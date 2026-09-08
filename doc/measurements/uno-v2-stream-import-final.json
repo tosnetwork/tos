@@ -1,0 +1,25 @@
+{
+  "scope": "Post-fix candidate streaming regression; source-boundary follow-up review pending at capture. D31 not complete. Earlier restored artifact predates review fixes; these hashes supersede it for current source.",
+  "build": "cmake --build build --target test-workchain-block test-tos-collator validator -- -j48",
+  "hashes": "3993f181f6a479648daa5ddd23eccd36572f48afaf4a4d5327f5f89857b7acd7  crypto/block/workchain-block-execution.cpp\n4a384b929a4f51cf14ebdd7aa3e65e70df71f7f578220103f06e52ba6ef20515  crypto/block/workchain-block-execution.h\n91d50aef1dbedeeb84828392f685a8bad6f6cb171b063ac455a0b67a9fb19ae0  crypto/test/test-workchain-block.cpp\n213c28b5cb7dad95daadcc6a294e8ffd85dcec76ab050bc73251f7fc72438eb9  validator/impl/validate-query.cpp\nc10d61869de62d21d7e8f7dd5a19848c9cc53500f60b5c22106f146de976e243  build/test-workchain-block\n85855165e35861e3c21ce073531bf4601919da5b77e9cf9195c291750552a059  build/test-tos-collator\n",
+  "test_start": {
+    "chunk_id": "1b0938",
+    "wall_time_seconds": 1.002000693,
+    "session_id": 94754,
+    "original_token_count": 35,
+    "output": "Internal ctest changing into directory: /home/tomi/tos/build\nTest project /home/tomi/tos/build\n    Start 16: test-counter-disk-integration\n"
+  },
+  "test_end": {
+    "chunk_id": "69aaee",
+    "wall_time_seconds": 0.00000602,
+    "exit_code": 0,
+    "original_token_count": 92,
+    "output": "1/3 Test #16: test-counter-disk-integration ....   Passed    1.39 sec\n    Start 37: test-workchain-block\n2/3 Test #37: test-workchain-block .............   Passed    3.20 sec\n    Start 38: test-workchain-admission\n3/3 Test #38: test-workchain-admission .........   Passed    0.01 sec\n\n100% tests passed, 0 tests failed out of 3\n\nTotal Test time (real) =   4.60 sec\n"
+  },
+  "negative_controls": [
+    "uno-v2-stream-import-limit-red.json",
+    "uno-v2-stream-import-callback-red.json",
+    "uno-v2-stream-import-state-fault-red.json"
+  ],
+  "limitations": "Manual controls, not recurring mutation CI. Shared encoder comparison tests collection equivalence. State fault is injected into a generic callback, not a real CellDb fault or validator-level mutation. Disk fixture is offline singleton restart/import; no V2 or network acceptance."
+}

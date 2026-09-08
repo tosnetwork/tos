@@ -10,6 +10,8 @@
 #include "vm/cells/Cell.h"
 #include "block/workchain-execution-errors.h"
 
+namespace vm { class CellSlice; }
+
 namespace block {
 
 struct SerializeConfig;
@@ -68,6 +70,19 @@ td::Result<std::uint64_t> workchain_batch_start_lt(std::uint64_t host_after_lt,
 // Deferred transit contributes no engine input; an empty result is null.
 td::Result<td::Ref<vm::Cell>> workchain_batch_inbound_from_imports(
     const std::vector<td::Ref<vm::Cell>>& imports);
+
+// Candidate-origin enumeration, not authenticated state. The enumerator must
+// stop on the first false visitor result. Streaming keeps at most the legacy
+// wire's 32767 final envelopes; transit entries allocate no retained slots.
+// The first excess final record is inspected but never retained. This is the
+// singleton wire boundary, not V2 authenticated resource admission. A missing
+// enumerator is LocalUnavailable (host failure), never candidate invalidity.
+// VmError/VmVirtError escaping the host enumerator are also local failures;
+// candidate dictionary adapters must classify their own source-specific errors.
+using CandidateImportVisitor = std::function<bool(td::Ref<vm::CellSlice>)>;
+using CandidateImportEnumerator = std::function<bool(const CandidateImportVisitor&)>;
+td::Result<td::Ref<vm::Cell>> workchain_batch_inbound_from_candidate_imports(
+    const CandidateImportEnumerator& enumerate, std::pmr::memory_resource& workspace);
 
 // Decode orders by (emitted LT, message hash), falling back to created LT.
 // Engines may apply their own authenticated source-locator order afterwards.

@@ -257,59 +257,116 @@ td::Result<td::Ref<vm::Cell>> extract_workchain_engine_state(const td::Ref<vm::C
   }
 }
 
-td::Result<td::Ref<vm::Cell>> workchain_batch_inbound_from_imports(
-    const std::vector<td::Ref<vm::Cell>>& imports) {
-  std::vector<td::Ref<vm::Cell>> envelopes;
+td::Result<td::Ref<vm::Cell>> workchain_batch_inbound_from_candidate_imports(
+    const CandidateImportEnumerator& enumerate, std::pmr::memory_resource& workspace) {
+  if (!enumerate) {
+    return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),
+                             "missing native import enumerator");
+  }
+  std::pmr::vector<td::Ref<vm::Cell>> envelopes(&workspace);
+  td::Status failure;
   try {
-    for (const auto& root : imports) {
-      if (root.is_null()) {
-        return td::Status::Error("missing native batch import");
+    auto reject = [&](const char* reason) {
+      failure = td::Status::Error(td::CSlice(reason));
+      return false;
+    };
+    const CandidateImportVisitor visitor = [&](td::Ref<vm::CellSlice> value) {
+      try {
+        if (failure.is_error())
+          return false;
+        if (value.is_null())
+          return reject("missing native batch import");
+        td::Ref<vm::Cell> envelope;
+        switch (gen::t_InMsg.check_tag(*value)) {
+          case gen::InMsg::msg_import_fin: {
+            gen::InMsg::Record_msg_import_fin record;
+            if (!tlb::csr_unpack(value, record)) {
+              return reject("invalid native final batch import");
+            }
+            envelope = record.in_msg;
+            break;
+          }
+          case gen::InMsg::msg_import_deferred_fin: {
+            gen::InMsg::Record_msg_import_deferred_fin record;
+            if (!tlb::csr_unpack(value, record)) {
+              return reject("invalid native deferred final batch import");
+            }
+            envelope = record.in_msg;
+            break;
+          }
+          case gen::InMsg::msg_import_tr: {
+            gen::InMsg::Record_msg_import_tr record;
+            if (!tlb::csr_unpack(value, record)) {
+              return reject("invalid native transit batch import");
+            }
+            break;
+          }
+          case gen::InMsg::msg_import_deferred_tr: {
+            gen::InMsg::Record_msg_import_deferred_tr record;
+            if (!tlb::csr_unpack(value, record)) {
+              return reject("invalid native deferred transit batch import");
+            }
+            break;
+          }
+          default:
+            return reject("unsupported native batch import kind");
+        }
+        if (envelope.not_null()) {
+          constexpr std::size_t wire_limit = 32767;
+          if (envelopes.size() >= wire_limit)
+            return reject("native batch import wire count exceeded");
+          if (envelopes.size() == envelopes.capacity()) {
+            // capacity <= wire_limit, and double only below half the limit.
+            const auto capacity = envelopes.capacity();
+            envelopes.reserve(capacity == 0 ? 1 : capacity > wire_limit / 2 ? wire_limit : capacity * 2);
+          }
+          envelopes.push_back(std::move(envelope));
+        }
+        return true;
+      } catch (vm::VmError&) {
+        return reject("invalid native batch import cells");
+      } catch (vm::VmVirtError&) {
+        return reject("incomplete native batch import proof");
       }
-      auto cs = vm::load_cell_slice(root);
-      switch (gen::t_InMsg.check_tag(cs)) {
-        case gen::InMsg::msg_import_fin: {
-          gen::InMsg::Record_msg_import_fin record;
-          if (!tlb::unpack_cell(root, record)) {
-            return td::Status::Error("invalid native final batch import");
-          }
-          envelopes.push_back(record.in_msg);
-          break;
-        }
-        case gen::InMsg::msg_import_deferred_fin: {
-          gen::InMsg::Record_msg_import_deferred_fin record;
-          if (!tlb::unpack_cell(root, record)) {
-            return td::Status::Error("invalid native deferred final batch import");
-          }
-          envelopes.push_back(record.in_msg);
-          break;
-        }
-        case gen::InMsg::msg_import_tr: {
-          gen::InMsg::Record_msg_import_tr record;
-          if (!tlb::unpack_cell(root, record)) {
-            return td::Status::Error("invalid native transit batch import");
-          }
-          break;
-        }
-        case gen::InMsg::msg_import_deferred_tr: {
-          gen::InMsg::Record_msg_import_deferred_tr record;
-          if (!tlb::unpack_cell(root, record)) {
-            return td::Status::Error("invalid native deferred transit batch import");
-          }
-          break;
-        }
-        default:
-          return td::Status::Error("unsupported native batch import kind");
-      }
+    };
+    bool traversed;
+    try {
+      // A host callback can capture local state. Only the visitor above owns
+      // candidate parsing; an exception from the callback proves no provenance.
+      traversed = enumerate(visitor);
+    } catch (vm::VmError&) {
+      if (failure.is_error())
+        return std::move(failure);
+      return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),
+                               "native import enumeration unavailable");
+    } catch (vm::VmVirtError&) {
+      if (failure.is_error()) return std::move(failure);
+      return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),
+                               "native import enumeration proof unavailable");
     }
+    if (failure.is_error()) return std::move(failure);
+    if (!traversed) return td::Status::Error("cannot traverse native batch imports");
     if (envelopes.empty()) {
       return td::Ref<vm::Cell>{};
     }
-    return encode_workchain_batch_inbound(envelopes);
+    // The legacy encoder owns a standard vector interface. This bounded copy
+    // coexists with the collected slots; no copy is made on collection failure.
+    return encode_workchain_batch_inbound({envelopes.begin(), envelopes.end()});
   } catch (vm::VmError&) {
     return td::Status::Error("invalid native batch import cells");
   } catch (vm::VmVirtError&) {
     return td::Status::Error("incomplete native batch import proof");
   }
+}
+
+td::Result<td::Ref<vm::Cell>> workchain_batch_inbound_from_imports(
+    const std::vector<td::Ref<vm::Cell>>& imports) {
+  return workchain_batch_inbound_from_candidate_imports([&](const CandidateImportVisitor& visit) {
+    for (const auto& root : imports) {
+      if (!visit(root.not_null() ? vm::load_cell_slice_ref(root) : td::Ref<vm::CellSlice>{})) return false;
+    }
+    return true;
+  }, *std::pmr::get_default_resource());
 }
 
 td::Result<std::uint64_t> workchain_batch_start_lt(std::uint64_t host_after_lt,

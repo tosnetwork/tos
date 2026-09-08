@@ -1,6 +1,7 @@
 #include "block/workchain-outbound-queues.h"
 
 #include <limits>
+#include <algorithm>
 #include <random>
 #include <type_traits>
 #include "workchain-counter-engine.h"
@@ -1184,9 +1185,11 @@ TEST(WorkchainBlock, BatchInputDeclarationCacheBindsRemainingWidth) {
 class InboxWorkspaceProbe final : public std::pmr::memory_resource {
  public:
   unsigned allocations{0};
+  std::size_t max_allocation{0};
  private:
   void* do_allocate(std::size_t bytes, std::size_t alignment) override {
     ++allocations;
+    max_allocation = std::max(max_allocation, bytes);
     return std::pmr::new_delete_resource()->allocate(bytes, alignment);
   }
   void do_deallocate(void* pointer, std::size_t bytes, std::size_t alignment) override {
@@ -5896,6 +5899,34 @@ TEST(WorkchainBlock, BatchTimeFollowsEveryInputAndLeavesEndSpace) {
   ASSERT_TRUE(block::workchain_batch_start_lt(0, number(0)).is_error());
 }
 
+TEST(WorkchainBlock, MissingImportEnumeratorIsLocalFailure) {
+  InboxWorkspaceProbe workspace;
+  bool escaped = false;
+  bool local_failure = false;
+  try {
+    auto result = block::workchain_batch_inbound_from_candidate_imports({}, workspace);
+    local_failure = result.is_error() && block::workchain_execution_requires_local_failure(result.error());
+  } catch (const std::bad_function_call&) {
+    escaped = true;
+  }
+  ASSERT_TRUE(!escaped);
+  ASSERT_TRUE(local_failure);
+  ASSERT_EQ(workspace.allocations, 0u);
+}
+
+TEST(WorkchainBlock, ImportEnumeratorStateFaultIsLocalFailure) {
+  InboxWorkspaceProbe workspace;
+  auto result = block::workchain_batch_inbound_from_candidate_imports(
+      [](const block::CandidateImportVisitor&) -> bool {
+        // Fault injection for an authenticated-state access captured by a host
+        // callback. An untyped callback exception cannot prove candidate fault.
+        throw vm::VmError{vm::Excno::dict_err};
+      }, workspace);
+  ASSERT_TRUE(result.is_error());
+  ASSERT_TRUE(block::workchain_execution_requires_local_failure(result.error()));
+  ASSERT_EQ(workspace.allocations, 0u);
+}
+
 TEST(WorkchainBlock, InboxReconstructedFromNativeImports) {
   auto first = inbound_envelope(3);
   auto second = inbound_envelope(4);
@@ -5927,6 +5958,35 @@ TEST(WorkchainBlock, InboxReconstructedFromNativeImports) {
       .store_long(1, 4).store_long(67, 8).finalize();
   ASSERT_TRUE(block::gen::t_InMsg.validate_ref(10000, discarded));
   ASSERT_TRUE(block::workchain_batch_inbound_from_imports({discarded}).is_error());
+
+  InboxWorkspaceProbe workspace;
+  auto streamed = block::workchain_batch_inbound_from_candidate_imports(
+      [&](const block::CandidateImportVisitor& visit) {
+        for (const auto& root : {deferred, transit, routed, final}) {
+          if (!visit(vm::load_cell_slice_ref(root))) return false;
+        }
+        return true;
+      }, workspace);
+  ASSERT_TRUE(streamed.is_ok());
+  ASSERT_TRUE(streamed.ok()->get_hash() == expected->get_hash());
+  InboxWorkspaceProbe no_retained;
+  auto transit_only = block::workchain_batch_inbound_from_candidate_imports(
+      [&](const block::CandidateImportVisitor& visit) { return visit(vm::load_cell_slice_ref(transit)); }, no_retained);
+  ASSERT_TRUE(transit_only.is_ok() && transit_only.ok().is_null());
+  ASSERT_EQ(no_retained.allocations, 0u);
+
+  unsigned visited = 0;
+  auto excessive = block::workchain_batch_inbound_from_candidate_imports(
+      [&](const block::CandidateImportVisitor& visit) {
+        for (unsigned i = 0; i < 32769; ++i) {
+          ++visited;
+          if (!visit(vm::load_cell_slice_ref(final))) return false;
+        }
+        return true;
+      }, workspace);
+  ASSERT_TRUE(excessive.is_error());
+  ASSERT_TRUE(workspace.max_allocation / sizeof(td::Ref<vm::Cell>) <= 32767);
+  ASSERT_EQ(visited, 32768u);  // First excess is probed, never retained; no further enumeration.
 }
 
 TEST(WorkchainBlock, NativeBatchCreditIsAtomicAndReplayable) {

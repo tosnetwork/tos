@@ -89,6 +89,49 @@ already satisfy the live path. Do not defer their tests until after wiring.
 
 The dependency order below remains unchanged.
 
+The singleton validator collection path now streams candidate-origin InMsg
+slices instead of first allocating a cell and vector slot for every record.
+It applies the existing 15-bit final-envelope count before retaining the first
+excess final record; transit records consume no retained envelope slots. The
+stream may inspect one excess record and then stops. Buffer growth is explicitly
+capped at 32767 slots; old/new buffers may coexist during growth, and the bounded
+legacy encoder copy is separate. The allocation control measures the largest
+collection allocation, not whole-process RSS. This preserves singleton wire
+semantics and is NOT V2 authenticated max_inbound wiring or a claim that full
+Native dictionary traversal is now admitted before semantic checks. Candidate
+enumeration is not an authenticated-state certificate. The V2 provenance types,
+earlier admission stage and authenticated resource cut remain required above.
+
+Boundary review found no blocking streaming regression. The comparison uses
+the same encoder with an independently specified envelope list: it establishes
+collection equivalence, not independent encoder verification. Repeated-envelope
+overflow fixtures may also fail the duplicate check, so the evidence is the
+allocation-size and visited-count assertions, not merely an error result.
+Candidate dictionary VmError now rejects locally instead of escaping to the
+outer abstention handler. A missing host enumerator is separately classified as
+LocalUnavailable and the live caller preserves that category. Its new test
+first failed on an escaping bad_function_call before the guard was added.
+An additional injected host-callback VmError initially failed the local-failure
+assertion. The generic callback now has a separate local-failure boundary from
+candidate slice parsing. The live adapter captures only the candidate dictionary
+pointer, not this/config/state, and locally classifies dictionary parsing errors.
+This narrows the callable's available objects; it is not a proof against arbitrary
+future global state access or a detached-arena provenance certificate. The empty
+callback has an API-level test but cannot arise from today's live lambda literal.
+Enumerator failure/re-entry and a validator-level targeted mutation remain
+uncovered; the existing disk regression is not a dedicated live-path control.
+Transit traversal remains uncapped here; 32767 bounds retained final envelopes,
+not total visited InMsg records. No source certificate or V2 limit is inferred.
+The retained vector compatibility API has no production callers. Its loader
+exceptions now cross the generic host-callback boundary as local failures;
+this is not full error-category parity with the old helper. Source-specific
+classification and dedicated exotic-root tests for that compatibility API
+remain follow-up work. Current live validation supplies candidate slices instead.
+Post-fix evidence is `measurements/uno-v2-stream-import-final.json`; the earlier
+`restored.json` predates review corrections. The separate
+`uno-v2-stream-import-state-fault-red.json` records the host-fault classification
+control, whereas `callback-red.json` records only the empty-callable control.
+
 M6 minimum-hardware accounting must include auxiliary admission memory, not
 only retained input bits/cells: materializer source/detached graphs, map nodes
 and allocator overhead, traversal stacks, inbox sorting and collection arrays,

@@ -18,6 +18,7 @@
     Copyright 2025-2026 TOS Blockchain Teams
 */
 #include <ctime>
+#include <memory_resource>
 
 #include "adnl/utils.hpp"
 #include "block/block-auto.h"
@@ -27,6 +28,7 @@
 #include "block/output-queue-merger.h"
 #include "block/validator-set.h"
 #include "block/workchain-execution-dispatch.h"
+#include "block/workchain-block-execution.h"
 #include "common/errorlog.h"
 #include "td/utils/format.h"
 #include "tos/tos-io.hpp"
@@ -6496,16 +6498,29 @@ bool ValidateQuery::check_transactions() {
   if (resolved.ok().has_value() &&
       std::holds_alternative<block::ResolvedWorkchainBlockExecution>(*resolved.ok())) {
     const auto& execution = std::get<block::ResolvedWorkchainBlockExecution>(*resolved.ok());
-    std::vector<Ref<vm::Cell>> native_imports;
-    if (!in_msg_dict_->check_for_each_extra(
-            [&](Ref<vm::CellSlice> value, Ref<vm::CellSlice>, td::ConstBitPtr, int) {
-              native_imports.push_back(vm::CellBuilder().append_cellslice(value).finalize());
-              return true;
-            })) {
-      return reject_query("cannot traverse native batch imports");
-    }
-    auto inbox = block::workchain_batch_inbound_from_imports(native_imports);
+    // Candidate-origin records remain candidate data, not local authenticated
+    // state. Stream through the singleton wire cap before retaining envelopes;
+    // do not first copy the entire InMsgDescr into an unbounded array.
+    auto inbox = block::workchain_batch_inbound_from_candidate_imports(
+        [candidate_inbox = in_msg_dict_.get()](const block::CandidateImportVisitor& visit) {
+          // This narrow catch may access only the candidate dictionary, never
+          // authenticated state. Capture no validator/this/config/state object.
+          // The generic enumerator boundary classifies untyped host faults as local.
+          try {
+            return candidate_inbox->check_for_each_extra(
+                [&visit](Ref<vm::CellSlice> value, Ref<vm::CellSlice>, td::ConstBitPtr, int) {
+                  return visit(std::move(value));
+                });
+          } catch (vm::VmError&) {
+            return false;
+          } catch (vm::VmVirtError&) {
+            return false;
+          }
+        }, *std::pmr::get_default_resource());
     if (inbox.is_error()) {
+      if (block::workchain_execution_requires_local_failure(inbox.error())) {
+        return fatal_error(inbox.move_as_error_prefix("native batch inbox unavailable: "));
+      }
       return reject_query(inbox.move_as_error_prefix("cannot reconstruct native batch inbox: ").to_string());
     }
     block::WorkchainReplayStorageCache storage_cache{
