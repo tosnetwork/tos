@@ -161,7 +161,11 @@ std::string ParsedAccountState::to_extended_info_json(const std::string& addr_st
       << "{\"@type\":\"fullAccountState\""
       << ",\"address\":{\"@type\":\"accountAddress\",\"account_address\":"
       << td::JsonString(td::Slice(addr_str)) << "}"
-      << ",\"balance\":" << balance
+      // Unquoted, so the wire type stays a JSON number, but written from
+      // the exact decimal: a JSON number carries the full literal, whereas
+      // the 64-bit rendering would report a saturated value for a balance
+      // wider than that type.
+      << ",\"balance\":" << balance_dec
       << ",\"extra_currencies\":[]"
       << ",\"last_transaction_id\":{\"@type\":\"internal.transactionId\""
       << ",\"lt\":\"" << last_trans_lt << "\""

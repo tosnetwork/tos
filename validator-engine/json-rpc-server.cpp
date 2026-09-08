@@ -485,8 +485,15 @@ void JsonRpcServer::on_request(RequestPtr request, PayloadPtr payload,
     return;  // 401 already sent
   }
 
-  // GET /readyz — readiness probe (queries liteserver for sync state)
+  // GET /readyz — readiness probe (queries liteserver for sync state).
+  // It does not route through the method dispatcher, so it needs the
+  // budget applied here: it issues a liteserver query of its own, and an
+  // ungated route is an ungated route regardless of how cheap it looks.
   if (method == "GET" && (url == "/readyz" || url == "/readyz/")) {
+    if (!consume_per_ip_token(source_ip)) {
+      promise.set_value(make_json_rpc_error(-32005, "Rate limit exceeded (per-IP)", "null", opts_.cors_origin));
+      return;
+    }
     handle_readyz(std::move(promise));
     return;
   }
@@ -993,7 +1000,13 @@ void JsonRpcServer::process_batch_step(std::shared_ptr<BatchState> state) {
             if (fv.second.type() == td::JsonValue::Type::String) {
               elem_id = PSTRING() << td::JsonString(td::Slice(fv.second.get_string()));
             } else if (fv.second.type() == td::JsonValue::Type::Number) {
-              elem_id = fv.second.get_number().str();
+              // Same grammar check as the dispatch path: this literal is
+              // spliced into the reply unquoted, and an element that never
+              // ran is exactly where a malformed id survives to be echoed.
+              auto number = fv.second.get_number().str();
+              if (is_valid_json_number(number)) {
+                elem_id = std::move(number);
+              }
             }
             break;
           }
@@ -1161,8 +1174,8 @@ void JsonRpcServer::dispatch_method_impl(const std::string &method, td::JsonObje
                                          td::Promise<HttpReturn> promise) {
 
   // Track per-method request count
-  requests_total_.fetch_add(1);
-  active_requests_.fetch_add(1);
+  counters_->total.fetch_add(1);
+  counters_->active.fetch_add(1);
   // The metric label comes from the request, so it is bounded here as well as
   // in the metric itself: a name long enough to matter is not one this node
   // implements, and keeping the full string would let a handful of requests
@@ -1173,11 +1186,12 @@ void JsonRpcServer::dispatch_method_impl(const std::string &method, td::JsonObje
   // Wrap the promise to track completion and errors
   auto method_copy = std::move(method_label);
   promise = td::PromiseCreator::lambda(
-      [this, method_copy, inner = std::move(promise)](td::Result<HttpReturn> R) mutable {
-        active_requests_.fetch_sub(1);
+      [counters = counters_, method_errors = method_errors_, method_copy,
+       inner = std::move(promise)](td::Result<HttpReturn> R) mutable {
+        counters->active.fetch_sub(1);
         if (R.is_error()) {
-          requests_errors_.fetch_add(1);
-          method_errors_->label(method_copy)->add(1);
+          counters->errors.fetch_add(1);
+          method_errors->label(method_copy)->add(1);
           inner.set_error(R.move_as_error());
         } else {
           auto ret = R.move_as_ok();
@@ -1941,15 +1955,15 @@ void JsonRpcServer::collect(metrics::MetricsPromise P) {
   // Scalar counters
   set.families.push_back(
       metrics::MetricFamily::make_scalar("jsonrpc_requests_total", "counter",
-          static_cast<double>(requests_total_.load()),
+          static_cast<double>(counters_->total.load()),
           "Total JSON-RPC requests received"));
   set.families.push_back(
       metrics::MetricFamily::make_scalar("jsonrpc_errors_total", "counter",
-          static_cast<double>(requests_errors_.load()),
+          static_cast<double>(counters_->errors.load()),
           "Total JSON-RPC requests that resulted in errors"));
   set.families.push_back(
       metrics::MetricFamily::make_scalar("jsonrpc_active_requests", "gauge",
-          static_cast<double>(active_requests_.load()),
+          static_cast<double>(counters_->active.load()),
           "Currently in-flight JSON-RPC requests"));
   set.families.push_back(
       metrics::MetricFamily::make_scalar("jsonrpc_cache_hits_total", "counter",

@@ -581,11 +581,18 @@ class JsonRpcServer final : public td::actor::Actor, public virtual metrics::Asy
 
   // ── Statistics ───────────────────────────────────────────────────────
   td::Timestamp start_time_;
-  std::atomic<td::uint64> requests_total_{0};
-  std::atomic<td::uint64> requests_errors_{0};
   std::atomic<td::uint64> cache_hits_{0};
   std::atomic<td::uint64> cache_misses_{0};
-  std::atomic<td::uint64> active_requests_{0};
+  // Counters the per-request completion callback touches. A promise can
+  // outlive this actor -- an abandoned one is still invoked, carrying
+  // "Lost promise" -- so that callback must not reach them through
+  // `this`. Holding them separately lets it keep them alive on its own.
+  struct RequestCounters {
+    std::atomic<td::uint64> total{0};
+    std::atomic<td::uint64> errors{0};
+    std::atomic<td::uint64> active{0};
+  };
+  std::shared_ptr<RequestCounters> counters_ = std::make_shared<RequestCounters>();
 
   // Per-method request count (method name → count)
   metrics::Labeled<std::string, metrics::AtomicCounter<td::uint64>>::Ptr

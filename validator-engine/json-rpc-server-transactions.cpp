@@ -86,10 +86,11 @@ void append_transaction_messages(td::StringBuilder &sb,
   vm::Dictionary dictionary{tx.r1.out_msgs, 15};
   bool first = true;
   // The field is 15 bits wide, and this runs once per transaction in a
-  // page of up to 256, so the count is bounded only by a consensus limit
-  // declared elsewhere. Cap it here, matching the sibling loop over the
-  // same dictionary.
-  constexpr int kMaxRenderedOutMessages = 100;
+  // page of up to 256, so without a local ceiling the work is bounded
+  // only by a limit declared elsewhere. Use that limit's own value: the
+  // action phase admits at most this many messages, so a transaction can
+  // never carry more, and a legitimate one is never rendered short.
+  constexpr int kMaxRenderedOutMessages = 255;
   for (int index = 0; index < tx.outmsg_cnt && index < kMaxRenderedOutMessages; ++index) {
     auto message = dictionary.lookup_ref(td::BitArray<15>{index});
     if (message.is_null()) {
