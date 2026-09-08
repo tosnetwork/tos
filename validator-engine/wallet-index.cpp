@@ -22,15 +22,8 @@ constexpr uint8_t kNftTag = 0x11;           // 0x11 + owner(32) + nft(32)
 constexpr uint8_t kEventTag = 0x12;         // 0x12 + account(32) + ~lt_be(8)
 constexpr uint8_t kNftOwnerTag = 0x13;      // 0x13 + nft(32) -> owner(32)
 
-// How much per-account history this index keeps. Sized well above what the
-// event feed can page through (its ceiling is a hundred rows) so ordinary
-// reads never reach the boundary, and finite so the index does not grow for
-// the life of the node.
-constexpr size_t kMaxEventsPerAccount = 10000;
-// Rows removed per write. Trimming happens on the transaction path, so it
-// has to be bounded work; an account far over the limit is brought down
-// across several writes rather than in one.
-constexpr size_t kMaxEventTrimPerPass = 64;
+// (kMaxEventsPerAccount / kMaxEventTrimPerPass are declared in the header
+// so tests can reference the exact bound.)
 // 0x1E + workchain_be(4) + shard_be(8) + seqno_be(4) + root_hash(32) + file_hash(32) -> sentinel(1)
 // The full BlockIdExt is in the key, not split key/value: if a position could
 // ever be re-applied with a different hash (e.g. some reorg/hardfork path),
@@ -284,8 +277,12 @@ td::Status WalletIndexDb::put_event(const HashKey& account, uint64_t lt,
   // Store ~lt so ascending key order is newest-first and `limit` caps the scan
   // to the most recent events instead of the oldest.
   make_event_key(account, ~lt, key);
-  TRY_STATUS(put_cell(td::Slice{key, kEventKeyLen}, std::move(value)));
-  return trim_events(account);
+  // Just write. Trimming is not done here: put_event runs once per
+  // transaction on the block-apply path, and its committed-DB scan does
+  // not see the batch's own writes, so trimming per put would re-scan the
+  // account's whole history for every transaction in a block. The caller
+  // trims each touched account once, after the block's events are in.
+  return put_cell(td::Slice{key, kEventKeyLen}, std::move(value));
 }
 
 td::Status WalletIndexDb::trim_events(const HashKey& account) {

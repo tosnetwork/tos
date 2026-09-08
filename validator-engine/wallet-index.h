@@ -31,6 +31,15 @@ class RocksDb;
 
 namespace tos_wallet_index {
 
+// How much per-account event history this index keeps. Well above what a
+// normal account accumulates, so ordinary reads never reach it, and finite
+// so the index does not grow for the life of the node. Declared here so
+// the retention test can assert against the exact bound.
+constexpr size_t kMaxEventsPerAccount = 10000;
+// Events removed per trim pass. Trimming is bounded work per call; an
+// account far over the limit is brought down across several blocks.
+constexpr size_t kMaxEventTrimPerPass = 64;
+
 using HashKey = td::Bits256;  // owner / master / nft / account / tx hash
 
 class WalletIndexDb {

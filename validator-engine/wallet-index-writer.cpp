@@ -500,6 +500,13 @@ bool index_block_walk(WalletIndexDb* db, td::Ref<vm::Cell> block_root, std::set<
       }
       return true;
     });
+    // Trim this account once, after all its events for the block are in --
+    // not once per transaction, which would re-scan its whole history each
+    // time (the scan reads the committed DB, blind to the pending batch).
+    auto trim_status = db->trim_events(account);
+    if (trim_status.is_error()) {
+      LOG(WARNING) << "wc0-index: trim_events failed: " << trim_status.message();
+    }
     return true;
   });
   return true;

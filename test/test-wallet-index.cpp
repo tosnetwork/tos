@@ -344,11 +344,15 @@ TEST(WalletIndex, EventHistoryIsBoundedPerAccount) {
   tos_wallet_index::HashKey account = td::Bits256::zero();
   account.as_slice()[31] = 0x77;
 
+  // put_event no longer trims (the block writer trims each touched account
+  // once per block). Model that here: write an event, then trim -- the
+  // tightest cadence, one transaction per block.
   constexpr uint64_t kWritten = 10400;
   for (uint64_t lt = 1; lt <= kWritten; lt++) {
     vm::CellBuilder builder;
     builder.store_long(static_cast<long long>(lt), 64);
     ASSERT_TRUE(db->put_event(account, lt, builder.finalize()).is_ok());
+    ASSERT_TRUE(db->trim_events(account).is_ok());
   }
 
   size_t retained = 0;
@@ -361,10 +365,17 @@ TEST(WalletIndex, EventHistoryIsBoundedPerAccount) {
     return td::Status::OK();
   }).ensure();
 
-  // Fewer rows than were written, and the ones kept are the recent ones.
-  ASSERT_TRUE(retained < kWritten);
-  ASSERT_EQ(newest, kWritten);
-  ASSERT_TRUE(oldest > 1);
+  // Assert against an absolute expected count, NOT the kMaxEventsPerAccount
+  // symbol: tying the assertion to the same constant the code uses means a
+  // mis-sized cap moves both together and the test can never catch it. The
+  // retained count must settle near 10000; a cap accidentally set to, say,
+  // 100 makes this fail. If the cap is changed on purpose, this expected
+  // value is updated deliberately alongside it.
+  constexpr size_t kExpectedRetained = 10000;
+  ASSERT_TRUE(retained <= kExpectedRetained);
+  ASSERT_TRUE(retained >= kExpectedRetained - 64);
+  ASSERT_EQ(newest, kWritten);   // newest kept
+  ASSERT_TRUE(oldest > 1);       // oldest dropped
 
   // A second account keeps its own history: the bound is per account, not
   // a global cap that one busy address could spend on behalf of others.
@@ -373,6 +384,7 @@ TEST(WalletIndex, EventHistoryIsBoundedPerAccount) {
   vm::CellBuilder builder;
   builder.store_long(1, 64);
   ASSERT_TRUE(db->put_event(other, 1, builder.finalize()).is_ok());
+  ASSERT_TRUE(db->trim_events(other).is_ok());
   size_t other_rows = 0;
   db->for_each_event(other, 10, [&](uint64_t, td::Ref<vm::Cell>) {
     other_rows++;
