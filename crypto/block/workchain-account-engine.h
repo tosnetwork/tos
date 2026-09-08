@@ -77,8 +77,10 @@ namespace account_engine_detail {
 // Post-admission execution, not an authentication certificate. The enclosing
 // host must bind old_accounts to the authenticated previous shard. Batch calls
 // admit lookup paths and account closures with state_policy; prototype callers
-// retain their separate admission obligation. Native exceptions propagate unchanged;
-// this helper never reclassifies missing local data as a candidate mismatch.
+// retain their separate admission obligation. The batch acquisition scope below
+// contains known source exceptions as local failures; the prototype and engine
+// callback retain their existing exception behaviour. This does not authenticate
+// the caller's source or contain the whole execution/settlement frame.
 // Count bounds alone are not state traversal or execution-work limits.
 inline td::Result<ExecutedWorkchainAccountBatch> execute(
     const WorkchainAccountEngine& engine, td::Ref<vm::Cell> old_accounts,
@@ -102,63 +104,108 @@ inline td::Result<ExecutedWorkchainAccountBatch> execute(
     // Only the retained singleton prototype uses this unmetered path.
     prototype_accounts.emplace(vm::load_cell_slice_ref(old_accounts), 256, tlb::aug_ShardAccounts);
   }
-  std::vector<WorkchainAccountSnapshot> snapshots;
-  snapshots.reserve(declarations.reads.size());
-  for (const auto& read : declarations.reads) {
-    auto expected = access.expected_read(read.account);
-    if (expected.is_error()) return expected.move_as_error();
-    td::Ref<vm::CellSlice> value;
-    if (state_meter) {
-      const auto mode = std::binary_search(declarations.writes.begin(), declarations.writes.end(), read.account)
-          ? WorkchainAccountPathMode::Replace : WorkchainAccountPathMode::Read;
-      auto acquired = lookup_workchain_account_metered(old_accounts, read.account, *state_meter, mode);
-      if (std::holds_alternative<NativeClosureLimit>(acquired)) {
-        return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::CandidateInvalid),
-                                 "declared account paths exceed batch state budget");
+  // This closure has no candidate Cell or engine callback capability. Only
+  // authenticated old-state reads can raise Native decoding exceptions here;
+  // declaration keys and expected hashes are already decoded scalar values.
+  // Authentication of old_accounts remains the enclosing host's obligation.
+  auto acquire = [&old_accounts, &declarations, &access, &state_meter,
+                  &prototype_accounts, state_policy]()
+      -> td::Result<std::vector<WorkchainAccountSnapshot>> {
+    std::vector<WorkchainAccountSnapshot> snapshots;
+    snapshots.reserve(declarations.reads.size());
+    for (const auto& read : declarations.reads) {
+      auto expected = access.expected_read(read.account);
+      if (expected.is_error()) return expected.move_as_error();
+      td::Ref<vm::CellSlice> value;
+      if (state_meter) {
+        const auto mode = std::binary_search(declarations.writes.begin(), declarations.writes.end(), read.account)
+            ? WorkchainAccountPathMode::Replace : WorkchainAccountPathMode::Read;
+        auto acquired = lookup_workchain_account_metered(old_accounts, read.account, *state_meter, mode);
+        if (std::holds_alternative<NativeClosureLimit>(acquired)) {
+          return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::CandidateInvalid),
+                                   "declared account paths exceed batch state budget");
+        }
+        if (std::holds_alternative<LocalUnavailable>(acquired)) {
+          return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),
+                                   "authenticated account path unavailable");
+        }
+        value = std::get<td::Ref<vm::CellSlice>>(std::move(acquired));
+      } else {
+        value = prototype_accounts->lookup(read.account);
       }
-      if (std::holds_alternative<LocalUnavailable>(acquired)) {
-        return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),
-                                 "authenticated account path unavailable");
+      td::Ref<vm::Cell> state;
+      std::optional<td::Bits256> actual;
+      if (value.not_null()) {
+        tlb::ShardAccount::Record record;
+        if (value->size_ext() != 0x10140 || !record.unpack(value)) {
+          if (state_policy) {
+            return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::AuthenticatedStateCorrupt),
+                                     "invalid authenticated ShardAccount entry");
+          }
+          throw vm::VmError{vm::Excno::dict_err, "invalid old ShardAccount entry"};
+        }
+        state = record.account;
+        actual = td::Bits256(state->get_hash().bits());
       }
-      value = std::get<td::Ref<vm::CellSlice>>(std::move(acquired));
-    } else {
-      value = prototype_accounts->lookup(read.account);
+      TRY_STATUS(access.record_old_read(read.account, actual));
+      if (state_meter && state.not_null()) {
+        auto closure = read_workchain_account_closure(state, *state_meter,
+            state_policy->max_account_cells, state_policy->max_account_bits,
+            static_cast<std::uint16_t>(state_policy->max_account_depth));
+        if (std::holds_alternative<NativeClosureLimit>(closure)) {
+          return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::CandidateInvalid),
+                                   "declared account closures exceed batch state budget");
+        }
+        if (std::holds_alternative<WorkchainAccountClosureLimit>(closure)) {
+          // A persisted account that cannot fit the installed per-account policy
+          // is not a bad candidate. Do not disguise it as candidate invalidity.
+          // Liveness requires output admission to enforce these same closure
+          // bounds and configuration migration to preserve readability of all
+          // persisted accounts. Neither obligation is implemented by this guard.
+          return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::AuthenticatedStateCorrupt),
+                                   "authenticated account violates installed closure policy");
+        }
+        if (std::holds_alternative<LocalUnavailable>(closure)) {
+          return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),
+                                   "authenticated account closure unavailable");
+        }
+      }
+      snapshots.push_back({read.account, std::move(state)});
     }
-    td::Ref<vm::Cell> state;
-    std::optional<td::Bits256> actual;
-    if (value.not_null()) {
-      tlb::ShardAccount::Record record;
-      if (value->size_ext() != 0x10140 || !record.unpack(value)) {
-        throw vm::VmError{vm::Excno::dict_err, "invalid old ShardAccount entry"};
-      }
-      state = record.account;
-      actual = td::Bits256(state->get_hash().bits());
+    return snapshots;
+  };
+  auto acquire_with_boundary = [&acquire, state_policy]() -> td::Result<std::vector<WorkchainAccountSnapshot>> {
+    if (!state_policy) return acquire();  // Retained singleton exception semantics.
+    const char* cause = nullptr;
+    try {
+      return acquire();
+    } catch (const WorkchainAccountFormatError& error) {
+      return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::AuthenticatedStateCorrupt),
+                               td::Slice(error.get_msg()));
+    } catch (const vm::VmError&) {
+      cause = "authenticated account acquisition: VM read/decode failure";
+    } catch (const vm::VmVirtError&) {
+      cause = "authenticated account acquisition: virtual content unavailable";
+    } catch (const vm::VmNoGas&) {
+      cause = "authenticated account acquisition: Native gas exhaustion";
+    } catch (const vm::VmFatal&) {
+      cause = "authenticated account acquisition: Native fatal exception";
+    } catch (const vm::CellBuilder::CellCreateError&) {
+      cause = "authenticated account acquisition: CellCreateError";
+    } catch (const vm::CellBuilder::CellWriteError&) {
+      cause = "authenticated account acquisition: CellWriteError";
+    } catch (const std::bad_alloc&) {
+      cause = "authenticated account acquisition: allocation failure";
+    } catch (const std::length_error&) {
+      cause = "authenticated account acquisition: allocation length failure";
     }
-    TRY_STATUS(access.record_old_read(read.account, actual));
-    if (state_meter && state.not_null()) {
-      auto closure = read_workchain_account_closure(state, *state_meter,
-          state_policy->max_account_cells, state_policy->max_account_bits,
-          static_cast<std::uint16_t>(state_policy->max_account_depth));
-      if (std::holds_alternative<NativeClosureLimit>(closure)) {
-        return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::CandidateInvalid),
-                                 "declared account closures exceed batch state budget");
-      }
-      if (std::holds_alternative<WorkchainAccountClosureLimit>(closure)) {
-        // A persisted account that cannot fit the installed per-account policy
-        // is not a bad candidate. Do not disguise it as candidate invalidity.
-        // Liveness requires output admission to enforce these same closure
-        // bounds and configuration migration to preserve readability of all
-        // persisted accounts. Neither obligation is implemented by this guard.
-        return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::AuthenticatedStateCorrupt),
-                                 "authenticated account violates installed closure policy");
-      }
-      if (std::holds_alternative<LocalUnavailable>(closure)) {
-        return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),
-                                 "authenticated account closure unavailable");
-      }
-    }
-    snapshots.push_back({read.account, std::move(state)});
-  }
+    // Source failure is never a mismatch with the candidate's declared hash.
+    // Preserve ordinary returned policy/mismatch errors; contain only exceptions
+    // from this acquisition scope, before the engine receives any read view.
+    return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),
+                             td::Slice(cause));
+  };
+  TRY_RESULT(snapshots, acquire_with_boundary());
   WorkchainAccountReadView view(std::move(snapshots));
   auto executed = engine.execute_accounts(input, view);
   // The engine cannot suppress an access violation by ignoring its Result.

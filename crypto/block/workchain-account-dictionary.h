@@ -12,6 +12,15 @@
 
 namespace block {
 
+// Raised only by explicit format predicates on an acquired account slice.
+// A provider's generic VmError does not establish this fact. Deriving from
+// VmError preserves existing decoder callers' exception handling; the batch
+// acquisition boundary distinguishes this more precise source failure first.
+// The reason must be a static-lifetime string literal, as at every throw below.
+struct WorkchainAccountFormatError : vm::VmError {
+  explicit WorkchainAccountFormatError(const char* reason) : vm::VmError(vm::Excno::dict_err, reason) {}
+};
+
 struct WorkchainAccountClosureLimit {
   enum Kind { Cells, Bits, Depth } kind;
 };
@@ -91,21 +100,21 @@ inline NativeMeteredRead admit_workchain_account_augmentation(
   td::Ref<vm::CellSlice> extra;
   if (label.l_bits != remaining) {
     // chk_size validates the fork's two child references. Keep the advance
-    // checked locally; the extra must consume everything after those refs,
+    // checked locally (unreachable failure under chk_size); the extra must consume everything after those refs,
     // exactly as Native get_node_extra requires for a fork (not for a leaf).
     if (!label.remainder.write().advance_refs(2)) {
-      throw vm::VmError{vm::Excno::dict_err, "invalid authenticated account augmentation fork"};
+      throw WorkchainAccountFormatError{"invalid authenticated account augmentation fork"};
     }
     vm::CellSlice tail{*label.remainder};
     if (!tlb::aug_ShardAccounts.skip_extra(tail) || !tail.empty_ext()) {
-      throw vm::VmError{vm::Excno::dict_err, "invalid authenticated account augmentation fork extra"};
+      throw WorkchainAccountFormatError{"invalid authenticated account augmentation fork extra"};
     }
     extra = std::move(label.remainder);
   } else {
     extra = tlb::aug_ShardAccounts.extract_extra(std::move(label.remainder));
   }
   if (extra.is_null()) {
-    throw vm::VmError{vm::Excno::dict_err, "invalid authenticated account augmentation"};
+    throw WorkchainAccountFormatError{"invalid authenticated account augmentation"};
   }
   std::vector<td::Ref<vm::Cell>> pending;
   for (unsigned i = extra->size_refs(); i > 0; --i) pending.push_back(extra->prefetch_ref(i - 1));
@@ -137,7 +146,7 @@ inline NativeMeteredRead lookup_workchain_account_metered(
   if (!std::holds_alternative<td::Ref<vm::CellSlice>>(root_result)) return root_result;
   auto root = std::get<td::Ref<vm::CellSlice>>(std::move(root_result));
   if (!root->have(1)) {
-    throw vm::VmError{vm::Excno::dict_err, "invalid authenticated ShardAccounts root"};
+    throw WorkchainAccountFormatError{"invalid authenticated ShardAccounts root"};
   }
   if (root->prefetch_ulong(1)) {
     auto node = root->prefetch_ref();

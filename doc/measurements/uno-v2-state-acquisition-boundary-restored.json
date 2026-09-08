@@ -1,0 +1,33 @@
+{
+  "base": "aee7638d2037e611ef840c55876415f64c762efc",
+  "scope": "Restored acquisition-boundary source before review. Four targeted regression tests, not live multiaccount acceptance.",
+  "build": {
+    "command": "cmake --build build --target test-workchain-block test-workchain-admission test-tos-collator validator-engine -j48",
+    "exit_code": 0
+  },
+  "regression": {
+    "command": "ctest --test-dir build --output-on-failure -R '^(test-workchain-block|test-workchain-admission|test-counter-disk-integration|test-counter-account-binding-readiness)$'",
+    "first_chunk": "test-counter-disk-integration Passed 1.09 sec",
+    "result": {
+      "chunk_id": "5c20bd",
+      "wall_time_seconds": 0.000004873,
+      "exit_code": 0,
+      "original_token_count": 98,
+      "output": "2/4 Test #17: test-counter-account-binding-readiness ...   Passed    0.32 sec\n    Start 38: test-workchain-block\n3/4 Test #38: test-workchain-block .....................   Passed    2.82 sec\n    Start 39: test-workchain-admission\n4/4 Test #39: test-workchain-admission .................   Passed    0.00 sec\n\n100% tests passed, 0 tests failed out of 4\n\nTotal Test time (real) =   4.24 sec\n"
+    }
+  },
+  "hashes": {
+    "chunk_id": "a201f0",
+    "wall_time_seconds": 0.421234091,
+    "exit_code": 0,
+    "original_token_count": 125,
+    "output": "9c7f40689a1fcc763417edd3eb082355517f8d8833c11980ebe8cb7db40a4a76  crypto/block/workchain-account-engine.h\n1082b6153e8eae6593b9c0fcc6895f015f65fc49c2095d6fc7fef263dbe8486d  crypto/test/test-workchain-block.cpp\nd1c15d80f4b92ada82538568c24a5fb471313636815d27a457b3a84b057a65f8  build/test-workchain-block\n9f49e9c26b4e19f0829f9464d17897ed1ece44e5f7dae03395a3da133fc9a937  build/test-tos-collator\n22b10685fe14794f7d0ccd2775c6eeff40c046421db9bcd7d3b1ebb16d0b189e  build/validator-engine/validator-engine\n"
+  },
+  "scan": {
+    "chunk_id": "70f40a",
+    "wall_time_seconds": 0.000004806,
+    "exit_code": 0,
+    "original_token_count": 25,
+    "output": "removed-execution-domain scan passed: 5267 text files, 378 binary files and 0 directories skipped\n"
+  }
+}

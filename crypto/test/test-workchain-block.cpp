@@ -3916,6 +3916,7 @@ TEST(WorkchainBlock, AccountEngineExecution) {
     auto rejected = block::execute_workchain_account_engine(engine, state.accounts,
         std::get<block::AdmittedBatchInput>(wrong_batch.evaluate()));
     ASSERT_TRUE(rejected.is_error());
+    ASSERT_TRUE(!block::workchain_execution_requires_local_failure(rejected.error()));
     ASSERT_EQ(engine.calls, 0u);
   }
   auto wrong = declarations;
@@ -3964,6 +3965,158 @@ TEST(WorkchainBlock, AccountEngineExecution) {
     ASSERT_EQ(settled.ok().input->get_hash(), complete.root()->get_hash());
     ASSERT_TRUE(settled.ok().state.accounts->get_hash() != state.accounts->get_hash());
     ASSERT_EQ(engine.seen_input->get_hash(), complete.root()->get_hash());
+    {
+      // Each exception comes from the old-state loader, not candidate decoding.
+      // VmError does not cover the other Native exception classes in this list.
+      const std::vector<std::function<void()>> faults{
+          [] { throw vm::VmError{vm::Excno::dict_err}; },
+          [] { throw vm::VmVirtError{1}; },
+          [] { throw vm::VmNoGas{}; },
+          [] { throw vm::VmFatal{}; },
+          [] { throw vm::CellBuilder::CellCreateError{}; },
+          [] { throw vm::CellBuilder::CellWriteError{}; },
+          [] { throw std::bad_alloc{}; },
+          [] { throw std::length_error("injected state allocation length"); }};
+      for (const auto& fault : faults) {
+        unsigned loads = 0;
+        td::Ref<vm::Cell> unavailable{td::Ref<StateReadCallbackCell>{true, state.accounts, [&] {
+          ++loads;
+          fault();
+        }}};
+        engine.calls = 0;
+        auto refused = block::execute_workchain_account_engine(engine, unavailable, complete);
+        ASSERT_EQ(loads, 1u);
+        ASSERT_EQ(engine.calls, 0u);
+        ASSERT_TRUE(refused.is_error());
+        ASSERT_EQ(refused.error().code(), static_cast<int>(block::WorkchainExecutionFailure::LocalUnavailable));
+      }
+      // Native initialization reads the dictionary root edge once for its
+      // augmentation. Fail its subsequent lookup load, inside acquire(), not
+      // the earlier prototype dictionary constructor outside the boundary.
+      unsigned prototype_loads = 0;
+      auto root_slice = vm::load_cell_slice(state.accounts);
+      auto edge = root_slice.fetch_ref();
+      td::Ref<vm::Cell> failing_edge{td::Ref<StateReadCallbackCell>{true, edge, [&] {
+        if (++prototype_loads == 2) throw vm::VmError{vm::Excno::dict_err};
+      }}};
+      auto prototype_source = vm::CellBuilder().store_ref(failing_edge).append_cellslice(root_slice).finalize();
+      ASSERT_EQ(prototype_source->get_hash(), state.accounts->get_hash());
+      engine.calls = 0;
+      bool prototype_exception = false;
+      try {
+        (void)block::execute_workchain_account_engine(engine, prototype_source, identity, admitted,
+            declarations, {}, 2, 2, 0);
+      } catch (const vm::VmError&) {
+        prototype_exception = true;
+      }
+      ASSERT_EQ(prototype_loads, 2u);
+      ASSERT_EQ(engine.calls, 0u);
+      ASSERT_TRUE(prototype_exception);
+      // A format predicate has stronger evidence than a loader throwing the
+      // same generic VM error. The old source is the authenticated-state role
+      // of this private fixture, not a candidate supplied to a live validator.
+      auto malformed_root = vm::CellBuilder().finalize();
+      engine.calls = 0;
+      auto corrupt_root = block::execute_workchain_account_engine(engine, malformed_root, complete);
+      ASSERT_TRUE(corrupt_root.is_error());
+      ASSERT_EQ(corrupt_root.error().code(),
+                static_cast<int>(block::WorkchainExecutionFailure::AuthenticatedStateCorrupt));
+      ASSERT_EQ(engine.calls, 0u);
+
+      auto entry = accounts.lookup(declarations.reads.front().account);
+      vm::CellBuilder malformed_entry;
+      malformed_entry.append_cellslice(*entry).store_long(0, 1);
+      vm::AugmentedDictionary malformed_accounts(vm::load_cell_slice_ref(state.accounts), 256,
+                                                 block::tlb::aug_ShardAccounts);
+      ASSERT_TRUE(malformed_accounts.set_builder(declarations.reads.front().account, malformed_entry));
+      ASSERT_EQ(malformed_accounts.lookup(declarations.reads.front().account)->size_ext(), 0x10141u);
+      auto corrupt_entry = block::execute_workchain_account_engine(
+          engine, malformed_accounts.get_wrapped_dict_root(), complete);
+      ASSERT_TRUE(corrupt_entry.is_error());
+      ASSERT_EQ(corrupt_entry.error().code(),
+                static_cast<int>(block::WorkchainExecutionFailure::AuthenticatedStateCorrupt));
+      ASSERT_EQ(engine.calls, 0u);
+
+      // Force the first declared key's opposite sibling to be a fork, then
+      // corrupt only that sibling's augmentation. Declared account hashes are
+      // unchanged: this must fail in Replace-path admission, before the engine.
+      vm::AugmentedDictionary branched(vm::load_cell_slice_ref(state.accounts), 256,
+                                        block::tlb::aug_ShardAccounts);
+      for (unsigned prefix : {0x80u, 0xc0u}) {
+        auto key = td::Bits256::zero();
+        key.as_slice()[0] = static_cast<char>(prefix);
+        ASSERT_TRUE(branched.set(key, entry));
+      }
+      auto branched_root = branched.get_wrapped_dict_root();
+      auto top_edge = vm::load_cell_slice(branched_root).prefetch_ref();
+      vm::dict::LabelParser top{vm::load_cell_slice_ref(top_edge), 256,
+                                vm::dict::LabelParser::chk_size};
+      ASSERT_EQ(top.l_bits, 0);
+      auto sibling = top.remainder->prefetch_ref(1);
+      vm::dict::LabelParser sibling_label{vm::load_cell_slice_ref(sibling), 255,
+                                          vm::dict::LabelParser::chk_size};
+      ASSERT_TRUE(sibling_label.l_bits < 255);
+      for (bool malformed_leaf : {false, true}) {
+        auto bad_sibling = malformed_leaf
+            ? vm::CellBuilder().store_long(6, 3).store_long(255, 8).finalize()
+            : vm::CellBuilder().append_cellslice(vm::load_cell_slice(sibling)).store_ref(number(3)).finalize();
+        auto edge_body = vm::load_cell_slice(top_edge);
+        auto left = edge_body.fetch_ref();
+        ASSERT_TRUE(edge_body.advance_refs(1));
+        auto bad_edge = vm::CellBuilder().store_ref(left).store_ref(bad_sibling)
+            .append_cellslice(edge_body).finalize();
+        auto wrapper = vm::load_cell_slice(branched_root);
+        ASSERT_TRUE(wrapper.advance_refs(1));
+        auto bad_source = vm::CellBuilder().store_ref(bad_edge).append_cellslice(wrapper).finalize();
+        auto corrupt_sibling = block::execute_workchain_account_engine(engine, bad_source, complete);
+        ASSERT_TRUE(corrupt_sibling.is_error());
+        ASSERT_EQ(corrupt_sibling.error().code(),
+                  static_cast<int>(block::WorkchainExecutionFailure::AuthenticatedStateCorrupt));
+        ASSERT_EQ(engine.calls, 0u);
+      }
+
+      // Fail only when the selected account closure is reached: construction
+      // is healthy, the declared hash matches, and earlier lookup reads succeed.
+      bool armed = false;
+      unsigned closure_loads = 0, prior_loads = 0;
+      vm::CellSlice prior(*entry);
+      auto prior_account = prior.fetch_ref();
+      td::Ref<vm::Cell> failing_account{td::Ref<StateReadCallbackCell>{true, prior_account, [&] {
+        if (armed) {
+          ++closure_loads;
+          throw vm::VmError{vm::Excno::dict_err};
+        }
+      }}};
+      vm::CellBuilder late_entry;
+      late_entry.store_ref(failing_account).append_cellslice(prior);
+      vm::AugmentedDictionary late_accounts(vm::load_cell_slice_ref(state.accounts), 256,
+                                            block::tlb::aug_ShardAccounts);
+      ASSERT_TRUE(late_accounts.set_builder(declarations.reads.front().account, late_entry));
+      auto late_root = late_accounts.get_wrapped_dict_root();
+      ASSERT_EQ(late_root->get_hash(), state.accounts->get_hash());
+      td::Ref<vm::Cell> observed_root{td::Ref<StateReadCallbackCell>{true, late_root, [&] { ++prior_loads; }}};
+      armed = true;
+      auto late_failure = block::execute_workchain_account_engine(engine, observed_root, complete);
+      ASSERT_TRUE(late_failure.is_error());
+      ASSERT_EQ(late_failure.error().code(),
+                static_cast<int>(block::WorkchainExecutionFailure::LocalUnavailable));
+      ASSERT_TRUE(prior_loads > 0);
+      ASSERT_EQ(closure_loads, 1u);
+      ASSERT_EQ(engine.calls, 0u);
+      // The source-only boundary must not swallow the engine's exceptions.
+      // The enclosing execution boundary still owes their classification.
+      engine.calls = 0;
+      engine.finish = [] { throw vm::VmError{vm::Excno::unknown}; };
+      bool engine_exception = false;
+      try {
+        (void)block::execute_workchain_account_engine(engine, state.accounts, complete);
+      } catch (const vm::VmError&) {
+        engine_exception = true;
+      }
+      engine.finish = {};
+      ASSERT_EQ(engine.calls, 1u);
+      ASSERT_TRUE(engine_exception);
+    }
     {
       // The private tree must not remain live in returned artifacts. A caller
       // can start a fresh proof and load an untouched account without nesting.

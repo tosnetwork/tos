@@ -1,0 +1,36 @@
+{
+  "scope": "Structural acquisition follow-up before mutation controls. This is private-runner evidence, not live M1 acceptance.",
+  "positive": {
+    "chunk_id": "e4982e",
+    "wall_time_seconds": 0.000006882,
+    "exit_code": 0,
+    "original_token_count": 23,
+    "output": "Running test Test_WorkchainBlock_AccountEngineExecution...\nPASS in 18.5ms\n1 test(s) passed\n"
+  },
+  "build": {
+    "command": "cmake --build build --target test-workchain-block test-workchain-admission test-tos-collator validator-engine -j48",
+    "exit_code": 0
+  },
+  "regression": {
+    "command": "ctest --test-dir build --output-on-failure -R '^(test-workchain-block|test-workchain-admission|test-counter-disk-integration|test-counter-account-binding-readiness)$'",
+    "exit_code": 0,
+    "results": [
+      "test-counter-disk-integration: 1.10 sec",
+      "test-counter-account-binding-readiness: 0.32 sec",
+      "test-workchain-block: 2.88 sec",
+      "test-workchain-admission: 0.01 sec"
+    ],
+    "total_seconds": 4.31
+  },
+  "hashes": {
+    "chunk_id": "69ad90",
+    "wall_time_seconds": 0.319794176,
+    "exit_code": 0,
+    "original_token_count": 152,
+    "output": "b14adfc956afa828c2b1539268a85cc02a08f7872456358f6a36ea8ca35a743d  crypto/block/workchain-account-engine.h\na19ef17dba22a04cc727628b3ed505a8d5acb2686d2b1e3a7cf26f29aef4a0ff  crypto/block/workchain-account-dictionary.h\na967dca5ae6bb2fab5a5aa769d0ac4567e4dab04ee6c1c839ec894604685d4b8  crypto/test/test-workchain-block.cpp\ncf96791950f19398cae44de017ccfac7584fa5166c91a030569e1a3608454e45  build/test-workchain-block\n9f49e9c26b4e19f0829f9464d17897ed1ece44e5f7dae03395a3da133fc9a937  build/test-tos-collator\n22b10685fe14794f7d0ccd2775c6eeff40c046421db9bcd7d3b1ebb16d0b189e  build/validator-engine/validator-engine\n"
+  },
+  "scan": {
+    "exit_code": 0,
+    "output": "removed-execution-domain scan passed: 5267 text files, 378 binary files and 0 directories skipped"
+  }
+}

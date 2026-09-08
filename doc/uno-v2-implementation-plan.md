@@ -97,6 +97,67 @@ already satisfy the live path. Do not defer their tests until after wiring.
 
 The dependency order below remains unchanged.
 
+The reviewed private acquisition-boundary cut confines known Native
+exceptions from old-account lookup, record decoding and closure traversal to
+local failure, without enclosing candidate Cell decoding or the engine
+callback. The closure captures only the old source, decoded declaration values,
+access ledger, the old-source prototype dictionary and state-policy/meter
+objects. The unmetered prototype preserves its prior exception semantics.
+This narrows the private runner's exception gap;
+it does not authenticate a raw Cell ref or authorize live execution.
+
+Caller enumeration for this cut finds four detail::execute invocations: the
+complete-input wrapper, the retained prototype wrapper, private settlement,
+and the test's oversized-state-policy case. The prototype passes no state
+policy and deliberately bypasses the new catches. Eight source exception
+controls, a broad-engine-catch control and a two-arm explicit-capture compiler
+control have been recorded; the instrument's ambiguous-brace restoration failure
+is recorded separately and excluded from successful mutation evidence. Four
+restored-source regression tests passed before review. Review follow-up added
+prototype exception bypass and returned mismatch classification with
+red-capable behavioral assertions. Explicit acquired-slice format predicates
+now distinguish AuthenticatedStateCorrupt from provider exceptions; generic
+Native parser/provider VmError remains LocalUnavailable rather than guessing
+whether the decoder or the loader raised it. This is not an exhaustive format
+corruption classifier. Root, record, both sibling-augmentation and late closure
+fixtures pass. Seven final-logic runtime controls each built successfully and
+failed the intended behavior/type assertion. The inner capture list now also
+has a two-arm compiler control, alongside the earlier outer-list control.
+Capture-list mutation evidence is manual, not a recurring CI enforcement of the
+explicit lists. This boundary
+contains the listed exceptions, not process-aborting CHECK failures; the direct
+runner does not have settlement's nested-usage observer guard. See the
+`measurements/uno-v2-state-acquisition-*.json` evidence cuts, including the
+followup and structural-positive records; the earlier boundary-only glob did
+not include those later files.
+
+Focused follow-up review accepted the scoped classification mechanism and
+required sibling-augmentation controls plus final-source mutation evidence.
+Both sibling fixtures are now present (invalid fork tail and missing leaf
+extra). The review's statement that no positive artifact covers the three new
+code hashes is superseded by `uno-v2-state-acquisition-structural-positive.json`,
+written during that review: it records those exact hashes and the completed
+build/regression runs. The reviewer was asked not to run a binary while its
+build was in flight; its report is static review, not an independent rerun.
+This correction does not turn the earlier mutation records into evidence for
+later source. Final-source production targets and all four regression tests
+passed after restoring the exact pre-control headers; final-controls and
+final-restored records retain the logs and hashes. These are author-executed
+controls after static review, not an independent reviewer's runtime rerun.
+The prototype exception fixture depends on Native initialization loading its
+root edge once and lookup loading it again; the observed count and mutation
+establish that behavior for this source, not for future dictionary revisions.
+The redundant augmentation advance check cannot fail under chk_size and has
+no independent red claim. Error reasons use static-lifetime literals.
+
+Source-path audit correction: ValidateQuery's full_collated_data_ starts false,
+and both assignments that would enable it are commented out. Thus its virtual
+candidate-proof replacement branch in compute_prev_state is currently inactive,
+not a second live acquisition path. Actual previous-state roots arrive from
+Manager or the consensus ChainState preloaded vector. A future activation of
+that proof branch must preserve witness provenance; do not apply a local-source
+classification merely because a virtual proof has an authenticated root hash.
+
 Old-state acquisition is in flight. NativeStateReadMeter preserves the complete
 LoadedCell and always calls the source loader, even when its content hash was
 already charged. A shared/repeated-read MerkleProof fixture produces identical
