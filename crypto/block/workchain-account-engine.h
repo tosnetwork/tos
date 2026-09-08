@@ -68,19 +68,17 @@ struct ExecutedWorkchainAccountBatch {
   WorkchainAccountEffects effects;
 };
 
+namespace account_engine_detail {
 // Post-admission execution, not an authentication certificate. The enclosing
 // host must bind old_accounts to the authenticated previous shard and bound its
 // read closures before calling. Native source exceptions propagate unchanged;
 // this helper never reclassifies missing local data as a candidate mismatch.
 // Count bounds alone are not state traversal or execution-work limits.
-inline td::Result<ExecutedWorkchainAccountBatch> execute_workchain_account_engine(
+inline td::Result<ExecutedWorkchainAccountBatch> execute(
     const WorkchainAccountEngine& engine, td::Ref<vm::Cell> old_accounts,
-    const WorkchainHostIdentity& identity, const AdmittedInput& admitted,
+    td::Ref<vm::Cell> input,
     const WorkchainAccountDeclarations& declarations,
-    const std::vector<td::Ref<vm::Cell>>& authenticated_inbox,
-    std::uint64_t max_reads, std::uint64_t max_writes, std::uint64_t max_inbound) {
-  TRY_RESULT(input, encode_workchain_host_input(identity, admitted, declarations, authenticated_inbox,
-                                                max_reads, max_writes, max_inbound));
+    std::uint64_t max_reads, std::uint64_t max_writes) {
   TRY_RESULT(access, WorkchainAccountAccess::create(declarations.reads, declarations.writes,
                                                    max_reads, max_writes));
   vm::AugmentedDictionary accounts(vm::load_cell_slice_ref(std::move(old_accounts)), 256,
@@ -120,6 +118,40 @@ inline td::Result<ExecutedWorkchainAccountBatch> execute_workchain_account_engin
   // This checks engine claims only. The settlement overlay must independently
   // check actual Native account differences and physical participant coverage.
   return ExecutedWorkchainAccountBatch{std::move(input), std::move(effects)};
+}
+}  // namespace account_engine_detail
+
+// Consume the complete structurally admitted input without rebuilding it or
+// accepting another policy/declaration cut. This remains a post-admission
+// runner: the enclosing host must check commitment, authenticate the complete
+// inbox, and admit old-state closures and proof work BEFORE invoking it. A
+// structural input alone does not grant live execution readiness.
+inline td::Result<ExecutedWorkchainAccountBatch> execute_workchain_account_engine(
+    const WorkchainAccountEngine& engine, td::Ref<vm::Cell> old_accounts,
+    const AdmittedBatchInput& admitted) {
+  gen::UnoV2HostInput::Record input;
+  if (!tlb::unpack_cell(admitted.root(), input)) {
+    return td::Status::Error("structurally admitted host input cannot be decoded");
+  }
+  const auto& limits = admitted.policy().resources().input;
+  TRY_RESULT(declarations, decode_workchain_account_declarations(input.access, limits.max_reads, limits.max_writes));
+  return account_engine_detail::execute(engine, std::move(old_accounts), admitted.root(), declarations,
+                                        limits.max_reads, limits.max_writes);
+}
+
+// Retained prototype settlement callers only. Do not route the live batch
+// profile through this singleton admission interface or synthesize its limits
+// from local defaults. It is removed as the settlement/replay chain is converted.
+inline td::Result<ExecutedWorkchainAccountBatch> execute_workchain_account_engine(
+    const WorkchainAccountEngine& engine, td::Ref<vm::Cell> old_accounts,
+    const WorkchainHostIdentity& identity, const AdmittedInput& admitted,
+    const WorkchainAccountDeclarations& declarations,
+    const std::vector<td::Ref<vm::Cell>>& authenticated_inbox,
+    std::uint64_t max_reads, std::uint64_t max_writes, std::uint64_t max_inbound) {
+  TRY_RESULT(input, encode_workchain_host_input(identity, admitted, declarations, authenticated_inbox,
+                                                max_reads, max_writes, max_inbound));
+  return account_engine_detail::execute(engine, std::move(old_accounts), std::move(input), declarations,
+                                        max_reads, max_writes);
 }
 
 }  // namespace block

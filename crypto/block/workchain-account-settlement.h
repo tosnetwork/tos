@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <type_traits>
 
 #include "block/workchain-account-effects.h"
 #include "block/workchain-payout-overlay.h"
@@ -28,16 +29,36 @@ struct WorkchainAccountSettlement {
 // runner preserves foreign destinations; the strict runner rejects them.
 // Joint disposal and custody payout settlement still needs integration.
 namespace account_settlement_detail {
+template <class Admission>
 inline td::Result<WorkchainAccountSettlement> execute(
     const WorkchainAccountEngine& engine, td::Ref<vm::Cell> old_accounts,
-    const WorkchainHostIdentity& identity, const AdmittedInput& admitted,
-    const WorkchainAccountDeclarations& declarations,
+    const WorkchainHostIdentity& identity, const Admission& admitted,
+    std::conditional_t<std::is_same_v<Admission, AdmittedBatchInput>, std::nullptr_t,
+                       const WorkchainAccountDeclarations&> prototype_declarations,
     const MaterializedNativeCells& native_cells,
     std::uint64_t max_reads, std::uint64_t max_writes, std::uint64_t max_inbound, std::uint64_t max_transfers,
     const td::Bits256& custody, const td::Bits256& coordinator, td::RefInt256 fee_budget,
     int extra_validation_cells,
     const SerializeConfig& cfg, const ActionPhaseConfig& message_cfg,
     const WorkchainDisposalEntryContext* disposal) {
+  static_assert(std::is_same_v<Admission, AdmittedInput> || std::is_same_v<Admission, AdmittedBatchInput>);
+  // Batch callers cannot supply a second declaration cut, even to this private
+  // helper. Decode once and use the same object for execution and settlement.
+  WorkchainAccountDeclarations batch_declarations;
+  gen::UnoV2HostInput::Record batch_input;
+  if constexpr (std::is_same_v<Admission, AdmittedBatchInput>) {
+    // The session locally finalizes this ordinary root; it is not a virtualized
+    // state root. Structural counts already passed the same authenticated limits.
+    if (!tlb::unpack_cell(admitted.root(), batch_input)) {
+      return td::Status::Error("invalid admitted settlement input");
+    }
+    TRY_RESULT(decoded, decode_workchain_account_declarations(batch_input.access, max_reads, max_writes));
+    batch_declarations = std::move(decoded);
+  }
+  const auto& declarations = [&]() -> const WorkchainAccountDeclarations& {
+    if constexpr (std::is_same_v<Admission, AdmittedBatchInput>) return batch_declarations;
+    else return prototype_declarations;
+  }();
   if (extra_validation_cells <= 0) return td::Status::Error("invalid settlement currency validation budget");
   if (disposal && (identity.shard_id != tos::shardIdAll || coordinator == custody ||
                    cfg.global_version != message_cfg.global_version)) {
@@ -51,8 +72,31 @@ inline td::Result<WorkchainAccountSettlement> execute(
   TRY_RESULT(inbox, disposal ? plan_workchain_disposal_envelopes(native_cells.roots(), identity.workchain_id,
       identity.host_after_lt, max_inbound) : plan_workchain_native_envelopes(native_cells.roots(),
       identity.workchain_id, recipients, identity.host_after_lt, max_inbound));
-  TRY_RESULT(executed, execute_workchain_account_engine(engine, old_accounts, identity, admitted, declarations,
-      inbox.envelopes, max_reads, max_writes, max_inbound));
+  auto run = [&]() -> td::Result<ExecutedWorkchainAccountBatch> {
+    if constexpr (std::is_same_v<Admission, AdmittedBatchInput>) {
+      const auto& input = batch_input;
+      TRY_RESULT(expected_identity, encode_workchain_host_identity(identity));
+      if (input.identity->get_hash() != expected_identity->get_hash()) {
+        return td::Status::Error("settlement context differs from admitted identity");
+      }
+      td::Ref<vm::Cell> expected_inbox;
+      if (!inbox.envelopes.empty()) {
+        TRY_RESULT(encoded, encode_workchain_batch_inbound(inbox.envelopes));
+        expected_inbox = std::move(encoded);
+      }
+      auto claimed_inbox = input.inbox->prefetch_ref();
+      if (claimed_inbox.is_null() != expected_inbox.is_null() ||
+          (expected_inbox.not_null() && claimed_inbox->get_hash() != expected_inbox->get_hash())) {
+        return td::Status::Error("settlement inbox differs from admitted input");
+      }
+      return account_engine_detail::execute(engine, old_accounts, admitted.root(), declarations,
+                                             max_reads, max_writes);
+    } else {
+      return execute_workchain_account_engine(engine, old_accounts, identity, admitted, declarations,
+          inbox.envelopes, max_reads, max_writes, max_inbound);
+    }
+  };
+  TRY_RESULT(executed, run());
   TRY_RESULT(effects_root, encode_workchain_account_effects(executed.effects, max_writes, max_transfers,
       extra_validation_cells));
   std::vector<WorkchainStorageWrite> writes;
@@ -96,6 +140,28 @@ inline td::Result<WorkchainAccountSettlement> execute(
                                     std::move(state), std::move(message), std::move(imports), std::move(exports)};
 }
 }  // namespace account_settlement_detail
+
+// Complete-input path: declaration and resource arguments cannot be supplied
+// independently of the admitted cut. Identity and authenticated inbox are
+// compared before account reads or engine invocation. Enclosing commitment,
+// state/proof budgets and Native authentication are still required; this is a
+// private settlement runner, not live execution authorization.
+// Enforced here: input read/write/inbound counts and output transfer count.
+// State cells/bits/per-account depth, proof units, effect cells/bits and output
+// cells/bits require independent admission; merely carrying the policy is not
+// enforcement of those fields.
+inline td::Result<WorkchainAccountSettlement> execute_and_settle_workchain_accounts(
+    const WorkchainAccountEngine& engine, td::Ref<vm::Cell> old_accounts,
+    const WorkchainHostIdentity& identity, const AdmittedBatchInput& admitted,
+    const MaterializedNativeCells& native_cells,
+    const td::Bits256& custody, const td::Bits256& coordinator, td::RefInt256 fee_budget,
+    int extra_validation_cells, const SerializeConfig& cfg, const ActionPhaseConfig& message_cfg) {
+  const auto& limits = admitted.policy().resources();
+  return account_settlement_detail::execute(engine, std::move(old_accounts), identity, admitted,
+      nullptr, native_cells, limits.input.max_reads, limits.input.max_writes,
+      limits.input.max_inbound, limits.work_output.max_transfers, custody, coordinator,
+      std::move(fee_budget), extra_validation_cells, cfg, message_cfg, nullptr);
+}
 
 inline td::Result<WorkchainAccountSettlement> execute_and_settle_workchain_accounts(
     const WorkchainAccountEngine& engine, td::Ref<vm::Cell> old_accounts,

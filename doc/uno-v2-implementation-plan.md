@@ -76,6 +76,14 @@ already satisfy the live path. Do not defer their tests until after wiring.
 - [ ] Admit old-state closures and proof work independently from the authenticated
   policy. Sharing does not relax per-account closure limits. Input logical roots
   are not a state budget; `max_proof_units` is not the D28 fee-unit schedule.
+  The total state meter must include ShardAccounts lookup/absence paths as well
+  as selected account wrappers. Measuring only returned account values after
+  dictionary lookup misses the first state reads and does not satisfy D31.
+  Compare serialized block-state proofs for the same input with metering on
+  and off, including repeated/shared reads, as part of the singleton byte
+  comparison. A negative control must bypass required usage tracking and make
+  that comparison fail. Merely moving a wrapper is not necessarily a faulty
+  mutation: a wrapper that preserves tracking may remain byte-identical.
 - [ ] Exercise nonempty declarations through the session itself: count/leaf
   rejection, thrown parser errors, and write-role constraints, with typed
   results and runnable mutations. Standalone inspector tests do not prove this
@@ -88,6 +96,39 @@ already satisfy the live path. Do not defer their tests until after wiring.
   encoding, write-subset semantics, or permission to execute.
 
 The dependency order below remains unchanged.
+
+The complete-input adaptation now reaches the existing private account runner,
+strict Native settlement and independent replay. The new overloads take
+AdmittedBatchInput without a second caller-supplied declaration set or resource
+cut; the engine receives that exact complete input root, not its candidate
+child. Settlement compares the supplied context and Native inbox before reading
+accounts or calling the engine. Replay compares the claimed input commitment
+before entering settlement and returns rebuilt artifacts after comparison.
+Six rebuilt controls remove forwarding, old-account comparison, context/inbox
+agreement, replay commitment and rebuilt account comparison respectively; each
+fails a state/hash/acceptance/call-count assertion. The final block/admission and
+two disk CTests pass. Evidence:
+`measurements/uno-v2-admitted-account-pipeline-controls.json`.
+
+This is a private pipeline connection, not a live execution permit. Prototype
+settlement/disposal callers still use singleton admission. Live collection,
+independent old-state and proof-work admission, effect/output budgets, disposal
+conversion and atomic publication remain outstanding. The new private overloads
+retain enclosing-host preconditions and are not a safe substitute for completing
+those steps. All live readiness refusals remain installed. No milestone or live
+I13 acceptance criterion is closed by these tests. The focused replay-boundary
+review found no defect blocking this development cut. Its follow-up obligations
+remain explicit: enumerate the enforced policy fields, remove the private
+template's independently supplied declaration set, account for repeated
+canonical decoding, document locally finalized input provenance, add batch
+payout coverage, and preserve source-based classification at the live boundary.
+The current six controls do not certify these remaining obligations. Review
+follow-up removes the batch template's second declaration parameter (only
+nullptr is accepted), decodes the admitted declaration once, and shares that
+object between execution and settlement. Clearing the decoded result makes
+the real complete-input settlement success assertion fail. The six-control
+archive retains its original source hashes; the follow-up control is recorded
+separately in `measurements/uno-v2-single-declaration-control.json`.
 
 In-flight account-binding dispatch now selects the dual-ingress family from
 the authenticated policy, resolves its resource identity from that same Config,
@@ -118,6 +159,15 @@ overlapped a rebuild and is excluded as ambiguous; the archived removal control
 waited for the build to finish. Evidence is in
 `measurements/uno-v2-account-binding-live-controls.json`; the earlier in-flight
 artifact records only unit controls.
+
+Readiness refusal acceptance is separate from successful binding. The live
+removal control above proves earlier continuation (a second configuration
+callback), not live engine execution after removing a single gate: later gates
+still refuse. Before replacing these refusals, add validator-side coverage and
+account-read/publication counters, record configuration allocations separately,
+and compare the old singleton artifacts for the same authenticated input across
+the boundary. Zero engine calls and no exported candidate alone are not proof
+of zero state reads, zero allocations, or zero side effects.
 
 First binding review disposition: the ignored-value entry points (F1) now visit
 the returned family explicitly. Account callback VmError/VmVirtError are now
@@ -336,7 +386,7 @@ below where later components already exist.
 
 | Boundary | Current authoritative shape | Remaining connection |
 |---|---|---|
-| Dispatch | `ResolvedScopedWorkchainExecution` contains account-compute and singleton block execution only | Add explicit multi-account resolution with descriptor-bound authenticated policy; do not reinterpret the singleton engine interface |
+| Dispatch | `ResolvedScopedWorkchainExecution` explicitly distinguishes account-compute, singleton block execution and account binding; all live binding consumers refuse readiness | Complete authenticated admission and replay before replacing refusal; do not reinterpret the singleton engine interface |
 | Admission | `ResolvedInputPolicy::from_resolved_fields` accepts supplied fields; dual destinations come from Config84 | Resolve every resource limit from the authenticated engine configuration and retain the same policy identity through admission and input commitment; no local defaults |
 | Execution | `execute_and_settle_workchain_disposal` calls the account engine and private payout/disposal overlays | Invoke through the live block path only after bounded admission, commitment and complete authenticated inbox reconstruction |
 | Validation | `ValidateQuery::check_transactions` still calls `replay_resolved_workchain_account_block` | Add an explicit versioned multi-record path that independently reconstructs every wrapper and dictionary difference; retain the singleton path |

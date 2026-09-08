@@ -3348,6 +3348,38 @@ TEST(WorkchainBlock, AccountEngineExecution) {
   ASSERT_EQ(engine.calls, 1u);
   ASSERT_EQ(result.ok().effects.updates.size(), 2u);
   ASSERT_TRUE(result.ok().effects.updates[1].data->get_hash() == number(102)->get_hash());
+  {
+    // Exercise the actual account runner with the complete batch admission,
+    // not a singleton permit plus a second caller-supplied declaration set.
+    const std::vector<td::Ref<vm::Cell>> inbox;
+    auto batch_identity = batch_test_identity(number(42));
+    auto declaration_root = block::encode_workchain_account_declarations(declarations, 2, 2).move_as_ok();
+    block::BatchInputAdmissionSession batch(inbox_test_policy(1, {100, 100000, 3}, 2, 2),
+        candidate, declaration_root, batch_identity, inbox);
+    const auto& evaluated = batch.evaluate();
+    ASSERT_TRUE(std::holds_alternative<block::AdmittedBatchInput>(evaluated));
+    const auto& full = std::get<block::AdmittedBatchInput>(evaluated);
+    engine.calls = 0;
+    auto complete = block::execute_workchain_account_engine(engine, state.accounts, full);
+    ASSERT_TRUE(complete.is_ok());
+    ASSERT_EQ(engine.calls, 1u);
+    ASSERT_EQ(engine.seen_input->get_hash(), full.root()->get_hash());
+    ASSERT_EQ(complete.ok().input->get_hash(), full.root()->get_hash());
+    ASSERT_TRUE(engine.seen_input->get_hash() != candidate->get_hash());
+    ASSERT_EQ(complete.ok().effects.updates[1].data->get_hash(), number(102)->get_hash());
+
+    auto mismatched = declarations;
+    mismatched.reads[0].old_account_hash = hash;
+    auto wrong_root = block::encode_workchain_account_declarations(mismatched, 2, 2).move_as_ok();
+    block::BatchInputAdmissionSession wrong_batch(inbox_test_policy(1, {100, 100000, 3}, 2, 2),
+        candidate, wrong_root, batch_identity, inbox);
+    ASSERT_TRUE(std::holds_alternative<block::AdmittedBatchInput>(wrong_batch.evaluate()));
+    engine.calls = 0;
+    auto rejected = block::execute_workchain_account_engine(engine, state.accounts,
+        std::get<block::AdmittedBatchInput>(wrong_batch.evaluate()));
+    ASSERT_TRUE(rejected.is_error());
+    ASSERT_EQ(engine.calls, 0u);
+  }
   auto wrong = declarations;
   wrong.reads[0].old_account_hash = hash;
   engine.calls = 0;
@@ -3377,6 +3409,73 @@ TEST(WorkchainBlock, AccountEngineExecution) {
     return block::execute_and_settle_workchain_accounts(engine, state.accounts, identity, admitted,
         declarations, own_native_fixture({}), 2, 2, 0, 2, a, b, td::make_refint(500), 4096, cfg, pricing);
   };
+  {
+    const std::vector<td::Ref<vm::Cell>> empty_inbox;
+    auto complete_identity = batch_test_identity(number(42));
+    auto access = block::encode_workchain_account_declarations(declarations, 2, 2).move_as_ok();
+    block::BatchInputAdmissionSession session(inbox_test_policy(1, {100, 100000, 3}, 2, 2),
+        candidate, access, complete_identity, empty_inbox);
+    ASSERT_TRUE(std::holds_alternative<block::AdmittedBatchInput>(session.evaluate()));
+    const auto& complete = std::get<block::AdmittedBatchInput>(session.evaluate());
+    auto native = own_native_fixture({});
+    engine.calls = 0;
+    auto settled = block::execute_and_settle_workchain_accounts(engine, state.accounts,
+        complete_identity, complete, native, a, b, td::make_refint(500), 4096, cfg, pricing);
+    ASSERT_TRUE(settled.is_ok());
+    ASSERT_EQ(engine.calls, 1u);
+    ASSERT_EQ(settled.ok().input->get_hash(), complete.root()->get_hash());
+    ASSERT_TRUE(settled.ok().state.accounts->get_hash() != state.accounts->get_hash());
+    ASSERT_EQ(engine.seen_input->get_hash(), complete.root()->get_hash());
+    auto replay_complete = [&](const block::WorkchainAccountSettlement& claim) {
+      return block::replay_workchain_account_settlement(engine, state.accounts,
+          complete_identity, complete, native, a, b, td::make_refint(500), 4096, cfg, pricing, claim);
+    };
+    engine.calls = 0;
+    auto repeated_complete = replay_complete(settled.ok());
+    ASSERT_TRUE(repeated_complete.is_ok());
+    ASSERT_EQ(engine.calls, 1u);
+    ASSERT_EQ(repeated_complete.ok().state.accounts->get_hash(), settled.ok().state.accounts->get_hash());
+    ASSERT_EQ(repeated_complete.ok().state.account_blocks->get_hash(), settled.ok().state.account_blocks->get_hash());
+    auto wrong_claim = settled.ok();
+    wrong_claim.input = candidate;
+    engine.calls = 0;
+    auto rejected_claim = replay_complete(wrong_claim);
+    ASSERT_TRUE(rejected_claim.is_error());
+    ASSERT_EQ(engine.calls, 0u);
+    wrong_claim = settled.ok();
+    wrong_claim.state.accounts = state.accounts;
+    engine.calls = 0;
+    ASSERT_TRUE(replay_complete(wrong_claim).is_error());
+    ASSERT_EQ(engine.calls, 1u);
+    auto wrong_identity = complete_identity;
+    ++wrong_identity.height;  // Fixture value is 1, not a policy counter.
+    engine.calls = 0;
+    auto wrong_context = block::execute_and_settle_workchain_accounts(engine, state.accounts,
+        wrong_identity, complete, native, a, b, td::make_refint(500), 4096, cfg, pricing);
+    ASSERT_TRUE(wrong_context.is_error());
+    ASSERT_EQ(engine.calls, 0u);
+    const std::vector<td::Ref<vm::Cell>> incoming{inbound_envelope(0, 77, {}, b)};
+    block::BatchInputAdmissionSession incoming_session(inbox_test_policy(1, {100, 100000, 4}, 2, 2),
+        candidate, access, complete_identity, incoming);
+    ASSERT_TRUE(std::holds_alternative<block::AdmittedBatchInput>(incoming_session.evaluate()));
+    const auto& with_incoming = std::get<block::AdmittedBatchInput>(incoming_session.evaluate());
+    auto incoming_native = own_native_fixture(incoming);
+    engine.calls = 0;
+    auto accepted_inbox = block::execute_and_settle_workchain_accounts(engine, state.accounts,
+        complete_identity, with_incoming, incoming_native, a, b, td::make_refint(500), 4096, cfg, pricing);
+    ASSERT_TRUE(accepted_inbox.is_ok());
+    ASSERT_EQ(engine.calls, 1u);
+    for (unsigned mismatch = 0; mismatch < 3; ++mismatch) {
+      const auto& admitted_inbox = mismatch == 0 ? complete : with_incoming;
+      auto supplied = mismatch == 0 ? own_native_fixture(incoming) :
+          mismatch == 1 ? own_native_fixture({}) : own_native_fixture({inbound_envelope(0, 78, {}, b)});
+      engine.calls = 0;
+      auto inconsistent = block::execute_and_settle_workchain_accounts(engine, state.accounts,
+          complete_identity, admitted_inbox, supplied, a, b, td::make_refint(500), 4096, cfg, pricing);
+      ASSERT_TRUE(inconsistent.is_error());
+      ASSERT_EQ(engine.calls, 0u);
+    }
+  }
   for (bool with_payout : {false, true}) {
     if (with_payout) {
       vm::CellBuilder cb;
