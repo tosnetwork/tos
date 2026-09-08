@@ -24,7 +24,7 @@ Old Note history fixtures are historical measurement data, not kernel vectors.
   wallet prover, full transaction transcript codec, rent or host integration is
   supplied here.
 
-The native entry point is `uno_crypto_verify_v1`. See [ABI.md](ABI.md) and
+The native balance entry point is `uno_crypto_verify_v2`. See [ABI.md](ABI.md) and
 [TRANSFER_TRANSCRIPT.md](TRANSFER_TRANSCRIPT.md). Every limit is explicit.
 The caller must obtain those limits and context from the authenticated policy.
 A proof does not establish that the supplied context is authentic or complete.

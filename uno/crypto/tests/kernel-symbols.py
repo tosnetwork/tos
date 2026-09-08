@@ -25,7 +25,7 @@ def main(binary):
     graph = {1: {2}, 2: {3}}
     assert 3 in reachable(graph, 1)
     assert entropy_name("std::sys::random::linux::getrandom")
-    assert not entropy_name("uno_crypto_verify_v1")
+    assert not entropy_name("uno_crypto_verify_v2")
     disassembly = subprocess.check_output(["objdump", "-d", "-C", binary], text=True)
     assert not re.search(r"\b(?:rdrand|rdseed)\b", disassembly), "hardware entropy instruction in test image"
     relocations = {}
@@ -52,7 +52,7 @@ def main(binary):
                 edges[current].add(relocations[int(got[1], 16)])
             else:
                 indirect[current] += 1
-    for entry in ("uno_crypto_verify_v1", "uno_crypto_system_encrypt_v1", "uno_crypto_system_verify_v1"):
+    for entry in ("uno_crypto_verify_v2", "uno_crypto_system_encrypt_v1", "uno_crypto_system_verify_v1"):
         roots = [address for address, name in names.items() if name == entry]
         assert len(roots) == 1, f"missing or ambiguous root: {entry}"
         visited = reachable(edges, roots[0])

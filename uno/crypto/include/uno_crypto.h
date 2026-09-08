@@ -11,6 +11,8 @@
 
 #define UNO_CRYPTO_ABI_VERSION 1
 
+#define UNO_BALANCE_ABI_VERSION 2
+
 #define UNO_RELATION_SEND 1
 
 #define UNO_RELATION_COLLECT 2
@@ -60,6 +62,8 @@ typedef struct {
   uint32_t abi_version;
   uint32_t relation;
   UnoCryptoLimits limits;
+  uint8_t domain[80];
+  uint64_t fee;
   const uint8_t *context;
   size_t context_bytes;
   const uint8_t (*points)[32];
@@ -72,7 +76,7 @@ typedef struct {
   size_t response_count;
   const uint8_t *proof;
   size_t proof_bytes;
-} UnoCryptoVerifyRequest;
+} UnoCryptoVerifyRequestV2;
 
 #ifdef __cplusplus
 extern "C" {
@@ -110,7 +114,7 @@ uint32_t uno_crypto_system_verify_v1(const UnoCryptoSystemEncryptionRequest *req
  * cannot validate arbitrary allocations. Unwinding panics are contained;
  * process abort, allocator OOM abort and invalid caller memory are not recoverable.
  */
-uint32_t uno_crypto_verify_v1(const UnoCryptoVerifyRequest *request);
+uint32_t uno_crypto_verify_v2(const UnoCryptoVerifyRequestV2 *request);
 
 #ifdef __cplusplus
 }  // extern "C"

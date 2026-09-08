@@ -1,9 +1,11 @@
 # Experimental balance-kernel vectors
 
-`balance-kernel-v1.txt` freezes one SEND and COLLECT with k=1 through 8.
+`balance-kernel-v2.txt` freezes one SEND and COLLECT with k=1 through 8.
 Each line contains the relation kind, explicit numerical policy, authenticated
 context bytes, public points, receipt IDs, Sigma commitments, shared-witness
-responses and aggregated range proof. The Rust generator uses public test seeds;
+responses and aggregated range proof, followed by the 80-byte protocol domain
+and public fee in nanotomi. The v1 file is historical, fee-less evidence; no
+active verifier or test consumer accepts its old profile. The Rust generator uses public test seeds;
 never use these keys or randomness for funds.
 
 Rust regenerates and compares every byte; the C++ test independently reads the

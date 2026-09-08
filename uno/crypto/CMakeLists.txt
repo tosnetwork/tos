@@ -31,7 +31,7 @@ target_link_libraries(test-uno-crypto-abi-real PRIVATE "${UNO_CRYPTO_ARCHIVE}" T
 add_dependencies(test-uno-crypto-abi-real uno-crypto-rust)
 add_dependencies(all-tests test-uno-crypto-abi-real)
 add_test(NAME test-uno-crypto-abi-real COMMAND test-uno-crypto-abi-real
-  "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/balance-kernel-v1.txt")
+  "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/balance-kernel-v2.txt")
 set_tests_properties(test-uno-crypto-abi-real PROPERTIES TIMEOUT 120)
 
 add_test(NAME test-uno-crypto-rust

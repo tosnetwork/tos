@@ -46,7 +46,7 @@ pub(crate) fn validate_limits(limits: &KernelLimits) -> Result<(), Error> {
 }
 
 pub(crate) fn prepare(
-    kind: u32, limits: &KernelLimits, context: &[u8], encoded: &[[u8; 32]], ids: &[[u8; 32]],
+    kind: u32, limits: &KernelLimits, domain: &[u8;80], fee: u64, context: &[u8], encoded: &[[u8; 32]], ids: &[[u8; 32]],
 ) -> Result<Relation, Error> {
     validate_limits(limits)?;
     if ids.len() > limits.max_collect || context.is_empty() || context.len() > limits.max_context_bytes {
@@ -64,6 +64,7 @@ pub(crate) fn prepare(
     let zero = Point::identity();
     let bmax = Scalar::from(limits.max_balance) * g;
     let vmax = Scalar::from(limits.max_value) * g;
+    let fee_g = Scalar::from(fee) * g;
     let mut rows = Vec::with_capacity(equation_count);
     let mut targets = Vec::with_capacity(equation_count);
     let mut push = |terms: &[(usize, Point)], target: Point| -> Result<(), Error> {
@@ -82,8 +83,9 @@ pub(crate) fn prepare(
             return Err(Error::UNO_CRYPTO_DECODE);
         }
         push(&[(0, p[0])], h)?;
-        push(&[(0, p[3]), (1, g), (2, g)], p[2])?;
-        push(&[(1, g), (2, g), (5, h)], p[9])?;
+        // a = a' + v + fee; fee is public, not a new shared witness.
+        push(&[(0, p[3]), (1, g), (2, g)], p[2] - fee_g)?;
+        push(&[(1, g), (2, g), (5, h)], p[9] - fee_g)?;
         push(&[(1, g), (4, h)], p[4])?;
         push(&[(4, p[0])], p[5])?;
         push(&[(2, g), (3, h)], p[6])?;
@@ -113,12 +115,15 @@ pub(crate) fn prepare(
         }
         let mut terms = vec![(1, g), (rho, h)];
         for i in 0..k { terms.push((i.checked_add(2).ok_or(Error::UNO_CRYPTO_DECODE)?, g)); }
-        push(&terms, p[3])?;
+        // a + sum(v_i) = b + fee; the range proof bounds b, not b+fee.
+        push(&terms, p[3] + fee_g)?;
         push(&[(rho, p[0])], p[4])?;
     }
     ranges.resize(m, zero);
-    let mut transcript = Transcript::new(b"TOS-UNO-BALANCE-KERNEL-EXPERIMENTAL-v1");
+    let mut transcript = Transcript::new(b"uno-v2/balance-relation");
+    transcript.append_message(b"protocol-domain", domain);
     transcript.append_u64(b"relation", u64::from(kind));
+    transcript.append_u64(b"fee", fee);
     transcript.append_u64(b"max-balance", limits.max_balance);
     transcript.append_u64(b"max-value", limits.max_value);
     transcript.append_message(b"authenticated-context", context);
@@ -144,7 +149,7 @@ pub(crate) fn range_transcript(mut t: Transcript) -> Transcript {
 /// This checks cryptography only, not whether context describes an authentic
 /// account, an unconsumed nonce, a registered recipient or reserved capacity.
 pub fn verify_relation(
-    kind: u32, limits: &KernelLimits, context: &[u8], points: &[[u8; 32]], ids: &[[u8; 32]],
+    kind: u32, limits: &KernelLimits, domain: &[u8;80], fee: u64, context: &[u8], points: &[[u8; 32]], ids: &[[u8; 32]],
     commitments: &[[u8; 32]], responses: &[[u8; 32]], proof: &[u8],
 ) -> Result<(), Error> {
     validate_limits(limits)?;
@@ -152,7 +157,7 @@ pub fn verify_relation(
     if commitments.len() != equations || responses.len() != witnesses || proof.len() != range_size(m)? {
         return Err(Error::UNO_CRYPTO_DECODE);
     }
-    let relation = prepare(kind, limits, context, points, ids)?;
+    let relation = prepare(kind, limits, domain, fee, context, points, ids)?;
     let ts: Vec<_> = commitments.iter().map(decode).collect::<Result<_, _>>()?;
     let zs: Vec<Scalar> = responses.iter().map(|s| Option::<Scalar>::from(Scalar::from_canonical_bytes(*s))
         .ok_or(Error::UNO_CRYPTO_DECODE)).collect::<Result<_, _>>()?;

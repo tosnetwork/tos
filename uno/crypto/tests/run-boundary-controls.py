@@ -62,7 +62,7 @@ def main():
     binary = scratch / "trap-mutant"
     run("trap-mutant-build", ["c++", "-std=c++17", "-O2", "-Iinclude", str(cpp), str(args.archive),
         "-lpthread", "-ldl", "-lm", "-o", str(binary)], 0, "")
-    run("removed-runtime-trap", [str(binary), str(source / "fixtures/balance-kernel-v1.txt")], 2,
+    run("removed-runtime-trap", [str(binary), str(source / "fixtures/balance-kernel-v2.txt")], 2,
         "entropy trap negative control did not fire")
     cpp.write_text(original)
     run("restored-boundary", ["cargo", "test", "--locked", "--offline", "--release", "-j48", "--lib",

@@ -1,8 +1,9 @@
-# Borrowed verification ABI v1
+# Borrowed balance verification ABI v2 and system encryption ABI v1
 
 This is a native process interface, not a TL-B constructor, network proof
-profile or M0 freeze. Version 0 is retired; the static library does not export
-`uno_crypto_verify_v0` or the old Note-tree function.
+profile or M0 freeze. Balance versions 0 and 1 are retired; the library exports
+`uno_crypto_verify_v2`, not the previous fee-less balance verification entries
+or the old Note-tree function. The system-encryption entries remain version 1.
 
 The existing boundary discipline is retained: every exported entry contains
 the entire call in catch_unwind, no AssertUnwindSafe, no pointer retention or
@@ -33,10 +34,23 @@ Policy is trusted caller input, not attacker-provided limits. A future host
 must resolve and admit it from authenticated configuration; this library is
 not that admission layer. K=8 is exercised, not hardcoded as the only limit.
 
-The request has a version, relation discriminator, limits, and borrowed
+`UnoCryptoVerifyRequestV2` has ABI version 2, relation discriminator, limits,
+an 80-byte protocol domain, public u64 fee in nanotomi, and borrowed
 (context, points, receipt_ids, commitments, responses, proof) arrays.
-On the supported 64-bit Linux target limits occupy 40 bytes, request 144 bytes,
-context offset 48. Rust and C++ assert these sizes.
+On the supported 64-bit Linux target limits occupy 40 bytes, request 232 bytes,
+domain offset 48, fee offset 128, context offset 136. Rust and C++ assert the
+layout. The protocol domain uses the exact system-encryption layout below.
+It has no default; the host must supply authenticated configuration values.
+
+SEND proves `a = a' + v + fee`; its old ciphertext and auxiliary commitment
+targets each subtract the public group element `fee*G`. COLLECT proves
+`a + sum(v_i) = b + fee`; its new ciphertext target adds `fee*G`.
+These are exact group operations, not unchecked integer balance arithmetic.
+The existing ranges still bound the actual old and new balances and values.
+With at most 64 receipts and u64-bounded integers, the corresponding integer
+relations cannot wrap the scalar modulus. There is no additional fee witness.
+The primitive allows fee zero; the host, not a local kernel default, enforces
+the authenticated fee schedule and performs checked account settlement.
 
 SEND points, in order:
 `P_A,P_B,C_old,D_old,C_new,D_new,C_transfer,D_transfer_A,D_transfer_B,J`.
@@ -96,8 +110,8 @@ selected, and these fixtures must not be deployed as a transaction format.
 
 The additive `uno_crypto_system_encrypt_v1` and
 `uno_crypto_system_verify_v1` entries implement the system-encryption mechanism,
-not deposit admission, account updates or public fee deductions in SEND/COLLECT.
-The existing verification request layout and symbols are unchanged.
+not deposit admission or account updates. Their version-1 request layout and
+symbols remain unchanged by the version-2 balance interface.
 
 `UnoCryptoSystemEncryptionRequest` contains ABI version (u32), domain (80 bytes),
 deposit ID (32 bytes), recipient P (32 bytes), and amount (u64).

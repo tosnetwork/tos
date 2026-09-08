@@ -13,7 +13,7 @@ include = ["AbiStatus"]
 item_types = ["constants", "enums", "structs", "functions"]
 
 [export.rename]
-VerifyRequest = "UnoCryptoVerifyRequest"
+VerifyRequestV2 = "UnoCryptoVerifyRequestV2"
 AbiStatus = "UnoCryptoStatus"
 KernelLimits = "UnoCryptoLimits"
 SystemEncryptionRequest = "UnoCryptoSystemEncryptionRequest"

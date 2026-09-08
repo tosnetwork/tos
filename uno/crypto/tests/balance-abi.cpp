@@ -22,8 +22,10 @@
 #include <unistd.h>
 
 static_assert(sizeof(UnoCryptoLimits) == 40);
-static_assert(sizeof(UnoCryptoVerifyRequest) == 144);
-static_assert(offsetof(UnoCryptoVerifyRequest, context) == 48);
+static_assert(sizeof(UnoCryptoVerifyRequestV2) == 232);
+static_assert(offsetof(UnoCryptoVerifyRequestV2, domain) == 48);
+static_assert(offsetof(UnoCryptoVerifyRequestV2, fee) == 128);
+static_assert(offsetof(UnoCryptoVerifyRequestV2, context) == 136);
 static_assert(sizeof(UnoCryptoSystemEncryptionRequest) == 160);
 static_assert(offsetof(UnoCryptoSystemEncryptionRequest, amount) == 152);
 static_assert(sizeof(UnoCryptoSystemCiphertext) == 64);
@@ -58,14 +60,18 @@ std::vector<Word> words(const std::string& s) {
 struct Fixture {
   uint32_t kind;
   UnoCryptoLimits limits;
+  std::array<uint8_t, 80> domain;
+  uint64_t fee;
   std::vector<uint8_t> context, proof;
   std::vector<Word> points, ids, ts, zs;
-  UnoCryptoVerifyRequest request() const {
-    return {UNO_CRYPTO_ABI_VERSION, kind, limits, context.data(), context.size(),
+  UnoCryptoVerifyRequestV2 request() const {
+    UnoCryptoVerifyRequestV2 out{UNO_BALANCE_ABI_VERSION, kind, limits, {}, fee, context.data(), context.size(),
       reinterpret_cast<const uint8_t(*)[32]>(points.data()), points.size(),
       reinterpret_cast<const uint8_t(*)[32]>(ids.data()), ids.size(),
       reinterpret_cast<const uint8_t(*)[32]>(ts.data()), ts.size(),
       reinterpret_cast<const uint8_t(*)[32]>(zs.data()), zs.size(), proof.data(), proof.size()};
+    std::memcpy(out.domain, domain.data(), domain.size());
+    return out;
   }
 };
 
@@ -86,11 +92,14 @@ std::vector<Fixture> load(const char* path) {
     std::istringstream stream(line);
     std::string field;
     while (std::getline(stream, field, '|')) fields.push_back(field);
-    require(fields.size() == 10, "vector column count");
+    require(fields.size() == 12, "vector column count");
     auto kind = number(fields[0]); auto k = number(fields[3]);
     require(kind <= UINT32_MAX && k <= SIZE_MAX, "vector narrowing");
-    Fixture f{uint32_t(kind), {number(fields[1]), number(fields[2]), size_t(k), 1024, 4096},
+    Fixture f{uint32_t(kind), {number(fields[1]), number(fields[2]), size_t(k), 1024, 4096}, {}, number(fields[11]),
       bytes(fields[4]), bytes(fields[9]), words(fields[5]), words(fields[6]), words(fields[7]), words(fields[8])};
+    auto domain = bytes(fields[10]);
+    require(domain.size() == f.domain.size(), "protocol domain length");
+    std::memcpy(f.domain.data(), domain.data(), domain.size());
     fixtures.push_back(std::move(f));
   }
   require(input.eof() && fixtures.size() == 9, "incomplete vector corpus");
@@ -170,13 +179,17 @@ void verify_all(const std::vector<Fixture>& fixtures) {
   verify_system();
   for (const auto& f : fixtures) {
     auto request = f.request();
-    require(uno_crypto_verify_v1(&request) == UNO_CRYPTO_OK, "real cross-language proof rejected");
-    request.abi_version = 0;
-    require(uno_crypto_verify_v1(&request) == UNO_CRYPTO_ARGUMENTS, "retired ABI accepted");
+    require(uno_crypto_verify_v2(&request) == UNO_CRYPTO_OK, "real cross-language proof rejected");
+    request.abi_version = 1;
+    require(uno_crypto_verify_v2(&request) == UNO_CRYPTO_ARGUMENTS, "retired ABI accepted");
+    request = f.request(); request.fee ^= 1;
+    require(uno_crypto_verify_v2(&request) == UNO_CRYPTO_VERIFY, "changed public fee accepted");
+    request = f.request(); request.domain[0] ^= 1;
+    require(uno_crypto_verify_v2(&request) == UNO_CRYPTO_VERIFY, "changed protocol domain accepted");
     auto bad = f; bad.context[0] ^= 1; request = bad.request();
-    require(uno_crypto_verify_v1(&request) == UNO_CRYPTO_VERIFY, "changed context not rejected as proof failure");
+    require(uno_crypto_verify_v2(&request) == UNO_CRYPTO_VERIFY, "changed context not rejected as proof failure");
     bad = f; bad.zs[0].fill(255); request = bad.request();
-    require(uno_crypto_verify_v1(&request) == UNO_CRYPTO_DECODE, "noncanonical scalar not rejected");
+    require(uno_crypto_verify_v2(&request) == UNO_CRYPTO_DECODE, "noncanonical scalar not rejected");
   }
 }
 
@@ -204,7 +217,7 @@ int main(int argc, char** argv) {
     std::vector<std::thread> threads;
     for (unsigned i = 0; i < 4; ++i) threads.emplace_back([&] { verify_all(fixtures); });
     for (auto& thread : threads) thread.join();
-    require(uno_crypto_verify_v1(nullptr) == UNO_CRYPTO_ARGUMENTS, "null ABI pointer accepted");
+    require(uno_crypto_verify_v2(nullptr) == UNO_CRYPTO_ARGUMENTS, "null ABI pointer accepted");
     std::cout << "PASS: 9 full relations and system ciphertext, C ABI, four workers, entropy trap and firing canary\n";
     return 0;
   } catch (const std::exception& e) { std::cerr << "FAIL: " << e.what() << '\n'; return 2; }

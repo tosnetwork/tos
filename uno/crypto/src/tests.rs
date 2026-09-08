@@ -5,16 +5,17 @@ use curve25519_dalek::{Scalar as S, RistrettoPoint as P, traits::VartimeMultisca
 use rand::{SeedableRng, rngs::StdRng};
 
 pub(crate) struct Fixture {
-    kind: u32, limits: KernelLimits, context: Vec<u8>, points: Vec<[u8;32]>, ids: Vec<[u8;32]>,
+    kind: u32, limits: KernelLimits, domain: [u8;80], fee: u64, context: Vec<u8>, points: Vec<[u8;32]>, ids: Vec<[u8;32]>,
     ts: Vec<[u8;32]>, zs: Vec<[u8;32]>, proof: Vec<u8>,
 }
 
 impl Fixture {
     fn verify(&self) -> Result<(), AbiStatus> {
-        verify_relation(self.kind, &self.limits, &self.context, &self.points, &self.ids, &self.ts, &self.zs, &self.proof)
+        verify_relation(self.kind, &self.limits, &self.domain, self.fee, &self.context, &self.points, &self.ids, &self.ts, &self.zs, &self.proof)
     }
-    fn request(&self) -> VerifyRequest {
-        VerifyRequest { abi_version: UNO_CRYPTO_ABI_VERSION, relation: self.kind, limits: self.limits,
+    fn request(&self) -> VerifyRequestV2 {
+        VerifyRequestV2 { abi_version: UNO_BALANCE_ABI_VERSION, relation: self.kind, limits: self.limits,
+            domain: self.domain, fee: self.fee,
             context: self.context.as_ptr(), context_bytes: self.context.len(), points: self.points.as_ptr(),
             point_count: self.points.len(), receipt_ids: self.ids.as_ptr(), receipt_count: self.ids.len(),
             commitments: self.ts.as_ptr(), commitment_count: self.ts.len(), responses: self.zs.as_ptr(),
@@ -22,14 +23,16 @@ impl Fixture {
     }
 }
 
-fn fixture(k: usize) -> Fixture {
+fn fixture(k: usize) -> Fixture { fixture_with_fee(k, 3) }
+
+fn fixture_with_fee(k: usize, fee: u64) -> Fixture {
     let pc = PedersenGens::default(); let g = pc.B; let h = pc.B_blinding;
     let s = S::from(11u64); let p = s.invert()*h; let rho = S::from(19u64);
     let blind = S::from(23u64); let old_r = S::from(29u64);
     let b = 1000u64; let bmax = 1_000_000u64; let vmax = 10000u64;
     let ca = S::from(b)*g+old_r*h; let da=old_r*p;
     let (points, witnesses, mut values, mut blinds) = if k == 0 {
-        let v=7u64; let new=b.checked_sub(v).expect("funded transfer");
+        let v=7u64; let new=b.checked_sub(v).and_then(|n| n.checked_sub(fee)).expect("funded transfer and fee");
         let r=S::from(17u64); let pb=S::from(13u64).invert()*h;
         (vec![p,pb,ca,da,S::from(new)*g+rho*h,rho*p,S::from(v)*g+r*h,r*p,r*pb,S::from(b)*g+blind*h],
             vec![s,S::from(new),S::from(v),r,rho,blind],
@@ -46,6 +49,7 @@ fn fixture(k: usize) -> Fixture {
             let ti=S::from(101u64.checked_add(offset).expect("auxiliary opening"));
             amounts.push(v); cs.push(S::from(v)*g+r*h); ds.push(r*p); js.push(S::from(v)*g+ti*h); receipt_blinds.push(ti);
         }
+        new = new.checked_sub(fee).expect("funded collect fee");
         let mut points=vec![p,ca,da,S::from(new)*g+rho*h,rho*p,S::from(b)*g+blind*h];
         for i in 0..k { points.extend([cs[i],ds[i],js[i]]); }
         let mut witnesses=vec![s,S::from(b)]; witnesses.extend(amounts.iter().copied().map(S::from));
@@ -60,10 +64,10 @@ fn fixture(k: usize) -> Fixture {
     };
     let limits=KernelLimits { max_balance:bmax,max_value:vmax,max_collect:8,max_context_bytes:1024,max_proof_bytes:4096 };
     let ids=(0..k).map(|i| {let mut id=[0;32];id[0]=u8::try_from(i).expect("fixture receipt");id}).collect();
-    let mut f=Fixture {kind:if k==0 {UNO_RELATION_SEND} else {UNO_RELATION_COLLECT},limits,
+    let mut f=Fixture {kind:if k==0 {UNO_RELATION_SEND} else {UNO_RELATION_COLLECT},limits, domain: [42;80], fee,
         context:b"test network/instance/account/nonce/policy; NOT production context".to_vec(),
         points:points.iter().map(P::compress).map(|p|p.to_bytes()).collect(),ids,ts:vec![],zs:vec![],proof:vec![]};
-    let relation=prepare(f.kind,&f.limits,&f.context,&f.points,&f.ids).expect("fixture statement");
+    let relation=prepare(f.kind,&f.limits,&f.domain,f.fee,&f.context,&f.points,&f.ids).expect("fixture statement");
     for (row,y) in relation.rows.iter().zip(&relation.targets) {
         assert_eq!(P::vartime_multiscalar_mul(&witnesses,row),*y,"known amount witness equation");
     }
@@ -86,9 +90,31 @@ fn fixture(k: usize) -> Fixture {
 fn full_send_and_collect_all_candidate_sizes() {
     for k in 0..=8 {
         let f=fixture(k); assert_eq!(f.verify(),Ok(()),"positive relation k={k}");
-        assert_eq!(unsafe {uno_crypto_verify_v1(&f.request())},UNO_CRYPTO_OK as u32,"FFI k={k}");
+        assert_eq!(unsafe {uno_crypto_verify_v2(&f.request())},UNO_CRYPTO_OK as u32,"FFI k={k}");
         let (_,equations,witnesses,m)=shapes(f.kind,k).expect("shape");
         assert_eq!((f.ts.len(),f.zs.len(),f.proof.len()),(equations,witnesses,range_size(m).expect("size")));
+    }
+}
+
+#[test]
+fn fee_and_protocol_domain_are_bound_independently_of_equations() {
+    for k in [0, 1, 8] {
+        let mut f = fixture(k);
+        let original = f.domain;
+        for i in 0..80 {
+            f.domain[i] ^= 1;
+            assert_eq!(f.verify(), Err(UNO_CRYPTO_VERIFY), "domain byte {i}, k={k}");
+            f.domain = original;
+        }
+        let challenge = |fee| {
+            let r = prepare(f.kind, &f.limits, &f.domain, fee, &f.context, &f.points, &f.ids)
+                .expect("same public points, independently changed public fee");
+            sigma_transcript(r.transcript, &f.ts).1
+        };
+        assert_ne!(challenge(f.fee), challenge(f.fee.checked_add(1).expect("test fee")));
+        f.fee = f.fee.checked_add(1).expect("test fee");
+        assert_eq!(f.verify(), Err(UNO_CRYPTO_VERIFY));
+        assert_eq!(fixture_with_fee(k, 0).verify(), Ok(()), "host, not primitive, enforces minimum fee");
     }
 }
 
@@ -138,7 +164,7 @@ fn policy_and_encoding_boundaries() {
 fn admission_predicates_have_independent_witnesses() {
     let f=fixture(1);
     let check=|limits:&KernelLimits,context:&[u8],points:&[[u8;32]]| {
-        prepare(f.kind,limits,context,points,&f.ids).map(|_|())
+        prepare(f.kind,limits,&f.domain,f.fee,context,points,&f.ids).map(|_|())
     };
     assert_eq!(check(&f.limits,&f.context,&f.points),Ok(()));
     let mut invalid=Vec::new();
@@ -151,7 +177,7 @@ fn admission_predicates_have_independent_witnesses() {
     for (i,p) in invalid.iter().enumerate() {
         assert_eq!(check(p,&f.context,&f.points),Err(UNO_CRYPTO_ARGUMENTS),"policy {i}");
         let mut request=f.request();request.limits=*p;
-        assert_eq!(unsafe{uno_crypto_verify_v1(&request)},UNO_CRYPTO_ARGUMENTS as u32,"FFI policy {i}");
+        assert_eq!(unsafe{uno_crypto_verify_v2(&request)},UNO_CRYPTO_ARGUMENTS as u32,"FFI policy {i}");
     }
     assert_eq!(check(&f.limits,&[],&f.points),Err(UNO_CRYPTO_DECODE));
     let mut p=f.limits;p.max_context_bytes=f.context.len().checked_sub(1).expect("nonempty context");
@@ -163,7 +189,7 @@ fn admission_predicates_have_independent_witnesses() {
     assert!(shapes(UNO_RELATION_COLLECT,0).is_err());
     let aligned=&f.limits as *const KernelLimits as usize;
     let misaligned=aligned.checked_add(1).expect("test pointer");
-    assert!(!bounded_span(misaligned as *const VerifyRequest,1));
+    assert!(!bounded_span(misaligned as *const VerifyRequestV2,1));
 }
 
 #[test]
@@ -177,17 +203,17 @@ fn internal_collect_ceiling_rejects_unsupported_policy_before_input() {
     let mut f=fixture(1);
     f.limits.max_collect=64;
     assert_eq!(f.verify(),Ok(()));
-    assert_eq!(unsafe{uno_crypto_verify_v1(&f.request())},UNO_CRYPTO_OK as u32);
+    assert_eq!(unsafe{uno_crypto_verify_v2(&f.request())},UNO_CRYPTO_OK as u32);
     f.limits.max_collect=65;
     assert_eq!(f.verify(),Err(UNO_CRYPTO_ARGUMENTS));
-    assert_eq!(unsafe{uno_crypto_verify_v1(&f.request())},UNO_CRYPTO_ARGUMENTS as u32);
+    assert_eq!(unsafe{uno_crypto_verify_v2(&f.request())},UNO_CRYPTO_ARGUMENTS as u32);
     f.limits.max_collect=usize::MAX;
     assert_eq!(validate_limits(&f.limits),Err(UNO_CRYPTO_ARGUMENTS));
     // A candidate violating a supported policy is still invalid input, not a
     // local configuration error. Shape/limit checks precede slice construction.
     f.limits.max_collect=64;
     let mut request=f.request();request.receipt_count=65;request.receipt_ids=std::ptr::null();
-    assert_eq!(unsafe{uno_crypto_verify_v1(&request)},UNO_CRYPTO_DECODE as u32);
+    assert_eq!(unsafe{uno_crypto_verify_v2(&request)},UNO_CRYPTO_DECODE as u32);
 }
 
 #[test]
@@ -199,10 +225,10 @@ fn nonidentity_handles_are_checked_before_proof_verification() {
             for i in 0usize..k {v.push(i.checked_mul(3).and_then(|x|x.checked_add(7)).expect("receipt index"));}
             v
         };
-        assert!(prepare(f.kind,&f.limits,&f.context,&f.points,&f.ids).is_ok());
+        assert!(prepare(f.kind,&f.limits,&f.domain,f.fee,&f.context,&f.points,&f.ids).is_ok());
         for index in indices {
             let mut points=f.points.clone();points[index]=[0;32];
-            assert!(matches!(prepare(f.kind,&f.limits,&f.context,&points,&f.ids),Err(UNO_CRYPTO_DECODE)),
+            assert!(matches!(prepare(f.kind,&f.limits,&f.domain,f.fee,&f.context,&points,&f.ids),Err(UNO_CRYPTO_DECODE)),
                 "identity handle k={k}, index={index}");
         }
     }
@@ -212,7 +238,7 @@ fn nonidentity_handles_are_checked_before_proof_verification() {
 fn each_sigma_equation_has_an_independent_negative_witness() {
     for k in 0..=8 {
         let f=fixture(k);
-        let mut relation=prepare(f.kind,&f.limits,&f.context,&f.points,&f.ids).expect("statement");
+        let mut relation=prepare(f.kind,&f.limits,&f.domain,f.fee,&f.context,&f.points,&f.ids).expect("statement");
         let ts:Vec<_>=f.ts.iter().copied().map(CompressedPoint).collect();
         let zs:Vec<_>=f.zs.iter().copied().map(S::from_bytes_mod_order).collect();
         let (_,e)=sigma_transcript(relation.transcript.clone(),&f.ts);
@@ -225,7 +251,7 @@ fn each_sigma_equation_has_an_independent_negative_witness() {
         }
         // The ABI has one response per witness, never per equation/witness pair.
         let mut extra=f.zs.clone();extra.extend(&f.zs);
-        assert_eq!(verify_relation(f.kind,&f.limits,&f.context,&f.points,&f.ids,&f.ts,&extra,&f.proof),
+        assert_eq!(verify_relation(f.kind,&f.limits,&f.domain,f.fee,&f.context,&f.points,&f.ids,&f.ts,&extra,&f.proof),
             Err(AbiStatus::UNO_CRYPTO_DECODE));
     }
 }
@@ -233,15 +259,17 @@ fn each_sigma_equation_has_an_independent_negative_witness() {
 #[test]
 fn borrowed_abi_layout_spans_and_panic_recovery() {
     assert_eq!(std::mem::size_of::<KernelLimits>(),40);
-    assert_eq!(std::mem::size_of::<VerifyRequest>(),144);
-    assert_eq!(std::mem::offset_of!(VerifyRequest,context),48);
+    assert_eq!(std::mem::size_of::<VerifyRequestV2>(),232);
+    assert_eq!(std::mem::offset_of!(VerifyRequestV2,domain),48);
+    assert_eq!(std::mem::offset_of!(VerifyRequestV2,fee),128);
+    assert_eq!(std::mem::offset_of!(VerifyRequestV2,context),136);
     assert!(!bounded_span(usize::MAX as *const u8,1));
     assert!(!bounded_span(&0u64,usize::MAX));
     INJECT_UNWIND.with(|flag|flag.set(true));
-    assert_eq!(unsafe{uno_crypto_verify_v1(std::ptr::null())},UNO_CRYPTO_PANIC as u32);
-    assert_eq!(unsafe{uno_crypto_verify_v1(std::ptr::null())},UNO_CRYPTO_ARGUMENTS as u32);
-    let f=fixture(0);let mut request=f.request();request.abi_version=0;
-    assert_eq!(unsafe{uno_crypto_verify_v1(&request)},UNO_CRYPTO_ARGUMENTS as u32);
+    assert_eq!(unsafe{uno_crypto_verify_v2(std::ptr::null())},UNO_CRYPTO_PANIC as u32);
+    assert_eq!(unsafe{uno_crypto_verify_v2(std::ptr::null())},UNO_CRYPTO_ARGUMENTS as u32);
+    let f=fixture(0);let mut request=f.request();request.abi_version=1;
+    assert_eq!(unsafe{uno_crypto_verify_v2(&request)},UNO_CRYPTO_ARGUMENTS as u32);
 }
 
 #[test]
@@ -249,7 +277,7 @@ fn concurrent_real_ffi_verification() {
     let send=fixture(0);let collect=fixture(8);
     std::thread::scope(|scope| {
         for f in [&send,&collect,&send,&collect] {scope.spawn(move|| {
-            assert_eq!(unsafe{uno_crypto_verify_v1(&f.request())},UNO_CRYPTO_OK as u32);
+            assert_eq!(unsafe{uno_crypto_verify_v2(&f.request())},UNO_CRYPTO_OK as u32);
         });}
     });
 }
@@ -263,15 +291,15 @@ fn cross_language_vectors_are_frozen() {
     let mut encoded=String::new();
     for k in 0..=8 {
         let f=fixture(k);
-        encoded.push_str(&format!("{}|{}|{}|{}|{}|{}|{}|{}|{}|{}\n",f.kind,
+        encoded.push_str(&format!("{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}\n",f.kind,
             f.limits.max_balance,f.limits.max_value,f.limits.max_collect,hex(&f.context),
-            hex(&f.points.concat()),hex(&f.ids.concat()),hex(&f.ts.concat()),hex(&f.zs.concat()),hex(&f.proof)));
+            hex(&f.points.concat()),hex(&f.ids.concat()),hex(&f.ts.concat()),hex(&f.zs.concat()),hex(&f.proof),hex(&f.domain),f.fee));
     }
     if let Some(path)=std::env::var_os("UNO_KERNEL_VECTOR_OUT") {
         std::fs::OpenOptions::new().write(true).create_new(true).open(path)
             .and_then(|mut file|std::io::Write::write_all(&mut file,encoded.as_bytes())).expect("export new vector artifact");
     }
-    let expected=include_str!("../fixtures/balance-kernel-v1.txt");
+    let expected=include_str!("../fixtures/balance-kernel-v2.txt");
     let offset=encoded.bytes().zip(expected.bytes()).position(|(a,b)|a!=b)
         .unwrap_or(encoded.len().min(expected.len()));
     let row=encoded.as_bytes()[..offset].iter().filter(|b|**b==b'\n').count();

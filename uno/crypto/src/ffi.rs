@@ -2,6 +2,7 @@
 use std::{mem, panic::catch_unwind, slice};
 
 pub const UNO_CRYPTO_ABI_VERSION: u32 = 1;
+pub const UNO_BALANCE_ABI_VERSION: u32 = 2;
 pub const UNO_RELATION_SEND: u32 = 1;
 pub const UNO_RELATION_COLLECT: u32 = 2;
 
@@ -28,10 +29,12 @@ pub struct KernelLimits {
 }
 
 #[repr(C)]
-pub struct VerifyRequest {
+pub struct VerifyRequestV2 {
     pub abi_version: u32,
     pub relation: u32,
     pub limits: KernelLimits,
+    pub domain: [u8; 80],
+    pub fee: u64,
     pub context: *const u8,
     pub context_bytes: usize,
     pub points: *const [u8; 32],
@@ -132,14 +135,14 @@ std::thread_local! {
     pub(crate) static INJECT_UNWIND: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
-unsafe fn verify(request: *const VerifyRequest) -> Result<(), AbiStatus> {
+unsafe fn verify(request: *const VerifyRequestV2) -> Result<(), AbiStatus> {
     #[cfg(test)]
     INJECT_UNWIND.with(|flag| {
         if flag.replace(false) { panic!("injected verification unwind"); }
     });
     if !bounded_span(request, 1) { return Err(AbiStatus::UNO_CRYPTO_ARGUMENTS); }
     let r = unsafe { &*request };
-    if r.abi_version != UNO_CRYPTO_ABI_VERSION {
+    if r.abi_version != UNO_BALANCE_ABI_VERSION {
         return Err(AbiStatus::UNO_CRYPTO_ARGUMENTS);
     }
     crate::relation::validate_limits(&r.limits)?;
@@ -152,7 +155,7 @@ unsafe fn verify(request: *const VerifyRequest) -> Result<(), AbiStatus> {
         || r.response_count != witnesses || r.proof_bytes != crate::relation::range_size(m)? {
         return Err(AbiStatus::UNO_CRYPTO_DECODE);
     }
-    crate::verify_relation(r.relation, &r.limits,
+    crate::verify_relation(r.relation, &r.limits, &r.domain, r.fee,
         unsafe { borrowed(r.context, r.context_bytes)? },
         unsafe { borrowed(r.points, r.point_count)? },
         unsafe { borrowed(r.receipt_ids, r.receipt_count)? },
@@ -178,6 +181,6 @@ pub(crate) fn contain_unwind(f: impl FnOnce() -> Result<(), AbiStatus> + std::pa
 /// cannot validate arbitrary allocations. Unwinding panics are contained;
 /// process abort, allocator OOM abort and invalid caller memory are not recoverable.
 #[no_mangle]
-pub unsafe extern "C" fn uno_crypto_verify_v1(request: *const VerifyRequest) -> u32 {
+pub unsafe extern "C" fn uno_crypto_verify_v2(request: *const VerifyRequestV2) -> u32 {
     contain_unwind(|| unsafe { verify(request) })
 }

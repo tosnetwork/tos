@@ -153,6 +153,16 @@ def main():
             file.write_text(original)
 
     command("baseline", "", True)
+    for name, before, after, test in (
+        ("send-old-fee", "p[2] - fee_g", "p[2]", "full_send_and_collect_all_candidate_sizes"),
+        ("send-aux-fee", "p[9] - fee_g", "p[9]", "full_send_and_collect_all_candidate_sizes"),
+        ("collect-fee", "p[3] + fee_g", "p[3]", "full_send_and_collect_all_candidate_sizes"),
+        ("domain-binding", 'transcript.append_message(b"protocol-domain", domain);', "let _ = domain;",
+         "fee_and_protocol_domain_are_bound_independently_of_equations"),
+        ("fee-binding", 'transcript.append_u64(b"fee", fee);', "let _ = fee;",
+         "fee_and_protocol_domain_are_bound_independently_of_equations"),
+    ):
+        mutation("balance-" + name, "src/relation.rs", before, after, test)
     for label, path, before, after, test in SYSTEM_MUTATIONS:
         mutation("system-" + label, path, before, after, test)
     mutation("drop-internal-collect-ceiling", "src/relation.rs", "limits.max_collect > 64", "false",

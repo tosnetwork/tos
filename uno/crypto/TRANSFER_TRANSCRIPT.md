@@ -5,17 +5,23 @@ unfrozen full transaction codec. Amounts are confidential; account and transfer
 relationships remain public. No legacy transcript or Note format is accepted.
 
 The initial Merlin domain is
-`TOS-UNO-BALANCE-KERNEL-EXPERIMENTAL-v1`. Append, in order:
+`uno-v2/balance-relation`. Append, in order:
 
-1. u64 `relation` (SEND=1, COLLECT=2).
-2. u64 `max-balance`, then `max-value`.
-3. `authenticated-context`: the complete caller-supplied context byte string.
-4. u64 `point-count`, followed by each `public-point` in ABI order.
-5. u64 `receipt-count`, followed by each `receipt-id` in ABI order.
+1. `protocol-domain`: the mandatory 80-byte domain defined in ABI.md, identical
+   in layout to system encryption but under this distinct operation label.
+2. u64 `relation` (SEND=1, COLLECT=2), then u64 `fee` in nanotomi.
+3. u64 `max-balance`, then `max-value`.
+4. `authenticated-context`: the complete caller-supplied context byte string.
+5. u64 `point-count`, followed by each `public-point` in ABI order.
+6. u64 `receipt-count`, followed by each `receipt-id` in ABI order.
 
 Merlin supplies message framing. Scalars/points in proof arrays are canonical.
 The context is authenticated by the future host, not by this library. No
-default context, fees, expiry, policy identity or deployment network is supplied.
+default context, fee, expiry, policy identity or deployment network is supplied.
+The public fee enters both the relation and the transcript: SEND proves
+`a = a' + v + fee`; COLLECT proves `a + sum(v_i) = b + fee`.
+The host must independently reconstruct the configured fee and protocol domain;
+accepting caller-supplied values here does not authenticate their provenance.
 
 Clone this state into separate subprotocols:
 
@@ -34,6 +40,8 @@ are group-derived commitments, not unguarded subtraction of secret integers.
 Prover randomness remains mandatory. All new context and proof-message binding
 requires independent security review even though Merlin itself is reused.
 
+The active artifact is `fixtures/balance-kernel-v2.txt`; the v1 artifact is
+historical and is not accepted by the v2 test consumer or exported interface.
 Frozen tests include complete SEND and COLLECT k=1..8 proofs, statement and
 proof perturbations, every independent row's negative witness, and an
 independent C transcript known-answer vector. Changing transcript events must
