@@ -22,6 +22,7 @@
 #include "tl/tl_object_parse.h"
 #include "block/block-auto.h"
 #include "block/block-parse.h"
+#include "block/transaction.h"
 #include "td/utils/crypto.h"
 #include "vm/cp0.h"
 #include "vm/vm.h"
@@ -87,10 +88,11 @@ void append_transaction_messages(td::StringBuilder &sb,
   bool first = true;
   // The field is 15 bits wide, and this runs once per transaction in a
   // page of up to 256, so without a local ceiling the work is bounded
-  // only by a limit declared elsewhere. Use that limit's own value: the
-  // action phase admits at most this many messages, so a transaction can
-  // never carry more, and a legitimate one is never rendered short.
-  constexpr int kMaxRenderedOutMessages = 255;
+  // only by a limit declared elsewhere. Take that limit rather than
+  // restate it: the action phase admits at most this many messages, so a
+  // transaction cannot carry more and a legitimate one is never rendered
+  // short, and if the limit moves this moves with it.
+  constexpr int kMaxRenderedOutMessages = block::kDefaultMaxActions;
   for (int index = 0; index < tx.outmsg_cnt && index < kMaxRenderedOutMessages; ++index) {
     auto message = dictionary.lookup_ref(td::BitArray<15>{index});
     if (message.is_null()) {
@@ -1311,7 +1313,7 @@ void JsonRpcServer::handle_tryLocateSourceTx(td::JsonObject &params, std::string
 
               // Iterate out_msgs dictionary
               vm::Dictionary dict{tx.r1.out_msgs, 15};
-              for (int k = 0; k < tx.outmsg_cnt && k < 100; k++) {
+              for (int k = 0; k < tx.outmsg_cnt && k < block::kDefaultMaxActions; k++) {
                 auto out_msg_ref = dict.lookup_ref(td::BitArray<15>{k});
                 if (out_msg_ref.is_null()) continue;
 

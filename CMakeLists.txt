@@ -1114,6 +1114,15 @@ tos_test(test-msg-envelope)
 tos_test(test-rate-limiter)
 tos_test(test-config-transition)
 tos_test(test-json-rpc-parse)
+tos_test(test-json-rpc-rate-gate)
+# Source-level check: a route added to on_request bypasses the dispatcher's
+# per-source budget, and no test of the budget itself can see that.
+find_package(Python3 COMPONENTS Interpreter)
+if (Python3_Interpreter_FOUND)
+  add_test(NAME jsonrpc-route-gating
+           COMMAND ${Python3_EXECUTABLE}
+                   ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-jsonrpc-route-gating.py)
+endif()
 tos_test(test-http-server-limits)
 tos_test(test-wallet-message-processor)
 tos_test(test-vm-exception-hardening)

@@ -18,10 +18,14 @@
 */
 #include "validator-engine/json-rpc-rate-gate.h"
 
+#include "td/utils/JsonBuilder.h"
+#include "td/utils/SharedSlice.h"
 #include "td/utils/StringBuilder.h"
+#include "td/utils/buffer.h"
 #include "td/utils/tests.h"
 
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -130,4 +134,38 @@ TEST(JsonRpcResponseBody, large_result_is_not_truncated) {
 
   ASSERT_TRUE(body.size() > payload.size());
   ASSERT_TRUE(body.size() >= 2 && body.compare(body.size() - 2, 2, "\"}") == 0);
+}
+
+// The batch driver holds parsed elements across an actor message, and a
+// td::JsonValue borrows slices from the buffer it was decoded from rather
+// than owning its strings. These pin that ownership rule with the same
+// types the server uses.
+//
+// Under a normal build the released-buffer case reads plausible bytes and
+// proves nothing; run this suite from an ASAN build for it to mean
+// anything. It is kept here so the rule is stated somewhere executable:
+// a future change that drops the buffer has to delete this to stay green.
+TEST(JsonRpcBatchLifetime, parsed_values_borrow_from_their_buffer) {
+  td::BufferSlice body(R"([{"method":"alpha"},{"method":"beta"}])");
+  auto parsed = td::json_decode(body.as_slice());
+  ASSERT_TRUE(parsed.is_ok());
+  auto value = parsed.move_as_ok();
+  ASSERT_TRUE(value.type() == td::JsonValue::Type::Array);
+
+  auto &arr = value.get_array();
+  ASSERT_EQ(2u, arr.size());
+
+  // Moving the elements out does not copy the strings they point at, so
+  // holding them without the buffer would leave them dangling. Keeping
+  // the buffer alive alongside is what makes the reads below defined --
+  // which is exactly what BatchState now does.
+  std::vector<td::JsonValue> elements;
+  for (auto &el : arr) {
+    elements.push_back(std::move(el));
+  }
+
+  ASSERT_TRUE(elements[1].type() == td::JsonValue::Type::Object);
+  auto method = elements[1].get_object().get_required_string_field("method");
+  ASSERT_TRUE(method.is_ok());
+  ASSERT_STREQ("beta", method.ok());
 }
