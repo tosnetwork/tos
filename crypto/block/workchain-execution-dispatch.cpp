@@ -367,7 +367,7 @@ td::Status validate_workchain_execution_descriptor_transitions(
 void WorkchainExecutionRegistry::register_engine(std::unique_ptr<WorkchainEngine> engine) {
   CHECK(engine != nullptr);
   auto key = engine->engine_key();
-  CHECK(block_engines_.count(key) == 0);
+  CHECK(block_engines_.count(key) == 0 && account_engines_.count(key) == 0);
   auto inserted = engines_.emplace(key, std::move(engine));
   LOG_CHECK(inserted.second) << "duplicate workchain engine registration for "
                              << workchain_engine_key_to_string(key);
@@ -386,7 +386,36 @@ bool WorkchainExecutionRegistry::register_engine_if_absent(std::unique_ptr<Workc
 }
 
 bool WorkchainExecutionRegistry::has_engine(const WorkchainEngineKey& key) const {
-  return engines_.count(key) != 0 || block_engines_.count(key) != 0;
+  return engines_.count(key) != 0 || block_engines_.count(key) != 0 || account_engines_.count(key) != 0;
+}
+
+td::Status WorkchainExecutionRegistry::register_account_engine(
+    std::unique_ptr<RegisteredWorkchainAccountEngine> engine) {
+  if (!engine) return td::Status::Error("cannot register null account engine");
+  const auto key = engine->engine_key();
+  if (workchain_engine_key_is_tvm(key) || has_engine(key)) {
+    return td::Status::Error("account engine key is reserved or already registered");
+  }
+  account_engines_.emplace(key, std::move(engine));
+  return td::Status::OK();
+}
+
+td::Result<ResolvedWorkchainAccountBinding> WorkchainExecutionRegistry::resolve_account_binding(
+    const WorkchainExecutionDescriptor& descriptor, const block::Config& configuration) const {
+  auto it = account_engines_.find(workchain_engine_key_from_descriptor(descriptor));
+  if (it == account_engines_.end()) return td::Status::Error("descriptor has no registered account engine");
+  // The shared loader enforces activation; binding below enforces active and
+  // unsplit execution before the callback. Do not duplicate those predicates.
+  TRY_RESULT(table, load_workchain_native_ingress_table(configuration));
+  auto ingress = table.find(descriptor.workchain_id);
+  if (ingress == table.end() || !ingress->second.custody_address) {
+    return td::Status::Error("multi-account engine requires dual native ingress");
+  }
+  TRY_STATUS(validate_workchain_native_ingress_binding(ingress->second, descriptor));
+  TRY_RESULT(config, it->second->validate_and_resolve_config(descriptor, configuration,
+                                                           ingress->second.engine_configuration));
+  if (!config) return td::Status::Error("account engine returned null configuration");
+  return ResolvedWorkchainAccountBinding{it->second.get(), descriptor, ingress->second, std::move(config)};
 }
 
 td::Status WorkchainExecutionRegistry::register_block_engine(std::unique_ptr<RegisteredWorkchainBlockEngine> engine) {
@@ -405,7 +434,9 @@ std::optional<WorkchainExecutionScope> WorkchainExecutionRegistry::execution_sco
   if (engines_.count(key)) {
     return WorkchainExecutionScope::AccountCompute;
   }
-  if (block_engines_.count(key)) {
+  if (block_engines_.count(key) || account_engines_.count(key)) {
+    // Scope identifies whole-block execution, not the accepted transaction
+    // record set. The singleton resolver remains separate from account binding.
     return WorkchainExecutionScope::BlockTransition;
   }
   return std::nullopt;

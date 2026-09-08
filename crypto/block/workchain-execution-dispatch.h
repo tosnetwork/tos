@@ -20,6 +20,7 @@
 #include "block/block.h"
 #include "block/mc-config.h"
 #include "block/workchain-block-execution.h"
+#include "block/workchain-account-engine.h"
 #include "td/utils/Status.h"
 #include "tos/tos-shard.h"
 #include "tos/tos-types.h"
@@ -260,6 +261,24 @@ struct ResolvedWorkchainBlockExecution {
   WorkchainBlockPolicy policy;
 };
 
+// Binding is separate from admission and execution readiness. The engine must
+// decode its complete payload; the enclosing host still resolves authenticated
+// resource policy before invoking any account execution.
+class RegisteredWorkchainAccountEngine : public WorkchainAccountEngine {
+ public:
+  virtual WorkchainEngineKey engine_key() const = 0;
+  virtual td::Result<std::shared_ptr<const WorkchainEngineConfig>> validate_and_resolve_config(
+      const WorkchainExecutionDescriptor& descriptor, const block::Config& configuration,
+      const td::Ref<vm::Cell>& engine_configuration) const = 0;
+};
+
+struct ResolvedWorkchainAccountBinding {
+  const RegisteredWorkchainAccountEngine* executor{nullptr};
+  WorkchainExecutionDescriptor descriptor;
+  WorkchainNativeIngressPolicy ingress;
+  std::shared_ptr<const WorkchainEngineConfig> engine_config;
+};
+
 td::Result<WorkchainBlockResult> execute_resolved_workchain_block(
     const ResolvedWorkchainBlockExecution& execution, const WorkchainBlockInput& input);
 td::Result<std::unique_ptr<transaction::Transaction>> prepare_resolved_workchain_batch_transaction(
@@ -295,6 +314,14 @@ class WorkchainExecutionRegistry {
   bool register_engine_if_absent(std::unique_ptr<WorkchainEngine> engine);
   bool has_engine(const WorkchainEngineKey& key) const;
   td::Status register_block_engine(std::unique_ptr<RegisteredWorkchainBlockEngine> engine);
+  td::Status register_account_engine(std::unique_ptr<RegisteredWorkchainAccountEngine> engine);
+  // Explicit staging path only. Generic scoped dispatch must not start accepting
+  // multi-account execution until admission and complete replay are connected.
+  // Configuration acquisition/engine exceptions propagate to a source-aware
+  // enclosing boundary. A plain Status here is not a candidate voting verdict;
+  // neither successful binding nor execution_scope proves resource admission.
+  td::Result<ResolvedWorkchainAccountBinding> resolve_account_binding(
+      const WorkchainExecutionDescriptor& descriptor, const block::Config& configuration) const;
   std::optional<WorkchainExecutionScope> execution_scope(const WorkchainEngineKey& key) const;
   td::Result<ResolvedWorkchainBlockExecution> resolve_block(
       const WorkchainExecutionDescriptor& descriptor, const block::Config& configuration) const;
@@ -326,6 +353,7 @@ class WorkchainExecutionRegistry {
   // register_engine* from any thread other than the startup sequence.
   std::map<WorkchainEngineKey, std::unique_ptr<WorkchainEngine>> engines_;
   std::map<WorkchainEngineKey, std::unique_ptr<RegisteredWorkchainBlockEngine>> block_engines_;
+  std::map<WorkchainEngineKey, std::unique_ptr<RegisteredWorkchainAccountEngine>> account_engines_;
 };
 
 td::uint32 workchain_execution_capability_flags(const WorkchainExecutionRegistry& registry);

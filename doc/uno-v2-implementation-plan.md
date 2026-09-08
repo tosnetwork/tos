@@ -6,7 +6,7 @@ Scope: implement the V2 specification in `/home/tomi/memo/TOS_UNO_PRIVACY_WORKCH
 
 The owner now delegates necessary design decisions to the implementer. Decisions must be explicit, derived from conservation, deterministic execution and bounded resources, and must not be hidden local defaults. Real-value deployment and irreversible external operations remain separate from coding.
 
-Specification baseline: memo `274258e5`. Late returns fund the slot fee from their actual carried value; the coordinator does not subsidize them. Process the authenticated inbox against open withdrawals before closing remaining expired records. Rich bounce messages return original logical time for scoped matching. Retirement does not remove the workchain configuration or custody while the native message lifecycle remains unresolved.
+Current specification/decision baseline: memo `1b2be223`; the earlier component work used `274258e5`. Operation fees now follow D24/D25: no public payer, user-authorized confidential debits flow through custody, with at most one aggregate operation-fee settlement per batch. D26 congestion allocation remains an activation obligation, not a property of fixed fees or admission limits. Process the authenticated inbox against open withdrawals before closing remaining expired records. Rich bounce messages return original logical time for scoped matching. Retirement does not remove the workchain configuration or custody while the native message lifecycle remains unresolved.
 
 `created_lt` must be determined before committing effects. Allocate one transaction per affected account, with a common start strictly beyond authenticated host/inbox timing and every affected account's previous transaction end. Within each account, assign outgoing message times in canonical order. The native wrapper must reproduce those values, never fill an uncommitted identity into state afterward.
 
@@ -17,7 +17,7 @@ The specification separately authorizes a payout and one aggregate operation-fee
 | Stage | Required outcome | Status |
 |---|---|---|
 | M0 | Consistent design decisions, configuration semantics and review | Existing design/review; implementation decisions tracked here. Production numeric calibration is not proven by research measurements. |
-| M1 | Multi-account wire, one logical execution, exact account coverage, native settlement, version gates, independent replay and synchronization | In progress. Participant LT allocator implemented and tested in isolation; no consensus integration yet. |
+| M1 | Multi-account wire, one logical execution, exact account coverage, native settlement, version gates, independent replay and synchronization | In progress. Private settlement/replay and outbound queue components exist; dual Native destination admission is integrated. Multi-account execution is not integrated into live collator/validator. None of these component results closes I13 acceptance. |
 | M2 | Complete deterministic relations, system encryption, prover/verifier, ABI and supply-chain gates | Existing kernel work is partial evidence; not marked complete. |
 | M3 | Registered accounts, real candidate source, SEND/COLLECT and pending lifecycle | Not accepted. |
 | M4 | Native deposits and fee isolation | Not accepted. |
@@ -25,6 +25,70 @@ The specification separately authorizes a payout and one aggregate operation-fee
 | M6 | Capacity, minimum hardware, state acquisition, lifecycle and migration | Not accepted. |
 | M7 | External review and restricted public testnet evidence | Not accepted; no public deployment performed. |
 | M8 | Real-value activation gates and operational rehearsal | Not authorized by a coding request. |
+
+## Current integration boundary and next sequence
+
+Source audit at `df73ed000`, after the reviewed dual-ingress development
+snapshot; this section supersedes older per-component "next step" statements
+below where later components already exist.
+
+| Boundary | Current authoritative shape | Remaining connection |
+|---|---|---|
+| Dispatch | `ResolvedScopedWorkchainExecution` contains account-compute and singleton block execution only | Add explicit multi-account resolution with descriptor-bound authenticated policy; do not reinterpret the singleton engine interface |
+| Admission | `ResolvedInputPolicy::from_resolved_fields` accepts supplied fields; dual destinations come from Config84 | Resolve every resource limit from the authenticated engine configuration and retain the same policy identity through admission and input commitment; no local defaults |
+| Execution | `execute_and_settle_workchain_disposal` calls the account engine and private payout/disposal overlays | Invoke through the live block path only after bounded admission, commitment and complete authenticated inbox reconstruction |
+| Validation | `ValidateQuery::check_transactions` still calls `replay_resolved_workchain_account_block` | Add an explicit versioned multi-record path that independently reconstructs every wrapper and dictionary difference; retain the singleton path |
+| Publication | `build_workchain_outbound_queues` builds private Native queues from reconstructed exports | Publish accounts, AccountBlocks, InMsg/OutMsg and queue changes together, with rollback evidence; queue construction alone is not I13e |
+
+Implement in that dependency order. The registry work must not invent resource
+values: a profile without a fully resolved authenticated policy cannot execute.
+The native account-engine interface is separate from the cryptographic kernel;
+registering a placeholder is not a real candidate source or M3 completion.
+Any immediate consensus-boundary review must include configuration provenance
+and the zero-engine-call failures before admission completes.
+
+The development snapshot does not prevent installation of unsupported execution:
+`SUPPORTED_VERSION` only causes logging. The sole configuration-installation
+code gate is `valid_config_data` through its ingress version/capability checks;
+v16 does not prove that a binary has a multi-account executor. Release readiness
+and a dry-run of premature v16 activation remain mandatory. No global warning
+is changed into reject/fatal as part of this integration.
+
+M1 acceptance requires all seven properties on those live paths: one logical
+batch; one engine invocation per authenticated execution context; independent
+actual-write-set equality and bound reads; exact account coverage with untouched
+accounts unchanged; all-or-nothing state/message publication; the complete fixed
+validation order; and independently rebuilt wrappers including payout and
+aggregate-operation-fee exceptions. Helper-only fixtures cannot close any of
+these live integration gates. Source-aware sticky errors and identical
+authenticated budgets for collator/validator are additional required gates.
+
+### Explicit multi-account registry binding (boundary reviewed, not live)
+
+The registry now owns a separate `RegisteredWorkchainAccountEngine` map and an
+explicit `resolve_account_binding` path. Three-way key isolation covers
+AccountCompute, singleton BlockTransition and multi-account BlockTransition.
+The result retains the descriptor-bound dual ingress and exact engine payload
+configuration. It does not execute, admit resources, choose configuration values,
+or add a multi-account alternative to generic scoped dispatch. Production startup
+does not register a multi-account implementation. The dispatch row above describes
+the live path and remains incomplete.
+
+The positive binding test first failed against an unimplemented registration
+stub. After implementation it verifies callback identity/role retention and
+zero execution, and after review it also tests compute registration conflicts,
+absent/mismatched entries and callback failures. Six independently rebuilt
+mutations fail: registry presence, reserved-key rejection, dual-ingress
+requirement, descriptor binding, null-config rejection and retained custody.
+These controls are manual, not recurring CI or coverage of every guard. Shared
+activation/active predicates are not duplicated for the sake of error wording.
+VM exceptions propagate to a source-aware enclosing boundary; plain binding
+Status is not a voting classification.
+
+Review scope, disagreements and residual obligations are in
+`uno-v2-account-registry-review-disposition.md`; evidence is in
+`measurements/uno-v2-account-registry-evidence.json`. This closes a registry
+binding prerequisite, not authenticated policy resolution or M1 integration.
 
 ## Verification discipline
 

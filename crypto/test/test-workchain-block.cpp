@@ -5954,6 +5954,152 @@ TEST(WorkchainBlock, DualNativeIngressCodecAndVersion) {
   }
 }
 
+TEST(WorkchainBlock, MultiAccountRegistryBinding) {
+  struct Engine final : block::RegisteredWorkchainAccountEngine {
+    block::WorkchainEngineKey key{block::WorkchainFormat::Basic, 0x434e5431};
+    mutable unsigned config_calls = 0, execute_calls = 0;
+    mutable td::Ref<vm::Cell> seen;
+    bool null_config = false;
+    unsigned throw_kind = 0;
+    block::WorkchainEngineKey engine_key() const override { return key; }
+    td::Result<std::shared_ptr<const block::WorkchainEngineConfig>> validate_and_resolve_config(
+        const block::WorkchainExecutionDescriptor&, const block::Config&,
+        const td::Ref<vm::Cell>& payload) const override {
+      ++config_calls;
+      seen = payload;
+      if (throw_kind == 1) throw vm::VmError{vm::Excno::cell_und};
+      if (throw_kind == 2) throw vm::VmVirtError{1};
+      if (null_config) return std::shared_ptr<const block::WorkchainEngineConfig>{};
+      if (payload->get_hash() != vm::CellBuilder().store_long(37, 8).finalize()->get_hash()) {
+        return td::Status::Error("unsupported test account engine payload");
+      }
+      return std::shared_ptr<const block::WorkchainEngineConfig>(new block::WorkchainEngineConfig);
+    }
+    td::Result<block::WorkchainAccountEffects> execute_accounts(
+        const td::Ref<vm::Cell>&, block::WorkchainAccountReadView&) const override {
+      ++execute_calls;
+      return td::Status::Error("binding must not execute");
+    }
+  };
+  struct ComputeEngine final : block::WorkchainEngine {
+    block::WorkchainEngineKey engine_key() const override {
+      return {block::WorkchainFormat::Basic, 0x434e5431};
+    }
+    td::Result<std::shared_ptr<const block::WorkchainEngineConfig>> validate_and_resolve_config(
+        const block::WorkchainExecutionDescriptor&, const block::Config&) const override {
+      return td::Status::Error("compute callback must not be reached");
+    }
+    block::AccountExecutionPolicy account_policy(const block::WorkchainExecutionDescriptor&,
+        const block::WorkchainEngineConfig&) const override { return {}; }
+    td::Result<block::WorkchainComputeOutput> run_compute(const block::WorkchainComputeInput&,
+        const block::WorkchainComputeContext&) const override {
+      return td::Status::Error("compute execution must not be reached");
+    }
+  };
+  auto engine = std::make_unique<Engine>();
+  auto* observed = engine.get();
+  block::WorkchainNativeIngressPolicy policy;
+  policy.workchain_id = 2;
+  policy.engine_key = engine->engine_key();
+  policy.executor_address = td::Bits256::zero();
+  policy.custody_address = td::Bits256::ones();
+  policy.engine_configuration = vm::CellBuilder().store_long(37, 8).finalize();
+  auto configuration = [&](unsigned version, td::uint64 capabilities) {
+    vm::Dictionary dictionary(32);
+    vm::CellBuilder version_cell;
+    ASSERT_TRUE(block::gen::t_GlobalVersion.pack_capabilities(version_cell, version, capabilities));
+    ASSERT_TRUE(dictionary.set_ref(td::BitArray<32>{8}, version_cell.finalize()));
+    ASSERT_TRUE(dictionary.set_ref(td::BitArray<32>{84},
+        block::encode_workchain_native_ingress_table({policy}).move_as_ok()));
+    return block::Config::unpack_config(dictionary.get_root_cell(), td::Bits256::zero(),
+                                       block::Config::needCapabilities).move_as_ok();
+  };
+  block::WorkchainExecutionDescriptor descriptor;
+  descriptor.workchain_id = 2;
+  descriptor.active = true;
+  descriptor.vm_version = static_cast<std::int32_t>(policy.engine_key.selector);
+  block::WorkchainExecutionRegistry registry;
+  ASSERT_TRUE(registry.register_account_engine(std::move(engine)).is_ok());
+  ASSERT_TRUE(registry.has_engine(policy.engine_key));
+  ASSERT_TRUE(registry.execution_scope(policy.engine_key) == block::WorkchainExecutionScope::BlockTransition);
+  ASSERT_TRUE(registry.register_account_engine(nullptr).is_error());
+  ASSERT_TRUE(registry.register_account_engine(std::make_unique<Engine>()).is_error());
+  ASSERT_TRUE(registry.register_block_engine(std::make_unique<CounterEngine>()).is_error());
+  ASSERT_TRUE(!registry.register_engine_if_absent(std::make_unique<ComputeEngine>()));
+  auto reserved = std::make_unique<Engine>();
+  reserved->key = block::tvm_workchain_engine_key();
+  ASSERT_TRUE(registry.register_account_engine(std::move(reserved)).is_error());
+  block::WorkchainExecutionRegistry reverse;
+  ASSERT_TRUE(reverse.register_block_engine(std::make_unique<CounterEngine>()).is_ok());
+  ASSERT_TRUE(reverse.register_account_engine(std::make_unique<Engine>()).is_error());
+  block::WorkchainExecutionRegistry compute;
+  compute.register_engine(std::make_unique<ComputeEngine>());
+  ASSERT_TRUE(compute.register_account_engine(std::make_unique<Engine>()).is_error());
+  auto config = configuration(16, tos::capBlockTransition);
+  ASSERT_TRUE(reverse.resolve_account_binding(descriptor, *config).is_error());
+  ASSERT_TRUE(compute.resolve_account_binding(descriptor, *config).is_error());
+  auto binding = registry.resolve_account_binding(descriptor, *config);
+  ASSERT_TRUE(binding.is_ok());
+  ASSERT_TRUE(binding.ok().executor == observed);
+  ASSERT_TRUE(binding.ok().engine_config != nullptr);
+  ASSERT_TRUE(binding.ok().ingress.executor_address == policy.executor_address);
+  ASSERT_TRUE(binding.ok().ingress.custody_address == policy.custody_address);
+  ASSERT_TRUE(observed->seen->get_hash() == policy.engine_configuration->get_hash());
+  ASSERT_EQ(observed->config_calls, 1u);
+  ASSERT_EQ(observed->execute_calls, 0u);
+  // Binding a local implementation is not admission or live host integration.
+  ASSERT_TRUE(registry.resolve_block(descriptor, *config).is_error());
+  ASSERT_TRUE(registry.resolve_scoped(descriptor, *config).is_error());
+  ASSERT_TRUE(registry.resolve(descriptor, *config).is_error());
+  for (auto version : {15u, 16u}) {
+    for (auto caps : {td::uint64{0}, td::uint64{tos::capBlockTransition}}) {
+      if (version == 16 && caps) continue;
+      ASSERT_TRUE(registry.resolve_account_binding(descriptor, *configuration(version, caps)).is_error());
+      ASSERT_EQ(observed->config_calls, 1u);
+    }
+  }
+  auto invalid = descriptor;
+  invalid.active = false;
+  ASSERT_TRUE(registry.resolve_account_binding(invalid, *config).is_error());
+  invalid = descriptor;
+  invalid.max_split = 1;
+  ASSERT_TRUE(registry.resolve_account_binding(invalid, *config).is_error());
+  invalid = descriptor;
+  invalid.version = 1;
+  ASSERT_TRUE(registry.resolve_account_binding(invalid, *config).is_error());
+  ASSERT_EQ(observed->config_calls, 1u);
+  policy.custody_address.reset();
+  ASSERT_TRUE(registry.resolve_account_binding(descriptor, *configuration(16, tos::capBlockTransition)).is_error());
+  ASSERT_EQ(observed->config_calls, 1u);
+  policy.custody_address = td::Bits256::ones();
+  policy.engine_key.selector = 123;
+  ASSERT_TRUE(registry.resolve_account_binding(descriptor, *configuration(16, tos::capBlockTransition)).is_error());
+  policy.engine_key = observed->engine_key();
+  policy.workchain_id = 3;
+  ASSERT_TRUE(registry.resolve_account_binding(descriptor, *configuration(16, tos::capBlockTransition)).is_error());
+  policy.workchain_id = 2;
+  ASSERT_EQ(observed->config_calls, 1u);
+  observed->null_config = true;
+  ASSERT_TRUE(registry.resolve_account_binding(descriptor, *config).is_error());
+  ASSERT_EQ(observed->config_calls, 2u);
+  observed->null_config = false;
+  policy.engine_configuration = vm::CellBuilder().store_long(38, 8).finalize();
+  ASSERT_TRUE(registry.resolve_account_binding(descriptor, *configuration(16, tos::capBlockTransition)).is_error());
+  ASSERT_EQ(observed->config_calls, 3u);
+  for (unsigned kind : {1u, 2u}) {
+    observed->throw_kind = kind;
+    unsigned caught = 0;
+    try {
+      auto ignored = registry.resolve_account_binding(descriptor, *config);
+      (void)ignored;
+    } catch (const vm::VmError&) { caught = 1; }
+      catch (const vm::VmVirtError&) { caught = 2; }
+    ASSERT_EQ(caught, kind);
+  }
+  ASSERT_EQ(observed->config_calls, 5u);
+  ASSERT_EQ(observed->execute_calls, 0u);
+}
+
 TEST(WorkchainBlock, PublicIngressTableCanonicalKeys) {
   block::WorkchainNativeIngressPolicy first;
   first.workchain_id = 2;
