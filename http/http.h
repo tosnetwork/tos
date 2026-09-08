@@ -202,20 +202,30 @@ class HttpRequest {
   // (1 MiB, 4 MiB] never completed because the HTTP reader paused
   // at the prior 1 MiB watermark and the application "too large"
   // path never fired — pinning connections.  The new
-  // Content-Length gate in HttpRequest::add_header rejects requests
-  // above this max up front, so an attacker can't pin connections
-  // with arbitrary Content-Length anymore.
+  // Back to the upstream sizes. These were raised for payloads that no
+  // longer exist: a hex-encoded STARK proof and a worst-case transfer from
+  // the custom workchains, both removed with those workchains. What
+  // replaced them is a Bulletproof, whose size is logarithmic in the range
+  // count -- about a kilobyte at the largest configuration -- and the
+  // biggest payload any current method accepts is a 64 KiB bag of cells.
+  //
+  // The Content-Length gate in HttpRequest::add_header stays: it rejects an
+  // oversized request before a body is read, rather than letting the reader
+  // stall against the watermark with nothing to drain it.
   static constexpr size_t max_payload_size() {
-    return 4 << 20;  // 4 MiB
+    return 1 << 20;  // 1 MiB
   }
 
   static constexpr size_t low_watermark() {
-    return 1 << 16;  // 64 KiB
+    return 1 << 14;  // 16 KiB
   }
-  // High watermark = max_payload_size (4 MiB). Prevents reader backpressure
-  // for request bodies up to the declared max.
+  // A consumer that waits for the whole body before draining any of it
+  // deadlocks against this: the reader stops here for a consumer that is
+  // waiting for the reader. Anything reading a request body in one piece
+  // must therefore refuse bodies larger than this watermark before it
+  // starts waiting -- see kJsonRpcMaxRequestBodyBytes.
   static constexpr size_t high_watermark() {
-    return 4 << 20;  // 4 MiB
+    return 1 << 17;  // 128 KiB
   }
 
   static td::Result<std::unique_ptr<HttpRequest>> create(std::string method, std::string url,
