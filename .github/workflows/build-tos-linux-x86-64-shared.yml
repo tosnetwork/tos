@@ -64,6 +64,7 @@ jobs:
     - name: Build TOS
       env:
         TOS_UNO_AUDIT_TESTS: '1'
+        TOS_UNO_CRYPTO_PROTOTYPE_TESTS: 'ON'
         CARGO_NET_OFFLINE: 'true'
       run: |
         mkdir -p ~/.ccache
@@ -81,6 +82,12 @@ jobs:
 
     - name: Generate Python API for registered Counter tests
       run: uv run --no-sync test/tostester/generate_tl.py
+
+    - name: Assert required UNO crypto gates are registered
+      run: |
+        cd build
+        count=$(ctest -N -R '^test-uno-crypto-(abi-real|rust|symbols|kernel-gates|header-guard)$' | grep -c '^ *Test *#' || true)
+        test "$count" -eq 5 || { echo "expected 5 UNO crypto gates, found $count"; exit 1; }
 
     - name: Run unit tests
       run: |

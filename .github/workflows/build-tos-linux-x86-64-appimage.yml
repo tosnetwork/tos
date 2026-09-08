@@ -50,6 +50,9 @@ jobs:
       run: scripts/install-rust-toolchain.sh
 
     - name: Build TOS
+      env:
+        # Release artifacts do not need the isolated UNO crypto test crate.
+        TOS_UNO_CRYPTO_PROTOTYPE_TESTS: 'OFF'
       run: |
         cp assembly/native/build-ubuntu-appimages.sh .
         chmod +x build-ubuntu-appimages.sh
