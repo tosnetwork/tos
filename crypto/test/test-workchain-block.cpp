@@ -2815,6 +2815,46 @@ TEST(WorkchainBlock, NativeDisposalEntry) {
       engine.effects = std::move(saved_effects);
     }
     {
+      auto saved_effects = engine.effects;
+      ASSERT_TRUE(!engine.effects.updates.empty());
+      const std::vector<std::function<void()>> faults{
+          [] { throw vm::VmError{vm::Excno::cell_und, "output test read"}; },
+          [] { throw vm::VmVirtError{1}; },
+          [] { throw vm::VmNoGas{}; },
+          [] { throw vm::VmFatal{}; },
+          [] { throw vm::CellBuilder::CellCreateError{}; },
+          [] { throw vm::CellBuilder::CellWriteError{}; },
+          [] { throw std::bad_alloc{}; },
+          [] { throw std::length_error{"output test length"}; },
+          [] { throw std::runtime_error{"output test runtime"}; }};
+      unsigned escaped = 0;
+      for (std::size_t kind = 0; kind < faults.size(); ++kind) {
+        unsigned loads = 0, fail_at = 0;
+        td::Ref<vm::Cell> source{td::Ref<StateReadCallbackCell>{true, number(989898), [&] {
+          ++loads;
+          if (loads == fail_at) faults[kind]();
+        }}};
+        engine.effects.updates[0].data = source;
+        auto available = with_output_limits(256, 65536);
+        ASSERT_TRUE(available.is_ok());
+        ASSERT_TRUE(loads > 1);
+        fail_at = loads;  // Final read is output closure admission, not construction.
+        loads = 0;
+        LOG(INFO) << "local output exception kind " << kind;
+        try {
+          auto failed = with_output_limits(256, 65536);
+          ASSERT_TRUE(failed.is_error());
+          ASSERT_EQ(failed.error().code(), static_cast<int>(block::WorkchainExecutionFailure::LocalUnavailable));
+        } catch (...) {
+          ++escaped;
+          LOG(ERROR) << "escaped output exception kind " << kind;
+        }
+        ASSERT_EQ(loads, fail_at);
+      }
+      ASSERT_EQ(escaped, 0u);
+      engine.effects = std::move(saved_effects);
+    }
+    {
       auto continuation = *exact_output.ok().output_admission;
       ASSERT_TRUE(std::holds_alternative<td::Ref<vm::CellSlice>>(
           continuation.load_encoded(exact_output.ok().state.account_blocks)));

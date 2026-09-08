@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <exception>
 #include <memory>
 #include <type_traits>
 
@@ -189,7 +190,7 @@ inline td::Result<WorkchainAccountSettlement> execute(
     // closure. Lazy/partial acquisition would require changing this boundary.
     // The engine has already produced its result: its own allocation/work bound
     // remains an independent pre-execution obligation, not proved by this walk.
-    auto charge_closure = [&](std::optional<NativeStateReadMeter>& meter, td::Ref<vm::Cell> root,
+    auto charge_closure = [](std::optional<NativeStateReadMeter>& meter, td::Ref<vm::Cell> root,
                               const char* limit_message, const char* unavailable_message) -> td::Status {
       if (!meter || root.is_null()) return td::Status::OK();
       std::vector<td::Ref<vm::Cell>> pending{std::move(root)};
@@ -278,55 +279,100 @@ inline td::Result<WorkchainAccountSettlement> execute(
       imports = std::move(payout.imports);
       exports = std::move(payout.exports);
     }
-    std::optional<NativeStateReadMeter> output_meter;
+    std::shared_ptr<const NativeStateReadMeter> output_snapshot;
     if constexpr (std::is_same_v<Admission, AdmittedBatchInput>) {
       const auto& limits = admitted.policy().resources();
-      output_meter.emplace(limits.work_output.max_output_cells, limits.work_output.max_output_bits);
-      // All three dictionary outputs use get_wrapped_dict_root(): even an
-      // empty dictionary yields a finalized cell; construction failure throws.
-      // Select only the independently rebuilt write set. Walking the whole
-      // ShardAccounts root would charge every untouched account as output.
-      // Lookup work remains bounded separately by write count and key width;
-      // account-dictionary/shard update proofs are a later output root group.
-      vm::AugmentedDictionary produced(vm::load_cell_slice_ref(state.accounts), 256, tlb::aug_ShardAccounts);
-      for (const auto& key : declarations.writes) {
-        auto value = produced.lookup(key);
-        tlb::ShardAccount::Record record;
-        if (value.is_null() || value->size_ext() != 0x10140 || !record.unpack(value)) {
-          return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),
-                                   "rebuilt account wrapper malformed");
+      // Only rebuilt outputs, decoded declaration keys and immutable limits
+      // enter this scope. There is no direct engine/candidate-parser capture;
+      // engine-produced Cells can still execute load callbacks, which the
+      // exception boundary below contains.
+      // References spliced from authenticated state are still local sources;
+      // the existing read observer keeps its separate footprint enforcement.
+      auto admit_output = [&state, &imports, &exports, &declarations, &limits, &charge_closure]()
+          -> td::Result<std::shared_ptr<const NativeStateReadMeter>> {
+        std::optional<NativeStateReadMeter> output_meter;
+        output_meter.emplace(limits.work_output.max_output_cells, limits.work_output.max_output_bits);
+        // All three dictionary outputs use get_wrapped_dict_root(): even an
+        // empty dictionary yields a finalized cell; construction failure throws.
+        // Select only the independently rebuilt write set. Walking the whole
+        // ShardAccounts root would charge every untouched account as output.
+        // Lookup work remains bounded separately by write count and key width;
+        // account-dictionary/shard update proofs are a later output root group.
+        vm::AugmentedDictionary produced(vm::load_cell_slice_ref(state.accounts), 256, tlb::aug_ShardAccounts);
+        for (const auto& key : declarations.writes) {
+          auto value = produced.lookup(key);
+          tlb::ShardAccount::Record record;
+          if (value.is_null() || value->size_ext() != 0x10140 || !record.unpack(value)) {
+            return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),
+                                     "rebuilt account wrapper malformed");
+          }
+          // Acquisition validated this same immutable depth value as uint16
+          // before calling the engine; no second policy supplies this narrowing.
+          auto closure = read_workchain_account_closure(record.account, *output_meter,
+              limits.state.max_account_cells, limits.state.max_account_bits,
+              static_cast<std::uint16_t>(limits.state.max_account_depth));
+          if (std::holds_alternative<NativeClosureLimit>(closure) ||
+              std::holds_alternative<WorkchainAccountClosureLimit>(closure)) {
+            // This is newly proposed output, not an unreadable persisted account.
+            return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::CandidateInvalid),
+                                     "rebuilt account exceeds output or per-account budget");
+          }
+          if (std::holds_alternative<LocalUnavailable>(closure)) {
+            return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),
+                                     "rebuilt account content unavailable");
+          }
         }
-        // Acquisition validated this same immutable depth value as uint16
-        // before calling the engine; no second policy supplies this narrowing.
-        auto closure = read_workchain_account_closure(record.account, *output_meter,
-            limits.state.max_account_cells, limits.state.max_account_bits,
-            static_cast<std::uint16_t>(limits.state.max_account_depth));
-        if (std::holds_alternative<NativeClosureLimit>(closure) ||
-            std::holds_alternative<WorkchainAccountClosureLimit>(closure)) {
-          // This is newly proposed output, not an unreadable persisted account.
-          return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::CandidateInvalid),
-                                   "rebuilt account exceeds output or per-account budget");
+        auto charge_output = [&](td::Ref<vm::Cell> root) {
+          return charge_closure(output_meter, std::move(root), "output closure exceeds authenticated budget",
+                                "rebuilt output content unavailable");
+        };
+        TRY_STATUS(charge_output(state.account_blocks));
+        TRY_STATUS(charge_output(imports.in_msg_descr));
+        for (const auto& output : exports) {
+          TRY_STATUS(charge_output(output.msg));
+          TRY_STATUS(charge_output(output.trans));
         }
-        if (std::holds_alternative<LocalUnavailable>(closure)) {
-          return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),
-                                   "rebuilt account content unavailable");
-        }
-      }
-      auto charge_output = [&](td::Ref<vm::Cell> root) {
-        return charge_closure(output_meter, std::move(root), "output closure exceeds authenticated budget",
-                              "rebuilt output content unavailable");
+        return std::make_shared<const NativeStateReadMeter>(std::move(*output_meter));
       };
-      TRY_STATUS(charge_output(state.account_blocks));
-      TRY_STATUS(charge_output(imports.in_msg_descr));
-      for (const auto& output : exports) {
-        TRY_STATUS(charge_output(output.msg));
-        TRY_STATUS(charge_output(output.trans));
-      }
+      auto guarded_output = [&admit_output]() -> td::Result<std::shared_ptr<const NativeStateReadMeter>> {
+        // Keep the unrelated Native exception classes aligned with
+        // NativeStateReadMeter::load_encoded in workchain-native-materialization.h.
+        // Standard exceptions from other own-output construction are local too;
+        // do not catch all types and intercept the custom footprint signal.
+        const char* cause = nullptr;
+        try {
+          return admit_output();
+        } catch (const vm::VmError&) {
+          cause = "rebuilt output admission: VM read/decode failure";
+        } catch (const vm::VmVirtError&) {
+          cause = "rebuilt output admission: virtual content unavailable";
+        } catch (const vm::VmNoGas&) {
+          cause = "rebuilt output admission: Native gas exhaustion";
+        } catch (const vm::VmFatal&) {
+          cause = "rebuilt output admission: Native fatal exception";
+        } catch (const vm::CellBuilder::CellCreateError&) {
+          cause = "rebuilt output admission: CellCreateError";
+        } catch (const vm::CellBuilder::CellWriteError&) {
+          cause = "rebuilt output admission: CellWriteError";
+        } catch (const std::bad_alloc&) {
+          cause = "rebuilt output admission: allocation failure";
+        } catch (const std::length_error&) {
+          cause = "rebuilt output admission: allocation length failure";
+        } catch (const std::exception&) {
+          cause = "rebuilt output admission: standard local exception";
+        }
+        // Returned quota errors remain CandidateInvalid; only exceptions from
+        // own-output acquisition/construction are translated here. The custom
+        // UnadmittedStateRead signal is left to the enclosing sticky observer.
+        return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),
+                                 td::Slice(cause));
+      };
+      TRY_RESULT(snapshot, guarded_output());
+      output_snapshot = std::move(snapshot);
     }
     return WorkchainAccountSettlement{std::move(executed.input), std::move(effects_root),
                                       std::move(state), std::move(message), std::move(imports), std::move(exports),
-                                      output_meter ? std::make_shared<const NativeStateReadMeter>(
-                                          std::move(*output_meter)) : nullptr};
+                                      std::move(output_snapshot)};
   };
   try {
     auto result = settle();

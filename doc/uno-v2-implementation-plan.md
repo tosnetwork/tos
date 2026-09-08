@@ -2555,3 +2555,45 @@ requirement, not a claim that the observer permits an actual load of that accoun
 The independent warm-source result has the same rebuilt account hash. Follow-up
 red and final restored regression evidence is archived in
 `measurements/uno-v2-output-record-review-followup.json`.
+
+### D31 own-output exception boundary (in progress)
+
+Before adding the queue/shard continuation, contain the existing own-output
+admission stage. The outbound builder accepts current private queues after
+Native processing, not raw previous-state roots; treating those roots as a
+whole old-state closure is not a correct shortcut for path-aware state admission.
+That integration must carry both state and output accounting with the original
+proof tracking and distinguish already-built nodes from old source reads.
+
+The new narrow output closure explicitly captures rebuilt artifacts, decoded
+declaration keys, immutable resource limits and a capture-free traversal helper.
+It cannot call the engine or decode the candidate without changing that capture
+boundary. Native read/decode, virtualization, gas/fatal, cell-create/write and
+allocation exceptions become LocalUnavailable. Returned quota overruns remain
+CandidateInvalid. The custom old-state footprint signal still reaches its
+existing sticky observer, and no snapshot is returned on failure. Legacy
+singleton calls do not enter this boundary.
+
+Eight independent exception types are injected at the last observed output
+read, after a successful identical-source calibration. On the unchanged
+implementation every type escaped and the aggregate assertion failed at 8 != 0.
+This concerns recoverable injected exceptions, not a guarantee that Status
+allocation succeeds under process-wide memory exhaustion. It does not contain
+the earlier engine/effects/Native preparation frame or authorize live execution.
+
+Review disposition: accepted the exception-inventory coupling concern. The meter
+and output boundary now cross-reference one another; a final std::exception
+handler contains other standard own-output faults without catching the unrelated
+custom footprint signal. A ninth runtime_error witness first escaped the eight-
+clause implementation (1 != 0). The capture comment now distinguishes absence of
+direct engine/parser access from arbitrary load callbacks on engine-produced
+Cells. The latter are local implementation behavior, not fresh candidate parsing.
+
+Evidence is indexed in `measurements/uno-v2-output-exception-controls.json`
+(original eight-class red run, compile-capture controls, classification mutation,
+historical initial-green hashes) and `measurements/uno-v2-output-exception-restored.json`
+(that stage's complete regression). The classification mutation aborts at kind 0:
+localization of kinds 1-7 follows from their same calibrated injection point and
+the shared return, not seven extra mutation runs. Final ninth-class follow-up
+and restored-source evidence is in `measurements/uno-v2-output-exception-followup.json`.
+The reviewer inspected source and archived evidence, but did not build or run.

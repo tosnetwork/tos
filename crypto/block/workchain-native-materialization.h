@@ -75,6 +75,8 @@ class NativeStateReadMeter {
     }
     // VmError, VmNoGas and VmFatal propagate with the ExecutionFault marker
     // installed before the read. The outer boundary must contain all of them.
+    // Own-output admission's boundary is in workchain-account-settlement.h;
+    // additions here require updating its exception inventory and fault tests.
   }
 
  private:
