@@ -2597,3 +2597,67 @@ localization of kinds 1-7 follows from their same calibrated injection point and
 the shared return, not seven extra mutation runs. Final ninth-class follow-up
 and restored-source evidence is in `measurements/uno-v2-output-exception-followup.json`.
 The reviewer inspected source and archived evidence, but did not build or run.
+
+### Private outbound descriptor admission continuation
+
+The outbound builder now has a settlement-derived continuation: no second
+message list is accepted. It copies the immutable output-meter snapshot and
+charges the rebuilt per-block OutMsgDescr into that same union, preserving
+shared message and transaction deduplication across stages. A failed continuation
+does not mutate its predecessor's snapshot. Missing continuation context is a
+local contract failure, while exceeding the authenticated output allowance is
+CandidateInvalid. Excess export count and illegal deferral choices are likewise
+candidate errors; authenticated dispatch corruption retains its separate code.
+Local queue construction and reads use the own-output exception
+boundary, not a candidate parsing boundary.
+
+This is not complete queue admission. The supplied roots are the host's private
+queues after earlier Native processing; old-state reads still require their own
+authenticated admission. Persistent outgoing/dispatch roots are intentionally
+not whole-tree charged as new output: doing so would traverse untouched history.
+Their update proofs, the final shard update, preconstruction work bounds and
+the live invocation remain outstanding. Public result structs are not unforgeable
+authorization tokens; replay must construct this continuation from its own
+settlement, never from a claimed meter. No live execution gate is opened here.
+
+Initial review disposition: accepted the export-count classification and the
+missing deferral/nonempty-descriptor coverage. Disputed the proposed two-batch
+failure scenario: one logical engine batch per block is required, and the D31
+output budget is for the block, not a fresh budget for each builder invocation.
+OutMsgDescr is a per-block record dictionary; unlike the persistent outgoing
+and dispatch queues, earlier Native records in it are part of this block's
+output and must be charged. A resumed nonempty fixture now checks the final
+union against an independent storage oracle. This fixture rearranges local
+records and is not evidence of multi-batch authorization.
+
+Deferral is an externally proposed choice, so its explicit ordering failure is
+preserved as CandidateInvalid. Message contents, transaction metadata, queue
+roots and Native policy remain local reconstruction inputs. Their public types
+do not prove provenance; the enclosing live adapter still must exclude claimed
+records from those inputs. The review's assertion that metadata and duplicate
+message identities are supplied by candidate queues does not hold for this
+settlement-derived interface, but the absence of a live provenance adapter is
+real and remains an activation limitation.
+
+Four independent rebuilt controls failed: omitted descriptor charging and
+returning the prior meter each produced 82 versus 91 cells; classifying either
+export-count excess or illegal deferral as local failure produced -7201 versus
+-7200. Each mutant was generated from one full-file baseline, not cumulatively.
+After complete-file restoration all four original snippets occurred exactly once,
+and reapplying each recorded substitution reproduced its archived source SHA256.
+The controls are manual, not a CI mutation facility. Records and substitutions
+are in `measurements/uno-v2-outbound-continuation-controls.json`; restored-source
+111 block tests, 30 admission tests and scan results are in
+`measurements/uno-v2-outbound-continuation-restored.json`.
+
+Follow-up review accepted the per-block descriptor dispute and the classification
+corrections, with one precommit evidence request. The additional one-site control
+replaced the incoming descriptor dictionary with an empty one. Earlier empty-root
+cases passed, then the resumed descriptor hash comparison failed at line 2881;
+the complete source was immediately restored and the targeted test passed.
+`measurements/uno-v2-outbound-seeded-control.json` records this control. It proves
+the resumed hash comparison is sensitive; it does not independently kill every
+assertion that follows that comparison. Live provenance for prior Native records,
+deterministic backlog derivation, queue update admission and the final shard
+update remain required. The Native maximum-output count is a separate per-call
+bound; the cells/bits union budget is the per-block bound described above.

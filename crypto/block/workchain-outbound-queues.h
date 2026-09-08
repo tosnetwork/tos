@@ -7,6 +7,7 @@
 #include "block/block-parse.h"
 #include "block/native-new-export.h"
 #include "block/workchain-participant-lt.h"
+#include "block/workchain-account-settlement.h"
 
 namespace block {
 
@@ -30,6 +31,7 @@ struct WorkchainOutboundQueuePolicy {
 struct WorkchainOutboundQueueResult {
   WorkchainOutboundQueueRoots roots;
   std::uint64_t queued = 0, deferred = 0;
+  std::shared_ptr<const NativeStateReadMeter> output_admission;
 };
 
 // Post-admission enqueue-only construction using Native queue encodings.
@@ -95,7 +97,8 @@ inline td::Result<WorkchainOutboundQueueResult> build_workchain_outbound_queues(
     const td::Bits256 actual_source = source.address;
     bool required = dispatch.lookup(actual_source).not_null() || unprocessed_dispatch_sources.count(actual_source);
     if ((required && !item.defer) || (item.defer && !required && (!policy.deferring_enabled || output.msg_idx == 0))) {
-      return td::Status::Error("outbound deferral violates actual-source ordering");
+      return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::CandidateInvalid),
+                              "outbound deferral violates actual-source ordering");
     }
     auto remaining = tlb::t_Tomis.as_integer(info.fwd_fee);
     if (remaining.is_null() || !remaining->unsigned_fits_bits(256)) {
@@ -120,7 +123,8 @@ inline td::Result<WorkchainOutboundQueueResult> build_workchain_outbound_queues(
       vm::Dictionary account_queue(64);
       std::uint64_t count;
       if (!unpack_account_dispatch_queue(dispatch.lookup(actual_source), account_queue, count)) {
-        return td::Status::Error("invalid authenticated account dispatch queue");
+        return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::AuthenticatedStateCorrupt),
+                                "invalid authenticated account dispatch queue");
       }
       TRY_RESULT(next_count, participant_lt_detail::checked_add(count, 1));
       if (next_count >= (std::uint64_t{1} << 48)) return td::Status::Error("account dispatch count exceeds wire width");
@@ -146,6 +150,56 @@ inline td::Result<WorkchainOutboundQueueResult> build_workchain_outbound_queues(
   }
   result.roots = {descriptors.get_wrapped_dict_root(), outgoing.get_wrapped_dict_root(), dispatch.get_wrapped_dict_root()};
   return result;
+}
+
+// Continue a locally reconstructed settlement, not a claimed replay artifact.
+// old.descriptors contains this block's earlier Native records, never a prior
+// block's OutMsgDescr. The budget is per block, not per invocation: all such
+// records must be included. There is only one logical engine batch per block.
+// Only per-block descriptors extend the output union here. Persistent queue
+// updates still require independent state-read and update-proof admission;
+// walking their entire roots would charge untouched historical content.
+inline td::Result<WorkchainOutboundQueueResult> continue_workchain_outbound_queues(
+    const WorkchainOutboundQueueRoots& old, const WorkchainAccountSettlement& settlement,
+    const std::vector<bool>& defer, const std::set<td::Bits256>& unprocessed_dispatch_sources,
+    const WorkchainOutboundQueuePolicy& policy) {
+  auto construct = [&old, &settlement, &defer, &unprocessed_dispatch_sources, &policy]()
+      -> td::Result<WorkchainOutboundQueueResult> {
+    if (!settlement.output_admission) {
+      return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),
+                              "invalid local outbound continuation context");
+    }
+    if (defer.size() != settlement.exports.size() || settlement.exports.size() > policy.max_outputs) {
+      return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::CandidateInvalid),
+                              "outbound count or claimed choice count exceeds admitted context");
+    }
+    std::vector<WorkchainQueuedOutput> outputs;
+    outputs.reserve(settlement.exports.size());
+    for (std::size_t i = 0; i < settlement.exports.size(); ++i) {
+      outputs.push_back({settlement.exports[i], defer[i]});
+    }
+    auto built = build_workchain_outbound_queues(old, outputs, unprocessed_dispatch_sources, policy);
+    if (built.is_error()) {
+      // The only candidate-controlled input to this builder is the deferral
+      // choice. Its explicit ordering rejection must remain a candidate error.
+      // The remaining inputs (including metadata in settlement.exports) are
+      // local reconstruction; authenticated dispatch corruption stays distinct.
+      if (built.error().code() == static_cast<int>(WorkchainExecutionFailure::CandidateInvalid) ||
+          built.error().code() == static_cast<int>(WorkchainExecutionFailure::AuthenticatedStateCorrupt)) {
+        return built.move_as_error();
+      }
+      return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),
+                              built.error().message());
+    }
+    auto result = built.move_as_ok();
+    std::optional<NativeStateReadMeter> meter;
+    meter.emplace(*settlement.output_admission);
+    TRY_STATUS(account_settlement_detail::charge_closure(meter, result.roots.descriptors,
+        "outbound descriptors exceed authenticated output budget", "rebuilt outbound descriptors unavailable"));
+    result.output_admission = std::make_shared<const NativeStateReadMeter>(std::move(*meter));
+    return result;
+  };
+  return account_settlement_detail::contain_local_output_failure(construct);
 }
 
 }  // namespace block

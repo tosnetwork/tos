@@ -2797,6 +2797,92 @@ TEST(WorkchainBlock, NativeDisposalEntry) {
     ASSERT_EQ(exact_output.ok().output_admission->usage().cells, output_size.cells);
     ASSERT_EQ(exact_output.ok().output_admission->usage().bits, output_size.bits);
     {
+      block::tlb::Aug_OutMsgDescr augmentation(16);
+      vm::AugmentedDictionary descriptors(256, augmentation);
+      vm::AugmentedDictionary outgoing(352, block::tlb::aug_OutMsgQueue);
+      vm::AugmentedDictionary dispatch(256, block::tlb::aug_DispatchQueue);
+      block::WorkchainOutboundQueueRoots empty{descriptors.get_wrapped_dict_root(),
+          outgoing.get_wrapped_dict_root(), dispatch.get_wrapped_dict_root()};
+      block::WorkchainOutboundQueuePolicy queue_policy{{2, tos::shardIdAll}, 10, 16, false, true, 3};
+      std::vector<bool> defer(3, false);
+      auto queued = block::continue_workchain_outbound_queues(empty, complete_result.ok(), defer, {}, queue_policy);
+      if (queued.is_error()) LOG(ERROR) << queued.error();
+      ASSERT_TRUE(queued.is_ok());
+      auto total_size = output_size;
+      ASSERT_TRUE(total_size.add_used_storage(queued.ok().roots.descriptors).is_ok());
+      ASSERT_TRUE(total_size.cells > output_size.cells && total_size.bits > output_size.bits);
+      ASSERT_EQ(queued.ok().output_admission->usage().cells, total_size.cells);
+      ASSERT_EQ(queued.ok().output_admission->usage().bits, total_size.bits);
+      ASSERT_EQ(complete_result.ok().output_admission->usage().cells, output_size.cells);
+      auto exact = with_output_limits(total_size.cells, total_size.bits);
+      ASSERT_TRUE(exact.is_ok());
+      auto exact_queue = block::continue_workchain_outbound_queues(empty, exact.ok(), defer, {}, queue_policy);
+      ASSERT_TRUE(exact_queue.is_ok());
+      ASSERT_EQ(exact_queue.ok().roots.descriptors->get_hash(), queued.ok().roots.descriptors->get_hash());
+      for (bool cells : {false, true}) {
+        // Both totals exceed the original settlement totals, so subtraction
+        // is safe and the earlier stage remains admissible.
+        auto short_budget = with_output_limits(total_size.cells - (cells ? 1 : 0),
+                                               total_size.bits - (cells ? 0 : 1));
+        ASSERT_TRUE(short_budget.is_ok());
+        auto rejected = block::continue_workchain_outbound_queues(empty, short_budget.ok(), defer, {}, queue_policy);
+        ASSERT_TRUE(rejected.is_error());
+        ASSERT_EQ(rejected.error().code(), static_cast<int>(block::WorkchainExecutionFailure::CandidateInvalid));
+        ASSERT_EQ(short_budget.ok().output_admission->usage().cells, output_size.cells);
+      }
+      auto missing = complete_result.ok();
+      missing.output_admission.reset();
+      auto rejected = block::continue_workchain_outbound_queues(empty, missing, defer, {}, queue_policy);
+      ASSERT_TRUE(rejected.is_error());
+      ASSERT_EQ(rejected.error().code(), static_cast<int>(block::WorkchainExecutionFailure::LocalUnavailable));
+      auto limited = queue_policy;
+      limited.max_outputs = 2;
+      for (const auto& failure : {
+          block::continue_workchain_outbound_queues(empty, complete_result.ok(), defer, {}, limited),
+          block::continue_workchain_outbound_queues(empty, complete_result.ok(), {}, {}, queue_policy),
+          block::continue_workchain_outbound_queues(empty, complete_result.ok(), defer, {foreign}, queue_policy)}) {
+        ASSERT_TRUE(failure.is_error());
+        ASSERT_EQ(failure.error().code(), static_cast<int>(block::WorkchainExecutionFailure::CandidateInvalid));
+      }
+      std::vector<block::WorkchainQueuedOutput> independently_queued;
+      auto deferred_choices = defer;
+      for (std::size_t i = 0; i < complete_result.ok().exports.size(); ++i) {
+        block::gen::CommonMsgInfo::Record_int_msg_info info;
+        block::gen::MsgAddressInt::Record_addr_std source;
+        ASSERT_TRUE(tlb::unpack_cell_inexact(complete_result.ok().exports[i].msg, info));
+        ASSERT_TRUE(tlb::csr_unpack(info.src, source));
+        deferred_choices[i] = td::Bits256(source.address) == foreign;
+        independently_queued.push_back({complete_result.ok().exports[i], deferred_choices[i]});
+      }
+      auto deferred = block::continue_workchain_outbound_queues(
+          empty, complete_result.ok(), deferred_choices, {foreign}, queue_policy);
+      ASSERT_TRUE(deferred.is_ok());
+      ASSERT_EQ(deferred.ok().deferred, 2u);
+      auto reference = block::build_workchain_outbound_queues(empty, independently_queued, {foreign}, queue_policy);
+      ASSERT_TRUE(reference.is_ok());
+      ASSERT_EQ(reference.ok().roots.descriptors->get_hash(), deferred.ok().roots.descriptors->get_hash());
+      ASSERT_EQ(reference.ok().roots.outgoing->get_hash(), deferred.ok().roots.outgoing->get_hash());
+      ASSERT_EQ(reference.ok().roots.dispatch->get_hash(), deferred.ok().roots.dispatch->get_hash());
+      auto deferred_size = output_size;
+      ASSERT_TRUE(deferred_size.add_used_storage(deferred.ok().roots.descriptors).is_ok());
+      ASSERT_EQ(deferred.ok().output_admission->usage().cells, deferred_size.cells);
+      ASSERT_EQ(deferred.ok().output_admission->usage().bits, deferred_size.bits);
+      // Seed an earlier Native record of the same block. This rearranges a
+      // local fixture, not a second engine batch or an authorization proof.
+      auto seeded = block::build_workchain_outbound_queues(
+          empty, {independently_queued.front()}, {foreign}, queue_policy);
+      ASSERT_TRUE(seeded.is_ok());
+      auto remaining = complete_result.ok();
+      remaining.exports.erase(remaining.exports.begin());
+      deferred_choices.erase(deferred_choices.begin());
+      auto resumed = block::continue_workchain_outbound_queues(
+          seeded.ok().roots, remaining, deferred_choices, {foreign}, queue_policy);
+      ASSERT_TRUE(resumed.is_ok());
+      ASSERT_EQ(resumed.ok().roots.descriptors->get_hash(), deferred.ok().roots.descriptors->get_hash());
+      ASSERT_EQ(resumed.ok().output_admission->usage().cells, deferred_size.cells);
+      ASSERT_EQ(resumed.ok().output_admission->usage().bits, deferred_size.bits);
+    }
+    {
       auto saved_effects = engine.effects;
       ASSERT_TRUE(!engine.effects.updates.empty());
       unsigned output_loads = 0;

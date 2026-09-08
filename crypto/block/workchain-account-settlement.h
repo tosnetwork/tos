@@ -43,6 +43,69 @@ namespace account_settlement_detail {
 // be used for candidate decoding or translated into candidate invalidity.
 struct UnadmittedStateRead {};
 
+// Source-specific helpers: callers must pass only locally rebuilt output or
+// engine-effects closures, never a parser for untrusted candidate wire data.
+inline td::Status charge_closure(std::optional<NativeStateReadMeter>& meter, td::Ref<vm::Cell> root,
+                          const char* limit_message, const char* unavailable_message) {
+  if (!meter || root.is_null()) return td::Status::OK();
+  std::vector<td::Ref<vm::Cell>> pending{std::move(root)};
+  while (!pending.empty()) {
+    auto cell = std::move(pending.back());
+    pending.pop_back();
+    if (meter->charged_hashes().count(cell->get_hash())) continue;
+    auto loaded = meter->load_encoded(cell);
+    if (std::holds_alternative<NativeClosureLimit>(loaded)) {
+      return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::CandidateInvalid),
+                               td::Slice(limit_message));
+    }
+    auto* slice = std::get_if<td::Ref<vm::CellSlice>>(&loaded);
+    if (!slice) {
+      return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),
+                               td::Slice(unavailable_message));
+    }
+    for (unsigned i = 0; i < (*slice)->size_refs(); ++i) {
+      pending.push_back((*slice)->prefetch_ref(i));
+    }
+  }
+  return td::Status::OK();
+}
+
+template <class Function>
+inline auto contain_local_output_failure(const Function& function) -> decltype(function()) {
+  // Keep the unrelated Native exception classes aligned with
+  // NativeStateReadMeter::load_encoded in workchain-native-materialization.h.
+  // Standard exceptions from other own-output construction are local too;
+  // do not catch all types and intercept the custom footprint signal.
+  const char* cause = nullptr;
+  try {
+    return function();
+  } catch (const vm::VmError&) {
+    cause = "rebuilt output admission: VM read/decode failure";
+  } catch (const vm::VmVirtError&) {
+    cause = "rebuilt output admission: virtual content unavailable";
+  } catch (const vm::VmNoGas&) {
+    cause = "rebuilt output admission: Native gas exhaustion";
+  } catch (const vm::VmFatal&) {
+    cause = "rebuilt output admission: Native fatal exception";
+  } catch (const vm::CellBuilder::CellCreateError&) {
+    cause = "rebuilt output admission: CellCreateError";
+  } catch (const vm::CellBuilder::CellWriteError&) {
+    cause = "rebuilt output admission: CellWriteError";
+  } catch (const std::bad_alloc&) {
+    cause = "rebuilt output admission: allocation failure";
+  } catch (const std::length_error&) {
+    cause = "rebuilt output admission: allocation length failure";
+  } catch (const std::exception&) {
+    cause = "rebuilt output admission: standard local exception";
+  }
+  // Returned quota errors remain CandidateInvalid; only exceptions from
+  // own-output acquisition/construction are translated here. The custom
+  // UnadmittedStateRead signal is left to the enclosing sticky observer.
+  return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),
+                           td::Slice(cause));
+}
+
+
 template <class Admission>
 inline td::Result<WorkchainAccountSettlement> execute(
     const WorkchainAccountEngine& engine, td::Ref<vm::Cell> old_accounts,
@@ -190,30 +253,6 @@ inline td::Result<WorkchainAccountSettlement> execute(
     // closure. Lazy/partial acquisition would require changing this boundary.
     // The engine has already produced its result: its own allocation/work bound
     // remains an independent pre-execution obligation, not proved by this walk.
-    auto charge_closure = [](std::optional<NativeStateReadMeter>& meter, td::Ref<vm::Cell> root,
-                              const char* limit_message, const char* unavailable_message) -> td::Status {
-      if (!meter || root.is_null()) return td::Status::OK();
-      std::vector<td::Ref<vm::Cell>> pending{std::move(root)};
-      while (!pending.empty()) {
-        auto cell = std::move(pending.back());
-        pending.pop_back();
-        if (meter->charged_hashes().count(cell->get_hash())) continue;
-        auto loaded = meter->load_encoded(cell);
-        if (std::holds_alternative<NativeClosureLimit>(loaded)) {
-          return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::CandidateInvalid),
-                                   td::Slice(limit_message));
-        }
-        auto* slice = std::get_if<td::Ref<vm::CellSlice>>(&loaded);
-        if (!slice) {
-          return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),
-                                   td::Slice(unavailable_message));
-        }
-        for (unsigned i = 0; i < (*slice)->size_refs(); ++i) {
-          pending.push_back((*slice)->prefetch_ref(i));
-        }
-      }
-      return td::Status::OK();
-    };
     auto charge_effect = [&](td::Ref<vm::Cell> root) {
       return charge_closure(effect_meter, std::move(root), "effects closure exceeds authenticated budget",
                             "engine effects content unavailable");
@@ -288,7 +327,7 @@ inline td::Result<WorkchainAccountSettlement> execute(
       // exception boundary below contains.
       // References spliced from authenticated state are still local sources;
       // the existing read observer keeps its separate footprint enforcement.
-      auto admit_output = [&state, &imports, &exports, &declarations, &limits, &charge_closure]()
+      auto admit_output = [&state, &imports, &exports, &declarations, &limits]()
           -> td::Result<std::shared_ptr<const NativeStateReadMeter>> {
         std::optional<NativeStateReadMeter> output_meter;
         output_meter.emplace(limits.work_output.max_output_cells, limits.work_output.max_output_bits);
@@ -334,40 +373,7 @@ inline td::Result<WorkchainAccountSettlement> execute(
         }
         return std::make_shared<const NativeStateReadMeter>(std::move(*output_meter));
       };
-      auto guarded_output = [&admit_output]() -> td::Result<std::shared_ptr<const NativeStateReadMeter>> {
-        // Keep the unrelated Native exception classes aligned with
-        // NativeStateReadMeter::load_encoded in workchain-native-materialization.h.
-        // Standard exceptions from other own-output construction are local too;
-        // do not catch all types and intercept the custom footprint signal.
-        const char* cause = nullptr;
-        try {
-          return admit_output();
-        } catch (const vm::VmError&) {
-          cause = "rebuilt output admission: VM read/decode failure";
-        } catch (const vm::VmVirtError&) {
-          cause = "rebuilt output admission: virtual content unavailable";
-        } catch (const vm::VmNoGas&) {
-          cause = "rebuilt output admission: Native gas exhaustion";
-        } catch (const vm::VmFatal&) {
-          cause = "rebuilt output admission: Native fatal exception";
-        } catch (const vm::CellBuilder::CellCreateError&) {
-          cause = "rebuilt output admission: CellCreateError";
-        } catch (const vm::CellBuilder::CellWriteError&) {
-          cause = "rebuilt output admission: CellWriteError";
-        } catch (const std::bad_alloc&) {
-          cause = "rebuilt output admission: allocation failure";
-        } catch (const std::length_error&) {
-          cause = "rebuilt output admission: allocation length failure";
-        } catch (const std::exception&) {
-          cause = "rebuilt output admission: standard local exception";
-        }
-        // Returned quota errors remain CandidateInvalid; only exceptions from
-        // own-output acquisition/construction are translated here. The custom
-        // UnadmittedStateRead signal is left to the enclosing sticky observer.
-        return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),
-                                 td::Slice(cause));
-      };
-      TRY_RESULT(snapshot, guarded_output());
+      TRY_RESULT(snapshot, contain_local_output_failure(admit_output));
       output_snapshot = std::move(snapshot);
     }
     return WorkchainAccountSettlement{std::move(executed.input), std::move(effects_root),
