@@ -42,9 +42,8 @@ kernel's verifier call closure and normal dependency graph are separately gated.
 
 ## Fork differences requiring continuing review
 
-The prior source comparison is recorded at
-~/memo/TOS_CONFIDENTIAL_BALANCE_E_XELIS_RUST_REVIEW.md. These are reviewed
-categories, not a proof that every fork modification is harmless:
+The source comparison identifies the following review categories. This summary
+is not a proof that every fork modification is harmless:
 
 - dalek contains ECDLP and explicit variable-time scalar functionality, not just
   type compatibility. The kernel does not enable ECDLP. The earlier comparison

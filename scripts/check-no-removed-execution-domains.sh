@@ -2,10 +2,10 @@
 set -euo pipefail
 
 # EVM remains a removed execution domain. Uno is approved only as the wc=2
-# BlockTransition engine in ~/memo/TOS_UNO_PRIVACY_WORKCHAIN_V2.md.
+# confidential-amount BlockTransition engine.
 # The former independent-asset and shielded-pool implementations remain banned.
 # Bridge exclusions apply to the execution-domain scan, not the retired-symbol
-# scan. The external policy also needs updating; this script does not claim it is:
+# scan. Public execution-registry policy:
 # https://github.com/tosnetwork/doc/blob/main/tos-blockchain/workchain-execution-registry.md
 exec python3 - "${1:-.}" <<'PY'
 import fnmatch
