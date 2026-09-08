@@ -234,7 +234,7 @@ JsonRpcServer::JsonRpcServer(
     Options options)
     : validator_manager_(std::move(validator_manager)),
       opts_(std::move(options)),
-      cache_(opts_.cache_max_entries, opts_.cache_max_body_bytes),
+      cache_(std::make_shared<JsonRpcResponseCache>(opts_.cache_max_entries, opts_.cache_max_body_bytes)),
       per_ip_gate_(opts_.per_ip_rate_window, opts_.per_ip_rate_requests, opts_.per_ip_rate_max_sources) {
   // Arm periodic cache cleanup if caching is enabled
   if (opts_.cache_ttl > 0) {
@@ -1745,8 +1745,8 @@ const std::set<std::string> &JsonRpcServer::cacheable_methods() {
 }
 
 void JsonRpcServer::alarm() {
-  if (opts_.cache_ttl > 0 && !cache_.empty()) {
-    cache_.evict_expired();
+  if (opts_.cache_ttl > 0 && !cache_->empty()) {
+    cache_->evict_expired();
   }
   // Re-arm alarm every 10 seconds if caching is enabled
   if (opts_.cache_ttl > 0) {
@@ -1865,7 +1865,7 @@ void JsonRpcServer::cached_dispatch_method(std::string method, td::JsonObject &p
   }
 
   // Check cache
-  auto cached = cache_.lookup(cache_key);
+  auto cached = cache_->lookup(cache_key);
   if (cached.has_value()) {
     // Cache hit — rebuild HTTP response from the cached body string, substituting
     // the current request's id so that each caller gets the correct "id" field.
@@ -1879,7 +1879,7 @@ void JsonRpcServer::cached_dispatch_method(std::string method, td::JsonObject &p
   auto ttl = opts_.cache_ttl;
   auto cors = opts_.cors_origin;
   auto cache_promise = td::PromiseCreator::lambda(
-      [this, cache_key = std::move(cache_key), ttl, req_id,
+      [cache = cache_, cache_key = std::move(cache_key), ttl, req_id,
        cors, orig_promise = std::move(promise)](td::Result<HttpReturn> R) mutable {
         if (R.is_error()) {
           orig_promise.set_error(R.move_as_error());
@@ -1913,9 +1913,9 @@ void JsonRpcServer::cached_dispatch_method(std::string method, td::JsonObject &p
               for (auto &fv : obj.field_values_) {
                 if (fv.first == "result") {
                   auto encoded = td::json_encode<std::string>(fv.second);
-                  if (cache_.store(cache_key, encoded,
+                  if (cache->store(cache_key, encoded,
                                    td::Timestamp::in(static_cast<double>(ttl)))) {
-                    auto cached_value = cache_.lookup(cache_key);
+                    auto cached_value = cache->lookup(cache_key);
                     if (cached_value.has_value()) {
                       orig_promise.set_value(make_json_ok(*cached_value, req_id, cors));
                       return;
@@ -1976,7 +1976,7 @@ void JsonRpcServer::collect(metrics::MetricsPromise P) {
           "JSON-RPC response cache misses"));
   set.families.push_back(
       metrics::MetricFamily::make_scalar("jsonrpc_cache_entries", "gauge",
-          static_cast<double>(cache_.size()),
+          static_cast<double>(cache_->size()),
           "Current number of entries in the response cache"));
 
   // Per-method request and error counters

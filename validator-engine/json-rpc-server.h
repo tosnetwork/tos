@@ -140,6 +140,24 @@ class JsonRpcResponseCache {
   std::size_t body_bytes_{0};
 };
 
+// Fields gathered for buildTransactionIntent before the intent is built.
+// Declared here because completing that request is a member function: the
+// completion runs from a liteserver reply, which may arrive after the
+// server is gone, so it is reached through the actor rather than a raw
+// pointer.
+struct InitialIntentInput {
+  std::string address;
+  std::string body_b64;
+  std::string init_code_b64;
+  std::string init_data_b64;
+  std::string account_model;
+  std::string authorization_version;
+  std::string signer;
+  std::string submitter;
+  std::string fee_payer;
+  std::string delegation_ref;
+};
+
 class JsonRpcServer final : public td::actor::Actor, public virtual metrics::AsyncCollector {
  public:
   struct Options {
@@ -417,6 +435,8 @@ class JsonRpcServer final : public td::actor::Actor, public virtual metrics::Asy
                                  td::Promise<HttpReturn> promise);
   void handle_getAccountAgents(td::JsonObject &params, std::string req_id,
                                td::Promise<HttpReturn> promise);
+  void finish_transaction_intent(InitialIntentInput input, std::string req_id,
+                                 td::Promise<HttpReturn> promise);
   void handle_buildTransactionIntent(td::JsonObject &params, std::string req_id,
                                      td::Promise<HttpReturn> promise);
   void handle_getSigningPayload(td::JsonObject &params, std::string req_id,
@@ -576,7 +596,10 @@ class JsonRpcServer final : public td::actor::Actor, public virtual metrics::Asy
   td::actor::ActorId<validator::ValidatorManagerInterface> validator_manager_;
   td::actor::ActorOwn<http::HttpServer> http_;
   Options opts_;
-  JsonRpcResponseCache cache_;
+  // Held by shared owner for the same reason as the counters: the
+  // completion that stores a response runs from a liteserver reply, which
+  // can arrive after this actor is gone.
+  std::shared_ptr<JsonRpcResponseCache> cache_;
   // Declared after opts_: it is constructed from the option values.
   PerIpRateGate per_ip_gate_;
   td::uint32 consensus_block_seqno_{0};

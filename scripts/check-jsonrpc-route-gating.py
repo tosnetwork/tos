@@ -47,8 +47,37 @@ MUST_GATE = set()
 MUST_BOUND_OTHERWISE = {"/readyz": "readyz_cached_until_ = td::Timestamp::in("}
 
 
+def check_no_raw_this_captures() -> int:
+    """No lambda in the JSON-RPC surface may capture a bare `this`.
+
+    These lambdas become promises handed to other actors, and such a
+    promise outlives this one: an abandoned promise is still invoked, and
+    a reply can arrive after the server has stopped. Single-threaded
+    execution rules out a data race, not a destroyed object. The safe
+    forms are an actor id plus a hop back, or a shared owner for whatever
+    the callback actually needs.
+    """
+    offenders = []
+    for path in sorted(SERVER.parent.glob("json-rpc-server*.cpp")):
+        for number, line in enumerate(path.read_text().splitlines(), 1):
+            if "[this" in line:
+                offenders.append(f"{path.name}:{number}: {line.strip()}")
+    if offenders:
+        print("FAIL: lambda(s) capturing a bare `this`:")
+        for offender in offenders:
+            print(f"  {offender}")
+        print()
+        print("Capture actor_id(this) and hop back with send_closure, or capture a")
+        print("shared owner of the state the callback needs.")
+        return 1
+    return 0
+
+
 def main() -> int:
     source = SERVER.read_text()
+
+    if check_no_raw_this_captures() != 0:
+        return 1
 
     found = set(re.findall(r'url == "(/[a-zA-Z0-9_-]+)"', source))
     unknown = found - set(KNOWN_DIRECT_ROUTES)

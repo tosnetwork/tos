@@ -296,19 +296,6 @@ static std::string build_estimate_fee_json(td::int64 in_fwd_fee, td::int64 stora
       << ",\"destination_fees\":[]}";
 }
 
-struct InitialIntentInput {
-  std::string address;
-  std::string body_b64;
-  std::string init_code_b64;
-  std::string init_data_b64;
-  std::string account_model;
-  std::string authorization_version;
-  std::string signer;
-  std::string submitter;
-  std::string fee_payer;
-  std::string delegation_ref;
-};
-
 static std::string extract_delegation_ref(td::JsonObject& obj) {
   for (auto key : {"delegation_ref", "delegation", "delegation_grant"}) {
     auto r = obj.get_optional_string_field(td::Slice{key});
@@ -687,20 +674,8 @@ void JsonRpcServer::handle_sendBocReturnHash(td::JsonObject &params, std::string
       });
 }
 
-void JsonRpcServer::handle_buildTransactionIntent(td::JsonObject &params, std::string req_id,
-                                                  td::Promise<HttpReturn> promise) {
-  auto input_r = parse_initial_intent_input(params);
-  if (input_r.is_error()) {
-    promise.set_value(make_json_error(-32602,
-        PSTRING() << "TRANSACTION_INTENT_UNSUPPORTED: " << input_r.error().message(), req_id));
-    return;
-  }
-  auto input = input_r.move_as_ok();
-
-  // Continuation: build and return the transaction intent.  Extracted as a
-  // shared lambda so both the sync and async-discovery paths converge here.
-  auto do_finish = [this](InitialIntentInput input, std::string req_id,
-                          td::Promise<HttpReturn> promise) mutable {
+void JsonRpcServer::finish_transaction_intent(InitialIntentInput input, std::string req_id,
+                                              td::Promise<HttpReturn> promise) {
     if (!input.delegation_ref.empty()) {
       block::StdAddress addr;
       if (!addr.parse_addr(td::Slice(input.address))) {
@@ -726,7 +701,28 @@ void JsonRpcServer::handle_buildTransactionIntent(td::JsonObject &params, std::s
           PSTRING() << "TRANSACTION_INTENT_UNSUPPORTED: " << msg_r.error().message(), req_id));
       return;
     }
-    promise.set_value(make_json_ok(build_transaction_intent_json(input), req_id));
+}
+
+void JsonRpcServer::handle_buildTransactionIntent(td::JsonObject &params, std::string req_id,
+                                                  td::Promise<HttpReturn> promise) {
+  auto input_r = parse_initial_intent_input(params);
+  if (input_r.is_error()) {
+    promise.set_value(make_json_error(-32602,
+        PSTRING() << "TRANSACTION_INTENT_UNSUPPORTED: " << input_r.error().message(), req_id));
+    return;
+  }
+  auto input = input_r.move_as_ok();
+
+  // Continuation: build and return the transaction intent.  Extracted as a
+  // shared lambda so both the sync and async-discovery paths converge here.
+  // Invoked from liteserver reply continuations as well as inline, so it
+  // must not hold a raw pointer to this server: single-threaded execution
+  // rules out a data race, not the server being gone by the time a reply
+  // arrives. Hop back onto the actor, where `this` is valid by construction.
+  auto do_finish = [self_id = actor_id(this)](InitialIntentInput input, std::string req_id,
+                                              td::Promise<HttpReturn> promise) mutable {
+    td::actor::send_closure(self_id, &JsonRpcServer::finish_transaction_intent, std::move(input),
+                            std::move(req_id), std::move(promise));
   };
 
   // When account_model is "unknown" (caller didn't supply it), perform async
