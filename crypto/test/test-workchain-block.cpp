@@ -6004,15 +6004,31 @@ TEST(WorkchainBlock, MultiAccountRegistryBinding) {
   policy.executor_address = td::Bits256::zero();
   policy.custody_address = td::Bits256::ones();
   policy.engine_configuration = vm::CellBuilder().store_long(37, 8).finalize();
-  auto configuration = [&](unsigned version, td::uint64 capabilities) {
+  auto configuration = [&](unsigned version, td::uint64 capabilities,
+                           const block::WorkchainExecutionDescriptor* actual = nullptr) {
     vm::Dictionary dictionary(32);
     vm::CellBuilder version_cell;
     ASSERT_TRUE(block::gen::t_GlobalVersion.pack_capabilities(version_cell, version, capabilities));
     ASSERT_TRUE(dictionary.set_ref(td::BitArray<32>{8}, version_cell.finalize()));
     ASSERT_TRUE(dictionary.set_ref(td::BitArray<32>{84},
         block::encode_workchain_native_ingress_table({policy}).move_as_ok()));
+    if (actual) {
+      vm::CellBuilder record;
+      record.store_long(0xa6, 8).store_zeroes(32).store_long(0, 8)
+          .store_long(actual->min_split, 8).store_long(actual->max_split, 8)
+          .store_long(1, 1).store_long(actual->active, 1).store_long(actual->accept_msgs, 1)
+          .store_zeroes(13 + 512).store_long(actual->version, 32).store_long(1, 4)
+          .store_long(actual->vm_version, 32).store_long(actual->vm_mode, 64);
+      auto encoded = record.finalize();
+      ASSERT_TRUE(block::gen::t_WorkchainDescr.validate_ref(10000, encoded));
+      vm::Dictionary workchains(32);
+      ASSERT_TRUE(workchains.set(td::BitArray<32>{actual->workchain_id}, vm::load_cell_slice_ref(encoded)));
+      vm::CellBuilder list;
+      ASSERT_TRUE(workchains.append_dict_to_bool(list));
+      ASSERT_TRUE(dictionary.set_ref(td::BitArray<32>{12}, list.finalize()));
+    }
     return block::Config::unpack_config(dictionary.get_root_cell(), td::Bits256::zero(),
-                                       block::Config::needCapabilities).move_as_ok();
+        block::Config::needCapabilities | block::Config::needWorkchainInfo).move_as_ok();
   };
   block::WorkchainExecutionDescriptor descriptor;
   descriptor.workchain_id = 2;
@@ -6097,6 +6113,52 @@ TEST(WorkchainBlock, MultiAccountRegistryBinding) {
     ASSERT_EQ(caught, kind);
   }
   ASSERT_EQ(observed->config_calls, 5u);
+  ASSERT_EQ(observed->execute_calls, 0u);
+  observed->throw_kind = 0;
+  policy.engine_configuration = vm::CellBuilder().store_long(37, 8).finalize();
+  auto full = configuration(16, tos::capBlockTransition, &descriptor);
+  auto from_config = registry.resolve_account_binding_from_config(2, *full);
+  ASSERT_TRUE(from_config.is_ok());
+  ASSERT_TRUE(from_config.ok().executor == observed);
+  ASSERT_EQ(from_config.ok().descriptor.workchain_id, 2);
+  ASSERT_EQ(from_config.ok().descriptor.min_addr_len, 256u);
+  ASSERT_EQ(from_config.ok().descriptor.max_addr_len, 256u);
+  ASSERT_EQ(observed->config_calls, 6u);
+  ASSERT_TRUE(registry.resolve_account_binding_from_config(3, *full).is_error());
+  ASSERT_TRUE(registry.resolve_account_binding_from_config(tos::masterchainId, *full).is_error());
+  ASSERT_TRUE(registry.resolve_account_binding_from_config(2, *config).is_error());
+  for (int mode : {0, block::Config::needCapabilities, block::Config::needWorkchainInfo}) {
+    auto incomplete = block::Config::unpack_config(full->get_root_cell(), td::Bits256::zero(), mode).move_as_ok();
+    auto local = registry.resolve_account_binding_from_config(2, *incomplete);
+    ASSERT_TRUE(local.is_error());
+    ASSERT_TRUE(block::workchain_execution_requires_local_failure(local.error()));
+  }
+  auto absent = registry.resolve_account_binding_from_config(3, *full);
+  ASSERT_TRUE(absent.is_error());
+  ASSERT_TRUE(!block::workchain_execution_requires_local_failure(absent.error()));
+  auto changed = descriptor;
+  changed.version = 1;
+  ASSERT_TRUE(registry.resolve_account_binding_from_config(2,
+      *configuration(16, tos::capBlockTransition, &changed)).is_error());
+  changed = descriptor;
+  changed.vm_mode = 1;
+  ASSERT_TRUE(registry.resolve_account_binding_from_config(2,
+      *configuration(16, tos::capBlockTransition, &changed)).is_error());
+  ASSERT_EQ(observed->config_calls, 6u);
+  changed = descriptor;
+  changed.vm_version = 123;
+  ASSERT_TRUE(registry.resolve_account_binding_from_config(2,
+      *configuration(16, tos::capBlockTransition, &changed)).is_error());
+  ASSERT_EQ(observed->config_calls, 6u);
+  changed = descriptor;
+  changed.version = policy.descriptor_version = 5;
+  changed.vm_mode = policy.vm_mode = 7;
+  auto nonzero = registry.resolve_account_binding_from_config(2,
+      *configuration(16, tos::capBlockTransition, &changed));
+  ASSERT_TRUE(nonzero.is_ok());
+  ASSERT_EQ(nonzero.ok().descriptor.version, 5u);
+  ASSERT_EQ(nonzero.ok().descriptor.vm_mode, 7u);
+  ASSERT_EQ(observed->config_calls, 7u);
   ASSERT_EQ(observed->execute_calls, 0u);
 }
 

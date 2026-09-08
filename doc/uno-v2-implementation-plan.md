@@ -90,6 +90,25 @@ Review scope, disagreements and residual obligations are in
 `measurements/uno-v2-account-registry-evidence.json`. This closes a registry
 binding prerequisite, not authenticated policy resolution or M1 integration.
 
+### Configuration-sourced descriptor binding (boundary reviewed, not live)
+
+`resolve_account_binding_from_config` obtains Config12 from the same Config
+snapshot used for Config84. No caller-supplied workchain map or separately
+constructed descriptor enters this wrapper. A snapshot not unpacked with both
+workchain-info and capability modes produces an existing LocalUnavailable code;
+it is not evidence of an absent descriptor or disabled capability. An intact,
+authenticated snapshot remains an enclosing-host requirement, not a certificate
+created by this method. Generic live dispatch remains unchanged.
+
+The positive first failed against a compiled stub. After review, the fixture
+covers incomplete unpack modes, absent entries, unsupported engines, mismatched
+version/mode, and nonzero returned fields. Four independently rebuilt mutations
+fail for unpack-mode provenance, descriptor version, mode and address width.
+These are manual controls, not recurring mutation CI. Review/disposition:
+`uno-v2-config-account-binding-review-disposition.md`; exact evidence:
+`measurements/uno-v2-config-account-binding-evidence.json`. This unit does not
+freeze the remaining logical-root definition or add engine resource defaults.
+
 ## Verification discipline
 
 New tests must fail with the relevant behavior removed. A failed compilation is not such evidence. Preserve mutation logs and source identities. Missing dependencies fail rather than skip. Arithmetic and narrowing must be checked. Classify failures by provenance, not only exception type; local faults must not become candidate judgments.

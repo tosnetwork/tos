@@ -430,6 +430,24 @@ td::Status WorkchainExecutionRegistry::register_block_engine(std::unique_ptr<Reg
   return td::Status::OK();
 }
 
+td::Result<ResolvedWorkchainAccountBinding> WorkchainExecutionRegistry::resolve_account_binding_from_config(
+    tos::WorkchainId workchain_id, const block::Config& configuration) const {
+  constexpr int required = block::Config::needWorkchainInfo | block::Config::needCapabilities;
+  if ((configuration.mode & required) != required) {
+    return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),
+                             "account binding requires locally unpacked descriptors and capabilities");
+  }
+  const auto& workchains = configuration.get_workchain_list();
+  auto it = workchains.find(workchain_id);
+  if (it == workchains.end()) {
+    return td::Status::Error("account workchain descriptor is absent from configuration");
+  }
+  // Config's parser only inserts successfully unpacked, non-null entries and
+  // assigns their workchain identity from the dictionary key.
+  TRY_RESULT(descriptor, normalize_workchain_descriptor(*it->second));
+  return resolve_account_binding(descriptor, configuration);
+}
+
 std::optional<WorkchainExecutionScope> WorkchainExecutionRegistry::execution_scope(const WorkchainEngineKey& key) const {
   if (engines_.count(key)) {
     return WorkchainExecutionScope::AccountCompute;

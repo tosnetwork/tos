@@ -322,6 +322,10 @@ class WorkchainExecutionRegistry {
   // neither successful binding nor execution_scope proves resource admission.
   td::Result<ResolvedWorkchainAccountBinding> resolve_account_binding(
       const WorkchainExecutionDescriptor& descriptor, const block::Config& configuration) const;
+  // Derive the descriptor from this same Config snapshot, rather than accepting
+  // a separately supplied workchain map. The caller must authenticate Config.
+  td::Result<ResolvedWorkchainAccountBinding> resolve_account_binding_from_config(
+      tos::WorkchainId workchain_id, const block::Config& configuration) const;
   std::optional<WorkchainExecutionScope> execution_scope(const WorkchainEngineKey& key) const;
   td::Result<ResolvedWorkchainBlockExecution> resolve_block(
       const WorkchainExecutionDescriptor& descriptor, const block::Config& configuration) const;
