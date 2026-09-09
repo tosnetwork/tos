@@ -63,8 +63,11 @@ class KernelGates(unittest.TestCase):
             self.assertEqual(path.read_text().splitlines()[0], "object " + commit)
 
     def test_verifier_entry_closure_and_negative_controls(self):
-        paths = ("src/ffi.rs", "src/relation.rs", "src/system_encryption.rs",
-                 "vendor/bulletproofs/src/range_proof/deterministic.rs")
+        # New first-party modules must enter the gate without a manual whitelist
+        # edit. Only the exact test-only fixture module is excluded.
+        paths = sorted(p.relative_to(ROOT) for p in (ROOT / "src").rglob("*.rs")
+                       if p != ROOT / "src/tests.rs")
+        paths.append(Path("vendor/bulletproofs/src/range_proof/deterministic.rs"))
         for path in paths:
             source = (ROOT / path).read_text()
             self.assertFalse(rejected(source), path)

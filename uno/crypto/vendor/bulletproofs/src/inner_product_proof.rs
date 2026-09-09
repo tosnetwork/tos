@@ -9,7 +9,7 @@ use alloc::vec::Vec;
 use core::iter;
 use curve25519_dalek::ristretto::{CompressedRistretto, RistrettoPoint};
 use curve25519_dalek::scalar::Scalar;
-use curve25519_dalek::traits::VartimeMultiscalarMul;
+use curve25519_dalek::traits::{MultiscalarMul, VartimeMultiscalarMul};
 use merlin::Transcript;
 
 use crate::errors::ProofError;
@@ -85,7 +85,8 @@ impl InnerProductProof {
             let c_L = inner_product(&a_L, &b_R);
             let c_R = inner_product(&a_R, &b_L);
 
-            let L = RistrettoPoint::vartime_multiscalar_mul(
+            // These scalars contain the prover's non-public vectors.
+            let L = RistrettoPoint::multiscalar_mul(
                 a_L.iter()
                     .zip(G_factors[n..2 * n].into_iter())
                     .map(|(a_L_i, g)| a_L_i * g)
@@ -99,7 +100,7 @@ impl InnerProductProof {
             )
             .compress();
 
-            let R = RistrettoPoint::vartime_multiscalar_mul(
+            let R = RistrettoPoint::multiscalar_mul(
                 a_R.iter()
                     .zip(G_factors[0..n].into_iter())
                     .map(|(a_R_i, g)| a_R_i * g)
@@ -151,13 +152,13 @@ impl InnerProductProof {
             let c_L = inner_product(&a_L, &b_R);
             let c_R = inner_product(&a_R, &b_L);
 
-            let L = RistrettoPoint::vartime_multiscalar_mul(
+            let L = RistrettoPoint::multiscalar_mul(
                 a_L.iter().chain(b_R.iter()).chain(iter::once(&c_L)),
                 G_R.iter().chain(H_L.iter()).chain(iter::once(Q)),
             )
             .compress();
 
-            let R = RistrettoPoint::vartime_multiscalar_mul(
+            let R = RistrettoPoint::multiscalar_mul(
                 a_R.iter().chain(b_L.iter()).chain(iter::once(&c_R)),
                 G_L.iter().chain(H_R.iter()).chain(iter::once(Q)),
             )

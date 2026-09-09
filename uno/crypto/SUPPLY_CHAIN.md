@@ -34,9 +34,15 @@ Local differences are limited to:
    the pinned no-default-features build otherwise references a missing rand.
 4. Add kernel-test-only re-exports for the independent residual negative test.
    The normal dependency tree does not enable the test feature or std RNG.
+5. Use constant-time MSM for the four inner-product prover L/R constructions
+   whose scalars depend on non-public vectors. Public-challenge generator folding
+   and verifier equations remain unchanged. This changes the generating algorithm,
+   not the proof format, transcript or verifier relation; frozen proofs must stay
+   byte-identical. It is not a certification of all platform side channels.
 
-The upstream prover and generic randomized verification APIs remain in the
-vendored source for differential tests; they are not called by the kernel.
+The prover and generic randomized verification APIs remain in the vendored
+source; they are not called by the kernel. The separately built wallet prover
+uses the explicit-generator proving API, with the local L/R adaptation above.
 Keeping their source is not permission to call them in consensus. The local
 kernel's verifier call closure and normal dependency graph are separately gated.
 
@@ -61,6 +67,14 @@ Security fixes upstream do not automatically reach any of these forks. Before
 a release, recheck upstream changes and advisories, build-script/macro changes,
 features, backend selection and licenses. This delivery does not claim a new
 complete RustSec audit; cargo-audit was not installed on the build host.
+
+The separate wallet graph also relies on chacha20 0.10.2's `zeroize` feature.
+Refresh review must inspect both `ChaChaCore::drop` (state/key erasure) and the
+generator hook called by `BlockRng::drop` (buffered-output erasure), not merely
+the `ZeroizeOnDrop` marker. The marker enforces feature presence, while pinned
+archive-byte checks bind the reviewed implementation. Seed-by-value compiler
+temporaries remain outside the erasure claim. This wallet dependency is not
+introduced into the normal node-verifier graph.
 
 ## What the gates establish
 

@@ -67,21 +67,21 @@ fn fixture_with_fee(k: usize, fee: u64) -> Fixture {
     let mut f=Fixture {kind:if k==0 {UNO_RELATION_SEND} else {UNO_RELATION_COLLECT},limits, domain: [42;80], fee,
         context:b"test network/instance/account/nonce/policy; NOT production context".to_vec(),
         points:points.iter().map(P::compress).map(|p|p.to_bytes()).collect(),ids,ts:vec![],zs:vec![],proof:vec![]};
-    let relation=prepare(f.kind,&f.limits,&f.domain,f.fee,&f.context,&f.points,&f.ids).expect("fixture statement");
-    for (row,y) in relation.rows.iter().zip(&relation.targets) {
+    let relation=crate::statement::PreparedStatement::new(f.kind,&f.limits,&f.domain,f.fee,&f.context,&f.points,&f.ids).expect("fixture statement");
+    for (row,y) in relation.rows().iter().zip(relation.targets()) {
         assert_eq!(P::vartime_multiscalar_mul(&witnesses,row),*y,"known amount witness equation");
     }
     let mut rng=StdRng::seed_from_u64(20260907u64.checked_add(u64::try_from(k).expect("k")).expect("seed"));
     let masks:Vec<_>=witnesses.iter().map(|_|S::random(&mut rng)).collect();
-    f.ts=relation.rows.iter().map(|row|P::vartime_multiscalar_mul(&masks,row).compress().to_bytes()).collect();
-    let (_,e)=sigma_transcript(relation.transcript.clone(),&f.ts);
+    f.ts=relation.rows().iter().map(|row|P::vartime_multiscalar_mul(&masks,row).compress().to_bytes()).collect();
+    let e=relation.sigma_challenge(&f.ts);
     f.zs=masks.iter().zip(&witnesses).map(|(mask,w)| (mask+e*w).to_bytes()).collect();
     let m=values.len().checked_next_power_of_two().expect("range padding");
     values.resize(m,0);blinds.resize(m,S::ZERO);
     let (proof,commitments)=RangeProof::prove_multiple_with_rng(&BulletproofGens::new(64,m),&pc,
-        &mut range_transcript(relation.transcript.clone()),&values,&blinds,64,&mut rng).expect("reference prover");
-    assert_eq!(commitments,relation.ranges,"verifier-derived commitments bind the actual amounts");
-    proof.verify_multiple_with_rng(&BulletproofGens::new(64,m),&pc,&mut range_transcript(relation.transcript),
+        &mut relation.range_transcript(),&values,&blinds,64,&mut rng).expect("reference prover");
+    assert_eq!(commitments,relation.ranges(),"verifier-derived commitments bind the actual amounts");
+    proof.verify_multiple_with_rng(&BulletproofGens::new(64,m),&pc,&mut relation.range_transcript(),
         &commitments,64,&mut rng).expect("reference randomized verifier agrees on valid proof");
     f.proof=proof.to_bytes(); f
 }

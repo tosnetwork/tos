@@ -31,7 +31,7 @@
     "README.md": "8c03f8b8a159183b3d51794ccf9ea16c36e58248b17b561b1455ad6b5a5d93af",
     "src/errors.rs": "bd1d665d8dbf5c50c6e28ca9ecbb2be3cac82153d51220fd95e56536df039f86",
     "src/generators.rs": "2c8a7d04510ff1943427dee2154e3335ed7a176951c6696dbc3cf28fdde86452",
-    "src/inner_product_proof.rs": "de4533ae6a0149142c5194b809afb7f891b1b04ec442fc39d702e40bd3fff796",
+    "src/inner_product_proof.rs": "19b47ea013a32d1c14be88995ce82ec0b9898dc8affb1a440205b58fa53d0d95",
     "src/lib.rs": "f66e0b02ac314ec22e9d348c8967c62c094f5e2901bfb824df958e82635a0fb1",
     "src/linear_proof.rs": "852140a0c26d9a77549e9948a2a827e54afafd0f9b68aec8b05089c0f11e70ac",
     "src/r1cs/constraint_system.rs": "002fca10eefaa29c615fbc65807f4416b1586d9a67fd1b28b18575bf0f86a779",
