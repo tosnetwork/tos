@@ -76,3 +76,48 @@ Planned ownership is new publication entry/reader/record files and dedicated
 private tests. No existing settlement/overlay edits are currently proposed.
 Existing CellDb/archive files were inspected read-only; no edits to A's engine,
 resource policy, wrapper, validator or shared block test are part of this work.
+
+## Persistent contents and release timing (D50)
+
+Section 9.3 requires the persistent message deliverability record, candidate
+contents and externally supplied committed-batch count to occupy the same
+WriteBatch. D50 requires passive readers to receive the immutable snapshot only
+after a real reopened-store read resolves the generation as committed. These
+are different obligations: common persistent contents and delayed observation.
+Release inside a transaction would satisfy neither obligation by itself; a
+rollback cannot revoke an observation already made.
+
+The private implementation uses one `read_and_release` path for normal success
+and recovery. There is no separate normal-path notification, recovery-only
+notification, or persistent released flag. Its consumer API returns immutable
+snapshots. Repeated release of the same bytes preserves the installed pointer.
+A private batch commit does not grant consensus finality or permission to send.
+
+### Providers and bounds
+
+The host supplies all ten canonical component byte strings (accounts,
+AccountBlocks, incoming/outgoing descriptors, outgoing/dispatch queues, shard
+state/update, value flow and processing metadata), pending message payloads and
+queue metadata, admitted input identity, batch identity, revision, and batch
+count. The publisher does not manufacture missing roots or recompute count.
+The existing construction provider fixture supplies them in these private tests;
+no live collator provider is wired. A deliberately supplied count of 19 must
+survive unchanged: its validity is I13a's independent responsibility.
+
+This storage adapter serializes complete supplied bytes, not a CellDb delta.
+Its byte limit bounds codec output and decoded strings, with framing included.
+The caller has already allocated the supplied strings before that check; their
+construction, peak simultaneous copies, reopen cost, retained history and disk
+growth are not bounded by an authenticated D31 admission here. The 16 MiB test
+limit is a fixture parameter, not evidence of D31 integration. Cross-component
+semantic consistency remains the provider/admission obligation.
+
+The private directory uses the existing RocksDb backend with an explicit store
+identity marker and mandatory existing-store reopen. It is not a new consensus
+authority and does not unify the live P1–P5 transitions. Bootstrap initialization
+is explicit and is outside the operational batch failure matrix. Runtime fault
+controls target the isolated directory's WAL and recovery reads, not every
+possible filesystem failure or power-loss behavior. Read observation is not a
+coverage oracle: complete persisted component/message bytes are compared with
+fresh frozen provider outputs, including entries writable without loading old
+bodies.
