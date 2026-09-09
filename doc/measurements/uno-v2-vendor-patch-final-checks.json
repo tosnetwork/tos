@@ -1,0 +1,18 @@
+{
+  "source_sha256": {
+    "uno/crypto/tests/kernel-gates.py": "15398b78f081772438a6f164269ed7691362a7be6b2fba02435fe1893bcede5f",
+    "uno/crypto/vendor/bulletproofs/SOURCE_MANIFEST.json": "9e593b158ae3e18dad0e13df17f7e749dc1641c04a4739b23ebdc035ece775a2",
+    "uno/crypto/SUPPLY_CHAIN.md": "40b7f63f24b7ae27e3201bfb1cbd6e8a25cdd3cd10ac1ac3afa51e37df39f75d",
+    "doc/measurements/uno-v2-vendor-patch-controls.json": "013c3de6f7f39b626818ae1251112561eb95e8dd074b67dadf5699128c8afb1b"
+  },
+  "checks": {
+    "reconstructed_mutants": 5,
+    "restored_sources": 5,
+    "upstream_blobs_checked": 21,
+    "vendored_package_files_unchanged": 22,
+    "kernel_ctest": "5/5, 9.37 seconds",
+    "wallet_ctest": "3/3, 5.93 seconds"
+  },
+  "upstream_revision": "961bf3f8c2baa1e4d2a87e8e1f5b6f12e7fe6c82",
+  "scope": "Recorded source provenance only, not a semantic constant-time proof, fresh remote attestation, or complete M2 supply-chain acceptance."
+}

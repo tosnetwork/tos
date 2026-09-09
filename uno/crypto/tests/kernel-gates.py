@@ -24,6 +24,40 @@ TAGS = {
 FORBIDDEN = re.compile(r"\b(?:rand|rand_chacha|getrandom|RandomState|HashMap|HashSet|AssertUnwindSafe)\b|\bbuild_rng\s*\(|"
                        r"\b(?:verify_multiple|verify_batch|verify_multiple_with_rng|verify_batch_with_rng)\s*\(")
 
+# Changing this reviewed patch set requires an explicit provenance review, not
+# merely recomputing the manifest's current-tree hashes during a source refresh.
+LOCAL_PATCHES = {
+    "locked-build-inputs": "Cargo.toml",
+    "constant-time-inner-product": "src/inner_product_proof.rs",
+    "test-only-residual-export": "src/lib.rs",
+    "deterministic-module-and-feature-boundary": "src/range_proof/mod.rs",
+    "independent-range-residuals": "src/range_proof/deterministic.rs",
+}
+
+
+def git_blob(data):
+    return hashlib.sha1(b"blob " + str(len(data)).encode() + b"\0" + data).hexdigest()
+
+
+def upstream_before_patch(data, patch):
+    # Offsets address final UTF-8 bytes. Undo from right to left, so changing a
+    # suffix cannot shift any earlier offset. No fuzzy matching or file writes.
+    edits = patch["edits"]
+    if not edits or not patch["reason"].strip():
+        raise ValueError("local patch lacks edits or rationale")
+    end = 0
+    for edit in edits:
+        offset, before, after = edit["offset"], edit["before"].encode(), edit["after"].encode()
+        if type(offset) is not int or offset < end or before == after:
+            raise ValueError("invalid or overlapping local patch edit")
+        if offset > len(data) or data[offset:offset + len(after)] != after:
+            raise ValueError("declared local patch is absent or changed")
+        end = offset + len(after)
+    for edit in reversed(edits):
+        offset, before, after = edit["offset"], edit["before"].encode(), edit["after"].encode()
+        data = data[:offset] + before + data[offset + len(after):]
+    return data
+
 
 def run(*args):
     return subprocess.run(args, cwd=ROOT, env=dict(os.environ, CARGO_NET_OFFLINE="true"),
@@ -38,6 +72,14 @@ def rejected(source):
 
 def validate_vendor(directory):
     manifest = json.loads((directory / "SOURCE_MANIFEST.json").read_text())
+    patches = manifest.get("local_patches", [])
+    if (len(patches) != len(LOCAL_PATCHES) or
+            {p["id"]: p["path"] for p in patches} != LOCAL_PATCHES):
+        raise ValueError("reviewed local patch set changed")
+    by_path = {p["path"]: p for p in patches}
+    upstream = manifest["upstream_git_blobs"]
+    if not set(upstream) <= set(manifest["sha256"]) or not set(by_path) <= set(manifest["sha256"]):
+        raise ValueError("upstream or patch file missing from source set")
     actual = {str(p.relative_to(directory)) for p in directory.rglob("*") if p.is_file() or p.is_symlink()}
     if actual != set(manifest["sha256"]) | {"SOURCE_MANIFEST.json"}:
         raise ValueError("unexpected or missing vendored file")
@@ -45,6 +87,17 @@ def validate_vendor(directory):
         file = directory / path
         if file.is_symlink() or hashlib.sha256(file.read_bytes()).hexdigest() != digest:
             raise ValueError(f"vendored source drift: {path}")
+        data = file.read_bytes()
+        if path in by_path:
+            patch = by_path[path]
+            if patch["upstream_git_blob"] != upstream.get(path):
+                raise ValueError("local patch has a different upstream base")
+            data = upstream_before_patch(data, patch)
+        if path in upstream:
+            if git_blob(data) != upstream[path]:
+                raise ValueError(f"undeclared upstream delta: {path}")
+        elif path not in by_path or data:
+            raise ValueError(f"undeclared added source: {path}")
 
 
 def validate_checkout_status(directory):
@@ -56,6 +109,54 @@ def validate_checkout_status(directory):
 
 
 class KernelGates(unittest.TestCase):
+    def test_rehashed_undeclared_vendor_changes_are_rejected(self):
+        for path in ("src/generators.rs", "src/inner_product_proof.rs", "build.rs"):
+            with self.subTest(path=path), tempfile.TemporaryDirectory(prefix="uno-rehashed-control-") as scratch:
+                directory = Path(scratch) / "vendor"
+                shutil.copytree(ROOT / "vendor/bulletproofs", directory)
+                file = directory / path
+                data = (file.read_bytes() if file.exists() else b"") + b"\n// unreviewed delta\n"
+                file.write_bytes(data)
+                manifest = json.loads((directory / "SOURCE_MANIFEST.json").read_text())
+                manifest["sha256"][path] = hashlib.sha256(data).hexdigest()
+                (directory / "SOURCE_MANIFEST.json").write_text(json.dumps(manifest))
+                with self.assertRaises(ValueError):
+                    validate_vendor(directory)
+
+    def test_required_patch_survives_upstream_refresh(self):
+        for remove_declaration in (False, True):
+            with self.subTest(remove=remove_declaration), tempfile.TemporaryDirectory(prefix="uno-patch-revert-") as scratch:
+                directory = Path(scratch) / "vendor"
+                shutil.copytree(ROOT / "vendor/bulletproofs", directory)
+                manifest = json.loads((directory / "SOURCE_MANIFEST.json").read_text())
+                patch = next(p for p in manifest["local_patches"] if p["id"] == "constant-time-inner-product")
+                file = directory / patch["path"]
+                upstream = upstream_before_patch(file.read_bytes(), patch)
+                self.assertEqual(git_blob(upstream), "4f23df6f251b617f9cd9438745453d912a9fd2e5")
+                file.write_bytes(upstream)
+                manifest["sha256"][patch["path"]] = hashlib.sha256(upstream).hexdigest()
+                if remove_declaration:
+                    manifest["local_patches"].remove(patch)
+                (directory / "SOURCE_MANIFEST.json").write_text(json.dumps(manifest))
+                with self.assertRaises(ValueError):
+                    validate_vendor(directory)
+
+    def test_declared_patch_base_is_checked(self):
+        with tempfile.TemporaryDirectory(prefix="uno-patch-base-") as scratch:
+            directory = Path(scratch) / "vendor"
+            shutil.copytree(ROOT / "vendor/bulletproofs", directory)
+            manifest = json.loads((directory / "SOURCE_MANIFEST.json").read_text())
+            manifest["local_patches"][0]["upstream_git_blob"] = "0" * 40
+            (directory / "SOURCE_MANIFEST.json").write_text(json.dumps(manifest))
+            with self.assertRaises(ValueError):
+                validate_vendor(directory)
+
+    def test_patch_byte_matching_is_exact(self):
+        patch = {"reason": "test replacement", "edits": [{"offset": 1, "before": "old", "after": "new"}]}
+        self.assertEqual(upstream_before_patch(b"xnewz", patch), b"xoldz")
+        with self.assertRaises(ValueError):
+            upstream_before_patch(b"xbadz", patch)
+
     def test_annotated_tag_objects_bind_the_commits(self):
         for name, (tag_object, commit) in TAGS.items():
             path = ROOT / "fixtures" / (name + ".tag")

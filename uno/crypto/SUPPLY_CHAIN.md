@@ -23,6 +23,24 @@ upstream APIs. Rather than silently alter an external checkout, this crate
 vendors the pinned source (license preserved) and records upstream Git blobs
 and adapted SHA-256 hashes in vendor/bulletproofs/SOURCE_MANIFEST.json.
 
+The manifest's `local_patches` records all five adapted/added files, each with
+an ID, path, rationale, upstream Git blob (null for an added file), and exact
+before/after UTF-8 edits. Offsets address final file bytes, not character indices;
+edits are undone from right to left without fuzzy matching. The gate reconstructs
+every upstream file and compares its Git blob identity with the recorded base.
+Unpatched files must equal their upstream blobs; an added file must reconstruct
+to empty bytes. The required patch IDs/paths are also fixed in the source gate,
+so restoring upstream and deleting a required declaration does not pass.
+
+Consequently, updating only current-file SHA-256 hashes no longer permits source
+drift, an extra build script, or loss of the constant-time prover adaptation.
+Changing the declared edits or upstream base is an explicit review event, not
+an automatic refresh operation. The upstream blob map was checked against the
+pinned commit when this patch inventory was recorded. The offline gate binds to
+that recorded map; it is not a remote attestation or protection against a party
+allowed to change the gate and provenance records together. Git SHA-1 is used
+only for existing object-ID compatibility; current bytes also retain SHA-256.
+
 Local differences are limited to:
 
 1. Pin transitive dalek/Merlin dependencies by full revision; omit standalone
@@ -89,7 +107,9 @@ the source-integrity gate. No blanket formatting of the dependency is authorized
   untracked and ignored files; only Cargo's `.cargo-ok` marker is exempted.
 - Every locked registry archive checksum, plus extracted source bytes compared
   with the authenticated archive used by Cargo.
-- Exact vendored file set and source byte hashes, including new files.
+- Exact vendored file set and source byte hashes, including new files, plus
+  reconstruction of the recorded upstream bytes through the declared local
+  patch set. This gate runs both in kernel CTest and via the wallet's source gate.
 - No rand/getrandom provider in the normal runtime graph; rand_core traits are
   not themselves an entropy source. Build/prover-test dependencies are separate.
 - Conservative lexical checks on kernel entry/independent range code, combined

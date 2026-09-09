@@ -48,5 +48,112 @@
     "src/transcript.rs": "f3bbba84f5b45a7875912a5029119b9d7d1ca390376cf1ea948146ae4528212f",
     "src/util.rs": "c06746b1f1bb59be51cd061e3a36a10352e3cb2f213f5d74f7067039c55ac8cd",
     "src/range_proof/deterministic.rs": "16169cdd82bdb7d25318bfae3def59d7485499a112c69622ee2afe3ad599692b"
-  }
+  },
+  "local_patches": [
+    {
+      "id": "locked-build-inputs",
+      "path": "Cargo.toml",
+      "upstream_git_blob": "d1c3eeee51bf8a29533bae54f70b05795800a0c2",
+      "reason": "Pin dependency revisions, retain the kernel test feature, and omit unvendored standalone test/benchmark targets.",
+      "edits": [
+        {
+          "offset": 621,
+          "before": "curve25519-dalek = { features = [\"digest\", \"group\", \"rand_core\", \"serde\", \"zeroize\", \"alloc\", \"std\", \"precomputed-tables\"], default-features = false, git = \"https://github.com/xelis-project/curve25519-dalek\", tag = \"v5.0.2\" }\nmerlin = { git = \"https://github.com/xelis-project/merlin\", default-features = false, tag = \"v4.1.0\" }\n",
+          "after": "curve25519-dalek = { features = [\"digest\", \"group\", \"rand_core\", \"serde\", \"zeroize\", \"alloc\", \"std\", \"precomputed-tables\"], default-features = false, git = \"https://github.com/xelis-project/curve25519-dalek\", rev = \"10042b03cfc92e505e9d33d2827d5c0f0d36989a\" }\nmerlin = { git = \"https://github.com/xelis-project/merlin\", default-features = false, rev = \"ee857c79347e0e2201e5192523faea13ac9bf451\" }\n"
+        },
+        {
+          "offset": 1698,
+          "before": "curve25519-dalek = { features = [\"digest\", \"group\", \"legacy_compatibility\", \"rand_core\", \"serde\", \"zeroize\", \"std\", \"alloc\", \"precomputed-tables\"], default-features = false, git = \"https://github.com/xelis-project/curve25519-dalek\", tag = \"v5.0.2\" }\n",
+          "after": "curve25519-dalek = { features = [\"digest\", \"group\", \"legacy_compatibility\", \"rand_core\", \"serde\", \"zeroize\", \"std\", \"alloc\", \"precomputed-tables\"], default-features = false, git = \"https://github.com/xelis-project/curve25519-dalek\", rev = \"10042b03cfc92e505e9d33d2827d5c0f0d36989a\" }\n"
+        },
+        {
+          "offset": 2084,
+          "before": "",
+          "after": "kernel-test = []\n"
+        },
+        {
+          "offset": 2239,
+          "before": "\n\n[[test]]\nname = \"range_proof\"\n\n[[test]]\nname = \"r1cs\"\nrequired-features = [\"yoloproofs\"]\n\n[[bench]]\nname = \"range_proof\"\nharness = false\n\n[[bench]]\nname = \"generators\"\nharness = false\n\n[[bench]]\nname = \"r1cs\"\nharness = false\nrequired-features = [\"yoloproofs\"]\n\n[[bench]]\nname = \"linear_proof\"\nharness = false\n",
+          "after": ""
+        }
+      ]
+    },
+    {
+      "id": "constant-time-inner-product",
+      "path": "src/inner_product_proof.rs",
+      "upstream_git_blob": "4f23df6f251b617f9cd9438745453d912a9fd2e5",
+      "reason": "The four prover L/R MSMs consume secret vectors and must use constant-time multiplication. Public-challenge and verifier sites remain unchanged.",
+      "edits": [
+        {
+          "offset": 311,
+          "before": "use curve25519_dalek::traits::VartimeMultiscalarMul;\n",
+          "after": "use curve25519_dalek::traits::{MultiscalarMul, VartimeMultiscalarMul};\n"
+        },
+        {
+          "offset": 3012,
+          "before": "            let L = RistrettoPoint::vartime_multiscalar_mul(\n",
+          "after": "            // These scalars contain the prover's non-public vectors.\n            let L = RistrettoPoint::multiscalar_mul(\n"
+        },
+        {
+          "offset": 3626,
+          "before": "            let R = RistrettoPoint::vartime_multiscalar_mul(\n",
+          "after": "            let R = RistrettoPoint::multiscalar_mul(\n"
+        },
+        {
+          "offset": 5377,
+          "before": "            let L = RistrettoPoint::vartime_multiscalar_mul(\n",
+          "after": "            let L = RistrettoPoint::multiscalar_mul(\n"
+        },
+        {
+          "offset": 5607,
+          "before": "            let R = RistrettoPoint::vartime_multiscalar_mul(\n",
+          "after": "            let R = RistrettoPoint::multiscalar_mul(\n"
+        }
+      ]
+    },
+    {
+      "id": "test-only-residual-export",
+      "path": "src/lib.rs",
+      "upstream_git_blob": "600ec4ea5ec243a68a19b90191701ef569a5594b",
+      "reason": "Expose independent residuals only under the kernel-test feature.",
+      "edits": [
+        {
+          "offset": 1058,
+          "before": "",
+          "after": "#[cfg(feature = \"kernel-test\")]\npub use crate::range_proof::independent_residuals_zero;\n"
+        }
+      ]
+    },
+    {
+      "id": "deterministic-module-and-feature-boundary",
+      "path": "src/range_proof/mod.rs",
+      "upstream_git_blob": "582ff6f14dcc578708fa97e4d8746e308f9f7071",
+      "reason": "Wire independent deterministic residual checking and the no-default-features allocation/RNG boundary.",
+      "edits": [
+        {
+          "offset": 730,
+          "before": "",
+          "after": "mod deterministic;\n#[cfg(feature = \"kernel-test\")]\npub use deterministic::independent_residuals_zero;\nuse alloc::vec;\n"
+        },
+        {
+          "offset": 14330,
+          "before": "",
+          "after": "    #[cfg(feature = \"std\")]\n"
+        }
+      ]
+    },
+    {
+      "id": "independent-range-residuals",
+      "path": "src/range_proof/deterministic.rs",
+      "upstream_git_blob": null,
+      "reason": "Add independent polynomial and inner-product residual checks without verifier RNG or cross-equation random merging.",
+      "edits": [
+        {
+          "offset": 0,
+          "before": "",
+          "after": "//! The two range equations are checked independently, without verifier entropy.\nuse super::*;\n\nimpl RangeProof {\n    /// Verify the original transcript with independent inner-product and polynomial checks.\n    /// The caller must bound the number of commitments before constructing generators.\n    pub fn verify_independent(\n        &self, bp: &BulletproofGens, pc: &PedersenGens, t: &mut Transcript,\n        values: &[CompressedRistretto], n: usize,\n    ) -> Result<(), ProofError> {\n        let m = values.len();\n        let nm = n.checked_mul(m).ok_or(ProofError::InvalidBitsize)?;\n        if ![8, 16, 32, 64].contains(&n) || !m.is_power_of_two() {\n            return Err(ProofError::InvalidBitsize);\n        }\n        if bp.gens_capacity < n || bp.party_capacity < m {\n            return Err(ProofError::InvalidGeneratorsLength);\n        }\n        t.rangeproof_domain_sep(n as u64, m as u64);\n        for value in values { t.append_point(b\"V\", value); }\n        t.validate_and_append_point(b\"A\", &self.A)?;\n        t.validate_and_append_point(b\"S\", &self.S)?;\n        let y = t.challenge_scalar(b\"y\");\n        let z = t.challenge_scalar(b\"z\");\n        t.validate_and_append_point(b\"T_1\", &self.T_1)?;\n        t.validate_and_append_point(b\"T_2\", &self.T_2)?;\n        let x = t.challenge_scalar(b\"x\");\n        t.append_scalar(b\"t_x\", &self.t_x);\n        t.append_scalar(b\"t_x_blinding\", &self.t_x_blinding);\n        t.append_scalar(b\"e_blinding\", &self.e_blinding);\n        let w = t.challenge_scalar(b\"w\");\n        let (xs, xis, s) = self.ipp_proof.verification_scalars(nm, t)?;\n        let a = self.ipp_proof.a;\n        let b = self.ipp_proof.b;\n        t.append_scalar(b\"ipp_a\", &a);\n        t.append_scalar(b\"ipp_b\", &b);\n        // Preserve the challenge event, but do not combine equations using it.\n        let _c = t.challenge_scalar(b\"c\");\n        let zz = z * z;\n        let twos: Vec<_> = util::exp_iter(Scalar::from(2u64)).take(n).collect();\n        let ztwo: Vec<_> = util::exp_iter(z).take(m)\n            .flat_map(|zj| twos.iter().map(move |p| zj * p)).collect();\n        let gs = s.iter().map(|si| -z - a * si);\n        let hs = s.iter().rev().zip(util::exp_iter(y.invert())).zip(ztwo.iter())\n            .map(|((si, yi), q)| z + yi * (zz * q - b * si));\n        let scalars = IntoIterator::into_iter([Scalar::ONE, x]).chain(xs).chain(xis)\n            .chain(gs).chain(hs).chain([w * (self.t_x - a * b), -self.e_blinding]);\n        let points = IntoIterator::into_iter([self.A.decompress(), self.S.decompress()])\n            .chain(self.ipp_proof.L_vec.iter().map(|p| p.decompress()))\n            .chain(self.ipp_proof.R_vec.iter().map(|p| p.decompress()))\n            .chain(bp.G(n, m).copied().map(Some)).chain(bp.H(n, m).copied().map(Some))\n            .chain([Some(pc.B), Some(pc.B_blinding)]);\n        let ip = RistrettoPoint::optional_multiscalar_mul(scalars, points)\n            .ok_or(ProofError::VerificationError)?;\n        let poly = RistrettoPoint::optional_multiscalar_mul(\n            IntoIterator::into_iter([x, x * x])\n                .chain(util::exp_iter(z).take(m).map(|zj| zz * zj))\n                .chain([delta(n, m, &y, &z) - self.t_x, -self.t_x_blinding]),\n            IntoIterator::into_iter([self.T_1.decompress(), self.T_2.decompress()])\n                .chain(values.iter().map(|v| v.decompress()))\n                .chain([Some(pc.B), Some(pc.B_blinding)]),\n        ).ok_or(ProofError::VerificationError)?;\n        if !independent_residuals_zero(ip, poly) { return Err(ProofError::VerificationError); }\n        Ok(())\n    }\n}\n\n/// Both residuals must vanish, including when their sum would vanish.\npub fn independent_residuals_zero(ip: RistrettoPoint, poly: RistrettoPoint) -> bool {\n    ip.is_identity() && poly.is_identity()\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n    use curve25519_dalek::traits::Identity;\n    #[test]\n    fn either_nonzero_residual_is_rejected() {\n        let g = PedersenGens::default().B;\n        let zero = RistrettoPoint::identity();\n        assert!(independent_residuals_zero(zero, zero));\n        assert!(!independent_residuals_zero(g, zero));\n        assert!(!independent_residuals_zero(zero, g));\n        assert!(!independent_residuals_zero(g, -g));\n    }\n}\n"
+        }
+      ]
+    }
+  ]
 }

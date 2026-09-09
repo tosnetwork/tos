@@ -1,0 +1,60 @@
+{
+  "baseline": "bc62d3698",
+  "controls": [
+    {
+      "name": "reviewed-patch-set",
+      "from": "    if (len(patches) != len(LOCAL_PATCHES) or\n            {p[\"id\"]: p[\"path\"] for p in patches} != LOCAL_PATCHES):",
+      "to": "    if False:",
+      "test": "test_required_patch_survives_upstream_refresh",
+      "path": "uno/crypto/tests/kernel-gates.py",
+      "restored_sha256": "15398b78f081772438a6f164269ed7691362a7be6b2fba02435fe1893bcede5f",
+      "recorded_mutant_sha256": "d5076b706b2f7a53c957a60bdcb5866de9c5d987e6211ab97b64ca16f53b44f3",
+      "exit_code": 1,
+      "output": "test_required_patch_survives_upstream_refresh (__main__.KernelGates.test_required_patch_survives_upstream_refresh) ... \n  test_required_patch_survives_upstream_refresh (__main__.KernelGates.test_required_patch_survives_upstream_refresh) (remove=True) ... FAIL\n\n======================================================================\nFAIL: test_required_patch_survives_upstream_refresh (__main__.KernelGates.test_required_patch_survives_upstream_refresh) (remove=True)\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"/home/tomi/tos/uno/crypto/tests/kernel-gates.py\", line 140, in test_required_patch_survives_upstream_refresh\n    with self.assertRaises(ValueError):\n         ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^\nAssertionError: ValueError not raised\n\n----------------------------------------------------------------------\nRan 1 test in 0.011s\n\nFAILED (failures=1)\n"
+    },
+    {
+      "name": "upstream-byte-identity",
+      "from": "            if git_blob(data) != upstream[path]:",
+      "to": "            if False:",
+      "test": "test_rehashed_undeclared_vendor_changes_are_rejected",
+      "path": "uno/crypto/tests/kernel-gates.py",
+      "restored_sha256": "15398b78f081772438a6f164269ed7691362a7be6b2fba02435fe1893bcede5f",
+      "recorded_mutant_sha256": "28b62c750e5389c1cce60bbe474996416bef427ac3d10004fb79cb4b07e098f1",
+      "exit_code": 1,
+      "output": "test_rehashed_undeclared_vendor_changes_are_rejected (__main__.KernelGates.test_rehashed_undeclared_vendor_changes_are_rejected) ... \n  test_rehashed_undeclared_vendor_changes_are_rejected (__main__.KernelGates.test_rehashed_undeclared_vendor_changes_are_rejected) (path='src/generators.rs') ... FAIL\n  test_rehashed_undeclared_vendor_changes_are_rejected (__main__.KernelGates.test_rehashed_undeclared_vendor_changes_are_rejected) (path='src/inner_product_proof.rs') ... FAIL\n\n======================================================================\nFAIL: test_rehashed_undeclared_vendor_changes_are_rejected (__main__.KernelGates.test_rehashed_undeclared_vendor_changes_are_rejected) (path='src/generators.rs')\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"/home/tomi/tos/uno/crypto/tests/kernel-gates.py\", line 123, in test_rehashed_undeclared_vendor_changes_are_rejected\n    with self.assertRaises(ValueError):\n         ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^\nAssertionError: ValueError not raised\n\n======================================================================\nFAIL: test_rehashed_undeclared_vendor_changes_are_rejected (__main__.KernelGates.test_rehashed_undeclared_vendor_changes_are_rejected) (path='src/inner_product_proof.rs')\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"/home/tomi/tos/uno/crypto/tests/kernel-gates.py\", line 123, in test_rehashed_undeclared_vendor_changes_are_rejected\n    with self.assertRaises(ValueError):\n         ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^\nAssertionError: ValueError not raised\n\n----------------------------------------------------------------------\nRan 1 test in 0.017s\n\nFAILED (failures=2)\n"
+    },
+    {
+      "name": "declared-base",
+      "from": "            if patch[\"upstream_git_blob\"] != upstream.get(path):",
+      "to": "            if False:",
+      "test": "test_declared_patch_base_is_checked",
+      "path": "uno/crypto/tests/kernel-gates.py",
+      "restored_sha256": "15398b78f081772438a6f164269ed7691362a7be6b2fba02435fe1893bcede5f",
+      "recorded_mutant_sha256": "2dcbe7c97a2c567169637711df3e77cd17a4b167cbf0a23db14c88b93d2f9b84",
+      "exit_code": 1,
+      "output": "test_declared_patch_base_is_checked (__main__.KernelGates.test_declared_patch_base_is_checked) ... FAIL\n\n======================================================================\nFAIL: test_declared_patch_base_is_checked (__main__.KernelGates.test_declared_patch_base_is_checked)\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"/home/tomi/tos/uno/crypto/tests/kernel-gates.py\", line 151, in test_declared_patch_base_is_checked\n    with self.assertRaises(ValueError):\n         ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^\nAssertionError: ValueError not raised\n\n----------------------------------------------------------------------\nRan 1 test in 0.007s\n\nFAILED (failures=1)\n"
+    },
+    {
+      "name": "exact-edit-bytes",
+      "from": "        if offset > len(data) or data[offset:offset + len(after)] != after:",
+      "to": "        if False:",
+      "test": "test_patch_byte_matching_is_exact",
+      "path": "uno/crypto/tests/kernel-gates.py",
+      "restored_sha256": "15398b78f081772438a6f164269ed7691362a7be6b2fba02435fe1893bcede5f",
+      "recorded_mutant_sha256": "d46de70ac50043b722d187cb3bb7b3f9edea5190d31ec968e44520198509dd02",
+      "exit_code": 1,
+      "output": "test_patch_byte_matching_is_exact (__main__.KernelGates.test_patch_byte_matching_is_exact) ... FAIL\n\n======================================================================\nFAIL: test_patch_byte_matching_is_exact (__main__.KernelGates.test_patch_byte_matching_is_exact)\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"/home/tomi/tos/uno/crypto/tests/kernel-gates.py\", line 157, in test_patch_byte_matching_is_exact\n    with self.assertRaises(ValueError):\n         ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^\nAssertionError: ValueError not raised\n\n----------------------------------------------------------------------\nRan 1 test in 0.001s\n\nFAILED (failures=1)\n"
+    },
+    {
+      "name": "declared-new-file",
+      "from": "        elif path not in by_path or data:",
+      "to": "        elif False:",
+      "test": "test_rehashed_undeclared_vendor_changes_are_rejected",
+      "path": "uno/crypto/tests/kernel-gates.py",
+      "restored_sha256": "15398b78f081772438a6f164269ed7691362a7be6b2fba02435fe1893bcede5f",
+      "recorded_mutant_sha256": "c938b9015e7697d08685a7cc82b04d0d747ddc4bcce850f85fbfdd77a88a9901",
+      "exit_code": 1,
+      "output": "test_rehashed_undeclared_vendor_changes_are_rejected (__main__.KernelGates.test_rehashed_undeclared_vendor_changes_are_rejected) ... \n  test_rehashed_undeclared_vendor_changes_are_rejected (__main__.KernelGates.test_rehashed_undeclared_vendor_changes_are_rejected) (path='build.rs') ... FAIL\n\n======================================================================\nFAIL: test_rehashed_undeclared_vendor_changes_are_rejected (__main__.KernelGates.test_rehashed_undeclared_vendor_changes_are_rejected) (path='build.rs')\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"/home/tomi/tos/uno/crypto/tests/kernel-gates.py\", line 123, in test_rehashed_undeclared_vendor_changes_are_rejected\n    with self.assertRaises(ValueError):\n         ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^\nAssertionError: ValueError not raised\n\n----------------------------------------------------------------------\nRan 1 test in 0.015s\n\nFAILED (failures=1)\n"
+    }
+  ]
+}

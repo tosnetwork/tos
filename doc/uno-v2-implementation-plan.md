@@ -3126,10 +3126,17 @@ CTest/all-tests graphs and forbids active includes of archived state. That suite
 runs when `TOS_UNO_COUNTER_PYTEST` is enabled; it is not an unconditional gate.
 
 This closes the source-cleanup task, not any live I13 property. The policy-bound
-host identity source remains a separate pre-live clarification. Machine-readable
-upstream-plus-local-patch provenance is the next supply-chain follow-up; the
-wallet's four-site CT guard is already in its standalone CTest/CI, but is not a
+host identity source remains a separate pre-live clarification. The wallet's
+four-site CT guard is already in its standalone CTest/CI, but is not a
 general verifier of secret dependence at newly introduced group-operation sites.
+
+The machine-readable patch follow-up now records all adapted files and exact
+reverse edits in `SOURCE_MANIFEST.json`. The existing kernel CTest and wallet
+source-gate chain verify current bytes equal recorded upstream plus declared
+patches, including required patch presence. Rehash-only drift and removal of the
+CT patch are rejected. This closes undeclared-byte-drift detection, not semantic
+review of new secret-dependent sites, remote provenance attestation, seed-copy
+erasure, or full supply-chain acceptance. No dependency source/revision changed.
 
 ### Real-entry runtime stop points and error transport
 
