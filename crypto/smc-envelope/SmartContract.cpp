@@ -329,14 +329,60 @@ SmartContract::Answer run_smartcont(SmartContract::State state, td::Ref<vm::Stac
   vm::init_vm(debug_enabled).ensure();
   vm::DictionaryBase::get_empty_dictionary();
 
+  // The VM emits a line per executed instruction, so an unbounded sink
+  // grows with the gas ceiling rather than with anything the caller
+  // asked for: callers that never read the log still paid for building
+  // megabytes of it. Keep only the tail, sized by how much detail was
+  // actually requested -- the same treatment the transaction executor
+  // gives its own VM log.
   class Logger : public td::LogInterface {
    public:
-    void append(td::CSlice slice) override {
-      res.append(slice.data(), slice.size());
+    explicit Logger(size_t max_size) : buf_(max_size, '\0') {
     }
-    std::string res;
+
+    void append(td::CSlice slice) override {
+      if (slice.size() > buf_.size()) {
+        slice.remove_prefix(slice.size() - buf_.size());
+      }
+      while (!slice.empty()) {
+        size_t s = std::min(buf_.size() - pos_, slice.size());
+        std::copy(slice.begin(), slice.begin() + s, buf_.begin() + pos_);
+        pos_ += s;
+        if (pos_ == buf_.size()) {
+          pos_ = 0;
+          wrapped_ = true;
+        }
+        slice.remove_prefix(s);
+      }
+    }
+
+    // Appends directly to the tail, for text the caller adds after the
+    // run rather than through the VM's own logging.
+    void append_text(td::Slice text) {
+      append(td::CSlice(text.begin(), text.end()));
+    }
+
+    std::string get_log() const {
+      if (!wrapped_) {
+        return buf_.substr(0, pos_);
+      }
+      std::string res = buf_;
+      std::rotate(res.begin(), res.begin() + pos_, res.end());
+      return res;
+    }
+
+   private:
+    std::string buf_;
+    size_t pos_{0};
+    bool wrapped_{false};
   };
-  Logger logger;
+  size_t vm_log_max_size = 256;
+  if (vm_log_verbosity > 4) {
+    vm_log_max_size = 32u << 20;
+  } else if (vm_log_verbosity > 0) {
+    vm_log_max_size = 1u << 20;
+  }
+  Logger logger{vm_log_max_size};
   vm::VmLog log{&logger, td::LogOptions(VERBOSITY_NAME(DEBUG), true, false)};
   if (vm_log_verbosity > 1) {
     log.log_mask |= vm::VmLog::ExecLocation;
@@ -380,9 +426,9 @@ SmartContract::Answer run_smartcont(SmartContract::State state, td::Ref<vm::Stac
   auto set_unhandled_exception = [&](int exit_code, const char* message) {
     unhandled_exception = true;
     res.code = ~exit_code;
-    logger.res.append("Unhandled VM exception: ");
-    logger.res.append(message ? message : "unknown exception");
-    logger.res.push_back('\n');
+    logger.append_text(td::Slice("Unhandled VM exception: "));
+    logger.append_text(td::Slice(message ? message : "unknown exception"));
+    logger.append_text(td::Slice("\n"));
   };
   try {
     res.code = ~vm.run();
@@ -405,9 +451,9 @@ SmartContract::Answer run_smartcont(SmartContract::State state, td::Ref<vm::Stac
   res.gas_used = gas.gas_consumed();
   res.accepted = gas.gas_credit == 0;
   res.success = (!unhandled_exception && res.accepted && vm.committed());
-  res.vm_log = logger.res;
+  res.vm_log = logger.get_log();
   if (GET_VERBOSITY_LEVEL() >= VERBOSITY_NAME(DEBUG)) {
-    LOG(DEBUG) << "VM log\n" << logger.res;
+    LOG(DEBUG) << "VM log\n" << res.vm_log;
     std::ostringstream os;
     res.stack->dump(os, 2);
     LOG(DEBUG) << "VM stack:\n" << os.str();

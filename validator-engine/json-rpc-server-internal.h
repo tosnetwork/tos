@@ -44,7 +44,13 @@ std::string format_zero_state_json(const tos::lite_api::tosNode_zeroStateIdExt& 
 // ─── Shared: ParsedAccountState (declaration only) ──────────────────────
 
 struct ParsedAccountState {
+  // Reported as a number where the shape requires one; a balance wider
+  // than this type saturates rather than wrapping to a negative.
   td::int64 balance = 0;
+  // The same balance in full precision, for the fields carrying it as a
+  // string. A Tomis amount is up to 2^120, so a 64-bit conversion is not
+  // guaranteed to be exact.
+  std::string balance_dec = "0";
   std::string state_str = "uninitialized";
   std::string code_b64;
   std::string data_b64;

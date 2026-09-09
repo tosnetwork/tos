@@ -288,14 +288,36 @@ export interface BlockHeader {
   prev_blocks: BlockIdExt[];
 }
 
-export interface BlockSignatures {
+export interface BlockSignatureEntry {
+  node_id_short: string;
+  signature: string;
+}
+
+/** Validator signatures for a masterchain block signed under ordinary consensus. */
+export interface BlockSignaturesOrdinary {
   "@type": "blocks.blockSignatures";
   id: BlockIdExt;
-  signatures: Array<{
-    node_id_short: string;
-    signature: string;
-  }>;
+  signatures: BlockSignatureEntry[];
 }
+
+/**
+ * Validator signatures for a masterchain block signed under simplex consensus.
+ * Simplex signatures are made over a message derived from `session_id`, `slot`
+ * and `candidate` (a finalize vote), not the block's root/file hash, so those
+ * fields are required to reconstruct the signed message and verify a signature.
+ */
+export interface BlockSignaturesSimplex {
+  "@type": "blocks.blockSignatures.simplex";
+  id: BlockIdExt;
+  signatures: BlockSignatureEntry[];
+  /** base64-encoded 32-byte consensus session id */
+  session_id: string;
+  slot: number;
+  /** base64-encoded serialized candidate consensus data */
+  candidate: string;
+}
+
+export type BlockSignatures = BlockSignaturesOrdinary | BlockSignaturesSimplex;
 
 export interface ShardInfo {
   "@type": "blocks.shards";

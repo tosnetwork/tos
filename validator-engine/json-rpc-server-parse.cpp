@@ -24,6 +24,41 @@
 
 namespace tos {
 
+bool is_valid_json_number(const std::string &s) {
+  size_t i = 0;
+  auto digits = [&]() {
+    size_t start = i;
+    while (i < s.size() && s[i] >= '0' && s[i] <= '9') {
+      i++;
+    }
+    return i > start;
+  };
+  if (i < s.size() && s[i] == '-') {
+    i++;
+  }
+  if (i < s.size() && s[i] == '0') {
+    i++;  // a leading zero admits no further integer digits
+  } else if (!digits()) {
+    return false;
+  }
+  if (i < s.size() && s[i] == '.') {
+    i++;
+    if (!digits()) {
+      return false;
+    }
+  }
+  if (i < s.size() && (s[i] == 'e' || s[i] == 'E')) {
+    i++;
+    if (i < s.size() && (s[i] == '+' || s[i] == '-')) {
+      i++;
+    }
+    if (!digits()) {
+      return false;
+    }
+  }
+  return i == s.size();
+}
+
 namespace {
 
 // Runs `f` and converts every VM-level exception into a td::Status so that
