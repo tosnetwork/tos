@@ -1,0 +1,4 @@
+<stdin>:15:15: error: static assertion failed due to requirement '!HasImplicitScanSource<td::Ref<vm::Cell>>': source.must_be_explicit
+   15 | static_assert(!HasImplicitScanSource<td::Ref<vm::Cell>>, "source.must_be_explicit");
+      |               ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+1 error generated.

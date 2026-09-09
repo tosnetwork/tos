@@ -1,0 +1,15 @@
+{
+  "argv": [
+    "cmake",
+    "-S",
+    "/home/tomi/tos",
+    "-B",
+    "/tmp/uno-ledger-mechanism-CYFxwo",
+    "-DCMAKE_PROJECT_TOS_INCLUDE=/home/tomi/tos/crypto/test/workchain-batch-scan.cmake",
+    "-DWORKCHAIN_SCAN_SOURCE=/tmp/uno-i13a-controls-hrh48qdh/crypto/test/test-workchain-batch-scan.cpp",
+    "-DWORKCHAIN_SCAN_HEADER_DIR=/tmp/uno-i13a-controls-hrh48qdh/crypto",
+    "-DWORKCHAIN_SCAN_DRIVER=/tmp/uno-i13a-controls-hrh48qdh/crypto/test/workchain-batch-scan.py",
+    "-DWORKCHAIN_SCAN_LATER_ONLY=OFF"
+  ],
+  "exit": 0
+}

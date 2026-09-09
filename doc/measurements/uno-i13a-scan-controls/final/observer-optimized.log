@@ -1,0 +1,160 @@
+-- Configuring done
+-- Generating done
+-- Build files have been written to: /tmp/i13-ci-observer-wb4j1boq/out
+Internal ctest changing into directory: /tmp/i13-ci-observer-wb4j1boq/out
+Test project /tmp/i13-ci-observer-wb4j1boq/out
+    Start 1: test-workchain-construction-isolation-gates
+1/5 Test #1: test-workchain-construction-isolation-gates ...   Passed    0.02 sec
+    Start 2: test-workchain-i13-acceptance-gates
+2/5 Test #2: test-workchain-i13-acceptance-gates ...........   Passed    0.02 sec
+    Start 3: test-workchain-i13-usage-acceptance-gates
+3/5 Test #3: test-workchain-i13-usage-acceptance-gates .....   Passed    0.02 sec
+    Start 4: test-workchain-execution-ledger-gates
+4/5 Test #4: test-workchain-execution-ledger-gates .........   Passed    0.02 sec
+    Start 5: test-workchain-batch-scan-gates
+5/5 Test #5: test-workchain-batch-scan-gates ...............   Passed    0.02 sec
+
+100% tests passed, 0 tests failed out of 5
+
+Label Time Summary:
+i13          =   0.09 sec*proc (5 tests)
+private      =   0.09 sec*proc (5 tests)
+workchain    =   0.09 sec*proc (5 tests)
+
+Total Test time (real) =   0.09 sec
+Internal ctest changing into directory: /tmp/i13-ci-observer-wb4j1boq/out
+Test project /tmp/i13-ci-observer-wb4j1boq/out
+    Start 1: test-workchain-construction-isolation-gates
+1/5 Test #1: test-workchain-construction-isolation-gates ...   Passed    0.02 sec
+    Start 2: test-workchain-i13-acceptance-gates
+2/5 Test #2: test-workchain-i13-acceptance-gates ...........   Passed    0.02 sec
+    Start 3: test-workchain-i13-usage-acceptance-gates
+3/5 Test #3: test-workchain-i13-usage-acceptance-gates .....   Passed    0.02 sec
+    Start 4: test-workchain-execution-ledger-gates
+4/5 Test #4: test-workchain-execution-ledger-gates .........   Passed    0.02 sec
+    Start 5: test-workchain-batch-scan-gates
+5/5 Test #5: test-workchain-batch-scan-gates ...............***Failed    0.02 sec
+
+80% tests passed, 1 tests failed out of 5
+
+Label Time Summary:
+i13          =   0.09 sec*proc (5 tests)
+private      =   0.09 sec*proc (5 tests)
+workchain    =   0.09 sec*proc (5 tests)
+
+Total Test time (real) =   0.09 sec
+
+The following tests FAILED:
+	  5 - test-workchain-batch-scan-gates (Failed)
+Errors while running CTest
+Output from these tests are in: /tmp/i13-ci-observer-wb4j1boq/out/Testing/Temporary/LastTest.log
+Use "--rerun-failed --output-on-failure" to re-run the failed cases verbosely.
+five.json: exit=0
+registered: exactly 5 private I13 checks: ['test-workchain-batch-scan-gates', 'test-workchain-construction-isolation-gates', 'test-workchain-execution-ledger-gates', 'test-workchain-i13-acceptance-gates', 'test-workchain-i13-usage-acceptance-gates']
+
+zero.json: exit=1
+Traceback (most recent call last):
+  File "/home/tomi/tos/.github/scripts/check-i13-results.py", line 46, in <module>
+    check(sys.argv[1], Path(sys.argv[2]), repository)
+    ~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/tomi/tos/.github/scripts/check-i13-results.py", line 40, in check
+    raise ValueError(f"expected exactly five named checks, observed {names!r}")
+ValueError: expected exactly five named checks, observed []
+
+missing.json: exit=1
+Traceback (most recent call last):
+  File "/home/tomi/tos/.github/scripts/check-i13-results.py", line 46, in <module>
+    check(sys.argv[1], Path(sys.argv[2]), repository)
+    ~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/tomi/tos/.github/scripts/check-i13-results.py", line 40, in check
+    raise ValueError(f"expected exactly five named checks, observed {names!r}")
+ValueError: expected exactly five named checks, observed ['test-workchain-construction-isolation-gates', 'test-workchain-i13-acceptance-gates', 'test-workchain-i13-usage-acceptance-gates', 'test-workchain-execution-ledger-gates']
+
+duplicate.json: exit=1
+Traceback (most recent call last):
+  File "/home/tomi/tos/.github/scripts/check-i13-results.py", line 46, in <module>
+    check(sys.argv[1], Path(sys.argv[2]), repository)
+    ~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/tomi/tos/.github/scripts/check-i13-results.py", line 40, in check
+    raise ValueError(f"expected exactly five named checks, observed {names!r}")
+ValueError: expected exactly five named checks, observed ['test-workchain-construction-isolation-gates', 'test-workchain-construction-isolation-gates', 'test-workchain-construction-isolation-gates', 'test-workchain-construction-isolation-gates', 'test-workchain-construction-isolation-gates']
+
+wrong-driver.json: exit=1
+Traceback (most recent call last):
+  File "/home/tomi/tos/.github/scripts/check-i13-results.py", line 46, in <module>
+    check(sys.argv[1], Path(sys.argv[2]), repository)
+    ~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/tomi/tos/.github/scripts/check-i13-results.py", line 27, in check
+    raise ValueError(f"wrong driver for {test['name']}: {command!r}")
+ValueError: wrong driver for test-workchain-construction-isolation-gates: ['cmake', '-E', 'true']
+
+actual.xml: exit=0
+executed: exactly 5 private I13 checks: ['test-workchain-batch-scan-gates', 'test-workchain-construction-isolation-gates', 'test-workchain-execution-ledger-gates', 'test-workchain-i13-acceptance-gates', 'test-workchain-i13-usage-acceptance-gates']
+
+actual-failure.xml: exit=1
+Traceback (most recent call last):
+  File "/home/tomi/tos/.github/scripts/check-i13-results.py", line 46, in <module>
+    check(sys.argv[1], Path(sys.argv[2]), repository)
+    ~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/tomi/tos/.github/scripts/check-i13-results.py", line 36, in check
+    raise ValueError(f"not successfully run: {ET.tostring(test, encoding='unicode')}")
+ValueError: not successfully run: <testcase name="test-workchain-batch-scan-gates" classname="test-workchain-batch-scan-gates" time="0.0173681" status="fail">
+		<failure message="" />
+		<system-out />
+	</testcase>
+
+
+zero.xml: exit=1
+Traceback (most recent call last):
+  File "/home/tomi/tos/.github/scripts/check-i13-results.py", line 46, in <module>
+    check(sys.argv[1], Path(sys.argv[2]), repository)
+    ~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/tomi/tos/.github/scripts/check-i13-results.py", line 40, in check
+    raise ValueError(f"expected exactly five named checks, observed {names!r}")
+ValueError: expected exactly five named checks, observed []
+
+missing.xml: exit=1
+Traceback (most recent call last):
+  File "/home/tomi/tos/.github/scripts/check-i13-results.py", line 46, in <module>
+    check(sys.argv[1], Path(sys.argv[2]), repository)
+    ~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/tomi/tos/.github/scripts/check-i13-results.py", line 40, in check
+    raise ValueError(f"expected exactly five named checks, observed {names!r}")
+ValueError: expected exactly five named checks, observed ['test-workchain-i13-acceptance-gates', 'test-workchain-i13-usage-acceptance-gates', 'test-workchain-execution-ledger-gates', 'test-workchain-batch-scan-gates']
+
+skipped.xml: exit=1
+Traceback (most recent call last):
+  File "/home/tomi/tos/.github/scripts/check-i13-results.py", line 46, in <module>
+    check(sys.argv[1], Path(sys.argv[2]), repository)
+    ~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/tomi/tos/.github/scripts/check-i13-results.py", line 36, in check
+    raise ValueError(f"not successfully run: {ET.tostring(test, encoding='unicode')}")
+ValueError: not successfully run: <testcase name="test-workchain-construction-isolation-gates" classname="test-workchain-construction-isolation-gates" time="0.017343" status="run">
+		<system-out />
+	<skipped /></testcase>
+	
+
+failure.xml: exit=1
+Traceback (most recent call last):
+  File "/home/tomi/tos/.github/scripts/check-i13-results.py", line 46, in <module>
+    check(sys.argv[1], Path(sys.argv[2]), repository)
+    ~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/tomi/tos/.github/scripts/check-i13-results.py", line 36, in check
+    raise ValueError(f"not successfully run: {ET.tostring(test, encoding='unicode')}")
+ValueError: not successfully run: <testcase name="test-workchain-construction-isolation-gates" classname="test-workchain-construction-isolation-gates" time="0.017343" status="run">
+		<system-out />
+	<failure /></testcase>
+	
+
+notrun.xml: exit=1
+Traceback (most recent call last):
+  File "/home/tomi/tos/.github/scripts/check-i13-results.py", line 46, in <module>
+    check(sys.argv[1], Path(sys.argv[2]), repository)
+    ~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/tomi/tos/.github/scripts/check-i13-results.py", line 36, in check
+    raise ValueError(f"not successfully run: {ET.tostring(test, encoding='unicode')}")
+ValueError: not successfully run: <testcase name="test-workchain-construction-isolation-gates" classname="test-workchain-construction-isolation-gates" time="0.017343" status="notrun">
+		<system-out />
+	</testcase>
+	
+

@@ -1,0 +1,11 @@
+<stdin>:2:131: error: too few arguments to function call, expected 4, have 3
+    2 | void probe(td::Ref<vm::Cell> root, const block::ResolvedBatchInputPolicy& p) { block::scan_workchain_batch_account_blocks(root,p,1); }
+      |                                                                                ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~         ^
+/home/tomi/tos/crypto/block/workchain-batch-scan.h:271:33: note: 'scan_workchain_batch_account_blocks' declared here
+  271 | inline WorkchainBatchScanResult scan_workchain_batch_account_blocks(
+      |                                 ^
+  272 |     const td::Ref<vm::Cell>& account_blocks, const ResolvedBatchInputPolicy& policy,
+      |     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  273 |     std::uint64_t claimed_batch_count, WorkchainBatchScanSource source) {
+      |     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+1 error generated.

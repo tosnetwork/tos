@@ -1,0 +1,35 @@
+{
+  "files": [
+    {
+      "path": "validator/impl/collator.cpp",
+      "sha256": "de0d5a2e7a65c7bb51a49259906cac2ed14cc704c157e1c5d971c3670212bf58",
+      "count": 1,
+      "occurrences": [
+        {
+          "line": 2458,
+          "text": "\"multi-account admission and replay are not connected\");"
+        }
+      ]
+    },
+    {
+      "path": "validator/impl/validate-query.cpp",
+      "sha256": "6aa03fb869bb018282dbbac2bc170b9e384576ed2a0dc71740debea43e35ac06",
+      "count": 3,
+      "occurrences": [
+        {
+          "line": 1150,
+          "text": "\"multi-account admission and replay are not connected\");"
+        },
+        {
+          "line": 1296,
+          "text": "\"multi-account admission and replay are not connected\");"
+        },
+        {
+          "line": 6527,
+          "text": "\"multi-account admission and replay are not connected\");"
+        }
+      ]
+    }
+  ],
+  "additional_boundary": "Registry required-workchain refusal is independent of these string counts; no connectivity claim."
+}

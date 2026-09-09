@@ -1,0 +1,24 @@
+Internal ctest changing into directory: /tmp/uno-ledger-mechanism-CYFxwo
+Test project /tmp/uno-ledger-mechanism-CYFxwo
+    Start 1: test-workchain-batch-scan-gates
+1/1 Test #1: test-workchain-batch-scan-gates ...***Failed    0.06 sec
+Traceback (most recent call last):
+  File "/tmp/uno-i13a-controls-9ctupgib/crypto/test/workchain-batch-scan.py", line 54, in <module>
+    main()
+    ~~~~^^
+  File "/tmp/uno-i13a-controls-9ctupgib/crypto/test/workchain-batch-scan.py", line 11, in main
+    raise RuntimeError('forced-driver-failure')
+RuntimeError: forced-driver-failure
+
+
+0% tests passed, 1 tests failed out of 1
+
+Label Time Summary:
+i13          =   0.06 sec*proc (1 test)
+private      =   0.06 sec*proc (1 test)
+workchain    =   0.06 sec*proc (1 test)
+
+Total Test time (real) =   0.07 sec
+
+The following tests FAILED:
+	  1 - test-workchain-batch-scan-gates (Failed)

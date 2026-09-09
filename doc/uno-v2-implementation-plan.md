@@ -85,10 +85,12 @@ configuration lists zero private I13 tests before integration and exactly three
 afterwards; the registration assertion rejects the former and accepts the latter.
 This is a registration-only check, not a run of the private harnesses or hosted CI.
 
-The I13b mechanism adds a fourth opt-in check through
+The I13b mechanism added a fourth opt-in check through
 `crypto/test/workchain-private-i13.cmake`, which includes the original three
 modules and `workchain-execution-ledger.cmake`. The manual workflow builds all
-four targets and checks four exact driver names and four successful JUnit entries.
+four targets at that checkpoint. I13a now adds `workchain-batch-scan.cmake` as
+the fifth private check: the workflow builds five targets and requires five
+exact driver names and five successful JUnit entries.
 The prior three-test merge-registration evidence remains historical. The ledger
 check is mechanism/private actor coverage, not live I13b acceptance; adding it
 does not authorize activation or connect the live execution seam.
@@ -116,7 +118,7 @@ counted as final-source evidence.
 JUnit failure controls require actual `status="fail"` plus a failure element;
 the workflow success observer requires `status="run"` and no failure/error/skip.
 These are intentionally opposite predicates on the same schema. The observer
-self-test runs four actual named tests with one forced driver failure, so a
+self-test runs five actual named tests with one forced driver failure, so a
 registration-count mismatch cannot substitute for detecting failed execution.
 
 Read-view finding (2026-09-09, source inspection, not live execution evidence):
@@ -125,9 +127,10 @@ reacquires them from its supplied `old_accounts`; returned effects and settlemen
 roots do not update that view or the caller's old-root reference. Repeating a
 call with the same old root therefore rereads the same state, not prior overlay
 writes. An explicit next-call root handoff could change this, but the live seam
-has not established one. Cross-call state progression needs an explicit design
-contract, not an assumption based on atomic publication. An engine may implement
-its own intra-batch working state; this interface supplies no such progression.
+has not established one. D53 now explicitly retains fixed per-call snapshots;
+do not silently change them to cross-call evolving state. Intra-batch nonce
+consistency is an engine/relationship obligation, not an assumed consequence
+of atomic publication. This interface supplies no intra-batch progression.
 The root-keyed I13b ledger prevents identical admitted-input re-entry, not the
 same operation repackaged under a different proof/root. Nonce/operation identity
 checks remain separate relation/execution obligations; I13b is not their substitute.
@@ -139,6 +142,23 @@ its selected source/header paths. It cannot certify a stale binary or exclude
 shadowing of other headers. Live actor slots also still need one-time construction
 enforcement. These are open integration/instrument obligations, not I13b acceptance.
 Mechanism evidence and exact scope: `measurements/uno-i13b-ledger-controls/README.md`.
+
+I13a private mechanism scans actual Native AccountBlock/Transaction framing,
+deriving distinct batch identities from `(input_hash, effects_hash)` in existing
+HostRecords and comparing the independently derived count with the claim only
+after traversal. Account/index fields do not define a new batch identity.
+Under the restricted one-record-per-write-account shape, authenticated
+`resources.input.max_writes` bounds AccountBlocks and identity-set allocation;
+this is not a general ordinary-block limit. Complete count/identity violations
+and an authenticated-bound overrun are CandidateInvalid. Pruned representation
+uses the caller's required, no-default source enum: unchanged received candidate
+bytes are CandidateInvalid; local storage or locally derived proof views are
+LocalUnavailable. Logical candidate ownership alone cannot select that source:
+the validator accepts collated Merkle proofs, separately from its raw block
+AccountBlocks path. Entry roots are checked for nonzero level before comparing
+the producer's existing `get_hash()` commitment. This mechanism does not connect the live scan,
+establish I13a, or replace I13c/I13d replay. Exact mapping, boundedness and
+exclusions: `crypto/test/workchain-batch-scan.md`.
 
 After the three private I13 harness modules have registered their Python
 drivers and demonstrated failing CTest controls, A first resumes the thin

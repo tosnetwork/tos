@@ -1,0 +1,13 @@
+{
+  "argv": [
+    "ctest",
+    "--test-dir",
+    "/tmp/uno-ledger-mechanism-CYFxwo",
+    "-R",
+    "^test-workchain-batch-scan-gates$",
+    "--output-on-failure",
+    "--output-junit",
+    "/home/tomi/tos/doc/measurements/uno-i13a-scan-controls/missing-classification/mutant.xml"
+  ],
+  "exit": 8
+}

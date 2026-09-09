@@ -11,6 +11,7 @@ EXPECTED = {
     "test-workchain-i13-acceptance-gates",
     "test-workchain-i13-usage-acceptance-gates",
     "test-workchain-execution-ledger-gates",
+    "test-workchain-batch-scan-gates",
 }
 
 
@@ -35,9 +36,9 @@ def check(mode, path, repository):
                 raise ValueError(f"not successfully run: {ET.tostring(test, encoding='unicode')}")
     else:
         raise ValueError(f"unknown mode: {mode}")
-    if len(names) != 4 or set(names) != EXPECTED:
-        raise ValueError(f"expected exactly four named checks, observed {names!r}")
-    print(f"{mode}: exactly 4 private I13 checks: {sorted(names)}")
+    if len(names) != 5 or set(names) != EXPECTED:
+        raise ValueError(f"expected exactly five named checks, observed {names!r}")
+    print(f"{mode}: exactly 5 private I13 checks: {sorted(names)}")
 
 
 if __name__ == "__main__":

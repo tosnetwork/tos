@@ -1,0 +1,24 @@
+{
+  "base_commit": "70b53ec8f0895837cd59fa3debd9fbcacf7bc767",
+  "original_sha256": "5486e94ee56caec999ceee316b91994dc04e00653f90fcc15f9d96b117c41c1c",
+  "recorded_mutant_sha256": "05078b32f7cc3efc81d8a2a77e96a23b2c93a30e560604dc19a447ca5bffc170",
+  "reconstructed_mutant_sha256": "05078b32f7cc3efc81d8a2a77e96a23b2c93a30e560604dc19a447ca5bffc170",
+  "restored_sha256": "5486e94ee56caec999ceee316b91994dc04e00653f90fcc15f9d96b117c41c1c",
+  "original_binary_sha256": "d698eacba790e0fa204675de0eb71f7935c8eb7a232fe032f0ebad6e2e1c708e",
+  "mutant_binary_sha256": "c7fa59fe6587a478145d4c74bbd02ddb424d269ca3b138a8edbf343f2aa5d76a",
+  "restored_binary_sha256": "d698eacba790e0fa204675de0eb71f7935c8eb7a232fe032f0ebad6e2e1c708e",
+  "repository_source_hashes": {
+    "crypto/block/workchain-batch-scan.h": "5486e94ee56caec999ceee316b91994dc04e00653f90fcc15f9d96b117c41c1c",
+    "crypto/test/test-workchain-batch-scan.cpp": "c8d3383ff8b6eac7e136d9a43257b84c697e2f4ca578de984473b086a2d46536",
+    "crypto/test/workchain-batch-scan.py": "7c470723136231363927f882654c473bd23645fc2ad9d564322404696ba1a479",
+    "crypto/test/workchain-batch-scan.cmake": "938b335456b090c37eeed38ca68e7689f33f1e786f423047ab7f84ef94fe9ec1"
+  },
+  "explicit_rebuilt_targets": [
+    "test-workchain-batch-scan"
+  ],
+  "executed_programs": [
+    "python3",
+    "ninja (provenance only)",
+    "test-workchain-batch-scan"
+  ]
+}

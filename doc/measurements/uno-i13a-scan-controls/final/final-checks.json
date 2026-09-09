@@ -1,0 +1,104 @@
+{
+  "base_commit": "70b53ec8f0895837cd59fa3debd9fbcacf7bc767",
+  "source_sha256": {
+    "crypto/block/workchain-batch-scan.h": "5486e94ee56caec999ceee316b91994dc04e00653f90fcc15f9d96b117c41c1c",
+    "crypto/test/test-workchain-batch-scan.cpp": "c8d3383ff8b6eac7e136d9a43257b84c697e2f4ca578de984473b086a2d46536",
+    "crypto/test/workchain-batch-scan.py": "7c470723136231363927f882654c473bd23645fc2ad9d564322404696ba1a479",
+    "crypto/test/workchain-batch-scan.cmake": "938b335456b090c37eeed38ca68e7689f33f1e786f423047ab7f84ef94fe9ec1",
+    "crypto/test/workchain-private-i13.cmake": "278596b9475dbf700dbcc1b09c61b8799fae460056f9c5d7dd836adec1f8745d",
+    ".github/scripts/check-i13-results.py": "744f24a716ed4eae93b912db3d3f79478f9cf97442e8e786b19bc1254a3d653b",
+    ".github/scripts/test-i13-results.py": "03923b593f1a5391be588c11fb797f30216432e009f9293bab1da3d880f976e7",
+    ".github/workflows/private-i13-acceptance.yml": "88a37d5ccfb3d3f6ddbbb8e81e2066d9442e9a81ca8fcac9daef7aa60f21d45e",
+    "crypto/test/workchain-batch-scan.md": "ea55519de5053444df2cad321436d68e347ece5d10f0fdea8413b2c727e44aba",
+    "doc/uno-v2-implementation-plan.md": "9801bf22eedbf4536aeaad13d45bff922b9ee665258e6d28dfa4d517635de0ed"
+  },
+  "private_binary_sha256": "d698eacba790e0fa204675de0eb71f7935c8eb7a232fe032f0ebad6e2e1c708e",
+  "ordinary": {
+    "actual": 130,
+    "passed": 121,
+    "owner_deferred": 9,
+    "unresolved": 0,
+    "skipped": 0,
+    "includes_private_i13": false,
+    "junit_sha256": "fa423aba7ebaf94c51180600020272cd2527cf4f0fed14ed1ac00ea16407d48f",
+    "raw_ctest_exit": 8
+  },
+  "private": {
+    "registered": 5,
+    "executed_in_this_unit": 1,
+    "junit_sha256": "92e7e19aa3f4dadc579fd9e4f578b3f2aee8ee996eaf1c019161a52a03a748d4"
+  },
+  "build": {
+    "command": [
+      "cmake",
+      "--build",
+      "/home/tomi/tos/build",
+      "-j32"
+    ],
+    "default_all": true,
+    "scope": "Complete default build; separate explicit private target rebuild",
+    "exit_code": 0
+  },
+  "extra_domain_scan": "Five unchanged B-owned Counter generated-tag comment findings; not all CI gates green",
+  "live_i13a": false,
+  "activation_changed": false,
+  "controls": {
+    "runtime": 27,
+    "runtime_ids": [
+      "count",
+      "unique",
+      "later-account",
+      "limit-source",
+      "late-allocation",
+      "missing-classification",
+      "pruned",
+      "entry-count",
+      "account-binding",
+      "entry-binding",
+      "positive",
+      "ctest-mount",
+      "completion",
+      "identity-readback",
+      "entry-input-load",
+      "entry-effects-load",
+      "partial-count",
+      "record-count",
+      "allocation-classification",
+      "candidate-provenance",
+      "local-provenance",
+      "entry-level",
+      "scan-complete",
+      "available-exotic",
+      "account-address",
+      "transaction-address",
+      "transaction-lt"
+    ],
+    "compile_time": "Required-source omission and added-default static assertion; separately archived, not counted as runtime mutations"
+  },
+  "review": {
+    "verdict": "No blockers",
+    "scope": "Final provenance and representation classification; comments clarify local root construction versus closure/earlier raw-block guarantees",
+    "external_record": "/home/tomi/memo/reviews/uno-i13a-provenance-review.txt"
+  },
+  "cleanup": {
+    "before": {
+      "build": "/home/tomi/tos/build",
+      "directories": 9,
+      "retained": 0,
+      "delete": false
+    },
+    "deleted": {
+      "removed": 9,
+      "diagnostic_files": 194,
+      "archive": "/home/tomi/tos/build/counter-fixture-diagnostics-1788991062363500807.tar.gz"
+    },
+    "after": {
+      "build": "/home/tomi/tos/build",
+      "directories": 0,
+      "retained": 0,
+      "delete": false
+    },
+    "archive_sha256": "afbb519f36dc21f1495dc130fa716e3916bae14033cb30f21d85839440f654bd",
+    "scope": "Top-level diagnostics archived, not complete fixture databases. B pause explicitly confirmed and released after cleanup."
+  }
+}

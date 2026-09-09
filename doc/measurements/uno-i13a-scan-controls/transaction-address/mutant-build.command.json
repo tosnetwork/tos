@@ -1,0 +1,11 @@
+{
+  "argv": [
+    "cmake",
+    "--build",
+    "/tmp/uno-ledger-mechanism-CYFxwo",
+    "--target",
+    "test-workchain-batch-scan",
+    "-j32"
+  ],
+  "exit": 0
+}

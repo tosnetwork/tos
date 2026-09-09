@@ -12,7 +12,8 @@ GATE = Path(__file__).with_name("check-i13-results.py")
 NAMES = ["test-workchain-construction-isolation-gates",
          "test-workchain-i13-acceptance-gates",
          "test-workchain-i13-usage-acceptance-gates",
-         "test-workchain-execution-ledger-gates"]
+         "test-workchain-execution-ledger-gates",
+         "test-workchain-batch-scan-gates"]
 
 
 def run(mode, path, success):
@@ -40,9 +41,9 @@ with tempfile.TemporaryDirectory(prefix="i13-ci-observer-") as temporary:
     registry = json.loads(subprocess.check_output(
         ["ctest", "--test-dir", str(build), "-L", "i13", "--show-only=json-v1"]))
     for label, tests, success in [
-        ("four", registry["tests"], True), ("zero", [], False),
+        ("five", registry["tests"], True), ("zero", [], False),
         ("missing", registry["tests"][:-1], False),
-        ("duplicate", [registry["tests"][0]] * 4, False),
+        ("duplicate", [registry["tests"][0]] * 5, False),
     ]:
         path = directory / (label + ".json")
         path.write_text(json.dumps({"tests": tests}))
@@ -57,9 +58,9 @@ with tempfile.TemporaryDirectory(prefix="i13-ci-observer-") as temporary:
                     "--no-tests=error", "--output-junit", str(report)], check=True)
     run("executed", report, True)
     successful_tests = list(ET.parse(report).iter('testcase'))
-    if len(successful_tests) != 4 or any(t.get('status') != 'run' for t in successful_tests):
-        raise AssertionError('positive observer must see four actual run statuses')
-    # Keep all four actual names so failure cannot be rejected merely by count.
+    if len(successful_tests) != 5 or any(t.get('status') != 'run' for t in successful_tests):
+        raise AssertionError('positive observer must see five actual run statuses')
+    # Keep all five actual names so failure cannot be rejected merely by count.
     failing_driver = drivers / (NAMES[-1].removeprefix('test-').removesuffix('-gates') + '.py')
     original_driver = failing_driver.read_bytes()
     try:
@@ -70,8 +71,8 @@ with tempfile.TemporaryDirectory(prefix="i13-ci-observer-") as temporary:
         if failed.returncode != 8:
             raise AssertionError(f'forced driver failure: expected CTest exit 8, got {failed.returncode}')
         failed_tests = list(ET.parse(failure_report).iter('testcase'))
-        if len(failed_tests) != 4 or {t.get('name') for t in failed_tests} != set(NAMES):
-            raise AssertionError('forced failure must retain all four registered names')
+        if len(failed_tests) != 5 or {t.get('name') for t in failed_tests} != set(NAMES):
+            raise AssertionError('forced failure must retain all five registered names')
         actual_failures = [t for t in failed_tests if t.find('failure') is not None]
         if len(actual_failures) != 1 or actual_failures[0].get('status') != 'fail':
             raise AssertionError('forced failure must produce exactly one real CTest fail status')

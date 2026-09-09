@@ -1,0 +1,1 @@
+registered: exactly 5 private I13 checks: ['test-workchain-batch-scan-gates', 'test-workchain-construction-isolation-gates', 'test-workchain-execution-ledger-gates', 'test-workchain-i13-acceptance-gates', 'test-workchain-i13-usage-acceptance-gates']

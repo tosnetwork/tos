@@ -1,0 +1,218 @@
+[
+  {
+    "id": "count",
+    "path": "crypto/block/workchain-batch-scan.h",
+    "from": "if (claimed_count != result_.distinct_batches)",
+    "to": "if (false /* removed count comparison */)",
+    "failure": "count.independent_mismatch",
+    "later_only": false
+  },
+  {
+    "id": "unique",
+    "path": "crypto/block/workchain-batch-scan.h",
+    "from": "if (result_.distinct_batches != 1)",
+    "to": "if (false /* removed uniqueness */)",
+    "failure": "identity.truthful_two_count",
+    "later_only": false
+  },
+  {
+    "id": "later-account",
+    "path": "crypto/block/workchain-batch-scan.h",
+    "from": "return walk(load(right), remaining - length - 1, next + 1, key, leaf);",
+    "to": "return true;  // Deliberate omission of the right subtree.",
+    "failure": "scan.second_account_observed",
+    "later_only": true
+  },
+  {
+    "id": "limit-source",
+    "path": "crypto/block/workchain-batch-scan.h",
+    "from": "account_limit_(policy.resources().input.max_writes)",
+    "to": "account_limit_(policy.resources().input.max_reads)",
+    "failure": "bound.authenticated_not_allocation",
+    "later_only": false
+  },
+  {
+    "id": "late-allocation",
+    "path": "crypto/block/workchain-batch-scan.h",
+    "from": "if (result_.accounts_seen >= account_limit_) return fail(WorkchainBatchScanReason::AccountBound);",
+    "to": "if (result_.accounts_seen >= account_limit_) { identities_.insert({{}, {}}); return fail(WorkchainBatchScanReason::AccountBound); }",
+    "failure": "bound.one_positive_allocation_no_second_allocation",
+    "later_only": false
+  },
+  {
+    "id": "missing-classification",
+    "path": "crypto/block/workchain-batch-scan.h",
+    "from": "result_.reason = WorkchainBatchScanReason::MissingContent;",
+    "to": "result_.reason = WorkchainBatchScanReason::MissingContent;\n    result_.disposition = WorkchainBatchScanDisposition::CandidateInvalid;",
+    "failure": "missing.local_not_candidate",
+    "later_only": false
+  },
+  {
+    "id": "pruned",
+    "path": "crypto/block/workchain-batch-scan.h",
+    "from": "if (slice.special_type() == vm::Cell::SpecialType::PrunnedBranch) return pruned_representation();",
+    "to": "if (false /* removed pruned-content classification */) return pruned_representation();",
+    "failure": "pruned.local_not_candidate",
+    "later_only": false
+  },
+  {
+    "id": "entry-count",
+    "path": "crypto/block/workchain-batch-scan.h",
+    "from": "if (result_.entries_seen != 1)",
+    "to": "if (false /* removed entry multiplicity */)",
+    "failure": "entry.required",
+    "later_only": false
+  },
+  {
+    "id": "account-binding",
+    "path": "crypto/block/workchain-batch-scan.h",
+    "from": "if (record.account_id != address)",
+    "to": "if (false /* removed account position */)",
+    "failure": "binding.account_position",
+    "later_only": false
+  },
+  {
+    "id": "entry-binding",
+    "path": "crypto/block/workchain-batch-scan.h",
+    "from": "if (entry && (record.input_hash != input->get_hash().bits() ||",
+    "to": "if (false && (record.input_hash != input->get_hash().bits() ||",
+    "failure": "binding.entry_actual_roots",
+    "later_only": false
+  },
+  {
+    "id": "positive",
+    "path": "crypto/block/workchain-batch-scan.h",
+    "from": "return result_;\n  }\n  WorkchainBatchScanResult allocation_failure()",
+    "to": "return invalid(WorkchainBatchScanReason::Malformed);\n  }\n  WorkchainBatchScanResult allocation_failure()",
+    "failure": "legal.accepted",
+    "later_only": false
+  },
+  {
+    "id": "ctest-mount",
+    "path": "crypto/test/workchain-batch-scan.py",
+    "from": "def main():\n",
+    "to": "def main():\n    raise RuntimeError('forced-driver-failure')\n",
+    "failure": "forced-driver-failure",
+    "later_only": false
+  },
+  {
+    "id": "completion",
+    "path": "crypto/test/test-workchain-batch-scan.cpp",
+    "from": "std::cout << \"batch-scan.completed\\n\";",
+    "to": "std::cout << \"\";  // Deliberately omit completion.",
+    "failure": "incomplete or failed scan checks",
+    "later_only": false
+  },
+  {
+    "id": "identity-readback",
+    "path": "crypto/block/workchain-batch-scan.h",
+    "from": "result_.identity = *identities_.begin();  // Exactly one identity was checked above.",
+    "to": "result_.identity.reset();  // Deliberately omit accepted identity.",
+    "failure": "legal.identity_readback",
+    "later_only": false
+  },
+  {
+    "id": "entry-input-load",
+    "path": "crypto/block/workchain-batch-scan.h",
+    "from": "if (entry && (load(input).is_null() || load(effects).is_null())) return false;",
+    "to": "if (entry && (false || load(effects).is_null())) return false;",
+    "failure": "binding.available_input_must_be_loaded",
+    "later_only": false
+  },
+  {
+    "id": "entry-effects-load",
+    "path": "crypto/block/workchain-batch-scan.h",
+    "from": "if (entry && (load(input).is_null() || load(effects).is_null())) return false;",
+    "to": "if (entry && (load(input).is_null() || false)) return false;",
+    "failure": "binding.available_effects_must_be_loaded",
+    "later_only": false
+  },
+  {
+    "id": "partial-count",
+    "path": "crypto/block/workchain-batch-scan.h",
+    "from": "if (present && !walk(load(dictionary), 256, 0, key, account)) return result_;",
+    "to": "if (present && !walk(load(dictionary), 256, 0, key, account)) {\n      if (result_.disposition == WorkchainBatchScanDisposition::LocalUnavailable && result_.records_seen != 0 && claimed_count != result_.distinct_batches) return invalid(WorkchainBatchScanReason::CountMismatch);\n      return result_;\n    }",
+    "failure": "scan.partial_count_never_compared",
+    "later_only": false
+  },
+  {
+    "id": "record-count",
+    "path": "crypto/block/workchain-batch-scan.h",
+    "from": "if (records != 0) return fail(WorkchainBatchScanReason::RecordMultiplicity);",
+    "to": "if (false /* removed record multiplicity */) return fail(WorkchainBatchScanReason::RecordMultiplicity);",
+    "failure": "record.one_per_account",
+    "later_only": false
+  },
+  {
+    "id": "allocation-classification",
+    "path": "crypto/block/workchain-batch-scan.h",
+    "from": "result_.reason = WorkchainBatchScanReason::AllocationFailure;",
+    "to": "result_.reason = WorkchainBatchScanReason::AccountBound;",
+    "failure": "allocation.not_candidate_bound",
+    "later_only": false
+  },
+  {
+    "id": "candidate-provenance",
+    "path": "crypto/block/workchain-batch-scan.h",
+    "from": "invalid(WorkchainBatchScanReason::ForbiddenPrunedRepresentation);",
+    "to": "return unavailable(); // Deliberately ignore received representation source.",
+    "failure": "pruned.same_cell_candidate_source",
+    "later_only": false
+  },
+  {
+    "id": "local-provenance",
+    "path": "crypto/block/workchain-batch-scan.h",
+    "from": "case WorkchainBatchScanSource::AcquiredView:\n        return unavailable();",
+    "to": "case WorkchainBatchScanSource::AcquiredView:\n        invalid(WorkchainBatchScanReason::ForbiddenPrunedRepresentation);\n        return {};",
+    "failure": "pruned.local_not_candidate",
+    "later_only": false
+  },
+  {
+    "id": "entry-level",
+    "path": "crypto/block/workchain-batch-scan.h",
+    "from": "if (entry && (input->get_level() != 0 || effects->get_level() != 0))",
+    "to": "if (false /* omitted level check */)",
+    "failure": "level.same_cell_candidate_not_commitment",
+    "later_only": false
+  },
+  {
+    "id": "scan-complete",
+    "path": "crypto/block/workchain-batch-scan.h",
+    "from": "bool scan_complete = false;",
+    "to": "bool scan_complete = true;",
+    "failure": "bound.partial_count_is_not_complete",
+    "later_only": false
+  },
+  {
+    "id": "available-exotic",
+    "path": "crypto/block/workchain-batch-scan.h",
+    "from": "invalid(WorkchainBatchScanReason::Malformed);\n        return {};",
+    "to": "return unavailable(); // Deliberately hide available exotic structure.",
+    "failure": "available_exotic.not_missing_content",
+    "later_only": false
+  },
+  {
+    "id": "account-address",
+    "path": "crypto/block/workchain-batch-scan.h",
+    "from": "account.account_addr != address)",
+    "to": "false /* omitted AccountBlock address binding */)",
+    "failure": "framing.account_address",
+    "later_only": false
+  },
+  {
+    "id": "transaction-address",
+    "path": "crypto/block/workchain-batch-scan.h",
+    "from": "transaction_address != address ||",
+    "to": "false /* omitted Transaction address binding */ ||",
+    "failure": "framing.transaction_address",
+    "later_only": false
+  },
+  {
+    "id": "transaction-lt",
+    "path": "crypto/block/workchain-batch-scan.h",
+    "from": "cs.fetch_ulong(64) != lt ||",
+    "to": "(cs.fetch_ulong(64), false) /* omitted LT binding */ ||",
+    "failure": "framing.transaction_lt",
+    "later_only": false
+  }
+]

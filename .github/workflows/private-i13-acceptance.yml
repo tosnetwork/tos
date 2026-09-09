@@ -30,23 +30,23 @@ jobs:
           submodules: recursive
       - name: Configure opt-in private harnesses
         run: |
-          # The aggregate includes the original three harnesses and the ledger.
+          # The aggregate includes the original three harnesses, ledger and scan.
           # Do not include their child modules again and duplicate targets.
           cmake -S . -B build-private-i13 -G Ninja -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_PROJECT_TOS_INCLUDE="$GITHUB_WORKSPACE/crypto/test/workchain-private-i13.cmake"
       - name: Check the registration and execution observer
         run: python3 .github/scripts/test-i13-results.py
-      - name: Build the four private targets
+      - name: Build the five private targets
         run: |
           cmake --build build-private-i13 -j32 --target \
             test-workchain-construction-isolation \
             test-workchain-i13-acceptance test-workchain-i13-usage-acceptance \
-            test-workchain-execution-ledger
+            test-workchain-execution-ledger test-workchain-batch-scan
       - name: Assert exact registration
         run: |
           ctest --test-dir build-private-i13 -L i13 --show-only=json-v1 > build-private-i13/registered.json
           python3 .github/scripts/check-i13-results.py registered build-private-i13/registered.json
-      - name: Run and require four actual successful executions
+      - name: Run and require five actual successful executions
         run: |
           # Do not let an old report stand in for this invocation.
           test ! -e build-private-i13/results.xml

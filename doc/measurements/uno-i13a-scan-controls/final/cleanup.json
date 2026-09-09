@@ -1,0 +1,21 @@
+{
+  "before": {
+    "build": "/home/tomi/tos/build",
+    "directories": 9,
+    "retained": 0,
+    "delete": false
+  },
+  "deleted": {
+    "removed": 9,
+    "diagnostic_files": 194,
+    "archive": "/home/tomi/tos/build/counter-fixture-diagnostics-1788991062363500807.tar.gz"
+  },
+  "after": {
+    "build": "/home/tomi/tos/build",
+    "directories": 0,
+    "retained": 0,
+    "delete": false
+  },
+  "archive_sha256": "afbb519f36dc21f1495dc130fa716e3916bae14033cb30f21d85839440f654bd",
+  "scope": "Top-level diagnostics archived, not complete fixture databases. B pause explicitly confirmed and released after cleanup."
+}
