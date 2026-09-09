@@ -48,26 +48,33 @@ Success is outside this instrument's domain and must be handled by the caller.
     )
 
 
-def check_activation_source(repo):
-    """Check production crypto/block, validator and validator-engine C++ sources.
-
-    This is not a whole-repository scanner. The exact account-compute failure
-    is specific to the calibrated workchain-2 test selector, not a wildcard.
-    """
+def _check_source_message(repo, message, function):
     repo = Path(repo)
     expected = repo / "crypto/block/workchain-execution-dispatch.cpp"
     hits = []
     for directory in ("crypto/block", "validator", "validator-engine"):
         for path in (repo / directory).rglob("*"):
             if path.suffix in (".cpp", ".h", ".hpp", ".cc"):
-                hits.extend([path] * path.read_text().count(ACTIVATION_MESSAGE))
+                hits.extend([path] * path.read_text().count(message))
     if hits != [expected]:
-        raise AssertionError(f"activation producer is not unique: {hits!r}")
+        raise AssertionError(f"message producer is not unique: {message!r}: {hits!r}")
     text = expected.read_text()
-    start = text.index("td::Status validate_workchain_block_activation(")
+    start = text.index(function)
     end = text.index("\n}\n", start)
-    if f'return td::Status::Error("{ACTIVATION_MESSAGE}");' not in text[start:end]:
-        raise AssertionError("activation message is not produced by the activation check")
+    if f'return td::Status::Error("{message}");' not in text[start:end]:
+        raise AssertionError(f"message {message!r} is not produced by {function}")
+
+
+def check_activation_source(repo):
+    """Check production crypto/block, validator and validator-engine C++ sources.
+
+    This is not a whole-repository scanner. The exact account-compute failure
+    is specific to the calibrated workchain-2 test selector, not a wildcard.
+    Both exact activation and block-lookup messages must have unique producers.
+    """
+    repo = Path(repo)
+    _check_source_message(repo, ACTIVATION_MESSAGE, "td::Status validate_workchain_block_activation(")
+    _check_source_message(repo, EARLIER_MESSAGE, "WorkchainExecutionRegistry::resolve_block(")
     prefix_site = f'execution_res.move_as_error_prefix("{COLLATOR_PREFIX}")'
     if (repo / 'validator/impl/collator.cpp').read_text().count(prefix_site) != 1:
         raise AssertionError("collator prefix differs from the calibrated producer")
@@ -142,6 +149,18 @@ class ActivationCalibration(unittest.TestCase):
             with self.assertRaisesRegex(AssertionError, 'producer is not unique'):
                 check_activation_source(repo)
 
+    def test_duplicate_block_lookup_producer(self):
+        repo = Path(__file__).resolve().parents[2]
+        original = Path.read_text
+        def duplicated(path, *args, **kwargs):
+            text = original(path, *args, **kwargs)
+            if path == repo / 'crypto/block/workchain-execution-dispatch.cpp':
+                text += '\n// ' + EARLIER_MESSAGE + '\n'
+            return text
+        with patch.object(Path, 'read_text', duplicated):
+            with self.assertRaisesRegex(AssertionError, 'producer is not unique'):
+                check_activation_source(repo)
+
     def test_malformed_calibration_table(self):
         path = Path(__file__).resolve().parents[2] / 'doc/measurements/uno-v2-activation-helper-provenance/probe.stdout.log'
         rows = path.read_text().splitlines()
@@ -169,7 +188,7 @@ class ActivationCalibration(unittest.TestCase):
                 text += '\n// ' + ACTIVATION_MESSAGE + '\n'
             return text
         with patch.object(Path, 'read_text', moved):
-            with self.assertRaisesRegex(AssertionError, 'not produced by the activation check'):
+            with self.assertRaisesRegex(AssertionError, 'not produced by'):
                 check_activation_source(repo)
 
 

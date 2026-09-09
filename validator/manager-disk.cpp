@@ -249,6 +249,10 @@ void ValidatorManagerImpl::sync_complete(td::Promise<td::Unit> promise) {
         // record the typed result before logging or moving the error.
         if (!result_path.empty()) {
           td::write_file(result_path, PSLICE() << "collate " << (R.is_ok() ? 0 : R.error().code()) << "\n").ensure();
+          // Preserve the terminal typed result, not a potentially misleading
+          // later log. A numeric zero alone does not identify Status success.
+          td::write_file(result_path + ".kind", td::Slice(R.is_ok() ? "success\n" : "error\n")).ensure();
+          td::write_file(result_path + ".message", R.is_ok() ? td::Slice{} : R.error().message()).ensure();
         }
         if (R.is_ok()) {
           auto v = R.move_as_ok();

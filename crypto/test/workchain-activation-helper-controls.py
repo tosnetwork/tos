@@ -13,6 +13,7 @@ unknown = '''    raise UnclassifiableActivationStatus(
         f"unclassifiable activation status: boundary={boundary!r}, code={code!r}, message={message!r}"
     )'''
 controls = [
+    ('block-lookup-source', '    _check_source_message(repo, EARLIER_MESSAGE, "WorkchainExecutionRegistry::resolve_block(")\n', ''),
     ('producer-uniqueness', 'if hits != [expected]:', 'if False:'),
     ('calibration-shape', "if len(rows) != 4 or any(len(row) != 5 for row in rows):", 'if False:'),
     ('calibration-flags', 'row[:2] != flags or ', ''),
@@ -24,7 +25,7 @@ controls = [
     ('collator-prefix-drift', 'COLLATOR_PREFIX = "cannot create block for configured workchain: "',
      'COLLATOR_PREFIX = "unrecognized prefix: "'),
     ('producer-function-check',
-     '''if f'return td::Status::Error("{ACTIVATION_MESSAGE}");' not in text[start:end]:''',
+     '''if f'return td::Status::Error("{message}");' not in text[start:end]:''',
      'if False:'),
 ]
 # Compile precisely the hashed text; the loader does not prepend source lines.

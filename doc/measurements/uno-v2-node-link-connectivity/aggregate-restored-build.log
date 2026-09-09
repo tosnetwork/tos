@@ -1,0 +1,60 @@
+[1/116] Linking CXX executable test-quorum
+[2/116] Linking CXX executable test-bigint
+[3/116] Linking CXX executable test-workchain-proof-work
+[4/116] Linking CXX executable test-workchain-proof-contracts
+[5/116] Linking CXX executable test-full-node-shard-routing
+[6/116] Linking CXX executable test-cells
+[7/116] Linking CXX executable test-workchain-admission
+[8/116] Linking CXX executable test-rldp2-connection-limits
+[9/116] cd /home/tomi/tos/uno/crypto && /usr/bin/cmake -E env CARGO_NET_OFFLINE=true CARGO_TARGET_DIR=/home/tomi/tos/build/uno/crypto/cargo-target /home/tomi/.cargo/bin/cargo build --locked --offline --release -j32
+    Finished `release` profile [optimized] target(s) in 0.06s
+[10/115] Linking CXX executable test-ed25519
+[11/115] Checking the git repository for changes...
+[12/59] Linking CXX executable test-msg-envelope
+[13/59] Linking CXX executable test-json-rpc-parse
+[14/59] Linking CXX executable test-config-transition
+[15/59] Linking CXX executable test-keyring-temp-key
+[16/59] Linking CXX executable test-vm
+[17/59] Linking CXX executable test-download-next-blocks-validation
+[18/59] Linking CXX executable test-fift
+[19/59] Linking CXX executable test-workchain-proof-backend
+[20/59] Linking CXX executable test-consensus-config-admission
+[21/59] Linking CXX executable test-vm-exception-hardening
+[22/59] Linking CXX executable test-block-handle-flags
+[23/59] Linking CXX executable test-rldp2-inbound-transfer-bound
+[24/59] Linking CXX executable test-json-rpc-handler-guard
+[25/59] Linking CXX executable test-validator-options
+[26/59] Linking CXX executable test-download-state-budget
+[27/59] Linking CXX executable test-metrics-label-bound
+[28/59] Linking CXX executable tol/tol
+[29/59] Linking CXX executable test-http-server-limits
+[30/59] Linking CXX executable test-db
+[31/59] Linking CXX executable test-overlay-peer-cleanup
+[32/59] Linking CXX executable test-wallet-index
+[33/59] Compiling Tol contract slice5-receive-context-tol -> /home/tomi/tos/build/slice1-gas-parity/slice5-receive-context-tol.boc
+[34/59] Compiling FunC contract jetton-wallet-func -> /home/tomi/tos/build/slice1-gas-parity/jetton-wallet-func.boc
+[35/59] Compiling FunC contract jetton-minter-func -> /home/tomi/tos/build/slice1-gas-parity/jetton-minter-func.boc
+[36/59] Compiling Tol contract jetton-minter-tol -> /home/tomi/tos/build/slice1-gas-parity/jetton-minter-tol.boc
+[37/59] Compiling Tol contract jetton-wallet-tol -> /home/tomi/tos/build/slice1-gas-parity/jetton-wallet-tol.boc
+[38/59] Compiling Tol contract wallet-v5-tol -> /home/tomi/tos/build/slice1-gas-parity/wallet-v5-tol.boc
+[39/59] Compiling Tol contract tos-report-bond-oracle -> /home/tomi/tos/build/slice1-gas-parity/tos-report-bond-oracle.boc
+[40/59] Compiling FunC contract wallet-v5-func -> /home/tomi/tos/build/slice1-gas-parity/wallet-v5-func.boc
+[41/59] Linking CXX executable test-rldp2-query-eviction
+[42/59] Linking CXX executable test-adnl
+[43/59] Linking CXX executable test-dht
+[44/59] Linking CXX shared library emulator/libemulator.so
+[45/59] Linking CXX executable test-rldp2
+[46/59] Linking CXX executable test-rldp2-connection-cap
+[47/59] Linking CXX executable test-ext-message-pool
+[48/59] Linking CXX executable test-workchain-block
+[49/59] Linking CXX executable test-smartcont
+[50/59] Linking CXX executable plumtree-graph-sim
+[51/59] Linking CXX executable test-celldb-streaming-import
+[52/59] Linking CXX executable test-toslib-offline
+[53/59] Linking CXX executable test-wallet-message-processor
+[54/59] Linking CXX executable test-emulator
+[55/59] Linking CXX executable test-celldb-actor-restart
+[56/59] Linking CXX executable test/toslib/test-ffi-awaitable
+[57/59] Linking CXX executable test/toslib/test-ffi-event-loop
+[58/59] Linking CXX executable test-uno-storage-measurement
+[59/59] Linking CXX executable test-uno-state-snapshot

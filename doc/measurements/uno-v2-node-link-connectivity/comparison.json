@@ -1,0 +1,185 @@
+{
+  "off_on_observations_equal": true,
+  "binary_hashes": {
+    "off": {
+      "validator-engine": "4cbf6c7d3cefc5022ec8516593873128a6ddd3a22b4afa0ceb93287803d449f1",
+      "test-tos-collator": "cb08788abd4204e71661d134a224bdc6dd728fe30c0ac40a86d2fdfb74259b60"
+    },
+    "on": {
+      "validator-engine": "7a0a0b0a8ea994406ae63ed3ab24485a750c4c16d5c2e4299b234d7f7c1bde21",
+      "test-tos-collator": "7f04611f9e1049a88bbaba9b6b2edfea7c483d8fdeab70485d85eb44368f46c0"
+    }
+  },
+  "observed": {
+    "bootstrap": {
+      "exit_code": 0,
+      "events": [
+        {
+          "site": "preinit"
+        },
+        {
+          "site": "validator_set"
+        },
+        {
+          "site": "old_state"
+        },
+        {
+          "site": "registry_default",
+          "registry": {
+            "engines_": [
+              {
+                "format": 0,
+                "selector": -1
+              }
+            ],
+            "block_engines_": [],
+            "account_engines_": []
+          }
+        },
+        {
+          "site": "config",
+          "version": 15,
+          "capabilities": 494
+        },
+        {
+          "site": "registry_default",
+          "registry": {
+            "engines_": [
+              {
+                "format": 0,
+                "selector": -1
+              }
+            ],
+            "block_engines_": [],
+            "account_engines_": []
+          }
+        },
+        {
+          "site": "registry_default",
+          "registry": {
+            "engines_": [
+              {
+                "format": 0,
+                "selector": -1
+              }
+            ],
+            "block_engines_": [],
+            "account_engines_": []
+          }
+        },
+        {
+          "site": "registry_default",
+          "registry": {
+            "engines_": [
+              {
+                "format": 0,
+                "selector": -1
+              }
+            ],
+            "block_engines_": [],
+            "account_engines_": []
+          }
+        },
+        {
+          "site": "registry_default",
+          "registry": {
+            "engines_": [
+              {
+                "format": 0,
+                "selector": -1
+              }
+            ],
+            "block_engines_": [],
+            "account_engines_": []
+          }
+        },
+        {
+          "site": "config",
+          "version": 15,
+          "capabilities": 494
+        },
+        {
+          "site": "registry_default",
+          "registry": {
+            "engines_": [
+              {
+                "format": 0,
+                "selector": -1
+              }
+            ],
+            "block_engines_": [],
+            "account_engines_": []
+          }
+        }
+      ],
+      "errors": []
+    },
+    "account": {
+      "exit_code": 2,
+      "events": [
+        {
+          "site": "registry_default",
+          "registry": {
+            "engines_": [
+              {
+                "format": 0,
+                "selector": -1
+              }
+            ],
+            "block_engines_": [],
+            "account_engines_": []
+          }
+        },
+        {
+          "site": "register_account",
+          "registry": {
+            "engines_": [
+              {
+                "format": 0,
+                "selector": -1
+              }
+            ],
+            "block_engines_": [],
+            "account_engines_": [
+              {
+                "format": 0,
+                "selector": 1129206833
+              }
+            ]
+          }
+        },
+        {
+          "site": "preinit"
+        },
+        {
+          "site": "dispatch"
+        },
+        {
+          "site": "registry_default",
+          "registry": {
+            "engines_": [
+              {
+                "format": 0,
+                "selector": -1
+              }
+            ],
+            "block_engines_": [],
+            "account_engines_": [
+              {
+                "format": 0,
+                "selector": 1129206833
+              }
+            ]
+          }
+        },
+        {
+          "site": "config",
+          "version": 15,
+          "capabilities": 494
+        }
+      ],
+      "errors": []
+    }
+  },
+  "scope": "production Collator path under the disk manager; closed activation, no admission or replay reached"
+}

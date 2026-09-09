@@ -42,6 +42,34 @@ The specification separately authorizes a payout and one aggregate operation-fee
 
 ### Owner-directed sequence after opt-in harness registration
 
+Owner authorization, 2026-09-09: isolated test-authenticated configurations may
+enable the workchain-2 capability/profile solely for I13 live acceptance.
+Construct these configurations inside the test; never read them from or write
+them to deployment configuration paths, and share no writable configuration
+source with deployment. Deployment configurations, production defaults,
+activation rules and the final submission gate remain unchanged/closed.
+This is a granted, narrowly scoped authorization, not a pending task or a
+precedent for enabling other capabilities. Each enabled-config live acceptance
+must run and archive a disabled-config control through the same path in the
+same unit: positively identify the activation rejection site, require zero
+transactions and no candidate export. LocalUnavailable (-7201) alone is not
+identification: earlier local failures share that code. Unknown status shapes
+must fail the observation, not receive a default Boolean classification.
+This reverse control is a condition of authorization.
+Any disabled-config execution or publication is a stop-and-report finding.
+
+Verification after this authorization: the existing enabled account-binding
+disk test reaches the production configured adapter (ownership 1 -> 2 -> 1),
+then still stops at the explicit admission/replay-not-connected refusal in
+`Collator::check_this_shard_mc_info`, before any transaction. Configuration
+permission alone therefore does not establish live stateful execution. The
+disabled account-engine probe currently stops at the missing-singleton-engine
+resolution error; it must not be labelled an activation-guard control. The
+separate disabled singleton block-engine probe does reach the activation
+refusal, but does not substitute for the required same-account-path control.
+These are open wiring/acceptance obligations, not permission to remove the
+early refusals without their resource-admission and final-publication safeguards.
+
 The private I13 harnesses have a separate, manual-only CI entry point:
 `.github/workflows/private-i13-acceptance.yml` (`workflow_dispatch`). It
 explicitly includes their modules, builds the three targets and selects only
@@ -59,9 +87,29 @@ This is a registration-only check, not a run of the private harnesses or hosted 
 
 After the three private I13 harness modules have registered their Python
 drivers and demonstrated failing CTest controls, A first resumes the thin
-end-to-end connectivity smoke, then I13b, then I13a. B owns I13e publication
+end-to-end connectivity smoke, then the shared activation observation helper,
+then the minimal common production connection (authenticated admission,
+metered execution, settlement and construction isolation), then I13b and I13a.
+B owns I13e publication
 work. This sequence supersedes older scheduling paragraphs below; it does not
 waive outstanding resource-admission prerequisites or authorize opening a gate.
+
+The common connection is deliberately staged: A first connects the collator
+execution-entry account-binding branch, preserving adapter/ownership telemetry
+and separating candidate-invalid failures from local unavailability by source.
+After immediate review of that shape, B may connect the three validator branches
+while A connects the remaining collator branches and I13b. Before that review B
+only inspects validator differences; it does not implement a parallel collator.
+Activation identity and its four-row calibration live in one shared test helper,
+not independently maintained classifiers or expected-answer tables.
+
+Restoration discipline (owner requirement, 2026-09-09): after restoring a
+mutated source byte-for-byte, explicitly enumerate and rebuild every affected
+artifact target. Record those target names and commands in the evidence;
+`all-tests` does not substitute for that inventory. In the disk observer unit it
+left test-tos-collator at the mutant hash; only explicitly rebuilding that target
+rebuilt validator-disk and restored the executable. Opt-in private harnesses
+likewise require their own explicit target rebuilds.
 
 - Connectivity must use objects constructed by the production path. Record
   the actual stopping point, counters and side effects; private fixture assembly
@@ -3042,12 +3090,28 @@ external cryptographic-review gap. Wallet prover dependencies remain separate
 from the node. Mutation controls, byte-exact restoration, full regression and
 independent review remain required for each completed unit.
 
-Connectivity investigation at `ffedd9d21` found the first missing seam before
+Connectivity investigation at `ffedd9d21` found a historical private-interface seam before
 runtime replay: `resolve_account_binding` returns a validated `engine_config`,
 but neither `proof_work` nor `execute_accounts` receives it. The existing
 complete-input identity binds the configuration hash; it does not supply the
 decoded business parameters. Existing engines in these tests do not require
 those parameters and therefore cannot establish their propagation.
+
+Closed-activation runtime clarification (2026-09-09): this historical private
+seam is not the first reachable stop with all activation gates closed. The
+OFF/ON disk smoke uses the same frozen state with global version 15,
+capabilities 494 (BlockTransition disabled), and no installed ingress/profile.
+The explicit account-engine test registration succeeds, but live dispatch
+selects the singleton resolver when no dual ingress is installed and fails
+because that family has no registered block engine. No adapter, proof admission,
+or replay is reached. Registering a singleton block engine is not a repair of
+the missing multi-account connection: a separate same-state diagnostic confirms
+that it registers successfully, then fails the activation check instead.
+Installing ConfigParam 84 while the capability is disabled is independently
+rejected by the configuration installation test. Local registry insertion does
+not require activation; advancing the selected authenticated execution profile
+does. Do not infer live multi-account acceptance from a singleton registration
+or silently enable fixture capability to move this stop.
 
 The initial probe at `ffedd9d21` used the real resolved-binding and admission
 types with the normal test translation unit's compiler flags. Passing the

@@ -1,0 +1,75 @@
+{
+  "node_base_commit": "c519361489d68708f7695f05fab8576397e78319",
+  "node_delta_source": "validator/manager-disk.cpp",
+  "final_source_hashes": {
+    "crypto/test/workchain-node-link-smoke.py": "640bb887495b1a147f6c829af55b21362367fba504095b22f3cca97a6e812fd3",
+    "crypto/test/workchain-activation-rejection.py": "8b27fa99e2801a97ff15ed456ad98e836e025dc94f849202f8a8a14920b03b81",
+    "crypto/test/workchain-activation-helper-controls.py": "e4c071e2933455fe2d484e8be917291c05a5756b06e121c638cae34b2a7941c8",
+    "crypto/test/workchain-node-link-smoke.gdb": "12f3706b106db5602755d4efa4cd121f61fac29a921151a9f5f9b98a836e351d",
+    "crypto/test/workchain-node-link-smoke-types.cpp": "836f8046ca8862f3061c340bb4fee735f7ecee5e73858957b8b43ad689fcc18f",
+    "validator/manager-disk.cpp": "3c6f8f32725760863ab7e8c70147ace50ac19db2ede50c529879985d88c3ac63"
+  },
+  "binary_hashes": {
+    "off/validator-engine": "4cbf6c7d3cefc5022ec8516593873128a6ddd3a22b4afa0ceb93287803d449f1",
+    "off/test-tos-collator": "cb08788abd4204e71661d134a224bdc6dd728fe30c0ac40a86d2fdfb74259b60",
+    "on/validator-engine": "7a0a0b0a8ea994406ae63ed3ab24485a750c4c16d5c2e4299b234d7f7c1bde21",
+    "on/test-tos-collator": "7f04611f9e1049a88bbaba9b6b2edfea7c483d8fdeab70485d85eb44368f46c0"
+  },
+  "controls": [
+    {
+      "name": "config",
+      "from_text": "int(cfg['version_'])",
+      "to_text": "int(cfg['version_']) + 1",
+      "base_sha256": "12f3706b106db5602755d4efa4cd121f61fac29a921151a9f5f9b98a836e351d",
+      "mutant_sha256": "223c62435e763256e3db5244cf39d31505abe95e196eca1165917a374fec4699",
+      "reconstructed_mutant_sha256": "223c62435e763256e3db5244cf39d31505abe95e196eca1165917a374fec4699",
+      "restored_sha256": "12f3706b106db5602755d4efa4cd121f61fac29a921151a9f5f9b98a836e351d",
+      "method": "One alternate GDB script per fresh child run; original source never overwritten. Checker unchanged. Both query runs exit0 from driver; check exits1. Not a production-source mutation.",
+      "source": "crypto/test/workchain-node-link-smoke.gdb"
+    },
+    {
+      "name": "frontier",
+      "from_text": "events.append({'site': self.site})",
+      "to_text": "pass  # controlled observation loss",
+      "base_sha256": "12f3706b106db5602755d4efa4cd121f61fac29a921151a9f5f9b98a836e351d",
+      "mutant_sha256": "3d0cfff88b010c43b79c354f79636882ee17bf5728f7f9aa240676474dac1d27",
+      "reconstructed_mutant_sha256": "3d0cfff88b010c43b79c354f79636882ee17bf5728f7f9aa240676474dac1d27",
+      "restored_sha256": "12f3706b106db5602755d4efa4cd121f61fac29a921151a9f5f9b98a836e351d",
+      "method": "One alternate GDB script per fresh child run; original source never overwritten. Checker unchanged. Both query runs exit0 from driver; check exits1. Not a production-source mutation.",
+      "source": "crypto/test/workchain-node-link-smoke.gdb"
+    },
+    {
+      "name": "terminal-message",
+      "source": "validator/manager-disk.cpp",
+      "from_text": "R.is_ok() ? td::Slice{} : R.error().message()",
+      "to_text": "R.is_ok() ? td::Slice{} : td::Slice(\"unrelated local failure\")",
+      "base_sha256": "3c6f8f32725760863ab7e8c70147ace50ac19db2ede50c529879985d88c3ac63",
+      "mutant_sha256": "9f5ac3bc0e75f98cad0272917bea8330fa59ae1ae1778a4fb76d688f6a646105",
+      "reconstructed_mutant_sha256": "9f5ac3bc0e75f98cad0272917bea8330fa59ae1ae1778a4fb76d688f6a646105",
+      "restored_sha256": "3c6f8f32725760863ab7e8c70147ace50ac19db2ede50c529879985d88c3ac63",
+      "mutant_binary_sha256": "5462cdd0d25096bf092c7ef29b493f934fab9e937de2887d93656cd2160bf881",
+      "restored_binary_sha256": "cb08788abd4204e71661d134a224bdc6dd728fe30c0ac40a86d2fdfb74259b60",
+      "build_exit_code": 0,
+      "run_exit_code": 0,
+      "check_exit_code": 1,
+      "typed_code": -7201,
+      "transactions": 0
+    }
+  ],
+  "build_jobs": 32,
+  "final_checker_recheck": {
+    "method": "Final checker rerun against retained exact node observations and three mutant observation sets; node executions were not repeated for this checker-only change.",
+    "baseline_exit_code": 0,
+    "control_exit_codes": {"config": 1, "frontier": 1, "terminal-message": 1}
+  },
+  "ordinary_regression": {
+    "command": "ctest --test-dir build -j32 --output-on-failure --output-junit /tmp/uno-connectivity-typed-regression-final.xml",
+    "tests": 127,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "private_i13_harnesses_included": false,
+    "initial_run": {"passed": 117, "failed": 10, "reason": "historical fixture retention cap; raw initial run retained separately"}
+  },
+  "scope": "Actual rebuilt nodes; production Collator path under disk manager. Exact terminal typed-result observation. No activation-site refusal, admission/replay or general zero-allocation claim."
+}
