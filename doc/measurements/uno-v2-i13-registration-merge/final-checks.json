@@ -1,0 +1,27 @@
+{
+  "tested_merge": "eea0e04dfc53fa1c55a62296119ff747402f4b47",
+  "parents": [
+    "395ae489b182367b309b45d8a8cf4c490f2289c3",
+    "ad4ff21eb685e05934031f5c4659889d9494dc5a"
+  ],
+  "ordinary_registered": 127,
+  "ordinary_executed_and_passed": 127,
+  "private_harnesses_executed": 0,
+  "opt_in_before_count": 0,
+  "opt_in_after_count": 3,
+  "private_and_ordinary_overlap": [],
+  "artifact_sha256": {
+    "all-tests-build.log": "305472e30d1facdf92c7ff128c631ecd82c8149358181b2d1cdf9093f075d70a",
+    "opt-in-configure-after.log": "8d862a15230d9291297243d9a89658f0cbf15340dbea1772243fe4b60ad396d9",
+    "ordinary-configure.log": "b54f0bcac3b85c593f94f3131a656185e0366b72b99f498a32fd7f5bb599dacd",
+    "ordinary-ctest.log": "2ea9600bd45b664734233c6d67804becb9103ca82d01220775cfa9cffe949a2d",
+    "ordinary-registration.json": "cbb72cc8a8a7dc048190d599d208bf2273d7ec94d6a8f4aec8d0447ad4d40425",
+    "ordinary-results.xml": "069a5abf6c70a3bfcef5d76eab4d2d79ad4505d1a9d2dcc17d42b9fd0dc4ac44",
+    "registration-after-gate.log": "44c42fd997c5eb423dce49661ceb3228b7a409e3d8fe5e43c529b40692b58e88",
+    "registration-after.json": "27b9d1a1c298b9c6c63d693afbcdb5726c7e828ae451820b1b9de6d79e03776d",
+    "registration-before-gate.log": "f46e3b43b3e4659c1d7d616fc3d7ea861231f5a5208a36869aa3c9d211c6404d",
+    "registration-before.json": "655b4edf543a99640d87b7cec2509f8071db3e631f77a63bd8b28f1533babfc4",
+    "source-guard.log": "4edb8214cc9e8c62f49078088f1c63464f4f2d33b448f16cd9eb6a9246204b4f",
+    "with-evidence-source-guard.log": "e42276b52af6eca53da5ff99566e966384f001a131b3e86ce97afb7f44658b2e"
+  }
+}

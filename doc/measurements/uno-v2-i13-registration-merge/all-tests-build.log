@@ -1,0 +1,266 @@
+[1/264] Building CXX object crypto/CMakeFiles/tos_crypto.dir/vm/cp0.cpp.o
+[2/264] Building CXX object crypto/CMakeFiles/tos_block.dir/block/output-queue-merger.cpp.o
+[3/264] Building CXX object crypto/CMakeFiles/tos_crypto.dir/vm/tosops.cpp.o
+[4/264] Building CXX object crypto/CMakeFiles/tos_block.dir/block/mc-config.cpp.o
+[5/264] Building CXX object crypto/CMakeFiles/tos_block.dir/block/signature-set.cpp.o
+[6/264] Building CXX object crypto/CMakeFiles/tos_block.dir/block/check-proof.cpp.o
+[7/264] Building CXX object crypto/CMakeFiles/tos_block.dir/block/block.cpp.o
+[8/264] Building CXX object crypto/CMakeFiles/tos_block.dir/block/precompiled-smc/PrecompiledSmartContract.cpp.o
+[9/264] Building CXX object crypto/CMakeFiles/tos_block.dir/block/workchain-execution-dispatch.cpp.o
+[10/264] Building CXX object crypto/CMakeFiles/tos_block.dir/block/workchain-block-execution.cpp.o
+[11/264] Building CXX object crypto/CMakeFiles/tos_block.dir/block/validator-set.cpp.o
+[12/264] Building CXX object crypto/CMakeFiles/tos_block.dir/block/transaction.cpp.o
+[13/264] Linking CXX static library crypto/libtos_block.a
+[14/264] cd /home/tomi/tos/uno/crypto && /usr/bin/cmake -E env CARGO_NET_OFFLINE=true CARGO_TARGET_DIR=/home/tomi/tos/build/uno/crypto/cargo-target /home/tomi/.cargo/bin/cargo build --locked --offline --release -j32
+    Finished `release` profile [optimized] target(s) in 0.08s
+[15/263] Linking CXX static library crypto/libtos_crypto.a
+[16/263] Linking CXX executable test-quorum
+[17/263] Checking the git repository for changes...
+[18/263] Linking CXX executable test-ed25519
+[19/263] Building CXX object CMakeFiles/git.dir/git.cc.o
+[20/263] Linking CXX static library libgit.a
+[21/263] Linking CXX executable test-bigint
+[22/263] Linking CXX executable test-cells
+[23/263] Linking CXX executable test-vm
+[24/263] Linking CXX executable test-workchain-proof-work
+[25/263] Linking CXX executable test-workchain-proof-backend
+[26/263] Linking CXX executable test-workchain-admission
+[27/263] Linking CXX executable test-fift
+[28/263] Linking CXX executable test-wallet-index
+[29/263] Linking CXX executable test-adnl
+[30/263] Linking CXX executable test-dht
+[31/263] Linking CXX executable test-rldp2
+[32/263] Linking CXX executable test-rldp2-connection-cap
+[33/263] Linking CXX executable test-rldp2-query-eviction
+[34/263] Linking CXX executable test-msg-envelope
+[35/263] Linking CXX executable test-overlay-peer-cleanup
+[36/263] Linking CXX executable test-full-node-shard-routing
+[37/263] Linking CXX executable plumtree-graph-sim
+[38/263] Building CXX object CMakeFiles/test-consensus-config-admission.dir/test/test-consensus-config-admission.cpp.o
+[39/263] Linking CXX executable test-json-rpc-parse
+[40/263] Linking CXX executable test-rldp2-connection-limits
+[41/263] Building CXX object CMakeFiles/test-vm-exception-hardening.dir/test/test-vm-exception-hardening.cpp.o
+[42/263] Linking CXX executable test-keyring-temp-key
+[43/263] Linking CXX executable test-json-rpc-handler-guard
+[44/263] Linking CXX executable test-rldp2-inbound-transfer-bound
+[45/263] Linking CXX executable test-consensus-config-admission
+[46/263] Linking CXX executable crypto/func
+[47/263] Compile FunC stdlib TVM v6 fee primitive coverage
+[48/263] Linking CXX executable crypto/fift
+[49/263] Generate /home/tomi/tos/build/crypto/smartcont/auto/highload-wallet-code.fif
+[50/263] Generate /home/tomi/tos/build/crypto/smartcont/auto/wallet-v4-code.fif
+[51/263] Generate /home/tomi/tos/build/crypto/smartcont/auto/highload-wallet-v2-code.fif
+[52/263] Generate /home/tomi/tos/build/crypto/smartcont/auto/restricted-wallet-code.fif
+[53/263] Linking CXX executable tol/tol
+[54/263] Generate /home/tomi/tos/build/crypto/smartcont/auto/restricted-wallet-code.cpp
+[55/263] Compiling Tol contract jetton-minter-tol -> /home/tomi/tos/build/slice1-gas-parity/jetton-minter-tol.boc
+[56/263] Compiling FunC contract jetton-minter-func -> /home/tomi/tos/build/slice1-gas-parity/jetton-minter-func.boc
+[57/263] Generate /home/tomi/tos/build/crypto/smartcont/auto/task-escrow-code.fif
+[58/263] Generate /home/tomi/tos/build/crypto/smartcont/auto/elector-code.fif
+[59/263] Generate /home/tomi/tos/build/crypto/smartcont/auto/highload-wallet-code.cpp
+[60/263] Compiling Tol contract tos-report-bond-oracle -> /home/tomi/tos/build/slice1-gas-parity/tos-report-bond-oracle.boc
+[61/263] Compiling FunC contract jetton-wallet-func -> /home/tomi/tos/build/slice1-gas-parity/jetton-wallet-func.boc
+[62/263] Compiling Tol contract jetton-wallet-tol -> /home/tomi/tos/build/slice1-gas-parity/jetton-wallet-tol.boc
+[63/263] Compiling FunC contract wallet-v5-func -> /home/tomi/tos/build/slice1-gas-parity/wallet-v5-func.boc
+[64/263] Generate /home/tomi/tos/build/crypto/smartcont/auto/highload-wallet-v2-code.cpp
+[65/263] Generate /home/tomi/tos/build/crypto/smartcont/auto/multisig-code.fif
+[66/263] Generate /home/tomi/tos/build/crypto/smartcont/auto/multisig-code.cpp
+[67/263] Generate /home/tomi/tos/build/crypto/smartcont/auto/elector-code.cpp
+[68/263] Generate /home/tomi/tos/build/crypto/smartcont/auto/restricted-wallet2-code.fif
+[69/263] Generate /home/tomi/tos/build/crypto/smartcont/auto/wallet-v4-code.cpp
+[70/263] Generate /home/tomi/tos/build/crypto/smartcont/auto/restricted-wallet2-code.cpp
+[71/263] Generate /home/tomi/tos/build/crypto/smartcont/auto/restricted-wallet3-code.fif
+[72/263] Building CXX object CMakeFiles/test-workchain-proof-contracts.dir/crypto/test/test-workchain-proof-contracts.cpp.o
+[73/263] Generate /home/tomi/tos/build/crypto/smartcont/auto/task-escrow-code.cpp
+[74/263] Generate /home/tomi/tos/build/crypto/smartcont/auto/restricted-wallet3-code.cpp
+[75/263] Generate /home/tomi/tos/build/crypto/smartcont/auto/wallet-v5-code.fif
+[76/263] Generate /home/tomi/tos/build/crypto/smartcont/auto/wallet-v5-code.cpp
+[77/263] Compiling Tol contract wallet-v5-tol -> /home/tomi/tos/build/slice1-gas-parity/wallet-v5-tol.boc
+[78/263] Compiling Tol contract slice5-receive-context-tol -> /home/tomi/tos/build/slice1-gas-parity/slice5-receive-context-tol.boc
+[79/263] Generate /home/tomi/tos/build/crypto/smartcont/auto/simple-wallet-code.fif
+[80/263] Generate /home/tomi/tos/build/crypto/smartcont/auto/simple-wallet-code.cpp
+[81/263] Generate /home/tomi/tos/build/crypto/smartcont/auto/wallet-code.fif
+[82/263] Generate /home/tomi/tos/build/crypto/smartcont/auto/config-code.fif
+[83/263] Generate /home/tomi/tos/build/crypto/smartcont/auto/wallet-code.cpp
+[84/263] Generate /home/tomi/tos/build/crypto/smartcont/auto/wallet3-code.fif
+[85/263] Generate /home/tomi/tos/build/crypto/smartcont/auto/config-code.cpp
+[86/263] Generate /home/tomi/tos/build/crypto/smartcont/auto/wallet3-code.cpp
+[87/263] Generate /home/tomi/tos/build/crypto/smartcont/auto/session-wallet-code.fif
+[88/263] Generate /home/tomi/tos/build/crypto/smartcont/auto/session-wallet-code.cpp
+[89/263] Linking CXX executable test-workchain-proof-contracts
+[90/263] Building CXX object CMakeFiles/test-config-transition.dir/test/test-config-transition.cpp.o
+[91/263] Verify and embed the frozen TOS Service Protocol stablecoin escrow v1 BOC
+NOTE: escrow v1 is deprecated (superseded by v2); this build exists only to verify the frozen historical artifact.
+NOTE: escrow v1 is deprecated (superseded by v2); this build exists only to verify the frozen historical artifact.
+[92/263] Generate /home/tomi/tos/build/crypto/smartcont/auto/agent-account-code.fif
+[93/263] Verify and embed the frozen TOS Native Service Registry BOC
+[94/263] Generate /home/tomi/tos/build/crypto/smartcont/auto/agent-account-code.cpp
+[95/263] Generate /home/tomi/tos/build/crypto/smartcont/auto/pow-testgiver-code.fif
+[96/263] Verify and embed the frozen TOS Service Protocol stablecoin escrow v2 BOC
+[97/263] Generate /home/tomi/tos/build/crypto/smartcont/auto/dns-manual-code.fif
+[98/263] Generate /home/tomi/tos/build/crypto/smartcont/auto/pow-testgiver-code.cpp
+[99/263] Generate /home/tomi/tos/build/crypto/smartcont/auto/dns-manual-code.cpp
+[100/263] Generate /home/tomi/tos/build/crypto/smartcont/auto/dns-auto-code.fif
+[101/263] Generate /home/tomi/tos/build/crypto/smartcont/auto/dns-auto-code.cpp
+[102/263] Generate /home/tomi/tos/build/crypto/smartcont/auto/payment-channel-code.fif
+[103/263] Generate /home/tomi/tos/build/crypto/smartcont/auto/simple-wallet-ext-code.fif
+[104/263] Generate /home/tomi/tos/build/crypto/smartcont/auto/payment-channel-code.cpp
+[105/263] Generate /home/tomi/tos/build/crypto/smartcont/auto/simple-wallet-ext-code.cpp
+[106/263] Linking CXX executable test-config-transition
+[107/263] Generate /home/tomi/tos/build/crypto/smartcont/auto/prediction-market-code.fif
+[108/263] Generate /home/tomi/tos/build/crypto/smartcont/auto/prediction-market-code.cpp
+[109/263] Building CXX object CMakeFiles/test-workchain-block.dir/crypto/test/test-workchain-block.cpp.o
+[110/263] Building CXX object CMakeFiles/test-download-next-blocks-validation.dir/test/test-download-next-blocks-validation.cpp.o
+[111/263] Building CXX object CMakeFiles/test-block-handle-flags.dir/test/test-block-handle-flags.cpp.o
+[112/263] Building CXX object CMakeFiles/test-validator-options.dir/test/test-validator-options.cpp.o
+[113/263] Building CXX object validator/CMakeFiles/validator-common.dir/block-handle.cpp.o
+[114/263] Building CXX object validator/CMakeFiles/validator-common.dir/downloaders/wait-block-state-merge.cpp.o
+[115/263] Building CXX object CMakeFiles/test-celldb-streaming-import.dir/test/test-celldb-streaming-import.cpp.o
+[116/263] Building CXX object validator/CMakeFiles/validator-db.dir/db/fileref.cpp.o
+[117/263] Building CXX object CMakeFiles/test-celldb-actor-restart.dir/test/test-celldb-actor-restart.cpp.o
+[118/263] Building CXX object validator/CMakeFiles/validator-common.dir/apply-block.cpp.o
+[119/263] Building CXX object CMakeFiles/test-uno-storage-measurement.dir/test/uno-snapshot-transport.cpp.o
+[120/263] Building CXX object validator/CMakeFiles/validator-db.dir/db/statedb.cpp.o
+[121/263] Building CXX object validator/CMakeFiles/validator-db.dir/db/archiver.cpp.o
+[122/263] Building CXX object crypto/CMakeFiles/smc-envelope.dir/smc-envelope/GenericAccount.cpp.o
+[123/263] Building CXX object CMakeFiles/test-uno-state-snapshot.dir/test/uno-snapshot-transport.cpp.o
+[124/263] Building CXX object crypto/CMakeFiles/smc-envelope.dir/smc-envelope/HighloadWallet.cpp.o
+[125/263] Building CXX object crypto/CMakeFiles/smc-envelope.dir/smc-envelope/HighloadWalletV2.cpp.o
+[126/263] Building CXX object crypto/CMakeFiles/smc-envelope.dir/smc-envelope/ManualDns.cpp.o
+[127/263] Building CXX object crypto/CMakeFiles/smc-envelope.dir/smc-envelope/MultisigWallet.cpp.o
+[128/263] Building CXX object crypto/CMakeFiles/smc-envelope.dir/smc-envelope/PaymentChannel.cpp.o
+[129/263] Building CXX object crypto/CMakeFiles/smc-envelope.dir/smc-envelope/SmartContractCode.cpp.o
+[130/263] Building CXX object crypto/CMakeFiles/smc-envelope.dir/smc-envelope/SmartContract.cpp.o
+[131/263] Building CXX object crypto/CMakeFiles/smc-envelope.dir/smc-envelope/WalletInterface.cpp.o
+[132/263] Building CXX object crypto/CMakeFiles/smc-envelope.dir/smc-envelope/WalletV3.cpp.o
+[133/263] Building CXX object crypto/CMakeFiles/smc-envelope.dir/smc-envelope/WalletV4.cpp.o
+[134/263] Linking CXX static library crypto/libsmc-envelope.a
+[135/263] Building CXX object emulator/CMakeFiles/emulator_static.dir/transaction-emulator.cpp.o
+[136/263] Linking CXX static library emulator/libemulator_static.a
+[137/263] Building CXX object CMakeFiles/test-ext-message-pool.dir/test/test-ext-message-pool.cpp.o
+[138/263] Linking CXX executable test-workchain-block
+[139/263] Building CXX object CMakeFiles/test-download-state-budget.dir/test/test-download-state-budget.cpp.o
+[140/263] Building CXX object crypto/CMakeFiles/tos_db.dir/vm/db/DynamicBagOfCellsDbV2.cpp.o
+[141/263] Linking CXX static library crypto/libtos_db.a
+[142/263] Linking CXX executable test-db
+[143/263] Building CXX object validator/CMakeFiles/validator-common.dir/downloaders/wait-block-state.cpp.o
+[144/263] Building CXX object validator/CMakeFiles/validator-db.dir/db/archive-slice.cpp.o
+[145/263] Building CXX object CMakeFiles/test-emulator.dir/emulator/test/slice-1-account-state-fixtures.cpp.o
+[146/263] Building CXX object validator/CMakeFiles/validator-common.dir/manager-init.cpp.o
+[147/263] Building CXX object CMakeFiles/test-emulator.dir/emulator/test/slice-1-stage-2-roundtrip-fixture.cpp.o
+[148/263] Building CXX object CMakeFiles/test-uno-state-snapshot.dir/test/test-uno-state-snapshot.cpp.o
+[149/263] Building CXX object CMakeFiles/test-emulator.dir/emulator/test/emulator-tests.cpp.o
+[150/263] Building CXX object validator/CMakeFiles/validator-common.dir/downloaders/download-state.cpp.o
+[151/263] Building CXX object CMakeFiles/test-emulator.dir/emulator/test/slice-3-replay-fixture.cpp.o
+[152/263] Building CXX object CMakeFiles/test-emulator.dir/emulator/test/tos-report-bond-oracle-fixture.cpp.o
+[153/263] Building CXX object CMakeFiles/test-emulator.dir/emulator/test/slice-1-failure-phase-fixtures.cpp.o
+[154/263] Building CXX object validator/CMakeFiles/validator-common.dir/validator-options.cpp.o
+[155/263] Building CXX object CMakeFiles/test-emulator.dir/emulator/test/slice-5-receive-context-fixture.cpp.o
+[156/263] Building CXX object CMakeFiles/test-emulator.dir/emulator/test/config-param-43-transaction-fixture.cpp.o
+[157/263] Building CXX object CMakeFiles/test-emulator.dir/emulator/test/tvm-v14-v15-transaction-fixture.cpp.o
+[158/263] Building CXX object CMakeFiles/test-emulator.dir/emulator/test/slice-1-stage-4-gas-parity-fixture.cpp.o
+[159/263] Building CXX object CMakeFiles/test-uno-storage-measurement.dir/test/test-uno-state-snapshot.cpp.o
+[160/263] Building CXX object validator/CMakeFiles/validator-db.dir/db/rootdb.cpp.o
+[161/263] Building CXX object validator/CMakeFiles/validator-db.dir/db/archive-manager.cpp.o
+[162/263] Building CXX object validator/CMakeFiles/validator.dir/collator-node/collator-node-session.cpp.o
+[163/263] Building CXX object validator/CMakeFiles/validator-common.dir/queue-size-counter.cpp.o
+[164/263] Building CXX object toslib/CMakeFiles/toslib.dir/toslib/ExtClient.cpp.o
+[165/263] Building CXX object validator/CMakeFiles/validator.dir/collation-manager.cpp.o
+[166/263] Building CXX object validator/CMakeFiles/validator-common.dir/shard-client.cpp.o
+[167/263] Building CXX object toslib/CMakeFiles/toslib.dir/toslib/Client.cpp.o
+[168/263] Building CXX object crypto/CMakeFiles/create-state.dir/block/create-state.cpp.o
+[169/263] Building CXX object emulator/CMakeFiles/emulator.dir/emulator-extern.cpp.o
+[170/263] Building CXX object CMakeFiles/test-wallet-message-processor.dir/test/test-wallet-message-processor.cpp.o
+[171/263] Linking CXX shared library emulator/libemulator.so
+[172/263] Building CXX object toslib/CMakeFiles/toslib.dir/toslib/LastBlock.cpp.o
+[173/263] Building CXX object validator/CMakeFiles/validator.dir/collator-node/collator-node.cpp.o
+[174/263] Linking CXX executable test-emulator
+[175/263] Building CXX object toslib/CMakeFiles/toslib.dir/toslib/LastConfig.cpp.o
+[176/263] Building CXX object validator/CMakeFiles/validator-db.dir/db/celldb.cpp.o
+[177/263] Linking CXX executable test-validator-options
+[178/263] Linking CXX executable test-block-handle-flags
+[179/263] Building CXX object toslib/CMakeFiles/toslib.dir/toslib/ToslibClientWrapper.cpp.o
+[180/263] Building CXX object CMakeFiles/test-toslib-offline.dir/toslib/test/offline.cpp.o
+[181/263] Building CXX object validator/CMakeFiles/validator.dir/get-next-key-blocks.cpp.o
+[182/263] Building CXX object validator/CMakeFiles/validator.dir/token-manager.cpp.o
+[183/263] Building CXX object validator/CMakeFiles/validator.dir/validator-telemetry.cpp.o
+[184/263] Building CXX object validator/CMakeFiles/validator.dir/storage-stat-cache.cpp.o
+[185/263] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/bus.cpp.o
+[186/263] Building CXX object validator/CMakeFiles/validator.dir/validate-broadcast.cpp.o
+[187/263] Building CXX object validator/CMakeFiles/validator.dir/downloaders/wait-block-data.cpp.o
+[188/263] Building CXX object validator/CMakeFiles/validator.dir/shard-block-verifier.cpp.o
+[189/263] Building CXX object validator/CMakeFiles/validator.dir/import-db-slice.cpp.o
+[190/263] Building CXX object validator/CMakeFiles/validator.dir/impl/applied-ext-message-cleanup.cpp.o
+[191/263] Building CXX object validator/CMakeFiles/validator.dir/shard-block-retainer.cpp.o
+[192/263] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/collator-schedule.cpp.o
+[193/263] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/certificate.cpp.o
+[194/263] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/metric-collector.cpp.o
+[195/263] Building CXX object validator/CMakeFiles/validator.dir/state-serializer.cpp.o
+[196/263] Building CXX object validator/CMakeFiles/validator.dir/import-db-slice-local.cpp.o
+[197/263] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/votes.cpp.o
+[198/263] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/candidate-resolver.cpp.o
+[199/263] Building CXX object validator/CMakeFiles/validator.dir/consensus/block-accepter.cpp.o
+[200/263] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/db.cpp.o
+[201/263] Building CXX object validator/CMakeFiles/validator.dir/consensus/block-validator.cpp.o
+[202/263] Building CXX object validator/CMakeFiles/validator.dir/consensus/block-sync-overlay.cpp.o
+[203/263] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/consensus.cpp.o
+[204/263] Building CXX object validator/CMakeFiles/validator.dir/consensus/block-producer.cpp.o
+[205/263] Building CXX object validator/CMakeFiles/validator.dir/consensus/chain-state.cpp.o
+[206/263] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/state-resolver.cpp.o
+[207/263] Building CXX object validator/CMakeFiles/validator.dir/consensus/misbehavior-reporter.cpp.o
+[208/263] Building CXX object validator/CMakeFiles/validator.dir/consensus/bus.cpp.o
+[209/263] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/config.cpp.o
+[210/263] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/pool.cpp.o
+[211/263] Building CXX object validator/CMakeFiles/validator.dir/consensus/types.cpp.o
+[212/263] Building CXX object validator/CMakeFiles/validator.dir/consensus/trace-collector.cpp.o
+[213/263] Building CXX object validator/CMakeFiles/validator.dir/consensus/utils.cpp.o
+[214/263] Building CXX object validator/CMakeFiles/full-node.dir/full-node-serializer.cpp.o
+[215/263] Building CXX object validator/CMakeFiles/validator.dir/consensus/bridge.cpp.o
+[216/263] Building CXX object validator/CMakeFiles/full-node.dir/net/download-block-new.cpp.o
+[217/263] Building CXX object validator/CMakeFiles/full-node.dir/net/download-archive-slice.cpp.o
+[218/263] Building CXX object validator/CMakeFiles/validator.dir/consensus/private-overlay.cpp.o
+[219/263] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/proof.cpp.o
+[220/263] Building CXX object validator/CMakeFiles/full-node.dir/net/download-next-blocks.cpp.o
+[221/263] Building CXX object validator/CMakeFiles/full-node.dir/net/download-proof.cpp.o
+[222/263] Building CXX object validator/CMakeFiles/full-node.dir/net/get-next-key-blocks.cpp.o
+[223/263] Building CXX object validator/CMakeFiles/full-node.dir/net/download-state.cpp.o
+[224/263] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/shard.cpp.o
+[225/263] Building CXX object validator/CMakeFiles/full-node.dir/full-node-custom-overlays.cpp.o
+[226/263] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/check-proof.cpp.o
+[227/263] Building CXX object validator/CMakeFiles/full-node.dir/full-node.cpp.o
+[228/263] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/external-message.cpp.o
+[229/263] Building CXX object validator/CMakeFiles/full-node.dir/full-node-master.cpp.o
+[230/263] Building CXX object validator/CMakeFiles/full-node.dir/full-node-fast-sync-overlays.cpp.o
+[231/263] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/accept-block.cpp.o
+[232/263] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/ext-message-checker.cpp.o
+[233/263] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/fabric.cpp.o
+[234/263] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/ext-message-pool.cpp.o
+[235/263] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/out-msg-queue-proof.cpp.o
+[236/263] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/top-shard-descr.cpp.o
+[237/263] Building CXX object validator/CMakeFiles/full-node.dir/full-node-shard.cpp.o
+[238/263] Linking CXX static library validator/libfull-node.a
+[239/263] Linking CXX executable test-download-next-blocks-validation
+[240/263] Linking CXX executable test-download-state-budget
+[241/263] Linking CXX executable test-celldb-streaming-import
+[242/263] Building CXX object toslib/CMakeFiles/toslib.dir/toslib/ToslibClient.cpp.o
+[243/263] Linking CXX executable test-celldb-actor-restart
+[244/263] Linking CXX static library toslib/libtoslib.a
+[245/263] Linking CXX executable test-metrics-label-bound
+[246/263] Linking CXX executable crypto/create-state
+[247/263] Linking CXX executable test-http-server-limits
+[248/263] Linking CXX executable test/toslib/test-ffi-awaitable
+[249/263] Linking CXX executable test-toslib-offline
+[250/263] Linking CXX executable test/toslib/test-ffi-event-loop
+[251/263] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/collator.cpp.o
+[252/263] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/liteserver.cpp.o
+[253/263] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/validate-query.cpp.o
+[254/263] Linking CXX static library validator/impl/libtos_validator.a
+[255/263] Building CXX object validator/CMakeFiles/validator.dir/manager.cpp.o
+[256/263] Linking CXX static library validator/libvalidator.a
+[257/263] Linking CXX executable test-vm-exception-hardening
+[258/263] Linking CXX executable test-wallet-message-processor
+[259/263] Linking CXX executable test-ext-message-pool
+[260/263] Linking CXX executable test-uno-state-snapshot
+[261/263] Linking CXX executable test-uno-storage-measurement
+[262/263] Building CXX object CMakeFiles/test-smartcont.dir/crypto/test/test-smartcont.cpp.o
+[263/263] Linking CXX executable test-smartcont

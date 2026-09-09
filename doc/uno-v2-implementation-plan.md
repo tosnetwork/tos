@@ -52,8 +52,10 @@ policy is the owner's decision of 2026-09-09, not an unfinished task. Ordinary
 "full regression passed" statements do **not** include these private harnesses;
 their separate manual run and result must be cited explicitly. This entry
 point does not change default builds, register engines or enable execution.
-Until the reviewed registration modules are integrated, the registration
-assertion intentionally fails rather than accepting an empty run.
+Merge `eea0e04df` integrates the reviewed registration modules. The same opt-in
+configuration lists zero private I13 tests before integration and exactly three
+afterwards; the registration assertion rejects the former and accepts the latter.
+This is a registration-only check, not a run of the private harnesses or hosted CI.
 
 After the three private I13 harness modules have registered their Python
 drivers and demonstrated failing CTest controls, A first resumes the thin
