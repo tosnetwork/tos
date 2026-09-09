@@ -52,6 +52,15 @@ waive outstanding resource-admission prerequisites or authorize opening a gate.
   the actual stopping point, counters and side effects; private fixture assembly
   is not runtime connectivity evidence. If a closed gate or incomplete resource
   admission prevents progress, report that boundary rather than bypassing it.
+- Run connectivity with `TOS_UNO_CRYPTO_NODE_LINK=OFF` and `ON` using the same
+  source, authenticated fixture and all other build settings. Actually build
+  the node in both modes. Record the registered engine identities (separating
+  any explicit test-probe registration from production registration), actual
+  capability/profile values, execution-gate state, stopping point and side
+  effects. Linking must add zero registrations and make no additional
+  workchain-2 execution path reachable. Any difference in these observations
+  is a stop-and-report finding, not an implicitly harmless linkage effect.
+  Symbol retention alone does not establish runtime reachability isolation.
 - I13b requires a host-owned ledger created at candidate-block processing entry
   and destroyed at its end, keyed by the admitted input root hash. Enforce it
   at the stateful engine entry, rejecting a second execution in that scope.
@@ -3140,8 +3149,12 @@ FFI entries in the actual node without registering or calling an engine. This
 is a build seam only: it establishes no I13 property or milestone acceptance.
 The independent wallet prover and its standalone CI were subsequently delivered
 in `62771b318` and `0b120a07d`; they never join the node dependency graph. Full
-differential and supply-chain acceptance, and production host invocation remain
-open. The scoped review disposition and evidence index for node linkage are
+differential, RNG and supply-chain deliverables were subsequently integrated
+in `9556ab05d`; the older outstanding-delivery statement is superseded.
+Production host invocation remains open. Optional linkage acceptance now
+requires the OFF/ON runtime connectivity comparison described above, not
+another implementation of the already existing link option.
+The scoped review disposition and evidence index for node linkage are
 in `doc/measurements/uno-v2-node-link-review-disposition.md`; execution matrix
 in `uno-v2-node-link-matrix.json`, initial controls in the retention/cargo-fixture
 JSONs and domain-controls Markdown, exact reconstruction in
