@@ -81,4 +81,8 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    try:
+        main()
+    except ControlFailure as error:
+        print(json.dumps({'guard': error.identity}), file=sys.stderr)
+        sys.exit(1)
