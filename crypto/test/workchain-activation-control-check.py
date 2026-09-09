@@ -46,15 +46,7 @@ def main():
     require(rows[0][4] == rows[2][4] and rows[1][4] == rows[3][4] and rows[0][4] != rows[1][4], 336)
     require(helper.is_activation_rejection(int(rows[2][2]), rows[2][3], boundary='scoped') is True, 337)
     require(helper.is_activation_rejection(int(rows[1][2]), rows[1][3], boundary='scoped') is False, 338)
-    # Another earlier failure is outside the shared instrument's known domain.
-    # Preserve the unknown; do not silently promote it to a classified rejection.
-    try:
-        helper.is_activation_rejection(int(rows[0][2]), rows[0][3], boundary='scoped')
-    except helper.UnclassifiableActivationStatus:
-        unknown = True
-    else:
-        unknown = False
-    require(unknown, 339)
+    require(helper.is_activation_rejection(int(rows[0][2]), rows[0][3], boundary='scoped') is False, 339)
     # Schema calibration only: statuses/config hashes are real resolver outputs;
     # the zero/export fields below are unit inputs, NOT collator observations.
     closed = dict(status_code=int(rows[2][2]), status_message=rows[2][3],
@@ -65,18 +57,21 @@ def main():
     enabled = dict(closed, capability_enabled=True, config_sha256=rows[3][4],
                    reached_required_frontier=True)
     check_pair(enabled, closed, boundary='scoped')
-    earlier = dict(closed, status_code=int(rows[1][2]), status_message=rows[1][3])
-    caught = None
-    try:
-        check_pair(enabled, earlier, boundary='scoped')
-    except ControlFailure as error:
-        caught = error.identity
-    require(caught == 315, 341)
+    caught_identities = []
+    for earlier_row in rows[:2]:
+        earlier = dict(closed, status_code=int(earlier_row[2]), status_message=earlier_row[3])
+        caught = None
+        try:
+            check_pair(enabled, earlier, boundary='scoped')
+        except ControlFailure as error:
+            caught = error.identity
+        require(caught == 315, 341)
+        caught_identities.append(caught)
     print(json.dumps({'scope': 'Resolver-only real configuration/status calibration; no live I13e claim, '
                              'no simulated zero-transaction or no-export observations.',
                       'rows': rows, 'activation': [1, 0], 'known_earlier': [0, 1],
-                      'unclassifiable_earlier': [0, 0],
-                      'schema_consumer_earlier_rejection_identity': caught,
+                      'other_known_earlier': [0, 0],
+                      'schema_consumer_earlier_rejection_identities': caught_identities,
                       'schema_consumer_scope': 'Unit record fields, not actual transaction/export observations.'}))
 
 

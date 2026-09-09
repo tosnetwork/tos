@@ -22,7 +22,8 @@ test engine does not change either configuration root.
 This is a single-account resolver calibration, not a substitute for the future
 multi-account engine/profile fixture. It executes the real
 `resolve_scoped_workchain` boundary. Registered + enabled resolves successfully;
-registered + disabled fails; unregistered cases fail earlier. In particular the
+registered + disabled fails; unregistered cases fail earlier with two exact known diagnostic forms. Both
+are classified False by the shared helper; other unknown forms remain exceptions. In particular the
 production boundary itself generates -7201 for both the earlier failure and the
 activation failure. No test-side conversion supplies that code. These real status
 observations feed the shared helper's identity check. A disabled resolver
