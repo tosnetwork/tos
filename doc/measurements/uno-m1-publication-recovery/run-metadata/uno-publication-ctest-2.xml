@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="(empty)"
+	tests="1"
+	failures="0"
+	disabled="0"
+	skipped="0"
+	hostname=""
+	time="259"
+	timestamp="2026-09-09T13:08:58"
+	>
+	<testcase name="test-workchain-publication-recovery-gates" classname="test-workchain-publication-recovery-gates" time="259.745" status="run">
+		<system-out>Private measurement evidence: /tmp/uno-publication-build/workchain-publication-ctest/run-uab_clw_/evidence
+PASS: 12 private disk scenarios, 24 isolated controls; no milestone acceptance claimed.
+</system-out>
+	</testcase>
+</testsuite>

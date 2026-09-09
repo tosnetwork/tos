@@ -11,6 +11,8 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+extern "C" void workchain_publication_set_arm(int);
+extern "C" unsigned workchain_publication_set_errors();
 namespace {
 using Publisher=block::WorkchainCandidatePublication;
 using Bundle=block::WorkchainPublicationBundle;
@@ -85,11 +87,14 @@ struct Session {
       }
       if(p==PubPoint::BeforeWrite) {
         auto actual=publisher->released();check(actual.is_ok(),208);
-        intermediate |= actual.ok()->batch_identity!=before.batch_identity;
+        trace(dir,"before-write identity "+actual.ok()->batch_identity.to_hex());
+        trace(dir,"before-write equals predecessor "+std::to_string(*actual.ok()==before));
+        intermediate |= *actual.ok()!=before;
         if(mode==1)throw CancelBeforeWrite{};
         if(mode==2)io.arm(1,(dir+"/db").c_str());
         if(mode==3||mode==6)io.arm(2,(dir+"/db").c_str());
         if(mode==4)io.arm(3,(dir+"/db").c_str());
+        if(mode==10||mode==11)workchain_publication_set_arm(mode-9);
       }
       if(p==PubPoint::BatchStaged)trace(dir,"write attempt");
       if(p==PubPoint::AfterCommitBeforeRead&&mode==5) {
@@ -163,7 +168,21 @@ void run_publication(unsigned which,const std::string& dir,const std::string& or
     std::cout<<"{\"case\":"<<which<<",\"returned\":"<<!cancelled
         <<",\"outcome\":"<<(cancelled?"null":std::to_string(static_cast<int>(r.outcome)))<<",\"availability\":"<<(cancelled?"null":std::to_string(static_cast<int>(r.availability)))
         <<",\"partial_bytes\":"<<s.io.written()<<",\"completed_syncs\":"<<s.io.synced()<<"}\n";
-    if(which==0||which>=7) {
+    if(which==10||which==11) {
+      check(!cancelled&&r.outcome==Outcome::NotCommitted&&r.availability==Availability::LocalUnavailable,225);
+      check(r.detail.is_error()&&r.detail.code()==-73002,226);
+      check(workchain_publication_set_errors()==1,227);
+      check(count_trace(dir,"write attempt")==0,228);
+      check(s.publisher->released().is_error(),208);
+      auto blocked=s.publisher->publish(s.expected.batch_identity,s.expected.admitted_input,s.expected.batch_identity,s.builder());
+      check(blocked.outcome==Outcome::Undetermined,211);
+      check(count_trace(dir,"execute")==1,205);
+      workchain_publication_set_arm(0);
+      auto recovered=s.publisher->recover(s.expected.batch_identity,s.expected.admitted_input,s.observer());
+      check(recovered.outcome==Outcome::NotCommitted&&recovered.availability==Availability::Ready,210);
+      check_bundle(*take(s.publisher->released()),oracle+"/before");
+      check(count_trace(dir,"release "+s.expected.batch_identity.to_hex())==0,207);
+    } else if(which==0||which>=7) {
       check(!cancelled&&r.outcome==Outcome::Committed&&r.availability==Availability::Ready,204);
       check(count_trace(dir,"point 3")==1,220);
       check(count_trace(dir,"release "+s.expected.batch_identity.to_hex())==1,207);
@@ -219,9 +238,22 @@ void run_publication(unsigned which,const std::string& dir,const std::string& or
       check_bundle(*take(s.publisher->released()),oracle+(committed?"/after":"/before"));
       check(count_trace(dir,"release "+s.expected.batch_identity.to_hex())==(committed?1u:0u),207);
       if(committed)s.verify_retry();
+      if(which==2) {
+        // Reopen once more before allowing a new execution: a pending fragment
+        // must not reappear as a delayed commit after the first absence result.
+        s.reopen();
+        auto still_absent=s.publisher->recover(s.expected.batch_identity,s.expected.admitted_input,s.observer());
+        check(still_absent.outcome==Outcome::NotCommitted&&still_absent.availability==Availability::Ready,210);
+        check_bundle(*take(s.publisher->released()),oracle+"/before");
+        auto retried=s.publisher->publish(s.expected.batch_identity,s.expected.admitted_input,s.before.batch_identity,s.builder(),s.observer());
+        check(retried.outcome==Outcome::Committed&&retried.availability==Availability::Ready,204);
+        check(count_trace(dir,"execute")==2,221);
+        check(count_trace(dir,"release "+s.expected.batch_identity.to_hex())==1,207);
+        check_bundle(*take(s.publisher->released()),oracle+"/after");s.verify_retry();
+      }
     }
   }
-  check(count_trace(dir,"execute")==1,205);
+  check(count_trace(dir,"execute")==unsigned(which==2?2:1),205);
   std::cout<<"PASS publication case "<<which<<"\n";
 }
 }

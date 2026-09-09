@@ -53,7 +53,13 @@ int sync_file(int fd,bool data_only) {
 }
 extern "C" void workchain_publication_fault_arm(int selected,const char* path) {
   mode.store(0);
-  std::strncpy(directory,path,sizeof(directory)-1);directory[sizeof(directory)-1]=0;
+  // One isolated directory per test process. Keep its bytes immutable after
+  // publishing the first armed mode to background I/O threads.
+  if (!directory[0]) {
+    std::strncpy(directory,path,sizeof(directory)-1);directory[sizeof(directory)-1]=0;
+  } else if (std::strcmp(directory,path)) {
+    ::_exit(213);
+  }
   phase.store(0);written.store(0);synced.store(0);failed_reads.store(0);mode.store(selected);
 }
 extern "C" void workchain_publication_fault_clear() {mode.store(0);}

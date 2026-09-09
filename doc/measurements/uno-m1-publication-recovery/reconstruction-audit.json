@@ -1,0 +1,151 @@
+{
+  "content-provenance-6ee1eb684": {
+    "manifest_members": 43,
+    "empty_stderr_members": 11,
+    "control_restore_chains": [
+      "bypass-readback-and-forge-read-event"
+    ],
+    "recorded_complete": true
+  },
+  "diagnostic-78fab252a": {
+    "manifest_members": 1338,
+    "empty_stderr_members": 352,
+    "control_restore_chains": [
+      "reexecute-identical-retry",
+      "rewrite-identical-retry",
+      "reinstall-identical-view",
+      "remove-read-observation",
+      "remove-new-release-observation",
+      "normalize-external-count",
+      "retain-old-message-bytes",
+      "drift-account-bytes",
+      "expose-view-while-undetermined",
+      "execute-while-undetermined",
+      "infer-absence-from-reopen-error",
+      "erase-store-binding",
+      "erase-completed-sync-counter",
+      "disable-commit-point-io-fault",
+      "erase-execution-probe"
+    ],
+    "recorded_complete": false
+  },
+  "final-898b86953": {
+    "manifest_members": 2404,
+    "empty_stderr_members": 685,
+    "control_restore_chains": [
+      "reexecute-identical-retry",
+      "rewrite-identical-retry",
+      "reinstall-identical-view",
+      "remove-read-observation",
+      "remove-new-release-observation",
+      "normalize-external-count",
+      "retain-old-message-bytes",
+      "drift-account-bytes",
+      "expose-view-while-undetermined",
+      "execute-while-undetermined",
+      "infer-absence-from-reopen-error",
+      "erase-store-binding",
+      "erase-completed-sync-counter",
+      "disable-commit-point-io-fault",
+      "erase-execution-probe",
+      "disable-partial-write-fault",
+      "disable-prewrite-cancellation",
+      "disable-postcommit-crash",
+      "mark-record-set-error-ready",
+      "mark-head-set-error-ready",
+      "erase-set-error-probe",
+      "disable-set-error-injection",
+      "alter-set-error-identity",
+      "allow-missing-store-creation",
+      "release-before-persistent-decision",
+      "bypass-normal-persistent-read"
+    ],
+    "recorded_complete": true
+  },
+  "initial-ad4ff21eb": {
+    "manifest_members": 1438,
+    "empty_stderr_members": 389,
+    "control_restore_chains": [
+      "reexecute-identical-retry",
+      "rewrite-identical-retry",
+      "reinstall-identical-view",
+      "remove-read-observation",
+      "remove-new-release-observation",
+      "normalize-external-count",
+      "retain-old-message-bytes",
+      "drift-account-bytes",
+      "expose-view-while-undetermined",
+      "execute-while-undetermined",
+      "infer-absence-from-reopen-error",
+      "erase-store-binding",
+      "erase-completed-sync-counter",
+      "disable-commit-point-io-fault",
+      "erase-execution-probe",
+      "disable-partial-write-fault",
+      "disable-prewrite-cancellation",
+      "disable-postcommit-crash"
+    ],
+    "recorded_complete": true
+  },
+  "intermediate-6c14be889": {
+    "manifest_members": 2228,
+    "empty_stderr_members": 640,
+    "control_restore_chains": [
+      "reexecute-identical-retry",
+      "rewrite-identical-retry",
+      "reinstall-identical-view",
+      "remove-read-observation",
+      "remove-new-release-observation",
+      "normalize-external-count",
+      "retain-old-message-bytes",
+      "drift-account-bytes",
+      "expose-view-while-undetermined",
+      "execute-while-undetermined",
+      "infer-absence-from-reopen-error",
+      "erase-store-binding",
+      "erase-completed-sync-counter",
+      "disable-commit-point-io-fault",
+      "erase-execution-probe",
+      "disable-partial-write-fault",
+      "disable-prewrite-cancellation",
+      "disable-postcommit-crash",
+      "mark-record-set-error-ready",
+      "mark-head-set-error-ready",
+      "erase-set-error-probe",
+      "disable-set-error-injection",
+      "alter-set-error-identity",
+      "allow-missing-store-creation"
+    ],
+    "recorded_complete": true
+  },
+  "missing-current-oracle": {
+    "manifest_members": 91,
+    "empty_stderr_members": 9,
+    "control_restore_chains": [],
+    "recorded_complete": false
+  },
+  "private-regressions": {
+    "manifest_members": 115,
+    "empty_stderr_members": 55,
+    "control_restore_chains": [],
+    "recorded_complete": false
+  },
+  "registration-control": {
+    "manifest_members": 4,
+    "empty_stderr_members": 0,
+    "control_restore_chains": [],
+    "recorded_complete": false
+  },
+  "restoration-78fab252a": {
+    "manifest_members": 26,
+    "empty_stderr_members": 12,
+    "control_restore_chains": [],
+    "recorded_complete": false
+  },
+  "run-metadata": {
+    "manifest_members": 21,
+    "empty_stderr_members": 5,
+    "control_restore_chains": [],
+    "recorded_complete": false
+  }
+}

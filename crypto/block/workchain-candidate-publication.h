@@ -36,6 +36,10 @@ struct WorkchainPublicationLimits {
 };
 
 enum class WorkchainPublicationOutcome { Committed, NotCommitted, Undetermined };
+// Outcome describes durable commitment; availability independently describes
+// whether this local operation can proceed. NotCommitted + LocalUnavailable
+// means no durable write occurred but a local failure requires abstention and
+// recovery. Ready is not a health certificate for the entire node.
 enum class WorkchainPublicationAvailability { Ready, LocalUnavailable };
 struct WorkchainPublicationResult {
   WorkchainPublicationOutcome outcome;

@@ -1,0 +1,29 @@
+{
+  "name": "missing-current-publication-oracle",
+  "scope": "CTest dependency-failure propagation, not an application-guard result. A physical current-run oracle file is removed after freezing.",
+  "commit": "898b86953215ee3458648ed20c3bfcdb6339cb28",
+  "path": "crypto/test/workchain-publication-recovery.py",
+  "git_blob_oid": "e9245ae4817740a54a4e4236257b035fae6adcde",
+  "from": "    report['baseline'] = run('baseline', {})",
+  "to": "    (oracle / 'after/field-0').unlink()\n    report['baseline'] = run('baseline', {})",
+  "offset": 6506,
+  "original_sha256": "cf2e5b42c89cd817067ecf53d06ad792347a77139918b8a7c92e642e2b55a65a",
+  "mutant_sha256": "3d04f883f54147c5fe812870966adfe78586d48b597d252bf4829d08fe730f29",
+  "syntax_compiled": true,
+  "command": [
+    "ctest",
+    "--test-dir",
+    "/tmp/uno-publication-build",
+    "-R",
+    "^test-workchain-publication-recovery-gates$",
+    "--output-on-failure",
+    "--output-junit",
+    "/tmp/uno-publication-registration-control/ctest.xml"
+  ],
+  "ctest_exit": 8,
+  "name_seen": "test-workchain-publication-recovery-gates",
+  "failed": true,
+  "skipped": false,
+  "restored_sha256": "cf2e5b42c89cd817067ecf53d06ad792347a77139918b8a7c92e642e2b55a65a",
+  "restore_audit_sha256": "3d04f883f54147c5fe812870966adfe78586d48b597d252bf4829d08fe730f29"
+}

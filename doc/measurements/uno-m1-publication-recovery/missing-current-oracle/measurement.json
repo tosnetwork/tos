@@ -1,0 +1,299 @@
+{
+  "schema": 1,
+  "base_commit": "898b86953215ee3458648ed20c3bfcdb6339cb28",
+  "events": [
+    {
+      "label": "baseline-configure",
+      "command": [
+        "cmake",
+        "-S",
+        "/home/tomi/tos-m2",
+        "-B",
+        "/tmp/uno-publication-build/workchain-publication-ctest/build",
+        "-G",
+        "Ninja",
+        "-DCMAKE_BUILD_TYPE=Release",
+        "-DCMAKE_PROJECT_TOS_INCLUDE=/home/tomi/tos-m2/crypto/test/workchain-publication-recovery.cmake",
+        "-DTOS_UNO_CRYPTO_PROTOTYPE_TESTS=OFF",
+        "-DPUBLICATION_SOURCE=/home/tomi/tos-m2/crypto/block/workchain-candidate-publication.cpp",
+        "-DPUBLICATION_TEST_SOURCE=/home/tomi/tos-m2/crypto/test/test-workchain-publication-recovery.cpp",
+        "-DPUBLICATION_FAULT_SOURCE=/home/tomi/tos-m2/crypto/test/workchain-publication-io-fault.cpp",
+        "-DPUBLICATION_SET_FAULT_SOURCE=/home/tomi/tos-m2/crypto/test/workchain-publication-set-fault.cpp"
+      ],
+      "exit": 0,
+      "preload": null,
+      "stdout_sha256": "d08fce92aa99a5a5b1503bc76ca13cbec97236be0443ab8622aa9acd22de2380",
+      "stderr_sha256": "36fe699d817386532e85666373ccccaf5bb2b56093468c348659ce7e729ce6e3"
+    },
+    {
+      "label": "baseline-build",
+      "command": [
+        "cmake",
+        "--build",
+        "/tmp/uno-publication-build/workchain-publication-ctest/build",
+        "--target",
+        "test-workchain-publication-recovery",
+        "workchain-publication-io-fault",
+        "-j32"
+      ],
+      "exit": 0,
+      "preload": null,
+      "stdout_sha256": "76c3cb64ff54e223f091593375ffc500c7c1c6460148e8cb5369d2b0a4d0e462",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "baseline-dependencies",
+      "command": [
+        "ninja",
+        "-C",
+        "/tmp/uno-publication-build/workchain-publication-ctest/build",
+        "-t",
+        "deps",
+        "CMakeFiles/workchain-private-publication.dir/crypto/block/workchain-candidate-publication.cpp.o",
+        "CMakeFiles/test-workchain-publication-recovery.dir/crypto/test/test-workchain-publication-recovery.cpp.o",
+        "CMakeFiles/workchain-publication-io-fault.dir/crypto/test/workchain-publication-io-fault.cpp.o",
+        "CMakeFiles/test-workchain-publication-recovery.dir/crypto/test/workchain-publication-set-fault.cpp.o"
+      ],
+      "exit": 0,
+      "preload": null,
+      "stdout_sha256": "78ff38cc1df5ab7eaa0f42b6e949ccb811129f10cc865fce9bde364bdba33179",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "baseline-commands",
+      "command": [
+        "ninja",
+        "-C",
+        "/tmp/uno-publication-build/workchain-publication-ctest/build",
+        "-t",
+        "commands",
+        "CMakeFiles/workchain-private-publication.dir/crypto/block/workchain-candidate-publication.cpp.o",
+        "CMakeFiles/test-workchain-publication-recovery.dir/crypto/test/test-workchain-publication-recovery.cpp.o",
+        "CMakeFiles/workchain-publication-io-fault.dir/crypto/test/workchain-publication-io-fault.cpp.o",
+        "CMakeFiles/test-workchain-publication-recovery.dir/crypto/test/workchain-publication-set-fault.cpp.o"
+      ],
+      "exit": 0,
+      "preload": null,
+      "stdout_sha256": "da6b0edb9377704c4baf466ef401be514a10500f504980124dae22a7b0a10af9",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "freeze",
+      "command": [
+        "/tmp/uno-publication-build/workchain-publication-ctest/build/test-workchain-publication-recovery",
+        "freeze",
+        "/tmp/uno-publication-build/workchain-publication-ctest/run-kj4znmpi/evidence/oracle"
+      ],
+      "exit": 0,
+      "preload": "/tmp/uno-publication-build/workchain-publication-ctest/build/libworkchain-publication-io-fault.so",
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "baseline-case-0",
+      "command": [
+        "/tmp/uno-publication-build/workchain-publication-ctest/build/test-workchain-publication-recovery",
+        "0",
+        "/tmp/uno-publication-build/workchain-publication-ctest/run-kj4znmpi/work/baseline-0",
+        "/tmp/uno-publication-build/workchain-publication-ctest/run-kj4znmpi/evidence/oracle"
+      ],
+      "exit": 92,
+      "preload": "/tmp/uno-publication-build/workchain-publication-ctest/build/libworkchain-publication-io-fault.so",
+      "stdout_sha256": "892c64216411be952217312b8e521e19f97c4d89084ee0a3d3e6a61a830dc4ba",
+      "stderr_sha256": "5230077122080988a1493c40d055f4377306b8595e077c7be27a499577783468"
+    },
+    {
+      "label": "baseline-case-1",
+      "command": [
+        "/tmp/uno-publication-build/workchain-publication-ctest/build/test-workchain-publication-recovery",
+        "1",
+        "/tmp/uno-publication-build/workchain-publication-ctest/run-kj4znmpi/work/baseline-1",
+        "/tmp/uno-publication-build/workchain-publication-ctest/run-kj4znmpi/evidence/oracle"
+      ],
+      "exit": 0,
+      "preload": "/tmp/uno-publication-build/workchain-publication-ctest/build/libworkchain-publication-io-fault.so",
+      "stdout_sha256": "5af13680ada609e9ccc08f89e49b212567c60acf49afca28eda7d26c329943c2",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "baseline-case-2",
+      "command": [
+        "/tmp/uno-publication-build/workchain-publication-ctest/build/test-workchain-publication-recovery",
+        "2",
+        "/tmp/uno-publication-build/workchain-publication-ctest/run-kj4znmpi/work/baseline-2",
+        "/tmp/uno-publication-build/workchain-publication-ctest/run-kj4znmpi/evidence/oracle"
+      ],
+      "exit": 92,
+      "preload": "/tmp/uno-publication-build/workchain-publication-ctest/build/libworkchain-publication-io-fault.so",
+      "stdout_sha256": "e64b2ac19d741d8868ad6652a504bd44b503f00c845c7a9b708d72c307a22a84",
+      "stderr_sha256": "5230077122080988a1493c40d055f4377306b8595e077c7be27a499577783468"
+    },
+    {
+      "label": "baseline-case-3",
+      "command": [
+        "/tmp/uno-publication-build/workchain-publication-ctest/build/test-workchain-publication-recovery",
+        "3",
+        "/tmp/uno-publication-build/workchain-publication-ctest/run-kj4znmpi/work/baseline-3",
+        "/tmp/uno-publication-build/workchain-publication-ctest/run-kj4znmpi/evidence/oracle"
+      ],
+      "exit": 92,
+      "preload": "/tmp/uno-publication-build/workchain-publication-ctest/build/libworkchain-publication-io-fault.so",
+      "stdout_sha256": "02ab02e72b608f2b8b2f36f6b0f938203c345e5dbd5fa3e1f18650f7e4edd785",
+      "stderr_sha256": "5230077122080988a1493c40d055f4377306b8595e077c7be27a499577783468"
+    },
+    {
+      "label": "baseline-case-4",
+      "command": [
+        "/tmp/uno-publication-build/workchain-publication-ctest/build/test-workchain-publication-recovery",
+        "4",
+        "/tmp/uno-publication-build/workchain-publication-ctest/run-kj4znmpi/work/baseline-4",
+        "/tmp/uno-publication-build/workchain-publication-ctest/run-kj4znmpi/evidence/oracle"
+      ],
+      "exit": 0,
+      "preload": "/tmp/uno-publication-build/workchain-publication-ctest/build/libworkchain-publication-io-fault.so",
+      "stdout_sha256": "3d75dcc8a0dad71870ddf8352c2eb19a22683623059da199a1ce6628159f6cdc",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "baseline-case-5",
+      "command": [
+        "/tmp/uno-publication-build/workchain-publication-ctest/build/test-workchain-publication-recovery",
+        "5",
+        "/tmp/uno-publication-build/workchain-publication-ctest/run-kj4znmpi/work/baseline-5",
+        "/tmp/uno-publication-build/workchain-publication-ctest/run-kj4znmpi/evidence/oracle"
+      ],
+      "exit": 92,
+      "preload": "/tmp/uno-publication-build/workchain-publication-ctest/build/libworkchain-publication-io-fault.so",
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "5230077122080988a1493c40d055f4377306b8595e077c7be27a499577783468"
+    },
+    {
+      "label": "baseline-case-6",
+      "command": [
+        "/tmp/uno-publication-build/workchain-publication-ctest/build/test-workchain-publication-recovery",
+        "6",
+        "/tmp/uno-publication-build/workchain-publication-ctest/run-kj4znmpi/work/baseline-6",
+        "/tmp/uno-publication-build/workchain-publication-ctest/run-kj4znmpi/evidence/oracle"
+      ],
+      "exit": 92,
+      "preload": "/tmp/uno-publication-build/workchain-publication-ctest/build/libworkchain-publication-io-fault.so",
+      "stdout_sha256": "baa962c9d3ef0168019a2f7ad9272f86edd5e85372acb7347dabe721f319496c",
+      "stderr_sha256": "5230077122080988a1493c40d055f4377306b8595e077c7be27a499577783468"
+    },
+    {
+      "label": "baseline-case-7",
+      "command": [
+        "/tmp/uno-publication-build/workchain-publication-ctest/build/test-workchain-publication-recovery",
+        "7",
+        "/tmp/uno-publication-build/workchain-publication-ctest/run-kj4znmpi/work/baseline-7",
+        "/tmp/uno-publication-build/workchain-publication-ctest/run-kj4znmpi/evidence/oracle"
+      ],
+      "exit": 0,
+      "preload": "/tmp/uno-publication-build/workchain-publication-ctest/build/libworkchain-publication-io-fault.so",
+      "stdout_sha256": "273e97be16aca4389f4f437bea1a03c473b53a02a272f723e5239dab55f194a8",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "baseline-case-8",
+      "command": [
+        "/tmp/uno-publication-build/workchain-publication-ctest/build/test-workchain-publication-recovery",
+        "8",
+        "/tmp/uno-publication-build/workchain-publication-ctest/run-kj4znmpi/work/baseline-8",
+        "/tmp/uno-publication-build/workchain-publication-ctest/run-kj4znmpi/evidence/oracle"
+      ],
+      "exit": 92,
+      "preload": "/tmp/uno-publication-build/workchain-publication-ctest/build/libworkchain-publication-io-fault.so",
+      "stdout_sha256": "608e4b75c1d4a2bfa5e0dcfb91d7f8c41e29b9e1b16ac533fcc756178fbce6a0",
+      "stderr_sha256": "5230077122080988a1493c40d055f4377306b8595e077c7be27a499577783468"
+    },
+    {
+      "label": "baseline-case-9",
+      "command": [
+        "/tmp/uno-publication-build/workchain-publication-ctest/build/test-workchain-publication-recovery",
+        "9",
+        "/tmp/uno-publication-build/workchain-publication-ctest/run-kj4znmpi/work/baseline-9",
+        "/tmp/uno-publication-build/workchain-publication-ctest/run-kj4znmpi/evidence/oracle"
+      ],
+      "exit": 92,
+      "preload": "/tmp/uno-publication-build/workchain-publication-ctest/build/libworkchain-publication-io-fault.so",
+      "stdout_sha256": "d059b93430ddd7ae1f03fb3f026ddc2de3543de7f611d709b9ebb8a31912f802",
+      "stderr_sha256": "5230077122080988a1493c40d055f4377306b8595e077c7be27a499577783468"
+    },
+    {
+      "label": "baseline-case-10",
+      "command": [
+        "/tmp/uno-publication-build/workchain-publication-ctest/build/test-workchain-publication-recovery",
+        "10",
+        "/tmp/uno-publication-build/workchain-publication-ctest/run-kj4znmpi/work/baseline-10",
+        "/tmp/uno-publication-build/workchain-publication-ctest/run-kj4znmpi/evidence/oracle"
+      ],
+      "exit": 0,
+      "preload": "/tmp/uno-publication-build/workchain-publication-ctest/build/libworkchain-publication-io-fault.so",
+      "stdout_sha256": "6141216364fb95c42d4e26ae47a9860fbf784539a188515f56c684d007f955e1",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "baseline-case-11",
+      "command": [
+        "/tmp/uno-publication-build/workchain-publication-ctest/build/test-workchain-publication-recovery",
+        "11",
+        "/tmp/uno-publication-build/workchain-publication-ctest/run-kj4znmpi/work/baseline-11",
+        "/tmp/uno-publication-build/workchain-publication-ctest/run-kj4znmpi/evidence/oracle"
+      ],
+      "exit": 0,
+      "preload": "/tmp/uno-publication-build/workchain-publication-ctest/build/libworkchain-publication-io-fault.so",
+      "stdout_sha256": "c40492c0e7e63ee171918cd85f57b1c8c8fbebd70c0b2347d3b9e817859a199d",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ],
+  "controls": [],
+  "scope": "Private RocksDb publication and passive immutable readers. No live host integration, activation, finality or permission to send. D31 provider allocation/history bounds remain open. Runtime I/O controls cover isolated WAL operations and actual reopen, not every power-loss failure. No production VmVirtError classification or I13 acceptance is established.",
+  "runner_sha256": "3d04f883f54147c5fe812870966adfe78586d48b597d252bf4829d08fe730f29",
+  "oracle_sha256": {
+    "after/count": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+    "after/field-0": "ef75384792f7000ac13f91bac7f2aab55cdab8f3e94869f9efe36386a78effa2",
+    "after/field-1": "f14c14567e2c1c8a5cb8cd639b2eccd6b1891f40f33a915f13363901f6b8cd8a",
+    "after/field-2": "2fe2965bedd2967cb60574338913a6242fbca9f86607d2ba8e44a3e3f7c9480a",
+    "after/field-3": "3e8a29135d2243823f0ad3a546bea9ffadfbed1361be2af773dcee256da136f5",
+    "after/field-4": "476f46f106579daec386b64e02e0b5b6af08fee5392f8efdc30f55d0e6186d95",
+    "after/field-5": "1b82fba68c53c2813f7a73f2971f48cd984588af15d4bacfcbada37ca334dae1",
+    "after/field-6": "1fc6283588861cfbf4d5cf4714bf7242c433146b8558d3ae2ee8edfdaffde53a",
+    "after/field-7": "5bbea48bd2469bed78803028a8fb94413cf1eeb0cd1bfffc7baaa5f0069a1dd8",
+    "after/field-8": "3b925407fe5a59de4b6db72bc5b48a55c7d9bbb53ec9cc3ef99ec1630751c7d5",
+    "after/field-9": "514c39b13ee096e985bb74ab632c49530a065c650c4977d414f3181f22cf6df2",
+    "after/identity": "8657cc779cb5c8383bcd53d21e47bfe67d9dadb2577775a27faf620163043f11",
+    "after/input": "e2474eb6a21f9177bcf643c296b80819c8c561a2bc34c1813a456ae0bf9d7bdb",
+    "after/messages": "277cbf1f00b61f7065b4283ab7131d01cd2cd50e8939914adc9b182dd36234c5",
+    "after/revision": "2c624232cdd221771294dfbb310aca000a0df6ac8b66b696d90ef06fdefb64a3",
+    "after-false-count/count": "9400f1b21cb527d7fa3d3eabba93557a18ebe7a2ca4e471cfe5e4c5b4ca7f767",
+    "after-false-count/field-0": "ef75384792f7000ac13f91bac7f2aab55cdab8f3e94869f9efe36386a78effa2",
+    "after-false-count/field-1": "f14c14567e2c1c8a5cb8cd639b2eccd6b1891f40f33a915f13363901f6b8cd8a",
+    "after-false-count/field-2": "2fe2965bedd2967cb60574338913a6242fbca9f86607d2ba8e44a3e3f7c9480a",
+    "after-false-count/field-3": "3e8a29135d2243823f0ad3a546bea9ffadfbed1361be2af773dcee256da136f5",
+    "after-false-count/field-4": "476f46f106579daec386b64e02e0b5b6af08fee5392f8efdc30f55d0e6186d95",
+    "after-false-count/field-5": "1b82fba68c53c2813f7a73f2971f48cd984588af15d4bacfcbada37ca334dae1",
+    "after-false-count/field-6": "1fc6283588861cfbf4d5cf4714bf7242c433146b8558d3ae2ee8edfdaffde53a",
+    "after-false-count/field-7": "5bbea48bd2469bed78803028a8fb94413cf1eeb0cd1bfffc7baaa5f0069a1dd8",
+    "after-false-count/field-8": "3b925407fe5a59de4b6db72bc5b48a55c7d9bbb53ec9cc3ef99ec1630751c7d5",
+    "after-false-count/field-9": "514c39b13ee096e985bb74ab632c49530a065c650c4977d414f3181f22cf6df2",
+    "after-false-count/identity": "8657cc779cb5c8383bcd53d21e47bfe67d9dadb2577775a27faf620163043f11",
+    "after-false-count/input": "e2474eb6a21f9177bcf643c296b80819c8c561a2bc34c1813a456ae0bf9d7bdb",
+    "after-false-count/messages": "277cbf1f00b61f7065b4283ab7131d01cd2cd50e8939914adc9b182dd36234c5",
+    "after-false-count/revision": "2c624232cdd221771294dfbb310aca000a0df6ac8b66b696d90ef06fdefb64a3",
+    "before/count": "5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9",
+    "before/field-0": "24586cdddd99e2d09c938b479615af0ed7562a126b0ed99dd9128fc10b8bdb3d",
+    "before/field-1": "c759da97ad83f4d47dab1e83dd182740c48a7a1a7ab144f370ae066b6cc954e0",
+    "before/field-2": "1703056d41c21c8129b7c8bf6cf7771d9c9dcfe4a3b856231e2ddbf1cbeb89bf",
+    "before/field-3": "c759da97ad83f4d47dab1e83dd182740c48a7a1a7ab144f370ae066b6cc954e0",
+    "before/field-4": "ab2875e2b8573de7e20aa00dd7e6fd9ad18d5f99847a26ab0dee19737cee1f38",
+    "before/field-5": "9b15f3ff63bef035b06213e53ebeea808325199f06bac5efd7b3508a5d7fdc4d",
+    "before/field-6": "f97623031bc62f42245a1ad26f51445d69e65cafc6757ca3d71ad17103d99ea6",
+    "before/field-7": "2554d83ba8bd33e0ea5adb4fc07548059b4bad1758758e88abfcaa07a7259899",
+    "before/field-8": "8c00a9e6afda5ed7248099b8a5c67b237d4790d6c161f66965be521f553b9dbc",
+    "before/field-9": "0e624695e999059c072dd3c88ffef90c599d2761af38609762dca80368ca4b0c",
+    "before/identity": "e136102e4af9860141d70fcc1f03c1650bbed899bbfd11ba9fec03758ef21435",
+    "before/input": "283b1796a8eaf232ff8af66fb018aac3bf2da2ff2a38ab4a88ffa67020c9815a",
+    "before/messages": "6ee6cde64d07596e49226dd6c9dac8cd823b71e1f3ec1f15f1d2360299bfa44c",
+    "before/revision": "7902699be42c8a8e46fbbb4501726517e86b22c56a189f7625a6da49081b2451"
+  }
+}

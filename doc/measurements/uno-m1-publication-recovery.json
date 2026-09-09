@@ -1,0 +1,16 @@
+{
+  "source_commit": "898b86953215ee3458648ed20c3bfcdb6339cb28",
+  "final_report": "uno-m1-publication-recovery/final-898b86953/measurement.json",
+  "baseline_cases": 12,
+  "isolated_controls": 26,
+  "mutant_case_failures": 111,
+  "restored_baseline_runs": 312,
+  "registered_ctest": "test-workchain-publication-recovery-gates",
+  "ctest_result": "Passed",
+  "registration_dependency_control": "Physical deletion of the current-run oracle made CTest Failed, not Skipped or Not Run. This is dependency propagation, not an application guard.",
+  "private_regression_cases": 54,
+  "standard_workchain_regression": "Not claimed: A fixture fix 879e5878a is not merged into this worktree.",
+  "scope": "Private publication/recovery mechanism only. No live integration, activation, finality or send permission. No I13e acceptance. Source authenticity and complete restore chains are independently reconstructed by reproduce-audit.py.",
+  "readback_proxy_limit": "Normal bypass is caught only by existing count assertion 220 in cases 0/7/8/9. It neither checks order nor excludes a forged PersistentRead event. Later byte checks are not reached in those failing cases. A separate completed persistent-byte calibration is linked below; it does not replace count 220.",
+  "separate_content_origin_calibration": "uno-m1-publication-recovery/content-provenance-6ee1eb684/measurement.json"
+}

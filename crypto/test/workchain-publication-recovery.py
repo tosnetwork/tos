@@ -28,7 +28,8 @@ def main():
     commit = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=repo, text=True).strip()
     names = {'source': 'crypto/block/workchain-candidate-publication.cpp',
              'test': 'crypto/test/test-workchain-publication-recovery.cpp',
-             'fault': 'crypto/test/workchain-publication-io-fault.cpp'}
+             'fault': 'crypto/test/workchain-publication-io-fault.cpp',
+             'set_fault': 'crypto/test/workchain-publication-set-fault.cpp'}
     originals, blobs = {}, {}
     for key, path in names.items():
         original = (repo / path).read_bytes()
@@ -58,29 +59,35 @@ def main():
         record()
         return result.returncode
     def configure(label, key=None, shadow=None):
-        switches = {'source': 'PUBLICATION_SOURCE', 'test': 'PUBLICATION_TEST_SOURCE', 'fault': 'PUBLICATION_FAULT_SOURCE'}
+        switches = {'source': 'PUBLICATION_SOURCE', 'test': 'PUBLICATION_TEST_SOURCE', 'fault': 'PUBLICATION_FAULT_SOURCE', 'set_fault': 'PUBLICATION_SET_FAULT_SOURCE'}
         argv = ['cmake', '-S', repo, '-B', args.build, '-G', 'Ninja', '-DCMAKE_BUILD_TYPE=Release',
                 '-DCMAKE_PROJECT_TOS_INCLUDE=' + str(repo / 'crypto/test/workchain-publication-recovery.cmake'),
                 '-DTOS_UNO_CRYPTO_PROTOTYPE_TESTS=OFF']
         argv += ['-D' + switch + '=' + str(shadow if k == key else repo / names[k]) for k, switch in switches.items()]
         assert command(label + '-configure', argv, False) == 0, 'configuration failure, not behavioral evidence'
         assert command(label + '-build', ['cmake', '--build', args.build, '--target', 'test-workchain-publication-recovery', 'workchain-publication-io-fault', '-j32'], False) == 0, 'build failure, not behavioral evidence'
-        assert command(label + '-dependencies', ['ninja', '-C', args.build, '-t', 'deps'], False) == 0
+        targets = {'source': 'workchain-private-publication', 'test': 'test-workchain-publication-recovery',
+                   'fault': 'workchain-publication-io-fault', 'set_fault': 'test-workchain-publication-recovery'}
+        objects = ['CMakeFiles/' + targets[k] + '.dir/' +
+                   (str(shadow).lstrip('/') if k == key else names[k]) + '.o' for k in names]
+        # Restrict diagnostics to the four current objects, never the complete
+        # retained Ninja history. Full output is still preserved without truncation.
+        assert command(label + '-dependencies', ['ninja', '-C', args.build, '-t', 'deps', *objects], False) == 0
         deps = (args.output / (label + '-dependencies.stdout.log')).read_text()
+        assert command(label + '-commands', ['ninja', '-C', args.build, '-t', 'commands', *objects], False) == 0
+        commands = (args.output / (label + '-commands.stdout.log')).read_text()
+        assert str(repo / 'crypto/block/workchain-candidate-publication.h') in deps
         if key:
-            assert str(shadow) in deps
+            assert str(shadow) in deps and str(shadow) in commands
         else:
-            # Ninja retains obsolete object entries. Query active compile commands
-            # instead of treating its historical dependency database as active.
-            assert command(label + '-commands', ['ninja', '-C', args.build, '-t', 'commands', 'test-workchain-publication-recovery', 'workchain-publication-io-fault'], False) == 0
-            assert str(args.work / 'shadow') not in (args.output / (label + '-commands.stdout.log')).read_text()
+            assert str(args.work / 'shadow') not in commands
     oracle = args.output / 'oracle'
     oracle.mkdir(exist_ok=False)
     def oracle_hashes():
         return {str(p.relative_to(oracle)): sha(p.read_bytes()) for p in sorted(oracle.rglob('*')) if p.is_file()}
     def run(label, expected=None, preload=True):
         results = {}
-        for case in range(10):
+        for case in range(12):
             directory = args.work / (label + '-' + str(case))
             directory.mkdir(exist_ok=False)
             results[case] = command(label + '-case-' + str(case), [args.build / 'test-workchain-publication-recovery', case, directory, oracle], preload)
@@ -88,14 +95,14 @@ def main():
                 shutil.copyfile(directory / 'trace', args.output / (label + '-case-' + str(case) + '.trace'))
         assert oracle_hashes() == report['oracle_sha256'], 'frozen oracle changed'
         if expected is not None:
-            assert results == {i: expected.get(i, 0) for i in range(10)}, (label, results, expected)
+            assert results == {i: expected.get(i, 0) for i in range(12)}, (label, results, expected)
         return results
     configure('baseline')
     assert command('freeze', [args.build / 'test-workchain-publication-recovery', 'freeze', oracle]) == 0
     report['oracle_sha256'] = oracle_hashes()
     assert len(report['oracle_sha256']) == 45
     report['baseline'] = run('baseline', {})
-    committed = [0, 3, 5, 6, 7, 8, 9]
+    committed = [0, 2, 3, 5, 6, 7, 8, 9]
     def failures(cases, identity):
         return dict.fromkeys(cases, identity)
     controls = []
@@ -110,7 +117,7 @@ def main():
         failures(committed, 219), 'Extra durable write without re-execution or changed bytes.')
     add('reinstall-identical-view', 'source', 'if (prior && prior->batch_identity == current_identity) {', 'if (false) {',
         failures(committed, 206), 'Passive release idempotence; values remain identical.')
-    add('remove-read-observation', 'source', 'observe(observer, Point::PersistentRead);\n  auto prior', '/* Read observation removed. */\n  auto prior',
+    add('remove-read-observation', 'source', 'observe(observer, Point::PersistentRead);\n  bool installed', '/* Read observation removed. */\n  bool installed',
         failures([0, 5, 7, 8, 9], 220), 'Same read observation guard in normal and cold recovery entry points.')
     add('remove-new-release-observation', 'source', 'observe(observer, Point::ReleaseInstall);',
         'if (released_.load()->committed_batch_count == 0) observe(observer, Point::ReleaseInstall);',
@@ -122,11 +129,11 @@ def main():
         failures(committed, 203), 'Actual message reader compares frozen payload and queue metadata.')
     add('drift-account-bytes', 'source', 'auto encoded = encode(bundle, limits_.max_bundle_bytes);',
         'auto altered = bundle; if (released_.load()) altered.components[0] += "drift"; auto encoded = encode(altered, limits_.max_bundle_bytes);',
-        {**failures([0, 3, 6, 7, 8, 9], 201), 5: 207}, 'Full state bytes; cold-reader identity 207 includes complete state observation.')
+        {**failures([0, 2, 3, 6, 7, 8, 9], 201), 5: 207}, 'Full state bytes; cold-reader identity 207 includes complete state observation.')
     add('expose-view-while-undetermined', 'source', 'if (recovery_required_.load()) return td::Status::Error(local_unavailable, "publication read requires recovery");',
-        '/* Recovery read guard removed. */', failures([2, 3, 4, 6], 208), 'Current reader refuses unresolved storage state.')
+        '/* Recovery read guard removed. */', failures([2, 3, 4, 6, 10, 11], 208), 'Current reader refuses unresolved storage state.')
     add('execute-while-undetermined', 'source', 'if (active_ || recovery_required_.load()) return unavailable();', 'if (active_) return unavailable();',
-        failures([2, 3, 4, 6], 211), 'No execution or retry before persistent resolution.')
+        failures([2, 3, 4, 6, 10, 11], 211), 'No execution or retry before persistent resolution.')
     add('infer-absence-from-reopen-error', 'source', 'if (reopened.is_error()) return unavailable(std::move(reopened));',
         'if (reopened.is_error()) return absent();', {6: 212}, 'Unavailable recovery must not mean absent.')
     add('erase-store-binding', 'source', 'status != td::KeyValue::GetStatus::Ok || binding != store_identity_.as_slice().str()',
@@ -136,14 +143,35 @@ def main():
     add('disable-commit-point-io-fault', 'fault', 'mode.load()==2 && matches(fd,true)', 'false && matches(fd,true)',
         failures([3, 6], 204), 'Real commit-point I/O control is active; this is instrument calibration.')
     add('erase-execution-probe', 'test', 'trace(dir,"execute");auto result', '/* Execution probe removed. */auto result',
-        failures(list(range(10)), 205), 'Independent execution counter cannot silently disappear.')
+        {**failures(list(range(12)), 205), 2: 221}, 'Independent execution counter cannot silently disappear.')
     add('disable-partial-write-fault', 'fault', 'mode.store(selected);', 'mode.store(selected == 1 ? 0 : selected);',
         {2: 204}, 'Partial-write runtime instrument must be active; no writer-status inference.')
     add('disable-prewrite-cancellation', 'test', 'if(mode==1)throw CancelBeforeWrite{};', 'if(false)throw CancelBeforeWrite{};',
         {1: 204}, 'Before-write cancellation actually occurs, not an unexercised label.')
     add('disable-postcommit-crash', 'test', 'p==PubPoint::AfterCommitBeforeRead&&mode==5', 'false',
         {5: 215}, 'Cold recovery scenario must terminate before its first release.')
-    shadow_dir = args.work / 'shadow' 
+    add('mark-record-set-error-ready', 'source', 'return not_committed_unavailable(std::move(stored));',
+        'return absent(std::move(stored));', {10: 225}, 'Known non-commit does not make a local record-set error Ready.')
+    add('mark-head-set-error-ready', 'source', 'return not_committed_unavailable(std::move(headed));',
+        'return absent(std::move(headed));', {11: 225}, 'Known non-commit does not make a local head-set error Ready.')
+    add('erase-set-error-probe', 'set_fault', 'errors.fetch_add(1);', '/* API error probe removed. */',
+        failures([10, 11], 227), 'The actual backend set boundary must be crossed before error substitution.')
+    add('disable-set-error-injection', 'set_fault', 'const auto mode = selected.load();', 'const auto mode = 0;',
+        failures([10, 11], 225), 'API-boundary status injection, not a physical disk failure claim.')
+    add('alter-set-error-identity', 'set_fault', 'td::Status::Error(-73002,', 'td::Status::Error(-73003,',
+        failures([10, 11], 226), 'Classification and originating numerical status are checked separately.')
+    add('allow-missing-store-creation', 'source', 'if (!std::filesystem::is_regular_file(path_ + "/CURRENT", error) || error)',
+        'if (false)', {8: 223}, 'A missing recovery store cannot be silently recreated even if its marker then fails.')
+    add('release-before-persistent-decision', 'source', 'observe(observer, Point::BeforeWrite);',
+        'if (bundle.committed_batch_count != 0) released_.store(std::make_shared<const Bundle>(bundle)); observe(observer, Point::BeforeWrite);',
+        failures([i for i in range(12) if i != 5], 202),
+        'Actual passive reader sees premature contents, including messages; no return-code-only oracle. '
+        'The cold crash case terminates before this post-call assertion and does not independently detect it.')
+    add('bypass-normal-persistent-read', 'source', 'return read_and_release(bundle.batch_identity, bundle.admitted_input, observer);',
+        'released_.store(std::make_shared<const Bundle>(bundle)); recovery_required_.store(false); observe(observer, Point::ReleaseInstall); return {Outcome::Committed, Availability::Ready, td::Status::OK()};',
+        failures([0, 7, 8, 9], 220),
+        'Normal readback is actually removed while correct bytes and release remain. Cold recovery retains its shared reader.')
+    shadow_dir = args.work / 'shadow'    
     shadow_dir.mkdir()
     for name, key, before, after, expected, claim in controls:
         original = originals[key]
@@ -159,6 +187,8 @@ def main():
         shadow.write_bytes(mutant)
         try:
             configure(name, key, shadow)
+            entry['binary_sha256'] = sha((args.build / 'test-workchain-publication-recovery').read_bytes())
+            entry['io_library_sha256'] = sha((args.build / 'libworkchain-publication-io-fault.so').read_bytes())
             entry['results'] = run(name, expected)
         finally:
             shadow.write_bytes(original)
@@ -169,13 +199,13 @@ def main():
             shadow.unlink()
             report['controls'].append(entry)
             record()
-        configure(name + '-restored')
-        run(name + '-restored', {})
-    report['missing_io_dependency'] = run('missing-io-dependency', failures(list(range(10)), 213), False)
+            configure(name + '-restored')
+            run(name + '-restored', {})
+    report['missing_io_dependency'] = run('missing-io-dependency', failures(list(range(12)), 213), False)
     report['source_files_unchanged'] = all((repo / names[k]).read_bytes() == v for k, v in originals.items())
     assert report['source_files_unchanged']
     record()
-    print('PASS: 10 private disk scenarios, 18 isolated controls; no milestone acceptance claimed.')
+    print('PASS: 12 private disk scenarios, 26 isolated controls; no milestone acceptance claimed.')
 
 
 if __name__ == '__main__':

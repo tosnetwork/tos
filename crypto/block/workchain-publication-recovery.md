@@ -121,3 +121,106 @@ possible filesystem failure or power-loss behavior. Read observation is not a
 coverage oracle: complete persisted component/message bytes are compared with
 fresh frozen provider outputs, including entries writable without loading old
 bodies.
+
+### Local errors before durable writing
+
+Outcome and availability are independent. A failed encoding or either failed
+RocksDb `set` before `commit_write_batch` returns NotCommitted together with
+LocalUnavailable. The operation can prove non-commit because only the pending
+in-memory batch was touched; it cannot call the failed local operation Ready.
+The recovery flag prevents continued publication until a real reopen succeeds.
+A successful absent-record lookup remains NotCommitted with Ready.
+
+The private executable's linker wrapper calls the real concrete RocksDb `set`
+first, then injects a distinct error status for the record or head key. These
+are API-boundary status propagation tests, not physical disk-failure evidence.
+The two paths must retain the injected numerical error identity, abort their
+staged writes, expose no new messages, and resolve absence from reopened disk.
+WAL write and sync failures use separate runtime I/O controls.
+
+The partial-WAL scenario resolves absence twice through actual reopen before
+a permitted new execution. Its durable entry count must become exactly two
+(one failed attempt, one allowed new attempt); subsequent committed retries
+must not increase it or the write/release counts. Thus D49's resolved-absence
+retry is distinct from re-executing an already committed identity.
+
+### Private measurement matrix and limits
+
+| Case | First attempt / fault | Observation from real reopened storage |
+| --- | --- | --- |
+| 0 | Ordinary synced write | Committed; one read observation before the subsequent retry probes |
+| 1 | Cancellation before writing | NotCommitted; complete old state and messages remain |
+| 2 | Actual partial WAL write followed by EIO | NotCommitted twice across reopen; only then a new execution may commit |
+| 3 | Real successful WAL sync followed by reported EIO | Undetermined writer result resolves to Committed |
+| 4 | WAL write fails before transferring bytes | The same Undetermined writer classification resolves to NotCommitted |
+| 5 | SIGKILL after commit, before first read/release | Fresh process/store recovery installs the first new released view |
+| 6 | Sync ambiguity, then actual recovery read errors | Stays LocalUnavailable; later readable recovery resolves commitment |
+| 7 | Host supplies count 19 | Count remains 19; this is not an I13a-validity assertion |
+| 8 | Existing store directory is moved away | Open fails and does not create a replacement recovery store |
+| 9 | Wrong external store identity | Open fails on the persisted binding |
+| 10 | Record-key Put status replaced after actual Put | NotCommitted / LocalUnavailable; staged contents disappear on abort |
+| 11 | Head-key Put status replaced after actual Put | NotCommitted / LocalUnavailable; neither staged key survives |
+
+The execution trace is fsynced independently of the candidate store and counts
+entry into the actual Native builder callback. Fixture/oracle preparation is not
+counted as a publisher execution. Committed retries are tested with the current
+predecessor, so the independent predecessor check cannot mask a missing duplicate
+check. Separate mutations re-execute identical work, rewrite identical bytes, or
+reinstall an identical view; their failure identities are 205, 219 and 206.
+
+Read-observation identity 220 checks that exactly one `PersistentRead` event has
+occurred at the normal-return boundary. It is a count assertion, not a complete
+event-order assertion. Removing the actual normal readback while retaining the
+correct bundle and release event targets that pre-existing assertion. A mutant
+that also forges a read event is outside this observation's exclusion claim;
+static inspection places that event after actual snapshot reads. The unreadable
+recovery case separately exercises real file reads. These facts do not constitute
+a proof of arbitrary implementation path equivalence.
+
+Premature view installation targets identity 202, which compares the actual
+passive view, including message bytes, with the predecessor. This comparison is
+made after the publication call returns or its prewrite cancellation unwinds.
+The cold-crash case terminates before that post-call assertion and is not an
+independent early-installation control. It instead checks SIGKILL before any new
+release event, and a first release from reopened storage in the surviving reader.
+
+Log archives preserve complete output, including empty stderr members. The
+artifact manifest identifies every member, its uncompressed byte count and its
+SHA-256. Historical runs retain their source commit and are not evidence for a
+later test version. This is private mechanism evidence, not live I13e acceptance.
+
+The present dynamic check for D50's common path is observation count 220. It
+detects the normal readback omission measured here, does not check order, and
+cannot rule out a forged `PersistentRead` event. A green 220 alone must not be
+read as proof that disk readback occurred.
+
+### Independent persistent-content calibration
+
+The separate manual calibration in `workchain-publication-provenance.py` does
+not count read observations. Its dedicated executable captures the real RocksDb
+set boundary through a test-only linker wrapper. At the existing
+`AfterCommitBeforeRead` callback it commits a replacement account-root BOC into
+the actual record. Batch identity, admitted input, scalar fields and every other
+component remain unchanged. No production code/header or observer assertion was
+added or changed for this calibration.
+
+The substitution occurs after the durable decision but before the first release
+of that identity. This timing is essential: changing an already released
+same-identity record would correctly trigger the existing immutable-view check,
+rather than release new bytes. The replacement is a valid canonical fixture BOC;
+this deliberately altered record is not claimed to be a semantically valid whole
+candidate. The calibration never grants finality or permission to send.
+
+Baseline and restored implementations release the replacement bytes. A single
+shadow-source mutation skips normal readback, installs the original bundle and
+forges both read/release observations. It fails only the final content-origin
+assertion, identity 230. Before that assertion, all bindings, other fields, one
+builder execution and one substitution have been checked. After closing the
+publisher, an independent real RocksDb reopen reads the same substituted record
+in all three runs. Their stored-record hashes are identical; their released
+component hashes distinguish the mutant from the two genuine-read runs.
+
+This is one independent content-origin calibration in addition to count 220. It
+excludes the measured no-read/forged-event substitution, not every conceivable
+implementation or all read paths. It is manual calibration evidence, not another
+CI mutation driver and not live I13e acceptance.
