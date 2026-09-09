@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import shutil
 import subprocess
+from workchain_i13_paths import resolve_ctest_paths
 
 
 def sha(data):
@@ -15,9 +16,11 @@ def sha(data):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--build', type=Path, required=True)
-    parser.add_argument('--work', type=Path, required=True)
-    parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--work', type=Path)
+    parser.add_argument('--output', type=Path)
+    parser.add_argument('--ctest-root', type=Path)
     args = parser.parse_args()
+    resolve_ctest_paths(parser, args)
     repo = Path(__file__).resolve().parents[2]
     args.work.mkdir(parents=True, exist_ok=False)
     args.output.mkdir(parents=True, exist_ok=False)

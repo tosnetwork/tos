@@ -1,0 +1,340 @@
+{
+  "base_commit": "6c4b7993a571d5fe631d20b8bc9c2ccfb2f832bd",
+  "events": [
+    {
+      "label": "default-configure",
+      "argv": [
+        "cmake",
+        "-S",
+        "/home/tomi/tos-m2",
+        "-B",
+        "/tmp/uno-i13-ctest-49adb250b",
+        "-G",
+        "Ninja",
+        "-DCMAKE_BUILD_TYPE=Release",
+        "-DTOS_UNO_CRYPTO_PROTOTYPE_TESTS=OFF",
+        "-UCMAKE_PROJECT_TOS_INCLUDE"
+      ],
+      "exit": 0,
+      "stdout_sha256": "dc0a6bf9e7ca55706304ccc64c8b29e71976ec84e0a530063c3841d7ddcfde73",
+      "stderr_sha256": "b3cec0d7c12d06460d21c63481dca818a9a3ba5f6ca8f13d6538bee6442ce2e8"
+    },
+    {
+      "label": "default-registry",
+      "argv": [
+        "ctest",
+        "--test-dir",
+        "/tmp/uno-i13-ctest-49adb250b",
+        "--show-only=json-v1"
+      ],
+      "exit": 0,
+      "stdout_sha256": "ff450ba141b78ce5a7fdfbdd7c1f3229970c42960a605bd67c0cb8b1d20e61f1",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "opt-in-configure",
+      "argv": [
+        "cmake",
+        "-S",
+        "/home/tomi/tos-m2",
+        "-B",
+        "/tmp/uno-i13-ctest-49adb250b",
+        "-G",
+        "Ninja",
+        "-DCMAKE_BUILD_TYPE=Release",
+        "-DTOS_UNO_CRYPTO_PROTOTYPE_TESTS=OFF",
+        "-DCMAKE_PROJECT_TOS_INCLUDE=/home/tomi/tos-m2/crypto/test/workchain-construction-isolation.cmake"
+      ],
+      "exit": 0,
+      "stdout_sha256": "efb65f75611bbebe14f3452974a01d0ddda72eb248aa5eea0d564efbb867f4f0",
+      "stderr_sha256": "b3cec0d7c12d06460d21c63481dca818a9a3ba5f6ca8f13d6538bee6442ce2e8"
+    },
+    {
+      "label": "opt-in-registry",
+      "argv": [
+        "ctest",
+        "--test-dir",
+        "/tmp/uno-i13-ctest-49adb250b",
+        "--show-only=json-v1"
+      ],
+      "exit": 0,
+      "stdout_sha256": "273b93f964c3cb1f476625d4878db31c0488a3e54a7ed3489aae8f3f1e70d0bb",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "construction-compile",
+      "argv": [
+        "/home/tomi/.local/bin/python3",
+        "-c",
+        "import pathlib,sys; compile(pathlib.Path(sys.argv[1]).read_bytes(), sys.argv[1], \"exec\")",
+        "/home/tomi/tos-m2/crypto/test/workchain-construction-isolation.py"
+      ],
+      "exit": 0,
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "construction-fails",
+      "argv": [
+        "ctest",
+        "--test-dir",
+        "/tmp/uno-i13-ctest-49adb250b",
+        "-T",
+        "Test",
+        "--no-compress-output",
+        "--output-on-failure",
+        "-j32",
+        "-R",
+        "^test-workchain-construction-isolation-gates$"
+      ],
+      "exit": 8,
+      "stdout_sha256": "730dc0fddcb2b60b2d0a1c57530adaa27237c0e6fd0850e611755fb478959e63",
+      "stderr_sha256": "e428070841f49545df261fac5fee983b16cbfea0b01dedfcafeebf7e7344af53"
+    },
+    {
+      "label": "coverage-compile",
+      "argv": [
+        "/home/tomi/.local/bin/python3",
+        "-c",
+        "import pathlib,sys; compile(pathlib.Path(sys.argv[1]).read_bytes(), sys.argv[1], \"exec\")",
+        "/home/tomi/tos-m2/crypto/test/workchain-i13-acceptance.py"
+      ],
+      "exit": 0,
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "coverage-fails",
+      "argv": [
+        "ctest",
+        "--test-dir",
+        "/tmp/uno-i13-ctest-49adb250b",
+        "-T",
+        "Test",
+        "--no-compress-output",
+        "--output-on-failure",
+        "-j32",
+        "-R",
+        "^test-workchain-i13-acceptance-gates$"
+      ],
+      "exit": 8,
+      "stdout_sha256": "f59953b36e6ed25e0bf9b73b25804003a283170d759046d1c12df64ebe8f97a1",
+      "stderr_sha256": "e428070841f49545df261fac5fee983b16cbfea0b01dedfcafeebf7e7344af53"
+    },
+    {
+      "label": "usage-compile",
+      "argv": [
+        "/home/tomi/.local/bin/python3",
+        "-c",
+        "import pathlib,sys; compile(pathlib.Path(sys.argv[1]).read_bytes(), sys.argv[1], \"exec\")",
+        "/home/tomi/tos-m2/crypto/test/workchain-i13-usage-acceptance.py"
+      ],
+      "exit": 0,
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "usage-fails",
+      "argv": [
+        "ctest",
+        "--test-dir",
+        "/tmp/uno-i13-ctest-49adb250b",
+        "-T",
+        "Test",
+        "--no-compress-output",
+        "--output-on-failure",
+        "-j32",
+        "-R",
+        "^test-workchain-i13-usage-acceptance-gates$"
+      ],
+      "exit": 8,
+      "stdout_sha256": "913f89a39daabd715012924dcb837cab7d38560af04d4258a770b643cdfe1cf8",
+      "stderr_sha256": "e428070841f49545df261fac5fee983b16cbfea0b01dedfcafeebf7e7344af53"
+    },
+    {
+      "label": "missing-current-oracle-compile",
+      "argv": [
+        "/home/tomi/.local/bin/python3",
+        "-c",
+        "import pathlib,sys; compile(pathlib.Path(sys.argv[1]).read_bytes(), sys.argv[1], \"exec\")",
+        "/home/tomi/tos-m2/crypto/test/workchain-construction-isolation.py"
+      ],
+      "exit": 0,
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "missing-current-oracle-fails",
+      "argv": [
+        "ctest",
+        "--test-dir",
+        "/tmp/uno-i13-ctest-49adb250b",
+        "-T",
+        "Test",
+        "--no-compress-output",
+        "--output-on-failure",
+        "-j32",
+        "-R",
+        "^test-workchain-construction-isolation-gates$"
+      ],
+      "exit": 8,
+      "stdout_sha256": "22f74756da446ae545165be201229e82426c1e3e9313844dd4196fd99379e2ef",
+      "stderr_sha256": "e428070841f49545df261fac5fee983b16cbfea0b01dedfcafeebf7e7344af53"
+    },
+    {
+      "label": "restored-all",
+      "argv": [
+        "ctest",
+        "--test-dir",
+        "/tmp/uno-i13-ctest-49adb250b",
+        "-T",
+        "Test",
+        "--no-compress-output",
+        "--output-on-failure",
+        "-j32",
+        "-R",
+        "^test-workchain-(construction-isolation|i13-acceptance|i13-usage-acceptance)-gates$"
+      ],
+      "exit": 0,
+      "stdout_sha256": "33e3b21a9d65332f05c8746e1fd840118223b3aa4bba1d8cee609f943266d9d0",
+      "stderr_sha256": "7fdb13780588fc821a3c158fba49bd314dc9c160b3ba83905d804f79fff2a2c4"
+    }
+  ],
+  "controls": [
+    {
+      "label": "construction",
+      "test": "test-workchain-construction-isolation-gates",
+      "committed_source": {
+        "commit": "6c4b7993a571d5fe631d20b8bc9c2ccfb2f832bd",
+        "path": "crypto/test/workchain-construction-isolation.py",
+        "blob_sha256": "9acf7ac1701959938af928d8d2f2035b69a07c21ae5f255464c45b103cb20c4b",
+        "git_blob_oid": "4656c5033cdb962302fd1102f5e0157caa904b1f"
+      },
+      "from": "if __name__ == '__main__':\n    main()",
+      "to": "if __name__ == '__main__':\n    raise SystemExit(113)",
+      "offset": 16014,
+      "original_sha256": "9acf7ac1701959938af928d8d2f2035b69a07c21ae5f255464c45b103cb20c4b",
+      "mutant_sha256": "2f28467ec3eab05ac7d56617ba29b550f3eb4790d8868120ad5a12a6e3ab2552",
+      "compiled": true,
+      "ctest_status": "failed",
+      "driver_exit": 113,
+      "behavior_confirmed": true,
+      "restored_sha256": "9acf7ac1701959938af928d8d2f2035b69a07c21ae5f255464c45b103cb20c4b",
+      "restore_audit_sha256": "2f28467ec3eab05ac7d56617ba29b550f3eb4790d8868120ad5a12a6e3ab2552",
+      "restored_ctest_passed": true
+    },
+    {
+      "label": "coverage",
+      "test": "test-workchain-i13-acceptance-gates",
+      "committed_source": {
+        "commit": "6c4b7993a571d5fe631d20b8bc9c2ccfb2f832bd",
+        "path": "crypto/test/workchain-i13-acceptance.py",
+        "blob_sha256": "dfa330d544a2f464dfb1d133dfdad2ec9ff70f8287b2328948102c4c49e18163",
+        "git_blob_oid": "2601fc03b956bef4cc54aad8b51fef2a5864a936"
+      },
+      "from": "if __name__ == '__main__':\n    main()",
+      "to": "if __name__ == '__main__':\n    raise SystemExit(113)",
+      "offset": 10313,
+      "original_sha256": "dfa330d544a2f464dfb1d133dfdad2ec9ff70f8287b2328948102c4c49e18163",
+      "mutant_sha256": "8263874a6490cb113ab828311648387c88da19281f2eb842013d61d35742cf22",
+      "compiled": true,
+      "ctest_status": "failed",
+      "driver_exit": 113,
+      "behavior_confirmed": true,
+      "restored_sha256": "dfa330d544a2f464dfb1d133dfdad2ec9ff70f8287b2328948102c4c49e18163",
+      "restore_audit_sha256": "8263874a6490cb113ab828311648387c88da19281f2eb842013d61d35742cf22",
+      "restored_ctest_passed": true
+    },
+    {
+      "label": "usage",
+      "test": "test-workchain-i13-usage-acceptance-gates",
+      "committed_source": {
+        "commit": "6c4b7993a571d5fe631d20b8bc9c2ccfb2f832bd",
+        "path": "crypto/test/workchain-i13-usage-acceptance.py",
+        "blob_sha256": "f94c89a2b828406b124886d7abdd56e03c9e6c0d2dcc52c9ba2e2d26fbf411e1",
+        "git_blob_oid": "820266b2fa8c97c4793479b77ead6d94948c557d"
+      },
+      "from": "if __name__ == '__main__':\n    main()",
+      "to": "if __name__ == '__main__':\n    raise SystemExit(113)",
+      "offset": 8267,
+      "original_sha256": "f94c89a2b828406b124886d7abdd56e03c9e6c0d2dcc52c9ba2e2d26fbf411e1",
+      "mutant_sha256": "7a6f674769a0402d35d68899a69d8791a4857d926e6bf67150cfa3c10c6da680",
+      "compiled": true,
+      "ctest_status": "failed",
+      "driver_exit": 113,
+      "behavior_confirmed": true,
+      "restored_sha256": "f94c89a2b828406b124886d7abdd56e03c9e6c0d2dcc52c9ba2e2d26fbf411e1",
+      "restore_audit_sha256": "7a6f674769a0402d35d68899a69d8791a4857d926e6bf67150cfa3c10c6da680",
+      "restored_ctest_passed": true
+    },
+    {
+      "label": "missing-current-oracle",
+      "test": "test-workchain-construction-isolation-gates",
+      "committed_source": {
+        "commit": "6c4b7993a571d5fe631d20b8bc9c2ccfb2f832bd",
+        "path": "crypto/test/workchain-construction-isolation.py",
+        "blob_sha256": "9acf7ac1701959938af928d8d2f2035b69a07c21ae5f255464c45b103cb20c4b",
+        "git_blob_oid": "4656c5033cdb962302fd1102f5e0157caa904b1f"
+      },
+      "from": "runs('baseline', range(35), 0)",
+      "to": "check_oracles(); (oracle / 'before.state').unlink(); runs('baseline', range(35), 0)",
+      "offset": 7264,
+      "original_sha256": "9acf7ac1701959938af928d8d2f2035b69a07c21ae5f255464c45b103cb20c4b",
+      "mutant_sha256": "3f39901fc14472d0d603f5ec363381b3f6f69b76da1ad7b9b7182c0b6688132d",
+      "compiled": true,
+      "ctest_status": "failed",
+      "driver_exit": 1,
+      "behavior_confirmed": true,
+      "scope": "A current-run oracle is physically deleted after all four hashes are checked. The driver fails on the missing file before executing baseline cases; this is dependency-failure propagation, not an application guard result.",
+      "restored_sha256": "9acf7ac1701959938af928d8d2f2035b69a07c21ae5f255464c45b103cb20c4b",
+      "restore_audit_sha256": "3f39901fc14472d0d603f5ec363381b3f6f69b76da1ad7b9b7182c0b6688132d",
+      "restored_ctest_passed": true
+    }
+  ],
+  "sources": {
+    "crypto/test/workchain-construction-isolation.py": {
+      "commit": "6c4b7993a571d5fe631d20b8bc9c2ccfb2f832bd",
+      "path": "crypto/test/workchain-construction-isolation.py",
+      "blob_sha256": "9acf7ac1701959938af928d8d2f2035b69a07c21ae5f255464c45b103cb20c4b",
+      "git_blob_oid": "4656c5033cdb962302fd1102f5e0157caa904b1f"
+    },
+    "crypto/test/workchain-construction-isolation.cmake": {
+      "commit": "6c4b7993a571d5fe631d20b8bc9c2ccfb2f832bd",
+      "path": "crypto/test/workchain-construction-isolation.cmake",
+      "blob_sha256": "0243e9dd32dbda5aef4b6688af230324f2ba0d8df8726a48ad62e22da6daee8c",
+      "git_blob_oid": "fbfebbec60ed51b121eb8807a13179c16b689b4d"
+    },
+    "crypto/test/workchain-i13-acceptance.py": {
+      "commit": "6c4b7993a571d5fe631d20b8bc9c2ccfb2f832bd",
+      "path": "crypto/test/workchain-i13-acceptance.py",
+      "blob_sha256": "dfa330d544a2f464dfb1d133dfdad2ec9ff70f8287b2328948102c4c49e18163",
+      "git_blob_oid": "2601fc03b956bef4cc54aad8b51fef2a5864a936"
+    },
+    "crypto/test/workchain-i13-acceptance.cmake": {
+      "commit": "6c4b7993a571d5fe631d20b8bc9c2ccfb2f832bd",
+      "path": "crypto/test/workchain-i13-acceptance.cmake",
+      "blob_sha256": "cbea9a66bb42434c78d0d6e617a0b2af844131a1f75ee246b47d353240555d8d",
+      "git_blob_oid": "4ac84fa051052f8f5879901874ee273702685564"
+    },
+    "crypto/test/workchain-i13-usage-acceptance.py": {
+      "commit": "6c4b7993a571d5fe631d20b8bc9c2ccfb2f832bd",
+      "path": "crypto/test/workchain-i13-usage-acceptance.py",
+      "blob_sha256": "f94c89a2b828406b124886d7abdd56e03c9e6c0d2dcc52c9ba2e2d26fbf411e1",
+      "git_blob_oid": "820266b2fa8c97c4793479b77ead6d94948c557d"
+    },
+    "crypto/test/workchain-i13-usage-acceptance.cmake": {
+      "commit": "6c4b7993a571d5fe631d20b8bc9c2ccfb2f832bd",
+      "path": "crypto/test/workchain-i13-usage-acceptance.cmake",
+      "blob_sha256": "f0dc714c6154232d17d8e11ed6f4d11aa50aaa215654934fc6eb03ae1ec6ca80",
+      "git_blob_oid": "23f55bd7b923ae2ac5d4cb36e3b65157c95dca7e"
+    }
+  },
+  "scope": "Opt-in CTest plumbing and private drivers only. No activation, live integration or I13e acceptance.",
+  "path_helper_sha256": "39631e07a8b759364b916de85b734e7ad418ab21023bb620136ca6bdc1bf42ad",
+  "default_count": 115,
+  "opt_in_count": 118,
+  "construction_report": "construction/measurement.json",
+  "coverage_report": "coverage/measurement.json",
+  "usage_report": "usage/measurement.json",
+  "complete": true
+}

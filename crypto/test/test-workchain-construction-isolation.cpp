@@ -293,7 +293,8 @@ void execute(unsigned which,const std::string& dir,bool freeze) {
     snapshot_seen |= candidate.snapshot()!=predecessor;
     state_seen |= observe_state()!=oracle_before_state;
     messages_seen |= observe_messages()!=oracle_before_messages;
-    if(which>=1&&which<=23&&point==expected_schedule[which-1]) return td::Status::Error(injected,"construction test fault");
+    if((which>=1&&which<=23&&point==expected_schedule[which-1]) ||
+       (which==34&&point.stage==Stage::GenerationCheck)) return td::Status::Error(injected,"construction test fault");
     return td::Status::OK();
   };
   td::Status status;
@@ -351,6 +352,12 @@ void execute(unsigned which,const std::string& dir,bool freeze) {
     status=candidate.construct(predecessor,[&](const Contents&,Contents&,const auto&){
       return td::Status::Error(injected,"ordinary builder failure without observer failure");
     });check(status.is_error()&&status.code()==injected,71);
+  } else if(which==34) {
+    // A stale predecessor must be rejected before the fault observer is reached.
+    const auto stale=std::make_shared<const Contents>(*predecessor);
+    status=candidate.construct(stale,[&](const Contents& old,Contents& draft,const auto& probe){
+      return fixture.build(old,draft,probe);
+    },observer);
   } else {throw Failed{10};}
   const auto actual_state=state_bytes(*candidate.snapshot());
   const auto actual_messages=same_block_messages(candidate);
@@ -372,7 +379,7 @@ void execute(unsigned which,const std::string& dir,bool freeze) {
     std::cout<<"[\""<<stage_names[index]<<"\","<<visited[i].occurrence<<']';
   }
   std::cout<<"]}\n";
-  if(which<=24) {check(state_reads==visited.size(),75);check(message_reads==visited.size(),74);}
+  if(which<=24||which==34) {check(state_reads==visited.size(),75);check(message_reads==visited.size(),74);}
   check(!(state_seen&&messages_seen),82);check(!state_seen,80);check(!messages_seen,81);check(!snapshot_seen,102);
   if(which==0) {
     check(status.is_ok(),70);check(visited==expected_schedule,76);
@@ -385,6 +392,10 @@ void execute(unsigned which,const std::string& dir,bool freeze) {
     if(which<=23) {
       check(status.is_error()&&status.code()==injected,71);
       check(visited==std::vector<Point>(expected_schedule.begin(),expected_schedule.begin()+which),76);
+    }
+    if(which==34) {
+      check(status.is_error()&&status.code()!=injected,104);
+      check(visited==std::vector<Point>(expected_schedule.begin(),expected_schedule.begin()+21),105);
     }
     check(candidate.snapshot()==predecessor,101);
     // Poll the same downstream surface after private temporaries are destroyed.

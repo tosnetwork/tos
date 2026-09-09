@@ -1,0 +1,162 @@
+CMake Error at CMakeLists.txt:13 (project):
+  project requested file is a directory:
+
+    
+
+
+DEBUG: all keys: APPLINKDIR, BINDIR, CMAKECONFIGDIR, ENGINESDIR, INCLUDEDIR, LDLIBS, LIBDIR, MODULESDIR, PKGCONFIGDIR, PREFIX, VERSION, libdir
+DEBUG: LIBDIR = lib, libdir = /tmp/uno-i13-ctest-49adb250b/third-party/openssl/lib => LIBDIR = lib
+DEBUG: PREFIX = /tmp/uno-i13-ctest-49adb250b/third-party/openssl => PREFIX = /tmp/uno-i13-ctest-49adb250b/third-party/openssl
+DEBUG: libdir = /tmp/uno-i13-ctest-49adb250b/third-party/openssl/lib => libdir = /tmp/uno-i13-ctest-49adb250b/third-party/openssl/lib
+DEBUG: BINDIR = bin => BINDIR = /tmp/uno-i13-ctest-49adb250b/third-party/openssl/bin, BINDIR_REL_PREFIX = bin
+DEBUG: LIBDIR = lib => LIBDIR = /tmp/uno-i13-ctest-49adb250b/third-party/openssl/lib, LIBDIR_REL_PREFIX = lib
+DEBUG: INCLUDEDIR = include => INCLUDEDIR = /tmp/uno-i13-ctest-49adb250b/third-party/openssl/include, INCLUDEDIR_REL_PREFIX = include
+DEBUG: APPLINKDIR = include/openssl => APPLINKDIR = /tmp/uno-i13-ctest-49adb250b/third-party/openssl/include/openssl, APPLINKDIR_REL_PREFIX = include/openssl
+DEBUG: ENGINESDIR = /tmp/uno-i13-ctest-49adb250b/third-party/openssl/lib/engines-3 => ENGINESDIR = /tmp/uno-i13-ctest-49adb250b/third-party/openssl/lib/engines-3, ENGINESDIR_REL_LIBDIR = engines-3
+DEBUG: MODULESDIR = /tmp/uno-i13-ctest-49adb250b/third-party/openssl/lib/ossl-modules => MODULESDIR = /tmp/uno-i13-ctest-49adb250b/third-party/openssl/lib/ossl-modules, MODULESDIR_REL_LIBDIR = ossl-modules
+DEBUG: PKGCONFIGDIR = /tmp/uno-i13-ctest-49adb250b/third-party/openssl/lib/pkgconfig => PKGCONFIGDIR = /tmp/uno-i13-ctest-49adb250b/third-party/openssl/lib/pkgconfig, PKGCONFIGDIR_REL_LIBDIR = pkgconfig
+DEBUG: CMAKECONFIGDIR = /tmp/uno-i13-ctest-49adb250b/third-party/openssl/lib/cmake/OpenSSL => CMAKECONFIGDIR = /tmp/uno-i13-ctest-49adb250b/third-party/openssl/lib/cmake/OpenSSL, CMAKECONFIGDIR_REL_LIBDIR = cmake/OpenSSL
+DEBUG: all keys: APPLINKDIR, BINDIR, CMAKECONFIGDIR, ENGINESDIR, INCLUDEDIR, LDLIBS, LIBDIR, MODULESDIR, PKGCONFIGDIR, PREFIX, VERSION, libdir
+Use of uninitialized value in concatenation (.) or string at util/mkinstallvars.pl line 55.
+DEBUG: LIBDIR = , libdir =  => Use of uninitialized value in concatenation (.) or string at util/mkinstallvars.pl line 57.
+LIBDIR = 
+No value given for CMAKECONFIGDIR
+No value given for PKGCONFIGDIR
+No value given for libdir
+DEBUG: PREFIX = . => PREFIX = /tmp/uno-i13-ctest-49adb250b/third-party/openssl-src
+Use of uninitialized value in concatenation (.) or string at util/mkinstallvars.pl line 72.
+DEBUG: libdir =  => Use of uninitialized value in concatenation (.) or string at util/mkinstallvars.pl line 75.
+libdir = 
+DEBUG: BINDIR = apps => BINDIR = /tmp/uno-i13-ctest-49adb250b/third-party/openssl-src/apps, BINDIR_REL_PREFIX = apps
+DEBUG: LIBDIR = Use of uninitialized value in print at util/mkinstallvars.pl line 91.
+ => Use of uninitialized value in concatenation (.) or string at util/mkinstallvars.pl line 108.
+LIBDIR = /tmp/uno-i13-ctest-49adb250b/third-party/openssl-src, LIBDIR_REL_PREFIX = 
+DEBUG: INCLUDEDIR = [ include, ./include ] => INCLUDEDIR = [ /tmp/uno-i13-ctest-49adb250b/third-party/openssl-src/include, /tmp/uno-i13-ctest-49adb250b/third-party/openssl-src/include ], INCLUDEDIR_REL_PREFIX = [ include, ./include ]
+DEBUG: APPLINKDIR = ms => APPLINKDIR = /tmp/uno-i13-ctest-49adb250b/third-party/openssl-src/ms, APPLINKDIR_REL_PREFIX = ms
+DEBUG: ENGINESDIR = engines => ENGINESDIR = /tmp/uno-i13-ctest-49adb250b/third-party/openssl-src/engines, ENGINESDIR_REL_LIBDIR = engines
+DEBUG: MODULESDIR = providers => MODULESDIR = /tmp/uno-i13-ctest-49adb250b/third-party/openssl-src/providers, MODULESDIR_REL_LIBDIR = providers
+DEBUG: PKGCONFIGDIR = . => PKGCONFIGDIR = /tmp/uno-i13-ctest-49adb250b/third-party/openssl-src, PKGCONFIGDIR_REL_LIBDIR = .
+DEBUG: CMAKECONFIGDIR = . => CMAKECONFIGDIR = /tmp/uno-i13-ctest-49adb250b/third-party/openssl-src, CMAKECONFIGDIR_REL_LIBDIR = .
+Use of uninitialized value in join or string at util/mkinstallvars.pl line 156.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Use of uninitialized value in join or string at /usr/lib/x86_64-linux-gnu/perl-base/re.pm line 47.
+Add rocksdb
+Add abseil-cpp
+Add crc32c
+Add ngtcp2 with custom OpenSSL from /tmp/uno-i13-ctest-49adb250b/third-party/openssl
+CMake Warning at third-party/ngtcp2/crypto/CMakeLists.txt:31 (message):
+  libngtcp2_crypto_quictls library is disabled due to lack of good quictls
+
+
+CMake Warning at third-party/ngtcp2/crypto/CMakeLists.txt:37 (message):
+  libngtcp2_crypto_libressl library is disabled due to lack of good LibreSSL
+
+
+Add tl-parser
+Add tos

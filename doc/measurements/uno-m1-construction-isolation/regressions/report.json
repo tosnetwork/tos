@@ -1,0 +1,352 @@
+{
+  "events": [
+    {
+      "label": "private-build",
+      "argv": [
+        "cmake",
+        "--build",
+        "/tmp/uno-m1-i13-build",
+        "--target",
+        "test-workchain-i13-acceptance",
+        "test-workchain-i13-usage-acceptance",
+        "-j32"
+      ],
+      "exit": 0,
+      "stdout_sha256": "323bc7a83082d5def0d07d7e8fc30c5ce0d9276552fabcec3e1cb20e00e1fc8c",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "i13-coverage-0",
+      "argv": [
+        "/tmp/uno-m1-i13-build/test-workchain-i13-acceptance",
+        "0"
+      ],
+      "exit": 0,
+      "stdout_sha256": "7d06e864abe39286702b9fcc01daa7a4ac8e695c81cc899654f1a0805e346f71",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "i13-coverage-1",
+      "argv": [
+        "/tmp/uno-m1-i13-build/test-workchain-i13-acceptance",
+        "1"
+      ],
+      "exit": 0,
+      "stdout_sha256": "7d06e864abe39286702b9fcc01daa7a4ac8e695c81cc899654f1a0805e346f71",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "i13-coverage-2",
+      "argv": [
+        "/tmp/uno-m1-i13-build/test-workchain-i13-acceptance",
+        "2"
+      ],
+      "exit": 0,
+      "stdout_sha256": "7d06e864abe39286702b9fcc01daa7a4ac8e695c81cc899654f1a0805e346f71",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "i13-coverage-3",
+      "argv": [
+        "/tmp/uno-m1-i13-build/test-workchain-i13-acceptance",
+        "3"
+      ],
+      "exit": 0,
+      "stdout_sha256": "7d06e864abe39286702b9fcc01daa7a4ac8e695c81cc899654f1a0805e346f71",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "i13-coverage-4",
+      "argv": [
+        "/tmp/uno-m1-i13-build/test-workchain-i13-acceptance",
+        "4"
+      ],
+      "exit": 0,
+      "stdout_sha256": "7d06e864abe39286702b9fcc01daa7a4ac8e695c81cc899654f1a0805e346f71",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "i13-coverage-5",
+      "argv": [
+        "/tmp/uno-m1-i13-build/test-workchain-i13-acceptance",
+        "5"
+      ],
+      "exit": 0,
+      "stdout_sha256": "7d06e864abe39286702b9fcc01daa7a4ac8e695c81cc899654f1a0805e346f71",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "i13-coverage-6",
+      "argv": [
+        "/tmp/uno-m1-i13-build/test-workchain-i13-acceptance",
+        "6"
+      ],
+      "exit": 0,
+      "stdout_sha256": "7d06e864abe39286702b9fcc01daa7a4ac8e695c81cc899654f1a0805e346f71",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "i13-coverage-7",
+      "argv": [
+        "/tmp/uno-m1-i13-build/test-workchain-i13-acceptance",
+        "7"
+      ],
+      "exit": 0,
+      "stdout_sha256": "7d06e864abe39286702b9fcc01daa7a4ac8e695c81cc899654f1a0805e346f71",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "i13-coverage-8",
+      "argv": [
+        "/tmp/uno-m1-i13-build/test-workchain-i13-acceptance",
+        "8"
+      ],
+      "exit": 0,
+      "stdout_sha256": "7d06e864abe39286702b9fcc01daa7a4ac8e695c81cc899654f1a0805e346f71",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "i13-coverage-9",
+      "argv": [
+        "/tmp/uno-m1-i13-build/test-workchain-i13-acceptance",
+        "9"
+      ],
+      "exit": 0,
+      "stdout_sha256": "7d06e864abe39286702b9fcc01daa7a4ac8e695c81cc899654f1a0805e346f71",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "i13-coverage-10",
+      "argv": [
+        "/tmp/uno-m1-i13-build/test-workchain-i13-acceptance",
+        "10"
+      ],
+      "exit": 0,
+      "stdout_sha256": "7d06e864abe39286702b9fcc01daa7a4ac8e695c81cc899654f1a0805e346f71",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "i13-coverage-11",
+      "argv": [
+        "/tmp/uno-m1-i13-build/test-workchain-i13-acceptance",
+        "11"
+      ],
+      "exit": 0,
+      "stdout_sha256": "7d06e864abe39286702b9fcc01daa7a4ac8e695c81cc899654f1a0805e346f71",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "i13-coverage-12",
+      "argv": [
+        "/tmp/uno-m1-i13-build/test-workchain-i13-acceptance",
+        "12"
+      ],
+      "exit": 0,
+      "stdout_sha256": "7d06e864abe39286702b9fcc01daa7a4ac8e695c81cc899654f1a0805e346f71",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "i13-coverage-13",
+      "argv": [
+        "/tmp/uno-m1-i13-build/test-workchain-i13-acceptance",
+        "13"
+      ],
+      "exit": 0,
+      "stdout_sha256": "7d06e864abe39286702b9fcc01daa7a4ac8e695c81cc899654f1a0805e346f71",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "i13-coverage-14",
+      "argv": [
+        "/tmp/uno-m1-i13-build/test-workchain-i13-acceptance",
+        "14"
+      ],
+      "exit": 0,
+      "stdout_sha256": "7d06e864abe39286702b9fcc01daa7a4ac8e695c81cc899654f1a0805e346f71",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "i13-coverage-15",
+      "argv": [
+        "/tmp/uno-m1-i13-build/test-workchain-i13-acceptance",
+        "15"
+      ],
+      "exit": 0,
+      "stdout_sha256": "7d06e864abe39286702b9fcc01daa7a4ac8e695c81cc899654f1a0805e346f71",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "i13-usage-0",
+      "argv": [
+        "/tmp/uno-m1-i13-build/test-workchain-i13-usage-acceptance",
+        "0"
+      ],
+      "exit": 0,
+      "stdout_sha256": "bcecf59936a3d840867a8dfc2d40401115481365c8b2964418cda4d8cc11dc3f",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "i13-usage-1",
+      "argv": [
+        "/tmp/uno-m1-i13-build/test-workchain-i13-usage-acceptance",
+        "1"
+      ],
+      "exit": 0,
+      "stdout_sha256": "5c13688dde3e767a8a8033e8180bce8303f922a432dfb164f4534baf4d8a5bb4",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "i13-usage-2",
+      "argv": [
+        "/tmp/uno-m1-i13-build/test-workchain-i13-usage-acceptance",
+        "2"
+      ],
+      "exit": 0,
+      "stdout_sha256": "a761eb77044f2e31d12f59c2b7d9c19c8a87ab7cb704f0dc8fded2c4c419a236",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "workchain-block-build",
+      "argv": [
+        "cmake",
+        "--build",
+        "/tmp/uno-m1-i13-build",
+        "--target",
+        "test-workchain-block",
+        "-j32"
+      ],
+      "exit": 1,
+      "stdout_sha256": "038a3f2a8ec77ab0d87cbdea4796c420dc808f24185c2c95b3ae9fa2792bc1b3",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "workchain-block-build-explicit-tools",
+      "argv": [
+        "env",
+        "FUNC_BIN=/tmp/uno-m1-i13-build/crypto/func",
+        "FIFT_BIN=/tmp/uno-m1-i13-build/crypto/fift",
+        "cmake",
+        "--build",
+        "/tmp/uno-m1-i13-build",
+        "--target",
+        "test-workchain-block",
+        "-j32"
+      ],
+      "exit": 0,
+      "stdout_sha256": "733a8c5aba2c1cc4a6b57bc1816c02a71a9ad1109b0cb663ae4f549baa529ba3",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "workchain-block-run",
+      "argv": [
+        "/tmp/uno-m1-i13-build/test-workchain-block",
+        "--filter",
+        "WorkchainBlock",
+        "--verbosity",
+        "0"
+      ],
+      "exit": 1,
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "5efb66ad79e0abb4a8c38a1a84db57da44e5ecd6b2a67f2fdcdde71d9bcbcbd5"
+    },
+    {
+      "label": "disposal-entry-alone",
+      "argv": [
+        "/tmp/uno-m1-i13-build/test-workchain-block",
+        "--filter",
+        "NativeDisposalEntry",
+        "--verbosity",
+        "0"
+      ],
+      "exit": 0,
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "404055f719e9e1602e247d20e261501f0d99221a688600f4c0173b5b6a719b90"
+    }
+  ],
+  "source_commit": "a0cca7b2ab575d8e39451994fbff755af48bb5f8",
+  "private_cases": [
+    {
+      "suite": "coverage",
+      "case": 0
+    },
+    {
+      "suite": "coverage",
+      "case": 1
+    },
+    {
+      "suite": "coverage",
+      "case": 2
+    },
+    {
+      "suite": "coverage",
+      "case": 3
+    },
+    {
+      "suite": "coverage",
+      "case": 4
+    },
+    {
+      "suite": "coverage",
+      "case": 5
+    },
+    {
+      "suite": "coverage",
+      "case": 6
+    },
+    {
+      "suite": "coverage",
+      "case": 7
+    },
+    {
+      "suite": "coverage",
+      "case": 8
+    },
+    {
+      "suite": "coverage",
+      "case": 9
+    },
+    {
+      "suite": "coverage",
+      "case": 10
+    },
+    {
+      "suite": "coverage",
+      "case": 11
+    },
+    {
+      "suite": "coverage",
+      "case": 12
+    },
+    {
+      "suite": "coverage",
+      "case": 13
+    },
+    {
+      "suite": "coverage",
+      "case": 14
+    },
+    {
+      "suite": "coverage",
+      "case": 15
+    },
+    {
+      "suite": "usage",
+      "case": 0
+    },
+    {
+      "suite": "usage",
+      "case": 1
+    },
+    {
+      "suite": "usage",
+      "case": 2
+    }
+  ],
+  "private_passed": true,
+  "workchain_block_built": true,
+  "workchain_block_passed": false,
+  "finished": true,
+  "workchain_block_passed_count": 0,
+  "build_retry_reason": "Historical contract embedding scripts defaulted to repository/build; retry supplies the actual built FunC/Fift paths using their existing environment interface. No source changes.",
+  "scope": "19 private regressions passed. Standard WorkchainBlock suite failed at NativeDisposalEntry; standalone passes. Coordinator attributed the paired failure to uninitialized fixture fwd_mc. A owns the fix; no full-suite pass is claimed here."
+}

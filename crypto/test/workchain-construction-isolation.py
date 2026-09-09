@@ -5,6 +5,7 @@ import hashlib
 import json
 from pathlib import Path
 import subprocess
+from workchain_i13_paths import resolve_ctest_paths
 
 
 def sha(data):
@@ -14,9 +15,12 @@ def sha(data):
 def main():
     p = argparse.ArgumentParser()
     p.add_argument('--build', required=True, type=Path)
-    p.add_argument('--work', required=True, type=Path)
-    p.add_argument('--output', required=True, type=Path)
+    p.add_argument('--work', type=Path)
+    p.add_argument('--output', type=Path)
+    p.add_argument('--only-control', help='Run one named control; all baseline/final cases still run')
+    p.add_argument('--ctest-root', type=Path)
     args = p.parse_args()
+    resolve_ctest_paths(p, args)
     repo = Path(__file__).resolve().parents[2]
     for path in (args.work, args.output):
         path.mkdir(parents=True, exist_ok=False)
@@ -48,7 +52,7 @@ def main():
         'full collator processing metadata and D31 integration remain unestablished. '
         'Frozen oracles calibrate isolation and supplied-value preservation, not independent Native semantics. '
         'No activation or I13e acceptance claimed.',
-        'events': [], 'controls': [], 'sources': bindings}
+        'events': [], 'controls': [], 'sources': bindings, 'selected_control': args.only_control}
     def save():
         (args.output / 'measurement.json').write_text(json.dumps(report, indent=2) + '\n')
     def command(label, argv):
@@ -91,6 +95,14 @@ def main():
             result = command(label + '-' + str(case), [args.build / 'test-workchain-construction-isolation', case, oracle])
             check_oracles()
             assert result.returncode == expected, f'{label}/{case}: expected {expected}, got {result.returncode}'
+            if case == 34 and expected in (0, 104):
+                observation = json.loads(result.stdout)
+                assert observation['visited'] == (21 if expected == 0 else 22)
+                assert (observation['status_code'] == -71034) == (expected == 104)
+                assert observation['points'][-1] == [('FinalBudgetCheck' if expected == 0 else 'GenerationCheck'), 0]
+                for key in ('intermediate_state', 'intermediate_messages', 'final_state_changed',
+                            'final_messages_changed', 'intermediate_snapshot_identity', 'final_snapshot_identity_changed'):
+                    assert observation[key] == 0
             if expected == 82:
                 observation = json.loads(result.stdout)
                 assert observation['intermediate_state'] == 1 and observation['intermediate_messages'] == 1
@@ -107,8 +119,14 @@ def main():
     assert frozen.returncode == 0
     report['oracle_sha256'] = {f.name: sha(f.read_bytes()) for f in sorted(oracle.iterdir())}
     assert set(report['oracle_sha256']) == {'before.state', 'before.messages', 'after.state', 'after.messages'}
-    runs('baseline', range(34), 0)
+    runs('baseline', range(35), 0)
+    predecessor_check = 'if (current_ != expected_predecessor) return td::Status::Error("candidate predecessor differs from prepared input");'
+    generation_checkpoint = 'TRY_STATUS(checkpoint({WorkchainConstructionStage::GenerationCheck, 0}));'
     controls = [
+        ('checkpoint-before-predecessor', core,
+         predecessor_check + '\n    ' + generation_checkpoint,
+         generation_checkpoint + '\n    ' + predecessor_check, [34], 104),
+        ('omit-generation-checkpoint', core, generation_checkpoint, '(void)checkpoint;', [0], 76),
         ('direct-live-stage', core,
          'auto status = observe_workchain_construction(observer, point.stage, point.occurrence);',
          'if (point.stage == WorkchainConstructionStage::ValueFlowFreeze) current_ = std::make_shared<const WorkchainCandidateContents>(draft);\n'
@@ -167,6 +185,9 @@ def main():
     for stage in ('ValueFlowFreeze', 'CoverageFreeze', 'ShardUpdateBuild', 'FinalBudgetCheck'):
         controls.append(('omit-' + stage, cpp, f'TRY_STATUS(probe({{Stage::{stage},0}}));',
             '(void)probe;', [0], 76))
+    if args.only_control:
+        controls = [c for c in controls if c[0] == args.only_control]
+        assert len(controls) == 1, 'unknown or ambiguous selected control'
     for label, name, before, after, cases, expected in controls:
         data = originals[name]
         old, new = before.encode(), after.encode()
@@ -184,6 +205,14 @@ def main():
             build(label + '-build')
             control['compiled'] = True
             deps(label + '-dependencies', name)
+            if label == 'checkpoint-before-predecessor':
+                # Do not combine source mutations: the old scenarios alone are
+                # run against this one order change to establish their blind spot.
+                runs(label + '-legacy', range(34), 0)
+                control['legacy_cases_passed'] = list(range(34))
+            if label == 'omit-generation-checkpoint':
+                runs(label + '-position-still-passes', [34], 0)
+                control['position_case_still_passes'] = 34
             runs(label, cases, expected)
             control['behavior_confirmed'] = True
         finally:
@@ -201,7 +230,7 @@ def main():
         deps(label + '-restored-dependencies')
         runs(label + '-restored', cases, 0)
         print('restored:', label, flush=True)
-    runs('final', range(34), 0)
+    runs('final', range(35), 0)
     missing = command('missing-oracle-dependency', [args.build / 'test-workchain-construction-isolation', 0, args.work / 'absent'])
     assert missing.returncode == 92
     check_oracles()
@@ -209,7 +238,7 @@ def main():
     report['original_source_files_unchanged'] = True
     report['complete'] = True
     save()
-    print(f'PASS: 34 private cases, {len(controls)} isolated controls; coordinator review pending')
+    print(f'PASS: 35 private cases, {len(controls)} isolated controls; coordinator review pending')
 
 
 if __name__ == '__main__':

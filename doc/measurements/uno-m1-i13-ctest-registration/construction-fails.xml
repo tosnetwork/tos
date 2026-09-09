@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Site BuildName="(empty)"
+	BuildStamp="20260909-1158-Experimental"
+	Name="(empty)"
+	Generator="ctest-3.22.1"
+	CompilerName=""
+	CompilerVersion=""
+	OSName="Linux"
+	Hostname="toserver"
+	OSRelease="6.8.0-138-generic"
+	OSVersion="#138~22.04.1-Ubuntu SMP PREEMPT_DYNAMIC Fri Aug  7 13:43:15 UTC "
+	OSPlatform="x86_64"
+	Is64Bits="1"
+	VendorString="GenuineIntel"
+	VendorID="Intel Corporation"
+	FamilyID="6"
+	ModelID="143"
+	ProcessorCacheSize="99840"
+	NumberOfLogicalCPU="192"
+	NumberOfPhysicalCPU="96"
+	TotalVirtualMemory="8191"
+	TotalPhysicalMemory="128481"
+	LogicalProcessorsPerPhysical="2"
+	ProcessorClockFrequency="796.042"
+	>
+	<Testing>
+		<StartDateTime>Sep 09 11:58 UTC</StartDateTime>
+		<StartTestTime>1788955117</StartTestTime>
+		<TestList>
+			<Test>./test-workchain-construction-isolation-gates</Test>
+		</TestList>
+		<Test Status="failed">
+			<Name>test-workchain-construction-isolation-gates</Name>
+			<Path>.</Path>
+			<FullName>./test-workchain-construction-isolation-gates</FullName>
+			<FullCommandLine>/home/tomi/.local/bin/python3 "/home/tomi/tos-m2/crypto/test/workchain-construction-isolation.py" "--build" "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/construction/build" "--ctest-root" "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/construction/runs"</FullCommandLine>
+			<Results>
+				<NamedMeasurement type="text/string" name="Exit Code">
+					<Value>Failed</Value>
+				</NamedMeasurement>
+				<NamedMeasurement type="text/string" name="Exit Value">
+					<Value>113</Value>
+				</NamedMeasurement>
+				<NamedMeasurement type="numeric/double" name="Execution Time">
+					<Value>0.0585504</Value>
+				</NamedMeasurement>
+				<NamedMeasurement type="numeric/double" name="Processors">
+					<Value>1</Value>
+				</NamedMeasurement>
+				<NamedMeasurement type="text/string" name="Completion Status">
+					<Value>Completed</Value>
+				</NamedMeasurement>
+				<NamedMeasurement type="text/string" name="Command Line">
+					<Value>/home/tomi/.local/bin/python3 "/home/tomi/tos-m2/crypto/test/workchain-construction-isolation.py" "--build" "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/construction/build" "--ctest-root" "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/construction/runs"</Value>
+				</NamedMeasurement>
+				<NamedMeasurement type="text/string" name="Environment">
+					<Value>#CTEST_RESOURCE_GROUP_COUNT=</Value>
+				</NamedMeasurement>
+				<Measurement>
+					<Value></Value>
+				</Measurement>
+			</Results>
+			<Labels>
+				<Label>i13</Label>
+				<Label>private</Label>
+				<Label>workchain</Label>
+			</Labels>
+		</Test>
+		<EndDateTime>Sep 09 11:58 UTC</EndDateTime>
+		<EndTestTime>1788955117</EndTestTime>
+		<ElapsedMinutes>0</ElapsedMinutes>
+	</Testing>
+</Site>

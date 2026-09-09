@@ -109,3 +109,52 @@ Snapshots held by arbitrary live consumers, aggregate pending-message copying,
 and live host closure/budget accounting remain resource-integration obligations.
 Storage transaction/recovery positions 22 and 25 of the historical matrix belong
 to D47(c) and are not silently skipped inside this unit's 23-position claim.
+
+Case 34 combines a stale predecessor with an observer that fails at
+GenerationCheck. It requires an error distinct from the injected numeric code
+(identity 104), exactly the first 21 construction observations (identity 105),
+and unchanged actual snapshot identity, state bytes and same-block message bytes.
+The comparison therefore runs before the GenerationCheck observation. The
+single `checkpoint-before-predecessor` control restores the old order: only
+case 34 fails (104), with 22 observations and the injected code; cases 0–33
+remain green against that same compiled replacement. This establishes the
+original scenarios' ordering blind spot. The other 29 controls are calibrated
+separately, never combined with the order replacement.
+
+The separate `omit-generation-checkpoint` control deletes the checkpoint entirely:
+case 0 must fail the schedule guard (76), while case 34 must still pass. Schedule
+presence and placement are distinct obligations. Under the order replacement,
+104 fails first; the recorded 22 observations also violate 105, but 105 is not
+reported as an executed failure after 104 has returned.
+
+## Explicit CTest registration
+
+Including this module registers all three private Python drivers as CTest tests.
+Each driver uses a separate child build, a shared CTest resource lock, and fresh
+`mkdtemp` run directories. The original `exist_ok=False` work/evidence creation
+checks remain intact. Only build products are reused; oracles never are.
+No module means no registration or additional default target. Python is required
+at configuration and runtime; missing fixtures fail, never skip.
+
+```
+ctest --test-dir /path/to/opt-in-build -L i13 --output-on-failure -j32
+```
+
+The construction timeout is 7200 seconds; coverage and usage each allow 3600.
+`workchain-i13-registration.py --build /tmp/fresh-parent --output /tmp/fresh-evidence`
+checks default versus opt-in registration, changes each driver separately to a
+compiled unconditional exit 113, asserts CTest's failed status and numeric exit,
+restores it byte-for-byte, then runs the complete registered drivers. A separate
+control physically removes a current-run oracle after checking all four hashes
+and requires a CTest failure. This checks dependency propagation, not the
+application's numeric missing-file guard. Missing oracle dependency identity 92
+is separately exercised by the normal construction driver.
+
+For the coordinator's next integration check, the same explicit module include
+must add exactly these three names to that integration tree's registry:
+`test-workchain-construction-isolation-gates`,
+`test-workchain-i13-acceptance-gates`, and
+`test-workchain-i13-usage-acceptance-gates`. Its recorded starting count is 127,
+so the expected integration count is 130. A registry still at 127 does not
+include this coverage; pre-merge regression results must not be cited as testing
+these drivers. This integration condition is separate from a private-tree run.

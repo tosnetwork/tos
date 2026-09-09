@@ -1,0 +1,20 @@
+Internal ctest changing into directory: /tmp/uno-i13-ctest-49adb250b
+   Site: 
+   Build name: (empty)
+Create new tag: 20260909-1158 - Experimental
+Test project /tmp/uno-i13-ctest-49adb250b
+    Start 3: test-workchain-construction-isolation-gates
+1/1 Test #3: test-workchain-construction-isolation-gates ...***Failed    0.06 sec
+
+
+0% tests passed, 1 tests failed out of 1
+
+Label Time Summary:
+i13          =   0.06 sec*proc (1 test)
+private      =   0.06 sec*proc (1 test)
+workchain    =   0.06 sec*proc (1 test)
+
+Total Test time (real) =   0.06 sec
+
+The following tests FAILED:
+	  3 - test-workchain-construction-isolation-gates (Failed)

@@ -1,0 +1,107 @@
+{
+  "schema": 1,
+  "base_commit": "6c4b7993a571d5fe631d20b8bc9c2ccfb2f832bd",
+  "runner_sha256": "3f39901fc14472d0d603f5ec363381b3f6f69b76da1ad7b9b7182c0b6688132d",
+  "scope": "Private candidate context with real Native payout/import/queue artifacts. 23 construction positions; no storage/recovery or consensus-authority claim. The same-block reader consumes the actual context snapshot. Live collator consumer coverage, full collator processing metadata and D31 integration remain unestablished. Frozen oracles calibrate isolation and supplied-value preservation, not independent Native semantics. No activation or I13e acceptance claimed.",
+  "events": [
+    {
+      "label": "baseline-configure",
+      "argv": [
+        "cmake",
+        "-S",
+        "/home/tomi/tos-m2",
+        "-B",
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/construction/build",
+        "-G",
+        "Ninja",
+        "-DCMAKE_BUILD_TYPE=Release",
+        "-DCMAKE_PROJECT_TOS_INCLUDE=/home/tomi/tos-m2/crypto/test/workchain-construction-isolation.cmake",
+        "-DCONSTRUCTION_ISOLATION_SOURCE=",
+        "-DCONSTRUCTION_ISOLATION_HEADER_DIR=",
+        "-DTOS_UNO_CRYPTO_PROTOTYPE_TESTS=OFF"
+      ],
+      "exit": 0,
+      "stdout_sha256": "4f212d86f4968718f4c18ea44bd825351b17350f9bbc6dcfd065391c25091c34",
+      "stderr_sha256": "3b0abaa21d6ccc71c4dd4ea7b6bf9a364700d834b5b33a03e4cca28d46fa507b"
+    },
+    {
+      "label": "baseline-build",
+      "argv": [
+        "cmake",
+        "--build",
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/construction/build",
+        "--target",
+        "test-workchain-construction-isolation",
+        "-j32"
+      ],
+      "exit": 0,
+      "stdout_sha256": "0d74cf97c3db868788550f257a61fd854fe0b683eadfc10e2301f6e5af69df10",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "baseline-dependencies",
+      "argv": [
+        "ninja",
+        "-C",
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/construction/build",
+        "-t",
+        "deps",
+        "CMakeFiles/test-workchain-construction-isolation.dir/crypto/test/test-workchain-construction-isolation.cpp.o"
+      ],
+      "exit": 0,
+      "stdout_sha256": "5ca1cd7bb406b41ad89e1a64e4dfcceaab348661683027b03b0ddc3a9fef32b4",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "freeze-oracles",
+      "argv": [
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/construction/build/test-workchain-construction-isolation",
+        "freeze",
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/construction/runs/run-cawj1loi/evidence/oracles"
+      ],
+      "exit": 0,
+      "stdout_sha256": "23d375255c26f012b472695b1412f28ca4a1d8cadd4171a0534ec4018c174897",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ],
+  "controls": [],
+  "sources": {
+    "test-workchain-construction-isolation.cpp": {
+      "commit": "6c4b7993a571d5fe631d20b8bc9c2ccfb2f832bd",
+      "path": "crypto/test/test-workchain-construction-isolation.cpp",
+      "blob_sha256": "c5ff83adde83619176d00ab6276e41f24ba44fcc8e527654f23e9a5ebf4d6939",
+      "git_blob_oid": "abcad36b204a6b7826857be19af99aaf9b077705"
+    },
+    "workchain-candidate-construction.h": {
+      "commit": "6c4b7993a571d5fe631d20b8bc9c2ccfb2f832bd",
+      "path": "crypto/block/workchain-candidate-construction.h",
+      "blob_sha256": "e18eaecd4dd5b5acf2980ae13e64063260a711783cc9b00a5277dc856480cfe4",
+      "git_blob_oid": "6aea38d53d8c715822da17db2bb9fd7314c68e0f"
+    },
+    "workchain-payout-overlay.h": {
+      "commit": "6c4b7993a571d5fe631d20b8bc9c2ccfb2f832bd",
+      "path": "crypto/block/workchain-payout-overlay.h",
+      "blob_sha256": "2822f17f03fe724695138077126908216afdb45db81020b9041ff1ca794a7eb1",
+      "git_blob_oid": "c3f0961428a9d508c95fb985649f88166cd4fce9"
+    },
+    "workchain-import-evidence.h": {
+      "commit": "6c4b7993a571d5fe631d20b8bc9c2ccfb2f832bd",
+      "path": "crypto/block/workchain-import-evidence.h",
+      "blob_sha256": "9756b416dd04bd3ef5a9df7ffa6526072cf7bb7dd8c9b798a431937b3df66f03",
+      "git_blob_oid": "a66dd8a16b31da95fb7b9db4859854e007c2fdf0"
+    },
+    "workchain-outbound-queues.h": {
+      "commit": "6c4b7993a571d5fe631d20b8bc9c2ccfb2f832bd",
+      "path": "crypto/block/workchain-outbound-queues.h",
+      "blob_sha256": "a616ceb770f5df11d7b68e4d9d0f2fd3a4d0d38762080eda0c5904e8864706fc",
+      "git_blob_oid": "a86d0c0694c8920776c2b02ff09a7f92a70a62c1"
+    },
+    "workchain-construction-observer.h": {
+      "commit": "6c4b7993a571d5fe631d20b8bc9c2ccfb2f832bd",
+      "path": "crypto/block/workchain-construction-observer.h",
+      "blob_sha256": "a11fbc32055a5b62e5fd17bbbd7057eb75f482963302232413295879defa75d1",
+      "git_blob_oid": "97a440a8321aa7e0004aaa760d817e6f8383144d"
+    }
+  },
+  "selected_control": null
+}

@@ -17,3 +17,13 @@ set(I13_ACCEPTANCE_HEADER_DIR "")
 include("${CMAKE_CURRENT_SOURCE_DIR}/crypto/test/workchain-i13-acceptance.cmake")
 set(I13_USAGE_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/crypto/test/test-workchain-i13-usage-acceptance.cpp")
 include("${CMAKE_CURRENT_SOURCE_DIR}/crypto/test/workchain-i13-usage-acceptance.cmake")
+
+# Registration is opt-in with this module; missing dependencies fail configuration
+# or the driver. The child build cannot rewrite this parent CTest registry.
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+add_test(NAME test-workchain-construction-isolation-gates COMMAND ${Python3_EXECUTABLE}
+  "${CMAKE_CURRENT_SOURCE_DIR}/crypto/test/workchain-construction-isolation.py"
+  --build "${CMAKE_CURRENT_BINARY_DIR}/workchain-i13-ctest/construction/build"
+  --ctest-root "${CMAKE_CURRENT_BINARY_DIR}/workchain-i13-ctest/construction/runs")
+set_tests_properties(test-workchain-construction-isolation-gates PROPERTIES
+  TIMEOUT 7200 RESOURCE_LOCK workchain_i13_measurements LABELS "private;workchain;i13")

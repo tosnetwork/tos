@@ -1,0 +1,1922 @@
+{
+  "schema": 1,
+  "base_commit": "6c4b7993a571d5fe631d20b8bc9c2ccfb2f832bd",
+  "source_sha256": {
+    "workchain-account-access.h": "3ece0319ea12aeb5cd5d6f86584eaa25cd7808de32e9293e16d94afaa03642bc",
+    "workchain-account-dictionary.h": "29aa33589ffd97276fd5f288c08d5e8600ed3237478b924a7fa007ffbcd3412f",
+    "workchain-storage-overlay.h": "eeb8ea26bac55e65cce9e42652648d11eca1ead4fa684d0e8d8a053a69026aa7",
+    "test-workchain-i13-acceptance.cpp": "f16f7fffd93823d4dc85c034df3bd510d3037dbe6e5bb59a2ab161f44a0c98ea"
+  },
+  "runner_sha256": "dfa330d544a2f464dfb1d133dfdad2ec9ff70f8287b2328948102c4c49e18163",
+  "events": [
+    {
+      "label": "baseline-configure",
+      "command": [
+        "cmake",
+        "-S",
+        "/home/tomi/tos-m2",
+        "-B",
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build",
+        "-G",
+        "Ninja",
+        "-DCMAKE_BUILD_TYPE=Release",
+        "-DCMAKE_PROJECT_TOS_INCLUDE=/home/tomi/tos-m2/crypto/test/workchain-i13-acceptance.cmake",
+        "-DI13_ACCEPTANCE_SOURCE=",
+        "-DI13_ACCEPTANCE_HEADER_DIR=",
+        "-DTOS_UNO_CRYPTO_PROTOTYPE_TESTS=OFF"
+      ],
+      "exit": 0,
+      "stdout_sha256": "e75e5268dd5f70ed208f2b6539361088100217c00f12b347d9933dc75ccb1f53",
+      "stderr_sha256": "1ec6ad975b60334c67292f5a82ead2fe09b796ee1219faa9d244a68c8ca38632"
+    },
+    {
+      "label": "baseline-build",
+      "command": [
+        "cmake",
+        "--build",
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build",
+        "--target",
+        "test-workchain-i13-acceptance",
+        "-j32"
+      ],
+      "exit": 0,
+      "stdout_sha256": "1d6ed9aa56400441ee44b3d25d556135d5d3cc756a3e807e8674e93386c5ac05",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "baseline-dependencies",
+      "command": [
+        "ninja",
+        "-C",
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build",
+        "-t",
+        "deps",
+        "CMakeFiles/test-workchain-i13-acceptance.dir/crypto/test/test-workchain-i13-acceptance.cpp.o"
+      ],
+      "exit": 0,
+      "stdout_sha256": "465dfc4fe79be55ea4933b3c6ec1c8aa6a8559a6240a9f604953ae62c9f9a11c",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "baseline-case-0",
+      "command": [
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build/test-workchain-i13-acceptance",
+        "0"
+      ],
+      "exit": 0,
+      "stdout_sha256": "7d06e864abe39286702b9fcc01daa7a4ac8e695c81cc899654f1a0805e346f71",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "baseline-case-1",
+      "command": [
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build/test-workchain-i13-acceptance",
+        "1"
+      ],
+      "exit": 0,
+      "stdout_sha256": "7d06e864abe39286702b9fcc01daa7a4ac8e695c81cc899654f1a0805e346f71",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "baseline-case-2",
+      "command": [
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build/test-workchain-i13-acceptance",
+        "2"
+      ],
+      "exit": 0,
+      "stdout_sha256": "7d06e864abe39286702b9fcc01daa7a4ac8e695c81cc899654f1a0805e346f71",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "baseline-case-3",
+      "command": [
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build/test-workchain-i13-acceptance",
+        "3"
+      ],
+      "exit": 0,
+      "stdout_sha256": "7d06e864abe39286702b9fcc01daa7a4ac8e695c81cc899654f1a0805e346f71",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "baseline-case-4",
+      "command": [
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build/test-workchain-i13-acceptance",
+        "4"
+      ],
+      "exit": 0,
+      "stdout_sha256": "7d06e864abe39286702b9fcc01daa7a4ac8e695c81cc899654f1a0805e346f71",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "baseline-case-5",
+      "command": [
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build/test-workchain-i13-acceptance",
+        "5"
+      ],
+      "exit": 0,
+      "stdout_sha256": "7d06e864abe39286702b9fcc01daa7a4ac8e695c81cc899654f1a0805e346f71",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "baseline-case-6",
+      "command": [
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build/test-workchain-i13-acceptance",
+        "6"
+      ],
+      "exit": 0,
+      "stdout_sha256": "7d06e864abe39286702b9fcc01daa7a4ac8e695c81cc899654f1a0805e346f71",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "baseline-case-7",
+      "command": [
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build/test-workchain-i13-acceptance",
+        "7"
+      ],
+      "exit": 0,
+      "stdout_sha256": "7d06e864abe39286702b9fcc01daa7a4ac8e695c81cc899654f1a0805e346f71",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "baseline-case-8",
+      "command": [
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build/test-workchain-i13-acceptance",
+        "8"
+      ],
+      "exit": 0,
+      "stdout_sha256": "7d06e864abe39286702b9fcc01daa7a4ac8e695c81cc899654f1a0805e346f71",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "baseline-case-9",
+      "command": [
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build/test-workchain-i13-acceptance",
+        "9"
+      ],
+      "exit": 0,
+      "stdout_sha256": "7d06e864abe39286702b9fcc01daa7a4ac8e695c81cc899654f1a0805e346f71",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "baseline-case-10",
+      "command": [
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build/test-workchain-i13-acceptance",
+        "10"
+      ],
+      "exit": 0,
+      "stdout_sha256": "7d06e864abe39286702b9fcc01daa7a4ac8e695c81cc899654f1a0805e346f71",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "baseline-case-11",
+      "command": [
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build/test-workchain-i13-acceptance",
+        "11"
+      ],
+      "exit": 0,
+      "stdout_sha256": "7d06e864abe39286702b9fcc01daa7a4ac8e695c81cc899654f1a0805e346f71",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "baseline-case-12",
+      "command": [
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build/test-workchain-i13-acceptance",
+        "12"
+      ],
+      "exit": 0,
+      "stdout_sha256": "7d06e864abe39286702b9fcc01daa7a4ac8e695c81cc899654f1a0805e346f71",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "baseline-case-13",
+      "command": [
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build/test-workchain-i13-acceptance",
+        "13"
+      ],
+      "exit": 0,
+      "stdout_sha256": "7d06e864abe39286702b9fcc01daa7a4ac8e695c81cc899654f1a0805e346f71",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "baseline-case-14",
+      "command": [
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build/test-workchain-i13-acceptance",
+        "14"
+      ],
+      "exit": 0,
+      "stdout_sha256": "7d06e864abe39286702b9fcc01daa7a4ac8e695c81cc899654f1a0805e346f71",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "baseline-case-15",
+      "command": [
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build/test-workchain-i13-acceptance",
+        "15"
+      ],
+      "exit": 0,
+      "stdout_sha256": "7d06e864abe39286702b9fcc01daa7a4ac8e695c81cc899654f1a0805e346f71",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "misroute-overlay-write-configure",
+      "command": [
+        "cmake",
+        "-S",
+        "/home/tomi/tos-m2",
+        "-B",
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build",
+        "-G",
+        "Ninja",
+        "-DCMAKE_BUILD_TYPE=Release",
+        "-DCMAKE_PROJECT_TOS_INCLUDE=/home/tomi/tos-m2/crypto/test/workchain-i13-acceptance.cmake",
+        "-DI13_ACCEPTANCE_SOURCE=",
+        "-DI13_ACCEPTANCE_HEADER_DIR=/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/runs/run-805z5_0o/work/include",
+        "-DTOS_UNO_CRYPTO_PROTOTYPE_TESTS=OFF"
+      ],
+      "exit": 0,
+      "stdout_sha256": "d0288a71e4a4da646de023a5405bee349a238d46c1975ed503b1a08cf4d135c0",
+      "stderr_sha256": "ed7c135eba34b3e947effd0f4c55a6fe4b7221d6ba4423ceb2458bfe9feedf9a"
+    },
+    {
+      "label": "misroute-overlay-write-build",
+      "command": [
+        "cmake",
+        "--build",
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build",
+        "--target",
+        "test-workchain-i13-acceptance",
+        "-j32"
+      ],
+      "exit": 0,
+      "stdout_sha256": "f939d53a07ade947934d62d17d73fe249684dcd09800c41b903b1b0c6f20a8e4",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "misroute-overlay-write-dependencies",
+      "command": [
+        "ninja",
+        "-C",
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build",
+        "-t",
+        "deps",
+        "CMakeFiles/test-workchain-i13-acceptance.dir/crypto/test/test-workchain-i13-acceptance.cpp.o"
+      ],
+      "exit": 0,
+      "stdout_sha256": "1b463ad5c9d3ddfc33e720115df1f21f6362eac2c84f8f5edb173554c1ac446a",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "misroute-overlay-write-case-0",
+      "command": [
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build/test-workchain-i13-acceptance",
+        "0"
+      ],
+      "exit": 10,
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "c1d7783c05d0631720eaa0fcaf39677fce9a6987e4b1b68cd619d848353faa74"
+    },
+    {
+      "label": "misroute-overlay-write-restored-configure",
+      "command": [
+        "cmake",
+        "-S",
+        "/home/tomi/tos-m2",
+        "-B",
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build",
+        "-G",
+        "Ninja",
+        "-DCMAKE_BUILD_TYPE=Release",
+        "-DCMAKE_PROJECT_TOS_INCLUDE=/home/tomi/tos-m2/crypto/test/workchain-i13-acceptance.cmake",
+        "-DI13_ACCEPTANCE_SOURCE=",
+        "-DI13_ACCEPTANCE_HEADER_DIR=",
+        "-DTOS_UNO_CRYPTO_PROTOTYPE_TESTS=OFF"
+      ],
+      "exit": 0,
+      "stdout_sha256": "d0288a71e4a4da646de023a5405bee349a238d46c1975ed503b1a08cf4d135c0",
+      "stderr_sha256": "ed7c135eba34b3e947effd0f4c55a6fe4b7221d6ba4423ceb2458bfe9feedf9a"
+    },
+    {
+      "label": "misroute-overlay-write-restored-build",
+      "command": [
+        "cmake",
+        "--build",
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build",
+        "--target",
+        "test-workchain-i13-acceptance",
+        "-j32"
+      ],
+      "exit": 0,
+      "stdout_sha256": "f939d53a07ade947934d62d17d73fe249684dcd09800c41b903b1b0c6f20a8e4",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "misroute-overlay-write-restored-dependencies",
+      "command": [
+        "ninja",
+        "-C",
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build",
+        "-t",
+        "deps",
+        "CMakeFiles/test-workchain-i13-acceptance.dir/crypto/test/test-workchain-i13-acceptance.cpp.o"
+      ],
+      "exit": 0,
+      "stdout_sha256": "b80601b8c89a97c3955e352cd8b725cef78512131903a08e5c75789c599a540a",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "misroute-overlay-write-restored-case-0",
+      "command": [
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build/test-workchain-i13-acceptance",
+        "0"
+      ],
+      "exit": 0,
+      "stdout_sha256": "7d06e864abe39286702b9fcc01daa7a4ac8e695c81cc899654f1a0805e346f71",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "omit-actual-equality-configure",
+      "command": [
+        "cmake",
+        "-S",
+        "/home/tomi/tos-m2",
+        "-B",
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build",
+        "-G",
+        "Ninja",
+        "-DCMAKE_BUILD_TYPE=Release",
+        "-DCMAKE_PROJECT_TOS_INCLUDE=/home/tomi/tos-m2/crypto/test/workchain-i13-acceptance.cmake",
+        "-DI13_ACCEPTANCE_SOURCE=",
+        "-DI13_ACCEPTANCE_HEADER_DIR=/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/runs/run-805z5_0o/work/include",
+        "-DTOS_UNO_CRYPTO_PROTOTYPE_TESTS=OFF"
+      ],
+      "exit": 0,
+      "stdout_sha256": "d0288a71e4a4da646de023a5405bee349a238d46c1975ed503b1a08cf4d135c0",
+      "stderr_sha256": "ed7c135eba34b3e947effd0f4c55a6fe4b7221d6ba4423ceb2458bfe9feedf9a"
+    },
+    {
+      "label": "omit-actual-equality-build",
+      "command": [
+        "cmake",
+        "--build",
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build",
+        "--target",
+        "test-workchain-i13-acceptance",
+        "-j32"
+      ],
+      "exit": 0,
+      "stdout_sha256": "f939d53a07ade947934d62d17d73fe249684dcd09800c41b903b1b0c6f20a8e4",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "omit-actual-equality-dependencies",
+      "command": [
+        "ninja",
+        "-C",
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build",
+        "-t",
+        "deps",
+        "CMakeFiles/test-workchain-i13-acceptance.dir/crypto/test/test-workchain-i13-acceptance.cpp.o"
+      ],
+      "exit": 0,
+      "stdout_sha256": "e305f95964fcc6cfda811584d5e94e1f21d46ea67a9950730cd14569074d6e13",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "omit-actual-equality-case-1",
+      "command": [
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build/test-workchain-i13-acceptance",
+        "1"
+      ],
+      "exit": 41,
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "83db69f3e06679d9d1da3c6c5c8589f9787a249168363d12aa4b793101ab98f6"
+    },
+    {
+      "label": "omit-actual-equality-case-2",
+      "command": [
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build/test-workchain-i13-acceptance",
+        "2"
+      ],
+      "exit": 41,
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "83db69f3e06679d9d1da3c6c5c8589f9787a249168363d12aa4b793101ab98f6"
+    },
+    {
+      "label": "omit-actual-equality-restored-configure",
+      "command": [
+        "cmake",
+        "-S",
+        "/home/tomi/tos-m2",
+        "-B",
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build",
+        "-G",
+        "Ninja",
+        "-DCMAKE_BUILD_TYPE=Release",
+        "-DCMAKE_PROJECT_TOS_INCLUDE=/home/tomi/tos-m2/crypto/test/workchain-i13-acceptance.cmake",
+        "-DI13_ACCEPTANCE_SOURCE=",
+        "-DI13_ACCEPTANCE_HEADER_DIR=",
+        "-DTOS_UNO_CRYPTO_PROTOTYPE_TESTS=OFF"
+      ],
+      "exit": 0,
+      "stdout_sha256": "d0288a71e4a4da646de023a5405bee349a238d46c1975ed503b1a08cf4d135c0",
+      "stderr_sha256": "ed7c135eba34b3e947effd0f4c55a6fe4b7221d6ba4423ceb2458bfe9feedf9a"
+    },
+    {
+      "label": "omit-actual-equality-restored-build",
+      "command": [
+        "cmake",
+        "--build",
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build",
+        "--target",
+        "test-workchain-i13-acceptance",
+        "-j32"
+      ],
+      "exit": 0,
+      "stdout_sha256": "f939d53a07ade947934d62d17d73fe249684dcd09800c41b903b1b0c6f20a8e4",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "omit-actual-equality-restored-dependencies",
+      "command": [
+        "ninja",
+        "-C",
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build",
+        "-t",
+        "deps",
+        "CMakeFiles/test-workchain-i13-acceptance.dir/crypto/test/test-workchain-i13-acceptance.cpp.o"
+      ],
+      "exit": 0,
+      "stdout_sha256": "66e511b9d382e4d0155e1780bc67d2a4beffe5753aab676d5a5fbdf2ded86ac6",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "omit-actual-equality-restored-case-1",
+      "command": [
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build/test-workchain-i13-acceptance",
+        "1"
+      ],
+      "exit": 0,
+      "stdout_sha256": "7d06e864abe39286702b9fcc01daa7a4ac8e695c81cc899654f1a0805e346f71",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "omit-actual-equality-restored-case-2",
+      "command": [
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build/test-workchain-i13-acceptance",
+        "2"
+      ],
+      "exit": 0,
+      "stdout_sha256": "7d06e864abe39286702b9fcc01daa7a4ac8e695c81cc899654f1a0805e346f71",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "omit-participant-equality-configure",
+      "command": [
+        "cmake",
+        "-S",
+        "/home/tomi/tos-m2",
+        "-B",
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build",
+        "-G",
+        "Ninja",
+        "-DCMAKE_BUILD_TYPE=Release",
+        "-DCMAKE_PROJECT_TOS_INCLUDE=/home/tomi/tos-m2/crypto/test/workchain-i13-acceptance.cmake",
+        "-DI13_ACCEPTANCE_SOURCE=",
+        "-DI13_ACCEPTANCE_HEADER_DIR=/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/runs/run-805z5_0o/work/include",
+        "-DTOS_UNO_CRYPTO_PROTOTYPE_TESTS=OFF"
+      ],
+      "exit": 0,
+      "stdout_sha256": "d0288a71e4a4da646de023a5405bee349a238d46c1975ed503b1a08cf4d135c0",
+      "stderr_sha256": "ed7c135eba34b3e947effd0f4c55a6fe4b7221d6ba4423ceb2458bfe9feedf9a"
+    },
+    {
+      "label": "omit-participant-equality-build",
+      "command": [
+        "cmake",
+        "--build",
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build",
+        "--target",
+        "test-workchain-i13-acceptance",
+        "-j32"
+      ],
+      "exit": 0,
+      "stdout_sha256": "f939d53a07ade947934d62d17d73fe249684dcd09800c41b903b1b0c6f20a8e4",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "omit-participant-equality-dependencies",
+      "command": [
+        "ninja",
+        "-C",
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build",
+        "-t",
+        "deps",
+        "CMakeFiles/test-workchain-i13-acceptance.dir/crypto/test/test-workchain-i13-acceptance.cpp.o"
+      ],
+      "exit": 0,
+      "stdout_sha256": "8cc87587581d8c90a5648cd802b8327164f0704861109cfc7ad362636b148c28",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "omit-participant-equality-case-3",
+      "command": [
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build/test-workchain-i13-acceptance",
+        "3"
+      ],
+      "exit": 41,
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "83db69f3e06679d9d1da3c6c5c8589f9787a249168363d12aa4b793101ab98f6"
+    },
+    {
+      "label": "omit-participant-equality-case-4",
+      "command": [
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build/test-workchain-i13-acceptance",
+        "4"
+      ],
+      "exit": 41,
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "83db69f3e06679d9d1da3c6c5c8589f9787a249168363d12aa4b793101ab98f6"
+    },
+    {
+      "label": "omit-participant-equality-restored-configure",
+      "command": [
+        "cmake",
+        "-S",
+        "/home/tomi/tos-m2",
+        "-B",
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build",
+        "-G",
+        "Ninja",
+        "-DCMAKE_BUILD_TYPE=Release",
+        "-DCMAKE_PROJECT_TOS_INCLUDE=/home/tomi/tos-m2/crypto/test/workchain-i13-acceptance.cmake",
+        "-DI13_ACCEPTANCE_SOURCE=",
+        "-DI13_ACCEPTANCE_HEADER_DIR=",
+        "-DTOS_UNO_CRYPTO_PROTOTYPE_TESTS=OFF"
+      ],
+      "exit": 0,
+      "stdout_sha256": "d0288a71e4a4da646de023a5405bee349a238d46c1975ed503b1a08cf4d135c0",
+      "stderr_sha256": "ed7c135eba34b3e947effd0f4c55a6fe4b7221d6ba4423ceb2458bfe9feedf9a"
+    },
+    {
+      "label": "omit-participant-equality-restored-build",
+      "command": [
+        "cmake",
+        "--build",
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build",
+        "--target",
+        "test-workchain-i13-acceptance",
+        "-j32"
+      ],
+      "exit": 0,
+      "stdout_sha256": "f939d53a07ade947934d62d17d73fe249684dcd09800c41b903b1b0c6f20a8e4",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "omit-participant-equality-restored-dependencies",
+      "command": [
+        "ninja",
+        "-C",
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build",
+        "-t",
+        "deps",
+        "CMakeFiles/test-workchain-i13-acceptance.dir/crypto/test/test-workchain-i13-acceptance.cpp.o"
+      ],
+      "exit": 0,
+      "stdout_sha256": "5d7247ec8a0c382ab87296694d180c360fdfb09856a10d83432d4507f7550728",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "omit-participant-equality-restored-case-3",
+      "command": [
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build/test-workchain-i13-acceptance",
+        "3"
+      ],
+      "exit": 0,
+      "stdout_sha256": "7d06e864abe39286702b9fcc01daa7a4ac8e695c81cc899654f1a0805e346f71",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "omit-participant-equality-restored-case-4",
+      "command": [
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build/test-workchain-i13-acceptance",
+        "4"
+      ],
+      "exit": 0,
+      "stdout_sha256": "7d06e864abe39286702b9fcc01daa7a4ac8e695c81cc899654f1a0805e346f71",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "omit-unused-read-check-configure",
+      "command": [
+        "cmake",
+        "-S",
+        "/home/tomi/tos-m2",
+        "-B",
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build",
+        "-G",
+        "Ninja",
+        "-DCMAKE_BUILD_TYPE=Release",
+        "-DCMAKE_PROJECT_TOS_INCLUDE=/home/tomi/tos-m2/crypto/test/workchain-i13-acceptance.cmake",
+        "-DI13_ACCEPTANCE_SOURCE=",
+        "-DI13_ACCEPTANCE_HEADER_DIR=/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/runs/run-805z5_0o/work/include",
+        "-DTOS_UNO_CRYPTO_PROTOTYPE_TESTS=OFF"
+      ],
+      "exit": 0,
+      "stdout_sha256": "d0288a71e4a4da646de023a5405bee349a238d46c1975ed503b1a08cf4d135c0",
+      "stderr_sha256": "ed7c135eba34b3e947effd0f4c55a6fe4b7221d6ba4423ceb2458bfe9feedf9a"
+    },
+    {
+      "label": "omit-unused-read-check-build",
+      "command": [
+        "cmake",
+        "--build",
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build",
+        "--target",
+        "test-workchain-i13-acceptance",
+        "-j32"
+      ],
+      "exit": 0,
+      "stdout_sha256": "f939d53a07ade947934d62d17d73fe249684dcd09800c41b903b1b0c6f20a8e4",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "omit-unused-read-check-dependencies",
+      "command": [
+        "ninja",
+        "-C",
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build",
+        "-t",
+        "deps",
+        "CMakeFiles/test-workchain-i13-acceptance.dir/crypto/test/test-workchain-i13-acceptance.cpp.o"
+      ],
+      "exit": 0,
+      "stdout_sha256": "9b647e61b3cdfaedf59d7a1edd54803a7ef826e2b1e50d1ed633de8d745a6326",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "omit-unused-read-check-case-5",
+      "command": [
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build/test-workchain-i13-acceptance",
+        "5"
+      ],
+      "exit": 42,
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "d774927522812a19eead09c736712141e4da25ae3fb454b7c12305ae9b5f1938"
+    },
+    {
+      "label": "omit-unused-read-check-restored-configure",
+      "command": [
+        "cmake",
+        "-S",
+        "/home/tomi/tos-m2",
+        "-B",
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build",
+        "-G",
+        "Ninja",
+        "-DCMAKE_BUILD_TYPE=Release",
+        "-DCMAKE_PROJECT_TOS_INCLUDE=/home/tomi/tos-m2/crypto/test/workchain-i13-acceptance.cmake",
+        "-DI13_ACCEPTANCE_SOURCE=",
+        "-DI13_ACCEPTANCE_HEADER_DIR=",
+        "-DTOS_UNO_CRYPTO_PROTOTYPE_TESTS=OFF"
+      ],
+      "exit": 0,
+      "stdout_sha256": "d0288a71e4a4da646de023a5405bee349a238d46c1975ed503b1a08cf4d135c0",
+      "stderr_sha256": "ed7c135eba34b3e947effd0f4c55a6fe4b7221d6ba4423ceb2458bfe9feedf9a"
+    },
+    {
+      "label": "omit-unused-read-check-restored-build",
+      "command": [
+        "cmake",
+        "--build",
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build",
+        "--target",
+        "test-workchain-i13-acceptance",
+        "-j32"
+      ],
+      "exit": 0,
+      "stdout_sha256": "f939d53a07ade947934d62d17d73fe249684dcd09800c41b903b1b0c6f20a8e4",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "omit-unused-read-check-restored-dependencies",
+      "command": [
+        "ninja",
+        "-C",
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build",
+        "-t",
+        "deps",
+        "CMakeFiles/test-workchain-i13-acceptance.dir/crypto/test/test-workchain-i13-acceptance.cpp.o"
+      ],
+      "exit": 0,
+      "stdout_sha256": "cb02e132cc3c42523db637fdb5cb7e0fd1d0ac43f8e4d4a360b582aaed429bdf",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "omit-unused-read-check-restored-case-5",
+      "command": [
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build/test-workchain-i13-acceptance",
+        "5"
+      ],
+      "exit": 0,
+      "stdout_sha256": "7d06e864abe39286702b9fcc01daa7a4ac8e695c81cc899654f1a0805e346f71",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "omit-old-hash-binding-configure",
+      "command": [
+        "cmake",
+        "-S",
+        "/home/tomi/tos-m2",
+        "-B",
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build",
+        "-G",
+        "Ninja",
+        "-DCMAKE_BUILD_TYPE=Release",
+        "-DCMAKE_PROJECT_TOS_INCLUDE=/home/tomi/tos-m2/crypto/test/workchain-i13-acceptance.cmake",
+        "-DI13_ACCEPTANCE_SOURCE=",
+        "-DI13_ACCEPTANCE_HEADER_DIR=/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/runs/run-805z5_0o/work/include",
+        "-DTOS_UNO_CRYPTO_PROTOTYPE_TESTS=OFF"
+      ],
+      "exit": 0,
+      "stdout_sha256": "d0288a71e4a4da646de023a5405bee349a238d46c1975ed503b1a08cf4d135c0",
+      "stderr_sha256": "ed7c135eba34b3e947effd0f4c55a6fe4b7221d6ba4423ceb2458bfe9feedf9a"
+    },
+    {
+      "label": "omit-old-hash-binding-build",
+      "command": [
+        "cmake",
+        "--build",
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build",
+        "--target",
+        "test-workchain-i13-acceptance",
+        "-j32"
+      ],
+      "exit": 0,
+      "stdout_sha256": "f939d53a07ade947934d62d17d73fe249684dcd09800c41b903b1b0c6f20a8e4",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "omit-old-hash-binding-dependencies",
+      "command": [
+        "ninja",
+        "-C",
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build",
+        "-t",
+        "deps",
+        "CMakeFiles/test-workchain-i13-acceptance.dir/crypto/test/test-workchain-i13-acceptance.cpp.o"
+      ],
+      "exit": 0,
+      "stdout_sha256": "bbaf92063f0a741ce01135fc9c7801ca3f9cc411bd76f58fc4cba08c8ddcca40",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "omit-old-hash-binding-case-6",
+      "command": [
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build/test-workchain-i13-acceptance",
+        "6"
+      ],
+      "exit": 42,
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "e3c23ca847423e313a16e418b225673981951f668f33c7b7bf3486a83ff8448b"
+    },
+    {
+      "label": "omit-old-hash-binding-case-7",
+      "command": [
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build/test-workchain-i13-acceptance",
+        "7"
+      ],
+      "exit": 42,
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "e3c23ca847423e313a16e418b225673981951f668f33c7b7bf3486a83ff8448b"
+    },
+    {
+      "label": "omit-old-hash-binding-case-12",
+      "command": [
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build/test-workchain-i13-acceptance",
+        "12"
+      ],
+      "exit": 42,
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "a3494ec76faa60ea6387ed1c6c9b9014d28f1cf8d3a5cc707ac73c3957fa9397"
+    },
+    {
+      "label": "omit-old-hash-binding-restored-configure",
+      "command": [
+        "cmake",
+        "-S",
+        "/home/tomi/tos-m2",
+        "-B",
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build",
+        "-G",
+        "Ninja",
+        "-DCMAKE_BUILD_TYPE=Release",
+        "-DCMAKE_PROJECT_TOS_INCLUDE=/home/tomi/tos-m2/crypto/test/workchain-i13-acceptance.cmake",
+        "-DI13_ACCEPTANCE_SOURCE=",
+        "-DI13_ACCEPTANCE_HEADER_DIR=",
+        "-DTOS_UNO_CRYPTO_PROTOTYPE_TESTS=OFF"
+      ],
+      "exit": 0,
+      "stdout_sha256": "d0288a71e4a4da646de023a5405bee349a238d46c1975ed503b1a08cf4d135c0",
+      "stderr_sha256": "ed7c135eba34b3e947effd0f4c55a6fe4b7221d6ba4423ceb2458bfe9feedf9a"
+    },
+    {
+      "label": "omit-old-hash-binding-restored-build",
+      "command": [
+        "cmake",
+        "--build",
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build",
+        "--target",
+        "test-workchain-i13-acceptance",
+        "-j32"
+      ],
+      "exit": 0,
+      "stdout_sha256": "f939d53a07ade947934d62d17d73fe249684dcd09800c41b903b1b0c6f20a8e4",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "omit-old-hash-binding-restored-dependencies",
+      "command": [
+        "ninja",
+        "-C",
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build",
+        "-t",
+        "deps",
+        "CMakeFiles/test-workchain-i13-acceptance.dir/crypto/test/test-workchain-i13-acceptance.cpp.o"
+      ],
+      "exit": 0,
+      "stdout_sha256": "610dcc7ebff4cbda64938fb7ff91bd9e91b96c6d860ad976eb145b6cc5006a99",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "omit-old-hash-binding-restored-case-6",
+      "command": [
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build/test-workchain-i13-acceptance",
+        "6"
+      ],
+      "exit": 0,
+      "stdout_sha256": "7d06e864abe39286702b9fcc01daa7a4ac8e695c81cc899654f1a0805e346f71",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "omit-old-hash-binding-restored-case-7",
+      "command": [
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build/test-workchain-i13-acceptance",
+        "7"
+      ],
+      "exit": 0,
+      "stdout_sha256": "7d06e864abe39286702b9fcc01daa7a4ac8e695c81cc899654f1a0805e346f71",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "omit-old-hash-binding-restored-case-12",
+      "command": [
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build/test-workchain-i13-acceptance",
+        "12"
+      ],
+      "exit": 0,
+      "stdout_sha256": "7d06e864abe39286702b9fcc01daa7a4ac8e695c81cc899654f1a0805e346f71",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "permit-undeclared-middle-read-configure",
+      "command": [
+        "cmake",
+        "-S",
+        "/home/tomi/tos-m2",
+        "-B",
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build",
+        "-G",
+        "Ninja",
+        "-DCMAKE_BUILD_TYPE=Release",
+        "-DCMAKE_PROJECT_TOS_INCLUDE=/home/tomi/tos-m2/crypto/test/workchain-i13-acceptance.cmake",
+        "-DI13_ACCEPTANCE_SOURCE=",
+        "-DI13_ACCEPTANCE_HEADER_DIR=/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/runs/run-805z5_0o/work/include",
+        "-DTOS_UNO_CRYPTO_PROTOTYPE_TESTS=OFF"
+      ],
+      "exit": 0,
+      "stdout_sha256": "d0288a71e4a4da646de023a5405bee349a238d46c1975ed503b1a08cf4d135c0",
+      "stderr_sha256": "ed7c135eba34b3e947effd0f4c55a6fe4b7221d6ba4423ceb2458bfe9feedf9a"
+    },
+    {
+      "label": "permit-undeclared-middle-read-build",
+      "command": [
+        "cmake",
+        "--build",
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build",
+        "--target",
+        "test-workchain-i13-acceptance",
+        "-j32"
+      ],
+      "exit": 0,
+      "stdout_sha256": "f939d53a07ade947934d62d17d73fe249684dcd09800c41b903b1b0c6f20a8e4",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "permit-undeclared-middle-read-dependencies",
+      "command": [
+        "ninja",
+        "-C",
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build",
+        "-t",
+        "deps",
+        "CMakeFiles/test-workchain-i13-acceptance.dir/crypto/test/test-workchain-i13-acceptance.cpp.o"
+      ],
+      "exit": 0,
+      "stdout_sha256": "f06b5c6e0e288ee0f84495dea63085f3a95cd236e05a7f3cc4dd60eed7ce0b11",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "permit-undeclared-middle-read-case-8",
+      "command": [
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build/test-workchain-i13-acceptance",
+        "8"
+      ],
+      "exit": 42,
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "499e98b663a945932531e27c4c0d5b62b2ea7c06d5d497d171469ffe19af217e"
+    },
+    {
+      "label": "permit-undeclared-middle-read-restored-configure",
+      "command": [
+        "cmake",
+        "-S",
+        "/home/tomi/tos-m2",
+        "-B",
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build",
+        "-G",
+        "Ninja",
+        "-DCMAKE_BUILD_TYPE=Release",
+        "-DCMAKE_PROJECT_TOS_INCLUDE=/home/tomi/tos-m2/crypto/test/workchain-i13-acceptance.cmake",
+        "-DI13_ACCEPTANCE_SOURCE=",
+        "-DI13_ACCEPTANCE_HEADER_DIR=",
+        "-DTOS_UNO_CRYPTO_PROTOTYPE_TESTS=OFF"
+      ],
+      "exit": 0,
+      "stdout_sha256": "d0288a71e4a4da646de023a5405bee349a238d46c1975ed503b1a08cf4d135c0",
+      "stderr_sha256": "ed7c135eba34b3e947effd0f4c55a6fe4b7221d6ba4423ceb2458bfe9feedf9a"
+    },
+    {
+      "label": "permit-undeclared-middle-read-restored-build",
+      "command": [
+        "cmake",
+        "--build",
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build",
+        "--target",
+        "test-workchain-i13-acceptance",
+        "-j32"
+      ],
+      "exit": 0,
+      "stdout_sha256": "f939d53a07ade947934d62d17d73fe249684dcd09800c41b903b1b0c6f20a8e4",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "permit-undeclared-middle-read-restored-dependencies",
+      "command": [
+        "ninja",
+        "-C",
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build",
+        "-t",
+        "deps",
+        "CMakeFiles/test-workchain-i13-acceptance.dir/crypto/test/test-workchain-i13-acceptance.cpp.o"
+      ],
+      "exit": 0,
+      "stdout_sha256": "f9fd7fa2b6b64b5ee4d6a456afad83ba2daa88127923f2aa0a270fabc59b3647",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "permit-undeclared-middle-read-restored-case-8",
+      "command": [
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build/test-workchain-i13-acceptance",
+        "8"
+      ],
+      "exit": 0,
+      "stdout_sha256": "7d06e864abe39286702b9fcc01daa7a4ac8e695c81cc899654f1a0805e346f71",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "omit-difference-key-configure",
+      "command": [
+        "cmake",
+        "-S",
+        "/home/tomi/tos-m2",
+        "-B",
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build",
+        "-G",
+        "Ninja",
+        "-DCMAKE_BUILD_TYPE=Release",
+        "-DCMAKE_PROJECT_TOS_INCLUDE=/home/tomi/tos-m2/crypto/test/workchain-i13-acceptance.cmake",
+        "-DI13_ACCEPTANCE_SOURCE=",
+        "-DI13_ACCEPTANCE_HEADER_DIR=/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/runs/run-805z5_0o/work/include",
+        "-DTOS_UNO_CRYPTO_PROTOTYPE_TESTS=OFF"
+      ],
+      "exit": 0,
+      "stdout_sha256": "d0288a71e4a4da646de023a5405bee349a238d46c1975ed503b1a08cf4d135c0",
+      "stderr_sha256": "ed7c135eba34b3e947effd0f4c55a6fe4b7221d6ba4423ceb2458bfe9feedf9a"
+    },
+    {
+      "label": "omit-difference-key-build",
+      "command": [
+        "cmake",
+        "--build",
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build",
+        "--target",
+        "test-workchain-i13-acceptance",
+        "-j32"
+      ],
+      "exit": 0,
+      "stdout_sha256": "f939d53a07ade947934d62d17d73fe249684dcd09800c41b903b1b0c6f20a8e4",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "omit-difference-key-dependencies",
+      "command": [
+        "ninja",
+        "-C",
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build",
+        "-t",
+        "deps",
+        "CMakeFiles/test-workchain-i13-acceptance.dir/crypto/test/test-workchain-i13-acceptance.cpp.o"
+      ],
+      "exit": 0,
+      "stdout_sha256": "21339c29ccd9338b12caeb91fbc16517db2ec0e7fdd0c9c75466fafe5b2a1ea6",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "omit-difference-key-case-13",
+      "command": [
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build/test-workchain-i13-acceptance",
+        "13"
+      ],
+      "exit": 40,
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "2141cf74b4f268d96457b934521c0d734414c0b623f5e03a60c0321ef464d185"
+    },
+    {
+      "label": "omit-difference-key-case-14",
+      "command": [
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build/test-workchain-i13-acceptance",
+        "14"
+      ],
+      "exit": 40,
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "2141cf74b4f268d96457b934521c0d734414c0b623f5e03a60c0321ef464d185"
+    },
+    {
+      "label": "omit-difference-key-case-15",
+      "command": [
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build/test-workchain-i13-acceptance",
+        "15"
+      ],
+      "exit": 40,
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "2141cf74b4f268d96457b934521c0d734414c0b623f5e03a60c0321ef464d185"
+    },
+    {
+      "label": "omit-difference-key-restored-configure",
+      "command": [
+        "cmake",
+        "-S",
+        "/home/tomi/tos-m2",
+        "-B",
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build",
+        "-G",
+        "Ninja",
+        "-DCMAKE_BUILD_TYPE=Release",
+        "-DCMAKE_PROJECT_TOS_INCLUDE=/home/tomi/tos-m2/crypto/test/workchain-i13-acceptance.cmake",
+        "-DI13_ACCEPTANCE_SOURCE=",
+        "-DI13_ACCEPTANCE_HEADER_DIR=",
+        "-DTOS_UNO_CRYPTO_PROTOTYPE_TESTS=OFF"
+      ],
+      "exit": 0,
+      "stdout_sha256": "d0288a71e4a4da646de023a5405bee349a238d46c1975ed503b1a08cf4d135c0",
+      "stderr_sha256": "ed7c135eba34b3e947effd0f4c55a6fe4b7221d6ba4423ceb2458bfe9feedf9a"
+    },
+    {
+      "label": "omit-difference-key-restored-build",
+      "command": [
+        "cmake",
+        "--build",
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build",
+        "--target",
+        "test-workchain-i13-acceptance",
+        "-j32"
+      ],
+      "exit": 0,
+      "stdout_sha256": "f939d53a07ade947934d62d17d73fe249684dcd09800c41b903b1b0c6f20a8e4",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "omit-difference-key-restored-dependencies",
+      "command": [
+        "ninja",
+        "-C",
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build",
+        "-t",
+        "deps",
+        "CMakeFiles/test-workchain-i13-acceptance.dir/crypto/test/test-workchain-i13-acceptance.cpp.o"
+      ],
+      "exit": 0,
+      "stdout_sha256": "9f209f08f8cd703fe9c921a9325fb103775b9e8ea0df2fee0c3dd208c9ac3a8a",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "omit-difference-key-restored-case-13",
+      "command": [
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build/test-workchain-i13-acceptance",
+        "13"
+      ],
+      "exit": 0,
+      "stdout_sha256": "7d06e864abe39286702b9fcc01daa7a4ac8e695c81cc899654f1a0805e346f71",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "omit-difference-key-restored-case-14",
+      "command": [
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build/test-workchain-i13-acceptance",
+        "14"
+      ],
+      "exit": 0,
+      "stdout_sha256": "7d06e864abe39286702b9fcc01daa7a4ac8e695c81cc899654f1a0805e346f71",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "omit-difference-key-restored-case-15",
+      "command": [
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build/test-workchain-i13-acceptance",
+        "15"
+      ],
+      "exit": 0,
+      "stdout_sha256": "7d06e864abe39286702b9fcc01daa7a4ac8e695c81cc899654f1a0805e346f71",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "remove-usage-observation-configure",
+      "command": [
+        "cmake",
+        "-S",
+        "/home/tomi/tos-m2",
+        "-B",
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build",
+        "-G",
+        "Ninja",
+        "-DCMAKE_BUILD_TYPE=Release",
+        "-DCMAKE_PROJECT_TOS_INCLUDE=/home/tomi/tos-m2/crypto/test/workchain-i13-acceptance.cmake",
+        "-DI13_ACCEPTANCE_SOURCE=/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/runs/run-805z5_0o/work/test-workchain-i13-acceptance.cpp",
+        "-DI13_ACCEPTANCE_HEADER_DIR=",
+        "-DTOS_UNO_CRYPTO_PROTOTYPE_TESTS=OFF"
+      ],
+      "exit": 0,
+      "stdout_sha256": "d0288a71e4a4da646de023a5405bee349a238d46c1975ed503b1a08cf4d135c0",
+      "stderr_sha256": "ed7c135eba34b3e947effd0f4c55a6fe4b7221d6ba4423ceb2458bfe9feedf9a"
+    },
+    {
+      "label": "remove-usage-observation-build",
+      "command": [
+        "cmake",
+        "--build",
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build",
+        "--target",
+        "test-workchain-i13-acceptance",
+        "-j32"
+      ],
+      "exit": 0,
+      "stdout_sha256": "2eb30f827e1366af1b41be93efe4b0c769a9a2569ff6907d62dc7aa948f9ba97",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "remove-usage-observation-dependencies",
+      "command": [
+        "ninja",
+        "-C",
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build",
+        "-t",
+        "deps",
+        "CMakeFiles/test-workchain-i13-acceptance.dir/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/runs/run-805z5_0o/work/test-workchain-i13-acceptance.cpp.o"
+      ],
+      "exit": 0,
+      "stdout_sha256": "e5adb194928c0ceb35bec54e408b810e17caf1ba9d8a83283bea2c9690af6594",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "remove-usage-observation-case-9",
+      "command": [
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build/test-workchain-i13-acceptance",
+        "9"
+      ],
+      "exit": 43,
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "8705ec51daf941a0162fff5563603eeff80e5375626a85f7612d9e861132af88"
+    },
+    {
+      "label": "remove-usage-observation-restored-configure",
+      "command": [
+        "cmake",
+        "-S",
+        "/home/tomi/tos-m2",
+        "-B",
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build",
+        "-G",
+        "Ninja",
+        "-DCMAKE_BUILD_TYPE=Release",
+        "-DCMAKE_PROJECT_TOS_INCLUDE=/home/tomi/tos-m2/crypto/test/workchain-i13-acceptance.cmake",
+        "-DI13_ACCEPTANCE_SOURCE=",
+        "-DI13_ACCEPTANCE_HEADER_DIR=",
+        "-DTOS_UNO_CRYPTO_PROTOTYPE_TESTS=OFF"
+      ],
+      "exit": 0,
+      "stdout_sha256": "d0288a71e4a4da646de023a5405bee349a238d46c1975ed503b1a08cf4d135c0",
+      "stderr_sha256": "ed7c135eba34b3e947effd0f4c55a6fe4b7221d6ba4423ceb2458bfe9feedf9a"
+    },
+    {
+      "label": "remove-usage-observation-restored-build",
+      "command": [
+        "cmake",
+        "--build",
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build",
+        "--target",
+        "test-workchain-i13-acceptance",
+        "-j32"
+      ],
+      "exit": 0,
+      "stdout_sha256": "692cac3894a8ae68bc77b83e42ed297bf4f411d993a0846b58e1aee0c349337a",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "remove-usage-observation-restored-dependencies",
+      "command": [
+        "ninja",
+        "-C",
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build",
+        "-t",
+        "deps",
+        "CMakeFiles/test-workchain-i13-acceptance.dir/crypto/test/test-workchain-i13-acceptance.cpp.o"
+      ],
+      "exit": 0,
+      "stdout_sha256": "9f209f08f8cd703fe9c921a9325fb103775b9e8ea0df2fee0c3dd208c9ac3a8a",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "remove-usage-observation-restored-case-9",
+      "command": [
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build/test-workchain-i13-acceptance",
+        "9"
+      ],
+      "exit": 0,
+      "stdout_sha256": "7d06e864abe39286702b9fcc01daa7a4ac8e695c81cc899654f1a0805e346f71",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "read-unparticipating-body-configure",
+      "command": [
+        "cmake",
+        "-S",
+        "/home/tomi/tos-m2",
+        "-B",
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build",
+        "-G",
+        "Ninja",
+        "-DCMAKE_BUILD_TYPE=Release",
+        "-DCMAKE_PROJECT_TOS_INCLUDE=/home/tomi/tos-m2/crypto/test/workchain-i13-acceptance.cmake",
+        "-DI13_ACCEPTANCE_SOURCE=/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/runs/run-805z5_0o/work/test-workchain-i13-acceptance.cpp",
+        "-DI13_ACCEPTANCE_HEADER_DIR=",
+        "-DTOS_UNO_CRYPTO_PROTOTYPE_TESTS=OFF"
+      ],
+      "exit": 0,
+      "stdout_sha256": "d0288a71e4a4da646de023a5405bee349a238d46c1975ed503b1a08cf4d135c0",
+      "stderr_sha256": "ed7c135eba34b3e947effd0f4c55a6fe4b7221d6ba4423ceb2458bfe9feedf9a"
+    },
+    {
+      "label": "read-unparticipating-body-build",
+      "command": [
+        "cmake",
+        "--build",
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build",
+        "--target",
+        "test-workchain-i13-acceptance",
+        "-j32"
+      ],
+      "exit": 0,
+      "stdout_sha256": "2eb30f827e1366af1b41be93efe4b0c769a9a2569ff6907d62dc7aa948f9ba97",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "read-unparticipating-body-dependencies",
+      "command": [
+        "ninja",
+        "-C",
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build",
+        "-t",
+        "deps",
+        "CMakeFiles/test-workchain-i13-acceptance.dir/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/runs/run-805z5_0o/work/test-workchain-i13-acceptance.cpp.o"
+      ],
+      "exit": 0,
+      "stdout_sha256": "18277dced55038f4d5d15c240489f467bfd98d8d56fc4bd10fe8f57fa8ac45cf",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "read-unparticipating-body-case-9",
+      "command": [
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build/test-workchain-i13-acceptance",
+        "9"
+      ],
+      "exit": 43,
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "8705ec51daf941a0162fff5563603eeff80e5375626a85f7612d9e861132af88"
+    },
+    {
+      "label": "read-unparticipating-body-restored-configure",
+      "command": [
+        "cmake",
+        "-S",
+        "/home/tomi/tos-m2",
+        "-B",
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build",
+        "-G",
+        "Ninja",
+        "-DCMAKE_BUILD_TYPE=Release",
+        "-DCMAKE_PROJECT_TOS_INCLUDE=/home/tomi/tos-m2/crypto/test/workchain-i13-acceptance.cmake",
+        "-DI13_ACCEPTANCE_SOURCE=",
+        "-DI13_ACCEPTANCE_HEADER_DIR=",
+        "-DTOS_UNO_CRYPTO_PROTOTYPE_TESTS=OFF"
+      ],
+      "exit": 0,
+      "stdout_sha256": "d0288a71e4a4da646de023a5405bee349a238d46c1975ed503b1a08cf4d135c0",
+      "stderr_sha256": "ed7c135eba34b3e947effd0f4c55a6fe4b7221d6ba4423ceb2458bfe9feedf9a"
+    },
+    {
+      "label": "read-unparticipating-body-restored-build",
+      "command": [
+        "cmake",
+        "--build",
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build",
+        "--target",
+        "test-workchain-i13-acceptance",
+        "-j32"
+      ],
+      "exit": 0,
+      "stdout_sha256": "692cac3894a8ae68bc77b83e42ed297bf4f411d993a0846b58e1aee0c349337a",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "read-unparticipating-body-restored-dependencies",
+      "command": [
+        "ninja",
+        "-C",
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build",
+        "-t",
+        "deps",
+        "CMakeFiles/test-workchain-i13-acceptance.dir/crypto/test/test-workchain-i13-acceptance.cpp.o"
+      ],
+      "exit": 0,
+      "stdout_sha256": "9f209f08f8cd703fe9c921a9325fb103775b9e8ea0df2fee0c3dd208c9ac3a8a",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "read-unparticipating-body-restored-case-9",
+      "command": [
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build/test-workchain-i13-acceptance",
+        "9"
+      ],
+      "exit": 0,
+      "stdout_sha256": "7d06e864abe39286702b9fcc01daa7a4ac8e695c81cc899654f1a0805e346f71",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "alter-unparticipating-result-configure",
+      "command": [
+        "cmake",
+        "-S",
+        "/home/tomi/tos-m2",
+        "-B",
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build",
+        "-G",
+        "Ninja",
+        "-DCMAKE_BUILD_TYPE=Release",
+        "-DCMAKE_PROJECT_TOS_INCLUDE=/home/tomi/tos-m2/crypto/test/workchain-i13-acceptance.cmake",
+        "-DI13_ACCEPTANCE_SOURCE=/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/runs/run-805z5_0o/work/test-workchain-i13-acceptance.cpp",
+        "-DI13_ACCEPTANCE_HEADER_DIR=",
+        "-DTOS_UNO_CRYPTO_PROTOTYPE_TESTS=OFF"
+      ],
+      "exit": 0,
+      "stdout_sha256": "d0288a71e4a4da646de023a5405bee349a238d46c1975ed503b1a08cf4d135c0",
+      "stderr_sha256": "ed7c135eba34b3e947effd0f4c55a6fe4b7221d6ba4423ceb2458bfe9feedf9a"
+    },
+    {
+      "label": "alter-unparticipating-result-build",
+      "command": [
+        "cmake",
+        "--build",
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build",
+        "--target",
+        "test-workchain-i13-acceptance",
+        "-j32"
+      ],
+      "exit": 0,
+      "stdout_sha256": "2eb30f827e1366af1b41be93efe4b0c769a9a2569ff6907d62dc7aa948f9ba97",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "alter-unparticipating-result-dependencies",
+      "command": [
+        "ninja",
+        "-C",
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build",
+        "-t",
+        "deps",
+        "CMakeFiles/test-workchain-i13-acceptance.dir/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/runs/run-805z5_0o/work/test-workchain-i13-acceptance.cpp.o"
+      ],
+      "exit": 0,
+      "stdout_sha256": "66c969c79e282cfadcfe54496c0fb71656b83096affdd286d2e7fbef30408b6f",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "alter-unparticipating-result-case-9",
+      "command": [
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build/test-workchain-i13-acceptance",
+        "9"
+      ],
+      "exit": 44,
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "fca74383e87bc392c76b5d1f07918b3e831091064522e81505fe8056987c0473"
+    },
+    {
+      "label": "alter-unparticipating-result-restored-configure",
+      "command": [
+        "cmake",
+        "-S",
+        "/home/tomi/tos-m2",
+        "-B",
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build",
+        "-G",
+        "Ninja",
+        "-DCMAKE_BUILD_TYPE=Release",
+        "-DCMAKE_PROJECT_TOS_INCLUDE=/home/tomi/tos-m2/crypto/test/workchain-i13-acceptance.cmake",
+        "-DI13_ACCEPTANCE_SOURCE=",
+        "-DI13_ACCEPTANCE_HEADER_DIR=",
+        "-DTOS_UNO_CRYPTO_PROTOTYPE_TESTS=OFF"
+      ],
+      "exit": 0,
+      "stdout_sha256": "d0288a71e4a4da646de023a5405bee349a238d46c1975ed503b1a08cf4d135c0",
+      "stderr_sha256": "ed7c135eba34b3e947effd0f4c55a6fe4b7221d6ba4423ceb2458bfe9feedf9a"
+    },
+    {
+      "label": "alter-unparticipating-result-restored-build",
+      "command": [
+        "cmake",
+        "--build",
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build",
+        "--target",
+        "test-workchain-i13-acceptance",
+        "-j32"
+      ],
+      "exit": 0,
+      "stdout_sha256": "692cac3894a8ae68bc77b83e42ed297bf4f411d993a0846b58e1aee0c349337a",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "alter-unparticipating-result-restored-dependencies",
+      "command": [
+        "ninja",
+        "-C",
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build",
+        "-t",
+        "deps",
+        "CMakeFiles/test-workchain-i13-acceptance.dir/crypto/test/test-workchain-i13-acceptance.cpp.o"
+      ],
+      "exit": 0,
+      "stdout_sha256": "9f209f08f8cd703fe9c921a9325fb103775b9e8ea0df2fee0c3dd208c9ac3a8a",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "alter-unparticipating-result-restored-case-9",
+      "command": [
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build/test-workchain-i13-acceptance",
+        "9"
+      ],
+      "exit": 0,
+      "stdout_sha256": "7d06e864abe39286702b9fcc01daa7a4ac8e695c81cc899654f1a0805e346f71",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "final-case-0",
+      "command": [
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build/test-workchain-i13-acceptance",
+        "0"
+      ],
+      "exit": 0,
+      "stdout_sha256": "7d06e864abe39286702b9fcc01daa7a4ac8e695c81cc899654f1a0805e346f71",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "final-case-1",
+      "command": [
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build/test-workchain-i13-acceptance",
+        "1"
+      ],
+      "exit": 0,
+      "stdout_sha256": "7d06e864abe39286702b9fcc01daa7a4ac8e695c81cc899654f1a0805e346f71",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "final-case-2",
+      "command": [
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build/test-workchain-i13-acceptance",
+        "2"
+      ],
+      "exit": 0,
+      "stdout_sha256": "7d06e864abe39286702b9fcc01daa7a4ac8e695c81cc899654f1a0805e346f71",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "final-case-3",
+      "command": [
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build/test-workchain-i13-acceptance",
+        "3"
+      ],
+      "exit": 0,
+      "stdout_sha256": "7d06e864abe39286702b9fcc01daa7a4ac8e695c81cc899654f1a0805e346f71",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "final-case-4",
+      "command": [
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build/test-workchain-i13-acceptance",
+        "4"
+      ],
+      "exit": 0,
+      "stdout_sha256": "7d06e864abe39286702b9fcc01daa7a4ac8e695c81cc899654f1a0805e346f71",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "final-case-5",
+      "command": [
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build/test-workchain-i13-acceptance",
+        "5"
+      ],
+      "exit": 0,
+      "stdout_sha256": "7d06e864abe39286702b9fcc01daa7a4ac8e695c81cc899654f1a0805e346f71",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "final-case-6",
+      "command": [
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build/test-workchain-i13-acceptance",
+        "6"
+      ],
+      "exit": 0,
+      "stdout_sha256": "7d06e864abe39286702b9fcc01daa7a4ac8e695c81cc899654f1a0805e346f71",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "final-case-7",
+      "command": [
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build/test-workchain-i13-acceptance",
+        "7"
+      ],
+      "exit": 0,
+      "stdout_sha256": "7d06e864abe39286702b9fcc01daa7a4ac8e695c81cc899654f1a0805e346f71",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "final-case-8",
+      "command": [
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build/test-workchain-i13-acceptance",
+        "8"
+      ],
+      "exit": 0,
+      "stdout_sha256": "7d06e864abe39286702b9fcc01daa7a4ac8e695c81cc899654f1a0805e346f71",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "final-case-9",
+      "command": [
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build/test-workchain-i13-acceptance",
+        "9"
+      ],
+      "exit": 0,
+      "stdout_sha256": "7d06e864abe39286702b9fcc01daa7a4ac8e695c81cc899654f1a0805e346f71",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "final-case-10",
+      "command": [
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build/test-workchain-i13-acceptance",
+        "10"
+      ],
+      "exit": 0,
+      "stdout_sha256": "7d06e864abe39286702b9fcc01daa7a4ac8e695c81cc899654f1a0805e346f71",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "final-case-11",
+      "command": [
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build/test-workchain-i13-acceptance",
+        "11"
+      ],
+      "exit": 0,
+      "stdout_sha256": "7d06e864abe39286702b9fcc01daa7a4ac8e695c81cc899654f1a0805e346f71",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "final-case-12",
+      "command": [
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build/test-workchain-i13-acceptance",
+        "12"
+      ],
+      "exit": 0,
+      "stdout_sha256": "7d06e864abe39286702b9fcc01daa7a4ac8e695c81cc899654f1a0805e346f71",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "final-case-13",
+      "command": [
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build/test-workchain-i13-acceptance",
+        "13"
+      ],
+      "exit": 0,
+      "stdout_sha256": "7d06e864abe39286702b9fcc01daa7a4ac8e695c81cc899654f1a0805e346f71",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "final-case-14",
+      "command": [
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build/test-workchain-i13-acceptance",
+        "14"
+      ],
+      "exit": 0,
+      "stdout_sha256": "7d06e864abe39286702b9fcc01daa7a4ac8e695c81cc899654f1a0805e346f71",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "final-case-15",
+      "command": [
+        "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build/test-workchain-i13-acceptance",
+        "15"
+      ],
+      "exit": 0,
+      "stdout_sha256": "7d06e864abe39286702b9fcc01daa7a4ac8e695c81cc899654f1a0805e346f71",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ],
+  "controls": [
+    {
+      "label": "misroute-overlay-write",
+      "source": "workchain-storage-overlay.h",
+      "from": "!staged.set_builder(account.addr, entry, vm::Dictionary::SetMode::Replace)",
+      "to": "!staged.set_builder(writes.back().account, entry, vm::Dictionary::SetMode::Replace)",
+      "offset": 4037,
+      "original_sha256": "eeb8ea26bac55e65cce9e42652648d11eca1ead4fa684d0e8d8a053a69026aa7",
+      "committed_source": {
+        "commit": "6c4b7993a571d5fe631d20b8bc9c2ccfb2f832bd",
+        "path": "crypto/block/workchain-storage-overlay.h",
+        "blob_sha256": "eeb8ea26bac55e65cce9e42652648d11eca1ead4fa684d0e8d8a053a69026aa7",
+        "git_blob_oid": "9e51f2ace07139b98971a736bacec24bc9ab34a0"
+      },
+      "copy_before_sha256": "eeb8ea26bac55e65cce9e42652648d11eca1ead4fa684d0e8d8a053a69026aa7",
+      "mutant_sha256": "a4015c8723d96d36d4a61f7aa521d0f6e0a4edaa4b7ab89eaccbba1bd615813e",
+      "expected_exit": 10,
+      "cases": [
+        0
+      ],
+      "compiled": true,
+      "behavior_confirmed": true,
+      "restored_sha256": "eeb8ea26bac55e65cce9e42652648d11eca1ead4fa684d0e8d8a053a69026aa7",
+      "restore_audit_sha256": "a4015c8723d96d36d4a61f7aa521d0f6e0a4edaa4b7ab89eaccbba1bd615813e",
+      "copy_discarded": true
+    },
+    {
+      "label": "omit-actual-equality",
+      "source": "workchain-account-access.h",
+      "from": "if (actual_changed_accounts != writes_)",
+      "to": "if (false)",
+      "offset": 6196,
+      "original_sha256": "3ece0319ea12aeb5cd5d6f86584eaa25cd7808de32e9293e16d94afaa03642bc",
+      "committed_source": {
+        "commit": "6c4b7993a571d5fe631d20b8bc9c2ccfb2f832bd",
+        "path": "crypto/block/workchain-account-access.h",
+        "blob_sha256": "3ece0319ea12aeb5cd5d6f86584eaa25cd7808de32e9293e16d94afaa03642bc",
+        "git_blob_oid": "a042b376d0f158d842e4dc6341350621fbc070d3"
+      },
+      "copy_before_sha256": "3ece0319ea12aeb5cd5d6f86584eaa25cd7808de32e9293e16d94afaa03642bc",
+      "mutant_sha256": "21d9e70097eb99feccedd7cf6cd6537c4bf56b06c9fc366f2c116ec6c415bd1d",
+      "expected_exit": 41,
+      "cases": [
+        1,
+        2
+      ],
+      "compiled": true,
+      "behavior_confirmed": true,
+      "restored_sha256": "3ece0319ea12aeb5cd5d6f86584eaa25cd7808de32e9293e16d94afaa03642bc",
+      "restore_audit_sha256": "21d9e70097eb99feccedd7cf6cd6537c4bf56b06c9fc366f2c116ec6c415bd1d",
+      "copy_discarded": true
+    },
+    {
+      "label": "omit-participant-equality",
+      "source": "workchain-account-access.h",
+      "from": "if (participant_accounts != writes_)",
+      "to": "if (false)",
+      "offset": 6299,
+      "original_sha256": "3ece0319ea12aeb5cd5d6f86584eaa25cd7808de32e9293e16d94afaa03642bc",
+      "committed_source": {
+        "commit": "6c4b7993a571d5fe631d20b8bc9c2ccfb2f832bd",
+        "path": "crypto/block/workchain-account-access.h",
+        "blob_sha256": "3ece0319ea12aeb5cd5d6f86584eaa25cd7808de32e9293e16d94afaa03642bc",
+        "git_blob_oid": "a042b376d0f158d842e4dc6341350621fbc070d3"
+      },
+      "copy_before_sha256": "3ece0319ea12aeb5cd5d6f86584eaa25cd7808de32e9293e16d94afaa03642bc",
+      "mutant_sha256": "7b562990ccfa2457836790a731b5f2a45f26fa02943d0564933827d67c4c437c",
+      "expected_exit": 41,
+      "cases": [
+        3,
+        4
+      ],
+      "compiled": true,
+      "behavior_confirmed": true,
+      "restored_sha256": "3ece0319ea12aeb5cd5d6f86584eaa25cd7808de32e9293e16d94afaa03642bc",
+      "restore_audit_sha256": "7b562990ccfa2457836790a731b5f2a45f26fa02943d0564933827d67c4c437c",
+      "copy_discarded": true
+    },
+    {
+      "label": "omit-unused-read-check",
+      "source": "workchain-account-access.h",
+      "from": "if (std::find(read_seen_.begin(), read_seen_.end(), false) != read_seen_.end())",
+      "to": "if (false)",
+      "offset": 5897,
+      "original_sha256": "3ece0319ea12aeb5cd5d6f86584eaa25cd7808de32e9293e16d94afaa03642bc",
+      "committed_source": {
+        "commit": "6c4b7993a571d5fe631d20b8bc9c2ccfb2f832bd",
+        "path": "crypto/block/workchain-account-access.h",
+        "blob_sha256": "3ece0319ea12aeb5cd5d6f86584eaa25cd7808de32e9293e16d94afaa03642bc",
+        "git_blob_oid": "a042b376d0f158d842e4dc6341350621fbc070d3"
+      },
+      "copy_before_sha256": "3ece0319ea12aeb5cd5d6f86584eaa25cd7808de32e9293e16d94afaa03642bc",
+      "mutant_sha256": "ab34aafe21cc58ea581f49ea94ffd5f76a25635aaf968fe6c678b962eb5eca6c",
+      "expected_exit": 42,
+      "cases": [
+        5
+      ],
+      "compiled": true,
+      "behavior_confirmed": true,
+      "restored_sha256": "3ece0319ea12aeb5cd5d6f86584eaa25cd7808de32e9293e16d94afaa03642bc",
+      "restore_audit_sha256": "ab34aafe21cc58ea581f49ea94ffd5f76a25635aaf968fe6c678b962eb5eca6c",
+      "copy_discarded": true
+    },
+    {
+      "label": "omit-old-hash-binding",
+      "source": "workchain-account-access.h",
+      "from": "if (expected != actual_hash)",
+      "to": "if (false)",
+      "offset": 4256,
+      "original_sha256": "3ece0319ea12aeb5cd5d6f86584eaa25cd7808de32e9293e16d94afaa03642bc",
+      "committed_source": {
+        "commit": "6c4b7993a571d5fe631d20b8bc9c2ccfb2f832bd",
+        "path": "crypto/block/workchain-account-access.h",
+        "blob_sha256": "3ece0319ea12aeb5cd5d6f86584eaa25cd7808de32e9293e16d94afaa03642bc",
+        "git_blob_oid": "a042b376d0f158d842e4dc6341350621fbc070d3"
+      },
+      "copy_before_sha256": "3ece0319ea12aeb5cd5d6f86584eaa25cd7808de32e9293e16d94afaa03642bc",
+      "mutant_sha256": "d2b12d0e1756ddd548203ddcfc6230858065087cbf4214db63d354238654737b",
+      "expected_exit": 42,
+      "cases": [
+        6,
+        7,
+        12
+      ],
+      "compiled": true,
+      "behavior_confirmed": true,
+      "restored_sha256": "3ece0319ea12aeb5cd5d6f86584eaa25cd7808de32e9293e16d94afaa03642bc",
+      "restore_audit_sha256": "d2b12d0e1756ddd548203ddcfc6230858065087cbf4214db63d354238654737b",
+      "copy_discarded": true
+    },
+    {
+      "label": "permit-undeclared-middle-read",
+      "source": "workchain-account-access.h",
+      "from": "if (it == reads_.end() || it->account != account)",
+      "to": "if (it == reads_.end())",
+      "offset": 3943,
+      "original_sha256": "3ece0319ea12aeb5cd5d6f86584eaa25cd7808de32e9293e16d94afaa03642bc",
+      "committed_source": {
+        "commit": "6c4b7993a571d5fe631d20b8bc9c2ccfb2f832bd",
+        "path": "crypto/block/workchain-account-access.h",
+        "blob_sha256": "3ece0319ea12aeb5cd5d6f86584eaa25cd7808de32e9293e16d94afaa03642bc",
+        "git_blob_oid": "a042b376d0f158d842e4dc6341350621fbc070d3"
+      },
+      "copy_before_sha256": "3ece0319ea12aeb5cd5d6f86584eaa25cd7808de32e9293e16d94afaa03642bc",
+      "mutant_sha256": "23e468261568b341c1ee7780058f2186f685066014f88439853476910ba8ae08",
+      "expected_exit": 42,
+      "cases": [
+        8
+      ],
+      "compiled": true,
+      "behavior_confirmed": true,
+      "restored_sha256": "3ece0319ea12aeb5cd5d6f86584eaa25cd7808de32e9293e16d94afaa03642bc",
+      "restore_audit_sha256": "23e468261568b341c1ee7780058f2186f685066014f88439853476910ba8ae08",
+      "copy_discarded": true
+    },
+    {
+      "label": "omit-difference-key",
+      "source": "workchain-account-dictionary.h",
+      "from": "keys.emplace_back(key);",
+      "to": "(void)key;",
+      "offset": 12080,
+      "original_sha256": "29aa33589ffd97276fd5f288c08d5e8600ed3237478b924a7fa007ffbcd3412f",
+      "committed_source": {
+        "commit": "6c4b7993a571d5fe631d20b8bc9c2ccfb2f832bd",
+        "path": "crypto/block/workchain-account-dictionary.h",
+        "blob_sha256": "29aa33589ffd97276fd5f288c08d5e8600ed3237478b924a7fa007ffbcd3412f",
+        "git_blob_oid": "5098c895e0ffe0614fdcb5dd6ac00aa87f7f6196"
+      },
+      "copy_before_sha256": "29aa33589ffd97276fd5f288c08d5e8600ed3237478b924a7fa007ffbcd3412f",
+      "mutant_sha256": "5409133f58f70ae39461fb04f1af572512e35854e5dcb9d997741d0348444b6d",
+      "expected_exit": 40,
+      "cases": [
+        13,
+        14,
+        15
+      ],
+      "compiled": true,
+      "behavior_confirmed": true,
+      "restored_sha256": "29aa33589ffd97276fd5f288c08d5e8600ed3237478b924a7fa007ffbcd3412f",
+      "restore_audit_sha256": "5409133f58f70ae39461fb04f1af572512e35854e5dcb9d997741d0348444b6d",
+      "copy_discarded": true
+    },
+    {
+      "label": "remove-usage-observation",
+      "source": "test-workchain-i13-acceptance.cpp",
+      "from": "if (cell.get_hash() == body->get_hash()) bodies_read.insert(id);",
+      "to": "if (false) bodies_read.insert(id);",
+      "offset": 6758,
+      "original_sha256": "f16f7fffd93823d4dc85c034df3bd510d3037dbe6e5bb59a2ab161f44a0c98ea",
+      "committed_source": {
+        "commit": "6c4b7993a571d5fe631d20b8bc9c2ccfb2f832bd",
+        "path": "crypto/test/test-workchain-i13-acceptance.cpp",
+        "blob_sha256": "f16f7fffd93823d4dc85c034df3bd510d3037dbe6e5bb59a2ab161f44a0c98ea",
+        "git_blob_oid": "b6f8607b13ce2ec19c34a71dece5b8783e00e8ab"
+      },
+      "copy_before_sha256": "f16f7fffd93823d4dc85c034df3bd510d3037dbe6e5bb59a2ab161f44a0c98ea",
+      "mutant_sha256": "025439e01cae3d034013ba94576cd334b3e981cd182133ef3cb4d3fa0ff25a9d",
+      "expected_exit": 43,
+      "cases": [
+        9
+      ],
+      "compiled": true,
+      "behavior_confirmed": true,
+      "restored_sha256": "f16f7fffd93823d4dc85c034df3bd510d3037dbe6e5bb59a2ab161f44a0c98ea",
+      "restore_audit_sha256": "025439e01cae3d034013ba94576cd334b3e981cd182133ef3cb4d3fa0ff25a9d",
+      "copy_discarded": true
+    },
+    {
+      "label": "read-unparticipating-body",
+      "source": "test-workchain-i13-acceptance.cpp",
+      "from": "result = overlay(f, tracked, {16, 64}).accounts;",
+      "to": "result = overlay(f, tracked, {16, 64}).accounts;\n      vm::AugmentedDictionary probe(vm::load_cell_slice_ref(tracked), 256, block::tlb::aug_ShardAccounts);\n      block::tlb::ShardAccount::Record entry;\n      require(entry.unpack(probe.lookup(key(128))), \"probe.entry\");\n      auto loaded = vm::load_cell_slice(entry.account);\n      require(loaded.size() > 0, \"probe.loaded\");",
+      "offset": 7237,
+      "original_sha256": "f16f7fffd93823d4dc85c034df3bd510d3037dbe6e5bb59a2ab161f44a0c98ea",
+      "committed_source": {
+        "commit": "6c4b7993a571d5fe631d20b8bc9c2ccfb2f832bd",
+        "path": "crypto/test/test-workchain-i13-acceptance.cpp",
+        "blob_sha256": "f16f7fffd93823d4dc85c034df3bd510d3037dbe6e5bb59a2ab161f44a0c98ea",
+        "git_blob_oid": "b6f8607b13ce2ec19c34a71dece5b8783e00e8ab"
+      },
+      "copy_before_sha256": "f16f7fffd93823d4dc85c034df3bd510d3037dbe6e5bb59a2ab161f44a0c98ea",
+      "mutant_sha256": "76f5f71026e8caf83f5f969a2ddba6d5176d7f3019d6fd21c917d7a028290349",
+      "expected_exit": 43,
+      "cases": [
+        9
+      ],
+      "compiled": true,
+      "behavior_confirmed": true,
+      "restored_sha256": "f16f7fffd93823d4dc85c034df3bd510d3037dbe6e5bb59a2ab161f44a0c98ea",
+      "restore_audit_sha256": "76f5f71026e8caf83f5f969a2ddba6d5176d7f3019d6fd21c917d7a028290349",
+      "copy_discarded": true
+    },
+    {
+      "label": "alter-unparticipating-result",
+      "source": "test-workchain-i13-acceptance.cpp",
+      "from": "result = overlay(f, tracked, {16, 64}).accounts;",
+      "to": "result = overlay(f, tracked, {16, 64}).accounts;\n      vm::AugmentedDictionary altered(vm::load_cell_slice_ref(result), 256, block::tlb::aug_ShardAccounts);\n      put(altered, 128, account(128, 2), 2);\n      result = altered.get_wrapped_dict_root();",
+      "offset": 7237,
+      "original_sha256": "f16f7fffd93823d4dc85c034df3bd510d3037dbe6e5bb59a2ab161f44a0c98ea",
+      "committed_source": {
+        "commit": "6c4b7993a571d5fe631d20b8bc9c2ccfb2f832bd",
+        "path": "crypto/test/test-workchain-i13-acceptance.cpp",
+        "blob_sha256": "f16f7fffd93823d4dc85c034df3bd510d3037dbe6e5bb59a2ab161f44a0c98ea",
+        "git_blob_oid": "b6f8607b13ce2ec19c34a71dece5b8783e00e8ab"
+      },
+      "copy_before_sha256": "f16f7fffd93823d4dc85c034df3bd510d3037dbe6e5bb59a2ab161f44a0c98ea",
+      "mutant_sha256": "ef93636b1f11e2692a39c1c3c9bb6985c95e44d31656a8eebab142a6d2eba3a7",
+      "expected_exit": 44,
+      "cases": [
+        9
+      ],
+      "compiled": true,
+      "behavior_confirmed": true,
+      "restored_sha256": "f16f7fffd93823d4dc85c034df3bd510d3037dbe6e5bb59a2ab161f44a0c98ea",
+      "restore_audit_sha256": "ef93636b1f11e2692a39c1c3c9bb6985c95e44d31656a8eebab142a6d2eba3a7",
+      "copy_discarded": true
+    }
+  ],
+  "scope": "Private host primitive/storage-overlay acceptance. No activation. Temporary source copies only. Full admitted engine/settlement/replay integration is not certified. Usage absence alone does not imply unchanged state; case 10 demonstrates this limit.",
+  "original_source_files_unchanged": true,
+  "complete": true
+}

@@ -1,0 +1,225 @@
+Running test Test_WorkchainBlock_CoordinatorStateLayout...
+PASS in 212.4us
+Running test Test_WorkchainBlock_CoordinatorStateExactFraming...
+PASS in 29.1us
+Running test Test_WorkchainBlock_ResourcePolicyWire...
+PASS in 41.6us
+Running test Test_WorkchainBlock_EngineConfigurationFraming...
+PASS in 35.1us
+Running test Test_WorkchainBlock_BatchPolicyVersionIdentityAgreement...
+PASS in 1866.0ns
+Running test Test_WorkchainBlock_BatchProfileUnsupportedNodeProbe...
+PASS in 630.0ns
+Running test Test_WorkchainBlock_ClaimedFeeOuterFraming...
+PASS in 9192.0ns
+Running test Test_WorkchainBlock_ClaimedFeeShortNativeFraming...
+PASS in 4741.0ns
+Running test Test_WorkchainBlock_ClaimedFeeSpecialNativeFraming...
+PASS in 4727.0ns
+Running test Test_WorkchainBlock_ClaimedFeeUnknownNativeFraming...
+PASS in 4847.0ns
+Running test Test_WorkchainBlock_ResourcePolicyRejectsSpecialBeforeDecoder...
+PASS in 1349.0ns
+Running test Test_WorkchainBlock_ResourcePolicyEncodedSpecialCells...
+PASS in 39.5us
+Running test Test_WorkchainBlock_ResourcePolicyMalformedClosure...
+PASS in 22.8us
+Running test Test_WorkchainBlock_BounceValueIsolation...
+PASS in 70.7us
+Running test Test_WorkchainBlock_PayoutPrincipalAndFees...
+PASS in 34.3us
+Running test Test_WorkchainBlock_NativeAccountValueFlow...
+PASS in 27.3us
+Running test Test_WorkchainBlock_ParticipantRecordBinding...
+PASS in 9455.0ns
+Running test Test_WorkchainBlock_HostIdentityBinding...
+PASS in 44.6us
+Running test Test_WorkchainBlock_AdmittedIdentityAgreement...
+PASS in 29.1us
+Running test Test_WorkchainBlock_AccountDeclarationsCodec...
+PASS in 38.9us
+Running test Test_WorkchainBlock_AccountDeclarationsMalformed...
+PASS in 18.0us
+Running test Test_WorkchainBlock_AccountAccessBinding...
+PASS in 8129.0ns
+Running test Test_WorkchainBlock_AccountAccessExactCoverage...
+PASS in 6506.0ns
+Running test Test_WorkchainBlock_ParticipantLtPlan...
+PASS in 2816.0ns
+Running test Test_WorkchainBlock_ParticipantLtExhaustion...
+PASS in 3713.0ns
+Running test Test_WorkchainBlock_ResourcePolicyLocalLoadFailure...
+PASS in 102.5us
+Running test Test_WorkchainBlock_CoordinatorStateLocalLoadFailure...
+PASS in 40.6us
+Running test Test_WorkchainBlock_ScopedStateReadObserver...
+PASS in 67.2us
+Running test Test_WorkchainBlock_StateReadRefusalLeavesProofUnchanged...
+PASS in 36.0us
+Running test Test_WorkchainBlock_StateReadMeterProofTracking...
+PASS in 174.7us
+Running test Test_WorkchainBlock_AccountDictionaryChanges...
+PASS in 153.9us
+Running test Test_WorkchainBlock_AccountDictionaryBinding...
+PASS in 15.4us
+Running test Test_WorkchainBlock_BatchInputUnionExactBounds...
+PASS in 50.9us
+Running test Test_WorkchainBlock_BatchInputRootCountPrecedesAcquisition...
+PASS in 1591.0ns
+Running test Test_WorkchainBlock_DeclarationShapeCountsSharedSubtreesWithoutExpansion...
+PASS in 24.1ms
+Running test Test_WorkchainBlock_BatchInputNativeSpecialAndFailureProvenance...
+PASS in 119.5us
+Running test Test_WorkchainBlock_BatchInputHostMismatchAndCorruptInbox...
+PASS in 19.9us
+Running test Test_WorkchainBlock_BatchInputDeclarationSemanticsAndProvenance...
+PASS in 76.2us
+Running test Test_WorkchainBlock_DeclarationSingleLeafZeroAllowance...
+PASS in 3015.0ns
+Running test Test_WorkchainBlock_BatchInputDeclarationCacheBindsRemainingWidth...
+PASS in 39.9us
+Running test Test_WorkchainBlock_BoundedInboxCountBeforeWorkspace...
+PASS in 283.0us
+Running test Test_WorkchainBlock_BoundedInboxStructureMatchesNativeDictionary...
+PASS in 4770.1us
+Running test Test_WorkchainBlock_BoundedInboxUniformPrefixLabels...
+PASS in 8934.1us
+Running test Test_WorkchainBlock_BoundedInboxStopsBeforeSemanticDecode...
+PASS in 189.4us
+Running test Test_WorkchainBlock_NativeDisposalPlan...
+PASS in 248.5us
+Running test Test_WorkchainBlock_NativeBounceMessage...
+PASS in 42.0us
+Running test Test_WorkchainBlock_NativeBounceStorage...
+PASS in 5637.0ns
+Running test Test_WorkchainBlock_NativeBounceStorageCaller...
+PASS in 106.1us
+Running test Test_WorkchainBlock_NativeBounceBody...
+PASS in 262.4us
+Running test Test_WorkchainBlock_NativeInboxPlan...
+PASS in 88.5us
+Running test Test_WorkchainBlock_NativeTransferEffects...
+PASS in 49.3us
+Running test Test_WorkchainBlock_NativeAllocation...
+PASS in 156.4us
+Running test Test_WorkchainBlock_BatchNativeAllocation...
+PASS in 146.0us
+Running test Test_WorkchainBlock_AggregateFeeSettlement...
+PASS in 1303.5us
+Running test Test_WorkchainBlock_NativeDisposalEntry...
+[1;31m[ 0][t 0][2026-09-09 12:04:27.803042511][test-workchain-block.cpp:2778]	Expectation failed: prepare(entry, context).is_ok()![0m
+[pid 1132462] [time 1788955467] Signal: 6
+------- Stack Backtrace -------
+/tmp/uno-m1-i13-build/test-workchain-block(+0x6361a7)[0x57daf1ea61a7]
+/tmp/uno-m1-i13-build/test-workchain-block(+0xd187d)[0x57daf194187d]
+/lib/x86_64-linux-gnu/libc.so.6(+0x42520)[0x7097dc442520]
+/lib/x86_64-linux-gnu/libc.so.6(pthread_kill+0x12c)[0x7097dc4969bc]
+/lib/x86_64-linux-gnu/libc.so.6(raise+0x16)[0x7097dc442476]
+/lib/x86_64-linux-gnu/libc.so.6(abort+0xd3)[0x7097dc4287f3]
+/tmp/uno-m1-i13-build/test-workchain-block(+0x639677)[0x57daf1ea9677]
+/tmp/uno-m1-i13-build/test-workchain-block(+0x639777)[0x57daf1ea9777]
+/tmp/uno-m1-i13-build/test-workchain-block(+0x639337)[0x57daf1ea9337]
+/tmp/uno-m1-i13-build/test-workchain-block(+0x2780ef)[0x57daf1ae80ef]
+/tmp/uno-m1-i13-build/test-workchain-block(+0x1ab89a)[0x57daf1a1b89a]
+/tmp/uno-m1-i13-build/test-workchain-block(+0x64363c)[0x57daf1eb363c]
+/tmp/uno-m1-i13-build/test-workchain-block(+0x643168)[0x57daf1eb3168]
+/tmp/uno-m1-i13-build/test-workchain-block(+0xd7fef)[0x57daf1947fef]
+/lib/x86_64-linux-gnu/libc.so.6(+0x29d90)[0x7097dc429d90]
+/lib/x86_64-linux-gnu/libc.so.6(__libc_start_main+0x80)[0x7097dc429e40]
+/tmp/uno-m1-i13-build/test-workchain-block(+0xd7e95)[0x57daf1947e95]
+-------------------------------
+--- Enhanced Backtrace (libbacktrace) ---
+    #0  ?? (test-workchain-block+0xd187c) [0x57daf194187c]
+    #1  ?? at libc_sigaction.c (libc.so.6+0x4251f) [0x7097dc44251f]
+    #2  __pthread_kill_implementation at pthread_kill.c:44 (libc.so.6+0x969bc) [0x7097dc4969bc]
+    #3  __pthread_kill_internal at pthread_kill.c:78 (libc.so.6+0x969bc) [0x7097dc4969bc]
+    #4  __GI___pthread_kill at pthread_kill.c:89 (libc.so.6+0x969bc) [0x7097dc4969bc]
+    #5  __GI_raise at raise.c:26 (libc.so.6+0x42475) [0x7097dc442475]
+    #6  __GI_abort at abort.c:79 (libc.so.6+0x287f2) [0x7097dc4287f2]
+    #7  ?? (test-workchain-block+0x639676) [0x57daf1ea9676]
+    #8  ?? (test-workchain-block+0x639776) [0x57daf1ea9776]
+    #9  ?? (test-workchain-block+0x639336) [0x57daf1ea9336]
+    #10  ?? (test-workchain-block+0x2780ee) [0x57daf1ae80ee]
+    #11  ?? (test-workchain-block+0x1ab899) [0x57daf1a1b899]
+    #12  ?? (test-workchain-block+0x64363b) [0x57daf1eb363b]
+    #13  ?? (test-workchain-block+0x643167) [0x57daf1eb3167]
+    #14  ?? (test-workchain-block+0xd7fee) [0x57daf1947fee]
+    #15  __libc_start_call_main at libc_start_call_main.h:58 (libc.so.6+0x29d8f) [0x7097dc429d8f]
+    #16  __libc_start_main_impl at libc-start.c:392 (libc.so.6+0x29e3f) [0x7097dc429e3f]
+    #17  ?? (test-workchain-block+0xd7e94) [0x57daf1947e94]
+    #18  `G7тя (unknown+0xffffffffffffffff) [0xffffffffffffffff]
+------------------------------------------
+[Thread debugging using libthread_db enabled]
+Using host libthread_db library "/lib/x86_64-linux-gnu/libthread_db.so.1".
+0x00007097dc4ea3aa in __GI___wait4 (pid=1132466, stat_loc=0x0, options=0, usage=0x0) at ../sysdeps/unix/sysv/linux/wait4.c:30
+30	../sysdeps/unix/sysv/linux/wait4.c: No such file or directory.
+[Current thread is 1 (Thread 0x7097dcb60800 (LWP 1132462))]
+
+Thread 1 (Thread 0x7097dcb60800 (LWP 1132462) "test-workchain-"):
+#0  0x00007097dc4ea3aa in __GI___wait4 (pid=1132466, stat_loc=0x0, options=0, usage=0x0) at ../sysdeps/unix/sysv/linux/wait4.c:30
+        sc_ret = -512
+        sc_ret = <optimized out>
+#1  0x000057daf1ea6422 in td::Stacktrace::print_to_stderr(td::Stacktrace::PrintOptions const&) ()
+No symbol table info available.
+#2  0x000057daf194187d in td::default_failure_signal_handler(int) ()
+No symbol table info available.
+#3  <signal handler called>
+No locals.
+#4  __pthread_kill_implementation (no_tid=0, signo=6, threadid=123797545289728) at ./nptl/pthread_kill.c:44
+        tid = <optimized out>
+        ret = 0
+        pd = 0x7097dcb60800
+        old_mask = {__val = {0 <repeats 16 times>}}
+        ret = <optimized out>
+        pd = <optimized out>
+        old_mask = <optimized out>
+        ret = <optimized out>
+        tid = <optimized out>
+        ret = <optimized out>
+        resultvar = <optimized out>
+        resultvar = <optimized out>
+        __arg3 = <optimized out>
+        __arg2 = <optimized out>
+        __arg1 = <optimized out>
+        _a3 = <optimized out>
+        _a2 = <optimized out>
+        _a1 = <optimized out>
+        __futex = <optimized out>
+        resultvar = <optimized out>
+        __arg3 = <optimized out>
+        __arg2 = <optimized out>
+        __arg1 = <optimized out>
+        _a3 = <optimized out>
+        _a2 = <optimized out>
+        _a1 = <optimized out>
+        __futex = <optimized out>
+        __private = <optimized out>
+        __oldval = <optimized out>
+        result = <optimized out>
+#5  __pthread_kill_internal (signo=6, threadid=123797545289728) at ./nptl/pthread_kill.c:78
+No locals.
+#6  __GI___pthread_kill (threadid=123797545289728, signo=signo@entry=6) at ./nptl/pthread_kill.c:89
+No locals.
+#7  0x00007097dc442476 in __GI_raise (sig=sig@entry=6) at ../sysdeps/posix/raise.c:26
+        ret = <optimized out>
+#8  0x00007097dc4287f3 in __GI_abort () at ./stdlib/abort.c:79
+        save_stage = 1
+        act = {__sigaction_handler = {sa_handler = 0x0, sa_sigaction = 0x0}, sa_mask = {__val = {0 <repeats 16 times>}}, sa_flags = 0, sa_restorer = 0x0}
+        sigs = {__val = {32, 0 <repeats 15 times>}}
+#9  0x000057daf1ea9677 in td::process_fatal_error(td::CSlice) ()
+No symbol table info available.
+#10 0x000057daf1ea9777 in td::DefaultLog::append(td::CSlice, int) ()
+No symbol table info available.
+#11 0x000057daf1ea9337 in td::Logger::~Logger() ()
+No symbol table info available.
+#12 0x000057daf1ae80ef in (anonymous namespace)::Test_WorkchainBlock_NativeDisposalEntry::run() ()
+No symbol table info available.
+#13 0x000057daf1a1b89a in td::Test::step() ()
+No symbol table info available.
+#14 0x000057daf1eb363c in td::TestsRunner::run_all_step() ()
+No symbol table info available.
+#15 0x000057daf1eb3168 in td::TestsRunner::run_all() ()
+No symbol table info available.
+#16 0x000057daf1947fef in main ()
+No symbol table info available.
+[Inferior 1 (process 1132462) detached]
