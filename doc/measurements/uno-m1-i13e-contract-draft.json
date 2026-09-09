@@ -1,0 +1,45 @@
+{
+  "status": "PROPOSAL_PENDING_REVIEW_NOT_ACCEPTANCE",
+  "base_commit": "fe4207afc2d06e2cc5dbf42ee5f8437e1c1a10c9",
+  "scope": "Syntax and missing-adapter link checks only. No behavioral run, mutation evidence, host implementation or I13e acceptance.",
+  "checks": [
+    {
+      "name": "assertion-object",
+      "command": [
+        "cmake",
+        "--build",
+        "/tmp/uno-m1-i13-build",
+        "--target",
+        "i13e-contract-assertions",
+        "-j32"
+      ],
+      "exit_code": 0
+    },
+    {
+      "name": "missing-adapter-link",
+      "command": [
+        "cmake",
+        "--build",
+        "/tmp/uno-m1-i13-build",
+        "--target",
+        "test-workchain-i13e-contract",
+        "-j32"
+      ],
+      "exit_code": 1
+    }
+  ],
+  "source_sha256": {
+    "crypto/test/workchain-i13e-contract.h": "1eb6f4914be438f02b4050156a9970eab3e86e5ccf3650acb2ac25987ac3a3a8",
+    "crypto/test/test-workchain-i13e-contract.cpp": "53dad79647ab9124553fae6e22061c3e8cb3069d1903022feb6e5fca0dbb88f8",
+    "crypto/test/workchain-i13e-contract.cmake": "160d196b8e725db7025fa8d2b2c59b7831762b17274fa9ead632415524b2d7a6",
+    "crypto/test/workchain-i13e-contract.md": "31ad733d52b900ec316415ae4293bdfba9abad15ebfe6c160a4baf28b5ff798d"
+  },
+  "logs": {
+    "assertion-object.stderr.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "assertion-object.stdout.log": "30c3d210f95db83b1ed039b774ac8d6957ba981dec816bd2c902d411ffa22203",
+    "configure.stderr.log": "0b954b933f18861b2a33e0b47d18ec6ed399668910104bd460e47c399de4f578",
+    "configure.stdout.log": "ee5677c265e5807dce9336c56a797ecc2ad83af0c88c05c9fdb72a1a94a33145",
+    "missing-adapter-link.stderr.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "missing-adapter-link.stdout.log": "f3a5c008257eabb60846c3d51bcbe001329d4a7bcb641e02a99ac948e23ffc7e"
+  }
+}
