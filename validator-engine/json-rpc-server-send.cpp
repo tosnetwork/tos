@@ -38,6 +38,7 @@
 #include "vm/vm.h"
 
 #include "json-rpc-server-internal.h"
+#include "json-rpc-signing-payload.h"
 
 namespace tos {
 
@@ -876,15 +877,10 @@ void JsonRpcServer::handle_getSigningPayload(td::JsonObject &params, std::string
             PSTRING() << "SIGNING_PAYLOAD_UNAVAILABLE: " << payload_b64_r.error().message(), req_id, cors));
         return;
       }
-      auto intent_json = PSTRING()
-          << "{\"@type\":\"transaction.signingPayload\""
-          << ",\"payload_version\":1"
-          << ",\"payload_encoding\":\"boc_base64\""
-          << ",\"payload\":" << td::JsonString(td::Slice(payload_b64_r.ok()))
-          << ",\"delegation_ref\":" << td::JsonString(td::Slice(input.delegation_ref))
-          << ",\"replay_protection\":{\"@type\":\"transaction.replayProtection\""
-          << ",\"mode\":\"contract_defined\"}"
-          << "}";
+      // Growable builder (see json-rpc-signing-payload.h): the payload can
+      // exceed PSTRING()'s 128 KiB buffer, which would silently truncate it.
+      auto intent_json = build_delegation_signing_payload_json(
+          td::Slice(payload_b64_r.ok()), td::Slice(input.delegation_ref));
       td::actor::send_closure(self_id, &JsonRpcServer::validate_delegation_and_return_intent,
           addr, input.address, input.delegation_ref,
           std::move(intent_json), std::move(req_id), std::move(promise));
@@ -965,15 +961,9 @@ void JsonRpcServer::handle_getSigningPayload(td::JsonObject &params, std::string
                     }
                     auto cfg = cfg_r.move_as_ok();
                     auto chain_id = cfg->get_global_blockchain_id();
-                    auto result_json = PSTRING()
-                        << "{\"@type\":\"transaction.signingPayload\""
-                        << ",\"payload_version\":1"
-                        << ",\"payload_encoding\":\"boc_base64\""
-                        << ",\"payload\":" << td::JsonString(td::Slice(payload_b64))
-                        << ",\"chain_id\":" << chain_id
-                        << ",\"replay_protection\":{\"@type\":\"transaction.replayProtection\""
-                        << ",\"mode\":\"contract_defined\"}"
-                        << "}";
+                    // Growable builder (see json-rpc-signing-payload.h): the
+                    // payload can exceed PSTRING()'s 128 KiB buffer.
+                    auto result_json = build_signing_payload_json(td::Slice(payload_b64), chain_id);
                     promise.set_value(make_json_ok(result_json, req_id, cors));
                   }));
         });
