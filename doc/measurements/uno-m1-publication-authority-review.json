@@ -1,0 +1,288 @@
+{
+  "status": "STATIC_AUTHORITY_BOUNDARY_REVIEW_NOT_ACCEPTANCE",
+  "source_commit": "e9c12755e206d614b98854c8b01feb03d22bece9",
+  "scope": "Read-only review of propositions 2 and 3; no runtime or mutation evidence, no implementation, no contract ratification. Earlier input drafts excluded.",
+  "findings": {
+    "proposition_2_literal_nonavailability": "Not universal: explicitly enabled nonfinal serving exposes candidate data/state.",
+    "proposition_2_authority": "Reviewed consumers distinguish block/proof binding from acceptance; no partial-authority promotion identified. Not a universal exclusion.",
+    "proposition_3_candidate_only": "False for N3: final signatures and finality broadcasts can precede local state availability.",
+    "proposition_3_authority": "Candidate availability alone does not select a neighbor or trigger the inspected final-only accepted notification.",
+    "prior_inference": "The necessity of storage-layer atomicity does not follow from the eight availability transition roles alone."
+  },
+  "unresolved": [
+    "All external consumer trust anchors",
+    "All canonical head/configuration, archive eligibility and recovery provenance",
+    "Every delegated signatures_checked caller and administrative fake/fork paths",
+    "Missing live wc=2 mechanisms and construction isolation"
+  ],
+  "sources": [
+    {
+      "path": "validator/manager.cpp",
+      "commit": "e9c12755e206d614b98854c8b01feb03d22bece9",
+      "git_blob_oid": "d3c3954b6d85c994177bf118a6067213922d4cc2",
+      "sha256": "231a177f5edf44c6353d128806cdd29d73495c2adebd6e37940f9b4bd5a771fe",
+      "workspace_matches_committed": true,
+      "excerpt_intervals": [
+        [
+          231,
+          259
+        ],
+        [
+          569,
+          607
+        ],
+        [
+          610,
+          681
+        ],
+        [
+          1963,
+          1984
+        ],
+        [
+          3643,
+          3673
+        ],
+        [
+          3715,
+          3752
+        ],
+        [
+          4203,
+          4267
+        ]
+      ]
+    },
+    {
+      "path": "validator/validate-broadcast.cpp",
+      "commit": "e9c12755e206d614b98854c8b01feb03d22bece9",
+      "git_blob_oid": "432b7bce3b7f53dbcfa2b8784e6f520d2438d7b5",
+      "sha256": "2d1c2a1cc1dd2e76d647b81c05fb11eb6dae2ed27364c49cd4fd5ffc1fdbc062",
+      "workspace_matches_committed": true,
+      "excerpt_intervals": [
+        [
+          80,
+          91
+        ],
+        [
+          213,
+          255
+        ]
+      ]
+    },
+    {
+      "path": "validator/impl/accept-block.cpp",
+      "commit": "e9c12755e206d614b98854c8b01feb03d22bece9",
+      "git_blob_oid": "a8bd02115ace1d4291acd60b4a25b63dab7289a6",
+      "sha256": "dba6e5f6354d7fcd61d1fdff2c9eaef5f89557a705620cc026d4289ee6ec6108",
+      "workspace_matches_committed": true,
+      "excerpt_intervals": [
+        [
+          253,
+          267
+        ],
+        [
+          504,
+          528
+        ],
+        [
+          960,
+          986
+        ]
+      ]
+    },
+    {
+      "path": "validator/impl/liteserver.cpp",
+      "commit": "e9c12755e206d614b98854c8b01feb03d22bece9",
+      "git_blob_oid": "c5dd0845f73141d91fc67b7204435d3f4fbd4161",
+      "sha256": "af9543b5f99c87babb12f328710eb7ce38b334b7037143ce2265a442a5278fba",
+      "workspace_matches_committed": true,
+      "excerpt_intervals": [
+        [
+          365,
+          389
+        ],
+        [
+          504,
+          549
+        ],
+        [
+          799,
+          842
+        ]
+      ]
+    },
+    {
+      "path": "validator/impl/collator.cpp",
+      "commit": "e9c12755e206d614b98854c8b01feb03d22bece9",
+      "git_blob_oid": "0c45e03d557bc1ff039045e5dec811f7b2295e4b",
+      "sha256": "7b034a1cc225ca9df9fc8f4f10f58cbcf18b9eae8e885f9f3ef10090dae0151c",
+      "workspace_matches_committed": true,
+      "excerpt_intervals": [
+        [
+          971,
+          1005
+        ],
+        [
+          6404,
+          6418
+        ],
+        [
+          6458,
+          6486
+        ]
+      ]
+    },
+    {
+      "path": "validator/impl/validate-query.cpp",
+      "commit": "e9c12755e206d614b98854c8b01feb03d22bece9",
+      "git_blob_oid": "1fcb5c5439747d5337930a368ca058911e133e0f",
+      "sha256": "06ecfc5f97e964bfe248f1743c04b1f09cb70138ca49df9e36b904eb1fbcdb0a",
+      "workspace_matches_committed": true,
+      "excerpt_intervals": [
+        [
+          1489,
+          1505
+        ],
+        [
+          1710,
+          1776
+        ],
+        [
+          7684,
+          7705
+        ]
+      ]
+    },
+    {
+      "path": "validator/impl/out-msg-queue-proof.cpp",
+      "commit": "e9c12755e206d614b98854c8b01feb03d22bece9",
+      "git_blob_oid": "2ac6e38c9250ab3e9b719326724b8bf756daa006",
+      "sha256": "f8b722e34136c6b537d1dbdbd119925983c732e993bfafeb04c0597cd7cccb2d",
+      "workspace_matches_committed": true,
+      "excerpt_intervals": [
+        [
+          168,
+          211
+        ]
+      ]
+    },
+    {
+      "path": "validator/impl/block.cpp",
+      "commit": "e9c12755e206d614b98854c8b01feb03d22bece9",
+      "git_blob_oid": "ec52767e50ec94e3478a6407972be0fe09a5501c",
+      "sha256": "74cf933f1b8bf03262b1a79033a9ed49b991ed4fca33a0e5156ef270821e7be5",
+      "workspace_matches_committed": true,
+      "excerpt_intervals": [
+        [
+          73,
+          108
+        ]
+      ]
+    },
+    {
+      "path": "validator/consensus/block-accepter.cpp",
+      "commit": "e9c12755e206d614b98854c8b01feb03d22bece9",
+      "git_blob_oid": "32a5c2a4aac5fb6b8ee8c59a719386919f40b821",
+      "sha256": "f9380ea9dde6ddd7cd255ce4bf61f9097d9b790a01796e7ae2859938603a45d1",
+      "workspace_matches_committed": true,
+      "excerpt_intervals": [
+        [
+          30,
+          90
+        ]
+      ]
+    },
+    {
+      "path": "validator/consensus/simplex/state-resolver.cpp",
+      "commit": "e9c12755e206d614b98854c8b01feb03d22bece9",
+      "git_blob_oid": "cf5220f1ea6f8e352d00ae208a96975bb777b200",
+      "sha256": "6ea518e5637c5116dfcaf8cb07d3c14fb7c28ee124400e763325516b9427ee8f",
+      "workspace_matches_committed": true,
+      "excerpt_intervals": [
+        [
+          275,
+          330
+        ]
+      ]
+    },
+    {
+      "path": "validator/consensus/chain-state.cpp",
+      "commit": "e9c12755e206d614b98854c8b01feb03d22bece9",
+      "git_blob_oid": "608b407c586dc50da6837394e86db3122c922bd8",
+      "sha256": "886a6703368236867b1168582e7f4e75c5c418bf4b7df659c5865bdc0ab6c802",
+      "workspace_matches_committed": true,
+      "excerpt_intervals": [
+        [
+          115,
+          134
+        ]
+      ]
+    },
+    {
+      "path": "crypto/block/check-proof.cpp",
+      "commit": "e9c12755e206d614b98854c8b01feb03d22bece9",
+      "git_blob_oid": "5c2c6e560876bb2e259a664c82fbe70642657056",
+      "sha256": "ba8cf44c17f216cbbbacdf14000b34858fd8aef9219801c81bc49ea4caf32817",
+      "workspace_matches_committed": true,
+      "excerpt_intervals": [
+        [
+          98,
+          122
+        ],
+        [
+          209,
+          241
+        ]
+      ]
+    },
+    {
+      "path": "lite-client/lite-client.cpp",
+      "commit": "e9c12755e206d614b98854c8b01feb03d22bece9",
+      "git_blob_oid": "bf4064714f7617fbd955cd8e949e6243670c6440",
+      "sha256": "c6ba9a43443051aa8e2d3a7ff049a9888b5368e87d94185aaf679c4b7ab1e7f3",
+      "workspace_matches_committed": true,
+      "excerpt_intervals": [
+        [
+          1197,
+          1239
+        ],
+        [
+          2129,
+          2157
+        ]
+      ]
+    },
+    {
+      "path": "validator-engine/validator-engine.hpp",
+      "commit": "e9c12755e206d614b98854c8b01feb03d22bece9",
+      "git_blob_oid": "7f3f7cfecdeaa14aa0685bba9f0e176640f56b85",
+      "sha256": "405d0e88d79ff6b151e26bca9d18f0694cb60fc8ad7a61d6e54c68b4a4e5b8ea",
+      "workspace_matches_committed": true,
+      "excerpt_intervals": [
+        [
+          255,
+          263
+        ]
+      ]
+    },
+    {
+      "path": "validator-engine/validator-engine.cpp",
+      "commit": "e9c12755e206d614b98854c8b01feb03d22bece9",
+      "git_blob_oid": "36277a58994b7a7703f88b5768f46983ac71dc03",
+      "sha256": "429af848b7b7b3ed306eef25f13a59f43b39b8d9e8f66303a30037c9aa074351",
+      "workspace_matches_committed": true,
+      "excerpt_intervals": [
+        [
+          6274,
+          6280
+        ]
+      ]
+    }
+  ],
+  "document_sha256": "ee96eff7f2503edb30106d9dd225a4a68fcd1cf9bf98a954fc8c4467fec998f8",
+  "prior_report_addendum_sha256": "2d5a1e2fd5f24f7eb3f5912cb4af3afa97b1fcf6be823b09666e50c9c7f59cae",
+  "artifacts": {
+    "reviewed-source-excerpts.txt": "9bc237ce53dfa319b06c4690ef6d04c1dec340dc2e43e39ae092c1719e45c7de"
+  }
+}

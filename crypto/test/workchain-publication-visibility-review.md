@@ -8,6 +8,12 @@ state-store completion. No complete D47 generation or batch-count persistence
 mechanism exists in this inspected code. These facts do not establish a violation
 of the existing protocol's finality rules or delivery of an unauthorized message.
 
+Follow-up: [the authority-boundary review](workchain-publication-authority-review.md)
+qualifies the inference from these transitions to required storage-layer work.
+Different availability transitions do not themselves prove partial authoritative
+publication. The eight observed roles remain valid; necessity of storage-layer
+atomicity for a redefined consensus-authority boundary is not established here.
+
 This is static analysis, not a failure-injection measurement or an implementation
 proposal. The companion `doc/measurements/uno-m1-publication-visibility-review.json`
 pins every reviewed source to a commit/blob/hash and archives numbered excerpts.
