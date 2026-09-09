@@ -50,6 +50,16 @@ CARGO_NET_OFFLINE=true python3 uno/crypto/tests/kernel-gates.py
 CARGO_NET_OFFLINE=true python3 uno/prover/tests/source-gates.py
 ```
 
-These wallet tests are currently explicit commands, not a default node CTest
-gate. The implementation and its controls passed independent follow-up review;
-automated wallet CI remains to be connected. This is not full M2 acceptance.
+The wallet has a standalone CTest project, not a default node CTest target:
+
+```sh
+cmake -S uno/prover -B build-wallet-tests
+CARGO_BUILD_JOBS=48 ctest --test-dir build-wallet-tests --output-on-failure --no-tests=error -j1
+```
+
+The dedicated wallet workflow provisions locked sources before running these
+tests offline. It includes proof generation, source gates, and registration
+checks; a successful command reporting zero Rust tests is rejected. Local
+negative-control records are in
+`doc/measurements/uno-v2-wallet-ci-controls.md`; those manual mutations are not
+reapplied by CI. This does not register an engine or establish M2 acceptance.

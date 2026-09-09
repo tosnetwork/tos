@@ -1,0 +1,44 @@
+name: Confidential wallet proof checks
+
+on:
+  push:
+    branches: [main, feature/uno-privacy-workchain-v2]
+    paths:
+      - 'uno/prover/**'
+      - 'uno/crypto/**'
+      - 'rust-toolchain.toml'
+      - 'scripts/install-rust-toolchain.sh'
+      - '.github/workflows/uno-wallet-prover.yml'
+  pull_request:
+    paths:
+      - 'uno/prover/**'
+      - 'uno/crypto/**'
+      - 'rust-toolchain.toml'
+      - 'scripts/install-rust-toolchain.sh'
+      - '.github/workflows/uno-wallet-prover.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  wallet:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      CARGO_NET_OFFLINE: 'true'
+      CARGO_BUILD_JOBS: '2'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install pinned toolchain
+        run: scripts/install-rust-toolchain.sh
+      - name: Provision locked sources
+        env:
+          CARGO_NET_OFFLINE: 'false'
+        run: |
+          cargo fetch --locked --manifest-path uno/prover/Cargo.toml
+          cargo fetch --locked --manifest-path uno/crypto/Cargo.toml
+      - name: Configure standalone wallet tests
+        run: cmake -S uno/prover -B build-wallet-tests
+      - name: Run wallet tests and source gates
+        run: ctest --test-dir build-wallet-tests --output-on-failure --no-tests=error -j1
