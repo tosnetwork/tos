@@ -110,5 +110,81 @@ class CounterGenesis(unittest.TestCase):
                     self.assertEqual(shard.shard_id.workchain_id, 2)
 
 
+class McStateExtraWire(unittest.TestCase):
+    """Wire-layout vectors, not consensus-valid state or D40 issuance evidence."""
+
+    @staticmethod
+    def generated_tag(name):
+        import re
+        header = (REPO / 'crypto/block/block-auto.h').read_text()
+        body = re.search(r'struct ' + name + r' final : TLB_Complex \{(.*?)\n\};', header, re.S)
+        if body is None:
+            raise AssertionError(930)
+        return int(re.search(r'cons_tag\[1\] = \{ 0x([0-9a-fA-F]+)', body[1])[1], 16)
+
+    @classmethod
+    def vector(cls, *, stats=None, ledger_present=True, tag=None):
+        from pytosiq_core import Builder
+        from pytosiq_core.boc.hashmap.hashmap import HashMap
+        payload = Builder().store_uint(11, 8).end_cell()
+        config = HashMap(32, map_={0: payload}, value_serializer=lambda value, dest: dest.store_ref(value)).serialize()
+        record = (Builder().store_uint(cls.generated_tag('WorkchainInstanceRecord'), 32)
+                  .store_uint(7, 64).store_uint(0xabcdef, 256).end_cell())
+        entries = HashMap(32, map_={2: record}, value_serializer=lambda value, dest: dest.store_cell(value)).serialize()
+        ledger = Builder().store_uint(cls.generated_tag('WorkchainInstanceLedger'), 32).store_dict(entries).end_cell()
+        aux = (Builder().store_uint(int(stats is not None), 16)
+               .store_uint(31, 32).store_uint(47, 32).store_bool(True)
+               .store_dict(None).store_bool(False).store_uint(17, 64)
+               .store_bool(True).store_bool(True)
+               .store_uint(19, 64).store_uint(23, 32).store_uint(29, 256).store_uint(37, 256))
+        if stats is not None:
+            aux.store_uint(0x34 if stats == 'extended' else 0x17, 8).store_dict(None)
+            if stats == 'extended':
+                aux.store_uint(99, 32)
+        if ledger_present:
+            aux.store_ref(ledger)
+        root = (Builder().store_uint(cls.generated_tag('McStateExtra') if tag is None else tag, 32)
+                .store_dict(None).store_uint(3, 256).store_ref(config).store_ref(aux.end_cell())
+                .store_coins(41).store_dict(None).end_cell())
+        return root, ledger
+
+    def test_mandatory_ledger_reference(self):
+        from pytosiq_core.tlb.block import McStateExtra
+        root, ledger = self.vector()
+        result = McStateExtra.deserialize(root.begin_parse())
+        self.assertEqual(result.workchain_instances.hash, ledger.hash, 931)
+        self.assertEqual(result.global_balance.tomis, 41, 932)
+        self.assertEqual(result.config.config_addr, (3).to_bytes(32, 'big').hex(), 933)
+
+    def test_root_augmentation_precedes_after_key(self):
+        from pytosiq_core.tlb.block import McStateExtra
+        root, _ = self.vector()
+        result = McStateExtra.deserialize(root.begin_parse())
+        self.assertTrue(result.after_key_block, 934)
+        self.assertEqual(result.last_key_block.seqno, 23, 935)
+
+    def test_statistics_variants_preserve_ledger(self):
+        from pytosiq_core.tlb.block import McStateExtra
+        for kind in ('ordinary', 'extended'):
+            with self.subTest(kind=kind):
+                root, ledger = self.vector(stats=kind)
+                result = McStateExtra.deserialize(root.begin_parse())
+                self.assertEqual(result.workchain_instances.hash, ledger.hash, 936)
+                self.assertEqual(result.global_balance.tomis, 41, 937)
+
+    def test_missing_ledger_is_not_empty_ledger(self):
+        from pytosiq_core.tlb.block import McStateExtra, BlockError
+        root, _ = self.vector(ledger_present=False)
+        with self.assertRaises(BlockError):
+            McStateExtra.deserialize(root.begin_parse())
+
+    def test_retired_and_unknown_tags_reject(self):
+        from pytosiq_core.tlb.block import McStateExtra, BlockError
+        for tag in (0xcc260000, 0):
+            with self.subTest(tag=tag), self.assertRaises(BlockError):
+                root, _ = self.vector(tag=tag)
+                McStateExtra.deserialize(root.begin_parse())
+
+
 if __name__ == "__main__":
     unittest.main()

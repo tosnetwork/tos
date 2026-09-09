@@ -1,0 +1,17 @@
+{
+  "representations": [
+    {"id": "schema", "path": "crypto/block/block.tlb", "check": "authoritative schema layout"},
+    {"id": "generated_cpp", "path": "crypto/block/block-auto.h", "check": "generated constructor tag, width and auxiliary declaration"},
+    {"id": "fift", "path": "test/test-counter-disk-integration.cmake", "check": "six annotated constructor tags against generated declarations"},
+    {"id": "python", "path": "test/tostester/src/pytosiq_core/tlb/block.py", "check": "McStateExtra tag, width and declared layout"},
+    {"id": "rust", "path": "tosctl/src/block/src/master.rs", "check": "existence only", "migration": "BLOCKED: old 16-bit cc26 reader/writer; operator-toolchain usability must exclude new MC states until migrated"}
+  ],
+  "additional_occurrences": [
+    {"path": "crypto/block/block-auto.cpp", "status": "generated implementation; not an independent handwritten layout"},
+    {"path": "crypto/block/create-state.cpp", "status": "uses generated McStateExtra constructor; no separate hardcoded wire tag"},
+    {"path": "crypto/block/block-parse.h", "status": "stale cc26 enum; companion skip/validate_skip delegate to generated implementation; no enum consumer found in inspected source"},
+    {"path": "crypto/block/block-parse.cpp", "status": "delegates McStateExtra decoding to generated implementation"},
+    {"path": "validator/impl/validate-query.cpp", "status": "stale cc26 layout comment; actual parsing uses generated type"}
+  ],
+  "scope": "Five required representation roles, not a claim that only five textual occurrences exist. Generated implementation, stale declarations/comments and archived examples are separately inventoried. Rust is known, present, not mechanically format-validated here, and remains an operator-toolchain blocker."
+}
