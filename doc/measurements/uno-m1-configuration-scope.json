@@ -1,0 +1,385 @@
+{
+  "kind": "read-only requirement attribution and source review",
+  "source_commit": "e317552e7add3727227b481023e29cb1b7188d2f",
+  "document": "crypto/test/workchain-m1-configuration-scope.md",
+  "memo": {
+    "commit": "bb3d031ead8ebe50cac6e68be9dafb5b4976b500",
+    "path": "TOS_UNO_PRIVACY_WORKCHAIN_V2.md",
+    "sha256": "bb17fc78a4663fd77c8147f72dc70a20319b2001be4d68d99bd562997c8215f5",
+    "working_bytes_equal_committed_blob": true,
+    "anchors": [
+      {
+        "line": 79,
+        "line_sha256": "5ac8784b96536d41bd03d8bad1e21ba3d0bd98dbe17abfc4888be520dd42c985"
+      },
+      {
+        "line": 81,
+        "line_sha256": "8c2fa3d473806e2206c3fc8367157281e35d4af324b8686cc4c8237dc5bee3e9"
+      },
+      {
+        "line": 675,
+        "line_sha256": "747d73ac8596ed1b540d971fa1d569845c4ca3a3d7991b7915ef18a2296938e0"
+      },
+      {
+        "line": 678,
+        "line_sha256": "b54a9b723a37e51d814c29e4b4d22175bc5f68ed996ff68c115931c662302fd2"
+      },
+      {
+        "line": 684,
+        "line_sha256": "653e8e95663ac9731462ed57734e65722a9593cc4c2dbc4511cc5d941a2183cd"
+      },
+      {
+        "line": 690,
+        "line_sha256": "4db911cf61d58c45d87f7624be403cdad928b2a93461f72069c613d29184e27c"
+      },
+      {
+        "line": 700,
+        "line_sha256": "6f10a125e8ea8a5fcf208096455379b2b70c44b0b2bfa4dcee6a6cb576030567"
+      },
+      {
+        "line": 718,
+        "line_sha256": "244f9c22769e318b3f556323acd8bdb6bebc585d044f1514cbf12c7650b6139e"
+      },
+      {
+        "line": 720,
+        "line_sha256": "989ca5faee46cdaafed2e91947974ded9cdd37a742806fba69c088ea884fc5db"
+      },
+      {
+        "line": 721,
+        "line_sha256": "393a4b913675453f4a77f9d2ea9be030ade0310a25a17744a606875554de8299"
+      },
+      {
+        "line": 722,
+        "line_sha256": "9568de2008f4326aff8dffee82b6add6740bcd51166ed050b792602afc526c95"
+      },
+      {
+        "line": 723,
+        "line_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "line": 739,
+        "line_sha256": "5832b221c6d051bd8b6c75271002e28329f624065beb3441af4a86c1907dc8a7"
+      },
+      {
+        "line": 741,
+        "line_sha256": "bd38a70bb3409cea319340312cb9c09cd09197633c021fc7b7fa6d7375e6e9b9"
+      },
+      {
+        "line": 743,
+        "line_sha256": "e71127a80c09b5b56181a90c574097cdc5a1f17f467a64117c0b6cfb6feb452e"
+      },
+      {
+        "line": 758,
+        "line_sha256": "421a38fa23e755586a91920ead38e2eb2b846131e26ec10b10ed3b87091be7c6"
+      },
+      {
+        "line": 862,
+        "line_sha256": "3b261f3771c5ea0bf79e2c64b5e2aa7c9e390dcc6083f55c1e881422c7d44415"
+      },
+      {
+        "line": 864,
+        "line_sha256": "58e7a2d1112a943443b495634a5c645d9c90c9dffb02d2c0d1cb421c50d82509"
+      },
+      {
+        "line": 865,
+        "line_sha256": "200d1ffdeee5b8ae5ec7fdd29ec47f0e19555d8aaa9b54b55fe0d6ebe2d88ca5"
+      },
+      {
+        "line": 866,
+        "line_sha256": "ac0e1728ae5349d94c508d0108709eb06f6e138d33ea83d25290bf59f5cf8014"
+      },
+      {
+        "line": 867,
+        "line_sha256": "79d3871498262160d54e6ccb993f310a1e7829f4f4748979b41cd1d495dc62d3"
+      },
+      {
+        "line": 869,
+        "line_sha256": "097e0fd8f7e9421e0a513969ceb651cfad601dc44a08383e7b7f2c477aef8364"
+      },
+      {
+        "line": 875,
+        "line_sha256": "39f767f413314b98cc51d9f43926729970f1b0acfbf45dda682e84160e095145"
+      },
+      {
+        "line": 890,
+        "line_sha256": "f227870a2dfa9a2ad0a0100bd1aa8c7f70b3308d7ff9633a735a640ec7e5ed4b"
+      },
+      {
+        "line": 999,
+        "line_sha256": "d53a775d144b36ae33be7f967b6e1fd941bc6876667761226f475b94a6baa2e7"
+      },
+      {
+        "line": 1006,
+        "line_sha256": "d1c067c2364048ee72a292401aa945fe9efcc83a77dad7128e4e4ede725a9fda"
+      },
+      {
+        "line": 1010,
+        "line_sha256": "789221086e1693510e8226f6c1cc781d6053fb4e370af15b765853a74912f779"
+      }
+    ]
+  },
+  "sources": [
+    {
+      "path": "crypto/block/block.cpp",
+      "git_blob_oid": "be788b7f5301977652fae7e54097839d3a308baa",
+      "sha256": "dfb6837c85b128887800eda9a97f9a8e4e8cd16e1bda72215354f080aaaee1a3",
+      "working_bytes_equal_committed_blob": true,
+      "anchors": [
+        {
+          "line": 1936,
+          "text": "td::Status valid_config_transition(Ref<vm::Cell> old_cfg_root, Ref<vm::Cell> new_cfg_root) {"
+        }
+      ]
+    },
+    {
+      "path": "crypto/block/block.tlb",
+      "git_blob_oid": "2d9ccb87c9c521945e4d31dd50a1107c11a4cbea",
+      "sha256": "3cfe3ebbc5b73bab19656b60d1a8bca0bee4c8832fb1a357cb108d31f6caa941",
+      "working_bytes_equal_committed_blob": true,
+      "anchors": [
+        {
+          "line": 2,
+          "text": "uno_v2_system_state#bbd85560 layout_version:uint16 base_compute:uint64"
+        },
+        {
+          "line": 7,
+          "text": "uno_v2_resource_input max_cells:uint64 max_bits:uint64 max_roots:uint64"
+        }
+      ]
+    },
+    {
+      "path": "crypto/block/mc-config.cpp",
+      "git_blob_oid": "892b3298a8aa51147a683c95ea3ff501dfecb0de",
+      "sha256": "4bb6ca99344eaaac73e62609dd4f3cc01b70d9bb61ed249e857283a2df05b81c",
+      "working_bytes_equal_committed_blob": true,
+      "anchors": [
+        {
+          "line": 388,
+          "text": "td::optional<tos::NewConsensusConfig> Config::get_new_consensus_config(tos::WorkchainId wc) const {"
+        },
+        {
+          "line": 418,
+          "text": "                .target_rate = std::chrono::milliseconds(v1.target_rate_ms),"
+        }
+      ]
+    },
+    {
+      "path": "crypto/block/workchain-coordinator-state.h",
+      "git_blob_oid": "c80f5b711b79fccc6e15b99f33ff1b975da54bc7",
+      "sha256": "7cc66c8c321ca317cd63064adeed021c6a59cbb3e70b32c94ec8ca1708de5333",
+      "working_bytes_equal_committed_blob": true,
+      "anchors": [
+        {
+          "line": 14,
+          "text": "inline td::Result<td::Ref<vm::Cell>> encode_workchain_coordinator_state("
+        },
+        {
+          "line": 28,
+          "text": "// Decode exactly two ordinary records. No optional bond placeholder exists in"
+        },
+        {
+          "line": 32,
+          "text": "// for resource-policy decoding; malformed data is not itself a consensus code."
+        }
+      ]
+    },
+    {
+      "path": "crypto/block/workchain-execution-dispatch.cpp",
+      "git_blob_oid": "247ad16855e9356e15b995ce0f1cee3b2676f3f2",
+      "sha256": "be99a089704b50e7d462e83316028be22a6cad51edc2f568b9db7be3bc722311",
+      "working_bytes_equal_committed_blob": true,
+      "anchors": [
+        {
+          "line": 160,
+          "text": "td::Status validate_native_ingress_presence(vm::Dictionary& configuration) {"
+        },
+        {
+          "line": 416,
+          "text": "td::Result<ResolvedWorkchainAccountBinding> WorkchainExecutionRegistry::resolve_account_binding("
+        },
+        {
+          "line": 451,
+          "text": "  TRY_RESULT(config, it->second->validate_and_resolve_config(descriptor, configuration,"
+        }
+      ]
+    },
+    {
+      "path": "crypto/block/workchain-execution-dispatch.h",
+      "git_blob_oid": "263416062eaf0a5961ec71d9f5741c9f286c0d89",
+      "sha256": "cda89ee512fcd10190c7510c2d928d03565946c3a479826f588992e14720a188",
+      "working_bytes_equal_committed_blob": true,
+      "anchors": [
+        {
+          "line": 266,
+          "text": "// Binding is separate from admission and execution readiness. The engine must"
+        },
+        {
+          "line": 278,
+          "text": "  virtual td::Result<std::shared_ptr<const WorkchainEngineConfig>> validate_and_resolve_config("
+        }
+      ]
+    },
+    {
+      "path": "crypto/block/workchain-resource-policy.h",
+      "git_blob_oid": "43d9406a02079ac0ab3abb391b84661a56ccded5",
+      "sha256": "0550f2845ad9b3c52b7e54528edf7b23a00f42d50fa16c78556567ac3cec10a7",
+      "working_bytes_equal_committed_blob": true,
+      "anchors": [
+        {
+          "line": 32,
+          "text": "inline bool workchain_batch_admission_version_supported(std::uint32_t version) {"
+        },
+        {
+          "line": 66,
+          "text": "  // Version 2 retains its original no-fee-constructor admission contract."
+        },
+        {
+          "line": 129,
+          "text": "struct WorkchainEngineParameters {"
+        }
+      ]
+    },
+    {
+      "path": "doc/uno-v2-implementation-plan.md",
+      "git_blob_oid": "d1b33c37315e808ddd6b1aad8e280322d6fee561",
+      "sha256": "3a4f8bed7c57c660502c207abc4e4a5451264ea3f42c50bbba14db053b30ceee",
+      "working_bytes_equal_committed_blob": true,
+      "anchors": [
+        {
+          "line": 31,
+          "text": "| M0 | Consistent design decisions, configuration semantics and review | Existing design/review; implementation decisions tracked here. Production numeric calibration is not proven by research measurements. |"
+        }
+      ]
+    },
+    {
+      "path": "tosctl/src/node-control/commands/src/commands/nodectl/config_cmd.rs",
+      "git_blob_oid": "1a28822a2eeb242e68a3918e648734c0392c9641",
+      "sha256": "285dbc504747435e49a2b6db29c931a18a274b0a6354c5908457ceb3ef79614a",
+      "working_bytes_equal_committed_blob": true,
+      "anchors": [
+        {
+          "line": 45,
+          "text": "#[derive(clap::Subcommand, Clone)]"
+        }
+      ]
+    },
+    {
+      "path": "tosctl/src/node-control/commands/src/commands/nodectl/vote_cmd.rs",
+      "git_blob_oid": "e6bba40c8e0a512d3ef631dc88c42076f1c40a6e",
+      "sha256": "f38425074c1dca746753011dd44177efeecd6a1b3285d64dbf4c2322cb790fa1",
+      "working_bytes_equal_committed_blob": true,
+      "anchors": [
+        {
+          "line": 1040,
+          "text": "        if self.dry_run {"
+        }
+      ]
+    },
+    {
+      "path": "validator/impl/collator.cpp",
+      "git_blob_oid": "0c45e03d557bc1ff039045e5dec811f7b2295e4b",
+      "sha256": "7b034a1cc225ca9df9fc8f4f10f58cbcf18b9eae8e885f9f3ef10090dae0151c",
+      "working_bytes_equal_committed_blob": true,
+      "anchors": [
+        {
+          "line": 5383,
+          "text": "  if (!block::valid_config_data(cfg_smc_config, config_addr, true, true, old_mparams_)) {"
+        },
+        {
+          "line": 5414,
+          "text": "  auto transition_status = block::valid_config_transition(state_extra.config->prefetch_ref(), cfg_smc_config);"
+        }
+      ]
+    },
+    {
+      "path": "validator/impl/validate-query.cpp",
+      "git_blob_oid": "1fcb5c5439747d5337930a368ca058911e133e0f",
+      "sha256": "06ecfc5f97e964bfe248f1743c04b1f09cb70138ca49df9e36b904eb1fbcdb0a",
+      "working_bytes_equal_committed_blob": true,
+      "anchors": [
+        {
+          "line": 7084,
+          "text": "  if (!block::valid_config_data(new_cfg_root, new_cfg_addr, true, false, old_mparams_)) {"
+        },
+        {
+          "line": 7115,
+          "text": "  auto transition_status = block::valid_config_transition(old_cfg_root, new_cfg_root);"
+        }
+      ]
+    }
+  ],
+  "searches": [
+    {
+      "argv": [
+        "rg",
+        "-n",
+        "get_new_consensus_config|target_rate_ms|K_collect|pending_slot_fee|withdraw_cap_per_block|retire_window_blocks",
+        "crypto/block",
+        "--glob",
+        "workchain-*"
+      ],
+      "exit_code": 1,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "rg",
+        "-n",
+        "get_new_consensus_config",
+        "crypto/block/block.cpp",
+        "crypto/block/workchain-execution-dispatch.cpp"
+      ],
+      "exit_code": 1,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "rg",
+        "-n",
+        "N_book|R_actual|K_collect|base_compute|RegisteredWorkchainAccountEngine",
+        "uno",
+        "--glob",
+        "*.{rs,h,cpp}",
+        "--glob",
+        "!**/archive/**",
+        "--glob",
+        "!**/vendor/**"
+      ],
+      "exit_code": 1,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "rg",
+        "-n",
+        "dry.run|valid_config_transition|readiness",
+        "tosctl/src",
+        "--glob",
+        "*.rs"
+      ],
+      "exit_code": 0,
+      "stdout": "tosctl/src/node-control/commands/src/commands/nodectl/vote_cmd.rs:142:    dry_run: bool,\ntosctl/src/node-control/commands/src/commands/nodectl/vote_cmd.rs:1040:        if self.dry_run {\ntosctl/src/node-control/commands/src/commands/nodectl/vote_cmd.rs:1043:                \"Dry-run mode: no bid was submitted. Remove --dry-run to participate.\"\n",
+      "stderr": ""
+    }
+  ],
+  "findings": {
+    "D36": "Required installation comparison absent from inspected generic functions; no concrete implementation identified in searched domains; exact delivery milestone not explicit.",
+    "business_profile": "Resource admission parsing exists; complete business resolver not identified. Operation-specific M3-M5 obligations must not all be charged to M1; memo explicitly excludes two M5 parameters from M1-M4.",
+    "readiness": "Section 14/18 pre-enablement requirement, not exclusively M8; complete tool delivery milestone not explicit. M8 launch rehearsal and M6 capacity/lifecycle evidence are separately assigned."
+  },
+  "limits": [
+    "No universal absence claim follows from a zero-match search.",
+    "No production changes, tests, builds, mutations, deployments or fixture access.",
+    "Source and citation verification only; no acceptance claim.",
+    "No new milestone assignment or profile design is made."
+  ],
+  "verification": {
+    "files": 12,
+    "cited_source_lines": 23,
+    "working_bytes_checked": true,
+    "coordinator_review": "pending"
+  }
+}
