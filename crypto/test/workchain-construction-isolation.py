@@ -91,6 +91,14 @@ def main():
             result = command(label + '-' + str(case), [args.build / 'test-workchain-construction-isolation', case, oracle])
             check_oracles()
             assert result.returncode == expected, f'{label}/{case}: expected {expected}, got {result.returncode}'
+            if case == 34 and expected in (0, 104):
+                observation = json.loads(result.stdout)
+                assert observation['visited'] == (21 if expected == 0 else 22)
+                assert (observation['status_code'] == -71034) == (expected == 104)
+                assert observation['points'][-1] == [('FinalBudgetCheck' if expected == 0 else 'GenerationCheck'), 0]
+                for key in ('intermediate_state', 'intermediate_messages', 'final_state_changed',
+                            'final_messages_changed', 'intermediate_snapshot_identity', 'final_snapshot_identity_changed'):
+                    assert observation[key] == 0
             if expected == 82:
                 observation = json.loads(result.stdout)
                 assert observation['intermediate_state'] == 1 and observation['intermediate_messages'] == 1
@@ -107,8 +115,13 @@ def main():
     assert frozen.returncode == 0
     report['oracle_sha256'] = {f.name: sha(f.read_bytes()) for f in sorted(oracle.iterdir())}
     assert set(report['oracle_sha256']) == {'before.state', 'before.messages', 'after.state', 'after.messages'}
-    runs('baseline', range(34), 0)
+    runs('baseline', range(35), 0)
+    predecessor_check = 'if (current_ != expected_predecessor) return td::Status::Error("candidate predecessor differs from prepared input");'
+    generation_checkpoint = 'TRY_STATUS(checkpoint({WorkchainConstructionStage::GenerationCheck, 0}));'
     controls = [
+        ('checkpoint-before-predecessor', core,
+         predecessor_check + '\n    ' + generation_checkpoint,
+         generation_checkpoint + '\n    ' + predecessor_check, [34], 104),
         ('direct-live-stage', core,
          'auto status = observe_workchain_construction(observer, point.stage, point.occurrence);',
          'if (point.stage == WorkchainConstructionStage::ValueFlowFreeze) current_ = std::make_shared<const WorkchainCandidateContents>(draft);\n'
@@ -184,6 +197,11 @@ def main():
             build(label + '-build')
             control['compiled'] = True
             deps(label + '-dependencies', name)
+            if label == 'checkpoint-before-predecessor':
+                # Do not combine source mutations: the old scenarios alone are
+                # run against this one order change to establish their blind spot.
+                runs(label + '-legacy', range(34), 0)
+                control['legacy_cases_passed'] = list(range(34))
             runs(label, cases, expected)
             control['behavior_confirmed'] = True
         finally:
@@ -201,7 +219,7 @@ def main():
         deps(label + '-restored-dependencies')
         runs(label + '-restored', cases, 0)
         print('restored:', label, flush=True)
-    runs('final', range(34), 0)
+    runs('final', range(35), 0)
     missing = command('missing-oracle-dependency', [args.build / 'test-workchain-construction-isolation', 0, args.work / 'absent'])
     assert missing.returncode == 92
     check_oracles()
@@ -209,7 +227,7 @@ def main():
     report['original_source_files_unchanged'] = True
     report['complete'] = True
     save()
-    print(f'PASS: 34 private cases, {len(controls)} isolated controls; coordinator review pending')
+    print(f'PASS: 35 private cases, {len(controls)} isolated controls; coordinator review pending')
 
 
 if __name__ == '__main__':
