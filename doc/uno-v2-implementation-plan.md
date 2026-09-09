@@ -3138,6 +3138,15 @@ CT patch are rejected. This closes undeclared-byte-drift detection, not semantic
 review of new secret-dependent sites, remote provenance attestation, seed-copy
 erasure, or full supply-chain acceptance. No dependency source/revision changed.
 
+- [ ] Independently review `uno/crypto/vendor/bulletproofs/src/range_proof/deterministic.rs`
+  as locally authored cryptographic code, separately from its provenance. Review
+  both independent residual equations, transcript binding, scalar/point decoding,
+  and the complete indirect verification call graph for RNG reachability. The
+  source reconstruction gate does not establish these mathematical or semantic
+  properties, and the file has no upstream blob to inherit such assurance from.
+  Earlier `SUPPLY_CHAIN.md` already described the local deltas in prose; the new
+  machine-readable inventory strengthens enforcement, not prior semantic approval.
+
 ### Real-entry runtime stop points and error transport
 
 The disk manager now records the actual collation promise result before moving
