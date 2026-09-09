@@ -37,6 +37,7 @@ uno_paths = (
     "assembly/native/build-ubuntu-appimages.sh",
     "assembly/native/build-ubuntu-portable.sh",
     "validator/impl/collator.cpp", "validator/impl/validate-query.cpp",
+    "validator-engine/CMakeLists.txt",
     "doc/workchain-native-ingress-policy.md",
     "scripts/measure-uno-audit-wave4.sh", "test/uno-snapshot-transport.*",
     ".github/workflows/build-tos-linux-x86-64-shared.yml",
