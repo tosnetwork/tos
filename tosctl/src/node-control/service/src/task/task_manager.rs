@@ -67,6 +67,11 @@ struct State {
     // started, so a finalizer joining an older generation cannot clobber a newer
     // state.
     generation: u64,
+    // Irreversible once set at process shutdown. enable(), restart() and the
+    // detached finalizer all refuse to start a new generation while it is set,
+    // so a control operation that races the shutdown (e.g. an HTTP handler that
+    // spawned a restart) cannot bring the task back up after it has stopped.
+    shutting_down: bool,
 }
 
 pub struct TaskController {
@@ -92,6 +97,7 @@ impl TaskController {
                 cancel: None,
                 handle: None,
                 generation: 0,
+                shutting_down: false,
             })),
             runtime_cfg,
         }
@@ -127,8 +133,28 @@ impl TaskController {
         st.updated_at = UnixTime::now();
     }
 
+    // Mark the controller as shutting down. Irreversible: after this, enable()
+    // and the finalizer will not start a new generation, so a control operation
+    // that races process shutdown cannot restart the task. disable() is still
+    // used separately to request the running generation to stop.
+    pub async fn begin_shutdown(&self) {
+        let mut st = self.state.lock().expect("failed to lock state");
+        st.shutting_down = true;
+        st.updated_at = UnixTime::now();
+    }
+
     pub async fn enable(&self) -> TaskStateView {
         let mut st = self.state.lock().expect("failed to lock state");
+        if st.shutting_down {
+            // Shutdown has begun; refuse to (re)start. A late restart/enable
+            // (e.g. from an HTTP handler that already spawned one) must not
+            // bring the task back up.
+            return TaskStateView {
+                enabled: st.enabled,
+                status: st.status,
+                updated_at: st.updated_at,
+            };
+        }
         st.enabled = true;
 
         match st.status {
@@ -214,7 +240,7 @@ impl TaskController {
                     // A newer generation already owns the state; nothing to do.
                     return;
                 }
-                if st.enabled {
+                if st.enabled && !st.shutting_down {
                     TaskController::start_generation(&mut st, &task, &runtime_cfg, name);
                     tracing::info!("{} task restarted after stop", name);
                 } else {
@@ -264,6 +290,30 @@ impl TaskController {
         // generation.
         let _ = self.disable().await;
         self.enable().await
+    }
+}
+
+// Request every task to stop, then wait for them all to actually reach Stopped
+// within ONE shared deadline. Each task is given only the time remaining until
+// `deadline`, so total shutdown time is bounded by a single budget regardless
+// of how many tasks there are or the iteration order (waiting each task for the
+// full grace separately would multiply the budget by the task count). A task
+// that overruns is logged rather than silently abandoned.
+pub async fn shutdown_tasks(
+    tasks: &std::collections::HashMap<&'static str, std::sync::Arc<TaskController>>,
+    deadline: tokio::time::Instant,
+) {
+    for task in tasks.values() {
+        let _ = task.disable().await;
+    }
+    for (name, task) in tasks.iter() {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if !task.wait_stopped(remaining).await {
+            tracing::warn!(
+                "{} task did not reach Stopped within the overall shutdown grace period",
+                name
+            );
+        }
     }
 }
 
@@ -899,6 +949,83 @@ mod tests {
         assert!(
             !ctrl.wait_stopped(std::time::Duration::from_millis(200)).await,
             "stuck task must time out"
+        );
+    }
+
+    // Once shutdown has begun, a control operation that races it (e.g. a restart
+    // an HTTP handler already spawned as its own task) must not bring the task
+    // back up.
+    #[tokio::test]
+    async fn shutdown_refuses_a_racing_restart() {
+        let (task, _started) = WaitForeverTask::new();
+        let ctrl = TaskController::new("test", task, runtime_config());
+
+        ctrl.enable().await;
+        assert_eq!(wait_for_status(&ctrl, TaskStatus::Running, 2000).await, TaskStatus::Running);
+        ctrl.disable().await;
+        assert_eq!(wait_for_status(&ctrl, TaskStatus::Stopped, 2000).await, TaskStatus::Stopped);
+
+        // Process shutdown begins.
+        ctrl.begin_shutdown().await;
+
+        // A restart that races the shutdown must be refused.
+        ctrl.restart().await;
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        let view = ctrl.status().await;
+        assert_eq!(
+            view.status,
+            TaskStatus::Stopped,
+            "a restart during shutdown must not start the task"
+        );
+        assert!(!view.enabled, "enable() during shutdown must be refused");
+    }
+
+    struct IgnoresCancellationTask;
+
+    #[async_trait::async_trait]
+    impl ServiceTask for IgnoresCancellationTask {
+        async fn run(
+            &self,
+            _ctx: CancellationCtx,
+            _app_config: Arc<AppConfig>,
+        ) -> anyhow::Result<()> {
+            std::future::pending::<()>().await;
+            Ok(())
+        }
+    }
+
+    // The shutdown wait is bounded by ONE overall deadline, not one per task:
+    // several tasks that never stop must not multiply the wait by the task count.
+    #[tokio::test]
+    async fn shutdown_tasks_wait_is_bounded_overall() {
+        const GRACE_MS: u64 = 300;
+        const TASK_COUNT: usize = 4;
+
+        let mut tasks: HashMap<&'static str, Arc<TaskController>> = HashMap::new();
+        let names: [&'static str; TASK_COUNT] = ["a", "b", "c", "d"];
+        for name in names {
+            let ctrl =
+                Arc::new(TaskController::new(name, IgnoresCancellationTask, runtime_config()));
+            ctrl.enable().await;
+            assert_eq!(
+                wait_for_status(&ctrl, TaskStatus::Running, 2000).await,
+                TaskStatus::Running
+            );
+            tasks.insert(name, ctrl);
+        }
+
+        let start = std::time::Instant::now();
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_millis(GRACE_MS);
+        shutdown_tasks(&tasks, deadline).await;
+        let elapsed = start.elapsed();
+
+        // With a shared deadline the total is ~one grace period. A per-task
+        // budget would be ~TASK_COUNT * GRACE_MS.
+        assert!(
+            elapsed < std::time::Duration::from_millis(GRACE_MS * 2),
+            "overall shutdown wait was not bounded by a single budget: {:?}",
+            elapsed
         );
     }
 }
