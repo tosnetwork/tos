@@ -3,8 +3,12 @@
 This unit does not add a collator path and does not establish live I13e
 acceptance. The shared activation classifier and its earlier-failure self-check
 are owned by A. B defines no alternative diagnostic, source-origin check, or
-classification fallback. The resolver calibration CTest currently fails explicitly
-until that helper is wired; this pending dependency is not a skipped test.
+classification fallback. The resolver calibration CTest imports that helper, runs its colocated self-check,
+and invokes its production-origin check. It fails if the helper is missing; that
+is not a skipped test. Until the shared source is merged into this worktree, an
+explicit WORKCHAIN_ACTIVATION_HELPER path can reference the one committed helper
+in the integration worktree. Evidence must pin that helper's separate source
+commit and byte hash. No local copy or fallback is permitted.
 
 `test-workchain-activation-control.cpp` constructs fresh Param 8, 12 and 84 cell
 dictionaries inside each test case. There is no configuration path argument,
@@ -21,16 +25,15 @@ multi-account engine/profile fixture. It executes the real
 registered + disabled fails; unregistered cases fail earlier. In particular the
 production boundary itself generates -7201 for both the earlier failure and the
 activation failure. No test-side conversion supplies that code. These real status
-observations will feed the shared helper's identity check. A disabled resolver
+observations feed the shared helper's identity check. A disabled resolver
 success exits immediately with 323 and requires coordinator reporting.
 
 The resolver probe does not produce transactions or export candidates. It does
 NOT invent zero counters to impersonate collator observations. Future live callers
 must supply actual host transaction counts and candidate-export observations to
-`workchain_activation_control.check_pair`, together with A's shared classifier.
+`workchain_activation_control.check_pair`, which imports A's shared classifier.
 Source uniqueness and the shared classifier self-check must be run by that same
-acceptance driver according to the shared helper API. The pending calibration
-entry must not be used as a completed acceptance result.
+acceptance driver according to the shared helper API. Resolver calibration must not be used as a completed live acceptance result.
 
 `check_pair_context` checks necessary, insufficient record constraints: non-success
 and local failure code, zero transactions, no exports, same run/path/input/common

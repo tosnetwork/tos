@@ -2,7 +2,7 @@
 
 Records must come from the same actual host path. This checker does not produce
 host observations or grant provenance to caller-supplied fields. The caller must
-pass the shared activation helper; this module defines no rejection classifier.
+use the shared activation helper; this module defines no rejection classifier.
 """
 class ControlFailure(RuntimeError):
     def __init__(self, identity):
@@ -35,6 +35,9 @@ def check_pair_context(enabled, closed):
     require(enabled['reached_required_frontier'] is True, 314)
 
 
-def check_pair(enabled, closed, is_activation_rejection):
+def check_pair(enabled, closed, *, boundary="collator"):
+    # One implementation shared with all other reverse controls. Missing helper
+    # and unknown statuses propagate as failures; there is no local substitute.
+    from workchain_activation_rejection import is_activation_rejection
     check_pair_context(enabled, closed)
-    require(is_activation_rejection(closed['status_code'], closed['status_message']), 315)
+    require(is_activation_rejection(closed['status_code'], closed['status_message'], boundary=boundary), 315)
