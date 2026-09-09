@@ -4,6 +4,7 @@
 #include <vector>
 
 #include "block/transaction.h"
+#include "block/workchain-construction-observer.h"
 #include "block/block-parse.h"
 
 namespace block {
@@ -28,7 +29,7 @@ td::Result<WorkchainFinalImportEvidence> build(
     const std::vector<td::Ref<vm::Cell>>& envelopes,
     const std::map<td::Bits256, td::Ref<vm::Cell>>& transactions,
     std::uint64_t max_inbound, std::uint64_t max_transactions, int extra_validation_cells,
-    const ResolveAccount& resolve_account) {
+    const ResolveAccount& resolve_account, const WorkchainConstructionObserver& observer = {}) {
   if (workchain < 0 || global_version < transaction::Transaction::kStorageParticipantMinGlobalVersion ||
       envelopes.size() > max_inbound || transactions.size() > max_transactions || extra_validation_cells <= 0) {
     return td::Status::Error("invalid final import context or limits");
@@ -99,6 +100,8 @@ td::Result<WorkchainFinalImportEvidence> build(
                      vm::Dictionary::SetMode::Add)) {
       return td::Status::Error("duplicate or unencodable final import");
     }
+    TRY_STATUS(observe_workchain_construction(observer, WorkchainConstructionStage::InboundStage,
+        static_cast<std::size_t>(&root - envelopes.data())));
   }
   // Verify the complete Native dictionary augmentation, not only per-record
   // arithmetic. A successful return contains an actual InMsgDescr root.
@@ -122,10 +125,11 @@ inline td::Result<WorkchainFinalImportEvidence> build_workchain_final_imports(
     tos::WorkchainId workchain, int global_version,
     const std::vector<td::Ref<vm::Cell>>& envelopes,
     const std::map<td::Bits256, td::Ref<vm::Cell>>& transactions,
-    std::uint64_t max_inbound, std::uint64_t max_transactions, int extra_validation_cells) {
+    std::uint64_t max_inbound, std::uint64_t max_transactions, int extra_validation_cells,
+    const WorkchainConstructionObserver& observer = {}) {
   return final_import_detail::build(workchain, global_version, envelopes, transactions, max_inbound,
                                     max_transactions, extra_validation_cells,
-                                    [](const td::Bits256& destination) { return destination; });
+                                    [](const td::Bits256& destination) { return destination; }, observer);
 }
 
 // Explicit V2 record shape, not activation of a Native validation exception.
@@ -140,13 +144,14 @@ inline td::Result<WorkchainFinalImportEvidence> build_workchain_routed_final_imp
     const std::vector<td::Ref<vm::Cell>>& envelopes,
     const std::map<td::Bits256, td::Ref<vm::Cell>>& transactions,
     const td::Bits256& coordinator, const td::Bits256& custody,
-    std::uint64_t max_inbound, std::uint64_t max_transactions, int extra_validation_cells) {
+    std::uint64_t max_inbound, std::uint64_t max_transactions, int extra_validation_cells,
+    const WorkchainConstructionObserver& observer = {}) {
   if (coordinator == custody) return td::Status::Error("final import roles must be distinct");
   return final_import_detail::build(workchain, global_version, envelopes, transactions, max_inbound,
                                     max_transactions, extra_validation_cells,
                                     [&](const td::Bits256& destination) {
                                       return destination == custody ? custody : coordinator;
-                                    });
+                                    }, observer);
 }
 
 }  // namespace block

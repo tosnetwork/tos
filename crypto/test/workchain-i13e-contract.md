@@ -1,3 +1,28 @@
+> **D47 amendment (memo c7d39fa3): obligation split.** The original
+> storage-oriented contract and pending assertion source below are retained for
+> traceability, not treated as the current single atomicity claim.
+>
+> (a) Failed construction leaves no residue in the live candidate, including
+> same-block consumers and observations later rolled back. (b) Consensus grants
+> block authority; workchain construction must introduce no alternative grant.
+> (c) Local availability and recovery are a separate work item, outside I13e.
+> Neither absence of an identified counterexample nor nonfinal serving proves
+> that all external consumers enforce acceptance. Propagation may include final
+> signatures; it must not be described uniformly as candidate-only propagation.
+>
+> Original positions 1–21 and 23–24 belong to (a): 23 construction positions.
+> Position 24 is now `BeforeCandidateInstall`, with no storage/finality meaning.
+> Positions 22 (`ReferencedCellsPersist`) and 25 (`AtomicStoreAbort`) belong to
+> (c). The old durable-decision, reply-loss, reopening and retry assertions also
+> remain (c), not construction-isolation evidence. The previous D45/storage
+> reachability description below is historical and must not be used to claim
+> current stage reachability. No rejection gate is moved by this annotation.
+>
+> Mapping a position to (a) does not make it implemented or observed. Private
+> builders, final context providers and live same-block consumers still require
+> concrete wiring and calibrated controls. The original pending adapter remains
+> undefined; its missing dependency must not become a skip or a passing model.
+
 # I13e atomic publication contract proposal
 
 **Contract approved by D47, with the clarifications below. Not an implementation
@@ -63,6 +88,15 @@ One generation binds all of the following, including references between them:
 - processing metadata affecting subsequent execution: logical-time bounds,
   counters and resource/budget totals, and any other authoritative cached value;
 - batch identity, committed-batch count and message identities/payload bindings.
+
+Every publication field is supplied by an identified host provider; see the
+[field/provider specification](../block/workchain-candidate-construction.md). In particular,
+the publisher receives the batch identity and committed-batch count explicitly.
+It must not compute or repair either value from AccountBlocks, infer count one
+from one invocation, or increment a previous count. A separate I13a checker
+recomputes from actual block content and compares with the submitted value.
+Fields whose providers are missing remain missing inputs, not values derived
+inside the publisher. The approved assertion code is unchanged.
 
 The committed-batch count couples I13e to **I13a**, which must enforce exactly
 one logical batch per block. I13e requires the count and batch contents to commit
