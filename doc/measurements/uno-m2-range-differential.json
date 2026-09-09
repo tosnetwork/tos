@@ -19,14 +19,17 @@
       "offset": 3178,
       "from": "-self.t_x_blinding]),",
       "to": "self.t_x_blinding]),",
-      "original_sha256": "fc7434cd5d49d5e226bac20093c228542479292c5e39d37af01464a73899b310",
-      "mutant_sha256": "18c97f99fedf453b520c72323ade7bf04ebe3a5712d34711760f44ca92fd38cb",
-      "restored_sha256": "fc7434cd5d49d5e226bac20093c228542479292c5e39d37af01464a73899b310",
-      "restore_audit_sha256": "18c97f99fedf453b520c72323ade7bf04ebe3a5712d34711760f44ca92fd38cb",
+      "original_sha256": "16169cdd82bdb7d25318bfae3def59d7485499a112c69622ee2afe3ad599692b",
+      "mutant_sha256": "f851cf50935ba7d2d1c8dcd791977fb4286e3357b91fb011a97c8604f0910802",
+      "restored_sha256": "16169cdd82bdb7d25318bfae3def59d7485499a112c69622ee2afe3ad599692b",
+      "restore_audit_sha256": "f851cf50935ba7d2d1c8dcd791977fb4286e3357b91fb011a97c8604f0910802",
       "result": {
-        "guard": "residual-reconstruction",
-        "case": "range/0/8/1/valid"
-      }
+        "guard": "acceptance",
+        "case": "range/0/8/1/valid",
+        "reference": "1",
+        "candidate": "0"
+      },
+      "evidence_report": "doc/measurements/uno-m2-polynomial-sign-rerun.json"
     },
     {
       "label": "omit-ip-check",
@@ -315,9 +318,9 @@
       ],
       "build_exit": 0,
       "run_exit": 0,
-      "binary_sha256": "88e0934b8ba3ccc6c4f4599c7414a026461adf53d0b0b3c84c90fdc90ef0b528",
+      "binary_sha256": "bda8848de6e13d4b54cf38f7186857b70318c1e035890e99314bbaecb23af082",
       "stdout_sha256": "933a5c68804667a9d294ad77fbbec5b7c8717dcf46def75ae8483d224d8b1b8b",
-      "stderr_sha256": "5647321bc3fa99aeaf493d6a00204a7c1386ef0f697df1002f58bec14153a671"
+      "stderr_sha256": "5e4ea1807016b1dd7c9b42c5ac576579d723e53ca3017e9fe5846f8540b734b1"
     },
     {
       "label": "residual-boundary",
@@ -444,5 +447,12 @@
   "base_commit": "1d6b99d8e4f862e2e673386d9551bcda61655bd1",
   "scope": "Shared-base patch semantics, finite empirical coverage. No external SEND/COLLECT oracle or independent implementation. Collision inputs exercise the residual boundary, not forged full Fiat-Shamir proofs.",
   "zero_factor_exception": "Excluded by D41 decision memo@91ef26f9 and recorded separately. Honest Scalar::random zero probability is approximately 2^-252; not a claim of a practical attack.",
-  "artifact_directory": "doc/measurements/uno-m2-range-differential"
+  "artifact_directory": "doc/measurements/uno-m2-range-differential",
+  "control_revisions": [
+    {
+      "label": "wrong-polynomial-sign",
+      "report": "doc/measurements/uno-m2-polynomial-sign-rerun.json",
+      "reason": "Replaces the observed-source baseline with direct committed-source evidence. The measured guard is acceptance, not residual reconstruction."
+    }
+  ]
 }

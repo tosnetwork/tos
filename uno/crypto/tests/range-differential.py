@@ -75,6 +75,7 @@ def main():
     parser.add_argument("--upstream-git", required=True, type=Path)
     parser.add_argument("--work-dir", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument("--only-polynomial-sign", action="store_true")
     args = parser.parse_args()
     work, output = args.work_dir.resolve(), args.output.resolve()
     work.mkdir(parents=True, exist_ok=False); output.mkdir(parents=True, exist_ok=False)
@@ -168,6 +169,29 @@ def main():
     baseline = execute("local", "local-independent", independent)
     comparison = compare(upstream.stdout, baseline.stdout); assert comparison["guard"] == "equal", comparison
     assert comparison["accepted"] == 72, comparison
+    def sign_control():
+        def wrong_sign():
+            r = execute("local", "wrong-polynomial-sign", independent)
+            failure = compare(upstream.stdout, r.stdout)
+            assert failure["guard"] == "acceptance" and failure["case"].endswith("/valid"), failure
+            return failure
+        replacement("wrong-polynomial-sign", "local", "src/range_proof/deterministic.rs",
+                    "-self.t_x_blinding]),", "self.t_x_blinding]),", wrong_sign)
+    if args.only_polynomial_sign:
+        committed = subprocess.check_output(["git", "show", "HEAD:uno/crypto/vendor/bulletproofs/src/range_proof/deterministic.rs"], cwd=ROOT)
+        assert committed == (work/"local/src/range_proof/deterministic.rs").read_bytes()
+        sign_control()
+        restored = execute("local", "local-restored", independent)
+        assert restored.stdout == baseline.stdout
+        gates.validate_vendor(work/"local"); authenticate_upstream(work/"upstream")
+        report = {"schema": 1, "unit": "committed-source-polynomial-sign-control", "comparison": comparison,
+                  "controls": controls, "events": events, "committed_source_sha256": sha(committed),
+                  "base_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip(),
+                  "runner_sha256": sha(Path(__file__).read_bytes()), "harness_sha256": sha(source),
+                  "scope": "A single coefficient mutation starting directly from committed source, without observation adapters. The acceptance guard is measured, not the observed-residual comparator."}
+        (output/"measurement.json").write_text(json.dumps(report,indent=2)+"\n")
+        print("PASS: committed-source polynomial sign control, compiled rejection, byte-exact restore audit")
+        return
     for factor in [2, 255]:
         result = execute("upstream", f"upstream-factor-{factor}", std, factor=factor)
         assert compare(upstream.stdout, result.stdout, True)["guard"] == "equal"
@@ -194,18 +218,9 @@ def main():
         assert result.stdout == baseline.stdout
         decomposition = compare_residuals(up_observation.stderr, result.stderr)
         assert decomposition["guard"] == "equal", decomposition
-        # The observer is the fixed baseline for this single coefficient
-        # control. Only the residual comparison is consulted, so an overlapping
-        # acceptance difference cannot masquerade as this guard firing.
-        def wrong_sign():
-            r = execute("local", "wrong-polynomial-sign", independent)
-            failure = compare_residuals(up_observation.stderr, r.stderr)
-            assert failure["guard"] == "residual-reconstruction", failure
-            return failure
-        replacement("wrong-polynomial-sign", "local", "src/range_proof/deterministic.rs",
-                    "-self.t_x_blinding]),", "self.t_x_blinding]),", wrong_sign)
         return decomposition
     replacement("observe-independent-residuals", "local", "src/range_proof/deterministic.rs", local_anchor, local_probe, observe_local, probes)
+    sign_control()
     residual_baseline = execute("local", "residual-boundary", exported, residual=True)
     assert boundary(residual_baseline.stdout)["guard"] == "equal"
     original = "    ip.is_identity() && poly.is_identity()"

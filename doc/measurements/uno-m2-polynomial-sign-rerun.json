@@ -1,0 +1,113 @@
+{
+  "schema": 1,
+  "unit": "committed-source-polynomial-sign-control",
+  "comparison": {
+    "guard": "equal",
+    "cases": 357,
+    "accepted": 72
+  },
+  "controls": [
+    {
+      "label": "wrong-polynomial-sign",
+      "side": "local",
+      "path": "src/range_proof/deterministic.rs",
+      "offset": 3178,
+      "from": "-self.t_x_blinding]),",
+      "to": "self.t_x_blinding]),",
+      "original_sha256": "16169cdd82bdb7d25318bfae3def59d7485499a112c69622ee2afe3ad599692b",
+      "mutant_sha256": "f851cf50935ba7d2d1c8dcd791977fb4286e3357b91fb011a97c8604f0910802",
+      "restored_sha256": "16169cdd82bdb7d25318bfae3def59d7485499a112c69622ee2afe3ad599692b",
+      "restore_audit_sha256": "f851cf50935ba7d2d1c8dcd791977fb4286e3357b91fb011a97c8604f0910802",
+      "result": {
+        "guard": "acceptance",
+        "case": "range/0/8/1/valid",
+        "reference": "1",
+        "candidate": "0"
+      }
+    }
+  ],
+  "events": [
+    {
+      "label": "upstream-factor-1",
+      "build_command": [
+        "cargo",
+        "build",
+        "--locked",
+        "--offline",
+        "--release",
+        "-j32",
+        "--no-default-features",
+        "--features",
+        "std-proof"
+      ],
+      "build_exit": 0,
+      "run_exit": 0,
+      "binary_sha256": "cabb7b5f581901226ec228c99655cc7d19883f9e31cb973a6e8ebffffc3d4590",
+      "stdout_sha256": "f5d537508c0198980af05868b0f45270363f55b6cf10ef7060629a05ef9a06b3",
+      "stderr_sha256": "5e4ea1807016b1dd7c9b42c5ac576579d723e53ca3017e9fe5846f8540b734b1"
+    },
+    {
+      "label": "local-independent",
+      "build_command": [
+        "cargo",
+        "build",
+        "--locked",
+        "--offline",
+        "--release",
+        "-j32",
+        "--no-default-features",
+        "--features",
+        "std-proof,independent"
+      ],
+      "build_exit": 0,
+      "run_exit": 0,
+      "binary_sha256": "24163b68dfc1bbad7f7d0c079022cb0a387c91c9ed453c693519c8866773ab26",
+      "stdout_sha256": "008c46da0d3ff99ba3b27c6890758998cebb7611b4ffdbdaafe37a0820b5a75a",
+      "stderr_sha256": "5e4ea1807016b1dd7c9b42c5ac576579d723e53ca3017e9fe5846f8540b734b1"
+    },
+    {
+      "label": "wrong-polynomial-sign",
+      "build_command": [
+        "cargo",
+        "build",
+        "--locked",
+        "--offline",
+        "--release",
+        "-j32",
+        "--no-default-features",
+        "--features",
+        "std-proof,independent"
+      ],
+      "build_exit": 0,
+      "run_exit": 0,
+      "binary_sha256": "bda8848de6e13d4b54cf38f7186857b70318c1e035890e99314bbaecb23af082",
+      "stdout_sha256": "933a5c68804667a9d294ad77fbbec5b7c8717dcf46def75ae8483d224d8b1b8b",
+      "stderr_sha256": "5e4ea1807016b1dd7c9b42c5ac576579d723e53ca3017e9fe5846f8540b734b1"
+    },
+    {
+      "label": "local-restored",
+      "build_command": [
+        "cargo",
+        "build",
+        "--locked",
+        "--offline",
+        "--release",
+        "-j32",
+        "--no-default-features",
+        "--features",
+        "std-proof,independent"
+      ],
+      "build_exit": 0,
+      "run_exit": 0,
+      "binary_sha256": "24163b68dfc1bbad7f7d0c079022cb0a387c91c9ed453c693519c8866773ab26",
+      "stdout_sha256": "008c46da0d3ff99ba3b27c6890758998cebb7611b4ffdbdaafe37a0820b5a75a",
+      "stderr_sha256": "5e4ea1807016b1dd7c9b42c5ac576579d723e53ca3017e9fe5846f8540b734b1"
+    }
+  ],
+  "committed_source_sha256": "16169cdd82bdb7d25318bfae3def59d7485499a112c69622ee2afe3ad599692b",
+  "base_commit": "e5bf5c6ac2235216901dd28958d1b1572fb3cf3f",
+  "runner_sha256": "f810bc0b468a3f7962b7b806ac2fdd9eff07ac6eff579cccffcf636849f7b8f0",
+  "harness_sha256": "69933f370d870a18b265f16d37fd2b1295bfbba9ab12d3124185a92105b448c0",
+  "scope": "A single coefficient mutation starting directly from committed source, without observation adapters. The acceptance guard is measured, not the observed-residual comparator.",
+  "artifact_directory": "doc/measurements/uno-m2-polynomial-sign-rerun"
+}

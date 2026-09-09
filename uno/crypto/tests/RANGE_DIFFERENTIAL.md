@@ -79,6 +79,11 @@ is the preceding observed residual comparison plus the existing algebraic
 review. Finite samples cannot prove there are no other divergences on all
 possible inputs, and no claim of such a universal empirical proof is made.
 
+Collision rows have four columns: case ID, `ip + c*poly` is identity, actual
+predicate acceptance, and c bytes. In `merge-residuals.tsv`, the second column
+is 1 for all 16 rows, while the third column is 1 only for case 0 (c=1).
+The unweighted merge mutation accepts one of these 16 inputs, not all 16.
+
 ## Attributed controls
 
 Every semantic control compiles, runs to completion, and fails a specific
@@ -86,18 +91,21 @@ structured criterion; error strings are not used for attribution:
 
 | Single change | Consulted guard | Distinguishing input |
 |---|---|---|
-| Flip polynomial blinding sign | `residual-reconstruction` | Real computed upstream/local points; acceptance guard is not consulted |
+| Flip polynomial blinding sign | `acceptance` | Valid proof rejects after one coefficient changes in committed source |
 | Omit IP check | `acceptance` | Altered e-blinding with observed zero polynomial residual |
 | Omit polynomial check | `residual-poly` | `(0,G)` accepted only by the missing polynomial guard |
 | Merge residuals with coefficient one | `collision` | Nonzero `(−G,G)`; both one-residual cases still reject |
 | Omit c transcript event | `transcript-tail` | Valid proof still accepts, but post-verification challenge changes |
 
-The sign control uses the observed source as its declared baseline and changes
-one coefficient. Its restore audit first restores that exact observed source;
-the outer observation adapter then restores the authenticated original. Each
-record includes exact from/to bytes and original, mutant, restored and replay
-hashes. A final rebuilt baseline must match, and both source trees are
-reauthenticated after all observations and mutations.
+The sign control starts directly from the committed source with no observation
+adapter. `--only-polynomial-sign` reruns this control and its baseline/restored
+checks without repeating the other controls. The rerun supersedes the initial
+sign-control record whose baseline included the read-only observer. The rerun
+measures the acceptance guard; it must not be cited as a mutation control of the
+observed-residual comparator. Each record includes exact from/to bytes and
+original, mutant, restored and replay hashes. A final rebuilt baseline must
+match, and both source trees are reauthenticated after all observations and
+mutations.
 
 This remains shared-base patch regression evidence. It is not independent
 implementation verification and does not provide an external SEND/COLLECT
