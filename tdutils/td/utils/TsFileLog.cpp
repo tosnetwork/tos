@@ -19,7 +19,6 @@
 */
 
 #include <array>
-#include <limits>
 
 #include "td/utils/FileLog.h"
 #include "td/utils/Slice.h"
@@ -81,7 +80,13 @@ class TsFileLog : public LogInterface {
   }
 
   Status init_info(Info *info) {
-    TRY_STATUS(info->log.init(get_path(info), std::numeric_limits<int64>::max(), info->id == 0 && redirect_stderr_));
+    // Pass the configured rotation threshold through to each per-thread
+    // FileLog. Historically this was hardcoded to int64 max, which left the
+    // stored rotate_threshold_ (and TsFileLog's DEFAULT_ROTATE_THRESHOLD)
+    // dead: the on-disk log grew without bound. Each thread keeps its own
+    // file pair, so this bounds every file to rotate_threshold_ (+ at most one
+    // trailing append) plus its retained `.old`.
+    TRY_STATUS(info->log.init(get_path(info), rotate_threshold_, info->id == 0 && redirect_stderr_));
     info->is_inited = true;
     return Status::OK();
   }

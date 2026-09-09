@@ -174,7 +174,11 @@ class HttpProxy : public td::actor::Actor {
       td::actor::ActorId<HttpProxy> proxy_;
     };
 
-    server_ = tos::http::HttpServer::create(port_, std::make_shared<Cb>(actor_id(this)));
+    // A proxy fans out many concurrent client connections, so it needs more
+    // headroom than the library default, but still a finite bound.
+    tos::http::HttpServer::Limits limits;
+    limits.max_connections = 4096;
+    server_ = tos::http::HttpServer::create(port_, std::make_shared<Cb>(actor_id(this)), limits);
   }
 
   void receive_request(

@@ -28,6 +28,7 @@
 #include "td/utils/format.h"
 #include "td/utils/logging.h"
 #include "td/utils/port/path.h"
+#include "td/utils/port/Stat.h"
 #include "td/utils/port/thread.h"
 #include "td/utils/tests.h"
 
@@ -140,5 +141,50 @@ TEST(Log, TsLogger) {
     };
     return td::make_unique<FileLog>();
   });
+}
+
+TEST(Log, TsFileLogRotationBoundsFileSize) {
+  // A TsFileLog created with a finite rotation threshold must actually rotate:
+  // once the active file passes the threshold it is renamed to `.old` and a
+  // fresh truncated active file is opened, so no single file grows without
+  // bound. This guards the historical dead bound where init_info() hardcoded
+  // the per-thread FileLog threshold to int64 max, leaving the configured
+  // rotate threshold ignored and the on-disk log unbounded. Reverting
+  // init_info() to std::numeric_limits<int64>::max() makes this test fail: the
+  // active file then retains all ~400 KiB written below, far above the 16 KiB
+  // threshold.
+  const td::int64 threshold = 16 * 1024;
+  const std::string base = "tmplog_rotate_test";
+  std::string line(200, 'x');
+  line += '\n';
+  const int lines = 2000;  // ~400 KiB total, >> threshold
+
+  std::vector<std::string> paths;
+  {
+    auto log = td::TsFileLog::create(base, threshold, false).move_as_ok();
+    for (int i = 0; i < lines; i++) {
+      log->append(line);
+    }
+    paths = log->get_file_paths();
+    // Every active per-thread file that exists must be bounded by the
+    // threshold plus at most one trailing append (rotation happens after a
+    // whole append, so a bounded overshoot is expected).
+    bool saw_written_file = false;
+    for (auto &path : paths) {
+      auto r_stat = td::stat(path);
+      if (r_stat.is_error()) {
+        continue;  // per-thread slot that was never written to
+      }
+      saw_written_file = true;
+      auto size = r_stat.ok().size_;
+      ASSERT_TRUE(size <= threshold + static_cast<td::int64>(line.size()));
+    }
+    ASSERT_TRUE(saw_written_file);
+  }
+
+  for (auto &path : paths) {
+    td::unlink(path).ignore();
+    td::unlink(path + ".old").ignore();
+  }
 }
 #endif

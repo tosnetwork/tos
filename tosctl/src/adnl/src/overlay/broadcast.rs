@@ -67,6 +67,31 @@ pub(crate) enum BroadcastData<'a> {
 
 pub(crate) type BroadcastId = [u8; 32];
 
+/// Take ownership of `bcast_id` in `owned` only if `verify` succeeds.
+///
+/// The dedup marker (`OwnedBroadcast::Send`) is produced from inside the map's
+/// value factory, which the lockfree map runs only when the id is absent, so a
+/// `verify` failure discards the insertion: a forged-id or bad-signature
+/// broadcast can never leave a permanent entry behind. Verifying before taking
+/// ownership (rather than inserting first and rolling back on failure) keeps
+/// the signed-payload construction inside the guarded section and is safe under
+/// concurrent inserts of the same id. Duplicates (id already present) skip
+/// verification, preserving the pre-existing fast path.
+///
+/// Returns `Ok(true)` if `bcast_id` was already owned (duplicate), `Ok(false)`
+/// if this call took ownership, or the `verify` error with nothing inserted.
+fn own_broadcast_verified(
+    owned: &lockfree::map::Map<BroadcastId, OwnedBroadcast>,
+    bcast_id: BroadcastId,
+    mut verify: impl FnMut() -> Result<()>,
+) -> Result<bool> {
+    let inserted = add_unbound_object_to_map(owned, bcast_id, || {
+        verify()?;
+        Ok(OwnedBroadcast::Send)
+    })?;
+    Ok(!inserted)
+}
+
 pub(crate) enum BroadcastJob {
     Background(u32),
     Foreground(Broadcast),
@@ -1387,23 +1412,11 @@ impl BroadcastSimpleProtocol {
     ) -> Result<BroadcastCheckInfo> {
         let src_key: Arc<dyn KeyOption> = (&bcast.src).try_into()?;
         let bcast_id = Self::calc_broadcast_id(&bcast.data, &src_key, bcast.flags as u32)?;
-        let dup = if add_unbound_object_to_map(&ctx.overlay.owned_broadcasts, bcast_id, || {
-            Ok(OwnedBroadcast::Send)
-        })? {
+        let dup = own_broadcast_verified(&ctx.overlay.owned_broadcasts, bcast_id, || {
             let to_sign = Self::calc_to_sign(&bcast_id, bcast.date)?;
-            // The dedup insert above is speculative: it happens before the
-            // signature is checked. If verification fails, roll it back so an
-            // attacker cannot leak a permanent owned_broadcasts entry per forged
-            // broadcast id. A bad-signature broadcast never propagates, so the
-            // brief window in which the entry exists is harmless.
-            if let Err(e) = src_key.verify(&to_sign, &bcast.signature) {
-                ctx.overlay.owned_broadcasts.remove(&bcast_id);
-                return Err(e);
-            }
-            false
-        } else {
-            true
-        };
+            src_key.verify(&to_sign, &bcast.signature)?;
+            Ok(())
+        })?;
         let data_len = bcast.data.len();
         Ok(BroadcastCheckInfo {
             bcast_id,
@@ -2040,15 +2053,11 @@ impl BroadcastProtocol<BroadcastTwostepSimple> for BroadcastTwostepSimpleProtoco
             bcast.flags as u32,
             &bcast.extra,
         )?;
-        let dup = if add_unbound_object_to_map(&ctx.overlay.owned_broadcasts, bcast_id, || {
-            Ok(OwnedBroadcast::Send)
-        })? {
+        let dup = own_broadcast_verified(&ctx.overlay.owned_broadcasts, bcast_id, || {
             let to_sign = Self::calc_to_sign(bcast_id, &bcast.data)?;
             src_key.verify(&to_sign, &bcast.signature)?;
-            false
-        } else {
-            true
-        };
+            Ok(())
+        })?;
         let data_len = bcast.data.len();
         Ok(BroadcastCheckInfo {
             bcast_id,
@@ -2122,5 +2131,40 @@ impl BroadcastProtocol<BroadcastTwostepSimple> for BroadcastTwostepSimpleProtoco
             }
             .into_boxed(),
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn own_broadcast_verified_does_not_leak_on_verify_failure() {
+        let owned = lockfree::map::Map::<BroadcastId, OwnedBroadcast>::new();
+        let id: BroadcastId = [7u8; 32];
+
+        // A failed verification must leave nothing behind: no permanent
+        // owned_broadcasts entry for a forged / bad-signature broadcast.
+        // Inserting the marker before verifying -- the bug this guards against,
+        // which the two-step-simple path had -- would leave `id` present here.
+        let bad = own_broadcast_verified(&owned, id, || Err(error!("bad signature")));
+        assert!(bad.is_err());
+        assert!(owned.get(&id).is_none());
+
+        // A successful verification takes ownership (not a duplicate) and inserts.
+        let dup = own_broadcast_verified(&owned, id, || Ok(())).unwrap();
+        assert!(!dup);
+        assert!(owned.get(&id).is_some());
+
+        // A resend of an already-owned id is a duplicate and must not re-run
+        // verification, so a resend cannot force repeated signature checks.
+        let mut verified_again = false;
+        let dup2 = own_broadcast_verified(&owned, id, || {
+            verified_again = true;
+            Ok(())
+        })
+        .unwrap();
+        assert!(dup2);
+        assert!(!verified_again);
     }
 }

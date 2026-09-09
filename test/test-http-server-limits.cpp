@@ -356,3 +356,16 @@ TEST(HttpServerLimits, rldp_request_rebuild_rejects_oversized_content_length) {
   auto r = tos::http::HttpRequest::create(*f);
   ASSERT_TRUE(r.is_error());
 }
+
+TEST(HttpServerLimits, default_connection_limit_is_finite) {
+  // The library default must be a finite cap, not 0 ("unlimited"). Every
+  // service that constructs an HttpServer without its own Limits inherits this
+  // default, so a 0 here would silently leave those consumers unbounded -- the
+  // dead guard this change removes. The connection_cap test above proves the
+  // guard rejects the (limit+1)-th connection when the limit is positive;
+  // this proves no consumer can end up with a non-positive (unlimited) limit
+  // by default. Reverting Limits::max_connections to 0 makes this fail.
+  tos::http::HttpServer::Limits limits;
+  ASSERT_TRUE(limits.max_connections != 0);
+  ASSERT_TRUE(limits.max_connections <= (static_cast<size_t>(1) << 20));
+}
