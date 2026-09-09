@@ -331,10 +331,26 @@ struct OverlayOptions {
   td::actor::ActorId<adnl::AdnlSenderEx> plumtree_broadcast_sender_ = {};
   PlumtreeFecOptions plumtree_fec_options_;
 
+  // Broadcast rate/size limits fed to the per-source BroadcastsLimiter. Left at
+  // {} the window duration is 0, and RateLimiterWindow::check() then always
+  // returns true -- so the precheck_new_broadcast gate is a dead guard (audit
+  // H1). Defaults below make the UNAUTHORIZED limiter live: it is shared across
+  // all untrusted (NeedCheck) sources and is the real remote DoS vector, which
+  // in practice only bites on public overlays -- private/consensus overlays
+  // admit only authorized keys, which use the authorized limiter below. These
+  // are conservative ceilings, not measured values: override per-overlay (each
+  // construction site passes its own OverlayOptions) and confirm against real
+  // shard-overlay broadcast rates.
+  //
+  // The AUTHORIZED limiter is intentionally left unconstrained by rate ({}): it
+  // is per-validator-key, and throttling it would risk consensus liveness
+  // (validators' consensus broadcasts). Authorized in-flight memory is already
+  // bounded by the in-flight broadcast count ceiling (kMaxInFlight*Broadcasts).
   td::RateLimiterWindow::Params auth_broadcast_rate_limit_ = {};
   td::RateLimiterWindow::Params auth_broadcast_size_rate_limit_ = {};
-  td::RateLimiterWindow::Params unauth_broadcast_rate_limit_ = {};
-  td::RateLimiterWindow::Params unauth_broadcast_size_rate_limit_ = {};
+  td::RateLimiterWindow::Params unauth_broadcast_rate_limit_ = {/*duration=*/10.0, /*limit=*/1024};
+  td::RateLimiterWindow::Params unauth_broadcast_size_rate_limit_ = {/*duration=*/10.0,
+                                                                     /*limit=*/256u << 20};
 };
 
 using PlumtreeFecOptions = OverlayOptions::PlumtreeFecOptions;

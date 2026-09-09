@@ -112,6 +112,10 @@ class AdnlPeerTableImpl : public AdnlPeerTable {
 
   void set_peer_pair_idle(AdnlNodeIdShort l_id, AdnlNodeIdShort p_id, bool value) override;
 
+  void set_max_peer_pairs(size_t value) override {
+    max_peer_pairs_ = value;
+  }
+
   struct PrintId {};
   PrintId print_id() const {
     return PrintId{};
@@ -140,6 +144,10 @@ class AdnlPeerTableImpl : public AdnlPeerTable {
 
     std::set<std::pair<td::Timestamp, AdnlNodeIdShort>> peers_gc_order = {};
     std::map<AdnlNodeIdShort, size_t> protected_peers = {};
+    // Total peer pairs currently held for this local id (active and idle).
+    // Maintained incrementally: +1 when a pair is created, -1 when one is
+    // destroyed. Used to enforce max_peer_pairs_.
+    size_t peer_pair_count = 0;
   };
 
   td::actor::ActorId<keyring::Keyring> keyring_;
@@ -169,6 +177,15 @@ class AdnlPeerTableImpl : public AdnlPeerTable {
                              td::Promise<std::vector<tl_object_ptr<tos_api::adnl_stats_peerPair>>> promise);
 
   static constexpr size_t MAX_IDLE_PEER_PAIRS = 2048;
+  // Default ceiling on total peer pairs per local id. The idle GC above only
+  // bounds pairs that have gone idle; a peer that keeps pairs active with
+  // low-rate traffic (one packet per local id per MARK_IDLE_TIMEOUT) evades it
+  // and could otherwise create an unbounded number of peer-pair actors. This
+  // ceiling bounds that total. It is generous enough never to reject a peer
+  // under normal operation; protected peers (e.g. current overlay/validator
+  // peers) are exempt and always admitted.
+  static constexpr size_t DEFAULT_MAX_PEER_PAIRS = 1 << 16;
+  size_t max_peer_pairs_ = DEFAULT_MAX_PEER_PAIRS;
 };
 
 inline td::StringBuilder &operator<<(td::StringBuilder &sb, const AdnlPeerTableImpl::PrintId &id) {

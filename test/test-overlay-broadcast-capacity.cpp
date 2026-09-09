@@ -38,6 +38,8 @@
 #include "overlay/broadcast-fec.hpp"
 #include "overlay/broadcast-twostep.hpp"
 #include "overlay/overlay.hpp"
+#include "td/utils/RateLimiterWindow.h"
+#include "td/utils/Time.h"
 #include "td/utils/port/Clocks.h"
 #include "td/utils/tests.h"
 
@@ -351,4 +353,28 @@ TEST(OverlayBroadcastCapacity, TwostepGcKeepsFreshInFlightBroadcasts) {
       ASSERT_TRUE(!overlay.is_delivered(id));
     }
   });
+}
+
+// H1: the unauthorized-source broadcast rate limiter must be live by default.
+// Left at {} its window duration is 0 and RateLimiterWindow::check() always
+// returns true, making the precheck_new_broadcast gate a dead guard. This pins
+// that the default window is non-zero and actually rejects once its count limit
+// is exceeded. (Reverting the default to {} makes duration 0 and fails this.)
+TEST(OverlayBroadcastCapacity, UnauthBroadcastRateLimitIsLiveByDefault) {
+  tos::overlay::OverlayOptions opts;
+  const auto &rate = opts.unauth_broadcast_rate_limit_;
+  ASSERT_TRUE(rate.duration > 0.0);
+  ASSERT_TRUE(rate.limit > 0);
+  ASSERT_TRUE(opts.unauth_broadcast_size_rate_limit_.duration > 0.0);
+  ASSERT_TRUE(opts.unauth_broadcast_size_rate_limit_.limit > 0);
+
+  // The window admits up to `limit` within `duration` and then refuses; a dead
+  // (duration 0) window would admit unboundedly.
+  td::RateLimiterWindow window{rate};
+  td::Timestamp now = td::Timestamp::now();
+  for (td::uint64 i = 0; i < rate.limit; i++) {
+    ASSERT_TRUE(window.check(now));
+    window.insert(now);
+  }
+  ASSERT_TRUE(!window.check(now));
 }
