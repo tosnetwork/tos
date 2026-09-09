@@ -521,6 +521,7 @@ pub struct ElectionsTaskControlRequest {
 #[serde(rename_all = "lowercase")]
 pub enum TaskStatusDto {
     Running,
+    Stopping,
     Stopped,
 }
 
@@ -528,6 +529,7 @@ impl From<TaskStatus> for TaskStatusDto {
     fn from(v: TaskStatus) -> Self {
         match v {
             TaskStatus::Running => TaskStatusDto::Running,
+            TaskStatus::Stopping => TaskStatusDto::Stopping,
             TaskStatus::Stopped => TaskStatusDto::Stopped,
         }
     }

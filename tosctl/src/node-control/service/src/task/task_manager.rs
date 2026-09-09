@@ -17,6 +17,10 @@ use std::sync::{Arc, Mutex};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TaskStatus {
     Running,
+    // The task has been signalled to stop and is being joined, but has not yet
+    // confirmed exit. Reported distinctly from Stopped so callers never see a
+    // task reported as fully stopped while it may still be running.
+    Stopping,
     Stopped,
 }
 
@@ -24,6 +28,7 @@ impl TaskStatus {
     pub fn as_str(&self) -> &'static str {
         match self {
             TaskStatus::Running => "running",
+            TaskStatus::Stopping => "stopping",
             TaskStatus::Stopped => "stopped",
         }
     }
@@ -56,13 +61,20 @@ struct State {
     status: TaskStatus,
     updated_at: u64,
     cancel: Option<CancellationCtx>,
+    // The running task's join handle (present only while Running).
     handle: Option<tokio::task::JoinHandle<()>>,
+    // While Stopping, an abort handle for the generation being joined, so
+    // enable() can force-stop it before starting a new one.
+    abort: Option<tokio::task::AbortHandle>,
+    // Identifies the current task instance. Bumped on each enable() so a
+    // finalizer joining an older generation cannot clobber a newer state.
+    generation: u64,
 }
 
 pub struct TaskController {
     name: &'static str,
     task: Arc<dyn ServiceTask>,
-    state: Mutex<State>,
+    state: Arc<Mutex<State>>,
     runtime_cfg: Arc<dyn RuntimeConfig>,
 }
 
@@ -75,13 +87,15 @@ impl TaskController {
         Self {
             name,
             task: Arc::new(task),
-            state: Mutex::new(State {
+            state: Arc::new(Mutex::new(State {
                 enabled: true,
                 status: TaskStatus::Stopped,
                 updated_at: UnixTime::now(),
                 cancel: None,
                 handle: None,
-            }),
+                abort: None,
+                generation: 0,
+            })),
             runtime_cfg,
         }
     }
@@ -105,6 +119,20 @@ impl TaskController {
             };
         }
 
+        // Status is Stopped or Stopping. Force-stop any previous generation that
+        // is still present before starting a new one, so two instances never run
+        // concurrently: a Stopping generation (being joined by a finalizer) is
+        // aborted via its abort handle, and any lingering running handle is
+        // aborted directly. Bumping the generation makes the old finalizer's
+        // Stopping->Stopped transition a no-op.
+        if let Some(orphan) = st.handle.take() {
+            orphan.abort();
+        }
+        if let Some(abort) = st.abort.take() {
+            abort.abort();
+        }
+        st.generation = st.generation.wrapping_add(1);
+
         let cancel_ctx = CancellationCtx::new();
         let task = self.task.clone();
         let name = self.name;
@@ -119,13 +147,6 @@ impl TaskController {
         });
         tracing::info!("{} task started", name);
 
-        // Abort any handle still present before replacing it. The Running guard
-        // above normally prevents this, but a concurrent enable/restart race could
-        // otherwise overwrite a live handle here and orphan its task (it would
-        // keep running with no way to cancel or await it).
-        if let Some(orphan) = st.handle.take() {
-            orphan.abort();
-        }
         st.cancel = Some(cancel_ctx);
         st.handle = Some(handle);
         st.status = TaskStatus::Running;
@@ -135,11 +156,14 @@ impl TaskController {
     }
 
     pub async fn disable(&self) -> TaskStateView {
-        let (view, handle_to_join) = {
+        let (view, finalizer) = {
             let mut st = self.state.lock().expect("failed to lock state");
             st.enabled = false;
 
-            if st.status == TaskStatus::Stopped {
+            // Already stopped, or already stopping (a finalizer is driving the
+            // Stopping -> Stopped transition). Don't re-signal or start a second
+            // finalizer.
+            if st.status == TaskStatus::Stopped || st.status == TaskStatus::Stopping {
                 st.updated_at = UnixTime::now();
                 return TaskStateView {
                     enabled: st.enabled,
@@ -155,28 +179,58 @@ impl TaskController {
                 tracing::warn!("{} task marked running but no cancellation ctx present", self.name);
             }
 
-            let handle = st.handle.take();
-            // Transition to Stopped synchronously, under the lock, before the only
-            // .await below (a best-effort graceful join). Once the state is durable
-            // here, an HTTP request timeout that drops this future can no longer
-            // strand status=Running with handle/cancel already cleared -- the state
-            // that previously made the next enable() see Running and refuse to
-            // start a new task. The cancellation signal asks the task to exit
-            // cleanly; if the future is dropped before the join completes, the task
-            // still observes the signal and exits on its own.
-            st.status = TaskStatus::Stopped;
-            st.updated_at = UnixTime::now();
-            let view =
-                TaskStateView { enabled: st.enabled, status: st.status, updated_at: st.updated_at };
-            (view, handle)
+            // Enter Stopping synchronously, under the lock. The task has been
+            // signalled but not yet joined, so it is reported Stopping, never
+            // Stopped -- a subsequent enable() must treat it as still-present and
+            // force-stop it rather than start a second instance. The handle moves
+            // to a detached finalizer that joins it and flips Stopping -> Stopped
+            // once it actually exits; an abort handle stays in state so enable()
+            // can force-stop this generation first.
+            match st.handle.take() {
+                Some(handle) => {
+                    st.abort = Some(handle.abort_handle());
+                    st.status = TaskStatus::Stopping;
+                    st.updated_at = UnixTime::now();
+                    let view = TaskStateView {
+                        enabled: st.enabled,
+                        status: st.status,
+                        updated_at: st.updated_at,
+                    };
+                    (view, Some((handle, st.generation)))
+                }
+                None => {
+                    // No running handle to join: settle as Stopped immediately.
+                    st.status = TaskStatus::Stopped;
+                    st.updated_at = UnixTime::now();
+                    let view = TaskStateView {
+                        enabled: st.enabled,
+                        status: st.status,
+                        updated_at: st.updated_at,
+                    };
+                    (view, None)
+                }
+            }
         };
 
-        if let Some(handle) = handle_to_join {
-            tracing::debug!("await {} task join...", self.name);
-            let _ = handle.await;
+        // Drive Stopping -> Stopped from a detached task, independent of this
+        // (HTTP-request) future's lifetime: a dropped future cannot strand
+        // Stopping, and the task is never reported Stopped before it exits.
+        if let Some((handle, generation)) = finalizer {
+            let state = self.state.clone();
+            let name = self.name;
+            tokio::spawn(async move {
+                let _ = handle.await;
+                let mut st = state.lock().expect("failed to lock state");
+                // Only finalize if this generation is still the one stopping; a
+                // later enable() bumps the generation and owns the state now.
+                if st.status == TaskStatus::Stopping && st.generation == generation {
+                    st.status = TaskStatus::Stopped;
+                    st.abort = None;
+                    st.updated_at = UnixTime::now();
+                    tracing::info!("{} task stopped", name);
+                }
+            });
         }
-
-        tracing::info!("{} task stopped", self.name);
         view
     }
 
@@ -341,12 +395,14 @@ mod tests {
     /// return -- so a disable() join is still pending if its future is dropped.
     struct SlowToStopTask {
         runs: Arc<AtomicU32>,
+        completed: Arc<AtomicU32>,
     }
 
     impl SlowToStopTask {
-        fn new() -> (Self, Arc<AtomicU32>) {
+        fn new() -> (Self, Arc<AtomicU32>, Arc<AtomicU32>) {
             let runs = Arc::new(AtomicU32::new(0));
-            (Self { runs: runs.clone() }, runs)
+            let completed = Arc::new(AtomicU32::new(0));
+            (Self { runs: runs.clone(), completed: completed.clone() }, runs, completed)
         }
     }
 
@@ -360,9 +416,30 @@ mod tests {
             self.runs.fetch_add(1, Ordering::SeqCst);
             let mut rx = ctx.subscribe();
             let _ = rx.changed().await;
-            // Observed cancellation, but take a while to actually exit.
+            // Observed cancellation, but take a while to actually exit. If the
+            // generation is aborted during this window it never reaches the
+            // completion marker below.
             tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            self.completed.fetch_add(1, Ordering::SeqCst);
             Ok(())
+        }
+    }
+
+    // disable() now returns Stopping and the Stopping -> Stopped transition is
+    // driven by a detached finalizer once the task actually exits, so tests poll
+    // for the terminal status rather than expecting it synchronously.
+    async fn wait_for_status(
+        ctrl: &TaskController,
+        want: TaskStatus,
+        timeout_ms: u64,
+    ) -> TaskStatus {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(timeout_ms);
+        loop {
+            let got = ctrl.status().await.status;
+            if got == want || std::time::Instant::now() >= deadline {
+                return got;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
     }
 
@@ -391,7 +468,8 @@ mod tests {
 
         // Cleanup
         let view2 = ctrl.disable().await;
-        assert_eq!(view2.status, TaskStatus::Stopped);
+        assert_eq!(view2.status, TaskStatus::Stopping);
+        assert_eq!(wait_for_status(&ctrl, TaskStatus::Stopped, 2000).await, TaskStatus::Stopped);
     }
 
     #[tokio::test]
@@ -405,8 +483,8 @@ mod tests {
         assert!(view.enabled);
         assert_eq!(view.status, TaskStatus::Running);
 
-        let view = ctrl.disable().await;
-        assert_eq!(view.status, TaskStatus::Stopped);
+        ctrl.disable().await;
+        assert_eq!(wait_for_status(&ctrl, TaskStatus::Stopped, 2000).await, TaskStatus::Stopped);
     }
 
     #[tokio::test]
@@ -418,7 +496,9 @@ mod tests {
         let view = ctrl.disable().await;
 
         assert!(!view.enabled);
-        assert_eq!(view.status, TaskStatus::Stopped);
+        // disable() reports Stopping synchronously; Stopped follows once joined.
+        assert_eq!(view.status, TaskStatus::Stopping);
+        assert_eq!(wait_for_status(&ctrl, TaskStatus::Stopped, 2000).await, TaskStatus::Stopped);
     }
 
     #[tokio::test]
@@ -462,6 +542,9 @@ mod tests {
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
         ctrl.disable().await;
+        // The task observes cancellation asynchronously; wait for the terminal
+        // state, by which point it must have set the flag.
+        assert_eq!(wait_for_status(&ctrl, TaskStatus::Stopped, 2000).await, TaskStatus::Stopped);
         assert!(cancelled.load(Ordering::SeqCst), "task should have observed cancellation");
     }
 
@@ -495,8 +578,8 @@ mod tests {
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
         // Controller should still be operational; disable should not panic.
-        let view = ctrl.disable().await;
-        assert_eq!(view.status, TaskStatus::Stopped);
+        ctrl.disable().await;
+        assert_eq!(wait_for_status(&ctrl, TaskStatus::Stopped, 2000).await, TaskStatus::Stopped);
     }
 
     #[tokio::test]
@@ -514,6 +597,7 @@ mod tests {
         assert!(v2.enabled);
 
         ctrl.disable().await;
+        assert_eq!(wait_for_status(&ctrl, TaskStatus::Stopped, 2000).await, TaskStatus::Stopped);
         let v3 = ctrl.status().await;
         assert_eq!(v3.status, TaskStatus::Stopped);
         assert!(!v3.enabled);
@@ -522,6 +606,7 @@ mod tests {
     #[tokio::test]
     async fn task_status_as_str() {
         assert_eq!(TaskStatus::Running.as_str(), "running");
+        assert_eq!(TaskStatus::Stopping.as_str(), "stopping");
         assert_eq!(TaskStatus::Stopped.as_str(), "stopped");
     }
 
@@ -589,8 +674,7 @@ mod tests {
         assert_eq!(v.load(Ordering::SeqCst), 1);
 
         ctrl.disable().await;
-        let view = ctrl.status().await;
-        assert_eq!(view.status, TaskStatus::Stopped);
+        assert_eq!(wait_for_status(&ctrl, TaskStatus::Stopped, 2000).await, TaskStatus::Stopped);
     }
 
     async fn no_fields_run(
@@ -610,36 +694,64 @@ mod tests {
         task.run(ctx, app_config).await.expect("zero-field task should work");
     }
 
-    // An HTTP request timeout can drop the disable() future while it is still
-    // joining the task. The state transition must be durable before that await,
-    // or disable() leaves status=Running with handle/cancel cleared and enable()
-    // then refuses to restart.
+    // disable() reports Stopping synchronously and never Running; a detached
+    // finalizer drives Stopping -> Stopped once the task actually exits,
+    // independent of the disable() future's lifetime. (Pre-fix disable() set
+    // Stopped only after a cancellable join, so a dropped future stranded
+    // Running; a version that set Stopped synchronously reported the task
+    // stopped while it was still running.)
     #[tokio::test]
-    async fn disable_reaches_stopped_even_if_its_future_is_dropped_mid_join() {
-        let (task, runs) = SlowToStopTask::new();
+    async fn disable_enters_stopping_then_reaches_stopped_via_finalizer() {
+        let (task, runs, _completed) = SlowToStopTask::new();
         let ctrl = TaskController::new("test", task, runtime_config());
 
         assert_eq!(ctrl.enable().await.status, TaskStatus::Running);
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         assert_eq!(runs.load(Ordering::SeqCst), 1, "task should have started once");
 
-        // Drop disable()'s future while its graceful join is still pending: the
-        // task takes 500ms to exit after observing cancellation, the timeout is
-        // 50ms. This mirrors the HTTP per-request timeout cancelling the handler.
-        let outcome =
-            tokio::time::timeout(std::time::Duration::from_millis(50), ctrl.disable()).await;
-        assert!(outcome.is_err(), "disable() should still be joining when dropped");
+        // Synchronous result is Stopping -- not Stopped (task still exiting),
+        // and not Running.
+        assert_eq!(ctrl.disable().await.status, TaskStatus::Stopping);
+        assert_eq!(ctrl.status().await.status, TaskStatus::Stopping);
 
-        // Durable state: Stopped, not a stranded Running. (Pre-fix this was
-        // Running, because status was only set after the cancelled join.)
-        assert_eq!(ctrl.status().await.status, TaskStatus::Stopped);
+        // The detached finalizer joins the task (it takes 500ms to exit) and then
+        // flips to Stopped. With no finalizer this would stay Stopping forever.
+        assert_eq!(wait_for_status(&ctrl, TaskStatus::Stopped, 3000).await, TaskStatus::Stopped);
+    }
 
-        // And enable() actually starts a fresh run rather than seeing Running and
-        // returning without spawning.
+    // enable() while a previous generation is still Stopping must force-stop that
+    // generation before starting a new one, never leave two running. The
+    // superseded generation is aborted mid-exit, so it never reaches its
+    // completion marker; removing the abort in enable() lets it run to
+    // completion, failing this test.
+    #[tokio::test]
+    async fn enable_during_stopping_aborts_the_superseded_generation() {
+        let (task, runs, completed) = SlowToStopTask::new();
+        let ctrl = TaskController::new("test", task, runtime_config());
+
         assert_eq!(ctrl.enable().await.status, TaskStatus::Running);
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-        assert_eq!(runs.load(Ordering::SeqCst), 2, "enable() should have restarted the task");
+        assert_eq!(runs.load(Ordering::SeqCst), 1);
 
-        let _ = ctrl.disable().await;
+        // Signal stop; generation 1 is now Stopping and, left alone, would finish
+        // its 500ms exit and hit the completion marker.
+        assert_eq!(ctrl.disable().await.status, TaskStatus::Stopping);
+
+        // Enable while Stopping: must abort generation 1 and start generation 2.
+        assert_eq!(ctrl.enable().await.status, TaskStatus::Running);
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        assert_eq!(runs.load(Ordering::SeqCst), 2, "a fresh generation must have started");
+
+        // Well past generation 1's 500ms natural-completion point: it was aborted
+        // mid-exit, so it never completed, and generation 2 is still parked on
+        // cancellation (not disabled), so it has not completed either.
+        tokio::time::sleep(std::time::Duration::from_millis(700)).await;
+        assert_eq!(
+            completed.load(Ordering::SeqCst),
+            0,
+            "the superseded generation must have been aborted, not run to completion"
+        );
+
+        ctrl.disable().await;
     }
 }
