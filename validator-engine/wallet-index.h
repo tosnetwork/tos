@@ -31,6 +31,18 @@ class RocksDb;
 
 namespace tos_wallet_index {
 
+// How much per-account event history this index keeps. Well above what a
+// normal account accumulates, so ordinary reads never reach it, and finite
+// so the index does not grow for the life of the node. Declared here so
+// the retention test can assert against the exact bound.
+constexpr size_t kMaxEventsPerAccount = 10000;
+// Extra events a trim pass may drop *beyond* replacing this block's additions.
+// A pass always deletes at least as many rows as were added for the account in
+// the block (so the bound cannot be outrun no matter how many events an account
+// gains per block) plus this drain, which brings a pre-existing backlog down
+// over successive blocks. Trimming stays bounded work per call.
+constexpr size_t kEventTrimDrainPerPass = 256;
+
 using HashKey = td::Bits256;  // owner / master / nft / account / tx hash
 
 class WalletIndexDb {
@@ -62,6 +74,15 @@ class WalletIndexDb {
   // Keys store the bitwise complement of lt so RocksDB's ascending iteration
   // yields newest events first and `limit` bounds the scan to the most recent.
   td::Status put_event(const HashKey& account, uint64_t lt, td::Ref<vm::Cell> value);
+  // Drops the oldest events of an account once it holds more than the retained
+  // history. Called on the write path inside the block's batch, before commit,
+  // so its scan sees only committed rows -- not the `added_this_block` rows just
+  // written into the batch. It keeps that many fewer committed rows so the total
+  // after commit stays within kMaxEventsPerAccount, and deletes at least
+  // `added_this_block` rows so the bound cannot be outrun. Bounded work per call.
+  td::Status trim_events(const HashKey& account, size_t added_this_block);
+  td::Status for_each_key_with_prefix(td::Slice prefix, size_t limit,
+                                      std::function<td::Status(td::Slice)> cb);
   // Walk at most `limit` events for `account`, newest first.
   td::Status for_each_event(
       const HashKey& account, size_t limit,

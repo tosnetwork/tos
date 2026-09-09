@@ -570,6 +570,9 @@ class ValidatorManagerImpl : public ValidatorManager {
   void init_last_masterchain_state(td::Ref<MasterchainState> state) override;
   void started(ValidatorManagerInitResult result);
   void got_destroyed_validator_sessions(std::vector<ValidatorSessionId> sessions);
+  // Reclaims per-group databases whose session is already recorded as
+  // destroyed; see the definition for why nothing else can.
+  void sweep_destroyed_consensus_dbs();
   td::actor::Task<> finish_start_up();
   td::actor::Task<> start_up_advance_mc();
 

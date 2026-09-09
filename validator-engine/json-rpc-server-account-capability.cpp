@@ -966,8 +966,14 @@ void JsonRpcServer::handle_getAccountCapability(td::JsonObject &params, std::str
   auto include_experimental_r = params.get_optional_bool_field("include_experimental", false);
   bool include_experimental = include_experimental_r.is_ok() && include_experimental_r.ok();
 
-  auto send_query = [this](td::BufferSlice query, td::Promise<td::BufferSlice> promise_inner) {
-    this->send_liteserver_query(std::move(query), std::move(promise_inner));
+  auto send_query = [self_id = actor_id(this)](td::BufferSlice query,
+                                            td::Promise<td::BufferSlice> promise_inner) {
+    // Invoked from continuations that run after a liteserver reply, so
+    // this outlives the call that created it. Route through the actor id:
+    // a raw pointer here is only valid while the server still exists,
+    // and nothing in the chain guarantees that.
+    td::actor::send_closure(self_id, &JsonRpcServer::send_liteserver_query, std::move(query),
+                            std::move(promise_inner));
   };
   fetch_account_capability_context(
       send_query, addr, std::move(addr_str), has_seqno, seqno,
@@ -1003,8 +1009,14 @@ void JsonRpcServer::handle_getAccountDelegations(td::JsonObject &params, std::st
   }
   auto addr = addr_r.move_as_ok();
   auto addr_str = params.get_required_string_field("address").ok();
-  auto send_query = [this](td::BufferSlice query, td::Promise<td::BufferSlice> promise_inner) {
-    this->send_liteserver_query(std::move(query), std::move(promise_inner));
+  auto send_query = [self_id = actor_id(this)](td::BufferSlice query,
+                                            td::Promise<td::BufferSlice> promise_inner) {
+    // Invoked from continuations that run after a liteserver reply, so
+    // this outlives the call that created it. Route through the actor id:
+    // a raw pointer here is only valid while the server still exists,
+    // and nothing in the chain guarantees that.
+    td::actor::send_closure(self_id, &JsonRpcServer::send_liteserver_query, std::move(query),
+                            std::move(promise_inner));
   };
   auto self_id = actor_id(this);
   fetch_account_capability_context(
@@ -1192,8 +1204,14 @@ void JsonRpcServer::handle_getAccountSessions(td::JsonObject &params, std::strin
   auto addr = addr_r.move_as_ok();
   auto addr_str = params.get_required_string_field("address").ok();
   auto self_id = actor_id(this);
-  auto send_query = [this](td::BufferSlice query, td::Promise<td::BufferSlice> promise_inner) {
-    this->send_liteserver_query(std::move(query), std::move(promise_inner));
+  auto send_query = [self_id = actor_id(this)](td::BufferSlice query,
+                                            td::Promise<td::BufferSlice> promise_inner) {
+    // Invoked from continuations that run after a liteserver reply, so
+    // this outlives the call that created it. Route through the actor id:
+    // a raw pointer here is only valid while the server still exists,
+    // and nothing in the chain guarantees that.
+    td::actor::send_closure(self_id, &JsonRpcServer::send_liteserver_query, std::move(query),
+                            std::move(promise_inner));
   };
   fetch_account_capability_context(
       send_query, addr, std::move(addr_str), false, 0,
@@ -1318,8 +1336,14 @@ void JsonRpcServer::handle_getAccountAgents(td::JsonObject &params, std::string 
   auto addr = addr_r.move_as_ok();
   auto addr_str = params.get_required_string_field("address").ok();
   auto self_id = actor_id(this);
-  auto send_query = [this](td::BufferSlice query, td::Promise<td::BufferSlice> promise_inner) {
-    this->send_liteserver_query(std::move(query), std::move(promise_inner));
+  auto send_query = [self_id = actor_id(this)](td::BufferSlice query,
+                                            td::Promise<td::BufferSlice> promise_inner) {
+    // Invoked from continuations that run after a liteserver reply, so
+    // this outlives the call that created it. Route through the actor id:
+    // a raw pointer here is only valid while the server still exists,
+    // and nothing in the chain guarantees that.
+    td::actor::send_closure(self_id, &JsonRpcServer::send_liteserver_query, std::move(query),
+                            std::move(promise_inner));
   };
   fetch_account_capability_context(
       send_query, addr, std::move(addr_str), false, 0,
@@ -1426,8 +1450,14 @@ void JsonRpcServer::validate_delegation_and_return_intent(
     std::string req_id,
     td::Promise<HttpReturn> promise) {
   auto self_id = actor_id(this);
-  auto send_query = [this](td::BufferSlice query, td::Promise<td::BufferSlice> p) {
-    this->send_liteserver_query(std::move(query), std::move(p));
+  auto send_query = [self_id = actor_id(this)](td::BufferSlice query,
+                                            td::Promise<td::BufferSlice> p) {
+    // Invoked from continuations that run after a liteserver reply, so
+    // this outlives the call that created it. Route through the actor id:
+    // a raw pointer here is only valid while the server still exists,
+    // and nothing in the chain guarantees that.
+    td::actor::send_closure(self_id, &JsonRpcServer::send_liteserver_query, std::move(query),
+                            std::move(p));
   };
   fetch_account_capability_context(
       send_query, addr, std::move(addr_str), false, 0,
@@ -1766,8 +1796,14 @@ void JsonRpcServer::handle_grantAccountDelegation(td::JsonObject &params, std::s
     promise.set_value(make_json_error(-32602, "invalid address", req_id));
     return;
   }
-  auto send_query = [this](td::BufferSlice query, td::Promise<td::BufferSlice> p) {
-    this->send_liteserver_query(std::move(query), std::move(p));
+  auto send_query = [self_id = actor_id(this)](td::BufferSlice query,
+                                            td::Promise<td::BufferSlice> p) {
+    // Invoked from continuations that run after a liteserver reply, so
+    // this outlives the call that created it. Route through the actor id:
+    // a raw pointer here is only valid while the server still exists,
+    // and nothing in the chain guarantees that.
+    td::actor::send_closure(self_id, &JsonRpcServer::send_liteserver_query, std::move(query),
+                            std::move(p));
   };
   fetch_account_capability_context(
       send_query, addr, grant.address, false, 0,
@@ -1839,8 +1875,14 @@ void JsonRpcServer::handle_revokeAccountDelegation(td::JsonObject &params, std::
     promise.set_value(make_json_error(-32602, "invalid address", req_id));
     return;
   }
-  auto send_query = [this](td::BufferSlice query, td::Promise<td::BufferSlice> p) {
-    this->send_liteserver_query(std::move(query), std::move(p));
+  auto send_query = [self_id = actor_id(this)](td::BufferSlice query,
+                                            td::Promise<td::BufferSlice> p) {
+    // Invoked from continuations that run after a liteserver reply, so
+    // this outlives the call that created it. Route through the actor id:
+    // a raw pointer here is only valid while the server still exists,
+    // and nothing in the chain guarantees that.
+    td::actor::send_closure(self_id, &JsonRpcServer::send_liteserver_query, std::move(query),
+                            std::move(p));
   };
   auto self_id = actor_id(this);
   fetch_account_capability_context(
@@ -1950,8 +1992,14 @@ void JsonRpcServer::handle_grantAccountSession(td::JsonObject &params, std::stri
     promise.set_value(make_json_error(-32602, "invalid address", req_id));
     return;
   }
-  auto send_query = [this](td::BufferSlice query, td::Promise<td::BufferSlice> p) {
-    this->send_liteserver_query(std::move(query), std::move(p));
+  auto send_query = [self_id = actor_id(this)](td::BufferSlice query,
+                                            td::Promise<td::BufferSlice> p) {
+    // Invoked from continuations that run after a liteserver reply, so
+    // this outlives the call that created it. Route through the actor id:
+    // a raw pointer here is only valid while the server still exists,
+    // and nothing in the chain guarantees that.
+    td::actor::send_closure(self_id, &JsonRpcServer::send_liteserver_query, std::move(query),
+                            std::move(p));
   };
   fetch_account_capability_context(
       send_query, addr, grant.address, false, 0,
@@ -1984,8 +2032,14 @@ void JsonRpcServer::handle_revokeAccountSession(td::JsonObject &params, std::str
     promise.set_value(make_json_error(-32602, "invalid address", req_id));
     return;
   }
-  auto send_query = [this](td::BufferSlice query, td::Promise<td::BufferSlice> p) {
-    this->send_liteserver_query(std::move(query), std::move(p));
+  auto send_query = [self_id = actor_id(this)](td::BufferSlice query,
+                                            td::Promise<td::BufferSlice> p) {
+    // Invoked from continuations that run after a liteserver reply, so
+    // this outlives the call that created it. Route through the actor id:
+    // a raw pointer here is only valid while the server still exists,
+    // and nothing in the chain guarantees that.
+    td::actor::send_closure(self_id, &JsonRpcServer::send_liteserver_query, std::move(query),
+                            std::move(p));
   };
   fetch_account_capability_context(
       send_query, addr, revoke.address, false, 0,
@@ -2018,8 +2072,14 @@ void JsonRpcServer::handle_grantAccountAgent(td::JsonObject &params, std::string
     promise.set_value(make_json_error(-32602, "invalid address", req_id));
     return;
   }
-  auto send_query = [this](td::BufferSlice query, td::Promise<td::BufferSlice> p) {
-    this->send_liteserver_query(std::move(query), std::move(p));
+  auto send_query = [self_id = actor_id(this)](td::BufferSlice query,
+                                            td::Promise<td::BufferSlice> p) {
+    // Invoked from continuations that run after a liteserver reply, so
+    // this outlives the call that created it. Route through the actor id:
+    // a raw pointer here is only valid while the server still exists,
+    // and nothing in the chain guarantees that.
+    td::actor::send_closure(self_id, &JsonRpcServer::send_liteserver_query, std::move(query),
+                            std::move(p));
   };
   fetch_account_capability_context(
       send_query, addr, grant.address, false, 0,
@@ -2057,8 +2117,14 @@ void JsonRpcServer::handle_revokeAccountAgent(td::JsonObject &params, std::strin
     promise.set_value(make_json_error(-32602, "invalid address", req_id));
     return;
   }
-  auto send_query = [this](td::BufferSlice query, td::Promise<td::BufferSlice> p) {
-    this->send_liteserver_query(std::move(query), std::move(p));
+  auto send_query = [self_id = actor_id(this)](td::BufferSlice query,
+                                            td::Promise<td::BufferSlice> p) {
+    // Invoked from continuations that run after a liteserver reply, so
+    // this outlives the call that created it. Route through the actor id:
+    // a raw pointer here is only valid while the server still exists,
+    // and nothing in the chain guarantees that.
+    td::actor::send_closure(self_id, &JsonRpcServer::send_liteserver_query, std::move(query),
+                            std::move(p));
   };
   fetch_account_capability_context(
       send_query, addr, revoke.address, false, 0,

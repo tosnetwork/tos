@@ -204,16 +204,27 @@ void AdnlExtServerImpl::add_local_id(AdnlNodeIdShort id) {
   local_ids_.insert(id);
 }
 
+void AdnlExtServerImpl::note_refused_connection(td::Slice reason) {
+  connections_refused_++;
+  if (!next_refusal_log_ || next_refusal_log_.is_in_past()) {
+    LOG(WARNING) << "adnl ext server refused " << connections_refused_ << " connections so far (last: " << reason
+                 << ")";
+    next_refusal_log_ = td::Timestamp::in(REFUSAL_LOG_INTERVAL);
+  } else {
+    VLOG(ADNL_DEBUG) << "refusing external connection: " << reason;
+  }
+}
+
 void AdnlExtServerImpl::accepted(td::SocketFd fd) {
   td::IPAddress peer_address;
   auto status = peer_address.init_peer_address(fd);
   if (status.is_error()) {
-    LOG(WARNING) << "Rejecting external connection with unknown peer address: " << status;
+    note_refused_connection("unknown peer address");
     return;
   }
   auto peer_ip = peer_address.get_ip_host();
   if (!connection_limits_.try_acquire(peer_ip)) {
-    LOG(WARNING) << "Rejecting external connection from " << peer_ip << ": connection limit exceeded";
+    note_refused_connection("connection limit exceeded");
     return;
   }
 

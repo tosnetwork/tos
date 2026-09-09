@@ -330,3 +330,103 @@ TEST(WalletIndex, LegacySeqnoOnlyMarkerNotSurfaced) {
 
   td::rmrf(path).ignore();
 }
+
+// Every workchain-zero transaction adds an event row holding the whole
+// transaction, and nothing removed one: the index grew for the life of the
+// node and outlived the archive retention bounding everything else. The
+// bound is per account and drops the oldest, so a caller reading recent
+// history never notices it, and rows written before the bound existed are
+// reached too -- they are found by the same account prefix, not by a
+// companion index they do not have.
+TEST(WalletIndex, EventHistoryIsBoundedPerAccount) {
+  auto path = std::string("test-wallet-index-db-trim");
+  auto db = open_fresh_db(path);
+  tos_wallet_index::HashKey account = td::Bits256::zero();
+  account.as_slice()[31] = 0x77;
+
+  // kMax drives the test's block count (how far to run to reach the bound);
+  // it may be the code's own constant. The *assertions* below instead use the
+  // absolute expected value kExpectedBound: tying the pass/fail check to
+  // kMaxEventsPerAccount would let a mis-sized cap (say 10000 -> 5000) move the
+  // code and the test together and stay green, which is exactly what must be
+  // caught. If the retention bound is changed on purpose, update this literal.
+  constexpr size_t kMax = tos_wallet_index::kMaxEventsPerAccount;
+  constexpr size_t kExpectedBound = 10000;
+  // Add far more than the per-pass drain each block. A trim that could only
+  // ever delete a fixed number per pass (the bug this guards) could not keep
+  // up at this rate, so the account would grow without bound. It is also above
+  // any realistic per-account per-block transaction count.
+  constexpr size_t kPerBlock = tos_wallet_index::kEventTrimDrainPerPass + 200;
+
+  auto count_events = [&]() {
+    size_t n = 0;
+    db->for_each_event(account, size_t{1} << 20, [&](uint64_t, td::Ref<vm::Cell>) {
+      n++;
+      return td::Status::OK();
+    }).ensure();
+    return n;
+  };
+
+  // Drive the *production* write path: each block opens the block batch, writes
+  // kPerBlock events, trims the account once with that count, and commits. The
+  // trim's scan runs before commit and cannot see the batch's own writes, which
+  // is exactly the condition the fix has to handle. Run enough blocks to climb
+  // well past the retention bound, then several more to show it holds steady
+  // instead of creeping upward.
+  const size_t warmup_blocks = kMax / kPerBlock + 5;
+  const size_t total_blocks = warmup_blocks + 20;
+
+  uint64_t lt = 1;
+  uint64_t newest = 0;
+  for (size_t block = 0; block < total_blocks; block++) {
+    ASSERT_TRUE(db->begin_batch().is_ok());
+    for (size_t i = 0; i < kPerBlock; i++, lt++) {
+      vm::CellBuilder builder;
+      builder.store_long(static_cast<long long>(lt), 64);
+      ASSERT_TRUE(db->put_event(account, lt, builder.finalize()).is_ok());
+      newest = lt;
+    }
+    ASSERT_TRUE(db->trim_events(account, kPerBlock).is_ok());
+    ASSERT_TRUE(db->commit_batch().is_ok());
+
+    size_t retained = count_events();
+    // The bound may momentarily hold up to one block's additions above it on the
+    // block that first crosses it (trim leaves room for the additions still in
+    // the batch), but it must never grow beyond that.
+    ASSERT_TRUE(retained <= kExpectedBound + kPerBlock);
+    // Once warmed up the account is pinned at the bound. The pre-fix trim would
+    // instead be at roughly kExpectedBound + (block - warmup) * (kPerBlock -
+    // fixed_cap) here -- growing every block. Compared against the absolute
+    // literal (see kExpectedBound), not the code's own constant.
+    if (block >= warmup_blocks) {
+      ASSERT_EQ(retained, kExpectedBound);
+    }
+  }
+  // Newest events are the ones kept.
+  uint64_t seen_newest = 0;
+  uint64_t seen_oldest = std::numeric_limits<uint64_t>::max();
+  db->for_each_event(account, size_t{1} << 20, [&](uint64_t l, td::Ref<vm::Cell>) {
+    seen_newest = std::max(seen_newest, l);
+    seen_oldest = std::min(seen_oldest, l);
+    return td::Status::OK();
+  }).ensure();
+  ASSERT_EQ(seen_newest, newest);  // newest kept
+  ASSERT_TRUE(seen_oldest > 1);    // oldest dropped
+
+  // A second account keeps its own history: the bound is per account, not a
+  // global cap that one busy address could spend on behalf of others.
+  tos_wallet_index::HashKey other = td::Bits256::zero();
+  other.as_slice()[31] = 0x78;
+  ASSERT_TRUE(db->begin_batch().is_ok());
+  vm::CellBuilder builder;
+  builder.store_long(1, 64);
+  ASSERT_TRUE(db->put_event(other, 1, builder.finalize()).is_ok());
+  ASSERT_TRUE(db->trim_events(other, 1).is_ok());
+  ASSERT_TRUE(db->commit_batch().is_ok());
+  size_t other_rows = 0;
+  db->for_each_event(other, 10, [&](uint64_t, td::Ref<vm::Cell>) {
+    other_rows++;
+    return td::Status::OK();
+  }).ensure();
+  ASSERT_EQ(other_rows, 1u);
+}

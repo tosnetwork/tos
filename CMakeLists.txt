@@ -756,6 +756,11 @@ target_include_directories(test-rate-limiter PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
 add_executable(test-config-transition test/test-td-main.cpp test/test-config-transition.cpp)
 target_link_libraries(test-config-transition PRIVATE tos_block tos_crypto tdutils)
 
+add_executable(test-consensus-db-path test/test-td-main.cpp test/test-consensus-db-path.cpp)
+target_include_directories(test-consensus-db-path PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                           ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
+target_link_libraries(test-consensus-db-path PRIVATE tos_crypto_core tdutils)
+
 add_executable(test-json-rpc-parse test/test-td-main.cpp test/test-json-rpc-parse.cpp)
 target_link_libraries(test-json-rpc-parse PRIVATE json-rpc-parse tos_crypto tdutils)
 
@@ -815,6 +820,10 @@ target_link_libraries(test-promise-loss-contract PRIVATE tdactor tdutils)
 add_executable(test-json-rpc-handler-guard test/test-td-main.cpp test/test-json-rpc-handler-guard.cpp)
 target_include_directories(test-json-rpc-handler-guard PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(test-json-rpc-handler-guard PRIVATE tdactor tdutils tos_crypto)
+
+add_executable(test-json-rpc-rate-gate test/test-td-main.cpp test/test-json-rpc-rate-gate.cpp)
+target_include_directories(test-json-rpc-rate-gate PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(test-json-rpc-rate-gate PRIVATE tdutils)
 
 add_executable(test-metrics-label-bound test/test-td-main.cpp test/test-metrics-label-bound.cpp)
 target_include_directories(test-metrics-label-bound PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
@@ -1113,6 +1122,16 @@ tos_test(test-msg-envelope)
 tos_test(test-rate-limiter)
 tos_test(test-config-transition)
 tos_test(test-json-rpc-parse)
+tos_test(test-consensus-db-path)
+tos_test(test-json-rpc-rate-gate)
+# Source-level check: a route added to on_request bypasses the dispatcher's
+# per-source budget, and no test of the budget itself can see that.
+find_package(Python3 COMPONENTS Interpreter)
+if (Python3_Interpreter_FOUND)
+  add_test(NAME jsonrpc-route-gating
+           COMMAND ${Python3_EXECUTABLE}
+                   ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-jsonrpc-route-gating.py)
+endif()
 tos_test(test-http-server-limits)
 tos_test(test-wallet-message-processor)
 tos_test(test-vm-exception-hardening)

@@ -18,6 +18,7 @@
     Copyright 2025-2026 TOS Blockchain Teams
 */
 #include <algorithm>
+#include <cerrno>
 #include <fstream>
 #include <limits>
 #include <optional>
@@ -61,6 +62,12 @@
 #include "import-db-slice.hpp"
 #include "manager.h"
 #include "manager.hpp"
+
+#include "validator/consensus/db-path.h"
+#include "td/db/RocksDb.h"
+#include "td/utils/PathView.h"
+#include "td/utils/filesystem.h"
+#include "td/utils/port/path.h"
 #include "shard.hpp"
 #include "state-serializer.hpp"
 #include "validate-broadcast.hpp"
@@ -2335,7 +2342,80 @@ void ValidatorManagerImpl::started(ValidatorManagerInitResult R) {
 
 void ValidatorManagerImpl::got_destroyed_validator_sessions(std::vector<ValidatorSessionId> sessions) {
   destroyed_validator_sessions_.insert(sessions.begin(), sessions.end());
+  sweep_destroyed_consensus_dbs();
   finish_start_up().start().detach_ensure();
+}
+
+void ValidatorManagerImpl::sweep_destroyed_consensus_dbs() {
+  // A group's database is removed by the live actor that owns it, and the
+  // record that the session was destroyed is written before that removal
+  // finishes. A crash in between leaves the directory behind, and because
+  // the record survives, the group is never recreated -- so nothing will
+  // ever own that directory again, and nothing else deletes it.
+  //
+  // Reclaim those here, once, before any group starts. Only directories
+  // whose session is already recorded as destroyed are touched; a name
+  // this cannot parse belongs to something else and is left alone.
+  auto root = consensus::consensus_db_root(db_root_);
+  size_t reclaimed = 0;
+  size_t failed = 0;
+  td::WalkPath::run(root, [&](td::CSlice path, td::WalkPath::Type type) {
+    if (type != td::WalkPath::Type::EnterDir) {
+      return td::WalkPath::Action::Continue;
+    }
+    auto name = td::PathView(path).file_name().str();
+    if (name.empty() || path.str() == root || path.str() + "/" == root) {
+      return td::WalkPath::Action::Continue;
+    }
+    auto session_id = consensus::consensus_db_session_id(name);
+    if (!session_id || !destroyed_validator_sessions_.contains(session_id.value())) {
+      // Not ours, or still live: do not descend into a database we are
+      // about to open.
+      return td::WalkPath::Action::SkipDir;
+    }
+    auto full = path.str();
+    // Delete, then confirm the directory is actually gone. rmrf()'s own status
+    // is not proof of removal: it ignores every unlink()/rmdir() error and
+    // returns OK as long as the walk itself succeeded, so a permissions or
+    // read-only-filesystem failure would leave the directory in place while
+    // rmrf() still reports success. Probe with stat() -- but only a
+    // "not found" error proves the path is gone. Any other stat error
+    // (EACCES, EIO, ELOOP, ...) leaves existence unknown and the directory may
+    // well still be there, so it must NOT be counted as reclaimed. Only a
+    // confirmed removal counts; otherwise the destroyed-session record is kept
+    // so the next startup retries this directory.
+    td::RocksDb::destroy(full + "/db/").ignore();
+    td::rmrf(full).ignore();
+    auto probe = td::stat(full);
+    bool confirmed_gone = false;
+    if (probe.is_error()) {
+#if TD_PORT_WINDOWS
+      auto code = probe.error().code();
+      confirmed_gone = (code == ERROR_FILE_NOT_FOUND || code == ERROR_PATH_NOT_FOUND);
+#else
+      confirmed_gone = (probe.error().code() == ENOENT);
+#endif
+    }
+    if (confirmed_gone) {
+      reclaimed++;
+    } else {
+      failed++;
+      if (probe.is_ok()) {
+        LOG(WARNING) << "leftover consensus database still present after delete attempt: " << full
+                     << "; keeping its destroyed-session record so a later startup retries it";
+      } else {
+        LOG(WARNING) << "could not confirm removal of consensus database " << full << " (stat: "
+                     << probe.error() << "); keeping its destroyed-session record so a later startup retries it";
+      }
+    }
+    return td::WalkPath::Action::SkipDir;
+  }).ignore();
+  if (reclaimed > 0) {
+    LOG(WARNING) << "reclaimed " << reclaimed << " consensus database(s) left behind by a destroyed session";
+  }
+  if (failed > 0) {
+    LOG(ERROR) << failed << " leftover consensus database(s) could not be removed; will retry on next startup";
+  }
 }
 
 td::actor::Task<> ValidatorManagerImpl::finish_start_up() {

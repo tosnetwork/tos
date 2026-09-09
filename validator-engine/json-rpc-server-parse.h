@@ -33,6 +33,13 @@
 
 namespace tos {
 
+// Strict JSON number grammar, for a value that is spliced into a reply
+// unquoted. The JSON scanner is deliberately permissive about what it
+// hands back as a Number -- ".", "--" and "1e+-.3" all parse -- so a
+// value echoed verbatim has to be checked against the grammar the reader
+// on the other side will apply, or the reply is unparseable.
+bool is_valid_json_number(const std::string &s);
+
 // Deserializes the serialized VM stack returned by liteServer.runSmcMethod.
 // Fails, instead of throwing, when the BOC is malformed, the root or any
 // nested cell is exotic (pruned branch, library, Merkle proof/update), or the
