@@ -34,4 +34,9 @@ regression cases are recorded in `private-regressions`.
 Count 220 detects the omitted normal read observation in cases 0/7/8/9; it does
 not establish event ordering or exclude a forged read event. Subsequent byte
 assertions are not counted as passed when 220 has already failed. Persistent
-byte provenance requires a separate calibration and is not claimed by this run.
+byte provenance is not claimed by that 26-control run. The later independent
+`content-provenance-6ee1eb684` calibration establishes the measured content-origin
+distinction: baseline/restored views contain the actual substituted disk bytes;
+the no-read mutant forges its observation yet retains original bytes and fails
+230. All other fields, identities, execution count and the independently
+reopened stored record remain equal. No production source changed.

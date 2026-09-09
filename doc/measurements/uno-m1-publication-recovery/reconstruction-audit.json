@@ -1,4 +1,12 @@
 {
+  "content-provenance-6ee1eb684": {
+    "manifest_members": 43,
+    "empty_stderr_members": 11,
+    "control_restore_chains": [
+      "bypass-readback-and-forge-read-event"
+    ],
+    "recorded_complete": true
+  },
   "diagnostic-78fab252a": {
     "manifest_members": 1338,
     "empty_stderr_members": 352,

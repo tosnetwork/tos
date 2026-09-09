@@ -27,7 +27,7 @@ for directory in sorted(base.iterdir()):
   controls.append(c['name'])
  for e in report.get('events',[]):
   for s in ('stdout','stderr'):assert manifest[e['label']+'.'+s+'.log']['sha256']==e[s+'_sha256']
- summary[directory.name]={'manifest_members':len(manifest),'empty_stderr_members':sum(k.endswith('.stderr.log') and v['bytes']==0 for k,v in manifest.items()),'control_restore_chains':controls,'recorded_complete':report.get('source_files_unchanged',False)}
+ summary[directory.name]={'manifest_members':len(manifest),'empty_stderr_members':sum(k.endswith('.stderr.log') and v['bytes']==0 for k,v in manifest.items()),'control_restore_chains':controls,'recorded_complete':report.get('source_files_unchanged',report.get('production_sources_unchanged',False))}
 registration=json.loads((base/'registration-control/measurement.json').read_text())
 blob=subprocess.check_output(['git','show',registration['commit']+':'+registration['path']],cwd=root)
 assert h(blob)==registration['original_sha256']==registration['restored_sha256']
@@ -35,5 +35,15 @@ assert blob.count(registration['from'].encode())==1 and blob.index(registration[
 assert h(blob.replace(registration['from'].encode(),registration['to'].encode()))==registration['mutant_sha256']==registration['restore_audit_sha256']
 assert registration['failed'] and not registration['skipped']
 final=json.loads((base/'final-898b86953/measurement.json').read_text());assert len(final['controls'])==26 and final['source_files_unchanged'] and set(final['baseline'].values())=={0}
+provenance=json.loads((base/'content-provenance-6ee1eb684/measurement.json').read_text())
+assert provenance['production_sources_unchanged']
+assert [provenance[s]['exit'] for s in ('baseline','replacement','restored')]==[0,230,0]
+for name in ('original-component.boc','replacement-component.boc','stored-record.bin'):
+ assert len({provenance[s]['artifacts'][name] for s in ('baseline','replacement','restored')})==1
+for stage in ('baseline','replacement','restored'):
+ values=provenance[stage]['artifacts'];obs=provenance[stage]['observation']
+ assert values['original-component.boc']!=values['replacement-component.boc']
+ assert values['released-component.boc']==values['original-component.boc' if stage=='replacement' else 'replacement-component.boc']
+ assert obs['executions']==obs['substitutions']==1 and obs['stored_matches_replacement'] and obs['bindings_and_other_fields_unchanged']
 (base/'reconstruction-audit.json').write_text(json.dumps(summary,indent=2)+'\n')
 print('PASS',[(k,len(v['control_restore_chains'])) for k,v in summary.items()])

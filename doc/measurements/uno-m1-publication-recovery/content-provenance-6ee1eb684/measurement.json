@@ -1,0 +1,323 @@
+{
+  "schema": 1,
+  "base_commit": "6ee1eb6847c5bb7165599805102c98df00305244",
+  "sources": {
+    "crypto/block/workchain-candidate-publication.cpp": {
+      "sha256": "8037d84d77d53b34139cb004e27eb5c715afd2fd76fc582e33d32090ef3748e0",
+      "git_blob_oid": "49ad548b43c748be196ad45a8c33c39d27320133"
+    },
+    "crypto/block/workchain-candidate-publication.h": {
+      "sha256": "b7cbab3d71101e2432101f76a03553765d8fbd05a687e8f9d7e977810ef7cc80",
+      "git_blob_oid": "c1a42243508126ca10120ac7cf91d7016478321c"
+    },
+    "crypto/test/test-workchain-publication-provenance.cpp": {
+      "sha256": "77d7172ef23fefe3a54b426ad2d217346c0d3809950c7351b1fab3fd4b4ed219",
+      "git_blob_oid": "e98cbe3c95b800b407c41596aaed21cba48ce711"
+    },
+    "crypto/test/test-workchain-construction-isolation.cpp": {
+      "sha256": "c5ff83adde83619176d00ab6276e41f24ba44fcc8e527654f23e9a5ebf4d6939",
+      "git_blob_oid": "abcad36b204a6b7826857be19af99aaf9b077705"
+    },
+    "crypto/test/workchain-publication-provenance.cmake": {
+      "sha256": "094e10dcaa095332518e4880b465f88b23c3b1b918794b7ea9011a442a56696d",
+      "git_blob_oid": "c7696c71bd110f3a937f654ef0e574f9bfe1b2d1"
+    }
+  },
+  "events": [
+    {
+      "label": "baseline-configure",
+      "command": [
+        "cmake",
+        "-S",
+        "/home/tomi/tos-m2",
+        "-B",
+        "/tmp/uno-publication-build",
+        "-G",
+        "Ninja",
+        "-DCMAKE_BUILD_TYPE=Release",
+        "-DCMAKE_PROJECT_TOS_INCLUDE=/home/tomi/tos-m2/crypto/test/workchain-publication-provenance.cmake",
+        "-DPUBLICATION_SOURCE=/home/tomi/tos-m2/crypto/block/workchain-candidate-publication.cpp",
+        "-DTOS_UNO_CRYPTO_PROTOTYPE_TESTS=OFF"
+      ],
+      "exit": 0,
+      "stdout_sha256": "1279b228831fb13cdffe78d5ca53ca50272a96befdb483d5982ad69210612aee",
+      "stderr_sha256": "a900bfe14ea12d64a8c4ea2904579660f6e9fe0d014c479f82b746ca70f3b37e"
+    },
+    {
+      "label": "baseline-build",
+      "command": [
+        "cmake",
+        "--build",
+        "/tmp/uno-publication-build",
+        "--target",
+        "test-workchain-publication-provenance",
+        "-j32"
+      ],
+      "exit": 0,
+      "stdout_sha256": "8c35b1682f73592d30612d7b0fabdb384fcfff35cb5a076cb48b85b1368aa794",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "baseline-commands",
+      "command": [
+        "ninja",
+        "-C",
+        "/tmp/uno-publication-build",
+        "-t",
+        "commands",
+        "CMakeFiles/workchain-private-publication.dir/crypto/block/workchain-candidate-publication.cpp.o",
+        "CMakeFiles/test-workchain-publication-provenance.dir/crypto/test/test-workchain-publication-provenance.cpp.o"
+      ],
+      "exit": 0,
+      "stdout_sha256": "29b3998636feb185a64042ab241e52c2d2f3bda1769b12177b46b4cc47ea6728",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "baseline-dependencies",
+      "command": [
+        "ninja",
+        "-C",
+        "/tmp/uno-publication-build",
+        "-t",
+        "deps",
+        "CMakeFiles/workchain-private-publication.dir/crypto/block/workchain-candidate-publication.cpp.o",
+        "CMakeFiles/test-workchain-publication-provenance.dir/crypto/test/test-workchain-publication-provenance.cpp.o"
+      ],
+      "exit": 0,
+      "stdout_sha256": "a31dab8896bc1e74802e9fbb21bc75cbebe7c7537464736a327402c644f0de09",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "baseline",
+      "command": [
+        "/tmp/uno-publication-build/test-workchain-publication-provenance",
+        "/tmp/uno-publication-provenance-work/baseline"
+      ],
+      "exit": 0,
+      "stdout_sha256": "94ced8356b990f09cefb0b56b471bc35318b15b5897b50fc89e4950ea0d06d2d",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "replacement-configure",
+      "command": [
+        "cmake",
+        "-S",
+        "/home/tomi/tos-m2",
+        "-B",
+        "/tmp/uno-publication-build",
+        "-G",
+        "Ninja",
+        "-DCMAKE_BUILD_TYPE=Release",
+        "-DCMAKE_PROJECT_TOS_INCLUDE=/home/tomi/tos-m2/crypto/test/workchain-publication-provenance.cmake",
+        "-DPUBLICATION_SOURCE=/tmp/uno-publication-provenance-work/workchain-candidate-publication.cpp",
+        "-DTOS_UNO_CRYPTO_PROTOTYPE_TESTS=OFF"
+      ],
+      "exit": 0,
+      "stdout_sha256": "1279b228831fb13cdffe78d5ca53ca50272a96befdb483d5982ad69210612aee",
+      "stderr_sha256": "a900bfe14ea12d64a8c4ea2904579660f6e9fe0d014c479f82b746ca70f3b37e"
+    },
+    {
+      "label": "replacement-build",
+      "command": [
+        "cmake",
+        "--build",
+        "/tmp/uno-publication-build",
+        "--target",
+        "test-workchain-publication-provenance",
+        "-j32"
+      ],
+      "exit": 0,
+      "stdout_sha256": "abc07d5faf49a435aa92e5f470de821ef3e161c183a3a93aedd0a0334c12df7c",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "replacement-commands",
+      "command": [
+        "ninja",
+        "-C",
+        "/tmp/uno-publication-build",
+        "-t",
+        "commands",
+        "CMakeFiles/workchain-private-publication.dir/tmp/uno-publication-provenance-work/workchain-candidate-publication.cpp.o",
+        "CMakeFiles/test-workchain-publication-provenance.dir/crypto/test/test-workchain-publication-provenance.cpp.o"
+      ],
+      "exit": 0,
+      "stdout_sha256": "45f998dd81109f26ec2677d4d160d1bb6ad055a1e10a0eb166790a3b5d01f832",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "replacement-dependencies",
+      "command": [
+        "ninja",
+        "-C",
+        "/tmp/uno-publication-build",
+        "-t",
+        "deps",
+        "CMakeFiles/workchain-private-publication.dir/tmp/uno-publication-provenance-work/workchain-candidate-publication.cpp.o",
+        "CMakeFiles/test-workchain-publication-provenance.dir/crypto/test/test-workchain-publication-provenance.cpp.o"
+      ],
+      "exit": 0,
+      "stdout_sha256": "6a5029cc9396ab47a2ed8f554c8448976267737f8e5a5edb9bdf323da47e7015",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "replacement",
+      "command": [
+        "/tmp/uno-publication-build/test-workchain-publication-provenance",
+        "/tmp/uno-publication-provenance-work/replacement"
+      ],
+      "exit": 230,
+      "stdout_sha256": "dcf68747655500bb64c97c26c9ce0ded3d96dcc6b9f4346ebaa18ef1f8d95aa0",
+      "stderr_sha256": "601782c880fcd5781c128a0056193906df4539b27c794249a7c001ad9eaf3281"
+    },
+    {
+      "label": "restored-configure",
+      "command": [
+        "cmake",
+        "-S",
+        "/home/tomi/tos-m2",
+        "-B",
+        "/tmp/uno-publication-build",
+        "-G",
+        "Ninja",
+        "-DCMAKE_BUILD_TYPE=Release",
+        "-DCMAKE_PROJECT_TOS_INCLUDE=/home/tomi/tos-m2/crypto/test/workchain-publication-provenance.cmake",
+        "-DPUBLICATION_SOURCE=/home/tomi/tos-m2/crypto/block/workchain-candidate-publication.cpp",
+        "-DTOS_UNO_CRYPTO_PROTOTYPE_TESTS=OFF"
+      ],
+      "exit": 0,
+      "stdout_sha256": "1279b228831fb13cdffe78d5ca53ca50272a96befdb483d5982ad69210612aee",
+      "stderr_sha256": "a900bfe14ea12d64a8c4ea2904579660f6e9fe0d014c479f82b746ca70f3b37e"
+    },
+    {
+      "label": "restored-build",
+      "command": [
+        "cmake",
+        "--build",
+        "/tmp/uno-publication-build",
+        "--target",
+        "test-workchain-publication-provenance",
+        "-j32"
+      ],
+      "exit": 0,
+      "stdout_sha256": "6ba07979a1da526e5ac1c58f6a31b29ed9d40d94f9d760587879f36f6a047694",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "restored-commands",
+      "command": [
+        "ninja",
+        "-C",
+        "/tmp/uno-publication-build",
+        "-t",
+        "commands",
+        "CMakeFiles/workchain-private-publication.dir/crypto/block/workchain-candidate-publication.cpp.o",
+        "CMakeFiles/test-workchain-publication-provenance.dir/crypto/test/test-workchain-publication-provenance.cpp.o"
+      ],
+      "exit": 0,
+      "stdout_sha256": "29b3998636feb185a64042ab241e52c2d2f3bda1769b12177b46b4cc47ea6728",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "restored-dependencies",
+      "command": [
+        "ninja",
+        "-C",
+        "/tmp/uno-publication-build",
+        "-t",
+        "deps",
+        "CMakeFiles/workchain-private-publication.dir/crypto/block/workchain-candidate-publication.cpp.o",
+        "CMakeFiles/test-workchain-publication-provenance.dir/crypto/test/test-workchain-publication-provenance.cpp.o"
+      ],
+      "exit": 0,
+      "stdout_sha256": "a31dab8896bc1e74802e9fbb21bc75cbebe7c7537464736a327402c644f0de09",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "restored",
+      "command": [
+        "/tmp/uno-publication-build/test-workchain-publication-provenance",
+        "/tmp/uno-publication-provenance-work/restored"
+      ],
+      "exit": 0,
+      "stdout_sha256": "94ced8356b990f09cefb0b56b471bc35318b15b5897b50fc89e4950ea0d06d2d",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ],
+  "scope": "One manual content-origin calibration, independent of PersistentRead observations. A real backend WriteBatch changes a valid account-root BOC after durable commit and before first release, retaining identity/input and all other fields. This is codec-level provenance, not whole-candidate semantic validity or live I13e acceptance. An already released changed same-identity record remains subject to immutable-view rejection.",
+  "runner_sha256": "0e36579894f636a19071067a32e0b38c644eba68bceb916aaaa8c60938bbdf55",
+  "baseline": {
+    "exit": 0,
+    "artifacts": {
+      "original-component.boc": "ef75384792f7000ac13f91bac7f2aab55cdab8f3e94869f9efe36386a78effa2",
+      "replacement-component.boc": "24586cdddd99e2d09c938b479615af0ed7562a126b0ed99dd9128fc10b8bdb3d",
+      "released-component.boc": "24586cdddd99e2d09c938b479615af0ed7562a126b0ed99dd9128fc10b8bdb3d",
+      "stored-record.bin": "9b0d56a82ae601e9d10d3eab43b5aad19600344454397eceee95739be7602c76"
+    },
+    "observation": {
+      "executions": 1,
+      "substitutions": 1,
+      "stored_matches_replacement": true,
+      "bindings_and_other_fields_unchanged": true,
+      "view_matches_replacement": 1,
+      "view_matches_original": 0
+    },
+    "binary_sha256": "a24dba809e24125db3df8266b837e0cf32b1ea29387871939d2b7cf946df8920"
+  },
+  "replacement": {
+    "exit": 230,
+    "artifacts": {
+      "original-component.boc": "ef75384792f7000ac13f91bac7f2aab55cdab8f3e94869f9efe36386a78effa2",
+      "replacement-component.boc": "24586cdddd99e2d09c938b479615af0ed7562a126b0ed99dd9128fc10b8bdb3d",
+      "released-component.boc": "ef75384792f7000ac13f91bac7f2aab55cdab8f3e94869f9efe36386a78effa2",
+      "stored-record.bin": "9b0d56a82ae601e9d10d3eab43b5aad19600344454397eceee95739be7602c76"
+    },
+    "observation": {
+      "executions": 1,
+      "substitutions": 1,
+      "stored_matches_replacement": true,
+      "bindings_and_other_fields_unchanged": true,
+      "view_matches_replacement": 0,
+      "view_matches_original": 1
+    },
+    "binary_sha256": "7c53383df9aa755d2f27000b30d2594b4a7834c7119d2c0cecbd7700be40b314"
+  },
+  "controls": [
+    {
+      "name": "bypass-readback-and-forge-read-event",
+      "committed_source": {
+        "commit": "6ee1eb6847c5bb7165599805102c98df00305244",
+        "path": "crypto/block/workchain-candidate-publication.cpp",
+        "blob_sha256": "8037d84d77d53b34139cb004e27eb5c715afd2fd76fc582e33d32090ef3748e0",
+        "git_blob_oid": "49ad548b43c748be196ad45a8c33c39d27320133"
+      },
+      "from": "return read_and_release(bundle.batch_identity, bundle.admitted_input, observer);",
+      "to": "released_.store(std::make_shared<const Bundle>(bundle)); recovery_required_.store(false); observe(observer, Point::PersistentRead); observe(observer, Point::ReleaseInstall); return {Outcome::Committed, Availability::Ready, td::Status::OK()};",
+      "offset": 12366,
+      "original_sha256": "8037d84d77d53b34139cb004e27eb5c715afd2fd76fc582e33d32090ef3748e0",
+      "copy_before_sha256": "8037d84d77d53b34139cb004e27eb5c715afd2fd76fc582e33d32090ef3748e0",
+      "mutant_sha256": "091ca7ad04f30da49a851f358eb7b3bebb5a060c9ae6ae30b8ece3e58365ff2a",
+      "restored_sha256": "8037d84d77d53b34139cb004e27eb5c715afd2fd76fc582e33d32090ef3748e0",
+      "restore_audit_sha256": "091ca7ad04f30da49a851f358eb7b3bebb5a060c9ae6ae30b8ece3e58365ff2a"
+    }
+  ],
+  "restored": {
+    "exit": 0,
+    "artifacts": {
+      "original-component.boc": "ef75384792f7000ac13f91bac7f2aab55cdab8f3e94869f9efe36386a78effa2",
+      "replacement-component.boc": "24586cdddd99e2d09c938b479615af0ed7562a126b0ed99dd9128fc10b8bdb3d",
+      "released-component.boc": "24586cdddd99e2d09c938b479615af0ed7562a126b0ed99dd9128fc10b8bdb3d",
+      "stored-record.bin": "9b0d56a82ae601e9d10d3eab43b5aad19600344454397eceee95739be7602c76"
+    },
+    "observation": {
+      "executions": 1,
+      "substitutions": 1,
+      "stored_matches_replacement": true,
+      "bindings_and_other_fields_unchanged": true,
+      "view_matches_replacement": 1,
+      "view_matches_original": 0
+    },
+    "binary_sha256": "a24dba809e24125db3df8266b837e0cf32b1ea29387871939d2b7cf946df8920"
+  },
+  "production_sources_unchanged": true
+}

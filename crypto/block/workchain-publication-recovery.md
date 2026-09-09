@@ -193,3 +193,34 @@ The present dynamic check for D50's common path is observation count 220. It
 detects the normal readback omission measured here, does not check order, and
 cannot rule out a forged `PersistentRead` event. A green 220 alone must not be
 read as proof that disk readback occurred.
+
+### Independent persistent-content calibration
+
+The separate manual calibration in `workchain-publication-provenance.py` does
+not count read observations. Its dedicated executable captures the real RocksDb
+set boundary through a test-only linker wrapper. At the existing
+`AfterCommitBeforeRead` callback it commits a replacement account-root BOC into
+the actual record. Batch identity, admitted input, scalar fields and every other
+component remain unchanged. No production code/header or observer assertion was
+added or changed for this calibration.
+
+The substitution occurs after the durable decision but before the first release
+of that identity. This timing is essential: changing an already released
+same-identity record would correctly trigger the existing immutable-view check,
+rather than release new bytes. The replacement is a valid canonical fixture BOC;
+this deliberately altered record is not claimed to be a semantically valid whole
+candidate. The calibration never grants finality or permission to send.
+
+Baseline and restored implementations release the replacement bytes. A single
+shadow-source mutation skips normal readback, installs the original bundle and
+forges both read/release observations. It fails only the final content-origin
+assertion, identity 230. Before that assertion, all bindings, other fields, one
+builder execution and one substitution have been checked. After closing the
+publisher, an independent real RocksDb reopen reads the same substituted record
+in all three runs. Their stored-record hashes are identical; their released
+component hashes distinguish the mutant from the two genuine-read runs.
+
+This is one independent content-origin calibration in addition to count 220. It
+excludes the measured no-read/forged-event substitution, not every conceivable
+implementation or all read paths. It is manual calibration evidence, not another
+CI mutation driver and not live I13e acceptance.
