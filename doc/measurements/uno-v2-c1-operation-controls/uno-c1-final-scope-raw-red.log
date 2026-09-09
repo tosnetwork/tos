@@ -1,0 +1,29 @@
+.F.
+======================================================================
+FAIL: test_only_wrapper_names_raw_abi (__main__.Boundary.test_only_wrapper_names_raw_abi)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/tomi/tos/crypto/test/workchain-proof-boundary-gates.py", line 33, in test_only_wrapper_names_raw_abi
+    self.assertEqual(hits, ["crypto/block/workchain-proof-backend.cpp",
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                            "uno/crypto/include/uno_crypto.h", "uno/crypto/src/ffi.rs"])
+                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Lists differ: ['cry[36 chars]p', 'crypto/block/workchain-proof-boundary-pro[63 chars].rs'] != ['cry[36 chars]p', 'uno/crypto/include/uno_crypto.h', 'uno/crypto/src/ffi.rs']
+
+First differing element 1:
+'crypto/block/workchain-proof-boundary-probe.cpp'
+'uno/crypto/include/uno_crypto.h'
+
+First list contains 1 additional elements.
+First extra element 3:
+'uno/crypto/src/ffi.rs'
+
+  ['crypto/block/workchain-proof-backend.cpp',
+-  'crypto/block/workchain-proof-boundary-probe.cpp',
+   'uno/crypto/include/uno_crypto.h',
+   'uno/crypto/src/ffi.rs']
+
+----------------------------------------------------------------------
+Ran 3 tests in 0.230s
+
+FAILED (failures=1)

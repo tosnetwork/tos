@@ -1,0 +1,240 @@
+{
+  "base_commit": "78daa8df1008bef4b13141cb7622f0ecdbbd9f3e",
+  "claim": "Production early stop measured; admission/replay not reached; no activation or acceptance.",
+  "controls": [
+    {
+      "name": "earliest-refusal",
+      "path": "validator/impl/collator.cpp",
+      "offset": 67782,
+      "from": "          stats_.account_config_owners_after = binding.engine_config.use_count();\n          return td::Status::Error(static_cast<int>(block::WorkchainExecutionFailure::LocalUnavailable),\n                                   \"multi-account admission and replay are not connected\");",
+      "to": "          stats_.account_config_owners_after = binding.engine_config.use_count();\n          return td::Status::OK();",
+      "recorded_mutant_sha256": "58d4af8ebe9b2836de1e9d48caf8aeb50bf5ce8d7d4e4223c4e348dfae4bf86b",
+      "reconstructed_mutant_sha256": "58d4af8ebe9b2836de1e9d48caf8aeb50bf5ce8d7d4e4223c4e348dfae4bf86b",
+      "restored_sha256": "7b034a1cc225ca9df9fc8f4f10f58cbcf18b9eae8e885f9f3ef10090dae0151c",
+      "mutant_binary_sha256": "e2154be05f22afb366c778cabe11cd75602b4ac3df1188af0fc27f05d82c988e",
+      "checker_exit_code": 1,
+      "checker_output": "Traceback (most recent call last):\n  File \"/home/tomi/tos/crypto/test/workchain-runtime-frontier.py\", line 61, in <module>\n    sys.exit(main())\n             ~~~~^^\n  File \"/home/tomi/tos/crypto/test/workchain-runtime-frontier.py\", line 37, in main\n    return check(Path(sys.argv[2]))\n  File \"/home/tomi/tos/crypto/test/workchain-runtime-frontier.py\", line 28, in check\n    raise RuntimeError(json.dumps({\"guard\": \"production-frontier\", \"query\": name,\n                                   \"expected_counts\": counts, \"observed\": value}))\nRuntimeError: {\"guard\": \"production-frontier\", \"query\": \"account_binding_refused\", \"expected_counts\": {\"preinit\": 1, \"configuration\": 1, \"adapter\": 1, \"validator_set\": 0, \"old_state\": 0}, \"observed\": {\"exit_code\": 2, \"counts\": {\"preinit\": 1, \"configuration\": 1, \"adapter\": 1, \"validator_set\": 1, \"old_state\": 1}, \"events\": [\"preinit\", \"configuration\", \"adapter\", \"validator_set\", \"old_state\"]}}\n",
+      "fixture_output": "-- Counter fixture active; retained if interrupted: /home/tomi/tos/build/counter-integration-50b80415a631\n-- Unconfirmed observation timing: wait_elapsed_seconds=1.001966\nwait_window_seconds=1.000000\n\nCMake Error at test/test-counter-disk-integration.cmake:236 (message):\n  Account binding refusal crossed the earliest gate: config=2\n\n  execute=0\n\n\n\n\nCMake Error at test/counter-fixture-lifecycle.cmake:58 (message):\n  Counter fixture FAILED (1); retained for inspection:\n  /home/tomi/tos/build/counter-integration-50b80415a631\nCall Stack (most recent call first):\n  test/test-counter-disk-integration.cmake:3 (counter_run_fixture)\n\n\n",
+      "traces": {
+        "account_binding_refused.result.trace.json": {
+          "exit_code": 2,
+          "counts": {
+            "preinit": 1,
+            "configuration": 1,
+            "adapter": 1,
+            "validator_set": 1,
+            "old_state": 1
+          },
+          "events": [
+            "preinit",
+            "configuration",
+            "adapter",
+            "validator_set",
+            "old_state"
+          ]
+        },
+        "account_no_stats.result.trace.json": {
+          "exit_code": 2,
+          "counts": {
+            "preinit": 0,
+            "configuration": 0,
+            "adapter": 0,
+            "validator_set": 0,
+            "old_state": 0
+          },
+          "events": []
+        },
+        "bootstrap.result.trace.json": {
+          "exit_code": 0,
+          "counts": {
+            "preinit": 1,
+            "configuration": 0,
+            "adapter": 0,
+            "validator_set": 1,
+            "old_state": 1
+          },
+          "events": [
+            "preinit",
+            "validator_set",
+            "old_state"
+          ]
+        }
+      }
+    },
+    {
+      "name": "old-state-positive-counter",
+      "path": "crypto/test/workchain-runtime-frontier.gdb",
+      "offset": 842,
+      "from": "        counts[self.name] += 1",
+      "to": "        counts[self.name] += int(self.name != \"old_state\")",
+      "recorded_mutant_sha256": "0a030ae2c7c7888b69c1108b089748017daa23c91b6656c72d14bdeaad0df33f",
+      "reconstructed_mutant_sha256": "0a030ae2c7c7888b69c1108b089748017daa23c91b6656c72d14bdeaad0df33f",
+      "restored_sha256": "4dc6eef38addedbdc92663527acfe137fd8e43197612d5f15904d04bbc2484f3",
+      "mutant_binary_sha256": "56f57a2862c5296062d9ad440e47309a7aff9af2b87979577e645f056b6b6e58",
+      "checker_exit_code": 1,
+      "checker_output": "Traceback (most recent call last):\n  File \"/home/tomi/tos/crypto/test/workchain-runtime-frontier.py\", line 61, in <module>\n    sys.exit(main())\n             ~~~~^^\n  File \"/home/tomi/tos/crypto/test/workchain-runtime-frontier.py\", line 37, in main\n    return check(Path(sys.argv[2]))\n  File \"/home/tomi/tos/crypto/test/workchain-runtime-frontier.py\", line 28, in check\n    raise RuntimeError(json.dumps({\"guard\": \"production-frontier\", \"query\": name,\n                                   \"expected_counts\": counts, \"observed\": value}))\nRuntimeError: {\"guard\": \"production-frontier\", \"query\": \"bootstrap\", \"expected_counts\": {\"preinit\": 1, \"configuration\": 0, \"adapter\": 0, \"validator_set\": 1, \"old_state\": 1}, \"observed\": {\"exit_code\": 0, \"counts\": {\"preinit\": 1, \"configuration\": 0, \"adapter\": 0, \"validator_set\": 1, \"old_state\": 0}, \"events\": [\"preinit\", \"validator_set\", \"old_state\"]}}\n",
+      "fixture_output": "-- Counter fixture active; retained if interrupted: /home/tomi/tos/build/counter-integration-40c1cf10f8e1\n-- Unconfirmed observation timing: wait_elapsed_seconds=1.001802\nwait_window_seconds=1.000000\n\n-- Closed-gate production observation: delivery=recorded\nvisited=1\nadapter=1\nowners_before=1\nowners_during=2\nowners_after=1\ntransactions=0\n\n-- Closed-gate observation timing: query_to_record_seconds=0.017283\nwait_window_seconds=1.000000\nheadroom_ratio=57.861232\n\n-- Live account binding: one config callback, zero engine calls, no candidate export\n\n-- Counter fixture passed and removed: /home/tomi/tos/build/counter-integration-40c1cf10f8e1\n",
+      "traces": {
+        "account_binding_refused.result.trace.json": {
+          "exit_code": 2,
+          "counts": {
+            "preinit": 1,
+            "configuration": 1,
+            "adapter": 1,
+            "validator_set": 0,
+            "old_state": 0
+          },
+          "events": [
+            "preinit",
+            "configuration",
+            "adapter"
+          ]
+        },
+        "account_config_failure.result.trace.json": {
+          "exit_code": 2,
+          "counts": {
+            "preinit": 1,
+            "configuration": 1,
+            "adapter": 0,
+            "validator_set": 0,
+            "old_state": 0
+          },
+          "events": [
+            "preinit",
+            "configuration"
+          ]
+        },
+        "account_no_stats.result.trace.json": {
+          "exit_code": 2,
+          "counts": {
+            "preinit": 0,
+            "configuration": 0,
+            "adapter": 0,
+            "validator_set": 0,
+            "old_state": 0
+          },
+          "events": []
+        },
+        "account_state_corrupt.result.trace.json": {
+          "exit_code": 2,
+          "counts": {
+            "preinit": 1,
+            "configuration": 1,
+            "adapter": 0,
+            "validator_set": 0,
+            "old_state": 0
+          },
+          "events": [
+            "preinit",
+            "configuration"
+          ]
+        },
+        "bootstrap.result.trace.json": {
+          "exit_code": 0,
+          "counts": {
+            "preinit": 1,
+            "configuration": 0,
+            "adapter": 0,
+            "validator_set": 1,
+            "old_state": 0
+          },
+          "events": [
+            "preinit",
+            "validator_set",
+            "old_state"
+          ]
+        }
+      }
+    }
+  ],
+  "final_source_hashes": {
+    "validator/impl/collator.cpp": "7b034a1cc225ca9df9fc8f4f10f58cbcf18b9eae8e885f9f3ef10090dae0151c",
+    "crypto/test/workchain-runtime-frontier.py": "f807e64009ca0f8b796368bb810838e1056a3d67385859325bcd008d52aa043b",
+    "crypto/test/workchain-runtime-frontier.gdb": "4dc6eef38addedbdc92663527acfe137fd8e43197612d5f15904d04bbc2484f3",
+    "build/test-tos-collator": "56f57a2862c5296062d9ad440e47309a7aff9af2b87979577e645f056b6b6e58"
+  },
+  "final_fixture_exit_code": 0,
+  "final_checker_exit_code": 0,
+  "final_fixture_output": "-- Counter fixture active; retained if interrupted: /home/tomi/tos/build/counter-integration-9eed710671ca\n-- Unconfirmed observation timing: wait_elapsed_seconds=1.002490\nwait_window_seconds=1.000000\n\n-- Closed-gate production observation: delivery=recorded\nvisited=1\nadapter=1\nowners_before=1\nowners_during=2\nowners_after=1\ntransactions=0\n\n-- Closed-gate observation timing: query_to_record_seconds=0.014861\nwait_window_seconds=1.000000\nheadroom_ratio=67.288172\n\n-- Live account binding: one config callback, zero engine calls, no candidate export\n\n-- Counter fixture passed and removed: /home/tomi/tos/build/counter-integration-9eed710671ca\n",
+  "final_traces": {
+    "account_binding_refused.result.trace.json": {
+      "exit_code": 2,
+      "counts": {
+        "preinit": 1,
+        "configuration": 1,
+        "adapter": 1,
+        "validator_set": 0,
+        "old_state": 0
+      },
+      "events": [
+        "preinit",
+        "configuration",
+        "adapter"
+      ]
+    },
+    "account_config_failure.result.trace.json": {
+      "exit_code": 2,
+      "counts": {
+        "preinit": 1,
+        "configuration": 1,
+        "adapter": 0,
+        "validator_set": 0,
+        "old_state": 0
+      },
+      "events": [
+        "preinit",
+        "configuration"
+      ]
+    },
+    "account_no_stats.result.trace.json": {
+      "exit_code": 2,
+      "counts": {
+        "preinit": 0,
+        "configuration": 0,
+        "adapter": 0,
+        "validator_set": 0,
+        "old_state": 0
+      },
+      "events": []
+    },
+    "account_state_corrupt.result.trace.json": {
+      "exit_code": 2,
+      "counts": {
+        "preinit": 1,
+        "configuration": 1,
+        "adapter": 0,
+        "validator_set": 0,
+        "old_state": 0
+      },
+      "events": [
+        "preinit",
+        "configuration"
+      ]
+    },
+    "bootstrap.result.trace.json": {
+      "exit_code": 0,
+      "counts": {
+        "preinit": 1,
+        "configuration": 0,
+        "adapter": 0,
+        "validator_set": 1,
+        "old_state": 1
+      },
+      "events": [
+        "preinit",
+        "validator_set",
+        "old_state"
+      ]
+    }
+  },
+  "restored_gate_fixture_output": "-- Counter fixture active; retained if interrupted: /home/tomi/tos/build/counter-integration-4996baa841e0\n-- Unconfirmed observation timing: wait_elapsed_seconds=1.001855\nwait_window_seconds=1.000000\n\n-- Closed-gate production observation: delivery=recorded\nvisited=1\nadapter=1\nowners_before=1\nowners_during=2\nowners_after=1\ntransactions=0\n\n-- Closed-gate observation timing: query_to_record_seconds=0.015947\nwait_window_seconds=1.000000\nheadroom_ratio=62.708824\n\n-- Live account binding: one config callback, zero engine calls, no candidate export\n\n-- Counter fixture passed and removed: /home/tomi/tos/build/counter-integration-4996baa841e0\n",
+  "build_logs": {
+    "/tmp/workchain-frontier-gate-build.log": "[1/3] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/collator.cpp.o\n[2/3] Linking CXX static library validator/impl/libtos_validator.a\n[3/3] Linking CXX executable test-tos-collator\n",
+    "/tmp/workchain-frontier-restored-build.log": "[1/3] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/collator.cpp.o\n[2/3] Linking CXX static library validator/impl/libtos_validator.a\n[3/3] Linking CXX executable test-tos-collator\n"
+  },
+  "excluded_setup_failures": [
+    "Initial debugger Breakpoint.locations API unavailable; no inferior run; replaced with is_valid plus pending check.",
+    "Fixture cap reached after two failures; moved only this run\u2019s known failed fixtures, did not change cap or evict other runs."
+  ],
+  "execution": "Manual integration probe, not registered CTest; passive debugger entry observations, timing not performance evidence."
+}

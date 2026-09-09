@@ -1,0 +1,13 @@
+{
+  "path": "crypto/block/workchain-account-engine.h",
+  "from": "if (source.policy().requires_proof_operation_meter())",
+  "to": "if (false)",
+  "original_sha256": "d69f7f74686205179b341b2c2856f53252c1ab37e1d375286eb161e6560bbc88",
+  "baseline_binary_sha256": "5f0c718d7158ac24d8ca81d6be302064a730267a666bd762645a391c52065711",
+  "recorded_mutant_sha256": "7ec00065a2f3c8a878dcce26fe887e57ea95331b4e7b000bf40835eb79a5dcdc",
+  "reconstructed_mutant_sha256": "7ec00065a2f3c8a878dcce26fe887e57ea95331b4e7b000bf40835eb79a5dcdc",
+  "mutant_binary_sha256": "07a6ce1caafba5f8e8e781d150abbd4a182b1434cd955dce34145d76b9e3e1c7",
+  "mutant_exit": 1,
+  "restored_sha256": "d69f7f74686205179b341b2c2856f53252c1ab37e1d375286eb161e6560bbc88",
+  "restored_binary_sha256": "5f0c718d7158ac24d8ca81d6be302064a730267a666bd762645a391c52065711"
+}

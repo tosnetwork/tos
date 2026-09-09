@@ -1,0 +1,3 @@
+[1/3] Building CXX object CMakeFiles/test-workchain-proof-contracts.dir/test/test-td-main.cpp.o
+[2/3] Building CXX object CMakeFiles/test-workchain-proof-contracts.dir/crypto/test/test-workchain-proof-contracts.cpp.o
+[3/3] Linking CXX executable test-workchain-proof-contracts

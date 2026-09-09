@@ -1,0 +1,7 @@
+/tmp/uno-c1-private-access.cpp:12:96: error: 'run_backend' is a private member of 'block::WorkchainProofVerifier'
+   12 | void forbidden(const UnoCryptoVerifyRequestV2& request) { (void)block::WorkchainProofVerifier::run_backend(request); }
+      |                                                                                                ^
+/home/tomi/tos/crypto/block/workchain-proof-work.h:165:32: note: declared private here
+  165 |   static WorkchainProofVerdict run_backend(const UnoCryptoVerifyRequestV2& request);
+      |                                ^
+1 error generated.

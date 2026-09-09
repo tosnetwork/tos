@@ -53,6 +53,15 @@ crypto_cache_lines = {
     '"UNO crypto tests: AUTO, ON, or OFF")',
     'set(TOS_UNO_CRYPTO_PROTOTYPE_TESTS "AUTO" CACHE STRING "UNO crypto tests: AUTO, ON, or OFF")',
 }
+# Approved build integration statements, bound to path and exact text rather
+# than line number. These do not exempt the independent retired-symbol scan.
+build_integration_lines = {
+    "CMakeLists.txt": {
+        'target_link_options(test-workchain-proof-backend PRIVATE "LINKER:--wrap=uno_crypto_verify_v2")',
+        'RESOURCE_LOCK uno_crypto_cargo)',
+    },
+    "crypto/CMakeLists.txt": {'if (TOS_UNO_CRYPTO_NODE_LINK)'},
+}
 # A path-and-word exception never suppresses another forbidden identifier.
 exceptions = {
     # Standard mnemonic dictionary data.
@@ -63,6 +72,13 @@ exceptions = {
     "toslib/toslib/keys/bip39.cpp": {"orchard"},
     # Negative dependency gate's own forbidden-name declarations.
     "uno/crypto/tests/kernel-gates.py": {"orchard", "halo2_proofs", "halo2_gadgets"},
+    # Archived traceback quotes the negative dependency gate's forbidden names.
+    "doc/measurements/uno-m2-rng-controls.json": {"orchard", "halo2_proofs"},
+    # Verbatim stderr from the same negative dependency gate control.
+    "doc/measurements/uno-m2-rng-controls/expanded-dependency-gate.stderr.log": {"orchard", "halo2_proofs"},
+    # Exact mutation declaration and verbatim failure of the retired-name gate.
+    "doc/measurements/uno-v2-c1-operation-controls/linkage/uno-c1-approved-guard-control.json": {"MineUno"},
+    "doc/measurements/uno-v2-c1-operation-controls/linkage/uno-c1-approved-guard-final-red.log": {"MineUno"},
 }
 negative_dependency_rules = {
     'self.assertFalse(names & {"rand", "getrandom", "rand_chacha", "orchard", "halo2_proofs"}, graph)',
@@ -127,7 +143,8 @@ for raw in paths:
                 not uno.search(remaining) or
                 line.strip() in crypto_cache_lines or
                 bool(re.fullmatch(r'\s*option\(TOS_UNO_[A-Z0-9_]+ "[^"]*" (?:ON|OFF)\)\s*', line)))
-            if uno.search(line) and not approved and not cmake_line:
+            integration_line = line.strip() in build_integration_lines.get(path, set())
+            if uno.search(line) and not approved and not cmake_line and not integration_line:
                 reasons.append("Uno outside approved engine paths")
         if not path.lower().endswith(".md"):
             for match in retired.finditer(line):

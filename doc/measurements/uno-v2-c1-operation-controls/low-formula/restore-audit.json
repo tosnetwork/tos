@@ -1,0 +1,13 @@
+{
+  "path": "crypto/block/workchain-proof-work.h",
+  "from": "proof_count_sum({sigma_terms, ip_terms, poly_terms})",
+  "to": "proof_count_sum({sigma_terms, ip_terms})",
+  "original_sha256": "26465362b6958c56feb66580437a58cb9ce453464a9c4f1d26456f26aadfd0de",
+  "baseline_binary_sha256": "15d4483b0dceb4e848b588f2f5b99c115dec8e27baf7534663e04157ef67658b",
+  "recorded_mutant_sha256": "695efc667d582a3d8b4e49636a479c451d22b8fbb2758b65b974b6d5409cddd9",
+  "reconstructed_mutant_sha256": "695efc667d582a3d8b4e49636a479c451d22b8fbb2758b65b974b6d5409cddd9",
+  "mutant_binary_sha256": "25ae614dc9fc314309472d4135f543b4309cc322faa1745dd2d18e0d3ad4dea9",
+  "mutant_exit": 1,
+  "restored_sha256": "26465362b6958c56feb66580437a58cb9ce453464a9c4f1d26456f26aadfd0de",
+  "restored_binary_sha256": "15d4483b0dceb4e848b588f2f5b99c115dec8e27baf7534663e04157ef67658b"
+}

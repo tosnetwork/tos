@@ -1,0 +1,24 @@
+In file included from /home/tomi/tos/crypto/test/test-workchain-proof-backend.cpp:5:
+/home/tomi/tos/crypto/block/workchain-proof-work.h:100:14: warning: unused variable 'poly_terms' [-Wunused-variable]
+  100 |   TRY_RESULT(poly_terms, proof_count_sum({padded, 4}));
+      |              ^~~~~~~~~~
+1 warning generated.
+In file included from /home/tomi/tos/crypto/block/workchain-proof-backend.cpp:1:
+/home/tomi/tos/crypto/block/workchain-proof-work.h:100:14: warning: unused variable 'poly_terms' [-Wunused-variable]
+  100 |   TRY_RESULT(poly_terms, proof_count_sum({padded, 4}));
+      |              ^~~~~~~~~~
+1 warning generated.
+kind=1 k=0 component=0 actual=1106 reserved=1094
+backend operations differ from the profile formula
+
+Traceback (most recent call last):
+  File "/home/tomi/tos/crypto/test/workchain-proof-trace.py", line 161, in <module>
+    main()
+    ~~~~^^
+  File "/home/tomi/tos/crypto/test/workchain-proof-trace.py", line 157, in main
+    result.check_returncode()
+    ~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/home/tomi/.local/share/uv/python/cpython-3.14.4-linux-x86_64-gnu/lib/python3.14/subprocess.py", line 509, in check_returncode
+    raise CalledProcessError(self.returncode, self.args, self.stdout,
+                             self.stderr)
+subprocess.CalledProcessError: Command '['/tmp/uno-c1-final-driver-low-formula-20260909/mutant-trace/trace', '/home/tomi/tos/uno/crypto/fixtures/balance-kernel-v2.txt']' returned non-zero exit status 2.

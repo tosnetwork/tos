@@ -1,0 +1,7 @@
+Traceback (most recent call last):
+  File "/home/tomi/tos/.github/scripts/check-i13-results.py", line 44, in <module>
+    check(sys.argv[1], Path(sys.argv[2]), repository)
+    ~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/tomi/tos/.github/scripts/check-i13-results.py", line 38, in check
+    raise ValueError(f"expected exactly three named checks, observed {names!r}")
+ValueError: expected exactly three named checks, observed []

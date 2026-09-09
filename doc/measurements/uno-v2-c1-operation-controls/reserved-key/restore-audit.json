@@ -1,0 +1,13 @@
+{
+  "path": "crypto/block/workchain-proof-backend.cpp",
+  "from": "case UNO_CRYPTO_KEY:",
+  "to": "case UNO_CRYPTO_KEY: return WorkchainProofVerdict::InvalidProof;",
+  "original_sha256": "fa06c77f2317e619d297f90d9186fea288d054c50a42a8da0c8966552dafae40",
+  "baseline_binary_sha256": "15d4483b0dceb4e848b588f2f5b99c115dec8e27baf7534663e04157ef67658b",
+  "recorded_mutant_sha256": "e01f13007d3d499fb75f00c12cec3e54c996e1ce24f22b41599eb4258a8ff220",
+  "reconstructed_mutant_sha256": "e01f13007d3d499fb75f00c12cec3e54c996e1ce24f22b41599eb4258a8ff220",
+  "mutant_binary_sha256": "eebe4dd38a147d53c195ca1a06a9f700ca4c3f99cb81654c9be3bcbb92b615d2",
+  "mutant_exit": 2,
+  "restored_sha256": "fa06c77f2317e619d297f90d9186fea288d054c50a42a8da0c8966552dafae40",
+  "restored_binary_sha256": "15d4483b0dceb4e848b588f2f5b99c115dec8e27baf7534663e04157ef67658b"
+}

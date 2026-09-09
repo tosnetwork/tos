@@ -1,0 +1,134 @@
+[0/1] Re-running CMake...
+-- Use openssl: /home/tomi/tos/build/third-party/openssl/lib/libcrypto.a
+Add rocksdb
+-- CMAKE_BUILD_TYPE is set to Release
+-- Could NOT find uring (missing: uring_LIBRARIES uring_INCLUDE_DIR) 
+-- Enabling RTTI in all builds
+-- ROCKSDB_PLUGINS: 
+-- ROCKSDB PLUGINS TO BUILD 
+-- JNI library is disabled
+Add abseil-cpp
+Add crc32c
+Add ngtcp2 with custom OpenSSL from /home/tomi/tos/build/third-party/openssl
+-- Could NOT find Libev (missing: LIBEV_LIBRARY LIBEV_INCLUDE_DIR) (Required is at least version "4.11")
+-- Could NOT find Libnghttp3 (missing: LIBNGHTTP3_LIBRARY LIBNGHTTP3_INCLUDE_DIR) (Required is at least version "1.14.0")
+-- Could NOT find Libbrotlienc (missing: LIBBROTLIENC_LIBRARY LIBBROTLIENC_INCLUDE_DIR) (Required is at least version "1.0.9")
+-- Could NOT find Libbrotlidec (missing: LIBBROTLIDEC_LIBRARY LIBBROTLIDEC_INCLUDE_DIR) (Required is at least version "1.0.9")
+CMake Warning at third-party/ngtcp2/crypto/CMakeLists.txt:31 (message):
+  libngtcp2_crypto_quictls library is disabled due to lack of good quictls
+
+
+CMake Warning at third-party/ngtcp2/crypto/CMakeLists.txt:37 (message):
+  libngtcp2_crypto_libressl library is disabled due to lack of good LibreSSL
+
+
+-- summary of build options:
+
+    Package version: 1.22.0
+    Library version: 24:0:8
+    Install prefix:  /home/tomi/tos/build/install
+    Target system:   Linux
+    Compiler:
+      Build type:     Release
+      C compiler:     /usr/bin/clang-21
+      CFLAGS:         -O3  
+      C++ compiler:   /usr/bin/clang++-21
+      CXXFLAGS:       -O3  
+      WARNCFLAGS:       -Wextra -Wall -Wconversion -Winline -Wmissing-declarations -Wmissing-prototypes -Wnested-externs -Wpointer-arith -Wshadow -Wundef -Wwrite-strings -Waddress -Wattributes -Wcast-align -Wdeclaration-after-statement -Wdiv-by-zero -Wempty-body -Wendif-labels -Wfloat-equal -Wformat-nonliteral -Wformat-security -Wmissing-field-initializers -Wmissing-noreturn -Wno-format-nonliteral -Wredundant-decls -Wsign-conversion -Wstrict-prototypes -Wunreachable-code -Wunused-macros -Wunused-parameter -Wvla -Wshorten-64-to-32 -Wlanguage-extension-token -Wpragmas -Wunreachable-code-break -Wheader-guard -Wsometimes-uninitialized -Wmissing-variable-declarations
+      WARNCXXFLAGS:     -Wall -Wformat-security -Wno-extern-c-compat -Wsometimes-uninitialized -Wno-noexcept-type
+    Library:
+      Shared:         ON
+      Static:         ON
+    Test:
+      Build Test:     OFF
+    Libs:
+      OpenSSL:        TRUE (LIBS='/home/tomi/tos/build/third-party/openssl/lib/libssl.a;/home/tomi/tos/build/third-party/openssl/lib/libcrypto.a;dl')
+      Libev:          FALSE (LIBS='')
+      Libnghttp3:     FALSE (LIBS='')
+      GnuTLS:         FALSE (LIBS='')
+      BoringSSL:      FALSE (LIBS='')
+      Picotls:        FALSE (LIBS='')
+      wolfSSL:        FALSE (LIBS='')
+      Jemalloc:        (LIBS='/usr/lib/x86_64-linux-gnu/libjemalloc.so')
+      Libbrotlienc:   FALSE (LIBS='')
+      Libbrotlidec:   FALSE (LIBS='')
+
+Add tl-parser
+Add tos
+-- Use Secp256k1: /home/tomi/tos/build/third-party/secp256k1/lib/libsecp256k1.a
+-- Building libbacktrace from: /home/tomi/tos/third-party/libbacktrace
+-- Using preconfigured zlib: /home/tomi/tos/build/third-party/zlib/lib/libz.a
+-- Using ccache
+-- Using zlib /home/tomi/tos/build/third-party/zlib/lib/libz.a
+-- Found ZLIB: /home/tomi/tos/build/third-party/zlib/include /home/tomi/tos/build/third-party/zlib/lib/libz.a
+-- Using libbacktrace for enhanced stack traces
+-- Found LZ4 /home/tomi/tos/build/third-party/lz4/lib/liblz4.a /home/tomi/tos/third-party/lz4/lib
+-- Checking for module 'benchmark'
+--   No package 'benchmark' found
+-- Google Benchmark not found via pkg-config - gbench-coro target disabled
+-- Found Readline: /usr/include /usr/lib/x86_64-linux-gnu/libreadline.so
+-- Using Sodium /home/tomi/tos/build/third-party/sodium/lib/libsodium.a
+-- Configuring done
+-- Generating done
+-- Build files have been written to: /home/tomi/tos/build
+[1/61] Building CXX object crypto/CMakeFiles/tos_block.dir/block/block.cpp.o
+[2/61] Building CXX object crypto/CMakeFiles/tos_block.dir/block/transaction.cpp.o
+[3/61] Building CXX object crypto/CMakeFiles/tos_block.dir/block/workchain-execution-dispatch.cpp.o
+[4/61] Linking CXX static library crypto/libtos_block.a
+[5/61] Checking the git repository for changes...
+[6/59] Linking CXX executable crypto/func
+[7/59] Compile FunC stdlib TVM v6 fee primitive coverage
+[8/59] Linking CXX executable crypto/fift
+[9/59] Generate /home/tomi/tos/build/crypto/smartcont/auto/session-wallet-code.fif
+[10/59] Generate /home/tomi/tos/build/crypto/smartcont/auto/restricted-wallet-code.fif
+[11/59] Generate /home/tomi/tos/build/crypto/smartcont/auto/wallet-code.fif
+[12/59] Generate /home/tomi/tos/build/crypto/smartcont/auto/simple-wallet-code.fif
+[13/59] Generate /home/tomi/tos/build/crypto/smartcont/auto/highload-wallet-v2-code.fif
+[14/59] Generate /home/tomi/tos/build/crypto/smartcont/auto/restricted-wallet2-code.fif
+[15/59] Generate /home/tomi/tos/build/crypto/smartcont/auto/wallet-v4-code.fif
+[16/59] Generate /home/tomi/tos/build/crypto/smartcont/auto/highload-wallet-code.fif
+[17/59] Generate /home/tomi/tos/build/crypto/smartcont/auto/wallet3-code.fif
+[18/59] Generate /home/tomi/tos/build/crypto/smartcont/auto/simple-wallet-ext-code.fif
+[19/59] Generate /home/tomi/tos/build/crypto/smartcont/auto/restricted-wallet3-code.fif
+[20/59] Generate /home/tomi/tos/build/crypto/smartcont/auto/wallet-v5-code.fif
+[21/59] Generate /home/tomi/tos/build/crypto/smartcont/auto/pow-testgiver-code.fif
+[22/59] Generate /home/tomi/tos/build/crypto/smartcont/auto/dns-manual-code.fif
+[23/59] Generate /home/tomi/tos/build/crypto/smartcont/auto/multisig-code.fif
+[24/59] Generate /home/tomi/tos/build/crypto/smartcont/auto/agent-account-code.fif
+[25/59] Generate /home/tomi/tos/build/crypto/smartcont/auto/payment-channel-code.fif
+[26/59] Generate /home/tomi/tos/build/crypto/smartcont/auto/session-wallet-code.cpp
+[27/59] Generate /home/tomi/tos/build/crypto/smartcont/auto/highload-wallet-v2-code.cpp
+[28/59] Generate /home/tomi/tos/build/crypto/smartcont/auto/simple-wallet-ext-code.cpp
+[29/59] Generate /home/tomi/tos/build/crypto/smartcont/auto/wallet-v4-code.cpp
+[30/59] Generate /home/tomi/tos/build/crypto/smartcont/auto/wallet3-code.cpp
+[31/59] Generate /home/tomi/tos/build/crypto/smartcont/auto/restricted-wallet3-code.cpp
+[32/59] Generate /home/tomi/tos/build/crypto/smartcont/auto/wallet-code.cpp
+[33/59] Generate /home/tomi/tos/build/crypto/smartcont/auto/simple-wallet-code.cpp
+[34/59] Generate /home/tomi/tos/build/crypto/smartcont/auto/restricted-wallet2-code.cpp
+[35/59] Generate /home/tomi/tos/build/crypto/smartcont/auto/highload-wallet-code.cpp
+[36/59] Generate /home/tomi/tos/build/crypto/smartcont/auto/restricted-wallet-code.cpp
+[37/59] Generate /home/tomi/tos/build/crypto/smartcont/auto/wallet-v5-code.cpp
+[38/59] Generate /home/tomi/tos/build/crypto/smartcont/auto/dns-auto-code.fif
+[39/59] Generate /home/tomi/tos/build/crypto/smartcont/auto/config-code.fif
+[40/59] Generate /home/tomi/tos/build/crypto/smartcont/auto/pow-testgiver-code.cpp
+[41/59] Generate /home/tomi/tos/build/crypto/smartcont/auto/dns-manual-code.cpp
+[42/59] Generate /home/tomi/tos/build/crypto/smartcont/auto/task-escrow-code.fif
+[43/59] Generate /home/tomi/tos/build/crypto/smartcont/auto/multisig-code.cpp
+[44/59] Generate /home/tomi/tos/build/crypto/smartcont/auto/agent-account-code.cpp
+[45/59] Generate /home/tomi/tos/build/crypto/smartcont/auto/payment-channel-code.cpp
+[46/59] Generate /home/tomi/tos/build/crypto/smartcont/auto/dns-auto-code.cpp
+[47/59] Generate /home/tomi/tos/build/crypto/smartcont/auto/config-code.cpp
+[48/59] Generate /home/tomi/tos/build/crypto/smartcont/auto/task-escrow-code.cpp
+[49/59] Generate /home/tomi/tos/build/crypto/smartcont/auto/elector-code.fif
+[50/59] Generate /home/tomi/tos/build/crypto/smartcont/auto/elector-code.cpp
+[51/59] Generate /home/tomi/tos/build/crypto/smartcont/auto/prediction-market-code.fif
+[52/59] Verify and embed the frozen TOS Service Protocol stablecoin escrow v1 BOC
+NOTE: escrow v1 is deprecated (superseded by v2); this build exists only to verify the frozen historical artifact.
+NOTE: escrow v1 is deprecated (superseded by v2); this build exists only to verify the frozen historical artifact.
+[53/59] Generate /home/tomi/tos/build/crypto/smartcont/auto/prediction-market-code.cpp
+[54/59] Verify and embed the frozen TOS Service Protocol stablecoin escrow v2 BOC
+[55/59] Verify and embed the frozen TOS Native Service Registry BOC
+[56/59] Building CXX object crypto/CMakeFiles/smc-envelope.dir/smc-envelope/SmartContractCode.cpp.o
+[57/59] Building CXX object CMakeFiles/test-workchain-block.dir/crypto/test/test-workchain-block.cpp.o
+[58/59] Linking CXX static library crypto/libsmc-envelope.a
+[59/59] Linking CXX executable test-workchain-block

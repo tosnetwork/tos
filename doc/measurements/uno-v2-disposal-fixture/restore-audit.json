@@ -1,0 +1,39 @@
+{
+  "base_commit": "defdc2060",
+  "test_source": "crypto/test/test-workchain-block.cpp",
+  "test_source_sha256": "a4b0892cf929c749deed2f4b0d4514f925e8320f921dbb2211379e8fe1bac583",
+  "restored_binary_sha256": "b69a5cf773e8d5b06157d24dc36b00868b5839b46ca47ec0a9c87b0dfe5b0c54",
+  "controls": [
+    {
+      "name": "initialize-mc",
+      "source": "crypto/test/test-workchain-block.cpp",
+      "from": "  config.fwd_mc = block::MsgPrices(100, 0, 0, 0, 16384, 0);\n",
+      "to": "",
+      "recorded_mutant_sha256": "2e6e77b7ebe828ef006a95b8b24a28f45a2feec6da3f60a73983b3d8afef8116",
+      "restored_sha256": "a4b0892cf929c749deed2f4b0d4514f925e8320f921dbb2211379e8fe1bac583",
+      "mutant_binary_sha256": "edce2a95d2087a1e10fc27d69cd972404c8113816365af6f1e53b26087722bbb",
+      "build_exit_code": 0,
+      "run_exit_code": 1,
+      "filter": "DisposalFixturePricesOverwritePriorState",
+      "assertion": "config.fwd_mc.lump_price is not equal to 100u (911 != 100)",
+      "log": "initialize-mutant-run.log"
+    },
+    {
+      "name": "reject-invalid-mc-fraction",
+      "source": "crypto/block/workchain-native-disposal.h",
+      "from": "      cfg.fwd_std.first_frac > 65535 || cfg.fwd_mc.first_frac > 65535 ||",
+      "to": "      cfg.fwd_std.first_frac > 65535 ||",
+      "recorded_mutant_sha256": "3a58ef42b4332c3afe5a34119244dd702c3bf3e55853acc95db95644a3bb1980",
+      "restored_sha256": "e11297bd53a521c1ed0b6fbb6994ee5927777e298d03b75fe1373466e97ed018",
+      "mutant_binary_sha256": "1f7ac97de9dcc6d8616396daf4bd5098163178007abd254df18a98117bf24b9c",
+      "build_exit_code": 0,
+      "run_exit_code": 1,
+      "filter": "NativeDisposalEntry",
+      "assertion": "Expectation failed: rejected_mc_prices.is_error()!",
+      "log": "fraction-mutant-run.log"
+    }
+  ],
+  "final_full_tests": 123,
+  "final_full_exit_code": 0,
+  "scope": "Both red controls use initialized values; no undefined-behavior regression control. Production header restored unchanged. MsgPrices default initialization is not included."
+}

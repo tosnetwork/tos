@@ -210,8 +210,22 @@ void child_control(const std::vector<Fixture>& fixtures, bool canary) {
 
 int main(int argc, char** argv) {
   try {
-    require(argc == 2, "supply the frozen vector path");
+    require(argc == 2 || argc == 3, "supply the frozen vector path and optional entropy probe mode");
     auto fixtures = load(argv[1]);
+    // Direct subprocess modes expose SIGSYS itself to the measurement runner.
+    // The corpus is loaded before the trap and no verification warms RNG state.
+    if (argc == 3) {
+      const std::string mode = argv[2];
+      require(mode == "--entropy-worker" || mode == "--entropy-canary", "unknown entropy probe mode");
+      forbid_entropy();
+      if (mode == "--entropy-canary") {
+        uint8_t byte;
+        syscall(SYS_getrandom, &byte, 1, 0);
+        return 0;
+      }
+      verify_all(fixtures);
+      return 0;
+    }
     child_control(fixtures, true);
     child_control(fixtures, false);
     std::vector<std::thread> threads;

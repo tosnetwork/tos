@@ -1,0 +1,13 @@
+{
+  "path": "crypto/block/workchain-proof-work.h",
+  "from": "case WorkchainProofVerdict::InvalidProof:\n        return fail(td::Status::Error(static_cast<int>(WorkchainExecutionFailure::CandidateInvalid)",
+  "to": "case WorkchainProofVerdict::InvalidProof:\n        return fail(td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable)",
+  "original_sha256": "26465362b6958c56feb66580437a58cb9ce453464a9c4f1d26456f26aadfd0de",
+  "baseline_binary_sha256": "529c402835b3d72dd68805325c28f65fb22e63a067e3e4debc0b4f4afa2f2a77",
+  "recorded_mutant_sha256": "9c4c19ec86ce4c4ef3884bbe2038586282b595f42cc67bf127194996a842ed0e",
+  "reconstructed_mutant_sha256": "9c4c19ec86ce4c4ef3884bbe2038586282b595f42cc67bf127194996a842ed0e",
+  "mutant_binary_sha256": "6548cb43e51623fdabf4c132d6879a8cc90b7706a74e3c4abb45dc06a0b237bd",
+  "mutant_exit": 1,
+  "restored_sha256": "26465362b6958c56feb66580437a58cb9ce453464a9c4f1d26456f26aadfd0de",
+  "restored_binary_sha256": "529c402835b3d72dd68805325c28f65fb22e63a067e3e4debc0b4f4afa2f2a77"
+}

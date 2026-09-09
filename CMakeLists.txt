@@ -643,6 +643,32 @@ endif()
 add_executable(test-cells test/test-td-main.cpp ${CELLS_TEST_SOURCE})
 add_executable(test-workchain-block test/test-td-main.cpp crypto/test/test-workchain-block.cpp)
 target_link_libraries(test-workchain-block PRIVATE tos_crypto emulator_static)
+add_executable(test-workchain-proof-work test/test-td-main.cpp crypto/test/test-workchain-proof-work.cpp)
+target_link_libraries(test-workchain-proof-work PRIVATE tos_crypto)
+add_executable(test-workchain-proof-contracts test/test-td-main.cpp crypto/test/test-workchain-proof-contracts.cpp)
+target_link_libraries(test-workchain-proof-contracts PRIVATE tos_crypto)
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+add_test(NAME test-workchain-proof-boundary-gates COMMAND ${Python3_EXECUTABLE}
+  "${PROJECT_SOURCE_DIR}/crypto/test/workchain-proof-boundary-gates.py")
+# The existing ABI test target exists only after normalized ON/AUTO admission.
+# In particular, a lowercase "off" with node linkage must not enable tests.
+if (TARGET test-uno-crypto-abi-real)
+  add_executable(test-workchain-proof-backend crypto/test/test-workchain-proof-backend.cpp
+    crypto/block/workchain-proof-backend.cpp)
+  target_compile_definitions(test-workchain-proof-backend PRIVATE TOS_CONFIDENTIAL_PROOF_BACKEND_LINKED)
+  target_include_directories(test-workchain-proof-backend PRIVATE uno/crypto/include)
+  target_link_libraries(test-workchain-proof-backend PRIVATE tos_crypto confidential-crypto-kernel)
+  target_link_options(test-workchain-proof-backend PRIVATE "LINKER:--wrap=uno_crypto_verify_v2")
+  add_test(NAME test-workchain-proof-backend COMMAND test-workchain-proof-backend
+    "${PROJECT_SOURCE_DIR}/uno/crypto/fixtures/balance-kernel-v2.txt")
+  set_tests_properties(test-workchain-proof-backend PROPERTIES TIMEOUT 120)
+  add_test(NAME test-workchain-proof-operation-trace COMMAND ${Python3_EXECUTABLE}
+    "${PROJECT_SOURCE_DIR}/crypto/test/workchain-proof-trace.py"
+    --source "${PROJECT_SOURCE_DIR}" --build "${CMAKE_BINARY_DIR}")
+  set_tests_properties(test-workchain-proof-operation-trace PROPERTIES TIMEOUT 600
+    RESOURCE_LOCK uno_crypto_cargo)
+  add_dependencies(all-tests test-workchain-proof-backend)
+endif()
 add_executable(test-workchain-admission test/test-td-main.cpp crypto/test/test-workchain-admission.cpp)
 target_link_libraries(test-workchain-admission PRIVATE tos_crypto)
 # Retired pool components are archived, with no target or transitive include
@@ -1159,6 +1185,8 @@ tos_test(test-vm ${TEST_OPTIONS})
 tos_test(test-fift ${TEST_OPTIONS})
 tos_test(test-cells ${TEST_OPTIONS})
 tos_test(test-workchain-block)
+tos_test(test-workchain-proof-work)
+tos_test(test-workchain-proof-contracts)
 tos_test(test-workchain-admission)
 tos_test(test-smartcont)
 tos_test(test-net)

@@ -288,6 +288,12 @@ class RegisteredWorkchainAccountEngine {
   virtual td::Result<WorkchainAccountEffects> execute_accounts(
       const td::Ref<vm::Cell>& input, WorkchainAccountReadView& accounts,
       const WorkchainEngineConfig& configuration) const = 0;
+  virtual td::Result<WorkchainAccountEffects> execute_metered_accounts(
+      const td::Ref<vm::Cell>& input, WorkchainAccountReadView& accounts,
+      const WorkchainEngineConfig& configuration, WorkchainProofVerifier& proofs) const {
+    return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),
+                             "registered engine has no operation-metered implementation");
+  }
 };
 
 struct ResolvedWorkchainAccountBinding {
@@ -337,6 +343,11 @@ class ConfiguredWorkchainAccountEngine final : public WorkchainAccountEngine {
   td::Result<WorkchainAccountEffects> execute_accounts(
       const td::Ref<vm::Cell>& input, WorkchainAccountReadView& accounts) const override {
     return engine_->execute_accounts(input, accounts, *configuration_);
+  }
+  td::Result<WorkchainAccountEffects> execute_metered_accounts(
+      const td::Ref<vm::Cell>& input, WorkchainAccountReadView& accounts,
+      WorkchainProofVerifier& proofs) const override {
+    return engine_->execute_metered_accounts(input, accounts, *configuration_, proofs);
   }
  private:
   explicit ConfiguredWorkchainAccountEngine(const ResolvedWorkchainAccountBinding& binding)

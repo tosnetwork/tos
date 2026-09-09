@@ -1,0 +1,6 @@
+[1/6] Building CXX object CMakeFiles/test-workchain-proof-contracts.dir/crypto/test/test-workchain-proof-contracts.cpp.o
+[2/6] Building CXX object crypto/CMakeFiles/tos_block.dir/block/workchain-execution-dispatch.cpp.o
+[3/6] Building CXX object crypto/CMakeFiles/tos_block.dir/block/block.cpp.o
+[4/6] Building CXX object crypto/CMakeFiles/tos_block.dir/block/transaction.cpp.o
+[5/6] Linking CXX static library crypto/libtos_block.a
+[6/6] Linking CXX executable test-workchain-proof-contracts

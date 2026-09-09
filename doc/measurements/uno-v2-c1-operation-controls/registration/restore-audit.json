@@ -1,0 +1,25 @@
+{
+  "workflow_script": "cd build\ncount=$(ctest -N -R '^(test-uno-crypto-(abi-real|rust|symbols|kernel-gates|header-guard)|test-workchain-proof-(backend|operation-trace))$' | grep -c '^ *Test *#' || true)\ntest \"$count\" -eq 7 || { echo \"expected 7 UNO crypto and proof-operation gates, found $count\"; exit 1; }",
+  "controls": [
+    {
+      "from": "  add_test(NAME test-workchain-proof-backend COMMAND test-workchain-proof-backend\n    \"${PROJECT_SOURCE_DIR}/uno/crypto/fixtures/balance-kernel-v2.txt\")\n  set_tests_properties(test-workchain-proof-backend PROPERTIES TIMEOUT 120)\n",
+      "to": "  if(FALSE)\n  add_test(NAME test-workchain-proof-backend COMMAND test-workchain-proof-backend\n    \"${PROJECT_SOURCE_DIR}/uno/crypto/fixtures/balance-kernel-v2.txt\")\n  set_tests_properties(test-workchain-proof-backend PROPERTIES TIMEOUT 120)\n  endif()\n",
+      "path": "CMakeLists.txt",
+      "original_sha256": "a1459fb23abb33d5bb366d7ef95f1e089d470f678a1f850b16c719575b032465",
+      "recorded_mutant_sha256": "3e98823fc9832236cda04769af9625fa75312893d1ddcdf6ef1c7cd8d184a652",
+      "reconstructed_mutant_sha256": "3e98823fc9832236cda04769af9625fa75312893d1ddcdf6ef1c7cd8d184a652",
+      "restored_sha256": "a1459fb23abb33d5bb366d7ef95f1e089d470f678a1f850b16c719575b032465",
+      "mutant_exit": 1
+    },
+    {
+      "from": "  add_test(NAME test-workchain-proof-operation-trace COMMAND ${Python3_EXECUTABLE}\n    \"${PROJECT_SOURCE_DIR}/crypto/test/workchain-proof-trace.py\"\n    --source \"${PROJECT_SOURCE_DIR}\" --build \"${CMAKE_BINARY_DIR}\")\n  set_tests_properties(test-workchain-proof-operation-trace PROPERTIES TIMEOUT 600\n    RESOURCE_LOCK uno_crypto_cargo)\n",
+      "to": "  if(FALSE)\n  add_test(NAME test-workchain-proof-operation-trace COMMAND ${Python3_EXECUTABLE}\n    \"${PROJECT_SOURCE_DIR}/crypto/test/workchain-proof-trace.py\"\n    --source \"${PROJECT_SOURCE_DIR}\" --build \"${CMAKE_BINARY_DIR}\")\n  set_tests_properties(test-workchain-proof-operation-trace PROPERTIES TIMEOUT 600\n    RESOURCE_LOCK uno_crypto_cargo)\n  endif()\n",
+      "path": "CMakeLists.txt",
+      "original_sha256": "a1459fb23abb33d5bb366d7ef95f1e089d470f678a1f850b16c719575b032465",
+      "recorded_mutant_sha256": "a6e54ce155db3b55f2c55830cfe45749c62f9a6167f12dfe54066dd65c47ab54",
+      "reconstructed_mutant_sha256": "a6e54ce155db3b55f2c55830cfe45749c62f9a6167f12dfe54066dd65c47ab54",
+      "restored_sha256": "a1459fb23abb33d5bb366d7ef95f1e089d470f678a1f850b16c719575b032465",
+      "mutant_exit": 1
+    }
+  ]
+}

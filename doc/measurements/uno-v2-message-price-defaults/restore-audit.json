@@ -1,0 +1,74 @@
+{
+  "base_commit": "879e5878a",
+  "source": "crypto/block/mc-config.h",
+  "source_sha256": "4e1437aa388ac5e3616ce72b81200d2733d3038f9078ee4a2095bfe138486481",
+  "test_source": "crypto/test/test-workchain-block.cpp",
+  "test_source_sha256": "591b44e0d30ba124ee8f8b5aefe5c32d438d164b52b4d8defe0d1e30a51a908f",
+  "kind": "compile-time controls on the actual test translation unit, not behavioral mutants",
+  "baseline_compile_exit": 0,
+  "controls": [
+    {
+      "field": "lump_price",
+      "source": "crypto/block/mc-config.h",
+      "from": "struct MsgPrices {\n  td::uint64 lump_price = 0;\n  td::uint64 bit_price = 0;\n  td::uint64 cell_price = 0;\n  td::uint32 ihr_factor = 0;\n  td::uint32 first_frac = 0;\n  td::uint32 next_frac = 0;",
+      "to": "struct MsgPrices {\n  td::uint64 lump_price;\n  td::uint64 bit_price = 0;\n  td::uint64 cell_price = 0;\n  td::uint32 ihr_factor = 0;\n  td::uint32 first_frac = 0;\n  td::uint32 next_frac = 0;",
+      "recorded_mutant_sha256": "fa142b599b422a85ef8fb2a7893dd1c4593895d25a638d680074f9ca33942eeb",
+      "compile_exit": 1,
+      "restored_sha256": "4e1437aa388ac5e3616ce72b81200d2733d3038f9078ee4a2095bfe138486481"
+    },
+    {
+      "field": "bit_price",
+      "source": "crypto/block/mc-config.h",
+      "from": "struct MsgPrices {\n  td::uint64 lump_price = 0;\n  td::uint64 bit_price = 0;\n  td::uint64 cell_price = 0;\n  td::uint32 ihr_factor = 0;\n  td::uint32 first_frac = 0;\n  td::uint32 next_frac = 0;",
+      "to": "struct MsgPrices {\n  td::uint64 lump_price = 0;\n  td::uint64 bit_price;\n  td::uint64 cell_price = 0;\n  td::uint32 ihr_factor = 0;\n  td::uint32 first_frac = 0;\n  td::uint32 next_frac = 0;",
+      "recorded_mutant_sha256": "8476a3c2c6d64e920f4aa2db300568de5c66fd4e54e8fbb3b7a8d5130b7e2e2b",
+      "compile_exit": 1,
+      "restored_sha256": "4e1437aa388ac5e3616ce72b81200d2733d3038f9078ee4a2095bfe138486481"
+    },
+    {
+      "field": "cell_price",
+      "source": "crypto/block/mc-config.h",
+      "from": "struct MsgPrices {\n  td::uint64 lump_price = 0;\n  td::uint64 bit_price = 0;\n  td::uint64 cell_price = 0;\n  td::uint32 ihr_factor = 0;\n  td::uint32 first_frac = 0;\n  td::uint32 next_frac = 0;",
+      "to": "struct MsgPrices {\n  td::uint64 lump_price = 0;\n  td::uint64 bit_price = 0;\n  td::uint64 cell_price;\n  td::uint32 ihr_factor = 0;\n  td::uint32 first_frac = 0;\n  td::uint32 next_frac = 0;",
+      "recorded_mutant_sha256": "c8fc4e63d490799e8ec8de7f08aa10efc8e4c10a8727f7bef396d44ad6c1c710",
+      "compile_exit": 1,
+      "restored_sha256": "4e1437aa388ac5e3616ce72b81200d2733d3038f9078ee4a2095bfe138486481"
+    },
+    {
+      "field": "ihr_factor",
+      "source": "crypto/block/mc-config.h",
+      "from": "struct MsgPrices {\n  td::uint64 lump_price = 0;\n  td::uint64 bit_price = 0;\n  td::uint64 cell_price = 0;\n  td::uint32 ihr_factor = 0;\n  td::uint32 first_frac = 0;\n  td::uint32 next_frac = 0;",
+      "to": "struct MsgPrices {\n  td::uint64 lump_price = 0;\n  td::uint64 bit_price = 0;\n  td::uint64 cell_price = 0;\n  td::uint32 ihr_factor;\n  td::uint32 first_frac = 0;\n  td::uint32 next_frac = 0;",
+      "recorded_mutant_sha256": "7b46759ec5a2e564c86926815e88e87cae3eac8cfd69fb6de2bc347199322256",
+      "compile_exit": 1,
+      "restored_sha256": "4e1437aa388ac5e3616ce72b81200d2733d3038f9078ee4a2095bfe138486481"
+    },
+    {
+      "field": "first_frac",
+      "source": "crypto/block/mc-config.h",
+      "from": "struct MsgPrices {\n  td::uint64 lump_price = 0;\n  td::uint64 bit_price = 0;\n  td::uint64 cell_price = 0;\n  td::uint32 ihr_factor = 0;\n  td::uint32 first_frac = 0;\n  td::uint32 next_frac = 0;",
+      "to": "struct MsgPrices {\n  td::uint64 lump_price = 0;\n  td::uint64 bit_price = 0;\n  td::uint64 cell_price = 0;\n  td::uint32 ihr_factor = 0;\n  td::uint32 first_frac;\n  td::uint32 next_frac = 0;",
+      "recorded_mutant_sha256": "61343ea93577838f53c07ffcd0fa622735ce6720ca41214a6b26168f16d0337a",
+      "compile_exit": 1,
+      "restored_sha256": "4e1437aa388ac5e3616ce72b81200d2733d3038f9078ee4a2095bfe138486481"
+    },
+    {
+      "field": "next_frac",
+      "source": "crypto/block/mc-config.h",
+      "from": "struct MsgPrices {\n  td::uint64 lump_price = 0;\n  td::uint64 bit_price = 0;\n  td::uint64 cell_price = 0;\n  td::uint32 ihr_factor = 0;\n  td::uint32 first_frac = 0;\n  td::uint32 next_frac = 0;",
+      "to": "struct MsgPrices {\n  td::uint64 lump_price = 0;\n  td::uint64 bit_price = 0;\n  td::uint64 cell_price = 0;\n  td::uint32 ihr_factor = 0;\n  td::uint32 first_frac = 0;\n  td::uint32 next_frac;",
+      "recorded_mutant_sha256": "3e85930158fb4a1282b079b52e7ee679d2ae7b8b7f42dc4ff59ce86f0e362af0",
+      "compile_exit": 1,
+      "restored_sha256": "4e1437aa388ac5e3616ce72b81200d2733d3038f9078ee4a2095bfe138486481"
+    },
+    {
+      "field": "lump_price_value",
+      "source": "crypto/block/mc-config.h",
+      "from": "  td::uint64 lump_price = 0;",
+      "to": "  td::uint64 lump_price = 1;",
+      "recorded_mutant_sha256": "3c6a61f5210139cf4a854e9d5775efe9672af71aa92fde83780a2f899198ab34",
+      "compile_exit": 1,
+      "restored_sha256": "4e1437aa388ac5e3616ce72b81200d2733d3038f9078ee4a2095bfe138486481"
+    }
+  ]
+}

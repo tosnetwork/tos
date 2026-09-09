@@ -1,0 +1,566 @@
+{
+  "base_commit": "6afee328135314b946caa9654999fa9aa391aa92",
+  "scope": "C1 only; no block aggregation, inspection complexity or live activation acceptance",
+  "runtime_controls": [
+    {
+      "path": "crypto/block/workchain-proof-work.h",
+      "from": "if (units.ok() > declared_ - consumed_)",
+      "to": "if (false)",
+      "original_sha256": "26465362b6958c56feb66580437a58cb9ce453464a9c4f1d26456f26aadfd0de",
+      "baseline_binary_sha256": "529c402835b3d72dd68805325c28f65fb22e63a067e3e4debc0b4f4afa2f2a77",
+      "recorded_mutant_sha256": "f081b65a3f21e697e90e2a98b6d959754a90858523d186a74fc6b537098426c1",
+      "reconstructed_mutant_sha256": "f081b65a3f21e697e90e2a98b6d959754a90858523d186a74fc6b537098426c1",
+      "mutant_binary_sha256": "e47e3444f18f4e544ac12fb7c30f5f110b81b6a0a51a060c163400d18ff59b7f",
+      "mutant_exit": 1,
+      "restored_sha256": "26465362b6958c56feb66580437a58cb9ce453464a9c4f1d26456f26aadfd0de",
+      "restored_binary_sha256": "529c402835b3d72dd68805325c28f65fb22e63a067e3e4debc0b4f4afa2f2a77",
+      "original_from_occurrences": 1,
+      "original_to_occurrences": 0,
+      "case": "precharge",
+      "logs": {
+        "doc/measurements/uno-v2-c1-operation-controls/precharge/baseline-build.log": "56b092eabeb77edcb6de5635820eb83b4b732b8917f662592288b8517bd50946",
+        "doc/measurements/uno-v2-c1-operation-controls/precharge/baseline.log": "3c678de6b02998f9085b1c58fd6452d7b895f9b675870c97a40f8ce536324eea",
+        "doc/measurements/uno-v2-c1-operation-controls/precharge/mutant-build.log": "88262f9dcbc8f77048786df8ac17a52db24acc8743741dcd7b6d7af0d1cafeff",
+        "doc/measurements/uno-v2-c1-operation-controls/precharge/mutant.log": "dcf21a99cb1c7503458597cfb0ddff175fdc1c293fc25d069c7a92a1861c0e97",
+        "doc/measurements/uno-v2-c1-operation-controls/precharge/restore-audit.json": "ecce73beadff7db2cd2586cf4bdfd7f515be05838becc891ed04edf32a37dfaf",
+        "doc/measurements/uno-v2-c1-operation-controls/precharge/restored-build.log": "523c3338a6a64f2e75e1dfde61a6fa297ca113d48abe21ddde93904e83e1a06e",
+        "doc/measurements/uno-v2-c1-operation-controls/precharge/restored.log": "e0a77860d353cfc962c38c0ead3b617da1080bb152d96478b53bb57c6abfaf0e"
+      }
+    },
+    {
+      "path": "crypto/block/workchain-proof-work.h",
+      "from": "consumed_ += units.ok();",
+      "to": "consumed_ += 0;",
+      "original_sha256": "26465362b6958c56feb66580437a58cb9ce453464a9c4f1d26456f26aadfd0de",
+      "baseline_binary_sha256": "529c402835b3d72dd68805325c28f65fb22e63a067e3e4debc0b4f4afa2f2a77",
+      "recorded_mutant_sha256": "fc5987a92a121ba732dd56b07e3dda164352ce66b015cab7355a2508b34207f4",
+      "reconstructed_mutant_sha256": "fc5987a92a121ba732dd56b07e3dda164352ce66b015cab7355a2508b34207f4",
+      "mutant_binary_sha256": "38e47a9a31c909f648dd71b66a4f7b3242f9311ff54e11aa45e24388c00a1430",
+      "mutant_exit": 1,
+      "restored_sha256": "26465362b6958c56feb66580437a58cb9ce453464a9c4f1d26456f26aadfd0de",
+      "restored_binary_sha256": "529c402835b3d72dd68805325c28f65fb22e63a067e3e4debc0b4f4afa2f2a77",
+      "original_from_occurrences": 1,
+      "original_to_occurrences": 0,
+      "case": "deduction",
+      "logs": {
+        "doc/measurements/uno-v2-c1-operation-controls/deduction/baseline-build.log": "8c35b1682f73592d30612d7b0fabdb384fcfff35cb5a076cb48b85b1368aa794",
+        "doc/measurements/uno-v2-c1-operation-controls/deduction/baseline.log": "01cfdf99bf2d0d7517d4d8fc3ffbea93760359be85300fb44a939629c11e6e40",
+        "doc/measurements/uno-v2-c1-operation-controls/deduction/mutant-build.log": "88262f9dcbc8f77048786df8ac17a52db24acc8743741dcd7b6d7af0d1cafeff",
+        "doc/measurements/uno-v2-c1-operation-controls/deduction/mutant.log": "e837a90489e34f45fd039011ad2eb9625a75ea75e9ed0dbf693a64b43920fac6",
+        "doc/measurements/uno-v2-c1-operation-controls/deduction/restore-audit.json": "1ab6b8d1d37e6ec1070398626034c279eab11289f2573fc474d35dc0dda134f1",
+        "doc/measurements/uno-v2-c1-operation-controls/deduction/restored-build.log": "7d94ea37eac0c647efcbaadea36c1f343f01e6827804c28097a41f290c10815e",
+        "doc/measurements/uno-v2-c1-operation-controls/deduction/restored.log": "1cbba38a743ba0d7bcc94a0804f8cfccd1e412254feec685154d5a608dbab716"
+      }
+    },
+    {
+      "path": "crypto/block/workchain-proof-work.h",
+      "from": "if (failure_.is_error()) return failure_.clone();",
+      "to": "if (false) return failure_.clone();",
+      "original_sha256": "26465362b6958c56feb66580437a58cb9ce453464a9c4f1d26456f26aadfd0de",
+      "baseline_binary_sha256": "529c402835b3d72dd68805325c28f65fb22e63a067e3e4debc0b4f4afa2f2a77",
+      "recorded_mutant_sha256": "eed968a18eb0490d4fcb66f40f52cda12d28f0ee155a2cf9775b3af476bf2967",
+      "reconstructed_mutant_sha256": "eed968a18eb0490d4fcb66f40f52cda12d28f0ee155a2cf9775b3af476bf2967",
+      "mutant_binary_sha256": "c77753c1171bcffd28cae8c8b34a787abe6bd4504743575e4da1a591e58558bb",
+      "mutant_exit": 1,
+      "restored_sha256": "26465362b6958c56feb66580437a58cb9ce453464a9c4f1d26456f26aadfd0de",
+      "restored_binary_sha256": "529c402835b3d72dd68805325c28f65fb22e63a067e3e4debc0b4f4afa2f2a77",
+      "original_from_occurrences": 1,
+      "original_to_occurrences": 0,
+      "case": "sticky",
+      "logs": {
+        "doc/measurements/uno-v2-c1-operation-controls/sticky/baseline-build.log": "8c35b1682f73592d30612d7b0fabdb384fcfff35cb5a076cb48b85b1368aa794",
+        "doc/measurements/uno-v2-c1-operation-controls/sticky/baseline.log": "e6586be7e4a585345cf659de6fc671a4a4f61d8e8484f5e230583739e9fb887b",
+        "doc/measurements/uno-v2-c1-operation-controls/sticky/mutant-build.log": "88262f9dcbc8f77048786df8ac17a52db24acc8743741dcd7b6d7af0d1cafeff",
+        "doc/measurements/uno-v2-c1-operation-controls/sticky/mutant.log": "63c9e443c96f05665cb488d212f4f6d7579e50a58550fbe67d019c534ccf324a",
+        "doc/measurements/uno-v2-c1-operation-controls/sticky/restore-audit.json": "901f11105e836d7512f2a8311f35494d7d0a4bc1c104f462726bf2125e7ee28e",
+        "doc/measurements/uno-v2-c1-operation-controls/sticky/restored-build.log": "165875106123e8bca50cb1e4dd3eb6c2ae602d2d315fe1de1aa2741c64608d48",
+        "doc/measurements/uno-v2-c1-operation-controls/sticky/restored.log": "7796e83d6dbc2711cf76ec5cce812f67721548ec9acb63537ec30d84ba0241d2"
+      }
+    },
+    {
+      "path": "crypto/block/workchain-proof-work.h",
+      "from": "case WorkchainProofVerdict::InvalidProof:\n        return fail(td::Status::Error(static_cast<int>(WorkchainExecutionFailure::CandidateInvalid)",
+      "to": "case WorkchainProofVerdict::InvalidProof:\n        return fail(td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable)",
+      "original_sha256": "26465362b6958c56feb66580437a58cb9ce453464a9c4f1d26456f26aadfd0de",
+      "baseline_binary_sha256": "529c402835b3d72dd68805325c28f65fb22e63a067e3e4debc0b4f4afa2f2a77",
+      "recorded_mutant_sha256": "9c4c19ec86ce4c4ef3884bbe2038586282b595f42cc67bf127194996a842ed0e",
+      "reconstructed_mutant_sha256": "9c4c19ec86ce4c4ef3884bbe2038586282b595f42cc67bf127194996a842ed0e",
+      "mutant_binary_sha256": "6548cb43e51623fdabf4c132d6879a8cc90b7706a74e3c4abb45dc06a0b237bd",
+      "mutant_exit": 1,
+      "restored_sha256": "26465362b6958c56feb66580437a58cb9ce453464a9c4f1d26456f26aadfd0de",
+      "restored_binary_sha256": "529c402835b3d72dd68805325c28f65fb22e63a067e3e4debc0b4f4afa2f2a77",
+      "original_from_occurrences": 1,
+      "original_to_occurrences": 0,
+      "case": "invalid-classification",
+      "logs": {
+        "doc/measurements/uno-v2-c1-operation-controls/invalid-classification/baseline-build.log": "8c35b1682f73592d30612d7b0fabdb384fcfff35cb5a076cb48b85b1368aa794",
+        "doc/measurements/uno-v2-c1-operation-controls/invalid-classification/baseline.log": "9b4a45a879595fa8e85abbbc37361601ef4eda81222a7765e591798db23584c0",
+        "doc/measurements/uno-v2-c1-operation-controls/invalid-classification/mutant-build.log": "88262f9dcbc8f77048786df8ac17a52db24acc8743741dcd7b6d7af0d1cafeff",
+        "doc/measurements/uno-v2-c1-operation-controls/invalid-classification/mutant.log": "2a85ff7c8a8e29b7a97c61237fd804553bcb080d90bb61fe085eb994ed8ea725",
+        "doc/measurements/uno-v2-c1-operation-controls/invalid-classification/restore-audit.json": "afad6995a82a4e63622f335daa5a389839521b072886deb90389fc1c86d192c9",
+        "doc/measurements/uno-v2-c1-operation-controls/invalid-classification/restored-build.log": "e32e900aae7a6aec6fdbb7dc83bca1445fd49b10631017ff742406d65d5dd5cb",
+        "doc/measurements/uno-v2-c1-operation-controls/invalid-classification/restored.log": "df598a177e07c4e3cbb67ee30e22b0886463779d541e5da916171a3dc31daf3d"
+      }
+    },
+    {
+      "path": "crypto/block/workchain-account-engine.h",
+      "from": "TRY_STATUS(proofs.status());",
+      "to": "(void)proofs.status();",
+      "original_sha256": "d69f7f74686205179b341b2c2856f53252c1ab37e1d375286eb161e6560bbc88",
+      "baseline_binary_sha256": "5f0c718d7158ac24d8ca81d6be302064a730267a666bd762645a391c52065711",
+      "recorded_mutant_sha256": "ed6251e415102bd1637eb0d30fe1cfec60f198178841ceedc1c099566aaf9dd1",
+      "reconstructed_mutant_sha256": "ed6251e415102bd1637eb0d30fe1cfec60f198178841ceedc1c099566aaf9dd1",
+      "mutant_binary_sha256": "b0b54448349408eb3e396ebc6c540c078db239d52b25160d899455bc14340b54",
+      "mutant_exit": 1,
+      "restored_sha256": "d69f7f74686205179b341b2c2856f53252c1ab37e1d375286eb161e6560bbc88",
+      "restored_binary_sha256": "5f0c718d7158ac24d8ca81d6be302064a730267a666bd762645a391c52065711",
+      "original_from_occurrences": 1,
+      "original_to_occurrences": 0,
+      "case": "runner-sticky",
+      "logs": {
+        "doc/measurements/uno-v2-c1-operation-controls/runner-sticky/baseline-build.log": "a7d542f58887120a20c89706ca01a124e24a3c07c835c0e09adcc78aa195008d",
+        "doc/measurements/uno-v2-c1-operation-controls/runner-sticky/baseline.log": "443ea1298429d54177957b12a4abaf7855c918f7836f99e71edfa9a7b69f18a1",
+        "doc/measurements/uno-v2-c1-operation-controls/runner-sticky/mutant-build.log": "70b1f270722a938c644ff98eb87264291ce8a6cc33211d8b99bf07ced430d52a",
+        "doc/measurements/uno-v2-c1-operation-controls/runner-sticky/mutant.log": "b7b3a7d108aa024d941fc624045b54e53e3623210ff2871c1f62c61ccc6a12e8",
+        "doc/measurements/uno-v2-c1-operation-controls/runner-sticky/restore-audit.json": "1c0be1b87a2fa1cf0e2f9e4463e91e90177d7638a47b865d3fd1ce59fcd2495f",
+        "doc/measurements/uno-v2-c1-operation-controls/runner-sticky/restored-build.log": "1766aa8ec0221a8fc37a4d450bd117d04ba6065aa6138d46bf2016ff1af6a2ad",
+        "doc/measurements/uno-v2-c1-operation-controls/runner-sticky/restored.log": "fadc7ec49d1f524fe5d94f0b350a75c7040174cf0ec35c28853dc5ff050bfd83"
+      }
+    },
+    {
+      "path": "crypto/block/workchain-account-engine.h",
+      "from": "if (source.policy().requires_proof_operation_meter())",
+      "to": "if (false)",
+      "original_sha256": "d69f7f74686205179b341b2c2856f53252c1ab37e1d375286eb161e6560bbc88",
+      "baseline_binary_sha256": "5f0c718d7158ac24d8ca81d6be302064a730267a666bd762645a391c52065711",
+      "recorded_mutant_sha256": "7ec00065a2f3c8a878dcce26fe887e57ea95331b4e7b000bf40835eb79a5dcdc",
+      "reconstructed_mutant_sha256": "7ec00065a2f3c8a878dcce26fe887e57ea95331b4e7b000bf40835eb79a5dcdc",
+      "mutant_binary_sha256": "07a6ce1caafba5f8e8e781d150abbd4a182b1434cd955dce34145d76b9e3e1c7",
+      "mutant_exit": 1,
+      "restored_sha256": "d69f7f74686205179b341b2c2856f53252c1ab37e1d375286eb161e6560bbc88",
+      "restored_binary_sha256": "5f0c718d7158ac24d8ca81d6be302064a730267a666bd762645a391c52065711",
+      "original_from_occurrences": 1,
+      "original_to_occurrences": 0,
+      "case": "runner-profile",
+      "logs": {
+        "doc/measurements/uno-v2-c1-operation-controls/runner-profile/baseline-build.log": "60748995927a7b3c0079bd90ff04ce1948494838a3c32baa975c6365ff37eac7",
+        "doc/measurements/uno-v2-c1-operation-controls/runner-profile/baseline.log": "548358031ff6ee406640e6e4298c1658ae0b10f28c03adbd261099df4710afce",
+        "doc/measurements/uno-v2-c1-operation-controls/runner-profile/mutant-build.log": "558ceb644cc582b46f8607fe22b0e78ce2fb07e6b95dc7067d94ed0ee81f951a",
+        "doc/measurements/uno-v2-c1-operation-controls/runner-profile/mutant.log": "9ee734da72e9080811888a11f841e73ae6aafcf0e104fc5a8dfe5a07b67a357f",
+        "doc/measurements/uno-v2-c1-operation-controls/runner-profile/restore-audit.json": "a0b35d210be498843d68f8235b6fd7f77d955278e3520767221bab3d1f032aa2",
+        "doc/measurements/uno-v2-c1-operation-controls/runner-profile/restored-build.log": "70fd2b947c497fdb2460dd5a85fb598dd26532e135ab45f8d91df727057d2d26",
+        "doc/measurements/uno-v2-c1-operation-controls/runner-profile/restored.log": "dced4a8b066d811cc241d2620a672f1995482aa862ea6865d619d41826b7ff77"
+      }
+    },
+    {
+      "path": "crypto/block/workchain-account-engine.h",
+      "from": "WorkchainProofVerifier(declared_proof_work_)",
+      "to": "WorkchainProofVerifier(policy().resources().work_output.max_proof_units)",
+      "original_sha256": "d69f7f74686205179b341b2c2856f53252c1ab37e1d375286eb161e6560bbc88",
+      "baseline_binary_sha256": "5f0c718d7158ac24d8ca81d6be302064a730267a666bd762645a391c52065711",
+      "recorded_mutant_sha256": "5075fb60d7060b3d5112312af67082e21464e24d6ef70358b44433ab245bbd90",
+      "reconstructed_mutant_sha256": "5075fb60d7060b3d5112312af67082e21464e24d6ef70358b44433ab245bbd90",
+      "mutant_binary_sha256": "58666fabdeb67261015ceaa212db6d05386aa0907e80383b3ee815aaf2af70ab",
+      "mutant_exit": 1,
+      "restored_sha256": "d69f7f74686205179b341b2c2856f53252c1ab37e1d375286eb161e6560bbc88",
+      "restored_binary_sha256": "5f0c718d7158ac24d8ca81d6be302064a730267a666bd762645a391c52065711",
+      "original_from_occurrences": 1,
+      "original_to_occurrences": 0,
+      "case": "declaration-cap",
+      "logs": {
+        "doc/measurements/uno-v2-c1-operation-controls/declaration-cap/baseline-build.log": "60748995927a7b3c0079bd90ff04ce1948494838a3c32baa975c6365ff37eac7",
+        "doc/measurements/uno-v2-c1-operation-controls/declaration-cap/baseline.log": "fdfa6cc72abafbd212d6eefcba63a9f0bf692124eca265ae6dccd6300b1828fe",
+        "doc/measurements/uno-v2-c1-operation-controls/declaration-cap/mutant-build.log": "824167dc5c028fd613c11eff9e1e27ddf5342ce1a2f4d9dcacd19f4dfa391804",
+        "doc/measurements/uno-v2-c1-operation-controls/declaration-cap/mutant.log": "de513c5b8b593f2910ac67a1469329a304bd2b95e02693693c0be74a9f2904eb",
+        "doc/measurements/uno-v2-c1-operation-controls/declaration-cap/restore-audit.json": "242b365712cff71a23a7bb7711351341887e70f0b1a15babc94f87ab414966f7",
+        "doc/measurements/uno-v2-c1-operation-controls/declaration-cap/restored-build.log": "09117dcc66986baa60115b7d905ddfde1fa491d98072f67ff976b375f057eff4",
+        "doc/measurements/uno-v2-c1-operation-controls/declaration-cap/restored.log": "bc9a1dd266e3f9cf09d545bcadb0930de224fdef57dbed41380f4519bd8d7811"
+      }
+    },
+    {
+      "path": "crypto/block/workchain-execution-dispatch.h",
+      "from": "return engine_->execute_metered_accounts(input, accounts, *configuration_, proofs);",
+      "to": "return engine_->execute_accounts(input, accounts, *configuration_); // injected unmetered dispatch",
+      "original_sha256": "cda89ee512fcd10190c7510c2d928d03565946c3a479826f588992e14720a188",
+      "baseline_binary_sha256": "5f0c718d7158ac24d8ca81d6be302064a730267a666bd762645a391c52065711",
+      "recorded_mutant_sha256": "ae63103a15183ba087448ad5eb5cbad19f465e9d82a4dcdba7f766cb9ec498c7",
+      "reconstructed_mutant_sha256": "ae63103a15183ba087448ad5eb5cbad19f465e9d82a4dcdba7f766cb9ec498c7",
+      "mutant_binary_sha256": "990366d1dc90800fab29c4beb22673faf1475e03d30300a874076e6a419f48f2",
+      "mutant_exit": 1,
+      "restored_sha256": "cda89ee512fcd10190c7510c2d928d03565946c3a479826f588992e14720a188",
+      "restored_binary_sha256": "5f0c718d7158ac24d8ca81d6be302064a730267a666bd762645a391c52065711",
+      "original_from_occurrences": 1,
+      "original_to_occurrences": 0,
+      "case": "configured-forward",
+      "logs": {
+        "doc/measurements/uno-v2-c1-operation-controls/configured-forward/baseline-build.log": "60748995927a7b3c0079bd90ff04ce1948494838a3c32baa975c6365ff37eac7",
+        "doc/measurements/uno-v2-c1-operation-controls/configured-forward/baseline.log": "23c8d5e1965ab49ebc7e1c0df5f1b8886c6cf425dcd235ec73bd3602dcbfb45b",
+        "doc/measurements/uno-v2-c1-operation-controls/configured-forward/mutant-build.log": "68fb7d3427e6e6de692ba8ff96759e5c3f77ec4547c6ec38cfdc65dfb092ab3a",
+        "doc/measurements/uno-v2-c1-operation-controls/configured-forward/mutant.log": "23765d94e09506169a3d0fd42ae6e6c348f72702cf803cf733a3ec096203d37f",
+        "doc/measurements/uno-v2-c1-operation-controls/configured-forward/restore-audit.json": "d095d8ef9a34481fc6e8bbff4dca42ec6cf2da7627b240a97135d531ced5b3eb",
+        "doc/measurements/uno-v2-c1-operation-controls/configured-forward/restored-build.log": "1ab5feffb16897d7f48c8a1e5cb36266ba98bca0142352befec7ff51e8f2075c",
+        "doc/measurements/uno-v2-c1-operation-controls/configured-forward/restored.log": "fb0327142610c22a7c86381618726aa53df887621656a21de56539644f9d2d51"
+      }
+    },
+    {
+      "path": "crypto/block/workchain-resource-policy.h",
+      "from": "resources_.admission_version == 3 || resources_.admission_version == 4",
+      "to": "resources_.admission_version == 3",
+      "original_sha256": "0550f2845ad9b3c52b7e54528edf7b23a00f42d50fa16c78556567ac3cec10a7",
+      "baseline_binary_sha256": "5f0c718d7158ac24d8ca81d6be302064a730267a666bd762645a391c52065711",
+      "recorded_mutant_sha256": "85c6c4db1bd96cb6a9eef1f2e1c3b8792cc5a810373a4229b240b9297083d3ef",
+      "reconstructed_mutant_sha256": "85c6c4db1bd96cb6a9eef1f2e1c3b8792cc5a810373a4229b240b9297083d3ef",
+      "mutant_binary_sha256": "d43978789cd0e2e7448e8b812bf3ec63ef6f654842ce77fe62670ba6602192e4",
+      "mutant_exit": 1,
+      "restored_sha256": "0550f2845ad9b3c52b7e54528edf7b23a00f42d50fa16c78556567ac3cec10a7",
+      "restored_binary_sha256": "5f0c718d7158ac24d8ca81d6be302064a730267a666bd762645a391c52065711",
+      "original_from_occurrences": 1,
+      "original_to_occurrences": 1,
+      "case": "fee-profile",
+      "logs": {
+        "doc/measurements/uno-v2-c1-operation-controls/fee-profile/baseline-build.log": "60748995927a7b3c0079bd90ff04ce1948494838a3c32baa975c6365ff37eac7",
+        "doc/measurements/uno-v2-c1-operation-controls/fee-profile/baseline.log": "c64944a678803d1891a72395f289717d090407aee47dd29c9ece9df7080a2e1d",
+        "doc/measurements/uno-v2-c1-operation-controls/fee-profile/mutant-build.log": "5091ca84556917fe18abb9baf107fb78a7d0c87c97df1e4ffb1adf2b36bb3b4d",
+        "doc/measurements/uno-v2-c1-operation-controls/fee-profile/mutant.log": "2cdfeb323f4e816574ea529b6b79d91b7d44a90201235ac13aff938abe406f51",
+        "doc/measurements/uno-v2-c1-operation-controls/fee-profile/restore-audit.json": "fc72630adb811fe3d1260f4643079caf1fb13b650deeea30e2eb4a31f5be4a4f",
+        "doc/measurements/uno-v2-c1-operation-controls/fee-profile/restored-build.log": "d4781ee761b6b8eec386efe6c9c51bc3463e2f0d0d2da976bd4c135c3123c607",
+        "doc/measurements/uno-v2-c1-operation-controls/fee-profile/restored.log": "9dc6107f4e97424ada3971db0c993ddb730557e8267e551d5df3dc167ca4d8db"
+      }
+    },
+    {
+      "path": "crypto/block/workchain-proof-work.h",
+      "from": "!request.context_bytes || request.context_bytes > limits.max_context_bytes",
+      "to": "request.context_bytes > limits.max_context_bytes",
+      "original_sha256": "26465362b6958c56feb66580437a58cb9ce453464a9c4f1d26456f26aadfd0de",
+      "baseline_binary_sha256": "529c402835b3d72dd68805325c28f65fb22e63a067e3e4debc0b4f4afa2f2a77",
+      "recorded_mutant_sha256": "07a3914abd15948b933d14894fcb6beaec27f1aff1ad14aca6133164891004fc",
+      "reconstructed_mutant_sha256": "07a3914abd15948b933d14894fcb6beaec27f1aff1ad14aca6133164891004fc",
+      "mutant_binary_sha256": "003b73c8304e7a4c7ffbc9e80369f2674a967b13c44b036b38cab854c4d64c71",
+      "mutant_exit": 1,
+      "restored_sha256": "26465362b6958c56feb66580437a58cb9ce453464a9c4f1d26456f26aadfd0de",
+      "restored_binary_sha256": "529c402835b3d72dd68805325c28f65fb22e63a067e3e4debc0b4f4afa2f2a77",
+      "original_from_occurrences": 1,
+      "original_to_occurrences": 1,
+      "case": "context-guard",
+      "logs": {
+        "doc/measurements/uno-v2-c1-operation-controls/context-guard/baseline-build.log": "702630198eb3a468b33f72c4c34d2389c38db2ebcb229e35acef397f0cdcaa9f",
+        "doc/measurements/uno-v2-c1-operation-controls/context-guard/baseline.log": "621a5083a7b3515bc0d082095bc0ac4abd958073a8850c03e477885a31bfa026",
+        "doc/measurements/uno-v2-c1-operation-controls/context-guard/mutant-build.log": "88262f9dcbc8f77048786df8ac17a52db24acc8743741dcd7b6d7af0d1cafeff",
+        "doc/measurements/uno-v2-c1-operation-controls/context-guard/mutant.log": "481b772b052f56eb4fcbafb2188ea01e00b86014a2cd34fb3d6d2d628e80c30c",
+        "doc/measurements/uno-v2-c1-operation-controls/context-guard/restore-audit.json": "de362e4f7b84fdb65cee65ebc60b8585805ce10c6b84ee9dba30c2f54dd9d031",
+        "doc/measurements/uno-v2-c1-operation-controls/context-guard/restored-build.log": "523c3338a6a64f2e75e1dfde61a6fa297ca113d48abe21ddde93904e83e1a06e",
+        "doc/measurements/uno-v2-c1-operation-controls/context-guard/restored.log": "a9e1c3d3e5558d084635e1135063d26048201aa08eefc4480bf834e6deaa258b"
+      }
+    },
+    {
+      "path": "crypto/block/workchain-proof-work.h",
+      "from": "result.context_bytes = request.context_bytes;",
+      "to": "result.context_bytes = 0;",
+      "original_sha256": "26465362b6958c56feb66580437a58cb9ce453464a9c4f1d26456f26aadfd0de",
+      "baseline_binary_sha256": "529c402835b3d72dd68805325c28f65fb22e63a067e3e4debc0b4f4afa2f2a77",
+      "recorded_mutant_sha256": "74c1c0f901d9f8d81cb8f99724a50dfaa6af22e74f315091b68ac2f994457c63",
+      "reconstructed_mutant_sha256": "74c1c0f901d9f8d81cb8f99724a50dfaa6af22e74f315091b68ac2f994457c63",
+      "mutant_binary_sha256": "81eeb3c1a913ddc5c2affc48a1eddcab318ee0d19d8458a05badde0079433783",
+      "mutant_exit": 1,
+      "restored_sha256": "26465362b6958c56feb66580437a58cb9ce453464a9c4f1d26456f26aadfd0de",
+      "restored_binary_sha256": "529c402835b3d72dd68805325c28f65fb22e63a067e3e4debc0b4f4afa2f2a77",
+      "original_from_occurrences": 1,
+      "original_to_occurrences": 0,
+      "case": "context-charge",
+      "logs": {
+        "doc/measurements/uno-v2-c1-operation-controls/context-charge/baseline-build.log": "8c35b1682f73592d30612d7b0fabdb384fcfff35cb5a076cb48b85b1368aa794",
+        "doc/measurements/uno-v2-c1-operation-controls/context-charge/baseline.log": "78684135db6a7a975c833c966800166e473582984c3be3d85321565c8257d3aa",
+        "doc/measurements/uno-v2-c1-operation-controls/context-charge/mutant-build.log": "88262f9dcbc8f77048786df8ac17a52db24acc8743741dcd7b6d7af0d1cafeff",
+        "doc/measurements/uno-v2-c1-operation-controls/context-charge/mutant.log": "95f84d5f498a2e1da116f05ca1a77ec21ea4e89f7f7894089a26f220ebb0e236",
+        "doc/measurements/uno-v2-c1-operation-controls/context-charge/restore-audit.json": "334c057cdb69d28716a43c6e6d048916a858b9313085fc66c19514ecc9f533b8",
+        "doc/measurements/uno-v2-c1-operation-controls/context-charge/restored-build.log": "523c3338a6a64f2e75e1dfde61a6fa297ca113d48abe21ddde93904e83e1a06e",
+        "doc/measurements/uno-v2-c1-operation-controls/context-charge/restored.log": "b5250bfcf1d55785a7a590a77ab01ae735efb85ae3877406ff0bc5d527033b9d"
+      }
+    },
+    {
+      "path": "crypto/block/workchain-proof-work.h",
+      "from": "if (part > std::numeric_limits<std::uint64_t>::max() - result)",
+      "to": "if (false)",
+      "original_sha256": "26465362b6958c56feb66580437a58cb9ce453464a9c4f1d26456f26aadfd0de",
+      "baseline_binary_sha256": "529c402835b3d72dd68805325c28f65fb22e63a067e3e4debc0b4f4afa2f2a77",
+      "recorded_mutant_sha256": "b6fb4e86d55b40616434f14c0caa3d4c08b6725b4d9f5bfd1aadffa6b16433f0",
+      "reconstructed_mutant_sha256": "b6fb4e86d55b40616434f14c0caa3d4c08b6725b4d9f5bfd1aadffa6b16433f0",
+      "mutant_binary_sha256": "15e37d4f6d509544b710cd67b7fa4719c9b2df626ff247b24da4b3f8b6e013f1",
+      "mutant_exit": 1,
+      "restored_sha256": "26465362b6958c56feb66580437a58cb9ce453464a9c4f1d26456f26aadfd0de",
+      "restored_binary_sha256": "529c402835b3d72dd68805325c28f65fb22e63a067e3e4debc0b4f4afa2f2a77",
+      "original_from_occurrences": 1,
+      "original_to_occurrences": 0,
+      "case": "count-overflow",
+      "logs": {
+        "doc/measurements/uno-v2-c1-operation-controls/count-overflow/baseline-build.log": "8c35b1682f73592d30612d7b0fabdb384fcfff35cb5a076cb48b85b1368aa794",
+        "doc/measurements/uno-v2-c1-operation-controls/count-overflow/baseline.log": "9a11d560eadc6758dfc6972472a720a40eead91e025c0a17ee0b5c2f1169e915",
+        "doc/measurements/uno-v2-c1-operation-controls/count-overflow/mutant-build.log": "88262f9dcbc8f77048786df8ac17a52db24acc8743741dcd7b6d7af0d1cafeff",
+        "doc/measurements/uno-v2-c1-operation-controls/count-overflow/mutant.log": "032e25c6a7a195082f0e89acdcacd04e59301e937ed9814dc268d0992edaa43a",
+        "doc/measurements/uno-v2-c1-operation-controls/count-overflow/restore-audit.json": "8c3701e6db7a7246a7865c4976c4bffadd558c09aa14cba964c660e9d8c75f35",
+        "doc/measurements/uno-v2-c1-operation-controls/count-overflow/restored-build.log": "523c3338a6a64f2e75e1dfde61a6fa297ca113d48abe21ddde93904e83e1a06e",
+        "doc/measurements/uno-v2-c1-operation-controls/count-overflow/restored.log": "c09f13666bab01ba11453717f88d180764d6de4d6c0550538ca50c12875d4554"
+      }
+    },
+    {
+      "path": "crypto/block/workchain-account-engine.h",
+      "from": "return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),\n                             \"engine has no operation-metered execution implementation\");",
+      "to": "return execute_accounts(input, accounts);",
+      "original_sha256": "d69f7f74686205179b341b2c2856f53252c1ab37e1d375286eb161e6560bbc88",
+      "baseline_binary_sha256": "eeeb3def63be9a6317efff426251f40a9c2f3bf6f300456709db520cce123443",
+      "recorded_mutant_sha256": "27ea1fbe7fd70cabee534dfd657e4c8e502d01cca0181f18bd18f4062d8327ef",
+      "reconstructed_mutant_sha256": "27ea1fbe7fd70cabee534dfd657e4c8e502d01cca0181f18bd18f4062d8327ef",
+      "mutant_binary_sha256": "aec62fcbe37806d55fdc6ac755bb715a8454a4407183b801ede4d100be07dfa7",
+      "mutant_exit": 1,
+      "restored_sha256": "d69f7f74686205179b341b2c2856f53252c1ab37e1d375286eb161e6560bbc88",
+      "restored_binary_sha256": "eeeb3def63be9a6317efff426251f40a9c2f3bf6f300456709db520cce123443",
+      "original_from_occurrences": 1,
+      "original_to_occurrences": 0,
+      "case": "engine-default",
+      "logs": {
+        "doc/measurements/uno-v2-c1-operation-controls/engine-default/baseline-build.log": "711b11f79f08ac01e7ecafce077dda178271cc68a7ab6efae548af6dda64a323",
+        "doc/measurements/uno-v2-c1-operation-controls/engine-default/baseline.log": "532e9ec5a3f55695973b0f2457b344d247e38ff060980a1688590681343401ab",
+        "doc/measurements/uno-v2-c1-operation-controls/engine-default/mutant-build.log": "de67ee86bdb4bb35e0ae365774f203c6592d36650e535da4d38847f6abdae9a0",
+        "doc/measurements/uno-v2-c1-operation-controls/engine-default/mutant.log": "8f5438b4be0292d0c79ffc71423ae62526b503a6aac867ec3a2522b720cae739",
+        "doc/measurements/uno-v2-c1-operation-controls/engine-default/restore-audit.json": "69cdabc6f49161ddd9631288a6f0f88aac33fee258de6b12fe52e722bdce91ca",
+        "doc/measurements/uno-v2-c1-operation-controls/engine-default/restored-build.log": "93205706c08cce1413ee110d339460d7bf6d481f72b662eccd0d3e46980d2d39",
+        "doc/measurements/uno-v2-c1-operation-controls/engine-default/restored.log": "c21a6d85451d348abed732c90badbe0f668b63b58201b3ca6eb6c0b4bdb0c079"
+      }
+    },
+    {
+      "path": "crypto/block/workchain-execution-dispatch.h",
+      "from": "return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),\n                             \"registered engine has no operation-metered implementation\");",
+      "to": "return execute_accounts(input, accounts, configuration);",
+      "original_sha256": "cda89ee512fcd10190c7510c2d928d03565946c3a479826f588992e14720a188",
+      "baseline_binary_sha256": "eeeb3def63be9a6317efff426251f40a9c2f3bf6f300456709db520cce123443",
+      "recorded_mutant_sha256": "af2949bc3d258ae2dc22d7b921ec7c3be051d87ff33852397cba2ccba74d717c",
+      "reconstructed_mutant_sha256": "af2949bc3d258ae2dc22d7b921ec7c3be051d87ff33852397cba2ccba74d717c",
+      "mutant_binary_sha256": "bd8f2ea297a0b9635455188b33b8b4de853385aeeb600d5c87f70e1d07edf8d0",
+      "mutant_exit": 1,
+      "restored_sha256": "cda89ee512fcd10190c7510c2d928d03565946c3a479826f588992e14720a188",
+      "restored_binary_sha256": "eeeb3def63be9a6317efff426251f40a9c2f3bf6f300456709db520cce123443",
+      "original_from_occurrences": 1,
+      "original_to_occurrences": 0,
+      "case": "registry-default",
+      "logs": {
+        "doc/measurements/uno-v2-c1-operation-controls/registry-default/baseline-build.log": "8c35b1682f73592d30612d7b0fabdb384fcfff35cb5a076cb48b85b1368aa794",
+        "doc/measurements/uno-v2-c1-operation-controls/registry-default/baseline.log": "2dbfb9f92e502ef4e0aa96a6cfe13b0fc77df71b4f98ed6b8128335047271e66",
+        "doc/measurements/uno-v2-c1-operation-controls/registry-default/mutant-build.log": "de67ee86bdb4bb35e0ae365774f203c6592d36650e535da4d38847f6abdae9a0",
+        "doc/measurements/uno-v2-c1-operation-controls/registry-default/mutant.log": "38a2e7230d4af0c1005774161ed5a08dc75a6433c955e188d0c7d8fbe69b04aa",
+        "doc/measurements/uno-v2-c1-operation-controls/registry-default/restore-audit.json": "eca791ea0ddd60a25baa8246f2ae0e60ecc4521a90119e54f707f5a79be1950f",
+        "doc/measurements/uno-v2-c1-operation-controls/registry-default/restored-build.log": "a4f40f9b0bef95ed6075bce1687744a6f6471313aca8d040b8e1587e58561fc2",
+        "doc/measurements/uno-v2-c1-operation-controls/registry-default/restored.log": "67dab232dc850be4ec12bc4ed7851c95bd07221afa074f0cd858400b6a034409"
+      }
+    },
+    {
+      "path": "crypto/block/workchain-proof-work.h",
+      "from": "proof_count_sum({sigma_terms, ip_terms, poly_terms})",
+      "to": "proof_count_sum({sigma_terms, ip_terms})",
+      "original_sha256": "26465362b6958c56feb66580437a58cb9ce453464a9c4f1d26456f26aadfd0de",
+      "baseline_binary_sha256": "15d4483b0dceb4e848b588f2f5b99c115dec8e27baf7534663e04157ef67658b",
+      "recorded_mutant_sha256": "695efc667d582a3d8b4e49636a479c451d22b8fbb2758b65b974b6d5409cddd9",
+      "reconstructed_mutant_sha256": "695efc667d582a3d8b4e49636a479c451d22b8fbb2758b65b974b6d5409cddd9",
+      "mutant_binary_sha256": "25ae614dc9fc314309472d4135f543b4309cc322faa1745dd2d18e0d3ad4dea9",
+      "mutant_exit": 1,
+      "restored_sha256": "26465362b6958c56feb66580437a58cb9ce453464a9c4f1d26456f26aadfd0de",
+      "restored_binary_sha256": "15d4483b0dceb4e848b588f2f5b99c115dec8e27baf7534663e04157ef67658b",
+      "original_from_occurrences": 1,
+      "original_to_occurrences": 0,
+      "case": "low-formula",
+      "logs": {
+        "doc/measurements/uno-v2-c1-operation-controls/low-formula/baseline-build.log": "a8e2408346a1c211bb6f9bd2637afd7a6e6f17136c6637622dbaf7e246f022e0",
+        "doc/measurements/uno-v2-c1-operation-controls/low-formula/baseline-instrumentation.json": "6b40848eadf3c66b14cd3ac9f5e7b595c911d07d1536c269792a47bd5294601e",
+        "doc/measurements/uno-v2-c1-operation-controls/low-formula/baseline-trace.log": "a8824eaf547772609332c1ab9e998219034fcf3df7ca3a68ee21cd933b2a57cb",
+        "doc/measurements/uno-v2-c1-operation-controls/low-formula/baseline.log": "aee1f182c193dee267574ceb68c644fafbc6f99f35e6a6da4fc37d4ef242ba0b",
+        "doc/measurements/uno-v2-c1-operation-controls/low-formula/mutant-build.log": "f10e8706490b0b2346adbd8ad0835e9f7b27a9449ffcddfeb92c89f67383a5fd",
+        "doc/measurements/uno-v2-c1-operation-controls/low-formula/mutant-instrumentation.json": "6b40848eadf3c66b14cd3ac9f5e7b595c911d07d1536c269792a47bd5294601e",
+        "doc/measurements/uno-v2-c1-operation-controls/low-formula/mutant-trace.log": "913ee3fe9e964d6ee186c0d4b2e862043a4681621789bddb959d1aa015db9b25",
+        "doc/measurements/uno-v2-c1-operation-controls/low-formula/mutant.log": "dbabe8be66ac2d528bd37526922675c842b3ecc515787aebab41fe5b14040131",
+        "doc/measurements/uno-v2-c1-operation-controls/low-formula/restore-audit.json": "c7953dc9612640f2680903b30902641d9e29693330692d88b4b3422aaa00f09a",
+        "doc/measurements/uno-v2-c1-operation-controls/low-formula/restored-build.log": "6f0ad92859b6294aca4c5a6f16648122be79b989f8ec3a7666fb9a22d2e8203b",
+        "doc/measurements/uno-v2-c1-operation-controls/low-formula/restored-instrumentation.json": "6b40848eadf3c66b14cd3ac9f5e7b595c911d07d1536c269792a47bd5294601e",
+        "doc/measurements/uno-v2-c1-operation-controls/low-formula/restored-trace.log": "a8824eaf547772609332c1ab9e998219034fcf3df7ca3a68ee21cd933b2a57cb",
+        "doc/measurements/uno-v2-c1-operation-controls/low-formula/restored.log": "aee1f182c193dee267574ceb68c644fafbc6f99f35e6a6da4fc37d4ef242ba0b"
+      }
+    },
+    {
+      "path": "crypto/block/workchain-proof-backend.cpp",
+      "from": "case UNO_CRYPTO_KEY:",
+      "to": "case UNO_CRYPTO_KEY: return WorkchainProofVerdict::InvalidProof;",
+      "original_sha256": "fa06c77f2317e619d297f90d9186fea288d054c50a42a8da0c8966552dafae40",
+      "baseline_binary_sha256": "15d4483b0dceb4e848b588f2f5b99c115dec8e27baf7534663e04157ef67658b",
+      "recorded_mutant_sha256": "e01f13007d3d499fb75f00c12cec3e54c996e1ce24f22b41599eb4258a8ff220",
+      "reconstructed_mutant_sha256": "e01f13007d3d499fb75f00c12cec3e54c996e1ce24f22b41599eb4258a8ff220",
+      "mutant_binary_sha256": "eebe4dd38a147d53c195ca1a06a9f700ca4c3f99cb81654c9be3bcbb92b615d2",
+      "mutant_exit": 2,
+      "restored_sha256": "fa06c77f2317e619d297f90d9186fea288d054c50a42a8da0c8966552dafae40",
+      "restored_binary_sha256": "15d4483b0dceb4e848b588f2f5b99c115dec8e27baf7534663e04157ef67658b",
+      "original_from_occurrences": 1,
+      "original_to_occurrences": 0,
+      "case": "reserved-key",
+      "logs": {
+        "doc/measurements/uno-v2-c1-operation-controls/reserved-key/baseline-build.log": "35e9627682754765a8a3eba10be59309c8f77378bc0eae5c82b5f4f93c523986",
+        "doc/measurements/uno-v2-c1-operation-controls/reserved-key/baseline.log": "e08a519007737b050152694f920dcfed7398e558e3b66f4d2c029c1299230172",
+        "doc/measurements/uno-v2-c1-operation-controls/reserved-key/mutant-build.log": "83716bfe9315c486a1cfabf6b3e518d10f4ae8e3cb7bd15dcf8fe250cdba2a1f",
+        "doc/measurements/uno-v2-c1-operation-controls/reserved-key/mutant.log": "37d91346f91d890d3d465129c6f2476cb78081759e38baf8242477510e70de06",
+        "doc/measurements/uno-v2-c1-operation-controls/reserved-key/restore-audit.json": "30aa01a8805e120f9e0eb9761903b0062f7e470e9f465197c5911154a0c70785",
+        "doc/measurements/uno-v2-c1-operation-controls/reserved-key/restored-build.log": "3f371b3fcd168046bc7b9cebd1561382000f7ba2cb323e6ec5e4732b08e47828",
+        "doc/measurements/uno-v2-c1-operation-controls/reserved-key/restored.log": "e08a519007737b050152694f920dcfed7398e558e3b66f4d2c029c1299230172"
+      }
+    }
+  ],
+  "source_gate_controls": [
+    {
+      "case": "raw",
+      "gate_source_sha256": "c250b984a32ceab469dee0f8ad835ccd58149aea8e40b36f7671864d91e1b9c1",
+      "logs": {
+        "red": {
+          "path": "doc/measurements/uno-v2-c1-operation-controls/uno-c1-reviewed-scope-raw-red.log",
+          "sha256": "358ace22b962cc73c8df12a83030807d1640b6dbbd433a25dda7c130df3c76be",
+          "exit": 1
+        },
+        "restored": {
+          "path": "doc/measurements/uno-v2-c1-operation-controls/uno-c1-reviewed-scope-raw-restored.log",
+          "sha256": "2843038b2004813434293cb4139a1fdf12e8cf65ec983e50f86fa692256e3ccf",
+          "exit": 0
+        }
+      },
+      "injected_path": "crypto/block/workchain-proof-boundary-probe.cpp",
+      "injected_bytes_utf8": "#include \"block/workchain-proof-work.h\"\nstd::uint32_t forbidden_raw_call(const UnoCryptoVerifyRequestV2* request) {\n  return uno_crypto_verify_v2(request);\n}\n",
+      "injected_sha256": "2d1755458e7dc5592f8f6db4c4696c21a61994339d7e35fe2ea3c8dfbad218f2",
+      "restored_absent": true
+    },
+    {
+      "case": "friend",
+      "gate_source_sha256": "c250b984a32ceab469dee0f8ad835ccd58149aea8e40b36f7671864d91e1b9c1",
+      "logs": {
+        "red": {
+          "path": "doc/measurements/uno-v2-c1-operation-controls/uno-c1-reviewed-scope-friend-red.log",
+          "sha256": "eb351c962103caae46ad91aa2564c4e5dc36b5da5e7e42b4aa7da53b3d1b393d",
+          "exit": 1
+        },
+        "restored": {
+          "path": "doc/measurements/uno-v2-c1-operation-controls/uno-c1-reviewed-scope-friend-restored.log",
+          "sha256": "bbd285541aaa549ac04727955d82ca7a7808d3ff6a7d53e49c28597aff84af30",
+          "exit": 0
+        }
+      },
+      "injected_path": "crypto/block/workchain-proof-boundary-probe.cpp",
+      "injected_bytes_utf8": "#include \"crypto/test/workchain-proof-test-access.h\"\nauto forbidden_test_capability() {\n  return block::WorkchainProofTestAccess::create(UINT64_MAX);\n}\n",
+      "injected_sha256": "5f3e169c066ff1fb12722cc1e00081c5b8d440b79c1c40dfdcfd4005752dd26f",
+      "restored_absent": true
+    },
+    {
+      "case": "redefinition",
+      "gate_source_sha256": "c250b984a32ceab469dee0f8ad835ccd58149aea8e40b36f7671864d91e1b9c1",
+      "logs": {
+        "red": {
+          "path": "doc/measurements/uno-v2-c1-operation-controls/uno-c1-reviewed-scope-redefinition-red.log",
+          "sha256": "1d76a8ee14d361d7a1f95f86e3f9a8fb183c3ceb1106d502ff1d1fc091675ef2",
+          "exit": 1
+        },
+        "restored": {
+          "path": "doc/measurements/uno-v2-c1-operation-controls/uno-c1-reviewed-scope-redefinition-restored.log",
+          "sha256": "d737120ad7944f97d22528f6586fac79e602f2579ac5d991f0c76057b96f7d68",
+          "exit": 0
+        }
+      },
+      "injected_path": "crypto/block/workchain-proof-boundary-probe.cpp",
+      "injected_bytes_utf8": "namespace block {\nstruct WorkchainProofTestAccess {};\n}\n",
+      "injected_sha256": "44dc0c16b2968c8b15bb0cd5143f54505f2c826ce6d012209c40d72f4171a847",
+      "restored_absent": true
+    },
+    {
+      "case": "node-raw",
+      "gate_source_sha256": "c250b984a32ceab469dee0f8ad835ccd58149aea8e40b36f7671864d91e1b9c1",
+      "logs": {
+        "red": {
+          "path": "doc/measurements/uno-v2-c1-operation-controls/uno-c1-reviewed-scope-node-raw-red.log",
+          "sha256": "92edea06467aac7a5338e4bf0772ce68893462fc46208710c73b4b5df330be3f",
+          "exit": 1
+        },
+        "restored": {
+          "path": "doc/measurements/uno-v2-c1-operation-controls/uno-c1-reviewed-scope-node-raw-restored.log",
+          "sha256": "25d4a9087682165fc994074743288ff9ca5e7ad22d4bc98bae43274a05732799",
+          "exit": 0
+        }
+      },
+      "injected_path": "validator-engine/workchain-proof-boundary-probe.cpp",
+      "injected_bytes_utf8": "#include \"block/workchain-proof-work.h\"\nstd::uint32_t forbidden_raw_call(const UnoCryptoVerifyRequestV2* request) {\n  return uno_crypto_verify_v2(request);\n}\n",
+      "injected_sha256": "2d1755458e7dc5592f8f6db4c4696c21a61994339d7e35fe2ea3c8dfbad218f2",
+      "restored_absent": true
+    },
+    {
+      "case": "node-friend",
+      "gate_source_sha256": "c250b984a32ceab469dee0f8ad835ccd58149aea8e40b36f7671864d91e1b9c1",
+      "logs": {
+        "red": {
+          "path": "doc/measurements/uno-v2-c1-operation-controls/uno-c1-reviewed-scope-node-friend-red.log",
+          "sha256": "0cb47a9706ef8f04b34ef0d9ba84fe1b0ad2ff4c82de9b63e384cf73fed76648",
+          "exit": 1
+        },
+        "restored": {
+          "path": "doc/measurements/uno-v2-c1-operation-controls/uno-c1-reviewed-scope-node-friend-restored.log",
+          "sha256": "a09a08599ec0a07702c41a3b5dd46383e1a394e649547dc9d81e4037fa3d1518",
+          "exit": 0
+        }
+      },
+      "injected_path": "validator-engine/workchain-proof-boundary-probe.cpp",
+      "injected_bytes_utf8": "namespace block {\nstruct WorkchainProofTestAccess {};\n}\n",
+      "injected_sha256": "44dc0c16b2968c8b15bb0cd5143f54505f2c826ce6d012209c40d72f4171a847",
+      "restored_absent": true
+    },
+    {
+      "case": "interval",
+      "gate_source_sha256": "c250b984a32ceab469dee0f8ad835ccd58149aea8e40b36f7671864d91e1b9c1",
+      "logs": {
+        "red": {
+          "path": "doc/measurements/uno-v2-c1-operation-controls/uno-c1-reviewed-scope-interval-red.log",
+          "sha256": "bbcc1c380831ace9b98d8f9f32b30b326e13c58548eb78f967a73bee5ee5bb33",
+          "exit": 1
+        },
+        "restored": {
+          "path": "doc/measurements/uno-v2-c1-operation-controls/uno-c1-reviewed-scope-interval-restored.log",
+          "sha256": "25d4a9087682165fc994074743288ff9ca5e7ad22d4bc98bae43274a05732799",
+          "exit": 0
+        }
+      },
+      "path": "crypto/block/workchain-resource-policy.h",
+      "from": "resources_.admission_version == 3 || resources_.admission_version == 4",
+      "to": "resources_.admission_version >= 3",
+      "restored_sha256": "0550f2845ad9b3c52b7e54528edf7b23a00f42d50fa16c78556567ac3cec10a7",
+      "reconstructed_mutant_sha256": "e1647d619a41d924dd53c0efaa8cd3b76146789fefc98131cb82cb2e2cadc4d9"
+    }
+  ],
+  "source_sha256": {
+    "CMakeLists.txt": "a1459fb23abb33d5bb366d7ef95f1e089d470f678a1f850b16c719575b032465",
+    "crypto/CMakeLists.txt": "c4858cc01d7dc13a2c02ff1fc1bbee63f4bfdcec56b506a871a267aed71ae58c",
+    "crypto/block/workchain-account-engine.h": "d69f7f74686205179b341b2c2856f53252c1ab37e1d375286eb161e6560bbc88",
+    "crypto/block/workchain-execution-dispatch.h": "cda89ee512fcd10190c7510c2d928d03565946c3a479826f588992e14720a188",
+    "crypto/block/workchain-proof-backend.cpp": "fa06c77f2317e619d297f90d9186fea288d054c50a42a8da0c8966552dafae40",
+    "crypto/block/workchain-proof-work.h": "26465362b6958c56feb66580437a58cb9ce453464a9c4f1d26456f26aadfd0de",
+    "crypto/block/workchain-resource-policy.h": "0550f2845ad9b3c52b7e54528edf7b23a00f42d50fa16c78556567ac3cec10a7",
+    "crypto/test/test-workchain-block.cpp": "8af24703eb504ab94e3dfce9fa7be85b2f6d5522601fe3c8bb55a28f71b58fed",
+    "crypto/test/test-workchain-proof-backend.cpp": "79f6eeb41b81943ff8491806aea5230fb7827c09424c135752745858d0e01118",
+    "crypto/test/test-workchain-proof-contracts.cpp": "71a647a13d995854d1cbec5c96a2b82dca60d3b7a654df1935cdea8b3aba4af5",
+    "crypto/test/test-workchain-proof-work.cpp": "576ecba1010c29b4a047b6ed4c123ed76b2ef2855ed9d87b83eb5aa9d4d75327",
+    "crypto/test/workchain-proof-boundary-gates.py": "c250b984a32ceab469dee0f8ad835ccd58149aea8e40b36f7671864d91e1b9c1",
+    "crypto/test/workchain-proof-controls.py": "aa46d43ea87f7d184e41dd389dd13bf4cbe23fa719bc505dd0f5c4344fa71923",
+    "crypto/test/workchain-proof-test-access.h": "9ac868a1ca635c47f8652e3e4f45333cfd291f7f70dfeac0d25fa3851553f9b0",
+    "crypto/test/workchain-proof-trace.py": "5e6fc2b90420809129a1594724386f097c4f4f64083807c75621f1d1611cdaa1",
+    "doc/uno-v2-proof-operation-profile.md": "5294a6f9767625d82c17c220e613baf2b22e7105487fe9fbabd44400e68e1a70",
+    ".github/workflows/build-tos-linux-x86-64-shared.yml": "b9bd294e49f1567db2fa0edd10b1bb71c6141de9c201ba23e85024f696697da2",
+    "doc/uno-v2-implementation-plan.md": "a867b6d93f7ccd9e502df63e8d2ef5d85b6be56593ff117e54b741f51c041e68"
+  },
+  "excluded_checkpoints": [
+    "final-configured-forward restoration refusal, subsequently repaired and rerun as completed-configured-forward",
+    "completed-low-formula superseded by final-driver-low-formula after diagnostic driver change",
+    "early eight-component traces and initial instrumentation/fixture failures",
+    "final-scope static logs predate the validator-engine scope extension; reviewed-scope logs replace them"
+  ],
+  "registration_controls": {
+    "audit": "doc/measurements/uno-v2-c1-operation-controls/registration/restore-audit.json",
+    "sha256": "618517c30a9fa75a1601ead50dc2d2ce2dd1ffc00377780b44c3eeb29422ab12",
+    "count": 2
+  }
+}

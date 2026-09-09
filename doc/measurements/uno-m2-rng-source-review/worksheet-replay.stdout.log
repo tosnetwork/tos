@@ -1,0 +1,53 @@
+Counter({'constant-register': 683, 'named-import': 207, 'unresolved-register': 109, 'memory-dispatch': 11})
+403 import:memcpy@GLIBC_2.14
+163 subtle::black_box::<u8>
+147 <&curve25519_dalek::backend::serial::u64::field::FieldElement51 as core::ops::arith::Mul>::mul
+109 unresolved-register
+20 <curve25519_dalek::backend::serial::u64::field::FieldElement51>::pow2k
+19 <&curve25519_dalek::backend::vector::avx2::edwards::ExtendedPoint as <&curve25519_dalek::backend::vector::avx2::edwards::ExtendedPoint as core::ops::arith::Add<&curve25519_dalek::backend::vector::avx2
+18 <curve25519_dalek::backend::vector::avx2::edwards::CachedPoint as <curve25519_dalek::backend::vector::avx2::edwards::CachedPoint as core::convert::From<curve25519_dalek::backend::vector::avx2::edwards
+11 memory-dispatch
+9 <curve25519_dalek::backend::serial::curve_models::ProjectiveNielsPoint as subtle::ConditionallySelectable>::conditional_assign
+9 <curve25519_dalek::backend::vector::avx2::edwards::ExtendedPoint as <curve25519_dalek::backend::vector::avx2::edwards::ExtendedPoint as subtle::ConditionallySelectable>::conditional_assign::__Impl_con
+8 <merlin::transcript::Transcript>::append_message
+7 <curve25519_dalek::scalar::Scalar as core::ops::arith::Mul>::mul
+6 <strobe_rs::strobe::Strobe>::meta_ad
+5 import:syscall@GLIBC_2.2.5
+5 <curve25519_dalek::backend::serial::curve_models::ProjectivePoint>::double
+5 <curve25519_dalek::backend::serial::u64::field::FieldElement51 as subtle::ConstantTimeEq>::ct_eq
+4 import:memmove@GLIBC_2.2.5
+4 <curve25519_dalek::edwards::EdwardsPoint as core::ops::arith::AddAssign>::add_assign
+4 <curve25519_dalek::backend::serial::u64::field::FieldElement51>::to_bytes
+4 <curve25519_dalek::scalar::Scalar as core::ops::arith::Mul<&curve25519_dalek::scalar::Scalar>>::mul
+3 <curve25519_dalek::backend::vector::avx2::edwards::ExtendedPoint as <curve25519_dalek::backend::vector::avx2::edwards::ExtendedPoint>::double::__Impl_double__>::_impl_double
+3 <curve25519_dalek::backend::serial::curve_models::CompletedPoint>::as_projective
+3 import:posix_memalign@GLIBC_2.2.5
+2 import:realloc@GLIBC_2.2.5
+2 import:malloc@GLIBC_2.2.5
+2 <merlin::transcript::Transcript>::append_u64
+2 <curve25519_dalek::scalar::Scalar>::from_bytes_mod_order_wide
+2 <merlin::transcript::Transcript as bulletproofs::transcript::TranscriptProtocol>::challenge_scalar
+2 <&curve25519_dalek::scalar::Scalar as core::ops::arith::Mul>::mul
+2 <&curve25519_dalek::edwards::EdwardsPoint as core::ops::arith::Add<&curve25519_dalek::backend::serial::curve_models::ProjectiveNielsPoint>>::add
+2 import:memset@GLIBC_2.2.5
+2 import:free@GLIBC_2.2.5
+2 import:pthread_key_create@GLIBC_2.34
+2 import:pthread_key_delete@GLIBC_2.34
+2 <curve25519_dalek::scalar::Scalar as core::ops::arith::MulAssign>::mul_assign
+1 import:_Unwind_Resume@GCC_3.0
+1 import:__errno_location@GLIBC_2.2.5
+1 import:abort@GLIBC_2.2.5
+1 <curve25519_dalek::ristretto::RistrettoPoint>::compress
+1 <curve25519_dalek::ristretto::RistrettoPoint as core::ops::arith::AddAssign<&curve25519_dalek::ristretto::RistrettoPoint>>::add_assign
+1 import:memcmp@GLIBC_2.2.5
+1 sha3::block_api::xor_block
+1 <curve25519_dalek::backend::vector::avx2::field::FieldElement2625x4 as <curve25519_dalek::backend::vector::avx2::field::FieldElement2625x4>::square_and_negate_D::__Impl_square_and_negate_D__>::_impl_s
+1 import:gettid@GLIBC_2.30
+1 import:getenv@GLIBC_2.2.5
+1 import:strlen@GLIBC_2.2.5
+1 import:calloc@GLIBC_2.2.5
+1 import:__cxa_thread_atexit_impl@GLIBC_2.18
+1 import:pthread_setspecific@GLIBC_2.34
+1 import:_Unwind_RaiseException@GCC_3.0
+1 import:_Unwind_DeleteException@GCC_3.0
+1 <curve25519_dalek::edwards::EdwardsPoint as core::ops::arith::Add>::add

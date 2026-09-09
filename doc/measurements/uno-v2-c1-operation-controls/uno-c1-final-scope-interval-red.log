@@ -1,0 +1,17 @@
+..F
+======================================================================
+FAIL: test_profile_permissions_are_explicit_sets (__main__.Boundary.test_profile_permissions_are_explicit_sets)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/tomi/tos/crypto/test/workchain-proof-boundary-gates.py", line 20, in test_profile_permissions_are_explicit_sets
+    self.assertEqual(re.sub(r"\s", "", matches[0]), expected, method)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'resources_.admission_version>=3' != 'resources_.admission_version==3||resources_.admission_version==4'
+- resources_.admission_version>=3
++ resources_.admission_version==3||resources_.admission_version==4
+ : permits_fee_settlement
+
+----------------------------------------------------------------------
+Ran 3 tests in 0.229s
+
+FAILED (failures=1)

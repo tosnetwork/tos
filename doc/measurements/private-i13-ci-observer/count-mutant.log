@@ -1,0 +1,16 @@
+-- Configuring done
+-- Generating done
+-- Build files have been written to: /tmp/i13-ci-observer-t97ln60g/out
+three.json: exit=0
+registered: exactly 3 private I13 checks: ['test-workchain-construction-isolation-gates', 'test-workchain-i13-acceptance-gates', 'test-workchain-i13-usage-acceptance-gates']
+
+zero.json: exit=0
+registered: exactly 3 private I13 checks: []
+
+Traceback (most recent call last):
+  File "/home/tomi/tos/.github/scripts/test-i13-results.py", line 48, in <module>
+    run("registered", path, success)
+    ~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/tomi/tos/.github/scripts/test-i13-results.py", line 22, in run
+    raise AssertionError(f"unexpected observer result: {path.name}")
+AssertionError: unexpected observer result: zero.json

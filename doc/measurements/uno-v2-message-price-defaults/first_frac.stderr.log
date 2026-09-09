@@ -1,0 +1,5 @@
+/home/tomi/tos/crypto/test/test-workchain-block.cpp:2576:30: error: default initialization of an object of const type 'const block::MsgPrices' without a user-provided default constructor
+ 2576 |   constexpr block::MsgPrices prices;
+      |                              ^     
+      |                                    {}
+1 error generated.

@@ -32,7 +32,7 @@ inline bool workchain_batch_input_bounds_nonzero(const WorkchainResourcePolicy& 
 inline bool workchain_batch_admission_version_supported(std::uint32_t version) {
   // Installation also revalidates old configuration: extend this set when
   // adding a profile; never retire an installed profile by replacing its value.
-  return version == 2 || version == 3;
+  return version == 2 || version == 3 || version == 4;
 }
 
 // An authenticated binding's resource cut, not proof of full batch admission.
@@ -65,7 +65,14 @@ class ResolvedBatchInputPolicy {
   const InputPolicyIdentity& identity() const { return identity_; }
   // Version 2 retains its original no-fee-constructor admission contract.
   // Supporting a profile does not imply support for every newer capability.
-  bool permits_fee_settlement() const { return resources_.admission_version == 3; }
+  bool permits_fee_settlement() const {
+    return resources_.admission_version == 3 || resources_.admission_version == 4;
+  }
+  // An older binary already accepts v3 without this contract. Retrofitting
+  // it into v3 would give the same authenticated value different meanings.
+  // v4 explicitly authorizes fee settlement AND precharged operation counts.
+  // Neither predicate grants capabilities to an unknown future profile.
+  bool requires_proof_operation_meter() const { return resources_.admission_version == 4; }
 
  private:
   ResolvedBatchInputPolicy(WorkchainResourcePolicy resources, InputPolicyIdentity identity)

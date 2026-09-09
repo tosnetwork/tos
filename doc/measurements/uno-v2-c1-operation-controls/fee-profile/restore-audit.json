@@ -1,0 +1,13 @@
+{
+  "path": "crypto/block/workchain-resource-policy.h",
+  "from": "resources_.admission_version == 3 || resources_.admission_version == 4",
+  "to": "resources_.admission_version == 3",
+  "original_sha256": "0550f2845ad9b3c52b7e54528edf7b23a00f42d50fa16c78556567ac3cec10a7",
+  "baseline_binary_sha256": "5f0c718d7158ac24d8ca81d6be302064a730267a666bd762645a391c52065711",
+  "recorded_mutant_sha256": "85c6c4db1bd96cb6a9eef1f2e1c3b8792cc5a810373a4229b240b9297083d3ef",
+  "reconstructed_mutant_sha256": "85c6c4db1bd96cb6a9eef1f2e1c3b8792cc5a810373a4229b240b9297083d3ef",
+  "mutant_binary_sha256": "d43978789cd0e2e7448e8b812bf3ec63ef6f654842ce77fe62670ba6602192e4",
+  "mutant_exit": 1,
+  "restored_sha256": "0550f2845ad9b3c52b7e54528edf7b23a00f42d50fa16c78556567ac3cec10a7",
+  "restored_binary_sha256": "5f0c718d7158ac24d8ca81d6be302064a730267a666bd762645a391c52065711"
+}

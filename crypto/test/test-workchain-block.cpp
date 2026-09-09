@@ -255,7 +255,7 @@ TEST(WorkchainBlock, BatchPolicyVersionIdentityAgreement) {
       {256,16384,128,8192,64}, {32,128,8192,256,16384,16}};
   auto root = vm::CellBuilder().finalize();
   block::InputPolicyIdentity identity{root->get_hash(), false, 0x434e5431, 7, 5, 2};
-  for (const auto& versions : {std::pair{2u, 2u}, std::pair{3u, 3u},
+  for (const auto& versions : {std::pair{2u, 2u}, std::pair{3u, 3u}, std::pair{4u, 4u},
                                std::pair{2u, 3u}, std::pair{3u, 2u},
                                std::pair{2u, 1u}, std::pair{1u, 2u},
                                std::pair{2u, 0x10002u}, std::pair{0x10002u, 2u},
@@ -265,7 +265,9 @@ TEST(WorkchainBlock, BatchPolicyVersionIdentityAgreement) {
     auto result = block::ResolvedBatchInputPolicy::from_resolved_fields(resources, identity);
     if (versions.first == versions.second) {
       ASSERT_TRUE(std::holds_alternative<block::ResolvedBatchInputPolicy>(result));
-      ASSERT_EQ(std::get<block::ResolvedBatchInputPolicy>(result).permits_fee_settlement(), versions.first == 3);
+      ASSERT_EQ(std::get<block::ResolvedBatchInputPolicy>(result).permits_fee_settlement(),
+                versions.first == 3 || versions.first == 4);
+      ASSERT_EQ(std::get<block::ResolvedBatchInputPolicy>(result).requires_proof_operation_meter(), versions.first == 4);
     } else {
       ASSERT_TRUE(std::holds_alternative<block::LocalUnavailable>(result));
       ASSERT_EQ(std::get<block::LocalUnavailable>(result).code,
@@ -279,16 +281,18 @@ TEST(WorkchainBlock, BatchPolicyVersionIdentityAgreement) {
 TEST(WorkchainBlock, BatchProfileUnsupportedNodeProbe) {
   // Also run with the support predicate restored to the version-2-only
   // implementation. This observes old-node execution binding, not installation.
-  block::WorkchainResourcePolicy resources{3, {64,4096,8,16,16,5},
+  for (auto version : {3u, 4u}) {
+  block::WorkchainResourcePolicy resources{version, {64,4096,8,16,16,5},
       {256,16384,128,8192,64}, {32,128,8192,256,16384,16}};
-  block::InputPolicyIdentity identity{vm::CellBuilder().finalize()->get_hash(), false, 0x434e5431, 7, 5, 3};
+  block::InputPolicyIdentity identity{vm::CellBuilder().finalize()->get_hash(), false, 0x434e5431, 7, 5, version};
   auto result = block::ResolvedBatchInputPolicy::from_resolved_fields(resources, identity);
-  if (block::workchain_batch_admission_version_supported(3)) {
+  if (block::workchain_batch_admission_version_supported(version)) {
     ASSERT_TRUE(std::holds_alternative<block::ResolvedBatchInputPolicy>(result));
   } else {
     ASSERT_TRUE(std::holds_alternative<block::LocalUnavailable>(result));
     ASSERT_EQ(std::get<block::LocalUnavailable>(result).code,
               block::LocalUnavailableCode::UnsupportedAdmissionVersion);
+  }
   }
 }
 
@@ -2566,6 +2570,50 @@ TEST(WorkchainBlock, BatchNativeAllocation) {
   ASSERT_TRUE(decode(malformed).is_error());
 }
 
+TEST(WorkchainBlock, MessagePricesDefaultInitialization) {
+  // No braces: this checks default initialization, not value-initialization's
+  // separate zeroing rule. Missing member initialization must fail compilation.
+  constexpr block::MsgPrices prices;
+  static_assert(prices.lump_price == 0);
+  static_assert(prices.bit_price == 0);
+  static_assert(prices.cell_price == 0);
+  static_assert(prices.ihr_factor == 0);
+  static_assert(prices.first_frac == 0);
+  static_assert(prices.next_frac == 0);
+  const block::MsgPrices configured(101, 102, 103, 104, 105, 106);
+  ASSERT_EQ(configured.lump_price, 101u);
+  ASSERT_EQ(configured.bit_price, 102u);
+  ASSERT_EQ(configured.cell_price, 103u);
+  ASSERT_EQ(configured.ihr_factor, 104u);
+  ASSERT_EQ(configured.first_frac, 105u);
+  ASSERT_EQ(configured.next_frac, 106u);
+}
+
+void initialize_disposal_fixture_prices(block::ActionPhaseConfig& config) {
+  // Disposal validates both schedules, even for a basechain destination.
+  // Fixtures must declare actual schedules rather than inherit zero defaults.
+  config.fwd_std = block::MsgPrices(200, 0, 0, 0, 16384, 0);
+  config.fwd_mc = block::MsgPrices(100, 0, 0, 0, 16384, 0);
+}
+
+TEST(WorkchainBlock, DisposalFixturePricesOverwritePriorState) {
+  block::ActionPhaseConfig config;
+  // Defined poison makes a missing assignment fail independently of stack
+  // layout, preceding tests, and the outer transaction's rejection guards.
+  config.fwd_std = block::MsgPrices(901, 902, 903, 904, 905, 906);
+  config.fwd_mc = block::MsgPrices(911, 912, 913, 914, 65536, 916);
+  initialize_disposal_fixture_prices(config);
+  ASSERT_EQ(config.fwd_std.lump_price, 200u);
+  ASSERT_EQ(config.fwd_mc.lump_price, 100u);
+  for (const auto* prices : {&config.fwd_std, &config.fwd_mc}) {
+    ASSERT_EQ(prices->bit_price, 0u);
+    ASSERT_EQ(prices->cell_price, 0u);
+    ASSERT_EQ(prices->ihr_factor, 0u);
+    ASSERT_EQ(prices->first_frac, 16384u);
+    ASSERT_EQ(prices->next_frac, 0u);
+  }
+}
+
 TEST(WorkchainBlock, AggregateFeeSettlement) {
   using C = block::CurrencyCollection;
   const auto coordinator_id = td::Bits256::zero();
@@ -2686,6 +2734,7 @@ TEST(WorkchainBlock, AggregateFeeSettlement) {
   // Direct disposal factory: no enclosing allocation/payout role guard can
   // mask a missing local check. Empty inbox keeps all other inputs identical.
   block::ActionPhaseConfig messages;
+  initialize_disposal_fixture_prices(messages);
   messages.global_version = 16;
   block::WorkchainSet workchains;
   block::NativeDisposalProfile profile{block::NativeDisposalSource::OriginalDestination,
@@ -2758,9 +2807,9 @@ TEST(WorkchainBlock, NativeDisposalEntry) {
   cfg.global_version = 16;
   cfg.disable_anycast = true;
   block::ActionPhaseConfig messages;
+  initialize_disposal_fixture_prices(messages);
   messages.global_version = 16;
   messages.bounce_msg_body = 256;
-  messages.fwd_std = block::MsgPrices(200, 0, 0, 0, 16384, 0);
   block::WorkchainSet workchains;
   td::Ref<block::WorkchainInfo> basechain{true};
   basechain.write().workchain = 0;
@@ -2774,6 +2823,20 @@ TEST(WorkchainBlock, NativeDisposalEntry) {
   auto prepare = [&](Transaction& tx, const block::WorkchainDisposalEntryContext& resolved) {
     return tx.prepare_workchain_disposal_entry(bindings[0], input, effects_root, number(321), cfg, 2, 4096, resolved);
   };
+  ASSERT_EQ(messages.fwd_mc.lump_price, 100u);
+  ASSERT_EQ(messages.fwd_mc.first_frac, 16384u);
+  block::tlb::MsgEnvelope::Record_std disposal_envelope;
+  ASSERT_TRUE(tlb::unpack_cell(inbox[2], disposal_envelope));
+  auto price_context = [&](const block::ActionPhaseConfig& prices) {
+    return block::plan_workchain_native_disposal(disposal_envelope.msg, 2, foreign, a,
+        block::CurrencyCollection(1000), 22, 10, prices, workchains, 4096, profile);
+  };
+  ASSERT_TRUE(price_context(messages).is_ok());
+  auto invalid_mc_prices = messages;
+  invalid_mc_prices.fwd_mc.first_frac = 65536;
+  auto rejected_mc_prices = price_context(invalid_mc_prices);
+  ASSERT_TRUE(rejected_mc_prices.is_error());
+  ASSERT_EQ(rejected_mc_prices.error().message().str(), "invalid resolved disposal context");
   Transaction entry(coordinator, Transaction::tr_workchain_batch, 21, 10);
   ASSERT_TRUE(prepare(entry, context).is_ok());
   ASSERT_TRUE(entry.balance == block::CurrencyCollection(1073));
@@ -9048,14 +9111,14 @@ TEST(WorkchainBlock, MultiAccountAdmissionVersionInstallation) {
   ASSERT_TRUE(workchains.append_dict_to_bool(workchain_list));
   put(12, workchain_list.finalize());
   auto business = vm::CellBuilder().store_long(0x12345678, 32).finalize();
-  for (std::uint32_t admission : {0u, 1u, 2u, 3u, 4u, 0x10002u, 0x10003u, 0x80000002u}) {
+  for (std::uint32_t admission : {0u, 1u, 2u, 3u, 4u, 5u, 0x10002u, 0x10003u, 0x10004u, 0x80000002u}) {
     block::WorkchainResourcePolicy resources{admission, {64,4096,8,16,16,5},
         {256,16384,128,8192,64}, {32,128,8192,256,16384,16}};
     policy.engine_configuration = block::encode_workchain_engine_parameters({resources, business}).move_as_ok();
     ASSERT_TRUE(configuration.set_ref(td::BitArray<32>{84},
         block::encode_workchain_native_ingress_table({policy}).move_as_ok()));
-    ASSERT_EQ(block::validate_native_ingress_presence(configuration).is_ok(), admission == 2 || admission == 3);
-    ASSERT_EQ(block::valid_config_data(configuration.get_root_cell(), td::Bits256::zero()), admission == 2 || admission == 3);
+    ASSERT_EQ(block::validate_native_ingress_presence(configuration).is_ok(), admission == 2 || admission == 3 || admission == 4);
+    ASSERT_EQ(block::valid_config_data(configuration.get_root_cell(), td::Bits256::zero()), admission == 2 || admission == 3 || admission == 4);
   }
   // Every semantic zero is rejected at installation, before candidate admission.
   for (unsigned field = 0; field < 12; ++field) {
@@ -9103,6 +9166,30 @@ TEST(WorkchainBlock, AccountRegistryReplayConnectivity) {
     mutable const block::WorkchainEngineConfig* inspected_config{nullptr};
     mutable const block::WorkchainEngineConfig* executed_config{nullptr};
     mutable std::weak_ptr<const block::WorkchainEngineConfig> config_lifetime;
+    mutable std::uint64_t metered_calls{0}, last_consumed{0};
+    bool attempt_proof{false};
+    td::Result<block::WorkchainAccountEffects> execute_metered_accounts(
+        const td::Ref<vm::Cell>& input, block::WorkchainAccountReadView& view,
+        const block::WorkchainEngineConfig& configuration, block::WorkchainProofVerifier& proofs) const override {
+      ++metered_calls;
+      if (attempt_proof) {
+        UnoCryptoVerifyRequestV2 request{};
+        request.abi_version = UNO_BALANCE_ABI_VERSION;
+        request.relation = UNO_RELATION_SEND;
+        request.limits = {100, 100, 8, 1024, 4096};
+        request.context_bytes = 1;
+        request.point_count = 10;
+        request.commitment_count = 8;
+        request.response_count = 6;
+        request.proof_bytes = 864;
+        // Deliberately ignore the error. Only the runner's sticky status can
+        // stop successful-looking effects escaping this fixture's violation.
+        auto ignored = proofs.verify(request);
+        ASSERT_TRUE(ignored.is_error());
+      }
+      last_consumed = proofs.consumed();
+      return execute_accounts(input, view, configuration);
+    }
     block::WorkchainEngineKey engine_key() const override {
       return {block::WorkchainFormat::Basic, 0x434e5431};
     }
@@ -9290,6 +9377,55 @@ TEST(WorkchainBlock, AccountRegistryReplayConnectivity) {
   ASSERT_TRUE(observed->executed_config == expected_config);
   ASSERT_EQ(replayed.ok().state.accounts->get_hash(),staged.ok().state.accounts->get_hash());
   ASSERT_TRUE(replayed.ok().state.accounts->get_hash() != state.accounts->get_hash());
+  // Exercise the new profile through the existing configured runner. The
+  // fixture's declared 37 units are deliberately less than the backend shape,
+  // but the authenticated cap is greater; substituting the cap for the
+  // declaration must therefore be observably different.
+  for (auto version : {2u, 3u, 4u}) {
+    auto resources = binding.input_policy.resources();
+    resources.admission_version = version;
+    resources.work_output.max_proof_units = 3000;
+    auto policy_identity = binding.input_policy.identity();
+    policy_identity.admission_version = version;
+    auto resolved_policy = block::ResolvedBatchInputPolicy::from_resolved_fields(resources, policy_identity);
+    ASSERT_TRUE(std::holds_alternative<block::ResolvedBatchInputPolicy>(resolved_policy));
+    auto next_binding = binding;
+    next_binding.engine_config = std::shared_ptr<const block::WorkchainEngineConfig>(
+        observed->config_lifetime.lock());
+    next_binding.input_policy = std::get<block::ResolvedBatchInputPolicy>(resolved_policy);
+    auto next = block::ConfiguredWorkchainAccountEngine::bind(next_binding).move_as_ok();
+    auto next_identity = identity;
+    next_identity.admission_version = version;
+    block::BatchInputAdmissionSession next_session(next_binding.input_policy, number(11), access, next_identity, inbox);
+    ASSERT_TRUE(std::holds_alternative<block::AdmittedBatchInput>(next_session.evaluate()));
+    const auto& structural = std::get<block::AdmittedBatchInput>(next_session.evaluate());
+    auto token = block::ProofAdmittedBatchInput::admit(*next, structural).move_as_ok();
+    ASSERT_EQ(token.declared_proof_work(), 37u);
+    observed->metered_calls = 0;
+    observed->attempt_proof = true;
+    observed->last_consumed = UINT64_MAX;
+    auto result = block::execute_and_settle_workchain_accounts(*next, state.accounts,
+        next_identity, token, native, b, a, td::make_refint(0), 4096, cfg, pricing);
+    if (version == 4) {
+      ASSERT_TRUE(result.is_error());
+      ASSERT_EQ(result.error().code(), static_cast<int>(block::WorkchainExecutionFailure::LocalUnavailable));
+      ASSERT_EQ(observed->metered_calls, 1u);
+      ASSERT_EQ(observed->last_consumed, 0u);
+      observed->attempt_proof = false;
+      auto no_proof = block::execute_and_settle_workchain_accounts(*next, state.accounts,
+          next_identity, token, native, b, a, td::make_refint(0), 4096, cfg, pricing);
+      ASSERT_TRUE(no_proof.is_ok());
+      ASSERT_EQ(observed->metered_calls, 2u);
+      ASSERT_EQ(no_proof.ok().effects->get_hash(), staged.ok().effects->get_hash());
+    } else {
+      ASSERT_TRUE(result.is_ok());
+      ASSERT_EQ(observed->metered_calls, 0u);
+      if (version == 2) {
+        ASSERT_EQ(result.ok().state.account_blocks->get_hash(), staged.ok().state.account_blocks->get_hash());
+      }
+      ASSERT_EQ(result.ok().effects->get_hash(), staged.ok().effects->get_hash());
+    }
+  }
 }
 
 TEST(WorkchainBlock, MultiAccountRegistryBinding) {

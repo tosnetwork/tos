@@ -1,0 +1,7 @@
+/tmp/uno-c1-private-access.cpp:9:75: error: 'make_verifier' is a private member of 'block::ProofAdmittedBatchInput'
+    9 | void forbidden(const block::ProofAdmittedBatchInput& token) { (void)token.make_verifier(); }
+      |                                                                           ^
+/home/tomi/tos/crypto/block/workchain-account-engine.h:132:26: note: declared private here
+  132 |   WorkchainProofVerifier make_verifier() const { return WorkchainProofVerifier(declared_proof_work_); }
+      |                          ^
+1 error generated.

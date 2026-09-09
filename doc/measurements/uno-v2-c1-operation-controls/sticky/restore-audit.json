@@ -1,0 +1,13 @@
+{
+  "path": "crypto/block/workchain-proof-work.h",
+  "from": "if (failure_.is_error()) return failure_.clone();",
+  "to": "if (false) return failure_.clone();",
+  "original_sha256": "26465362b6958c56feb66580437a58cb9ce453464a9c4f1d26456f26aadfd0de",
+  "baseline_binary_sha256": "529c402835b3d72dd68805325c28f65fb22e63a067e3e4debc0b4f4afa2f2a77",
+  "recorded_mutant_sha256": "eed968a18eb0490d4fcb66f40f52cda12d28f0ee155a2cf9775b3af476bf2967",
+  "reconstructed_mutant_sha256": "eed968a18eb0490d4fcb66f40f52cda12d28f0ee155a2cf9775b3af476bf2967",
+  "mutant_binary_sha256": "c77753c1171bcffd28cae8c8b34a787abe6bd4504743575e4da1a591e58558bb",
+  "mutant_exit": 1,
+  "restored_sha256": "26465362b6958c56feb66580437a58cb9ce453464a9c4f1d26456f26aadfd0de",
+  "restored_binary_sha256": "529c402835b3d72dd68805325c28f65fb22e63a067e3e4debc0b4f4afa2f2a77"
+}

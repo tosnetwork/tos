@@ -1,0 +1,20 @@
+Internal ctest changing into directory: /home/tomi/tos/build
+Test project /home/tomi/tos/build
+    Start  1: test-workchain-proof-boundary-gates
+1/7 Test  #1: test-workchain-proof-boundary-gates ....   Passed    0.39 sec
+    Start  2: test-workchain-proof-backend
+2/7 Test  #2: test-workchain-proof-backend ...........   Passed    0.55 sec
+    Start  3: test-workchain-proof-operation-trace
+3/7 Test  #3: test-workchain-proof-operation-trace ...   Passed   16.10 sec
+    Start 39: test-workchain-block
+4/7 Test #39: test-workchain-block ...................   Passed    2.84 sec
+    Start 40: test-workchain-proof-work
+5/7 Test #40: test-workchain-proof-work ..............   Passed    0.00 sec
+    Start 41: test-workchain-proof-contracts
+6/7 Test #41: test-workchain-proof-contracts .........   Passed    0.01 sec
+    Start 42: test-workchain-admission
+7/7 Test #42: test-workchain-admission ...............   Passed    0.00 sec
+
+100% tests passed, 0 tests failed out of 7
+
+Total Test time (real) =  19.90 sec
