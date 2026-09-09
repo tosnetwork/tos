@@ -232,6 +232,12 @@ class HttpRequest {
 
   static td::Result<std::unique_ptr<HttpRequest>> create(std::string method, std::string url,
                                                          std::string proto_version);
+  // Rebuild a request from its TL wire form (the inverse of store_tl). Every
+  // header is admitted through add_header, so the Content-Length gate applies
+  // to the RLDP-proxied path exactly as it does to the socket path. Used by the
+  // RLDP HTTP proxy; a malformed or oversized header fails here rather than
+  // being silently dropped.
+  static td::Result<std::unique_ptr<HttpRequest>> create(const tos_api::http_request &f);
 
   HttpRequest(std::string method, std::string url, std::string proto_version);
 
