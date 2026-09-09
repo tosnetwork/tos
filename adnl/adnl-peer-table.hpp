@@ -84,6 +84,13 @@ class AdnlPeerTableImpl : public AdnlPeerTable {
     promise.set_value(local_ids_.count(id));
   }
 
+  // Diagnostic accessor: number of entries in the outer peer table (peers_),
+  // including any that currently hold no peer pairs. Used by tests to assert
+  // that refused sources do not leave empty PeerInfo records behind.
+  void get_peer_table_size(td::Promise<size_t> promise) {
+    promise.set_value(peers_.size());
+  }
+
   void write_new_addr_list_to_db(AdnlNodeIdShort local_id, AdnlNodeIdShort peer_id, AdnlDbItem node,
                                  td::Promise<td::Unit> promise) override;
   void get_addr_list_from_db(AdnlNodeIdShort local_id, AdnlNodeIdShort peer_id,

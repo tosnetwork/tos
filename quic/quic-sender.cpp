@@ -45,6 +45,11 @@ class QuicSender::ServerCallback final : public QuicServer::Callback {
     auto [state_ptr, inserted, local_id, peer_id] = r;
     auto &state = *state_ptr;
     if (inserted) {
+      // First data on a stream we did not open: a peer-initiated (inbound)
+      // request. Streams we opened for outbound queries are created earlier via
+      // set_stream_options (with the caller's absolute deadline), so they are
+      // never inserted here and keep that deadline.
+      state.mark_inbound();
       td::uint64 mtu = get_peer_mtu_(local_id, peer_id);
       apply_stream_options(state, StreamOptions{mtu});
     }
@@ -55,10 +60,14 @@ class QuicSender::ServerCallback final : public QuicServer::Callback {
     state.append(std::move(data));
     auto status = state.check_limits();
     if (status.is_ok() && !is_end) {
-      // Re-arm the inbound stream's inactivity timeout on every data chunk so a
-      // stream that stops delivering data is reaped, while one still making
-      // progress is never cut off mid-transfer.
-      rearm_inbound_timeout(state);
+      // Re-arm the inactivity timeout on every data chunk so a stream that stops
+      // delivering data is reaped, while one still making progress is never cut
+      // off mid-transfer. Only inbound streams are reaped this way: an outbound
+      // query's response stream carries the caller's absolute deadline, and
+      // receiving a partial response must never extend it.
+      if (state.is_inbound()) {
+        rearm_inbound_timeout(state);
+      }
       return td::Status::OK();
     }
     // Terminal chunk: the stream either hit its size limit or is complete. Drop
@@ -190,11 +199,24 @@ class QuicSender::ServerCallback final : public QuicServer::Callback {
       return options_;
     }
 
+    // A stream this callback created on first received data (peer-initiated
+    // request), as opposed to one opened locally via set_stream_options for an
+    // outbound query/message. Only inbound streams carry the inactivity reaper;
+    // outbound streams keep the caller-supplied absolute deadline untouched.
+    void mark_inbound() {
+      is_inbound_ = true;
+    }
+
+    bool is_inbound() const {
+      return is_inbound_;
+    }
+
    private:
     td::BufferBuilder builder_;
     td::MemoryTrackerToken memory_token_{td::MemoryTrackerCategory::QuicInbound, 0};
     StreamOptions options_;
     bool failed_{false};
+    bool is_inbound_{false};
   };
 
   td::actor::ActorId<QuicSender> sender_;
