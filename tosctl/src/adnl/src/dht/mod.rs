@@ -386,6 +386,12 @@ impl DhtNode {
     const MAX_PEERS: u32 = 65536;
     const MAX_TASKS: u8 = 5;
     const TIMEOUT_VALUE: i32 = 600; // Seconds
+                                    // Ceiling on the number of stored DHT values. Each store of a fresh key
+                                    // adds a permanent entry; without a bound an attacker minting distinct keys
+                                    // grows the storage map without limit. Expired entries are swept before the
+                                    // ceiling is enforced, so the bound is on live (unexpired) values. Matches
+                                    // the C++ DHT member, which evicts by TTL order once size exceeds its cap.
+    const MAX_VALUES: u64 = 100_000;
 
     /// Constructor
     pub fn with_adnl_node(adnl: Arc<AdnlNode>, key_tag: usize) -> Result<Arc<Self>> {
@@ -1039,10 +1045,41 @@ impl DhtNode {
         Ok(DhtPong { random_id: query.random_id })
     }
 
+    /// Remove expired values from the storage map. Called before enforcing the
+    /// storage ceiling so the bound applies to live (unexpired) values only.
+    /// Each removed ValueObject decrements the allocated.values counter on drop.
+    fn gc_expired_values(&self, network: &DhtNetwork) {
+        let now = Version::get();
+        let expired: Vec<DhtKeyId> = network
+            .storage
+            .iter()
+            .filter(|guard| guard.val().object.ttl <= now)
+            .map(|guard| *guard.key())
+            .collect();
+        for key in expired {
+            network.storage.remove(&key);
+        }
+    }
+
     fn process_store(&self, network: &Arc<DhtNetwork>, query: Store) -> Result<Stored> {
         let dht_key_id = hash(query.value.key.key.clone())?;
         if query.value.ttl <= Version::get() {
             fail!("Ignore expired DHT value with key {}", base64_encode(&dht_key_id))
+        }
+        // Bound the storage map. A store of a fresh key adds a permanent entry;
+        // sweep expired values first, then refuse a brand-new key once the live
+        // count is at the ceiling. Updates to an existing key never grow the map
+        // and are always allowed.
+        if network.storage.get(&dht_key_id).is_none() {
+            self.gc_expired_values(network);
+            if self.allocated.values.load(std::sync::atomic::Ordering::Relaxed) >= Self::MAX_VALUES
+            {
+                fail!(
+                    "DHT storage full ({} values), rejecting new key {}",
+                    Self::MAX_VALUES,
+                    base64_encode(&dht_key_id)
+                )
+            }
         }
         match query.value.key.update_rule {
             UpdateRule::Dht_UpdateRule_Signature => {

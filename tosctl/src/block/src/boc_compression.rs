@@ -733,6 +733,9 @@ pub fn boc_decompress_improved_structure_lz4(
 ) -> Result<Vec<Cell>> {
     // Maximum cell data length in bits (TOS limit)
     const K_MAX_CELL_DATA_LENGTH_BITS: usize = 1024;
+    // See the node_count check below. Matches the C++ streaming BOC reader's
+    // kDefaultStreamingBocMaxCells (crypto/vm/boc.h) = 50,000,000.
+    const MAX_BOC_CELLS: usize = 50_000_000;
     // Size of decompressed length header
     const K_DECOMPRESSED_SIZE_BYTES: usize = 4;
 
@@ -807,6 +810,19 @@ pub fn boc_decompress_improved_structure_lz4(
     }
     if node_count > decompressed_size {
         fail!("BOC decompression failed: incorrect node count provided");
+    }
+    // Absolute ceiling on the announced cell count. node_count <= decompressed_size
+    // bounds it to the input, but SECTION 4 then eagerly allocates several arrays
+    // of ~240 bytes per node, so a caller that passes a large max_size would let a
+    // small compressed input drive a huge pre-parse allocation. This cap bounds the
+    // allocation regardless of max_size, matching the C++ streaming BOC reader's
+    // kDefaultStreamingBocMaxCells (crypto/vm/boc.h).
+    if node_count > MAX_BOC_CELLS {
+        fail!(
+            "BOC decompression failed: node count {} exceeds maximum {}",
+            node_count,
+            MAX_BOC_CELLS
+        );
     }
     for &idx in &root_indexes {
         if idx >= node_count {

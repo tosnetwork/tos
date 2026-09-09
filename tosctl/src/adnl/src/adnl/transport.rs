@@ -29,6 +29,11 @@ const MASK_TCP_ADDRESS: u32 = 0x40444E4C;
 const SIZE_TCP_ADDRESS: usize = 10;
 const SIZE_TCP_CONFIRM: usize = 1;
 const SIZE_TCP_LENGTH: usize = 4;
+// Upper bound on a single TCP frame, read from the peer's 32-bit length
+// prefix before any authentication. Without it a peer can declare up to
+// u32::MAX and force a 4 GiB allocation in read_len(). Matches the C++
+// ADNL ext connection, which rejects len > (1 << 24) (adnl-ext-connection.cpp).
+const MAX_TCP_PACKET_SIZE: usize = 1 << 24;
 const SIZE_UDP_BUFFER: usize = 1500;
 const SOCKET_BUFFER_SIZE: usize = 1 << 24;
 const SOCKET_TCP_BACKLOG: usize = 256;
@@ -254,9 +259,13 @@ impl TcpStreamContext {
         if self.len.is_none() {
             match self.read_len(SIZE_TCP_LENGTH) {
                 Ok(true) => {
-                    let len =
-                        read_u32(&self.buf).map_err(|e| error!("Cannot get TCP length: {e}"))?;
-                    self.len = Some(len as usize);
+                    let len = read_u32(&self.buf)
+                        .map_err(|e| error!("Cannot get TCP length: {e}"))?
+                        as usize;
+                    if len > MAX_TCP_PACKET_SIZE {
+                        fail!("TCP frame length {len} exceeds maximum {MAX_TCP_PACKET_SIZE}");
+                    }
+                    self.len = Some(len);
                     self.buf.clear();
                     self.offset = 0;
                 }
@@ -290,6 +299,7 @@ impl TcpStreamContext {
 }
 
 struct TcpReceiver {
+    connections: Arc<Connections<TcpConnectionState>>,
     event_queue: VecDeque<SocketAddr>,
     events: mio::Events,
     next_token: usize,
@@ -323,6 +333,13 @@ impl TcpReceiver {
             }
             self.tokens.remove(&context.token);
         }
+        // Drop the sender-side connection entry too. Without this the Connections
+        // map only ever transitions to Disconnected and never shrinks, so an
+        // attacker presenting many self-reported addresses (see accept()) grows
+        // it without bound. A later reconnect re-creates the entry fresh; the
+        // only thing forgotten is the dead connection's best-effort send queue,
+        // which higher layers retransmit.
+        self.connections.map().remove(addr);
         err.map_or(Ok(()), |e| Err(e))
     }
 
@@ -917,7 +934,9 @@ fn tcp_sender_receiver(node: &Arc<AdnlNode>) -> Result<(Arc<TcpSender>, TcpRecei
     listener.listen(SOCKET_TCP_BACKLOG as i32)?;
     log::info!(target: TARGET, "ADNL TCP listening on {local}...");
     let (updates_sender, updates_receiver) = channel();
+    let connections = Connections::new();
     let receiver = TcpReceiver {
+        connections: connections.clone(),
         event_queue: VecDeque::new(),
         events: mio::Events::with_capacity(SOCKET_TCP_BACKLOG),
         next_token: 1,
@@ -928,12 +947,8 @@ fn tcp_sender_receiver(node: &Arc<AdnlNode>) -> Result<(Arc<TcpSender>, TcpRecei
         udp_token: mio::Token(0),
         updates: updates_receiver,
     };
-    let sender = Arc::new(TcpSender {
-        connections: Connections::new(),
-        local_ip,
-        local_port,
-        updates: updates_sender.clone(),
-    });
+    let sender =
+        Arc::new(TcpSender { connections, local_ip, local_port, updates: updates_sender.clone() });
     let sender_context = sender.clone();
     let stop = node.stopper().clone();
     thread::Builder::new().name("ADNL TCP listener".into()).spawn(move || {

@@ -302,6 +302,13 @@ impl RecvTransfer {
             total_size
         } else {
             let total_size = chunk.total_size as usize;
+            if total_size > Constraints::MAX_TRANSFER_SIZE {
+                fail!(
+                    "RLDP total size {} exceeds maximum {}",
+                    total_size,
+                    Constraints::MAX_TRANSFER_SIZE
+                )
+            }
             self.total_size = Some(total_size);
             self.data
                 .try_reserve_exact(total_size)

@@ -95,6 +95,17 @@ impl Constraints {
     const MAX_PARTS_IN_TRANSIT: usize = 20;
     const SLICE: usize = 2000000;
     const SYMBOL: usize = 768;
+    // Ceiling on a single inbound transfer's declared total_size. The peer
+    // sends total_size as an unauthenticated 32-bit value; without a bound,
+    // process() would try_reserve_exact() up to ~4 GiB per transfer. This is
+    // far above any legitimate answer this crate receives (the RLDP query API
+    // caps max_answer_size, whose largest use here is 4 MiB) yet bounds the
+    // pre-reservation. Matches the C++ ADNL frame ceiling (1 << 24).
+    pub const MAX_TRANSFER_SIZE: usize = 1 << 24;
+    // Ceiling on the number of concurrent inbound transfers, matching the C++
+    // RldpConnection::MAX_INBOUND_TRANSFERS. Without it an attacker opens a new
+    // transfer per forged transfer id, each holding a reassembly buffer.
+    pub const MAX_INBOUND_TRANSFERS: u64 = 256;
 
     pub fn check_data_size(&self, data_size: i32) -> Result<()> {
         if data_size == 0 {
@@ -615,6 +626,20 @@ impl RldpNode {
         v2: bool,
     ) -> Result<Option<tokio::sync::mpsc::UnboundedSender<Chunk>>> {
         let rldp = if v2 { "RLDPv2" } else { "RLDPv1" };
+        // Bound concurrent inbound transfers. recv_transfers is an always-on
+        // live count (RAII Counter on each RecvTransfer); once at the ceiling a
+        // forged transfer id is dropped rather than allocating another
+        // reassembly buffer. The peer retransmits once one finishes or expires.
+        if self.allocated.recv_transfers.load(Ordering::Relaxed)
+            >= Constraints::MAX_INBOUND_TRANSFERS
+        {
+            log::debug!(
+                target: TARGET,
+                "{rldp} inbound transfer table full ({}), dropping transfer",
+                Constraints::MAX_INBOUND_TRANSFERS
+            );
+            return Ok(None);
+        }
         let (queue_sender, queue_reader) = tokio::sync::mpsc::unbounded_channel();
         let inserted = add_unbound_object_to_map(&self.transfers, *transfer_id, || {
             Ok(RldpTransfer::Recv(queue_sender.clone()))

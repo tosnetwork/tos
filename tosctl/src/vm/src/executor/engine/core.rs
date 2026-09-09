@@ -112,6 +112,11 @@ pub struct Engine {
     trace_callback: Option<Arc<TraceCallback>>,
     log_string: Option<&'static str>,
     max_data_depth: u16,
+    // Number of parent VMs on the native call stack. run_child_vm recurses into
+    // execute() on the native stack, so without a cap a contract using deeply
+    // nested RUNVM (each costing little gas) can overflow the host's native
+    // stack and crash the process rather than merely failing the transaction.
+    vm_nesting_depth: u16,
     capabilities: u64,
     block_version: u32,
 }
@@ -173,6 +178,11 @@ impl Engine {
     pub const TRACE_CTRLS: u8 = 0x08;
     pub const TRACE_ALL: u8 = 0xFF;
     pub const TRACE_ALL_BUT_CTRLS: u8 = 0x07;
+    // Hard cap on nested child VMs (RUNVM). Each level consumes native stack
+    // frames in run_child_vm -> execute(); the ceiling stops a malicious
+    // contract from overflowing the host stack. Chosen well below any native
+    // stack budget while far above any legitimate contract's RUNVM nesting.
+    pub const MAX_VM_NESTING_DEPTH: u16 = 16;
 
     // External API ***********************************************************
 
@@ -220,6 +230,7 @@ impl Engine {
             trace_callback,
             log_string: None,
             max_data_depth: 512,
+            vm_nesting_depth: 0,
             capabilities,
             block_version: 0,
         }
@@ -1029,6 +1040,14 @@ impl Engine {
     }
 
     pub(crate) fn run_child_vm(&mut self, params: RunChildVm) -> Status {
+        if self.vm_nesting_depth >= Self::MAX_VM_NESTING_DEPTH {
+            fail!(
+                ExceptionCode::StackOverflow,
+                "RUNVM nesting depth {} exceeds maximum {}",
+                self.vm_nesting_depth,
+                Self::MAX_VM_NESTING_DEPTH
+            )
+        }
         let (visited_cells, checked_signatures_count, free_gas_consumed) = if params.isolate_gas {
             (HashSet::new(), 0, 0)
         } else {
@@ -1082,6 +1101,7 @@ impl Engine {
             trace_callback: self.trace_callback.clone(),
             log_string: None,
             max_data_depth: self.max_data_depth,
+            vm_nesting_depth: self.vm_nesting_depth + 1,
             capabilities: self.capabilities,
             block_version: self.block_version,
         };
@@ -1692,6 +1712,63 @@ impl Engine {
         match self.get_config_param(index)? {
             Some(cell) => T::construct_from_cell(cell),
             None => fail!("Cannot get config param {}", index),
+        }
+    }
+}
+
+#[cfg(test)]
+mod nesting_depth_tests {
+    use super::*;
+
+    fn minimal_child_params() -> RunChildVm {
+        RunChildVm {
+            code: SliceData::default(),
+            data: StackItem::None,
+            c7: StackItem::None,
+            stack: Stack::new(),
+            gas_max: 100_000,
+            gas_limit: 100_000,
+            same_c3: false,
+            return_data: false,
+            return_actions: false,
+            return_gas: false,
+            isolate_gas: true,
+            ret_vals: 0,
+        }
+    }
+
+    fn engine_at_depth(depth: u16) -> Engine {
+        let mut engine = Engine::with_capabilities(0);
+        engine.set_gas(Gas::test_with_limit(1_000_000));
+        engine.vm_nesting_depth = depth;
+        engine
+    }
+
+    // At the ceiling, run_child_vm must refuse with StackOverflow instead of
+    // recursing into another native execute() frame. Removing the guard in
+    // run_child_vm makes this return Ok (the empty child runs), so the test
+    // goes red exactly when the fix is reverted.
+    #[test]
+    fn child_vm_at_max_depth_is_refused() {
+        let mut engine = engine_at_depth(Engine::MAX_VM_NESTING_DEPTH);
+        let result = engine.run_child_vm(minimal_child_params());
+        let err = result.expect_err("run_child_vm at max nesting depth must fail");
+        assert_eq!(tvm_exception_code(&err), Some(ExceptionCode::StackOverflow));
+    }
+
+    // Identical params one level below the ceiling must NOT hit the nesting
+    // guard: this proves the refusal above is caused by the depth, not by the
+    // minimal params themselves.
+    #[test]
+    fn child_vm_below_max_depth_is_not_refused_for_depth() {
+        let mut engine = engine_at_depth(Engine::MAX_VM_NESTING_DEPTH - 1);
+        let result = engine.run_child_vm(minimal_child_params());
+        if let Err(err) = result {
+            assert_ne!(
+                tvm_exception_code(&err),
+                Some(ExceptionCode::StackOverflow),
+                "one level below the ceiling must not be refused by the nesting guard"
+            );
         }
     }
 }
