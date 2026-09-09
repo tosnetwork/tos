@@ -19,6 +19,7 @@
 */
 #pragma once
 #include <cstring>
+#include "block/workchain-instance-identity.h"
 #include <limits>
 #include <map>
 #include <set>
@@ -739,6 +740,7 @@ class ConfigInfo : public Config, public ShardConfig {
   Ref<vm::Cell> state_root;
   Ref<vm::Cell> lib_root_;
   Ref<vm::Cell> state_extra_root_;
+  Ref<vm::Cell> workchain_instances_;
   Ref<vm::CellSlice> accounts_root;
   tos::ZeroStateIdExt zerostate_id_;
   tos::BlockIdExt last_key_block_;
@@ -769,6 +771,9 @@ class ConfigInfo : public Config, public ShardConfig {
   }
   bool is_key_state() const {
     return is_key_state_;
+  }
+  Ref<vm::Cell> get_workchain_instances_root() const {
+    return workchain_instances_;
   }
   Ref<vm::Cell> get_state_extra_root() const {
     return state_extra_root_;

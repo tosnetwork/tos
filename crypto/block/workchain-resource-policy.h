@@ -131,14 +131,17 @@ struct WorkchainEngineParameters {
   // This codec has no current Config/Param30 input and performs no installation
   // comparison. Callers must supply the acceptance record, not today's cadence.
   std::uint32_t k_accepted_target_rate_ms;
+  td::Bits256 genesis_hash;
+  td::Bits256 instance_id;
   WorkchainResourcePolicy resources;
   td::Ref<vm::Cell> parameters;
 
-  // A non-aggregate, three-argument constructor prevents omitted fields from
+  // A non-aggregate constructor with mandatory identity prevents omitted fields from
   // silently becoming zero through aggregate value initialization.
-  WorkchainEngineParameters(std::uint32_t accepted_target_rate_ms, WorkchainResourcePolicy resource_policy,
+  WorkchainEngineParameters(std::uint32_t accepted_target_rate_ms, td::Bits256 genesis, td::Bits256 instance,
+                            WorkchainResourcePolicy resource_policy,
                             td::Ref<vm::Cell> business_parameters)
-      : k_accepted_target_rate_ms(accepted_target_rate_ms), resources(std::move(resource_policy)),
+      : k_accepted_target_rate_ms(accepted_target_rate_ms), genesis_hash(genesis), instance_id(instance), resources(std::move(resource_policy)),
         parameters(std::move(business_parameters)) {}
 };
 
@@ -148,6 +151,8 @@ inline td::Result<td::Ref<vm::Cell>> encode_workchain_engine_parameters(
   TRY_RESULT(resources, encode_workchain_resource_policy(value.resources));
   gen::UnoV2EngineConfiguration::Record record;
   record.k_accepted_target_rate_ms = value.k_accepted_target_rate_ms;
+  record.genesis_hash = value.genesis_hash;
+  record.instance_id = value.instance_id;
   record.resource_policy = std::move(resources);
   record.parameters = value.parameters;
   td::Ref<vm::Cell> result;
@@ -157,14 +162,14 @@ inline td::Result<td::Ref<vm::Cell>> encode_workchain_engine_parameters(
 
 inline td::Result<WorkchainEngineParameters> decode_workchain_engine_parameters(
     const td::Ref<vm::Cell>& root) {
-  // Only the cadence-bearing constructor is legal. The former 0xb7226bea
-  // framing and unknown tags are rejected, never filled with a default value.
+  // Only the identity-bearing constructor is legal. Earlier constructors
+  // and unknown tags are rejected, never filled with default identities.
   gen::UnoV2EngineConfiguration::Record record;
   if (!resource_policy_detail::unpack_exact(root, record)) {
     return td::Status::Error("malformed engine configuration framing");
   }
   TRY_RESULT(resources, decode_workchain_resource_policy(record.resource_policy));
-  return WorkchainEngineParameters{record.k_accepted_target_rate_ms, std::move(resources), std::move(record.parameters)};
+  return WorkchainEngineParameters{record.k_accepted_target_rate_ms, record.genesis_hash, record.instance_id, std::move(resources), std::move(record.parameters)};
 }
 
 }  // namespace block

@@ -169,6 +169,8 @@ td::Status ConfigInfo::unpack() {
     };
     return td::Status::Error("state extra information is invalid");
   }
+  TRY_RESULT(instance_ledger, read_workchain_instance_ledger(extra_info.r1.workchain_instances));
+  workchain_instances_ = extra_info.r1.workchain_instances;
   gen::ValidatorInfo::Record validator_info;
   if (!tlb::csr_unpack(extra_info.r1.validator_info, validator_info)) {
     return td::Status::Error("validator_info in state extra information is invalid");

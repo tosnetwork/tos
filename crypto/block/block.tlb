@@ -13,8 +13,12 @@ uno_v2_resource_work_output max_proof_units:uint64 max_effect_cells:uint64
   max_transfers:uint32 = UnoV2ResourceWorkOutput;
 uno_v2_resource_policy admission_version:uint32 input:^UnoV2ResourceInput
   state:^UnoV2ResourceState work_output:^UnoV2ResourceWorkOutput = UnoV2ResourcePolicy;
-uno_v2_engine_configuration_cadence k_accepted_target_rate_ms:uint32
-  resource_policy:^UnoV2ResourcePolicy parameters:^Cell = UnoV2EngineConfiguration;
+uno_v2_engine_configuration_instance k_accepted_target_rate_ms:uint32
+  genesis_hash:bits256 instance_id:bits256 resource_policy:^UnoV2ResourcePolicy parameters:^Cell = UnoV2EngineConfiguration;
+workchain_instance_record instance_seq:uint64 creation_descriptor_hash:bits256 = WorkchainInstanceRecord;
+workchain_instance_ledger entries:(HashmapE 32 WorkchainInstanceRecord) = WorkchainInstanceLedger;
+workchain_instance_identity genesis_hash:bits256 workchain_id:int32
+  creation_descriptor_hash:bits256 instance_seq:uint64 = WorkchainInstanceIdentity;
 uno_v2_host_domain global_id:int32 genesis_hash:bits256 instance_id:bits256
   workchain_id:int32 shard_id:uint64 = UnoV2HostDomain;
 uno_v2_host_policy configuration_hash:bits256 extended:Bool engine_selector:int64
@@ -658,7 +662,7 @@ creator_info#4 mc_blocks:Counters shard_blocks:Counters = CreatorStats;
 block_create_stats#17 counters:(HashmapE 256 CreatorStats) = BlockCreateStats;
 block_create_stats_ext#34 counters:(HashmapAugE 256 CreatorStats uint32) = BlockCreateStats;
 
-masterchain_state_extra#cc26
+masterchain_state_extra_instances
   shard_hashes:ShardHashes
   config:ConfigParams
   ^[ flags:(## 16) { flags <= 1 }
@@ -666,7 +670,8 @@ masterchain_state_extra#cc26
      prev_blocks:OldMcBlocksInfo
      after_key_block:Bool
      last_key_block:(Maybe ExtBlkRef)
-     block_create_stats:(flags . 0)?BlockCreateStats ]
+     block_create_stats:(flags . 0)?BlockCreateStats
+     workchain_instances:^WorkchainInstanceLedger ]
   global_balance:CurrencyCollection
 = McStateExtra;
 
