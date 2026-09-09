@@ -1,0 +1,4 @@
+32:uno_v2_host_record input_hash:bits256 effects_hash:bits256 account_id:bits256
+432:trans_workchain_storage_participant_v3$1010 binding:^UnoV2HostRecord = TransactionDescr;
+433:trans_workchain_settlement_participant_v3$1011 binding:^UnoV2HostRecord = TransactionDescr;
+434:trans_workchain_entry_v3$1100 binding:^UnoV2HostRecord input:^UnoV2HostInput

@@ -1,0 +1,10 @@
+31:  td::Result<std::optional<td::Bits256>> expected_read(const td::Bits256& account);
+33:  td::Status record_write(const td::Bits256& account);
+35:  td::Status finish(const std::vector<td::Bits256>& actual_changed_accounts,
+85:inline td::Result<std::optional<td::Bits256>> WorkchainAccountAccess::expected_read(const td::Bits256& account) {
+95:  TRY_RESULT(expected, expected_read(account));
+99:  // expected_read established begin <= it < end; the distance is a valid index.
+103:inline td::Status WorkchainAccountAccess::record_write(const td::Bits256& account) {
+117:inline td::Status WorkchainAccountAccess::finish(const std::vector<td::Bits256>& actual_changed_accounts,
+127:  if (actual_changed_accounts != writes_) return fail("actual account changes differ from write set");
+128:  if (participant_accounts != writes_) return fail("participant records differ from write set");

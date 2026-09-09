@@ -1,0 +1,175 @@
+crypto/block/workchain-account-engine.h @ d11bead7a81b6bcf1dac13d5aa939c2f1fa3d492 lines 94-113
+94: 
+95: // Admission of declared proof work, not commitment, inbox authentication or
+96: // permission to execute. Keep the exact owned input and inspecting engine so
+97: // later stages need not repeat inspection or accept another input/profile.
+98: // The factory also certifies max_account_depth is in [1, UINT16_MAX].
+99: // Copying this token is not a one-use execution permit; block uniqueness and
+100: // the execution ledger remain host obligations.
+101: class ProofAdmittedBatchInput {
+102:  public:
+103:   const td::Ref<vm::Cell>& root() const { return input_.root(); }
+104:   const td::Ref<vm::Cell>& candidate() const { return input_.candidate(); }
+105:   const ResolvedBatchInputPolicy& policy() const { return input_.policy(); }
+106:   bool inspected_by(const WorkchainAccountEngine& engine) const { return engine_ == &engine; }
+107:   static td::Result<ProofAdmittedBatchInput> admit(
+108:       const WorkchainAccountEngine& engine, const AdmittedBatchInput& input);
+109: 
+110:  private:
+111:   ProofAdmittedBatchInput(const WorkchainAccountEngine& engine, AdmittedBatchInput input)
+112:       : input_(std::move(input)), engine_(&engine) {}
+113:   AdmittedBatchInput input_;
+
+crypto/block/workchain-account-access-codec.h @ d11bead7a81b6bcf1dac13d5aa939c2f1fa3d492 lines 161-171
+161:         if (result.writes.size() >= max_writes || width != 256 || !value->empty_ext()) return false;
+162:         result.writes.emplace_back(key);
+163:         return true;
+164:       })) return td::Status::Error("invalid or excessive account write declarations");
+165:   // Enforce the same set semantics as the execution ledger and one canonical
+166:   // dictionary encoding. Rebuilding is bounded by the admitted entry counts.
+167:   TRY_RESULT(canonical, encode_workchain_account_declarations(result, max_reads, max_writes));
+168:   if (canonical->get_hash() != root->get_hash()) {
+169:     return td::Status::Error("noncanonical account declarations");
+170:   }
+171:   return result;
+
+crypto/block/workchain-account-replay.h @ d11bead7a81b6bcf1dac13d5aa939c2f1fa3d492 lines 41-53
+41: inline td::Status compare_rebuilt(const WorkchainAccountSettlement& rebuilt,
+42:                                   const WorkchainAccountSettlement& claimed) {
+43:   if (rebuilt.effects->get_hash() != claimed.effects->get_hash() ||
+44:       rebuilt.state.accounts->get_hash() != claimed.state.accounts->get_hash() ||
+45:       rebuilt.state.account_blocks->get_hash() != claimed.state.account_blocks->get_hash() ||
+46:       rebuilt.imports.in_msg_descr->get_hash() != claimed.imports.in_msg_descr->get_hash() ||
+47:       rebuilt.state.end_lt != claimed.state.end_lt ||
+48:       rebuilt.message.is_null() != claimed.message.is_null() ||
+49:       (rebuilt.message.not_null() && rebuilt.message->get_hash() != claimed.message->get_hash())) {
+50:     return td::Status::Error("claimed account settlement artifacts differ from independent replay");
+51:   }
+52:   return td::Status::OK();
+53: }
+
+crypto/block/workchain-account-settlement.h @ d11bead7a81b6bcf1dac13d5aa939c2f1fa3d492 lines 17-38
+17: struct WorkchainAccountSettlement {
+18:   td::Ref<vm::Cell> input, effects;
+19:   WorkchainStorageOverlay state;
+20:   td::Ref<vm::Cell> message;
+21:   WorkchainFinalImportEvidence imports;
+22:   // Disposal exports derived from transactions, not queue-ready envelopes.
+23:   std::vector<NewOutMsg> exports;
+24:   // Private continuation of the output content union. It is absent for the
+25:   // retained prototype and is never trusted from claimed replay artifacts.
+26:   // Queue/shard updates must extend this meter before live authorization;
+27:   // carrying it is not evidence that those remaining outputs were admitted.
+28:   // A later stage copies this immutable snapshot before extending it; copied
+29:   // settlement/claim objects cannot charge or reset one another's meter.
+30:   std::shared_ptr<const NativeStateReadMeter> output_admission;
+31:   // Continue the same authenticated state union without extending a temporary
+32:   // proof tree's lifetime. A complete host owns the tree across all stages.
+33:   std::shared_ptr<const NativeStateReadMeter> state_admission;
+34:   vm::CellUsageTree::NodePtr state_usage_node;
+35: };
+36: 
+37: // One engine invocation followed by private Native materialization. No caller
+38: // supplies the input/effects hashes or a second set of account data updates.
+
+crypto/block/transaction.cpp @ d11bead7a81b6bcf1dac13d5aa939c2f1fa3d492 lines 4910-4938
+4910: td::Status Transaction::prepare_workchain_storage_participant(Ref<vm::Cell> binding, Ref<vm::Cell> data,
+4911:                                                              const SerializeConfig& cfg) {
+4912:   if (cfg.global_version < kStorageParticipantMinGlobalVersion || trans_type != tr_workchain_batch || account.status != Account::acc_active ||
+4913:       account.workchain < 0 || account.is_special || account.now_ != now || start_lt >= end_lt ||
+4914:       root.not_null() || new_total_state.not_null() || batch_description.not_null() || data.is_null()) {
+4915:     return td::Status::Error("invalid storage participant preparation context");
+4916:   }
+4917:   gen::UnoV2HostRecord::Record record;
+4918:   if (!tlb::unpack_cell(binding, record) || record.account_id != account.addr) {
+4919:     return td::Status::Error("storage participant binding has wrong account");
+4920:   }
+4921:   if (in_msg.not_null() || !out_msgs.empty() || compute_phase || action_phase || storage_phase || credit_phase ||
+4922:       bounce_phase || balance != account.balance || !total_fees.is_zero() || !blackhole_burned.is_zero()) {
+4923:     return td::Status::Error("storage participant cannot run phases or move native value");
+4924:   }
+4925:   new_data = std::move(data);
+4926:   auto limits = check_state_limits(cfg.size_limits, cfg.global_version);
+4927:   if (limits.is_error()) {
+4928:     new_data = account.data;
+4929:     return limits;
+4930:   }
+4931:   batch_account_data = new_data;
+4932:   batch_description = vm::CellBuilder()
+4933:                           .store_long(block::tlb::TransactionDescr::trans_workchain_storage_participant_v3, 4)
+4934:                           .store_ref(binding).finalize();
+4935:   batch_balance = balance;
+4936:   batch_fees = total_fees;
+4937:   batch_out_msgs = out_msgs;
+4938:   batch_end_lt = end_lt;
+
+validator/impl/validate-query.cpp @ d11bead7a81b6bcf1dac13d5aa939c2f1fa3d492 lines 6510-6533
+6510: bool ValidateQuery::check_transactions() {
+6511:   LOG(INFO) << "checking all transactions";
+6512:   auto resolved = block::default_workchain_execution_registry().resolve_scoped_workchain(
+6513:       workchain(), *config_);
+6514:   if (resolved.is_error()) {
+6515:     return fatal_error(resolved.move_as_error_prefix("cannot resolve transaction execution scope: "));
+6516:   }
+6517:   // Exhaustiveness is a compile-time obligation for every new execution family.
+6518:   // Only the explicit account alternative (or no binding) may reach the ordinary loop.
+6519:   using BlockPointer = const block::ResolvedWorkchainBlockExecution*;
+6520:   auto selected = resolved.ok().has_value() ? std::visit(td::overloaded(
+6521:       [](const block::ResolvedWorkchainExecution&) -> td::Result<BlockPointer> {
+6522:         return nullptr;
+6523:       },
+6524:       [](const block::ResolvedWorkchainBlockExecution& block) -> td::Result<BlockPointer> { return &block; },
+6525:       [](const block::ResolvedWorkchainAccountBinding&) -> td::Result<BlockPointer> {
+6526:         return td::Status::Error(static_cast<int>(block::WorkchainExecutionFailure::LocalUnavailable),
+6527:                                  "multi-account admission and replay are not connected");
+6528:       }), *resolved.ok()) : td::Result<BlockPointer>(nullptr);
+6529:   if (selected.is_error()) return fatal_error(selected.move_as_error());
+6530:   const auto* singleton = selected.move_as_ok();
+6531:   if (singleton) {
+6532:     const auto& execution = *singleton;
+6533:     // Candidate-origin records remain candidate data, not local authenticated
+
+validator/impl/validate-query.cpp @ d11bead7a81b6bcf1dac13d5aa939c2f1fa3d492 lines 6564-6578
+6564:     context.storage_cache = &storage_cache;
+6565:     bool found = false;
+6566:     bool valid = account_blocks_dict_->check_for_each_extra(
+6567:         [&](Ref<vm::CellSlice> value, Ref<vm::CellSlice>, td::ConstBitPtr key, int) {
+6568:           if (found || td::Bits256(key) != execution.policy.executor_address) {
+6569:             return reject_query("block execution requires exactly its executor AccountBlock");
+6570:           }
+6571:           found = true;
+6572:           auto account_block = vm::CellBuilder().append_cellslice(value).finalize();
+6573:           auto status = block::replay_resolved_workchain_account_block(
+6574:               execution, context, state_root_, account_block, now_, serialize_cfg_, &action_phase_cfg_);
+6575:           if (status.is_error()) {
+6576:             if (block::workchain_execution_requires_local_failure(status)) {
+6577:               return fatal_error(status.move_as_error_prefix("block execution unavailable: "));
+6578:             }
+
+crypto/block/workchain-storage-overlay.h @ d11bead7a81b6bcf1dac13d5aa939c2f1fa3d492 lines 69-93
+69:     }
+70:     // No engine/user callback or mutable alias exists between serialize and
+71:     // commit. This Account is private temporary state, not the live manager's.
+72:     tx.commit(account);
+73:     vm::CellBuilder account_block;
+74:     if (!account.create_account_block(account_block) ||
+75:         !blocks.set_builder(account.addr, account_block, vm::Dictionary::SetMode::Add)) {
+76:       return td::Status::Error("cannot construct storage AccountBlock");
+77:     }
+78:     vm::CellBuilder entry;
+79:     entry.store_ref(account.total_state).store_bits(account.last_trans_hash_.bits(), 256)
+80:         .store_long(account.last_trans_lt_, 64);
+81:     if (!staged.set_builder(account.addr, entry, vm::Dictionary::SetMode::Replace)) {
+82:       return td::Status::Error("cannot replace storage ShardAccount");
+83:     }
+84:     TRY_STATUS(access.record_write(account.addr));
+85:     participants.push_back(account.addr);
+86:   }
+87:   auto next_root = staged.get_wrapped_dict_root();
+88:   WorkchainAccountDictionary next(next_root);
+89:   TRY_RESULT(changed, original.changed_accounts(next, max_participants));
+90:   TRY_STATUS(access.finish(changed, participants));
+91:   return WorkchainStorageOverlay{next_root, blocks.get_wrapped_dict_root(), schedule.end_lt};
+92: }
+93: 
+
