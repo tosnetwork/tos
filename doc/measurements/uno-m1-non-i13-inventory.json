@@ -1,0 +1,579 @@
+{
+  "kind": "read-only source inventory, not behavioral acceptance",
+  "source_commit": "1b978f80eb35517826c3772a753e215ba28575ca",
+  "document": "crypto/test/workchain-m1-non-i13-inventory.md",
+  "scope": "M1 restricted records, custody message value ownership, independent value flow, configuration, real synchronization; no production changes or test executions",
+  "memo": {
+    "commit": "7a6e4d81ef9754a79df66a8ce2b663c77505d83c",
+    "path": "TOS_UNO_PRIVACY_WORKCHAIN_V2.md",
+    "sha256": "63128526386718abc63dcf08f8110a990149a4093b8221010e17efd10dcade68",
+    "working_bytes_equal_committed_blob": true,
+    "sections": [
+      "9.1",
+      "9.2",
+      "10",
+      "14",
+      "16",
+      "17"
+    ]
+  },
+  "sources": [
+    {
+      "path": "crypto/block/block.cpp",
+      "git_blob_oid": "be788b7f5301977652fae7e54097839d3a308baa",
+      "sha256": "dfb6837c85b128887800eda9a97f9a8e4e8cd16e1bda72215354f080aaaee1a3",
+      "working_bytes_equal_committed_blob": true,
+      "anchors": [
+        {
+          "line": 1936,
+          "text": "td::Status valid_config_transition(Ref<vm::Cell> old_cfg_root, Ref<vm::Cell> new_cfg_root) {"
+        }
+      ]
+    },
+    {
+      "path": "crypto/block/block.tlb",
+      "git_blob_oid": "2d9ccb87c9c521945e4d31dd50a1107c11a4cbea",
+      "sha256": "3cfe3ebbc5b73bab19656b60d1a8bca0bee4c8832fb1a357cb108d31f6caa941",
+      "working_bytes_equal_committed_blob": true,
+      "anchors": [
+        {
+          "line": 32,
+          "text": "uno_v2_host_record input_hash:bits256 effects_hash:bits256 account_id:bits256"
+        },
+        {
+          "line": 432,
+          "text": "trans_workchain_storage_participant_v3$1010 binding:^UnoV2HostRecord = TransactionDescr;"
+        }
+      ]
+    },
+    {
+      "path": "crypto/block/transaction.cpp",
+      "git_blob_oid": "1c368546a7fdf0b1f97e30141509bb47420e9095",
+      "sha256": "c511848ba163d0c30a51bcbd03f06e38f4073c356117d3a2171235c3dc365e58",
+      "working_bytes_equal_committed_blob": true,
+      "anchors": [
+        {
+          "line": 4529,
+          "text": "td::Result<PricedWorkchainPayout> Transaction::price_workchain_payout("
+        },
+        {
+          "line": 4557,
+          "text": "  CurrencyCollection principal_remainder, funded;"
+        },
+        {
+          "line": 4600,
+          "text": "td::Result<PreparedWorkchainPayoutPair> Transaction::build_workchain_payout_pair("
+        },
+        {
+          "line": 4673,
+          "text": "  TRY_RESULT(allocation, account_workchain_payout(custody.addr, coordinator.addr, pair[0]->balance,"
+        },
+        {
+          "line": 4683,
+          "text": "  pair[0]->out_msgs.push_back(priced.message);"
+        },
+        {
+          "line": 4876,
+          "text": "  if (native.fees && native.fees->custody == account.addr) {"
+        },
+        {
+          "line": 4910,
+          "text": "td::Status Transaction::prepare_workchain_storage_participant(Ref<vm::Cell> binding, Ref<vm::Cell> data,"
+        },
+        {
+          "line": 4947,
+          "text": "  if (batch_metadata_sealed &&"
+        }
+      ]
+    },
+    {
+      "path": "crypto/block/workchain-account-replay.h",
+      "git_blob_oid": "6273b22a2e87ab2dd0d27c4406a3b2b256a0dec5",
+      "sha256": "2e5fe271f42cdf4c51277c667c47ace669e5bf6ffba7c660430e957c0650ff76",
+      "working_bytes_equal_committed_blob": true,
+      "anchors": [
+        {
+          "line": 41,
+          "text": "inline td::Status compare_rebuilt(const WorkchainAccountSettlement& rebuilt,"
+        }
+      ]
+    },
+    {
+      "path": "crypto/block/workchain-account-settlement.h",
+      "git_blob_oid": "899dcc70a9164e3663c3e28d22d7240f4dec9ab0",
+      "sha256": "f2766fd4ec46bb27d8795e7106f9b274d56a895d006e4fc54ea3228d0a0d903e",
+      "working_bytes_equal_committed_blob": true,
+      "anchors": [
+        {
+          "line": 318,
+          "text": "    writes.reserve(executed.effects.updates.size());"
+        },
+        {
+          "line": 322,
+          "text": "      if (read == declarations.reads.end() || read->account != update.account || !read->old_account_hash) {"
+        }
+      ]
+    },
+    {
+      "path": "crypto/block/workchain-allocation-overlay.h",
+      "git_blob_oid": "bdcc112a942cb1f2089b02307d82e0c181271bb2",
+      "sha256": "c23855a4a5fafd7fd16b6b86637a9914f946fbf0240baa7ea770415464624b75",
+      "working_bytes_equal_committed_blob": true,
+      "anchors": [
+        {
+          "line": 141,
+          "text": "    // Derive balances and fees from serialized Native artifacts, not the plan"
+        },
+        {
+          "line": 148,
+          "text": "    // The fee equality below is a cross-derivation regression tripwire for"
+        },
+        {
+          "line": 155,
+          "text": "        (!is_prepared && fees != (keys[i] == custody ? aggregate_collected : CurrencyCollection(0))) ||"
+        },
+        {
+          "line": 209,
+          "text": "  TRY_RESULT(imports, disposal ? build_workchain_routed_final_imports(identity.workchain_id, cfg.global_version,"
+        },
+        {
+          "line": 217,
+          "text": "  TRY_STATUS(verify_workchain_value_flow(rows, plan.transfers, max_writes, max_transfers, extra_validation_cells));"
+        }
+      ]
+    },
+    {
+      "path": "crypto/block/workchain-candidate-publication.cpp",
+      "git_blob_oid": "49ad548b43c748be196ad45a8c33c39d27320133",
+      "sha256": "8037d84d77d53b34139cb004e27eb5c715afd2fd76fc582e33d32090ef3748e0",
+      "working_bytes_equal_committed_blob": true,
+      "anchors": []
+    },
+    {
+      "path": "crypto/block/workchain-execution-dispatch.cpp",
+      "git_blob_oid": "247ad16855e9356e15b995ce0f1cee3b2676f3f2",
+      "sha256": "be99a089704b50e7d462e83316028be22a6cad51edc2f568b9db7be3bc722311",
+      "working_bytes_equal_committed_blob": true,
+      "anchors": [
+        {
+          "line": 160,
+          "text": "td::Status validate_native_ingress_presence(vm::Dictionary& configuration) {"
+        },
+        {
+          "line": 416,
+          "text": "td::Result<ResolvedWorkchainAccountBinding> WorkchainExecutionRegistry::resolve_account_binding("
+        },
+        {
+          "line": 451,
+          "text": "  TRY_RESULT(config, it->second->validate_and_resolve_config(descriptor, configuration,"
+        }
+      ]
+    },
+    {
+      "path": "crypto/block/workchain-fee-settlement.h",
+      "git_blob_oid": "7a8250aa0826979eab6b6895ac0a6e8d0df6f306",
+      "sha256": "df767dcc698b79dafa6964e9e150883d0336cd0c0c1fd8940f03a3d1982f7f7b",
+      "working_bytes_equal_committed_blob": true,
+      "anchors": [
+        {
+          "line": 14,
+          "text": "// Components remain separate even when their sum is unchanged. These amounts"
+        },
+        {
+          "line": 17,
+          "text": "struct WorkchainFeeSettlement {"
+        },
+        {
+          "line": 26,
+          "text": "inline td::Result<WorkchainFeeTotals> checked_workchain_fee_totals(const WorkchainFeeSettlement& fees) {"
+        }
+      ]
+    },
+    {
+      "path": "crypto/block/workchain-native-allocation.h",
+      "git_blob_oid": "a27116bb87e39ab8bbfb594b4547b8eb44733f93",
+      "sha256": "539cedd154c0ecf4fc1c31a7274a88fbd208be47bf2848c9c4387d9081492645",
+      "working_bytes_equal_committed_blob": true,
+      "anchors": [
+        {
+          "line": 57,
+          "text": "  if (native.fees) {"
+        }
+      ]
+    },
+    {
+      "path": "crypto/block/workchain-participant-record.h",
+      "git_blob_oid": "c59e13ef07c04b48ac839f7ec2acfa490c807dc5",
+      "sha256": "f68fb413a86caff60f0c96deda6f7849fdbfba16392371b71866eba82be284d2",
+      "working_bytes_equal_committed_blob": true,
+      "anchors": [
+        {
+          "line": 18,
+          "text": "inline td::Result<std::vector<td::Ref<vm::Cell>>> build_workchain_participant_records("
+        }
+      ]
+    },
+    {
+      "path": "crypto/block/workchain-payout-accounting.h",
+      "git_blob_oid": "0f0bd9e286d5db595927d8bc11f59749521e7c33",
+      "sha256": "6f2ad150a61d752bada98546cf5378cc4966e2cdcd3fb6d5fed4827d70cdb69f",
+      "working_bytes_equal_committed_blob": true,
+      "anchors": [
+        {
+          "line": 21,
+          "text": "    const td::Bits256& custody, const td::Bits256& coordinator,"
+        }
+      ]
+    },
+    {
+      "path": "crypto/block/workchain-payout-overlay.h",
+      "git_blob_oid": "c3f0961428a9d508c95fb985649f88166cd4fce9",
+      "sha256": "2822f17f03fe724695138077126908216afdb45db81020b9041ff1ca794a7eb1",
+      "working_bytes_equal_committed_blob": true,
+      "anchors": [
+        {
+          "line": 206,
+          "text": "    if (!messages.check_for_each([&](td::Ref<vm::CellSlice> value, td::ConstBitPtr key, int bits) {"
+        },
+        {
+          "line": 249,
+          "text": "  TRY_RESULT(imports, disposal ? build_workchain_routed_final_imports(workchain, cfg.global_version, inbox.envelopes,"
+        },
+        {
+          "line": 260,
+          "text": "  TRY_STATUS(verify_workchain_value_flow(rows, allocations.transfers, max_participants, flow_limit,"
+        }
+      ]
+    },
+    {
+      "path": "crypto/block/workchain-publication-recovery.md",
+      "git_blob_oid": "0aafb397b0c20c8a786856e0614bef93246e9081",
+      "sha256": "9b3f64b47b9716a0333b72c463e4f45283f65be748c5b5ef9769f1b085c0aaae",
+      "working_bytes_equal_committed_blob": true,
+      "anchors": []
+    },
+    {
+      "path": "crypto/block/workchain-resource-policy.h",
+      "git_blob_oid": "43d9406a02079ac0ab3abb391b84661a56ccded5",
+      "sha256": "0550f2845ad9b3c52b7e54528edf7b23a00f42d50fa16c78556567ac3cec10a7",
+      "working_bytes_equal_committed_blob": true,
+      "anchors": [
+        {
+          "line": 129,
+          "text": "struct WorkchainEngineParameters {"
+        }
+      ]
+    },
+    {
+      "path": "crypto/block/workchain-value-flow.h",
+      "git_blob_oid": "daa0fdd3b4c9bacccd995ac4d92b08f0de4fe5a3",
+      "sha256": "594a91d0805e3f997d235b43954f9557a8b13e7bdb226fac8be5021bf2f9317b",
+      "working_bytes_equal_committed_blob": true,
+      "anchors": [
+        {
+          "line": 11,
+          "text": "struct WorkchainAccountValueFlow {"
+        },
+        {
+          "line": 25,
+          "text": "inline td::Status verify_workchain_value_flow("
+        }
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-v2-account-settlement-evidence.json",
+      "git_blob_oid": "12a1517fda4ac6e0f803e1de3b8e7fa712d566bb",
+      "sha256": "9dafe5d7caa8a12a2e42b1efbcde246f184e0455eab0bb3aa4d533ff183fb1a1",
+      "working_bytes_equal_committed_blob": true,
+      "anchors": []
+    },
+    {
+      "path": "doc/measurements/uno-v2-native-payout-pair-evidence.json",
+      "git_blob_oid": "1cc3ca27c1944d2777e20b9b9bfa0ec498011064",
+      "sha256": "20e30b27e281e0b4b30322fdf9ea4ec0f9c34488168b6429f35abfb29e453a91",
+      "working_bytes_equal_committed_blob": true,
+      "anchors": []
+    },
+    {
+      "path": "doc/measurements/uno-v2-storage-overlay-evidence.json",
+      "git_blob_oid": "22bbc8e60850121a4a41de5a4596b55087b3f69b",
+      "sha256": "0f7acd513596e720124c5621a145370378d728d3861cb66b746c5b1347d1006a",
+      "working_bytes_equal_committed_blob": true,
+      "anchors": []
+    },
+    {
+      "path": "doc/measurements/uno-v2-storage-participant-evidence.json",
+      "git_blob_oid": "373a2e74572c8b1ed6020a166fef28c3a1893b27",
+      "sha256": "70c46d5646024d0e26ddfbadee6f07ada30ab3854bb25f36488986dde8658e88",
+      "working_bytes_equal_committed_blob": true,
+      "anchors": []
+    },
+    {
+      "path": "doc/measurements/uno-v2-value-flow-evidence.json",
+      "git_blob_oid": "c0084068ee0d0e8e51d50e0d7f419f3d9daf6bc0",
+      "sha256": "7426f3e8637893587a9cf8a3b4889381ff7f980d56d5e3bd6fc1a99ab99e9292",
+      "working_bytes_equal_committed_blob": true,
+      "anchors": []
+    },
+    {
+      "path": "doc/uno-implementation-progress.md",
+      "git_blob_oid": "88394cc2343c1b1d40e306965583f080b60ac50c",
+      "sha256": "5fb14fde28a808822a446dbe80f69de4e7a51bb9144d5a6199bf9752e7dd56ab",
+      "working_bytes_equal_committed_blob": true,
+      "anchors": [
+        {
+          "line": 3595,
+          "text": "### Native GC followed by successful multi-workchain archive catch-up"
+        }
+      ]
+    },
+    {
+      "path": "scripts/m1-real-manager-sync.py",
+      "git_blob_oid": "39281168bebeb10292d3d074269d310f15affded",
+      "sha256": "1df1496182e833cec1f921e028c86de56fbbef66cbe819473ad6b90abbebe803",
+      "working_bytes_equal_committed_blob": true,
+      "anchors": [
+        {
+          "line": 32,
+          "text": "async def counter_state(client, block, payload=None):"
+        },
+        {
+          "line": 584,
+          "text": "        print(f\"cold node reached height {observed.seqno}; stopping all validators\", flush=True)"
+        },
+        {
+          "line": 605,
+          "text": "            await cold.stop()"
+        },
+        {
+          "line": 627,
+          "text": "        return {\"scope\": \"Counter real-manager cold-join\" if counter else \"native/masterchain real-manager cold-join baseline only\","
+        }
+      ]
+    },
+    {
+      "path": "tosctl/src/node-control/commands/src/commands/nodectl/config_cmd.rs",
+      "git_blob_oid": "1a28822a2eeb242e68a3918e648734c0392c9641",
+      "sha256": "285dbc504747435e49a2b6db29c931a18a274b0a6354c5908457ceb3ef79614a",
+      "working_bytes_equal_committed_blob": true,
+      "anchors": [
+        {
+          "line": 28,
+          "text": "#[derive(clap::Args, Clone)]"
+        }
+      ]
+    },
+    {
+      "path": "tosctl/src/node-control/commands/src/commands/nodectl/vote_cmd.rs",
+      "git_blob_oid": "e6bba40c8e0a512d3ef631dc88c42076f1c40a6e",
+      "sha256": "f38425074c1dca746753011dd44177efeecd6a1b3285d64dbf4c2322cb790fa1",
+      "working_bytes_equal_committed_blob": true,
+      "anchors": [
+        {
+          "line": 1040,
+          "text": "        if self.dry_run {"
+        }
+      ]
+    },
+    {
+      "path": "validator/db/celldb.cpp",
+      "git_blob_oid": "b4b04bdebfd75a68d40275a19e0efdaa640029d1",
+      "sha256": "4c2e099ded01908e06dd5d5a840f17bf92cc9f9b0e113f86cefdd42eaad15464",
+      "working_bytes_equal_committed_blob": true,
+      "anchors": [
+        {
+          "line": 2372,
+          "text": "  const auto parsed_hash = root->get_hash();"
+        },
+        {
+          "line": 2948,
+          "text": "    auto commit_status = cell_db_->commit_write_batch();"
+        }
+      ]
+    },
+    {
+      "path": "validator/downloaders/download-state.cpp",
+      "git_blob_oid": "7c261d1c6848a4b5a1c13efc5c0115df020d5311",
+      "sha256": "fb4fdf65ea9afb99af2b3986b0423f2fc592107cba13b82494ba18ee1a3f15b7",
+      "working_bytes_equal_committed_blob": true,
+      "anchors": [
+        {
+          "line": 1021,
+          "text": "  PersistentStateImportRequest req;"
+        },
+        {
+          "line": 1033,
+          "text": "      manager_, &ValidatorManager::import_persistent_state_streaming, std::move(req),"
+        }
+      ]
+    },
+    {
+      "path": "validator/impl/collator.cpp",
+      "git_blob_oid": "0c45e03d557bc1ff039045e5dec811f7b2295e4b",
+      "sha256": "7b034a1cc225ca9df9fc8f4f10f58cbcf18b9eae8e885f9f3ef10090dae0151c",
+      "working_bytes_equal_committed_blob": true,
+      "anchors": [
+        {
+          "line": 1614,
+          "text": "                                   \"multi-account admission and replay are not connected\");"
+        },
+        {
+          "line": 2311,
+          "text": "                                   \"multi-account admission and replay are not connected\");"
+        },
+        {
+          "line": 2465,
+          "text": "                                 \"multi-account admission and replay are not connected\");"
+        },
+        {
+          "line": 5383,
+          "text": "  if (!block::valid_config_data(cfg_smc_config, config_addr, true, true, old_mparams_)) {"
+        },
+        {
+          "line": 5414,
+          "text": "  auto transition_status = block::valid_config_transition(state_extra.config->prefetch_ref(), cfg_smc_config);"
+        }
+      ]
+    },
+    {
+      "path": "validator/impl/validate-query.cpp",
+      "git_blob_oid": "1fcb5c5439747d5337930a368ca058911e133e0f",
+      "sha256": "06ecfc5f97e964bfe248f1743c04b1f09cb70138ca49df9e36b904eb1fbcdb0a",
+      "working_bytes_equal_committed_blob": true,
+      "anchors": [
+        {
+          "line": 1150,
+          "text": "                                     \"multi-account admission and replay are not connected\");"
+        },
+        {
+          "line": 1296,
+          "text": "                                   \"multi-account admission and replay are not connected\");"
+        },
+        {
+          "line": 6527,
+          "text": "                                 \"multi-account admission and replay are not connected\");"
+        },
+        {
+          "line": 7084,
+          "text": "  if (!block::valid_config_data(new_cfg_root, new_cfg_addr, true, false, old_mparams_)) {"
+        },
+        {
+          "line": 7115,
+          "text": "  auto transition_status = block::valid_config_transition(old_cfg_root, new_cfg_root);"
+        }
+      ]
+    },
+    {
+      "path": "validator/manager.cpp",
+      "git_blob_oid": "d3c3954b6d85c994177bf118a6067213922d4cc2",
+      "sha256": "231a177f5edf44c6353d128806cdd29d73495c2adebd6e37940f9b4bd5a771fe",
+      "working_bytes_equal_committed_blob": true,
+      "anchors": [
+        {
+          "line": 1629,
+          "text": "void ValidatorManagerImpl::import_persistent_state_streaming(PersistentStateImportRequest request,"
+        }
+      ]
+    }
+  ],
+  "searches": [
+    {
+      "argv": [
+        "rg",
+        "-n",
+        "multi-account admission and replay are not connected",
+        "validator/impl/collator.cpp",
+        "validator/impl/validate-query.cpp"
+      ],
+      "exit_code": 0,
+      "stdout": "validator/impl/collator.cpp:1614:                                   \"multi-account admission and replay are not connected\");\nvalidator/impl/collator.cpp:2311:                                   \"multi-account admission and replay are not connected\");\nvalidator/impl/collator.cpp:2465:                                 \"multi-account admission and replay are not connected\");\nvalidator/impl/validate-query.cpp:1150:                                     \"multi-account admission and replay are not connected\");\nvalidator/impl/validate-query.cpp:1296:                                   \"multi-account admission and replay are not connected\");\nvalidator/impl/validate-query.cpp:6527:                                 \"multi-account admission and replay are not connected\");\n",
+      "stderr": "",
+      "interpretation": "Bounded discovery aid; no matches alone do not establish absence."
+    },
+    {
+      "argv": [
+        "rg",
+        "-n",
+        "valid_config_data|valid_config_transition",
+        "validator/impl/collator.cpp",
+        "validator/impl/validate-query.cpp"
+      ],
+      "exit_code": 0,
+      "stdout": "validator/impl/validate-query.cpp:2318:  // check_config_update() through block::valid_config_transition(), the same\nvalidator/impl/validate-query.cpp:7084:  if (!block::valid_config_data(new_cfg_root, new_cfg_addr, true, false, old_mparams_)) {\nvalidator/impl/validate-query.cpp:7109:  if (!block::valid_config_data(ocfg_root, old_cfg_addr, true, true, old_mparams_)) {\nvalidator/impl/validate-query.cpp:7115:  auto transition_status = block::valid_config_transition(old_cfg_root, new_cfg_root);\nvalidator/impl/validate-query.cpp:7169:  if (!block::valid_config_data(wcfg_root, want_cfg_addr, true, false, old_mparams_)) {\nvalidator/impl/collator.cpp:5383:  if (!block::valid_config_data(cfg_smc_config, config_addr, true, true, old_mparams_)) {\nvalidator/impl/collator.cpp:5411:  // transition rules (see block::valid_config_transition). Refuse to produce\nvalidator/impl/collator.cpp:5414:  auto transition_status = block::valid_config_transition(state_extra.config->prefetch_ref(), cfg_smc_config);\nvalidator/impl/collator.cpp:5733:  if (!block::valid_config_data(cfg, cfg_addr, true, false, old_mparams_)) {\n",
+      "stderr": "",
+      "interpretation": "Bounded discovery aid; no matches alone do not establish absence."
+    },
+    {
+      "argv": [
+        "rg",
+        "-n",
+        "dry.run|valid_config_transition|readiness",
+        "tosctl/src",
+        "--glob",
+        "*.rs"
+      ],
+      "exit_code": 0,
+      "stdout": "tosctl/src/node-control/commands/src/commands/nodectl/vote_cmd.rs:142:    dry_run: bool,\ntosctl/src/node-control/commands/src/commands/nodectl/vote_cmd.rs:1040:        if self.dry_run {\ntosctl/src/node-control/commands/src/commands/nodectl/vote_cmd.rs:1043:                \"Dry-run mode: no bid was submitted. Remove --dry-run to participate.\"\n",
+      "stderr": "",
+      "interpretation": "Bounded discovery aid; no matches alone do not establish absence."
+    },
+    {
+      "argv": [
+        "rg",
+        "-n",
+        "N_book|R_actual|K_collect|base_compute|RegisteredWorkchainAccountEngine",
+        "uno",
+        "--glob",
+        "*.{rs,h,cpp}",
+        "--glob",
+        "!**/archive/**",
+        "--glob",
+        "!**/vendor/**"
+      ],
+      "exit_code": 1,
+      "stdout": "",
+      "stderr": "",
+      "interpretation": "Bounded discovery aid; no matches alone do not establish absence."
+    },
+    {
+      "argv": [
+        "rg",
+        "-n",
+        "m1-counter-network-run-8tzvi58s",
+        "doc/measurements",
+        "--glob",
+        "*.json"
+      ],
+      "exit_code": 0,
+      "stdout": "doc/measurements/uno-m1-non-i13-inventory.json:542:        \"m1-counter-network-run-8tzvi58s\",\ndoc/measurements/uno-m1-non-i13-inventory.json:555:      \"path\": \"/home/tomi/tos/build/m1-counter-network-run-8tzvi58s\",\ndoc/measurements/uno-m1-non-i13-inventory.json:559:      \"path\": \"/home/tomi/tos-m2/build/m1-counter-network-run-8tzvi58s\",\n",
+      "stderr": "",
+      "interpretation": "Bounded discovery aid; no matches alone do not establish absence."
+    }
+  ],
+  "historical_sync_directory_checks": [
+    {
+      "path": "/home/tomi/tos/build/m1-counter-network-run-8tzvi58s",
+      "exists": false
+    },
+    {
+      "path": "/home/tomi/tos-m2/build/m1-counter-network-run-8tzvi58s",
+      "exists": false
+    }
+  ],
+  "limits": [
+    "Source review establishes inspected implementation and caller availability, not end-to-end acceptance.",
+    "Historical evidence is pinned as historical records, not rerun or recertified.",
+    "Unmatched searches are not treated as proof of universal absence.",
+    "No mutation or build ran in this unit; prospective explicit-target rebuild discipline does not certify old binaries."
+  ],
+  "verification": {
+    "kind": "source and citation integrity only",
+    "committed_files_checked": 30,
+    "line_anchors_checked": 56,
+    "working_bytes_match_all_pinned_files": true,
+    "production_changes": false,
+    "tests_executed": false,
+    "mutations_executed": false,
+    "coordinator_review": "pending"
+  }
+}
