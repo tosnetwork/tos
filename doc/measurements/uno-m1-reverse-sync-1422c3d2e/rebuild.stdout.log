@@ -1,0 +1,32 @@
+[1/70] Checking the git repository for changes...
+[2/30] Generate /tmp/uno-publication-build/crypto/smartcont/auto/dns-auto-code.cpp
+[3/30] Generate /tmp/uno-publication-build/crypto/smartcont/auto/task-escrow-code.cpp
+[4/30] Generate /tmp/uno-publication-build/crypto/smartcont/auto/pow-testgiver-code.cpp
+[5/30] Generate /tmp/uno-publication-build/crypto/smartcont/auto/dns-manual-code.cpp
+[6/30] Generate /tmp/uno-publication-build/crypto/smartcont/auto/agent-account-code.cpp
+[7/30] Generate /tmp/uno-publication-build/crypto/smartcont/auto/payment-channel-code.cpp
+[8/30] Generate /tmp/uno-publication-build/crypto/smartcont/auto/config-code.cpp
+[9/30] Generate /tmp/uno-publication-build/crypto/smartcont/auto/elector-code.cpp
+[10/30] Generate /tmp/uno-publication-build/crypto/smartcont/auto/prediction-market-code.cpp
+[11/30] Verify and embed the frozen TOS Service Protocol stablecoin escrow v1 BOC
+NOTE: escrow v1 is deprecated (superseded by v2); this build exists only to verify the frozen historical artifact.
+NOTE: escrow v1 is deprecated (superseded by v2); this build exists only to verify the frozen historical artifact.
+[12/30] Verify and embed the frozen TOS Service Protocol stablecoin escrow v2 BOC
+[13/30] Verify and embed the frozen TOS Native Service Registry BOC
+[14/30] Building CXX object CMakeFiles/test-workchain-block.dir/test/test-td-main.cpp.o
+[15/30] Building CXX object crypto/CMakeFiles/smc-envelope.dir/smc-envelope/SmartContractCode.cpp.o
+[16/30] Building CXX object crypto/CMakeFiles/smc-envelope.dir/smc-envelope/WalletV3.cpp.o
+[17/30] Building CXX object crypto/CMakeFiles/smc-envelope.dir/smc-envelope/WalletV4.cpp.o
+[18/30] Building CXX object crypto/CMakeFiles/smc-envelope.dir/smc-envelope/HighloadWalletV2.cpp.o
+[19/30] Building CXX object crypto/CMakeFiles/smc-envelope.dir/smc-envelope/HighloadWallet.cpp.o
+[20/30] Building CXX object crypto/CMakeFiles/smc-envelope.dir/smc-envelope/GenericAccount.cpp.o
+[21/30] Building CXX object crypto/CMakeFiles/smc-envelope.dir/smc-envelope/WalletInterface.cpp.o
+[22/30] Building CXX object crypto/CMakeFiles/smc-envelope.dir/smc-envelope/PaymentChannel.cpp.o
+[23/30] Building CXX object crypto/CMakeFiles/smc-envelope.dir/smc-envelope/MultisigWallet.cpp.o
+[24/30] Building CXX object crypto/CMakeFiles/smc-envelope.dir/smc-envelope/SmartContract.cpp.o
+[25/30] Building CXX object emulator/CMakeFiles/emulator_static.dir/transaction-emulator.cpp.o
+[26/30] Building CXX object crypto/CMakeFiles/smc-envelope.dir/smc-envelope/ManualDns.cpp.o
+[27/30] Linking CXX static library crypto/libsmc-envelope.a
+[28/30] Linking CXX static library emulator/libemulator_static.a
+[29/30] Building CXX object CMakeFiles/test-workchain-block.dir/crypto/test/test-workchain-block.cpp.o
+[30/30] Linking CXX executable test-workchain-block
