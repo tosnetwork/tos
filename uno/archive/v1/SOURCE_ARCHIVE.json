@@ -1,0 +1,137 @@
+{
+  "source_commit": "0b120a07d7924b20540c0f98924f18faed5e2f2e",
+  "files": {
+    "uno/testdata/README.md": {
+      "archive_path": "uno/archive/v1/testdata/README.md",
+      "sha256": "ac2d20c8247317980fae96b3c79be004cb2599f369a8d0a19dfc4d5edd4011dd"
+    },
+    "uno/testdata/public-context-v1.txt": {
+      "archive_path": "uno/archive/v1/testdata/public-context-v1.txt",
+      "sha256": "34bd0004e50b684b97a6ce429f4e084ed45b8cf74f06a724f84f24a53c2bfeec"
+    },
+    "uno/core/accounting.h": {
+      "archive_path": "uno/archive/v1/core/accounting.h",
+      "sha256": "d58c5ecfbf8fe3f65ec4854cf3d5835809ae984b5143854d36b9066e26a7cf49"
+    },
+    "uno/core/amount.h": {
+      "archive_path": "uno/archive/v1/core/amount.h",
+      "sha256": "b307a7d038f21c5e61303114650a65debffa6e8253ee2ae02dfff6475c079cd9"
+    },
+    "uno/core/anchor-window.h": {
+      "archive_path": "uno/archive/v1/core/anchor-window.h",
+      "sha256": "ba75b7a90e1f1bb0497222a5d45e2d58e909482e63336a75f3c904980ac55d4c"
+    },
+    "uno/core/bundle-context.h": {
+      "archive_path": "uno/archive/v1/core/bundle-context.h",
+      "sha256": "3c0e55963e3e879e65035f41bdc9d3825141a655cc7df4e1bfbe03bb6734165f"
+    },
+    "uno/core/crypto-verifier.h": {
+      "archive_path": "uno/archive/v1/core/crypto-verifier.h",
+      "sha256": "238c1ee47ee7753e6869dc1b0da0e8a4b09fbd0dc515be56e37417354a2ab5ae"
+    },
+    "uno/core/leaf-budget.h": {
+      "archive_path": "uno/archive/v1/core/leaf-budget.h",
+      "sha256": "64287094f0958717bc67b67fdbf24470c083ca8064a4888223c865623d7d3408"
+    },
+    "uno/core/native-amount.h": {
+      "archive_path": "uno/archive/v1/core/native-amount.h",
+      "sha256": "57e6f93bc7626630482163d9e00274adb1d83ed691245f2444feb8678f74d59f"
+    },
+    "uno/core/note-state.h": {
+      "archive_path": "uno/archive/v1/core/note-state.h",
+      "sha256": "93715c5c0d90b9618d9995fd20ac3e1e1273340357de8d421567f8cb425ba3b2"
+    },
+    "uno/core/note-tree-state.h": {
+      "archive_path": "uno/archive/v1/core/note-tree-state.h",
+      "sha256": "51d5d8ddd1aa4a630ef63d9b98e3c6bbc0104bfecf545d7347db9cf4276b489d"
+    },
+    "uno/core/nullifier-state.h": {
+      "archive_path": "uno/archive/v1/core/nullifier-state.h",
+      "sha256": "31551555ea2a21e4ab13bf2b2c7d6e5526ba1665280b6da61783515c36614ff8"
+    },
+    "uno/core/private-transfer-state.h": {
+      "archive_path": "uno/archive/v1/core/private-transfer-state.h",
+      "sha256": "21344422e35ec7a99c23ff768c92f054e62fe7b2b223151409a24d82b66c38e0"
+    },
+    "uno/core/slot-epoch.h": {
+      "archive_path": "uno/archive/v1/core/slot-epoch.h",
+      "sha256": "fa3ae9c3ffc9b9731ec6e10f91d6cab7528cdae0a0620e8ad1916ef3a9abfb38"
+    },
+    "uno/core/state-dictionary.h": {
+      "archive_path": "uno/archive/v1/core/state-dictionary.h",
+      "sha256": "20d6fb3934281e4e5fa2cae8e880b6d33d3920e744159a1db74302024fea5c7f"
+    },
+    "uno/core/transition-budget.h": {
+      "archive_path": "uno/archive/v1/core/transition-budget.h",
+      "sha256": "ae5fa2d3b1ad6203f3de98be8690ec7876c66d0cb9fae5f875b61941e8a32967"
+    },
+    "uno/core/tree-error.h": {
+      "archive_path": "uno/archive/v1/core/tree-error.h",
+      "sha256": "4ad4e8beb3db36fc71fa8cbb5cdf3c407b4ab9bf4cd7141476f135d313054f2d"
+    },
+    "uno/core/used-nullifiers.h": {
+      "archive_path": "uno/archive/v1/core/used-nullifiers.h",
+      "sha256": "61f93a242de2a6219ed0ad0217ecec490101970f9d9e5d98508edf6fd7ee135e"
+    },
+    "scripts/measure-uno-audit-wave4.sh": {
+      "archive_path": "uno/archive/v1/measure-uno-audit-wave4.sh.txt",
+      "sha256": "0d828e2a655153c6cd54abc639c2acfe40246ce72ec0c797e7f2156bc6f5b687"
+    },
+    "uno/test/measure-adaptive-partition.cpp": {
+      "archive_path": "uno/archive/v1/test/measure-adaptive-partition.cpp",
+      "sha256": "c1b47a281f2c333743c702be331ea50df8616dc19490a207580dcb2dfaf48f8c"
+    },
+    "uno/test/measure-input-admission.cpp": {
+      "archive_path": "uno/archive/v1/test/measure-input-admission.cpp",
+      "sha256": "17951dab10cf8dd77ba4660be907ff0c889f6b37182370e6bb21a07d73a76337"
+    },
+    "uno/test/measure-partition-state.cpp": {
+      "archive_path": "uno/archive/v1/test/measure-partition-state.cpp",
+      "sha256": "036866ce448b41bb9196b1c479b15e7501028a64781efa80553a831696c92ecc"
+    },
+    "uno/test/test-accounting.cpp": {
+      "archive_path": "uno/archive/v1/test/test-accounting.cpp",
+      "sha256": "66b4452d980ad14ae0f9a8d910dd65f1a643aabc1def8dac9514fc8d65f13146"
+    },
+    "uno/test/test-amount.cpp": {
+      "archive_path": "uno/archive/v1/test/test-amount.cpp",
+      "sha256": "0c35402d643dcbafcb9ee9c01bee99d2fc442ec8c4a5603be10737beb7fe1507"
+    },
+    "uno/test/test-anchor-window.cpp": {
+      "archive_path": "uno/archive/v1/test/test-anchor-window.cpp",
+      "sha256": "c8b064378bd6c8a1e67f69cd6cf7b04b8068bd8e40895f5facbcba4bb45bc0ba"
+    },
+    "uno/test/test-bundle-context.cpp": {
+      "archive_path": "uno/archive/v1/test/test-bundle-context.cpp",
+      "sha256": "853450181497e0db95d2fb8c8ea77ff9d7d48ac05a6acb1ba2487fb6663c1426"
+    },
+    "uno/test/test-crypto-adapter.cpp": {
+      "archive_path": "uno/archive/v1/test/test-crypto-adapter.cpp",
+      "sha256": "070abeaac5e0c4a56bc6bca127f6a43c6e43900fbe962f6ad8aee70c02f35a04"
+    },
+    "uno/test/test-leaf-budget.cpp": {
+      "archive_path": "uno/archive/v1/test/test-leaf-budget.cpp",
+      "sha256": "70a6e36cef8c822813b0848d6a46b8c494bfb08049696eb083238d42c11c8db6"
+    },
+    "uno/test/test-native-amount.cpp": {
+      "archive_path": "uno/archive/v1/test/test-native-amount.cpp",
+      "sha256": "58f9be53abdd26b3f3e88566744fd550b0fdef1cb5973157a8c68c1ce51640f8"
+    },
+    "uno/test/test-nullifier-state.cpp": {
+      "archive_path": "uno/archive/v1/test/test-nullifier-state.cpp",
+      "sha256": "c240baa06b3888127f2fd7a78645193ad2dc2eec4fb708b6c7f5d3392af4d9fc"
+    },
+    "uno/test/test-slot-epoch.cpp": {
+      "archive_path": "uno/archive/v1/test/test-slot-epoch.cpp",
+      "sha256": "919f31ee721fe01d6a89d38d3e5040aa0a805245b8873fe7aa1e953d9bdacb4f"
+    },
+    "uno/test/test-transition-budget.cpp": {
+      "archive_path": "uno/archive/v1/test/test-transition-budget.cpp",
+      "sha256": "5151dcb81320adfa95064a791231108b0019655988822ee78617e9d2908047be"
+    },
+    "uno/test/test-used-nullifiers.cpp": {
+      "archive_path": "uno/archive/v1/test/test-used-nullifiers.cpp",
+      "sha256": "49b3b253a67a10318f0c9d3c591db8d2dd9aeb767abc9ab451e069683a414622"
+    }
+  }
+}

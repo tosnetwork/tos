@@ -10,6 +10,18 @@ REPO = Path(__file__).resolve().parents[1]
 
 
 class UnoBuildWiring(unittest.TestCase):
+    def test_retired_pool_code_is_only_archived(self):
+        self.assertFalse((REPO / "uno/core").exists(), "retired pool headers still occupy the active core path")
+        for directory in (REPO / "crypto", REPO / "validator", REPO / "test", REPO / "uno/crypto",
+                          REPO / "uno/prover"):
+            for file in directory.rglob("*"):
+                if file.suffix not in {".cpp", ".h"} or "target" in file.parts:
+                    continue
+                source = file.read_text()
+                for forbidden in ('#include "uno/core/', '#include "uno/archive/v1/',
+                                  "uno_workchain::UsedNullifiers"):
+                    self.assertFalse(forbidden in source, f"retired state reference in {file}: {forbidden}")
+
     def test_cargo_pin_and_offline_environment_are_enforced(self):
         with tempfile.TemporaryDirectory(prefix="uno-cargo-gate-") as directory:
             root = Path(directory)
@@ -46,6 +58,10 @@ class UnoBuildWiring(unittest.TestCase):
             result = subprocess.run(["ctest", "--test-dir", directory, "--show-only=json-v1"],
                                     capture_output=True, text=True, check=True)
             tests = {test["name"]: test for test in json.loads(result.stdout)["tests"]}
+            for retired in ("test-uno-amount", "test-uno-crypto-adapter", "test-uno-native-amount",
+                            "test-uno-used-nullifiers", "test-uno-partition-measurement-self",
+                            "test-uno-adaptive-partition-self"):
+                self.assertFalse(retired in tests, f"retired CTest entry: {retired}")
             # A fresh configuration enables prototype tests, not node linkage.
             self.assertNotIn("test-uno-crypto-node-link", tests)
             for name in ("test-uno-crypto-rust", "test-uno-crypto-abi-real", "test-uno-crypto-header-guard",
@@ -56,6 +72,9 @@ class UnoBuildWiring(unittest.TestCase):
             graph = subprocess.run(["ninja", "-C", directory, "-t", "query", "all-tests"],
                                    capture_output=True, text=True, check=True)
             self.assertIn("uno/crypto/test-uno-crypto-abi-real", {line.strip() for line in graph.stdout.splitlines()})
+            for retired in ("measure-uno-partition-state", "measure-uno-adaptive-partition",
+                            "test-uno-used-nullifiers", "test-uno-amount"):
+                self.assertFalse(retired in graph.stdout, f"retired all-tests dependency: {retired}")
             # The default snapshot registration must never silently include a
             # resource-heavy experiment that turns into a passing early return.
             result = subprocess.run(configure + ["-DTOS_UNO_LARGE_SNAPSHOT_TEST=OFF"],

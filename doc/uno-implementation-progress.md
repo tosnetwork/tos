@@ -1,5 +1,15 @@
 # Privacy workchain implementation progress
 
+## Active-model boundary (2026-09-09)
+
+Older pool-specific entries below are historical evidence, not the current
+account model. Their source and tests are preserved in `uno/archive/v1`, outside
+the build graph. Native storage/import tests use plain test dictionaries, not
+the retired spent-set primitive. The current verifier and independent wallet
+prover live in `uno/crypto` and `uno/prover`; their isolated CI does not establish
+live host integration. Follow `doc/uno-v2-implementation-plan.md` for remaining
+I13 and admission obligations; no milestone is declared complete here.
+
 ## V2 public system-encryption primitive (2026-09-08)
 
 The kernel now constructs and independently recomputes deterministic public

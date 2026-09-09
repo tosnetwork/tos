@@ -1,0 +1,31 @@
+{
+  "source_sha256": {
+    "CMakeLists.txt": "7dfeb5bd76d12fe60ccdf75a518895ce2334cf93b63202ebf6294312ba165883",
+    "crypto/test/workchain-fixture-dictionary.h": "3c6622b7ae72181794d5a3ee7293109f0a11d822d6ceb165683acdda38acf21e",
+    "crypto/test/test-workchain-block.cpp": "a8b382e58371dd99d52fd918d69a5406919e477043c56d7d8766879a5812c5ad",
+    "test/test-uno-state-snapshot.cpp": "3b2448c836e614be457f32ea99ed2be1c6fb670428d46fce44a128fbf9e5411f",
+    "test/test-uno-build-wiring.py": "26187eeb0613539f05e9c0d550b9056d1e779ee7d0759952d6961515ffebb758",
+    "uno/archive/v1/SOURCE_ARCHIVE.json": "7bdcb0d02e05b886a4e96b4caf58a10701c68511c97c3059b6c0c79a40de2e31",
+    "doc/measurements/uno-v2-retired-state-controls.json": "097c691b2e1d3301d5494610e919fb7f33ffe5628f3617ed54902745374fbe5c"
+  },
+  "binary_sha256": {
+    "build/test-workchain-block": "79ab3b51222f3216d1bfee18b31916b0cd21c7150c4e1273fd0543462e709275",
+    "build/test-workchain-admission": "64d8d42d60ea2c56c82eeb7b35ba960e0fdfe2098c35545b7678cc4a4055b4e7",
+    "build/test-uno-state-snapshot": "e7c78ecd359779ff9a20d5c7356e0f517bddff3003f7b529cc2b4524b13fe497",
+    "build/test-uno-storage-measurement": "5d7af419a4bf72d4060fd91f52e4773abea335eb23ce72b16ef28cbd5fb72918"
+  },
+  "checks": {
+    "archived_files_equal_original_commit": 33,
+    "mutants_reconstructed_and_sources_restored": 5,
+    "build_exit": 0,
+    "ctest_exit": 0,
+    "ctest_passed": 13,
+    "ctest_total": 13,
+    "ctest_seconds": 56.13
+  },
+  "scope": "Scoped Native fixture, storage, build wiring and crypto regression only; not all repository tests or milestone acceptance. Large opt-in capacity experiment not run.",
+  "commands": {
+    "build": "cmake --build build --target test-workchain-block test-workchain-admission test-uno-state-snapshot test-uno-storage-measurement -j48",
+    "ctest": "ctest --test-dir build --output-on-failure --no-tests=error -R '^(test-workchain-block|test-workchain-admission|test-uno-state-snapshot|test-uno-(partition|incremental|split|split-prefix)-storage-smoke|test-uno-build-wiring|test-uno-crypto-.*)$' -j1"
+  }
+}

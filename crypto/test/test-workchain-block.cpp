@@ -44,7 +44,7 @@
 #include "block/block-auto.h"
 #include "block/block-parse.h"
 #include "emulator/transaction-emulator.h"
-#include "uno/core/used-nullifiers.h"
+#include "workchain-fixture-dictionary.h"
 
 namespace {
 
@@ -6717,7 +6717,31 @@ TEST(WorkchainBlock, ResolvedBatchStaging) {
   ASSERT_TRUE(account.transactions.empty());
 }
 
-TEST(WorkchainBlock, UsedNullifierGrowthReachesNativeAccountLimit) {
+TEST(WorkchainBlock, StorageFixtureDictionaryContracts) {
+  const auto first = td::Bits256::zero();
+  auto second = first;
+  second.as_slice()[0] = 1;
+  const auto empty = block::test::FixtureDictionary{};
+  auto staged = empty.with_entries({first, second}).move_as_ok();
+  ASSERT_EQ(empty.size(), 0u);
+  ASSERT_EQ(staged.size(), 2u);
+  ASSERT_TRUE(empty.root().is_null());
+  ASSERT_TRUE(staged.contains(first));
+  ASSERT_TRUE(staged.contains(second));
+  ASSERT_TRUE(staged.with_entries({first}).is_error());
+  ASSERT_TRUE(block::test::FixtureDictionary::from_root(staged.root(), 1).is_error());
+  auto loaded = block::test::FixtureDictionary::from_root(staged.root(), 2).move_as_ok();
+  ASSERT_EQ(loaded.size(), 2u);
+  ASSERT_TRUE(loaded.root()->get_hash() == staged.root()->get_hash());
+  ASSERT_EQ(block::test::FixtureDictionary::from_root({}, 0).move_as_ok().size(), 0u);
+  vm::Dictionary nonempty_value(256);
+  vm::CellBuilder payload;
+  payload.store_long(1, 1);
+  ASSERT_TRUE(nonempty_value.set_builder(first, payload));
+  ASSERT_TRUE(block::test::FixtureDictionary::from_root(nonempty_value.get_root_cell(), 1).is_error());
+}
+
+TEST(WorkchainBlock, FixtureDictionaryReachesNativeAccountLimit) {
   std::mt19937 random(91);
   std::vector<td::Bits256> keys(32768);
   for (auto& key : keys) {
@@ -6730,11 +6754,11 @@ TEST(WorkchainBlock, UsedNullifierGrowthReachesNativeAccountLimit) {
   cfg.global_version = block::kBlockTransitionMinGlobalVersion;
   ASSERT_EQ(cfg.size_limits.max_acc_state_cells, 65536u);
   auto fits = [&](std::size_t count) {
-    auto used = uno_workchain::UsedNullifiers{}.with_used(
+    auto used = block::test::FixtureDictionary{}.with_entries(
         std::vector<td::Bits256>(keys.begin(), keys.begin() + count)).move_as_ok();
     auto effects = CounterEngine().execute_block(in).move_as_ok();
-    // Use the real persistent used-set representation as host payload. This
-    // measures account admission, not a complete private-transfer execution.
+    // Generic dictionary fixture measures Native account admission, not a
+    // confidential account schema or a production capacity recommendation.
     effects.new_engine_state = used.root();
     block::gen::ShardStateUnsplit::Record state;
     ASSERT_TRUE(tlb::unpack_cell(in.previous_shard_state, state));
@@ -6764,9 +6788,9 @@ TEST(WorkchainBlock, UsedNullifierGrowthReachesNativeAccountLimit) {
   }
   ASSERT_TRUE(fits(lower));
   ASSERT_TRUE(!fits(upper));
-  LOG(INFO) << "Used-nullifier host capacity: accepted=" << lower << " rejected=" << upper
+  LOG(INFO) << "Fixture dictionary host capacity: accepted=" << lower << " rejected=" << upper
             << " account_cell_limit=" << cfg.size_limits.max_acc_state_cells
-            << " scope=used-set-only payload plus host wrapper; not complete UNO state";
+            << " scope=test dictionary plus host wrapper; not confidential account state";
 }
 
 TEST(WorkchainBlock, BatchExecutorCellBudgetIncludesFullWrapper) {

@@ -3097,8 +3097,10 @@ dead code or credited as the early-ordering guard.
 The default-OFF `TOS_UNO_CRYPTO_NODE_LINK` option can retain all three kernel
 FFI entries in the actual node without registering or calling an engine. This
 is a build seam only: it establishes no I13 property or milestone acceptance.
-The prover, full differential and supply-chain acceptance, and production host
-invocation remain open. The scoped review disposition and evidence index are
+The independent wallet prover and its standalone CI were subsequently delivered
+in `62771b318` and `0b120a07d`; they never join the node dependency graph. Full
+differential and supply-chain acceptance, and production host invocation remain
+open. The scoped review disposition and evidence index for node linkage are
 in `doc/measurements/uno-v2-node-link-review-disposition.md`; execution matrix
 in `uno-v2-node-link-matrix.json`, initial controls in the retention/cargo-fixture
 JSONs and domain-controls Markdown, exact reconstruction in
@@ -3106,3 +3108,25 @@ JSONs and domain-controls Markdown, exact reconstruction in
 final checks in `uno-v2-node-link-default-control.json` and
 `uno-v2-node-link-followup-final.md` (all under `doc/measurements/`). The baseline
 scan omitted untracked evidence and is explicitly not final-tree evidence.
+
+### Retired pool source boundary
+
+The former `uno/core` and `uno/test` pool components and their measurement driver
+are preserved byte-for-byte under `uno/archive/v1`, with original commit and
+hash mapping. They have no active target or include. This also removes the old
+note accounting, bundle permissions and slot arithmetic; their names must not
+be mistaken for implemented V2 business objects.
+
+Native snapshot/reopen/GC and account-limit tests remain active, using only a
+plain test dictionary in `crypto/test/workchain-fixture-dictionary.h`. That
+fixture is not a production state schema and carries no permanent-spent or
+asset semantics. Historical measurements remain historical, not V2 capacity
+acceptance. The build-wiring suite checks retired tests are absent from actual
+CTest/all-tests graphs and forbids active includes of archived state. That suite
+runs when `TOS_UNO_COUNTER_PYTEST` is enabled; it is not an unconditional gate.
+
+This closes the source-cleanup task, not any live I13 property. The policy-bound
+host identity source remains a separate pre-live clarification. Machine-readable
+upstream-plus-local-patch provenance is the next supply-chain follow-up; the
+wallet's four-site CT guard is already in its standalone CTest/CI, but is not a
+general verifier of secret dependence at newly introduced group-operation sites.

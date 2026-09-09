@@ -17,7 +17,7 @@
 #include "td/utils/port/path.h"
 #include "td/utils/tests.h"
 #include "td/db/RocksDb.h"
-#include "uno/core/used-nullifiers.h"
+#include "crypto/test/workchain-fixture-dictionary.h"
 #include "validator/downloaders/download-state.hpp"
 #include "validator/state-serializer.hpp"
 #include "validator/streaming-import-budget.h"
@@ -347,11 +347,11 @@ class SnapshotImportActor final : public td::actor::Actor {
       verify_state_(root, true);
     } else {
     auto payload = block::extract_workchain_engine_state(root, 2, td::Bits256::zero()).move_as_ok();
-    auto restored = uno_workchain::UsedNullifiers::from_root(payload, keys_.size()).move_as_ok();
-    ASSERT_TRUE(restored.with_used({keys_.front()}).is_error());
+    auto restored = block::test::FixtureDictionary::from_root(payload, keys_.size()).move_as_ok();
+    ASSERT_TRUE(restored.with_entries({keys_.front()}).is_error());
     auto fresh = td::Bits256::zero();
     ASSERT_TRUE(!restored.contains(fresh));
-    auto next = restored.with_used({fresh}).move_as_ok();
+    auto next = restored.with_entries({fresh}).move_as_ok();
     ASSERT_TRUE(next.contains(fresh));
     ASSERT_TRUE(!restored.contains(fresh));
     ASSERT_TRUE(restored.root()->get_hash() == payload->get_hash());
@@ -535,7 +535,7 @@ struct MeasuredStateCells {
   td::uint64 batch_data, serialized_account;
 };
 
-td::Result<MeasuredStateCells> admit_measured_state(const uno_workchain::UsedNullifiers& used) {
+td::Result<MeasuredStateCells> admit_measured_state(const block::test::FixtureDictionary& used) {
   block::WorkchainBlockInput input{
       single_account_state(block::test::counter_number(40)), block::test::counter_number(2),
       block::test::counter_number(1), block::test::counter_number(1)};
@@ -573,12 +573,12 @@ long snapshot_peak_rss_kib() {
 
 TEST(UnoStorageMeasurement, CapacityGateInstrumentSelfCheck) {
   auto keys = measurement_keys(32768);
-  auto oversized = uno_workchain::UsedNullifiers{}.with_used(keys).move_as_ok();
+  auto oversized = block::test::FixtureDictionary{}.with_entries(keys).move_as_ok();
   auto rejected = admit_measured_state(oversized);
   ASSERT_TRUE(rejected.is_error());
   ASSERT_EQ(rejected.error().code(), block::AccountStorageStat::errorcode_limits_exceeded);
   keys.resize(32000);
-  auto accepted = uno_workchain::UsedNullifiers{}.with_used(keys).move_as_ok();
+  auto accepted = block::test::FixtureDictionary{}.with_entries(keys).move_as_ok();
   ASSERT_TRUE(admit_measured_state(accepted).is_ok());
 }
 
@@ -591,7 +591,7 @@ TEST(UnoStorageMeasurement, SnapshotStages) {
   const auto rss_before = snapshot_peak_rss_kib();
   auto started = SnapshotClock::now();
   auto keys = measurement_keys(count);
-  auto used = uno_workchain::UsedNullifiers{}.with_used(keys).move_as_ok();
+  auto used = block::test::FixtureDictionary{}.with_entries(keys).move_as_ok();
   auto state = single_account_state(used.root());
   const auto generate_ms = snapshot_elapsed_ms(started);
   started = SnapshotClock::now();
@@ -666,11 +666,11 @@ TEST(UnoStorageMeasurement, PartitionPersistenceStages) {
     auto page = page_count == 1 ? 0u : static_cast<unsigned char>(key.as_slice()[0]) >> 4;
     grouped[page].push_back(key);
   }
-  std::vector<uno_workchain::UsedNullifiers> pages;
+  std::vector<block::test::FixtureDictionary> pages;
   vm::AugmentedDictionary accounts(256,block::tlb::aug_ShardAccounts);
   td::uint64 max_data_cells = 0;
   for (std::size_t i = 0; i < page_count; ++i) {
-    pages.push_back(uno_workchain::UsedNullifiers{}.with_used(grouped[i]).move_as_ok());
+    pages.push_back(block::test::FixtureDictionary{}.with_entries(grouped[i]).move_as_ok());
     ASSERT_TRUE(pages.back().root().not_null()); // All selected seeded groups are nonempty.
     auto data = pages.back().root();
     vm::CellStorageStat stat;
@@ -707,15 +707,15 @@ TEST(UnoStorageMeasurement, PartitionPersistenceStages) {
       td::Bits256 expected(pages[i].root()->get_hash().bits());
       if (wrong_expected && i == 0) expected.as_slice()[0] ^= 1;
       if (td::Bits256(account.data->get_hash().bits()) != expected) return false;
-      auto used = uno_workchain::UsedNullifiers::from_root(account.data,grouped[i].size()).move_as_ok();
-      for (const auto& key : grouped[i]) if (!used.try_contains(key).move_as_ok()) return false;
+      auto used = block::test::FixtureDictionary::from_root(account.data,grouped[i].size()).move_as_ok();
+      for (const auto& key : grouped[i]) if (!used.contains(key)) return false;
       if (probe) {
-        if (used.with_used({grouped[i].front()}).is_ok()) return false;
+        if (used.with_entries({grouped[i].front()}).is_ok()) return false;
         auto fresh = td::Bits256::zero();
         fresh.as_slice()[0] = static_cast<char>(i << 4);
-        if (used.try_contains(fresh).move_as_ok()) return false;
-        auto next = used.with_used({fresh}).move_as_ok();
-        if (!next.try_contains(fresh).move_as_ok() || used.try_contains(fresh).move_as_ok()) return false;
+        if (used.contains(fresh)) return false;
+        auto next = used.with_entries({fresh}).move_as_ok();
+        if (!next.contains(fresh) || used.contains(fresh)) return false;
       }
     }
     return true;
@@ -794,9 +794,9 @@ TEST(UnoStorageMeasurement, PartitionIncrementalRecords) {
   };
   std::vector<std::vector<td::Bits256>> grouped(page_count);
   for (const auto& key : keys) grouped[route(key)].push_back(key);
-  std::vector<uno_workchain::UsedNullifiers> pages;
+  std::vector<block::test::FixtureDictionary> pages;
   std::vector<td::Ref<vm::Cell>> expected_data;
-  auto data_root = [](const uno_workchain::UsedNullifiers& used) {
+  auto data_root = [](const block::test::FixtureDictionary& used) {
     return used.root().is_null() ? vm::CellBuilder().finalize() : used.root();
   };
   auto put = [&](vm::AugmentedDictionary& dictionary, std::size_t page, td::Ref<vm::Cell> data) {
@@ -813,7 +813,7 @@ TEST(UnoStorageMeasurement, PartitionIncrementalRecords) {
   };
   vm::AugmentedDictionary accounts(256,block::tlb::aug_ShardAccounts);
   for (std::size_t i = 0; i < page_count; ++i) {
-    pages.push_back(uno_workchain::UsedNullifiers{}.with_used(grouped[i]).move_as_ok());
+    pages.push_back(block::test::FixtureDictionary{}.with_entries(grouped[i]).move_as_ok());
     expected_data.push_back(data_root(pages.back()));
     put(accounts,i,expected_data.back());
   }
@@ -863,10 +863,10 @@ TEST(UnoStorageMeasurement, PartitionIncrementalRecords) {
     block::Account account(2,address.bits());
     ASSERT_TRUE(account.unpack(updated.lookup(address),10,false));
     ASSERT_TRUE(account.data->get_hash() == expected_data[page]->get_hash());
-    auto used = pages[page].size() == 0 ? uno_workchain::UsedNullifiers{} :
-        uno_workchain::UsedNullifiers::from_root(account.data,pages[page].size()).move_as_ok();
-    ASSERT_TRUE(!used.try_contains(key).move_as_ok());
-    pages[page] = used.with_used({key}).move_as_ok();
+    auto used = pages[page].size() == 0 ? block::test::FixtureDictionary{} :
+        block::test::FixtureDictionary::from_root(account.data,pages[page].size()).move_as_ok();
+    ASSERT_TRUE(!used.contains(key));
+    pages[page] = used.with_entries({key}).move_as_ok();
     expected_data[page] = data_root(pages[page]);
     put(updated,page,expected_data[page]);
   }
@@ -882,8 +882,8 @@ TEST(UnoStorageMeasurement, PartitionIncrementalRecords) {
       block::Account account(2,address.bits());
       ASSERT_TRUE(account.unpack(updated.lookup(address),10,false));
       ASSERT_TRUE(account.data->get_hash() == expected_data[i]->get_hash());
-      auto used = pages[i].size() == 0 ? uno_workchain::UsedNullifiers{} :
-          uno_workchain::UsedNullifiers::from_root(account.data,pages[i].size()).move_as_ok();
+      auto used = pages[i].size() == 0 ? block::test::FixtureDictionary{} :
+          block::test::FixtureDictionary::from_root(account.data,pages[i].size()).move_as_ok();
       vm::Dictionary entries(used.root(),256);
       ASSERT_TRUE(entries.check_for_each([&](td::Ref<vm::CellSlice> value, td::ConstBitPtr bits, int width) {
         ASSERT_TRUE(width == 256 && value->empty_ext());
@@ -901,7 +901,7 @@ TEST(UnoStorageMeasurement, PartitionIncrementalRecords) {
     updated.reset(); pages.clear(); expected_data.clear();
     td::uint64 rebuilt = 0;
     for (std::size_t i = 0; i < page_count; ++i) {
-      pages.push_back(uno_workchain::UsedNullifiers{}.with_used(relocated[i]).move_as_ok());
+      pages.push_back(block::test::FixtureDictionary{}.with_entries(relocated[i]).move_as_ok());
       ASSERT_TRUE(metric_add(rebuilt,pages.back().size(),rebuilt));
       expected_data.push_back(data_root(pages.back()));
       put(updated,i,expected_data.back());
@@ -953,10 +953,10 @@ TEST(UnoStorageMeasurement, PartitionIncrementalRecords) {
     block::Account account(2,address.bits());
     ASSERT_TRUE(account.unpack(final_accounts.lookup(address),10,false));
     ASSERT_TRUE(account.data->get_hash() == expected_hashes[i]);
-    auto used = expected_sizes[i] == 0 ? uno_workchain::UsedNullifiers{} :
-        uno_workchain::UsedNullifiers::from_root(account.data,expected_sizes[i]).move_as_ok();
-    for (const auto& key : grouped[i]) ASSERT_TRUE(used.try_contains(key).move_as_ok());
-    for (const auto& key : fresh) if (route(key) == i) ASSERT_TRUE(used.with_used({key}).is_error());
+    auto used = expected_sizes[i] == 0 ? block::test::FixtureDictionary{} :
+        block::test::FixtureDictionary::from_root(account.data,expected_sizes[i]).move_as_ok();
+    for (const auto& key : grouped[i]) ASSERT_TRUE(used.contains(key));
+    for (const auto& key : fresh) if (route(key) == i) ASSERT_TRUE(used.with_entries({key}).is_error());
   }
   const auto final_records = read_cell_records(*kv);
   delta = cell_record_delta(retained,final_records);
@@ -1038,17 +1038,17 @@ TEST(UnoStateSnapshot, GrowingStateRetainsSharedCellsAfterRootRelease) {
   for (unsigned epoch = 0; epoch < 12; ++epoch) {
     const auto before_records = read_cell_records(*kv);
     {
-      uno_workchain::UsedNullifiers previous;
+      block::test::FixtureDictionary previous;
       if (!retained.empty()) {
         auto state = database->load_cell(retained.back().as_slice()).move_as_ok();
         auto payload = block::extract_workchain_engine_state(state, 2, td::Bits256::zero()).move_as_ok();
-        previous = uno_workchain::UsedNullifiers::from_root(payload, keys.size()).move_as_ok();
+        previous = block::test::FixtureDictionary::from_root(payload, keys.size()).move_as_ok();
       }
       std::vector<td::Bits256> added(64);
       for (auto& key : added) {
         for (auto& byte : key.as_slice()) byte = static_cast<char>(generator() & 255);
       }
-      auto next = previous.with_used(added).move_as_ok();
+      auto next = previous.with_entries(added).move_as_ok();
       keys.insert(keys.end(), added.begin(), added.end());
       auto root = single_account_state(next.root());
       database->inc(root);
@@ -1094,10 +1094,10 @@ TEST(UnoStateSnapshot, GrowingStateRetainsSharedCellsAfterRootRelease) {
       for (const auto& hash : released) ASSERT_TRUE(database->load_cell(hash.as_slice()).is_error());
       auto newest = database->load_cell(retained.back().as_slice()).move_as_ok();
       auto payload = block::extract_workchain_engine_state(newest, 2, td::Bits256::zero()).move_as_ok();
-      auto restored = uno_workchain::UsedNullifiers::from_root(payload, keys.size()).move_as_ok();
+      auto restored = block::test::FixtureDictionary::from_root(payload, keys.size()).move_as_ok();
       for (const auto& key : keys) ASSERT_TRUE(restored.contains(key));
-      ASSERT_TRUE(restored.with_used({keys.front()}).is_error());
-      LOG(INFO) << "Root retention epoch=" << epoch << " nullifiers=" << keys.size()
+      ASSERT_TRUE(restored.with_entries({keys.front()}).is_error());
+      LOG(INFO) << "Root retention epoch=" << epoch << " fixture_keys=" << keys.size()
                 << " roots=" << retained.size() << " live_cells=" << stored_cells;
     }
   }
@@ -1172,7 +1172,7 @@ TEST(UnoStateSnapshot, V2ActorImportPublishesFreshReader) {
       byte = static_cast<char>(generator() & 255);
     }
   }
-  auto used = uno_workchain::UsedNullifiers{}.with_used(keys).move_as_ok();
+  auto used = block::test::FixtureDictionary{}.with_entries(keys).move_as_ok();
   actor_import_snapshot(single_account_state(used.root()), used.root(), keys, true);
 }
 
@@ -1233,8 +1233,8 @@ TEST(UnoStateSnapshot, LargeSingleAccountDownloadAndImport) {
   for (auto& key : keys) {
     for (auto& byte : key.as_slice()) byte = static_cast<char>(generator() & 255);
   }
-  LOG(WARNING) << "Building large single-account state with " << count << " nullifiers";
-  auto used = uno_workchain::UsedNullifiers{}.with_used(keys).move_as_ok();
+  LOG(WARNING) << "Building large single-account state with " << count << " fixture keys";
+  auto used = block::test::FixtureDictionary{}.with_entries(keys).move_as_ok();
   auto state = single_account_state(used.root());
   auto bytes = vm::std_boc_serialize(state).move_as_ok();
   LOG(WARNING) << "Large single-account state serialized bytes=" << bytes.size();
@@ -1257,7 +1257,7 @@ TEST(UnoStateSnapshot, SingleAccountIsAnIndivisibleSnapshotPart) {
       byte = static_cast<char>(generator() & 255);
     }
   }
-  auto used = uno_workchain::UsedNullifiers{}.with_used(keys).move_as_ok();
+  auto used = block::test::FixtureDictionary{}.with_entries(keys).move_as_ok();
   auto state = single_account_state(used.root());
   actor_import_snapshot(state, used.root(), keys);
   auto unsplit = tos::validator::split_shard_state(tos::shardIdAll, state, 0);
