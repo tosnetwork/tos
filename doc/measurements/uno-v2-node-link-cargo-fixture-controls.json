@@ -1,0 +1,44 @@
+{
+  "scope": "Repair stale configure-test fixture and demonstrate both existing policy checks remain load-bearing.",
+  "prior_failure": {
+    "chunk_id": "001e53",
+    "wall_time_seconds": 0.00001262,
+    "exit_code": 1,
+    "original_token_count": 263,
+    "output": "F\n======================================================================\nFAIL: test_cargo_pin_and_offline_environment_are_enforced (__main__.UnoBuildWiring.test_cargo_pin_and_offline_environment_are_enforced) (version='1.97.1')\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"/home/tomi/tos/test/test-uno-build-wiring.py\", line 29, in test_cargo_pin_and_offline_environment_are_enforced\n    self.assertEqual(result.returncode == 0, accepted, result.stdout + result.stderr)\n    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: False != True : CMake Error at uno/crypto/RequireCargo.cmake:38 (message):\n  UNO crypto prototype tests require the pinned Rust toolchain: is\n  unsupported; a native Linux build is required\nCall Stack (most recent call first):\n  /tmp/uno-cargo-gate-si14k_qy/check.cmake:2 (uno_require_cargo)\n\n\n\n\n----------------------------------------------------------------------\nRan 1 test in 0.044s\n\nFAILED (failures=1)\n"
+  },
+  "records": [
+    {
+      "name": "version",
+      "from": "      elseif (NOT _uno_cargo_version MATCHES \"^cargo 1\\\\.97\\\\.1 \")",
+      "to": "      elseif (FALSE)",
+      "source": "uno/crypto/RequireCargo.cmake",
+      "before_sha256": "8cf88b805e9ffadbd593ea88a6f2a4c30a691ab03362e47c7934a96e690f70e9",
+      "mutant_sha256": "b96758bb6c8de879cca013fdeea9bd40bf8fa2b11e8452d0fbc24d7f874b9184",
+      "after_sha256": "8cf88b805e9ffadbd593ea88a6f2a4c30a691ab03362e47c7934a96e690f70e9",
+      "test": {
+        "chunk_id": "5cf940",
+        "wall_time_seconds": 0.044142044,
+        "exit_code": 1,
+        "original_token_count": 358,
+        "output": "FF\n======================================================================\nFAIL: test_cargo_pin_and_offline_environment_are_enforced (__main__.UnoBuildWiring.test_cargo_pin_and_offline_environment_are_enforced) (version='1.96.0')\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"/home/tomi/tos/test/test-uno-build-wiring.py\", line 37, in test_cargo_pin_and_offline_environment_are_enforced\n    self.assertEqual(result.returncode == 0, accepted, result.stdout + result.stderr)\n    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: True != False : \n\n======================================================================\nFAIL: test_cargo_pin_and_offline_environment_are_enforced (__main__.UnoBuildWiring.test_cargo_pin_and_offline_environment_are_enforced) (version='1.97.10')\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"/home/tomi/tos/test/test-uno-build-wiring.py\", line 37, in test_cargo_pin_and_offline_environment_are_enforced\n    self.assertEqual(result.returncode == 0, accepted, result.stdout + result.stderr)\n    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: True != False : \n\n----------------------------------------------------------------------\nRan 1 test in 0.095s\n\nFAILED (failures=2)\n"
+      }
+    },
+    {
+      "name": "offline",
+      "from": "      execute_process(COMMAND \"${CMAKE_COMMAND}\" -E env \"CARGO_NET_OFFLINE=true\" \"${_uno_cargo}\" --version",
+      "to": "      execute_process(COMMAND \"${CMAKE_COMMAND}\" -E env \"${_uno_cargo}\" --version",
+      "source": "uno/crypto/RequireCargo.cmake",
+      "before_sha256": "8cf88b805e9ffadbd593ea88a6f2a4c30a691ab03362e47c7934a96e690f70e9",
+      "mutant_sha256": "ef48c8c1d42a5befc1cdb91b1b9da50cdf211d3e42664e8130385525c6194626",
+      "after_sha256": "8cf88b805e9ffadbd593ea88a6f2a4c30a691ab03362e47c7934a96e690f70e9",
+      "test": {
+        "chunk_id": "d2d020",
+        "wall_time_seconds": 0.048889886,
+        "exit_code": 1,
+        "original_token_count": 273,
+        "output": "F\n======================================================================\nFAIL: test_cargo_pin_and_offline_environment_are_enforced (__main__.UnoBuildWiring.test_cargo_pin_and_offline_environment_are_enforced) (version='1.97.1')\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"/home/tomi/tos/test/test-uno-build-wiring.py\", line 37, in test_cargo_pin_and_offline_environment_are_enforced\n    self.assertEqual(result.returncode == 0, accepted, result.stdout + result.stderr)\n    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: False != True : CMake Error at uno/crypto/RequireCargo.cmake:38 (message):\n  UNO crypto prototype tests require the pinned Rust toolchain: cargo at\n  '/tmp/uno-cargo-gate-5u048t91/cargo' could not report its version (exit\n  17):\nCall Stack (most recent call first):\n  /tmp/uno-cargo-gate-5u048t91/check.cmake:3 (uno_require_cargo)\n\n\n\n\n----------------------------------------------------------------------\nRan 1 test in 0.095s\n\nFAILED (failures=1)\n"
+      }
+    }
+  ]
+}

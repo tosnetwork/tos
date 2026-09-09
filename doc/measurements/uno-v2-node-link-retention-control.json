@@ -1,0 +1,32 @@
+{
+  "scope": "Remove link retention, retain the archive dependency; tests must detect missing actual node symbols.",
+  "source": "uno/crypto/CMakeLists.txt",
+  "from": "  target_link_options(${node} PRIVATE\n    \"LINKER:--undefined=uno_crypto_verify_v2\"\n    \"LINKER:--undefined=uno_crypto_system_encrypt_v1\"\n    \"LINKER:--undefined=uno_crypto_system_verify_v1\")",
+  "to": "  # Mutation control: intentionally omit entry-point retention.",
+  "before": {
+    "cmd": "sha256sum uno/crypto/CMakeLists.txt",
+    "exit_code": 0,
+    "output": "98c5eff9b6186132b04872cf35550cef7fd681da818ac1ccc380bc26204aa49d  uno/crypto/CMakeLists.txt\n"
+  },
+  "mutant": {
+    "cmd": "sha256sum uno/crypto/CMakeLists.txt",
+    "exit_code": 0,
+    "output": "e30e56fb5cfae30e04f914110e0867f6feee4ba9dcafb7507a408636ca3fd3db  uno/crypto/CMakeLists.txt\n"
+  },
+  "build": {
+    "cmd": "cmake --build build --target validator-engine -j48",
+    "exit_code": 0,
+    "output": "[0/1] Re-running CMake...\n-- Use openssl: /home/tomi/tos/build/third-party/openssl/lib/libcrypto.a\nAdd rocksdb\n-- CMAKE_BUILD_TYPE is set to Release\n-- Could NOT find uring (missing: uring_LIBRARIES uring_INCLUDE_DIR) \n-- Enabling RTTI in all builds\n-- ROCKSDB_PLUGINS: \n-- ROCKSDB PLUGINS TO BUILD \n-- JNI library is disabled\nAdd abseil-cpp\nAdd crc32c\nAdd ngtcp2 with custom OpenSSL from /home/tomi/tos/build/third-party/openssl\n-- Could NOT find Libev (missing: LIBEV_LIBRARY LIBEV_INCLUDE_DIR) (Required is at least version \"4.11\")\n-- Could NOT find Libnghttp3 (missing: LIBNGHTTP3_LIBRARY LIBNGHTTP3_INCLUDE_DIR) (Required is at least version \"1.14.0\")\n-- Could NOT find Libbrotlienc (missing: LIBBROTLIENC_LIBRARY LIBBROTLIENC_INCLUDE_DIR) (Required is at least version \"1.0.9\")\n-- Could NOT find Libbrotlidec (missing: LIBBROTLIDEC_LIBRARY LIBBROTLIDEC_INCLUDE_DIR) (Required is at least version \"1.0.9\")\nCMake Warning at third-party/ngtcp2/crypto/CMakeLists.txt:31 (message):\n  libngtcp2_crypto_quictls library is disabled due to lack of good quictls\n\n\nCMake Warning at third-party/ngtcp2/crypto/CMakeLists.txt:37 (message):\n  libngtcp2_crypto_libressl library is disabled due to lack of good LibreSSL\n\n\n-- summary of build options:\n\n    Package version: 1.22.0\n    Library version: 24:0:8\n    Install prefix:  /home/tomi/tos/build/install\n    Target system:   Linux\n    Compiler:\n      Build type:     Release\n      C compiler:     /usr/bin/clang-21\n      CFLAGS:         -O3  \n      C++ compiler:   /usr/bin/clang++-21\n      CXXFLAGS:       -O3  \n      WARNCFLAGS:       -Wextra -Wall -Wconversion -Winline -Wmissing-declarations -Wmissing-prototypes -Wnested-externs -Wpointer-arith -Wshadow -Wundef -Wwrite-strings -Waddress -Wattributes -Wcast-align -Wdeclaration-after-statement -Wdiv-by-zero -Wempty-body -Wendif-labels -Wfloat-equal -Wformat-nonliteral -Wformat-security -Wmissing-field-initializers -Wmissing-noreturn -Wno-format-nonliteral -Wredundant-decls -Wsign-conversion -Wstrict-prototypes -Wunreachable-code -Wunused-macros -Wunused-parameter -Wvla -Wshorten-64-to-32 -Wlanguage-extension-token -Wpragmas -Wunreachable-code-break -Wheader-guard -Wsometimes-uninitialized -Wmissing-variable-declarations\n      WARNCXXFLAGS:     -Wall -Wformat-security -Wno-extern-c-compat -Wsometimes-uninitialized -Wno-noexcept-type\n    Library:\n      Shared:         ON\n      Static:         ON\n    Test:\n      Build Test:     OFF\n    Libs:\n      OpenSSL:        TRUE (LIBS='/home/tomi/tos/build/third-party/openssl/lib/libssl.a;/home/tomi/tos/build/third-party/openssl/lib/libcrypto.a;dl')\n      Libev:          FALSE (LIBS='')\n      Libnghttp3:     FALSE (LIBS='')\n      GnuTLS:         FALSE (LIBS='')\n      BoringSSL:      FALSE (LIBS='')\n      Picotls:        FALSE (LIBS='')\n      wolfSSL:        FALSE (LIBS='')\n      Jemalloc:        (LIBS='/usr/lib/x86_64-linux-gnu/libjemalloc.so')\n      Libbrotlienc:   FALSE (LIBS='')\n      Libbrotlidec:   FALSE (LIBS='')\n\nAdd tl-parser\nAdd tos\n-- Use Secp256k1: /home/tomi/tos/build/third-party/secp256k1/lib/libsecp256k1.a\n-- Building libbacktrace from: /home/tomi/tos/third-party/libbacktrace\n-- Using preconfigured zlib: /home/tomi/tos/build/third-party/zlib/lib/libz.a\n-- Using ccache\n-- Using zlib /home/tomi/tos/build/third-party/zlib/lib/libz.a\n-- Found ZLIB: /home/tomi/tos/build/third-party/zlib/include /home/tomi/tos/build/third-party/zlib/lib/libz.a\n-- Using libbacktrace for enhanced stack traces\n-- Found LZ4 /home/tomi/tos/build/third-party/lz4/lib/liblz4.a /home/tomi/tos/third-party/lz4/lib\n-- Checking for module 'benchmark'\n--   No package 'benchmark' found\n-- Google Benchmark not found via pkg-config - gbench-coro target disabled\n-- Found Readline: /usr/include /usr/lib/x86_64-linux-gnu/libreadline.so\n-- Using Sodium /home/tomi/tos/build/third-party/sodium/lib/libsodium.a\n-- Configuring done\n-- Generating done\n-- Build files have been written to: /home/tomi/tos/build\n[1/57] cd /home/tomi/tos/uno/crypto && /usr/bin/cmake -E env CARGO_NET_OFFLINE=true CARGO_TARGET_DIR=/home/tomi/tos/build/uno/crypto/cargo-target /home/tomi/.cargo/bin/cargo build --locked --offline --release -j48\n    Finished `release` profile [optimized] target(s) in 0.06s\n[2/57] Checking the git repository for changes...\n[3/3] Linking CXX executable validator-engine/validator-engine\n"
+  },
+  "test": {
+    "cmd": "ctest --test-dir build -R '^test-uno-crypto-node-link$' --output-on-failure",
+    "exit_code": 8,
+    "output": "Internal ctest changing into directory: /home/tomi/tos/build\nTest project /home/tomi/tos/build\n    Start 99: test-uno-crypto-node-link\n1/1 Test #99: test-uno-crypto-node-link ........***Failed    0.22 sec\nFAIL: expected 1 definition(s) per entry, measured {'uno_crypto_verify_v2': 0, 'uno_crypto_system_encrypt_v1': 0, 'uno_crypto_system_verify_v1': 0}\n\n\n0% tests passed, 1 tests failed out of 1\n\nTotal Test time (real) =   0.23 sec\n\nThe following tests FAILED:\n\t 99 - test-uno-crypto-node-link (Failed)\nErrors while running CTest\n"
+  },
+  "after": {
+    "cmd": "sha256sum uno/crypto/CMakeLists.txt",
+    "exit_code": 0,
+    "output": "98c5eff9b6186132b04872cf35550cef7fd681da818ac1ccc380bc26204aa49d  uno/crypto/CMakeLists.txt\n"
+  },
+  "restored": true
+}

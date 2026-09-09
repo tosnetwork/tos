@@ -45,6 +45,9 @@ target_link_libraries(validator-engine metrics overlay tdutils tdactor adnl tl_a
   fift-lib memprof git ${JEMALLOC_LIBRARIES})
 
 target_link_libraries(validator-engine smc-envelope json-rpc-parse)
+if (TOS_UNO_CRYPTO_NODE_LINK)
+  link_confidential_kernel_into_node(validator-engine)
+endif()
 if (JEMALLOC_FOUND)
   target_include_directories(validator-engine PRIVATE ${JEMALLOC_INCLUDE_DIR})
   target_compile_definitions(validator-engine PRIVATE -DTOS_USE_JEMALLOC=1)

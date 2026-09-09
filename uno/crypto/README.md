@@ -43,7 +43,34 @@ python3 tests/kernel-gates.py
 Configure the parent build with `TOS_UNO_CRYPTO_PROTOTYPE_TESTS=ON`.
 The real ABI executable is in `all-tests`; CTest registers the Rust tests,
 frozen C++ vectors, dependency/source gates and generated-header drift test.
-The option retains its existing opt-in meaning. CI must explicitly enable it.
+The test option is `AUTO`/`ON`/`OFF`: `AUTO` uses the pinned native toolchain
+when available, `ON` requires it, and `OFF` disables these tests. CI profiles
+requiring this evidence must explicitly select `ON`.
+
+### Experimental node linkage
+
+`TOS_UNO_CRYPTO_NODE_LINK` is a separate boolean, default `OFF`. From the
+repository root, an explicit development build can retain the three current
+FFI entries in the actual node executable:
+
+```sh
+cmake -S . -B build -DTOS_UNO_CRYPTO_NODE_LINK=ON -DTOS_UNO_CRYPTO_PROTOTYPE_TESTS=ON
+cmake --build build --target validator-engine test-uno-crypto-abi-real -j48
+ctest --test-dir build -R '^test-uno-crypto-' --output-on-failure
+```
+
+Node linkage requires the pinned native Linux toolchain even when prototype
+tests are `OFF`; it never silently falls back to an unlinked node. The node
+symbol test is registered only when linkage is selected, and `all-tests` then
+depends on the node. It checks the unstripped build executable, not a packaged
+binary whose symbol table has been removed. Normal release scripts and CI
+profiles do not enable this new option implicitly.
+
+This adds no engine registration, RPC, opcode, verifier invocation or execution
+permission. The existing entropy, dependency and ABI gates remain unchanged.
+The node symbol test proves retention, not absence of entropy throughout the
+node or correctness of a future host call. A separate wallet prover and full
+relation/differential/host acceptance remain outstanding.
 
 `tests/run-mutations.py --output <new-evidence-dir> --target-dir <scratch-cargo-dir>`
 copies the crate into a temporary source directory, runs positive controls,

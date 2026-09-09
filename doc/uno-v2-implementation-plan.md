@@ -3075,3 +3075,30 @@ inverse edits back to the reviewed header hashes are recorded in
 were rerun in `uno-v2-connectivity-postreview-checks.json`. Both tested binary
 hashes remain identical to the reviewed regression. The private configuration
 seam is connected; production registration and actor replay remain future work.
+
+The independent review of `ffedd9d21` also leaves two explicit integration
+obligations. On returning to D31, the convenience account-engine runner must
+either reject a null old-account root before proof inspection or justify its
+exception to the cheap-context-first rule, with a failure-capable control.
+Live integration must keep proof-admission tokens synchronous and strictly
+shorter-lived than the inspecting engine: they must not be retained, queued or
+cross an asynchronous boundary. Pointer equality alone cannot prevent address
+reuse after destruction. Tokens remain copyable, not one-shot execution
+permission; they do not establish I13b. The later disposal guards remain
+reachable through the retained prototype entry and must not be removed as
+dead code or credited as the early-ordering guard.
+
+### Experimental node linkage, not host invocation
+
+The default-OFF `TOS_UNO_CRYPTO_NODE_LINK` option can retain all three kernel
+FFI entries in the actual node without registering or calling an engine. This
+is a build seam only: it establishes no I13 property or milestone acceptance.
+The prover, full differential and supply-chain acceptance, and production host
+invocation remain open. The scoped review disposition and evidence index are
+in `doc/measurements/uno-v2-node-link-review-disposition.md`; execution matrix
+in `uno-v2-node-link-matrix.json`, initial controls in the retention/cargo-fixture
+JSONs and domain-controls Markdown, exact reconstruction in
+`uno-v2-node-link-restore-audit.md`, and the default-OFF follow-up control and
+final checks in `uno-v2-node-link-default-control.json` and
+`uno-v2-node-link-followup-final.md` (all under `doc/measurements/`). The baseline
+scan omitted untracked evidence and is explicitly not final-tree evidence.

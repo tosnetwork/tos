@@ -1,4 +1,5 @@
 include("${CMAKE_CURRENT_SOURCE_DIR}/RequireCargo.cmake")
+option(TOS_UNO_CRYPTO_NODE_LINK "Link the experimental confidential kernel into the node without enabling execution" OFF)
 string(TOUPPER "${TOS_UNO_CRYPTO_PROTOTYPE_TESTS}" _uno_crypto_tests_mode)
 if (NOT _uno_crypto_tests_mode STREQUAL "AUTO" AND
     NOT _uno_crypto_tests_mode STREQUAL "ON" AND
@@ -6,12 +7,12 @@ if (NOT _uno_crypto_tests_mode STREQUAL "AUTO" AND
   message(FATAL_ERROR "TOS_UNO_CRYPTO_PROTOTYPE_TESTS must be AUTO, ON, or OFF; got '${TOS_UNO_CRYPTO_PROTOTYPE_TESTS}'")
 endif()
 
-if (_uno_crypto_tests_mode STREQUAL "OFF")
+if (_uno_crypto_tests_mode STREQUAL "OFF" AND NOT TOS_UNO_CRYPTO_NODE_LINK)
   message(STATUS "UNO crypto prototype tests disabled by TOS_UNO_CRYPTO_PROTOTYPE_TESTS=OFF")
   return()
 endif()
 
-if (_uno_crypto_tests_mode STREQUAL "ON")
+if (_uno_crypto_tests_mode STREQUAL "ON" OR TOS_UNO_CRYPTO_NODE_LINK)
   uno_require_cargo("${CMAKE_CURRENT_SOURCE_DIR}" UNO_CRYPTO_CARGO)
 else()
   uno_probe_cargo("${CMAKE_CURRENT_SOURCE_DIR}" _uno_crypto_cargo_available _uno_crypto_cargo_reason UNO_CRYPTO_CARGO)
@@ -36,6 +37,32 @@ add_custom_target(uno-crypto-rust
   WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
   VERBATIM)
 
+add_library(confidential-crypto-kernel STATIC IMPORTED GLOBAL)
+set_target_properties(confidential-crypto-kernel PROPERTIES
+  IMPORTED_LOCATION "${UNO_CRYPTO_ARCHIVE}"
+  INTERFACE_LINK_LIBRARIES "Threads::Threads;${CMAKE_DL_LIBS};m")
+add_dependencies(confidential-crypto-kernel uno-crypto-rust)
+
+function(link_confidential_kernel_into_node node)
+  # Linkage only: no engine registration, RPC, opcode or execution permission.
+  # Native Linux toolchain availability was checked before creating the archive.
+  target_link_libraries(${node} confidential-crypto-kernel)
+  target_link_options(${node} PRIVATE
+    "LINKER:--undefined=uno_crypto_verify_v2"
+    "LINKER:--undefined=uno_crypto_system_encrypt_v1"
+    "LINKER:--undefined=uno_crypto_system_verify_v1")
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
+  add_test(NAME test-uno-crypto-node-link COMMAND "${Python3_EXECUTABLE}"
+    "${PROJECT_SOURCE_DIR}/uno/crypto/tests/node-link.py"
+    --expect present $<TARGET_FILE:${node}>)
+  set_tests_properties(test-uno-crypto-node-link PROPERTIES TIMEOUT 60)
+  add_dependencies(all-tests ${node})
+endfunction()
+
+if (_uno_crypto_tests_mode STREQUAL "OFF")
+  message(STATUS "Confidential kernel node link enabled; prototype tests remain explicitly disabled")
+  return()
+endif()
 
 add_executable(test-uno-crypto-abi-real tests/balance-abi.cpp)
 target_include_directories(test-uno-crypto-abi-real PRIVATE include)

@@ -1,0 +1,20 @@
+{
+  "scope": "Initial opt-in link baseline; no mutation or final acceptance claim.",
+  "checks": [
+    {
+      "cmd": "python3 uno/crypto/tests/node-link.py --expect present build/validator-engine/validator-engine",
+      "exit_code": 0,
+      "output": "PASS: expected present, measured {'uno_crypto_system_verify_v1': 1, 'uno_crypto_verify_v2': 1, 'uno_crypto_system_encrypt_v1': 1}; no execution or entropy claim\n"
+    },
+    {
+      "cmd": "ctest --test-dir build -R '^test-uno-crypto-(node-link|abi-real|rust|symbols|kernel-gates|header-guard)$' --output-on-failure",
+      "exit_code": 0,
+      "output": "Internal ctest changing into directory: /home/tomi/tos/build\nTest project /home/tomi/tos/build\n    Start 93: test-uno-crypto-abi-real\n1/6 Test #93: test-uno-crypto-abi-real .........   Passed    1.13 sec\n    Start 94: test-uno-crypto-rust\n2/6 Test #94: test-uno-crypto-rust .............   Passed    4.01 sec\n    Start 95: test-uno-crypto-symbols\n3/6 Test #95: test-uno-crypto-symbols ..........   Passed    1.11 sec\n    Start 96: test-uno-crypto-kernel-gates\n4/6 Test #96: test-uno-crypto-kernel-gates .....   Passed    1.11 sec\n    Start 97: test-uno-crypto-header-guard\n5/6 Test #97: test-uno-crypto-header-guard .....   Passed    3.83 sec\n    Start 99: test-uno-crypto-node-link\n6/6 Test #99: test-uno-crypto-node-link ........   Passed    0.22 sec\n\n100% tests passed, 0 tests failed out of 6\n\nTotal Test time (real) =  11.41 sec\n"
+    },
+    {
+      "cmd": "scripts/check-no-removed-execution-domains.sh",
+      "exit_code": 1,
+      "output": "validator-engine/CMakeLists.txt:48: Uno outside approved engine paths: if (TOS_UNO_CRYPTO_NODE_LINK)\nremoved-execution-domain scan failed\n"
+    }
+  ]
+}

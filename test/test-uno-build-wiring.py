@@ -19,11 +19,19 @@ class UnoBuildWiring(unittest.TestCase):
                              "echo \"cargo $UNO_FAKE_VERSION (fixture)\"\n")
             cargo.chmod(0o700)
             script = root / "check.cmake"
-            script.write_text(f'include("{REPO}/uno/crypto/RequireCargo.cmake")\n'
-                              f'uno_require_cargo("{cargo}" "{root}")\n')
+            # Script mode has no project() to establish the target system.
+            # Set the supported test target, then exercise PATH discovery and
+            # the current (source-directory, output-variable) interface.
+            script.write_text('set(CMAKE_SYSTEM_NAME "Linux")\n'
+                              f'include("{REPO}/uno/crypto/RequireCargo.cmake")\n'
+                              f'uno_require_cargo("{root}" PINNED_CARGO)\n'
+                              f'if(NOT PINNED_CARGO STREQUAL "{cargo}")\n'
+                              '  message(FATAL_ERROR "did not select the controlled cargo fixture")\n'
+                              'endif()\n')
             for version, accepted in (("1.97.1", True), ("1.96.0", False), ("1.97.10", False)):
                 with self.subTest(version=version):
-                    env = dict(os.environ, UNO_FAKE_VERSION=version, CARGO_NET_OFFLINE="false")
+                    env = dict(os.environ, UNO_FAKE_VERSION=version, CARGO_NET_OFFLINE="false",
+                               PATH=str(root) + os.pathsep + os.environ.get("PATH", ""))
                     result = subprocess.run(["cmake", "-P", str(script)], env=env,
                                             capture_output=True, text=True)
                     self.assertEqual(result.returncode == 0, accepted, result.stdout + result.stderr)
@@ -38,6 +46,8 @@ class UnoBuildWiring(unittest.TestCase):
             result = subprocess.run(["ctest", "--test-dir", directory, "--show-only=json-v1"],
                                     capture_output=True, text=True, check=True)
             tests = {test["name"]: test for test in json.loads(result.stdout)["tests"]}
+            # A fresh configuration enables prototype tests, not node linkage.
+            self.assertNotIn("test-uno-crypto-node-link", tests)
             for name in ("test-uno-crypto-rust", "test-uno-crypto-abi-real", "test-uno-crypto-header-guard",
                          "test-uno-crypto-kernel-gates",
                          "test-counter-python-harness", "test-counter-real-manager-sync",
