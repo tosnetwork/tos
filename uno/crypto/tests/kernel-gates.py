@@ -16,6 +16,7 @@ PINS = {
     "curve25519-dalek": ("5.0.2", "10042b03cfc92e505e9d33d2827d5c0f0d36989a"),
     "merlin": ("4.1.0", "ee857c79347e0e2201e5192523faea13ac9bf451"),
 }
+MIRRORS = {name: "https://github.com/tosnetwork/" + name for name in PINS}
 TAGS = {
     "curve25519-dalek": ("e527e3a83b2647ac8e82fd27158a55593717e25e", PINS["curve25519-dalek"][1]),
     "bulletproofs": ("def04efbf9d435a22306eae2c1a967f15ad43239", "961bf3f8c2baa1e4d2a87e8e1f5b6f12e7fe6c82"),
@@ -109,6 +110,30 @@ def validate_checkout_status(directory):
 
 
 class KernelGates(unittest.TestCase):
+    def test_mirror_dependency_sources(self):
+        # Acquisition identity is separate from the immutable upstream object.
+        # Cover the wallet and vendored dev graph as well as the verifier graph.
+        declarations = (
+            (ROOT / "Cargo.toml", "dependencies", ("curve25519-dalek", "merlin")),
+            (ROOT.parent / "prover/Cargo.toml", "dependencies", ("curve25519-dalek",)),
+            (ROOT / "vendor/bulletproofs/Cargo.toml", "dependencies", ("curve25519-dalek", "merlin")),
+            (ROOT / "vendor/bulletproofs/Cargo.toml", "dev-dependencies", ("curve25519-dalek",)),
+        )
+        for path, section, names in declarations:
+            manifest = tomllib.loads(path.read_text())
+            for name in names:
+                with self.subTest(path=path, section=section, name=name):
+                    self.assertEqual(manifest[section][name]["git"], MIRRORS[name])
+                    self.assertEqual(manifest[section][name]["rev"], PINS[name][1])
+        for path in (ROOT / "Cargo.lock", ROOT.parent / "prover/Cargo.lock"):
+            packages = tomllib.loads(path.read_text())["package"]
+            for name, (version, revision) in PINS.items():
+                entries = [p for p in packages if p["name"] == name]
+                self.assertEqual(len(entries), 1, (path, name))
+                self.assertEqual(entries[0]["version"], version)
+                self.assertEqual(entries[0]["source"],
+                                 f"git+{MIRRORS[name]}?rev={revision}#{revision}")
+
     def test_rehashed_undeclared_vendor_changes_are_rejected(self):
         for path in ("src/generators.rs", "src/inner_product_proof.rs", "build.rs"):
             with self.subTest(path=path), tempfile.TemporaryDirectory(prefix="uno-rehashed-control-") as scratch:

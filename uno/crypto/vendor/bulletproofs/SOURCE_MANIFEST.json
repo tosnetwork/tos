@@ -26,7 +26,7 @@
     "src/util.rs": "a956469a2a812989fabafb01683d41d73e92d772"
   },
   "sha256": {
-    "Cargo.toml": "0bfe43ec802dcfa9ecea73c6dfa02c38047d3f0c88eaccb1054a4372e6a02e7d",
+    "Cargo.toml": "4684f33dccc50cf4ac34184158cf337d2f415a40993ca165ff5921f73eee73f6",
     "LICENSE.txt": "c11b881a42d112b7fb0ba3b4731c76d2a0c1f90e9fa62612b83f435ff38d76f7",
     "README.md": "8c03f8b8a159183b3d51794ccf9ea16c36e58248b17b561b1455ad6b5a5d93af",
     "src/errors.rs": "bd1d665d8dbf5c50c6e28ca9ecbb2be3cac82153d51220fd95e56536df039f86",
@@ -54,25 +54,25 @@
       "id": "locked-build-inputs",
       "path": "Cargo.toml",
       "upstream_git_blob": "d1c3eeee51bf8a29533bae54f70b05795800a0c2",
-      "reason": "Pin dependency revisions, retain the kernel test feature, and omit unvendored standalone test/benchmark targets.",
+      "reason": "Pin dependency revisions and acquire identical Git objects from the distribution mirrors; retain the kernel test feature and omit unvendored standalone test/benchmark targets.",
       "edits": [
         {
           "offset": 621,
           "before": "curve25519-dalek = { features = [\"digest\", \"group\", \"rand_core\", \"serde\", \"zeroize\", \"alloc\", \"std\", \"precomputed-tables\"], default-features = false, git = \"https://github.com/xelis-project/curve25519-dalek\", tag = \"v5.0.2\" }\nmerlin = { git = \"https://github.com/xelis-project/merlin\", default-features = false, tag = \"v4.1.0\" }\n",
-          "after": "curve25519-dalek = { features = [\"digest\", \"group\", \"rand_core\", \"serde\", \"zeroize\", \"alloc\", \"std\", \"precomputed-tables\"], default-features = false, git = \"https://github.com/xelis-project/curve25519-dalek\", rev = \"10042b03cfc92e505e9d33d2827d5c0f0d36989a\" }\nmerlin = { git = \"https://github.com/xelis-project/merlin\", default-features = false, rev = \"ee857c79347e0e2201e5192523faea13ac9bf451\" }\n"
+          "after": "curve25519-dalek = { features = [\"digest\", \"group\", \"rand_core\", \"serde\", \"zeroize\", \"alloc\", \"std\", \"precomputed-tables\"], default-features = false, git = \"https://github.com/tosnetwork/curve25519-dalek\", rev = \"10042b03cfc92e505e9d33d2827d5c0f0d36989a\" }\nmerlin = { git = \"https://github.com/tosnetwork/merlin\", default-features = false, rev = \"ee857c79347e0e2201e5192523faea13ac9bf451\" }\n"
         },
         {
-          "offset": 1698,
+          "offset": 1692,
           "before": "curve25519-dalek = { features = [\"digest\", \"group\", \"legacy_compatibility\", \"rand_core\", \"serde\", \"zeroize\", \"std\", \"alloc\", \"precomputed-tables\"], default-features = false, git = \"https://github.com/xelis-project/curve25519-dalek\", tag = \"v5.0.2\" }\n",
-          "after": "curve25519-dalek = { features = [\"digest\", \"group\", \"legacy_compatibility\", \"rand_core\", \"serde\", \"zeroize\", \"std\", \"alloc\", \"precomputed-tables\"], default-features = false, git = \"https://github.com/xelis-project/curve25519-dalek\", rev = \"10042b03cfc92e505e9d33d2827d5c0f0d36989a\" }\n"
+          "after": "curve25519-dalek = { features = [\"digest\", \"group\", \"legacy_compatibility\", \"rand_core\", \"serde\", \"zeroize\", \"std\", \"alloc\", \"precomputed-tables\"], default-features = false, git = \"https://github.com/tosnetwork/curve25519-dalek\", rev = \"10042b03cfc92e505e9d33d2827d5c0f0d36989a\" }\n"
         },
         {
-          "offset": 2084,
+          "offset": 2075,
           "before": "",
           "after": "kernel-test = []\n"
         },
         {
-          "offset": 2239,
+          "offset": 2230,
           "before": "\n\n[[test]]\nname = \"range_proof\"\n\n[[test]]\nname = \"r1cs\"\nrequired-features = [\"yoloproofs\"]\n\n[[bench]]\nname = \"range_proof\"\nharness = false\n\n[[bench]]\nname = \"generators\"\nharness = false\n\n[[bench]]\nname = \"r1cs\"\nharness = false\nrequired-features = [\"yoloproofs\"]\n\n[[bench]]\nname = \"linear_proof\"\nharness = false\n",
           "after": ""
         }

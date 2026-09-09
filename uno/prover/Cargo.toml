@@ -12,7 +12,7 @@ crate-type = ["rlib"]
 [dependencies]
 tos-uno-crypto-prototype = { path = "../crypto" }
 bulletproofs = { path = "../crypto/vendor/bulletproofs", default-features = false }
-curve25519-dalek = { git = "https://github.com/xelis-project/curve25519-dalek", rev = "10042b03cfc92e505e9d33d2827d5c0f0d36989a", default-features = false, features = ["alloc", "std", "precomputed-tables", "zeroize"] }
+curve25519-dalek = { git = "https://github.com/tosnetwork/curve25519-dalek", rev = "10042b03cfc92e505e9d33d2827d5c0f0d36989a", default-features = false, features = ["alloc", "std", "precomputed-tables", "zeroize"] }
 rand = { version = "=0.10.1", default-features = false, features = ["std", "std_rng", "sys_rng"] }
 chacha20 = { version = "=0.10.2", default-features = false, features = ["rng", "zeroize"] }
 zeroize = "=1.9.0"

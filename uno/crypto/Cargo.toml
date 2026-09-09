@@ -9,8 +9,8 @@ crate-type = ["rlib", "staticlib"]
 
 [dependencies]
 bulletproofs = { path = "vendor/bulletproofs", default-features = false }
-curve25519-dalek = { git = "https://github.com/xelis-project/curve25519-dalek", rev = "10042b03cfc92e505e9d33d2827d5c0f0d36989a", default-features = false, features = ["alloc", "std", "precomputed-tables"] }
-merlin = { git = "https://github.com/xelis-project/merlin", rev = "ee857c79347e0e2201e5192523faea13ac9bf451", default-features = false }
+curve25519-dalek = { git = "https://github.com/tosnetwork/curve25519-dalek", rev = "10042b03cfc92e505e9d33d2827d5c0f0d36989a", default-features = false, features = ["alloc", "std", "precomputed-tables"] }
+merlin = { git = "https://github.com/tosnetwork/merlin", rev = "ee857c79347e0e2201e5192523faea13ac9bf451", default-features = false }
 
 [workspace]
 exclude = ["vendor/bulletproofs"]

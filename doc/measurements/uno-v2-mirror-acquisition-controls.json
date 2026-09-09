@@ -1,0 +1,310 @@
+{
+  "scope": "Acquisition-only migration; no Rust source, upstream revision/blob, or raw signed tag object changes",
+  "base_commit": "2e72521f7",
+  "controls": [
+    {
+      "name": "uno/crypto/Cargo.toml:0",
+      "path": "uno/crypto/Cargo.toml",
+      "from": "curve25519-dalek = { git = \"https://github.com/tosnetwork/curve25519-dalek\", rev = \"10042b03cfc92e505e9d33d2827d5c0f0d36989a\", default-features = false, features = [\"alloc\", \"std\", \"precomputed-tables\"] }",
+      "to": "curve25519-dalek = { git = \"https://github.com/xelis-project/curve25519-dalek\", rev = \"10042b03cfc92e505e9d33d2827d5c0f0d36989a\", default-features = false, features = [\"alloc\", \"std\", \"precomputed-tables\"] }",
+      "restored_sha256": "14fc0667d7aef2e1c755939d6894f56071b563eb1d5580fc50dde3a4c705591a",
+      "observed_restored_sha256": "14fc0667d7aef2e1c755939d6894f56071b563eb1d5580fc50dde3a4c705591a",
+      "recorded_mutant_sha256": "7816a236398817772d41a30750f0f7d89f0144d17e00067e381c09e2dc71c18d",
+      "command": "python3 uno/crypto/tests/kernel-gates.py KernelGates.test_mirror_dependency_sources",
+      "test": {
+        "chunk_id": "947883",
+        "wall_time_seconds": 0.00001024,
+        "exit_code": 1,
+        "original_token_count": 349,
+        "output": "7816a236398817772d41a30750f0f7d89f0144d17e00067e381c09e2dc71c18d  uno/crypto/Cargo.toml\ntest_mirror_dependency_sources (__main__.KernelGates.test_mirror_dependency_sources) ... \n  test_mirror_dependency_sources (__main__.KernelGates.test_mirror_dependency_sources) (path=PosixPath('/home/tomi/tos/uno/crypto/Cargo.toml'), section='dependencies', name='curve25519-dalek') ... FAIL\n\n======================================================================\nFAIL: test_mirror_dependency_sources (__main__.KernelGates.test_mirror_dependency_sources) (path=PosixPath('/home/tomi/tos/uno/crypto/Cargo.toml'), section='dependencies', name='curve25519-dalek')\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"/home/tomi/tos/uno/crypto/tests/kernel-gates.py\", line 126, in test_mirror_dependency_sources\n    self.assertEqual(manifest[section][name][\"git\"], MIRRORS[name])\n    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: 'https://github.com/xelis-project/curve25519-dalek' != 'https://github.com/tosnetwork/curve25519-dalek'\n- https://github.com/xelis-project/curve25519-dalek\n?                    ^ ^^^^^ ^^^^^\n+ https://github.com/tosnetwork/curve25519-dalek\n?                    ^^^^ ^^^ ^\n\n\n----------------------------------------------------------------------\nRan 1 test in 0.008s\n\nFAILED (failures=1)\n"
+      },
+      "reconstructed_mutant_sha256": "7816a236398817772d41a30750f0f7d89f0144d17e00067e381c09e2dc71c18d"
+    },
+    {
+      "name": "uno/crypto/Cargo.toml:1",
+      "path": "uno/crypto/Cargo.toml",
+      "from": "merlin = { git = \"https://github.com/tosnetwork/merlin\", rev = \"ee857c79347e0e2201e5192523faea13ac9bf451\", default-features = false }",
+      "to": "merlin = { git = \"https://github.com/xelis-project/merlin\", rev = \"ee857c79347e0e2201e5192523faea13ac9bf451\", default-features = false }",
+      "restored_sha256": "14fc0667d7aef2e1c755939d6894f56071b563eb1d5580fc50dde3a4c705591a",
+      "observed_restored_sha256": "14fc0667d7aef2e1c755939d6894f56071b563eb1d5580fc50dde3a4c705591a",
+      "recorded_mutant_sha256": "b3b7a2b4da72aef7ef443dff219ac2c68e753960b514546ea05634e3794fd542",
+      "command": "python3 uno/crypto/tests/kernel-gates.py KernelGates.test_mirror_dependency_sources",
+      "test": {
+        "chunk_id": "30ab73",
+        "wall_time_seconds": 0.000007839,
+        "exit_code": 1,
+        "original_token_count": 334,
+        "output": "b3b7a2b4da72aef7ef443dff219ac2c68e753960b514546ea05634e3794fd542  uno/crypto/Cargo.toml\ntest_mirror_dependency_sources (__main__.KernelGates.test_mirror_dependency_sources) ... \n  test_mirror_dependency_sources (__main__.KernelGates.test_mirror_dependency_sources) (path=PosixPath('/home/tomi/tos/uno/crypto/Cargo.toml'), section='dependencies', name='merlin') ... FAIL\n\n======================================================================\nFAIL: test_mirror_dependency_sources (__main__.KernelGates.test_mirror_dependency_sources) (path=PosixPath('/home/tomi/tos/uno/crypto/Cargo.toml'), section='dependencies', name='merlin')\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"/home/tomi/tos/uno/crypto/tests/kernel-gates.py\", line 126, in test_mirror_dependency_sources\n    self.assertEqual(manifest[section][name][\"git\"], MIRRORS[name])\n    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: 'https://github.com/xelis-project/merlin' != 'https://github.com/tosnetwork/merlin'\n- https://github.com/xelis-project/merlin\n?                    ^ ^^^^^ ^^^^^\n+ https://github.com/tosnetwork/merlin\n?                    ^^^^ ^^^ ^\n\n\n----------------------------------------------------------------------\nRan 1 test in 0.008s\n\nFAILED (failures=1)\n"
+      },
+      "reconstructed_mutant_sha256": "b3b7a2b4da72aef7ef443dff219ac2c68e753960b514546ea05634e3794fd542"
+    },
+    {
+      "name": "uno/prover/Cargo.toml:0",
+      "path": "uno/prover/Cargo.toml",
+      "from": "curve25519-dalek = { git = \"https://github.com/tosnetwork/curve25519-dalek\", rev = \"10042b03cfc92e505e9d33d2827d5c0f0d36989a\", default-features = false, features = [\"alloc\", \"std\", \"precomputed-tables\", \"zeroize\"] }",
+      "to": "curve25519-dalek = { git = \"https://github.com/xelis-project/curve25519-dalek\", rev = \"10042b03cfc92e505e9d33d2827d5c0f0d36989a\", default-features = false, features = [\"alloc\", \"std\", \"precomputed-tables\", \"zeroize\"] }",
+      "restored_sha256": "8aa5b03fde58e8cf6077cddadd87d205c8bc21800d19245b2f65c6a21e3cf15a",
+      "observed_restored_sha256": "8aa5b03fde58e8cf6077cddadd87d205c8bc21800d19245b2f65c6a21e3cf15a",
+      "recorded_mutant_sha256": "ac35a6174f1e86c46af88cff839fb87171da416066b5745e892b222c2e2fddbb",
+      "command": "python3 uno/crypto/tests/kernel-gates.py KernelGates.test_mirror_dependency_sources",
+      "test": {
+        "chunk_id": "fd834d",
+        "wall_time_seconds": 0.000008664,
+        "exit_code": 1,
+        "original_token_count": 349,
+        "output": "ac35a6174f1e86c46af88cff839fb87171da416066b5745e892b222c2e2fddbb  uno/prover/Cargo.toml\ntest_mirror_dependency_sources (__main__.KernelGates.test_mirror_dependency_sources) ... \n  test_mirror_dependency_sources (__main__.KernelGates.test_mirror_dependency_sources) (path=PosixPath('/home/tomi/tos/uno/prover/Cargo.toml'), section='dependencies', name='curve25519-dalek') ... FAIL\n\n======================================================================\nFAIL: test_mirror_dependency_sources (__main__.KernelGates.test_mirror_dependency_sources) (path=PosixPath('/home/tomi/tos/uno/prover/Cargo.toml'), section='dependencies', name='curve25519-dalek')\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"/home/tomi/tos/uno/crypto/tests/kernel-gates.py\", line 126, in test_mirror_dependency_sources\n    self.assertEqual(manifest[section][name][\"git\"], MIRRORS[name])\n    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: 'https://github.com/xelis-project/curve25519-dalek' != 'https://github.com/tosnetwork/curve25519-dalek'\n- https://github.com/xelis-project/curve25519-dalek\n?                    ^ ^^^^^ ^^^^^\n+ https://github.com/tosnetwork/curve25519-dalek\n?                    ^^^^ ^^^ ^\n\n\n----------------------------------------------------------------------\nRan 1 test in 0.007s\n\nFAILED (failures=1)\n"
+      },
+      "reconstructed_mutant_sha256": "ac35a6174f1e86c46af88cff839fb87171da416066b5745e892b222c2e2fddbb"
+    },
+    {
+      "name": "uno/crypto/vendor/bulletproofs/Cargo.toml:0",
+      "path": "uno/crypto/vendor/bulletproofs/Cargo.toml",
+      "from": "curve25519-dalek = { features = [\"digest\", \"group\", \"rand_core\", \"serde\", \"zeroize\", \"alloc\", \"std\", \"precomputed-tables\"], default-features = false, git = \"https://github.com/tosnetwork/curve25519-dalek\", rev = \"10042b03cfc92e505e9d33d2827d5c0f0d36989a\" }",
+      "to": "curve25519-dalek = { features = [\"digest\", \"group\", \"rand_core\", \"serde\", \"zeroize\", \"alloc\", \"std\", \"precomputed-tables\"], default-features = false, git = \"https://github.com/xelis-project/curve25519-dalek\", rev = \"10042b03cfc92e505e9d33d2827d5c0f0d36989a\" }",
+      "restored_sha256": "4684f33dccc50cf4ac34184158cf337d2f415a40993ca165ff5921f73eee73f6",
+      "observed_restored_sha256": "4684f33dccc50cf4ac34184158cf337d2f415a40993ca165ff5921f73eee73f6",
+      "recorded_mutant_sha256": "b5c39c14d1a75553bf624dfdb7de8c08621f2f6a5316b5c6168d0e14a62f0a63",
+      "command": "python3 uno/crypto/tests/kernel-gates.py KernelGates.test_mirror_dependency_sources",
+      "test": {
+        "chunk_id": "225f32",
+        "wall_time_seconds": 0.00000612,
+        "exit_code": 1,
+        "original_token_count": 364,
+        "output": "b5c39c14d1a75553bf624dfdb7de8c08621f2f6a5316b5c6168d0e14a62f0a63  uno/crypto/vendor/bulletproofs/Cargo.toml\ntest_mirror_dependency_sources (__main__.KernelGates.test_mirror_dependency_sources) ... \n  test_mirror_dependency_sources (__main__.KernelGates.test_mirror_dependency_sources) (path=PosixPath('/home/tomi/tos/uno/crypto/vendor/bulletproofs/Cargo.toml'), section='dependencies', name='curve25519-dalek') ... FAIL\n\n======================================================================\nFAIL: test_mirror_dependency_sources (__main__.KernelGates.test_mirror_dependency_sources) (path=PosixPath('/home/tomi/tos/uno/crypto/vendor/bulletproofs/Cargo.toml'), section='dependencies', name='curve25519-dalek')\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"/home/tomi/tos/uno/crypto/tests/kernel-gates.py\", line 126, in test_mirror_dependency_sources\n    self.assertEqual(manifest[section][name][\"git\"], MIRRORS[name])\n    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: 'https://github.com/xelis-project/curve25519-dalek' != 'https://github.com/tosnetwork/curve25519-dalek'\n- https://github.com/xelis-project/curve25519-dalek\n?                    ^ ^^^^^ ^^^^^\n+ https://github.com/tosnetwork/curve25519-dalek\n?                    ^^^^ ^^^ ^\n\n\n----------------------------------------------------------------------\nRan 1 test in 0.007s\n\nFAILED (failures=1)\n"
+      },
+      "reconstructed_mutant_sha256": "b5c39c14d1a75553bf624dfdb7de8c08621f2f6a5316b5c6168d0e14a62f0a63"
+    },
+    {
+      "name": "uno/crypto/vendor/bulletproofs/Cargo.toml:1",
+      "path": "uno/crypto/vendor/bulletproofs/Cargo.toml",
+      "from": "merlin = { git = \"https://github.com/tosnetwork/merlin\", default-features = false, rev = \"ee857c79347e0e2201e5192523faea13ac9bf451\" }",
+      "to": "merlin = { git = \"https://github.com/xelis-project/merlin\", default-features = false, rev = \"ee857c79347e0e2201e5192523faea13ac9bf451\" }",
+      "restored_sha256": "4684f33dccc50cf4ac34184158cf337d2f415a40993ca165ff5921f73eee73f6",
+      "observed_restored_sha256": "4684f33dccc50cf4ac34184158cf337d2f415a40993ca165ff5921f73eee73f6",
+      "recorded_mutant_sha256": "b0783652fc30aca15110b6867f2e30e7ff0ac2460157ba91b3196548dc9d773a",
+      "command": "python3 uno/crypto/tests/kernel-gates.py KernelGates.test_mirror_dependency_sources",
+      "test": {
+        "chunk_id": "53e872",
+        "wall_time_seconds": 0.000008563,
+        "exit_code": 1,
+        "original_token_count": 349,
+        "output": "b0783652fc30aca15110b6867f2e30e7ff0ac2460157ba91b3196548dc9d773a  uno/crypto/vendor/bulletproofs/Cargo.toml\ntest_mirror_dependency_sources (__main__.KernelGates.test_mirror_dependency_sources) ... \n  test_mirror_dependency_sources (__main__.KernelGates.test_mirror_dependency_sources) (path=PosixPath('/home/tomi/tos/uno/crypto/vendor/bulletproofs/Cargo.toml'), section='dependencies', name='merlin') ... FAIL\n\n======================================================================\nFAIL: test_mirror_dependency_sources (__main__.KernelGates.test_mirror_dependency_sources) (path=PosixPath('/home/tomi/tos/uno/crypto/vendor/bulletproofs/Cargo.toml'), section='dependencies', name='merlin')\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"/home/tomi/tos/uno/crypto/tests/kernel-gates.py\", line 126, in test_mirror_dependency_sources\n    self.assertEqual(manifest[section][name][\"git\"], MIRRORS[name])\n    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: 'https://github.com/xelis-project/merlin' != 'https://github.com/tosnetwork/merlin'\n- https://github.com/xelis-project/merlin\n?                    ^ ^^^^^ ^^^^^\n+ https://github.com/tosnetwork/merlin\n?                    ^^^^ ^^^ ^\n\n\n----------------------------------------------------------------------\nRan 1 test in 0.007s\n\nFAILED (failures=1)\n"
+      },
+      "reconstructed_mutant_sha256": "b0783652fc30aca15110b6867f2e30e7ff0ac2460157ba91b3196548dc9d773a"
+    },
+    {
+      "name": "uno/crypto/vendor/bulletproofs/Cargo.toml:2",
+      "path": "uno/crypto/vendor/bulletproofs/Cargo.toml",
+      "from": "curve25519-dalek = { features = [\"digest\", \"group\", \"legacy_compatibility\", \"rand_core\", \"serde\", \"zeroize\", \"std\", \"alloc\", \"precomputed-tables\"], default-features = false, git = \"https://github.com/tosnetwork/curve25519-dalek\", rev = \"10042b03cfc92e505e9d33d2827d5c0f0d36989a\" }",
+      "to": "curve25519-dalek = { features = [\"digest\", \"group\", \"legacy_compatibility\", \"rand_core\", \"serde\", \"zeroize\", \"std\", \"alloc\", \"precomputed-tables\"], default-features = false, git = \"https://github.com/xelis-project/curve25519-dalek\", rev = \"10042b03cfc92e505e9d33d2827d5c0f0d36989a\" }",
+      "restored_sha256": "4684f33dccc50cf4ac34184158cf337d2f415a40993ca165ff5921f73eee73f6",
+      "observed_restored_sha256": "4684f33dccc50cf4ac34184158cf337d2f415a40993ca165ff5921f73eee73f6",
+      "recorded_mutant_sha256": "43a98d3f10b3f5f886174c5895e66b2b8cd9cf9738586a892ae6fb4ab86198f0",
+      "command": "python3 uno/crypto/tests/kernel-gates.py KernelGates.test_mirror_dependency_sources",
+      "test": {
+        "chunk_id": "07c2dd",
+        "wall_time_seconds": 0.000008636,
+        "exit_code": 1,
+        "original_token_count": 366,
+        "output": "43a98d3f10b3f5f886174c5895e66b2b8cd9cf9738586a892ae6fb4ab86198f0  uno/crypto/vendor/bulletproofs/Cargo.toml\ntest_mirror_dependency_sources (__main__.KernelGates.test_mirror_dependency_sources) ... \n  test_mirror_dependency_sources (__main__.KernelGates.test_mirror_dependency_sources) (path=PosixPath('/home/tomi/tos/uno/crypto/vendor/bulletproofs/Cargo.toml'), section='dev-dependencies', name='curve25519-dalek') ... FAIL\n\n======================================================================\nFAIL: test_mirror_dependency_sources (__main__.KernelGates.test_mirror_dependency_sources) (path=PosixPath('/home/tomi/tos/uno/crypto/vendor/bulletproofs/Cargo.toml'), section='dev-dependencies', name='curve25519-dalek')\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"/home/tomi/tos/uno/crypto/tests/kernel-gates.py\", line 126, in test_mirror_dependency_sources\n    self.assertEqual(manifest[section][name][\"git\"], MIRRORS[name])\n    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: 'https://github.com/xelis-project/curve25519-dalek' != 'https://github.com/tosnetwork/curve25519-dalek'\n- https://github.com/xelis-project/curve25519-dalek\n?                    ^ ^^^^^ ^^^^^\n+ https://github.com/tosnetwork/curve25519-dalek\n?                    ^^^^ ^^^ ^\n\n\n----------------------------------------------------------------------\nRan 1 test in 0.007s\n\nFAILED (failures=1)\n"
+      },
+      "reconstructed_mutant_sha256": "43a98d3f10b3f5f886174c5895e66b2b8cd9cf9738586a892ae6fb4ab86198f0"
+    },
+    {
+      "name": "uno/crypto/Cargo.lock:0",
+      "path": "uno/crypto/Cargo.lock",
+      "from": "source = \"git+https://github.com/tosnetwork/curve25519-dalek?rev=10042b03cfc92e505e9d33d2827d5c0f0d36989a#10042b03cfc92e505e9d33d2827d5c0f0d36989a\"",
+      "to": "source = \"git+https://github.com/xelis-project/curve25519-dalek?rev=10042b03cfc92e505e9d33d2827d5c0f0d36989a#10042b03cfc92e505e9d33d2827d5c0f0d36989a\"",
+      "restored_sha256": "53498d7f50d16046abf39c03bedc58eb1eadedbea9aa96bfdd10c93ae88db543",
+      "observed_restored_sha256": "53498d7f50d16046abf39c03bedc58eb1eadedbea9aa96bfdd10c93ae88db543",
+      "recorded_mutant_sha256": "7dab8d8145bf305d78ffab9212427d6e27d8ad2f828da078517b2fd86c21c54b",
+      "command": "python3 uno/crypto/tests/kernel-gates.py KernelGates.test_mirror_dependency_sources",
+      "test": {
+        "chunk_id": "15fa21",
+        "wall_time_seconds": 0.000008636,
+        "exit_code": 1,
+        "original_token_count": 357,
+        "output": "7dab8d8145bf305d78ffab9212427d6e27d8ad2f828da078517b2fd86c21c54b  uno/crypto/Cargo.lock\ntest_mirror_dependency_sources (__main__.KernelGates.test_mirror_dependency_sources) ... FAIL\n\n======================================================================\nFAIL: test_mirror_dependency_sources (__main__.KernelGates.test_mirror_dependency_sources)\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"/home/tomi/tos/uno/crypto/tests/kernel-gates.py\", line 134, in test_mirror_dependency_sources\n    self.assertEqual(entries[0][\"source\"],\n    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^\n                     f\"git+{MIRRORS[name]}?rev={revision}#{revision}\")\n                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: 'git+[14 chars].com/xelis-project/curve25519-dalek?rev=10042b[71 chars]989a' != 'git+[14 chars].com/tosnetwork/curve25519-dalek?rev=10042b03c[68 chars]989a'\n- git+https://github.com/xelis-project/curve25519-dalek?rev=10042b03cfc92e505e9d33d2827d5c0f0d36989a#10042b03cfc92e505e9d33d2827d5c0f0d36989a\n?                        ^ ^^^^^ ^^^^^\n+ git+https://github.com/tosnetwork/curve25519-dalek?rev=10042b03cfc92e505e9d33d2827d5c0f0d36989a#10042b03cfc92e505e9d33d2827d5c0f0d36989a\n?                        ^^^^ ^^^ ^\n\n\n----------------------------------------------------------------------\nRan 1 test in 0.005s\n\nFAILED (failures=1)\n"
+      },
+      "reconstructed_mutant_sha256": "7dab8d8145bf305d78ffab9212427d6e27d8ad2f828da078517b2fd86c21c54b"
+    },
+    {
+      "name": "uno/crypto/Cargo.lock:1",
+      "path": "uno/crypto/Cargo.lock",
+      "from": "source = \"git+https://github.com/tosnetwork/merlin?rev=ee857c79347e0e2201e5192523faea13ac9bf451#ee857c79347e0e2201e5192523faea13ac9bf451\"",
+      "to": "source = \"git+https://github.com/xelis-project/merlin?rev=ee857c79347e0e2201e5192523faea13ac9bf451#ee857c79347e0e2201e5192523faea13ac9bf451\"",
+      "restored_sha256": "53498d7f50d16046abf39c03bedc58eb1eadedbea9aa96bfdd10c93ae88db543",
+      "observed_restored_sha256": "53498d7f50d16046abf39c03bedc58eb1eadedbea9aa96bfdd10c93ae88db543",
+      "recorded_mutant_sha256": "862238097a7be54c47f94c45929d0abe2c4cd54c636704218f40a97674e324b7",
+      "command": "python3 uno/crypto/tests/kernel-gates.py KernelGates.test_mirror_dependency_sources",
+      "test": {
+        "chunk_id": "d8e453",
+        "wall_time_seconds": 0.000008476,
+        "exit_code": 1,
+        "original_token_count": 352,
+        "output": "862238097a7be54c47f94c45929d0abe2c4cd54c636704218f40a97674e324b7  uno/crypto/Cargo.lock\ntest_mirror_dependency_sources (__main__.KernelGates.test_mirror_dependency_sources) ... FAIL\n\n======================================================================\nFAIL: test_mirror_dependency_sources (__main__.KernelGates.test_mirror_dependency_sources)\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"/home/tomi/tos/uno/crypto/tests/kernel-gates.py\", line 134, in test_mirror_dependency_sources\n    self.assertEqual(entries[0][\"source\"],\n    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^\n                     f\"git+{MIRRORS[name]}?rev={revision}#{revision}\")\n                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: 'git+[14 chars].com/xelis-project/merlin?rev=ee857c79347e0e22[61 chars]f451' != 'git+[14 chars].com/tosnetwork/merlin?rev=ee857c79347e0e2201e[58 chars]f451'\n- git+https://github.com/xelis-project/merlin?rev=ee857c79347e0e2201e5192523faea13ac9bf451#ee857c79347e0e2201e5192523faea13ac9bf451\n?                        ^ ^^^^^ ^^^^^\n+ git+https://github.com/tosnetwork/merlin?rev=ee857c79347e0e2201e5192523faea13ac9bf451#ee857c79347e0e2201e5192523faea13ac9bf451\n?                        ^^^^ ^^^ ^\n\n\n----------------------------------------------------------------------\nRan 1 test in 0.005s\n\nFAILED (failures=1)\n"
+      },
+      "reconstructed_mutant_sha256": "862238097a7be54c47f94c45929d0abe2c4cd54c636704218f40a97674e324b7"
+    },
+    {
+      "name": "uno/prover/Cargo.lock:0",
+      "path": "uno/prover/Cargo.lock",
+      "from": "source = \"git+https://github.com/tosnetwork/curve25519-dalek?rev=10042b03cfc92e505e9d33d2827d5c0f0d36989a#10042b03cfc92e505e9d33d2827d5c0f0d36989a\"",
+      "to": "source = \"git+https://github.com/xelis-project/curve25519-dalek?rev=10042b03cfc92e505e9d33d2827d5c0f0d36989a#10042b03cfc92e505e9d33d2827d5c0f0d36989a\"",
+      "restored_sha256": "4bb0c19fd76c3084a9537cbd94146a73e427aae6875aa9e39d509a24b777eedc",
+      "observed_restored_sha256": "4bb0c19fd76c3084a9537cbd94146a73e427aae6875aa9e39d509a24b777eedc",
+      "recorded_mutant_sha256": "1fcbc699ca5c4786557868c92f89a0108e1970969d6dce6dc47f68777b302f90",
+      "command": "python3 uno/crypto/tests/kernel-gates.py KernelGates.test_mirror_dependency_sources",
+      "test": {
+        "chunk_id": "71ccc2",
+        "wall_time_seconds": 0.00000833,
+        "exit_code": 1,
+        "original_token_count": 357,
+        "output": "1fcbc699ca5c4786557868c92f89a0108e1970969d6dce6dc47f68777b302f90  uno/prover/Cargo.lock\ntest_mirror_dependency_sources (__main__.KernelGates.test_mirror_dependency_sources) ... FAIL\n\n======================================================================\nFAIL: test_mirror_dependency_sources (__main__.KernelGates.test_mirror_dependency_sources)\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"/home/tomi/tos/uno/crypto/tests/kernel-gates.py\", line 134, in test_mirror_dependency_sources\n    self.assertEqual(entries[0][\"source\"],\n    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^\n                     f\"git+{MIRRORS[name]}?rev={revision}#{revision}\")\n                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: 'git+[14 chars].com/xelis-project/curve25519-dalek?rev=10042b[71 chars]989a' != 'git+[14 chars].com/tosnetwork/curve25519-dalek?rev=10042b03c[68 chars]989a'\n- git+https://github.com/xelis-project/curve25519-dalek?rev=10042b03cfc92e505e9d33d2827d5c0f0d36989a#10042b03cfc92e505e9d33d2827d5c0f0d36989a\n?                        ^ ^^^^^ ^^^^^\n+ git+https://github.com/tosnetwork/curve25519-dalek?rev=10042b03cfc92e505e9d33d2827d5c0f0d36989a#10042b03cfc92e505e9d33d2827d5c0f0d36989a\n?                        ^^^^ ^^^ ^\n\n\n----------------------------------------------------------------------\nRan 1 test in 0.007s\n\nFAILED (failures=1)\n"
+      },
+      "reconstructed_mutant_sha256": "1fcbc699ca5c4786557868c92f89a0108e1970969d6dce6dc47f68777b302f90"
+    },
+    {
+      "name": "uno/prover/Cargo.lock:1",
+      "path": "uno/prover/Cargo.lock",
+      "from": "source = \"git+https://github.com/tosnetwork/merlin?rev=ee857c79347e0e2201e5192523faea13ac9bf451#ee857c79347e0e2201e5192523faea13ac9bf451\"",
+      "to": "source = \"git+https://github.com/xelis-project/merlin?rev=ee857c79347e0e2201e5192523faea13ac9bf451#ee857c79347e0e2201e5192523faea13ac9bf451\"",
+      "restored_sha256": "4bb0c19fd76c3084a9537cbd94146a73e427aae6875aa9e39d509a24b777eedc",
+      "observed_restored_sha256": "4bb0c19fd76c3084a9537cbd94146a73e427aae6875aa9e39d509a24b777eedc",
+      "recorded_mutant_sha256": "543b3b8d6ce8b35b24cdaf798a80f51645f99378ead8d1287295808071d4ff3e",
+      "command": "python3 uno/crypto/tests/kernel-gates.py KernelGates.test_mirror_dependency_sources",
+      "test": {
+        "chunk_id": "b4697b",
+        "wall_time_seconds": 0.000008365,
+        "exit_code": 1,
+        "original_token_count": 352,
+        "output": "543b3b8d6ce8b35b24cdaf798a80f51645f99378ead8d1287295808071d4ff3e  uno/prover/Cargo.lock\ntest_mirror_dependency_sources (__main__.KernelGates.test_mirror_dependency_sources) ... FAIL\n\n======================================================================\nFAIL: test_mirror_dependency_sources (__main__.KernelGates.test_mirror_dependency_sources)\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"/home/tomi/tos/uno/crypto/tests/kernel-gates.py\", line 134, in test_mirror_dependency_sources\n    self.assertEqual(entries[0][\"source\"],\n    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^\n                     f\"git+{MIRRORS[name]}?rev={revision}#{revision}\")\n                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: 'git+[14 chars].com/xelis-project/merlin?rev=ee857c79347e0e22[61 chars]f451' != 'git+[14 chars].com/tosnetwork/merlin?rev=ee857c79347e0e2201e[58 chars]f451'\n- git+https://github.com/xelis-project/merlin?rev=ee857c79347e0e2201e5192523faea13ac9bf451#ee857c79347e0e2201e5192523faea13ac9bf451\n?                        ^ ^^^^^ ^^^^^\n+ git+https://github.com/tosnetwork/merlin?rev=ee857c79347e0e2201e5192523faea13ac9bf451#ee857c79347e0e2201e5192523faea13ac9bf451\n?                        ^^^^ ^^^ ^\n\n\n----------------------------------------------------------------------\nRan 1 test in 0.008s\n\nFAILED (failures=1)\n"
+      },
+      "reconstructed_mutant_sha256": "543b3b8d6ce8b35b24cdaf798a80f51645f99378ead8d1287295808071d4ff3e"
+    },
+    {
+      "name": "stale-patch-after-with-current-sha256",
+      "path": "uno/crypto/vendor/bulletproofs/SOURCE_MANIFEST.json",
+      "from": "          \"after\": \"curve25519-dalek = { features = [\\\"digest\\\", \\\"group\\\", \\\"rand_core\\\", \\\"serde\\\", \\\"zeroize\\\", \\\"alloc\\\", \\\"std\\\", \\\"precomputed-tables\\\"], default-features = false, git = \\\"https://github.com/tosnetwork/curve25519-dalek\\\", rev = \\\"10042b03cfc92e505e9d33d2827d5c0f0d36989a\\\" }\\nmerlin = { git = \\\"https://github.com/tosnetwork/merlin\\\", default-features = false, rev = \\\"ee857c79347e0e2201e5192523faea13ac9bf451\\\" }\\n\"",
+      "to": "          \"after\": \"curve25519-dalek = { features = [\\\"digest\\\", \\\"group\\\", \\\"rand_core\\\", \\\"serde\\\", \\\"zeroize\\\", \\\"alloc\\\", \\\"std\\\", \\\"precomputed-tables\\\"], default-features = false, git = \\\"https://github.com/xelis-project/curve25519-dalek\\\", rev = \\\"10042b03cfc92e505e9d33d2827d5c0f0d36989a\\\" }\\nmerlin = { git = \\\"https://github.com/tosnetwork/merlin\\\", default-features = false, rev = \\\"ee857c79347e0e2201e5192523faea13ac9bf451\\\" }\\n\"",
+      "restored_sha256": "598cc10da4a2f146013e6d3d74eee9334ae74d085fdc73e8a8063daec6b1c120",
+      "observed_restored_sha256": "598cc10da4a2f146013e6d3d74eee9334ae74d085fdc73e8a8063daec6b1c120",
+      "recorded_mutant_sha256": "bb988929e71971223dc6c328e7e72e1e1816da0eec50bf8c6f65002a29a0bd75",
+      "test": {
+        "chunk_id": "8ff1cd",
+        "wall_time_seconds": 0.000009361,
+        "exit_code": 1,
+        "original_token_count": 308,
+        "output": "bb988929e71971223dc6c328e7e72e1e1816da0eec50bf8c6f65002a29a0bd75  uno/crypto/vendor/bulletproofs/SOURCE_MANIFEST.json\ntest_vendored_source_manifest_and_tamper_control (__main__.KernelGates.test_vendored_source_manifest_and_tamper_control) ... ERROR\n\n======================================================================\nERROR: test_vendored_source_manifest_and_tamper_control (__main__.KernelGates.test_vendored_source_manifest_and_tamper_control)\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"/home/tomi/tos/uno/crypto/tests/kernel-gates.py\", line 265, in test_vendored_source_manifest_and_tamper_control\n    validate_vendor(ROOT / \"vendor/bulletproofs\")\n    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/tomi/tos/uno/crypto/tests/kernel-gates.py\", line 96, in validate_vendor\n    data = upstream_before_patch(data, patch)\n  File \"/home/tomi/tos/uno/crypto/tests/kernel-gates.py\", line 55, in upstream_before_patch\n    raise ValueError(\"declared local patch is absent or changed\")\nValueError: declared local patch is absent or changed\n\n----------------------------------------------------------------------\nRan 1 test in 0.002s\n\nFAILED (errors=1)\n"
+      },
+      "reconstructed_mutant_sha256": "bb988929e71971223dc6c328e7e72e1e1816da0eec50bf8c6f65002a29a0bd75"
+    }
+  ],
+  "cold_fetches": [
+    {
+      "crate": "uno/crypto",
+      "cache": "/tmp/uno-mirror-verifier.lWif5S",
+      "initial_state": "fresh empty directory allocated with mktemp -d; no git or registry cache copied",
+      "command": "env CARGO_HOME=/tmp/uno-mirror-verifier.lWif5S CARGO_NET_OFFLINE=false GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null cargo fetch --locked --manifest-path uno/crypto/Cargo.toml",
+      "exit_code": 0
+    },
+    {
+      "crate": "uno/prover",
+      "cache": "/tmp/uno-mirror-prover.Dm6gDb",
+      "initial_state": "separate fresh empty directory allocated with mktemp -d; no git or registry cache copied",
+      "command": "env CARGO_HOME=/tmp/uno-mirror-prover.Dm6gDb CARGO_NET_OFFLINE=false GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null cargo fetch --locked --manifest-path uno/prover/Cargo.toml",
+      "exit_code": 0
+    }
+  ],
+  "reported_git_repositories": [
+    "https://github.com/tosnetwork/curve25519-dalek",
+    "https://github.com/tosnetwork/merlin"
+  ],
+  "tag_fetches": [
+    {
+      "name": "curve25519-dalek",
+      "dir": "/tmp/uno-mirror-tags.TCiFWO/curve25519-dalek",
+      "commit": "10042b03cfc92e505e9d33d2827d5c0f0d36989a",
+      "obj": "e527e3a83b2647ac8e82fd27158a55593717e25e",
+      "tag": "v5.0.2",
+      "chunk_id": "45a984",
+      "wall_time_seconds": 0.749857018,
+      "exit_code": 0,
+      "original_token_count": 135,
+      "output": "From https://github.com/tosnetwork/curve25519-dalek\n * [new tag]         v5.0.2     -> v5.0.2\ne527e3a83b2647ac8e82fd27158a55593717e25e\n10042b03cfc92e505e9d33d2827d5c0f0d36989a\nobject 10042b03cfc92e505e9d33d2827d5c0f0d36989a\ntype commit\ntag v5.0.2\ntagger Slixe <slixeprivate@gmail.com> 1783277771 +0200\n\nv5.0.2\n-----BEGIN PGP SIGNATURE-----\n\niHUEABYKAB0WIQRlxOLZEWNlrvRy49B26XkOoodAywUCakqozgAKCRB26XkOoodA\nyz1kAP9UygTYrCBXr6fLou63IMQ0QUwWy2OfoqHrRJVc5A6bLwD/aDgL0DU1Bt7Z\n6VBd4EOCcDEcmrj3KBt7NjHRBBkI2AM=\n=ZeUA\n-----END PGP SIGNATURE-----\n"
+    },
+    {
+      "name": "bulletproofs",
+      "dir": "/tmp/uno-mirror-tags.TCiFWO/bulletproofs",
+      "commit": "961bf3f8c2baa1e4d2a87e8e1f5b6f12e7fe6c82",
+      "obj": "def04efbf9d435a22306eae2c1a967f15ad43239",
+      "tag": "v5.3.0",
+      "chunk_id": "04a0a6",
+      "wall_time_seconds": 0.794267013,
+      "exit_code": 0,
+      "original_token_count": 134,
+      "output": "From https://github.com/tosnetwork/bulletproofs\n * [new tag]         v5.3.0     -> v5.3.0\ndef04efbf9d435a22306eae2c1a967f15ad43239\n961bf3f8c2baa1e4d2a87e8e1f5b6f12e7fe6c82\nobject 961bf3f8c2baa1e4d2a87e8e1f5b6f12e7fe6c82\ntype commit\ntag v5.3.0\ntagger Slixe <slixeprivate@gmail.com> 1783286851 +0200\n\nv5.3.0\n-----BEGIN PGP SIGNATURE-----\n\niHUEABYKAB0WIQRlxOLZEWNlrvRy49B26XkOoodAywUCakrMSAAKCRB26XkOoodA\ny/ubAQD9/8Sgsqg4AEhiZvaAqymV/IxJMrhCHLU09HWoT6IzBgEAthzY4yqoKrDP\nAkkRtruR0IlHg4uaXbaOW6zAQgv+bwA=\n=fWAD\n-----END PGP SIGNATURE-----\n"
+    },
+    {
+      "name": "merlin",
+      "dir": "/tmp/uno-mirror-tags.TCiFWO/merlin",
+      "commit": "ee857c79347e0e2201e5192523faea13ac9bf451",
+      "obj": "fb9aae0179e42c7e4872d26485f19c1a03710182",
+      "tag": "v4.1.0",
+      "chunk_id": "ee8467",
+      "wall_time_seconds": 0.544884884,
+      "exit_code": 0,
+      "original_token_count": 132,
+      "output": "From https://github.com/tosnetwork/merlin\n * [new tag]         v4.1.0     -> v4.1.0\nfb9aae0179e42c7e4872d26485f19c1a03710182\nee857c79347e0e2201e5192523faea13ac9bf451\nobject ee857c79347e0e2201e5192523faea13ac9bf451\ntype commit\ntag v4.1.0\ntagger Slixe <slixeprivate@gmail.com> 1783278834 +0200\n\nv4.1.0\n-----BEGIN PGP SIGNATURE-----\n\niHUEABYKAB0WIQRlxOLZEWNlrvRy49B26XkOoodAywUCakqs9QAKCRB26XkOoodA\ny+e+AQDH1bc3HK9A6Ck12pCQzPUolycTmnS/qRsNzB6Dcx0ACwEAtG3ZmkEmAdpI\nQ6MqIPSXopw80tWt1jeTFNeAebXzBAc=\n=AQ/B\n-----END PGP SIGNATURE-----\n"
+    }
+  ],
+  "github_verification": {
+    "date": "2026-09-09",
+    "source": "GET repos/tosnetwork/{name}/git/tags/{object}",
+    "all_verified": true,
+    "all_reasons": "valid",
+    "scope": "Remote API result; not an offline trust-chain verification performed by the local gate"
+  },
+  "ci": {
+    "workflow": ".github/workflows/uno-wallet-prover.yml",
+    "changed": false,
+    "commands": [
+      "CARGO_NET_OFFLINE=false cargo fetch --locked --manifest-path uno/prover/Cargo.toml",
+      "CARGO_NET_OFFLINE=false cargo fetch --locked --manifest-path uno/crypto/Cargo.toml"
+    ],
+    "scope": "The same manifests and locks now name the mirrors. Local fresh-cache runs exercise these fetch commands, not a claim of a completed remote CI run."
+  },
+  "final_checks": {
+    "kernel": {
+      "command": "env CARGO_HOME=/tmp/uno-mirror-verifier.lWif5S python3 uno/crypto/tests/kernel-gates.py",
+      "chunk_id": "485d63",
+      "wall_time_seconds": 1.136051769,
+      "exit_code": 0,
+      "original_token_count": 348,
+      "output": "test_annotated_tag_objects_bind_the_commits (__main__.KernelGates.test_annotated_tag_objects_bind_the_commits) ... ok\ntest_checkout_status_rejects_untracked_build_script (__main__.KernelGates.test_checkout_status_rejects_untracked_build_script) ... ok\ntest_declared_patch_base_is_checked (__main__.KernelGates.test_declared_patch_base_is_checked) ... ok\ntest_mirror_dependency_sources (__main__.KernelGates.test_mirror_dependency_sources) ... ok\ntest_normal_dependency_graph_has_no_entropy_provider (__main__.KernelGates.test_normal_dependency_graph_has_no_entropy_provider) ... ok\ntest_patch_byte_matching_is_exact (__main__.KernelGates.test_patch_byte_matching_is_exact) ... ok\ntest_pins_and_registry_archives (__main__.KernelGates.test_pins_and_registry_archives) ... ok\ntest_rehashed_undeclared_vendor_changes_are_rejected (__main__.KernelGates.test_rehashed_undeclared_vendor_changes_are_rejected) ... ok\ntest_required_patch_survives_upstream_refresh (__main__.KernelGates.test_required_patch_survives_upstream_refresh) ... ok\ntest_vendored_source_manifest_and_tamper_control (__main__.KernelGates.test_vendored_source_manifest_and_tamper_control) ... ok\ntest_verifier_entry_closure_and_negative_controls (__main__.KernelGates.test_verifier_entry_closure_and_negative_controls) ... ok\n\n----------------------------------------------------------------------\nRan 11 tests in 1.183s\n\nOK\n"
+    },
+    "wallet_source": {
+      "command": "env CARGO_HOME=/tmp/uno-mirror-prover.Dm6gDb python3 uno/prover/tests/source-gates.py",
+      "chunk_id": "c1d394",
+      "wall_time_seconds": 1.382063297,
+      "exit_code": 0,
+      "original_token_count": 471,
+      "output": "test_distinct_entropy_graphs (__main__.WalletGates.test_distinct_entropy_graphs) ... ok\ntest_external_sources_are_covered_by_kernel_archive_checks (__main__.WalletGates.test_external_sources_are_covered_by_kernel_archive_checks) ... test_annotated_tag_objects_bind_the_commits (__main__.KernelGates.test_annotated_tag_objects_bind_the_commits) ... ok\ntest_checkout_status_rejects_untracked_build_script (__main__.KernelGates.test_checkout_status_rejects_untracked_build_script) ... ok\ntest_declared_patch_base_is_checked (__main__.KernelGates.test_declared_patch_base_is_checked) ... ok\ntest_mirror_dependency_sources (__main__.KernelGates.test_mirror_dependency_sources) ... ok\ntest_normal_dependency_graph_has_no_entropy_provider (__main__.KernelGates.test_normal_dependency_graph_has_no_entropy_provider) ... ok\ntest_patch_byte_matching_is_exact (__main__.KernelGates.test_patch_byte_matching_is_exact) ... ok\ntest_pins_and_registry_archives (__main__.KernelGates.test_pins_and_registry_archives) ... ok\ntest_rehashed_undeclared_vendor_changes_are_rejected (__main__.KernelGates.test_rehashed_undeclared_vendor_changes_are_rejected) ... ok\ntest_required_patch_survives_upstream_refresh (__main__.KernelGates.test_required_patch_survives_upstream_refresh) ... ok\ntest_vendored_source_manifest_and_tamper_control (__main__.KernelGates.test_vendored_source_manifest_and_tamper_control) ... ok\ntest_verifier_entry_closure_and_negative_controls (__main__.KernelGates.test_verifier_entry_closure_and_negative_controls) ... ok\n\n----------------------------------------------------------------------\nRan 11 tests in 1.183s\n\nOK\nok\ntest_nonpublic_inner_product_constructions_use_constant_time_msm (__main__.WalletGates.test_nonpublic_inner_product_constructions_use_constant_time_msm) ... ok\n\n----------------------------------------------------------------------\nRan 3 tests in 1.447s\n\nOK\n"
+    },
+    "wallet_proofs": {
+      "command": "env CARGO_HOME=/tmp/uno-mirror-prover.Dm6gDb CARGO_NET_OFFLINE=true CARGO_BUILD_JOBS=2 cargo test --locked --manifest-path uno/prover/Cargo.toml --lib",
+      "exit_code": 0,
+      "final_output": "test tests::fresh_entropy_proofs_verify_for_every_supported_size ... ok\n\ntest result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 656.76s\n",
+      "scope": "Includes frozen SEND/COLLECT byte reproduction and fresh-entropy proofs for all supported sizes; debug test run, not performance evidence."
+    },
+    "sha256_output": "14fc0667d7aef2e1c755939d6894f56071b563eb1d5580fc50dde3a4c705591a  uno/crypto/Cargo.toml\n53498d7f50d16046abf39c03bedc58eb1eadedbea9aa96bfdd10c93ae88db543  uno/crypto/Cargo.lock\n8aa5b03fde58e8cf6077cddadd87d205c8bc21800d19245b2f65c6a21e3cf15a  uno/prover/Cargo.toml\n4bb0c19fd76c3084a9537cbd94146a73e427aae6875aa9e39d509a24b777eedc  uno/prover/Cargo.lock\n4684f33dccc50cf4ac34184158cf337d2f415a40993ca165ff5921f73eee73f6  uno/crypto/vendor/bulletproofs/Cargo.toml\n598cc10da4a2f146013e6d3d74eee9334ae74d085fdc73e8a8063daec6b1c120  uno/crypto/vendor/bulletproofs/SOURCE_MANIFEST.json\n858e7aed977eb0854e012716f4c0e1b3001f8079ef8a038c8f3bfe4b7142fdac  uno/crypto/tests/kernel-gates.py\n73f882a0d5afca97e943f4e01bdf31d632f7ff8ab4ad60d13d8a2995910de575  uno/crypto/SUPPLY_CHAIN.md\n316927bf24e9fa292813652bee645301f6cea5cbd9558633fab1387b9f272103  uno/prover/target/debug/deps/tos_uno_wallet_prover-9f74b98dfe1c6813\n",
+    "scan": {
+      "exit_code": 0,
+      "output": "removed-execution-domain scan passed: 5366 text files, 378 binary files and 0 directories skipped"
+    },
+    "review": {
+      "result": "No blockers",
+      "disposition": "Full Cargo-dependent gates passed after review. Fresh cache validation is local, not a remote CI claim. The vendored proof library is not a Cargo git acquisition dependency; its mirror was checked explicitly against the original annotated tag and pinned upstream blob tree. Future refresh must repeat that acquisition check. No cryptographic completeness or offline PGP trust-chain claim."
+    }
+  }
+}

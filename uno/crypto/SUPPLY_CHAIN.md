@@ -4,17 +4,36 @@ This is source provenance, not a claim that pinning establishes cryptographic
 security. Refreshes require source review, vectors, negative controls and a
 new review record. No global Cargo patch redirects unrelated dependencies.
 
-| Source | Version/tag | Immutable revision | Annotated tag object |
-|---|---|---|---|
-| xelis-project/curve25519-dalek | 5.0.2 / v5.0.2 | 10042b03cfc92e505e9d33d2827d5c0f0d36989a | e527e3a83b2647ac8e82fd27158a55593717e25e |
-| xelis-project/bulletproofs | 5.3.0 / v5.3.0 | 961bf3f8c2baa1e4d2a87e8e1f5b6f12e7fe6c82 | def04efbf9d435a22306eae2c1a967f15ad43239 |
-| xelis-project/merlin | 4.1.0 / v4.1.0 | ee857c79347e0e2201e5192523faea13ac9bf451 | fb9aae0179e42c7e4872d26485f19c1a03710182 |
+| Upstream source | Acquisition mirror | Version/tag | Shared immutable revision | Shared annotated tag object |
+|---|---|---|---|---|
+| xelis-project/curve25519-dalek | tosnetwork/curve25519-dalek | 5.0.2 / v5.0.2 | 10042b03cfc92e505e9d33d2827d5c0f0d36989a | e527e3a83b2647ac8e82fd27158a55593717e25e |
+| xelis-project/bulletproofs | tosnetwork/bulletproofs | 5.3.0 / v5.3.0 | 961bf3f8c2baa1e4d2a87e8e1f5b6f12e7fe6c82 | def04efbf9d435a22306eae2c1a967f15ad43239 |
+| xelis-project/merlin | tosnetwork/merlin | 4.1.0 / v4.1.0 | ee857c79347e0e2201e5192523faea13ac9bf451 | fb9aae0179e42c7e4872d26485f19c1a03710182 |
+
+The mirror changes acquisition location, not upstream authorship or provenance.
+Each mirror must contain the exact commit and original signed annotated tag
+object above; creating a replacement tag is not equivalent, even if it peels
+to the same commit. Git object identity is content-addressed. The local raw tag
+fixtures and `upstream_git_blobs` remain unchanged. Cargo fetches dalek/Merlin
+from the mirrors; Bulletproofs remains vendored, with its mirror available for
+source acquisition and refresh verification. No cryptographic Rust source is
+changed by the acquisition migration.
+
+URL-bearing Cargo manifests and lockfiles necessarily change bytes. The vendored
+manifest's `locked-build-inputs` patch declares this URL delta in its `after`
+text; subsequent byte offsets and its current-file SHA-256 change accordingly.
+Its `before` bytes and upstream blob stay fixed. These expected local metadata
+changes must not be confused with changing an upstream commit or signed object.
 
 The tags and peeled commits were rechecked with git ls-remote on 2026-09-07.
 Raw annotated tag objects are retained in fixtures; the gate recomputes their
 Git object hashes and checks their target commits offline. This detects changes
 to the recorded association, not a future remote tag move. Refresh review must
-query the remote again. No signature/trusted-release-attestation claim is made.
+query the remote again. On 2026-09-09, fresh mirror fetches reproduced all
+three exact raw tag objects; GitHub's tag API reported `verified=true` and
+`reason=valid` for each. This is a recorded remote verification result, not an
+offline trust-chain check performed by the source gate or a cryptographic
+security endorsement of the release.
 
 ## Local Bulletproofs delta
 
@@ -43,7 +62,8 @@ only for existing object-ID compatibility; current bytes also retain SHA-256.
 
 Local differences are limited to:
 
-1. Pin transitive dalek/Merlin dependencies by full revision; omit standalone
+1. Pin transitive dalek/Merlin dependencies by full revision and acquire those
+   same objects from the distribution mirrors; omit standalone
    upstream test/benchmark target declarations whose files are not vendored.
 2. Add range_proof/deterministic.rs with independent IP/poly checks, retaining
    the original transcript events. No batch_factor, proof factor or fixed
@@ -105,6 +125,10 @@ the source-integrity gate. No blanket formatting of the dependency is authorized
 
 - Full revision/version identity and cached git checkout status, including
   untracked and ignored files; only Cargo's `.cargo-ok` marker is exempted.
+- Exact mirror URLs and unchanged full revisions in the verifier, wallet,
+  vendored dependency/dev-dependency declarations and both lockfiles. The
+  ordinary offline gate checks the declared acquisition identity, not remote
+  availability. Migration testing must separately use fresh Cargo git caches.
 - Every locked registry archive checksum, plus extracted source bytes compared
   with the authenticated archive used by Cargo.
 - Exact vendored file set and source byte hashes, including new files, plus

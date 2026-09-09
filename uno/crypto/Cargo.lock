@@ -111,7 +111,7 @@ dependencies = [
 [[package]]
 name = "curve25519-dalek"
 version = "5.0.2"
-source = "git+https://github.com/xelis-project/curve25519-dalek?rev=10042b03cfc92e505e9d33d2827d5c0f0d36989a#10042b03cfc92e505e9d33d2827d5c0f0d36989a"
+source = "git+https://github.com/tosnetwork/curve25519-dalek?rev=10042b03cfc92e505e9d33d2827d5c0f0d36989a#10042b03cfc92e505e9d33d2827d5c0f0d36989a"
 dependencies = [
  "cfg-if",
  "cpufeatures 0.3.1",
@@ -291,7 +291,7 @@ checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 [[package]]
 name = "merlin"
 version = "4.1.0"
-source = "git+https://github.com/xelis-project/merlin?rev=ee857c79347e0e2201e5192523faea13ac9bf451#ee857c79347e0e2201e5192523faea13ac9bf451"
+source = "git+https://github.com/tosnetwork/merlin?rev=ee857c79347e0e2201e5192523faea13ac9bf451#ee857c79347e0e2201e5192523faea13ac9bf451"
 dependencies = [
  "byteorder",
  "keccak 0.1.6",
