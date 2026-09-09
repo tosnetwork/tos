@@ -222,6 +222,30 @@ review decision on whether to include now or track separately.
 
 ---
 
+## Codex review outcome (2026-09-10) and disposition
+
+An independent Codex review (read-only sandbox) checked every item against the
+current source. It confirmed **all problems are real** (AUTHENTIC or
+PARTIALLY-AUTHENTIC — no false alarms), corrected two evidence line numbers,
+and flagged two proposed solutions as unsound. Verdicts:
+
+| Item | Problem | Solution | Disposition |
+|---|---|---|---|
+| R1 | AUTHENTIC | SOUND | **Implemented.** Init is line 84 (not 87); rotation bounds each per-thread file pair, not all disk writes — accepted. |
+| R2 | AUTHENTIC | SOUND-with-changes | **Implemented.** Finite library default + explicit service overrides; rejection warning throttled; test asserts the default is finite. |
+| R3 | AUTHENTIC | SOUND-with-changes | **Implemented** via a shared `own_broadcast_verified` helper doing verify-before-insert (also fixes the simple path's `calc_to_sign`-outside-rollback). |
+| R4 | AUTHENTIC (qualified) | **UNSOUND as specified** | **Deferred.** Re-keying on the accept() endpoint breaks endpoint semantics; needs a real redesign (socket identity vs. logical destination, admission caps incl. pending handshakes, cleanup on EOF/recv-error/idle). Dormant (no Rust listener in production). |
+| R5 | AUTHENTIC | SOUND-with-changes | **Deferred.** Consensus-sensitive: `wait_shard_blocks` fails open on null, and eviction must never call `finalize_promises()` (reports success). Requires separating the confirmation cache from requested verification; needs action-phase testing. |
+| R6/H6 | PARTIALLY-AUTHENTIC | SOUND-with-changes | **Deferred.** Keep the `max_ext_msg_*` codec fields; add a real cell budget. |
+| R6/Incinerator | AUTHENTIC | **UNSOUND** | **Deferred (document only).** Saturating the live-reader counter risks premature reclamation (memory-unsafety); treat as a separate, concurrency-tested change. |
+| R6/peer-evict, reconnect | PARTIAL/AUTH | SOUND-with-changes | **Deferred.** Non-atomic capacity check; backoff must survive entry recreation. |
+
+This PR implements the safe set **R1 + R2 + R3**, each with a falsifiable test
+(the guard's removal was shown to turn the test red). R4, R5, and the R6 items
+are tracked for a dedicated follow-up: R4 and the Incinerator change need
+redesign rather than the described fix, and R5 is consensus-critical and must
+not convert resource pressure into a successful (unconfirmed) block.
+
 ## Verified-clean (no action) — restated for the reviewer
 
 - On-chain storage rent enabled and non-zero in both genesis generators
