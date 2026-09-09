@@ -18,6 +18,7 @@
 */
 #include "json-rpc-server-internal.h"
 #include "json-rpc-handler-guard.h"
+#include "json-rpc-payload-waiter.h"
 
 #include <algorithm>
 #include <cstdlib>
@@ -681,29 +682,30 @@ void JsonRpcServer::on_request(RequestPtr request, PayloadPtr payload,
       // IMPORTANT: completed() must NOT call payload_->get_slice() directly,
       // because it runs inside HttpPayload::parse() which may hold mutex_.
       // Defer body read to actor scheduler via send_closure, same fix as BodyWaiter.
-      class PostRestWaiter : public http::HttpPayload::Callback {
+      // Holds only a weak reference to the payload (via the base) so the
+      // payload's body is freed when the connection goes away, even if the body
+      // never completes. See JsonRpcPayloadBodyWaiter.
+      class PostRestWaiter : public JsonRpcPayloadBodyWaiter {
        public:
         PostRestWaiter(td::actor::ActorId<JsonRpcServer> server, PayloadPtr payload,
                        std::string method, std::string source_ip,
                        td::Promise<HttpReturn> promise)
-            : server_(server), payload_(std::move(payload)),
+            : JsonRpcPayloadBodyWaiter(std::move(payload)), server_(server),
               method_(std::move(method)), source_ip_(std::move(source_ip)),
               promise_(std::move(promise)) {}
-        void run(size_t) override {}
-        void completed() override {
-          if (fired_) return;  // one-shot guard
-          fired_ = true;
+
+       protected:
+        void deliver(std::shared_ptr<http::HttpPayload> payload) override {
           td::actor::send_closure(server_, &JsonRpcServer::on_post_rest_body_ready,
-                                  std::move(payload_), std::move(method_),
+                                  std::move(payload), std::move(method_),
                                   std::move(source_ip_), std::move(promise_));
         }
+
        private:
         td::actor::ActorId<JsonRpcServer> server_;
-        PayloadPtr payload_;
         std::string method_;
         std::string source_ip_;
         td::Promise<HttpReturn> promise_;
-        bool fired_{false};
       };
       if (payload->parse_completed()) {
         auto body_r = drain_payload_body(payload);
@@ -745,31 +747,30 @@ void JsonRpcServer::on_request(RequestPtr request, PayloadPtr payload,
     // because it runs inside HttpPayload::parse() which holds mutex_.
     // get_slice() also takes mutex_ → deadlock on the same thread.
     // Instead, send an actor message to read the body outside the lock.
-    class BodyWaiter : public http::HttpPayload::Callback {
+    // Holds only a weak reference to the payload (via the base) so the payload's
+    // body is freed when the connection goes away, even if the body never
+    // completes. See JsonRpcPayloadBodyWaiter.
+    class BodyWaiter : public JsonRpcPayloadBodyWaiter {
      public:
       BodyWaiter(td::actor::ActorId<JsonRpcServer> server, PayloadPtr payload,
                  std::string source_ip,
                  td::Promise<HttpReturn> promise)
-          : server_(server), payload_(std::move(payload)),
+          : JsonRpcPayloadBodyWaiter(std::move(payload)), server_(server),
             source_ip_(std::move(source_ip)),
             promise_(std::move(promise)) {}
-      void run(size_t) override {}
-      void completed() override {
-        if (fired_) {
-          return;
-        }
-        fired_ = true;
+
+     protected:
+      void deliver(std::shared_ptr<http::HttpPayload> payload) override {
         // Do NOT read payload here (mutex deadlock). Defer to actor scheduler.
         td::actor::send_closure(server_, &JsonRpcServer::on_body_ready,
-                                payload_, std::move(source_ip_),
+                                std::move(payload), std::move(source_ip_),
                                 std::move(promise_));
       }
+
      private:
       td::actor::ActorId<JsonRpcServer> server_;
-      PayloadPtr payload_;
       std::string source_ip_;
       td::Promise<HttpReturn> promise_;
-      bool fired_ = false;
     };
     payload->add_callback(std::make_unique<BodyWaiter>(
         actor_id(this), payload, std::move(source_ip), std::move(promise)));
