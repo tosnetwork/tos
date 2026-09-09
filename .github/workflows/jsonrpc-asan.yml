@@ -21,7 +21,7 @@ on:
     branches: [master, testnet, main]
     types: [opened, reopened, synchronize, ready_for_review]
     paths:
-      - 'validator-engine/json-rpc-server*'
+      - 'validator-engine/json-rpc-*'
       - 'test/test-json-rpc-*'
       - 'test/json-rpc/**'
       - 'scripts/asan-jsonrpc-corpus.py'
@@ -66,13 +66,23 @@ jobs:
           -DTOS_USE_ASAN=ON
 
     - name: Build the instrumented JSON-RPC tests
-      run: ninja -C build-asan test-json-rpc-rate-gate test-json-rpc-parse test-json-rpc-handler-guard
+      run: |
+        ninja -C build-asan \
+          test-json-rpc-rate-gate \
+          test-json-rpc-parse \
+          test-json-rpc-handler-guard \
+          test-json-rpc-payload-waiter \
+          test-json-rpc-signing-payload \
+          test-json-rpc-source-ip
 
     - name: Run under AddressSanitizer
       run: |
         ./build-asan/test-json-rpc-rate-gate
         ./build-asan/test-json-rpc-parse
         ./build-asan/test-json-rpc-handler-guard
+        ./build-asan/test-json-rpc-payload-waiter
+        ./build-asan/test-json-rpc-signing-payload
+        ./build-asan/test-json-rpc-source-ip
 
     - name: Check JSON-RPC route gating
       run: python3 scripts/check-jsonrpc-route-gating.py
