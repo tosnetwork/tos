@@ -85,13 +85,25 @@ class BroadcastsTwostep {
   // so there is no is_ours exemption.
   td::Status ensure_in_flight_capacity(OverlayImpl *overlay);
 
+  // The single insertion primitive for a new in-flight broadcast: it applies the
+  // capacity gate and, only if admitted, tracks the broadcast in both indexes.
+  // process_broadcast inserts only through here, so the gate and the insert are
+  // inseparable -- a test that drives this at capacity fails if the gate is
+  // removed, and an insertion that bypassed it would not assemble the broadcast
+  // at all (caught by the end-to-end receive path).
+  td::Status admit_and_track(OverlayImpl *overlay, td::uint32 date, Overlay::BroadcastHash broadcast_id,
+                             std::unique_ptr<BroadcastTwostep> bcast);
+
   // Test support: inject a decoder-less in-flight entry with a chosen date and
   // read the table size, so gc() and the admission ceiling can be exercised
-  // without standing up real FEC state and crypto. Defined where
-  // BroadcastTwostep is a complete type.
+  // without standing up real FEC state and crypto. try_admit_fresh_for_test
+  // drives the real admit_and_track primitive with a synthetic entry, covering
+  // the production insertion gate. Defined where BroadcastTwostep is a complete
+  // type.
   void inject_in_flight_for_test(Overlay::BroadcastHash broadcast_id, td::uint32 date);
   size_t in_flight_count_for_test() const;
   size_t capacity_for_test() const;
+  td::Status try_admit_fresh_for_test(OverlayImpl *overlay, Overlay::BroadcastHash broadcast_id);
   friend class BroadcastsTwostepTestAccess;
 };
 }  // namespace overlay

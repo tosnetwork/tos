@@ -412,11 +412,6 @@ td::actor::Task<> BroadcastsTwostep::process_broadcast(OverlayImpl *overlay, adn
     }
   }
   if (it == broadcasts_.end()) {
-    // Capacity admission, checked at the commit point: no co_await runs between
-    // here and the emplace below, so this count is authoritative, and it is
-    // before try_register_broadcast so the per-source byte budget is not
-    // charged for a broadcast we decline.
-    CO_TRY(ensure_in_flight_capacity(overlay));
     CO_TRY(overlay->get_broadcasts_limiter(src_keyhash, cert.get()).try_register_broadcast(data_size));
     td::Result<std::unique_ptr<td::raptorq::Decoder>> R;
     if (part_size == 0 ||
@@ -436,8 +431,14 @@ td::actor::Task<> BroadcastsTwostep::process_broadcast(OverlayImpl *overlay, adn
                                        .symbols_needed = symbols_needed,
                                        .timestamp = td::Timestamp::now(),
                                        .chunk_senders = {}}});
-    by_date_.emplace(date, broadcast_id);
-    it = broadcasts_.emplace(broadcast_id, std::move(bcast)).first;
+    // Admit and track through the single insertion primitive. Its capacity gate
+    // is authoritative: no co_await runs between the re-find above and this
+    // call, so the table size it sees is current. The (already-verified) byte
+    // budget was charged above; the only cost of declining here rather than
+    // earlier is that charge and the decoder build, both bounded and both after
+    // the signature check that already ran.
+    CO_TRY(admit_and_track(overlay, date, broadcast_id, std::move(bcast)));
+    it = broadcasts_.find(broadcast_id);
     VLOG(TWOSTEP_INFO) << "twostep START receiver " << *it->second << " from=" << src_peer_id;
   }
   auto bcast = it->second.get();
@@ -488,6 +489,14 @@ td::Status BroadcastsTwostep::ensure_in_flight_capacity(OverlayImpl *overlay) {
   return td::Status::OK();
 }
 
+td::Status BroadcastsTwostep::admit_and_track(OverlayImpl *overlay, td::uint32 date, Overlay::BroadcastHash broadcast_id,
+                                              std::unique_ptr<BroadcastTwostep> bcast) {
+  TRY_STATUS(ensure_in_flight_capacity(overlay));
+  by_date_.emplace(date, broadcast_id);
+  broadcasts_.emplace(broadcast_id, std::move(bcast));
+  return td::Status::OK();
+}
+
 void BroadcastsTwostep::inject_in_flight_for_test(Overlay::BroadcastHash broadcast_id, td::uint32 date) {
   auto bcast = std::make_unique<BroadcastTwostep>();
   bcast->broadcast_id = broadcast_id;
@@ -502,6 +511,16 @@ size_t BroadcastsTwostep::in_flight_count_for_test() const {
 
 size_t BroadcastsTwostep::capacity_for_test() const {
   return kMaxInFlightTwostepBroadcasts;
+}
+
+td::Status BroadcastsTwostep::try_admit_fresh_for_test(OverlayImpl *overlay, Overlay::BroadcastHash broadcast_id) {
+  // Drives the real admit_and_track primitive -- the production insertion gate
+  // for a new broadcast -- with a synthetic decoder-less entry, so the test
+  // exercises the actual call site rather than the predicate in isolation.
+  auto bcast = std::make_unique<BroadcastTwostep>();
+  bcast->broadcast_id = broadcast_id;
+  bcast->date = static_cast<td::uint32>(td::Clocks::system());
+  return admit_and_track(overlay, bcast->date, broadcast_id, std::move(bcast));
 }
 
 void BroadcastsTwostep::gc(OverlayImpl *overlay) {

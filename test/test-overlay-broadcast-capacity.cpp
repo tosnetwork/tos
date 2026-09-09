@@ -90,6 +90,9 @@ class BroadcastsTwostepTestAccess {
   static td::Status admit(BroadcastsTwostep &b, OverlayImpl &overlay) {
     return b.ensure_in_flight_capacity(&overlay);
   }
+  static td::Status try_admit_fresh(BroadcastsTwostep &b, OverlayImpl &overlay, Overlay::BroadcastHash id) {
+    return b.try_admit_fresh_for_test(&overlay, id);
+  }
 };
 
 }  // namespace tos::overlay
@@ -300,6 +303,29 @@ TEST(OverlayBroadcastCapacity, TwostepReclaimsExpiredBehindFreshOldestInsertion)
 
     ASSERT_TRUE(Access::admit(twostep, overlay).is_ok());
     ASSERT_EQ(Access::count(twostep), 1u);
+  });
+}
+
+TEST(OverlayBroadcastCapacity, TwostepAdmitAndTrackConsultsGate) {
+  using Access = tos::overlay::BroadcastsTwostepTestAccess;
+  with_overlay([](tos::overlay::OverlayImpl &overlay) {
+    auto &twostep = tos::overlay::OverlayImplBroadcastCapacityTest::twostep(overlay);
+    const size_t cap = Access::capacity(twostep);
+
+    for (size_t i = 0; i < cap; i++) {  // fill to capacity with fresh entries
+      Access::inject(twostep, hash_from_index(i), now_sec());
+    }
+    ASSERT_EQ(Access::count(twostep), cap);
+
+    // Drive the real insertion primitive that process_broadcast commits new
+    // broadcasts through. At capacity it must refuse with notready and insert
+    // nothing -- proving the production insertion gate is applied, not just that
+    // the predicate works. Removing the gate from the primitive makes this
+    // insert a cap+1'th entry (count changes and the status is ok).
+    auto status = Access::try_admit_fresh(twostep, overlay, hash_from_index(cap));
+    ASSERT_TRUE(status.is_error());
+    ASSERT_EQ(status.error().code(), static_cast<int>(tos::ErrorCode::notready));
+    ASSERT_EQ(Access::count(twostep), cap);
   });
 }
 
