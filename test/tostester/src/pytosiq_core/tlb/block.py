@@ -517,17 +517,22 @@ class DepthBalanceInfo(TlbScheme):
 
 class McStateExtra(TlbScheme):
     """
-    masterchain_state_extra#cc26 shard_hashes:ShardHashes config:ConfigParams
+    masterchain_state_extra_instances shard_hashes:ShardHashes config:ConfigParams
     ^[ flags:(## 16) { flags <= 1 }
         validator_info:ValidatorInfo
         prev_blocks:OldMcBlocksInfo
         after_key_block:Bool
         last_key_block:(Maybe ExtBlkRef)
         block_create_stats:(flags . 0)?BlockCreateStats
+        workchain_instances:^WorkchainInstanceLedger
     ]
     global_balance:CurrencyCollection
     = McStateExtra;
     """
+
+    # Checked against generated cons_tag/cons_len_exact by the repository guard.
+    WIRE_TAG = 0x3214e578
+    WIRE_TAG_BITS = 32
 
     def __init__(self,
                  shard_hashes: dict,
@@ -538,7 +543,8 @@ class McStateExtra(TlbScheme):
                  after_key_block: bool,
                  last_key_block: typing.Optional[ExtBlkRef],
                  block_create_stats: typing.Optional["BlockCreateStats"],
-                 global_balance: CurrencyCollection
+                 global_balance: CurrencyCollection,
+                 workchain_instances: Cell
                  ):
         self.shard_hashes = shard_hashes
         self.config = config
@@ -549,6 +555,9 @@ class McStateExtra(TlbScheme):
         self.last_key_block = last_key_block
         self.block_create_stats = block_create_stats
         self.global_balance = global_balance
+        # Preserve the mandatory authenticated ledger reference as an opaque cell.
+        # This reader does not implement D40 issuance or ledger delta validation.
+        self.workchain_instances = workchain_instances
 
     @classmethod
     def serialize(cls, *args):
@@ -558,8 +567,8 @@ class McStateExtra(TlbScheme):
     def deserialize(cls, cell_slice: Slice):
         if cell_slice.is_special():
             return None
-        tag = cell_slice.load_bytes(2)
-        if tag != b'\xcc&':
+        tag = cell_slice.load_uint(cls.WIRE_TAG_BITS)
+        if tag != cls.WIRE_TAG:
             raise BlockError(f'McStateExtra deserialization error unknown prefix tag: {tag}')
         shard_hashes = deserialize_shard_hashes(cell_slice)
         config = ConfigParams.deserialize(cell_slice)
@@ -569,14 +578,21 @@ class McStateExtra(TlbScheme):
             raise BlockError(f'McStateExtra deserialization error expected flags <= 1, got: {flags}')
         validator_info = ValidatorInfo.deserialize(ref)
         prev_blocks = OldMcBlocksInfo.deserialize(ref)
+        # load_hashmap_aug_e leaves the root KeyMaxLt augmentation in this slice.
+        # It precedes after_key_block; reading that Boolean first shifts its value.
+        KeyMaxLt.deserialize(ref)
         after_key_block = ref.load_bool()
-        ref.load_bits(65)  # TODO why ?
         last_key_block = ExtBlkRef.deserialize(ref) if ref.load_bit() else None
         block_create_stats = None
         if bin(flags)[-1] == '1':
             block_create_stats = BlockCreateStats.deserialize(ref)
+            if block_create_stats.type_ == "block_create_stats_ext":
+                ref.load_uint(32)  # Root HashmapAugE uint32 augmentation.
+        if ref.remaining_bits or ref.remaining_refs != 1:
+            raise BlockError("McStateExtra requires exactly its ledger reference after auxiliary fields")
+        workchain_instances = ref.load_ref()
         global_balance = CurrencyCollection.deserialize(cell_slice)
-        return cls(shard_hashes, config, flags, validator_info, prev_blocks, after_key_block, last_key_block, block_create_stats, global_balance)
+        return cls(shard_hashes, config, flags, validator_info, prev_blocks, after_key_block, last_key_block, block_create_stats, global_balance, workchain_instances)
 
 
 class McBlockExtra(TlbScheme):
