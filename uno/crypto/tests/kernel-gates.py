@@ -71,6 +71,12 @@ def rejected(source):
     return bool(FORBIDDEN.search(source))
 
 
+def normal_feature_rows():
+    graph = run("cargo", "tree", "--locked", "--offline", "-e", "normal", "--prefix", "none",
+                "--format", "{p}|{f}", "--no-dedupe")
+    return sorted(set(line.replace(str(ROOT), "<KERNEL>") for line in graph.splitlines() if line))
+
+
 def validate_vendor(directory):
     manifest = json.loads((directory / "SOURCE_MANIFEST.json").read_text())
     patches = manifest.get("local_patches", [])
@@ -110,6 +116,10 @@ def validate_checkout_status(directory):
 
 
 class KernelGates(unittest.TestCase):
+    def test_normal_feature_graph_matches_reviewed_snapshot(self):
+        expected = json.loads((ROOT / "fixtures/verifier-feature-graph.json").read_text())
+        self.assertEqual(normal_feature_rows(), expected["normal_package_features"])
+
     def test_mirror_dependency_sources(self):
         # Acquisition identity is separate from the immutable upstream object.
         # Cover the wallet and vendored dev graph as well as the verifier graph.

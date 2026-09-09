@@ -1,0 +1,92 @@
+test_normal_dependency_graph_has_no_entropy_provider (__main__.KernelGates.test_normal_dependency_graph_has_no_entropy_provider) ... FAIL
+
+======================================================================
+FAIL: test_normal_dependency_graph_has_no_entropy_provider (__main__.KernelGates.test_normal_dependency_graph_has_no_entropy_provider)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/uno-m2-rng-run1/crypto/tests/kernel-gates.py", line 210, in test_normal_dependency_graph_has_no_entropy_provider
+    self.assertFalse(names & {"rand", "getrandom", "rand_chacha", "orchard", "halo2_proofs"}, graph)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: {'getrandom', 'rand'} is not false : tos-uno-crypto-prototype v0.1.0 (/tmp/uno-m2-rng-run1/crypto)
+bulletproofs v5.3.0 (/tmp/uno-m2-rng-run1/crypto/vendor/bulletproofs)
+byteorder v1.5.0
+curve25519-dalek v5.0.2 (https://github.com/tosnetwork/curve25519-dalek?rev=10042b03cfc92e505e9d33d2827d5c0f0d36989a#10042b03)
+cfg-if v1.0.4
+cpufeatures v0.3.1
+curve25519-dalek-derive v0.1.1 (proc-macro)
+proc-macro2 v1.0.107
+unicode-ident v1.0.24
+quote v1.0.47
+proc-macro2 v1.0.107 (*)
+syn v2.0.119
+proc-macro2 v1.0.107 (*)
+quote v1.0.47 (*)
+unicode-ident v1.0.24
+digest v0.11.3
+block-buffer v0.12.1
+hybrid-array v0.4.14
+typenum v1.20.1
+crypto-common v0.2.2
+hybrid-array v0.4.14 (*)
+rand_core v0.10.1
+group v0.14.0
+ff v0.14.0
+rand_core v0.10.1
+subtle v2.6.1
+rand_core v0.10.1
+subtle v2.6.1
+rand_core v0.10.1
+serde v1.0.229
+serde_core v1.0.229
+serde_derive v1.0.229 (proc-macro)
+proc-macro2 v1.0.107 (*)
+quote v1.0.47 (*)
+syn v3.0.5
+proc-macro2 v1.0.107 (*)
+quote v1.0.47 (*)
+unicode-ident v1.0.24
+subtle v2.6.1
+zeroize v1.9.0
+zeroize_derive v1.5.0 (proc-macro)
+proc-macro2 v1.0.107 (*)
+quote v1.0.47 (*)
+syn v2.0.119 (*)
+digest v0.11.3 (*)
+merlin v4.1.0 (https://github.com/tosnetwork/merlin?rev=ee857c79347e0e2201e5192523faea13ac9bf451#ee857c79)
+byteorder v1.5.0
+keccak v0.1.6
+rand_core v0.10.1
+strobe-rs v0.10.0
+bitflags v1.3.2
+byteorder v1.5.0
+keccak v0.1.6
+subtle v2.6.1
+zeroize v1.9.0 (*)
+zeroize v1.9.0 (*)
+rand_core v0.10.1
+serde v1.0.229 (*)
+serde_derive v1.0.229 (proc-macro) (*)
+sha3 v0.11.0
+digest v0.11.3 (*)
+keccak v0.2.2
+cfg-if v1.0.4
+subtle v2.6.1
+zeroize v1.9.0 (*)
+curve25519-dalek v5.0.2 (https://github.com/tosnetwork/curve25519-dalek?rev=10042b03cfc92e505e9d33d2827d5c0f0d36989a#10042b03) (*)
+merlin v4.1.0 (https://github.com/tosnetwork/merlin?rev=ee857c79347e0e2201e5192523faea13ac9bf451#ee857c79) (*)
+rand v0.10.1
+chacha20 v0.10.2
+cfg-if v1.0.4
+cpufeatures v0.3.1
+rand_core v0.10.1
+getrandom v0.4.3
+cfg-if v1.0.4
+libc v0.2.189
+rand_core v0.10.1
+rand_core v0.10.1
+
+
+----------------------------------------------------------------------
+Ran 1 test in 0.166s
+
+FAILED (failures=1)

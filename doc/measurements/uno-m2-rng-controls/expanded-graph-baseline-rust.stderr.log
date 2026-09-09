@@ -1,0 +1,6 @@
+   Compiling libc v0.2.189
+   Compiling getrandom v0.4.3
+   Compiling chacha20 v0.10.2
+   Compiling rand v0.10.1
+   Compiling tos-uno-crypto-prototype v0.1.0 (/tmp/uno-m2-rng-run1/crypto)
+    Finished `release` profile [optimized] target(s) in 1.50s

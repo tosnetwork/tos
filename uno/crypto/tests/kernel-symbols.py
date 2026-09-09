@@ -17,10 +17,10 @@ def reachable(edges, root):
 
 
 def entropy_name(name):
-    return bool(re.search(r"getrandom|RandomState|build_rng|rand::|random_device|arc4random", name))
+    return bool(re.search(r"getrandom|getentropy|RandomState|build_rng|rand::|random_device|arc4random", name))
 
 
-def main(binary):
+def inspect(binary):
     # Negative control for the graph predicate, independent of the real binary.
     graph = {1: {2}, 2: {3}}
     assert 3 in reachable(graph, 1)
@@ -28,12 +28,19 @@ def main(binary):
     assert not entropy_name("uno_crypto_verify_v2")
     disassembly = subprocess.check_output(["objdump", "-d", "-C", binary], text=True)
     assert not re.search(r"\b(?:rdrand|rdseed)\b", disassembly), "hardware entropy instruction in test image"
-    relocations = {}
+    relocations, imported_names = {}, {}
     for line in subprocess.check_output(["readelf", "-rW", binary], text=True).splitlines():
         fields = line.split()
         if len(fields) > 3 and fields[2] in {"R_X86_64_RELATIVE", "R_AARCH64_RELATIVE"}:
             relocations[int(fields[0], 16)] = int(fields[3], 16)
-    names, edges, indirect = {}, collections.defaultdict(set), collections.Counter()
+        elif len(fields) > 4 and fields[2] in {"R_X86_64_GLOB_DAT", "R_X86_64_JUMP_SLOT",
+                                              "R_AARCH64_GLOB_DAT", "R_AARCH64_JUMP_SLOT"}:
+            # Dynamic imports have names rather than an in-image target address.
+            # Keep them as terminal graph nodes; do not silently drop GOT calls.
+            address = int(fields[0], 16)
+            relocations[address] = -address
+            imported_names[-address] = fields[4]
+    names, edges, indirect = dict(imported_names), collections.defaultdict(set), collections.Counter()
     current = None
     for line in disassembly.splitlines():
         label = re.match(r"^([0-9a-f]+) <(.*)>:", line)
@@ -52,15 +59,26 @@ def main(binary):
                 edges[current].add(relocations[int(got[1], 16)])
             else:
                 indirect[current] += 1
+    report = []
     for entry in ("uno_crypto_verify_v2", "uno_crypto_system_encrypt_v1", "uno_crypto_system_verify_v1"):
         roots = [address for address, name in names.items() if name == entry]
         assert len(roots) == 1, f"missing or ambiguous root: {entry}"
         visited = reachable(edges, roots[0])
         assert len(visited) > 10, f"instrument did not traverse {entry}"
         forbidden = [names[a] for a in visited if entropy_name(names.get(a, ""))]
-        assert not forbidden, forbidden
-        print(f"PASS {entry}: {len(visited)} direct/GOT nodes, no matched entropy target; "
-              f"{sum(indirect[a] for a in visited)} unresolved indirect sites REQUIRE source/runtime review")
+        report.append({"entry": entry, "visited_nodes": len(visited),
+                       "forbidden": sorted(forbidden),
+                       "dynamic_imports": sorted(names[a] for a in visited if a in imported_names),
+                       "unresolved_indirect_sites": sum(indirect[a] for a in visited),
+                       "unresolved_functions": sorted(names[a] for a in visited if indirect[a])})
+    return report
+
+
+def main(binary):
+    for result in inspect(binary):
+        assert not result["forbidden"], result["forbidden"]
+        print(f"PASS {result['entry']}: {result['visited_nodes']} direct/GOT nodes, no matched entropy target; "
+              f"{result['unresolved_indirect_sites']} unresolved indirect sites REQUIRE source/runtime review")
     print("Dormant runtime entropy symbols are not classified as reachable merely because they are linked.")
 
 
