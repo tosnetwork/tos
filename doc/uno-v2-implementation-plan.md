@@ -3419,3 +3419,18 @@ to 500 ms would weaken that requirement to twofold. Keep the measured failure
 visible and reproduce under controlled load before diagnosing a code defect.
 The interval begins just before launching collation, not at subprocess startup
 or database open. No arbitrary-load timing guarantee follows from these tests.
+
+The timing diagnostic reports the measured seconds, configured wait window,
+and their headroom ratio from the same sample. The 100 ms threshold is unchanged.
+These values quantify a failure; they cannot alone distinguish scheduler load
+from a genuine delivery-path regression. Investigate repeatability and load
+before attributing cause. An injected 200 ms sample checks that the failure
+prints a fivefold ratio; it is a diagnostic control, not a performance sample.
+
+Before enabling the account path, remove the temporary construct/sample/destroy
+observation or place it behind an explicit diagnostic build gate. Do not add
+per-collation adapter churn merely to maintain these telemetry fields. The closed
+seam is not behavior-identical to its predecessor: a local bind failure can
+return before the old refusal, although both outcomes are LocalUnavailable.
+The late-message terminal guard is inspected, not a demonstrated late-reordering
+delivery experiment. Keep that distinction separate from measured missing stats.

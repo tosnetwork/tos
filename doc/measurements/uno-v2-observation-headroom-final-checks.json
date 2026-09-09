@@ -1,0 +1,25 @@
+{
+  "regression": {
+    "command": "ctest --test-dir build -R '^(test-counter-.*|test-workchain-block)$' --output-on-failure",
+    "exit_code": 0,
+    "passed": 17,
+    "failed": 0,
+    "elapsed_seconds": 16.68,
+    "scope": "Related host regression, not all CTests"
+  },
+  "guard": {
+    "chunk_id": "7c2a1b",
+    "wall_time_seconds": 0.000005043,
+    "exit_code": 0,
+    "original_token_count": 25,
+    "output": "removed-execution-domain scan passed: 5372 text files, 378 binary files and 0 directories skipped\n"
+  },
+  "restored_hashes": {
+    "chunk_id": "3db01d",
+    "wall_time_seconds": 0.117716857,
+    "exit_code": 0,
+    "original_token_count": 96,
+    "output": "56bf4dc1f4b3017c04931c55f87d33690343a8ad3f8695d6727ee2733fc43edf  validator/manager-disk.cpp\n2b3e3d0ec9222c104717d6dbeb56d2719591b9a3a9ce7df45ebc4e1db5a80086  test/test-counter-disk-integration.cmake\ne52367fc15fefb2405d85ec2d358b5cbe61a36452eb8dd52f0b4cb7bed993fc7  build/test-tos-collator\nc339b3e2183845543a889aa22bbfe25a12ca23a3edb784a1d59ff3dbefe23b7f  build/test-workchain-block\n"
+  },
+  "prior_evidence": "The previous eight-control artifact remains tied to d7b845d5f. This followup reruns two diagnostic controls and related regression; it does not relabel the older mutations as this tree."
+}

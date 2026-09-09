@@ -249,7 +249,7 @@ if(ACCOUNT_BINDING_ONLY)
   endif()
   message(STATUS "Closed-gate production observation: ${binding_stats}")
   file(READ "${fixture}/account_binding_refused.result.stats.timing" binding_timing)
-  string(REGEX MATCH "query_to_record_seconds=([0-9.eE+-]+)\nwait_window_seconds=([0-9.eE+-]+)\n" timing_match "${binding_timing}")
+  string(REGEX MATCH "query_to_record_seconds=([0-9.eE+-]+)\nwait_window_seconds=([0-9.eE+-]+)\nheadroom_ratio=([0-9.eE+-]+)\n" timing_match "${binding_timing}")
   if(NOT timing_match OR NOT CMAKE_MATCH_1 GREATER 0 OR NOT CMAKE_MATCH_1 LESS 0.1 OR
       NOT CMAKE_MATCH_2 EQUAL 1)
     message(FATAL_ERROR "Normal observation lacks the required tenfold deadline headroom: ${binding_timing}")

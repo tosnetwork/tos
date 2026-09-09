@@ -52,10 +52,13 @@ void ValidatorManagerImpl::log_collate_query_stats(CollationStats stats) {
   // This interval includes the whole query up to the completed stats write,
   // not just message delivery. It is a conservative normal-run observation,
   // not an upper bound under arbitrary scheduler or storage delays.
+  const double query_to_record = td::Clocks::monotonic() - collation_observation_started_;
   td::write_file(query_result_path_ + ".stats.timing",
-                 PSLICE() << "query_to_record_seconds="
-                          << (td::Clocks::monotonic() - collation_observation_started_)
-                          << "\nwait_window_seconds=" << collation_stats_wait_seconds_ << "\n").ensure();
+                 PSLICE() << "query_to_record_seconds=" << query_to_record
+                          << "\nwait_window_seconds=" << collation_stats_wait_seconds_
+                          << "\nheadroom_ratio="
+                          << (query_to_record > 0 ? collation_stats_wait_seconds_ / query_to_record : 0.0)
+                          << "\n").ensure();
   collation_observation_closed_ = true;
   alarm_timestamp() = td::Timestamp::never();
   if (collation_stats_waiter_) collation_stats_waiter_.set_value(td::Unit());
