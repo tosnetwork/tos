@@ -346,7 +346,7 @@ void execute(unsigned which,const std::string& dir,bool freeze) {
       if(which==31) draft.pending_messages.reset();
       if(which==32) draft.batch_identity.clear();
       return td::Status::OK();
-    });check(status.is_error(),99);
+    });check(status.is_error(),which==30?99:103);
   } else if(which==33) {
     status=candidate.construct(predecessor,[&](const Contents&,Contents&,const auto&){
       return td::Status::Error(injected,"ordinary builder failure without observer failure");

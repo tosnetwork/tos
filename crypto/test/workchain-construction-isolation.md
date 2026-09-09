@@ -76,7 +76,7 @@ checker; it is not a claim that such a block is valid.
 | 96 | Nested construction cannot install another generation |
 | 97 | Supplied count is not normalized by construction |
 | 98 | A provider's mutable message elements cannot change a frozen list |
-| 99 | Missing supplied components prevent installation |
+| 99 / 103 | Missing roots / missing messages or identity prevent installation |
 | 100 | Exception unwinding releases the construction guard |
 | 101 | Failed construction preserves the actual predecessor snapshot identity |
 | 102 | Intermediate replacement with byte-identical state is still observed |
@@ -90,7 +90,7 @@ separately recorded as identity 124 with `status_returned` false.
 
 Several removed stage hooks fail 76: they intentionally exercise the same
 schedule-completeness guard from different sites, not independent safety layers.
-The combined message/identity presence check similarly shares 99 between two
+The combined message/identity presence check similarly shares 103 between two
 inputs. The two direct-live controls exercise the same sticky observation guard
 at different stages. No duplicated numeric identity is counted as a new layer.
 

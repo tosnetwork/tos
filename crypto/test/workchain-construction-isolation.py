@@ -136,7 +136,7 @@ def main():
          'const std::vector<NewOutMsg>& messages_;', [29], 98),
         ('omit-root-presence', core, 'if (root.is_null())', 'if (false)', [30], 99),
         ('omit-message-identity-presence', core, 'if (draft.batch_identity.is_null() || !draft.pending_messages)',
-         'if (false)', [31, 32], 99),
+         'if (false)', [31, 32], 103),
         ('leave-construction-active', core, '~Reset() { value = false; }', '~Reset() {}', [24], 100),
         ('omit-state-observation', cpp, 'state_seen |= observe_state()!=oracle_before_state;', '(void)observe_state;', [0], 75),
         ('omit-message-observation', cpp, 'messages_seen |= observe_messages()!=oracle_before_messages;', '(void)observe_messages;', [0], 74),

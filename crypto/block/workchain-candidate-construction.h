@@ -84,8 +84,8 @@ class WorkchainCandidateConstruction {
     if (draft.batch_identity.is_null() || !draft.pending_messages) {
       return td::Status::Error("candidate construction omitted identity or pending messages");
     }
-    TRY_STATUS(checkpoint({WorkchainConstructionStage::GenerationCheck, 0}));
     if (current_ != expected_predecessor) return td::Status::Error("candidate predecessor differs from prepared input");
+    TRY_STATUS(checkpoint({WorkchainConstructionStage::GenerationCheck, 0}));
     // Finish every allocating step before the sole installation. No callbacks,
     // mutable draft aliases, or fallible operations run after that assignment.
     auto next = std::make_shared<const WorkchainCandidateContents>(draft);
