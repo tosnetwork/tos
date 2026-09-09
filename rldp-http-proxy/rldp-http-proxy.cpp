@@ -1146,7 +1146,7 @@ class RldpHttpProxy : public td::actor::Actor {
       for (auto &x : f->headers_) {
         tos::http::HttpHeader h{x->name_, x->value_};
         TRY_STATUS(h.basic_check());
-        request->add_header(std::move(h));
+        TRY_STATUS(request->add_header(std::move(h)));
       }
       TRY_STATUS(request->complete_parse_header());
       return td::Status::OK();

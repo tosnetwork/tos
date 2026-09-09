@@ -194,22 +194,29 @@ class HttpRequest {
   // whole request-header window; parse() enforces max_header_size() here.
   size_t total_headers_size_ = 0;
 
-  // Back to the upstream sizes. These were raised for payloads that no
-  // longer exist: a hex-encoded STARK proof and a worst-case transfer from
-  // the custom workchains, both removed with those workchains. What
-  // replaced them is a Bulletproof, whose size is logarithmic in the range
-  // count -- about a kilobyte at the largest configuration -- and the
-  // biggest payload any current method accepts is a 64 KiB bag of cells.
+  // Request body limit: 4 MiB. An earlier revision cut this to 1 MiB, reasoning
+  // that the largest payload any method accepts is a 64 KiB bag of cells -- but
+  // that 64 KiB bound is on a single base64-decoded BOC on the send path, not
+  // on a whole request. runGetMethod takes up to 256 stack cell/slice arguments
+  // and the JSON-RPC batch entry takes up to 100 elements, so requests that are
+  // well-formed under those existing limits and fit within 4 MiB (a
+  // runGetMethod with a handful of ~80 KiB-base64 cells, or a batch of them)
+  // exceeded 1 MiB and were rejected -- a compatibility regression, not a dead
+  // config. This is also the general HTTP request limit, shared by the RLDP
+  // HTTP proxy, so the same reduction broke proxied uploads in (1 MiB, 4 MiB].
+  // The 4 MiB receive capacity is kept; giving the JSON-RPC layer a smaller
+  // memory budget would need its own limit, separate from this shared one, plus
+  // a client batching/argument-budget contract -- not a blanket narrowing here.
   //
   // The Content-Length gate in HttpRequest::add_header stays: it rejects an
   // oversized request before a body is read, rather than letting the reader
   // stall against the watermark with nothing to drain it.
   static constexpr size_t max_payload_size() {
-    return 1 << 20;  // 1 MiB
+    return 4 << 20;  // 4 MiB
   }
 
   static constexpr size_t low_watermark() {
-    return 1 << 14;  // 16 KiB
+    return 1 << 16;  // 64 KiB
   }
   // Must equal max_payload_size(). The JSON-RPC consumer drains a request
   // body only once it has fully arrived, so the reader must be allowed to
@@ -220,7 +227,7 @@ class HttpRequest {
   // Keeping the two equal makes the gate's threshold and the stall point
   // coincide: every body the gate admits can be read to completion.
   static constexpr size_t high_watermark() {
-    return 1 << 20;  // 1 MiB, == max_payload_size()
+    return 4 << 20;  // 4 MiB, == max_payload_size()
   }
 
   static td::Result<std::unique_ptr<HttpRequest>> create(std::string method, std::string url,
