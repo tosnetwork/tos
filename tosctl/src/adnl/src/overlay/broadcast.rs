@@ -1391,7 +1391,15 @@ impl BroadcastSimpleProtocol {
             Ok(OwnedBroadcast::Send)
         })? {
             let to_sign = Self::calc_to_sign(&bcast_id, bcast.date)?;
-            src_key.verify(&to_sign, &bcast.signature)?;
+            // The dedup insert above is speculative: it happens before the
+            // signature is checked. If verification fails, roll it back so an
+            // attacker cannot leak a permanent owned_broadcasts entry per forged
+            // broadcast id. A bad-signature broadcast never propagates, so the
+            // brief window in which the entry exists is harmless.
+            if let Err(e) = src_key.verify(&to_sign, &bcast.signature) {
+                ctx.overlay.owned_broadcasts.remove(&bcast_id);
+                return Err(e);
+            }
             false
         } else {
             true

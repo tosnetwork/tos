@@ -733,6 +733,9 @@ pub fn boc_decompress_improved_structure_lz4(
 ) -> Result<Vec<Cell>> {
     // Maximum cell data length in bits (TOS limit)
     const K_MAX_CELL_DATA_LENGTH_BITS: usize = 1024;
+    // See the node_count check below. Matches the C++ streaming BOC reader's
+    // kDefaultStreamingBocMaxCells (crypto/vm/boc.h) = 50,000,000.
+    const MAX_BOC_CELLS: usize = 50_000_000;
     // Size of decompressed length header
     const K_DECOMPRESSED_SIZE_BYTES: usize = 4;
 
@@ -797,6 +800,26 @@ pub fn boc_decompress_improved_structure_lz4(
     if root_count < 1 || root_count > decompressed_size {
         fail!("BOC decompression failed: invalid root count");
     }
+    // Before allocating the root-index vector, bound it two ways -- the
+    // decompressed_size check above is not enough, since a ~200 KiB input can
+    // inflate to a large decompressed_size and an attacker-controlled root_count
+    // up to it would size a Vec<usize> (root_count * 8 bytes) before the stream
+    // is known to hold the indexes. (1) Prove the stream actually contains
+    // root_count 32-bit indexes plus the 32-bit node_count that follows, using
+    // checked arithmetic; (2) cap the allocation by a fixed memory budget
+    // independent of max_size. Legitimate BOCs have a tiny root count, so the
+    // budget is generous.
+    const ROOT_INDEX_BUDGET_BYTES: usize = 64 * 1024 * 1024;
+    let required_bits = root_count
+        .checked_mul(32)
+        .and_then(|b| b.checked_add(32))
+        .ok_or_else(|| error!("BOC decompression failed: root count {root_count} too large"))?;
+    if required_bits > reader.remaining_bits() {
+        fail!("BOC decompression failed: not enough bits for {root_count} root indexes");
+    }
+    if root_count.saturating_mul(std::mem::size_of::<usize>()) > ROOT_INDEX_BUDGET_BYTES {
+        fail!("BOC decompression failed: root count {root_count} exceeds the root-index memory budget");
+    }
     let mut root_indexes = Vec::with_capacity(root_count);
     for _ in 0..root_count {
         root_indexes.push(reader.read_uint(32)? as usize);
@@ -807,6 +830,45 @@ pub fn boc_decompress_improved_structure_lz4(
     }
     if node_count > decompressed_size {
         fail!("BOC decompression failed: incorrect node count provided");
+    }
+    // Absolute ceiling on the announced cell count. node_count <= decompressed_size
+    // bounds it to the input, but SECTION 4 then eagerly allocates several arrays
+    // of ~240 bytes per node, so a caller that passes a large max_size would let a
+    // small compressed input drive a huge pre-parse allocation. This cap bounds the
+    // allocation regardless of max_size, matching the C++ streaming BOC reader's
+    // kDefaultStreamingBocMaxCells (crypto/vm/boc.h).
+    if node_count > MAX_BOC_CELLS {
+        fail!(
+            "BOC decompression failed: node count {} exceeds maximum {}",
+            node_count,
+            MAX_BOC_CELLS
+        );
+    }
+    // Memory budget for the per-node working set allocated eagerly in SECTION 4,
+    // enforced BEFORE that allocation. The cell-count ceiling above is not a
+    // memory bound: at MAX_BOC_CELLS the fixed per-node arrays below total
+    // billions of bytes, so a ~200 KiB compressed input that inflates to a large
+    // decompressed_size (and a caller that allows a large max_size) could drive a
+    // multi-GiB allocation before any per-node metadata is validated. Bound
+    // node_count so that allocation stays within a fixed budget, regardless of
+    // max_size. Computed from the actual per-node footprint so it tracks the
+    // types rather than a hand-copied constant.
+    const DECODE_WORKING_SET_BUDGET_BYTES: usize = 512 * 1024 * 1024;
+    let per_node_working_bytes = 2 * std::mem::size_of::<usize>() // cell_data_length + cell_refs_cnt
+        + 3 // is_data_small + is_special + is_depth_balance
+        + std::mem::size_of::<u8>() // pruned_branch_level
+        + std::mem::size_of::<[usize; 4]>() // boc_graph adjacency
+        + std::mem::size_of::<BuilderData>(); // cell_builders
+    let max_nodes_by_budget = DECODE_WORKING_SET_BUDGET_BYTES / per_node_working_bytes.max(1);
+    if node_count > max_nodes_by_budget {
+        fail!(
+            "BOC decompression failed: node count {} exceeds the {}-byte decode memory budget \
+             ({} nodes at {} bytes each)",
+            node_count,
+            DECODE_WORKING_SET_BUDGET_BYTES,
+            max_nodes_by_budget,
+            per_node_working_bytes
+        );
     }
     for &idx in &root_indexes {
         if idx >= node_count {

@@ -17,6 +17,10 @@ use std::sync::{Arc, Mutex};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TaskStatus {
     Running,
+    // The task has been signalled to stop and is being joined, but has not yet
+    // confirmed exit. Reported distinctly from Stopped so callers never see a
+    // task reported as fully stopped while it may still be running.
+    Stopping,
     Stopped,
 }
 
@@ -24,6 +28,7 @@ impl TaskStatus {
     pub fn as_str(&self) -> &'static str {
         match self {
             TaskStatus::Running => "running",
+            TaskStatus::Stopping => "stopping",
             TaskStatus::Stopped => "stopped",
         }
     }
@@ -56,13 +61,18 @@ struct State {
     status: TaskStatus,
     updated_at: u64,
     cancel: Option<CancellationCtx>,
+    // The running task's join handle (present only while Running).
     handle: Option<tokio::task::JoinHandle<()>>,
+    // Identifies the current task instance. Bumped whenever a new generation is
+    // started, so a finalizer joining an older generation cannot clobber a newer
+    // state.
+    generation: u64,
 }
 
 pub struct TaskController {
     name: &'static str,
     task: Arc<dyn ServiceTask>,
-    state: Mutex<State>,
+    state: Arc<Mutex<State>>,
     runtime_cfg: Arc<dyn RuntimeConfig>,
 }
 
@@ -75,13 +85,14 @@ impl TaskController {
         Self {
             name,
             task: Arc::new(task),
-            state: Mutex::new(State {
+            state: Arc::new(Mutex::new(State {
                 enabled: true,
                 status: TaskStatus::Stopped,
                 updated_at: UnixTime::now(),
                 cancel: None,
                 handle: None,
-            }),
+                generation: 0,
+            })),
             runtime_cfg,
         }
     }
@@ -91,81 +102,139 @@ impl TaskController {
         TaskStateView { enabled: st.enabled, status: st.status, updated_at: st.updated_at }
     }
 
-    pub async fn enable(&self) -> TaskStateView {
-        let mut st = self.state.lock().expect("failed to lock state");
-
-        st.enabled = true;
-
-        if st.status == TaskStatus::Running {
-            st.updated_at = UnixTime::now();
-            return TaskStateView {
-                enabled: st.enabled,
-                status: st.status,
-                updated_at: st.updated_at,
-            };
-        }
-
+    // Spawn a fresh task generation and record it as Running. Takes the pieces
+    // rather than &self so both enable() and the detached finalizer (which owns
+    // clones) can call it.
+    fn start_generation(
+        st: &mut State,
+        task: &Arc<dyn ServiceTask>,
+        runtime_cfg: &Arc<dyn RuntimeConfig>,
+        name: &'static str,
+    ) {
         let cancel_ctx = CancellationCtx::new();
-        let task = self.task.clone();
-        let name = self.name;
-
-        tracing::debug!("starting {} task...", name);
         let ctx = cancel_ctx.clone();
-        let app_config = self.runtime_cfg.get();
+        let app_config = runtime_cfg.get();
+        let task = task.clone();
         let handle = tokio::spawn(async move {
             if let Err(e) = task.run(ctx, app_config).await {
                 tracing::error!("{} task error: {:#}", name, e);
             }
         });
-        tracing::info!("{} task started", name);
-
+        st.generation = st.generation.wrapping_add(1);
         st.cancel = Some(cancel_ctx);
         st.handle = Some(handle);
         st.status = TaskStatus::Running;
         st.updated_at = UnixTime::now();
+    }
+
+    pub async fn enable(&self) -> TaskStateView {
+        let mut st = self.state.lock().expect("failed to lock state");
+        st.enabled = true;
+
+        match st.status {
+            TaskStatus::Running => {
+                st.updated_at = UnixTime::now();
+            }
+            TaskStatus::Stopping => {
+                // A finalizer is joining the previous generation. Because enabled
+                // is now true, it will start a fresh generation once that one
+                // actually exits. Do NOT spawn here: abort()/cancellation only
+                // signals stop, it is not a barrier that the old generation has
+                // ended, so starting now could run two generations at once.
+                st.updated_at = UnixTime::now();
+            }
+            TaskStatus::Stopped => {
+                tracing::debug!("starting {} task...", self.name);
+                Self::start_generation(&mut st, &self.task, &self.runtime_cfg, self.name);
+                tracing::info!("{} task started", self.name);
+            }
+        }
 
         TaskStateView { enabled: st.enabled, status: st.status, updated_at: st.updated_at }
     }
 
     pub async fn disable(&self) -> TaskStateView {
-        let handle_to_await = {
+        let (view, finalizer) = {
             let mut st = self.state.lock().expect("failed to lock state");
             st.enabled = false;
 
-            if st.status == TaskStatus::Stopped {
-                st.updated_at = UnixTime::now();
-                return TaskStateView {
-                    enabled: st.enabled,
-                    status: st.status,
-                    updated_at: st.updated_at,
-                };
+            match st.status {
+                // Stopped: nothing running. Stopping: a finalizer is already
+                // joining the generation; enabled=false now means it will settle
+                // to Stopped rather than restart. Either way, no new finalizer.
+                TaskStatus::Stopped | TaskStatus::Stopping => {
+                    st.updated_at = UnixTime::now();
+                    return TaskStateView {
+                        enabled: st.enabled,
+                        status: st.status,
+                        updated_at: st.updated_at,
+                    };
+                }
+                TaskStatus::Running => {
+                    tracing::debug!("stopping {} task...", self.name);
+                    if let Some(mut ctx) = st.cancel.take() {
+                        ctx.cancel(CancellationReason::GracefullyShutdown());
+                    } else {
+                        tracing::warn!(
+                            "{} task marked running but no cancellation ctx present",
+                            self.name
+                        );
+                    }
+                    // Enter Stopping synchronously. The task is signalled but not
+                    // yet joined, so it is reported Stopping, never Stopped. The
+                    // handle moves to a detached finalizer.
+                    let handle = st.handle.take();
+                    st.status = TaskStatus::Stopping;
+                    st.updated_at = UnixTime::now();
+                    let view = TaskStateView {
+                        enabled: st.enabled,
+                        status: st.status,
+                        updated_at: st.updated_at,
+                    };
+                    (view, handle.map(|h| (h, st.generation)))
+                }
             }
-
-            tracing::debug!("stopping {} task...", self.name);
-            if let Some(mut ctx) = st.cancel.take() {
-                ctx.cancel(CancellationReason::GracefullyShutdown());
-            } else {
-                tracing::warn!("{} task marked running but no cancellation ctx present", self.name);
-            }
-
-            st.handle.take()
         };
 
-        if let Some(handle) = handle_to_await {
-            tracing::debug!("await {} task join...", self.name);
-            let _ = handle.await;
+        // The finalizer waits for the OLD generation's JoinHandle to actually
+        // complete -- the real barrier that it has ended, which cancellation
+        // alone does not provide -- and only then either starts the next
+        // generation (if re-enabled meanwhile) or settles to Stopped. Two
+        // generations therefore never run at once. Detached, so a dropped
+        // (HTTP-request) future cannot strand the transition.
+        if let Some((handle, generation)) = finalizer {
+            let state = self.state.clone();
+            let task = self.task.clone();
+            let runtime_cfg = self.runtime_cfg.clone();
+            let name = self.name;
+            tokio::spawn(async move {
+                let _ = handle.await;
+                let mut st = state.lock().expect("failed to lock state");
+                if st.generation != generation {
+                    // A newer generation already owns the state; nothing to do.
+                    return;
+                }
+                if st.enabled {
+                    TaskController::start_generation(&mut st, &task, &runtime_cfg, name);
+                    tracing::info!("{} task restarted after stop", name);
+                } else {
+                    st.cancel = None;
+                    st.handle = None;
+                    st.status = TaskStatus::Stopped;
+                    st.updated_at = UnixTime::now();
+                    tracing::info!("{} task stopped", name);
+                }
+            });
         }
-
-        tracing::info!("{} task stopped", self.name);
-
-        let mut st = self.state.lock().expect("failed to lock state");
-        st.status = TaskStatus::Stopped;
-        st.updated_at = UnixTime::now();
-
-        TaskStateView { enabled: st.enabled, status: st.status, updated_at: st.updated_at }
+        view
     }
 
     pub async fn restart(&self) -> TaskStateView {
+        // disable() enters Stopping and arms the finalizer; enable() marks the
+        // controller enabled again. When the old generation actually exits, the
+        // finalizer starts the new one. The result is reported Stopping and
+        // becomes Running once the restart completes -- no overlap with the old
+        // generation.
         let _ = self.disable().await;
         self.enable().await
     }
@@ -229,6 +298,7 @@ mod tests {
                 http: HttpConfig::default(),
                 master_wallet: None,
                 tick_interval: 30,
+                indexer_retention_blocks: 0,
                 log: None,
                 bookmarks: HashMap::new(),
                 agent_wallets: HashMap::new(),
@@ -321,6 +391,93 @@ mod tests {
         }
     }
 
+    /// Counts its runs and, once cancelled, still takes a while to actually
+    /// return -- so a disable() join is still pending if its future is dropped.
+    // Tracks how many generations are simultaneously inside run() (via an RAII
+    // guard) and lingers after observing cancellation, widening any window in
+    // which a superseding generation could start before this one has exited.
+    struct ActiveGuard {
+        active: Arc<AtomicU32>,
+    }
+
+    impl ActiveGuard {
+        fn enter(active: &Arc<AtomicU32>, max_active: &Arc<AtomicU32>) -> Self {
+            let now = active.fetch_add(1, Ordering::SeqCst) + 1;
+            max_active.fetch_max(now, Ordering::SeqCst);
+            Self { active: active.clone() }
+        }
+    }
+
+    impl Drop for ActiveGuard {
+        fn drop(&mut self) {
+            self.active.fetch_sub(1, Ordering::SeqCst);
+        }
+    }
+
+    struct ConcurrencyTask {
+        runs: Arc<AtomicU32>,
+        active: Arc<AtomicU32>,
+        max_active: Arc<AtomicU32>,
+        linger_ms: u64,
+    }
+
+    impl ConcurrencyTask {
+        fn new(linger_ms: u64) -> (Self, Arc<AtomicU32>, Arc<AtomicU32>, Arc<AtomicU32>) {
+            let runs = Arc::new(AtomicU32::new(0));
+            let active = Arc::new(AtomicU32::new(0));
+            let max_active = Arc::new(AtomicU32::new(0));
+            (
+                Self {
+                    runs: runs.clone(),
+                    active: active.clone(),
+                    max_active: max_active.clone(),
+                    linger_ms,
+                },
+                runs,
+                active,
+                max_active,
+            )
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl ServiceTask for ConcurrencyTask {
+        async fn run(
+            &self,
+            ctx: CancellationCtx,
+            _app_config: Arc<AppConfig>,
+        ) -> anyhow::Result<()> {
+            self.runs.fetch_add(1, Ordering::SeqCst);
+            let _guard = ActiveGuard::enter(&self.active, &self.max_active);
+            let mut rx = ctx.subscribe();
+            let _ = rx.changed().await;
+            // Observed cancellation, but take a while to actually exit; the guard
+            // (and thus the active count) is not released until this returns.
+            if self.linger_ms > 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(self.linger_ms)).await;
+            }
+            Ok(())
+        }
+    }
+
+    // disable() now returns Stopping and the Stopping -> Stopped transition is
+    // driven by a detached finalizer once the task actually exits, so tests poll
+    // for the terminal status rather than expecting it synchronously.
+    async fn wait_for_status(
+        ctrl: &TaskController,
+        want: TaskStatus,
+        timeout_ms: u64,
+    ) -> TaskStatus {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(timeout_ms);
+        loop {
+            let got = ctrl.status().await.status;
+            if got == want || std::time::Instant::now() >= deadline {
+                return got;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    }
+
     #[tokio::test]
     async fn new_controller_is_stopped_and_enabled() {
         let ctrl = TaskController::new("test", ImmediateTask, runtime_config());
@@ -346,7 +503,8 @@ mod tests {
 
         // Cleanup
         let view2 = ctrl.disable().await;
-        assert_eq!(view2.status, TaskStatus::Stopped);
+        assert_eq!(view2.status, TaskStatus::Stopping);
+        assert_eq!(wait_for_status(&ctrl, TaskStatus::Stopped, 2000).await, TaskStatus::Stopped);
     }
 
     #[tokio::test]
@@ -360,8 +518,8 @@ mod tests {
         assert!(view.enabled);
         assert_eq!(view.status, TaskStatus::Running);
 
-        let view = ctrl.disable().await;
-        assert_eq!(view.status, TaskStatus::Stopped);
+        ctrl.disable().await;
+        assert_eq!(wait_for_status(&ctrl, TaskStatus::Stopped, 2000).await, TaskStatus::Stopped);
     }
 
     #[tokio::test]
@@ -373,7 +531,9 @@ mod tests {
         let view = ctrl.disable().await;
 
         assert!(!view.enabled);
-        assert_eq!(view.status, TaskStatus::Stopped);
+        // disable() reports Stopping synchronously; Stopped follows once joined.
+        assert_eq!(view.status, TaskStatus::Stopping);
+        assert_eq!(wait_for_status(&ctrl, TaskStatus::Stopped, 2000).await, TaskStatus::Stopped);
     }
 
     #[tokio::test]
@@ -417,6 +577,9 @@ mod tests {
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
         ctrl.disable().await;
+        // The task observes cancellation asynchronously; wait for the terminal
+        // state, by which point it must have set the flag.
+        assert_eq!(wait_for_status(&ctrl, TaskStatus::Stopped, 2000).await, TaskStatus::Stopped);
         assert!(cancelled.load(Ordering::SeqCst), "task should have observed cancellation");
     }
 
@@ -429,11 +592,11 @@ mod tests {
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         assert_eq!(count.load(Ordering::SeqCst), 1);
 
+        // restart() reports Stopping and becomes Running once the old generation
+        // has exited and the finalizer starts the new one.
         let view = ctrl.restart().await;
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-
         assert!(view.enabled);
-        assert_eq!(view.status, TaskStatus::Running);
+        assert_eq!(wait_for_status(&ctrl, TaskStatus::Running, 2000).await, TaskStatus::Running);
         assert_eq!(count.load(Ordering::SeqCst), 2, "task should have been started twice");
 
         ctrl.disable().await;
@@ -450,8 +613,8 @@ mod tests {
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
         // Controller should still be operational; disable should not panic.
-        let view = ctrl.disable().await;
-        assert_eq!(view.status, TaskStatus::Stopped);
+        ctrl.disable().await;
+        assert_eq!(wait_for_status(&ctrl, TaskStatus::Stopped, 2000).await, TaskStatus::Stopped);
     }
 
     #[tokio::test]
@@ -469,6 +632,7 @@ mod tests {
         assert!(v2.enabled);
 
         ctrl.disable().await;
+        assert_eq!(wait_for_status(&ctrl, TaskStatus::Stopped, 2000).await, TaskStatus::Stopped);
         let v3 = ctrl.status().await;
         assert_eq!(v3.status, TaskStatus::Stopped);
         assert!(!v3.enabled);
@@ -477,6 +641,7 @@ mod tests {
     #[tokio::test]
     async fn task_status_as_str() {
         assert_eq!(TaskStatus::Running.as_str(), "running");
+        assert_eq!(TaskStatus::Stopping.as_str(), "stopping");
         assert_eq!(TaskStatus::Stopped.as_str(), "stopped");
     }
 
@@ -544,8 +709,7 @@ mod tests {
         assert_eq!(v.load(Ordering::SeqCst), 1);
 
         ctrl.disable().await;
-        let view = ctrl.status().await;
-        assert_eq!(view.status, TaskStatus::Stopped);
+        assert_eq!(wait_for_status(&ctrl, TaskStatus::Stopped, 2000).await, TaskStatus::Stopped);
     }
 
     async fn no_fields_run(
@@ -563,5 +727,62 @@ mod tests {
         let ctx = CancellationCtx::new();
         let app_config = runtime_config().get();
         task.run(ctx, app_config).await.expect("zero-field task should work");
+    }
+
+    // disable() reports Stopping synchronously and never Running; a detached
+    // finalizer drives Stopping -> Stopped once the task actually exits,
+    // independent of the disable() future's lifetime. (Pre-fix disable() set
+    // Stopped only after a cancellable join, so a dropped future stranded
+    // Running; a version that set Stopped synchronously reported the task
+    // stopped while it was still running.)
+    #[tokio::test]
+    async fn disable_enters_stopping_then_reaches_stopped_via_finalizer() {
+        let (task, runs, _active, _max) = ConcurrencyTask::new(200);
+        let ctrl = TaskController::new("test", task, runtime_config());
+
+        assert_eq!(ctrl.enable().await.status, TaskStatus::Running);
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        assert_eq!(runs.load(Ordering::SeqCst), 1, "task should have started once");
+
+        // Synchronous result is Stopping -- not Stopped (task still exiting),
+        // and not Running.
+        assert_eq!(ctrl.disable().await.status, TaskStatus::Stopping);
+        assert_eq!(ctrl.status().await.status, TaskStatus::Stopping);
+
+        // The detached finalizer joins the task (it lingers before exiting) and
+        // then flips to Stopped. With no finalizer this would stay Stopping.
+        assert_eq!(wait_for_status(&ctrl, TaskStatus::Stopped, 3000).await, TaskStatus::Stopped);
+    }
+
+    // A restart must never run two generations at once: the new generation starts
+    // only after the old one's JoinHandle has actually completed, not merely after
+    // abort()/cancellation is signalled. The task lingers after cancellation, so a
+    // version that aborts-then-immediately-spawns would briefly have two live and
+    // drive max_active to 2.
+    #[tokio::test]
+    async fn restart_never_runs_two_generations_concurrently() {
+        let (task, runs, _active, max_active) = ConcurrencyTask::new(200);
+        let ctrl = TaskController::new("test", task, runtime_config());
+
+        assert_eq!(ctrl.enable().await.status, TaskStatus::Running);
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        assert_eq!(runs.load(Ordering::SeqCst), 1);
+        assert_eq!(max_active.load(Ordering::SeqCst), 1);
+
+        // restart() -> Stopping; the finalizer waits for generation 1 to exit
+        // (200ms linger) and only then starts generation 2.
+        assert_eq!(ctrl.restart().await.status, TaskStatus::Stopping);
+        assert_eq!(wait_for_status(&ctrl, TaskStatus::Running, 3000).await, TaskStatus::Running);
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        assert_eq!(runs.load(Ordering::SeqCst), 2, "a fresh generation must have started");
+
+        // The overlap invariant: at no point were two generations inside run().
+        assert_eq!(
+            max_active.load(Ordering::SeqCst),
+            1,
+            "the old generation must have fully exited before the new one started"
+        );
+
+        ctrl.disable().await;
     }
 }

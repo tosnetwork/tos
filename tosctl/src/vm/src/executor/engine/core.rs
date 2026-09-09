@@ -112,6 +112,11 @@ pub struct Engine {
     trace_callback: Option<Arc<TraceCallback>>,
     log_string: Option<&'static str>,
     max_data_depth: u16,
+    // Number of parent VMs on the native call stack. run_child_vm recurses into
+    // execute() on the native stack, so without a cap a contract using deeply
+    // nested RUNVM (each costing little gas) can overflow the host's native
+    // stack and crash the process rather than merely failing the transaction.
+    vm_nesting_depth: u16,
     capabilities: u64,
     block_version: u32,
 }
@@ -173,6 +178,12 @@ impl Engine {
     pub const TRACE_CTRLS: u8 = 0x08;
     pub const TRACE_ALL: u8 = 0xFF;
     pub const TRACE_ALL_BUT_CTRLS: u8 = 0x07;
+    // Historical reference depth. There is no enforced nesting cap: RUNVM
+    // nesting is bounded by gas, as in the C++ VM, and run_child_vm keeps the
+    // host-stack recursion safe by growing the stack on demand (stacker). This
+    // constant is kept only as a reference point for tests that verify nesting
+    // at and beyond it is NOT refused.
+    pub const FORMER_VM_NESTING_CAP: u16 = 16;
 
     // External API ***********************************************************
 
@@ -220,6 +231,7 @@ impl Engine {
             trace_callback,
             log_string: None,
             max_data_depth: 512,
+            vm_nesting_depth: 0,
             capabilities,
             block_version: 0,
         }
@@ -1082,10 +1094,20 @@ impl Engine {
             trace_callback: self.trace_callback.clone(),
             log_string: None,
             max_data_depth: self.max_data_depth,
+            vm_nesting_depth: self.vm_nesting_depth + 1,
             capabilities: self.capabilities,
             block_version: self.block_version,
         };
-        let mut result = match child.execute() {
+        // A child VM executes on the host call stack (execute -> ... ->
+        // run_child_vm -> child.execute), so deep RUNVM nesting would otherwise
+        // overflow it. The real bound on nesting is gas -- each level consumes
+        // gas from the shared budget -- and the C++ VM imposes no separate depth
+        // cap, so we must not either: a cap would reject gas-valid programs the
+        // native executor accepts. Instead grow the host stack on demand, which
+        // keeps the recursion safe without changing the set of accepted programs.
+        const RED_ZONE: usize = 128 * 1024;
+        const STACK_GROW: usize = 2 * 1024 * 1024;
+        let mut result = match stacker::maybe_grow(RED_ZONE, STACK_GROW, || child.execute()) {
             Ok(result) => result,
             Err(err) => {
                 // in case of error we have copy of code on stack
@@ -1106,8 +1128,8 @@ impl Engine {
         // let mut result = child.execute().unwrap_or_else(|err| tvm_exception_or_custom_code(&err));
         log::debug!(
             target: "tvm",
-            "Child VM finished. res: {result}, steps: {}, gas: {}, stack depth: {}\n",
-            child.step, child.gas_used(), child.cc.stack.depth()
+            "Child VM finished. res: {result}, nesting: {}, steps: {}, gas: {}, stack depth: {}\n",
+            child.vm_nesting_depth, child.step, child.gas_used(), child.cc.stack.depth()
         );
 
         self.step += child.step;
@@ -1692,6 +1714,64 @@ impl Engine {
         match self.get_config_param(index)? {
             Some(cell) => T::construct_from_cell(cell),
             None => fail!("Cannot get config param {}", index),
+        }
+    }
+}
+
+#[cfg(test)]
+mod nesting_depth_tests {
+    use super::*;
+
+    fn minimal_child_params() -> RunChildVm {
+        RunChildVm {
+            code: SliceData::default(),
+            data: StackItem::None,
+            c7: StackItem::None,
+            stack: Stack::new(),
+            gas_max: 100_000,
+            gas_limit: 100_000,
+            same_c3: false,
+            return_data: false,
+            return_actions: false,
+            return_gas: false,
+            isolate_gas: true,
+            ret_vals: 0,
+        }
+    }
+
+    fn engine_at_depth(depth: u16) -> Engine {
+        let mut engine = Engine::with_capabilities(0);
+        engine.set_gas(Gas::test_with_limit(1_000_000));
+        engine.vm_nesting_depth = depth;
+        engine
+    }
+
+    // There is no nesting cap: at and well beyond the former ceiling, a
+    // gas-valid child VM must run rather than be refused with StackOverflow --
+    // matching the C++ VM, which caps nesting by gas, not by depth. Re-adding a
+    // depth cap at or below these depths makes run_child_vm return StackOverflow
+    // here, so these tests go red exactly when the semantic divergence returns.
+    #[test]
+    fn child_vm_at_former_cap_depth_is_not_refused() {
+        let mut engine = engine_at_depth(Engine::FORMER_VM_NESTING_CAP);
+        if let Err(err) = engine.run_child_vm(minimal_child_params()) {
+            assert_ne!(
+                tvm_exception_code(&err),
+                Some(ExceptionCode::StackOverflow),
+                "nesting at the former cap must not be refused for depth"
+            );
+        }
+    }
+
+    #[test]
+    fn child_vm_far_beyond_former_cap_depth_is_not_refused() {
+        let mut engine = engine_at_depth(Engine::FORMER_VM_NESTING_CAP * 8);
+        if let Err(err) = engine.run_child_vm(minimal_child_params()) {
+            assert_ne!(
+                tvm_exception_code(&err),
+                Some(ExceptionCode::StackOverflow),
+                "nesting far beyond the former cap must not be refused for depth"
+            );
         }
     }
 }

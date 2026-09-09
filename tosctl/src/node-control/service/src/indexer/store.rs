@@ -320,6 +320,12 @@ pub struct IndexerStore {
 impl IndexerStore {
     pub fn open(path: &Path) -> anyhow::Result<Self> {
         let conn = Connection::open(path)?;
+        // Incremental auto-vacuum lets prune_history() return freed pages to the
+        // OS via `PRAGMA incremental_vacuum`. On a fresh database this must be
+        // set before any table is created; on a pre-existing database it is a
+        // no-op until a full VACUUM, in which case pruning still bounds row
+        // growth, only the file does not shrink.
+        conn.execute_batch("PRAGMA auto_vacuum = INCREMENTAL;")?;
         Self::init_schema(&conn)?;
         Self::ensure_schema_version(&conn)?;
         Ok(Self { conn: Mutex::new(conn) })
@@ -328,9 +334,49 @@ impl IndexerStore {
     /// In-memory store, for tests.
     pub fn open_in_memory() -> anyhow::Result<Self> {
         let conn = Connection::open_in_memory()?;
+        conn.execute_batch("PRAGMA auto_vacuum = INCREMENTAL;")?;
         Self::init_schema(&conn)?;
         Self::ensure_schema_version(&conn)?;
         Ok(Self { conn: Mutex::new(conn) })
+    }
+
+    /// Prune explorer/indexer history older than `keep_from_mc_seqno`
+    /// (exclusive) to bound the append-only history tables. The DNS-history and
+    /// explorer block tables are keyed by the masterchain seqno at which the row
+    /// was observed; explorer transactions carry no such column and are pruned
+    /// referentially, by dropping rows whose block is no longer retained. Called
+    /// with `keep_from = tip - retention_window`; a window of 0 disables pruning
+    /// (the caller does not invoke this). Returns the number of rows removed.
+    pub fn prune_history(&self, keep_from_mc_seqno: u32) -> anyhow::Result<usize> {
+        let conn = self.conn.lock().expect("indexer store lock poisoned");
+        let mut removed = 0usize;
+        removed += conn.execute(
+            "DELETE FROM dns_domain_history WHERE observed_mc_seqno < ?1",
+            params![keep_from_mc_seqno],
+        )?;
+        removed += conn.execute(
+            "DELETE FROM explorer_blocks WHERE observed_mc_seqno < ?1",
+            params![keep_from_mc_seqno],
+        )?;
+        // Explorer transactions have no observed_mc_seqno; drop the ones whose
+        // block has just been (or was previously) pruned so the two stay
+        // consistent and transactions cannot outlive their block.
+        removed += conn.execute(
+            "DELETE FROM explorer_transactions
+             WHERE NOT EXISTS (
+                 SELECT 1 FROM explorer_blocks b
+                 WHERE b.workchain = explorer_transactions.workchain
+                   AND b.shard = explorer_transactions.shard
+                   AND b.seqno = explorer_transactions.seqno
+             )",
+            [],
+        )?;
+        if removed > 0 {
+            // Return the freed pages to the OS (no-op unless auto_vacuum is
+            // incremental for this database).
+            conn.execute_batch("PRAGMA incremental_vacuum;")?;
+        }
+        Ok(removed)
     }
 
     fn init_schema(conn: &Connection) -> anyhow::Result<()> {
@@ -1853,6 +1899,66 @@ mod tests {
         assert_eq!(rows[0].file_hash.as_deref(), Some("file-seven"));
         store.reset_canonical_index().expect("reorg reset");
         assert!(store.dns_domain_history(0, "", 10).expect("history after reset").is_empty());
+    }
+
+    #[test]
+    fn prune_history_drops_rows_older_than_retention_window() {
+        let store = IndexerStore::open_in_memory().expect("store");
+        let mk_block = |seqno: u32| ExplorerBlockRecord {
+            workchain: -1,
+            shard: i64::MIN,
+            seqno,
+            root_hash: format!("root-{seqno}"),
+            file_hash: format!("file-{seqno}"),
+            gen_utime: 1_700_000_000,
+            tx_count: 1,
+            indexed_at: 1_700_000_001,
+            observed_mc_seqno: seqno,
+        };
+        let mk_tx = |seqno: u32| ExplorerTransactionRecord {
+            hash: format!("tx-{seqno}"),
+            account: "0:acct".to_owned(),
+            lt: seqno as u64,
+            workchain: -1,
+            shard: i64::MIN,
+            seqno,
+            gen_utime: 1_700_000_000,
+            fee: None,
+            in_msg_hash: None,
+            indexed_at: 1_700_000_001,
+        };
+        // One old block/tx/dns row (mc seqno 10) and one recent (mc seqno 1000).
+        store.index_explorer_block(&mk_block(10), &[mk_tx(10)]).expect("old block");
+        store.index_explorer_block(&mk_block(1000), &[mk_tx(1000)]).expect("new block");
+        for (addr, seqno) in [("0:old", 10u32), ("0:new", 1000u32)] {
+            store
+                .record_dns_domain_history(&DnsDomainHistoryRecord {
+                    address: addr.to_owned(),
+                    account_seqno: 1,
+                    observed_mc_seqno: seqno,
+                    observed_at: 1_700_000_000,
+                    dto_json: "{}".to_owned(),
+                    root_hash: Some(format!("root-{seqno}")),
+                    file_hash: Some(format!("file-{seqno}")),
+                })
+                .expect("dns");
+        }
+
+        let count = |sql: &str| -> i64 {
+            store.conn.lock().unwrap().query_row(sql, [], |row| row.get(0)).unwrap()
+        };
+        assert_eq!(count("SELECT COUNT(*) FROM explorer_blocks"), 2);
+        assert_eq!(count("SELECT COUNT(*) FROM explorer_transactions"), 2);
+        assert_eq!(count("SELECT COUNT(*) FROM dns_domain_history"), 2);
+
+        // Retain from mc seqno 500: the seqno-10 rows go, the seqno-1000 rows stay.
+        let removed = store.prune_history(500).expect("prune");
+        assert!(removed >= 3, "old block + dns + tx must be pruned, removed={removed}");
+        assert_eq!(count("SELECT COUNT(*) FROM explorer_blocks"), 1);
+        assert_eq!(count("SELECT COUNT(*) FROM explorer_transactions"), 1);
+        assert_eq!(count("SELECT COUNT(*) FROM dns_domain_history"), 1);
+        assert!(store.explorer_block_root(-1, i64::MIN, 1000).expect("q").is_some());
+        assert!(store.explorer_block_root(-1, i64::MIN, 10).expect("q").is_none());
     }
 
     #[test]

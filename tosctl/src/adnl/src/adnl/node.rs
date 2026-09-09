@@ -2244,6 +2244,16 @@ impl Drop for AdnlNode {
 }
 
 impl AdnlNode {
+    // Ceiling on the total number of registered peers. add_peer is driven from
+    // inbound packet processing, so any node presenting a signed address list is
+    // auto-registered; the only removal path (delete_peer) fires on explicit key
+    // deletion, never on idle. Without a ceiling an attacker minting identities
+    // grows the peer table without bound. The cap converts that unbounded growth
+    // into a bounded table: once full, a fresh peer is refused rather than
+    // crashing the process. (Idle-based LRU eviction, to keep serving new peers
+    // under such pressure, is a recommended follow-up.)
+    const MAX_PEERS: u64 = 65536;
+
     /// ADNL options
     pub const OPTION_FORCE_COMPRESSION: u32 = 0x0100; // Force traffic compression
     pub const OPTION_FORCE_VERSIONING: u32 = 0x0200; // Force ADNL versioning
@@ -2850,62 +2860,76 @@ impl AdnlNode {
         if peer_key.id() == local_key {
             return Ok(None);
         }
+        // Bound the peer table: refuse a brand-new peer once the table is at the
+        // ceiling. An update to an already-known peer never grows the table and
+        // is always allowed. See MAX_PEERS.
+        let peers = self.peers(local_key)?;
+        if peers.map_of.get(peer_key.id()).is_none()
+            && self.allocated.peers.load(Ordering::Relaxed) >= Self::MAX_PEERS
+        {
+            log::debug!(
+                target: TARGET,
+                "ADNL peer table full ({} peers), refusing new peer {}",
+                Self::MAX_PEERS,
+                peer_key.id()
+            );
+            return Ok(None);
+        }
         let mut error = None;
         let mut ret = peer_key.id().clone();
-        let result =
-            self.peers(local_key)?.map_of.insert_with(ret.clone(), |key, inserted, found| {
-                if let Some((_, found)) = found {
-                    ret = key.clone();
-                    found.address.update(peer_ip_address, peer_ip_address_quic);
-                    lockfree::map::Preview::Discard
-                } else if inserted.is_some() {
-                    ret = key.clone();
-                    lockfree::map::Preview::Keep
-                } else {
-                    let address = AdnlNodeAddress::from_ip_addresses_and_key(
-                        peer_ip_address,
-                        peer_ip_address_quic,
-                        peer_key,
-                    );
-                    match address {
-                        Ok(address) => {
-                            #[cfg(feature = "telemetry")]
-                            let peers = AdnlPeers::with_keys(local_key.clone(), ret.clone());
-                            let peer = Peer {
-                                address,
-                                recv_state: PeerState::for_receive_with_reinit_date(
-                                    self.start_timestamp,
-                                    #[cfg(feature = "telemetry")]
-                                    self,
-                                    #[cfg(feature = "telemetry")]
-                                    &peers,
-                                    #[cfg(feature = "telemetry")]
-                                    None,
-                                ),
-                                send_state: PeerState::for_send(
-                                    #[cfg(feature = "telemetry")]
-                                    self,
-                                    #[cfg(feature = "telemetry")]
-                                    &peers,
-                                    #[cfg(feature = "telemetry")]
-                                    None,
-                                ),
-                                counter: self.allocated.peers.clone().into(),
-                            };
-                            #[cfg(feature = "telemetry")]
-                            self.telemetry
-                                .allocated
-                                .peers
-                                .update(self.allocated.peers.load(Ordering::Relaxed));
-                            lockfree::map::Preview::New(peer)
-                        }
-                        Err(err) => {
-                            error = Some(err);
-                            lockfree::map::Preview::Discard
-                        }
+        let result = peers.map_of.insert_with(ret.clone(), |key, inserted, found| {
+            if let Some((_, found)) = found {
+                ret = key.clone();
+                found.address.update(peer_ip_address, peer_ip_address_quic);
+                lockfree::map::Preview::Discard
+            } else if inserted.is_some() {
+                ret = key.clone();
+                lockfree::map::Preview::Keep
+            } else {
+                let address = AdnlNodeAddress::from_ip_addresses_and_key(
+                    peer_ip_address,
+                    peer_ip_address_quic,
+                    peer_key,
+                );
+                match address {
+                    Ok(address) => {
+                        #[cfg(feature = "telemetry")]
+                        let peers = AdnlPeers::with_keys(local_key.clone(), ret.clone());
+                        let peer = Peer {
+                            address,
+                            recv_state: PeerState::for_receive_with_reinit_date(
+                                self.start_timestamp,
+                                #[cfg(feature = "telemetry")]
+                                self,
+                                #[cfg(feature = "telemetry")]
+                                &peers,
+                                #[cfg(feature = "telemetry")]
+                                None,
+                            ),
+                            send_state: PeerState::for_send(
+                                #[cfg(feature = "telemetry")]
+                                self,
+                                #[cfg(feature = "telemetry")]
+                                &peers,
+                                #[cfg(feature = "telemetry")]
+                                None,
+                            ),
+                            counter: self.allocated.peers.clone().into(),
+                        };
+                        #[cfg(feature = "telemetry")]
+                        self.telemetry
+                            .allocated
+                            .peers
+                            .update(self.allocated.peers.load(Ordering::Relaxed));
+                        lockfree::map::Preview::New(peer)
+                    }
+                    Err(err) => {
+                        error = Some(err);
+                        lockfree::map::Preview::Discard
                     }
                 }
-            });
+            }
+        });
         if let Some(error) = error {
             return Err(error);
         }

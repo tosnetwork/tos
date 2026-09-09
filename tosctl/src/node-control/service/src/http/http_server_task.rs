@@ -31,6 +31,51 @@ use common::{
 };
 use std::{collections::HashMap, net::SocketAddr, sync::Arc};
 
+// Ceiling on distinct per-node stake-policy overrides. Each override is a
+// persisted config entry; a node operator manages far fewer validators than
+// this, so the cap only bites an abusive or buggy caller minting node ids.
+const MAX_POLICY_OVERRIDES: usize = 4096;
+
+// Global cap on concurrent in-flight HTTP requests. The server has
+// unauthenticated public/explorer routes, so without a bound a flood of slow or
+// concurrent requests can grow in-flight memory and task count without limit.
+// Excess requests are shed with 503 rather than queued.
+const MAX_CONCURRENT_HTTP_REQUESTS: usize = 256;
+// Hard per-request timeout, so a stuck handler cannot hold a concurrency permit
+// (and its resources) indefinitely.
+const HTTP_REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+#[derive(Clone)]
+struct HttpLimits {
+    concurrency: Arc<tokio::sync::Semaphore>,
+    request_timeout: std::time::Duration,
+}
+
+fn http_limits() -> HttpLimits {
+    HttpLimits {
+        concurrency: Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_HTTP_REQUESTS)),
+        request_timeout: HTTP_REQUEST_TIMEOUT,
+    }
+}
+
+// Sheds load past the concurrency ceiling (503) and bounds each request's
+// lifetime (504). The permit is held for the request and released on return, so
+// concurrent in-flight requests -- and the memory they hold -- stay bounded.
+async fn limit_concurrency_and_timeout(
+    axum::extract::State(limits): axum::extract::State<HttpLimits>,
+    req: axum::http::Request<axum::body::Body>,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let Ok(_permit) = limits.concurrency.try_acquire() else {
+        return (axum::http::StatusCode::SERVICE_UNAVAILABLE, "server busy").into_response();
+    };
+    match tokio::time::timeout(limits.request_timeout, next.run(req)).await {
+        Ok(response) => response,
+        Err(_) => (axum::http::StatusCode::GATEWAY_TIMEOUT, "request timed out").into_response(),
+    }
+}
+
 #[derive(Clone)]
 pub struct AppState {
     pub store: Arc<SnapshotStore>,
@@ -274,6 +319,7 @@ pub(crate) fn routes(enable_swagger: bool, state: AppState) -> axum::Router {
         .merge(operator_only)
         .layer(axum::extract::DefaultBodyLimit::max(16 * 1024))
         .with_state(state)
+        .layer(axum::middleware::from_fn_with_state(http_limits(), limit_concurrency_and_timeout))
 }
 
 fn explorer_public_routes() -> axum::Router<AppState> {
@@ -303,6 +349,7 @@ pub(crate) fn explorer_only_routes(state: AppState) -> axum::Router {
         .merge(explorer_public_routes())
         .layer(axum::extract::DefaultBodyLimit::max(16 * 1024))
         .with_state(state)
+        .layer(axum::middleware::from_fn_with_state(http_limits(), limit_concurrency_and_timeout))
 }
 
 // --- Error handling ---
@@ -474,6 +521,7 @@ pub struct ElectionsTaskControlRequest {
 #[serde(rename_all = "lowercase")]
 pub enum TaskStatusDto {
     Running,
+    Stopping,
     Stopped,
 }
 
@@ -481,6 +529,7 @@ impl From<TaskStatus> for TaskStatusDto {
     fn from(v: TaskStatus) -> Self {
         match v {
             TaskStatus::Running => TaskStatusDto::Running,
+            TaskStatus::Stopping => TaskStatusDto::Stopping,
             TaskStatus::Stopped => TaskStatusDto::Stopped,
         }
     }
@@ -738,18 +787,38 @@ pub async fn v1_stake_strategy_handler(
 
     let policy = req.policy.clone();
     let node_id = req.node.clone();
+    // Bound the persisted per-node override map: each request with a fresh node
+    // id adds a permanent, persisted entry, so without a ceiling a caller could
+    // grow the config file without limit. Setting a policy for an already-known
+    // node, or the default policy (no node id), never grows the map.
+    //
+    // The ceiling is enforced INSIDE the update closure, which runs under the
+    // config write lock, so the capacity check and the insert are one atomic
+    // step. A check performed before update_with (outside the lock) let two
+    // concurrent requests both observe len == MAX - 1, both pass, and each
+    // insert, overshooting the ceiling.
+    let mut rejected_over_capacity = false;
     state
         .runtime_cfg
         .update_with(|cfg| {
             if let Some(elections) = &mut cfg.elections {
                 if let Some(node_id) = node_id {
-                    elections.policy_overrides.insert(node_id, policy);
+                    if !elections.policy_overrides.contains_key(&node_id)
+                        && elections.policy_overrides.len() >= MAX_POLICY_OVERRIDES
+                    {
+                        rejected_over_capacity = true;
+                    } else {
+                        elections.policy_overrides.insert(node_id, policy);
+                    }
                 } else {
                     elections.policy = policy;
                 }
             }
         })
         .map_err(|e| AppError::internal(e.to_string()))?;
+    if rejected_over_capacity {
+        return Err(AppError::bad_request("too many stake-policy overrides configured"));
+    }
 
     let task = state.elections_task.clone();
     tokio::spawn(async move {
@@ -1232,6 +1301,7 @@ mod tests {
             voting: None,
             master_wallet: None,
             tick_interval: 30,
+            indexer_retention_blocks: 0,
             log: Some(LogConfig::default()),
             bookmarks: HashMap::new(),
             agent_wallets: HashMap::new(),
@@ -1256,6 +1326,7 @@ mod tests {
             voting: None,
             master_wallet: None,
             tick_interval: 30,
+            indexer_retention_blocks: 0,
             log: Some(LogConfig::default()),
             bookmarks: HashMap::new(),
             agent_wallets: HashMap::new(),
@@ -1512,7 +1583,9 @@ mod tests {
         assert_eq!(v["result"]["enabled"], true);
         assert_eq!(v["result"]["status"], "running");
 
-        // Restart
+        // Restart: the running generation is signalled to stop and the new one
+        // starts only after it has actually exited, so the immediate response
+        // reports stopping (never overlapping two generations).
         let app = routes(false, state.clone());
         let resp = app
             .oneshot(post_json(
@@ -1524,7 +1597,19 @@ mod tests {
         assert_eq!(resp.status(), 200);
         let v = body_json(resp).await;
         assert_eq!(v["result"]["enabled"], true);
-        assert_eq!(v["result"]["status"], "running");
+        assert_eq!(v["result"]["status"], "stopping");
+
+        // Once the old generation exits, the finalizer starts the new one and the
+        // controller reports running again.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(2000);
+        loop {
+            let status = state.elections_task.status().await.status;
+            if status == TaskStatus::Running || std::time::Instant::now() >= deadline {
+                assert_eq!(status, TaskStatus::Running, "restart should reach running");
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
     }
 
     #[tokio::test]
