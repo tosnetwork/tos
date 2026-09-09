@@ -1,4 +1,4 @@
-# Genesis installation draft
+# Genesis installation
 
 The production generator now constructs an empty wc=2 shard, saves its root and
 file hashes, and commits them in the complete creation descriptor. Its basic
@@ -51,7 +51,11 @@ The test-network copy of the production generator produced a real zerostate.
 Its ledger contains wc=2 with seq=1. The production check_mc_state_extra method
 accepted the unchanged state and rejected missing-instance and wrong-descriptor
 candidate deltas with final typed CandidateReject. This is method-level evidence,
-not full-block consensus acceptance; mutation calibration remains pending.
+not full-block consensus acceptance. Removing genesis issuance in a committed
+source copy leaves a validly encoded empty ledger and trips identity 936.
+Removing the independent delta comparison retains positive acceptance and trips
+identity 931 for both missing-entry and changed-descriptor candidates. These
+are two directions through the same delta guard, not two independent defenses.
 
 The initial system record encoded for configuration seeding has layout=1,
 base_compute=1000000, registered_accounts=0, and system_pending_count=0. The wc=2
@@ -63,3 +67,45 @@ entry coverage is claimed. Shared issuance routine coverage from genesis does
 not remove this blocker. Before D54 is resolved and measured, runtime workchain
 activation is not accepted. Before its independent McStateExtra codec migrates,
 tosctl is excluded from claims that the operator toolchain can read this state.
+
+
+## Destination routing configurations
+
+The production descriptor uses `0xc000` (basic=1, active=1, accept_msgs=0,
+flags=0) because no production engine can service wc=2. The Counter network uses
+`0xe000` (basic=1, active=1, accept_msgs=1, flags=0) because its registered Counter
+engine can service that workchain. Both configurations are exercised by the
+same real-node source-transaction and exported-state inspection code.
+
+Two successive source blocks are validated and exported in each configuration.
+With service, each adds one destination message. Without service, action result
+36 is recorded, the source remains active, its logical time advances, the
+balance loses exactly the transaction fees, and both resulting outbound queues
+are empty. These are persistent transaction/state observations, not log text or
+absence of reads. The sender's earlier ignored invalid send remains separately
+counted as one skipped action. Removing the destination `accept_msgs` predicate
+preserves both serving observations and fails the unserved action-code assertion
+957. This isolates that guard from the other producers of action result 36.
+No claim about all possible send modes follows from this two-block fixture.
+
+## Activation boundary still blocking completion
+
+The two historical full-node activation fixtures remove Param84. With D40,
+issuance refuses the resulting incomplete instance configuration (7409), before
+the node's activation boundary. They are neither passing activation controls nor
+regression passes. Keeping Param84 while closing the capability/version instead
+violates the existing configuration-presence constraint during genesis
+construction. No production validation exception has been introduced.
+
+Supplementary scoped-resolver probes retain Param84 and use the shared
+activation classifier, including its earlier-failure calibration. They do not
+start a node and do not observe transaction counts or candidate exports. Before
+a closed-configuration control reaches the same live boundary and observes
+zero transactions and no export, the required live activation control remains
+unestablished. Resolver evidence must not be substituted for it.
+
+The ordinary smart-contract genesis regression now explicitly selects a test
+network before using public deterministic validators and development operators.
+The production mainnet approval guard is unchanged. The build-wiring regression
+passes its actual prepared Python interpreter to child configuration rather than
+assuming this worktree has another environment at `.venv`.

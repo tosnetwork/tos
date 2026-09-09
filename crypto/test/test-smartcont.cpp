@@ -330,6 +330,13 @@ std::string run_zerostate_regression(td::Slice script_name) {
 
   auto patched_script = replace_word_token(load_source(PSTRING() << "smartcont/" << script_name), "now",
                                            td::Slice(td::to_string(kDeterministicZerostateNow)));
+  // This regression uses public deterministic development validators and
+  // unapproved development operators. It must never request mainnet genesis.
+  const std::string mainnet_marker = "1 setglobalid";
+  auto network_offset = patched_script.find(mainnet_marker);
+  CHECK(network_offset != std::string::npos);
+  CHECK(patched_script.find(mainnet_marker, network_offset + mainnet_marker.size()) == std::string::npos);
+  patched_script.replace(network_offset, mainnet_marker.size(), "-23901 setglobalid");
   auto script_path = temp_dir + TD_DIR_SLASH + script_name.str();
   td::write_file(script_path, patched_script).ensure();
 

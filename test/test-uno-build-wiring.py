@@ -3,6 +3,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -52,7 +53,8 @@ class UnoBuildWiring(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="uno-ctest-gate-") as directory:
             configure = ["cmake", "-S", str(REPO), "-B", directory, "-G", "Ninja",
                          "-DTOS_UNO_CRYPTO_PROTOTYPE_TESTS=ON", "-DTOS_UNO_COUNTER_PYTEST=ON",
-                         "-DTOS_UNO_COUNTER_NETWORK_TEST=ON", "-DTOS_UNO_LARGE_SNAPSHOT_TEST=ON"]
+                         "-DTOS_UNO_COUNTER_NETWORK_TEST=ON", "-DTOS_UNO_LARGE_SNAPSHOT_TEST=ON",
+                         f"-DTOS_UNO_TEST_PYTHON={sys.executable}"]
             result = subprocess.run(configure, capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             result = subprocess.run(["ctest", "--test-dir", directory, "--show-only=json-v1"],

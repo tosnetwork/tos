@@ -7,13 +7,15 @@
 // Resolver-only calibration. No collator, transaction counter or candidate
 // exporter is simulated here. Configuration cells are constructed afresh in
 // memory; this executable accepts no configuration paths and opens no fixtures.
-int main() {
+int main(int argc, char** argv) {
+  const bool old_version = argc == 2 && std::string(argv[1]) == "--old-version";
+  if (argc != 1 && !old_version) return 319;
   for (bool registered : {false, true}) {
     for (bool enabled : {false, true}) {
       vm::Dictionary dictionary(32);
       vm::CellBuilder version;
-      if (!block::gen::t_GlobalVersion.pack_capabilities(version, 15,
-              enabled ? tos::capBlockTransition : 0) ||
+      if (!block::gen::t_GlobalVersion.pack_capabilities(version, old_version && !enabled ? 14 : 16,
+              old_version || enabled ? tos::capBlockTransition : 0) ||
           !dictionary.set_ref(td::BitArray<32>{8}, version.finalize())) return 320;
       auto descriptor = vm::CellBuilder().store_long(0xa6, 8).store_zeroes(32 + 24)
           .store_long(7, 3).store_zeroes(13 + 512).store_long(0, 32)
@@ -41,6 +43,12 @@ int main() {
       auto config = block::Config::unpack_config(dictionary.get_root_cell(), td::Bits256::zero(),
                                                 block::Config::needCapabilities | block::Config::needWorkchainInfo);
       if (config.is_error()) return 321;
+      if (config.ok()->get_config_param(84).is_null()) return 330;
+      // Input facts are separate from the final typed resolver rows. Consumers
+      // verify that the requested version/capability experiment was constructed.
+      std::cerr << "input_configuration\t" << config.ok()->get_global_version() << '\t'
+                << ((config.ok()->get_capabilities() & tos::capBlockTransition) != 0) << '\t'
+                << !config.ok()->get_config_param(84).is_null() << '\n';
       block::WorkchainExecutionRegistry registry;
       if (registered && registry.register_block_engine(std::make_unique<block::test::CounterEngine>()).is_error())
         return 322;
