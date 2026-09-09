@@ -151,7 +151,8 @@ file(WRITE "${fixture}/global.json" "{
 
 set(node_db "${fixture}/db")
 function(run_node label expected_status expected_text)
-  execute_process(COMMAND "${COLLATOR}" -C "${fixture}/global.json" -D "${node_db}" ${ARGN}
+  execute_process(COMMAND "${COLLATOR}" -C "${fixture}/global.json" -D "${node_db}"
+    --query-result "${fixture}/${label}.result" ${ARGN}
     WORKING_DIRECTORY "${fixture}" RESULT_VARIABLE status OUTPUT_VARIABLE output ERROR_VARIABLE errors TIMEOUT 30)
   set(log "${output}${errors}")
   file(WRITE "${fixture}/${label}.log" "${log}")
@@ -222,6 +223,35 @@ if(ACCOUNT_BINDING_ONLY)
   endif()
   if(EXISTS "${fixture}/unexpected-candidate.bin")
     message(FATAL_ERROR "Refused account binding reached candidate publication")
+  endif()
+  # Bootstrap actually collates, so this is a positive control for the same
+  # observer that records the later failure. Numeric identity, not error prose.
+  file(READ "${fixture}/bootstrap.result" bootstrap_result)
+  file(READ "${fixture}/account_binding_refused.result" binding_result)
+  if(NOT bootstrap_result STREQUAL "collate 0\n" OR NOT binding_result STREQUAL "collate -7201\n")
+    message(FATAL_ERROR "Unexpected typed actor results: ${bootstrap_result}${binding_result}")
+  endif()
+  run_node(account_config_failure 2 "injected account configuration fault"
+    --account-binding-probe "${fixture}/fault-calls.txt" --account-probe-config-failure
+    -w 2 -T "${previous}" --export-candidate "${fixture}/fault-candidate.bin")
+  file(READ "${fixture}/account_config_failure.result" config_result)
+  file(READ "${fixture}/fault-calls.txt" fault_calls)
+  if(NOT config_result STREQUAL "collate -7201\n" OR NOT fault_calls STREQUAL "config=1\nexecute=0\n")
+    message(FATAL_ERROR "Configuration failure changed provenance or crossed execution: ${config_result}${fault_calls}")
+  endif()
+  if(EXISTS "${fixture}/fault-candidate.bin")
+    message(FATAL_ERROR "Failed configuration published a candidate")
+  endif()
+  run_node(account_state_corrupt 2 "injected account configuration fault"
+    --account-binding-probe "${fixture}/corrupt-calls.txt" --account-probe-state-corrupt
+    -w 2 -T "${previous}" --export-candidate "${fixture}/corrupt-candidate.bin")
+  file(READ "${fixture}/account_state_corrupt.result" corrupt_result)
+  file(READ "${fixture}/corrupt-calls.txt" corrupt_calls)
+  if(NOT corrupt_result STREQUAL "collate -7202\n" OR NOT corrupt_calls STREQUAL "config=1\nexecute=0\n")
+    message(FATAL_ERROR "Actor result lost the distinct local failure: ${corrupt_result}${corrupt_calls}")
+  endif()
+  if(EXISTS "${fixture}/corrupt-candidate.bin")
+    message(FATAL_ERROR "Corrupt-state configuration published a candidate")
   endif()
   message(STATUS "Live account binding: one config callback, zero engine calls, no candidate export")
   return()

@@ -1,0 +1,39 @@
+{
+  "baseline": "1fba4aa58",
+  "note": "Initial controls were rerun with exact leading whitespace after the restoration audit detected indentation drift. Only the final exact-byte executions are recorded here.",
+  "controls": [
+    {
+      "name": "typed-result-observer",
+      "path": "validator/manager-disk.cpp",
+      "from": "        if (!result_path.empty()) {",
+      "to": "        if (false && !result_path.empty()) {",
+      "restored_sha256": "ced9f2e373de4cceac27f8bafe2cdda13958abdb6e83c7cf8ec8cc985492dc1d",
+      "recorded_mutant_sha256": "9e7b23ff753362e37237c6ae645fd4d7c93afd0e7c5277db1b7171c46e739a87",
+      "build_exit": 0,
+      "exit_code": 8,
+      "output": "Internal ctest changing into directory: /home/tomi/tos/build\nTest project /home/tomi/tos/build\n    Start 15: test-counter-account-binding-readiness\n1/1 Test #15: test-counter-account-binding-readiness ...***Failed    0.34 sec\n-- Counter fixture active; retained if interrupted: /home/tomi/tos/build/counter-integration-030ffdb3b3cd\nCMake Error at /home/tomi/tos/test/test-counter-disk-integration.cmake:229 (file):\n  file failed to open for reading (No such file or directory):\n\n    /home/tomi/tos/build/counter-integration-030ffdb3b3cd/bootstrap.result\n\n\n\nCMake Error at /home/tomi/tos/test/counter-fixture-lifecycle.cmake:58 (message):\n  Counter fixture FAILED (1); retained for inspection:\n  /home/tomi/tos/build/counter-integration-030ffdb3b3cd\nCall Stack (most recent call first):\n  /home/tomi/tos/test/test-counter-disk-integration.cmake:3 (counter_run_fixture)\n\n\n\n\n0% tests passed, 1 tests failed out of 1\n\nTotal Test time (real) =   0.34 sec\n\nThe following tests FAILED:\n\t 15 - test-counter-account-binding-readiness (Failed)\nErrors while running CTest\n"
+    },
+    {
+      "name": "configuration-provenance",
+      "path": "crypto/block/workchain-execution-dispatch.cpp",
+      "from": "    if (result.is_ok() || workchain_execution_requires_local_failure(result.error())) return result;",
+      "to": "    if (result.is_ok() || workchain_execution_requires_local_failure(result.error()) ||\n        result.error().code() == static_cast<int>(WorkchainExecutionFailure::CandidateInvalid)) return result;",
+      "restored_sha256": "be99a089704b50e7d462e83316028be22a6cad51edc2f568b9db7be3bc722311",
+      "recorded_mutant_sha256": "80191a909f60dec345b2accae3c4602d670eb8c91de2fc9a88427b69fed089b3",
+      "build_exit": 0,
+      "exit_code": 8,
+      "output": "Internal ctest changing into directory: /home/tomi/tos/build\nTest project /home/tomi/tos/build\n    Start 15: test-counter-account-binding-readiness\n1/1 Test #15: test-counter-account-binding-readiness ...***Failed    0.41 sec\n-- Counter fixture active; retained if interrupted: /home/tomi/tos/build/counter-integration-85ab52224321\nCMake Error at /home/tomi/tos/test/test-counter-disk-integration.cmake:240 (message):\n  Configuration failure changed provenance or crossed execution: collate\n  -7200\n\n  config=1\n\n  execute=0\n\n\n\n\nCMake Error at /home/tomi/tos/test/counter-fixture-lifecycle.cmake:58 (message):\n  Counter fixture FAILED (1); retained for inspection:\n  /home/tomi/tos/build/counter-integration-85ab52224321\nCall Stack (most recent call first):\n  /home/tomi/tos/test/test-counter-disk-integration.cmake:3 (counter_run_fixture)\n\n\n\n\n0% tests passed, 1 tests failed out of 1\n\nTotal Test time (real) =   0.41 sec\n\nThe following tests FAILED:\n\t 15 - test-counter-account-binding-readiness (Failed)\nErrors while running CTest\n"
+    },
+    {
+      "name": "distinct-local-code-transport",
+      "path": "validator/manager-disk.cpp",
+      "from": "(R.is_ok() ? 0 : R.error().code())",
+      "to": "(R.is_ok() ? 0 : -7201)",
+      "build_exit": 0,
+      "exit_code": 8,
+      "output": "Internal ctest changing into directory: /home/tomi/tos/build\nTest project /home/tomi/tos/build\n    Start 15: test-counter-account-binding-readiness\n1/1 Test #15: test-counter-account-binding-readiness ...***Failed    0.55 sec\n-- Counter fixture active; retained if interrupted: /home/tomi/tos/build/counter-integration-bdc91195497b\nCMake Error at /home/tomi/tos/test/test-counter-disk-integration.cmake:251 (message):\n  Actor result lost the distinct local failure: collate -7201\n\n  config=1\n\n  execute=0\n\n\n\n\nCMake Error at /home/tomi/tos/test/counter-fixture-lifecycle.cmake:58 (message):\n  Counter fixture FAILED (1); retained for inspection:\n  /home/tomi/tos/build/counter-integration-bdc91195497b\nCall Stack (most recent call first):\n  /home/tomi/tos/test/test-counter-disk-integration.cmake:3 (counter_run_fixture)\n\n\n\n\n0% tests passed, 1 tests failed out of 1\n\nTotal Test time (real) =   0.56 sec\n\nThe following tests FAILED:\n\t 15 - test-counter-account-binding-readiness (Failed)\nErrors while running CTest\n",
+      "restored_sha256": "ced9f2e373de4cceac27f8bafe2cdda13958abdb6e83c7cf8ec8cc985492dc1d",
+      "recorded_mutant_sha256": "9fc5446cb7a5250dc39124c307c3e64b82f284ee7b3d896999cfc6520f894a5c"
+    }
+  ]
+}

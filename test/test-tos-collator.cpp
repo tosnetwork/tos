@@ -68,7 +68,8 @@ class AccountBindingProbe final : public block::RegisteredWorkchainAccountEngine
     return td::Status::Error(static_cast<int>(block::WorkchainExecutionFailure::LocalUnavailable),
                              "account binding probe must not inspect proofs");
   }
-  explicit AccountBindingProbe(std::string path) : path_(std::move(path)) { save(); }
+  explicit AccountBindingProbe(std::string path, int fail_config = 0)
+      : path_(std::move(path)), fail_config_(fail_config) { save(); }
   block::WorkchainEngineKey engine_key() const override {
     return {block::WorkchainFormat::Basic, 0x434e5431};
   }
@@ -85,6 +86,11 @@ class AccountBindingProbe final : public block::RegisteredWorkchainAccountEngine
     if (config_calls_ == std::numeric_limits<td::uint64>::max()) return td::Status::Error("probe count overflow");
     ++config_calls_;
     save();
+    if (fail_config_) {
+      // No candidate participates in configuration resolution. Even this
+      // deliberately wrong callback label must not become candidate rejection.
+      return td::Status::Error(fail_config_, "injected account configuration fault");
+    }
     return std::shared_ptr<const block::WorkchainEngineConfig>(new block::WorkchainEngineConfig);
   }
   td::Result<block::WorkchainAccountEffects> execute_accounts(
@@ -101,6 +107,7 @@ class AccountBindingProbe final : public block::RegisteredWorkchainAccountEngine
     td::write_file(path_, PSLICE() << "config=" << config_calls_ << "\nexecute=" << execute_calls_ << "\n").ensure();
   }
   const std::string path_;
+  const int fail_config_;
   mutable std::mutex mutex_;
   mutable td::uint64 config_calls_{0}, execute_calls_{0};
 };
@@ -132,6 +139,8 @@ class TestNode : public td::actor::Actor {
   std::string export_candidate_, import_candidate_;
   std::string account_probe_path_;
   bool account_probe_selftest_{false};
+  int account_probe_config_failure_{0};
+  std::string query_result_path_;
   td::Ref<tos::validator::ValidatorManagerOptions> opts_;
 
   tos::ZeroStateIdExt zero_id_;
@@ -147,6 +156,8 @@ class TestNode : public td::actor::Actor {
   tos::ShardIdFull shard_{tos::masterchainId, tos::shardIdAll};
 
  public:
+  void set_query_result_path(std::string path) { query_result_path_ = std::move(path); }
+  void set_account_probe_config_failure(int code) { account_probe_config_failure_ = code; }
   void set_account_probe(std::string path, bool selftest) {
     account_probe_path_ = std::move(path);
     account_probe_selftest_ = selftest;
@@ -363,7 +374,7 @@ class TestNode : public td::actor::Actor {
           ? block::default_workchain_execution_registry().register_block_engine(
               std::make_unique<block::test::CounterEngine>(block::WorkchainBlockResourceUsage{8, 1, 3}, 1, shard_.workchain))
           : block::default_workchain_execution_registry().register_account_engine(
-              std::make_unique<AccountBindingProbe>(account_probe_path_));
+              std::make_unique<AccountBindingProbe>(account_probe_path_, account_probe_config_failure_));
       if (status.is_error()) {
         LOG(ERROR) << status;
         std::_Exit(2);
@@ -402,7 +413,8 @@ class TestNode : public td::actor::Actor {
     opts.write().set_initial_sync_disabled(true);
     validator_manager_ = tos::validator::ValidatorManagerDiskFactory::create(tos::PublicKeyHash::zero(), opts, shard_,
                                                                              shard_top_block_id_, db_root_, block_candidate_,
-                                                                             export_candidate_, import_candidate_);
+                                                                             export_candidate_, import_candidate_,
+                                                                             query_result_path_);
     for (auto &msg : ext_msgs_) {
       td::actor::ask(validator_manager_, &tos::validator::ValidatorManager::new_external_message_broadcast,
                      std::move(msg), 0, td::optional<tos::PublicKeyHash>{})
@@ -540,6 +552,14 @@ int main(int argc, char *argv[]) {
                [&](td::Slice path) { td::actor::send_closure(x, &TestNode::set_account_probe, path.str(), false); });
   p.add_option(0, "account-binding-probe-selftest", "test-only: exercise the account engine counter instrument",
                [&](td::Slice path) { td::actor::send_closure(x, &TestNode::set_account_probe, path.str(), true); });
+  p.add_option(0, "query-result", "disk-only: record the real collation result code",
+               [&](td::Slice path) { td::actor::send_closure(x, &TestNode::set_query_result_path, path.str()); });
+  p.add_option(0, "account-probe-config-failure", "test-only: inject a wrongly labelled configuration error",
+               [&]() { td::actor::send_closure(x, &TestNode::set_account_probe_config_failure,
+                   static_cast<int>(block::WorkchainExecutionFailure::CandidateInvalid)); });
+  p.add_option(0, "account-probe-state-corrupt", "test-only: inject an authenticated-state failure",
+               [&]() { td::actor::send_closure(x, &TestNode::set_account_probe_config_failure,
+                   static_cast<int>(block::WorkchainExecutionFailure::AuthenticatedStateCorrupt)); });
   p.add_checked_option(0, "counter-send-increment", "test-only: increment Counter and send two native messages",
                        [&](td::Slice arg) {
                          TRY_RESULT(increment, td::to_integer_safe<td::uint64>(arg));

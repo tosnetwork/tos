@@ -1,0 +1,33 @@
+{
+  "source_sha256": {
+    "test/test-counter-disk-integration.cmake": "27b854237b8d96c9a1667aeb906e84c20bca9f135f4924466072db05b684c1fd",
+    "test/test-tos-collator.cpp": "a17d045caeb3fcc335cf613b777c97c0299d3c41b031b2a580077f53295e8cef",
+    "validator/manager-disk.cpp": "ced9f2e373de4cceac27f8bafe2cdda13958abdb6e83c7cf8ec8cc985492dc1d",
+    "validator/manager-disk.h": "b2e5ef6b8836838ab9cfd6de388ed0bc3de60370af2d38f0eb7f66b043d6f8dc",
+    "validator/manager-disk.hpp": "fd2c68cd36655a0009673f174c66e7864290af442dc41ac3f9744a06b3e830d8",
+    "crypto/block/workchain-execution-dispatch.cpp": "be99a089704b50e7d462e83316028be22a6cad51edc2f568b9db7be3bc722311",
+    "doc/measurements/uno-v2-live-config-result-controls.json": "d68ba6f368f837340e21e91e4d1e0d14cc7de10b6ec0ed323a76273f06761eb7"
+  },
+  "binary_sha256": {
+    "build/test-tos-collator": "19e90208a13a0fd08971202a2e75eb7e862b036eb941c77c52b70c34f470e952",
+    "build/test-workchain-block": "79ab3b51222f3216d1bfee18b31916b0cd21c7150c4e1273fd0543462e709275",
+    "build/test-workchain-admission": "64d8d42d60ea2c56c82eeb7b35ba960e0fdfe2098c35545b7678cc4a4055b4e7"
+  },
+  "checks": {
+    "controls_reconstructed": 3,
+    "restored_build_exit": 0,
+    "scoped_ctest_pass": 7,
+    "scoped_ctest_total": 7,
+    "scoped_ctest_seconds": 5.84
+  },
+  "scope": "Real collator configuration resolution and closed-gate stop points only. No production gate changes, no live proof admission/replay or I13 acceptance. Validator transport not covered.",
+  "tests": [
+    "test-counter-disk-integration",
+    "test-counter-account-binding-readiness",
+    "test-counter-activation-missing_capability",
+    "test-counter-activation-old_version",
+    "test-counter-config-binding",
+    "test-workchain-block",
+    "test-workchain-admission"
+  ]
+}

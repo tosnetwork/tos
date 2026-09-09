@@ -32,7 +32,8 @@ class ValidatorManagerDiskFactory {
                                                                BlockIdExt shard_top_block_id, std::string db_root,
                                                                td::Ref<vm::Cell> block_candidate = {},
                                                                std::string export_candidate = {},
-                                                               std::string import_candidate = {});
+                                                               std::string import_candidate = {},
+                                                               std::string query_result_path = {});
 };
 
 }  // namespace validator

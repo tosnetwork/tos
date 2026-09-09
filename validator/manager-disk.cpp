@@ -191,7 +191,13 @@ void ValidatorManagerImpl::sync_complete(td::Promise<td::Unit> promise) {
   //LOG(DEBUG) << "after get_validator_set: addr=" << (const void*)val_set.get();
 
   auto P = td::PromiseCreator::lambda(
-      [SelfId = actor_id(this), last = last_masterchain_block_id_, val_set, prev](td::Result<BlockCandidate> R) {
+      [SelfId = actor_id(this), last = last_masterchain_block_id_, val_set, prev,
+       result_path = query_result_path_](td::Result<BlockCandidate> R) {
+        // Disk-tool observation only. Own the path across the actor callback;
+        // record the typed result before logging or moving the error.
+        if (!result_path.empty()) {
+          td::write_file(result_path, PSLICE() << "collate " << (R.is_ok() ? 0 : R.error().code()) << "\n").ensure();
+        }
         if (R.is_ok()) {
           auto v = R.move_as_ok();
           LOG(ERROR) << "created block " << v.id;
@@ -1180,10 +1186,12 @@ void ValidatorManagerImpl::try_get_static_file(FileHash file_hash, td::Promise<t
 
 td::actor::ActorOwn<ValidatorManagerInterface> ValidatorManagerDiskFactory::create(
     PublicKeyHash id, td::Ref<ValidatorManagerOptions> opts, ShardIdFull shard, BlockIdExt shard_top_block_id,
-    std::string db_root, td::Ref<vm::Cell> block_candidate, std::string export_candidate, std::string import_candidate) {
+    std::string db_root, td::Ref<vm::Cell> block_candidate, std::string export_candidate, std::string import_candidate,
+    std::string query_result_path) {
   return td::actor::create_actor<validator::ValidatorManagerImpl>("manager", id, std::move(opts), shard,
                                                                   shard_top_block_id, db_root, std::move(block_candidate),
-                                                                  std::move(export_candidate), std::move(import_candidate));
+                                                                  std::move(export_candidate), std::move(import_candidate),
+                                                                  std::move(query_result_path));
 }
 
 }  // namespace validator

@@ -3130,3 +3130,21 @@ host identity source remains a separate pre-live clarification. Machine-readable
 upstream-plus-local-patch provenance is the next supply-chain follow-up; the
 wallet's four-site CT guard is already in its standalone CTest/CI, but is not a
 general verifier of secret dependence at newly introduced group-operation sites.
+
+### Real-entry runtime stop points and error transport
+
+The disk manager now records the actual collation promise result before moving
+or logging it. The observation path is owned by the asynchronous callback, not
+borrowed from a test stack. The test does not create admitted input, proof tokens,
+or replay claims: the real collator resolves the disk-authenticated configuration.
+It stops at the existing account-binding refusal, or earlier at an injected
+configuration callback failure. No admission, proof work, or replay connectivity
+is inferred from this observation; the production refusal remains unchanged.
+
+Error-code fidelity is a prerequisite of every runtime classification assertion,
+not a generic property inferred from a passing promise test. This collation path
+checks success (0), gate/local failure (-7201), and authenticated corruption
+(-7202). A deliberately mislabelled configuration error (-7200) must normalize
+to -7201; bypassing that boundary fails even with zero engine execution. Other
+actor/promise paths, including live validation, still require their own controls;
+this test cannot certify that they preserve codes or do not rewrap errors.
