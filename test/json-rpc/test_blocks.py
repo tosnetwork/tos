@@ -131,6 +131,37 @@ class TestGetMasterchainBlockSignatures:
             assert "candidate" in result
             base64.b64decode(result["candidate"])  # must be valid base64
 
+    def test_simplex_context_is_present_and_not_skippable(self, api_method_call, last_mc_seqno):
+        """Regression that the simplex verification context is returned.
+
+        TOS runs simplex consensus, so a finalized masterchain block's
+        signatures MUST come back as blocks.blockSignatures.simplex carrying the
+        session_id / slot / candidate needed to reconstruct the signed
+        finalize-vote message. Unlike the check in the direction test above, this
+        asserts the simplex type *unconditionally* rather than behind an
+        `if @type == simplex`: a regression that relabelled the response as the
+        ordinary blocks.blockSignatures type (dropping the context, the way the
+        pre-fix code did) would silently skip a guarded check but fails here.
+
+        Full cryptographic verification of the signatures against the
+        reconstructed message is a separate, larger follow-up; this test pins
+        that the context is present and typed, not that it verifies.
+        """
+        if last_mc_seqno < 3:
+            pytest.skip("chain has not advanced far enough for a settled block")
+        seqno = max(2, last_mc_seqno - 3)
+        response = api_method_call(self.METHOD, seqno=seqno)
+        assert response.status_code == 200, response.json().get("error")
+        result = response.json()["result"]
+        assert result["@type"] == "blocks.blockSignatures.simplex", (
+            "expected simplex signatures on a simplex-consensus network; a "
+            "regression to the ordinary type would drop the verification context"
+        )
+        assert len(base64.b64decode(result["session_id"])) == 32
+        assert isinstance(result["slot"], int)
+        base64.b64decode(result["candidate"])  # must be valid base64
+        assert result["signatures"], "simplex block must carry validator signatures"
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 #  3. getShardBlockProof
