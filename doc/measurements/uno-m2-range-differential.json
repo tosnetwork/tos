@@ -1,0 +1,448 @@
+{
+  "schema": 1,
+  "unit": "nonzero-factor-range-patch-differential",
+  "comparison": {
+    "guard": "equal",
+    "cases": 357,
+    "accepted": 72
+  },
+  "residual_decomposition": {
+    "guard": "equal",
+    "observed_cases": 258,
+    "isolated_ip_cases": 72
+  },
+  "controls": [
+    {
+      "label": "wrong-polynomial-sign",
+      "side": "local",
+      "path": "src/range_proof/deterministic.rs",
+      "offset": 3178,
+      "from": "-self.t_x_blinding]),",
+      "to": "self.t_x_blinding]),",
+      "original_sha256": "fc7434cd5d49d5e226bac20093c228542479292c5e39d37af01464a73899b310",
+      "mutant_sha256": "18c97f99fedf453b520c72323ade7bf04ebe3a5712d34711760f44ca92fd38cb",
+      "restored_sha256": "fc7434cd5d49d5e226bac20093c228542479292c5e39d37af01464a73899b310",
+      "restore_audit_sha256": "18c97f99fedf453b520c72323ade7bf04ebe3a5712d34711760f44ca92fd38cb",
+      "result": {
+        "guard": "residual-reconstruction",
+        "case": "range/0/8/1/valid"
+      }
+    },
+    {
+      "label": "omit-ip-check",
+      "side": "local",
+      "path": "src/range_proof/deterministic.rs",
+      "offset": 3731,
+      "from": "    ip.is_identity() && poly.is_identity()",
+      "to": "    poly.is_identity()",
+      "original_sha256": "16169cdd82bdb7d25318bfae3def59d7485499a112c69622ee2afe3ad599692b",
+      "mutant_sha256": "4e48b2ada37fccd2678a69c8928d8446b21ad264d9a81cbd831055231fead7cd",
+      "restored_sha256": "16169cdd82bdb7d25318bfae3def59d7485499a112c69622ee2afe3ad599692b",
+      "restore_audit_sha256": "4e48b2ada37fccd2678a69c8928d8446b21ad264d9a81cbd831055231fead7cd",
+      "result": {
+        "guard": "acceptance",
+        "case": "range/0/8/1/ip-only-response",
+        "reference": "0",
+        "candidate": "1"
+      }
+    },
+    {
+      "label": "omit-poly-check",
+      "side": "local",
+      "path": "src/range_proof/deterministic.rs",
+      "offset": 3731,
+      "from": "    ip.is_identity() && poly.is_identity()",
+      "to": "    ip.is_identity()",
+      "original_sha256": "16169cdd82bdb7d25318bfae3def59d7485499a112c69622ee2afe3ad599692b",
+      "mutant_sha256": "025ec129582d22e86524e2457cef74ef15ac91c1bcb5544d6bd8f5a337887d2c",
+      "restored_sha256": "16169cdd82bdb7d25318bfae3def59d7485499a112c69622ee2afe3ad599692b",
+      "restore_audit_sha256": "025ec129582d22e86524e2457cef74ef15ac91c1bcb5544d6bd8f5a337887d2c",
+      "result": {
+        "guard": "residual-poly"
+      }
+    },
+    {
+      "label": "merge-residuals",
+      "side": "local",
+      "path": "src/range_proof/deterministic.rs",
+      "offset": 3731,
+      "from": "    ip.is_identity() && poly.is_identity()",
+      "to": "    (ip + poly).is_identity()",
+      "original_sha256": "16169cdd82bdb7d25318bfae3def59d7485499a112c69622ee2afe3ad599692b",
+      "mutant_sha256": "345d168e005eb2e61c543d8b7e7137b059c09c5bd65f17977a47bd42b26feab4",
+      "restored_sha256": "16169cdd82bdb7d25318bfae3def59d7485499a112c69622ee2afe3ad599692b",
+      "restore_audit_sha256": "345d168e005eb2e61c543d8b7e7137b059c09c5bd65f17977a47bd42b26feab4",
+      "result": {
+        "guard": "collision",
+        "case": 0
+      }
+    },
+    {
+      "label": "omit-c-event",
+      "side": "local",
+      "path": "src/range_proof/deterministic.rs",
+      "offset": 1809,
+      "from": "        let _c = t.challenge_scalar(b\"c\");",
+      "to": "        let _c = Scalar::ONE;",
+      "original_sha256": "16169cdd82bdb7d25318bfae3def59d7485499a112c69622ee2afe3ad599692b",
+      "mutant_sha256": "669d99d3e30d0d2b7340d03b1fc68160159309531c97fcd82f92b25e3a99a5b0",
+      "restored_sha256": "16169cdd82bdb7d25318bfae3def59d7485499a112c69622ee2afe3ad599692b",
+      "restore_audit_sha256": "669d99d3e30d0d2b7340d03b1fc68160159309531c97fcd82f92b25e3a99a5b0",
+      "result": {
+        "guard": "transcript-tail",
+        "case": "range/0/8/1/valid"
+      }
+    }
+  ],
+  "observation_adapters": [
+    {
+      "label": "observe-upstream-residual",
+      "side": "upstream",
+      "path": "src/range_proof/mod.rs",
+      "offset": 26526,
+      "from": "        if mega_check.is_identity().into() {",
+      "to": "        std::eprintln!(\"OBS\\t{:?}\", mega_check.compress().to_bytes());\n        if mega_check.is_identity().into() {",
+      "original_sha256": "9f1701b22a492225cccba568d26cd6d93a348381ede21cac4218e3c85c917ff7",
+      "mutant_sha256": "57009e0dec2b5021cf465578b7675440ba4b7bde08f6f9c1576203facc14c3da",
+      "restored_sha256": "9f1701b22a492225cccba568d26cd6d93a348381ede21cac4218e3c85c917ff7",
+      "restore_audit_sha256": "57009e0dec2b5021cf465578b7675440ba4b7bde08f6f9c1576203facc14c3da",
+      "result": {
+        "unchanged_acceptance_and_tails": true
+      }
+    },
+    {
+      "label": "observe-independent-residuals",
+      "side": "local",
+      "path": "src/range_proof/deterministic.rs",
+      "offset": 3454,
+      "from": "        if !independent_residuals_zero(ip, poly) { return Err(ProofError::VerificationError); }",
+      "to": "        std::eprintln!(\"OBS\\t{:?}\\t{:?}\\t{:?}\\t{:?}\", ip.compress().to_bytes(), poly.compress().to_bytes(), _c.to_bytes(), (ip + _c * poly).compress().to_bytes());\n        if !independent_residuals_zero(ip, poly) { return Err(ProofError::VerificationError); }",
+      "original_sha256": "16169cdd82bdb7d25318bfae3def59d7485499a112c69622ee2afe3ad599692b",
+      "mutant_sha256": "fc7434cd5d49d5e226bac20093c228542479292c5e39d37af01464a73899b310",
+      "restored_sha256": "16169cdd82bdb7d25318bfae3def59d7485499a112c69622ee2afe3ad599692b",
+      "restore_audit_sha256": "fc7434cd5d49d5e226bac20093c228542479292c5e39d37af01464a73899b310",
+      "result": {
+        "guard": "equal",
+        "observed_cases": 258,
+        "isolated_ip_cases": 72
+      }
+    }
+  ],
+  "events": [
+    {
+      "label": "upstream-factor-1",
+      "build_command": [
+        "cargo",
+        "build",
+        "--locked",
+        "--offline",
+        "--release",
+        "-j32",
+        "--no-default-features",
+        "--features",
+        "std-proof"
+      ],
+      "build_exit": 0,
+      "run_exit": 0,
+      "binary_sha256": "b1ea25ac3d2d2dfc764f8699539ad02f55e62e3c2576307bf17a8a10df06775c",
+      "stdout_sha256": "f5d537508c0198980af05868b0f45270363f55b6cf10ef7060629a05ef9a06b3",
+      "stderr_sha256": "5e4ea1807016b1dd7c9b42c5ac576579d723e53ca3017e9fe5846f8540b734b1"
+    },
+    {
+      "label": "local-independent",
+      "build_command": [
+        "cargo",
+        "build",
+        "--locked",
+        "--offline",
+        "--release",
+        "-j32",
+        "--no-default-features",
+        "--features",
+        "std-proof,independent"
+      ],
+      "build_exit": 0,
+      "run_exit": 0,
+      "binary_sha256": "7decdd70473da79b2a747a9656c6b4689595bb3f730b5d1b5009d8f8960b506d",
+      "stdout_sha256": "008c46da0d3ff99ba3b27c6890758998cebb7611b4ffdbdaafe37a0820b5a75a",
+      "stderr_sha256": "5e4ea1807016b1dd7c9b42c5ac576579d723e53ca3017e9fe5846f8540b734b1"
+    },
+    {
+      "label": "upstream-factor-2",
+      "build_command": [
+        "cargo",
+        "build",
+        "--locked",
+        "--offline",
+        "--release",
+        "-j32",
+        "--no-default-features",
+        "--features",
+        "std-proof"
+      ],
+      "build_exit": 0,
+      "run_exit": 0,
+      "binary_sha256": "b1ea25ac3d2d2dfc764f8699539ad02f55e62e3c2576307bf17a8a10df06775c",
+      "stdout_sha256": "f5d537508c0198980af05868b0f45270363f55b6cf10ef7060629a05ef9a06b3",
+      "stderr_sha256": "5e4ea1807016b1dd7c9b42c5ac576579d723e53ca3017e9fe5846f8540b734b1"
+    },
+    {
+      "label": "upstream-factor-255",
+      "build_command": [
+        "cargo",
+        "build",
+        "--locked",
+        "--offline",
+        "--release",
+        "-j32",
+        "--no-default-features",
+        "--features",
+        "std-proof"
+      ],
+      "build_exit": 0,
+      "run_exit": 0,
+      "binary_sha256": "b1ea25ac3d2d2dfc764f8699539ad02f55e62e3c2576307bf17a8a10df06775c",
+      "stdout_sha256": "f5d537508c0198980af05868b0f45270363f55b6cf10ef7060629a05ef9a06b3",
+      "stderr_sha256": "5e4ea1807016b1dd7c9b42c5ac576579d723e53ca3017e9fe5846f8540b734b1"
+    },
+    {
+      "label": "local-original-api",
+      "build_command": [
+        "cargo",
+        "build",
+        "--locked",
+        "--offline",
+        "--release",
+        "-j32",
+        "--no-default-features",
+        "--features",
+        "std-proof"
+      ],
+      "build_exit": 0,
+      "run_exit": 0,
+      "binary_sha256": "9b995211b4cf28cfc68daf24546a3fac367e9c546fb129b2254f1d8d8e6b8ac9",
+      "stdout_sha256": "f5d537508c0198980af05868b0f45270363f55b6cf10ef7060629a05ef9a06b3",
+      "stderr_sha256": "5e4ea1807016b1dd7c9b42c5ac576579d723e53ca3017e9fe5846f8540b734b1"
+    },
+    {
+      "label": "local-no-std",
+      "build_command": [
+        "cargo",
+        "build",
+        "--locked",
+        "--offline",
+        "--release",
+        "-j32",
+        "--no-default-features",
+        "--features",
+        "independent"
+      ],
+      "build_exit": 0,
+      "run_exit": 0,
+      "binary_sha256": "4afef1d9fbf6dcd04b7ea8cde99f175471ba8ec6b5a99e585e66430ac729553a",
+      "stdout_sha256": "008c46da0d3ff99ba3b27c6890758998cebb7611b4ffdbdaafe37a0820b5a75a",
+      "stderr_sha256": "5e4ea1807016b1dd7c9b42c5ac576579d723e53ca3017e9fe5846f8540b734b1"
+    },
+    {
+      "label": "local-test-export",
+      "build_command": [
+        "cargo",
+        "build",
+        "--locked",
+        "--offline",
+        "--release",
+        "-j32",
+        "--no-default-features",
+        "--features",
+        "std-proof,independent,residual-export"
+      ],
+      "build_exit": 0,
+      "run_exit": 0,
+      "binary_sha256": "f3e977e0cd4f301a380c4dc9a9994ab2c8a171401d7820b7fefa7fe27d82c56d",
+      "stdout_sha256": "008c46da0d3ff99ba3b27c6890758998cebb7611b4ffdbdaafe37a0820b5a75a",
+      "stderr_sha256": "5e4ea1807016b1dd7c9b42c5ac576579d723e53ca3017e9fe5846f8540b734b1"
+    },
+    {
+      "label": "upstream-observed",
+      "build_command": [
+        "cargo",
+        "build",
+        "--locked",
+        "--offline",
+        "--release",
+        "-j32",
+        "--no-default-features",
+        "--features",
+        "std-proof"
+      ],
+      "build_exit": 0,
+      "run_exit": 0,
+      "binary_sha256": "68bae01f169cb35ccb3284614468784aba1eb0150a5b61457633e7a5868383e3",
+      "stdout_sha256": "f5d537508c0198980af05868b0f45270363f55b6cf10ef7060629a05ef9a06b3",
+      "stderr_sha256": "9b68bcf2e759f21ae3b07274dbfc2a1c8de4f228a05cb5220f16a49cd78570ad"
+    },
+    {
+      "label": "local-observed",
+      "build_command": [
+        "cargo",
+        "build",
+        "--locked",
+        "--offline",
+        "--release",
+        "-j32",
+        "--no-default-features",
+        "--features",
+        "std-proof,independent"
+      ],
+      "build_exit": 0,
+      "run_exit": 0,
+      "binary_sha256": "9e75ff5e5551539965aea39130136639c257d44c368a400aa18e38986b96c8c5",
+      "stdout_sha256": "008c46da0d3ff99ba3b27c6890758998cebb7611b4ffdbdaafe37a0820b5a75a",
+      "stderr_sha256": "8fe53b3c88ef5a69c3ea16e09e8e9eb41eb327b47118e243ed03ee5da1b74f6e"
+    },
+    {
+      "label": "wrong-polynomial-sign",
+      "build_command": [
+        "cargo",
+        "build",
+        "--locked",
+        "--offline",
+        "--release",
+        "-j32",
+        "--no-default-features",
+        "--features",
+        "std-proof,independent"
+      ],
+      "build_exit": 0,
+      "run_exit": 0,
+      "binary_sha256": "88e0934b8ba3ccc6c4f4599c7414a026461adf53d0b0b3c84c90fdc90ef0b528",
+      "stdout_sha256": "933a5c68804667a9d294ad77fbbec5b7c8717dcf46def75ae8483d224d8b1b8b",
+      "stderr_sha256": "5647321bc3fa99aeaf493d6a00204a7c1386ef0f697df1002f58bec14153a671"
+    },
+    {
+      "label": "residual-boundary",
+      "build_command": [
+        "cargo",
+        "build",
+        "--locked",
+        "--offline",
+        "--release",
+        "-j32",
+        "--no-default-features",
+        "--features",
+        "std-proof,independent,residual-export"
+      ],
+      "build_exit": 0,
+      "run_exit": 0,
+      "binary_sha256": "f3e977e0cd4f301a380c4dc9a9994ab2c8a171401d7820b7fefa7fe27d82c56d",
+      "stdout_sha256": "8275265af2c6b7fe250cabc3f9f7efa7cf0685d49f2b49cbb79051c740f0e415",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "omit-ip-check",
+      "build_command": [
+        "cargo",
+        "build",
+        "--locked",
+        "--offline",
+        "--release",
+        "-j32",
+        "--no-default-features",
+        "--features",
+        "std-proof,independent"
+      ],
+      "build_exit": 0,
+      "run_exit": 0,
+      "binary_sha256": "4c98f3579c520cbf315999b53b9b22b79dba62993be5bce273a8531d6226f0c6",
+      "stdout_sha256": "3f4510e54acb39de920d961087dedc1062ac7f6c272c30d97d0272f5a4a71ad0",
+      "stderr_sha256": "5e4ea1807016b1dd7c9b42c5ac576579d723e53ca3017e9fe5846f8540b734b1"
+    },
+    {
+      "label": "omit-poly-check",
+      "build_command": [
+        "cargo",
+        "build",
+        "--locked",
+        "--offline",
+        "--release",
+        "-j32",
+        "--no-default-features",
+        "--features",
+        "std-proof,independent,residual-export"
+      ],
+      "build_exit": 0,
+      "run_exit": 0,
+      "binary_sha256": "08612be42c8fbcf7d610fa82300bdff5b2de04c5b95557dae20c71839d5b99f5",
+      "stdout_sha256": "b559c9e1634826dd96bbaf95003a6de1d6d09bbf9e7154ebde0c3ae86dd8584b",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "merge-residuals",
+      "build_command": [
+        "cargo",
+        "build",
+        "--locked",
+        "--offline",
+        "--release",
+        "-j32",
+        "--no-default-features",
+        "--features",
+        "std-proof,independent,residual-export"
+      ],
+      "build_exit": 0,
+      "run_exit": 0,
+      "binary_sha256": "702b43068278a1660cc36f61c5dbd9ed6be99ce3b2ef85c4b77bc0b82c03419c",
+      "stdout_sha256": "5749d4d6f5cf1cb93c0ee593626bdf06deb07531c75418a6fa86c1b13ceb604d",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "omit-c-event",
+      "build_command": [
+        "cargo",
+        "build",
+        "--locked",
+        "--offline",
+        "--release",
+        "-j32",
+        "--no-default-features",
+        "--features",
+        "std-proof,independent"
+      ],
+      "build_exit": 0,
+      "run_exit": 0,
+      "binary_sha256": "f673b667e337a25f6a3f7d3b07e60d1f8a894fbf8813ef5a50e9a36f6e4ca3eb",
+      "stdout_sha256": "0463ad60a7d417d74185a637a32dedb9129c024a98f581d7c454c16705d4671b",
+      "stderr_sha256": "5e4ea1807016b1dd7c9b42c5ac576579d723e53ca3017e9fe5846f8540b734b1"
+    },
+    {
+      "label": "local-restored",
+      "build_command": [
+        "cargo",
+        "build",
+        "--locked",
+        "--offline",
+        "--release",
+        "-j32",
+        "--no-default-features",
+        "--features",
+        "std-proof,independent"
+      ],
+      "build_exit": 0,
+      "run_exit": 0,
+      "binary_sha256": "7decdd70473da79b2a747a9656c6b4689595bb3f730b5d1b5009d8f8960b506d",
+      "stdout_sha256": "008c46da0d3ff99ba3b27c6890758998cebb7611b4ffdbdaafe37a0820b5a75a",
+      "stderr_sha256": "5e4ea1807016b1dd7c9b42c5ac576579d723e53ca3017e9fe5846f8540b734b1"
+    }
+  ],
+  "runner_sha256": "e17458dc45bb59e7776f933d4844432a3c1990c7be917c29be7b6abb21ef5ba3",
+  "harness_sha256": "69933f370d870a18b265f16d37fd2b1295bfbba9ab12d3124185a92105b448c0",
+  "corpus_sha256": "4593b3a47fe67e6693d40890f9aafe7ba3d6e2511ac86afdc15a73f8cda5609d",
+  "upstream_revision": "961bf3f8c2baa1e4d2a87e8e1f5b6f12e7fe6c82",
+  "authenticated_upstream_files": 46,
+  "upstream_tree": "21b8e61f5d26648b8b8974e254b86f356bfc431d",
+  "toolchain": "rustc 1.97.1 (8bab26f4f 2026-07-14)\nbinary: rustc\ncommit-hash: 8bab26f4f68e0e26f0bb7960be334d5b520ea452\ncommit-date: 2026-07-14\nhost: x86_64-unknown-linux-gnu\nrelease: 1.97.1\nLLVM version: 22.1.6\n",
+  "base_commit": "1d6b99d8e4f862e2e673386d9551bcda61655bd1",
+  "scope": "Shared-base patch semantics, finite empirical coverage. No external SEND/COLLECT oracle or independent implementation. Collision inputs exercise the residual boundary, not forged full Fiat-Shamir proofs.",
+  "zero_factor_exception": "Excluded by D41 decision memo@91ef26f9 and recorded separately. Honest Scalar::random zero probability is approximately 2^-252; not a claim of a practical attack.",
+  "artifact_directory": "doc/measurements/uno-m2-range-differential"
+}

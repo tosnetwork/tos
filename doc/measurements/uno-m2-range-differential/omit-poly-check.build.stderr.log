@@ -1,0 +1,21 @@
+   Compiling bulletproofs v5.3.0 (/tmp/uno-m2-range-run2/local)
+warning: unused variable: `poly`
+  --> /tmp/uno-m2-range-run2/local/src/range_proof/deterministic.rs:69:55
+   |
+69 | pub fn independent_residuals_zero(ip: RistrettoPoint, poly: RistrettoPoint) -> bool {
+   |                                                       ^^^^ help: if this is intentional, prefix it with an underscore: `_poly`
+   |
+   = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: `bulletproofs` (lib) generated 1 warning (run `cargo fix --lib -p bulletproofs` to apply 1 suggestion)
+   Compiling range-differential v0.0.0 (/tmp/uno-m2-range-run2/local-harness)
+warning: struct `Factor` is never constructed
+ --> src/main.rs:8:8
+  |
+8 | struct Factor(u8);
+  |        ^^^^^^
+  |
+  = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `range-differential` (bin "range-differential") generated 1 warning
+    Finished `release` profile [optimized] target(s) in 2.81s
