@@ -384,6 +384,12 @@ td::Status WalletIndexDb::prune_events_by_age(uint32_t cutoff_gen_utime, size_t 
   // `budget` deletions so per-block work is bounded; a backlog drains over
   // successive blocks because the caller's budget always covers at least the
   // rows the block added.
+  //
+  // The range scan reads committed state only, not the current write batch, so
+  // age rows written by *this* block are invisible here. An already-expired
+  // event inserted by a late or recovery block is therefore not removed in its
+  // own block; the next block's prune reclaims it (it is < cutoff and the budget
+  // carries a drain). This is deliberately not strict same-block retention.
   if (budget == 0) {
     return td::Status::OK();
   }
@@ -448,18 +454,27 @@ td::Status WalletIndexDb::put_event_watermark(uint32_t gen_utime) {
 }
 
 td::Status WalletIndexDb::clear_namespace(uint8_t tag) {
+  // A single range tombstone: O(1) work and memory regardless of how many keys
+  // the namespace holds. Enumerating them here would defeat the purpose -- the
+  // 0x12 event namespace this clears is exactly the one that could have grown
+  // without bound, so loading all of it into memory to delete could OOM the very
+  // node the migration exists to fix.
   const char begin[1] = {static_cast<char>(tag)};
   const char end[1] = {static_cast<char>(static_cast<uint8_t>(tag + 1))};
-  std::vector<std::string> keys;
-  TRY_STATUS(db_->for_each_in_range(td::Slice{begin, 1}, td::Slice{end, 1},
-                                    [&](td::Slice key, td::Slice) -> td::Status {
-    keys.emplace_back(key.str());
-    return td::Status::OK();
-  }));
-  for (const auto& key : keys) {
-    TRY_STATUS(db_->erase(td::Slice{key}));
-  }
-  return td::Status::OK();
+  return db_->erase_range(td::Slice{begin, 1}, td::Slice{end, 1});
+}
+
+td::Status WalletIndexDb::advance_retention(uint32_t gen_utime, size_t age_rows_added) {
+  // The watermark, the age rows, and the prune together define the retention
+  // invariant, so any error must propagate and let the caller abort the block
+  // rather than commit a broken retention state. A watermark read error in
+  // particular must NOT fall back to 0: that could regress the non-decreasing
+  // watermark and let a late or recovery block retain expired rows.
+  TRY_RESULT(stored_watermark, get_event_watermark());
+  uint32_t watermark = stored_watermark > gen_utime ? stored_watermark : gen_utime;
+  TRY_STATUS(put_event_watermark(watermark));
+  uint32_t cutoff = watermark > kEventRetentionSeconds ? watermark - kEventRetentionSeconds : 0;
+  return prune_events_by_age(cutoff, age_rows_added + kEventPruneDrainPerBlock);
 }
 
 td::Status WalletIndexDb::migrate_schema() {

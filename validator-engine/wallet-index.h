@@ -121,6 +121,12 @@ class WalletIndexDb {
   // prune cutoff and silently retain expired rows.
   td::Result<uint32_t> get_event_watermark();
   td::Status put_event_watermark(uint32_t gen_utime);
+  // Advance the watermark to max(current, gen_utime) and prune events older than
+  // the resulting cutoff (at most age_rows_added + drain of them), within the
+  // current batch. Fails closed: any error -- including a watermark read error,
+  // which must never fall back to 0 and regress the watermark -- is returned so
+  // the caller aborts the block instead of committing a broken retention state.
+  td::Status advance_retention(uint32_t gen_utime, size_t age_rows_added);
   td::Status for_each_key_with_prefix(td::Slice prefix, size_t limit,
                                       std::function<td::Status(td::Slice)> cb);
   // Walk at most `limit` events for `account`, newest first.

@@ -631,30 +631,17 @@ void wc0_index_block(td::Ref<vm::Cell> block_root, td::Ref<vm::Cell> state_root,
     LOG(WARNING) << "wc0-index: unknown error while indexing block seqno=" << seqno;
   }
   if (ok && !write_error) {
-    // Advance the non-decreasing retention watermark and prune expired events,
-    // inside this block's batch. Taking the max of the stored watermark and this
-    // block's gen_utime means a late or recovery block cannot regress the cutoff
-    // and silently retain expired rows. The prune budget always covers at least
-    // the rows this block added (plus a drain), so the global bound cannot be
-    // outrun and any backlog shrinks block by block.
-    uint32_t stored_watermark = 0;
-    auto wm_r = db->get_event_watermark();
-    if (wm_r.is_ok()) {
-      stored_watermark = wm_r.move_as_ok();
-    } else {
-      LOG(WARNING) << "wc0-index: read watermark failed for block seqno=" << seqno << ": "
-                   << wm_r.move_as_error().message();
-    }
-    uint32_t watermark = stored_watermark > gen_utime ? stored_watermark : gen_utime;
-    auto wm_put = db->put_event_watermark(watermark);
-    if (wm_put.is_error()) {
-      LOG(WARNING) << "wc0-index: write watermark failed for block seqno=" << seqno << ": " << wm_put.message();
-    }
-    uint32_t cutoff = watermark > kEventRetentionSeconds ? watermark - kEventRetentionSeconds : 0;
-    size_t prune_budget = age_rows_added + kEventPruneDrainPerBlock;
-    auto prune_status = db->prune_events_by_age(cutoff, prune_budget);
-    if (prune_status.is_error()) {
-      LOG(WARNING) << "wc0-index: prune failed for block seqno=" << seqno << ": " << prune_status.message();
+    // Advance the retention watermark and prune expired events inside this
+    // block's batch. Fails closed: on any error -- a failed or would-be-regressed
+    // watermark, or a failed prune -- abort the block and keep the
+    // incomplete-block marker so a later pass retries, rather than commit event
+    // rows with a broken retention state.
+    auto retention_status = db->advance_retention(gen_utime, age_rows_added);
+    if (retention_status.is_error()) {
+      LOG(WARNING) << "wc0-index: retention maintenance failed for block seqno=" << seqno
+                   << ", aborting this pass (marker retained for retry): " << retention_status.message();
+      db->abort_batch();
+      return;
     }
     // Indexing completed for this block; clear the in-progress marker and commit
     // the block's entries atomically. This is the second of two necessary WAL

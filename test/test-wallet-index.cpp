@@ -479,13 +479,9 @@ TEST(WalletIndex, EventHistoryIsGloballyBoundedByAge) {
       ASSERT_TRUE(db->put_event_age(account, lt, gen_utime).is_ok());
       age_added++;
     }
-    auto wm_r = db->get_event_watermark();
-    ASSERT_TRUE(wm_r.is_ok());
-    uint32_t stored = wm_r.move_as_ok();
-    uint32_t watermark = stored > gen_utime ? stored : gen_utime;
-    ASSERT_TRUE(db->put_event_watermark(watermark).is_ok());
-    uint32_t cutoff = watermark > retention ? watermark - retention : 0;
-    ASSERT_TRUE(db->prune_events_by_age(cutoff, age_added + tos_wallet_index::kEventPruneDrainPerBlock).is_ok());
+    // Drive the real consolidated retention path (watermark max + prune),
+    // exactly as wc0_index_block does.
+    ASSERT_TRUE(db->advance_retention(gen_utime, age_added).is_ok());
     ASSERT_TRUE(db->commit_batch().is_ok());
   };
 
@@ -549,6 +545,99 @@ TEST(WalletIndex, EventHistoryIsGloballyBoundedByAge) {
   // before the true watermark reappears, and the count stays at zero.
   index_block({{make_account(2000000), 1}}, kBase);  // far in the past
   ASSERT_TRUE(count_prefix(0x12) <= 1);
+
+  td::rmrf(path).ignore();
+}
+
+TEST(WalletIndex, MigrationClearsEventNamespacesPreservesOthers) {
+  // A database written before schema versioning (no version key) can hold an
+  // unbounded 0x12 event namespace. Opening it migrates v0 -> v1, range-deleting
+  // the 0x12 and 0x14 namespaces (bounded work, not an enumerate-all that could
+  // OOM the very node this fixes), while leaving jetton (0x10), NFT (0x11),
+  // nft-owner (0x13) and incomplete-block (0x1E) data intact.
+  auto path = std::string("test-wallet-index-db-migration");
+  td::rmrf(path).ignore();
+  auto put_raw = [](td::RocksDb &raw, std::initializer_list<uint8_t> key) {
+    std::string k;
+    for (uint8_t b : key) {
+      k.push_back(static_cast<char>(b));
+    }
+    char v[1] = {0};
+    raw.set(td::Slice{k}, td::Slice{v, 1}).ensure();
+  };
+  auto count_raw_prefix = [](td::RocksDb &raw, uint8_t tag) {
+    size_t n = 0;
+    char begin[1] = {static_cast<char>(tag)};
+    char end[1] = {static_cast<char>(static_cast<uint8_t>(tag + 1))};
+    raw.for_each_in_range(td::Slice{begin, 1}, td::Slice{end, 1}, [&](td::Slice, td::Slice) {
+         n++;
+         return td::Status::OK();
+       }).ensure();
+    return n;
+  };
+  {
+    auto raw_r = td::RocksDb::open(path);
+    ASSERT_TRUE(raw_r.is_ok());
+    auto raw = raw_r.move_as_ok();
+    for (uint8_t i = 0; i < 5; i++) {
+      put_raw(raw, {0x12, i});  // old event rows (unbounded namespace)
+      put_raw(raw, {0x14, i});  // old age rows
+    }
+    put_raw(raw, {0x10, 0x01});  // jetton
+    put_raw(raw, {0x11, 0x01});  // nft
+    put_raw(raw, {0x13, 0x01});  // nft-owner
+    put_raw(raw, {0x1E, 0x01});  // incomplete-block marker
+    // No 0x00 schema key -> version 0.
+  }
+
+  {
+    auto db_r = tos_wallet_index::WalletIndexDb::open(path);  // triggers migration
+    ASSERT_TRUE(db_r.is_ok());
+  }
+
+  auto raw_r = td::RocksDb::open(path);
+  ASSERT_TRUE(raw_r.is_ok());
+  auto raw = raw_r.move_as_ok();
+  ASSERT_EQ(count_raw_prefix(raw, 0x12), 0u);  // event namespace cleared
+  ASSERT_EQ(count_raw_prefix(raw, 0x14), 0u);  // age namespace cleared
+  ASSERT_EQ(count_raw_prefix(raw, 0x10), 1u);  // jetton preserved
+  ASSERT_EQ(count_raw_prefix(raw, 0x11), 1u);  // nft preserved
+  ASSERT_EQ(count_raw_prefix(raw, 0x13), 1u);  // nft-owner preserved
+  ASSERT_EQ(count_raw_prefix(raw, 0x1E), 1u);  // marker preserved
+  ASSERT_EQ(count_raw_prefix(raw, 0x00), 1u);  // schema version key written
+
+  td::rmrf(path).ignore();
+}
+
+TEST(WalletIndex, RetentionMaintenanceFailsClosedOnWatermarkReadError) {
+  // The retention watermark must be non-decreasing; a read failure must never
+  // fall back to 0 and let a block write a lower watermark. advance_retention
+  // returns the error (so the writer aborts the block) and leaves the stored
+  // watermark untouched -- it does not overwrite it with a regressed value.
+  auto path = std::string("test-wallet-index-db-wm-failclosed");
+  td::rmrf(path).ignore();
+  const std::string wm_key = {static_cast<char>(0x00), static_cast<char>(0x02)};
+  {
+    auto raw_r = td::RocksDb::open(path);
+    ASSERT_TRUE(raw_r.is_ok());
+    auto raw = raw_r.move_as_ok();
+    char bad[3] = {0x01, 0x02, 0x03};  // not 4 bytes -> get_event_watermark errors
+    raw.set(td::Slice{wm_key}, td::Slice{bad, 3}).ensure();
+  }
+
+  auto db_r = tos_wallet_index::WalletIndexDb::open(path);
+  ASSERT_TRUE(db_r.is_ok());
+  auto db = db_r.move_as_ok();
+
+  ASSERT_TRUE(db->begin_batch().is_ok());
+  auto status = db->advance_retention(/*gen_utime=*/1000, /*age_rows_added=*/0);
+  ASSERT_TRUE(status.is_error());  // fails closed on the malformed watermark
+  db->abort_batch();
+
+  // The malformed watermark was not overwritten with a 0-fallback value: a fresh
+  // read still errors on the same malformed bytes.
+  auto again = db->get_event_watermark();
+  ASSERT_TRUE(again.is_error());
 
   td::rmrf(path).ignore();
 }

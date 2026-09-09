@@ -181,6 +181,25 @@ six required changes:
    worker for isolation is possible but deferred; an absolute count/byte ceiling
    (vs the time window alone) is also deferred and noted.
 
+## Second review round (2026-09-10) — two required fixes applied
+
+A follow-up review of the implementation flagged two issues, both now fixed:
+
+- **Migration must not enumerate the whole namespace.** The first cut loaded
+  every `0x12`/`0x14` key into a vector and one giant `WriteBatch` — an unbounded
+  migration to fix an unbounded index, which could OOM a node that had already
+  accumulated millions of one-tx-account rows. Fixed by adding a real
+  `RocksDb::erase_range()` (a RocksDB `DeleteRange` range tombstone; joins the
+  active write batch), so `clear_namespace()` is O(1) in memory and work.
+  Covered by `MigrationClearsEventNamespacesPreservesOthers`.
+- **Retention maintenance must fail closed.** A `get_event_watermark()` read
+  error previously fell back to 0, which could regress the non-decreasing
+  watermark (a late/recovery block writing a lower value), and `put_watermark` /
+  `prune` errors only logged and still committed. Consolidated into
+  `WalletIndexDb::advance_retention()` which propagates every error; the writer
+  aborts the block and retains the incomplete-block marker on any failure.
+  Covered by `RetentionMaintenanceFailsClosedOnWatermarkReadError`.
+
 ## Out of scope (tracked separately per the audit)
 
 Telemetry JSONL rotation (P2), the all-shards rotation consensus-DB orphan window
