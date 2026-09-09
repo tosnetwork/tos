@@ -53,7 +53,7 @@ def main():
     def config(label, include):
         r = command(label, ['cmake', '-S', repo, '-B', args.build, '-G', 'Ninja',
             '-DCMAKE_BUILD_TYPE=Release', '-DTOS_UNO_CRYPTO_PROTOTYPE_TESTS=OFF',
-            '-DCMAKE_PROJECT_TOS_INCLUDE=' + include])
+            *(['-DCMAKE_PROJECT_TOS_INCLUDE=' + include] if include else ['-UCMAKE_PROJECT_TOS_INCLUDE'])])
         assert r.returncode == 0
     def registry(label):
         r = command(label, ['ctest', '--test-dir', args.build, '--show-only=json-v1'])
@@ -168,8 +168,7 @@ def main():
         c['restored_ctest_passed'] = True
     for short in stems:
         runs = list((args.build / 'workchain-i13-ctest' / short / 'runs').glob('run-*/evidence'))
-        runs = [p for p in runs if json.loads((p / 'measurement.json').read_text()).get('complete') or
-                json.loads((p / 'measurement.json').read_text()).get('original_source_files_unchanged')]
+        runs = [p for p in runs if json.loads((p / 'measurement.json').read_text()).get('complete')]
         assert len(runs) == 1, 'expected one complete fresh positive run per driver'
         shutil.copytree(runs[0], args.output / short)
         report[short + '_report'] = short + '/measurement.json'
