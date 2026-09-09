@@ -5,6 +5,7 @@ import hashlib
 import json
 from pathlib import Path
 import subprocess
+from workchain_i13_paths import resolve_ctest_paths
 
 
 def sha(data):
@@ -14,9 +15,12 @@ def sha(data):
 def main():
     p = argparse.ArgumentParser()
     p.add_argument('--build', required=True, type=Path)
-    p.add_argument('--work', required=True, type=Path)
-    p.add_argument('--output', required=True, type=Path)
+    p.add_argument('--work', type=Path)
+    p.add_argument('--output', type=Path)
+    p.add_argument('--only-control', help='Run one named control; all baseline/final cases still run')
+    p.add_argument('--ctest-root', type=Path)
     args = p.parse_args()
+    resolve_ctest_paths(p, args)
     repo = Path(__file__).resolve().parents[2]
     for path in (args.work, args.output):
         path.mkdir(parents=True, exist_ok=False)
@@ -48,7 +52,7 @@ def main():
         'full collator processing metadata and D31 integration remain unestablished. '
         'Frozen oracles calibrate isolation and supplied-value preservation, not independent Native semantics. '
         'No activation or I13e acceptance claimed.',
-        'events': [], 'controls': [], 'sources': bindings}
+        'events': [], 'controls': [], 'sources': bindings, 'selected_control': args.only_control}
     def save():
         (args.output / 'measurement.json').write_text(json.dumps(report, indent=2) + '\n')
     def command(label, argv):
@@ -122,6 +126,7 @@ def main():
         ('checkpoint-before-predecessor', core,
          predecessor_check + '\n    ' + generation_checkpoint,
          generation_checkpoint + '\n    ' + predecessor_check, [34], 104),
+        ('omit-generation-checkpoint', core, generation_checkpoint, '(void)checkpoint;', [0], 76),
         ('direct-live-stage', core,
          'auto status = observe_workchain_construction(observer, point.stage, point.occurrence);',
          'if (point.stage == WorkchainConstructionStage::ValueFlowFreeze) current_ = std::make_shared<const WorkchainCandidateContents>(draft);\n'
@@ -180,6 +185,9 @@ def main():
     for stage in ('ValueFlowFreeze', 'CoverageFreeze', 'ShardUpdateBuild', 'FinalBudgetCheck'):
         controls.append(('omit-' + stage, cpp, f'TRY_STATUS(probe({{Stage::{stage},0}}));',
             '(void)probe;', [0], 76))
+    if args.only_control:
+        controls = [c for c in controls if c[0] == args.only_control]
+        assert len(controls) == 1, 'unknown or ambiguous selected control'
     for label, name, before, after, cases, expected in controls:
         data = originals[name]
         old, new = before.encode(), after.encode()
@@ -202,6 +210,9 @@ def main():
                 # run against this one order change to establish their blind spot.
                 runs(label + '-legacy', range(34), 0)
                 control['legacy_cases_passed'] = list(range(34))
+            if label == 'omit-generation-checkpoint':
+                runs(label + '-position-still-passes', [34], 0)
+                control['position_case_still_passes'] = 34
             runs(label, cases, expected)
             control['behavior_confirmed'] = True
         finally:

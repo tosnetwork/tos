@@ -120,3 +120,32 @@ case 34 fails (104), with 22 observations and the injected code; cases 0–33
 remain green against that same compiled replacement. This establishes the
 original scenarios' ordering blind spot. The other 29 controls are calibrated
 separately, never combined with the order replacement.
+
+The separate `omit-generation-checkpoint` control deletes the checkpoint entirely:
+case 0 must fail the schedule guard (76), while case 34 must still pass. Schedule
+presence and placement are distinct obligations. Under the order replacement,
+104 fails first; the recorded 22 observations also violate 105, but 105 is not
+reported as an executed failure after 104 has returned.
+
+## Explicit CTest registration
+
+Including this module registers all three private Python drivers as CTest tests.
+Each driver uses a separate child build, a shared CTest resource lock, and fresh
+`mkdtemp` run directories. The original `exist_ok=False` work/evidence creation
+checks remain intact. Only build products are reused; oracles never are.
+No module means no registration or additional default target. Python is required
+at configuration and runtime; missing fixtures fail, never skip.
+
+```
+ctest --test-dir /path/to/opt-in-build -L i13 --output-on-failure -j32
+```
+
+The construction timeout is 7200 seconds; coverage and usage each allow 3600.
+`workchain-i13-registration.py --build /tmp/fresh-parent --output /tmp/fresh-evidence`
+checks default versus opt-in registration, changes each driver separately to a
+compiled unconditional exit 113, asserts CTest's failed status and numeric exit,
+restores it byte-for-byte, then runs the complete registered drivers. A separate
+control physically removes a current-run oracle after checking all four hashes
+and requires a CTest failure. This checks dependency propagation, not the
+application's numeric missing-file guard. Missing oracle dependency identity 92
+is separately exercised by the normal construction driver.
