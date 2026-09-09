@@ -1,0 +1,1 @@
+[1;31m[ 0][t 0][2026-09-09 18:00:22.133429212][Status.h:274]	Unexpected Status [PosixError : No such file or directory : 2 : Can't create directory "corrupt-errors/error"] in file /home/tomi/tos-m2/common/errorlog.cpp at line 46[0m

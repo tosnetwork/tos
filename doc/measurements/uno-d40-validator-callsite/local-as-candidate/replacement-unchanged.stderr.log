@@ -1,0 +1,10 @@
+[1;36m[ 3][t 0][2026-09-09 18:12:05.835376842][validate-query.cpp:7262][!mc-extra-probe]	checking header of McStateExtra in the new masterchain state[0m
+[0m[ 4][t 0][2026-09-09 18:12:05.835801861][mc-config.cpp:572][!mc-extra-probe]	workchain description dictionary created[0m
+[0m[ 4][t 0][2026-09-09 18:12:05.835811709][mc-config.cpp:2347][!mc-extra-probe]	unpacked info for workchain 0: basic=true, active=true, accept_msgs=true, min_split=0, max_split=0[0m
+[0m[ 4][t 0][2026-09-09 18:12:05.835822482][mc-config.cpp:572][!mc-extra-probe]	workchain description dictionary created[0m
+[0m[ 4][t 0][2026-09-09 18:12:05.835827248][mc-config.cpp:2347][!mc-extra-probe]	unpacked info for workchain 0: basic=true, active=true, accept_msgs=true, min_split=0, max_split=0[0m
+[1;33m[ 2][t 0][2026-09-09 18:12:05.835859664][validate-query.cpp:8017][!mc-extra-probe]	validation took 0.001216s[0m
+[1;33m[ 2][t 0][2026-09-09 18:12:05.835893239][validate-query.cpp:8018][!mc-extra-probe]	Validate query work time = 0.000000s, cpu time = 0.000000s[0m
+[1;33m[ 2][t 0][2026-09-09 18:12:05.835900348][validate-query.cpp:8020][!mc-extra-probe]	{{
+}[0m
+[1;33m[ 2][t 0][2026-09-09 18:12:05.835909706][validate-query.cpp:269][!mc-extra-probe]	validate query done[0m
