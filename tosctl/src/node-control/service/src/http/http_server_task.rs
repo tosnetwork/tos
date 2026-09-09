@@ -1583,7 +1583,9 @@ mod tests {
         assert_eq!(v["result"]["enabled"], true);
         assert_eq!(v["result"]["status"], "running");
 
-        // Restart
+        // Restart: the running generation is signalled to stop and the new one
+        // starts only after it has actually exited, so the immediate response
+        // reports stopping (never overlapping two generations).
         let app = routes(false, state.clone());
         let resp = app
             .oneshot(post_json(
@@ -1595,7 +1597,19 @@ mod tests {
         assert_eq!(resp.status(), 200);
         let v = body_json(resp).await;
         assert_eq!(v["result"]["enabled"], true);
-        assert_eq!(v["result"]["status"], "running");
+        assert_eq!(v["result"]["status"], "stopping");
+
+        // Once the old generation exits, the finalizer starts the new one and the
+        // controller reports running again.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(2000);
+        loop {
+            let status = state.elections_task.status().await.status;
+            if status == TaskStatus::Running || std::time::Instant::now() >= deadline {
+                assert_eq!(status, TaskStatus::Running, "restart should reach running");
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
     }
 
     #[tokio::test]
