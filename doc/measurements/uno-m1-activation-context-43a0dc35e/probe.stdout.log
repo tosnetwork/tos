@@ -1,0 +1,4 @@
+0	0	-7201	missing workchain engine Basic:1129206833 for workchain 2	2086c9b6abe0d1f6ac55753a4fe0e27b258ea2b871d8e37bc582d87aac718b39
+0	1	-7201	descriptor has no registered block engine	592d680f96881d8280782bb88708872bfbaa7f699ccc80e5d8e38007fd85e145
+1	0	-7201	block transition is not activated by global version and capability	2086c9b6abe0d1f6ac55753a4fe0e27b258ea2b871d8e37bc582d87aac718b39
+1	1	0		592d680f96881d8280782bb88708872bfbaa7f699ccc80e5d8e38007fd85e145
