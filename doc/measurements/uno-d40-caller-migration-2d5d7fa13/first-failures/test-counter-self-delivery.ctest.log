@@ -1,0 +1,16 @@
+-- Counter fixture active; retained if interrupted: /tmp/uno-publication-build/counter-integration-22dcdcd6ee8e
+CMake Error at /home/tomi/tos-m2/test/test-counter-disk-integration.cmake:171 (message):
+  bootstrap: exit 2, expected 0; see
+  /tmp/uno-publication-build/counter-integration-22dcdcd6ee8e/bootstrap.log
+Call Stack (most recent call first):
+  /home/tomi/tos-m2/test/test-counter-disk-integration.cmake:212 (run_node)
+
+
+
+CMake Error at /home/tomi/tos-m2/test/counter-fixture-lifecycle.cmake:58 (message):
+  Counter fixture FAILED (1); retained for inspection:
+  /tmp/uno-publication-build/counter-integration-22dcdcd6ee8e
+Call Stack (most recent call first):
+  /home/tomi/tos-m2/test/test-counter-disk-integration.cmake:3 (counter_run_fixture)
+
+

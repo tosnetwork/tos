@@ -1,0 +1,4 @@
+-- Counter fixture active; retained if interrupted: /tmp/uno-publication-build/counter-integration-8b99f576aa3f
+-- Invalid ingress rejected by complete configuration validation: /tmp/uno-publication-build/counter-integration-8b99f576aa3f
+
+-- Counter fixture passed and removed: /tmp/uno-publication-build/counter-integration-8b99f576aa3f

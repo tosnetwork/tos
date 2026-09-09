@@ -1,0 +1,255 @@
+[
+  {
+    "name": "test-counter-disk-integration",
+    "ctest_log": "first-failures/test-counter-disk-integration.ctest.log",
+    "first_result": "Failed",
+    "reason": "Bootstrap rejected: invalid instance installation / malformed engine configuration framing",
+    "missing_tool_or_env_explains": false,
+    "category": "non-environment finding",
+    "diagnostic_lines": [
+      {
+        "line": 99,
+        "text": "[ 1][t 6][2026-09-09 16:58:31.372519861][validate-query.cpp:147][!fakevalidate(-1,8000000000000000):1#0]\tREJECT: aborting validation of block candidate for (-1,8000000000000000) : invalid instance installation : [Error : 0 : malformed engine configuration framing]"
+      },
+      {
+        "line": 109,
+        "text": "[ 1][t 6][2026-09-09 16:58:31.374247174][manager-disk.cpp:315][!fakevalidate(-1,8000000000000000):1#0]\tfailed to create block: invalid instance installation : [Error : 0 : malformed engine configuration framing]"
+      }
+    ],
+    "raw_bootstrap": "first-failures/test-counter-disk-integration/bootstrap.log",
+    "typed_sidecar": "collate 0\n",
+    "scope": "Raw diagnostics locate the failure; no typed rejection/local-failure classification is inferred from log text. The sidecar only records collate false.",
+    "second_result": "Not run: fixture cap (CTest reports Failed)",
+    "after_retention_result": "Not rerun in the six-case admission check"
+  },
+  {
+    "name": "test-counter-account-binding-readiness",
+    "ctest_log": "first-failures/test-counter-account-binding-readiness.ctest.log",
+    "first_result": "Not run: fixture cap (CTest reports Failed)",
+    "reason": "Fixture retention/admission cap 16 reached before test body",
+    "missing_tool_or_env_explains": false,
+    "category": "fixture admission infrastructure",
+    "scope": "Not a missing tool; no application guard was executed.",
+    "second_result": "Not run: fixture cap (CTest reports Failed)",
+    "after_retention_result": "Failed",
+    "after_retention_fixture": "/tmp/uno-publication-build/counter-integration-b7c2294d2a25",
+    "after_retention_diagnostics": [
+      {
+        "line": 101,
+        "text": "[ 1][t 1][2026-09-09 17:13:47.019459057][validate-query.cpp:147][!fakevalidate(-1,8000000000000000):1#0]\tREJECT: aborting validation of block candidate for (-1,8000000000000000) : invalid instance installation : [Error : 7406 : configured genesis differs from authenticated genesis]"
+      },
+      {
+        "line": 111,
+        "text": "[ 1][t 1][2026-09-09 17:13:47.021737058][manager-disk.cpp:315][!fakevalidate(-1,8000000000000000):1#0]\tfailed to create block: invalid instance installation : [Error : 7406 : configured genesis differs from authenticated genesis]"
+      }
+    ]
+  },
+  {
+    "name": "test-counter-idle-replay",
+    "ctest_log": "first-failures/test-counter-idle-replay.ctest.log",
+    "first_result": "Failed",
+    "reason": "Bootstrap rejected: invalid instance installation / malformed engine configuration framing",
+    "missing_tool_or_env_explains": false,
+    "category": "non-environment finding",
+    "diagnostic_lines": [
+      {
+        "line": 99,
+        "text": "[ 1][t 1][2026-09-09 16:58:32.293270429][validate-query.cpp:147][!fakevalidate(-1,8000000000000000):1#0]\tREJECT: aborting validation of block candidate for (-1,8000000000000000) : invalid instance installation : [Error : 0 : malformed engine configuration framing]"
+      },
+      {
+        "line": 109,
+        "text": "[ 1][t 1][2026-09-09 16:58:32.294786080][manager-disk.cpp:315][!fakevalidate(-1,8000000000000000):1#0]\tfailed to create block: invalid instance installation : [Error : 0 : malformed engine configuration framing]"
+      }
+    ],
+    "raw_bootstrap": "first-failures/test-counter-idle-replay/bootstrap.log",
+    "typed_sidecar": "collate 0\n",
+    "scope": "Raw diagnostics locate the failure; no typed rejection/local-failure classification is inferred from log text. The sidecar only records collate false.",
+    "second_result": "Not run: fixture cap (CTest reports Failed)",
+    "after_retention_result": "Not rerun in the six-case admission check"
+  },
+  {
+    "name": "test-counter-self-delivery",
+    "ctest_log": "first-failures/test-counter-self-delivery.ctest.log",
+    "first_result": "Failed",
+    "reason": "Bootstrap rejected: invalid instance installation / malformed engine configuration framing",
+    "missing_tool_or_env_explains": false,
+    "category": "non-environment finding",
+    "diagnostic_lines": [
+      {
+        "line": 99,
+        "text": "[ 1][t 5][2026-09-09 16:58:33.785500444][validate-query.cpp:147][!fakevalidate(-1,8000000000000000):1#0]\tREJECT: aborting validation of block candidate for (-1,8000000000000000) : invalid instance installation : [Error : 0 : malformed engine configuration framing]"
+      },
+      {
+        "line": 109,
+        "text": "[ 1][t 5][2026-09-09 16:58:33.789897066][manager-disk.cpp:315][!fakevalidate(-1,8000000000000000):1#0]\tfailed to create block: invalid instance installation : [Error : 0 : malformed engine configuration framing]"
+      }
+    ],
+    "raw_bootstrap": "first-failures/test-counter-self-delivery/bootstrap.log",
+    "typed_sidecar": "collate 0\n",
+    "scope": "Raw diagnostics locate the failure; no typed rejection/local-failure classification is inferred from log text. The sidecar only records collate false.",
+    "second_result": "Not run: fixture cap (CTest reports Failed)",
+    "after_retention_result": "Not rerun in the six-case admission check"
+  },
+  {
+    "name": "test-counter-cross-delivery",
+    "ctest_log": "first-failures/test-counter-cross-delivery.ctest.log",
+    "first_result": "Failed",
+    "reason": "Bootstrap rejected: invalid instance installation / malformed engine configuration framing",
+    "missing_tool_or_env_explains": false,
+    "category": "non-environment finding",
+    "diagnostic_lines": [
+      {
+        "line": 100,
+        "text": "[ 1][t 5][2026-09-09 16:58:32.941998640][validate-query.cpp:147][!fakevalidate(-1,8000000000000000):1#0]\tREJECT: aborting validation of block candidate for (-1,8000000000000000) : invalid instance installation : [Error : 0 : malformed engine configuration framing]"
+      },
+      {
+        "line": 110,
+        "text": "[ 1][t 5][2026-09-09 16:58:32.943389084][manager-disk.cpp:315][!fakevalidate(-1,8000000000000000):1#0]\tfailed to create block: invalid instance installation : [Error : 0 : malformed engine configuration framing]"
+      }
+    ],
+    "raw_bootstrap": "first-failures/test-counter-cross-delivery/bootstrap.log",
+    "typed_sidecar": "collate 0\n",
+    "scope": "Raw diagnostics locate the failure; no typed rejection/local-failure classification is inferred from log text. The sidecar only records collate false.",
+    "second_result": "Not run: fixture cap (CTest reports Failed)",
+    "after_retention_result": "Not rerun in the six-case admission check"
+  },
+  {
+    "name": "test-counter-native-sender",
+    "ctest_log": "first-failures/test-counter-native-sender.ctest.log",
+    "first_result": "Failed",
+    "reason": "Bootstrap rejected: invalid instance installation / malformed engine configuration framing",
+    "missing_tool_or_env_explains": false,
+    "category": "non-environment finding",
+    "diagnostic_lines": [
+      {
+        "line": 99,
+        "text": "[ 1][t 4][2026-09-09 16:58:29.876799619][validate-query.cpp:147][!fakevalidate(-1,8000000000000000):1#0]\tREJECT: aborting validation of block candidate for (-1,8000000000000000) : invalid instance installation : [Error : 0 : malformed engine configuration framing]"
+      },
+      {
+        "line": 109,
+        "text": "[ 1][t 4][2026-09-09 16:58:29.878035765][manager-disk.cpp:315][!fakevalidate(-1,8000000000000000):1#0]\tfailed to create block: invalid instance installation : [Error : 0 : malformed engine configuration framing]"
+      }
+    ],
+    "raw_bootstrap": "first-failures/test-counter-native-sender/bootstrap.log",
+    "typed_sidecar": "collate 0\n",
+    "scope": "Raw diagnostics locate the failure; no typed rejection/local-failure classification is inferred from log text. The sidecar only records collate false.",
+    "second_result": "Not run: fixture cap (CTest reports Failed)",
+    "after_retention_result": "Not rerun in the six-case admission check"
+  },
+  {
+    "name": "test-counter-activation-missing_capability",
+    "ctest_log": "first-failures/test-counter-activation-missing_capability.ctest.log",
+    "first_result": "Not run: fixture cap (CTest reports Failed)",
+    "reason": "Fixture retention/admission cap 16 reached before test body",
+    "missing_tool_or_env_explains": false,
+    "category": "fixture admission infrastructure",
+    "scope": "Not a missing tool; no application guard was executed.",
+    "second_result": "Not run: fixture cap (CTest reports Failed)",
+    "after_retention_result": "Failed",
+    "after_retention_fixture": "/tmp/uno-publication-build/counter-integration-c3e2be613a54",
+    "after_retention_diagnostics": [
+      {
+        "line": 99,
+        "text": "[ 1][t 6][2026-09-09 17:13:47.280467288][validate-query.cpp:147][!fakevalidate(-1,8000000000000000):1#0]\tREJECT: aborting validation of block candidate for (-1,8000000000000000) : invalid instance installation : [Error : 7409 : instance configuration is missing]"
+      },
+      {
+        "line": 109,
+        "text": "[ 1][t 6][2026-09-09 17:13:47.281818980][manager-disk.cpp:315][!fakevalidate(-1,8000000000000000):1#0]\tfailed to create block: invalid instance installation : [Error : 7409 : instance configuration is missing]"
+      }
+    ]
+  },
+  {
+    "name": "test-counter-config-presence-missing_capability",
+    "ctest_log": "first-failures/test-counter-config-presence-missing_capability.ctest.log",
+    "first_result": "Not run: fixture cap (CTest reports Failed)",
+    "reason": "Fixture retention/admission cap 16 reached before test body",
+    "missing_tool_or_env_explains": false,
+    "category": "fixture admission infrastructure",
+    "scope": "Not a missing tool; no application guard was executed.",
+    "second_result": "Not run: fixture cap (CTest reports Failed)",
+    "after_retention_result": "Passed",
+    "after_retention_fixture": "/tmp/uno-publication-build/counter-integration-10682ecb616d",
+    "successful_fixture_lifecycle": "Existing test driver removed successful fixture; raw CTest output retained"
+  },
+  {
+    "name": "test-counter-activation-old_version",
+    "ctest_log": "first-failures/test-counter-activation-old_version.ctest.log",
+    "first_result": "Not run: fixture cap (CTest reports Failed)",
+    "reason": "Fixture retention/admission cap 16 reached before test body",
+    "missing_tool_or_env_explains": false,
+    "category": "fixture admission infrastructure",
+    "scope": "Not a missing tool; no application guard was executed.",
+    "second_result": "Not run: fixture cap (CTest reports Failed)",
+    "after_retention_result": "Failed",
+    "after_retention_fixture": "/tmp/uno-publication-build/counter-integration-f75a2b0e2280",
+    "after_retention_diagnostics": [
+      {
+        "line": 99,
+        "text": "[ 1][t 5][2026-09-09 17:13:47.692303532][validate-query.cpp:147][!fakevalidate(-1,8000000000000000):1#0]\tREJECT: aborting validation of block candidate for (-1,8000000000000000) : invalid instance installation : [Error : 7409 : instance configuration is missing]"
+      },
+      {
+        "line": 109,
+        "text": "[ 1][t 5][2026-09-09 17:13:47.694120378][manager-disk.cpp:315][!fakevalidate(-1,8000000000000000):1#0]\tfailed to create block: invalid instance installation : [Error : 7409 : instance configuration is missing]"
+      }
+    ]
+  },
+  {
+    "name": "test-counter-config-presence-old_version",
+    "ctest_log": "first-failures/test-counter-config-presence-old_version.ctest.log",
+    "first_result": "Not run: fixture cap (CTest reports Failed)",
+    "reason": "Fixture retention/admission cap 16 reached before test body",
+    "missing_tool_or_env_explains": false,
+    "category": "fixture admission infrastructure",
+    "scope": "Not a missing tool; no application guard was executed.",
+    "second_result": "Not run: fixture cap (CTest reports Failed)",
+    "after_retention_result": "Passed",
+    "after_retention_fixture": "/tmp/uno-publication-build/counter-integration-8b99f576aa3f",
+    "successful_fixture_lifecycle": "Existing test driver removed successful fixture; raw CTest output retained"
+  },
+  {
+    "name": "test-counter-config-binding",
+    "ctest_log": "first-failures/test-counter-config-binding.ctest.log",
+    "first_result": "Not run: fixture cap (CTest reports Failed)",
+    "reason": "Fixture retention/admission cap 16 reached before test body",
+    "missing_tool_or_env_explains": false,
+    "category": "fixture admission infrastructure",
+    "scope": "Not a missing tool; no application guard was executed.",
+    "second_result": "Not run: fixture cap (CTest reports Failed)",
+    "after_retention_result": "Passed",
+    "after_retention_fixture": "/tmp/uno-publication-build/counter-integration-1151ae673c14",
+    "successful_fixture_lifecycle": "Existing test driver removed successful fixture; raw CTest output retained"
+  },
+  {
+    "name": "test-counter-engine-config",
+    "ctest_log": "first-failures/test-counter-engine-config.ctest.log",
+    "first_result": "Failed",
+    "reason": "Bootstrap rejected: invalid instance installation / malformed engine configuration framing",
+    "missing_tool_or_env_explains": false,
+    "category": "non-environment finding",
+    "diagnostic_lines": [
+      {
+        "line": 99,
+        "text": "[ 1][t 5][2026-09-09 16:58:35.154592634][validate-query.cpp:147][!fakevalidate(-1,8000000000000000):1#0]\tREJECT: aborting validation of block candidate for (-1,8000000000000000) : invalid instance installation : [Error : 0 : malformed engine configuration framing]"
+      },
+      {
+        "line": 109,
+        "text": "[ 1][t 5][2026-09-09 16:58:35.160733389][manager-disk.cpp:315][!fakevalidate(-1,8000000000000000):1#0]\tfailed to create block: invalid instance installation : [Error : 0 : malformed engine configuration framing]"
+      }
+    ],
+    "raw_bootstrap": "first-failures/test-counter-engine-config/bootstrap.log",
+    "typed_sidecar": "collate 0\n",
+    "scope": "Raw diagnostics locate the failure; no typed rejection/local-failure classification is inferred from log text. The sidecar only records collate false.",
+    "second_result": "Not run: fixture cap (CTest reports Failed)",
+    "after_retention_result": "Not rerun in the six-case admission check"
+  },
+  {
+    "name": "test-tol",
+    "ctest_log": "first-failures/test-tol.ctest.log",
+    "first_result": "Failed",
+    "reason": "Tol compiler exit 2: Failed to discover Tol stdlib; TOL_STDLIB requested explicitly",
+    "missing_tool_or_env_explains": true,
+    "category": "missing runtime environment",
+    "second_result": "Passed",
+    "after_retention_result": "Not rerun in the six-case admission check"
+  }
+]

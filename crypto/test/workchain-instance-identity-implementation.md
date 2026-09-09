@@ -67,10 +67,13 @@ are retained as development failures, not behavior evidence.
 
 1. Collator producer call, after configuration validation and before installation.
    `collator.cpp` remains reserved to A at this checkpoint.
-2. Migration of all existing shell construction sites and frozen state fixtures;
-   the mandatory constructor signature intentionally has no compatibility default.
-   Standard WorkchainBlock regression has not been rebuilt/run for this checkpoint.
-   Earlier green binaries are not evidence for this wire revision.
+2. Caller migration checkpoint `2d5d7fa13` supplies explicit identities at the
+   nine existing test calls and updates Counter framing. A freshly rebuilt
+   WorkchainBlock group passes 125 tests. Counter readiness remains an acceptance
+   blocker: its identity-bearing configuration inside zerostate is illegal under
+   D40/D52. Until migrated to post-zerostate installation, it cannot be used as
+   D40 acceptance evidence. See `workchain-instance-fixture-migration.md`.
+   No constructor compatibility default or identity-check exception was added.
 3. Actual validator typed-result/call-site controls. In particular, removing the
    call in `check_mc_state_extra` has NOT been shown to fail these private tests.
    Compiling the full `tos_validator` target is not that behavioral evidence.

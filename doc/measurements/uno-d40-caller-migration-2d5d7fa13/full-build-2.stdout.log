@@ -1,0 +1,145 @@
+[1/201] Linking CXX executable test-quorum
+[2/201] Linking CXX executable test-bigint
+[3/201] Linking CXX executable test-full-node-shard-routing
+[4/201] Linking CXX executable test-cells
+[5/201] Linking CXX executable test-json-rpc-parse
+[6/201] Linking CXX executable test-ed25519
+[7/201] Linking CXX executable test-fift
+[8/201] Linking CXX executable test-vm
+[9/201] Linking CXX executable test-rldp2-connection-limits
+[10/201] Linking CXX executable test-keyring-temp-key
+[11/201] Linking CXX executable test-db
+[12/201] cd /home/tomi/tos-m2/uno/crypto && /usr/bin/cmake -E env CARGO_NET_OFFLINE=true CARGO_TARGET_DIR=/tmp/uno-publication-build/uno/crypto/cargo-target /home/tomi/.cargo/bin/cargo build --locked --offline --release -j48
+    Finished `release` profile [optimized] target(s) in 0.06s
+[13/200] Checking the git repository for changes...
+[14/144] Linking CXX executable test-dht
+[15/144] Linking CXX executable test-rldp2
+[16/144] Linking CXX executable test-rldp2-inbound-transfer-bound
+[17/144] Linking CXX executable test-wallet-index
+[18/144] Linking CXX executable test-adnl
+[19/144] Linking CXX executable test-json-rpc-handler-guard
+[20/144] Linking CXX executable test-workchain-proof-backend
+[21/144] Linking CXX executable test-overlay-peer-cleanup
+[22/144] Linking CXX executable test-rldp2-query-eviction
+[23/144] Linking CXX executable test-rldp2-connection-cap
+[24/144] Linking CXX executable plumtree-graph-sim
+[25/144] Linking CXX executable test-metrics-label-bound
+[26/144] Linking CXX executable tol/tol
+[27/144] Compiling FunC contract wallet-v5-func -> /tmp/uno-publication-build/slice1-gas-parity/wallet-v5-func.boc
+[28/144] Linking CXX executable test-http-server-limits
+[29/144] Compiling FunC contract jetton-minter-func -> /tmp/uno-publication-build/slice1-gas-parity/jetton-minter-func.boc
+[30/144] Compiling Tol contract jetton-minter-tol -> /tmp/uno-publication-build/slice1-gas-parity/jetton-minter-tol.boc
+[31/144] Compiling FunC contract jetton-wallet-func -> /tmp/uno-publication-build/slice1-gas-parity/jetton-wallet-func.boc
+[32/144] Compiling Tol contract jetton-wallet-tol -> /tmp/uno-publication-build/slice1-gas-parity/jetton-wallet-tol.boc
+[33/144] Compiling Tol contract wallet-v5-tol -> /tmp/uno-publication-build/slice1-gas-parity/wallet-v5-tol.boc
+[34/144] Compiling Tol contract slice5-receive-context-tol -> /tmp/uno-publication-build/slice1-gas-parity/slice5-receive-context-tol.boc
+[35/144] Compiling Tol contract tos-report-bond-oracle -> /tmp/uno-publication-build/slice1-gas-parity/tos-report-bond-oracle.boc
+[36/144] Building CXX object CMakeFiles/test-workchain-proof-work.dir/crypto/test/test-workchain-proof-work.cpp.o
+[37/144] Linking CXX executable test-workchain-proof-work
+[38/144] Building CXX object CMakeFiles/test-msg-envelope.dir/test/test-msg-envelope.cpp.o
+[39/144] Building CXX object CMakeFiles/test-workchain-admission.dir/crypto/test/test-workchain-admission.cpp.o
+[40/144] Building CXX object CMakeFiles/test-workchain-activation-control.dir/crypto/test/test-workchain-activation-control.cpp.o
+[41/144] Building CXX object CMakeFiles/test-vm-exception-hardening.dir/test/test-vm-exception-hardening.cpp.o
+[42/144] Linking CXX executable test-msg-envelope
+[43/144] Linking CXX executable test-workchain-admission
+[44/144] Linking CXX executable test-workchain-activation-control
+[45/144] Linking CXX executable test-vm-exception-hardening
+[46/144] Building CXX object CMakeFiles/test-consensus-config-admission.dir/test/test-consensus-config-admission.cpp.o
+[47/144] Linking CXX executable test-consensus-config-admission
+[48/144] Building CXX object CMakeFiles/test-config-transition.dir/test/test-config-transition.cpp.o
+[49/144] Building CXX object CMakeFiles/test-workchain-proof-contracts.dir/crypto/test/test-workchain-proof-contracts.cpp.o
+[50/144] Linking CXX executable test-workchain-proof-contracts
+[51/144] Linking CXX executable test-config-transition
+[52/144] Building CXX object emulator/CMakeFiles/emulator.dir/emulator-extern.cpp.o
+[53/144] Building CXX object CMakeFiles/test-emulator.dir/emulator/test/slice-1-failure-phase-fixtures.cpp.o
+[54/144] Linking CXX shared library emulator/libemulator.so
+[55/144] Building CXX object CMakeFiles/test-validator-options.dir/test/test-validator-options.cpp.o
+[56/144] Building CXX object CMakeFiles/test-block-handle-flags.dir/test/test-block-handle-flags.cpp.o
+[57/144] Linking CXX executable test-block-handle-flags
+[58/144] Linking CXX executable test-validator-options
+[59/144] Building CXX object CMakeFiles/test-download-next-blocks-validation.dir/test/test-download-next-blocks-validation.cpp.o
+[60/144] Building CXX object CMakeFiles/test-wallet-message-processor.dir/test/test-wallet-message-processor.cpp.o
+[61/144] Building CXX object CMakeFiles/test-emulator.dir/emulator/test/slice-3-replay-fixture.cpp.o
+[62/144] Building CXX object CMakeFiles/test-uno-state-snapshot.dir/test/uno-snapshot-transport.cpp.o
+[63/144] Building CXX object CMakeFiles/test-ext-message-pool.dir/test/test-ext-message-pool.cpp.o
+[64/144] Building CXX object CMakeFiles/test-emulator.dir/emulator/test/slice-1-stage-2-roundtrip-fixture.cpp.o
+[65/144] Building CXX object CMakeFiles/test-emulator.dir/emulator/test/slice-1-stage-4-gas-parity-fixture.cpp.o
+[66/144] Building CXX object validator/CMakeFiles/validator.dir/get-next-key-blocks.cpp.o
+[67/144] Building CXX object CMakeFiles/test-emulator.dir/emulator/test/emulator-tests.cpp.o
+[68/144] Building CXX object CMakeFiles/test-emulator.dir/emulator/test/slice-1-account-state-fixtures.cpp.o
+[69/144] Linking CXX executable test-wallet-message-processor
+[70/144] Building CXX object CMakeFiles/test-emulator.dir/emulator/test/slice-5-receive-context-fixture.cpp.o
+[71/144] Linking CXX executable test-ext-message-pool
+[72/144] Building CXX object validator/CMakeFiles/validator.dir/collator-node/collator-node-session.cpp.o
+[73/144] Building CXX object validator/CMakeFiles/validator.dir/collation-manager.cpp.o
+[74/144] Building CXX object CMakeFiles/test-celldb-actor-restart.dir/test/test-celldb-actor-restart.cpp.o
+[75/144] Building CXX object CMakeFiles/test-celldb-streaming-import.dir/test/test-celldb-streaming-import.cpp.o
+[76/144] Building CXX object CMakeFiles/test-uno-storage-measurement.dir/test/uno-snapshot-transport.cpp.o
+[77/144] Building CXX object CMakeFiles/test-emulator.dir/emulator/test/tos-report-bond-oracle-fixture.cpp.o
+[78/144] Building CXX object CMakeFiles/test-emulator.dir/emulator/test/tvm-v14-v15-transaction-fixture.cpp.o
+[79/144] Building CXX object CMakeFiles/test-emulator.dir/emulator/test/config-param-43-transaction-fixture.cpp.o
+[80/144] Building CXX object CMakeFiles/test-download-state-budget.dir/test/test-download-state-budget.cpp.o
+[81/144] Linking CXX executable test-emulator
+[82/144] Building CXX object CMakeFiles/test-smartcont.dir/crypto/test/test-smartcont.cpp.o
+[83/144] Building CXX object validator/CMakeFiles/validator.dir/downloaders/wait-block-data.cpp.o
+[84/144] Linking CXX executable test-smartcont
+[85/144] Building CXX object validator/CMakeFiles/validator.dir/import-db-slice.cpp.o
+[86/144] Building CXX object validator/CMakeFiles/validator.dir/collator-node/collator-node.cpp.o
+[87/144] Building CXX object CMakeFiles/test-uno-state-snapshot.dir/test/test-uno-state-snapshot.cpp.o
+[88/144] Building CXX object CMakeFiles/test-uno-storage-measurement.dir/test/test-uno-state-snapshot.cpp.o
+[89/144] Building CXX object CMakeFiles/test-toslib-offline.dir/toslib/test/offline.cpp.o
+[90/144] Building CXX object validator/CMakeFiles/validator.dir/state-serializer.cpp.o
+[91/144] Building CXX object validator/CMakeFiles/validator.dir/import-db-slice-local.cpp.o
+[92/144] Linking CXX executable test-toslib-offline
+[93/144] Building CXX object validator/CMakeFiles/validator.dir/token-manager.cpp.o
+[94/144] Building CXX object validator/CMakeFiles/validator.dir/validator-telemetry.cpp.o
+[95/144] Building CXX object validator/CMakeFiles/validator.dir/shard-block-verifier.cpp.o
+[96/144] Building CXX object validator/CMakeFiles/validator.dir/storage-stat-cache.cpp.o
+[97/144] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/bus.cpp.o
+[98/144] Building CXX object validator/CMakeFiles/validator.dir/impl/applied-ext-message-cleanup.cpp.o
+[99/144] Building CXX object validator/CMakeFiles/validator.dir/validate-broadcast.cpp.o
+[100/144] Building CXX object validator/CMakeFiles/validator.dir/shard-block-retainer.cpp.o
+[101/144] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/collator-schedule.cpp.o
+[102/144] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/certificate.cpp.o
+[103/144] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/votes.cpp.o
+[104/144] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/metric-collector.cpp.o
+[105/144] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/db.cpp.o
+[106/144] Linking CXX executable test/toslib/test-ffi-awaitable
+[107/144] Building CXX object validator/CMakeFiles/validator.dir/consensus/block-accepter.cpp.o
+[108/144] Linking CXX executable test/toslib/test-ffi-event-loop
+[109/144] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/candidate-resolver.cpp.o
+[110/144] Building CXX object validator/CMakeFiles/validator.dir/consensus/utils.cpp.o
+[111/144] Building CXX object validator/CMakeFiles/validator.dir/consensus/block-validator.cpp.o
+[112/144] Building CXX object validator/CMakeFiles/validator.dir/consensus/chain-state.cpp.o
+[113/144] Building CXX object validator/CMakeFiles/validator.dir/consensus/misbehavior-reporter.cpp.o
+[114/144] Building CXX object validator/CMakeFiles/validator.dir/consensus/trace-collector.cpp.o
+[115/144] Building CXX object validator/CMakeFiles/validator.dir/consensus/block-sync-overlay.cpp.o
+[116/144] Building CXX object validator/CMakeFiles/validator.dir/consensus/types.cpp.o
+[117/144] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/consensus.cpp.o
+[118/144] Building CXX object validator/CMakeFiles/validator.dir/consensus/block-producer.cpp.o
+[119/144] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/state-resolver.cpp.o
+[120/144] Building CXX object validator/CMakeFiles/validator.dir/consensus/bus.cpp.o
+[121/144] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/pool.cpp.o
+[122/144] Building CXX object validator/CMakeFiles/validator.dir/consensus/private-overlay.cpp.o
+[123/144] Building CXX object validator/CMakeFiles/full-node.dir/net/download-archive-slice.cpp.o
+[124/144] Building CXX object validator/CMakeFiles/full-node.dir/full-node-serializer.cpp.o
+[125/144] Building CXX object validator/CMakeFiles/validator.dir/consensus/bridge.cpp.o
+[126/144] Building CXX object validator/CMakeFiles/full-node.dir/net/download-block-new.cpp.o
+[127/144] Building CXX object validator/CMakeFiles/full-node.dir/net/download-next-blocks.cpp.o
+[128/144] Building CXX object validator/CMakeFiles/full-node.dir/net/download-state.cpp.o
+[129/144] Building CXX object validator/CMakeFiles/full-node.dir/net/get-next-key-blocks.cpp.o
+[130/144] Building CXX object validator/CMakeFiles/full-node.dir/net/download-proof.cpp.o
+[131/144] Building CXX object validator/CMakeFiles/full-node.dir/full-node-custom-overlays.cpp.o
+[132/144] Building CXX object validator/CMakeFiles/full-node.dir/full-node.cpp.o
+[133/144] Building CXX object validator/CMakeFiles/full-node.dir/full-node-fast-sync-overlays.cpp.o
+[134/144] Building CXX object validator/CMakeFiles/full-node.dir/full-node-master.cpp.o
+[135/144] Building CXX object validator/CMakeFiles/full-node.dir/full-node-shard.cpp.o
+[136/144] Linking CXX static library validator/libfull-node.a
+[137/144] Linking CXX executable test-download-next-blocks-validation
+[138/144] Linking CXX executable test-download-state-budget
+[139/144] Linking CXX executable test-celldb-actor-restart
+[140/144] Linking CXX executable test-celldb-streaming-import
+[141/144] Building CXX object validator/CMakeFiles/validator.dir/manager.cpp.o
+[142/144] Linking CXX static library validator/libvalidator.a
+[143/144] Linking CXX executable test-uno-state-snapshot
+[144/144] Linking CXX executable test-uno-storage-measurement

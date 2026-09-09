@@ -1,0 +1,5 @@
+Traceback (most recent call last):
+  File "/tmp/uno-d40-migration/control.py", line 22, in <module>
+    report['explicit_restore_build']=run('restore-build',['cmake','--build',build,'--target','create-state','fift','test-tos-collator','test-workchain-block','-j32']);assert report['explicit_restore_build']['exit_code']==0
+                                                                                                                                                                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError

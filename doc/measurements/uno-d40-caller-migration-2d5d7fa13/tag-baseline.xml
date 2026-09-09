@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="(empty)"
+	tests="1"
+	failures="0"
+	disabled="0"
+	skipped="0"
+	hostname=""
+	time="0"
+	timestamp="2026-09-09T16:54:53"
+	>
+	<testcase name="test-workchain-handwritten-tags" classname="test-workchain-handwritten-tags" time="0.0415498" status="run">
+		<system-out>UnoV2ResourceInput	0	c5defa2a
+UnoV2ResourceState	0	90aef2dd
+UnoV2ResourceWorkOutput	0	7a310b92
+UnoV2ResourcePolicy	0	bbd8a9ec
+UnoV2EngineConfiguration	0	ff68187c
+WorkchainNativeIngressPolicy	0	4abd5ab4
+</system-out>
+	</testcase>
+</testsuite>

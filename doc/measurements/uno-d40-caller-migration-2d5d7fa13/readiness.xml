@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="(empty)"
+	tests="1"
+	failures="1"
+	disabled="0"
+	skipped="0"
+	hostname=""
+	time="0"
+	timestamp="2026-09-09T16:55:24"
+	>
+	<testcase name="test-counter-account-binding-readiness" classname="test-counter-account-binding-readiness" time="0.328598" status="fail">
+		<failure message=""/>
+		<system-out>-- Counter fixture active; retained if interrupted: /tmp/uno-publication-build/counter-integration-d7cf3a71bb69
+CMake Error at /home/tomi/tos-m2/test/test-counter-disk-integration.cmake:171 (message):
+  bootstrap: exit 2, expected 0; see
+  /tmp/uno-publication-build/counter-integration-d7cf3a71bb69/bootstrap.log
+Call Stack (most recent call first):
+  /home/tomi/tos-m2/test/test-counter-disk-integration.cmake:212 (run_node)
+
+
+
+CMake Error at /home/tomi/tos-m2/test/counter-fixture-lifecycle.cmake:58 (message):
+  Counter fixture FAILED (1); retained for inspection:
+  /tmp/uno-publication-build/counter-integration-d7cf3a71bb69
+Call Stack (most recent call first):
+  /home/tomi/tos-m2/test/test-counter-disk-integration.cmake:3 (counter_run_fixture)
+
+
+</system-out>
+	</testcase>
+</testsuite>

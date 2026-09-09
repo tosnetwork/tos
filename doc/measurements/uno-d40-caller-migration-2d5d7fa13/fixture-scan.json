@@ -1,0 +1,591 @@
+{
+  "input_mode": "committed regular-file blobs (git cat-file --batch), not working-tree files",
+  "source_commit": "2d5d7fa133664178c099ee422ac6346131af7cfd",
+  "generated_header_sha256": "fc88f065bf263adc6cbba5a6f44b9125ccee9668f05cd8a18cdbb56017520920",
+  "retired_text_hits": [
+    {
+      "path": "crypto/test/test-workchain-block.cpp",
+      "line": 290,
+      "count": 1
+    },
+    {
+      "path": "crypto/test/workchain-cadence-field.md",
+      "line": 16,
+      "count": 1
+    },
+    {
+      "path": "doc/measurements/uno-m1-cadence-7008e8a40/controls.json",
+      "line": 9,
+      "count": 1
+    },
+    {
+      "path": "doc/measurements/uno-m1-cadence-7008e8a40/driver-decode.py",
+      "line": 10,
+      "count": 1
+    },
+    {
+      "path": "doc/measurements/uno-m1-cadence-7008e8a40/driver-initial.py",
+      "line": 10,
+      "count": 1
+    },
+    {
+      "path": "doc/measurements/uno-m1-cadence-7008e8a40/generation.json",
+      "line": 4,
+      "count": 1
+    }
+  ],
+  "literal_candidates": [
+    {
+      "path": "crypto/block/block.tlb",
+      "line": 2,
+      "tag": "bbd85560",
+      "type": "UnoV2SystemState"
+    },
+    {
+      "path": "crypto/block/block.tlb",
+      "line": 5,
+      "tag": "46ff26c1",
+      "type": "UnoV2CoordinatorState"
+    },
+    {
+      "path": "crypto/block/workchain-account-access-codec.h",
+      "line": 38,
+      "tag": "7bc07a6d",
+      "type": "UnoV2HostAccess"
+    },
+    {
+      "path": "crypto/block/workchain-account-access-codec.h",
+      "line": 68,
+      "tag": "439e6964",
+      "type": "UnoV2HostRead"
+    },
+    {
+      "path": "crypto/block/workchain-account-access-codec.h",
+      "line": 110,
+      "tag": "439e6964",
+      "type": "UnoV2HostRead"
+    },
+    {
+      "path": "crypto/block/workchain-account-access-codec.h",
+      "line": 121,
+      "tag": "7bc07a6d",
+      "type": "UnoV2HostAccess"
+    },
+    {
+      "path": "crypto/block/workchain-account-access-codec.h",
+      "line": 133,
+      "tag": "7bc07a6d",
+      "type": "UnoV2HostAccess"
+    },
+    {
+      "path": "crypto/block/workchain-account-access-codec.h",
+      "line": 148,
+      "tag": "439e6964",
+      "type": "UnoV2HostRead"
+    },
+    {
+      "path": "crypto/block/workchain-account-effects.h",
+      "line": 48,
+      "tag": "6b953015",
+      "type": "UnoV2NativeTransfer"
+    },
+    {
+      "path": "crypto/block/workchain-account-effects.h",
+      "line": 58,
+      "tag": "67e2d380",
+      "type": "UnoV2NativeEffects"
+    },
+    {
+      "path": "crypto/block/workchain-account-effects.h",
+      "line": 58,
+      "tag": "0bd47725",
+      "type": "UnoV2NativeEffects"
+    },
+    {
+      "path": "crypto/block/workchain-account-effects.h",
+      "line": 75,
+      "tag": "4155a803",
+      "type": "UnoV2HostEffects"
+    },
+    {
+      "path": "crypto/block/workchain-account-replay.h",
+      "line": 30,
+      "tag": "0bd47725",
+      "type": "UnoV2NativeEffects"
+    },
+    {
+      "path": "crypto/block/workchain-account-replay.h",
+      "line": 31,
+      "tag": "67e2d380",
+      "type": "UnoV2NativeEffects"
+    },
+    {
+      "path": "crypto/block/workchain-fee-settlement.h",
+      "line": 10,
+      "tag": "b02c852d",
+      "type": "UnoV2FeeSettlement"
+    },
+    {
+      "path": "crypto/block/workchain-fee-settlement.h",
+      "line": 11,
+      "tag": "0bd47725",
+      "type": "UnoV2NativeEffects"
+    },
+    {
+      "path": "crypto/block/workchain-fee-settlement.h",
+      "line": 12,
+      "tag": "67e2d380",
+      "type": "UnoV2NativeEffects"
+    },
+    {
+      "path": "crypto/block/workchain-fee-settlement.h",
+      "line": 47,
+      "tag": "b02c852d",
+      "type": "UnoV2FeeSettlement"
+    },
+    {
+      "path": "crypto/block/workchain-fee-settlement.h",
+      "line": 69,
+      "tag": "0bd47725",
+      "type": "UnoV2NativeEffects"
+    },
+    {
+      "path": "crypto/block/workchain-fee-settlement.h",
+      "line": 74,
+      "tag": "67e2d380",
+      "type": "UnoV2NativeEffects"
+    },
+    {
+      "path": "crypto/block/workchain-host-identity.h",
+      "line": 40,
+      "tag": "5ab37c9a",
+      "type": "UnoV2HostDomain"
+    },
+    {
+      "path": "crypto/block/workchain-host-identity.h",
+      "line": 45,
+      "tag": "f704b16c",
+      "type": "UnoV2HostPolicy"
+    },
+    {
+      "path": "crypto/block/workchain-host-identity.h",
+      "line": 50,
+      "tag": "8a4ca5dc",
+      "type": "UnoV2HostContext"
+    },
+    {
+      "path": "crypto/block/workchain-host-identity.h",
+      "line": 55,
+      "tag": "7d71caf4",
+      "type": "UnoV2HostIdentity"
+    },
+    {
+      "path": "crypto/block/workchain-host-input.h",
+      "line": 189,
+      "tag": "7c0766c8",
+      "type": "UnoV2HostInput"
+    },
+    {
+      "path": "crypto/block/workchain-host-input.h",
+      "line": 229,
+      "tag": "7c0766c8",
+      "type": "UnoV2HostInput"
+    },
+    {
+      "path": "crypto/block/workchain-participant-record.h",
+      "line": 37,
+      "tag": "35739af6",
+      "type": "UnoV2HostRecord"
+    },
+    {
+      "path": "crypto/test/test-workchain-block.cpp",
+      "line": 71,
+      "tag": "46ff26c1",
+      "type": "UnoV2CoordinatorState"
+    },
+    {
+      "path": "crypto/test/test-workchain-block.cpp",
+      "line": 77,
+      "tag": "bbd85560",
+      "type": "UnoV2SystemState"
+    },
+    {
+      "path": "crypto/test/test-workchain-block.cpp",
+      "line": 116,
+      "tag": "bbd85560",
+      "type": "UnoV2SystemState"
+    },
+    {
+      "path": "crypto/test/test-workchain-block.cpp",
+      "line": 119,
+      "tag": "46ff26c1",
+      "type": "UnoV2CoordinatorState"
+    },
+    {
+      "path": "crypto/test/test-workchain-block.cpp",
+      "line": 129,
+      "tag": "bbd85560",
+      "type": "UnoV2SystemState"
+    },
+    {
+      "path": "crypto/test/test-workchain-block.cpp",
+      "line": 133,
+      "tag": "46ff26c1",
+      "type": "UnoV2CoordinatorState"
+    },
+    {
+      "path": "crypto/test/test-workchain-block.cpp",
+      "line": 138,
+      "tag": "46ff26c1",
+      "type": "UnoV2CoordinatorState"
+    },
+    {
+      "path": "crypto/test/test-workchain-block.cpp",
+      "line": 149,
+      "tag": "bbd85560",
+      "type": "UnoV2SystemState"
+    },
+    {
+      "path": "crypto/test/test-workchain-block.cpp",
+      "line": 175,
+      "tag": "bbd8a9ec",
+      "type": "UnoV2ResourcePolicy"
+    },
+    {
+      "path": "crypto/test/test-workchain-block.cpp",
+      "line": 178,
+      "tag": "c5defa2a",
+      "type": "UnoV2ResourceInput"
+    },
+    {
+      "path": "crypto/test/test-workchain-block.cpp",
+      "line": 178,
+      "tag": "90aef2dd",
+      "type": "UnoV2ResourceState"
+    },
+    {
+      "path": "crypto/test/test-workchain-block.cpp",
+      "line": 178,
+      "tag": "7a310b92",
+      "type": "UnoV2ResourceWorkOutput"
+    },
+    {
+      "path": "crypto/test/test-workchain-block.cpp",
+      "line": 290,
+      "tag": "6e1fa05f",
+      "type": "retired cadence"
+    },
+    {
+      "path": "crypto/test/test-workchain-block.cpp",
+      "line": 359,
+      "tag": "4155a803",
+      "type": "UnoV2HostEffects"
+    },
+    {
+      "path": "crypto/test/test-workchain-block.cpp",
+      "line": 364,
+      "tag": "67e2d380",
+      "type": "UnoV2NativeEffects"
+    },
+    {
+      "path": "crypto/test/test-workchain-block.cpp",
+      "line": 366,
+      "tag": "0bd47725",
+      "type": "UnoV2NativeEffects"
+    },
+    {
+      "path": "crypto/test/test-workchain-block.cpp",
+      "line": 424,
+      "tag": "bbd8a9ec",
+      "type": "UnoV2ResourcePolicy"
+    },
+    {
+      "path": "crypto/test/test-workchain-block.cpp",
+      "line": 458,
+      "tag": "bbd8a9ec",
+      "type": "UnoV2ResourcePolicy"
+    },
+    {
+      "path": "crypto/test/test-workchain-block.cpp",
+      "line": 467,
+      "tag": "bbd8a9ec",
+      "type": "UnoV2ResourcePolicy"
+    },
+    {
+      "path": "crypto/test/test-workchain-block.cpp",
+      "line": 612,
+      "tag": "35739af6",
+      "type": "UnoV2HostRecord"
+    },
+    {
+      "path": "crypto/test/test-workchain-block.cpp",
+      "line": 652,
+      "tag": "5ab37c9a",
+      "type": "UnoV2HostDomain"
+    },
+    {
+      "path": "crypto/test/test-workchain-block.cpp",
+      "line": 661,
+      "tag": "f704b16c",
+      "type": "UnoV2HostPolicy"
+    },
+    {
+      "path": "crypto/test/test-workchain-block.cpp",
+      "line": 670,
+      "tag": "8a4ca5dc",
+      "type": "UnoV2HostContext"
+    },
+    {
+      "path": "crypto/test/test-workchain-block.cpp",
+      "line": 775,
+      "tag": "439e6964",
+      "type": "UnoV2HostRead"
+    },
+    {
+      "path": "crypto/test/test-workchain-block.cpp",
+      "line": 782,
+      "tag": "7bc07a6d",
+      "type": "UnoV2HostAccess"
+    },
+    {
+      "path": "crypto/test/test-workchain-block.cpp",
+      "line": 793,
+      "tag": "439e6964",
+      "type": "UnoV2HostRead"
+    },
+    {
+      "path": "crypto/test/test-workchain-block.cpp",
+      "line": 801,
+      "tag": "7bc07a6d",
+      "type": "UnoV2HostAccess"
+    },
+    {
+      "path": "crypto/test/test-workchain-block.cpp",
+      "line": 809,
+      "tag": "7bc07a6d",
+      "type": "UnoV2HostAccess"
+    },
+    {
+      "path": "crypto/test/test-workchain-block.cpp",
+      "line": 1009,
+      "tag": "46ff26c1",
+      "type": "UnoV2CoordinatorState"
+    },
+    {
+      "path": "crypto/test/test-workchain-block.cpp",
+      "line": 1542,
+      "tag": "439e6964",
+      "type": "UnoV2HostRead"
+    },
+    {
+      "path": "crypto/test/test-workchain-block.cpp",
+      "line": 1549,
+      "tag": "7bc07a6d",
+      "type": "UnoV2HostAccess"
+    },
+    {
+      "path": "crypto/test/test-workchain-block.cpp",
+      "line": 1658,
+      "tag": "7bc07a6d",
+      "type": "UnoV2HostAccess"
+    },
+    {
+      "path": "crypto/test/test-workchain-block.cpp",
+      "line": 1662,
+      "tag": "439e6964",
+      "type": "UnoV2HostRead"
+    },
+    {
+      "path": "crypto/test/test-workchain-block.cpp",
+      "line": 1700,
+      "tag": "439e6964",
+      "type": "UnoV2HostRead"
+    },
+    {
+      "path": "crypto/test/test-workchain-block.cpp",
+      "line": 1703,
+      "tag": "7bc07a6d",
+      "type": "UnoV2HostAccess"
+    },
+    {
+      "path": "crypto/test/test-workchain-block.cpp",
+      "line": 1713,
+      "tag": "439e6964",
+      "type": "UnoV2HostRead"
+    },
+    {
+      "path": "crypto/test/test-workchain-block.cpp",
+      "line": 1722,
+      "tag": "7bc07a6d",
+      "type": "UnoV2HostAccess"
+    },
+    {
+      "path": "crypto/test/test-workchain-block.cpp",
+      "line": 2472,
+      "tag": "0bd47725",
+      "type": "UnoV2NativeEffects"
+    },
+    {
+      "path": "crypto/test/test-workchain-block.cpp",
+      "line": 2497,
+      "tag": "0bd47725",
+      "type": "UnoV2NativeEffects"
+    },
+    {
+      "path": "crypto/test/test-workchain-block.cpp",
+      "line": 2552,
+      "tag": "0bd47725",
+      "type": "UnoV2NativeEffects"
+    },
+    {
+      "path": "crypto/test/test-workchain-block.cpp",
+      "line": 2622,
+      "tag": "0bd47725",
+      "type": "UnoV2NativeEffects"
+    },
+    {
+      "path": "crypto/test/test-workchain-block.cpp",
+      "line": 2706,
+      "tag": "0bd47725",
+      "type": "UnoV2NativeEffects"
+    },
+    {
+      "path": "crypto/test/test-workchain-block.cpp",
+      "line": 2712,
+      "tag": "67e2d380",
+      "type": "UnoV2NativeEffects"
+    },
+    {
+      "path": "crypto/test/test-workchain-block.cpp",
+      "line": 6585,
+      "tag": "7c0766c8",
+      "type": "UnoV2HostInput"
+    },
+    {
+      "path": "crypto/test/workchain-cadence-field.md",
+      "line": 16,
+      "tag": "6e1fa05f",
+      "type": "retired cadence"
+    },
+    {
+      "path": "doc/measurements/uno-m1-cadence-7008e8a40/controls.json",
+      "line": 9,
+      "tag": "6e1fa05f",
+      "type": "retired cadence"
+    },
+    {
+      "path": "doc/measurements/uno-m1-cadence-7008e8a40/driver-decode.py",
+      "line": 10,
+      "tag": "6e1fa05f",
+      "type": "retired cadence"
+    },
+    {
+      "path": "doc/measurements/uno-m1-cadence-7008e8a40/driver-initial.py",
+      "line": 10,
+      "tag": "6e1fa05f",
+      "type": "retired cadence"
+    },
+    {
+      "path": "doc/measurements/uno-m1-cadence-7008e8a40/generation.json",
+      "line": 4,
+      "tag": "6e1fa05f",
+      "type": "retired cadence"
+    },
+    {
+      "path": "doc/measurements/uno-m1-configuration-scope.json",
+      "line": 142,
+      "tag": "bbd85560",
+      "type": "UnoV2SystemState"
+    },
+    {
+      "path": "doc/measurements/uno-v2-coordinator-state-followup-controls.json",
+      "line": 280,
+      "tag": "bbd85560",
+      "type": "UnoV2SystemState"
+    },
+    {
+      "path": "doc/measurements/uno-v2-coordinator-state-followup-controls.json",
+      "line": 281,
+      "tag": "bbd85560",
+      "type": "UnoV2SystemState"
+    },
+    {
+      "path": "doc/uno-v2-coordinator-state-wire.md",
+      "line": 8,
+      "tag": "46ff26c1",
+      "type": "UnoV2CoordinatorState"
+    },
+    {
+      "path": "doc/uno-v2-coordinator-state-wire.md",
+      "line": 10,
+      "tag": "bbd85560",
+      "type": "UnoV2SystemState"
+    },
+    {
+      "path": "doc/uno-v2-resource-policy-wire.md",
+      "line": 11,
+      "tag": "67e2d380",
+      "type": "UnoV2NativeEffects"
+    },
+    {
+      "path": "test/test-counter-disk-integration.cmake",
+      "line": 96,
+      "tag": "c5defa2a",
+      "type": "UnoV2ResourceInput"
+    },
+    {
+      "path": "test/test-counter-disk-integration.cmake",
+      "line": 98,
+      "tag": "90aef2dd",
+      "type": "UnoV2ResourceState"
+    },
+    {
+      "path": "test/test-counter-disk-integration.cmake",
+      "line": 100,
+      "tag": "7a310b92",
+      "type": "UnoV2ResourceWorkOutput"
+    },
+    {
+      "path": "test/test-counter-disk-integration.cmake",
+      "line": 102,
+      "tag": "bbd8a9ec",
+      "type": "UnoV2ResourcePolicy"
+    },
+    {
+      "path": "test/test-counter-disk-integration.cmake",
+      "line": 109,
+      "tag": "ff68187c",
+      "type": "UnoV2EngineConfiguration"
+    }
+  ],
+  "counts": {
+    "tracked_files": 61938,
+    "streams": 69024,
+    "bytes": 1895763123,
+    "base64_bocs": 841,
+    "archive_members": 7084
+  },
+  "manifest_sha256": "9825642dfec275d17a7d0126076f1b2a88f8476e9301f4cfeef08a576e752393",
+  "hits": [],
+  "positive_calibration": [
+    {
+      "path": "calibration.raw",
+      "encoding": "big-endian",
+      "count": 1,
+      "sha256": "49bda2653dc8748f5f4ca61f51cf5029dae2cfad708536d1c570a870cd152fde"
+    },
+    {
+      "path": "calibration.base64",
+      "encoding": "base64 BOC",
+      "count": 1,
+      "decoded_sha256": "49bda2653dc8748f5f4ca61f51cf5029dae2cfad708536d1c570a870cd152fde"
+    },
+    {
+      "path": "calibration.base64",
+      "encoding": "base64 BOC",
+      "count": 1,
+      "decoded_sha256": "49bda2653dc8748f5f4ca61f51cf5029dae2cfad708536d1c570a870cd152fde"
+    }
+  ],
+  "scope": "All tracked regular files including tostester; raw BE/LE bytes, standard base64 BOC tokens and folded base64 files, tar/gzip/xz/zstd/zip members. Does not inspect ignored runtime build databases, encrypted or arbitrary custom encodings; no history rewritten."
+}

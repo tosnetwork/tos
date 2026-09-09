@@ -1,0 +1,74 @@
+{
+  "commit": "2d5d7fa133664178c099ee422ac6346131af7cfd",
+  "path": "test/test-counter-disk-integration.cmake",
+  "git_blob_oid": "06e91d77ab5014d7635f00f9a87f8908bec60826",
+  "original_sha256": "180808c2d1275d9eb8520056e9f259a3d2192c194dec747669d8468a61fe5e49",
+  "from": "x{ff68187c}",
+  "to": "x{6e1fa05f}",
+  "mutant_sha256": "65a9abc8b51d084f5e4cc5744e8191533b58fac83fca08ac40c40e07d8445b45",
+  "scope": "Executed Python/CTest source-tag comparison, failure identity 964. Not engine activation, identity admission, or a compiled application guard. The fixture is read as text; no binary embeds this mutation.",
+  "syntax": {
+    "command": [
+      "python3",
+      "-m",
+      "py_compile",
+      "/home/tomi/tos-m2/crypto/test/workchain-handwritten-tags.py"
+    ],
+    "exit_code": 0
+  },
+  "mutant_run": {
+    "command": [
+      "ctest",
+      "--test-dir",
+      "/tmp/uno-publication-build",
+      "-R",
+      "^test-workchain-handwritten-tags$",
+      "--output-on-failure",
+      "--output-junit",
+      "/tmp/uno-d40-migration/tag-mutant.xml"
+    ],
+    "exit_code": 8
+  },
+  "restored_sha256": "180808c2d1275d9eb8520056e9f259a3d2192c194dec747669d8468a61fe5e49",
+  "restore_audit_sha256": "65a9abc8b51d084f5e4cc5744e8191533b58fac83fca08ac40c40e07d8445b45",
+  "execution_leaves": {
+    "tag_check": [
+      "ctest",
+      "Python3: crypto/test/workchain-handwritten-tags.py"
+    ],
+    "counter_driver": [
+      "cmake",
+      "base64",
+      "crypto/create-state",
+      "test-tos-collator"
+    ],
+    "compiled_mutation_holders": []
+  },
+  "explicit_restore_build": {
+    "command": [
+      "cmake",
+      "--build",
+      "/tmp/uno-publication-build",
+      "--target",
+      "create-state",
+      "fift",
+      "test-tos-collator",
+      "test-workchain-block",
+      "-j32"
+    ],
+    "exit_code": 0
+  },
+  "restored_run": {
+    "command": [
+      "ctest",
+      "--test-dir",
+      "/tmp/uno-publication-build",
+      "-R",
+      "^test-workchain-handwritten-tags$",
+      "--output-on-failure",
+      "--output-junit",
+      "/tmp/uno-d40-migration/tag-restored.xml"
+    ],
+    "exit_code": 0
+  }
+}

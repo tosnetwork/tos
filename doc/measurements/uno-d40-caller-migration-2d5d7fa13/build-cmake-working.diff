@@ -1,0 +1,15 @@
+diff --git a/crypto/CMakeLists.txt b/crypto/CMakeLists.txt
+index 1d34310b9..f065e1d56 100644
+--- a/crypto/CMakeLists.txt
++++ b/crypto/CMakeLists.txt
+@@ -680,6 +680,10 @@ install(DIRECTORY smartcont DESTINATION share/tos)
+ # Private D40 primitive tests; no activation or production configuration changes.
+ option(TOS_WORKCHAIN_INSTANCE_TESTS "Build private workchain instance identity tests" OFF)
+ if(TOS_WORKCHAIN_INSTANCE_TESTS)
++  add_executable(test-workchain-instance-callsite test/test-workchain-instance-callsite.cpp)
++  target_include_directories(test-workchain-instance-callsite PRIVATE "${PROJECT_SOURCE_DIR}/common")
++  target_compile_options(test-workchain-instance-callsite PRIVATE -fno-access-control -g)
++  target_link_libraries(test-workchain-instance-callsite PRIVATE validator-disk validator-common validator-db tos_validator tos_block tos_crypto)
+   add_executable(test-workchain-instance-identity test/test-workchain-instance-identity.cpp)
+   target_link_libraries(test-workchain-instance-identity PRIVATE tos_block tos_crypto)
+   add_test(NAME test-workchain-instance-identity COMMAND test-workchain-instance-identity)

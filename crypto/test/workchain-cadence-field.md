@@ -1,5 +1,13 @@
 # K acceptance cadence in the configuration shell
 
+Historical D36/D51 evidence below describes `7008e8a40`. D40 source checkpoint
+`ce1db0695` supersedes its cadence-only constructor with the mandatory identity
+constructor (`0xff68187c`, 576 bits and two references), retaining the same
+historical cadence semantics. The public constructor now requires five arguments.
+Caller migration and the Counter readiness blocker are documented in
+`workchain-instance-fixture-migration.md`. The old measurements are preserved;
+they do not certify the current wire layout.
+
 D51 assigns the recording field to M1 and leaves the installation comparison as
 a separate pre-enablement obligation. The approved wire implementation is commit
 `7008e8a40`. Evidence is indexed by

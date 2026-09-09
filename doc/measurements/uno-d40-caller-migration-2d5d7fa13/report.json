@@ -1,0 +1,80 @@
+{
+  "source_commit": "2d5d7fa133664178c099ee422ac6346131af7cfd",
+  "source_control": "control.json",
+  "scan": "fixture-scan.json",
+  "failure_comparison": "failure-comparison.json",
+  "retention": "retention.json",
+  "scope": "Explicit caller and wire-tag migration only; no D40 acceptance. Counter zerostate identity installation is an acceptance blocker. A third untagged singleton business-config producer and its engine consumption contract require coordinated migration. Actual validator call-site work is not included in this source checkpoint.",
+  "build_worktree_note": "crypto/CMakeLists.txt has four uncommitted lines defining a separate, unregistered work-in-progress call-site executable. Exact diff archived. It is not invoked by any reported CTest run; no access-control compiler flag is applied to production targets.",
+  "generated_header_sha256": "fc88f065bf263adc6cbba5a6f44b9125ccee9668f05cd8a18cdbb56017520920",
+  "schema_sha256": "383e6765bdd2a3f757cd54e451f27fb8c16b838f2dfc566e75f902459a04c728",
+  "binaries": {
+    "/tmp/uno-publication-build/test-workchain-block": "4fc420119dc8337f35a17d76fcaf85557d35be6dee859153070f5c6b79a983e6",
+    "/tmp/uno-publication-build/test-tos-collator": "57f9e4dbe781037eeb6b0835bcca0237ebbe60110d8cf7c730e7c574e97dc67b",
+    "/tmp/uno-publication-build/crypto/create-state": "f6b8509f2b56577785deafa44289b8fbbe13f5f806349b168f570cf46006bf94",
+    "/tmp/uno-publication-build/crypto/fift": "2487d7f92fbf2660859fb6a53035299cfa2d5e772c7fc5b184665138376e7f8f",
+    "/tmp/uno-publication-build/crypto/tlbc": "8222c6d3d0d3e495c0feaebd4431c0290c86726cefce28ab7c477a1c895a802f",
+    "/tmp/uno-publication-build/crypto/func": "de9b508252b2f56f0b78d28fbc75df315bbf3182b37847b829c56380e00bc4c4"
+  },
+  "build_environment": {
+    "FUNC_BIN": "/tmp/uno-publication-build/crypto/func",
+    "FIFT_BIN": "/tmp/uno-publication-build/crypto/fift",
+    "TOL_STDLIB": "/home/tomi/tos-m2/crypto/smartcont/tol-stdlib",
+    "CARGO_BUILD_JOBS": "32"
+  },
+  "explicit_final_build_targets": [
+    "all-tests",
+    "create-state",
+    "fift",
+    "test-tos-collator",
+    "test-workchain-block",
+    "test-workchain-instance-identity",
+    "test-workchain-activation-control"
+  ],
+  "build_parallelism": 32,
+  "workchain_group": {
+    "exit_code": 0,
+    "passed": 125,
+    "stdout": "workchain.stdout.log",
+    "stderr": "workchain.stderr.log"
+  },
+  "full_runs": {
+    "full-regression": {
+      "name": "(empty)",
+      "tests": "128",
+      "failures": "13",
+      "disabled": "0",
+      "skipped": "0",
+      "hostname": "",
+      "time": "389",
+      "timestamp": "2026-09-09T16:57:44"
+    },
+    "final-regression": {
+      "name": "(empty)",
+      "tests": "128",
+      "failures": "12",
+      "disabled": "0",
+      "skipped": "0",
+      "hostname": "",
+      "time": "434",
+      "timestamp": "2026-09-09T17:05:16"
+    },
+    "admitted-six": {
+      "name": "(empty)",
+      "tests": "6",
+      "failures": "3",
+      "disabled": "0",
+      "skipped": "0",
+      "hostname": "",
+      "time": "1",
+      "timestamp": "2026-09-09T17:13:46"
+    }
+  },
+  "limitations": [
+    "First control restore build failed without explicit FUNC_BIN; initial attempt preserved and final isolated control rerun with environment. No behavior credit for build failure.",
+    "Initial all-target command named unavailable opt-in targets; preserved as full-build logs, corrected explicit target list in full-build-2/final-build logs.",
+    "First full run omitted TOL_STDLIB: only test-tol failure is directly explained by that omission. Six bootstrap failures and six cap-blocked tests are distinct.",
+    "Raw bootstrap logs locate errors but are not typed CandidateReject versus LocalUnavailable assertions.",
+    "/proc permission denials and vanished links are enumerated; no claim of inspecting inaccessible processes. Successful new Counter runs follow their existing auto-removal lifecycle; moved historical directories were not deleted."
+  ]
+}

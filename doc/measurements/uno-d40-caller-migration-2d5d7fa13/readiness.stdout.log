@@ -1,0 +1,28 @@
+Internal ctest changing into directory: /tmp/uno-publication-build
+Test project /tmp/uno-publication-build
+    Start 19: test-counter-account-binding-readiness
+1/1 Test #19: test-counter-account-binding-readiness ...***Failed    0.33 sec
+-- Counter fixture active; retained if interrupted: /tmp/uno-publication-build/counter-integration-d7cf3a71bb69
+CMake Error at /home/tomi/tos-m2/test/test-counter-disk-integration.cmake:171 (message):
+  bootstrap: exit 2, expected 0; see
+  /tmp/uno-publication-build/counter-integration-d7cf3a71bb69/bootstrap.log
+Call Stack (most recent call first):
+  /home/tomi/tos-m2/test/test-counter-disk-integration.cmake:212 (run_node)
+
+
+
+CMake Error at /home/tomi/tos-m2/test/counter-fixture-lifecycle.cmake:58 (message):
+  Counter fixture FAILED (1); retained for inspection:
+  /tmp/uno-publication-build/counter-integration-d7cf3a71bb69
+Call Stack (most recent call first):
+  /home/tomi/tos-m2/test/test-counter-disk-integration.cmake:3 (counter_run_fixture)
+
+
+
+
+0% tests passed, 1 tests failed out of 1
+
+Total Test time (real) =   0.33 sec
+
+The following tests FAILED:
+	 19 - test-counter-account-binding-readiness (Failed)
