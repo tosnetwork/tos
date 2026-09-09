@@ -74,6 +74,17 @@ class QuicServer : public td::actor::Actor, public td::ObserverBase {
     // finite one; lower it per deployment to trade reachable-peer headroom for a
     // tighter memory bound.
     size_t max_connections = 1 << 13;
+    // Inactivity window for an inbound QUIC stream, consumed by the sender's
+    // inbound stream callback (not by QuicServer itself). Inbound streams
+    // otherwise carry no timeout, so a peer can open a stream, send partial
+    // data, and pin its (MTU-bounded) buffer for the life of the connection by
+    // keeping the connection alive with keep-alives and never sending FIN. The
+    // callback re-arms this window on every stream data chunk, so a stream still
+    // making progress is never cut off; only one that falls silent this long is
+    // reaped. It is deliberately longer than the connection idle timeout: a
+    // connection with no traffic at all dies on its own idle timer, so this
+    // guard matters precisely for streams abandoned on a kept-alive connection.
+    double inbound_stream_timeout = 60.0;
     bool stateless_retry = true;
   };
   class Callback {

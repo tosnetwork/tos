@@ -24,7 +24,8 @@ static td::Result<adnl::AdnlNodeIdShort> parse_peer_id(td::Slice peer_public_key
 
 class QuicSender::ServerCallback final : public QuicServer::Callback {
  public:
-  explicit ServerCallback(td::actor::ActorId<QuicSender> sender) : sender_(sender) {
+  ServerCallback(td::actor::ActorId<QuicSender> sender, double inbound_stream_timeout)
+      : sender_(sender), inbound_stream_timeout_(inbound_stream_timeout) {
   }
 
   td::Status on_connected(QuicConnectionId cid, td::SecureString local_public_key,
@@ -54,7 +55,17 @@ class QuicSender::ServerCallback final : public QuicServer::Callback {
     state.append(std::move(data));
     auto status = state.check_limits();
     if (status.is_ok() && !is_end) {
+      // Re-arm the inbound stream's inactivity timeout on every data chunk so a
+      // stream that stops delivering data is reaped, while one still making
+      // progress is never cut off mid-transfer.
+      rearm_inbound_timeout(state);
       return td::Status::OK();
+    }
+    // Terminal chunk: the stream either hit its size limit or is complete. Drop
+    // any pending timeout first so loop() cannot later fail an already-finished
+    // stream that lingers in the table until on_stream_closed.
+    if (state.in_heap()) {
+      timeout_heap_.erase(&state);
     }
     if (status.is_error()) {
       LOG(INFO) << "close stream cid=" << cid << " sid=" << sid << " due to " << status.error();
@@ -175,6 +186,10 @@ class QuicSender::ServerCallback final : public QuicServer::Callback {
       options_ = options;
     }
 
+    const StreamOptions &options() const {
+      return options_;
+    }
+
    private:
     td::BufferBuilder builder_;
     td::MemoryTrackerToken memory_token_{td::MemoryTrackerCategory::QuicInbound, 0};
@@ -183,6 +198,7 @@ class QuicSender::ServerCallback final : public QuicServer::Callback {
   };
 
   td::actor::ActorId<QuicSender> sender_;
+  double inbound_stream_timeout_ = 0.0;
 
   struct Connection {
     adnl::AdnlNodeIdShort local_id;
@@ -230,6 +246,16 @@ class QuicSender::ServerCallback final : public QuicServer::Callback {
       }
     }
     connections_.erase(it);
+  }
+
+  void rearm_inbound_timeout(StreamState &state) {
+    if (inbound_stream_timeout_ <= 0.0) {
+      return;
+    }
+    StreamOptions options = state.options();
+    options.timeout = td::Timestamp::in(inbound_stream_timeout_);
+    options.timeout_seconds = inbound_stream_timeout_;
+    apply_stream_options(state, options);
   }
 
   void apply_stream_options(StreamState &state, const StreamOptions &options) {
@@ -537,9 +563,9 @@ td::actor::Task<> QuicSender::add_local_id_coro(adnl::AdnlNodeIdShort local_id) 
   } else {
     auto identity = ServerIdentity{.local_id = local_id,
                                    .key = td::Ed25519::PrivateKey(local_keys_.at(local_id).as_octet_string())};
-    auto owned = co_await QuicServer::create(port, std::make_unique<ServerCallback>(actor_id(this)),
-                                             get_local_id_mtu(local_id), std::move(identity), "tos", "0.0.0.0",
-                                             server_options_);
+    auto owned = co_await QuicServer::create(
+        port, std::make_unique<ServerCallback>(actor_id(this), server_options_.inbound_stream_timeout),
+        get_local_id_mtu(local_id), std::move(identity), "tos", "0.0.0.0", server_options_);
     server = owned.get();
     servers_by_port_[port] = std::move(owned);
     for (const auto &[peer_id, mtu] : get_local_id_peers_mtu(local_id)) {
