@@ -31,7 +31,6 @@
 #include "td/actor/actor.h"
 #include "td/fec/raptorq/Decoder.h"
 #include "td/fec/raptorq/Encoder.h"
-#include "td/utils/List.h"
 #include "td/utils/Status.h"
 #include "td/utils/buffer.h"
 #include "td/utils/common.h"
@@ -88,7 +87,7 @@ td::StringBuilder &operator<<(td::StringBuilder &sb, const BroadcastTwostepDebug
   return sb;
 }
 
-struct BroadcastTwostep : td::ListNode {
+struct BroadcastTwostep {
   Overlay::BroadcastHash broadcast_id;
   td::uint32 date;
   std::unique_ptr<td::raptorq::Decoder> decoder;
@@ -437,7 +436,7 @@ td::actor::Task<> BroadcastsTwostep::process_broadcast(OverlayImpl *overlay, adn
                                        .symbols_needed = symbols_needed,
                                        .timestamp = td::Timestamp::now(),
                                        .chunk_senders = {}}});
-    lru_.put(bcast.get());
+    by_date_.emplace(date, broadcast_id);
     it = broadcasts_.emplace(broadcast_id, std::move(bcast)).first;
     VLOG(TWOSTEP_INFO) << "twostep START receiver " << *it->second << " from=" << src_peer_id;
   }
@@ -493,7 +492,7 @@ void BroadcastsTwostep::inject_in_flight_for_test(Overlay::BroadcastHash broadca
   auto bcast = std::make_unique<BroadcastTwostep>();
   bcast->broadcast_id = broadcast_id;
   bcast->date = date;
-  lru_.put(bcast.get());
+  by_date_.emplace(date, broadcast_id);
   broadcasts_.emplace(broadcast_id, std::move(bcast));
 }
 
@@ -506,13 +505,19 @@ size_t BroadcastsTwostep::capacity_for_test() const {
 }
 
 void BroadcastsTwostep::gc(OverlayImpl *overlay) {
-  while (!broadcasts_.empty()) {
-    auto bcast = static_cast<BroadcastTwostep *>(lru_.prev);
-    CHECK(bcast);
-    if (bcast->date > td::Clocks::system() - 25) {  // see OverlayImpl::check_date
+  // by_date_ is ordered by the date gc expires on, so the earliest entry is the
+  // first to expire; once it is still fresh, every later-dated entry is too, and
+  // the scan can stop. (Insertion order would not give this, since the accepted
+  // date can lead or lag arrival.)
+  while (!by_date_.empty()) {
+    auto oldest = by_date_.begin();
+    if (oldest->first > td::Clocks::system() - 25) {  // see OverlayImpl::check_date
       break;
     }
-    auto broadcast_id = bcast->broadcast_id;
+    auto broadcast_id = oldest->second;
+    auto bcast_it = broadcasts_.find(broadcast_id);
+    CHECK(bcast_it != broadcasts_.end());
+    auto &bcast = bcast_it->second;
 
     if (!bcast->delivered) {
       FLOG(INFO) {
@@ -520,7 +525,8 @@ void BroadcastsTwostep::gc(OverlayImpl *overlay) {
         bcast->debug.print_senders(sb);
       };
     }
-    CHECK(broadcasts_.erase(broadcast_id));
+    by_date_.erase(oldest);
+    broadcasts_.erase(bcast_it);
     overlay->register_delivered_broadcast(broadcast_id);
   }
   // The count ceiling is enforced as an admission check at insertion time in

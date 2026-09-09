@@ -19,6 +19,7 @@
 */
 #pragma once
 
+#include <map>
 #include <set>
 
 #include "adnl/adnl-node-id.hpp"
@@ -26,7 +27,6 @@
 #include "fec/fec.h"
 #include "keys/keys.hpp"
 #include "overlay/overlay.h"
-#include "td/utils/List.h"
 
 namespace tos {
 
@@ -68,7 +68,13 @@ class BroadcastsFec {
   td::Status ensure_in_flight_capacity(OverlayImpl *overlay, bool is_ours);
 
   std::map<Overlay::BroadcastHash, std::unique_ptr<BroadcastFec>> broadcasts_;
-  td::ListNode lru_;
+  // Index of in-flight broadcasts ordered by their (sender-supplied) date, which
+  // is what gc expires on. Insertion order is not date order -- the accepted
+  // date may lead or lag arrival -- so an insertion-ordered list cannot let gc
+  // stop at the first fresh entry. Ordering by date lets gc evict every expired
+  // entry and stop as soon as the earliest remaining date is fresh, and lets the
+  // admission path tell in O(1) whether anything can be reclaimed.
+  std::multimap<td::uint32, Overlay::BroadcastHash> by_date_;
 
   // Test support: inject a decoder-less in-flight entry with a chosen date and
   // read the table size, so gc() and the admission ceiling can be exercised

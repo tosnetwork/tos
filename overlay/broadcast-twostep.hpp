@@ -26,7 +26,6 @@
 #include "adnl/adnl-node-id.hpp"
 #include "auto/tl/tos_api.h"
 #include "keys/keys.hpp"
-#include "td/utils/List.h"
 #include "td/utils/Status.h"
 #include "td/utils/buffer.h"
 #include "td/utils/common.h"
@@ -65,7 +64,13 @@ class BroadcastsTwostep {
  private:
   td::actor::ActorId<adnl::AdnlSenderInterface> sender_;
   std::map<Overlay::BroadcastHash, std::unique_ptr<BroadcastTwostep>> broadcasts_;
-  td::ListNode lru_;
+  // Index of in-flight broadcasts ordered by their (sender-supplied) date, which
+  // is what gc expires on. Insertion order is not date order -- the accepted
+  // date may lead or lag arrival -- so an insertion-ordered list cannot let gc
+  // stop at the first fresh entry. Ordering by date lets gc evict every expired
+  // entry and stop as soon as the earliest remaining date is fresh, and lets the
+  // admission path tell in O(1) whether anything can be reclaimed.
+  std::multimap<td::uint32, Overlay::BroadcastHash> by_date_;
 
   td::uint64 rebroadcast(OverlayImpl *overlay, const adnl::AdnlNodeIdShort &bcast_src_adnl_id,
                          const td::BufferSlice &data);

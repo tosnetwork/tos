@@ -38,7 +38,7 @@
 #include "overlay/broadcast-fec.hpp"
 #include "overlay/broadcast-twostep.hpp"
 #include "overlay/overlay.hpp"
-#include "td/utils/Time.h"
+#include "td/utils/port/Clocks.h"
 #include "td/utils/tests.h"
 
 #include <cstring>
@@ -178,6 +178,28 @@ TEST(OverlayBroadcastCapacity, FecReclaimsExpiredBeforeRejecting) {
   });
 }
 
+TEST(OverlayBroadcastCapacity, FecReclaimsExpiredBehindFreshOldestInsertion) {
+  using Access = tos::overlay::BroadcastsFecTestAccess;
+  with_overlay([](tos::overlay::OverlayImpl &overlay) {
+    auto &fec = tos::overlay::OverlayImplBroadcastCapacityTest::fec(overlay);
+    const size_t cap = Access::capacity(fec);
+
+    // A fresh entry inserted FIRST, with expired entries inserted after it. The
+    // accepted date can lag arrival, so an entry inserted later can already be
+    // expired. An insertion-ordered scan stops at this first-inserted fresh
+    // entry and reclaims nothing; ordering reclamation by date drops the expired
+    // entries regardless of insertion order.
+    Access::inject(fec, hash_from_index(0), now_sec());
+    for (size_t i = 1; i < cap; i++) {
+      Access::inject(fec, hash_from_index(i), expired_sec());
+    }
+    ASSERT_EQ(Access::count(fec), cap);
+
+    ASSERT_TRUE(Access::admit(fec, overlay, /*is_ours=*/false).is_ok());
+    ASSERT_EQ(Access::count(fec), 1u);  // only the fresh entry survives
+  });
+}
+
 TEST(OverlayBroadcastCapacity, FecGcKeepsFreshInFlightBroadcasts) {
   using Access = tos::overlay::BroadcastsFecTestAccess;
   with_overlay([](tos::overlay::OverlayImpl &overlay) {
@@ -259,6 +281,25 @@ TEST(OverlayBroadcastCapacity, TwostepReclaimsExpiredBeforeRejecting) {
 
     ASSERT_TRUE(Access::admit(twostep, overlay).is_ok());
     ASSERT_EQ(Access::count(twostep), 0u);
+  });
+}
+
+TEST(OverlayBroadcastCapacity, TwostepReclaimsExpiredBehindFreshOldestInsertion) {
+  using Access = tos::overlay::BroadcastsTwostepTestAccess;
+  with_overlay([](tos::overlay::OverlayImpl &overlay) {
+    auto &twostep = tos::overlay::OverlayImplBroadcastCapacityTest::twostep(overlay);
+    const size_t cap = Access::capacity(twostep);
+
+    // A fresh entry inserted first, expired entries after it: reclamation must
+    // follow date order, not insertion order, or the expired slots stay full.
+    Access::inject(twostep, hash_from_index(0), now_sec());
+    for (size_t i = 1; i < cap; i++) {
+      Access::inject(twostep, hash_from_index(i), expired_sec());
+    }
+    ASSERT_EQ(Access::count(twostep), cap);
+
+    ASSERT_TRUE(Access::admit(twostep, overlay).is_ok());
+    ASSERT_EQ(Access::count(twostep), 1u);
   });
 }
 
