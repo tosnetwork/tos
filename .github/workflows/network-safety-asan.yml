@@ -72,6 +72,14 @@ jobs:
           -DTOS_USE_ASAN=ON
 
     - name: Build the instrumented network-safety tests
+      # These targets pull in the frozen-contract embedding, whose verify step
+      # recompiles the sources with func/fift. That script defaults to
+      # build/crypto/{func,fift}; point it at this build dir's freshly built
+      # tools instead (CMake builds them here and propagates the environment to
+      # the custom command).
+      env:
+        FUNC_BIN: ${{ github.workspace }}/build-asan/crypto/func
+        FIFT_BIN: ${{ github.workspace }}/build-asan/crypto/fift
       run: |
         ninja -C build-asan \
           test-quic-sender \
