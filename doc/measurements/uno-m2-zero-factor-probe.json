@@ -1,0 +1,82 @@
+{
+  "schema": 1,
+  "status": "coordinator-decision-required",
+  "unit": "outer-zero-factor-boundary-probe",
+  "upstream_revision": "961bf3f8c2baa1e4d2a87e8e1f5b6f12e7fe6c82",
+  "scope": "Chosen entropy-output probe; not a claim of a practical attack or an approved change to D41. The upstream verifier source is unchanged.",
+  "source": "use bulletproofs::{BulletproofGens, PedersenGens, RangeProof};\nuse curve25519_dalek::scalar::Scalar;\nuse merlin::Transcript;\nuse rand::{rngs::StdRng, SeedableRng, TryRng, TryCryptoRng};\nuse std::convert::Infallible;\n// Test-only chosen entropy output; this is deliberately not a secure generator.\nstruct Factor(u8);\nimpl TryRng for Factor {\n    type Error = Infallible;\n    fn try_next_u32(&mut self) -> Result<u32, Infallible> { Ok(self.0 as u32) }\n    fn try_next_u64(&mut self) -> Result<u64, Infallible> { Ok(self.0 as u64) }\n    fn try_fill_bytes(&mut self, dst: &mut [u8]) -> Result<(), Infallible> {\n        dst.fill(0); if !dst.is_empty() { dst[0] = self.0; } Ok(())\n    }\n}\nimpl TryCryptoRng for Factor {}\nfn main() {\n    let bp=BulletproofGens::new(8,1);\n    let pc=PedersenGens::default();\n    let mut rng=StdRng::seed_from_u64(20260909);\n    let (proof, values)=RangeProof::prove_multiple_with_rng(&bp,&pc,&mut Transcript::new(b\"factor-probe\"),&[42],&[Scalar::from(17u64)],8,&mut rng).expect(\"prove\");\n    let mut bytes=proof.to_bytes();\n    let tx=Option::<Scalar>::from(Scalar::from_canonical_bytes(bytes[128..160].try_into().expect(\"scalar bytes\"))).expect(\"canonical response\");\n    bytes[128..160].copy_from_slice(&(tx+Scalar::ONE).to_bytes());\n    let invalid=RangeProof::from_bytes(&bytes).expect(\"decodable altered response\");\n    let zero=invalid.verify_multiple_with_rng(&bp,&pc,&mut Transcript::new(b\"factor-probe\"),&values,8,&mut Factor(0)).is_ok();\n    let one=invalid.verify_multiple_with_rng(&bp,&pc,&mut Transcript::new(b\"factor-probe\"),&values,8,&mut Factor(1)).is_ok();\n    println!(\"{{\\\"zero_factor_accepts\\\":{zero},\\\"one_factor_accepts\\\":{one}}}\");\n    assert!(zero && !one);\n}\n",
+  "source_sha256": "e26de02f64aaabe5eb37c4c1f4ada6ead297fd6217ee532479eaee2e2637d761",
+  "cargo_lock_sha256": "c53a4faf46049f93d782f0edebfe0c8e9227928a91ee0f27e676ffcb77445b08",
+  "events": [
+    {
+      "label": "baseline",
+      "build_command": [
+        "cargo",
+        "build",
+        "--manifest-path",
+        "/tmp/uno-m2-ct-run4/upstream-factor-probe/Cargo.toml",
+        "--locked",
+        "--offline",
+        "--release",
+        "-j32",
+        "--target-dir",
+        "/tmp/uno-m2-ct-run4/upstream-harness/target"
+      ],
+      "build_exit": 0,
+      "build_stdout": "",
+      "build_stderr": "    Finished `release` profile [optimized] target(s) in 0.06s\n",
+      "run_exit": 0,
+      "stdout": "{\"zero_factor_accepts\":true,\"one_factor_accepts\":false}\n",
+      "stderr": ""
+    },
+    {
+      "label": "remove-invalid-response",
+      "build_command": [
+        "cargo",
+        "build",
+        "--manifest-path",
+        "/tmp/uno-m2-ct-run4/upstream-factor-probe/Cargo.toml",
+        "--locked",
+        "--offline",
+        "--release",
+        "-j32",
+        "--target-dir",
+        "/tmp/uno-m2-ct-run4/upstream-harness/target"
+      ],
+      "build_exit": 0,
+      "build_stdout": "",
+      "build_stderr": "   Compiling patch-differential v0.0.0 (/tmp/uno-m2-ct-run4/upstream-factor-probe)\n    Finished `release` profile [optimized] target(s) in 0.82s\n",
+      "run_exit": 101,
+      "stdout": "{\"zero_factor_accepts\":true,\"one_factor_accepts\":true}\n",
+      "stderr": "\nthread 'main' (1539032) panicked at src/main.rs:29:5:\nassertion failed: zero && !one\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\n"
+    },
+    {
+      "label": "restored",
+      "build_command": [
+        "cargo",
+        "build",
+        "--manifest-path",
+        "/tmp/uno-m2-ct-run4/upstream-factor-probe/Cargo.toml",
+        "--locked",
+        "--offline",
+        "--release",
+        "-j32",
+        "--target-dir",
+        "/tmp/uno-m2-ct-run4/upstream-harness/target"
+      ],
+      "build_exit": 0,
+      "build_stdout": "",
+      "build_stderr": "   Compiling patch-differential v0.0.0 (/tmp/uno-m2-ct-run4/upstream-factor-probe)\n    Finished `release` profile [optimized] target(s) in 0.77s\n",
+      "run_exit": 0,
+      "stdout": "{\"zero_factor_accepts\":true,\"one_factor_accepts\":false}\n",
+      "stderr": ""
+    }
+  ],
+  "control": {
+    "from": "    bytes[128..160].copy_from_slice(&(tx+Scalar::ONE).to_bytes());",
+    "to": "    bytes[128..160].copy_from_slice(&tx.to_bytes());",
+    "mutant_sha256": "f6129741f2bf04ab3cc82622f2786a7fcae679559d1cda792ff8dc17a4ed85db",
+    "restored_sha256": "e26de02f64aaabe5eb37c4c1f4ada6ead297fd6217ee532479eaee2e2637d761",
+    "restore_audit_sha256": "f6129741f2bf04ab3cc82622f2786a7fcae679559d1cda792ff8dc17a4ed85db"
+  }
+}
