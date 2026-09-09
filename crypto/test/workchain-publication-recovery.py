@@ -162,7 +162,16 @@ def main():
         failures([10, 11], 226), 'Classification and originating numerical status are checked separately.')
     add('allow-missing-store-creation', 'source', 'if (!std::filesystem::is_regular_file(path_ + "/CURRENT", error) || error)',
         'if (false)', {8: 223}, 'A missing recovery store cannot be silently recreated even if its marker then fails.')
-    shadow_dir = args.work / 'shadow'   
+    add('release-before-persistent-decision', 'source', 'observe(observer, Point::BeforeWrite);',
+        'if (bundle.committed_batch_count != 0) released_.store(std::make_shared<const Bundle>(bundle)); observe(observer, Point::BeforeWrite);',
+        failures([i for i in range(12) if i != 5], 202),
+        'Actual passive reader sees premature contents, including messages; no return-code-only oracle. '
+        'The cold crash case terminates before this post-call assertion and does not independently detect it.')
+    add('bypass-normal-persistent-read', 'source', 'return read_and_release(bundle.batch_identity, bundle.admitted_input, observer);',
+        'released_.store(std::make_shared<const Bundle>(bundle)); recovery_required_.store(false); observe(observer, Point::ReleaseInstall); return {Outcome::Committed, Availability::Ready, td::Status::OK()};',
+        failures([0, 7, 8, 9], 220),
+        'Normal readback is actually removed while correct bytes and release remain. Cold recovery retains its shared reader.')
+    shadow_dir = args.work / 'shadow'    
     shadow_dir.mkdir()
     for name, key, before, after, expected, claim in controls:
         original = originals[key]
@@ -178,6 +187,8 @@ def main():
         shadow.write_bytes(mutant)
         try:
             configure(name, key, shadow)
+            entry['binary_sha256'] = sha((args.build / 'test-workchain-publication-recovery').read_bytes())
+            entry['io_library_sha256'] = sha((args.build / 'libworkchain-publication-io-fault.so').read_bytes())
             entry['results'] = run(name, expected)
         finally:
             shadow.write_bytes(original)
@@ -194,7 +205,7 @@ def main():
     report['source_files_unchanged'] = all((repo / names[k]).read_bytes() == v for k, v in originals.items())
     assert report['source_files_unchanged']
     record()
-    print('PASS: 12 private disk scenarios, 24 isolated controls; no milestone acceptance claimed.')
+    print('PASS: 12 private disk scenarios, 26 isolated controls; no milestone acceptance claimed.')
 
 
 if __name__ == '__main__':

@@ -87,7 +87,9 @@ struct Session {
       }
       if(p==PubPoint::BeforeWrite) {
         auto actual=publisher->released();check(actual.is_ok(),208);
-        intermediate |= actual.ok()->batch_identity!=before.batch_identity;
+        trace(dir,"before-write identity "+actual.ok()->batch_identity.to_hex());
+        trace(dir,"before-write equals predecessor "+std::to_string(*actual.ok()==before));
+        intermediate |= *actual.ok()!=before;
         if(mode==1)throw CancelBeforeWrite{};
         if(mode==2)io.arm(1,(dir+"/db").c_str());
         if(mode==3||mode==6)io.arm(2,(dir+"/db").c_str());
