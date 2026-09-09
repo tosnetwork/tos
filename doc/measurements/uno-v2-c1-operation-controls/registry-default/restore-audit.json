@@ -1,0 +1,13 @@
+{
+  "path": "crypto/block/workchain-execution-dispatch.h",
+  "from": "return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),\n                             \"registered engine has no operation-metered implementation\");",
+  "to": "return execute_accounts(input, accounts, configuration);",
+  "original_sha256": "cda89ee512fcd10190c7510c2d928d03565946c3a479826f588992e14720a188",
+  "baseline_binary_sha256": "eeeb3def63be9a6317efff426251f40a9c2f3bf6f300456709db520cce123443",
+  "recorded_mutant_sha256": "af2949bc3d258ae2dc22d7b921ec7c3be051d87ff33852397cba2ccba74d717c",
+  "reconstructed_mutant_sha256": "af2949bc3d258ae2dc22d7b921ec7c3be051d87ff33852397cba2ccba74d717c",
+  "mutant_binary_sha256": "bd8f2ea297a0b9635455188b33b8b4de853385aeeb600d5c87f70e1d07edf8d0",
+  "mutant_exit": 1,
+  "restored_sha256": "cda89ee512fcd10190c7510c2d928d03565946c3a479826f588992e14720a188",
+  "restored_binary_sha256": "eeeb3def63be9a6317efff426251f40a9c2f3bf6f300456709db520cce123443"
+}

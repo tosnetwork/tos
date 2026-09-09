@@ -1,0 +1,119 @@
+Running test Test_WorkchainProofWork_ExactSendComponents...
+PASS in 2857.0ns
+Running test Test_WorkchainProofWork_PrechargeAndStickyFailure...
+[1;31m[ 0][t 0][2026-09-09 10:24:12.594481961][test-workchain-proof-work.cpp:79]	Expectation failed: backend_calls is not equal to before + 1 (3 != 2)[0m
+[pid 2003298] [time 1788949452] Signal: 6
+------- Stack Backtrace -------
+/home/tomi/tos/build/test-workchain-proof-work(+0x9c757)[0x653f36605757]
+/home/tomi/tos/build/test-workchain-proof-work(+0x93eed)[0x653f365fceed]
+/lib/x86_64-linux-gnu/libc.so.6(+0x42520)[0x79d425842520]
+/lib/x86_64-linux-gnu/libc.so.6(pthread_kill+0x12c)[0x79d4258969bc]
+/lib/x86_64-linux-gnu/libc.so.6(raise+0x16)[0x79d425842476]
+/lib/x86_64-linux-gnu/libc.so.6(abort+0xd3)[0x79d4258287f3]
+/home/tomi/tos/build/test-workchain-proof-work(+0x9f747)[0x653f36608747]
+/home/tomi/tos/build/test-workchain-proof-work(+0x9fcb7)[0x653f36608cb7]
+/home/tomi/tos/build/test-workchain-proof-work(+0x9f077)[0x653f36608077]
+/home/tomi/tos/build/test-workchain-proof-work(+0x9845d)[0x653f3660145d]
+/home/tomi/tos/build/test-workchain-proof-work(+0x9b6ca)[0x653f366046ca]
+/home/tomi/tos/build/test-workchain-proof-work(+0xa843c)[0x653f3661143c]
+/home/tomi/tos/build/test-workchain-proof-work(+0xa7f68)[0x653f36610f68]
+/home/tomi/tos/build/test-workchain-proof-work(+0x945bf)[0x653f365fd5bf]
+/lib/x86_64-linux-gnu/libc.so.6(+0x29d90)[0x79d425829d90]
+/lib/x86_64-linux-gnu/libc.so.6(__libc_start_main+0x80)[0x79d425829e40]
+/home/tomi/tos/build/test-workchain-proof-work(+0x94465)[0x653f365fd465]
+-------------------------------
+--- Enhanced Backtrace (libbacktrace) ---
+    #0  ?? (test-workchain-proof-work+0x93eec) [0x653f365fceec]
+    #1  ?? at libc_sigaction.c (libc.so.6+0x4251f) [0x79d42584251f]
+    #2  __pthread_kill_implementation at pthread_kill.c:44 (libc.so.6+0x969bc) [0x79d4258969bc]
+    #3  __pthread_kill_internal at pthread_kill.c:78 (libc.so.6+0x969bc) [0x79d4258969bc]
+    #4  __GI___pthread_kill at pthread_kill.c:89 (libc.so.6+0x969bc) [0x79d4258969bc]
+    #5  __GI_raise at raise.c:26 (libc.so.6+0x42475) [0x79d425842475]
+    #6  __GI_abort at abort.c:79 (libc.so.6+0x287f2) [0x79d4258287f2]
+    #7  ?? (test-workchain-proof-work+0x9f746) [0x653f36608746]
+    #8  ?? (test-workchain-proof-work+0x9fcb6) [0x653f36608cb6]
+    #9  ?? (test-workchain-proof-work+0x9f076) [0x653f36608076]
+    #10  ?? (test-workchain-proof-work+0x9845c) [0x653f3660145c]
+    #11  ?? (test-workchain-proof-work+0x9b6c9) [0x653f366046c9]
+    #12  ?? (test-workchain-proof-work+0xa843b) [0x653f3661143b]
+    #13  ?? (test-workchain-proof-work+0xa7f67) [0x653f36610f67]
+    #14  ?? (test-workchain-proof-work+0x945be) [0x653f365fd5be]
+    #15  __libc_start_call_main at libc_start_call_main.h:58 (libc.so.6+0x29d8f) [0x79d425829d8f]
+    #16  __libc_start_main_impl at libc-start.c:392 (libc.so.6+0x29e3f) [0x79d425829e3f]
+    #17  ?? (test-workchain-proof-work+0x94464) [0x653f365fd464]
+    #18  °ï[¾ü (unknown+0xffffffffffffffff) [0xffffffffffffffff]
+------------------------------------------
+[Thread debugging using libthread_db enabled]
+Using host libthread_db library "/lib/x86_64-linux-gnu/libthread_db.so.1".
+0x000079d4258ea3aa in __GI___wait4 (pid=2003299, stat_loc=0x0, options=0, usage=0x0) at ../sysdeps/unix/sysv/linux/wait4.c:30
+30	../sysdeps/unix/sysv/linux/wait4.c: No such file or directory.
+[Current thread is 1 (Thread 0x79d425f4e780 (LWP 2003298))]
+
+Thread 1 (Thread 0x79d425f4e780 (LWP 2003298) "test-workchain-"):
+#0  0x000079d4258ea3aa in __GI___wait4 (pid=2003299, stat_loc=0x0, options=0, usage=0x0) at ../sysdeps/unix/sysv/linux/wait4.c:30
+        sc_ret = -512
+        sc_ret = <optimized out>
+#1  0x0000653f366059d2 in td::Stacktrace::print_to_stderr(td::Stacktrace::PrintOptions const&) ()
+No symbol table info available.
+#2  0x0000653f365fceed in td::default_failure_signal_handler(int) ()
+No symbol table info available.
+#3  <signal handler called>
+No locals.
+#4  __pthread_kill_implementation (no_tid=0, signo=6, threadid=133952076834688) at ./nptl/pthread_kill.c:44
+        tid = <optimized out>
+        ret = 0
+        pd = 0x79d425f4e780
+        old_mask = {__val = {0 <repeats 16 times>}}
+        ret = <optimized out>
+        pd = <optimized out>
+        old_mask = <optimized out>
+        ret = <optimized out>
+        tid = <optimized out>
+        ret = <optimized out>
+        resultvar = <optimized out>
+        resultvar = <optimized out>
+        __arg3 = <optimized out>
+        __arg2 = <optimized out>
+        __arg1 = <optimized out>
+        _a3 = <optimized out>
+        _a2 = <optimized out>
+        _a1 = <optimized out>
+        __futex = <optimized out>
+        resultvar = <optimized out>
+        __arg3 = <optimized out>
+        __arg2 = <optimized out>
+        __arg1 = <optimized out>
+        _a3 = <optimized out>
+        _a2 = <optimized out>
+        _a1 = <optimized out>
+        __futex = <optimized out>
+        __private = <optimized out>
+        __oldval = <optimized out>
+        result = <optimized out>
+#5  __pthread_kill_internal (signo=6, threadid=133952076834688) at ./nptl/pthread_kill.c:78
+No locals.
+#6  __GI___pthread_kill (threadid=133952076834688, signo=signo@entry=6) at ./nptl/pthread_kill.c:89
+No locals.
+#7  0x000079d425842476 in __GI_raise (sig=sig@entry=6) at ../sysdeps/posix/raise.c:26
+        ret = <optimized out>
+#8  0x000079d4258287f3 in __GI_abort () at ./stdlib/abort.c:79
+        save_stage = 1
+        act = {__sigaction_handler = {sa_handler = 0x0, sa_sigaction = 0x0}, sa_mask = {__val = {0 <repeats 16 times>}}, sa_flags = 0, sa_restorer = 0x0}
+        sigs = {__val = {32, 0 <repeats 15 times>}}
+#9  0x0000653f36608747 in td::process_fatal_error(td::CSlice) ()
+No symbol table info available.
+#10 0x0000653f36608cb7 in td::DefaultLog::append(td::CSlice, int) ()
+No symbol table info available.
+#11 0x0000653f36608077 in td::Logger::~Logger() ()
+No symbol table info available.
+#12 0x0000653f3660145d in Test_WorkchainProofWork_PrechargeAndStickyFailure::run() ()
+No symbol table info available.
+#13 0x0000653f366046ca in td::Test::step() ()
+No symbol table info available.
+#14 0x0000653f3661143c in td::TestsRunner::run_all_step() ()
+No symbol table info available.
+#15 0x0000653f36610f68 in td::TestsRunner::run_all() ()
+No symbol table info available.
+#16 0x0000653f365fd5bf in main ()
+No symbol table info available.
+[Inferior 1 (process 2003298) detached]

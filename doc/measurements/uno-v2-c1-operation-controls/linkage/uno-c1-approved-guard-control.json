@@ -1,0 +1,10 @@
+{
+  "path": "CMakeLists.txt",
+  "from": "add_executable(test-workchain-proof-work test/test-td-main.cpp crypto/test/test-workchain-proof-work.cpp)",
+  "to": "option(TOS_UNO_C1_GUARD_PROBE \"MineUno\" OFF)\nadd_executable(test-workchain-proof-work test/test-td-main.cpp crypto/test/test-workchain-proof-work.cpp)",
+  "original_sha256": "a1459fb23abb33d5bb366d7ef95f1e089d470f678a1f850b16c719575b032465",
+  "recorded_mutant_sha256": "c61bb44cbe503ff6c5d34e3b7145849371f78f61e3f7f3e800cd19f1f3940a55",
+  "reconstructed_mutant_sha256": "c61bb44cbe503ff6c5d34e3b7145849371f78f61e3f7f3e800cd19f1f3940a55",
+  "restored_sha256": "a1459fb23abb33d5bb366d7ef95f1e089d470f678a1f850b16c719575b032465",
+  "mutant_exit": 1
+}

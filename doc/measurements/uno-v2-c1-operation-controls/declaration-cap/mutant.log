@@ -1,0 +1,117 @@
+Running test Test_WorkchainBlock_AccountRegistryReplayConnectivity...
+[1;31m[ 0][t 0][2026-09-09 10:28:54.753699306][test-workchain-block.cpp:9354]	Expectation failed: observed->last_consumed is not equal to 0u (2223 != 0)[0m
+[pid 2008385] [time 1788949734] Signal: 6
+------- Stack Backtrace -------
+/home/tomi/tos/build/test-workchain-block(+0x6308e7)[0x62d2b9ab78e7]
+/home/tomi/tos/build/test-workchain-block(+0xd287d)[0x62d2b955987d]
+/lib/x86_64-linux-gnu/libc.so.6(+0x42520)[0x76c67f642520]
+/lib/x86_64-linux-gnu/libc.so.6(pthread_kill+0x12c)[0x76c67f6969bc]
+/lib/x86_64-linux-gnu/libc.so.6(raise+0x16)[0x76c67f642476]
+/lib/x86_64-linux-gnu/libc.so.6(abort+0xd3)[0x76c67f6287f3]
+/home/tomi/tos/build/test-workchain-block(+0x633ce7)[0x62d2b9abace7]
+/home/tomi/tos/build/test-workchain-block(+0x633de7)[0x62d2b9abade7]
+/home/tomi/tos/build/test-workchain-block(+0x633997)[0x62d2b9aba997]
+/home/tomi/tos/build/test-workchain-block(+0x183209)[0x62d2b960a209]
+/home/tomi/tos/build/test-workchain-block(+0x1b057a)[0x62d2b963757a]
+/home/tomi/tos/build/test-workchain-block(+0x63dabc)[0x62d2b9ac4abc]
+/home/tomi/tos/build/test-workchain-block(+0x63d5e8)[0x62d2b9ac45e8]
+/home/tomi/tos/build/test-workchain-block(+0xd965f)[0x62d2b956065f]
+/lib/x86_64-linux-gnu/libc.so.6(+0x29d90)[0x76c67f629d90]
+/lib/x86_64-linux-gnu/libc.so.6(__libc_start_main+0x80)[0x76c67f629e40]
+/home/tomi/tos/build/test-workchain-block(+0xd9505)[0x62d2b9560505]
+-------------------------------
+--- Enhanced Backtrace (libbacktrace) ---
+    #0  ?? (test-workchain-block+0xd287c) [0x62d2b955987c]
+    #1  ?? at libc_sigaction.c (libc.so.6+0x4251f) [0x76c67f64251f]
+    #2  __pthread_kill_implementation at pthread_kill.c:44 (libc.so.6+0x969bc) [0x76c67f6969bc]
+    #3  __pthread_kill_internal at pthread_kill.c:78 (libc.so.6+0x969bc) [0x76c67f6969bc]
+    #4  __GI___pthread_kill at pthread_kill.c:89 (libc.so.6+0x969bc) [0x76c67f6969bc]
+    #5  __GI_raise at raise.c:26 (libc.so.6+0x42475) [0x76c67f642475]
+    #6  __GI_abort at abort.c:79 (libc.so.6+0x287f2) [0x76c67f6287f2]
+    #7  ?? (test-workchain-block+0x633ce6) [0x62d2b9abace6]
+    #8  ?? (test-workchain-block+0x633de6) [0x62d2b9abade6]
+    #9  ?? (test-workchain-block+0x633996) [0x62d2b9aba996]
+    #10  ?? (test-workchain-block+0x183208) [0x62d2b960a208]
+    #11  ?? (test-workchain-block+0x1b0579) [0x62d2b9637579]
+    #12  ?? (test-workchain-block+0x63dabb) [0x62d2b9ac4abb]
+    #13  ?? (test-workchain-block+0x63d5e7) [0x62d2b9ac45e7]
+    #14  ?? (test-workchain-block+0xd965e) [0x62d2b956065e]
+    #15  __libc_start_call_main at libc_start_call_main.h:58 (libc.so.6+0x29d8f) [0x76c67f629d8f]
+    #16  __libc_start_main_impl at libc-start.c:392 (libc.so.6+0x29e3f) [0x76c67f629e3f]
+    #17  ?? (test-workchain-block+0xd9504) [0x62d2b9560504]
+    #18  ð·Íþ (unknown+0xffffffffffffffff) [0xffffffffffffffff]
+------------------------------------------
+[Thread debugging using libthread_db enabled]
+Using host libthread_db library "/lib/x86_64-linux-gnu/libthread_db.so.1".
+0x000076c67f6ea3aa in __GI___wait4 (pid=2008386, stat_loc=0x0, options=0, usage=0x0) at ../sysdeps/unix/sysv/linux/wait4.c:30
+30	../sysdeps/unix/sysv/linux/wait4.c: No such file or directory.
+[Current thread is 1 (Thread 0x76c67fd22800 (LWP 2008385))]
+
+Thread 1 (Thread 0x76c67fd22800 (LWP 2008385) "test-workchain-"):
+#0  0x000076c67f6ea3aa in __GI___wait4 (pid=2008386, stat_loc=0x0, options=0, usage=0x0) at ../sysdeps/unix/sysv/linux/wait4.c:30
+        sc_ret = -512
+        sc_ret = <optimized out>
+#1  0x000062d2b9ab7b62 in td::Stacktrace::print_to_stderr(td::Stacktrace::PrintOptions const&) ()
+No symbol table info available.
+#2  0x000062d2b955987d in td::default_failure_signal_handler(int) ()
+No symbol table info available.
+#3  <signal handler called>
+No locals.
+#4  __pthread_kill_implementation (no_tid=0, signo=6, threadid=130594920081408) at ./nptl/pthread_kill.c:44
+        tid = <optimized out>
+        ret = 0
+        pd = 0x76c67fd22800
+        old_mask = {__val = {0 <repeats 16 times>}}
+        ret = <optimized out>
+        pd = <optimized out>
+        old_mask = <optimized out>
+        ret = <optimized out>
+        tid = <optimized out>
+        ret = <optimized out>
+        resultvar = <optimized out>
+        resultvar = <optimized out>
+        __arg3 = <optimized out>
+        __arg2 = <optimized out>
+        __arg1 = <optimized out>
+        _a3 = <optimized out>
+        _a2 = <optimized out>
+        _a1 = <optimized out>
+        __futex = <optimized out>
+        resultvar = <optimized out>
+        __arg3 = <optimized out>
+        __arg2 = <optimized out>
+        __arg1 = <optimized out>
+        _a3 = <optimized out>
+        _a2 = <optimized out>
+        _a1 = <optimized out>
+        __futex = <optimized out>
+        __private = <optimized out>
+        __oldval = <optimized out>
+        result = <optimized out>
+#5  __pthread_kill_internal (signo=6, threadid=130594920081408) at ./nptl/pthread_kill.c:78
+No locals.
+#6  __GI___pthread_kill (threadid=130594920081408, signo=signo@entry=6) at ./nptl/pthread_kill.c:89
+No locals.
+#7  0x000076c67f642476 in __GI_raise (sig=sig@entry=6) at ../sysdeps/posix/raise.c:26
+        ret = <optimized out>
+#8  0x000076c67f6287f3 in __GI_abort () at ./stdlib/abort.c:79
+        save_stage = 1
+        act = {__sigaction_handler = {sa_handler = 0x0, sa_sigaction = 0x0}, sa_mask = {__val = {0 <repeats 16 times>}}, sa_flags = 0, sa_restorer = 0x0}
+        sigs = {__val = {32, 0 <repeats 15 times>}}
+#9  0x000062d2b9abace7 in td::process_fatal_error(td::CSlice) ()
+No symbol table info available.
+#10 0x000062d2b9abade7 in td::DefaultLog::append(td::CSlice, int) ()
+No symbol table info available.
+#11 0x000062d2b9aba997 in td::Logger::~Logger() ()
+No symbol table info available.
+#12 0x000062d2b960a209 in Test_WorkchainBlock_AccountRegistryReplayConnectivity::run() ()
+No symbol table info available.
+#13 0x000062d2b963757a in td::Test::step() ()
+No symbol table info available.
+#14 0x000062d2b9ac4abc in td::TestsRunner::run_all_step() ()
+No symbol table info available.
+#15 0x000062d2b9ac45e8 in td::TestsRunner::run_all() ()
+No symbol table info available.
+#16 0x000062d2b956065f in main ()
+No symbol table info available.
+[Inferior 1 (process 2008385) detached]

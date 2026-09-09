@@ -1,0 +1,170 @@
+[
+  {
+    "path": "vendor/bulletproofs/src/lib.rs",
+    "from": "extern crate alloc;",
+    "to": "extern crate alloc;\npub static OPERATION_TRACE_COUNTS: [core::sync::atomic::AtomicU64; 9] =\n    [const { core::sync::atomic::AtomicU64::new(0) }; 9];\npub fn operation_trace_count(index: usize) {\n    OPERATION_TRACE_COUNTS[index].fetch_add(1, core::sync::atomic::Ordering::Relaxed);\n}",
+    "before_sha256": "f66e0b02ac314ec22e9d348c8967c62c094f5e2901bfb824df958e82635a0fb1",
+    "after_sha256": "c35bac96c65c2a33c94689d9b05c582e36aa603c720fe947323c7668c8f29a46"
+  },
+  {
+    "path": "src/lib.rs",
+    "from": "pub mod ffi;",
+    "to": "pub mod ffi;\n/// cbindgen:ignore\n#[unsafe(no_mangle)]\npub extern \"C\" fn workchain_proof_trace_read(index: usize) -> u64 {\n    bulletproofs::OPERATION_TRACE_COUNTS[index].load(core::sync::atomic::Ordering::Relaxed)\n}\n/// cbindgen:ignore\n#[unsafe(no_mangle)]\npub extern \"C\" fn workchain_proof_trace_reset() {\n    for value in &bulletproofs::OPERATION_TRACE_COUNTS {\n        value.store(0, core::sync::atomic::Ordering::Relaxed);\n    }\n}",
+    "before_sha256": "0a437268c4eeebc195c6b9ad4826901ff01a7cfa336f296f43bae01fa7208fb3",
+    "after_sha256": "6475fe715d81ac005247d6736d92bc9a12b4cf672e93eb4b668401e353e189d9"
+  },
+  {
+    "path": "src/relation.rs",
+    "from": "CompressedRistretto(*bytes).decompress().ok_or(Error::UNO_CRYPTO_DECODE)",
+    "to": "bulletproofs::operation_trace_count(3);\n    CompressedRistretto(*bytes).decompress().ok_or(Error::UNO_CRYPTO_DECODE)",
+    "before_sha256": "559132dc5d338dcf9807d5b72270a1304b77a40352d2dca871ad169e4dd86090",
+    "after_sha256": "07992c0ecf149064a81786536c58881c1be66d56fadc03a58a9cfeb1442099f3"
+  },
+  {
+    "path": "src/relation.rs",
+    "from": "Scalar::from(limits.max_balance) * g",
+    "to": "{ bulletproofs::operation_trace_count(1); Scalar::from(limits.max_balance) * g }",
+    "before_sha256": "07992c0ecf149064a81786536c58881c1be66d56fadc03a58a9cfeb1442099f3",
+    "after_sha256": "51bafb8ed79e2637b76f5a7fae76bd1d86100b95c535784c592a1b718cfd65ca"
+  },
+  {
+    "path": "src/relation.rs",
+    "from": "Scalar::from(limits.max_value) * g",
+    "to": "{ bulletproofs::operation_trace_count(1); Scalar::from(limits.max_value) * g }",
+    "before_sha256": "51bafb8ed79e2637b76f5a7fae76bd1d86100b95c535784c592a1b718cfd65ca",
+    "after_sha256": "166efdbbd50742f28204de66e1ede4930c5ccc286c8377ecb4973738658daa56"
+  },
+  {
+    "path": "src/relation.rs",
+    "from": "Scalar::from(fee) * g",
+    "to": "{ bulletproofs::operation_trace_count(1); Scalar::from(fee) * g }",
+    "before_sha256": "166efdbbd50742f28204de66e1ede4930c5ccc286c8377ecb4973738658daa56",
+    "after_sha256": "b5da3df4402b102613ac3a6cb8c7800fe766cf61b547bc2007d19865f66d755f"
+  },
+  {
+    "path": "src/relation.rs",
+    "from": "e * target",
+    "to": "{ bulletproofs::operation_trace_count(1); e * target }",
+    "before_sha256": "b5da3df4402b102613ac3a6cb8c7800fe766cf61b547bc2007d19865f66d755f",
+    "after_sha256": "f72f96b8770627470a3fae36f8b375cfde8426cb271f9519c940c94e891fd6fc"
+  },
+  {
+    "path": "src/relation.rs",
+    "from": "ranges.iter().map(Point::compress)",
+    "to": "ranges.iter().map(|p| { bulletproofs::operation_trace_count(4); p.compress() })",
+    "before_sha256": "f72f96b8770627470a3fae36f8b375cfde8426cb271f9519c940c94e891fd6fc",
+    "after_sha256": "85cbf6bde79bfb66f57a9c8b60e1b0ee3ec3664a09de764d082481803255a187"
+  },
+  {
+    "path": "src/relation.rs",
+    "from": "Scalar::from_canonical_bytes(*s)",
+    "to": "{ bulletproofs::operation_trace_count(7); Scalar::from_canonical_bytes(*s) }",
+    "before_sha256": "85cbf6bde79bfb66f57a9c8b60e1b0ee3ec3664a09de764d082481803255a187",
+    "after_sha256": "f016486e7f031adcc55bf7a69a870b87adac0e142fa5f1aa8a5d6dbf20813b13"
+  },
+  {
+    "path": "src/relation.rs",
+    "from": "transcript.append_message(b\"authenticated-context\", context);",
+    "to": "transcript.append_message(b\"authenticated-context\", { for _ in context { bulletproofs::operation_trace_count(8); } context });",
+    "before_sha256": "f016486e7f031adcc55bf7a69a870b87adac0e142fa5f1aa8a5d6dbf20813b13",
+    "after_sha256": "a5f2f5f838e60129b0a1f7c8f75990abb13b27f7b9f39fcf5d1048e38fa34f06"
+  },
+  {
+    "path": "src/relation.rs",
+    "from": "Point::vartime_multiscalar_mul(zs, row)",
+    "to": "{ bulletproofs::operation_trace_count(6); Point::vartime_multiscalar_mul(zs.iter().inspect(|_| bulletproofs::operation_trace_count(0)), row) }",
+    "before_sha256": "a5f2f5f838e60129b0a1f7c8f75990abb13b27f7b9f39fcf5d1048e38fa34f06",
+    "after_sha256": "85d155d827bbc997edc1355749793b2306f1f7a5b929dca7db89d850cf34b562"
+  },
+  {
+    "path": "vendor/bulletproofs/src/generators.rs",
+    "from": "B_blinding: RistrettoPoint::hash_from_bytes::<Sha3_512>(",
+    "to": "B_blinding: { crate::operation_trace_count(2); RistrettoPoint::hash_from_bytes::<Sha3_512>(",
+    "before_sha256": "2c8a7d04510ff1943427dee2154e3335ed7a176951c6696dbc3cf28fdde86452",
+    "after_sha256": "591fa1e2121f966837febc6b2efdc2cd927f6714b4e02c2be808064676c3e480"
+  },
+  {
+    "path": "vendor/bulletproofs/src/generators.rs",
+    "from": "RISTRETTO_BASEPOINT_COMPRESSED.as_bytes(),\n            ),",
+    "to": "RISTRETTO_BASEPOINT_COMPRESSED.as_bytes(),\n            ) },",
+    "before_sha256": "591fa1e2121f966837febc6b2efdc2cd927f6714b4e02c2be808064676c3e480",
+    "after_sha256": "a4b93a6dec97e26995ee5e50ad03fca3949c814972bce475e8fd126c21625c2d"
+  },
+  {
+    "path": "vendor/bulletproofs/src/generators.rs",
+    "from": "Some(RistrettoPoint::from_uniform_bytes(&uniform_bytes))",
+    "to": "{ crate::operation_trace_count(2); Some(RistrettoPoint::from_uniform_bytes(&uniform_bytes)) }",
+    "before_sha256": "a4b93a6dec97e26995ee5e50ad03fca3949c814972bce475e8fd126c21625c2d",
+    "after_sha256": "7cd64a37af9f574dc9a11427f85bb05b548b4ad918f9000c8a87bf696038115f"
+  },
+  {
+    "path": "vendor/bulletproofs/src/inner_product_proof.rs",
+    "from": "challenges.push(transcript.challenge_scalar(b\"u\"));",
+    "to": "crate::operation_trace_count(5);\n            challenges.push(transcript.challenge_scalar(b\"u\"));",
+    "before_sha256": "19b47ea013a32d1c14be88995ce82ec0b9898dc8affb1a440205b58fa53d0d95",
+    "after_sha256": "98658eb5e4648bbbadab5023c24c2da58aa8f09dfaf55da3405c8fca553bf618"
+  },
+  {
+    "path": "vendor/bulletproofs/src/range_proof/deterministic.rs",
+    "from": "optional_multiscalar_mul(scalars, points)",
+    "to": "optional_multiscalar_mul(scalars.inspect(|_| crate::operation_trace_count(0)), points)",
+    "before_sha256": "16169cdd82bdb7d25318bfae3def59d7485499a112c69622ee2afe3ad599692b",
+    "after_sha256": "112190228e8c51a4f46e888cb87087b5023d180719dc1b1a0748811abe053453"
+  },
+  {
+    "path": "vendor/bulletproofs/src/range_proof/deterministic.rs",
+    "from": "-self.t_x_blinding]),",
+    "to": "-self.t_x_blinding]).inspect(|_| crate::operation_trace_count(0)),",
+    "before_sha256": "112190228e8c51a4f46e888cb87087b5023d180719dc1b1a0748811abe053453",
+    "after_sha256": "baf3b47f4187b9f5c90ecf993dc54e6d5d14135999d2aca087bd167e33e2b6a6"
+  },
+  {
+    "path": "vendor/bulletproofs/src/range_proof/deterministic.rs",
+    "from": "self.A.decompress()",
+    "to": "{ crate::operation_trace_count(3); self.A.decompress() }",
+    "before_sha256": "baf3b47f4187b9f5c90ecf993dc54e6d5d14135999d2aca087bd167e33e2b6a6",
+    "after_sha256": "47e73a16d8e753428e011a1d1bed286b574893e178e394b952ceac6d96b87af1"
+  },
+  {
+    "path": "vendor/bulletproofs/src/range_proof/deterministic.rs",
+    "from": "self.S.decompress()",
+    "to": "{ crate::operation_trace_count(3); self.S.decompress() }",
+    "before_sha256": "47e73a16d8e753428e011a1d1bed286b574893e178e394b952ceac6d96b87af1",
+    "after_sha256": "253da62519c2beb1025fcddae45ae742611093fd2a7312b4d20338be152ef30e"
+  },
+  {
+    "path": "vendor/bulletproofs/src/range_proof/deterministic.rs",
+    "from": "self.ipp_proof.L_vec.iter().map(|p| p.decompress())",
+    "to": "self.ipp_proof.L_vec.iter().map(|p| { crate::operation_trace_count(3); p.decompress() })",
+    "before_sha256": "253da62519c2beb1025fcddae45ae742611093fd2a7312b4d20338be152ef30e",
+    "after_sha256": "77c4660bcbd73425abe85a95a2596a1cf133cdc45dafbcb7a7f79ede1a342f8c"
+  },
+  {
+    "path": "vendor/bulletproofs/src/range_proof/deterministic.rs",
+    "from": "self.ipp_proof.R_vec.iter().map(|p| p.decompress())",
+    "to": "self.ipp_proof.R_vec.iter().map(|p| { crate::operation_trace_count(3); p.decompress() })",
+    "before_sha256": "77c4660bcbd73425abe85a95a2596a1cf133cdc45dafbcb7a7f79ede1a342f8c",
+    "after_sha256": "b7d46558866c44124786e08b16d465619cb17d27ab7236dc7f1dff5565948b86"
+  },
+  {
+    "path": "vendor/bulletproofs/src/range_proof/deterministic.rs",
+    "from": "self.T_1.decompress()",
+    "to": "{ crate::operation_trace_count(3); self.T_1.decompress() }",
+    "before_sha256": "b7d46558866c44124786e08b16d465619cb17d27ab7236dc7f1dff5565948b86",
+    "after_sha256": "a06484762c463f0c693e4624899877548f2ed119e7864d4814293d5257b22fa9"
+  },
+  {
+    "path": "vendor/bulletproofs/src/range_proof/deterministic.rs",
+    "from": "self.T_2.decompress()",
+    "to": "{ crate::operation_trace_count(3); self.T_2.decompress() }",
+    "before_sha256": "a06484762c463f0c693e4624899877548f2ed119e7864d4814293d5257b22fa9",
+    "after_sha256": "0d72fb8e97371e5eb0c38e8e90669c2031872d4153aadd35bcf3ce9ec4ecb7d5"
+  },
+  {
+    "path": "vendor/bulletproofs/src/range_proof/deterministic.rs",
+    "from": "v.decompress()",
+    "to": "{ crate::operation_trace_count(3); v.decompress() }",
+    "before_sha256": "0d72fb8e97371e5eb0c38e8e90669c2031872d4153aadd35bcf3ce9ec4ecb7d5",
+    "after_sha256": "2c141af4cce84bf706b20096439ddf8d4d2ada7ac237f29ff81f89ecbedda979"
+  }
+]

@@ -1,0 +1,13 @@
+{
+  "path": "crypto/block/workchain-execution-dispatch.h",
+  "from": "return engine_->execute_metered_accounts(input, accounts, *configuration_, proofs);",
+  "to": "return engine_->execute_accounts(input, accounts, *configuration_); // injected unmetered dispatch",
+  "original_sha256": "cda89ee512fcd10190c7510c2d928d03565946c3a479826f588992e14720a188",
+  "baseline_binary_sha256": "5f0c718d7158ac24d8ca81d6be302064a730267a666bd762645a391c52065711",
+  "recorded_mutant_sha256": "ae63103a15183ba087448ad5eb5cbad19f465e9d82a4dcdba7f766cb9ec498c7",
+  "reconstructed_mutant_sha256": "ae63103a15183ba087448ad5eb5cbad19f465e9d82a4dcdba7f766cb9ec498c7",
+  "mutant_binary_sha256": "990366d1dc90800fab29c4beb22673faf1475e03d30300a874076e6a419f48f2",
+  "mutant_exit": 1,
+  "restored_sha256": "cda89ee512fcd10190c7510c2d928d03565946c3a479826f588992e14720a188",
+  "restored_binary_sha256": "5f0c718d7158ac24d8ca81d6be302064a730267a666bd762645a391c52065711"
+}

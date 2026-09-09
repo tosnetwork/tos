@@ -1,0 +1,7 @@
+/tmp/uno-c1-private-access.cpp:6:50: error: calling a private constructor of class 'block::WorkchainProofVerifier'
+    6 | void forbidden() { block::WorkchainProofVerifier meter(100); }
+      |                                                  ^
+/home/tomi/tos/crypto/block/workchain-proof-work.h:164:12: note: declared private here
+  164 |   explicit WorkchainProofVerifier(std::uint64_t declared) : declared_(declared) {}
+      |            ^
+1 error generated.

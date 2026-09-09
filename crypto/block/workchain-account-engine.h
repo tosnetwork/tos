@@ -5,6 +5,7 @@
 #include "block/workchain-value-flow.h"
 #include "block/workchain-execution-errors.h"
 #include "block/workchain-fee-settlement.h"
+#include "block/workchain-proof-work.h"
 
 namespace block {
 
@@ -81,6 +82,14 @@ class WorkchainAccountEngine {
   // have their own admitted profiles; candidate-only rules do not apply to them.
   virtual td::Result<WorkchainAccountEffects> execute_accounts(
       const td::Ref<vm::Cell>& input, WorkchainAccountReadView& accounts) const = 0;
+  // Profiles 2/3 retain the entry above. A profile-4 engine must explicitly
+  // implement the capability-bearing entry; never default to unmetered work.
+  virtual td::Result<WorkchainAccountEffects> execute_metered_accounts(
+      const td::Ref<vm::Cell>& input, WorkchainAccountReadView& accounts,
+      WorkchainProofVerifier& proofs) const {
+    return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),
+                             "engine has no operation-metered execution implementation");
+  }
 };
 
 struct ExecutedWorkchainAccountBatch {
@@ -91,6 +100,13 @@ struct ExecutedWorkchainAccountBatch {
   // An absent meter belongs only to the retained prototype path.
   std::optional<NativeStateReadMeter> state_admission;
 };
+
+namespace account_engine_detail {
+template <class Input>
+td::Result<ExecutedWorkchainAccountBatch> execute(
+    const WorkchainAccountEngine&, td::Ref<vm::Cell>, const Input&,
+    const WorkchainAccountDeclarations&, std::uint64_t, std::uint64_t);
+}
 
 // Admission of declared proof work, not commitment, inbox authentication or
 // permission to execute. Keep the exact owned input and inspecting engine so
@@ -104,16 +120,24 @@ class ProofAdmittedBatchInput {
   const td::Ref<vm::Cell>& candidate() const { return input_.candidate(); }
   const ResolvedBatchInputPolicy& policy() const { return input_.policy(); }
   bool inspected_by(const WorkchainAccountEngine& engine) const { return engine_ == &engine; }
+  std::uint64_t declared_proof_work() const { return declared_proof_work_; }
   static td::Result<ProofAdmittedBatchInput> admit(
       const WorkchainAccountEngine& engine, const AdmittedBatchInput& input);
 
  private:
-  ProofAdmittedBatchInput(const WorkchainAccountEngine& engine, AdmittedBatchInput input)
-      : input_(std::move(input)), engine_(&engine) {}
+  template <class Input>
+  friend td::Result<ExecutedWorkchainAccountBatch> account_engine_detail::execute(
+      const WorkchainAccountEngine&, td::Ref<vm::Cell>, const Input&,
+      const WorkchainAccountDeclarations&, std::uint64_t, std::uint64_t);
+  WorkchainProofVerifier make_verifier() const { return WorkchainProofVerifier(declared_proof_work_); }
+  ProofAdmittedBatchInput(const WorkchainAccountEngine& engine, AdmittedBatchInput input,
+                          std::uint64_t declared_proof_work)
+      : input_(std::move(input)), engine_(&engine), declared_proof_work_(declared_proof_work) {}
   AdmittedBatchInput input_;
   // Synchronous stages borrow an engine whose registry/fixture owner must
   // outlive them. This token never extends that owner's lifetime.
   const WorkchainAccountEngine* engine_;
+  const std::uint64_t declared_proof_work_;
 };
 
 inline td::Result<ProofAdmittedBatchInput> ProofAdmittedBatchInput::admit(
@@ -151,7 +175,7 @@ inline td::Result<ProofAdmittedBatchInput> ProofAdmittedBatchInput::admit(
     return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::CandidateInvalid),
                              "proof work exceeds authenticated batch allowance");
   }
-  return ProofAdmittedBatchInput(engine, input);
+  return ProofAdmittedBatchInput(engine, input, work);
 }
 
 namespace account_engine_detail {
@@ -298,7 +322,18 @@ inline td::Result<ExecutedWorkchainAccountBatch> execute(
   };
   TRY_RESULT(snapshots, acquire_with_boundary());
   WorkchainAccountReadView view(std::move(snapshots));
-  auto executed = engine.execute_accounts(input, view);
+  auto invoke = [&]() -> td::Result<WorkchainAccountEffects> {
+    if constexpr (std::is_same_v<Input, ProofAdmittedBatchInput>) {
+      if (source.policy().requires_proof_operation_meter()) {
+        auto proofs = source.make_verifier();
+        auto result = engine.execute_metered_accounts(input, view, proofs);
+        TRY_STATUS(proofs.status());
+        return result;
+      }
+    }
+    return engine.execute_accounts(input, view);
+  };
+  auto executed = invoke();
   // The engine cannot suppress an access violation by ignoring its Result.
   TRY_STATUS(view.status());
   TRY_RESULT(effects, std::move(executed));

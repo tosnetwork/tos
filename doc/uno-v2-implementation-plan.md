@@ -2860,7 +2860,7 @@ inventory item; this unit removed the duplicate decode, not that natural site.
 
 ### Proof-work inventory after independent review of `6034b6aaf`
 
-- Actual cost correspondence is not enforced. Closing it requires an actual
+- At that checkpoint actual cost correspondence was not enforced. Closing it requires an actual
   verification-work meter using the same unit definitions as shape inspection,
   charging before expensive backend calls, and checking actual attempted work
   against the admitted declaration. A post-execution assertion alone discovers
@@ -2868,7 +2868,12 @@ inventory item; this unit removed the duplicate decode, not that natural site.
   an engine's effects.usage report is not an independent measurement. The
   production integration must distinguish an engine counting-contract failure
   from an invalid cryptographic proof, without inferring provenance from an
-  untyped backend error.
+  untyped backend error. The profile-4 C1 cut now provides a typed, precharged
+  backend wrapper and an independently instrumented operation correspondence
+  trace; see [the exact profile and its evidence](uno-v2-proof-operation-profile.md).
+  It leaves live registration and statement construction unclaimed and does
+  not close the next two items. In particular it does not reinterpret profiles
+  2 or 3, and an invocation-local meter is not a block accumulator.
 - Block-level proof-work acceptance is not implemented. The current limit is
   per batch, with no cross-batch accumulator. I13a requires exactly one logical
   batch per block; only independent enforcement of that live invariant can make

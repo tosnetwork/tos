@@ -1,0 +1,13 @@
+{
+  "path": "crypto/block/workchain-account-engine.h",
+  "from": "return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),\n                             \"engine has no operation-metered execution implementation\");",
+  "to": "return execute_accounts(input, accounts);",
+  "original_sha256": "d69f7f74686205179b341b2c2856f53252c1ab37e1d375286eb161e6560bbc88",
+  "baseline_binary_sha256": "eeeb3def63be9a6317efff426251f40a9c2f3bf6f300456709db520cce123443",
+  "recorded_mutant_sha256": "27ea1fbe7fd70cabee534dfd657e4c8e502d01cca0181f18bd18f4062d8327ef",
+  "reconstructed_mutant_sha256": "27ea1fbe7fd70cabee534dfd657e4c8e502d01cca0181f18bd18f4062d8327ef",
+  "mutant_binary_sha256": "aec62fcbe37806d55fdc6ac755bb715a8454a4407183b801ede4d100be07dfa7",
+  "mutant_exit": 1,
+  "restored_sha256": "d69f7f74686205179b341b2c2856f53252c1ab37e1d375286eb161e6560bbc88",
+  "restored_binary_sha256": "eeeb3def63be9a6317efff426251f40a9c2f3bf6f300456709db520cce123443"
+}

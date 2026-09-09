@@ -390,6 +390,12 @@ target_include_directories(src_parser PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_S
 target_link_libraries(src_parser PUBLIC tos_crypto_core)
 
 add_library(tos_block STATIC ${BLOCK_SOURCE})
+target_sources(tos_block PRIVATE block/workchain-proof-backend.cpp)
+if (TOS_UNO_CRYPTO_NODE_LINK)
+  set_source_files_properties(block/workchain-proof-backend.cpp PROPERTIES
+    COMPILE_DEFINITIONS TOS_CONFIDENTIAL_PROOF_BACKEND_LINKED)
+  target_link_libraries(tos_block PUBLIC confidential-crypto-kernel)
+endif()
 target_include_directories(tos_block PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/block> $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/..>)
 target_link_libraries(tos_block PUBLIC tos_crypto_core tdactor tl_api)
