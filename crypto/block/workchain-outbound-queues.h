@@ -1,5 +1,7 @@
 #pragma once
 
+#include "block/workchain-construction-observer.h"
+
 #include <algorithm>
 #include <set>
 
@@ -48,7 +50,8 @@ struct WorkchainOutboundQueueResult {
 // Exceptions propagate with provenance; only private dictionaries are changed.
 inline td::Result<WorkchainOutboundQueueResult> build_workchain_outbound_queues(
     const WorkchainOutboundQueueRoots& old, const std::vector<WorkchainQueuedOutput>& supplied_outputs,
-    const std::set<td::Bits256>& unprocessed_dispatch_sources, const WorkchainOutboundQueuePolicy& policy) {
+    const std::set<td::Bits256>& unprocessed_dispatch_sources, const WorkchainOutboundQueuePolicy& policy,
+    const WorkchainConstructionObserver& observer = {}) {
   if (policy.shard.workchain < 0 || policy.shard.shard != tos::shardIdAll ||
       policy.global_version < transaction::Transaction::kStorageParticipantMinGlobalVersion ||
       supplied_outputs.size() > policy.max_outputs || old.descriptors.is_null() || old.outgoing.is_null() ||
@@ -119,6 +122,8 @@ inline td::Result<WorkchainOutboundQueueResult> build_workchain_outbound_queues(
                          vm::Dictionary::SetMode::Add)) {
       return td::Status::Error("duplicate outbound descriptor");
     }
+    TRY_STATUS(observe_workchain_construction(observer, WorkchainConstructionStage::OutboundDescriptorStage,
+        static_cast<std::size_t>(&item - outputs.data())));
     auto enqueued = vm::load_cell_slice_ref(encoded.enqueued);
     if (item.defer) {
       vm::Dictionary account_queue(64);
@@ -148,6 +153,8 @@ inline td::Result<WorkchainOutboundQueueResult> build_workchain_outbound_queues(
       TRY_RESULT(next, participant_lt_detail::checked_add(result.queued, 1));
       result.queued = next;
     }
+    TRY_STATUS(observe_workchain_construction(observer, WorkchainConstructionStage::OutboundQueueStage,
+        static_cast<std::size_t>(&item - outputs.data())));
   }
   result.roots = {descriptors.get_wrapped_dict_root(), outgoing.get_wrapped_dict_root(), dispatch.get_wrapped_dict_root()};
   return result;

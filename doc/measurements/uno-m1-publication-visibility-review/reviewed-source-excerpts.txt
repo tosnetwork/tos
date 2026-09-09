@@ -1,0 +1,1259 @@
+validator/db/rootdb.cpp @ 1743c7616a923ec4f9e39319d5e21260615533f0 lines 35-75
+35: void RootDb::store_block_data(BlockHandle handle, td::Ref<BlockData> block, td::Promise<td::Unit> promise) {
+36:   if (handle->received()) {
+37:     promise.set_value(td::Unit());
+38:     return;
+39:   }
+40: 
+41:   auto P = td::PromiseCreator::lambda(
+42:       [id = archive_db_.get(), handle, promise = std::move(promise)](td::Result<td::Unit> R) mutable {
+43:         if (R.is_error()) {
+44:           promise.set_error(R.move_as_error());
+45:         } else {
+46:           handle->set_received();
+47:           td::actor::send_closure(id, &ArchiveManager::update_handle, std::move(handle), std::move(promise));
+48:         }
+49:       });
+50: 
+51:   td::actor::send_closure(archive_db_, &ArchiveManager::add_file, handle, fileref::Block{handle->id()}, block->data(),
+52:                           std::move(P));
+53: }
+54: 
+55: void RootDb::get_block_data(ConstBlockHandle handle, td::Promise<td::Ref<BlockData>> promise) {
+56:   if (!handle->received()) {
+57:     promise.set_error(td::Status::Error(ErrorCode::notready, "not in db"));
+58:   } else {
+59:     auto P = td::PromiseCreator::lambda(
+60:         [id = handle->id(), promise = std::move(promise)](td::Result<td::BufferSlice> R) mutable {
+61:           if (R.is_error()) {
+62:             promise.set_error(R.move_as_error());
+63:           } else {
+64:             promise.set_result(create_block(id, R.move_as_ok()));
+65:           }
+66:         });
+67: 
+68:     td::actor::send_closure(archive_db_, &ArchiveManager::get_file, handle, fileref::Block{handle->id()}, std::move(P));
+69:   }
+70: }
+71: 
+72: void RootDb::store_block_signatures(BlockHandle handle, td::Ref<block::BlockSignatureSet> data,
+73:                                     Ref<block::ValidatorSet> vset, td::Promise<td::Unit> promise) {
+74:   if (handle->inited_signatures() || handle->moved_to_archive()) {
+75:     promise.set_value(td::Unit());
+
+validator/db/rootdb.cpp @ 1743c7616a923ec4f9e39319d5e21260615533f0 lines 257-290
+257: void RootDb::store_block_state(BlockHandle handle, td::Ref<ShardState> state, vm::StoreCellHint hint,
+258:                                td::Promise<td::Ref<ShardState>> promise) {
+259:   if (handle->moved_to_archive()) {
+260:     promise.set_value(std::move(state));
+261:     return;
+262:   }
+263:   if (!handle->inited_state_boc()) {
+264:     auto P = td::PromiseCreator::lambda([b = archive_db_.get(), root_hash = state->root_hash(), handle,
+265:                                          promise = std::move(promise)](td::Result<td::Ref<vm::DataCell>> R) mutable {
+266:       if (R.is_error()) {
+267:         promise.set_error(R.move_as_error());
+268:       } else {
+269:         handle->set_state_root_hash(root_hash);
+270:         handle->set_state_boc();
+271: 
+272:         auto S = create_shard_state(handle->id(), R.move_as_ok());
+273:         S.ensure();
+274: 
+275:         auto P = td::PromiseCreator::lambda(
+276:             [promise = std::move(promise), state = S.move_as_ok()](td::Result<td::Unit> R) mutable {
+277:               R.ensure();
+278:               promise.set_value(std::move(state));
+279:             });
+280: 
+281:         td::actor::send_closure(b, &ArchiveManager::update_handle, std::move(handle), std::move(P));
+282:       }
+283:     });
+284:     td::actor::send_closure(cell_db_, &CellDb::store_cell, handle->id(), state->root_cell(), std::move(hint),
+285:                             std::move(P));
+286:   } else {
+287:     get_block_state(handle, std::move(promise));
+288:   }
+289: }
+290: 
+
+validator/db/rootdb.cpp @ 1743c7616a923ec4f9e39319d5e21260615533f0 lines 343-364
+343: void RootDb::get_block_state(ConstBlockHandle handle, td::Promise<td::Ref<ShardState>> promise) {
+344:   if (handle->inited_state_boc()) {
+345:     if (handle->deleted_state_boc()) {
+346:       promise.set_error(td::Status::Error(ErrorCode::error, "state already gc'd"));
+347:       return;
+348:     }
+349:     auto P =
+350:         td::PromiseCreator::lambda([handle, promise = std::move(promise)](td::Result<td::Ref<vm::DataCell>> R) mutable {
+351:           if (R.is_error()) {
+352:             promise.set_error(R.move_as_error());
+353:           } else {
+354:             auto S = create_shard_state(handle->id(), R.move_as_ok());
+355:             S.ensure();
+356:             promise.set_value(S.move_as_ok());
+357:           }
+358:         });
+359:     td::actor::send_closure(cell_db_, &CellDb::load_cell, handle->state(), std::move(P));
+360:   } else {
+361:     promise.set_error(td::Status::Error(ErrorCode::notready, "state not in db"));
+362:   }
+363: }
+364: 
+
+validator/db/rootdb.cpp @ 1743c7616a923ec4f9e39319d5e21260615533f0 lines 456-463
+456: void RootDb::store_block_handle(BlockHandle handle, td::Promise<td::Unit> promise) {
+457:   td::actor::send_closure(archive_db_, &ArchiveManager::update_handle, std::move(handle), std::move(promise));
+458: }
+459: 
+460: void RootDb::get_block_handle(BlockIdExt id, td::Promise<BlockHandle> promise) {
+461:   td::actor::send_closure(archive_db_, &ArchiveManager::get_handle, id, std::move(promise));
+462: }
+463: 
+
+validator/db/celldb.cpp @ 1743c7616a923ec4f9e39319d5e21260615533f0 lines 562-641
+562: void CellDbIn::store_cell(BlockIdExt block_id, td::Ref<vm::Cell> cell, vm::StoreCellHint hint,
+563:                           td::Promise<td::Ref<vm::DataCell>> promise) {
+564:   if (db_busy_) {
+565:     ++action_queue_cnt_store_;
+566:     action_queue_.push_back([self = this, block_id, cell = std::move(cell), hint = std::move(hint),
+567:                              promise = std::move(promise)](td::Result<td::Unit> R) mutable {
+568:       R.ensure();  // CELDB_LEGACY_FATAL_INVARIANT: queued store resumes only after actor-local DB mutation completion.
+569:       --self->action_queue_cnt_store_;
+570:       self->store_cell(block_id, std::move(cell), std::move(hint), std::move(promise));
+571:     });
+572:     return;
+573:   }
+574:   td::PerfWarningTimer timer{"storecell", 0.1};
+575:   auto key_hash = get_key_hash(block_id);
+576:   auto R = get_block(key_hash);
+577:   // duplicate
+578:   if (R.is_ok()) {
+579:     delay_action([cell = boc_->load_cell(cell->get_hash().as_slice()),
+580:                   promise = std::move(promise)]() mutable { promise.set_result(std::move(cell)); },
+581:                  td::Timestamp::now());
+582:     return;
+583:   }
+584: 
+585:   boc_->inc(cell);
+586:   db_busy_ = true;
+587:   boc_->prepare_commit_async(
+588:       async_executor, std::move(hint),
+589:       [=, this, SelfId = actor_id(this), timer = std::move(timer), timer_prepare = td::Timer{},
+590:        promise = std::move(promise), cell = std::move(cell)](td::Result<td::Unit> Res) mutable {
+591:         Res.ensure();  // CELDB_LEGACY_FATAL_INVARIANT: legacy non-streaming store prepare failure is local DB fatal.
+592:         timer_prepare.pause();
+593:         td::actor::send_lambda_later(SelfId, [=, this, timer = std::move(timer), promise = std::move(promise),
+594:                                               cell = std::move(cell)]() mutable {
+595:           TD_PERF_COUNTER(celldb_store_cell);
+596:           auto empty = get_empty_key_hash();
+597:           auto ER = get_block(empty);
+598:           ER.ensure();  // CELDB_LEGACY_FATAL_INVARIANT: local CellDb linked-list sentinel must exist during store.
+599:           auto E = ER.move_as_ok();
+600: 
+601:           auto PR = get_block(E.prev);
+602:           PR.ensure();  // CELDB_LEGACY_FATAL_INVARIANT: local CellDb linked-list predecessor must exist during store.
+603:           auto P = PR.move_as_ok();
+604:           CHECK(P.next == empty);  // CELDB_LEGACY_FATAL_INVARIANT: local CellDb linked-list tail invariant.
+605: 
+606:           DbEntry D{block_id, E.prev, empty, cell->get_hash().bits()};
+607: 
+608:           E.prev = key_hash;
+609:           P.next = key_hash;
+610: 
+611:           if (P.is_empty()) {
+612:             E.next = key_hash;
+613:             P.prev = key_hash;
+614:           }
+615:           td::Timer timer_write;
+616:           vm::CellStorer stor{*cell_db_};
+617:           cell_db_->begin_write_batch().ensure();  // CELDB_LEGACY_FATAL_INVARIANT: legacy non-streaming store writes actor-local batch.
+618:           set_block(get_empty_key_hash(), std::move(E));
+619:           set_block(D.prev, std::move(P));
+620:           set_block(key_hash, std::move(D));
+621:           boc_->commit(stor).ensure();  // CELDB_LEGACY_FATAL_INVARIANT: legacy non-streaming store commits local BoC metadata.
+622:           cell_db_->commit_write_batch().ensure();  // CELDB_LEGACY_FATAL_INVARIANT: legacy non-streaming store commits local batch.
+623:           timer_write.pause();
+624: 
+625:           if (!opts_->get_celldb_in_memory()) {
+626:             boc_->set_loader(std::make_unique<vm::CellLoader>(cell_db_->snapshot(), on_load_callback_)).ensure();  // CELDB_LEGACY_FATAL_INVARIANT: legacy non-streaming store snapshot refresh.
+627:             td::actor::send_closure(parent_, &CellDb::update_snapshot, cell_db_->snapshot());
+628:           }
+629: 
+630:           delay_action([cell = boc_->load_cell(cell->get_hash().as_slice()),
+631:                         promise = std::move(promise)]() mutable { promise.set_result(std::move(cell)); },
+632:                        td::Timestamp::now());
+633:           if (!opts_->get_disable_rocksdb_stats()) {
+634:             cell_db_statistics_.store_cell_time_.insert(timer.elapsed() * 1e6);
+635:             cell_db_statistics_.store_cell_prepare_time_.insert(timer_prepare.elapsed() * 1e6);
+636:             cell_db_statistics_.store_cell_write_time_.insert(timer_write.elapsed() * 1e6);
+637:           }
+638:           LOG(DEBUG) << "Stored state " << block_id.to_str();
+639:           release_db();
+640:         });
+641:       });
+
+validator/db/archive-slice.cpp @ 1743c7616a923ec4f9e39319d5e21260615533f0 lines 331-356
+331: void ArchiveSlice::update_handle(BlockHandle handle, td::Promise<td::Unit> promise) {
+332:   if (destroyed_) {
+333:     promise.set_error(td::Status::Error(ErrorCode::notready, "package already gc'd"));
+334:     return;
+335:   }
+336:   if (!handle->need_flush() && (temp_ || handle->handle_moved_to_archive())) {
+337:     promise.set_value(td::Unit());
+338:     return;
+339:   }
+340:   before_query();
+341:   CHECK(!key_blocks_only_);
+342: 
+343:   begin_transaction();
+344:   auto version = handle->version();
+345:   kv_->set(get_db_key_block_info(handle->id()), handle->serialize().as_slice()).ensure();
+346:   commit_transaction([=, this, promise = std::move(promise)](td::Result<td::Unit> R) mutable {
+347:     R.ensure();
+348:     handle->flushed_upto(version);
+349:     update_temp_max_seqno(handle->id().id);
+350:     if (!temp_) {
+351:       handle->set_handle_moved_to_archive();
+352:     }
+353:     promise.set_value(td::Unit());
+354:   });
+355: }
+356: 
+
+validator/db/archive-slice.cpp @ 1743c7616a923ec4f9e39319d5e21260615533f0 lines 406-479
+406: void ArchiveSlice::add_file(BlockHandle handle, FileReference ref_id, td::BufferSlice data,
+407:                             td::Promise<td::Unit> promise) {
+408:   if (destroyed_) {
+409:     promise.set_error(td::Status::Error(ErrorCode::notready, "package already gc'd"));
+410:     return;
+411:   }
+412:   before_query();
+413:   TRY_RESULT_PROMISE(promise, p, choose_package(handle, true));
+414:   std::string value;
+415:   auto R = kv_->get(ref_id.hash().to_hex(), value);
+416:   R.ensure();
+417:   if (R.move_as_ok() == td::KeyValue::GetStatus::Ok) {
+418:     promise.set_value(td::Unit());
+419:     return;
+420:   }
+421:   promise = begin_async_query(std::move(promise));
+422:   auto P = td::PromiseCreator::lambda([SelfId = actor_id(this), idx = p->idx, ref_id, promise = std::move(promise)](
+423:                                           td::Result<std::pair<td::uint64, td::uint64>> R) mutable {
+424:     if (R.is_error()) {
+425:       promise.set_error(R.move_as_error());
+426:       return;
+427:     }
+428:     auto v = R.move_as_ok();
+429:     td::actor::send_closure(SelfId, &ArchiveSlice::add_file_cont, idx, std::move(ref_id), v.first, v.second,
+430:                             std::move(promise));
+431:   });
+432: 
+433:   td::actor::send_closure(p->writer, &PackageWriter::append, ref_id.filename(), std::move(data), std::move(P));
+434: }
+435: 
+436: void ArchiveSlice::add_file_cont(size_t idx, FileReference ref_id, td::uint64 offset, td::uint64 size,
+437:                                  td::Promise<td::Unit> promise) {
+438:   if (destroyed_) {
+439:     promise.set_error(td::Status::Error(ErrorCode::notready, "package already gc'd"));
+440:     return;
+441:   }
+442:   begin_transaction();
+443:   if (sliced_mode_) {
+444:     kv_->set(PSTRING() << "status." << idx, td::to_string(size)).ensure();
+445:     kv_->set(ref_id.hash().to_hex(), td::to_string(offset)).ensure();
+446:   } else {
+447:     CHECK(!idx);
+448:     kv_->set("status", td::to_string(size)).ensure();
+449:     kv_->set(ref_id.hash().to_hex(), td::to_string(offset)).ensure();
+450:   }
+451:   update_temp_max_seqno(ref_id);
+452:   commit_transaction(std::move(promise));
+453: }
+454: 
+455: void ArchiveSlice::get_handle(BlockIdExt block_id, td::Promise<BlockHandle> promise) {
+456:   if (destroyed_) {
+457:     promise.set_error(td::Status::Error(ErrorCode::notready, "package already gc'd"));
+458:     return;
+459:   }
+460:   before_query();
+461:   CHECK(!key_blocks_only_);
+462:   std::string value;
+463:   auto R = kv_->get(get_db_key_block_info(block_id), value);
+464:   R.ensure();
+465:   if (R.move_as_ok() == td::KeyValue::GetStatus::NotFound) {
+466:     promise.set_error(td::Status::Error(ErrorCode::notready, "handle not in archive slice"));
+467:     return;
+468:   }
+469:   auto E = create_block_handle(td::BufferSlice{value});
+470:   E.ensure();
+471:   auto handle = E.move_as_ok();
+472:   if (!temp_) {
+473:     handle->set_handle_moved_to_archive();
+474:   }
+475:   if (handle->is_applied()) {
+476:     handle->set_applied_stored();
+477:   }
+478:   promise.set_value(std::move(handle));
+479: }
+
+validator/db/archive-slice.cpp @ 1743c7616a923ec4f9e39319d5e21260615533f0 lines 929-970
+929: void ArchiveSlice::begin_transaction() {
+930:   if (transaction_started_) {
+931:     return;
+932:   }
+933:   transaction_started_ = true;
+934:   kv_->begin_transaction().ensure();
+935: }
+936: 
+937: void ArchiveSlice::commit_transaction(td::Promise<td::Unit> promise) {
+938:   if (!transaction_started_ || !async_mode_) {
+939:     commit_transaction_now();
+940:     promise.set_value(td::Unit{});
+941:     return;
+942:   }
+943:   transaction_commit_waiters_.push_back(std::move(promise));
+944:   if (!transaction_commit_pending_) {
+945:     transaction_commit_pending_ = true;
+946:     td::actor::send_closure_later(actor_id(this), &ArchiveSlice::commit_transaction_now);
+947:   }
+948: }
+949: 
+950: td::actor::Task<> ArchiveSlice::commit_transaction_coro() {
+951:   auto [task, promise] = td::actor::StartedTask<>::make_bridge();
+952:   commit_transaction(std::move(promise));
+953:   co_return co_await std::move(task);
+954: }
+955: 
+956: void ArchiveSlice::commit_transaction_now() {
+957:   if (!transaction_started_) {
+958:     return;
+959:   }
+960:   kv_->commit_transaction().ensure();
+961:   transaction_started_ = false;
+962:   transaction_commit_pending_ = false;
+963:   auto waiters = std::move(transaction_commit_waiters_);
+964:   transaction_commit_waiters_.clear();
+965:   if (!waiters.empty()) {
+966:     LOG(DEBUG) << "Huge transaction size = " << waiters.size();
+967:   }
+968:   for (auto &promise : waiters) {
+969:     promise.set_value(td::Unit{});
+970:   }
+
+validator/db/archive-manager.cpp @ 1743c7616a923ec4f9e39319d5e21260615533f0 lines 82-110
+82: void ArchiveManager::update_handle(BlockHandle handle, td::Promise<td::Unit> promise) {
+83:   const FileDescription *f;
+84:   if (handle->handle_moved_to_archive()) {
+85:     CHECK(handle->inited_unix_time());
+86:     if (!handle->need_flush()) {
+87:       promise.set_value(td::Unit());
+88:       return;
+89:     }
+90:     auto F = get_file_desc(handle->id().shard_full(), get_package_id(handle->masterchain_ref_block()),
+91:                            handle->id().seqno(), handle->unix_time(), handle->logical_time(), true);
+92:     if (F.is_error()) {
+93:       handle->flushed_upto(handle->version());
+94:       promise.set_value(td::Unit());
+95:       return;
+96:     }
+97:     f = F.move_as_ok();
+98:   } else {
+99:     TRY_RESULT_PROMISE_ASSIGN(promise, f,
+100:                               get_file_desc(handle->id().shard_full(), get_temp_package_id(), 0, 0, 0, true));
+101:   }
+102:   td::actor::send_closure(f->file_actor_id(), &ArchiveSlice::update_handle, std::move(handle), std::move(promise));
+103: }
+104: 
+105: td::actor::Task<> ArchiveManager::move_block_to_archive(BlockHandle handle,
+106:                                                         std::vector<std::pair<FileReference, td::BufferSlice>> files) {
+107:   CHECK(handle->inited_unix_time());
+108:   auto p = handle->id().is_masterchain()
+109:                ? get_package_id_force(handle->masterchain_ref_block(), handle->id().shard_full(), handle->id().seqno(),
+110:                                       handle->unix_time(), handle->logical_time(),
+
+validator/block-handle.hpp @ 1743c7616a923ec4f9e39319d5e21260615533f0 lines 184-203
+184:   bool inited_state_boc() const override {
+185:     return flags_.load(std::memory_order_consume) & Flags::dbf_inited_state_boc;
+186:   }
+187:   bool deleted_state_boc() const override {
+188:     return flags_.load(std::memory_order_consume) & Flags::dbf_deleted_boc;
+189:   }
+190:   bool received_state() const override {
+191:     return flags_.load(std::memory_order_consume) & Flags::dbf_inited_state_boc;
+192:   }
+193:   bool need_flush() const override {
+194:     return written_version_.load(std::memory_order_consume) < version();
+195:   }
+196:   bool is_zero() const override {
+197:     return id_.id.seqno == 0;
+198:   }
+199:   bool is_applied() const override {
+200:     return flags_.load(std::memory_order_consume) & Flags::dbf_applied;
+201:   }
+202:   bool inited_masterchain_ref_block() const override {
+203:     return id_.is_masterchain() || (flags_.load(std::memory_order_consume) & Flags::dbf_inited_masterchain_ref_block);
+
+validator/block-handle.hpp @ 1743c7616a923ec4f9e39319d5e21260615533f0 lines 405-413
+405:   void set_received() override {
+406:     if (flags_.load(std::memory_order_consume) & Flags::dbf_received) {
+407:       return;
+408:     }
+409:     lock();
+410:     flags_ |= Flags::dbf_received;
+411:     unlock();
+412:   }
+413:   void set_moved_to_archive() override {
+
+validator/block-handle.hpp @ 1743c7616a923ec4f9e39319d5e21260615533f0 lines 473-499
+473:   void set_state_boc() override {
+474:     if (!inited_state_boc()) {
+475:       CHECK(inited_state_root_hash());
+476:       lock();
+477:       flags_ |= Flags::dbf_inited_state_boc;
+478:       unlock();
+479:     }
+480:   }
+481:   void set_deleted_state_boc() override {
+482:     if (flags_.load(std::memory_order_consume) & Flags::dbf_deleted_boc) {
+483:       return;
+484:     }
+485:     lock();
+486:     flags_ |= Flags::dbf_deleted_boc;
+487:     unlock();
+488:   }
+489:   void set_applied() override {
+490:     if (!is_applied()) {
+491:       lock();
+492:       flags_ |= Flags::dbf_applied;
+493:       unlock();
+494:     }
+495:   }
+496:   void set_masterchain_ref_block(BlockSeqno seqno) override {
+497:     if (!inited_masterchain_ref_block()) {
+498:       lock();
+499:       masterchain_ref_seqno_ = seqno;
+
+validator/apply-block.cpp @ 1743c7616a923ec4f9e39319d5e21260615533f0 lines 255-325
+255: }
+256: 
+257: void ApplyBlock::applied_prev() {
+258:   VLOG(VALIDATOR_DEBUG) << "applying parents";
+259:   VLOG(VALIDATOR_DEBUG) << "applied_prev, waiting manager's confirm";
+260:   if (!id_.is_masterchain()) {
+261:     handle_->set_masterchain_ref_block(masterchain_block_id_.seqno());
+262:   }
+263:   auto P = td::PromiseCreator::lambda([SelfId = actor_id(this)](td::Result<td::Unit> R) {
+264:     if (R.is_error()) {
+265:       td::actor::send_closure(SelfId, &ApplyBlock::abort_query, R.move_as_error());
+266:     } else {
+267:       td::actor::send_closure(SelfId, &ApplyBlock::applied_set);
+268:     }
+269:   });
+270:   td::actor::send_closure(manager_, &ValidatorManager::new_block, handle_, state_, std::move(P));
+271: }
+272: 
+273: void ApplyBlock::applied_set() {
+274:   VLOG(VALIDATOR_DEBUG) << "applied_set";
+275:   handle_->set_applied();
+276:   // wc=0 wallet index hook (best-effort, installed by validator-engine). Runs
+277:   // here — after the block is applied — so only canonical-chain blocks are ever
+278:   // indexed; data stored for unfinalized candidates (e.g. nonfinal candidate
+279:   // broadcasts) must not reach the index. When the block data was already in the
+280:   // database before this apply (block_ is null), fetch it asynchronously; a
+281:   // fetch failure only degrades RPC for this block.
+282:   if (g_wc0_block_index_hook && handle_->id().id.workchain == 0 && handle_->id().seqno() > 0) {
+283:     auto state_root = state_.not_null() ? state_->root_cell() : td::Ref<vm::Cell>{};
+284:     if (block_.not_null()) {
+285:       try {
+286:         g_wc0_block_index_hook(block_->root_cell(), state_root, handle_->id());
+287:       } catch (...) {
+288:         // Indexing must never affect block application.
+289:       }
+290:     } else {
+291:       td::actor::send_closure(
+292:           manager_, &ValidatorManager::get_block_data_from_db, handle_,
+293:           [id = handle_->id(), state_root](td::Result<td::Ref<BlockData>> R) {
+294:             if (R.is_error() || R.ok().is_null() || !g_wc0_block_index_hook) {
+295:               return;
+296:             }
+297:             try {
+298:               g_wc0_block_index_hook(R.ok()->root_cell(), state_root, id);
+299:             } catch (...) {
+300:               // Indexing must never affect block application.
+301:             }
+302:           });
+303:     }
+304:   }
+305:   if (handle_->id().seqno() > 0) {
+306:     CHECK(handle_->handle_moved_to_archive());
+307:     CHECK(handle_->moved_to_archive());
+308:   }
+309:   if (handle_->need_flush()) {
+310:     auto P = td::PromiseCreator::lambda([SelfId = actor_id(this)](td::Result<td::Unit> R) {
+311:       if (R.is_error()) {
+312:         td::actor::send_closure(SelfId, &ApplyBlock::abort_query, R.move_as_error());
+313:       } else {
+314:         td::actor::send_closure(SelfId, &ApplyBlock::cleanup_and_finish);
+315:       }
+316:     });
+317:     VLOG(VALIDATOR_DEBUG) << "flush handle";
+318:     handle_->flush(manager_, handle_, std::move(P));
+319:   } else {
+320:     cleanup_and_finish();
+321:   }
+322: }
+323: 
+324: void ApplyBlock::schedule_external_messages_cleanup() {
+325:   td::actor::send_closure(manager_, &ValidatorManager::cleanup_applied_external_messages, handle_, block_);
+
+validator/manager.cpp @ 1743c7616a923ec4f9e39319d5e21260615533f0 lines 1309-1324
+1309: void ValidatorManagerImpl::wait_block_message_queue(BlockHandle handle, td::uint32 priority, td::Timestamp timeout,
+1310:                                                     td::Promise<td::Ref<MessageQueue>> promise) {
+1311:   auto P = td::PromiseCreator::lambda([promise = std::move(promise)](td::Result<td::Ref<ShardState>> R) mutable {
+1312:     if (R.is_error()) {
+1313:       promise.set_error(R.move_as_error());
+1314:     } else {
+1315:       auto state = R.move_as_ok();
+1316:       promise.set_result(state->message_queue());
+1317:     }
+1318:   });
+1319: 
+1320:   wait_block_state(handle, priority, timeout, false, std::move(P));
+1321: }
+1322: 
+1323: void ValidatorManagerImpl::wait_block_message_queue_short(BlockIdExt block_id, td::uint32 priority,
+1324:                                                           td::Timestamp timeout,
+
+validator/manager.cpp @ 1743c7616a923ec4f9e39319d5e21260615533f0 lines 1732-1746
+1732: void ValidatorManagerImpl::set_block_candidate(BlockIdExt id, BlockCandidate candidate, CatchainSeqno cc_seqno,
+1733:                                                td::uint32 validator_set_hash, bool cache_only,
+1734:                                                td::Promise<td::Unit> promise) {
+1735:   add_cached_block_data(id, candidate.data.clone());
+1736:   if (cache_only) {
+1737:     promise.set_value(td::Unit{});
+1738:     return;
+1739:   }
+1740:   LOG(INFO) << "Got candidate " << id.to_str() << " with " << candidate.out_msg_queue_proof_broadcasts.size()
+1741:             << " out msg queue proof broadcasts";
+1742:   for (auto broadcast : candidate.out_msg_queue_proof_broadcasts) {
+1743:     callback_->send_out_msg_queue_proof_broadcast(broadcast);
+1744:   }
+1745:   td::actor::send_closure(db_, &Db::store_block_candidate, std::move(candidate), std::move(promise));
+1746: }
+
+validator/manager.cpp @ 1743c7616a923ec4f9e39319d5e21260615533f0 lines 1805-1890
+1805: void ValidatorManagerImpl::new_block_cont(BlockHandle handle, td::Ref<ShardState> state,
+1806:                                           td::Promise<td::Unit> promise) {
+1807:   if (state->get_shard().is_masterchain() && handle->id().id.seqno > last_masterchain_seqno_) {
+1808:     if (handle->id().id.seqno == last_masterchain_seqno_ + 1) {
+1809:       VLOG(VALIDATOR_DEBUG) << "new block " << handle->id().id.to_str() << " is the next masterchain block";
+1810:       last_masterchain_seqno_ = handle->id().id.seqno;
+1811:       last_masterchain_state_ = td::Ref<MasterchainState>{state};
+1812:       last_masterchain_block_id_ = handle->id();
+1813:       last_masterchain_block_handle_ = handle;
+1814:       last_masterchain_block_handle_->set_processed();
+1815: 
+1816:       new_masterchain_block();
+1817: 
+1818:       promise.set_value(td::Unit());
+1819: 
+1820:       while (true) {
+1821:         auto it = pending_masterchain_states_.find(last_masterchain_seqno_ + 1);
+1822:         if (it != pending_masterchain_states_.end()) {
+1823:           CHECK(it == pending_masterchain_states_.begin());
+1824:           last_masterchain_block_handle_ = std::move(std::get<0>(it->second));
+1825:           last_masterchain_state_ = std::move(std::get<1>(it->second));
+1826:           last_masterchain_block_id_ = last_masterchain_block_handle_->id();
+1827:           last_masterchain_seqno_ = last_masterchain_block_id_.id.seqno;
+1828:           CHECK(it->first == last_masterchain_seqno_);
+1829:           VLOG(VALIDATOR_DEBUG) << "processing pending masterchain block " << last_masterchain_block_id_.id.to_str();
+1830: 
+1831:           auto l_promise = std::move(std::get<2>(it->second));
+1832:           last_masterchain_block_handle_->set_processed();
+1833: 
+1834:           pending_masterchain_states_.erase(it);
+1835: 
+1836:           new_masterchain_block();
+1837: 
+1838:           for (auto &p : l_promise) {
+1839:             p.set_value(td::Unit());
+1840:           }
+1841:         } else {
+1842:           break;
+1843:         }
+1844:       }
+1845:     } else {
+1846:       VLOG(VALIDATOR_DEBUG) << "new block " << handle->id().id.to_str() << " is too new masterchain block";
+1847:       auto it = pending_masterchain_states_.find(handle->id().id.seqno);
+1848:       if (it != pending_masterchain_states_.end()) {
+1849:         std::get<2>(it->second).emplace_back(std::move(promise));
+1850:       } else {
+1851:         std::vector<td::Promise<td::Unit>> v;
+1852:         v.emplace_back(std::move(promise));
+1853:         pending_masterchain_states_.emplace(
+1854:             handle->id().id.seqno,
+1855:             std::forward_as_tuple(handle, td::Ref<MasterchainState>{std::move(state)}, std::move(v)));
+1856:       }
+1857:     }
+1858:   } else {
+1859:     VLOG(VALIDATOR_DEBUG) << "new block " << handle->id().id.to_str() << " is already processed";
+1860:     handle->set_processed();
+1861:     promise.set_value(td::Unit());
+1862:   }
+1863:   if (!db_event_publisher_.empty() && !handle->id().is_masterchain()) {
+1864:     VLOG(VALIDATOR_DEBUG) << "DB Event: blockApplied " << handle->id().to_str();
+1865:     td::actor::ask(db_event_publisher_, &DbEventPublisher::publish,
+1866:                    create_tl_object<tos_api::db_event_blockApplied>(create_tl_block_id(handle->id())))
+1867:         .detach();
+1868:   }
+1869: }
+1870: 
+1871: void ValidatorManagerImpl::new_block(BlockHandle handle, td::Ref<ShardState> state, td::Promise<td::Unit> promise) {
+1872:   VLOG(VALIDATOR_DEBUG) << "new block " << handle->id().id.to_str();
+1873:   if (handle->is_applied()) {
+1874:     return new_block_cont(std::move(handle), std::move(state), std::move(promise));
+1875:   } else {
+1876:     auto P = td::PromiseCreator::lambda([SelfId = actor_id(this), handle, state = std::move(state),
+1877:                                          promise = std::move(promise)](td::Result<td::Unit> R) mutable {
+1878:       if (R.is_error()) {
+1879:         promise.set_error(R.move_as_error());
+1880:       } else {
+1881:         td::actor::send_closure(SelfId, &ValidatorManagerImpl::new_block_cont, std::move(handle), std::move(state),
+1882:                                 std::move(promise));
+1883:       }
+1884:     });
+1885:     td::actor::send_closure(db_, &Db::archive, handle, std::move(P));
+1886:   }
+1887: }
+1888: 
+1889: void ValidatorManagerImpl::get_block_handle(BlockIdExt id, bool force, td::Promise<BlockHandle> promise) {
+1890:   if (!id.is_valid()) {
+
+validator/manager.cpp @ 1743c7616a923ec4f9e39319d5e21260615533f0 lines 1891-1915
+1891:     promise.set_error(td::Status::Error(ErrorCode::protoviolation, "bad block id"));
+1892:     return;
+1893:   }
+1894:   {
+1895:     // updates LRU position if found
+1896:     auto B = get_handle_from_lru(id);
+1897:     if (B) {
+1898:       CHECK(B->id() == id);
+1899:       promise.set_value(std::move(B));
+1900:       return;
+1901:     }
+1902:   }
+1903:   auto handle = handles_.get(id);
+1904:   if (handle) {
+1905:     CHECK(handle->id() == id);
+1906:     promise.set_value(std::move(handle));
+1907:     return;
+1908:   }
+1909: 
+1910:   auto [it2, inserted] = wait_block_handle_.emplace(id, WaitBlockHandle{});
+1911:   it2->second.waiting_.emplace_back(std::move(promise));
+1912:   if (force) {
+1913:     it2->second.force_ = true;
+1914:   }
+1915:   if (!inserted) {
+
+validator/manager.cpp @ 1743c7616a923ec4f9e39319d5e21260615533f0 lines 2079-2086
+2079: void ValidatorManagerImpl::send_block_broadcast(BlockBroadcast broadcast, int mode) {
+2080:   callback_->send_broadcast(std::move(broadcast), mode);
+2081: }
+2082: 
+2083: void ValidatorManagerImpl::send_block_finality_broadcast(BlockFinalityBroadcast finality, int mode) {
+2084:   new_block_finality_broadcast(finality.clone(), BroadcastSource::consensus_overlay).start().detach();
+2085:   callback_->send_block_finality_broadcast(std::move(finality), mode);
+2086: }
+
+validator/impl/accept-block.cpp @ 1743c7616a923ec4f9e39319d5e21260615533f0 lines 504-533
+504:   VLOG(VALIDATOR_DEBUG) << "written block info";
+505:   if (data_.not_null()) {
+506:     block_root_ = data_->root_cell();
+507:     if (block_root_.is_null()) {
+508:       fatal_error("block data does not contain a root cell");
+509:       return;
+510:     }
+511:     // generate proof
+512:     if (!create_new_proof()) {
+513:       fatal_error("cannot generate proof for block "s + id_.to_str());
+514:       return;
+515:     }
+516:     send_broadcasts();
+517:     if (!apply_) {
+518:       written_state({});
+519:       return;
+520:     }
+521:     auto P = td::PromiseCreator::lambda([SelfId = actor_id(this)](td::Result<td::Ref<ShardState>> R) {
+522:       check_send_error(SelfId, R) ||
+523:           td::actor::send_closure_bool(SelfId, &AcceptBlockQuery::got_prev_state, R.move_as_ok());
+524:     });
+525: 
+526:     VLOG(VALIDATOR_DEBUG) << "wait_prev_block_state";
+527:     td::actor::send_closure(manager_, &ValidatorManager::wait_prev_block_state, handle_, priority(), timeout_,
+528:                             std::move(P));
+529:   } else {
+530:     VLOG(VALIDATOR_DEBUG) << "wait_block_data";
+531:     td::actor::send_closure(manager_, &ValidatorManager::wait_block_data, handle_, priority(), timeout_,
+532:                             [SelfId = actor_id(this)](td::Result<td::Ref<BlockData>> R) {
+533:                               check_send_error(SelfId, R) ||
+
+validator/impl/accept-block.cpp @ 1743c7616a923ec4f9e39319d5e21260615533f0 lines 563-584
+563:   VLOG(VALIDATOR_DEBUG) << "got prev state";
+564:   state_ = std::move(state);
+565: 
+566:   state_keep_old_hash_ = state_->root_hash();
+567: 
+568:   vm::StoreCellHint hint;
+569:   auto err = state_.write().apply_block(id_, data_, &hint);
+570:   if (err.is_error()) {
+571:     abort_query(std::move(err));
+572:     return;
+573:   }
+574: 
+575:   handle_->set_split(state_->before_split());
+576: 
+577:   td::actor::send_closure(manager_, &ValidatorManager::set_block_state, handle_, state_, std::move(hint),
+578:                           [SelfId = actor_id(this)](td::Result<td::Ref<ShardState>> R) {
+579:                             check_send_error(SelfId, R) ||
+580:                                 td::actor::send_closure_bool(SelfId, &AcceptBlockQuery::written_state, R.move_as_ok());
+581:                           });
+582: }
+583: 
+584: void AcceptBlockQuery::written_state(td::Ref<ShardState> upd_state) {
+
+validator/impl/accept-block.cpp @ 1743c7616a923ec4f9e39319d5e21260615533f0 lines 938-986
+938:     });
+939:   } else {
+940:     written_block_info_2();
+941:   }
+942: }
+943: 
+944: void AcceptBlockQuery::written_block_info_2() {
+945:   VLOG(VALIDATOR_DEBUG) << "written_block_info_2()";
+946:   if (handle_->id().is_masterchain()) {
+947:     auto P = td::PromiseCreator::lambda([SelfId = actor_id(this)](td::Result<td::Unit> R) {
+948:       check_send_error(SelfId, R) || td::actor::send_closure_bool(SelfId, &AcceptBlockQuery::applied);
+949:     });
+950:     run_apply_block_query(handle_->id(), data_, handle_->id(), manager_, timeout_, std::move(P));
+951:   } else {
+952:     applied();
+953:   }
+954: }
+955: 
+956: void AcceptBlockQuery::applied() {
+957:   finish_query();
+958: }
+959: 
+960: void AcceptBlockQuery::send_broadcasts() {
+961:   if (block_broadcast_mode_ == 0 && finality_broadcast_mode_ == 0) {
+962:     return;
+963:   }
+964:   VLOG(VALIDATOR_DEBUG) << "send_broadcasts block_mode=" << block_broadcast_mode_
+965:                         << " finality_mode=" << finality_broadcast_mode_;
+966:   if (finality_broadcast_mode_ != 0) {
+967:     td::actor::send_closure_later(manager_, &ValidatorManager::send_block_finality_broadcast,
+968:                                   BlockFinalityBroadcast{id_, signatures_}, finality_broadcast_mode_);
+969:   }
+970: 
+971:   if (block_broadcast_mode_ == 0) {
+972:     return;
+973:   }
+974:   BlockBroadcast b;
+975:   b.data = data_->data();
+976:   b.block_id = id_;
+977:   b.sig_set = signatures_;
+978:   if (is_masterchain()) {
+979:     b.proof = proof_->data();
+980:   } else {
+981:     b.proof = proof_link_->data();
+982:   }
+983: 
+984:   // do not wait for answer
+985:   td::actor::send_closure_later(manager_, &ValidatorManager::send_block_broadcast, std::move(b),
+986:                                 block_broadcast_mode_);
+
+validator/impl/collator.cpp @ 1743c7616a923ec4f9e39319d5e21260615533f0 lines 971-1005
+971: bool Collator::request_neighbor_msg_queues() {
+972:   assert(config_ && shard_conf_);
+973:   auto neighbor_list = shard_conf_->get_neighbor_shard_hash_ids(shard_);
+974:   LOG(DEBUG) << "got a preliminary list of " << neighbor_list.size() << " neighbors for " << shard_.to_str();
+975:   for (tos::BlockId blk_id : neighbor_list) {
+976:     if (blk_id.seqno == 0 && blk_id.shard_full() != shard_) {
+977:       continue;
+978:     }
+979:     auto shard_ptr = shard_conf_->get_shard_hash(tos::ShardIdFull(blk_id));
+980:     if (shard_ptr.is_null()) {
+981:       return fatal_error(-667, "cannot obtain shard hash for neighbor "s + blk_id.to_str());
+982:     }
+983:     if (shard_ptr->blk_.id != blk_id) {
+984:       return fatal_error(-667, "invalid block id "s + shard_ptr->blk_.to_str() +
+985:                                    " returned in information for neighbor " + blk_id.to_str());
+986:     }
+987:     neighbors_.emplace_back(*shard_ptr);
+988:   }
+989:   std::vector<BlockIdExt> top_blocks;
+990:   unsigned i = 0;
+991:   for (block::McShardDescr& descr : neighbors_) {
+992:     LOG(DEBUG) << "neighbor #" << i << " : " << descr.blk_.to_str();
+993:     if (prev_block_idx(descr.blk_) == -1) {
+994:       top_blocks.push_back(descr.blk_);
+995:     }
+996:     ++i;
+997:   }
+998:   ++pending;
+999:   auto token = perf_log_.start_action("neighbor_msg_queues");
+1000:   td::actor::send_closure_later(
+1001:       manager, &ValidatorManager::wait_neighbor_msg_queue_proofs, shard_, std::move(top_blocks), timeout_,
+1002:       [self = get_self(),
+1003:        token = std::move(token)](td::Result<std::map<BlockIdExt, Ref<OutMsgQueueProof>>> res) mutable {
+1004:         td::actor::send_closure_later(std::move(self), &Collator::got_neighbor_msg_queues, std::move(res),
+1005:                                       std::move(token));
+
+validator/impl/collator.cpp @ 1743c7616a923ec4f9e39319d5e21260615533f0 lines 1066-1119
+1066: void Collator::got_neighbor_msg_queue(unsigned i, Ref<OutMsgQueueProof> res) {
+1067:   BlockIdExt block_id = neighbors_.at(i).blk_;
+1068:   if (res->block_state_proof_.not_null() && !block_id.is_masterchain()) {
+1069:     block_state_proofs_.emplace(block_id.root_hash, res->block_state_proof_);
+1070:   }
+1071: 
+1072:   auto& neighbor_stats = stats_.neighbors.at(i);
+1073:   neighbor_stats.shard = block_id.shard_full();
+1074:   neighbor_stats.is_trivial = shard_intersects(block_id.shard_full(), shard_);
+1075:   neighbor_stats.is_local = res->is_local_;
+1076:   neighbor_stats.msg_limit = res->msg_count_;
+1077: 
+1078:   Ref<vm::Cell> state_root;
+1079:   if (block_id.is_masterchain()) {
+1080:     state_root = res->state_root_;
+1081:   } else {
+1082:     neighbor_proof_builders_.push_back(vm::MerkleProofBuilder{res->state_root_});
+1083:     state_root = neighbor_proof_builders_.back().root();
+1084:     if (full_collated_data_ && !block_id.is_masterchain()) {
+1085:       neighbor_proof_builders_.back().set_cell_load_callback([&](const vm::LoadedCell& cell) { on_cell_loaded(cell); });
+1086:     }
+1087:   }
+1088:   auto state = ShardStateQ::fetch(block_id, {}, state_root);
+1089:   if (state.is_error()) {
+1090:     fatal_error(state.move_as_error());
+1091:     return;
+1092:   }
+1093:   auto outq_descr_res = state.move_as_ok()->message_queue();
+1094:   if (outq_descr_res.is_error()) {
+1095:     fatal_error(outq_descr_res.move_as_error());
+1096:     return;
+1097:   }
+1098:   Ref<MessageQueue> outq_descr = outq_descr_res.move_as_ok();
+1099:   block::McShardDescr& descr = neighbors_.at(i);
+1100:   LOG(WARNING) << "obtained outbound queue for neighbor #" << i << "(" << descr.shard().to_str() << ")";
+1101:   if (outq_descr->get_block_id() != descr.blk_) {
+1102:     LOG(DEBUG) << "outq_descr->id = " << outq_descr->get_block_id().to_str() << " ; descr.id = " << descr.blk_.to_str();
+1103:     fatal_error(
+1104:         -667, "invalid outbound queue information returned for "s + descr.shard().to_str() + " : id or hash mismatch");
+1105:     return;
+1106:   }
+1107:   if (outq_descr->root_cell().is_null()) {
+1108:     fatal_error("no OutMsgQueueInfo in queue info in a neighbor state");
+1109:     return;
+1110:   }
+1111:   block::gen::OutMsgQueueInfo::Record qinfo;
+1112:   if (!tlb::unpack_cell(outq_descr->root_cell(), qinfo)) {
+1113:     fatal_error("cannot unpack neighbor output queue info");
+1114:     return;
+1115:   }
+1116:   auto queue_root = qinfo.out_queue->prefetch_ref(0);
+1117:   descr.set_queue_root(queue_root);
+1118:   if (res->msg_count_ != -1) {
+1119:     LOG(INFO) << "neighbor " << descr.shard().to_str() << " has msg_limit=" << res->msg_count_;
+
+validator/impl/collator.cpp @ 1743c7616a923ec4f9e39319d5e21260615533f0 lines 2520-2531
+2520:     }
+2521:     if (!process_inbound_internal_messages()) {
+2522:       co_return td::Status::Error("cannot collect workchain batch incoming messages");
+2523:     }
+2524:     if (!create_workchain_batch_transaction(*block_execution, params_.workchain_block_candidate)) {
+2525:       co_return td::Status::Error("cannot create workchain batch transaction");
+2526:     }
+2527:     bool enqueue_only = true;
+2528:     if (!process_new_messages(enqueue_only)) {
+2529:       co_return td::Status::Error("cannot enqueue workchain batch messages");
+2530:     }
+2531:   } else {
+
+validator/impl/collator.cpp @ 1743c7616a923ec4f9e39319d5e21260615533f0 lines 3537-3558
+3537:     if (!insert_in_msg(in_msg)) {
+3538:       return fatal_error("cannot publish final batch import");
+3539:     }
+3540:   }
+3541:   if (!batch->update_limits(*block_limit_status_, false)) {
+3542:     return fatal_error("cannot account for workchain batch block size");
+3543:   }
+3544:   if (batch->commit(*account).is_null()) {
+3545:     return fatal_error("cannot commit workchain batch executor state");
+3546:   }
+3547:   if (!update_account_dict_estimation(*batch)) {
+3548:     return fatal_error("cannot account for workchain batch dictionary size");
+3549:   }
+3550:   update_account_storage_dict_info(*batch);
+3551:   update_max_lt(account->last_trans_end_lt_);
+3552:   block::MsgMetadata metadata{0, account->workchain, account->addr, batch->start_lt};
+3553:   register_new_msgs(*batch, std::move(metadata));
+3554:   ++stats_.transactions;
+3555:   return true;
+3556: }
+3557: 
+3558: /**
+
+validator/impl/collator.cpp @ 1743c7616a923ec4f9e39319d5e21260615533f0 lines 5137-5204
+5137: bool Collator::process_new_messages(bool& enqueue_only) {
+5138:   SCOPE_EXIT {
+5139:     stats_.load_fraction_new_msgs = block_limit_status_->load_fraction(block::ParamLimits::cl_normal);
+5140:   };
+5141:   while (!new_msgs.empty()) {
+5142:     if (!block_limit_status_->fits(block::ParamLimits::cl_normal)) {
+5143:       block_full_ = true;
+5144:     }
+5145:     if (!block_full_ && internal_msg_timeout_.is_in_past()) {
+5146:       LOG(INFO) << "soft timeout reached, enqueue all remaining new messages";
+5147:       block_full_ = true;
+5148:     }
+5149:     block::NewOutMsg msg = new_msgs.top();
+5150:     new_msgs.pop();
+5151:     block_limit_status_->extra_out_msgs--;
+5152:     if ((block_full_ || have_unprocessed_account_dispatch_queue_) && !enqueue_only) {
+5153:       LOG(INFO) << "BLOCK FULL, enqueue all remaining new messages";
+5154:       enqueue_only = true;
+5155:       stats_.limits_log += PSTRING() << "NEW_MESSAGES: "
+5156:                                      << block_full_comment(*block_limit_status_, block::ParamLimits::cl_normal) << "\n";
+5157:     }
+5158:     if (!check_cancelled()) {
+5159:       return false;
+5160:     }
+5161:     LOG(DEBUG) << "have message with lt=" << msg.lt;
+5162:     int res = process_one_new_message(std::move(msg), enqueue_only);
+5163:     if (res < 0) {
+5164:       return fatal_error("error processing newly-generated outbound messages");
+5165:     } else if (res == 3) {
+5166:       LOG(INFO) << "All remaining new messages must be enqueued (BLOCK FULL)";
+5167:       enqueue_only = true;
+5168:       stats_.limits_log += PSTRING() << "NEW_MESSAGES: "
+5169:                                      << block_full_comment(*block_limit_status_, block::ParamLimits::cl_normal) << "\n";
+5170:     }
+5171:   }
+5172:   return true;
+5173: }
+5174: 
+5175: /**
+5176:  * Registers a new output message.
+5177:  *
+5178:  * @param new_msg The new output message to be registered.
+5179:  */
+5180: void Collator::register_new_msg(block::NewOutMsg new_msg) {
+5181:   if (new_msg.lt < min_new_msg_lt) {
+5182:     min_new_msg_lt = new_msg.lt;
+5183:   }
+5184:   new_msgs.push(std::move(new_msg));
+5185:   block_limit_status_->extra_out_msgs++;
+5186: }
+5187: 
+5188: /**
+5189:  * Registers new messages that were created in the transaction.
+5190:  *
+5191:  * @param trans The transaction containing the messages.
+5192:  * @param msg_metadata Metadata of the new messages.
+5193:  */
+5194: void Collator::register_new_msgs(block::transaction::Transaction& trans,
+5195:                                  td::optional<block::MsgMetadata> msg_metadata) {
+5196:   CHECK(trans.root.not_null());
+5197:   for (unsigned i = 0; i < trans.out_msgs.size(); i++) {
+5198:     block::NewOutMsg msg = trans.extract_out_msg_ext(i);
+5199:     if (msg_metadata_enabled_) {
+5200:       msg.metadata = msg_metadata;
+5201:     }
+5202:     register_new_msg(std::move(msg));
+5203:   }
+5204: }
+
+validator/impl/collator.cpp @ 1743c7616a923ec4f9e39319d5e21260615533f0 lines 6089-6144
+6089:  * Creates a new shard state and the Merkle update.
+6090:  *
+6091:  * @returns True if the shard state and Merkle update were successfully created, false otherwise.
+6092:  */
+6093: bool Collator::create_shard_state() {
+6094:   Ref<vm::Cell> msg_q_info;
+6095:   vm::CellBuilder cb, cb2;
+6096:   if (!(cb.store_long_bool(0x9023afe2, 32)          // shard_state#9023afe2
+6097:         && cb.store_long_bool(global_id_, 32)       // global_id:int32
+6098:         && global_id_                               // { global_id != 0 }
+6099:         && block::ShardId{shard_}.serialize(cb)     // shard_id:ShardIdent
+6100:         && cb.store_long_bool(new_block_seqno, 32)  // seq_no:uint32
+6101:         && cb.store_long_bool(vert_seqno_, 32)      // vert_seq_no:#
+6102:         && cb.store_long_bool(now_, 32)             // gen_utime:uint32
+6103:         && cb.store_long_bool(max_lt, 64)           // gen_lt:uint64
+6104:         && update_processed_upto()                  // insert new ProcessedUpto
+6105:         && update_min_mc_seqno(processed_upto_->min_mc_seqno()) &&
+6106:         cb.store_long_bool(min_ref_mc_seqno_, 32)       // min_ref_mc_seqno:uint32
+6107:         && compute_out_msg_queue_info(msg_q_info)       // -> out_msg_queue_info
+6108:         && cb.store_ref_bool(msg_q_info)                // out_msg_queue_info:^OutMsgQueueInfo
+6109:         && cb.store_long_bool(before_split_, 1)         // before_split:Bool
+6110:         && account_dict->append_dict_to_bool(cb2)       // accounts:^ShardAccounts
+6111:         && cb.store_ref_bool(cb2.finalize())            // ...
+6112:         && cb2.store_long_bool(overload_history_, 64)   // ^[ overload_history:uint64
+6113:         && cb2.store_long_bool(underload_history_, 64)  //    underload_history:uint64
+6114:         && compute_total_balance()                      //    -> total_balance, total_validator_fees
+6115:         && total_balance_.store(cb2)                    //  total_balance:CurrencyCollection
+6116:         && total_validator_fees_.store(cb2)             //  total_validator_fees:CurrencyCollection
+6117:         && shard_libraries_->append_dict_to_bool(cb2)   //    libraries:(HashmapE 256 LibDescr)
+6118:         && cb2.store_bool_bool(!is_masterchain()) &&
+6119:         (is_masterchain() || store_master_ref(cb2))  // master_ref:(Maybe BlkMasterInfo)
+6120:         && cb.store_ref_bool(cb2.finalize())         // ]
+6121:         && cb.store_maybe_ref(mc_state_extra_)       // custom:(Maybe ^McStateExtra)
+6122:         && cb.finalize_to(state_root))) {
+6123:     return fatal_error("cannot create new ShardState");
+6124:   }
+6125:   LOG(DEBUG) << "min_ref_mc_seqno is " << min_ref_mc_seqno_;
+6126:   if (verbosity > 2) {
+6127:     FLOG(INFO) {
+6128:       sb << "new ShardState: ";
+6129:       block::gen::t_ShardState.print_ref(sb, state_root);
+6130:       vm::load_cell_slice(state_root).print_rec(sb);
+6131:     };
+6132:   }
+6133:   if (verify >= 2) {
+6134:     LOG(INFO) << "verifying new ShardState";
+6135:     CHECK(block::gen::t_ShardState.validate_ref(1000000, state_root));
+6136:     CHECK(block::tlb::t_ShardState.validate_ref(1000000, state_root));
+6137:   }
+6138:   LOG(INFO) << "creating Merkle update for the ShardState";
+6139:   auto r_state_update = vm::MerkleUpdate::generate(prev_state_root_, state_root, state_usage_tree_.get());
+6140:   if (r_state_update.is_error()) {
+6141:     return fatal_error("cannot create Merkle update for ShardState");
+6142:   }
+6143:   state_update = r_state_update.move_as_ok();
+6144:   if (verbosity > 2) {
+
+validator/impl/collator.cpp @ 1743c7616a923ec4f9e39319d5e21260615533f0 lines 6192-6226
+6192: bool Collator::compute_out_msg_queue_info(Ref<vm::Cell>& out_msg_queue_info) {
+6193:   if (verbosity >= 2) {
+6194:     FLOG(INFO) {
+6195:       auto rt = out_msg_queue_->get_root();
+6196:       sb << "resulting out_msg_queue is ";
+6197:       block::gen::t_OutMsgQueue.print(sb, rt);
+6198:       rt->print_rec(sb);
+6199:     };
+6200:   }
+6201:   vm::CellBuilder cb;
+6202:   // out_msg_queue_extra#0 dispatch_queue:DispatchQueue out_queue_size:(Maybe uint48) = OutMsgQueueExtra;
+6203:   // ... extra:(Maybe OutMsgQueueExtra)
+6204:   if (!dispatch_queue_->is_empty() || store_out_msg_queue_size_) {
+6205:     if (!(cb.store_long_bool(1, 1) && cb.store_long_bool(0, 4) && dispatch_queue_->append_dict_to_bool(cb))) {
+6206:       return false;
+6207:     }
+6208:     if (!(cb.store_bool_bool(store_out_msg_queue_size_) &&
+6209:           (!store_out_msg_queue_size_ || cb.store_long_bool(out_msg_queue_size_, 48)))) {
+6210:       return false;
+6211:     }
+6212:   } else {
+6213:     if (!cb.store_long_bool(0, 1)) {
+6214:       return false;
+6215:     }
+6216:   }
+6217:   vm::CellSlice maybe_extra = cb.as_cellslice();
+6218:   cb.reset();
+6219: 
+6220:   return register_out_msg_queue_op(true) && register_dispatch_queue_op(true) &&
+6221:          out_msg_queue_->append_dict_to_bool(cb)   // _ out_queue:OutMsgQueue
+6222:          && processed_upto_->pack(cb)              // proc_info:ProcessedInfo
+6223:          && cb.append_cellslice_bool(maybe_extra)  // extra:(Maybe OutMsgQueueExtra)
+6224:          && cb.finalize_to(out_msg_queue_info);
+6225: }
+6226: 
+
+validator/impl/collator.cpp @ 1743c7616a923ec4f9e39319d5e21260615533f0 lines 6404-6418
+6404: bool Collator::create_block_extra(Ref<vm::Cell>& block_extra) {
+6405:   bool mc = is_masterchain();
+6406:   Ref<vm::Cell> mc_block_extra;
+6407:   vm::CellBuilder cb, cb2;
+6408:   return cb.store_long_bool(0x4a33f6fdU, 32)                                             // block_extra
+6409:          && in_msg_dict->append_dict_to_bool(cb2) && cb.store_ref_bool(cb2.finalize())   // in_msg_descr:^InMsgDescr
+6410:          && out_msg_dict->append_dict_to_bool(cb2) && cb.store_ref_bool(cb2.finalize())  // out_msg_descr:^OutMsgDescr
+6411:          && cb.store_ref_bool(shard_account_blocks_)          // account_blocks:^ShardAccountBlocks
+6412:          && cb.store_bits_bool(rand_seed_)                    // rand_seed:bits256
+6413:          && cb.store_bits_bool(params_.creator.as_bits256())  // created_by:bits256
+6414:          && cb.store_bool_bool(mc)                            // custom:(Maybe
+6415:          && (!mc || (create_mc_block_extra(mc_block_extra) && cb.store_ref_bool(mc_block_extra)))  // .. ^McBlockExtra)
+6416:          && cb.finalize_to(block_extra);                                                           // = BlockExtra;
+6417: }
+6418: 
+
+validator/impl/collator.cpp @ 1743c7616a923ec4f9e39319d5e21260615533f0 lines 6458-6486
+6458:   SCOPE_EXIT {
+6459:     stats_.work_time.create_block += timer.elapsed_both();
+6460:   };
+6461:   Ref<vm::Cell> block_info, extra;
+6462:   if (!create_block_info(block_info)) {
+6463:     return fatal_error("cannot create BlockInfo for the new block");
+6464:   }
+6465:   if (!check_value_flow()) {
+6466:     return fatal_error("cannot create ValueFlow for the new block");
+6467:   }
+6468:   if (!create_block_extra(extra)) {
+6469:     return fatal_error("cannot create BlockExtra for the new block");
+6470:   }
+6471:   vm::CellBuilder cb, cb2;
+6472:   if (!(cb.store_long_bool(0x11ef55aa, 32)     // block#11ef55aa
+6473:         && cb.store_long_bool(global_id_, 32)  // global_id:int32
+6474:         && global_id_                          // { global_id != 0 }
+6475:         && cb.store_ref_bool(block_info)       // info:^BlockInfo
+6476:         && value_flow_.store(cb2)              // value_flow:^ValueFlow
+6477:         && cb.store_ref_bool(cb2.finalize())   // ...
+6478:         && cb.store_ref_bool(state_update)     // state_update:^(MERKLE_UPDATE ShardState)
+6479:         && cb.store_ref_bool(extra)            // extra:^BlockExtra
+6480:         && cb.finalize_to(new_block))) {       // = Block
+6481:     return fatal_error("cannot create new Block");
+6482:   }
+6483:   if (verbosity >= 3 * 1) {
+6484:     FLOG(INFO) {
+6485:       sb << "new Block: ";
+6486:       block::gen::t_Block.print_ref(sb, new_block);
+
+validator/impl/shard.cpp @ 1743c7616a923ec4f9e39319d5e21260615533f0 lines 168-183
+168: td::Result<Ref<MessageQueue>> ShardStateQ::message_queue() const {
+169:   if (root.is_null()) {
+170:     return {};  // GIGO
+171:   }
+172:   vm::CellSlice cs{vm::NoVmOrd(), root};
+173:   if (!cs.have(64, 1) || cs.prefetch_ulong(32) != (unsigned)block::tlb::ShardState::shard_state) {
+174:     return td::Status::Error(-668, "state for block "s + blkid.id.to_str() + " is invalid");
+175:   }
+176:   if (fake_split_ || fake_merge_) {
+177:     return td::Status::Error(-668, "cannot obtain message queue from a virtually split or merged state");
+178:   }
+179:   auto out_queue_info = cs.prefetch_ref();
+180:   return Ref<MessageQueue>(Ref<MessageQueueQ>{true, blkid, std::move(out_queue_info)});
+181: }
+182: 
+183: td::Status ShardStateQ::apply_block(BlockIdExt newid, td::Ref<BlockData> block, vm::StoreCellHint* hint) {
+
+validator/impl/out-msg-queue-proof.cpp @ 1743c7616a923ec4f9e39319d5e21260615533f0 lines 168-211
+168: td::Result<std::vector<td::Ref<OutMsgQueueProof>>> OutMsgQueueProof::fetch(ShardIdFull dst_shard,
+169:                                                                            std::vector<BlockIdExt> blocks,
+170:                                                                            block::ImportedMsgQueueLimits limits,
+171:                                                                            const tos_api::tosNode_outMsgQueueProof& f) {
+172:   try {
+173:     std::vector<td::Ref<OutMsgQueueProof>> res;
+174:     TRY_RESULT(queue_proofs, vm::std_boc_deserialize_multi(f.queue_proofs_, (int)blocks.size()));
+175:     TRY_RESULT(block_state_proofs, vm::std_boc_deserialize_multi(f.block_state_proofs_, (int)blocks.size()));
+176:     if (queue_proofs.size() != blocks.size()) {
+177:       return td::Status::Error("invalid size of queue_proofs");
+178:     }
+179:     if (f.msg_counts_.size() != blocks.size()) {
+180:       return td::Status::Error("invalid size of msg_counts");
+181:     }
+182:     size_t j = 0;
+183:     std::vector<std::pair<BlockIdExt, block::gen::OutMsgQueueInfo::Record>> data(blocks.size());
+184:     for (size_t i = 0; i < blocks.size(); ++i) {
+185:       td::Bits256 state_root_hash;
+186:       Ref<vm::Cell> block_state_proof = {};
+187:       if (blocks[i].seqno() == 0) {
+188:         state_root_hash = blocks[i].root_hash;
+189:       } else {
+190:         if (j == block_state_proofs.size()) {
+191:           return td::Status::Error("invalid size of block_state_proofs");
+192:         }
+193:         block_state_proof = block_state_proofs[j++];
+194:         TRY_RESULT_ASSIGN(state_root_hash, unpack_block_state_proof(blocks[i], block_state_proof));
+195:       }
+196:       TRY_RESULT(state_root, vm::MerkleProof::virtualize(queue_proofs[i]));
+197:       if (state_root->get_hash().as_slice() != state_root_hash.as_slice()) {
+198:         return td::Status::Error("state root hash mismatch");
+199:       }
+200:       res.emplace_back(true, blocks[i], state_root, block_state_proof, false, f.msg_counts_[i]);
+201: 
+202:       data[i].first = blocks[i];
+203:       TRY_RESULT(state, ShardStateQ::fetch(blocks[i], {}, state_root));
+204:       TRY_RESULT(outq_descr, state->message_queue());
+205:       block::gen::OutMsgQueueInfo::Record qinfo;
+206:       if (!tlb::unpack_cell(outq_descr->root_cell(), data[i].second)) {
+207:         return td::Status::Error("invalid message queue");
+208:       }
+209:     }
+210:     if (j != block_state_proofs.size()) {
+211:       return td::Status::Error("invalid size of block_state_proofs");
+
+crypto/block/workchain-account-settlement.h @ 1743c7616a923ec4f9e39319d5e21260615533f0 lines 17-38
+17: struct WorkchainAccountSettlement {
+18:   td::Ref<vm::Cell> input, effects;
+19:   WorkchainStorageOverlay state;
+20:   td::Ref<vm::Cell> message;
+21:   WorkchainFinalImportEvidence imports;
+22:   // Disposal exports derived from transactions, not queue-ready envelopes.
+23:   std::vector<NewOutMsg> exports;
+24:   // Private continuation of the output content union. It is absent for the
+25:   // retained prototype and is never trusted from claimed replay artifacts.
+26:   // Queue/shard updates must extend this meter before live authorization;
+27:   // carrying it is not evidence that those remaining outputs were admitted.
+28:   // A later stage copies this immutable snapshot before extending it; copied
+29:   // settlement/claim objects cannot charge or reset one another's meter.
+30:   std::shared_ptr<const NativeStateReadMeter> output_admission;
+31:   // Continue the same authenticated state union without extending a temporary
+32:   // proof tree's lifetime. A complete host owns the tree across all stages.
+33:   std::shared_ptr<const NativeStateReadMeter> state_admission;
+34:   vm::CellUsageTree::NodePtr state_usage_node;
+35: };
+36: 
+37: // One engine invocation followed by private Native materialization. No caller
+38: // supplies the input/effects hashes or a second set of account data updates.
+
+crypto/block/workchain-outbound-queues.h @ 1743c7616a923ec4f9e39319d5e21260615533f0 lines 14-38
+14: struct WorkchainOutboundQueueRoots {
+15:   td::Ref<vm::Cell> descriptors, outgoing, dispatch;
+16: };
+17: 
+18: struct WorkchainQueuedOutput {
+19:   NewOutMsg output;
+20:   bool defer;
+21: };
+22: 
+23: struct WorkchainOutboundQueuePolicy {
+24:   tos::ShardIdFull shard;
+25:   tos::UnixTime now;
+26:   int global_version;
+27:   bool metadata_enabled, deferring_enabled;
+28:   std::uint64_t max_outputs;
+29: };
+30: 
+31: struct WorkchainOutboundQueueResult {
+32:   WorkchainOutboundQueueRoots roots;
+33:   std::uint64_t queued = 0, deferred = 0;
+34:   std::shared_ptr<const NativeStateReadMeter> output_admission;
+35:   std::shared_ptr<const NativeStateReadMeter> state_admission;
+36: };
+37: 
+38: // Post-admission enqueue-only construction using Native queue encodings.
+
+crypto/block/block.tlb @ 1743c7616a923ec4f9e39319d5e21260615533f0 lines 26-35
+26: // Multi-account access declarations. No TransactionDescr selects this format yet.
+27: uno_v2_host_read old_account_hash:(Maybe bits256) = UnoV2HostRead;
+28: uno_v2_host_access reads:(HashmapE 256 ^UnoV2HostRead)
+29:   writes:(HashmapE 256 True) = UnoV2HostAccess;
+30: uno_v2_host_input identity:^UnoV2HostIdentity access:^UnoV2HostAccess
+31:   candidate:^Cell inbox:(Maybe ^WorkchainBatchInbound) = UnoV2HostInput;
+32: uno_v2_host_record input_hash:bits256 effects_hash:bits256 account_id:bits256
+33:   effect_index:uint32 = UnoV2HostRecord;
+34: uno_v2_native_transfer source:bits256 destination:bits256 value:CurrencyCollection = UnoV2NativeTransfer;
+35: uno_v2_native_effects payout:(Maybe ^Cell) transfers:(HashmapE 32 ^UnoV2NativeTransfer) = UnoV2NativeEffects;
+
+crypto/block/block.tlb @ 1743c7616a923ec4f9e39319d5e21260615533f0 lines 431-440
+431: // Structural support only; existing scope dispatch rejects this new profile.
+432: trans_workchain_storage_participant_v3$1010 binding:^UnoV2HostRecord = TransactionDescr;
+433: trans_workchain_settlement_participant_v3$1011 binding:^UnoV2HostRecord = TransactionDescr;
+434: trans_workchain_entry_v3$1100 binding:^UnoV2HostRecord input:^UnoV2HostInput
+435:   effects:^UnoV2HostEffects = TransactionDescr;
+436: // Commit effects before constructing the transaction and final shard wrapper.
+437: trans_workchain_batch_v2$1001 input_hash:bits256 effects_hash:bits256
+438:   wire_bytes:uint64 verification_units:uint64 written_cells:uint64
+439:   inbound_messages:(Maybe ^WorkchainBatchInbound) = TransactionDescr;
+440: 
+

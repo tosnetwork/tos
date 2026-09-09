@@ -1,0 +1,1145 @@
+validator/manager.cpp @ e9c12755e206d614b98854c8b01feb03d22bece9 lines 231-259
+231: void ValidatorManagerImpl::new_block_broadcast(BlockBroadcast broadcast, bool signatures_checked,
+232:                                                BroadcastSource source, td::Promise<td::Unit> promise) {
+233:   if (last_masterchain_state_.is_null() || !last_masterchain_block_handle_) {
+234:     promise.set_error(td::Status::Error(ErrorCode::notready, "node not started"));
+235:     return;
+236:   }
+237:   if (!need_monitor(broadcast.block_id.shard_full())) {
+238:     promise.set_error(td::Status::Error("not monitoring shard"));
+239:     return;
+240:   }
+241:   auto sig_set = broadcast.sig_set;
+242:   promise = [SelfId = actor_id(this), promise = std::move(promise), block_id = broadcast.block_id,
+243:              cc_seqno = broadcast.sig_set->get_catchain_seqno(), is_final = broadcast.sig_set->is_final(),
+244:              sig_set = std::move(sig_set)](td::Result<td::Unit> R) mutable {
+245:     if (R.is_ok() && is_final) {
+246:       td::actor::ask(SelfId, &ValidatorManagerImpl::validated_accepted_block_broadcast, block_id, cc_seqno).detach();
+247:       if (!block_id.is_masterchain()) {
+248:         td::actor::ask(SelfId, &ValidatorManagerImpl::generate_shard_block_description, block_id, std::move(sig_set))
+249:             .detach();
+250:       }
+251:     }
+252:     promise.set_result(std::move(R));
+253:   };
+254:   BlockIdExt block_id = broadcast.block_id;
+255:   td::actor::create_actor<ValidateBroadcast>(PSTRING() << "broadcast" << block_id.id.to_str(), std::move(broadcast),
+256:                                              last_masterchain_block_handle_, last_masterchain_state_,
+257:                                              last_known_key_block_handle_, actor_id(this), td::Timestamp::in(20.0),
+258:                                              std::move(promise), false, signatures_checked)
+259:       .release();
+
+validator/manager.cpp @ e9c12755e206d614b98854c8b01feb03d22bece9 lines 569-607
+569: td::actor::Task<> ValidatorManagerImpl::new_block_candidate_broadcast(BlockIdExt block_id, CatchainSeqno cc_seqno,
+570:                                                                       td::BufferSlice data, BroadcastSource source) {
+571:   if (!last_masterchain_block_handle_) {
+572:     VLOG(VALIDATOR_DEBUG) << "dropping top shard block broadcast: not inited";
+573:     co_return td::Unit{};
+574:   }
+575:   if (!need_monitor(block_id.shard_full())) {
+576:     VLOG(VALIDATOR_DEBUG) << "dropping block candidate broadcast: not monitoring shard";
+577:     co_return td::Unit{};
+578:   }
+579:   add_cached_block_data(block_id, data.clone());
+580: 
+581:   if (opts_->nonfinal_ls_queries_enabled() && shard_client_handle_ &&
+582:       shard_client_handle_->unix_time() > (UnixTime)td::Clocks::system() - 60) {
+583:     auto handle = co_await td::actor::ask(actor_id(this), &ValidatorManagerImpl::get_block_handle, block_id, true);
+584:     Ref<BlockData> block = co_await create_block(block_id, std::move(data));
+585:     co_await td::actor::ask(actor_id(this), &ValidatorManagerImpl::set_block_data, handle, std::move(block));
+586:     co_await td::actor::ask(actor_id(this), &ValidatorManagerImpl::wait_block_state, handle, 0, td::Timestamp::in(60.0),
+587:                             true);
+588:     VLOG(VALIDATOR_DEBUG) << "Processed candidate broadcast " << block_id.to_str();
+589:     if (is_valid_nonfinal_group(block_id.shard_full(), cc_seqno)) {
+590:       NonfinalGroupInfo &info = nonfinal_info_[{block_id.shard_full(), cc_seqno}];
+591:       if (!info.last_accepted.is_valid() || info.last_accepted.seqno() < block_id.seqno()) {
+592:         if (!info.last_candidate.is_valid() || info.last_candidate.seqno() < block_id.seqno()) {
+593:           info.last_candidate = block_id;
+594:         }
+595:       }
+596:     }
+597:   }
+598:   if (!db_event_publisher_.empty() && is_valid_nonfinal_group(block_id.shard_full(), cc_seqno)) {
+599:     VLOG(VALIDATOR_DEBUG) << "DB Event: blockCandidateReceived " << block_id.to_str();
+600:     td::actor::ask(db_event_publisher_, &DbEventPublisher::publish,
+601:                    create_tl_object<tos_api::db_event_blockCandidateReceived>(create_tl_block_id(block_id)))
+602:         .detach();
+603:   }
+604:   co_return td::Unit{};
+605: }
+606: 
+607: static td::actor::Task<> check_finality_signatures(BlockIdExt block_id, Ref<block::BlockSignatureSet> sig_set,
+
+validator/manager.cpp @ e9c12755e206d614b98854c8b01feb03d22bece9 lines 610-681
+610:   CHECK(td::actor::detail::get_current_actor_id().empty());
+611:   auto try_val_set = [&](Ref<block::ValidatorSet> val_set) -> td::Status {
+612:     if (val_set.is_null()) {
+613:       return td::Status::Error("no validator set");
+614:     }
+615:     if (sig_set->is_final()) {
+616:       TRY_STATUS(sig_set->check_signatures(val_set, block_id));
+617:     } else {
+618:       TRY_STATUS(sig_set->check_approve_signatures(val_set, block_id));
+619:     }
+620:     return td::Status::OK();
+621:   };
+622: 
+623:   auto mc_state_q = Ref<MasterchainStateQ>(mc_state);
+624:   auto next_val_set = mc_state_q->get_next_validator_set(block_id.shard_full(), sig_set->get_catchain_seqno());
+625:   if (try_val_set(next_val_set).is_ok()) {
+626:     co_return td::Unit{};
+627:   }
+628:   auto val_set = mc_state_q->get_validator_set(block_id.shard_full(), sig_set->get_catchain_seqno());
+629:   CO_TRY(try_val_set(val_set));
+630:   co_return td::Unit{};
+631: }
+632: 
+633: td::actor::Task<> ValidatorManagerImpl::new_block_finality_broadcast(BlockFinalityBroadcast finality,
+634:                                                                      BroadcastSource source) {
+635:   if (!last_masterchain_block_handle_ || last_masterchain_state_.is_null()) {
+636:     VLOG(VALIDATOR_DEBUG) << "dropping block finality broadcast: not inited";
+637:     co_return td::Unit{};
+638:   }
+639:   if (!need_monitor(finality.block_id.shard_full())) {
+640:     VLOG(VALIDATOR_DEBUG) << "dropping block finality broadcast: not monitoring shard";
+641:     co_return td::Unit{};
+642:   }
+643:   if (finality.sig_set.is_null()) {
+644:     VLOG(VALIDATOR_WARNING) << "dropping block finality broadcast without signatures: " << finality.block_id.to_str();
+645:     co_return td::Unit{};
+646:   }
+647:   if (finality.block_id.is_masterchain() && !finality.sig_set->is_final()) {
+648:     VLOG(VALIDATOR_WARNING) << "dropping masterchain block finality broadcast with non-final signatures: "
+649:                             << finality.block_id.to_str();
+650:     co_return td::Unit{};
+651:   }
+652: 
+653:   auto cached = pending_block_finality_.get_if_exists(finality.block_id, false);
+654:   if (!should_replace_pending_finality(cached != nullptr, cached != nullptr && cached->sig_set->is_final(),
+655:                                        finality.sig_set->is_final())) {
+656:     co_return td::Unit{};
+657:   }
+658: 
+659:   auto status = co_await check_finality_signatures(finality.block_id, finality.sig_set, last_masterchain_state_).wrap();
+660:   if (status.is_error()) {
+661:     VLOG(VALIDATOR_WARNING) << "dropping block finality broadcast: " << status.move_as_error();
+662:     co_return td::Unit{};
+663:   }
+664: 
+665:   if (!finality.block_id.is_masterchain() && finality.sig_set->is_final() && is_validator()) {
+666:     generate_shard_block_description(finality.block_id, finality.sig_set).start().detach();
+667:   }
+668:   if (!finality.block_id.is_masterchain() && finality.sig_set->is_final()) {
+669:     process_accepted_nonfinal_block(finality.block_id, finality.sig_set->get_catchain_seqno()).start().detach();
+670:   }
+671:   pending_block_finality_.put(finality.block_id, PendingBlockFinality{std::move(finality.sig_set), source});
+672:   try_process_pending_block_finality(finality.block_id);
+673:   co_return td::Unit{};
+674: }
+675: 
+676: void ValidatorManagerImpl::add_shard_block_description(td::Ref<ShardTopBlockDescription> desc) {
+677:   for (const BlockIdExt &block_id : desc->get_chain_blocks()) {
+678:     if (cached_checked_shard_block_descriptions_.put(block_id, td::Unit())) {
+679:       if (cached_block_data_.contains(block_id)) {
+680:         wait_block_data_short(block_id, 0, td::Timestamp::in(60.0), [id = block_id](td::Result<td::Ref<BlockData>> R) {
+681:           if (R.is_error()) {
+
+validator/manager.cpp @ e9c12755e206d614b98854c8b01feb03d22bece9 lines 1963-1984
+1963: td::Ref<MasterchainState> ValidatorManagerImpl::do_get_last_liteserver_state() {
+1964:   if (last_masterchain_state_.is_null()) {
+1965:     return {};
+1966:   }
+1967:   if (last_liteserver_state_.is_null()) {
+1968:     last_liteserver_state_ = last_masterchain_state_;
+1969:     return last_liteserver_state_;
+1970:   }
+1971:   if (last_liteserver_state_->get_seqno() == last_masterchain_state_->get_seqno()) {
+1972:     return last_liteserver_state_;
+1973:   }
+1974:   // If liteserver seqno (i.e. shard client) lags then use last masterchain state for liteserver
+1975:   // Allowed lag depends on the block rate
+1976:   double time_per_block = double(last_masterchain_state_->get_unix_time() - last_liteserver_state_->get_unix_time()) /
+1977:                           double(last_masterchain_state_->get_seqno() - last_liteserver_state_->get_seqno());
+1978:   time_per_block = std::max(time_per_block, 2.0);
+1979:   if (td::Clocks::system() - double(last_liteserver_state_->get_unix_time()) > std::min(time_per_block * 8, 180.0)) {
+1980:     last_liteserver_state_ = last_masterchain_state_;
+1981:   }
+1982:   return last_liteserver_state_;
+1983: }
+1984: 
+
+validator/manager.cpp @ e9c12755e206d614b98854c8b01feb03d22bece9 lines 3643-3673
+3643: void ValidatorManagerImpl::get_block_handle_for_litequery(BlockIdExt block_id, td::Promise<ConstBlockHandle> promise) {
+3644:   get_block_handle(block_id, false,
+3645:                    [SelfId = actor_id(this), block_id, promise = std::move(promise),
+3646:                     allow_not_applied = opts_->nonfinal_ls_queries_enabled()](td::Result<BlockHandle> R) mutable {
+3647:                      if (R.is_ok() && (allow_not_applied || R.ok()->handle_moved_to_archive())) {
+3648:                        promise.set_value(R.move_as_ok());
+3649:                      } else {
+3650:                        td::actor::send_closure(SelfId, &ValidatorManagerImpl::process_block_handle_for_litequery_error,
+3651:                                                block_id, std::move(R), std::move(promise));
+3652:                      }
+3653:                    });
+3654: }
+3655: 
+3656: void ValidatorManagerImpl::get_block_data_for_litequery(BlockIdExt block_id, td::Promise<td::Ref<BlockData>> promise) {
+3657:   get_block_handle_for_litequery(
+3658:       block_id, [manager = actor_id(this), promise = std::move(promise)](td::Result<ConstBlockHandle> R) mutable {
+3659:         TRY_RESULT_PROMISE(promise, handle, std::move(R));
+3660:         td::actor::send_closure_later(manager, &ValidatorManager::get_block_data_from_db, std::move(handle),
+3661:                                       std::move(promise));
+3662:       });
+3663: }
+3664: 
+3665: void ValidatorManagerImpl::get_block_state_for_litequery(BlockIdExt block_id,
+3666:                                                          td::Promise<td::Ref<ShardState>> promise) {
+3667:   get_block_handle_for_litequery(
+3668:       block_id, [manager = actor_id(this), promise = std::move(promise)](td::Result<ConstBlockHandle> R) mutable {
+3669:         TRY_RESULT_PROMISE(promise, handle, std::move(R));
+3670:         td::actor::send_closure_later(manager, &ValidatorManager::get_shard_state_from_db, std::move(handle),
+3671:                                       std::move(promise));
+3672:       });
+3673: }
+
+validator/manager.cpp @ e9c12755e206d614b98854c8b01feb03d22bece9 lines 3715-3752
+3715: void ValidatorManagerImpl::process_block_handle_for_litequery_error(BlockIdExt block_id,
+3716:                                                                     td::Result<BlockHandle> r_handle,
+3717:                                                                     td::Promise<ConstBlockHandle> promise) {
+3718:   td::Status err;
+3719:   if (r_handle.is_error()) {
+3720:     err = r_handle.move_as_error();
+3721:   } else {
+3722:     auto handle = r_handle.move_as_ok();
+3723:     if (handle->handle_moved_to_archive()) {
+3724:       promise.set_value(std::move(handle));
+3725:       return;
+3726:     }
+3727:     if (!handle->received() || !handle->received_state()) {
+3728:       err = td::Status::Error(ErrorCode::notready, PSTRING() << "block " << block_id.id.to_str() << " is not in db");
+3729:     } else {
+3730:       err = td::Status::Error(ErrorCode::notready, PSTRING() << "block " << block_id.id.to_str() << " is not applied");
+3731:     }
+3732:   }
+3733:   if (block_id.is_masterchain()) {
+3734:     if (block_id.seqno() > last_masterchain_seqno_) {
+3735:       err = err.move_as_error_suffix(PSTRING() << " (last known masterchain block: " << last_masterchain_seqno_ << ")");
+3736:     }
+3737:   } else {
+3738:     for (auto &shard : shard_client_shards_) {
+3739:       if (shard_intersects(shard->shard(), block_id.shard_full())) {
+3740:         if (block_id.seqno() > shard->top_block_id().seqno()) {
+3741:           err = err.move_as_error_suffix(
+3742:               PSTRING() << " (possibly out of sync: shard_client_seqno="
+3743:                         << (shard_client_handle_ ? shard_client_handle_->id().seqno() : 0) << " ls_seqno="
+3744:                         << (last_liteserver_state_.not_null() ? last_liteserver_state_->get_seqno() : 0) << ")");
+3745:         }
+3746:         break;
+3747:       }
+3748:     }
+3749:   }
+3750:   promise.set_error(std::move(err));
+3751: }
+3752: 
+
+validator/manager.cpp @ e9c12755e206d614b98854c8b01feb03d22bece9 lines 4203-4267
+4203: 
+4204: td::actor::Task<> ValidatorManagerImpl::process_accepted_nonfinal_block(BlockIdExt block_id, CatchainSeqno cc_seqno) {
+4205:   if (block_id.is_masterchain() || (!opts_->nonfinal_ls_queries_enabled() && db_event_publisher_.empty())) {
+4206:     co_return td::Unit{};
+4207:   }
+4208: 
+4209:   // Once initialized, the shard-client group only advances. Reject obsolete
+4210:   // work before admission; cleanup may already have cancelled an older wait.
+4211:   if (!shard_client_state_.is_null() && !is_valid_nonfinal_group(block_id.shard_full(), cc_seqno)) {
+4212:     co_return td::Unit{};
+4213:   }
+4214: 
+4215:   NonfinalProcessingKey key{block_id, cc_seqno};
+4216:   using StartResult = BoundedIdempotentOperations<NonfinalProcessingKey>::StartResult;
+4217:   switch (nonfinal_processing_.try_start(key)) {
+4218:     case StartResult::AlreadyInFlight:
+4219:     case StartResult::AlreadyProcessed:
+4220:       co_return td::Unit{};
+4221:     case StartResult::Full:
+4222:       VLOG(VALIDATOR_WARNING) << "Dropping nonfinal block processing for " << block_id.to_str()
+4223:                               << " : in-flight limit reached (" << nonfinal_processing_.in_flight_size() << "/"
+4224:                               << nonfinal_processing_.in_flight_capacity() << ")";
+4225:       co_return td::Unit{};
+4226:     case StartResult::Started:
+4227:       break;
+4228:   }
+4229: 
+4230:   bool completed = false;
+4231:   SCOPE_EXIT {
+4232:     if (!completed) {
+4233:       nonfinal_processing_.finish_failure_if_present(key);
+4234:     }
+4235:   };
+4236: 
+4237:   auto r_state = co_await td::actor::ask(actor_id(this), &ValidatorManagerImpl::wait_block_state_short, block_id, 0,
+4238:                                          td::Timestamp::in(60.0), true)
+4239:                      .wrap();
+4240:   if (r_state.is_error()) {
+4241:     auto error = r_state.move_as_error();
+4242:     if (error.code() == ErrorCode::timeout || error.code() == ErrorCode::notready) {
+4243:       VLOG(VALIDATOR_DEBUG) << "Failed to process nonfinal block " << block_id.to_str() << " : " << error;
+4244:     } else {
+4245:       VLOG(VALIDATOR_NOTICE) << "Failed to process nonfinal block " << block_id.to_str() << " : " << error;
+4246:     }
+4247:     co_return td::Unit{};
+4248:   }
+4249:   if (!nonfinal_processing_.is_in_flight(key) || !is_valid_nonfinal_group(block_id.shard_full(), cc_seqno)) {
+4250:     co_return td::Unit{};
+4251:   }
+4252: 
+4253:   if (opts_->nonfinal_ls_queries_enabled()) {
+4254:     NonfinalGroupInfo &info = nonfinal_info_[{block_id.shard_full(), cc_seqno}];
+4255:     if (!info.last_accepted.is_valid() || info.last_accepted.seqno() < block_id.seqno()) {
+4256:       info.last_accepted = block_id;
+4257:       if (info.last_candidate.is_valid() && info.last_candidate.seqno() <= block_id.seqno()) {
+4258:         info.last_candidate = {};
+4259:       }
+4260:     }
+4261:   }
+4262:   if (!db_event_publisher_.empty()) {
+4263:     VLOG(VALIDATOR_DEBUG) << "DB Event: blockSigned " << block_id.to_str();
+4264:     td::actor::send_closure(db_event_publisher_, &DbEventPublisher::publish,
+4265:                             create_tl_object<tos_api::db_event_blockSigned>(create_tl_block_id(block_id)));
+4266:   }
+4267:   nonfinal_processing_.finish_success(key);
+
+validator/validate-broadcast.cpp @ e9c12755e206d614b98854c8b01feb03d22bece9 lines 80-91
+80:     return;
+81:   }
+82: 
+83:   if (broadcast_.block_id.is_masterchain()) {
+84:     if (!broadcast_.sig_set->is_final()) {
+85:       abort_query(td::Status::Error(ErrorCode::protoviolation, "not final signature set for masterchain block"));
+86:       return;
+87:     }
+88:     auto R = create_proof(broadcast_.block_id, broadcast_.proof.clone());
+89:     if (R.is_error()) {
+90:       abort_query(R.move_as_error_prefix("bad proof: "));
+91:       return;
+
+validator/validate-broadcast.cpp @ e9c12755e206d614b98854c8b01feb03d22bece9 lines 213-255
+213: void ValidateBroadcast::check_signatures_common(td::Ref<ConfigHolder> conf) {
+214:   VLOG(VALIDATOR_DEBUG) << "checking signatures (" << (broadcast_.sig_set->is_final() ? "final" : "approve") << ")";
+215:   if (header_info_.cc_seqno != broadcast_.sig_set->get_catchain_seqno()) {
+216:     abort_query(
+217:         td::Status::Error(ErrorCode::notready, "catchain seqno in block header and signature set does not match"));
+218:     return;
+219:   }
+220:   if (header_info_.validator_set_hash != broadcast_.sig_set->get_validator_set_hash()) {
+221:     abort_query(
+222:         td::Status::Error(ErrorCode::notready, "validator set hash in block header and signature set does not match"));
+223:     return;
+224:   }
+225:   if (signatures_checked_) {
+226:     checked_signatures();
+227:     return;
+228:   }
+229:   auto val_set = conf->get_validator_set(broadcast_.block_id.shard_full(), header_info_.utime, header_info_.cc_seqno);
+230:   if (val_set.is_null()) {
+231:     abort_query(td::Status::Error(ErrorCode::notready, "failed to compute validator set"));
+232:     return;
+233:   }
+234: 
+235:   if (val_set->get_validator_set_hash() != header_info_.validator_set_hash) {
+236:     if (!exact_key_block_handle_) {
+237:       abort_query(td::Status::Error(ErrorCode::notready, "too new block, don't know recent enough key block"));
+238:       return;
+239:     } else {
+240:       abort_query(td::Status::Error(ErrorCode::notready, "bad validator set hash"));
+241:       return;
+242:     }
+243:   }
+244:   td::Result<td::uint64> S;
+245:   if (broadcast_.sig_set->is_final()) {
+246:     S = broadcast_.sig_set->check_signatures(val_set, broadcast_.block_id);
+247:   } else {
+248:     S = broadcast_.sig_set->check_approve_signatures(val_set, broadcast_.block_id);
+249:   }
+250:   if (S.is_ok()) {
+251:     checked_signatures();
+252:   } else {
+253:     abort_query(S.move_as_error_prefix("failed signature check: "));
+254:   }
+255: }
+
+validator/impl/accept-block.cpp @ e9c12755e206d614b98854c8b01feb03d22bece9 lines 253-267
+253:   // 7. check signatures
+254:   if (!is_fake_) {
+255:     td::Result<td::uint64> sign_chk;
+256:     if (signatures_->is_final()) {
+257:       sign_chk = signatures_->check_signatures(validator_set_, id_);
+258:     } else {
+259:       sign_chk = signatures_->check_approve_signatures(validator_set_, id_);
+260:     }
+261:     if (sign_chk.is_error()) {
+262:       auto err = sign_chk.move_as_error();
+263:       VLOG(VALIDATOR_WARNING) << "signature check failed : " << err.to_string();
+264:       abort_query(std::move(err));
+265:       return false;
+266:     }
+267:   }
+
+validator/impl/accept-block.cpp @ e9c12755e206d614b98854c8b01feb03d22bece9 lines 504-528
+504:   VLOG(VALIDATOR_DEBUG) << "written block info";
+505:   if (data_.not_null()) {
+506:     block_root_ = data_->root_cell();
+507:     if (block_root_.is_null()) {
+508:       fatal_error("block data does not contain a root cell");
+509:       return;
+510:     }
+511:     // generate proof
+512:     if (!create_new_proof()) {
+513:       fatal_error("cannot generate proof for block "s + id_.to_str());
+514:       return;
+515:     }
+516:     send_broadcasts();
+517:     if (!apply_) {
+518:       written_state({});
+519:       return;
+520:     }
+521:     auto P = td::PromiseCreator::lambda([SelfId = actor_id(this)](td::Result<td::Ref<ShardState>> R) {
+522:       check_send_error(SelfId, R) ||
+523:           td::actor::send_closure_bool(SelfId, &AcceptBlockQuery::got_prev_state, R.move_as_ok());
+524:     });
+525: 
+526:     VLOG(VALIDATOR_DEBUG) << "wait_prev_block_state";
+527:     td::actor::send_closure(manager_, &ValidatorManager::wait_prev_block_state, handle_, priority(), timeout_,
+528:                             std::move(P));
+
+validator/impl/accept-block.cpp @ e9c12755e206d614b98854c8b01feb03d22bece9 lines 960-986
+960: void AcceptBlockQuery::send_broadcasts() {
+961:   if (block_broadcast_mode_ == 0 && finality_broadcast_mode_ == 0) {
+962:     return;
+963:   }
+964:   VLOG(VALIDATOR_DEBUG) << "send_broadcasts block_mode=" << block_broadcast_mode_
+965:                         << " finality_mode=" << finality_broadcast_mode_;
+966:   if (finality_broadcast_mode_ != 0) {
+967:     td::actor::send_closure_later(manager_, &ValidatorManager::send_block_finality_broadcast,
+968:                                   BlockFinalityBroadcast{id_, signatures_}, finality_broadcast_mode_);
+969:   }
+970: 
+971:   if (block_broadcast_mode_ == 0) {
+972:     return;
+973:   }
+974:   BlockBroadcast b;
+975:   b.data = data_->data();
+976:   b.block_id = id_;
+977:   b.sig_set = signatures_;
+978:   if (is_masterchain()) {
+979:     b.proof = proof_->data();
+980:   } else {
+981:     b.proof = proof_link_->data();
+982:   }
+983: 
+984:   // do not wait for answer
+985:   td::actor::send_closure_later(manager_, &ValidatorManager::send_block_broadcast, std::move(b),
+986:                                 block_broadcast_mode_);
+
+validator/impl/liteserver.cpp @ e9c12755e206d614b98854c8b01feb03d22bece9 lines 365-389
+365: void LiteQuery::perform_getBlock(BlockIdExt blkid) {
+366:   LOG(INFO) << "started a getBlock(" << blkid.to_str() << ") liteserver query";
+367:   if (!blkid.is_valid_full()) {
+368:     fatal_error("invalid BlockIdExt");
+369:     return;
+370:   }
+371:   td::actor::send_closure(manager_, &ValidatorManager::get_block_data_for_litequery, blkid,
+372:                           [Self = actor_id(this), blkid](td::Result<Ref<tos::validator::BlockData>> res) {
+373:                             if (res.is_error()) {
+374:                               td::actor::send_closure(Self, &LiteQuery::abort_query, res.move_as_error());
+375:                             } else {
+376:                               td::actor::send_closure_later(Self, &LiteQuery::continue_getBlock, blkid,
+377:                                                             res.move_as_ok());
+378:                             }
+379:                           });
+380: }
+381: 
+382: void LiteQuery::continue_getBlock(BlockIdExt blkid, Ref<tos::validator::BlockData> block) {
+383:   LOG(INFO) << "obtained data for getBlock(" << blkid.to_str() << ")";
+384:   CHECK(block.not_null());
+385:   auto b = tos::create_serialize_tl_object<tos::lite_api::liteServer_blockData>(tos::create_tl_lite_block_id(blkid),
+386:                                                                                 block->data());
+387: 
+388:   finish_query(std::move(b));
+389: }
+
+validator/impl/liteserver.cpp @ e9c12755e206d614b98854c8b01feb03d22bece9 lines 504-549
+504: void LiteQuery::perform_getState(BlockIdExt blkid) {
+505:   LOG(INFO) << "started a getState(" << blkid.to_str() << ") liteserver query";
+506:   if (!blkid.is_valid_full()) {
+507:     fatal_error("invalid BlockIdExt");
+508:     return;
+509:   }
+510:   if (blkid.id.seqno > 1000) {
+511:     fatal_error("cannot request total state: possibly too large");
+512:     return;
+513:   }
+514:   if (blkid.id.seqno) {
+515:     td::actor::send_closure(manager_, &ValidatorManager::get_block_state_for_litequery, blkid,
+516:                             [Self = actor_id(this), blkid](td::Result<Ref<ShardState>> res) {
+517:                               if (res.is_error()) {
+518:                                 td::actor::send_closure(Self, &LiteQuery::abort_query, res.move_as_error());
+519:                               } else {
+520:                                 td::actor::send_closure_later(Self, &LiteQuery::continue_getState, blkid,
+521:                                                               res.move_as_ok());
+522:                               }
+523:                             });
+524:   } else {
+525:     td::actor::send_closure_later(manager_, &ValidatorManager::get_zero_state, blkid,
+526:                                   [Self = actor_id(this), blkid](td::Result<td::BufferSlice> res) {
+527:                                     if (res.is_error()) {
+528:                                       td::actor::send_closure(Self, &LiteQuery::abort_query, res.move_as_error());
+529:                                     } else {
+530:                                       td::actor::send_closure_later(Self, &LiteQuery::continue_getZeroState, blkid,
+531:                                                                     res.move_as_ok());
+532:                                     }
+533:                                   });
+534:   }
+535: }
+536: 
+537: void LiteQuery::continue_getState(BlockIdExt blkid, Ref<tos::validator::ShardState> state) {
+538:   LOG(INFO) << "obtained data for getState(" << blkid.to_str() << ")";
+539:   CHECK(state.not_null());
+540:   auto res = state->serialize();
+541:   if (res.is_error()) {
+542:     abort_query(res.move_as_error());
+543:     return;
+544:   }
+545:   auto data = res.move_as_ok();
+546:   FileHash file_hash;
+547:   td::sha256(data, file_hash.as_slice());
+548:   auto b = tos::create_serialize_tl_object<tos::lite_api::liteServer_blockState>(
+549:       tos::create_tl_lite_block_id(blkid), state->root_hash(), file_hash, std::move(data));
+
+validator/impl/liteserver.cpp @ e9c12755e206d614b98854c8b01feb03d22bece9 lines 799-842
+799: void LiteQuery::perform_getAccountState(BlockIdExt blkid, WorkchainId workchain, StdSmcAddress addr, int mode) {
+800:   LOG(INFO) << "started a getAccountState(" << blkid.to_str() << ", " << workchain << ", " << addr.to_hex() << ", "
+801:             << mode << ") liteserver query";
+802:   if (blkid.id.workchain != masterchainId && blkid.id.workchain != workchain) {
+803:     fatal_error("reference block for a getAccountState() must belong to the masterchain");
+804:     return;
+805:   }
+806:   //if (workchain != masterchainId && workchain != basechainId) {
+807:   //  fatal_error("cannot get account states from specified workchain");
+808:   //  return;
+809:   //}
+810:   if (!blkid.is_valid()) {
+811:     fatal_error("reference block id for a getAccountState() is invalid");
+812:     return;
+813:   }
+814:   if (workchain == blkid.id.workchain &&
+815:       !tos::shard_contains(blkid.shard_full(), extract_addr_prefix(workchain, addr))) {
+816:     fatal_error("requested account id is not contained in the shard of the reference block");
+817:     return;
+818:   }
+819:   acc_workchain_ = workchain;
+820:   acc_addr_ = addr;
+821:   mode_ = mode;
+822:   if (blkid.id.workchain != masterchainId) {
+823:     base_blk_id_ = blkid;
+824:     set_continuation([&]() -> void { finish_getAccountState({}); });
+825:     request_block_data_state(blkid);
+826:   } else if (blkid.id.seqno != ~0U) {
+827:     set_continuation([&]() -> void { continue_getAccountState(); });
+828:     request_mc_block_data_state(blkid);
+829:   } else {
+830:     LOG(INFO) << "sending a get_last_liteserver_state_block query to manager";
+831:     td::actor::send_closure_later(
+832:         manager_, &tos::validator::ValidatorManager::get_last_liteserver_state_block,
+833:         [Self = actor_id(this)](td::Result<std::pair<Ref<tos::validator::MasterchainState>, BlockIdExt>> res) -> void {
+834:           if (res.is_error()) {
+835:             td::actor::send_closure(Self, &LiteQuery::abort_query, res.move_as_error());
+836:           } else {
+837:             auto pair = res.move_as_ok();
+838:             td::actor::send_closure_later(Self, &LiteQuery::continue_getAccountState_0, std::move(pair.first),
+839:                                           pair.second);
+840:           }
+841:         });
+842:   }
+
+validator/impl/collator.cpp @ e9c12755e206d614b98854c8b01feb03d22bece9 lines 971-1005
+971: bool Collator::request_neighbor_msg_queues() {
+972:   assert(config_ && shard_conf_);
+973:   auto neighbor_list = shard_conf_->get_neighbor_shard_hash_ids(shard_);
+974:   LOG(DEBUG) << "got a preliminary list of " << neighbor_list.size() << " neighbors for " << shard_.to_str();
+975:   for (tos::BlockId blk_id : neighbor_list) {
+976:     if (blk_id.seqno == 0 && blk_id.shard_full() != shard_) {
+977:       continue;
+978:     }
+979:     auto shard_ptr = shard_conf_->get_shard_hash(tos::ShardIdFull(blk_id));
+980:     if (shard_ptr.is_null()) {
+981:       return fatal_error(-667, "cannot obtain shard hash for neighbor "s + blk_id.to_str());
+982:     }
+983:     if (shard_ptr->blk_.id != blk_id) {
+984:       return fatal_error(-667, "invalid block id "s + shard_ptr->blk_.to_str() +
+985:                                    " returned in information for neighbor " + blk_id.to_str());
+986:     }
+987:     neighbors_.emplace_back(*shard_ptr);
+988:   }
+989:   std::vector<BlockIdExt> top_blocks;
+990:   unsigned i = 0;
+991:   for (block::McShardDescr& descr : neighbors_) {
+992:     LOG(DEBUG) << "neighbor #" << i << " : " << descr.blk_.to_str();
+993:     if (prev_block_idx(descr.blk_) == -1) {
+994:       top_blocks.push_back(descr.blk_);
+995:     }
+996:     ++i;
+997:   }
+998:   ++pending;
+999:   auto token = perf_log_.start_action("neighbor_msg_queues");
+1000:   td::actor::send_closure_later(
+1001:       manager, &ValidatorManager::wait_neighbor_msg_queue_proofs, shard_, std::move(top_blocks), timeout_,
+1002:       [self = get_self(),
+1003:        token = std::move(token)](td::Result<std::map<BlockIdExt, Ref<OutMsgQueueProof>>> res) mutable {
+1004:         td::actor::send_closure_later(std::move(self), &Collator::got_neighbor_msg_queues, std::move(res),
+1005:                                       std::move(token));
+
+validator/impl/collator.cpp @ e9c12755e206d614b98854c8b01feb03d22bece9 lines 6404-6418
+6404: bool Collator::create_block_extra(Ref<vm::Cell>& block_extra) {
+6405:   bool mc = is_masterchain();
+6406:   Ref<vm::Cell> mc_block_extra;
+6407:   vm::CellBuilder cb, cb2;
+6408:   return cb.store_long_bool(0x4a33f6fdU, 32)                                             // block_extra
+6409:          && in_msg_dict->append_dict_to_bool(cb2) && cb.store_ref_bool(cb2.finalize())   // in_msg_descr:^InMsgDescr
+6410:          && out_msg_dict->append_dict_to_bool(cb2) && cb.store_ref_bool(cb2.finalize())  // out_msg_descr:^OutMsgDescr
+6411:          && cb.store_ref_bool(shard_account_blocks_)          // account_blocks:^ShardAccountBlocks
+6412:          && cb.store_bits_bool(rand_seed_)                    // rand_seed:bits256
+6413:          && cb.store_bits_bool(params_.creator.as_bits256())  // created_by:bits256
+6414:          && cb.store_bool_bool(mc)                            // custom:(Maybe
+6415:          && (!mc || (create_mc_block_extra(mc_block_extra) && cb.store_ref_bool(mc_block_extra)))  // .. ^McBlockExtra)
+6416:          && cb.finalize_to(block_extra);                                                           // = BlockExtra;
+6417: }
+6418: 
+
+validator/impl/collator.cpp @ e9c12755e206d614b98854c8b01feb03d22bece9 lines 6458-6486
+6458:   SCOPE_EXIT {
+6459:     stats_.work_time.create_block += timer.elapsed_both();
+6460:   };
+6461:   Ref<vm::Cell> block_info, extra;
+6462:   if (!create_block_info(block_info)) {
+6463:     return fatal_error("cannot create BlockInfo for the new block");
+6464:   }
+6465:   if (!check_value_flow()) {
+6466:     return fatal_error("cannot create ValueFlow for the new block");
+6467:   }
+6468:   if (!create_block_extra(extra)) {
+6469:     return fatal_error("cannot create BlockExtra for the new block");
+6470:   }
+6471:   vm::CellBuilder cb, cb2;
+6472:   if (!(cb.store_long_bool(0x11ef55aa, 32)     // block#11ef55aa
+6473:         && cb.store_long_bool(global_id_, 32)  // global_id:int32
+6474:         && global_id_                          // { global_id != 0 }
+6475:         && cb.store_ref_bool(block_info)       // info:^BlockInfo
+6476:         && value_flow_.store(cb2)              // value_flow:^ValueFlow
+6477:         && cb.store_ref_bool(cb2.finalize())   // ...
+6478:         && cb.store_ref_bool(state_update)     // state_update:^(MERKLE_UPDATE ShardState)
+6479:         && cb.store_ref_bool(extra)            // extra:^BlockExtra
+6480:         && cb.finalize_to(new_block))) {       // = Block
+6481:     return fatal_error("cannot create new Block");
+6482:   }
+6483:   if (verbosity >= 3 * 1) {
+6484:     FLOG(INFO) {
+6485:       sb << "new Block: ";
+6486:       block::gen::t_Block.print_ref(sb, new_block);
+
+validator/impl/validate-query.cpp @ e9c12755e206d614b98854c8b01feb03d22bece9 lines 1489-1505
+1489:   res = vm::MerkleUpdate::may_apply(prev_state_root_, state_update_);
+1490:   if (res.is_error()) {
+1491:     return reject_query("state update cannot be applied: "s + res.move_as_error().to_string());
+1492:   }
+1493:   auto r_state_root = vm::MerkleUpdate::apply(prev_state_root_, state_update_);
+1494:   if (r_state_root.is_error()) {
+1495:     return reject_query("cannot apply Merkle update from block to compute new state");
+1496:   }
+1497:   state_root_ = r_state_root.move_as_ok();
+1498:   Bits256 state_hash{state_root_->get_hash().bits()};
+1499:   if (state_hash != state_hash_) {
+1500:     return reject_query("next state hash mismatch for block "s + id_.to_str() + " : block header declares " +
+1501:                         state_hash_.to_hex() + " , actual " + state_hash.to_hex());
+1502:   }
+1503:   block::gen::ShardStateUnsplit::Record info;
+1504:   if (!tlb::unpack_cell(state_root_, info)) {
+1505:     return reject_query("next state does not have a valid header");
+
+validator/impl/validate-query.cpp @ e9c12755e206d614b98854c8b01feb03d22bece9 lines 1710-1776
+1710: bool ValidateQuery::request_neighbor_queues() {
+1711:   REJECT_UNLESS(new_shard_conf_);
+1712:   auto neighbor_list = new_shard_conf_->get_neighbor_shard_hash_ids(shard_);
+1713:   LOG(DEBUG) << "got a preliminary list of " << neighbor_list.size() << " neighbors for " << shard_.to_str();
+1714:   for (tos::BlockId blk_id : neighbor_list) {
+1715:     if (blk_id.seqno == 0 && blk_id.shard_full() != shard_) {
+1716:       continue;
+1717:     }
+1718:     auto shard_ptr = new_shard_conf_->get_shard_hash(tos::ShardIdFull(blk_id));
+1719:     if (shard_ptr.is_null()) {
+1720:       return reject_query("cannot obtain shard hash for neighbor "s + blk_id.to_str());
+1721:     }
+1722:     if (shard_ptr->blk_.id != blk_id) {
+1723:       return reject_query("invalid block id "s + shard_ptr->blk_.to_str() + " returned in information for neighbor " +
+1724:                           blk_id.to_str());
+1725:     }
+1726:     neighbors_.emplace_back(*shard_ptr);
+1727:   }
+1728:   int i = 0;
+1729:   if (full_collated_data_) {
+1730:     for (block::McShardDescr& descr : neighbors_) {
+1731:       LOG(DEBUG) << "getting outbound queue of neighbor #" << i << " from collated data : " << descr.blk_.to_str();
+1732:       if (descr.blk_.is_masterchain()) {
+1733:         if (descr.blk_ != mc_state_->get_block_id()) {
+1734:           return fatal_error("neighbor from masterchain is not the last mc block");
+1735:         }
+1736:         ++pending;
+1737:         send_closure_later(get_self(), &ValidateQuery::got_neighbor_out_queue, i, mc_state_->message_queue(),
+1738:                            td::PerfLogAction{});
+1739:         ++i;
+1740:         continue;
+1741:       }
+1742:       auto state_root = get_virt_state_root(descr.blk_);
+1743:       if (state_root.is_null()) {
+1744:         return reject_query(PSTRING() << "cannot get state root form collated data: " << descr.blk_.to_str());
+1745:       }
+1746:       auto state = ShardStateQ::fetch(descr.blk_, {}, std::move(state_root));
+1747:       if (state.is_error()) {
+1748:         return reject_query("cannot fetch shard state from collated data", state.move_as_error());
+1749:       }
+1750:       ++pending;
+1751:       send_closure_later(get_self(), &ValidateQuery::got_neighbor_out_queue, i, state.move_as_ok()->message_queue(),
+1752:                          td::PerfLogAction{});
+1753:       ++i;
+1754:     }
+1755:   } else {
+1756:     for (block::McShardDescr& descr : neighbors_) {
+1757:       LOG(DEBUG) << "requesting outbound queue of neighbor #" << i << " : " << descr.blk_.to_str();
+1758:       ++pending;
+1759:       if (int prev_idx = prev_block_idx(descr.blk_); prev_idx >= 0) {
+1760:         td::actor::send_closure(actor_id(this), &ValidateQuery::got_neighbor_out_queue, i,
+1761:                                 prev_states.at(prev_idx)->message_queue(), td::PerfLogAction{});
+1762:       } else {
+1763:         send_closure_later(
+1764:             manager, &ValidatorManager::wait_block_message_queue_short, descr.blk_, priority(), timeout,
+1765:             [self = get_self(), i, token = perf_log_.start_action(PSTRING() << "wait_block_message_queue #" << i)](
+1766:                 td::Result<Ref<MessageQueue>> res) mutable {
+1767:               td::actor::send_closure(std::move(self), &ValidateQuery::got_neighbor_out_queue, i, std::move(res),
+1768:                                       std::move(token));
+1769:             });
+1770:       }
+1771:       ++i;
+1772:     }
+1773:   }
+1774:   return true;
+1775: }
+1776: 
+
+validator/impl/validate-query.cpp @ e9c12755e206d614b98854c8b01feb03d22bece9 lines 7684-7705
+7684: Ref<vm::Cell> ValidateQuery::get_virt_state_root(const BlockIdExt& block_id) {
+7685:   auto it = virt_roots_.find(block_id.root_hash);
+7686:   if (it == virt_roots_.end()) {
+7687:     return {};
+7688:   }
+7689:   Ref<vm::Cell> root = it->second;
+7690:   if (block_id.seqno() == 0) {
+7691:     return root;
+7692:   }
+7693:   block::gen::Block::Record block;
+7694:   if (!tlb::unpack_cell(root, block)) {
+7695:     return {};
+7696:   }
+7697:   vm::CellSlice upd_cs{vm::NoVm(), block.state_update};
+7698:   if (!(upd_cs.is_special() && upd_cs.prefetch_long(8) == 4 && upd_cs.size_ext() == 0x20228)) {
+7699:     return {};
+7700:   }
+7701:   td::Bits256 state_root_hash = upd_cs.prefetch_ref(1)->get_hash(0).bits();
+7702:   it = virt_roots_.find(state_root_hash);
+7703:   return it == virt_roots_.end() ? Ref<vm::Cell>{} : it->second;
+7704: }
+7705: 
+
+validator/impl/out-msg-queue-proof.cpp @ e9c12755e206d614b98854c8b01feb03d22bece9 lines 168-211
+168: td::Result<std::vector<td::Ref<OutMsgQueueProof>>> OutMsgQueueProof::fetch(ShardIdFull dst_shard,
+169:                                                                            std::vector<BlockIdExt> blocks,
+170:                                                                            block::ImportedMsgQueueLimits limits,
+171:                                                                            const tos_api::tosNode_outMsgQueueProof& f) {
+172:   try {
+173:     std::vector<td::Ref<OutMsgQueueProof>> res;
+174:     TRY_RESULT(queue_proofs, vm::std_boc_deserialize_multi(f.queue_proofs_, (int)blocks.size()));
+175:     TRY_RESULT(block_state_proofs, vm::std_boc_deserialize_multi(f.block_state_proofs_, (int)blocks.size()));
+176:     if (queue_proofs.size() != blocks.size()) {
+177:       return td::Status::Error("invalid size of queue_proofs");
+178:     }
+179:     if (f.msg_counts_.size() != blocks.size()) {
+180:       return td::Status::Error("invalid size of msg_counts");
+181:     }
+182:     size_t j = 0;
+183:     std::vector<std::pair<BlockIdExt, block::gen::OutMsgQueueInfo::Record>> data(blocks.size());
+184:     for (size_t i = 0; i < blocks.size(); ++i) {
+185:       td::Bits256 state_root_hash;
+186:       Ref<vm::Cell> block_state_proof = {};
+187:       if (blocks[i].seqno() == 0) {
+188:         state_root_hash = blocks[i].root_hash;
+189:       } else {
+190:         if (j == block_state_proofs.size()) {
+191:           return td::Status::Error("invalid size of block_state_proofs");
+192:         }
+193:         block_state_proof = block_state_proofs[j++];
+194:         TRY_RESULT_ASSIGN(state_root_hash, unpack_block_state_proof(blocks[i], block_state_proof));
+195:       }
+196:       TRY_RESULT(state_root, vm::MerkleProof::virtualize(queue_proofs[i]));
+197:       if (state_root->get_hash().as_slice() != state_root_hash.as_slice()) {
+198:         return td::Status::Error("state root hash mismatch");
+199:       }
+200:       res.emplace_back(true, blocks[i], state_root, block_state_proof, false, f.msg_counts_[i]);
+201: 
+202:       data[i].first = blocks[i];
+203:       TRY_RESULT(state, ShardStateQ::fetch(blocks[i], {}, state_root));
+204:       TRY_RESULT(outq_descr, state->message_queue());
+205:       block::gen::OutMsgQueueInfo::Record qinfo;
+206:       if (!tlb::unpack_cell(outq_descr->root_cell(), data[i].second)) {
+207:         return td::Status::Error("invalid message queue");
+208:       }
+209:     }
+210:     if (j != block_state_proofs.size()) {
+211:       return td::Status::Error("invalid size of block_state_proofs");
+
+validator/impl/block.cpp @ e9c12755e206d614b98854c8b01feb03d22bece9 lines 73-108
+73:   }
+74:   // Round 138 MEDIUM fix: enforce that the supplied bytes
+75:   // actually hash to the BlockIdExt the caller claimed.  Pre-fix
+76:   // BlockQ::init only validated structural BoC shape; the
+77:   // archive load path (RootDb::get_block_data → ArchiveSlice::
+78:   // get_file → create_block(id, bytes)) returned the block bytes
+79:   // it found at the given fileref offset without integrity-
+80:   // checking them against the requested BlockIdExt.  A single
+81:   // archive corruption / mis-indexed write could let
+82:   // liteServer_getBlock(idA) return dataB to clients and let
+83:   // liteServer_getBlockHeader(idA) hit a fatal CHECK on the same
+84:   // mismatch.  Same integrity-gate class as round 136's
+85:   // CellLoader::load fix.
+86:   auto actual_root_hash = root_->get_hash();
+87:   if (actual_root_hash.as_slice() != id_.root_hash.as_slice()) {
+88:     return td::Status::Error(
+89:         -668,
+90:         PSLICE() << "BlockData integrity error: bytes for "
+91:                  << id_.to_str() << " produce root hash 0x"
+92:                  << actual_root_hash.to_hex()
+93:                  << " (expected 0x" << id_.root_hash.to_hex() << ")");
+94:   }
+95:   auto actual_file_hash = block::compute_file_hash(data_);
+96:   if (actual_file_hash != id_.file_hash) {
+97:     return td::Status::Error(
+98:         -668,
+99:         PSLICE() << "BlockData integrity error: bytes for "
+100:                  << id_.to_str() << " produce file hash 0x"
+101:                  << actual_file_hash.to_hex()
+102:                  << " (expected 0x" << id_.file_hash.to_hex() << ")");
+103:   }
+104:   return td::Status::OK();
+105: }
+106: 
+107: td::Result<td::Ref<BlockQ>> BlockQ::create(BlockIdExt id, td::BufferSlice data) {
+108:   td::Ref<BlockQ> res{true, id, std::move(data)};
+
+validator/consensus/block-accepter.cpp @ e9c12755e206d614b98854c8b01feb03d22bece9 lines 30-90
+30:   td::actor::Task<> process(BusHandle, std::shared_ptr<FinalizeBlock> event) {
+31:     const auto& block = std::get<BlockCandidate>(event->candidate->block);
+32:     auto block_data = create_block(block.id, block.data.clone()).move_as_ok();
+33: 
+34:     bool is_leader = owning_bus()->is_validator() && event->candidate->leader == owning_bus()->local_id->idx;
+35: 
+36:     int block_broadcast_mode = fullnode::FullNode::broadcast_mode_custom;
+37:     int finality_broadcast_mode = 0;
+38:     bool send_shard_block_desc = true;
+39:     if (owning_bus()->config.enable_plumtree_broadcast()) {
+40:       finality_broadcast_mode = fullnode::FullNode::broadcast_mode_custom |
+41:                                 fullnode::FullNode::broadcast_mode_fast_sync |
+42:                                 fullnode::FullNode::broadcast_mode_public;
+43:       if (is_leader) {
+44:         block_broadcast_mode |= fullnode::FullNode::broadcast_mode_public;
+45:       }
+46:       send_shard_block_desc = false;
+47:     } else {
+48:       if (is_leader) {
+49:         block_broadcast_mode |=
+50:             fullnode::FullNode::broadcast_mode_public | fullnode::FullNode::broadcast_mode_fast_sync;
+51:       }
+52:       if (sent_candidate_broadcasts_.contains(block.id)) {
+53:         block_broadcast_mode &=
+54:             ~(fullnode::FullNode::broadcast_mode_fast_sync | fullnode::FullNode::broadcast_mode_custom);
+55:       }
+56:     }
+57:     if (last_mc_finalized_seqno_ >= 2 && block.id.seqno() < last_mc_finalized_seqno_ - 2) {
+58:       block_broadcast_mode = 0;
+59:       finality_broadcast_mode = 0;
+60:     }
+61:     co_await td::actor::ask(owning_bus()->manager, &ManagerFacade::accept_block, block.id, block_data,
+62:                             event->candidate->leader.value(), event->signatures, block_broadcast_mode,
+63:                             finality_broadcast_mode, send_shard_block_desc, true);
+64:     owning_bus().publish<TraceEvent>(stats::BlockAccepted::create(event->candidate->id));
+65:     co_return td::Unit{};
+66:   }
+67: 
+68:   template <>
+69:   void handle(BusHandle, std::shared_ptr<const BlockFinalizedInMasterchain> event) {
+70:     last_mc_finalized_seqno_ = std::max(event->block.seqno(), last_mc_finalized_seqno_);
+71:   }
+72: 
+73:   template <>
+74:   void handle(BusHandle bus, std::shared_ptr<const CandidateGenerated> event) {
+75:     if (bus->config.enable_plumtree_broadcast()) {
+76:       return;
+77:     }
+78:     if (bus->shard.is_masterchain() || event->candidate->is_empty()) {
+79:       return;
+80:     }
+81:     const BlockCandidate& candidate = std::get<BlockCandidate>(event->candidate->block);
+82:     if (!sent_candidate_broadcasts_.insert(candidate.id).second) {
+83:       return;
+84:     }
+85:     td::actor::send_closure(bus->manager, &ManagerFacade::send_block_candidate_broadcast, candidate.id,
+86:                             candidate.data.clone(),
+87:                             fullnode::FullNode::broadcast_mode_fast_sync | fullnode::FullNode::broadcast_mode_custom);
+88:   }
+89: 
+90:  private:
+
+validator/consensus/simplex/state-resolver.cpp @ e9c12755e206d614b98854c8b01feb03d22bece9 lines 275-330
+275:       auto candidate = (co_await owning_bus().publish<ResolveCandidate>(*id)).candidate;
+276:       if (candidate->is_empty()) {
+277:         id = candidate->parent_id;
+278:         continue;
+279:       }
+280: 
+281:       const auto& block_candidate = std::get<BlockCandidate>(candidate->block);
+282:       auto candidate_gen_utime = get_candidate_gen_utime_exact(block_candidate);
+283:       if (candidate_gen_utime.is_error()) {
+284:         LOG(WARNING) << "Simplex state-resolver: candidate " << *id
+285:                      << " has invalid generation time: " << candidate_gen_utime.error();
+286:         co_return candidate_gen_utime.move_as_error();
+287:       }
+288:       if (!gen_utime_exact.has_value()) {
+289:         gen_utime_exact = candidate_gen_utime.move_as_ok();
+290:       }
+291: 
+292:       if (!reconstruct_from_candidate_data && co_await is_finalized(*id, true)) {
+293:         auto genesis = co_await genesis_.get();
+294:         auto manager_state =
+295:             co_await ChainState::from_manager(owning_bus()->manager, owning_bus()->shard,
+296:                                               {candidate->block_id()}, genesis->state->min_mc_block_id())
+297:                 .wrap();
+298:         if (manager_state.is_ok()) {
+299:           state = manager_state.move_as_ok();
+300:           break;
+301:         }
+302:         if (manager_state.error().code() != ErrorCode::timeout &&
+303:             manager_state.error().code() != ErrorCode::notready) {
+304:           co_return manager_state.move_as_error();
+305:         }
+306: 
+307:         // A finalized consensus candidate can temporarily be absent from the
+308:         // manager's block/state indexes during cold-start replay. Restarting
+309:         // the entire ancestor walk on that transient timeout is both
+310:         // needlessly expensive and, for a long empty chain, a liveness bug.
+311:         // Reconstruct it from its already validated candidate data instead.
+312:         LOG(WARNING) << "Simplex state-resolver: finalized anchor " << *id
+313:                      << " is not available from manager (" << manager_state.error()
+314:                      << "); reconstructing it from candidate data";
+315:         reconstruct_from_candidate_data = true;
+316:       }
+317: 
+318:       candidates_to_apply.push_back(std::move(candidate));
+319:       id = candidates_to_apply.back()->parent_id;
+320:     }
+321: 
+322:     if (!state.has_value()) {
+323:       auto genesis = co_await genesis_.get();
+324:       state = co_await ChainState::from_manager(owning_bus()->manager, owning_bus()->shard,
+325:                                                genesis->state->block_ids(), genesis->state->min_mc_block_id());
+326:     }
+327:     for (auto it = candidates_to_apply.rbegin(); it != candidates_to_apply.rend(); ++it) {
+328:       state = (*state)->apply(std::get<BlockCandidate>((*it)->block));
+329:     }
+330:     co_return ResolvedState{*state, gen_utime_exact};
+
+validator/consensus/chain-state.cpp @ e9c12755e206d614b98854c8b01feb03d22bece9 lines 115-134
+115: td::Ref<ChainState> ChainState::apply(const BlockCandidate& candidate) const {
+116:   try {
+117:     auto block = create_block(candidate.id, candidate.data.clone()).move_as_ok();
+118: 
+119:     block::gen::Block::Record rec;
+120:     bool rc = block::gen::unpack_cell(block->root_cell(), rec);
+121:     LOG_CHECK(rc) << "Failed to unpack block " << candidate.id.to_str();
+122: 
+123:     auto state = vm::MerkleUpdate::apply(root_, rec.state_update).ensure().move_as_ok();
+124: 
+125:     return td::Ref<ChainState>(new ChainState{NormalTip{block, state}, min_mc_block_id_},
+126:                                td::Ref<ChainState>::acquire_t{});
+127:   } catch (vm::CellBuilder::CellCreateError& e) {
+128:     LOG(FATAL) << "Failed to apply Merkle update of " << candidate.id.to_str() << ": CellCreateError";
+129:     unreachable();
+130:   } catch (vm::CellBuilder::CellWriteError& e) {
+131:     LOG(FATAL) << "Failed to apply Merkle update of " << candidate.id.to_str() << ": CellWriteError";
+132:     unreachable();
+133:   } catch (vm::VmError& e) {
+134:     LOG(FATAL) << "Failed to apply block " << candidate.id.to_str() << ": VmError: " << e.as_status();
+
+crypto/block/check-proof.cpp @ e9c12755e206d614b98854c8b01feb03d22bece9 lines 98-122
+98: td::Status check_shard_proof(tos::BlockIdExt blk, tos::BlockIdExt shard_blk, td::Slice shard_proof) {
+99:   if (blk == shard_blk) {
+100:     if (!shard_proof.empty()) {
+101:       LOG(WARNING) << "Unexpected non-empty shard proof";
+102:     }
+103:     return td::Status::OK();
+104:   }
+105:   if (!blk.is_masterchain() || !blk.is_valid_full()) {
+106:     return td::Status::Error(PSLICE() << "reference block " << blk.to_str()
+107:                                       << " for a getAccountState query must belong to the masterchain");
+108:   }
+109:   TRY_RESULT_PREFIX(P_roots, vm::std_boc_deserialize_multi(std::move(shard_proof)),
+110:                     "cannot deserialize shard configuration proof");
+111:   if (P_roots.size() != 2) {
+112:     return td::Status::Error("shard configuration proof must have exactly two roots");
+113:   }
+114:   try {
+115:     TRY_RESULT(mc_state_root, vm::MerkleProof::virtualize(std::move(P_roots[1])));
+116:     tos::Bits256 mc_state_hash = mc_state_root->get_hash().bits();
+117:     TRY_RESULT(virt_root, vm::MerkleProof::virtualize(std::move(P_roots[0])));
+118:     TRY_STATUS_PREFIX(check_block_header_proof(std::move(virt_root), blk, &mc_state_hash, true),
+119:                       "error in shard configuration block header proof :");
+120:     block::gen::ShardStateUnsplit::Record sstate;
+121:     if (!(tlb::unpack_cell(mc_state_root, sstate))) {
+122:       return td::Status::Error("cannot unpack masterchain state header");
+
+crypto/block/check-proof.cpp @ e9c12755e206d614b98854c8b01feb03d22bece9 lines 209-241
+209: td::Result<AccountState::Info> AccountState::validate(tos::BlockIdExt ref_blk, block::StdAddress addr) const {
+210:   TRY_RESULT_PREFIX(true_root, vm::std_boc_deserialize(state.as_slice(), true), "cannot deserialize account state");
+211:   Ref<vm::Cell> root;
+212: 
+213:   if (is_virtualized && true_root.not_null()) {
+214:     TRY_RESULT_ASSIGN(root, vm::MerkleProof::virtualize(true_root));
+215:   } else {
+216:     root = true_root;
+217:   }
+218: 
+219:   if (blk != ref_blk && ref_blk.id.seqno != ~0U) {
+220:     return td::Status::Error(PSLICE() << "obtained getAccountState() for a different reference block " << blk.to_str()
+221:                                       << " instead of requested " << ref_blk.to_str());
+222:   }
+223: 
+224:   if (!shard_blk.is_valid_full()) {
+225:     return td::Status::Error(PSLICE() << "shard block id " << shard_blk.to_str() << " in answer is invalid");
+226:   }
+227: 
+228:   if (!tos::shard_contains(shard_blk.shard_full(), tos::extract_addr_prefix(addr.workchain, addr.addr))) {
+229:     return td::Status::Error(PSLICE() << "received data from shard block " << shard_blk.to_str()
+230:                                       << " that cannot contain requested account");
+231:   }
+232: 
+233:   TRY_STATUS(block::check_shard_proof(blk, shard_blk, shard_proof.as_slice()));
+234: 
+235:   Info res;
+236:   TRY_STATUS(block::check_account_proof(proof.as_slice(), shard_blk, addr, root, &res.last_trans_lt,
+237:                                         &res.last_trans_hash, &res.gen_utime, &res.gen_lt));
+238:   res.root = std::move(root);
+239:   res.true_root = std::move(true_root);
+240: 
+241:   return res;
+
+lite-client/lite-client.cpp @ e9c12755e206d614b98854c8b01feb03d22bece9 lines 1197-1239
+1197: bool TestNode::get_account_state(tos::WorkchainId workchain, tos::StdSmcAddress addr, tos::BlockIdExt ref_blkid,
+1198:                                  int addr_ext, std::string filename, int mode, bool prunned) {
+1199:   if (!ref_blkid.is_valid()) {
+1200:     return set_error("must obtain last block information before making other queries");
+1201:   }
+1202:   if (!(ready_ && !client_.empty())) {
+1203:     return set_error("server connection not ready");
+1204:   }
+1205:   if (addr_ext) {
+1206:     return get_special_smc_addr(
+1207:         addr_ext, [this, ref_blkid, filename, mode, prunned](td::Result<tos::StdSmcAddress> res) {
+1208:           if (res.is_error()) {
+1209:             LOG(ERROR) << "cannot resolve special smart contract address: " << res.move_as_error();
+1210:           } else {
+1211:             get_account_state(tos::masterchainId, res.move_as_ok(), ref_blkid, 0, filename, mode, prunned);
+1212:           }
+1213:         });
+1214:   }
+1215:   auto a = tos::create_tl_object<tos::lite_api::liteServer_accountId>(workchain, addr);
+1216:   td::BufferSlice b;
+1217:   if (prunned) {
+1218:     b = tos::serialize_tl_object(tos::create_tl_object<tos::lite_api::liteServer_getAccountStatePrunned>(
+1219:                                      tos::create_tl_lite_block_id(ref_blkid), std::move(a)),
+1220:                                  true);
+1221:   } else {
+1222:     b = tos::serialize_tl_object(tos::create_tl_object<tos::lite_api::liteServer_getAccountState>(
+1223:                                      tos::create_tl_lite_block_id(ref_blkid), std::move(a)),
+1224:                                  true);
+1225:   }
+1226:   LOG(INFO) << "requesting " << (prunned ? "prunned " : "") << "account state for " << workchain << ":" << addr.to_hex()
+1227:             << " with respect to " << ref_blkid.to_str() << " with savefile `" << filename << "` and mode " << mode;
+1228:   return envelope_send_query(std::move(b), [Self = actor_id(this), workchain, addr, ref_blkid, filename, mode,
+1229:                                             prunned](td::Result<td::BufferSlice> R) {
+1230:     if (R.is_error()) {
+1231:       return;
+1232:     }
+1233:     auto F = tos::fetch_tl_object<tos::lite_api::liteServer_accountState>(R.move_as_ok(), true);
+1234:     if (F.is_error()) {
+1235:       LOG(ERROR) << "cannot parse answer to liteServer.getAccountState";
+1236:     } else {
+1237:       auto f = F.move_as_ok();
+1238:       td::actor::send_closure_later(Self, &TestNode::got_account_state, ref_blkid, tos::create_block_id(f->id_),
+1239:                                     tos::create_block_id(f->shardblk_), std::move(f->shard_proof_),
+
+lite-client/lite-client.cpp @ e9c12755e206d614b98854c8b01feb03d22bece9 lines 2129-2157
+2129: void TestNode::got_account_state(tos::BlockIdExt ref_blk, tos::BlockIdExt blk, tos::BlockIdExt shard_blk,
+2130:                                  td::BufferSlice shard_proof, td::BufferSlice proof, td::BufferSlice state,
+2131:                                  tos::WorkchainId workchain, tos::StdSmcAddress addr, std::string filename, int mode,
+2132:                                  bool prunned) {
+2133:   LOG(INFO) << "got " << (prunned ? "prunned " : "") << "account state for " << workchain << ":" << addr.to_hex()
+2134:             << " with respect to blocks " << blk.to_str()
+2135:             << (shard_blk == blk ? "" : std::string{" and "} + shard_blk.to_str());
+2136:   block::AccountState account_state;
+2137:   account_state.blk = blk;
+2138:   account_state.shard_blk = shard_blk;
+2139:   account_state.shard_proof = std::move(shard_proof);
+2140:   account_state.proof = std::move(proof);
+2141:   account_state.state = std::move(state);
+2142:   account_state.is_virtualized = prunned;
+2143:   auto r_info = account_state.validate(ref_blk, block::StdAddress(workchain, addr));
+2144:   if (r_info.is_error()) {
+2145:     LOG(ERROR) << r_info.error().message();
+2146:     return;
+2147:   }
+2148:   auto out = td::TerminalIO::out();
+2149:   auto info = r_info.move_as_ok();
+2150:   if (mode < 0) {
+2151:     if (info.root.not_null()) {
+2152:       out << "account state is ";
+2153:       std::ostringstream outp;
+2154:       block::gen::t_Account.print_ref(print_limit_, outp, info.root);
+2155:       vm::load_cell_slice(info.root).print_rec(print_limit_, outp);
+2156:       out << outp.str();
+2157:       out << "last transaction lt = " << info.last_trans_lt << " hash = " << info.last_trans_hash.to_hex() << std::endl;
+
+validator-engine/validator-engine.hpp @ e9c12755e206d614b98854c8b01feb03d22bece9 lines 255-263
+255:   td::uint32 celldb_compress_depth_ = 0;
+256:   size_t max_open_archive_files_ =
+257:       tos::validator::ValidatorManagerOptions::default_max_open_archive_files();
+258:   double archive_preload_period_ = 0.0;
+259:   bool disable_rocksdb_stats_ = false;
+260:   bool nonfinal_ls_queries_enabled_ = false;
+261:   td::optional<td::uint64> celldb_cache_size_ = 1LL << 30;
+262:   td::optional<td::uint64> celldb_cache_min_size_;
+263:   td::uint64 celldb_cell_cache_max_size_{1000000};
+
+validator-engine/validator-engine.cpp @ e9c12755e206d614b98854c8b01feb03d22bece9 lines 6274-6280
+6274:   p.add_option('\0', "disable-rocksdb-stats", "disable gathering rocksdb statistics (enabled by default)", [&]() {
+6275:     acts.push_back([&x]() { td::actor::send_closure(x, &ValidatorEngine::set_disable_rocksdb_stats, true); });
+6276:   });
+6277:   p.add_option('\0', "nonfinal-ls", "enable special LS queries to non-finalized blocks", [&]() {
+6278:     acts.push_back([&x]() { td::actor::send_closure(x, &ValidatorEngine::set_nonfinal_ls_queries_enabled); });
+6279:   });
+6280:   p.add_checked_option(
+

@@ -1,0 +1,7 @@
+[1/1] Linking CXX executable test-workchain-i13e-contract
+FAILED: test-workchain-i13e-contract 
+: && /usr/bin/clang++ -march=native -fno-omit-frame-pointer -ffunction-sections -fdata-sections -O3 -DNDEBUG -Wl,--gc-sections -Wl,--exclude-libs,ALL CMakeFiles/i13e-contract-assertions.dir/crypto/test/test-workchain-i13e-contract.cpp.o -o test-workchain-i13e-contract   && :
+/usr/bin/ld: CMakeFiles/i13e-contract-assertions.dir/crypto/test/test-workchain-i13e-contract.cpp.o: in function `main':
+test-workchain-i13e-contract.cpp:(.text.main+0x813): undefined reference to `i13e_proposal::make_real_i13e_adapter()'
+clang++: error: linker command failed with exit code 1 (use -v to see invocation)
+ninja: build stopped: subcommand failed.

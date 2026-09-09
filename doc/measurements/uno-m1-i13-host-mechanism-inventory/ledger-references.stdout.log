@@ -1,0 +1,3 @@
+crypto/block/workchain-account-engine.h:99:// Copying this token is not a one-use execution permit; block uniqueness and
+crypto/block/workchain-account-engine.h:100:// the execution ledger remain host obligations.
+crypto/block/workchain-account-access-codec.h:165:  // Enforce the same set semantics as the execution ledger and one canonical

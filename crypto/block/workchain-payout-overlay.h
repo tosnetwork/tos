@@ -1,5 +1,7 @@
 #pragma once
 
+#include "block/workchain-construction-observer.h"
+
 #include "block/workchain-storage-overlay.h"
 #include "block/workchain-account-access-codec.h"
 #include "block/workchain-allocation-plan.h"
@@ -41,7 +43,8 @@ inline td::Result<WorkchainPayoutOverlay> build_workchain_payout_overlay(
     std::uint64_t max_reads, std::uint64_t max_participants, std::uint64_t max_transfers, int extra_validation_cells,
     const SerializeConfig& cfg, const ActionPhaseConfig& message_cfg,
     td::Ref<vm::Cell> entry_input, td::Ref<vm::Cell> entry_effects, std::uint64_t max_inbound,
-    const WorkchainDisposalEntryContext* disposal = nullptr) {
+    const WorkchainDisposalEntryContext* disposal = nullptr,
+    const WorkchainConstructionObserver& observer = {}) {
   if (extra_validation_cells <= 0) return td::Status::Error("invalid payout overlay currency budget");
   // Reserve the host-derived fee edge before reading or materializing state.
   auto flow_bound = participant_lt_detail::checked_add(max_transfers, 1);
@@ -228,22 +231,25 @@ inline td::Result<WorkchainPayoutOverlay> build_workchain_payout_overlay(
     // These accounts and transactions are private. Failure in a later record
     // still publishes neither dictionary nor a message; no CellDb is touched.
     if (tx.commit(account).is_null()) return td::Status::Error("cannot commit private payout account");
+    TRY_STATUS(observe_workchain_construction(observer, WorkchainConstructionStage::ParticipantFinalize, i));
     vm::CellBuilder account_block, entry;
     if (!account.create_account_block(account_block) ||
         !blocks.set_builder(account.addr, account_block, vm::Dictionary::SetMode::Add)) {
       return td::Status::Error("cannot build payout overlay AccountBlock");
     }
+    TRY_STATUS(observe_workchain_construction(observer, WorkchainConstructionStage::AccountBlockStage, i));
     entry.store_ref(account.total_state).store_bits(account.last_trans_hash_.bits(), 256).store_long(account.last_trans_lt_, 64);
     if (!staged.set_builder(account.addr, entry, vm::Dictionary::SetMode::Replace)) {
       return td::Status::Error("cannot replace payout overlay ShardAccount");
     }
+    TRY_STATUS(observe_workchain_construction(observer, WorkchainConstructionStage::AccountRootStage, i));
     TRY_STATUS(access.record_write(account.addr));
     participants.push_back(account.addr);
   }
   TRY_RESULT(imports, disposal ? build_workchain_routed_final_imports(workchain, cfg.global_version, inbox.envelopes,
-      processing, coordinator, custody, max_inbound, max_participants, extra_validation_cells) :
+      processing, coordinator, custody, max_inbound, max_participants, extra_validation_cells, observer) :
       build_workchain_final_imports(workchain, cfg.global_version, inbox.envelopes,
-      processing, max_inbound, max_participants, extra_validation_cells));
+      processing, max_inbound, max_participants, extra_validation_cells, observer));
   for (auto& row : rows) {
     auto credit = imports.account_credits.find(row.account);
     if (credit != imports.account_credits.end()) row.imported = credit->second;
