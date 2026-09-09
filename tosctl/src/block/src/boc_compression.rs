@@ -824,6 +824,32 @@ pub fn boc_decompress_improved_structure_lz4(
             MAX_BOC_CELLS
         );
     }
+    // Memory budget for the per-node working set allocated eagerly in SECTION 4,
+    // enforced BEFORE that allocation. The cell-count ceiling above is not a
+    // memory bound: at MAX_BOC_CELLS the fixed per-node arrays below total
+    // billions of bytes, so a ~200 KiB compressed input that inflates to a large
+    // decompressed_size (and a caller that allows a large max_size) could drive a
+    // multi-GiB allocation before any per-node metadata is validated. Bound
+    // node_count so that allocation stays within a fixed budget, regardless of
+    // max_size. Computed from the actual per-node footprint so it tracks the
+    // types rather than a hand-copied constant.
+    const DECODE_WORKING_SET_BUDGET_BYTES: usize = 512 * 1024 * 1024;
+    let per_node_working_bytes = 2 * std::mem::size_of::<usize>() // cell_data_length + cell_refs_cnt
+        + 3 // is_data_small + is_special + is_depth_balance
+        + std::mem::size_of::<u8>() // pruned_branch_level
+        + std::mem::size_of::<[usize; 4]>() // boc_graph adjacency
+        + std::mem::size_of::<BuilderData>(); // cell_builders
+    let max_nodes_by_budget = DECODE_WORKING_SET_BUDGET_BYTES / per_node_working_bytes.max(1);
+    if node_count > max_nodes_by_budget {
+        fail!(
+            "BOC decompression failed: node count {} exceeds the {}-byte decode memory budget \
+             ({} nodes at {} bytes each)",
+            node_count,
+            DECODE_WORKING_SET_BUDGET_BYTES,
+            max_nodes_by_budget,
+            per_node_working_bytes
+        );
+    }
     for &idx in &root_indexes {
         if idx >= node_count {
             fail!("BOC decompression failed: invalid root index");

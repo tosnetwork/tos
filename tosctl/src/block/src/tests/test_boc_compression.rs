@@ -126,6 +126,36 @@ fn test_decompress_size_exceeds_max() {
     assert!(result.unwrap_err().to_string().contains("invalid decompressed size"));
 }
 
+#[test]
+fn test_decompress_node_count_exceeds_memory_budget() {
+    // A well-formed header that declares far more nodes than the decode memory
+    // budget allows, inside a decompressed buffer large enough that the
+    // node_count <= decompressed_size check passes. The budget guard must reject
+    // this BEFORE the SECTION 4 per-node arrays (~tens of bytes per node) are
+    // allocated, even with a generous max_size. node_count is chosen above the
+    // largest possible budget ceiling (512 MiB / 52 B ~= 10.3M nodes), so it
+    // exceeds the budget regardless of BuilderData's exact size. Removing the
+    // guard lets this fall through to the multi-hundred-MiB allocation and fail
+    // (if at all) with a different error, so the test goes red.
+    let node_count: u32 = 11_000_000;
+    let mut serialized = vec![0u8; node_count as usize];
+    serialized[0..4].copy_from_slice(&1u32.to_be_bytes()); // root_count = 1
+    serialized[4..8].copy_from_slice(&0u32.to_be_bytes()); // root_indexes[0] = 0
+    serialized[8..12].copy_from_slice(&node_count.to_be_bytes()); // node_count
+
+    let payload = lz4::block::compress(&serialized, None, false).unwrap();
+    let mut data = (serialized.len() as u32).to_be_bytes().to_vec();
+    data.extend_from_slice(&payload);
+
+    // Generous max_size: the guard must not depend on max_size being small.
+    let result = boc_decompress_improved_structure_lz4(data, 1 << 30);
+    assert!(result.is_err());
+    assert!(
+        result.unwrap_err().to_string().contains("decode memory budget"),
+        "must be rejected by the memory budget guard before the per-node allocation"
+    );
+}
+
 // ============================================
 // Round-trip tests (compress then decompress)
 // ============================================
