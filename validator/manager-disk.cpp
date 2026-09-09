@@ -20,6 +20,7 @@
 #include "adnl/utils.hpp"
 #include "common/checksum.h"
 #include "td/utils/filesystem.h"
+#include "td/utils/Time.h"
 #include "db/celldb.hpp"
 #include "downloaders/wait-block-data-disk.hpp"
 #include "downloaders/wait-block-state-merge.hpp"
@@ -36,6 +37,54 @@
 namespace tos {
 
 namespace validator {
+
+void ValidatorManagerImpl::log_collate_query_stats(CollationStats stats) {
+  if (query_result_path_.empty() || collation_observation_closed_) return;
+  // Evidence must be persisted before the result callback can exit the tool.
+  // An absent stats message must not be interpreted as a zero observation.
+  td::write_file(query_result_path_ + ".stats",
+                 PSLICE() << "delivery=recorded\nvisited=" << (stats.account_binding_visited ? 1 : 0)
+                          << "\nadapter=" << (stats.account_adapter_bound ? 1 : 0)
+                          << "\nowners_before=" << stats.account_config_owners_before
+                          << "\nowners_during=" << stats.account_config_owners_during
+                          << "\nowners_after=" << stats.account_config_owners_after
+                          << "\ntransactions=" << stats.transactions << "\n").ensure();
+  // This interval includes the whole query up to the completed stats write,
+  // not just message delivery. It is a conservative normal-run observation,
+  // not an upper bound under arbitrary scheduler or storage delays.
+  td::write_file(query_result_path_ + ".stats.timing",
+                 PSLICE() << "query_to_record_seconds="
+                          << (td::Clocks::monotonic() - collation_observation_started_)
+                          << "\nwait_window_seconds=" << collation_stats_wait_seconds_ << "\n").ensure();
+  collation_observation_closed_ = true;
+  alarm_timestamp() = td::Timestamp::never();
+  if (collation_stats_waiter_) collation_stats_waiter_.set_value(td::Unit());
+}
+
+void ValidatorManagerImpl::await_collation_stats(td::Promise<td::Unit> promise) {
+  if (query_result_path_.empty() || collation_observation_closed_) {
+    promise.set_value(td::Unit());
+  } else {
+    // This manager launches one collation query; there is one continuation.
+    collation_stats_waiter_ = std::move(promise);
+    // Offline observation deadline, not a protocol timeout. Early startup
+    // failures can complete the result without ever emitting statistics.
+    collation_wait_started_ = td::Clocks::monotonic();
+    alarm_timestamp() = td::Timestamp::in(collation_stats_wait_seconds_);
+  }
+}
+
+void ValidatorManagerImpl::alarm() {
+  if (collation_stats_waiter_) {
+    td::write_file(query_result_path_ + ".stats", "delivery=unconfirmed\n").ensure();
+    td::write_file(query_result_path_ + ".stats.timing",
+                   PSLICE() << "wait_elapsed_seconds=" << (td::Clocks::monotonic() - collation_wait_started_)
+                            << "\nwait_window_seconds=" << collation_stats_wait_seconds_ << "\n").ensure();
+    // A late message must not rewrite an already terminal observation.
+    collation_observation_closed_ = true;
+    collation_stats_waiter_.set_value(td::Unit());
+  }
+}
 
 void ValidatorManagerImpl::validate_block_is_next_proof(BlockIdExt prev_block_id, BlockIdExt next_block_id,
                                                         td::BufferSlice proof, td::Promise<td::Unit> promise) {
@@ -190,7 +239,7 @@ void ValidatorManagerImpl::sync_complete(td::Promise<td::Unit> promise) {
   }
   //LOG(DEBUG) << "after get_validator_set: addr=" << (const void*)val_set.get();
 
-  auto P = td::PromiseCreator::lambda(
+  td::Promise<BlockCandidate> P = td::PromiseCreator::lambda(
       [SelfId = actor_id(this), last = last_masterchain_block_id_, val_set, prev,
        result_path = query_result_path_](td::Result<BlockCandidate> R) {
         // Disk-tool observation only. Own the path across the actor callback;
@@ -208,6 +257,24 @@ void ValidatorManagerImpl::sync_complete(td::Promise<td::Unit> promise) {
           std::exit(2);
         }
       });
+
+  if (!query_result_path_.empty()) {
+    td::write_file(query_result_path_ + ".stats", "delivery=pending\n").ensure();
+    collation_observation_started_ = td::Clocks::monotonic();
+    // Join the two actor messages instead of assuming the statistics send
+    // finishes before the result callback. Only the offline observer opts in.
+    P = td::PromiseCreator::lambda(
+        [SelfId = actor_id(this), continuation = std::move(P)](td::Result<BlockCandidate> result) mutable {
+          td::actor::send_closure(
+              SelfId, &ValidatorManagerImpl::await_collation_stats,
+              td::PromiseCreator::lambda(
+                  [continuation = std::move(continuation), result = std::move(result)](
+                      td::Result<td::Unit> recorded) mutable {
+                    recorded.ensure();
+                    continuation.set_result(std::move(result));
+                  }));
+        });
+  }
 
   LOG(ERROR) << "running collate query";
   if (local_id_.is_zero()) {

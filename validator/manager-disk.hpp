@@ -79,6 +79,10 @@ class ValidatorManagerImpl : public ValidatorManager {
   //BlockHandle last_masterchain_block_;
 
  public:
+  void log_collate_query_stats(CollationStats stats) override;
+  void await_collation_stats(td::Promise<td::Unit> promise);
+  void alarm() override;
+
   void install_callback(std::unique_ptr<Callback> new_callback, td::Promise<td::Unit> promise) override {
     callback_ = std::move(new_callback);
     promise.set_value(td::Unit());
@@ -479,6 +483,11 @@ class ValidatorManagerImpl : public ValidatorManager {
   std::string export_candidate_;
   std::string import_candidate_;
   std::string query_result_path_;
+  bool collation_observation_closed_ = false;
+  td::Promise<td::Unit> collation_stats_waiter_;
+  static constexpr double collation_stats_wait_seconds_ = 1.0;
+  double collation_observation_started_ = 0.0;
+  double collation_wait_started_ = 0.0;
   td::actor::ActorOwn<OutMsgQueueImporter> out_msg_queue_importer_;
 
   int pending_new_shard_block_descr_{0};

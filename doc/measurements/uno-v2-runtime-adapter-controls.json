@@ -1,0 +1,377 @@
+{
+  "schema": "uno-runtime-adapter-controls-v1",
+  "baseline_commit": "ba22bc5c8",
+  "scope": "Closed production collator adapter seam and offline observation only; no replay or I13 acceptance",
+  "method": "One mutation at a time; each successful mutant build precedes the red test; restore exact bytes immediately, rebuild, compare source/test/binary hashes and run green readiness. Markers identify assertion sites, not consensus error strings.",
+  "controls": [
+    {
+      "id": "adapter-construction",
+      "file": "validator/impl/collator.cpp",
+      "from": "            auto adapter = block::ConfiguredWorkchainAccountEngine::bind(binding);",
+      "to": "            auto adapter = td::Result<std::unique_ptr<block::ConfiguredWorkchainAccountEngine>>(std::unique_ptr<block::ConfiguredWorkchainAccountEngine>{});",
+      "marker": "Production adapter lifetime was not observed",
+      "before": {
+        "exit_code": 0,
+        "output": "7b034a1cc225ca9df9fc8f4f10f58cbcf18b9eae8e885f9f3ef10090dae0151c  validator/impl/collator.cpp\n6ef536def629730353abfb9831f0364c05cd39c4762d8bb204010085825e714b  test/test-counter-disk-integration.cmake\n6fc2018f7e1ae29f48896e654790a9ba1f715c8fb375b3770307a7b00548a334  build/test-tos-collator\n"
+      },
+      "build": {
+        "exit_code": 0,
+        "output": "[1/3] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/collator.cpp.o\n[2/3] Linking CXX static library validator/impl/libtos_validator.a\n[3/3] Linking CXX executable test-tos-collator\n"
+      },
+      "mutant_hashes": {
+        "exit_code": 0,
+        "output": "32f3b5a533f226b1cc2112d8d33b6d0486c9e862f8245f2e9fb00b137ccf48ce  validator/impl/collator.cpp\nd9d6bb32c65f6fed2c774323f50ff9addd721fdf37c18adb8c9199e866fc6c74  build/test-tos-collator\n"
+      },
+      "test": {
+        "exit_code": 8,
+        "output": "Internal ctest changing into directory: /home/tomi/tos/build\nTest project /home/tomi/tos/build\n    Start 15: test-counter-account-binding-readiness\n1/1 Test #15: test-counter-account-binding-readiness ...***Failed    1.39 sec\n-- Counter fixture active; retained if interrupted: /home/tomi/tos/build/counter-integration-33d4f4bfc79a\n-- Unconfirmed observation timing: wait_elapsed_seconds=1.002553\nwait_window_seconds=1.000000\n\nCMake Error at /home/tomi/tos/test/test-counter-disk-integration.cmake:248 (message):\n  Production adapter lifetime was not observed at the closed gate:\n  delivery=recorded\n\n  visited=1\n\n  adapter=0\n\n  owners_before=1\n\n  owners_during=1\n\n  owners_after=1\n\n  transactions=0\n\n\n\n\nCMake Error at /home/tomi/tos/test/counter-fixture-lifecycle.cmake:58 (message):\n  Counter fixture FAILED (1); retained for inspection:\n  /home/tomi/tos/build/counter-integration-33d4f4bfc79a\nCall Stack (most recent call first):\n  /home/tomi/tos/test/test-counter-disk-integration.cmake:3 (counter_run_fixture)\n\n\n\n\n0% tests passed, 1 tests failed out of 1\n\nTotal Test time (real) =   1.39 sec\n\nThe following tests FAILED:\n\t 15 - test-counter-account-binding-readiness (Failed)\nErrors while running CTest\n"
+      },
+      "fixture": "/home/tomi/tos/build/counter-integration-33d4f4bfc79a",
+      "observations": {
+        "exit_code": 0,
+        "output": "/home/tomi/tos/build/counter-integration-33d4f4bfc79a/account_binding_refused.result\ncollate -7201\n/home/tomi/tos/build/counter-integration-33d4f4bfc79a/account_binding_refused.result.stats\ndelivery=recorded\nvisited=1\nadapter=0\nowners_before=1\nowners_during=1\nowners_after=1\ntransactions=0\n/home/tomi/tos/build/counter-integration-33d4f4bfc79a/calls.txt\nconfig=1\nexecute=0\n/home/tomi/tos/build/counter-integration-33d4f4bfc79a/account_no_stats.result.stats\ndelivery=unconfirmed\n"
+      },
+      "retained_at": "/tmp/uno-runtime-fixtures.JZ5a5y/counter-integration-33d4f4bfc79a",
+      "restore_build": {
+        "exit_code": 0,
+        "output": "[1/3] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/collator.cpp.o\n[2/3] Linking CXX static library validator/impl/libtos_validator.a\n[3/3] Linking CXX executable test-tos-collator\n"
+      },
+      "restored_hashes": {
+        "exit_code": 0,
+        "output": "7b034a1cc225ca9df9fc8f4f10f58cbcf18b9eae8e885f9f3ef10090dae0151c  validator/impl/collator.cpp\n6ef536def629730353abfb9831f0364c05cd39c4762d8bb204010085825e714b  test/test-counter-disk-integration.cmake\n6fc2018f7e1ae29f48896e654790a9ba1f715c8fb375b3770307a7b00548a334  build/test-tos-collator\n"
+      },
+      "restore_audit": {
+        "exit_code": 0,
+        "output": "{\"restored_sha256\": \"7b034a1cc225ca9df9fc8f4f10f58cbcf18b9eae8e885f9f3ef10090dae0151c\", \"reconstructed_mutant_sha256\": \"32f3b5a533f226b1cc2112d8d33b6d0486c9e862f8245f2e9fb00b137ccf48ce\"}\n"
+      },
+      "green": {
+        "exit_code": 0,
+        "output": "Internal ctest changing into directory: /home/tomi/tos/build\nTest project /home/tomi/tos/build\n    Start 15: test-counter-account-binding-readiness\n1/1 Test #15: test-counter-account-binding-readiness ...   Passed    1.51 sec\n\n100% tests passed, 0 tests failed out of 1\n\nTotal Test time (real) =   1.52 sec\n"
+      }
+    },
+    {
+      "id": "adapter-release",
+      "file": "validator/impl/collator.cpp",
+      "from": "            stats_.account_config_owners_during = binding.engine_config.use_count();\n          }\n          stats_.account_config_owners_after = binding.engine_config.use_count();",
+      "to": "            stats_.account_config_owners_during = binding.engine_config.use_count();\n            stats_.account_config_owners_after = binding.engine_config.use_count();\n          }",
+      "marker": "owners_after=2",
+      "before": {
+        "exit_code": 0,
+        "output": "7b034a1cc225ca9df9fc8f4f10f58cbcf18b9eae8e885f9f3ef10090dae0151c  validator/impl/collator.cpp\n6ef536def629730353abfb9831f0364c05cd39c4762d8bb204010085825e714b  test/test-counter-disk-integration.cmake\n6fc2018f7e1ae29f48896e654790a9ba1f715c8fb375b3770307a7b00548a334  build/test-tos-collator\n"
+      },
+      "build": {
+        "exit_code": 0,
+        "output": "[1/3] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/collator.cpp.o\n[2/3] Linking CXX static library validator/impl/libtos_validator.a\n[3/3] Linking CXX executable test-tos-collator\n"
+      },
+      "mutant_hashes": {
+        "exit_code": 0,
+        "output": "89800a1439ea630a5a9c20a0cefbd5e1af13776fff63dab246bc051484df4124  validator/impl/collator.cpp\n8f16e0907f016b9ba1ec7be959dd82ada5a39db2680e01500f1fed26c0a27014  build/test-tos-collator\n"
+      },
+      "test": {
+        "exit_code": 8,
+        "output": "Internal ctest changing into directory: /home/tomi/tos/build\nTest project /home/tomi/tos/build\n    Start 15: test-counter-account-binding-readiness\n1/1 Test #15: test-counter-account-binding-readiness ...***Failed    1.38 sec\n-- Counter fixture active; retained if interrupted: /home/tomi/tos/build/counter-integration-28da60f2ebc1\n-- Unconfirmed observation timing: wait_elapsed_seconds=1.002170\nwait_window_seconds=1.000000\n\nCMake Error at /home/tomi/tos/test/test-counter-disk-integration.cmake:248 (message):\n  Production adapter lifetime was not observed at the closed gate:\n  delivery=recorded\n\n  visited=1\n\n  adapter=1\n\n  owners_before=1\n\n  owners_during=2\n\n  owners_after=2\n\n  transactions=0\n\n\n\n\nCMake Error at /home/tomi/tos/test/counter-fixture-lifecycle.cmake:58 (message):\n  Counter fixture FAILED (1); retained for inspection:\n  /home/tomi/tos/build/counter-integration-28da60f2ebc1\nCall Stack (most recent call first):\n  /home/tomi/tos/test/test-counter-disk-integration.cmake:3 (counter_run_fixture)\n\n\n\n\n0% tests passed, 1 tests failed out of 1\n\nTotal Test time (real) =   1.38 sec\n\nThe following tests FAILED:\n\t 15 - test-counter-account-binding-readiness (Failed)\nErrors while running CTest\n"
+      },
+      "fixture": "/home/tomi/tos/build/counter-integration-28da60f2ebc1",
+      "observations": {
+        "exit_code": 0,
+        "output": "/home/tomi/tos/build/counter-integration-28da60f2ebc1/account_binding_refused.result\ncollate -7201\n/home/tomi/tos/build/counter-integration-28da60f2ebc1/account_binding_refused.result.stats\ndelivery=recorded\nvisited=1\nadapter=1\nowners_before=1\nowners_during=2\nowners_after=2\ntransactions=0\n/home/tomi/tos/build/counter-integration-28da60f2ebc1/calls.txt\nconfig=1\nexecute=0\n/home/tomi/tos/build/counter-integration-28da60f2ebc1/account_no_stats.result.stats\ndelivery=unconfirmed\n"
+      },
+      "retained_at": "/tmp/uno-runtime-fixtures.JZ5a5y/counter-integration-28da60f2ebc1",
+      "restore_build": {
+        "exit_code": 0,
+        "output": "[1/3] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/collator.cpp.o\n[2/3] Linking CXX static library validator/impl/libtos_validator.a\n[3/3] Linking CXX executable test-tos-collator\n"
+      },
+      "restored_hashes": {
+        "exit_code": 0,
+        "output": "7b034a1cc225ca9df9fc8f4f10f58cbcf18b9eae8e885f9f3ef10090dae0151c  validator/impl/collator.cpp\n6ef536def629730353abfb9831f0364c05cd39c4762d8bb204010085825e714b  test/test-counter-disk-integration.cmake\n6fc2018f7e1ae29f48896e654790a9ba1f715c8fb375b3770307a7b00548a334  build/test-tos-collator\n"
+      },
+      "restore_audit": {
+        "exit_code": 0,
+        "output": "{\"restored_sha256\": \"7b034a1cc225ca9df9fc8f4f10f58cbcf18b9eae8e885f9f3ef10090dae0151c\", \"reconstructed_mutant_sha256\": \"89800a1439ea630a5a9c20a0cefbd5e1af13776fff63dab246bc051484df4124\"}\n"
+      },
+      "green": {
+        "exit_code": 0,
+        "output": "Internal ctest changing into directory: /home/tomi/tos/build\nTest project /home/tomi/tos/build\n    Start 15: test-counter-account-binding-readiness\n1/1 Test #15: test-counter-account-binding-readiness ...   Passed    1.50 sec\n\n100% tests passed, 0 tests failed out of 1\n\nTotal Test time (real) =   1.51 sec\n"
+      }
+    },
+    {
+      "id": "missing-delivery",
+      "file": "validator/manager-disk.cpp",
+      "from": "void ValidatorManagerImpl::log_collate_query_stats(CollationStats stats) {\n  if (query_result_path_.empty() || collation_observation_closed_) return;",
+      "to": "void ValidatorManagerImpl::log_collate_query_stats(CollationStats stats) {\n  if (stats.account_adapter_bound) return;\n  if (query_result_path_.empty() || collation_observation_closed_) return;",
+      "marker": "delivery=unconfirmed",
+      "before": {
+        "exit_code": 0,
+        "output": "b47a08f8cd35dadc8566a7733de6350a76b3dc14e364cd68521de407dad80c87  validator/manager-disk.cpp\n6ef536def629730353abfb9831f0364c05cd39c4762d8bb204010085825e714b  test/test-counter-disk-integration.cmake\n6fc2018f7e1ae29f48896e654790a9ba1f715c8fb375b3770307a7b00548a334  build/test-tos-collator\n"
+      },
+      "build": {
+        "exit_code": 0,
+        "output": "[1/3] Building CXX object validator/CMakeFiles/validator-disk.dir/manager-disk.cpp.o\n[2/3] Linking CXX static library validator/libvalidator-disk.a\n[3/3] Linking CXX executable test-tos-collator\n"
+      },
+      "mutant_hashes": {
+        "exit_code": 0,
+        "output": "f605320cdf3e2d410e101bbe74258b9b72269b75c7a49a5cf73546d7cc761513  validator/manager-disk.cpp\nc78df405e5e207b17348d0d3b030813952045d87484ad158588feb455fa069af  build/test-tos-collator\n"
+      },
+      "test": {
+        "exit_code": 8,
+        "output": "Internal ctest changing into directory: /home/tomi/tos/build\nTest project /home/tomi/tos/build\n    Start 15: test-counter-account-binding-readiness\n1/1 Test #15: test-counter-account-binding-readiness ...***Failed    2.43 sec\n-- Counter fixture active; retained if interrupted: /home/tomi/tos/build/counter-integration-cdd03f31c886\n-- Unconfirmed observation timing: wait_elapsed_seconds=1.002575\nwait_window_seconds=1.000000\n\nCMake Error at /home/tomi/tos/test/test-counter-disk-integration.cmake:248 (message):\n  Production adapter lifetime was not observed at the closed gate:\n  delivery=unconfirmed\n\n\n\n\nCMake Error at /home/tomi/tos/test/counter-fixture-lifecycle.cmake:58 (message):\n  Counter fixture FAILED (1); retained for inspection:\n  /home/tomi/tos/build/counter-integration-cdd03f31c886\nCall Stack (most recent call first):\n  /home/tomi/tos/test/test-counter-disk-integration.cmake:3 (counter_run_fixture)\n\n\n\n\n0% tests passed, 1 tests failed out of 1\n\nTotal Test time (real) =   2.44 sec\n\nThe following tests FAILED:\n\t 15 - test-counter-account-binding-readiness (Failed)\nErrors while running CTest\n"
+      },
+      "fixture": "/home/tomi/tos/build/counter-integration-cdd03f31c886",
+      "observations": {
+        "exit_code": 0,
+        "output": "/home/tomi/tos/build/counter-integration-cdd03f31c886/account_binding_refused.result\ncollate -7201\n/home/tomi/tos/build/counter-integration-cdd03f31c886/account_binding_refused.result.stats\ndelivery=unconfirmed\n/home/tomi/tos/build/counter-integration-cdd03f31c886/calls.txt\nconfig=1\nexecute=0\n/home/tomi/tos/build/counter-integration-cdd03f31c886/account_no_stats.result.stats\ndelivery=unconfirmed\n"
+      },
+      "retained_at": "/tmp/uno-runtime-fixtures.JZ5a5y/counter-integration-cdd03f31c886",
+      "restore_build": {
+        "exit_code": 0,
+        "output": "[1/3] Building CXX object validator/CMakeFiles/validator-disk.dir/manager-disk.cpp.o\n[2/3] Linking CXX static library validator/libvalidator-disk.a\n[3/3] Linking CXX executable test-tos-collator\n"
+      },
+      "restored_hashes": {
+        "exit_code": 0,
+        "output": "b47a08f8cd35dadc8566a7733de6350a76b3dc14e364cd68521de407dad80c87  validator/manager-disk.cpp\n6ef536def629730353abfb9831f0364c05cd39c4762d8bb204010085825e714b  test/test-counter-disk-integration.cmake\n6fc2018f7e1ae29f48896e654790a9ba1f715c8fb375b3770307a7b00548a334  build/test-tos-collator\n"
+      },
+      "restore_audit": {
+        "exit_code": 0,
+        "output": "{\"restored_sha256\": \"b47a08f8cd35dadc8566a7733de6350a76b3dc14e364cd68521de407dad80c87\", \"reconstructed_mutant_sha256\": \"f605320cdf3e2d410e101bbe74258b9b72269b75c7a49a5cf73546d7cc761513\"}\n"
+      },
+      "green": {
+        "exit_code": 0,
+        "output": "Internal ctest changing into directory: /home/tomi/tos/build\nTest project /home/tomi/tos/build\n    Start 15: test-counter-account-binding-readiness\n1/1 Test #15: test-counter-account-binding-readiness ...   Passed    1.50 sec\n\n100% tests passed, 0 tests failed out of 1\n\nTotal Test time (real) =   1.50 sec\n"
+      }
+    },
+    {
+      "id": "branch-visit",
+      "file": "validator/impl/collator.cpp",
+      "from": "          stats_.account_binding_visited = true;",
+      "to": "          stats_.account_binding_visited = false;",
+      "marker": "Production adapter lifetime was not observed",
+      "before": {
+        "exit_code": 0,
+        "output": "7b034a1cc225ca9df9fc8f4f10f58cbcf18b9eae8e885f9f3ef10090dae0151c  validator/impl/collator.cpp\n6ef536def629730353abfb9831f0364c05cd39c4762d8bb204010085825e714b  test/test-counter-disk-integration.cmake\n6fc2018f7e1ae29f48896e654790a9ba1f715c8fb375b3770307a7b00548a334  build/test-tos-collator\n"
+      },
+      "build": {
+        "exit_code": 0,
+        "output": "[1/3] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/collator.cpp.o\n[2/3] Linking CXX static library validator/impl/libtos_validator.a\n[3/3] Linking CXX executable test-tos-collator\n"
+      },
+      "mutant_hashes": {
+        "exit_code": 0,
+        "output": "e9cebfd3cc5e8ec6f7bb155025aa7904b0f553bf2f76e459c920b4f971a9bbdc  validator/impl/collator.cpp\nf9cbc41783029fa8783f04ae22134c8aa42c5e6e908fb60018352cb07243a2c3  build/test-tos-collator\n"
+      },
+      "test": {
+        "exit_code": 8,
+        "output": "Internal ctest changing into directory: /home/tomi/tos/build\nTest project /home/tomi/tos/build\n    Start 15: test-counter-account-binding-readiness\n1/1 Test #15: test-counter-account-binding-readiness ...***Failed    1.39 sec\n-- Counter fixture active; retained if interrupted: /home/tomi/tos/build/counter-integration-4c87331e7eb7\n-- Unconfirmed observation timing: wait_elapsed_seconds=1.002484\nwait_window_seconds=1.000000\n\nCMake Error at /home/tomi/tos/test/test-counter-disk-integration.cmake:248 (message):\n  Production adapter lifetime was not observed at the closed gate:\n  delivery=recorded\n\n  visited=0\n\n  adapter=1\n\n  owners_before=1\n\n  owners_during=2\n\n  owners_after=1\n\n  transactions=0\n\n\n\n\nCMake Error at /home/tomi/tos/test/counter-fixture-lifecycle.cmake:58 (message):\n  Counter fixture FAILED (1); retained for inspection:\n  /home/tomi/tos/build/counter-integration-4c87331e7eb7\nCall Stack (most recent call first):\n  /home/tomi/tos/test/test-counter-disk-integration.cmake:3 (counter_run_fixture)\n\n\n\n\n0% tests passed, 1 tests failed out of 1\n\nTotal Test time (real) =   1.39 sec\n\nThe following tests FAILED:\n\t 15 - test-counter-account-binding-readiness (Failed)\nErrors while running CTest\n"
+      },
+      "fixture": "/home/tomi/tos/build/counter-integration-4c87331e7eb7",
+      "observations": {
+        "exit_code": 0,
+        "output": "/home/tomi/tos/build/counter-integration-4c87331e7eb7/account_binding_refused.result\ncollate -7201\n/home/tomi/tos/build/counter-integration-4c87331e7eb7/account_binding_refused.result.stats\ndelivery=recorded\nvisited=0\nadapter=1\nowners_before=1\nowners_during=2\nowners_after=1\ntransactions=0\n/home/tomi/tos/build/counter-integration-4c87331e7eb7/calls.txt\nconfig=1\nexecute=0\n/home/tomi/tos/build/counter-integration-4c87331e7eb7/account_no_stats.result.stats\ndelivery=unconfirmed\n"
+      },
+      "retained_at": "/tmp/uno-runtime-fixtures.JZ5a5y/counter-integration-4c87331e7eb7",
+      "restore_build": {
+        "exit_code": 0,
+        "output": "[1/3] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/collator.cpp.o\n[2/3] Linking CXX static library validator/impl/libtos_validator.a\n[3/3] Linking CXX executable test-tos-collator\n"
+      },
+      "restored_hashes": {
+        "exit_code": 0,
+        "output": "7b034a1cc225ca9df9fc8f4f10f58cbcf18b9eae8e885f9f3ef10090dae0151c  validator/impl/collator.cpp\n6ef536def629730353abfb9831f0364c05cd39c4762d8bb204010085825e714b  test/test-counter-disk-integration.cmake\n6fc2018f7e1ae29f48896e654790a9ba1f715c8fb375b3770307a7b00548a334  build/test-tos-collator\n"
+      },
+      "restore_audit": {
+        "exit_code": 0,
+        "output": "{\"restored_sha256\": \"7b034a1cc225ca9df9fc8f4f10f58cbcf18b9eae8e885f9f3ef10090dae0151c\", \"reconstructed_mutant_sha256\": \"e9cebfd3cc5e8ec6f7bb155025aa7904b0f553bf2f76e459c920b4f971a9bbdc\"}\n"
+      },
+      "green": {
+        "exit_code": 0,
+        "output": "Internal ctest changing into directory: /home/tomi/tos/build\nTest project /home/tomi/tos/build\n    Start 15: test-counter-account-binding-readiness\n1/1 Test #15: test-counter-account-binding-readiness ...   Passed    1.49 sec\n\n100% tests passed, 0 tests failed out of 1\n\nTotal Test time (real) =   1.50 sec\n"
+      }
+    },
+    {
+      "id": "missing-is-not-recorded",
+      "file": "validator/manager-disk.cpp",
+      "from": "    td::write_file(query_result_path_ + \".stats\", \"delivery=unconfirmed\\n\").ensure();",
+      "to": "    td::write_file(query_result_path_ + \".stats\", \"delivery=recorded\\n\").ensure();",
+      "marker": "Missing delivery was represented as measured work",
+      "before": {
+        "exit_code": 0,
+        "output": "b47a08f8cd35dadc8566a7733de6350a76b3dc14e364cd68521de407dad80c87  validator/manager-disk.cpp\n6ef536def629730353abfb9831f0364c05cd39c4762d8bb204010085825e714b  test/test-counter-disk-integration.cmake\n6fc2018f7e1ae29f48896e654790a9ba1f715c8fb375b3770307a7b00548a334  build/test-tos-collator\n"
+      },
+      "build": {
+        "exit_code": 0,
+        "output": "[1/3] Building CXX object validator/CMakeFiles/validator-disk.dir/manager-disk.cpp.o\n[2/3] Linking CXX static library validator/libvalidator-disk.a\n[3/3] Linking CXX executable test-tos-collator\n"
+      },
+      "mutant_hashes": {
+        "exit_code": 0,
+        "output": "29724e6bccefbe4295b72bd3e646cf55393515fa3c594661198598e192b26e19  validator/manager-disk.cpp\na4aa83ef2bbe29ef4ae1c5194e5ea206ea162ecc9600f11bf715e5f5925fab65  build/test-tos-collator\n"
+      },
+      "test": {
+        "exit_code": 8,
+        "output": "Internal ctest changing into directory: /home/tomi/tos/build\nTest project /home/tomi/tos/build\n    Start 15: test-counter-account-binding-readiness\n1/1 Test #15: test-counter-account-binding-readiness ...***Failed    1.31 sec\n-- Counter fixture active; retained if interrupted: /home/tomi/tos/build/counter-integration-a2138a6ff617\nCMake Error at /home/tomi/tos/test/test-counter-disk-integration.cmake:214 (message):\n  Missing delivery was represented as measured work: delivery=recorded\n\n\n\n\nCMake Error at /home/tomi/tos/test/counter-fixture-lifecycle.cmake:58 (message):\n  Counter fixture FAILED (1); retained for inspection:\n  /home/tomi/tos/build/counter-integration-a2138a6ff617\nCall Stack (most recent call first):\n  /home/tomi/tos/test/test-counter-disk-integration.cmake:3 (counter_run_fixture)\n\n\n\n\n0% tests passed, 1 tests failed out of 1\n\nTotal Test time (real) =   1.32 sec\n\nThe following tests FAILED:\n\t 15 - test-counter-account-binding-readiness (Failed)\nErrors while running CTest\n"
+      },
+      "fixture": "/home/tomi/tos/build/counter-integration-a2138a6ff617",
+      "observations": {
+        "exit_code": 0,
+        "output": "/home/tomi/tos/build/counter-integration-a2138a6ff617/account_no_stats.result.stats\ndelivery=recorded\n"
+      },
+      "retained_at": "/tmp/uno-runtime-fixtures.JZ5a5y/counter-integration-a2138a6ff617",
+      "restore_build": {
+        "exit_code": 0,
+        "output": "[1/3] Building CXX object validator/CMakeFiles/validator-disk.dir/manager-disk.cpp.o\n[2/3] Linking CXX static library validator/libvalidator-disk.a\n[3/3] Linking CXX executable test-tos-collator\n"
+      },
+      "restored_hashes": {
+        "exit_code": 0,
+        "output": "b47a08f8cd35dadc8566a7733de6350a76b3dc14e364cd68521de407dad80c87  validator/manager-disk.cpp\n6ef536def629730353abfb9831f0364c05cd39c4762d8bb204010085825e714b  test/test-counter-disk-integration.cmake\n6fc2018f7e1ae29f48896e654790a9ba1f715c8fb375b3770307a7b00548a334  build/test-tos-collator\n"
+      },
+      "restore_audit": {
+        "exit_code": 0,
+        "output": "{\"restored_sha256\": \"b47a08f8cd35dadc8566a7733de6350a76b3dc14e364cd68521de407dad80c87\", \"reconstructed_mutant_sha256\": \"29724e6bccefbe4295b72bd3e646cf55393515fa3c594661198598e192b26e19\"}\n"
+      },
+      "green": {
+        "exit_code": 0,
+        "output": "Internal ctest changing into directory: /home/tomi/tos/build\nTest project /home/tomi/tos/build\n    Start 15: test-counter-account-binding-readiness\n1/1 Test #15: test-counter-account-binding-readiness ...   Passed    1.49 sec\n\n100% tests passed, 0 tests failed out of 1\n\nTotal Test time (real) =   1.50 sec\n"
+      }
+    },
+    {
+      "id": "timer-observation",
+      "file": "validator/manager-disk.cpp",
+      "from": "                          << (td::Clocks::monotonic() - collation_observation_started_)",
+      "to": "                          << 0.0",
+      "marker": "Normal observation lacks the required tenfold deadline headroom",
+      "before": {
+        "exit_code": 0,
+        "output": "b47a08f8cd35dadc8566a7733de6350a76b3dc14e364cd68521de407dad80c87  validator/manager-disk.cpp\n6ef536def629730353abfb9831f0364c05cd39c4762d8bb204010085825e714b  test/test-counter-disk-integration.cmake\n6fc2018f7e1ae29f48896e654790a9ba1f715c8fb375b3770307a7b00548a334  build/test-tos-collator\n"
+      },
+      "build": {
+        "exit_code": 0,
+        "output": "[1/3] Building CXX object validator/CMakeFiles/validator-disk.dir/manager-disk.cpp.o\n[2/3] Linking CXX static library validator/libvalidator-disk.a\n[3/3] Linking CXX executable test-tos-collator\n"
+      },
+      "mutant_hashes": {
+        "exit_code": 0,
+        "output": "84f4f06586857eb5d31446a5b4fa217af0cbd37268160f3f307ee0d940edb1a6  validator/manager-disk.cpp\nbe4902c1f6b7355c09abdaa4a29ef3e70e73737d3923a6be13e7c2397f01234c  build/test-tos-collator\n"
+      },
+      "test": {
+        "exit_code": 8,
+        "output": "Internal ctest changing into directory: /home/tomi/tos/build\nTest project /home/tomi/tos/build\n    Start 15: test-counter-account-binding-readiness\n1/1 Test #15: test-counter-account-binding-readiness ...***Failed    1.35 sec\n-- Counter fixture active; retained if interrupted: /home/tomi/tos/build/counter-integration-e42944e30a24\n-- Unconfirmed observation timing: wait_elapsed_seconds=1.001879\nwait_window_seconds=1.000000\n\n-- Closed-gate production observation: delivery=recorded\nvisited=1\nadapter=1\nowners_before=1\nowners_during=2\nowners_after=1\ntransactions=0\n\nCMake Error at /home/tomi/tos/test/test-counter-disk-integration.cmake:255 (message):\n  Normal observation lacks the required tenfold deadline headroom:\n  query_to_record_seconds=0.000000\n\n  wait_window_seconds=1.000000\n\n\n\n\nCMake Error at /home/tomi/tos/test/counter-fixture-lifecycle.cmake:58 (message):\n  Counter fixture FAILED (1); retained for inspection:\n  /home/tomi/tos/build/counter-integration-e42944e30a24\nCall Stack (most recent call first):\n  /home/tomi/tos/test/test-counter-disk-integration.cmake:3 (counter_run_fixture)\n\n\n\n\n0% tests passed, 1 tests failed out of 1\n\nTotal Test time (real) =   1.36 sec\n\nThe following tests FAILED:\n\t 15 - test-counter-account-binding-readiness (Failed)\nErrors while running CTest\n"
+      },
+      "fixture": "/home/tomi/tos/build/counter-integration-e42944e30a24",
+      "observations": {
+        "exit_code": 0,
+        "output": "/home/tomi/tos/build/counter-integration-e42944e30a24/account_binding_refused.result\ncollate -7201\n/home/tomi/tos/build/counter-integration-e42944e30a24/account_binding_refused.result.stats\ndelivery=recorded\nvisited=1\nadapter=1\nowners_before=1\nowners_during=2\nowners_after=1\ntransactions=0\n/home/tomi/tos/build/counter-integration-e42944e30a24/calls.txt\nconfig=1\nexecute=0\n/home/tomi/tos/build/counter-integration-e42944e30a24/account_no_stats.result.stats\ndelivery=unconfirmed\n"
+      },
+      "retained_at": "/tmp/uno-runtime-fixtures.JZ5a5y/counter-integration-e42944e30a24",
+      "restore_build": {
+        "exit_code": 0,
+        "output": "[1/3] Building CXX object validator/CMakeFiles/validator-disk.dir/manager-disk.cpp.o\n[2/3] Linking CXX static library validator/libvalidator-disk.a\n[3/3] Linking CXX executable test-tos-collator\n"
+      },
+      "restored_hashes": {
+        "exit_code": 0,
+        "output": "b47a08f8cd35dadc8566a7733de6350a76b3dc14e364cd68521de407dad80c87  validator/manager-disk.cpp\n6ef536def629730353abfb9831f0364c05cd39c4762d8bb204010085825e714b  test/test-counter-disk-integration.cmake\n6fc2018f7e1ae29f48896e654790a9ba1f715c8fb375b3770307a7b00548a334  build/test-tos-collator\n"
+      },
+      "restore_audit": {
+        "exit_code": 0,
+        "output": "{\"restored_sha256\": \"b47a08f8cd35dadc8566a7733de6350a76b3dc14e364cd68521de407dad80c87\", \"reconstructed_mutant_sha256\": \"84f4f06586857eb5d31446a5b4fa217af0cbd37268160f3f307ee0d940edb1a6\"}\n"
+      },
+      "green": {
+        "exit_code": 0,
+        "output": "Internal ctest changing into directory: /home/tomi/tos/build\nTest project /home/tomi/tos/build\n    Start 15: test-counter-account-binding-readiness\n1/1 Test #15: test-counter-account-binding-readiness ...   Passed    1.51 sec\n\n100% tests passed, 0 tests failed out of 1\n\nTotal Test time (real) =   1.51 sec\n"
+      }
+    },
+    {
+      "id": "positive-transactions",
+      "file": "validator/manager-disk.cpp",
+      "from": "                          << \"\\ntransactions=\" << stats.transactions << \"\\n\").ensure();",
+      "to": "                          << \"\\ntransactions=\" << 0 << \"\\n\").ensure();",
+      "marker": "Successful collation did not deliver its positive transaction count",
+      "before": {
+        "exit_code": 0,
+        "output": "b47a08f8cd35dadc8566a7733de6350a76b3dc14e364cd68521de407dad80c87  validator/manager-disk.cpp\n6ef536def629730353abfb9831f0364c05cd39c4762d8bb204010085825e714b  test/test-counter-disk-integration.cmake\n6fc2018f7e1ae29f48896e654790a9ba1f715c8fb375b3770307a7b00548a334  build/test-tos-collator\n"
+      },
+      "build": {
+        "exit_code": 0,
+        "output": "[1/3] Building CXX object validator/CMakeFiles/validator-disk.dir/manager-disk.cpp.o\n[2/3] Linking CXX static library validator/libvalidator-disk.a\n[3/3] Linking CXX executable test-tos-collator\n"
+      },
+      "mutant_hashes": {
+        "exit_code": 0,
+        "output": "ee4a9967cb858ef743a9c56a043b81b96618ac91fb7836792805ba501c71de9d  validator/manager-disk.cpp\n2a7ac31afc90c43670c35ec88f4fcbaf8d9982ffe1d5022d82ea43436e70b81f  build/test-tos-collator\n"
+      },
+      "test": {
+        "exit_code": 8,
+        "output": "Internal ctest changing into directory: /home/tomi/tos/build\nTest project /home/tomi/tos/build\n    Start 15: test-counter-account-binding-readiness\n1/1 Test #15: test-counter-account-binding-readiness ...***Failed    1.39 sec\n-- Counter fixture active; retained if interrupted: /home/tomi/tos/build/counter-integration-ebfd465dec47\n-- Unconfirmed observation timing: wait_elapsed_seconds=1.001983\nwait_window_seconds=1.000000\n\n-- Closed-gate production observation: delivery=recorded\nvisited=1\nadapter=1\nowners_before=1\nowners_during=2\nowners_after=1\ntransactions=0\n\n-- Closed-gate observation timing: query_to_record_seconds=0.014246\nwait_window_seconds=1.000000\n\nCMake Error at /home/tomi/tos/test/test-counter-disk-integration.cmake:265 (message):\n  Successful collation did not deliver its positive transaction count:\n  delivery=recorded\n\n  visited=0\n\n  adapter=0\n\n  owners_before=0\n\n  owners_during=0\n\n  owners_after=0\n\n  transactions=0\n\n\n\n\nCMake Error at /home/tomi/tos/test/counter-fixture-lifecycle.cmake:58 (message):\n  Counter fixture FAILED (1); retained for inspection:\n  /home/tomi/tos/build/counter-integration-ebfd465dec47\nCall Stack (most recent call first):\n  /home/tomi/tos/test/test-counter-disk-integration.cmake:3 (counter_run_fixture)\n\n\n\n\n0% tests passed, 1 tests failed out of 1\n\nTotal Test time (real) =   1.39 sec\n\nThe following tests FAILED:\n\t 15 - test-counter-account-binding-readiness (Failed)\nErrors while running CTest\n"
+      },
+      "fixture": "/home/tomi/tos/build/counter-integration-ebfd465dec47",
+      "observations": {
+        "exit_code": 0,
+        "output": "/home/tomi/tos/build/counter-integration-ebfd465dec47/account_binding_refused.result\ncollate -7201\n/home/tomi/tos/build/counter-integration-ebfd465dec47/account_binding_refused.result.stats\ndelivery=recorded\nvisited=1\nadapter=1\nowners_before=1\nowners_during=2\nowners_after=1\ntransactions=0\n/home/tomi/tos/build/counter-integration-ebfd465dec47/calls.txt\nconfig=1\nexecute=0\n/home/tomi/tos/build/counter-integration-ebfd465dec47/account_no_stats.result.stats\ndelivery=unconfirmed\n"
+      },
+      "retained_at": "/tmp/uno-runtime-fixtures.JZ5a5y/counter-integration-ebfd465dec47",
+      "restore_build": {
+        "exit_code": 0,
+        "output": "[1/3] Building CXX object validator/CMakeFiles/validator-disk.dir/manager-disk.cpp.o\n[2/3] Linking CXX static library validator/libvalidator-disk.a\n[3/3] Linking CXX executable test-tos-collator\n"
+      },
+      "restored_hashes": {
+        "exit_code": 0,
+        "output": "b47a08f8cd35dadc8566a7733de6350a76b3dc14e364cd68521de407dad80c87  validator/manager-disk.cpp\n6ef536def629730353abfb9831f0364c05cd39c4762d8bb204010085825e714b  test/test-counter-disk-integration.cmake\n6fc2018f7e1ae29f48896e654790a9ba1f715c8fb375b3770307a7b00548a334  build/test-tos-collator\n"
+      },
+      "restore_audit": {
+        "exit_code": 0,
+        "output": "{\"restored_sha256\": \"b47a08f8cd35dadc8566a7733de6350a76b3dc14e364cd68521de407dad80c87\", \"reconstructed_mutant_sha256\": \"ee4a9967cb858ef743a9c56a043b81b96618ac91fb7836792805ba501c71de9d\"}\n"
+      },
+      "green": {
+        "exit_code": 0,
+        "output": "Internal ctest changing into directory: /home/tomi/tos/build\nTest project /home/tomi/tos/build\n    Start 15: test-counter-account-binding-readiness\n1/1 Test #15: test-counter-account-binding-readiness ...   Passed    1.50 sec\n\n100% tests passed, 0 tests failed out of 1\n\nTotal Test time (real) =   1.50 sec\n"
+      }
+    },
+    {
+      "id": "actual-deadline",
+      "file": "validator/manager-disk.cpp",
+      "from": "    alarm_timestamp() = td::Timestamp::in(collation_stats_wait_seconds_);",
+      "to": "    alarm_timestamp() = td::Timestamp::in(0.01);",
+      "marker": "Observation deadline did not fire within the measured band",
+      "before": {
+        "exit_code": 0,
+        "output": "b47a08f8cd35dadc8566a7733de6350a76b3dc14e364cd68521de407dad80c87  validator/manager-disk.cpp\n6ef536def629730353abfb9831f0364c05cd39c4762d8bb204010085825e714b  test/test-counter-disk-integration.cmake\n6fc2018f7e1ae29f48896e654790a9ba1f715c8fb375b3770307a7b00548a334  build/test-tos-collator\n"
+      },
+      "build": {
+        "exit_code": 0,
+        "output": "[1/3] Building CXX object validator/CMakeFiles/validator-disk.dir/manager-disk.cpp.o\n[2/3] Linking CXX static library validator/libvalidator-disk.a\n[3/3] Linking CXX executable test-tos-collator\n"
+      },
+      "mutant_hashes": {
+        "exit_code": 0,
+        "output": "b24f44fd40a3745bafdf623f148d9bddb2759f8358780ad3397edafd79ba3b2b  validator/manager-disk.cpp\n61fcfa2de9aabbcc056f2b68de44c559a443877f16cb14caa2d8e379ad16c9ba  build/test-tos-collator\n"
+      },
+      "test": {
+        "exit_code": 8,
+        "output": "Internal ctest changing into directory: /home/tomi/tos/build\nTest project /home/tomi/tos/build\n    Start 15: test-counter-account-binding-readiness\n1/1 Test #15: test-counter-account-binding-readiness ...***Failed    0.31 sec\n-- Counter fixture active; retained if interrupted: /home/tomi/tos/build/counter-integration-554682bbe4b9\nCMake Error at /home/tomi/tos/test/test-counter-disk-integration.cmake:219 (message):\n  Observation deadline did not fire within the measured band:\n  wait_elapsed_seconds=0.011132\n\n  wait_window_seconds=1.000000\n\n\n\n\nCMake Error at /home/tomi/tos/test/counter-fixture-lifecycle.cmake:58 (message):\n  Counter fixture FAILED (1); retained for inspection:\n  /home/tomi/tos/build/counter-integration-554682bbe4b9\nCall Stack (most recent call first):\n  /home/tomi/tos/test/test-counter-disk-integration.cmake:3 (counter_run_fixture)\n\n\n\n\n0% tests passed, 1 tests failed out of 1\n\nTotal Test time (real) =   0.32 sec\n\nThe following tests FAILED:\n\t 15 - test-counter-account-binding-readiness (Failed)\nErrors while running CTest\n"
+      },
+      "fixture": "/home/tomi/tos/build/counter-integration-554682bbe4b9",
+      "observations": {
+        "exit_code": 0,
+        "output": "/home/tomi/tos/build/counter-integration-554682bbe4b9/account_no_stats.result.stats\ndelivery=unconfirmed\n"
+      },
+      "retained_at": "/tmp/uno-runtime-fixtures.JZ5a5y/counter-integration-554682bbe4b9",
+      "restore_build": {
+        "exit_code": 0,
+        "output": "[1/3] Building CXX object validator/CMakeFiles/validator-disk.dir/manager-disk.cpp.o\n[2/3] Linking CXX static library validator/libvalidator-disk.a\n[3/3] Linking CXX executable test-tos-collator\n"
+      },
+      "restored_hashes": {
+        "exit_code": 0,
+        "output": "b47a08f8cd35dadc8566a7733de6350a76b3dc14e364cd68521de407dad80c87  validator/manager-disk.cpp\n6ef536def629730353abfb9831f0364c05cd39c4762d8bb204010085825e714b  test/test-counter-disk-integration.cmake\n6fc2018f7e1ae29f48896e654790a9ba1f715c8fb375b3770307a7b00548a334  build/test-tos-collator\n"
+      },
+      "restore_audit": {
+        "exit_code": 0,
+        "output": "{\"restored_sha256\": \"b47a08f8cd35dadc8566a7733de6350a76b3dc14e364cd68521de407dad80c87\", \"reconstructed_mutant_sha256\": \"b24f44fd40a3745bafdf623f148d9bddb2759f8358780ad3397edafd79ba3b2b\"}\n"
+      },
+      "green": {
+        "exit_code": 0,
+        "output": "Internal ctest changing into directory: /home/tomi/tos/build\nTest project /home/tomi/tos/build\n    Start 15: test-counter-account-binding-readiness\n1/1 Test #15: test-counter-account-binding-readiness ...   Passed    1.50 sec\n\n100% tests passed, 0 tests failed out of 1\n\nTotal Test time (real) =   1.51 sec\n"
+      }
+    }
+  ],
+  "normal_timing_cohort": {
+    "chunk_id": "973f28",
+    "wall_time_seconds": 0.0000051,
+    "exit_code": 0,
+    "original_token_count": 1360,
+    "output": "15: -- Unconfirmed observation timing: wait_elapsed_seconds=1.003607\n15: wait_window_seconds=1.000000\n15: \n15: -- Closed-gate production observation: delivery=recorded\n15: visited=1\n15: adapter=1\n15: owners_before=1\n15: owners_during=2\n15: owners_after=1\n15: transactions=0\n15: \n15: -- Closed-gate observation timing: query_to_record_seconds=0.021061\n15: wait_window_seconds=1.000000\n15: \n15: -- Live account binding: one config callback, zero engine calls, no candidate export\n15: \n15: -- Counter fixture passed and removed: /home/tomi/tos/build/counter-integration-37122c408ebd\n    Test #15: test-counter-account-binding-readiness ...   Passed    1.66 sec\n    Start 15: test-counter-account-binding-readiness\n\n15: Test command: /usr/bin/cmake \"-DCOLLATOR=/home/tomi/tos/build/test-tos-collator\" \"-DCREATE_STATE=/home/tomi/tos/build/crypto/create-state\" \"-DSOURCE_DIR=/home/tomi/tos\" \"-DBUILD_DIR=/home/tomi/tos/build\" \"-DACCOUNT_BINDING_ONLY=ON\" \"-P\" \"/home/tomi/tos/test/test-counter-disk-integration.cmake\"\n15: Test timeout computed to be: 180\n15: -- Counter fixture active; retained if interrupted: /home/tomi/tos/build/counter-integration-78c6a7359f08\n15: -- Unconfirmed observation timing: wait_elapsed_seconds=1.003495\n15: wait_window_seconds=1.000000\n15: \n15: -- Closed-gate production observation: delivery=recorded\n15: visited=1\n15: adapter=1\n15: owners_before=1\n15: owners_during=2\n15: owners_after=1\n15: transactions=0\n15: \n15: -- Closed-gate observation timing: query_to_record_seconds=0.016899\n15: wait_window_seconds=1.000000\n15: \n15: -- Live account binding: one config callback, zero engine calls, no candidate export\n15: \n15: -- Counter fixture passed and removed: /home/tomi/tos/build/counter-integration-78c6a7359f08\n    Test #15: test-counter-account-binding-readiness ...   Passed    1.64 sec\n    Start 15: test-counter-account-binding-readiness\n\n15: Test command: /usr/bin/cmake \"-DCOLLATOR=/home/tomi/tos/build/test-tos-collator\" \"-DCREATE_STATE=/home/tomi/tos/build/crypto/create-state\" \"-DSOURCE_DIR=/home/tomi/tos\" \"-DBUILD_DIR=/home/tomi/tos/build\" \"-DACCOUNT_BINDING_ONLY=ON\" \"-P\" \"/home/tomi/tos/test/test-counter-disk-integration.cmake\"\n15: Test timeout computed to be: 180\n15: -- Counter fixture active; retained if interrupted: /home/tomi/tos/build/counter-integration-b2e7f792c244\n15: -- Unconfirmed observation timing: wait_elapsed_seconds=1.002859\n15: wait_window_seconds=1.000000\n15: \n15: -- Closed-gate production observation: delivery=recorded\n15: visited=1\n15: adapter=1\n15: owners_before=1\n15: owners_during=2\n15: owners_after=1\n15: transactions=0\n15: \n15: -- Closed-gate observation timing: query_to_record_seconds=0.015209\n15: wait_window_seconds=1.000000\n15: \n15: -- Live account binding: one config callback, zero engine calls, no candidate export\n15: \n15: -- Counter fixture passed and removed: /home/tomi/tos/build/counter-integration-b2e7f792c244\n    Test #15: test-counter-account-binding-readiness ...   Passed    1.61 sec\n    Start 15: test-counter-account-binding-readiness\n\n15: Test command: /usr/bin/cmake \"-DCOLLATOR=/home/tomi/tos/build/test-tos-collator\" \"-DCREATE_STATE=/home/tomi/tos/build/crypto/create-state\" \"-DSOURCE_DIR=/home/tomi/tos\" \"-DBUILD_DIR=/home/tomi/tos/build\" \"-DACCOUNT_BINDING_ONLY=ON\" \"-P\" \"/home/tomi/tos/test/test-counter-disk-integration.cmake\"\n15: Test timeout computed to be: 180\n15: -- Counter fixture active; retained if interrupted: /home/tomi/tos/build/counter-integration-9dbb98861288\n15: -- Unconfirmed observation timing: wait_elapsed_seconds=1.004507\n15: wait_window_seconds=1.000000\n15: \n15: -- Closed-gate production observation: delivery=recorded\n15: visited=1\n15: adapter=1\n15: owners_before=1\n15: owners_during=2\n15: owners_after=1\n15: transactions=0\n15: \n15: -- Closed-gate observation timing: query_to_record_seconds=0.016746\n15: wait_window_seconds=1.000000\n15: \n15: -- Live account binding: one config callback, zero engine calls, no candidate export\n15: \n15: -- Counter fixture passed and removed: /home/tomi/tos/build/counter-integration-9dbb98861288\n    Test #15: test-counter-account-binding-readiness ...   Passed    1.60 sec\n    Start 15: test-counter-account-binding-readiness\n\n15: Test command: /usr/bin/cmake \"-DCOLLATOR=/home/tomi/tos/build/test-tos-collator\" \"-DCREATE_STATE=/home/tomi/tos/build/crypto/create-state\" \"-DSOURCE_DIR=/home/tomi/tos\" \"-DBUILD_DIR=/home/tomi/tos/build\" \"-DACCOUNT_BINDING_ONLY=ON\" \"-P\" \"/home/tomi/tos/test/test-counter-disk-integration.cmake\"\n15: Test timeout computed to be: 180\n15: -- Counter fixture active; retained if interrupted: /home/tomi/tos/build/counter-integration-5e046b2da6ef\n15: -- Unconfirmed observation timing: wait_elapsed_seconds=1.004521\n15: wait_window_seconds=1.000000\n15: \n15: -- Closed-gate production observation: delivery=recorded\n15: visited=1\n15: adapter=1\n15: owners_before=1\n15: owners_during=2\n15: owners_after=1\n15: transactions=0\n15: \n15: -- Closed-gate observation timing: query_to_record_seconds=0.016363\n15: wait_window_seconds=1.000000\n15: \n15: -- Live account binding: one config callback, zero engine calls, no candidate export\n15: \n15: -- Counter fixture passed and removed: /home/tomi/tos/build/counter-integration-5e046b2da6ef\n1/1 Test #15: test-counter-account-binding-readiness ...   Passed    1.59 sec\n\nThe following tests passed:\n\ttest-counter-account-binding-readiness\n\n100% tests passed, 0 tests failed out of 1\n\nTotal Test time (real) =   8.11 sec\n"
+  },
+  "historical_checkpoint": "Earlier timing/deletion runs are retained in memo, not counted as these eight final controls.",
+  "retained_fixture_archive": "/tmp/uno-runtime-fixtures.JZ5a5y"
+}

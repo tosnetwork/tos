@@ -176,6 +176,13 @@ struct CollationStats {
   std::string time_stats;
 
   td::uint32 transactions = 0;
+  // Closed account-engine seam observations, not execution authorization.
+  // Counts are sampled from the authenticated configuration's shared owner.
+  bool account_binding_visited = false;
+  bool account_adapter_bound = false;
+  td::int64 account_config_owners_before = 0;
+  td::int64 account_config_owners_during = 0;
+  td::int64 account_config_owners_after = 0;
   std::vector<BlockIdExt> shard_configuration;
   td::uint32 ext_msgs_total = 0;
   td::uint32 ext_msgs_filtered = 0;

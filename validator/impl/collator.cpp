@@ -1597,7 +1597,19 @@ bool Collator::check_this_shard_mc_info() {
     auto ready = std::visit(td::overloaded(
         [](const block::ResolvedWorkchainExecution&) { return td::Status::OK(); },
         [](const block::ResolvedWorkchainBlockExecution&) { return td::Status::OK(); },
-        [](const block::ResolvedWorkchainAccountBinding&) {
+        [this](const block::ResolvedWorkchainAccountBinding& binding) {
+          stats_.account_binding_visited = true;
+          // Construct only from the production resolver's authenticated cut.
+          // The adapter and its configuration ownership end synchronously,
+          // before the unchanged refusal. No input or proof token is invented.
+          stats_.account_config_owners_before = binding.engine_config.use_count();
+          {
+            auto adapter = block::ConfiguredWorkchainAccountEngine::bind(binding);
+            if (adapter.is_error()) return adapter.move_as_error();
+            stats_.account_adapter_bound = adapter.ok() != nullptr;
+            stats_.account_config_owners_during = binding.engine_config.use_count();
+          }
+          stats_.account_config_owners_after = binding.engine_config.use_count();
           return td::Status::Error(static_cast<int>(block::WorkchainExecutionFailure::LocalUnavailable),
                                    "multi-account admission and replay are not connected");
         }), *execution_res.ok());

@@ -1,0 +1,27 @@
+{
+  "scope": "Final restored-source host runtime adapter regression; not all repository CTests or milestone acceptance",
+  "ctest_command": "ctest --test-dir build -R '^(test-counter-.*|test-workchain-block)$' --output-on-failure",
+  "ctest_completion_chunk": {
+    "chunk_id": "9e9a08",
+    "wall_time_seconds": 0.000005475,
+    "exit_code": 0,
+    "original_token_count": 580,
+    "output": " 2/17 Test #14: test-counter-disk-integration .....................   Passed    1.34 sec\n      Start 15: test-counter-account-binding-readiness\n 3/17 Test #15: test-counter-account-binding-readiness ............   Passed    1.55 sec\n      Start 16: test-counter-fixture-lifecycle\n 4/17 Test #16: test-counter-fixture-lifecycle ....................   Passed    0.09 sec\n      Start 17: test-counter-idle-replay\n 5/17 Test #17: test-counter-idle-replay ..........................   Passed    1.04 sec\n      Start 18: test-counter-self-delivery\n 6/17 Test #18: test-counter-self-delivery ........................   Passed    0.60 sec\n      Start 19: test-counter-cross-delivery\n 7/17 Test #19: test-counter-cross-delivery .......................   Passed    0.90 sec\n      Start 20: test-counter-native-sender\n 8/17 Test #20: test-counter-native-sender ........................   Passed    0.81 sec\n      Start 21: test-counter-activation-missing_capability\n 9/17 Test #21: test-counter-activation-missing_capability ........   Passed    0.31 sec\n      Start 22: test-counter-config-presence-missing_capability\n10/17 Test #22: test-counter-config-presence-missing_capability ...   Passed    0.13 sec\n      Start 23: test-counter-activation-old_version\n11/17 Test #23: test-counter-activation-old_version ...............   Passed    0.31 sec\n      Start 24: test-counter-config-presence-old_version\n12/17 Test #24: test-counter-config-presence-old_version ..........   Passed    0.13 sec\n      Start 25: test-counter-config-binding\n13/17 Test #25: test-counter-config-binding .......................   Passed    0.13 sec\n      Start 26: test-counter-engine-config\n14/17 Test #26: test-counter-engine-config ........................   Passed    0.30 sec\n      Start 36: test-workchain-block\n15/17 Test #36: test-workchain-block ..............................   Passed    3.39 sec\n      Start 68: test-counter-genesis-domain\n16/17 Test #68: test-counter-genesis-domain .......................   Passed    0.15 sec\n      Start 69: test-counter-python-harness\n17/17 Test #69: test-counter-python-harness .......................   Passed    5.34 sec\n\n100% tests passed, 0 tests failed out of 17\n\nLabel Time Summary:\nharness    =   5.34 sec*proc (1 test)\nuno        =   5.34 sec*proc (1 test)\n\nTotal Test time (real) =  16.59 sec\n"
+  },
+  "guard": {
+    "chunk_id": "9e266a",
+    "wall_time_seconds": 0.000003094,
+    "exit_code": 0,
+    "original_token_count": 25,
+    "output": "removed-execution-domain scan passed: 5370 text files, 378 binary files and 0 directories skipped\n"
+  },
+  "hashes": {
+    "chunk_id": "72da22",
+    "wall_time_seconds": 0.122126407,
+    "exit_code": 0,
+    "original_token_count": 170,
+    "output": "7b034a1cc225ca9df9fc8f4f10f58cbcf18b9eae8e885f9f3ef10090dae0151c  validator/impl/collator.cpp\nb47a08f8cd35dadc8566a7733de6350a76b3dc14e364cd68521de407dad80c87  validator/manager-disk.cpp\n51d0f7bfe9068ba8d1cde202861d1ba852989e58629195c9dc7044b67585466d  validator/manager-disk.hpp\n8d39dde37686e8ec8d1c879d31a5b669ba4adfe8304fc7a60fb8adb776c24a48  validator/interfaces/validator-manager.h\n6ef536def629730353abfb9831f0364c05cd39c4762d8bb204010085825e714b  test/test-counter-disk-integration.cmake\n6fc2018f7e1ae29f48896e654790a9ba1f715c8fb375b3770307a7b00548a334  build/test-tos-collator\nc339b3e2183845543a889aa22bbfe25a12ca23a3edb784a1d59ff3dbefe23b7f  build/test-workchain-block\n"
+  },
+  "mutation_reconstruction": "All eight from strings occur once, to strings zero times in current source; independently replacing from with to reproduces recorded mutant SHA256 and restored-source hashes. See controls artifact for exact edits and per-control restore audit.",
+  "build_parallelism": "Historical builds used -j2 before the owner instruction arrived; subsequent builds use -j32. No build was needed after that instruction for this final regression."
+}

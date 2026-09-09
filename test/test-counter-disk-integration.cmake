@@ -205,6 +205,20 @@ file(READ "${fixture}/counter-state.fhash" counter_hash HEX)
 set(previous "(2,8000000000000000,0):${counter_root}:${counter_hash}")
 set(zero_block "${previous}")
 if(ACCOUNT_BINDING_ONLY)
+  # A real pre-busy startup failure emits no CollationStats. It must still
+  # complete the disk query, with absence of confirmation distinct from zero.
+  run_node(account_no_stats 2 "cannot split a shard more than 60 times"
+    -w 2:0000000000000001 -T "(2,0000000000000001,0):${counter_root}:${counter_hash}")
+  file(READ "${fixture}/account_no_stats.result.stats" no_stats)
+  if(NOT no_stats STREQUAL "delivery=unconfirmed\n")
+    message(FATAL_ERROR "Missing delivery was represented as measured work: ${no_stats}")
+  endif()
+  file(READ "${fixture}/account_no_stats.result.stats.timing" no_stats_timing)
+  string(REGEX MATCH "wait_elapsed_seconds=([0-9.eE+-]+)\nwait_window_seconds=([0-9.eE+-]+)\n" wait_match "${no_stats_timing}")
+  if(NOT wait_match OR CMAKE_MATCH_1 LESS 0.9 OR CMAKE_MATCH_1 GREATER 2 OR NOT CMAKE_MATCH_2 EQUAL 1)
+    message(FATAL_ERROR "Observation deadline did not fire within the measured band: ${no_stats_timing}")
+  endif()
+  message(STATUS "Unconfirmed observation timing: ${no_stats_timing}")
   execute_process(COMMAND "${COLLATOR}" --account-binding-probe-selftest "${fixture}/instrument.txt"
     RESULT_VARIABLE instrument_status OUTPUT_VARIABLE instrument_out ERROR_VARIABLE instrument_err TIMEOUT 30)
   if(NOT instrument_status STREQUAL "0")
@@ -224,9 +238,32 @@ if(ACCOUNT_BINDING_ONLY)
   if(EXISTS "${fixture}/unexpected-candidate.bin")
     message(FATAL_ERROR "Refused account binding reached candidate publication")
   endif()
+  # These observations come from the production resolver and adapter, before
+  # the same failed collation exits. The owner increase is the positive control
+  # for a resource side effect; its release is a separate lifetime assertion.
+  # This fixture returns a fresh configuration with no cache or cross-thread
+  # owner. The absolute baseline of one asserts that fixture isolation too.
+  file(READ "${fixture}/account_binding_refused.result.stats" binding_stats)
+  if(NOT binding_stats STREQUAL "delivery=recorded\nvisited=1\nadapter=1\nowners_before=1\nowners_during=2\nowners_after=1\ntransactions=0\n")
+    message(FATAL_ERROR "Production adapter lifetime was not observed at the closed gate: ${binding_stats}")
+  endif()
+  message(STATUS "Closed-gate production observation: ${binding_stats}")
+  file(READ "${fixture}/account_binding_refused.result.stats.timing" binding_timing)
+  string(REGEX MATCH "query_to_record_seconds=([0-9.eE+-]+)\nwait_window_seconds=([0-9.eE+-]+)\n" timing_match "${binding_timing}")
+  if(NOT timing_match OR NOT CMAKE_MATCH_1 GREATER 0 OR NOT CMAKE_MATCH_1 LESS 0.1 OR
+      NOT CMAKE_MATCH_2 EQUAL 1)
+    message(FATAL_ERROR "Normal observation lacks the required tenfold deadline headroom: ${binding_timing}")
+  endif()
+  message(STATUS "Closed-gate observation timing: ${binding_timing}")
   # Bootstrap actually collates, so this is a positive control for the same
   # observer that records the later failure. Numeric identity, not error prose.
   file(READ "${fixture}/bootstrap.result" bootstrap_result)
+  file(READ "${fixture}/bootstrap.result.stats" bootstrap_stats)
+  # This masterchain fixture actually executes one transaction. This is the
+  # nonzero control for the same transaction field asserted at the closed gate.
+  if(NOT bootstrap_stats STREQUAL "delivery=recorded\nvisited=0\nadapter=0\nowners_before=0\nowners_during=0\nowners_after=0\ntransactions=1\n")
+    message(FATAL_ERROR "Successful collation did not deliver its positive transaction count: ${bootstrap_stats}")
+  endif()
   file(READ "${fixture}/account_binding_refused.result" binding_result)
   if(NOT bootstrap_result STREQUAL "collate 0\n" OR NOT binding_result STREQUAL "collate -7201\n")
     message(FATAL_ERROR "Unexpected typed actor results: ${bootstrap_result}${binding_result}")
@@ -242,6 +279,10 @@ if(ACCOUNT_BINDING_ONLY)
   if(EXISTS "${fixture}/fault-candidate.bin")
     message(FATAL_ERROR "Failed configuration published a candidate")
   endif()
+  file(READ "${fixture}/account_config_failure.result.stats" fault_stats)
+  if(NOT fault_stats STREQUAL "delivery=recorded\nvisited=0\nadapter=0\nowners_before=0\nowners_during=0\nowners_after=0\ntransactions=0\n")
+    message(FATAL_ERROR "Pre-binding failure did not deliver a distinct observation: ${fault_stats}")
+  endif()
   run_node(account_state_corrupt 2 "injected account configuration fault"
     --account-binding-probe "${fixture}/corrupt-calls.txt" --account-probe-state-corrupt
     -w 2 -T "${previous}" --export-candidate "${fixture}/corrupt-candidate.bin")
@@ -252,6 +293,10 @@ if(ACCOUNT_BINDING_ONLY)
   endif()
   if(EXISTS "${fixture}/corrupt-candidate.bin")
     message(FATAL_ERROR "Corrupt-state configuration published a candidate")
+  endif()
+  file(READ "${fixture}/account_state_corrupt.result.stats" corrupt_stats)
+  if(NOT corrupt_stats STREQUAL fault_stats)
+    message(FATAL_ERROR "Distinct configuration fault lost its pre-binding observation: ${corrupt_stats}")
   endif()
   message(STATUS "Live account binding: one config callback, zero engine calls, no candidate export")
   return()

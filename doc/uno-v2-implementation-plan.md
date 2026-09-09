@@ -3341,3 +3341,81 @@ Open coverage and integration obligations:
 - Independent authenticated fee-table reconstruction, correspondence with
   verified operation fees, the matching confidential `N_book` debit, and live
   publication remain unimplemented. No gate may open on this checkpoint alone.
+
+### Closed-gate runtime adapter observation
+
+The earliest live collator account-binding branch constructs the configured
+adapter from the production resolver result, samples configuration ownership,
+destroys the adapter synchronously, and returns the existing refusal. It does
+not assemble an admitted input in the disk fixture. The observed ownership
+increase is a resource side effect on the same failed-query path; its release
+is not an account-state rollback test. No proof work or replay is authorized.
+
+The offline result observer joins statistics delivery with the result callback.
+Its sidecar starts as `delivery=pending` and changes to `delivery=recorded` only
+after statistics are written successfully. Missing delivery cannot be read as
+zero transactions. A one-second offline observation deadline records
+`delivery=unconfirmed` without counters and releases the original result. It
+does not prove statistics do not exist or impose a protocol delivery bound;
+startup failures before the collator becomes busy legitimately emit none.
+Process interruption before confirmation leaves `pending`. Neither is a
+consensus error code or an observation of zero work.
+An empty result path retains the unobserved tool route. This join is scoped to
+the disk manager's single collation query, not a general actor-delivery theorem
+or per-attempt resource accounting. Failed writes terminate the disk tool.
+
+The measured stop is the unchanged refusal after adapter construction, not
+commitment checking or replay. Authenticated domain construction is a separate
+static frontier: the existing two-reference configuration shell and resolver
+do not supply genesis/instance metadata for `WorkchainHostIdentity`. No zero,
+fixture constant, or locally chosen domain may substitute for that missing
+production source. This observation does not install the pending instance
+sequence mechanism or authorize a new state layout.
+
+The transaction counter and absence of a candidate export have narrow meanings.
+They do not count earlier authenticated-state reads, all allocations, or all
+possible external side effects, and they are not a state-proof byte comparison.
+All validator refusal gates and the registry's production registration status
+remain unchanged. I13a-e acceptance remains open.
+
+Eight final-source controls are recorded in
+`measurements/uno-v2-runtime-adapter-controls.json`: omit construction, sample
+release early, drop statistics, erase the visit marker, label missing delivery
+as recorded, flatten the measured interval, flatten the transaction counter,
+and shorten the actual alarm without changing its reported window. Each has a
+red assertion, exact source/test/binary restoration, and a green readiness run.
+The construction control intentionally leaves `visited=1`: entry occurred but
+construction did not. Erasing entry is a separate control. The review suggestion
+that omitting construction should flip entry is rejected as conflating stages.
+
+In five consecutive final-source runs, normal query-to-record intervals were
+15.209--21.061 ms and measured no-stats waits were 1.002859--1.004521 s. The
+slowest normal sample leaves more than 47-fold headroom against the one-second
+offline deadline. This is a local normal-run cohort, not a worst-case delivery
+claim. The test separately observes the actual wait within a 0.9--2 s band; it
+does not infer timer behavior from the printed constant. Earlier checkpoints
+are not substituted for this cohort. Bootstrap's observed transaction count
+of one supplies the nonzero witness for the same stats field reported as zero
+at refusal. Configuration-error and authenticated-state-error observations
+both assert no entry into the binding branch.
+
+The initial review's mismatched-workchain/previous-block example aborts in the
+disk manager before collation and is not a no-stats witness. The actual fixture
+uses a matching shard with excessive depth, reaching the pre-busy collator
+refusal. The legacy scalar result sidecar cannot distinguish successful code
+zero from an uncoded error with code zero; exit status and observation status
+remain separate. Do not generalize named nonzero-code preservation to all
+statuses. The terminal observation flag prevents subsequent writes; late-message
+reordering itself is not exercised by this production call chain. The disk
+manager remains a single-query observer, not a multi-query statistics service.
+
+Final relevant regression and restored hashes are recorded separately in
+`measurements/uno-v2-runtime-adapter-final-checks.json` (17 CTests, not the full
+repository suite). Final review independently reconstructed all eight controls.
+Its minor timing-robustness concern is retained: a loaded runner may fail the
+100 ms headroom assertion without a functional defect. This assertion deliberately
+tests tenfold normal-run headroom, not only an initialized clock; increasing it
+to 500 ms would weaken that requirement to twofold. Keep the measured failure
+visible and reproduce under controlled load before diagnosing a code defect.
+The interval begins just before launching collation, not at subprocess startup
+or database open. No arbitrary-load timing guarantee follows from these tests.
