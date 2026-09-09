@@ -173,7 +173,8 @@ void run_publication(unsigned which,const std::string& dir,const std::string& or
       check(count_trace(dir,"write attempt")==0,228);
       check(s.publisher->released().is_error(),208);
       auto blocked=s.publisher->publish(s.expected.batch_identity,s.expected.admitted_input,s.expected.batch_identity,s.builder());
-      check(blocked.outcome==Outcome::Undetermined&&count_trace(dir,"execute")==1,211);
+      check(blocked.outcome==Outcome::Undetermined,211);
+      check(count_trace(dir,"execute")==1,205);
       workchain_publication_set_arm(0);
       auto recovered=s.publisher->recover(s.expected.batch_identity,s.expected.admitted_input,s.observer());
       check(recovered.outcome==Outcome::NotCommitted&&recovered.availability==Availability::Ready,210);

@@ -66,15 +66,21 @@ def main():
         argv += ['-D' + switch + '=' + str(shadow if k == key else repo / names[k]) for k, switch in switches.items()]
         assert command(label + '-configure', argv, False) == 0, 'configuration failure, not behavioral evidence'
         assert command(label + '-build', ['cmake', '--build', args.build, '--target', 'test-workchain-publication-recovery', 'workchain-publication-io-fault', '-j32'], False) == 0, 'build failure, not behavioral evidence'
-        assert command(label + '-dependencies', ['ninja', '-C', args.build, '-t', 'deps'], False) == 0
+        targets = {'source': 'workchain-private-publication', 'test': 'test-workchain-publication-recovery',
+                   'fault': 'workchain-publication-io-fault', 'set_fault': 'test-workchain-publication-recovery'}
+        objects = ['CMakeFiles/' + targets[k] + '.dir/' +
+                   (str(shadow).lstrip('/') if k == key else names[k]) + '.o' for k in names]
+        # Restrict diagnostics to the four current objects, never the complete
+        # retained Ninja history. Full output is still preserved without truncation.
+        assert command(label + '-dependencies', ['ninja', '-C', args.build, '-t', 'deps', *objects], False) == 0
         deps = (args.output / (label + '-dependencies.stdout.log')).read_text()
+        assert command(label + '-commands', ['ninja', '-C', args.build, '-t', 'commands', *objects], False) == 0
+        commands = (args.output / (label + '-commands.stdout.log')).read_text()
+        assert str(repo / 'crypto/block/workchain-candidate-publication.h') in deps
         if key:
-            assert str(shadow) in deps
+            assert str(shadow) in deps and str(shadow) in commands
         else:
-            # Ninja retains obsolete object entries. Query active compile commands
-            # instead of treating its historical dependency database as active.
-            assert command(label + '-commands', ['ninja', '-C', args.build, '-t', 'commands', 'test-workchain-publication-recovery', 'workchain-publication-io-fault'], False) == 0
-            assert str(args.work / 'shadow') not in (args.output / (label + '-commands.stdout.log')).read_text()
+            assert str(args.work / 'shadow') not in commands
     oracle = args.output / 'oracle'
     oracle.mkdir(exist_ok=False)
     def oracle_hashes():
@@ -152,7 +158,11 @@ def main():
         failures([10, 11], 227), 'The actual backend set boundary must be crossed before error substitution.')
     add('disable-set-error-injection', 'set_fault', 'const auto mode = selected.load();', 'const auto mode = 0;',
         failures([10, 11], 225), 'API-boundary status injection, not a physical disk failure claim.')
-    shadow_dir = args.work / 'shadow'  
+    add('alter-set-error-identity', 'set_fault', 'td::Status::Error(-73002,', 'td::Status::Error(-73003,',
+        failures([10, 11], 226), 'Classification and originating numerical status are checked separately.')
+    add('allow-missing-store-creation', 'source', 'if (!std::filesystem::is_regular_file(path_ + "/CURRENT", error) || error)',
+        'if (false)', {8: 223}, 'A missing recovery store cannot be silently recreated even if its marker then fails.')
+    shadow_dir = args.work / 'shadow'   
     shadow_dir.mkdir()
     for name, key, before, after, expected, claim in controls:
         original = originals[key]
@@ -178,13 +188,13 @@ def main():
             shadow.unlink()
             report['controls'].append(entry)
             record()
-        configure(name + '-restored')
-        run(name + '-restored', {})
+            configure(name + '-restored')
+            run(name + '-restored', {})
     report['missing_io_dependency'] = run('missing-io-dependency', failures(list(range(12)), 213), False)
     report['source_files_unchanged'] = all((repo / names[k]).read_bytes() == v for k, v in originals.items())
     assert report['source_files_unchanged']
     record()
-    print('PASS: 12 private disk scenarios, 22 isolated controls; no milestone acceptance claimed.')
+    print('PASS: 12 private disk scenarios, 24 isolated controls; no milestone acceptance claimed.')
 
 
 if __name__ == '__main__':
