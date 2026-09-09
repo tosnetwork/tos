@@ -1,0 +1,139 @@
+{
+  "source_commit": "d51f962ff1a808bf48b9d5ca481cded4a5956102",
+  "scope": "Source contamination audit only; no new behavioral acceptance. Historical restored hashes are verified only for their corresponding source revisions. New shell drafts have no prior mutation/restore chain. Future controls use independent measurement copies.",
+  "modified_files": [
+    {
+      "path": "crypto/test/test-workchain-activation-control.cpp",
+      "head_sha256": "be43db6e4694c6d6d9bd3588ff59b74f45dfdbbf8d4cfd5678aa35e61b55346f",
+      "current_sha256": "e2661a185f5949073aa8234c0356e513fcc621f0a2d6ff46712b06fd71fc87bf",
+      "classification": "Reviewed intentional uncommitted shell migration; not yet subjected to mutation controls"
+    },
+    {
+      "path": "crypto/test/test-workchain-block.cpp",
+      "head_sha256": "61b967c6457c377e1b8ca035281b4aebffa6d2513905475c4de794a9b8f2ca87",
+      "current_sha256": "69a519f981f1c518f8b68f6ba60e10e7c739fc8e5851edbd3e7d8a3f1e634b03",
+      "classification": "Reviewed intentional uncommitted shell migration; not yet subjected to mutation controls"
+    },
+    {
+      "path": "crypto/test/workchain-counter-engine.h",
+      "head_sha256": "58a51083aadcea70e36cf2d249bd7ad13b5f6a3059c7cdf89e561737cfe8e628",
+      "current_sha256": "14c880ead239a66f553efa3b92c5fcb6010b1dd401f99885aaf2802ba2002e29",
+      "classification": "Reviewed intentional uncommitted shell migration; not yet subjected to mutation controls"
+    },
+    {
+      "path": "crypto/test/workchain-instance-fixture-migration.md",
+      "head_sha256": "2e9db3f26ab021daeecd91e9589d580f408a27ae6607dec1bcf00c182ff18dfe",
+      "current_sha256": "fc14bfc0f5fffd5ca313bfcc1a0b901779f921db2d5f11562713b779a1f1235c",
+      "classification": "Reviewed coordinator disposition documentation and manifest update"
+    },
+    {
+      "path": "doc/measurements/uno-d40-caller-migration-2d5d7fa13/artifact-manifest.json",
+      "head_sha256": "6d966ca7099711a7fb8697d75b73c6b65e7ed6b86f4a25ee92f60cf8142009eb",
+      "current_sha256": "aae2adf6593786d3f06a34ac2b2b989a38add1d4c3ff434c1aefab2e09c74b83",
+      "classification": "Reviewed coordinator disposition documentation and manifest update"
+    },
+    {
+      "path": "doc/measurements/uno-d40-caller-migration-2d5d7fa13/failure-comparison.md",
+      "head_sha256": "0490be0917785a17f84e2e01e73b5941f30e06a4f8d01053a3fb154b5bf2f01f",
+      "current_sha256": "384d9eeed47c3f647b3f04ef94316b56e59449404c2417410f1d03148d3a52d2",
+      "classification": "Reviewed coordinator disposition documentation and manifest update"
+    },
+    {
+      "path": "doc/measurements/uno-d40-caller-migration-2d5d7fa13/report.json",
+      "head_sha256": "9119c8197997a6610a228ae304441765779f77ea5f1125240148f59f88b33616",
+      "current_sha256": "1bf2df59a7b5924ee3ba419a7f867b6cf1e190614c68b6901e920084d579109d",
+      "classification": "Reviewed coordinator disposition documentation and manifest update"
+    }
+  ],
+  "historical_restore_checks": [
+    {
+      "report": "doc/measurements/uno-counter-domain-path/report.json",
+      "source": "test/test-counter-disk-integration.cmake",
+      "current_sha256": "30e97da5ddf43573238c77ad31884f2a1d93f937c3f888ec044d13b6cfd5e8d6",
+      "restore_audit_verified": true
+    },
+    {
+      "report": "doc/measurements/uno-d40-validator-callsite/candidate-as-local/report.json",
+      "source": "validator/impl/validate-query.cpp",
+      "current_sha256": "ddd6d68ffe9c98770f1924d7d46db68b1f4609d59a71dab1e7947cd67672023b",
+      "restore_audit_verified": true
+    },
+    {
+      "report": "doc/measurements/uno-d40-validator-callsite/local-as-candidate/report.json",
+      "source": "validator/impl/validate-query.cpp",
+      "current_sha256": "ddd6d68ffe9c98770f1924d7d46db68b1f4609d59a71dab1e7947cd67672023b",
+      "restore_audit_verified": true
+    },
+    {
+      "report": "doc/measurements/uno-d40-validator-callsite/callsite-control/report.json",
+      "source": "validator/impl/validate-query.cpp",
+      "current_sha256": "ddd6d68ffe9c98770f1924d7d46db68b1f4609d59a71dab1e7947cd67672023b",
+      "restore_audit_verified": true
+    },
+    {
+      "report": "/tmp/uno-d40-python/controls.json",
+      "control": "python-tag",
+      "source": "test/tostester/src/pytosiq_core/tlb/block.py",
+      "current_sha256": "fa9c11c4c3787630a98c9a7c22d4d0fb2b0a8d1d33a8bdfc808d652433f2cb9e",
+      "restore_audit_verified": true
+    },
+    {
+      "report": "/tmp/uno-d40-python/controls.json",
+      "control": "python-width",
+      "source": "test/tostester/src/pytosiq_core/tlb/block.py",
+      "current_sha256": "fa9c11c4c3787630a98c9a7c22d4d0fb2b0a8d1d33a8bdfc808d652433f2cb9e",
+      "restore_audit_verified": true
+    },
+    {
+      "report": "/tmp/uno-d40-python/controls.json",
+      "control": "layout-ledger-declaration",
+      "source": "test/tostester/src/pytosiq_core/tlb/block.py",
+      "current_sha256": "fa9c11c4c3787630a98c9a7c22d4d0fb2b0a8d1d33a8bdfc808d652433f2cb9e",
+      "restore_audit_verified": true
+    },
+    {
+      "report": "/tmp/uno-d40-python/controls.json",
+      "control": "omit-rust-inventory",
+      "source": "crypto/test/workchain-wire-representations.json",
+      "current_sha256": "0cf654d1c0b823fc9dd78543cf84b9c310d586c56590dbf403c9b31c23de86aa",
+      "restore_audit_verified": true
+    },
+    {
+      "report": "/tmp/uno-d40-python/controls.json",
+      "control": "omit-tag-check",
+      "source": "test/tostester/src/pytosiq_core/tlb/block.py",
+      "current_sha256": "fa9c11c4c3787630a98c9a7c22d4d0fb2b0a8d1d33a8bdfc808d652433f2cb9e",
+      "restore_audit_verified": true
+    },
+    {
+      "report": "/tmp/uno-d40-python/controls.json",
+      "control": "substitute-ledger",
+      "source": "test/tostester/src/pytosiq_core/tlb/block.py",
+      "current_sha256": "fa9c11c4c3787630a98c9a7c22d4d0fb2b0a8d1d33a8bdfc808d652433f2cb9e",
+      "restore_audit_verified": true
+    },
+    {
+      "report": "/tmp/uno-d40-python/controls.json",
+      "control": "default-missing-ledger",
+      "source": "test/tostester/src/pytosiq_core/tlb/block.py",
+      "current_sha256": "fa9c11c4c3787630a98c9a7c22d4d0fb2b0a8d1d33a8bdfc808d652433f2cb9e",
+      "restore_audit_verified": true
+    },
+    {
+      "report": "/tmp/uno-d40-python/controls.json",
+      "control": "wrong-augmentation-order",
+      "source": "test/tostester/src/pytosiq_core/tlb/block.py",
+      "current_sha256": "fa9c11c4c3787630a98c9a7c22d4d0fb2b0a8d1d33a8bdfc808d652433f2cb9e",
+      "restore_audit_verified": true
+    },
+    {
+      "report": "/tmp/uno-d40-python/controls.json",
+      "control": "omit-stats-augmentation",
+      "source": "test/tostester/src/pytosiq_core/tlb/block.py",
+      "current_sha256": "fa9c11c4c3787630a98c9a7c22d4d0fb2b0a8d1d33a8bdfc808d652433f2cb9e",
+      "restore_audit_verified": true
+    }
+  ],
+  "reviewed_patch_sha256": "de7d7dffa65d5a387f01a465f8a58f6698146811fc048110a15036a6e77851c4",
+  "finding": "No archived mutant residue found; all seven tracked diffs reviewed as intentional changes."
+}

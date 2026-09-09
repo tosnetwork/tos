@@ -1,5 +1,19 @@
 # D40 caller migration and Counter readiness blocker
 
+**Historical coordinator scope (subsequently revised):** nine Counter cases were owner-deferred as obsolete
+zerostate installation shapes, neither regression failures nor passes: readiness,
+activation-missing_capability, activation-old_version, disk-integration,
+idle-replay, self-delivery, cross-delivery, native-sender and engine-config.
+The Python harness decoder is not deferred. The initial three-case disposition
+below is historical; the then-complete set and limits are recorded in
+`doc/measurements/uno-d40-caller-migration-2d5d7fa13/coordinator-nine-case-extension.json`.
+Merged-run causes must still be checked individually.
+
+D40/D52 were later revised to permit identity-bearing genesis. The new genesis
+implementation restores seven cases; the two activation fixtures still stop at
+7409. This historical nine-case disposition is not a current blanket exception.
+See `workchain-genesis-installation.md` and its new run archive.
+
 Source checkpoint: `2d5d7fa13` (parent `dd7a9afa3`).
 
 Nine `encode_workchain_engine_parameters` call sites in
