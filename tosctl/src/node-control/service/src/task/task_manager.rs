@@ -166,11 +166,8 @@ impl TaskController {
             // still observes the signal and exits on its own.
             st.status = TaskStatus::Stopped;
             st.updated_at = UnixTime::now();
-            let view = TaskStateView {
-                enabled: st.enabled,
-                status: st.status,
-                updated_at: st.updated_at,
-            };
+            let view =
+                TaskStateView { enabled: st.enabled, status: st.status, updated_at: st.updated_at };
             (view, handle)
         };
 
