@@ -229,6 +229,33 @@ impl TaskController {
         view
     }
 
+    /// Block until the task has actually reached `Stopped` — its detached
+    /// finalizer has joined the task's `JoinHandle` and run its cleanup to
+    /// completion — or until `max_wait` elapses. Returns `true` if it stopped,
+    /// `false` on timeout.
+    ///
+    /// `disable()` only *requests* a stop and arms a detached finalizer; it
+    /// returns while that finalizer is still joining the task. Process-level
+    /// shutdown uses this as the barrier that the cleanup has finished before
+    /// the Tokio runtime is torn down (runtime shutdown does not run detached
+    /// tasks to completion, so without this barrier in-flight cleanup is
+    /// dropped). It does not itself request a stop; call `disable()` first.
+    pub async fn wait_stopped(&self, max_wait: std::time::Duration) -> bool {
+        let deadline = tokio::time::Instant::now() + max_wait;
+        loop {
+            {
+                let st = self.state.lock().expect("failed to lock state");
+                if matches!(st.status, TaskStatus::Stopped) {
+                    return true;
+                }
+            }
+            if tokio::time::Instant::now() >= deadline {
+                return false;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    }
+
     pub async fn restart(&self) -> TaskStateView {
         // disable() enters Stopping and arms the finalizer; enable() marks the
         // controller enabled again. When the old generation actually exits, the
@@ -784,5 +811,94 @@ mod tests {
         );
 
         ctrl.disable().await;
+    }
+
+    /// A task whose cleanup, run after cancellation, takes observable time. It
+    /// sets `cleanup_done` only once that cleanup has finished, which mirrors a
+    /// real task flushing state on shutdown.
+    struct SlowCleanupTask {
+        cleanup_done: Arc<AtomicBool>,
+    }
+
+    #[async_trait::async_trait]
+    impl ServiceTask for SlowCleanupTask {
+        async fn run(
+            &self,
+            ctx: CancellationCtx,
+            _app_config: Arc<AppConfig>,
+        ) -> anyhow::Result<()> {
+            let mut rx = ctx.subscribe();
+            let _ = rx.changed().await;
+            // Cleanup that takes time: the finalizer only joins (and the status
+            // only settles to Stopped) once this has finished.
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            self.cleanup_done.store(true, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
+    // The shutdown barrier must not return until a task's post-cancellation
+    // cleanup has actually finished; otherwise a process exit that relies on it
+    // would let the runtime drop the in-flight finalizer.
+    #[tokio::test]
+    async fn wait_stopped_blocks_until_cleanup_finishes() {
+        let cleanup_done = Arc::new(AtomicBool::new(false));
+        let ctrl = TaskController::new(
+            "test",
+            SlowCleanupTask { cleanup_done: cleanup_done.clone() },
+            runtime_config(),
+        );
+
+        ctrl.enable().await;
+        assert_eq!(wait_for_status(&ctrl, TaskStatus::Running, 2000).await, TaskStatus::Running);
+
+        // disable() returns immediately, while cleanup is still running.
+        let view = ctrl.disable().await;
+        assert_eq!(view.status, TaskStatus::Stopping);
+        assert!(
+            !cleanup_done.load(Ordering::SeqCst),
+            "cleanup should still be in progress right after disable()"
+        );
+
+        // The barrier blocks until the finalizer settles to Stopped, which only
+        // happens after the slow cleanup completes.
+        assert!(
+            ctrl.wait_stopped(std::time::Duration::from_secs(2)).await,
+            "task should reach Stopped within grace"
+        );
+        assert!(
+            cleanup_done.load(Ordering::SeqCst),
+            "wait_stopped returned before cleanup finished"
+        );
+        assert_eq!(ctrl.status().await.status, TaskStatus::Stopped);
+    }
+
+    // A task that never stops must make the barrier report a timeout (so the
+    // caller can log and move on) rather than block forever.
+    #[tokio::test]
+    async fn wait_stopped_times_out_on_a_stuck_task() {
+        struct StuckOnCancelTask;
+
+        #[async_trait::async_trait]
+        impl ServiceTask for StuckOnCancelTask {
+            async fn run(
+                &self,
+                _ctx: CancellationCtx,
+                _app_config: Arc<AppConfig>,
+            ) -> anyhow::Result<()> {
+                // Ignores cancellation entirely.
+                std::future::pending::<()>().await;
+                Ok(())
+            }
+        }
+
+        let ctrl = TaskController::new("test", StuckOnCancelTask, runtime_config());
+        ctrl.enable().await;
+        assert_eq!(wait_for_status(&ctrl, TaskStatus::Running, 2000).await, TaskStatus::Running);
+        ctrl.disable().await;
+        assert!(
+            !ctrl.wait_stopped(std::time::Duration::from_millis(200)).await,
+            "stuck task must time out"
+        );
     }
 }

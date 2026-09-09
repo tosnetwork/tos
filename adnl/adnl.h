@@ -156,6 +156,13 @@ class Adnl : public AdnlSenderInterface {
 
   static td::int32 adnl_start_time();
 
+  // Upper bound on the number of peer pairs held for a single local id. Once
+  // reached, packets from a new, unprotected peer are dropped rather than
+  // creating an unbounded number of peer-pair actors. Default no-op so
+  // implementations that do not keep a peer table are unaffected.
+  virtual void set_max_peer_pairs(size_t value) {
+  }
+
  protected:
   virtual void add_protected_peers(AdnlNodeIdShort local_id, std::vector<AdnlNodeIdShort> peer_ids) = 0;
   virtual void remove_protected_peers(AdnlNodeIdShort local_id, std::vector<AdnlNodeIdShort> peer_ids) = 0;

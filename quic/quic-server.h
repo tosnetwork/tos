@@ -60,6 +60,31 @@ class QuicServer : public td::actor::Actor, public td::ObserverBase {
     double new_connection_rate_limit_period = 0.2;
     td::uint32 global_new_connection_rate_limit_capacity = 100000;
     double global_new_connection_rate_limit_period = 0.00001;
+    // Hard ceiling on the number of live connections held in the connection
+    // table. The per-IP flood control and the per-IP/global rate limiters bound
+    // how fast new connections arrive, but none of them bound the live total: a
+    // distributed source (many IPs, each under the per-IP limits) can accumulate
+    // connections without bound. This ceiling bounds the worst-case aggregate
+    // inbound-stream memory, which is roughly
+    //   max_connections * max_streams_bidi * per-stream buffer cap,
+    // since every connection can hold up to max_streams_bidi concurrent inbound
+    // streams and each inbound stream is capped to about one peer MTU. The
+    // default is generous enough to never reject a legitimate peer under normal
+    // operation while still turning an otherwise unbounded growth path into a
+    // finite one; lower it per deployment to trade reachable-peer headroom for a
+    // tighter memory bound.
+    size_t max_connections = 1 << 13;
+    // Inactivity window for an inbound QUIC stream, consumed by the sender's
+    // inbound stream callback (not by QuicServer itself). Inbound streams
+    // otherwise carry no timeout, so a peer can open a stream, send partial
+    // data, and pin its (MTU-bounded) buffer for the life of the connection by
+    // keeping the connection alive with keep-alives and never sending FIN. The
+    // callback re-arms this window on every stream data chunk, so a stream still
+    // making progress is never cut off; only one that falls silent this long is
+    // reaped. It is deliberately longer than the connection idle timeout: a
+    // connection with no traffic at all dies on its own idle timer, so this
+    // guard matters precisely for streams abandoned on a kept-alive connection.
+    double inbound_stream_timeout = 60.0;
     bool stateless_retry = true;
   };
   class Callback {

@@ -103,6 +103,9 @@ td::actor::ActorOwn<AdnlPeerPair> &AdnlPeerTableImpl::get_peer_pair(AdnlNodeIdSh
              .emplace(local_id, AdnlPeerPair::create(network_manager_, actor_id(this), local_id_info.mode,
                                                      local_id_info.local_id.get(), dht_node_, local_id, peer_id))
              .first;
+    // A pair was just created for this local id; keep the per-local-id count in
+    // step so the peer-pair ceiling in receive_decrypted_packet stays accurate.
+    local_id_info.peer_pair_count++;
     if (!peer_info.peer_id.empty()) {
       td::actor::send_closure(it->second.actor, &AdnlPeerPair::update_peer_id, peer_info.peer_id);
     }
@@ -155,6 +158,17 @@ void AdnlPeerTableImpl::receive_decrypted_packet(AdnlNodeIdShort dst, AdnlPacket
 
   if (packet.inited_from()) {
     update_id(it->second, packet.from());
+  }
+
+  // Peer-pair ceiling: if this packet would create a brand-new pair for the
+  // destination local id, the local id is already at its limit, and the source
+  // is not a protected peer, drop the packet instead of growing the peer-pair
+  // table without bound. Existing pairs and protected peers are never refused.
+  if (it->second.peers.find(dst) == it->second.peers.end() &&
+      it2->second.peer_pair_count >= max_peer_pairs_ && !it2->second.protected_peers.contains(src)) {
+    VLOG(ADNL_NOTICE) << this << ": dropping IN message [" << src << "->" << dst
+                      << "]: peer pair limit reached (" << it2->second.peer_pair_count << ")";
+    return;
   }
 
   td::actor::send_closure(get_peer_pair(src, it->second, dst, it2->second), &AdnlPeerPair::receive_packet,
@@ -609,7 +623,9 @@ void AdnlPeerTableImpl::gc_peer_pairs(AdnlNodeIdShort local_id, LocalIdInfo &loc
     auto it = local_id_info.peers_gc_order.begin();
     AdnlNodeIdShort gc_peer_id = it->second;
     VLOG(ADNL_NOTICE) << "Removing idle peer pair l_id=" << local_id << " p_id=" << gc_peer_id;
-    peers_[gc_peer_id].peers.erase(local_id);
+    if (peers_[gc_peer_id].peers.erase(local_id) > 0 && local_id_info.peer_pair_count > 0) {
+      local_id_info.peer_pair_count--;
+    }
     if (peers_[gc_peer_id].peers.empty()) {
       // FIXME: if PeerInfo is empty from the start, it won't be erased ever
       peers_.erase(gc_peer_id);

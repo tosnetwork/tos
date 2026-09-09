@@ -187,9 +187,31 @@ async fn run_with_profile(
             }
         }
     }
+    // Orderly shutdown. First stop accepting control operations: the HTTP API
+    // can enable/disable tasks, so drain it before requesting task shutdown, or
+    // a late enable() could race the disable() below.
+    let _ = http_task_handle.await;
+
+    // Request every task to stop. disable() only signals the stop and arms a
+    // detached finalizer; it returns before the task has actually ended.
     for task in tasks.values() {
         let _ = task.disable().await;
     }
-    let _ = http_task_handle.await;
+
+    // Barrier: wait for each task to actually reach Stopped before returning,
+    // so the Tokio runtime is not torn down while finalizers are still running
+    // their cleanup (runtime shutdown does not run detached tasks to
+    // completion). Bounded by an overall grace period; a task that overruns it
+    // is logged rather than silently abandoned.
+    let shutdown_grace = std::time::Duration::from_secs(15);
+    for (name, task) in tasks.iter() {
+        if !task.wait_stopped(shutdown_grace).await {
+            tracing::warn!(
+                "{} task did not reach Stopped within the {}s shutdown grace period",
+                name,
+                shutdown_grace.as_secs()
+            );
+        }
+    }
     Ok(())
 }
