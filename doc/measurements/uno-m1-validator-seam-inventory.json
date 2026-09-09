@@ -1,0 +1,14 @@
+{
+  "scope": "Read-only seam inventory, no implementation or acceptance claim.",
+  "source_commit": "a3a4438bdaeb9946d43794346fe7bcd40df40990",
+  "sources": {
+    "validator/impl/collator.cpp": {
+      "sha256": "7b034a1cc225ca9df9fc8f4f10f58cbcf18b9eae8e885f9f3ef10090dae0151c",
+      "git_blob_oid": "0c45e03d557bc1ff039045e5dec811f7b2295e4b"
+    },
+    "validator/impl/validate-query.cpp": {
+      "sha256": "06ecfc5f97e964bfe248f1743c04b1f09cb70138ca49df9e36b904eb1fbcdb0a",
+      "git_blob_oid": "1fcb5c5439747d5337930a368ca058911e133e0f"
+    }
+  }
+}
