@@ -3669,3 +3669,41 @@ Terminal removal of the binding itself is also not separately observed: the
 owner sample precedes `account_binding_.reset()`, and actor destruction provides
 the final ownership backstop. A later paired-member hardening should add a
 binding-cleared observation/control, not claim it from the adapter's released flag.
+
+### Second collator seam: legacy compute-mode classification
+
+The configuration-stage visitor now explicitly classifies account batches as
+not using custom AccountCompute. The shared inline classifier is used by the
+real collator and a narrow regression target; it neither binds an adapter nor
+authorizes execution. The existing actor-owned adapter, state tracking and
+terminal release remain unchanged. Legacy TVM/custom AccountCompute and
+singleton results retain their previous values. There is no generic visitor
+fallback for future execution families.
+
+This is classification wiring, not live admission/replay connectivity. The
+required-workchain registry refusal still precedes this classifier in the live
+batch path; the later execution-path visitor remains closed. Literal unresolved
+visitor counts are now collator 1 and validator 3, plus the separate registry
+required-workchain refusal. No deployment, activation or final-publication gate
+changes. Direct classifier tests do not establish live reachability.
+
+New source-bound controls change the batch mode to true and restore the old
+classification refusal, respectively. They test returned typed results before
+any execution or settlement guard can mask the outcome. The first-seam twelve
+controls remain historical evidence for unchanged lifetime/settlement code,
+not newly rerun mutation evidence. Ordinary regression reruns their positive
+targets and the real Counter readiness path. This adds one ordinary test;
+private I13 harnesses remain outside ordinary regression.
+
+Second-seam review disposition: validator's paired classifier is intentionally
+not changed in this collator-only stage. Both classifiers must be unified or
+shown equivalent before batch execution is enabled; the remaining validator
+refusals are not a completed integration. Neither the registry refusal nor the
+later execution visitor is relaxed here. The classifier test exercises the
+actual header, not an imitation; its dependency on a validator-private inline
+header is test-only and does not add a crypto-library dependency on validator.
+No ordering-mutation claim is made by this unit: the live readiness test still
+observes the earlier typed refusal, while the new classification mutations are
+private. Moving that refusal later requires its own reachability and
+no-publication controls. The post-review test removes an immutable-input
+postcondition and verifies the TVM key after explicit selector conversion.

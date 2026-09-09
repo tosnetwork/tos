@@ -42,6 +42,7 @@
 #include "vm/dict.h"
 
 #include "collator-impl.h"
+#include "workchain-collator-compute-mode.h"
 #include "fabric.h"
 #include "storage-stat-cache.hpp"
 #include "top-shard-descr.hpp"
@@ -2301,15 +2302,7 @@ bool Collator::fetch_config_params() {
     return fatal_error(resolved_execution.move_as_error_prefix("cannot resolve configured workchain execution: "));
   }
   if (resolved_execution.ok().has_value()) {
-    auto custom = std::visit(td::overloaded(
-        [](const block::ResolvedWorkchainExecution& account) -> td::Result<bool> {
-          return block::resolved_workchain_execution_is_custom(account);
-        },
-        [](const block::ResolvedWorkchainBlockExecution&) -> td::Result<bool> { return false; },
-        [](const block::ResolvedWorkchainAccountBinding&) -> td::Result<bool> {
-          return td::Status::Error(static_cast<int>(block::WorkchainExecutionFailure::LocalUnavailable),
-                                   "multi-account admission and replay are not connected");
-        }), *resolved_execution.ok());
+    auto custom = collator_uses_custom_account_compute(*resolved_execution.ok());
     if (custom.is_error()) return fatal_error(custom.move_as_error());
     custom_workchain = custom.move_as_ok();
   }

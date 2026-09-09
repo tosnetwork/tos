@@ -1,0 +1,15 @@
+[1/87] Building CXX object CMakeFiles/test-workchain-collator-compute-mode.dir/crypto/test/test-workchain-collator-compute-mode.cpp.o
+[2/87] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/collator.cpp.o
+[3/87] Linking CXX static library validator/impl/libtos_validator.a
+[4/87] cd /home/tomi/tos/uno/crypto && /usr/bin/cmake -E env CARGO_NET_OFFLINE=true CARGO_TARGET_DIR=/home/tomi/tos/build/uno/crypto/cargo-target /home/tomi/.cargo/bin/cargo build --locked --offline --release -j32
+    Finished `release` profile [optimized] target(s) in 0.06s
+[5/85] Checking the git repository for changes...
+[6/14] Compiling FunC contract jetton-minter-func -> /home/tomi/tos/build/slice1-gas-parity/jetton-minter-func.boc
+[7/14] Compiling FunC contract jetton-wallet-func -> /home/tomi/tos/build/slice1-gas-parity/jetton-wallet-func.boc
+[8/14] Linking CXX executable test-workchain-collator-compute-mode
+[9/14] Linking CXX executable test-vm-exception-hardening
+[10/14] Linking CXX executable test-ext-message-pool
+[11/14] Linking CXX executable test-wallet-message-processor
+[12/14] Linking CXX executable test-uno-storage-measurement
+[13/14] Linking CXX executable test-uno-state-snapshot
+[14/14] Linking CXX executable test-tos-collator

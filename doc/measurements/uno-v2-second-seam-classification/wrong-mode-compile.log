@@ -1,0 +1,6 @@
+[1/2] Building CXX object CMakeFiles/test-workchain-collator-compute-mode.dir/crypto/test/test-workchain-collator-compute-mode.cpp.o
+/home/tomi/tos/crypto/test/test-workchain-collator-compute-mode.cpp:20:71: warning: implicit conversion loses integer precision: 'std::int64_t' (aka 'long') to 'std::int32_t' (aka 'int') [-Wshorten-64-to-32]
+   20 |     account.descriptor.vm_version = block::tvm_workchain_engine_key().selector;
+      |                                   ~ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^~~~~~~~
+1 warning generated.
+[2/2] Linking CXX executable test-workchain-collator-compute-mode

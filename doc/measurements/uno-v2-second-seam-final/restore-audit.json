@@ -1,0 +1,29 @@
+{
+  "base_commit": "139899d34655267df6718bc5743d6320a5886d11",
+  "controls": [
+    {
+      "name": "wrong-mode",
+      "source": "validator/impl/workchain-collator-compute-mode.h",
+      "before": "        return false;\n",
+      "after": "        return true;\n",
+      "recorded_mutant_sha256": "9ade3561fdfaa7feac8dc521d4f871ddec33f7d13a09684fadd5842d54ab5156",
+      "reconstructed_mutant_sha256": "9ade3561fdfaa7feac8dc521d4f871ddec33f7d13a09684fadd5842d54ab5156",
+      "restored_sha256": "5de42709e6917f8391513b4b26278a42aee34de06ead809bf2629cb9585a948d",
+      "mutant_binary_sha256": "e981fff437d9212d3044330f3c5633ca738f65b2f5f164e1b2b0c896c50e87ca",
+      "failure_identity": "batch.not_account_compute"
+    },
+    {
+      "name": "old-refusal",
+      "source": "validator/impl/workchain-collator-compute-mode.h",
+      "before": "        return false;\n",
+      "after": "        return td::Status::Error(static_cast<int>(block::WorkchainExecutionFailure::LocalUnavailable),\n                                 \"multi-account admission and replay are not connected\");\n",
+      "recorded_mutant_sha256": "d1897cefb1d8c02c014a2416976505baea7854e0040f43c19b913b9dbdab12a6",
+      "reconstructed_mutant_sha256": "d1897cefb1d8c02c014a2416976505baea7854e0040f43c19b913b9dbdab12a6",
+      "restored_sha256": "5de42709e6917f8391513b4b26278a42aee34de06ead809bf2629cb9585a948d",
+      "mutant_binary_sha256": "42a2689ce678946e16107b2f5eb23216f04c2623c4f110569d4285888fdcef51",
+      "failure_identity": "classification.must_not_authorize_or_refuse_execution"
+    }
+  ],
+  "test_source_sha256": "82587bac2fff2d79bd29c3dd25933135de4835f484a0848989a2e11987026fa8",
+  "restored_binary_sha256": "84c095fba07eb3ff4f3a857fb3937b389da2a90f37278813393aae4ad9640b2d"
+}
