@@ -800,6 +800,26 @@ pub fn boc_decompress_improved_structure_lz4(
     if root_count < 1 || root_count > decompressed_size {
         fail!("BOC decompression failed: invalid root count");
     }
+    // Before allocating the root-index vector, bound it two ways -- the
+    // decompressed_size check above is not enough, since a ~200 KiB input can
+    // inflate to a large decompressed_size and an attacker-controlled root_count
+    // up to it would size a Vec<usize> (root_count * 8 bytes) before the stream
+    // is known to hold the indexes. (1) Prove the stream actually contains
+    // root_count 32-bit indexes plus the 32-bit node_count that follows, using
+    // checked arithmetic; (2) cap the allocation by a fixed memory budget
+    // independent of max_size. Legitimate BOCs have a tiny root count, so the
+    // budget is generous.
+    const ROOT_INDEX_BUDGET_BYTES: usize = 64 * 1024 * 1024;
+    let required_bits = root_count
+        .checked_mul(32)
+        .and_then(|b| b.checked_add(32))
+        .ok_or_else(|| error!("BOC decompression failed: root count {root_count} too large"))?;
+    if required_bits > reader.remaining_bits() {
+        fail!("BOC decompression failed: not enough bits for {root_count} root indexes");
+    }
+    if root_count.saturating_mul(std::mem::size_of::<usize>()) > ROOT_INDEX_BUDGET_BYTES {
+        fail!("BOC decompression failed: root count {root_count} exceeds the root-index memory budget");
+    }
     let mut root_indexes = Vec::with_capacity(root_count);
     for _ in 0..root_count {
         root_indexes.push(reader.read_uint(32)? as usize);

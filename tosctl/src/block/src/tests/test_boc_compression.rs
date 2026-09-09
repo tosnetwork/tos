@@ -156,6 +156,30 @@ fn test_decompress_node_count_exceeds_memory_budget() {
     );
 }
 
+#[test]
+fn test_decompress_root_count_exceeds_available_bits() {
+    // A root_count that passes the `<= decompressed_size` check but is more than
+    // the stream can actually hold (each index is 32 bits) must be rejected
+    // before the root-index Vec is allocated and before the read loop runs off
+    // the end. decompressed_size = 4096 bytes = 32768 bits; root_count = 2000
+    // needs 2000*32 + 32 = 64032 bits.
+    let root_count: u32 = 2000;
+    let decompressed_size: usize = 4096;
+    let mut serialized = vec![0u8; decompressed_size];
+    serialized[0..4].copy_from_slice(&root_count.to_be_bytes());
+
+    let payload = lz4::block::compress(&serialized, None, false).unwrap();
+    let mut data = (serialized.len() as u32).to_be_bytes().to_vec();
+    data.extend_from_slice(&payload);
+
+    let result = boc_decompress_improved_structure_lz4(data, 1 << 20);
+    assert!(result.is_err());
+    assert!(
+        result.unwrap_err().to_string().contains("not enough bits for"),
+        "must be rejected by the root-index bit-availability guard before allocation"
+    );
+}
+
 // ============================================
 // Round-trip tests (compress then decompress)
 // ============================================
