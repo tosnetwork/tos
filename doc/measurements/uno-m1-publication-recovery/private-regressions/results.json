@@ -1,0 +1,481 @@
+{
+  "events": [
+    {
+      "name": "freeze",
+      "argv": [
+        "/tmp/uno-m1-i13-build/test-workchain-construction-isolation",
+        "freeze",
+        "/tmp/uno-publication-private-regressions/oracle"
+      ],
+      "exit": 0
+    },
+    {
+      "name": "construction-0",
+      "argv": [
+        "/tmp/uno-m1-i13-build/test-workchain-construction-isolation",
+        "0",
+        "/tmp/uno-publication-private-regressions/oracle"
+      ],
+      "exit": 0
+    },
+    {
+      "name": "construction-1",
+      "argv": [
+        "/tmp/uno-m1-i13-build/test-workchain-construction-isolation",
+        "1",
+        "/tmp/uno-publication-private-regressions/oracle"
+      ],
+      "exit": 0
+    },
+    {
+      "name": "construction-2",
+      "argv": [
+        "/tmp/uno-m1-i13-build/test-workchain-construction-isolation",
+        "2",
+        "/tmp/uno-publication-private-regressions/oracle"
+      ],
+      "exit": 0
+    },
+    {
+      "name": "construction-3",
+      "argv": [
+        "/tmp/uno-m1-i13-build/test-workchain-construction-isolation",
+        "3",
+        "/tmp/uno-publication-private-regressions/oracle"
+      ],
+      "exit": 0
+    },
+    {
+      "name": "construction-4",
+      "argv": [
+        "/tmp/uno-m1-i13-build/test-workchain-construction-isolation",
+        "4",
+        "/tmp/uno-publication-private-regressions/oracle"
+      ],
+      "exit": 0
+    },
+    {
+      "name": "construction-5",
+      "argv": [
+        "/tmp/uno-m1-i13-build/test-workchain-construction-isolation",
+        "5",
+        "/tmp/uno-publication-private-regressions/oracle"
+      ],
+      "exit": 0
+    },
+    {
+      "name": "construction-6",
+      "argv": [
+        "/tmp/uno-m1-i13-build/test-workchain-construction-isolation",
+        "6",
+        "/tmp/uno-publication-private-regressions/oracle"
+      ],
+      "exit": 0
+    },
+    {
+      "name": "construction-7",
+      "argv": [
+        "/tmp/uno-m1-i13-build/test-workchain-construction-isolation",
+        "7",
+        "/tmp/uno-publication-private-regressions/oracle"
+      ],
+      "exit": 0
+    },
+    {
+      "name": "construction-8",
+      "argv": [
+        "/tmp/uno-m1-i13-build/test-workchain-construction-isolation",
+        "8",
+        "/tmp/uno-publication-private-regressions/oracle"
+      ],
+      "exit": 0
+    },
+    {
+      "name": "construction-9",
+      "argv": [
+        "/tmp/uno-m1-i13-build/test-workchain-construction-isolation",
+        "9",
+        "/tmp/uno-publication-private-regressions/oracle"
+      ],
+      "exit": 0
+    },
+    {
+      "name": "construction-10",
+      "argv": [
+        "/tmp/uno-m1-i13-build/test-workchain-construction-isolation",
+        "10",
+        "/tmp/uno-publication-private-regressions/oracle"
+      ],
+      "exit": 0
+    },
+    {
+      "name": "construction-11",
+      "argv": [
+        "/tmp/uno-m1-i13-build/test-workchain-construction-isolation",
+        "11",
+        "/tmp/uno-publication-private-regressions/oracle"
+      ],
+      "exit": 0
+    },
+    {
+      "name": "construction-12",
+      "argv": [
+        "/tmp/uno-m1-i13-build/test-workchain-construction-isolation",
+        "12",
+        "/tmp/uno-publication-private-regressions/oracle"
+      ],
+      "exit": 0
+    },
+    {
+      "name": "construction-13",
+      "argv": [
+        "/tmp/uno-m1-i13-build/test-workchain-construction-isolation",
+        "13",
+        "/tmp/uno-publication-private-regressions/oracle"
+      ],
+      "exit": 0
+    },
+    {
+      "name": "construction-14",
+      "argv": [
+        "/tmp/uno-m1-i13-build/test-workchain-construction-isolation",
+        "14",
+        "/tmp/uno-publication-private-regressions/oracle"
+      ],
+      "exit": 0
+    },
+    {
+      "name": "construction-15",
+      "argv": [
+        "/tmp/uno-m1-i13-build/test-workchain-construction-isolation",
+        "15",
+        "/tmp/uno-publication-private-regressions/oracle"
+      ],
+      "exit": 0
+    },
+    {
+      "name": "construction-16",
+      "argv": [
+        "/tmp/uno-m1-i13-build/test-workchain-construction-isolation",
+        "16",
+        "/tmp/uno-publication-private-regressions/oracle"
+      ],
+      "exit": 0
+    },
+    {
+      "name": "construction-17",
+      "argv": [
+        "/tmp/uno-m1-i13-build/test-workchain-construction-isolation",
+        "17",
+        "/tmp/uno-publication-private-regressions/oracle"
+      ],
+      "exit": 0
+    },
+    {
+      "name": "construction-18",
+      "argv": [
+        "/tmp/uno-m1-i13-build/test-workchain-construction-isolation",
+        "18",
+        "/tmp/uno-publication-private-regressions/oracle"
+      ],
+      "exit": 0
+    },
+    {
+      "name": "construction-19",
+      "argv": [
+        "/tmp/uno-m1-i13-build/test-workchain-construction-isolation",
+        "19",
+        "/tmp/uno-publication-private-regressions/oracle"
+      ],
+      "exit": 0
+    },
+    {
+      "name": "construction-20",
+      "argv": [
+        "/tmp/uno-m1-i13-build/test-workchain-construction-isolation",
+        "20",
+        "/tmp/uno-publication-private-regressions/oracle"
+      ],
+      "exit": 0
+    },
+    {
+      "name": "construction-21",
+      "argv": [
+        "/tmp/uno-m1-i13-build/test-workchain-construction-isolation",
+        "21",
+        "/tmp/uno-publication-private-regressions/oracle"
+      ],
+      "exit": 0
+    },
+    {
+      "name": "construction-22",
+      "argv": [
+        "/tmp/uno-m1-i13-build/test-workchain-construction-isolation",
+        "22",
+        "/tmp/uno-publication-private-regressions/oracle"
+      ],
+      "exit": 0
+    },
+    {
+      "name": "construction-23",
+      "argv": [
+        "/tmp/uno-m1-i13-build/test-workchain-construction-isolation",
+        "23",
+        "/tmp/uno-publication-private-regressions/oracle"
+      ],
+      "exit": 0
+    },
+    {
+      "name": "construction-24",
+      "argv": [
+        "/tmp/uno-m1-i13-build/test-workchain-construction-isolation",
+        "24",
+        "/tmp/uno-publication-private-regressions/oracle"
+      ],
+      "exit": 0
+    },
+    {
+      "name": "construction-25",
+      "argv": [
+        "/tmp/uno-m1-i13-build/test-workchain-construction-isolation",
+        "25",
+        "/tmp/uno-publication-private-regressions/oracle"
+      ],
+      "exit": 0
+    },
+    {
+      "name": "construction-26",
+      "argv": [
+        "/tmp/uno-m1-i13-build/test-workchain-construction-isolation",
+        "26",
+        "/tmp/uno-publication-private-regressions/oracle"
+      ],
+      "exit": 0
+    },
+    {
+      "name": "construction-27",
+      "argv": [
+        "/tmp/uno-m1-i13-build/test-workchain-construction-isolation",
+        "27",
+        "/tmp/uno-publication-private-regressions/oracle"
+      ],
+      "exit": 0
+    },
+    {
+      "name": "construction-28",
+      "argv": [
+        "/tmp/uno-m1-i13-build/test-workchain-construction-isolation",
+        "28",
+        "/tmp/uno-publication-private-regressions/oracle"
+      ],
+      "exit": 0
+    },
+    {
+      "name": "construction-29",
+      "argv": [
+        "/tmp/uno-m1-i13-build/test-workchain-construction-isolation",
+        "29",
+        "/tmp/uno-publication-private-regressions/oracle"
+      ],
+      "exit": 0
+    },
+    {
+      "name": "construction-30",
+      "argv": [
+        "/tmp/uno-m1-i13-build/test-workchain-construction-isolation",
+        "30",
+        "/tmp/uno-publication-private-regressions/oracle"
+      ],
+      "exit": 0
+    },
+    {
+      "name": "construction-31",
+      "argv": [
+        "/tmp/uno-m1-i13-build/test-workchain-construction-isolation",
+        "31",
+        "/tmp/uno-publication-private-regressions/oracle"
+      ],
+      "exit": 0
+    },
+    {
+      "name": "construction-32",
+      "argv": [
+        "/tmp/uno-m1-i13-build/test-workchain-construction-isolation",
+        "32",
+        "/tmp/uno-publication-private-regressions/oracle"
+      ],
+      "exit": 0
+    },
+    {
+      "name": "construction-33",
+      "argv": [
+        "/tmp/uno-m1-i13-build/test-workchain-construction-isolation",
+        "33",
+        "/tmp/uno-publication-private-regressions/oracle"
+      ],
+      "exit": 0
+    },
+    {
+      "name": "construction-34",
+      "argv": [
+        "/tmp/uno-m1-i13-build/test-workchain-construction-isolation",
+        "34",
+        "/tmp/uno-publication-private-regressions/oracle"
+      ],
+      "exit": 0
+    },
+    {
+      "name": "coverage-0",
+      "argv": [
+        "/tmp/uno-m1-i13-build/test-workchain-i13-acceptance",
+        "0"
+      ],
+      "exit": 0
+    },
+    {
+      "name": "coverage-1",
+      "argv": [
+        "/tmp/uno-m1-i13-build/test-workchain-i13-acceptance",
+        "1"
+      ],
+      "exit": 0
+    },
+    {
+      "name": "coverage-2",
+      "argv": [
+        "/tmp/uno-m1-i13-build/test-workchain-i13-acceptance",
+        "2"
+      ],
+      "exit": 0
+    },
+    {
+      "name": "coverage-3",
+      "argv": [
+        "/tmp/uno-m1-i13-build/test-workchain-i13-acceptance",
+        "3"
+      ],
+      "exit": 0
+    },
+    {
+      "name": "coverage-4",
+      "argv": [
+        "/tmp/uno-m1-i13-build/test-workchain-i13-acceptance",
+        "4"
+      ],
+      "exit": 0
+    },
+    {
+      "name": "coverage-5",
+      "argv": [
+        "/tmp/uno-m1-i13-build/test-workchain-i13-acceptance",
+        "5"
+      ],
+      "exit": 0
+    },
+    {
+      "name": "coverage-6",
+      "argv": [
+        "/tmp/uno-m1-i13-build/test-workchain-i13-acceptance",
+        "6"
+      ],
+      "exit": 0
+    },
+    {
+      "name": "coverage-7",
+      "argv": [
+        "/tmp/uno-m1-i13-build/test-workchain-i13-acceptance",
+        "7"
+      ],
+      "exit": 0
+    },
+    {
+      "name": "coverage-8",
+      "argv": [
+        "/tmp/uno-m1-i13-build/test-workchain-i13-acceptance",
+        "8"
+      ],
+      "exit": 0
+    },
+    {
+      "name": "coverage-9",
+      "argv": [
+        "/tmp/uno-m1-i13-build/test-workchain-i13-acceptance",
+        "9"
+      ],
+      "exit": 0
+    },
+    {
+      "name": "coverage-10",
+      "argv": [
+        "/tmp/uno-m1-i13-build/test-workchain-i13-acceptance",
+        "10"
+      ],
+      "exit": 0
+    },
+    {
+      "name": "coverage-11",
+      "argv": [
+        "/tmp/uno-m1-i13-build/test-workchain-i13-acceptance",
+        "11"
+      ],
+      "exit": 0
+    },
+    {
+      "name": "coverage-12",
+      "argv": [
+        "/tmp/uno-m1-i13-build/test-workchain-i13-acceptance",
+        "12"
+      ],
+      "exit": 0
+    },
+    {
+      "name": "coverage-13",
+      "argv": [
+        "/tmp/uno-m1-i13-build/test-workchain-i13-acceptance",
+        "13"
+      ],
+      "exit": 0
+    },
+    {
+      "name": "coverage-14",
+      "argv": [
+        "/tmp/uno-m1-i13-build/test-workchain-i13-acceptance",
+        "14"
+      ],
+      "exit": 0
+    },
+    {
+      "name": "coverage-15",
+      "argv": [
+        "/tmp/uno-m1-i13-build/test-workchain-i13-acceptance",
+        "15"
+      ],
+      "exit": 0
+    },
+    {
+      "name": "usage-0",
+      "argv": [
+        "/tmp/uno-m1-i13-build/test-workchain-i13-usage-acceptance",
+        "0"
+      ],
+      "exit": 0
+    },
+    {
+      "name": "usage-1",
+      "argv": [
+        "/tmp/uno-m1-i13-build/test-workchain-i13-usage-acceptance",
+        "1"
+      ],
+      "exit": 0
+    },
+    {
+      "name": "usage-2",
+      "argv": [
+        "/tmp/uno-m1-i13-build/test-workchain-i13-usage-acceptance",
+        "2"
+      ],
+      "exit": 0
+    }
+  ],
+  "scope": "35 construction, 16 coverage and 3 partial-state private cases only. The old full WorkchainBlock failure remains open on this unmerged tree; A fixture repair 879e5878a is not incorporated."
+}

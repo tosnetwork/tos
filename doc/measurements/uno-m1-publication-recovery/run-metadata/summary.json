@@ -1,0 +1,11 @@
+{
+  "source_commit": "898b86953",
+  "private_regression_count": 54,
+  "full_workchain_regression": "Not closed on this branch. A repair 879e5878a is not merged.",
+  "binary_sha256": {
+    "test-workchain-publication-recovery": "9e76de0b9551d9ffe5a2cefaf438210615c6c679906cfb7084c6c68124faa45e",
+    "libworkchain-publication-io-fault.so": "37a80b9a8d5c4fce0d8f9aaf7877c7ce845ae18c86d287794b414f58ff1bac45"
+  },
+  "compiler_exit": 0,
+  "submodules_exit": 0
+}

@@ -1,0 +1,24 @@
+{
+  "ctest.stderr.log": {
+    "sha256": "18e00877dc1071c85cd4f479d451bebeef8309022e46cf8c63b0bed5151984a4",
+    "bytes": 27,
+    "archive": "logs.tar.zst",
+    "member": "ctest.stderr.log"
+  },
+  "ctest.stdout.log": {
+    "sha256": "c369159f348a9a17af8b99b08f109bb29289d73aebcc707af002372a1a26bc08",
+    "bytes": 1253,
+    "archive": "logs.tar.zst",
+    "member": "ctest.stdout.log"
+  },
+  "ctest.xml": {
+    "sha256": "add149b14b2831fd19ab2eba5d556bd16186facb10c458945ad8d5d784f92596",
+    "bytes": 1108,
+    "artifact": "ctest.xml"
+  },
+  "measurement.json": {
+    "sha256": "b1a0b50d892e2ad5dfd49ea1309bdfa9694ffc67ffa4397842706e77776de27c",
+    "bytes": 1304,
+    "artifact": "measurement.json"
+  }
+}

@@ -1,0 +1,123 @@
+{
+  "CMakeCache.txt": {
+    "sha256": "5aee89d2a538bf2806ac93956f52eb607ec3e185ab60ceac7de158e5f372da7b",
+    "bytes": 53712,
+    "artifact": "CMakeCache.txt"
+  },
+  "compiler.stderr.log": {
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "bytes": 0,
+    "archive": "logs.tar.zst",
+    "member": "compiler.stderr.log"
+  },
+  "compiler.stdout.log": {
+    "sha256": "07c8e26dde5e6ceac7c82345d0b43f8d22dd736dc106c36f41b4714f1b7537fd",
+    "bytes": 168,
+    "archive": "logs.tar.zst",
+    "member": "compiler.stdout.log"
+  },
+  "submodules.stderr.log": {
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "bytes": 0,
+    "archive": "logs.tar.zst",
+    "member": "submodules.stderr.log"
+  },
+  "submodules.stdout.log": {
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "bytes": 0,
+    "archive": "logs.tar.zst",
+    "member": "submodules.stdout.log"
+  },
+  "summary.json": {
+    "sha256": "ca81e31249e3ec3833d8bcdaf26eb01982f734ab59905d43e534022136eb03e4",
+    "bytes": 458,
+    "artifact": "summary.json"
+  },
+  "uno-publication-ctest-1.stderr.log": {
+    "sha256": "18e00877dc1071c85cd4f479d451bebeef8309022e46cf8c63b0bed5151984a4",
+    "bytes": 27,
+    "archive": "logs.tar.zst",
+    "member": "uno-publication-ctest-1.stderr.log"
+  },
+  "uno-publication-ctest-1.stdout.log": {
+    "sha256": "7ed05514ff402718dd68020c6541e15f766d6d24043c41196e035661aa67f58f",
+    "bytes": 1478,
+    "archive": "logs.tar.zst",
+    "member": "uno-publication-ctest-1.stdout.log"
+  },
+  "uno-publication-ctest-1.xml": {
+    "sha256": "60e1454f54b6ee7ed19b3c15bb6dcae90170d8d7c081a871e4f05b4c6ad9d374",
+    "bytes": 1334,
+    "artifact": "uno-publication-ctest-1.xml"
+  },
+  "uno-publication-ctest-2.stderr.log": {
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "bytes": 0,
+    "archive": "logs.tar.zst",
+    "member": "uno-publication-ctest-2.stderr.log"
+  },
+  "uno-publication-ctest-2.stdout.log": {
+    "sha256": "5fd40e0cf9ae13cb225fe78a6ffa9ee394da6486c85fe7e0317769ff192826c0",
+    "bytes": 464,
+    "archive": "logs.tar.zst",
+    "member": "uno-publication-ctest-2.stdout.log"
+  },
+  "uno-publication-ctest-2.xml": {
+    "sha256": "9147c4e422451ff98fe76fa1733dca5e9d22f8003d72f5db14f7b66d3cc2664a",
+    "bytes": 570,
+    "artifact": "uno-publication-ctest-2.xml"
+  },
+  "uno-publication-ctest-final.stderr.log": {
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "bytes": 0,
+    "archive": "logs.tar.zst",
+    "member": "uno-publication-ctest-final.stderr.log"
+  },
+  "uno-publication-ctest-final.stdout.log": {
+    "sha256": "5e5ecd66476548b0a3e16db73e5a2ad66c3222c0cd4b6ceae3b7b6ea6f90c4b6",
+    "bytes": 464,
+    "archive": "logs.tar.zst",
+    "member": "uno-publication-ctest-final.stdout.log"
+  },
+  "uno-publication-ctest-final.xml": {
+    "sha256": "4724c32f3582f45d125283d93ca874054545300c582c8c9ba6d2477c7b4c71be",
+    "bytes": 570,
+    "artifact": "uno-publication-ctest-final.xml"
+  },
+  "uno-publication-private-regression-build.stderr.log": {
+    "sha256": "0b954b933f18861b2a33e0b47d18ec6ed399668910104bd460e47c399de4f578",
+    "bytes": 438,
+    "archive": "logs.tar.zst",
+    "member": "uno-publication-private-regression-build.stderr.log"
+  },
+  "uno-publication-private-regression-build.stdout.log": {
+    "sha256": "35b1192be2af3e762746d77d33a935a8dba321a1be6673931cd21e45a450c626",
+    "bytes": 3680,
+    "archive": "logs.tar.zst",
+    "member": "uno-publication-private-regression-build.stdout.log"
+  },
+  "uno-publication-restore-78-build.stderr.log": {
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "bytes": 0,
+    "archive": "logs.tar.zst",
+    "member": "uno-publication-restore-78-build.stderr.log"
+  },
+  "uno-publication-restore-78-build.stdout.log": {
+    "sha256": "a75c5ecf141c4bdfa9ccd84799ca71295667d949cd46542646f2a800812a7e3c",
+    "bytes": 65,
+    "archive": "logs.tar.zst",
+    "member": "uno-publication-restore-78-build.stdout.log"
+  },
+  "uno-publication-restore-78-configure.stderr.log": {
+    "sha256": "36fe699d817386532e85666373ccccaf5bb2b56093468c348659ce7e729ce6e3",
+    "bytes": 477,
+    "archive": "logs.tar.zst",
+    "member": "uno-publication-restore-78-configure.stderr.log"
+  },
+  "uno-publication-restore-78-configure.stdout.log": {
+    "sha256": "d08fce92aa99a5a5b1503bc76ca13cbec97236be0443ab8622aa9acd22de2380",
+    "bytes": 3940,
+    "archive": "logs.tar.zst",
+    "member": "uno-publication-restore-78-configure.stdout.log"
+  }
+}
