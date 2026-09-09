@@ -1,0 +1,23 @@
+{
+  "commit": "47c9cfd5a97d1cd7f986588aa9667edde3eb2b94",
+  "source": "test/test-counter-disk-integration.cmake",
+  "original_sha256": "30e97da5ddf43573238c77ad31884f2a1d93f937c3f888ec044d13b6cfd5e8d6",
+  "from": "if(NOT COUNTER_FIXTURE_CHILD)\n",
+  "to": "# \u0065vm calibration input; restored after the isolated scan.\nif(NOT COUNTER_FIXTURE_CHILD)\n",
+  "mutant_sha256": "be3d7b4e5e3f4350124e7cdee95df1d665327b5b2f9d041d099ff7441b535d61",
+  "scope": "Scanner input calibration, not application or configuration activation evidence. Comment-only input mutation; no executable embeds this CMake comment. No native rebuild is applicable.",
+  "failure_category": "removed execution domain",
+  "exit_status": 1,
+  "restored_sha256": "30e97da5ddf43573238c77ad31884f2a1d93f937c3f888ec044d13b6cfd5e8d6",
+  "restore_audit_sha256": "be3d7b4e5e3f4350124e7cdee95df1d665327b5b2f9d041d099ff7441b535d61",
+  "baseline_exit_status": 0,
+  "restored_exit_status": 0,
+  "artifacts": {
+    "baseline.stderr.log.gz": "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64",
+    "baseline.stdout.log.gz": "7cd61daa3d9424a79415b4096221c95366c6b063c0d0c2f1748e3dde316787b4",
+    "replacement.stderr.log.gz": "a4c896f126711bf8189a1bd6e38b2833c4d420fea78028160e84fde9a8cd25f8",
+    "replacement.stdout.log.gz": "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64",
+    "restored.stderr.log.gz": "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64",
+    "restored.stdout.log.gz": "7cd61daa3d9424a79415b4096221c95366c6b063c0d0c2f1748e3dde316787b4"
+  }
+}
