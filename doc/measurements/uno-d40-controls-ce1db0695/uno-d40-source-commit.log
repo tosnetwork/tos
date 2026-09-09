@@ -1,0 +1,6 @@
+[agent/uno-m1-i13-acceptance ce1db0695] Add initial instance ledger reconstruction and validator checks
+ 11 files changed, 509 insertions(+), 13 deletions(-)
+ create mode 100644 crypto/block/workchain-instance-identity.cpp
+ create mode 100644 crypto/block/workchain-instance-identity.h
+ create mode 100644 crypto/test/test-workchain-instance-identity.cpp
+ create mode 100644 crypto/test/workchain-instance-identity-shape.md

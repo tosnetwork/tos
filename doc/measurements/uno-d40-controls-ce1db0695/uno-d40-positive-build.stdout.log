@@ -1,0 +1,4 @@
+[1/4] Building CXX object crypto/CMakeFiles/tos_block.dir/block/workchain-instance-identity.cpp.o
+[2/4] Building CXX object crypto/CMakeFiles/test-workchain-instance-identity.dir/test/test-workchain-instance-identity.cpp.o
+[3/4] Linking CXX static library crypto/libtos_block.a
+[4/4] Linking CXX executable crypto/test-workchain-instance-identity

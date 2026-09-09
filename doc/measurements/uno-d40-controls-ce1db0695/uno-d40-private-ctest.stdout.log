@@ -1,0 +1,13 @@
+Internal ctest changing into directory: /tmp/uno-publication-build
+Test project /tmp/uno-publication-build
+    Start 97: test-workchain-instance-identity
+1/1 Test #97: test-workchain-instance-identity ...   Passed    0.00 sec
+
+100% tests passed, 0 tests failed out of 1
+
+Label Time Summary:
+d40          =   0.00 sec*proc (1 test)
+private      =   0.00 sec*proc (1 test)
+workchain    =   0.00 sec*proc (1 test)
+
+Total Test time (real) =   0.01 sec
