@@ -285,7 +285,7 @@ td::Status WalletIndexDb::put_event(const HashKey& account, uint64_t lt,
   return put_cell(td::Slice{key, kEventKeyLen}, std::move(value));
 }
 
-td::Status WalletIndexDb::trim_events(const HashKey& account) {
+td::Status WalletIndexDb::trim_events(const HashKey& account, size_t added_this_block) {
   // Every workchain-zero transaction adds a row holding the whole
   // transaction, and until now nothing removed one: jetton and NFT rows have
   // erase paths, events did not, so this index grew for the life of the node
@@ -295,18 +295,34 @@ td::Status WalletIndexDb::trim_events(const HashKey& account) {
   // history is kept per account is just a matter of dropping the tail. That
   // also reaches rows written before this existed, which a separate
   // time-index would not: those rows have no companion entry to find them by.
+  //
+  // Two things make the bound actually hold on the production path:
+  //
+  //  * This runs inside the block's write batch, before commit, so the scan
+  //    below sees only committed rows -- the `added_this_block` rows written
+  //    for this account earlier in the batch are invisible to it. Keeping
+  //    `kMaxEventsPerAccount - added_this_block` committed rows leaves room for
+  //    them, so the post-commit total is at most kMaxEventsPerAccount.
+  //
+  //  * The delete budget is `added_this_block + kEventTrimDrainPerPass`. A pass
+  //    therefore always removes at least as many rows as the block added, so an
+  //    account gaining more rows per block than a fixed cap can no longer
+  //    outrun trimming; the drain term additionally shrinks any pre-existing
+  //    backlog block by block.
   char prefix[1 + 32];
   prefix[0] = static_cast<char>(kEventTag);
   std::memcpy(prefix + 1, account.data(), 32);
 
+  size_t keep = added_this_block >= kMaxEventsPerAccount ? 0 : kMaxEventsPerAccount - added_this_block;
+  size_t budget = added_this_block + kEventTrimDrainPerPass;
+
   std::vector<std::string> doomed;
   size_t seen = 0;
-  auto status = for_each_key_with_prefix(td::Slice{prefix, sizeof(prefix)},
-                                         kMaxEventsPerAccount + kMaxEventTrimPerPass + 1,
+  auto status = for_each_key_with_prefix(td::Slice{prefix, sizeof(prefix)}, keep + budget + 1,
                                          [&](td::Slice key) -> td::Status {
-    if (++seen > kMaxEventsPerAccount) {
+    if (++seen > keep) {
       doomed.emplace_back(key.str());
-      if (doomed.size() >= kMaxEventTrimPerPass) {
+      if (doomed.size() >= budget) {
         return td::Status::Error("wc0-index: trim batch full");
       }
     }

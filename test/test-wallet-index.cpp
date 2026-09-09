@@ -344,47 +344,78 @@ TEST(WalletIndex, EventHistoryIsBoundedPerAccount) {
   tos_wallet_index::HashKey account = td::Bits256::zero();
   account.as_slice()[31] = 0x77;
 
-  // put_event no longer trims (the block writer trims each touched account
-  // once per block). Model that here: write an event, then trim -- the
-  // tightest cadence, one transaction per block.
-  constexpr uint64_t kWritten = 10400;
-  for (uint64_t lt = 1; lt <= kWritten; lt++) {
-    vm::CellBuilder builder;
-    builder.store_long(static_cast<long long>(lt), 64);
-    ASSERT_TRUE(db->put_event(account, lt, builder.finalize()).is_ok());
-    ASSERT_TRUE(db->trim_events(account).is_ok());
-  }
+  constexpr size_t kMax = tos_wallet_index::kMaxEventsPerAccount;
+  // Add far more than the per-pass drain each block. A trim that could only
+  // ever delete a fixed number per pass (the bug this guards) could not keep
+  // up at this rate, so the account would grow without bound. It is also above
+  // any realistic per-account per-block transaction count.
+  constexpr size_t kPerBlock = tos_wallet_index::kEventTrimDrainPerPass + 200;
 
-  size_t retained = 0;
+  auto count_events = [&]() {
+    size_t n = 0;
+    db->for_each_event(account, size_t{1} << 20, [&](uint64_t, td::Ref<vm::Cell>) {
+      n++;
+      return td::Status::OK();
+    }).ensure();
+    return n;
+  };
+
+  // Drive the *production* write path: each block opens the block batch, writes
+  // kPerBlock events, trims the account once with that count, and commits. The
+  // trim's scan runs before commit and cannot see the batch's own writes, which
+  // is exactly the condition the fix has to handle. Run enough blocks to climb
+  // well past the retention bound, then several more to show it holds steady
+  // instead of creeping upward.
+  const size_t warmup_blocks = kMax / kPerBlock + 5;
+  const size_t total_blocks = warmup_blocks + 20;
+
+  uint64_t lt = 1;
   uint64_t newest = 0;
-  uint64_t oldest = std::numeric_limits<uint64_t>::max();
-  db->for_each_event(account, kWritten * 2, [&](uint64_t lt, td::Ref<vm::Cell>) {
-    retained++;
-    newest = std::max(newest, lt);
-    oldest = std::min(oldest, lt);
+  for (size_t block = 0; block < total_blocks; block++) {
+    ASSERT_TRUE(db->begin_batch().is_ok());
+    for (size_t i = 0; i < kPerBlock; i++, lt++) {
+      vm::CellBuilder builder;
+      builder.store_long(static_cast<long long>(lt), 64);
+      ASSERT_TRUE(db->put_event(account, lt, builder.finalize()).is_ok());
+      newest = lt;
+    }
+    ASSERT_TRUE(db->trim_events(account, kPerBlock).is_ok());
+    ASSERT_TRUE(db->commit_batch().is_ok());
+
+    size_t retained = count_events();
+    // The bound may momentarily hold up to one block's additions above kMax on
+    // the block that first crosses it (trim leaves room for the additions that
+    // are still in the batch), but it must never grow beyond that.
+    ASSERT_TRUE(retained <= kMax + kPerBlock);
+    // Once warmed up the account is pinned at the bound. The pre-fix trim would
+    // instead be at roughly kMax + (block - warmup) * (kPerBlock - fixed_cap)
+    // here -- growing every block. An absolute value, not the code's own
+    // constant, so a mis-sized cap cannot move test and code together.
+    if (block >= warmup_blocks) {
+      ASSERT_EQ(retained, kMax);
+    }
+  }
+  // Newest events are the ones kept.
+  uint64_t seen_newest = 0;
+  uint64_t seen_oldest = std::numeric_limits<uint64_t>::max();
+  db->for_each_event(account, size_t{1} << 20, [&](uint64_t l, td::Ref<vm::Cell>) {
+    seen_newest = std::max(seen_newest, l);
+    seen_oldest = std::min(seen_oldest, l);
     return td::Status::OK();
   }).ensure();
+  ASSERT_EQ(seen_newest, newest);  // newest kept
+  ASSERT_TRUE(seen_oldest > 1);    // oldest dropped
 
-  // Assert against an absolute expected count, NOT the kMaxEventsPerAccount
-  // symbol: tying the assertion to the same constant the code uses means a
-  // mis-sized cap moves both together and the test can never catch it. The
-  // retained count must settle near 10000; a cap accidentally set to, say,
-  // 100 makes this fail. If the cap is changed on purpose, this expected
-  // value is updated deliberately alongside it.
-  constexpr size_t kExpectedRetained = 10000;
-  ASSERT_TRUE(retained <= kExpectedRetained);
-  ASSERT_TRUE(retained >= kExpectedRetained - 64);
-  ASSERT_EQ(newest, kWritten);   // newest kept
-  ASSERT_TRUE(oldest > 1);       // oldest dropped
-
-  // A second account keeps its own history: the bound is per account, not
-  // a global cap that one busy address could spend on behalf of others.
+  // A second account keeps its own history: the bound is per account, not a
+  // global cap that one busy address could spend on behalf of others.
   tos_wallet_index::HashKey other = td::Bits256::zero();
   other.as_slice()[31] = 0x78;
+  ASSERT_TRUE(db->begin_batch().is_ok());
   vm::CellBuilder builder;
   builder.store_long(1, 64);
   ASSERT_TRUE(db->put_event(other, 1, builder.finalize()).is_ok());
-  ASSERT_TRUE(db->trim_events(other).is_ok());
+  ASSERT_TRUE(db->trim_events(other, 1).is_ok());
+  ASSERT_TRUE(db->commit_batch().is_ok());
   size_t other_rows = 0;
   db->for_each_event(other, 10, [&](uint64_t, td::Ref<vm::Cell>) {
     other_rows++;

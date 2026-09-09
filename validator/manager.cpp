@@ -2357,6 +2357,7 @@ void ValidatorManagerImpl::sweep_destroyed_consensus_dbs() {
   // this cannot parse belongs to something else and is left alone.
   auto root = consensus::consensus_db_root(db_root_);
   size_t reclaimed = 0;
+  size_t failed = 0;
   td::WalkPath::run(root, [&](td::CSlice path, td::WalkPath::Type type) {
     if (type != td::WalkPath::Type::EnterDir) {
       return td::WalkPath::Action::Continue;
@@ -2372,13 +2373,28 @@ void ValidatorManagerImpl::sweep_destroyed_consensus_dbs() {
       return td::WalkPath::Action::SkipDir;
     }
     auto full = path.str();
+    // rmrf() is authoritative for whether the directory is gone; the rocksdb
+    // destroy() before it is best-effort cleanup of the db files. Only count a
+    // reclaim when the directory is actually removed -- otherwise a failed
+    // delete (permissions, fs error) would be reported as success and the
+    // leftover silently kept. The destroyed-session record is left in place on
+    // failure, so the next startup sweep retries this directory.
     td::RocksDb::destroy(full + "/db/").ignore();
-    td::rmrf(full).ignore();
-    reclaimed++;
+    auto removed = td::rmrf(full);
+    if (removed.is_ok()) {
+      reclaimed++;
+    } else {
+      failed++;
+      LOG(WARNING) << "could not remove leftover consensus database " << full << ": " << removed.message()
+                   << "; keeping its destroyed-session record so a later startup retries it";
+    }
     return td::WalkPath::Action::SkipDir;
   }).ignore();
   if (reclaimed > 0) {
     LOG(WARNING) << "reclaimed " << reclaimed << " consensus database(s) left behind by a destroyed session";
+  }
+  if (failed > 0) {
+    LOG(ERROR) << failed << " leftover consensus database(s) could not be removed; will retry on next startup";
   }
 }
 

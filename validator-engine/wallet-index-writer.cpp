@@ -465,9 +465,10 @@ bool index_block_walk(WalletIndexDb* db, td::Ref<vm::Cell> block_root, std::set<
         jettons.size() + nfts.size() < kMaxTokenCandidatesPerBlock) {
       nfts.insert(account);
     }
-    trans_dict.check_for_each_extra([db, &account, &jettons, &nfts](td::Ref<vm::CellSlice> tvalue,
-                                                                    td::Ref<vm::CellSlice> /*textra*/,
-                                                                    td::ConstBitPtr /*tkey*/, int /*tn*/) -> bool {
+    size_t events_added = 0;
+    trans_dict.check_for_each_extra([db, &account, &jettons, &nfts, &events_added](
+                                        td::Ref<vm::CellSlice> tvalue, td::Ref<vm::CellSlice> /*textra*/,
+                                        td::ConstBitPtr /*tkey*/, int /*tn*/) -> bool {
       auto tx_cell = tvalue->prefetch_ref();
       if (tx_cell.is_null()) {
         return true;
@@ -479,6 +480,8 @@ bool index_block_walk(WalletIndexDb* db, td::Ref<vm::Cell> block_root, std::set<
       auto status = db->put_event(account, static_cast<uint64_t>(trans.lt), tx_cell);
       if (status.is_error()) {
         LOG(WARNING) << "wc0-index: put_event failed: " << status.message();
+      } else {
+        ++events_added;
       }
       // A freshly deployed token contract has no token operation in its first
       // inbound message: StateInit plus an application-specific mint body
@@ -500,10 +503,13 @@ bool index_block_walk(WalletIndexDb* db, td::Ref<vm::Cell> block_root, std::set<
       }
       return true;
     });
-    // Trim this account once, after all its events for the block are in --
-    // not once per transaction, which would re-scan its whole history each
-    // time (the scan reads the committed DB, blind to the pending batch).
-    auto trim_status = db->trim_events(account);
+    // Trim this account once, after all its events for the block are in -- not
+    // once per transaction, which would re-scan its whole history each time.
+    // The scan reads the committed DB, blind to the pending batch, so pass the
+    // number of rows just added for this account: trim keeps that many fewer
+    // committed rows (so the post-commit total stays bounded) and deletes at
+    // least that many (so a high per-block add rate cannot outrun the bound).
+    auto trim_status = db->trim_events(account, events_added);
     if (trim_status.is_error()) {
       LOG(WARNING) << "wc0-index: trim_events failed: " << trim_status.message();
     }
