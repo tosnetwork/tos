@@ -324,31 +324,43 @@ void JsonRpcServer::handle_getAccountEvents(td::JsonObject &params, std::string 
   bool first = true;
   size_t seen = 0;
   uint64_t last_lt = 0;
+  bool budget_hit = false;
   if (is_indexed_workchain(addr)) {
     // Read one extra entry to determine whether the continuation cursor exists.
     auto append = [&](uint64_t lt, td::Ref<vm::Cell> cell) -> td::Status {
       ++seen;
       if (seen > limit) {
+        // One row past the page: its existence only signals a continuation
+        // cursor, so it is not appended. The traversal stops at its own
+        // limit + 1, so no further rows are read.
         return td::Status::OK();
       }
-      // Stop on the byte budget the same way as on the row count: mark
-      // the page short so the cursor below points at the last row that
-      // did fit, and the caller continues from there.
-      if (sb.as_cslice().size() >= kMaxIndexPageBytes) {
+      auto row = format_account_event(lt, std::move(cell));
+      // Stop *before* appending a row that would push the page past the byte
+      // budget, so the response never exceeds it (the previous code checked the
+      // size before the row and let one row overshoot). Returning an error
+      // stops the underlying scan, so no further records are read or
+      // deserialized -- the byte budget now bounds scan work, not just output.
+      // budget_hit marks this as a normal short page, not a failure. The first
+      // row is always emitted so an oversized single row cannot stall
+      // pagination.
+      size_t projected = sb.as_cslice().size() + (first ? 0 : 1) + row.size();
+      if (!first && projected > kMaxIndexPageBytes) {
         limit = seen - 1;
-        return td::Status::OK();
+        budget_hit = true;
+        return td::Status::Error("wc0-index: page byte budget reached");
       }
       if (!first) {
         sb << ",";
       }
       first = false;
       last_lt = lt;
-      sb << format_account_event(lt, std::move(cell));
+      sb << row;
       return td::Status::OK();
     };
     auto status = has_before_lt ? db->for_each_event_before(addr.addr, before_lt, limit + 1, append)
                                 : db->for_each_event(addr.addr, limit + 1, append);
-    if (status.is_error()) {
+    if (status.is_error() && !budget_hit) {
       promise.set_value(make_json_error(-32603, status.message().str(), req_id));
       return;
     }

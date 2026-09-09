@@ -31,6 +31,7 @@
 #include "block/block.h"
 
 #include <list>
+#include <mutex>
 #include <set>
 #include <unordered_map>
 
@@ -42,38 +43,43 @@ class JsonRpcResponseCache {
       : max_entries_(max_entries), max_body_bytes_(max_body_bytes) {
   }
 
-  bool empty() const noexcept {
+  // All public methods lock mutex_. The cache is a plain shared object accessed
+  // from more than one actor: the JSON-RPC actor (lookup/evict on the request
+  // and cleanup paths) and the promise continuation that stores a completed
+  // response, which -- with query timeouts enabled -- runs on the
+  // QueryTimeoutGuard actor. On a multi-threaded scheduler those actors can run
+  // concurrently, so the map/list/counter must be synchronized. The shared_ptr
+  // only keeps the object alive; it does not make its operations thread-safe.
+  bool empty() const {
+    std::lock_guard<std::mutex> guard(mutex_);
     return entries_.empty();
   }
 
-  std::size_t size() const noexcept {
+  std::size_t size() const {
+    std::lock_guard<std::mutex> guard(mutex_);
     return entries_.size();
   }
 
-  std::size_t body_bytes() const noexcept {
+  std::size_t body_bytes() const {
+    std::lock_guard<std::mutex> guard(mutex_);
     return body_bytes_;
   }
 
   void clear() {
+    std::lock_guard<std::mutex> guard(mutex_);
     entries_.clear();
     lru_.clear();
     body_bytes_ = 0;
   }
 
   void evict_expired() {
-    auto it = entries_.begin();
-    while (it != entries_.end()) {
-      if (it->second.expires_at.is_in_past()) {
-        auto erase_it = it++;
-        erase(erase_it);
-      } else {
-        ++it;
-      }
-    }
+    std::lock_guard<std::mutex> guard(mutex_);
+    evict_expired_locked();
   }
 
   std::optional<std::string> lookup(const std::string& key) {
-    evict_expired();
+    std::lock_guard<std::mutex> guard(mutex_);
+    evict_expired_locked();
     auto it = entries_.find(key);
     if (it == entries_.end()) {
       return std::nullopt;
@@ -83,7 +89,8 @@ class JsonRpcResponseCache {
   }
 
   bool store(const std::string& key, std::string response_json, td::Timestamp expires_at) {
-    evict_expired();
+    std::lock_guard<std::mutex> guard(mutex_);
+    evict_expired_locked();
     if (max_body_bytes_ > 0 && response_json.size() > max_body_bytes_) {
       return false;
     }
@@ -101,6 +108,19 @@ class JsonRpcResponseCache {
   }
 
  private:
+  // Caller must hold mutex_.
+  void evict_expired_locked() {
+    auto it = entries_.begin();
+    while (it != entries_.end()) {
+      if (it->second.expires_at.is_in_past()) {
+        auto erase_it = it++;
+        erase(erase_it);
+      } else {
+        ++it;
+      }
+    }
+  }
+
   struct Entry {
     std::string response_json;
     td::Timestamp expires_at;
@@ -133,6 +153,7 @@ class JsonRpcResponseCache {
     }
   }
 
+  mutable std::mutex mutex_;
   std::size_t max_entries_{0};
   std::size_t max_body_bytes_{0};
   std::unordered_map<std::string, Entry> entries_;

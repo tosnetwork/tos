@@ -462,6 +462,14 @@ static td::Result<InitialIntentInput> parse_initial_intent_input(td::JsonObject 
   if (out.fee_payer.empty()) out.fee_payer = out.address;
   if (out.account_model.empty()) out.account_model = "unknown";
   if (out.authorization_version.empty()) out.authorization_version = "unknown";
+  // Authorization roles are addresses; reject absurdly long values so a request
+  // cannot stuff hundreds of KiB into a role field. The limit is far above any
+  // real address encoding, so it rejects only clearly invalid input.
+  constexpr size_t kMaxRoleLen = 256;
+  if (out.signer.size() > kMaxRoleLen || out.submitter.size() > kMaxRoleLen ||
+      out.fee_payer.size() > kMaxRoleLen) {
+    return td::Status::Error("authorization role identifier too long");
+  }
   if (out.fee_payer != out.signer) {
     return td::Status::Error(
         "FEATURE_DEFERRED: distinct fee_payer semantics are not supported in the initial implementation");
@@ -472,14 +480,20 @@ static td::Result<InitialIntentInput> parse_initial_intent_input(td::JsonObject 
 static std::string build_authorization_roles_json(const std::string& signer,
                                                   const std::string& submitter,
                                                   const std::string& fee_payer) {
-  return PSTRING()
-      << "{\"@type\":\"account.authorizationRoles\""
-      << ",\"signer\":" << td::JsonString(td::Slice(signer))
-      << ",\"submitter\":" << td::JsonString(td::Slice(submitter))
-      << ",\"fee_payer\":" << td::JsonString(td::Slice(fee_payer))
-      << ",\"is_self_submitted\":" << (signer == submitter ? "true" : "false")
-      << ",\"is_self_paid\":" << (signer == fee_payer ? "true" : "false")
-      << "}";
+  // Growable builder, not PSTRING(): signer/submitter/fee_payer come from the
+  // request and (see parse) are only length-bounded to an address, but a
+  // fixed-capacity buffer would silently truncate into invalid JSON that the
+  // outer growable builder would then wrap unchanged. StringBuilder can't
+  // truncate.
+  td::StringBuilder sb;
+  sb << "{\"@type\":\"account.authorizationRoles\""
+     << ",\"signer\":" << td::JsonString(td::Slice(signer))
+     << ",\"submitter\":" << td::JsonString(td::Slice(submitter))
+     << ",\"fee_payer\":" << td::JsonString(td::Slice(fee_payer))
+     << ",\"is_self_submitted\":" << (signer == submitter ? "true" : "false")
+     << ",\"is_self_paid\":" << (signer == fee_payer ? "true" : "false")
+     << "}";
+  return sb.as_cslice().str();
 }
 
 static std::string build_transaction_intent_json(const InitialIntentInput& in) {
@@ -603,14 +617,17 @@ static std::string build_submission_result_json(bool accepted, const std::string
                                                 const std::string& signer,
                                                 const std::string& submitter,
                                                 const std::string& fee_payer) {
-  return PSTRING()
-      << "{\"@type\":\"transaction.submissionResult\""
-      << ",\"accepted\":" << (accepted ? "true" : "false")
-      << ",\"transaction_hash\":" << td::JsonString(td::Slice(hash_b64))
-      << ",\"submission_id\":" << td::JsonString(td::Slice(hash_b64))
-      << ",\"status\":" << status
-      << ",\"authorization_roles\":" << build_authorization_roles_json(signer, submitter, fee_payer)
-      << "}";
+  // Growable builder, not PSTRING(): the embedded authorization_roles JSON
+  // carries request-derived role strings and must not be truncated.
+  td::StringBuilder sb;
+  sb << "{\"@type\":\"transaction.submissionResult\""
+     << ",\"accepted\":" << (accepted ? "true" : "false")
+     << ",\"transaction_hash\":" << td::JsonString(td::Slice(hash_b64))
+     << ",\"submission_id\":" << td::JsonString(td::Slice(hash_b64))
+     << ",\"status\":" << status
+     << ",\"authorization_roles\":" << build_authorization_roles_json(signer, submitter, fee_payer)
+     << "}";
+  return sb.as_cslice().str();
 }
 
 

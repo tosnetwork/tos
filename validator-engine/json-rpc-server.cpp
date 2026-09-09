@@ -593,6 +593,34 @@ void JsonRpcServer::on_request(RequestPtr request, PayloadPtr payload,
     return;
   }
 
+  // CSRF hardening. A cross-site web page can issue a POST without a CORS
+  // preflight only as a "simple request", which is limited to the form-style
+  // content types below. JSON-RPC/REST clients send application/json (or no
+  // Content-Type). Rejecting the form-safelisted types means any cross-site
+  // write must first pass a CORS preflight, which this server -- sending no
+  // Access-Control-Allow-Origin by default -- fails, so the browser never
+  // sends the write. Not sending a CORS response header only blocks the page
+  // from *reading* the reply; it does not stop the request from being
+  // processed, which this check does. Same-origin and non-browser clients are
+  // unaffected.
+  {
+    std::string content_type = request->get_header("Content-Type");
+    for (auto &c : content_type) {
+      c = td::to_lower(c);
+    }
+    auto starts_with = [](const std::string &s, const char *prefix) {
+      return s.rfind(prefix, 0) == 0;
+    };
+    if (starts_with(content_type, "text/plain") ||
+        starts_with(content_type, "application/x-www-form-urlencoded") ||
+        starts_with(content_type, "multipart/form-data")) {
+      promise.set_value(make_text_response(
+          415, "Unsupported Media Type",
+          "write requests must use Content-Type: application/json", opts_.cors_origin));
+      return;
+    }
+  }
+
   // POST REST-style endpoints: /runGetMethod, /sendBoc, etc.
   // These use the POST body as params (same as JSON-RPC but without the envelope).
   // Check if the URL path matches a known method name — if so, treat the POST body
