@@ -685,3 +685,9 @@ if(TOS_WORKCHAIN_INSTANCE_TESTS)
   add_test(NAME test-workchain-instance-identity COMMAND test-workchain-instance-identity)
   set_tests_properties(test-workchain-instance-identity PROPERTIES TIMEOUT 60 LABELS "private;workchain;d40")
 endif()
+
+# A generated constructor changing must invalidate its hand-written Fift consumer.
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+add_test(NAME test-workchain-handwritten-tags COMMAND ${Python3_EXECUTABLE}
+  "${PROJECT_SOURCE_DIR}/crypto/test/workchain-handwritten-tags.py" --repo "${PROJECT_SOURCE_DIR}")
+set_tests_properties(test-workchain-handwritten-tags PROPERTIES TIMEOUT 30 LABELS "workchain;d40")
