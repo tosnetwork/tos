@@ -63,6 +63,10 @@ exceptions = {
     "toslib/toslib/keys/bip39.cpp": {"orchard"},
     # Negative dependency gate's own forbidden-name declarations.
     "uno/crypto/tests/kernel-gates.py": {"orchard", "halo2_proofs", "halo2_gadgets"},
+    # Archived traceback quotes the negative dependency gate's forbidden names.
+    "doc/measurements/uno-m2-rng-controls.json": {"orchard", "halo2_proofs"},
+    # Verbatim stderr from the same negative dependency gate control.
+    "doc/measurements/uno-m2-rng-controls/expanded-dependency-gate.stderr.log": {"orchard", "halo2_proofs"},
 }
 negative_dependency_rules = {
     'self.assertFalse(names & {"rand", "getrandom", "rand_chacha", "orchard", "halo2_proofs"}, graph)',
