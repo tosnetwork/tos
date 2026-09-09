@@ -3077,9 +3077,13 @@ hashes remain identical to the reviewed regression. The private configuration
 seam is connected; production registration and actor replay remain future work.
 
 The independent review of `ffedd9d21` also leaves two explicit integration
-obligations. On returning to D31, the convenience account-engine runner must
-either reject a null old-account root before proof inspection or justify its
-exception to the cheap-context-first rule, with a failure-capable control.
+obligations. The convenience account-engine runner now rejects a null
+old-account root before proof inspection as LocalUnavailable. Its same-input
+positive control executes inspection and engine once; the null-root control
+requires both counts zero. The added test failed before the fix at work_calls
+1 != 0, so later state acquisition cannot mask removal of the early guard.
+`doc/measurements/uno-v2-runner-null-context-control.json` preserves the complete
+run and exact reconstruction from final header to the measured pre-fix bytes.
 Live integration must keep proof-admission tokens synchronous and strictly
 shorter-lived than the inspecting engine: they must not be retained, queued or
 cross an asynchronous boundary. Pointer equality alone cannot prevent address

@@ -325,6 +325,12 @@ inline td::Result<ExecutedWorkchainAccountBatch> execute(
 inline td::Result<ExecutedWorkchainAccountBatch> execute_workchain_account_engine(
     const WorkchainAccountEngine& engine, td::Ref<vm::Cell> old_accounts,
     const AdmittedBatchInput& admitted) {
+  // A missing host state root is local context failure, not candidate data.
+  // Reject it before paying for any engine proof-shape inspection.
+  if (old_accounts.is_null()) {
+    return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),
+                             "missing authenticated old-account root");
+  }
   TRY_RESULT(preflight, ProofAdmittedBatchInput::admit(engine, admitted));
   gen::UnoV2HostInput::Record input;
   if (!tlb::unpack_cell(preflight.root(), input)) {

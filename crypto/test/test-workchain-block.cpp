@@ -2949,6 +2949,23 @@ TEST(WorkchainBlock, NativeDisposalEntry) {
       }
       engine.work_fault = 0;
       {
+        // Positive liveness and the null-context ordering control use the same
+        // admitted input and engine. A later state-read failure cannot satisfy
+        // the zero-work assertion after an earlier proof inspection.
+        engine.calls = engine.work_calls = 0;
+        auto direct_valid = block::execute_workchain_account_engine(engine, old.accounts, full);
+        ASSERT_TRUE(direct_valid.is_ok());
+        ASSERT_EQ(engine.work_calls, 1u);
+        ASSERT_EQ(engine.calls, 1u);
+        engine.calls = engine.work_calls = 0;
+        auto direct_missing = block::execute_workchain_account_engine(engine, {}, full);
+        ASSERT_TRUE(direct_missing.is_error());
+        ASSERT_EQ(engine.work_calls, 0u);
+        ASSERT_EQ(engine.calls, 0u);
+        ASSERT_EQ(direct_missing.error().code(),
+                  static_cast<int>(block::WorkchainExecutionFailure::LocalUnavailable));
+      }
+      {
         // Preflight must precede even commitment hashing, and the succeeding
         // replay must not re-inspect after crossing into semantic processing.
         td::uint64 commitment_hashes = 0;
