@@ -53,9 +53,7 @@ fn find_tos_root() -> Option<PathBuf> {
 ///   `crypto/fift/lib` / `crypto/smartcont`. Falls back to `~/tos` or
 ///   relative paths.
 /// * `CREATE_STATE_PATH` -- override the path to the `create-state` binary.
-pub fn generate_zerostate_total_balance(
-    fif_path: impl AsRef<Path>,
-) -> SandboxResult<CurrencyCollection> {
+pub fn generate_zerostate_state(fif_path: impl AsRef<Path>) -> SandboxResult<ShardStateUnsplit> {
     let tos_root = find_tos_root();
 
     let create_state_bin = env::var("CREATE_STATE_PATH")
@@ -148,10 +146,16 @@ pub fn generate_zerostate_total_balance(
         .map_err(|e| SandboxError::Serialization(format!("read BOC: {e}")))?;
     let cell = read_single_root_boc(boc_bytes)
         .map_err(|e| SandboxError::Serialization(format!("parse BOC: {e}")))?;
-    let state = ShardStateUnsplit::construct_from_cell(cell)
-        .map_err(|e| SandboxError::Serialization(format!("parse ShardStateUnsplit: {e}")))?;
+    ShardStateUnsplit::construct_from_cell(cell)
+        .map_err(|e| SandboxError::Serialization(format!("parse ShardStateUnsplit: {e}")))
+}
 
-    Ok(state.total_balance().clone())
+/// Total balance of the generated genesis masterchain state (sum of all
+/// account balances plus protocol-reserved balances).
+pub fn generate_zerostate_total_balance(
+    fif_path: impl AsRef<Path>,
+) -> SandboxResult<CurrencyCollection> {
+    Ok(generate_zerostate_state(fif_path)?.total_balance().clone())
 }
 
 #[cfg(test)]
@@ -163,8 +167,9 @@ mod tests {
     /// a bounded 100,000-TOS validator-bootstrap main wallet plus 500 TOS
     /// each for the elector and config contracts (see https://github.com/tosnetwork/doc/blob/main/tos-blockchain/Currency.md,
     /// https://github.com/tosnetwork/doc/blob/main/tos-blockchain/Zerostate.md). No premine, treasury, or team allocation exists;
-    /// the long-run 5 B TOS figure is a creation target reached through
-    /// validator block rewards, not a genesis balance.
+    /// the ~10 million TOS total-supply target for the first two years is a
+    /// creation target reached through validator block rewards (ConfigParam 14),
+    /// not a genesis balance. Genesis itself remains exactly 101,000 TOS.
     #[test]
     fn mainnet_genesis_total_supply_matches_validator_bootstrap_allocation() {
         let tos_root = find_tos_root().expect("TOS_ROOT (or a parent build dir) must be locatable");
@@ -181,6 +186,55 @@ mod tests {
             "genesis total supply must be exactly 101,000 TOS, got {} nanotos ({} TOS)",
             total_nanotos,
             total_nanotos / NANOTOS_PER_TOS
+        );
+    }
+
+    /// Pins the ConfigParam 14 block-creation rate (the emission engine's only
+    /// input) to the per-block fees calibrated for the ~10,000,000 TOS / two-year
+    /// bootstrap target, retaining the 1.7:1 masterchain:basechain ratio. This
+    /// asserts the two constants only: it does NOT prove that two years actually
+    /// yield ~10M TOS — the realized total depends on how many blocks are
+    /// produced (the calibration assumes ~2.5 finalized blocks/s). It guards
+    /// against a silent change to the emission rate, which the genesis-balance
+    /// test above does not (that guards only genesis funding). Changing the rate
+    /// makes this red.
+    #[test]
+    fn mainnet_block_create_fees_match_two_year_emission_calibration() {
+        // 10,000,000 TOS total = 101,000 genesis + 9,899,000 emitted over 2yr,
+        // linearly rescaled from the prior 499,899,000-over-7-years calibration.
+        const EXPECTED_MASTERCHAIN_FEE_NANOTOS: u128 = 39_496_630;
+        const EXPECTED_BASECHAIN_FEE_NANOTOS: u128 = 23_233_312;
+
+        let tos_root = find_tos_root().expect("TOS_ROOT (or a parent build dir) must be locatable");
+        let fif_path = tos_root.join("crypto/smartcont/gen-zerostate.fif");
+        let state = generate_zerostate_state(&fif_path).expect("zerostate generation");
+        let mc_extra = state
+            .read_custom()
+            .expect("read masterchain state extra")
+            .expect("genesis masterchain state must carry McStateExtra");
+        let config = mc_extra.config();
+
+        let masterchain_fee =
+            config.block_create_fees(true).expect("ConfigParam 14 masterchain block fee").as_u128();
+        let basechain_fee =
+            config.block_create_fees(false).expect("ConfigParam 14 basechain block fee").as_u128();
+
+        assert_eq!(
+            masterchain_fee, EXPECTED_MASTERCHAIN_FEE_NANOTOS,
+            "masterchain block-create fee must match the 10M-over-2-years calibration"
+        );
+        assert_eq!(
+            basechain_fee, EXPECTED_BASECHAIN_FEE_NANOTOS,
+            "basechain block-create fee must match the 10M-over-2-years calibration"
+        );
+        // Guard the 1.7:1 ratio the calibration preserves (integer-nano exact
+        // ratio is 1.6999..., so check the two are within the expected band).
+        assert!(
+            masterchain_fee * 1000 / basechain_fee == 1699
+                || masterchain_fee * 1000 / basechain_fee == 1700,
+            "masterchain:basechain ratio must stay ~1.7:1, got {}:{}",
+            masterchain_fee,
+            basechain_fee
         );
     }
 }
