@@ -202,8 +202,18 @@ async fn run_with_profile(
         task.begin_shutdown().await;
     }
 
-    // 2. Drain the HTTP control API, within the overall budget.
-    let _ = tokio::time::timeout_at(shutdown_deadline, http_task_handle).await;
+    // 2. Drain the HTTP control API, within the overall budget. Distinguish the
+    //    three outcomes: a clean drain, the task failing, and the grace expiring.
+    //    On timeout the JoinHandle is dropped, which detaches the task — it is
+    //    not a guarantee the HTTP server has actually stopped, so say so rather
+    //    than imply a clean drain.
+    match tokio::time::timeout_at(shutdown_deadline, http_task_handle).await {
+        Ok(Ok(())) => tracing::info!("HTTP server drained"),
+        Ok(Err(e)) => tracing::warn!("HTTP server task failed during shutdown drain: {:#}", e),
+        Err(_) => tracing::warn!(
+            "HTTP server did not drain within the shutdown grace period; detaching it and continuing shutdown"
+        ),
+    }
 
     // 3. Request every task to stop and wait for them to actually reach Stopped,
     //    sharing the overall deadline, so the Tokio runtime is not torn down
