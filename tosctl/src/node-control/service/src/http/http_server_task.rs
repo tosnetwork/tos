@@ -36,6 +36,46 @@ use std::{collections::HashMap, net::SocketAddr, sync::Arc};
 // this, so the cap only bites an abusive or buggy caller minting node ids.
 const MAX_POLICY_OVERRIDES: usize = 4096;
 
+// Global cap on concurrent in-flight HTTP requests. The server has
+// unauthenticated public/explorer routes, so without a bound a flood of slow or
+// concurrent requests can grow in-flight memory and task count without limit.
+// Excess requests are shed with 503 rather than queued.
+const MAX_CONCURRENT_HTTP_REQUESTS: usize = 256;
+// Hard per-request timeout, so a stuck handler cannot hold a concurrency permit
+// (and its resources) indefinitely.
+const HTTP_REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+#[derive(Clone)]
+struct HttpLimits {
+    concurrency: Arc<tokio::sync::Semaphore>,
+    request_timeout: std::time::Duration,
+}
+
+fn http_limits() -> HttpLimits {
+    HttpLimits {
+        concurrency: Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_HTTP_REQUESTS)),
+        request_timeout: HTTP_REQUEST_TIMEOUT,
+    }
+}
+
+// Sheds load past the concurrency ceiling (503) and bounds each request's
+// lifetime (504). The permit is held for the request and released on return, so
+// concurrent in-flight requests -- and the memory they hold -- stay bounded.
+async fn limit_concurrency_and_timeout(
+    axum::extract::State(limits): axum::extract::State<HttpLimits>,
+    req: axum::http::Request<axum::body::Body>,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let Ok(_permit) = limits.concurrency.try_acquire() else {
+        return (axum::http::StatusCode::SERVICE_UNAVAILABLE, "server busy").into_response();
+    };
+    match tokio::time::timeout(limits.request_timeout, next.run(req)).await {
+        Ok(response) => response,
+        Err(_) => (axum::http::StatusCode::GATEWAY_TIMEOUT, "request timed out").into_response(),
+    }
+}
+
 #[derive(Clone)]
 pub struct AppState {
     pub store: Arc<SnapshotStore>,
@@ -279,6 +319,7 @@ pub(crate) fn routes(enable_swagger: bool, state: AppState) -> axum::Router {
         .merge(operator_only)
         .layer(axum::extract::DefaultBodyLimit::max(16 * 1024))
         .with_state(state)
+        .layer(axum::middleware::from_fn_with_state(http_limits(), limit_concurrency_and_timeout))
 }
 
 fn explorer_public_routes() -> axum::Router<AppState> {
@@ -308,6 +349,7 @@ pub(crate) fn explorer_only_routes(state: AppState) -> axum::Router {
         .merge(explorer_public_routes())
         .layer(axum::extract::DefaultBodyLimit::max(16 * 1024))
         .with_state(state)
+        .layer(axum::middleware::from_fn_with_state(http_limits(), limit_concurrency_and_timeout))
 }
 
 // --- Error handling ---
