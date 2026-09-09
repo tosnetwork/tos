@@ -127,6 +127,60 @@ account's event is still present; the prune budget bounds per-call work; and an
 event row is actually gone after its age row is pruned (reconstructed-key
 correctness).
 
+## Codex review outcome (2026-09-10) — revised design
+
+Codex (read-only) confirmed the **problem is AUTHENTIC** and the approach
+**SOUND-WITH-CHANGES**. The design below supersedes the sketch above with the
+six required changes:
+
+1. **Proportional prune budget (not fixed).** A fixed budget `B` lets storage
+   grow when a block adds more than `B` fresh-account events. Use
+   `budget = age_rows_added_this_block + kEventPruneDrainPerBlock`, mirroring the
+   existing per-account `trim_events` (`wallet-index.cpp:314`): a pass always
+   removes at least what the block added, so growth cannot outrun it; the drain
+   shrinks any backlog. The prune counts **all** age rows in `[0x14|0, 0x14|cutoff)`,
+   including orphans whose event was already removed.
+2. **Persisted non-decreasing watermark for the cutoff.** Blocks can arrive out
+   of timestamp order (recovery path, concurrent shard actors), so the cutoff must
+   never regress. Persist `max_gen_utime` in a meta key; each block sets
+   `wm = max(wm, block.gen_utime)` and `cutoff = wm > kEventRetentionSeconds ? wm - kEventRetentionSeconds : 0`
+   (saturating). The range scan upper bound is exclusive, so an event exactly at
+   `cutoff` is retained — the test asserts that boundary. Late blocks that insert
+   already-expired age rows are cleaned by the same block's prune (their rows are
+   `< cutoff`, and the proportional budget covers the rows just added).
+3. **Writer atomicity / error handling.** Age and event rows go into the same
+   per-block `WriteBatch` (atomic, `sync=true`), so no half-pair survives a crash.
+   But: (a) bail if `begin_batch()` fails (today the walk proceeds before the
+   `batch_open` check); (b) a failed age/event enqueue must abort the batch and
+   leave the incomplete-block marker, not log-and-continue with the marker
+   cleared; (c) per-account `trim_events` still deletes only `0x12` — its `0x14`
+   sentinels (≤ a hot account's within-window count, one byte each) are reclaimed
+   by the time-prune at expiry. This is intentional and documented, and the global
+   bound still holds because the prune budget is proportional to age inserts.
+4. **Migration.** In `open()` add a schema-version meta key. If below the version
+   that introduces the age index, in **one WAL-synced batch before exposing the
+   singleton**, range-delete exactly `[0x12,0x13)` and `[0x14,0x15)` and write the
+   version; leave `0x10/0x11/0x13/0x1E` untouched; **reject** an unknown newer
+   version (leave the singleton null) rather than misinterpret it. The index then
+   rebuilds forward. This removes all pre-upgrade event history (recent included);
+   document that the event RPC does not fall back to archive
+   (`json-rpc-server-wc0index.cpp:317`). Retention awareness also applies to the
+   incomplete-block recovery path. (Range delete is logical; physical reclaim is
+   at compaction.)
+5. **Test** drives the production writer end to end (not `put_event_age` directly),
+   uses explicit `gen_utime`s spanning more than the retention window, asserts
+   literal counts on **both** the `0x12` and `0x14` namespaces and actual event
+   absence, and covers: insert rate > drain, equal timestamps, backward arrival,
+   the exact `cutoff` boundary, saturating underflow, hot-account age remnants,
+   batch abort/reopen, and migration preserving `0x10/0x11/0x13/0x1E`. It must go
+   red when age-insertion and pruning are each disabled.
+6. **Liveness wording.** The hook runs synchronously on the apply path
+   (`apply-block.cpp:286`) under `write_mutex()`; it does not touch the consensus
+   state tree and a failure only degrades RPC, but it is not free of apply
+   latency. Work per block is bounded (proportional budget). A dedicated bounded
+   worker for isolation is possible but deferred; an absolute count/byte ceiling
+   (vs the time window alone) is also deferred and noted.
+
 ## Out of scope (tracked separately per the audit)
 
 Telemetry JSONL rotation (P2), the all-shards rotation consensus-DB orphan window

@@ -430,3 +430,125 @@ TEST(WalletIndex, EventHistoryIsBoundedPerAccount) {
   }).ensure();
   ASSERT_EQ(other_rows, 1u);
 }
+
+// The per-account cap above bounds one account's history but not the number of
+// accounts: a fresh account with a single transaction never trips its own trim
+// and would be kept forever, so the index grew with distinct-account count.
+// The companion age index (0x14) + per-block time prune drops whole dormant
+// accounts once they fall out of the retention window, so the total is bounded
+// by the window, not by how many accounts were ever seen. Disabling either the
+// age writes or the prune below makes the "bounded" assertions fail.
+TEST(WalletIndex, EventHistoryIsGloballyBoundedByAge) {
+  auto path = std::string("test-wallet-index-db-age");
+  auto db = open_fresh_db(path);
+
+  constexpr uint32_t kDay = 24 * 60 * 60;
+  constexpr uint32_t kBase = 1700000000;
+  const uint32_t retention = tos_wallet_index::kEventRetentionSeconds;
+  const uint32_t window_blocks = retention / kDay;  // 7 for a 7-day window
+  ASSERT_TRUE(retention % kDay == 0);
+
+  auto make_account = [](uint32_t n) {
+    tos_wallet_index::HashKey a = td::Bits256::zero();
+    a.as_slice()[28] = static_cast<char>((n >> 24) & 0xff);
+    a.as_slice()[29] = static_cast<char>((n >> 16) & 0xff);
+    a.as_slice()[30] = static_cast<char>((n >> 8) & 0xff);
+    a.as_slice()[31] = static_cast<char>(n & 0xff);
+    return a;
+  };
+  auto count_prefix = [&](uint8_t tag) {
+    size_t n = 0;
+    char prefix[1] = {static_cast<char>(tag)};
+    db->for_each_key_with_prefix(td::Slice{prefix, 1}, size_t{1} << 30, [&](td::Slice) {
+      n++;
+      return td::Status::OK();
+    }).ensure();
+    return n;
+  };
+  // Mirror wc0_index_block's DB-level sequence: write (event, age) pairs, then
+  // advance the non-decreasing watermark and prune with a budget proportional
+  // to the rows just added (this is what keeps the bound from being outrun).
+  auto index_block = [&](const std::vector<std::pair<tos_wallet_index::HashKey, uint64_t>>& events,
+                         uint32_t gen_utime) {
+    ASSERT_TRUE(db->begin_batch().is_ok());
+    size_t age_added = 0;
+    for (const auto& [account, lt] : events) {
+      vm::CellBuilder builder;
+      builder.store_long(static_cast<long long>(lt), 64);
+      ASSERT_TRUE(db->put_event(account, lt, builder.finalize()).is_ok());
+      ASSERT_TRUE(db->put_event_age(account, lt, gen_utime).is_ok());
+      age_added++;
+    }
+    auto wm_r = db->get_event_watermark();
+    ASSERT_TRUE(wm_r.is_ok());
+    uint32_t stored = wm_r.move_as_ok();
+    uint32_t watermark = stored > gen_utime ? stored : gen_utime;
+    ASSERT_TRUE(db->put_event_watermark(watermark).is_ok());
+    uint32_t cutoff = watermark > retention ? watermark - retention : 0;
+    ASSERT_TRUE(db->prune_events_by_age(cutoff, age_added + tos_wallet_index::kEventPruneDrainPerBlock).is_ok());
+    ASSERT_TRUE(db->commit_batch().is_ok());
+  };
+
+  // One brand-new account per block, one event each, one block per day. Without
+  // the age prune this climbs to `total_blocks`; with it, it must hold at the
+  // window size.
+  const uint32_t total_blocks = window_blocks + 25;
+  for (uint32_t b = 0; b < total_blocks; b++) {
+    uint32_t gen_utime = kBase + b * kDay;
+    index_block({{make_account(b), 1}}, gen_utime);
+
+    // Every event has exactly one companion age row -- no orphans in either
+    // direction.
+    ASSERT_EQ(count_prefix(0x12), count_prefix(0x14));
+
+    if (b >= window_blocks) {
+      // Retained accounts are exactly those whose gen_utime >= cutoff =
+      // (kBase + b*kDay) - retention = kBase + (b - window_blocks)*kDay. The
+      // exclusive upper bound keeps the account exactly at the cutoff, so blocks
+      // [b - window_blocks .. b] survive: window_blocks + 1 rows, regardless of
+      // how many total blocks have been processed. The pre-fix index would be at
+      // b + 1 here and rising every block.
+      ASSERT_EQ(count_prefix(0x12), static_cast<size_t>(window_blocks + 1));
+      // The account exactly at the cutoff is retained; the one just older is gone.
+      ASSERT_TRUE(db->get_event(make_account(b - window_blocks), 1).is_ok());
+      ASSERT_TRUE(db->get_event(make_account(b - window_blocks - 1), 1).is_error());
+    }
+  }
+
+  // Burst: one block introduces far more fresh accounts than a single prune's
+  // drain, at a timestamp that is already outside the window relative to a later
+  // block. A fixed per-block budget could never catch up; the proportional
+  // budget + drain does, over a bounded number of later blocks.
+  const size_t burst = tos_wallet_index::kEventPruneDrainPerBlock + 500;
+  uint32_t burst_time = kBase + total_blocks * kDay;
+  {
+    std::vector<std::pair<tos_wallet_index::HashKey, uint64_t>> events;
+    for (size_t i = 0; i < burst; i++) {
+      events.emplace_back(make_account(1000000 + static_cast<uint32_t>(i)), 1);
+    }
+    index_block(events, burst_time);
+  }
+  // Now advance well past the window with empty blocks (age_added == 0, so each
+  // prune still gets a full drain budget) and confirm the burst fully drains --
+  // the backlog shrinks by at least the drain each block and reaches the steady
+  // window size, it does not plateau above it.
+  size_t drained_after = 0;
+  for (uint32_t k = 1; k <= 20; k++) {
+    index_block({}, burst_time + retention + k * kDay);
+    if (count_prefix(0x12) == 0) {
+      drained_after = k;
+      break;
+    }
+  }
+  ASSERT_TRUE(drained_after != 0);          // the burst was fully reclaimed
+  ASSERT_TRUE(drained_after <= burst / tos_wallet_index::kEventPruneDrainPerBlock + 2);
+  ASSERT_EQ(count_prefix(0x12), count_prefix(0x14));  // still paired at zero
+
+  // A late block carrying an old gen_utime must not regress the cutoff: its
+  // event is (correctly) already expired, so after its own prune nothing from
+  // before the true watermark reappears, and the count stays at zero.
+  index_block({{make_account(2000000), 1}}, kBase);  // far in the past
+  ASSERT_TRUE(count_prefix(0x12) <= 1);
+
+  td::rmrf(path).ignore();
+}

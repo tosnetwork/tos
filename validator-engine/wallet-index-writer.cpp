@@ -437,7 +437,8 @@ void index_nft_candidate(WalletIndexDb* db, StateAccounts& state, const td::Bits
 // collect token-verification candidates. Returns false if the block envelope
 // does not parse; fills `end_lt` from the block info.
 bool index_block_walk(WalletIndexDb* db, td::Ref<vm::Cell> block_root, std::set<td::Bits256>& jettons,
-                      std::set<td::Bits256>& nfts, unsigned long long& end_lt) {
+                      std::set<td::Bits256>& nfts, unsigned long long& end_lt, uint32_t& gen_utime,
+                      size_t& age_rows_added, bool& write_error) {
   block::gen::Block::Record blk;
   block::gen::BlockInfo::Record info;
   block::gen::BlockExtra::Record extra;
@@ -445,9 +446,11 @@ bool index_block_walk(WalletIndexDb* db, td::Ref<vm::Cell> block_root, std::set<
     return false;
   }
   end_lt = info.end_lt;
+  gen_utime = info.gen_utime;
   vm::AugmentedDictionary acc_dict{vm::load_cell_slice_ref(extra.account_blocks), 256,
                                    block::tlb::aug_ShardAccountBlocks};
-  acc_dict.check_for_each_extra([db, &jettons, &nfts](td::Ref<vm::CellSlice> value,
+  acc_dict.check_for_each_extra([db, &jettons, &nfts, gen_utime, &age_rows_added, &write_error](
+                                    td::Ref<vm::CellSlice> value,
                                                       td::Ref<vm::CellSlice> /*extra*/, td::ConstBitPtr /*key*/,
                                                       int /*n*/) -> bool {
     block::gen::AccountBlock::Record acc_blk;
@@ -466,7 +469,8 @@ bool index_block_walk(WalletIndexDb* db, td::Ref<vm::Cell> block_root, std::set<
       nfts.insert(account);
     }
     size_t events_added = 0;
-    trans_dict.check_for_each_extra([db, &account, &jettons, &nfts, &events_added](
+    trans_dict.check_for_each_extra([db, &account, &jettons, &nfts, &events_added, gen_utime, &age_rows_added,
+                                     &write_error](
                                         td::Ref<vm::CellSlice> tvalue, td::Ref<vm::CellSlice> /*textra*/,
                                         td::ConstBitPtr /*tkey*/, int /*tn*/) -> bool {
       auto tx_cell = tvalue->prefetch_ref();
@@ -481,7 +485,18 @@ bool index_block_walk(WalletIndexDb* db, td::Ref<vm::Cell> block_root, std::set<
       if (status.is_error()) {
         LOG(WARNING) << "wc0-index: put_event failed: " << status.message();
       } else {
-        ++events_added;
+        // Pair every event with its age-index row so the global time-based prune
+        // can reach it. Committing the event without its age row would leave an
+        // orphan the pruner can never find, so a failed age write fails the whole
+        // block (aborted below) rather than persisting a half-pair.
+        auto age_status = db->put_event_age(account, static_cast<uint64_t>(trans.lt), gen_utime);
+        if (age_status.is_error()) {
+          LOG(WARNING) << "wc0-index: put_event_age failed: " << age_status.message();
+          write_error = true;
+        } else {
+          ++events_added;
+          ++age_rows_added;
+        }
       }
       // A freshly deployed token contract has no token operation in its first
       // inbound message: StateInit plus an application-specific mint body
@@ -556,12 +571,20 @@ void wc0_index_block(td::Ref<vm::Cell> block_root, td::Ref<vm::Cell> state_root,
               << " in-progress, skipping indexing this pass: " << marker_status.message();
     return;
   }
-  bool batch_open = db->begin_batch().is_ok();
+  if (!db->begin_batch().is_ok()) {
+    LOG(WARNING) << "wc0-index: begin_batch failed for block seqno=" << seqno
+                 << "; skipping indexing this pass (marker retained for retry)";
+    return;
+  }
   bool ok = false;
   std::set<td::Bits256> jetton_candidates, nft_candidates;
   unsigned long long end_lt = 0;
+  uint32_t gen_utime = 0;
+  size_t age_rows_added = 0;
+  bool write_error = false;
   try {
-    ok = index_block_walk(db, block_root, jetton_candidates, nft_candidates, end_lt);
+    ok = index_block_walk(db, block_root, jetton_candidates, nft_candidates, end_lt, gen_utime, age_rows_added,
+                          write_error);
     if (ok && !(jetton_candidates.empty() && nft_candidates.empty())) {
       if (jetton_candidates.size() + nft_candidates.size() >= kMaxTokenCandidatesPerBlock) {
         LOG(WARNING) << "wc0-index: token candidate cap (" << kMaxTokenCandidatesPerBlock
@@ -607,10 +630,32 @@ void wc0_index_block(td::Ref<vm::Cell> block_root, td::Ref<vm::Cell> state_root,
   } catch (...) {
     LOG(WARNING) << "wc0-index: unknown error while indexing block seqno=" << seqno;
   }
-  if (!batch_open) {
-    return;
-  }
-  if (ok) {
+  if (ok && !write_error) {
+    // Advance the non-decreasing retention watermark and prune expired events,
+    // inside this block's batch. Taking the max of the stored watermark and this
+    // block's gen_utime means a late or recovery block cannot regress the cutoff
+    // and silently retain expired rows. The prune budget always covers at least
+    // the rows this block added (plus a drain), so the global bound cannot be
+    // outrun and any backlog shrinks block by block.
+    uint32_t stored_watermark = 0;
+    auto wm_r = db->get_event_watermark();
+    if (wm_r.is_ok()) {
+      stored_watermark = wm_r.move_as_ok();
+    } else {
+      LOG(WARNING) << "wc0-index: read watermark failed for block seqno=" << seqno << ": "
+                   << wm_r.move_as_error().message();
+    }
+    uint32_t watermark = stored_watermark > gen_utime ? stored_watermark : gen_utime;
+    auto wm_put = db->put_event_watermark(watermark);
+    if (wm_put.is_error()) {
+      LOG(WARNING) << "wc0-index: write watermark failed for block seqno=" << seqno << ": " << wm_put.message();
+    }
+    uint32_t cutoff = watermark > kEventRetentionSeconds ? watermark - kEventRetentionSeconds : 0;
+    size_t prune_budget = age_rows_added + kEventPruneDrainPerBlock;
+    auto prune_status = db->prune_events_by_age(cutoff, prune_budget);
+    if (prune_status.is_error()) {
+      LOG(WARNING) << "wc0-index: prune failed for block seqno=" << seqno << ": " << prune_status.message();
+    }
     // Indexing completed for this block; clear the in-progress marker and commit
     // the block's entries atomically. This is the second of two necessary WAL
     // syncs per block — the first was put_incomplete_block()'s own sync,
@@ -621,7 +666,8 @@ void wc0_index_block(td::Ref<vm::Cell> block_root, td::Ref<vm::Cell> state_root,
       LOG(WARNING) << "wc0-index: commit failed for block seqno=" << seqno << ": " << s.message();
     }
   } else {
-    // Never persist a partial block.
+    // Never persist a partial block: a parse failure, or a half-written
+    // event/age pair. The retained incomplete-block marker triggers a re-index.
     db->abort_batch();
   }
 }

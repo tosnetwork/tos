@@ -43,6 +43,26 @@ constexpr size_t kMaxEventsPerAccount = 10000;
 // over successive blocks. Trimming stays bounded work per call.
 constexpr size_t kEventTrimDrainPerPass = 256;
 
+// Global age-based retention. The per-account cap above bounds one account's
+// history but not the number of accounts, so one-transaction accounts would
+// accumulate forever. Events whose block gen_utime is older than this window
+// are dropped regardless of account, so total index size is bounded by the
+// retention window rather than by the count of distinct accounts ever seen.
+// Aligned to the archive TTL. Declared here so the retention test can assert
+// the exact bound.
+constexpr uint32_t kEventRetentionSeconds = 7 * 24 * 60 * 60;  // 7 days
+// Extra expired age rows a per-block prune may drop beyond the number added in
+// the block. As with kEventTrimDrainPerPass, a prune pass always removes at
+// least as many rows as the block added (plus this drain), so a high
+// fresh-account insert rate cannot outrun the global bound and any backlog
+// shrinks block by block. A fixed budget alone would not hold the bound.
+constexpr size_t kEventPruneDrainPerBlock = 256;
+// wc0-index on-disk schema version, bumped when a key layout changes so open()
+// can migrate. Version 1 introduces the event-age index (0x14) and global
+// retention; a database with no version key predates this and is treated as
+// version 0.
+constexpr uint32_t kWalletIndexSchemaVersion = 1;
+
 using HashKey = td::Bits256;  // owner / master / nft / account / tx hash
 
 class WalletIndexDb {
@@ -81,6 +101,26 @@ class WalletIndexDb {
   // after commit stays within kMaxEventsPerAccount, and deletes at least
   // `added_this_block` rows so the bound cannot be outrun. Bounded work per call.
   td::Status trim_events(const HashKey& account, size_t added_this_block);
+
+  // --- Event age index: 0x14 + gen_utime_be(4) + account(32) + lt_be(8) -> sentinel ---
+  // Written alongside every put_event so the index can be pruned by block time,
+  // reaching entire dormant accounts that the per-account trim_events never
+  // revisits. Keyed by gen_utime first (a shard-agnostic global time scale;
+  // account+lt break ties) so a time range scan finds the oldest events. Stores
+  // plain lt (not ~lt) so the pruner can reconstruct the 0x12 event key.
+  // Joins the current write batch.
+  td::Status put_event_age(const HashKey& account, uint64_t lt, uint32_t gen_utime);
+  // Delete event rows (and their age companions) whose block gen_utime is
+  // strictly older than `cutoff_gen_utime`, at most `budget` of them, so work
+  // per block is bounded and any backlog drains over successive blocks. Events
+  // exactly at the cutoff are retained. Deletes join the current batch.
+  td::Status prune_events_by_age(uint32_t cutoff_gen_utime, size_t budget);
+  // Non-decreasing chain-time watermark (max block gen_utime indexed); read
+  // returns 0 when unset, put joins the current batch. The writer advances it to
+  // max(current, block gen_utime) so a late or recovery block cannot regress the
+  // prune cutoff and silently retain expired rows.
+  td::Result<uint32_t> get_event_watermark();
+  td::Status put_event_watermark(uint32_t gen_utime);
   td::Status for_each_key_with_prefix(td::Slice prefix, size_t limit,
                                       std::function<td::Status(td::Slice)> cb);
   // Walk at most `limit` events for `account`, newest first.
@@ -150,6 +190,14 @@ class WalletIndexDb {
   td::Status for_each_with_prefix(
       td::Slice prefix, size_t limit,
       std::function<td::Status(td::Slice key, td::Ref<vm::Cell>)> cb);
+
+  // Bring the on-disk layout up to kWalletIndexSchemaVersion. Runs once in
+  // open() before the DB is used; migrates atomically (WAL-synced) and refuses
+  // to open a database written by a newer, unknown version.
+  td::Status migrate_schema();
+  // Delete every key in the single-byte-tag namespace [tag, tag+1). Migration
+  // only; routes through the active write batch.
+  td::Status clear_namespace(uint8_t tag);
 
   std::unique_ptr<td::RocksDb> db_;
   std::mutex write_mutex_;
