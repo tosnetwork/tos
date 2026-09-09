@@ -44,6 +44,7 @@ uno_paths = (
     ".github/workflows/build-tos-linux-arm64-shared.yml",
     ".github/workflows/build-tos-linux-x86-64-appimage.yml",
     ".github/workflows/build-tos-linux-arm64-appimage.yml",
+    ".github/workflows/uno-wallet-prover.yml",
 )
 # Exact cache-option help/comment lines; this does not exempt root build code.
 crypto_cache_lines = {
