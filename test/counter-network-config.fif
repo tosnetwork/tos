@@ -2,23 +2,29 @@
 // Every participating binary must support the activated host before genesis.
 // This profile is not an upgrade sequence or a UNO asset allocation.
 globalid@ -23903 <> abort"Counter network global ID required"
+variable counter_network_descriptor
+// basic:1 active:1 accept_msgs:1; thirteen reserved zero bits. Participating
+// test nodes register the serving Counter engine, unlike production nodes.
 { <b x{a7} s, 5 roll 32 u, 4 roll 8 u, 3 roll 8 u, rot 8 u, x{e000} s,
   3 roll 256 u, rot 256 u, 0 32 u, x{1} s, 0x434e5431 32 i, 0 64 u,
   x{0} s, 20 32 u, 20 32 u, 10 32 u, 1000 32 u, 0 8 u, b>
   dup isWorkchainDescr? not abort"invalid Counter network descriptor"
+  dup counter_network_descriptor !
   <s swap workchain-dict @ 32 idict!+ 0= abort"duplicate Counter workchain"
   workchain-dict !
 } : add-counter-network-workchain
 "counter-state.rhash" file>B 256 B>u@
 "counter-state.fhash" file>B 256 B>u@
 now 0 0 0 2 add-counter-network-workchain
+400 counter_network_descriptor @ 2 first-instance-identity
+uno-v2-provisional-resources empty_cell instance-engine-configuration constant counter_network_config
 // Development ingress envelope already used by the disk host fixture. All
 // nodes in this isolated experiment run the new test binary. This does not
 // exercise old-node compatibility or the mandatory pre-activation upgrade.
 variable counter-network-ingress
 dictnew counter-network-ingress !
 <b x{57495031} s, 2 32 i, 0 1 u, 0x434e5431 64 i, 0 64 u,
-  0 32 u, 0 256 u, empty_cell ref, b>
+  0 32 u, 0 256 u, counter_network_config ref, b>
 <b swap ref, b> <s 2 counter-network-ingress @ 32 idict!+ 0= abort"duplicate Counter ingress"
 counter-network-ingress !
 <b x{57495431} s, counter-network-ingress @ dict, b> 84 config!

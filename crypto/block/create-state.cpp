@@ -28,6 +28,8 @@
 */
 #include <algorithm>
 #include "block/workchain-instance-identity.h"
+#include "block/workchain-resource-policy.h"
+#include "block/workchain-execution-dispatch.h"
 #include <cassert>
 #include <cmath>
 #include <cstdlib>
@@ -448,7 +450,14 @@ bool store_custom(vm::CellBuilder& cb) {
   bool ok = true;
   auto ledger_result = block::make_initial_workchain_instance_ledger();
   if (ledger_result.is_error()) return false;
-  auto ledger = ledger_result.move_as_ok();
+  // Use the exact configuration root being serialized below, not config_dict.
+  // The empty ledger is a private issuance input, never the installed result.
+  auto issued = block::reconstruct_configured_workchain_instances(
+      ledger_result.move_as_ok(), config_param_root, global_id);
+  if (issued.is_error()) {
+    throw fift::IntError{issued.move_as_error().to_string()};
+  }
+  auto ledger = issued.move_as_ok();
   PDO(cb2.store_long_bool(block::gen::McStateExtra::cons_tag[0], 32)
       && cb2.store_long_bool(0, 1)           // shard_hashes:ShardHashes = (HashmapE 32 ^(BinTree ShardDescr))
       && store_config_params(cb2)            // config:ConfigParams
@@ -670,6 +679,96 @@ void interpret_is_workchain_descr(vm::Stack& stack) {
   stack.push_bool(block::gen::t_WorkchainDescr.validate_ref(std::move(cell)));
 }
 
+// ( descriptor workchain -- identity-bytes ). This computes a proposal only;
+// store_custom independently issues against the final serialized config root.
+void interpret_first_instance_identity(vm::Stack& stack) {
+  auto wc = stack.pop_smallint_range(0x7fffffff, -0x7fffffff);
+  auto descriptor = stack.pop_cell();
+  if (!block::gen::t_WorkchainDescr.validate_ref(descriptor)) {
+    throw fift::IntError{"invalid creation descriptor"};
+  }
+  block::gen::WorkchainInstanceRecord::Record first{1, descriptor->get_hash().bits()};
+  auto identity = block::derive_workchain_instance_id(global_id, wc, first);
+  if (identity.is_error()) throw fift::IntError{identity.move_as_error().to_string()};
+  stack.push_bytes(identity.ok().as_slice().str());
+}
+
+void interpret_configured_first_instance_identity(vm::Stack& stack) {
+  auto wc = stack.pop_smallint_range(0x7fffffff, -0x7fffffff);
+  auto root = config_dict.lookup_ref(td::BitArray<32>{12});
+  if (root.is_null()) throw fift::IntError{"missing proposed workchain configuration"};
+  vm::Dictionary descriptions(vm::load_cell_slice(root), 32);
+  auto description = descriptions.lookup(td::BitArray<32>{wc});
+  if (description.is_null()) throw fift::IntError{"missing proposed workchain descriptor"};
+  vm::CellBuilder cell;
+  if (!cell.append_cellslice_bool(*description)) throw fift::IntError{"cannot copy proposed descriptor"};
+  stack.push_cell(cell.finalize());
+  stack.push_smallint(wc);
+  interpret_first_instance_identity(stack);
+}
+
+// ( accepted-rate-ms identity-bytes resources business -- engine-shell ).
+// Required inputs have no defaults; the encoder cannot read current cadence.
+void interpret_instance_engine_configuration(vm::Stack& stack) {
+  auto business = stack.pop_cell();
+  auto resources = block::decode_workchain_resource_policy(stack.pop_cell());
+  if (resources.is_error()) throw fift::IntError{resources.move_as_error().to_string()};
+  auto bytes = stack.pop_bytes();
+  if (bytes.size() != 32) throw fift::IntError{"instance identity must contain 32 bytes"};
+  td::Bits256 identity;
+  identity.as_slice().copy_from(td::Slice(bytes));
+  auto accepted_rate = stack.pop_long_range(0xffffffffLL);
+  if (accepted_rate == 0) throw fift::IntError{"accepted cadence must be nonzero"};
+  auto result = block::encode_workchain_engine_parameters(
+      {static_cast<std::uint32_t>(accepted_rate), identity, resources.move_as_ok(), business});
+  if (result.is_error()) throw fift::IntError{result.move_as_error().to_string()};
+  stack.push_cell(result.move_as_ok());
+}
+
+void interpret_uno_engine_key(vm::Stack& stack) {
+  const auto key = block::uno_v2_workchain_engine_key();
+  if (key.format != block::WorkchainFormat::Basic) throw fift::IntError{"unsupported genesis engine format"};
+  stack.push_smallint(key.selector);
+}
+
+// Deliberately restrictive development admission envelope. These are not fee
+// units or measured production capacities; mainnet approval is a separate gate.
+void interpret_uno_provisional_resources(vm::Stack& stack) {
+  block::WorkchainResourcePolicy value{4, {384, 392832, 4, 8, 8, 1},
+      {2048, 2095104, 256, 261888, 32}, {1, 48, 49104, 384, 392832, 12}};
+  auto result = block::encode_workchain_resource_policy(value);
+  if (result.is_error()) throw fift::IntError{result.move_as_error().to_string()};
+  stack.push_cell(result.move_as_ok());
+}
+
+// ( shell coordinator-bytes custody-bytes -- ingress-table ). Required
+// operational identities are supplied by the guarded genesis script.
+void interpret_uno_genesis_ingress(vm::Stack& stack) {
+  auto custody = stack.pop_bytes();
+  auto coordinator = stack.pop_bytes();
+  auto shell = stack.pop_cell();
+  if (custody.size() != 32 || coordinator.size() != 32) {
+    throw fift::IntError{"operator account IDs must contain 32 bytes"};
+  }
+  block::WorkchainNativeIngressPolicy policy;
+  policy.workchain_id = 2;
+  policy.engine_key = block::uno_v2_workchain_engine_key();
+  policy.executor_address.as_slice().copy_from(td::Slice(coordinator));
+  policy.custody_address.emplace();
+  policy.custody_address->as_slice().copy_from(td::Slice(custody));
+  policy.engine_configuration = shell;
+  auto result = block::encode_workchain_native_ingress_table({policy});
+  if (result.is_error()) throw fift::IntError{result.move_as_error().to_string()};
+  stack.push_cell(result.move_as_ok());
+}
+
+void interpret_uno_initial_system(vm::Stack& stack) {
+  block::gen::UnoV2SystemState::Record initial{1, 1000000, 0, 0};
+  Ref<vm::Cell> result;
+  if (!tlb::pack_cell(result, initial)) throw fift::IntError{"cannot encode initial system state"};
+  stack.push_cell(result);
+}
+
 void interpret_add_extra_currencies(vm::Stack& stack) {
   Ref<vm::Cell> y = stack.pop_maybe_cell(), x = stack.pop_maybe_cell(), res;
   bool ok = block::add_extra_currency(std::move(x), std::move(y), res);
@@ -727,6 +826,13 @@ void init_words_custom(fift::Dictionary& d) {
   d.def_stack_word("set_config_smc ", interpret_set_config_smartcontract);
   d.def_stack_word("create_state ", interpret_create_state);  d.def_stack_word("isShardState? ", interpret_is_shard_state);
   d.def_stack_word("isWorkchainDescr? ", interpret_is_workchain_descr);
+  d.def_stack_word("first-instance-identity ", interpret_first_instance_identity);
+  d.def_stack_word("configured-first-instance-identity ", interpret_configured_first_instance_identity);
+  d.def_stack_word("instance-engine-configuration ", interpret_instance_engine_configuration);
+  d.def_stack_word("uno-v2-engine-key ", interpret_uno_engine_key);
+  d.def_stack_word("uno-v2-provisional-resources ", interpret_uno_provisional_resources);
+  d.def_stack_word("uno-genesis-ingress ", interpret_uno_genesis_ingress);
+  d.def_stack_word("uno-initial-system ", interpret_uno_initial_system);
   d.def_stack_word("CC+? ", interpret_add_extra_currencies);
   d.def_stack_word("CC-? ", interpret_sub_extra_currencies);
   d.def_stack_word("allocated-balance ", interpret_allocated_balance);

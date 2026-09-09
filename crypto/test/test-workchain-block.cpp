@@ -219,34 +219,31 @@ TEST(WorkchainBlock, ResourcePolicyWire) {
 }
 
 TEST(WorkchainBlock, EngineConfigurationFraming) {
-  // Explicit codec/resolver fixture identities: all-zero genesis and all-one
-  // instance are distinct, representable bits256 values. These tests do not
-  // authenticate an MC installation or claim that this pair is D40-issued.
-  const auto fixture_genesis = td::Bits256::zero();
+  // Explicit codec/resolver fixture instance. This representable wire value
+  // does not authenticate an installation or claim a production-issued identity.
   const auto fixture_instance = td::Bits256::ones();
   block::WorkchainResourcePolicy value{2, {1,2,3,4,5,6}, {7,8,9,10,11}, {12,13,14,15,16,17}};
   // Test-only tagged business payload: the host must preserve, not interpret it.
   auto payload = vm::CellBuilder().store_long(0x12345678, 32).finalize();
   for (std::uint32_t version : {2u, 3u, 0x10002u, 0x10003u, 0x80000002u}) {
     value.admission_version = version;
-    auto encoded = block::encode_workchain_engine_parameters({400, fixture_genesis, fixture_instance, value, payload});
+    auto encoded = block::encode_workchain_engine_parameters({400, fixture_instance, value, payload});
     ASSERT_TRUE(encoded.is_ok());
     auto root = encoded.move_as_ok();
     auto cs = vm::load_cell_slice(root);
-    ASSERT_EQ(cs.size(), 576u);
+    ASSERT_EQ(cs.size(), 320u);
     ASSERT_EQ(cs.size_refs(), 2u);
     ASSERT_EQ(cs.fetch_ulong(32), block::gen::UnoV2EngineConfiguration::cons_tag[0]);
     ASSERT_EQ(cs.fetch_ulong(32), 400u);
     auto decoded = block::decode_workchain_engine_parameters(root);
     ASSERT_TRUE(decoded.is_ok());
-    ASSERT_EQ(decoded.ok().genesis_hash, fixture_genesis);
     ASSERT_EQ(decoded.ok().instance_id, fixture_instance);
     ASSERT_EQ(decoded.ok().resources.admission_version, version);
     ASSERT_EQ(decoded.ok().parameters->get_hash(), payload->get_hash());
     auto resources = cs.fetch_ref();
     for (unsigned defect = 0; defect < 5; ++defect) {
       vm::CellBuilder b;
-      b.store_long(defect == 0 ? 0 : block::gen::UnoV2EngineConfiguration::cons_tag[0], 32).store_long(400, 32).store_bits(fixture_genesis.bits(), 256).store_bits(fixture_instance.bits(), 256);
+      b.store_long(defect == 0 ? 0 : block::gen::UnoV2EngineConfiguration::cons_tag[0], 32).store_long(400, 32).store_bits(fixture_instance.bits(), 256);
       if (defect != 1) b.store_ref(resources);
       if (defect != 2) b.store_ref(payload);
       if (defect == 3) b.store_long(0, 1);
@@ -255,16 +252,14 @@ TEST(WorkchainBlock, EngineConfigurationFraming) {
     }
   }
   ASSERT_TRUE(block::decode_workchain_engine_parameters({}).is_error());
-  ASSERT_TRUE(block::encode_workchain_engine_parameters({400, fixture_genesis, fixture_instance, value, {}}).is_error());
+  ASSERT_TRUE(block::encode_workchain_engine_parameters({400, fixture_instance, value, {}}).is_error());
 }
 
 // These are fixture acceptance records, not production defaults or a claim
 // that a deployment has passed K acceptance at these intervals.
 TEST(WorkchainBlock, EngineConfigurationAcceptedCadence) {
-  // Explicit codec/resolver fixture identities: all-zero genesis and all-one
-  // instance are distinct, representable bits256 values. These tests do not
-  // authenticate an MC installation or claim that this pair is D40-issued.
-  const auto fixture_genesis = td::Bits256::zero();
+  // Explicit codec/resolver fixture instance. This representable wire value
+  // does not authenticate an installation or claim a production-issued identity.
   const auto fixture_instance = td::Bits256::ones();
   static_assert(!std::is_default_constructible_v<block::WorkchainEngineParameters>);
   static_assert(!std::is_aggregate_v<block::WorkchainEngineParameters>);
@@ -275,17 +270,17 @@ TEST(WorkchainBlock, EngineConfigurationAcceptedCadence) {
   for (std::uint32_t accepted : {0u, 1u, 400u, 401u, UINT32_MAX}) {
     // Recording and installation validation are separate; even zero is a
     // representable explicit value, never an omitted-field default.
-    auto encoded = block::encode_workchain_engine_parameters({accepted, fixture_genesis, fixture_instance, resources, payload});
+    auto encoded = block::encode_workchain_engine_parameters({accepted, fixture_instance, resources, payload});
     ASSERT_EQ(encoded.is_ok() ? 0 : 401, 0);
     auto cs = vm::load_cell_slice(encoded.ok());
-    ASSERT_EQ(cs.size() == 576 && cs.size_refs() == 2 ? 0 : 402, 0);
+    ASSERT_EQ(cs.size() == 320 && cs.size_refs() == 2 ? 0 : 402, 0);
     ASSERT_EQ(cs.fetch_ulong(32) == block::gen::UnoV2EngineConfiguration::cons_tag[0] && cs.fetch_ulong(32) == accepted ? 0 : 403, 0);
     auto decoded = block::decode_workchain_engine_parameters(encoded.ok());
     ASSERT_EQ(decoded.is_ok() ? 0 : 404, 0);
     ASSERT_EQ(decoded.ok().k_accepted_target_rate_ms == accepted ? 0 : 405, 0);
   }
   auto resource = block::encode_workchain_resource_policy(resources).move_as_ok();
-  auto missing = vm::CellBuilder().store_long(block::gen::UnoV2EngineConfiguration::cons_tag[0], 32).store_bits(fixture_genesis.bits(), 256).store_bits(fixture_instance.bits(), 256).store_ref(resource).store_ref(payload).finalize();
+  auto missing = vm::CellBuilder().store_long(block::gen::UnoV2EngineConfiguration::cons_tag[0], 32).store_bits(fixture_instance.bits(), 256).store_ref(resource).store_ref(payload).finalize();
   ASSERT_EQ(block::decode_workchain_engine_parameters(missing).is_error() ? 0 : 406, 0);
   auto retired_cadence = vm::CellBuilder().store_long(0x6e1fa05f, 32).store_long(400, 32)
       .store_ref(resource).store_ref(payload).finalize();
@@ -402,10 +397,8 @@ TEST(WorkchainBlock, ResourcePolicyRejectsSpecialBeforeDecoder) {
 }
 
 TEST(WorkchainBlock, ResourcePolicyEncodedSpecialCells) {
-  // Explicit codec/resolver fixture identities: all-zero genesis and all-one
-  // instance are distinct, representable bits256 values. These tests do not
-  // authenticate an MC installation or claim that this pair is D40-issued.
-  const auto fixture_genesis = td::Bits256::zero();
+  // Explicit codec/resolver fixture instance. This representable wire value
+  // does not authenticate an installation or claim a production-issued identity.
   const auto fixture_instance = td::Bits256::ones();
   block::WorkchainResourcePolicy value{2, {1,2,3,4,5,6}, {7,8,9,10,11}, {12,13,14,15,16,17}};
   auto resource = block::encode_workchain_resource_policy(value).move_as_ok();
@@ -426,13 +419,13 @@ TEST(WorkchainBlock, ResourcePolicyEncodedSpecialCells) {
                 .store_ref(position == 3 ? special : state)
                 .store_ref(position == 4 ? special : work).finalize();
       auto framing = position == 0 ? special
-          : vm::CellBuilder().store_long(block::gen::UnoV2EngineConfiguration::cons_tag[0], 32).store_long(400, 32).store_bits(fixture_genesis.bits(), 256).store_bits(fixture_instance.bits(), 256)
+          : vm::CellBuilder().store_long(block::gen::UnoV2EngineConfiguration::cons_tag[0], 32).store_long(400, 32).store_bits(fixture_instance.bits(), 256)
                 .store_ref(altered_resource).store_ref(plain).finalize();
       ASSERT_TRUE(block::decode_workchain_engine_parameters(framing).is_error());
       if (position != 0) ASSERT_TRUE(block::decode_workchain_resource_policy(altered_resource).is_error());
     }
     // Business contents are not the host's wire profile to interpret.
-    auto opaque = block::encode_workchain_engine_parameters({400, fixture_genesis, fixture_instance, value, special}).move_as_ok();
+    auto opaque = block::encode_workchain_engine_parameters({400, fixture_instance, value, special}).move_as_ok();
     ASSERT_TRUE(block::decode_workchain_engine_parameters(opaque).is_ok());
   }
 }
@@ -1296,6 +1289,17 @@ block::MaterializedNativeCells own_native_fixture(const std::vector<td::Ref<vm::
 
 using CounterEngine = block::test::CounterEngine;
 
+td::Ref<vm::Cell> counter_configuration_shell(td::Ref<vm::Cell> business) {
+  // Resolver-only fixture: this explicit instance identity is a wire value,
+  // not a claim of installation against an authenticated masterchain state.
+  // Live installation fixtures derive their claims from their actual zerostate.
+  block::WorkchainResourcePolicy fixture_resources{4, {64,4096,8,16,16,5},
+      {256,16384,128,8192,64}, {32,128,8192,256,16384,16}};
+  return block::encode_workchain_engine_parameters(
+      {400, number(4002)->get_hash().bits(),
+       fixture_resources, std::move(business)}).move_as_ok();
+}
+
 std::unique_ptr<block::Config> block_configuration(int version = block::kBlockTransitionMinGlobalVersion,
                                                  td::uint64 capabilities = tos::capBlockTransition,
                                                  td::uint64 vm_mode = 0, bool include_ingress = true) {
@@ -1308,12 +1312,33 @@ std::unique_ptr<block::Config> block_configuration(int version = block::kBlockTr
   policy.engine_key = {block::WorkchainFormat::Basic, 0x434e5431};
   policy.vm_mode = vm_mode;
   policy.executor_address.set_zero();
-  policy.engine_configuration = vm::CellBuilder().finalize();
+  policy.engine_configuration = counter_configuration_shell(vm::CellBuilder().finalize());
   if (include_ingress) {
     CHECK(config.set_ref(td::BitArray<32>(84u), block::encode_workchain_native_ingress_table({policy}).move_as_ok()));
   }
   return block::Config::unpack_config(config.get_root_cell(), td::Bits256::zero(),
                                      block::Config::needCapabilities).move_as_ok();
+}
+
+TEST(WorkchainBlock, CounterConfigurationEnvelope) {
+  auto config = block_configuration();
+  auto table = block::decode_workchain_native_ingress_table(config->get_config_param(84)).move_as_ok();
+  auto shell = table.at(2).engine_configuration;
+  block::WorkchainExecutionDescriptor descriptor;
+  descriptor.workchain_id = 2;
+  descriptor.active = true;
+  descriptor.vm_version = 0x434e5431;
+  CounterEngine engine;
+  ASSERT_EQ(engine.validate_and_resolve_config(descriptor, *config, shell).is_ok() ? 0 : 1125, 0);
+  // A bare empty cell must fail framing; it is not empty business parameters.
+  ASSERT_EQ(engine.validate_and_resolve_config(descriptor, *config, vm::CellBuilder().finalize()).is_error() ? 0 : 1126, 0);
+  auto decoded = block::decode_workchain_engine_parameters(shell).move_as_ok();
+  decoded.parameters = vm::CellBuilder().store_long(0, 1).finalize();
+  auto nonempty = block::encode_workchain_engine_parameters(decoded).move_as_ok();
+  ASSERT_TRUE(block::decode_workchain_engine_parameters(nonempty).is_ok());
+  // Framing and descriptor are valid; the independent business predicate alone
+  // rejects this input. No error-text matching substitutes for that isolation.
+  ASSERT_EQ(engine.validate_and_resolve_config(descriptor, *config, nonempty).is_error() ? 0 : 1127, 0);
 }
 
 td::Ref<vm::Cell> shard_fixture(int shard_wc = 2, int account_wc = 2, bool active = true,
@@ -9042,10 +9067,8 @@ TEST(WorkchainBlock, PublicIngressRequiresStandardWorkchainRange) {
 }
 
 TEST(WorkchainBlock, DualNativeIngressCodecAndVersion) {
-  // Explicit codec/resolver fixture identities: all-zero genesis and all-one
-  // instance are distinct, representable bits256 values. These tests do not
-  // authenticate an MC installation or claim that this pair is D40-issued.
-  const auto fixture_genesis = td::Bits256::zero();
+  // Explicit codec/resolver fixture instance. This representable wire value
+  // does not authenticate an installation or claim a production-issued identity.
   const auto fixture_instance = td::Bits256::ones();
   block::WorkchainNativeIngressPolicy policy;
   policy.workchain_id = 2;
@@ -9055,7 +9078,7 @@ TEST(WorkchainBlock, DualNativeIngressCodecAndVersion) {
   block::WorkchainResourcePolicy resources{2, {64,4096,8,16,16,5},
       {256,16384,128,8192,64}, {32,128,8192,256,16384,16}};
   auto business = vm::CellBuilder().store_long(0x12345678, 32).finalize();
-  policy.engine_configuration = block::encode_workchain_engine_parameters({400, fixture_genesis, fixture_instance, resources, business}).move_as_ok();
+  policy.engine_configuration = block::encode_workchain_engine_parameters({400, fixture_instance, resources, business}).move_as_ok();
   auto encoded = block::encode_workchain_native_ingress_policy(policy);
   ASSERT_TRUE(encoded.is_ok());
   auto root = encoded.move_as_ok();
@@ -9104,8 +9127,8 @@ TEST(WorkchainBlock, DualNativeIngressCodecAndVersion) {
       descriptor.vm_version = 0x434e5431;
       ASSERT_TRUE(registry.resolve_block(descriptor, *unpacked.ok()).is_error());
       policy.custody_address.reset();
-      // The singleton engine retains its original, unframed empty payload.
-      policy.engine_configuration = vm::CellBuilder().finalize();
+      // Singleton and dual policies share framing; Counter business parameters are empty.
+      policy.engine_configuration = counter_configuration_shell(vm::CellBuilder().finalize());
       ASSERT_TRUE(config.set_ref(td::BitArray<32>{84},
           block::encode_workchain_native_ingress_table({policy}).move_as_ok()));
       auto legacy = block::Config::unpack_config(config.get_root_cell(), td::Bits256::zero(),
@@ -9117,10 +9140,8 @@ TEST(WorkchainBlock, DualNativeIngressCodecAndVersion) {
 }
 
 TEST(WorkchainBlock, MultiAccountAdmissionVersionInstallation) {
-  // Explicit codec/resolver fixture identities: all-zero genesis and all-one
-  // instance are distinct, representable bits256 values. These tests do not
-  // authenticate an MC installation or claim that this pair is D40-issued.
-  const auto fixture_genesis = td::Bits256::zero();
+  // Explicit codec/resolver fixture instance. This representable wire value
+  // does not authenticate an installation or claim a production-issued identity.
   const auto fixture_instance = td::Bits256::ones();
   vm::Dictionary configuration(32);
   // A complete, test-only configuration makes this exercise valid_config_data,
@@ -9180,7 +9201,7 @@ TEST(WorkchainBlock, MultiAccountAdmissionVersionInstallation) {
   for (std::uint32_t admission : {0u, 1u, 2u, 3u, 4u, 5u, 0x10002u, 0x10003u, 0x10004u, 0x80000002u}) {
     block::WorkchainResourcePolicy resources{admission, {64,4096,8,16,16,5},
         {256,16384,128,8192,64}, {32,128,8192,256,16384,16}};
-    policy.engine_configuration = block::encode_workchain_engine_parameters({400, fixture_genesis, fixture_instance, resources, business}).move_as_ok();
+    policy.engine_configuration = block::encode_workchain_engine_parameters({400, fixture_instance, resources, business}).move_as_ok();
     ASSERT_TRUE(configuration.set_ref(td::BitArray<32>{84},
         block::encode_workchain_native_ingress_table({policy}).move_as_ok()));
     ASSERT_EQ(block::validate_native_ingress_presence(configuration).is_ok(), admission == 2 || admission == 3 || admission == 4);
@@ -9202,7 +9223,7 @@ TEST(WorkchainBlock, MultiAccountAdmissionVersionInstallation) {
     if (field == 9) resources.work_output.max_effect_bits = 0;
     if (field == 10) resources.work_output.max_output_cells = 0;
     if (field == 11) resources.work_output.max_output_bits = 0;
-    policy.engine_configuration = block::encode_workchain_engine_parameters({400, fixture_genesis, fixture_instance, resources, business}).move_as_ok();
+    policy.engine_configuration = block::encode_workchain_engine_parameters({400, fixture_instance, resources, business}).move_as_ok();
     ASSERT_TRUE(configuration.set_ref(td::BitArray<32>{84},
         block::encode_workchain_native_ingress_table({policy}).move_as_ok()));
     ASSERT_TRUE(!block::valid_config_data(configuration.get_root_cell(), td::Bits256::zero()));
@@ -9210,7 +9231,7 @@ TEST(WorkchainBlock, MultiAccountAdmissionVersionInstallation) {
   // Missing either mandatory reference is rejected by the installation gate.
   for (unsigned refs = 0; refs < 2; ++refs) {
     vm::CellBuilder malformed;
-    malformed.store_long(block::gen::UnoV2EngineConfiguration::cons_tag[0], 32).store_long(400, 32).store_bits(fixture_genesis.bits(), 256).store_bits(fixture_instance.bits(), 256);
+    malformed.store_long(block::gen::UnoV2EngineConfiguration::cons_tag[0], 32).store_long(400, 32).store_bits(fixture_instance.bits(), 256);
     if (refs) malformed.store_ref(business);
     policy.engine_configuration = malformed.finalize();
     ASSERT_TRUE(configuration.set_ref(td::BitArray<32>{84},
@@ -9220,10 +9241,8 @@ TEST(WorkchainBlock, MultiAccountAdmissionVersionInstallation) {
 }
 
 TEST(WorkchainBlock, AccountRegistryReplayConnectivity) {
-  // Explicit codec/resolver fixture identities: all-zero genesis and all-one
-  // instance are distinct, representable bits256 values. These tests do not
-  // authenticate an MC installation or claim that this pair is D40-issued.
-  const auto fixture_genesis = td::Bits256::zero();
+  // Explicit codec/resolver fixture instance. This representable wire value
+  // does not authenticate an installation or claim a production-issued identity.
   const auto fixture_instance = td::Bits256::ones();
   // Connectivity only: a local registry and explicit synthetic parameters.
   // No live actor gate is opened and no confidential proof is implemented here.
@@ -9326,7 +9345,7 @@ TEST(WorkchainBlock, AccountRegistryReplayConnectivity) {
   ingress.vm_mode = 7;
   ingress.executor_address = a;
   ingress.custody_address = b;
-  ingress.engine_configuration = block::encode_workchain_engine_parameters({400, fixture_genesis, fixture_instance, resources,
+  ingress.engine_configuration = block::encode_workchain_engine_parameters({400, fixture_instance, resources,
       vm::CellBuilder().store_long(0x50524231,32).store_long(37,8).finalize()}).move_as_ok();
   vm::Dictionary config_dict(32);
   vm::CellBuilder version;
@@ -9500,10 +9519,8 @@ TEST(WorkchainBlock, AccountRegistryReplayConnectivity) {
 }
 
 TEST(WorkchainBlock, MultiAccountRegistryBinding) {
-  // Explicit codec/resolver fixture identities: all-zero genesis and all-one
-  // instance are distinct, representable bits256 values. These tests do not
-  // authenticate an MC installation or claim that this pair is D40-issued.
-  const auto fixture_genesis = td::Bits256::zero();
+  // Explicit codec/resolver fixture instance. This representable wire value
+  // does not authenticate an installation or claim a production-issued identity.
   const auto fixture_instance = td::Bits256::ones();
   struct Engine final : block::RegisteredWorkchainAccountEngine {
     td::Result<std::uint64_t> proof_work(
@@ -9560,7 +9577,7 @@ TEST(WorkchainBlock, MultiAccountRegistryBinding) {
       {256,16384,128,8192,64}, {32,128,8192,256,16384,16}};
   auto engine_parameters = [&](unsigned value) {
     return block::encode_workchain_engine_parameters(
-        {400, fixture_genesis, fixture_instance, resource_policy, vm::CellBuilder().store_long(value, 8).finalize()}).move_as_ok();
+        {400, fixture_instance, resource_policy, vm::CellBuilder().store_long(value, 8).finalize()}).move_as_ok();
   };
   block::WorkchainNativeIngressPolicy policy;
   policy.workchain_id = 2;
@@ -9821,7 +9838,7 @@ TEST(WorkchainBlock, MultiAccountRegistryBinding) {
   policy.custody_address.reset();
   policy.descriptor_version = descriptor.version;
   policy.vm_mode = descriptor.vm_mode;
-  policy.engine_configuration = vm::CellBuilder().finalize();
+  policy.engine_configuration = counter_configuration_shell(vm::CellBuilder().finalize());
   auto singleton_cut = configuration(16, tos::capBlockTransition, &descriptor);
   auto live = reverse.resolve_scoped_workchain(2, *singleton_cut);
   ASSERT_TRUE(live.is_ok() && live.ok().has_value());
@@ -10233,7 +10250,7 @@ TEST(WorkchainBlock, ReceiverRequiresMatchingPublicIngressPolicy) {
   policy.workchain_id = 2;
   policy.engine_key = {block::WorkchainFormat::Basic, 0x434e5431};
   policy.executor_address.set_zero();
-  policy.engine_configuration = vm::CellBuilder().finalize();
+  policy.engine_configuration = counter_configuration_shell(vm::CellBuilder().finalize());
   auto resolve = [&](std::vector<block::WorkchainNativeIngressPolicy> policies) {
     auto cfg = configuration(block::encode_workchain_native_ingress_table(policies).move_as_ok());
     return registry.resolve_block(descriptor, *cfg);
@@ -10252,9 +10269,13 @@ TEST(WorkchainBlock, ReceiverRequiresMatchingPublicIngressPolicy) {
   wrong.executor_address = td::Bits256::ones();
   ASSERT_TRUE(resolve({wrong}).is_error());
   wrong = policy;
-  wrong.engine_configuration = number(0);
+  // Preserve the original nonempty-business defect inside valid framing.
+  wrong.engine_configuration = counter_configuration_shell(number(0));
+  ASSERT_TRUE(block::decode_workchain_engine_parameters(wrong.engine_configuration).is_ok());
   ASSERT_TRUE(resolve({wrong}).is_error());
-  wrong.engine_configuration = vm::CellBuilder().store_ref(policy.engine_configuration).finalize();
+  wrong.engine_configuration = counter_configuration_shell(
+      vm::CellBuilder().store_ref(vm::CellBuilder().finalize()).finalize());
+  ASSERT_TRUE(block::decode_workchain_engine_parameters(wrong.engine_configuration).is_ok());
   ASSERT_TRUE(resolve({wrong}).is_error());
   auto malformed = configuration(number(0));
   ASSERT_TRUE(registry.resolve_block(descriptor, *malformed).is_error());

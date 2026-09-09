@@ -32,8 +32,10 @@ td::Result<gen::WorkchainInstanceLedger::Record> read_workchain_instance_ledger(
     const td::Ref<vm::Cell>& root);
 td::Result<std::optional<gen::WorkchainInstanceRecord::Record>> read_workchain_instance_record(
     const td::Ref<vm::Cell>& ledger, std::int32_t workchain);
+// The frozen creation descriptor commits the workchain zerostate. No masterchain
+// root is an input: this identity can be issued while constructing genesis.
 td::Result<td::Bits256> derive_workchain_instance_id(
-    const std::optional<td::Bits256>& authenticated_genesis, std::int32_t workchain,
+    std::int32_t authenticated_global_id, std::int32_t workchain,
     const gen::WorkchainInstanceRecord::Record& record);
 
 // The host triggers first installation only for a descriptor whose workchain
@@ -42,7 +44,7 @@ td::Result<td::Bits256> derive_workchain_instance_id(
 // Returned cells are private until the containing masterchain state commits.
 td::Result<StagedFirstInstance> stage_first_workchain_instance(
     const td::Ref<vm::Cell>& predecessor_ledger, std::int32_t workchain,
-    const std::optional<td::Bits256>& authenticated_genesis,
+    std::int32_t authenticated_global_id,
     const td::Ref<vm::Cell>& creation_descriptor, const td::Bits256& claimed_id);
 
 // Reconstruct this workchain's permitted change from the proposed configuration.
@@ -51,7 +53,7 @@ td::Result<StagedFirstInstance> stage_first_workchain_instance(
 // workchain, retaining all historical entries.
 td::Result<td::Ref<vm::Cell>> reconstruct_workchain_instance_ledger(
     const td::Ref<vm::Cell>& predecessor, const td::Ref<vm::Cell>& proposed_config,
-    const std::optional<td::Bits256>& authenticated_genesis, std::int32_t workchain);
+    std::int32_t authenticated_global_id, std::int32_t workchain);
 
 // Traverse authenticated records before inspecting candidate configuration so
 // unavailable predecessor cells cannot be classified as candidate faults.
@@ -61,7 +63,7 @@ td::Status validate_workchain_instance_ledger_records(const td::Ref<vm::Cell>& l
 // instances. The result starts from the entire predecessor, not a projection.
 td::Result<td::Ref<vm::Cell>> reconstruct_configured_workchain_instances(
     const td::Ref<vm::Cell>& predecessor, const td::Ref<vm::Cell>& proposed_config,
-    const std::optional<td::Bits256>& authenticated_genesis);
+    std::int32_t authenticated_global_id);
 
 // Compare the complete independently reconstructed root, including unread keys
 // and deletions. For a non-creation block expected is the predecessor root.

@@ -13,11 +13,11 @@ uno_v2_resource_work_output max_proof_units:uint64 max_effect_cells:uint64
   max_transfers:uint32 = UnoV2ResourceWorkOutput;
 uno_v2_resource_policy admission_version:uint32 input:^UnoV2ResourceInput
   state:^UnoV2ResourceState work_output:^UnoV2ResourceWorkOutput = UnoV2ResourcePolicy;
-uno_v2_engine_configuration_instance k_accepted_target_rate_ms:uint32
-  genesis_hash:bits256 instance_id:bits256 resource_policy:^UnoV2ResourcePolicy parameters:^Cell = UnoV2EngineConfiguration;
+uno_v2_engine_configuration_issued k_accepted_target_rate_ms:uint32
+  instance_id:bits256 resource_policy:^UnoV2ResourcePolicy parameters:^Cell = UnoV2EngineConfiguration;
 workchain_instance_record instance_seq:uint64 creation_descriptor_hash:bits256 = WorkchainInstanceRecord;
 workchain_instance_ledger entries:(HashmapE 32 WorkchainInstanceRecord) = WorkchainInstanceLedger;
-workchain_instance_identity genesis_hash:bits256 workchain_id:int32
+workchain_instance_identity_descriptor global_id:int32 workchain_id:int32
   creation_descriptor_hash:bits256 instance_seq:uint64 = WorkchainInstanceIdentity;
 uno_v2_host_domain global_id:int32 genesis_hash:bits256 instance_id:bits256
   workchain_id:int32 shard_id:uint64 = UnoV2HostDomain;

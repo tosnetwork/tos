@@ -5414,13 +5414,13 @@ bool Collator::create_mc_state_extra() {
   // D52: stage issuance after validating the proposed configuration, before
   // installing it. The predecessor ledger is authenticated MC state; a
   // configuration transaction can supply a claim but cannot supply this root.
-  auto genesis = config_->get_zerostate_id();
-  if (!genesis.is_masterchain() || !genesis.is_valid_full()) {
-    return fatal_error("authenticated masterchain genesis identity is missing");
+  const auto instance_global_id = config_->get_global_blockchain_id();
+  if (!instance_global_id) {
+    return fatal_error("authenticated blockchain global id is missing");
   }
   try {
     auto instances = block::reconstruct_configured_workchain_instances(
-        state_extra.r1.workchain_instances, cfg_smc_config, genesis.root_hash);
+        state_extra.r1.workchain_instances, cfg_smc_config, instance_global_id);
     if (instances.is_error()) {
       return fatal_error(instances.move_as_error_prefix("cannot stage workchain instance installation: "));
     }

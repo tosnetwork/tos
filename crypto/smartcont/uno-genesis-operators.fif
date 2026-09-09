@@ -2,7 +2,7 @@
 // owner-approved coordinator/custody pair to the approval predicate below.
 // Replacing these values alone must NOT authorize an arbitrary mainnet pair.
 0 constant uno_development_coordinator
-0 constant uno_development_custody
+1 constant uno_development_custody
 
 // global-id coordinator-account-id custody-account-id -- approved?
 // The mainnet approval list is deliberately EMPTY: no operational identities

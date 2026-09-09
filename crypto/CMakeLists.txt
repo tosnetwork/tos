@@ -690,6 +690,12 @@ if(TOS_WORKCHAIN_INSTANCE_TESTS)
   target_link_libraries(test-workchain-instance-identity PRIVATE tos_block tos_crypto)
   add_test(NAME test-workchain-instance-identity COMMAND test-workchain-instance-identity)
   set_tests_properties(test-workchain-instance-identity PROPERTIES TIMEOUT 60 LABELS "private;workchain;d40")
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
+  add_test(NAME test-workchain-genesis-installation COMMAND ${Python3_EXECUTABLE}
+    "${PROJECT_SOURCE_DIR}/crypto/test/workchain-genesis-installation.py"
+    --repo "${PROJECT_SOURCE_DIR}" --create-state $<TARGET_FILE:create-state>
+    --probe $<TARGET_FILE:test-workchain-instance-callsite>)
+  set_tests_properties(test-workchain-genesis-installation PROPERTIES TIMEOUT 180 LABELS "private;workchain;d40")
 endif()
 
 # A generated constructor changing must invalidate its hand-written Fift consumer.

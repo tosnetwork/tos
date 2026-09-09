@@ -278,6 +278,10 @@ bool workchain_engine_key_is_tvm(const WorkchainEngineKey& key) {
   return key == tvm_workchain_engine_key();
 }
 
+WorkchainEngineKey uno_v2_workchain_engine_key() {
+  return {WorkchainFormat::Basic, 0x554e4f32};  // ASCII UNO2, one production definition.
+}
+
 WorkchainEngineKey tvm_workchain_engine_key() {
   return {WorkchainFormat::Basic, kTvmVmVersion};
 }

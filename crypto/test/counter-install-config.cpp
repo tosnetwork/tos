@@ -43,13 +43,13 @@ int main(int argc, char** argv) {
       shard.ok()->get_hash().bits(), shard_file, 0, vm::load_cell_slice_ref(format)};
   td::Ref<vm::Cell> closed; require(tlb::pack_cell(closed, descriptor), 1112);
   block::gen::WorkchainInstanceRecord::Record first{1, closed->get_hash().bits()};
-  auto identity = block::derive_workchain_instance_id(zero.root_hash, wc, first); require(identity.is_ok(), 1113);
+  auto identity = block::derive_workchain_instance_id(state.global_id, wc, first); require(identity.is_ok(), 1113);
   // These are explicit isolated-test limits and the historical acceptance
   // interval. No current cadence, deployment configuration, or default identity.
   block::WorkchainResourcePolicy resources{4, {64,4096,8,16,16,5},
       {256,16384,128,8192,64}, {32,128,8192,256,16384,16}};
   auto shell = block::encode_workchain_engine_parameters(
-      {400, zero.root_hash, identity.ok(), resources, vm::CellBuilder().finalize()});
+      {400, identity.ok(), resources, vm::CellBuilder().finalize()});
   require(shell.is_ok(), 1114);
   block::WorkchainNativeIngressPolicy policy;
   policy.workchain_id = wc;

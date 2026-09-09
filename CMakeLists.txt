@@ -1308,6 +1308,11 @@ if (TOS_UNO_COUNTER_PYTEST OR TOS_UNO_COUNTER_NETWORK_TEST)
   endif()
 endif()
 if (TOS_UNO_COUNTER_PYTEST)
+  add_test(NAME test-workchain-genesis-routing COMMAND "${TOS_UNO_TEST_PYTHON}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/crypto/test/workchain-genesis-routing.py"
+    --repo "${CMAKE_CURRENT_SOURCE_DIR}" --create-state $<TARGET_FILE:create-state>
+    --collator $<TARGET_FILE:test-tos-collator>)
+  set_tests_properties(test-workchain-genesis-routing PROPERTIES TIMEOUT 300 LABELS "uno;genesis;harness")
   add_test(NAME test-counter-python-harness COMMAND "${TOS_UNO_TEST_PYTHON}" -m pytest
     test/tostester/test_counter_committee.py test/tostester/test_counter_genesis.py test/tostester/test_counter_state_check.py)
   set_tests_properties(test-counter-python-harness PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" LABELS "uno;harness" TIMEOUT 300)

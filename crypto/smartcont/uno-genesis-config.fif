@@ -1,0 +1,22 @@
+// Inputs are explicit: descriptor key comes from the production C++ identity.
+uno-v2-engine-key constant uno_genesis_engine_key
+uno-v2-provisional-resources constant uno_genesis_resources
+
+// global-id resource-cell -- approved?
+// Empty mainnet resource allowlist pending M6 capacity acceptance. Replacing
+// provisional numbers alone does not authorize the replacement on mainnet.
+{ swap 1 = { drop false } { drop true } cond } : uno-genesis-resources-approved?
+globalid@ uno_genesis_resources uno-genesis-resources-approved? not
+abort"mainnet resource policy lacks M6 approval"
+
+// The standard basic descriptor shape with a different engine selector and
+// D55 routing flags. 0xc000 = basic:1 active:1 accept_msgs:0 flags:0000000000000.
+// root-hash file-hash enable-utime actual-min-split min-split max-split wc --
+variable uno_genesis_descriptor
+{ <b x{a6} s, 5 roll 32 u, 4 roll 8 u, 3 roll 8 u, rot 8 u, x{c000} s,
+  3 roll 256 u, rot 256 u, 0 32 u, x{1} s, uno_genesis_engine_key 32 i, 0 64 u, b>
+  dup isWorkchainDescr? not abort"invalid genesis workchain descriptor"
+  dup uno_genesis_descriptor !
+  <s swap workchain-dict @ 32 idict!+ 0= abort"duplicate genesis workchain"
+  workchain-dict !
+} : add-uno-genesis-workchain

@@ -7294,13 +7294,13 @@ bool ValidateQuery::check_mc_state_extra() {
     } catch (vm::VmVirtError& error) {
       return fatal_error(PSTRING() << "authenticated instance ledger: " << error.get_msg());
     }
-    auto genesis = config_->get_zerostate_id();
-    if (!genesis.is_masterchain() || !genesis.is_valid_full()) {
-      return fatal_error("authenticated masterchain genesis identity is missing");
+    const auto instance_global_id = config_->get_global_blockchain_id();
+    if (!instance_global_id) {
+      return fatal_error("authenticated blockchain global id is missing");
     }
     try {
       auto expected = block::reconstruct_configured_workchain_instances(
-          old_extra.r1.workchain_instances, new_extra.config->prefetch_ref(), genesis.root_hash);
+          old_extra.r1.workchain_instances, new_extra.config->prefetch_ref(), instance_global_id);
       if (expected.is_error()) {
         return reject_query("invalid instance installation", expected.move_as_error());
       }

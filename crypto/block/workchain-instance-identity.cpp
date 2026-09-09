@@ -46,12 +46,10 @@ td::Result<std::optional<gen::WorkchainInstanceRecord::Record>> read_workchain_i
 }
 
 td::Result<td::Bits256> derive_workchain_instance_id(
-    const std::optional<td::Bits256>& authenticated_genesis, std::int32_t workchain,
-    const gen::WorkchainInstanceRecord::Record& record) {
-  if (!authenticated_genesis) return error(InstanceIdentityError::MissingGenesis, "authenticated genesis is missing");
+    std::int32_t authenticated_global_id, std::int32_t workchain, const gen::WorkchainInstanceRecord::Record& record) {
+  if (!authenticated_global_id) return error(InstanceIdentityError::InvalidConfiguration, "authenticated global id is zero");
   if (!record.instance_seq) return error(InstanceIdentityError::MalformedRecord, "issued sequence is zero");
-  gen::WorkchainInstanceIdentity::Record identity{*authenticated_genesis, workchain,
-                                               record.creation_descriptor_hash, record.instance_seq};
+  gen::WorkchainInstanceIdentity::Record identity{authenticated_global_id, workchain, record.creation_descriptor_hash, record.instance_seq};
   td::Ref<vm::Cell> root;
   if (!tlb::pack_cell(root, identity)) return error(InstanceIdentityError::MalformedRecord, "cannot encode instance identity");
   return root->get_hash().bits();
@@ -59,14 +57,14 @@ td::Result<td::Bits256> derive_workchain_instance_id(
 
 td::Result<StagedFirstInstance> stage_first_workchain_instance(
     const td::Ref<vm::Cell>& predecessor_ledger, std::int32_t workchain,
-    const std::optional<td::Bits256>& authenticated_genesis,
+    std::int32_t authenticated_global_id,
     const td::Ref<vm::Cell>& creation_descriptor, const td::Bits256& claimed_id) {
   TRY_RESULT(header, read_workchain_instance_ledger(predecessor_ledger));
   if (creation_descriptor.is_null()) return error(InstanceIdentityError::MissingDescriptor, "creation descriptor is missing");
   // No prior issuance exists. First installation issues exactly 1; no caller
   // counter, arithmetic wrap, or successor reset is available in this phase.
   gen::WorkchainInstanceRecord::Record record{1, creation_descriptor->get_hash().bits()};
-  TRY_RESULT(instance_id, derive_workchain_instance_id(authenticated_genesis, workchain, record));
+  TRY_RESULT(instance_id, derive_workchain_instance_id(authenticated_global_id, workchain, record));
   vm::CellBuilder value;
   if (!tlb::pack(value, record)) return error(InstanceIdentityError::MalformedRecord, "cannot encode instance record");
   vm::Dictionary staged(header.entries, 32);
@@ -84,7 +82,7 @@ td::Result<StagedFirstInstance> stage_first_workchain_instance(
 
 td::Result<td::Ref<vm::Cell>> reconstruct_workchain_instance_ledger(
     const td::Ref<vm::Cell>& predecessor, const td::Ref<vm::Cell>& proposed_config,
-    const std::optional<td::Bits256>& authenticated_genesis, std::int32_t workchain) {
+    std::int32_t authenticated_global_id, std::int32_t workchain) {
   TRY_RESULT(header, read_workchain_instance_ledger(predecessor));
   if (proposed_config.is_null()) return error(InstanceIdentityError::InvalidConfiguration, "configuration is missing");
   vm::Dictionary config(proposed_config, 32);
@@ -103,18 +101,14 @@ td::Result<td::Ref<vm::Cell>> reconstruct_workchain_instance_ledger(
   auto policy = ingress.find(workchain);
   if (policy == ingress.end()) return error(InstanceIdentityError::InvalidConfiguration, "instance policy is missing");
   TRY_RESULT(shell, decode_workchain_engine_parameters(policy->second.engine_configuration));
-  if (!authenticated_genesis) return error(InstanceIdentityError::MissingGenesis, "authenticated genesis is missing");
-  if (shell.genesis_hash != *authenticated_genesis) {
-    return error(InstanceIdentityError::IdentityMismatch, "configured genesis differs from authenticated genesis");
-  }
   TRY_RESULT(record, read_workchain_instance_record(predecessor, workchain));
   if (!record) {
-    TRY_RESULT(staged, stage_first_workchain_instance(predecessor, workchain, authenticated_genesis,
+    TRY_RESULT(staged, stage_first_workchain_instance(predecessor, workchain, authenticated_global_id,
                                                      descriptor, shell.instance_id));
     return staged.ledger;
   }
   // Historical descriptor comes from the ledger, never the proposed descriptor.
-  TRY_RESULT(expected_id, derive_workchain_instance_id(authenticated_genesis, workchain, *record));
+  TRY_RESULT(expected_id, derive_workchain_instance_id(authenticated_global_id, workchain, *record));
   if (shell.instance_id != expected_id) {
     return error(InstanceIdentityError::SuccessorUnsupported, "successor identity issuance is not supported");
   }
@@ -135,16 +129,16 @@ td::Status validate_workchain_instance_ledger_records(const td::Ref<vm::Cell>& l
 
 td::Result<td::Ref<vm::Cell>> reconstruct_configured_workchain_instances(
     const td::Ref<vm::Cell>& predecessor, const td::Ref<vm::Cell>& proposed_config,
-    const std::optional<td::Bits256>& authenticated_genesis) {
+    std::int32_t authenticated_global_id) {
   TRY_STATUS(validate_workchain_instance_ledger_records(predecessor));
-  TRY_RESULT(staged, reconstruct_workchain_instance_ledger(predecessor, proposed_config, authenticated_genesis, 2));
+  TRY_RESULT(staged, reconstruct_workchain_instance_ledger(predecessor, proposed_config, authenticated_global_id, 2));
   vm::Dictionary config(proposed_config, 32);
   auto ingress_root = config.lookup_ref(td::BitArray<32>{84});
   if (ingress_root.is_null()) return staged;
   TRY_RESULT(ingress, decode_workchain_native_ingress_table(ingress_root));
   for (const auto& entry : ingress) {
     if (entry.first == 2) continue;
-    TRY_RESULT(next, reconstruct_workchain_instance_ledger(staged, proposed_config, authenticated_genesis, entry.first));
+    TRY_RESULT(next, reconstruct_workchain_instance_ledger(staged, proposed_config, authenticated_global_id, entry.first));
     staged = std::move(next);
   }
   return staged;

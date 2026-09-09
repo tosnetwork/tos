@@ -26,12 +26,12 @@ class ExtraProbe final : public ValidateQuery {
  public:
   ExtraProbe(td::Ref<vm::Cell> root, BlockCandidate candidate, ValidateParams params,
              td::actor::ActorId<ValidatorManager> manager,
-             td::Promise<ValidateCandidateResult> result, bool corrupt, bool local_fault)
+             td::Promise<ValidateCandidateResult> result, int corrupt, bool local_fault)
       : ValidateQuery(std::move(candidate), std::move(params), manager, {}, std::move(result)),
         root_(std::move(root)), corrupt_(corrupt), local_fault_(local_fault) {}
  private:
   td::Ref<vm::Cell> root_;
-  bool corrupt_;
+  int corrupt_;
   bool local_fault_;
   void start_up() override {
     // This harness seeds the method's authenticated predecessor and candidate
@@ -85,7 +85,11 @@ class ExtraProbe final : public ValidateQuery {
       require(tlb::pack(value, injected), 907);
       // Deliberately outside wc=2: the production call must compare the whole
       // ledger even when no wc=3 installation is proposed.
-      require(entries.set_builder(td::BitArray<32>{3}, value), 908);
+      if (corrupt_ == 2) {
+        require(entries.lookup_delete(td::BitArray<32>{2}).not_null(), 933);
+      } else {
+        require(entries.set_builder(td::BitArray<32>{corrupt_ == 3 ? 2 : 3}, value), 908);
+      }
       header.entries = entries.get_root();
       require(tlb::pack_cell(next.r1.workchain_instances, header), 909);
     }
@@ -109,13 +113,32 @@ int main(int argc, char** argv) {
   require(hash_data.ok().size() == 32, 924);
   td::Bits256 file_hash; file_hash.as_slice().copy_from(hash_data.ok().as_slice());
   BlockIdExt previous{BlockId{masterchainId, shardIdAll, 0}, root->get_hash().bits(), file_hash};
+  if (std::string(argv[2]) == "genesis" || std::string(argv[2]) == "missing-instance" ||
+      std::string(argv[2]) == "wrong-descriptor") {
+    block::gen::ShardStateUnsplit::Record state;
+    require(tlb::unpack_cell(root, state), 934);
+    block::gen::McStateExtra::Record extra;
+    require(state.custom.not_null() && state.custom->prefetch_ulong(1) == 1 &&
+            tlb::unpack_cell(state.custom->prefetch_ref(), extra), 935);
+    auto record = block::read_workchain_instance_record(extra.r1.workchain_instances, 2);
+    require(record.is_ok() && record.ok().has_value() && record.ok()->instance_seq == 1, 936);
+    auto configuration = block::ConfigInfo::extract_config(root, previous, block::Config::needWorkchainInfo);
+    require(configuration.is_ok(), 937);
+    vm::Dictionary descriptions(vm::load_cell_slice(configuration.ok()->get_config_param(12)), 32);
+    auto descriptor = descriptions.lookup(td::BitArray<32>{2});
+    require(descriptor.not_null(), 938);
+    auto copied = vm::CellBuilder().append_cellslice(*descriptor).finalize();
+    require(record.ok()->creation_descriptor_hash == copied->get_hash().bits(), 939);
+  }
   BlockCandidate candidate;
   candidate.id = {BlockId{masterchainId, shardIdAll, 1}, td::Bits256::zero(), td::Bits256::zero()};
   candidate.collated_file_hash.set_zero();
   ValidateParams params; params.shard = {masterchainId, shardIdAll}; params.prev = {previous};
-  bool corrupt = std::string(argv[2]) == "corrupt";
+  int corrupt = std::string(argv[2]) == "corrupt" ? 1 :
+                std::string(argv[2]) == "missing-instance" ? 2 :
+                std::string(argv[2]) == "wrong-descriptor" ? 3 : 0;
   bool local_fault = std::string(argv[2]) == "local-fault";
-  require(corrupt || local_fault || std::string(argv[2]) == "unchanged", 925);
+  require(corrupt || local_fault || std::string(argv[2]) == "unchanged" || std::string(argv[2]) == "genesis", 925);
   int kind = -1;
   td::actor::Scheduler scheduler({0});
   td::actor::ActorOwn<StatisticsSink> sink;

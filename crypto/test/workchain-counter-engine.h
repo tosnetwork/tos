@@ -3,6 +3,7 @@
 #include <limits>
 
 #include "block/workchain-execution-dispatch.h"
+#include "block/workchain-resource-policy.h"
 #include "vm/cells.h"
 #include "vm/cellslice.h"
 #include "vm/dict.h"
@@ -52,8 +53,10 @@ class CounterEngine final : public block::RegisteredWorkchainBlockEngine {
   td::Result<std::shared_ptr<const block::WorkchainEngineConfig>> validate_and_resolve_config(
       const block::WorkchainExecutionDescriptor& descriptor, const block::Config&,
       const td::Ref<vm::Cell>& engine_configuration) const override {
-    if (engine_configuration.is_null() ||
-        engine_configuration->get_hash() != vm::CellBuilder().finalize()->get_hash()) {
+    TRY_RESULT(shell, block::decode_workchain_engine_parameters(engine_configuration));
+    // The host installs the identity-bearing shell. Empty means the business
+    // parameters only; accepting a bare empty cell would bypass that contract.
+    if (shell.parameters->get_hash() != vm::CellBuilder().finalize()->get_hash()) {
       return td::Status::Error("counter requires an empty engine configuration");
     }
     if (descriptor.min_split != 0 || descriptor.max_split != 0) {

@@ -28,7 +28,14 @@ int main() {
       policy.workchain_id = 2;
       policy.engine_key = {block::WorkchainFormat::Basic, 0x434e5431};
       policy.executor_address.set_zero();
-      policy.engine_configuration = vm::CellBuilder().finalize();
+      // Explicit resolver-only identity values, not an authenticated
+      // installation. The same shell is used for both capability settings.
+      block::WorkchainResourcePolicy resources{4, {64,4096,8,16,16,5},
+          {256,16384,128,8192,64}, {32,128,8192,256,16384,16}};
+      auto shell = block::encode_workchain_engine_parameters(
+          {400, td::Bits256::ones(), resources, vm::CellBuilder().finalize()});
+      if (shell.is_error()) return 329;
+      policy.engine_configuration = shell.move_as_ok();
       auto ingress = block::encode_workchain_native_ingress_table({policy});
       if (ingress.is_error() || !dictionary.set_ref(td::BitArray<32>{84}, ingress.move_as_ok())) return 327;
       auto config = block::Config::unpack_config(dictionary.get_root_cell(), td::Bits256::zero(),

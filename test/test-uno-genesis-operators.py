@@ -11,12 +11,14 @@ def main():
     parser.add_argument("--create-state", type=pathlib.Path, required=True)
     parser.add_argument("--repo", type=pathlib.Path, required=True)
     parser.add_argument("--operators", type=pathlib.Path)
+    parser.add_argument("--resources", type=pathlib.Path)
     parser.add_argument("--evidence", type=pathlib.Path)
     args = parser.parse_args()
     if args.evidence is None:
         args.evidence = pathlib.Path(tempfile.mkdtemp(prefix="uno-genesis-operator-evidence-")) / "run"
     args.evidence.mkdir(parents=True, exist_ok=False)
     operators = (args.operators or args.repo / "crypto/smartcont/uno-genesis-operators.fif").resolve()
+    resources = (args.resources or args.repo / "crypto/smartcont/uno-genesis-config.fif").resolve()
     library = ":".join(map(str, (args.repo / "crypto/fift/lib",
                                 args.create_state.resolve().parent / "smartcont",
                                 args.repo / "crypto/smartcont")))
@@ -56,6 +58,10 @@ def main():
         assert result.returncode == 0 and result.stdout.strip() == b"992", "988: prefix did not reach authorization"
         result = run("production-prefix", prefix + "\n992 . cr\n")
         assert result.returncode != 0 and b"992" not in result.stdout, "987: mainnet generator continued"
+        result = run("resource-testnet", f'-23901 setglobalid\n"{resources}" include\n993 . cr\n')
+        assert result.returncode == 0 and result.stdout.strip() == b"993", "989: resource fixture failed before guard"
+        result = run("resource-mainnet", f'1 setglobalid\n"{resources}" include\n993 . cr\n')
+        assert result.returncode != 0 and b"993" not in result.stdout, "990: unapproved mainnet resource continued"
     print("PASS: three approval cases, three guard cases, production and testnet prefixes")
     print(f"Evidence: {args.evidence}")
 

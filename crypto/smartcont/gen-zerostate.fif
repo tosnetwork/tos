@@ -4,11 +4,11 @@
 "Lists.fif" include
 
 // =====================================================================
-//  CANONICAL MAINNET GENESIS — Native (wc=0) only
+//  CANONICAL MAINNET GENESIS — Native (wc=0) and confidential workchain (wc=2)
 // =====================================================================
 //
 // This is THE default mainnet template. It ships a ConfigParam 12 that
-// contains ONLY the Native workchain (wc=0) plus the masterchain (wc=-1).
+// contains Native (wc=0) and wc=2; the masterchain is wc=-1.
 // Genesis contains only the bounded validator-bootstrap wallet and the two
 // system-contract reserves defined below. ConfigParam 14 validator block
 // rewards create approximately 500 million TOS of the network's supply
@@ -63,6 +63,16 @@ hashu dup =: basestate0_rhash
 // root-hash file-hash start-at actual-min-split min-split-depth max-split-depth wc-id
 basestate0_rhash basestate0_fhash now 0 4 8 0 add-std-workchain
 
+// No confidential accounts exist at genesis. This shard root is built before
+// its descriptor or engine identity and cannot depend on the masterchain root.
+2 mkemptyShardState
+dup 31 boc+>B dup "unostate0" +suffix +".boc" B>file
+Bhashu dup constant unostate0_fhash
+256 u>B "unostate0" +suffix +".fhash" B>file
+hashu dup constant unostate0_rhash
+256 u>B "unostate0" +suffix +".rhash" B>file
+"uno-genesis-config.fif" include
+unostate0_rhash unostate0_fhash now 0 0 0 2 add-uno-genesis-workchain
 config.workchains!
 
 // Version 0.5 validator-led genesis balances. The 100,000-TOS main wallet is
@@ -125,7 +135,13 @@ Masterchain swap
  *
  */
 // version capabilities (Native Registry SHA256C requires version 14)
-14 capCreateStats capBounceMsgBody or capReportVersion or capShortDequeue or capStoreOutMsgQueueSize or capMsgMetadata or capDeferMessages or config.version!
+16 capCreateStats capBounceMsgBody or capReportVersion or capShortDequeue or capStoreOutMsgQueueSize or capMsgMetadata or capDeferMessages or 1024 or config.version!
+// Historical K acceptance interval, not inferred from the current Param30.
+// The initial-system seed is encoded by the generated TL-B type in create-state.
+400 uno_genesis_descriptor @ 2 first-instance-identity
+uno_genesis_resources uno-initial-system instance-engine-configuration
+uno_development_coordinator 256 u>B uno_development_custody 256 u>B
+uno-genesis-ingress 84 config!
 // ConfigParam 19: global_id (must match setglobalid above)
 <b globalid@ 32 i, b> 19 config!
 // max-validators max-main-validators min-validators
