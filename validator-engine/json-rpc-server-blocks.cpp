@@ -491,6 +491,16 @@ void JsonRpcServer::handle_getBlockHeader(td::JsonObject &params, std::string re
 
 // ─── getMasterchainBlockSignatures ──────────────────────────────────────
 
+// Helper: serialize a lookupBlock query for a masterchain block by seqno.
+static td::BufferSlice masterchain_lookup_query(td::int32 seqno) {
+  auto block_id = tos::create_tl_object<tos::lite_api::tosNode_blockId>(
+      -1, static_cast<td::int64>(-1LL << 63), seqno);
+  auto inner = tos::serialize_tl_object(
+      tos::create_tl_object<tos::lite_api::liteServer_lookupBlock>(1, std::move(block_id), 0, 0), true);
+  return tos::serialize_tl_object(
+      tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(inner)), true);
+}
+
 void JsonRpcServer::handle_getMasterchainBlockSignatures(td::JsonObject &params, std::string req_id,
                                                          td::Promise<HttpReturn> promise) {
   auto seqno_r = params.get_required_int_field("seqno");
@@ -499,101 +509,120 @@ void JsonRpcServer::handle_getMasterchainBlockSignatures(td::JsonObject &params,
     return;
   }
   td::int32 seqno = seqno_r.ok();
-
-  // Step 1: lookup the masterchain block by seqno
-  auto block_id = tos::create_tl_object<tos::lite_api::tosNode_blockId>(
-      -1, static_cast<td::int64>(-1LL << 63), seqno);
-  auto lookup_inner = tos::serialize_tl_object(
-      tos::create_tl_object<tos::lite_api::liteServer_lookupBlock>(
-          1, std::move(block_id), 0, 0),
-      true);
-  auto lookup_query = tos::serialize_tl_object(
-      tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(lookup_inner)), true);
+  if (seqno < 1) {
+    // Block #0 is the genesis block; it is not signed by a validator set.
+    promise.set_value(
+        make_json_error(-32602, "seqno must be >= 1 (block #0 has no signatures)", req_id));
+    return;
+  }
 
   auto self_id = actor_id(this);
-  send_liteserver_query(std::move(lookup_query),
-      [cors = opts_.cors_origin, req_id = std::move(req_id), self_id, promise = std::move(promise)](
+  auto cors = opts_.cors_origin;
+
+  // The signatures that finalized block N are carried by the forward proof link
+  // from N-1 to N (the link "arrives at" N). So resolve N and N-1, then ask for
+  // getBlockProof(known = N-1, target = N) and read the forward link into N.
+  // This mirrors toslib's GetMasterchainBlockSignatures. The previous version
+  // walked the proof forward FROM N (mode 0, no target), whose forward links
+  // sign *later* blocks, so it answered with the wrong block's signatures; it
+  // also only handled the ordinary signature set, missing the simplex sets this
+  // network actually produces.
+
+  // Step 1: resolve block N (full id).
+  send_liteserver_query(masterchain_lookup_query(seqno),
+      [self_id, cors, req_id = std::move(req_id), seqno, promise = std::move(promise)](
           td::Result<td::BufferSlice> R) mutable {
         if (R.is_error()) {
-          promise.set_value(make_json_error(-32603,
-              PSTRING() << "lookupBlock: " << R.error(), req_id, cors));
+          promise.set_value(make_json_error(-32603, PSTRING() << "lookupBlock: " << R.error(), req_id, cors));
           return;
         }
-        auto lb_r = tos::fetch_tl_object<tos::lite_api::liteServer_blockHeader>(
-            R.move_as_ok(), true);
+        auto lb_r = tos::fetch_tl_object<tos::lite_api::liteServer_blockHeader>(R.move_as_ok(), true);
         if (lb_r.is_error()) {
-          promise.set_value(make_json_error(-32603,
-              PSTRING() << "parse lookupBlock: " << lb_r.error(), req_id, cors));
+          promise.set_value(make_json_error(-32603, PSTRING() << "parse lookupBlock: " << lb_r.error(), req_id, cors));
           return;
         }
         auto lb = lb_r.move_as_ok();
-        auto resolved_id_json = format_block_id_json(*lb->id_);
+        auto id_json = format_block_id_json(*lb->id_);
+        auto n_id = std::move(lb->id_);  // full id of N, used as the proof target
 
-        // Step 2: getBlockProof with mode=0 (no target — proof from known block back to init).
-        // The proof chain contains forward links with validator signatures.
-        auto inner = tos::serialize_tl_object(
-            tos::create_tl_object<tos::lite_api::liteServer_getBlockProof>(
-                0, std::move(lb->id_), nullptr),
-            true);
-        auto query = tos::serialize_tl_object(
-            tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(inner)), true);
-
+        // Step 2: resolve block N-1 (the known block of the proof).
         td::actor::send_closure(self_id, &JsonRpcServer::send_liteserver_query,
-            std::move(query),
+            masterchain_lookup_query(seqno - 1),
             td::PromiseCreator::lambda(
-                [cors, req_id = std::move(req_id), id_json = std::move(resolved_id_json),
-                 promise = std::move(promise)](
+                [self_id, cors, req_id = std::move(req_id), seqno, id_json = std::move(id_json),
+                 n_id = std::move(n_id), promise = std::move(promise)](
                     td::Result<td::BufferSlice> R) mutable {
           if (R.is_error()) {
-            promise.set_value(make_json_error(-32603,
-                PSTRING() << "getBlockProof: " << R.error(), req_id, cors));
+            promise.set_value(make_json_error(-32603, PSTRING() << "lookupBlock(prev): " << R.error(), req_id, cors));
             return;
           }
-          auto proof_r = tos::fetch_tl_object<tos::lite_api::liteServer_partialBlockProof>(
-              R.move_as_ok(), true);
-          if (proof_r.is_error()) {
-            promise.set_value(make_json_error(-32603,
-                PSTRING() << "parse blockProof: " << proof_r.error(), req_id, cors));
+          auto pb_r = tos::fetch_tl_object<tos::lite_api::liteServer_blockHeader>(R.move_as_ok(), true);
+          if (pb_r.is_error()) {
+            promise.set_value(make_json_error(-32603, PSTRING() << "parse lookupBlock(prev): " << pb_r.error(), req_id, cors));
             return;
           }
-          auto proof = proof_r.move_as_ok();
+          auto pb = pb_r.move_as_ok();
 
-          // A forward link's signature set authenticates the block the link
-          // arrives at, not the block the proof started from. The chain here
-          // runs forward from the requested block, so these signatures sign
-          // later blocks -- carrying them under the requested id alone would
-          // answer "who signed this block" with signatures for a different
-          // one. Each entry therefore names the block it actually signs, and
-          // a caller after one specific block's signatures matches on that
-          // field rather than trusting the enclosing id.
-          td::StringBuilder sb;
-          sb << "{\"@type\":\"blocks.blockSignatures\",\"id\":" << id_json
-             << ",\"signatures\":[";
-          bool first_sig = true;
-          for (auto& step : proof->steps_) {
-            if (step->get_id() == tos::lite_api::liteServer_blockLinkForward::ID) {
-              auto* fwd = static_cast<tos::lite_api::liteServer_blockLinkForward*>(step.get());
-              if (fwd->signatures_ &&
-                  fwd->signatures_->get_id() == tos::lite_api::liteServer_signatureSet_ordinary::ID) {
-                auto* sig_set = static_cast<tos::lite_api::liteServer_signatureSet_ordinary*>(
-                    fwd->signatures_.get());
-                std::string signed_block_json = fwd->to_ ? format_block_id_json(*fwd->to_) : std::string("null");
-                for (auto& sig : sig_set->signatures_) {
-                  if (!first_sig) sb << ",";
-                  first_sig = false;
-                  sb << "{\"@type\":\"blocks.signature\""
-                     << ",\"signed_block\":" << signed_block_json
-                     << ",\"node_id_short\":\""
-                     << td::base64_encode(sig->node_id_short_.as_slice())
-                     << "\",\"signature\":\""
-                     << td::base64_encode(sig->signature_.as_slice())
-                     << "\"}";
+          // Step 3: getBlockProof(known = N-1, target = N). Mode 0x1001 requests
+          // the proof between the two given blocks (same mode toslib uses).
+          auto inner = tos::serialize_tl_object(
+              tos::create_tl_object<tos::lite_api::liteServer_getBlockProof>(
+                  0x1001, std::move(pb->id_), std::move(n_id)),
+              true);
+          auto query = tos::serialize_tl_object(
+              tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(inner)), true);
+
+          td::actor::send_closure(self_id, &JsonRpcServer::send_liteserver_query, std::move(query),
+              td::PromiseCreator::lambda(
+                  [cors, req_id = std::move(req_id), id_json = std::move(id_json), seqno,
+                   promise = std::move(promise)](td::Result<td::BufferSlice> R) mutable {
+            if (R.is_error()) {
+              promise.set_value(make_json_error(-32603, PSTRING() << "getBlockProof: " << R.error(), req_id, cors));
+              return;
+            }
+            auto proof_r = tos::fetch_tl_object<tos::lite_api::liteServer_partialBlockProof>(R.move_as_ok(), true);
+            if (proof_r.is_error()) {
+              promise.set_value(make_json_error(-32603, PSTRING() << "parse blockProof: " << proof_r.error(), req_id, cors));
+              return;
+            }
+            auto proof = proof_r.move_as_ok();
+
+            td::StringBuilder sb;
+            sb << "{\"@type\":\"blocks.blockSignatures\",\"id\":" << id_json << ",\"signatures\":[";
+            bool first_sig = true;
+            // Emit one signature entry; works for both signature-set variants.
+            auto emit_sigs = [&](const auto& sig_vec) {
+              for (auto& sig : sig_vec) {
+                if (!first_sig) {
+                  sb << ",";
                 }
+                first_sig = false;
+                sb << "{\"@type\":\"blocks.signature\",\"node_id_short\":\""
+                   << td::base64_encode(sig->node_id_short_.as_slice())
+                   << "\",\"signature\":\"" << td::base64_encode(sig->signature_.as_slice()) << "\"}";
+              }
+            };
+            // Take the forward link that arrives at N; its signature set signs N.
+            for (auto& step : proof->steps_) {
+              if (step->get_id() != tos::lite_api::liteServer_blockLinkForward::ID) {
+                continue;
+              }
+              auto* fwd = static_cast<tos::lite_api::liteServer_blockLinkForward*>(step.get());
+              if (!fwd->to_ || fwd->to_->seqno_ != seqno || !fwd->signatures_) {
+                continue;
+              }
+              auto sig_id = fwd->signatures_->get_id();
+              if (sig_id == tos::lite_api::liteServer_signatureSet_ordinary::ID) {
+                emit_sigs(static_cast<tos::lite_api::liteServer_signatureSet_ordinary*>(
+                              fwd->signatures_.get())->signatures_);
+              } else if (sig_id == tos::lite_api::liteServer_signatureSet_simplex::ID) {
+                emit_sigs(static_cast<tos::lite_api::liteServer_signatureSet_simplex*>(
+                              fwd->signatures_.get())->signatures_);
               }
             }
-          }
-          sb << "]}";
-          promise.set_value(make_json_ok(sb.as_cslice().str(), req_id, cors));
+            sb << "]}";
+            promise.set_value(make_json_ok(sb.as_cslice().str(), req_id, cors));
+          }));
         }));
       });
 }
