@@ -412,6 +412,12 @@ td::actor::Task<> BroadcastsTwostep::process_broadcast(OverlayImpl *overlay, adn
     }
   }
   if (it == broadcasts_.end()) {
+    // Early reject: refuse a full table before charging the byte budget or
+    // building a decoder for a broadcast that would only be declined at the
+    // commit-point gate below. admit_and_track re-checks as the authoritative,
+    // mutation-tested guard; no co_await runs between here and it, so that
+    // re-check is an O(1) safeguard rather than a second race window.
+    CO_TRY(ensure_in_flight_capacity(overlay));
     CO_TRY(overlay->get_broadcasts_limiter(src_keyhash, cert.get()).try_register_broadcast(data_size));
     td::Result<std::unique_ptr<td::raptorq::Decoder>> R;
     if (part_size == 0 ||
@@ -433,10 +439,10 @@ td::actor::Task<> BroadcastsTwostep::process_broadcast(OverlayImpl *overlay, adn
                                        .chunk_senders = {}}});
     // Admit and track through the single insertion primitive. Its capacity gate
     // is authoritative: no co_await runs between the re-find above and this
-    // call, so the table size it sees is current. The (already-verified) byte
-    // budget was charged above; the only cost of declining here rather than
-    // earlier is that charge and the decoder build, both bounded and both after
-    // the signature check that already ran.
+    // call, so the table size it sees is current. The common full-table case is
+    // already rejected by the early gate above, before the charge and decoder;
+    // this gate is what the mutation test locks, and keeps the gate and the
+    // insert inseparable.
     CO_TRY(admit_and_track(overlay, date, broadcast_id, std::move(bcast)));
     it = broadcasts_.find(broadcast_id);
     VLOG(TWOSTEP_INFO) << "twostep START receiver " << *it->second << " from=" << src_peer_id;
