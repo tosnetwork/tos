@@ -9,6 +9,7 @@
 #include "candidate-relay-policy.h"
 #include "tos/lite-tl.hpp"
 #include "tos/quorum.h"
+#include "validator/consensus/db-path.h"
 #include "validator/consensus/simplex/bus.h"
 #include "validator/fabric.h"
 #include "validator/full-node.h"
@@ -560,9 +561,13 @@ class BridgeImpl final : public IValidatorGroup {
   NewConsensusConfig::NoncriticalParams current_noncritical_params_;
 
   std::string db_path() const {
-    return PSTRING() << params_.db_root << "/consensus/consensus." << params_.shard.workchain << "."
-                     << params_.shard.shard << "." << params_.validator_set->get_catchain_seqno() << "."
-                     << params_.session_id.to_hex() << params_.db_suffix << "/";
+    // Shares its naming with the startup sweep: a directory abandoned by a
+    // crash is identified by parsing the session id back out of this name,
+    // so the two must not drift apart.
+    return consensus_db_root(params_.db_root) +
+           consensus_db_dir_name(params_.shard, params_.validator_set->get_catchain_seqno(), params_.session_id,
+                                 params_.db_suffix) +
+           "/";
   }
 };
 
