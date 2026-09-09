@@ -1,0 +1,117 @@
+Running test Test_WorkchainBlock_DisposalFixturePricesOverwritePriorState...
+[1;31m[ 0][t 0][2026-09-09 12:26:07.401601978][test-workchain-block.cpp:2587]	Expectation failed: config.fwd_mc.lump_price is not equal to 100u (911 != 100)[0m
+[pid 1201337] [time 1788956767] Signal: 6
+------- Stack Backtrace -------
+build/test-workchain-block(+0x6347e7)[0x5cbd1efba7e7]
+build/test-workchain-block(+0xd287d)[0x5cbd1ea5887d]
+/lib/x86_64-linux-gnu/libc.so.6(+0x42520)[0x7f72b6242520]
+/lib/x86_64-linux-gnu/libc.so.6(pthread_kill+0x12c)[0x7f72b62969bc]
+/lib/x86_64-linux-gnu/libc.so.6(raise+0x16)[0x7f72b6242476]
+/lib/x86_64-linux-gnu/libc.so.6(abort+0xd3)[0x7f72b62287f3]
+build/test-workchain-block(+0x637be7)[0x5cbd1efbdbe7]
+build/test-workchain-block(+0x637ce7)[0x5cbd1efbdce7]
+build/test-workchain-block(+0x637897)[0x5cbd1efbd897]
+build/test-workchain-block(+0x26fc69)[0x5cbd1ebf5c69]
+build/test-workchain-block(+0x1b0c5a)[0x5cbd1eb36c5a]
+build/test-workchain-block(+0x6419bc)[0x5cbd1efc79bc]
+build/test-workchain-block(+0x6414e8)[0x5cbd1efc74e8]
+build/test-workchain-block(+0xd97af)[0x5cbd1ea5f7af]
+/lib/x86_64-linux-gnu/libc.so.6(+0x29d90)[0x7f72b6229d90]
+/lib/x86_64-linux-gnu/libc.so.6(__libc_start_main+0x80)[0x7f72b6229e40]
+build/test-workchain-block(+0xd9655)[0x5cbd1ea5f655]
+-------------------------------
+--- Enhanced Backtrace (libbacktrace) ---
+    #0  ?? (test-workchain-block+0xd287c) [0x5cbd1ea5887c]
+    #1  ?? at libc_sigaction.c (libc.so.6+0x4251f) [0x7f72b624251f]
+    #2  __pthread_kill_implementation at pthread_kill.c:44 (libc.so.6+0x969bc) [0x7f72b62969bc]
+    #3  __pthread_kill_internal at pthread_kill.c:78 (libc.so.6+0x969bc) [0x7f72b62969bc]
+    #4  __GI___pthread_kill at pthread_kill.c:89 (libc.so.6+0x969bc) [0x7f72b62969bc]
+    #5  __GI_raise at raise.c:26 (libc.so.6+0x42475) [0x7f72b6242475]
+    #6  __GI_abort at abort.c:79 (libc.so.6+0x287f2) [0x7f72b62287f2]
+    #7  ?? (test-workchain-block+0x637be6) [0x5cbd1efbdbe6]
+    #8  ?? (test-workchain-block+0x637ce6) [0x5cbd1efbdce6]
+    #9  ?? (test-workchain-block+0x637896) [0x5cbd1efbd896]
+    #10  ?? (test-workchain-block+0x26fc68) [0x5cbd1ebf5c68]
+    #11  ?? (test-workchain-block+0x1b0c59) [0x5cbd1eb36c59]
+    #12  ?? (test-workchain-block+0x6419bb) [0x5cbd1efc79bb]
+    #13  ?? (test-workchain-block+0x6414e7) [0x5cbd1efc74e7]
+    #14  ?? (test-workchain-block+0xd97ae) [0x5cbd1ea5f7ae]
+    #15  __libc_start_call_main at libc_start_call_main.h:58 (libc.so.6+0x29d8f) [0x7f72b6229d8f]
+    #16  __libc_start_main_impl at libc-start.c:392 (libc.so.6+0x29e3f) [0x7f72b6229e3f]
+    #17  ?? (test-workchain-block+0xd9654) [0x5cbd1ea5f654]
+    #18  `^2Qÿ (unknown+0xffffffffffffffff) [0xffffffffffffffff]
+------------------------------------------
+[Thread debugging using libthread_db enabled]
+Using host libthread_db library "/lib/x86_64-linux-gnu/libthread_db.so.1".
+0x00007f72b62ea3aa in __GI___wait4 (pid=1201338, stat_loc=0x0, options=0, usage=0x0) at ../sysdeps/unix/sysv/linux/wait4.c:30
+30	../sysdeps/unix/sysv/linux/wait4.c: No such file or directory.
+[Current thread is 1 (Thread 0x7f72b64e8800 (LWP 1201337))]
+
+Thread 1 (Thread 0x7f72b64e8800 (LWP 1201337) "test-workchain-"):
+#0  0x00007f72b62ea3aa in __GI___wait4 (pid=1201338, stat_loc=0x0, options=0, usage=0x0) at ../sysdeps/unix/sysv/linux/wait4.c:30
+        sc_ret = -512
+        sc_ret = <optimized out>
+#1  0x00005cbd1efbaa62 in td::Stacktrace::print_to_stderr(td::Stacktrace::PrintOptions const&) ()
+No symbol table info available.
+#2  0x00005cbd1ea5887d in td::default_failure_signal_handler(int) ()
+No symbol table info available.
+#3  <signal handler called>
+No locals.
+#4  __pthread_kill_implementation (no_tid=0, signo=6, threadid=140130661599232) at ./nptl/pthread_kill.c:44
+        tid = <optimized out>
+        ret = 0
+        pd = 0x7f72b64e8800
+        old_mask = {__val = {0 <repeats 16 times>}}
+        ret = <optimized out>
+        pd = <optimized out>
+        old_mask = <optimized out>
+        ret = <optimized out>
+        tid = <optimized out>
+        ret = <optimized out>
+        resultvar = <optimized out>
+        resultvar = <optimized out>
+        __arg3 = <optimized out>
+        __arg2 = <optimized out>
+        __arg1 = <optimized out>
+        _a3 = <optimized out>
+        _a2 = <optimized out>
+        _a1 = <optimized out>
+        __futex = <optimized out>
+        resultvar = <optimized out>
+        __arg3 = <optimized out>
+        __arg2 = <optimized out>
+        __arg1 = <optimized out>
+        _a3 = <optimized out>
+        _a2 = <optimized out>
+        _a1 = <optimized out>
+        __futex = <optimized out>
+        __private = <optimized out>
+        __oldval = <optimized out>
+        result = <optimized out>
+#5  __pthread_kill_internal (signo=6, threadid=140130661599232) at ./nptl/pthread_kill.c:78
+No locals.
+#6  __GI___pthread_kill (threadid=140130661599232, signo=signo@entry=6) at ./nptl/pthread_kill.c:89
+No locals.
+#7  0x00007f72b6242476 in __GI_raise (sig=sig@entry=6) at ../sysdeps/posix/raise.c:26
+        ret = <optimized out>
+#8  0x00007f72b62287f3 in __GI_abort () at ./stdlib/abort.c:79
+        save_stage = 1
+        act = {__sigaction_handler = {sa_handler = 0x0, sa_sigaction = 0x0}, sa_mask = {__val = {0 <repeats 16 times>}}, sa_flags = 1, sa_restorer = 0x0}
+        sigs = {__val = {32, 0 <repeats 15 times>}}
+#9  0x00005cbd1efbdbe7 in td::process_fatal_error(td::CSlice) ()
+No symbol table info available.
+#10 0x00005cbd1efbdce7 in td::DefaultLog::append(td::CSlice, int) ()
+No symbol table info available.
+#11 0x00005cbd1efbd897 in td::Logger::~Logger() ()
+No symbol table info available.
+#12 0x00005cbd1ebf5c69 in (anonymous namespace)::Test_WorkchainBlock_DisposalFixturePricesOverwritePriorState::run() ()
+No symbol table info available.
+#13 0x00005cbd1eb36c5a in td::Test::step() ()
+No symbol table info available.
+#14 0x00005cbd1efc79bc in td::TestsRunner::run_all_step() ()
+No symbol table info available.
+#15 0x00005cbd1efc74e8 in td::TestsRunner::run_all() ()
+No symbol table info available.
+#16 0x00005cbd1ea5f7af in main ()
+No symbol table info available.
+[Inferior 1 (process 1201337) detached]

@@ -2570,6 +2570,31 @@ TEST(WorkchainBlock, BatchNativeAllocation) {
   ASSERT_TRUE(decode(malformed).is_error());
 }
 
+void initialize_disposal_fixture_prices(block::ActionPhaseConfig& config) {
+  // Disposal validates both schedules, even for a basechain destination.
+  // MsgPrices default construction leaves its integer fields uninitialized.
+  config.fwd_std = block::MsgPrices(200, 0, 0, 0, 16384, 0);
+  config.fwd_mc = block::MsgPrices(100, 0, 0, 0, 16384, 0);
+}
+
+TEST(WorkchainBlock, DisposalFixturePricesOverwritePriorState) {
+  block::ActionPhaseConfig config;
+  // Defined poison makes a missing assignment fail independently of stack
+  // layout, preceding tests, and the outer transaction's rejection guards.
+  config.fwd_std = block::MsgPrices(901, 902, 903, 904, 905, 906);
+  config.fwd_mc = block::MsgPrices(911, 912, 913, 914, 65536, 916);
+  initialize_disposal_fixture_prices(config);
+  ASSERT_EQ(config.fwd_std.lump_price, 200u);
+  ASSERT_EQ(config.fwd_mc.lump_price, 100u);
+  for (const auto* prices : {&config.fwd_std, &config.fwd_mc}) {
+    ASSERT_EQ(prices->bit_price, 0u);
+    ASSERT_EQ(prices->cell_price, 0u);
+    ASSERT_EQ(prices->ihr_factor, 0u);
+    ASSERT_EQ(prices->first_frac, 16384u);
+    ASSERT_EQ(prices->next_frac, 0u);
+  }
+}
+
 TEST(WorkchainBlock, AggregateFeeSettlement) {
   using C = block::CurrencyCollection;
   const auto coordinator_id = td::Bits256::zero();
@@ -2690,6 +2715,7 @@ TEST(WorkchainBlock, AggregateFeeSettlement) {
   // Direct disposal factory: no enclosing allocation/payout role guard can
   // mask a missing local check. Empty inbox keeps all other inputs identical.
   block::ActionPhaseConfig messages;
+  initialize_disposal_fixture_prices(messages);
   messages.global_version = 16;
   block::WorkchainSet workchains;
   block::NativeDisposalProfile profile{block::NativeDisposalSource::OriginalDestination,
@@ -2762,9 +2788,9 @@ TEST(WorkchainBlock, NativeDisposalEntry) {
   cfg.global_version = 16;
   cfg.disable_anycast = true;
   block::ActionPhaseConfig messages;
+  initialize_disposal_fixture_prices(messages);
   messages.global_version = 16;
   messages.bounce_msg_body = 256;
-  messages.fwd_std = block::MsgPrices(200, 0, 0, 0, 16384, 0);
   block::WorkchainSet workchains;
   td::Ref<block::WorkchainInfo> basechain{true};
   basechain.write().workchain = 0;
@@ -2778,6 +2804,20 @@ TEST(WorkchainBlock, NativeDisposalEntry) {
   auto prepare = [&](Transaction& tx, const block::WorkchainDisposalEntryContext& resolved) {
     return tx.prepare_workchain_disposal_entry(bindings[0], input, effects_root, number(321), cfg, 2, 4096, resolved);
   };
+  ASSERT_EQ(messages.fwd_mc.lump_price, 100u);
+  ASSERT_EQ(messages.fwd_mc.first_frac, 16384u);
+  block::tlb::MsgEnvelope::Record_std disposal_envelope;
+  ASSERT_TRUE(tlb::unpack_cell(inbox[2], disposal_envelope));
+  auto price_context = [&](const block::ActionPhaseConfig& prices) {
+    return block::plan_workchain_native_disposal(disposal_envelope.msg, 2, foreign, a,
+        block::CurrencyCollection(1000), 22, 10, prices, workchains, 4096, profile);
+  };
+  ASSERT_TRUE(price_context(messages).is_ok());
+  auto invalid_mc_prices = messages;
+  invalid_mc_prices.fwd_mc.first_frac = 65536;
+  auto rejected_mc_prices = price_context(invalid_mc_prices);
+  ASSERT_TRUE(rejected_mc_prices.is_error());
+  ASSERT_EQ(rejected_mc_prices.error().message().str(), "invalid resolved disposal context");
   Transaction entry(coordinator, Transaction::tr_workchain_batch, 21, 10);
   ASSERT_TRUE(prepare(entry, context).is_ok());
   ASSERT_TRUE(entry.balance == block::CurrencyCollection(1073));
