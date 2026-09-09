@@ -43,9 +43,22 @@ using tos::validator_engine::guard_handler;
 // DoS.  See test/conformance/manual-rpc/http_large_request_body.io for the
 // regression test that pins this behaviour.
 //
-// Cap: 4 MiB. This is intentionally above the largest native wallet/indexer
-// request bodies accepted today and below common reverse-proxy limits.
-static constexpr std::size_t kJsonRpcMaxRequestBodyBytes = 4u << 20;
+// The cap has to stay at or below the HTTP layer's high watermark. This
+// drains a body only once it has arrived in full, so a body larger than
+// the watermark stalls the reader against a consumer that is waiting for
+// that same reader. Accepting more here than the watermark admits is how
+// bodies in that gap used to pin a connection until it timed out.
+//
+// A floor check only -- not a proof that the largest legal request fits. A
+// single request can carry many cells (runGetMethod takes up to 256 stack
+// arguments) or batch up to 100 elements, and base64 plus the JSON envelope
+// inflate each, so the real maximum request is far larger than one 64 KiB bag
+// of cells. This just asserts the reader watermark is at least large enough for
+// one such BOC; the actual receive capacity is high_watermark() (see http.h),
+// and the body ceiling below tracks it.
+static_assert(64u * 1024 <= http::HttpRequest::high_watermark(),
+              "the reader watermark must admit at least a single max-size bag of cells");
+static constexpr std::size_t kJsonRpcMaxRequestBodyBytes = http::HttpRequest::high_watermark();
 
 // Drain the entire payload into a single contiguous buffer.  Returns an
 // error status if the body would exceed `kJsonRpcMaxRequestBodyBytes`
