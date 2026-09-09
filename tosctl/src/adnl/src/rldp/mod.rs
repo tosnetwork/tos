@@ -102,9 +102,13 @@ impl Constraints {
     // caps max_answer_size, whose largest use here is 4 MiB) yet bounds the
     // pre-reservation. Matches the C++ ADNL frame ceiling (1 << 24).
     pub const MAX_TRANSFER_SIZE: usize = 1 << 24;
-    // Ceiling on the number of concurrent inbound transfers, matching the C++
-    // RldpConnection::MAX_INBOUND_TRANSFERS. Without it an attacker opens a new
-    // transfer per forged transfer id, each holding a reassembly buffer.
+    // Ceiling on concurrent inbound transfers. Without it an attacker opens a new
+    // transfer per forged transfer id, each holding a reassembly buffer. The
+    // value is borrowed from C++ RldpConnection::MAX_INBOUND_TRANSFERS, but note
+    // the scope differs: C++ applies it per connection (per local/remote pair),
+    // whereas recv_transfers here counts the whole RldpNode, so this is a single
+    // global cap rather than a per-peer one. A per-peer quota is a possible
+    // future refinement.
     pub const MAX_INBOUND_TRANSFERS: u64 = 256;
 
     pub fn check_data_size(&self, data_size: i32) -> Result<()> {
