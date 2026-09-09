@@ -1,0 +1,38 @@
+{
+  "base_commit": "15345af44",
+  "source": ".github/scripts/check-i13-results.py",
+  "test_source": ".github/scripts/test-i13-results.py",
+  "test_source_sha256": "d67afbc9df79eea7583a124fb4b1fb5d78740cbdafa88afc2667d593661588f6",
+  "restored_sha256": "c4fee096a053f782ce3b2c7f28cf59cfe12ff8caa24bdb2a4d0078eba78c1c6c",
+  "controls": [
+    {
+      "name": "count",
+      "from": "    if len(names) != 3 or set(names) != EXPECTED:",
+      "to": "    if False:",
+      "recorded_mutant_sha256": "415a9fd09cf439bf778b3b54d59db6dcd259157cd3a5516964a7caba084872a1",
+      "exit_code": 1,
+      "log": "count-mutant.log",
+      "assertion": "unexpected observer result: zero.json"
+    },
+    {
+      "name": "execution",
+      "from": "            if test.get(\"status\") != \"run\" or any(\n                test.find(tag) is not None for tag in (\"skipped\", \"failure\", \"error\")\n            ):",
+      "to": "            if False:",
+      "recorded_mutant_sha256": "32c9526fcfa13846eead3e6bc9afdf6ff79751a838d612f3e9c98fdbf947681b",
+      "exit_code": 1,
+      "log": "execution-mutant.log",
+      "assertion": "unexpected observer result: skipped.xml"
+    },
+    {
+      "name": "driver",
+      "from": "            if len(command) < 2 or Path(command[1]).resolve() != expected_driver.resolve():",
+      "to": "            if False:",
+      "recorded_mutant_sha256": "a610d5c195bb52263a74fb67bdd881897afbfd7610a037a66e41e3b603bbe491",
+      "exit_code": 1,
+      "log": "driver-mutant.log",
+      "assertion": "unexpected observer result: wrong-driver.json"
+    }
+  ],
+  "final_exit_code": 0,
+  "scope": "Observer controls using three trivial Python CTest commands and modified reports. Not an execution of private I13 harnesses or a hosted workflow run."
+}

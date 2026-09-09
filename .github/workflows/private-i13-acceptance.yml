@@ -1,0 +1,65 @@
+name: Private I13 acceptance (manual only)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  private-acceptance:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    container:
+      image: ghcr.io/${{ github.repository }}-builder:ubuntu-24.04
+      credentials:
+        username: ${{ github.repository_owner }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    env:
+      CC: clang
+      CXX: clang++
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+      - name: Configure opt-in private harnesses
+        run: |
+          # This module explicitly includes the other two modules; listing all
+          # three independently would define the same targets twice.
+          cmake -S . -B build-private-i13 -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PROJECT_TOS_INCLUDE="$GITHUB_WORKSPACE/crypto/test/workchain-construction-isolation.cmake"
+      - name: Check the registration and execution observer
+        run: python3 .github/scripts/test-i13-results.py
+      - name: Build the three private targets
+        run: |
+          cmake --build build-private-i13 -j32 --target \
+            test-workchain-construction-isolation \
+            test-workchain-i13-acceptance test-workchain-i13-usage-acceptance
+      - name: Assert exact registration
+        run: |
+          ctest --test-dir build-private-i13 -L i13 --show-only=json-v1 > build-private-i13/registered.json
+          python3 .github/scripts/check-i13-results.py registered build-private-i13/registered.json
+      - name: Run and require three actual successful executions
+        run: |
+          # Do not let an old report stand in for this invocation.
+          test ! -e build-private-i13/results.xml
+          rc=0
+          ctest --test-dir build-private-i13 -L i13 -j1 --no-tests=error \
+            --output-on-failure --output-junit results.xml || rc=$?
+          python3 .github/scripts/check-i13-results.py executed build-private-i13/results.xml
+          exit "$rc"
+      - name: Retain raw reports and driver evidence, including failures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: private-i13-acceptance
+          if-no-files-found: error
+          path: |
+            build-private-i13/registered.json
+            build-private-i13/results.xml
+            build-private-i13/Testing/Temporary/
+            build-private-i13/workchain-i13-ctest/**/runs/**

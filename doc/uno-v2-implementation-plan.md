@@ -42,6 +42,18 @@ The specification separately authorizes a payout and one aggregate operation-fee
 
 ### Owner-directed sequence after opt-in harness registration
 
+The private I13 harnesses have a separate, manual-only CI entry point:
+`.github/workflows/private-i13-acceptance.yml` (`workflow_dispatch`). It
+explicitly includes their modules, builds the three targets and selects only
+the `i13` label. Both the registered names and the JUnit execution results must
+contain exactly the three expected tests; skipped, missing and failed tests
+are errors. There is no push, pull-request or scheduled trigger. Ordinary
+"full regression passed" statements do **not** include these private harnesses;
+their separate manual run and result must be cited explicitly. This entry
+point does not change default builds, register engines or enable execution.
+Until the reviewed registration modules are integrated, the registration
+assertion intentionally fails rather than accepting an empty run.
+
 After the three private I13 harness modules have registered their Python
 drivers and demonstrated failing CTest controls, A first resumes the thin
 end-to-end connectivity smoke, then I13b, then I13a. B owns I13e publication
