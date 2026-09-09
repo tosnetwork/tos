@@ -901,6 +901,16 @@ td::Result<std::unique_ptr<HttpResponse>> HttpResponse::parse(std::unique_ptr<Ht
       break;
     }
 
+    if (response) {
+      // Mirror the request side: cap total header bytes, not just each
+      // line. A hostile server can otherwise stream headers without end
+      // into a client that keeps them all.
+      response->total_headers_size_ += line.size() + 2;
+      if (response->total_headers_size_ > HttpResponse::max_header_size()) {
+        return td::Status::Error("response headers too large");
+      }
+    }
+
     if (!response) {
       auto v = td::full_split(line, ' ', 3);
       if (v.size() != 3) {

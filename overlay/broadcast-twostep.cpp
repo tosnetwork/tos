@@ -31,7 +31,6 @@
 #include "td/actor/actor.h"
 #include "td/fec/raptorq/Decoder.h"
 #include "td/fec/raptorq/Encoder.h"
-#include "td/utils/List.h"
 #include "td/utils/Status.h"
 #include "td/utils/buffer.h"
 #include "td/utils/common.h"
@@ -44,6 +43,8 @@
 namespace tos {
 
 namespace overlay {
+
+static constexpr size_t kMaxInFlightTwostepBroadcasts = 4096;
 
 constexpr int VERBOSITY_NAME(TWOSTEP_WARNING) = verbosity_WARNING;
 constexpr int VERBOSITY_NAME(TWOSTEP_INFO) = verbosity_DEBUG;
@@ -86,7 +87,7 @@ td::StringBuilder &operator<<(td::StringBuilder &sb, const BroadcastTwostepDebug
   return sb;
 }
 
-struct BroadcastTwostep : td::ListNode {
+struct BroadcastTwostep {
   Overlay::BroadcastHash broadcast_id;
   td::uint32 date;
   std::unique_ptr<td::raptorq::Decoder> decoder;
@@ -411,6 +412,12 @@ td::actor::Task<> BroadcastsTwostep::process_broadcast(OverlayImpl *overlay, adn
     }
   }
   if (it == broadcasts_.end()) {
+    // Early reject: refuse a full table before charging the byte budget or
+    // building a decoder for a broadcast that would only be declined at the
+    // commit-point gate below. admit_and_track re-checks as the authoritative,
+    // mutation-tested guard; no co_await runs between here and it, so that
+    // re-check is an O(1) safeguard rather than a second race window.
+    CO_TRY(ensure_in_flight_capacity(overlay));
     CO_TRY(overlay->get_broadcasts_limiter(src_keyhash, cert.get()).try_register_broadcast(data_size));
     td::Result<std::unique_ptr<td::raptorq::Decoder>> R;
     if (part_size == 0 ||
@@ -430,8 +437,14 @@ td::actor::Task<> BroadcastsTwostep::process_broadcast(OverlayImpl *overlay, adn
                                        .symbols_needed = symbols_needed,
                                        .timestamp = td::Timestamp::now(),
                                        .chunk_senders = {}}});
-    lru_.put(bcast.get());
-    it = broadcasts_.emplace(broadcast_id, std::move(bcast)).first;
+    // Admit and track through the single insertion primitive. Its capacity gate
+    // is authoritative: no co_await runs between the re-find above and this
+    // call, so the table size it sees is current. The common full-table case is
+    // already rejected by the early gate above, before the charge and decoder;
+    // this gate is what the mutation test locks, and keeps the gate and the
+    // insert inseparable.
+    CO_TRY(admit_and_track(overlay, date, broadcast_id, std::move(bcast)));
+    it = broadcasts_.find(broadcast_id);
     VLOG(TWOSTEP_INFO) << "twostep START receiver " << *it->second << " from=" << src_peer_id;
   }
   auto bcast = it->second.get();
@@ -463,14 +476,73 @@ td::actor::Task<> BroadcastsTwostep::process_broadcast(OverlayImpl *overlay, adn
   co_return td::Unit{};
 }
 
+td::Status BroadcastsTwostep::ensure_in_flight_capacity(OverlayImpl *overlay) {
+  // A conservative ceiling, not a measured one -- confirm against real overlay
+  // rates before relying on it.
+  if (broadcasts_.size() >= kMaxInFlightTwostepBroadcasts) {
+    // Reclaim entries past the assembly window before refusing: on a
+    // fixed-member overlay the periodic gc can be far apart, so the table may
+    // be full only of already-expired broadcasts. Refusing without reclaiming
+    // would wrongly block new broadcasts behind stale slots -- and because the
+    // accepted-date window is narrower than the assembly window, a broadcast
+    // refused that way could age out before a later gc frees its slot and never
+    // be re-accepted under the same id.
+    gc(overlay);
+  }
+  if (broadcasts_.size() >= kMaxInFlightTwostepBroadcasts) {
+    return td::Status::Error(ErrorCode::notready, "too many in-flight twostep broadcasts");
+  }
+  return td::Status::OK();
+}
+
+td::Status BroadcastsTwostep::admit_and_track(OverlayImpl *overlay, td::uint32 date, Overlay::BroadcastHash broadcast_id,
+                                              std::unique_ptr<BroadcastTwostep> bcast) {
+  TRY_STATUS(ensure_in_flight_capacity(overlay));
+  by_date_.emplace(date, broadcast_id);
+  broadcasts_.emplace(broadcast_id, std::move(bcast));
+  return td::Status::OK();
+}
+
+void BroadcastsTwostep::inject_in_flight_for_test(Overlay::BroadcastHash broadcast_id, td::uint32 date) {
+  auto bcast = std::make_unique<BroadcastTwostep>();
+  bcast->broadcast_id = broadcast_id;
+  bcast->date = date;
+  by_date_.emplace(date, broadcast_id);
+  broadcasts_.emplace(broadcast_id, std::move(bcast));
+}
+
+size_t BroadcastsTwostep::in_flight_count_for_test() const {
+  return broadcasts_.size();
+}
+
+size_t BroadcastsTwostep::capacity_for_test() const {
+  return kMaxInFlightTwostepBroadcasts;
+}
+
+td::Status BroadcastsTwostep::try_admit_fresh_for_test(OverlayImpl *overlay, Overlay::BroadcastHash broadcast_id) {
+  // Drives the real admit_and_track primitive -- the production insertion gate
+  // for a new broadcast -- with a synthetic decoder-less entry, so the test
+  // exercises the actual call site rather than the predicate in isolation.
+  auto bcast = std::make_unique<BroadcastTwostep>();
+  bcast->broadcast_id = broadcast_id;
+  bcast->date = static_cast<td::uint32>(td::Clocks::system());
+  return admit_and_track(overlay, bcast->date, broadcast_id, std::move(bcast));
+}
+
 void BroadcastsTwostep::gc(OverlayImpl *overlay) {
-  while (!broadcasts_.empty()) {
-    auto bcast = static_cast<BroadcastTwostep *>(lru_.prev);
-    CHECK(bcast);
-    if (bcast->date > td::Clocks::system() - 25) {  // see OverlayImpl::check_date
+  // by_date_ is ordered by the date gc expires on, so the earliest entry is the
+  // first to expire; once it is still fresh, every later-dated entry is too, and
+  // the scan can stop. (Insertion order would not give this, since the accepted
+  // date can lead or lag arrival.)
+  while (!by_date_.empty()) {
+    auto oldest = by_date_.begin();
+    if (oldest->first > td::Clocks::system() - 25) {  // see OverlayImpl::check_date
       break;
     }
-    auto broadcast_id = bcast->broadcast_id;
+    auto broadcast_id = oldest->second;
+    auto bcast_it = broadcasts_.find(broadcast_id);
+    CHECK(bcast_it != broadcasts_.end());
+    auto &bcast = bcast_it->second;
 
     if (!bcast->delivered) {
       FLOG(INFO) {
@@ -478,9 +550,17 @@ void BroadcastsTwostep::gc(OverlayImpl *overlay) {
         bcast->debug.print_senders(sb);
       };
     }
-    CHECK(broadcasts_.erase(broadcast_id));
+    by_date_.erase(oldest);
+    broadcasts_.erase(bcast_it);
     overlay->register_delivered_broadcast(broadcast_id);
   }
+  // The count ceiling is enforced as an admission check at insertion time in
+  // process_broadcast, not here. A gc-time count eviction would drop the
+  // oldest broadcast even while it is fresh and still assembling, and marking
+  // that victim delivered (as the time path does for genuinely expired ones)
+  // would permanently suppress its remaining parts. Admission at insertion
+  // refuses a new broadcast instead, which both protects in-flight broadcasts
+  // and keeps the table bounded between gc passes, as for FEC broadcasts.
 }
 
 }  // namespace overlay

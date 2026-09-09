@@ -255,7 +255,10 @@ void AdnlPeerPairImpl::receive_packet_from_channel(AdnlChannelIdShort id, AdnlPa
 }
 
 void AdnlPeerPairImpl::receive_packet(AdnlPacket packet, td::uint64 serialized_size) {
-  set_idle_mark(false);
+  // Do NOT refresh the idle mark yet. A packet that fails the signature
+  // check below must not keep this pair alive: otherwise anyone who can
+  // send an unsigned packet to the pair's key defers the idle sweep
+  // indefinitely, and the sweep is the only bound on the pair table.
   add_packet_stats(serialized_size, /* in = */ true, /* channel = */ false);
   packet.run_basic_checks().ensure();
 
@@ -270,6 +273,9 @@ void AdnlPeerPairImpl::receive_packet(AdnlPacket packet, td::uint64 serialized_s
     return;
   }
 
+  // Verified: this packet proves knowledge of the peer's key, so it is
+  // genuine traffic and may refresh the idle mark.
+  set_idle_mark(false);
   receive_packet_checked(std::move(packet));
 }
 

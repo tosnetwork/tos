@@ -532,10 +532,10 @@ td::actor::Task<> ValidatorManagerImpl::new_external_message_query_cont(td::Ref<
                                                                         td::actor::StartedTask<> wait_allow_broadcast) {
   auto result = co_await std::move(wait_allow_broadcast).wrap();
   if (result.is_error()) {
-    LOG(INFO) << "Cannot send external message to " << message->wc() << ":" << message->addr().to_hex() << " : "
-              << result.error();
+    LOG(DEBUG) << "Cannot send external message to " << message->wc() << ":" << message->addr().to_hex() << " : "
+               << result.error();
   } else {
-    LOG(INFO) << "Sending external message to " << message->wc() << ":" << message->addr().to_hex();
+    LOG(DEBUG) << "Sending external message to " << message->wc() << ":" << message->addr().to_hex();
     callback_->send_ext_message(message->shard(), message->serialize());
   }
   co_return td::Unit{};

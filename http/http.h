@@ -411,6 +411,9 @@ class HttpResponse {
 
   bool parse_header_completed_ = false;
   bool keep_alive_ = false;
+  // Running total of header bytes, capped in parse() the same way the
+  // request side is; a server cannot stream headers without bound.
+  size_t total_headers_size_ = 0;
 
   std::vector<HttpHeader> options_;
   bool is_tunnel_ = false;
