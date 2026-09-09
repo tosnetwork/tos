@@ -1,0 +1,30 @@
+{
+  "date": "2026-09-09",
+  "authority": "Coordinator user decision after review of the 13-row comparison",
+  "source_evidence_commit": "8623b4a5a4e517ef32587c76e54f714ae18bb6e6",
+  "cases": {
+    "test-counter-account-binding-readiness": {
+      "classification": "obsolete fixture shape; acceptance blocked",
+      "observed_diagnostic": 7406,
+      "count_as_regression_failure": false,
+      "count_as_pass": false
+    },
+    "test-counter-activation-missing_capability": {
+      "classification": "obsolete fixture shape; acceptance blocked",
+      "observed_diagnostic": 7409,
+      "count_as_regression_failure": false,
+      "count_as_pass": false
+    },
+    "test-counter-activation-old_version": {
+      "classification": "obsolete fixture shape; acceptance blocked",
+      "observed_diagnostic": 7409,
+      "count_as_regression_failure": false,
+      "count_as_pass": false
+    }
+  },
+  "blocker": "Until Counter readiness and both activation fixtures install identity-bearing configuration after zerostate, these cases are unavailable as D40 acceptance evidence. 7406/7409 are correct behavior.",
+  "singleton_rule": "Singleton consumes the same ConfigParam 84 identity shell and must supply valid identity. No exemption or optional identity.",
+  "scope_closure": "Caller migration, wire layout and generated-tag guard complete; Counter fixture reshaping is a separate unit. No D40 acceptance claimed.",
+  "historical_evidence": "Raw JUnit/logs and prior per-run observations are unchanged. First-run six real framing failures, six fixture-cap unexecuted cases and one environment failure remain separate; this adjudication does not retroactively assert that blocked runs executed.",
+  "next_unit": "The third untagged producer, Counter engine configuration parsing and post-zerostate installation must be changed together in one separate unit. None is modified in this closeout."
+}

@@ -69,10 +69,12 @@ are retained as development failures, not behavior evidence.
    `collator.cpp` remains reserved to A at this checkpoint.
 2. Caller migration checkpoint `2d5d7fa13` supplies explicit identities at the
    nine existing test calls and updates Counter framing. A freshly rebuilt
-   WorkchainBlock group passes 125 tests. Counter readiness remains an acceptance
-   blocker: its identity-bearing configuration inside zerostate is illegal under
-   D40/D52. Until migrated to post-zerostate installation, it cannot be used as
-   D40 acceptance evidence. See `workchain-instance-fixture-migration.md`.
+   WorkchainBlock group passes 125 tests. Counter readiness and the two activation cases remain acceptance
+   blockers: their zerostate installation shape is obsolete under D40/D52. The
+   observed 7406/7409 checks are correct, not regression defects. Until migrated
+   to post-zerostate installation, these three cases cannot be used as D40
+   acceptance evidence or counted as regression failures. Raw CTest statuses
+   remain unchanged; they are not passes. See `workchain-instance-fixture-migration.md`.
    No constructor compatibility default or identity-check exception was added.
 3. Actual validator typed-result/call-site controls. In particular, removing the
    call in `check_mc_state_extra` has NOT been shown to fail these private tests.
