@@ -42,7 +42,13 @@
         "line": 111,
         "text": "[ 1][t 1][2026-09-09 17:13:47.021737058][manager-disk.cpp:315][!fakevalidate(-1,8000000000000000):1#0]\tfailed to create block: invalid instance installation : [Error : 7406 : configured genesis differs from authenticated genesis]"
       }
-    ]
+    ],
+    "coordinator_disposition": {
+      "classification": "obsolete fixture shape; acceptance blocked",
+      "observed_diagnostic": 7406,
+      "count_as_regression_failure": false,
+      "count_as_pass": false
+    }
   },
   {
     "name": "test-counter-idle-replay",
@@ -156,7 +162,13 @@
         "line": 109,
         "text": "[ 1][t 6][2026-09-09 17:13:47.281818980][manager-disk.cpp:315][!fakevalidate(-1,8000000000000000):1#0]\tfailed to create block: invalid instance installation : [Error : 7409 : instance configuration is missing]"
       }
-    ]
+    ],
+    "coordinator_disposition": {
+      "classification": "obsolete fixture shape; acceptance blocked",
+      "observed_diagnostic": 7409,
+      "count_as_regression_failure": false,
+      "count_as_pass": false
+    }
   },
   {
     "name": "test-counter-config-presence-missing_capability",
@@ -191,7 +203,13 @@
         "line": 109,
         "text": "[ 1][t 5][2026-09-09 17:13:47.694120378][manager-disk.cpp:315][!fakevalidate(-1,8000000000000000):1#0]\tfailed to create block: invalid instance installation : [Error : 7409 : instance configuration is missing]"
       }
-    ]
+    ],
+    "coordinator_disposition": {
+      "classification": "obsolete fixture shape; acceptance blocked",
+      "observed_diagnostic": 7409,
+      "count_as_regression_failure": false,
+      "count_as_pass": false
+    }
   },
   {
     "name": "test-counter-config-presence-old_version",

@@ -76,5 +76,7 @@
     "First full run omitted TOL_STDLIB: only test-tol failure is directly explained by that omission. Six bootstrap failures and six cap-blocked tests are distinct.",
     "Raw bootstrap logs locate errors but are not typed CandidateReject versus LocalUnavailable assertions.",
     "/proc permission denials and vanished links are enumerated; no claim of inspecting inaccessible processes. Successful new Counter runs follow their existing auto-removal lifecycle; moved historical directories were not deleted."
-  ]
+  ],
+  "subsequent_coordinator_disposition": "coordinator-disposition.json",
+  "historical_scope_note": "The original scope statement records the pending decision at evidence production. The subsequent coordinator disposition resolves singleton identity applicability and closes this migration scope without changing raw observations."
 }

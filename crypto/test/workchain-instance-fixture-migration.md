@@ -18,13 +18,32 @@ fields, using the same explicitly synthetic codec-only values. This fixes its
 wire layout, not its installation provenance. The fragment embeds the shell in
 its MC zerostate; that cannot carry its own final root hash.
 
-**Acceptance blocker:** Counter readiness currently uses identity-bearing
-configuration inside zerostate. That shape is illegal under D40/D52. Until the
-fixture installs wc=2 after zerostate, this readiness test must not be used as
-D40 acceptance evidence. Its observed bootstrap failure is retained; neither
-its success expectation nor production identity validation is relaxed. The
-post-zerostate fixture migration is a separate unit, dependent on the real first
-installation path. No bootstrap identity definition is introduced here.
+**Acceptance blocker (coordinator disposition, 2026-09-09):** Counter readiness
+and both activation cases use an obsolete zerostate installation shape. Under
+D40/D52, identity-bearing configuration must be installed after zerostate, using
+its actual root as `genesis_hash`. Readiness's 7406 and the activation cases' 7409
+are correct checks, not regression defects. The activation variants remove the
+instance configuration during bootstrap, hence 7409 rather than 7406. Until the
+fixtures install after zerostate, these three cases are unavailable as D40
+acceptance evidence and must not be counted as regression failures. Their raw
+CTest Failed statuses remain archived; this disposition does not turn them into
+passes, skips or successful activation controls. No expectation is changed.
+
+The three cases are `test-counter-account-binding-readiness`,
+`test-counter-activation-missing_capability` and
+`test-counter-activation-old_version`. Fixture-cap admission blocks, obsolete
+fixture shapes, actual bootstrap failures and missing environment are recorded
+separately in the per-test comparison.
+
+Singleton execution has no identity exemption. Its ConfigParam 84 engine shell
+must carry a valid D40 identity too; there is no optional-identity or alternate
+identity-free shell. Counter tests the same UNO infrastructure. Its existing raw
+business-parameter consumption must be adapted as part of the separate Counter
+fixture reshaping unit, not by weakening identity validation in this migration.
+That unit covers readiness and both activation cases: zerostate contains no
+identity-bearing workchain configuration, installation occurs in a later block,
+and `genesis_hash` is the real zerostate root. The present caller/wire/tag migration
+is complete within its approved scope; fixture reshaping is not included.
 
 `test-workchain-handwritten-tags` is registered directly in `crypto/CMakeLists.txt`.
 It reads six annotated Fift constructor sites and compares them with the actual
@@ -67,3 +86,9 @@ match that search. This is why a clean old-tag scan did not establish complete
 caller migration. The engine's consumption contract and post-zerostate install
 shape must also be reconciled; simply wrapping the cell is not evidence that the
 Counter execution path accepts the migrated configuration.
+
+The coordinator resolved the consumption question above on 2026-09-09:
+singleton must provide valid identity, with no exception. The raw-business-cell
+finding is retained as search-method evidence; it does not authorize keeping
+an identity-free singleton installation path. Fixture and consumption reshaping
+belong to the separate post-zerostate unit.
