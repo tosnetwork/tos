@@ -19,6 +19,7 @@
 #include "json-rpc-server-internal.h"
 #include "json-rpc-handler-guard.h"
 #include "json-rpc-payload-waiter.h"
+#include "json-rpc-source-ip.h"
 
 #include <algorithm>
 #include <cstdlib>
@@ -329,87 +330,16 @@ void JsonRpcServer::HttpCallback::receive_request(
 
 // ─── Request handling ─────────────────────────────────────────────────────
 
-// M-01 hardening: trim ASCII whitespace from both ends of a string.
-static std::string trim_ws(std::string s) {
-  size_t start = 0;
-  while (start < s.size() &&
-         (s[start] == ' ' || s[start] == '\t' ||
-          s[start] == '\r' || s[start] == '\n')) {
-    ++start;
-  }
-  size_t end = s.size();
-  while (end > start &&
-         (s[end - 1] == ' ' || s[end - 1] == '\t' ||
-          s[end - 1] == '\r' || s[end - 1] == '\n')) {
-    --end;
-  }
-  if (start == 0 && end == s.size()) return s;
-  return s.substr(start, end - start);
-}
-
-// M-01 hardening: returns true when `peer` is on the loopback
-// interface (127.0.0.1, ::1, or the canonical-uncompressed IPv6
-// loopback "0:0:0:0:0:0:0:1"). Loopback peers are always implicit
-// trust anchors for proxy headers — operators that keep an admin
-// surface behind SSH / nginx-on-localhost rely on this.
-static bool peer_is_loopback(const std::string& peer) {
-  if (peer == "127.0.0.1") return true;
-  if (peer == "::1") return true;
-  if (peer == "0:0:0:0:0:0:0:1") return true;
-  // 127.0.0.0/8 is the documented loopback range; cover the most
-  // common variants without pulling in a CIDR matcher.
-  if (peer.size() >= 4 && peer.compare(0, 4, "127.") == 0) return true;
-  return false;
-}
-
-// M-01 hardening: returns true when `peer` is loopback or appears in
-// the operator-supplied trusted-proxy allow-list. Allow-list entries
-// are matched verbatim (numeric textual form, no CIDR / DNS).
-static bool peer_is_loopback_or_trusted(
-    const std::string& peer,
-    const std::vector<std::string>& trusted_proxies) {
-  if (peer_is_loopback(peer)) return true;
-  for (const auto& p : trusted_proxies) {
-    if (p == peer) return true;
-  }
-  return false;
-}
-
+// Source-IP resolution (trim, loopback/trusted-proxy checks, and the
+// X-Forwarded-For chain walk) lives in json-rpc-source-ip.h so it can be unit
+// tested in isolation. This thin wrapper keeps the existing call sites.
 std::string JsonRpcServer::resolve_source_ip(
     const std::string& peer_ip,
     const std::string& forwarded_for,
     const std::string& real_ip,
     bool trust_proxy_headers,
     const std::vector<std::string>& trusted_proxies) {
-  std::string source = peer_ip;
-  if (trust_proxy_headers &&
-      peer_is_loopback_or_trusted(peer_ip, trusted_proxies)) {
-    if (!forwarded_for.empty()) {
-      // X-Forwarded-For is a comma-separated list; the leftmost entry
-      // is the original client IP per RFC 7239 / common reverse proxy
-      // convention.
-      auto comma = forwarded_for.find(',');
-      std::string first = (comma == std::string::npos)
-                              ? forwarded_for
-                              : forwarded_for.substr(0, comma);
-      first = trim_ws(std::move(first));
-      if (!first.empty()) {
-        source = std::move(first);
-      }
-    } else if (!real_ip.empty()) {
-      std::string xri = trim_ws(real_ip);
-      if (!xri.empty()) {
-        source = std::move(xri);
-      }
-    }
-  }
-  // Empty attribution must never bypass the per-IP gate. Bucket
-  // every untagged caller into a shared "unknown" slot so a flood
-  // from peer-less connections still throttles.
-  if (source.empty()) {
-    source = "unknown";
-  }
-  return source;
+  return resolve_client_source_ip(peer_ip, forwarded_for, real_ip, trust_proxy_headers, trusted_proxies);
 }
 
 // Extract the originating client IP for the in-process per-IP rate
