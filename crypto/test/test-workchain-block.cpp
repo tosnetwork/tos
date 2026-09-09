@@ -8527,10 +8527,213 @@ TEST(WorkchainBlock, MultiAccountAdmissionVersionInstallation) {
   }
 }
 
+TEST(WorkchainBlock, AccountRegistryReplayConnectivity) {
+  // Connectivity only: a local registry and explicit synthetic parameters.
+  // No live actor gate is opened and no confidential proof is implemented here.
+  struct Parameters final : block::WorkchainEngineConfig {
+    explicit Parameters(std::uint64_t value) : value(value) {}
+    std::uint64_t value;
+  };
+  struct Engine final : block::RegisteredWorkchainAccountEngine {
+    td::Bits256 a, b;
+    mutable td::uint64 configs{0}, inspections{0}, executions{0};
+    mutable const block::WorkchainEngineConfig* inspected_config{nullptr};
+    mutable const block::WorkchainEngineConfig* executed_config{nullptr};
+    mutable std::weak_ptr<const block::WorkchainEngineConfig> config_lifetime;
+    block::WorkchainEngineKey engine_key() const override {
+      return {block::WorkchainFormat::Basic, 0x434e5431};
+    }
+    td::Result<std::shared_ptr<const block::WorkchainEngineConfig>> validate_and_resolve_config(
+        const block::WorkchainExecutionDescriptor&, const block::Config&,
+        const td::Ref<vm::Cell>& payload) const override {
+      TRY_RESULT(next, block::participant_lt_detail::checked_add(configs, 1));
+      configs = next;
+      TRY_RESULT(parsed, block::decode_workchain_engine_parameters(payload));
+      bool special = false;
+      auto cs = vm::load_cell_slice_special(parsed.parameters, special);
+      if (special || cs.size_ext() != 40 || cs.fetch_ulong(32) != 0x50524231) {
+        return td::Status::Error("invalid connectivity parameters");
+      }
+      auto config = std::make_shared<Parameters>(cs.fetch_ulong(8));
+      config_lifetime = config;
+      return std::shared_ptr<const block::WorkchainEngineConfig>(std::move(config));
+    }
+    td::Result<std::uint64_t> proof_work(
+        const td::Ref<vm::Cell>&, const block::InputPolicyIdentity&,
+        const block::WorkchainEngineConfig& configuration) const override {
+      TRY_RESULT(next, block::participant_lt_detail::checked_add(inspections, 1));
+      inspections = next;
+      inspected_config = &configuration;
+      const auto* config = dynamic_cast<const Parameters*>(&configuration);
+      if (!config) return td::Status::Error(
+          static_cast<int>(block::WorkchainExecutionFailure::LocalUnavailable), "wrong connectivity config type");
+      return config->value;  // Synthetic declared units, not cryptographic work.
+    }
+    td::Result<block::WorkchainAccountEffects> execute_accounts(
+        const td::Ref<vm::Cell>&, block::WorkchainAccountReadView& view,
+        const block::WorkchainEngineConfig& configuration) const override {
+      TRY_RESULT(next, block::participant_lt_detail::checked_add(executions, 1));
+      executions = next;
+      executed_config = &configuration;
+      const auto* config = dynamic_cast<const Parameters*>(&configuration);
+      if (!config) return td::Status::Error(
+          static_cast<int>(block::WorkchainExecutionFailure::LocalUnavailable), "wrong connectivity config type");
+      TRY_RESULT(first, view.read(a));
+      TRY_RESULT(second, view.read(b));
+      if (first.is_null() || second.is_null()) return td::Status::Error("missing connectivity account");
+      block::WorkchainAccountEffects effects;
+      effects.updates = {{a, number(config->value)}, {b, number(config->value)}};
+      return effects;
+    }
+  };
+  const auto a = td::Bits256::zero();
+  const td::Bits256 b(number(1)->get_hash().bits());
+  auto engine = std::make_unique<Engine>();
+  engine->a = a;
+  engine->b = b;
+  auto* observed = engine.get();
+  block::WorkchainExecutionRegistry registry;
+  ASSERT_TRUE(registry.register_account_engine(std::move(engine)).is_ok());
+  static_assert(!std::is_base_of_v<block::WorkchainAccountEngine, block::RegisteredWorkchainAccountEngine>);
+
+  block::WorkchainResourcePolicy resources{2, {100,100000,3,2,2,1},
+      {256,16384,128,8192,64}, {64,128,8192,256,65536,16}};
+  block::WorkchainNativeIngressPolicy ingress;
+  ingress.workchain_id = 2;
+  ingress.engine_key = observed->engine_key();
+  ingress.descriptor_version = 5;
+  ingress.vm_mode = 7;
+  ingress.executor_address = a;
+  ingress.custody_address = b;
+  ingress.engine_configuration = block::encode_workchain_engine_parameters({resources,
+      vm::CellBuilder().store_long(0x50524231,32).store_long(37,8).finalize()}).move_as_ok();
+  vm::Dictionary config_dict(32);
+  vm::CellBuilder version;
+  ASSERT_TRUE(block::gen::t_GlobalVersion.pack_capabilities(version, 16, tos::capBlockTransition));
+  ASSERT_TRUE(config_dict.set_ref(td::BitArray<32>{8}, version.finalize()));
+  ASSERT_TRUE(config_dict.set_ref(td::BitArray<32>{84},
+      block::encode_workchain_native_ingress_table({ingress}).move_as_ok()));
+  auto descriptor = vm::CellBuilder().store_long(0xa6,8).store_zeroes(32).store_zeroes(24)
+      .store_long(1,1).store_long(1,1).store_long(1,1).store_zeroes(13+512)
+      .store_long(5,32).store_long(1,4).store_long(0x434e5431,32).store_long(7,64).finalize();
+  ASSERT_TRUE(block::gen::t_WorkchainDescr.validate_ref(10000, descriptor));
+  vm::Dictionary workchains(32);
+  ASSERT_TRUE(workchains.set(td::BitArray<32>{2}, vm::load_cell_slice_ref(descriptor)));
+  vm::CellBuilder list;
+  ASSERT_TRUE(workchains.append_dict_to_bool(list));
+  ASSERT_TRUE(config_dict.set_ref(td::BitArray<32>{12}, list.finalize()));
+  auto config = block::Config::unpack_config(config_dict.get_root_cell(), td::Bits256::zero(),
+      block::Config::needCapabilities | block::Config::needWorkchainInfo).move_as_ok();
+  auto resolved = registry.resolve_scoped_workchain(2, *config);
+  ASSERT_TRUE(resolved.is_ok() && resolved.ok().has_value());
+  ASSERT_TRUE(std::holds_alternative<block::ResolvedWorkchainAccountBinding>(*resolved.ok()));
+  auto binding = std::get<block::ResolvedWorkchainAccountBinding>(std::move(*resolved.ok_ref()));
+  ASSERT_EQ(observed->configs, 1u);
+  for (unsigned missing = 0; missing < 2; ++missing) {
+    auto incomplete = binding;
+    if (missing == 0) incomplete.executor = nullptr;
+    else incomplete.engine_config.reset();
+    auto refused = block::ConfiguredWorkchainAccountEngine::bind(incomplete);
+    ASSERT_TRUE(refused.is_error());
+    ASSERT_EQ(refused.error().code(), static_cast<int>(block::WorkchainExecutionFailure::LocalUnavailable));
+  }
+  auto configured = block::ConfiguredWorkchainAccountEngine::bind(binding);
+  ASSERT_TRUE(configured.is_ok());
+  const auto* expected_config = binding.engine_config.get();
+  binding.engine_config.reset();
+  ASSERT_EQ(observed->config_lifetime.use_count(), 1);
+  // Configuration hash is tested through settlement below, without a direct
+  // hash-mismatch invocation that could mask a missing entry-path guard.
+  for (unsigned field = 1; field < 6; ++field) {
+    auto wrong = binding.input_policy.identity();
+    if (field == 1) wrong.extended = !wrong.extended;
+    if (field == 2) wrong.engine_selector ^= 1;
+    if (field == 3) wrong.vm_mode ^= 1;
+    if (field == 4) wrong.descriptor_version ^= 1;
+    if (field == 5) wrong.admission_version ^= 1;
+    auto refused = configured.ok()->proof_work(number(11), wrong);
+    ASSERT_TRUE(refused.is_error());
+    ASSERT_EQ(refused.error().code(), static_cast<int>(block::WorkchainExecutionFailure::LocalUnavailable));
+    ASSERT_EQ(observed->inspections, 0u);
+  }
+  auto units = configured.ok()->proof_work(number(11), binding.input_policy.identity());
+  ASSERT_TRUE(units.is_ok());
+  ASSERT_EQ(units.ok(), 37u);
+  ASSERT_EQ(observed->inspections, 1u);
+  observed->inspections = 0;
+
+  block::gen::ShardStateUnsplit::Record state;
+  ASSERT_TRUE(tlb::unpack_cell(shard_fixture(2,2,true,3,false,0,40,false,1000), state));
+  vm::AugmentedDictionary accounts(vm::load_cell_slice_ref(state.accounts),256,block::tlb::aug_ShardAccounts);
+  block::WorkchainAccountDeclarations declarations;
+  for (const auto& key : {a,b}) {
+    block::tlb::ShardAccount::Record old;
+    ASSERT_TRUE(old.unpack(accounts.lookup(key)));
+    declarations.reads.push_back({key, td::Bits256(old.account->get_hash().bits())});
+    declarations.writes.push_back(key);
+  }
+  auto identity = batch_test_identity(number(42));
+  identity.configuration_hash = config->get_root_cell()->get_hash().bits();
+  const std::vector<td::Ref<vm::Cell>> inbox;
+  auto access = block::encode_workchain_account_declarations(declarations,2,2).move_as_ok();
+  block::BatchInputAdmissionSession admission(binding.input_policy,number(11),access,identity,inbox);
+  ASSERT_TRUE(std::holds_alternative<block::AdmittedBatchInput>(admission.evaluate()));
+  const auto& admitted = std::get<block::AdmittedBatchInput>(admission.evaluate());
+  auto native = own_native_fixture({});
+  block::SerializeConfig cfg;
+  cfg.global_version = 16;
+  cfg.disable_anycast = cfg.extra_currency_v2 = true;
+  block::ActionPhaseConfig pricing;
+  pricing.global_version = 16;
+  pricing.disable_custom_fess = pricing.disable_anycast = pricing.extra_currency_v2 = true;
+  // Both inputs are internally consistent; only the adapter belongs to the
+  // other authenticated cut. Admission's own identity guard cannot catch this.
+  auto other_policy_identity = binding.input_policy.identity();
+  other_policy_identity.configuration_hash = number(999)->get_hash();
+  auto other_policy = block::ResolvedBatchInputPolicy::from_resolved_fields(
+      binding.input_policy.resources(), other_policy_identity);
+  ASSERT_TRUE(std::holds_alternative<block::ResolvedBatchInputPolicy>(other_policy));
+  auto other_identity = identity;
+  other_identity.configuration_hash = other_policy_identity.configuration_hash.bits();
+  block::BatchInputAdmissionSession other_admission(
+      std::get<block::ResolvedBatchInputPolicy>(other_policy), number(11), access, other_identity, inbox);
+  ASSERT_TRUE(std::holds_alternative<block::AdmittedBatchInput>(other_admission.evaluate()));
+  auto wrong_cut = block::execute_and_settle_workchain_accounts(*configured.ok(), state.accounts,
+      other_identity, std::get<block::AdmittedBatchInput>(other_admission.evaluate()), native,
+      b, a, td::make_refint(0), 4096, cfg, pricing);
+  ASSERT_TRUE(wrong_cut.is_error());
+  ASSERT_EQ(wrong_cut.error().code(), static_cast<int>(block::WorkchainExecutionFailure::LocalUnavailable));
+  ASSERT_EQ(observed->inspections, 0u);
+  ASSERT_EQ(observed->executions, 0u);
+  auto staged = block::execute_and_settle_workchain_accounts(*configured.ok(),state.accounts,
+      identity,admitted,native,b,a,td::make_refint(0),4096,cfg,pricing);
+  if (staged.is_error()) LOG(ERROR) << staged.error();
+  ASSERT_TRUE(staged.is_ok());
+  ASSERT_EQ(observed->inspections,1u);
+  ASSERT_EQ(observed->executions,1u);
+  ASSERT_TRUE(observed->inspected_config == expected_config);
+  ASSERT_TRUE(observed->executed_config == expected_config);
+  block::WorkchainAccountEffects expected_effects;
+  expected_effects.updates = {{a,number(37)},{b,number(37)}};
+  ASSERT_EQ(staged.ok().effects->get_hash(),
+      block::encode_workchain_account_effects(expected_effects,2,16,4096).move_as_ok()->get_hash());
+  auto replayed = block::replay_workchain_account_settlement(*configured.ok(),state.accounts,
+      identity,admitted,native,b,a,td::make_refint(0),4096,cfg,pricing,staged.ok());
+  if (replayed.is_error()) LOG(ERROR) << replayed.error();
+  ASSERT_TRUE(replayed.is_ok());
+  ASSERT_EQ(observed->inspections,2u);
+  ASSERT_EQ(observed->executions,2u);
+  ASSERT_TRUE(observed->inspected_config == expected_config);
+  ASSERT_TRUE(observed->executed_config == expected_config);
+  ASSERT_EQ(replayed.ok().state.accounts->get_hash(),staged.ok().state.accounts->get_hash());
+  ASSERT_TRUE(replayed.ok().state.accounts->get_hash() != state.accounts->get_hash());
+}
+
 TEST(WorkchainBlock, MultiAccountRegistryBinding) {
   struct Engine final : block::RegisteredWorkchainAccountEngine {
     td::Result<std::uint64_t> proof_work(
-        const td::Ref<vm::Cell>&, const block::InputPolicyIdentity&) const override {
+        const td::Ref<vm::Cell>&, const block::InputPolicyIdentity&,
+        const block::WorkchainEngineConfig&) const override {
       return td::Status::Error(static_cast<int>(block::WorkchainExecutionFailure::LocalUnavailable),
                                "binding must not invoke proof preflight");
     }
@@ -8555,7 +8758,8 @@ TEST(WorkchainBlock, MultiAccountRegistryBinding) {
       return std::shared_ptr<const block::WorkchainEngineConfig>(new block::WorkchainEngineConfig);
     }
     td::Result<block::WorkchainAccountEffects> execute_accounts(
-        const td::Ref<vm::Cell>&, block::WorkchainAccountReadView&) const override {
+        const td::Ref<vm::Cell>&, block::WorkchainAccountReadView&,
+        const block::WorkchainEngineConfig&) const override {
       ++execute_calls;
       return td::Status::Error("binding must not execute");
     }
@@ -8781,7 +8985,7 @@ TEST(WorkchainBlock, MultiAccountRegistryBinding) {
       // Model the caller continuing past the role gate with the registered
       // engine, not a registry-empty or missing-engine negative fixture.
       block::WorkchainAccountReadView view({});
-      auto unexpected = observed->execute_accounts({}, view);
+      auto unexpected = observed->execute_accounts({}, view, *live.engine_config);
       ASSERT_TRUE(unexpected.is_error());
     }
     ASSERT_EQ(observed->execute_calls, 0u);

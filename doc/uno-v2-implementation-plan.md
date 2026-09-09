@@ -2976,3 +2976,102 @@ without opening execution. Wallet prover work remains separate. Neither this
 scheduling change nor a successful link closes the outstanding differential or
 supply-chain acceptance requirements. Mutation controls, byte-exact restoration,
 full regression and independent review remain required for each completed unit.
+
+Connectivity investigation at `ffedd9d21` found the first missing seam before
+runtime replay: `resolve_account_binding` returns a validated `engine_config`,
+but neither `proof_work` nor `execute_accounts` receives it. The existing
+complete-input identity binds the configuration hash; it does not supply the
+decoded business parameters. Existing engines in these tests do not require
+those parameters and therefore cannot establish their propagation.
+
+The initial probe at `ffedd9d21` used the real resolved-binding and admission
+types with the normal test translation unit's compiler flags. Passing the
+resolved configuration to admission failed to compile; dropping configuration
+compiled. Historical commands and diagnostics are in
+`doc/measurements/uno-v2-connectivity-config-probe.json`; they describe that
+pre-adapter interface, not the current probe's expected results.
+This establishes the missing explicit-argument seam, not impossibility of all
+other designs, runtime error classification, or end-to-end success. The probe
+is outside default targets and is not a failing CI test. No execution gate or
+production registry changes accompany it.
+
+The working adapter, `ConfiguredWorkchainAccountEngine`, owns the resolved
+immutable configuration and passes it explicitly to shape inspection and
+execution. Registered account engines no longer inherit the unconfigured
+prototype interface; `ProofAdmittedBatchInput::admit` remains a two-argument
+operation over the adapter. The current manual compile probe exercises that
+adapter, with dropping configuration now intended to fail compilation.
+
+The smoke exercises a local registration, the real scoped resolver, settlement
+and independent replay with synthetic parameters. Actor execution gates remain
+closed. Review found that the first lifetime assertion had another shared owner
+masking the claimed property; the corrected control moves the resolved binding
+and requires exactly one owner. A mismatched-cut test also enters through
+settlement rather than only calling the adapter directly. The controls below
+are complete; follow-up review passed without blockers. This is not live execution or
+M1 acceptance.
+
+The adopted compile pair is recorded separately in
+`doc/measurements/uno-v2-connectivity-adapter-compile-control.json`: the adapter
+path compiles and the implicit configuration-dropping path does not. The old
+JSON remains historical evidence rather than being relabeled as a current run.
+The ownership-fixture control in
+`doc/measurements/uno-v2-connectivity-owner-control.json` restores the accidental
+copy from the first review and fails with two owners instead of one. This
+control catches a masked lifetime assertion; it is distinct from removing the
+adapter's ownership itself. Neither manual control is a standing CTest gate.
+
+The independent first review is a source review, not executed evidence. Its
+ownership finding was accepted: moving from `Result::ok()` copied a const
+variant, leaving another shared owner alive. `ok_ref()` now permits the intended
+move. Removing the adapter's shared ownership separately fails at owner count
+zero, before any dangling configuration access; this run and exact restoration
+are in `uno-v2-connectivity-adapter-owner-control.json` in the same measurements
+directory. The mismatch path now uses a separately admitted, internally
+consistent input from another host-resolved configuration cut. Direct mismatch
+calls cover the other identity fields, not configuration hash, so they cannot
+mask the settlement-entry control.
+
+The review's non-blocking API limitations remain explicit: the public resolved
+binding is trusted local data, not an unforgeable certificate; the adapter is
+only for batch entry points that perform proof admission, not retained singleton
+prototype overloads. No current production caller uses it. A generic equality
+operator for policy identity and a stronger binding-construction API are not
+claimed by this smoke. Both require their own controls if adopted later.
+
+Post-fix controls: extra fixture owner, removed adapter ownership, removed
+configuration-hash guard, dropped proof-stage configuration, dropped execution
+configuration, and changed encoded parameter value each compiled successfully
+and failed at runtime (the two ownership runs predate the immaterial deltas
+reconstructed in the restore audit; the other four use the reviewed source).
+In particular, removing the hash guard made the
+other-cut settlement succeed, so the negative test fails on acceptance rather
+than on an unrelated error. Each mutation was restored before the next one.
+The six `uno-v2-connectivity-*-control.json` runtime records and separate compile
+pair retain their outcomes; `uno-v2-connectivity-restore-audit.json` reconstructs
+the final-source mutants and earlier ownership-control source hashes.
+
+`uno-v2-connectivity-final-checks.json` records the restored build, 112 block
+tests, 30 admission tests, disk account-binding readiness, removed-domain scan
+and whitespace checks, all successful. This is the scoped connectivity
+regression, not all repository tests, proof-cost acceptance, production engine
+registration or live actor execution. The existing actor gate is unchanged.
+
+Follow-up review independently reconstructed the recorded mutants and earlier
+ownership sources, and confirmed B1-B5 fixed. The added configuration path also
+makes a gate-opening prerequisite explicit: configuration resolution must be
+deterministic from the authenticated cut, with independent-node differential
+controls for equal resolved parameters and proof units. A header contract is
+not that evidence; this prerequisite remains open, alongside C1-C3. The adapter
+guard proves input-cut equality with its stored identity; only trusted resolver
+construction currently ties that identity to the supplied parameter object.
+Unforgeable bindings, future identity-field completeness, execution exception
+containment, a dedicated effects-equality mutation and a post-replay resolution
+counter assertion remain outside this smoke's claims. No live gate is opened.
+
+The follow-up's determinism clarification changes comments only. The exact
+inverse edits back to the reviewed header hashes are recorded in
+`uno-v2-connectivity-postreview-source-audit.json`; restored full scoped checks
+were rerun in `uno-v2-connectivity-postreview-checks.json`. Both tested binary
+hashes remain identical to the reviewed regression. The private configuration
+seam is connected; production registration and actor replay remain future work.

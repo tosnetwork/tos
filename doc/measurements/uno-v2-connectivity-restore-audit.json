@@ -1,0 +1,27 @@
+{
+  "checks": [
+    {
+      "control": "configuration-cut",
+      "restored_sha256": "53bb90b0c134bfeaf158621b142be90d3e354b7fb8c88898112204a013ff78ea",
+      "mutant_reconstructed": true
+    },
+    {
+      "control": "proof-configuration",
+      "restored_sha256": "53bb90b0c134bfeaf158621b142be90d3e354b7fb8c88898112204a013ff78ea",
+      "mutant_reconstructed": true
+    },
+    {
+      "control": "execution-configuration",
+      "restored_sha256": "53bb90b0c134bfeaf158621b142be90d3e354b7fb8c88898112204a013ff78ea",
+      "mutant_reconstructed": true
+    },
+    {
+      "control": "parameter-value",
+      "restored_sha256": "b54ce27f6993d97611f9add687170fa50204a77f8eb53300362956f003bef748",
+      "mutant_reconstructed": true
+    }
+  ],
+  "earlier_owner_test_reconstructed_sha256": "30bae7be92d72d8422b8b90803f8f00fbdfc95c1776bb5956095c09ef12b8cb6",
+  "earlier_owner_header_reconstructed_sha256": "cc3998d6dbb7bc229bf5e06660b4b8308da0cc55c9a92bc4d2723c13df24dc11",
+  "note": "Earlier owner controls precede the documented fixture-classification/guard-isolation edits and adapter comments; reconstructed from final source by reversing only those changes."
+}

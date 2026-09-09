@@ -266,12 +266,28 @@ struct ResolvedWorkchainBlockExecution {
 // Binding is separate from admission and execution readiness. The engine must
 // decode its complete payload; the enclosing host still resolves authenticated
 // resource policy before invoking any account execution.
-class RegisteredWorkchainAccountEngine : public WorkchainAccountEngine {
+class RegisteredWorkchainAccountEngine {
  public:
+  virtual ~RegisteredWorkchainAccountEngine() = default;
   virtual WorkchainEngineKey engine_key() const = 0;
+  // Successful resolution must be a pure function of the descriptor and
+  // authenticated configuration, never a fallback to node-local policy when
+  // authenticated data is unavailable.
+  // The returned immutable parameters must have identical semantics on nodes
+  // resolving the same cut; differing results can change candidate admission.
   virtual td::Result<std::shared_ptr<const WorkchainEngineConfig>> validate_and_resolve_config(
       const WorkchainExecutionDescriptor& descriptor, const block::Config& configuration,
       const td::Ref<vm::Cell>& engine_configuration) const = 0;
+  // Registration alone cannot enter the unconfigured prototype interface.
+  // Both stages receive the same immutable, resolved business parameters.
+  // Shape units remain a pure function of candidate and authenticated identity:
+  // configuration must be the deterministic resolution of that same cut.
+  virtual td::Result<std::uint64_t> proof_work(
+      const td::Ref<vm::Cell>& candidate, const InputPolicyIdentity& identity,
+      const WorkchainEngineConfig& configuration) const = 0;
+  virtual td::Result<WorkchainAccountEffects> execute_accounts(
+      const td::Ref<vm::Cell>& input, WorkchainAccountReadView& accounts,
+      const WorkchainEngineConfig& configuration) const = 0;
 };
 
 struct ResolvedWorkchainAccountBinding {
@@ -281,6 +297,53 @@ struct ResolvedWorkchainAccountBinding {
   std::shared_ptr<const WorkchainEngineConfig> engine_config;
   td::Ref<vm::Cell> authenticated_configuration;
   ResolvedBatchInputPolicy input_policy;
+};
+
+// Synchronous adapter only, not live execution authorization. It owns the
+// resolved parameters, but borrows the registry engine for the call chain.
+// Use only batch admission/replay entry points: the retained singleton
+// prototype overloads do not run the configuration-identity preflight.
+// The caller must obtain the binding from the authenticated resolver; this
+// local aggregate is not a certificate for an arbitrarily assembled binding.
+class ConfiguredWorkchainAccountEngine final : public WorkchainAccountEngine {
+ public:
+  static td::Result<std::unique_ptr<ConfiguredWorkchainAccountEngine>> bind(
+      const ResolvedWorkchainAccountBinding& binding) {
+    if (!binding.executor || !binding.engine_config) {
+      return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),
+                               "incomplete resolved account engine binding");
+    }
+    try {
+      return std::unique_ptr<ConfiguredWorkchainAccountEngine>(new ConfiguredWorkchainAccountEngine(binding));
+    } catch (const std::bad_alloc&) {
+      return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),
+                               "cannot allocate configured account engine");
+    }
+  }
+  td::Result<std::uint64_t> proof_work(
+      const td::Ref<vm::Cell>& candidate, const InputPolicyIdentity& identity) const override {
+    // Both identities come from host-resolved authenticated configuration,
+    // never candidate bytes. A mismatch is therefore a local cut-selection
+    // fault, not a reason to reject a candidate.
+    if (identity.configuration_hash != identity_.configuration_hash ||
+        identity.extended != identity_.extended || identity.engine_selector != identity_.engine_selector ||
+        identity.vm_mode != identity_.vm_mode || identity.descriptor_version != identity_.descriptor_version ||
+        identity.admission_version != identity_.admission_version) {
+      return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),
+                               "proof input and configured account engine use different cuts");
+    }
+    return engine_->proof_work(candidate, identity, *configuration_);
+  }
+  td::Result<WorkchainAccountEffects> execute_accounts(
+      const td::Ref<vm::Cell>& input, WorkchainAccountReadView& accounts) const override {
+    return engine_->execute_accounts(input, accounts, *configuration_);
+  }
+ private:
+  explicit ConfiguredWorkchainAccountEngine(const ResolvedWorkchainAccountBinding& binding)
+      : engine_(binding.executor), configuration_(binding.engine_config), identity_(binding.input_policy.identity()) {}
+  const RegisteredWorkchainAccountEngine* engine_;
+  std::shared_ptr<const WorkchainEngineConfig> configuration_;
+  InputPolicyIdentity identity_;
 };
 
 td::Result<WorkchainBlockResult> execute_resolved_workchain_block(

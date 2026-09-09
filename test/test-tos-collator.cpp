@@ -63,7 +63,8 @@ int verbosity;
 class AccountBindingProbe final : public block::RegisteredWorkchainAccountEngine {
  public:
   td::Result<std::uint64_t> proof_work(
-      const td::Ref<vm::Cell>&, const block::InputPolicyIdentity&) const override {
+      const td::Ref<vm::Cell>&, const block::InputPolicyIdentity&,
+      const block::WorkchainEngineConfig&) const override {
     return td::Status::Error(static_cast<int>(block::WorkchainExecutionFailure::LocalUnavailable),
                              "account binding probe must not inspect proofs");
   }
@@ -87,7 +88,8 @@ class AccountBindingProbe final : public block::RegisteredWorkchainAccountEngine
     return std::shared_ptr<const block::WorkchainEngineConfig>(new block::WorkchainEngineConfig);
   }
   td::Result<block::WorkchainAccountEffects> execute_accounts(
-      const td::Ref<vm::Cell>&, block::WorkchainAccountReadView&) const override {
+      const td::Ref<vm::Cell>&, block::WorkchainAccountReadView&,
+      const block::WorkchainEngineConfig&) const override {
     std::lock_guard<std::mutex> lock(mutex_);
     if (execute_calls_ == std::numeric_limits<td::uint64>::max()) return td::Status::Error("probe count overflow");
     ++execute_calls_;
@@ -348,7 +350,8 @@ class TestNode : public td::actor::Actor {
     if (account_probe_selftest_) {
       AccountBindingProbe probe(account_probe_path_);
       block::WorkchainAccountReadView view({});
-      auto result = probe.execute_accounts({}, view);
+      const block::WorkchainEngineConfig counter_only_configuration;
+      auto result = probe.execute_accounts({}, view, counter_only_configuration);
       std::_Exit(result.is_error() ? 0 : 2);
     }
     if (block_candidate_.not_null()) {

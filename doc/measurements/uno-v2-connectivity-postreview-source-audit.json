@@ -1,0 +1,31 @@
+{
+  "scope": "Post-review source delta is comments only; reconstruct reviewed source with the listed inverse replacements.",
+  "files": [
+    {
+      "path": "crypto/block/workchain-execution-dispatch.h",
+      "current_sha256": "675cde47e217783ece31e6c933742e76a48303982e0823b3a1a2cca74b1383d0",
+      "reviewed_sha256": "53bb90b0c134bfeaf158621b142be90d3e354b7fb8c88898112204a013ff78ea",
+      "inverse_edits": [
+        {
+          "from_text": "  // Successful resolution must be a pure function of the descriptor and\n  // authenticated configuration, never a fallback to node-local policy when\n  // authenticated data is unavailable.\n  // The returned immutable parameters must have identical semantics on nodes\n  // resolving the same cut; differing results can change candidate admission.\n",
+          "to_text": ""
+        },
+        {
+          "from_text": "  // Shape units remain a pure function of candidate and authenticated identity:\n  // configuration must be the deterministic resolution of that same cut.\n",
+          "to_text": ""
+        }
+      ]
+    },
+    {
+      "path": "crypto/block/workchain-account-engine.h",
+      "current_sha256": "936c11875caa4c4e83a00f3f246c1d3e979f40d24d4ca7c2b9bab34b9a967eb4",
+      "reviewed_sha256": "2008d20a1ba7566f2a011878df0df27f0cc58b1fdc8d14d298044c90c8b3124f",
+      "inverse_edits": [
+        {
+          "from_text": "  // no node-local policy, clock, thread ordering, ambient VM state or entropy.\n  // An adapter may supply immutable parameters resolved deterministically from\n  // the authenticated configuration committed by this identity. Equal cuts\n  // must yield equal parameters and units, independently on every node.\n",
+          "to_text": "  // no local configuration, clock, thread ordering, ambient VM state or entropy.\n"
+        }
+      ]
+    }
+  ]
+}

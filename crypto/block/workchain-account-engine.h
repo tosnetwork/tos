@@ -61,7 +61,10 @@ class WorkchainAccountEngine {
   // account access or side effects. Units are defined by the engine/admission
   // profile, not by fees. No implicit zero-work implementation is provided.
   // The result must be a pure function of candidate bytes and this identity:
-  // no local configuration, clock, thread ordering, ambient VM state or entropy.
+  // no node-local policy, clock, thread ordering, ambient VM state or entropy.
+  // An adapter may supply immutable parameters resolved deterministically from
+  // the authenticated configuration committed by this identity. Equal cuts
+  // must yield equal parameters and units, independently on every node.
   // It must conservatively bound all subsequent proof verification for that
   // candidate under the same profile, including every verification branch.
   // A shape counter unrelated to the backend cost does not meet this contract.
