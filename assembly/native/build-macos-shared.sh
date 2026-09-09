@@ -117,7 +117,6 @@ if [ "$with_artifacts" = true ]; then
   cp build/utils/generate-random-id artifacts/
   cp build/utils/json2tlo artifacts/
   cp build/utils/proxy-liteserver artifacts/
-  cp artifacts/
   cp build/emulator/libemulator.dylib artifacts/
   cp -R crypto/smartcont artifacts/
   cp -R crypto/fift/lib artifacts/

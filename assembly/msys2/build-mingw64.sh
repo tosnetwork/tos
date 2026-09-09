@@ -106,7 +106,6 @@ if [ "$with_artifacts" = true ]; then
      $BUILD_DIR/validator-engine/validator-engine \
      $BUILD_DIR/utils/generate-random-id \
      $BUILD_DIR/utils/json2tlo \
-     $BUILD_DIR/adnl/ \
      $BUILD_DIR/emulator/libemulator.dll \
      $BUILD_DIR/dht/dht-ping-servers \
      $BUILD_DIR/dht/dht-resolve \
