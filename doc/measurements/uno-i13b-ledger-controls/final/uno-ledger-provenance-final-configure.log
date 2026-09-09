@@ -1,0 +1,72 @@
+-- Use openssl: /tmp/uno-ledger-mechanism-CYFxwo/third-party/openssl/lib/libcrypto.a
+Add rocksdb
+-- CMAKE_BUILD_TYPE is set to Release
+-- Could NOT find uring (missing: uring_LIBRARIES uring_INCLUDE_DIR) 
+-- Enabling RTTI in all builds
+-- ROCKSDB_PLUGINS: 
+-- ROCKSDB PLUGINS TO BUILD 
+-- JNI library is disabled
+Add abseil-cpp
+Add crc32c
+Add ngtcp2 with custom OpenSSL from /tmp/uno-ledger-mechanism-CYFxwo/third-party/openssl
+-- Could NOT find Libev (missing: LIBEV_LIBRARY LIBEV_INCLUDE_DIR) (Required is at least version "4.11")
+-- Could NOT find Libnghttp3 (missing: LIBNGHTTP3_LIBRARY LIBNGHTTP3_INCLUDE_DIR) (Required is at least version "1.14.0")
+-- Could NOT find Libbrotlienc (missing: LIBBROTLIENC_LIBRARY LIBBROTLIENC_INCLUDE_DIR) (Required is at least version "1.0.9")
+-- Could NOT find Libbrotlidec (missing: LIBBROTLIDEC_LIBRARY LIBBROTLIDEC_INCLUDE_DIR) (Required is at least version "1.0.9")
+CMake Warning at third-party/ngtcp2/crypto/CMakeLists.txt:31 (message):
+  libngtcp2_crypto_quictls library is disabled due to lack of good quictls
+
+
+CMake Warning at third-party/ngtcp2/crypto/CMakeLists.txt:37 (message):
+  libngtcp2_crypto_libressl library is disabled due to lack of good LibreSSL
+
+
+-- summary of build options:
+
+    Package version: 1.22.0
+    Library version: 24:0:8
+    Install prefix:  /usr
+    Target system:   Linux
+    Compiler:
+      Build type:     Release
+      C compiler:     /usr/bin/clang-21
+      CFLAGS:         -O3  
+      C++ compiler:   /usr/bin/clang++-21
+      CXXFLAGS:       -O3  
+      WARNCFLAGS:       -Wextra -Wall -Wconversion -Winline -Wmissing-declarations -Wmissing-prototypes -Wnested-externs -Wpointer-arith -Wshadow -Wundef -Wwrite-strings -Waddress -Wattributes -Wcast-align -Wdeclaration-after-statement -Wdiv-by-zero -Wempty-body -Wendif-labels -Wfloat-equal -Wformat-nonliteral -Wformat-security -Wmissing-field-initializers -Wmissing-noreturn -Wno-format-nonliteral -Wredundant-decls -Wsign-conversion -Wstrict-prototypes -Wunreachable-code -Wunused-macros -Wunused-parameter -Wvla -Wshorten-64-to-32 -Wlanguage-extension-token -Wpragmas -Wunreachable-code-break -Wheader-guard -Wsometimes-uninitialized -Wmissing-variable-declarations
+      WARNCXXFLAGS:     -Wall -Wformat-security -Wno-extern-c-compat -Wsometimes-uninitialized -Wno-noexcept-type
+    Library:
+      Shared:         ON
+      Static:         ON
+    Test:
+      Build Test:     OFF
+    Libs:
+      OpenSSL:        TRUE (LIBS='/tmp/uno-ledger-mechanism-CYFxwo/third-party/openssl/lib/libssl.a;/tmp/uno-ledger-mechanism-CYFxwo/third-party/openssl/lib/libcrypto.a;dl')
+      Libev:          FALSE (LIBS='')
+      Libnghttp3:     FALSE (LIBS='')
+      GnuTLS:         FALSE (LIBS='')
+      BoringSSL:      FALSE (LIBS='')
+      Picotls:        FALSE (LIBS='')
+      wolfSSL:        FALSE (LIBS='')
+      Jemalloc:        (LIBS='')
+      Libbrotlienc:   FALSE (LIBS='')
+      Libbrotlidec:   FALSE (LIBS='')
+
+Add tl-parser
+Add tos
+-- BuildSECP256K1: cached artifacts missing (library=/tmp/uno-ledger-mechanism-CYFxwo/third-party/secp256k1/lib/libsecp256k1.a, include=/tmp/uno-ledger-mechanism-CYFxwo/third-party/secp256k1/include); rebuilding
+-- Building libbacktrace from: /home/tomi/tos/third-party/libbacktrace
+-- Using preconfigured zlib: /tmp/uno-ledger-mechanism-CYFxwo/third-party/zlib/lib/libz.a
+-- Using ccache
+-- Using zlib /tmp/uno-ledger-mechanism-CYFxwo/third-party/zlib/lib/libz.a
+-- Found ZLIB: /tmp/uno-ledger-mechanism-CYFxwo/third-party/zlib/include /tmp/uno-ledger-mechanism-CYFxwo/third-party/zlib/lib/libz.a
+-- Using libbacktrace for enhanced stack traces
+-- Found LZ4 /tmp/uno-ledger-mechanism-CYFxwo/third-party/lz4/lib/liblz4.a /home/tomi/tos/third-party/lz4/lib
+-- Checking for module 'benchmark'
+--   No package 'benchmark' found
+-- Google Benchmark not found via pkg-config - gbench-coro target disabled
+-- Found Readline: /usr/include /usr/lib/x86_64-linux-gnu/libreadline.so
+-- Using Sodium /tmp/uno-ledger-mechanism-CYFxwo/third-party/sodium/lib/libsodium.a
+-- Configuring done
+-- Generating done
+-- Build files have been written to: /tmp/uno-ledger-mechanism-CYFxwo

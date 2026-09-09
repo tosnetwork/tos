@@ -1,0 +1,6 @@
+test/test-counter-disk-integration.cmake:95: Uno outside approved engine paths: // @generated-tag UnoV2ResourceInput 0
+test/test-counter-disk-integration.cmake:97: Uno outside approved engine paths: // @generated-tag UnoV2ResourceState 0
+test/test-counter-disk-integration.cmake:99: Uno outside approved engine paths: // @generated-tag UnoV2ResourceWorkOutput 0
+test/test-counter-disk-integration.cmake:101: Uno outside approved engine paths: // @generated-tag UnoV2ResourcePolicy 0
+test/test-counter-disk-integration.cmake:108: Uno outside approved engine paths: // @generated-tag UnoV2EngineConfiguration 0
+removed-execution-domain scan failed

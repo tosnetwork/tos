@@ -1,0 +1,25 @@
+Internal ctest changing into directory: /tmp/uno-ledger-mechanism-CYFxwo
+Test project /tmp/uno-ledger-mechanism-CYFxwo
+    Start 4: test-workchain-execution-ledger-gates
+1/1 Test #4: test-workchain-execution-ledger-gates ...***Failed    0.29 sec
+actor.duplicate_cannot_execute
+Traceback (most recent call last):
+  File "/tmp/uno-ledger-measurement-copy-rpqt0y2m/crypto/test/workchain-execution-ledger.py", line 57, in <module>
+    main()
+    ~~~~^^
+  File "/tmp/uno-ledger-measurement-copy-rpqt0y2m/crypto/test/workchain-execution-ledger.py", line 50, in main
+    raise RuntimeError(f'ledger mechanism failed: exit={result.returncode}')
+RuntimeError: ledger mechanism failed: exit=1
+
+
+0% tests passed, 1 tests failed out of 1
+
+Label Time Summary:
+i13          =   0.29 sec*proc (1 test)
+private      =   0.29 sec*proc (1 test)
+workchain    =   0.29 sec*proc (1 test)
+
+Total Test time (real) =   0.29 sec
+
+The following tests FAILED:
+	  4 - test-workchain-execution-ledger-gates (Failed)

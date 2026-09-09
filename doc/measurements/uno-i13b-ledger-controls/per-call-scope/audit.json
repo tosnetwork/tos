@@ -1,0 +1,28 @@
+{
+  "id": "per-call-scope",
+  "path": "crypto/test/test-workchain-execution-ledger.cpp",
+  "from": "    const auto result = ledger_.record_attempt(hash);",
+  "to": "    Ledger ledger_{2};\n    const auto result = ledger_.record_attempt(hash);",
+  "failure": "actor.same_scope_duplicate_identity",
+  "base_commit": "330f5b06d6214aad77dc6da5beda05556aa236cf",
+  "repository_source_hashes": {
+    "crypto/block/workchain-execution-ledger.h": "5ac808f6da54e9ffce5ca3170b2e9c9b0b654719c613e5ad35bf743a2745f813",
+    "crypto/test/test-workchain-execution-ledger.cpp": "e90b37f77423e2e01af578e5a6cd2c417c1ddb8e6196c29d42d5e5019c93b5cd",
+    "crypto/test/workchain-execution-ledger.py": "b7117d686ab0e36c28dbc2a26ae64f926dd7ae6d4076e3535cf49b8bf1a1828e"
+  },
+  "original_sha256": "e90b37f77423e2e01af578e5a6cd2c417c1ddb8e6196c29d42d5e5019c93b5cd",
+  "reconstructed_mutant_sha256": "e488ed6f08ea1edf321d71cf7e33881be4ae78d6b642ac86466cbaf723f6a2ea",
+  "original_binary_sha256": "873f25417cba453976dd05ffa280563b74a82cf3b19e7d9c0ed4cf6d671a09a9",
+  "measurement_copy": "/tmp/uno-ledger-measurement-copy-rpqt0y2m/crypto/test/test-workchain-execution-ledger.cpp",
+  "executable_chain": [
+    "ctest",
+    "/tmp/uno-ledger-measurement-copy-rpqt0y2m/crypto/test/workchain-execution-ledger.py",
+    "/tmp/uno-ledger-mechanism-CYFxwo/test-workchain-execution-ledger"
+  ],
+  "recorded_mutant_sha256": "e488ed6f08ea1edf321d71cf7e33881be4ae78d6b642ac86466cbaf723f6a2ea",
+  "mutant_binary_sha256": "a0e756c020e0ea1e0c5477e4d84e3f953d2fbf830f9d4a544cb34d77504545b4",
+  "observed_failure_identity": "actor.same_scope_duplicate_identity",
+  "restored_sha256": "e90b37f77423e2e01af578e5a6cd2c417c1ddb8e6196c29d42d5e5019c93b5cd",
+  "restored_binary_sha256": "873f25417cba453976dd05ffa280563b74a82cf3b19e7d9c0ed4cf6d671a09a9",
+  "repository_sources_unchanged": true
+}

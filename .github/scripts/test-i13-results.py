@@ -11,7 +11,8 @@ import xml.etree.ElementTree as ET
 GATE = Path(__file__).with_name("check-i13-results.py")
 NAMES = ["test-workchain-construction-isolation-gates",
          "test-workchain-i13-acceptance-gates",
-         "test-workchain-i13-usage-acceptance-gates"]
+         "test-workchain-i13-usage-acceptance-gates",
+         "test-workchain-execution-ledger-gates"]
 
 
 def run(mode, path, success):
@@ -39,9 +40,9 @@ with tempfile.TemporaryDirectory(prefix="i13-ci-observer-") as temporary:
     registry = json.loads(subprocess.check_output(
         ["ctest", "--test-dir", str(build), "-L", "i13", "--show-only=json-v1"]))
     for label, tests, success in [
-        ("three", registry["tests"], True), ("zero", [], False),
+        ("four", registry["tests"], True), ("zero", [], False),
         ("missing", registry["tests"][:-1], False),
-        ("duplicate", [registry["tests"][0]] * 3, False),
+        ("duplicate", [registry["tests"][0]] * 4, False),
     ]:
         path = directory / (label + ".json")
         path.write_text(json.dumps({"tests": tests}))
@@ -55,6 +56,28 @@ with tempfile.TemporaryDirectory(prefix="i13-ci-observer-") as temporary:
     subprocess.run(["ctest", "--test-dir", str(build), "-L", "i13",
                     "--no-tests=error", "--output-junit", str(report)], check=True)
     run("executed", report, True)
+    successful_tests = list(ET.parse(report).iter('testcase'))
+    if len(successful_tests) != 4 or any(t.get('status') != 'run' for t in successful_tests):
+        raise AssertionError('positive observer must see four actual run statuses')
+    # Keep all four actual names so failure cannot be rejected merely by count.
+    failing_driver = drivers / (NAMES[-1].removeprefix('test-').removesuffix('-gates') + '.py')
+    original_driver = failing_driver.read_bytes()
+    try:
+        failing_driver.write_text('raise SystemExit(1)\n')
+        failure_report = directory / 'actual-failure.xml'
+        failed = subprocess.run(['ctest', '--test-dir', str(build), '-L', 'i13',
+                                 '--no-tests=error', '--output-junit', str(failure_report)])
+        if failed.returncode != 8:
+            raise AssertionError(f'forced driver failure: expected CTest exit 8, got {failed.returncode}')
+        failed_tests = list(ET.parse(failure_report).iter('testcase'))
+        if len(failed_tests) != 4 or {t.get('name') for t in failed_tests} != set(NAMES):
+            raise AssertionError('forced failure must retain all four registered names')
+        actual_failures = [t for t in failed_tests if t.find('failure') is not None]
+        if len(actual_failures) != 1 or actual_failures[0].get('status') != 'fail':
+            raise AssertionError('forced failure must produce exactly one real CTest fail status')
+        run('executed', failure_report, False)
+    finally:
+        failing_driver.write_bytes(original_driver)
     for label in ("zero", "missing", "skipped", "failure", "notrun"):
         root = ET.parse(report).getroot()
         tests = root.findall("testcase")

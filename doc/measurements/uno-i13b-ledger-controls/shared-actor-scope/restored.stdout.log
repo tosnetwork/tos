@@ -1,0 +1,13 @@
+Internal ctest changing into directory: /tmp/uno-ledger-mechanism-CYFxwo
+Test project /tmp/uno-ledger-mechanism-CYFxwo
+    Start 4: test-workchain-execution-ledger-gates
+1/1 Test #4: test-workchain-execution-ledger-gates ...   Passed    0.28 sec
+
+100% tests passed, 0 tests failed out of 1
+
+Label Time Summary:
+i13          =   0.28 sec*proc (1 test)
+private      =   0.28 sec*proc (1 test)
+workchain    =   0.28 sec*proc (1 test)
+
+Total Test time (real) =   0.28 sec

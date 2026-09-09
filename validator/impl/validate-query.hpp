@@ -28,6 +28,7 @@
 #include "block/mc-config.h"
 #include "block/signature-set.h"
 #include "block/transaction.h"
+#include "block/workchain-execution-ledger.h"
 #include "common/global-version.h"
 #include "interfaces/validator-manager.h"
 #include "vm/cells.h"
@@ -136,6 +137,9 @@ class ValidateQuery : public td::actor::Actor {
   std::vector<BlockIdExt> prev_blocks;
   std::vector<Ref<ShardState>> prev_states;
   BlockCandidate block_candidate;
+  // Independent validator replay owns a fresh candidate-actor scope.
+  // Construct once from authenticated policy when the pending live seam binds it.
+  std::optional<block::WorkchainExecutionLedger> account_execution_ledger_;
   td::Ref<block::ValidatorSet> validator_set_;
   PublicKeyHash local_validator_id_ = PublicKeyHash::zero();
   td::actor::ActorId<ValidatorManager> manager;

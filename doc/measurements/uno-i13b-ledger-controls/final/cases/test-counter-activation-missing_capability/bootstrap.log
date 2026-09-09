@@ -1,0 +1,109 @@
+[1;36m[ 3][t 1][2026-09-09 20:09:38.258619252][test-tos-collator.cpp:331][!testnode]	no init block in config. using zero state[0m
+[1;36m[ 3][t 1][2026-09-09 20:09:38.259054667][test-tos-collator.cpp:356][!testnode]	Hardforks num in config: 0[0m
+[1;36m[ 3][t 1][2026-09-09 20:09:38.259243678][manager-init.cpp:333][!starter]	Starting validator manager[0m
+[1;33m[ 2][t 3][2026-09-09 20:09:38.273838158][celldb.cpp:371][!celldbin]	Using V1 DynamicBagOfCells with options V1{}[0m
+[1;36m[ 3][t 4][2026-09-09 20:09:38.278889925][manager-init.cpp:39][!reiniter]	init_block_id=[ w=-1 s=9223372036854775808 seq=0 Q1i82V+EXm0kTAGWvYU1Kt7GKZFCHrsZoRv+fNKrXH4= EF+H1AQNAUafyATY7ZslDZLNkKVuoMJ4XP13lCkh5as= ][0m
+[1;36m[ 3][t 3][2026-09-09 20:09:38.290688707][celldb.cpp:251][!celldbin]	Validating metadata[0m
+[1;36m[ 3][t 3][2026-09-09 20:09:38.290724946][celldb.cpp:307][!celldbin]	Validating metadata: OK[0m
+[1;36m[ 3][t 1][2026-09-09 20:09:38.290759455][download-state.cpp:491][!reiniter]	requested to download state of (-1,8000000000000000,0):4358BCD95F845E6D244C0196BD85352ADEC62991421EBB19A11BFE7CD2AB5C7E:105F87D4040D01469FC804D8ED9B250D92CD90A56EA0C2785CFD77942921E5AB referenced by (-2147483648,0000000000000000,0):0000000000000000000000000000000000000000000000000000000000000000:0000000000000000000000000000000000000000000000000000000000000000 with split depth 0[0m
+[1;33m[ 2][t 7][2026-09-09 20:09:38.293060533][download-state.cpp:1100][!downloadstate]	checked shard state (-1,8000000000000000,0):4358BCD95F845E6D244C0196BD85352ADEC62991421EBB19A11BFE7CD2AB5C7E:105F87D4040D01469FC804D8ED9B250D92CD90A56EA0C2785CFD77942921E5AB[0m
+[1;33m[ 2][t 4][2026-09-09 20:09:38.293964244][download-state.cpp:1697][!downloadstate]	written shard state file (-1,8000000000000000,0):4358BCD95F845E6D244C0196BD85352ADEC62991421EBB19A11BFE7CD2AB5C7E:105F87D4040D01469FC804D8ED9B250D92CD90A56EA0C2785CFD77942921E5AB[0m
+[1;33m[ 2][t 3][2026-09-09 20:09:38.422831794][download-state.cpp:1759][!downloadstate]	finished downloading and storing shard state (-1,8000000000000000,0):4358BCD95F845E6D244C0196BD85352ADEC62991421EBB19A11BFE7CD2AB5C7E:105F87D4040D01469FC804D8ED9B250D92CD90A56EA0C2785CFD77942921E5AB[0m
+[1;36m[ 3][t 7][2026-09-09 20:09:38.422904839][download-state.cpp:491][!reiniter]	requested to download state of (-1,8000000000000000,0):4358BCD95F845E6D244C0196BD85352ADEC62991421EBB19A11BFE7CD2AB5C7E:105F87D4040D01469FC804D8ED9B250D92CD90A56EA0C2785CFD77942921E5AB referenced by (-1,8000000000000000,0):4358BCD95F845E6D244C0196BD85352ADEC62991421EBB19A11BFE7CD2AB5C7E:105F87D4040D01469FC804D8ED9B250D92CD90A56EA0C2785CFD77942921E5AB with split depth 0[0m
+[1;33m[ 2][t 4][2026-09-09 20:09:38.423010395][download-state.cpp:519][!downloadstate]	shard state (-1,8000000000000000,0):4358BCD95F845E6D244C0196BD85352ADEC62991421EBB19A11BFE7CD2AB5C7E:105F87D4040D01469FC804D8ED9B250D92CD90A56EA0C2785CFD77942921E5AB already stored in db[0m
+[1;33m[ 2][t 4][2026-09-09 20:09:38.423163067][download-state.cpp:1759][!downloadstate]	finished downloading and storing shard state (-1,8000000000000000,0):4358BCD95F845E6D244C0196BD85352ADEC62991421EBB19A11BFE7CD2AB5C7E:105F87D4040D01469FC804D8ED9B250D92CD90A56EA0C2785CFD77942921E5AB[0m
+[1;36m[ 3][t 4][2026-09-09 20:09:38.423186066][manager-init.cpp:294][!reiniter]	downloaded masterchain state[0m
+[1;33m[ 2][t 4][2026-09-09 20:09:38.423199796][shard-client.cpp:58][!shardclient]	Downloading shard states for masterchain block [ w=-1 s=9223372036854775808 seq=0 Q1i82V+EXm0kTAGWvYU1Kt7GKZFCHrsZoRv+fNKrXH4= EF+H1AQNAUafyATY7ZslDZLNkKVuoMJ4XP13lCkh5as= ][0m
+[1;33m[ 2][t 4][2026-09-09 20:09:38.423207934][shard-client.cpp:71][!shardclient]	Downloaded all shard states[0m
+[1;36m[ 3][t 4][2026-09-09 20:09:38.424252867][manager-init.cpp:305][!reiniter]	downloaded all shards[0m
+[1;36m[ 3][t 4][2026-09-09 20:09:38.424274775][manager-init.cpp:316][!reiniter]	persistent state download finished[0m
+[1;31m[ 1][t 3][2026-09-09 20:09:38.425579054][manager-disk.cpp:291][!manager]	running collate query[0m
+[1;33m[ 2][t 3][2026-09-09 20:09:38.425661619][collator.cpp:144][!collate(-1,8000000000000000):1]	Collator for shard (-1,8000000000000000) started[0m
+[1;36m[ 3][t 7][2026-09-09 20:09:38.425742460][collator.cpp:831][!collate(-1,8000000000000000):1]	after_get_shard_blocks: got 0 ShardTopBlockDescriptions[0m
+[1;36m[ 3][t 7][2026-09-09 20:09:38.425760081][collator.cpp:845][!collate(-1,8000000000000000):1]	after_get_storage_stat_cache : [Error : 0 : not implemented][0m
+[1;33m[ 2][t 3][2026-09-09 20:09:38.426153295][collator.cpp:668][!collate(-1,8000000000000000):1]	in Collator::after_get_shard_state(0)[0m
+[1;33m[ 2][t 3][2026-09-09 20:09:38.426186676][collator.cpp:2085][!collate(-1,8000000000000000):1]	running do_preinit()[0m
+[1;36m[ 3][t 3][2026-09-09 20:09:38.426206926][collator.cpp:1778][!collate(-1,8000000000000000):1]	unpacking most recent masterchain state[0m
+[1;36m[ 3][t 3][2026-09-09 20:09:38.426362827][collator.cpp:1841][!collate(-1,8000000000000000):1]	adding new workchain 0 to shard configuration in masterchain state[0m
+[1;36m[ 3][t 3][2026-09-09 20:09:38.426395098][collator.cpp:1841][!collate(-1,8000000000000000):1]	adding new workchain 2 to shard configuration in masterchain state[0m
+[1;36m[ 3][t 3][2026-09-09 20:09:38.426432813][collator.cpp:2265][!collate(-1,8000000000000000):1]	start_lt set to 1000000[0m
+[1;36m[ 3][t 4][2026-09-09 20:09:38.426496145][collator.cpp:1046][!collate(-1,8000000000000000):1]	neighbor output queues fetched, took 0.000045s[0m
+[1;33m[ 2][t 4][2026-09-09 20:09:38.426726075][collator.cpp:1168][!collate(-1,8000000000000000):1]	got outbound queue size from prev block #0: 0[0m
+[1;33m[ 2][t 4][2026-09-09 20:09:38.426745212][collator.cpp:2438][!collate(-1,8000000000000000):1]	do_collate() : start[0m
+[1;36m[ 3][t 4][2026-09-09 20:09:38.427437219][collator.cpp:2672][!collate(-1,8000000000000000):1]	cleaning outbound queue from messages already imported by neighbors[0m
+[1;33m[ 2][t 4][2026-09-09 20:09:38.427445049][collator.cpp:2839][!collate(-1,8000000000000000):1]	deleted 0 messages from out_msg_queue, remaining queue size is 0[0m
+[1;36m[ 3][t 4][2026-09-09 20:09:38.427461175][collator.cpp:2404][!collate(-1,8000000000000000):1]	fee recovery skipped (0ng)[0m
+[1;36m[ 3][t 4][2026-09-09 20:09:38.427472465][collator.cpp:2526][!collate(-1,8000000000000000):1]	process dispatch queue[0m
+[1;36m[ 3][t 4][2026-09-09 20:09:38.427486924][collator.cpp:2531][!collate(-1,8000000000000000):1]	create tick transactions[0m
+[1;36m[ 3][t 4][2026-09-09 20:09:38.427504061][collator.cpp:2552][!collate(-1,8000000000000000):1]	process inbound internal messages[0m
+[1;36m[ 3][t 4][2026-09-09 20:09:38.427509152][collator.cpp:4497][!collate(-1,8000000000000000):1]	process inbound external messages[0m
+[1;36m[ 3][t 4][2026-09-09 20:09:38.427523997][collator.cpp:4505][!collate(-1,8000000000000000):1]	process newly-generated messages[0m
+[1;36m[ 3][t 4][2026-09-09 20:09:38.427528571][collator.cpp:4510][!collate(-1,8000000000000000):1]	Don't wait for new external messages[0m
+[1;36m[ 3][t 4][2026-09-09 20:09:38.427533910][collator.cpp:2574][!collate(-1,8000000000000000):1]	create tock transactions[0m
+[1;36m[ 3][t 4][2026-09-09 20:09:38.427610279][collator.cpp:2579][!collate(-1,8000000000000000):1]	enqueue newly-generated messages[0m
+[1;36m[ 3][t 4][2026-09-09 20:09:38.427615631][collator.cpp:5754][!collate(-1,8000000000000000):1]	final out_msg_queue size is 0[0m
+[1;36m[ 3][t 4][2026-09-09 20:09:38.427619410][collator.cpp:5758][!collate(-1,8000000000000000):1]	block load statistics: gas=0 lt_delta=2 size_estimate=2561 collated_size_estimate=0[0m
+[1;36m[ 3][t 4][2026-09-09 20:09:38.427623965][collator.cpp:5798][!collate(-1,8000000000000000):1]	block is underloaded[0m
+[1;36m[ 3][t 4][2026-09-09 20:09:38.427935768][collator.cpp:5490][!collate(-1,8000000000000000):1]	masterchain validator set hash changed from 2805358205 to 2805358205[0m
+[1;36m[ 3][t 4][2026-09-09 20:09:38.427948313][collator.cpp:5533][!collate(-1,8000000000000000):1]	Global balance is 0ng[0m
+[1;36m[ 3][t 4][2026-09-09 20:09:38.427958219][collator.cpp:5653][!collate(-1,8000000000000000):1]	updating block creator statistics[0m
+[1;36m[ 3][t 4][2026-09-09 20:09:38.427962284][collator.cpp:5669][!collate(-1,8000000000000000):1]	scanning for outdated CreatorStats entries[0m
+[1;36m[ 3][t 4][2026-09-09 20:09:38.427968940][collator.cpp:5695][!collate(-1,8000000000000000):1]	removed 0 stale CreatorStats entries out of 0 scanned[0m
+[1;36m[ 3][t 4][2026-09-09 20:09:38.427980005][collator.cpp:5576][!collate(-1,8000000000000000):1]	McStateExtra created[0m
+[1;36m[ 3][t 4][2026-09-09 20:09:38.428004881][collator.cpp:6131][!collate(-1,8000000000000000):1]	creating Merkle update for the ShardState[0m
+[1;36m[ 3][t 4][2026-09-09 20:09:38.428067016][collator.cpp:6144][!collate(-1,8000000000000000):1]	updating block profile statistics[0m
+[1;36m[ 3][t 4][2026-09-09 20:09:38.428079685][collator.cpp:6146][!collate(-1,8000000000000000):1]	new ShardState and corresponding Merkle update created[0m
+[1;36m[ 3][t 4][2026-09-09 20:09:38.428095075][collator.cpp:6386][!collate(-1,8000000000000000):1]	Value flow: (value-flow from_prev_blk:0ng to_next_blk:0ng imported:0ng exported:0ng fees_collected:0ng fees_imported:0ng recovered:0ng created:0ng minted:0ng)[0m
+[1;36m[ 3][t 4][2026-09-09 20:09:38.428132244][collator.cpp:6484][!collate(-1,8000000000000000):1]	verifying new Block[0m
+[1;36m[ 3][t 4][2026-09-09 20:09:38.428181613][collator.cpp:6489][!collate(-1,8000000000000000):1]	new Block created[0m
+[1;36m[ 3][t 4][2026-09-09 20:09:38.428199462][collator.cpp:6705][!collate(-1,8000000000000000):1]	serializing new Block[0m
+[1;36m[ 3][t 4][2026-09-09 20:09:38.428257355][collator.cpp:6736][!collate(-1,8000000000000000):1]	serialized block size 1898 bytes (preliminary estimate was 2561)[0m
+[1;36m[ 3][t 4][2026-09-09 20:09:38.428265362][collator.cpp:6739][!collate(-1,8000000000000000):1]	size regression stats: 1898 18 6480 19 4 1 1[0m
+[1;36m[ 3][t 4][2026-09-09 20:09:38.428272844][collator.cpp:6742][!collate(-1,8000000000000000):1]	serialized collated data size 33 bytes (preliminary estimate was 0)[0m
+[1;36m[ 3][t 4][2026-09-09 20:09:38.428292058][collator.cpp:6802][!collate(-1,8000000000000000):1]	saving new BlockCandidate[0m
+[1;33m[ 2][t 7][2026-09-09 20:09:38.432376705][collator.cpp:6841][!collate(-1,8000000000000000):1]	sending new BlockCandidate to Promise[0m
+[1;33m[ 2][t 7][2026-09-09 20:09:38.432391994][collator.cpp:6842][!collate(-1,8000000000000000):1]	collation took 0.006744 s[0m
+[1;33m[ 2][t 7][2026-09-09 20:09:38.432407503][collator.cpp:6843][!collate(-1,8000000000000000):1]	{{
+	{set_block_candidate:136464.050389->136464.054466(0.004077)}
+	{do_collate:136464.048834->136464.050412(0.001578)}
+	{post_ext_processing:136464.049705->136464.050400(0.000694)}
+	{wait_block_state #0:136464.047777->136464.048257(0.000480)}
+	{get_storage_stat_cache:136464.047788->136464.047850(0.000062)[Error : 0 : not implemented]}
+	{get_shard_blocks_for_collator:136464.047787->136464.047832(0.000045)}
+	{neighbor_msg_queues:136464.048541->136464.048586(0.000045)}
+}[0m
+[1;33m[ 2][t 7][2026-09-09 20:09:38.432442641][collator.cpp:6954][!collate(-1,8000000000000000):1]	Collate query work time = 0.001831s, cpu time = 0.001829s[0m
+[1;31m[ 1][t 5][2026-09-09 20:09:38.438568602][manager-disk.cpp:264][!manager]	created block [ w=-1 s=9223372036854775808 seq=1 y+wEc+0V/QYyHB0gzbp4k2bzbg55lQDNfNxVxNGSMjk= r3fBeVNV2WB/VmXWzIRJC0U0d8SVL3uLHzdoZT3hL8o= ][0m
+[1;33m[ 2][t 5][2026-09-09 20:09:38.438600996][validate-query.cpp:289][!fakevalidate(-1,8000000000000000):1#0]	validate query for (-1,8000000000000000,1):CBEC0473ED15FD06321C1D20CDBA789366F36E0E799500CD7CDC55C4D1923239:AF77C1795355D9607F5665D6CC84490B453477C4952F7B8B1F3768653DE12FCA started[0m
+[1;33m[ 2][t 1][2026-09-09 20:09:38.438697477][validate-query.cpp:786][!fakevalidate(-1,8000000000000000):1#0]	in ValidateQuery::after_get_latest_mc_state()[0m
+[1;36m[ 3][t 1][2026-09-09 20:09:38.438736431][validate-query.cpp:884][!fakevalidate(-1,8000000000000000):1#0]	after_get_storage_stat_cache : [Error : 0 : not implemented][0m
+[1;33m[ 2][t 7][2026-09-09 20:09:38.438856888][validate-query.cpp:904][!fakevalidate(-1,8000000000000000):1#0]	in ValidateQuery::after_get_shard_state(0)[0m
+[1;33m[ 2][t 7][2026-09-09 20:09:38.439004174][validate-query.cpp:786][!fakevalidate(-1,8000000000000000):1#0]	in ValidateQuery::after_get_latest_mc_state()[0m
+[1;33m[ 2][t 7][2026-09-09 20:09:38.439015218][validate-query.cpp:7757][!fakevalidate(-1,8000000000000000):1#0]	try_validate stage 0[0m
+[1;36m[ 3][t 7][2026-09-09 20:09:38.439221432][validate-query.cpp:2478][!fakevalidate(-1,8000000000000000):1#0]	masterchain validator set hash changed from 2805358205 to 2805358205[0m
+[1;33m[ 2][t 7][2026-09-09 20:09:38.439247088][validate-query.cpp:7797][!fakevalidate(-1,8000000000000000):1#0]	try_validate stage 1[0m
+[1;36m[ 3][t 7][2026-09-09 20:09:38.439253350][validate-query.cpp:7798][!fakevalidate(-1,8000000000000000):1#0]	running automated validity checks for block candidate (-1,8000000000000000,1):CBEC0473ED15FD06321C1D20CDBA789366F36E0E799500CD7CDC55C4D1923239:AF77C1795355D9607F5665D6CC84490B453477C4952F7B8B1F3768653DE12FCA[0m
+[1;36m[ 3][t 7][2026-09-09 20:09:38.439384231][validate-query.cpp:3200][!fakevalidate(-1,8000000000000000):1#0]	pre-checking all Account updates between the old and the new state[0m
+[1;36m[ 3][t 7][2026-09-09 20:09:38.439417894][validate-query.cpp:3393][!fakevalidate(-1,8000000000000000):1#0]	pre-checking all AccountBlocks, and all transactions of all accounts[0m
+[1;36m[ 3][t 7][2026-09-09 20:09:38.439450883][validate-query.cpp:3652][!fakevalidate(-1,8000000000000000):1#0]	pre-checking the difference between the old and the new outbound message queues[0m
+[1;36m[ 3][t 7][2026-09-09 20:09:38.439459114][validate-query.cpp:3673][!fakevalidate(-1,8000000000000000):1#0]	outbound message queue size: 0 -> 0[0m
+[1;36m[ 3][t 7][2026-09-09 20:09:38.439467479][validate-query.cpp:3816][!fakevalidate(-1,8000000000000000):1#0]	checking the difference between the old and the new dispatch queues[0m
+[1;36m[ 3][t 7][2026-09-09 20:09:38.439483894][validate-query.cpp:4574][!fakevalidate(-1,8000000000000000):1#0]	checking inbound messages listed in InMsgDescr[0m
+[1;36m[ 3][t 7][2026-09-09 20:09:38.439500724][validate-query.cpp:5247][!fakevalidate(-1,8000000000000000):1#0]	checking outbound messages listed in OutMsgDescr[0m
+[1;36m[ 3][t 7][2026-09-09 20:09:38.439511193][validate-query.cpp:5271][!fakevalidate(-1,8000000000000000):1#0]	checking ProcessedInfo[0m
+[1;36m[ 3][t 7][2026-09-09 20:09:38.439518718][validate-query.cpp:5308][!fakevalidate(-1,8000000000000000):1#0]	ProcessedInfo claims to have processed all inbound messages up to (0,0000000000000000000000000000000000000000000000000000000000000000)[0m
+[1;36m[ 3][t 7][2026-09-09 20:09:38.439530624][validate-query.cpp:6511][!fakevalidate(-1,8000000000000000):1#0]	checking all transactions[0m
+[1;33m[ 2][t 7][2026-09-09 20:09:38.439630372][validate-query.cpp:7916][!fakevalidate(-1,8000000000000000):1#0]	try_validate stage 2[0m
+[1;36m[ 3][t 7][2026-09-09 20:09:38.439656141][validate-query.cpp:6963][!fakevalidate(-1,8000000000000000):1#0]	checking header of the new shardchain state[0m
+[1;36m[ 3][t 7][2026-09-09 20:09:38.439696317][validate-query.cpp:7262][!fakevalidate(-1,8000000000000000):1#0]	checking header of McStateExtra in the new masterchain state[0m
+[1;31m[ 1][t 7][2026-09-09 20:09:38.440182116][validate-query.cpp:147][!fakevalidate(-1,8000000000000000):1#0]	REJECT: aborting validation of block candidate for (-1,8000000000000000) : invalid instance installation : [Error : 7409 : instance configuration is missing][0m
+[1;33m[ 2][t 7][2026-09-09 20:09:38.440218336][validate-query.cpp:8013][!fakevalidate(-1,8000000000000000):1#0]	validation took 0.001625s[0m
+[1;33m[ 2][t 7][2026-09-09 20:09:38.440227641][validate-query.cpp:8014][!fakevalidate(-1,8000000000000000):1#0]	Validate query work time = 0.001174s, cpu time = 0.001173s[0m
+[1;33m[ 2][t 7][2026-09-09 20:09:38.440237366][validate-query.cpp:8016][!fakevalidate(-1,8000000000000000):1#0]	{{
+	{wait_block_state #0:136464.060768->136464.060947(0.000179)}
+	{get_top_masterchain_state_block:136464.060701->136464.060786(0.000085)}
+	{get_storage_stat_cache:136464.060772->136464.060826(0.000054)[Error : 0 : not implemented]}
+	{wait_verify_shard_blocks:136464.061289->136464.061336(0.000047)}
+	{get_top_masterchain_state_block:136464.061087->136464.061094(0.000007)}
+}[0m
+[1;31m[ 1][t 7][2026-09-09 20:09:38.441992986][manager-disk.cpp:324][!fakevalidate(-1,8000000000000000):1#0]	failed to create block: invalid instance installation : [Error : 7409 : instance configuration is missing][0m

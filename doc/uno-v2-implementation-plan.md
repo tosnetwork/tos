@@ -72,9 +72,9 @@ early refusals without their resource-admission and final-publication safeguards
 
 The private I13 harnesses have a separate, manual-only CI entry point:
 `.github/workflows/private-i13-acceptance.yml` (`workflow_dispatch`). It
-explicitly includes their modules, builds the three targets and selects only
+explicitly includes their modules, builds the four targets and selects only
 the `i13` label. Both the registered names and the JUnit execution results must
-contain exactly the three expected tests; skipped, missing and failed tests
+contain exactly the four expected tests; skipped, missing and failed tests
 are errors. There is no push, pull-request or scheduled trigger. This manual-only
 policy is the owner's decision of 2026-09-09, not an unfinished task. Ordinary
 "full regression passed" statements do **not** include these private harnesses;
@@ -84,6 +84,61 @@ Merge `eea0e04df` integrates the reviewed registration modules. The same opt-in
 configuration lists zero private I13 tests before integration and exactly three
 afterwards; the registration assertion rejects the former and accepts the latter.
 This is a registration-only check, not a run of the private harnesses or hosted CI.
+
+The I13b mechanism adds a fourth opt-in check through
+`crypto/test/workchain-private-i13.cmake`, which includes the original three
+modules and `workchain-execution-ledger.cmake`. The manual workflow builds all
+four targets and checks four exact driver names and four successful JUnit entries.
+The prior three-test merge-registration evidence remains historical. The ledger
+check is mechanism/private actor coverage, not live I13b acceptance; adding it
+does not authorize activation or connect the live execution seam.
+
+The I13b ledger mechanism has four distinct outcomes: recorded attempt, duplicate
+input, authenticated-bound exceeded, and allocation failure. Duplicate lookup
+precedes the bound check; the bound check precedes insertion allocation. The
+bound is immutable after construction, and the record method accepts only a
+root hash. Private tests use synthetic bounds, not authenticated provenance.
+Actor headers reserve optional, noncopyable/nonmovable ledgers for construction
+once authenticated policy is available; no production execution call consumes
+them yet. Live one-time construction and enforcement remain seam obligations.
+Auxiliary storage is O(U) tree nodes and lookup O(log U), where U cannot exceed
+the constructor bound. There is no record erasure or execution-failure refund.
+
+The private actor test observes the real stateful probe method, independent
+actor scopes, actual destruction, and an explicit coroutine completion marker.
+An ended task without that marker is not a successful check. Mutation builds use
+separate source/header/driver copies; repository source hashes remain fixed.
+Restoration explicitly rebuilds the actual executable reached through CTest and
+its Python driver, rather than relying on `all-tests`. Historical controls from
+before the completion marker and an interrupted mutation are superseded, not
+counted as final-source evidence.
+
+JUnit failure controls require actual `status="fail"` plus a failure element;
+the workflow success observer requires `status="run"` and no failure/error/skip.
+These are intentionally opposite predicates on the same schema. The observer
+self-test runs four actual named tests with one forced driver failure, so a
+registration-count mismatch cannot substitute for detecting failed execution.
+
+Read-view finding (2026-09-09, source inspection, not live execution evidence):
+`WorkchainAccountReadView` owns immutable snapshots. Each account runner call
+reacquires them from its supplied `old_accounts`; returned effects and settlement
+roots do not update that view or the caller's old-root reference. Repeating a
+call with the same old root therefore rereads the same state, not prior overlay
+writes. An explicit next-call root handoff could change this, but the live seam
+has not established one. Cross-call state progression needs an explicit design
+contract, not an assumption based on atomic publication. An engine may implement
+its own intra-batch working state; this interface supplies no such progression.
+The root-keyed I13b ledger prevents identical admitted-input re-entry, not the
+same operation repackaged under a different proof/root. Nonce/operation identity
+checks remain separate relation/execution obligations; I13b is not their substitute.
+
+Before downstream reuse of the ledger driver as a standalone provenance gate,
+close its whole-dependency-path and build-freshness gaps. Current controls rebuild
+explicitly and bind their changed source bytes; the driver itself checks only
+its selected source/header paths. It cannot certify a stale binary or exclude
+shadowing of other headers. Live actor slots also still need one-time construction
+enforcement. These are open integration/instrument obligations, not I13b acceptance.
+Mechanism evidence and exact scope: `measurements/uno-i13b-ledger-controls/README.md`.
 
 After the three private I13 harness modules have registered their Python
 drivers and demonstrated failing CTest controls, A first resumes the thin

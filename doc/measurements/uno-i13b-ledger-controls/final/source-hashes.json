@@ -1,0 +1,12 @@
+{
+  "crypto/block/workchain-execution-ledger.h": "5ac808f6da54e9ffce5ca3170b2e9c9b0b654719c613e5ad35bf743a2745f813",
+  "crypto/test/test-workchain-execution-ledger.cpp": "e90b37f77423e2e01af578e5a6cd2c417c1ddb8e6196c29d42d5e5019c93b5cd",
+  "crypto/test/workchain-execution-ledger.py": "b7117d686ab0e36c28dbc2a26ae64f926dd7ae6d4076e3535cf49b8bf1a1828e",
+  "crypto/test/workchain-execution-ledger.cmake": "d67922d834dc92201d01d177b57f4b9e8b1aa9b2f95c562cbec4d12027c260f5",
+  "crypto/test/workchain-private-i13.cmake": "8d5c2c8bc88bb33f1204d4538a26c5367a5d916b124a81e0af0a8b99dcfbdeee",
+  "validator/impl/collator-impl.h": "3a6e04ad339b65a9fde5768982b5577bc7f669907efba589d72ebd5ca9b860b8",
+  "validator/impl/validate-query.hpp": "1f38c3397c73076559cf8ad951f408c23c94e5de0113ce401fd6fc734ed74842",
+  ".github/scripts/check-i13-results.py": "d0e30a8fe38f93dbb3f7458f15b5965abf6381241a0c19ee9bb3424a6f227862",
+  ".github/scripts/test-i13-results.py": "da992bed5483fe62fd40262163de36c30a9a147141b20567bbd3f111a65499db",
+  ".github/workflows/private-i13-acceptance.yml": "4a65f626120069ccf6aa56bf978c6a6cb79bffb4db16c7fab67129cf63f766ce"
+}

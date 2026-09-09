@@ -1,0 +1,65 @@
+[
+  {
+    "id": "bound-classification",
+    "path": "crypto/block/workchain-execution-ledger.h",
+    "from": "    if (roots_.size() >= authenticated_root_limit_) {\n      return WorkchainExecutionClaim::BoundExceeded;\n    }\n",
+    "to": "    if (roots_.size() >= authenticated_root_limit_) {\n      return WorkchainExecutionClaim::AllocationFailure;\n    }\n",
+    "failure": "bound.zero_is_not_allocation_failure"
+  },
+  {
+    "id": "late-bound-allocation",
+    "path": "crypto/block/workchain-execution-ledger.h",
+    "from": "    if (roots_.size() >= authenticated_root_limit_) {\n      return WorkchainExecutionClaim::BoundExceeded;\n    }\n    try {\n      const auto inserted = roots_.insert(admitted_input_root_hash).second;",
+    "to": "    try {\n      const auto inserted = roots_.insert(admitted_input_root_hash).second;\n      if (roots_.size() > authenticated_root_limit_) {\n        return WorkchainExecutionClaim::BoundExceeded;\n      }",
+    "failure": "bound.before_first_allocation"
+  },
+  {
+    "id": "no-root-record",
+    "path": "crypto/block/workchain-execution-ledger.h",
+    "from": "      const auto inserted = roots_.insert(admitted_input_root_hash).second;",
+    "to": "      const auto inserted = roots_.insert(admitted_input_root_hash).second;\n      roots_.clear();",
+    "failure": "first.root_is_present"
+  },
+  {
+    "id": "refuse-first",
+    "path": "crypto/block/workchain-execution-ledger.h",
+    "from": "      return inserted ? WorkchainExecutionClaim::Recorded : WorkchainExecutionClaim::DuplicateInput;",
+    "to": "      return inserted ? WorkchainExecutionClaim::DuplicateInput : WorkchainExecutionClaim::DuplicateInput;",
+    "failure": "first.recorded"
+  },
+  {
+    "id": "per-call-scope",
+    "path": "crypto/test/test-workchain-execution-ledger.cpp",
+    "from": "    const auto result = ledger_.record_attempt(hash);",
+    "to": "    Ledger ledger_{2};\n    const auto result = ledger_.record_attempt(hash);",
+    "failure": "actor.same_scope_duplicate_identity"
+  },
+  {
+    "id": "shared-actor-scope",
+    "path": "crypto/test/test-workchain-execution-ledger.cpp",
+    "from": "  Ledger ledger_{2};  // Private synthetic bound; actual actor member, no exit reset.",
+    "to": "  inline static Ledger ledger_{2};  // Deliberate scope mutation.",
+    "failure": "actor.independent_scope_allowed"
+  },
+  {
+    "id": "duplicate-execution",
+    "path": "crypto/test/test-workchain-execution-ledger.cpp",
+    "from": "    if (result == Claim::Recorded) engine_.execute();",
+    "to": "    engine_.execute();",
+    "failure": "actor.duplicate_cannot_execute"
+  },
+  {
+    "id": "ctest-driver-mount",
+    "path": "crypto/test/workchain-execution-ledger.py",
+    "from": "def main():\n",
+    "to": "def main():\n    raise RuntimeError('forced-driver-failure')\n",
+    "failure": "forced-driver-failure"
+  },
+  {
+    "id": "coroutine-completion",
+    "path": "crypto/test/test-workchain-execution-ledger.cpp",
+    "from": "    completed = true;",
+    "to": "    // Deliberately omit the completion observation.",
+    "failure": "actor.coroutine_completed_all_checks"
+  }
+]

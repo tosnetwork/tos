@@ -1,0 +1,28 @@
+{
+  "id": "refuse-first",
+  "path": "crypto/block/workchain-execution-ledger.h",
+  "from": "      return inserted ? WorkchainExecutionClaim::Recorded : WorkchainExecutionClaim::DuplicateInput;",
+  "to": "      return inserted ? WorkchainExecutionClaim::DuplicateInput : WorkchainExecutionClaim::DuplicateInput;",
+  "failure": "first.recorded",
+  "base_commit": "330f5b06d6214aad77dc6da5beda05556aa236cf",
+  "repository_source_hashes": {
+    "crypto/block/workchain-execution-ledger.h": "5ac808f6da54e9ffce5ca3170b2e9c9b0b654719c613e5ad35bf743a2745f813",
+    "crypto/test/test-workchain-execution-ledger.cpp": "e90b37f77423e2e01af578e5a6cd2c417c1ddb8e6196c29d42d5e5019c93b5cd",
+    "crypto/test/workchain-execution-ledger.py": "b7117d686ab0e36c28dbc2a26ae64f926dd7ae6d4076e3535cf49b8bf1a1828e"
+  },
+  "original_sha256": "5ac808f6da54e9ffce5ca3170b2e9c9b0b654719c613e5ad35bf743a2745f813",
+  "reconstructed_mutant_sha256": "0143f3e7002490af96d2b291362a0ee2991063f71894c508c71ca912138e903b",
+  "original_binary_sha256": "873f25417cba453976dd05ffa280563b74a82cf3b19e7d9c0ed4cf6d671a09a9",
+  "measurement_copy": "/tmp/uno-ledger-measurement-copy-rpqt0y2m/crypto/block/workchain-execution-ledger.h",
+  "executable_chain": [
+    "ctest",
+    "/tmp/uno-ledger-measurement-copy-rpqt0y2m/crypto/test/workchain-execution-ledger.py",
+    "/tmp/uno-ledger-mechanism-CYFxwo/test-workchain-execution-ledger"
+  ],
+  "recorded_mutant_sha256": "0143f3e7002490af96d2b291362a0ee2991063f71894c508c71ca912138e903b",
+  "mutant_binary_sha256": "0da43e71fec00a3840aa224a6f0cffb20ab1791cdf7ad86af79f1dc2942d6e67",
+  "observed_failure_identity": "first.recorded",
+  "restored_sha256": "5ac808f6da54e9ffce5ca3170b2e9c9b0b654719c613e5ad35bf743a2745f813",
+  "restored_binary_sha256": "873f25417cba453976dd05ffa280563b74a82cf3b19e7d9c0ed4cf6d671a09a9",
+  "repository_sources_unchanged": true
+}

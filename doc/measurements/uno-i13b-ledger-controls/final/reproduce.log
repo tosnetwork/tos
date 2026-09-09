@@ -1,0 +1,9 @@
+bound-classification: reconstructed and restored; actual Failed then passed
+late-bound-allocation: reconstructed and restored; actual Failed then passed
+no-root-record: reconstructed and restored; actual Failed then passed
+refuse-first: reconstructed and restored; actual Failed then passed
+per-call-scope: reconstructed and restored; actual Failed then passed
+shared-actor-scope: reconstructed and restored; actual Failed then passed
+duplicate-execution: reconstructed and restored; actual Failed then passed
+ctest-driver-mount: reconstructed and restored; actual Failed then passed
+coroutine-completion: reconstructed and restored; actual Failed then passed

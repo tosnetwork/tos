@@ -27,6 +27,7 @@
 #include "block/output-queue-merger.h"
 #include "block/transaction.h"
 #include "block/workchain-execution-dispatch.h"
+#include "block/workchain-execution-ledger.h"
 #include "common/global-version.h"
 #include "common/refcnt.hpp"
 #include "interfaces/validator-manager.h"
@@ -175,6 +176,9 @@ class Collator final : public td::actor::Actor {
   // Declared after the usage tree so destruction releases the adapter first.
   std::optional<block::ResolvedWorkchainAccountBinding> account_binding_;
   std::unique_ptr<block::ConfiguredWorkchainAccountEngine> account_adapter_;
+  // Candidate-actor lifetime; reserved for the pending live execution seam.
+  // Construct once from authenticated policy when the pending live seam binds it.
+  std::optional<block::WorkchainExecutionLedger> account_execution_ledger_;
   Ref<vm::CellSlice> new_config_params_;
   Ref<vm::Cell> old_mparams_;
   tos::LogicalTime prev_state_lt_;

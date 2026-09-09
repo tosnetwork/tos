@@ -1,0 +1,23 @@
+[1/124] cd /home/tomi/tos/uno/crypto && /usr/bin/cmake -E env CARGO_NET_OFFLINE=true CARGO_TARGET_DIR=/home/tomi/tos/build/uno/crypto/cargo-target /home/tomi/.cargo/bin/cargo build --locked --offline --release -j32
+    Finished `release` profile [optimized] target(s) in 0.06s
+[2/122] Checking the git repository for changes...
+[3/22] Compiling FunC contract jetton-minter-func -> /home/tomi/tos/build/slice1-gas-parity/jetton-minter-func.boc
+[4/22] Compiling FunC contract jetton-wallet-func -> /home/tomi/tos/build/slice1-gas-parity/jetton-wallet-func.boc
+[5/22] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/external-message.cpp.o
+[6/22] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/fabric.cpp.o
+[7/22] Building CXX object validator/CMakeFiles/validator.dir/collator-node/collator-node.cpp.o
+[8/22] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/validate-query.cpp.o
+[9/22] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/collator.cpp.o
+[10/22] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/liteserver.cpp.o
+[11/22] Linking CXX static library validator/impl/libtos_validator.a
+[12/22] Linking CXX static library validator/libvalidator.a
+[13/22] Linking CXX executable utils/pack-viewer
+[14/22] Linking CXX executable test-vm-exception-hardening
+[15/22] Linking CXX executable test-wallet-message-processor
+[16/22] Linking CXX executable test-ext-message-pool
+[17/22] Linking CXX executable test/validator/consensus/test-validator-manager-resource-policy
+[18/22] Linking CXX executable test/validator/consensus/test-consensus
+[19/22] Linking CXX executable test-tos-collator
+[20/22] Linking CXX executable test-uno-state-snapshot
+[21/22] Linking CXX executable create-hardfork/create-hardfork
+[22/22] Linking CXX executable validator-engine/validator-engine
