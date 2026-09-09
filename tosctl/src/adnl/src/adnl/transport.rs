@@ -339,13 +339,20 @@ impl TcpReceiver {
             }
             self.tokens.remove(&context.token);
         }
-        // Drop the sender-side connection entry too. Without this the Connections
-        // map only ever transitions to Disconnected and never shrinks, so an
-        // attacker presenting many self-reported addresses (see accept()) grows
-        // it without bound. A later reconnect re-creates the entry fresh; the
-        // only thing forgotten is the dead connection's best-effort send queue,
-        // which higher layers retransmit.
-        self.connections.map().remove(addr);
+        // Shrink the sender-side connection entry too. Without this the
+        // Connections map only ever transitions to Disconnected and never
+        // shrinks, so an attacker presenting many self-reported addresses (see
+        // accept()) grows it without bound. But this runs from a stale
+        // Deleted(addr) event that may arrive after a reconnect already moved the
+        // entry on to Connecting/Connected/Confirmed; removing by address alone
+        // would delete that live connection and strand its send queue. Remove
+        // only a still-Disconnected entry, atomically (remove_with inspects the
+        // current value under the map's guard). A later reconnect re-creates the
+        // entry fresh; the only thing forgotten is a dead connection's
+        // best-effort send queue, which higher layers retransmit.
+        self.connections
+            .map()
+            .remove_with(addr, |(_, state)| matches!(state, TcpConnectionState::Disconnected(_)));
         err.map_or(Ok(()), |e| Err(e))
     }
 
@@ -687,7 +694,18 @@ impl TcpSender {
         let convert_err = |e, msg| error!("error when {msg} to {socket_addr}: {e}");
         loop {
             match connections.map().get(&socket_addr) {
-                None => fail!("Cannot create send queue to {socket_addr} in background"),
+                None => {
+                    // A concurrent Deleted(addr) cleanup may have removed this
+                    // entry while it was momentarily Disconnected between reconnect
+                    // states. Recreate it fresh and retry rather than failing the
+                    // send: the in-flight ctx is preserved and a new connect
+                    // attempt follows on the next iteration.
+                    let queue = TcpSendQueue::with_capacity(MAX_TCP_SEND_QUEUE_LEN);
+                    add_unbound_object_to_map(connections.map(), socket_addr, || {
+                        Ok(TcpConnectionState::Disconnected(queue.clone()))
+                    })?;
+                    continue;
+                }
                 Some(state) => match state.val() {
                     TcpConnectionState::Confirmed(conn) => {
                         match Self::send_step(&conn.socket, &mut ctx) {

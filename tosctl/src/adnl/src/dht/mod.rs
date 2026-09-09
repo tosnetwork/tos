@@ -312,6 +312,9 @@ struct DhtNetwork {
     node_key: Arc<dyn KeyOption>,
     query_prefix: Vec<u8>,
     storage: lockfree::map::Map<DhtKeyId, ValueObject>,
+    // Last time (Version units ~ seconds) the expired-value sweep ran, used to
+    // throttle it so a stream of new keys cannot trigger an O(n) scan per store.
+    last_gc_at: std::sync::atomic::AtomicI32,
 }
 
 impl DhtNetwork {
@@ -392,6 +395,11 @@ impl DhtNode {
                                     // ceiling is enforced, so the bound is on live (unexpired) values. Matches
                                     // the C++ DHT member, which evicts by TTL order once size exceeds its cap.
     const MAX_VALUES: u64 = 100_000;
+    // Minimum spacing (Version units ~ seconds) between expired-value sweeps. The
+    // sweep is O(n) in the table, so it runs at most once per this interval, and
+    // only when the table is at the ceiling -- a flood of new keys cannot turn it
+    // into a per-store full scan.
+    const GC_MIN_INTERVAL_SECS: i32 = 1;
 
     /// Constructor
     pub fn with_adnl_node(adnl: Arc<AdnlNode>, key_tag: usize) -> Result<Arc<Self>> {
@@ -839,6 +847,7 @@ impl DhtNode {
             node_key,
             query_prefix: Vec::new(),
             storage: lockfree::map::Map::new(),
+            last_gc_at: std::sync::atomic::AtomicI32::new(0),
         };
         let query = DhtQuery { node };
         serialize_boxed_inplace(&mut ret.query_prefix, &query)?;
@@ -1057,7 +1066,11 @@ impl DhtNode {
             .map(|guard| *guard.key())
             .collect();
         for key in expired {
-            network.storage.remove(&key);
+            // Re-check expiry atomically at removal: a concurrent store may have
+            // refreshed this key to a later ttl since it was collected above (the
+            // update rules replace an entry with a higher ttl), and an
+            // unconditional remove would then delete a freshly valid value.
+            network.storage.remove_with(&key, |(_, value)| value.object.ttl <= now);
         }
     }
 
@@ -1067,18 +1080,30 @@ impl DhtNode {
             fail!("Ignore expired DHT value with key {}", base64_encode(&dht_key_id))
         }
         // Bound the storage map. A store of a fresh key adds a permanent entry;
-        // sweep expired values first, then refuse a brand-new key once the live
-        // count is at the ceiling. Updates to an existing key never grow the map
-        // and are always allowed.
+        // refuse a brand-new key once the live count is at the ceiling. Updates to
+        // an existing key never grow the map and are always allowed.
+        //
+        // The expired-value sweep is O(n), so it is NOT run on every new key:
+        // that let a flood of distinct keys (even ones that fail validation
+        // below) amplify into a full scan per store. It runs only when the table
+        // is actually at the ceiling, and at most once per GC_MIN_INTERVAL_SECS;
+        // between sweeps a new key is simply refused while full.
         if network.storage.get(&dht_key_id).is_none() {
-            self.gc_expired_values(network);
-            if self.allocated.values.load(std::sync::atomic::Ordering::Relaxed) >= Self::MAX_VALUES
-            {
-                fail!(
-                    "DHT storage full ({} values), rejecting new key {}",
-                    Self::MAX_VALUES,
-                    base64_encode(&dht_key_id)
-                )
+            use std::sync::atomic::Ordering::Relaxed;
+            if self.allocated.values.load(Relaxed) >= Self::MAX_VALUES {
+                let now = Version::get();
+                let last = network.last_gc_at.load(Relaxed);
+                if now.saturating_sub(last) >= Self::GC_MIN_INTERVAL_SECS {
+                    network.last_gc_at.store(now, Relaxed);
+                    self.gc_expired_values(network);
+                }
+                if self.allocated.values.load(Relaxed) >= Self::MAX_VALUES {
+                    fail!(
+                        "DHT storage full ({} values), rejecting new key {}",
+                        Self::MAX_VALUES,
+                        base64_encode(&dht_key_id)
+                    )
+                }
             }
         }
         match query.value.key.update_rule {
