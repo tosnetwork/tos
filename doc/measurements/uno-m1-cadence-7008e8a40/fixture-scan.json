@@ -1,0 +1,33 @@
+{
+  "source_commit": "6c6e93894f7dc0ffde7d6cf4b598b9dfce2601c8",
+  "counts": {
+    "tracked_files": 61768,
+    "streams": 68854,
+    "bytes": 1895009654,
+    "base64_bocs": 841,
+    "archive_members": 7084
+  },
+  "manifest_sha256": "19ac6dd1899ac2e6f63414867f71cd713615a3361f612a07c5b1f59ac4a69b9f",
+  "hits": [],
+  "positive_calibration": [
+    {
+      "path": "calibration.raw",
+      "encoding": "big-endian",
+      "count": 1,
+      "sha256": "3cf7b11a8991cf8b71f4a4245a5618d1c7cf3cfd4fc7d24bb2825807e692a921"
+    },
+    {
+      "path": "calibration.base64",
+      "encoding": "base64 BOC",
+      "count": 1,
+      "decoded_sha256": "3cf7b11a8991cf8b71f4a4245a5618d1c7cf3cfd4fc7d24bb2825807e692a921"
+    },
+    {
+      "path": "calibration.base64",
+      "encoding": "base64 BOC",
+      "count": 1,
+      "decoded_sha256": "3cf7b11a8991cf8b71f4a4245a5618d1c7cf3cfd4fc7d24bb2825807e692a921"
+    }
+  ],
+  "scope": "All tracked regular files including tostester; raw BE/LE bytes, standard base64 BOC tokens and folded base64 files, tar/gzip/xz/zstd/zip members. Does not inspect ignored runtime build databases, encrypted or arbitrary custom encodings; no history rewritten."
+}

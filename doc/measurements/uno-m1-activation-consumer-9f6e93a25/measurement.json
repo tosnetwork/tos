@@ -1,0 +1,189 @@
+{
+  "source_commit": "9f6e93a25b5e16c1b12ce6b9a695fb3ba54613ee",
+  "helper_commit": "c519361489d68708f7695f05fab8576397e78319",
+  "helper_path": "/home/tomi/tos/crypto/test/workchain-activation-rejection.py",
+  "helper_sha256": "3591b1535176dc67febe0d36cb8f0561dd5c73e808e5087b3574bc9520cae6d4",
+  "events": [
+    {
+      "label": "configure",
+      "argv": [
+        "cmake",
+        "-S",
+        "/home/tomi/tos-m2",
+        "-B",
+        "/tmp/uno-publication-build",
+        "-DCMAKE_PROJECT_TOS_INCLUDE=/home/tomi/tos-m2/crypto/test/workchain-activation-control.cmake",
+        "-DWORKCHAIN_ACTIVATION_HELPER=/home/tomi/tos/crypto/test/workchain-activation-rejection.py"
+      ],
+      "exit": 0
+    },
+    {
+      "label": "build",
+      "argv": [
+        "cmake",
+        "--build",
+        "/tmp/uno-publication-build",
+        "--target",
+        "test-workchain-activation-control",
+        "-j32"
+      ],
+      "exit": 0
+    },
+    {
+      "label": "baseline",
+      "argv": [
+        "python3",
+        "/home/tomi/tos-m2/crypto/test/workchain-activation-control-check.py",
+        "--probe",
+        "/tmp/uno-publication-build/test-workchain-activation-control",
+        "--repo",
+        "/home/tomi/tos-m2",
+        "--shared-helper",
+        "/home/tomi/tos/crypto/test/workchain-activation-rejection.py"
+      ],
+      "exit": 0
+    },
+    {
+      "label": "mutant-compile",
+      "argv": [
+        "python3",
+        "-m",
+        "py_compile",
+        "/tmp/uno-activation-consumer-shadow-f5h77y55/workchain-activation-context.py"
+      ],
+      "exit": 0
+    },
+    {
+      "label": "mutant",
+      "argv": [
+        "python3",
+        "/tmp/uno-activation-consumer-shadow-f5h77y55/workchain-activation-control-check.py",
+        "--probe",
+        "/tmp/uno-publication-build/test-workchain-activation-control",
+        "--repo",
+        "/home/tomi/tos-m2",
+        "--shared-helper",
+        "/home/tomi/tos/crypto/test/workchain-activation-rejection.py"
+      ],
+      "exit": 1
+    },
+    {
+      "label": "restored",
+      "argv": [
+        "python3",
+        "/home/tomi/tos-m2/crypto/test/workchain-activation-control-check.py",
+        "--probe",
+        "/tmp/uno-publication-build/test-workchain-activation-control",
+        "--repo",
+        "/home/tomi/tos-m2",
+        "--shared-helper",
+        "/home/tomi/tos/crypto/test/workchain-activation-rejection.py"
+      ],
+      "exit": 0
+    },
+    {
+      "label": "missing-helper-configure",
+      "argv": [
+        "cmake",
+        "-S",
+        "/home/tomi/tos-m2",
+        "-B",
+        "/tmp/uno-publication-build",
+        "-DWORKCHAIN_ACTIVATION_HELPER=/tmp/uno-activation-consumer-shadow-f5h77y55/missing-helper.py"
+      ],
+      "exit": 0
+    },
+    {
+      "label": "missing-helper-ctest",
+      "argv": [
+        "ctest",
+        "--test-dir",
+        "/tmp/uno-publication-build",
+        "-R",
+        "^test-workchain-activation-control-gates$",
+        "--output-on-failure",
+        "--output-junit",
+        "/home/tomi/tos-m2/doc/measurements/uno-m1-activation-consumer-9f6e93a25/missing-helper.xml"
+      ],
+      "exit": 8
+    },
+    {
+      "label": "restore-configure",
+      "argv": [
+        "cmake",
+        "-S",
+        "/home/tomi/tos-m2",
+        "-B",
+        "/tmp/uno-publication-build",
+        "-DWORKCHAIN_ACTIVATION_HELPER=/home/tomi/tos/crypto/test/workchain-activation-rejection.py"
+      ],
+      "exit": 0
+    },
+    {
+      "label": "ctest",
+      "argv": [
+        "ctest",
+        "--test-dir",
+        "/tmp/uno-publication-build",
+        "-R",
+        "^test-workchain-activation-control-gates$",
+        "--output-on-failure",
+        "--output-junit",
+        "/home/tomi/tos-m2/doc/measurements/uno-m1-activation-consumer-9f6e93a25/ctest.xml"
+      ],
+      "exit": 0
+    }
+  ],
+  "scope": "Shared-helper integration and schema-consumer calibration with real resolver statuses. No live transaction/export or I13e acceptance claim. Guard 341 observes the schema consumer failing to reject the first known earlier error after guard 315 removal. Later consumer iterations are not reached in that mutant and are not counted as passing. Earlier shared calibration and context-vector checks completed.",
+  "sources": {
+    "crypto/test/workchain-activation-context.py": {
+      "sha256": "ddc883b47b9ae05226a38b9553fa51d7767f64b51e2198116e827ade89d848dd",
+      "git_blob_oid": "a477d494e20c9e783c7606d7590cc616b09762d7"
+    },
+    "crypto/test/workchain-activation-context-selftest.py": {
+      "sha256": "b5266d1221a57ba265733649a717be5bff8ced92fffe29ea841e735b390732f5",
+      "git_blob_oid": "9fe12f3cd15f86dddd1bf55def48968614ad567c"
+    },
+    "crypto/test/workchain-activation-control-check.py": {
+      "sha256": "44693a27556a5b57a2fee9186b36492dfb3600803f495dd7a229e0eb93d05f45",
+      "git_blob_oid": "8599a6390c1c318afba00ffafe4c11dd716bd26f"
+    }
+  },
+  "control": {
+    "path": "crypto/test/workchain-activation-context.py",
+    "original_sha256": "ddc883b47b9ae05226a38b9553fa51d7767f64b51e2198116e827ade89d848dd",
+    "copy_before_sha256": "ddc883b47b9ae05226a38b9553fa51d7767f64b51e2198116e827ade89d848dd",
+    "from": "    require(is_activation_rejection(closed['status_code'], closed['status_message'], boundary=boundary), 315)\n",
+    "to": "    require(True, 315)\n",
+    "offset": 2600,
+    "mutant_sha256": "60e6fe6657d9ebebbbf29aaf45eb5226595fbe4054f36eb19cd728c94e9f6035",
+    "failure_identity": 341,
+    "restored_sha256": "ddc883b47b9ae05226a38b9553fa51d7767f64b51e2198116e827ade89d848dd",
+    "restore_audit_sha256": "60e6fe6657d9ebebbbf29aaf45eb5226595fbe4054f36eb19cd728c94e9f6035"
+  },
+  "helper_unchanged": true,
+  "original_source_unchanged": true,
+  "binary_sha256": "8876d5b631d9c1db12d7c66c0f748b7411768db209227f86b1598d8ff33e2e98",
+  "shared_source_inventory": {
+    "crypto/test/workchain-activation-rejection.py": {
+      "sha256": "3591b1535176dc67febe0d36cb8f0561dd5c73e808e5087b3574bc9520cae6d4",
+      "git_blob_oid": "4ef811b93af9666905f2ada6b491502f0e930732"
+    },
+    "doc/measurements/uno-v2-activation-helper-provenance/README.md": {
+      "sha256": "674f741e223372c6883e286896161f5d99f7c63bc1a5548c9a5c9489930c6cd5",
+      "git_blob_oid": "9d32c9215ea9989e3e7d2add371915d0ffe4f2e2"
+    },
+    "doc/measurements/uno-v2-activation-helper-provenance/probe-provenance.json": {
+      "sha256": "001a89696a8f5bdd054e1286fb617a920f40d8fd377263e5d9acb552890d8499",
+      "git_blob_oid": "dee5be80e7a531570b4935d4eb08820161ffd120"
+    },
+    "doc/measurements/uno-v2-activation-helper-provenance/probe.stderr.log": {
+      "sha256": "2272a338f445df6b86bff5e50c6de2bd76f4274dbeb7f2ef1b09a1a564e55c4a",
+      "git_blob_oid": "b83b2305869cb25b5c6b294498435e1f521726fc"
+    },
+    "doc/measurements/uno-v2-activation-helper-provenance/probe.stdout.log": {
+      "sha256": "733efbdfc547676767c5c7b3b64884a4d24c2383b27b48e1517afdcb8d7c151b",
+      "git_blob_oid": "8422bfa766519d349cf4d968efe2694b57bbdfa6"
+    }
+  }
+}

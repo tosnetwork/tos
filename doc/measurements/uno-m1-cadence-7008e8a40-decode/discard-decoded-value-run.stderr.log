@@ -1,0 +1,117 @@
+Running test Test_WorkchainBlock_EngineConfigurationAcceptedCadence...
+[1;31m[ 0][t 0][2026-09-09 15:23:28.025461988][test-workchain-block.cpp:273]	Expectation failed: decoded.ok().k_accepted_target_rate_ms == accepted ? 0 : 405 is not equal to 0 (405 != 0)[0m
+[pid 1153299] [time 1788967408] Signal: 6
+------- Stack Backtrace -------
+/tmp/uno-publication-build/test-workchain-block(+0x640267)[0x5714ab542267]
+/tmp/uno-publication-build/test-workchain-block(+0xd287d)[0x5714aafd487d]
+/lib/x86_64-linux-gnu/libc.so.6(+0x42520)[0x711795042520]
+/lib/x86_64-linux-gnu/libc.so.6(pthread_kill+0x12c)[0x7117950969bc]
+/lib/x86_64-linux-gnu/libc.so.6(raise+0x16)[0x711795042476]
+/lib/x86_64-linux-gnu/libc.so.6(abort+0xd3)[0x7117950287f3]
+/tmp/uno-publication-build/test-workchain-block(+0x643737)[0x5714ab545737]
+/tmp/uno-publication-build/test-workchain-block(+0x643837)[0x5714ab545837]
+/tmp/uno-publication-build/test-workchain-block(+0x6433f7)[0x5714ab5453f7]
+/tmp/uno-publication-build/test-workchain-block(+0x1eca42)[0x5714ab0eea42]
+/tmp/uno-publication-build/test-workchain-block(+0x1afe3a)[0x5714ab0b1e3a]
+/tmp/uno-publication-build/test-workchain-block(+0x64d6fc)[0x5714ab54f6fc]
+/tmp/uno-publication-build/test-workchain-block(+0x64d228)[0x5714ab54f228]
+/tmp/uno-publication-build/test-workchain-block(+0xd92df)[0x5714aafdb2df]
+/lib/x86_64-linux-gnu/libc.so.6(+0x29d90)[0x711795029d90]
+/lib/x86_64-linux-gnu/libc.so.6(__libc_start_main+0x80)[0x711795029e40]
+/tmp/uno-publication-build/test-workchain-block(+0xd9185)[0x5714aafdb185]
+-------------------------------
+--- Enhanced Backtrace (libbacktrace) ---
+    #0  ?? (test-workchain-block+0xd287c) [0x5714aafd487c]
+    #1  ?? at libc_sigaction.c (libc.so.6+0x4251f) [0x71179504251f]
+    #2  __pthread_kill_implementation at pthread_kill.c:44 (libc.so.6+0x969bc) [0x7117950969bc]
+    #3  __pthread_kill_internal at pthread_kill.c:78 (libc.so.6+0x969bc) [0x7117950969bc]
+    #4  __GI___pthread_kill at pthread_kill.c:89 (libc.so.6+0x969bc) [0x7117950969bc]
+    #5  __GI_raise at raise.c:26 (libc.so.6+0x42475) [0x711795042475]
+    #6  __GI_abort at abort.c:79 (libc.so.6+0x287f2) [0x7117950287f2]
+    #7  ?? (test-workchain-block+0x643736) [0x5714ab545736]
+    #8  ?? (test-workchain-block+0x643836) [0x5714ab545836]
+    #9  ?? (test-workchain-block+0x6433f6) [0x5714ab5453f6]
+    #10  ?? (test-workchain-block+0x1eca41) [0x5714ab0eea41]
+    #11  ?? (test-workchain-block+0x1afe39) [0x5714ab0b1e39]
+    #12  ?? (test-workchain-block+0x64d6fb) [0x5714ab54f6fb]
+    #13  ?? (test-workchain-block+0x64d227) [0x5714ab54f227]
+    #14  ?? (test-workchain-block+0xd92de) [0x5714aafdb2de]
+    #15  __libc_start_call_main at libc_start_call_main.h:58 (libc.so.6+0x29d8f) [0x711795029d8f]
+    #16  __libc_start_main_impl at libc-start.c:392 (libc.so.6+0x29e3f) [0x711795029e3f]
+    #17  ?? (test-workchain-block+0xd9184) [0x5714aafdb184]
+    #18  à¸oäÿ (unknown+0xffffffffffffffff) [0xffffffffffffffff]
+------------------------------------------
+[Thread debugging using libthread_db enabled]
+Using host libthread_db library "/lib/x86_64-linux-gnu/libthread_db.so.1".
+0x00007117950ea3aa in __GI___wait4 (pid=1153300, stat_loc=0x0, options=0, usage=0x0) at ../sysdeps/unix/sysv/linux/wait4.c:30
+30	../sysdeps/unix/sysv/linux/wait4.c: No such file or directory.
+[Current thread is 1 (Thread 0x711795736800 (LWP 1153299))]
+
+Thread 1 (Thread 0x711795736800 (LWP 1153299) "test-workchain-"):
+#0  0x00007117950ea3aa in __GI___wait4 (pid=1153300, stat_loc=0x0, options=0, usage=0x0) at ../sysdeps/unix/sysv/linux/wait4.c:30
+        sc_ret = -512
+        sc_ret = <optimized out>
+#1  0x00005714ab5424e2 in td::Stacktrace::print_to_stderr(td::Stacktrace::PrintOptions const&) ()
+No symbol table info available.
+#2  0x00005714aafd487d in td::default_failure_signal_handler(int) ()
+No symbol table info available.
+#3  <signal handler called>
+No locals.
+#4  __pthread_kill_implementation (no_tid=0, signo=6, threadid=124346105554944) at ./nptl/pthread_kill.c:44
+        tid = <optimized out>
+        ret = 0
+        pd = 0x711795736800
+        old_mask = {__val = {0 <repeats 16 times>}}
+        ret = <optimized out>
+        pd = <optimized out>
+        old_mask = <optimized out>
+        ret = <optimized out>
+        tid = <optimized out>
+        ret = <optimized out>
+        resultvar = <optimized out>
+        resultvar = <optimized out>
+        __arg3 = <optimized out>
+        __arg2 = <optimized out>
+        __arg1 = <optimized out>
+        _a3 = <optimized out>
+        _a2 = <optimized out>
+        _a1 = <optimized out>
+        __futex = <optimized out>
+        resultvar = <optimized out>
+        __arg3 = <optimized out>
+        __arg2 = <optimized out>
+        __arg1 = <optimized out>
+        _a3 = <optimized out>
+        _a2 = <optimized out>
+        _a1 = <optimized out>
+        __futex = <optimized out>
+        __private = <optimized out>
+        __oldval = <optimized out>
+        result = <optimized out>
+#5  __pthread_kill_internal (signo=6, threadid=124346105554944) at ./nptl/pthread_kill.c:78
+No locals.
+#6  __GI___pthread_kill (threadid=124346105554944, signo=signo@entry=6) at ./nptl/pthread_kill.c:89
+No locals.
+#7  0x0000711795042476 in __GI_raise (sig=sig@entry=6) at ../sysdeps/posix/raise.c:26
+        ret = <optimized out>
+#8  0x00007117950287f3 in __GI_abort () at ./stdlib/abort.c:79
+        save_stage = 1
+        act = {__sigaction_handler = {sa_handler = 0x0, sa_sigaction = 0x0}, sa_mask = {__val = {0 <repeats 14 times>, 140737025913015, 0}}, sa_flags = 1, sa_restorer = 0x0}
+        sigs = {__val = {32, 0 <repeats 15 times>}}
+#9  0x00005714ab545737 in td::process_fatal_error(td::CSlice) ()
+No symbol table info available.
+#10 0x00005714ab545837 in td::DefaultLog::append(td::CSlice, int) ()
+No symbol table info available.
+#11 0x00005714ab5453f7 in td::Logger::~Logger() ()
+No symbol table info available.
+#12 0x00005714ab0eea42 in (anonymous namespace)::Test_WorkchainBlock_EngineConfigurationAcceptedCadence::run() ()
+No symbol table info available.
+#13 0x00005714ab0b1e3a in td::Test::step() ()
+No symbol table info available.
+#14 0x00005714ab54f6fc in td::TestsRunner::run_all_step() ()
+No symbol table info available.
+#15 0x00005714ab54f228 in td::TestsRunner::run_all() ()
+No symbol table info available.
+#16 0x00005714aafdb2df in main ()
+No symbol table info available.
+[Inferior 1 (process 1153299) detached]

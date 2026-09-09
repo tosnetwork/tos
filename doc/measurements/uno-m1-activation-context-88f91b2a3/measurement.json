@@ -1,0 +1,541 @@
+{
+  "source_commit": "88f91b2a365dcfe33096bf116dafac998f856464",
+  "path": "crypto/test/workchain_activation_control.py",
+  "git_blob_oid": "1d4604abdc41deb28611db926f4930bdf5d82b5c",
+  "original_sha256": "4dbf1f43f0cb384d79b6c6eed01f5f29df2d962eaffeced35a7980d7b40955fa",
+  "scope": "Context schema unit controls only. Shared activation classification and its self-check remain pending. No live observations are synthesized as evidence.",
+  "events": [
+    {
+      "label": "baseline",
+      "argv": [
+        "python3",
+        "/home/tomi/tos-m2/crypto/test/workchain-activation-context-selftest.py"
+      ],
+      "exit": 0
+    },
+    {
+      "label": "303-compile",
+      "argv": [
+        "python3",
+        "-m",
+        "py_compile",
+        "/tmp/uno-activation-shadow-7ja7jqrc/control-303.py"
+      ],
+      "exit": 0
+    },
+    {
+      "label": "303-mutant",
+      "argv": [
+        "python3",
+        "/home/tomi/tos-m2/crypto/test/workchain-activation-context-selftest.py",
+        "/tmp/uno-activation-shadow-7ja7jqrc/control-303.py"
+      ],
+      "exit": 1
+    },
+    {
+      "label": "303-restored",
+      "argv": [
+        "python3",
+        "/home/tomi/tos-m2/crypto/test/workchain-activation-context-selftest.py"
+      ],
+      "exit": 0
+    },
+    {
+      "label": "304-compile",
+      "argv": [
+        "python3",
+        "-m",
+        "py_compile",
+        "/tmp/uno-activation-shadow-7ja7jqrc/control-304.py"
+      ],
+      "exit": 0
+    },
+    {
+      "label": "304-mutant",
+      "argv": [
+        "python3",
+        "/home/tomi/tos-m2/crypto/test/workchain-activation-context-selftest.py",
+        "/tmp/uno-activation-shadow-7ja7jqrc/control-304.py"
+      ],
+      "exit": 1
+    },
+    {
+      "label": "304-restored",
+      "argv": [
+        "python3",
+        "/home/tomi/tos-m2/crypto/test/workchain-activation-context-selftest.py"
+      ],
+      "exit": 0
+    },
+    {
+      "label": "305-compile",
+      "argv": [
+        "python3",
+        "-m",
+        "py_compile",
+        "/tmp/uno-activation-shadow-7ja7jqrc/control-305.py"
+      ],
+      "exit": 0
+    },
+    {
+      "label": "305-mutant",
+      "argv": [
+        "python3",
+        "/home/tomi/tos-m2/crypto/test/workchain-activation-context-selftest.py",
+        "/tmp/uno-activation-shadow-7ja7jqrc/control-305.py"
+      ],
+      "exit": 1
+    },
+    {
+      "label": "305-restored",
+      "argv": [
+        "python3",
+        "/home/tomi/tos-m2/crypto/test/workchain-activation-context-selftest.py"
+      ],
+      "exit": 0
+    },
+    {
+      "label": "306-compile",
+      "argv": [
+        "python3",
+        "-m",
+        "py_compile",
+        "/tmp/uno-activation-shadow-7ja7jqrc/control-306.py"
+      ],
+      "exit": 0
+    },
+    {
+      "label": "306-mutant",
+      "argv": [
+        "python3",
+        "/home/tomi/tos-m2/crypto/test/workchain-activation-context-selftest.py",
+        "/tmp/uno-activation-shadow-7ja7jqrc/control-306.py"
+      ],
+      "exit": 1
+    },
+    {
+      "label": "306-restored",
+      "argv": [
+        "python3",
+        "/home/tomi/tos-m2/crypto/test/workchain-activation-context-selftest.py"
+      ],
+      "exit": 0
+    },
+    {
+      "label": "307-compile",
+      "argv": [
+        "python3",
+        "-m",
+        "py_compile",
+        "/tmp/uno-activation-shadow-7ja7jqrc/control-307.py"
+      ],
+      "exit": 0
+    },
+    {
+      "label": "307-mutant",
+      "argv": [
+        "python3",
+        "/home/tomi/tos-m2/crypto/test/workchain-activation-context-selftest.py",
+        "/tmp/uno-activation-shadow-7ja7jqrc/control-307.py"
+      ],
+      "exit": 1
+    },
+    {
+      "label": "307-restored",
+      "argv": [
+        "python3",
+        "/home/tomi/tos-m2/crypto/test/workchain-activation-context-selftest.py"
+      ],
+      "exit": 0
+    },
+    {
+      "label": "308-compile",
+      "argv": [
+        "python3",
+        "-m",
+        "py_compile",
+        "/tmp/uno-activation-shadow-7ja7jqrc/control-308.py"
+      ],
+      "exit": 0
+    },
+    {
+      "label": "308-mutant",
+      "argv": [
+        "python3",
+        "/home/tomi/tos-m2/crypto/test/workchain-activation-context-selftest.py",
+        "/tmp/uno-activation-shadow-7ja7jqrc/control-308.py"
+      ],
+      "exit": 1
+    },
+    {
+      "label": "308-restored",
+      "argv": [
+        "python3",
+        "/home/tomi/tos-m2/crypto/test/workchain-activation-context-selftest.py"
+      ],
+      "exit": 0
+    },
+    {
+      "label": "309-compile",
+      "argv": [
+        "python3",
+        "-m",
+        "py_compile",
+        "/tmp/uno-activation-shadow-7ja7jqrc/control-309.py"
+      ],
+      "exit": 0
+    },
+    {
+      "label": "309-mutant",
+      "argv": [
+        "python3",
+        "/home/tomi/tos-m2/crypto/test/workchain-activation-context-selftest.py",
+        "/tmp/uno-activation-shadow-7ja7jqrc/control-309.py"
+      ],
+      "exit": 1
+    },
+    {
+      "label": "309-restored",
+      "argv": [
+        "python3",
+        "/home/tomi/tos-m2/crypto/test/workchain-activation-context-selftest.py"
+      ],
+      "exit": 0
+    },
+    {
+      "label": "310-compile",
+      "argv": [
+        "python3",
+        "-m",
+        "py_compile",
+        "/tmp/uno-activation-shadow-7ja7jqrc/control-310.py"
+      ],
+      "exit": 0
+    },
+    {
+      "label": "310-mutant",
+      "argv": [
+        "python3",
+        "/home/tomi/tos-m2/crypto/test/workchain-activation-context-selftest.py",
+        "/tmp/uno-activation-shadow-7ja7jqrc/control-310.py"
+      ],
+      "exit": 1
+    },
+    {
+      "label": "310-restored",
+      "argv": [
+        "python3",
+        "/home/tomi/tos-m2/crypto/test/workchain-activation-context-selftest.py"
+      ],
+      "exit": 0
+    },
+    {
+      "label": "311-compile",
+      "argv": [
+        "python3",
+        "-m",
+        "py_compile",
+        "/tmp/uno-activation-shadow-7ja7jqrc/control-311.py"
+      ],
+      "exit": 0
+    },
+    {
+      "label": "311-mutant",
+      "argv": [
+        "python3",
+        "/home/tomi/tos-m2/crypto/test/workchain-activation-context-selftest.py",
+        "/tmp/uno-activation-shadow-7ja7jqrc/control-311.py"
+      ],
+      "exit": 1
+    },
+    {
+      "label": "311-restored",
+      "argv": [
+        "python3",
+        "/home/tomi/tos-m2/crypto/test/workchain-activation-context-selftest.py"
+      ],
+      "exit": 0
+    },
+    {
+      "label": "312-compile",
+      "argv": [
+        "python3",
+        "-m",
+        "py_compile",
+        "/tmp/uno-activation-shadow-7ja7jqrc/control-312.py"
+      ],
+      "exit": 0
+    },
+    {
+      "label": "312-mutant",
+      "argv": [
+        "python3",
+        "/home/tomi/tos-m2/crypto/test/workchain-activation-context-selftest.py",
+        "/tmp/uno-activation-shadow-7ja7jqrc/control-312.py"
+      ],
+      "exit": 1
+    },
+    {
+      "label": "312-restored",
+      "argv": [
+        "python3",
+        "/home/tomi/tos-m2/crypto/test/workchain-activation-context-selftest.py"
+      ],
+      "exit": 0
+    },
+    {
+      "label": "313-compile",
+      "argv": [
+        "python3",
+        "-m",
+        "py_compile",
+        "/tmp/uno-activation-shadow-7ja7jqrc/control-313.py"
+      ],
+      "exit": 0
+    },
+    {
+      "label": "313-mutant",
+      "argv": [
+        "python3",
+        "/home/tomi/tos-m2/crypto/test/workchain-activation-context-selftest.py",
+        "/tmp/uno-activation-shadow-7ja7jqrc/control-313.py"
+      ],
+      "exit": 1
+    },
+    {
+      "label": "313-restored",
+      "argv": [
+        "python3",
+        "/home/tomi/tos-m2/crypto/test/workchain-activation-context-selftest.py"
+      ],
+      "exit": 0
+    },
+    {
+      "label": "314-compile",
+      "argv": [
+        "python3",
+        "-m",
+        "py_compile",
+        "/tmp/uno-activation-shadow-7ja7jqrc/control-314.py"
+      ],
+      "exit": 0
+    },
+    {
+      "label": "314-mutant",
+      "argv": [
+        "python3",
+        "/home/tomi/tos-m2/crypto/test/workchain-activation-context-selftest.py",
+        "/tmp/uno-activation-shadow-7ja7jqrc/control-314.py"
+      ],
+      "exit": 1
+    },
+    {
+      "label": "314-restored",
+      "argv": [
+        "python3",
+        "/home/tomi/tos-m2/crypto/test/workchain-activation-context-selftest.py"
+      ],
+      "exit": 0
+    },
+    {
+      "label": "probe",
+      "argv": [
+        "/tmp/uno-publication-build/test-workchain-activation-control"
+      ],
+      "exit": 0
+    }
+  ],
+  "controls": [
+    {
+      "identity": 303,
+      "from": "    require(record['status_code'] != 0, 303)\n",
+      "to": "    require(True, 303)\n",
+      "offset": 680,
+      "copy_before_sha256": "4dbf1f43f0cb384d79b6c6eed01f5f29df2d962eaffeced35a7980d7b40955fa",
+      "mutant_sha256": "aba61e8f650c9bcd25ce807b02a7b7166dbccdd6eb92d199fd2a47d98ef88b44",
+      "failed_vectors": [
+        303
+      ],
+      "restored_sha256": "4dbf1f43f0cb384d79b6c6eed01f5f29df2d962eaffeced35a7980d7b40955fa",
+      "restore_audit_sha256": "aba61e8f650c9bcd25ce807b02a7b7166dbccdd6eb92d199fd2a47d98ef88b44"
+    },
+    {
+      "identity": 304,
+      "from": "    require(record['status_code'] == -7201, 304)\n",
+      "to": "    require(True, 304)\n",
+      "offset": 725,
+      "copy_before_sha256": "4dbf1f43f0cb384d79b6c6eed01f5f29df2d962eaffeced35a7980d7b40955fa",
+      "mutant_sha256": "c1797f7215d255924f5f3a8c13f284f277a0d6a16daf363cc8a5d224fde38bf8",
+      "failed_vectors": [
+        304
+      ],
+      "restored_sha256": "4dbf1f43f0cb384d79b6c6eed01f5f29df2d962eaffeced35a7980d7b40955fa",
+      "restore_audit_sha256": "c1797f7215d255924f5f3a8c13f284f277a0d6a16daf363cc8a5d224fde38bf8"
+    },
+    {
+      "identity": 305,
+      "from": "    require(record['transactions'] == 0, 305)\n",
+      "to": "    require(True, 305)\n",
+      "offset": 774,
+      "copy_before_sha256": "4dbf1f43f0cb384d79b6c6eed01f5f29df2d962eaffeced35a7980d7b40955fa",
+      "mutant_sha256": "7d8adb1df4ac5e6fb7721ca4df96d5f6dde57056f20488e8d05a256272e15256",
+      "failed_vectors": [
+        305
+      ],
+      "restored_sha256": "4dbf1f43f0cb384d79b6c6eed01f5f29df2d962eaffeced35a7980d7b40955fa",
+      "restore_audit_sha256": "7d8adb1df4ac5e6fb7721ca4df96d5f6dde57056f20488e8d05a256272e15256"
+    },
+    {
+      "identity": 306,
+      "from": "    require(record['candidate_exports'] == [], 306)\n",
+      "to": "    require(True, 306)\n",
+      "offset": 820,
+      "copy_before_sha256": "4dbf1f43f0cb384d79b6c6eed01f5f29df2d962eaffeced35a7980d7b40955fa",
+      "mutant_sha256": "70763701c4b2122a575b7a1fb071f31a368ddba72c83e48824b447b3993665e6",
+      "failed_vectors": [
+        306
+      ],
+      "restored_sha256": "4dbf1f43f0cb384d79b6c6eed01f5f29df2d962eaffeced35a7980d7b40955fa",
+      "restore_audit_sha256": "70763701c4b2122a575b7a1fb071f31a368ddba72c83e48824b447b3993665e6"
+    },
+    {
+      "identity": 307,
+      "from": "    require(enabled['run_id'] == closed['run_id'] and bool(enabled['run_id']), 307)\n",
+      "to": "    require(True, 307)\n",
+      "offset": 953,
+      "copy_before_sha256": "4dbf1f43f0cb384d79b6c6eed01f5f29df2d962eaffeced35a7980d7b40955fa",
+      "mutant_sha256": "f8aa4bf11880dbad6352de1ab2844ea0ccec0fe589da3bff7e1a20e8dd44ec4e",
+      "failed_vectors": [
+        307
+      ],
+      "restored_sha256": "4dbf1f43f0cb384d79b6c6eed01f5f29df2d962eaffeced35a7980d7b40955fa",
+      "restore_audit_sha256": "f8aa4bf11880dbad6352de1ab2844ea0ccec0fe589da3bff7e1a20e8dd44ec4e"
+    },
+    {
+      "identity": 308,
+      "from": "    require(enabled['host_path'] == closed['host_path'] and bool(enabled['host_path']), 308)\n",
+      "to": "    require(True, 308)\n",
+      "offset": 1037,
+      "copy_before_sha256": "4dbf1f43f0cb384d79b6c6eed01f5f29df2d962eaffeced35a7980d7b40955fa",
+      "mutant_sha256": "03911d37f111565c47ad3a239c7c830336831e1aba305df0c7044022f340dd07",
+      "failed_vectors": [
+        308
+      ],
+      "restored_sha256": "4dbf1f43f0cb384d79b6c6eed01f5f29df2d962eaffeced35a7980d7b40955fa",
+      "restore_audit_sha256": "03911d37f111565c47ad3a239c7c830336831e1aba305df0c7044022f340dd07"
+    },
+    {
+      "identity": 309,
+      "from": "    require(enabled['input_sha256'] == closed['input_sha256'], 309)\n",
+      "to": "    require(True, 309)\n",
+      "offset": 1130,
+      "copy_before_sha256": "4dbf1f43f0cb384d79b6c6eed01f5f29df2d962eaffeced35a7980d7b40955fa",
+      "mutant_sha256": "ee2301c6717a0eaf220275f05b385e699b8b5559ed9c847a882ac53a4be80fe7",
+      "failed_vectors": [
+        309
+      ],
+      "restored_sha256": "4dbf1f43f0cb384d79b6c6eed01f5f29df2d962eaffeced35a7980d7b40955fa",
+      "restore_audit_sha256": "ee2301c6717a0eaf220275f05b385e699b8b5559ed9c847a882ac53a4be80fe7"
+    },
+    {
+      "identity": 310,
+      "from": "    require(enabled['common_config_sha256'] == closed['common_config_sha256'], 310)\n",
+      "to": "    require(True, 310)\n",
+      "offset": 1198,
+      "copy_before_sha256": "4dbf1f43f0cb384d79b6c6eed01f5f29df2d962eaffeced35a7980d7b40955fa",
+      "mutant_sha256": "23b762d6a4b2cddf32f79f5ee33fc43a37b77651f57a51f19249d4933e8bf978",
+      "failed_vectors": [
+        310
+      ],
+      "restored_sha256": "4dbf1f43f0cb384d79b6c6eed01f5f29df2d962eaffeced35a7980d7b40955fa",
+      "restore_audit_sha256": "23b762d6a4b2cddf32f79f5ee33fc43a37b77651f57a51f19249d4933e8bf978"
+    },
+    {
+      "identity": 311,
+      "from": "    require(enabled['config_origin'] == closed['config_origin'] == 'test-internal', 311)\n",
+      "to": "    require(True, 311)\n",
+      "offset": 1282,
+      "copy_before_sha256": "4dbf1f43f0cb384d79b6c6eed01f5f29df2d962eaffeced35a7980d7b40955fa",
+      "mutant_sha256": "dbda2548675e08b9fbdd7e59ced825e13c35b672ded0b4718531e72d7e36eeaf",
+      "failed_vectors": [
+        311
+      ],
+      "restored_sha256": "4dbf1f43f0cb384d79b6c6eed01f5f29df2d962eaffeced35a7980d7b40955fa",
+      "restore_audit_sha256": "dbda2548675e08b9fbdd7e59ced825e13c35b672ded0b4718531e72d7e36eeaf"
+    },
+    {
+      "identity": 312,
+      "from": "    require(enabled['capability_enabled'] is True and closed['capability_enabled'] is False, 312)\n",
+      "to": "    require(True, 312)\n",
+      "offset": 1371,
+      "copy_before_sha256": "4dbf1f43f0cb384d79b6c6eed01f5f29df2d962eaffeced35a7980d7b40955fa",
+      "mutant_sha256": "50c231b08c308fe8c282433b6e241f259f26d1ce7be692ffef556124d815b064",
+      "failed_vectors": [
+        312
+      ],
+      "restored_sha256": "4dbf1f43f0cb384d79b6c6eed01f5f29df2d962eaffeced35a7980d7b40955fa",
+      "restore_audit_sha256": "50c231b08c308fe8c282433b6e241f259f26d1ce7be692ffef556124d815b064"
+    },
+    {
+      "identity": 313,
+      "from": "    require(enabled['config_sha256'] != closed['config_sha256'], 313)\n",
+      "to": "    require(True, 313)\n",
+      "offset": 1469,
+      "copy_before_sha256": "4dbf1f43f0cb384d79b6c6eed01f5f29df2d962eaffeced35a7980d7b40955fa",
+      "mutant_sha256": "f3a6a5155e768b75f49bc2d721cc015fb69d2339ddf05e07d2196242c46945a3",
+      "failed_vectors": [
+        313
+      ],
+      "restored_sha256": "4dbf1f43f0cb384d79b6c6eed01f5f29df2d962eaffeced35a7980d7b40955fa",
+      "restore_audit_sha256": "f3a6a5155e768b75f49bc2d721cc015fb69d2339ddf05e07d2196242c46945a3"
+    },
+    {
+      "identity": 314,
+      "from": "    require(enabled['reached_required_frontier'] is True, 314)\n",
+      "to": "    require(True, 314)\n",
+      "offset": 1539,
+      "copy_before_sha256": "4dbf1f43f0cb384d79b6c6eed01f5f29df2d962eaffeced35a7980d7b40955fa",
+      "mutant_sha256": "a9d576d3a0c960bc6c62c3f9e670e97af3d918182d3c1c725a8b6f160301cdb8",
+      "failed_vectors": [
+        314
+      ],
+      "restored_sha256": "4dbf1f43f0cb384d79b6c6eed01f5f29df2d962eaffeced35a7980d7b40955fa",
+      "restore_audit_sha256": "a9d576d3a0c960bc6c62c3f9e670e97af3d918182d3c1c725a8b6f160301cdb8"
+    }
+  ],
+  "probe": {
+    "raw_rows": [
+      [
+        "0",
+        "0",
+        "-7201",
+        "missing workchain engine Basic:1129206833 for workchain 2",
+        "2086c9b6abe0d1f6ac55753a4fe0e27b258ea2b871d8e37bc582d87aac718b39"
+      ],
+      [
+        "0",
+        "1",
+        "-7201",
+        "descriptor has no registered block engine",
+        "592d680f96881d8280782bb88708872bfbaa7f699ccc80e5d8e38007fd85e145"
+      ],
+      [
+        "1",
+        "0",
+        "-7201",
+        "block transition is not activated by global version and capability",
+        "2086c9b6abe0d1f6ac55753a4fe0e27b258ea2b871d8e37bc582d87aac718b39"
+      ],
+      [
+        "1",
+        "1",
+        "0",
+        "",
+        "592d680f96881d8280782bb88708872bfbaa7f699ccc80e5d8e38007fd85e145"
+      ]
+    ],
+    "scope": "Production resolver result only; activation identity intentionally not classified until shared helper arrives. No transaction/export claims."
+  },
+  "binary_sha256": "8876d5b631d9c1db12d7c66c0f748b7411768db209227f86b1598d8ff33e2e98",
+  "original_source_unchanged": true
+}

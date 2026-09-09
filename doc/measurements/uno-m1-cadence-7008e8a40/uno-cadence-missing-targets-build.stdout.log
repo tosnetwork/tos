@@ -1,0 +1,4 @@
+[1/4] Building CXX object test/validator/consensus/CMakeFiles/test-validator-manager-resource-policy.dir/test-validator-manager-resource-policy.cpp.o
+[2/4] Linking CXX executable test/validator/consensus/test-validator-manager-resource-policy
+[3/4] Building CXX object test/validator/consensus/CMakeFiles/test-consensus.dir/test-consensus.cpp.o
+[4/4] Linking CXX executable test/validator/consensus/test-consensus

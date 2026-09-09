@@ -1,0 +1,6 @@
+6c6e93894:crypto/test/test-workchain-block.cpp:233:    ASSERT_EQ(cs.fetch_ulong(32), 0xb7226beau);
+6c6e93894:crypto/test/test-workchain-block.cpp:241:      b.store_long(defect == 0 ? 0 : 0xb7226bea, 32);
+6c6e93894:crypto/test/test-workchain-block.cpp:373:          : vm::CellBuilder().store_long(0xb7226bea, 32)
+6c6e93894:crypto/test/test-workchain-block.cpp:9147:    malformed.store_long(0xb7226bea, 32);
+6c6e93894:doc/uno-v2-resource-policy-wire.md:44:| uno_v2_engine_configuration | b7226bea | 32 / 2 |
+6c6e93894:test/test-counter-disk-integration.cmake:99:<b x{b7226bea} s, probe_resources ref, <b x{50524231} s, b> ref, b> constant probe_config

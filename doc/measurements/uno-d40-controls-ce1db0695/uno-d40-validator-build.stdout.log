@@ -1,0 +1,16 @@
+[1/16] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/config.cpp.o
+[2/16] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/proof.cpp.o
+[3/16] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/ihr-message.cpp.o
+[4/16] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/shard.cpp.o
+[5/16] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/external-message.cpp.o
+[6/16] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/check-proof.cpp.o
+[7/16] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/ext-message-checker.cpp.o
+[8/16] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/ext-message-pool.cpp.o
+[9/16] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/out-msg-queue-proof.cpp.o
+[10/16] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/top-shard-descr.cpp.o
+[11/16] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/fabric.cpp.o
+[12/16] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/accept-block.cpp.o
+[13/16] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/collator.cpp.o
+[14/16] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/validate-query.cpp.o
+[15/16] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/liteserver.cpp.o
+[16/16] Linking CXX static library validator/impl/libtos_validator.a

@@ -1,0 +1,17 @@
+{
+  "fixture_commit": "88f91b2a365dcfe33096bf116dafac998f856464",
+  "fixture_path": "crypto/test/test-workchain-activation-control.cpp",
+  "fixture_blob_sha256": "be43db6e4694c6d6d9bd3588ff59b74f45dfdbbf8d4cfd5678aa35e61b55346f",
+  "fixture_git_blob_oid": "7e32b0ea8ee516542915c89a8561e0728cd8d3eb",
+  "binary_path": "/tmp/uno-publication-build/test-workchain-activation-control",
+  "binary_sha256": "8876d5b631d9c1db12d7c66c0f748b7411768db209227f86b1598d8ff33e2e98",
+  "probe_stdout_sha256": "733efbdfc547676767c5c7b3b64884a4d24c2383b27b48e1517afdcb8d7c151b",
+  "probe_stderr_sha256": "2272a338f445df6b86bff5e50c6de2bd76f4274dbeb7f2ef1b09a1a564e55c4a",
+  "scope": "Real scoped resolver output; registered/off is row 3, unregistered/on is row 2, both observed errors. Unregistered/off remains unknown to the shared classifier.",
+  "linked_production_sources": {
+    "crypto/block/workchain-execution-dispatch.cpp": "be99a089704b50e7d462e83316028be22a6cad51edc2f568b9db7be3bc722311",
+    "crypto/block/workchain-execution-dispatch.h": "cda89ee512fcd10190c7510c2d928d03565946c3a479826f588992e14720a188",
+    "crypto/test/workchain-counter-engine.h": "58a51083aadcea70e36cf2d249bd7ad13b5f6a3059c7cdf89e561737cfe8e628"
+  },
+  "superseded_scope_note": "Original scope wording about row 1 being unknown is superseded by coordinator decision and shared helper c51936148: both actual earlier failure forms return False. Original scope and raw observations retained."
+}

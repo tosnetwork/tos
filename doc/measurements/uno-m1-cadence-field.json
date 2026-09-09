@@ -1,0 +1,488 @@
+{
+  "source_commit": "7008e8a40aa6a21cc899f9d459c70884ec0a7338",
+  "scope": "D51 M1 recording field only; no installation cadence check, activation change or M1 acceptance. Tests use explicit fixture acceptance intervals, not deployment acceptance certificates.",
+  "sources": [
+    {
+      "path": "crypto/block/block.tlb",
+      "commit": "7008e8a40aa6a21cc899f9d459c70884ec0a7338",
+      "sha256": "24b7d4b1677198280d7fa4fd0871111f56e33d0485042a9daea55ebf96b85b4b",
+      "git_blob_oid": "66373d2becf77596485f0275ae5c5e8cb100a473"
+    },
+    {
+      "path": "crypto/block/workchain-resource-policy.h",
+      "commit": "7008e8a40aa6a21cc899f9d459c70884ec0a7338",
+      "sha256": "4673011e7bd8ee11b803e09b251261bec12b520baf5dd3206e0b0c4f8365d460",
+      "git_blob_oid": "f61533c7dad2d39154e62123031484f42071192b"
+    },
+    {
+      "path": "crypto/test/test-workchain-block.cpp",
+      "commit": "7008e8a40aa6a21cc899f9d459c70884ec0a7338",
+      "sha256": "20b3d16805dde15dda6015fc5db57fce671bf2a175081572719bc242e1393b22",
+      "git_blob_oid": "c140fea5b85ab0d106ac518df9886fa7e5aac875"
+    },
+    {
+      "path": "test/test-counter-disk-integration.cmake",
+      "commit": "7008e8a40aa6a21cc899f9d459c70884ec0a7338",
+      "sha256": "6bdf551cac5f2ffec8fe88a9e17a9d070eff61eb3f086d84af3654cb30046eb3",
+      "git_blob_oid": "4bfb526d5493eff32475bcb3d782cde567082ec2"
+    }
+  ],
+  "controls": [
+    {
+      "name": "omit-wire-field",
+      "failure_identity": 402,
+      "record": "doc/measurements/uno-m1-cadence-7008e8a40/controls.json",
+      "source_blob_matches": true,
+      "restoration_reapplication_matches": true
+    },
+    {
+      "name": "discard-decoded-value",
+      "failure_identity": 405,
+      "record": "doc/measurements/uno-m1-cadence-7008e8a40-decode/controls.json",
+      "source_blob_matches": true,
+      "restoration_reapplication_matches": true
+    }
+  ],
+  "current_cadence_mutation": "Not constructible with existing encoder inputs; no current configuration input/lookup was added. Caller historical truthfulness remains outside this structural claim.",
+  "regression": {
+    "final": {
+      "exit_code": 0,
+      "tests": 126,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "junit": "doc/measurements/uno-m1-cadence-7008e8a40/uno-cadence-final-junit.xml"
+    },
+    "first_attempt": {
+      "exit_code": 8,
+      "tests": 126,
+      "failures": 10,
+      "skipped_or_not_run": 20,
+      "classification": "Missing direct executables and indirectly invoked test-tos-collator; dependency failures, not cadence guard evidence."
+    },
+    "command": [
+      "ctest",
+      "--test-dir",
+      "/tmp/uno-publication-build",
+      "--output-on-failure",
+      "--output-junit",
+      "/tmp/uno-cadence-final-junit.xml",
+      "-j8"
+    ],
+    "build_commands": [
+      [
+        "cmake",
+        "--build",
+        "/tmp/uno-publication-build",
+        "--target",
+        "all-tests",
+        "test-workchain-activation-control",
+        "-j32"
+      ],
+      [
+        "cmake",
+        "--build",
+        "/tmp/uno-publication-build",
+        "--target",
+        "test-consensus",
+        "test-validator-manager-resource-policy",
+        "-j32"
+      ],
+      [
+        "cmake",
+        "--build",
+        "/tmp/uno-publication-build",
+        "--target",
+        "test-tos-collator",
+        "create-state",
+        "-j32"
+      ]
+    ],
+    "environment": {
+      "FUNC_BIN": "/tmp/uno-publication-build/crypto/func",
+      "FIFT_BIN": "/tmp/uno-publication-build/crypto/fift",
+      "TOL_STDLIB": "/home/tomi/tos-m2/crypto/smartcont/tol-stdlib",
+      "CARGO_BUILD_JOBS": "32"
+    },
+    "scope": "126 tests registered in archived CMake configuration. Other optional I13 suites were not registered and are not claimed."
+  },
+  "helper_binding": {
+    "commit": "3822c76ed9dd10633b9cbc58c457ab55f373bc07",
+    "record": "doc/measurements/uno-m1-cadence-7008e8a40/helper-rebinding.json",
+    "self_checks": 8,
+    "consumer_ctest_passed": true,
+    "historical_controls": "c51936148 evidence remains historical; consumer mutations were not repeated."
+  },
+  "artifact_manifest": [
+    {
+      "path": "doc/measurements/uno-m1-cadence-7008e8a40/CMakeCache.txt",
+      "bytes": 52767,
+      "sha256": "3d617694b0e320aabce37870fd08c509e237cf4e09e1a5c8801f677b306f341e"
+    },
+    {
+      "path": "doc/measurements/uno-m1-cadence-7008e8a40/baseline.stderr.log",
+      "bytes": 104,
+      "sha256": "59e6f0f74c73a010038ea4f7bee58d72d7238b6cfff83ca97379f8ad614f0b08"
+    },
+    {
+      "path": "doc/measurements/uno-m1-cadence-7008e8a40/baseline.stdout.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "doc/measurements/uno-m1-cadence-7008e8a40/construction-sites-before.exit",
+      "bytes": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+    },
+    {
+      "path": "doc/measurements/uno-m1-cadence-7008e8a40/construction-sites-before.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "doc/measurements/uno-m1-cadence-7008e8a40/construction-sites-before.stdout.log",
+      "bytes": 1977,
+      "sha256": "1f39458ce2376cc6e38d3e42bf46d46f3feb9adc2077540afedf73d13f768384"
+    },
+    {
+      "path": "doc/measurements/uno-m1-cadence-7008e8a40/controls.json",
+      "bytes": 3347,
+      "sha256": "432cc3cc7712ac87e526abd5866b78add6adbb2d98523d9a5caaead3d17c34e0"
+    },
+    {
+      "path": "doc/measurements/uno-m1-cadence-7008e8a40/ctest-registered-commands.json",
+      "bytes": 85641,
+      "sha256": "b86eefc351b2eac1201f13d32d4010f7b7f10ecd87c4bf711079de85ec1a9e6c"
+    },
+    {
+      "path": "doc/measurements/uno-m1-cadence-7008e8a40/driver-decode.py",
+      "bytes": 4171,
+      "sha256": "ee1c8bae0712f7d811987dca297d458f0803fae0d33d30b40f72befa650c0dab"
+    },
+    {
+      "path": "doc/measurements/uno-m1-cadence-7008e8a40/driver-decode.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "doc/measurements/uno-m1-cadence-7008e8a40/driver-decode.stdout.log",
+      "bytes": 174,
+      "sha256": "3e011d0ab422347eb7304829d6abf492a8bc71b70c3a48e667cbf28c6b7be0e0"
+    },
+    {
+      "path": "doc/measurements/uno-m1-cadence-7008e8a40/driver-initial.py",
+      "bytes": 4154,
+      "sha256": "8a3330042f3637506dc2b5f87168bdf8e60ef7c683981142f0bae428d513e25a"
+    },
+    {
+      "path": "doc/measurements/uno-m1-cadence-7008e8a40/driver-initial.stderr.log",
+      "bytes": 961,
+      "sha256": "bc7d8457f5465990729d1ec4fc3ae69b59c704c6ef1863db6999deffb2f1aa28"
+    },
+    {
+      "path": "doc/measurements/uno-m1-cadence-7008e8a40/driver-initial.stdout.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "doc/measurements/uno-m1-cadence-7008e8a40/execution-dependencies.json",
+      "bytes": 8338,
+      "sha256": "5c9e32702375f5c7b80428f1ffd7e6bbd6a6d58c5198482dd30bb3a770797f84"
+    },
+    {
+      "path": "doc/measurements/uno-m1-cadence-7008e8a40/fixture-scan.json",
+      "bytes": 1179,
+      "sha256": "1002144bf037bc2e7c94ca0dc9b558cd25a0e04894395dc8098946aa5bba3934"
+    },
+    {
+      "path": "doc/measurements/uno-m1-cadence-7008e8a40/fixture-scan.py",
+      "bytes": 3001,
+      "sha256": "3c1cefcd2371e844ac566cd6a1dcdbed869d23dccfe4faa53e89407c714ba483"
+    },
+    {
+      "path": "doc/measurements/uno-m1-cadence-7008e8a40/generation.json",
+      "bytes": 1089,
+      "sha256": "0530a3603911e3a25ba3bd3c10ca59ba16bc95fbfe78550c660211b96be94da6"
+    },
+    {
+      "path": "doc/measurements/uno-m1-cadence-7008e8a40/helper-rebinding.json",
+      "bytes": 1393,
+      "sha256": "6133bd651d788f1f6e05397ab1febf0fe6bff61b55c536461f0733213c69b16a"
+    },
+    {
+      "path": "doc/measurements/uno-m1-cadence-7008e8a40/new-tag-collision-before.exit",
+      "bytes": 2,
+      "sha256": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865"
+    },
+    {
+      "path": "doc/measurements/uno-m1-cadence-7008e8a40/new-tag-collision-before.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "doc/measurements/uno-m1-cadence-7008e8a40/new-tag-collision-before.stdout.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "doc/measurements/uno-m1-cadence-7008e8a40/old-tag-sites-before.exit",
+      "bytes": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+    },
+    {
+      "path": "doc/measurements/uno-m1-cadence-7008e8a40/old-tag-sites-before.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "doc/measurements/uno-m1-cadence-7008e8a40/old-tag-sites-before.stdout.log",
+      "bytes": 650,
+      "sha256": "976fd56256a444b4f3fdd55ea207f9ea3259eedcfed7f587af7b746a73fe480f"
+    },
+    {
+      "path": "doc/measurements/uno-m1-cadence-7008e8a40/omit-wire-field-build.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "doc/measurements/uno-m1-cadence-7008e8a40/omit-wire-field-build.stdout.log",
+      "bytes": 5363,
+      "sha256": "e92a759b4bdfcb1c7c0d78d1236df028946cefb04f161710c05067caa84dc003"
+    },
+    {
+      "path": "doc/measurements/uno-m1-cadence-7008e8a40/omit-wire-field-restore-build.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "doc/measurements/uno-m1-cadence-7008e8a40/omit-wire-field-restore-build.stdout.log",
+      "bytes": 5263,
+      "sha256": "7f570d0d628f991afc66002100eaf6be08d29d274e865a16f738f758989a0ab9"
+    },
+    {
+      "path": "doc/measurements/uno-m1-cadence-7008e8a40/omit-wire-field-restore-run.stderr.log",
+      "bytes": 104,
+      "sha256": "a8a78c801850a0455f69e507abe9bcd7a28f9b451da7b286c55a02da143e305c"
+    },
+    {
+      "path": "doc/measurements/uno-m1-cadence-7008e8a40/omit-wire-field-restore-run.stdout.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "doc/measurements/uno-m1-cadence-7008e8a40/omit-wire-field-run.stderr.log",
+      "bytes": 6361,
+      "sha256": "85cf8f85ff558e4a8c144b9662503ca5cff7c102d1a5cc80945a711dd8104d73"
+    },
+    {
+      "path": "doc/measurements/uno-m1-cadence-7008e8a40/omit-wire-field-run.stdout.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "doc/measurements/uno-m1-cadence-7008e8a40/uno-cadence-baseline.stderr.log",
+      "bytes": 104,
+      "sha256": "190845acae21d8a0bb364fccdadf781224a0f46530f6ccbac8d320a86c3a059b"
+    },
+    {
+      "path": "doc/measurements/uno-m1-cadence-7008e8a40/uno-cadence-baseline.stdout.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "doc/measurements/uno-m1-cadence-7008e8a40/uno-cadence-block-baseline.stderr.log",
+      "bytes": 10380,
+      "sha256": "801ff9d02fce12cacdaa55c0318fee39ee5953702f740bf003462bd82ba55a3e"
+    },
+    {
+      "path": "doc/measurements/uno-m1-cadence-7008e8a40/uno-cadence-block-baseline.stdout.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "doc/measurements/uno-m1-cadence-7008e8a40/uno-cadence-build.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "doc/measurements/uno-m1-cadence-7008e8a40/uno-cadence-build.stdout.log",
+      "bytes": 2357,
+      "sha256": "ecd1990a71bf8d11f1be3dee09e4768b0796c52f6f4f516e51608acd984ac8c8"
+    },
+    {
+      "path": "doc/measurements/uno-m1-cadence-7008e8a40/uno-cadence-collator-target-build.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "doc/measurements/uno-m1-cadence-7008e8a40/uno-cadence-collator-target-build.stdout.log",
+      "bytes": 438,
+      "sha256": "99c2919cf07ec064b14b5146bc54514d712dfa60aa4f044a128812663094f238"
+    },
+    {
+      "path": "doc/measurements/uno-m1-cadence-7008e8a40/uno-cadence-configure-new-helper.stderr.log",
+      "bytes": 443,
+      "sha256": "a900bfe14ea12d64a8c4ea2904579660f6e9fe0d014c479f82b746ca70f3b37e"
+    },
+    {
+      "path": "doc/measurements/uno-m1-cadence-7008e8a40/uno-cadence-configure-new-helper.stdout.log",
+      "bytes": 3489,
+      "sha256": "0196446d9e48fa53fd1bb7868cf31f18fa182369b3db7c4eed206a573c53831b"
+    },
+    {
+      "path": "doc/measurements/uno-m1-cadence-7008e8a40/uno-cadence-configure.stderr.log",
+      "bytes": 443,
+      "sha256": "a900bfe14ea12d64a8c4ea2904579660f6e9fe0d014c479f82b746ca70f3b37e"
+    },
+    {
+      "path": "doc/measurements/uno-m1-cadence-7008e8a40/uno-cadence-configure.stdout.log",
+      "bytes": 3489,
+      "sha256": "0196446d9e48fa53fd1bb7868cf31f18fa182369b3db7c4eed206a573c53831b"
+    },
+    {
+      "path": "doc/measurements/uno-m1-cadence-7008e8a40/uno-cadence-final-ctest.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "doc/measurements/uno-m1-cadence-7008e8a40/uno-cadence-final-ctest.stdout.log",
+      "bytes": 19892,
+      "sha256": "35b9b72c0fa78b9121462d88d3e53e82d139cee4c6aecb72b4569087fd9cea0f"
+    },
+    {
+      "path": "doc/measurements/uno-m1-cadence-7008e8a40/uno-cadence-final-junit.xml",
+      "bytes": 129852,
+      "sha256": "f512db7cbd3e6cd3d3d852c48d51a52a66e010d08267bba24da616417f5c0766"
+    },
+    {
+      "path": "doc/measurements/uno-m1-cadence-7008e8a40/uno-cadence-first-build.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "doc/measurements/uno-m1-cadence-7008e8a40/uno-cadence-first-build.stdout.log",
+      "bytes": 6461,
+      "sha256": "505102cfcd10efa25459fdf97296dddee510d29f392faa5552a699f546940305"
+    },
+    {
+      "path": "doc/measurements/uno-m1-cadence-7008e8a40/uno-cadence-full-build-restored.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "doc/measurements/uno-m1-cadence-7008e8a40/uno-cadence-full-build-restored.stdout.log",
+      "bytes": 19237,
+      "sha256": "a28db538e11165544e4db52f2cc44a2913126f0c8df3a0d66e51e40a6206597c"
+    },
+    {
+      "path": "doc/measurements/uno-m1-cadence-7008e8a40/uno-cadence-full-build.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "doc/measurements/uno-m1-cadence-7008e8a40/uno-cadence-full-build.stdout.log",
+      "bytes": 31081,
+      "sha256": "16cb21f83e34cb95ae4ca16729bf23cf8474a181c4be573763907f674c41691e"
+    },
+    {
+      "path": "doc/measurements/uno-m1-cadence-7008e8a40/uno-cadence-full-ctest.stderr.log",
+      "bytes": 1931,
+      "sha256": "e803b92eb69d0e1ed27d2c3f39a3c6e06f5030eaf734430093910ce3889a9fa4"
+    },
+    {
+      "path": "doc/measurements/uno-m1-cadence-7008e8a40/uno-cadence-full-ctest.stdout.log",
+      "bytes": 74414,
+      "sha256": "439d34bddad39c6e447620bc94c62fd0225d7b558731982cd18a15fc41e8d7aa"
+    },
+    {
+      "path": "doc/measurements/uno-m1-cadence-7008e8a40/uno-cadence-full-junit.xml",
+      "bytes": 113647,
+      "sha256": "65d3ad5619d0ef383aa75d671d412f06f7bb63b561367c1c1d4abd037654a44a"
+    },
+    {
+      "path": "doc/measurements/uno-m1-cadence-7008e8a40/uno-cadence-helper-new.stderr.log",
+      "bytes": 106,
+      "sha256": "322e9bec5d6bbde47d6476008f309469c1e42048ed96320a3bae52af8811e27a"
+    },
+    {
+      "path": "doc/measurements/uno-m1-cadence-7008e8a40/uno-cadence-helper-new.stdout.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "doc/measurements/uno-m1-cadence-7008e8a40/uno-cadence-helper.stderr.log",
+      "bytes": 105,
+      "sha256": "e586fc0f3bb2a05f4c80f07d1b4c6171e830592f6c7aaf70d4af3b0aa3ebd072"
+    },
+    {
+      "path": "doc/measurements/uno-m1-cadence-7008e8a40/uno-cadence-helper.stdout.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "doc/measurements/uno-m1-cadence-7008e8a40/uno-cadence-missing-targets-build.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "doc/measurements/uno-m1-cadence-7008e8a40/uno-cadence-missing-targets-build.stdout.log",
+      "bytes": 414,
+      "sha256": "81a0525665067821cb817d0fa7f90e559f7487cf3bdedf2e8940a418a60c9a70"
+    },
+    {
+      "path": "doc/measurements/uno-m1-cadence-7008e8a40-decode/baseline.stderr.log",
+      "bytes": 104,
+      "sha256": "5174f5567d3906c3e73628622b4ebc1b456486e449141adba7abad37e2f7d1da"
+    },
+    {
+      "path": "doc/measurements/uno-m1-cadence-7008e8a40-decode/baseline.stdout.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "doc/measurements/uno-m1-cadence-7008e8a40-decode/controls.json",
+      "bytes": 3342,
+      "sha256": "232e7a4c3aebaf42b25bb4f352fe0db25f716e4dc0691aa080551812d873bb47"
+    },
+    {
+      "path": "doc/measurements/uno-m1-cadence-7008e8a40-decode/discard-decoded-value-build.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "doc/measurements/uno-m1-cadence-7008e8a40-decode/discard-decoded-value-build.stdout.log",
+      "bytes": 5263,
+      "sha256": "410a07b6a00806e1e888f8ee689fe46a023a3287ab8fdf3b88a7b51a0fcda9e4"
+    },
+    {
+      "path": "doc/measurements/uno-m1-cadence-7008e8a40-decode/discard-decoded-value-restore-build.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "doc/measurements/uno-m1-cadence-7008e8a40-decode/discard-decoded-value-restore-build.stdout.log",
+      "bytes": 5263,
+      "sha256": "716241522a62511f854aa88a2b6ebe748d1ffff6c7d9bb6c9b837c5422f8130f"
+    },
+    {
+      "path": "doc/measurements/uno-m1-cadence-7008e8a40-decode/discard-decoded-value-restore-run.stderr.log",
+      "bytes": 104,
+      "sha256": "49a0449f300b9120d72f198cba4b3119d1bb265c97765b5dc2ee4424bbf68fc7"
+    },
+    {
+      "path": "doc/measurements/uno-m1-cadence-7008e8a40-decode/discard-decoded-value-restore-run.stdout.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "doc/measurements/uno-m1-cadence-7008e8a40-decode/discard-decoded-value-run.stderr.log",
+      "bytes": 6393,
+      "sha256": "f372ab4732c7d0bd133ac843b451024d26d1c0b3b4b90522edd417354b6a48e6"
+    },
+    {
+      "path": "doc/measurements/uno-m1-cadence-7008e8a40-decode/discard-decoded-value-run.stdout.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ]
+}

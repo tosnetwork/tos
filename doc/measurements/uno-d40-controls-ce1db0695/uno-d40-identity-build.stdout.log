@@ -1,0 +1,21 @@
+[1/21] Generate block tlb source files
+[2/21] Building CXX object crypto/CMakeFiles/test-workchain-instance-identity.dir/test/test-workchain-instance-identity.cpp.o
+[3/21] Building CXX object crypto/CMakeFiles/tos_block.dir/block/output-queue-merger.cpp.o
+[4/21] Building CXX object crypto/CMakeFiles/tos_crypto.dir/vm/cp0.cpp.o
+[5/21] Building CXX object crypto/CMakeFiles/tos_block.dir/block/precompiled-smc/PrecompiledSmartContract.cpp.o
+[6/21] Building CXX object crypto/CMakeFiles/tos_block.dir/block/workchain-instance-identity.cpp.o
+[7/21] Building CXX object crypto/CMakeFiles/tos_block.dir/block/validator-set.cpp.o
+[8/21] Building CXX object crypto/CMakeFiles/tos_block.dir/block/block-parse.cpp.o
+[9/21] Building CXX object crypto/CMakeFiles/tos_crypto.dir/vm/boc-compression.cpp.o
+[10/21] Building CXX object crypto/CMakeFiles/tos_block.dir/block/check-proof.cpp.o
+[11/21] Building CXX object crypto/CMakeFiles/tos_block.dir/block/workchain-block-execution.cpp.o
+[12/21] Building CXX object crypto/CMakeFiles/tos_block.dir/block/workchain-execution-dispatch.cpp.o
+[13/21] Building CXX object crypto/CMakeFiles/tos_crypto.dir/vm/tosops.cpp.o
+[14/21] Building CXX object crypto/CMakeFiles/tos_block.dir/block/block.cpp.o
+[15/21] Building CXX object crypto/CMakeFiles/tos_block.dir/block/mc-config.cpp.o
+[16/21] Building CXX object crypto/CMakeFiles/tos_block.dir/block/signature-set.cpp.o
+[17/21] Building CXX object crypto/CMakeFiles/tos_block.dir/block/transaction.cpp.o
+[18/21] Building CXX object crypto/CMakeFiles/tos_block.dir/block/block-auto.cpp.o
+[19/21] Linking CXX static library crypto/libtos_block.a
+[20/21] Linking CXX static library crypto/libtos_crypto.a
+[21/21] Linking CXX executable crypto/test-workchain-instance-identity

@@ -1,0 +1,1058 @@
+Internal ctest changing into directory: /tmp/uno-publication-build
+Test project /tmp/uno-publication-build
+        Start   1: test-workchain-activation-control-gates
+        Start   2: test-workchain-proof-boundary-gates
+        Start   3: test-workchain-proof-backend
+        Start   4: test-workchain-proof-operation-trace
+        Start   5: test-quorum-static-grep
+        Start   6: plumtree-graph-sim-smoke
+        Start   7: plumtree-graph-sim-simple-smoke
+        Start   8: plumtree-graph-sim-loss
+  1/126 Test   #5: test-quorum-static-grep ..........................................   Passed    0.05 sec
+        Start   9: plumtree-graph-sim-simple-loss
+  2/126 Test   #7: plumtree-graph-sim-simple-smoke ..................................   Passed    0.08 sec
+        Start  10: plumtree-graph-sim-partition-recovery
+  3/126 Test   #9: plumtree-graph-sim-simple-loss ...................................   Passed    0.07 sec
+        Start  11: plumtree-graph-sim-selective-forwarding
+  4/126 Test   #1: test-workchain-activation-control-gates ..........................   Passed    0.22 sec
+        Start  12: plumtree-graph-sim-rotating-outage
+  5/126 Test   #2: test-workchain-proof-boundary-gates ..............................   Passed    0.27 sec
+        Start  13: plumtree-graph-sim-simple-selective-forwarding
+  6/126 Test  #13: plumtree-graph-sim-simple-selective-forwarding ...................   Passed    0.06 sec
+        Start  14: plumtree-graph-sim-simple-rotating-outage
+  7/126 Test  #14: plumtree-graph-sim-simple-rotating-outage ........................   Passed    0.04 sec
+        Start  15: plumtree-graph-sim-fec-stress
+  8/126 Test   #8: plumtree-graph-sim-loss ..........................................   Passed    0.51 sec
+        Start  16: plumtree-graph-sim-simple-stress
+  9/126 Test  #10: plumtree-graph-sim-partition-recovery ............................   Passed    0.57 sec
+        Start  17: test-counter-collator-admission
+ 10/126 Test  #17: test-counter-collator-admission ..................................***Failed    0.04 sec
+CMake Error at /home/tomi/tos-m2/test/test-counter-collator-admission.cmake:9 (message):
+  Expected exit 2, got No such file or directory:
+Call Stack (most recent call first):
+  /home/tomi/tos-m2/test/test-counter-collator-admission.cmake:17 (expect_failure)
+
+
+
+        Start  18: test-counter-disk-integration
+ 11/126 Test  #11: plumtree-graph-sim-selective-forwarding ..........................   Passed    0.59 sec
+        Start  19: test-counter-account-binding-readiness
+ 12/126 Test   #6: plumtree-graph-sim-smoke .........................................   Passed    0.74 sec
+        Start  20: test-counter-fixture-lifecycle
+ 13/126 Test   #3: test-workchain-proof-backend .....................................   Passed    0.82 sec
+        Start  21: test-counter-idle-replay
+ 14/126 Test  #20: test-counter-fixture-lifecycle ...................................   Passed    0.09 sec
+        Start  22: test-counter-self-delivery
+ 15/126 Test  #18: test-counter-disk-integration ....................................***Failed    0.15 sec
+-- Counter fixture active; retained if interrupted: /tmp/uno-publication-build/counter-integration-981d56d3d53b
+CMake Error at /home/tomi/tos-m2/test/test-counter-disk-integration.cmake:161 (message):
+  bootstrap: exit No such file or directory, expected 0; see
+  /tmp/uno-publication-build/counter-integration-981d56d3d53b/bootstrap.log
+Call Stack (most recent call first):
+  /home/tomi/tos-m2/test/test-counter-disk-integration.cmake:202 (run_node)
+
+
+
+CMake Error at /home/tomi/tos-m2/test/counter-fixture-lifecycle.cmake:58 (message):
+  Counter fixture FAILED (1); retained for inspection:
+  /tmp/uno-publication-build/counter-integration-981d56d3d53b
+Call Stack (most recent call first):
+  /home/tomi/tos-m2/test/test-counter-disk-integration.cmake:3 (counter_run_fixture)
+
+
+
+        Start  23: test-counter-cross-delivery
+ 16/126 Test  #16: plumtree-graph-sim-simple-stress .................................   Passed    0.34 sec
+        Start  24: test-counter-native-sender
+ 17/126 Test  #12: plumtree-graph-sim-rotating-outage ...............................   Passed    0.68 sec
+        Start  25: test-counter-activation-missing_capability
+ 18/126 Test  #19: test-counter-account-binding-readiness ...........................***Failed    0.18 sec
+-- Counter fixture active; retained if interrupted: /tmp/uno-publication-build/counter-integration-3a81181df222
+CMake Error at /home/tomi/tos-m2/test/test-counter-disk-integration.cmake:161 (message):
+  bootstrap: exit No such file or directory, expected 0; see
+  /tmp/uno-publication-build/counter-integration-3a81181df222/bootstrap.log
+Call Stack (most recent call first):
+  /home/tomi/tos-m2/test/test-counter-disk-integration.cmake:202 (run_node)
+
+
+
+CMake Error at /home/tomi/tos-m2/test/counter-fixture-lifecycle.cmake:58 (message):
+  Counter fixture FAILED (1); retained for inspection:
+  /tmp/uno-publication-build/counter-integration-3a81181df222
+Call Stack (most recent call first):
+  /home/tomi/tos-m2/test/test-counter-disk-integration.cmake:3 (counter_run_fixture)
+
+
+
+        Start  26: test-counter-config-presence-missing_capability
+ 19/126 Test  #21: test-counter-idle-replay .........................................***Failed    0.16 sec
+-- Counter fixture active; retained if interrupted: /tmp/uno-publication-build/counter-integration-a2de89fed205
+CMake Error at /home/tomi/tos-m2/test/test-counter-disk-integration.cmake:161 (message):
+  bootstrap: exit No such file or directory, expected 0; see
+  /tmp/uno-publication-build/counter-integration-a2de89fed205/bootstrap.log
+Call Stack (most recent call first):
+  /home/tomi/tos-m2/test/test-counter-disk-integration.cmake:202 (run_node)
+
+
+
+CMake Error at /home/tomi/tos-m2/test/counter-fixture-lifecycle.cmake:58 (message):
+  Counter fixture FAILED (1); retained for inspection:
+  /tmp/uno-publication-build/counter-integration-a2de89fed205
+Call Stack (most recent call first):
+  /home/tomi/tos-m2/test/test-counter-disk-integration.cmake:3 (counter_run_fixture)
+
+
+
+        Start  27: test-counter-activation-old_version
+ 20/126 Test  #22: test-counter-self-delivery .......................................***Failed    0.17 sec
+-- Counter fixture active; retained if interrupted: /tmp/uno-publication-build/counter-integration-d567a5369845
+CMake Error at /home/tomi/tos-m2/test/test-counter-disk-integration.cmake:161 (message):
+  bootstrap: exit No such file or directory, expected 0; see
+  /tmp/uno-publication-build/counter-integration-d567a5369845/bootstrap.log
+Call Stack (most recent call first):
+  /home/tomi/tos-m2/test/test-counter-disk-integration.cmake:202 (run_node)
+
+
+
+CMake Error at /home/tomi/tos-m2/test/counter-fixture-lifecycle.cmake:58 (message):
+  Counter fixture FAILED (1); retained for inspection:
+  /tmp/uno-publication-build/counter-integration-d567a5369845
+Call Stack (most recent call first):
+  /home/tomi/tos-m2/test/test-counter-disk-integration.cmake:3 (counter_run_fixture)
+
+
+
+        Start  28: test-counter-config-presence-old_version
+ 21/126 Test  #26: test-counter-config-presence-missing_capability ..................   Passed    0.13 sec
+        Start  29: test-counter-config-binding
+ 22/126 Test  #23: test-counter-cross-delivery ......................................***Failed    0.22 sec
+-- Counter fixture active; retained if interrupted: /tmp/uno-publication-build/counter-integration-f843b113dfee
+CMake Error at /home/tomi/tos-m2/test/test-counter-disk-integration.cmake:161 (message):
+  bootstrap: exit No such file or directory, expected 0; see
+  /tmp/uno-publication-build/counter-integration-f843b113dfee/bootstrap.log
+Call Stack (most recent call first):
+  /home/tomi/tos-m2/test/test-counter-disk-integration.cmake:202 (run_node)
+
+
+
+CMake Error at /home/tomi/tos-m2/test/counter-fixture-lifecycle.cmake:58 (message):
+  Counter fixture FAILED (1); retained for inspection:
+  /tmp/uno-publication-build/counter-integration-f843b113dfee
+Call Stack (most recent call first):
+  /home/tomi/tos-m2/test/test-counter-disk-integration.cmake:3 (counter_run_fixture)
+
+
+
+        Start  30: test-counter-engine-config
+ 23/126 Test  #25: test-counter-activation-missing_capability .......................***Failed    0.17 sec
+-- Counter fixture active; retained if interrupted: /tmp/uno-publication-build/counter-integration-1ff12e0eec1d
+CMake Error at /home/tomi/tos-m2/test/test-counter-disk-integration.cmake:161 (message):
+  bootstrap: exit No such file or directory, expected 0; see
+  /tmp/uno-publication-build/counter-integration-1ff12e0eec1d/bootstrap.log
+Call Stack (most recent call first):
+  /home/tomi/tos-m2/test/test-counter-disk-integration.cmake:202 (run_node)
+
+
+
+CMake Error at /home/tomi/tos-m2/test/counter-fixture-lifecycle.cmake:58 (message):
+  Counter fixture FAILED (1); retained for inspection:
+  /tmp/uno-publication-build/counter-integration-1ff12e0eec1d
+Call Stack (most recent call first):
+  /home/tomi/tos-m2/test/test-counter-disk-integration.cmake:3 (counter_run_fixture)
+
+
+
+        Start  31: test-uno-partition-storage-smoke
+ 24/126 Test  #24: test-counter-native-sender .......................................***Failed    0.22 sec
+-- Counter fixture active; retained if interrupted: /tmp/uno-publication-build/counter-integration-64725eadaed1
+CMake Error at /home/tomi/tos-m2/test/test-counter-disk-integration.cmake:161 (message):
+  bootstrap: exit No such file or directory, expected 0; see
+  /tmp/uno-publication-build/counter-integration-64725eadaed1/bootstrap.log
+Call Stack (most recent call first):
+  /home/tomi/tos-m2/test/test-counter-disk-integration.cmake:202 (run_node)
+
+
+
+CMake Error at /home/tomi/tos-m2/test/counter-fixture-lifecycle.cmake:58 (message):
+  Counter fixture FAILED (1); retained for inspection:
+  /tmp/uno-publication-build/counter-integration-64725eadaed1
+Call Stack (most recent call first):
+  /home/tomi/tos-m2/test/test-counter-disk-integration.cmake:3 (counter_run_fixture)
+
+
+
+        Start  32: test-uno-incremental-storage-smoke
+ 25/126 Test  #28: test-counter-config-presence-old_version .........................   Passed    0.13 sec
+        Start  33: test-uno-split-storage-smoke
+ 26/126 Test  #27: test-counter-activation-old_version ..............................***Failed    0.17 sec
+-- Counter fixture active; retained if interrupted: /tmp/uno-publication-build/counter-integration-02c9e1076c62
+CMake Error at /home/tomi/tos-m2/test/test-counter-disk-integration.cmake:161 (message):
+  bootstrap: exit No such file or directory, expected 0; see
+  /tmp/uno-publication-build/counter-integration-02c9e1076c62/bootstrap.log
+Call Stack (most recent call first):
+  /home/tomi/tos-m2/test/test-counter-disk-integration.cmake:202 (run_node)
+
+
+
+CMake Error at /home/tomi/tos-m2/test/counter-fixture-lifecycle.cmake:58 (message):
+  Counter fixture FAILED (1); retained for inspection:
+  /tmp/uno-publication-build/counter-integration-02c9e1076c62
+Call Stack (most recent call first):
+  /home/tomi/tos-m2/test/test-counter-disk-integration.cmake:3 (counter_run_fixture)
+
+
+
+        Start  34: test-uno-split-prefix-storage-smoke
+ 27/126 Test  #29: test-counter-config-binding ......................................   Passed    0.14 sec
+        Start  35: test-ed25519
+ 28/126 Test  #32: test-uno-incremental-storage-smoke ...............................   Passed    0.11 sec
+        Start  36: test-bigint
+ 29/126 Test  #31: test-uno-partition-storage-smoke .................................   Passed    0.12 sec
+        Start  37: test-vm
+ 30/126 Test  #30: test-counter-engine-config .......................................***Failed    0.16 sec
+-- Counter fixture active; retained if interrupted: /tmp/uno-publication-build/counter-integration-a58f4fb4391c
+CMake Error at /home/tomi/tos-m2/test/test-counter-disk-integration.cmake:161 (message):
+  bootstrap: exit No such file or directory, expected 0; see
+  /tmp/uno-publication-build/counter-integration-a58f4fb4391c/bootstrap.log
+Call Stack (most recent call first):
+  /home/tomi/tos-m2/test/test-counter-disk-integration.cmake:202 (run_node)
+
+
+
+CMake Error at /home/tomi/tos-m2/test/counter-fixture-lifecycle.cmake:58 (message):
+  Counter fixture FAILED (1); retained for inspection:
+  /tmp/uno-publication-build/counter-integration-a58f4fb4391c
+Call Stack (most recent call first):
+  /home/tomi/tos-m2/test/test-counter-disk-integration.cmake:3 (counter_run_fixture)
+
+
+
+        Start  38: test-fift
+ 31/126 Test  #33: test-uno-split-storage-smoke .....................................   Passed    0.12 sec
+        Start  39: test-cells
+ 32/126 Test  #34: test-uno-split-prefix-storage-smoke ..............................   Passed    0.13 sec
+        Start  40: test-workchain-block
+ 33/126 Test  #39: test-cells .......................................................   Passed    0.06 sec
+        Start  41: test-workchain-proof-work
+ 34/126 Test  #41: test-workchain-proof-work ........................................   Passed    0.01 sec
+        Start  42: test-workchain-proof-contracts
+ 35/126 Test  #42: test-workchain-proof-contracts ...................................   Passed    0.00 sec
+        Start  43: test-workchain-admission
+ 36/126 Test  #43: test-workchain-admission .........................................   Passed    0.01 sec
+        Start  44: test-smartcont
+ 37/126 Test  #15: plumtree-graph-sim-fec-stress ....................................   Passed    2.44 sec
+        Start  45: test-net
+ 38/126 Test  #45: test-net .........................................................   Passed    0.54 sec
+        Start  46: test-tdactor
+ 39/126 Test  #40: test-workchain-block .............................................   Passed    3.38 sec
+        Start  47: test-tdutils
+ 40/126 Test  #38: test-fift ........................................................   Passed    3.51 sec
+        Start  48: test-toslib-offline
+ 41/126 Test  #44: test-smartcont ...................................................   Passed   11.11 sec
+        Start  49: test-func
+ 42/126 Test  #35: test-ed25519 .....................................................   Passed   11.89 sec
+        Start  50: test-func-legacy
+ 43/126 Test  #49: test-func ........................................................   Passed    0.90 sec
+        Start  51: test-tol
+ 44/126 Test  #50: test-func-legacy .................................................   Passed    1.16 sec
+        Start  52: test-adnl
+ 45/126 Test   #4: test-workchain-proof-operation-trace .............................   Passed   17.00 sec
+        Start  53: test-dht
+ 46/126 Test  #46: test-tdactor .....................................................   Passed   17.11 sec
+        Start  54: test-rldp2
+ 47/126 Test  #36: test-bigint ......................................................   Passed   21.94 sec
+        Start  55: test-rldp2-connection-cap
+ 48/126 Test  #55: test-rldp2-connection-cap ........................................   Passed    0.04 sec
+        Start  56: test-rldp2-query-eviction
+ 49/126 Test  #54: test-rldp2 .......................................................   Passed    4.09 sec
+        Start  57: test-rldp-http-proxy-routing
+ 50/126 Test  #57: test-rldp-http-proxy-routing .....................................   Passed    0.01 sec
+        Start  58: test-overlay-peer-cleanup
+ 51/126 Test  #58: test-overlay-peer-cleanup ........................................   Passed    0.01 sec
+        Start  59: test-download-state-budget
+ 52/126 Test  #51: test-tol .........................................................   Passed   11.27 sec
+        Start  60: test-download-next-blocks-validation
+ 53/126 Test  #60: test-download-next-blocks-validation .............................   Passed    0.01 sec
+        Start  61: test-ext-message-pool
+ 54/126 Test  #61: test-ext-message-pool ............................................   Passed    0.01 sec
+        Start  62: test-msg-envelope
+ 55/126 Test  #62: test-msg-envelope ................................................   Passed    0.00 sec
+        Start  63: test-rate-limiter
+ 56/126 Test  #63: test-rate-limiter ................................................   Passed    0.00 sec
+        Start  64: test-config-transition
+ 57/126 Test  #64: test-config-transition ...........................................   Passed    0.01 sec
+        Start  65: test-json-rpc-parse
+ 58/126 Test  #65: test-json-rpc-parse ..............................................   Passed    0.00 sec
+        Start  66: test-http-server-limits
+ 59/126 Test  #56: test-rldp2-query-eviction ........................................   Passed    1.71 sec
+        Start  67: test-wallet-message-processor
+ 60/126 Test  #67: test-wallet-message-processor ....................................   Passed    0.01 sec
+        Start  68: test-vm-exception-hardening
+ 61/126 Test  #68: test-vm-exception-hardening ......................................   Passed    0.01 sec
+        Start  69: test-celldb-streaming-import
+ 62/126 Test  #69: test-celldb-streaming-import .....................................   Passed    0.01 sec
+        Start  70: test-celldb-actor-restart
+ 63/126 Test  #48: test-toslib-offline ..............................................   Passed   20.36 sec
+        Start  71: test-validator-options
+ 64/126 Test  #71: test-validator-options ...........................................   Passed    0.01 sec
+        Start  72: test-full-node-shard-routing
+ 65/126 Test  #72: test-full-node-shard-routing .....................................   Passed    0.00 sec
+        Start  73: test-uno-state-snapshot
+ 66/126 Test  #70: test-celldb-actor-restart ........................................   Passed    1.24 sec
+        Start  74: test-counter-genesis-domain
+ 67/126 Test  #74: test-counter-genesis-domain ......................................   Passed    0.13 sec
+        Start  75: test-block-handle-flags
+ 68/126 Test  #75: test-block-handle-flags ..........................................   Passed    0.01 sec
+        Start  76: test-keyring-temp-key
+ 69/126 Test  #66: test-http-server-limits ..........................................   Passed    2.03 sec
+        Start  77: test-collator-node-limits
+ 70/126 Test  #77: test-collator-node-limits ........................................   Passed    0.01 sec
+        Start  78: test-rldp2-connection-limits
+ 71/126 Test  #78: test-rldp2-connection-limits .....................................   Passed    0.00 sec
+        Start  79: test-promise-loss-contract
+ 72/126 Test  #79: test-promise-loss-contract .......................................   Passed    0.01 sec
+        Start  80: test-json-rpc-handler-guard
+ 73/126 Test  #80: test-json-rpc-handler-guard ......................................   Passed    0.00 sec
+        Start  81: test-metrics-label-bound
+ 74/126 Test  #81: test-metrics-label-bound .........................................   Passed    0.02 sec
+        Start  82: test-rldp2-inbound-transfer-bound
+ 75/126 Test  #73: test-uno-state-snapshot ..........................................   Passed    1.71 sec
+        Start  83: test-consensus-config-admission
+ 76/126 Test  #83: test-consensus-config-admission ..................................   Passed    0.01 sec
+        Start  84: test-weak-ptr-registry
+ 77/126 Test  #84: test-weak-ptr-registry ...........................................   Passed    0.01 sec
+        Start  85: test-wallet-index
+ 78/126 Test  #76: test-keyring-temp-key ............................................   Passed    0.61 sec
+        Start  86: test-quorum
+ 79/126 Test  #86: test-quorum ......................................................   Passed    0.00 sec
+        Start  87: test-emulator
+ 80/126 Test  #85: test-wallet-index ................................................   Passed    0.07 sec
+        Start  88: test-fec
+ 81/126 Test  #87: test-emulator ....................................................   Passed    0.04 sec
+        Start  89: test-tddb
+ 82/126 Test  #82: test-rldp2-inbound-transfer-bound ................................   Passed    0.41 sec
+        Start  90: test-db
+ 83/126 Test  #88: test-fec .........................................................   Passed    0.54 sec
+        Start  91: test-uno-crypto-abi-real
+ 84/126 Test  #89: test-tddb ........................................................   Passed    1.31 sec
+        Start  92: test-uno-crypto-rust
+ 85/126 Test  #91: test-uno-crypto-abi-real .........................................   Passed    0.97 sec
+        Start  93: test-uno-crypto-symbols
+ 86/126 Test  #53: test-dht .........................................................   Passed   12.07 sec
+        Start  94: test-uno-crypto-kernel-gates
+ 87/126 Test  #93: test-uno-crypto-symbols ..........................................   Passed    1.12 sec
+        Start  96: test-coro
+ 88/126 Test  #59: test-download-state-budget .......................................   Passed    5.14 sec
+        Start  97: test-scheduler-stop
+ 89/126 Test  #97: test-scheduler-stop ..............................................   Passed    0.04 sec
+        Start  98: test-runtime
+ 90/126 Test  #98: test-runtime .....................................................   Passed    0.01 sec
+        Start  99: test-test-scheduler
+ 91/126 Test  #99: test-test-scheduler ..............................................   Passed    0.01 sec
+        Start 100: test-backpressure-queue
+ 92/126 Test #100: test-backpressure-queue ..........................................   Passed    0.00 sec
+        Start 101: test-persistent-treap
+ 93/126 Test  #94: test-uno-crypto-kernel-gates .....................................   Passed    1.52 sec
+        Start 102: test-lru-cache
+ 94/126 Test #102: test-lru-cache ...................................................   Passed    0.01 sec
+        Start 103: test-ffi-awaitable
+ 95/126 Test #103: test-ffi-awaitable ...............................................   Passed    0.02 sec
+        Start 104: test-ffi-event-loop
+ 96/126 Test #104: test-ffi-event-loop ..............................................   Passed    0.11 sec
+        Start 105: test-liteserver-admission
+ 97/126 Test #105: test-liteserver-admission ........................................   Passed    0.01 sec
+        Start 106: test-consensus-simplex2-loss
+Could not find executable /tmp/uno-publication-build/test/validator/consensus/test-consensus
+Looked in the following places:
+/tmp/uno-publication-build/test/validator/consensus/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Release/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Release/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Debug/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Debug/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/MinSizeRel/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/MinSizeRel/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/RelWithDebInfo/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/RelWithDebInfo/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Deployment/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Deployment/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Development/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Development/test-consensus
+tmp/uno-publication-build/test/validator/consensus/test-consensus
+tmp/uno-publication-build/test/validator/consensus/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Release/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Release/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Debug/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Debug/test-consensus
+tmp/uno-publication-build/test/validator/consensus/MinSizeRel/test-consensus
+tmp/uno-publication-build/test/validator/consensus/MinSizeRel/test-consensus
+tmp/uno-publication-build/test/validator/consensus/RelWithDebInfo/test-consensus
+tmp/uno-publication-build/test/validator/consensus/RelWithDebInfo/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Deployment/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Deployment/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Development/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Development/test-consensus
+ 98/126 Test #106: test-consensus-simplex2-loss .....................................***Not Run   0.00 sec
+        Start 107: test-consensus-simplex2-restart
+Could not find executable /tmp/uno-publication-build/test/validator/consensus/test-consensus
+Looked in the following places:
+/tmp/uno-publication-build/test/validator/consensus/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Release/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Release/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Debug/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Debug/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/MinSizeRel/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/MinSizeRel/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/RelWithDebInfo/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/RelWithDebInfo/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Deployment/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Deployment/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Development/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Development/test-consensus
+tmp/uno-publication-build/test/validator/consensus/test-consensus
+tmp/uno-publication-build/test/validator/consensus/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Release/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Release/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Debug/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Debug/test-consensus
+tmp/uno-publication-build/test/validator/consensus/MinSizeRel/test-consensus
+tmp/uno-publication-build/test/validator/consensus/MinSizeRel/test-consensus
+tmp/uno-publication-build/test/validator/consensus/RelWithDebInfo/test-consensus
+tmp/uno-publication-build/test/validator/consensus/RelWithDebInfo/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Deployment/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Deployment/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Development/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Development/test-consensus
+ 99/126 Test #107: test-consensus-simplex2-restart ..................................***Not Run   0.00 sec
+        Start 108: test-consensus-simplex2-partition
+Could not find executable /tmp/uno-publication-build/test/validator/consensus/test-consensus
+Looked in the following places:
+/tmp/uno-publication-build/test/validator/consensus/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Release/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Release/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Debug/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Debug/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/MinSizeRel/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/MinSizeRel/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/RelWithDebInfo/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/RelWithDebInfo/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Deployment/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Deployment/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Development/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Development/test-consensus
+tmp/uno-publication-build/test/validator/consensus/test-consensus
+tmp/uno-publication-build/test/validator/consensus/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Release/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Release/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Debug/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Debug/test-consensus
+tmp/uno-publication-build/test/validator/consensus/MinSizeRel/test-consensus
+tmp/uno-publication-build/test/validator/consensus/MinSizeRel/test-consensus
+tmp/uno-publication-build/test/validator/consensus/RelWithDebInfo/test-consensus
+tmp/uno-publication-build/test/validator/consensus/RelWithDebInfo/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Deployment/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Deployment/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Development/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Development/test-consensus
+100/126 Test #108: test-consensus-simplex2-partition ................................***Not Run   0.00 sec
+        Start 109: test-consensus-simplex2-malicious-observer
+Could not find executable /tmp/uno-publication-build/test/validator/consensus/test-consensus
+Looked in the following places:
+/tmp/uno-publication-build/test/validator/consensus/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Release/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Release/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Debug/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Debug/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/MinSizeRel/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/MinSizeRel/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/RelWithDebInfo/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/RelWithDebInfo/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Deployment/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Deployment/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Development/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Development/test-consensus
+tmp/uno-publication-build/test/validator/consensus/test-consensus
+tmp/uno-publication-build/test/validator/consensus/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Release/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Release/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Debug/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Debug/test-consensus
+tmp/uno-publication-build/test/validator/consensus/MinSizeRel/test-consensus
+tmp/uno-publication-build/test/validator/consensus/MinSizeRel/test-consensus
+tmp/uno-publication-build/test/validator/consensus/RelWithDebInfo/test-consensus
+tmp/uno-publication-build/test/validator/consensus/RelWithDebInfo/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Deployment/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Deployment/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Development/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Development/test-consensus
+101/126 Test #109: test-consensus-simplex2-malicious-observer .......................***Not Run   0.00 sec
+        Start 110: test-consensus-simplex2-relay-loop
+Could not find executable /tmp/uno-publication-build/test/validator/consensus/test-consensus
+Looked in the following places:
+/tmp/uno-publication-build/test/validator/consensus/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Release/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Release/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Debug/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Debug/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/MinSizeRel/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/MinSizeRel/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/RelWithDebInfo/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/RelWithDebInfo/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Deployment/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Deployment/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Development/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Development/test-consensus
+tmp/uno-publication-build/test/validator/consensus/test-consensus
+tmp/uno-publication-build/test/validator/consensus/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Release/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Release/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Debug/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Debug/test-consensus
+tmp/uno-publication-build/test/validator/consensus/MinSizeRel/test-consensus
+tmp/uno-publication-build/test/validator/consensus/MinSizeRel/test-consensus
+tmp/uno-publication-build/test/validator/consensus/RelWithDebInfo/test-consensus
+tmp/uno-publication-build/test/validator/consensus/RelWithDebInfo/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Deployment/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Deployment/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Development/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Development/test-consensus
+102/126 Test #110: test-consensus-simplex2-relay-loop ...............................***Not Run   0.00 sec
+        Start 111: test-consensus-simplex2-adaptive-byzantine
+Could not find executable /tmp/uno-publication-build/test/validator/consensus/test-consensus
+Looked in the following places:
+/tmp/uno-publication-build/test/validator/consensus/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Release/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Release/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Debug/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Debug/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/MinSizeRel/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/MinSizeRel/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/RelWithDebInfo/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/RelWithDebInfo/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Deployment/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Deployment/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Development/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Development/test-consensus
+tmp/uno-publication-build/test/validator/consensus/test-consensus
+tmp/uno-publication-build/test/validator/consensus/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Release/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Release/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Debug/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Debug/test-consensus
+tmp/uno-publication-build/test/validator/consensus/MinSizeRel/test-consensus
+tmp/uno-publication-build/test/validator/consensus/MinSizeRel/test-consensus
+tmp/uno-publication-build/test/validator/consensus/RelWithDebInfo/test-consensus
+tmp/uno-publication-build/test/validator/consensus/RelWithDebInfo/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Deployment/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Deployment/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Development/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Development/test-consensus
+103/126 Test #111: test-consensus-simplex2-adaptive-byzantine .......................***Not Run   0.00 sec
+        Start 112: test-consensus-simplex2-manager-ingress-adversarial
+Could not find executable /tmp/uno-publication-build/test/validator/consensus/test-consensus
+Looked in the following places:
+/tmp/uno-publication-build/test/validator/consensus/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Release/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Release/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Debug/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Debug/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/MinSizeRel/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/MinSizeRel/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/RelWithDebInfo/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/RelWithDebInfo/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Deployment/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Deployment/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Development/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Development/test-consensus
+tmp/uno-publication-build/test/validator/consensus/test-consensus
+tmp/uno-publication-build/test/validator/consensus/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Release/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Release/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Debug/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Debug/test-consensus
+tmp/uno-publication-build/test/validator/consensus/MinSizeRel/test-consensus
+tmp/uno-publication-build/test/validator/consensus/MinSizeRel/test-consensus
+tmp/uno-publication-build/test/validator/consensus/RelWithDebInfo/test-consensus
+tmp/uno-publication-build/test/validator/consensus/RelWithDebInfo/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Deployment/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Deployment/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Development/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Development/test-consensus
+104/126 Test #112: test-consensus-simplex2-manager-ingress-adversarial ..............***Not Run   0.00 sec
+        Start 113: test-consensus-simplex2-candidate-relay-eviction
+Could not find executable /tmp/uno-publication-build/test/validator/consensus/test-consensus
+Looked in the following places:
+/tmp/uno-publication-build/test/validator/consensus/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Release/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Release/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Debug/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Debug/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/MinSizeRel/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/MinSizeRel/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/RelWithDebInfo/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/RelWithDebInfo/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Deployment/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Deployment/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Development/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Development/test-consensus
+tmp/uno-publication-build/test/validator/consensus/test-consensus
+tmp/uno-publication-build/test/validator/consensus/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Release/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Release/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Debug/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Debug/test-consensus
+tmp/uno-publication-build/test/validator/consensus/MinSizeRel/test-consensus
+tmp/uno-publication-build/test/validator/consensus/MinSizeRel/test-consensus
+tmp/uno-publication-build/test/validator/consensus/RelWithDebInfo/test-consensus
+tmp/uno-publication-build/test/validator/consensus/RelWithDebInfo/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Deployment/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Deployment/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Development/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Development/test-consensus
+105/126 Test #113: test-consensus-simplex2-candidate-relay-eviction .................***Not Run   0.00 sec
+        Start 114: test-consensus-simplex2-state-resolver-cache-unit
+Could not find executable /tmp/uno-publication-build/test/validator/consensus/test-consensus
+Looked in the following places:
+/tmp/uno-publication-build/test/validator/consensus/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Release/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Release/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Debug/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Debug/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/MinSizeRel/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/MinSizeRel/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/RelWithDebInfo/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/RelWithDebInfo/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Deployment/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Deployment/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Development/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Development/test-consensus
+tmp/uno-publication-build/test/validator/consensus/test-consensus
+tmp/uno-publication-build/test/validator/consensus/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Release/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Release/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Debug/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Debug/test-consensus
+tmp/uno-publication-build/test/validator/consensus/MinSizeRel/test-consensus
+tmp/uno-publication-build/test/validator/consensus/MinSizeRel/test-consensus
+tmp/uno-publication-build/test/validator/consensus/RelWithDebInfo/test-consensus
+tmp/uno-publication-build/test/validator/consensus/RelWithDebInfo/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Deployment/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Deployment/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Development/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Development/test-consensus
+106/126 Test #114: test-consensus-simplex2-state-resolver-cache-unit ................***Not Run   0.00 sec
+        Start 115: test-consensus-simplex2-state-resolver-inflight-admission-unit
+Could not find executable /tmp/uno-publication-build/test/validator/consensus/test-consensus
+Looked in the following places:
+/tmp/uno-publication-build/test/validator/consensus/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Release/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Release/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Debug/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Debug/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/MinSizeRel/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/MinSizeRel/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/RelWithDebInfo/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/RelWithDebInfo/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Deployment/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Deployment/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Development/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Development/test-consensus
+tmp/uno-publication-build/test/validator/consensus/test-consensus
+tmp/uno-publication-build/test/validator/consensus/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Release/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Release/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Debug/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Debug/test-consensus
+tmp/uno-publication-build/test/validator/consensus/MinSizeRel/test-consensus
+tmp/uno-publication-build/test/validator/consensus/MinSizeRel/test-consensus
+tmp/uno-publication-build/test/validator/consensus/RelWithDebInfo/test-consensus
+tmp/uno-publication-build/test/validator/consensus/RelWithDebInfo/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Deployment/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Deployment/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Development/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Development/test-consensus
+107/126 Test #115: test-consensus-simplex2-state-resolver-inflight-admission-unit ...***Not Run   0.00 sec
+        Start 116: test-consensus-simplex2-skipped-slot-resolution-unit
+Could not find executable /tmp/uno-publication-build/test/validator/consensus/test-consensus
+Looked in the following places:
+/tmp/uno-publication-build/test/validator/consensus/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Release/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Release/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Debug/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Debug/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/MinSizeRel/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/MinSizeRel/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/RelWithDebInfo/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/RelWithDebInfo/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Deployment/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Deployment/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Development/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Development/test-consensus
+tmp/uno-publication-build/test/validator/consensus/test-consensus
+tmp/uno-publication-build/test/validator/consensus/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Release/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Release/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Debug/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Debug/test-consensus
+tmp/uno-publication-build/test/validator/consensus/MinSizeRel/test-consensus
+tmp/uno-publication-build/test/validator/consensus/MinSizeRel/test-consensus
+tmp/uno-publication-build/test/validator/consensus/RelWithDebInfo/test-consensus
+tmp/uno-publication-build/test/validator/consensus/RelWithDebInfo/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Deployment/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Deployment/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Development/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Development/test-consensus
+108/126 Test #116: test-consensus-simplex2-skipped-slot-resolution-unit .............***Not Run   0.00 sec
+        Start 117: test-consensus-simplex2-candidate-resolver-retention-unit
+Could not find executable /tmp/uno-publication-build/test/validator/consensus/test-consensus
+Looked in the following places:
+/tmp/uno-publication-build/test/validator/consensus/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Release/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Release/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Debug/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Debug/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/MinSizeRel/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/MinSizeRel/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/RelWithDebInfo/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/RelWithDebInfo/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Deployment/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Deployment/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Development/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Development/test-consensus
+tmp/uno-publication-build/test/validator/consensus/test-consensus
+tmp/uno-publication-build/test/validator/consensus/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Release/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Release/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Debug/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Debug/test-consensus
+tmp/uno-publication-build/test/validator/consensus/MinSizeRel/test-consensus
+tmp/uno-publication-build/test/validator/consensus/MinSizeRel/test-consensus
+tmp/uno-publication-build/test/validator/consensus/RelWithDebInfo/test-consensus
+tmp/uno-publication-build/test/validator/consensus/RelWithDebInfo/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Deployment/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Deployment/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Development/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Development/test-consensus
+109/126 Test #117: test-consensus-simplex2-candidate-resolver-retention-unit ........***Not Run   0.00 sec
+        Start 118: test-consensus-simplex2-candidate-resolver-interleaving-unit
+Could not find executable /tmp/uno-publication-build/test/validator/consensus/test-consensus
+Looked in the following places:
+/tmp/uno-publication-build/test/validator/consensus/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Release/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Release/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Debug/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Debug/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/MinSizeRel/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/MinSizeRel/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/RelWithDebInfo/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/RelWithDebInfo/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Deployment/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Deployment/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Development/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Development/test-consensus
+tmp/uno-publication-build/test/validator/consensus/test-consensus
+tmp/uno-publication-build/test/validator/consensus/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Release/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Release/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Debug/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Debug/test-consensus
+tmp/uno-publication-build/test/validator/consensus/MinSizeRel/test-consensus
+tmp/uno-publication-build/test/validator/consensus/MinSizeRel/test-consensus
+tmp/uno-publication-build/test/validator/consensus/RelWithDebInfo/test-consensus
+tmp/uno-publication-build/test/validator/consensus/RelWithDebInfo/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Deployment/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Deployment/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Development/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Development/test-consensus
+110/126 Test #118: test-consensus-simplex2-candidate-resolver-interleaving-unit .....***Not Run   0.00 sec
+        Start 119: test-consensus-simplex2-db-finalized-slot-dedup-unit
+Could not find executable /tmp/uno-publication-build/test/validator/consensus/test-consensus
+Looked in the following places:
+/tmp/uno-publication-build/test/validator/consensus/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Release/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Release/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Debug/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Debug/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/MinSizeRel/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/MinSizeRel/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/RelWithDebInfo/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/RelWithDebInfo/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Deployment/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Deployment/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Development/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Development/test-consensus
+tmp/uno-publication-build/test/validator/consensus/test-consensus
+tmp/uno-publication-build/test/validator/consensus/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Release/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Release/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Debug/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Debug/test-consensus
+tmp/uno-publication-build/test/validator/consensus/MinSizeRel/test-consensus
+tmp/uno-publication-build/test/validator/consensus/MinSizeRel/test-consensus
+tmp/uno-publication-build/test/validator/consensus/RelWithDebInfo/test-consensus
+tmp/uno-publication-build/test/validator/consensus/RelWithDebInfo/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Deployment/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Deployment/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Development/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Development/test-consensus
+111/126 Test #119: test-consensus-simplex2-db-finalized-slot-dedup-unit .............***Not Run   0.00 sec
+        Start 120: test-consensus-validator-manager-resource-policy-unit
+Could not find executable /tmp/uno-publication-build/test/validator/consensus/test-consensus
+Looked in the following places:
+/tmp/uno-publication-build/test/validator/consensus/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Release/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Release/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Debug/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Debug/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/MinSizeRel/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/MinSizeRel/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/RelWithDebInfo/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/RelWithDebInfo/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Deployment/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Deployment/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Development/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Development/test-consensus
+tmp/uno-publication-build/test/validator/consensus/test-consensus
+tmp/uno-publication-build/test/validator/consensus/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Release/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Release/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Debug/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Debug/test-consensus
+tmp/uno-publication-build/test/validator/consensus/MinSizeRel/test-consensus
+tmp/uno-publication-build/test/validator/consensus/MinSizeRel/test-consensus
+tmp/uno-publication-build/test/validator/consensus/RelWithDebInfo/test-consensus
+tmp/uno-publication-build/test/validator/consensus/RelWithDebInfo/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Deployment/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Deployment/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Development/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Development/test-consensus
+112/126 Test #120: test-consensus-validator-manager-resource-policy-unit ............***Not Run   0.00 sec
+        Start 121: test-validator-manager-resource-policy-actor
+Could not find executable /tmp/uno-publication-build/test/validator/consensus/test-validator-manager-resource-policy
+Looked in the following places:
+/tmp/uno-publication-build/test/validator/consensus/test-validator-manager-resource-policy
+/tmp/uno-publication-build/test/validator/consensus/test-validator-manager-resource-policy
+/tmp/uno-publication-build/test/validator/consensus/Release/test-validator-manager-resource-policy
+/tmp/uno-publication-build/test/validator/consensus/Release/test-validator-manager-resource-policy
+/tmp/uno-publication-build/test/validator/consensus/Debug/test-validator-manager-resource-policy
+/tmp/uno-publication-build/test/validator/consensus/Debug/test-validator-manager-resource-policy
+/tmp/uno-publication-build/test/validator/consensus/MinSizeRel/test-validator-manager-resource-policy
+/tmp/uno-publication-build/test/validator/consensus/MinSizeRel/test-validator-manager-resource-policy
+/tmp/uno-publication-build/test/validator/consensus/RelWithDebInfo/test-validator-manager-resource-policy
+/tmp/uno-publication-build/test/validator/consensus/RelWithDebInfo/test-validator-manager-resource-policy
+/tmp/uno-publication-build/test/validator/consensus/Deployment/test-validator-manager-resource-policy
+/tmp/uno-publication-build/test/validator/consensus/Deployment/test-validator-manager-resource-policy
+/tmp/uno-publication-build/test/validator/consensus/Development/test-validator-manager-resource-policy
+/tmp/uno-publication-build/test/validator/consensus/Development/test-validator-manager-resource-policy
+tmp/uno-publication-build/test/validator/consensus/test-validator-manager-resource-policy
+tmp/uno-publication-build/test/validator/consensus/test-validator-manager-resource-policy
+tmp/uno-publication-build/test/validator/consensus/Release/test-validator-manager-resource-policy
+tmp/uno-publication-build/test/validator/consensus/Release/test-validator-manager-resource-policy
+tmp/uno-publication-build/test/validator/consensus/Debug/test-validator-manager-resource-policy
+tmp/uno-publication-build/test/validator/consensus/Debug/test-validator-manager-resource-policy
+tmp/uno-publication-build/test/validator/consensus/MinSizeRel/test-validator-manager-resource-policy
+tmp/uno-publication-build/test/validator/consensus/MinSizeRel/test-validator-manager-resource-policy
+tmp/uno-publication-build/test/validator/consensus/RelWithDebInfo/test-validator-manager-resource-policy
+tmp/uno-publication-build/test/validator/consensus/RelWithDebInfo/test-validator-manager-resource-policy
+tmp/uno-publication-build/test/validator/consensus/Deployment/test-validator-manager-resource-policy
+tmp/uno-publication-build/test/validator/consensus/Deployment/test-validator-manager-resource-policy
+tmp/uno-publication-build/test/validator/consensus/Development/test-validator-manager-resource-policy
+tmp/uno-publication-build/test/validator/consensus/Development/test-validator-manager-resource-policy
+113/126 Test #121: test-validator-manager-resource-policy-actor .....................***Not Run   0.00 sec
+        Start 122: test-consensus-simplex2-state-resolver-catch-up
+Could not find executable /tmp/uno-publication-build/test/validator/consensus/test-consensus
+Looked in the following places:
+/tmp/uno-publication-build/test/validator/consensus/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Release/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Release/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Debug/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Debug/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/MinSizeRel/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/MinSizeRel/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/RelWithDebInfo/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/RelWithDebInfo/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Deployment/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Deployment/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Development/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Development/test-consensus
+tmp/uno-publication-build/test/validator/consensus/test-consensus
+tmp/uno-publication-build/test/validator/consensus/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Release/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Release/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Debug/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Debug/test-consensus
+tmp/uno-publication-build/test/validator/consensus/MinSizeRel/test-consensus
+tmp/uno-publication-build/test/validator/consensus/MinSizeRel/test-consensus
+tmp/uno-publication-build/test/validator/consensus/RelWithDebInfo/test-consensus
+tmp/uno-publication-build/test/validator/consensus/RelWithDebInfo/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Deployment/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Deployment/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Development/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Development/test-consensus
+114/126 Test #122: test-consensus-simplex2-state-resolver-catch-up ..................***Not Run   0.00 sec
+        Start 123: test-consensus-simplex2-empty-chain-restart
+Could not find executable /tmp/uno-publication-build/test/validator/consensus/test-consensus
+Looked in the following places:
+/tmp/uno-publication-build/test/validator/consensus/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Release/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Release/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Debug/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Debug/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/MinSizeRel/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/MinSizeRel/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/RelWithDebInfo/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/RelWithDebInfo/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Deployment/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Deployment/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Development/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Development/test-consensus
+tmp/uno-publication-build/test/validator/consensus/test-consensus
+tmp/uno-publication-build/test/validator/consensus/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Release/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Release/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Debug/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Debug/test-consensus
+tmp/uno-publication-build/test/validator/consensus/MinSizeRel/test-consensus
+tmp/uno-publication-build/test/validator/consensus/MinSizeRel/test-consensus
+tmp/uno-publication-build/test/validator/consensus/RelWithDebInfo/test-consensus
+tmp/uno-publication-build/test/validator/consensus/RelWithDebInfo/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Deployment/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Deployment/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Development/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Development/test-consensus
+115/126 Test #123: test-consensus-simplex2-empty-chain-restart ......................***Not Run   0.00 sec
+        Start 124: test-consensus-simplex2-query-abuse
+Could not find executable /tmp/uno-publication-build/test/validator/consensus/test-consensus
+Looked in the following places:
+/tmp/uno-publication-build/test/validator/consensus/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Release/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Release/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Debug/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Debug/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/MinSizeRel/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/MinSizeRel/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/RelWithDebInfo/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/RelWithDebInfo/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Deployment/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Deployment/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Development/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Development/test-consensus
+tmp/uno-publication-build/test/validator/consensus/test-consensus
+tmp/uno-publication-build/test/validator/consensus/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Release/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Release/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Debug/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Debug/test-consensus
+tmp/uno-publication-build/test/validator/consensus/MinSizeRel/test-consensus
+tmp/uno-publication-build/test/validator/consensus/MinSizeRel/test-consensus
+tmp/uno-publication-build/test/validator/consensus/RelWithDebInfo/test-consensus
+tmp/uno-publication-build/test/validator/consensus/RelWithDebInfo/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Deployment/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Deployment/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Development/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Development/test-consensus
+116/126 Test #124: test-consensus-simplex2-query-abuse ..............................***Not Run   0.00 sec
+        Start 125: test-consensus-simplex2-codec-boundary
+Could not find executable /tmp/uno-publication-build/test/validator/consensus/test-consensus
+Looked in the following places:
+/tmp/uno-publication-build/test/validator/consensus/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Release/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Release/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Debug/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Debug/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/MinSizeRel/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/MinSizeRel/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/RelWithDebInfo/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/RelWithDebInfo/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Deployment/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Deployment/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Development/test-consensus
+/tmp/uno-publication-build/test/validator/consensus/Development/test-consensus
+tmp/uno-publication-build/test/validator/consensus/test-consensus
+tmp/uno-publication-build/test/validator/consensus/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Release/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Release/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Debug/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Debug/test-consensus
+tmp/uno-publication-build/test/validator/consensus/MinSizeRel/test-consensus
+tmp/uno-publication-build/test/validator/consensus/MinSizeRel/test-consensus
+tmp/uno-publication-build/test/validator/consensus/RelWithDebInfo/test-consensus
+tmp/uno-publication-build/test/validator/consensus/RelWithDebInfo/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Deployment/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Deployment/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Development/test-consensus
+tmp/uno-publication-build/test/validator/consensus/Development/test-consensus
+117/126 Test #125: test-consensus-simplex2-codec-boundary ...........................***Not Run   0.00 sec
+        Start 126: test-consensus-simplex2-genesis-config
+118/126 Test #126: test-consensus-simplex2-genesis-config ...........................   Passed    0.03 sec
+119/126 Test #101: test-persistent-treap ............................................   Passed    1.31 sec
+120/126 Test  #37: test-vm ..........................................................   Passed   33.87 sec
+121/126 Test  #96: test-coro ........................................................   Passed    5.64 sec
+122/126 Test  #92: test-uno-crypto-rust .............................................   Passed    7.50 sec
+        Start  95: test-uno-crypto-header-guard
+123/126 Test  #95: test-uno-crypto-header-guard .....................................   Passed    3.76 sec
+124/126 Test  #52: test-adnl ........................................................   Passed   25.87 sec
+125/126 Test  #47: test-tdutils .....................................................   Passed  132.32 sec
+126/126 Test  #90: test-db ..........................................................   Passed  404.49 sec
+
+76% tests passed, 30 tests failed out of 126
+
+Label Time Summary:
+i13          =   0.22 sec*proc (1 test)
+private      =   0.22 sec*proc (1 test)
+smoke        =   0.48 sec*proc (4 tests)
+storage      =   0.48 sec*proc (4 tests)
+uno          =   0.48 sec*proc (4 tests)
+workchain    =   0.22 sec*proc (1 test)
+
+Total Test time (real) = 431.73 sec
+
+The following tests FAILED:
+	 17 - test-counter-collator-admission (Failed)
+	 18 - test-counter-disk-integration (Failed)
+	 19 - test-counter-account-binding-readiness (Failed)
+	 21 - test-counter-idle-replay (Failed)
+	 22 - test-counter-self-delivery (Failed)
+	 23 - test-counter-cross-delivery (Failed)
+	 24 - test-counter-native-sender (Failed)
+	 25 - test-counter-activation-missing_capability (Failed)
+	 27 - test-counter-activation-old_version (Failed)
+	 30 - test-counter-engine-config (Failed)
+	106 - test-consensus-simplex2-loss (Not Run)
+	107 - test-consensus-simplex2-restart (Not Run)
+	108 - test-consensus-simplex2-partition (Not Run)
+	109 - test-consensus-simplex2-malicious-observer (Not Run)
+	110 - test-consensus-simplex2-relay-loop (Not Run)
+	111 - test-consensus-simplex2-adaptive-byzantine (Not Run)
+	112 - test-consensus-simplex2-manager-ingress-adversarial (Not Run)
+	113 - test-consensus-simplex2-candidate-relay-eviction (Not Run)
+	114 - test-consensus-simplex2-state-resolver-cache-unit (Not Run)
+	115 - test-consensus-simplex2-state-resolver-inflight-admission-unit (Not Run)
+	116 - test-consensus-simplex2-skipped-slot-resolution-unit (Not Run)
+	117 - test-consensus-simplex2-candidate-resolver-retention-unit (Not Run)
+	118 - test-consensus-simplex2-candidate-resolver-interleaving-unit (Not Run)
+	119 - test-consensus-simplex2-db-finalized-slot-dedup-unit (Not Run)
+	120 - test-consensus-validator-manager-resource-policy-unit (Not Run)
+	121 - test-validator-manager-resource-policy-actor (Not Run)
+	122 - test-consensus-simplex2-state-resolver-catch-up (Not Run)
+	123 - test-consensus-simplex2-empty-chain-restart (Not Run)
+	124 - test-consensus-simplex2-query-abuse (Not Run)
+	125 - test-consensus-simplex2-codec-boundary (Not Run)

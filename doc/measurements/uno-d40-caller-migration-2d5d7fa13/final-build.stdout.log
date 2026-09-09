@@ -1,0 +1,21 @@
+[1/78] cd /home/tomi/tos-m2/uno/crypto && /usr/bin/cmake -E env CARGO_NET_OFFLINE=true CARGO_TARGET_DIR=/tmp/uno-publication-build/uno/crypto/cargo-target /home/tomi/.cargo/bin/cargo build --locked --offline --release -j48
+    Finished `release` profile [optimized] target(s) in 0.06s
+[2/76] Checking the git repository for changes...
+[3/20] Linking CXX executable test-metrics-label-bound
+[4/20] Linking CXX executable tol/tol
+[5/20] Compiling Tol contract slice5-receive-context-tol -> /tmp/uno-publication-build/slice1-gas-parity/slice5-receive-context-tol.boc
+[6/20] Compiling FunC contract jetton-minter-func -> /tmp/uno-publication-build/slice1-gas-parity/jetton-minter-func.boc
+[7/20] Compiling FunC contract wallet-v5-func -> /tmp/uno-publication-build/slice1-gas-parity/wallet-v5-func.boc
+[8/20] Compiling Tol contract jetton-minter-tol -> /tmp/uno-publication-build/slice1-gas-parity/jetton-minter-tol.boc
+[9/20] Compiling FunC contract jetton-wallet-func -> /tmp/uno-publication-build/slice1-gas-parity/jetton-wallet-func.boc
+[10/20] Compiling Tol contract jetton-wallet-tol -> /tmp/uno-publication-build/slice1-gas-parity/jetton-wallet-tol.boc
+[11/20] Compiling Tol contract wallet-v5-tol -> /tmp/uno-publication-build/slice1-gas-parity/wallet-v5-tol.boc
+[12/20] Compiling Tol contract tos-report-bond-oracle -> /tmp/uno-publication-build/slice1-gas-parity/tos-report-bond-oracle.boc
+[13/20] Linking CXX executable test-http-server-limits
+[14/20] Linking CXX executable test-smartcont
+[15/20] Linking CXX shared library emulator/libemulator.so
+[16/20] Linking CXX executable test/toslib/test-ffi-awaitable
+[17/20] Linking CXX executable test-wallet-message-processor
+[18/20] Linking CXX executable test-toslib-offline
+[19/20] Linking CXX executable test/toslib/test-ffi-event-loop
+[20/20] Linking CXX executable test-emulator

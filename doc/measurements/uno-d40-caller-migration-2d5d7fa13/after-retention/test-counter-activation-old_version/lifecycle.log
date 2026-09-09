@@ -1,0 +1,7 @@
+CMake Error at /home/tomi/tos-m2/test/test-counter-disk-integration.cmake:171 (message):
+  bootstrap: exit 2, expected 0; see
+  /tmp/uno-publication-build/counter-integration-f75a2b0e2280/bootstrap.log
+Call Stack (most recent call first):
+  /home/tomi/tos-m2/test/test-counter-disk-integration.cmake:212 (run_node)
+
+

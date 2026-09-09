@@ -1,0 +1,7 @@
+control remove-full-root-check
+control accept-missing-ledger
+control overwrite-issued-entry
+control use-current-descriptor
+control leak-failed-staging
+control reject-all-first-installations
+PASS 6 isolated source controls

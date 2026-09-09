@@ -1,0 +1,28 @@
+Internal ctest changing into directory: /tmp/uno-publication-build
+Test project /tmp/uno-publication-build
+    Start 98: test-workchain-handwritten-tags
+1/1 Test #98: test-workchain-handwritten-tags ...***Failed    0.08 sec
+UnoV2ResourceInput	0	c5defa2a
+UnoV2ResourceState	0	90aef2dd
+UnoV2ResourceWorkOutput	0	7a310b92
+UnoV2ResourcePolicy	0	bbd8a9ec
+Traceback (most recent call last):
+  File "/home/tomi/tos-m2/crypto/test/workchain-handwritten-tags.py", line 30, in <module>
+    check(parser.parse_args().repo)
+    ~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/tomi/tos-m2/crypto/test/workchain-handwritten-tags.py", line 22, in check
+    assert int(actual, 16) == int(values[int(index)], 16), f'964: tag mismatch {name}: {actual} != {values[int(index)]}'
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 964: tag mismatch UnoV2EngineConfiguration: 6e1fa05f != ff68187c
+
+
+0% tests passed, 1 tests failed out of 1
+
+Label Time Summary:
+d40          =   0.08 sec*proc (1 test)
+workchain    =   0.08 sec*proc (1 test)
+
+Total Test time (real) =   0.08 sec
+
+The following tests FAILED:
+	 98 - test-workchain-handwritten-tags (Failed)

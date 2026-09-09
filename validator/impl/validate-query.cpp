@@ -7268,7 +7268,7 @@ bool ValidateQuery::check_mc_state_extra() {
   }
   block::gen::McStateExtra::Record old_extra, new_extra;
   if (!tlb::unpack_cell(ps_.mc_state_extra_, old_extra)) {
-    return reject_query("cannot unpack old McStateExtra");
+    return fatal_error("cannot unpack authenticated old McStateExtra");
   }
   if (!tlb::unpack_cell(ns_.mc_state_extra_, new_extra)) {
     return reject_query("cannot unpack new McStateExtra");
@@ -7278,6 +7278,42 @@ bool ValidateQuery::check_mc_state_extra() {
   // config:ConfigParams
   if (!check_config_update(old_extra.config, new_extra.config)) {
     return reject_query("invalid configuration update");
+  }
+  // Reconstruct from authenticated predecessor state, never from a candidate
+  // counter. Missing entries can be issued once; all other keys are retained.
+  {
+    // Read the complete local path that reconstruction will use before reading
+    // candidate configuration. Missing local proof cells are not candidate faults.
+    try {
+      auto previous = block::read_workchain_instance_record(old_extra.r1.workchain_instances, 2);
+      if (previous.is_error()) {
+        return fatal_error(previous.move_as_error_prefix("authenticated instance ledger: "));
+      }
+    } catch (vm::VmError& error) {
+      return fatal_error(PSTRING() << "authenticated instance ledger: " << error.get_msg());
+    } catch (vm::VmVirtError& error) {
+      return fatal_error(PSTRING() << "authenticated instance ledger: " << error.get_msg());
+    }
+    auto genesis = config_->get_zerostate_id();
+    if (!genesis.is_masterchain() || !genesis.is_valid_full()) {
+      return fatal_error("authenticated masterchain genesis identity is missing");
+    }
+    try {
+      auto expected = block::reconstruct_workchain_instance_ledger(
+          old_extra.r1.workchain_instances, new_extra.config->prefetch_ref(), genesis.root_hash, 2);
+      if (expected.is_error()) {
+        return reject_query("invalid instance installation", expected.move_as_error());
+      }
+      auto delta = block::check_workchain_instance_ledger_delta(
+          expected.move_as_ok(), new_extra.r1.workchain_instances);
+      if (delta.is_error()) {
+        return reject_query("invalid workchain instance ledger transition", delta.move_as_error());
+      }
+    } catch (vm::VmError& error) {
+      return reject_query(PSTRING() << "invalid candidate instance ledger/configuration: " << error.get_msg());
+    } catch (vm::VmVirtError& error) {
+      return reject_query(PSTRING() << "candidate instance ledger/configuration contains unavailable cells: " << error.get_msg());
+    }
   }
   // ...
   // flags:(## 16) { flags <= 1 }

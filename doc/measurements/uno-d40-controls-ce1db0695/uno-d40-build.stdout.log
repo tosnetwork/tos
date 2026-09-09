@@ -1,0 +1,33 @@
+[1/17] Generate block tlb source files
+[2/17] Building CXX object crypto/CMakeFiles/tos_block.dir/block/workchain-instance-identity.cpp.o
+FAILED: crypto/CMakeFiles/tos_block.dir/block/workchain-instance-identity.cpp.o 
+ccache /usr/bin/clang++ -D_FILE_OFFSET_BITS=64 -D_INTERNAL_COMPILE=1 -D_TOSLIB_COMPILE=1 -I/home/tomi/tos-m2/crypto -I/home/tomi/tos-m2/crypto/block -I/home/tomi/tos-m2/crypto/.. -I/tmp/uno-publication-build/third-party/secp256k1/include -I/tmp/uno-publication-build/third-party/sodium/include -I/home/tomi/tos-m2/tdutils -I/tmp/uno-publication-build/tdutils -I/home/tomi/tos-m2/tddb -I/home/tomi/tos-m2/tdactor -I/home/tomi/tos-m2/tl -I/home/tomi/tos-m2/tl/.. -I/home/tomi/tos-m2/tl/../crypto -I/home/tomi/tos-m2/tl/generate -isystem /tmp/uno-publication-build/third-party/openssl/include -isystem /home/tomi/tos-m2/third-party/abseil-cpp -march=native -fno-omit-frame-pointer -ffunction-sections -fdata-sections -O3 -DNDEBUG -fPIC -Wall -Wextra -Wpointer-arith -Wcast-qual -Wsign-compare -Wvla -Wnon-virtual-dtor -Wconversion -Wno-tautological-compare -Wno-unused-parameter -Wno-sign-conversion -Wno-unused-private-field -Wno-redundant-move -std=c++20 -MD -MT crypto/CMakeFiles/tos_block.dir/block/workchain-instance-identity.cpp.o -MF crypto/CMakeFiles/tos_block.dir/block/workchain-instance-identity.cpp.o.d -o crypto/CMakeFiles/tos_block.dir/block/workchain-instance-identity.cpp.o -c /home/tomi/tos-m2/crypto/block/workchain-instance-identity.cpp
+/home/tomi/tos-m2/crypto/block/workchain-instance-identity.cpp:6:10: error: no matching function for call to 'Error'
+    6 |   return td::Status::Error(static_cast<int>(code), detail);
+      |          ^~~~~~~~~~~~~~~~~
+/home/tomi/tos-m2/tdutils/td/utils/Status.h:190:17: note: candidate function not viable: no known conversion from 'const char *' to 'Slice' for 2nd argument
+  190 |   static Status Error(int err, Slice message = Slice()) TD_WARN_UNUSED_RESULT {
+      |                 ^              ~~~~~~~~~~~~~~~~~~~~~~~
+/home/tomi/tos-m2/tdutils/td/utils/Status.h:194:17: note: candidate function not viable: requires single argument 'message', but 2 arguments were provided
+  194 |   static Status Error(Slice message) TD_WARN_UNUSED_RESULT {
+      |                 ^     ~~~~~~~~~~~~~
+/home/tomi/tos-m2/tdutils/td/utils/Status.h:210:17: note: candidate function not viable: requires 0 arguments, but 2 were provided
+  210 |   static Status Error() TD_WARN_UNUSED_RESULT {
+      |                 ^
+/home/tomi/tos-m2/tdutils/td/utils/Status.h:215:17: note: candidate function template not viable: requires 0 arguments, but 2 were provided
+  215 |   static Status Error() {
+      |                 ^
+1 error generated.
+[3/17] Building CXX object crypto/CMakeFiles/test-workchain-instance-identity.dir/test/test-workchain-instance-identity.cpp.o
+[4/17] Building CXX object crypto/CMakeFiles/tos_crypto.dir/vm/boc-compression.cpp.o
+[5/17] Building CXX object crypto/CMakeFiles/tos_block.dir/block/check-proof.cpp.o
+[6/17] Building CXX object crypto/CMakeFiles/tos_block.dir/block/workchain-execution-dispatch.cpp.o
+[7/17] Building CXX object crypto/CMakeFiles/tos_block.dir/block/workchain-block-execution.cpp.o
+[8/17] Building CXX object crypto/CMakeFiles/tos_block.dir/block/block-parse.cpp.o
+[9/17] Building CXX object crypto/CMakeFiles/tos_block.dir/block/block.cpp.o
+[10/17] Building CXX object crypto/CMakeFiles/tos_crypto.dir/vm/tosops.cpp.o
+[11/17] Building CXX object crypto/CMakeFiles/tos_block.dir/block/mc-config.cpp.o
+[12/17] Building CXX object crypto/CMakeFiles/tos_block.dir/block/signature-set.cpp.o
+[13/17] Building CXX object crypto/CMakeFiles/tos_block.dir/block/transaction.cpp.o
+[14/17] Building CXX object crypto/CMakeFiles/tos_block.dir/block/block-auto.cpp.o
+ninja: build stopped: subcommand failed.

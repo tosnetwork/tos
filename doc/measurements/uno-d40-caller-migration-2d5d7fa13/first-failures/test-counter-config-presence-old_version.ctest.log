@@ -1,0 +1,8 @@
+CMake Error at /home/tomi/tos-m2/test/counter-fixture-lifecycle.cmake:25 (message):
+  Counter fixture retention/admission cap 16 reached in
+  /tmp/uno-publication-build; inspect retained/incomplete fixtures before
+  retrying
+Call Stack (most recent call first):
+  /home/tomi/tos-m2/test/test-counter-disk-integration.cmake:3 (counter_run_fixture)
+
+

@@ -1,0 +1,1689 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="(empty)"
+	tests="126"
+	failures="0"
+	disabled="0"
+	skipped="0"
+	hostname=""
+	time="421"
+	timestamp="2026-09-09T15:35:47"
+	>
+	<testcase name="test-workchain-activation-control-gates" classname="test-workchain-activation-control-gates" time="0.129458" status="run">
+		<system-out>........
+----------------------------------------------------------------------
+Ran 8 tests in 0.003s
+
+OK
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:36:36.540379093][mc-config.cpp:570]	workchain description dictionary created[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:36:36.540594239][mc-config.cpp:2345]	unpacked info for workchain 2: basic=true, active=true, accept_msgs=true, min_split=0, max_split=0[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:36:36.540644532][mc-config.cpp:570]	workchain description dictionary created[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:36:36.540650627][mc-config.cpp:2345]	unpacked info for workchain 2: basic=true, active=true, accept_msgs=true, min_split=0, max_split=0[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:36:36.540671098][mc-config.cpp:570]	workchain description dictionary created[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:36:36.540676421][mc-config.cpp:2345]	unpacked info for workchain 2: basic=true, active=true, accept_msgs=true, min_split=0, max_split=0[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:36:36.540691006][mc-config.cpp:570]	workchain description d...
+The rest of the test output was removed since it exceeds the threshold of 1024 bytes.
+</system-out>
+	</testcase>
+	<testcase name="test-workchain-proof-boundary-gates" classname="test-workchain-proof-boundary-gates" time="0.257719" status="run">
+		<system-out>...
+----------------------------------------------------------------------
+Ran 3 tests in 0.185s
+
+OK
+</system-out>
+	</testcase>
+	<testcase name="test-workchain-proof-backend" classname="test-workchain-proof-backend" time="0.505829" status="run">
+		<system-out>verified SEND and COLLECT k=1..8: 9 fixtures
+</system-out>
+	</testcase>
+	<testcase name="test-workchain-proof-operation-trace" classname="test-workchain-proof-operation-trace" time="16.7596" status="run">
+		<system-out>kind=1 k=0 component=0 actual=1106 reserved=1106
+kind=1 k=0 component=1 actual=11 reserved=11
+kind=1 k=0 component=2 actual=1026 reserved=1026
+kind=1 k=0 component=3 actual=48 reserved=48
+kind=1 k=0 component=4 actual=8 reserved=8
+kind=1 k=0 component=5 actual=9 reserved=9
+kind=1 k=0 component=6 actual=8 reserved=8
+kind=1 k=0 component=7 actual=6 reserved=6
+kind=1 k=0 component=8 actual=66 reserved=66
+kind=2 k=1 component=0 actual=1100 reserved=1100
+kind=2 k=1 component=1 actual=10 reserved=10
+kind=2 k=1 component=2 actual=1026 reserved=1026
+kind=2 k=1 component=3 actual=46 reserved=46
+kind=2 k=1 component=4 actual=8 reserved=8
+kind=2 k=1 component=5 actual=9 reserved=9
+kind=2 k=1 component=6 actual=7 reserved=7
+kind=2 k=1 component=7 actual=6 reserved=6
+kind=2 k=1 component=8 actual=66 reserved=66
+kind=2 k=2 component=0 actual=1130 reserved=1130
+kind=2 k=2 component=1 actual=12 reserved=12
+kind=2 k=2 component=2 actual=1026 reserved=1026
+kind=2 k=2 component=3 actual=51 reserved=51
+kind=2 k=2 component=4 act...
+The rest of the test output was removed since it exceeds the threshold of 1024 bytes.
+</system-out>
+	</testcase>
+	<testcase name="test-quorum-static-grep" classname="test-quorum-static-grep" time="0.0431261" status="run">
+		<system-out>rg: /home/tomi/tos-m2/validator-session: No such file or directory (os error 2)
+rg: /home/tomi/tos-m2/validator-session: No such file or directory (os error 2)
+rg: /home/tomi/tos-m2/validator-session: No such file or directory (os error 2)
+quorum static check passed
+</system-out>
+	</testcase>
+	<testcase name="plumtree-graph-sim-smoke" classname="plumtree-graph-sim-smoke" time="0.8913" status="run">
+		<system-out>Plumtree graph simulation: mode=fec, all-validators-send, nodes=12, validators=4, senders=4, tree_slots=46, expected=12, unreachable=0, broadcasts=5, payload=32.0K, packet_loss=0, isolate_broadcasts=0, rotate_isolation=0, selective_drop=none
+   # senders   delivered      p90      p95      p99     last     avg in    avg out     max in    max out      sent      dup    dup%
+   0       4    12/12       458.4    469.3    475.6    477.1      53.6K      65.4K      76.8K     143.1K    785.0K        0   0.00%
+   1       4    12/12       600.2    606.8    612.1    613.5      81.4K     100.6K     182.1K     134.3K     1.18M      218  37.78%
+   2       4    12/12       592.7    676.6    717.5    727.7      94.5K      67.6K     173.3K     129.0K    810.9K      392  52.62%
+   3       4    12/12       209.5    213.6    214.3    214.5      46.9K      51.1K      71.1K     116.8K    613.4K        0   0.00%
+   4       4    12/12       208.8    212.0    212.5    212.7      50.8K      51.2K      67.9K     116.8K    614.7K        ...
+The rest of the test output was removed since it exceeds the threshold of 1024 bytes.
+</system-out>
+	</testcase>
+	<testcase name="plumtree-graph-sim-simple-smoke" classname="plumtree-graph-sim-simple-smoke" time="0.0836618" status="run">
+		<system-out>Plumtree graph simulation: mode=simple, all-validators-send, nodes=12, validators=4, senders=4, tree_slots=46, expected=12, unreachable=0, broadcasts=5, payload=32.0K, packet_loss=0, isolate_broadcasts=0, rotate_isolation=0, selective_drop=none
+   # senders   delivered      p90      p95      p99     last     avg in    avg out     max in    max out      sent      dup    dup%
+   0       4    12/12       442.0    468.3    492.7    498.7      21.8K      24.7K      32.6K      65.0K    295.8K        0   0.00%
+     divergent simple: full_node_payload_hashes=4, full_node_sources=4
+   1       4    12/12       933.7    947.0    959.7    962.9      35.3K      48.7K      96.9K      64.8K    584.0K        5  38.46%
+     divergent simple: full_node_payload_hashes=4, full_node_sources=4
+   2       4    12/12       919.5   1001.6   1003.9   1004.5      45.9K      29.9K      96.8K      64.7K    358.3K        9  52.94%
+     divergent simple: full_node_payload_hashes=4, full_node_sources=4
+   3       4    12/12       208.0    2...
+The rest of the test output was removed since it exceeds the threshold of 1024 bytes.
+</system-out>
+	</testcase>
+	<testcase name="plumtree-graph-sim-loss" classname="plumtree-graph-sim-loss" time="0.664848" status="run">
+		<system-out>Plumtree graph simulation: mode=fec, all-validators-send, nodes=12, validators=4, senders=4, tree_slots=46, expected=12, unreachable=0, broadcasts=5, payload=32.0K, packet_loss=0.1, isolate_broadcasts=0, rotate_isolation=0, selective_drop=none
+   # senders   delivered      p90      p95      p99     last     avg in    avg out     max in    max out      sent      dup    dup%
+   0       4    12/12       603.0    636.1    656.1    661.1      53.5K      63.6K      94.7K     122.0K    763.2K       55  16.27%
+   1       4    12/12       561.7    590.6    600.1    602.5      52.6K      62.2K      79.2K     125.9K    746.7K       38  10.53%
+   2       4    12/12       232.0    391.3    543.0    580.9      58.6K      63.1K      83.2K     124.9K    757.4K       84  19.22%
+   3       4    12/12       174.4    192.9    210.8    215.2      43.9K      51.6K      72.1K     116.9K    619.1K       37  10.57%
+   4       4    12/12       204.0    211.6    212.5    212.8      45.9K      51.9K      62.5K     118.3K    622.9K      ...
+The rest of the test output was removed since it exceeds the threshold of 1024 bytes.
+</system-out>
+	</testcase>
+	<testcase name="plumtree-graph-sim-simple-loss" classname="plumtree-graph-sim-simple-loss" time="0.0694641" status="run">
+		<system-out>Plumtree graph simulation: mode=simple, all-validators-send, nodes=12, validators=4, senders=4, tree_slots=46, expected=12, unreachable=0, broadcasts=5, payload=32.0K, packet_loss=0.08, isolate_broadcasts=0, rotate_isolation=0, selective_drop=none
+   # senders   delivered      p90      p95      p99     last     avg in    avg out     max in    max out      sent      dup    dup%
+   0       4    12/12       703.9    772.8    813.8    824.1      24.6K      24.7K      64.8K      65.0K    295.9K        1  11.11%
+     divergent simple: full_node_payload_hashes=4, full_node_sources=4
+   1       4    12/12       471.9    530.9    579.6    591.8      24.4K      29.8K      64.4K      65.0K    357.9K        1  11.11%
+     divergent simple: full_node_payload_hashes=4, full_node_sources=4
+   2       4    12/12       567.2    640.4    700.2    715.2      27.1K      27.2K      64.7K      64.6K    325.8K        2  20.00%
+     divergent simple: full_node_payload_hashes=4, full_node_sources=4
+   3       4    12/12       201.1  ...
+The rest of the test output was removed since it exceeds the threshold of 1024 bytes.
+</system-out>
+	</testcase>
+	<testcase name="plumtree-graph-sim-partition-recovery" classname="plumtree-graph-sim-partition-recovery" time="0.568832" status="run">
+		<system-out>Plumtree graph simulation: mode=fec, all-validators-send, nodes=12, validators=4, senders=4, tree_slots=46, expected=12, unreachable=0, broadcasts=3, payload=32.0K, packet_loss=0, isolate_broadcasts=2, rotate_isolation=0, selective_drop=none
+   # senders   delivered      p90      p95      p99     last     avg in    avg out     max in    max out      sent      dup    dup%
+   0       4    11/12       458.6    470.0    479.1    481.4      46.6K      59.0K      76.8K     143.1K    707.6K        0   0.00%
+   1       4    11/12       951.8    962.8    971.6    973.8      69.5K      86.8K     183.3K     134.3K     1.02M      175  35.64%
+   2       4    12/12       592.8    641.6    652.5    655.3      94.5K      71.0K     173.3K     135.4K    852.4K      364  49.26%
+</system-out>
+	</testcase>
+	<testcase name="plumtree-graph-sim-selective-forwarding" classname="plumtree-graph-sim-selective-forwarding" time="0.74802" status="run">
+		<system-out>Plumtree graph simulation: mode=fec, all-validators-send, nodes=12, validators=4, senders=4, tree_slots=46, expected=12, unreachable=0, broadcasts=5, payload=32.0K, packet_loss=0, isolate_broadcasts=0, rotate_isolation=0, selective_drop=4
+   # senders   delivered      p90      p95      p99     last     avg in    avg out     max in    max out      sent      dup    dup%
+   0       4    12/12       457.8    469.8    477.1    478.9      53.4K      65.4K      76.8K     143.1K    784.5K        0   0.00%
+   1       4    12/12       617.1    639.6    658.7    663.4      83.2K      98.5K     188.3K     134.3K     1.15M      231  38.82%
+   2       4    12/12       189.1    201.1    209.5    211.5      68.8K      59.1K     137.0K     128.9K    708.7K      219  39.11%
+   3       4    12/12       178.7    195.5    209.8    213.4      51.3K      51.2K      69.7K     125.2K    614.9K        0   0.00%
+   4       4    12/12       182.9    198.8    211.6    214.8      52.4K      53.2K      74.0K     125.2K    638.2K        0  ...
+The rest of the test output was removed since it exceeds the threshold of 1024 bytes.
+</system-out>
+	</testcase>
+	<testcase name="plumtree-graph-sim-rotating-outage" classname="plumtree-graph-sim-rotating-outage" time="0.776453" status="run">
+		<system-out>Plumtree graph simulation: mode=fec, all-validators-send, nodes=12, validators=4, senders=4, tree_slots=46, expected=12, unreachable=0, broadcasts=5, payload=32.0K, packet_loss=0, isolate_broadcasts=4, rotate_isolation=1, selective_drop=none
+   # senders   delivered      p90      p95      p99     last     avg in    avg out     max in    max out      sent      dup    dup%
+   0       4    11/12       464.5    472.0    477.9    479.4      46.5K      58.8K      76.8K     143.1K    706.1K        0   0.00%
+   1       4    11/12       657.1    667.7    676.2    678.3      71.1K      81.7K     188.3K     143.3K    980.8K      184  36.51%
+   2       4    11/12       156.8    158.1    159.2    159.4      49.4K      58.7K      89.1K     127.3K    704.1K      104  26.53%
+   3       4    11/12       162.1    174.9    185.2    187.8      48.8K      51.0K      91.4K     126.0K    611.9K        9   2.63%
+   4       4    12/12       159.0    172.6    185.9    189.2      50.3K      54.5K      86.4K     125.2K    654.1K        ...
+The rest of the test output was removed since it exceeds the threshold of 1024 bytes.
+</system-out>
+	</testcase>
+	<testcase name="plumtree-graph-sim-simple-selective-forwarding" classname="plumtree-graph-sim-simple-selective-forwarding" time="0.0871314" status="run">
+		<system-out>Plumtree graph simulation: mode=simple, all-validators-send, nodes=12, validators=4, senders=4, tree_slots=46, expected=12, unreachable=0, broadcasts=5, payload=32.0K, packet_loss=0, isolate_broadcasts=0, rotate_isolation=0, selective_drop=4
+   # senders   delivered      p90      p95      p99     last     avg in    avg out     max in    max out      sent      dup    dup%
+   0       4    12/12       449.4    456.4    458.8    459.4      21.8K      24.6K      32.6K      65.0K    295.8K        0   0.00%
+     divergent simple: full_node_payload_hashes=4, full_node_sources=4
+   1       4    12/12       665.6    674.8    680.3    681.7      32.6K      38.0K      96.9K      65.0K    455.9K        4  33.33%
+     divergent simple: full_node_payload_hashes=4, full_node_sources=4
+   2       4    12/12       150.4    509.0    859.0    946.4      27.2K      24.5K      64.7K      64.7K    293.5K        2  20.00%
+     divergent simple: full_node_payload_hashes=4, full_node_sources=4
+   3       4    12/12       150.3    163....
+The rest of the test output was removed since it exceeds the threshold of 1024 bytes.
+</system-out>
+	</testcase>
+	<testcase name="plumtree-graph-sim-simple-rotating-outage" classname="plumtree-graph-sim-simple-rotating-outage" time="0.083815" status="run">
+		<system-out>Plumtree graph simulation: mode=simple, all-validators-send, nodes=12, validators=4, senders=4, tree_slots=46, expected=12, unreachable=0, broadcasts=5, payload=32.0K, packet_loss=0, isolate_broadcasts=4, rotate_isolation=1, selective_drop=none
+   # senders   delivered      p90      p95      p99     last     avg in    avg out     max in    max out      sent      dup    dup%
+   0       4    11/12       465.4    478.5    489.1    491.7      19.1K      21.9K      32.6K      65.0K    263.2K        0   0.00%
+     divergent simple: full_node_payload_hashes=4, full_node_sources=4
+   1       4    11/12       651.3    674.2    692.6    697.2      29.9K      32.6K      96.9K      65.0K    391.4K        4  36.36%
+     divergent simple: full_node_payload_hashes=4, full_node_sources=4
+   2       4    11/12       158.6    161.1    163.0    163.5      19.0K      24.4K      32.5K      64.6K    292.9K        0   0.00%
+     divergent simple: full_node_payload_hashes=4, full_node_sources=4
+   3       4    11/12       143.5    1...
+The rest of the test output was removed since it exceeds the threshold of 1024 bytes.
+</system-out>
+	</testcase>
+	<testcase name="plumtree-graph-sim-fec-stress" classname="plumtree-graph-sim-fec-stress" time="2.5387" status="run">
+		<system-out>Plumtree graph simulation: mode=fec, all-validators-send, nodes=12, validators=4, senders=4, tree_slots=46, expected=12, unreachable=0, broadcasts=20, payload=256.0K, packet_loss=0, isolate_broadcasts=0, rotate_isolation=0, selective_drop=none
+   # senders   delivered      p90      p95      p99     last     avg in    avg out     max in    max out      sent      dup    dup%
+   0       4    12/12       918.6    921.0    922.7    923.2     267.0K     392.5K     426.4K     814.9K     4.60M       37  10.91%
+   1       4    12/12       741.7    767.8    792.8    799.0     375.2K     275.7K     745.6K     620.4K     3.23M      129  26.11%
+   2       4    12/12       637.0    665.7    690.4    696.6     335.0K     386.7K     530.6K     739.9K     4.53M       80  18.02%
+   3       4    12/12       656.5    718.4    774.5    788.5     358.3K     303.1K     616.2K     627.6K     3.55M       90  19.11%
+   4       4    12/12       597.3    654.8    708.7    722.1     288.0K     286.6K     472.9K     662.5K     3.36M      ...
+The rest of the test output was removed since it exceeds the threshold of 1024 bytes.
+</system-out>
+	</testcase>
+	<testcase name="plumtree-graph-sim-simple-stress" classname="plumtree-graph-sim-simple-stress" time="0.332017" status="run">
+		<system-out>Plumtree graph simulation: mode=simple, all-validators-send, nodes=12, validators=4, senders=4, tree_slots=46, expected=12, unreachable=0, broadcasts=20, payload=256.0K, packet_loss=0, isolate_broadcasts=0, rotate_isolation=0, selective_drop=none
+   # senders   delivered      p90      p95      p99     last     avg in    avg out     max in    max out      sent      dup    dup%
+   0       4    12/12       892.9    904.9    907.5    908.1     171.2K     192.6K     256.6K     513.0K     2.26M        0   0.00%
+     divergent simple: full_node_payload_hashes=4, full_node_sources=4
+   1       4    12/12      1107.5   1165.0   1219.9   1233.6     192.6K     277.9K     512.8K     512.8K     3.26M        1  11.11%
+     divergent simple: full_node_payload_hashes=4, full_node_sources=4
+   2       4    12/12       896.8    939.8    956.1    960.1     320.5K     213.8K     768.6K     512.7K     2.51M        7  46.67%
+     divergent simple: full_node_payload_hashes=4, full_node_sources=4
+   3       4    12/12       723.8   ...
+The rest of the test output was removed since it exceeds the threshold of 1024 bytes.
+</system-out>
+	</testcase>
+	<testcase name="test-counter-collator-admission" classname="test-counter-collator-admission" time="0.0289206" status="run">
+		<system-out></system-out>
+	</testcase>
+	<testcase name="test-counter-disk-integration" classname="test-counter-disk-integration" time="1.47656" status="run">
+		<system-out>-- Counter fixture active; retained if interrupted: /tmp/uno-publication-build/counter-integration-dbbdf39a0ba3
+-- Counter collate/validate/restart checks passed; artifacts: /tmp/uno-publication-build/counter-integration-dbbdf39a0ba3
+
+-- Counter fixture passed and removed: /tmp/uno-publication-build/counter-integration-dbbdf39a0ba3
+</system-out>
+	</testcase>
+	<testcase name="test-counter-account-binding-readiness" classname="test-counter-account-binding-readiness" time="1.60155" status="run">
+		<system-out>-- Counter fixture active; retained if interrupted: /tmp/uno-publication-build/counter-integration-0f591ef8dd03
+-- Unconfirmed observation timing: wait_elapsed_seconds=1.001742
+wait_window_seconds=1.000000
+
+-- Closed-gate production observation: delivery=recorded
+visited=1
+adapter=1
+owners_before=1
+owners_during=2
+owners_after=1
+transactions=0
+
+-- Closed-gate observation timing: query_to_record_seconds=0.018166
+wait_window_seconds=1.000000
+headroom_ratio=55.048616
+
+-- Live account binding: one config callback, zero engine calls, no candidate export
+
+-- Counter fixture passed and removed: /tmp/uno-publication-build/counter-integration-0f591ef8dd03
+</system-out>
+	</testcase>
+	<testcase name="test-counter-fixture-lifecycle" classname="test-counter-fixture-lifecycle" time="0.0732534" status="run">
+		<system-out>-- Counter success cleanup, failure retention and admission cap passed
+</system-out>
+	</testcase>
+	<testcase name="test-counter-idle-replay" classname="test-counter-idle-replay" time="1.23919" status="run">
+		<system-out>-- Counter fixture active; retained if interrupted: /tmp/uno-publication-build/counter-integration-445edb3a466e
+-- Consecutive idle batches and independent disk replay passed: /tmp/uno-publication-build/counter-integration-445edb3a466e
+
+-- Counter fixture passed and removed: /tmp/uno-publication-build/counter-integration-445edb3a466e
+</system-out>
+	</testcase>
+	<testcase name="test-counter-self-delivery" classname="test-counter-self-delivery" time="0.762284" status="run">
+		<system-out>-- Counter fixture active; retained if interrupted: /tmp/uno-publication-build/counter-integration-10aa993e927e
+-- Counter fixture passed and removed: /tmp/uno-publication-build/counter-integration-10aa993e927e
+</system-out>
+	</testcase>
+	<testcase name="test-counter-cross-delivery" classname="test-counter-cross-delivery" time="1.17601" status="run">
+		<system-out>-- Counter fixture active; retained if interrupted: /tmp/uno-publication-build/counter-integration-8126405eeedd
+-- Counter fixture passed and removed: /tmp/uno-publication-build/counter-integration-8126405eeedd
+</system-out>
+	</testcase>
+	<testcase name="test-counter-native-sender" classname="test-counter-native-sender" time="2.05552" status="run">
+		<system-out>-- Counter fixture active; retained if interrupted: /tmp/uno-publication-build/counter-integration-1a7a11a45f82
+-- Native sender admission and independent replay passed: /tmp/uno-publication-build/counter-integration-1a7a11a45f82
+
+-- Counter fixture passed and removed: /tmp/uno-publication-build/counter-integration-1a7a11a45f82
+</system-out>
+	</testcase>
+	<testcase name="test-counter-activation-missing_capability" classname="test-counter-activation-missing_capability" time="0.347248" status="run">
+		<system-out>-- Counter fixture active; retained if interrupted: /tmp/uno-publication-build/counter-integration-f2dd18b29538
+-- Counter fixture passed and removed: /tmp/uno-publication-build/counter-integration-f2dd18b29538
+</system-out>
+	</testcase>
+	<testcase name="test-counter-config-presence-missing_capability" classname="test-counter-config-presence-missing_capability" time="0.0969924" status="run">
+		<system-out>-- Counter fixture active; retained if interrupted: /tmp/uno-publication-build/counter-integration-1808e6b92cff
+-- Invalid ingress rejected by complete configuration validation: /tmp/uno-publication-build/counter-integration-1808e6b92cff
+
+-- Counter fixture passed and removed: /tmp/uno-publication-build/counter-integration-1808e6b92cff
+</system-out>
+	</testcase>
+	<testcase name="test-counter-activation-old_version" classname="test-counter-activation-old_version" time="0.350916" status="run">
+		<system-out>-- Counter fixture active; retained if interrupted: /tmp/uno-publication-build/counter-integration-45490bffebd7
+-- Counter fixture passed and removed: /tmp/uno-publication-build/counter-integration-45490bffebd7
+</system-out>
+	</testcase>
+	<testcase name="test-counter-config-presence-old_version" classname="test-counter-config-presence-old_version" time="0.0999324" status="run">
+		<system-out>-- Counter fixture active; retained if interrupted: /tmp/uno-publication-build/counter-integration-140606767111
+-- Invalid ingress rejected by complete configuration validation: /tmp/uno-publication-build/counter-integration-140606767111
+
+-- Counter fixture passed and removed: /tmp/uno-publication-build/counter-integration-140606767111
+</system-out>
+	</testcase>
+	<testcase name="test-counter-config-binding" classname="test-counter-config-binding" time="0.118088" status="run">
+		<system-out>-- Counter fixture active; retained if interrupted: /tmp/uno-publication-build/counter-integration-0055f2c87d24
+-- Invalid ingress rejected by complete configuration validation: /tmp/uno-publication-build/counter-integration-0055f2c87d24
+
+-- Counter fixture passed and removed: /tmp/uno-publication-build/counter-integration-0055f2c87d24
+</system-out>
+	</testcase>
+	<testcase name="test-counter-engine-config" classname="test-counter-engine-config" time="0.396695" status="run">
+		<system-out>-- Counter fixture active; retained if interrupted: /tmp/uno-publication-build/counter-integration-8fda33a78650
+-- Counter fixture passed and removed: /tmp/uno-publication-build/counter-integration-8fda33a78650
+</system-out>
+	</testcase>
+	<testcase name="test-uno-partition-storage-smoke" classname="test-uno-partition-storage-smoke" time="0.144703" status="run">
+		<system-out>Running test Test_UnoStorageMeasurement_PartitionPersistenceStages...
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:36:36.743457486][transaction.cpp:616]	unpacking account 0000000000000000000000000000000000000000000000000000000000000000[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:36:36.743675599][transaction.cpp:449]	last_paid=0; cells=0 bits=0[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:36:36.743685950][transaction.cpp:679]	end of Account.unpack() for 2:0000000000000000000000000000000000000000000000000000000000000000 (balance = 0ng ; last_trans_lt = 1..2)[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:36:36.743866801][transaction.cpp:616]	unpacking account 0000000000000000000000000000000000000000000000000000000000000001[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:36:36.743874451][transaction.cpp:449]	last_paid=0; cells=0 bits=0[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:36:36.743879599][transaction.cpp:679]	end of Account.unpack() for 2:0000000000000000000000000000000000000000000000000000000000000001 (balance = 0ng ; last_trans_lt = 1..2)[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:36:36.744017138]...
+The rest of the test output was removed since it exceeds the threshold of 1024 bytes.
+</system-out>
+	</testcase>
+	<testcase name="test-uno-incremental-storage-smoke" classname="test-uno-incremental-storage-smoke" time="0.127352" status="run">
+		<system-out>Running test Test_UnoStorageMeasurement_PartitionIncrementalRecords...
+[NON-XML-CHAR-0x1B][1;33m[ 2][t 0][2026-09-09 15:36:36.789511360][test-uno-state-snapshot.cpp:827]	Incremental records database /tmp/uno-incremental-records-mAFhEH (removed on success, retained on failure)[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:36:36.836907410][transaction.cpp:616]	unpacking account 0000000000000000000000000000000000000000000000000000000000000000[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:36:36.836941458][transaction.cpp:449]	last_paid=0; cells=0 bits=0[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:36:36.836947915][transaction.cpp:679]	end of Account.unpack() for 2:0000000000000000000000000000000000000000000000000000000000000000 (balance = 0ng ; last_trans_lt = 1..2)[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:36:36.837351411][transaction.cpp:616]	unpacking account 000000000000000000000000000000000000000000000000000000000000000F[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:36:36.837360612][transaction.cpp:449]	last_paid=0; cells=0 bits=0[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:36:36.837365520][transactio...
+The rest of the test output was removed since it exceeds the threshold of 1024 bytes.
+</system-out>
+	</testcase>
+	<testcase name="test-uno-split-storage-smoke" classname="test-uno-split-storage-smoke" time="0.145619" status="run">
+		<system-out>Running test Test_UnoStorageMeasurement_PartitionIncrementalRecords...
+[NON-XML-CHAR-0x1B][1;33m[ 2][t 0][2026-09-09 15:36:36.768962714][test-uno-state-snapshot.cpp:827]	Incremental records database /tmp/uno-incremental-records-kJMKYt (removed on success, retained on failure)[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:36:36.812622516][transaction.cpp:616]	unpacking account 0000000000000000000000000000000000000000000000000000000000000000[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:36:36.812656412][transaction.cpp:449]	last_paid=0; cells=0 bits=0[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:36:36.812665149][transaction.cpp:679]	end of Account.unpack() for 2:0000000000000000000000000000000000000000000000000000000000000000 (balance = 0ng ; last_trans_lt = 1..2)[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:36:36.813284653][transaction.cpp:616]	unpacking account 000000000000000000000000000000000000000000000000000000000000000F[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:36:36.813297269][transaction.cpp:449]	last_paid=0; cells=0 bits=0[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:36:36.813303961][transactio...
+The rest of the test output was removed since it exceeds the threshold of 1024 bytes.
+</system-out>
+	</testcase>
+	<testcase name="test-uno-split-prefix-storage-smoke" classname="test-uno-split-prefix-storage-smoke" time="0.151496" status="run">
+		<system-out>Running test Test_UnoStorageMeasurement_PartitionIncrementalRecords...
+[NON-XML-CHAR-0x1B][1;33m[ 2][t 0][2026-09-09 15:36:36.716828842][test-uno-state-snapshot.cpp:827]	Incremental records database /tmp/uno-incremental-records-PiFyDU (removed on success, retained on failure)[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:36:36.759350010][transaction.cpp:616]	unpacking account 0000000000000000000000000000000000000000000000000000000000000000[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:36:36.759384519][transaction.cpp:449]	last_paid=0; cells=0 bits=0[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:36:36.759394281][transaction.cpp:679]	end of Account.unpack() for 2:0000000000000000000000000000000000000000000000000000000000000000 (balance = 0ng ; last_trans_lt = 1..2)[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:36:36.766786302][transaction.cpp:616]	unpacking account 0000000000000000000000000000000000000000000000000000000000000000[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:36:36.766798100][transaction.cpp:449]	last_paid=0; cells=0 bits=0[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:36:36.766804272][transactio...
+The rest of the test output was removed since it exceeds the threshold of 1024 bytes.
+</system-out>
+	</testcase>
+	<testcase name="test-ed25519" classname="test-ed25519" time="11.7799" status="run">
+		<system-out>Running test Test_Crypto_ed25519...
+[NON-XML-CHAR-0x1B][1;31m[ 1][t 0][2026-09-09 15:36:16.148270326][Ed25519.cpp:78]	PK1 = 71C5D668760CACC6A1D59DB615C4C16B2D4BB22B4353A64528AB310D2FDBAA2D[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;31m[ 1][t 0][2026-09-09 15:36:16.148468422][Ed25519.cpp:80]	PK2 = 6162616361626164616261636162616561626163616261646162616361626100[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;31m[ 1][t 0][2026-09-09 15:36:16.148549627][Ed25519.cpp:84]	PubK1 = 49FF8F072A569DC18A5D4C77EE2DEF236C17F0ABE79202D223DD86780A811C0C[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;31m[ 1][t 0][2026-09-09 15:36:16.148615994][Ed25519.cpp:86]	PubK2 = 6F9E5BDECE8721EB5737FBB59228BA07F7880F73CE5BFAA1B7157303D4201E74[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;31m[ 1][t 0][2026-09-09 15:36:16.148680822][Ed25519.cpp:89]	PubK3 = 6F9E5BDECE8721EB5737FBB59228BA07F7880F73CE5BFAA1B7157303D4201E74[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;31m[ 1][t 0][2026-09-09 15:36:16.148686025][Ed25519.cpp:91]	PubK1 = 49FF8F072A569DC18A5D4C77EE2DEF236C17F0ABE79202D223DD86780A811C0C[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;31m[ 1][t 0][2026-09-09 15:36:16.148885071][Ed25519.cpp:94]	secret(PK2, PubK2)=24451FC42D64B73BFC73BEAE8AEDFE20E62D221315C672A669A9BC13B4913B1...
+The rest of the test output was removed since it exceeds the threshold of 1024 bytes.
+</system-out>
+	</testcase>
+	<testcase name="test-bigint" classname="test-bigint" time="24.0361" status="run">
+		<system-out>check special ints
+check power-2 ops
+check unary ops
+run special tests
+check random ops (100000 iterations)
+#0: check on 1889226942578694 = 00..0006b63decd00006 = [ 1889226942578694 ]
+#10000: check on 649037107316853453566312041152513 = 00..002000000000000000000000000001 = [ 1 0 32 ]
+#20000: check on -84508239119 = ff..ffec52ea9af1 = [ -84508239119 ]
+#30000: check on 14474011154664524427946373126085988481658748083205070504932198000989141204993 = 00..002000000000000000000000000000000000000000000000000000000000000001 = [ 1 0 0 0 35184372088832 ]
+#40000: check on -28269553036454149273332760011886696253239742350009903329945699220681916417 = ff..ffefffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff = [ -1 0 0 0 -68719476736 ]
+#50000: check on -327681 = ff..fffaffff = [ -327681 ]
+#60000: check on 95549835287303782567988657 = 00..004f0976f33056c4c5e34db1 = [ 95403133586865 21216325427 ]
+#70000: check on -4398046511103 = ff..fffc0000000001 = [ -4398046511103 ]
+#80000: check on -117440509 = ff..fff9000003 =...
+The rest of the test output was removed since it exceeds the threshold of 1024 bytes.
+</system-out>
+	</testcase>
+	<testcase name="test-vm" classname="test-vm" time="34.133" status="run">
+		<system-out>Running test Test_VM_simple...
+[NON-XML-CHAR-0x1B][1;36m[ 3][t 0][2026-09-09 15:35:53.807588895][vm.cpp:606]	steps: 2 gas: used=76, max=1000, limit=1000, credit=0[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:35:53.807700285][vm.cpp:635]	move resulting stack (1 entries)[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;36m[ 3][t 0][2026-09-09 15:35:53.807725321][vm.cpp:606]	steps: 2 gas: used=76, max=1000, limit=1000, credit=0[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:35:53.807733077][vm.cpp:635]	move resulting stack (1 entries)[NON-XML-CHAR-0x1B][0m
+PASS in 3999.7us
+Running test Test_VM_sha256_canonical_snake...
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:35:53.809393726][tosops.cpp:687]	execute SHA256C[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:35:53.809428795][vm.cpp:473]	execute implicit RET[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;36m[ 3][t 0][2026-09-09 15:35:53.809436574][vm.cpp:606]	steps: 2 gas: used=239, max=100000, limit=100000, credit=0[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:35:53.809441774][vm.cpp:635]	move resulting stack (1 entries)[NON-XML-CHAR-0x1B][0m
+PASS in 65.1us
+Running test Test_VM_sha256_canonical_snake_rejects_aliases_and_old_versions...
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:35...
+The rest of the test output was removed since it exceeds the threshold of 1024 bytes.
+</system-out>
+	</testcase>
+	<testcase name="test-fift" classname="test-fift" time="4.90413" status="run">
+		<system-out>Running test Test_Fift_testvm...
+[NON-XML-CHAR-0x1B][1;36m[ 3][t 0][2026-09-09 15:36:28.769985646][vm.cpp:606]	steps: 3 gas: used=41, max=9223372036854775807, limit=9223372036854775807, credit=0[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:36:28.770025596][vm.cpp:635]	move resulting stack (3 entries)[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;36m[ 3][t 0][2026-09-09 15:36:28.770161153][vm.cpp:606]	steps: 21 gas: used=429, max=9223372036854775807, limit=9223372036854775807, credit=0[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:36:28.770166589][vm.cpp:635]	move resulting stack (6 entries)[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;36m[ 3][t 0][2026-09-09 15:36:28.770191081][vm.cpp:606]	steps: 29 gas: used=525, max=9223372036854775807, limit=9223372036854775807, credit=0[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:36:28.770194822][vm.cpp:635]	move resulting stack (9 entries)[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;36m[ 3][t 0][2026-09-09 15:36:28.770217661][vm.cpp:606]	steps: 29 gas: used=525, max=9223372036854775807, limit=9223372036854775807, credit=0[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:36:28.770221357][vm.cpp:635]	move resulting stack (12 entries)[NON-XML-CHAR-0x1B][0m
+PASS in 5156.1us...
+The rest of the test output was removed since it exceeds the threshold of 1024 bytes.
+</system-out>
+	</testcase>
+	<testcase name="test-cells" classname="test-cells" time="0.0562406" status="run">
+		<system-out>Running test Test_Cells_simple...
+PASS in 2051.4us
+Running test Test_Bitstrings_main...
+PASS in 382.4us
+Running test Test_Bitstrings_ZeroLengthIntegerLoads...
+PASS in 952.0ns
+Running test Test_Bigint_main...
+PASS in 47.2ms
+Running test Test_RefInt_main...
+PASS in 36.8us
+Running test Test_crc16_main...
+PASS in 7872.0ns
+Running test Test_base64_main...
+PASS in 29.2us
+Running test Test_base64_short_inputs...
+PASS in 3929.0ns
+Running test Test_bits256_scan_main...
+PASS in 71.4us
+Running test Test_bigexp_main...
+PASS in 162.3us
+Running test Test_uint64_exp_main...
+PASS in 315.8us
+11 test(s) passed
+</system-out>
+	</testcase>
+	<testcase name="test-workchain-block" classname="test-workchain-block" time="3.64603" status="run">
+		<system-out>Running test Test_WorkchainBlock_CoordinatorStateLayout...
+PASS in 257.0us
+Running test Test_WorkchainBlock_CoordinatorStateExactFraming...
+PASS in 23.1us
+Running test Test_WorkchainBlock_ResourcePolicyWire...
+PASS in 45.8us
+Running test Test_WorkchainBlock_EngineConfigurationFraming...
+PASS in 35.0us
+Running test Test_WorkchainBlock_EngineConfigurationAcceptedCadence...
+PASS in 19.2us
+Running test Test_WorkchainBlock_BatchPolicyVersionIdentityAgreement...
+PASS in 2528.0ns
+Running test Test_WorkchainBlock_BatchProfileUnsupportedNodeProbe...
+PASS in 959.0ns
+Running test Test_WorkchainBlock_ClaimedFeeOuterFraming...
+PASS in 14.5us
+Running test Test_WorkchainBlock_ClaimedFeeShortNativeFraming...
+PASS in 4754.0ns
+Running test Test_WorkchainBlock_ClaimedFeeSpecialNativeFraming...
+PASS in 4775.0ns
+Running test Test_WorkchainBlock_ClaimedFeeUnknownNativeFraming...
+PASS in 4694.0ns
+Running test Test_WorkchainBlock_ResourcePolicyRejectsSpecialBeforeDecoder...
+PASS in 1504.0ns
+Running test Test_WorkchainBlock_ResourceP...
+The rest of the test output was removed since it exceeds the threshold of 1024 bytes.
+</system-out>
+	</testcase>
+	<testcase name="test-workchain-proof-work" classname="test-workchain-proof-work" time="0.0165167" status="run">
+		<system-out>Running test Test_WorkchainProofWork_ExactSendComponents...
+PASS in 4015.0ns
+Running test Test_WorkchainProofWork_PrechargeAndStickyFailure...
+PASS in 9138.0ns
+Running test Test_WorkchainProofWork_ShapeRefusalBeforeBackend...
+PASS in 3658.0ns
+Running test Test_WorkchainProofWork_ExplicitProfileSet...
+PASS in 314.0ns
+Running test Test_WorkchainProofWork_LocalLimitsAndContext...
+PASS in 4216.0ns
+5 test(s) passed
+</system-out>
+	</testcase>
+	<testcase name="test-workchain-proof-contracts" classname="test-workchain-proof-contracts" time="0.00525973" status="run">
+		<system-out>Running test Test_WorkchainProofContract_UnmeteredEngineCannotFallback...
+PASS in 4492.0ns
+Running test Test_WorkchainProofContract_UnmeteredRegistrationCannotFallback...
+PASS in 788.0ns
+2 test(s) passed
+</system-out>
+	</testcase>
+	<testcase name="test-workchain-admission" classname="test-workchain-admission" time="0.0174311" status="run">
+		<system-out>Running test Test_WorkchainAdmission_OwnsEveryDescendantAndPreservesIdentity...
+PASS in 175.5us
+Running test Test_WorkchainAdmission_LocalFailureRemainsLocalUntilNewAttempt...
+PASS in 8737.0ns
+Running test Test_WorkchainAdmission_ProtocolRejectionPrecedesUnnecessaryLoads...
+PASS in 14.3us
+Running test Test_WorkchainAdmission_ConfigurationFailureIsSeparate...
+PASS in 798.0ns
+Running test Test_WorkchainAdmission_BatchZeroReadsIsConfigurationFailure...
+PASS in 666.0ns
+Running test Test_WorkchainAdmission_BatchZeroWritesIsConfigurationFailure...
+PASS in 493.0ns
+Running test Test_WorkchainAdmission_BatchZeroInboundIsConfigurationFailure...
+PASS in 415.0ns
+Running test Test_WorkchainAdmission_BatchZeroStateCellsIsConfigurationFailure...
+PASS in 428.0ns
+Running test Test_WorkchainAdmission_BatchZeroStateBitsIsConfigurationFailure...
+PASS in 395.0ns
+Running test Test_WorkchainAdmission_BatchZeroStateAccountCellsIsConfigurationFailure...
+PASS in 473.0ns
+Running test Test_WorkchainAdmission_BatchZeroStateAccountBitsIsC...
+The rest of the test output was removed since it exceeds the threshold of 1024 bytes.
+</system-out>
+	</testcase>
+	<testcase name="test-smartcont" classname="test-smartcont" time="9.4884" status="run">
+		<system-out>Running test Test_Toslib_WalletV3...
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:36:20.104330419][words.cpp:3418]	import_cmdlist_args(aba,2)[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:36:20.115261771][SmartContract.cpp:358]	VM stack:
+ [ 85143 ] [NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:36:20.115295997][SmartContract.cpp:410]	VM log
+execute SETCP 0
+execute DICTPUSHCONST 19 (xC_,1)
+execute DICTIGETJMPZ
+execute PUSH c4
+execute CTOS
+execute PLDU 32
+execute implicit RET[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:36:20.115300090][SmartContract.cpp:413]	VM stack:
+ [ 0 ] [NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:36:20.115301775][SmartContract.cpp:414]	VM exit code: 0[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:36:20.115303342][SmartContract.cpp:415]	VM accepted: true[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:36:20.115305549][SmartContract.cpp:416]	VM success: true[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:36:20.115308246][SmartContract.cpp:426]	output actions:
+out_list_empty[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:36:20.115330755][SmartContract.cpp:358]	VM stack:
+ [ 85143 ] [NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:36:2...
+The rest of the test output was removed since it exceeds the threshold of 1024 bytes.
+</system-out>
+	</testcase>
+	<testcase name="test-net" classname="test-net" time="0.536129" status="run">
+		<system-out>Running test Test_Net_PingPong...
+[NON-XML-CHAR-0x1B][1;31m[ 1][t 1][2026-09-09 15:36:36.089995700][TcpListener.cpp:40][!TcpListener[port:10220]]	0.0.0.0 10220[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;31m[ 1][t 2][2026-09-09 15:36:36.090245667][TcpListener.cpp:40][!TcpListener[port:11237]]	0.0.0.0 11237[NON-XML-CHAR-0x1B][0m
+PASS in 526.8ms
+1 test(s) passed
+</system-out>
+	</testcase>
+	<testcase name="test-tdactor" classname="test-tdactor" time="17.1608" status="run">
+		<system-out>Running test Test_Actor_promise_callback_runs_at_most_once_when_it_throws...
+PASS in 75.0us
+Running test Test_Actor_promise...
+PASS in 2018.0ns
+Running test Test_Actor_safe_promise...
+PASS in 1497.0ns
+Running test Test_Actor_split_promise...
+PASS in 8168.0ns
+Running test Test_Actor_promise_future...
+[NON-XML-CHAR-0x1B][1;31m[ 1][t 0][2026-09-09 15:35:58.414713265][PromiseFuture.h:383]	Lost PromiseFuture[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;31m[ 1][t 0][2026-09-09 15:35:58.414907349][actors_promise.cpp:220]	Second test[NON-XML-CHAR-0x1B][0m
+PASS in 216.7us
+Running test Test_Actor2_actor_lost_promise...
+[NON-XML-CHAR-0x1B][1;31m[ 1][t 1][2026-09-09 15:35:58.416670491][actors_promise.cpp:259][!B]	![NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;31m[ 1][t 1][2026-09-09 15:35:58.416732617][actors_promise.cpp:264][!B]	![NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;31m[ 1][t 0][2026-09-09 15:35:58.416739494][actors_promise.cpp:270][!A]	FINISH[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;31m[ 1][t 0][2026-09-09 15:35:58.416749934][actors_promise.cpp:237][!A]	STOP[NON-XML-CHAR-0x1B][0m
+PASS in 2094.7us
+Running test Test_Actor2_MultiPromise...
+PASS in 19.2us
+Running test Test_Actor2_signals...
+PASS in 309.0ns
+Running test Test_A...
+The rest of the test output was removed since it exceeds the threshold of 1024 bytes.
+</system-out>
+	</testcase>
+	<testcase name="test-tdutils" classname="test-tdutils" time="133.534" status="run">
+		<system-out>Running test Test_Buffer_buffer_builder...
+PASS in 213.1us
+Running test Test_ConcurrentHashMap_Benchmark...
+[NON-XML-CHAR-0x1B][1;31m[ 1][t 0][2026-09-09 15:36:03.557878630][benchmark.h:136]	Bench [                      ConcurrrentHashMap]: 2125182.688[2062726.453-2187638.924] ops/sec,	470.5ns [d = 62456.235502][NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;31m[ 1][t 0][2026-09-09 15:36:10.402282453][benchmark.h:136]	Bench [                      ConcurrrentHashMap]: 10973493.837[9525191.065-12421796.609] ops/sec,	91.1ns [d = 1448302.771768][NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;31m[ 1][t 0][2026-09-09 15:36:19.802242301][benchmark.h:136]	Bench [                            ArrayHashMap]: 13254359.137[11767399.457-14741318.816] ops/sec,	75.4ns [d = 1486959.679472][NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;31m[ 1][t 0][2026-09-09 15:36:28.169816913][benchmark.h:136]	Bench [                            ArrayHashMap]: 20197398.994[19487588.252-20907209.736] ops/sec,	49.5ns [d = 709810.742049][NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;31m[ 1][t 0][2026-09-09 15:36:31.878415672][benchmark.h:136]	Bench [               ConcurrentHashMapSpinlock]: 63382.536[62742.700-640...
+The rest of the test output was removed since it exceeds the threshold of 1024 bytes.
+</system-out>
+	</testcase>
+	<testcase name="test-toslib-offline" classname="test-toslib-offline" time="18.2018" status="run">
+		<system-out>Running test Test_Toslib_CellString...
+PASS in 462.1us
+Running test Test_Toslib_Text...
+x{00}
+x{00}
+x{00}
+x{00}
+x{00}
+x{00}
+x{00}
+x{0200}
+ x{0167}
+x{0200}
+ x{0167}
+x{010167}
+x{010167}
+x{010167}
+x{010167}
+x{010167}
+x{0200}
+ x{076E786674756A70}
+x{0200}
+ x{076E786674756A70}
+x{01076E786674756A70}
+x{01076E786674756A70}
+x{01076E786674756A70}
+x{01076E786674756A70}
+x{01076E786674756A70}
+x{0200}
+ x{08656976706B6B616F}
+x{0200}
+ x{08656976706B6B616F}
+x{0108656976706B6B616F}
+x{0108656976706B6B616F}
+x{0108656976706B6B616F}
+x{0108656976706B6B616F}
+x{0108656976706B6B616F}
+x{0200}
+ x{237469676A6D6478657962737075616F616F6C6E79756E6D67616C6C6D7962616C726C65}
+x{0200}
+ x{237469676A6D6478657962737075616F616F6C6E79756E6D67616C6C6D7962616C726C65}
+x{020D7469676A6D6478657962737075}
+ x{16616F616F6C6E79756E6D67616C6C6D7962616C726C65}
+x{02217469676A6D6478657962737075616F616F6C6E79756E6D67616C6C6D7962616C72}
+ x{026C65}
+x{01237469676A6D6478657962737075616F616F6C6E79756E6D67616C6C6D7962616C726C65}
+x{01237469676A6D6478657962737075616F616F6C...
+The rest of the test output was removed since it exceeds the threshold of 1024 bytes.
+</system-out>
+	</testcase>
+	<testcase name="test-func" classname="test-func" time="0.766425" status="run">
+		<system-out>Found 29 tests
+Running test 1/29: a10.fc
+  OK, 4 cases
+Running test 2/29: a6.fc
+  OK, 1 cases
+Running test 3/29: a6_1.fc
+  OK, 6 cases
+Running test 4/29: a6_5.fc
+  OK, 4 cases
+Running test 5/29: a7.fc
+  OK, 6 cases
+Running test 6/29: allow_post_modification.fc
+  OK, 9 cases
+Running test 7/29: asm_arg_order.fc
+  OK, 12 cases
+Running test 8/29: bit-operators.fc
+  OK, 10 cases
+Running test 9/29: c2.fc
+  OK, 3 cases
+Running test 10/29: c2_1.fc
+  OK, 3 cases
+Running test 11/29: co1.fc
+  OK, 1 cases
+Running test 12/29: code_after_ifelse.fc
+  OK, 4 cases
+Running test 13/29: inline_big.fc
+  OK, 1 cases
+Running test 14/29: inline_if.fc
+  OK, 2 cases
+Running test 15/29: inline_loops.fc
+  OK, 1 cases
+Running test 16/29: method_id.fc
+  OK, 4 cases
+Running test 17/29: s1.fc
+  OK, 1 cases
+Running test 18/29: test-math.fc
+  OK, 55 cases
+Running test 19/29: try-func.fc
+  OK, 15 cases
+Running test 20/29: unbalanced_ret.fc
+  OK, 3 cases
+Running test 21/29: unbalanced_ret_inline.fc
+  OK, 3 cases
+Running test 22/29: unbalanced_r...
+The rest of the test output was removed since it exceeds the threshold of 1024 bytes.
+</system-out>
+	</testcase>
+	<testcase name="test-func-legacy" classname="test-func-legacy" time="1.24724" status="run">
+		<system-out>  Running test 1/19: elector/elector-code.fc
+  OK  
+  Running test 2/19: config/config-code.fc
+  OK  
+  Running test 3/19: eth-bridge-multisig/multisig-code.fc
+  OK  
+  Running test 4/19: bsc-bridge-collector/votes-collector.fc
+  OK  
+  Running test 5/19: uni-lock-wallet/uni-lockup-wallet.fc
+  OK  
+  Running test 6/19: nft-collection/nft-collection-editable.fc
+  OK  
+  Running test 7/19: dns-collection/nft-collection.fc
+  OK  
+  Running test 8/19: tele-nft-item/nft-item.fc
+  OK  
+  Running test 9/19: storage/storage-contract.fc
+  OK  
+  Running test 10/19: storage/storage-provider.fc
+  OK  
+  Running test 11/19: nominator-pool/pool.fc
+  OK  
+  Running test 12/19: jetton-minter/jetton-minter.fc
+  OK  
+  Running test 13/19: gg-marketplace/nft-marketplace-v2.fc
+  OK  
+  Running test 14/19: jetton-wallet/jetton-wallet.fc
+  OK  
+  Running test 15/19: whales-nominators/nominators.fc
+  OK  
+  Running test 16/19: tact-examples/treasure_Treasure.code.fc
+  OK  
+  Running test 17/19: tact-examples/jetton_SampleJetton.co...
+The rest of the test output was removed since it exceeds the threshold of 1024 bytes.
+</system-out>
+	</testcase>
+	<testcase name="test-tol" classname="test-tol" time="10.8093" status="run">
+		<system-out>Found 669 tests
+Running test 1/669: a-tests.tol
+  OK, 1 cases
+Running test 2/669: allow-post-modification.tol
+  OK, 21 cases
+Running test 3/669: annotations-tests.tol
+  OK, 1 cases
+Running test 4/669: arrays-tuples-tests.tol
+  OK, 54 cases
+Running test 5/669: asm-arg-order.tol
+  OK, 23 cases
+Running test 6/669: assignment-tests.tol
+  OK, 14 cases
+Running test 7/669: bit-operators.tol
+  OK, 23 cases
+Running test 8/669: build-addr-tests.tol
+  OK, 17 cases
+Running test 9/669: bytesN-tests.tol
+  OK, 2 cases
+Running test 10/669: calls-tests.tol
+  OK, 19 cases
+Running test 11/669: cells-slices.tol
+  OK, 47 cases
+Running test 12/669: codegen-check-demo.tol
+  OK, 3 cases
+Running test 13/669: comments-tests.tol
+  OK, 2 cases
+Running test 14/669: comments.tol
+  OK, 2 cases
+Running test 15/669: constants-tests.tol
+  OK, 23 cases
+Running test 16/669: contract-deploy-get-address-positive.tol
+  OK, 1 cases
+Running test 17/669: contract-deploy-multiple.tol
+  OK, stderr match
+Running test 18/669: contract-deploy-on-field-rej...
+The rest of the test output was removed since it exceeds the threshold of 1024 bytes.
+</system-out>
+	</testcase>
+	<testcase name="test-adnl" classname="test-adnl" time="26.6155" status="run">
+		<system-out>[NON-XML-CHAR-0x1B][1;31m[ 1][t 0][2026-09-09 15:35:59.777735365][test-adnl.cpp:136]	Encrypted 10000 of 1KiB packets. Time=3.836775[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;31m[ 1][t 0][2026-09-09 15:36:02.047314038][test-adnl.cpp:151]	Encrypted 10000 of 1KiB packets with one key. Time=2.269360[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;31m[ 1][t 0][2026-09-09 15:36:05.264228747][test-adnl.cpp:164]	Signed 10000 of 1KiB packets. Time=3.216894[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;31m[ 1][t 0][2026-09-09 15:36:06.963445841][test-adnl.cpp:178]	Signed 10000 of 1KiB packets with one key. Time=1.699193[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;31m[ 1][t 0][2026-09-09 15:36:06.964698251][test-adnl.cpp:244]	Ed25519 version is 810549328[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;31m[ 1][t 0][2026-09-09 15:36:06.964706184][test-adnl.cpp:245]	testing delivering of all packets[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;31m[ 1][t 0][2026-09-09 15:36:09.968940670][test-adnl.cpp:271]	successfully tested delivering of packets of various sizes. Time=3.004257[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;31m[ 1][t 0][2026-09-09 15:36:10.970518969][test-adnl.cpp:287]	testing with channels enabled[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;31m[ 1][t 0][2026-09-09 15:36:12.031983891][test-adnl.cpp:306]	successfully t...
+The rest of the test output was removed since it exceeds the threshold of 1024 bytes.
+</system-out>
+	</testcase>
+	<testcase name="test-dht" classname="test-dht" time="12.0622" status="run">
+		<system-out>[NON-XML-CHAR-0x1B][1;31m[ 1][t 0][2026-09-09 15:36:16.132465777][test-dht.cpp:162]	testing DHT self-node error propagation and retry[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;31m[ 1][t 0][2026-09-09 15:36:16.333215839][test-dht.cpp:197]	DHT self-node error propagation and retry succeeded[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;31m[ 1][t 0][2026-09-09 15:36:16.333268166][test-dht.cpp:199]	testing different values[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;31m[ 1][t 0][2026-09-09 15:36:16.355290243][test-dht.cpp:438]	success[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;31m[ 1][t 0][2026-09-09 15:36:16.355297937][test-dht.cpp:440]	empty run[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;31m[ 1][t 0][2026-09-09 15:36:26.597298484][test-dht.cpp:448]	success[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;31m[ 1][t 0][2026-09-09 15:36:26.624030978][test-dht.cpp:476]	stores[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;31m[ 1][t 0][2026-09-09 15:36:26.864348358][test-dht.cpp:486]	success[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;31m[ 1][t 0][2026-09-09 15:36:26.864476594][test-dht.cpp:510]	gets[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;31m[ 1][t 0][2026-09-09 15:36:27.625695481][test-dht.cpp:520]	success[NON-XML-CHAR-0x1B][0m
+</system-out>
+	</testcase>
+	<testcase name="test-rldp2" classname="test-rldp2" time="4.26891" status="run">
+		<system-out>[NON-XML-CHAR-0x1B][1;31m[ 1][t 0][2026-09-09 15:36:27.931281614][test-rldp2.cpp:53]	testing OutQuery answer-size boundary directly[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;31m[ 1][t 0][2026-09-09 15:36:27.931643645][test-rldp2.cpp:85]	success[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;31m[ 1][t 0][2026-09-09 15:36:27.933050437][test-rldp2.cpp:187]	testing delivering of packet of size 1[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;31m[ 1][t 0][2026-09-09 15:36:27.952722320][test-rldp2.cpp:210]	success. Time=0.019675[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;31m[ 1][t 0][2026-09-09 15:36:27.952745908][test-rldp2.cpp:187]	testing delivering of packet of size 1024[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;31m[ 1][t 0][2026-09-09 15:36:27.953028002][test-rldp2.cpp:210]	success. Time=0.000280[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;31m[ 1][t 0][2026-09-09 15:36:27.953035781][test-rldp2.cpp:187]	testing delivering of packet of size 1048576[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;31m[ 1][t 0][2026-09-09 15:36:27.977216905][test-rldp2.cpp:210]	success. Time=0.024189[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;31m[ 1][t 0][2026-09-09 15:36:27.977238972][test-rldp2.cpp:187]	testing delivering of packet of size 2097152[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;31m[ 1][t 0][2026-09-09 15:36:28.015085436][test-rldp2.cpp:210]	success. Time=0...
+The rest of the test output was removed since it exceeds the threshold of 1024 bytes.
+</system-out>
+	</testcase>
+	<testcase name="test-rldp2-connection-cap" classname="test-rldp2-connection-cap" time="0.0551639" status="run">
+		<system-out>[NON-XML-CHAR-0x1B][1;31m[ 1][t 0][2026-09-09 15:36:36.994488288][test-rldp2-connection-cap.cpp:152]	presented 5000 distinct peers to one local id: 4096 connections live (4064 flooded, 32 quiet), 936 evicted[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;31m[ 1][t 0][2026-09-09 15:36:36.995997507][test-rldp2-connection-cap.cpp:189]	success[NON-XML-CHAR-0x1B][0m
+</system-out>
+	</testcase>
+	<testcase name="test-rldp2-query-eviction" classname="test-rldp2-query-eviction" time="2.42814" status="run">
+		<system-out>[NON-XML-CHAR-0x1B][1;31m[ 1][t 0][2026-09-09 15:36:32.348137549][test-rldp2-query-eviction.cpp:139][!rldp]	after the flood: 4096 live, 1905 evicted, 1 queries still pending[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;31m[ 1][t 0][2026-09-09 15:36:33.450111612][test-rldp2-query-eviction.cpp:187]	after forcing the eviction: query answered=true with_error=true, 0 queries still pending[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;31m[ 1][t 0][2026-09-09 15:36:34.636802232][test-rldp2-query-eviction.cpp:232]	after flooding queries: 8192 pending, 64 refused[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;31m[ 1][t 0][2026-09-09 15:36:34.673312200][test-rldp2-query-eviction.cpp:251]	success[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;31m[ 1][t 0][2026-09-09 15:36:34.679041321][adnl-peer.cpp:394]	[peerpair wfiUd05O0ft3WYMqW2sFz+5qkghkmk1Q2b5Xw+vrJA0=-pfn6bmgenebs6xGFBzTnkUms762VnYaQBptBwfVkrgo=]: dropping OUT message: error while creating packet: [Error : 0 : Lost promise][NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;31m[ 1][t 0][2026-09-09 15:36:34.679062617][adnl-peer.cpp:394]	[peerpair wfiUd05O0ft3WYMqW2sFz+5qkghkmk1Q2b5Xw+vrJA0=-pfn6bmgenebs6xGFBzTnkUms762VnYaQBptBwfVkrgo=]: dropping OUT message: error while cre...
+The rest of the test output was removed since it exceeds the threshold of 1024 bytes.
+</system-out>
+	</testcase>
+	<testcase name="test-rldp-http-proxy-routing" classname="test-rldp-http-proxy-routing" time="0.0149948" status="run">
+		<system-out>Running test Test_RldpHttpProxyDns_lifecycle_fails_closed_under_auction...
+PASS in 1226.0ns
+Running test Test_RldpHttpProxyDns_lifecycle_fails_closed_when_overdue_or_clockless...
+PASS in 163.0ns
+Running test Test_RldpHttpProxyDns_domain_item_is_the_canonical_third_hop_not_the_last...
+PASS in 4654.0ns
+Running test Test_RldpHttpProxyDns_loaded_contract_cleanup_runs_exactly_once_on_every_exit...
+PASS in 629.0ns
+Running test Test_RldpHttpProxyDns_lifecycle_returns_the_renewal_deadline...
+PASS in 176.0ns
+Running test Test_RldpHttpProxyDns_cache_expiry_never_outlives_the_lease...
+PASS in 175.0ns
+Running test Test_RldpHttpProxyDns_checkpoint_identity_detects_progress_and_reorganization...
+PASS in 914.0ns
+Running test Test_RldpHttpProxyDns_cache_evicts_expired_first_then_stalest...
+PASS in 486.0us
+8 test(s) passed
+</system-out>
+	</testcase>
+	<testcase name="test-overlay-peer-cleanup" classname="test-overlay-peer-cleanup" time="0.0130571" status="run">
+		<system-out>Running test Test_Overlay_PlumtreePeerCleanup...
+PASS in 21.5us
+Running test Test_Overlay_DelPeerCleansPlumtreeState...
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:36:37.039791751][overlay.cpp:122][&amp;OVERLAY_INFO]	[overlay U/AkG3XfVDued5/u1lKHt8gV1EOH6PVrjK52XRjAFPw=@bGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGw=]: creating[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 5][t 0][2026-09-09 15:36:37.040035662][overlay-peers.cpp:46][&amp;OVERLAY_DEBUG]	[overlay U/AkG3XfVDued5/u1lKHt8gV1EOH6PVrjK52XRjAFPw=@bGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGw=]: deleting peer cHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHA=[NON-XML-CHAR-0x1B][0m
+PASS in 1497.1us
+2 test(s) passed
+</system-out>
+	</testcase>
+	<testcase name="test-download-state-budget" classname="test-download-state-budget" time="5.18513" status="run">
+		<system-out>[NON-XML-CHAR-0x1B][1;33m[ 2][t 0][2026-09-09 15:36:27.641114922][state-download-buffer.cpp:923]	removed residual persistent state tempfile /tmp/tos-test-download-h02-cleanup-9576/persistent-state/something.partial (age 0s)[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;33m[ 2][t 0][2026-09-09 15:36:27.641322949][state-download-buffer.cpp:882]	preserving CellDb streaming-import rollback manifest for startup replay: /tmp/tos-test-download-h02-cleanup-9576/persistent-state/state.boc.celldb-rollback.12345.partial[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;33m[ 2][t 0][2026-09-09 15:36:28.463431984][state-download-buffer.cpp:923]	removed residual persistent state tempfile /tmp/tos-test-h02-cleanup-race-9576/persistent-state/old.partial (age 300s)[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;36m[ 3][t 0][2026-09-09 15:36:28.463455702][state-download-buffer.cpp:901]	skipping recent persistent state tempfile /tmp/tos-test-h02-cleanup-race-9576/persistent-state/recent.partial (age 0s &lt; threshold 60s)[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;33m[ 2][t 0][2026-09-09 15:36:29.383249710][state-download-buffer.cpp:923]	removed residual persistent state tempfile /tmp/tos-test-h02-c...
+The rest of the test output was removed since it exceeds the threshold of 1024 bytes.
+</system-out>
+	</testcase>
+	<testcase name="test-download-next-blocks-validation" classname="test-download-next-blocks-validation" time="0.0178029" status="run">
+		<system-out>test-download-next-blocks-validation: nextBlocksFull batch-shape regression
+test-download-next-blocks-validation: OK
+</system-out>
+	</testcase>
+	<testcase name="test-ext-message-pool" classname="test-ext-message-pool" time="0.0168031" status="run">
+		<system-out>Running test Test_ExtMessagePool_RejectsAdmissionBeforeMasterchainState...
+PASS in 22.5us
+Running test Test_ExtMessageChecker_RejectsMalformedBagOfCellsBeforeStateLookup...
+PASS in 18.0us
+Running test Test_ExtMessageChecker_ParsesValidMessageBeforeStateLookup...
+PASS in 4813.0ns
+3 test(s) passed
+</system-out>
+	</testcase>
+	<testcase name="test-msg-envelope" classname="test-msg-envelope" time="0.0175239" status="run">
+		<system-out>Running test Test_MsgEnvelope_RequiresCanonicalV2...
+PASS in 210.8us
+1 test(s) passed
+</system-out>
+	</testcase>
+	<testcase name="test-rate-limiter" classname="test-rate-limiter" time="0.0176885" status="run">
+		<system-out>Running test Test_RateLimiter_CategoryWindowIsShared...
+PASS in 11.7us
+Running test Test_RateLimiter_HeavyExhaustsWindowByCost...
+PASS in 4584.0ns
+Running test Test_RateLimiter_SmallBypassesGlobalWindow...
+PASS in 4363.0ns
+Running test Test_RateLimiter_GlobalWindowCapsAcrossCategories...
+PASS in 2559.0ns
+Running test Test_RateLimiter_UnlistedRequestIsNotLimited...
+PASS in 2092.0ns
+Running test Test_RateLimiter_WindowSlides...
+PASS in 2298.0ns
+Running test Test_RateLimiter_ZeroCostCountsAsOne...
+PASS in 1772.0ns
+7 test(s) passed
+</system-out>
+	</testcase>
+	<testcase name="test-config-transition" classname="test-config-transition" time="0.0174676" status="run">
+		<system-out>Running test Test_ConfigTransition_unchanged_configuration_is_accepted...
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:36:37.081916853][mc-config.cpp:570]	workchain description dictionary created[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:36:37.082103405][mc-config.cpp:2345]	unpacked info for workchain 0: basic=true, active=true, accept_msgs=true, min_split=0, max_split=4[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:36:37.082113984][mc-config.cpp:570]	workchain description dictionary created[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:36:37.082118619][mc-config.cpp:2345]	unpacked info for workchain 0: basic=true, active=true, accept_msgs=true, min_split=0, max_split=4[NON-XML-CHAR-0x1B][0m
+PASS in 900.0us
+Running test Test_ConfigTransition_adding_a_workchain_is_accepted...
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:36:37.082167405][mc-config.cpp:570]	workchain description dictionary created[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:36:37.082171660][mc-config.cpp:2345]	unpacked info for workchain 0: basic=true, active=true, accept_msgs=true, min_split=0, max_split=4[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:36:37....
+The rest of the test output was removed since it exceeds the threshold of 1024 bytes.
+</system-out>
+	</testcase>
+	<testcase name="test-json-rpc-parse" classname="test-json-rpc-parse" time="0.0109775" status="run">
+		<system-out>Running test Test_JsonRpcParse_result_stack_round_trip...
+PASS in 216.7us
+Running test Test_JsonRpcParse_result_stack_rejects_garbage_boc...
+PASS in 4144.0ns
+Running test Test_JsonRpcParse_result_stack_rejects_exotic_root...
+PASS in 7561.0ns
+Running test Test_JsonRpcParse_result_stack_rejects_slice_over_exotic_cell...
+PASS in 81.6us
+Running test Test_JsonRpcParse_multisig_keys_happy_path...
+PASS in 15.8us
+Running test Test_JsonRpcParse_multisig_keys_empty_dictionary...
+PASS in 503.0ns
+Running test Test_JsonRpcParse_multisig_keys_rejects_short_entry...
+PASS in 3536.0ns
+Running test Test_JsonRpcParse_multisig_keys_rejects_malformed_dictionary...
+PASS in 15.7us
+Running test Test_JsonRpcParse_multisig_keys_rejects_exotic_root...
+PASS in 15.2us
+Running test Test_JsonRpcParse_restricted_wallet_start_at...
+PASS in 1271.0ns
+Running test Test_JsonRpcParse_restricted_wallet_start_at_short_cell_is_zero...
+PASS in 2049.0ns
+Running test Test_JsonRpcParse_restricted_wallet_start_at_rejects_null_and_exotic...
+PASS in 1062.0...
+The rest of the test output was removed since it exceeds the threshold of 1024 bytes.
+</system-out>
+	</testcase>
+	<testcase name="test-http-server-limits" classname="test-http-server-limits" time="2.02995" status="run">
+		<system-out>Running test Test_HttpServerLimits_connection_cap_refuses_extra_connections_and_recovers...
+[NON-XML-CHAR-0x1B][1;31m[ 1][t 0][2026-09-09 15:36:32.197091604][TcpListener.cpp:40][!TcpListener[port:59363]]	127.0.0.1 59363[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:36:32.217313885][http-connection.cpp:33][!inhttpconn]	loop(): in=0 out=0[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:36:32.217351264][BufferedFd.h:221][!inhttpconn]	Flush read: +35B[total:35B][NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:36:32.217399770][BufferedFd.h:155][!inhttpconn]	Nothing to write to [fd:9][NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:36:32.217406988][http-connection.cpp:33][!inhttpconn]	loop(): in=0 out=0[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:36:32.217415721][BufferedFd.h:155][!inhttpconn]	Nothing to write to [fd:9][NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:36:32.217423951][http-connection.cpp:33][!inhttpconn]	loop(): in=0 out=0[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:36:32.217429057][BufferedFd.h:155][!inhttpconn]	Nothing to write to [fd:9][NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:36:32.217434742][http-connection.cpp:33][!inht...
+The rest of the test output was removed since it exceeds the threshold of 1024 bytes.
+</system-out>
+	</testcase>
+	<testcase name="test-wallet-message-processor" classname="test-wallet-message-processor" time="0.0148616" status="run">
+		<system-out>Running test Test_WalletMessageProcessor_admission_table_tracks_compiled_wallet_code...
+PASS in 327.7us
+Running test Test_WalletMessageProcessor_network_bound_layouts_parse_seqno_and_valid_until...
+PASS in 20.1us
+Running test Test_WalletMessageProcessor_wallet_seqno_round_trip...
+PASS in 4289.0ns
+3 test(s) passed
+</system-out>
+	</testcase>
+	<testcase name="test-vm-exception-hardening" classname="test-vm-exception-hardening" time="0.0171544" status="run">
+		<system-out>Running test Test_VmExceptionHardening_ConvertsEverySupportedExceptionToStatus...
+PASS in 731.4us
+Running test Test_TlbNullCellHardening_RejectsNullCellsBeforeUnpacking...
+PASS in 6840.0ns
+Running test Test_TlbNullCellHardening_PreservesNonNullUnpacking...
+PASS in 200.2us
+Running test Test_MasterchainStateHardening_RejectsMalformedExtraAfterHeaderInitialization...
+[NON-XML-CHAR-0x1B][1;33m[ 2][t 0][2026-09-09 15:36:37.063166825][mc-config.cpp:165]	state extra information is invalid: x{}
+PRINTING FAILED[NON-XML-CHAR-0x1B][0m
+PASS in 231.2us
+4 test(s) passed
+</system-out>
+	</testcase>
+	<testcase name="test-celldb-streaming-import" classname="test-celldb-streaming-import" time="0.0359803" status="run">
+		<system-out>[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:36:37.026136616][state-download-buffer.cpp:1131]	CellDbStreamingSink finished parse of 127 cell(s); root=C003143D8578FF35773280F44D3E20EBE5F875BB1258EA64921E31C787A4E27F (awaiting commit_after_root_verified)[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:36:37.028186820][state-download-buffer.cpp:1131]	CellDbStreamingSink finished parse of 399 cell(s); root=603D0B6D694895A7ABF3BB516FA53C45310DDA790AE1BF0E438EA68A28EF631F (awaiting commit_after_root_verified)[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;36m[ 3][t 0][2026-09-09 15:36:37.028309181][state-download-buffer.cpp:1195]	CellDbStreamingSink committed 399 cell(s); root=603D0B6D694895A7ABF3BB516FA53C45310DDA790AE1BF0E438EA68A28EF631F[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:36:37.029600054][state-download-buffer.cpp:1131]	CellDbStreamingSink finished parse of 199 cell(s); root=6A38690B2F7D9A217AC0C6B4DEF96B62A38E110840E075A10F4C99FDDDA3F3CB (awaiting commit_after_root_verified)[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;36m[ 3][t 0][2026-09-09 15:36:37.029656434][state-download-buffer.cpp:1195]	CellDbStreamingSink committ...
+The rest of the test output was removed since it exceeds the threshold of 1024 bytes.
+</system-out>
+	</testcase>
+	<testcase name="test-celldb-actor-restart" classname="test-celldb-actor-restart" time="1.28218" status="run">
+		<system-out>[NON-XML-CHAR-0x1B][1;33m[ 2][t 1][2026-09-09 15:36:34.230066620][celldb.cpp:371][!celldbin]	Using V1 DynamicBagOfCells with options V1{}[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;36m[ 3][t 1][2026-09-09 15:36:34.246398753][celldb.cpp:251][!celldbin]	Validating metadata[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;36m[ 3][t 1][2026-09-09 15:36:34.246434784][celldb.cpp:307][!celldbin]	Validating metadata: OK[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;33m[ 2][t 1][2026-09-09 15:36:34.254688302][celldb.cpp:371][!celldbin]	Using V1 DynamicBagOfCells with options V1{}[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;33m[ 2][t 1][2026-09-09 15:36:34.269995441][celldb.cpp:2537][!celldbin]	CellDbIn found 1 residual streaming-import rollback manifest(s) and 0 adopted marker(s), plus 0 committed manifest(s); replaying only unadopted manifests before metadata validation[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;33m[ 2][t 1][2026-09-09 15:36:34.273045571][celldb.cpp:2484][!celldbin]	CellDbIn replayed streaming import rollback manifest /tmp/tos-test-celldb-actor-restart-13449-unadopted/tmp/persistent-state/state.celldb-rollback.test.partial reason="startup recovery after interrupted streaming import" processed=1 eras...
+The rest of the test output was removed since it exceeds the threshold of 1024 bytes.
+</system-out>
+	</testcase>
+	<testcase name="test-validator-options" classname="test-validator-options" time="0.0170305" status="run">
+		<system-out></system-out>
+	</testcase>
+	<testcase name="test-full-node-shard-routing" classname="test-full-node-shard-routing" time="0.0174647" status="run">
+		<system-out>Running test Test_FullNodeShardRouting_ForeignWorkchainAndIsolation...
+PASS in 3470.0ns
+Running test Test_FullNodeShardRouting_IndependentDepthAndHistoricalParents...
+PASS in 2109.0ns
+2 test(s) passed
+</system-out>
+	</testcase>
+	<testcase name="test-uno-state-snapshot" classname="test-uno-state-snapshot" time="1.41554" status="run">
+		<system-out>Running test Test_UnoStateSnapshot_CellRecordDeltaAccounting...
+PASS in 9972.0ns
+Running test Test_UnoStateSnapshot_GrowingStateRetainsSharedCellsAfterRootRelease...
+[NON-XML-CHAR-0x1B][1;33m[ 2][t 0][2026-09-09 15:36:32.824767731][test-uno-state-snapshot.cpp:1015]	Root retention database: /tmp/uno-root-retention-ojSsMQ (removed on success, retained on failure)[NON-XML-CHAR-0x1B][0m
+CELL_RECORD_DELTA,0,134,12090,0,0,0,0
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:36:32.852990203][transaction.cpp:616]	unpacking account 0000000000000000000000000000000000000000000000000000000000000000[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:36:32.853008925][transaction.cpp:449]	last_paid=0; cells=0 bits=0[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:36:32.853014928][transaction.cpp:679]	end of Account.unpack() for 2:0000000000000000000000000000000000000000000000000000000000000000 (balance = 0ng ; last_trans_lt = 1..2)[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;36m[ 3][t 0][2026-09-09 15:36:32.853092203][test-uno-state-snapshot.cpp:1100]	Root retention epoch=0 fixture_keys=64 roots=1 live_cells=134[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:36:32...
+The rest of the test output was removed since it exceeds the threshold of 1024 bytes.
+</system-out>
+	</testcase>
+	<testcase name="test-counter-genesis-domain" classname="test-counter-genesis-domain" time="0.0928378" status="run">
+		<system-out>-- Public-key genesis domain guard verified before state creation
+</system-out>
+	</testcase>
+	<testcase name="test-block-handle-flags" classname="test-block-handle-flags" time="0.0162512" status="run">
+		<system-out></system-out>
+	</testcase>
+	<testcase name="test-keyring-temp-key" classname="test-keyring-temp-key" time="0.613427" status="run">
+		<system-out></system-out>
+	</testcase>
+	<testcase name="test-collator-node-limits" classname="test-collator-node-limits" time="0.015415" status="run">
+		<system-out></system-out>
+	</testcase>
+	<testcase name="test-rldp2-connection-limits" classname="test-rldp2-connection-limits" time="0.0171908" status="run">
+		<system-out>Running test Test_Rldp2ConnectionLimits_EvictsTheEntryClosestToExpiring...
+PASS in 10.3us
+Running test Test_Rldp2ConnectionLimits_EvictionKeepsBothViewsInStep...
+PASS in 8529.0ns
+Running test Test_Rldp2ConnectionLimits_RefreshingMovesAConnectionWithoutChangingTheCount...
+PASS in 2136.0ns
+Running test Test_Rldp2ConnectionLimits_AdmissionHoldsTheTableAtTheCap...
+PASS in 102.3us
+Running test Test_Rldp2ConnectionLimits_AdmissionIsANoOpBelowTheCap...
+PASS in 1673.0ns
+Running test Test_Rldp2ConnectionLimits_AdmissionRefusesRatherThanGrowWhenTheOrderIsLost...
+PASS in 1050.0ns
+Running test Test_Rldp2ConnectionLimits_AFloodedLocalIdRecyclesItsOwnInsteadOfTakingFromAnother...
+PASS in 5978.0ns
+Running test Test_Rldp2ConnectionLimits_AFloodCannotStarveAnotherLocalIdHoweverLongItRuns...
+PASS in 174.6us
+Running test Test_Rldp2ConnectionLimits_ALocalIdBelowItsShareTakesFromAnOverServedOne...
+PASS in 3717.0ns
+Running test Test_Rldp2ConnectionLimits_ASingleLocalIdBehavesAsPlainMostIdleEviction...
+PASS in 2108.0ns
+Running test...
+The rest of the test output was removed since it exceeds the threshold of 1024 bytes.
+</system-out>
+	</testcase>
+	<testcase name="test-promise-loss-contract" classname="test-promise-loss-contract" time="0.0163674" status="run">
+		<system-out>Running test Test_PromiseLossContract_DestroyingAnUnfulfilledPromiseReportsAnError...
+PASS in 4287.0ns
+Running test Test_PromiseLossContract_AnAnsweredPromiseIsNotAnsweredAgainOnDestruction...
+PASS in 329.0ns
+Running test Test_PromiseLossContract_ThrowingAfterTakingOwnershipStillAnswersTheCaller...
+PASS in 56.7us
+3 test(s) passed
+</system-out>
+	</testcase>
+	<testcase name="test-json-rpc-handler-guard" classname="test-json-rpc-handler-guard" time="0.0086566" status="run">
+		<system-out>Running test Test_JsonRpcHandlerGuard_RunsWorkThatDoesNotThrow...
+PASS in 2137.0ns
+Running test Test_JsonRpcHandlerGuard_ContainsAVmError...
+[NON-XML-CHAR-0x1B][1;33m[ 2][t 0][2026-09-09 15:36:37.103579839][json-rpc-handler-guard.h:40]	json-rpc: vm error raised VM error: cell underflow[NON-XML-CHAR-0x1B][0m
+PASS in 215.3us
+Running test Test_JsonRpcHandlerGuard_ContainsAVmVirtualizationError...
+[NON-XML-CHAR-0x1B][1;33m[ 2][t 0][2026-09-09 15:36:37.103756849][json-rpc-handler-guard.h:42]	json-rpc: vm virt error raised VM virtualization error: prunned branch[NON-XML-CHAR-0x1B][0m
+PASS in 10.8us
+Running test Test_JsonRpcHandlerGuard_ContainsAStandardException...
+[NON-XML-CHAR-0x1B][1;33m[ 2][t 0][2026-09-09 15:36:37.103772900][json-rpc-handler-guard.h:44]	json-rpc: std exception raised exception: boom[NON-XML-CHAR-0x1B][0m
+PASS in 11.0us
+Running test Test_JsonRpcHandlerGuard_ContainsAnExceptionOfAnyOtherType...
+[NON-XML-CHAR-0x1B][1;33m[ 2][t 0][2026-09-09 15:36:37.103784929][json-rpc-handler-guard.h:46]	json-rpc: foreign exception raised an unknown exception[NON-XML-CHAR-0x1B][0m
+PASS in 5532.0ns
+Running test Test_JsonRpcHandlerGuard_ThrowingWorkStillA...
+The rest of the test output was removed since it exceeds the threshold of 1024 bytes.
+</system-out>
+	</testcase>
+	<testcase name="test-metrics-label-bound" classname="test-metrics-label-bound" time="0.0257972" status="run">
+		<system-out>Running test Test_MetricsLabelBound_KeepsEveryLabelUpToTheLimit...
+PASS in 1314.9us
+Running test Test_MetricsLabelBound_LabelsPastTheLimitShareOneEntry...
+PASS in 17.5ms
+Running test Test_MetricsLabelBound_TheLimitIsAboveTheNodesOwnLabelSet...
+PASS in 139.0ns
+3 test(s) passed
+</system-out>
+	</testcase>
+	<testcase name="test-rldp2-inbound-transfer-bound" classname="test-rldp2-inbound-transfer-bound" time="0.410832" status="run">
+		<system-out>Running test Test_Rldp2InboundTransferBound_ATransferCompletesWhenTheConnectionHasRoom...
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:36:36.338866764][Solver.cpp:85]	PERF: Generate sparse matrix 57.9us 100.000000[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:36:36.338951609][InactivationDecoding.cpp:30]	[A_small.cols:14][Total columns:27][PI:10][A_small.cols - PI:4][NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:36:36.338963308][Solver.cpp:85]	PERF: Inactivation decoding 24.0us 57.586366[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:36:36.338982792][Solver.cpp:85]	PERF: D: apply permutation 14.7us 25.683117[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:36:36.338996342][Solver.cpp:85]	PERF: A_upper: apply permutation 8545.0ns 12.171181[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:36:36.339005943][Solver.cpp:85]	PERF: Calc E 3911.0ns 1.423328[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:36:36.339022431][Solver.cpp:85]	PERF: Triangular -&gt; Identity 12.5us 15.907969[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:36:36.339032169][Solver.cpp:85]	PERF: G_left 4400.0ns 3.774516[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:36:36.339039695][Sol...
+The rest of the test output was removed since it exceeds the threshold of 1024 bytes.
+</system-out>
+	</testcase>
+	<testcase name="test-consensus-config-admission" classname="test-consensus-config-admission" time="0.0153357" status="run">
+		<system-out>Running test Test_ConsensusConfigAdmission_supported_version_is_admissible...
+PASS in 202.1us
+Running test Test_ConsensusConfigAdmission_legacy_v1_entry_is_admissible...
+PASS in 11.8us
+Running test Test_ConsensusConfigAdmission_missing_parameter_fails_closed...
+PASS in 4119.0ns
+Running test Test_ConsensusConfigAdmission_missing_workchain_entry_fails_closed...
+PASS in 13.5us
+Running test Test_ConsensusConfigAdmission_newer_protocol_version_fails_closed...
+PASS in 7551.0ns
+Running test Test_ConsensusConfigAdmission_reserved_flag_bits_fail_closed...
+PASS in 71.2us
+Running test Test_ConsensusConfigAdmission_malformed_parameter_fails_closed...
+PASS in 4480.0ns
+Running test Test_ConsensusConfigAdmission_unknown_inner_constructor_fails_closed...
+PASS in 6424.0ns
+8 test(s) passed
+</system-out>
+	</testcase>
+	<testcase name="test-weak-ptr-registry" classname="test-weak-ptr-registry" time="0.0161998" status="run">
+		<system-out>Running test Test_WeakPtrRegistry_PreservesLiveEntriesAndRemovesExpiredEntries...
+PASS in 5117.0ns
+Running test Test_WeakPtrRegistry_KeyCursorSurvivesLookupErasingLastInspectedEntry...
+PASS in 2299.0ns
+Running test Test_WeakPtrRegistry_WrapFindsKeysInsertedOnBothSidesOfCursor...
+PASS in 2051.0ns
+Running test Test_WeakPtrRegistry_InsertionProportionalSweepBoundsExpiredBacklog...
+PASS in 506.6us
+Running test Test_WeakPtrRegistry_SweepReleasesSharedAllocationRetainedByWeakReference...
+PASS in 1175.0ns
+Running test Test_WeakPtrRegistry_InsertOrGetKeepsLiveCanonicalValue...
+PASS in 810.0ns
+Running test Test_WeakPtrRegistry_InsertOrGetReplacesExpiredValue...
+PASS in 806.0ns
+7 test(s) passed
+</system-out>
+	</testcase>
+	<testcase name="test-wallet-index" classname="test-wallet-index" time="0.152988" status="run">
+		<system-out>Running test Test_WalletIndex_HostileAcceptCannotRaiseGetMethodGasLimit...
+PASS in 1156.0ns
+Running test Test_WalletIndex_AggregateGetMethodGasIsBoundedPerBlock...
+PASS in 720.0ns
+Running test Test_WalletIndex_VerificationBudgetIsFairAcrossCandidates...
+PASS in 495.0ns
+Running test Test_WalletIndex_ReducedShareOutOfGasIsIndeterminate...
+PASS in 420.0ns
+Running test Test_WalletIndex_FullLimitOutOfGasIsContractFailure...
+PASS in 143.0ns
+Running test Test_WalletIndex_ReducedShareEarlyOutOfGasIsContractFailure...
+PASS in 142.0ns
+Running test Test_WalletIndex_ReducedShareNonGasFailureIsContractFailure...
+PASS in 149.0ns
+Running test Test_WalletIndex_VirtualizationFailureIsIndeterminate...
+PASS in 147.0ns
+Running test Test_WalletIndex_ForeignShardAbsenceIsNotAuthoritative...
+PASS in 609.0ns
+Running test Test_WalletIndex_AccountEventExactLookupAndCursorPagination...
+PASS in 21.8ms
+Running test Test_WalletIndex_NftReverseOwnerCanBeRemovedAfterOwnershipEnds...
+PASS in 18.8ms
+Running test Test_WalletIndex_IncompleteBlo...
+The rest of the test output was removed since it exceeds the threshold of 1024 bytes.
+</system-out>
+	</testcase>
+	<testcase name="test-quorum" classname="test-quorum" time="0.00587776" status="run">
+		<system-out>tos/quorum.h — BFT-2/3 helper tests
+====================================
+
+[TEST] canonical_threshold_table
+  PASSED
+[TEST] sub_threshold_is_rejected
+  PASSED
+[TEST] unequal_weights
+  PASSED
+[TEST] overflow_safe_at_cap
+  PASSED
+
+Total failures: 0
+</system-out>
+	</testcase>
+	<testcase name="test-emulator" classname="test-emulator" time="0.049181" status="run">
+		<system-out>Running test Test_Emulator_wallet_int_and_ext_msg...
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:36:36.975764351][mc-config.cpp:262]	needSpecialSmc flag set[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:36:36.976000594][mc-config.cpp:268]	smc dictionary created[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:36:36.976007734][mc-config.cpp:570]	workchain description dictionary created[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:36:36.976023817][mc-config.cpp:2345]	unpacked info for workchain 0: basic=true, active=true, accept_msgs=true, min_split=2, max_split=4[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:36:36.977270651][transaction.cpp:5519]	block random seed set to 7E88767D286FEC2E592AF66A6A2B9377D43709881E137B90B9FA0202C9B92FBA[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:36:36.977685991][transaction.cpp:1643]	gas limits: max=1000000, limit=1000000, credit=0[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:36:36.977691560][transaction.cpp:2340]	HASH(in_msg_state) = CB731CB751E72B1E18EC671687DA0553AA9D7F682BD1C10B0A1AB881957A71F6, account_state_hash = CB731CB751E72B1E18EC671687DA0553AA9D7F682BD1C10B0A1AB88...
+The rest of the test output was removed since it exceeds the threshold of 1024 bytes.
+</system-out>
+	</testcase>
+	<testcase name="test-fec" classname="test-fec" time="0.540788" status="run">
+		<system-out>Running test Test_Fec_Simd...
+[NON-XML-CHAR-0x1B][1;31m[ 1][t 0][2026-09-09 15:36:36.124363324][fec-test.cpp:48]	32[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;31m[ 1][t 0][2026-09-09 15:36:36.124566233][fec-test.cpp:69]	Without simd[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;31m[ 1][t 0][2026-09-09 15:36:36.124667611][fec-test.cpp:69]	With SSE[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;31m[ 1][t 0][2026-09-09 15:36:36.124745350][fec-test.cpp:69]	With AVX[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;31m[ 1][t 0][2026-09-09 15:36:36.124790026][fec-test.cpp:69]	With AVX[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;31m[ 1][t 0][2026-09-09 15:36:36.124841231][fec-test.cpp:48]	64[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;31m[ 1][t 0][2026-09-09 15:36:36.124846702][fec-test.cpp:69]	Without simd[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;31m[ 1][t 0][2026-09-09 15:36:36.124934445][fec-test.cpp:69]	With SSE[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;31m[ 1][t 0][2026-09-09 15:36:36.125002672][fec-test.cpp:69]	With AVX[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;31m[ 1][t 0][2026-09-09 15:36:36.125047629][fec-test.cpp:69]	With AVX[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;31m[ 1][t 0][2026-09-09 15:36:36.125098330][fec-test.cpp:48]	320[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;31m[ 1][t 0][2026-09-09 15:36:36.125106565][fec-test.cpp:69]	Without simd[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;31m[ 1][t 0][2026-09-09 15:36:36.125358541][fec-test.cpp:69...
+The rest of the test output was removed since it exceeds the threshold of 1024 bytes.
+</system-out>
+	</testcase>
+	<testcase name="test-tddb" classname="test-tddb" time="1.49254" status="run">
+		<system-out>Running test Test_KeyValue_PrefixedGetMulti...
+PASS in 8105.0ns
+Running test Test_KeyValue_PrefixedKeyValueGetMulti...
+PASS in 5314.0ns
+Running test Test_KeyValue_simple...
+[NON-XML-CHAR-0x1B][1;33m[ 2][t 0][2026-09-09 15:36:33.687106589][RocksDb.cpp:89]	Enabled process-wide RocksDB block-cache budget: limit=33554432[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;33m[ 2][t 0][2026-09-09 15:36:33.687285410][RocksDb.cpp:101]	Enabled global RocksDB write-buffer budget: limit=134217728 allow_stall=true[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;33m[ 2][t 0][2026-09-09 15:36:33.687295760][RocksDb.cpp:109]	Enabled consensus-critical RocksDB write-buffer budget: limit=67108864 allow_stall=true[NON-XML-CHAR-0x1B][0m
+PASS in 81.0ms
+Running test Test_KeyValue_async_simple...
+[NON-XML-CHAR-0x1B][1;31m[ 1][t 4][2026-09-09 15:36:34.915043059][key_value.cpp:305][!Worker]	0.000909[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;31m[ 1][t 4][2026-09-09 15:36:34.915077484][key_value.cpp:306][!Worker]	1.129862[NON-XML-CHAR-0x1B][0m
+PASS in 1151.6ms
+Running test Test_KeyValue_RocksDbMemoryBounds...
+PASS in 135.6ms
+Running test Test_KeyValue_RocksDbCriticalMemoryDomain...
+PASS in 28.2ms
+Running test Test_KeyVal...
+The rest of the test output was removed since it exceeds the threshold of 1024 bytes.
+</system-out>
+	</testcase>
+	<testcase name="test-db" classname="test-db" time="415.383" status="run">
+		<system-out>Running test Test_Cell_sha_benchmark...
+[NON-XML-CHAR-0x1B][1;31m[ 1][t 0][2026-09-09 15:35:57.523438621][benchmark.h:136]	Bench [                   SHA256 TDLib length=4]: 3946772.159[3040518.863-4853025.455] ops/sec,	253.4ns [d = 906253.295760][NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;31m[ 1][t 0][2026-09-09 15:36:03.264134405][benchmark.h:136]	Bench [               SHA256 low level length=4]: 17148000.310[15650943.493-18645057.127] ops/sec,	58.3ns [d = 1497056.816992][NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;31m[ 1][t 0][2026-09-09 15:36:06.796664852][benchmark.h:136]	Bench [SHA256 reuse (used in DataCell) length=4]: 16244003.747[14263983.001-18224024.494] ops/sec,	61.6ns [d = 1980020.746514][NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;31m[ 1][t 0][2026-09-09 15:36:12.910626042][benchmark.h:136]	Bench [                         SHA256 length=4]: 18363870.903[18356145.468-18371596.338] ops/sec,	54.5ns [d = 7725.434974][NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;31m[ 1][t 0][2026-09-09 15:36:18.486423798][benchmark.h:136]	Bench [                  SHA256 TDLib length=64]: 4560568.074[4544665.510-4576470.638] ops/sec,	219.3ns [d = 15902.564210][NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;31m[ 1][t ...
+The rest of the test output was removed since it exceeds the threshold of 1024 bytes.
+</system-out>
+	</testcase>
+	<testcase name="test-uno-crypto-abi-real" classname="test-uno-crypto-abi-real" time="1.09425" status="run">
+		<system-out>PASS: 9 full relations and system ciphertext, C ABI, four workers, entropy trap and firing canary
+</system-out>
+	</testcase>
+	<testcase name="test-uno-crypto-rust" classname="test-uno-crypto-rust" time="2.92987" status="run">
+		<system-out>    Finished `release` profile [optimized] target(s) in 0.06s
+     Running unittests src/lib.rs (/tmp/uno-publication-build/uno/crypto/cargo-target/release/deps/tos_uno_crypto_prototype-7a23a0f6440603b7)
+
+running 20 tests
+test relation::range_shape_tests::padding_preserves_constraints_and_rejects_shape_disagreement ... ok
+test system_encryption::tests::system_verify_checks_request_version_independently ... ok
+test system_encryption::tests::system_encryption_rejects_each_invalid_input ... ok
+test system_encryption::tests::system_ciphertext_decrypts_to_the_public_amount ... ok
+test tests::range_residuals_cannot_cancel ... ok
+test tests::unknown_relation_kind_is_not_collect ... ok
+test tests::transcript_matches_independent_c_reference ... ok
+test system_encryption::tests::system_abi_checks_layout_failure_atomicity_and_both_components ... ok
+test system_encryption::tests::system_encryption_binds_every_public_field ... ok
+test tests::borrowed_abi_layout_spans_and_panic_recovery ... ok
+test tests::admission_predica...
+The rest of the test output was removed since it exceeds the threshold of 1024 bytes.
+</system-out>
+	</testcase>
+	<testcase name="test-uno-crypto-symbols" classname="test-uno-crypto-symbols" time="0.895293" status="run">
+		<system-out>PASS uno_crypto_verify_v2: 2219 direct/GOT nodes, no matched entropy target; 803 unresolved indirect sites REQUIRE source/runtime review
+PASS uno_crypto_system_encrypt_v1: 430 direct/GOT nodes, no matched entropy target; 399 unresolved indirect sites REQUIRE source/runtime review
+PASS uno_crypto_system_verify_v1: 433 direct/GOT nodes, no matched entropy target; 399 unresolved indirect sites REQUIRE source/runtime review
+Dormant runtime entropy symbols are not classified as reachable merely because they are linked.
+</system-out>
+	</testcase>
+	<testcase name="test-uno-crypto-kernel-gates" classname="test-uno-crypto-kernel-gates" time="1.23375" status="run">
+		<system-out>test_annotated_tag_objects_bind_the_commits (__main__.KernelGates.test_annotated_tag_objects_bind_the_commits) ... ok
+test_checkout_status_rejects_untracked_build_script (__main__.KernelGates.test_checkout_status_rejects_untracked_build_script) ... ok
+test_declared_patch_base_is_checked (__main__.KernelGates.test_declared_patch_base_is_checked) ... ok
+test_mirror_dependency_sources (__main__.KernelGates.test_mirror_dependency_sources) ... ok
+test_normal_dependency_graph_has_no_entropy_provider (__main__.KernelGates.test_normal_dependency_graph_has_no_entropy_provider) ... ok
+test_normal_feature_graph_matches_reviewed_snapshot (__main__.KernelGates.test_normal_feature_graph_matches_reviewed_snapshot) ... ok
+test_patch_byte_matching_is_exact (__main__.KernelGates.test_patch_byte_matching_is_exact) ... ok
+test_pins_and_registry_archives (__main__.KernelGates.test_pins_and_registry_archives) ... ok
+test_rehashed_undeclared_vendor_changes_are_rejected (__main__.KernelGates.test_rehashed_undeclared_vendor_changes_a...
+The rest of the test output was removed since it exceeds the threshold of 1024 bytes.
+</system-out>
+	</testcase>
+	<testcase name="test-uno-crypto-header-guard" classname="test-uno-crypto-header-guard" time="4.37293" status="run">
+		<system-out>-- Header guard fixture (retained on failure): /tmp/uno-publication-build/uno/crypto/cargo-target/header-guard-054cce3fe35275eb45fb
+-- Header drift and non-overwrite controls passed
+</system-out>
+	</testcase>
+	<testcase name="test-coro" classname="test-coro" time="5.66222" status="run">
+		<system-out>[NON-XML-CHAR-0x1B][1;31m[ 1][t 1][2026-09-09 15:36:25.484346734][test-coro.cpp:1225][!CoroSpec]	Run tests[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;36m[ 3][t 3][2026-09-09 15:36:25.496261438][test-coro.cpp:106][!TestLogger]	[Logger] Starting coroutine tests[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;36m[ 3][t 3][2026-09-09 15:36:25.496328350][test-coro.cpp:171][!CoroSpec]	=== unified queries ===[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;36m[ 3][t 3][2026-09-09 15:36:25.496349735][test-coro.cpp:212][!CoroSpec]	meta_ask: ask(args...)[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;36m[ 3][t 3][2026-09-09 15:36:25.496375690][test-coro.cpp:214][!CoroSpec]	meta_ask: ask_immediate(args...)[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;36m[ 3][t 3][2026-09-09 15:36:25.496388349][test-coro.cpp:216][!CoroSpec]	meta_ask: co_try(ask_immediate(args...))[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;36m[ 3][t 3][2026-09-09 15:36:25.496399190][test-coro.cpp:218][!CoroSpec]	meta_ask: co_try(ask(args...))[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;36m[ 3][t 1][2026-09-09 15:36:25.496437833][test-coro.cpp:212][!CoroSpec]	meta_ask: ask(args...)[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;36m[ 3][t 1][2026-09-09 15:36:25.496458393][test-coro.cpp:214][!CoroSpec]	meta_ask: ask_immediate(args...)[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;36m[ 3][t 1][2026-09-09 15:...
+The rest of the test output was removed since it exceeds the threshold of 1024 bytes.
+</system-out>
+	</testcase>
+	<testcase name="test-scheduler-stop" classname="test-scheduler-stop" time="0.0441951" status="run">
+		<system-out>Running test Test_SchedulerStop_AliveActors...
+PASS in 829.1us
+Running test Test_SchedulerStop_SelfStoppedVsAlive...
+PASS in 1260.1us
+Running test Test_SchedulerStop_PendingAlarm...
+PASS in 279.2us
+Running test Test_SchedulerStop_RepeatingAlarm...
+PASS in 11.0ms
+Running test Test_SchedulerStop_FromStartUp...
+PASS in 116.9us
+Running test Test_SchedulerStop_OwnedChildren...
+PASS in 125.6us
+Running test Test_SchedulerStop_PendingClosures...
+PASS in 459.0us
+Running test Test_SchedulerStop_YieldingActor...
+PASS in 10.2ms
+Running test Test_SchedulerStop_Idempotent...
+PASS in 121.8us
+Running test Test_SchedulerStop_MultipleAlarmActors...
+PASS in 172.8us
+Running test Test_SchedulerStop_SchedulerStopInTearDown...
+PASS in 132.9us
+Running test Test_SchedulerStop_NormalFlow...
+[NON-XML-CHAR-0x1B][1;31m[ 1][t 0][2026-09-09 15:36:37.004188895][coro_task.h:433][&amp;r.is_error() &amp;&amp; r.error().code() != 653]	Detached task &lt;UnknownTask&gt; failed: [Error : 0 : promise destroyed][NON-XML-CHAR-0x1B][0m
+PASS in 10.7ms
+12 test(s) passed
+</system-out>
+	</testcase>
+	<testcase name="test-runtime" classname="test-runtime" time="0.0161229" status="run">
+		<system-out>Running test Test_Runtime_SimpleMessageToSelf...
+[NON-XML-CHAR-0x1B][1;36m[ 3][t 1][2026-09-09 15:36:37.027327234][BusRuntime.h:238][!SampleActor]	Published event td::actor::test_simple_message_to_self::(anonymous namespace)::MainBus::[NON-XML-CHAR-0x1B][1;33mSampleEvent[NON-XML-CHAR-0x1B][1;36m@0x7f250c000b80[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 1][2026-09-09 15:36:37.027728454][BusRuntime.h:240][!SampleActor]	Received event td::actor::test_simple_message_to_self::(anonymous namespace)::MainBus::[NON-XML-CHAR-0x1B][1;33mSampleEvent[NON-XML-CHAR-0x1B][0m@0x7f250c000b80[NON-XML-CHAR-0x1B][0m
+PASS in 1982.7us
+Running test Test_Runtime_BusTree...
+[NON-XML-CHAR-0x1B][1;36m[ 3][t 1][2026-09-09 15:36:37.029277240][BusRuntime.h:238][!RootController]	Published event td::actor::test_bus_tree::(anonymous namespace)::Level1Bus::[NON-XML-CHAR-0x1B][1;33mStopRequested[NON-XML-CHAR-0x1B][1;36m@0x7f250c000b80 on Level1[0] bus[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;36m[ 3][t 1][2026-09-09 15:36:37.029354639][BusRuntime.h:238][!RootController]	Published event td::actor::test_bus_tree::(anonymous namespace)::Level1Bus::[NON-XML-CHAR-0x1B][1;33mStopRequested[NON-XML-CHAR-0x1B][1;36m@0x7f250c001070 on Level1[1] bus[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 1][2026-09-09 15:36:37.029374688][BusRuntime....
+The rest of the test output was removed since it exceeds the threshold of 1024 bytes.
+</system-out>
+	</testcase>
+	<testcase name="test-test-scheduler" classname="test-test-scheduler" time="0.016206" status="run">
+		<system-out>Running test Test_SharedFuture_FailedResultIsEvictedAndRetried...
+PASS in 15.3us
+Running test Test_SharedFuture_ConcurrentWaitersShareFailureAndRetry...
+PASS in 2000.0ms
+Running test Test_SharedFuture_AwaitWithTimeoutSimultaneousCompletion...
+PASS in 100.0s
+Running test Test_TestScheduler_BasicActorStartUp...
+PASS in 3364.0ns
+Running test Test_TestScheduler_AlarmWithVirtualTime...
+PASS in 5000.0ms
+Running test Test_TestScheduler_TimeFrozenDuringWork...
+PASS in 1000.0ms
+Running test Test_TestScheduler_RepeatingAlarm...
+PASS in 5000.0ms
+Running test Test_TestScheduler_SendClosure...
+PASS in 2809.0ns
+Running test Test_TestScheduler_CoroSleep...
+PASS in 3000.0ms
+Running test Test_TestScheduler_MultipleActorsInteracting...
+PASS in 3000.0ms
+Running test Test_TestScheduler_NextTimeoutInfinity...
+PASS in 2679.0ns
+Running test Test_TestScheduler_ActorStopAndTearDown...
+PASS in 3261.0ns
+Running test Test_TestScheduler_AdvanceTimePrecise...
+PASS in 5000.0ms
+Running test Test_TestScheduler_CleanupDrainsPendingAlarms...
+P...
+The rest of the test output was removed since it exceeds the threshold of 1024 bytes.
+</system-out>
+	</testcase>
+	<testcase name="test-backpressure-queue" classname="test-backpressure-queue" time="0.0136847" status="run">
+		<system-out>Running test Test_BackpressureQueue_BasicPushPop...
+PASS in 15.4us
+Running test Test_BackpressureQueue_NonBlockingPushPop...
+PASS in 5600.0ns
+Running test Test_BackpressureQueue_BackpressureBlocksProducer...
+PASS in 3411.0ns
+Running test Test_BackpressureQueue_PopBlocksConsumer...
+PASS in 3207.0ns
+Running test Test_BackpressureQueue_CloseWakesBlockedPop...
+PASS in 2799.0ns
+Running test Test_BackpressureQueue_CloseWakesBlockedPush...
+PASS in 2720.0ns
+Running test Test_BackpressureQueue_CloseAllowsDrainingRemainingItems...
+PASS in 2979.0ns
+Running test Test_BackpressureQueue_ProducerConsumerStreaming...
+PASS in 3006.0ns
+Running test Test_BackpressureQueue_MultipleProducers...
+PASS in 3366.0ns
+9 test(s) passed
+</system-out>
+	</testcase>
+	<testcase name="test-persistent-treap" classname="test-persistent-treap" time="1.31954" status="run">
+		<system-out>Running test Test_PersistentTreap_Empty...
+PASS in 1992.0ns
+Running test Test_PersistentTreap_InsertAndFind...
+PASS in 38.4us
+Running test Test_PersistentTreap_InsertOverwrite...
+PASS in 3729.0ns
+Running test Test_PersistentTreap_Erase...
+PASS in 4882.0ns
+Running test Test_PersistentTreap_EraseAt...
+PASS in 5031.0ns
+Running test Test_PersistentTreap_AtRandomAccess...
+PASS in 5160.0ns
+Running test Test_PersistentTreap_SnapshotIsolation...
+PASS in 3743.0ns
+Running test Test_PersistentTreap_LargeInsertErase...
+PASS in 25.7ms
+Running test Test_PersistentTreap_EraseAtSmall...
+PASS in 8809.0ns
+Running test Test_PersistentTreap_RandomInsertEraseAt...
+PASS in 2983.5us
+Running test Test_PersistentTreap_SnapshotRandomDrain...
+PASS in 1974.7us
+Running test Test_PersistentTreap_StringKeys...
+PASS in 8788.0ns
+Running test Test_PersistentTreap_StressRandomOps...
+PASS in 80.7ms
+Running test Test_PersistentTreap_StressSnapshotIsolation...
+PASS in 14.2ms
+Running test Test_PersistentTreap_StressRandomDrain...
+PASS in 1188.6ms
+...
+The rest of the test output was removed since it exceeds the threshold of 1024 bytes.
+</system-out>
+	</testcase>
+	<testcase name="test-lru-cache" classname="test-lru-cache" time="0.0130169" status="run">
+		<system-out>Running test Test_LRUCache_EmptyReflectsContents...
+PASS in 4963.0ns
+1 test(s) passed
+</system-out>
+	</testcase>
+	<testcase name="test-ffi-awaitable" classname="test-ffi-awaitable" time="0.025438" status="run">
+		<system-out>Running test Test_FFIAwaitable_CreateResolvedWithValue...
+PASS in 2126.6us
+Running test Test_FFIAwaitable_CreateResolvedWithError...
+PASS in 1598.9us
+Running test Test_FFIAwaitable_AwaitSuspendOnResolved...
+PASS in 401.8us
+Running test Test_FFIAwaitable_CreateBridgeResolveWithoutSuspend...
+PASS in 492.7us
+Running test Test_FFIAwaitable_CreateBridgeResolveAfterSuspend...
+PASS in 410.7us
+Running test Test_FFIAwaitable_TransformString...
+PASS in 602.5us
+Running test Test_FFIAwaitable_ConcurrentResolveAndSuspend...
+PASS in 5535.2us
+Running test Test_FFIAwaitable_DestroyUnresolvedWithoutSuspend...
+PASS in 450.4us
+Running test Test_FFIAwaitable_DestroyUnresolvedAfterSuspend...
+PASS in 299.4us
+Running test Test_FFIAwaitable_DestroyResolvedWithoutSuspend...
+PASS in 475.4us
+Running test Test_FFIAwaitable_DestroyResolvedAfterSuspend...
+PASS in 504.2us
+Running test Test_FFIAwaitable_DestroyConcurrentWithResolve...
+PASS in 5337.3us
+12 test(s) passed
+</system-out>
+	</testcase>
+	<testcase name="test-ffi-event-loop" classname="test-ffi-event-loop" time="0.111191" status="run">
+		<system-out>Running test Test_FFIEventLoop_WaitTimeout...
+PASS in 20.6ms
+Running test Test_FFIEventLoop_PutBeforeWait...
+PASS in 1522.0us
+Running test Test_FFIEventLoop_WaitThenPut...
+PASS in 20.7ms
+Running test Test_FFIEventLoop_CancelBeforeWait...
+PASS in 399.6us
+Running test Test_FFIEventLoop_CancelDuringWait...
+PASS in 20.6ms
+Running test Test_FFIEventLoop_MultiplePuts...
+PASS in 424.9us
+Running test Test_FFIEventLoop_ObjectCounter...
+PASS in 518.3us
+Running test Test_FFIEventLoop_RunInContext...
+PASS in 443.4us
+Running test Test_FFIEventLoop_ConcurrentPuts...
+PASS in 10.8ms
+Running test Test_FFIEventLoop_BackgroundThreadFlow...
+PASS in 15.5ms
+Running test Test_FFIEventLoop_InterleavedPutsAndWaits...
+PASS in 10.5ms
+Running test Test_FFIEventLoop_CancelMultipleTimes...
+PASS in 411.6us
+Running test Test_FFIEventLoop_PutAfterCancel...
+PASS in 459.5us
+13 test(s) passed
+</system-out>
+	</testcase>
+	<testcase name="test-liteserver-admission" classname="test-liteserver-admission" time="0.0135364" status="run">
+		<system-out>Running test Test_LiteServerAdmission_ConnectionCapsAreReleased...
+PASS in 6065.0ns
+Running test Test_LiteServerAdmission_PerConnectionRateAndInflightCapsCompose...
+PASS in 1695.0ns
+Running test Test_LiteServerAdmission_ServerQueryCapsComposeAcrossIps...
+PASS in 2986.0ns
+Running test Test_LiteServerAdmission_ServerQueryReleaseIsIdempotentPerIp...
+PASS in 2355.0ns
+Running test Test_LiteServerAdmission_AnonymousIdentityIsStablePerIp...
+PASS in 1247.2us
+Running test Test_LiteServerAdmission_UnknownAndExcessHeavyQueriesFailClosed...
+PASS in 38.4us
+Running test Test_LiteServerAdmission_WaitingDoesNotConsumeExecutionCapacity...
+PASS in 44.4us
+Running test Test_LiteServerAdmission_ConnectionIdentityPairsAddressWithItsKey...
+PASS in 7854.0ns
+Running test Test_LiteServerAdmission_EveryCategorisedRequestIsAdmissible...
+PASS in 85.2us
+9 test(s) passed
+</system-out>
+	</testcase>
+	<testcase name="test-consensus-simplex2-loss" classname="test-consensus-simplex2-loss" time="4.13544" status="run">
+		<system-out>[NON-XML-CHAR-0x1B][1;33m[ 2][t 0][2026-09-09 15:35:47.799666095][candidate-codec.cpp:41][&amp;VALIDATOR_SESSION_BENCHMARK]	Broadcast_benchmark serialize_candidate block_id=808443C6B9992F1BE0A21619968AFCB1E9A5CEBAFFFE594C5C9F6285A7A95180 called_from=consensus time_sec=0.000838 compression=none original_size=46 compressed_size=46[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;33m[ 2][t 0][2026-09-09 15:35:47.799956054][candidate-codec.cpp:69][&amp;VALIDATOR_SESSION_BENCHMARK]	Broadcast_benchmark deserialize_candidate block_id=808443C6B9992F1BE0A21619968AFCB1E9A5CEBAFFFE594C5C9F6285A7A95180 called_from=consensus time_sec=0.000023 compression=none compressed_size=46[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:35:47.799994738][candidate-codec.cpp:126]	Compressing block candidate: 46 -&gt; 33[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;33m[ 2][t 0][2026-09-09 15:35:47.800000310][candidate-codec.cpp:127][&amp;VALIDATOR_SESSION_BENCHMARK]	Broadcast_benchmark serialize_candidate block_id=808443C6B9992F1BE0A21619968AFCB1E9A5CEBAFFFE594C5C9F6285A7A95180 called_from=test time_sec=0.000022 compression=compressed original_size=46 compresse...
+The rest of the test output was removed since it exceeds the threshold of 1024 bytes.
+</system-out>
+	</testcase>
+	<testcase name="test-consensus-simplex2-restart" classname="test-consensus-simplex2-restart" time="5.09845" status="run">
+		<system-out>[NON-XML-CHAR-0x1B][1;33m[ 2][t 0][2026-09-09 15:35:48.180880102][candidate-codec.cpp:41][&amp;VALIDATOR_SESSION_BENCHMARK]	Broadcast_benchmark serialize_candidate block_id=808443C6B9992F1BE0A21619968AFCB1E9A5CEBAFFFE594C5C9F6285A7A95180 called_from=consensus time_sec=0.001032 compression=none original_size=46 compressed_size=46[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;33m[ 2][t 0][2026-09-09 15:35:48.181264551][candidate-codec.cpp:69][&amp;VALIDATOR_SESSION_BENCHMARK]	Broadcast_benchmark deserialize_candidate block_id=808443C6B9992F1BE0A21619968AFCB1E9A5CEBAFFFE594C5C9F6285A7A95180 called_from=consensus time_sec=0.000019 compression=none compressed_size=46[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:35:48.181305923][candidate-codec.cpp:126]	Compressing block candidate: 46 -&gt; 33[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;33m[ 2][t 0][2026-09-09 15:35:48.181312392][candidate-codec.cpp:127][&amp;VALIDATOR_SESSION_BENCHMARK]	Broadcast_benchmark serialize_candidate block_id=808443C6B9992F1BE0A21619968AFCB1E9A5CEBAFFFE594C5C9F6285A7A95180 called_from=test time_sec=0.000025 compression=compressed original_size=46 compresse...
+The rest of the test output was removed since it exceeds the threshold of 1024 bytes.
+</system-out>
+	</testcase>
+	<testcase name="test-consensus-simplex2-partition" classname="test-consensus-simplex2-partition" time="5.13774" status="run">
+		<system-out>[NON-XML-CHAR-0x1B][1;33m[ 2][t 0][2026-09-09 15:35:48.192027196][candidate-codec.cpp:41][&amp;VALIDATOR_SESSION_BENCHMARK]	Broadcast_benchmark serialize_candidate block_id=808443C6B9992F1BE0A21619968AFCB1E9A5CEBAFFFE594C5C9F6285A7A95180 called_from=consensus time_sec=0.001002 compression=none original_size=46 compressed_size=46[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;33m[ 2][t 0][2026-09-09 15:35:48.192396083][candidate-codec.cpp:69][&amp;VALIDATOR_SESSION_BENCHMARK]	Broadcast_benchmark deserialize_candidate block_id=808443C6B9992F1BE0A21619968AFCB1E9A5CEBAFFFE594C5C9F6285A7A95180 called_from=consensus time_sec=0.000016 compression=none compressed_size=46[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:35:48.192450085][candidate-codec.cpp:126]	Compressing block candidate: 46 -&gt; 33[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;33m[ 2][t 0][2026-09-09 15:35:48.192456742][candidate-codec.cpp:127][&amp;VALIDATOR_SESSION_BENCHMARK]	Broadcast_benchmark serialize_candidate block_id=808443C6B9992F1BE0A21619968AFCB1E9A5CEBAFFFE594C5C9F6285A7A95180 called_from=test time_sec=0.000037 compression=compressed original_size=46 compresse...
+The rest of the test output was removed since it exceeds the threshold of 1024 bytes.
+</system-out>
+	</testcase>
+	<testcase name="test-consensus-simplex2-malicious-observer" classname="test-consensus-simplex2-malicious-observer" time="5.13812" status="run">
+		<system-out>[NON-XML-CHAR-0x1B][1;33m[ 2][t 0][2026-09-09 15:35:48.608721565][candidate-codec.cpp:41][&amp;VALIDATOR_SESSION_BENCHMARK]	Broadcast_benchmark serialize_candidate block_id=808443C6B9992F1BE0A21619968AFCB1E9A5CEBAFFFE594C5C9F6285A7A95180 called_from=consensus time_sec=0.000987 compression=none original_size=46 compressed_size=46[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;33m[ 2][t 0][2026-09-09 15:35:48.609091198][candidate-codec.cpp:69][&amp;VALIDATOR_SESSION_BENCHMARK]	Broadcast_benchmark deserialize_candidate block_id=808443C6B9992F1BE0A21619968AFCB1E9A5CEBAFFFE594C5C9F6285A7A95180 called_from=consensus time_sec=0.000023 compression=none compressed_size=46[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:35:48.609148364][candidate-codec.cpp:126]	Compressing block candidate: 46 -&gt; 33[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;33m[ 2][t 0][2026-09-09 15:35:48.609154778][candidate-codec.cpp:127][&amp;VALIDATOR_SESSION_BENCHMARK]	Broadcast_benchmark serialize_candidate block_id=808443C6B9992F1BE0A21619968AFCB1E9A5CEBAFFFE594C5C9F6285A7A95180 called_from=test time_sec=0.000033 compression=compressed original_size=46 compresse...
+The rest of the test output was removed since it exceeds the threshold of 1024 bytes.
+</system-out>
+	</testcase>
+	<testcase name="test-consensus-simplex2-relay-loop" classname="test-consensus-simplex2-relay-loop" time="5.13938" status="run">
+		<system-out>[NON-XML-CHAR-0x1B][1;33m[ 2][t 0][2026-09-09 15:35:48.668290617][candidate-codec.cpp:41][&amp;VALIDATOR_SESSION_BENCHMARK]	Broadcast_benchmark serialize_candidate block_id=808443C6B9992F1BE0A21619968AFCB1E9A5CEBAFFFE594C5C9F6285A7A95180 called_from=consensus time_sec=0.001089 compression=none original_size=46 compressed_size=46[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;33m[ 2][t 0][2026-09-09 15:35:48.668665068][candidate-codec.cpp:69][&amp;VALIDATOR_SESSION_BENCHMARK]	Broadcast_benchmark deserialize_candidate block_id=808443C6B9992F1BE0A21619968AFCB1E9A5CEBAFFFE594C5C9F6285A7A95180 called_from=consensus time_sec=0.000026 compression=none compressed_size=46[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:35:48.668715806][candidate-codec.cpp:126]	Compressing block candidate: 46 -&gt; 33[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;33m[ 2][t 0][2026-09-09 15:35:48.668722414][candidate-codec.cpp:127][&amp;VALIDATOR_SESSION_BENCHMARK]	Broadcast_benchmark serialize_candidate block_id=808443C6B9992F1BE0A21619968AFCB1E9A5CEBAFFFE594C5C9F6285A7A95180 called_from=test time_sec=0.000035 compression=compressed original_size=46 compresse...
+The rest of the test output was removed since it exceeds the threshold of 1024 bytes.
+</system-out>
+	</testcase>
+	<testcase name="test-consensus-simplex2-adaptive-byzantine" classname="test-consensus-simplex2-adaptive-byzantine" time="7.03975" status="run">
+		<system-out>[NON-XML-CHAR-0x1B][1;33m[ 2][t 0][2026-09-09 15:35:48.899930364][candidate-codec.cpp:41][&amp;VALIDATOR_SESSION_BENCHMARK]	Broadcast_benchmark serialize_candidate block_id=808443C6B9992F1BE0A21619968AFCB1E9A5CEBAFFFE594C5C9F6285A7A95180 called_from=consensus time_sec=0.000981 compression=none original_size=46 compressed_size=46[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;33m[ 2][t 0][2026-09-09 15:35:48.900369659][candidate-codec.cpp:69][&amp;VALIDATOR_SESSION_BENCHMARK]	Broadcast_benchmark deserialize_candidate block_id=808443C6B9992F1BE0A21619968AFCB1E9A5CEBAFFFE594C5C9F6285A7A95180 called_from=consensus time_sec=0.000025 compression=none compressed_size=46[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:35:48.900427346][candidate-codec.cpp:126]	Compressing block candidate: 46 -&gt; 33[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;33m[ 2][t 0][2026-09-09 15:35:48.900433785][candidate-codec.cpp:127][&amp;VALIDATOR_SESSION_BENCHMARK]	Broadcast_benchmark serialize_candidate block_id=808443C6B9992F1BE0A21619968AFCB1E9A5CEBAFFFE594C5C9F6285A7A95180 called_from=test time_sec=0.000043 compression=compressed original_size=46 compresse...
+The rest of the test output was removed since it exceeds the threshold of 1024 bytes.
+</system-out>
+	</testcase>
+	<testcase name="test-consensus-simplex2-manager-ingress-adversarial" classname="test-consensus-simplex2-manager-ingress-adversarial" time="7.04214" status="run">
+		<system-out>[NON-XML-CHAR-0x1B][1;33m[ 2][t 0][2026-09-09 15:35:49.027553144][candidate-codec.cpp:41][&amp;VALIDATOR_SESSION_BENCHMARK]	Broadcast_benchmark serialize_candidate block_id=808443C6B9992F1BE0A21619968AFCB1E9A5CEBAFFFE594C5C9F6285A7A95180 called_from=consensus time_sec=0.000897 compression=none original_size=46 compressed_size=46[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;33m[ 2][t 0][2026-09-09 15:35:49.027899677][candidate-codec.cpp:69][&amp;VALIDATOR_SESSION_BENCHMARK]	Broadcast_benchmark deserialize_candidate block_id=808443C6B9992F1BE0A21619968AFCB1E9A5CEBAFFFE594C5C9F6285A7A95180 called_from=consensus time_sec=0.000020 compression=none compressed_size=46[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:35:49.027955870][candidate-codec.cpp:126]	Compressing block candidate: 46 -&gt; 33[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;33m[ 2][t 0][2026-09-09 15:35:49.027962243][candidate-codec.cpp:127][&amp;VALIDATOR_SESSION_BENCHMARK]	Broadcast_benchmark serialize_candidate block_id=808443C6B9992F1BE0A21619968AFCB1E9A5CEBAFFFE594C5C9F6285A7A95180 called_from=test time_sec=0.000022 compression=compressed original_size=46 compresse...
+The rest of the test output was removed since it exceeds the threshold of 1024 bytes.
+</system-out>
+	</testcase>
+	<testcase name="test-consensus-simplex2-candidate-relay-eviction" classname="test-consensus-simplex2-candidate-relay-eviction" time="0.0269747" status="run">
+		<system-out>[NON-XML-CHAR-0x1B][1;33m[ 2][t 0][2026-09-09 15:35:49.488530659][candidate-codec.cpp:41][&amp;VALIDATOR_SESSION_BENCHMARK]	Broadcast_benchmark serialize_candidate block_id=808443C6B9992F1BE0A21619968AFCB1E9A5CEBAFFFE594C5C9F6285A7A95180 called_from=consensus time_sec=0.000937 compression=none original_size=46 compressed_size=46[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;33m[ 2][t 0][2026-09-09 15:35:49.488872114][candidate-codec.cpp:69][&amp;VALIDATOR_SESSION_BENCHMARK]	Broadcast_benchmark deserialize_candidate block_id=808443C6B9992F1BE0A21619968AFCB1E9A5CEBAFFFE594C5C9F6285A7A95180 called_from=consensus time_sec=0.000016 compression=none compressed_size=46[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:35:49.488916606][candidate-codec.cpp:126]	Compressing block candidate: 46 -&gt; 33[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;33m[ 2][t 0][2026-09-09 15:35:49.488923142][candidate-codec.cpp:127][&amp;VALIDATOR_SESSION_BENCHMARK]	Broadcast_benchmark serialize_candidate block_id=808443C6B9992F1BE0A21619968AFCB1E9A5CEBAFFFE594C5C9F6285A7A95180 called_from=test time_sec=0.000029 compression=compressed original_size=46 compresse...
+The rest of the test output was removed since it exceeds the threshold of 1024 bytes.
+</system-out>
+	</testcase>
+	<testcase name="test-consensus-simplex2-state-resolver-cache-unit" classname="test-consensus-simplex2-state-resolver-cache-unit" time="0.0271446" status="run">
+		<system-out>[NON-XML-CHAR-0x1B][1;33m[ 2][t 0][2026-09-09 15:35:49.516974044][candidate-codec.cpp:41][&amp;VALIDATOR_SESSION_BENCHMARK]	Broadcast_benchmark serialize_candidate block_id=808443C6B9992F1BE0A21619968AFCB1E9A5CEBAFFFE594C5C9F6285A7A95180 called_from=consensus time_sec=0.001056 compression=none original_size=46 compressed_size=46[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;33m[ 2][t 0][2026-09-09 15:35:49.517295225][candidate-codec.cpp:69][&amp;VALIDATOR_SESSION_BENCHMARK]	Broadcast_benchmark deserialize_candidate block_id=808443C6B9992F1BE0A21619968AFCB1E9A5CEBAFFFE594C5C9F6285A7A95180 called_from=consensus time_sec=0.000017 compression=none compressed_size=46[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:35:49.517338987][candidate-codec.cpp:126]	Compressing block candidate: 46 -&gt; 33[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;33m[ 2][t 0][2026-09-09 15:35:49.517345807][candidate-codec.cpp:127][&amp;VALIDATOR_SESSION_BENCHMARK]	Broadcast_benchmark serialize_candidate block_id=808443C6B9992F1BE0A21619968AFCB1E9A5CEBAFFFE594C5C9F6285A7A95180 called_from=test time_sec=0.000030 compression=compressed original_size=46 compresse...
+The rest of the test output was removed since it exceeds the threshold of 1024 bytes.
+</system-out>
+	</testcase>
+	<testcase name="test-consensus-simplex2-state-resolver-inflight-admission-unit" classname="test-consensus-simplex2-state-resolver-inflight-admission-unit" time="0.0275359" status="run">
+		<system-out>[NON-XML-CHAR-0x1B][1;33m[ 2][t 0][2026-09-09 15:35:49.544394284][candidate-codec.cpp:41][&amp;VALIDATOR_SESSION_BENCHMARK]	Broadcast_benchmark serialize_candidate block_id=808443C6B9992F1BE0A21619968AFCB1E9A5CEBAFFFE594C5C9F6285A7A95180 called_from=consensus time_sec=0.000895 compression=none original_size=46 compressed_size=46[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;33m[ 2][t 0][2026-09-09 15:35:49.544758521][candidate-codec.cpp:69][&amp;VALIDATOR_SESSION_BENCHMARK]	Broadcast_benchmark deserialize_candidate block_id=808443C6B9992F1BE0A21619968AFCB1E9A5CEBAFFFE594C5C9F6285A7A95180 called_from=consensus time_sec=0.000025 compression=none compressed_size=46[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:35:49.544815088][candidate-codec.cpp:126]	Compressing block candidate: 46 -&gt; 33[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;33m[ 2][t 0][2026-09-09 15:35:49.544819362][candidate-codec.cpp:127][&amp;VALIDATOR_SESSION_BENCHMARK]	Broadcast_benchmark serialize_candidate block_id=808443C6B9992F1BE0A21619968AFCB1E9A5CEBAFFFE594C5C9F6285A7A95180 called_from=test time_sec=0.000041 compression=compressed original_size=46 compresse...
+The rest of the test output was removed since it exceeds the threshold of 1024 bytes.
+</system-out>
+	</testcase>
+	<testcase name="test-consensus-simplex2-skipped-slot-resolution-unit" classname="test-consensus-simplex2-skipped-slot-resolution-unit" time="0.027184" status="run">
+		<system-out>[NON-XML-CHAR-0x1B][1;33m[ 2][t 0][2026-09-09 15:35:49.572169907][candidate-codec.cpp:41][&amp;VALIDATOR_SESSION_BENCHMARK]	Broadcast_benchmark serialize_candidate block_id=808443C6B9992F1BE0A21619968AFCB1E9A5CEBAFFFE594C5C9F6285A7A95180 called_from=consensus time_sec=0.001017 compression=none original_size=46 compressed_size=46[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;33m[ 2][t 0][2026-09-09 15:35:49.572543661][candidate-codec.cpp:69][&amp;VALIDATOR_SESSION_BENCHMARK]	Broadcast_benchmark deserialize_candidate block_id=808443C6B9992F1BE0A21619968AFCB1E9A5CEBAFFFE594C5C9F6285A7A95180 called_from=consensus time_sec=0.000028 compression=none compressed_size=46[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:35:49.572596652][candidate-codec.cpp:126]	Compressing block candidate: 46 -&gt; 33[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;33m[ 2][t 0][2026-09-09 15:35:49.572602821][candidate-codec.cpp:127][&amp;VALIDATOR_SESSION_BENCHMARK]	Broadcast_benchmark serialize_candidate block_id=808443C6B9992F1BE0A21619968AFCB1E9A5CEBAFFFE594C5C9F6285A7A95180 called_from=test time_sec=0.000028 compression=compressed original_size=46 compresse...
+The rest of the test output was removed since it exceeds the threshold of 1024 bytes.
+</system-out>
+	</testcase>
+	<testcase name="test-consensus-simplex2-candidate-resolver-retention-unit" classname="test-consensus-simplex2-candidate-resolver-retention-unit" time="0.0250789" status="run">
+		<system-out>[NON-XML-CHAR-0x1B][1;33m[ 2][t 0][2026-09-09 15:35:49.599183676][candidate-codec.cpp:41][&amp;VALIDATOR_SESSION_BENCHMARK]	Broadcast_benchmark serialize_candidate block_id=808443C6B9992F1BE0A21619968AFCB1E9A5CEBAFFFE594C5C9F6285A7A95180 called_from=consensus time_sec=0.000702 compression=none original_size=46 compressed_size=46[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;33m[ 2][t 0][2026-09-09 15:35:49.599468620][candidate-codec.cpp:69][&amp;VALIDATOR_SESSION_BENCHMARK]	Broadcast_benchmark deserialize_candidate block_id=808443C6B9992F1BE0A21619968AFCB1E9A5CEBAFFFE594C5C9F6285A7A95180 called_from=consensus time_sec=0.000022 compression=none compressed_size=46[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:35:49.599505515][candidate-codec.cpp:126]	Compressing block candidate: 46 -&gt; 33[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;33m[ 2][t 0][2026-09-09 15:35:49.599512234][candidate-codec.cpp:127][&amp;VALIDATOR_SESSION_BENCHMARK]	Broadcast_benchmark serialize_candidate block_id=808443C6B9992F1BE0A21619968AFCB1E9A5CEBAFFFE594C5C9F6285A7A95180 called_from=test time_sec=0.000023 compression=compressed original_size=46 compresse...
+The rest of the test output was removed since it exceeds the threshold of 1024 bytes.
+</system-out>
+	</testcase>
+	<testcase name="test-consensus-simplex2-candidate-resolver-interleaving-unit" classname="test-consensus-simplex2-candidate-resolver-interleaving-unit" time="0.0243724" status="run">
+		<system-out>[NON-XML-CHAR-0x1B][1;33m[ 2][t 0][2026-09-09 15:35:49.623427253][candidate-codec.cpp:41][&amp;VALIDATOR_SESSION_BENCHMARK]	Broadcast_benchmark serialize_candidate block_id=808443C6B9992F1BE0A21619968AFCB1E9A5CEBAFFFE594C5C9F6285A7A95180 called_from=consensus time_sec=0.000845 compression=none original_size=46 compressed_size=46[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;33m[ 2][t 0][2026-09-09 15:35:49.623706682][candidate-codec.cpp:69][&amp;VALIDATOR_SESSION_BENCHMARK]	Broadcast_benchmark deserialize_candidate block_id=808443C6B9992F1BE0A21619968AFCB1E9A5CEBAFFFE594C5C9F6285A7A95180 called_from=consensus time_sec=0.000016 compression=none compressed_size=46[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:35:49.623739911][candidate-codec.cpp:126]	Compressing block candidate: 46 -&gt; 33[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;33m[ 2][t 0][2026-09-09 15:35:49.623750687][candidate-codec.cpp:127][&amp;VALIDATOR_SESSION_BENCHMARK]	Broadcast_benchmark serialize_candidate block_id=808443C6B9992F1BE0A21619968AFCB1E9A5CEBAFFFE594C5C9F6285A7A95180 called_from=test time_sec=0.000025 compression=compressed original_size=46 compresse...
+The rest of the test output was removed since it exceeds the threshold of 1024 bytes.
+</system-out>
+	</testcase>
+	<testcase name="test-consensus-simplex2-db-finalized-slot-dedup-unit" classname="test-consensus-simplex2-db-finalized-slot-dedup-unit" time="0.0239814" status="run">
+		<system-out>[NON-XML-CHAR-0x1B][1;33m[ 2][t 0][2026-09-09 15:35:49.648261608][candidate-codec.cpp:41][&amp;VALIDATOR_SESSION_BENCHMARK]	Broadcast_benchmark serialize_candidate block_id=808443C6B9992F1BE0A21619968AFCB1E9A5CEBAFFFE594C5C9F6285A7A95180 called_from=consensus time_sec=0.000692 compression=none original_size=46 compressed_size=46[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;33m[ 2][t 0][2026-09-09 15:35:49.648518751][candidate-codec.cpp:69][&amp;VALIDATOR_SESSION_BENCHMARK]	Broadcast_benchmark deserialize_candidate block_id=808443C6B9992F1BE0A21619968AFCB1E9A5CEBAFFFE594C5C9F6285A7A95180 called_from=consensus time_sec=0.000014 compression=none compressed_size=46[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:35:49.648555795][candidate-codec.cpp:126]	Compressing block candidate: 46 -&gt; 33[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;33m[ 2][t 0][2026-09-09 15:35:49.648562438][candidate-codec.cpp:127][&amp;VALIDATOR_SESSION_BENCHMARK]	Broadcast_benchmark serialize_candidate block_id=808443C6B9992F1BE0A21619968AFCB1E9A5CEBAFFFE594C5C9F6285A7A95180 called_from=test time_sec=0.000023 compression=compressed original_size=46 compresse...
+The rest of the test output was removed since it exceeds the threshold of 1024 bytes.
+</system-out>
+	</testcase>
+	<testcase name="test-consensus-validator-manager-resource-policy-unit" classname="test-consensus-validator-manager-resource-policy-unit" time="0.0272915" status="run">
+		<system-out>[NON-XML-CHAR-0x1B][1;33m[ 2][t 0][2026-09-09 15:35:49.674080895][candidate-codec.cpp:41][&amp;VALIDATOR_SESSION_BENCHMARK]	Broadcast_benchmark serialize_candidate block_id=808443C6B9992F1BE0A21619968AFCB1E9A5CEBAFFFE594C5C9F6285A7A95180 called_from=consensus time_sec=0.000993 compression=none original_size=46 compressed_size=46[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;33m[ 2][t 0][2026-09-09 15:35:49.674585237][candidate-codec.cpp:69][&amp;VALIDATOR_SESSION_BENCHMARK]	Broadcast_benchmark deserialize_candidate block_id=808443C6B9992F1BE0A21619968AFCB1E9A5CEBAFFFE594C5C9F6285A7A95180 called_from=consensus time_sec=0.000016 compression=none compressed_size=46[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:35:49.674633136][candidate-codec.cpp:126]	Compressing block candidate: 46 -&gt; 33[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;33m[ 2][t 0][2026-09-09 15:35:49.674639643][candidate-codec.cpp:127][&amp;VALIDATOR_SESSION_BENCHMARK]	Broadcast_benchmark serialize_candidate block_id=808443C6B9992F1BE0A21619968AFCB1E9A5CEBAFFFE594C5C9F6285A7A95180 called_from=test time_sec=0.000030 compression=compressed original_size=46 compresse...
+The rest of the test output was removed since it exceeds the threshold of 1024 bytes.
+</system-out>
+	</testcase>
+	<testcase name="test-validator-manager-resource-policy-actor" classname="test-validator-manager-resource-policy-actor" time="0.206189" status="run">
+		<system-out></system-out>
+	</testcase>
+	<testcase name="test-consensus-simplex2-state-resolver-catch-up" classname="test-consensus-simplex2-state-resolver-catch-up" time="8.03879" status="run">
+		<system-out>[NON-XML-CHAR-0x1B][1;33m[ 2][t 0][2026-09-09 15:35:49.907808429][candidate-codec.cpp:41][&amp;VALIDATOR_SESSION_BENCHMARK]	Broadcast_benchmark serialize_candidate block_id=808443C6B9992F1BE0A21619968AFCB1E9A5CEBAFFFE594C5C9F6285A7A95180 called_from=consensus time_sec=0.000841 compression=none original_size=46 compressed_size=46[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;33m[ 2][t 0][2026-09-09 15:35:49.908146983][candidate-codec.cpp:69][&amp;VALIDATOR_SESSION_BENCHMARK]	Broadcast_benchmark deserialize_candidate block_id=808443C6B9992F1BE0A21619968AFCB1E9A5CEBAFFFE594C5C9F6285A7A95180 called_from=consensus time_sec=0.000012 compression=none compressed_size=46[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:35:49.908181195][candidate-codec.cpp:126]	Compressing block candidate: 46 -&gt; 33[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;33m[ 2][t 0][2026-09-09 15:35:49.908187216][candidate-codec.cpp:127][&amp;VALIDATOR_SESSION_BENCHMARK]	Broadcast_benchmark serialize_candidate block_id=808443C6B9992F1BE0A21619968AFCB1E9A5CEBAFFFE594C5C9F6285A7A95180 called_from=test time_sec=0.000019 compression=compressed original_size=46 compresse...
+The rest of the test output was removed since it exceeds the threshold of 1024 bytes.
+</system-out>
+	</testcase>
+	<testcase name="test-consensus-simplex2-empty-chain-restart" classname="test-consensus-simplex2-empty-chain-restart" time="9.25895" status="run">
+		<system-out>[NON-XML-CHAR-0x1B][1;33m[ 2][t 0][2026-09-09 15:35:51.939276495][candidate-codec.cpp:41][&amp;VALIDATOR_SESSION_BENCHMARK]	Broadcast_benchmark serialize_candidate block_id=808443C6B9992F1BE0A21619968AFCB1E9A5CEBAFFFE594C5C9F6285A7A95180 called_from=consensus time_sec=0.001080 compression=none original_size=46 compressed_size=46[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;33m[ 2][t 0][2026-09-09 15:35:51.939772770][candidate-codec.cpp:69][&amp;VALIDATOR_SESSION_BENCHMARK]	Broadcast_benchmark deserialize_candidate block_id=808443C6B9992F1BE0A21619968AFCB1E9A5CEBAFFFE594C5C9F6285A7A95180 called_from=consensus time_sec=0.000029 compression=none compressed_size=46[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:35:51.939826112][candidate-codec.cpp:126]	Compressing block candidate: 46 -&gt; 33[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;33m[ 2][t 0][2026-09-09 15:35:51.939835111][candidate-codec.cpp:127][&amp;VALIDATOR_SESSION_BENCHMARK]	Broadcast_benchmark serialize_candidate block_id=808443C6B9992F1BE0A21619968AFCB1E9A5CEBAFFFE594C5C9F6285A7A95180 called_from=test time_sec=0.000029 compression=compressed original_size=46 compresse...
+The rest of the test output was removed since it exceeds the threshold of 1024 bytes.
+</system-out>
+	</testcase>
+	<testcase name="test-consensus-simplex2-query-abuse" classname="test-consensus-simplex2-query-abuse" time="5.1377" status="run">
+		<system-out>[NON-XML-CHAR-0x1B][1;33m[ 2][t 0][2026-09-09 15:35:53.278691350][candidate-codec.cpp:41][&amp;VALIDATOR_SESSION_BENCHMARK]	Broadcast_benchmark serialize_candidate block_id=808443C6B9992F1BE0A21619968AFCB1E9A5CEBAFFFE594C5C9F6285A7A95180 called_from=consensus time_sec=0.001020 compression=none original_size=46 compressed_size=46[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;33m[ 2][t 0][2026-09-09 15:35:53.279043616][candidate-codec.cpp:69][&amp;VALIDATOR_SESSION_BENCHMARK]	Broadcast_benchmark deserialize_candidate block_id=808443C6B9992F1BE0A21619968AFCB1E9A5CEBAFFFE594C5C9F6285A7A95180 called_from=consensus time_sec=0.000017 compression=none compressed_size=46[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:35:53.279090340][candidate-codec.cpp:126]	Compressing block candidate: 46 -&gt; 33[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;33m[ 2][t 0][2026-09-09 15:35:53.279096526][candidate-codec.cpp:127][&amp;VALIDATOR_SESSION_BENCHMARK]	Broadcast_benchmark serialize_candidate block_id=808443C6B9992F1BE0A21619968AFCB1E9A5CEBAFFFE594C5C9F6285A7A95180 called_from=test time_sec=0.000032 compression=compressed original_size=46 compresse...
+The rest of the test output was removed since it exceeds the threshold of 1024 bytes.
+</system-out>
+	</testcase>
+	<testcase name="test-consensus-simplex2-codec-boundary" classname="test-consensus-simplex2-codec-boundary" time="0.300432" status="run">
+		<system-out>[NON-XML-CHAR-0x1B][1;33m[ 2][t 0][2026-09-09 15:35:53.331101777][candidate-codec.cpp:41][&amp;VALIDATOR_SESSION_BENCHMARK]	Broadcast_benchmark serialize_candidate block_id=808443C6B9992F1BE0A21619968AFCB1E9A5CEBAFFFE594C5C9F6285A7A95180 called_from=consensus time_sec=0.000947 compression=none original_size=46 compressed_size=46[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;33m[ 2][t 0][2026-09-09 15:35:53.331439028][candidate-codec.cpp:69][&amp;VALIDATOR_SESSION_BENCHMARK]	Broadcast_benchmark deserialize_candidate block_id=808443C6B9992F1BE0A21619968AFCB1E9A5CEBAFFFE594C5C9F6285A7A95180 called_from=consensus time_sec=0.000015 compression=none compressed_size=46[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 15:35:53.331487625][candidate-codec.cpp:126]	Compressing block candidate: 46 -&gt; 33[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;33m[ 2][t 0][2026-09-09 15:35:53.331494338][candidate-codec.cpp:127][&amp;VALIDATOR_SESSION_BENCHMARK]	Broadcast_benchmark serialize_candidate block_id=808443C6B9992F1BE0A21619968AFCB1E9A5CEBAFFFE594C5C9F6285A7A95180 called_from=test time_sec=0.000029 compression=compressed original_size=46 compresse...
+The rest of the test output was removed since it exceeds the threshold of 1024 bytes.
+</system-out>
+	</testcase>
+	<testcase name="test-consensus-simplex2-genesis-config" classname="test-consensus-simplex2-genesis-config" time="0.040462" status="run">
+		<system-out>[NON-XML-CHAR-0x1B][1;31m[ 1][t 0][2026-09-09 15:36:37.006742489][create-state.cpp:887]	{}[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;31m[ 1][t 0][2026-09-09 15:36:37.006953956][create-state.cpp:887]	{/home/tomi/tos-m2/crypto/fift/lib}[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][1;31m[ 1][t 0][2026-09-09 15:36:37.006961567][create-state.cpp:887]	{/home/tomi/tos-m2/crypto/fift/lib, /tmp/uno-publication-build/crypto/smartcont}[NON-XML-CHAR-0x1B][0m
+</system-out>
+	</testcase>
+</testsuite>

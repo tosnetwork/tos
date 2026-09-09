@@ -27,6 +27,7 @@
     Copyright 2025-2026 TOS Blockchain Teams
 */
 #include <algorithm>
+#include "block/workchain-instance-identity.h"
 #include <cassert>
 #include <cmath>
 #include <cstdlib>
@@ -445,7 +446,10 @@ bool store_custom(vm::CellBuilder& cb) {
   }
   vm::CellBuilder cb2, cb3;
   bool ok = true;
-  PDO(cb2.store_long_bool(0xcc26, 16)        // masterchain_state_extra#cc26
+  auto ledger_result = block::make_initial_workchain_instance_ledger();
+  if (ledger_result.is_error()) return false;
+  auto ledger = ledger_result.move_as_ok();
+  PDO(cb2.store_long_bool(block::gen::McStateExtra::cons_tag[0], 32)
       && cb2.store_long_bool(0, 1)           // shard_hashes:ShardHashes = (HashmapE 32 ^(BinTree ShardDescr))
       && store_config_params(cb2)            // config:ConfigParams
       && cb3.store_long_bool(0, 16)          // ^[ flags:(## 16) { flags = 0 }
@@ -454,6 +458,7 @@ bool store_custom(vm::CellBuilder& cb) {
       && cb3.store_bool_bool(true)           //   nx_cc_updated:Bool
       && cb3.store_zeroes_bool(1 + 65)       //   prev_blocks:OldMcBlocksInfo
       && cb3.store_long_bool(2, 1 + 1)       //   after_key_block:Bool last_key_block:(Maybe ...)
+      && cb3.store_ref_bool(ledger)           // mandatory initial instance ledger
       && cb2.store_ref_bool(cb3.finalize())  // ]
       && block::CurrencyCollection{total_smc_balance}.store(cb2)  // global_balance:CurrencyCollection
       && cb.store_long_bool(1, 1)                                 // just

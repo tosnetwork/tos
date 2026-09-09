@@ -1,0 +1,7 @@
+{
+  "@type":"config.global",
+  "dht":{"@type":"dht.config.global","k":6,"a":3,
+    "static_nodes":{"@type":"dht.nodes","nodes":[]}},
+  "validator":{"@type":"validator.config.global","zero_state":{
+    "workchain":-1,"shard":-9223372036854775808,"seqno":0,
+    "root_hash":"2F7S/ffh4hIyAH1rVAywmaGeh442R/1xDyCcZILCYWk=","file_hash":"z1LhU+p+MpgoW9x2IVe3xg7CyJjl7qo5sB4Xp9FGxDM="},"hardforks":[]}}

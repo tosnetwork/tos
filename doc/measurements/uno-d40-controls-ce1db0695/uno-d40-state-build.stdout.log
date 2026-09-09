@@ -1,0 +1,105 @@
+[1/103] Generate block tlb source files
+[2/103] Checking the git repository for changes...
+[3/103] Building CXX object CMakeFiles/git.dir/git.cc.o
+[4/103] Linking CXX static library libgit.a
+[5/103] Building CXX object crypto/CMakeFiles/tos_block.dir/block/workchain-instance-identity.cpp.o
+[6/103] Building CXX object crypto/CMakeFiles/test-workchain-instance-identity.dir/test/test-workchain-instance-identity.cpp.o
+[7/103] Building CXX object crypto/CMakeFiles/tos_block.dir/block/precompiled-smc/PrecompiledSmartContract.cpp.o
+[8/103] Building CXX object crypto/CMakeFiles/tos_block.dir/block/validator-set.cpp.o
+[9/103] Building CXX object crypto/CMakeFiles/tos_crypto.dir/vm/cp0.cpp.o
+[10/103] Building CXX object crypto/CMakeFiles/tos_crypto.dir/vm/boc-compression.cpp.o
+[11/103] Building CXX object crypto/CMakeFiles/tos_block.dir/block/block-parse.cpp.o
+[12/103] Building CXX object crypto/CMakeFiles/tos_block.dir/block/output-queue-merger.cpp.o
+[13/103] Building CXX object crypto/CMakeFiles/tos_block.dir/block/check-proof.cpp.o
+[14/103] Building CXX object crypto/CMakeFiles/tos_block.dir/block/workchain-execution-dispatch.cpp.o
+[15/103] Building CXX object crypto/CMakeFiles/tos_block.dir/block/workchain-block-execution.cpp.o
+[16/103] Building CXX object crypto/CMakeFiles/func.dir/func/parse-func.cpp.o
+[17/103] Building CXX object crypto/CMakeFiles/tos_block.dir/block/mc-config.cpp.o
+[18/103] Building CXX object crypto/CMakeFiles/tos_crypto.dir/vm/tosops.cpp.o
+[19/103] Building CXX object lite-client/CMakeFiles/lite-client-common.dir/query-utils.cpp.o
+[20/103] Building CXX object crypto/CMakeFiles/tos_block.dir/block/block.cpp.o
+[21/103] Building CXX object crypto/CMakeFiles/tos_block.dir/block/transaction.cpp.o
+[22/103] Building CXX object crypto/CMakeFiles/tos_block.dir/block/signature-set.cpp.o
+[23/103] Building CXX object crypto/CMakeFiles/tos_block.dir/block/block-auto.cpp.o
+[24/103] Linking CXX static library crypto/libtos_block.a
+[25/103] Linking CXX static library crypto/libtos_crypto.a
+[26/103] Linking CXX static library lite-client/liblite-client-common.a
+[27/103] Linking CXX executable crypto/test-workchain-instance-identity
+[28/103] Linking CXX executable crypto/func
+[29/103] Compile FunC stdlib TVM v6 fee primitive coverage
+[30/103] Linking CXX executable crypto/fift
+[31/103] Generate /tmp/uno-publication-build/crypto/smartcont/auto/wallet3-code.fif
+[32/103] Generate /tmp/uno-publication-build/crypto/smartcont/auto/highload-wallet-v2-code.fif
+[33/103] Generate /tmp/uno-publication-build/crypto/smartcont/auto/restricted-wallet-code.fif
+[34/103] Generate /tmp/uno-publication-build/crypto/smartcont/auto/wallet-code.fif
+[35/103] Generate /tmp/uno-publication-build/crypto/smartcont/auto/simple-wallet-code.fif
+[36/103] Generate /tmp/uno-publication-build/crypto/smartcont/auto/restricted-wallet2-code.fif
+[37/103] Generate /tmp/uno-publication-build/crypto/smartcont/auto/session-wallet-code.fif
+[38/103] Generate /tmp/uno-publication-build/crypto/smartcont/auto/highload-wallet-code.fif
+[39/103] Generate /tmp/uno-publication-build/crypto/smartcont/auto/restricted-wallet3-code.fif
+[40/103] Generate /tmp/uno-publication-build/crypto/smartcont/auto/simple-wallet-ext-code.fif
+[41/103] Generate /tmp/uno-publication-build/crypto/smartcont/auto/wallet-v5-code.fif
+[42/103] Generate /tmp/uno-publication-build/crypto/smartcont/auto/wallet-v4-code.fif
+[43/103] Generate /tmp/uno-publication-build/crypto/smartcont/auto/highload-wallet-v2-code.cpp
+[44/103] Generate /tmp/uno-publication-build/crypto/smartcont/auto/dns-manual-code.fif
+[45/103] Generate /tmp/uno-publication-build/crypto/smartcont/auto/pow-testgiver-code.fif
+[46/103] Generate /tmp/uno-publication-build/crypto/smartcont/auto/multisig-code.fif
+[47/103] Generate /tmp/uno-publication-build/crypto/smartcont/auto/wallet3-code.cpp
+[48/103] Generate /tmp/uno-publication-build/crypto/smartcont/auto/highload-wallet-code.cpp
+[49/103] Generate /tmp/uno-publication-build/crypto/smartcont/auto/simple-wallet-code.cpp
+[50/103] Generate /tmp/uno-publication-build/crypto/smartcont/auto/payment-channel-code.fif
+[51/103] Generate /tmp/uno-publication-build/crypto/smartcont/auto/wallet-code.cpp
+[52/103] Generate /tmp/uno-publication-build/crypto/smartcont/auto/restricted-wallet2-code.cpp
+[53/103] Generate /tmp/uno-publication-build/crypto/smartcont/auto/restricted-wallet-code.cpp
+[54/103] Generate /tmp/uno-publication-build/crypto/smartcont/auto/session-wallet-code.cpp
+[55/103] Generate /tmp/uno-publication-build/crypto/smartcont/auto/simple-wallet-ext-code.cpp
+[56/103] Generate /tmp/uno-publication-build/crypto/smartcont/auto/restricted-wallet3-code.cpp
+[57/103] Generate /tmp/uno-publication-build/crypto/smartcont/auto/wallet-v4-code.cpp
+[58/103] Generate /tmp/uno-publication-build/crypto/smartcont/auto/wallet-v5-code.cpp
+[59/103] Generate /tmp/uno-publication-build/crypto/smartcont/auto/agent-account-code.fif
+[60/103] Generate /tmp/uno-publication-build/crypto/smartcont/auto/dns-auto-code.fif
+[61/103] Generate /tmp/uno-publication-build/crypto/smartcont/auto/multisig-code.cpp
+[62/103] Generate /tmp/uno-publication-build/crypto/smartcont/auto/config-code.fif
+[63/103] Generate /tmp/uno-publication-build/crypto/smartcont/auto/dns-manual-code.cpp
+[64/103] Generate /tmp/uno-publication-build/crypto/smartcont/auto/pow-testgiver-code.cpp
+[65/103] Generate /tmp/uno-publication-build/crypto/smartcont/auto/task-escrow-code.fif
+[66/103] Generate /tmp/uno-publication-build/crypto/smartcont/auto/payment-channel-code.cpp
+[67/103] Generate /tmp/uno-publication-build/crypto/smartcont/auto/dns-auto-code.cpp
+[68/103] Generate /tmp/uno-publication-build/crypto/smartcont/auto/agent-account-code.cpp
+[69/103] Generate /tmp/uno-publication-build/crypto/smartcont/auto/config-code.cpp
+[70/103] Generate /tmp/uno-publication-build/crypto/smartcont/auto/task-escrow-code.cpp
+[71/103] Generate /tmp/uno-publication-build/crypto/smartcont/auto/elector-code.fif
+[72/103] Generate /tmp/uno-publication-build/crypto/smartcont/auto/elector-code.cpp
+[73/103] Verify and embed the frozen TOS Service Protocol stablecoin escrow v1 BOC
+NOTE: escrow v1 is deprecated (superseded by v2); this build exists only to verify the frozen historical artifact.
+NOTE: escrow v1 is deprecated (superseded by v2); this build exists only to verify the frozen historical artifact.
+[74/103] Generate /tmp/uno-publication-build/crypto/smartcont/auto/prediction-market-code.fif
+[75/103] Verify and embed the frozen TOS Service Protocol stablecoin escrow v2 BOC
+[76/103] Generate /tmp/uno-publication-build/crypto/smartcont/auto/prediction-market-code.cpp
+[77/103] Verify and embed the frozen TOS Native Service Registry BOC
+[78/103] Building CXX object crypto/CMakeFiles/smc-envelope.dir/smc-envelope/SmartContractCode.cpp.o
+[79/103] Building CXX object toslib/CMakeFiles/toslib.dir/toslib/utils.cpp.o
+[80/103] Building CXX object crypto/CMakeFiles/smc-envelope.dir/smc-envelope/WalletV4.cpp.o
+[81/103] Building CXX object crypto/CMakeFiles/smc-envelope.dir/smc-envelope/WalletInterface.cpp.o
+[82/103] Building CXX object crypto/CMakeFiles/smc-envelope.dir/smc-envelope/HighloadWallet.cpp.o
+[83/103] Building CXX object toslib/CMakeFiles/toslib.dir/toslib/Logging.cpp.o
+[84/103] Building CXX object crypto/CMakeFiles/smc-envelope.dir/smc-envelope/PaymentChannel.cpp.o
+[85/103] Building CXX object toslib/CMakeFiles/toslib.dir/toslib/LastBlockStorage.cpp.o
+[86/103] Building CXX object crypto/CMakeFiles/create-state.dir/block/create-state.cpp.o
+[87/103] Building CXX object crypto/CMakeFiles/smc-envelope.dir/smc-envelope/MultisigWallet.cpp.o
+[88/103] Building CXX object crypto/CMakeFiles/smc-envelope.dir/smc-envelope/WalletV3.cpp.o
+[89/103] Building CXX object crypto/CMakeFiles/smc-envelope.dir/smc-envelope/HighloadWalletV2.cpp.o
+[90/103] Building CXX object crypto/CMakeFiles/smc-envelope.dir/smc-envelope/SmartContract.cpp.o
+[91/103] Building CXX object toslib/CMakeFiles/toslib.dir/toslib/LastConfig.cpp.o
+[92/103] Building CXX object emulator/CMakeFiles/emulator_static.dir/transaction-emulator.cpp.o
+[93/103] Building CXX object toslib/CMakeFiles/toslib.dir/toslib/Client.cpp.o
+[94/103] Building CXX object toslib/CMakeFiles/toslib.dir/toslib/LastBlock.cpp.o
+[95/103] Building CXX object crypto/CMakeFiles/smc-envelope.dir/smc-envelope/GenericAccount.cpp.o
+[96/103] Building CXX object toslib/CMakeFiles/toslib.dir/toslib/ToslibClientWrapper.cpp.o
+[97/103] Building CXX object crypto/CMakeFiles/smc-envelope.dir/smc-envelope/ManualDns.cpp.o
+[98/103] Linking CXX static library crypto/libsmc-envelope.a
+[99/103] Building CXX object toslib/CMakeFiles/toslib.dir/toslib/ExtClient.cpp.o
+[100/103] Linking CXX static library emulator/libemulator_static.a
+[101/103] Building CXX object toslib/CMakeFiles/toslib.dir/toslib/ToslibClient.cpp.o
+[102/103] Linking CXX static library toslib/libtoslib.a
+[103/103] Linking CXX executable crypto/create-state

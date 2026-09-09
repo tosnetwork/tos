@@ -1,0 +1,86 @@
+{
+  "CMakeCache.txt": {
+    "sha256": "e47c505c40e51d9b64cfbd82ccd892e8e51ba507dd059dc751bd9cb99c912e8d",
+    "bytes": 52444
+  },
+  "build.stderr.log": {
+    "sha256": "a900bfe14ea12d64a8c4ea2904579660f6e9fe0d014c479f82b746ca70f3b37e",
+    "bytes": 443
+  },
+  "build.stdout.log": {
+    "sha256": "71b142cedbed7d13cf8610910e948b948ffd49271c84f51b901e8776c68c7d5b",
+    "bytes": 11702
+  },
+  "compiler.stderr.log": {
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "bytes": 0
+  },
+  "compiler.stdout.log": {
+    "sha256": "07c8e26dde5e6ceac7c82345d0b43f8d22dd736dc106c36f41b4714f1b7537fd",
+    "bytes": 168
+  },
+  "diagnostic-pair.stderr.log": {
+    "sha256": "cd3215e00a0353dbc25ea0a80f1e796a9e97d3bde69361da829b5bff6ed8e19d",
+    "bytes": 164
+  },
+  "diagnostic-pair.stdout.log": {
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "bytes": 0
+  },
+  "diagnostic-run-checks.py": {
+    "sha256": "0126e53625b5d27473debc06643f8ab5ff51f639febb6fd5c169fee8e8157e11",
+    "bytes": 2258
+  },
+  "diagnostic-summary.json": {
+    "sha256": "23af072d5389077c064469794e6579e6d4046478b8fe786a75f9dd30c88902d1",
+    "bytes": 11028
+  },
+  "full.stderr.log": {
+    "sha256": "fbadeee92379beb101538efa01bdfe84bf9a041c6bd3c88f8062f4b28d4cdf30",
+    "bytes": 10294
+  },
+  "full.stdout.log": {
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "bytes": 0
+  },
+  "pair.stderr.log": {
+    "sha256": "8e21a5300b6fcb3bbc98069b2d02a0cf104069fa2521fd75058dcdb2c5986566",
+    "bytes": 164
+  },
+  "pair.stdout.log": {
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "bytes": 0
+  },
+  "rebuild.stderr.log": {
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "bytes": 0
+  },
+  "rebuild.stdout.log": {
+    "sha256": "43842d3921ac82230a064dca075f9a569dfe3773cee0554159652c410c7f4680",
+    "bytes": 2806
+  },
+  "run-checks.py": {
+    "sha256": "c5ac3535090d55fcb2c9f7ecea360b1de74dada1f4cee21f2abc259a761856b1",
+    "bytes": 2261
+  },
+  "source-status.stderr.log": {
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "bytes": 0
+  },
+  "source-status.stdout.log": {
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "bytes": 0
+  },
+  "submodules.stderr.log": {
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "bytes": 0
+  },
+  "submodules.stdout.log": {
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "bytes": 0
+  },
+  "summary.json": {
+    "sha256": "7ddd5829f98c5c42df6110f9e3ac441b7743ca18fb0b1f021629fff437c77d4e",
+    "bytes": 27715
+  }
+}

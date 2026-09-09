@@ -1,0 +1,7 @@
+Found 669 tests
+Running test 1/669: a-tests.tol
+  Error compiling tol: tol exit_code = 2
+  stderr:
+Failed to discover Tol stdlib.
+Probably, you have a non-standard Tol installation.
+Please, provide env variable TOL_STDLIB referencing to tol-stdlib/ folder.

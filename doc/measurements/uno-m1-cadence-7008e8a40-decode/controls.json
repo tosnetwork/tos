@@ -1,0 +1,91 @@
+{
+  "source_commit": "7008e8a40aa6a21cc899f9d459c70884ec0a7338",
+  "source_path": "crypto/block/workchain-resource-policy.h",
+  "original_sha256": "4673011e7bd8ee11b803e09b251261bec12b520baf5dd3206e0b0c4f8365d460",
+  "controls": [
+    {
+      "name": "discard-decoded-value",
+      "from": "return WorkchainEngineParameters{record.k_accepted_target_rate_ms, std::move(resources), std::move(record.parameters)};",
+      "to": "return WorkchainEngineParameters{0, std::move(resources), std::move(record.parameters)};",
+      "original_sha256": "4673011e7bd8ee11b803e09b251261bec12b520baf5dd3206e0b0c4f8365d460",
+      "mutant_sha256": "50beb5d0c9a9d4199cf3c12372b16e7050fed6053a4bc204918ba9bef773bd32",
+      "expected_failure_identity": 405,
+      "build": {
+        "command": [
+          "cmake",
+          "--build",
+          "/tmp/uno-publication-build",
+          "--target",
+          "tos_block",
+          "test-workchain-block",
+          "-j32"
+        ],
+        "exit_code": 0,
+        "stdout": "discard-decoded-value-build.stdout.log",
+        "stderr": "discard-decoded-value-build.stderr.log"
+      },
+      "run": {
+        "command": [
+          "/tmp/uno-publication-build/test-workchain-block",
+          "--filter",
+          "EngineConfigurationAcceptedCadence",
+          "--verbosity",
+          "0"
+        ],
+        "exit_code": 1,
+        "stdout": "discard-decoded-value-run.stdout.log",
+        "stderr": "discard-decoded-value-run.stderr.log"
+      },
+      "restored_sha256": "4673011e7bd8ee11b803e09b251261bec12b520baf5dd3206e0b0c4f8365d460",
+      "restore_audit_sha256": "50beb5d0c9a9d4199cf3c12372b16e7050fed6053a4bc204918ba9bef773bd32",
+      "explicit_restored_targets": [
+        "smc-envelope",
+        "test-workchain-block",
+        "tos_block"
+      ],
+      "restore_build": {
+        "command": [
+          "cmake",
+          "--build",
+          "/tmp/uno-publication-build",
+          "--target",
+          "smc-envelope",
+          "test-workchain-block",
+          "tos_block",
+          "-j32"
+        ],
+        "exit_code": 0,
+        "stdout": "discard-decoded-value-restore-build.stdout.log",
+        "stderr": "discard-decoded-value-restore-build.stderr.log"
+      },
+      "restore_run": {
+        "command": [
+          "/tmp/uno-publication-build/test-workchain-block",
+          "--filter",
+          "EngineConfigurationAcceptedCadence",
+          "--verbosity",
+          "0"
+        ],
+        "exit_code": 0,
+        "stdout": "discard-decoded-value-restore-run.stdout.log",
+        "stderr": "discard-decoded-value-restore-run.stderr.log"
+      }
+    }
+  ],
+  "current_cadence_substitution": {
+    "status": "not constructible as a local substitution with the existing encoder inputs",
+    "reason": "Encoder accepts only explicitly supplied acceptance interval, resource policy and opaque business Cell. It has no Config/Param30/current-cadence parameter or lookup. No new current-config input is introduced for a mutation. Caller provenance/truthfulness is outside this guarantee."
+  },
+  "baseline": {
+    "command": [
+      "/tmp/uno-publication-build/test-workchain-block",
+      "--filter",
+      "EngineConfigurationAcceptedCadence",
+      "--verbosity",
+      "0"
+    ],
+    "exit_code": 0,
+    "stdout": "baseline.stdout.log",
+    "stderr": "baseline.stderr.log"
+  }
+}

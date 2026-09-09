@@ -92,11 +92,22 @@ foreach(script ${genesis_scripts})
     endif()
     set(new_ingress [=[
 // Test-only limits, not production defaults; generated schema tags.
+// @generated-tag UnoV2ResourceInput 0
 <b x{c5defa2a} s, 64 64 u, 4096 64 u, 8 64 u, 16 32 u, 16 32 u, 5 32 u, b> constant probe_input
+// @generated-tag UnoV2ResourceState 0
 <b x{90aef2dd} s, 256 64 u, 16384 64 u, 128 64 u, 8192 64 u, 64 16 u, b> constant probe_state
+// @generated-tag UnoV2ResourceWorkOutput 0
 <b x{7a310b92} s, 32 64 u, 128 64 u, 8192 64 u, 256 64 u, 16384 64 u, 16 32 u, b> constant probe_work
+// @generated-tag UnoV2ResourcePolicy 0
 <b x{bbd8a9ec} s, 2 32 u, probe_input ref, probe_state ref, probe_work ref, b> constant probe_resources
-<b x{b7226bea} s, probe_resources ref, <b x{50524231} s, b> ref, b> constant probe_config
+// Fixture K acceptance interval, explicitly recorded; not read from current Param30.
+// Explicit framing-only identities: genesis = zero bits256, instance = one bits256.
+// Both are legal wire values; this readiness fixture does not assert D40 issuance.
+// Its MC zerostate cannot embed its own final hash. No authenticated installation
+// or bootstrap identity is supplied by these synthetic values.
+// @generated-tag UnoV2EngineConfiguration 0
+<b x{ff68187c} s, 400 32 u, 0 256 u, 256 1<<1- 256 u, probe_resources ref, <b x{50524231} s, b> ref, b> constant probe_config
+// @generated-tag WorkchainNativeIngressPolicy 0
 { dup <b x{4abd5ab4} s, swap 32 i, 0 1 u, 0x434e5431 64 i, 0 64 u,
   0 32 u, 0 256 u, 256 1<<1- 256 u, probe_config ref, b>]=])
     string(REPLACE "${old_ingress}" "${new_ingress}" genesis "${genesis}")

@@ -390,7 +390,7 @@ target_include_directories(src_parser PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_S
 target_link_libraries(src_parser PUBLIC tos_crypto_core)
 
 add_library(tos_block STATIC ${BLOCK_SOURCE})
-target_sources(tos_block PRIVATE block/workchain-proof-backend.cpp)
+target_sources(tos_block PRIVATE block/workchain-proof-backend.cpp block/workchain-instance-identity.cpp)
 if (TOS_UNO_CRYPTO_NODE_LINK)
   set_source_files_properties(block/workchain-proof-backend.cpp PROPERTIES
     COMPILE_DEFINITIONS TOS_CONFIDENTIAL_PROOF_BACKEND_LINKED)
@@ -676,3 +676,18 @@ endif()
 install(TARGETS fift func create-state tlbc RUNTIME DESTINATION bin)
 install(DIRECTORY fift/lib/ DESTINATION lib/fift)
 install(DIRECTORY smartcont DESTINATION share/tos)
+
+# Private D40 primitive tests; no activation or production configuration changes.
+option(TOS_WORKCHAIN_INSTANCE_TESTS "Build private workchain instance identity tests" OFF)
+if(TOS_WORKCHAIN_INSTANCE_TESTS)
+  add_executable(test-workchain-instance-identity test/test-workchain-instance-identity.cpp)
+  target_link_libraries(test-workchain-instance-identity PRIVATE tos_block tos_crypto)
+  add_test(NAME test-workchain-instance-identity COMMAND test-workchain-instance-identity)
+  set_tests_properties(test-workchain-instance-identity PROPERTIES TIMEOUT 60 LABELS "private;workchain;d40")
+endif()
+
+# A generated constructor changing must invalidate its hand-written Fift consumer.
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+add_test(NAME test-workchain-handwritten-tags COMMAND ${Python3_EXECUTABLE}
+  "${PROJECT_SOURCE_DIR}/crypto/test/workchain-handwritten-tags.py" --repo "${PROJECT_SOURCE_DIR}")
+set_tests_properties(test-workchain-handwritten-tags PROPERTIES TIMEOUT 30 LABELS "workchain;d40")

@@ -1,0 +1,881 @@
+{
+  "source_commit": "ce1db0695f820068b1df98c19a2165d992a81819",
+  "source_path": "crypto/block/workchain-instance-identity.cpp",
+  "git_blob_oid": "28a4b729d52b0df1c5f6c9b7002afce6d3415e52",
+  "original_sha256": "069659667aa2bf4621f3a4a4d156d77696f9c8fc603e7cb43ab5e6ac4a6953c3",
+  "scope": "Private configuration reconstruction/ledger controls. Not actual ValidateQuery invocation or collator installation acceptance. Root-check cases 4/5/7 exercise one shared guard. No deployment activation or successor support.",
+  "controls": [
+    {
+      "name": "remove-full-root-check",
+      "from": "if (expected->get_hash() != candidate->get_hash()) {",
+      "to": "if (false) {",
+      "original_sha256": "069659667aa2bf4621f3a4a4d156d77696f9c8fc603e7cb43ab5e6ac4a6953c3",
+      "mutant_sha256": "314b269edeef7522bcbad24bdc276505e24bc089b841acfefaef85a11325dded",
+      "runs": [
+        {
+          "command": [
+            "/tmp/uno-publication-build/crypto/test-workchain-instance-identity",
+            "4"
+          ],
+          "exit_code": 1,
+          "stdout": "remove-full-root-check-case-4.stdout.log",
+          "stderr": "remove-full-root-check-case-4.stderr.log",
+          "case": 4,
+          "expected_failure_identity": 804
+        },
+        {
+          "command": [
+            "/tmp/uno-publication-build/crypto/test-workchain-instance-identity",
+            "5"
+          ],
+          "exit_code": 1,
+          "stdout": "remove-full-root-check-case-5.stdout.log",
+          "stderr": "remove-full-root-check-case-5.stderr.log",
+          "case": 5,
+          "expected_failure_identity": 805
+        },
+        {
+          "command": [
+            "/tmp/uno-publication-build/crypto/test-workchain-instance-identity",
+            "7"
+          ],
+          "exit_code": 1,
+          "stdout": "remove-full-root-check-case-7.stdout.log",
+          "stderr": "remove-full-root-check-case-7.stderr.log",
+          "case": 7,
+          "expected_failure_identity": 848
+        }
+      ],
+      "build": {
+        "command": [
+          "cmake",
+          "--build",
+          "/tmp/uno-publication-build",
+          "--target",
+          "tos_block",
+          "tos_validator",
+          "test-workchain-instance-identity",
+          "-j32"
+        ],
+        "exit_code": 0,
+        "stdout": "remove-full-root-check-build.stdout.log",
+        "stderr": "remove-full-root-check-build.stderr.log"
+      },
+      "restored_sha256": "069659667aa2bf4621f3a4a4d156d77696f9c8fc603e7cb43ab5e6ac4a6953c3",
+      "restore_audit_sha256": "314b269edeef7522bcbad24bdc276505e24bc089b841acfefaef85a11325dded",
+      "explicit_restored_targets": [
+        "tos_block",
+        "tos_validator",
+        "test-workchain-instance-identity"
+      ],
+      "restore_build": {
+        "command": [
+          "cmake",
+          "--build",
+          "/tmp/uno-publication-build",
+          "--target",
+          "tos_block",
+          "tos_validator",
+          "test-workchain-instance-identity",
+          "-j32"
+        ],
+        "exit_code": 0,
+        "stdout": "remove-full-root-check-restore-build.stdout.log",
+        "stderr": "remove-full-root-check-restore-build.stderr.log"
+      },
+      "restored_run": {
+        "command": [
+          "/tmp/uno-publication-build/crypto/test-workchain-instance-identity"
+        ],
+        "exit_code": 0,
+        "stdout": "remove-full-root-check-restored.stdout.log",
+        "stderr": "remove-full-root-check-restored.stderr.log"
+      }
+    },
+    {
+      "name": "accept-missing-ledger",
+      "from": "if (root.is_null()) return error(InstanceIdentityError::MissingLedger, \"instance ledger is missing\");",
+      "to": "if (root.is_null()) { TRY_RESULT(empty, make_initial_workchain_instance_ledger()); return read_workchain_instance_ledger(empty); }",
+      "original_sha256": "069659667aa2bf4621f3a4a4d156d77696f9c8fc603e7cb43ab5e6ac4a6953c3",
+      "mutant_sha256": "a7745ce55dd9eb8c15d00b91f4347c5e189f553f6715bfb6382d2dcaae0da4a3",
+      "runs": [
+        {
+          "command": [
+            "/tmp/uno-publication-build/crypto/test-workchain-instance-identity",
+            "0"
+          ],
+          "exit_code": 1,
+          "stdout": "accept-missing-ledger-case-0.stdout.log",
+          "stderr": "accept-missing-ledger-case-0.stderr.log",
+          "case": 0,
+          "expected_failure_identity": 803
+        }
+      ],
+      "build": {
+        "command": [
+          "cmake",
+          "--build",
+          "/tmp/uno-publication-build",
+          "--target",
+          "tos_block",
+          "tos_validator",
+          "test-workchain-instance-identity",
+          "-j32"
+        ],
+        "exit_code": 0,
+        "stdout": "accept-missing-ledger-build.stdout.log",
+        "stderr": "accept-missing-ledger-build.stderr.log"
+      },
+      "restored_sha256": "069659667aa2bf4621f3a4a4d156d77696f9c8fc603e7cb43ab5e6ac4a6953c3",
+      "restore_audit_sha256": "a7745ce55dd9eb8c15d00b91f4347c5e189f553f6715bfb6382d2dcaae0da4a3",
+      "explicit_restored_targets": [
+        "tos_block",
+        "tos_validator",
+        "test-workchain-instance-identity"
+      ],
+      "restore_build": {
+        "command": [
+          "cmake",
+          "--build",
+          "/tmp/uno-publication-build",
+          "--target",
+          "tos_block",
+          "tos_validator",
+          "test-workchain-instance-identity",
+          "-j32"
+        ],
+        "exit_code": 0,
+        "stdout": "accept-missing-ledger-restore-build.stdout.log",
+        "stderr": "accept-missing-ledger-restore-build.stderr.log"
+      },
+      "restored_run": {
+        "command": [
+          "/tmp/uno-publication-build/crypto/test-workchain-instance-identity"
+        ],
+        "exit_code": 0,
+        "stdout": "accept-missing-ledger-restored.stdout.log",
+        "stderr": "accept-missing-ledger-restored.stderr.log"
+      }
+    },
+    {
+      "name": "overwrite-issued-entry",
+      "from": "value, vm::Dictionary::SetMode::Add)",
+      "to": "value, vm::Dictionary::SetMode::Set)",
+      "original_sha256": "069659667aa2bf4621f3a4a4d156d77696f9c8fc603e7cb43ab5e6ac4a6953c3",
+      "mutant_sha256": "7cb5ae40e4d9a8b50f327ef5a8876ca8b15ff36ad359a2d02a69aa246df834db",
+      "runs": [
+        {
+          "command": [
+            "/tmp/uno-publication-build/crypto/test-workchain-instance-identity",
+            "0"
+          ],
+          "exit_code": 1,
+          "stdout": "overwrite-issued-entry-case-0.stdout.log",
+          "stderr": "overwrite-issued-entry-case-0.stderr.log",
+          "case": 0,
+          "expected_failure_identity": 846
+        }
+      ],
+      "build": {
+        "command": [
+          "cmake",
+          "--build",
+          "/tmp/uno-publication-build",
+          "--target",
+          "tos_block",
+          "tos_validator",
+          "test-workchain-instance-identity",
+          "-j32"
+        ],
+        "exit_code": 0,
+        "stdout": "overwrite-issued-entry-build.stdout.log",
+        "stderr": "overwrite-issued-entry-build.stderr.log"
+      },
+      "restored_sha256": "069659667aa2bf4621f3a4a4d156d77696f9c8fc603e7cb43ab5e6ac4a6953c3",
+      "restore_audit_sha256": "7cb5ae40e4d9a8b50f327ef5a8876ca8b15ff36ad359a2d02a69aa246df834db",
+      "explicit_restored_targets": [
+        "tos_block",
+        "tos_validator",
+        "test-workchain-instance-identity"
+      ],
+      "restore_build": {
+        "command": [
+          "cmake",
+          "--build",
+          "/tmp/uno-publication-build",
+          "--target",
+          "tos_block",
+          "tos_validator",
+          "test-workchain-instance-identity",
+          "-j32"
+        ],
+        "exit_code": 0,
+        "stdout": "overwrite-issued-entry-restore-build.stdout.log",
+        "stderr": "overwrite-issued-entry-restore-build.stderr.log"
+      },
+      "restored_run": {
+        "command": [
+          "/tmp/uno-publication-build/crypto/test-workchain-instance-identity"
+        ],
+        "exit_code": 0,
+        "stdout": "overwrite-issued-entry-restored.stdout.log",
+        "stderr": "overwrite-issued-entry-restored.stderr.log"
+      }
+    },
+    {
+      "name": "use-current-descriptor",
+      "from": "derive_workchain_instance_id(authenticated_genesis, workchain, *record)",
+      "to": "derive_workchain_instance_id(authenticated_genesis, workchain, gen::WorkchainInstanceRecord::Record{record->instance_seq, descriptor->get_hash().bits()})",
+      "original_sha256": "069659667aa2bf4621f3a4a4d156d77696f9c8fc603e7cb43ab5e6ac4a6953c3",
+      "mutant_sha256": "dceaebda2ddbf168a84e74e1e9fe923fddd614bf1d0ab170d8cdf43faab5391a",
+      "runs": [
+        {
+          "command": [
+            "/tmp/uno-publication-build/crypto/test-workchain-instance-identity",
+            "0"
+          ],
+          "exit_code": 1,
+          "stdout": "use-current-descriptor-case-0.stdout.log",
+          "stderr": "use-current-descriptor-case-0.stderr.log",
+          "case": 0,
+          "expected_failure_identity": 814
+        }
+      ],
+      "build": {
+        "command": [
+          "cmake",
+          "--build",
+          "/tmp/uno-publication-build",
+          "--target",
+          "tos_block",
+          "tos_validator",
+          "test-workchain-instance-identity",
+          "-j32"
+        ],
+        "exit_code": 0,
+        "stdout": "use-current-descriptor-build.stdout.log",
+        "stderr": "use-current-descriptor-build.stderr.log"
+      },
+      "restored_sha256": "069659667aa2bf4621f3a4a4d156d77696f9c8fc603e7cb43ab5e6ac4a6953c3",
+      "restore_audit_sha256": "dceaebda2ddbf168a84e74e1e9fe923fddd614bf1d0ab170d8cdf43faab5391a",
+      "explicit_restored_targets": [
+        "tos_block",
+        "tos_validator",
+        "test-workchain-instance-identity"
+      ],
+      "restore_build": {
+        "command": [
+          "cmake",
+          "--build",
+          "/tmp/uno-publication-build",
+          "--target",
+          "tos_block",
+          "tos_validator",
+          "test-workchain-instance-identity",
+          "-j32"
+        ],
+        "exit_code": 0,
+        "stdout": "use-current-descriptor-restore-build.stdout.log",
+        "stderr": "use-current-descriptor-restore-build.stderr.log"
+      },
+      "restored_run": {
+        "command": [
+          "/tmp/uno-publication-build/crypto/test-workchain-instance-identity"
+        ],
+        "exit_code": 0,
+        "stdout": "use-current-descriptor-restored.stdout.log",
+        "stderr": "use-current-descriptor-restored.stderr.log"
+      }
+    },
+    {
+      "name": "leak-failed-staging",
+      "from": "if (instance_id != claimed_id) return error(InstanceIdentityError::IdentityMismatch, \"instance identity differs\");",
+      "to": "if (instance_id != claimed_id) { const_cast<td::Ref<vm::Cell>&>(predecessor_ledger) = next; return error(InstanceIdentityError::IdentityMismatch, \"instance identity differs\"); }",
+      "original_sha256": "069659667aa2bf4621f3a4a4d156d77696f9c8fc603e7cb43ab5e6ac4a6953c3",
+      "mutant_sha256": "6727cb67a92de468271a421f43b6ac44ef282dca8748595bf5ad3d87e94c2258",
+      "runs": [
+        {
+          "command": [
+            "/tmp/uno-publication-build/crypto/test-workchain-instance-identity",
+            "0"
+          ],
+          "exit_code": 1,
+          "stdout": "leak-failed-staging-case-0.stdout.log",
+          "stderr": "leak-failed-staging-case-0.stderr.log",
+          "case": 0,
+          "expected_failure_identity": 808
+        }
+      ],
+      "build": {
+        "command": [
+          "cmake",
+          "--build",
+          "/tmp/uno-publication-build",
+          "--target",
+          "tos_block",
+          "tos_validator",
+          "test-workchain-instance-identity",
+          "-j32"
+        ],
+        "exit_code": 0,
+        "stdout": "leak-failed-staging-build.stdout.log",
+        "stderr": "leak-failed-staging-build.stderr.log"
+      },
+      "restored_sha256": "069659667aa2bf4621f3a4a4d156d77696f9c8fc603e7cb43ab5e6ac4a6953c3",
+      "restore_audit_sha256": "6727cb67a92de468271a421f43b6ac44ef282dca8748595bf5ad3d87e94c2258",
+      "explicit_restored_targets": [
+        "tos_block",
+        "tos_validator",
+        "test-workchain-instance-identity"
+      ],
+      "restore_build": {
+        "command": [
+          "cmake",
+          "--build",
+          "/tmp/uno-publication-build",
+          "--target",
+          "tos_block",
+          "tos_validator",
+          "test-workchain-instance-identity",
+          "-j32"
+        ],
+        "exit_code": 0,
+        "stdout": "leak-failed-staging-restore-build.stdout.log",
+        "stderr": "leak-failed-staging-restore-build.stderr.log"
+      },
+      "restored_run": {
+        "command": [
+          "/tmp/uno-publication-build/crypto/test-workchain-instance-identity"
+        ],
+        "exit_code": 0,
+        "stdout": "leak-failed-staging-restored.stdout.log",
+        "stderr": "leak-failed-staging-restored.stderr.log"
+      }
+    },
+    {
+      "name": "reject-all-first-installations",
+      "from": "return staged.ledger;",
+      "to": "return error(InstanceIdentityError::SuccessorUnsupported, \"first installation disabled\");",
+      "original_sha256": "069659667aa2bf4621f3a4a4d156d77696f9c8fc603e7cb43ab5e6ac4a6953c3",
+      "mutant_sha256": "cf277489aad580ae939a0476a06e02b13036bedc18b425788aa8563a0f725d6e",
+      "runs": [
+        {
+          "command": [
+            "/tmp/uno-publication-build/crypto/test-workchain-instance-identity",
+            "0"
+          ],
+          "exit_code": 1,
+          "stdout": "reject-all-first-installations-case-0.stdout.log",
+          "stderr": "reject-all-first-installations-case-0.stderr.log",
+          "case": 0,
+          "expected_failure_identity": 840
+        }
+      ],
+      "build": {
+        "command": [
+          "cmake",
+          "--build",
+          "/tmp/uno-publication-build",
+          "--target",
+          "tos_block",
+          "tos_validator",
+          "test-workchain-instance-identity",
+          "-j32"
+        ],
+        "exit_code": 0,
+        "stdout": "reject-all-first-installations-build.stdout.log",
+        "stderr": "reject-all-first-installations-build.stderr.log"
+      },
+      "restored_sha256": "069659667aa2bf4621f3a4a4d156d77696f9c8fc603e7cb43ab5e6ac4a6953c3",
+      "restore_audit_sha256": "cf277489aad580ae939a0476a06e02b13036bedc18b425788aa8563a0f725d6e",
+      "explicit_restored_targets": [
+        "tos_block",
+        "tos_validator",
+        "test-workchain-instance-identity"
+      ],
+      "restore_build": {
+        "command": [
+          "cmake",
+          "--build",
+          "/tmp/uno-publication-build",
+          "--target",
+          "tos_block",
+          "tos_validator",
+          "test-workchain-instance-identity",
+          "-j32"
+        ],
+        "exit_code": 0,
+        "stdout": "reject-all-first-installations-restore-build.stdout.log",
+        "stderr": "reject-all-first-installations-restore-build.stderr.log"
+      },
+      "restored_run": {
+        "command": [
+          "/tmp/uno-publication-build/crypto/test-workchain-instance-identity"
+        ],
+        "exit_code": 0,
+        "stdout": "reject-all-first-installations-restored.stdout.log",
+        "stderr": "reject-all-first-installations-restored.stderr.log"
+      }
+    }
+  ],
+  "baseline": {
+    "command": [
+      "/tmp/uno-publication-build/crypto/test-workchain-instance-identity"
+    ],
+    "exit_code": 0,
+    "stdout": "baseline.stdout.log",
+    "stderr": "baseline.stderr.log"
+  },
+  "restoration_verified_again": true,
+  "execution_chain": [
+    "python3 driver.py",
+    "cmake --build -j32",
+    "Ninja build graph",
+    "clang++ compilation and link",
+    "crypto/test-workchain-instance-identity (direct subprocess)"
+  ],
+  "missing_host_measurement": "Controls invoke production reconstruction/comparison functions, not the ValidateQuery actor. Removal of the actor call is not calibrated yet.",
+  "remaining_integration": [
+    "collator create_mc_state_extra issuance call (ownership pending)",
+    "existing shell fixture migration (ownership pending)",
+    "full regression and frozen masterchain state fixture audit",
+    "actual validator typed-result and call-site controls"
+  ],
+  "artifact_manifest": [
+    {
+      "path": "doc/measurements/uno-d40-controls-ce1db0695/accept-missing-ledger-build.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "doc/measurements/uno-d40-controls-ce1db0695/accept-missing-ledger-build.stdout.log",
+      "sha256": "6ad5a935ad96cc92198f836d8dd3058921ffb16852d70a92a688fe3ad624c38a",
+      "bytes": 222
+    },
+    {
+      "path": "doc/measurements/uno-d40-controls-ce1db0695/accept-missing-ledger-case-0.stderr.log",
+      "sha256": "85a4208631dd2e6c598ba31bc0506fe8eebafeb4310e7406290f1ae18e96eb15",
+      "bytes": 21
+    },
+    {
+      "path": "doc/measurements/uno-d40-controls-ce1db0695/accept-missing-ledger-case-0.stdout.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "doc/measurements/uno-d40-controls-ce1db0695/accept-missing-ledger-restore-build.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "doc/measurements/uno-d40-controls-ce1db0695/accept-missing-ledger-restore-build.stdout.log",
+      "sha256": "6ad5a935ad96cc92198f836d8dd3058921ffb16852d70a92a688fe3ad624c38a",
+      "bytes": 222
+    },
+    {
+      "path": "doc/measurements/uno-d40-controls-ce1db0695/accept-missing-ledger-restored.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "doc/measurements/uno-d40-controls-ce1db0695/accept-missing-ledger-restored.stdout.log",
+      "sha256": "291725570e19bab0059d7eae67822312a3ec43ad264334f2d2294b31feb0d1a2",
+      "bytes": 65
+    },
+    {
+      "path": "doc/measurements/uno-d40-controls-ce1db0695/baseline.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "doc/measurements/uno-d40-controls-ce1db0695/baseline.stdout.log",
+      "sha256": "291725570e19bab0059d7eae67822312a3ec43ad264334f2d2294b31feb0d1a2",
+      "bytes": 65
+    },
+    {
+      "path": "doc/measurements/uno-d40-controls-ce1db0695/driver.py",
+      "sha256": "68a48ebc1337ff0168ee17cd07b16f8de9c344a3815b4f935e8780813d49369c",
+      "bytes": 4367
+    },
+    {
+      "path": "doc/measurements/uno-d40-controls-ce1db0695/leak-failed-staging-build.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "doc/measurements/uno-d40-controls-ce1db0695/leak-failed-staging-build.stdout.log",
+      "sha256": "6ad5a935ad96cc92198f836d8dd3058921ffb16852d70a92a688fe3ad624c38a",
+      "bytes": 222
+    },
+    {
+      "path": "doc/measurements/uno-d40-controls-ce1db0695/leak-failed-staging-case-0.stderr.log",
+      "sha256": "dd0b77d60e17d2362aa7e4c68b411daa7edd87b334e1c1866cffaa0c0a27fe08",
+      "bytes": 21
+    },
+    {
+      "path": "doc/measurements/uno-d40-controls-ce1db0695/leak-failed-staging-case-0.stdout.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "doc/measurements/uno-d40-controls-ce1db0695/leak-failed-staging-restore-build.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "doc/measurements/uno-d40-controls-ce1db0695/leak-failed-staging-restore-build.stdout.log",
+      "sha256": "6ad5a935ad96cc92198f836d8dd3058921ffb16852d70a92a688fe3ad624c38a",
+      "bytes": 222
+    },
+    {
+      "path": "doc/measurements/uno-d40-controls-ce1db0695/leak-failed-staging-restored.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "doc/measurements/uno-d40-controls-ce1db0695/leak-failed-staging-restored.stdout.log",
+      "sha256": "291725570e19bab0059d7eae67822312a3ec43ad264334f2d2294b31feb0d1a2",
+      "bytes": 65
+    },
+    {
+      "path": "doc/measurements/uno-d40-controls-ce1db0695/overwrite-issued-entry-build.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "doc/measurements/uno-d40-controls-ce1db0695/overwrite-issued-entry-build.stdout.log",
+      "sha256": "6ad5a935ad96cc92198f836d8dd3058921ffb16852d70a92a688fe3ad624c38a",
+      "bytes": 222
+    },
+    {
+      "path": "doc/measurements/uno-d40-controls-ce1db0695/overwrite-issued-entry-case-0.stderr.log",
+      "sha256": "132abc2ce19b2ef17bb15cd3bf69605784b86f6374c3135b6743719a3b70fa39",
+      "bytes": 21
+    },
+    {
+      "path": "doc/measurements/uno-d40-controls-ce1db0695/overwrite-issued-entry-case-0.stdout.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "doc/measurements/uno-d40-controls-ce1db0695/overwrite-issued-entry-restore-build.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "doc/measurements/uno-d40-controls-ce1db0695/overwrite-issued-entry-restore-build.stdout.log",
+      "sha256": "6ad5a935ad96cc92198f836d8dd3058921ffb16852d70a92a688fe3ad624c38a",
+      "bytes": 222
+    },
+    {
+      "path": "doc/measurements/uno-d40-controls-ce1db0695/overwrite-issued-entry-restored.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "doc/measurements/uno-d40-controls-ce1db0695/overwrite-issued-entry-restored.stdout.log",
+      "sha256": "291725570e19bab0059d7eae67822312a3ec43ad264334f2d2294b31feb0d1a2",
+      "bytes": 65
+    },
+    {
+      "path": "doc/measurements/uno-d40-controls-ce1db0695/reject-all-first-installations-build.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "doc/measurements/uno-d40-controls-ce1db0695/reject-all-first-installations-build.stdout.log",
+      "sha256": "6ad5a935ad96cc92198f836d8dd3058921ffb16852d70a92a688fe3ad624c38a",
+      "bytes": 222
+    },
+    {
+      "path": "doc/measurements/uno-d40-controls-ce1db0695/reject-all-first-installations-case-0.stderr.log",
+      "sha256": "179f1c03e86fc0adde1750b6a3483e860dce381efeaa692b17e6a17d70b4290c",
+      "bytes": 21
+    },
+    {
+      "path": "doc/measurements/uno-d40-controls-ce1db0695/reject-all-first-installations-case-0.stdout.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "doc/measurements/uno-d40-controls-ce1db0695/reject-all-first-installations-restore-build.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "doc/measurements/uno-d40-controls-ce1db0695/reject-all-first-installations-restore-build.stdout.log",
+      "sha256": "6ad5a935ad96cc92198f836d8dd3058921ffb16852d70a92a688fe3ad624c38a",
+      "bytes": 222
+    },
+    {
+      "path": "doc/measurements/uno-d40-controls-ce1db0695/reject-all-first-installations-restored.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "doc/measurements/uno-d40-controls-ce1db0695/reject-all-first-installations-restored.stdout.log",
+      "sha256": "291725570e19bab0059d7eae67822312a3ec43ad264334f2d2294b31feb0d1a2",
+      "bytes": 65
+    },
+    {
+      "path": "doc/measurements/uno-d40-controls-ce1db0695/remove-full-root-check-build.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "doc/measurements/uno-d40-controls-ce1db0695/remove-full-root-check-build.stdout.log",
+      "sha256": "6ad5a935ad96cc92198f836d8dd3058921ffb16852d70a92a688fe3ad624c38a",
+      "bytes": 222
+    },
+    {
+      "path": "doc/measurements/uno-d40-controls-ce1db0695/remove-full-root-check-case-4.stderr.log",
+      "sha256": "683476adc6f98b02c5010f12f8f2e20200845222761972e89f561191718422b8",
+      "bytes": 21
+    },
+    {
+      "path": "doc/measurements/uno-d40-controls-ce1db0695/remove-full-root-check-case-4.stdout.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "doc/measurements/uno-d40-controls-ce1db0695/remove-full-root-check-case-5.stderr.log",
+      "sha256": "15ee3c838a4500ce0a2db03f1ca202b07c8d10816a8053e4d46ea1b191446650",
+      "bytes": 21
+    },
+    {
+      "path": "doc/measurements/uno-d40-controls-ce1db0695/remove-full-root-check-case-5.stdout.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "doc/measurements/uno-d40-controls-ce1db0695/remove-full-root-check-case-7.stderr.log",
+      "sha256": "a8e76b7c72fb373105d2747a1d911a7a3fa20d70f48c11210910ace3818e44e7",
+      "bytes": 21
+    },
+    {
+      "path": "doc/measurements/uno-d40-controls-ce1db0695/remove-full-root-check-case-7.stdout.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "doc/measurements/uno-d40-controls-ce1db0695/remove-full-root-check-restore-build.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "doc/measurements/uno-d40-controls-ce1db0695/remove-full-root-check-restore-build.stdout.log",
+      "sha256": "6ad5a935ad96cc92198f836d8dd3058921ffb16852d70a92a688fe3ad624c38a",
+      "bytes": 222
+    },
+    {
+      "path": "doc/measurements/uno-d40-controls-ce1db0695/remove-full-root-check-restored.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "doc/measurements/uno-d40-controls-ce1db0695/remove-full-root-check-restored.stdout.log",
+      "sha256": "291725570e19bab0059d7eae67822312a3ec43ad264334f2d2294b31feb0d1a2",
+      "bytes": 65
+    },
+    {
+      "path": "doc/measurements/uno-d40-controls-ce1db0695/uno-d40-baseline.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "doc/measurements/uno-d40-controls-ce1db0695/uno-d40-baseline.stdout.log",
+      "sha256": "291725570e19bab0059d7eae67822312a3ec43ad264334f2d2294b31feb0d1a2",
+      "bytes": 65
+    },
+    {
+      "path": "doc/measurements/uno-d40-controls-ce1db0695/uno-d40-build-fixed.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "doc/measurements/uno-d40-controls-ce1db0695/uno-d40-build-fixed.stdout.log",
+      "sha256": "f61de77d4e3c08c7ae82e2daf7f55225cd64dc03687ca26b415e5755fdbe2d68",
+      "bytes": 278
+    },
+    {
+      "path": "doc/measurements/uno-d40-controls-ce1db0695/uno-d40-build.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "doc/measurements/uno-d40-controls-ce1db0695/uno-d40-build.stdout.log",
+      "sha256": "bd8eab3a37eb20a5d8e619c29fa4300b925f36e36fe3099e47fed2efe79dd530",
+      "bytes": 3804
+    },
+    {
+      "path": "doc/measurements/uno-d40-controls-ce1db0695/uno-d40-configure.stderr.log",
+      "sha256": "a900bfe14ea12d64a8c4ea2904579660f6e9fe0d014c479f82b746ca70f3b37e",
+      "bytes": 443
+    },
+    {
+      "path": "doc/measurements/uno-d40-controls-ce1db0695/uno-d40-configure.stdout.log",
+      "sha256": "0196446d9e48fa53fd1bb7868cf31f18fa182369b3db7c4eed206a573c53831b",
+      "bytes": 3489
+    },
+    {
+      "path": "doc/measurements/uno-d40-controls-ce1db0695/uno-d40-controls.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "doc/measurements/uno-d40-controls-ce1db0695/uno-d40-controls.stdout.log",
+      "sha256": "c135e553a136b480f45da5318180fdaf1c55151036bca408eef801b341253efc",
+      "bytes": 222
+    },
+    {
+      "path": "doc/measurements/uno-d40-controls-ce1db0695/uno-d40-identity-build.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "doc/measurements/uno-d40-controls-ce1db0695/uno-d40-identity-build.stdout.log",
+      "sha256": "5049a41c433918d38daeb58fde0aa37fa10b570248915e02721e629e18d5cbbb",
+      "bytes": 1752
+    },
+    {
+      "path": "doc/measurements/uno-d40-controls-ce1db0695/uno-d40-identity-tlbc.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "doc/measurements/uno-d40-controls-ce1db0695/uno-d40-identity-tlbc.stdout.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "doc/measurements/uno-d40-controls-ce1db0695/uno-d40-positive-build.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "doc/measurements/uno-d40-controls-ce1db0695/uno-d40-positive-build.stdout.log",
+      "sha256": "e3bdddce01754b1a51b24c12a738f08b4f5753ea07146a0698fae95bb24d8220",
+      "bytes": 347
+    },
+    {
+      "path": "doc/measurements/uno-d40-controls-ce1db0695/uno-d40-positive.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "doc/measurements/uno-d40-controls-ce1db0695/uno-d40-positive.stdout.log",
+      "sha256": "291725570e19bab0059d7eae67822312a3ec43ad264334f2d2294b31feb0d1a2",
+      "bytes": 65
+    },
+    {
+      "path": "doc/measurements/uno-d40-controls-ce1db0695/uno-d40-private-ctest.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "doc/measurements/uno-d40-controls-ce1db0695/uno-d40-private-ctest.stdout.log",
+      "sha256": "11e6d0c179caa592e59e1da9ea558f257a7d51f7b3333de03d10773bfda03d81",
+      "bytes": 448
+    },
+    {
+      "path": "doc/measurements/uno-d40-controls-ce1db0695/uno-d40-private-junit.xml",
+      "sha256": "7938e44982b54be7c8b430cf82fb9c3b5937fedf174ab83b844a900d4cdfbf90",
+      "bytes": 423
+    },
+    {
+      "path": "doc/measurements/uno-d40-controls-ce1db0695/uno-d40-source-commit.log",
+      "sha256": "99d393958edd5e1254bcb65fa98e5d2f85305fd02fb0ea2c2eef261764e9f4f0",
+      "bytes": 424
+    },
+    {
+      "path": "doc/measurements/uno-d40-controls-ce1db0695/uno-d40-stage-build.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "doc/measurements/uno-d40-controls-ce1db0695/uno-d40-stage-build.stdout.log",
+      "sha256": "2fcfbf118a81bc672c80200538ed803489f6effa5db32bbcb340e46ee8d655a1",
+      "bytes": 352
+    },
+    {
+      "path": "doc/measurements/uno-d40-controls-ce1db0695/uno-d40-state-build.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "doc/measurements/uno-d40-controls-ce1db0695/uno-d40-state-build.stdout.log",
+      "sha256": "c138c23862342c86e9d3395eeb0276c9ab0bcf203d87236f95afc85f9516622d",
+      "bytes": 8938
+    },
+    {
+      "path": "doc/measurements/uno-d40-controls-ce1db0695/uno-d40-state-tlbc.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "doc/measurements/uno-d40-controls-ce1db0695/uno-d40-state-tlbc.stdout.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "doc/measurements/uno-d40-controls-ce1db0695/uno-d40-tlbc.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "doc/measurements/uno-d40-controls-ce1db0695/uno-d40-tlbc.stdout.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "doc/measurements/uno-d40-controls-ce1db0695/uno-d40-validator-build.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "doc/measurements/uno-d40-controls-ce1db0695/uno-d40-validator-build.stdout.log",
+      "sha256": "fe0e7cf07a4043064ab8badf777b10e7ff456d0230270fbd94b0b63233938239",
+      "bytes": 1418
+    },
+    {
+      "path": "doc/measurements/uno-d40-controls-ce1db0695/use-current-descriptor-build.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "doc/measurements/uno-d40-controls-ce1db0695/use-current-descriptor-build.stdout.log",
+      "sha256": "6ad5a935ad96cc92198f836d8dd3058921ffb16852d70a92a688fe3ad624c38a",
+      "bytes": 222
+    },
+    {
+      "path": "doc/measurements/uno-d40-controls-ce1db0695/use-current-descriptor-case-0.stderr.log",
+      "sha256": "9f73973482b3bb9d113613e7500a2cb143e44803905906a56006c8036e80d168",
+      "bytes": 21
+    },
+    {
+      "path": "doc/measurements/uno-d40-controls-ce1db0695/use-current-descriptor-case-0.stdout.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "doc/measurements/uno-d40-controls-ce1db0695/use-current-descriptor-restore-build.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "doc/measurements/uno-d40-controls-ce1db0695/use-current-descriptor-restore-build.stdout.log",
+      "sha256": "6ad5a935ad96cc92198f836d8dd3058921ffb16852d70a92a688fe3ad624c38a",
+      "bytes": 222
+    },
+    {
+      "path": "doc/measurements/uno-d40-controls-ce1db0695/use-current-descriptor-restored.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "doc/measurements/uno-d40-controls-ce1db0695/use-current-descriptor-restored.stdout.log",
+      "sha256": "291725570e19bab0059d7eae67822312a3ec43ad264334f2d2294b31feb0d1a2",
+      "bytes": 65
+    }
+  ]
+}

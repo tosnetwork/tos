@@ -1,0 +1,93 @@
+{
+  "source_commit": "7008e8a40aa6a21cc899f9d459c70884ec0a7338",
+  "source_path": "crypto/block/workchain-resource-policy.h",
+  "original_sha256": "4673011e7bd8ee11b803e09b251261bec12b520baf5dd3206e0b0c4f8365d460",
+  "controls": [
+    {
+      "name": "omit-wire-field",
+      "from": "  if (!tlb::pack_cell(result, record)) return td::Status::Error(\"cannot encode engine configuration\");",
+      "to": "  result = vm::CellBuilder().store_long(0x6e1fa05f, 32).store_ref(record.resource_policy).store_ref(record.parameters).finalize();",
+      "original_sha256": "4673011e7bd8ee11b803e09b251261bec12b520baf5dd3206e0b0c4f8365d460",
+      "mutant_sha256": "b01627406af666afc3808f2d55cb52c04cf0664c7f2334cebb1761032cfc903c",
+      "expected_failure_identity": 402,
+      "build": {
+        "command": [
+          "cmake",
+          "--build",
+          "/tmp/uno-publication-build",
+          "--target",
+          "tos_block",
+          "test-workchain-block",
+          "-j32"
+        ],
+        "exit_code": 0,
+        "stdout": "omit-wire-field-build.stdout.log",
+        "stderr": "omit-wire-field-build.stderr.log"
+      },
+      "run": {
+        "command": [
+          "/tmp/uno-publication-build/test-workchain-block",
+          "--filter",
+          "EngineConfigurationAcceptedCadence",
+          "--verbosity",
+          "0"
+        ],
+        "exit_code": 1,
+        "stdout": "omit-wire-field-run.stdout.log",
+        "stderr": "omit-wire-field-run.stderr.log"
+      },
+      "restored_sha256": "4673011e7bd8ee11b803e09b251261bec12b520baf5dd3206e0b0c4f8365d460",
+      "restore_audit_sha256": "b01627406af666afc3808f2d55cb52c04cf0664c7f2334cebb1761032cfc903c",
+      "explicit_restored_targets": [
+        "git",
+        "smc-envelope",
+        "test-workchain-block",
+        "tos_block"
+      ],
+      "restore_build": {
+        "command": [
+          "cmake",
+          "--build",
+          "/tmp/uno-publication-build",
+          "--target",
+          "git",
+          "smc-envelope",
+          "test-workchain-block",
+          "tos_block",
+          "-j32"
+        ],
+        "exit_code": 0,
+        "stdout": "omit-wire-field-restore-build.stdout.log",
+        "stderr": "omit-wire-field-restore-build.stderr.log"
+      },
+      "restore_run": {
+        "command": [
+          "/tmp/uno-publication-build/test-workchain-block",
+          "--filter",
+          "EngineConfigurationAcceptedCadence",
+          "--verbosity",
+          "0"
+        ],
+        "exit_code": 0,
+        "stdout": "omit-wire-field-restore-run.stdout.log",
+        "stderr": "omit-wire-field-restore-run.stderr.log"
+      }
+    }
+  ],
+  "current_cadence_substitution": {
+    "status": "not constructible as a local substitution with the existing encoder inputs",
+    "reason": "Encoder accepts only explicitly supplied acceptance interval, resource policy and opaque business Cell. It has no Config/Param30/current-cadence parameter or lookup. No new current-config input is introduced for a mutation. Caller provenance/truthfulness is outside this guarantee."
+  },
+  "baseline": {
+    "command": [
+      "/tmp/uno-publication-build/test-workchain-block",
+      "--filter",
+      "EngineConfigurationAcceptedCadence",
+      "--verbosity",
+      "0"
+    ],
+    "exit_code": 0,
+    "stdout": "baseline.stdout.log",
+    "stderr": "baseline.stderr.log"
+  }
+}

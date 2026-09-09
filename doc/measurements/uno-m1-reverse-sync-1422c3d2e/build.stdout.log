@@ -1,0 +1,153 @@
+[0/1] Re-running CMake...
+-- Use openssl: /tmp/uno-publication-build/third-party/openssl/lib/libcrypto.a
+-- CMAKE_BUILD_TYPE is set to Release
+-- Could NOT find uring (missing: uring_LIBRARIES uring_INCLUDE_DIR) 
+-- Enabling RTTI in all builds
+-- ROCKSDB_PLUGINS: 
+-- ROCKSDB PLUGINS TO BUILD 
+-- JNI library is disabled
+-- Could NOT find Libev (missing: LIBEV_LIBRARY LIBEV_INCLUDE_DIR) (Required is at least version "4.11")
+-- Could NOT find Libnghttp3 (missing: LIBNGHTTP3_LIBRARY LIBNGHTTP3_INCLUDE_DIR) (Required is at least version "1.14.0")
+-- Could NOT find Libbrotlienc (missing: LIBBROTLIENC_LIBRARY LIBBROTLIENC_INCLUDE_DIR) (Required is at least version "1.0.9")
+-- Could NOT find Libbrotlidec (missing: LIBBROTLIDEC_LIBRARY LIBBROTLIDEC_INCLUDE_DIR) (Required is at least version "1.0.9")
+-- summary of build options:
+
+    Package version: 1.22.0
+    Library version: 24:0:8
+    Install prefix:  /usr
+    Target system:   Linux
+    Compiler:
+      Build type:     Release
+      C compiler:     /usr/bin/clang
+      CFLAGS:         -O3  
+      C++ compiler:   /usr/bin/clang++
+      CXXFLAGS:       -O3  
+      WARNCFLAGS:       -Wextra -Wall -Wconversion -Winline -Wmissing-declarations -Wmissing-prototypes -Wnested-externs -Wpointer-arith -Wshadow -Wundef -Wwrite-strings -Waddress -Wattributes -Wcast-align -Wdeclaration-after-statement -Wdiv-by-zero -Wempty-body -Wendif-labels -Wfloat-equal -Wformat-nonliteral -Wformat-security -Wmissing-field-initializers -Wmissing-noreturn -Wno-format-nonliteral -Wredundant-decls -Wsign-conversion -Wstrict-prototypes -Wunreachable-code -Wunused-macros -Wunused-parameter -Wvla -Wshorten-64-to-32 -Wlanguage-extension-token -Wpragmas -Wunreachable-code-break -Wheader-guard -Wsometimes-uninitialized -Wmissing-variable-declarations
+      WARNCXXFLAGS:     -Wall -Wformat-security -Wno-extern-c-compat -Wsometimes-uninitialized -Wno-noexcept-type
+    Library:
+      Shared:         ON
+      Static:         ON
+    Test:
+      Build Test:     OFF
+    Libs:
+      OpenSSL:        TRUE (LIBS='/tmp/uno-publication-build/third-party/openssl/lib/libssl.a;/tmp/uno-publication-build/third-party/openssl/lib/libcrypto.a;dl')
+      Libev:          FALSE (LIBS='')
+      Libnghttp3:     FALSE (LIBS='')
+      GnuTLS:         FALSE (LIBS='')
+      BoringSSL:      FALSE (LIBS='')
+      Picotls:        FALSE (LIBS='')
+      wolfSSL:        FALSE (LIBS='')
+      Jemalloc:        (LIBS='')
+      Libbrotlienc:   FALSE (LIBS='')
+      Libbrotlidec:   FALSE (LIBS='')
+
+-- Use Secp256k1: /tmp/uno-publication-build/third-party/secp256k1/lib/libsecp256k1.a
+-- Building libbacktrace from: /home/tomi/tos-m2/third-party/libbacktrace
+-- Using preconfigured zlib: /tmp/uno-publication-build/third-party/zlib/lib/libz.a
+-- Using ccache
+-- Using zlib /tmp/uno-publication-build/third-party/zlib/lib/libz.a
+-- UNO crypto prototype tests disabled by TOS_UNO_CRYPTO_PROTOTYPE_TESTS=OFF
+-- Found ZLIB: /tmp/uno-publication-build/third-party/zlib/include /tmp/uno-publication-build/third-party/zlib/lib/libz.a
+-- Using libbacktrace for enhanced stack traces
+-- Found LZ4 /tmp/uno-publication-build/third-party/lz4/lib/liblz4.a /home/tomi/tos-m2/third-party/lz4/lib
+-- Checking for module 'benchmark'
+--   No package 'benchmark' found
+-- Google Benchmark not found via pkg-config - gbench-coro target disabled
+-- Found Readline: /usr/include /usr/lib/x86_64-linux-gnu/libreadline.so
+-- Using Sodium /tmp/uno-publication-build/third-party/sodium/lib/libsodium.a
+-- Configuring done
+-- Generating done
+-- Build files have been written to: /tmp/uno-publication-build
+[1/108] Checking the git repository for changes...
+[2/108] Building CXX object CMakeFiles/git.dir/git.cc.o
+[3/108] Linking CXX static library libgit.a
+[4/108] Building CXX object crypto/CMakeFiles/tos_block.dir/block/workchain-proof-backend.cpp.o
+[5/108] Building CXX object crypto/CMakeFiles/func.dir/func/func-main.cpp.o
+[6/108] Building CXX object crypto/CMakeFiles/fift-lib.dir/fift/SourceLookup.cpp.o
+[7/108] Building CXX object crypto/CMakeFiles/func.dir/func/keywords.cpp.o
+[8/108] Building CXX object crypto/CMakeFiles/func.dir/func/asmops.cpp.o
+[9/108] Building CXX object crypto/CMakeFiles/func.dir/func/unify-types.cpp.o
+[10/108] Building CXX object crypto/CMakeFiles/func.dir/func/abscode.cpp.o
+[11/108] Building CXX object crypto/CMakeFiles/func.dir/func/gen-abscode.cpp.o
+[12/108] Building CXX object crypto/CMakeFiles/func.dir/func/stack-transform.cpp.o
+[13/108] Building CXX object crypto/CMakeFiles/func.dir/func/builtins.cpp.o
+[14/108] Building CXX object crypto/CMakeFiles/fift-lib.dir/fift/Dictionary.cpp.o
+[15/108] Building CXX object crypto/CMakeFiles/func.dir/func/func.cpp.o
+[16/108] Building CXX object crypto/CMakeFiles/fift-lib.dir/fift/HashMap.cpp.o
+[17/108] Building CXX object crypto/CMakeFiles/func.dir/func/optimize.cpp.o
+[18/108] Building CXX object crypto/CMakeFiles/fift-lib.dir/fift/Fift.cpp.o
+[19/108] Building CXX object crypto/CMakeFiles/fift-lib.dir/fift/IntCtx.cpp.o
+[20/108] Building CXX object crypto/CMakeFiles/fift.dir/fift/fift-main.cpp.o
+[21/108] Building CXX object crypto/CMakeFiles/fift-lib.dir/fift/Continuation.cpp.o
+[22/108] Building CXX object crypto/CMakeFiles/func.dir/func/codegen.cpp.o
+[23/108] Building CXX object crypto/CMakeFiles/tos_crypto.dir/vm/cp0.cpp.o
+[24/108] Building CXX object crypto/CMakeFiles/tos_block.dir/block/precompiled-smc/PrecompiledSmartContract.cpp.o
+[25/108] Building CXX object crypto/CMakeFiles/func.dir/func/analyzer.cpp.o
+[26/108] Building CXX object crypto/CMakeFiles/tos_block.dir/block/output-queue-merger.cpp.o
+[27/108] Building CXX object crypto/CMakeFiles/fift-lib.dir/fift/utils.cpp.o
+[28/108] Building CXX object crypto/CMakeFiles/tos_block.dir/block/validator-set.cpp.o
+[29/108] Building CXX object crypto/CMakeFiles/tos_block.dir/block/check-proof.cpp.o
+[30/108] Building CXX object crypto/CMakeFiles/tos_block.dir/block/workchain-block-execution.cpp.o
+[31/108] Building CXX object crypto/CMakeFiles/tos_crypto.dir/vm/tosops.cpp.o
+[32/108] Building CXX object crypto/CMakeFiles/tos_block.dir/block/workchain-execution-dispatch.cpp.o
+[33/108] Building CXX object crypto/CMakeFiles/func.dir/func/parse-func.cpp.o
+[34/108] Building CXX object crypto/CMakeFiles/tos_block.dir/block/block.cpp.o
+[35/108] Building CXX object crypto/CMakeFiles/tos_block.dir/block/mc-config.cpp.o
+[36/108] Building CXX object crypto/CMakeFiles/fift-lib.dir/fift/words.cpp.o
+[37/108] Building CXX object crypto/CMakeFiles/tos_block.dir/block/signature-set.cpp.o
+[38/108] Building CXX object crypto/CMakeFiles/tos_block.dir/block/transaction.cpp.o
+[39/108] Linking CXX static library crypto/libtos_block.a
+[40/108] Linking CXX static library crypto/libtos_crypto.a
+[41/108] Linking CXX static library crypto/libfift.a
+[42/108] Linking CXX executable crypto/func
+[43/108] Compile FunC stdlib TVM v6 fee primitive coverage
+[44/108] Linking CXX executable crypto/fift
+[45/108] Generate /tmp/uno-publication-build/crypto/smartcont/auto/simple-wallet-code.fif
+[46/108] Generate /tmp/uno-publication-build/crypto/smartcont/auto/highload-wallet-code.fif
+[47/108] Generate /tmp/uno-publication-build/crypto/smartcont/auto/wallet-code.fif
+[48/108] Generate /tmp/uno-publication-build/crypto/smartcont/auto/wallet3-code.fif
+[49/108] Generate /tmp/uno-publication-build/crypto/smartcont/auto/session-wallet-code.fif
+[50/108] Generate /tmp/uno-publication-build/crypto/smartcont/auto/wallet-v4-code.fif
+[51/108] Generate /tmp/uno-publication-build/crypto/smartcont/auto/restricted-wallet3-code.fif
+[52/108] Generate /tmp/uno-publication-build/crypto/smartcont/auto/restricted-wallet-code.fif
+[53/108] Generate /tmp/uno-publication-build/crypto/smartcont/auto/highload-wallet-v2-code.fif
+[54/108] Generate /tmp/uno-publication-build/crypto/smartcont/auto/simple-wallet-ext-code.fif
+[55/108] Generate /tmp/uno-publication-build/crypto/smartcont/auto/wallet-v5-code.fif
+[56/108] Generate /tmp/uno-publication-build/crypto/smartcont/auto/restricted-wallet2-code.fif
+[57/108] Generate /tmp/uno-publication-build/crypto/smartcont/auto/multisig-code.fif
+[58/108] Verify and embed the frozen TOS Native Service Registry BOC
+FAILED: crypto/smartcont/auto/native-registry-code.cpp /tmp/uno-publication-build/crypto/smartcont/auto/native-registry-code.cpp 
+cd /home/tomi/tos-m2 && /home/tomi/tos-m2/scripts/embed-tos-service-native-registry-v1.sh /tmp/uno-publication-build/crypto/smartcont/auto/native-registry-code.cpp native-registry
+required compiler is unavailable: /home/tomi/tos-m2/build/crypto/func
+[59/108] Generate /tmp/uno-publication-build/crypto/smartcont/auto/dns-manual-code.fif
+[60/108] Generate /tmp/uno-publication-build/crypto/smartcont/auto/pow-testgiver-code.fif
+[61/108] Generate /tmp/uno-publication-build/crypto/smartcont/auto/simple-wallet-code.cpp
+[62/108] Generate /tmp/uno-publication-build/crypto/smartcont/auto/wallet-v4-code.cpp
+[63/108] Generate /tmp/uno-publication-build/crypto/smartcont/auto/wallet3-code.cpp
+[64/108] Generate /tmp/uno-publication-build/crypto/smartcont/auto/restricted-wallet-code.cpp
+[65/108] Verify and embed the frozen TOS Service Protocol stablecoin escrow v1 BOC
+FAILED: crypto/smartcont/auto/tos-service-stablecoin-escrow-v1.cpp /tmp/uno-publication-build/crypto/smartcont/auto/tos-service-stablecoin-escrow-v1.cpp 
+cd /home/tomi/tos-m2 && /home/tomi/tos-m2/scripts/embed-tos-service-stablecoin-escrow-v1.sh /tmp/uno-publication-build/crypto/smartcont/auto/tos-service-stablecoin-escrow-v1.cpp tos-service-stablecoin-escrow-v1
+NOTE: escrow v1 is deprecated (superseded by v2); this build exists only to verify the frozen historical artifact.
+required compiler is unavailable: /home/tomi/tos-m2/build/crypto/func
+[66/108] Generate /tmp/uno-publication-build/crypto/smartcont/auto/agent-account-code.fif
+[67/108] Verify and embed the frozen TOS Service Protocol stablecoin escrow v2 BOC
+FAILED: crypto/smartcont/auto/tos-service-stablecoin-escrow-v2.cpp /tmp/uno-publication-build/crypto/smartcont/auto/tos-service-stablecoin-escrow-v2.cpp 
+cd /home/tomi/tos-m2 && /home/tomi/tos-m2/scripts/embed-tos-service-stablecoin-escrow-v2.sh /tmp/uno-publication-build/crypto/smartcont/auto/tos-service-stablecoin-escrow-v2.cpp tos-service-stablecoin-escrow-v2
+required compiler is unavailable: /home/tomi/tos-m2/build/crypto/func
+[68/108] Generate /tmp/uno-publication-build/crypto/smartcont/auto/simple-wallet-ext-code.cpp
+[69/108] Generate /tmp/uno-publication-build/crypto/smartcont/auto/restricted-wallet2-code.cpp
+[70/108] Generate /tmp/uno-publication-build/crypto/smartcont/auto/dns-auto-code.fif
+[71/108] Generate /tmp/uno-publication-build/crypto/smartcont/auto/highload-wallet-code.cpp
+[72/108] Generate /tmp/uno-publication-build/crypto/smartcont/auto/wallet-code.cpp
+[73/108] Generate /tmp/uno-publication-build/crypto/smartcont/auto/wallet-v5-code.cpp
+[74/108] Generate /tmp/uno-publication-build/crypto/smartcont/auto/restricted-wallet3-code.cpp
+[75/108] Generate /tmp/uno-publication-build/crypto/smartcont/auto/session-wallet-code.cpp
+[76/108] Generate /tmp/uno-publication-build/crypto/smartcont/auto/payment-channel-code.fif
+[77/108] Generate /tmp/uno-publication-build/crypto/smartcont/auto/highload-wallet-v2-code.cpp
+[78/108] Generate /tmp/uno-publication-build/crypto/smartcont/auto/task-escrow-code.fif
+[79/108] Generate /tmp/uno-publication-build/crypto/smartcont/auto/multisig-code.cpp
+[80/108] Generate /tmp/uno-publication-build/crypto/smartcont/auto/config-code.fif
+[81/108] Generate /tmp/uno-publication-build/crypto/smartcont/auto/elector-code.fif
+[82/108] Generate /tmp/uno-publication-build/crypto/smartcont/auto/prediction-market-code.fif
+ninja: build stopped: subcommand failed.

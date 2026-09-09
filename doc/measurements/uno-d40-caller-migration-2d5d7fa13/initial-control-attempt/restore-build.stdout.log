@@ -1,0 +1,57 @@
+[1/57] Checking the git repository for changes...
+[2/57] Building CXX object CMakeFiles/git.dir/git.cc.o
+[3/57] Linking CXX static library libgit.a
+[4/57] Linking CXX executable crypto/func
+[5/57] Compile FunC stdlib TVM v6 fee primitive coverage
+[6/57] Linking CXX executable crypto/fift
+[7/57] Generate /tmp/uno-publication-build/crypto/smartcont/auto/wallet-code.fif
+[8/57] Generate /tmp/uno-publication-build/crypto/smartcont/auto/session-wallet-code.fif
+[9/57] Generate /tmp/uno-publication-build/crypto/smartcont/auto/simple-wallet-code.fif
+[10/57] Generate /tmp/uno-publication-build/crypto/smartcont/auto/highload-wallet-v2-code.fif
+[11/57] Generate /tmp/uno-publication-build/crypto/smartcont/auto/wallet3-code.fif
+[12/57] Generate /tmp/uno-publication-build/crypto/smartcont/auto/restricted-wallet-code.fif
+[13/57] Generate /tmp/uno-publication-build/crypto/smartcont/auto/restricted-wallet3-code.fif
+[14/57] Generate /tmp/uno-publication-build/crypto/smartcont/auto/restricted-wallet2-code.fif
+[15/57] Generate /tmp/uno-publication-build/crypto/smartcont/auto/highload-wallet-code.fif
+[16/57] Generate /tmp/uno-publication-build/crypto/smartcont/auto/wallet-v4-code.fif
+[17/57] Generate /tmp/uno-publication-build/crypto/smartcont/auto/simple-wallet-ext-code.fif
+[18/57] Generate /tmp/uno-publication-build/crypto/smartcont/auto/wallet-v5-code.fif
+[19/57] Generate /tmp/uno-publication-build/crypto/smartcont/auto/dns-manual-code.fif
+[20/57] Generate /tmp/uno-publication-build/crypto/smartcont/auto/pow-testgiver-code.fif
+[21/57] Generate /tmp/uno-publication-build/crypto/smartcont/auto/multisig-code.fif
+[22/57] Verify and embed the frozen TOS Service Protocol stablecoin escrow v2 BOC
+FAILED: crypto/smartcont/auto/tos-service-stablecoin-escrow-v2.cpp /tmp/uno-publication-build/crypto/smartcont/auto/tos-service-stablecoin-escrow-v2.cpp 
+cd /home/tomi/tos-m2 && /home/tomi/tos-m2/scripts/embed-tos-service-stablecoin-escrow-v2.sh /tmp/uno-publication-build/crypto/smartcont/auto/tos-service-stablecoin-escrow-v2.cpp tos-service-stablecoin-escrow-v2
+required compiler is unavailable: /home/tomi/tos-m2/build/crypto/func
+[23/57] Verify and embed the frozen TOS Service Protocol stablecoin escrow v1 BOC
+FAILED: crypto/smartcont/auto/tos-service-stablecoin-escrow-v1.cpp /tmp/uno-publication-build/crypto/smartcont/auto/tos-service-stablecoin-escrow-v1.cpp 
+cd /home/tomi/tos-m2 && /home/tomi/tos-m2/scripts/embed-tos-service-stablecoin-escrow-v1.sh /tmp/uno-publication-build/crypto/smartcont/auto/tos-service-stablecoin-escrow-v1.cpp tos-service-stablecoin-escrow-v1
+NOTE: escrow v1 is deprecated (superseded by v2); this build exists only to verify the frozen historical artifact.
+required compiler is unavailable: /home/tomi/tos-m2/build/crypto/func
+[24/57] Generate /tmp/uno-publication-build/crypto/smartcont/auto/wallet-code.cpp
+[25/57] Generate /tmp/uno-publication-build/crypto/smartcont/auto/simple-wallet-code.cpp
+[26/57] Generate /tmp/uno-publication-build/crypto/smartcont/auto/payment-channel-code.fif
+[27/57] Generate /tmp/uno-publication-build/crypto/smartcont/auto/session-wallet-code.cpp
+[28/57] Verify and embed the frozen TOS Native Service Registry BOC
+FAILED: crypto/smartcont/auto/native-registry-code.cpp /tmp/uno-publication-build/crypto/smartcont/auto/native-registry-code.cpp 
+cd /home/tomi/tos-m2 && /home/tomi/tos-m2/scripts/embed-tos-service-native-registry-v1.sh /tmp/uno-publication-build/crypto/smartcont/auto/native-registry-code.cpp native-registry
+required compiler is unavailable: /home/tomi/tos-m2/build/crypto/func
+[29/57] Generate /tmp/uno-publication-build/crypto/smartcont/auto/wallet3-code.cpp
+[30/57] Generate /tmp/uno-publication-build/crypto/smartcont/auto/restricted-wallet-code.cpp
+[31/57] Generate /tmp/uno-publication-build/crypto/smartcont/auto/highload-wallet-v2-code.cpp
+[32/57] Generate /tmp/uno-publication-build/crypto/smartcont/auto/restricted-wallet2-code.cpp
+[33/57] Generate /tmp/uno-publication-build/crypto/smartcont/auto/highload-wallet-code.cpp
+[34/57] Generate /tmp/uno-publication-build/crypto/smartcont/auto/agent-account-code.fif
+[35/57] Generate /tmp/uno-publication-build/crypto/smartcont/auto/simple-wallet-ext-code.cpp
+[36/57] Generate /tmp/uno-publication-build/crypto/smartcont/auto/restricted-wallet3-code.cpp
+[37/57] Generate /tmp/uno-publication-build/crypto/smartcont/auto/wallet-v4-code.cpp
+[38/57] Generate /tmp/uno-publication-build/crypto/smartcont/auto/wallet-v5-code.cpp
+[39/57] Generate /tmp/uno-publication-build/crypto/smartcont/auto/dns-auto-code.fif
+[40/57] Generate /tmp/uno-publication-build/crypto/smartcont/auto/config-code.fif
+[41/57] Generate /tmp/uno-publication-build/crypto/smartcont/auto/dns-manual-code.cpp
+[42/57] Generate /tmp/uno-publication-build/crypto/smartcont/auto/pow-testgiver-code.cpp
+[43/57] Generate /tmp/uno-publication-build/crypto/smartcont/auto/task-escrow-code.fif
+[44/57] Generate /tmp/uno-publication-build/crypto/smartcont/auto/multisig-code.cpp
+[45/57] Generate /tmp/uno-publication-build/crypto/smartcont/auto/elector-code.fif
+[46/57] Generate /tmp/uno-publication-build/crypto/smartcont/auto/prediction-market-code.fif
+ninja: build stopped: subcommand failed.
