@@ -111,7 +111,7 @@ TEST(WorkchainBlock, EngineConfigurationFraming) {
   block::WorkchainResourcePolicy value{2, {1,2,3,4,5,6}, {7,8,9,10,11}, {12,13,14,15,16,17}};
   // Test-only tagged business payload: the host must preserve, not interpret it.
   auto payload = vm::CellBuilder().store_long(0x12345678, 32).finalize();
-  for (std::uint32_t version : {2u, 0x10002u, 0x80000002u}) {
+  for (std::uint32_t version : {2u, 3u, 0x10002u, 0x10003u, 0x80000002u}) {
     value.admission_version = version;
     auto encoded = block::encode_workchain_engine_parameters({value, payload});
     ASSERT_TRUE(encoded.is_ok());
@@ -144,20 +144,73 @@ TEST(WorkchainBlock, BatchPolicyVersionIdentityAgreement) {
       {256,16384,128,8192,64}, {32,128,8192,256,16384,16}};
   auto root = vm::CellBuilder().finalize();
   block::InputPolicyIdentity identity{root->get_hash(), false, 0x434e5431, 7, 5, 2};
-  for (const auto& versions : {std::pair{2u, 2u}, std::pair{2u, 1u}, std::pair{1u, 2u},
-                               std::pair{2u, 0x10002u}, std::pair{0x10002u, 2u}}) {
+  for (const auto& versions : {std::pair{2u, 2u}, std::pair{3u, 3u},
+                               std::pair{2u, 3u}, std::pair{3u, 2u},
+                               std::pair{2u, 1u}, std::pair{1u, 2u},
+                               std::pair{2u, 0x10002u}, std::pair{0x10002u, 2u},
+                               std::pair{3u, 0x10003u}, std::pair{0x10003u, 3u}}) {
     resources.admission_version = versions.first;
     identity.admission_version = versions.second;
     auto result = block::ResolvedBatchInputPolicy::from_resolved_fields(resources, identity);
-    if (versions.first == 2 && versions.second == 2) {
+    if (versions.first == versions.second) {
       ASSERT_TRUE(std::holds_alternative<block::ResolvedBatchInputPolicy>(result));
+      ASSERT_EQ(std::get<block::ResolvedBatchInputPolicy>(result).permits_fee_settlement(), versions.first == 3);
     } else {
       ASSERT_TRUE(std::holds_alternative<block::LocalUnavailable>(result));
       ASSERT_EQ(std::get<block::LocalUnavailable>(result).code,
-                block::LocalUnavailableCode::UnsupportedAdmissionVersion);
+                ((versions.first == 2 && versions.second == 3) || (versions.first == 3 && versions.second == 2))
+                    ? block::LocalUnavailableCode::ExecutionFault
+                    : block::LocalUnavailableCode::UnsupportedAdmissionVersion);
     }
   }
 }
+
+TEST(WorkchainBlock, BatchProfileUnsupportedNodeProbe) {
+  // Also run with the support predicate restored to the version-2-only
+  // implementation. This observes old-node execution binding, not installation.
+  block::WorkchainResourcePolicy resources{3, {64,4096,8,16,16,5},
+      {256,16384,128,8192,64}, {32,128,8192,256,16384,16}};
+  block::InputPolicyIdentity identity{vm::CellBuilder().finalize()->get_hash(), false, 0x434e5431, 7, 5, 3};
+  auto result = block::ResolvedBatchInputPolicy::from_resolved_fields(resources, identity);
+  if (block::workchain_batch_admission_version_supported(3)) {
+    ASSERT_TRUE(std::holds_alternative<block::ResolvedBatchInputPolicy>(result));
+  } else {
+    ASSERT_TRUE(std::holds_alternative<block::LocalUnavailable>(result));
+    ASSERT_EQ(std::get<block::LocalUnavailable>(result).code,
+              block::LocalUnavailableCode::UnsupportedAdmissionVersion);
+  }
+}
+
+void check_claimed_fee_framing(unsigned defect) {
+  block::WorkchainResourcePolicy resources{3, {64,4096,8,16,16,5},
+      {256,16384,128,8192,64}, {32,128,8192,256,16384,16}};
+  auto empty = vm::CellBuilder().finalize();
+  block::InputPolicyIdentity identity{empty->get_hash(), false, 0x434e5431, 7, 5, 3};
+  auto resolved = block::ResolvedBatchInputPolicy::from_resolved_fields(resources, identity);
+  ASSERT_TRUE(std::holds_alternative<block::ResolvedBatchInputPolicy>(resolved));
+  const auto& policy = std::get<block::ResolvedBatchInputPolicy>(resolved);
+  auto frame = [](td::Ref<vm::Cell> native) {
+    return vm::CellBuilder().store_long(0x4155a803, 32).store_long(0, 1)
+        .store_ref(native).store_long(0, 2).store_zeroes(192).finalize();
+  };
+  // This helper authorizes framing only, not the complete native payload.
+  ASSERT_TRUE(block::account_replay_detail::validate_claimed_fee_profile(
+      frame(vm::CellBuilder().store_long(0x67e2d380, 32).finalize()), policy).is_ok());
+  ASSERT_TRUE(block::account_replay_detail::validate_claimed_fee_profile(
+      frame(vm::CellBuilder().store_long(0x0bd47725, 32).finalize()), policy).is_ok());
+  auto claimed = empty;
+  if (defect == 1) claimed = frame(empty);
+  if (defect == 2) claimed = frame(vm::CellBuilder().store_long(2, 8).store_zeroes(256).finalize(true));
+  if (defect == 3) claimed = frame(vm::CellBuilder().store_long(0xdeadbeef, 32).finalize());
+  auto result = block::account_replay_detail::validate_claimed_fee_profile(claimed, policy);
+  ASSERT_TRUE(result.is_error());
+  ASSERT_EQ(result.code(), static_cast<int>(block::WorkchainExecutionFailure::CandidateInvalid));
+}
+
+TEST(WorkchainBlock, ClaimedFeeOuterFraming) { check_claimed_fee_framing(0); }
+TEST(WorkchainBlock, ClaimedFeeShortNativeFraming) { check_claimed_fee_framing(1); }
+TEST(WorkchainBlock, ClaimedFeeSpecialNativeFraming) { check_claimed_fee_framing(2); }
+TEST(WorkchainBlock, ClaimedFeeUnknownNativeFraming) { check_claimed_fee_framing(3); }
 
 // A permissive test decoder isolates the ordinary-cell contract from today's
 // generated tags. It is not an additional resource-policy wire constructor.
@@ -3042,6 +3095,65 @@ TEST(WorkchainBlock, NativeDisposalEntry) {
     ASSERT_TRUE(source_loads > 0);
     ASSERT_EQ(engine.seen->get_hash(), full.root()->get_hash());
     ASSERT_EQ(complete_result.ok().exports.size(), 3u);
+    {
+      const auto saved = engine.effects;
+      auto with_fees = saved;
+      with_fees.fees = block::WorkchainFeeSettlement{b, a,
+          td::make_refint(17), td::make_refint(23), td::make_refint(5)};
+      auto fee_root = block::encode_workchain_account_effects(with_fees, 2, 3, 4096).move_as_ok();
+      for (std::uint32_t version : {2u, 3u}) {
+        auto resources = policy.resources();
+        auto policy_identity = policy.identity();
+        auto host_identity = complete_identity;
+        resources.admission_version = policy_identity.admission_version = host_identity.admission_version = version;
+        auto resolved = block::ResolvedBatchInputPolicy::from_resolved_fields(resources, policy_identity);
+        ASSERT_TRUE(std::holds_alternative<block::ResolvedBatchInputPolicy>(resolved));
+        block::BatchInputAdmissionSession fee_session(std::get<block::ResolvedBatchInputPolicy>(resolved),
+            candidate, declaration_root, host_identity, inbox);
+        ASSERT_TRUE(std::holds_alternative<block::AdmittedBatchInput>(fee_session.evaluate()));
+        const auto& fee_input = std::get<block::AdmittedBatchInput>(fee_session.evaluate());
+        engine.effects = with_fees;
+        engine.calls = engine.work_calls = 0;
+        auto built = block::execute_and_settle_workchain_disposal(engine, old.accounts,
+            host_identity, fee_input, owned_inbox, a, td::make_refint(100), 4096, cfg, joint_context);
+        ASSERT_EQ(engine.calls, 1u);
+        ASSERT_EQ(engine.work_calls, 1u);
+        if (version == 2) {
+          ASSERT_TRUE(built.is_error());
+          ASSERT_EQ(built.error().code(), static_cast<int>(block::WorkchainExecutionFailure::LocalUnavailable));
+          auto claim = complete_result.ok();
+          claim.input = fee_input.root();
+          claim.effects = fee_root;
+          // The engine emits no fees here: removing the claim guard must not
+          // be hidden by the independently tested engine-output guard.
+          engine.effects = saved;
+          for (bool disposal : {false, true}) {
+            engine.calls = engine.work_calls = 0;
+            auto replay = disposal
+                ? block::replay_workchain_disposal_settlement(engine, old.accounts, host_identity,
+                    fee_input, owned_inbox, a, td::make_refint(100), 4096, cfg, joint_context, claim)
+                : block::replay_workchain_account_settlement(engine, old.accounts, host_identity,
+                    fee_input, owned_inbox, b, a, td::make_refint(100), 4096, cfg, joint_prices, claim);
+            ASSERT_TRUE(replay.is_error());
+            ASSERT_EQ(replay.error().code(), static_cast<int>(block::WorkchainExecutionFailure::CandidateInvalid));
+            ASSERT_EQ(engine.calls, 0u);
+            ASSERT_EQ(engine.work_calls, 1u);
+          }
+        } else {
+          if (built.is_error()) LOG(ERROR) << built.error();
+          ASSERT_TRUE(built.is_ok());
+          engine.calls = engine.work_calls = 0;
+          auto replay = block::replay_workchain_disposal_settlement(engine, old.accounts, host_identity,
+              fee_input, owned_inbox, a, td::make_refint(100), 4096, cfg, joint_context, built.ok());
+          ASSERT_TRUE(replay.is_ok());
+          ASSERT_EQ(engine.calls, 1u);
+          ASSERT_EQ(engine.work_calls, 1u);
+          ASSERT_EQ(replay.ok().effects->get_hash(), built.ok().effects->get_hash());
+          ASSERT_EQ(replay.ok().state.accounts->get_hash(), built.ok().state.accounts->get_hash());
+        }
+      }
+      engine.effects = saved;
+    }
     // Independent full-record closure oracle; do not include the whole
     // ShardAccounts dictionary (its untouched accounts are not new output).
     vm::CellStorageStat output_size;
@@ -3813,7 +3925,11 @@ TEST(WorkchainBlock, NativeDisposalEntry) {
     ASSERT_EQ(replayed.ok().state.accounts->get_hash(), complete_result.ok().state.accounts->get_hash());
     ASSERT_EQ(replayed.ok().state.account_blocks->get_hash(), complete_result.ok().state.account_blocks->get_hash());
     auto wrong_artifacts = complete_result.ok();
-    wrong_artifacts.effects = number(88);
+    // Keep this a valid, authorized constructor so it still reaches the
+    // independent replay comparison rather than the earlier profile framing gate.
+    auto different_effects = engine.effects;
+    different_effects.events = number(88);
+    wrong_artifacts.effects = block::encode_workchain_account_effects(different_effects, 2, 2, 4096).move_as_ok();
     engine.calls = 0;
     auto wrong_effects = block::replay_workchain_disposal_settlement(engine, old.accounts, complete_identity,
         full, owned_inbox, a, td::make_refint(100), 4096, cfg, joint_context, wrong_artifacts);
@@ -8768,14 +8884,14 @@ TEST(WorkchainBlock, MultiAccountAdmissionVersionInstallation) {
   ASSERT_TRUE(workchains.append_dict_to_bool(workchain_list));
   put(12, workchain_list.finalize());
   auto business = vm::CellBuilder().store_long(0x12345678, 32).finalize();
-  for (std::uint32_t admission : {0u, 1u, 2u, 3u, 0x10002u, 0x80000002u}) {
+  for (std::uint32_t admission : {0u, 1u, 2u, 3u, 4u, 0x10002u, 0x10003u, 0x80000002u}) {
     block::WorkchainResourcePolicy resources{admission, {64,4096,8,16,16,5},
         {256,16384,128,8192,64}, {32,128,8192,256,16384,16}};
     policy.engine_configuration = block::encode_workchain_engine_parameters({resources, business}).move_as_ok();
     ASSERT_TRUE(configuration.set_ref(td::BitArray<32>{84},
         block::encode_workchain_native_ingress_table({policy}).move_as_ok()));
-    ASSERT_EQ(block::validate_native_ingress_presence(configuration).is_ok(), admission == 2);
-    ASSERT_EQ(block::valid_config_data(configuration.get_root_cell(), td::Bits256::zero()), admission == 2);
+    ASSERT_EQ(block::validate_native_ingress_presence(configuration).is_ok(), admission == 2 || admission == 3);
+    ASSERT_EQ(block::valid_config_data(configuration.get_root_cell(), td::Bits256::zero()), admission == 2 || admission == 3);
   }
   // Every semantic zero is rejected at installation, before candidate admission.
   for (unsigned field = 0; field < 12; ++field) {
@@ -9236,6 +9352,7 @@ TEST(WorkchainBlock, MultiAccountRegistryBinding) {
   static_assert(!std::is_constructible_v<block::CandidateAdmissionSession,
                 td::Ref<vm::Cell>, block::ResolvedBatchInputPolicy>);
   for (unsigned cells : {64u, 128u}) {
+    resource_policy.admission_version = cells == 64 ? 2 : 3;
     resource_policy.input.max_cells = cells;
     resource_policy.input.max_bits = cells == 64 ? 4096 : 8192;
     resource_policy.input.max_roots = cells == 64 ? 8 : 16;
@@ -9248,7 +9365,8 @@ TEST(WorkchainBlock, MultiAccountRegistryBinding) {
     ASSERT_EQ(resolved.ok().input_policy.limits().cells, cells);
     ASSERT_EQ(resolved.ok().input_policy.limits().bits, resource_policy.input.max_bits);
     ASSERT_EQ(resolved.ok().input_policy.limits().roots, resource_policy.input.max_roots);
-    ASSERT_EQ(resolved.ok().input_policy.identity().admission_version, 2u);
+    ASSERT_EQ(resolved.ok().input_policy.identity().admission_version, resource_policy.admission_version);
+    ASSERT_EQ(resolved.ok().input_policy.permits_fee_settlement(), cells == 128);
     ASSERT_TRUE(!resolved.ok().input_policy.identity().extended);
     ASSERT_EQ(resolved.ok().input_policy.identity().engine_selector, 0x434e5431);
     ASSERT_EQ(resolved.ok().input_policy.identity().descriptor_version, changed.version);

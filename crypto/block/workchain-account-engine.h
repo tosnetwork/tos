@@ -302,6 +302,14 @@ inline td::Result<ExecutedWorkchainAccountBatch> execute(
   // The engine cannot suppress an access violation by ignoring its Result.
   TRY_STATUS(view.status());
   TRY_RESULT(effects, std::move(executed));
+  if constexpr (std::is_same_v<Input, ProofAdmittedBatchInput>) {
+    if (effects.fees && !source.policy().permits_fee_settlement()) {
+      // These are locally produced engine effects, not a candidate claim.
+      // The engine must not emit a constructor its authenticated profile forbids.
+      return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),
+                               "engine emitted fees outside its admission profile");
+    }
+  }
   if (effects.updates.size() != declarations.writes.size()) {
     return td::Status::Error("engine updates differ from declared write count");
   }

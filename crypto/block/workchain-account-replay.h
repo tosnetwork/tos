@@ -9,6 +9,35 @@ namespace block {
 // error-classification boundary; acquisition exceptions retain their provenance.
 // The claimed caches are never authorization and are never returned to callers.
 namespace account_replay_detail {
+// Only inspect the two bounded framing cells of candidate-supplied effects.
+// No authenticated state access belongs here. Loader exceptions propagate to
+// the enclosing provenance boundary; a failed quiet decode must not erase them.
+// This authorizes the constructor, not its fee amounts or operation schedule.
+inline td::Status validate_claimed_fee_profile(const td::Ref<vm::Cell>& claimed,
+                                             const ResolvedBatchInputPolicy& policy) {
+  gen::UnoV2HostEffects::Record effects;
+  if (!resource_policy_detail::unpack_exact(claimed, effects)) {
+    return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::CandidateInvalid),
+                             "invalid claimed effects framing");
+  }
+  bool special = false;
+  auto native = vm::load_cell_slice_special(effects.native, special);
+  if (special || native.size() < 32) {
+    return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::CandidateInvalid),
+                             "invalid claimed native effects framing");
+  }
+  switch (native.prefetch_ulong(32)) {
+    case 0x0bd47725: return td::Status::OK();
+    case 0x67e2d380:
+      if (policy.permits_fee_settlement()) return td::Status::OK();
+      return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::CandidateInvalid),
+                               "claimed fee constructor is not authorized by admission profile");
+    default:
+      return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::CandidateInvalid),
+                               "unknown claimed native effects constructor");
+  }
+}
+
 inline td::Status compare_rebuilt(const WorkchainAccountSettlement& rebuilt,
                                   const WorkchainAccountSettlement& claimed) {
   if (rebuilt.effects->get_hash() != claimed.effects->get_hash() ||
@@ -75,6 +104,7 @@ inline td::Result<WorkchainAccountSettlement> replay_workchain_account_settlemen
   if (claimed.input->get_hash() != preflight.root()->get_hash()) {
     return td::Status::Error("claimed account settlement input differs from admitted input");
   }
+  TRY_STATUS(account_replay_detail::validate_claimed_fee_profile(claimed.effects, preflight.policy()));
   TRY_RESULT(rebuilt, execute_and_settle_workchain_accounts(engine, std::move(old_accounts), identity,
       preflight, native_cells, custody, coordinator, std::move(fee_budget), extra_validation_cells, cfg, message_cfg));
   TRY_STATUS(account_replay_detail::compare_rebuilt(rebuilt, claimed));
@@ -111,6 +141,7 @@ inline td::Result<WorkchainAccountSettlement> replay_workchain_disposal_settleme
   if (claimed.input->get_hash() != preflight.root()->get_hash()) {
     return td::Status::Error("claimed disposal input differs from admitted input");
   }
+  TRY_STATUS(account_replay_detail::validate_claimed_fee_profile(claimed.effects, preflight.policy()));
   TRY_RESULT(rebuilt, execute_and_settle_workchain_disposal(engine, std::move(old_accounts), identity,
       preflight, native_cells, coordinator, std::move(fee_budget), extra_validation_cells, cfg, context));
   TRY_STATUS(account_replay_detail::compare_rebuilt(rebuilt, claimed));

@@ -7,6 +7,27 @@ prototype meaning. Neither value is an implicit configuration default. The
 version-2 installation gate is connected through `valid_config_data`; the
 complete admission path remains unimplemented.
 
+Admission version 3 adds permission for the fee-bearing native-effects
+constructor `0x67e2d380`; version 2 retains its original meaning. Neither is a
+default. Both remain supported for installation and binding. Resource and
+identity admission versions must agree: disagreement between these two
+host-resolved fields is local unavailability, not a candidate fault.
+An unsupported authenticated profile also remains local unavailability.
+
+The complete typed replay entries reject a candidate's unauthorized fee
+constructor as CandidateInvalid before the engine's execute_accounts callback
+in either typed replay path. Shape inspection
+still runs first, in the existing admission-before-commitment order. Its
+returned proof units do not bound the CPU spent inspecting shape; that remains
+the separate preflight-complexity obligation, not closed by this authorization.
+A local engine
+emitting fees under a profile that forbids them instead violates its local
+contract and returns LocalUnavailable. The generic codec only recognizes wire
+constructors; it does not authorize them. Retained untyped prototype entries
+are not authenticated-profile entry points. These private checks neither open
+the live execution gate nor implement fee-table recomputation, hidden-balance
+accounting, or system-state layout.
+
 The five constructors omit explicit tags in `crypto/block/block.tlb`; `tlbc`
 derives CRC32 tags from its normalized constructor definitions. Recompute with:
 

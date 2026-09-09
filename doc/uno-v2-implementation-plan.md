@@ -3260,15 +3260,50 @@ disputed for the I13e reason above, not deferred for implementation.
 
 Open coverage and integration obligations:
 
-- Before installing a fee-enabled profile, bind permission to use the fee-bearing
-  constructor to an explicitly authenticated engine/descriptor profile. The
+- D42 selects authenticated admission version 3 for the fee-bearing
+  constructor; version 2 must retain its original meaning. The
   generic codec recognizes both constructors but does not authorize either.
   Do not reinterpret admission version 2 as a fee capability: it already names
   a resource-accounting contract. A candidate presenting fees without profile
   permission must be rejected as CandidateInvalid; authenticated configuration
-  or local capability failures must retain their distinct provenance. Add a
-  same-effects/different-profile control and prove removing this gate changes
-  the result, without relying on the still-closed live execution gate.
+  or local capability failures must retain their distinct provenance. Private
+  same-effects/different-profile controls now demonstrate the typed gates;
+  removing each changes its result without relying on the still-closed live
+  execution gate. Live integration remains open.
+  Current implementation work is restricted to that authorization and its
+  source-specific failures. Fee-table recomputation, operation-derived S/C/T,
+  N_book changes and D43 state placement are not part of this unit.
+  After this unit's controls, regression, review and commit, the next unit is
+  exclusively the runtime vertical-slice continuation: production-constructed
+  objects in production call order, observed stop point, counters and side
+  effects, with execution gates closed. No other D32 dimension, differential
+  work or system-state encoding precedes that checkpoint. Private replay tests
+  in this unit do not satisfy that runtime requirement.
+  Focused review identified missing malformed-claim framing coverage; separate
+  outer, short-native, special-native and unknown-tag witnesses now close that
+  predicate-level gap, with refusal-to-success controls. Their call-site
+  reachability is covered separately by the two typed replay controls, not by
+  malformed-claim end-to-end tests. The special-native test concerns encoded
+  candidate data, not missing authenticated data; live claim materialization
+  and its provenance boundary must preserve that distinction.
+  The version-agreement factory guard is not reachable from today's registry,
+  which derives both fields from the same value; its control proves the public
+  factory contract only. The v2-only-node probe observes classification under
+  a temporarily restricted support set; the installation test supplies the
+  separate red control. Do not describe the probe itself as a red control.
+  Do not move fee-claim checks ahead of shape admission: the existing host
+  order remains in force. The review's assertion that max_proof_units bounds
+  shape-inspection work is rejected; it bounds a returned value, not callback
+  CPU, and the separate preflight-complexity obligation remains open.
+  The factory disagreement cannot reach today's registry diagnostic (both
+  versions are constructed from one field); its generic unsupported-version
+  wording is not a demonstrated live misdiagnosis. Native tag constants remain
+  anchored by the existing generated-tag static assertions. The account-only
+  replay positive fee case is not established by the disposal positive case.
+  Claim loading adds a live-integration obligation: authenticate/materialize
+  candidate closures and preserve acquisition-failure provenance at the outer
+  boundary. Prototype overloads carry no authenticated profile permission and
+  must not be substituted for the typed path during live wiring.
 - The charged payout now has a direct pair-level numeric control before the
   enclosing conservation check: restoring the overwrite reaches and fails the
   custody fee assertion (53), after the prepared-pair success and balance

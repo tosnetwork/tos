@@ -32,7 +32,7 @@ inline bool workchain_batch_input_bounds_nonzero(const WorkchainResourcePolicy& 
 inline bool workchain_batch_admission_version_supported(std::uint32_t version) {
   // Installation also revalidates old configuration: extend this set when
   // adding a profile; never retire an installed profile by replacing its value.
-  return version == 2;
+  return version == 2 || version == 3;
 }
 
 // An authenticated binding's resource cut, not proof of full batch admission.
@@ -49,6 +49,13 @@ class ResolvedBatchInputPolicy {
     if (!workchain_batch_input_bounds_nonzero(resources)) {
       return ConfigInvalid{ConfigInvalidCode::ZeroLimit};
     }
+    if (resources.admission_version != identity.admission_version) {
+      // Both fields are host-resolved configuration, never candidate data.
+      // The registry currently derives both from resources, so disagreement is
+      // unreachable there; this factory also protects independently supplied
+      // host identities. Unit controls exercise the factory, not registry reachability.
+      return LocalUnavailable{LocalUnavailableCode::ExecutionFault};
+    }
     return ResolvedBatchInputPolicy(resources, identity);
   }
   WorkchainInputLimits limits() const {
@@ -56,6 +63,9 @@ class ResolvedBatchInputPolicy {
   }
   const WorkchainResourcePolicy& resources() const { return resources_; }
   const InputPolicyIdentity& identity() const { return identity_; }
+  // Version 2 retains its original no-fee-constructor admission contract.
+  // Supporting a profile does not imply support for every newer capability.
+  bool permits_fee_settlement() const { return resources_.admission_version == 3; }
 
  private:
   ResolvedBatchInputPolicy(WorkchainResourcePolicy resources, InputPolicyIdentity identity)
