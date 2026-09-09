@@ -56,14 +56,15 @@ intermediate observation. Omitting installation fails 86; omitting successful
 messages fails 87. Thus a generic return-code failure cannot satisfy the bypass
 controls.
 
-Cases 24–32 cover exception cleanup, ignored observer failure, stale predecessor,
+Cases 24–33 cover exception cleanup, ignored observer failure, stale predecessor,
 reentrancy, preservation of a supplied count, freezing mutable message providers,
-and omitted roots/messages/identity. Case 28 intentionally supplies count 19:
+omitted roots/messages/identity, and ordinary returned builder failure. Case 28 intentionally supplies count 19:
 carrying that value proves that construction does not replace I13a's independent
 checker; it is not a claim that such a block is valid.
 
 | Numeric identity | Guard calibrated by source replacement |
 |---|---|
+| 71 | A returned builder error is not swallowed |
 | 74 / 75 | Required message / state observation actually ran |
 | 76 | Concrete stage schedule, including each repeated occurrence |
 | 82 | Both actual intermediate candidate and same-block messages changed |
@@ -77,6 +78,15 @@ checker; it is not a claim that such a block is valid.
 | 98 | A provider's mutable message elements cannot change a frozen list |
 | 99 | Missing supplied components prevent installation |
 | 100 | Exception unwinding releases the construction guard |
+| 101 | Failed construction preserves the actual predecessor snapshot identity |
+| 102 | Intermediate replacement with byte-identical state is still observed |
+
+Snapshot identity is observable through the context's predecessor check. Equal
+bytes alone therefore do not establish zero residue. Two additional controls
+replace the snapshot with a byte-identical generation: one inside a stage (102),
+one after a returned failure (101). Neither changes the message or state bytes.
+The logs record the actual stage sequence and Status code; an exception is
+separately recorded as identity 124 with `status_returned` false.
 
 Several removed stage hooks fail 76: they intentionally exercise the same
 schedule-completeness guard from different sites, not independent safety layers.

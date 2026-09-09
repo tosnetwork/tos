@@ -16,7 +16,7 @@ builders. An engine must not receive the context or the host builder capability.
 The final assignment has no observer, allocation or fallible operation after it.
 The caller supplies the expected predecessor snapshot obtained from this context;
 construction refuses installation against another snapshot identity. This is a
-local generation binding, not I13b execution accounting or a restriction on
+local generation binding, observable even for byte-identical snapshots, not I13b execution accounting or a restriction on
 independent validator replay.
 Thrown exceptions retain their provenance and destroy the draft; returned
 failures also leave the current view in place. Nested construction is refused.
@@ -128,3 +128,22 @@ consensus-affecting consumers still require an explicit integration audit,
 including observations later rolled back. No omitted live consumer is treated
 as isolated. Retaining this gap does not turn the fixture's real snapshot or
 message reader into an adapter-maintained expected-state model.
+
+## Cost-to-limit correspondence in the inspected branch
+
+| Construction cost | Existing limit or explicit gap |
+|---|---|
+| Carrier copy | Fixed ten roots, one identity, one shared list handle and two scalars; no closure traversal |
+| Participant reads and private Account/Transaction vectors | `resources.input.max_reads/max_writes`, passed as `max_reads/max_participants`; this fixture supplies 3/3, not a resolved D31 certificate |
+| Native transfer planning | `resources.work_output.max_transfers`; fixture supplies 2 |
+| Final-import enumeration | `resources.input.max_inbound`; fixture supplies 2 |
+| New outgoing/deferred list copying and sorting | `WorkchainOutboundQueuePolicy::max_outputs` and disposal `max_outbound`; fixture supplies 3; authoritative derivation/connection remains outside this entry |
+| Account body/closure work | `resources.state.max_cells/max_bits/max_account_cells/max_account_bits/max_account_depth`; no additional meter is attached by this entry |
+| Effect and newly produced cell closures | `resources.work_output.max_effect_cells/max_effect_bits/max_output_cells/max_output_bits`; fixture's 1 MiB-per-root serialization check is not a substitute |
+| Complete pending-list freezing | No authenticated aggregate bound on prior plus new messages is connected here |
+| Retained snapshots and their cell/list lifetimes | No bound on concurrent retained generations is connected here |
+| Full BOC oracle reads and late size-check serialization | Test-provider work only, including shared historical closures; not production admission evidence |
+
+These field names refer to this branch's committed resource schema. Reported
+newer metered-runner work on the integration branch is not assumed to be present
+here. No resource-policy or engine interface was modified by this unit.

@@ -95,6 +95,11 @@ def main():
                 observation = json.loads(result.stdout)
                 assert observation['intermediate_state'] == 1 and observation['intermediate_messages'] == 1
                 assert observation['final_state_changed'] == 1 and observation['final_messages_changed'] == 1
+            if expected in (101, 102):
+                observation = json.loads(result.stdout)
+                assert observation['final_state_changed'] == 0 and observation['final_messages_changed'] == 0
+                assert observation['final_snapshot_identity_changed'] == 1
+                assert observation['intermediate_snapshot_identity'] == (1 if expected == 102 else 0)
     config('baseline-configure')
     build('baseline-build')
     deps('baseline-dependencies')
@@ -102,7 +107,7 @@ def main():
     assert frozen.returncode == 0
     report['oracle_sha256'] = {f.name: sha(f.read_bytes()) for f in sorted(oracle.iterdir())}
     assert set(report['oracle_sha256']) == {'before.state', 'before.messages', 'after.state', 'after.messages'}
-    runs('baseline', range(33), 0)
+    runs('baseline', range(34), 0)
     controls = [
         ('direct-live-stage', core,
          'auto status = observe_workchain_construction(observer, point.stage, point.occurrence);',
@@ -138,6 +143,16 @@ def main():
         ('alter-before-oracle-reader', cpp, 'const auto oracle_before_state=read(dir+"/before.state");',
          'const auto oracle_before_state=read(dir+"/before.state")+"drift";', [0], 90),
     ]
+    controls.extend([
+        ('replace-live-snapshot-with-identical-bytes', core,
+         'auto status = observe_workchain_construction(observer, point.stage, point.occurrence);',
+         'if (point.stage == WorkchainConstructionStage::ParticipantFinalize) current_ = std::make_shared<const WorkchainCandidateContents>(*before);\n'
+         '      auto status = observe_workchain_construction(observer, point.stage, point.occurrence);', [1], 102),
+        ('replace-failed-snapshot-with-identical-bytes', core, 'TRY_STATUS(build(*before, draft, checkpoint));',
+         'auto failed = build(*before, draft, checkpoint);\n    if (failed.is_error()) { current_ = std::make_shared<const WorkchainCandidateContents>(draft); return failed; }', [1], 101),
+        ('ignore-ordinary-builder-failure', core, 'TRY_STATUS(build(*before, draft, checkpoint));',
+         'auto ignored = build(*before, draft, checkpoint); (void)ignored;', [33], 71),
+    ])
     for stage in ('ParticipantFinalize', 'AccountBlockStage', 'AccountRootStage'):
         controls.append(('omit-' + stage, payout,
             f'TRY_STATUS(observe_workchain_construction(observer, WorkchainConstructionStage::{stage}, i));',
@@ -186,7 +201,7 @@ def main():
         deps(label + '-restored-dependencies')
         runs(label + '-restored', cases, 0)
         print('restored:', label, flush=True)
-    runs('final', range(33), 0)
+    runs('final', range(34), 0)
     missing = command('missing-oracle-dependency', [args.build / 'test-workchain-construction-isolation', 0, args.work / 'absent'])
     assert missing.returncode == 92
     check_oracles()
@@ -194,7 +209,7 @@ def main():
     report['original_source_files_unchanged'] = True
     report['complete'] = True
     save()
-    print(f'PASS: 33 private cases, {len(controls)} isolated controls; coordinator review pending')
+    print(f'PASS: 34 private cases, {len(controls)} isolated controls; coordinator review pending')
 
 
 if __name__ == '__main__':

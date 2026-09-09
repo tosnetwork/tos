@@ -282,13 +282,15 @@ void execute(unsigned which,const std::string& dir,bool freeze) {
   const auto oracle_before_messages=read(dir+"/before.messages");
   check(before_state==oracle_before_state&&before_messages==oracle_before_messages,90);
   std::vector<Point> visited;
-  bool state_seen=false,messages_seen=false;
+  bool state_seen=false,messages_seen=false,snapshot_seen=false;
+  unsigned exception_identity=0;
   std::size_t state_reads=0,message_reads=0;
   auto observe_state=[&]{++state_reads;return state_bytes(*candidate.snapshot());};
   auto observe_messages=[&]{++message_reads;return same_block_messages(candidate);};
   const int injected=-71000-static_cast<int>(which);
   auto observer=[&](Point point) -> td::Status {
     visited.push_back(point);
+    snapshot_seen |= candidate.snapshot()!=predecessor;
     state_seen |= observe_state()!=oracle_before_state;
     messages_seen |= observe_messages()!=oracle_before_messages;
     if(which>=1&&which<=23&&point==expected_schedule[which-1]) return td::Status::Error(injected,"construction test fault");
@@ -305,8 +307,8 @@ void execute(unsigned which,const std::string& dir,bool freeze) {
       status=candidate.construct(predecessor,[&](const Contents& old,Contents& draft,const auto& probe)->td::Status {
         TRY_STATUS(fixture.build(old,draft,probe));throw Failed{124};
       },observer);
-    } catch(Failed f) {check(f.identity==124,93);threw=true;}
-    check(threw,93);status=td::Status::Error(injected,"caught exact private fixture exception");
+    } catch(Failed f) {check(f.identity==124,93);threw=true;exception_identity=f.identity;}
+    check(threw,93);
   } else if(which==25) {
     status=candidate.construct(predecessor,[&](const Contents&,Contents& draft,const auto& probe) {
       draft.revision=8;
@@ -317,7 +319,7 @@ void execute(unsigned which,const std::string& dir,bool freeze) {
   } else if(which==26) {
     const auto stale=std::make_shared<const Contents>(*predecessor);
     status=candidate.construct(stale,[](const Contents&,Contents&,const auto&){return td::Status::OK();});
-    check(status.is_error(),95);status=td::Status::Error(injected,"stale predecessor rejected");
+    check(status.is_error(),95);
   } else if(which==27) {
     bool rejected=false;
     status=candidate.construct(predecessor,[&](const Contents&,Contents&,const auto&) {
@@ -345,6 +347,10 @@ void execute(unsigned which,const std::string& dir,bool freeze) {
       if(which==32) draft.batch_identity.clear();
       return td::Status::OK();
     });check(status.is_error(),99);
+  } else if(which==33) {
+    status=candidate.construct(predecessor,[&](const Contents&,Contents&,const auto&){
+      return td::Status::Error(injected,"ordinary builder failure without observer failure");
+    });check(status.is_error()&&status.code()==injected,71);
   } else {throw Failed{10};}
   const auto actual_state=state_bytes(*candidate.snapshot());
   const auto actual_messages=same_block_messages(candidate);
@@ -352,9 +358,22 @@ void execute(unsigned which,const std::string& dir,bool freeze) {
   std::cout<<"{\"case\":"<<which<<",\"visited\":"<<visited.size()
       <<",\"intermediate_state\":"<<state_seen<<",\"intermediate_messages\":"<<messages_seen
       <<",\"final_state_changed\":"<<(actual_state!=oracle_before_state)
-      <<",\"final_messages_changed\":"<<(actual_messages!=oracle_before_messages)<<"}\n";
+      <<",\"final_messages_changed\":"<<(actual_messages!=oracle_before_messages)
+      <<",\"intermediate_snapshot_identity\":"<<snapshot_seen
+      <<",\"final_snapshot_identity_changed\":"<<(candidate.snapshot()!=predecessor)
+      <<",\"status_returned\":"<<(exception_identity==0)<<",\"status_code\":"<<status.code()
+      <<",\"exception_identity\":"<<exception_identity<<",\"points\":[";
+  constexpr const char* stage_names[]={"ParticipantFinalize","AccountBlockStage","AccountRootStage","InboundStage",
+      "OutboundDescriptorStage","OutboundQueueStage","ValueFlowFreeze","CoverageFreeze","ShardUpdateBuild",
+      "FinalBudgetCheck","GenerationCheck","BeforeCandidateInstall"};
+  for(std::size_t i=0;i<visited.size();++i) {
+    const auto index=static_cast<unsigned>(visited[i].stage);check(index<std::size(stage_names),10);
+    if(i) std::cout<<',';
+    std::cout<<"[\""<<stage_names[index]<<"\","<<visited[i].occurrence<<']';
+  }
+  std::cout<<"]}\n";
   if(which<=24) {check(state_reads==visited.size(),75);check(message_reads==visited.size(),74);}
-  check(!(state_seen&&messages_seen),82);check(!state_seen,80);check(!messages_seen,81);
+  check(!(state_seen&&messages_seen),82);check(!state_seen,80);check(!messages_seen,81);check(!snapshot_seen,102);
   if(which==0) {
     check(status.is_ok(),70);check(visited==expected_schedule,76);
     if(freeze) {write(dir+"/after.state",actual_state);write(dir+"/after.messages",actual_messages);}
@@ -367,6 +386,7 @@ void execute(unsigned which,const std::string& dir,bool freeze) {
       check(status.is_error()&&status.code()==injected,71);
       check(visited==std::vector<Point>(expected_schedule.begin(),expected_schedule.begin()+which),76);
     }
+    check(candidate.snapshot()==predecessor,101);
     // Poll the same downstream surface after private temporaries are destroyed.
     check(same_block_messages(candidate)==oracle_before_messages&&state_bytes(*candidate.snapshot())==oracle_before_state,89);
   }
