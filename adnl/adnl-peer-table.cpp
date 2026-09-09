@@ -134,7 +134,8 @@ void AdnlPeerTableImpl::receive_decrypted_packet(AdnlNodeIdShort dst, AdnlPacket
   AdnlNodeIdShort src = packet.from_short();
 
   auto it = peers_.find(src);
-  if (it == peers_.end()) {
+  bool new_peer = (it == peers_.end());
+  if (new_peer) {
     if (!packet.inited_from()) {
       VLOG(ADNL_NOTICE) << this << ": dropping IN message [" << packet.from_short() << "->" << dst
                         << "]: unknown peer and no full src in packet";
@@ -145,8 +146,6 @@ void AdnlPeerTableImpl::receive_decrypted_packet(AdnlNodeIdShort dst, AdnlPacket
                         << "]: unknown peer and network manager uninitialized";
       return;
     }
-
-    it = peers_.try_emplace(src).first;
   }
 
   auto it2 = local_ids_.find(dst);
@@ -156,19 +155,28 @@ void AdnlPeerTableImpl::receive_decrypted_packet(AdnlNodeIdShort dst, AdnlPacket
     return;
   }
 
-  if (packet.inited_from()) {
-    update_id(it->second, packet.from());
-  }
-
   // Peer-pair ceiling: if this packet would create a brand-new pair for the
   // destination local id, the local id is already at its limit, and the source
-  // is not a protected peer, drop the packet instead of growing the peer-pair
-  // table without bound. Existing pairs and protected peers are never refused.
-  if (it->second.peers.find(dst) == it->second.peers.end() &&
-      it2->second.peer_pair_count >= max_peer_pairs_ && !it2->second.protected_peers.contains(src)) {
+  // is not a protected peer, drop the packet. This check runs BEFORE the outer
+  // peers_ record is created: otherwise a rejected new source would still leave
+  // an empty PeerInfo (no pair, never entered into peers_gc_order, never
+  // reclaimed), so the refused traffic would grow peers_ without bound even
+  // though no AdnlPeerPair actor is created. Existing pairs and protected peers
+  // are never refused.
+  bool would_create_pair = new_peer || it->second.peers.find(dst) == it->second.peers.end();
+  if (would_create_pair && it2->second.peer_pair_count >= max_peer_pairs_ &&
+      !it2->second.protected_peers.contains(src)) {
     VLOG(ADNL_NOTICE) << this << ": dropping IN message [" << src << "->" << dst
                       << "]: peer pair limit reached (" << it2->second.peer_pair_count << ")";
     return;
+  }
+
+  if (new_peer) {
+    it = peers_.try_emplace(src).first;
+  }
+
+  if (packet.inited_from()) {
+    update_id(it->second, packet.from());
   }
 
   td::actor::send_closure(get_peer_pair(src, it->second, dst, it2->second), &AdnlPeerPair::receive_packet,

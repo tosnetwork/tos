@@ -31,15 +31,19 @@
 #include <cstdlib>
 
 #include "adnl/adnl-network-manager.h"
+#include "adnl/adnl-peer-table.hpp"
 #include "adnl/adnl-test-loopback-implementation.h"
 #include "adnl/adnl.h"
+#include "td/actor/PromiseFuture.h"
 #include "td/utils/port/path.h"
 #include "td/utils/port/signals.h"
 
 namespace {
 
 constexpr size_t kMaxPeerPairs = 2;
-constexpr int kSenders = 3;
+// Two senders fill the ceiling; the rest are refused. More than one refused
+// sender exercises the "repeatedly submit new identities" case.
+constexpr int kSenders = 5;
 
 }  // namespace
 
@@ -165,17 +169,40 @@ int main() {
     }
   };
 
+  // Reads the receiver's outer peer-table size (number of peers_ entries).
+  auto peer_table_size = [&]() -> size_t {
+    std::atomic<size_t> result{0};
+    std::atomic<bool> ready{false};
+    scheduler.run_in_context([&] {
+      auto impl = td::actor::actor_dynamic_cast<tos::adnl::AdnlPeerTableImpl>(adnl.get());
+      td::actor::send_closure(impl, &tos::adnl::AdnlPeerTableImpl::get_peer_table_size,
+                              td::PromiseCreator::lambda([&](td::Result<size_t> R) {
+                                result.store(R.move_as_ok(), std::memory_order_release);
+                                ready.store(true, std::memory_order_release);
+                              }));
+    });
+    wait_for([&] { return ready.load(std::memory_order_acquire); }, 5.0, "peer table size");
+    return result.load(std::memory_order_acquire);
+  };
+
   // Fill the ceiling: the first two senders each create a pair on dst and are
   // delivered.
   send_from(0);
   send_from(1);
   wait_for([&] { return delivered[0].load() && delivered[1].load(); }, 20.0, "first two deliveries");
 
-  // The third sender would create a third pair for dst, which is at its limit
-  // of two. Its packet must be dropped, so its message is never delivered.
-  send_from(2);
+  // Baseline outer peer-table size once the ceiling is full. The refused
+  // senders below must not grow it.
+  size_t baseline_peers = peer_table_size();
 
-  // Give the third message ample scheduler time to (not) arrive.
+  // The remaining senders would each create a new pair for dst, which is at its
+  // limit. Their packets must be dropped: not delivered, AND not leaving an
+  // empty outer PeerInfo behind (which would never be reclaimed).
+  for (int i = 2; i < kSenders; i++) {
+    send_from(i);
+  }
+
+  // Give the refused messages ample scheduler time to (not) arrive.
   auto quiet = td::Timestamp::in(3.0);
   while (!quiet.is_in_past()) {
     if (!scheduler.run(0.05)) {
@@ -185,9 +212,18 @@ int main() {
 
   CHECK(delivered[0].load());
   CHECK(delivered[1].load());
-  CHECK(!delivered[2].load());  // refused by the peer-pair ceiling
+  for (int i = 2; i < kSenders; i++) {
+    CHECK(!delivered[i].load());  // refused by the peer-pair ceiling
+  }
 
-  LOG(ERROR) << "peer-pair ceiling held: 2 of 3 distinct senders admitted, third refused";
+  // The refused sources must not have grown the outer peer table. Before the
+  // fix, each rejected new source left an empty PeerInfo (created before the
+  // ceiling check), so this size would grow by one per refused sender.
+  size_t final_peers = peer_table_size();
+  CHECK(final_peers == baseline_peers);
+
+  LOG(ERROR) << "peer-pair ceiling held: 2 senders admitted, " << (kSenders - 2)
+             << " refused; outer peer table did not grow (" << final_peers << " entries)";
 
   // Actors keep long-lived idle alarms scheduled, so draining the scheduler to
   // quiescence would hang; force-exit like the other ADNL loopback tests.
