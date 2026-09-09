@@ -1089,12 +1089,17 @@ impl DhtNode {
         // is actually at the ceiling, and at most once per GC_MIN_INTERVAL_SECS;
         // between sweeps a new key is simply refused while full.
         if network.storage.get(&dht_key_id).is_none() {
-            use std::sync::atomic::Ordering::Relaxed;
+            use std::sync::atomic::Ordering::{AcqRel, Relaxed};
             if self.allocated.values.load(Relaxed) >= Self::MAX_VALUES {
+                // Claim the sweep with a single compare_exchange so that, under
+                // concurrent stores, exactly one task runs the O(n) scan per
+                // interval. A load-then-store would let several tasks all observe
+                // the old timestamp and each scan the whole table.
                 let now = Version::get();
                 let last = network.last_gc_at.load(Relaxed);
-                if now.saturating_sub(last) >= Self::GC_MIN_INTERVAL_SECS {
-                    network.last_gc_at.store(now, Relaxed);
+                if now.saturating_sub(last) >= Self::GC_MIN_INTERVAL_SECS
+                    && network.last_gc_at.compare_exchange(last, now, AcqRel, Relaxed).is_ok()
+                {
                     self.gc_expired_values(network);
                 }
                 if self.allocated.values.load(Relaxed) >= Self::MAX_VALUES {
