@@ -2847,6 +2847,25 @@ TEST(WorkchainBlock, NativeDisposalEntry) {
     auto charged_effects = joint_effects;
     charged_effects.fees = block::WorkchainFeeSettlement{b, a,
         td::make_refint(17), td::make_refint(23), td::make_refint(5)};
+    // Inspect the prepared pair before the enclosing overlay's conservation
+    // check can reject it. This distinguishes fee preservation from a later
+    // generic rejection of inconsistent value flow.
+    auto charged_root = block::encode_workchain_account_effects(charged_effects, 2, 3, 4096).move_as_ok();
+    auto charged_bindings = block::build_workchain_participant_records(
+        td::Bits256(overlay_input->get_hash().bits()), td::Bits256(charged_root->get_hash().bits()),
+        {a, b}, 2).move_as_ok();
+    auto charged_pair_result = Transaction::build_workchain_payout_pair(custody, coordinator,
+        charged_bindings[1], charged_bindings[0], number(322), number(321), request, 21, 10,
+        td::make_refint(100), 3, 4096, cfg, joint_prices, overlay_input, charged_root, &joint_context);
+    if (charged_pair_result.is_error()) LOG(ERROR) << charged_pair_result.error();
+    ASSERT_TRUE(charged_pair_result.is_ok());
+    const auto& charged_pair = charged_pair_result.ok().transactions;
+    ASSERT_TRUE(charged_pair[0]->balance == block::CurrencyCollection(1045));
+    ASSERT_TRUE(charged_pair[1]->balance == block::CurrencyCollection(990));
+    ASSERT_TRUE(charged_pair[0]->total_fees == block::CurrencyCollection(53));
+    ASSERT_TRUE(charged_pair[1]->total_fees == block::CurrencyCollection(100));
+    ASSERT_EQ(charged_pair[0]->out_msgs.size(), 1u);
+    ASSERT_EQ(charged_pair[1]->out_msgs.size(), 2u);
     engine.effects = charged_effects;
     engine.calls = 0;
     auto charged_result = block::execute_and_settle_workchain_disposal(engine, old.accounts,

@@ -669,13 +669,17 @@ Effect-zero pre-fix evidence is
    identity from the same Config cut. Full limit compatibility and live whole-input
    admission remain unfinished; this is not completion of D31.
    D28 billing units must not silently become proof-work units.
-2. D24/D32 aggregate operation-fee settlement. `WorkchainAccountEffects` currently
-   has one optional `payout_request`; existing custody payout construction and
-   Native allocation edges do not implement the separately authorized aggregate
-   accounting operation. D32 directs S internally to coordinator and C+T into
-   Native fees_collected, with zero fee messages. Its bound amount, cost funding and
-   effects authorization must be independently reconstructed, not inferred from
-   the ordinary payout test or a larger output-count limit.
+2. D24/D32 authenticated operation-fee reconstruction. The reviewed private
+   checkpoint `f5fca8779` now carries an optional fee record separately from the
+   payout request: S transfers internally to coordinator and C+T enters Native
+   fees_collected, with zero fee messages. The remaining work is not to build
+   those transfers again. It is to resolve the explicit fee-enabled profile and
+   business parameters from authenticated configuration, read the committed
+   base_compute state, and reconstruct S/C/T from verified operations (including
+   their proof-bound public fee). Compare each component before allowing the
+   resulting debit and its matching N_book update. A decoded engine fee record
+   is not an authorized fee schedule; neither conservation nor byte equality
+   fills this gap. Withdrawal-specific reserves remain separate from F.
 3. Live execution, independent replay and atomic publication. The validator
    still resolves the singleton scoped variant and enforces exactly its
    executor AccountBlock before `replay_resolved_workchain_account_block`.
@@ -3227,6 +3231,16 @@ Evidence must be read as a pair:
   and thirteen existing counter/disk compatibility tests. These are existing
   singleton/closed-gate regressions, not multi-account live acceptance.
 
+That final-checks artifact is historical evidence for `f5fca8779`, not a
+moving assertion about subsequent test binaries. The numeric-pair follow-up
+records its own test and binary hashes and full regression. It does not modify
+production sources or the separate collator tool: both the collator source
+hash `a17d045c...` and binary hash `7d1fb613...` still match the historical
+artifact. A review claim that those two collator hashes had changed was checked
+and rejected; the workchain-block test and its binary did change as expected.
+This is why the previous compatibility run remains applicable to the unchanged
+production code, not evidence of new live behavior.
+
 The payout-overwrite control fails at `charged_result.is_ok()`, before the
 numeric fee assertion. Source inspection attributes this to value-flow
 conservation; the recorded runtime result establishes rejection, not a uniquely
@@ -3246,9 +3260,22 @@ disputed for the I13e reason above, not deferred for implementation.
 
 Open coverage and integration obligations:
 
-- Isolate the charged payout's numeric fee preservation before an enclosing
-  conservation check can reject, and test aggregate-fee-funded but combined
-  payout-unfunded staging with unchanged published state.
+- Before installing a fee-enabled profile, bind permission to use the fee-bearing
+  constructor to an explicitly authenticated engine/descriptor profile. The
+  generic codec recognizes both constructors but does not authorize either.
+  Do not reinterpret admission version 2 as a fee capability: it already names
+  a resource-accounting contract. A candidate presenting fees without profile
+  permission must be rejected as CandidateInvalid; authenticated configuration
+  or local capability failures must retain their distinct provenance. Add a
+  same-effects/different-profile control and prove removing this gate changes
+  the result, without relying on the still-closed live execution gate.
+- The charged payout now has a direct pair-level numeric control before the
+  enclosing conservation check: restoring the overwrite reaches and fails the
+  custody fee assertion (53), after the prepared-pair success and balance
+  assertions pass. See `measurements/uno-v2-d32-payout-pair-control.json` for
+  the red output, exact restoration and restored full regression. Still test
+  aggregate-fee-funded but combined payout-unfunded staging with unchanged
+  published state.
 - Add isolated controls for fee constructor selection, malformed/unknown tags,
   coincident roles, invalid/zero components, combined 120-bit bounds, and the
   payout-specific role guard. Seven existing controls do not prove all of these.
