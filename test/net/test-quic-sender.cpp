@@ -1857,6 +1857,44 @@ TEST(QuicRateLimiter, CapacityOneDoesNotAllowExtraBurst) {
   expect_take(false);
 }
 
+TEST(QuicConnectionLimit, MaxConnectionsRejectsBeyondCap) {
+  run_raw_quic_test([](RawQuicTestRunner& t) -> td::actor::Task<td::Unit> {
+    // The server accepts at most one connection. quic_test_options() disables
+    // flood control and the per-IP/global rate limiters, so the connection
+    // count ceiling is the only gate left on the inbound accept path.
+    auto server_options = quic_test_options();
+    server_options.max_connections = 1;
+    auto server = co_await t.create_endpoint(server_options);
+
+    // First client connects and occupies the single slot.
+    auto client1 = co_await t.create_endpoint(quic_test_options());
+    auto [c1_out, c1_in] = co_await t.connect(client1, server);
+    static_cast<void>(c1_out);
+    ASSERT_TRUE(server.state->get_inbound_cid().has_value());
+    ASSERT_EQ(server.state->get_inbound_cid().value(), c1_in);
+
+    // Second client initiates against a full table. The client-side connect
+    // only emits the initial packet, so it succeeds locally; the server must
+    // refuse the inbound connection in get_or_create_connection, so it never
+    // reaches on_connected and the server's recorded inbound connection stays
+    // client1's. With the ceiling removed the server would accept client2 and
+    // the recorded inbound cid would change, failing the assertion below.
+    auto client2 = co_await t.create_endpoint(quic_test_options());
+    auto connect_result =
+        co_await td::actor::ask(client2.server, &tos::quic::QuicServer::connect, td::Slice("127.0.0.1"), server.port,
+                                clone_quic_key(client2.key), td::Slice("tos"), td::Slice(""))
+            .wrap();
+    ASSERT_TRUE(connect_result.is_ok());
+
+    // Give the server ample time to (not) complete a second handshake.
+    co_await td::actor::coro_sleep(td::Timestamp::in(2.0));
+
+    ASSERT_TRUE(server.state->get_inbound_cid().has_value());
+    ASSERT_EQ(server.state->get_inbound_cid().value(), c1_in);
+    co_return td::Unit{};
+  });
+}
+
 int main(int argc, char* argv[]) {
   SET_VERBOSITY_LEVEL(verbosity_INFO);
   td::set_default_failure_signal_handler().ensure();
