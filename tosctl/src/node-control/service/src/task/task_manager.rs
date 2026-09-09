@@ -135,7 +135,7 @@ impl TaskController {
     }
 
     pub async fn disable(&self) -> TaskStateView {
-        let handle_to_await = {
+        let (view, handle_to_join) = {
             let mut st = self.state.lock().expect("failed to lock state");
             st.enabled = false;
 
@@ -155,21 +155,32 @@ impl TaskController {
                 tracing::warn!("{} task marked running but no cancellation ctx present", self.name);
             }
 
-            st.handle.take()
+            let handle = st.handle.take();
+            // Transition to Stopped synchronously, under the lock, before the only
+            // .await below (a best-effort graceful join). Once the state is durable
+            // here, an HTTP request timeout that drops this future can no longer
+            // strand status=Running with handle/cancel already cleared -- the state
+            // that previously made the next enable() see Running and refuse to
+            // start a new task. The cancellation signal asks the task to exit
+            // cleanly; if the future is dropped before the join completes, the task
+            // still observes the signal and exits on its own.
+            st.status = TaskStatus::Stopped;
+            st.updated_at = UnixTime::now();
+            let view = TaskStateView {
+                enabled: st.enabled,
+                status: st.status,
+                updated_at: st.updated_at,
+            };
+            (view, handle)
         };
 
-        if let Some(handle) = handle_to_await {
+        if let Some(handle) = handle_to_join {
             tracing::debug!("await {} task join...", self.name);
             let _ = handle.await;
         }
 
         tracing::info!("{} task stopped", self.name);
-
-        let mut st = self.state.lock().expect("failed to lock state");
-        st.status = TaskStatus::Stopped;
-        st.updated_at = UnixTime::now();
-
-        TaskStateView { enabled: st.enabled, status: st.status, updated_at: st.updated_at }
+        view
     }
 
     pub async fn restart(&self) -> TaskStateView {
@@ -325,6 +336,35 @@ mod tests {
             self.count.fetch_add(1, Ordering::SeqCst);
             let mut rx = ctx.subscribe();
             let _ = rx.changed().await;
+            Ok(())
+        }
+    }
+
+    /// Counts its runs and, once cancelled, still takes a while to actually
+    /// return -- so a disable() join is still pending if its future is dropped.
+    struct SlowToStopTask {
+        runs: Arc<AtomicU32>,
+    }
+
+    impl SlowToStopTask {
+        fn new() -> (Self, Arc<AtomicU32>) {
+            let runs = Arc::new(AtomicU32::new(0));
+            (Self { runs: runs.clone() }, runs)
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl ServiceTask for SlowToStopTask {
+        async fn run(
+            &self,
+            ctx: CancellationCtx,
+            _app_config: Arc<AppConfig>,
+        ) -> anyhow::Result<()> {
+            self.runs.fetch_add(1, Ordering::SeqCst);
+            let mut rx = ctx.subscribe();
+            let _ = rx.changed().await;
+            // Observed cancellation, but take a while to actually exit.
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
             Ok(())
         }
     }
@@ -571,5 +611,38 @@ mod tests {
         let ctx = CancellationCtx::new();
         let app_config = runtime_config().get();
         task.run(ctx, app_config).await.expect("zero-field task should work");
+    }
+
+    // An HTTP request timeout can drop the disable() future while it is still
+    // joining the task. The state transition must be durable before that await,
+    // or disable() leaves status=Running with handle/cancel cleared and enable()
+    // then refuses to restart.
+    #[tokio::test]
+    async fn disable_reaches_stopped_even_if_its_future_is_dropped_mid_join() {
+        let (task, runs) = SlowToStopTask::new();
+        let ctrl = TaskController::new("test", task, runtime_config());
+
+        assert_eq!(ctrl.enable().await.status, TaskStatus::Running);
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        assert_eq!(runs.load(Ordering::SeqCst), 1, "task should have started once");
+
+        // Drop disable()'s future while its graceful join is still pending: the
+        // task takes 500ms to exit after observing cancellation, the timeout is
+        // 50ms. This mirrors the HTTP per-request timeout cancelling the handler.
+        let outcome =
+            tokio::time::timeout(std::time::Duration::from_millis(50), ctrl.disable()).await;
+        assert!(outcome.is_err(), "disable() should still be joining when dropped");
+
+        // Durable state: Stopped, not a stranded Running. (Pre-fix this was
+        // Running, because status was only set after the cancelled join.)
+        assert_eq!(ctrl.status().await.status, TaskStatus::Stopped);
+
+        // And enable() actually starts a fresh run rather than seeing Running and
+        // returning without spawning.
+        assert_eq!(ctrl.enable().await.status, TaskStatus::Running);
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        assert_eq!(runs.load(Ordering::SeqCst), 2, "enable() should have restarted the task");
+
+        let _ = ctrl.disable().await;
     }
 }

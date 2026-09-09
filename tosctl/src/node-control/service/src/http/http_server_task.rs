@@ -789,27 +789,34 @@ pub async fn v1_stake_strategy_handler(
     // id adds a permanent, persisted entry, so without a ceiling a caller could
     // grow the config file without limit. Setting a policy for an already-known
     // node, or the default policy (no node id), never grows the map.
-    if let Some(id) = &node_id {
-        if let Some(elections) = &state.runtime_cfg.get().elections {
-            if !elections.policy_overrides.contains_key(id)
-                && elections.policy_overrides.len() >= MAX_POLICY_OVERRIDES
-            {
-                return Err(AppError::bad_request("too many stake-policy overrides configured"));
-            }
-        }
-    }
+    //
+    // The ceiling is enforced INSIDE the update closure, which runs under the
+    // config write lock, so the capacity check and the insert are one atomic
+    // step. A check performed before update_with (outside the lock) let two
+    // concurrent requests both observe len == MAX - 1, both pass, and each
+    // insert, overshooting the ceiling.
+    let mut rejected_over_capacity = false;
     state
         .runtime_cfg
         .update_with(|cfg| {
             if let Some(elections) = &mut cfg.elections {
                 if let Some(node_id) = node_id {
-                    elections.policy_overrides.insert(node_id, policy);
+                    if !elections.policy_overrides.contains_key(&node_id)
+                        && elections.policy_overrides.len() >= MAX_POLICY_OVERRIDES
+                    {
+                        rejected_over_capacity = true;
+                    } else {
+                        elections.policy_overrides.insert(node_id, policy);
+                    }
                 } else {
                     elections.policy = policy;
                 }
             }
         })
         .map_err(|e| AppError::internal(e.to_string()))?;
+    if rejected_over_capacity {
+        return Err(AppError::bad_request("too many stake-policy overrides configured"));
+    }
 
     let task = state.elections_task.clone();
     tokio::spawn(async move {
