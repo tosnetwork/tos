@@ -16,6 +16,15 @@ fn decode(bytes: &[u8; 32]) -> Result<Point, Error> {
     CompressedRistretto(*bytes).decompress().ok_or(Error::UNO_CRYPTO_DECODE)
 }
 
+fn pad_range_commitments(ranges: &mut Vec<Point>, expected: usize, padded: usize) -> Result<(), Error> {
+    // A disagreement between local relation construction and its shape is a
+    // kernel contract failure, not invalid candidate data. Never truncate a
+    // constraint or silently pad a missing one into an identity commitment.
+    if ranges.len() != expected || expected > padded { return Err(Error::UNO_CRYPTO_ARGUMENTS); }
+    ranges.resize(padded, Point::identity());
+    Ok(())
+}
+
 pub(crate) fn shapes(kind: u32, k: usize) -> Result<(usize, usize, usize, usize), Error> {
     if kind == UNO_RELATION_SEND && k == 0 { return Ok((10, 8, 6, 8)); }
     if kind != UNO_RELATION_COLLECT || k == 0 { return Err(Error::UNO_CRYPTO_DECODE); }
@@ -119,7 +128,10 @@ pub(crate) fn prepare(
         push(&terms, p[3] + fee_g)?;
         push(&[(rho, p[0])], p[4])?;
     }
-    ranges.resize(m, zero);
+    let expected_ranges = if kind == UNO_RELATION_SEND { 6 } else {
+        ids.len().checked_mul(2).and_then(|n| n.checked_add(4)).ok_or(Error::UNO_CRYPTO_ARGUMENTS)?
+    };
+    pad_range_commitments(&mut ranges, expected_ranges, m)?;
     let mut transcript = Transcript::new(b"uno-v2/balance-relation");
     transcript.append_message(b"protocol-domain", domain);
     transcript.append_u64(b"relation", u64::from(kind));
@@ -183,4 +195,26 @@ pub(crate) fn check_sigma(rows: &[Vec<Point>], targets: &[Point], ts: &[Point], 
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod range_shape_tests {
+    use super::*;
+
+    #[test]
+    fn padding_preserves_constraints_and_rejects_shape_disagreement() {
+        let g = PedersenGens::default().B;
+        let mut valid = vec![g; 6];
+        assert_eq!(pad_range_commitments(&mut valid, 6, 8), Ok(()));
+        assert_eq!(valid.len(), 8);
+        assert!(valid[..6].iter().all(|point| *point == g));
+        assert!(valid[6..].iter().all(Point::is_identity));
+        for (actual, expected, padded) in [(5, 6, 8), (7, 6, 8), (9, 6, 8), (6, 6, 4)] {
+            let mut invalid = vec![g; actual];
+            let before = invalid.clone();
+            assert_eq!(pad_range_commitments(&mut invalid, expected, padded), Err(Error::UNO_CRYPTO_ARGUMENTS),
+                "local range shape: actual={actual}, expected={expected}, padded={padded}");
+            assert_eq!(invalid, before, "rejection must precede resizing");
+        }
+    }
 }

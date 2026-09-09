@@ -1,0 +1,65 @@
+{
+  "note": "Local relation shape guards, not new cryptographic equations. Each mutation was restored before the next. Debug Rust controls; release regression is recorded separately.",
+  "controls": [
+    {
+      "path": "uno/crypto/src/relation.rs",
+      "from": "    if ranges.len() != expected || expected > padded { return Err(Error::UNO_CRYPTO_ARGUMENTS); }",
+      "to": "    if expected > padded { return Err(Error::UNO_CRYPTO_ARGUMENTS); }",
+      "recorded_mutant_sha256": "87f0940db5a6f16df389ec9f987651ae2a5160f5b4d49d80bf9b4460c1fb387b",
+      "reconstructed_mutant_sha256": "87f0940db5a6f16df389ec9f987651ae2a5160f5b4d49d80bf9b4460c1fb387b",
+      "result": {
+        "chunk_id": "0b665b",
+        "wall_time_seconds": 0.658426934,
+        "exit_code": 101,
+        "original_token_count": 250,
+        "output": "   Compiling tos-uno-crypto-prototype v0.1.0 (/home/tomi/tos/uno/crypto)\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.74s\n     Running unittests src/lib.rs (build/uno-crypto-target/debug/deps/tos_uno_crypto_prototype-3f5cbb42291bbc04)\n\nrunning 1 test\n\nthread 'relation::range_shape_tests::padding_preserves_constraints_and_rejects_shape_disagreement' (1257124) panicked at src/relation.rs:215:13:\nassertion `left == right` failed: local range shape: actual=5, expected=6, padded=8\n  left: Ok(())\n right: Err(UNO_CRYPTO_ARGUMENTS)\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\ntest relation::range_shape_tests::padding_preserves_constraints_and_rejects_shape_disagreement ... FAILED\n\nfailures:\n\nfailures:\n    relation::range_shape_tests::padding_preserves_constraints_and_rejects_shape_disagreement\n\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 19 filtered out; finished in 0.00s\n\nerror: test failed, to rerun pass `--lib`\n"
+      },
+      "restored_sha256": "559132dc5d338dcf9807d5b72270a1304b77a40352d2dca871ad169e4dd86090"
+    },
+    {
+      "path": "uno/crypto/src/relation.rs",
+      "from": "    if ranges.len() != expected || expected > padded { return Err(Error::UNO_CRYPTO_ARGUMENTS); }",
+      "to": "    if ranges.len() != expected { return Err(Error::UNO_CRYPTO_ARGUMENTS); }",
+      "recorded_mutant_sha256": "4a108eaea4166e0b664395d3be67bc54e951c57c8334af4c3e71846b3263c87d",
+      "reconstructed_mutant_sha256": "4a108eaea4166e0b664395d3be67bc54e951c57c8334af4c3e71846b3263c87d",
+      "result": {
+        "chunk_id": "e4ffc0",
+        "wall_time_seconds": 0.390861472,
+        "exit_code": 101,
+        "original_token_count": 250,
+        "output": "   Compiling tos-uno-crypto-prototype v0.1.0 (/home/tomi/tos/uno/crypto)\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.48s\n     Running unittests src/lib.rs (build/uno-crypto-target/debug/deps/tos_uno_crypto_prototype-3f5cbb42291bbc04)\n\nrunning 1 test\n\nthread 'relation::range_shape_tests::padding_preserves_constraints_and_rejects_shape_disagreement' (1255266) panicked at src/relation.rs:215:13:\nassertion `left == right` failed: local range shape: actual=6, expected=6, padded=4\n  left: Ok(())\n right: Err(UNO_CRYPTO_ARGUMENTS)\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\ntest relation::range_shape_tests::padding_preserves_constraints_and_rejects_shape_disagreement ... FAILED\n\nfailures:\n\nfailures:\n    relation::range_shape_tests::padding_preserves_constraints_and_rejects_shape_disagreement\n\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 19 filtered out; finished in 0.00s\n\nerror: test failed, to rerun pass `--lib`\n"
+      },
+      "restored_sha256": "559132dc5d338dcf9807d5b72270a1304b77a40352d2dca871ad169e4dd86090"
+    },
+    {
+      "path": "uno/crypto/src/relation.rs",
+      "from": "    if ranges.len() != expected || expected > padded { return Err(Error::UNO_CRYPTO_ARGUMENTS); }",
+      "to": "    if ranges.len() < expected || expected > padded { return Err(Error::UNO_CRYPTO_ARGUMENTS); }",
+      "recorded_mutant_sha256": "4eafb43a5e9c62485a0bd58d0841807945019559dffd47a5751589addc64fb4e",
+      "reconstructed_mutant_sha256": "4eafb43a5e9c62485a0bd58d0841807945019559dffd47a5751589addc64fb4e",
+      "restored_sha256": "559132dc5d338dcf9807d5b72270a1304b77a40352d2dca871ad169e4dd86090",
+      "result": {
+        "chunk_id": "819422",
+        "wall_time_seconds": 0.608434425,
+        "exit_code": 101,
+        "original_token_count": 250,
+        "output": "   Compiling tos-uno-crypto-prototype v0.1.0 (/home/tomi/tos/uno/crypto)\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.69s\n     Running unittests src/lib.rs (build/uno-crypto-target/debug/deps/tos_uno_crypto_prototype-3f5cbb42291bbc04)\n\nrunning 1 test\n\nthread 'relation::range_shape_tests::padding_preserves_constraints_and_rejects_shape_disagreement' (1256151) panicked at src/relation.rs:215:13:\nassertion `left == right` failed: local range shape: actual=7, expected=6, padded=8\n  left: Ok(())\n right: Err(UNO_CRYPTO_ARGUMENTS)\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\ntest relation::range_shape_tests::padding_preserves_constraints_and_rejects_shape_disagreement ... FAILED\n\nfailures:\n\nfailures:\n    relation::range_shape_tests::padding_preserves_constraints_and_rejects_shape_disagreement\n\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 19 filtered out; finished in 0.00s\n\nerror: test failed, to rerun pass `--lib`\n"
+      }
+    },
+    {
+      "path": "uno/crypto/src/relation.rs",
+      "from": "    let expected_ranges = if kind == UNO_RELATION_SEND { 6 } else {",
+      "to": "    ranges.push(zero);\n    let expected_ranges = if kind == UNO_RELATION_SEND { 6 } else {",
+      "recorded_mutant_sha256": "6a9f52ca534666dd1f97431b82d9c5a4523e45df6d7cc0812ff2b19f9065249b",
+      "reconstructed_mutant_sha256": "6a9f52ca534666dd1f97431b82d9c5a4523e45df6d7cc0812ff2b19f9065249b",
+      "restored_sha256": "559132dc5d338dcf9807d5b72270a1304b77a40352d2dca871ad169e4dd86090",
+      "result": {
+        "chunk_id": "3518ea",
+        "wall_time_seconds": 0.951370431,
+        "exit_code": 101,
+        "original_token_count": 195,
+        "output": "   Compiling tos-uno-crypto-prototype v0.1.0 (/home/tomi/tos/uno/crypto)\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.78s\n     Running unittests src/lib.rs (build/uno-crypto-target/debug/deps/tos_uno_crypto_prototype-3f5cbb42291bbc04)\n\nrunning 1 test\n\nthread 'tests::full_send_and_collect_all_candidate_sizes' (1256569) panicked at src/tests.rs:70:121:\nfixture statement: UNO_CRYPTO_ARGUMENTS\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\ntest tests::full_send_and_collect_all_candidate_sizes ... FAILED\n\nfailures:\n\nfailures:\n    tests::full_send_and_collect_all_candidate_sizes\n\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 19 filtered out; finished in 0.24s\n\nerror: test failed, to rerun pass `--lib`\n"
+      }
+    }
+  ]
+}
