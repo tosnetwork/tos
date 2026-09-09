@@ -190,11 +190,14 @@ mod tests {
     }
 
     /// Pins the ConfigParam 14 block-creation rate (the emission engine's only
-    /// input) to the values calibrated for ~10,000,000 TOS of total supply over
-    /// the first two years, retaining the 1.7:1 masterchain:basechain ratio.
-    /// The genesis-balance test above guards only genesis funding, not the
-    /// emission rate; without this test a change to block_create_fees would
-    /// silently alter the monetary policy. Changing the rate makes this red.
+    /// input) to the per-block fees calibrated for the ~10,000,000 TOS / two-year
+    /// bootstrap target, retaining the 1.7:1 masterchain:basechain ratio. This
+    /// asserts the two constants only: it does NOT prove that two years actually
+    /// yield ~10M TOS — the realized total depends on how many blocks are
+    /// produced (the calibration assumes ~2.5 finalized blocks/s). It guards
+    /// against a silent change to the emission rate, which the genesis-balance
+    /// test above does not (that guards only genesis funding). Changing the rate
+    /// makes this red.
     #[test]
     fn mainnet_block_create_fees_match_two_year_emission_calibration() {
         // 10,000,000 TOS total = 101,000 genesis + 9,899,000 emitted over 2yr,
