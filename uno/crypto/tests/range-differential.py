@@ -76,7 +76,9 @@ def main():
     parser.add_argument("--work-dir", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--only-polynomial-sign", action="store_true")
+    parser.add_argument("--only-weighted-boundary", action="store_true")
     args = parser.parse_args()
+    assert not (args.only_polynomial_sign and args.only_weighted_boundary)
     work, output = args.work_dir.resolve(), args.output.resolve()
     work.mkdir(parents=True, exist_ok=False); output.mkdir(parents=True, exist_ok=False)
     spec = importlib.util.spec_from_file_location("gates", ROOT / "tests/kernel-gates.py")
@@ -165,6 +167,49 @@ def main():
         return result
 
     std = ["std-proof"]; independent = ["std-proof", "independent"]; exported = independent+["residual-export"]
+    def weighted_control():
+        baseline = execute("local", "weighted-boundary-baseline", exported, residual=True)
+        assert boundary(baseline.stdout)["guard"] == "equal"
+        archived = ROOT.parents[1]/"doc/measurements/uno-m2-range-differential/residual-boundary.tsv"
+        assert baseline.stdout == archived.read_text(), "the original 16 inputs and c values must be reused exactly"
+        committed = subprocess.check_output(["git", "show", "HEAD:uno/crypto/tests/range-differential.rs"], cwd=ROOT)
+        assert committed == (work/"local-harness/src/main.rs").read_bytes()
+        before = "u8::from(independent_residuals_zero(ip, poly)), hex(&c.to_bytes())"
+        after = "u8::from((ip + c * poly).is_identity()), hex(&c.to_bytes())"
+        def weighted():
+            result = execute("local", "weighted-boundary-replacement", exported, residual=True)
+            left = {row[0]: row[1:] for row in (line.split("\t") for line in baseline.stdout.splitlines())}
+            right = {row[0]: row[1:] for row in (line.split("\t") for line in result.stdout.splitlines())}
+            assert left.keys() == right.keys() and len(left) == 19
+            for key in ["boundary/zero", "boundary/ip", "boundary/poly"]:
+                assert left[key] == right[key], key
+            differences = []
+            for i in range(16):
+                key = f"collision/{i}"
+                assert left[key][0] == right[key][0] == "1"
+                assert left[key][2] == right[key][2], "c changed"
+                assert left[key][1] == "0" and right[key][1] == "1", key
+                differences.append({"case": key, "c": left[key][2], "split_accepts": False, "weighted_accepts": True})
+            return {"guard": "split-predicate-acceptance", "criterion_passed": False,
+                    "differing_cases": len(differences), "cases": differences}
+        replacement("weighted-residual-predicate", "local-harness", "src/main.rs", before, after, weighted)
+        restored = execute("local", "weighted-boundary-restored", exported, residual=True)
+        assert restored.stdout == baseline.stdout
+        assert (work/"local-harness/src/main.rs").read_bytes() == committed
+        return {"committed_harness_sha256": sha(committed), "baseline_corpus_sha256": sha(baseline.stdout.encode()),
+                "archived_corpus_sha256": sha(archived.read_bytes()), "cases": 16,
+                "mutation_location": "Test harness residual-boundary call site; vendored verifier source stays unchanged."}
+    if args.only_weighted_boundary:
+        result = weighted_control()
+        gates.validate_vendor(work/"local"); authenticate_upstream(work/"upstream")
+        report = {"schema": 1, "unit": "weighted-versus-split-residual-predicate", "comparison": result,
+                  "controls": controls, "events": events,
+                  "base_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip(),
+                  "runner_sha256": sha(Path(__file__).read_bytes()), "harness_sha256": sha(source),
+                  "scope": "Residual-level predicate comparison only. No full proof construction, no claim about practical applicability to the upstream protocol, and no examination of transcript-derived c in that protocol."}
+        (output/"measurement.json").write_text(json.dumps(report,indent=2)+"\n")
+        print("PASS: all 16 archived cases reject under the split predicate and accept under the weighted predicate; exact restore audit passed")
+        return
     upstream = execute("upstream", "upstream-factor-1", std)
     baseline = execute("local", "local-independent", independent)
     comparison = compare(upstream.stdout, baseline.stdout); assert comparison["guard"] == "equal", comparison
@@ -223,6 +268,7 @@ def main():
     sign_control()
     residual_baseline = execute("local", "residual-boundary", exported, residual=True)
     assert boundary(residual_baseline.stdout)["guard"] == "equal"
+    weighted_comparison = weighted_control()
     original = "    ip.is_identity() && poly.is_identity()"
     def drop_ip():
         r = execute("local", "omit-ip-check", independent)
@@ -250,6 +296,7 @@ def main():
     authenticate_upstream(work/"upstream")
     for name, blob in manifest["upstream_git_blobs"].items(): assert gates.git_blob((work/"upstream"/name).read_bytes()) == blob
     report = {"schema": 1, "unit": "nonzero-factor-range-patch-differential", "comparison": comparison,
+              "weighted_boundary": weighted_comparison,
               "residual_decomposition": decomposition, "controls": controls, "observation_adapters": probes, "events": events,
               "runner_sha256": sha(Path(__file__).read_bytes()), "harness_sha256": sha(source),
               "corpus_sha256": sha(corpus.read_bytes()), "upstream_revision": manifest["revision"],

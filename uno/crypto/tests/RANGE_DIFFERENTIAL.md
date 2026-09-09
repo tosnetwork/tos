@@ -84,6 +84,24 @@ predicate acceptance, and c bytes. In `merge-residuals.tsv`, the second column
 is 1 for all 16 rows, while the third column is 1 only for case 0 (c=1).
 The unweighted merge mutation accepts one of these 16 inputs, not all 16.
 
+The additional weighted-boundary control replaces only the collision-loop call
+to the actual `independent_residuals_zero(ip, poly)` predicate with
+`(ip + c * poly).is_identity()`. The change is at the committed test harness's
+residual-boundary call site; no vendored verifier source is changed. The original
+19-row boundary corpus must match the archived corpus byte-for-byte before the
+replacement. All 16 collision rows change from rejection to acceptance, their
+c bytes and weighted-zero columns remain identical, and the three separate
+boundary rows remain unchanged. This distinguishes the weighted predicate from
+the earlier unweighted merge control. It does not construct a complete proof or
+make a claim about practical applicability to the upstream protocol; that
+protocol's derivation of c is outside this residual-level test.
+
+Use `--only-weighted-boundary` with the same paths above to reproduce this
+control separately. It requires the harness baseline to equal its committed
+source bytes, compiles and runs both forms, restores the bytes, audits the
+restoration by reapplying the exact replacement, then rebuilds the original
+predicate and requires the original corpus again.
+
 ## Attributed controls
 
 Every semantic control compiles, runs to completion, and fails a specific
@@ -95,6 +113,7 @@ structured criterion; error strings are not used for attribution:
 | Omit IP check | `acceptance` | Altered e-blinding with observed zero polynomial residual |
 | Omit polynomial check | `residual-poly` | `(0,G)` accepted only by the missing polynomial guard |
 | Merge residuals with coefficient one | `collision` | Nonzero `(−G,G)`; both one-residual cases still reject |
+| Replace boundary predicate with weighted sum | `split-predicate-acceptance` | All 16 original nonzero-component pairs under their recorded c |
 | Omit c transcript event | `transcript-tail` | Valid proof still accepts, but post-verification challenge changes |
 
 The sign control starts directly from the committed source with no observation
