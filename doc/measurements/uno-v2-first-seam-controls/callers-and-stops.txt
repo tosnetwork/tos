@@ -1,0 +1,11 @@
+crypto/block/workchain-execution-dispatch.cpp:809:                                       "multi-account admission and replay are not connected");
+validator/impl/collator.cpp:1609:          account_adapter_ = adapter.move_as_ok();
+validator/impl/collator.cpp:2311:                                   "multi-account admission and replay are not connected");
+validator/impl/collator.cpp:2465:                                 "multi-account admission and replay are not connected");
+validator/impl/collator.cpp:6953:  account_adapter_.reset();
+validator/impl/validate-query.cpp:1150:                                     "multi-account admission and replay are not connected");
+validator/impl/validate-query.cpp:1296:                                   "multi-account admission and replay are not connected");
+validator/impl/validate-query.cpp:6527:                                 "multi-account admission and replay are not connected");
+crypto/block/workchain-account-settlement.h:139:inline td::Result<WorkchainAccountSettlement> settle_executed(
+crypto/block/workchain-account-settlement.h:454:  return settle_executed(std::move(executed), std::move(old_accounts), identity, admitted,
+crypto/test/test-workchain-settlement-continuation.cpp:118:    return block::account_settlement_detail::settle_executed(std::move(result), settlement_old, identity, preflight,

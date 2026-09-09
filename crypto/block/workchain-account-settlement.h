@@ -132,127 +132,25 @@ inline auto contain_local_output_failure(const Function& function) -> decltype(f
 }
 
 
+// Settlement-only continuation. It cannot call an engine: the executed result,
+// decoded declarations and original admission/tracking context are explicit.
+// The enclosing execute frame owns any private usage tree through this call.
 template <class Admission>
-inline td::Result<WorkchainAccountSettlement> execute(
-    const WorkchainAccountEngine& engine, td::Ref<vm::Cell> old_accounts,
+inline td::Result<WorkchainAccountSettlement> settle_executed(
+    ExecutedWorkchainAccountBatch executed, td::Ref<vm::Cell> old_accounts,
     const WorkchainHostIdentity& identity, const Admission& admitted,
-    std::conditional_t<std::is_same_v<Admission, ProofAdmittedBatchInput>, std::nullptr_t,
-                       const WorkchainAccountDeclarations&> prototype_declarations,
-    const MaterializedNativeCells& native_cells,
+    const WorkchainAccountDeclarations& declarations,
+    vm::CellUsageTree::NodePtr state_usage_node,
     std::uint64_t max_reads, std::uint64_t max_writes, std::uint64_t max_inbound, std::uint64_t max_transfers,
     const td::Bits256& custody, const td::Bits256& coordinator, td::RefInt256 fee_budget,
-    int extra_validation_cells,
-    const SerializeConfig& cfg, const ActionPhaseConfig& message_cfg,
+    int extra_validation_cells, const SerializeConfig& cfg, const ActionPhaseConfig& message_cfg,
     const WorkchainDisposalEntryContext* disposal) {
-  static_assert(std::is_same_v<Admission, AdmittedInput> || std::is_same_v<Admission, ProofAdmittedBatchInput>);
   if constexpr (std::is_same_v<Admission, ProofAdmittedBatchInput>) {
-    if (!admitted.inspected_by(engine)) {
+    if (executed.input.is_null() || executed.input->get_hash() != admitted.root()->get_hash()) {
       return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),
-                               "settlement proof admission belongs to another engine");
+                               "executed input differs from settlement admission");
     }
   }
-  std::shared_ptr<vm::CellUsageTree> state_usage_tree;
-  vm::CellUsageTree::NodePtr state_usage_node;
-  if constexpr (std::is_same_v<Admission, ProofAdmittedBatchInput>) {
-    if (old_accounts.is_null()) {
-      return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),
-                               "authenticated settlement state missing");
-    }
-    state_usage_node = old_accounts->get_tree_node();
-    if (state_usage_node.empty()) {
-      // Private-source tree ownership stays in this frame. Returned Native
-      // cells may retain weak usage nodes; do not export a strong owner of this
-      // tree or those wrappers would remain active in a caller's new proof.
-      // Existing caller-owned trees retain their ordinary Native lifetime.
-      // An expired wrapper is also empty: its load no longer sets a tree node,
-      // so wrapping it in this fresh tree does not create live nested tracking.
-      state_usage_tree = std::make_shared<vm::CellUsageTree>();
-      old_accounts = vm::UsageCell::create(std::move(old_accounts), state_usage_tree->root_ptr());
-      state_usage_node = old_accounts->get_tree_node();
-    }
-  }
-  // Batch callers cannot supply a second declaration cut, even to this private
-  // helper. Decode once and use the same object for execution and settlement.
-  WorkchainAccountDeclarations batch_declarations;
-  gen::UnoV2HostInput::Record batch_input;
-  if constexpr (std::is_same_v<Admission, ProofAdmittedBatchInput>) {
-    // The session locally finalizes this ordinary root; it is not a virtualized
-    // state root. Structural counts already passed the same authenticated limits.
-    if (!tlb::unpack_cell(admitted.root(), batch_input)) {
-      return td::Status::Error("invalid admitted settlement input");
-    }
-    TRY_RESULT(decoded, decode_workchain_account_declarations(batch_input.access, max_reads, max_writes));
-    batch_declarations = std::move(decoded);
-  }
-  const auto& declarations = [&]() -> const WorkchainAccountDeclarations& {
-    if constexpr (std::is_same_v<Admission, ProofAdmittedBatchInput>) return batch_declarations;
-    else return prototype_declarations;
-  }();
-  if (extra_validation_cells <= 0) return td::Status::Error("invalid settlement currency validation budget");
-  if (disposal && (identity.shard_id != tos::shardIdAll || coordinator == custody ||
-                   cfg.global_version != message_cfg.global_version)) {
-    return td::Status::Error("invalid resolved disposal settlement context");
-  }
-  // Ownership is enforced by type. Queue authentication, aggregate admission
-  // and role authorization are still enclosing-host obligations. Check final
-  // import destinations before account acquisition or any engine invocation.
-  std::vector<td::Bits256> recipients{coordinator, custody};
-  std::sort(recipients.begin(), recipients.end());
-  TRY_RESULT(inbox, disposal ? plan_workchain_disposal_envelopes(native_cells.roots(), identity.workchain_id,
-      identity.host_after_lt, max_inbound) : plan_workchain_native_envelopes(native_cells.roots(),
-      identity.workchain_id, recipients, identity.host_after_lt, max_inbound));
-  auto run = [&]() -> td::Result<ExecutedWorkchainAccountBatch> {
-    if constexpr (std::is_same_v<Admission, ProofAdmittedBatchInput>) {
-      const auto& input = batch_input;
-      TRY_RESULT(expected_identity, encode_workchain_host_identity(identity));
-      if (input.identity->get_hash() != expected_identity->get_hash()) {
-        return td::Status::Error("settlement context differs from admitted identity");
-      }
-      td::Ref<vm::Cell> expected_inbox;
-      if (!inbox.envelopes.empty()) {
-        TRY_RESULT(encoded, encode_workchain_batch_inbound(inbox.envelopes));
-        expected_inbox = std::move(encoded);
-      }
-      auto claimed_inbox = input.inbox->prefetch_ref();
-      if (claimed_inbox.is_null() != expected_inbox.is_null() ||
-          (expected_inbox.not_null() && claimed_inbox->get_hash() != expected_inbox->get_hash())) {
-        return td::Status::Error("settlement inbox differs from admitted input");
-      }
-      return account_engine_detail::execute(engine, old_accounts, admitted, declarations,
-                                             max_reads, max_writes);
-    } else {
-      return execute_workchain_account_engine(engine, old_accounts, identity, admitted, declarations,
-          inbox.envelopes, max_reads, max_writes, max_inbound);
-    }
-  };
-  auto guarded_run = [&]() -> td::Result<ExecutedWorkchainAccountBatch> {
-    if constexpr (std::is_same_v<Admission, ProofAdmittedBatchInput>) {
-      bool nested_read = false;
-      // The private owner above or the synchronous caller owns this live node.
-      // Both callbacks are nonempty. Invalid observer construction is therefore
-      // a host lifetime/contract violation, not a serialized-input condition.
-      // This scope ends before the post-execution observer is installed; their
-      // shared exception type has exactly one installing handler at a time.
-      vm::CellUsageTree::ScopedReadObserver source_guard(state_usage_node, [&](const vm::Cell& cell) {
-        // A bare root says nothing about descendants. Stop an encountered
-        // nested UsageCell before its load can reach Native's anti-nesting CHECK.
-        if (nested_read || !cell.get_tree_node().empty()) {
-          nested_read = true;
-          throw UnadmittedStateRead{};
-        }
-      });
-      try {
-        auto result = run();
-        if (!nested_read) return result;
-      } catch (const UnadmittedStateRead&) {
-      }
-      return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),
-                               "authenticated settlement source has nested tracking");
-    } else {
-      return run();
-    }
-  };
-  TRY_RESULT(executed, guarded_run());
   bool unadmitted_read = false;
   std::optional<vm::CellUsageTree::ScopedReadObserver> state_observer;
   if constexpr (std::is_same_v<Admission, ProofAdmittedBatchInput>) {
@@ -430,6 +328,132 @@ inline td::Result<WorkchainAccountSettlement> execute(
   }
   return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),
                            "settlement read outside admitted old-state footprint");
+}
+
+template <class Admission>
+inline td::Result<WorkchainAccountSettlement> execute(
+    const WorkchainAccountEngine& engine, td::Ref<vm::Cell> old_accounts,
+    const WorkchainHostIdentity& identity, const Admission& admitted,
+    std::conditional_t<std::is_same_v<Admission, ProofAdmittedBatchInput>, std::nullptr_t,
+                       const WorkchainAccountDeclarations&> prototype_declarations,
+    const MaterializedNativeCells& native_cells,
+    std::uint64_t max_reads, std::uint64_t max_writes, std::uint64_t max_inbound, std::uint64_t max_transfers,
+    const td::Bits256& custody, const td::Bits256& coordinator, td::RefInt256 fee_budget,
+    int extra_validation_cells,
+    const SerializeConfig& cfg, const ActionPhaseConfig& message_cfg,
+    const WorkchainDisposalEntryContext* disposal) {
+  static_assert(std::is_same_v<Admission, AdmittedInput> || std::is_same_v<Admission, ProofAdmittedBatchInput>);
+  if constexpr (std::is_same_v<Admission, ProofAdmittedBatchInput>) {
+    if (!admitted.inspected_by(engine)) {
+      return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),
+                               "settlement proof admission belongs to another engine");
+    }
+  }
+  std::shared_ptr<vm::CellUsageTree> state_usage_tree;
+  vm::CellUsageTree::NodePtr state_usage_node;
+  if constexpr (std::is_same_v<Admission, ProofAdmittedBatchInput>) {
+    if (old_accounts.is_null()) {
+      return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),
+                               "authenticated settlement state missing");
+    }
+    state_usage_node = old_accounts->get_tree_node();
+    if (state_usage_node.empty()) {
+      // Private-source tree ownership stays in this frame. Returned Native
+      // cells may retain weak usage nodes; do not export a strong owner of this
+      // tree or those wrappers would remain active in a caller's new proof.
+      // Existing caller-owned trees retain their ordinary Native lifetime.
+      // An expired wrapper is also empty: its load no longer sets a tree node,
+      // so wrapping it in this fresh tree does not create live nested tracking.
+      state_usage_tree = std::make_shared<vm::CellUsageTree>();
+      old_accounts = vm::UsageCell::create(std::move(old_accounts), state_usage_tree->root_ptr());
+      state_usage_node = old_accounts->get_tree_node();
+    }
+  }
+  // Batch callers cannot supply a second declaration cut, even to this private
+  // helper. Decode once and use the same object for execution and settlement.
+  WorkchainAccountDeclarations batch_declarations;
+  gen::UnoV2HostInput::Record batch_input;
+  if constexpr (std::is_same_v<Admission, ProofAdmittedBatchInput>) {
+    // The session locally finalizes this ordinary root; it is not a virtualized
+    // state root. Structural counts already passed the same authenticated limits.
+    if (!tlb::unpack_cell(admitted.root(), batch_input)) {
+      return td::Status::Error("invalid admitted settlement input");
+    }
+    TRY_RESULT(decoded, decode_workchain_account_declarations(batch_input.access, max_reads, max_writes));
+    batch_declarations = std::move(decoded);
+  }
+  const auto& declarations = [&]() -> const WorkchainAccountDeclarations& {
+    if constexpr (std::is_same_v<Admission, ProofAdmittedBatchInput>) return batch_declarations;
+    else return prototype_declarations;
+  }();
+  if (extra_validation_cells <= 0) return td::Status::Error("invalid settlement currency validation budget");
+  if (disposal && (identity.shard_id != tos::shardIdAll || coordinator == custody ||
+                   cfg.global_version != message_cfg.global_version)) {
+    return td::Status::Error("invalid resolved disposal settlement context");
+  }
+  // Ownership is enforced by type. Queue authentication, aggregate admission
+  // and role authorization are still enclosing-host obligations. Check final
+  // import destinations before account acquisition or any engine invocation.
+  std::vector<td::Bits256> recipients{coordinator, custody};
+  std::sort(recipients.begin(), recipients.end());
+  TRY_RESULT(inbox, disposal ? plan_workchain_disposal_envelopes(native_cells.roots(), identity.workchain_id,
+      identity.host_after_lt, max_inbound) : plan_workchain_native_envelopes(native_cells.roots(),
+      identity.workchain_id, recipients, identity.host_after_lt, max_inbound));
+  auto run = [&]() -> td::Result<ExecutedWorkchainAccountBatch> {
+    if constexpr (std::is_same_v<Admission, ProofAdmittedBatchInput>) {
+      const auto& input = batch_input;
+      TRY_RESULT(expected_identity, encode_workchain_host_identity(identity));
+      if (input.identity->get_hash() != expected_identity->get_hash()) {
+        return td::Status::Error("settlement context differs from admitted identity");
+      }
+      td::Ref<vm::Cell> expected_inbox;
+      if (!inbox.envelopes.empty()) {
+        TRY_RESULT(encoded, encode_workchain_batch_inbound(inbox.envelopes));
+        expected_inbox = std::move(encoded);
+      }
+      auto claimed_inbox = input.inbox->prefetch_ref();
+      if (claimed_inbox.is_null() != expected_inbox.is_null() ||
+          (expected_inbox.not_null() && claimed_inbox->get_hash() != expected_inbox->get_hash())) {
+        return td::Status::Error("settlement inbox differs from admitted input");
+      }
+      return account_engine_detail::execute(engine, old_accounts, admitted, declarations,
+                                             max_reads, max_writes);
+    } else {
+      return execute_workchain_account_engine(engine, old_accounts, identity, admitted, declarations,
+          inbox.envelopes, max_reads, max_writes, max_inbound);
+    }
+  };
+  auto guarded_run = [&]() -> td::Result<ExecutedWorkchainAccountBatch> {
+    if constexpr (std::is_same_v<Admission, ProofAdmittedBatchInput>) {
+      bool nested_read = false;
+      // The private owner above or the synchronous caller owns this live node.
+      // Both callbacks are nonempty. Invalid observer construction is therefore
+      // a host lifetime/contract violation, not a serialized-input condition.
+      // This scope ends before the post-execution observer is installed; their
+      // shared exception type has exactly one installing handler at a time.
+      vm::CellUsageTree::ScopedReadObserver source_guard(state_usage_node, [&](const vm::Cell& cell) {
+        // A bare root says nothing about descendants. Stop an encountered
+        // nested UsageCell before its load can reach Native's anti-nesting CHECK.
+        if (nested_read || !cell.get_tree_node().empty()) {
+          nested_read = true;
+          throw UnadmittedStateRead{};
+        }
+      });
+      try {
+        auto result = run();
+        if (!nested_read) return result;
+      } catch (const UnadmittedStateRead&) {
+      }
+      return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),
+                               "authenticated settlement source has nested tracking");
+    } else {
+      return run();
+    }
+  };
+  TRY_RESULT(executed, guarded_run());
+  return settle_executed(std::move(executed), std::move(old_accounts), identity, admitted,
+      declarations, state_usage_node, max_reads, max_writes, max_inbound, max_transfers,
+      custody, coordinator, std::move(fee_budget), extra_validation_cells, cfg, message_cfg, disposal);
 }
 }  // namespace account_settlement_detail
 

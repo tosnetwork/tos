@@ -1,0 +1,24 @@
+{
+  "name": "usage-tracking-bypass",
+  "path": "crypto/test/test-workchain-settlement-continuation.cpp",
+  "scenario": "tracking",
+  "from": "  auto settlement_old = vm::UsageCell::create(dictionary.get_wrapped_dict_root(), settlement_tree->root_ptr());",
+  "to": "  auto settlement_old = dictionary.get_wrapped_dict_root();",
+  "expected": "tracking.positive_settlement_reads",
+  "baseline_sha256": "14cca94cf592b3bdae6c1cdaddd3f3ef1a01b5ae819518b601d002837e45f489",
+  "test_source_sha256": "14cca94cf592b3bdae6c1cdaddd3f3ef1a01b5ae819518b601d002837e45f489",
+  "restored_targets": [
+    "test-workchain-settlement-continuation"
+  ],
+  "build_command": "cmake --build build --target test-workchain-settlement-continuation -j32",
+  "run_command": "build/test-workchain-settlement-continuation tracking",
+  "recorded_mutant_sha256": "208a550bebce1027ef8c1390b5afbf094483bf1147c1ea435bcd863c503f5176",
+  "compile_exit": 0,
+  "mutant_binary_sha256": "9cdada80905f8259e3d1c6cd6a5759318f3887a4ea332f8ff77d99709949a3c3",
+  "run_exit": 1,
+  "expected_failure": true,
+  "restored_sha256": "14cca94cf592b3bdae6c1cdaddd3f3ef1a01b5ae819518b601d002837e45f489",
+  "restore_compile_exit": 0,
+  "restored_binary_sha256": "9bfd18d86b092f9faea85826170dec96a86088294372e4976500eb9bbaa610e7",
+  "restore_run_exit": 0
+}

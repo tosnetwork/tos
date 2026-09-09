@@ -171,6 +171,10 @@ class Collator final : public td::actor::Actor {
   Ref<vm::Cell> state_root;                              // (new) shardchain state
   Ref<vm::Cell> state_update;                            // Merkle update from prev_state_root to state_root
   std::shared_ptr<vm::CellUsageTree> state_usage_tree_;  // used to construct Merkle update
+  // One candidate actor owns the authenticated cut and its configured adapter.
+  // Declared after the usage tree so destruction releases the adapter first.
+  std::optional<block::ResolvedWorkchainAccountBinding> account_binding_;
+  std::unique_ptr<block::ConfiguredWorkchainAccountEngine> account_adapter_;
   Ref<vm::CellSlice> new_config_params_;
   Ref<vm::Cell> old_mparams_;
   tos::LogicalTime prev_state_lt_;
@@ -291,6 +295,7 @@ class Collator final : public td::actor::Actor {
   bool init_utime();
   bool init_lt();
   bool fetch_config_params();
+  void release_account_adapter();
   bool fatal_error(td::Status error);
   bool fatal_error(int err_code, std::string err_msg);
   bool fatal_error(std::string err_msg, int err_code = -666);

@@ -1,0 +1,24 @@
+{
+  "name": "input-binding",
+  "path": "crypto/block/workchain-account-settlement.h",
+  "scenario": "input",
+  "from": "    if (executed.input.is_null() || executed.input->get_hash() != admitted.root()->get_hash()) {",
+  "to": "    if (false) {",
+  "expected": "negative.exact_source_guard",
+  "baseline_sha256": "dd7137d93041509fe8feb17b5c0d093ce5ad0b55b65598276a0ba8b2ffd11436",
+  "test_source_sha256": "14cca94cf592b3bdae6c1cdaddd3f3ef1a01b5ae819518b601d002837e45f489",
+  "restored_targets": [
+    "test-workchain-settlement-continuation"
+  ],
+  "build_command": "cmake --build build --target test-workchain-settlement-continuation -j32",
+  "run_command": "build/test-workchain-settlement-continuation input",
+  "recorded_mutant_sha256": "9b3fdd83eb4c476fe369b75dc4d61f40b576288315a9075c9f15af9c2eb8a258",
+  "compile_exit": 0,
+  "mutant_binary_sha256": "0c644a3a9c84d51b76448df8c5cbd980d76b897fdb78555d4bd3aaa32b6dd681",
+  "run_exit": 1,
+  "expected_failure": true,
+  "restored_sha256": "dd7137d93041509fe8feb17b5c0d093ce5ad0b55b65598276a0ba8b2ffd11436",
+  "restore_compile_exit": 0,
+  "restored_binary_sha256": "9bfd18d86b092f9faea85826170dec96a86088294372e4976500eb9bbaa610e7",
+  "restore_run_exit": 0
+}

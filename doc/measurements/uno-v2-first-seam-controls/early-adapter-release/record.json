@@ -1,0 +1,27 @@
+{
+  "name": "early-adapter-release",
+  "path": "validator/impl/collator.cpp",
+  "scenario": "readiness",
+  "target": "test-tos-collator",
+  "test_source_path": "test/test-counter-disk-integration.cmake",
+  "run": "ctest --test-dir build -R '^test-counter-account-binding-readiness$' --output-on-failure",
+  "from": "  if (!unpack_last_state()) {",
+  "to": "  release_account_adapter();\n  if (!unpack_last_state()) {",
+  "expected": "Adapter must survive old-state unpacking and release at terminal failure",
+  "baseline_sha256": "f7133b458dea724ef83981781f5d9d8469b690480882cc0d12924eeeee188c6b",
+  "test_source_sha256": "1e362c02cb82c5d2fd7e2f5206e3ea7b2b203eb7fbe50a2037aca5b37161ad66",
+  "restored_targets": [
+    "test-tos-collator"
+  ],
+  "build_command": "cmake --build build --target test-tos-collator -j32",
+  "run_command": "ctest --test-dir build -R '^test-counter-account-binding-readiness$' --output-on-failure",
+  "recorded_mutant_sha256": "ff5f7758049db882c8a88289ee8448699a6f3dfb722856d8c92be6020d49c57a",
+  "compile_exit": 0,
+  "mutant_binary_sha256": "c56fd8103979c2fb3265fe3421cae3dd9fc29aadd4b3e1df44edaf5105fd57e8",
+  "run_exit": 8,
+  "expected_failure": true,
+  "restored_sha256": "f7133b458dea724ef83981781f5d9d8469b690480882cc0d12924eeeee188c6b",
+  "restore_compile_exit": 0,
+  "restored_binary_sha256": "77dfc287f98cb660cb8a11b0fc38961fc9ec0d5fa691a8ea63ff1f5e0eaef7ba",
+  "restore_run_exit": 0
+}

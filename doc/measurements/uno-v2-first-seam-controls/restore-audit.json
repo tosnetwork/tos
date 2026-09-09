@@ -1,0 +1,112 @@
+{
+  "controls": [
+    {
+      "name": "binding-observation",
+      "source_sha256": "d312bef68a7c0f4d33a16abaa222023fda3ebf8360f7afbe3fcc6f1d97b2eef4",
+      "test_source_path": "test/test-counter-disk-integration.cmake",
+      "test_source_sha256": "1e362c02cb82c5d2fd7e2f5206e3ea7b2b203eb7fbe50a2037aca5b37161ad66",
+      "recorded_mutant_sha256": "2e7877acdce872b0fd9526df94c564186dcba944d54b3bb0a475e82e3d5f4289",
+      "reconstructed_mutant_sha256": "2e7877acdce872b0fd9526df94c564186dcba944d54b3bb0a475e82e3d5f4289",
+      "restored_sha256": "d312bef68a7c0f4d33a16abaa222023fda3ebf8360f7afbe3fcc6f1d97b2eef4"
+    },
+    {
+      "name": "combined-entry",
+      "source_sha256": "e076ea19780de816c9930ae32e78a7bbc263bc6939d2a2449b5053c0e7e95e7e",
+      "test_source_path": "crypto/test/test-workchain-settlement-continuation.cpp",
+      "test_source_sha256": "e076ea19780de816c9930ae32e78a7bbc263bc6939d2a2449b5053c0e7e95e7e",
+      "recorded_mutant_sha256": "15e8036dea1a33a004d3e98a9d362853a659410d534dd4c197b227f5a93d75b9",
+      "reconstructed_mutant_sha256": "15e8036dea1a33a004d3e98a9d362853a659410d534dd4c197b227f5a93d75b9",
+      "restored_sha256": "e076ea19780de816c9930ae32e78a7bbc263bc6939d2a2449b5053c0e7e95e7e"
+    },
+    {
+      "name": "early-adapter-release",
+      "source_sha256": "f7133b458dea724ef83981781f5d9d8469b690480882cc0d12924eeeee188c6b",
+      "test_source_path": "test/test-counter-disk-integration.cmake",
+      "test_source_sha256": "1e362c02cb82c5d2fd7e2f5206e3ea7b2b203eb7fbe50a2037aca5b37161ad66",
+      "recorded_mutant_sha256": "ff5f7758049db882c8a88289ee8448699a6f3dfb722856d8c92be6020d49c57a",
+      "reconstructed_mutant_sha256": "ff5f7758049db882c8a88289ee8448699a6f3dfb722856d8c92be6020d49c57a",
+      "restored_sha256": "f7133b458dea724ef83981781f5d9d8469b690480882cc0d12924eeeee188c6b"
+    },
+    {
+      "name": "effects-budget",
+      "source_sha256": "dd7137d93041509fe8feb17b5c0d093ce5ad0b55b65598276a0ba8b2ffd11436",
+      "test_source_path": "crypto/test/test-workchain-settlement-continuation.cpp",
+      "test_source_sha256": "e076ea19780de816c9930ae32e78a7bbc263bc6939d2a2449b5053c0e7e95e7e",
+      "recorded_mutant_sha256": "0b1024ef97dc5e7cf541f1694ac9783a8c4aebb9c2c07fdccabca2120faea4c2",
+      "reconstructed_mutant_sha256": "0b1024ef97dc5e7cf541f1694ac9783a8c4aebb9c2c07fdccabca2120faea4c2",
+      "restored_sha256": "dd7137d93041509fe8feb17b5c0d093ce5ad0b55b65598276a0ba8b2ffd11436"
+    },
+    {
+      "name": "input-binding",
+      "source_sha256": "dd7137d93041509fe8feb17b5c0d093ce5ad0b55b65598276a0ba8b2ffd11436",
+      "test_source_path": "crypto/test/test-workchain-settlement-continuation.cpp",
+      "test_source_sha256": "e076ea19780de816c9930ae32e78a7bbc263bc6939d2a2449b5053c0e7e95e7e",
+      "recorded_mutant_sha256": "9b3fdd83eb4c476fe369b75dc4d61f40b576288315a9075c9f15af9c2eb8a258",
+      "reconstructed_mutant_sha256": "9b3fdd83eb4c476fe369b75dc4d61f40b576288315a9075c9f15af9c2eb8a258",
+      "restored_sha256": "dd7137d93041509fe8feb17b5c0d093ce5ad0b55b65598276a0ba8b2ffd11436"
+    },
+    {
+      "name": "missing-state-classification",
+      "source_sha256": "dd7137d93041509fe8feb17b5c0d093ce5ad0b55b65598276a0ba8b2ffd11436",
+      "test_source_path": "crypto/test/test-workchain-settlement-continuation.cpp",
+      "test_source_sha256": "e076ea19780de816c9930ae32e78a7bbc263bc6939d2a2449b5053c0e7e95e7e",
+      "recorded_mutant_sha256": "08f18425036fc27592225f5e5f49ca1bad3f1a450e2a18d5071cbecc9b91732e",
+      "reconstructed_mutant_sha256": "08f18425036fc27592225f5e5f49ca1bad3f1a450e2a18d5071cbecc9b91732e",
+      "restored_sha256": "dd7137d93041509fe8feb17b5c0d093ce5ad0b55b65598276a0ba8b2ffd11436"
+    },
+    {
+      "name": "output-budget",
+      "source_sha256": "dd7137d93041509fe8feb17b5c0d093ce5ad0b55b65598276a0ba8b2ffd11436",
+      "test_source_path": "crypto/test/test-workchain-settlement-continuation.cpp",
+      "test_source_sha256": "e076ea19780de816c9930ae32e78a7bbc263bc6939d2a2449b5053c0e7e95e7e",
+      "recorded_mutant_sha256": "21c31695f215591f0f9f58f2f624d030b2a68f212d7540883d6973feef0a5e2a",
+      "reconstructed_mutant_sha256": "21c31695f215591f0f9f58f2f624d030b2a68f212d7540883d6973feef0a5e2a",
+      "restored_sha256": "dd7137d93041509fe8feb17b5c0d093ce5ad0b55b65598276a0ba8b2ffd11436"
+    },
+    {
+      "name": "settlement-observer",
+      "source_sha256": "dd7137d93041509fe8feb17b5c0d093ce5ad0b55b65598276a0ba8b2ffd11436",
+      "test_source_path": "crypto/test/test-workchain-settlement-continuation.cpp",
+      "test_source_sha256": "e076ea19780de816c9930ae32e78a7bbc263bc6939d2a2449b5053c0e7e95e7e",
+      "recorded_mutant_sha256": "72706a8bf9bfd0a6b643ed91f0dc53b6a24abe8a6a1693ff8466fc63f90a9941",
+      "reconstructed_mutant_sha256": "72706a8bf9bfd0a6b643ed91f0dc53b6a24abe8a6a1693ff8466fc63f90a9941",
+      "restored_sha256": "dd7137d93041509fe8feb17b5c0d093ce5ad0b55b65598276a0ba8b2ffd11436"
+    },
+    {
+      "name": "state-snapshot-handoff",
+      "source_sha256": "dd7137d93041509fe8feb17b5c0d093ce5ad0b55b65598276a0ba8b2ffd11436",
+      "test_source_path": "crypto/test/test-workchain-settlement-continuation.cpp",
+      "test_source_sha256": "e076ea19780de816c9930ae32e78a7bbc263bc6939d2a2449b5053c0e7e95e7e",
+      "recorded_mutant_sha256": "1bccd7cf497c26e0f39a977b6dfd27e1e74936792394562917a0ccf49e045c05",
+      "reconstructed_mutant_sha256": "1bccd7cf497c26e0f39a977b6dfd27e1e74936792394562917a0ccf49e045c05",
+      "restored_sha256": "dd7137d93041509fe8feb17b5c0d093ce5ad0b55b65598276a0ba8b2ffd11436"
+    },
+    {
+      "name": "terminal-adapter-release",
+      "source_sha256": "f7133b458dea724ef83981781f5d9d8469b690480882cc0d12924eeeee188c6b",
+      "test_source_path": "test/test-counter-disk-integration.cmake",
+      "test_source_sha256": "1e362c02cb82c5d2fd7e2f5206e3ea7b2b203eb7fbe50a2037aca5b37161ad66",
+      "recorded_mutant_sha256": "a2d0c59c83a53d66b26395e2315bdf0b681dfd0fd9c9deb5c69c76da7e300694",
+      "reconstructed_mutant_sha256": "a2d0c59c83a53d66b26395e2315bdf0b681dfd0fd9c9deb5c69c76da7e300694",
+      "restored_sha256": "f7133b458dea724ef83981781f5d9d8469b690480882cc0d12924eeeee188c6b"
+    },
+    {
+      "name": "usage-node-handoff",
+      "source_sha256": "dd7137d93041509fe8feb17b5c0d093ce5ad0b55b65598276a0ba8b2ffd11436",
+      "test_source_path": "crypto/test/test-workchain-settlement-continuation.cpp",
+      "test_source_sha256": "e076ea19780de816c9930ae32e78a7bbc263bc6939d2a2449b5053c0e7e95e7e",
+      "recorded_mutant_sha256": "aad75f138bf2d4ba5b9357b4eee68cd2c80ea578a5e2cf36e4560cc43dd05564",
+      "reconstructed_mutant_sha256": "aad75f138bf2d4ba5b9357b4eee68cd2c80ea578a5e2cf36e4560cc43dd05564",
+      "restored_sha256": "dd7137d93041509fe8feb17b5c0d093ce5ad0b55b65598276a0ba8b2ffd11436"
+    },
+    {
+      "name": "usage-tracking-bypass",
+      "source_sha256": "e076ea19780de816c9930ae32e78a7bbc263bc6939d2a2449b5053c0e7e95e7e",
+      "test_source_path": "crypto/test/test-workchain-settlement-continuation.cpp",
+      "test_source_sha256": "e076ea19780de816c9930ae32e78a7bbc263bc6939d2a2449b5053c0e7e95e7e",
+      "recorded_mutant_sha256": "ed74fb4aa8e345a77233ff749af4c913ecf77053ee5a2e03c1d0605623911670",
+      "reconstructed_mutant_sha256": "ed74fb4aa8e345a77233ff749af4c913ecf77053ee5a2e03c1d0605623911670",
+      "restored_sha256": "e076ea19780de816c9930ae32e78a7bbc263bc6939d2a2449b5053c0e7e95e7e"
+    }
+  ]
+}

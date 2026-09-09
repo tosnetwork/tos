@@ -49,6 +49,11 @@ void ValidatorManagerImpl::log_collate_query_stats(CollationStats stats) {
                           << "\nowners_during=" << stats.account_config_owners_during
                           << "\nowners_after=" << stats.account_config_owners_after
                           << "\ntransactions=" << stats.transactions << "\n").ensure();
+  // Separate lifecycle observations preserve the existing stats wire for old
+  // tools, without implying that release happened inside the binding branch.
+  td::write_file(query_result_path_ + ".binding",
+                 PSLICE() << "retained_after_state=" << (stats.account_adapter_retained_after_state ? 1 : 0)
+                          << "\nreleased=" << (stats.account_adapter_released ? 1 : 0) << "\n").ensure();
   // This interval includes the whole query up to the completed stats write,
   // not just message delivery. It is a conservative normal-run observation,
   // not an upper bound under arbitrary scheduler or storage delays.

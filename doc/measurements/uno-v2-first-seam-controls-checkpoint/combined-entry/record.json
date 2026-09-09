@@ -1,0 +1,25 @@
+{
+  "name": "combined-entry",
+  "path": "crypto/test/test-workchain-settlement-continuation.cpp",
+  "scenario": "once",
+  "from": "    return block::account_settlement_detail::settle_executed(std::move(result), settlement_old, identity, preflight,\n        declarations, settlement_tree->root_ptr(), 2, 2, 1, 2, key(16), key(32), td::make_refint(500),\n        4096, cfg, prices, nullptr);",
+  "to": "    return block::execute_and_settle_workchain_accounts(*adapter, settlement_old, identity, preflight,\n        native, key(16), key(32), td::make_refint(500), 4096, cfg, prices);",
+  "expected": "settlement.exactly_once",
+  "positive": "actual_engine_calls=2",
+  "baseline_sha256": "14cca94cf592b3bdae6c1cdaddd3f3ef1a01b5ae819518b601d002837e45f489",
+  "test_source_sha256": "14cca94cf592b3bdae6c1cdaddd3f3ef1a01b5ae819518b601d002837e45f489",
+  "restored_targets": [
+    "test-workchain-settlement-continuation"
+  ],
+  "build_command": "cmake --build build --target test-workchain-settlement-continuation -j32",
+  "run_command": "build/test-workchain-settlement-continuation once",
+  "recorded_mutant_sha256": "5649aca784cc3ea172d2577fe160ea42ab1c985210aa9b6e3881504eff62164a",
+  "compile_exit": 0,
+  "mutant_binary_sha256": "7a1683a3e410050bae23f37f315f4f5e2fcbb4c5a9f0b2b4cb458b799d7f03a7",
+  "run_exit": 1,
+  "expected_failure": true,
+  "restored_sha256": "14cca94cf592b3bdae6c1cdaddd3f3ef1a01b5ae819518b601d002837e45f489",
+  "restore_compile_exit": 0,
+  "restored_binary_sha256": "9bfd18d86b092f9faea85826170dec96a86088294372e4976500eb9bbaa610e7",
+  "restore_run_exit": 0
+}

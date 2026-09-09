@@ -1,0 +1,24 @@
+{
+  "name": "output-budget",
+  "path": "crypto/block/workchain-account-settlement.h",
+  "scenario": "output",
+  "from": "        output_meter.emplace(limits.work_output.max_output_cells, limits.work_output.max_output_bits);",
+  "to": "        output_meter.emplace(1000, limits.work_output.max_output_bits);",
+  "expected": "budget.expected_refusal",
+  "baseline_sha256": "dd7137d93041509fe8feb17b5c0d093ce5ad0b55b65598276a0ba8b2ffd11436",
+  "test_source_sha256": "e076ea19780de816c9930ae32e78a7bbc263bc6939d2a2449b5053c0e7e95e7e",
+  "restored_targets": [
+    "test-workchain-settlement-continuation"
+  ],
+  "build_command": "cmake --build build --target test-workchain-settlement-continuation -j32",
+  "run_command": "build/test-workchain-settlement-continuation output",
+  "recorded_mutant_sha256": "21c31695f215591f0f9f58f2f624d030b2a68f212d7540883d6973feef0a5e2a",
+  "compile_exit": 0,
+  "mutant_binary_sha256": "329719fe9fb4f178df6cf2bff5749725fcbab207d6883a1168d06588248913eb",
+  "run_exit": 1,
+  "expected_failure": true,
+  "restored_sha256": "dd7137d93041509fe8feb17b5c0d093ce5ad0b55b65598276a0ba8b2ffd11436",
+  "restore_compile_exit": 0,
+  "restored_binary_sha256": "c437a1270ea7bdb5052112124f03d903e50ed57528f4124a37a1c3b1f1b806bc",
+  "restore_run_exit": 0
+}

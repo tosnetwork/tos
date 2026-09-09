@@ -3594,3 +3594,78 @@ wire-compatibility property. Keep width-boundary and order claims separate.
 Mutation tooling must retain unique patch context and compare applied bytes
 against the intended replacement before building; a non-red misapplied patch
 is not evidence about the intended path.
+
+### First collator seam shape: retained binding, separate settlement
+
+This unit establishes the first seam's shape, not connected live admission or
+replay. Readiness binds one configured account adapter and retains it, its
+authenticated binding/configuration, and the existing old-state usage tree in
+the same candidate actor. Terminal failure or success releases the adapter;
+ordinary actor destruction remains the ownership backstop. No admission token
+is manufactured and no activation or final-publication gate is opened.
+
+The next required-workchain check reparses the same authenticated Config but
+does not bind another adapter. The runtime probe records two configuration
+callbacks, one bind, and the same nonzero adapter pointer across readiness,
+old-state unpacking, configuration fetching, and terminal release. The old
+`config=1` earliest-readiness-stop assertion and its error message are obsolete.
+Ownership counts remain numerically 1/2/1, with the final sample now taken at
+terminal release rather than inside readiness. A separate binding observation
+asserts retention after old-state unpacking and release before result delivery.
+
+The final typed result currently comes from `validate_required_workchains`:
+LocalUnavailable with the `cannot execute configured workchain: ` prefix and
+the unconnected-account-path message. This is not a D40 identity rejection.
+D40 authenticated genesis/instance installation is an unimplemented downstream
+prerequisite, not the directly observed reason for zero execution. No candidate
+is exported and transactions remain zero. Two literal unconnected visitor
+refusals remain in collator.cpp and three in validate-query.cpp; the separate
+registry required-workchain refusal also remains. Counts alone do not prove
+connectivity or completeness.
+
+The private settlement implementation now has an internal `settle_executed`
+continuation with no engine parameter. Existing combined callers execute once
+then pass their decoded declarations, limits, state-admission meter, usage node,
+effects and admitted input to that continuation. Effects/output admission and
+the settlement read observer remain there. A mismatched locally handed-off
+input is a local contract failure, not candidate invalidity. This internal
+helper is not a new live entry or permission to supply local default limits.
+
+The standalone continuation test uses manually constructed private fixtures;
+its evidence must not be described as production-created admission/replay.
+Its counter is in the registered engine method body. Replacing settlement with
+the old combined entry produces two executions. Independent omission controls
+cover input binding, the settlement observer, usage tracking and node handoff,
+state snapshot handoff, and effects/output limits. Each source mutation is
+restored byte-for-byte and its actual executable explicitly rebuilt. The
+existing declaration/configuration-source and singleton regression controls
+remain applicable; this unit does not claim new live coverage for those seams.
+
+For later validator integration, preserve the same adapter through inspection,
+execution and any publication Build callback. Preserve source-based failure
+classification; never infer it from logs, exit status or the old unconnected
+LocalUnavailable return. Collator lacks reject_query: its final
+Result<BlockCandidate> must retain the category. The shared activation helper
+classifies only final typed observations. Its validator-specific prefix still
+requires real validator output before being added; do not duplicate classifiers.
+
+First-seam review followup adds three real disk-readiness mutations: release
+before old-state unpacking, omit terminal release, and corrupt the new lifecycle
+field. All retain the same typed unconnected-path failure and zero execution;
+the dedicated lifetime/observation assertions fail. A fourth mutation relabels
+missing local state admission as CandidateInvalid, avoiding the undefined
+behavior of deleting a null-state check before dereference.
+
+Explicit remaining boundaries: success-terminal release is unreachable for
+bound account adapters under the retained required-workchain refusal; it needs
+a real success-path control before that gate is removed. The two private actor
+members are installed synchronously after successful nonnull bind and cleared
+adapter-first; release currently relies on that invariant, not an independently
+validated arbitrary member combination. The legacy AdmittedInput continuation
+likewise relies on the existing combined caller's nonnull executed input; it is
+not licensed as an independently validated legacy entry. These defensive
+followups are not reported as closed by the twelve controls.
+Terminal removal of the binding itself is also not separately observed: the
+owner sample precedes `account_binding_.reset()`, and actor destruction provides
+the final ownership backstop. A later paired-member hardening should add a
+binding-cleared observation/control, not claim it from the adapter's released flag.

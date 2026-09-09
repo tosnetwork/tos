@@ -1,0 +1,3 @@
+[1/3] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/collator.cpp.o
+[2/3] Linking CXX static library validator/impl/libtos_validator.a
+[3/3] Linking CXX executable test-tos-collator

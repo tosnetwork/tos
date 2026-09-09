@@ -1,0 +1,234 @@
+warning: File "/home/tomi/tos/.gdbinit" auto-loading has been declined by your `auto-load safe-path' set to "$debugdir:$datadir/auto-load".
+To enable execution of this file add
+	add-auto-load-safe-path /home/tomi/tos/.gdbinit
+line to your configuration file "/home/tomi/.config/gdb/gdbinit".
+To completely disable this security protection add
+	set auto-load safe-path /
+line to your configuration file "/home/tomi/.config/gdb/gdbinit".
+For more information about this security protection see the
+"Auto-loading safe path" section in the GDB manual.  E.g., run from the shell:
+	info "(gdb)Auto-loading safe path"
+[Thread debugging using libthread_db enabled]
+Using host libthread_db library "/lib/x86_64-linux-gnu/libthread_db.so.1".
+[1;36m[ 3][t 0][2026-09-09 15:42:25.944024887][test-tos-collator.cpp:585]	setting previous block to (2,8000000000000000,0):9CAC257B2746D4504815C10F48776F645089285C03B742BF88C285FA8E0128BD:B6D8A41DD3D87C3F7454101F4F33EB423A3CDD5F6E7AE4F1518E832D4F1DD013[0m
+[New Thread 0x7ffff697f640 (LWP 2866184)]
+[New Thread 0x7ffff617e640 (LWP 2866197)]
+[New Thread 0x7ffff53ff640 (LWP 2866198)]
+[New Thread 0x7ffff45ff640 (LWP 2866199)]
+[New Thread 0x7ffff37ff640 (LWP 2866200)]
+[New Thread 0x7ffff29ff640 (LWP 2866201)]
+[New Thread 0x7ffff21fe640 (LWP 2866202)]
+[1;36m[ 3][t 1][2026-09-09 15:42:25.947929152][test-tos-collator.cpp:331][!testnode]	no init block in config. using zero state[0m
+[1;36m[ 3][t 1][2026-09-09 15:42:25.947962498][test-tos-collator.cpp:356][!testnode]	Hardforks num in config: 0[0m
+[New Thread 0x7fffed5ff640 (LWP 2866203)]
+[New Thread 0x7fffecdfe640 (LWP 2866204)]
+[1;36m[ 3][t 3][2026-09-09 15:42:25.949541550][manager-init.cpp:333][!starter]	Starting validator manager[0m
+[New Thread 0x7fffebfff640 (LWP 2866205)]
+[New Thread 0x7fffeb3ff640 (LWP 2866207)]
+[New Thread 0x7fffea3ff640 (LWP 2866213)]
+[New Thread 0x7fffe9bfe640 (LWP 2866216)]
+[New Thread 0x7fffe7b7f640 (LWP 2866222)]
+[New Thread 0x7fffe737e640 (LWP 2866225)]
+[New Thread 0x7fffe67ff640 (LWP 2866231)]
+[New Thread 0x7fffe59ff640 (LWP 2866237)]
+[Thread 0x7fffe737e640 (LWP 2866225) exited]
+[New Thread 0x7fffe51fe640 (LWP 2866238)]
+[Thread 0x7fffe59ff640 (LWP 2866237) exited]
+[Thread 0x7fffe67ff640 (LWP 2866231) exited]
+[Thread 0x7fffe7b7f640 (LWP 2866222) exited]
+[New Thread 0x7fffe45ff640 (LWP 2866239)]
+[Thread 0x7fffe51fe640 (LWP 2866238) exited]
+[New Thread 0x7fffe3dfe640 (LWP 2866246)]
+[Thread 0x7fffe45ff640 (LWP 2866239) exited]
+[New Thread 0x7fffe35fd640 (LWP 2866253)]
+[Thread 0x7fffe3dfe640 (LWP 2866246) exited]
+[New Thread 0x7fffe2dfc640 (LWP 2866254)]
+[New Thread 0x7fffe25fb640 (LWP 2866255)]
+[Thread 0x7fffe2dfc640 (LWP 2866254) exited]
+[Thread 0x7fffe35fd640 (LWP 2866253) exited]
+[New Thread 0x7fffe1dfa640 (LWP 2866258)]
+[Thread 0x7fffe25fb640 (LWP 2866255) exited]
+[Thread 0x7fffe1dfa640 (LWP 2866258) exited]
+[New Thread 0x7fffe15f9640 (LWP 2866262)]
+[New Thread 0x7fffe0df8640 (LWP 2866268)]
+[Thread 0x7fffe15f9640 (LWP 2866262) exited]
+[New Thread 0x7fffe05f7640 (LWP 2866271)]
+[Thread 0x7fffe0df8640 (LWP 2866268) exited]
+[New Thread 0x7fffdfdf6640 (LWP 2866272)]
+[Thread 0x7fffe05f7640 (LWP 2866271) exited]
+[Thread 0x7fffdfdf6640 (LWP 2866272) exited]
+[New Thread 0x7fffdfdf6640 (LWP 2866321)]
+[1;33m[ 2][t 7][2026-09-09 15:42:25.961349517][celldb.cpp:371][!celldbin]	Using V1 DynamicBagOfCells with options V1{}[0m
+[1;36m[ 3][t 1][2026-09-09 15:42:25.962346107][manager-init.cpp:344][!starter]	init_block_id = (-1,8000000000000000,1):4C4D3521C647A80E4BCF010B18C9E54D2BAF25A2782DB22E08EB0CA029110876:8CCA366097CBFD959090BF564AA75000B7FB960705168436FC220264DD3504DA[0m
+[1;36m[ 3][t 1][2026-09-09 15:42:25.962374434][manager-init.cpp:345][!starter]	config init_block_id = (-1,8000000000000000,0):E3B91CD406025FE05CED02D0369A1B26CBE9E041D469737DB6715BC0B92DAF9A:0793B12C733739D9915BEDE412AFDA117F9AF2F195C5EEEE2C7BEF7C431831CC[0m
+[New Thread 0x7fffe05f7640 (LWP 2866346)]
+[New Thread 0x7fffe0df8640 (LWP 2866347)]
+[New Thread 0x7fffe15f9640 (LWP 2866348)]
+[Thread 0x7fffe0df8640 (LWP 2866347) exited]
+[Thread 0x7fffe15f9640 (LWP 2866348) exited]
+[New Thread 0x7fffe59ff640 (LWP 2866349)]
+[Thread 0x7fffe59ff640 (LWP 2866349) exited]
+[New Thread 0x7fffe51fe640 (LWP 2866354)]
+[Thread 0x7fffe05f7640 (LWP 2866346) exited]
+[Thread 0x7fffe51fe640 (LWP 2866354) exited]
+[New Thread 0x7fffe45ff640 (LWP 2866361)]
+[New Thread 0x7fffe3dfe640 (LWP 2866363)]
+[Thread 0x7fffe45ff640 (LWP 2866361) exited]
+[New Thread 0x7fffe35fd640 (LWP 2866365)]
+[New Thread 0x7fffe2dfc640 (LWP 2866366)]
+[Thread 0x7fffe2dfc640 (LWP 2866366) exited]
+[New Thread 0x7fffe25fb640 (LWP 2866379)]
+[Thread 0x7fffe3dfe640 (LWP 2866363) exited]
+[New Thread 0x7fffe1dfa640 (LWP 2866380)]
+[Thread 0x7fffe35fd640 (LWP 2866365) exited]
+[Thread 0x7fffe1dfa640 (LWP 2866380) exited]
+[Thread 0x7fffe25fb640 (LWP 2866379) exited]
+[New Thread 0x7fffdf5f5640 (LWP 2866381)]
+[New Thread 0x7fffdedf4640 (LWP 2866382)]
+[Thread 0x7fffdedf4640 (LWP 2866382) exited]
+[Thread 0x7fffdf5f5640 (LWP 2866381) exited]
+[New Thread 0x7fffde5f3640 (LWP 2866383)]
+[New Thread 0x7fffdddf2640 (LWP 2866384)]
+[Thread 0x7fffde5f3640 (LWP 2866383) exited]
+[Thread 0x7fffdddf2640 (LWP 2866384) exited]
+[New Thread 0x7fffdd5f1640 (LWP 2866385)]
+[New Thread 0x7fffdcdf0640 (LWP 2866386)]
+[Thread 0x7fffdcdf0640 (LWP 2866386) exited]
+[Thread 0x7fffdd5f1640 (LWP 2866385) exited]
+[New Thread 0x7fffdc5ef640 (LWP 2866387)]
+[New Thread 0x7fffdbdee640 (LWP 2866388)]
+[New Thread 0x7fffdb5ed640 (LWP 2866389)]
+[Thread 0x7fffdbdee640 (LWP 2866388) exited]
+[Thread 0x7fffdc5ef640 (LWP 2866387) exited]
+[New Thread 0x7fffdadec640 (LWP 2866390)]
+[Thread 0x7fffdadec640 (LWP 2866390) exited]
+[Thread 0x7fffdb5ed640 (LWP 2866389) exited]
+[New Thread 0x7fffda5eb640 (LWP 2866391)]
+[New Thread 0x7fffd9dea640 (LWP 2866392)]
+[New Thread 0x7fffd95e9640 (LWP 2866393)]
+[Thread 0x7fffd9dea640 (LWP 2866392) exited]
+[Thread 0x7fffda5eb640 (LWP 2866391) exited]
+[New Thread 0x7fffd8de8640 (LWP 2866394)]
+[New Thread 0x7fffe15f9640 (LWP 2866395)]
+[Thread 0x7fffd8de8640 (LWP 2866394) exited]
+[Thread 0x7fffd95e9640 (LWP 2866393) exited]
+[New Thread 0x7fffd95e9640 (LWP 2866396)]
+[Thread 0x7fffe15f9640 (LWP 2866395) exited]
+[Thread 0x7fffd95e9640 (LWP 2866396) exited]
+[New Thread 0x7fffda5eb640 (LWP 2866399)]
+[Thread 0x7fffda5eb640 (LWP 2866399) exited]
+[New Thread 0x7fffdb5ed640 (LWP 2866402)]
+[Thread 0x7fffdb5ed640 (LWP 2866402) exited]
+[New Thread 0x7fffdc5ef640 (LWP 2866405)]
+[Thread 0x7fffdc5ef640 (LWP 2866405) exited]
+[1;36m[ 3][t 7][2026-09-09 15:42:25.973027504][celldb.cpp:251][!celldbin]	Validating metadata[0m
+[1;36m[ 3][t 7][2026-09-09 15:42:25.973181996][celldb.cpp:307][!celldbin]	Validating metadata: OK[0m
+[1;31m[ 1][t 4][2026-09-09 15:42:25.973292729][archive-manager.cpp:1045][!archive]	checking file /home/tomi/tos/build/counter-integration-27de94862b0d/db/archive/states/zerostate_2_7B2D8093B172580162F13460AB4CC2E762A6225E4E8BC348841568BDD724E4F1[0m
+[1;31m[ 1][t 4][2026-09-09 15:42:25.973325675][archive-manager.cpp:1045][!archive]	checking file /home/tomi/tos/build/counter-integration-27de94862b0d/db/archive/states/zerostate_-1_85F250BD52E807ED6636D41B350A1C399EAF7793142D9A4865B664BDE30AC32F[0m
+[New Thread 0x7fffdc5ef640 (LWP 2866472)]
+[New Thread 0x7fffdb5ed640 (LWP 2866473)]
+[New Thread 0x7fffda5eb640 (LWP 2866474)]
+[Thread 0x7fffdb5ed640 (LWP 2866473) exited]
+[New Thread 0x7fffd95e9640 (LWP 2866475)]
+[Thread 0x7fffd95e9640 (LWP 2866475) exited]
+[Thread 0x7fffda5eb640 (LWP 2866474) exited]
+[New Thread 0x7fffe59ff640 (LWP 2866476)]
+[Thread 0x7fffdc5ef640 (LWP 2866472) exited]
+[Thread 0x7fffe59ff640 (LWP 2866476) exited]
+[New Thread 0x7fffe51fe640 (LWP 2866477)]
+[New Thread 0x7fffe45ff640 (LWP 2866478)]
+[Thread 0x7fffe51fe640 (LWP 2866477) exited]
+[Thread 0x7fffe45ff640 (LWP 2866478) exited]
+[New Thread 0x7fffe3dfe640 (LWP 2866480)]
+[Thread 0x7fffe3dfe640 (LWP 2866480) exited]
+[New Thread 0x7fffe35fd640 (LWP 2866485)]
+[New Thread 0x7fffe2dfc640 (LWP 2866490)]
+[Thread 0x7fffe35fd640 (LWP 2866485) exited]
+[Thread 0x7fffe2dfc640 (LWP 2866490) exited]
+[New Thread 0x7fffe25fb640 (LWP 2866494)]
+[New Thread 0x7fffe1dfa640 (LWP 2866495)]
+[Thread 0x7fffe25fb640 (LWP 2866494) exited]
+[Thread 0x7fffe1dfa640 (LWP 2866495) exited]
+[New Thread 0x7fffe15f9640 (LWP 2866496)]
+[New Thread 0x7fffe0df8640 (LWP 2866497)]
+[Thread 0x7fffe15f9640 (LWP 2866496) exited]
+[Thread 0x7fffe0df8640 (LWP 2866497) exited]
+[New Thread 0x7fffe05f7640 (LWP 2866501)]
+[Thread 0x7fffe05f7640 (LWP 2866501) exited]
+[1;36m[ 3][t 4][2026-09-09 15:42:25.981562742][manager-init.cpp:384][!starter]	gc_block_id = (-1,8000000000000000,0):E3B91CD406025FE05CED02D0369A1B26CBE9E041D469737DB6715BC0B92DAF9A:0793B12C733739D9915BEDE412AFDA117F9AF2F195C5EEEE2C7BEF7C431831CC[0m
+[1;36m[ 3][t 4][2026-09-09 15:42:25.981721435][manager-init.cpp:434][!starter]	Starting shard client[0m
+[1;36m[ 3][t 4][2026-09-09 15:42:25.981781185][manager-init.cpp:438][!starter]	Started shard client[0m
+[1;36m[ 3][t 4][2026-09-09 15:42:25.981788635][manager-init.cpp:448][!starter]	Last key block is (-1,8000000000000000,0):E3B91CD406025FE05CED02D0369A1B26CBE9E041D469737DB6715BC0B92DAF9A:0793B12C733739D9915BEDE412AFDA117F9AF2F195C5EEEE2C7BEF7C431831CC[0m
+[1;31m[ 1][t 4][2026-09-09 15:42:25.982474775][manager-disk.cpp:291][!manager]	running collate query[0m
+[1;33m[ 2][t 4][2026-09-09 15:42:25.982512194][collator.cpp:143][!collate(2,8000000000000000):1]	Collator for shard (2,8000000000000000) started[0m
+[1;36m[ 3][t 4][2026-09-09 15:42:25.982541267][collator.cpp:844][!collate(2,8000000000000000):1]	after_get_storage_stat_cache : [Error : 0 : not implemented][0m
+[New Thread 0x7fffe05f7640 (LWP 2866577)]
+[New Thread 0x7fffe0df8640 (LWP 2866581)]
+[Thread 0x7fffe0df8640 (LWP 2866581) exited]
+[New Thread 0x7fffe15f9640 (LWP 2866585)]
+[Thread 0x7fffe15f9640 (LWP 2866585) exited]
+[New Thread 0x7fffe1dfa640 (LWP 2866586)]
+[Thread 0x7fffe05f7640 (LWP 2866577) exited]
+[New Thread 0x7fffe53dd640 (LWP 2866587)]
+[Thread 0x7fffe1dfa640 (LWP 2866586) exited]
+[Thread 0x7fffe53dd640 (LWP 2866587) exited]
+[New Thread 0x7fffe45ff640 (LWP 2866588)]
+[Thread 0x7fffe45ff640 (LWP 2866588) exited]
+[New Thread 0x7fffe3dfe640 (LWP 2866594)]
+[Thread 0x7fffe3dfe640 (LWP 2866594) exited]
+[New Thread 0x7fffe35fd640 (LWP 2866599)]
+[Thread 0x7fffe35fd640 (LWP 2866599) exited]
+[New Thread 0x7fffe2dfc640 (LWP 2866603)]
+[Thread 0x7fffe2dfc640 (LWP 2866603) exited]
+[New Thread 0x7fffe25fb640 (LWP 2866604)]
+[Thread 0x7fffe25fb640 (LWP 2866604) exited]
+[New Thread 0x7fffdf5f5640 (LWP 2866605)]
+[New Thread 0x7fffdedf4640 (LWP 2866607)]
+[Thread 0x7fffdf5f5640 (LWP 2866605) exited]
+[Thread 0x7fffdedf4640 (LWP 2866607) exited]
+[New Thread 0x7fffde5f3640 (LWP 2866613)]
+[New Thread 0x7fffdddf2640 (LWP 2866620)]
+[Thread 0x7fffdddf2640 (LWP 2866620) exited]
+[Thread 0x7fffde5f3640 (LWP 2866613) exited]
+[New Thread 0x7fffdd5f1640 (LWP 2866621)]
+[Thread 0x7fffdd5f1640 (LWP 2866621) exited]
+[1;33m[ 2][t 7][2026-09-09 15:42:25.992050201][collator.cpp:667][!collate(2,8000000000000000):1]	in Collator::after_get_shard_state(0)[0m
+[1;33m[ 2][t 7][2026-09-09 15:42:25.992269394][collator.cpp:629][!collate(2,8000000000000000):1]	in Collator::after_get_mc_state()[0m
+[1;33m[ 2][t 4][2026-09-09 15:42:25.992637764][collator.cpp:2084][!collate(2,8000000000000000):1]	running do_preinit()[0m
+[1;36m[ 3][t 4][2026-09-09 15:42:25.992654176][collator.cpp:1777][!collate(2,8000000000000000):1]	unpacking most recent masterchain state[0m
+[1;31m[ 1][t 4][2026-09-09 15:42:25.992734830][collator.cpp:926][!collate(2,8000000000000000):1]	block version 16 have been enabled in global configuration, but we support only 15 (upgrade validator software?)[0m
+[1;36m[ 3][t 4][2026-09-09 15:42:26.013227893][collator.cpp:2264][!collate(2,8000000000000000):1]	start_lt set to 2000000[0m
+[1;33m[ 2][t 7][2026-09-09 15:42:26.014026703][collator.cpp:1167][!collate(2,8000000000000000):1]	got outbound queue size from prev block #0: 0[0m
+[1;36m[ 3][t 4][2026-09-09 15:42:26.015726942][out-msg-queue-proof.cpp:437][!disk-outmsgqueueimporter]	Done importing neighbor msg queues for shard (2,8000000000000000) from (-1,8000000000000000,1) in 0.002274s sources{ local=1} cache_size=1[0m
+[1;36m[ 3][t 4][2026-09-09 15:42:26.015818757][collator.cpp:1045][!collate(2,8000000000000000):1]	neighbor output queues fetched, took 0.002393s[0m
+[1;33m[ 2][t 4][2026-09-09 15:42:26.015969019][collator.cpp:1101][!collate(2,8000000000000000):1]	obtained outbound queue for neighbor #0((-1,8000000000000000))[0m
+[1;33m[ 2][t 4][2026-09-09 15:42:26.016072399][collator.cpp:1101][!collate(2,8000000000000000):1]	obtained outbound queue for neighbor #1((2,8000000000000000))[0m
+[1;33m[ 2][t 4][2026-09-09 15:42:26.016106696][collator.cpp:2445][!collate(2,8000000000000000):1]	do_collate() : start[0m
+[1;31m[ 1][t 4][2026-09-09 15:42:26.026777534][collator.cpp:392][!collate(2,8000000000000000):1]	cannot generate block candidate for 2:_ : [Error : -7201 : cannot execute configured workchain: multi-account admission and replay are not connected][0m
+[1;36m[ 3][t 4][2026-09-09 15:42:26.026818422][collator.cpp:401][!collate(2,8000000000000000):1]	collation failed in 0.044316 s [Error : -7201 : cannot execute configured workchain: multi-account admission and replay are not connected][0m
+[1;36m[ 3][t 4][2026-09-09 15:42:26.026832527][collator.cpp:402][!collate(2,8000000000000000):1]	{{
+	{wait_block_state #0:120431.604614->120431.614194(0.009580)}
+	{neighbor_msg_queues:120431.635516->120431.637908(0.002393)}
+	{wait_block_data #-1:120431.614389->120431.614724(0.000335)}
+	{get_top_masterchain_state_block:120431.614196->120431.614375(0.000179)}
+	{get_storage_stat_cache:120431.604618->120431.604631(0.000013)[Error : 0 : not implemented]}
+	{do_collate:120431.638194->0.000000(-120431.638194)}
+}[0m
+[1;33m[ 2][t 4][2026-09-09 15:42:26.026861604][collator.cpp:6961][!collate(2,8000000000000000):1]	Collate query work time = 0.031569s, cpu time = 0.002260s[0m
+[1;31m[ 1][t 4][2026-09-09 15:42:26.028943750][collator.cpp:392][!collate(2,8000000000000000):1]	cannot generate block candidate for 2:_ : [Error : 0 : cannot fetch required configuration parameters from masterchain state][0m
+[1;31m[ 1][t 6][2026-09-09 15:42:26.032265023][manager-disk.cpp:268][!manager]	failed to create block: [Error : -7201 : cannot execute configured workchain: multi-account admission and replay are not connected][0m
+[Thread 0x7fffebfff640 (LWP 2866205) exited]
+[Thread 0x7fffeb3ff640 (LWP 2866207) exited]
+[Thread 0x7fffecdfe640 (LWP 2866204) exited]
+[Thread 0x7fffed5ff640 (LWP 2866203) exited]
+[Thread 0x7fffea3ff640 (LWP 2866213) exited]
+[Thread 0x7fffe9bfe640 (LWP 2866216) exited]
+[Thread 0x7ffff21fe640 (LWP 2866202) exited]
+[Thread 0x7ffff29ff640 (LWP 2866201) exited]
+[Thread 0x7ffff37ff640 (LWP 2866200) exited]
+[Thread 0x7ffff53ff640 (LWP 2866198) exited]
+[Thread 0x7ffff697f640 (LWP 2866184) exited]
+[Thread 0x7fffdfdf6640 (LWP 2866321) exited]
+[Thread 0x7ffff617e640 (LWP 2866197) exited]
+[Thread 0x7ffff45ff640 (LWP 2866199) exited]
+[Inferior 1 (process 2858647) exited with code 02]
