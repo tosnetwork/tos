@@ -1,0 +1,102 @@
+{
+  "source_commit": "9f6e93a25b5e16c1b12ce6b9a695fb3ba54613ee",
+  "shared_helper_commit": "c519361489d68708f7695f05fab8576397e78319",
+  "context_controls": 13,
+  "consumer_removal_identity": 341,
+  "restore_audits": [
+    {
+      "artifact": "uno-m1-activation-context-9f6e93a25",
+      "identity": 303,
+      "restored_sha256": "ddc883b47b9ae05226a38b9553fa51d7767f64b51e2198116e827ade89d848dd",
+      "mutant_sha256": "2578bee055f492035a8da67abacc3223dfce2d062509047d2b6c6eb206ccb596"
+    },
+    {
+      "artifact": "uno-m1-activation-context-9f6e93a25",
+      "identity": 304,
+      "restored_sha256": "ddc883b47b9ae05226a38b9553fa51d7767f64b51e2198116e827ade89d848dd",
+      "mutant_sha256": "1083ce936e7a869885d3b32b40866c20e6cda3f940dc0dcd5afacc72716b7390"
+    },
+    {
+      "artifact": "uno-m1-activation-context-9f6e93a25",
+      "identity": 305,
+      "restored_sha256": "ddc883b47b9ae05226a38b9553fa51d7767f64b51e2198116e827ade89d848dd",
+      "mutant_sha256": "2906fb1726cab59db91da6268ca7b2b223c16993e196b24d00f9aa4bdbcb85d9"
+    },
+    {
+      "artifact": "uno-m1-activation-context-9f6e93a25",
+      "identity": 306,
+      "restored_sha256": "ddc883b47b9ae05226a38b9553fa51d7767f64b51e2198116e827ade89d848dd",
+      "mutant_sha256": "1dfab70e7bbca0ff6b531baf2c3ea2da725ed23198b5bb8cc32a97ac3564afec"
+    },
+    {
+      "artifact": "uno-m1-activation-context-9f6e93a25",
+      "identity": 307,
+      "restored_sha256": "ddc883b47b9ae05226a38b9553fa51d7767f64b51e2198116e827ade89d848dd",
+      "mutant_sha256": "4d27d63227e7dc85477f612003793ece60b02f326da80e8166cfd4bb8067e757"
+    },
+    {
+      "artifact": "uno-m1-activation-context-9f6e93a25",
+      "identity": 308,
+      "restored_sha256": "ddc883b47b9ae05226a38b9553fa51d7767f64b51e2198116e827ade89d848dd",
+      "mutant_sha256": "34f02b4b079f8293a0538b1c8fa47b9b767269affef83a570b632482de52a73b"
+    },
+    {
+      "artifact": "uno-m1-activation-context-9f6e93a25",
+      "identity": 309,
+      "restored_sha256": "ddc883b47b9ae05226a38b9553fa51d7767f64b51e2198116e827ade89d848dd",
+      "mutant_sha256": "af701928828d9b74722d6590328e90d35d462f4f9a9075e616cfe7bb72d59960"
+    },
+    {
+      "artifact": "uno-m1-activation-context-9f6e93a25",
+      "identity": 310,
+      "restored_sha256": "ddc883b47b9ae05226a38b9553fa51d7767f64b51e2198116e827ade89d848dd",
+      "mutant_sha256": "944cb33684a88e927ac429f19f85f775c3bac5885c7735b5782a5342e14c6636"
+    },
+    {
+      "artifact": "uno-m1-activation-context-9f6e93a25",
+      "identity": 311,
+      "restored_sha256": "ddc883b47b9ae05226a38b9553fa51d7767f64b51e2198116e827ade89d848dd",
+      "mutant_sha256": "48f59ff8308f16e41ee9b05c6aeb4cf690e336d7f4270a465d697b8adf692226"
+    },
+    {
+      "artifact": "uno-m1-activation-context-9f6e93a25",
+      "identity": 312,
+      "restored_sha256": "ddc883b47b9ae05226a38b9553fa51d7767f64b51e2198116e827ade89d848dd",
+      "mutant_sha256": "af3f379b7bfcadd2782a384a3f86ac4dc46973aa10402d71b5f7b67d5039f1f5"
+    },
+    {
+      "artifact": "uno-m1-activation-context-9f6e93a25",
+      "identity": 313,
+      "restored_sha256": "ddc883b47b9ae05226a38b9553fa51d7767f64b51e2198116e827ade89d848dd",
+      "mutant_sha256": "544f1281eb2b2a4d2c9ed8e3710ea0eda00cec9281b5a6c0e3e927138c7c45b8"
+    },
+    {
+      "artifact": "uno-m1-activation-context-9f6e93a25",
+      "identity": 314,
+      "restored_sha256": "ddc883b47b9ae05226a38b9553fa51d7767f64b51e2198116e827ade89d848dd",
+      "mutant_sha256": "e1030ed2cfc9906a76d70308f11cc4e41a9f00dc3383b8bdeaf23812c8a0a6a6"
+    },
+    {
+      "artifact": "uno-m1-activation-context-9f6e93a25",
+      "identity": 316,
+      "restored_sha256": "ddc883b47b9ae05226a38b9553fa51d7767f64b51e2198116e827ade89d848dd",
+      "mutant_sha256": "320368c2b76baa4d46f91b517d6fe56d99187a71b80e4b5e5a6fee4243c38fe5"
+    },
+    {
+      "artifact": "uno-m1-activation-consumer-9f6e93a25",
+      "identity": 315,
+      "restored_sha256": "ddc883b47b9ae05226a38b9553fa51d7767f64b51e2198116e827ade89d848dd",
+      "mutant_sha256": "60e6fe6657d9ebebbbf29aaf45eb5226595fbe4054f36eb19cd728c94e9f6035"
+    }
+  ],
+  "ctest_missing_helper": "Failed, not skipped",
+  "ctest_missing_probe": "Failed, not skipped",
+  "restored_ctest": "Passed",
+  "source_guard_exit": 0,
+  "standard_WorkchainBlock": {
+    "exit": 0,
+    "executed": 124,
+    "passed": 124
+  },
+  "scope": "Resolver calibration and schema infrastructure only; no live I13e acceptance, no live transaction/export observations, no validator boundary. Final outcome classification must come from final typed results."
+}

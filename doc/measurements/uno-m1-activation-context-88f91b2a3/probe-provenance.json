@@ -12,5 +12,6 @@
     "crypto/block/workchain-execution-dispatch.cpp": "be99a089704b50e7d462e83316028be22a6cad51edc2f568b9db7be3bc722311",
     "crypto/block/workchain-execution-dispatch.h": "cda89ee512fcd10190c7510c2d928d03565946c3a479826f588992e14720a188",
     "crypto/test/workchain-counter-engine.h": "58a51083aadcea70e36cf2d249bd7ad13b5f6a3059c7cdf89e561737cfe8e628"
-  }
+  },
+  "superseded_scope_note": "Original scope wording about row 1 being unknown is superseded by coordinator decision and shared helper c51936148: both actual earlier failure forms return False. Original scope and raw observations retained."
 }

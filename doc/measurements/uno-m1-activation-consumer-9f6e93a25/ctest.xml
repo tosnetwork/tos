@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="(empty)"
+	tests="1"
+	failures="0"
+	disabled="0"
+	skipped="0"
+	hostname=""
+	time="0"
+	timestamp="2026-09-09T14:33:10"
+	>
+	<testcase name="test-workchain-activation-control-gates" classname="test-workchain-activation-control-gates" time="0.138275" status="run">
+		<system-out>.......
+----------------------------------------------------------------------
+Ran 7 tests in 0.024s
+
+OK
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 14:33:10.937329314][mc-config.cpp:570]	workchain description dictionary created[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 14:33:10.937511545][mc-config.cpp:2345]	unpacked info for workchain 2: basic=true, active=true, accept_msgs=true, min_split=0, max_split=0[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 14:33:10.937556374][mc-config.cpp:570]	workchain description dictionary created[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 14:33:10.937562529][mc-config.cpp:2345]	unpacked info for workchain 2: basic=true, active=true, accept_msgs=true, min_split=0, max_split=0[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 14:33:10.937582475][mc-config.cpp:570]	workchain description dictionary created[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 14:33:10.937587863][mc-config.cpp:2345]	unpacked info for workchain 2: basic=true, active=true, accept_msgs=true, min_split=0, max_split=0[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 14:33:10.937602693][mc-config.cpp:570]	workchain description di...
+The rest of the test output was removed since it exceeds the threshold of 1024 bytes.
+</system-out>
+	</testcase>
+</testsuite>

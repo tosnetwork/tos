@@ -1,0 +1,34 @@
+Internal ctest changing into directory: /tmp/uno-publication-build
+Test project /tmp/uno-publication-build
+    Start 1: test-workchain-activation-control-gates
+1/1 Test #1: test-workchain-activation-control-gates ...***Failed    0.21 sec
+.......
+----------------------------------------------------------------------
+Ran 7 tests in 0.042s
+
+OK
+Traceback (most recent call last):
+  File "/home/tomi/tos-m2/crypto/test/workchain-activation-control-check.py", line 80, in <module>
+    main()
+    ~~~~^^
+  File "/home/tomi/tos-m2/crypto/test/workchain-activation-control-check.py", line 40, in main
+    result = subprocess.run([str(args.probe.resolve(strict=True))], check=False, capture_output=True)
+                                 ~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^
+  File "/home/tomi/.local/share/uv/python/cpython-3.14.4-linux-x86_64-gnu/lib/python3.14/pathlib/__init__.py", line 938, in resolve
+    return self.with_segments(os.path.realpath(self, strict=strict))
+                              ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+  File "<frozen posixpath>", line 457, in realpath
+FileNotFoundError: [Errno 2] No such file or directory: '/tmp/uno-publication-build/test-workchain-activation-control'
+
+
+0% tests passed, 1 tests failed out of 1
+
+Label Time Summary:
+i13          =   0.21 sec*proc (1 test)
+private      =   0.21 sec*proc (1 test)
+workchain    =   0.21 sec*proc (1 test)
+
+Total Test time (real) =   0.21 sec
+
+The following tests FAILED:
+	  1 - test-workchain-activation-control-gates (Failed)

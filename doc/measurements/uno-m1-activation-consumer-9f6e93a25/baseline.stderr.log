@@ -1,0 +1,13 @@
+.......
+----------------------------------------------------------------------
+Ran 7 tests in 0.024s
+
+OK
+[0m[ 4][t 0][2026-09-09 14:33:08.761620142][mc-config.cpp:570]	workchain description dictionary created[0m
+[0m[ 4][t 0][2026-09-09 14:33:08.761796834][mc-config.cpp:2345]	unpacked info for workchain 2: basic=true, active=true, accept_msgs=true, min_split=0, max_split=0[0m
+[0m[ 4][t 0][2026-09-09 14:33:08.761841588][mc-config.cpp:570]	workchain description dictionary created[0m
+[0m[ 4][t 0][2026-09-09 14:33:08.761847438][mc-config.cpp:2345]	unpacked info for workchain 2: basic=true, active=true, accept_msgs=true, min_split=0, max_split=0[0m
+[0m[ 4][t 0][2026-09-09 14:33:08.761867444][mc-config.cpp:570]	workchain description dictionary created[0m
+[0m[ 4][t 0][2026-09-09 14:33:08.761872644][mc-config.cpp:2345]	unpacked info for workchain 2: basic=true, active=true, accept_msgs=true, min_split=0, max_split=0[0m
+[0m[ 4][t 0][2026-09-09 14:33:08.761887162][mc-config.cpp:570]	workchain description dictionary created[0m
+[0m[ 4][t 0][2026-09-09 14:33:08.761892217][mc-config.cpp:2345]	unpacked info for workchain 2: basic=true, active=true, accept_msgs=true, min_split=0, max_split=0[0m

@@ -20,3 +20,12 @@ Registered/disabled is row 3; unregistered/enabled is row 2. Registered/enabled
 resolves successfully. Unregistered/disabled is deliberately left unclassified
 rather than normalized to a known message. No zero-transaction or no-export
 observation is invented for this resolver-only probe.
+
+## Superseded classification note
+
+The original statement above and in probe-provenance.json that row 1 remained
+unclassified is preserved as historical context. The coordinator subsequently
+confirmed both earlier failure forms. Shared helper commit c51936148 classifies
+rows 1/2 as False, row 3 as True, and success/unknown forms as exceptions. B now
+uses shared check_scoped_probe_output and maintains no independent answer table.
+The raw stdout and its provenance hashes are unchanged.

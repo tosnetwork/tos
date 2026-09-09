@@ -1,0 +1,39 @@
+{
+  "scope": "Physical missing probe dependency propagation, not an application guard or host result classification.",
+  "original_binary_sha256": "8876d5b631d9c1db12d7c66c0f748b7411768db209227f86b1598d8ff33e2e98",
+  "restored_binary_sha256": "8876d5b631d9c1db12d7c66c0f748b7411768db209227f86b1598d8ff33e2e98",
+  "events": [
+    {
+      "label": "missing-probe",
+      "argv": [
+        "ctest",
+        "--test-dir",
+        "/tmp/uno-publication-build",
+        "-R",
+        "^test-workchain-activation-control-gates$",
+        "--output-on-failure",
+        "--output-junit",
+        "/home/tomi/tos-m2/doc/measurements/uno-m1-activation-consumer-9f6e93a25/missing-probe.xml"
+      ],
+      "exit_code": 8,
+      "failure": true,
+      "skipped": false
+    },
+    {
+      "label": "restored-probe",
+      "argv": [
+        "ctest",
+        "--test-dir",
+        "/tmp/uno-publication-build",
+        "-R",
+        "^test-workchain-activation-control-gates$",
+        "--output-on-failure",
+        "--output-junit",
+        "/home/tomi/tos-m2/doc/measurements/uno-m1-activation-consumer-9f6e93a25/restored-probe.xml"
+      ],
+      "exit_code": 0,
+      "failure": false,
+      "skipped": false
+    }
+  ]
+}
