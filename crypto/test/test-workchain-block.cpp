@@ -2570,9 +2570,28 @@ TEST(WorkchainBlock, BatchNativeAllocation) {
   ASSERT_TRUE(decode(malformed).is_error());
 }
 
+TEST(WorkchainBlock, MessagePricesDefaultInitialization) {
+  // No braces: this checks default initialization, not value-initialization's
+  // separate zeroing rule. Missing member initialization must fail compilation.
+  constexpr block::MsgPrices prices;
+  static_assert(prices.lump_price == 0);
+  static_assert(prices.bit_price == 0);
+  static_assert(prices.cell_price == 0);
+  static_assert(prices.ihr_factor == 0);
+  static_assert(prices.first_frac == 0);
+  static_assert(prices.next_frac == 0);
+  const block::MsgPrices configured(101, 102, 103, 104, 105, 106);
+  ASSERT_EQ(configured.lump_price, 101u);
+  ASSERT_EQ(configured.bit_price, 102u);
+  ASSERT_EQ(configured.cell_price, 103u);
+  ASSERT_EQ(configured.ihr_factor, 104u);
+  ASSERT_EQ(configured.first_frac, 105u);
+  ASSERT_EQ(configured.next_frac, 106u);
+}
+
 void initialize_disposal_fixture_prices(block::ActionPhaseConfig& config) {
   // Disposal validates both schedules, even for a basechain destination.
-  // MsgPrices default construction leaves its integer fields uninitialized.
+  // Fixtures must declare actual schedules rather than inherit zero defaults.
   config.fwd_std = block::MsgPrices(200, 0, 0, 0, 16384, 0);
   config.fwd_mc = block::MsgPrices(100, 0, 0, 0, 16384, 0);
 }

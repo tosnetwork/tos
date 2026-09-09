@@ -47,7 +47,8 @@ The private I13 harnesses have a separate, manual-only CI entry point:
 explicitly includes their modules, builds the three targets and selects only
 the `i13` label. Both the registered names and the JUnit execution results must
 contain exactly the three expected tests; skipped, missing and failed tests
-are errors. There is no push, pull-request or scheduled trigger. Ordinary
+are errors. There is no push, pull-request or scheduled trigger. This manual-only
+policy is the owner's decision of 2026-09-09, not an unfinished task. Ordinary
 "full regression passed" statements do **not** include these private harnesses;
 their separate manual run and result must be cited explicitly. This entry
 point does not change default builds, register engines or enable execution.

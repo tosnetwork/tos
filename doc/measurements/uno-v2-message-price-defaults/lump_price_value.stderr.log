@@ -1,0 +1,7 @@
+/home/tomi/tos/crypto/test/test-workchain-block.cpp:2577:17: error: static assertion failed due to requirement 'prices.lump_price == 0'
+ 2577 |   static_assert(prices.lump_price == 0);
+      |                 ^~~~~~~~~~~~~~~~~~~~~~
+/home/tomi/tos/crypto/test/test-workchain-block.cpp:2577:35: note: expression evaluates to '1 == 0'
+ 2577 |   static_assert(prices.lump_price == 0);
+      |                 ~~~~~~~~~~~~~~~~~~^~~~
+1 error generated.

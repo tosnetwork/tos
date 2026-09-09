@@ -1,5 +1,7 @@
 name: Private I13 acceptance (manual only)
 
+# Owner decision (2026-09-09): automatic triggers are deliberately absent.
+# Adding automatic triggers, including schedule or push, requires an owner decision.
 on:
   workflow_dispatch:
 

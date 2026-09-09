@@ -369,12 +369,12 @@ struct GasLimitsPrices {
 // bits in the root cell of a message are not included in msg.bits (lump_price pays for them)
 
 struct MsgPrices {
-  td::uint64 lump_price;
-  td::uint64 bit_price;
-  td::uint64 cell_price;
-  td::uint32 ihr_factor;
-  td::uint32 first_frac;
-  td::uint32 next_frac;
+  td::uint64 lump_price = 0;
+  td::uint64 bit_price = 0;
+  td::uint64 cell_price = 0;
+  td::uint32 ihr_factor = 0;
+  td::uint32 first_frac = 0;
+  td::uint32 next_frac = 0;
   td::uint64 compute_fwd_fees(td::uint64 cells, td::uint64 bits) const;
   td::RefInt256 compute_fwd_fees256(td::uint64 cells, td::uint64 bits) const;
   std::pair<td::uint64, td::uint64> compute_fwd_ihr_fees(td::uint64 cells, td::uint64 bits,
