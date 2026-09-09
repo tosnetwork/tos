@@ -1,0 +1,104 @@
+name: Network safety ASAN
+
+# The ADNL / overlay / QUIC growth-path and deadline guards fail quietly by
+# default: a missing bound or a corrupted deadline still builds and usually
+# passes an ordinary run. They are only actually exercised when their regression
+# tests run -- and instrumented, so a use-after-free or overflow is caught. The
+# ADNL and overlay cases already run in the normal CTest pass; this workflow
+# builds a second time with AddressSanitizer and runs the whole "network-safety"
+# label, the QUIC regressions included.
+#
+# It also checks execution completeness: every expected test must be registered
+# (a removed or relabelled test fails the gate), and the run must actually
+# execute tests (a filter that matches nothing fails rather than passing with
+# zero coverage -- test-quic-sender exits non-zero on an empty filter, and
+# --no-tests=error guards the ctest selection).
+#
+# Deliberately excludes the large-scale / fairness QUIC suites: those run
+# separately and must not gate every change, nor drown the signal here.
+
+on:
+  pull_request:
+    branches: [master, testnet, main]
+    types: [opened, reopened, synchronize, ready_for_review]
+    paths:
+      - 'adnl/**'
+      - 'overlay/**'
+      - 'quic/**'
+      - 'tdactor/**'
+      - 'test/test-adnl-peer-pair-cap.cpp'
+      - 'test/test-overlay-broadcast-capacity.cpp'
+      - 'test/net/test-quic-sender.cpp'
+      - 'tdutils/td/utils/tests.*'
+      - 'CMakeLists.txt'
+      - '.github/workflows/network-safety-asan.yml'
+  workflow_dispatch:
+  workflow_call:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  # A fault should stop the run at the first one with its trace intact. Leaks
+  # are a separate question here (these tests assert reclamation directly) and
+  # detecting them globally would surface unrelated pre-existing reports.
+  ASAN_OPTIONS: detect_leaks=0:abort_on_error=1:halt_on_error=1
+
+jobs:
+  network-safety:
+    name: instrumented network-safety tests
+    runs-on: ubuntu-24.04
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install system libraries
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential git cmake ninja-build
+
+    - name: Install Clang 21
+      run: |
+        wget -q https://apt.llvm.org/llvm.sh
+        chmod +x llvm.sh
+        sudo ./llvm.sh 21 all
+
+    - name: Configure with AddressSanitizer
+      run: |
+        cmake -S . -B build-asan -G Ninja \
+          -DCMAKE_C_COMPILER=clang-21 \
+          -DCMAKE_CXX_COMPILER=clang++-21 \
+          -DCMAKE_BUILD_TYPE=Debug \
+          -DTOS_USE_ASAN=ON
+
+    - name: Build the instrumented network-safety tests
+      run: |
+        ninja -C build-asan \
+          test-quic-sender \
+          test-adnl-peer-pair-cap \
+          test-overlay-broadcast-capacity
+
+    - name: Verify the expected network-safety tests are registered
+      working-directory: build-asan
+      run: |
+        ctest --show-only=json-v1 -L network-safety > network-safety-tests.json
+        python3 - <<'PY'
+        import json
+
+        expected = {
+            "quic-inbound-stream-timeout",
+            "quic-outbound-query-deadline",
+            "quic-connection-count-cap",
+            "test-adnl-peer-pair-cap",
+            "test-overlay-broadcast-capacity",
+        }
+        got = {t["name"] for t in json.load(open("network-safety-tests.json"))["tests"]}
+        missing = expected - got
+        if missing:
+            raise SystemExit(f"network-safety gate is missing expected tests: {sorted(missing)}")
+        print(f"all {len(expected)} expected network-safety tests are registered")
+        PY
+
+    - name: Run network-safety tests under AddressSanitizer
+      working-directory: build-asan
+      run: ctest -L network-safety --no-tests=error --output-on-failure

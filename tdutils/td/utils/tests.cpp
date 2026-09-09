@@ -227,6 +227,7 @@ bool TestsRunner::run_all_step() {
 
     auto passed = Time::now() - state_.start;
     auto real_passed = Time::now_unadjusted() - state_.start_unadjusted;
+    ++executed_tests_;
     if (test_failed_) {
       if (pretty_output_) {
         std::cerr << "FAIL" << std::endl;

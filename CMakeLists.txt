@@ -1174,6 +1174,26 @@ set_tests_properties(test-tddb PROPERTIES ENVIRONMENT
   "TOS_ROCKSDB_BLOCK_CACHE_SIZE=33554432;TOS_ROCKSDB_CRITICAL_WRITE_BUFFER_SIZE=67108864;TOS_ROCKSDB_CRITICAL_WRITE_BUFFER_ALLOW_STALL=1;TOS_ROCKSDB_GLOBAL_WRITE_BUFFER_SIZE=134217728;TOS_ROCKSDB_GLOBAL_WRITE_BUFFER_ALLOW_STALL=1")
 tos_test(test-db ${TEST_OPTIONS})
 
+# Network-safety regressions. test-quic-sender is a multi-suite binary (it also
+# holds large-scale/fairness suites that must not gate every change), so the
+# individual safety cases are registered here as filtered CTest entries rather
+# than via tos_test(). test-quic-sender fails if a -f filter matches no test, so
+# a stale filter name cannot silently gate on zero coverage. The ADNL and
+# overlay safety tests are already registered above via tos_test(); they are
+# only labelled here. All are tagged "network-safety" so the instrumented
+# network-safety workflow can select exactly this set.
+add_dependencies(all-tests test-quic-sender)
+add_test(NAME quic-inbound-stream-timeout COMMAND test-quic-sender -f AbandonedInboundStreamIsReaped)
+add_test(NAME quic-outbound-query-deadline COMMAND test-quic-sender -f PartialResponseDoesNotExtendDeadline)
+add_test(NAME quic-connection-count-cap COMMAND test-quic-sender -f MaxConnectionsRejectsBeyondCap)
+set_tests_properties(
+  quic-inbound-stream-timeout
+  quic-outbound-query-deadline
+  quic-connection-count-cap
+  test-adnl-peer-pair-cap
+  test-overlay-broadcast-capacity
+  PROPERTIES LABELS "network-safety")
+
 add_subdirectory(test)
 endif()
 #END internal
