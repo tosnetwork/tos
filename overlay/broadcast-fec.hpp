@@ -57,21 +57,29 @@ class BroadcastsFec {
   td::Status process(OverlayImpl *overlay, BroadcastFecPart &part, bool is_ours);
 
   // In-flight admission ceiling, checked in process() before a new broadcast is
-  // created. Refuses a newcomer when the table is full rather than evicting one
-  // already being assembled; our own (is_ours) broadcasts are locally paced and
-  // exempt.
-  td::Status check_in_flight_capacity(bool is_ours) const;
+  // created. When the table is full it first reclaims entries past the assembly
+  // window (a gc pass) and only then, if still full, refuses the newcomer --
+  // rather than evicting one already being assembled. Reclaiming first matters
+  // on fixed-member overlays, whose periodic gc can be tens of seconds apart
+  // while the assembly window is much shorter, so the table can be full of
+  // already-expired entries. Our own (is_ours) broadcasts are locally paced and
+  // exempt, so this bounds the inbound/remote table, not locally originated
+  // broadcasts.
+  td::Status ensure_in_flight_capacity(OverlayImpl *overlay, bool is_ours);
 
   std::map<Overlay::BroadcastHash, std::unique_ptr<BroadcastFec>> broadcasts_;
   td::ListNode lru_;
 
-  // Test support: inject a fresh, decoder-less in-flight entry and read the
-  // table size, so gc() and the admission ceiling can be exercised without
-  // standing up real FEC state and crypto. Defined where BroadcastFec is a
-  // complete type.
-  void inject_fresh_in_flight_for_test(Overlay::BroadcastHash hash);
+  // Test support: inject a decoder-less in-flight entry with a chosen date and
+  // read the table size, so gc() and the admission ceiling can be exercised
+  // without standing up real FEC state and crypto. try_process_fresh_for_test
+  // drives the real process() with a minimal part carrying a fresh hash, so the
+  // production admission wiring (not just the predicate) is covered. Defined
+  // where BroadcastFec is a complete type.
+  void inject_in_flight_for_test(Overlay::BroadcastHash hash, td::uint32 date);
   size_t in_flight_count_for_test() const;
   size_t capacity_for_test() const;
+  td::Status try_process_fresh_for_test(OverlayImpl *overlay, Overlay::BroadcastHash hash, bool is_ours);
   friend class BroadcastsFecTestAccess;
 };
 

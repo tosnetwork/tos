@@ -417,7 +417,7 @@ td::actor::Task<> BroadcastsTwostep::process_broadcast(OverlayImpl *overlay, adn
     // here and the emplace below, so this count is authoritative, and it is
     // before try_register_broadcast so the per-source byte budget is not
     // charged for a broadcast we decline.
-    CO_TRY(check_in_flight_capacity());
+    CO_TRY(ensure_in_flight_capacity(overlay));
     CO_TRY(overlay->get_broadcasts_limiter(src_keyhash, cert.get()).try_register_broadcast(data_size));
     td::Result<std::unique_ptr<td::raptorq::Decoder>> R;
     if (part_size == 0 ||
@@ -470,24 +470,29 @@ td::actor::Task<> BroadcastsTwostep::process_broadcast(OverlayImpl *overlay, adn
   co_return td::Unit{};
 }
 
-td::Status BroadcastsTwostep::check_in_flight_capacity() const {
-  // Admission ceiling, as for FEC broadcasts: the 25 s window alone leaves the
-  // count unbounded under a flood. Far above any legitimate in-flight count, so
-  // it only fires under a flood. Refusing a new broadcast here -- rather than
-  // evicting an in-flight one in gc -- bounds the table at all times and never
-  // records the refused broadcast as delivered, so it can still arrive later
-  // once the window frees space. A conservative ceiling, not a measured one --
-  // confirm against real overlay rates before relying on it.
+td::Status BroadcastsTwostep::ensure_in_flight_capacity(OverlayImpl *overlay) {
+  // A conservative ceiling, not a measured one -- confirm against real overlay
+  // rates before relying on it.
+  if (broadcasts_.size() >= kMaxInFlightTwostepBroadcasts) {
+    // Reclaim entries past the assembly window before refusing: on a
+    // fixed-member overlay the periodic gc can be far apart, so the table may
+    // be full only of already-expired broadcasts. Refusing without reclaiming
+    // would wrongly block new broadcasts behind stale slots -- and because the
+    // accepted-date window is narrower than the assembly window, a broadcast
+    // refused that way could age out before a later gc frees its slot and never
+    // be re-accepted under the same id.
+    gc(overlay);
+  }
   if (broadcasts_.size() >= kMaxInFlightTwostepBroadcasts) {
     return td::Status::Error(ErrorCode::notready, "too many in-flight twostep broadcasts");
   }
   return td::Status::OK();
 }
 
-void BroadcastsTwostep::inject_fresh_in_flight_for_test(Overlay::BroadcastHash broadcast_id) {
+void BroadcastsTwostep::inject_in_flight_for_test(Overlay::BroadcastHash broadcast_id, td::uint32 date) {
   auto bcast = std::make_unique<BroadcastTwostep>();
   bcast->broadcast_id = broadcast_id;
-  bcast->date = static_cast<td::uint32>(td::Clocks::system());
+  bcast->date = date;
   lru_.put(bcast.get());
   broadcasts_.emplace(broadcast_id, std::move(bcast));
 }

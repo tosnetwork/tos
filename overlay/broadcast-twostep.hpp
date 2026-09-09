@@ -70,17 +70,21 @@ class BroadcastsTwostep {
   td::uint64 rebroadcast(OverlayImpl *overlay, const adnl::AdnlNodeIdShort &bcast_src_adnl_id,
                          const td::BufferSlice &data);
 
-  // In-flight admission ceiling, checked in process_broadcast before a new
-  // broadcast is created. Refuses a newcomer when the table is full rather than
-  // evicting one already being assembled. This is a receiver-side path, so
-  // there is no is_ours exemption.
-  td::Status check_in_flight_capacity() const;
+  // In-flight admission ceiling, checked in process_broadcast at the commit
+  // point before a new broadcast is created. When the table is full it first
+  // reclaims entries past the assembly window (a gc pass) and only then, if
+  // still full, refuses the newcomer rather than evicting one being assembled.
+  // Reclaiming first matters on fixed-member overlays, whose periodic gc can be
+  // tens of seconds apart while the 25 s assembly window is shorter, so the
+  // table can be full of already-expired entries. This is a receiver-side path,
+  // so there is no is_ours exemption.
+  td::Status ensure_in_flight_capacity(OverlayImpl *overlay);
 
-  // Test support: inject a fresh, decoder-less in-flight entry and read the
-  // table size, so gc() and the admission ceiling can be exercised without
-  // standing up real FEC state and crypto. Defined where BroadcastTwostep is a
-  // complete type.
-  void inject_fresh_in_flight_for_test(Overlay::BroadcastHash broadcast_id);
+  // Test support: inject a decoder-less in-flight entry with a chosen date and
+  // read the table size, so gc() and the admission ceiling can be exercised
+  // without standing up real FEC state and crypto. Defined where
+  // BroadcastTwostep is a complete type.
+  void inject_in_flight_for_test(Overlay::BroadcastHash broadcast_id, td::uint32 date);
   size_t in_flight_count_for_test() const;
   size_t capacity_for_test() const;
   friend class BroadcastsTwostepTestAccess;
