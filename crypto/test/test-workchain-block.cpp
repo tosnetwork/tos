@@ -2866,6 +2866,38 @@ TEST(WorkchainBlock, NativeDisposalEntry) {
     ASSERT_TRUE(charged_pair[1]->total_fees == block::CurrencyCollection(100));
     ASSERT_EQ(charged_pair[0]->out_msgs.size(), 1u);
     ASSERT_EQ(charged_pair[1]->out_msgs.size(), 2u);
+    {
+      // Fees alone fit (1227 - 1100 = 127), but the unchanged payout needs
+      // another 137. Reject the pair, rather than return the fee-only prefix.
+      // Observe this before calling the enclosing overlay.
+      auto underfunded = charged_effects;
+      underfunded.fees->compute_fee = td::make_refint(1078);
+      auto underfunded_root = block::encode_workchain_account_effects(underfunded, 2, 3, 4096).move_as_ok();
+      auto underfunded_bindings = block::build_workchain_participant_records(
+          td::Bits256(overlay_input->get_hash().bits()), td::Bits256(underfunded_root->get_hash().bits()),
+          {a, b}, 2).move_as_ok();
+      Transaction fee_only(custody, Transaction::tr_workchain_batch, 21, 10);
+      ASSERT_TRUE(fee_only.prepare_workchain_import_participant(underfunded_bindings[1], overlay_input,
+          underfunded_root, number(322), cfg, 3, 4096).is_ok());
+      ASSERT_TRUE(fee_only.balance == block::CurrencyCollection(127));
+      ASSERT_TRUE(fee_only.total_fees == block::CurrencyCollection(1083));
+      ASSERT_EQ(fee_only.out_msgs.size(), 0u);
+      auto insufficient_pair = Transaction::build_workchain_payout_pair(custody, coordinator,
+          underfunded_bindings[1], underfunded_bindings[0], number(322), number(321), request, 21, 10,
+          td::make_refint(100), 3, 4096, cfg, joint_prices, overlay_input, underfunded_root, &joint_context);
+      ASSERT_TRUE(insufficient_pair.is_error());
+      engine.effects = underfunded;
+      engine.calls = 0;
+      auto insufficient_batch = block::execute_and_settle_workchain_disposal(engine, old.accounts,
+          overlay_identity, admitted, access, owned_inbox, 2, 2, 3, a, td::make_refint(100),
+          4096, cfg, joint_context);
+      ASSERT_TRUE(insufficient_batch.is_error());
+      ASSERT_EQ(engine.calls, 1u);
+      // This also exercises the enclosing rejection after one engine call;
+      // the isolated mutation witness above concerns the direct pair only.
+      // Original accounts are const inputs and finalized cells are immutable:
+      // their unchanged bytes would not be a live rollback/publication test.
+    }
     engine.effects = charged_effects;
     engine.calls = 0;
     auto charged_result = block::execute_and_settle_workchain_disposal(engine, old.accounts,

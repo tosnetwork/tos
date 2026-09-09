@@ -3254,8 +3254,8 @@ The review's request for a green baseline is satisfied by the companion
 final-checks artifact, not by the controls artifact alone. Its claim that the
 existing unfunded case specifically exercises a funded aggregate fee followed
 by an unfundable payout is not adopted: that case is aggregate-only. The
-atomicity argument remains valid, but this particular combined failure still
-needs its own behavioral witness. The proposed fee-priority policy remains
+atomicity argument remains valid; the subsequent direct pair control described
+below now supplies that private combined-failure witness. The proposed fee-priority policy remains
 disputed for the I13e reason above, not deferred for implementation.
 
 Open coverage and integration obligations:
@@ -3273,9 +3273,16 @@ Open coverage and integration obligations:
   enclosing conservation check: restoring the overwrite reaches and fails the
   custody fee assertion (53), after the prepared-pair success and balance
   assertions pass. See `measurements/uno-v2-d32-payout-pair-control.json` for
-  the red output, exact restoration and restored full regression. Still test
-  aggregate-fee-funded but combined payout-unfunded staging with unchanged
-  published state.
+  the red output, exact restoration and restored full regression. The subsequent
+  funded-fee/unfunded-payout witness stages fees successfully (custody 127,
+  collected fees 1083), then rejects the unchanged payout of 137 at the pair
+  boundary before overlay conservation. Returning the fee-only prefix on that
+  allocation failure makes the direct error assertion fail. Original accounts
+  are const inputs and finalized cells are immutable; their unchanged bytes
+  are structural, not behavioral rollback evidence. The enclosing batch also
+  rejects after one engine call, but its failure site is not mutation-localized.
+  This is private staging evidence, not a live atomic-publication test; see
+  `measurements/uno-v2-d32-unfunded-payout-control.json`.
 - Add isolated controls for fee constructor selection, malformed/unknown tags,
   coincident roles, invalid/zero components, combined 120-bit bounds, and the
   payout-specific role guard. Seven existing controls do not prove all of these.
