@@ -413,6 +413,11 @@ td::actor::Task<> BroadcastsTwostep::process_broadcast(OverlayImpl *overlay, adn
     }
   }
   if (it == broadcasts_.end()) {
+    // Capacity admission, checked at the commit point: no co_await runs between
+    // here and the emplace below, so this count is authoritative, and it is
+    // before try_register_broadcast so the per-source byte budget is not
+    // charged for a broadcast we decline.
+    CO_TRY(check_in_flight_capacity());
     CO_TRY(overlay->get_broadcasts_limiter(src_keyhash, cert.get()).try_register_broadcast(data_size));
     td::Result<std::unique_ptr<td::raptorq::Decoder>> R;
     if (part_size == 0 ||
@@ -465,6 +470,36 @@ td::actor::Task<> BroadcastsTwostep::process_broadcast(OverlayImpl *overlay, adn
   co_return td::Unit{};
 }
 
+td::Status BroadcastsTwostep::check_in_flight_capacity() const {
+  // Admission ceiling, as for FEC broadcasts: the 25 s window alone leaves the
+  // count unbounded under a flood. Far above any legitimate in-flight count, so
+  // it only fires under a flood. Refusing a new broadcast here -- rather than
+  // evicting an in-flight one in gc -- bounds the table at all times and never
+  // records the refused broadcast as delivered, so it can still arrive later
+  // once the window frees space. A conservative ceiling, not a measured one --
+  // confirm against real overlay rates before relying on it.
+  if (broadcasts_.size() >= kMaxInFlightTwostepBroadcasts) {
+    return td::Status::Error(ErrorCode::notready, "too many in-flight twostep broadcasts");
+  }
+  return td::Status::OK();
+}
+
+void BroadcastsTwostep::inject_fresh_in_flight_for_test(Overlay::BroadcastHash broadcast_id) {
+  auto bcast = std::make_unique<BroadcastTwostep>();
+  bcast->broadcast_id = broadcast_id;
+  bcast->date = static_cast<td::uint32>(td::Clocks::system());
+  lru_.put(bcast.get());
+  broadcasts_.emplace(broadcast_id, std::move(bcast));
+}
+
+size_t BroadcastsTwostep::in_flight_count_for_test() const {
+  return broadcasts_.size();
+}
+
+size_t BroadcastsTwostep::capacity_for_test() const {
+  return kMaxInFlightTwostepBroadcasts;
+}
+
 void BroadcastsTwostep::gc(OverlayImpl *overlay) {
   while (!broadcasts_.empty()) {
     auto bcast = static_cast<BroadcastTwostep *>(lru_.prev);
@@ -483,17 +518,13 @@ void BroadcastsTwostep::gc(OverlayImpl *overlay) {
     CHECK(broadcasts_.erase(broadcast_id));
     overlay->register_delivered_broadcast(broadcast_id);
   }
-  // Absolute ceiling, as for FEC broadcasts: the 25 s window alone leaves
-  // the count unbounded under a flood. Far above any legitimate in-flight
-  // count; oldest dropped first. A conservative ceiling, not a measured
-  // one -- confirm against real overlay rates before relying on it.
-  while (broadcasts_.size() > kMaxInFlightTwostepBroadcasts) {
-    auto bcast = static_cast<BroadcastTwostep *>(lru_.prev);
-    CHECK(bcast);
-    auto broadcast_id = bcast->broadcast_id;
-    CHECK(broadcasts_.erase(broadcast_id));
-    overlay->register_delivered_broadcast(broadcast_id);
-  }
+  // The count ceiling is enforced as an admission check at insertion time in
+  // process_broadcast, not here. A gc-time count eviction would drop the
+  // oldest broadcast even while it is fresh and still assembling, and marking
+  // that victim delivered (as the time path does for genuinely expired ones)
+  // would permanently suppress its remaining parts. Admission at insertion
+  // refuses a new broadcast instead, which both protects in-flight broadcasts
+  // and keeps the table bounded between gc passes, as for FEC broadcasts.
 }
 
 }  // namespace overlay

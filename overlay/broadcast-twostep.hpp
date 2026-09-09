@@ -69,6 +69,21 @@ class BroadcastsTwostep {
 
   td::uint64 rebroadcast(OverlayImpl *overlay, const adnl::AdnlNodeIdShort &bcast_src_adnl_id,
                          const td::BufferSlice &data);
+
+  // In-flight admission ceiling, checked in process_broadcast before a new
+  // broadcast is created. Refuses a newcomer when the table is full rather than
+  // evicting one already being assembled. This is a receiver-side path, so
+  // there is no is_ours exemption.
+  td::Status check_in_flight_capacity() const;
+
+  // Test support: inject a fresh, decoder-less in-flight entry and read the
+  // table size, so gc() and the admission ceiling can be exercised without
+  // standing up real FEC state and crypto. Defined where BroadcastTwostep is a
+  // complete type.
+  void inject_fresh_in_flight_for_test(Overlay::BroadcastHash broadcast_id);
+  size_t in_flight_count_for_test() const;
+  size_t capacity_for_test() const;
+  friend class BroadcastsTwostepTestAccess;
 };
 }  // namespace overlay
 

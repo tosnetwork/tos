@@ -538,6 +538,40 @@ void BroadcastsFec::checked(OverlayImpl *overlay, Overlay::BroadcastHash &&hash,
   }
 }
 
+td::Status BroadcastsFec::check_in_flight_capacity(bool is_ours) const {
+  // Admission ceiling. The time window alone lets an unauthenticated flood hold
+  // a full window's worth of in-flight FEC broadcasts with no bound on how
+  // many; this caps the count far above any legitimate in-flight level on a
+  // shard overlay, so it only fires under a flood. Refusing a new broadcast
+  // here -- rather than evicting an in-flight one in gc -- bounds the table at
+  // all times and never records the refused broadcast as delivered, so it can
+  // still be accepted later once the window frees space. Our own broadcasts are
+  // locally paced and not a flood vector, so they are exempt, matching the
+  // per-source byte limiter. The value is a conservative ceiling, not a
+  // measured one -- confirm it against real shard-overlay rates before relying
+  // on it.
+  if (!is_ours && broadcasts_.size() >= kMaxInFlightFecBroadcasts) {
+    return td::Status::Error(ErrorCode::notready, "too many in-flight FEC broadcasts");
+  }
+  return td::Status::OK();
+}
+
+void BroadcastsFec::inject_fresh_in_flight_for_test(Overlay::BroadcastHash hash) {
+  auto bcast = std::make_unique<BroadcastFec>(hash, Overlay::BroadcastDataHash::zero(), /*flags=*/0,
+                                              static_cast<td::uint32>(td::Clocks::system()), PublicKey{},
+                                              /*certificate=*/nullptr, fec::FecType{});
+  lru_.put(bcast.get());
+  broadcasts_.emplace(hash, std::move(bcast));
+}
+
+size_t BroadcastsFec::in_flight_count_for_test() const {
+  return broadcasts_.size();
+}
+
+size_t BroadcastsFec::capacity_for_test() const {
+  return kMaxInFlightFecBroadcasts;
+}
+
 void BroadcastsFec::gc(OverlayImpl *overlay) {
   // Time-based eviction: anything past the assembly window is dropped.
   while (!broadcasts_.empty()) {
@@ -551,21 +585,14 @@ void BroadcastsFec::gc(OverlayImpl *overlay) {
     broadcasts_.erase(hash);
     overlay->register_delivered_broadcast(hash);
   }
-  // Absolute count ceiling. The time window alone lets an unauthenticated
-  // flood hold up to a full window's worth of in-flight FEC broadcasts,
-  // each up to the max broadcast size, with no bound on how many. This
-  // caps that at a level far above any legitimate in-flight count on a
-  // shard overlay, so it only fires under a flood; the oldest are dropped
-  // first, matching the time path. The value is a conservative ceiling,
-  // not a measured one -- the protocol team should confirm it against
-  // real shard-overlay broadcast rates before relying on it.
-  while (broadcasts_.size() > kMaxInFlightFecBroadcasts) {
-    auto bcast = BroadcastFec::from_list_node(lru_.prev);
-    CHECK(bcast);
-    auto hash = bcast->hash_;
-    broadcasts_.erase(hash);
-    overlay->register_delivered_broadcast(hash);
-  }
+  // The absolute count ceiling is NOT enforced here. Evicting by count in gc
+  // would drop the oldest broadcast even when it is fresh and still being
+  // assembled, and marking that victim delivered (as the time path does for
+  // genuinely expired broadcasts) would permanently suppress its remaining
+  // parts and retransmissions. The ceiling is instead an admission check at
+  // insertion time in process(), which refuses a new broadcast when the table
+  // is full rather than sacrificing one already in flight. That keeps the
+  // table bounded between gc passes, which a gc-only trim cannot do.
 }
 
 td::Status BroadcastsFec::process(OverlayImpl *overlay, BroadcastFecPart &part, bool is_ours) {
@@ -574,6 +601,7 @@ td::Status BroadcastsFec::process(OverlayImpl *overlay, BroadcastFecPart &part, 
     if (overlay->is_delivered(part.broadcast_hash_)) {
       return td::Status::Error(ErrorCode::notready, "duplicate broadcast");
     }
+    TRY_STATUS(check_in_flight_capacity(is_ours));
     BroadcastsLimiter &limiter = overlay->get_broadcasts_limiter(part.source_.compute_short_id(), part.cert_.get());
     if (!is_ours) {
       TRY_STATUS(limiter.precheck_new_broadcast(part.broadcast_size_));

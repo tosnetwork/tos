@@ -408,6 +408,7 @@ class OverlayImpl : public Overlay {
 
  private:
   friend class OverlayImplPeerCleanupTest;
+  friend class OverlayImplBroadcastCapacityTest;
 
   template <class T>
   void process_query(adnl::AdnlNodeIdShort src, T &query, td::Promise<td::BufferSlice> promise) {

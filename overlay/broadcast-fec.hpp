@@ -56,8 +56,23 @@ class BroadcastsFec {
  private:
   td::Status process(OverlayImpl *overlay, BroadcastFecPart &part, bool is_ours);
 
+  // In-flight admission ceiling, checked in process() before a new broadcast is
+  // created. Refuses a newcomer when the table is full rather than evicting one
+  // already being assembled; our own (is_ours) broadcasts are locally paced and
+  // exempt.
+  td::Status check_in_flight_capacity(bool is_ours) const;
+
   std::map<Overlay::BroadcastHash, std::unique_ptr<BroadcastFec>> broadcasts_;
   td::ListNode lru_;
+
+  // Test support: inject a fresh, decoder-less in-flight entry and read the
+  // table size, so gc() and the admission ceiling can be exercised without
+  // standing up real FEC state and crypto. Defined where BroadcastFec is a
+  // complete type.
+  void inject_fresh_in_flight_for_test(Overlay::BroadcastHash hash);
+  size_t in_flight_count_for_test() const;
+  size_t capacity_for_test() const;
+  friend class BroadcastsFecTestAccess;
 };
 
 }  // namespace overlay
