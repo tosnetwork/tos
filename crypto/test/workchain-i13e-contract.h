@@ -1,6 +1,6 @@
 #pragma once
 
-// PROPOSED TEST CONTRACT ONLY. No host implementation or acceptance certificate.
+// D47-APPROVED TEST CONTRACT ONLY. No host implementation or acceptance certificate.
 #include <array>
 #include <cstdint>
 #include <functional>
@@ -56,12 +56,25 @@ class PreparedBatch {
  public:
   virtual ~PreparedBatch() = default;
 };
+struct PrivateVisibilityAudit {
+  // Complete only after all consensus-affecting consumers are mapped to real
+  // observation hooks. Missing hooks or an unknown consumer must fail closed.
+  bool coverage_complete{};
+  // Sticky, append-only observations of pre-decision builder intermediates by
+  // consensus-affecting consumers, including observations later rolled back.
+  // Internal engine calculation is not publication to a consumer. Observations
+  // of the complete committed generation after the decision are not violations.
+  Bytes intermediate_observations;
+};
 class Session {
  public:
   virtual ~Session() = default;
   // All observers must interrogate real publication/reader surfaces, using fresh
   // canonical deep copies. This must not return an adapter-maintained model.
   virtual Snapshot observe() = 0;
+  // Arm at fresh_session creation and retain through release/retry. Read actual
+  // consumer hooks, never infer isolation merely from unchanged root snapshots.
+  virtual PrivateVisibilityAudit private_visibility_audit() = 0;
   // Prepare the request only; all tested host stages execute inside attempt().
   virtual std::unique_ptr<PreparedBatch> prepare() = 0;
   virtual std::vector<Point> registered_points() const = 0;

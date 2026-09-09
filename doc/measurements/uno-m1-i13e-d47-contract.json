@@ -1,0 +1,43 @@
+{
+  "status": "D47_CONTRACT_CLARIFICATIONS_NOT_ACCEPTANCE",
+  "base_commit": "e0bb941afc60759f83946dfe455caf2c0cdec217",
+  "scope": "Object compilation and missing-adapter link checks only. Assertions 78/79 have no real hooks or behavioral controls yet. No gate changed; no I13e acceptance.",
+  "checks": [
+    {
+      "name": "assertion-object",
+      "command": [
+        "cmake",
+        "--build",
+        "/tmp/uno-m1-i13-build",
+        "--target",
+        "i13e-contract-assertions",
+        "-j32"
+      ],
+      "exit_code": 0
+    },
+    {
+      "name": "missing-adapter-link",
+      "command": [
+        "cmake",
+        "--build",
+        "/tmp/uno-m1-i13-build",
+        "--target",
+        "test-workchain-i13e-contract",
+        "-j32"
+      ],
+      "exit_code": 1
+    }
+  ],
+  "source_sha256": {
+    "crypto/test/workchain-i13e-contract.h": "e3f17ecfebc92adf568cb79706af30f01f120778f0aabb98d8fd4463d697c6e4",
+    "crypto/test/test-workchain-i13e-contract.cpp": "7f30a10dccdcc3d5cc7a055fb55b9ba8a1de4bfe92dca286f0ef9e6205e5c50a",
+    "crypto/test/workchain-i13e-contract.md": "5858e989ff450478735343b9291e854d3c7ad133b688fb7b35e4e021ded7cde1",
+    "crypto/test/workchain-i13e-contract.cmake": "160d196b8e725db7025fa8d2b2c59b7831762b17274fa9ead632415524b2d7a6"
+  },
+  "logs": {
+    "assertion-object.stderr.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "assertion-object.stdout.log": "30c3d210f95db83b1ed039b774ac8d6957ba981dec816bd2c902d411ffa22203",
+    "missing-adapter-link.stderr.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "missing-adapter-link.stdout.log": "f3a5c008257eabb60846c3d51bcbe001329d4a7bcb641e02a99ac948e23ffc7e"
+  }
+}

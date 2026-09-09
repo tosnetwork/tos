@@ -64,26 +64,36 @@ std::vector<Point> required_points() {
                      Stage::BeforeAtomicPublish, Stage::AtomicStoreAbort}) points.push_back({stage, 0});
   return points;
 }
+void require_private_isolation(Session& session) {
+  const auto audit = session.private_visibility_audit();
+  demand(audit.coverage_complete, 79);  // An uninstrumented consumer is not safe.
+  demand(audit.intermediate_observations.empty(), 78);
+}
 void exercise(Adapter& adapter, const Snapshot& before, const Snapshot& committed,
               const Snapshot& released, Fault fault, const std::vector<Point>& required) {
   auto session = adapter.fresh_session();
   demand(static_cast<bool>(session), 61);
   demand(session->observe() == before, 62);
+  require_private_isolation(*session);
   const auto saved_before = before;  // Deep copies owned by the assertion code.
   const auto saved_committed = committed;
   const auto saved_released = released;
   auto prepared = session->prepare();
   demand(static_cast<bool>(prepared), 61);
   demand(session->observe() == before, 63);  // Preparing the engine cut is private.
+  require_private_isolation(*session);
   demand(session->registered_points() == required, 64);  // Missing stages never skip.
   std::vector<Point> visited;
   auto result = session->attempt(*prepared, fault, [&](Point point) {
     demand(visited.size() < required.size() && point == required[visited.size()], 65);
     visited.push_back(point);
+    require_private_isolation(*session);
     demand(session->observe() == before, 66);  // Check during the attempt, not only after it.
     session->poll_release();
+    require_private_isolation(*session);
     demand(session->observe() == before, 67);  // No publication can escape early.
   });
+  require_private_isolation(*session);
   demand(before == saved_before && committed == saved_committed && released == saved_released, 68);
   if (fault.kind == FaultKind::FailAtPoint) {
     demand(!visited.empty() && visited.back() == fault.point, 69);
@@ -91,6 +101,7 @@ void exercise(Adapter& adapter, const Snapshot& before, const Snapshot& committe
     demand(result.generation == before.generation, 70);
     demand(session->observe() == before, 71);
     session->poll_release();
+    require_private_isolation(*session);
     demand(session->observe() == before, 72);  // Also no deferred orphan after failure.
     return;
   }
@@ -101,11 +112,13 @@ void exercise(Adapter& adapter, const Snapshot& before, const Snapshot& committe
   demand(result.generation == committed.generation, 73);
   demand(session->observe() == committed, 74);
   session->poll_release();
+  require_private_isolation(*session);
   demand(session->observe() == released, 75);
   // Same logical request: one committed generation and no extra logical message.
   auto retry = session->attempt(*prepared, {}, [&](Point) { throw Failed{76}; });
   demand(retry.outcome == Outcome::Committed && retry.failure == FailureIdentity::None && retry.generation == committed.generation, 76);
   session->poll_release();
+  require_private_isolation(*session);
   demand(session->observe() == released, 77);
 }
 }

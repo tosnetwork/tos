@@ -1,6 +1,7 @@
 # I13e atomic publication contract proposal
 
-**Pending coordinator decision. Not an implementation or acceptance result.**
+**Contract approved by D47, with the clarifications below. Not an implementation
+or acceptance result.**
 The [current-boundary inventory](workchain-i13e-boundary.md) identifies the
 missing operation. This proposal supplies its intended obligations and strict,
 currently unwired assertions. No production header or activation gate changes.
@@ -19,6 +20,22 @@ no authoritative reader or publisher may discover them through a committed root.
 | Recovery reader | Reopening the real commit store and reconstructing the same authoritative generation, including message eligibility. No reconstruction from an adapter cache. |
 | Other shards / external consumers | Logical handoff at the actual downstream publication boundary. Eligibility is bound to the owning committed generation AND existing enclosing block acceptance/finality rules. A private batch commit does not grant consensus finality or permission to send. |
 
+Private builder intermediates are excluded from "visible" **if and only if no
+consensus-affecting consumer can observe them**. Calling a builder private does
+not establish this property. A consumer that can influence validation, subsequent
+execution, block contents or publication defeats the exclusion even if it later
+rolls back its own state. Internal calculations constructing the private result
+are distinct from exposing that intermediate result to such a consumer.
+
+The pending assertion uses `private_visibility_audit()`: real consumer hooks must
+retain every such intermediate observation from session creation through the
+attempt, release and retry. Assertion 78 rejects any observation; assertion 79
+rejects incomplete hook coverage. The sticky record must catch transient exposure
+between stage probes, not just compare roots at those probes. The implementation
+must enumerate consumers and justify coverage; an adapter-provided boolean alone
+is not evidence of completeness. Both hooks and their isolation/coverage controls
+remain unwired. No absence of observations is claimed by this contract update.
+
 The last row requires a private recording transport at the real handoff boundary.
 It records **every attempt**, including an orphan attempt, without filtering by
 commit status or deduplicating observations. It sends no live traffic. Existing
@@ -29,8 +46,8 @@ not enable a workchain or bypass production activation/finality checks.
 
 Publication is therefore an atomic commitment of state **and message release
 eligibility**, followed by release under the enclosing policy. A fallible direct
-send followed by a state commit cannot implement this contract. This proposed
-interpretation of "publication and commit cannot split" requires ratification;
+send followed by a state commit cannot implement this contract. This D47-approved
+interpretation of "publication and commit cannot split" defines the obligation;
 it is not a decision to implement a particular database or outbox design.
 
 ## Bundle and outcomes
@@ -46,6 +63,12 @@ One generation binds all of the following, including references between them:
 - processing metadata affecting subsequent execution: logical-time bounds,
   counters and resource/budget totals, and any other authoritative cached value;
 - batch identity, committed-batch count and message identities/payload bindings.
+
+The committed-batch count couples I13e to **I13a**, which must enforce exactly
+one logical batch per block. I13e requires the count and batch contents to commit
+atomically; its increment and retry assertions do not establish I13a's per-block
+cardinality rule. That enforcement remains an explicit dependency, not an
+additional property claimed by this test.
 
 The test's ten serialized components are a minimum semantic partition. A real
 implementation must enumerate every additional authoritative field and map it
@@ -90,6 +113,16 @@ minimum execution plan has 25 distinct failure positions:
 | Before atomic publish | 1 | Immediately before entering the store decision |
 | Atomic store abort | 1 | Inside the real store operation before its durable decision |
 
+**D45 gate placement:** moving the rejection gate to "Before atomic publish"
+means position 24 in this 25-position schedule. These are the same boundary, not
+two separate operations. Once that move is implemented, positions 1–24 are on
+the real execution path, subject to earlier failures. Position 25,
+`AtomicStoreAbort`, is inside the store and remains unreachable while the gate
+is closed. Moving the gate therefore does not make the entire matrix acceptable
+as covered. Success, post-decision recovery and retry runs also remain blocked;
+the full pending assertions must not skip those obligations to produce a pass.
+This contract update neither moves nor opens the gate.
+
 This is a proposed semantic schedule, not a claim that 25 existing production
 sites have been found. Approval and implementation must map each position to a
 concrete file/operation and enumerate **all** additional fallible late stages,
@@ -119,6 +152,8 @@ adapter variable. Success and both recovery cases retry the same batch.
 | 71–72 | Zero visible changes and no deferred orphan after failure |
 | 73–75 | One complete commit, followed by exactly the expected handoffs |
 | 76–77 | Retry resolves the same commit without re-execution or new handoffs |
+| 78 | No consensus-affecting consumer observes private builder intermediates |
+| 79 | Complete real consumer-hook coverage; unknown or missing coverage fails |
 
 Identities name guards, not independent defenses. Multiple faults can exercise
 the same guard; archive their selected stage and observed identity separately.
@@ -143,11 +178,15 @@ identity, numeric failure, byte restoration and restore replay, as in I13c/d.
 At minimum cover early installation of each state component, early handoff,
 omitted output on successful commit, incomplete store abort, omitted stages,
 wrong observer routing, oracle corruption and duplicate retry publication.
+For 78, expose an intermediate to a real consensus-affecting consumer while
+keeping published roots unchanged, isolating it from root guards 66–67. For 79,
+remove a required consumer hook while leaving the observation log empty. These
+are required future controls, not executed evidence.
 Controls must establish that observers see the production surfaces; a self-report
 from the publisher is insufficient. Archive every stdout/stderr, including empty
 files. Missing dependencies and compile failures are never behavioral evidence.
 
 The object target can be built to check assertion syntax. Linking the executable
-without a real adapter must fail. Neither result establishes I13e. Coordinator
-ratification is required for the visibility domains, recovery/idempotence contract,
-and concrete host stage mapping before assigning production implementation.
+without a real adapter must fail. Neither result establishes I13e. D47 approves the contract;
+concrete host stage/consumer mapping and production implementation assignment
+remain pending coordinator scheduling. I13a/I13b work is not started here.
