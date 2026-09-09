@@ -11,7 +11,7 @@ def run(source):
     spec = importlib.util.spec_from_file_location('pair_context', source)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    closed = dict(status_code=-7201, status_message='not classified by this unit',
+    closed = dict(result_kind='local-error', status_code=-7201, status_message='not classified by this unit',
                   transactions=0, candidate_exports=[], run_id='unit-records',
                   host_path='unit-record-schema', input_sha256='1' * 64,
                   common_config_sha256='2' * 64, config_origin='test-internal',
@@ -31,7 +31,8 @@ def run(source):
                (311, 'enabled', 'config_origin', 'deployment'),
                (312, 'closed', 'capability_enabled', True),
                (313, 'enabled', 'config_sha256', closed['config_sha256']),
-               (314, 'enabled', 'reached_required_frontier', False)]
+               (314, 'enabled', 'reached_required_frontier', False),
+               (316, 'closed', 'result_kind', 'candidate-reject')]
     observed = []
     for identity, side, field, value in vectors:
         on, off = copy.deepcopy(enabled), copy.deepcopy(closed)

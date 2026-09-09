@@ -83,3 +83,28 @@ Publication serialization/history costs still lack an authenticated D31 bound.
 The final commit gate remains closed; this specification does not authorize moving
 or opening it. Any incompatibility between that gate and the required call order
 must be resolved before wiring rather than bypassed in a fixture.
+
+## Terminal-result rule for the reviewed seam pattern
+
+Every seam assertion about acceptance, candidate rejection, or local abstention
+must consume the final typed host result. A process exit code, log substring, or
+last output line is never a classification oracle. `CandidateReject` and an error
+`Status` are different outcomes even if diagnostics contain the same number or
+message. Serialize the outcome discriminator together with the final Status code
+and message where applicable; do not reconstruct it from text. Activation matching
+uses the shared helper on that final Status, with an explicitly supported boundary.
+Validator prefixes require real terminal-result calibration by the shared helper
+owner, not inference or local prefix stripping.
+
+The context checker requires `result_kind == "local-error"` in a closed record.
+This is a consumer contract, not proof that a caller populated it honestly. The
+live observation adapter must obtain that tag from the terminal variant/error
+branch, and a control must distinguish a CandidateReject carrying otherwise
+identical diagnostic data. The current schema control covers the consumer only;
+there is no live validator observer in this unit.
+
+Operational checks that the instrument compiled, ran, restored, or failed on a
+missing dependency remain separate from production outcome classification. Their
+exit statuses are never cited as evidence of CandidateInvalid versus
+LocalUnavailable. The source-traced possible parent-log/terminal-result mismatch
+in the difference inventory is not claimed as a completed live reproduction.

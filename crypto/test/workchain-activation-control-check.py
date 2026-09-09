@@ -44,7 +44,7 @@ def main():
     require(rows[0][4] == rows[2][4] and rows[1][4] == rows[3][4] and rows[0][4] != rows[1][4], 336)
     # Schema calibration only: statuses/config hashes are real resolver outputs;
     # the zero/export fields below are unit inputs, NOT collator observations.
-    closed = dict(status_code=int(rows[2][2]), status_message=rows[2][3],
+    closed = dict(result_kind='local-error', status_code=int(rows[2][2]), status_message=rows[2][3],
                   transactions=0, candidate_exports=[], run_id='schema-calibration',
                   host_path='scoped-resolver-calibration', input_sha256='1' * 64,
                   common_config_sha256='2' * 64, config_origin='test-internal',

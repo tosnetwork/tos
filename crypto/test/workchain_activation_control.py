@@ -16,6 +16,9 @@ def require(condition, identity):
 
 
 def check_closed_observations(record):
+    # This tag must be serialized from the final typed host result. Neither a
+    # process exit status nor a log message may supply it.
+    require(record['result_kind'] == 'local-error', 316)
     # Unexpected release is a hard stop, never a skip or accepted fallback.
     require(record['status_code'] != 0, 303)
     require(record['status_code'] == -7201, 304)

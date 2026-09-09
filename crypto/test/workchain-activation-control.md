@@ -36,7 +36,7 @@ must supply actual host transaction counts and candidate-export observations to
 Source uniqueness and the shared classifier self-check must be run by that same
 acceptance driver according to the shared helper API. Resolver calibration must not be used as a completed live acceptance result.
 
-`check_pair_context` checks necessary, insufficient record constraints: non-success
+`check_pair_context` checks necessary, insufficient record constraints: a final typed local-error discriminator, non-success
 and local failure code, zero transactions, no exports, same run/path/input/common
 configuration, internal configuration provenance, opposite capability states,
 distinct config roots, and a reached enabled frontier. Its synthetic unit vectors
@@ -59,3 +59,10 @@ helper are required dependencies. Missing dependencies must fail.
 The execution/recovery seam is specified separately in
 `workchain-publication-execution-order.md`. Neither this unit nor that specification
 opens the final commit gate, grants consensus finality, or permits sending.
+
+Only the final typed host result may populate closed-control status fields. Never
+parse logs or use a process return code to choose between candidate rejection and
+local abstention. The resolver calibration emits fields from its actual returned
+`td::Result`; it does not establish a validator terminal observation boundary.
+A candidate-reject schema vector with otherwise unchanged diagnostics must fail
+316. The live serializer still needs its own calibration when it exists.
