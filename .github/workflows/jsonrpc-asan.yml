@@ -1,0 +1,173 @@
+name: JSON-RPC ASAN
+
+# The JSON-RPC hardening includes two memory-safety fixes: a request
+# buffer whose lifetime the batch driver has to extend, and completion
+# callbacks that must not reach a destroyed server. Neither is observable
+# from an ordinary build -- a use-after-free reads plausible bytes and
+# every assertion still passes -- so those fixes are only actually
+# checked when the tests run instrumented.
+#
+# The corpus job is what makes this worth its runtime. Before the batch
+# fix, two unknown methods in one batch killed the node outright, with
+# the fault landing in process_batch_step; the unit tests stayed green
+# through all of it, because the defect was in a lifetime the tests do
+# not own.
+#
+# Kept as its own workflow because it builds the tree a second time with
+# different flags.
+
+on:
+  pull_request:
+    branches: [master, testnet, main]
+    types: [opened, reopened, synchronize, ready_for_review]
+    paths:
+      - 'validator-engine/json-rpc-server*'
+      - 'test/test-json-rpc-*'
+      - 'test/json-rpc/**'
+      - 'scripts/asan-jsonrpc-corpus.py'
+      - '.github/workflows/jsonrpc-asan.yml'
+  workflow_dispatch:
+  workflow_call:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Sanitizer settings shared by every instrumented process here. Leaks
+  # are a separate question and would drown the signal; a fault should
+  # stop the run at the first one, with its trace intact.
+  ASAN_OPTIONS: detect_leaks=0:abort_on_error=1:halt_on_error=1
+
+jobs:
+  unit:
+    name: instrumented unit tests
+    runs-on: ubuntu-24.04
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install system libraries
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential git cmake ninja-build
+
+    - name: Install Clang 21
+      run: |
+        wget -q https://apt.llvm.org/llvm.sh
+        chmod +x llvm.sh
+        sudo ./llvm.sh 21 all
+
+    - name: Configure with AddressSanitizer
+      run: |
+        cmake -S . -B build-asan -G Ninja \
+          -DCMAKE_C_COMPILER=clang-21 \
+          -DCMAKE_CXX_COMPILER=clang++-21 \
+          -DCMAKE_BUILD_TYPE=Debug \
+          -DTOS_USE_ASAN=ON
+
+    - name: Build the instrumented JSON-RPC tests
+      run: ninja -C build-asan test-json-rpc-rate-gate test-json-rpc-parse test-json-rpc-handler-guard
+
+    - name: Run under AddressSanitizer
+      run: |
+        ./build-asan/test-json-rpc-rate-gate
+        ./build-asan/test-json-rpc-parse
+        ./build-asan/test-json-rpc-handler-guard
+
+    - name: Check JSON-RPC route gating
+      run: python3 scripts/check-jsonrpc-route-gating.py
+
+  corpus:
+    name: instrumented node vs corpus
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install system libraries
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential git cmake ninja-build tmux libgsl-dev libblas-dev
+
+    - name: Install Clang 21
+      run: |
+        wget -q https://apt.llvm.org/llvm.sh
+        chmod +x llvm.sh
+        sudo ./llvm.sh 21 all
+
+    - name: Install uv
+      run: |
+        curl -LsSf https://astral.sh/uv/install.sh | sh
+        echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+    - name: Configure with AddressSanitizer
+      # QUIC stays on: with it off the adnl and overlay libraries still
+      # carry -lquic into the link, so the build fails at the last step.
+      run: |
+        cmake -S . -B build-asan -G Ninja \
+          -DCMAKE_C_COMPILER=clang-21 \
+          -DCMAKE_CXX_COMPILER=clang++-21 \
+          -DCMAKE_BUILD_TYPE=Debug \
+          -DTOS_USE_ASAN=ON \
+          -DUSE_QUIC=ON
+
+    - name: Build the compilers the frozen contracts are verified with
+      run: ninja -C build-asan func fift
+
+    - name: Build the instrumented node and its helpers
+      # The contract embedding scripts look for these under a directory
+      # named exactly `build`, and report a missing compiler when the
+      # build directory is called anything else. Point them at this one.
+      run: |
+        export FUNC_BIN="$PWD/build-asan/crypto/func"
+        export FIFT_BIN="$PWD/build-asan/crypto/fift"
+        ninja -C build-asan validator-engine create-state generate-random-id toslibjson
+
+    - name: Prepare the harness environment
+      # The harness needs the tostester dependencies; a bare system
+      # python does not have them. tosapi is generated and untracked, so
+      # a fresh checkout has to produce it before anything can import.
+      run: |
+        uv venv .venv
+        uv pip install --python .venv/bin/python -e test/tostester
+        .venv/bin/python test/tostester/generate_tl.py
+
+    - name: Bring up an instrumented local chain
+      run: |
+        chmod +x scripts/asan-jsonrpc-localnet.sh
+        tmux new-session -d -s asan "./scripts/asan-jsonrpc-localnet.sh > /tmp/localnet.log 2>&1"
+        for _ in $(seq 1 60); do
+          if ss -tln | grep -q 18545; then break; fi
+          sleep 5
+        done
+        ss -tln | grep 18545 || { echo "node did not come up"; tail -40 /tmp/localnet.log; exit 1; }
+
+    - name: Drive the corpus
+      run: |
+        uv run --with requests python scripts/asan-jsonrpc-corpus.py http://127.0.0.1:18545/
+
+    - name: Fail on any sanitizer report
+      # The corpus itself asserts little on purpose: most of these
+      # requests are meant to be refused. What decides the run is whether
+      # the instrumented node reported anything while refusing them.
+      run: |
+        if ls /tmp/asan-report.* >/dev/null 2>&1; then
+          echo "AddressSanitizer reported a fault:"
+          cat /tmp/asan-report.*
+          exit 1
+        fi
+        if grep -qE "ERROR: AddressSanitizer" /tmp/localnet.log; then
+          echo "AddressSanitizer output in the node log:"
+          grep -B 5 -A 40 "ERROR: AddressSanitizer" /tmp/localnet.log
+          exit 1
+        fi
+        if ! pgrep -f "[v]alidator-engine --" > /dev/null; then
+          echo "the node did not survive the corpus"
+          tail -60 /tmp/localnet.log
+          exit 1
+        fi
+        echo "no sanitizer output, node alive"
+
+    - name: Node log on failure
+      if: failure()
+      run: tail -200 /tmp/localnet.log || true

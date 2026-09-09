@@ -41,11 +41,44 @@ namespace {
 // Optional "limit" param: default 100, clamped to [1, 1000]. The index can be
 // inflated by third parties (anyone can send notification/spam transactions at
 // an account), so responses must stay bounded regardless of index size.
+// Rows a single index query may return. Each row is read from the index,
+// unpacked and re-serialized, and that work happens before anything else
+// on this thread can run, so the ceiling is a bound on how long one
+// caller can hold the server -- not just on how much it receives. A
+// caller that wants more pages for them through the continuation cursor.
+constexpr size_t kMaxIndexPageRows = 100;
+
+// Byte budget for the rows of one page. Row size is driven by the
+// account's own history, so a row count alone does not bound the work:
+// a hundred large transactions is a far bigger response than a hundred
+// small ones. Whichever ceiling is reached first ends the page, and the
+// cursor lets the caller continue from there.
+constexpr size_t kMaxIndexPageBytes = 4u << 20;
+
+// Jetton and NFT lists have no continuation cursor, so a caller cannot
+// page past a truncated result -- capping them at the event-feed page
+// size silently hid assets an account really holds. They get their own,
+// far larger ceiling: high enough that a real account is returned whole,
+// bounded so the scan is still finite, and cheap per row (two hashes,
+// not a full transaction). A proper cursor is the long-term fix; until
+// then this restores complete results without a new pagination API.
+constexpr size_t kMaxCursorlessListRows = 10000;
+
 size_t parse_limit_param(td::JsonObject &params) {
-  size_t limit = 100;
+  size_t limit = kMaxIndexPageRows;
   auto limit_r = params.get_optional_int_field("limit");
   if (limit_r.is_ok() && limit_r.ok() > 0) {
-    limit = std::min<size_t>(static_cast<size_t>(limit_r.ok()), 1000);
+    limit = std::min<size_t>(static_cast<size_t>(limit_r.ok()), kMaxIndexPageRows);
+  }
+  return limit;
+}
+
+// For the cursorless jetton/NFT lists: same shape, larger ceiling.
+size_t parse_cursorless_list_limit(td::JsonObject &params) {
+  size_t limit = kMaxCursorlessListRows;
+  auto limit_r = params.get_optional_int_field("limit");
+  if (limit_r.is_ok() && limit_r.ok() > 0) {
+    limit = std::min<size_t>(static_cast<size_t>(limit_r.ok()), kMaxCursorlessListRows);
   }
   return limit;
 }
@@ -84,7 +117,11 @@ std::string extract_text_comment(td::Ref<vm::CellSlice> body) {
     bool special = false;
     try {
       cs = vm::load_cell_slice_special(cs.prefetch_ref(), special);
-    } catch (vm::VmError &) {
+    } catch (...) {
+      // The loader signals a virtualization-level mismatch with a type that
+      // is not related to VmError, so naming one exception left the other
+      // to unwind out of a synchronous handler. Everything here is
+      // best-effort decoration of an event: any failure means no comment.
       return {};
     }
     if (special) {
@@ -210,7 +247,7 @@ void JsonRpcServer::handle_getAccountJettons(td::JsonObject &params, std::string
     return;
   }
   auto addr = addr_r.move_as_ok();
-  auto limit = parse_limit_param(params);
+  auto limit = parse_cursorless_list_limit(params);
 
   auto *db = tos_wallet_index::wallet_index_db();
   if (db == nullptr) {
@@ -287,24 +324,43 @@ void JsonRpcServer::handle_getAccountEvents(td::JsonObject &params, std::string 
   bool first = true;
   size_t seen = 0;
   uint64_t last_lt = 0;
+  bool budget_hit = false;
   if (is_indexed_workchain(addr)) {
     // Read one extra entry to determine whether the continuation cursor exists.
     auto append = [&](uint64_t lt, td::Ref<vm::Cell> cell) -> td::Status {
       ++seen;
       if (seen > limit) {
+        // One row past the page: its existence only signals a continuation
+        // cursor, so it is not appended. The traversal stops at its own
+        // limit + 1, so no further rows are read.
         return td::Status::OK();
+      }
+      auto row = format_account_event(lt, std::move(cell));
+      // Stop *before* appending a row that would push the page past the byte
+      // budget, so the response never exceeds it (the previous code checked the
+      // size before the row and let one row overshoot). Returning an error
+      // stops the underlying scan, so no further records are read or
+      // deserialized -- the byte budget now bounds scan work, not just output.
+      // budget_hit marks this as a normal short page, not a failure. The first
+      // row is always emitted so an oversized single row cannot stall
+      // pagination.
+      size_t projected = sb.as_cslice().size() + (first ? 0 : 1) + row.size();
+      if (!first && projected > kMaxIndexPageBytes) {
+        limit = seen - 1;
+        budget_hit = true;
+        return td::Status::Error("wc0-index: page byte budget reached");
       }
       if (!first) {
         sb << ",";
       }
       first = false;
       last_lt = lt;
-      sb << format_account_event(lt, std::move(cell));
+      sb << row;
       return td::Status::OK();
     };
     auto status = has_before_lt ? db->for_each_event_before(addr.addr, before_lt, limit + 1, append)
                                 : db->for_each_event(addr.addr, limit + 1, append);
-    if (status.is_error()) {
+    if (status.is_error() && !budget_hit) {
       promise.set_value(make_json_error(-32603, status.message().str(), req_id));
       return;
     }
@@ -359,7 +415,7 @@ void JsonRpcServer::handle_getAccountNfts(td::JsonObject &params, std::string re
     return;
   }
   auto addr = addr_r.move_as_ok();
-  auto limit = parse_limit_param(params);
+  auto limit = parse_cursorless_list_limit(params);
 
   auto *db = tos_wallet_index::wallet_index_db();
   if (db == nullptr) {

@@ -177,8 +177,15 @@ struct ComputePhaseConfig {
                                       td::uint64 flat_gas_price = 0);
 };
 
+// Ceiling on the actions one transaction may emit, and therefore on the
+// out-messages it can carry. Named so that code which has to bound work
+// per transaction can derive its own limit from this rather than repeat
+// the number: a copy drifts silently when this moves, and a copy set too
+// low truncates real transactions.
+constexpr int kDefaultMaxActions = 255;
+
 struct ActionPhaseConfig {
-  int max_actions{255};
+  int max_actions{kDefaultMaxActions};
   int bounce_msg_body{0};  // usually 0 or 256 bits
   MsgPrices fwd_std;
   MsgPrices fwd_mc;  // from/to masterchain

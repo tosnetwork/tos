@@ -221,6 +221,18 @@ void JsonRpcServer::handle_getLibraries(td::JsonObject &params, std::string req_
     return;
   }
   auto &arr = list_val.get_array();
+  // The liteserver answers at most this many and silently drops the rest,
+  // so decoding a longer list is work spent on entries that were never
+  // going to be looked up, and the caller is never told its request was cut
+  // short. Refuse instead: the request body alone would admit tens of
+  // thousands of entries.
+  constexpr size_t kMaxLibraryList = 16;
+  if (arr.size() > kMaxLibraryList) {
+    promise.set_value(make_json_error(
+        -32602, PSTRING() << "Too many entries in 'library_list': " << arr.size() << ", max " << kMaxLibraryList,
+        req_id));
+    return;
+  }
   std::vector<td::Bits256> hashes;
   hashes.reserve(arr.size());
   for (auto &elem : arr) {

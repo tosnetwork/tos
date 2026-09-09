@@ -21,6 +21,9 @@ constexpr uint8_t kJettonTag = 0x10;        // 0x10 + owner(32) + master(32)
 constexpr uint8_t kNftTag = 0x11;           // 0x11 + owner(32) + nft(32)
 constexpr uint8_t kEventTag = 0x12;         // 0x12 + account(32) + ~lt_be(8)
 constexpr uint8_t kNftOwnerTag = 0x13;      // 0x13 + nft(32) -> owner(32)
+
+// (kMaxEventsPerAccount / kMaxEventTrimPerPass are declared in the header
+// so tests can reference the exact bound.)
 // 0x1E + workchain_be(4) + shard_be(8) + seqno_be(4) + root_hash(32) + file_hash(32) -> sentinel(1)
 // The full BlockIdExt is in the key, not split key/value: if a position could
 // ever be re-applied with a different hash (e.g. some reorg/hardfork path),
@@ -139,6 +142,34 @@ td::Status WalletIndexDb::put_cell(td::Slice key, td::Ref<vm::Cell> value) {
   return db_->set(key, td::Slice{serialized.as_slice()});
 }
 
+td::Status WalletIndexDb::for_each_key_with_prefix(
+    td::Slice prefix, size_t limit, std::function<td::Status(td::Slice)> cb) {
+  // As for_each_with_prefix, but hands over keys only: a row about to be
+  // deleted does not need its cell deserialized first.
+  std::string end = prefix.str();
+  size_t i = end.size();
+  while (i > 0) {
+    auto b = static_cast<uint8_t>(end[i - 1]);
+    if (b != 0xff) {
+      end[i - 1] = static_cast<char>(b + 1);
+      end.resize(i);
+      break;
+    }
+    --i;
+  }
+  if (i == 0) {
+    return td::Status::Error("wc0-index: unbounded prefix");
+  }
+  size_t seen = 0;
+  return db_->for_each_in_range(prefix, td::Slice{end}, [&](td::Slice key, td::Slice) -> td::Status {
+    if (seen >= limit) {
+      return td::Status::Error("wc0-index: limit reached");
+    }
+    ++seen;
+    return cb(key);
+  });
+}
+
 td::Status WalletIndexDb::for_each_with_prefix(
     td::Slice prefix, size_t limit, std::function<td::Status(td::Slice, td::Ref<vm::Cell>)> cb) {
   // Range scan [prefix, next(prefix)): increment the last non-0xff byte of the
@@ -246,7 +277,73 @@ td::Status WalletIndexDb::put_event(const HashKey& account, uint64_t lt,
   // Store ~lt so ascending key order is newest-first and `limit` caps the scan
   // to the most recent events instead of the oldest.
   make_event_key(account, ~lt, key);
+  // Just write. Trimming is not done here: put_event runs once per
+  // transaction on the block-apply path, and its committed-DB scan does
+  // not see the batch's own writes, so trimming per put would re-scan the
+  // account's whole history for every transaction in a block. The caller
+  // trims each touched account once, after the block's events are in.
   return put_cell(td::Slice{key, kEventKeyLen}, std::move(value));
+}
+
+td::Status WalletIndexDb::trim_events(const HashKey& account, size_t added_this_block) {
+  // Every workchain-zero transaction adds a row holding the whole
+  // transaction, and until now nothing removed one: jetton and NFT rows have
+  // erase paths, events did not, so this index grew for the life of the node
+  // and outlived the archive retention that bounds everything else.
+  //
+  // The key orders an account's events newest-first, so a bound on how much
+  // history is kept per account is just a matter of dropping the tail. That
+  // also reaches rows written before this existed, which a separate
+  // time-index would not: those rows have no companion entry to find them by.
+  //
+  // Two things make the bound actually hold on the production path:
+  //
+  //  * This runs inside the block's write batch, before commit, so the scan
+  //    below sees only committed rows -- the `added_this_block` rows written
+  //    for this account earlier in the batch are invisible to it. Keeping
+  //    `kMaxEventsPerAccount - added_this_block` committed rows leaves room for
+  //    them, so the post-commit total is at most kMaxEventsPerAccount, provided
+  //    a single block adds fewer than kMaxEventsPerAccount events for one
+  //    account (block transaction limits make this the case in practice). If a
+  //    block ever added at least that many, `keep` clamps to 0 and those
+  //    in-batch rows cannot be scanned to delete, so that one block would
+  //    commit with `added_this_block` rows; the next block's trim then brings
+  //    it back down -- growth still cannot run away, since a pass always
+  //    deletes at least what the block added (see below).
+  //
+  //  * The delete budget is `added_this_block + kEventTrimDrainPerPass`. A pass
+  //    therefore always removes at least as many rows as the block added, so an
+  //    account gaining more rows per block than a fixed cap can no longer
+  //    outrun trimming; the drain term additionally shrinks any pre-existing
+  //    backlog block by block.
+  char prefix[1 + 32];
+  prefix[0] = static_cast<char>(kEventTag);
+  std::memcpy(prefix + 1, account.data(), 32);
+
+  size_t keep = added_this_block >= kMaxEventsPerAccount ? 0 : kMaxEventsPerAccount - added_this_block;
+  size_t budget = added_this_block + kEventTrimDrainPerPass;
+
+  std::vector<std::string> doomed;
+  size_t seen = 0;
+  auto status = for_each_key_with_prefix(td::Slice{prefix, sizeof(prefix)}, keep + budget + 1,
+                                         [&](td::Slice key) -> td::Status {
+    if (++seen > keep) {
+      doomed.emplace_back(key.str());
+      if (doomed.size() >= budget) {
+        return td::Status::Error("wc0-index: trim batch full");
+      }
+    }
+    return td::Status::OK();
+  });
+  // The iteration is stopped by returning an error once the batch is full;
+  // a genuine read failure is reported, a full batch is not.
+  if (status.is_error() && status.message() != "wc0-index: trim batch full") {
+    return status;
+  }
+  for (const auto& key : doomed) {
+    TRY_STATUS(db_->erase(td::Slice{key}));
+  }
+  return td::Status::OK();
 }
 
 td::Status WalletIndexDb::for_each_event(
