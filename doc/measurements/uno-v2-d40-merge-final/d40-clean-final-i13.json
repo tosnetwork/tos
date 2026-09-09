@@ -1,0 +1,227 @@
+{
+  "backtraceGraph" : 
+  {
+    "commands" : 
+    [
+      "add_test",
+      "include",
+      "project"
+    ],
+    "files" : 
+    [
+      "/home/tomi/tos/crypto/test/workchain-i13-acceptance.cmake",
+      "/home/tomi/tos/crypto/test/workchain-construction-isolation.cmake",
+      "/home/tomi/tos/CMakeLists.txt",
+      "/home/tomi/tos/crypto/test/workchain-i13-usage-acceptance.cmake"
+    ],
+    "nodes" : 
+    [
+      {
+        "file" : 2
+      },
+      {
+        "command" : 2,
+        "file" : 2,
+        "line" : 13,
+        "parent" : 0
+      },
+      {
+        "file" : 1,
+        "parent" : 1
+      },
+      {
+        "command" : 1,
+        "file" : 1,
+        "line" : 17,
+        "parent" : 2
+      },
+      {
+        "file" : 0,
+        "parent" : 3
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 18,
+        "parent" : 4
+      },
+      {
+        "file" : 2
+      },
+      {
+        "command" : 2,
+        "file" : 2,
+        "line" : 13,
+        "parent" : 6
+      },
+      {
+        "file" : 1,
+        "parent" : 7
+      },
+      {
+        "command" : 1,
+        "file" : 1,
+        "line" : 19,
+        "parent" : 8
+      },
+      {
+        "file" : 3,
+        "parent" : 9
+      },
+      {
+        "command" : 0,
+        "file" : 3,
+        "line" : 12,
+        "parent" : 10
+      },
+      {
+        "file" : 2
+      },
+      {
+        "command" : 2,
+        "file" : 2,
+        "line" : 13,
+        "parent" : 12
+      },
+      {
+        "file" : 1,
+        "parent" : 13
+      },
+      {
+        "command" : 0,
+        "file" : 1,
+        "line" : 24,
+        "parent" : 14
+      }
+    ]
+  },
+  "kind" : "ctestInfo",
+  "tests" : 
+  [
+    {
+      "backtrace" : 5,
+      "command" : 
+      [
+        "/home/tomi/.local/bin/python3",
+        "/home/tomi/tos/crypto/test/workchain-i13-acceptance.py",
+        "--build",
+        "/tmp/uno-i13-merge-registration-Tg5Kvb/workchain-i13-ctest/coverage/build",
+        "--ctest-root",
+        "/tmp/uno-i13-merge-registration-Tg5Kvb/workchain-i13-ctest/coverage/runs"
+      ],
+      "name" : "test-workchain-i13-acceptance-gates",
+      "properties" : 
+      [
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "i13",
+            "private",
+            "workchain"
+          ]
+        },
+        {
+          "name" : "RESOURCE_LOCK",
+          "value" : 
+          [
+            "workchain_i13_measurements"
+          ]
+        },
+        {
+          "name" : "TIMEOUT",
+          "value" : 3600.0
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/uno-i13-merge-registration-Tg5Kvb"
+        }
+      ]
+    },
+    {
+      "backtrace" : 11,
+      "command" : 
+      [
+        "/home/tomi/.local/bin/python3",
+        "/home/tomi/tos/crypto/test/workchain-i13-usage-acceptance.py",
+        "--build",
+        "/tmp/uno-i13-merge-registration-Tg5Kvb/workchain-i13-ctest/usage/build",
+        "--ctest-root",
+        "/tmp/uno-i13-merge-registration-Tg5Kvb/workchain-i13-ctest/usage/runs"
+      ],
+      "name" : "test-workchain-i13-usage-acceptance-gates",
+      "properties" : 
+      [
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "i13",
+            "private",
+            "workchain"
+          ]
+        },
+        {
+          "name" : "RESOURCE_LOCK",
+          "value" : 
+          [
+            "workchain_i13_measurements"
+          ]
+        },
+        {
+          "name" : "TIMEOUT",
+          "value" : 3600.0
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/uno-i13-merge-registration-Tg5Kvb"
+        }
+      ]
+    },
+    {
+      "backtrace" : 15,
+      "command" : 
+      [
+        "/home/tomi/.local/bin/python3",
+        "/home/tomi/tos/crypto/test/workchain-construction-isolation.py",
+        "--build",
+        "/tmp/uno-i13-merge-registration-Tg5Kvb/workchain-i13-ctest/construction/build",
+        "--ctest-root",
+        "/tmp/uno-i13-merge-registration-Tg5Kvb/workchain-i13-ctest/construction/runs"
+      ],
+      "name" : "test-workchain-construction-isolation-gates",
+      "properties" : 
+      [
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "i13",
+            "private",
+            "workchain"
+          ]
+        },
+        {
+          "name" : "RESOURCE_LOCK",
+          "value" : 
+          [
+            "workchain_i13_measurements"
+          ]
+        },
+        {
+          "name" : "TIMEOUT",
+          "value" : 7200.0
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/uno-i13-merge-registration-Tg5Kvb"
+        }
+      ]
+    }
+  ],
+  "version" : 
+  {
+    "major" : 1,
+    "minor" : 0
+  }
+}

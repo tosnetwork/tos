@@ -1,0 +1,373 @@
+{
+  "source_commit": "fdae869937b19f3713e356bc85665da50429d563",
+  "junit_sha256": "5673e30a65aab6d4d7ca4dd3b62d5ba7455fe6db1d95e855e4895b3e25903f54",
+  "actual_entries": 130,
+  "passed": 121,
+  "deferred": 9,
+  "unresolved": 0,
+  "generated_mc_extra_tag": "0x3214e578",
+  "rows": [
+    {
+      "name": "test-counter-disk-integration",
+      "fixture": "/home/tomi/tos/build/counter-integration-22f31b370297",
+      "failure_reason": "malformed engine configuration framing",
+      "raw_diagnostics": [
+        {
+          "line": 99,
+          "text": "\u001b[1;31m[ 1][t 3][2026-09-09 17:48:42.166705666][validate-query.cpp:147][!fakevalidate(-1,8000000000000000):1#0]\tREJECT: aborting validation of block candidate for (-1,8000000000000000) : invalid instance installation : [Error : 0 : malformed engine configuration framing]\u001b[0m"
+        },
+        {
+          "line": 109,
+          "text": "\u001b[1;31m[ 1][t 3][2026-09-09 17:48:42.168757174][manager-disk.cpp:324][!fakevalidate(-1,8000000000000000):1#0]\tfailed to create block: invalid instance installation : [Error : 0 : malformed engine configuration framing]\u001b[0m"
+        }
+      ],
+      "param84_present": true,
+      "payloads": [
+        {
+          "workchain": 2,
+          "bits": 0,
+          "refs": 0,
+          "root_hash": "96a296d224f285c67bee93c30f8a309157f0daa35dc5b87e410b78630a09cfc7",
+          "raw_bits": ""
+        }
+      ],
+      "new_to_this_merge": false,
+      "relation_to_three_original_exceptions": "Earlier framing failure: raw business cell is not the required identity shell; same deferred installation/consumer migration, not the 7406 genesis comparison.",
+      "disposition": "Owner-deferred obsolete fixture shape; neither passed nor waived as an unrelated failure.",
+      "observer": {
+        "bootstrap.result": "collate 0\n",
+        "bootstrap.result.kind": "success\n",
+        "bootstrap.result.message": ""
+      },
+      "observer_scope": "Collator result only; not a typed validator terminal result. Diagnostic log is used to locate cause, not infer CandidateInvalid versus LocalUnavailable.",
+      "sha256": {
+        "zerostate.boc": "2d7579f4ebfd88920df61661b6514252f0ea07fa36049f4d0dca27654fd5272c",
+        "bootstrap.log": "384d990189ce21bec09a6ffb8c33bc1f73285d161062b9bf1766cbe86210efc5",
+        "bootstrap.result": "b0b5464a5f290a15b6a78529508979e500a2ef2b88da01fca94db52c314fc8d0",
+        "bootstrap.result.kind": "81b2bd4ea98c8db66554fbc8d7637a1a69a130f331feb732b75caab4c4868fd5",
+        "bootstrap.result.message": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    },
+    {
+      "name": "test-counter-idle-replay",
+      "fixture": "/home/tomi/tos/build/counter-integration-ab42c7b93a36",
+      "failure_reason": "malformed engine configuration framing",
+      "raw_diagnostics": [
+        {
+          "line": 99,
+          "text": "\u001b[1;31m[ 1][t 1][2026-09-09 17:48:42.171483270][validate-query.cpp:147][!fakevalidate(-1,8000000000000000):1#0]\tREJECT: aborting validation of block candidate for (-1,8000000000000000) : invalid instance installation : [Error : 0 : malformed engine configuration framing]\u001b[0m"
+        },
+        {
+          "line": 109,
+          "text": "\u001b[1;31m[ 1][t 1][2026-09-09 17:48:42.173160236][manager-disk.cpp:324][!fakevalidate(-1,8000000000000000):1#0]\tfailed to create block: invalid instance installation : [Error : 0 : malformed engine configuration framing]\u001b[0m"
+        }
+      ],
+      "param84_present": true,
+      "payloads": [
+        {
+          "workchain": 2,
+          "bits": 0,
+          "refs": 0,
+          "root_hash": "96a296d224f285c67bee93c30f8a309157f0daa35dc5b87e410b78630a09cfc7",
+          "raw_bits": ""
+        }
+      ],
+      "new_to_this_merge": false,
+      "relation_to_three_original_exceptions": "Earlier framing failure: raw business cell is not the required identity shell; same deferred installation/consumer migration, not the 7406 genesis comparison.",
+      "disposition": "Owner-deferred obsolete fixture shape; neither passed nor waived as an unrelated failure.",
+      "observer": {
+        "bootstrap.result": "collate 0\n",
+        "bootstrap.result.kind": "success\n",
+        "bootstrap.result.message": ""
+      },
+      "observer_scope": "Collator result only; not a typed validator terminal result. Diagnostic log is used to locate cause, not infer CandidateInvalid versus LocalUnavailable.",
+      "sha256": {
+        "zerostate.boc": "2d7579f4ebfd88920df61661b6514252f0ea07fa36049f4d0dca27654fd5272c",
+        "bootstrap.log": "1bb317eae5ca302e83b2afd6c52b0d517bd06a3f976e71d09e8a5bcd290ea68c",
+        "bootstrap.result": "b0b5464a5f290a15b6a78529508979e500a2ef2b88da01fca94db52c314fc8d0",
+        "bootstrap.result.kind": "81b2bd4ea98c8db66554fbc8d7637a1a69a130f331feb732b75caab4c4868fd5",
+        "bootstrap.result.message": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    },
+    {
+      "name": "test-counter-self-delivery",
+      "fixture": "/home/tomi/tos/build/counter-integration-37e0a88f40dc",
+      "failure_reason": "malformed engine configuration framing",
+      "raw_diagnostics": [
+        {
+          "line": 99,
+          "text": "\u001b[1;31m[ 1][t 1][2026-09-09 17:48:42.177633195][validate-query.cpp:147][!fakevalidate(-1,8000000000000000):1#0]\tREJECT: aborting validation of block candidate for (-1,8000000000000000) : invalid instance installation : [Error : 0 : malformed engine configuration framing]\u001b[0m"
+        },
+        {
+          "line": 109,
+          "text": "\u001b[1;31m[ 1][t 1][2026-09-09 17:48:42.179451819][manager-disk.cpp:324][!fakevalidate(-1,8000000000000000):1#0]\tfailed to create block: invalid instance installation : [Error : 0 : malformed engine configuration framing]\u001b[0m"
+        }
+      ],
+      "param84_present": true,
+      "payloads": [
+        {
+          "workchain": 2,
+          "bits": 0,
+          "refs": 0,
+          "root_hash": "96a296d224f285c67bee93c30f8a309157f0daa35dc5b87e410b78630a09cfc7",
+          "raw_bits": ""
+        }
+      ],
+      "new_to_this_merge": false,
+      "relation_to_three_original_exceptions": "Earlier framing failure: raw business cell is not the required identity shell; same deferred installation/consumer migration, not the 7406 genesis comparison.",
+      "disposition": "Owner-deferred obsolete fixture shape; neither passed nor waived as an unrelated failure.",
+      "observer": {
+        "bootstrap.result": "collate 0\n",
+        "bootstrap.result.kind": "success\n",
+        "bootstrap.result.message": ""
+      },
+      "observer_scope": "Collator result only; not a typed validator terminal result. Diagnostic log is used to locate cause, not infer CandidateInvalid versus LocalUnavailable.",
+      "sha256": {
+        "zerostate.boc": "2d7579f4ebfd88920df61661b6514252f0ea07fa36049f4d0dca27654fd5272c",
+        "bootstrap.log": "5d3248d83924383ec2cbb8d332518688490544d288c515289e14818815afbe43",
+        "bootstrap.result": "b0b5464a5f290a15b6a78529508979e500a2ef2b88da01fca94db52c314fc8d0",
+        "bootstrap.result.kind": "81b2bd4ea98c8db66554fbc8d7637a1a69a130f331feb732b75caab4c4868fd5",
+        "bootstrap.result.message": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    },
+    {
+      "name": "test-counter-cross-delivery",
+      "fixture": "/home/tomi/tos/build/counter-integration-bd957ef2294d",
+      "failure_reason": "malformed engine configuration framing",
+      "raw_diagnostics": [
+        {
+          "line": 100,
+          "text": "\u001b[1;31m[ 1][t 6][2026-09-09 17:48:42.193563159][validate-query.cpp:147][!fakevalidate(-1,8000000000000000):1#0]\tREJECT: aborting validation of block candidate for (-1,8000000000000000) : invalid instance installation : [Error : 0 : malformed engine configuration framing]\u001b[0m"
+        },
+        {
+          "line": 110,
+          "text": "\u001b[1;31m[ 1][t 6][2026-09-09 17:48:42.195230532][manager-disk.cpp:324][!fakevalidate(-1,8000000000000000):1#0]\tfailed to create block: invalid instance installation : [Error : 0 : malformed engine configuration framing]\u001b[0m"
+        }
+      ],
+      "param84_present": true,
+      "payloads": [
+        {
+          "workchain": 2,
+          "bits": 0,
+          "refs": 0,
+          "root_hash": "96a296d224f285c67bee93c30f8a309157f0daa35dc5b87e410b78630a09cfc7",
+          "raw_bits": ""
+        },
+        {
+          "workchain": 3,
+          "bits": 0,
+          "refs": 0,
+          "root_hash": "96a296d224f285c67bee93c30f8a309157f0daa35dc5b87e410b78630a09cfc7",
+          "raw_bits": ""
+        }
+      ],
+      "new_to_this_merge": false,
+      "relation_to_three_original_exceptions": "Earlier framing failure: raw business cell is not the required identity shell; same deferred installation/consumer migration, not the 7406 genesis comparison.",
+      "disposition": "Owner-deferred obsolete fixture shape; neither passed nor waived as an unrelated failure.",
+      "observer": {
+        "bootstrap.result": "collate 0\n",
+        "bootstrap.result.kind": "success\n",
+        "bootstrap.result.message": ""
+      },
+      "observer_scope": "Collator result only; not a typed validator terminal result. Diagnostic log is used to locate cause, not infer CandidateInvalid versus LocalUnavailable.",
+      "sha256": {
+        "zerostate.boc": "5b2ffdd8432bb6a48844f751fb7692e68fb82670ff1a22662d8dc8e97d0bc572",
+        "bootstrap.log": "1d3dde951e2dff7e4c841b2ef72cbab15ee6e4d14e6789e3a97f0e2f002f92b6",
+        "bootstrap.result": "b0b5464a5f290a15b6a78529508979e500a2ef2b88da01fca94db52c314fc8d0",
+        "bootstrap.result.kind": "81b2bd4ea98c8db66554fbc8d7637a1a69a130f331feb732b75caab4c4868fd5",
+        "bootstrap.result.message": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    },
+    {
+      "name": "test-counter-native-sender",
+      "fixture": "/home/tomi/tos/build/counter-integration-4e020fb36c9d",
+      "failure_reason": "malformed engine configuration framing",
+      "raw_diagnostics": [
+        {
+          "line": 99,
+          "text": "\u001b[1;31m[ 1][t 7][2026-09-09 17:48:42.199671599][validate-query.cpp:147][!fakevalidate(-1,8000000000000000):1#0]\tREJECT: aborting validation of block candidate for (-1,8000000000000000) : invalid instance installation : [Error : 0 : malformed engine configuration framing]\u001b[0m"
+        },
+        {
+          "line": 109,
+          "text": "\u001b[1;31m[ 1][t 7][2026-09-09 17:48:42.200877522][manager-disk.cpp:324][!fakevalidate(-1,8000000000000000):1#0]\tfailed to create block: invalid instance installation : [Error : 0 : malformed engine configuration framing]\u001b[0m"
+        }
+      ],
+      "param84_present": true,
+      "payloads": [
+        {
+          "workchain": 2,
+          "bits": 0,
+          "refs": 0,
+          "root_hash": "96a296d224f285c67bee93c30f8a309157f0daa35dc5b87e410b78630a09cfc7",
+          "raw_bits": ""
+        }
+      ],
+      "new_to_this_merge": false,
+      "relation_to_three_original_exceptions": "Earlier framing failure: raw business cell is not the required identity shell; same deferred installation/consumer migration, not the 7406 genesis comparison.",
+      "disposition": "Owner-deferred obsolete fixture shape; neither passed nor waived as an unrelated failure.",
+      "observer": {
+        "bootstrap.result": "collate 0\n",
+        "bootstrap.result.kind": "success\n",
+        "bootstrap.result.message": ""
+      },
+      "observer_scope": "Collator result only; not a typed validator terminal result. Diagnostic log is used to locate cause, not infer CandidateInvalid versus LocalUnavailable.",
+      "sha256": {
+        "zerostate.boc": "9ef43823ab9bb6839e6bf9e1fc82815d0150e4c4916146c33db95f729360eba8",
+        "bootstrap.log": "960c93d0d8022dff61960c45182085833e4c90717521839a568bd1cac923813d",
+        "bootstrap.result": "b0b5464a5f290a15b6a78529508979e500a2ef2b88da01fca94db52c314fc8d0",
+        "bootstrap.result.kind": "81b2bd4ea98c8db66554fbc8d7637a1a69a130f331feb732b75caab4c4868fd5",
+        "bootstrap.result.message": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    },
+    {
+      "name": "test-counter-engine-config",
+      "fixture": "/home/tomi/tos/build/counter-integration-9c2ffc7d8de1",
+      "failure_reason": "malformed engine configuration framing",
+      "raw_diagnostics": [
+        {
+          "line": 99,
+          "text": "\u001b[1;31m[ 1][t 3][2026-09-09 17:48:42.411931056][validate-query.cpp:147][!fakevalidate(-1,8000000000000000):1#0]\tREJECT: aborting validation of block candidate for (-1,8000000000000000) : invalid instance installation : [Error : 0 : malformed engine configuration framing]\u001b[0m"
+        },
+        {
+          "line": 109,
+          "text": "\u001b[1;31m[ 1][t 3][2026-09-09 17:48:42.413312968][manager-disk.cpp:324][!fakevalidate(-1,8000000000000000):1#0]\tfailed to create block: invalid instance installation : [Error : 0 : malformed engine configuration framing]\u001b[0m"
+        }
+      ],
+      "param84_present": true,
+      "payloads": [
+        {
+          "workchain": 2,
+          "bits": 1,
+          "refs": 0,
+          "root_hash": "90aec8965afabb16ebc3cb9b408ebae71b618d78788bc80d09843593cac98da4",
+          "raw_bits": "0"
+        }
+      ],
+      "new_to_this_merge": false,
+      "relation_to_three_original_exceptions": "Earlier framing failure: raw business cell is not the required identity shell; same deferred installation/consumer migration, not the 7406 genesis comparison.",
+      "disposition": "Owner-deferred obsolete fixture shape; neither passed nor waived as an unrelated failure.",
+      "observer": {
+        "bootstrap.result": "collate 0\n",
+        "bootstrap.result.kind": "success\n",
+        "bootstrap.result.message": ""
+      },
+      "observer_scope": "Collator result only; not a typed validator terminal result. Diagnostic log is used to locate cause, not infer CandidateInvalid versus LocalUnavailable.",
+      "sha256": {
+        "zerostate.boc": "0440a040210b2d13dae05d290bc07caa1e2b017f5997c109be36b68161945fab",
+        "bootstrap.log": "5f90ece1714f0b099c4a61c3f0a61f18018f130c601d179995fed34403278367",
+        "bootstrap.result": "b0b5464a5f290a15b6a78529508979e500a2ef2b88da01fca94db52c314fc8d0",
+        "bootstrap.result.kind": "81b2bd4ea98c8db66554fbc8d7637a1a69a130f331feb732b75caab4c4868fd5",
+        "bootstrap.result.message": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    },
+    {
+      "name": "test-counter-account-binding-readiness",
+      "fixture": "/home/tomi/tos/build/counter-integration-b689c5733199",
+      "failure_reason": "configured genesis differs from authenticated genesis",
+      "raw_diagnostics": [
+        {
+          "line": 101,
+          "text": "\u001b[1;31m[ 1][t 6][2026-09-09 17:48:42.177284315][validate-query.cpp:147][!fakevalidate(-1,8000000000000000):1#0]\tREJECT: aborting validation of block candidate for (-1,8000000000000000) : invalid instance installation : [Error : 7406 : configured genesis differs from authenticated genesis]\u001b[0m"
+        },
+        {
+          "line": 111,
+          "text": "\u001b[1;31m[ 1][t 6][2026-09-09 17:48:42.178992313][manager-disk.cpp:324][!fakevalidate(-1,8000000000000000):1#0]\tfailed to create block: invalid instance installation : [Error : 7406 : configured genesis differs from authenticated genesis]\u001b[0m"
+        }
+      ],
+      "param84_present": true,
+      "payloads": [
+        {
+          "workchain": 2,
+          "bits": 576,
+          "refs": 2,
+          "root_hash": "d0ad25d5fa5ff497579a863c398351bdef94c3202b3623bff27f42a568236cfe",
+          "cadence_ms": 400,
+          "claimed_genesis": "0000000000000000000000000000000000000000000000000000000000000000",
+          "actual_genesis": "2fab446ea078e1b7816449bf42d7d387c2f6383466cc36caf16822829998cc6b"
+        }
+      ],
+      "new_to_this_merge": false,
+      "relation_to_three_original_exceptions": "Original adjudicated bootstrap shape.",
+      "disposition": "Owner-deferred obsolete fixture shape; neither passed nor waived as an unrelated failure.",
+      "observer": {
+        "bootstrap.result": "collate 0\n",
+        "bootstrap.result.kind": "success\n",
+        "bootstrap.result.message": ""
+      },
+      "observer_scope": "Collator result only; not a typed validator terminal result. Diagnostic log is used to locate cause, not infer CandidateInvalid versus LocalUnavailable.",
+      "sha256": {
+        "zerostate.boc": "a175e16ca858c7bc22741f82cd1e132a6bb21a8f00e7d6bd5f09990a8a674c63",
+        "bootstrap.log": "2a64443e0f87cc7f54206f9cc5b6ca069cc966f420e6a28f8e81a15152c04681",
+        "bootstrap.result": "b0b5464a5f290a15b6a78529508979e500a2ef2b88da01fca94db52c314fc8d0",
+        "bootstrap.result.kind": "81b2bd4ea98c8db66554fbc8d7637a1a69a130f331feb732b75caab4c4868fd5",
+        "bootstrap.result.message": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    },
+    {
+      "name": "test-counter-activation-old_version",
+      "fixture": "/home/tomi/tos/build/counter-integration-e4b6ef69babd",
+      "failure_reason": "instance configuration is missing",
+      "raw_diagnostics": [
+        {
+          "line": 99,
+          "text": "\u001b[1;31m[ 1][t 7][2026-09-09 17:48:42.288002004][validate-query.cpp:147][!fakevalidate(-1,8000000000000000):1#0]\tREJECT: aborting validation of block candidate for (-1,8000000000000000) : invalid instance installation : [Error : 7409 : instance configuration is missing]\u001b[0m"
+        },
+        {
+          "line": 109,
+          "text": "\u001b[1;31m[ 1][t 7][2026-09-09 17:48:42.289444065][manager-disk.cpp:324][!fakevalidate(-1,8000000000000000):1#0]\tfailed to create block: invalid instance installation : [Error : 7409 : instance configuration is missing]\u001b[0m"
+        }
+      ],
+      "param84_present": false,
+      "payloads": [],
+      "new_to_this_merge": false,
+      "relation_to_three_original_exceptions": "Original adjudicated bootstrap shape.",
+      "disposition": "Owner-deferred obsolete fixture shape; neither passed nor waived as an unrelated failure.",
+      "observer": {
+        "bootstrap.result": "collate 0\n",
+        "bootstrap.result.kind": "success\n",
+        "bootstrap.result.message": ""
+      },
+      "observer_scope": "Collator result only; not a typed validator terminal result. Diagnostic log is used to locate cause, not infer CandidateInvalid versus LocalUnavailable.",
+      "sha256": {
+        "zerostate.boc": "421ecd7c08a5810420832cf27eb10e2437d32b4bfffa1148152fdda3be30d6a2",
+        "bootstrap.log": "2a36466f8eefb5638bac5335ec00b1699595bf4d5ddcf1088269ef6711ab47b8",
+        "bootstrap.result": "b0b5464a5f290a15b6a78529508979e500a2ef2b88da01fca94db52c314fc8d0",
+        "bootstrap.result.kind": "81b2bd4ea98c8db66554fbc8d7637a1a69a130f331feb732b75caab4c4868fd5",
+        "bootstrap.result.message": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    },
+    {
+      "name": "test-counter-activation-missing_capability",
+      "fixture": "/home/tomi/tos/build/counter-integration-7bdb92becf03",
+      "failure_reason": "instance configuration is missing",
+      "raw_diagnostics": [
+        {
+          "line": 99,
+          "text": "\u001b[1;31m[ 1][t 3][2026-09-09 17:48:43.073765998][validate-query.cpp:147][!fakevalidate(-1,8000000000000000):1#0]\tREJECT: aborting validation of block candidate for (-1,8000000000000000) : invalid instance installation : [Error : 7409 : instance configuration is missing]\u001b[0m"
+        },
+        {
+          "line": 109,
+          "text": "\u001b[1;31m[ 1][t 3][2026-09-09 17:48:43.075185759][manager-disk.cpp:324][!fakevalidate(-1,8000000000000000):1#0]\tfailed to create block: invalid instance installation : [Error : 7409 : instance configuration is missing]\u001b[0m"
+        }
+      ],
+      "param84_present": false,
+      "payloads": [],
+      "new_to_this_merge": false,
+      "relation_to_three_original_exceptions": "Original adjudicated bootstrap shape.",
+      "disposition": "Owner-deferred obsolete fixture shape; neither passed nor waived as an unrelated failure.",
+      "observer": {
+        "bootstrap.result": "collate 0\n",
+        "bootstrap.result.kind": "success\n",
+        "bootstrap.result.message": ""
+      },
+      "observer_scope": "Collator result only; not a typed validator terminal result. Diagnostic log is used to locate cause, not infer CandidateInvalid versus LocalUnavailable.",
+      "sha256": {
+        "zerostate.boc": "7a91c11ed27321987714f0e0bffcccc8773199e96c719aadb7a3f2f20736413a",
+        "bootstrap.log": "a2bfd2dc287566292a732e9f018f92fd76aa67c02ea4714e7ffd56fce1be8847",
+        "bootstrap.result": "b0b5464a5f290a15b6a78529508979e500a2ef2b88da01fca94db52c314fc8d0",
+        "bootstrap.result.kind": "81b2bd4ea98c8db66554fbc8d7637a1a69a130f331feb732b75caab4c4868fd5",
+        "bootstrap.result.message": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    }
+  ]
+}

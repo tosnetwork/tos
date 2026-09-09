@@ -1,0 +1,7 @@
+{
+  "time_utc": "2026-09-09T17:44:37Z",
+  "prior_b_ctest_pid_exists": false,
+  "matching_references": [],
+  "inaccessible_processes": 1841,
+  "scope": "Readable process cwd/fd references; no tests launched. A processes untouched."
+}

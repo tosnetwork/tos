@@ -1,0 +1,25 @@
+{
+  "before_count": 26,
+  "after_count": 0,
+  "keep_newest": 0,
+  "archive": "/home/tomi/tos/build/counter-fixture-diagnostics-1788976094780310948.tar.gz",
+  "archive_sha256": "1c6a3f1ed4253132064fef929cf601f627c9bb1ef30b12ccfcf3931052b0d4f7",
+  "diagnostic_members": 661,
+  "archived_fixture_directories": 26,
+  "archive_scope": "top-level diagnostic files, not nested databases",
+  "pause_confirmation": "cleanup-window-stop-check.json",
+  "commands": [
+    "python3 test/cleanup-counter-fixtures.py /home/tomi/tos/build --keep-newest 0",
+    "python3 test/cleanup-counter-fixtures.py /home/tomi/tos/build --keep-newest 0 --delete"
+  ],
+  "cleanup_script_sha256": "a72622a350df0ae69feea2729727403985a7195aec1cc389d3e22a6bd0ff4d9a",
+  "logs": {
+    "d40-cleanup-before.txt": "3040b98a2c9ceb1674e07aa6ae401d1252a11c0ec361c6ecdde1e0df62ac31a3",
+    "d40-cleanup-after.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "d40-cleanup-dry-run.log": "419158f130b12fc695d3f008500117bf24b6735c84635ecc83772126ff15d0ac",
+    "d40-cleanup-delete.log": "6f709167e7c390a1831fe1005717f7eb3042b0b165fe425a1d7cfd9bdeb30c86",
+    "d40-clean-final-default-build.log": "03798c136eda2ef430371101bcbdfad58343f773323ee47c4db7d655d1df98b7",
+    "d40-clean-final-i13.json": "27b9d1a1c298b9c6c63d693afbcdb5726c7e828ae451820b1b9de6d79e03776d",
+    "d40-clean-final-i13-configure.log": "8d862a15230d9291297243d9a89658f0cbf15340dbea1772243fe4b60ad396d9"
+  }
+}
