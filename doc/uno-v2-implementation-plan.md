@@ -3434,3 +3434,34 @@ seam is not behavior-identical to its predecessor: a local bind failure can
 return before the old refusal, although both outcomes are LocalUnavailable.
 The late-message terminal guard is inspected, not a demonstrated late-reordering
 delivery experiment. Keep that distinction separate from measured missing stats.
+
+### Approved coordinator container layout
+
+The final system placement is coordinator StateInit.data -> versioned container
+-> system reference. The container's explicit tag is 46ff26c1 with layout 1,
+48 bits and exactly one reference; the system tag is bbd85560 with independent
+layout 1, 192 bits and no references. Both reject version zero and unsupported
+versions. The earlier two-reference proposal is superseded, not an alternative
+accepted encoding. Registration bonds require a later container layout; no
+placeholder/default is installed. See `uno-v2-coordinator-state-wire.md`.
+Codec delivery does not close D32 fee reconstruction or live state acquisition.
+
+Codec field-order witnesses must use distinguishable values for same-type
+fields and assert each decoded component. Equal extreme values remain useful
+width-boundary tests, but are not field-order evidence. ResourcePolicyWire has
+distinct per-record values and now reads each raw wire field independently of
+generated unpack, avoiding a self-consistent encoder/decoder swap. Aggregate fee
+checks read all three unequal amounts and both distinct role addresses directly,
+before conservation/overlay checks. Coordinator ExactFraming reads 7/8/9 from a
+hand-built system record. ResultWireRoundTrip adds distinct 101/102/103 usage
+beside its separate extreme-value case. Declaration keys/hashes and executor
+witness roots already have distinguishable fixtures; ingress role fixtures use
+different executor/custody addresses. This is a targeted codec-test sweep, not
+a claim about all equal-valued integration fixtures or all repository codecs.
+Open followup: the block-result usage triple still has no independent raw
+positional witness for a coordinated encoder-and-decoder reorder. Distinct
+101/102/103 values catch one-sided edits only; do not claim that stronger
+wire-compatibility property. Keep width-boundary and order claims separate.
+Mutation tooling must retain unique patch context and compare applied bytes
+against the intended replacement before building; a non-red misapplied patch
+is not evidence about the intended path.

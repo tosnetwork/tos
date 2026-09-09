@@ -1,4 +1,9 @@
 unit$_ = Unit;
+uno_v2_system_state#bbd85560 layout_version:uint16 base_compute:uint64
+  registered_accounts:uint64 system_pending_count:uint16 = UnoV2SystemState;
+// Explicit frozen tag: do not regenerate it from the current definition.
+uno_v2_coordinator_state#46ff26c1 layout_version:uint16
+  system:^UnoV2SystemState = UnoV2CoordinatorState;
 uno_v2_resource_input max_cells:uint64 max_bits:uint64 max_roots:uint64
   max_reads:uint32 max_writes:uint32 max_inbound:uint32 = UnoV2ResourceInput;
 uno_v2_resource_state max_cells:uint64 max_bits:uint64 max_account_cells:uint64

@@ -28,6 +28,7 @@
 #include "block/workchain-account-access-codec.h"
 #include "block/workchain-host-identity.h"
 #include "block/workchain-resource-policy.h"
+#include "block/workchain-coordinator-state.h"
 #include "block/workchain-host-input.h"
 #include "block/workchain-account-engine.h"
 #include "block/workchain-account-settlement.h"
@@ -59,6 +60,106 @@ struct AllowsImplicitAccountPathMode<Cell, std::void_t<decltype(block::lookup_wo
 static_assert(!AllowsImplicitAccountPathMode<td::Ref<vm::Cell>>::value,
               "Account lookup callers must explicitly choose Read or Replace");
 
+TEST(WorkchainBlock, CoordinatorStateLayout) {
+  block::WorkchainCoordinatorState input{1, {1, UINT64_MAX, UINT64_MAX, UINT16_MAX}};
+  auto encoded = block::encode_workchain_coordinator_state(input);
+  ASSERT_TRUE(encoded.is_ok());
+  auto root = encoded.move_as_ok();
+  auto cs = vm::load_cell_slice(root);
+  ASSERT_EQ(cs.size(), 48u);
+  ASSERT_EQ(cs.size_refs(), 1u);
+  ASSERT_EQ(cs.fetch_ulong(32), 0x46ff26c1u);
+  ASSERT_EQ(cs.fetch_ulong(16), 1u);
+  auto system = cs.fetch_ref();
+  auto ss = vm::load_cell_slice(system);
+  ASSERT_EQ(ss.size(), 192u);
+  ASSERT_EQ(ss.size_refs(), 0u);
+  ASSERT_EQ(ss.fetch_ulong(32), 0xbbd85560u);
+  auto decoded = block::decode_workchain_coordinator_state(root);
+  ASSERT_TRUE(decoded.is_ok());
+  ASSERT_EQ(decoded.ok().layout_version, 1);
+  ASSERT_EQ(decoded.ok().system.layout_version, 1);
+  ASSERT_EQ(decoded.ok().system.base_compute, UINT64_MAX);
+  ASSERT_EQ(decoded.ok().system.registered_accounts, UINT64_MAX);
+  ASSERT_EQ(decoded.ok().system.system_pending_count, UINT16_MAX);
+  auto again = block::encode_workchain_coordinator_state(decoded.ok());
+  ASSERT_TRUE(again.is_ok());
+  ASSERT_EQ(again.ok()->get_hash(), root->get_hash());
+  for (int count : {-1, 65536}) {
+    auto malformed = input;
+    malformed.system.system_pending_count = count;
+    ASSERT_TRUE(block::encode_workchain_coordinator_state(malformed).is_error());
+  }
+  // Raw generated packing makes malformed/unsupported fixtures independently
+  // of the supported-layout encoder; no host default is involved.
+  for (auto version : {std::uint16_t{0}, std::uint16_t{2}, std::uint16_t{65535}}) {
+    auto changed = input;
+    changed.layout_version = version;
+    ASSERT_TRUE(block::encode_workchain_coordinator_state(changed).is_error());
+    block::gen::UnoV2CoordinatorState::Record header;
+    header.layout_version = version;
+    header.system = system;
+    td::Ref<vm::Cell> bad;
+    ASSERT_TRUE(block::tlb::pack_cell(bad, header));
+    ASSERT_TRUE(block::decode_workchain_coordinator_state(bad).is_error());
+    changed = input;
+    changed.system.layout_version = version;
+    ASSERT_TRUE(block::encode_workchain_coordinator_state(changed).is_error());
+    ASSERT_TRUE(block::tlb::pack_cell(header.system, changed.system));
+    header.layout_version = 1;
+    ASSERT_TRUE(block::tlb::pack_cell(bad, header));
+    ASSERT_TRUE(block::decode_workchain_coordinator_state(bad).is_error());
+  }
+}
+
+TEST(WorkchainBlock, CoordinatorStateExactFraming) {
+  auto system = vm::CellBuilder().store_long(0xbbd85560, 32).store_long(1, 16)
+      .store_long(7, 64).store_long(8, 64).store_long(9, 16).finalize();
+  auto wrap = [](td::Ref<vm::Cell> child) {
+    return vm::CellBuilder().store_long(0x46ff26c1, 32).store_long(1, 16).store_ref(child).finalize();
+  };
+  auto valid = wrap(system);
+  auto fields = block::decode_workchain_coordinator_state(valid);
+  ASSERT_TRUE(fields.is_ok());
+  ASSERT_EQ(fields.ok().system.base_compute, 7u);
+  ASSERT_EQ(fields.ok().system.registered_accounts, 8u);
+  ASSERT_EQ(fields.ok().system.system_pending_count, 9);
+  ASSERT_TRUE(block::decode_workchain_coordinator_state({}).is_error());
+  ASSERT_TRUE(block::decode_workchain_coordinator_state(system).is_error());
+  for (unsigned tag : {0u, 0x46ff26c0u, 0xbbd85560u}) {
+    auto bad = vm::CellBuilder().store_long(tag, 32).store_long(1, 16).store_ref(system).finalize();
+    ASSERT_TRUE(block::decode_workchain_coordinator_state(bad).is_error());
+  }
+  for (unsigned tag : {0u, 0xbbd85561u, 0x46ff26c1u}) {
+    auto bad = vm::CellBuilder().store_long(tag, 32).store_long(1, 16)
+        .store_long(7, 64).store_long(8, 64).store_long(9, 16).finalize();
+    ASSERT_TRUE(block::decode_workchain_coordinator_state(wrap(bad)).is_error());
+  }
+  auto no_ref = vm::CellBuilder().store_long(0x46ff26c1, 32).store_long(1, 16).finalize();
+  ASSERT_TRUE(block::decode_workchain_coordinator_state(no_ref).is_error());
+  for (bool extra_ref : {false, true}) {
+    for (bool outer : {false, true}) {
+      vm::CellBuilder b;
+      b.append_cellslice(vm::load_cell_slice(outer ? valid : system));
+      if (extra_ref) b.store_ref(system); else b.store_long(0, 1);
+      auto bad = b.finalize();
+      ASSERT_TRUE(block::decode_workchain_coordinator_state(outer ? bad : wrap(bad)).is_error());
+    }
+  }
+  auto short_system = vm::CellBuilder().store_long(0xbbd85560, 32).store_long(1, 16)
+      .store_long(7, 64).store_long(8, 64).finalize();
+  ASSERT_TRUE(block::decode_workchain_coordinator_state(wrap(short_system)).is_error());
+  auto plain = vm::CellBuilder().store_long(17, 8).finalize();
+  std::vector<td::Ref<vm::Cell>> special_cells{
+      vm::CellBuilder().store_long(2, 8).store_zeroes(256).finalize(true),
+      vm::CellBuilder::do_create_pruned_branch(plain, 1, 0),
+      vm::CellBuilder::create_merkle_proof(plain)};
+  for (const auto& special : special_cells) {
+    ASSERT_TRUE(block::decode_workchain_coordinator_state(special).is_error());
+    ASSERT_TRUE(block::decode_workchain_coordinator_state(wrap(special)).is_error());
+  }
+}
+
 TEST(WorkchainBlock, ResourcePolicyWire) {
   block::WorkchainResourcePolicy policy{0x80010001u,
       {UINT64_MAX, 2, 3, UINT32_MAX, 5, 6},
@@ -75,11 +176,21 @@ TEST(WorkchainBlock, ResourcePolicyWire) {
   ASSERT_EQ(cs.fetch_ulong(32), policy.admission_version);
   const unsigned widths[] = {320, 304, 384};
   const unsigned tags[] = {0xc5defa2au, 0x90aef2ddu, 0x7a310b92u};
+  // Read wire order independently of generated unpack: a self-consistent
+  // encoder/decoder field swap must not survive this round-trip fixture.
+  const std::vector<std::pair<unsigned, std::uint64_t>> wire_fields[] = {
+      {{64, UINT64_MAX}, {64, 2}, {64, 3}, {32, UINT32_MAX}, {32, 5}, {32, 6}},
+      {{64, 7}, {64, UINT64_MAX}, {64, 9}, {64, 10}, {16, UINT16_MAX}},
+      {{64, 11}, {64, 12}, {64, 13}, {64, 14}, {64, UINT64_MAX}, {32, UINT32_MAX}}};
   for (unsigned i = 0; i < 3; ++i) {
     auto child = vm::load_cell_slice(cs.fetch_ref());
     ASSERT_EQ(child.size(), widths[i]);
     ASSERT_EQ(child.size_refs(), 0u);
     ASSERT_EQ(child.fetch_ulong(32), tags[i]);
+    for (const auto& field : wire_fields[i]) {
+      ASSERT_EQ(child.fetch_ulong(field.first), field.second);
+    }
+    ASSERT_TRUE(child.empty_ext());
   }
   auto decoded = block::decode_workchain_resource_policy(root);
   ASSERT_TRUE(decoded.is_ok());
@@ -801,6 +912,54 @@ TEST(WorkchainBlock, ResourcePolicyLocalLoadFailure) {
   }
   ASSERT_TRUE(threw);
   ASSERT_EQ(loads, 1u);
+}
+
+TEST(WorkchainBlock, CoordinatorStateLocalLoadFailure) {
+  auto encoded = block::encode_workchain_coordinator_state({1, {1, 0, 0, 0}});
+  ASSERT_TRUE(encoded.is_ok());
+  auto root = encoded.move_as_ok();
+  unsigned loads = 0;
+  td::Ref<PreflightObservedCell> available{true, root, &loads, false};
+  ASSERT_TRUE(block::decode_workchain_coordinator_state(available).is_ok());
+  ASSERT_EQ(loads, 1u);
+  loads = 0;
+  td::Ref<PreflightObservedCell> missing{true, root, &loads, true};
+  bool unavailable = false;
+  try {
+    (void)block::decode_workchain_coordinator_state(missing);
+  } catch (const vm::VmError&) {
+    unavailable = true;
+  }
+  ASSERT_TRUE(unavailable);
+  ASSERT_EQ(loads, 1u);
+  loads = 0;
+  td::Ref<PreflightObservedCell> hidden{true, root, &loads, false, 1};
+  bool virtual_failure = false;
+  try {
+    (void)block::decode_workchain_coordinator_state(hidden);
+  } catch (const vm::VmVirtError&) {
+    virtual_failure = true;
+  }
+  ASSERT_TRUE(virtual_failure);
+  ASSERT_EQ(loads, 1u);
+  auto system = vm::load_cell_slice(root).prefetch_ref();
+  for (unsigned fault = 0; fault != 3; ++fault) {
+    loads = 0;
+    td::Ref<PreflightObservedCell> child{true, system, &loads, fault == 1, fault == 2 ? 1u : 0u};
+    auto wrapper = vm::CellBuilder().store_long(0x46ff26c1, 32).store_long(1, 16).store_ref(child).finalize();
+    bool failed = false;
+    try {
+      ASSERT_TRUE(block::decode_workchain_coordinator_state(wrapper).is_ok());
+    } catch (const vm::VmError&) {
+      ASSERT_EQ(fault, 1u);
+      failed = true;
+    } catch (const vm::VmVirtError&) {
+      ASSERT_EQ(fault, 2u);
+      failed = true;
+    }
+    ASSERT_EQ(failed, fault != 0);
+    ASSERT_EQ(loads, 1u);
+  }
 }
 
 td::Ref<vm::Cell> number(std::uint64_t value) {
@@ -2450,6 +2609,9 @@ TEST(WorkchainBlock, AggregateFeeSettlement) {
   ASSERT_TRUE(block::gen::t_UnoV2HostEffects.validate_ref(4096, root));
   auto native = block::decode_workchain_native_effects(decoded.native).move_as_ok();
   ASSERT_TRUE(native.fees.has_value());
+  ASSERT_EQ(native.fees->custody, custody_id);
+  ASSERT_EQ(native.fees->coordinator, coordinator_id);
+  ASSERT_EQ(native.fees->state_fee->to_long(), 17);
   ASSERT_EQ(native.fees->compute_fee->to_long(), 23);
   ASSERT_EQ(native.fees->tip->to_long(), 5);
   ASSERT_TRUE(block::allocate_workchain_native_balance(custody_id, C(1000), decoded, 1, 4096).move_as_ok() == C(983));
@@ -8287,8 +8449,10 @@ TEST(WorkchainBlock, ResultWireRoundTrip) {
       &block::WorkchainBlockResult::data_availability};
   std::uint64_t value = 100;
   for (auto field : fields) produced.*field = number(value++);
+  produced.usage = {101, 102, 103};
   auto distinct = block::encode_workchain_block_result(produced).move_as_ok();
   auto decoded = block::decode_workchain_block_result(distinct).move_as_ok();
+  ASSERT_TRUE(decoded.usage == produced.usage);
   for (auto field : fields) {
     ASSERT_TRUE((decoded.*field)->get_hash() == (produced.*field)->get_hash());
   }
