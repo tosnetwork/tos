@@ -111,6 +111,20 @@ left test-tos-collator at the mutant hash; only explicitly rebuilding that targe
 rebuilt validator-disk and restored the executable. Opt-in private harnesses
 likewise require their own explicit target rebuilds.
 
+Regression preflight (owner decision, 2026-09-09): before every full regression,
+coordinate a test-idle window with all agents and run
+`python3 test/cleanup-counter-fixtures.py <build-dir> --keep-newest N` first as
+a dry run, then with `--delete` after inspecting the exact targets. Retain the
+before/after directory counts and archive path in the run evidence. The script
+checks test processes and readable `/proc` cwd/file-descriptor references,
+archives top-level diagnostics before deletion, and never replaces coordination
+against newly launched tests. Choose N with enough room below the unchanged
+fixture limit for the whole run; this integration uses N=0. Do not wait for the
+retention cap to fail a test, bypass the cap, or classify a cap failure as an
+expected protocol rejection. Recheck each deferred failure's actual cause on
+fresh fixtures after cleanup; previous-run names and reasons are not evidence
+for the next run.
+
 - Connectivity must use objects constructed by the production path. Record
   the actual stopping point, counters and side effects; private fixture assembly
   is not runtime connectivity evidence. If a closed gate or incomplete resource

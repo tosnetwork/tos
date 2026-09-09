@@ -1,0 +1,439 @@
+Internal ctest changing into directory: /home/tomi/tos/build
+Test project /home/tomi/tos/build
+        Start  17: test-counter-disk-integration
+        Start  18: test-counter-account-binding-readiness
+        Start  20: test-counter-idle-replay
+        Start  21: test-counter-self-delivery
+        Start  22: test-counter-cross-delivery
+        Start  23: test-counter-native-sender
+        Start  24: test-counter-activation-missing_capability
+        Start  25: test-counter-config-presence-missing_capability
+  1/130 Test  #25: test-counter-config-presence-missing_capability ..................   Passed    0.21 sec
+        Start  26: test-counter-activation-old_version
+  2/130 Test  #17: test-counter-disk-integration ....................................***Failed    0.33 sec
+-- Counter fixture active; retained if interrupted: /home/tomi/tos/build/counter-integration-22f31b370297
+CMake Error at /home/tomi/tos/test/test-counter-disk-integration.cmake:171 (message):
+  bootstrap: exit 2, expected 0; see
+  /home/tomi/tos/build/counter-integration-22f31b370297/bootstrap.log
+Call Stack (most recent call first):
+  /home/tomi/tos/test/test-counter-disk-integration.cmake:212 (run_node)
+
+
+
+CMake Error at /home/tomi/tos/test/counter-fixture-lifecycle.cmake:58 (message):
+  Counter fixture FAILED (1); retained for inspection:
+  /home/tomi/tos/build/counter-integration-22f31b370297
+Call Stack (most recent call first):
+  /home/tomi/tos/test/test-counter-disk-integration.cmake:3 (counter_run_fixture)
+
+
+
+        Start  27: test-counter-config-presence-old_version
+  3/130 Test  #20: test-counter-idle-replay .........................................***Failed    0.33 sec
+-- Counter fixture active; retained if interrupted: /home/tomi/tos/build/counter-integration-ab42c7b93a36
+CMake Error at /home/tomi/tos/test/test-counter-disk-integration.cmake:171 (message):
+  bootstrap: exit 2, expected 0; see
+  /home/tomi/tos/build/counter-integration-ab42c7b93a36/bootstrap.log
+Call Stack (most recent call first):
+  /home/tomi/tos/test/test-counter-disk-integration.cmake:212 (run_node)
+
+
+
+CMake Error at /home/tomi/tos/test/counter-fixture-lifecycle.cmake:58 (message):
+  Counter fixture FAILED (1); retained for inspection:
+  /home/tomi/tos/build/counter-integration-ab42c7b93a36
+Call Stack (most recent call first):
+  /home/tomi/tos/test/test-counter-disk-integration.cmake:3 (counter_run_fixture)
+
+
+
+        Start  28: test-counter-config-binding
+  4/130 Test  #18: test-counter-account-binding-readiness ...........................***Failed    0.34 sec
+-- Counter fixture active; retained if interrupted: /home/tomi/tos/build/counter-integration-b689c5733199
+CMake Error at /home/tomi/tos/test/test-counter-disk-integration.cmake:171 (message):
+  bootstrap: exit 2, expected 0; see
+  /home/tomi/tos/build/counter-integration-b689c5733199/bootstrap.log
+Call Stack (most recent call first):
+  /home/tomi/tos/test/test-counter-disk-integration.cmake:212 (run_node)
+
+
+
+CMake Error at /home/tomi/tos/test/counter-fixture-lifecycle.cmake:58 (message):
+  Counter fixture FAILED (1); retained for inspection:
+  /home/tomi/tos/build/counter-integration-b689c5733199
+Call Stack (most recent call first):
+  /home/tomi/tos/test/test-counter-disk-integration.cmake:3 (counter_run_fixture)
+
+
+
+        Start  29: test-counter-engine-config
+  5/130 Test  #21: test-counter-self-delivery .......................................***Failed    0.34 sec
+-- Counter fixture active; retained if interrupted: /home/tomi/tos/build/counter-integration-37e0a88f40dc
+CMake Error at /home/tomi/tos/test/test-counter-disk-integration.cmake:171 (message):
+  bootstrap: exit 2, expected 0; see
+  /home/tomi/tos/build/counter-integration-37e0a88f40dc/bootstrap.log
+Call Stack (most recent call first):
+  /home/tomi/tos/test/test-counter-disk-integration.cmake:212 (run_node)
+
+
+
+CMake Error at /home/tomi/tos/test/counter-fixture-lifecycle.cmake:58 (message):
+  Counter fixture FAILED (1); retained for inspection:
+  /home/tomi/tos/build/counter-integration-37e0a88f40dc
+Call Stack (most recent call first):
+  /home/tomi/tos/test/test-counter-disk-integration.cmake:3 (counter_run_fixture)
+
+
+
+        Start  93: test-db
+  6/130 Test  #22: test-counter-cross-delivery ......................................***Failed    0.35 sec
+-- Counter fixture active; retained if interrupted: /home/tomi/tos/build/counter-integration-bd957ef2294d
+CMake Error at /home/tomi/tos/test/test-counter-disk-integration.cmake:171 (message):
+  bootstrap: exit 2, expected 0; see
+  /home/tomi/tos/build/counter-integration-bd957ef2294d/bootstrap.log
+Call Stack (most recent call first):
+  /home/tomi/tos/test/test-counter-disk-integration.cmake:212 (run_node)
+
+
+
+CMake Error at /home/tomi/tos/test/counter-fixture-lifecycle.cmake:58 (message):
+  Counter fixture FAILED (1); retained for inspection:
+  /home/tomi/tos/build/counter-integration-bd957ef2294d
+Call Stack (most recent call first):
+  /home/tomi/tos/test/test-counter-disk-integration.cmake:3 (counter_run_fixture)
+
+
+
+        Start  48: test-tdutils
+  7/130 Test  #23: test-counter-native-sender .......................................***Failed    0.35 sec
+-- Counter fixture active; retained if interrupted: /home/tomi/tos/build/counter-integration-4e020fb36c9d
+CMake Error at /home/tomi/tos/test/test-counter-disk-integration.cmake:171 (message):
+  bootstrap: exit 2, expected 0; see
+  /home/tomi/tos/build/counter-integration-4e020fb36c9d/bootstrap.log
+Call Stack (most recent call first):
+  /home/tomi/tos/test/test-counter-disk-integration.cmake:212 (run_node)
+
+
+
+CMake Error at /home/tomi/tos/test/counter-fixture-lifecycle.cmake:58 (message):
+  Counter fixture FAILED (1); retained for inspection:
+  /home/tomi/tos/build/counter-integration-4e020fb36c9d
+Call Stack (most recent call first):
+  /home/tomi/tos/test/test-counter-disk-integration.cmake:3 (counter_run_fixture)
+
+
+
+        Start  35: test-bigint
+  8/130 Test  #26: test-counter-activation-old_version ..............................***Failed    0.23 sec
+-- Counter fixture active; retained if interrupted: /home/tomi/tos/build/counter-integration-e4b6ef69babd
+CMake Error at /home/tomi/tos/test/test-counter-disk-integration.cmake:171 (message):
+  bootstrap: exit 2, expected 0; see
+  /home/tomi/tos/build/counter-integration-e4b6ef69babd/bootstrap.log
+Call Stack (most recent call first):
+  /home/tomi/tos/test/test-counter-disk-integration.cmake:212 (run_node)
+
+
+
+CMake Error at /home/tomi/tos/test/counter-fixture-lifecycle.cmake:58 (message):
+  Counter fixture FAILED (1); retained for inspection:
+  /home/tomi/tos/build/counter-integration-e4b6ef69babd
+Call Stack (most recent call first):
+  /home/tomi/tos/test/test-counter-disk-integration.cmake:3 (counter_run_fixture)
+
+
+
+        Start  77: test-uno-build-wiring
+  9/130 Test  #27: test-counter-config-presence-old_version .........................   Passed    0.14 sec
+        Start  53: test-adnl
+ 10/130 Test  #28: test-counter-config-binding ......................................   Passed    0.14 sec
+        Start  47: test-tdactor
+ 11/130 Test  #29: test-counter-engine-config .......................................***Failed    0.23 sec
+-- Counter fixture active; retained if interrupted: /home/tomi/tos/build/counter-integration-9c2ffc7d8de1
+CMake Error at /home/tomi/tos/test/test-counter-disk-integration.cmake:171 (message):
+  bootstrap: exit 2, expected 0; see
+  /home/tomi/tos/build/counter-integration-9c2ffc7d8de1/bootstrap.log
+Call Stack (most recent call first):
+  /home/tomi/tos/test/test-counter-disk-integration.cmake:212 (run_node)
+
+
+
+CMake Error at /home/tomi/tos/test/counter-fixture-lifecycle.cmake:58 (message):
+  Counter fixture FAILED (1); retained for inspection:
+  /home/tomi/tos/build/counter-integration-9c2ffc7d8de1
+Call Stack (most recent call first):
+  /home/tomi/tos/test/test-counter-disk-integration.cmake:3 (counter_run_fixture)
+
+
+
+        Start  49: test-toslib-offline
+ 12/130 Test  #24: test-counter-activation-missing_capability .......................***Failed    1.22 sec
+-- Counter fixture active; retained if interrupted: /home/tomi/tos/build/counter-integration-7bdb92becf03
+CMake Error at /home/tomi/tos/test/test-counter-disk-integration.cmake:171 (message):
+  bootstrap: exit 2, expected 0; see
+  /home/tomi/tos/build/counter-integration-7bdb92becf03/bootstrap.log
+Call Stack (most recent call first):
+  /home/tomi/tos/test/test-counter-disk-integration.cmake:212 (run_node)
+
+
+
+CMake Error at /home/tomi/tos/test/counter-fixture-lifecycle.cmake:58 (message):
+  Counter fixture FAILED (1); retained for inspection:
+  /home/tomi/tos/build/counter-integration-7bdb92becf03
+Call Stack (most recent call first):
+  /home/tomi/tos/test/test-counter-disk-integration.cmake:3 (counter_run_fixture)
+
+
+
+        Start  34: test-ed25519
+ 13/130 Test  #49: test-toslib-offline ..............................................   Passed    9.91 sec
+        Start  54: test-dht
+ 14/130 Test  #34: test-ed25519 .....................................................   Passed   11.80 sec
+        Start   3: test-workchain-proof-operation-trace
+ 15/130 Test  #47: test-tdactor .....................................................   Passed   17.06 sec
+        Start  52: test-tol
+ 16/130 Test  #54: test-dht .........................................................   Passed   12.07 sec
+        Start  36: test-vm
+ 17/130 Test  #53: test-adnl ........................................................   Passed   26.02 sec
+        Start 127: test-consensus-simplex2-empty-chain-restart
+ 18/130 Test  #35: test-bigint ......................................................   Passed   26.31 sec
+        Start 126: test-consensus-simplex2-state-resolver-catch-up
+ 19/130 Test  #52: test-tol .........................................................   Passed   10.83 sec
+        Start 116: test-consensus-simplex2-manager-ingress-adversarial
+ 20/130 Test   #3: test-workchain-proof-operation-trace .............................   Passed   16.02 sec
+        Start 115: test-consensus-simplex2-adaptive-byzantine
+ 21/130 Test #127: test-consensus-simplex2-empty-chain-restart ......................   Passed    6.87 sec
+        Start  99: test-coro
+ 22/130 Test #126: test-consensus-simplex2-state-resolver-catch-up ..................   Passed    8.04 sec
+        Start  60: test-download-state-budget
+ 23/130 Test #116: test-consensus-simplex2-manager-ingress-adversarial ..............   Passed    7.04 sec
+        Start 128: test-consensus-simplex2-query-abuse
+ 24/130 Test  #77: test-uno-build-wiring ............................................   Passed   35.36 sec
+        Start 113: test-consensus-simplex2-malicious-observer
+ 25/130 Test #115: test-consensus-simplex2-adaptive-byzantine .......................   Passed    7.03 sec
+        Start 114: test-consensus-simplex2-relay-loop
+ 26/130 Test  #99: test-coro ........................................................   Passed    5.65 sec
+        Start 111: test-consensus-simplex2-restart
+ 27/130 Test #128: test-consensus-simplex2-query-abuse ..............................   Passed    5.13 sec
+        Start 112: test-consensus-simplex2-partition
+ 28/130 Test #113: test-consensus-simplex2-malicious-observer .......................   Passed    5.12 sec
+        Start 110: test-consensus-simplex2-loss
+ 29/130 Test #114: test-consensus-simplex2-relay-loop ...............................   Passed    5.13 sec
+        Start  37: test-fift
+ 30/130 Test  #60: test-download-state-budget .......................................   Passed    6.81 sec
+        Start  55: test-rldp2
+ 31/130 Test #111: test-consensus-simplex2-restart ..................................   Passed    5.08 sec
+        Start  14: plumtree-graph-sim-fec-stress
+ 32/130 Test #110: test-consensus-simplex2-loss .....................................   Passed    4.13 sec
+        Start  76: test-counter-python-harness
+ 33/130 Test  #37: test-fift ........................................................   Passed    3.91 sec
+        Start  57: test-rldp2-query-eviction
+ 34/130 Test #112: test-consensus-simplex2-partition ................................   Passed    5.08 sec
+        Start  45: test-smartcont
+ 35/130 Test  #55: test-rldp2 .......................................................   Passed    4.76 sec
+        Start  67: test-http-server-limits
+ 36/130 Test  #14: plumtree-graph-sim-fec-stress ....................................   Passed    3.23 sec
+        Start  74: test-uno-state-snapshot
+ 37/130 Test  #57: test-rldp2-query-eviction ........................................   Passed    2.81 sec
+        Start  92: test-tddb
+ 38/130 Test  #67: test-http-server-limits ..........................................   Passed    2.03 sec
+        Start  71: test-celldb-actor-restart
+ 39/130 Test  #74: test-uno-state-snapshot ..........................................   Passed    1.19 sec
+        Start  51: test-func-legacy
+ 40/130 Test  #92: test-tddb ........................................................   Passed    1.37 sec
+        Start 105: test-persistent-treap
+ 41/130 Test  #71: test-celldb-actor-restart ........................................   Passed    1.21 sec
+        Start  98: test-uno-crypto-header-guard
+ 42/130 Test  #51: test-func-legacy .................................................   Passed    1.09 sec
+        Start  50: test-func
+ 43/130 Test #105: test-persistent-treap ............................................   Passed    0.70 sec
+        Start   5: plumtree-graph-sim-smoke
+ 44/130 Test  #50: test-func ........................................................   Passed    0.87 sec
+        Start  91: test-fec
+ 45/130 Test   #5: plumtree-graph-sim-smoke .........................................   Passed    0.91 sec
+        Start  85: test-rldp2-inbound-transfer-bound
+ 46/130 Test  #91: test-fec .........................................................   Passed    0.45 sec
+        Start  10: plumtree-graph-sim-selective-forwarding
+ 47/130 Test  #76: test-counter-python-harness ......................................   Passed    6.25 sec
+        Start   7: plumtree-graph-sim-loss
+ 48/130 Test  #85: test-rldp2-inbound-transfer-bound ................................   Passed    0.45 sec
+        Start  79: test-keyring-temp-key
+ 49/130 Test  #10: plumtree-graph-sim-selective-forwarding ..........................   Passed    0.50 sec
+        Start  11: plumtree-graph-sim-rotating-outage
+ 50/130 Test  #79: test-keyring-temp-key ............................................   Passed    0.62 sec
+        Start  46: test-net
+ 51/130 Test   #7: plumtree-graph-sim-loss ..........................................   Passed    0.80 sec
+        Start   2: test-workchain-proof-backend
+ 52/130 Test  #11: plumtree-graph-sim-rotating-outage ...............................   Passed    0.70 sec
+        Start   9: plumtree-graph-sim-partition-recovery
+ 53/130 Test   #9: plumtree-graph-sim-partition-recovery ............................   Passed    0.40 sec
+        Start  97: test-uno-crypto-kernel-gates
+ 54/130 Test  #46: test-net .........................................................   Passed    0.55 sec
+        Start  15: plumtree-graph-sim-simple-stress
+ 55/130 Test   #2: test-workchain-proof-backend .....................................   Passed    0.52 sec
+        Start  96: test-uno-crypto-symbols
+ 56/130 Test  #15: plumtree-graph-sim-simple-stress .................................   Passed    0.34 sec
+        Start   1: test-workchain-proof-boundary-gates
+ 57/130 Test  #98: test-uno-crypto-header-guard .....................................   Passed    3.75 sec
+        Start  95: test-uno-crypto-rust
+ 58/130 Test   #1: test-workchain-proof-boundary-gates ..............................   Passed    0.41 sec
+        Start 125: test-validator-manager-resource-policy-actor
+ 59/130 Test #125: test-validator-manager-resource-policy-actor .....................   Passed    0.21 sec
+        Start  94: test-uno-crypto-abi-real
+ 60/130 Test  #96: test-uno-crypto-symbols ..........................................   Passed    1.12 sec
+        Start 129: test-consensus-simplex2-codec-boundary
+ 61/130 Test  #97: test-uno-crypto-kernel-gates .....................................   Passed    1.36 sec
+        Start 108: test-ffi-event-loop
+ 62/130 Test #108: test-ffi-event-loop ..............................................   Passed    0.12 sec
+        Start  32: test-uno-split-storage-smoke
+ 63/130 Test #129: test-consensus-simplex2-codec-boundary ...........................   Passed    0.25 sec
+        Start   8: plumtree-graph-sim-simple-loss
+ 64/130 Test   #8: plumtree-graph-sim-simple-loss ...................................   Passed    0.06 sec
+        Start  12: plumtree-graph-sim-simple-selective-forwarding
+ 65/130 Test  #12: plumtree-graph-sim-simple-selective-forwarding ...................   Passed    0.06 sec
+        Start  39: test-workchain-block
+ 66/130 Test  #32: test-uno-split-storage-smoke .....................................   Passed    0.14 sec
+        Start  88: test-wallet-index
+ 67/130 Test  #88: test-wallet-index ................................................   Passed    0.10 sec
+        Start  33: test-uno-split-prefix-storage-smoke
+ 68/130 Test  #33: test-uno-split-prefix-storage-smoke ..............................   Passed    0.11 sec
+        Start   6: plumtree-graph-sim-simple-smoke
+ 69/130 Test   #6: plumtree-graph-sim-simple-smoke ..................................   Passed    0.07 sec
+        Start  13: plumtree-graph-sim-simple-rotating-outage
+ 70/130 Test  #13: plumtree-graph-sim-simple-rotating-outage ........................   Passed    0.08 sec
+        Start  75: test-counter-genesis-domain
+ 71/130 Test  #94: test-uno-crypto-abi-real .........................................   Passed    1.07 sec
+        Start  30: test-uno-partition-storage-smoke
+ 72/130 Test  #75: test-counter-genesis-domain ......................................   Passed    0.16 sec
+        Start  90: test-emulator
+ 73/130 Test  #30: test-uno-partition-storage-smoke .................................   Passed    0.17 sec
+        Start  31: test-uno-incremental-storage-smoke
+ 74/130 Test  #90: test-emulator ....................................................   Passed    0.08 sec
+        Start 100: test-workchain-handwritten-tags
+ 75/130 Test #100: test-workchain-handwritten-tags ..................................   Passed    0.08 sec
+        Start  56: test-rldp2-connection-cap
+ 76/130 Test  #31: test-uno-incremental-storage-smoke ...............................   Passed    0.11 sec
+        Start 101: test-scheduler-stop
+ 77/130 Test  #56: test-rldp2-connection-cap ........................................   Passed    0.04 sec
+        Start  19: test-counter-fixture-lifecycle
+ 78/130 Test #101: test-scheduler-stop ..............................................   Passed    0.05 sec
+        Start  70: test-celldb-streaming-import
+ 79/130 Test  #70: test-celldb-streaming-import .....................................   Passed    0.03 sec
+        Start   4: test-quorum-static-grep
+ 80/130 Test   #4: test-quorum-static-grep ..........................................   Passed    0.04 sec
+        Start 107: test-ffi-awaitable
+ 81/130 Test  #19: test-counter-fixture-lifecycle ...................................   Passed    0.10 sec
+        Start 118: test-consensus-simplex2-state-resolver-cache-unit
+ 82/130 Test #107: test-ffi-awaitable ...............................................   Passed    0.03 sec
+        Start 124: test-consensus-validator-manager-resource-policy-unit
+ 83/130 Test #118: test-consensus-simplex2-state-resolver-cache-unit ................   Passed    0.03 sec
+        Start 121: test-consensus-simplex2-candidate-resolver-retention-unit
+ 84/130 Test #124: test-consensus-validator-manager-resource-policy-unit ............   Passed    0.03 sec
+        Start 120: test-consensus-simplex2-skipped-slot-resolution-unit
+ 85/130 Test #121: test-consensus-simplex2-candidate-resolver-retention-unit ........   Passed    0.03 sec
+        Start 123: test-consensus-simplex2-db-finalized-slot-dedup-unit
+ 86/130 Test #120: test-consensus-simplex2-skipped-slot-resolution-unit .............   Passed    0.02 sec
+        Start  84: test-metrics-label-bound
+ 87/130 Test #123: test-consensus-simplex2-db-finalized-slot-dedup-unit .............   Passed    0.03 sec
+        Start  89: test-quorum
+ 88/130 Test  #89: test-quorum ......................................................   Passed    0.01 sec
+        Start 122: test-consensus-simplex2-candidate-resolver-interleaving-unit
+ 89/130 Test  #84: test-metrics-label-bound .........................................   Passed    0.03 sec
+        Start 117: test-consensus-simplex2-candidate-relay-eviction
+ 90/130 Test #122: test-consensus-simplex2-candidate-resolver-interleaving-unit .....   Passed    0.02 sec
+        Start 119: test-consensus-simplex2-state-resolver-inflight-admission-unit
+ 91/130 Test #117: test-consensus-simplex2-candidate-relay-eviction .................   Passed    0.03 sec
+        Start 130: test-consensus-simplex2-genesis-config
+ 92/130 Test #119: test-consensus-simplex2-state-resolver-inflight-admission-unit ...   Passed    0.02 sec
+        Start 102: test-runtime
+ 93/130 Test #102: test-runtime .....................................................   Passed    0.02 sec
+        Start  68: test-wallet-message-processor
+ 94/130 Test  #68: test-wallet-message-processor ....................................   Passed    0.01 sec
+        Start  59: test-overlay-peer-cleanup
+ 95/130 Test #130: test-consensus-simplex2-genesis-config ...........................   Passed    0.03 sec
+        Start 106: test-lru-cache
+ 96/130 Test  #59: test-overlay-peer-cleanup ........................................   Passed    0.01 sec
+        Start  78: test-block-handle-flags
+ 97/130 Test #106: test-lru-cache ...................................................   Passed    0.01 sec
+        Start 104: test-backpressure-queue
+ 98/130 Test  #78: test-block-handle-flags ..........................................   Passed    0.01 sec
+        Start  81: test-rldp2-connection-limits
+ 99/130 Test #104: test-backpressure-queue ..........................................   Passed    0.02 sec
+        Start  80: test-collator-node-limits
+100/130 Test  #81: test-rldp2-connection-limits .....................................   Passed    0.01 sec
+        Start  64: test-rate-limiter
+101/130 Test  #80: test-collator-node-limits ........................................   Passed    0.01 sec
+        Start  66: test-json-rpc-parse
+102/130 Test  #64: test-rate-limiter ................................................   Passed    0.01 sec
+        Start  83: test-json-rpc-handler-guard
+103/130 Test  #66: test-json-rpc-parse ..............................................   Passed    0.01 sec
+        Start  61: test-download-next-blocks-validation
+104/130 Test  #83: test-json-rpc-handler-guard ......................................   Passed    0.01 sec
+        Start  40: test-workchain-settlement-continuation
+105/130 Test  #61: test-download-next-blocks-validation .............................   Passed    0.01 sec
+        Start  86: test-consensus-config-admission
+106/130 Test  #40: test-workchain-settlement-continuation ...........................   Passed    0.01 sec
+        Start  63: test-msg-envelope
+107/130 Test  #86: test-consensus-config-admission ..................................   Passed    0.01 sec
+        Start  38: test-cells
+108/130 Test  #63: test-msg-envelope ................................................   Passed    0.01 sec
+        Start  87: test-weak-ptr-registry
+109/130 Test  #87: test-weak-ptr-registry ...........................................   Passed    0.01 sec
+        Start 103: test-test-scheduler
+110/130 Test #103: test-test-scheduler ..............................................   Passed    0.01 sec
+        Start  82: test-promise-loss-contract
+111/130 Test  #82: test-promise-loss-contract .......................................   Passed    0.01 sec
+        Start  72: test-validator-options
+112/130 Test  #72: test-validator-options ...........................................   Passed    0.01 sec
+        Start  42: test-workchain-proof-work
+113/130 Test  #42: test-workchain-proof-work ........................................   Passed    0.01 sec
+        Start  43: test-workchain-proof-contracts
+114/130 Test  #43: test-workchain-proof-contracts ...................................   Passed    0.01 sec
+        Start  69: test-vm-exception-hardening
+115/130 Test  #69: test-vm-exception-hardening ......................................   Passed    0.01 sec
+        Start  62: test-ext-message-pool
+116/130 Test  #38: test-cells .......................................................   Passed    0.06 sec
+        Start 109: test-liteserver-admission
+117/130 Test  #62: test-ext-message-pool ............................................   Passed    0.01 sec
+        Start  41: test-workchain-collator-compute-mode
+118/130 Test #109: test-liteserver-admission ........................................   Passed    0.01 sec
+        Start  58: test-rldp-http-proxy-routing
+119/130 Test  #41: test-workchain-collator-compute-mode .............................   Passed    0.01 sec
+        Start  73: test-full-node-shard-routing
+120/130 Test  #58: test-rldp-http-proxy-routing .....................................   Passed    0.01 sec
+        Start  16: test-counter-collator-admission
+121/130 Test  #73: test-full-node-shard-routing .....................................   Passed    0.01 sec
+        Start  65: test-config-transition
+122/130 Test  #65: test-config-transition ...........................................   Passed    0.01 sec
+        Start  44: test-workchain-admission
+123/130 Test  #44: test-workchain-admission .........................................   Passed    0.01 sec
+124/130 Test  #16: test-counter-collator-admission ..................................   Passed    0.03 sec
+125/130 Test  #36: test-vm ..........................................................   Passed   33.16 sec
+126/130 Test  #45: test-smartcont ...................................................   Passed   10.42 sec
+127/130 Test  #95: test-uno-crypto-rust .............................................   Passed    3.18 sec
+128/130 Test  #39: test-workchain-block .............................................   Passed    2.88 sec
+129/130 Test  #48: test-tdutils .....................................................   Passed  129.39 sec
+130/130 Test  #93: test-db ..........................................................   Passed  476.71 sec
+
+93% tests passed, 9 tests failed out of 130
+
+Label Time Summary:
+d40          =   0.08 sec*proc (1 test)
+harness      =   6.25 sec*proc (1 test)
+smoke        =   0.53 sec*proc (4 tests)
+storage      =   0.53 sec*proc (4 tests)
+uno          =   6.78 sec*proc (5 tests)
+workchain    =   0.08 sec*proc (1 test)
+
+Total Test time (real) = 477.06 sec
+
+The following tests FAILED:
+	 17 - test-counter-disk-integration (Failed)
+	 18 - test-counter-account-binding-readiness (Failed)
+	 20 - test-counter-idle-replay (Failed)
+	 21 - test-counter-self-delivery (Failed)
+	 22 - test-counter-cross-delivery (Failed)
+	 23 - test-counter-native-sender (Failed)
+	 24 - test-counter-activation-missing_capability (Failed)
+	 26 - test-counter-activation-old_version (Failed)
+	 29 - test-counter-engine-config (Failed)
+Errors while running CTest
