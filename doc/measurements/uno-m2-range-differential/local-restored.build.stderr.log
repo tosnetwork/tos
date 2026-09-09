@@ -1,0 +1,12 @@
+   Compiling bulletproofs v5.3.0 (/tmp/uno-m2-range-run2/local)
+   Compiling range-differential v0.0.0 (/tmp/uno-m2-range-run2/local-harness)
+warning: struct `Factor` is never constructed
+ --> src/main.rs:8:8
+  |
+8 | struct Factor(u8);
+  |        ^^^^^^
+  |
+  = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `range-differential` (bin "range-differential") generated 1 warning
+    Finished `release` profile [optimized] target(s) in 0.72s

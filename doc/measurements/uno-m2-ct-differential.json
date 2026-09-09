@@ -1,0 +1,145 @@
+{
+  "schema": 1,
+  "unit": "constant-time-proof-byte-differential",
+  "upstream_revision": "961bf3f8c2baa1e4d2a87e8e1f5b6f12e7fe6c82",
+  "upstream_tag_object": "def04efbf9d435a22306eae2c1a967f15ad43239",
+  "base_commit": "ba22bc5c8899f42343f9865f7772b7cbc2eb4851",
+  "harness_sha256": "2ed822f912786ad76bcc0f06df0704afcd8415f601324dee21c3a82b27e0afd3",
+  "runner_sha256": "f7b2deea531cd35a604c1680361307a0a494908d2aa7b6097e85052125cf1025",
+  "dependency_lock_sha256": "c53a4faf46049f93d782f0edebfe0c8e9227928a91ee0f27e676ffcb77445b08",
+  "toolchain": "rustc 1.97.1 (8bab26f4f 2026-07-14)\nbinary: rustc\ncommit-hash: 8bab26f4f68e0e26f0bb7960be334d5b520ea452\ncommit-date: 2026-07-14\nhost: x86_64-unknown-linux-gnu\nrelease: 1.97.1\nLLVM version: 22.1.6\n",
+  "scope": "Shared-base primitive patch semantics only; no independent implementation or relation oracle.",
+  "build": "Unchanged upstream tree; root Cargo patches select authenticated identical dalek/Merlin checkouts. std enabled in both test harnesses.",
+  "comparison": {
+    "guard": "equal",
+    "cases": 90
+  },
+  "events": [
+    {
+      "label": "upstream-baseline",
+      "build_exit": 0,
+      "run_exit": 0,
+      "binary_sha256": "4be22d6b5fa3c7955b82a6c58a4a7dd0c5354795b93f7d2d34297744830a95cb",
+      "corpus_sha256": "4593b3a47fe67e6693d40890f9aafe7ba3d6e2511ac86afdc15a73f8cda5609d",
+      "build_log": "   Compiling proc-macro2 v1.0.107\n   Compiling quote v1.0.47\n   Compiling unicode-ident v1.0.24\n   Compiling rand_core v0.10.1\n   Compiling cfg-if v1.0.4\n   Compiling typenum v1.20.1\n   Compiling subtle v2.6.1\n   Compiling libc v0.2.189\n   Compiling semver v1.0.28\n   Compiling serde_core v1.0.229\n   Compiling getrandom v0.4.3\n   Compiling cpufeatures v0.3.1\n   Compiling serde v1.0.229\n   Compiling bitflags v1.3.2\n   Compiling thiserror v2.0.20\n   Compiling keccak v0.1.6\n   Compiling byteorder v1.5.0\n   Compiling keccak v0.2.2\n   Compiling chacha20 v0.10.2\n   Compiling ff v0.14.0\n   Compiling rustc_version v0.4.1\n   Compiling group v0.14.0\n   Compiling hybrid-array v0.4.14\n   Compiling curve25519-dalek v5.0.2 (/home/tomi/.cargo/git/checkouts/curve25519-dalek-34e77fdc1853c816/10042b0/curve25519-dalek)\n   Compiling block-buffer v0.12.1\n   Compiling crypto-common v0.2.2\n   Compiling digest v0.11.3\n   Compiling sha3 v0.11.0\n   Compiling rand v0.10.1\n   Compiling syn v3.0.5\n   Compiling syn v2.0.119\n   Compiling serde_derive v1.0.229\n   Compiling bytemuck_derive v1.12.0\n   Compiling thiserror-impl v2.0.20\n   Compiling zeroize_derive v1.5.0\n   Compiling curve25519-dalek-derive v0.1.1\n   Compiling zeroize v1.9.0\n   Compiling bytemuck v1.25.2\n   Compiling strobe-rs v0.10.0\n   Compiling merlin v4.1.0 (/home/tomi/.cargo/git/checkouts/merlin-0f4e2c1d8524998f/ee857c7)\n   Compiling bulletproofs v5.3.0 (/tmp/uno-m2-ct-run4/upstream)\n   Compiling patch-differential v0.0.0 (/tmp/uno-m2-ct-run4/upstream-harness)\n    Finished `release` profile [optimized] target(s) in 9.84s\n",
+      "run_stderr": ""
+    },
+    {
+      "label": "local-baseline",
+      "build_exit": 0,
+      "run_exit": 0,
+      "binary_sha256": "54eedee5bb250ac7643939022b5e67ed015577ebdee87169478921d3fc9cac0a",
+      "corpus_sha256": "4593b3a47fe67e6693d40890f9aafe7ba3d6e2511ac86afdc15a73f8cda5609d",
+      "build_log": "   Compiling proc-macro2 v1.0.107\n   Compiling quote v1.0.47\n   Compiling unicode-ident v1.0.24\n   Compiling rand_core v0.10.1\n   Compiling cfg-if v1.0.4\n   Compiling typenum v1.20.1\n   Compiling subtle v2.6.1\n   Compiling semver v1.0.28\n   Compiling serde_core v1.0.229\n   Compiling libc v0.2.189\n   Compiling getrandom v0.4.3\n   Compiling cpufeatures v0.3.1\n   Compiling serde v1.0.229\n   Compiling thiserror v2.0.20\n   Compiling bitflags v1.3.2\n   Compiling byteorder v1.5.0\n   Compiling keccak v0.1.6\n   Compiling keccak v0.2.2\n   Compiling chacha20 v0.10.2\n   Compiling ff v0.14.0\n   Compiling rustc_version v0.4.1\n   Compiling group v0.14.0\n   Compiling curve25519-dalek v5.0.2 (/home/tomi/.cargo/git/checkouts/curve25519-dalek-34e77fdc1853c816/10042b0/curve25519-dalek)\n   Compiling hybrid-array v0.4.14\n   Compiling block-buffer v0.12.1\n   Compiling crypto-common v0.2.2\n   Compiling digest v0.11.3\n   Compiling rand v0.10.1\n   Compiling sha3 v0.11.0\n   Compiling syn v3.0.5\n   Compiling syn v2.0.119\n   Compiling serde_derive v1.0.229\n   Compiling bytemuck_derive v1.12.0\n   Compiling thiserror-impl v2.0.20\n   Compiling zeroize_derive v1.5.0\n   Compiling curve25519-dalek-derive v0.1.1\n   Compiling zeroize v1.9.0\n   Compiling strobe-rs v0.10.0\n   Compiling merlin v4.1.0 (/home/tomi/.cargo/git/checkouts/merlin-0f4e2c1d8524998f/ee857c7)\n   Compiling bytemuck v1.25.2\n   Compiling bulletproofs v5.3.0 (/tmp/uno-m2-ct-run4/local)\n   Compiling patch-differential v0.0.0 (/tmp/uno-m2-ct-run4/local-harness)\n    Finished `release` profile [optimized] target(s) in 9.45s\n",
+      "run_stderr": ""
+    },
+    {
+      "label": "wrong-msm-0",
+      "build_exit": 0,
+      "run_exit": 0,
+      "binary_sha256": "dedfc8165f629847ecdb65f4c96d2583bc3f5cab15397dd2495fa127415f95ba",
+      "corpus_sha256": "7bef1e15128db364b0a23f5b2f8abc1e99ae32e78a897fd932cd1506ffc5e558",
+      "build_log": "   Compiling bulletproofs v5.3.0 (/tmp/uno-m2-ct-run4/local)\n   Compiling patch-differential v0.0.0 (/tmp/uno-m2-ct-run4/local-harness)\n    Finished `release` profile [optimized] target(s) in 3.37s\n",
+      "run_stderr": ""
+    },
+    {
+      "label": "wrong-msm-1",
+      "build_exit": 0,
+      "run_exit": 0,
+      "binary_sha256": "7e72826c29d9c6e3a12b1a91419cfd38f735181f266d21c2d07c6c7c7318d264",
+      "corpus_sha256": "d4c87b78261bee24aa085e61fffd240a22d644d00b9921922ee70ef6c22ecce9",
+      "build_log": "   Compiling bulletproofs v5.3.0 (/tmp/uno-m2-ct-run4/local)\n   Compiling patch-differential v0.0.0 (/tmp/uno-m2-ct-run4/local-harness)\n    Finished `release` profile [optimized] target(s) in 3.03s\n",
+      "run_stderr": ""
+    },
+    {
+      "label": "wrong-msm-2",
+      "build_exit": 0,
+      "run_exit": 0,
+      "binary_sha256": "d76138cf1237c8cf1356ac8d4f9ce919c5bf5b80829f85f0af7eeac0a124e9d2",
+      "corpus_sha256": "5510d9e14fc1fc2e1aa6aed1cad9f96992ee85c986cb1d5b6b5a7c86660306e0",
+      "build_log": "   Compiling bulletproofs v5.3.0 (/tmp/uno-m2-ct-run4/local)\n   Compiling patch-differential v0.0.0 (/tmp/uno-m2-ct-run4/local-harness)\n    Finished `release` profile [optimized] target(s) in 3.24s\n",
+      "run_stderr": ""
+    },
+    {
+      "label": "wrong-msm-3",
+      "build_exit": 0,
+      "run_exit": 0,
+      "binary_sha256": "a4b38ee81fbe72925d92ab07400a555977677af27f410524fa694e78cf7b64ec",
+      "corpus_sha256": "3458998a899c259a6338cc12e66b3d140bb0ccc10dec15c408e613e9cb529648",
+      "build_log": "   Compiling bulletproofs v5.3.0 (/tmp/uno-m2-ct-run4/local)\n   Compiling patch-differential v0.0.0 (/tmp/uno-m2-ct-run4/local-harness)\n    Finished `release` profile [optimized] target(s) in 3.22s\n",
+      "run_stderr": ""
+    },
+    {
+      "label": "local-restored",
+      "build_exit": 0,
+      "run_exit": 0,
+      "binary_sha256": "54eedee5bb250ac7643939022b5e67ed015577ebdee87169478921d3fc9cac0a",
+      "corpus_sha256": "4593b3a47fe67e6693d40890f9aafe7ba3d6e2511ac86afdc15a73f8cda5609d",
+      "build_log": "   Compiling bulletproofs v5.3.0 (/tmp/uno-m2-ct-run4/local)\n   Compiling patch-differential v0.0.0 (/tmp/uno-m2-ct-run4/local-harness)\n    Finished `release` profile [optimized] target(s) in 0.85s\n",
+      "run_stderr": ""
+    }
+  ],
+  "controls": [
+    {
+      "site": 0,
+      "path": "src/inner_product_proof.rs",
+      "offset": 3094,
+      "from": "let L = RistrettoPoint::multiscalar_mul(\n                a_L.iter()\n                    .zip(G_factors[n..2 * n].into_iter())\n                    .map(|(a_L_i, g)| a_L_i * g)\n                    .chain(\n                        b_R.iter()\n                            .zip(H_factors[0..n].into_iter())\n                            .map(|(b_R_i, h)| b_R_i * h),\n                    )\n                    .chain(iter::once(c_L)),\n                G_R.iter().chain(H_L.iter()).chain(iter::once(Q)),\n            )\n            .compress();",
+      "to": "let L = (RistrettoPoint::multiscalar_mul(\n                a_L.iter()\n                    .zip(G_factors[n..2 * n].into_iter())\n                    .map(|(a_L_i, g)| a_L_i * g)\n                    .chain(\n                        b_R.iter()\n                            .zip(H_factors[0..n].into_iter())\n                            .map(|(b_R_i, h)| b_R_i * h),\n                    )\n                    .chain(iter::once(c_L)),\n                G_R.iter().chain(H_L.iter()).chain(iter::once(Q)),\n            ) + Q)\n            .compress();",
+      "original_sha256": "19b47ea013a32d1c14be88995ce82ec0b9898dc8affb1a440205b58fa53d0d95",
+      "mutant_sha256": "f8e0d145af52efe8b5f52df23e46df215b97232025dc43eb6b33f25939e0c953",
+      "restored_sha256": "19b47ea013a32d1c14be88995ce82ec0b9898dc8affb1a440205b58fa53d0d95",
+      "restore_audit_sha256": "f8e0d145af52efe8b5f52df23e46df215b97232025dc43eb6b33f25939e0c953",
+      "result": {
+        "guard": "proof-bytes",
+        "case": "ip/0/2"
+      }
+    },
+    {
+      "site": 1,
+      "path": "src/inner_product_proof.rs",
+      "offset": 3638,
+      "from": "let R = RistrettoPoint::multiscalar_mul(\n                a_R.iter()\n                    .zip(G_factors[0..n].into_iter())\n                    .map(|(a_R_i, g)| a_R_i * g)\n                    .chain(\n                        b_L.iter()\n                            .zip(H_factors[n..2 * n].into_iter())\n                            .map(|(b_L_i, h)| b_L_i * h),\n                    )\n                    .chain(iter::once(c_R)),\n                G_L.iter().chain(H_R.iter()).chain(iter::once(Q)),\n            )\n            .compress();",
+      "to": "let R = (RistrettoPoint::multiscalar_mul(\n                a_R.iter()\n                    .zip(G_factors[0..n].into_iter())\n                    .map(|(a_R_i, g)| a_R_i * g)\n                    .chain(\n                        b_L.iter()\n                            .zip(H_factors[n..2 * n].into_iter())\n                            .map(|(b_L_i, h)| b_L_i * h),\n                    )\n                    .chain(iter::once(c_R)),\n                G_L.iter().chain(H_R.iter()).chain(iter::once(Q)),\n            ) + Q)\n            .compress();",
+      "original_sha256": "19b47ea013a32d1c14be88995ce82ec0b9898dc8affb1a440205b58fa53d0d95",
+      "mutant_sha256": "43e76659e817ab6d97be737b784a8d91ec333750a2927dc45fb5af410c8560a6",
+      "restored_sha256": "19b47ea013a32d1c14be88995ce82ec0b9898dc8affb1a440205b58fa53d0d95",
+      "restore_audit_sha256": "43e76659e817ab6d97be737b784a8d91ec333750a2927dc45fb5af410c8560a6",
+      "result": {
+        "guard": "proof-bytes",
+        "case": "ip/0/2"
+      }
+    },
+    {
+      "site": 2,
+      "path": "src/inner_product_proof.rs",
+      "offset": 5389,
+      "from": "let L = RistrettoPoint::multiscalar_mul(\n                a_L.iter().chain(b_R.iter()).chain(iter::once(&c_L)),\n                G_R.iter().chain(H_L.iter()).chain(iter::once(Q)),\n            )\n            .compress();",
+      "to": "let L = (RistrettoPoint::multiscalar_mul(\n                a_L.iter().chain(b_R.iter()).chain(iter::once(&c_L)),\n                G_R.iter().chain(H_L.iter()).chain(iter::once(Q)),\n            ) + Q)\n            .compress();",
+      "original_sha256": "19b47ea013a32d1c14be88995ce82ec0b9898dc8affb1a440205b58fa53d0d95",
+      "mutant_sha256": "6507bdf3f933ff46fc787eed14fd31966beecd3eee357ef83618e312303df07a",
+      "restored_sha256": "19b47ea013a32d1c14be88995ce82ec0b9898dc8affb1a440205b58fa53d0d95",
+      "restore_audit_sha256": "6507bdf3f933ff46fc787eed14fd31966beecd3eee357ef83618e312303df07a",
+      "result": {
+        "guard": "proof-bytes",
+        "case": "ip/0/4"
+      }
+    },
+    {
+      "site": 3,
+      "path": "src/inner_product_proof.rs",
+      "offset": 5619,
+      "from": "let R = RistrettoPoint::multiscalar_mul(\n                a_R.iter().chain(b_L.iter()).chain(iter::once(&c_R)),\n                G_L.iter().chain(H_R.iter()).chain(iter::once(Q)),\n            )\n            .compress();",
+      "to": "let R = (RistrettoPoint::multiscalar_mul(\n                a_R.iter().chain(b_L.iter()).chain(iter::once(&c_R)),\n                G_L.iter().chain(H_R.iter()).chain(iter::once(Q)),\n            ) + Q)\n            .compress();",
+      "original_sha256": "19b47ea013a32d1c14be88995ce82ec0b9898dc8affb1a440205b58fa53d0d95",
+      "mutant_sha256": "432e10e2284be11489a1d2207346fbb75ffd8f5f2e4a84a3c024d63ccac99472",
+      "restored_sha256": "19b47ea013a32d1c14be88995ce82ec0b9898dc8affb1a440205b58fa53d0d95",
+      "restore_audit_sha256": "432e10e2284be11489a1d2207346fbb75ffd8f5f2e4a84a3c024d63ccac99472",
+      "result": {
+        "guard": "proof-bytes",
+        "case": "ip/0/4"
+      }
+    }
+  ],
+  "artifact_directory": "doc/measurements/uno-m2-ct-differential"
+}

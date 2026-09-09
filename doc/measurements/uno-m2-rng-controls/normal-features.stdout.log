@@ -1,0 +1,165 @@
+tos-uno-crypto-prototype v0.1.0 (/tmp/uno-m2-rng-run1/crypto)
+bulletproofs v5.3.0 (/tmp/uno-m2-rng-run1/crypto/vendor/bulletproofs)
+byteorder v1.5.0
+digest v0.11.3
+block-buffer feature "default"
+block-buffer v0.12.1
+hybrid-array feature "default"
+hybrid-array v0.4.14
+typenum feature "const-generics"
+typenum v1.20.1
+typenum feature "default"
+typenum v1.20.1
+crypto-common feature "default"
+crypto-common v0.2.2
+hybrid-array feature "default" (*)
+rand_core feature "default"
+rand_core v0.10.1
+merlin v4.1.0 (https://github.com/tosnetwork/merlin?rev=ee857c79347e0e2201e5192523faea13ac9bf451#ee857c79)
+byteorder v1.5.0
+keccak v0.1.6
+rand_core v0.10.1
+zeroize feature "zeroize_derive"
+zeroize v1.9.0
+zeroize_derive feature "default"
+zeroize_derive v1.5.0 (proc-macro)
+proc-macro2 feature "default"
+proc-macro2 v1.0.107
+unicode-ident feature "default"
+unicode-ident v1.0.24
+proc-macro2 feature "proc-macro"
+proc-macro2 v1.0.107 (*)
+quote feature "default"
+quote v1.0.47
+proc-macro2 v1.0.107 (*)
+quote feature "proc-macro"
+quote v1.0.47 (*)
+proc-macro2 feature "proc-macro" (*)
+syn feature "default"
+syn v2.0.119
+proc-macro2 v1.0.107 (*)
+quote v1.0.47 (*)
+unicode-ident feature "default" (*)
+syn feature "clone-impls"
+syn v2.0.119 (*)
+syn feature "derive"
+syn v2.0.119 (*)
+syn feature "parsing"
+syn v2.0.119 (*)
+syn feature "printing"
+syn v2.0.119 (*)
+syn feature "proc-macro"
+syn v2.0.119 (*)
+proc-macro2 feature "proc-macro" (*)
+quote feature "proc-macro" (*)
+syn feature "extra-traits"
+syn v2.0.119 (*)
+syn feature "full"
+syn v2.0.119 (*)
+syn feature "visit"
+syn v2.0.119 (*)
+strobe-rs feature "default"
+strobe-rs v0.10.0
+byteorder v1.5.0
+subtle v2.6.1
+zeroize feature "default"
+zeroize v1.9.0 (*)
+zeroize feature "alloc"
+zeroize v1.9.0 (*)
+zeroize feature "derive"
+zeroize v1.9.0 (*)
+zeroize feature "zeroize_derive" (*)
+keccak feature "default"
+keccak v0.1.6
+bitflags feature "default"
+bitflags v1.3.2
+rand_core v0.10.1
+serde_derive v1.0.229 (proc-macro)
+proc-macro2 feature "proc-macro" (*)
+quote feature "proc-macro" (*)
+syn feature "clone-impls"
+syn v3.0.5
+proc-macro2 v1.0.107 (*)
+quote v1.0.47 (*)
+unicode-ident feature "default" (*)
+syn feature "derive"
+syn v3.0.5 (*)
+syn feature "parsing"
+syn v3.0.5 (*)
+syn feature "printing"
+syn v3.0.5 (*)
+syn feature "proc-macro"
+syn v3.0.5 (*)
+proc-macro2 feature "proc-macro" (*)
+quote feature "proc-macro" (*)
+sha3 v0.11.0
+digest feature "default"
+digest v0.11.3 (*)
+digest feature "block-api"
+digest v0.11.3 (*)
+keccak feature "default"
+keccak v0.2.2
+cfg-if feature "default"
+cfg-if v1.0.4
+subtle v2.6.1
+curve25519-dalek feature "alloc"
+curve25519-dalek v5.0.2 (https://github.com/tosnetwork/curve25519-dalek?rev=10042b03cfc92e505e9d33d2827d5c0f0d36989a#10042b03)
+group v0.14.0
+ff v0.14.0
+rand_core v0.10.1
+subtle feature "i128"
+subtle v2.6.1
+rand_core v0.10.1
+subtle v2.6.1
+rand_core v0.10.1
+zeroize v1.9.0 (*)
+cfg-if feature "default" (*)
+cpufeatures feature "default"
+cpufeatures v0.3.1
+curve25519-dalek-derive feature "default"
+curve25519-dalek-derive v0.1.1 (proc-macro)
+proc-macro2 feature "default" (*)
+quote feature "default" (*)
+syn feature "default" (*)
+syn feature "full" (*)
+digest feature "block-api" (*)
+subtle feature "const-generics"
+subtle v2.6.1
+serde feature "derive"
+serde v1.0.229
+serde_core feature "result"
+serde_core v1.0.229
+serde_derive feature "default"
+serde_derive v1.0.229 (proc-macro) (*)
+serde feature "serde_derive"
+serde v1.0.229 (*)
+zeroize feature "alloc" (*)
+curve25519-dalek feature "digest"
+curve25519-dalek v5.0.2 (https://github.com/tosnetwork/curve25519-dalek?rev=10042b03cfc92e505e9d33d2827d5c0f0d36989a#10042b03) (*)
+curve25519-dalek feature "group"
+curve25519-dalek v5.0.2 (https://github.com/tosnetwork/curve25519-dalek?rev=10042b03cfc92e505e9d33d2827d5c0f0d36989a#10042b03) (*)
+curve25519-dalek feature "rand_core"
+curve25519-dalek v5.0.2 (https://github.com/tosnetwork/curve25519-dalek?rev=10042b03cfc92e505e9d33d2827d5c0f0d36989a#10042b03) (*)
+curve25519-dalek feature "digest" (*)
+digest feature "rand_core"
+digest v0.11.3 (*)
+crypto-common feature "rand_core"
+crypto-common v0.2.2 (*)
+curve25519-dalek feature "precomputed-tables"
+curve25519-dalek v5.0.2 (https://github.com/tosnetwork/curve25519-dalek?rev=10042b03cfc92e505e9d33d2827d5c0f0d36989a#10042b03) (*)
+curve25519-dalek feature "rand_core" (*)
+curve25519-dalek feature "serde"
+curve25519-dalek v5.0.2 (https://github.com/tosnetwork/curve25519-dalek?rev=10042b03cfc92e505e9d33d2827d5c0f0d36989a#10042b03) (*)
+curve25519-dalek feature "std"
+curve25519-dalek v5.0.2 (https://github.com/tosnetwork/curve25519-dalek?rev=10042b03cfc92e505e9d33d2827d5c0f0d36989a#10042b03) (*)
+curve25519-dalek feature "zeroize"
+curve25519-dalek v5.0.2 (https://github.com/tosnetwork/curve25519-dalek?rev=10042b03cfc92e505e9d33d2827d5c0f0d36989a#10042b03) (*)
+serde feature "alloc"
+serde v1.0.229 (*)
+serde_core feature "alloc"
+serde_core v1.0.229
+zeroize feature "default" (*)
+merlin v4.1.0 (https://github.com/tosnetwork/merlin?rev=ee857c79347e0e2201e5192523faea13ac9bf451#ee857c79) (*)
+curve25519-dalek feature "alloc" (*)
+curve25519-dalek feature "precomputed-tables" (*)
+curve25519-dalek feature "std" (*)

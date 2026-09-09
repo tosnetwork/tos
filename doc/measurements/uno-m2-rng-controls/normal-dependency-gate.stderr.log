@@ -1,0 +1,6 @@
+test_normal_dependency_graph_has_no_entropy_provider (__main__.KernelGates.test_normal_dependency_graph_has_no_entropy_provider) ... ok
+
+----------------------------------------------------------------------
+Ran 1 test in 0.151s
+
+OK
