@@ -31,6 +31,11 @@ use common::{
 };
 use std::{collections::HashMap, net::SocketAddr, sync::Arc};
 
+// Ceiling on distinct per-node stake-policy overrides. Each override is a
+// persisted config entry; a node operator manages far fewer validators than
+// this, so the cap only bites an abusive or buggy caller minting node ids.
+const MAX_POLICY_OVERRIDES: usize = 4096;
+
 #[derive(Clone)]
 pub struct AppState {
     pub store: Arc<SnapshotStore>,
@@ -738,6 +743,19 @@ pub async fn v1_stake_strategy_handler(
 
     let policy = req.policy.clone();
     let node_id = req.node.clone();
+    // Bound the persisted per-node override map: each request with a fresh node
+    // id adds a permanent, persisted entry, so without a ceiling a caller could
+    // grow the config file without limit. Setting a policy for an already-known
+    // node, or the default policy (no node id), never grows the map.
+    if let Some(id) = &node_id {
+        if let Some(elections) = &state.runtime_cfg.get().elections {
+            if !elections.policy_overrides.contains_key(id)
+                && elections.policy_overrides.len() >= MAX_POLICY_OVERRIDES
+            {
+                return Err(AppError::bad_request("too many stake-policy overrides configured"));
+            }
+        }
+    }
     state
         .runtime_cfg
         .update_with(|cfg| {
@@ -1232,6 +1250,7 @@ mod tests {
             voting: None,
             master_wallet: None,
             tick_interval: 30,
+            indexer_retention_blocks: 0,
             log: Some(LogConfig::default()),
             bookmarks: HashMap::new(),
             agent_wallets: HashMap::new(),
@@ -1256,6 +1275,7 @@ mod tests {
             voting: None,
             master_wallet: None,
             tick_interval: 30,
+            indexer_retention_blocks: 0,
             log: Some(LogConfig::default()),
             bookmarks: HashMap::new(),
             agent_wallets: HashMap::new(),

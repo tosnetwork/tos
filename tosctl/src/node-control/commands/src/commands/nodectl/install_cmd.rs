@@ -181,6 +181,7 @@ impl InstallWizardCmd {
                 http: HttpConfig::default(),
                 master_wallet: None,
                 tick_interval: 40,
+                indexer_retention_blocks: common::app_config::default_indexer_retention_blocks(),
                 log: Some(LogConfig::default()),
                 bookmarks: HashMap::new(),
                 alerts: Default::default(),

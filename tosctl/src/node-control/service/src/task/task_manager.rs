@@ -229,6 +229,7 @@ mod tests {
                 http: HttpConfig::default(),
                 master_wallet: None,
                 tick_interval: 30,
+                indexer_retention_blocks: 0,
                 log: None,
                 bookmarks: HashMap::new(),
                 agent_wallets: HashMap::new(),
