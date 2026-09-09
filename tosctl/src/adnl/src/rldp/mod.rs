@@ -155,6 +155,17 @@ enum RldpTransfer {
     Done,
 }
 
+// Outcome of trying to admit a new inbound transfer. `Raced` and `Full` are both
+// "no queue to hand the chunk to" but the caller must treat them differently:
+// `Raced` means another task inserted the transfer first, so re-check the map;
+// `Full` means the concurrency ceiling is reached, so drop this chunk. Collapsing
+// the two into one `None` is what turned the ceiling into a no-await busy loop.
+enum InboundResult {
+    Created(tokio::sync::mpsc::UnboundedSender<Chunk>),
+    Raced,
+    Full,
+}
+
 #[cfg(feature = "telemetry")]
 #[derive(Default)]
 struct RldpStats {
@@ -449,10 +460,15 @@ impl RldpNode {
                     );
                     break;
                 }
-            } else if let Some(queue_sender) = self.inbound(transfer_id, peers, v2)? {
-                queue_sender.send(chunk)
             } else {
-                continue;
+                match self.inbound(transfer_id, peers, v2)? {
+                    InboundResult::Created(queue_sender) => queue_sender.send(chunk),
+                    // Another task inserted this transfer first -- re-check the map.
+                    InboundResult::Raced => continue,
+                    // Concurrency ceiling reached -- drop this chunk instead of
+                    // retrying, which (with no .await here) would spin the task.
+                    InboundResult::Full => break,
+                }
             };
             match result {
                 Ok(()) => (),
@@ -624,7 +640,7 @@ impl RldpNode {
         transfer_id: &TransferId,
         peers: &AdnlPeers,
         v2: bool,
-    ) -> Result<Option<tokio::sync::mpsc::UnboundedSender<Chunk>>> {
+    ) -> Result<InboundResult> {
         let rldp = if v2 { "RLDPv2" } else { "RLDPv1" };
         // Bound concurrent inbound transfers. recv_transfers is an always-on
         // live count (RAII Counter on each RecvTransfer); once at the ceiling a
@@ -638,14 +654,14 @@ impl RldpNode {
                 "{rldp} inbound transfer table full ({}), dropping transfer",
                 Constraints::MAX_INBOUND_TRANSFERS
             );
-            return Ok(None);
+            return Ok(InboundResult::Full);
         }
         let (queue_sender, queue_reader) = tokio::sync::mpsc::unbounded_channel();
         let inserted = add_unbound_object_to_map(&self.transfers, *transfer_id, || {
             Ok(RldpTransfer::Recv(queue_sender.clone()))
         })?;
         if !inserted {
-            return Ok(None);
+            return Ok(InboundResult::Raced);
         }
         #[cfg(feature = "telemetry")]
         let all = RldpStats::inc(&self.stats.transfers_recv_all);
@@ -723,7 +739,7 @@ impl RldpNode {
             tokio::time::sleep(Duration::from_millis(Self::TIMEOUT_MAX_MS)).await;
             transfers.insert(transfer_id, RldpTransfer::Done);
         });
-        Ok(Some(queue_sender))
+        Ok(InboundResult::Created(queue_sender))
     }
 
     async fn inbound_loop(
