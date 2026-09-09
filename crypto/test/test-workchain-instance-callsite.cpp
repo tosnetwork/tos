@@ -26,12 +26,13 @@ class ExtraProbe final : public ValidateQuery {
  public:
   ExtraProbe(td::Ref<vm::Cell> root, BlockCandidate candidate, ValidateParams params,
              td::actor::ActorId<ValidatorManager> manager,
-             td::Promise<ValidateCandidateResult> result, bool corrupt)
+             td::Promise<ValidateCandidateResult> result, bool corrupt, bool local_fault)
       : ValidateQuery(std::move(candidate), std::move(params), manager, {}, std::move(result)),
-        root_(std::move(root)), corrupt_(corrupt) {}
+        root_(std::move(root)), corrupt_(corrupt), local_fault_(local_fault) {}
  private:
   td::Ref<vm::Cell> root_;
   bool corrupt_;
+  bool local_fault_;
   void start_up() override {
     // This harness seeds the method's authenticated predecessor and candidate
     // context. It runs the production method and its production terminal result
@@ -54,6 +55,14 @@ class ExtraProbe final : public ValidateQuery {
 
     block::gen::McStateExtra::Record next;
     require(tlb::unpack_cell(ps_.mc_state_extra_, next), 903);
+    if (local_fault_) {
+      // Only the authenticated predecessor slot is malformed. The candidate
+      // retains the valid ledger. This measures provenance classification at
+      // the method boundary, not authentication of a complete predecessor.
+      auto unavailable_predecessor = next;
+      unavailable_predecessor.r1.workchain_instances = vm::CellBuilder().finalize();
+      require(tlb::pack_cell(ps_.mc_state_extra_, unavailable_predecessor), 915);
+    }
     next.r1.after_key_block = false;
     block::gen::ExtBlkRef::Record previous{config_->lt, 0, prev_blocks.at(0).root_hash, prev_blocks.at(0).file_hash};
     vm::CellBuilder last_key;
@@ -105,7 +114,8 @@ int main(int argc, char** argv) {
   candidate.collated_file_hash.set_zero();
   ValidateParams params; params.shard = {masterchainId, shardIdAll}; params.prev = {previous};
   bool corrupt = std::string(argv[2]) == "corrupt";
-  require(corrupt || std::string(argv[2]) == "unchanged", 925);
+  bool local_fault = std::string(argv[2]) == "local-fault";
+  require(corrupt || local_fault || std::string(argv[2]) == "unchanged", 925);
   int kind = -1;
   td::actor::Scheduler scheduler({0});
   td::actor::ActorOwn<StatisticsSink> sink;
@@ -123,11 +133,11 @@ int main(int argc, char** argv) {
       // Do not destroy the scheduler while its actor callback is active.
     });
     td::actor::create_actor<ExtraProbe>("mc-extra-probe", root, std::move(candidate), std::move(params),
-                                      sink.get(), std::move(promise), corrupt).release();
+                                      sink.get(), std::move(promise), corrupt, local_fault).release();
   });
   while (kind == -1 && scheduler.run(1)) {}
   scheduler.run_in_context([&] { sink.reset(); });
   scheduler.stop();
   std::cout << "final_typed_kind=" << kind << '\n';
-  require(kind == (corrupt ? 1 : 0), corrupt ? 931 : 930);
+  require(kind == (local_fault ? 2 : corrupt ? 1 : 0), local_fault ? 932 : corrupt ? 931 : 930);
 }
