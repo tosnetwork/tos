@@ -10,7 +10,10 @@ use crate::{
     http::http_server_task,
     indexer::IndexerStore,
     runtime_config::RuntimeConfigStore,
-    task::{ContractsTask, ElectionsTask, IndexerTask, VotingTask, task_manager::TaskController},
+    task::{
+        ContractsTask, ElectionsTask, IndexerTask, VotingTask,
+        task_manager::{TaskController, shutdown_tasks},
+    },
 };
 use anyhow::Context;
 use common::{
@@ -187,31 +190,24 @@ async fn run_with_profile(
             }
         }
     }
-    // Orderly shutdown. First stop accepting control operations: the HTTP API
-    // can enable/disable tasks, so drain it before requesting task shutdown, or
-    // a late enable() could race the disable() below.
-    let _ = http_task_handle.await;
+    // Orderly shutdown, bounded by a single overall grace period (not per task).
+    let shutdown_deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(15);
 
-    // Request every task to stop. disable() only signals the stop and arms a
-    // detached finalizer; it returns before the task has actually ended.
+    // 1. Close control-operation admission first. Marking every task shutting
+    //    down makes enable()/restart() and the detached finalizer refuse to
+    //    start a new generation, so a control operation that races shutdown —
+    //    including a restart an HTTP handler already spawned as its own task —
+    //    cannot bring a task back up after it stops.
     for task in tasks.values() {
-        let _ = task.disable().await;
+        task.begin_shutdown().await;
     }
 
-    // Barrier: wait for each task to actually reach Stopped before returning,
-    // so the Tokio runtime is not torn down while finalizers are still running
-    // their cleanup (runtime shutdown does not run detached tasks to
-    // completion). Bounded by an overall grace period; a task that overruns it
-    // is logged rather than silently abandoned.
-    let shutdown_grace = std::time::Duration::from_secs(15);
-    for (name, task) in tasks.iter() {
-        if !task.wait_stopped(shutdown_grace).await {
-            tracing::warn!(
-                "{} task did not reach Stopped within the {}s shutdown grace period",
-                name,
-                shutdown_grace.as_secs()
-            );
-        }
-    }
+    // 2. Drain the HTTP control API, within the overall budget.
+    let _ = tokio::time::timeout_at(shutdown_deadline, http_task_handle).await;
+
+    // 3. Request every task to stop and wait for them to actually reach Stopped,
+    //    sharing the overall deadline, so the Tokio runtime is not torn down
+    //    while finalizers are still running their cleanup.
+    shutdown_tasks(&tasks, shutdown_deadline).await;
     Ok(())
 }
