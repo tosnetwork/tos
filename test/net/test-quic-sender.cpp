@@ -15,6 +15,7 @@
     along with TOS Blockchain.  If not, see <http://www.gnu.org/licenses/>.
 */
 #include <atomic>
+#include <iostream>
 #include <mutex>
 #include <optional>
 #include <unordered_set>
@@ -2159,8 +2160,11 @@ int main(int argc, char* argv[]) {
   });
   p.add_option('T', "timeout", "test timeout in seconds (default 60)",
                [](td::Slice arg) { g_config.timeout = td::to_double(arg); });
-  p.add_option('f', "filter", "run only tests matching filter",
-               [](td::Slice arg) { td::TestsRunner::get_default().add_substr_filter(arg.str()); });
+  bool filter_set = false;
+  p.add_option('f', "filter", "run only tests matching filter", [&filter_set](td::Slice arg) {
+    filter_set = true;
+    td::TestsRunner::get_default().add_substr_filter(arg.str());
+  });
   p.add_checked_option('N', "nodes", "large scale test: number of nodes (default 5, 0 to skip)", [](td::Slice arg) {
     TRY_RESULT(v, td::to_integer_safe<int>(arg));
     g_config.large_nodes = v;
@@ -2178,6 +2182,14 @@ int main(int argc, char* argv[]) {
   });
   p.run(argc, argv).ensure();
 
-  td::TestsRunner::get_default().run_all();
-  return td::TestsRunner::get_default().any_test_failed() ? 1 : 0;
+  auto& runner = td::TestsRunner::get_default();
+  runner.run_all();
+  if (filter_set && runner.executed_test_count() == 0) {
+    // A filter that matches no test must fail rather than exit successfully
+    // having run nothing — otherwise a stale name in a CTest -f entry would
+    // silently gate on zero coverage.
+    std::cerr << "error: test filter matched no tests" << std::endl;
+    return 1;
+  }
+  return runner.any_test_failed() ? 1 : 0;
 }
