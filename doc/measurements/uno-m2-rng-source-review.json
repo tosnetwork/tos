@@ -1,0 +1,123 @@
+{
+  "schema": 1,
+  "unit": "Static review of the 1010 archived balance-root indirect sites",
+  "base_commit": "e8d1a47ce",
+  "prior_report": "doc/measurements/uno-m2-rng-controls.json",
+  "prior_report_sha256": "80c79b4d8fdb1b61b69d239efc4e31df6e2e545fb9551ff2e4d25fef7ff6c8e1",
+  "binary_sha256": "e15080cd8a5b400fdb8c3d63c5d5b69c8df79014d05e7c7d674e3fb53048944e",
+  "binary_matches_archived_baseline": true,
+  "old_graph_matches_archived_baseline": true,
+  "entry": "uno_crypto_verify_v2",
+  "function_count": 146,
+  "site_count": 1010,
+  "categories": {
+    "dynamic_loader_resolver": 1,
+    "direct_import_slot": 207,
+    "allocation_error_hook_pointer": 1,
+    "import_address_in_register": 232,
+    "register_value_flow_open": 99,
+    "fixed_local_nonleaf": 80,
+    "open_vtable_dispatch": 16,
+    "fixed_local_leaf": 371,
+    "any_type_id_vtable": 2,
+    "format_argument_function_pointer": 1
+  },
+  "dispositions": {
+    "not_excluded": 637,
+    "excluded_for_reviewed_image": 371,
+    "excluded_by_blanket_implementation": 2
+  },
+  "scope": "Static review only. No builds, verifier executions, entropy-source insertions or control reruns. Exclusions cover the stated calls, not the entire root or every possible failure handler. Native implementations, unresolved value flow and downstream open edges remain unexcluded. Coordinator review pending; no milestone acceptance.",
+  "original_system_roots": {
+    "sites_each": 443,
+    "shared_with_balance_each": 391,
+    "outside_this_review_each": 52
+  },
+  "source_inventory": [
+    {
+      "label": "kernel/ffi.rs",
+      "read_path": "/home/tomi/tos-m2/uno/crypto/src/ffi.rs",
+      "sha256": "d505c845e9e192e4dc5d5fe1b6d175b90b38d9ff9baf10d71b37a46182b813b0"
+    },
+    {
+      "label": "subtle/lib.rs",
+      "read_path": "/home/tomi/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/subtle-2.6.1/src/lib.rs",
+      "sha256": "ced6ebd3622af527cbbbb09feb57a2894751ff07e7ca8f97f22bad89401e5c8d"
+    },
+    {
+      "label": "dalek/backend/serial/u64/field.rs",
+      "read_path": "/home/tomi/.cargo/git/checkouts/curve25519-dalek-34e77fdc1853c816/10042b0/curve25519-dalek/src/backend/serial/u64/field.rs",
+      "sha256": "7ea95907cb3bd79c41fd552b61dad1bd9ad3d9112406b21f999e8f6a8c6cf963"
+    },
+    {
+      "label": "dalek/backend/serial/curve_models.rs",
+      "read_path": "/home/tomi/.cargo/git/checkouts/curve25519-dalek-34e77fdc1853c816/10042b0/curve25519-dalek/src/backend/serial/curve_models.rs",
+      "sha256": "0f318062f526b2a343b4752ed16a94998af9e25e79282608ed6ef5264927bcac"
+    },
+    {
+      "label": "dalek/backend/vector/avx2/edwards.rs",
+      "read_path": "/home/tomi/.cargo/git/checkouts/curve25519-dalek-34e77fdc1853c816/10042b0/curve25519-dalek/src/backend/vector/avx2/edwards.rs",
+      "sha256": "ac88fc633d3f9e6eba5fc871fd2d0f1c3c32937b066bc87cc5568423e4de488a"
+    },
+    {
+      "label": "dalek/backend/vector/avx2/field.rs",
+      "read_path": "/home/tomi/.cargo/git/checkouts/curve25519-dalek-34e77fdc1853c816/10042b0/curve25519-dalek/src/backend/vector/avx2/field.rs",
+      "sha256": "a4e344d43f5e7f49dd6509eda48228e1bb28964ea9a0101e30f42f941f91ece7"
+    },
+    {
+      "label": "rust/std/src/panicking.rs",
+      "read_path": "/home/tomi/.rustup/toolchains/1.97.1-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/panicking.rs",
+      "sha256": "8aa4e1a2a94dec487185e927606fc449602aeb8bd49e4d26f9789c184376cbb1"
+    },
+    {
+      "label": "rust/std/src/alloc.rs",
+      "read_path": "/home/tomi/.rustup/toolchains/1.97.1-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std/src/alloc.rs",
+      "sha256": "187966e1cecab705f9aeaa032285e428d1f8dd6d5d9563d2d2343ce08f532c13"
+    },
+    {
+      "label": "rust/core/src/any.rs",
+      "read_path": "/home/tomi/.rustup/toolchains/1.97.1-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/any.rs",
+      "sha256": "77a2c96342110b33d5b3a21f88a054f8ecdae3a781181ee9495d8ef7097c226c"
+    },
+    {
+      "label": "rust/core/src/fmt/mod.rs",
+      "read_path": "/home/tomi/.rustup/toolchains/1.97.1-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/fmt/mod.rs",
+      "sha256": "0b01f8c3ef1a7c1a75eaf468456a2fc10a608d9f9191b56e1793f8b9bfb29b23"
+    },
+    {
+      "label": "rust/core/src/fmt/rt.rs",
+      "read_path": "/home/tomi/.rustup/toolchains/1.97.1-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/fmt/rt.rs",
+      "sha256": "7a7dd4b1640a734fcb82f178ab69868b8f2f624a8c1f5a6fcf85002f4e2e4423"
+    },
+    {
+      "label": "rust/panic_unwind/src/gcc.rs",
+      "read_path": "/home/tomi/.rustup/toolchains/1.97.1-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/panic_unwind/src/gcc.rs",
+      "sha256": "cc73c0208b01291df849e51b3257d9a16c9d13864ca954b0398a63c0e0813546"
+    }
+  ],
+  "artifact_directory": "doc/measurements/uno-m2-rng-source-review",
+  "artifacts": {
+    "archived-symbol-reader.py": "b53171a4d6bec81db5579797d629a2e31c35d4495d1af2b0f031c8038a079dd2",
+    "disassembly.txt.gz": "b16fb54c16562ea254489583843a66bff5d61dd43a304f0dad73e6164c851efb",
+    "extract.py": "e47977025c937f7989686213c9f3517636631391d071b9e0951960d30b3c2b93",
+    "leaf-bodies.json": "18ed03c8563aa554a8b2309610d1b9c218567b902da1a4dc374c13809892e335",
+    "open-sites.tsv": "65b2b01e63eee4fc70dc2c4058dfc677260694cd2c9b8ce6994e835daa9ef67f",
+    "relocations.txt": "510676e963c17639e75ec54b9be54420d8f1780ade3a32f031aa55855d7f4e02",
+    "resolve.py": "45937ec56c2a81dc352bfe261a4ede75801e14cb53291051042794b70104432f",
+    "reviewed-image.elf.gz": "19cc446994cfebee8978b4c6c47a21bb40cb631ac054cab4bb8dcee73e23c86f",
+    "sites.json": "c5116c661c25505269ce9ad5cdcecd5b34cd2d47628cdc0b50df421ee79ad4d8",
+    "sites.tsv": "e51652fffee59a9449e9367617aa0f6fd113716414fc65fe45a76f498581af29",
+    "worksheet-replay.stderr.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "worksheet-replay.stdout.log": "75adcf1ed452679b202a62adba898d56e22eab80e45c426013dcf7bfb55390ea"
+  },
+  "static_reconciliation": {
+    "image_and_all_three_old_graphs_match": true,
+    "unique_balance_sites": 1010,
+    "excluded_sites": 373,
+    "unexcluded_sites": 637,
+    "leaf_bodies_reviewed": 8,
+    "worksheet_replay_exit": 0,
+    "worksheet_replay_output_sha256": "5f25760c3a84ca7abf763d3888cb7af62ed4ff24916633fae87435fdb11f2466",
+    "no_subject_execution": true
+  }
+}
