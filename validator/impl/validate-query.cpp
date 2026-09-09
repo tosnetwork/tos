@@ -7285,7 +7285,7 @@ bool ValidateQuery::check_mc_state_extra() {
     // Read the complete local path that reconstruction will use before reading
     // candidate configuration. Missing local proof cells are not candidate faults.
     try {
-      auto previous = block::read_workchain_instance_record(old_extra.r1.workchain_instances, 2);
+      auto previous = block::validate_workchain_instance_ledger_records(old_extra.r1.workchain_instances);
       if (previous.is_error()) {
         return fatal_error(previous.move_as_error_prefix("authenticated instance ledger: "));
       }
@@ -7299,8 +7299,8 @@ bool ValidateQuery::check_mc_state_extra() {
       return fatal_error("authenticated masterchain genesis identity is missing");
     }
     try {
-      auto expected = block::reconstruct_workchain_instance_ledger(
-          old_extra.r1.workchain_instances, new_extra.config->prefetch_ref(), genesis.root_hash, 2);
+      auto expected = block::reconstruct_configured_workchain_instances(
+          old_extra.r1.workchain_instances, new_extra.config->prefetch_ref(), genesis.root_hash);
       if (expected.is_error()) {
         return reject_query("invalid instance installation", expected.move_as_error());
       }
@@ -7313,6 +7313,10 @@ bool ValidateQuery::check_mc_state_extra() {
       return reject_query(PSTRING() << "invalid candidate instance ledger/configuration: " << error.get_msg());
     } catch (vm::VmVirtError& error) {
       return reject_query(PSTRING() << "candidate instance ledger/configuration contains unavailable cells: " << error.get_msg());
+    } catch (vm::CellBuilder::CellCreateError&) {
+      return fatal_error("cannot create reconstructed instance ledger cells");
+    } catch (vm::CellBuilder::CellWriteError&) {
+      return fatal_error("cannot write reconstructed instance ledger cells");
     }
   }
   // ...

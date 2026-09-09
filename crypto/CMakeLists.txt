@@ -679,7 +679,13 @@ install(DIRECTORY smartcont DESTINATION share/tos)
 
 # Private D40 primitive tests; no activation or production configuration changes.
 option(TOS_WORKCHAIN_INSTANCE_TESTS "Build private workchain instance identity tests" OFF)
+add_executable(counter-install-config test/counter-install-config.cpp)
+target_link_libraries(counter-install-config PRIVATE tos_block tos_crypto)
 if(TOS_WORKCHAIN_INSTANCE_TESTS)
+  add_executable(test-workchain-instance-callsite test/test-workchain-instance-callsite.cpp)
+  target_include_directories(test-workchain-instance-callsite PRIVATE "${PROJECT_SOURCE_DIR}/common")
+  target_compile_options(test-workchain-instance-callsite PRIVATE -fno-access-control -g)
+  target_link_libraries(test-workchain-instance-callsite PRIVATE validator-disk validator-common validator-db tos_validator tos_block tos_crypto)
   add_executable(test-workchain-instance-identity test/test-workchain-instance-identity.cpp)
   target_link_libraries(test-workchain-instance-identity PRIVATE tos_block tos_crypto)
   add_test(NAME test-workchain-instance-identity COMMAND test-workchain-instance-identity)

@@ -46,11 +46,22 @@ td::Result<StagedFirstInstance> stage_first_workchain_instance(
     const td::Ref<vm::Cell>& creation_descriptor, const td::Bits256& claimed_id);
 
 // Reconstruct this workchain's permitted change from the proposed configuration.
-// The predecessor is authenticated state, never the candidate ledger. D40 is
-// applied to wc=2 by the current host; other ledger keys remain immutable.
+// The predecessor is authenticated state, never the candidate ledger.
+// The complete host transition below also reconstructs every configured UNO
+// workchain, retaining all historical entries.
 td::Result<td::Ref<vm::Cell>> reconstruct_workchain_instance_ledger(
     const td::Ref<vm::Cell>& predecessor, const td::Ref<vm::Cell>& proposed_config,
     const std::optional<td::Bits256>& authenticated_genesis, std::int32_t workchain);
+
+// Traverse authenticated records before inspecting candidate configuration so
+// unavailable predecessor cells cannot be classified as candidate faults.
+td::Status validate_workchain_instance_ledger_records(const td::Ref<vm::Cell>& ledger);
+
+// Preserve the mandatory wc=2 check and reconstruct all other ConfigParam 84
+// instances. The result starts from the entire predecessor, not a projection.
+td::Result<td::Ref<vm::Cell>> reconstruct_configured_workchain_instances(
+    const td::Ref<vm::Cell>& predecessor, const td::Ref<vm::Cell>& proposed_config,
+    const std::optional<td::Bits256>& authenticated_genesis);
 
 // Compare the complete independently reconstructed root, including unread keys
 // and deletions. For a non-creation block expected is the predecessor root.

@@ -121,6 +121,35 @@ td::Result<td::Ref<vm::Cell>> reconstruct_workchain_instance_ledger(
   return predecessor;
 }
 
+td::Status validate_workchain_instance_ledger_records(const td::Ref<vm::Cell>& ledger) {
+  TRY_RESULT(header, read_workchain_instance_ledger(ledger));
+  vm::Dictionary entries(header.entries, 32);
+  if (!entries.check_for_each([](td::Ref<vm::CellSlice> value, td::ConstBitPtr, int) {
+        gen::WorkchainInstanceRecord::Record record;
+        return tlb::csr_unpack(value, record) && record.instance_seq != 0;
+      })) {
+    return error(InstanceIdentityError::MalformedRecord, "malformed authenticated instance record");
+  }
+  return td::Status::OK();
+}
+
+td::Result<td::Ref<vm::Cell>> reconstruct_configured_workchain_instances(
+    const td::Ref<vm::Cell>& predecessor, const td::Ref<vm::Cell>& proposed_config,
+    const std::optional<td::Bits256>& authenticated_genesis) {
+  TRY_STATUS(validate_workchain_instance_ledger_records(predecessor));
+  TRY_RESULT(staged, reconstruct_workchain_instance_ledger(predecessor, proposed_config, authenticated_genesis, 2));
+  vm::Dictionary config(proposed_config, 32);
+  auto ingress_root = config.lookup_ref(td::BitArray<32>{84});
+  if (ingress_root.is_null()) return staged;
+  TRY_RESULT(ingress, decode_workchain_native_ingress_table(ingress_root));
+  for (const auto& entry : ingress) {
+    if (entry.first == 2) continue;
+    TRY_RESULT(next, reconstruct_workchain_instance_ledger(staged, proposed_config, authenticated_genesis, entry.first));
+    staged = std::move(next);
+  }
+  return staged;
+}
+
 td::Status check_workchain_instance_ledger_delta(const td::Ref<vm::Cell>& expected,
                                                const td::Ref<vm::Cell>& candidate) {
   TRY_RESULT(expected_header, read_workchain_instance_ledger(expected));
