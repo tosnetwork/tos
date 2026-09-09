@@ -1295,6 +1295,10 @@ add_test(NAME test-counter-genesis-domain COMMAND "${CMAKE_COMMAND}"
   "-DCREATE_STATE=$<TARGET_FILE:create-state>" "-DSOURCE_DIR=${CMAKE_SOURCE_DIR}"
   "-DBUILD_DIR=${CMAKE_BINARY_DIR}" -P "${CMAKE_SOURCE_DIR}/test/test-counter-genesis-domain.cmake")
 set_tests_properties(test-counter-genesis-domain PROPERTIES TIMEOUT 30)
+add_test(NAME test-uno-genesis-operators COMMAND ${Python3_EXECUTABLE}
+  "${CMAKE_CURRENT_SOURCE_DIR}/test/test-uno-genesis-operators.py"
+  --create-state $<TARGET_FILE:create-state> --repo "${CMAKE_CURRENT_SOURCE_DIR}")
+set_tests_properties(test-uno-genesis-operators PROPERTIES TIMEOUT 120 LABELS "uno;genesis")
 option(TOS_UNO_COUNTER_PYTEST "Register the Counter Python harness tests" OFF)
 option(TOS_UNO_COUNTER_NETWORK_TEST "Register the independent-process Counter cold-join experiment" OFF)
 if (TOS_UNO_COUNTER_PYTEST OR TOS_UNO_COUNTER_NETWORK_TEST)

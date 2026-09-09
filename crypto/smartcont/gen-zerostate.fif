@@ -22,6 +22,10 @@ def? $1 { @' $1 } { "" } cond constant suffix
 
 wc_master setworkchain
 1 setglobalid   // TOS mainnet global_id
+// Fail before creating keys or writing genesis artifacts. Development account
+// IDs are explicit; changing them does not add them to the mainnet allowlist.
+"uno-genesis-operators.fif" include
+globalid@ uno_development_coordinator uno_development_custody require-uno-genesis-operators
 0x544F5301 default-subwallet-id!  // TOS-specific default subwallet id
 
 // Canonical mainnet genesis: 2026-09-15 10:00:00 JST

@@ -1,0 +1,15 @@
+// Development-only account IDs. Replace before mainnet and add the exact
+// owner-approved coordinator/custody pair to the approval predicate below.
+// Replacing these values alone must NOT authorize an arbitrary mainnet pair.
+0 constant uno_development_coordinator
+0 constant uno_development_custody
+
+// global-id coordinator-account-id custody-account-id -- approved?
+// The mainnet approval list is deliberately EMPTY: no operational identities
+// have been approved. Network 1 rejects every pair, including plausible-looking
+// nonzero values. Other network IDs permit explicit development identities.
+{ rot 1 = { 2drop false } { 2drop true } cond } : uno-genesis-operators-approved?
+
+{ uno-genesis-operators-approved? not
+  abort"mainnet coordinator/custody pair is not owner-approved"
+} : require-uno-genesis-operators
