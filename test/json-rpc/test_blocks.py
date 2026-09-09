@@ -48,13 +48,17 @@ class TestGetMasterchainInfo:
 class TestGetMasterchainBlockSignatures:
 
     METHOD = "getMasterchainBlockSignatures"
+    # Ordinary blocks answer with blocks.blockSignatures; simplex-consensus
+    # blocks answer with blocks.blockSignatures.simplex, which additionally
+    # carries the session_id / slot / candidate needed to verify the signatures.
+    SIG_TYPES = ("blocks.blockSignatures", "blocks.blockSignatures.simplex")
 
     def test_basic(self, api_method_call, last_mc_seqno):
         response = api_method_call(self.METHOD, seqno=last_mc_seqno)
         assert response.status_code == 200, response.json().get("error")
         data = response.json()
         assert data["ok"] is True
-        assert data["result"]["@type"] == "blocks.blockSignatures"
+        assert data["result"]["@type"] in self.SIG_TYPES
         if data["result"]["signatures"]:
             assert data["result"]["signatures"][0]["@type"] == "blocks.signature"
 
@@ -103,7 +107,7 @@ class TestGetMasterchainBlockSignatures:
         data = response.json()
         assert data["ok"] is True
         result = data["result"]
-        assert result["@type"] == "blocks.blockSignatures"
+        assert result["@type"] in self.SIG_TYPES
         assert result["id"]["seqno"] == seqno
 
         signatures = result["signatures"]
@@ -116,6 +120,16 @@ class TestGetMasterchainBlockSignatures:
             assert "signed_block" not in sig
             assert len(base64.b64decode(sig["node_id_short"])) == 32
             assert len(base64.b64decode(sig["signature"])) == 64
+
+        # Simplex signatures are made over a message built from the session id,
+        # slot and candidate -- not the block hash -- so a client cannot verify
+        # them without those fields. The simplex response must carry them (this
+        # is the second review finding: the earlier version dropped them).
+        if result["@type"] == "blocks.blockSignatures.simplex":
+            assert len(base64.b64decode(result["session_id"])) == 32
+            assert isinstance(result["slot"], int)
+            assert "candidate" in result
+            base64.b64decode(result["candidate"])  # must be valid base64
 
 
 # ═══════════════════════════════════════════════════════════════════════════

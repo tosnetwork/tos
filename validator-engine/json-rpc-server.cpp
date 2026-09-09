@@ -593,27 +593,33 @@ void JsonRpcServer::on_request(RequestPtr request, PayloadPtr payload,
     return;
   }
 
-  // CSRF hardening. A cross-site web page can issue a POST without a CORS
-  // preflight only as a "simple request", which is limited to the form-style
-  // content types below. JSON-RPC/REST clients send application/json (or no
-  // Content-Type). Rejecting the form-safelisted types means any cross-site
-  // write must first pass a CORS preflight, which this server -- sending no
-  // Access-Control-Allow-Origin by default -- fails, so the browser never
-  // sends the write. Not sending a CORS response header only blocks the page
-  // from *reading* the reply; it does not stop the request from being
-  // processed, which this check does. Same-origin and non-browser clients are
-  // unaffected.
+  // CSRF hardening: require application/json on writes.
+  //
+  // A cross-site page can issue a POST without a CORS preflight only as a
+  // "simple request". The Content-Type of a simple request is limited to the
+  // three form-style types -- but a request with NO Content-Type is also
+  // simple, and a page can produce one: a body of Uint8Array / ArrayBuffer /
+  // untyped Blob sets no Content-Type. So allowing "missing Content-Type"
+  // leaves the hole open. application/json is not a safelisted type, so
+  // requiring it forces any cross-site write through a preflight this server
+  // -- sending no Access-Control-Allow-Origin by default -- rejects, and the
+  // browser never sends the write. (Not sending a CORS header only blocks the
+  // page from *reading* the reply; it does not stop the request being
+  // processed, which this check does.) All first-party clients (JS SDK, test
+  // harness, corpus driver) already send application/json, so this rejects
+  // only browser-style writes and misconfigured callers; a legacy client that
+  // cannot set the header needs an explicit authenticated path, not a blanket
+  // "no Content-Type is trusted" exception.
   {
     std::string content_type = request->get_header("Content-Type");
     for (auto &c : content_type) {
       c = td::to_lower(c);
     }
-    auto starts_with = [](const std::string &s, const char *prefix) {
-      return s.rfind(prefix, 0) == 0;
-    };
-    if (starts_with(content_type, "text/plain") ||
-        starts_with(content_type, "application/x-www-form-urlencoded") ||
-        starts_with(content_type, "multipart/form-data")) {
+    // Accept application/json optionally followed by parameters (e.g.
+    // "; charset=utf-8"); reject everything else, including a missing header.
+    bool is_json = content_type.rfind("application/json", 0) == 0 &&
+                   (content_type.size() == 16 || content_type[16] == ';' || content_type[16] == ' ');
+    if (!is_json) {
       promise.set_value(make_text_response(
           415, "Unsupported Media Type",
           "write requests must use Content-Type: application/json", opts_.cors_origin));

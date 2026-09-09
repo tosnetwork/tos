@@ -587,22 +587,8 @@ void JsonRpcServer::handle_getMasterchainBlockSignatures(td::JsonObject &params,
             }
             auto proof = proof_r.move_as_ok();
 
-            td::StringBuilder sb;
-            sb << "{\"@type\":\"blocks.blockSignatures\",\"id\":" << id_json << ",\"signatures\":[";
-            bool first_sig = true;
-            // Emit one signature entry; works for both signature-set variants.
-            auto emit_sigs = [&](const auto& sig_vec) {
-              for (auto& sig : sig_vec) {
-                if (!first_sig) {
-                  sb << ",";
-                }
-                first_sig = false;
-                sb << "{\"@type\":\"blocks.signature\",\"node_id_short\":\""
-                   << td::base64_encode(sig->node_id_short_.as_slice())
-                   << "\",\"signature\":\"" << td::base64_encode(sig->signature_.as_slice()) << "\"}";
-              }
-            };
             // Take the forward link that arrives at N; its signature set signs N.
+            tos::lite_api::liteServer_SignatureSet* sig_set = nullptr;
             for (auto& step : proof->steps_) {
               if (step->get_id() != tos::lite_api::liteServer_blockLinkForward::ID) {
                 continue;
@@ -611,16 +597,46 @@ void JsonRpcServer::handle_getMasterchainBlockSignatures(td::JsonObject &params,
               if (!fwd->to_ || fwd->to_->seqno_ != seqno || !fwd->signatures_) {
                 continue;
               }
-              auto sig_id = fwd->signatures_->get_id();
-              if (sig_id == tos::lite_api::liteServer_signatureSet_ordinary::ID) {
-                emit_sigs(static_cast<tos::lite_api::liteServer_signatureSet_ordinary*>(
-                              fwd->signatures_.get())->signatures_);
-              } else if (sig_id == tos::lite_api::liteServer_signatureSet_simplex::ID) {
-                emit_sigs(static_cast<tos::lite_api::liteServer_signatureSet_simplex*>(
-                              fwd->signatures_.get())->signatures_);
-              }
+              sig_set = fwd->signatures_.get();
+              break;
             }
-            sb << "]}";
+
+            auto emit_sig_array = [](td::StringBuilder& out, const auto& sig_vec) {
+              bool first_sig = true;
+              for (auto& sig : sig_vec) {
+                if (!first_sig) {
+                  out << ",";
+                }
+                first_sig = false;
+                out << "{\"@type\":\"blocks.signature\",\"node_id_short\":\""
+                    << td::base64_encode(sig->node_id_short_.as_slice())
+                    << "\",\"signature\":\"" << td::base64_encode(sig->signature_.as_slice()) << "\"}";
+              }
+            };
+
+            td::StringBuilder sb;
+            if (sig_set && sig_set->get_id() == tos::lite_api::liteServer_signatureSet_simplex::ID) {
+              // Simplex signatures are made over a message built from the
+              // session id, slot and candidate data (a finalize vote), not the
+              // block's root/file hash. Those fields must be returned or the
+              // signatures cannot be verified, so a distinct @type carries them
+              // (candidate_ is already the serialized consensus data). This
+              // mirrors toslib's blocks.blockSignatures.simplex.
+              auto* s = static_cast<tos::lite_api::liteServer_signatureSet_simplex*>(sig_set);
+              sb << "{\"@type\":\"blocks.blockSignatures.simplex\",\"id\":" << id_json
+                 << ",\"session_id\":\"" << td::base64_encode(s->session_id_.as_slice()) << "\""
+                 << ",\"slot\":" << s->slot_
+                 << ",\"candidate\":\"" << td::base64_encode(s->candidate_.as_slice()) << "\""
+                 << ",\"signatures\":[";
+              emit_sig_array(sb, s->signatures_);
+              sb << "]}";
+            } else {
+              sb << "{\"@type\":\"blocks.blockSignatures\",\"id\":" << id_json << ",\"signatures\":[";
+              if (sig_set && sig_set->get_id() == tos::lite_api::liteServer_signatureSet_ordinary::ID) {
+                emit_sig_array(sb, static_cast<tos::lite_api::liteServer_signatureSet_ordinary*>(sig_set)->signatures_);
+              }
+              sb << "]}";
+            }
             promise.set_value(make_json_ok(sb.as_cslice().str(), req_id, cors));
           }));
         }));
