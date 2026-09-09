@@ -32,7 +32,7 @@ success exits immediately with 323 and requires coordinator reporting.
 The resolver probe does not produce transactions or export candidates. It does
 NOT invent zero counters to impersonate collator observations. Future live callers
 must supply actual host transaction counts and candidate-export observations to
-`workchain_activation_control.check_pair`, which imports A's shared classifier.
+`workchain-activation-context.py:check_pair`, which imports A's shared classifier.
 Source uniqueness and the shared classifier self-check must be run by that same
 acceptance driver according to the shared helper API. Resolver calibration must not be used as a completed live acceptance result.
 

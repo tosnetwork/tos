@@ -52,4 +52,4 @@ def run(source):
 
 if __name__ == '__main__':
     sys.exit(run(Path(sys.argv[1]) if len(sys.argv) == 2 else
-                 Path(__file__).with_name('workchain_activation_control.py')))
+                 Path(__file__).with_name('workchain-activation-context.py')))
