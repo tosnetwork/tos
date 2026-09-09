@@ -38,15 +38,10 @@ def main():
     result = subprocess.run([str(args.probe.resolve(strict=True))], check=False, capture_output=True)
     sys.stderr.buffer.write(result.stderr)
     require(result.returncode == 0, 332)
-    rows = [line.split('\t') for line in result.stdout.decode().splitlines()]
-    require(len(rows) == 4 and all(len(r) == 5 for r in rows), 333)
-    require([(r[0], r[1]) for r in rows] == [('0', '0'), ('0', '1'), ('1', '0'), ('1', '1')], 334)
-    # No application success code is passed to the rejection instrument.
-    require([int(r[2]) for r in rows] == [-7201, -7201, -7201, 0] and rows[3][3] == '', 335)
+    output = result.stdout.decode()
+    helper.check_scoped_probe_output(output)
+    rows = [line.split('\t') for line in output.splitlines()]
     require(rows[0][4] == rows[2][4] and rows[1][4] == rows[3][4] and rows[0][4] != rows[1][4], 336)
-    require(helper.is_activation_rejection(int(rows[2][2]), rows[2][3], boundary='scoped') is True, 337)
-    require(helper.is_activation_rejection(int(rows[1][2]), rows[1][3], boundary='scoped') is False, 338)
-    require(helper.is_activation_rejection(int(rows[0][2]), rows[0][3], boundary='scoped') is False, 339)
     # Schema calibration only: statuses/config hashes are real resolver outputs;
     # the zero/export fields below are unit inputs, NOT collator observations.
     closed = dict(status_code=int(rows[2][2]), status_message=rows[2][3],
@@ -55,10 +50,14 @@ def main():
                   common_config_sha256='2' * 64, config_origin='test-internal',
                   capability_enabled=False, config_sha256=rows[2][4])
     enabled = dict(closed, capability_enabled=True, config_sha256=rows[3][4],
-                   reached_required_frontier=True)
+                   reached_required_frontier=(int(rows[3][2]) == 0))
     check_pair(enabled, closed, boundary='scoped')
     caught_identities = []
-    for earlier_row in rows[:2]:
+    for earlier_row in rows:
+        if int(earlier_row[2]) == 0:
+            continue  # Success/unknown-domain checks belong to the shared calibration.
+        if helper.is_activation_rejection(int(earlier_row[2]), earlier_row[3]):
+            continue
         earlier = dict(closed, status_code=int(earlier_row[2]), status_message=earlier_row[3])
         caught = None
         try:
@@ -69,8 +68,7 @@ def main():
         caught_identities.append(caught)
     print(json.dumps({'scope': 'Resolver-only real configuration/status calibration; no live I13e claim, '
                              'no simulated zero-transaction or no-export observations.',
-                      'rows': rows, 'activation': [1, 0], 'known_earlier': [0, 1],
-                      'other_known_earlier': [0, 0],
+                      'rows': rows, 'classification_expectations': 'shared check_scoped_probe_output',
                       'schema_consumer_earlier_rejection_identities': caught_identities,
                       'schema_consumer_scope': 'Unit record fields, not actual transaction/export observations.'}))
 
