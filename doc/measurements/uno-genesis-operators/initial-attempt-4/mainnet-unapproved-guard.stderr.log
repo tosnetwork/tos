@@ -1,0 +1,5 @@
+[1;31m[ 1][t 0][2026-09-09 21:58:29.422970561][create-state.cpp:899]	{}[0m
+[1;31m[ 1][t 0][2026-09-09 21:58:29.450841913][Fift.cpp:67]	top: abort
+level 1: swap { <continuation 0x5e09a6459f70> } if **HERE** drop 
+level 2: <text interpreter continuation>[0m
+Error interpreting file `/tmp/uno-genesis-operators-gon3yjeq/mainnet-unapproved-guard.fif`: [Error : 0 : mainnet-unapproved-guard.fif:2:	require-uno-genesis-operators:mainnet coordinator/custody pair is not owner-approved]

@@ -1,0 +1,5 @@
+[1;31m[ 1][t 0][2026-09-09 21:58:15.386635207][create-state.cpp:899]	{}[0m
+[1;31m[ 1][t 0][2026-09-09 21:58:15.402228951][Fift.cpp:67]	top: include
+level 1: <text interpreter continuation>[0m
+[1;31m[ 1][t 0][2026-09-09 21:58:15.402241376][create-state.cpp:870]	Error interpreting application-specific preamble file `CreateState.fif`: CreateState.fif:24:	include:cannot locate file `auto/wallet-code.fif`
+Check that correct include path is set by -I or by FIFTPATH environment variable, or disable standard preamble by -n.[0m

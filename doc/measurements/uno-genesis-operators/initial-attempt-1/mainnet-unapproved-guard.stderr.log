@@ -1,0 +1,4 @@
+[1;31m[ 1][t 0][2026-09-09 21:57:22.196404024][Fift.cpp:67]	top: abort
+level 1: swap { <continuation 0x60f21ea51d50> } if **HERE** drop 
+level 2: <text interpreter continuation>[0m
+[1;31m[ 1][t 0][2026-09-09 21:57:22.196570296][fift-main.cpp:198]	Error interpreting file `/tmp/uno-genesis-operators-s6z5obcz/mainnet-unapproved-guard.fif`: mainnet-unapproved-guard.fif:2:	require-uno-genesis-operators:mainnet coordinator/custody pair is not owner-approved[0m
