@@ -37,10 +37,19 @@ inline td::Result<WorkchainInboundAllocationOverlay> build(
     const WorkchainDisposalEntryContext* disposal) {
   gen::UnoV2HostInput::Record decoded;
   gen::UnoV2HostEffects::Record output;
-  gen::UnoV2NativeEffects::Record native;
   if (identity.workchain_id < 0 || coordinator == custody ||
-      !tlb::unpack_cell(input, decoded) || !tlb::unpack_cell(effects, output) ||
-      !tlb::unpack_cell(output.native, native)) return td::Status::Error("invalid allocation overlay input");
+      !tlb::unpack_cell(input, decoded) || !tlb::unpack_cell(effects, output)) {
+    return td::Status::Error("invalid allocation overlay input");
+  }
+  TRY_RESULT(native, decode_workchain_native_effects(output.native));
+  CurrencyCollection aggregate_collected(0);
+  if (native.fees) {
+    if (native.fees->custody != custody || native.fees->coordinator != coordinator) {
+      return td::Status::Error("fee settlement differs from authenticated roles");
+    }
+    TRY_RESULT(totals, checked_workchain_fee_totals(*native.fees));
+    aggregate_collected = std::move(totals.collected);
+  }
   TRY_RESULT(expected_identity, encode_workchain_host_identity(identity));
   if (decoded.identity->get_hash() != expected_identity->get_hash()) {
     return td::Status::Error("allocation overlay identity mismatch");
@@ -136,12 +145,15 @@ inline td::Result<WorkchainInboundAllocationOverlay> build(
     gen::Account::Record_account old_record, next_record;
     gen::AccountStorage::Record old_storage, next_storage;
     CurrencyCollection before, after, fees, exported(0);
+    // The fee equality below is a cross-derivation regression tripwire for
+    // serialized output, not independent authorization by a fee schedule.
     if (!tlb::unpack_cell(tx.root, record) || record.account_addr != account.addr ||
         record.prev_trans_hash != account.last_trans_hash_ || record.prev_trans_lt != account.last_trans_lt_ ||
         !tlb::unpack_cell(account.total_state, old_record) || !tlb::csr_unpack(old_record.storage, old_storage) ||
         !tlb::unpack_cell(tx.new_total_state, next_record) || !tlb::csr_unpack(next_record.storage, next_storage) ||
         !before.unpack(old_storage.balance) || !after.unpack(next_storage.balance) || !fees.unpack(record.total_fees) ||
-        (!is_prepared && !fees.is_zero()) || next_storage.last_trans_lt != tx.end_lt || record.lt != tx.start_lt ||
+        (!is_prepared && fees != (keys[i] == custody ? aggregate_collected : CurrencyCollection(0))) ||
+        next_storage.last_trans_lt != tx.end_lt || record.lt != tx.start_lt ||
         record.r1.in_msg->prefetch_ulong(1) != 0 ||
         static_cast<std::uint64_t>(record.outmsg_cnt) != schedule.participants[i].outbound_count) {
       return td::Status::Error("invalid allocation overlay native artifacts");

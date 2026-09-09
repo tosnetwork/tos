@@ -55,9 +55,21 @@ inline td::Result<td::Ref<vm::Cell>> encode_workchain_account_effects(
     }
   }
   vm::CellBuilder native;
-  native.store_long(0x0bd47725, 32);
+  native.store_long(effects.fees ? 0x67e2d380 : 0x0bd47725, 32);
   if (!native.store_maybe_ref(effects.payout_request) || !transfers.append_dict_to_bool(native)) {
     return td::Status::Error("cannot encode native effects");
+  }
+  if (effects.fees) {
+    TRY_RESULT(totals, checked_workchain_fee_totals(*effects.fees));
+    if (!totals.state.is_zero() && effects.native_transfers.size() >= max_transfers) {
+      return td::Status::Error("fee edge exceeds admitted transfer count");
+    }
+    if (updates.lookup_ref(effects.fees->custody).is_null() ||
+        updates.lookup_ref(effects.fees->coordinator).is_null()) {
+      return td::Status::Error("fee role missing from account updates");
+    }
+    TRY_RESULT(fees, encode_workchain_fee_settlement(*effects.fees));
+    if (!native.store_ref_bool(fees)) return td::Status::Error("cannot encode fee reference");
   }
   vm::CellBuilder cb;
   cb.store_long(0x4155a803, 32);

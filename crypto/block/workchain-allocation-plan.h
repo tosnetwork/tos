@@ -4,6 +4,7 @@
 
 #include "block/block-auto.h"
 #include "block/workchain-value-flow.h"
+#include "block/workchain-fee-settlement.h"
 
 namespace block {
 
@@ -35,8 +36,7 @@ inline td::Result<WorkchainAllocationPlan> plan_workchain_native_allocations(
         td::Bits256 account(key);
         return plan.accounts.emplace(account, WorkchainAllocationTotals{}).second;
       }) || plan.accounts.empty()) return td::Status::Error("invalid batch allocation update set");
-  gen::UnoV2NativeEffects::Record native;
-  if (!::tlb::unpack_cell(effects.native, native)) return td::Status::Error("invalid batch native effects");
+  TRY_RESULT(native, decode_workchain_native_effects(effects.native));
   vm::Dictionary transfers(native.transfers, 32);
   if (!transfers.check_for_each([&](td::Ref<vm::CellSlice> leaf, td::ConstBitPtr key, int bits) {
         if (plan.transfers.size() >= max_transfers || bits != 32 ||
@@ -63,6 +63,27 @@ inline td::Result<WorkchainAllocationPlan> plan_workchain_native_allocations(
         plan.transfers.push_back({record.source, record.destination, std::move(value)});
         return true;
       })) return td::Status::Error("invalid batch allocation transfer graph or arithmetic");
+  if (native.fees) {
+    const auto& fees = *native.fees;
+    TRY_RESULT(totals, checked_workchain_fee_totals(fees));
+    auto from = plan.accounts.find(fees.custody), to = plan.accounts.find(fees.coordinator);
+    if (from == plan.accounts.end() || to == plan.accounts.end()) {
+      return td::Status::Error("fee allocation endpoints absent from updates");
+    }
+    if (!totals.state.is_zero()) {
+      if (plan.transfers.size() >= max_transfers) return td::Status::Error("fee edge exceeds transfer budget");
+      CurrencyCollection outgoing, incoming;
+      if (!CurrencyCollection::add(from->second.outgoing, totals.state, outgoing) ||
+          !outgoing.tomis->unsigned_fits_bits(256) ||
+          !CurrencyCollection::add(to->second.incoming, totals.state, incoming) ||
+          !incoming.tomis->unsigned_fits_bits(256)) return td::Status::Error("fee allocation totals overflow");
+      from->second.outgoing = std::move(outgoing);
+      to->second.incoming = std::move(incoming);
+      // This is a derived sum graph, not the canonical wire transfer list.
+      // The fee edge may duplicate a wire pair; value flow sums both edges.
+      plan.transfers.push_back({fees.custody, fees.coordinator, totals.state});
+    }
+  }
   return plan;
 }
 

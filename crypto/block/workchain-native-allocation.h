@@ -3,6 +3,7 @@
 #include "block/block-auto.h"
 #include "block/block.h"
 #include "block/workchain-participant-lt.h"
+#include "block/workchain-fee-settlement.h"
 
 namespace block {
 
@@ -22,8 +23,7 @@ inline td::Result<CurrencyCollection> allocate_workchain_native_balance(
            value.validate_extra(extra_validation_cells);
   };
   if (!valid(credited)) return td::Status::Error("invalid credited allocation balance");
-  gen::UnoV2NativeEffects::Record native;
-  if (!::tlb::unpack_cell(effects.native, native)) return td::Status::Error("invalid native allocation effects");
+  TRY_RESULT(native, decode_workchain_native_effects(effects.native));
   vm::Dictionary updates(effects.updates, 256), transfers(native.transfers, 32);
   if (updates.lookup_ref(account).is_null()) return td::Status::Error("allocation account absent from updates");
   CurrencyCollection incoming(0), outgoing(0);
@@ -54,6 +54,28 @@ inline td::Result<CurrencyCollection> allocate_workchain_native_balance(
         index = next.move_as_ok();
         return true;
       })) return td::Status::Error("invalid native allocation sequence or arithmetic");
+  if (native.fees) {
+    const auto& fees = *native.fees;
+    TRY_RESULT(totals, checked_workchain_fee_totals(fees));
+    if (updates.lookup_ref(fees.custody).is_null() || updates.lookup_ref(fees.coordinator).is_null()) {
+      return td::Status::Error("fee allocation role absent from updates");
+    }
+    if (!totals.state.is_zero()) {
+      if (index >= max_transfers) return td::Status::Error("fee allocation exceeds transfer budget");
+      CurrencyCollection next;
+      if (account == fees.custody) {
+        if (!CurrencyCollection::add(outgoing, totals.state, next) || !next.tomis->unsigned_fits_bits(256)) {
+          return td::Status::Error("fee allocation debit overflow");
+        }
+        outgoing = std::move(next);
+      } else if (account == fees.coordinator) {
+        if (!CurrencyCollection::add(incoming, totals.state, next) || !next.tomis->unsigned_fits_bits(256)) {
+          return td::Status::Error("fee allocation credit overflow");
+        }
+        incoming = std::move(next);
+      }
+    }
+  }
   CurrencyCollection available, result;
   if (!CurrencyCollection::add(credited, incoming, available) || !available.tomis->unsigned_fits_bits(256) ||
       !CurrencyCollection::sub(available, outgoing, result)) {

@@ -307,9 +307,10 @@ inline td::Result<WorkchainAccountSettlement> execute(
     // Dictionary construction above is count-bounded, not incrementally charged.
     // dict_set follows one path, decreasing key width each recursion, rebuilds
     // one node per ancestor and finalizes at most three nodes at the insertion.
-    // A conservative cumulative bound is 259*U + 36*T + 2 finalized Cells:
+    // A conservative cumulative bound is 259*U + 36*T + 3 finalized Cells:
     // 256-bit update paths; 32-bit transfer paths plus one entry each; two
-    // outer wrappers. U <= max_writes and T <= max_transfers were checked above.
+    // outer wrappers and at most one fee record. U <= max_writes and
+    // T <= max_transfers were checked above.
     // This excludes already-produced engine data and is not zero overshoot of
     // the final union budget. No runtime multiplication relies on this bound.
     TRY_STATUS(charge_effect(effects_root));

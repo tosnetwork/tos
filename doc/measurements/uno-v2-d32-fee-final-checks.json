@@ -1,0 +1,43 @@
+{
+  "scope": "Private D32 Native settlement checkpoint, not fee authorization or live acceptance",
+  "source_sha256": {
+    "crypto/block/block.tlb": "5763e2250369d34f412fa281d9682647921db86f8dbceaaf594286854778ff66",
+    "crypto/block/transaction.cpp": "c511848ba163d0c30a51bcbd03f06e38f4073c356117d3a2171235c3dc365e58",
+    "crypto/block/workchain-account-effects.h": "e5609973417f57788b22e8e606d4bffc3805df44283f3f5c141a26ae5231156f",
+    "crypto/block/workchain-account-engine.h": "ea8880c3c02f87930448aa7d28a80bd06028ece388183ef5d9f312a3f13a4929",
+    "crypto/block/workchain-account-settlement.h": "f2766fd4ec46bb27d8795e7106f9b274d56a895d006e4fc54ea3228d0a0d903e",
+    "crypto/block/workchain-allocation-overlay.h": "c23855a4a5fafd7fd16b6b86637a9914f946fbf0240baa7ea770415464624b75",
+    "crypto/block/workchain-allocation-plan.h": "2e78cea0b274b793ad35d05f94a1b54f133f84a307bd9bb8d200142c2eba0a71",
+    "crypto/block/workchain-fee-settlement.h": "df767dcc698b79dafa6964e9e150883d0336cd0c0c1fd8940f03a3d1982f7f7b",
+    "crypto/block/workchain-native-allocation.h": "539cedd154c0ecf4fc1c31a7274a88fbd208be47bf2848c9c4387d9081492645",
+    "crypto/test/test-workchain-block.cpp": "87d8f1757d4b1d350bcd02378efd3cc40f7f28a85678bee64aa1b647f3171b74"
+  },
+  "generated_sha256": {
+    "crypto/block/block-auto.h": "7d95dae9d187289c6804f411181d4aaa20a5388c04c88591e9ba7cab1da3f929",
+    "crypto/block/block-auto.cpp": "347e703d16d916dfaf16f4bf45a4ec14da561e633511f3bb75164c64da4e3dc4"
+  },
+  "binary_sha256": "d0856145da3bf89323b56fe36ced3a09dca0428a0c2afc5ab2cf1d241688dbde",
+  "collator_compatibility": {
+    "build_command": "cmake --build build --target test-tos-collator -j48",
+    "build_exit_code": 0,
+    "build_scope": "25 build steps, including collator.cpp, validate-query.cpp and final tool link",
+    "binary_sha256": "7d1fb613b2beb05c1019d59742c90d420a693ea39454807f67d2d7d7b08b9937",
+    "test_source_sha256": "a17d045caeb3fcc335cf613b777c97c0299d3c41b031b2a580077f53295e8cef",
+    "command": "ctest --test-dir build --output-on-failure -R '^test-counter-(collator-admission|disk-integration|account-binding-readiness|idle-replay|self-delivery|cross-delivery|native-sender|activation-.*|config-presence-.*|config-binding|engine-config)$'",
+    "exit_code": 0,
+    "passed": 13,
+    "failed": 0,
+    "elapsed_seconds": 6.94,
+    "scope": "Existing counter/singleton compatibility and closed-gate behavior only; not live multi-account acceptance"
+  },
+  "build": {
+    "command": "cmake --build build --target test-workchain-block -j48",
+    "exit_code": 0,
+    "output": "[1/57] Checking the git repository for changes...\n[2/3] Building CXX object CMakeFiles/test-workchain-block.dir/crypto/test/test-workchain-block.cpp.o\n[3/3] Linking CXX executable test-workchain-block\n"
+  },
+  "regression": {
+    "command": "ctest --test-dir build --output-on-failure -R '^test-workchain-block$'",
+    "exit_code": 0,
+    "output": "Internal ctest changing into directory: /home/tomi/tos/build\nTest project /home/tomi/tos/build\n    Start 36: test-workchain-block\n1/1 Test #36: test-workchain-block .............   Passed    2.91 sec\n\n100% tests passed, 0 tests failed out of 1\n\nTotal Test time (real) =   2.91 sec\n"
+  }
+}

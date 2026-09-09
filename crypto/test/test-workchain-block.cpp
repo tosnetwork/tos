@@ -2129,7 +2129,7 @@ TEST(WorkchainBlock, NativeTransferEffects) {
   ASSERT_TRUE(block::gen::t_UnoV2HostEffects.validate_ref(4096, result.ok()));
   block::gen::UnoV2HostEffects::Record decoded;
   ASSERT_TRUE(tlb::unpack_cell(result.ok(), decoded));
-  block::gen::UnoV2NativeEffects::Record native;
+  block::gen::UnoV2NativeEffects::Record_uno_v2_native_effects native;
   ASSERT_TRUE(tlb::unpack_cell(decoded.native, native));
   vm::Dictionary transfers(native.transfers, 32);
   unsigned count = 0;
@@ -2214,7 +2214,7 @@ TEST(WorkchainBlock, NativeAllocation) {
   auto malformed = effects;
   malformed.native = number(123);
   ASSERT_TRUE(block::allocate_workchain_native_balance(a, C(1200), malformed, 2, 4096).is_error());
-  block::gen::UnoV2NativeEffects::Record native;
+  block::gen::UnoV2NativeEffects::Record_uno_v2_native_effects native;
   ASSERT_TRUE(tlb::unpack_cell(normal.native, native));
   vm::Dictionary trailing(native.transfers, 32);
   auto key = td::BitArray<32>::zero();
@@ -2339,7 +2339,7 @@ TEST(WorkchainBlock, BatchNativeAllocation) {
   ASSERT_TRUE(no_updates.append_dict_to_bool(empty_updates_cell));
   malformed.updates = vm::load_cell_slice_ref(empty_updates_cell.finalize());
   ASSERT_TRUE(decode(malformed).is_error());
-  block::gen::UnoV2NativeEffects::Record native;
+  block::gen::UnoV2NativeEffects::Record_uno_v2_native_effects native;
   ASSERT_TRUE(tlb::unpack_cell(edges.native, native));
   vm::Dictionary bad_transfers(native.transfers, 32);
   auto zero_key = td::BitArray<32>::zero();
@@ -2352,6 +2352,148 @@ TEST(WorkchainBlock, BatchNativeAllocation) {
   malformed = base;
   malformed.native = native_cell.finalize();
   ASSERT_TRUE(decode(malformed).is_error());
+}
+
+TEST(WorkchainBlock, AggregateFeeSettlement) {
+  using C = block::CurrencyCollection;
+  const auto coordinator_id = td::Bits256::zero();
+  const td::Bits256 custody_id(number(1)->get_hash().bits());
+  auto candidate = number(11);
+  const td::Bits256 hash(candidate->get_hash().bits());
+  block::InputPolicyIdentity policy_id{candidate->get_hash(), false, 17, 9, 2, 1};
+  auto policy = block::ResolvedInputPolicy::from_resolved_fields({10, 1024, 1}, policy_id);
+  ASSERT_TRUE(std::holds_alternative<block::ResolvedInputPolicy>(policy));
+  block::CandidateAdmissionSession admission(candidate, std::get<block::ResolvedInputPolicy>(policy));
+  ASSERT_TRUE(std::holds_alternative<block::AdmittedInput>(admission.evaluate()));
+  const auto& admitted = std::get<block::AdmittedInput>(admission.evaluate());
+  block::WorkchainHostIdentity identity{-1, hash, hash, 2, UINT64_MAX, hash, false,
+      17, 9, 2, 1, hash, 1, 10, 20, number(1)};
+  block::gen::ShardStateUnsplit::Record old;
+  ASSERT_TRUE(tlb::unpack_cell(shard_fixture(2, 2, true, 3, false, 0, 40, false, 1000), old));
+  auto original_hash = old.accounts->get_hash();
+  vm::AugmentedDictionary accounts(vm::load_cell_slice_ref(old.accounts), 256, block::tlb::aug_ShardAccounts);
+  block::Account coordinator(2, coordinator_id.bits()), custody(2, custody_id.bits());
+  ASSERT_TRUE(coordinator.unpack(accounts.lookup(coordinator_id), 10, false));
+  ASSERT_TRUE(custody.unpack(accounts.lookup(custody_id), 10, false));
+  block::WorkchainAccountDeclarations access{{
+      {coordinator_id, td::Bits256(coordinator.total_state->get_hash().bits())},
+      {custody_id, td::Bits256(custody.total_state->get_hash().bits())}}, {coordinator_id, custody_id}};
+  auto input = block::encode_workchain_host_input(identity, admitted, access, {}, 2, 2, 0).move_as_ok();
+  block::SerializeConfig cfg;
+  cfg.global_version = 16;
+  cfg.disable_anycast = true;
+  block::WorkchainAccountEffects effects;
+  effects.updates = {{coordinator_id, number(321)}, {custody_id, number(322)}};
+  auto legacy = block::encode_workchain_account_effects(effects, 2, 1, 4096).move_as_ok();
+  block::gen::UnoV2HostEffects::Record decoded;
+  ASSERT_TRUE(tlb::unpack_cell(legacy, decoded));
+  ASSERT_EQ(vm::load_cell_slice(decoded.native).prefetch_ulong(32), 0x0bd47725u);
+  ASSERT_TRUE(!block::decode_workchain_native_effects(decoded.native).move_as_ok().fees.has_value());
+  effects.fees = block::WorkchainFeeSettlement{custody_id, coordinator_id,
+      td::make_refint(17), td::make_refint(23), td::make_refint(5)};
+  auto root = block::encode_workchain_account_effects(effects, 2, 1, 4096).move_as_ok();
+  ASSERT_TRUE(tlb::unpack_cell(root, decoded));
+  ASSERT_EQ(vm::load_cell_slice(decoded.native).prefetch_ulong(32), 0x67e2d380u);
+  ASSERT_TRUE(block::gen::t_UnoV2HostEffects.validate_ref(4096, root));
+  auto native = block::decode_workchain_native_effects(decoded.native).move_as_ok();
+  ASSERT_TRUE(native.fees.has_value());
+  ASSERT_EQ(native.fees->compute_fee->to_long(), 23);
+  ASSERT_EQ(native.fees->tip->to_long(), 5);
+  ASSERT_TRUE(block::allocate_workchain_native_balance(custody_id, C(1000), decoded, 1, 4096).move_as_ok() == C(983));
+  ASSERT_TRUE(block::allocate_workchain_native_balance(coordinator_id, C(1000), decoded, 1, 4096).move_as_ok() == C(1017));
+  auto allocation = block::plan_workchain_native_allocations(decoded, 2, 1, 4096).move_as_ok();
+  ASSERT_EQ(allocation.transfers.size(), 1u);
+  ASSERT_TRUE(allocation.accounts.at(custody_id).outgoing == C(17));
+  ASSERT_TRUE(allocation.accounts.at(coordinator_id).incoming == C(17));
+  auto bindings = block::build_workchain_participant_records(td::Bits256(input->get_hash().bits()),
+      td::Bits256(root->get_hash().bits()), {coordinator_id, custody_id}, 2).move_as_ok();
+  block::transaction::Transaction prepared(custody, block::transaction::Transaction::tr_workchain_batch, 21, 10);
+  ASSERT_TRUE(prepared.prepare_workchain_import_participant(bindings[1], input, root, number(322), cfg, 1, 4096).is_ok());
+  ASSERT_TRUE(prepared.balance == C(955));
+  ASSERT_TRUE(prepared.total_fees == C(28));
+  ASSERT_TRUE(prepared.out_msgs.empty() && prepared.serialize(cfg));
+  ASSERT_TRUE(block::encode_workchain_account_effects(effects, 2, 0, 4096).is_error());
+  auto built_result = block::build_workchain_inbound_allocation_overlay(old.accounts, identity,
+      input, root, coordinator_id, custody_id, 2, 2, 1, 0, 4096, cfg);
+  if (built_result.is_error()) LOG(ERROR) << built_result.error();
+  ASSERT_TRUE(built_result.is_ok());
+  auto built = built_result.move_as_ok();
+  ASSERT_TRUE(built.exports.empty());
+  vm::AugmentedDictionary next(vm::load_cell_slice_ref(built.state.accounts), 256, block::tlb::aug_ShardAccounts);
+  vm::AugmentedDictionary blocks(vm::load_cell_slice_ref(built.state.account_blocks), 256, block::tlb::aug_ShardAccountBlocks);
+  for (const auto& key : {coordinator_id, custody_id}) {
+    block::Account account(2, key.bits());
+    ASSERT_TRUE(account.unpack(next.lookup(key), 10, false));
+    ASSERT_TRUE(account.balance == C(key == custody_id ? 955 : 1017));
+    block::gen::AccountBlock::Record ab;
+    ASSERT_TRUE(tlb::unpack_cell(vm::CellBuilder().append_cellslice(*blocks.lookup(key)).finalize(), ab));
+    vm::AugmentedDictionary txs(vm::DictNonEmpty(), ab.transactions, 64, block::tlb::aug_AccountTransactions);
+    block::gen::Transaction::Record tx;
+    ASSERT_TRUE(tlb::unpack_cell(txs.lookup_ref(td::BitArray<64>(account.last_trans_lt_)), tx));
+    C fees;
+    ASSERT_TRUE(fees.unpack(tx.total_fees));
+    ASSERT_TRUE(fees == C(key == custody_id ? 28 : 0));
+    ASSERT_EQ(tx.outmsg_cnt, 0);
+  }
+  ASSERT_TRUE(block::replay_workchain_inbound_allocation_overlay(old.accounts, identity, input, root,
+      coordinator_id, custody_id, 2, 2, 1, 0, 4096, cfg, built).is_ok());
+  // C and T share the collected-fee channel; only the authenticated schedule
+  // can authorize their split. S uses a different channel. Test the numeric
+  // settlement rather than an effects-hash mismatch between two claims.
+  for (const auto& amounts : std::vector<std::vector<long long>>{
+      {17, 28, 0, 955, 1017, 28}, {0, 40, 5, 955, 1000, 45}, {45, 0, 0, 955, 1045, 0}}) {
+    auto alternative = effects;
+    alternative.fees->state_fee = td::make_refint(amounts[0]);
+    alternative.fees->compute_fee = td::make_refint(amounts[1]);
+    alternative.fees->tip = td::make_refint(amounts[2]);
+    const unsigned edges = amounts[0] == 0 ? 0 : 1;
+    auto other_root = block::encode_workchain_account_effects(alternative, 2, edges, 4096).move_as_ok();
+    block::gen::UnoV2HostEffects::Record other_decoded;
+    ASSERT_TRUE(tlb::unpack_cell(other_root, other_decoded));
+    ASSERT_EQ(block::plan_workchain_native_allocations(other_decoded, 2, edges, 4096).move_as_ok().transfers.size(), edges);
+    auto other_bindings = block::build_workchain_participant_records(td::Bits256(input->get_hash().bits()),
+        td::Bits256(other_root->get_hash().bits()), {coordinator_id, custody_id}, 2).move_as_ok();
+    block::transaction::Transaction c(custody, block::transaction::Transaction::tr_workchain_batch, 21, 10);
+    block::transaction::Transaction o(coordinator, block::transaction::Transaction::tr_workchain_batch, 21, 10);
+    ASSERT_TRUE(c.prepare_workchain_import_participant(other_bindings[1], input, other_root, number(322), cfg, edges, 4096).is_ok());
+    ASSERT_TRUE(o.prepare_workchain_entry(other_bindings[0], input, other_root, number(321), cfg, edges, 4096).is_ok());
+    ASSERT_TRUE(c.balance == C(amounts[3]) && o.balance == C(amounts[4]));
+    ASSERT_TRUE(c.total_fees == C(amounts[5]) && o.total_fees.is_zero());
+    ASSERT_TRUE(c.out_msgs.empty() && o.out_msgs.empty() && c.serialize(cfg) && o.serialize(cfg));
+    ASSERT_TRUE(block::build_workchain_inbound_allocation_overlay(old.accounts, identity, input, other_root,
+        coordinator_id, custody_id, 2, 2, edges, 0, 4096, cfg).is_ok());
+  }
+  auto changed = effects;
+  std::swap(changed.fees->custody, changed.fees->coordinator);
+  auto wrong_roles = block::encode_workchain_account_effects(changed, 2, 1, 4096).move_as_ok();
+  ASSERT_TRUE(block::build_workchain_inbound_allocation_overlay(old.accounts, identity, input, wrong_roles,
+      coordinator_id, custody_id, 2, 2, 1, 0, 4096, cfg).is_error());
+  // Direct disposal factory: no enclosing allocation/payout role guard can
+  // mask a missing local check. Empty inbox keeps all other inputs identical.
+  block::ActionPhaseConfig messages;
+  messages.global_version = 16;
+  block::WorkchainSet workchains;
+  block::NativeDisposalProfile profile{block::NativeDisposalSource::OriginalDestination,
+      {0, -block::ComputePhase::sk_no_state, {}}, false};
+  block::WorkchainDisposalEntryContext disposal{custody_id, messages, workchains, profile, 1, 1};
+  block::transaction::Transaction good_disposal(coordinator, block::transaction::Transaction::tr_workchain_batch, 21, 10);
+  ASSERT_TRUE(good_disposal.prepare_workchain_disposal_entry(bindings[0], input, root, number(321),
+      cfg, 1, 4096, disposal).is_ok());
+  ASSERT_TRUE(good_disposal.balance == C(1017) && good_disposal.total_fees.is_zero());
+  auto wrong_bindings = block::build_workchain_participant_records(td::Bits256(input->get_hash().bits()),
+      td::Bits256(wrong_roles->get_hash().bits()), {coordinator_id, custody_id}, 2).move_as_ok();
+  block::transaction::Transaction bad_disposal(coordinator, block::transaction::Transaction::tr_workchain_batch, 21, 10);
+  ASSERT_TRUE(bad_disposal.prepare_workchain_disposal_entry(wrong_bindings[0], input, wrong_roles, number(321),
+      cfg, 1, 4096, disposal).is_error());
+  ASSERT_TRUE(bad_disposal.balance == C(1000) && bad_disposal.total_fees.is_zero());
+  ASSERT_TRUE(bad_disposal.root.is_null() && bad_disposal.new_total_state.is_null() && bad_disposal.out_msgs.empty());
+  changed = effects;
+  changed.fees->compute_fee = td::make_refint(1000);
+  auto unfunded = block::encode_workchain_account_effects(changed, 2, 1, 4096).move_as_ok();
+  ASSERT_TRUE(block::build_workchain_inbound_allocation_overlay(old.accounts, identity, input, unfunded,
+      coordinator_id, custody_id, 2, 2, 1, 0, 4096, cfg).is_error());
+  ASSERT_EQ(old.accounts->get_hash(), original_hash);
+  ASSERT_TRUE(custody.balance == C(1000) && coordinator.balance == C(1000));
 }
 
 TEST(WorkchainBlock, NativeDisposalEntry) {
@@ -2698,6 +2840,55 @@ TEST(WorkchainBlock, NativeDisposalEntry) {
   ASSERT_EQ(joint_settled.exports.size(), 3u);
   ASSERT_EQ(joint_settled.state.end_lt, 24u);
   ASSERT_EQ(joint_settled.message->get_hash(), pair[0]->out_msgs[0]->get_hash());
+  {
+    // Aggregate user fees coexist with payout forwarding and disposal fees.
+    // The three charges have different funders and must never overwrite one
+    // another. All final balances below are decoded from Native artifacts.
+    auto charged_effects = joint_effects;
+    charged_effects.fees = block::WorkchainFeeSettlement{b, a,
+        td::make_refint(17), td::make_refint(23), td::make_refint(5)};
+    engine.effects = charged_effects;
+    engine.calls = 0;
+    auto charged_result = block::execute_and_settle_workchain_disposal(engine, old.accounts,
+        overlay_identity, admitted, access, owned_inbox, 2, 2, 3, a, td::make_refint(100), 4096, cfg, joint_context);
+    if (charged_result.is_error()) LOG(ERROR) << charged_result.error();
+    ASSERT_TRUE(charged_result.is_ok());
+    ASSERT_EQ(engine.calls, 1u);
+    auto charged = charged_result.move_as_ok();
+    ASSERT_EQ(charged.exports.size(), 3u);
+    vm::AugmentedDictionary states(vm::load_cell_slice_ref(charged.state.accounts), 256, block::tlb::aug_ShardAccounts);
+    vm::AugmentedDictionary account_blocks(vm::load_cell_slice_ref(charged.state.account_blocks),
+        256, block::tlb::aug_ShardAccountBlocks);
+    for (const auto& key : {a, b}) {
+      block::Account account(2, key.bits());
+      ASSERT_TRUE(account.unpack(states.lookup(key), 10, false));
+      ASSERT_TRUE(account.balance == block::CurrencyCollection(key == b ? 1045 : 990));
+      block::gen::AccountBlock::Record ab;
+      ASSERT_TRUE(tlb::unpack_cell(vm::CellBuilder().append_cellslice(*account_blocks.lookup(key)).finalize(), ab));
+      vm::AugmentedDictionary txs(vm::DictNonEmpty(), ab.transactions, 64, block::tlb::aug_AccountTransactions);
+      block::gen::Transaction::Record tx;
+      ASSERT_TRUE(tlb::unpack_cell(txs.lookup_ref(td::BitArray<64>(account.last_trans_lt_)), tx));
+      block::CurrencyCollection fees;
+      ASSERT_TRUE(fees.unpack(tx.total_fees));
+      ASSERT_TRUE(fees == block::CurrencyCollection(key == b ? 53 : 100));
+      ASSERT_EQ(tx.outmsg_cnt, key == b ? 1 : 2);
+    }
+    engine.calls = 0;
+    auto charged_replay = block::replay_workchain_disposal_settlement(engine, old.accounts,
+        overlay_identity, admitted, access, owned_inbox, 2, 2, 3, a, td::make_refint(100), 4096,
+        cfg, joint_context, charged);
+    ASSERT_TRUE(charged_replay.is_ok());
+    ASSERT_EQ(engine.calls, 1u);
+    ASSERT_EQ(charged_replay.ok().state.accounts->get_hash(), charged.state.accounts->get_hash());
+    ASSERT_EQ(charged_replay.ok().state.account_blocks->get_hash(), charged.state.account_blocks->get_hash());
+    engine.calls = 0;
+    ASSERT_TRUE(block::execute_and_settle_workchain_disposal(engine, old.accounts,
+        overlay_identity, admitted, access, owned_inbox, 2, 2, 2, a, td::make_refint(100),
+        4096, cfg, joint_context).is_error());
+    ASSERT_EQ(engine.calls, 1u);
+    ASSERT_EQ(old.accounts->get_hash(), original_hash);
+    engine.effects = joint_effects;
+  }
   for (const auto& output : joint_settled.exports) {
     bool found = false;
     for (const auto& transaction : pair) {
@@ -5222,7 +5413,7 @@ TEST(WorkchainBlock, AccountEngineExecution) {
     ASSERT_EQ(decoded.events->prefetch_ulong(1), 1u);
     ASSERT_TRUE(decoded.receipts->prefetch_ref()->get_hash() == number(103)->get_hash());
     ASSERT_TRUE(decoded.events->prefetch_ref()->get_hash() == number(104)->get_hash());
-    block::gen::UnoV2NativeEffects::Record native;
+    block::gen::UnoV2NativeEffects::Record_uno_v2_native_effects native;
     ASSERT_TRUE(tlb::unpack_cell(decoded.native, native));
     ASSERT_EQ(native.payout->prefetch_ulong(1), with_payout ? 1u : 0u);
     if (with_payout) ASSERT_TRUE(native.payout->prefetch_ref()->get_hash() == engine.payout->get_hash());

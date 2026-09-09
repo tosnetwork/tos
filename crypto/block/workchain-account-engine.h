@@ -4,6 +4,7 @@
 #include "block/workchain-host-input.h"
 #include "block/workchain-value-flow.h"
 #include "block/workchain-execution-errors.h"
+#include "block/workchain-fee-settlement.h"
 
 namespace block {
 
@@ -50,6 +51,7 @@ struct WorkchainAccountEffects {
   // Optional single custody payout request, not a finalized Native message.
   // The settlement host must authenticate its role, amount and authorization.
   td::Ref<vm::Cell> payout_request;
+  std::optional<WorkchainFeeSettlement> fees;
   td::Ref<vm::Cell> receipts, events;
   WorkchainBlockResourceUsage usage;
 };

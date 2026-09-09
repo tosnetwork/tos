@@ -4626,13 +4626,17 @@ td::Result<PreparedWorkchainPayoutPair> Transaction::build_workchain_payout_pair
   if (entry_input.not_null()) {
     gen::UnoV2HostInput::Record input;
     gen::UnoV2HostEffects::Record effects;
-    gen::UnoV2NativeEffects::Record native;
     if (first.input_hash != entry_input->get_hash().bits() || first.effects_hash != entry_effects->get_hash().bits() ||
-        !tlb::unpack_cell(entry_input, input) || !tlb::unpack_cell(entry_effects, effects) ||
-        !tlb::unpack_cell(effects.native, native) ||
-        native.payout->prefetch_ulong(1) != 1 ||
+        !tlb::unpack_cell(entry_input, input) || !tlb::unpack_cell(entry_effects, effects)) {
+      return td::Status::Error("payout entry context mismatch");
+    }
+    TRY_RESULT(native, decode_workchain_native_effects(effects.native));
+    if (native.payout->prefetch_ulong(1) != 1 ||
         request.is_null() || native.payout->prefetch_ref()->get_hash() != request->get_hash()) {
       return td::Status::Error("payout entry context or request mismatch");
+    }
+    if (native.fees && (native.fees->custody != custody.addr || native.fees->coordinator != coordinator.addr)) {
+      return td::Status::Error("payout fee roles differ from authenticated pair");
     }
     vm::Dictionary updates(effects.updates, 256);
     auto expected = updates.lookup_ref(custody.addr);
@@ -4670,10 +4674,12 @@ td::Result<PreparedWorkchainPayoutPair> Transaction::build_workchain_payout_pair
       pair[1]->balance, priced.payment, priced.total_fee, priced.collected_fee, extra_validation_cells));
   pair[0]->balance = allocation.custody_after;
   pair[1]->balance = allocation.operator_after;
-  // The custody import participant has no transaction fee-producing phase:
-  // inbound forwarding fees live in InMsgDescr, and disposal runs only on the
-  // coordinator. This assigns the complete custody transaction fee, not a sum.
-  pair[0]->total_fees = CurrencyCollection(priced.collected_fee);
+  // Preserve the independently staged aggregate fee when a payout shares the
+  // batch. Its funding is already debited; only the payout fee is funded above.
+  CurrencyCollection combined_fees;
+  if (!CurrencyCollection::add(pair[0]->total_fees, CurrencyCollection(priced.collected_fee), combined_fees) ||
+      !combined_fees.tomis->unsigned_fits_bits(120)) return td::Status::Error("combined custody fee overflow");
+  pair[0]->total_fees = std::move(combined_fees);
   pair[0]->out_msgs.push_back(priced.message);
   pair[0]->end_lt = priced.end_lt;
   for (std::size_t i = 0; i < pair.size(); ++i) {
@@ -4777,6 +4783,13 @@ td::Status Transaction::prepare_workchain_entry_impl(Ref<vm::Cell> binding, Ref<
   if (context.gen_utime != now) return td::Status::Error("entry generation time mismatch");
   if (context.host_after_lt >= start_lt) return td::Status::Error("entry logical time precedes input boundary");
   if (!tlb::unpack_cell(effects, output)) return td::Status::Error("entry effects encoding invalid");
+  TRY_RESULT(native, decode_workchain_native_effects(output.native));
+  // Disposal is performed by the coordinator. Its authenticated custody role
+  // must agree before staging imports, even when this factory is called alone.
+  // Other entry callers bind both fee roles at the enclosing batch boundary.
+  if (disposal && native.fees && native.fees->custody != disposal->custody) {
+    return td::Status::Error("disposal fee custody differs from authenticated context");
+  }
   gen::UnoV2HostAccess::Record declared;
   if (!tlb::unpack_cell(decoded.access, declared)) return td::Status::Error("entry access encoding invalid");
   vm::Dictionary reads(declared.reads, 256), writes(declared.writes, 256);
@@ -4860,6 +4873,19 @@ td::Status Transaction::prepare_workchain_entry_impl(Ref<vm::Cell> binding, Ref<
   }
   TRY_RESULT(allocated, allocate_workchain_native_balance(account.addr, credited, output,
       max_transfers, extra_validation_cells));
+  if (native.fees && native.fees->custody == account.addr) {
+    TRY_RESULT(totals, checked_workchain_fee_totals(*native.fees));
+    CurrencyCollection remaining, combined;
+    // Checked subtraction establishes funding before changing either field.
+    // S was allocated internally above; only C+T leaves through total_fees.
+    // A later payout must also be fully funded or the entire private batch
+    // fails. This order does not authorize partial fee collection or payment.
+    if (!CurrencyCollection::sub(allocated, totals.collected, remaining) ||
+        !CurrencyCollection::add(disposal_fees, totals.collected, combined) ||
+        !combined.tomis->unsigned_fits_bits(120)) return td::Status::Error("unfunded or overflowing aggregate fee");
+    allocated = std::move(remaining);
+    disposal_fees = std::move(combined);
+  }
   // Allocate both private output vectors before sealing the transaction. On
   // failure no account or queue has been published; the caller discards it.
   auto sealed_messages = disposed_messages;

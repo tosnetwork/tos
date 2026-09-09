@@ -613,7 +613,7 @@ allowance. Neither table below is itself a column of byte costs to sum.
 | Repeated work | Cumulative count (not peak memory) | Source and qualification |
 | --- | --- | --- |
 | State traversal while rebuilding writes | Scaling term `O(writes * 257 * admitted_state_cells)`, not a complete operation cap | Account replacement and tracked reads in `crypto/block/workchain-storage-overlay.h`, `crypto/block/workchain-account-dictionary.h` and `crypto/block/workchain-account-settlement.h`: a 256-bit path may contain 257 nodes including its leaf. Include augmentation/probe work and measured constant factors; count lookup and closure-validation work independently of retained-state deduplication. |
-| Effects dictionary construction | At most `259 * updates + 36 * transfers + 2` finalized cells | `encode_workchain_account_effects` in `crypto/block/workchain-account-effects.h`, dictionary `dict_set` path reconstruction, bound beside the encoder call in `crypto/block/workchain-account-settlement.h`. Use `updates <= max_writes` and `transfers <= max_transfers`; include simultaneously retained intermediate roots and allocator overhead separately in peak measurements. |
+| Effects dictionary construction | At most `259 * updates + 36 * transfers + 3` finalized cells | `encode_workchain_account_effects` in `crypto/block/workchain-account-effects.h`, dictionary `dict_set` path reconstruction, bound beside the encoder call in `crypto/block/workchain-account-settlement.h`. The third constant cell is the optional aggregate fee record; the legacy form still uses two wrappers. Use `updates <= max_writes` and `transfers <= max_transfers`; include simultaneously retained intermediate roots and allocator overhead separately in peak measurements. |
 | Queue-state observer probes | At most one extra source load and one temporary CellSlice allocation per attempted tracked read | `crypto/block/workchain-outbound-queues.h`: physical hash deduplication does not remove repeated probes. Count dictionary-path revisits and allocator work separately; these are cumulative costs, not one retained slice per visit. Final Merkle-update reads remain outside this helper's scope. |
 
 For memory, sum simultaneously live byte costs (including materializer graphs,
@@ -3138,10 +3138,15 @@ CT patch are rejected. This closes undeclared-byte-drift detection, not semantic
 review of new secret-dependent sites, remote provenance attestation, seed-copy
 erasure, or full supply-chain acceptance. No dependency source/revision changed.
 
-- [ ] Independently review `uno/crypto/vendor/bulletproofs/src/range_proof/deterministic.rs`
-  as locally authored cryptographic code, separately from its provenance. Review
-  both independent residual equations, transcript binding, scalar/point decoding,
-  and the complete indirect verification call graph for RNG reachability. The
+- [x] File-level independent review of
+  `uno/crypto/vendor/bulletproofs/src/range_proof/deterministic.rs` found no defect
+  in that file: independent residual checks, retained transcript challenge events,
+  and intentional identity padding were checked. The caller's range-shape
+  finding is addressed by exact pre-padding counts; see
+  `uno-v2-range-shape-review-disposition.md` for its controls and scope.
+- [ ] Independently establish completeness for the full application relations,
+  the correctness of all five local patch rationales, and the complete indirect
+  verification call graph for RNG reachability. The
   source reconstruction gate does not establish these mathematical or semantic
   properties, and the file has no upstream blob to inherit such assurance from.
   Earlier `SUPPLY_CHAIN.md` already described the local deltas in prose; the new
@@ -3164,3 +3169,106 @@ checks success (0), gate/local failure (-7201), and authenticated corruption
 to -7201; bypassing that boundary fails even with zero engine execution. Other
 actor/promise paths, including live validation, still require their own controls;
 this test cannot certify that they preserve codes or do not rewrap errors.
+
+### Aggregate fee settlement (D32, in progress; not live)
+
+The private settlement path is being extended to preserve separate state,
+compute and tip components. State fees allocate internally from custody to
+coordinator; compute plus tip becomes custody's Native transaction `total_fees`.
+There is no fee message. A payout in the same batch must add its independently
+priced fee rather than overwrite the aggregate fee. Disposal retains its own
+coordinator-funded transaction fee. The legacy no-fee constructor is preserved;
+the fee-bearing constructor is separately tagged.
+
+Current tests exercise serialized account balances, transaction fees, output
+counts and independent replay, including aggregate fees plus payout plus
+disposal. This is not an authenticated fee schedule or business-state test:
+fee-table reconstruction, the matching `N_book` update, live admission/replay
+and block publication remain unconnected. No D32 completion or live I13
+acceptance follows from the private Native arithmetic tests. The private
+checkpoint has completed two consensus-boundary reviews, seven recorded red
+controls and restored-state regressions. Coverage is explicitly limited below;
+this does not close the remaining D32 integration obligations.
+
+Initial review disposition: the proposed "fees have priority over payout"
+policy is **disputed**, not an open decision. Both are staged privately and
+must be fully funded before a batch may publish. I13e permits one complete
+commit or zero commits; partial fee collection or shrinking an authorized
+payout would contradict that atomicity. Evaluation order therefore establishes
+no economic priority and must not be turned into such a protocol rule.
+
+The prior C/T-swap replay rejection established only effects-byte binding.
+Independent numeric controls now distinguish S from C+T, including zero-S and
+zero-collected cases. Rejecting unauthorized splits at the candidate boundary
+still requires independent reconstruction from the authenticated fee schedule
+and verified operations. In particular, swapping C and T preserves their Native
+recipient, so settlement totals alone cannot detect that unauthorized swap.
+
+Review inventory rule: monetary assertions must compare numeric values, never
+`RefInt256 == RefInt256`. The latter can select reference identity: two aliases
+then pass without checking any amount. Use explicit numeric comparison or the
+numeric `CurrencyCollection` overload. The corrected fee round-trip assertion
+compares scalar values; its earlier test-only failure is not mutation evidence.
+
+#### D32 checkpoint review disposition and evidence limits
+
+The follow-up review found no blocking defect in this private settlement change.
+The accepted fixes include numeric S versus C+T allocation cases, disposal-local
+role validation before staging, generated tag assertions, checked fee-cell
+storage, and explicit descriptions of derived-graph and comparison tripwires.
+Raw review transcripts remain working material outside this repository.
+
+Evidence must be read as a pair:
+
+- `measurements/uno-v2-d32-fee-controls.json` records seven individual mutations,
+  successful builds, failing tests, and exact mutant/restored source hashes.
+- `measurements/uno-v2-d32-fee-final-checks.json` records the restored source,
+  generated codec and binary hashes, the passing full workchain-block test,
+  and thirteen existing counter/disk compatibility tests. These are existing
+  singleton/closed-gate regressions, not multi-account live acceptance.
+
+The payout-overwrite control fails at `charged_result.is_ok()`, before the
+numeric fee assertion. Source inspection attributes this to value-flow
+conservation; the recorded runtime result establishes rejection, not a uniquely
+identified conservation error. An error string would not strengthen that into
+a typed or numeric behavioral control. The debit mutation likewise aborts at
+the balance assertion: later fee assertions were not observed in that run.
+Successful restored runs exercise those later assertions, but do not establish
+that each has an independently isolated mutation witness.
+
+The review's request for a green baseline is satisfied by the companion
+final-checks artifact, not by the controls artifact alone. Its claim that the
+existing unfunded case specifically exercises a funded aggregate fee followed
+by an unfundable payout is not adopted: that case is aggregate-only. The
+atomicity argument remains valid, but this particular combined failure still
+needs its own behavioral witness. The proposed fee-priority policy remains
+disputed for the I13e reason above, not deferred for implementation.
+
+Open coverage and integration obligations:
+
+- Isolate the charged payout's numeric fee preservation before an enclosing
+  conservation check can reject, and test aggregate-fee-funded but combined
+  payout-unfunded staging with unchanged published state.
+- Add isolated controls for fee constructor selection, malformed/unknown tags,
+  coincident roles, invalid/zero components, combined 120-bit bounds, and the
+  payout-specific role guard. Seven existing controls do not prove all of these.
+- The allocation overlay's fee comparison is a cross-derivation tripwire,
+  not independent fee authorization. The payout overlay currently relies on
+  independently reconstructed value flow instead of duplicating this comparison.
+- Plain-entry role binding remains an enclosing caller obligation; disposal
+  entry additionally checks its authenticated custody locally. Live wiring must
+  preserve provenance across every caller and exception boundary. Generic
+  status code zero does not by itself prove candidate origin. Quiet decoding
+  must not be treated as a universal exception barrier either.
+- Account for repeated effects decoding in the aggregate auxiliary-work budget:
+  entry preparation decodes directly and again through balance allocation;
+  enclosing paths may repeat it further. Charge this with account count and
+  admitted effects size, in addition to the constructed-cell bound, rather than
+  inferring zero work from shared physical cells. Before live admission, enumerate
+  the complete call path to establish the actual multiplicative bound.
+- The prepared-participant fee-check exemption currently concerns the
+  coordinator disposal entry; custody is distinct and must never be exempt.
+  Changing prepared-participant roles requires re-establishing this property.
+- Independent authenticated fee-table reconstruction, correspondence with
+  verified operation fees, the matching confidential `N_book` debit, and live
+  publication remain unimplemented. No gate may open on this checkpoint alone.

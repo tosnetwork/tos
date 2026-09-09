@@ -28,6 +28,10 @@ uno_v2_host_record input_hash:bits256 effects_hash:bits256 account_id:bits256
   effect_index:uint32 = UnoV2HostRecord;
 uno_v2_native_transfer source:bits256 destination:bits256 value:CurrencyCollection = UnoV2NativeTransfer;
 uno_v2_native_effects payout:(Maybe ^Cell) transfers:(HashmapE 32 ^UnoV2NativeTransfer) = UnoV2NativeEffects;
+uno_v2_fee_settlement custody:bits256 coordinator:bits256
+  state_fee:Tomis compute_fee:Tomis tip:Tomis = UnoV2FeeSettlement;
+uno_v2_native_effects_fees payout:(Maybe ^Cell) transfers:(HashmapE 32 ^UnoV2NativeTransfer)
+  fees:^UnoV2FeeSettlement = UnoV2NativeEffects;
 uno_v2_host_effects updates:(HashmapE 256 ^Cell) native:^UnoV2NativeEffects
   receipts:(Maybe ^Cell) events:(Maybe ^Cell) wire_bytes:uint64
   verification_units:uint64 written_cells:uint64 = UnoV2HostEffects;
