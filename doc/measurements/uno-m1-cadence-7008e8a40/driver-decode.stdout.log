@@ -1,0 +1,2 @@
+discard-decoded-value behavioral red 405 restored and explicitly rebuilt ['smc-envelope', 'test-workchain-block', 'tos_block']
+PASS: isolated controls and restoration audits

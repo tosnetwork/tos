@@ -1,0 +1,6 @@
+[1/61] Checking the git repository for changes...
+[2/6] Building CXX object validator/CMakeFiles/validator-disk.dir/downloaders/wait-block-data-disk.cpp.o
+[3/6] Building CXX object CMakeFiles/test-tos-collator.dir/test/test-tos-collator.cpp.o
+[4/6] Building CXX object validator/CMakeFiles/validator-disk.dir/manager-disk.cpp.o
+[5/6] Linking CXX static library validator/libvalidator-disk.a
+[6/6] Linking CXX executable test-tos-collator

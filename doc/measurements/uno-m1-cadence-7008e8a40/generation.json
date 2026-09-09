@@ -1,0 +1,28 @@
+{
+  "source_commit": "7008e8a40aa6a21cc899f9d459c70884ec0a7338",
+  "canonical": "uno_v2_engine_configuration_cadence k_accepted_target_rate_ms:uint32 resource_policy:^UnoV2ResourcePolicy parameters:^Cell = UnoV2EngineConfiguration",
+  "wire_tag": "0x6e1fa05f",
+  "generator_argv": [
+    "/tmp/uno-publication-build/crypto/tlbc",
+    "-o",
+    "crypto/block/block-auto",
+    "-n",
+    "block::gen",
+    "-z",
+    "crypto/block/block.tlb"
+  ],
+  "generator_source_note": "Constructor::compute_tag in crypto/tl/tlbc.cpp returns CRC32 in the upper 32 bits and an internal terminator in the lower half. -z controls generated suffixes, not CRC32.",
+  "generated_files": [
+    {
+      "path": "crypto/block/block-auto.h",
+      "sha256": "3c490cbb056b8fe7d831e1fa4784ca555a9ca6961d4f121114711c3d52633471",
+      "tracked": false
+    },
+    {
+      "path": "crypto/block/block-auto.cpp",
+      "sha256": "d8ac4e466252d698c30132b038aa1310908ae0f7f8ebf4efa77d5677694e11b0",
+      "tracked": false
+    }
+  ],
+  "generator_sha256": "8222c6d3d0d3e495c0feaebd4431c0290c86726cefce28ab7c477a1c895a802f"
+}

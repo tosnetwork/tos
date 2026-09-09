@@ -1,0 +1,264 @@
+{
+  "scope": "D36 build/mutation and migrated fixture/activation execution chains. Complete registered CTest commands are archived separately; unrelated regression drivers are not claimed to have a whole-program subprocess audit.",
+  "chains": [
+    {
+      "root": "D36 mutation driver",
+      "layers": [
+        [
+          "python3",
+          "driver-initial.py / driver-decode.py"
+        ],
+        [
+          "cmake",
+          "--build --target <recorded targets> -j32"
+        ],
+        [
+          "ninja",
+          "CMake generated build graph"
+        ],
+        [
+          "clang++",
+          "ld.lld",
+          "compiled/linked outputs listed in each build log"
+        ]
+      ],
+      "runtime_leaf": [
+        "test-workchain-block"
+      ],
+      "restored_targets": "Exact list in each control, derived from actual compilation output plus explicit tos_block/test-workchain-block."
+    },
+    {
+      "root": "block.tlb generation",
+      "layers": [
+        [
+          "cmake",
+          "tlb_generate_block"
+        ],
+        [
+          "tlbc",
+          "-o block-auto -n block::gen -z block.tlb"
+        ]
+      ],
+      "outputs": [
+        "crypto/block/block-auto.h",
+        "crypto/block/block-auto.cpp"
+      ]
+    },
+    {
+      "root": "Counter disk/account-binding/activation tests",
+      "layers": [
+        [
+          "ctest",
+          "registered cmake command"
+        ],
+        [
+          "cmake",
+          "test/test-counter-disk-integration.cmake includes counter-fixture-lifecycle.cmake"
+        ],
+        [
+          "cmake",
+          "counter-fixture-lifecycle.cmake:44 starts the same worker with COUNTER_FIXTURE_CHILD"
+        ],
+        [
+          "cmake",
+          "test-counter-disk-integration.cmake:108 uses cmake -E env to invoke CREATE_STATE"
+        ],
+        [
+          "create-state",
+          "evaluates generated and repository Fift scripts in process"
+        ],
+        [
+          "base64",
+          "test-counter-disk-integration.cmake:135/137"
+        ],
+        [
+          "test-tos-collator",
+          "test-counter-disk-integration.cmake:155/223, including bootstrap and self-check"
+        ]
+      ],
+      "explicit_targets": [
+        "create-state",
+        "test-tos-collator"
+      ]
+    },
+    {
+      "root": "Counter collator admission test",
+      "layers": [
+        [
+          "ctest",
+          "cmake -P test/test-counter-collator-admission.cmake"
+        ],
+        [
+          "test-tos-collator",
+          "execute_process at line 6"
+        ]
+      ]
+    },
+    {
+      "root": "Shared activation binding",
+      "layers": [
+        [
+          "ctest",
+          "python3 workchain-activation-control-check.py"
+        ],
+        [
+          "python3",
+          "workchain-activation-context-selftest.py"
+        ],
+        [
+          "test-workchain-activation-control",
+          "probe subprocess at driver line 44"
+        ]
+      ],
+      "explicit_targets": [
+        "test-workchain-activation-control"
+      ],
+      "helper_commit": "3822c76ed9dd10633b9cbc58c457ab55f373bc07"
+    },
+    {
+      "root": "Frozen contract build prerequisites",
+      "layers": [
+        [
+          "cmake",
+          "embed-tos-service-*.sh"
+        ],
+        [
+          "bash",
+          "test-tos-service-*.sh / build-tos-service-*.sh"
+        ],
+        [
+          "func",
+          "fift",
+          "python3",
+          "cmp",
+          "tr"
+        ]
+      ],
+      "explicit_tool_paths": {
+        "FUNC_BIN": "/tmp/uno-publication-build/crypto/func",
+        "FIFT_BIN": "/tmp/uno-publication-build/crypto/fift"
+      }
+    },
+    {
+      "root": "Additional directly registered omitted targets",
+      "runtime_leaf": [
+        "test/validator/consensus/test-consensus",
+        "test/validator/consensus/test-validator-manager-resource-policy"
+      ],
+      "explicit_targets": [
+        "test-consensus",
+        "test-validator-manager-resource-policy"
+      ]
+    }
+  ],
+  "executables": [
+    {
+      "name": "python3",
+      "path": "/home/tomi/.local/bin/python3",
+      "realpath": "/home/tomi/.local/share/uv/python/cpython-3.14.4-linux-x86_64-gnu/bin/python3.14",
+      "sha256": "3033d7dd6bc07b45575eeb52dd886c05391f2464e4c51c9cac5e63226d41c9db"
+    },
+    {
+      "name": "cmake",
+      "path": "/usr/bin/cmake",
+      "realpath": "/usr/bin/cmake",
+      "sha256": "fd22547781b64bb2db04370970b93db1f3fada1e41e60873b015ee0747009fc0"
+    },
+    {
+      "name": "ninja",
+      "path": "/usr/bin/ninja",
+      "realpath": "/usr/bin/ninja",
+      "sha256": "a9ddfbf7e365a2e5026ed44f9173e498e37d8b71ec5e259b2c2a684f16cfa862"
+    },
+    {
+      "name": "clang++",
+      "path": "/usr/bin/clang++",
+      "realpath": "/usr/lib/llvm-21/bin/clang",
+      "sha256": "82481792aef943c1750ae5fd71e5a5737212741337debd0fe5d28bd82dd018e9"
+    },
+    {
+      "name": "ld.lld",
+      "path": "/usr/bin/ld.lld",
+      "realpath": "/usr/lib/llvm-14/bin/lld",
+      "sha256": "13646c8b08b0c28e51cd6d4ab2e916ca5b30c82af9681fd3cc9524be7fa965c2"
+    },
+    {
+      "name": "base64",
+      "path": "/usr/bin/base64",
+      "realpath": "/usr/bin/base64",
+      "sha256": "aad6e64184aa59d8c8dd7251c6928c7c4d6bb701f5c5189d97589f0621cdfee0"
+    },
+    {
+      "name": "bash",
+      "path": "/usr/bin/bash",
+      "realpath": "/usr/bin/bash",
+      "sha256": "59474588a312b6b6e73e5a42a59bf71e62b55416b6c9d5e4a6e1c630c2a9ecd4"
+    },
+    {
+      "name": "cmp",
+      "path": "/usr/bin/cmp",
+      "realpath": "/usr/bin/cmp",
+      "sha256": "68a6e547995fbb3aedc270d126a824d38b34f9109d4dbb0e3c693ff9b5d6f4e0"
+    },
+    {
+      "name": "tr",
+      "path": "/usr/bin/tr",
+      "realpath": "/usr/bin/tr",
+      "sha256": "5f57710f6329d64250bd3caffa68fa4266516dfc863f8ccf81bd8e147ad48bd9"
+    },
+    {
+      "name": "test-workchain-block",
+      "path": "/tmp/uno-publication-build/test-workchain-block",
+      "realpath": "/tmp/uno-publication-build/test-workchain-block",
+      "sha256": "c9a71c892e4f7ee2ba6242ca0d23ab6e6c934e7a363a613061f46629b8789779"
+    },
+    {
+      "name": "test-workchain-activation-control",
+      "path": "/tmp/uno-publication-build/test-workchain-activation-control",
+      "realpath": "/tmp/uno-publication-build/test-workchain-activation-control",
+      "sha256": "c22081c756778fd19022ce08d3f01fd0aecc3383f90b7eee998550bb15dcd8cb"
+    },
+    {
+      "name": "test-tos-collator",
+      "path": "/tmp/uno-publication-build/test-tos-collator",
+      "realpath": "/tmp/uno-publication-build/test-tos-collator",
+      "sha256": "6e3d44475ce947f15a51cf1eba6809f81e942a8e26d81fede3d58d9f7019173c"
+    },
+    {
+      "name": "crypto/create-state",
+      "path": "/tmp/uno-publication-build/crypto/create-state",
+      "realpath": "/tmp/uno-publication-build/crypto/create-state",
+      "sha256": "2363072ced3695f2c5bee570a00476cf9bf84f0b69466fac414a7781bf87d03b"
+    },
+    {
+      "name": "crypto/tlbc",
+      "path": "/tmp/uno-publication-build/crypto/tlbc",
+      "realpath": "/tmp/uno-publication-build/crypto/tlbc",
+      "sha256": "8222c6d3d0d3e495c0feaebd4431c0290c86726cefce28ab7c477a1c895a802f"
+    },
+    {
+      "name": "crypto/func",
+      "path": "/tmp/uno-publication-build/crypto/func",
+      "realpath": "/tmp/uno-publication-build/crypto/func",
+      "sha256": "3fa793a80c762afcb7ddfecde32bb81689796e1471988d28b4a8bc37ca173efd"
+    },
+    {
+      "name": "crypto/fift",
+      "path": "/tmp/uno-publication-build/crypto/fift",
+      "realpath": "/tmp/uno-publication-build/crypto/fift",
+      "sha256": "424c7636d475209f04d974f318a6fcb8ba227f6054dc200bd996eaa539086383"
+    },
+    {
+      "name": "test/validator/consensus/test-consensus",
+      "path": "/tmp/uno-publication-build/test/validator/consensus/test-consensus",
+      "realpath": "/tmp/uno-publication-build/test/validator/consensus/test-consensus",
+      "sha256": "98a198da8d68eb2e2c3cbfaf0a4ab4e003d7c01fa518de77d525840aff48bba5"
+    },
+    {
+      "name": "test/validator/consensus/test-validator-manager-resource-policy",
+      "path": "/tmp/uno-publication-build/test/validator/consensus/test-validator-manager-resource-policy",
+      "realpath": "/tmp/uno-publication-build/test/validator/consensus/test-validator-manager-resource-policy",
+      "sha256": "7041f7633d52fdc0edc824194b2eb02c32957881a1b5dd357237ee813517368a"
+    }
+  ]
+}

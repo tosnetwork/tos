@@ -1,0 +1,228 @@
+[1/288] cd /home/tomi/tos-m2/uno/crypto && /usr/bin/cmake -E env CARGO_NET_OFFLINE=true CARGO_TARGET_DIR=/tmp/uno-publication-build/uno/crypto/cargo-target /home/tomi/.cargo/bin/cargo build --locked --offline --release -j48
+    Finished `release` profile [optimized] target(s) in 0.07s
+[2/286] Linking CXX static library lite-client/liblite-client-common.a
+[3/286] Building CXX object rldp2/CMakeFiles/rldp2.dir/FecHelper.cpp.o
+[4/286] Building CXX object rldp2/CMakeFiles/rldp2.dir/Ack.cpp.o
+[5/286] Linking CXX static library crypto/libtos_db.a
+[6/286] Checking the git repository for changes...
+[7/227] Compiling Tol contract jetton-minter-tol -> /tmp/uno-publication-build/slice1-gas-parity/jetton-minter-tol.boc
+[8/227] Compiling FunC contract jetton-wallet-func -> /tmp/uno-publication-build/slice1-gas-parity/jetton-wallet-func.boc
+[9/227] Compiling Tol contract jetton-wallet-tol -> /tmp/uno-publication-build/slice1-gas-parity/jetton-wallet-tol.boc
+[10/227] Compiling Tol contract wallet-v5-tol -> /tmp/uno-publication-build/slice1-gas-parity/wallet-v5-tol.boc
+[11/227] Compiling Tol contract slice5-receive-context-tol -> /tmp/uno-publication-build/slice1-gas-parity/slice5-receive-context-tol.boc
+[12/227] Compiling Tol contract tos-report-bond-oracle -> /tmp/uno-publication-build/slice1-gas-parity/tos-report-bond-oracle.boc
+[13/227] Building CXX object rldp2/CMakeFiles/rldp2.dir/LossStats.cpp.o
+[14/227] Building CXX object rldp2/CMakeFiles/rldp2.dir/LossSender.cpp.o
+[15/227] Building CXX object tdfec/CMakeFiles/tdfec.dir/td/fec/algebra/Octet.cpp.o
+[16/227] Building CXX object rldp2/CMakeFiles/rldp2.dir/Pacer.cpp.o
+[17/227] Building CXX object tdfec/CMakeFiles/tdfec.dir/td/fec/algebra/MatrixGF256.cpp.o
+[18/227] Building CXX object rldp2/CMakeFiles/rldp2.dir/RldpReceiver.cpp.o
+[19/227] Building CXX object rldp2/CMakeFiles/rldp2.dir/SenderPackets.cpp.o
+[20/227] Building CXX object rldp2/CMakeFiles/rldp2.dir/Bbr.cpp.o
+[21/227] Building CXX object rldp2/CMakeFiles/rldp2.dir/RldpSender.cpp.o
+[22/227] Building CXX object tdfec/CMakeFiles/tdfec.dir/td/fec/algebra/MatrixGF2.cpp.o
+[23/227] Building CXX object CMakeFiles/test-emulator.dir/emulator/test/slice-1-extra-flags-fixtures.cpp.o
+[24/227] Building CXX object tdfec/CMakeFiles/tdfec.dir/td/fec/fec.cpp.o
+[25/227] Building CXX object rldp2/CMakeFiles/rldp2.dir/InboundTransfer.cpp.o
+[26/227] Building CXX object rldp2/CMakeFiles/rldp2.dir/OutboundTransfer.cpp.o
+[27/227] Building CXX object CMakeFiles/test-emulator.dir/emulator/test/slice-6-stage2-schedule-fixtures.cpp.o
+[28/227] Building CXX object rldp2/CMakeFiles/rldp2.dir/BdwStats.cpp.o
+[29/227] Building CXX object CMakeFiles/test-emulator.dir/test/test-td-main.cpp.o
+[30/227] Building CXX object rldp2/CMakeFiles/rldp2.dir/RttStats.cpp.o
+[31/227] Building CXX object CMakeFiles/test-emulator.dir/emulator/test/slice-6-stage5-supervision-fixtures.cpp.o
+[32/227] Building CXX object CMakeFiles/test-emulator.dir/emulator/test/slice-6-stage8-dogfood-fixtures.cpp.o
+[33/227] Building CXX object CMakeFiles/test-emulator.dir/emulator/test/slice-6-stage6-capability-fixtures.cpp.o
+[34/227] Linking CXX static library toslib/libtoslib.a
+[35/227] Building CXX object keyring/CMakeFiles/keyring.dir/keyring.cpp.o
+[36/227] Building CXX object CMakeFiles/test-emulator.dir/emulator/test/slice-6-deploy-activation-version-fixture.cpp.o
+[37/227] Linking CXX static library http/libtoshttp.a
+[38/227] Linking CXX static library metrics/libmetrics.a
+[39/227] Linking CXX executable crypto/create-state
+[40/227] Linking CXX executable test-http-server-limits
+[41/227] Linking CXX executable test-toslib-offline
+[42/227] Building CXX object CMakeFiles/test-emulator.dir/emulator/test/slice-6-stage1-delivery-fixtures.cpp.o
+[43/227] Linking CXX static library keyring/libkeyring.a
+[44/227] Building CXX object CMakeFiles/test-emulator.dir/emulator/test/slice-1-boc-envelope-fuzz-fixture.cpp.o
+[45/227] Linking CXX executable test-metrics-label-bound
+[46/227] Linking CXX static library tdfec/libtdfec.a
+[47/227] Building CXX object fec/CMakeFiles/fec.dir/fec.cpp.o
+[48/227] Linking CXX static library adnl/libadnl.a
+[49/227] Linking CXX executable test-keyring-temp-key
+[50/227] Linking CXX static library adnl/libadnltest.a
+[51/227] Building CXX object CMakeFiles/test-emulator.dir/emulator/test/slice-6-stage4-monitor-fixtures.cpp.o
+[52/227] Linking CXX static library fec/libfec.a
+[53/227] Building CXX object CMakeFiles/test-smartcont.dir/test/test-td-main.cpp.o
+[54/227] Linking CXX executable test-fec
+[55/227] Linking CXX executable test-rldp2-connection-limits
+[56/227] Building CXX object CMakeFiles/test-emulator.dir/emulator/test/vm-library-loads-fixture.cpp.o
+[57/227] Linking CXX executable test-db
+[58/227] Building CXX object dht/CMakeFiles/dht.dir/dht-node.cpp.o
+[59/227] Building CXX object CMakeFiles/test-emulator.dir/emulator/test/slice-1-account-state-fixtures.cpp.o
+[60/227] Building CXX object CMakeFiles/test-emulator.dir/emulator/test/slice-3-replay-fixture.cpp.o
+[61/227] Building CXX object dht/CMakeFiles/dht.dir/dht-bucket.cpp.o
+[62/227] Building CXX object CMakeFiles/test-emulator.dir/emulator/test/slice-1-stage-4-gas-parity-fixture.cpp.o
+[63/227] Building CXX object CMakeFiles/test-emulator.dir/emulator/test/slice-1-failure-phase-fixtures.cpp.o
+[64/227] Building CXX object CMakeFiles/test-emulator.dir/emulator/test/emulator-tests.cpp.o
+[65/227] Building CXX object dht/CMakeFiles/dht.dir/dht-types.cpp.o
+[66/227] Building CXX object CMakeFiles/test-emulator.dir/emulator/test/slice-1-stage-2-roundtrip-fixture.cpp.o
+[67/227] Building CXX object dht/CMakeFiles/dht.dir/dht-remote-node.cpp.o
+[68/227] Building CXX object rldp2/CMakeFiles/rldp2.dir/RldpConnection.cpp.o
+[69/227] Building CXX object validator/CMakeFiles/validator-db.dir/db/db-utils.cpp.o
+[70/227] Building CXX object CMakeFiles/test-emulator.dir/emulator/test/tos-report-bond-oracle-fixture.cpp.o
+[71/227] Building CXX object overlay/CMakeFiles/overlay.dir/broadcast-simple.cpp.o
+[72/227] Building CXX object validator/CMakeFiles/validator-db.dir/db/staticfilesdb.cpp.o
+[73/227] Building CXX object CMakeFiles/test-emulator.dir/emulator/test/slice-5-receive-context-fixture.cpp.o
+[74/227] Building CXX object CMakeFiles/test-emulator.dir/emulator/test/tvm-v14-v15-transaction-fixture.cpp.o
+[75/227] Building CXX object dht/CMakeFiles/dht.dir/dht-query.cpp.o
+[76/227] Building CXX object CMakeFiles/test-emulator.dir/emulator/test/config-param-43-transaction-fixture.cpp.o
+[77/227] Building CXX object rldp2/CMakeFiles/rldp2.dir/rldp.cpp.o
+[78/227] Linking CXX static library rldp2/librldp2.a
+[79/227] Building CXX object validator/CMakeFiles/validator-db.dir/db/package.cpp.o
+[80/227] Building CXX object validator/CMakeFiles/validator-state-download-budget.dir/state-download-buffer.cpp.o
+[81/227] Building CXX object overlay/CMakeFiles/overlay.dir/broadcast-fec.cpp.o
+[82/227] Linking CXX static library validator/libvalidator-state-download-budget.a
+[83/227] Linking CXX executable test-rldp2-inbound-transfer-bound
+[84/227] Building CXX object validator/CMakeFiles/validator-db.dir/db/db-event-publisher.cpp.o
+[85/227] Linking CXX executable test-emulator
+[86/227] Building CXX object overlay/CMakeFiles/overlay.dir/broadcast-twostep.cpp.o
+[87/227] Building CXX object validator/CMakeFiles/validator-common.dir/wc0-block-hook.cpp.o
+[88/227] Building CXX object validator/CMakeFiles/validator-db.dir/db/permanent-celldb/permanent-celldb-utils.cpp.o
+[89/227] Building CXX object validator/CMakeFiles/validator-common.dir/validator-full-id.cpp.o
+[90/227] Building CXX object overlay/CMakeFiles/overlay.dir/overlay-manager.cpp.o
+[91/227] Building CXX object overlay/CMakeFiles/overlay.dir/broadcast-plumtree.cpp.o
+[92/227] Building CXX object dht/CMakeFiles/dht.dir/dht.cpp.o
+[93/227] Linking CXX static library dht/libdht.a
+[94/227] Linking CXX executable test-adnl
+[95/227] Building CXX object overlay/CMakeFiles/overlay.dir/overlay.cpp.o
+[96/227] Linking CXX executable test-dht
+[97/227] Linking CXX executable test-rldp2-connection-cap
+[98/227] Building CXX object validator/CMakeFiles/validator.dir/collator-node/utils.cpp.o
+[99/227] Linking CXX executable test-rldp2-query-eviction
+[100/227] Building CXX object overlay/CMakeFiles/overlay.dir/overlay-peers.cpp.o
+[101/227] Linking CXX static library overlay/liboverlay.a
+[102/227] Linking CXX executable test-rldp2
+[103/227] Building CXX object validator/CMakeFiles/validator-db.dir/db/fileref.cpp.o
+[104/227] Building CXX object validator/CMakeFiles/validator-common.dir/downloaders/wait-block-state-merge.cpp.o
+[105/227] Linking CXX executable test-overlay-peer-cleanup
+[106/227] Building CXX object validator/CMakeFiles/validator-db.dir/db/statedb.cpp.o
+[107/227] Building CXX object validator/CMakeFiles/validator-db.dir/db/archiver.cpp.o
+[108/227] Linking CXX executable plumtree-graph-sim
+[109/227] Building CXX object validator/CMakeFiles/validator-common.dir/block-handle.cpp.o
+[110/227] Building CXX object CMakeFiles/test-smartcont.dir/crypto/test/test-smartcont.cpp.o
+[111/227] Building CXX object validator/CMakeFiles/validator-common.dir/validator-options.cpp.o
+[112/227] Linking CXX executable test-smartcont
+[113/227] Building CXX object validator/CMakeFiles/validator-common.dir/apply-block.cpp.o
+[114/227] Building CXX object validator/CMakeFiles/validator.dir/get-next-key-blocks.cpp.o
+[115/227] Building CXX object validator/CMakeFiles/validator.dir/collator-node/collator-node-session.cpp.o
+[116/227] Building CXX object validator/CMakeFiles/validator-db.dir/db/archive-slice.cpp.o
+[117/227] Building CXX object validator/CMakeFiles/validator.dir/collation-manager.cpp.o
+[118/227] Building CXX object validator/CMakeFiles/validator-common.dir/downloaders/wait-block-state.cpp.o
+[119/227] Building CXX object validator/CMakeFiles/validator-common.dir/queue-size-counter.cpp.o
+[120/227] Building CXX object validator/CMakeFiles/validator.dir/token-manager.cpp.o
+[121/227] Building CXX object validator/CMakeFiles/validator.dir/downloaders/wait-block-data.cpp.o
+[122/227] Building CXX object validator/CMakeFiles/validator-common.dir/shard-client.cpp.o
+[123/227] Building CXX object validator/CMakeFiles/validator.dir/validator-telemetry.cpp.o
+[124/227] Building CXX object validator/CMakeFiles/validator.dir/collator-node/collator-node.cpp.o
+[125/227] Building CXX object validator/CMakeFiles/validator-common.dir/downloaders/download-state.cpp.o
+[126/227] Building CXX object validator/CMakeFiles/validator.dir/import-db-slice.cpp.o
+[127/227] Building CXX object validator/CMakeFiles/validator.dir/validate-broadcast.cpp.o
+[128/227] Building CXX object validator/CMakeFiles/validator-db.dir/db/archive-manager.cpp.o
+[129/227] Building CXX object validator/CMakeFiles/validator-common.dir/manager-init.cpp.o
+[130/227] Building CXX object validator/CMakeFiles/validator.dir/state-serializer.cpp.o
+[131/227] Building CXX object validator/CMakeFiles/validator.dir/storage-stat-cache.cpp.o
+[132/227] Building CXX object validator/CMakeFiles/validator.dir/consensus/payload.cpp.o
+[133/227] Building CXX object validator/CMakeFiles/validator-db.dir/db/rootdb.cpp.o
+[134/227] Building CXX object validator/CMakeFiles/validator.dir/import-db-slice-local.cpp.o
+[135/227] Building CXX object validator/CMakeFiles/validator-db.dir/db/celldb.cpp.o
+[136/227] Building CXX object validator/CMakeFiles/validator.dir/shard-block-verifier.cpp.o
+[137/227] Linking CXX executable test-validator-options
+[138/227] Linking CXX executable test-block-handle-flags
+[139/227] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/bus.cpp.o
+[140/227] Building CXX object validator/CMakeFiles/validator.dir/shard-block-retainer.cpp.o
+[141/227] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/stats.cpp.o
+[142/227] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/collator-schedule.cpp.o
+[143/227] Building CXX object validator/CMakeFiles/validator.dir/impl/applied-ext-message-cleanup.cpp.o
+[144/227] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/certificate.cpp.o
+[145/227] Building CXX object validator/CMakeFiles/validator.dir/consensus/candidate-codec.cpp.o
+[146/227] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/metric-collector.cpp.o
+[147/227] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/db.cpp.o
+[148/227] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/votes.cpp.o
+[149/227] Building CXX object validator/CMakeFiles/validator.dir/consensus/session-compat.cpp.o
+[150/227] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/candidate-resolver.cpp.o
+[151/227] Building CXX object validator/CMakeFiles/validator.dir/consensus/stats.cpp.o
+[152/227] Building CXX object validator/CMakeFiles/validator.dir/consensus/block-accepter.cpp.o
+[153/227] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/consensus.cpp.o
+[154/227] Building CXX object validator/CMakeFiles/validator.dir/consensus/block-validator.cpp.o
+[155/227] Building CXX object validator/CMakeFiles/validator.dir/consensus/block-sync-overlay.cpp.o
+[156/227] Building CXX object validator/CMakeFiles/validator.dir/consensus/misbehavior-reporter.cpp.o
+[157/227] Building CXX object validator/CMakeFiles/validator.dir/consensus/trace-collector.cpp.o
+[158/227] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/block.cpp.o
+[159/227] Building CXX object validator/CMakeFiles/validator.dir/consensus/utils.cpp.o
+[160/227] Building CXX object validator/CMakeFiles/validator.dir/consensus/block-producer.cpp.o
+[161/227] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/state-resolver.cpp.o
+[162/227] Building CXX object validator/CMakeFiles/validator.dir/consensus/types.cpp.o
+[163/227] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/pool.cpp.o
+[164/227] Building CXX object validator/CMakeFiles/validator.dir/consensus/chain-state.cpp.o
+[165/227] Building CXX object validator/CMakeFiles/validator.dir/consensus/bus.cpp.o
+[166/227] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/config.cpp.o
+[167/227] Building CXX object validator/CMakeFiles/full-node.dir/full-node-serializer.cpp.o
+[168/227] Building CXX object validator/CMakeFiles/validator.dir/consensus/private-overlay.cpp.o
+[169/227] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/message-queue.cpp.o
+[170/227] Building CXX object test/CMakeFiles/td-test-main.dir/test-td-main.cpp.o
+[171/227] Linking CXX static library test/libtd-test-main.a
+[172/227] Linking CXX executable test/tdactor/test-scheduler-stop
+[173/227] Building CXX object validator/CMakeFiles/full-node.dir/net/download-block-new.cpp.o
+[174/227] Linking CXX executable test/tdactor/test-runtime
+[175/227] Linking CXX executable test/tdactor/test-test-scheduler
+[176/227] Building CXX object test/tdutils/CMakeFiles/test-lru-cache.dir/test-lru-cache.cpp.o
+[177/227] Linking CXX executable test/tdactor/test-backpressure-queue
+[178/227] Building CXX object validator/CMakeFiles/full-node.dir/net/download-archive-slice.cpp.o
+[179/227] Linking CXX executable test/tdutils/test-lru-cache
+[180/227] Building CXX object validator/CMakeFiles/validator.dir/consensus/bridge.cpp.o
+[181/227] Building CXX object validator/CMakeFiles/full-node.dir/net/download-next-blocks.cpp.o
+[182/227] Building CXX object validator-engine/CMakeFiles/json-rpc-parse.dir/json-rpc-server-parse.cpp.o
+[183/227] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/ihr-message.cpp.o
+[184/227] Linking CXX static library validator-engine/libjson-rpc-parse.a
+[185/227] Building CXX object test/tdutils/CMakeFiles/test-persistent-treap.dir/test-persistent-treap.cpp.o
+[186/227] Linking CXX executable test/tdutils/test-persistent-treap
+[187/227] Linking CXX executable test-json-rpc-parse
+[188/227] Building CXX object test/toslib/CMakeFiles/test-ffi-awaitable.dir/test-ffi-awaitable.cpp.o
+[189/227] Building CXX object validator/CMakeFiles/full-node.dir/net/download-proof.cpp.o
+[190/227] Building CXX object validator/CMakeFiles/full-node.dir/net/get-next-key-blocks.cpp.o
+[191/227] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/proof.cpp.o
+[192/227] Building CXX object test/validator/consensus/CMakeFiles/test-liteserver-admission.dir/test-liteserver-admission.cpp.o
+[193/227] Linking CXX executable test/toslib/test-ffi-awaitable
+[194/227] Linking CXX executable test/validator/consensus/test-liteserver-admission
+[195/227] Building CXX object validator/CMakeFiles/full-node.dir/net/download-state.cpp.o
+[196/227] Building CXX object test/toslib/CMakeFiles/test-ffi-event-loop.dir/test-ffi-event-loop.cpp.o
+[197/227] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/shard.cpp.o
+[198/227] Building CXX object validator/CMakeFiles/full-node.dir/full-node-master.cpp.o
+[199/227] Building CXX object validator/CMakeFiles/full-node.dir/full-node-custom-overlays.cpp.o
+[200/227] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/check-proof.cpp.o
+[201/227] Building CXX object validator/CMakeFiles/full-node.dir/full-node.cpp.o
+[202/227] Linking CXX executable test/toslib/test-ffi-event-loop
+[203/227] Building CXX object validator/CMakeFiles/full-node.dir/full-node-fast-sync-overlays.cpp.o
+[204/227] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/external-message.cpp.o
+[205/227] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/ext-message-checker.cpp.o
+[206/227] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/accept-block.cpp.o
+[207/227] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/ext-message-pool.cpp.o
+[208/227] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/fabric.cpp.o
+[209/227] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/out-msg-queue-proof.cpp.o
+[210/227] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/top-shard-descr.cpp.o
+[211/227] Building CXX object validator/CMakeFiles/full-node.dir/full-node-shard.cpp.o
+[212/227] Linking CXX static library validator/libfull-node.a
+[213/227] Linking CXX executable test-download-next-blocks-validation
+[214/227] Linking CXX executable test-download-state-budget
+[215/227] Linking CXX executable test-celldb-actor-restart
+[216/227] Linking CXX executable test-celldb-streaming-import
+[217/227] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/collator.cpp.o
+[218/227] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/liteserver.cpp.o
+[219/227] Building CXX object validator/CMakeFiles/validator.dir/manager.cpp.o
+[220/227] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/validate-query.cpp.o
+[221/227] Linking CXX static library validator/impl/libtos_validator.a
+[222/227] Linking CXX static library validator/libvalidator.a
+[223/227] Linking CXX executable test-vm-exception-hardening
+[224/227] Linking CXX executable test-wallet-message-processor
+[225/227] Linking CXX executable test-ext-message-pool
+[226/227] Linking CXX executable test-uno-storage-measurement
+[227/227] Linking CXX executable test-uno-state-snapshot

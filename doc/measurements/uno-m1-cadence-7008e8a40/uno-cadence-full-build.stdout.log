@@ -1,0 +1,403 @@
+[1/602] Building CXX object CMakeFiles/test-tdutils.dir/tdutils/test/filesystem.cpp.o
+[2/602] Building CXX object CMakeFiles/test-tdutils.dir/tdutils/test/HazardPointers.cpp.o
+[3/602] Building CXX object CMakeFiles/test-tdutils.dir/tdutils/test/Enumerator.cpp.o
+[4/602] Building CXX object CMakeFiles/test-workchain-admission.dir/test/test-td-main.cpp.o
+[5/602] Building CXX object CMakeFiles/test-vm.dir/test/test-td-main.cpp.o
+[6/602] Building CXX object CMakeFiles/test-cells.dir/test/test-td-main.cpp.o
+[7/602] Building CXX object CMakeFiles/test-ed25519.dir/test/test-td-main.cpp.o
+[8/602] Building CXX object CMakeFiles/test-tdutils.dir/tdutils/test/buffer.cpp.o
+[9/602] Building CXX object CMakeFiles/test-tdutils.dir/tdutils/test/List.cpp.o
+[10/602] Building CXX object CMakeFiles/test-tdutils.dir/tdutils/test/json.cpp.o
+[11/602] Building CXX object CMakeFiles/test-tdutils.dir/tdutils/test/LRUCache.cpp.o
+[12/602] Building CXX object CMakeFiles/test-full-node-shard-routing.dir/test/test-td-main.cpp.o
+[13/602] Building CXX object CMakeFiles/test-fift.dir/test/test-td-main.cpp.o
+[14/602] Building CXX object CMakeFiles/test-tdutils.dir/tdutils/test/heap.cpp.o
+[15/602] Building CXX object CMakeFiles/test-workchain-proof-work.dir/test/test-td-main.cpp.o
+[16/602] Building CXX object CMakeFiles/test-workchain-proof-contracts.dir/test/test-td-main.cpp.o
+[17/602] Building CXX object CMakeFiles/test-tdutils.dir/tdutils/test/log.cpp.o
+[18/602] Building CXX object CMakeFiles/test-tdutils.dir/tdutils/test/gzip.cpp.o
+[19/602] Building CXX object CMakeFiles/test-tdutils.dir/tdutils/test/MpscLinkQueue.cpp.o
+[20/602] Building CXX object CMakeFiles/test-tdutils.dir/test/test-td-main.cpp.o
+[21/602] Building CXX object CMakeFiles/test-tdutils.dir/tdutils/test/variant.cpp.o
+[22/602] Building CXX object CMakeFiles/test-tdutils.dir/tdutils/test/MpmcWaiter.cpp.o
+[23/602] Building CXX object CMakeFiles/test-tdutils.dir/tdutils/test/crypto.cpp.o
+[24/602] Building CXX object CMakeFiles/test-tdutils.dir/tdutils/test/StealingQueue.cpp.o
+[25/602] Building CXX object CMakeFiles/test-tdutils.dir/tdutils/test/OrderedEventsProcessor.cpp.o
+[26/602] Building CXX object CMakeFiles/test-bigint.dir/crypto/test/test-bigint.cpp.o
+[27/602] Building CXX object CMakeFiles/test-tdutils.dir/tdutils/test/OptionParser.cpp.o
+[28/602] Building CXX object CMakeFiles/test-tdutils.dir/tdutils/test/SharedSlice.cpp.o
+[29/602] Building CXX object CMakeFiles/test-tdutils.dir/tdutils/test/SharedObjectPool.cpp.o
+[30/602] Linking CXX executable test-bigint
+[31/602] Building CXX object CMakeFiles/test-tdutils.dir/tdutils/test/pq.cpp.o
+[32/602] Building CXX object CMakeFiles/test-tdutils.dir/tdutils/test/MpmcQueue.cpp.o
+[33/602] Building CXX object CMakeFiles/test-tdactor.dir/test/test-td-main.cpp.o
+[34/602] Building CXX object CMakeFiles/test-db.dir/test/test-td-main.cpp.o
+[35/602] Building CXX object CMakeFiles/test-tdutils.dir/tdutils/test/ConcurrentHashMap.cpp.o
+[36/602] Building CXX object CMakeFiles/test-tdutils.dir/tdutils/test/port.cpp.o
+[37/602] Building CXX object CMakeFiles/test-fift.dir/crypto/test/fift.cpp.o
+[38/602] Building CXX object CMakeFiles/test-workchain-proof-work.dir/crypto/test/test-workchain-proof-work.cpp.o
+[39/602] Linking CXX executable test-workchain-proof-work
+[40/602] Building CXX object CMakeFiles/test-ed25519.dir/crypto/test/Ed25519.cpp.o
+[41/602] Building CXX object CMakeFiles/test-vm.dir/crypto/test/vm.cpp.o
+[42/602] Building CXX object CMakeFiles/test-net.dir/test/test-td-main.cpp.o
+[43/602] Linking CXX executable test-fift
+[44/602] Building CXX object CMakeFiles/test-rldp-http-proxy-routing.dir/test/test-rldp-http-proxy-routing.cpp.o
+[45/602] Building CXX object CMakeFiles/test-json-rpc-parse.dir/test/test-json-rpc-parse.cpp.o
+In file included from /home/tomi/tos-m2/test/test-json-rpc-parse.cpp:27:
+/home/tomi/tos-m2/tdutils/td/utils/tests.h:228:15: warning: comparison of integers of different signs: 'const unsigned int' and 'const int' [-Wsign-compare]
+  228 |   if (a_value == b_value) {
+      |       ~~~~~~~ ^  ~~~~~~~
+/home/tomi/tos-m2/test/test-json-rpc-parse.cpp:83:3: note: in instantiation of function template specialization 'td::detail::check_eq<unsigned int, int>' requested here
+   83 |   ASSERT_EQ(2u, stk->depth());
+      |   ^
+/home/tomi/tos-m2/tdutils/td/utils/tests.h:263:44: note: expanded from macro 'ASSERT_EQ'
+  263 |     if (auto error_message = ::td::detail::check_eq(a, b, #a, #b)) { \
+      |                                            ^
+1 warning generated.
+[46/602] Building CXX object CMakeFiles/test-cells.dir/crypto/test/test-cells.cpp.o
+[47/602] Building CXX object CMakeFiles/test-fec.dir/test/test-td-main.cpp.o
+[48/602] Building CXX object CMakeFiles/test-rldp2-inbound-transfer-bound.dir/test/test-td-main.cpp.o
+[49/602] Linking CXX executable test-cells
+[50/602] Building CXX object CMakeFiles/test-net.dir/tdnet/test/net-test.cpp.o
+[51/602] Linking CXX executable test-vm
+[52/602] Building CXX object CMakeFiles/test-wallet-index.dir/test/test-td-main.cpp.o
+[53/602] Building CXX object CMakeFiles/test-tddb.dir/test/test-td-main.cpp.o
+[54/602] Building CXX object CMakeFiles/test-quorum.dir/test/test-quorum.cpp.o
+[55/602] Building CXX object CMakeFiles/test-fec.dir/tdfec/test/fec-test.cpp.o
+[56/602] Linking CXX executable test-quorum
+[57/602] Building CXX object CMakeFiles/test-rldp-http-proxy-routing.dir/test/test-td-main.cpp.o
+[58/602] Linking CXX executable test-rldp-http-proxy-routing
+[59/602] Building CXX object CMakeFiles/test-overlay-peer-cleanup.dir/test/test-td-main.cpp.o
+[60/602] Building CXX object CMakeFiles/test-workchain-admission.dir/crypto/test/test-workchain-admission.cpp.o
+[61/602] Building CXX object CMakeFiles/plumtree-graph-sim.dir/test/plumtree/graph.cpp.o
+[62/602] Building CXX object CMakeFiles/test-msg-envelope.dir/test/test-td-main.cpp.o
+[63/602] Linking CXX executable test-workchain-admission
+[64/602] Building CXX object CMakeFiles/test-tddb.dir/tddb/test/binlog.cpp.o
+[65/602] Building CXX object CMakeFiles/test-ext-message-pool.dir/test/test-td-main.cpp.o
+[66/602] Building CXX object CMakeFiles/test-workchain-activation-control.dir/crypto/test/test-workchain-activation-control.cpp.o
+[67/602] Building CXX object CMakeFiles/test-config-transition.dir/test/test-td-main.cpp.o
+[68/602] Building CXX object CMakeFiles/test-wallet-index.dir/test/test-wallet-index.cpp.o
+[69/602] Building CXX object CMakeFiles/plumtree-graph-sim.dir/test/plumtree/scheduler.cpp.o
+[70/602] Building CXX object CMakeFiles/test-rate-limiter.dir/test/test-td-main.cpp.o
+[71/602] Building CXX object CMakeFiles/test-tdactor.dir/tdactor/test/actors_promise.cpp.o
+[72/602] Linking CXX executable test-workchain-activation-control
+[73/602] Building CXX object CMakeFiles/test-wallet-index.dir/validator-engine/wallet-index.cpp.o
+[74/602] Building CXX object CMakeFiles/test-json-rpc-parse.dir/test/test-td-main.cpp.o
+[75/602] Building CXX object CMakeFiles/test-tdutils.dir/tdutils/test/misc.cpp.o
+[76/602] Building CXX object CMakeFiles/plumtree-graph-sim.dir/test/plumtree/util.cpp.o
+[77/602] Building CXX object CMakeFiles/test-rate-limiter.dir/test/test-rate-limiter.cpp.o
+[78/602] Building CXX object CMakeFiles/test-vm-exception-hardening.dir/test/test-td-main.cpp.o
+[79/602] Building CXX object CMakeFiles/test-tddb.dir/tddb/test/key_value.cpp.o
+[80/602] Building CXX object CMakeFiles/test-workchain-proof-contracts.dir/crypto/test/test-workchain-proof-contracts.cpp.o
+[81/602] Linking CXX executable test-rate-limiter
+[82/602] Linking CXX executable test-workchain-proof-contracts
+[83/602] Building CXX object CMakeFiles/test-rldp2-connection-cap.dir/test/test-rldp2-connection-cap.cpp.o
+[84/602] Building CXX object CMakeFiles/test-uno-state-snapshot.dir/test/test-td-main.cpp.o
+[85/602] Building CXX object CMakeFiles/test-uno-storage-measurement.dir/test/test-td-main.cpp.o
+[86/602] Building CXX object CMakeFiles/test-full-node-shard-routing.dir/test/test-full-node-shard-routing.cpp.o
+[87/602] Building CXX object CMakeFiles/test-adnl.dir/test/test-adnl.cpp.o
+[88/602] Linking CXX executable test-full-node-shard-routing
+[89/602] Building CXX object CMakeFiles/test-rldp2.dir/test/test-rldp2.cpp.o
+[90/602] Building CXX object CMakeFiles/test-collator-node-limits.dir/test/test-collator-node-limits.cpp.o
+[91/602] Linking CXX executable test-collator-node-limits
+[92/602] Building CXX object CMakeFiles/test-promise-loss-contract.dir/test/test-promise-loss-contract.cpp.o
+[93/602] Building CXX object CMakeFiles/test-rldp2-connection-limits.dir/test/test-td-main.cpp.o
+[94/602] Building CXX object CMakeFiles/test-rldp2-query-eviction.dir/test/test-rldp2-query-eviction.cpp.o
+[95/602] Building CXX object CMakeFiles/test-json-rpc-handler-guard.dir/test/test-td-main.cpp.o
+[96/602] Building CXX object CMakeFiles/test-promise-loss-contract.dir/test/test-td-main.cpp.o
+[97/602] Checking the git repository for changes...
+[98/547] Linking CXX executable test-promise-loss-contract
+[99/547] Building CXX object CMakeFiles/test-tdactor.dir/tdactor/test/actors_core.cpp.o
+[100/547] Building CXX object CMakeFiles/test-weak-ptr-registry.dir/test/test-td-main.cpp.o
+[101/547] Building CXX object CMakeFiles/test-consensus-config-admission.dir/test/test-td-main.cpp.o
+[102/547] Linking CXX executable test-tdactor
+[103/547] Building CXX object CMakeFiles/test-msg-envelope.dir/test/test-msg-envelope.cpp.o
+[104/547] Building CXX object CMakeFiles/test-weak-ptr-registry.dir/test/test-weak-ptr-registry.cpp.o
+[105/547] Building CXX object CMakeFiles/test-rldp2-inbound-transfer-bound.dir/test/test-rldp2-inbound-transfer-bound.cpp.o
+[106/547] Linking CXX executable test-msg-envelope
+[107/547] Building CXX object CMakeFiles/test-toslib-offline.dir/test/test-td-main.cpp.o
+[108/547] Linking CXX executable test-weak-ptr-registry
+[109/547] Building CXX object CMakeFiles/test-http-server-limits.dir/test/test-td-main.cpp.o
+[110/547] Building CXX object CMakeFiles/test-rldp2-connection-limits.dir/test/test-rldp2-connection-limits.cpp.o
+[111/547] Building CXX object CMakeFiles/test-keyring-temp-key.dir/test/test-keyring-temp-key.cpp.o
+[112/547] Building CXX object CMakeFiles/test-metrics-label-bound.dir/test/test-td-main.cpp.o
+[113/547] Building CXX object CMakeFiles/test-vm-exception-hardening.dir/test/test-vm-exception-hardening.cpp.o
+[114/547] Building CXX object CMakeFiles/test-wallet-message-processor.dir/test/test-td-main.cpp.o
+[115/547] Building CXX object CMakeFiles/test-config-transition.dir/test/test-config-transition.cpp.o
+[116/547] Building CXX object adnl/CMakeFiles/adnllite.dir/adnl-ext-connection.cpp.o
+[117/547] Building CXX object memprof/CMakeFiles/memprof.dir/memprof/memprof.cpp.o
+[118/547] Building CXX object CMakeFiles/plumtree-graph-sim.dir/test/plumtree/transport.cpp.o
+[119/547] Linking CXX static library memprof/libmemprof.a
+[120/547] Building CXX object CMakeFiles/test-json-rpc-handler-guard.dir/test/test-json-rpc-handler-guard.cpp.o
+[121/547] Linking CXX executable test-config-transition
+[122/547] Linking CXX executable test-tdutils
+[123/547] Building CXX object crypto/CMakeFiles/tos_db.dir/vm/db/CellDbExtCell.cpp.o
+[124/547] Building CXX object CMakeFiles/test-overlay-peer-cleanup.dir/test/test-overlay-peer-cleanup.cpp.o
+[125/547] Linking CXX executable test-json-rpc-handler-guard
+[126/547] Linking CXX executable test-wallet-index
+[127/547] Linking CXX executable test-tddb
+[128/547] Building CXX object CMakeFiles/test-metrics-label-bound.dir/test/test-metrics-label-bound.cpp.o
+[129/547] Building CXX object tdnet/CMakeFiles/tdnet.dir/td/net/FramedPipe.cpp.o
+[130/547] Building CXX object CMakeFiles/test-dht.dir/test/test-dht.cpp.o
+[131/547] Building CXX object CMakeFiles/test-http-server-limits.dir/test/test-http-server-limits.cpp.o
+[132/547] Building CXX object metrics/CMakeFiles/metrics.dir/metrics-types.cpp.o
+[133/547] Building CXX object CMakeFiles/test-consensus-config-admission.dir/test/test-consensus-config-admission.cpp.o
+[134/547] Linking CXX executable test-consensus-config-admission
+[135/547] Building CXX object CMakeFiles/test-db.dir/crypto/test/test-db.cpp.o
+/home/tomi/tos-m2/crypto/test/test-db.cpp:1135:7: warning: missing field 'write_buffer_size' initializer [-Wmissing-designated-field-initializers]
+ 1135 |       };
+      |       ^
+1 warning generated.
+[136/547] Building CXX object tdnet/CMakeFiles/tdnet.dir/td/net/FdListener.cpp.o
+[137/547] Building CXX object metrics/CMakeFiles/metrics.dir/metrics-collectors.cpp.o
+[138/547] Building CXX object test/tdactor/CMakeFiles/test-scheduler-stop.dir/test-scheduler-stop.cpp.o
+[139/547] Building CXX object CMakeFiles/plumtree-graph-sim.dir/test/plumtree/plumtree-graph-sim.cpp.o
+[140/547] Building CXX object CMakeFiles/test-download-next-blocks-validation.dir/test/test-download-next-blocks-validation.cpp.o
+[141/547] Building CXX object tdnet/CMakeFiles/tdnet.dir/td/net/TcpListener.cpp.o
+[142/547] Building CXX object CMakeFiles/test-validator-options.dir/test/test-validator-options.cpp.o
+[143/547] Building CXX object test/tdactor/CMakeFiles/test-backpressure-queue.dir/test-backpressure-queue.cpp.o
+[144/547] Building CXX object tdnet/CMakeFiles/tdnet.dir/td/net/UdpServer.cpp.o
+[145/547] Building CXX object metrics/CMakeFiles/metrics.dir/prometheus-exporter.cpp.o
+[146/547] Building CXX object test/tdactor/CMakeFiles/test-test-scheduler.dir/test-test-scheduler.cpp.o
+[147/547] Building CXX object CMakeFiles/test-ext-message-pool.dir/test/test-ext-message-pool.cpp.o
+[148/547] Building CXX object CMakeFiles/test-celldb-streaming-import.dir/test/test-celldb-streaming-import.cpp.o
+[149/547] Building CXX object tdnet/CMakeFiles/tdnet.dir/td/net/Pipe.cpp.o
+[150/547] Linking CXX static library tdnet/libtdnet.a
+[151/547] Linking CXX executable test-net
+[152/547] Building CXX object CMakeFiles/test-block-handle-flags.dir/test/test-block-handle-flags.cpp.o
+[153/547] Building CXX object tl-utils/CMakeFiles/tl-lite-utils.dir/lite-utils.cpp.o
+[154/547] Building CXX object CMakeFiles/test-uno-storage-measurement.dir/test/uno-snapshot-transport.cpp.o
+[155/547] Building CXX object CMakeFiles/test-celldb-actor-restart.dir/test/test-celldb-actor-restart.cpp.o
+[156/547] Building CXX object tl/CMakeFiles/tl_toslib_api.dir/generate/auto/tl/toslib_api.cpp.o
+[157/547] Linking CXX static library tl/libtl_toslib_api.a
+[158/547] Building CXX object adnl/CMakeFiles/adnl.dir/adnl-ext-connection.cpp.o
+[159/547] Building CXX object CMakeFiles/test-uno-state-snapshot.dir/test/uno-snapshot-transport.cpp.o
+[160/547] Building CXX object adnl/CMakeFiles/adnl.dir/adnl-node-id.cpp.o
+[161/547] Building CXX object adnl/CMakeFiles/adnl.dir/adnl-db.cpp.o
+[162/547] Building CXX object adnl/CMakeFiles/adnl.dir/adnl-query.cpp.o
+[163/547] Building CXX object adnl/CMakeFiles/adnl.dir/adnl-node.cpp.o
+[164/547] Building CXX object tl-utils/CMakeFiles/tl-utils.dir/tl-utils.cpp.o
+[165/547] Building CXX object adnl/CMakeFiles/adnl.dir/adnl-ext-server.cpp.o
+[166/547] Linking CXX static library tl-utils/libtl-utils.a
+[167/547] Building CXX object tl/CMakeFiles/tl_lite_api.dir/generate/auto/tl/lite_api.cpp.o
+[168/547] Linking CXX static library tl/libtl_lite_api.a
+[169/547] Building CXX object CMakeFiles/test-download-state-budget.dir/test/test-download-state-budget.cpp.o
+[170/547] Linking CXX static library tl-utils/libtl-lite-utils.a
+[171/547] Building CXX object adnl/CMakeFiles/adnl.dir/adnl-ext-client.cpp.o
+[172/547] Building CXX object test/tdactor/CMakeFiles/test-runtime.dir/test-runtime.cpp.o
+[173/547] Building CXX object adnl/CMakeFiles/adnl.dir/adnl-packet.cpp.o
+[174/547] Building CXX object keys/CMakeFiles/keys.dir/encryptor.cpp.o
+[175/547] Building CXX object CMakeFiles/test-wallet-message-processor.dir/test/test-wallet-message-processor.cpp.o
+[176/547] Building CXX object adnl/CMakeFiles/adnl.dir/adnl-sender-ex.cpp.o
+[177/547] Building CXX object CMakeFiles/test-uno-state-snapshot.dir/test/test-uno-state-snapshot.cpp.o
+[178/547] Building CXX object adnl/CMakeFiles/adnllite.dir/adnl-query.cpp.o
+[179/547] Building CXX object tol/CMakeFiles/tol.dir/lexer.cpp.o
+[180/547] Building CXX object tol/CMakeFiles/tol.dir/src-file.cpp.o
+[181/547] Building CXX object tol/CMakeFiles/tol.dir/compilation-errors.cpp.o
+[182/547] Building CXX object keys/CMakeFiles/keys.dir/keys.cpp.o
+[183/547] Building CXX object tol/CMakeFiles/tol.dir/tol-main.cpp.o
+[184/547] cd /home/tomi/tos-m2/uno/crypto && /usr/bin/cmake -E env CARGO_NET_OFFLINE=true CARGO_TARGET_DIR=/tmp/uno-publication-build/uno/crypto/cargo-target /home/tomi/.cargo/bin/cargo build --locked --offline --release -j48
+   Compiling proc-macro2 v1.0.107
+   Compiling unicode-ident v1.0.24
+   Compiling quote v1.0.47
+   Compiling serde_core v1.0.229
+   Compiling serde v1.0.229
+   Compiling rand_core v0.10.1
+   Compiling libc v0.2.189
+   Compiling typenum v1.20.1
+   Compiling rustix v1.1.4
+   Compiling subtle v2.6.1
+   Compiling getrandom v0.4.3
+   Compiling zmij v1.0.23
+   Compiling hashbrown v0.17.1
+   Compiling equivalent v1.0.2
+   Compiling bitflags v2.13.1
+   Compiling cfg-if v1.0.4
+   Compiling serde_json v1.0.151
+   Compiling linux-raw-sys v0.12.1
+   Compiling toml_write v0.1.2
+   Compiling winnow v0.7.15
+   Compiling semver v1.0.28
+   Compiling itoa v1.0.18
+   Compiling fastrand v2.5.0
+   Compiling once_cell v1.21.4
+   Compiling cbindgen v0.29.0
+   Compiling memchr v2.8.3
+   Compiling log v0.4.34
+   Compiling byteorder v1.5.0
+   Compiling heck v0.5.0
+   Compiling keccak v0.1.6
+   Compiling bitflags v1.3.2
+   Compiling cpufeatures v0.3.1
+   Compiling keccak v0.2.2
+   Compiling ff v0.14.0
+   Compiling rustc_version v0.4.1
+   Compiling group v0.14.0
+   Compiling indexmap v2.14.2
+   Compiling curve25519-dalek v5.0.2 (https://github.com/tosnetwork/curve25519-dalek?rev=10042b03cfc92e505e9d33d2827d5c0f0d36989a#10042b03)
+   Compiling hybrid-array v0.4.14
+   Compiling crypto-common v0.2.2
+   Compiling block-buffer v0.12.1
+   Compiling syn v3.0.5
+   Compiling syn v2.0.119
+   Compiling tempfile v3.27.0
+   Compiling digest v0.11.3
+   Compiling sha3 v0.11.0
+   Compiling serde_derive v1.0.229
+   Compiling zeroize_derive v1.5.0
+   Compiling curve25519-dalek-derive v0.1.1
+   Compiling zeroize v1.9.0
+   Compiling strobe-rs v0.10.0
+   Compiling toml_datetime v0.6.11
+   Compiling serde_spanned v0.6.9
+   Compiling toml_edit v0.22.27
+   Compiling merlin v4.1.0 (https://github.com/tosnetwork/merlin?rev=ee857c79347e0e2201e5192523faea13ac9bf451#ee857c79)
+   Compiling bulletproofs v5.3.0 (/home/tomi/tos-m2/uno/crypto/vendor/bulletproofs)
+   Compiling toml v0.8.23
+   Compiling tos-uno-crypto-prototype v0.1.0 (/home/tomi/tos-m2/uno/crypto)
+    Finished `release` profile [optimized] target(s) in 12.11s
+[185/547] Building CXX object adnl/CMakeFiles/adnl.dir/utils.cpp.o
+[186/547] Linking CXX static library keys/libkeys.a
+[187/547] Building CXX object tol/CMakeFiles/tol.dir/symtable.cpp.o
+[188/547] Building CXX object tol/CMakeFiles/tol.dir/compiler-state.cpp.o
+[189/547] Building CXX object adnl/CMakeFiles/adnltest.dir/adnl-test-loopback-implementation.cpp.o
+[190/547] Linking CXX executable test-ed25519
+[191/547] Building CXX object adnl/CMakeFiles/adnl.dir/adnl-address-list.cpp.o
+[192/547] Building CXX object adnl/CMakeFiles/adnl.dir/adnl-message.cpp.o
+[193/547] Building CXX object CMakeFiles/test-workchain-proof-backend.dir/crypto/block/workchain-proof-backend.cpp.o
+[194/547] Building CXX object CMakeFiles/test-uno-storage-measurement.dir/test/test-uno-state-snapshot.cpp.o
+[195/547] Building CXX object tol/CMakeFiles/tol.dir/ast.cpp.o
+[196/547] Building CXX object adnl/CMakeFiles/adnl.dir/adnl-proxy-types.cpp.o
+[197/547] Building CXX object adnl/CMakeFiles/adnl.dir/adnl-network-manager.cpp.o
+[198/547] Building CXX object uno/crypto/CMakeFiles/test-uno-crypto-abi-real.dir/tests/balance-abi.cpp.o
+[199/547] Building CXX object adnl/CMakeFiles/adnllite.dir/adnl-ext-client.cpp.o
+[200/547] Building CXX object tol/CMakeFiles/tol.dir/gen-entrypoints.cpp.o
+[201/547] Building CXX object tol/CMakeFiles/tol.dir/pipe-discover-parse-sources.cpp.o
+[202/547] Linking CXX static library adnl/libadnllite.a
+[203/547] Linking CXX executable uno/crypto/test-uno-crypto-abi-real
+[204/547] Building CXX object crypto/CMakeFiles/tos_db.dir/vm/db/DynamicBagOfCellsDb.cpp.o
+[205/547] Building CXX object CMakeFiles/test-workchain-proof-backend.dir/crypto/test/test-workchain-proof-backend.cpp.o
+[206/547] Building CXX object lite-client/CMakeFiles/lite-client-common.dir/ext-client.cpp.o
+[207/547] Building CXX object tol/CMakeFiles/tol.dir/send-message-api.cpp.o
+[208/547] Linking CXX executable test-workchain-proof-backend
+[209/547] Building CXX object crypto/CMakeFiles/tos_db.dir/vm/db/CellStorage.cpp.o
+[210/547] Building CXX object tol/CMakeFiles/tol.dir/pipe-calc-rvalue-lvalue.cpp.o
+[211/547] Building CXX object adnl/CMakeFiles/adnl.dir/adnl-local-id.cpp.o
+[212/547] Building CXX object tol/CMakeFiles/tol.dir/pack-unpack-api.cpp.o
+[213/547] Building CXX object tol/CMakeFiles/tol.dir/maps-kv-api.cpp.o
+[214/547] Building CXX object tol/CMakeFiles/tol.dir/pipe-resolve-identifiers.cpp.o
+[215/547] Building CXX object tol/CMakeFiles/tol.dir/pipe-refine-lvalue-for-mutate.cpp.o
+[216/547] Building CXX object tol/CMakeFiles/tol.dir/pipe-check-rvalue-lvalue.cpp.o
+[217/547] Building CXX object crypto/CMakeFiles/tos_db.dir/vm/db/TosDb.cpp.o
+[218/547] Building CXX object tol/CMakeFiles/tol.dir/pipe-optimize-boolean-expr.cpp.o
+[219/547] Building CXX object tol/CMakeFiles/tol.dir/pipe-resolve-types.cpp.o
+[220/547] Building CXX object tol/CMakeFiles/tol.dir/pipe-mini-borrow-checker.cpp.o
+[221/547] Building CXX object tol/CMakeFiles/tol.dir/pipe-check-private-fields.cpp.o
+[222/547] Building CXX object tol/CMakeFiles/tol.dir/pipe-check-inferred-types.cpp.o
+[223/547] Building CXX object tol/CMakeFiles/tol.dir/pipe-register-symbols.cpp.o
+[224/547] Building CXX object tol/CMakeFiles/tol.dir/ast-from-tokens.cpp.o
+[225/547] Building CXX object tol/CMakeFiles/tol.dir/pipe-detect-inline-in-place.cpp.o
+[226/547] Building CXX object tol/CMakeFiles/tol.dir/pipe-check-pure-impure.cpp.o
+[227/547] Building CXX object adnl/CMakeFiles/adnl.dir/adnl-channel.cpp.o
+[228/547] Building CXX object tol/CMakeFiles/tol.dir/pipe-check-serialized-fields.cpp.o
+[229/547] Building CXX object tol/CMakeFiles/tol.dir/pipe-check-const-expr.cpp.o
+[230/547] Building CXX object crypto/CMakeFiles/create-state.dir/block/create-state.cpp.o
+[231/547] Building CXX object crypto/CMakeFiles/tos_db.dir/vm/db/InMemoryBagOfCellsDb.cpp.o
+[232/547] Building CXX object tol/CMakeFiles/tol.dir/constant-evaluator.cpp.o
+[233/547] Building CXX object tol/CMakeFiles/tol.dir/pipe-check-state-reachability.cpp.o
+[234/547] Building CXX object lite-client/CMakeFiles/lite-client-common.dir/lite-client-common.cpp.o
+[235/547] Building CXX object tdactor/test/CMakeFiles/test-coro.dir/test-coro.cpp.o
+[236/547] Building CXX object tl/CMakeFiles/tl_toslib_api_json.dir/generate/auto/tl/toslib_api_json.cpp.o
+[237/547] Building CXX object tol/CMakeFiles/tol.dir/pipe-check-slice3-reply-correlation.cpp.o
+[238/547] Linking CXX static library tl/libtl_toslib_api_json.a
+[239/547] Linking CXX executable tdactor/test/test-coro
+[240/547] Building CXX object tol/CMakeFiles/tol.dir/pretty-print.cpp.o
+[241/547] Building CXX object tol/CMakeFiles/tol.dir/pipe-check-query-id-propagation.cpp.o
+[242/547] Building CXX object tol/CMakeFiles/tol.dir/pipe-assign-require-codes.cpp.o
+[243/547] Building CXX object tol/CMakeFiles/tol.dir/pipe-find-unused-symbols.cpp.o
+[244/547] Building CXX object tol/CMakeFiles/tol.dir/pipe-transform-on-message.cpp.o
+[245/547] Building CXX object tol/CMakeFiles/tol.dir/pipe-infer-types-and-calls.cpp.o
+[246/547] Building CXX object tol/CMakeFiles/tol.dir/pipe-check-field-scoping.cpp.o
+[247/547] Building CXX object tol/CMakeFiles/tol.dir/pack-unpack-serializers.cpp.o
+[248/547] Building CXX object tol/CMakeFiles/tol.dir/pipe-check-postponement.cpp.o
+[249/547] Building CXX object tol/CMakeFiles/tol.dir/lazy-helpers.cpp.o
+[250/547] Building CXX object tol/CMakeFiles/tol.dir/overload-resolution.cpp.o
+[251/547] Building CXX object tol/CMakeFiles/tol.dir/smart-casts-cfg.cpp.o
+[252/547] Building CXX object tol/CMakeFiles/tol.dir/type-system.cpp.o
+[253/547] Building CXX object emulator/CMakeFiles/emulator.dir/emulator-extern.cpp.o
+[254/547] Building CXX object tol/CMakeFiles/tol.dir/type-transition.cpp.o
+[255/547] Building CXX object tol/CMakeFiles/tol.dir/pipe-check-receive-exhaustiveness.cpp.o
+[256/547] Building CXX object tol/CMakeFiles/tol.dir/abscode.cpp.o
+[257/547] Building CXX object tol/CMakeFiles/tol.dir/pipe-generate-fif-output.cpp.o
+[258/547] Building CXX object tol/CMakeFiles/tol.dir/asmops.cpp.o
+[259/547] Linking CXX shared library emulator/libemulator.so
+[260/547] Building CXX object tol/CMakeFiles/tol.dir/tol.cpp.o
+[261/547] Building CXX object toslib/CMakeFiles/toslib.dir/toslib/keys/bip39.cpp.o
+[262/547] Building CXX object tol/CMakeFiles/tol.dir/stack-transform.cpp.o
+[263/547] Building CXX object toslib/CMakeFiles/toslib.dir/toslib/KeyValue.cpp.o
+[264/547] Building CXX object adnl/CMakeFiles/adnl.dir/adnl-peer.cpp.o
+[265/547] Building CXX object CMakeFiles/test-toslib-offline.dir/toslib/test/offline.cpp.o
+[266/547] Building CXX object toslib/CMakeFiles/toslib.dir/toslib/KeyStorage.cpp.o
+[267/547] Building CXX object adnl/CMakeFiles/adnl.dir/adnl-peer-table.cpp.o
+[268/547] Building CXX object tol/CMakeFiles/tol.dir/generics-helpers.cpp.o
+[269/547] Building CXX object toslib/CMakeFiles/toslib.dir/toslib/keys/EncryptedKey.cpp.o
+[270/547] Building CXX object tol/CMakeFiles/tol.dir/optimize.cpp.o
+[271/547] Building CXX object tol/CMakeFiles/tol.dir/pipe-lazy-load-insertions.cpp.o
+[272/547] Building CXX object tol/CMakeFiles/tol.dir/codegen.cpp.o
+[273/547] Building CXX object toslib/CMakeFiles/toslib.dir/toslib/keys/SimpleEncryption.cpp.o
+[274/547] Building CXX object toslib/CMakeFiles/toslib.dir/toslib/keys/Mnemonic.cpp.o
+[275/547] Building CXX object toslib/CMakeFiles/toslib.dir/toslib/keys/DecryptedKey.cpp.o
+[276/547] Building CXX object tol/CMakeFiles/tol.dir/pipe-lower-contract.cpp.o
+[277/547] Building CXX object tol/CMakeFiles/tol.dir/analyzer.cpp.o
+[278/547] Building CXX object toslib/CMakeFiles/toslibjson_objects.dir/toslib/toslib_client_json.cpp.o
+[279/547] Building CXX object toslib/CMakeFiles/toslib.dir/toslib/ExtClientOutbound.cpp.o
+[280/547] Building CXX object tdfec/CMakeFiles/tdfec.dir/td/fec/raptorq/Rfc.cpp.o
+[281/547] Building CXX object toslib/CMakeFiles/toslibjson_objects.dir/toslib/FFIEventLoop.cpp.o
+[282/547] Building CXX object tol/CMakeFiles/tol.dir/builtins.cpp.o
+[283/547] Building CXX object tdfec/CMakeFiles/tdfec.dir/td/fec/common/SymbolsView.cpp.o
+[284/547] Building CXX object common/CMakeFiles/common.dir/errorlog.cpp.o
+[285/547] Building CXX object tdfec/CMakeFiles/tdfec.dir/td/fec/raptorq/Decoder.cpp.o
+[286/547] Linking CXX static library common/libcommon.a
+[287/547] Building CXX object tol/CMakeFiles/tol.dir/pipe-ast-to-legacy.cpp.o
+[288/547] Building CXX object tdfec/CMakeFiles/tdfec.dir/td/fec/raptorq/RawEncoder.cpp.o
+[289/547] Linking CXX executable tol/tol
+[290/547] Compiling FunC contract wallet-v5-func -> /tmp/uno-publication-build/slice1-gas-parity/wallet-v5-func.boc
+[291/547] Building CXX object tdfec/CMakeFiles/tdfec.dir/td/fec/raptorq/Encoder.cpp.o
+[292/547] Compiling Tol contract jetton-minter-tol -> /tmp/uno-publication-build/slice1-gas-parity/jetton-minter-tol.boc
+FAILED: slice1-gas-parity/jetton-minter-tol.boc /tmp/uno-publication-build/slice1-gas-parity/jetton-minter-tol.boc 
+cd /tmp/uno-publication-build/slice1-gas-parity && /usr/bin/cmake -E env FIFTPATH=/home/tomi/tos-m2/crypto/fift/lib /tmp/uno-publication-build/tol/tol --boc-output /tmp/uno-publication-build/slice1-gas-parity/jetton-minter-tol.boc -o /tmp/uno-publication-build/slice1-gas-parity/jetton-minter-tol.fif /home/tomi/tos-m2/crypto/smartcont/jetton-minter.tol && /usr/bin/cmake -E env FIFTPATH=/home/tomi/tos-m2/crypto/fift/lib /tmp/uno-publication-build/crypto/fift /tmp/uno-publication-build/slice1-gas-parity/jetton-minter-tol.fif
+Failed to discover Tol stdlib.
+Probably, you have a non-standard Tol installation.
+Please, provide env variable TOL_STDLIB referencing to tol-stdlib/ folder.
+[293/547] Compiling FunC contract jetton-minter-func -> /tmp/uno-publication-build/slice1-gas-parity/jetton-minter-func.boc
+[294/547] Building CXX object tdfec/CMakeFiles/tdfec.dir/td/fec/online/Rfc.cpp.o
+[295/547] Building CXX object http/CMakeFiles/toshttp.dir/http.cpp.o
+[296/547] Building CXX object toslib/CMakeFiles/toslibjson_objects.dir/toslib/FFIEngineConsoleClient.cpp.o
+[297/547] Building CXX object tdfec/CMakeFiles/tdfec.dir/td/fec/online/Encoder.cpp.o
+[298/547] Building CXX object tdfec/CMakeFiles/tdfec.dir/td/fec/online/Decoder.cpp.o
+[299/547] Building CXX object http/CMakeFiles/toshttp.dir/http-outbound-connection.cpp.o
+[300/547] Building CXX object http/CMakeFiles/toshttp.dir/http-connection.cpp.o
+[301/547] Building CXX object lite-client/CMakeFiles/lite-client-common.dir/query-utils.cpp.o
+[302/547] Building CXX object tdfec/CMakeFiles/tdfec.dir/td/fec/algebra/InactivationDecoding.cpp.o
+[303/547] Building CXX object http/CMakeFiles/toshttp.dir/http-inbound-connection.cpp.o
+[304/547] Building CXX object http/CMakeFiles/toshttp.dir/http-client.cpp.o
+[305/547] Building CXX object tdfec/CMakeFiles/tdfec.dir/td/fec/algebra/BeliefPropagationDecoding.cpp.o
+[306/547] Building CXX object crypto/CMakeFiles/tos_db.dir/vm/db/DynamicBagOfCellsDbV2.cpp.o
+[307/547] Building CXX object tdfec/CMakeFiles/tdfec.dir/td/fec/algebra/GaussianElimination.cpp.o
+[308/547] Building CXX object toslib/CMakeFiles/toslibjson_objects.dir/toslib/ClientJson.cpp.o
+[309/547] Building CXX object tdfec/CMakeFiles/tdfec.dir/td/fec/algebra/SparseMatrixGF2.cpp.o
+[310/547] Building CXX object toslib/CMakeFiles/toslib.dir/toslib/utils.cpp.o
+[311/547] Building CXX object toslib/CMakeFiles/toslib.dir/toslib/LastBlockStorage.cpp.o
+[312/547] Building CXX object http/CMakeFiles/toshttp.dir/http-server.cpp.o
+[313/547] Building CXX object tdfec/CMakeFiles/tdfec.dir/td/fec/raptorq/Solver.cpp.o
+[314/547] Building CXX object toslib/CMakeFiles/toslib.dir/toslib/Logging.cpp.o
+[315/547] Building CXX object toslib/CMakeFiles/toslib.dir/toslib/ExtClient.cpp.o
+[316/547] Building CXX object toslib/CMakeFiles/toslib.dir/toslib/Client.cpp.o
+[317/547] Building CXX object toslib/CMakeFiles/toslib.dir/toslib/LastBlock.cpp.o
+[318/547] Building CXX object toslib/CMakeFiles/toslib.dir/toslib/EngineConsoleClient.cpp.o
+[319/547] Building CXX object toslib/CMakeFiles/toslib.dir/toslib/LastConfig.cpp.o
+[320/547] Building CXX object toslib/CMakeFiles/toslib.dir/toslib/ToslibClientWrapper.cpp.o
+[321/547] Building CXX object toslib/CMakeFiles/toslib.dir/toslib/Config.cpp.o
+[322/547] Building CXX object toslib/CMakeFiles/toslibjson_objects.dir/toslib/toslib_engine_console.cpp.o
+[323/547] Building CXX object toslib/CMakeFiles/toslib.dir/toslib/ToslibClient.cpp.o
+ninja: build stopped: subcommand failed.

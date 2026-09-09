@@ -1,0 +1,15 @@
+6c6e93894:crypto/block/workchain-resource-policy.h:129:struct WorkchainEngineParameters {
+6c6e93894:crypto/block/workchain-resource-policy.h:134:inline td::Result<td::Ref<vm::Cell>> encode_workchain_engine_parameters(
+6c6e93894:crypto/block/workchain-resource-policy.h:135:    const WorkchainEngineParameters& value) {
+6c6e93894:crypto/block/workchain-resource-policy.h:146:inline td::Result<WorkchainEngineParameters> decode_workchain_engine_parameters(
+6c6e93894:crypto/block/workchain-resource-policy.h:153:  return WorkchainEngineParameters{std::move(resources), std::move(record.parameters)};
+6c6e93894:crypto/test/test-workchain-block.cpp:227:    auto encoded = block::encode_workchain_engine_parameters({value, payload});
+6c6e93894:crypto/test/test-workchain-block.cpp:250:  ASSERT_TRUE(block::encode_workchain_engine_parameters({value, {}}).is_error());
+6c6e93894:crypto/test/test-workchain-block.cpp:379:    auto opaque = block::encode_workchain_engine_parameters({value, special}).move_as_ok();
+6c6e93894:crypto/test/test-workchain-block.cpp:8997:  policy.engine_configuration = block::encode_workchain_engine_parameters({resources, business}).move_as_ok();
+6c6e93894:crypto/test/test-workchain-block.cpp:9117:    policy.engine_configuration = block::encode_workchain_engine_parameters({resources, business}).move_as_ok();
+6c6e93894:crypto/test/test-workchain-block.cpp:9139:    policy.engine_configuration = block::encode_workchain_engine_parameters({resources, business}).move_as_ok();
+6c6e93894:crypto/test/test-workchain-block.cpp:9258:  ingress.engine_configuration = block::encode_workchain_engine_parameters({resources,
+6c6e93894:crypto/test/test-workchain-block.cpp:9486:    return block::encode_workchain_engine_parameters(
+6c6e93894:doc/measurements/uno-m1-configuration-scope.json:238:          "text": "struct WorkchainEngineParameters {"
+6c6e93894:doc/measurements/uno-m1-non-i13-inventory.json:263:          "text": "struct WorkchainEngineParameters {"

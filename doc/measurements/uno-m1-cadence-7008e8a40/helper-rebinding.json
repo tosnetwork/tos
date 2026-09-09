@@ -1,0 +1,31 @@
+{
+  "old": {
+    "commit": "c519361489d68708f7695f05fab8576397e78319",
+    "sha256": "3591b1535176dc67febe0d36cb8f0561dd5c73e808e5087b3574bc9520cae6d4"
+  },
+  "current": {
+    "commit": "3822c76ed9dd10633b9cbc58c457ab55f373bc07",
+    "paths": [
+      {
+        "path": "crypto/test/workchain-activation-rejection.py",
+        "sha256": "8b27fa99e2801a97ff15ed456ad98e836e025dc94f849202f8a8a14920b03b81"
+      },
+      {
+        "path": "crypto/block/workchain-execution-dispatch.cpp",
+        "sha256": "be99a089704b50e7d462e83316028be22a6cad51edc2f568b9db7be3bc722311"
+      },
+      {
+        "path": "validator/impl/collator.cpp",
+        "sha256": "7b034a1cc225ca9df9fc8f4f10f58cbcf18b9eae8e885f9f3ef10090dae0151c"
+      },
+      {
+        "path": "doc/measurements/uno-v2-activation-helper-provenance/probe.stdout.log",
+        "sha256": "733efbdfc547676767c5c7b3b64884a4d24c2383b27b48e1517afdcb8d7c151b"
+      }
+    ],
+    "supersedes_helper_binding": "c519361489d68708f7695f05fab8576397e78319",
+    "scope": "Source-check followup, API and classifier answers unchanged. Historical c519 consumer controls are not reissued."
+  },
+  "diff_numstat": "31\t12\tcrypto/test/workchain-activation-rejection.py\n",
+  "scope": "Historical consumer mutations remain tied to c519; this unit rebinds and reruns the unchanged consumer against 3822. No classifier copy or new expected-answer table."
+}

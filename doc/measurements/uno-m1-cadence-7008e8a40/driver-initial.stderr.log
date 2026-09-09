@@ -1,0 +1,9 @@
+Traceback (most recent call last):
+  File "/tmp/uno-b-cadence-controls.py", line 19, in <module>
+    record['run']=run(name+'-run',[str(build/'test-workchain-block'),'--filter','EngineConfigurationAcceptedCadence','--verbosity','0']);combined=(out/record['run']['stdout']).read_text()+(out/record['run']['stderr']).read_text();assert record['run']['exit_code']!=0;assert re.search(r'\b'+str(identity)+r'\b',combined)
+                                                                                                                                                                                            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/home/tomi/.local/share/uv/python/cpython-3.14.4-linux-x86_64-gnu/lib/python3.14/pathlib/__init__.py", line 788, in read_text
+    return f.read()
+           ~~~~~~^^
+  File "<frozen codecs>", line 325, in decode
+UnicodeDecodeError: 'utf-8' codec can't decode byte 0xae in position 2878: invalid start byte
