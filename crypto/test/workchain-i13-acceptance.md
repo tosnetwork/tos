@@ -133,6 +133,11 @@ not used as an immutability proof.
 
 ## Remaining scope
 
+The companion pruning evidence proves only read non-dependence, not absence of
+blind dictionary writes. Read observation and independent delta coverage are both
+required. Neither private unit establishes completed live multi-account I13c/I13d
+acceptance; archived `complete` flags refer only to measurement-run completion.
+
 This unit does not establish the entire M1 invariant chain: complete admitted
 engine integration, allocation/payout-specific overlays, validator replay,
 publication/commit atomicity and large-shard cost bounds are outside these

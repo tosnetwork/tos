@@ -1916,7 +1916,7 @@
       "copy_discarded": true
     }
   ],
-  "scope": "Private host primitive/storage-overlay acceptance. No activation. Temporary source copies only. Full admitted engine/settlement/replay integration is not certified. Usage absence alone does not imply unchanged state; case 10 demonstrates this limit.",
+  "scope": "Private host primitive/storage-overlay acceptance. No activation. Temporary source copies only. Full admitted engine/settlement/replay integration is not certified. Usage absence alone does not imply unchanged state; case 10 demonstrates this limit. Read observation and deliberate pruning establish only the read/non-dependence portion: a blind dictionary entry replacement need not load its old body and is invisible to that observer. I13d also requires independent actual-delta/participant coverage and untouched-state binding; the pruning evidence alone is not a complete I13d argument. Case 10 of the preceding coverage unit demonstrates blind replacement. These are private-path measurements, not completed live multi-account I13c/I13d acceptance. Historical complete flags describe the recorded measurement run only.",
   "original_source_files_unchanged": true,
   "complete": true,
   "artifact_directory": "doc/measurements/uno-m1-i13-acceptance",

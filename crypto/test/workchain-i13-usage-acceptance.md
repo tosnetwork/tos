@@ -13,6 +13,24 @@ missing authenticated local state belongs to `LocalUnavailable`. Seeing that
 exception alone does not identify its source. These tests exercise a known
 fixture source, not a candidate/local-state classification boundary.
 
+## I13d limitation: pruning does not prevent blind writes
+
+**The read observation and pruning proof are only the read/non-dependence half,
+not complete I13d evidence.** Replacing a dictionary entry does not require
+loading its old body. Such a blind write is invisible to the read observer and
+can occur even when that old body is pruned. I13d therefore also needs independent
+actual-delta/participant coverage and untouched-state binding. This unit's delta
+and returned-root checks and the preceding unit's byte comparisons serve those
+separate purposes for these fixtures; case 10 of the preceding unit explicitly
+demonstrates blind replacement without an old-body read.
+
+Neither this private-path unit nor the preceding I13c/d unit establishes live
+multi-account integration. Do not cite the pruning evidence alone as complete
+I13d acceptance. This clarification changes the interpretation scope only; the
+archived run, source hashes, controls and restore audits remain historical and
+unchanged. A report's `complete` flag denotes completion of that measurement run,
+not live invariant acceptance.
+
 ## What is physically unavailable
 
 The full-state private overlay runs through `MerkleProofBuilder` first. For
