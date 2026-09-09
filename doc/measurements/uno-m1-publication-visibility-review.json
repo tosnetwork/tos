@@ -1,0 +1,333 @@
+{
+  "status": "READ_ONLY_STATIC_REVIEW_NOT_ACCEPTANCE",
+  "source_commit": "1743c7616a923ec4f9e39319d5e21260615533f0",
+  "integration_revision": "6afee328135314b946caa9654999fa9aa391aa92",
+  "scope": "Existing observer and storage paths only. No production edits, fault injection, complete finality/recovery audit, solution design or I13e acceptance. Uncommitted publication drafts are excluded.",
+  "conclusion": "No single durable transition shared by all three D47 observer classes was established; traced paths include distinct state/archive/handle operations and non-storage consumers/handoffs.",
+  "transition_role_count": 8,
+  "transition_roles": [
+    "P1 state cells and root registration",
+    "P2 archived block file/index",
+    "P3 received handle publication/persistence",
+    "P4 state_boc handle publication/persistence",
+    "P5 applied handle publication/persistence",
+    "N1 same-block working-state consumption",
+    "N2 candidate queue-proof handoff",
+    "N3 block/finality broadcast handoff"
+  ],
+  "count_scope": "Eight traced semantic roles, not eight writes per run or exhaustive global transition count. P3/P4/P5 may be batched but are not required to commit together with P1/P2.",
+  "sources": [
+    {
+      "path": "validator/db/rootdb.cpp",
+      "commit": "1743c7616a923ec4f9e39319d5e21260615533f0",
+      "git_blob_oid": "439446fce7e89a22f096d3140dec378caa812402",
+      "sha256": "a3fdb541871f12c16a04e647c8e0599969da3b18d3bb219c655fb032d29fc391",
+      "workspace_matches_committed": true,
+      "matches_integration_revision": true,
+      "excerpt_intervals": [
+        [
+          35,
+          75
+        ],
+        [
+          257,
+          290
+        ],
+        [
+          343,
+          364
+        ],
+        [
+          456,
+          463
+        ]
+      ]
+    },
+    {
+      "path": "validator/db/celldb.cpp",
+      "commit": "1743c7616a923ec4f9e39319d5e21260615533f0",
+      "git_blob_oid": "b4b04bdebfd75a68d40275a19e0efdaa640029d1",
+      "sha256": "4c2e099ded01908e06dd5d5a840f17bf92cc9f9b0e113f86cefdd42eaad15464",
+      "workspace_matches_committed": true,
+      "matches_integration_revision": true,
+      "excerpt_intervals": [
+        [
+          562,
+          641
+        ]
+      ]
+    },
+    {
+      "path": "validator/db/archive-slice.cpp",
+      "commit": "1743c7616a923ec4f9e39319d5e21260615533f0",
+      "git_blob_oid": "aad3f799288fe3bc8b22325d689740c774c12d02",
+      "sha256": "55ac65570c1eff29b9f616b5079032e96e02b44776d9bd6fc5b39e86d8dd006d",
+      "workspace_matches_committed": true,
+      "matches_integration_revision": true,
+      "excerpt_intervals": [
+        [
+          331,
+          356
+        ],
+        [
+          406,
+          479
+        ],
+        [
+          929,
+          970
+        ]
+      ]
+    },
+    {
+      "path": "validator/db/archive-manager.cpp",
+      "commit": "1743c7616a923ec4f9e39319d5e21260615533f0",
+      "git_blob_oid": "2bb8d9281b8b957bbbb0fd8669b832d4dfde3a37",
+      "sha256": "620c04899bce0fd88b61e0950192fc12636074f59ae6a83baacc119a70ef53ef",
+      "workspace_matches_committed": true,
+      "matches_integration_revision": true,
+      "excerpt_intervals": [
+        [
+          82,
+          110
+        ]
+      ]
+    },
+    {
+      "path": "validator/block-handle.hpp",
+      "commit": "1743c7616a923ec4f9e39319d5e21260615533f0",
+      "git_blob_oid": "54130eba1f2f1ac00b4069bb5a4476a39a1f4cd8",
+      "sha256": "6f514260e16b056db4cc2f8238216ccad735d848bd527d6444844045a2587210",
+      "workspace_matches_committed": true,
+      "matches_integration_revision": true,
+      "excerpt_intervals": [
+        [
+          184,
+          203
+        ],
+        [
+          405,
+          413
+        ],
+        [
+          473,
+          499
+        ]
+      ]
+    },
+    {
+      "path": "validator/apply-block.cpp",
+      "commit": "1743c7616a923ec4f9e39319d5e21260615533f0",
+      "git_blob_oid": "66c9c7186558d0c1fa63dfb2cea516638f336f7f",
+      "sha256": "74c5d71265d769529d3a6c2851f755ca522247740e8a81fea889e0f6163ac1e9",
+      "workspace_matches_committed": true,
+      "matches_integration_revision": true,
+      "excerpt_intervals": [
+        [
+          255,
+          325
+        ]
+      ]
+    },
+    {
+      "path": "validator/manager.cpp",
+      "commit": "1743c7616a923ec4f9e39319d5e21260615533f0",
+      "git_blob_oid": "d3c3954b6d85c994177bf118a6067213922d4cc2",
+      "sha256": "231a177f5edf44c6353d128806cdd29d73495c2adebd6e37940f9b4bd5a771fe",
+      "workspace_matches_committed": true,
+      "matches_integration_revision": true,
+      "excerpt_intervals": [
+        [
+          1309,
+          1324
+        ],
+        [
+          1732,
+          1746
+        ],
+        [
+          1805,
+          1890
+        ],
+        [
+          1891,
+          1915
+        ],
+        [
+          2079,
+          2086
+        ]
+      ]
+    },
+    {
+      "path": "validator/impl/accept-block.cpp",
+      "commit": "1743c7616a923ec4f9e39319d5e21260615533f0",
+      "git_blob_oid": "a8bd02115ace1d4291acd60b4a25b63dab7289a6",
+      "sha256": "dba6e5f6354d7fcd61d1fdff2c9eaef5f89557a705620cc026d4289ee6ec6108",
+      "workspace_matches_committed": true,
+      "matches_integration_revision": true,
+      "excerpt_intervals": [
+        [
+          504,
+          533
+        ],
+        [
+          563,
+          584
+        ],
+        [
+          938,
+          986
+        ]
+      ]
+    },
+    {
+      "path": "validator/impl/collator.cpp",
+      "commit": "1743c7616a923ec4f9e39319d5e21260615533f0",
+      "git_blob_oid": "0c45e03d557bc1ff039045e5dec811f7b2295e4b",
+      "sha256": "7b034a1cc225ca9df9fc8f4f10f58cbcf18b9eae8e885f9f3ef10090dae0151c",
+      "workspace_matches_committed": true,
+      "matches_integration_revision": true,
+      "excerpt_intervals": [
+        [
+          971,
+          1005
+        ],
+        [
+          1066,
+          1119
+        ],
+        [
+          2520,
+          2531
+        ],
+        [
+          3537,
+          3558
+        ],
+        [
+          5137,
+          5204
+        ],
+        [
+          6089,
+          6144
+        ],
+        [
+          6192,
+          6226
+        ],
+        [
+          6404,
+          6418
+        ],
+        [
+          6458,
+          6486
+        ]
+      ]
+    },
+    {
+      "path": "validator/impl/shard.cpp",
+      "commit": "1743c7616a923ec4f9e39319d5e21260615533f0",
+      "git_blob_oid": "644a17a506031b59952a54d09f0b995e40f0347a",
+      "sha256": "8d65888988d6223b9d43a058aaa68b265e6163deb24c05207c9faf91914d9adc",
+      "workspace_matches_committed": true,
+      "matches_integration_revision": true,
+      "excerpt_intervals": [
+        [
+          168,
+          183
+        ]
+      ]
+    },
+    {
+      "path": "validator/impl/out-msg-queue-proof.cpp",
+      "commit": "1743c7616a923ec4f9e39319d5e21260615533f0",
+      "git_blob_oid": "2ac6e38c9250ab3e9b719326724b8bf756daa006",
+      "sha256": "f8b722e34136c6b537d1dbdbd119925983c732e993bfafeb04c0597cd7cccb2d",
+      "workspace_matches_committed": true,
+      "matches_integration_revision": true,
+      "excerpt_intervals": [
+        [
+          168,
+          211
+        ]
+      ]
+    },
+    {
+      "path": "crypto/block/workchain-account-settlement.h",
+      "commit": "1743c7616a923ec4f9e39319d5e21260615533f0",
+      "git_blob_oid": "899dcc70a9164e3663c3e28d22d7240f4dec9ab0",
+      "sha256": "f2766fd4ec46bb27d8795e7106f9b274d56a895d006e4fc54ea3228d0a0d903e",
+      "workspace_matches_committed": true,
+      "matches_integration_revision": true,
+      "excerpt_intervals": [
+        [
+          17,
+          38
+        ]
+      ]
+    },
+    {
+      "path": "crypto/block/workchain-outbound-queues.h",
+      "commit": "1743c7616a923ec4f9e39319d5e21260615533f0",
+      "git_blob_oid": "afa33dc5b6f27e532076fc188dd401efd68342bc",
+      "sha256": "f40f2c72de5d12e59552df863b59126aa26cbaf66f1b212da9954a3b119e8c8a",
+      "workspace_matches_committed": true,
+      "matches_integration_revision": true,
+      "excerpt_intervals": [
+        [
+          14,
+          38
+        ]
+      ]
+    },
+    {
+      "path": "crypto/block/block.tlb",
+      "commit": "1743c7616a923ec4f9e39319d5e21260615533f0",
+      "git_blob_oid": "2d9ccb87c9c521945e4d31dd50a1107c11a4cbea",
+      "sha256": "3cfe3ebbc5b73bab19656b60d1a8bca0bee4c8832fb1a357cb108d31f6caa941",
+      "workspace_matches_committed": true,
+      "matches_integration_revision": true,
+      "excerpt_intervals": [
+        [
+          26,
+          35
+        ],
+        [
+          431,
+          440
+        ]
+      ]
+    }
+  ],
+  "search": {
+    "command": [
+      "git",
+      "grep",
+      "-n",
+      "-E",
+      "batch_identity|batch_count|committed_batches|committed.batch|BatchIdentity",
+      "1743c7616a923ec4f9e39319d5e21260615533f0",
+      "--",
+      "crypto/block",
+      "validator/impl",
+      "validator/db",
+      "validator/block-handle.hpp"
+    ],
+    "exit_code": 1,
+    "limitation": "Keyword search supports review; no match alone is not an absence proof."
+  },
+  "unresolved": [
+    "All alternate recovery/permanent-store/GC/archive-migration paths",
+    "Complete consensus/finality acquisition and every external consumer",
+    "Missing live multi-account count/context/publication provider"
+  ],
+  "document_sha256": "b2b64987e25714030a6dedfd081929cd185dd91a1f3bdb51be5352f68664d169",
+  "artifacts": {
+    "committed-count-search.stderr.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "committed-count-search.stdout.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "reviewed-source-excerpts.txt": "47b403b00bc9e1117d6f5a62ac0f7409a522ee2783cdc56324184d7b01e857f9"
+  }
+}
