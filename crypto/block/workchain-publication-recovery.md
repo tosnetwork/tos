@@ -121,3 +121,25 @@ possible filesystem failure or power-loss behavior. Read observation is not a
 coverage oracle: complete persisted component/message bytes are compared with
 fresh frozen provider outputs, including entries writable without loading old
 bodies.
+
+### Local errors before durable writing
+
+Outcome and availability are independent. A failed encoding or either failed
+RocksDb `set` before `commit_write_batch` returns NotCommitted together with
+LocalUnavailable. The operation can prove non-commit because only the pending
+in-memory batch was touched; it cannot call the failed local operation Ready.
+The recovery flag prevents continued publication until a real reopen succeeds.
+A successful absent-record lookup remains NotCommitted with Ready.
+
+The private executable's linker wrapper calls the real concrete RocksDb `set`
+first, then injects a distinct error status for the record or head key. These
+are API-boundary status propagation tests, not physical disk-failure evidence.
+The two paths must retain the injected numerical error identity, abort their
+staged writes, expose no new messages, and resolve absence from reopened disk.
+WAL write and sync failures use separate runtime I/O controls.
+
+The partial-WAL scenario resolves absence twice through actual reopen before
+a permitted new execution. Its durable entry count must become exactly two
+(one failed attempt, one allowed new attempt); subsequent committed retries
+must not increase it or the write/release counts. Thus D49's resolved-absence
+retry is distinct from re-executing an already committed identity.

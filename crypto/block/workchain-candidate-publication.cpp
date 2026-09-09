@@ -171,6 +171,13 @@ Result WorkchainCandidatePublication::read_and_release(const td::Bits256& identi
     const td::Bits256& admitted_input, const WorkchainPublicationObserver& observer) {
   auto reopened = reopen();
   if (reopened.is_error()) return unavailable(std::move(reopened));
+  // Every successful read resolves through this one clearance point. Diagnostic
+  // observers run afterward so they can acquire the fully checked snapshot.
+  auto finish_read = [&](bool found, bool installed) -> Result {
+    recovery_required_.store(false);
+    if (installed) observe(observer, Point::ReleaseInstall);
+    return found ? Result{Outcome::Committed, Availability::Ready, td::Status::OK()} : absent();
+  };
   auto reader = db_->snapshot();
   std::string requested, head;
   auto requested_status = reader->get(record_key(identity), requested);
@@ -189,8 +196,7 @@ Result WorkchainCandidatePublication::read_and_release(const td::Bits256& identi
   if (head_status.move_as_ok() == td::KeyValue::GetStatus::NotFound) {
     if (found) return unavailable(td::Status::Error("committed batch has no generation head"));
     observe(observer, Point::PersistentRead);
-    recovery_required_.store(false);
-    return absent();
+    return finish_read(false, false);
   }
   if (head.size() != 32) return unavailable(td::Status::Error("invalid persisted generation head"));
   td::Bits256 current_identity;
@@ -205,17 +211,16 @@ Result WorkchainCandidatePublication::read_and_release(const td::Bits256& identi
   if (current.is_error()) return unavailable(current.move_as_error());
   if (current.ok().batch_identity != current_identity) return unavailable(td::Status::Error("generation head binding differs"));
   observe(observer, Point::PersistentRead);
+  bool installed = false;
   auto prior = released_.load();
   if (prior && prior->batch_identity == current_identity) {
     if (*prior != current.ok()) return unavailable(td::Status::Error("immutable published generation changed"));
   } else {
     auto next = std::make_shared<const Bundle>(current.move_as_ok());
     released_.store(std::move(next));
-    recovery_required_.store(false);
-    observe(observer, Point::ReleaseInstall);
+    installed = true;
   }
-  recovery_required_.store(false);
-  return found ? Result{Outcome::Committed, Availability::Ready, td::Status::OK()} : absent();
+  return finish_read(found, installed);
 }
 Result WorkchainCandidatePublication::recover(const td::Bits256& identity, const td::Bits256& admitted_input,
     const WorkchainPublicationObserver& observer) {
@@ -224,8 +229,12 @@ Result WorkchainCandidatePublication::recover(const td::Bits256& identity, const
   return read_and_release(identity, admitted_input, observer);
 }
 Result WorkchainCandidatePublication::write(const Bundle& bundle, const WorkchainPublicationObserver& observer) {
+  auto not_committed_unavailable = [&](td::Status detail) -> Result {
+    recovery_required_.store(true);
+    return {Outcome::NotCommitted, Availability::LocalUnavailable, std::move(detail)};
+  };
   auto encoded = encode(bundle, limits_.max_bundle_bytes);
-  if (encoded.is_error()) return absent(encoded.move_as_error());
+  if (encoded.is_error()) return not_committed_unavailable(encoded.move_as_error());
   observe(observer, Point::BeforeWrite);
   auto started = db_->begin_write_batch();
   if (started.is_error()) return unavailable(std::move(started));
@@ -235,10 +244,12 @@ Result WorkchainCandidatePublication::write(const Bundle& bundle, const Workchai
     // is attempted or inferred after commit_write_batch has consumed the batch.
     if (batch_active) db_->abort_write_batch().ensure();
   };
-  auto stored = db_->set(record_key(bundle.batch_identity), encoded.ok());
-  if (stored.is_error()) return absent(std::move(stored));
-  auto headed = db_->set(head_key, bundle.batch_identity.as_slice());
-  if (headed.is_error()) return absent(std::move(headed));
+  // Bind to this concrete backend: the precommit error contract depends on
+  // RocksDb retaining both sets in its pending in-memory WriteBatch.
+  auto stored = db_->RocksDb::set(record_key(bundle.batch_identity), encoded.ok());
+  if (stored.is_error()) return not_committed_unavailable(std::move(stored));
+  auto headed = db_->RocksDb::set(head_key, bundle.batch_identity.as_slice());
+  if (headed.is_error()) return not_committed_unavailable(std::move(headed));
   observe(observer, Point::BatchStaged);
   recovery_required_.store(true);
   batch_active = false;
