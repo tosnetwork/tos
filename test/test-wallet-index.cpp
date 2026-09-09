@@ -344,7 +344,14 @@ TEST(WalletIndex, EventHistoryIsBoundedPerAccount) {
   tos_wallet_index::HashKey account = td::Bits256::zero();
   account.as_slice()[31] = 0x77;
 
+  // kMax drives the test's block count (how far to run to reach the bound);
+  // it may be the code's own constant. The *assertions* below instead use the
+  // absolute expected value kExpectedBound: tying the pass/fail check to
+  // kMaxEventsPerAccount would let a mis-sized cap (say 10000 -> 5000) move the
+  // code and the test together and stay green, which is exactly what must be
+  // caught. If the retention bound is changed on purpose, update this literal.
   constexpr size_t kMax = tos_wallet_index::kMaxEventsPerAccount;
+  constexpr size_t kExpectedBound = 10000;
   // Add far more than the per-pass drain each block. A trim that could only
   // ever delete a fixed number per pass (the bug this guards) could not keep
   // up at this rate, so the account would grow without bound. It is also above
@@ -383,16 +390,16 @@ TEST(WalletIndex, EventHistoryIsBoundedPerAccount) {
     ASSERT_TRUE(db->commit_batch().is_ok());
 
     size_t retained = count_events();
-    // The bound may momentarily hold up to one block's additions above kMax on
-    // the block that first crosses it (trim leaves room for the additions that
-    // are still in the batch), but it must never grow beyond that.
-    ASSERT_TRUE(retained <= kMax + kPerBlock);
+    // The bound may momentarily hold up to one block's additions above it on the
+    // block that first crosses it (trim leaves room for the additions still in
+    // the batch), but it must never grow beyond that.
+    ASSERT_TRUE(retained <= kExpectedBound + kPerBlock);
     // Once warmed up the account is pinned at the bound. The pre-fix trim would
-    // instead be at roughly kMax + (block - warmup) * (kPerBlock - fixed_cap)
-    // here -- growing every block. An absolute value, not the code's own
-    // constant, so a mis-sized cap cannot move test and code together.
+    // instead be at roughly kExpectedBound + (block - warmup) * (kPerBlock -
+    // fixed_cap) here -- growing every block. Compared against the absolute
+    // literal (see kExpectedBound), not the code's own constant.
     if (block >= warmup_blocks) {
-      ASSERT_EQ(retained, kMax);
+      ASSERT_EQ(retained, kExpectedBound);
     }
   }
   // Newest events are the ones kept.

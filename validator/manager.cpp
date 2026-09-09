@@ -2373,19 +2373,22 @@ void ValidatorManagerImpl::sweep_destroyed_consensus_dbs() {
       return td::WalkPath::Action::SkipDir;
     }
     auto full = path.str();
-    // rmrf() is authoritative for whether the directory is gone; the rocksdb
-    // destroy() before it is best-effort cleanup of the db files. Only count a
-    // reclaim when the directory is actually removed -- otherwise a failed
-    // delete (permissions, fs error) would be reported as success and the
-    // leftover silently kept. The destroyed-session record is left in place on
-    // failure, so the next startup sweep retries this directory.
+    // Delete, then confirm the directory is actually gone. rmrf()'s own status
+    // is not proof of removal: it ignores every unlink()/rmdir() error and
+    // returns OK as long as the walk itself succeeded, so a permissions or
+    // read-only-filesystem failure would leave the directory in place while
+    // rmrf() still reports success. Probe with stat() -- an error means the
+    // path no longer exists (the removal worked); a successful stat means the
+    // directory is still there. Only a confirmed removal counts as reclaimed;
+    // otherwise the destroyed-session record is kept so the next startup
+    // retries this directory.
     td::RocksDb::destroy(full + "/db/").ignore();
-    auto removed = td::rmrf(full);
-    if (removed.is_ok()) {
+    td::rmrf(full).ignore();
+    if (td::stat(full).is_error()) {
       reclaimed++;
     } else {
       failed++;
-      LOG(WARNING) << "could not remove leftover consensus database " << full << ": " << removed.message()
+      LOG(WARNING) << "leftover consensus database still present after delete attempt: " << full
                    << "; keeping its destroyed-session record so a later startup retries it";
     }
     return td::WalkPath::Action::SkipDir;

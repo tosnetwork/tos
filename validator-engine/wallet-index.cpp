@@ -302,7 +302,14 @@ td::Status WalletIndexDb::trim_events(const HashKey& account, size_t added_this_
   //    below sees only committed rows -- the `added_this_block` rows written
   //    for this account earlier in the batch are invisible to it. Keeping
   //    `kMaxEventsPerAccount - added_this_block` committed rows leaves room for
-  //    them, so the post-commit total is at most kMaxEventsPerAccount.
+  //    them, so the post-commit total is at most kMaxEventsPerAccount, provided
+  //    a single block adds fewer than kMaxEventsPerAccount events for one
+  //    account (block transaction limits make this the case in practice). If a
+  //    block ever added at least that many, `keep` clamps to 0 and those
+  //    in-batch rows cannot be scanned to delete, so that one block would
+  //    commit with `added_this_block` rows; the next block's trim then brings
+  //    it back down -- growth still cannot run away, since a pass always
+  //    deletes at least what the block added (see below).
   //
   //  * The delete budget is `added_this_block + kEventTrimDrainPerPass`. A pass
   //    therefore always removes at least as many rows as the block added, so an
