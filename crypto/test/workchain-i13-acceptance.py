@@ -25,7 +25,7 @@ def main():
     shadow.mkdir(parents=True)
     originals = {}
     paths = {}
-    for name in ('workchain-account-access.h', 'workchain-account-dictionary.h'):
+    for name in ('workchain-account-access.h', 'workchain-account-dictionary.h', 'workchain-storage-overlay.h'):
         source = repo / 'crypto/block' / name
         paths[name] = shadow / name
         originals[name] = source.read_bytes()
@@ -95,7 +95,7 @@ def main():
         status = command(label, ['ninja', '-C', args.build, '-t', 'deps', obj])
         assert status == 0
         text = (args.output / (label + '.stdout.log')).read_text()
-        for header in ('workchain-account-access.h', 'workchain-account-dictionary.h'):
+        for header in ('workchain-account-access.h', 'workchain-account-dictionary.h', 'workchain-storage-overlay.h'):
             expected = paths[header] if file == header else repo / 'crypto/block' / header
             assert str(expected) in text, 'actual header dependency missing: ' + str(expected)
             if file != header:
@@ -108,6 +108,9 @@ def main():
     access = 'workchain-account-access.h'
     cpp = name
     controls = [
+        ('misroute-overlay-write', 'workchain-storage-overlay.h',
+         '!staged.set_builder(account.addr, entry, vm::Dictionary::SetMode::Replace)',
+         '!staged.set_builder(writes.back().account, entry, vm::Dictionary::SetMode::Replace)', [0], 10),
         ('omit-actual-equality', access,
          'if (actual_changed_accounts != writes_)', 'if (false)', [1, 2], 41),
         ('omit-participant-equality', access,
@@ -183,7 +186,7 @@ def main():
     report['original_source_files_unchanged'] = True
     report['complete'] = True
     record()
-    print('PASS: 16 cases, 9 isolated controls, restored sources; review pending')
+    print('PASS: 16 cases, 10 isolated controls, restored sources; review pending')
 
 
 if __name__ == '__main__':
