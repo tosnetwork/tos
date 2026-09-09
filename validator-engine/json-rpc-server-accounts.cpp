@@ -55,7 +55,16 @@ td::Result<ParsedAccountState> ParsedAccountState::parse(
   as.proof = f->proof_.clone();
   as.state = f->state_.clone();
   auto info_r = as.validate(blk_id, addr);
-  if (info_r.is_ok()) {
+  // A proof that does not check out is a failure to answer, not an answer.
+  // Falling through would hand back the default-constructed state, which
+  // reads as a real account holding nothing: a caller cannot tell that
+  // apart from an address that has never been used. An account that
+  // genuinely does not exist validates successfully with an empty root
+  // and still reaches the caller as "uninitialized".
+  if (info_r.is_error()) {
+    return info_r.move_as_error_prefix("account state proof did not validate: ");
+  }
+  {
     auto info = info_r.move_as_ok();
     res.last_trans_lt = info.last_trans_lt;
     res.last_trans_hash_b64 = td::base64_encode(info.last_trans_hash.as_slice());
@@ -82,7 +91,13 @@ td::Result<ParsedAccountState> ParsedAccountState::parse(
         if (tlb::csr_unpack(account.storage, storage)) {
           auto balance_cs = storage.balance.write();
           auto coins = block::tlb::t_Tomis.as_integer_skip(balance_cs);
-          if (coins.not_null()) res.balance = coins->to_long();
+          if (coins.not_null()) {
+            res.balance_dec = coins->to_dec_string();
+            // to_long() answers INT64_MIN for anything that does not fit,
+            // so an unchecked conversion turns a large balance into a
+            // large negative one.
+            res.balance = coins->fits_bits(63, false) ? coins->to_long() : std::numeric_limits<td::int64>::max();
+          }
           res.extra_currencies_cell = storage.balance->prefetch_ref();
 
           auto tag = block::gen::t_AccountState.get_tag(*storage.state);
@@ -120,9 +135,12 @@ td::Result<ParsedAccountState> ParsedAccountState::parse(
 }
 
 std::string ParsedAccountState::to_address_info_json() const {
-  return PSTRING()
-      << "{\"@type\":\"raw.fullAccountState\""
-      << ",\"balance\":" << td::JsonString(td::Slice(PSTRING() << balance))
+  // Growable builder, not PSTRING: code and data are contract BOCs that
+  // can exceed the fixed logger buffer, and truncating them here cannot
+  // be undone by the caller's outer growable wrapper.
+  td::StringBuilder sb;
+  sb << "{\"@type\":\"raw.fullAccountState\""
+      << ",\"balance\":" << td::JsonString(td::Slice(balance_dec))
       << ",\"code\":" << td::JsonString(td::Slice(code_b64))
       << ",\"data\":" << td::JsonString(td::Slice(data_b64))
       << ",\"last_transaction_id\":{\"@type\":\"internal.transactionId\""
@@ -139,14 +157,21 @@ std::string ParsedAccountState::to_address_info_json() const {
       << ",\"state\":" << td::JsonString(td::Slice(state_str))
       << ",\"frozen_hash\":" << td::JsonString(td::Slice(frozen_hash))
       << "}";
+  return sb.as_cslice().str();
 }
 
 std::string ParsedAccountState::to_extended_info_json(const std::string& addr_str) const {
-  return PSTRING()
-      << "{\"@type\":\"fullAccountState\""
+  // Growable, for the same reason as to_address_info_json: the account
+  // state carries code and data that can outgrow the fixed buffer.
+  td::StringBuilder sb;
+  sb << "{\"@type\":\"fullAccountState\""
       << ",\"address\":{\"@type\":\"accountAddress\",\"account_address\":"
       << td::JsonString(td::Slice(addr_str)) << "}"
-      << ",\"balance\":" << balance
+      // Unquoted, so the wire type stays a JSON number, but written from
+      // the exact decimal: a JSON number carries the full literal, whereas
+      // the 64-bit rendering would report a saturated value for a balance
+      // wider than that type.
+      << ",\"balance\":" << balance_dec
       << ",\"extra_currencies\":[]"
       << ",\"last_transaction_id\":{\"@type\":\"internal.transactionId\""
       << ",\"lt\":\"" << last_trans_lt << "\""
@@ -163,6 +188,7 @@ std::string ParsedAccountState::to_extended_info_json(const std::string& addr_st
       << ",\"data\":" << td::JsonString(td::Slice(data_b64))
       << ",\"frozen_hash\":" << td::JsonString(td::Slice(frozen_hash)) << "}"
       << ",\"revision\":0}";
+  return sb.as_cslice().str();
 }
 
 // ─── getAddressInformation ──────────────────────────────────────────────
@@ -455,7 +481,7 @@ void JsonRpcServer::handle_getAddressBalance(td::JsonObject &params, std::string
         return;
       }
       promise_inner.set_value(make_json_ok(
-          PSTRING() << "\"" << parsed.ok().balance << "\"", req_id_inner, cors));
+          PSTRING() << "\"" << parsed.ok().balance_dec << "\"", req_id_inner, cors));
     }));
   };
 
