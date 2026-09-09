@@ -49,6 +49,11 @@ void ValidatorManagerImpl::log_collate_query_stats(CollationStats stats) {
                           << "\nowners_during=" << stats.account_config_owners_during
                           << "\nowners_after=" << stats.account_config_owners_after
                           << "\ntransactions=" << stats.transactions << "\n").ensure();
+  // Separate lifecycle observations preserve the existing stats wire for old
+  // tools, without implying that release happened inside the binding branch.
+  td::write_file(query_result_path_ + ".binding",
+                 PSLICE() << "retained_after_state=" << (stats.account_adapter_retained_after_state ? 1 : 0)
+                          << "\nreleased=" << (stats.account_adapter_released ? 1 : 0) << "\n").ensure();
   // This interval includes the whole query up to the completed stats write,
   // not just message delivery. It is a conservative normal-run observation,
   // not an upper bound under arbitrary scheduler or storage delays.
@@ -249,6 +254,10 @@ void ValidatorManagerImpl::sync_complete(td::Promise<td::Unit> promise) {
         // record the typed result before logging or moving the error.
         if (!result_path.empty()) {
           td::write_file(result_path, PSLICE() << "collate " << (R.is_ok() ? 0 : R.error().code()) << "\n").ensure();
+          // Preserve the terminal typed result, not a potentially misleading
+          // later log. A numeric zero alone does not identify Status success.
+          td::write_file(result_path + ".kind", td::Slice(R.is_ok() ? "success\n" : "error\n")).ensure();
+          td::write_file(result_path + ".message", R.is_ok() ? td::Slice{} : R.error().message()).ensure();
         }
         if (R.is_ok()) {
           auto v = R.move_as_ok();

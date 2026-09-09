@@ -1,0 +1,21 @@
+{
+  "tested_merge": "6e089de558a587f674abf943e98a670c3cb25164",
+  "source_tip": "2ee0365a4e408f3c3d033c78731906d13e17a11b",
+  "ordinary_registered": 127,
+  "ordinary_executed_passed": 127,
+  "private_registered": 3,
+  "private_executed": 0,
+  "private_ordinary_overlap": [],
+  "artifact_sha256": {
+    "README.md": "5666f2dac77f2259cc268b36e139ab69570a8d17db408f39a13a1a0c0df3b067",
+    "all-tests-build.log": "595ce1a5af9aa629005b76711f2dd2b5cc7227dc4625a8dadbe3f80bdabfb4cb",
+    "ordinary-configure.log": "b54f0bcac3b85c593f94f3131a656185e0366b72b99f498a32fd7f5bb599dacd",
+    "ordinary-ctest.log": "0430f7c53fb7baeb1d547a066a0216dfc52dea4979d0a3fcbc85ba60d6d71749",
+    "ordinary-registration.json": "cbb72cc8a8a7dc048190d599d208bf2273d7ec94d6a8f4aec8d0447ad4d40425",
+    "ordinary-results.xml": "d352c5024cd476826068cdf14ea6f5dae53e2a297ea73856fa7619150a23d708",
+    "private-configure.log": "8d862a15230d9291297243d9a89658f0cbf15340dbea1772243fe4b60ad396d9",
+    "private-registration-check.log": "44c42fd997c5eb423dce49661ceb3228b7a409e3d8fe5e43c529b40692b58e88",
+    "private-registration.json": "27b9d1a1c298b9c6c63d693afbcdb5726c7e828ae451820b1b9de6d79e03776d",
+    "source-guard.log": "e39a819ab3156fa4da07b4d1a53ebcfb0e590b0c42c6c271b1ce041eeb8e2fa1"
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "base_commit": "139899d34655267df6718bc5743d6320a5886d11",
+  "ordinary_regression": {
+    "actual_junit_testcases": 129,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "seconds": 485.98,
+    "private_i13_harnesses_included": false
+  },
+  "controls": {
+    "wrong-mode": {"compile_exit": 0, "run_exit": 1, "restored_run_exit": 0},
+    "old-refusal": {"compile_exit": 0, "run_exit": 1, "restored_run_exit": 0}
+  },
+  "final_source_hash_check": "passed",
+  "restore_audit_reconstruction": "2/2",
+  "staged_ignore_scan": {"exit": 1, "matched_paths": []},
+  "remaining_refusals": {"collator_visitors": 1, "validator_visitors": 3, "registry": 1},
+  "scope": "Classification only; no live admission/replay or activation authorization."
+}

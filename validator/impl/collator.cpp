@@ -42,6 +42,7 @@
 #include "vm/dict.h"
 
 #include "collator-impl.h"
+#include "workchain-collator-compute-mode.h"
 #include "fabric.h"
 #include "storage-stat-cache.hpp"
 #include "top-shard-descr.hpp"
@@ -388,6 +389,7 @@ std::string show_shard(const tos::ShardIdFull blk_id) {
  */
 bool Collator::fatal_error(td::Status error) {
   error.ensure_error();
+  release_account_adapter();
   LOG(ERROR) << "cannot generate block candidate for " << show_shard(shard_) << " : " << error.to_string();
   if (busy_) {
     if (allow_repeat_collation_ && error.code() != ErrorCode::cancelled && params_.attempt_idx + 1 < MAX_ATTEMPTS &&
@@ -1593,26 +1595,24 @@ bool Collator::check_this_shard_mc_info() {
   if (execution_res.is_error()) {
     return fatal_error(execution_res.move_as_error_prefix("cannot create block for configured workchain: "));
   }
-  if (execution_res.ok()) {
+  auto execution = execution_res.move_as_ok();
+  if (execution) {
     auto ready = std::visit(td::overloaded(
         [](const block::ResolvedWorkchainExecution&) { return td::Status::OK(); },
         [](const block::ResolvedWorkchainBlockExecution&) { return td::Status::OK(); },
-        [this](const block::ResolvedWorkchainAccountBinding& binding) {
+        [this](block::ResolvedWorkchainAccountBinding& binding) {
           stats_.account_binding_visited = true;
-          // Construct only from the production resolver's authenticated cut.
-          // The adapter and its configuration ownership end synchronously,
-          // before the unchanged refusal. No input or proof token is invented.
+          // Resolve once, then retain this exact adapter across host stages.
+          // No input/proof token or execution permission is manufactured here.
           stats_.account_config_owners_before = binding.engine_config.use_count();
-          {
-            auto adapter = block::ConfiguredWorkchainAccountEngine::bind(binding);
-            if (adapter.is_error()) return adapter.move_as_error();
-            stats_.account_adapter_bound = adapter.ok() != nullptr;
-            stats_.account_config_owners_during = binding.engine_config.use_count();
-          }
-          stats_.account_config_owners_after = binding.engine_config.use_count();
-          return td::Status::Error(static_cast<int>(block::WorkchainExecutionFailure::LocalUnavailable),
-                                   "multi-account admission and replay are not connected");
-        }), *execution_res.ok());
+          auto adapter = block::ConfiguredWorkchainAccountEngine::bind(binding);
+          if (adapter.is_error()) return adapter.move_as_error();
+          account_adapter_ = adapter.move_as_ok();
+          account_binding_.emplace(std::move(binding));
+          stats_.account_adapter_bound = account_adapter_ != nullptr;
+          stats_.account_config_owners_during = account_binding_->engine_config.use_count();
+          return td::Status::OK();
+        }), *execution);
     if (ready.is_error()) return fatal_error(std::move(ready));
   }
   if (wc_info_->enabled_since && wc_info_->enabled_since > config_->utime) {
@@ -1794,6 +1794,7 @@ bool Collator::do_preinit() {
     return fatal_error("cannot unpack previous state of current shardchain");
   }
   CHECK(account_dict);
+  stats_.account_adapter_retained_after_state = account_adapter_ != nullptr && account_binding_.has_value();
   if (!init_utime()) {
     return fatal_error("cannot initialize unix time");
   }
@@ -2301,15 +2302,7 @@ bool Collator::fetch_config_params() {
     return fatal_error(resolved_execution.move_as_error_prefix("cannot resolve configured workchain execution: "));
   }
   if (resolved_execution.ok().has_value()) {
-    auto custom = std::visit(td::overloaded(
-        [](const block::ResolvedWorkchainExecution& account) -> td::Result<bool> {
-          return block::resolved_workchain_execution_is_custom(account);
-        },
-        [](const block::ResolvedWorkchainBlockExecution&) -> td::Result<bool> { return false; },
-        [](const block::ResolvedWorkchainAccountBinding&) -> td::Result<bool> {
-          return td::Status::Error(static_cast<int>(block::WorkchainExecutionFailure::LocalUnavailable),
-                                   "multi-account admission and replay are not connected");
-        }), *resolved_execution.ok());
+    auto custom = collator_uses_custom_account_compute(*resolved_execution.ok());
     if (custom.is_error()) return fatal_error(custom.move_as_error());
     custom_workchain = custom.move_as_ok();
   }
@@ -6843,6 +6836,7 @@ void Collator::return_block_candidate(td::Result<td::Unit> saved, td::PerfLogAct
     LOG(ERROR) << "cannot save block candidate: " << err.to_string();
     fatal_error(std::move(err));
   } else {
+    release_account_adapter();
     CHECK(block_candidate);
     LOG(WARNING) << "sending new BlockCandidate to Promise";
     LOG(WARNING) << "collation took " << perf_timer_.elapsed() << " s";
@@ -6945,6 +6939,14 @@ bool Collator::check_cancelled() {
 
 td::uint32 Collator::get_skip_externals_queue_size() {
   return SKIP_EXTERNALS_QUEUE_SIZE;
+}
+
+void Collator::release_account_adapter() {
+  if (!account_adapter_) return;
+  account_adapter_.reset();
+  stats_.account_adapter_released = true;
+  stats_.account_config_owners_after = account_binding_->engine_config.use_count();
+  account_binding_.reset();
 }
 
 void Collator::finalize_stats() {

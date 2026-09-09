@@ -1,0 +1,24 @@
+{
+  "name": "usage-node-handoff",
+  "path": "crypto/block/workchain-account-settlement.h",
+  "scenario": "tracking",
+  "from": "                                      std::move(output_snapshot), std::move(state_snapshot), state_usage_node};",
+  "to": "                                      std::move(output_snapshot), std::move(state_snapshot), {}};",
+  "expected": "tracking.same_tree",
+  "baseline_sha256": "dd7137d93041509fe8feb17b5c0d093ce5ad0b55b65598276a0ba8b2ffd11436",
+  "test_source_sha256": "e076ea19780de816c9930ae32e78a7bbc263bc6939d2a2449b5053c0e7e95e7e",
+  "restored_targets": [
+    "test-workchain-settlement-continuation"
+  ],
+  "build_command": "cmake --build build --target test-workchain-settlement-continuation -j32",
+  "run_command": "build/test-workchain-settlement-continuation tracking",
+  "recorded_mutant_sha256": "aad75f138bf2d4ba5b9357b4eee68cd2c80ea578a5e2cf36e4560cc43dd05564",
+  "compile_exit": 0,
+  "mutant_binary_sha256": "54fcd6fbe466cf53859ebea342603de4ff3d8c7b5a707fa81a3f808e6d087cb5",
+  "run_exit": 1,
+  "expected_failure": true,
+  "restored_sha256": "dd7137d93041509fe8feb17b5c0d093ce5ad0b55b65598276a0ba8b2ffd11436",
+  "restore_compile_exit": 0,
+  "restored_binary_sha256": "c437a1270ea7bdb5052112124f03d903e50ed57528f4124a37a1c3b1f1b806bc",
+  "restore_run_exit": 0
+}

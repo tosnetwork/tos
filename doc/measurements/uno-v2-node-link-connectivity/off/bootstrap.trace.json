@@ -1,0 +1,103 @@
+{
+  "exit_code": 0,
+  "events": [
+    {
+      "site": "preinit"
+    },
+    {
+      "site": "validator_set"
+    },
+    {
+      "site": "old_state"
+    },
+    {
+      "site": "registry_default",
+      "registry": {
+        "engines_": [
+          {
+            "format": 0,
+            "selector": -1
+          }
+        ],
+        "block_engines_": [],
+        "account_engines_": []
+      }
+    },
+    {
+      "site": "config",
+      "version": 15,
+      "capabilities": 494
+    },
+    {
+      "site": "registry_default",
+      "registry": {
+        "engines_": [
+          {
+            "format": 0,
+            "selector": -1
+          }
+        ],
+        "block_engines_": [],
+        "account_engines_": []
+      }
+    },
+    {
+      "site": "registry_default",
+      "registry": {
+        "engines_": [
+          {
+            "format": 0,
+            "selector": -1
+          }
+        ],
+        "block_engines_": [],
+        "account_engines_": []
+      }
+    },
+    {
+      "site": "registry_default",
+      "registry": {
+        "engines_": [
+          {
+            "format": 0,
+            "selector": -1
+          }
+        ],
+        "block_engines_": [],
+        "account_engines_": []
+      }
+    },
+    {
+      "site": "registry_default",
+      "registry": {
+        "engines_": [
+          {
+            "format": 0,
+            "selector": -1
+          }
+        ],
+        "block_engines_": [],
+        "account_engines_": []
+      }
+    },
+    {
+      "site": "config",
+      "version": 15,
+      "capabilities": 494
+    },
+    {
+      "site": "registry_default",
+      "registry": {
+        "engines_": [
+          {
+            "format": 0,
+            "selector": -1
+          }
+        ],
+        "block_engines_": [],
+        "account_engines_": []
+      }
+    }
+  ],
+  "errors": []
+}

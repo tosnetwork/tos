@@ -1,0 +1,33 @@
+Internal ctest changing into directory: /home/tomi/tos/build
+Test project /home/tomi/tos/build
+    Start 18: test-counter-account-binding-readiness
+1/1 Test #18: test-counter-account-binding-readiness ...***Failed    1.38 sec
+-- Counter fixture active; retained if interrupted: /home/tomi/tos/build/counter-integration-15dcb92a7ff9
+-- Unconfirmed observation timing: wait_elapsed_seconds=1.002152
+wait_window_seconds=1.000000
+
+CMake Error at /home/tomi/tos/test/test-counter-disk-integration.cmake:265 (message):
+  Adapter must survive old-state unpacking and release at terminal failure:
+  retained_after_state=0
+
+  released=1
+
+
+
+
+CMake Error at /home/tomi/tos/test/counter-fixture-lifecycle.cmake:58 (message):
+  Counter fixture FAILED (1); retained for inspection:
+  /home/tomi/tos/build/counter-integration-15dcb92a7ff9
+Call Stack (most recent call first):
+  /home/tomi/tos/test/test-counter-disk-integration.cmake:3 (counter_run_fixture)
+
+
+
+
+0% tests passed, 1 tests failed out of 1
+
+Total Test time (real) =   1.38 sec
+
+The following tests FAILED:
+	 18 - test-counter-account-binding-readiness (Failed)
+Errors while running CTest

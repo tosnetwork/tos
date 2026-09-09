@@ -1,0 +1,3 @@
+5de42709e6917f8391513b4b26278a42aee34de06ead809bf2629cb9585a948d  validator/impl/workchain-collator-compute-mode.h
+82587bac2fff2d79bd29c3dd25933135de4835f484a0848989a2e11987026fa8  crypto/test/test-workchain-collator-compute-mode.cpp
+84c095fba07eb3ff4f3a857fb3937b389da2a90f37278813393aae4ad9640b2d  build/test-workchain-collator-compute-mode

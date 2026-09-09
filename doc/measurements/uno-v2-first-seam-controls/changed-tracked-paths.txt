@@ -1,0 +1,8 @@
+CMakeLists.txt
+crypto/block/workchain-account-settlement.h
+doc/uno-v2-implementation-plan.md
+test/test-counter-disk-integration.cmake
+validator/impl/collator-impl.h
+validator/impl/collator.cpp
+validator/interfaces/validator-manager.h
+validator/manager-disk.cpp

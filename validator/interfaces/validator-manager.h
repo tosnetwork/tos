@@ -180,6 +180,8 @@ struct CollationStats {
   // Counts are sampled from the authenticated configuration's shared owner.
   bool account_binding_visited = false;
   bool account_adapter_bound = false;
+  bool account_adapter_retained_after_state = false;
+  bool account_adapter_released = false;
   td::int64 account_config_owners_before = 0;
   td::int64 account_config_owners_during = 0;
   td::int64 account_config_owners_after = 0;

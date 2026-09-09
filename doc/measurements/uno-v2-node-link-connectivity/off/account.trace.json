@@ -1,0 +1,66 @@
+{
+  "exit_code": 2,
+  "events": [
+    {
+      "site": "registry_default",
+      "registry": {
+        "engines_": [
+          {
+            "format": 0,
+            "selector": -1
+          }
+        ],
+        "block_engines_": [],
+        "account_engines_": []
+      }
+    },
+    {
+      "site": "register_account",
+      "registry": {
+        "engines_": [
+          {
+            "format": 0,
+            "selector": -1
+          }
+        ],
+        "block_engines_": [],
+        "account_engines_": [
+          {
+            "format": 0,
+            "selector": 1129206833
+          }
+        ]
+      }
+    },
+    {
+      "site": "preinit"
+    },
+    {
+      "site": "dispatch"
+    },
+    {
+      "site": "registry_default",
+      "registry": {
+        "engines_": [
+          {
+            "format": 0,
+            "selector": -1
+          }
+        ],
+        "block_engines_": [],
+        "account_engines_": [
+          {
+            "format": 0,
+            "selector": 1129206833
+          }
+        ]
+      }
+    },
+    {
+      "site": "config",
+      "version": 15,
+      "capabilities": 494
+    }
+  ],
+  "errors": []
+}

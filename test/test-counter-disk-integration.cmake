@@ -243,20 +243,37 @@ if(ACCOUNT_BINDING_ONLY)
     --account-binding-probe "${fixture}/calls.txt" -w 2 -T "${previous}"
     --export-candidate "${fixture}/unexpected-candidate.bin")
   file(READ "${fixture}/calls.txt" calls)
-  if(NOT calls STREQUAL "config=1\nexecute=0\n")
-    message(FATAL_ERROR "Account binding refusal crossed the earliest gate: ${calls}")
+  # Readiness resolves the binding and retains its adapter. The later required-
+  # workchain check resolves the same authenticated Config again, without binding
+  # another adapter, and refuses the still-unconnected account execution path.
+  # This replaces the former earliest-readiness-stop expectation. Authenticated
+  # genesis/instance installation is still a prerequisite for later admission;
+  # this observation stops before that missing implementation, not inside it.
+  if(NOT calls STREQUAL "config=2\nexecute=0\n")
+    message(FATAL_ERROR "Deferred binding stop must resolve twice and execute zero times: ${calls}")
+  endif()
+  file(READ "${fixture}/account_binding_refused.result.kind" binding_kind)
+  file(READ "${fixture}/account_binding_refused.result" binding_result)
+  file(READ "${fixture}/account_binding_refused.result.message" binding_message)
+  if(NOT binding_kind STREQUAL "error\n" OR NOT binding_result STREQUAL "collate -7201\n" OR
+      NOT binding_message STREQUAL "cannot execute configured workchain: multi-account admission and replay are not connected")
+    message(FATAL_ERROR "Unexpected typed result at deferred required-workchain stop: ${binding_kind}${binding_result}${binding_message}")
   endif()
   if(EXISTS "${fixture}/unexpected-candidate.bin")
     message(FATAL_ERROR "Refused account binding reached candidate publication")
   endif()
-  # These observations come from the production resolver and adapter, before
-  # the same failed collation exits. The owner increase is the positive control
-  # for a resource side effect; its release is a separate lifetime assertion.
+  # The owner increase occurs at readiness; release now occurs at the terminal
+  # failure, after old-state unpacking. Equal numeric counts do not imply the
+  # former immediate-release timing. The binding sidecar asserts the new stages.
   # This fixture returns a fresh configuration with no cache or cross-thread
   # owner. The absolute baseline of one asserts that fixture isolation too.
   file(READ "${fixture}/account_binding_refused.result.stats" binding_stats)
   if(NOT binding_stats STREQUAL "delivery=recorded\nvisited=1\nadapter=1\nowners_before=1\nowners_during=2\nowners_after=1\ntransactions=0\n")
     message(FATAL_ERROR "Production adapter lifetime was not observed at the closed gate: ${binding_stats}")
+  endif()
+  file(READ "${fixture}/account_binding_refused.result.binding" binding_lifetime)
+  if(NOT binding_lifetime STREQUAL "retained_after_state=1\nreleased=1\n")
+    message(FATAL_ERROR "Adapter must survive old-state unpacking and release at terminal failure: ${binding_lifetime}")
   endif()
   message(STATUS "Closed-gate production observation: ${binding_stats}")
   file(READ "${fixture}/account_binding_refused.result.stats.timing" binding_timing)

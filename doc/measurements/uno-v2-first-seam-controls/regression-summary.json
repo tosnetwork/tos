@@ -1,0 +1,36 @@
+[
+  {
+    "file": "final-junit.xml",
+    "testcases": 128,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "attributes": {
+      "name": "(empty)",
+      "tests": "128",
+      "failures": "0",
+      "disabled": "0",
+      "skipped": "0",
+      "hostname": "",
+      "time": "489",
+      "timestamp": "2026-09-09T16:04:41"
+    }
+  },
+  {
+    "file": "followup-final-junit.xml",
+    "testcases": 128,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "attributes": {
+      "name": "(empty)",
+      "tests": "128",
+      "failures": "0",
+      "disabled": "0",
+      "skipped": "0",
+      "hostname": "",
+      "time": "473",
+      "timestamp": "2026-09-09T16:19:42"
+    }
+  }
+]

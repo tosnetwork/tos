@@ -1,0 +1,64 @@
+[1/61] cd /home/tomi/tos/uno/crypto && /usr/bin/cmake -E env CARGO_NET_OFFLINE=true CARGO_TARGET_DIR=/home/tomi/tos/build/uno/crypto/cargo-target /home/tomi/.cargo/bin/cargo build --locked --offline --release -j32
+    Finished `release` profile [optimized] target(s) in 0.06s
+[2/61] Building CXX object crypto/CMakeFiles/tos_block.dir/block/workchain-proof-backend.cpp.o
+[3/61] Linking CXX static library crypto/libtos_block.a
+[4/61] Checking the git repository for changes...
+[5/61] Building CXX object CMakeFiles/git.dir/git.cc.o
+[6/61] Linking CXX static library libgit.a
+[7/61] Linking CXX executable crypto/func
+[8/61] Compile FunC stdlib TVM v6 fee primitive coverage
+[9/61] Linking CXX executable crypto/fift
+[10/61] Generate /home/tomi/tos/build/crypto/smartcont/auto/simple-wallet-code.fif
+[11/61] Generate /home/tomi/tos/build/crypto/smartcont/auto/restricted-wallet-code.fif
+[12/61] Generate /home/tomi/tos/build/crypto/smartcont/auto/highload-wallet-code.fif
+[13/61] Generate /home/tomi/tos/build/crypto/smartcont/auto/session-wallet-code.fif
+[14/61] Generate /home/tomi/tos/build/crypto/smartcont/auto/wallet-code.fif
+[15/61] Generate /home/tomi/tos/build/crypto/smartcont/auto/highload-wallet-v2-code.fif
+[16/61] Generate /home/tomi/tos/build/crypto/smartcont/auto/wallet3-code.fif
+[17/61] Generate /home/tomi/tos/build/crypto/smartcont/auto/wallet-v4-code.fif
+[18/61] Generate /home/tomi/tos/build/crypto/smartcont/auto/restricted-wallet2-code.fif
+[19/61] Generate /home/tomi/tos/build/crypto/smartcont/auto/simple-wallet-ext-code.fif
+[20/61] Generate /home/tomi/tos/build/crypto/smartcont/auto/restricted-wallet3-code.fif
+[21/61] Generate /home/tomi/tos/build/crypto/smartcont/auto/wallet-v5-code.fif
+[22/61] Generate /home/tomi/tos/build/crypto/smartcont/auto/dns-manual-code.fif
+[23/61] Generate /home/tomi/tos/build/crypto/smartcont/auto/pow-testgiver-code.fif
+[24/61] Generate /home/tomi/tos/build/crypto/smartcont/auto/multisig-code.fif
+[25/61] Generate /home/tomi/tos/build/crypto/smartcont/auto/dns-auto-code.fif
+[26/61] Generate /home/tomi/tos/build/crypto/smartcont/auto/payment-channel-code.fif
+[27/61] Generate /home/tomi/tos/build/crypto/smartcont/auto/simple-wallet-ext-code.cpp
+[28/61] Generate /home/tomi/tos/build/crypto/smartcont/auto/restricted-wallet-code.cpp
+[29/61] Generate /home/tomi/tos/build/crypto/smartcont/auto/restricted-wallet2-code.cpp
+[30/61] Generate /home/tomi/tos/build/crypto/smartcont/auto/simple-wallet-code.cpp
+[31/61] Generate /home/tomi/tos/build/crypto/smartcont/auto/session-wallet-code.cpp
+[32/61] Generate /home/tomi/tos/build/crypto/smartcont/auto/highload-wallet-code.cpp
+[33/61] Generate /home/tomi/tos/build/crypto/smartcont/auto/wallet-code.cpp
+[34/61] Generate /home/tomi/tos/build/crypto/smartcont/auto/wallet-v4-code.cpp
+[35/61] Generate /home/tomi/tos/build/crypto/smartcont/auto/highload-wallet-v2-code.cpp
+[36/61] Generate /home/tomi/tos/build/crypto/smartcont/auto/wallet3-code.cpp
+[37/61] Generate /home/tomi/tos/build/crypto/smartcont/auto/agent-account-code.fif
+[38/61] Generate /home/tomi/tos/build/crypto/smartcont/auto/restricted-wallet3-code.cpp
+[39/61] Generate /home/tomi/tos/build/crypto/smartcont/auto/config-code.fif
+[40/61] Generate /home/tomi/tos/build/crypto/smartcont/auto/wallet-v5-code.cpp
+[41/61] Generate /home/tomi/tos/build/crypto/smartcont/auto/dns-manual-code.cpp
+[42/61] Generate /home/tomi/tos/build/crypto/smartcont/auto/pow-testgiver-code.cpp
+[43/61] Generate /home/tomi/tos/build/crypto/smartcont/auto/multisig-code.cpp
+[44/61] Generate /home/tomi/tos/build/crypto/smartcont/auto/task-escrow-code.fif
+[45/61] Generate /home/tomi/tos/build/crypto/smartcont/auto/elector-code.fif
+[46/61] Generate /home/tomi/tos/build/crypto/smartcont/auto/payment-channel-code.cpp
+[47/61] Generate /home/tomi/tos/build/crypto/smartcont/auto/dns-auto-code.cpp
+[48/61] Generate /home/tomi/tos/build/crypto/smartcont/auto/agent-account-code.cpp
+[49/61] Generate /home/tomi/tos/build/crypto/smartcont/auto/config-code.cpp
+[50/61] Generate /home/tomi/tos/build/crypto/smartcont/auto/task-escrow-code.cpp
+[51/61] Generate /home/tomi/tos/build/crypto/smartcont/auto/elector-code.cpp
+[52/61] Verify and embed the frozen TOS Service Protocol stablecoin escrow v1 BOC
+NOTE: escrow v1 is deprecated (superseded by v2); this build exists only to verify the frozen historical artifact.
+NOTE: escrow v1 is deprecated (superseded by v2); this build exists only to verify the frozen historical artifact.
+[53/61] Verify and embed the frozen TOS Service Protocol stablecoin escrow v2 BOC
+[54/61] Verify and embed the frozen TOS Native Service Registry BOC
+[55/61] Generate /home/tomi/tos/build/crypto/smartcont/auto/prediction-market-code.fif
+[56/61] Generate /home/tomi/tos/build/crypto/smartcont/auto/prediction-market-code.cpp
+[57/61] Building CXX object crypto/CMakeFiles/smc-envelope.dir/smc-envelope/SmartContractCode.cpp.o
+[58/61] Linking CXX static library crypto/libsmc-envelope.a
+[59/61] Linking CXX executable test-tos-collator
+[60/61] Linking CXX executable crypto/create-state
+[61/61] Linking CXX executable validator-engine/validator-engine

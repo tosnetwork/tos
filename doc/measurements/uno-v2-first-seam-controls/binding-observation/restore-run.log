@@ -1,0 +1,8 @@
+Internal ctest changing into directory: /home/tomi/tos/build
+Test project /home/tomi/tos/build
+    Start 18: test-counter-account-binding-readiness
+1/1 Test #18: test-counter-account-binding-readiness ...   Passed    1.50 sec
+
+100% tests passed, 0 tests failed out of 1
+
+Total Test time (real) =   1.51 sec

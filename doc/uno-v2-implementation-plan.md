@@ -42,6 +42,34 @@ The specification separately authorizes a payout and one aggregate operation-fee
 
 ### Owner-directed sequence after opt-in harness registration
 
+Owner authorization, 2026-09-09: isolated test-authenticated configurations may
+enable the workchain-2 capability/profile solely for I13 live acceptance.
+Construct these configurations inside the test; never read them from or write
+them to deployment configuration paths, and share no writable configuration
+source with deployment. Deployment configurations, production defaults,
+activation rules and the final submission gate remain unchanged/closed.
+This is a granted, narrowly scoped authorization, not a pending task or a
+precedent for enabling other capabilities. Each enabled-config live acceptance
+must run and archive a disabled-config control through the same path in the
+same unit: positively identify the activation rejection site, require zero
+transactions and no candidate export. LocalUnavailable (-7201) alone is not
+identification: earlier local failures share that code. Unknown status shapes
+must fail the observation, not receive a default Boolean classification.
+This reverse control is a condition of authorization.
+Any disabled-config execution or publication is a stop-and-report finding.
+
+Verification after this authorization: the existing enabled account-binding
+disk test reaches the production configured adapter (ownership 1 -> 2 -> 1),
+then still stops at the explicit admission/replay-not-connected refusal in
+`Collator::check_this_shard_mc_info`, before any transaction. Configuration
+permission alone therefore does not establish live stateful execution. The
+disabled account-engine probe currently stops at the missing-singleton-engine
+resolution error; it must not be labelled an activation-guard control. The
+separate disabled singleton block-engine probe does reach the activation
+refusal, but does not substitute for the required same-account-path control.
+These are open wiring/acceptance obligations, not permission to remove the
+early refusals without their resource-admission and final-publication safeguards.
+
 The private I13 harnesses have a separate, manual-only CI entry point:
 `.github/workflows/private-i13-acceptance.yml` (`workflow_dispatch`). It
 explicitly includes their modules, builds the three targets and selects only
@@ -59,9 +87,29 @@ This is a registration-only check, not a run of the private harnesses or hosted 
 
 After the three private I13 harness modules have registered their Python
 drivers and demonstrated failing CTest controls, A first resumes the thin
-end-to-end connectivity smoke, then I13b, then I13a. B owns I13e publication
+end-to-end connectivity smoke, then the shared activation observation helper,
+then the minimal common production connection (authenticated admission,
+metered execution, settlement and construction isolation), then I13b and I13a.
+B owns I13e publication
 work. This sequence supersedes older scheduling paragraphs below; it does not
 waive outstanding resource-admission prerequisites or authorize opening a gate.
+
+The common connection is deliberately staged: A first connects the collator
+execution-entry account-binding branch, preserving adapter/ownership telemetry
+and separating candidate-invalid failures from local unavailability by source.
+After immediate review of that shape, B may connect the three validator branches
+while A connects the remaining collator branches and I13b. Before that review B
+only inspects validator differences; it does not implement a parallel collator.
+Activation identity and its four-row calibration live in one shared test helper,
+not independently maintained classifiers or expected-answer tables.
+
+Restoration discipline (owner requirement, 2026-09-09): after restoring a
+mutated source byte-for-byte, explicitly enumerate and rebuild every affected
+artifact target. Record those target names and commands in the evidence;
+`all-tests` does not substitute for that inventory. In the disk observer unit it
+left test-tos-collator at the mutant hash; only explicitly rebuilding that target
+rebuilt validator-disk and restored the executable. Opt-in private harnesses
+likewise require their own explicit target rebuilds.
 
 - Connectivity must use objects constructed by the production path. Record
   the actual stopping point, counters and side effects; private fixture assembly
@@ -3042,12 +3090,28 @@ external cryptographic-review gap. Wallet prover dependencies remain separate
 from the node. Mutation controls, byte-exact restoration, full regression and
 independent review remain required for each completed unit.
 
-Connectivity investigation at `ffedd9d21` found the first missing seam before
+Connectivity investigation at `ffedd9d21` found a historical private-interface seam before
 runtime replay: `resolve_account_binding` returns a validated `engine_config`,
 but neither `proof_work` nor `execute_accounts` receives it. The existing
 complete-input identity binds the configuration hash; it does not supply the
 decoded business parameters. Existing engines in these tests do not require
 those parameters and therefore cannot establish their propagation.
+
+Closed-activation runtime clarification (2026-09-09): this historical private
+seam is not the first reachable stop with all activation gates closed. The
+OFF/ON disk smoke uses the same frozen state with global version 15,
+capabilities 494 (BlockTransition disabled), and no installed ingress/profile.
+The explicit account-engine test registration succeeds, but live dispatch
+selects the singleton resolver when no dual ingress is installed and fails
+because that family has no registered block engine. No adapter, proof admission,
+or replay is reached. Registering a singleton block engine is not a repair of
+the missing multi-account connection: a separate same-state diagnostic confirms
+that it registers successfully, then fails the activation check instead.
+Installing ConfigParam 84 while the capability is disabled is independently
+rejected by the configuration installation test. Local registry insertion does
+not require activation; advancing the selected authenticated execution profile
+does. Do not infer live multi-account acceptance from a singleton registration
+or silently enable fixture capability to move this stop.
 
 The initial probe at `ffedd9d21` used the real resolved-binding and admission
 types with the normal test translation unit's compiler flags. Passing the
@@ -3530,3 +3594,116 @@ wire-compatibility property. Keep width-boundary and order claims separate.
 Mutation tooling must retain unique patch context and compare applied bytes
 against the intended replacement before building; a non-red misapplied patch
 is not evidence about the intended path.
+
+### First collator seam shape: retained binding, separate settlement
+
+This unit establishes the first seam's shape, not connected live admission or
+replay. Readiness binds one configured account adapter and retains it, its
+authenticated binding/configuration, and the existing old-state usage tree in
+the same candidate actor. Terminal failure or success releases the adapter;
+ordinary actor destruction remains the ownership backstop. No admission token
+is manufactured and no activation or final-publication gate is opened.
+
+The next required-workchain check reparses the same authenticated Config but
+does not bind another adapter. The runtime probe records two configuration
+callbacks, one bind, and the same nonzero adapter pointer across readiness,
+old-state unpacking, configuration fetching, and terminal release. The old
+`config=1` earliest-readiness-stop assertion and its error message are obsolete.
+Ownership counts remain numerically 1/2/1, with the final sample now taken at
+terminal release rather than inside readiness. A separate binding observation
+asserts retention after old-state unpacking and release before result delivery.
+
+The final typed result currently comes from `validate_required_workchains`:
+LocalUnavailable with the `cannot execute configured workchain: ` prefix and
+the unconnected-account-path message. This is not a D40 identity rejection.
+D40 authenticated genesis/instance installation is an unimplemented downstream
+prerequisite, not the directly observed reason for zero execution. No candidate
+is exported and transactions remain zero. Two literal unconnected visitor
+refusals remain in collator.cpp and three in validate-query.cpp; the separate
+registry required-workchain refusal also remains. Counts alone do not prove
+connectivity or completeness.
+
+The private settlement implementation now has an internal `settle_executed`
+continuation with no engine parameter. Existing combined callers execute once
+then pass their decoded declarations, limits, state-admission meter, usage node,
+effects and admitted input to that continuation. Effects/output admission and
+the settlement read observer remain there. A mismatched locally handed-off
+input is a local contract failure, not candidate invalidity. This internal
+helper is not a new live entry or permission to supply local default limits.
+
+The standalone continuation test uses manually constructed private fixtures;
+its evidence must not be described as production-created admission/replay.
+Its counter is in the registered engine method body. Replacing settlement with
+the old combined entry produces two executions. Independent omission controls
+cover input binding, the settlement observer, usage tracking and node handoff,
+state snapshot handoff, and effects/output limits. Each source mutation is
+restored byte-for-byte and its actual executable explicitly rebuilt. The
+existing declaration/configuration-source and singleton regression controls
+remain applicable; this unit does not claim new live coverage for those seams.
+
+For later validator integration, preserve the same adapter through inspection,
+execution and any publication Build callback. Preserve source-based failure
+classification; never infer it from logs, exit status or the old unconnected
+LocalUnavailable return. Collator lacks reject_query: its final
+Result<BlockCandidate> must retain the category. The shared activation helper
+classifies only final typed observations. Its validator-specific prefix still
+requires real validator output before being added; do not duplicate classifiers.
+
+First-seam review followup adds three real disk-readiness mutations: release
+before old-state unpacking, omit terminal release, and corrupt the new lifecycle
+field. All retain the same typed unconnected-path failure and zero execution;
+the dedicated lifetime/observation assertions fail. A fourth mutation relabels
+missing local state admission as CandidateInvalid, avoiding the undefined
+behavior of deleting a null-state check before dereference.
+
+Explicit remaining boundaries: success-terminal release is unreachable for
+bound account adapters under the retained required-workchain refusal; it needs
+a real success-path control before that gate is removed. The two private actor
+members are installed synchronously after successful nonnull bind and cleared
+adapter-first; release currently relies on that invariant, not an independently
+validated arbitrary member combination. The legacy AdmittedInput continuation
+likewise relies on the existing combined caller's nonnull executed input; it is
+not licensed as an independently validated legacy entry. These defensive
+followups are not reported as closed by the twelve controls.
+Terminal removal of the binding itself is also not separately observed: the
+owner sample precedes `account_binding_.reset()`, and actor destruction provides
+the final ownership backstop. A later paired-member hardening should add a
+binding-cleared observation/control, not claim it from the adapter's released flag.
+
+### Second collator seam: legacy compute-mode classification
+
+The configuration-stage visitor now explicitly classifies account batches as
+not using custom AccountCompute. The shared inline classifier is used by the
+real collator and a narrow regression target; it neither binds an adapter nor
+authorizes execution. The existing actor-owned adapter, state tracking and
+terminal release remain unchanged. Legacy TVM/custom AccountCompute and
+singleton results retain their previous values. There is no generic visitor
+fallback for future execution families.
+
+This is classification wiring, not live admission/replay connectivity. The
+required-workchain registry refusal still precedes this classifier in the live
+batch path; the later execution-path visitor remains closed. Literal unresolved
+visitor counts are now collator 1 and validator 3, plus the separate registry
+required-workchain refusal. No deployment, activation or final-publication gate
+changes. Direct classifier tests do not establish live reachability.
+
+New source-bound controls change the batch mode to true and restore the old
+classification refusal, respectively. They test returned typed results before
+any execution or settlement guard can mask the outcome. The first-seam twelve
+controls remain historical evidence for unchanged lifetime/settlement code,
+not newly rerun mutation evidence. Ordinary regression reruns their positive
+targets and the real Counter readiness path. This adds one ordinary test;
+private I13 harnesses remain outside ordinary regression.
+
+Second-seam review disposition: validator's paired classifier is intentionally
+not changed in this collator-only stage. Both classifiers must be unified or
+shown equivalent before batch execution is enabled; the remaining validator
+refusals are not a completed integration. Neither the registry refusal nor the
+later execution visitor is relaxed here. The classifier test exercises the
+actual header, not an imitation; its dependency on a validator-private inline
+header is test-only and does not add a crypto-library dependency on validator.
+No ordering-mutation claim is made by this unit: the live readiness test still
+observes the earlier typed refusal, while the new classification mutations are
+private. Moving that refusal later requires its own reachability and
+no-publication controls. The post-review test removes an immutable-input
+postcondition and verifies the TVM key after explicit selector conversion.

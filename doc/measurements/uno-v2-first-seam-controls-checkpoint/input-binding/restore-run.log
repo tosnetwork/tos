@@ -1,0 +1,17 @@
+[0m[ 4][t 0][2026-09-09 15:57:44.035210177][transaction.cpp:616]	unpacking account 1000000000000000000000000000000000000000000000000000000000000000[0m
+[0m[ 4][t 0][2026-09-09 15:57:44.035463906][transaction.cpp:449]	last_paid=0; cells=0 bits=0[0m
+[0m[ 4][t 0][2026-09-09 15:57:44.035476282][transaction.cpp:679]	end of Account.unpack() for 2:1000000000000000000000000000000000000000000000000000000000000000 (balance = 1000ng ; last_trans_lt = 1..2)[0m
+[0m[ 4][t 0][2026-09-09 15:57:44.035499974][transaction.cpp:616]	unpacking account 2000000000000000000000000000000000000000000000000000000000000000[0m
+[0m[ 4][t 0][2026-09-09 15:57:44.035508220][transaction.cpp:449]	last_paid=0; cells=0 bits=0[0m
+[0m[ 4][t 0][2026-09-09 15:57:44.035514258][transaction.cpp:679]	end of Account.unpack() for 2:2000000000000000000000000000000000000000000000000000000000000000 (balance = 1000ng ; last_trans_lt = 1..2)[0m
+[0m[ 4][t 0][2026-09-09 15:57:44.036178616][transaction.cpp:616]	unpacking account 1000000000000000000000000000000000000000000000000000000000000000[0m
+[0m[ 4][t 0][2026-09-09 15:57:44.036196297][transaction.cpp:449]	last_paid=0; cells=0 bits=0[0m
+[0m[ 4][t 0][2026-09-09 15:57:44.036203729][transaction.cpp:679]	end of Account.unpack() for 2:1000000000000000000000000000000000000000000000000000000000000000 (balance = 1000ng ; last_trans_lt = 1..2)[0m
+[0m[ 4][t 0][2026-09-09 15:57:44.036211694][transaction.cpp:616]	unpacking account 2000000000000000000000000000000000000000000000000000000000000000[0m
+[0m[ 4][t 0][2026-09-09 15:57:44.036219087][transaction.cpp:449]	last_paid=0; cells=0 bits=0[0m
+[0m[ 4][t 0][2026-09-09 15:57:44.036224882][transaction.cpp:679]	end of Account.unpack() for 2:2000000000000000000000000000000000000000000000000000000000000000 (balance = 1000ng ; last_trans_lt = 1..2)[0m
+once: actual_engine_calls=1 inspections=1
+input: exact local refusal; actual_engine_calls=1
+state: exact local refusal; actual_engine_calls=1
+observer: exact local refusal; actual_engine_calls=1
+tracking: actual_engine_calls=1 inspections=1

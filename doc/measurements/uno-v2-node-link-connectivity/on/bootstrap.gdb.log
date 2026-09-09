@@ -1,0 +1,296 @@
+add symbol table from file "/tmp/uno-connectivity-typed-wqZasd/final/types.o" at
+	.text_addr = 0x0
+[Thread debugging using libthread_db enabled]
+Using host libthread_db library "/lib/x86_64-linux-gnu/libthread_db.so.1".
+[New Thread 0x7ffff697f640 (LWP 3425725)]
+[New Thread 0x7ffff617e640 (LWP 3425726)]
+[New Thread 0x7ffff53ff640 (LWP 3425727)]
+[New Thread 0x7ffff45ff640 (LWP 3425728)]
+[New Thread 0x7ffff37ff640 (LWP 3425729)]
+[New Thread 0x7ffff29ff640 (LWP 3425730)]
+[New Thread 0x7ffff21fe640 (LWP 3425731)]
+[1;36m[ 3][t 1][2026-09-09 14:35:14.586877296][test-tos-collator.cpp:331][!testnode]	no init block in config. using zero state[0m
+[1;36m[ 3][t 1][2026-09-09 14:35:14.587094734][test-tos-collator.cpp:356][!testnode]	Hardforks num in config: 0[0m
+[1;36m[ 3][t 1][2026-09-09 14:35:14.587200090][manager-init.cpp:333][!starter]	Starting validator manager[0m
+[New Thread 0x7fffed5ff640 (LWP 3425732)]
+[New Thread 0x7fffecdfe640 (LWP 3425733)]
+[New Thread 0x7fffebfff640 (LWP 3425734)]
+[New Thread 0x7fffeb1ff640 (LWP 3425735)]
+[New Thread 0x7fffea3ff640 (LWP 3425736)]
+[New Thread 0x7fffe95ff640 (LWP 3425737)]
+[New Thread 0x7fffe7bff640 (LWP 3425738)]
+[New Thread 0x7fffe73fe640 (LWP 3425739)]
+[New Thread 0x7fffe67ff640 (LWP 3425740)]
+[Thread 0x7fffe7bff640 (LWP 3425738) exited]
+[Thread 0x7fffe73fe640 (LWP 3425739) exited]
+[New Thread 0x7fffe5ffe640 (LWP 3425741)]
+[Thread 0x7fffe67ff640 (LWP 3425740) exited]
+[New Thread 0x7fffe57fd640 (LWP 3425742)]
+[Thread 0x7fffe5ffe640 (LWP 3425741) exited]
+[New Thread 0x7fffe4ffc640 (LWP 3425743)]
+[New Thread 0x7fffe47fb640 (LWP 3425744)]
+[Thread 0x7fffe57fd640 (LWP 3425742) exited]
+[Thread 0x7fffe4ffc640 (LWP 3425743) exited]
+[New Thread 0x7fffe3ffa640 (LWP 3425745)]
+[Thread 0x7fffe47fb640 (LWP 3425744) exited]
+[New Thread 0x7fffe37f9640 (LWP 3425746)]
+[Thread 0x7fffe3ffa640 (LWP 3425745) exited]
+[New Thread 0x7fffe2ff8640 (LWP 3425747)]
+[Thread 0x7fffe37f9640 (LWP 3425746) exited]
+[New Thread 0x7fffe27f7640 (LWP 3425748)]
+[New Thread 0x7fffe1ff6640 (LWP 3425749)]
+[Thread 0x7fffe27f7640 (LWP 3425748) exited]
+[Thread 0x7fffe2ff8640 (LWP 3425747) exited]
+[New Thread 0x7fffe17f5640 (LWP 3425750)]
+[Thread 0x7fffe1ff6640 (LWP 3425749) exited]
+[New Thread 0x7fffe0ff4640 (LWP 3425751)]
+[Thread 0x7fffe0ff4640 (LWP 3425751) exited]
+[Thread 0x7fffe17f5640 (LWP 3425750) exited]
+[New Thread 0x7fffe07f3640 (LWP 3425752)]
+[Thread 0x7fffe07f3640 (LWP 3425752) exited]
+[1;33m[ 2][t 1][2026-09-09 14:35:14.600074403][celldb.cpp:371][!celldbin]	Using V1 DynamicBagOfCells with options V1{}[0m
+[New Thread 0x7fffe07f3640 (LWP 3425753)]
+[New Thread 0x7fffe0ff4640 (LWP 3425754)]
+[New Thread 0x7fffe17f5640 (LWP 3425755)]
+[Thread 0x7fffe0ff4640 (LWP 3425754) exited]
+[New Thread 0x7fffe1ff6640 (LWP 3425756)]
+[Thread 0x7fffe1ff6640 (LWP 3425756) exited]
+[Thread 0x7fffe17f5640 (LWP 3425755) exited]
+[New Thread 0x7fffe63ff640 (LWP 3425757)]
+[Thread 0x7fffe63ff640 (LWP 3425757) exited]
+[New Thread 0x7fffe5bfe640 (LWP 3425758)]
+[New Thread 0x7fffe53fd640 (LWP 3425759)]
+[Thread 0x7fffe5bfe640 (LWP 3425758) exited]
+[New Thread 0x7fffe4bfc640 (LWP 3425761)]
+[Thread 0x7fffe53fd640 (LWP 3425759) exited]
+[New Thread 0x7fffe43fb640 (LWP 3425760)]
+[Thread 0x7fffe43fb640 (LWP 3425760) exited]
+[Thread 0x7fffe4bfc640 (LWP 3425761) exited]
+[New Thread 0x7fffe3bfa640 (LWP 3425762)]
+[New Thread 0x7fffe33f9640 (LWP 3425763)]
+[1;36m[ 3][t 6][2026-09-09 14:35:14.608225929][manager-init.cpp:39][!reiniter]	init_block_id=[ w=-1 s=9223372036854775808 seq=0 Q+FYonq2SNownJQLDA7jMETAhHSJ91AhwcxCSJErWb0= VEZ1PnOOJz3cITmPj8HmSQEXSK5HBLXK61bybajXKxE= ][0m
+[New Thread 0x7fffe2bf8640 (LWP 3425764)]
+[New Thread 0x7fffdfff2640 (LWP 3425765)]
+[Thread 0x7fffe33f9640 (LWP 3425763) exited]
+[Thread 0x7fffdfff2640 (LWP 3425765) exited]
+[Thread 0x7fffe2bf8640 (LWP 3425764) exited]
+[Thread 0x7fffe3bfa640 (LWP 3425762) exited]
+[New Thread 0x7fffdf7f1640 (LWP 3425766)]
+[New Thread 0x7fffdeff0640 (LWP 3425767)]
+[Thread 0x7fffdeff0640 (LWP 3425767) exited]
+[Thread 0x7fffdf7f1640 (LWP 3425766) exited]
+[New Thread 0x7fffde7ef640 (LWP 3425768)]
+[New Thread 0x7fffddfee640 (LWP 3425769)]
+[Thread 0x7fffddfee640 (LWP 3425769) exited]
+[New Thread 0x7fffdd7ed640 (LWP 3425770)]
+[New Thread 0x7fffdcfec640 (LWP 3425771)]
+[Thread 0x7fffde7ef640 (LWP 3425768) exited]
+[New Thread 0x7fffdc7eb640 (LWP 3425772)]
+[Thread 0x7fffdd7ed640 (LWP 3425770) exited]
+[Thread 0x7fffdcfec640 (LWP 3425771) exited]
+[New Thread 0x7fffdbfea640 (LWP 3425773)]
+[New Thread 0x7fffdb7e9640 (LWP 3425774)]
+[Thread 0x7fffdc7eb640 (LWP 3425772) exited]
+[Thread 0x7fffdb7e9640 (LWP 3425774) exited]
+[New Thread 0x7fffdafe8640 (LWP 3425775)]
+[Thread 0x7fffdbfea640 (LWP 3425773) exited]
+[New Thread 0x7fffda7e7640 (LWP 3425776)]
+[Thread 0x7fffdafe8640 (LWP 3425775) exited]
+[New Thread 0x7fffd9fe6640 (LWP 3425777)]
+[Thread 0x7fffda7e7640 (LWP 3425776) exited]
+[New Thread 0x7fffd97e5640 (LWP 3425778)]
+[Thread 0x7fffd97e5640 (LWP 3425778) exited]
+[Thread 0x7fffd9fe6640 (LWP 3425777) exited]
+[New Thread 0x7fffd8fe4640 (LWP 3425779)]
+[Thread 0x7fffd8fe4640 (LWP 3425779) exited]
+[New Thread 0x7fffd97e5640 (LWP 3425780)]
+[Thread 0x7fffd97e5640 (LWP 3425780) exited]
+[New Thread 0x7fffdafe8640 (LWP 3425781)]
+[Thread 0x7fffdafe8640 (LWP 3425781) exited]
+[New Thread 0x7fffdb7e9640 (LWP 3425782)]
+[New Thread 0x7fffdc7eb640 (LWP 3425783)]
+[Thread 0x7fffdc7eb640 (LWP 3425783) exited]
+[Thread 0x7fffdb7e9640 (LWP 3425782) exited]
+[1;36m[ 3][t 1][2026-09-09 14:35:14.614691255][celldb.cpp:251][!celldbin]	Validating metadata[0m
+[1;36m[ 3][t 1][2026-09-09 14:35:14.614733766][celldb.cpp:307][!celldbin]	Validating metadata: OK[0m
+[1;36m[ 3][t 7][2026-09-09 14:35:14.616838707][download-state.cpp:491][!reiniter]	requested to download state of (-1,8000000000000000,0):43E158A27AB648DA309C940B0C0EE33044C0847489F75021C1CC4248912B59BD:5446753E738E273DDC21398F8FC1E649011748AE4704B5CAEB56F26DA8D72B11 referenced by (-2147483648,0000000000000000,0):0000000000000000000000000000000000000000000000000000000000000000:0000000000000000000000000000000000000000000000000000000000000000 with split depth 0[0m
+[1;33m[ 2][t 7][2026-09-09 14:35:14.617188056][download-state.cpp:1100][!downloadstate]	checked shard state (-1,8000000000000000,0):43E158A27AB648DA309C940B0C0EE33044C0847489F75021C1CC4248912B59BD:5446753E738E273DDC21398F8FC1E649011748AE4704B5CAEB56F26DA8D72B11[0m
+[1;33m[ 2][t 5][2026-09-09 14:35:14.619279890][download-state.cpp:1697][!downloadstate]	written shard state file (-1,8000000000000000,0):43E158A27AB648DA309C940B0C0EE33044C0847489F75021C1CC4248912B59BD:5446753E738E273DDC21398F8FC1E649011748AE4704B5CAEB56F26DA8D72B11[0m
+[New Thread 0x7fffdc7eb640 (LWP 3425784)]
+[New Thread 0x7fffdb7e9640 (LWP 3425785)]
+[Thread 0x7fffdb7e9640 (LWP 3425785) exited]
+[Thread 0x7fffdc7eb640 (LWP 3425784) exited]
+[New Thread 0x7fffdafe8640 (LWP 3425786)]
+[New Thread 0x7fffd97e5640 (LWP 3425787)]
+[Thread 0x7fffdafe8640 (LWP 3425786) exited]
+[Thread 0x7fffd97e5640 (LWP 3425787) exited]
+[New Thread 0x7fffe58dd640 (LWP 3425788)]
+[Thread 0x7fffe58dd640 (LWP 3425788) exited]
+[New Thread 0x7fffe50dc640 (LWP 3425789)]
+[Thread 0x7fffe50dc640 (LWP 3425789) exited]
+[New Thread 0x7fffe48db640 (LWP 3425790)]
+[Thread 0x7fffe48db640 (LWP 3425790) exited]
+[New Thread 0x7fffe40da640 (LWP 3425791)]
+[Thread 0x7fffe40da640 (LWP 3425791) exited]
+[New Thread 0x7fffe38d9640 (LWP 3425792)]
+[Thread 0x7fffe38d9640 (LWP 3425792) exited]
+[New Thread 0x7fffe30d8640 (LWP 3425793)]
+[Thread 0x7fffe30d8640 (LWP 3425793) exited]
+[New Thread 0x7fffe1fff640 (LWP 3425794)]
+[Thread 0x7fffe1fff640 (LWP 3425794) exited]
+[New Thread 0x7fffe17fe640 (LWP 3425795)]
+[Thread 0x7fffe17fe640 (LWP 3425795) exited]
+[New Thread 0x7fffe0ffd640 (LWP 3425796)]
+[Thread 0x7fffe0ffd640 (LWP 3425796) exited]
+[New Thread 0x7fffdfff2640 (LWP 3425797)]
+[Thread 0x7fffdfff2640 (LWP 3425797) exited]
+[New Thread 0x7fffdf7f1640 (LWP 3425798)]
+[Thread 0x7fffdf7f1640 (LWP 3425798) exited]
+[New Thread 0x7fffdf7f1640 (LWP 3425799)]
+[Thread 0x7fffdf7f1640 (LWP 3425799) exited]
+[New Thread 0x7fffdfff2640 (LWP 3425800)]
+[New Thread 0x7fffe0ffd640 (LWP 3425801)]
+[Thread 0x7fffe0ffd640 (LWP 3425801) exited]
+[Thread 0x7fffdfff2640 (LWP 3425800) exited]
+[New Thread 0x7fffe17fe640 (LWP 3425802)]
+[Thread 0x7fffe17fe640 (LWP 3425802) exited]
+[New Thread 0x7fffe503b640 (LWP 3425803)]
+[Thread 0x7fffe503b640 (LWP 3425803) exited]
+[New Thread 0x7fffe483a640 (LWP 3425804)]
+[Thread 0x7fffe483a640 (LWP 3425804) exited]
+[New Thread 0x7fffe4039640 (LWP 3425805)]
+[Thread 0x7fffe4039640 (LWP 3425805) exited]
+[New Thread 0x7fffe3838640 (LWP 3425806)]
+[New Thread 0x7fffe3037640 (LWP 3425807)]
+[Thread 0x7fffe3838640 (LWP 3425806) exited]
+[New Thread 0x7fffe1fff640 (LWP 3425808)]
+[Thread 0x7fffe3037640 (LWP 3425807) exited]
+[Thread 0x7fffe1fff640 (LWP 3425808) exited]
+[New Thread 0x7fffdeff0640 (LWP 3425809)]
+[Thread 0x7fffdeff0640 (LWP 3425809) exited]
+[New Thread 0x7fffde7ef640 (LWP 3425810)]
+[Thread 0x7fffde7ef640 (LWP 3425810) exited]
+[New Thread 0x7fffddfee640 (LWP 3425811)]
+[Thread 0x7fffddfee640 (LWP 3425811) exited]
+[New Thread 0x7fffdd7ed640 (LWP 3425812)]
+[New Thread 0x7fffdcfec640 (LWP 3425813)]
+[Thread 0x7fffdd7ed640 (LWP 3425812) exited]
+[Thread 0x7fffdcfec640 (LWP 3425813) exited]
+[1;33m[ 2][t 6][2026-09-09 14:35:14.649741857][download-state.cpp:1759][!downloadstate]	finished downloading and storing shard state (-1,8000000000000000,0):43E158A27AB648DA309C940B0C0EE33044C0847489F75021C1CC4248912B59BD:5446753E738E273DDC21398F8FC1E649011748AE4704B5CAEB56F26DA8D72B11[0m
+[1;36m[ 3][t 6][2026-09-09 14:35:14.649858938][download-state.cpp:491][!reiniter]	requested to download state of (-1,8000000000000000,0):43E158A27AB648DA309C940B0C0EE33044C0847489F75021C1CC4248912B59BD:5446753E738E273DDC21398F8FC1E649011748AE4704B5CAEB56F26DA8D72B11 referenced by (-1,8000000000000000,0):43E158A27AB648DA309C940B0C0EE33044C0847489F75021C1CC4248912B59BD:5446753E738E273DDC21398F8FC1E649011748AE4704B5CAEB56F26DA8D72B11 with split depth 0[0m
+[1;33m[ 2][t 6][2026-09-09 14:35:14.649909103][download-state.cpp:519][!downloadstate]	shard state (-1,8000000000000000,0):43E158A27AB648DA309C940B0C0EE33044C0847489F75021C1CC4248912B59BD:5446753E738E273DDC21398F8FC1E649011748AE4704B5CAEB56F26DA8D72B11 already stored in db[0m
+[1;33m[ 2][t 6][2026-09-09 14:35:14.650133860][download-state.cpp:1759][!downloadstate]	finished downloading and storing shard state (-1,8000000000000000,0):43E158A27AB648DA309C940B0C0EE33044C0847489F75021C1CC4248912B59BD:5446753E738E273DDC21398F8FC1E649011748AE4704B5CAEB56F26DA8D72B11[0m
+[1;36m[ 3][t 6][2026-09-09 14:35:14.650164095][manager-init.cpp:294][!reiniter]	downloaded masterchain state[0m
+[1;33m[ 2][t 4][2026-09-09 14:35:14.650195704][shard-client.cpp:58][!shardclient]	Downloading shard states for masterchain block [ w=-1 s=9223372036854775808 seq=0 Q+FYonq2SNownJQLDA7jMETAhHSJ91AhwcxCSJErWb0= VEZ1PnOOJz3cITmPj8HmSQEXSK5HBLXK61bybajXKxE= ][0m
+[1;33m[ 2][t 4][2026-09-09 14:35:14.650217704][shard-client.cpp:71][!shardclient]	Downloaded all shard states[0m
+[1;36m[ 3][t 1][2026-09-09 14:35:14.650723555][manager-init.cpp:305][!reiniter]	downloaded all shards[0m
+[1;36m[ 3][t 1][2026-09-09 14:35:14.650790355][manager-init.cpp:316][!reiniter]	persistent state download finished[0m
+[1;31m[ 1][t 6][2026-09-09 14:35:14.651741657][manager-disk.cpp:286][!manager]	running collate query[0m
+[1;33m[ 2][t 6][2026-09-09 14:35:14.651827117][collator.cpp:143][!collate(-1,8000000000000000):1]	Collator for shard (-1,8000000000000000) started[0m
+[1;36m[ 3][t 4][2026-09-09 14:35:14.651878323][collator.cpp:829][!collate(-1,8000000000000000):1]	after_get_shard_blocks: got 0 ShardTopBlockDescriptions[0m
+[1;36m[ 3][t 1][2026-09-09 14:35:14.651931393][collator.cpp:843][!collate(-1,8000000000000000):1]	after_get_storage_stat_cache : [Error : 0 : not implemented][0m
+[1;33m[ 2][t 1][2026-09-09 14:35:14.652343301][collator.cpp:666][!collate(-1,8000000000000000):1]	in Collator::after_get_shard_state(0)[0m
+[1;33m[ 2][t 1][2026-09-09 14:35:14.652369037][collator.cpp:2084][!collate(-1,8000000000000000):1]	running do_preinit()[0m
+[1;36m[ 3][t 1][2026-09-09 14:35:14.653129523][collator.cpp:1778][!collate(-1,8000000000000000):1]	unpacking most recent masterchain state[0m
+[1;36m[ 3][t 1][2026-09-09 14:35:14.654184185][collator.cpp:1840][!collate(-1,8000000000000000):1]	adding new workchain 0 to shard configuration in masterchain state[0m
+[1;36m[ 3][t 1][2026-09-09 14:35:14.654224924][collator.cpp:1840][!collate(-1,8000000000000000):1]	adding new workchain 2 to shard configuration in masterchain state[0m
+[1;36m[ 3][t 1][2026-09-09 14:35:14.654246888][collator.cpp:2264][!collate(-1,8000000000000000):1]	start_lt set to 1000000[0m
+[1;36m[ 3][t 1][2026-09-09 14:35:14.654289461][collator.cpp:1044][!collate(-1,8000000000000000):1]	neighbor output queues fetched, took 0.000031s[0m
+[1;33m[ 2][t 5][2026-09-09 14:35:14.654526389][collator.cpp:1166][!collate(-1,8000000000000000):1]	got outbound queue size from prev block #0: 0[0m
+[1;33m[ 2][t 5][2026-09-09 14:35:14.654588216][collator.cpp:2445][!collate(-1,8000000000000000):1]	do_collate() : start[0m
+warning: RTTI symbol not found for class 'block::ConfigInfo'
+[1;36m[ 3][t 5][2026-09-09 14:35:14.691939129][collator.cpp:2679][!collate(-1,8000000000000000):1]	cleaning outbound queue from messages already imported by neighbors[0m
+[1;33m[ 2][t 5][2026-09-09 14:35:14.691992495][collator.cpp:2846][!collate(-1,8000000000000000):1]	deleted 0 messages from out_msg_queue, remaining queue size is 0[0m
+[1;36m[ 3][t 5][2026-09-09 14:35:14.692037960][collator.cpp:2411][!collate(-1,8000000000000000):1]	fee recovery skipped (0ng)[0m
+[1;36m[ 3][t 5][2026-09-09 14:35:14.692066341][collator.cpp:2533][!collate(-1,8000000000000000):1]	process dispatch queue[0m
+[1;36m[ 3][t 5][2026-09-09 14:35:14.692098757][collator.cpp:2538][!collate(-1,8000000000000000):1]	create tick transactions[0m
+[1;36m[ 3][t 5][2026-09-09 14:35:14.692141106][collator.cpp:2559][!collate(-1,8000000000000000):1]	process inbound internal messages[0m
+[1;36m[ 3][t 5][2026-09-09 14:35:14.692156151][collator.cpp:4504][!collate(-1,8000000000000000):1]	process inbound external messages[0m
+[1;36m[ 3][t 5][2026-09-09 14:35:14.692199616][collator.cpp:4512][!collate(-1,8000000000000000):1]	process newly-generated messages[0m
+[1;36m[ 3][t 5][2026-09-09 14:35:14.692210547][collator.cpp:4517][!collate(-1,8000000000000000):1]	Don't wait for new external messages[0m
+[1;36m[ 3][t 5][2026-09-09 14:35:14.692224321][collator.cpp:2581][!collate(-1,8000000000000000):1]	create tock transactions[0m
+[1;36m[ 3][t 5][2026-09-09 14:35:14.692393753][collator.cpp:2586][!collate(-1,8000000000000000):1]	enqueue newly-generated messages[0m
+[1;36m[ 3][t 5][2026-09-09 14:35:14.692405934][collator.cpp:5761][!collate(-1,8000000000000000):1]	final out_msg_queue size is 0[0m
+[1;36m[ 3][t 5][2026-09-09 14:35:14.692416369][collator.cpp:5765][!collate(-1,8000000000000000):1]	block load statistics: gas=0 lt_delta=2 size_estimate=2561 collated_size_estimate=0[0m
+[1;36m[ 3][t 5][2026-09-09 14:35:14.692427454][collator.cpp:5805][!collate(-1,8000000000000000):1]	block is underloaded[0m
+[1;36m[ 3][t 5][2026-09-09 14:35:14.693200420][collator.cpp:5497][!collate(-1,8000000000000000):1]	masterchain validator set hash changed from 2805358205 to 2805358205[0m
+[1;36m[ 3][t 5][2026-09-09 14:35:14.693232685][collator.cpp:5540][!collate(-1,8000000000000000):1]	Global balance is 0ng[0m
+[1;36m[ 3][t 5][2026-09-09 14:35:14.693248740][collator.cpp:5660][!collate(-1,8000000000000000):1]	updating block creator statistics[0m
+[1;36m[ 3][t 5][2026-09-09 14:35:14.693259660][collator.cpp:5676][!collate(-1,8000000000000000):1]	scanning for outdated CreatorStats entries[0m
+[1;36m[ 3][t 5][2026-09-09 14:35:14.693284555][collator.cpp:5702][!collate(-1,8000000000000000):1]	removed 0 stale CreatorStats entries out of 0 scanned[0m
+[1;36m[ 3][t 5][2026-09-09 14:35:14.693305129][collator.cpp:5583][!collate(-1,8000000000000000):1]	McStateExtra created[0m
+[1;36m[ 3][t 5][2026-09-09 14:35:14.693333557][collator.cpp:6138][!collate(-1,8000000000000000):1]	creating Merkle update for the ShardState[0m
+[1;36m[ 3][t 5][2026-09-09 14:35:14.693387972][collator.cpp:6151][!collate(-1,8000000000000000):1]	updating block profile statistics[0m
+[1;36m[ 3][t 5][2026-09-09 14:35:14.693398163][collator.cpp:6153][!collate(-1,8000000000000000):1]	new ShardState and corresponding Merkle update created[0m
+[1;36m[ 3][t 5][2026-09-09 14:35:14.693419516][collator.cpp:6393][!collate(-1,8000000000000000):1]	Value flow: (value-flow from_prev_blk:0ng to_next_blk:0ng imported:0ng exported:0ng fees_collected:0ng fees_imported:0ng recovered:0ng created:0ng minted:0ng)[0m
+[1;36m[ 3][t 5][2026-09-09 14:35:14.693448386][collator.cpp:6491][!collate(-1,8000000000000000):1]	verifying new Block[0m
+[1;36m[ 3][t 5][2026-09-09 14:35:14.693486261][collator.cpp:6496][!collate(-1,8000000000000000):1]	new Block created[0m
+[1;36m[ 3][t 5][2026-09-09 14:35:14.693499594][collator.cpp:6712][!collate(-1,8000000000000000):1]	serializing new Block[0m
+[1;36m[ 3][t 5][2026-09-09 14:35:14.693546660][collator.cpp:6743][!collate(-1,8000000000000000):1]	serialized block size 1833 bytes (preliminary estimate was 2561)[0m
+[1;36m[ 3][t 5][2026-09-09 14:35:14.693553126][collator.cpp:6746][!collate(-1,8000000000000000):1]	size regression stats: 1833 18 6464 19 3 1 1[0m
+[1;36m[ 3][t 5][2026-09-09 14:35:14.693559414][collator.cpp:6749][!collate(-1,8000000000000000):1]	serialized collated data size 33 bytes (preliminary estimate was 0)[0m
+[1;36m[ 3][t 5][2026-09-09 14:35:14.693573087][collator.cpp:6809][!collate(-1,8000000000000000):1]	saving new BlockCandidate[0m
+[1;33m[ 2][t 1][2026-09-09 14:35:14.696791865][collator.cpp:6847][!collate(-1,8000000000000000):1]	sending new BlockCandidate to Promise[0m
+[1;33m[ 2][t 1][2026-09-09 14:35:14.696817778][collator.cpp:6848][!collate(-1,8000000000000000):1]	collation took 0.045006 s[0m
+[1;33m[ 2][t 1][2026-09-09 14:35:14.696832751][collator.cpp:6849][!collate(-1,8000000000000000):1]	{{
+	{do_collate:116400.276675->116400.315678(0.039003)}
+	{set_block_candidate:116400.315669->116400.318881(0.003212)}
+	{post_ext_processing:116400.314496->116400.315676(0.001180)}
+	{wait_block_state #0:116400.273933->116400.274446(0.000512)}
+	{get_storage_stat_cache:116400.273947->116400.274021(0.000074)[Error : 0 : not implemented]}
+	{neighbor_msg_queues:116400.276348->116400.276379(0.000031)}
+	{get_shard_blocks_for_collator:116400.273945->116400.273968(0.000023)}
+}[0m
+[1;33m[ 2][t 1][2026-09-09 14:35:14.696864982][collator.cpp:6952][!collate(-1,8000000000000000):1]	Collate query work time = 0.040870s, cpu time = 0.003671s[0m
+[1;31m[ 1][t 5][2026-09-09 14:35:14.699687904][manager-disk.cpp:259][!manager]	created block [ w=-1 s=9223372036854775808 seq=1 hZIpoB5lz9W3nE2cu/8Ifj6DKrwMi4xSmqp0eBXXlP8= c3VjVNlYsyX5SYmrer/ax0qijETyF/81cxp0k+hYsM8= ][0m
+[1;33m[ 2][t 5][2026-09-09 14:35:14.699716346][validate-query.cpp:289][!fakevalidate(-1,8000000000000000):1#0]	validate query for (-1,8000000000000000,1):859229A01E65CFD5B79C4D9CBBFF087E3E832ABC0C8B8C529AAA747815D794FF:73756354D958B325F94989AB7ABFDAC74AA28C44F217FF35731A7493E858B0CF started[0m
+[1;33m[ 2][t 5][2026-09-09 14:35:14.699793435][validate-query.cpp:786][!fakevalidate(-1,8000000000000000):1#0]	in ValidateQuery::after_get_latest_mc_state()[0m
+[1;36m[ 3][t 5][2026-09-09 14:35:14.699800003][validate-query.cpp:884][!fakevalidate(-1,8000000000000000):1#0]	after_get_storage_stat_cache : [Error : 0 : not implemented][0m
+[1;33m[ 2][t 5][2026-09-09 14:35:14.700163256][validate-query.cpp:904][!fakevalidate(-1,8000000000000000):1#0]	in ValidateQuery::after_get_shard_state(0)[0m
+warning: RTTI symbol not found for class 'block::ConfigInfo'
+[1;33m[ 2][t 5][2026-09-09 14:35:14.709280669][validate-query.cpp:786][!fakevalidate(-1,8000000000000000):1#0]	in ValidateQuery::after_get_latest_mc_state()[0m
+[1;33m[ 2][t 5][2026-09-09 14:35:14.709292344][validate-query.cpp:7721][!fakevalidate(-1,8000000000000000):1#0]	try_validate stage 0[0m
+[1;36m[ 3][t 5][2026-09-09 14:35:14.709470267][validate-query.cpp:2478][!fakevalidate(-1,8000000000000000):1#0]	masterchain validator set hash changed from 2805358205 to 2805358205[0m
+[1;33m[ 2][t 5][2026-09-09 14:35:14.709495187][validate-query.cpp:7761][!fakevalidate(-1,8000000000000000):1#0]	try_validate stage 1[0m
+[1;36m[ 3][t 5][2026-09-09 14:35:14.709509616][validate-query.cpp:7762][!fakevalidate(-1,8000000000000000):1#0]	running automated validity checks for block candidate (-1,8000000000000000,1):859229A01E65CFD5B79C4D9CBBFF087E3E832ABC0C8B8C529AAA747815D794FF:73756354D958B325F94989AB7ABFDAC74AA28C44F217FF35731A7493E858B0CF[0m
+[1;36m[ 3][t 5][2026-09-09 14:35:14.709641837][validate-query.cpp:3200][!fakevalidate(-1,8000000000000000):1#0]	pre-checking all Account updates between the old and the new state[0m
+[1;36m[ 3][t 5][2026-09-09 14:35:14.709666952][validate-query.cpp:3393][!fakevalidate(-1,8000000000000000):1#0]	pre-checking all AccountBlocks, and all transactions of all accounts[0m
+[1;36m[ 3][t 5][2026-09-09 14:35:14.709707016][validate-query.cpp:3652][!fakevalidate(-1,8000000000000000):1#0]	pre-checking the difference between the old and the new outbound message queues[0m
+[1;36m[ 3][t 5][2026-09-09 14:35:14.709715376][validate-query.cpp:3673][!fakevalidate(-1,8000000000000000):1#0]	outbound message queue size: 0 -> 0[0m
+[1;36m[ 3][t 5][2026-09-09 14:35:14.709724787][validate-query.cpp:3816][!fakevalidate(-1,8000000000000000):1#0]	checking the difference between the old and the new dispatch queues[0m
+[1;36m[ 3][t 5][2026-09-09 14:35:14.709741145][validate-query.cpp:4574][!fakevalidate(-1,8000000000000000):1#0]	checking inbound messages listed in InMsgDescr[0m
+[1;36m[ 3][t 5][2026-09-09 14:35:14.709757099][validate-query.cpp:5247][!fakevalidate(-1,8000000000000000):1#0]	checking outbound messages listed in OutMsgDescr[0m
+[1;36m[ 3][t 5][2026-09-09 14:35:14.709768372][validate-query.cpp:5271][!fakevalidate(-1,8000000000000000):1#0]	checking ProcessedInfo[0m
+[1;36m[ 3][t 5][2026-09-09 14:35:14.709776618][validate-query.cpp:5308][!fakevalidate(-1,8000000000000000):1#0]	ProcessedInfo claims to have processed all inbound messages up to (0,0000000000000000000000000000000000000000000000000000000000000000)[0m
+[1;36m[ 3][t 5][2026-09-09 14:35:14.709795608][validate-query.cpp:6511][!fakevalidate(-1,8000000000000000):1#0]	checking all transactions[0m
+[1;33m[ 2][t 5][2026-09-09 14:35:14.712584515][validate-query.cpp:7880][!fakevalidate(-1,8000000000000000):1#0]	try_validate stage 2[0m
+[1;36m[ 3][t 5][2026-09-09 14:35:14.712607643][validate-query.cpp:6963][!fakevalidate(-1,8000000000000000):1#0]	checking header of the new shardchain state[0m
+[1;36m[ 3][t 5][2026-09-09 14:35:14.712650049][validate-query.cpp:7262][!fakevalidate(-1,8000000000000000):1#0]	checking header of McStateExtra in the new masterchain state[0m
+[1;36m[ 3][t 5][2026-09-09 14:35:14.713180295][validate-query.cpp:7536][!fakevalidate(-1,8000000000000000):1#0]	checking all CreatorStats updates between the old and the new state[0m
+[1;33m[ 2][t 5][2026-09-09 14:35:14.713297274][validate-query.cpp:7977][!fakevalidate(-1,8000000000000000):1#0]	validation took 0.013587s[0m
+[1;33m[ 2][t 5][2026-09-09 14:35:14.713307343][validate-query.cpp:7978][!fakevalidate(-1,8000000000000000):1#0]	Validate query work time = 0.003910s, cpu time = 0.001245s[0m
+[1;33m[ 2][t 5][2026-09-09 14:35:14.713317410][validate-query.cpp:7980][!fakevalidate(-1,8000000000000000):1#0]	{{
+	{wait_block_state #0:116400.321872->116400.322253(0.000381)}
+	{get_top_masterchain_state_block:116400.321815->116400.321883(0.000069)}
+	{set_block_candidate:116400.335290->116400.335351(0.000062)}
+	{wait_verify_shard_blocks:116400.331541->116400.331584(0.000043)}
+	{get_storage_stat_cache:116400.321873->116400.321890(0.000017)[Error : 0 : not implemented]}
+	{get_top_masterchain_state_block:116400.331363->116400.331371(0.000007)}
+}[0m
+[1;33m[ 2][t 5][2026-09-09 14:35:14.713351019][validate-query.cpp:269][!fakevalidate(-1,8000000000000000):1#0]	validate query done[0m
+[1;31m[ 1][t 6][2026-09-09 14:35:14.727584342][manager-disk.cpp:364][!manager]	success, block [ w=-1 s=9223372036854775808 seq=1 hZIpoB5lz9W3nE2cu/8Ifj6DKrwMi4xSmqp0eBXXlP8= c3VjVNlYsyX5SYmrer/ax0qijETyF/81cxp0k+hYsM8= ] = (-1,8000000000000000,1):859229A01E65CFD5B79C4D9CBBFF087E3E832ABC0C8B8C529AAA747815D794FF:73756354D958B325F94989AB7ABFDAC74AA28C44F217FF35731A7493E858B0CF saved to disk[0m
+[Thread 0x7fffeb1ff640 (LWP 3425735) exited]
+[Thread 0x7fffebfff640 (LWP 3425734) exited]
+[Thread 0x7fffecdfe640 (LWP 3425733) exited]
+[Thread 0x7fffed5ff640 (LWP 3425732) exited]
+[Thread 0x7fffe95ff640 (LWP 3425737) exited]
+[Thread 0x7fffea3ff640 (LWP 3425736) exited]
+[Thread 0x7fffe07f3640 (LWP 3425753) exited]
+[Thread 0x7ffff21fe640 (LWP 3425731) exited]
+[Thread 0x7ffff29ff640 (LWP 3425730) exited]
+[Thread 0x7ffff37ff640 (LWP 3425729) exited]
+[Thread 0x7ffff45ff640 (LWP 3425728) exited]
+[Thread 0x7ffff53ff640 (LWP 3425727) exited]
+[Thread 0x7ffff617e640 (LWP 3425726) exited]
+[Thread 0x7ffff697f640 (LWP 3425725) exited]
+[Inferior 1 (process 3425722) exited normally]

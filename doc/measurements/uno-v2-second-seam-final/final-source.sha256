@@ -1,0 +1,4 @@
+a9bebbd7795c78e04909723d27520610fcf0c361d64945c2349437e98f65e6a7  CMakeLists.txt
+de0d5a2e7a65c7bb51a49259906cac2ed14cc704c157e1c5d971c3670212bf58  validator/impl/collator.cpp
+5de42709e6917f8391513b4b26278a42aee34de06ead809bf2629cb9585a948d  validator/impl/workchain-collator-compute-mode.h
+82587bac2fff2d79bd29c3dd25933135de4835f484a0848989a2e11987026fa8  crypto/test/test-workchain-collator-compute-mode.cpp

@@ -1,0 +1,67 @@
+{
+  "exit_code": 2,
+  "events": [
+    {
+      "site": "readiness",
+      "actor": 140737264723968,
+      "adapter": 0
+    },
+    {
+      "site": "config",
+      "config": 140737264447872,
+      "engine": 140737308041216,
+      "stack": "#0  0x0000555555784c80 in AccountBindingProbe::validate_and_resolve_config(block::WorkchainExecutionDescriptor const&, block::Config const&, td::Ref<vm::Cell> const&) const ()\n#1  0x0000555556266930 in block::WorkchainExecutionRegistry::resolve_account_binding(block::WorkchainExecutionDescriptor const&, block::Config const&) const ()\n#2  0x000055555626a120 in block::WorkchainExecutionRegistry::resolve_scoped(block::WorkchainExecutionDescriptor const&, block::Config const&) const ()\n#3  0x000055555626b37a in block::WorkchainExecutionRegistry::resolve_scoped_workchain(std::map<int, td::Ref<block::WorkchainInfo>, std::less<int>, std::allocator<std::pair<int const, td::Ref<block::WorkchainInfo> > > > const&, int, block::Config const&) const ()\n#4  0x000055555626bb2e in block::WorkchainExecutionRegistry::resolve_scoped_workchain(int, block::Config const&) const ()\n#5  0x0000555555ae0d52 in tos::validator::Collator::check_this_shard_mc_info() ()\n#6  0x0000555555ae3aa5 in tos::validator::Collator::do_preinit() ()\n#7  0x0000555555acdbde in tos::validator::Collator::try_collate() ()\n#8  0x0000555555acd8b4 in tos::validator::Collator::check_pending() ()\n"
+    },
+    {
+      "site": "bind"
+    },
+    {
+      "site": "readiness_return",
+      "actor": 140737264723968,
+      "adapter": 140737264148832
+    },
+    {
+      "site": "old_state",
+      "actor": 140737264723968,
+      "adapter": 140737264148832
+    },
+    {
+      "site": "old_state_return",
+      "actor": 140737264723968,
+      "adapter": 140737264148832
+    },
+    {
+      "site": "fetch",
+      "actor": 140737264723968,
+      "adapter": 140737264148832
+    },
+    {
+      "site": "config",
+      "config": 140737264447872,
+      "engine": 140737308041216,
+      "stack": "#0  0x0000555555784c80 in AccountBindingProbe::validate_and_resolve_config(block::WorkchainExecutionDescriptor const&, block::Config const&, td::Ref<vm::Cell> const&) const ()\n#1  0x0000555556266930 in block::WorkchainExecutionRegistry::resolve_account_binding(block::WorkchainExecutionDescriptor const&, block::Config const&) const ()\n#2  0x000055555626a120 in block::WorkchainExecutionRegistry::resolve_scoped(block::WorkchainExecutionDescriptor const&, block::Config const&) const ()\n#3  0x000055555626b37a in block::WorkchainExecutionRegistry::resolve_scoped_workchain(std::map<int, td::Ref<block::WorkchainInfo>, std::less<int>, std::allocator<std::pair<int const, td::Ref<block::WorkchainInfo> > > > const&, int, block::Config const&) const ()\n#4  0x000055555626bb2e in block::WorkchainExecutionRegistry::resolve_scoped_workchain(int, block::Config const&) const ()\n#5  0x000055555626c75b in block::WorkchainExecutionRegistry::validate_required_workchains(std::map<int, td::Ref<block::WorkchainInfo>, std::less<int>, std::allocator<std::pair<int const, td::Ref<block::WorkchainInfo> > > > const&, block::Config const&, block::LocalWorkchainRoleSet const&) const ()\n#6  0x0000555555ae9b49 in tos::validator::Collator::fetch_config_params() ()\n#7  0x0000555555b42afa in tos::validator::Collator::do_collate_inner() [clone .resume] ()\n#8  0x000055555578974f in td::actor::detail::ActorMessageCoroutineSafe<td::actor::promise_type<td::Unit> >::run() ()\n"
+    },
+    {
+      "site": "release",
+      "actor": 140737264723968,
+      "adapter": 140737264148832
+    },
+    {
+      "site": "release_return",
+      "actor": 140737264723968,
+      "adapter": 0
+    },
+    {
+      "site": "release",
+      "actor": 140737264723968,
+      "adapter": 0
+    },
+    {
+      "site": "release_return",
+      "actor": 140737264723968,
+      "adapter": 0
+    }
+  ],
+  "errors": [],
+  "disassembly": "Dump of assembler code for function _ZN3tos9validator8Collator23release_account_adapterEv:\n   0x0000000000578a10 <+0>:\tpush   %rbp\n   0x0000000000578a11 <+1>:\tmov    %rsp,%rbp\n   0x0000000000578a14 <+4>:\tpush   %r15\n   0x0000000000578a16 <+6>:\tpush   %r14\n   0x0000000000578a18 <+8>:\tpush   %rbx\n   0x0000000000578a19 <+9>:\tpush   %rax\n   0x0000000000578a1a <+10>:\tmov    %rdi,%rbx\n   0x0000000000578a1d <+13>:\tmov    0x610(%rdi),%rdi\n   0x0000000000578a24 <+20>:\ttest   %rdi,%rdi\n   0x0000000000578a27 <+23>:\tje     0x578ae6 <_ZN3tos9validator8Collator23release_account_adapterEv+214>\n   0x0000000000578a2d <+29>:\tmovq   $0x0,0x610(%rbx)\n   0x0000000000578a38 <+40>:\tmov    0x18(%rdi),%r14\n   0x0000000000578a3c <+44>:\ttest   %r14,%r14\n   0x0000000000578a3f <+47>:\tje     0x578a8e <_ZN3tos9validator8Collator23release_account_adapterEv+126>\n   0x0000000000578a41 <+49>:\tmov    0x8(%r14),%rax\n   0x0000000000578a45 <+53>:\tmovabs $0x100000001,%rcx\n   0x0000000000578a4f <+63>:\tcmp    %rcx,%rax\n   0x0000000000578a52 <+66>:\tjne    0x578a76 <_ZN3tos9validator8Collator23release_account_adapterEv+102>\n   0x0000000000578a54 <+68>:\tmovq   $0x0,0x8(%r14)\n   0x0000000000578a5c <+76>:\tmov    (%r14),%rax\n   0x0000000000578a5f <+79>:\tmov    %rdi,%r15\n   0x0000000000578a62 <+82>:\tmov    %r14,%rdi\n   0x0000000000578a65 <+85>:\tcall   *0x10(%rax)\n   0x0000000000578a68 <+88>:\tmov    (%r14),%rax\n   0x0000000000578a6b <+91>:\tmov    %r14,%rdi\n   0x0000000000578a6e <+94>:\tcall   *0x18(%rax)\n   0x0000000000578a71 <+97>:\tmov    %r15,%rdi\n   0x0000000000578a74 <+100>:\tjmp    0x578a8e <_ZN3tos9validator8Collator23release_account_adapterEv+126>\n   0x0000000000578a76 <+102>:\tmov    0x1187483(%rip),%rcx        # 0x16fff00\n   0x0000000000578a7d <+109>:\tcmpb   $0x0,(%rcx)\n   0x0000000000578a80 <+112>:\tje     0x578af1 <_ZN3tos9validator8Collator23release_account_adapterEv+225>\n   0x0000000000578a82 <+114>:\tlea    -0x1(%rax),%ecx\n   0x0000000000578a85 <+117>:\tmov    %ecx,0x8(%r14)\n   0x0000000000578a89 <+121>:\tcmp    $0x1,%eax\n   0x0000000000578a8c <+124>:\tje     0x578b01 <_ZN3tos9validator8Collator23release_account_adapterEv+241>\n   0x0000000000578a8e <+126>:\tmov    $0x60,%esi\n   0x0000000000578a93 <+131>:\tcall   0x164a90 <_ZdlPvm@plt>\n   0x0000000000578a98 <+136>:\tmovb   $0x1,0x11af(%rbx)\n   0x0000000000578a9f <+143>:\tmov    0x530(%rbx),%rax\n   0x0000000000578aa6 <+150>:\ttest   %rax,%rax\n   0x0000000000578aa9 <+153>:\tje     0x578ab2 <_ZN3tos9validator8Collator23release_account_adapterEv+162>\n   0x0000000000578aab <+155>:\tmov    0x8(%rax),%eax\n   0x0000000000578aae <+158>:\tcltq   \n   0x0000000000578ab0 <+160>:\tjmp    0x578ab4 <_ZN3tos9validator8Collator23release_account_adapterEv+164>\n   0x0000000000578ab2 <+162>:\txor    %eax,%eax\n   0x0000000000578ab4 <+164>:\tmov    %rax,0x11c0(%rbx)\n   0x0000000000578abb <+171>:\tmovzbl 0x608(%rbx),%eax\n   0x0000000000578ac2 <+178>:\tmovb   $0x0,0x608(%rbx)\n   0x0000000000578ac9 <+185>:\tcmp    $0x1,%al\n   0x0000000000578acb <+187>:\tjne    0x578ae6 <_ZN3tos9validator8Collator23release_account_adapterEv+214>\n   0x0000000000578acd <+189>:\tadd    $0x430,%rbx\n   0x0000000000578ad4 <+196>:\tmov    %rbx,%rdi\n   0x0000000000578ad7 <+199>:\tadd    $0x8,%rsp\n   0x0000000000578adb <+203>:\tpop    %rbx\n   0x0000000000578adc <+204>:\tpop    %r14\n   0x0000000000578ade <+206>:\tpop    %r15\n   0x0000000000578ae0 <+208>:\tpop    %rbp\n   0x0000000000578ae1 <+209>:\tjmp    0x444390 <_ZN5block31ResolvedWorkchainAccountBindingD2Ev>\n   0x0000000000578ae6 <+214>:\tadd    $0x8,%rsp\n   0x0000000000578aea <+218>:\tpop    %rbx\n   0x0000000000578aeb <+219>:\tpop    %r14\n   0x0000000000578aed <+221>:\tpop    %r15\n   0x0000000000578aef <+223>:\tpop    %rbp\n   0x0000000000578af0 <+224>:\tret    \n   0x0000000000578af1 <+225>:\tmov    $0xffffffff,%eax\n   0x0000000000578af6 <+230>:\tlock xadd %eax,0x8(%r14)\n   0x0000000000578afc <+236>:\tcmp    $0x1,%eax\n   0x0000000000578aff <+239>:\tjne    0x578a8e <_ZN3tos9validator8Collator23release_account_adapterEv+126>\n   0x0000000000578b01 <+241>:\tmov    %rdi,%r15\n   0x0000000000578b04 <+244>:\tmov    %r14,%rdi\n   0x0000000000578b07 <+247>:\tcall   0x22bef0 <_ZNSt16_Sp_counted_baseILN9__gnu_cxx12_Lock_policyE2EE24_M_release_last_use_coldEv>\n   0x0000000000578b0c <+252>:\tjmp    0x578a71 <_ZN3tos9validator8Collator23release_account_adapterEv+97>\nEnd of assembler dump.\n"
+}
