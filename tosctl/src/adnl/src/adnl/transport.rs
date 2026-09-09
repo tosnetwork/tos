@@ -34,6 +34,12 @@ const SIZE_TCP_LENGTH: usize = 4;
 // u32::MAX and force a 4 GiB allocation in read_len(). Matches the C++
 // ADNL ext connection, which rejects len > (1 << 24) (adnl-ext-connection.cpp).
 const MAX_TCP_PACKET_SIZE: usize = 1 << 24;
+// Ceiling on queued outgoing packets per TCP connection. The send queue was
+// created with usize::MAX capacity and the send path enqueued unconditionally,
+// so a slow or stalled peer let outgoing packets accumulate without bound. Once
+// full, further packets are dropped (best-effort, as higher layers retransmit)
+// rather than growing memory.
+const MAX_TCP_SEND_QUEUE_LEN: usize = 8192;
 const SIZE_UDP_BUFFER: usize = 1500;
 const SOCKET_BUFFER_SIZE: usize = 1 << 24;
 const SOCKET_TCP_BACKLOG: usize = 256;
@@ -595,7 +601,7 @@ impl TcpSender {
             match connections.map().get(&socket_addr) {
                 None => {
                     // Create send queue in single thread context
-                    let queue = TcpSendQueue::new();
+                    let queue = TcpSendQueue::with_capacity(MAX_TCP_SEND_QUEUE_LEN);
                     if !add_unbound_object_to_map(connections.map(), socket_addr, || {
                         Ok(TcpConnectionState::Disconnected(queue.clone()))
                     })? {
@@ -608,7 +614,12 @@ impl TcpSender {
                         TcpConnectionState::Confirmed(conn) => {
                             // Queue is pushed only in single thread context, so this check is ok
                             if conn.queue.check(true) {
-                                conn.queue.push(ctx);
+                                if !conn.queue.try_push(ctx) {
+                                    log::warn!(
+                                        target: TARGET,
+                                        "TCP send queue for {socket_addr} full, dropping outgoing packet"
+                                    );
+                                }
                                 while !conn.queue.check(false) {
                                     thread::yield_now();
                                 }
@@ -628,8 +639,11 @@ impl TcpSender {
                         | TcpConnectionState::Disconnected(queue) => {
                             if queue.activate(true) {
                                 break (queue.clone(), false);
-                            } else {
-                                queue.push(ctx);
+                            } else if !queue.try_push(ctx) {
+                                log::warn!(
+                                    target: TARGET,
+                                    "TCP send queue for {socket_addr} full, dropping outgoing packet"
+                                );
                             }
                         }
                     }
@@ -637,7 +651,12 @@ impl TcpSender {
             };
             return Ok(None);
         };
-        queue.push(ctx);
+        if !queue.try_push(ctx) {
+            log::warn!(
+                target: TARGET,
+                "TCP send queue for {socket_addr} full, dropping outgoing packet"
+            );
+        }
         // queue.sync.store(TcpSendQueue::SYNC_INACTIVE, Ordering::Relaxed);
         let node = node.clone();
         let name = format!("{socket_addr} ADNL TCP pending send");
@@ -887,7 +906,7 @@ fn tcp_sender_receiver(node: &Arc<AdnlNode>) -> Result<(Arc<TcpSender>, TcpRecei
         context.peer_addr.set_ip(IpAddr::V4(Ipv4Addr::from(peer_ip)));
         context.peer_addr.set_port(peer_port);
         let peer_addr = context.peer_addr;
-        let queue = TcpSendQueue::new();
+        let queue = TcpSendQueue::with_capacity(MAX_TCP_SEND_QUEUE_LEN);
         let confirmed =
             add_unbound_object_to_map_with_update(sender.connections.map(), peer_addr, |found| {
                 let confirm = |queue: &Arc<TcpSendQueue>| {

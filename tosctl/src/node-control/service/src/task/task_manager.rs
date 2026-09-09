@@ -119,6 +119,13 @@ impl TaskController {
         });
         tracing::info!("{} task started", name);
 
+        // Abort any handle still present before replacing it. The Running guard
+        // above normally prevents this, but a concurrent enable/restart race could
+        // otherwise overwrite a live handle here and orphan its task (it would
+        // keep running with no way to cancel or await it).
+        if let Some(orphan) = st.handle.take() {
+            orphan.abort();
+        }
         st.cancel = Some(cancel_ctx);
         st.handle = Some(handle);
         st.status = TaskStatus::Running;
