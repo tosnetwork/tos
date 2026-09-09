@@ -825,6 +825,10 @@ add_executable(test-json-rpc-rate-gate test/test-td-main.cpp test/test-json-rpc-
 target_include_directories(test-json-rpc-rate-gate PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(test-json-rpc-rate-gate PRIVATE tdutils)
 
+add_executable(test-json-rpc-payload-waiter test/test-json-rpc-payload-waiter.cpp)
+target_include_directories(test-json-rpc-payload-waiter PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(test-json-rpc-payload-waiter PRIVATE toshttp tdactor tdutils)
+
 add_executable(test-metrics-label-bound test/test-td-main.cpp test/test-metrics-label-bound.cpp)
 target_include_directories(test-metrics-label-bound PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(test-metrics-label-bound PRIVATE metrics tdactor tdutils)
@@ -1124,6 +1128,7 @@ tos_test(test-config-transition)
 tos_test(test-json-rpc-parse)
 tos_test(test-consensus-db-path)
 tos_test(test-json-rpc-rate-gate)
+tos_test(test-json-rpc-payload-waiter)
 # Source-level check: a route added to on_request bypasses the dispatcher's
 # per-source budget, and no test of the budget itself can see that.
 find_package(Python3 COMPONENTS Interpreter)
