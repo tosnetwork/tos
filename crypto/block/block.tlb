@@ -13,8 +13,8 @@ uno_v2_resource_work_output max_proof_units:uint64 max_effect_cells:uint64
   max_transfers:uint32 = UnoV2ResourceWorkOutput;
 uno_v2_resource_policy admission_version:uint32 input:^UnoV2ResourceInput
   state:^UnoV2ResourceState work_output:^UnoV2ResourceWorkOutput = UnoV2ResourcePolicy;
-uno_v2_engine_configuration resource_policy:^UnoV2ResourcePolicy
-  parameters:^Cell = UnoV2EngineConfiguration;
+uno_v2_engine_configuration_cadence k_accepted_target_rate_ms:uint32
+  resource_policy:^UnoV2ResourcePolicy parameters:^Cell = UnoV2EngineConfiguration;
 uno_v2_host_domain global_id:int32 genesis_hash:bits256 instance_id:bits256
   workchain_id:int32 shard_id:uint64 = UnoV2HostDomain;
 uno_v2_host_policy configuration_hash:bits256 extended:Bool engine_selector:int64
