@@ -1,0 +1,5 @@
+[1;31m[ 1][t 0][2026-09-09 22:09:58.888807208][create-state.cpp:982]	{}[0m
+[1;31m[ 1][t 0][2026-09-09 22:09:58.957470077][Fift.cpp:67]	top: file>B
+level 1: [in load-keys-from-file:] file>B **HERE** dup Blen 128 <> "validator key manifest must contain exactly four 32-byte public keys" <continuation 0x5f0e0e7022e0> { <continuation 0x5f0e0e83c4d0> } { <continuation 0x5f0e0e7fbe20> } while drop 
+level 2: <text interpreter continuation>[0m
+Error interpreting file `/tmp/uno-genesis-four-items-gee4tajh/genesis.fif`: [Error : 0 : genesis.fif:285:	load-keys-from-file:error reading file `validator-keys.pub`: [PosixError : No such file or directory : 2 : File "validator-keys.pub" can't be opened for reading]]

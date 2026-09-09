@@ -1,0 +1,62 @@
+[
+  {
+    "path": "crypto/block/block.tlb",
+    "commit": "573df2f3c24b168599fa21bc1db8af7a54b61d99",
+    "git_blob_oid": "2d5a1daf3bb581c0677f65e088553b857cd0c8c6",
+    "sha256": "dd4a406da238ea00e18528c97372d5aa4941d3a9ba624e5b52048cabaa4f8241"
+  },
+  {
+    "path": "crypto/block/workchain-instance-identity.cpp",
+    "commit": "573df2f3c24b168599fa21bc1db8af7a54b61d99",
+    "git_blob_oid": "04289972dfd76145ad6ce57faf266506de679ec9",
+    "sha256": "380a130fefd305c5f4d8171d58decf0aab39ed5e254969d71648ae0d299b7460"
+  },
+  {
+    "path": "crypto/block/workchain-resource-policy.h",
+    "commit": "573df2f3c24b168599fa21bc1db8af7a54b61d99",
+    "git_blob_oid": "a5079b0d3cad26c46bd5e054833929a50368845b",
+    "sha256": "f4202d84f8e81020a98fe23640835d69fd3f39144c96934e50ef7da31993fb73"
+  },
+  {
+    "path": "crypto/block/create-state.cpp",
+    "commit": "573df2f3c24b168599fa21bc1db8af7a54b61d99",
+    "git_blob_oid": "f47816f7c014b2856c6c45cceb43663d45a2448c",
+    "sha256": "e36d93f8ce7fdeab6d3d84d24cbe853a4b42ce446ef4a19dbe19d28d6437d53c"
+  },
+  {
+    "path": "crypto/block/workchain-execution-dispatch.cpp",
+    "commit": "573df2f3c24b168599fa21bc1db8af7a54b61d99",
+    "git_blob_oid": "a90552f71a92b5c53a203c4dc5542ecb11e423a2",
+    "sha256": "6966728eed275637c96af1c783d913d2c90f82af1845e0cfe7cc499a465ede00"
+  },
+  {
+    "path": "validator/impl/collator.cpp",
+    "commit": "573df2f3c24b168599fa21bc1db8af7a54b61d99",
+    "git_blob_oid": "dc78b3d7d89172380ffb379ebf9fdf7a6ef41971",
+    "sha256": "f854a2dedea8fd2b7b48cfaaad5877e1bce3983f63a5e4be785d6d0e617e9b4b"
+  },
+  {
+    "path": "validator/impl/validate-query.cpp",
+    "commit": "573df2f3c24b168599fa21bc1db8af7a54b61d99",
+    "git_blob_oid": "9cb73226d22fd907ae6c9361491fcf29c9e980c1",
+    "sha256": "df105fae6161fb1bee9a45da3dda56369c8d27943b355f7fafa0441b44ff157c"
+  },
+  {
+    "path": "crypto/smartcont/gen-zerostate.fif",
+    "commit": "573df2f3c24b168599fa21bc1db8af7a54b61d99",
+    "git_blob_oid": "4c7a52e4f0bf0fcf7e89b96e8bca3a8f66683133",
+    "sha256": "d11f1c95a502bc07eff8f553aa65af35276c3765ff385a0d4959094b0a0d1054"
+  },
+  {
+    "path": "crypto/smartcont/uno-genesis-config.fif",
+    "commit": "573df2f3c24b168599fa21bc1db8af7a54b61d99",
+    "git_blob_oid": "7ddf04b078bb9cf4780a79c247b1d70d6e04ed32",
+    "sha256": "f57206792ec50829aaccdb107022966793970b9f2df160519681afc343c2ec7c"
+  },
+  {
+    "path": "crypto/test/workchain-activation-rejection.py",
+    "commit": "573df2f3c24b168599fa21bc1db8af7a54b61d99",
+    "git_blob_oid": "d9e7b208f2468b00e5f4468bdcea96b6eeaa7381",
+    "sha256": "8b27fa99e2801a97ff15ed456ad98e836e025dc94f849202f8a8a14920b03b81"
+  }
+]

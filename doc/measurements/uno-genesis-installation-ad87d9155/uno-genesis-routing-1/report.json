@@ -1,0 +1,56 @@
+{
+  "scope": "Native source behavior and queues; not UNO execution or global liveness.",
+  "cases": [
+    {
+      "accept_msgs": true,
+      "runs": [
+        {
+          "name": "counter-shard-genesis",
+          "command": [
+            "/tmp/uno-publication-build/crypto/create-state",
+            "-I",
+            "/home/tomi/tos-m2/crypto/fift/lib:/tmp/uno-publication-build/crypto/smartcont:/home/tomi/tos-m2/crypto/smartcont",
+            "/home/tomi/tos-m2/test/counter-shard-genesis.fif"
+          ],
+          "exit": 0
+        },
+        {
+          "name": "counter-native-sender",
+          "command": [
+            "/tmp/uno-publication-build/crypto/create-state",
+            "-I",
+            "/home/tomi/tos-m2/crypto/fift/lib:/tmp/uno-publication-build/crypto/smartcont:/home/tomi/tos-m2/crypto/smartcont",
+            "/home/tomi/tos-m2/test/counter-native-sender.fif"
+          ],
+          "exit": 0
+        },
+        {
+          "name": "master",
+          "command": [
+            "/tmp/uno-publication-build/crypto/create-state",
+            "-I",
+            "/home/tomi/tos-m2/crypto/fift/lib:/tmp/uno-publication-build/crypto/smartcont:/home/tomi/tos-m2/crypto/smartcont",
+            "/tmp/uno-genesis-routing-1/serving/master.fif"
+          ],
+          "exit": 0
+        },
+        {
+          "name": "bootstrap",
+          "command": [
+            "/tmp/uno-publication-build/test-tos-collator",
+            "-C",
+            "/tmp/uno-genesis-routing-1/serving/global.json",
+            "-D",
+            "/tmp/uno-genesis-routing-1/serving/db",
+            "--query-result",
+            "/tmp/uno-genesis-routing-1/serving/bootstrap.result",
+            "-w",
+            "-1"
+          ],
+          "exit": 1
+        }
+      ],
+      "transactions": []
+    }
+  ]
+}

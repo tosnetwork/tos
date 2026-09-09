@@ -1,0 +1,11 @@
+{
+  "command": [
+    "/tmp/uno-publication-build/crypto/create-state",
+    "-I",
+    "/home/tomi/tos-m2/crypto/fift/lib:/tmp/uno-publication-build/crypto/smartcont:/home/tomi/tos-m2/crypto/smartcont",
+    "/tmp/uno-genesis-four-items-s5ngk7i8/genesis.fif"
+  ],
+  "exit": 2,
+  "SOURCE_DATE_EPOCH": "1789434000",
+  "validator_keys": "four public development keys derived from repeated-byte seeds 1..4; test network only"
+}

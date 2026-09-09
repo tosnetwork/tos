@@ -1,0 +1,7 @@
+{
+  "original": "uno-genesis-smartcont-restored.stderr.log",
+  "original_size": 117945491,
+  "original_sha256": "486a42bc4760cd266a3a436d724f5361d4022141fa15cc253d91c5502be2aeed",
+  "archive": "uno-genesis-smartcont-restored.stderr.log.gz",
+  "reason": "Full VM diagnostics retained losslessly; no output truncation."
+}

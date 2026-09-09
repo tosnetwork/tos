@@ -1,0 +1,12 @@
+Internal ctest changing into directory: /tmp/uno-publication-build
+Test project /tmp/uno-publication-build
+    Start 79: test-counter-python-harness
+1/1 Test #79: test-counter-python-harness ......   Passed    5.98 sec
+
+100% tests passed, 0 tests failed out of 1
+
+Label Time Summary:
+harness    =   5.98 sec*proc (1 test)
+uno        =   5.98 sec*proc (1 test)
+
+Total Test time (real) =   5.99 sec

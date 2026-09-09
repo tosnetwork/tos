@@ -1,0 +1,95 @@
+{
+  "scope": "Native source behavior and queues; not UNO execution or global liveness.",
+  "SOURCE_DATE_EPOCH": 1788993233,
+  "cases": [
+    {
+      "accept_msgs": true,
+      "runs": [
+        {
+          "name": "counter-shard-genesis",
+          "command": [
+            "/tmp/uno-publication-build/crypto/create-state",
+            "-I",
+            "/home/tomi/tos-m2/crypto/fift/lib:/tmp/uno-publication-build/crypto/smartcont:/home/tomi/tos-m2/crypto/smartcont",
+            "/home/tomi/tos-m2/test/counter-shard-genesis.fif"
+          ],
+          "exit": 0
+        },
+        {
+          "name": "counter-native-sender",
+          "command": [
+            "/tmp/uno-publication-build/crypto/create-state",
+            "-I",
+            "/home/tomi/tos-m2/crypto/fift/lib:/tmp/uno-publication-build/crypto/smartcont:/home/tomi/tos-m2/crypto/smartcont",
+            "/home/tomi/tos-m2/test/counter-native-sender.fif"
+          ],
+          "exit": 0
+        },
+        {
+          "name": "master",
+          "command": [
+            "/tmp/uno-publication-build/crypto/create-state",
+            "-I",
+            "/home/tomi/tos-m2/crypto/fift/lib:/tmp/uno-publication-build/crypto/smartcont:/home/tomi/tos-m2/crypto/smartcont",
+            "/tmp/uno-genesis-routing-2/serving/master.fif"
+          ],
+          "exit": 0
+        },
+        {
+          "name": "bootstrap",
+          "command": [
+            "/tmp/uno-publication-build/test-tos-collator",
+            "-C",
+            "/tmp/uno-genesis-routing-2/serving/global.json",
+            "-D",
+            "/tmp/uno-genesis-routing-2/serving/db",
+            "--query-result",
+            "/tmp/uno-genesis-routing-2/serving/bootstrap.result",
+            "-w",
+            "-1"
+          ],
+          "exit": 0
+        },
+        {
+          "name": "serving-engine",
+          "command": [
+            "/tmp/uno-publication-build/test-tos-collator",
+            "-C",
+            "/tmp/uno-genesis-routing-2/serving/global.json",
+            "-D",
+            "/tmp/uno-genesis-routing-2/serving/db",
+            "--query-result",
+            "/tmp/uno-genesis-routing-2/serving/serving-engine.result",
+            "-w",
+            "2",
+            "--counter-increment",
+            "0",
+            "-T",
+            "(2,8000000000000000,0):3c14ab7118564fcb2e0e05df174a398ddd47f00a98230cb2fc2db6da730b0034:48e6e665ee9551d91510fabe781e8609bde292a655377619b051aa62342d2f92"
+          ],
+          "exit": 0
+        },
+        {
+          "name": "source-1",
+          "command": [
+            "/tmp/uno-publication-build/test-tos-collator",
+            "-C",
+            "/tmp/uno-genesis-routing-2/serving/global.json",
+            "-D",
+            "/tmp/uno-genesis-routing-2/serving/db",
+            "--query-result",
+            "/tmp/uno-genesis-routing-2/serving/source-1.result",
+            "-w",
+            "0",
+            "-m",
+            "/tmp/uno-genesis-routing-2/serving/sender-message.boc",
+            "--export-candidate",
+            "/tmp/uno-genesis-routing-2/serving/source-1.candidate"
+          ],
+          "exit": 0
+        }
+      ],
+      "transactions": []
+    }
+  ]
+}

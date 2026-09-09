@@ -1,0 +1,7 @@
+Traceback (most recent call last):
+  File "/home/tomi/tos-m2/crypto/test/workchain-genesis-routing.py", line 110, in <module>
+    require(action is not None and action.result_code == (0 if accepting else 36), 957)
+    ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/tomi/tos-m2/crypto/test/workchain-genesis-routing.py", line 35, in require
+    raise AssertionError(identity)
+AssertionError: 957

@@ -1,0 +1,109 @@
+{
+  "commit": "ad87d9155f7ed38798d8b0a647cf209f289609b5",
+  "source": "crypto/smartcont/uno-genesis-operators.fif",
+  "source_sha256": "91a17f158d7fa63503139132583732fb09410affdc37cab0363128fdd75de631",
+  "executable": "/tmp/uno-publication-build/crypto/create-state",
+  "executable_sha256": "368480f414ed84da48fb71154a4d106ab73cc478c419d536edc360862067a5f9",
+  "actual_executable_targets": [
+    "create-state"
+  ],
+  "scope": "Approval predicate and generator pre-artifact boundary only; not completed genesis or D40 acceptance.",
+  "controls": [
+    {
+      "name": "approve-unlisted-mainnet",
+      "from": "{ 2drop false }",
+      "to": "{ 2drop true }",
+      "copy_before_sha256": "91a17f158d7fa63503139132583732fb09410affdc37cab0363128fdd75de631",
+      "mutant_sha256": "956b42886063f7e5a42e7cb6b0e4453d92f33bcfcbbc453c4527a691f2a7d955",
+      "restored_sha256": "91a17f158d7fa63503139132583732fb09410affdc37cab0363128fdd75de631",
+      "restore_audit_sha256": "956b42886063f7e5a42e7cb6b0e4453d92f33bcfcbbc453c4527a691f2a7d955",
+      "load_exit_code": 0,
+      "observation": {
+        "command": [
+          "/home/tomi/.local/bin/python3",
+          "/home/tomi/tos-m2/test/test-uno-genesis-operators.py",
+          "--repo",
+          "/home/tomi/tos-m2",
+          "--create-state",
+          "/tmp/uno-publication-build/crypto/create-state",
+          "--operators",
+          "/tmp/uno-operator-control-omeuteke/operators.fif",
+          "--evidence",
+          "/tmp/uno-genesis-operators-serial/approve-unlisted-mainnet"
+        ],
+        "exit_code": 1,
+        "failure_identity": 984
+      }
+    },
+    {
+      "name": "remove-enforcement",
+      "from": "abort\"mainnet coordinator/custody pair is not owner-approved\"",
+      "to": "drop",
+      "copy_before_sha256": "91a17f158d7fa63503139132583732fb09410affdc37cab0363128fdd75de631",
+      "mutant_sha256": "58da577fc39fee79482a5ca1170737a36ad81909069eb87797117f91bd65fd90",
+      "restored_sha256": "91a17f158d7fa63503139132583732fb09410affdc37cab0363128fdd75de631",
+      "restore_audit_sha256": "58da577fc39fee79482a5ca1170737a36ad81909069eb87797117f91bd65fd90",
+      "load_exit_code": 0,
+      "observation": {
+        "command": [
+          "/home/tomi/.local/bin/python3",
+          "/home/tomi/tos-m2/test/test-uno-genesis-operators.py",
+          "--repo",
+          "/home/tomi/tos-m2",
+          "--create-state",
+          "/tmp/uno-publication-build/crypto/create-state",
+          "--operators",
+          "/tmp/uno-operator-control-p09rdri7/operators.fif",
+          "--evidence",
+          "/tmp/uno-genesis-operators-serial/remove-enforcement"
+        ],
+        "exit_code": 1,
+        "failure_identity": 985
+      }
+    }
+  ],
+  "baseline": {
+    "command": [
+      "/home/tomi/.local/bin/python3",
+      "/home/tomi/tos-m2/test/test-uno-genesis-operators.py",
+      "--repo",
+      "/home/tomi/tos-m2",
+      "--create-state",
+      "/tmp/uno-publication-build/crypto/create-state",
+      "--operators",
+      "/home/tomi/tos-m2/crypto/smartcont/uno-genesis-operators.fif",
+      "--evidence",
+      "/tmp/uno-genesis-operators-serial/baseline"
+    ],
+    "exit_code": 0,
+    "failure_identity": 0
+  },
+  "restored_build": {
+    "command": [
+      "cmake",
+      "--build",
+      "/tmp/uno-publication-build",
+      "--target",
+      "create-state",
+      "-j32"
+    ],
+    "exit_code": 0
+  },
+  "restored": {
+    "command": [
+      "/home/tomi/.local/bin/python3",
+      "/home/tomi/tos-m2/test/test-uno-genesis-operators.py",
+      "--repo",
+      "/home/tomi/tos-m2",
+      "--create-state",
+      "/tmp/uno-publication-build/crypto/create-state",
+      "--operators",
+      "/home/tomi/tos-m2/crypto/smartcont/uno-genesis-operators.fif",
+      "--evidence",
+      "/tmp/uno-genesis-operators-serial/restored"
+    ],
+    "exit_code": 0,
+    "failure_identity": 0
+  },
+  "source_unchanged": true
+}

@@ -1,0 +1,113 @@
+{
+  "implementation_commit": "ad87d9155f7ed38798d8b0a647cf209f289609b5",
+  "consumer_followup_commit": "573df2f3c24b168599fa21bc1db8af7a54b61d99",
+  "scope": "Genesis installation and private production-method validation; two real-node routing configurations. No M1, D40, I13e or complete live activation acceptance claim.",
+  "ordinary_regression": {
+    "file": "uno-genesis-full-regression.xml",
+    "total": 137,
+    "passed": 133,
+    "failures": [
+      "test-counter-activation-missing_capability",
+      "test-counter-activation-old_version",
+      "test-smartcont",
+      "test-uno-build-wiring"
+    ],
+    "skipped": []
+  },
+  "consumer_followup": {
+    "file": "uno-genesis-consumer-followup.xml",
+    "total": 5,
+    "passed": 5,
+    "failures": [],
+    "skipped": []
+  },
+  "first_run_source_note": "The full run used ad87d9155 production sources and then-uncommitted scoped activation mode tests. Those mode tests were subsequently committed and independently rebuilt/retested at the followup. No claim that the full run was a clean HEAD-only build.",
+  "builds": [
+    {
+      "command": "cmake --build /tmp/uno-publication-build -j32",
+      "log": "uno-genesis-full-build.log",
+      "outcome": "failed: Tol standard library discovery; no behavior evidence"
+    },
+    {
+      "command": "TOL_STDLIB=/home/tomi/tos-m2/crypto/smartcont/tol-stdlib cmake --build /tmp/uno-publication-build -j32",
+      "log": "uno-genesis-full-build-2.log",
+      "outcome": "default all build passed"
+    }
+  ],
+  "restoration_audit": "restore-audit.json",
+  "routing_baseline": "uno-genesis-routing-3/report.json",
+  "routing_control": "uno-genesis-source-controls/report.json",
+  "live_activation_blocker": "Two historical node fixtures fail during genesis with 7409 because they remove Param84. Retaining Param84 while closing activation is rejected by configuration-presence validation. Scoped evidence neither observes node transactions/exports nor replaces this boundary.",
+  "other_blockers": [
+    "Runtime collator issuance entry unexercised; shared issuance routine exercised at genesis.",
+    "D54 runtime workchain activation transition unresolved.",
+    "tosctl Rust McStateExtra migration pending.",
+    "D31 numerical policy provisional pending M6."
+  ],
+  "cleanup": {
+    "before": 8,
+    "after": 0,
+    "diagnostic_files": 167,
+    "archive_on_host": "/tmp/uno-publication-build/counter-fixture-diagnostics-1788993801379302104.tar.gz",
+    "logs": [
+      "uno-genesis-cleanup-dry.log",
+      "uno-genesis-cleanup-delete.log"
+    ]
+  },
+  "failed_attempts_not_behavior_evidence": [
+    {
+      "path": "uno-genesis-four-items-gee4tajh",
+      "cause": "Missing deterministic validator-key fixture."
+    },
+    {
+      "path": "uno-genesis-four-items-s5ngk7i8",
+      "cause": "Initial provisional admission version 1 unsupported; corrected to existing version 4."
+    },
+    {
+      "path": "uno-genesis-routing-1",
+      "cause": "Static database indexed by cell root instead of file hash; no destination observation reached."
+    },
+    {
+      "path": "uno-genesis-routing-2",
+      "cause": "Incorrect expected sender count; existing first send is ignored, second send is the delivered message. Actual candidate retained."
+    },
+    {
+      "path": "uno-genesis-business-control",
+      "cause": "Calibration runner expected wrong test-runner summary spelling. Baseline actually passed; no mutation applied."
+    },
+    {
+      "path": "uno-genesis-mode-driver.log",
+      "cause": "Probe absent from compile_commands.json; measurement copy discarded. No compiled behavior."
+    },
+    {
+      "path": "uno-genesis-mode-driver-2.log",
+      "cause": "Same absent compile_commands entry after path normalization; next run reads actual Ninja object command. No compiled behavior."
+    }
+  ],
+  "full_regression_failure_explanations": [
+    {
+      "name": "test-counter-activation-missing_capability",
+      "cause": "7409 instance configuration missing at create_state",
+      "environment": false,
+      "followup": "blocked, not rerun as passing"
+    },
+    {
+      "name": "test-counter-activation-old_version",
+      "cause": "7409 instance configuration missing at create_state",
+      "environment": false,
+      "followup": "blocked, not rerun as passing"
+    },
+    {
+      "name": "test-smartcont",
+      "cause": "Regression requested mainnet with development operator identities; require-uno-genesis-operators correctly aborted",
+      "environment": false,
+      "followup": "test copy now explicitly selects test network; CTest passed"
+    },
+    {
+      "name": "test-uno-build-wiring",
+      "cause": "Child configure assumed local .venv instead of actual prepared interpreter",
+      "environment": true,
+      "followup": "Child receives sys.executable; CTest passed"
+    }
+  ]
+}

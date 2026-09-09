@@ -1,0 +1,22 @@
+[0m[ 4][t 0][2026-09-09 22:59:50.751678191][mc-config.cpp:572]	workchain description dictionary created[0m
+[0m[ 4][t 0][2026-09-09 22:59:50.751826983][mc-config.cpp:2347]	unpacked info for workchain 0: basic=true, active=true, accept_msgs=true, min_split=4, max_split=8[0m
+[0m[ 4][t 0][2026-09-09 22:59:50.751834170][mc-config.cpp:2347]	unpacked info for workchain 2: basic=true, active=true, accept_msgs=false, min_split=0, max_split=0[0m
+[1;36m[ 3][t 0][2026-09-09 22:59:50.751924779][validate-query.cpp:7262][!mc-extra-probe]	checking header of McStateExtra in the new masterchain state[0m
+[0m[ 4][t 0][2026-09-09 22:59:50.751989260][mc-config.cpp:572][!mc-extra-probe]	workchain description dictionary created[0m
+[0m[ 4][t 0][2026-09-09 22:59:50.751993650][mc-config.cpp:2347][!mc-extra-probe]	unpacked info for workchain 0: basic=true, active=true, accept_msgs=true, min_split=4, max_split=8[0m
+[0m[ 4][t 0][2026-09-09 22:59:50.751996067][mc-config.cpp:2347][!mc-extra-probe]	unpacked info for workchain 2: basic=true, active=true, accept_msgs=false, min_split=0, max_split=0[0m
+[0m[ 4][t 0][2026-09-09 22:59:50.752066598][mc-config.cpp:572][!mc-extra-probe]	workchain description dictionary created[0m
+[0m[ 4][t 0][2026-09-09 22:59:50.752070381][mc-config.cpp:2347][!mc-extra-probe]	unpacked info for workchain 0: basic=true, active=true, accept_msgs=true, min_split=4, max_split=8[0m
+[0m[ 4][t 0][2026-09-09 22:59:50.752072759][mc-config.cpp:2347][!mc-extra-probe]	unpacked info for workchain 2: basic=true, active=true, accept_msgs=false, min_split=0, max_split=0[0m
+[0m[ 4][t 0][2026-09-09 22:59:50.752106328][mc-config.cpp:572][!mc-extra-probe]	workchain description dictionary created[0m
+[0m[ 4][t 0][2026-09-09 22:59:50.752109879][mc-config.cpp:2347][!mc-extra-probe]	unpacked info for workchain 0: basic=true, active=true, accept_msgs=true, min_split=4, max_split=8[0m
+[0m[ 4][t 0][2026-09-09 22:59:50.752112013][mc-config.cpp:2347][!mc-extra-probe]	unpacked info for workchain 2: basic=true, active=true, accept_msgs=false, min_split=0, max_split=0[0m
+[0m[ 4][t 0][2026-09-09 22:59:50.752118837][mc-config.cpp:572][!mc-extra-probe]	workchain description dictionary created[0m
+[0m[ 4][t 0][2026-09-09 22:59:50.752121877][mc-config.cpp:2347][!mc-extra-probe]	unpacked info for workchain 0: basic=true, active=true, accept_msgs=true, min_split=4, max_split=8[0m
+[0m[ 4][t 0][2026-09-09 22:59:50.752125764][mc-config.cpp:2347][!mc-extra-probe]	unpacked info for workchain 2: basic=true, active=true, accept_msgs=false, min_split=0, max_split=0[0m
+[1;33m[ 2][t 0][2026-09-09 22:59:50.752158598][validate-query.cpp:8017][!mc-extra-probe]	validation took 0.000283s[0m
+[1;33m[ 2][t 0][2026-09-09 22:59:50.752179861][validate-query.cpp:8018][!mc-extra-probe]	Validate query work time = 0.000000s, cpu time = 0.000000s[0m
+[1;33m[ 2][t 0][2026-09-09 22:59:50.752183370][validate-query.cpp:8020][!mc-extra-probe]	{{
+}[0m
+[1;33m[ 2][t 0][2026-09-09 22:59:50.752186029][validate-query.cpp:269][!mc-extra-probe]	validate query done[0m
+failure_identity=931

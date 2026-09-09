@@ -1,0 +1,34 @@
+{
+  "commit": "ad87d9155f7ed38798d8b0a647cf209f289609b5",
+  "source": "crypto/smartcont/uno-genesis-config.fif",
+  "from": "{ drop false }",
+  "to": "{ drop true }",
+  "original_sha256": "f57206792ec50829aaccdb107022966793970b9f2df160519681afc343c2ec7c",
+  "copy_before_sha256": "f57206792ec50829aaccdb107022966793970b9f2df160519681afc343c2ec7c",
+  "mutant_sha256": "13ecdc92433d6c673dfe203e40a1c2ab49f12b54e3dc38161ebd8b7f60fcb681",
+  "restored_sha256": "f57206792ec50829aaccdb107022966793970b9f2df160519681afc343c2ec7c",
+  "restore_audit_sha256": "13ecdc92433d6c673dfe203e40a1c2ab49f12b54e3dc38161ebd8b7f60fcb681",
+  "failure_identity": 990,
+  "command": [
+    "python3",
+    "/home/tomi/tos-m2/test/test-uno-genesis-operators.py",
+    "--repo",
+    "/home/tomi/tos-m2",
+    "--create-state",
+    "/tmp/uno-publication-build/crypto/create-state",
+    "--resources",
+    "/tmp/uno-resource-control-nq7rzht2/resource.fif",
+    "--evidence",
+    "/tmp/uno-genesis-resources-serial/run"
+  ],
+  "interpretation_completed": "Both resource branches reached sentinel 993; not a load failure.",
+  "source_unchanged": true,
+  "restored_build_command": [
+    "cmake",
+    "--build",
+    "/tmp/uno-publication-build",
+    "--target",
+    "create-state",
+    "-j32"
+  ]
+}

@@ -1,0 +1,12 @@
+[0m[ 4][t 0][2026-09-09 23:03:38.513732977][mc-config.cpp:572]	workchain description dictionary created[0m
+[0m[ 4][t 0][2026-09-09 23:03:38.514062830][mc-config.cpp:2347]	unpacked info for workchain 2: basic=true, active=true, accept_msgs=true, min_split=0, max_split=0[0m
+input_configuration	16	0	1
+[0m[ 4][t 0][2026-09-09 23:03:38.514138356][mc-config.cpp:572]	workchain description dictionary created[0m
+[0m[ 4][t 0][2026-09-09 23:03:38.514145340][mc-config.cpp:2347]	unpacked info for workchain 2: basic=true, active=true, accept_msgs=true, min_split=0, max_split=0[0m
+input_configuration	16	1	1
+[0m[ 4][t 0][2026-09-09 23:03:38.514178521][mc-config.cpp:572]	workchain description dictionary created[0m
+[0m[ 4][t 0][2026-09-09 23:03:38.514184652][mc-config.cpp:2347]	unpacked info for workchain 2: basic=true, active=true, accept_msgs=true, min_split=0, max_split=0[0m
+input_configuration	16	0	1
+[0m[ 4][t 0][2026-09-09 23:03:38.514209960][mc-config.cpp:572]	workchain description dictionary created[0m
+[0m[ 4][t 0][2026-09-09 23:03:38.514216260][mc-config.cpp:2347]	unpacked info for workchain 2: basic=true, active=true, accept_msgs=true, min_split=0, max_split=0[0m
+input_configuration	16	1	1

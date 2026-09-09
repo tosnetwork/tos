@@ -1,0 +1,117 @@
+Running test Test_WorkchainBlock_CounterConfigurationEnvelope...
+[1;31m[ 0][t 0][2026-09-09 22:59:24.414521751][test-workchain-block.cpp:1341]	Expectation failed: engine.validate_and_resolve_config(descriptor, *config, nonempty).is_error() ? 0 : 1127 is not equal to 0 (1127 != 0)[0m
+[pid 3082037] [time 1788994764] Signal: 6
+------- Stack Backtrace -------
+/tmp/uno-business-copy-6js27txe/test-workchain-block(+0x6433f7)[0x6116dbd9a3f7]
+/tmp/uno-business-copy-6js27txe/test-workchain-block(+0xd287d)[0x6116db82987d]
+/lib/x86_64-linux-gnu/libc.so.6(+0x42520)[0x7c9c25042520]
+/lib/x86_64-linux-gnu/libc.so.6(pthread_kill+0x12c)[0x7c9c250969bc]
+/lib/x86_64-linux-gnu/libc.so.6(raise+0x16)[0x7c9c25042476]
+/lib/x86_64-linux-gnu/libc.so.6(abort+0xd3)[0x7c9c250287f3]
+/tmp/uno-business-copy-6js27txe/test-workchain-block(+0x6468c7)[0x6116dbd9d8c7]
+/tmp/uno-business-copy-6js27txe/test-workchain-block(+0x6469c7)[0x6116dbd9d9c7]
+/tmp/uno-business-copy-6js27txe/test-workchain-block(+0x646587)[0x6116dbd9d587]
+/tmp/uno-business-copy-6js27txe/test-workchain-block(+0x22279f)[0x6116db97979f]
+/tmp/uno-business-copy-6js27txe/test-workchain-block(+0x1b0d3a)[0x6116db907d3a]
+/tmp/uno-business-copy-6js27txe/test-workchain-block(+0x65088c)[0x6116dbda788c]
+/tmp/uno-business-copy-6js27txe/test-workchain-block(+0x6503b8)[0x6116dbda73b8]
+/tmp/uno-business-copy-6js27txe/test-workchain-block(+0xd93bf)[0x6116db8303bf]
+/lib/x86_64-linux-gnu/libc.so.6(+0x29d90)[0x7c9c25029d90]
+/lib/x86_64-linux-gnu/libc.so.6(__libc_start_main+0x80)[0x7c9c25029e40]
+/tmp/uno-business-copy-6js27txe/test-workchain-block(+0xd9265)[0x6116db830265]
+-------------------------------
+--- Enhanced Backtrace (libbacktrace) ---
+    #0  ?? (test-workchain-block+0xd287c) [0x6116db82987c]
+    #1  ?? at libc_sigaction.c (libc.so.6+0x4251f) [0x7c9c2504251f]
+    #2  __pthread_kill_implementation at pthread_kill.c:44 (libc.so.6+0x969bc) [0x7c9c250969bc]
+    #3  __pthread_kill_internal at pthread_kill.c:78 (libc.so.6+0x969bc) [0x7c9c250969bc]
+    #4  __GI___pthread_kill at pthread_kill.c:89 (libc.so.6+0x969bc) [0x7c9c250969bc]
+    #5  __GI_raise at raise.c:26 (libc.so.6+0x42475) [0x7c9c25042475]
+    #6  __GI_abort at abort.c:79 (libc.so.6+0x287f2) [0x7c9c250287f2]
+    #7  ?? (test-workchain-block+0x6468c6) [0x6116dbd9d8c6]
+    #8  ?? (test-workchain-block+0x6469c6) [0x6116dbd9d9c6]
+    #9  ?? (test-workchain-block+0x646586) [0x6116dbd9d586]
+    #10  ?? (test-workchain-block+0x22279e) [0x6116db97979e]
+    #11  ?? (test-workchain-block+0x1b0d39) [0x6116db907d39]
+    #12  ?? (test-workchain-block+0x65088b) [0x6116dbda788b]
+    #13  ?? (test-workchain-block+0x6503b7) [0x6116dbda73b7]
+    #14  ?? (test-workchain-block+0xd93be) [0x6116db8303be]
+    #15  __libc_start_call_main at libc_start_call_main.h:58 (libc.so.6+0x29d8f) [0x7c9c25029d8f]
+    #16  __libc_start_main_impl at libc-start.c:392 (libc.so.6+0x29e3f) [0x7c9c25029e3f]
+    #17  ?? (test-workchain-block+0xd9264) [0x6116db830264]
+    #18  πενώ (unknown+0xffffffffffffffff) [0xffffffffffffffff]
+------------------------------------------
+[Thread debugging using libthread_db enabled]
+Using host libthread_db library "/lib/x86_64-linux-gnu/libthread_db.so.1".
+0x00007c9c250ea3aa in __GI___wait4 (pid=3084614, stat_loc=0x0, options=0, usage=0x0) at ../sysdeps/unix/sysv/linux/wait4.c:30
+30	../sysdeps/unix/sysv/linux/wait4.c: No such file or directory.
+[Current thread is 1 (Thread 0x7c9c256ee800 (LWP 3082037))]
+
+Thread 1 (Thread 0x7c9c256ee800 (LWP 3082037) "test-workchain-"):
+#0  0x00007c9c250ea3aa in __GI___wait4 (pid=3084614, stat_loc=0x0, options=0, usage=0x0) at ../sysdeps/unix/sysv/linux/wait4.c:30
+        sc_ret = -512
+        sc_ret = <optimized out>
+#1  0x00006116dbd9a672 in td::Stacktrace::print_to_stderr(td::Stacktrace::PrintOptions const&) ()
+No symbol table info available.
+#2  0x00006116db82987d in td::default_failure_signal_handler(int) ()
+No symbol table info available.
+#3  <signal handler called>
+No locals.
+#4  __pthread_kill_implementation (no_tid=0, signo=6, threadid=137010084767744) at ./nptl/pthread_kill.c:44
+        tid = <optimized out>
+        ret = 0
+        pd = 0x7c9c256ee800
+        old_mask = {__val = {0 <repeats 16 times>}}
+        ret = <optimized out>
+        pd = <optimized out>
+        old_mask = <optimized out>
+        ret = <optimized out>
+        tid = <optimized out>
+        ret = <optimized out>
+        resultvar = <optimized out>
+        resultvar = <optimized out>
+        __arg3 = <optimized out>
+        __arg2 = <optimized out>
+        __arg1 = <optimized out>
+        _a3 = <optimized out>
+        _a2 = <optimized out>
+        _a1 = <optimized out>
+        __futex = <optimized out>
+        resultvar = <optimized out>
+        __arg3 = <optimized out>
+        __arg2 = <optimized out>
+        __arg1 = <optimized out>
+        _a3 = <optimized out>
+        _a2 = <optimized out>
+        _a1 = <optimized out>
+        __futex = <optimized out>
+        __private = <optimized out>
+        __oldval = <optimized out>
+        result = <optimized out>
+#5  __pthread_kill_internal (signo=6, threadid=137010084767744) at ./nptl/pthread_kill.c:78
+No locals.
+#6  __GI___pthread_kill (threadid=137010084767744, signo=signo@entry=6) at ./nptl/pthread_kill.c:89
+No locals.
+#7  0x00007c9c25042476 in __GI_raise (sig=sig@entry=6) at ../sysdeps/posix/raise.c:26
+        ret = <optimized out>
+#8  0x00007c9c250287f3 in __GI_abort () at ./stdlib/abort.c:79
+        save_stage = 1
+        act = {__sigaction_handler = {sa_handler = 0x0, sa_sigaction = 0x0}, sa_mask = {__val = {0 <repeats 16 times>}}, sa_flags = 0, sa_restorer = 0x0}
+        sigs = {__val = {32, 0 <repeats 15 times>}}
+#9  0x00006116dbd9d8c7 in td::process_fatal_error(td::CSlice) ()
+No symbol table info available.
+#10 0x00006116dbd9d9c7 in td::DefaultLog::append(td::CSlice, int) ()
+No symbol table info available.
+#11 0x00006116dbd9d587 in td::Logger::~Logger() ()
+No symbol table info available.
+#12 0x00006116db97979f in (anonymous namespace)::Test_WorkchainBlock_CounterConfigurationEnvelope::run() ()
+No symbol table info available.
+#13 0x00006116db907d3a in td::Test::step() ()
+No symbol table info available.
+#14 0x00006116dbda788c in td::TestsRunner::run_all_step() ()
+No symbol table info available.
+#15 0x00006116dbda73b8 in td::TestsRunner::run_all() ()
+No symbol table info available.
+#16 0x00006116db8303bf in main ()
+No symbol table info available.
+[Inferior 1 (process 3082037) detached]

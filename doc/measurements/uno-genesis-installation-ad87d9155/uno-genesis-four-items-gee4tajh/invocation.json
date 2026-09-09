@@ -1,0 +1,10 @@
+{
+  "command": [
+    "/tmp/uno-publication-build/crypto/create-state",
+    "-I",
+    "/home/tomi/tos-m2/crypto/fift/lib:/tmp/uno-publication-build/crypto/smartcont:/home/tomi/tos-m2/crypto/smartcont",
+    "/tmp/uno-genesis-four-items-gee4tajh/genesis.fif"
+  ],
+  "exit": 2,
+  "SOURCE_DATE_EPOCH": "1789434000"
+}

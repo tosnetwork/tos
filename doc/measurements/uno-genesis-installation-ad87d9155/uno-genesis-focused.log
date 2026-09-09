@@ -1,0 +1,22 @@
+Internal ctest changing into directory: /tmp/uno-publication-build
+Test project /tmp/uno-publication-build
+    Start  77: test-uno-genesis-operators
+1/4 Test  #77: test-uno-genesis-operators ............   Passed    0.41 sec
+    Start  78: test-workchain-genesis-routing
+2/4 Test  #78: test-workchain-genesis-routing ........   Passed    0.97 sec
+    Start 103: test-workchain-instance-identity
+3/4 Test #103: test-workchain-instance-identity ......   Passed    0.01 sec
+    Start 104: test-workchain-genesis-installation
+4/4 Test #104: test-workchain-genesis-installation ...   Passed    0.19 sec
+
+100% tests passed, 0 tests failed out of 4
+
+Label Time Summary:
+d40          =   0.19 sec*proc (2 tests)
+genesis      =   1.37 sec*proc (2 tests)
+harness      =   0.97 sec*proc (1 test)
+private      =   0.19 sec*proc (2 tests)
+uno          =   1.37 sec*proc (2 tests)
+workchain    =   0.19 sec*proc (2 tests)
+
+Total Test time (real) =   1.58 sec

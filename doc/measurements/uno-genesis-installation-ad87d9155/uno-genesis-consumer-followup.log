@@ -1,0 +1,22 @@
+Internal ctest changing into directory: /tmp/uno-publication-build
+Test project /tmp/uno-publication-build
+    Start  1: test-workchain-genesis-activation-missing-capability
+1/5 Test  #1: test-workchain-genesis-activation-missing-capability ...   Passed    0.16 sec
+    Start  2: test-workchain-genesis-activation-old-version
+2/5 Test  #2: test-workchain-genesis-activation-old-version ..........   Passed    0.16 sec
+    Start  3: test-workchain-activation-control-gates
+3/5 Test  #3: test-workchain-activation-control-gates ................   Passed    0.18 sec
+    Start 48: test-smartcont
+4/5 Test #48: test-smartcont .........................................   Passed    9.47 sec
+    Start 82: test-uno-build-wiring
+5/5 Test #82: test-uno-build-wiring ..................................   Passed   34.22 sec
+
+100% tests passed, 0 tests failed out of 5
+
+Label Time Summary:
+genesis      =   0.32 sec*proc (2 tests)
+i13          =   0.18 sec*proc (1 test)
+private      =   0.50 sec*proc (3 tests)
+workchain    =   0.50 sec*proc (3 tests)
+
+Total Test time (real) =  44.28 sec
