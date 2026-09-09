@@ -1,0 +1,47 @@
+{
+  "schema": 1,
+  "kind": "static_subject_inventory_not_acceptance",
+  "base_commit": "e542b08d5ca305c18be4fd4eb357548e3866f368",
+  "other_branch_checked": "6afee328135314b946caa9654999fa9aa391aa92",
+  "production_paths_changed_on_other_branch_since_fork": [],
+  "source_inventory": [
+    {
+      "path": "crypto/block/workchain-storage-overlay.h",
+      "sha256": "eeb8ea26bac55e65cce9e42652648d11eca1ead4fa684d0e8d8a053a69026aa7",
+      "git_blob_oid": "9e51f2ace07139b98971a736bacec24bc9ab34a0"
+    },
+    {
+      "path": "crypto/block/workchain-allocation-overlay.h",
+      "sha256": "c23855a4a5fafd7fd16b6b86637a9914f946fbf0240baa7ea770415464624b75",
+      "git_blob_oid": "bdcc112a942cb1f2089b02307d82e0c181271bb2"
+    },
+    {
+      "path": "crypto/block/workchain-payout-overlay.h",
+      "sha256": "11a3a678afd3e358ce948ad67d930c7a18a16ad767980cddfaae8fb3aa0c711b",
+      "git_blob_oid": "d70d3c0b6d2f6930d9aaf038f52259ec0ccae1fa"
+    },
+    {
+      "path": "crypto/block/workchain-account-settlement.h",
+      "sha256": "f2766fd4ec46bb27d8795e7106f9b274d56a895d006e4fc54ea3228d0a0d903e",
+      "git_blob_oid": "899dcc70a9164e3663c3e28d22d7240f4dec9ab0"
+    },
+    {
+      "path": "crypto/block/workchain-outbound-queues.h",
+      "sha256": "f40f2c72de5d12e59552df863b59126aa26cbaf66f1b212da9954a3b119e8c8a",
+      "git_blob_oid": "afa33dc5b6f27e532076fc188dd401efd68342bc"
+    },
+    {
+      "path": "validator/impl/collator.cpp",
+      "sha256": "7b034a1cc225ca9df9fc8f4f10f58cbcf18b9eae8e885f9f3ef10090dae0151c",
+      "git_blob_oid": "0c45e03d557bc1ff039045e5dec811f7b2295e4b"
+    }
+  ],
+  "finding": "Inspected multi-account private APIs return staged roots/artifacts; no atomic visible commit/publication operation identified on this surface.",
+  "not_claimed": [
+    "No assertion of an actual split-publication defect",
+    "No I13e behavior evidence",
+    "No milestone acceptance",
+    "No activation"
+  ],
+  "required_coordinator_decision": "Identify the real private commit/publication operation and observer boundary, or coordinate its introduction/ownership before acceptance instrumentation."
+}
