@@ -36,7 +36,10 @@ def main():
               'runner_sha256': sha(Path(__file__).read_bytes()), 'events': [], 'controls': [],
               'scope': 'Three private storage-overlay cases, each with two available and four pruned old account bodies. '
                        'No activation, full admitted-engine/replay or universal independence claim. '
-                       'Fixture metadata paths are exposed before proof extraction, without loading unused bodies.'}
+                       'Fixture metadata paths are exposed before proof extraction, without loading unused bodies. '
+                       'Pruning is deliberately test-constructed to check non-dependence; this establishes no production '
+                       'VmVirtError classification. Forbidden candidate pruned structure is CandidateInvalid; missing '
+                       'authenticated local state is LocalUnavailable. Exception type alone cannot distinguish their sources.'}
     copied = args.work / (target + '.cpp')
 
     def save():

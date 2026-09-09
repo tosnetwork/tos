@@ -9,6 +9,11 @@ struct UsageAssertion { int id; };
 void usage_require(bool value, int id) {
   if (!value) throw UsageAssertion{id};
 }
+// Pruning is deliberately constructed by this test to check non-dependence on
+// unused bodies. This establishes no production VmVirtError classification:
+// forbidden candidate pruned structure is CandidateInvalid, whereas missing
+// authenticated local state is LocalUnavailable. Source, not exception type
+// alone, determines that classification.
 void partial_state(unsigned scenario) {
   Fixture f;
   const std::vector<std::vector<unsigned>> pairs{{16, 128}, {32, 192}, {64, 224}};
