@@ -1,0 +1,4 @@
+[1/4] Building CXX object CMakeFiles/test-workchain-i13-acceptance.dir/crypto/test/test-workchain-i13-acceptance.cpp.o
+[2/4] Linking CXX executable test-workchain-i13-acceptance
+[3/4] Building CXX object CMakeFiles/test-workchain-i13-usage-acceptance.dir/crypto/test/test-workchain-i13-usage-acceptance.cpp.o
+[4/4] Linking CXX executable test-workchain-i13-usage-acceptance

@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Site BuildName="(empty)"
+	BuildStamp="20260909-1158-Experimental"
+	Name="(empty)"
+	Generator="ctest-3.22.1"
+	CompilerName=""
+	CompilerVersion=""
+	OSName="Linux"
+	Hostname="toserver"
+	OSRelease="6.8.0-138-generic"
+	OSVersion="#138~22.04.1-Ubuntu SMP PREEMPT_DYNAMIC Fri Aug  7 13:43:15 UTC "
+	OSPlatform="x86_64"
+	Is64Bits="1"
+	VendorString="GenuineIntel"
+	VendorID="Intel Corporation"
+	FamilyID="6"
+	ModelID="143"
+	ProcessorCacheSize="99840"
+	NumberOfLogicalCPU="192"
+	NumberOfPhysicalCPU="96"
+	TotalVirtualMemory="8191"
+	TotalPhysicalMemory="128481"
+	LogicalProcessorsPerPhysical="2"
+	ProcessorClockFrequency="791.301"
+	>
+	<Testing>
+		<StartDateTime>Sep 09 11:58 UTC</StartDateTime>
+		<StartTestTime>1788955118</StartTestTime>
+		<TestList>
+			<Test>./test-workchain-construction-isolation-gates</Test>
+		</TestList>
+		<Test Status="failed">
+			<Name>test-workchain-construction-isolation-gates</Name>
+			<Path>.</Path>
+			<FullName>./test-workchain-construction-isolation-gates</FullName>
+			<FullCommandLine>/home/tomi/.local/bin/python3 "/home/tomi/tos-m2/crypto/test/workchain-construction-isolation.py" "--build" "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/construction/build" "--ctest-root" "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/construction/runs"</FullCommandLine>
+			<Results>
+				<NamedMeasurement type="text/string" name="Exit Code">
+					<Value>Failed</Value>
+				</NamedMeasurement>
+				<NamedMeasurement type="text/string" name="Exit Value">
+					<Value>1</Value>
+				</NamedMeasurement>
+				<NamedMeasurement type="numeric/double" name="Execution Time">
+					<Value>87.0717</Value>
+				</NamedMeasurement>
+				<NamedMeasurement type="numeric/double" name="Processors">
+					<Value>1</Value>
+				</NamedMeasurement>
+				<NamedMeasurement type="text/string" name="Completion Status">
+					<Value>Completed</Value>
+				</NamedMeasurement>
+				<NamedMeasurement type="text/string" name="Command Line">
+					<Value>/home/tomi/.local/bin/python3 "/home/tomi/tos-m2/crypto/test/workchain-construction-isolation.py" "--build" "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/construction/build" "--ctest-root" "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/construction/runs"</Value>
+				</NamedMeasurement>
+				<NamedMeasurement type="text/string" name="Environment">
+					<Value>#CTEST_RESOURCE_GROUP_COUNT=</Value>
+				</NamedMeasurement>
+				<Measurement>
+					<Value>Private measurement evidence: /tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/construction/runs/run-cawj1loi/evidence
+Traceback (most recent call last):
+  File "/home/tomi/tos-m2/crypto/test/workchain-construction-isolation.py", line 245, in &lt;module&gt;
+    main()
+    ~~~~^^
+  File "/home/tomi/tos-m2/crypto/test/workchain-construction-isolation.py", line 122, in main
+    check_oracles(); (oracle / 'before.state').unlink(); runs('baseline', range(35), 0)
+                                                         ~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/tomi/tos-m2/crypto/test/workchain-construction-isolation.py", line 94, in runs
+    check_oracles()
+    ~~~~~~~~~~~~~^^
+  File "/home/tomi/tos-m2/crypto/test/workchain-construction-isolation.py", line 91, in check_oracles
+    assert sha((oracle / name).read_bytes()) == digest, 'oracle drift: ' + name
+               ~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/home/tomi/.local/share/uv/python/cpython-3.14.4-linux-x86_64-gnu/lib/python3.14/pathlib/__init__.py", line 777, in read_bytes
+    with self.open(mode='rb', buffering=0) as f:
+         ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/tomi/.local/share/uv/python/cpython-3.14.4-linux-x86_64-gnu/lib/python3.14/pathlib/__init__.py", line 771, in open
+    return io.open(self, mode, buffering, encoding, errors, newline)
+           ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: '/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/construction/runs/run-cawj1loi/evidence/oracles/before.state'
+</Value>
+				</Measurement>
+			</Results>
+			<Labels>
+				<Label>i13</Label>
+				<Label>private</Label>
+				<Label>workchain</Label>
+			</Labels>
+		</Test>
+		<EndDateTime>Sep 09 12:00 UTC</EndDateTime>
+		<EndTestTime>1788955206</EndTestTime>
+		<ElapsedMinutes>1</ElapsedMinutes>
+	</Testing>
+</Site>

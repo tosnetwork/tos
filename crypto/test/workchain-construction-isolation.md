@@ -149,3 +149,12 @@ control physically removes a current-run oracle after checking all four hashes
 and requires a CTest failure. This checks dependency propagation, not the
 application's numeric missing-file guard. Missing oracle dependency identity 92
 is separately exercised by the normal construction driver.
+
+For the coordinator's next integration check, the same explicit module include
+must add exactly these three names to that integration tree's registry:
+`test-workchain-construction-isolation-gates`,
+`test-workchain-i13-acceptance-gates`, and
+`test-workchain-i13-usage-acceptance-gates`. Its recorded starting count is 127,
+so the expected integration count is 130. A registry still at 127 does not
+include this coverage; pre-merge regression results must not be cited as testing
+these drivers. This integration condition is separate from a private-tree run.

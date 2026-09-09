@@ -1,0 +1,64 @@
+{
+  "base_commit": "49adb250b93648391a316f9e5110d9a0787fbfda",
+  "events": [
+    {
+      "label": "default-configure",
+      "argv": [
+        "cmake",
+        "-S",
+        "/home/tomi/tos-m2",
+        "-B",
+        "/tmp/uno-i13-ctest-49adb250b",
+        "-G",
+        "Ninja",
+        "-DCMAKE_BUILD_TYPE=Release",
+        "-DTOS_UNO_CRYPTO_PROTOTYPE_TESTS=OFF",
+        "-DCMAKE_PROJECT_TOS_INCLUDE="
+      ],
+      "exit": 1,
+      "stdout_sha256": "6ceddd6018b855d992283bfb65d626c7712e48e536ec312bfc62f0f8c580fd2d",
+      "stderr_sha256": "d6cebe834d39d34f3c264aac9ce9fe5b82ccbbb0cb6bf40fca742ef82f8a0f53"
+    }
+  ],
+  "controls": [],
+  "sources": {
+    "crypto/test/workchain-construction-isolation.py": {
+      "commit": "49adb250b93648391a316f9e5110d9a0787fbfda",
+      "path": "crypto/test/workchain-construction-isolation.py",
+      "blob_sha256": "9acf7ac1701959938af928d8d2f2035b69a07c21ae5f255464c45b103cb20c4b",
+      "git_blob_oid": "4656c5033cdb962302fd1102f5e0157caa904b1f"
+    },
+    "crypto/test/workchain-construction-isolation.cmake": {
+      "commit": "49adb250b93648391a316f9e5110d9a0787fbfda",
+      "path": "crypto/test/workchain-construction-isolation.cmake",
+      "blob_sha256": "0243e9dd32dbda5aef4b6688af230324f2ba0d8df8726a48ad62e22da6daee8c",
+      "git_blob_oid": "fbfebbec60ed51b121eb8807a13179c16b689b4d"
+    },
+    "crypto/test/workchain-i13-acceptance.py": {
+      "commit": "49adb250b93648391a316f9e5110d9a0787fbfda",
+      "path": "crypto/test/workchain-i13-acceptance.py",
+      "blob_sha256": "dfa330d544a2f464dfb1d133dfdad2ec9ff70f8287b2328948102c4c49e18163",
+      "git_blob_oid": "2601fc03b956bef4cc54aad8b51fef2a5864a936"
+    },
+    "crypto/test/workchain-i13-acceptance.cmake": {
+      "commit": "49adb250b93648391a316f9e5110d9a0787fbfda",
+      "path": "crypto/test/workchain-i13-acceptance.cmake",
+      "blob_sha256": "cbea9a66bb42434c78d0d6e617a0b2af844131a1f75ee246b47d353240555d8d",
+      "git_blob_oid": "4ac84fa051052f8f5879901874ee273702685564"
+    },
+    "crypto/test/workchain-i13-usage-acceptance.py": {
+      "commit": "49adb250b93648391a316f9e5110d9a0787fbfda",
+      "path": "crypto/test/workchain-i13-usage-acceptance.py",
+      "blob_sha256": "f94c89a2b828406b124886d7abdd56e03c9e6c0d2dcc52c9ba2e2d26fbf411e1",
+      "git_blob_oid": "820266b2fa8c97c4793479b77ead6d94948c557d"
+    },
+    "crypto/test/workchain-i13-usage-acceptance.cmake": {
+      "commit": "49adb250b93648391a316f9e5110d9a0787fbfda",
+      "path": "crypto/test/workchain-i13-usage-acceptance.cmake",
+      "blob_sha256": "f0dc714c6154232d17d8e11ed6f4d11aa50aaa215654934fc6eb03ae1ec6ca80",
+      "git_blob_oid": "23f55bd7b923ae2ac5d4cb36e3b65157c95dca7e"
+    }
+  },
+  "scope": "Opt-in CTest plumbing and private drivers only. No activation, live integration or I13e acceptance.",
+  "path_helper_sha256": "39631e07a8b759364b916de85b734e7ad418ab21023bb620136ca6bdc1bf42ad"
+}

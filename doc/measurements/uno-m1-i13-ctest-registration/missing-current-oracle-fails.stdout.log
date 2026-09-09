@@ -1,0 +1,40 @@
+Internal ctest changing into directory: /tmp/uno-i13-ctest-49adb250b
+   Site: 
+   Build name: (empty)
+Test project /tmp/uno-i13-ctest-49adb250b
+    Start 3: test-workchain-construction-isolation-gates
+1/1 Test #3: test-workchain-construction-isolation-gates ...***Failed   87.07 sec
+Private measurement evidence: /tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/construction/runs/run-cawj1loi/evidence
+Traceback (most recent call last):
+  File "/home/tomi/tos-m2/crypto/test/workchain-construction-isolation.py", line 245, in <module>
+    main()
+    ~~~~^^
+  File "/home/tomi/tos-m2/crypto/test/workchain-construction-isolation.py", line 122, in main
+    check_oracles(); (oracle / 'before.state').unlink(); runs('baseline', range(35), 0)
+                                                         ~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/tomi/tos-m2/crypto/test/workchain-construction-isolation.py", line 94, in runs
+    check_oracles()
+    ~~~~~~~~~~~~~^^
+  File "/home/tomi/tos-m2/crypto/test/workchain-construction-isolation.py", line 91, in check_oracles
+    assert sha((oracle / name).read_bytes()) == digest, 'oracle drift: ' + name
+               ~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/home/tomi/.local/share/uv/python/cpython-3.14.4-linux-x86_64-gnu/lib/python3.14/pathlib/__init__.py", line 777, in read_bytes
+    with self.open(mode='rb', buffering=0) as f:
+         ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/tomi/.local/share/uv/python/cpython-3.14.4-linux-x86_64-gnu/lib/python3.14/pathlib/__init__.py", line 771, in open
+    return io.open(self, mode, buffering, encoding, errors, newline)
+           ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: '/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/construction/runs/run-cawj1loi/evidence/oracles/before.state'
+
+
+0% tests passed, 1 tests failed out of 1
+
+Label Time Summary:
+i13          =  87.07 sec*proc (1 test)
+private      =  87.07 sec*proc (1 test)
+workchain    =  87.07 sec*proc (1 test)
+
+Total Test time (real) =  87.07 sec
+
+The following tests FAILED:
+	  3 - test-workchain-construction-isolation-gates (Failed)

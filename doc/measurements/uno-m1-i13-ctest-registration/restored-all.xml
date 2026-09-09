@@ -1,0 +1,162 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Site BuildName="(empty)"
+	BuildStamp="20260909-1158-Experimental"
+	Name="(empty)"
+	Generator="ctest-3.22.1"
+	CompilerName=""
+	CompilerVersion=""
+	OSName="Linux"
+	Hostname="toserver"
+	OSRelease="6.8.0-138-generic"
+	OSVersion="#138~22.04.1-Ubuntu SMP PREEMPT_DYNAMIC Fri Aug  7 13:43:15 UTC "
+	OSPlatform="x86_64"
+	Is64Bits="1"
+	VendorString="GenuineIntel"
+	VendorID="Intel Corporation"
+	FamilyID="6"
+	ModelID="143"
+	ProcessorCacheSize="99840"
+	NumberOfLogicalCPU="192"
+	NumberOfPhysicalCPU="96"
+	TotalVirtualMemory="8191"
+	TotalPhysicalMemory="128481"
+	LogicalProcessorsPerPhysical="2"
+	ProcessorClockFrequency="799.735"
+	>
+	<Testing>
+		<StartDateTime>Sep 09 12:00 UTC</StartDateTime>
+		<StartTestTime>1788955206</StartTestTime>
+		<TestList>
+			<Test>./test-workchain-construction-isolation-gates</Test>
+			<Test>./test-workchain-i13-acceptance-gates</Test>
+			<Test>./test-workchain-i13-usage-acceptance-gates</Test>
+		</TestList>
+		<Test Status="passed">
+			<Name>test-workchain-construction-isolation-gates</Name>
+			<Path>.</Path>
+			<FullName>./test-workchain-construction-isolation-gates</FullName>
+			<FullCommandLine>/home/tomi/.local/bin/python3 "/home/tomi/tos-m2/crypto/test/workchain-construction-isolation.py" "--build" "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/construction/build" "--ctest-root" "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/construction/runs"</FullCommandLine>
+			<Results>
+				<NamedMeasurement type="numeric/double" name="Execution Time">
+					<Value>599.625</Value>
+				</NamedMeasurement>
+				<NamedMeasurement type="numeric/double" name="Processors">
+					<Value>1</Value>
+				</NamedMeasurement>
+				<NamedMeasurement type="text/string" name="Completion Status">
+					<Value>Completed</Value>
+				</NamedMeasurement>
+				<NamedMeasurement type="text/string" name="Command Line">
+					<Value>/home/tomi/.local/bin/python3 "/home/tomi/tos-m2/crypto/test/workchain-construction-isolation.py" "--build" "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/construction/build" "--ctest-root" "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/construction/runs"</Value>
+				</NamedMeasurement>
+				<NamedMeasurement type="text/string" name="Environment">
+					<Value>#CTEST_RESOURCE_GROUP_COUNT=</Value>
+				</NamedMeasurement>
+				<Measurement>
+					<Value>Private measurement evidence: /tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/construction/runs/run-_af8vdbu/evidence
+restored: checkpoint-before-predecessor
+restored: omit-generation-checkpoint
+restored: direct-live-stage
+restored: direct-live-before-install
+restored: install-after-builder-failure
+restored: omit-successful-install
+restored: omit-successful-messages
+restored: forget-observed-failure
+restored: omit-predecessor-check
+restored: allow-reentrant-construction
+restored: normalize-submitted-count
+restored: retain-mutable-message-alias
+restored: omit-root-presence
+restored: omit-message-identity-presence
+restored: leave-construction-active
+restored: omit-state-observation
+restored: omit-message-observation
+restored: alter-before-oracle-reader
+restored: replace-live-snapshot-with-identical-bytes
+restored: replace-failed-snapshot-with-identical-bytes
+restored: ignore-ordinary-builder-failure
+restored: omit-ParticipantFinalize
+restored: omit-AccountBlockStage
+restored: omit-AccountRootStage
+restored: om...
+The rest of the test output was removed since it exceeds the threshold of 1024 bytes.
+</Value>
+				</Measurement>
+			</Results>
+			<Labels>
+				<Label>i13</Label>
+				<Label>private</Label>
+				<Label>workchain</Label>
+			</Labels>
+		</Test>
+		<Test Status="passed">
+			<Name>test-workchain-i13-acceptance-gates</Name>
+			<Path>.</Path>
+			<FullName>./test-workchain-i13-acceptance-gates</FullName>
+			<FullCommandLine>/home/tomi/.local/bin/python3 "/home/tomi/tos-m2/crypto/test/workchain-i13-acceptance.py" "--build" "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build" "--ctest-root" "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/runs"</FullCommandLine>
+			<Results>
+				<NamedMeasurement type="numeric/double" name="Execution Time">
+					<Value>212.271</Value>
+				</NamedMeasurement>
+				<NamedMeasurement type="numeric/double" name="Processors">
+					<Value>1</Value>
+				</NamedMeasurement>
+				<NamedMeasurement type="text/string" name="Completion Status">
+					<Value>Completed</Value>
+				</NamedMeasurement>
+				<NamedMeasurement type="text/string" name="Command Line">
+					<Value>/home/tomi/.local/bin/python3 "/home/tomi/tos-m2/crypto/test/workchain-i13-acceptance.py" "--build" "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/build" "--ctest-root" "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/runs"</Value>
+				</NamedMeasurement>
+				<NamedMeasurement type="text/string" name="Environment">
+					<Value>#CTEST_RESOURCE_GROUP_COUNT=</Value>
+				</NamedMeasurement>
+				<Measurement>
+					<Value>Private measurement evidence: /tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/coverage/runs/run-805z5_0o/evidence
+PASS: 16 cases, 10 isolated controls, restored sources; review pending
+</Value>
+				</Measurement>
+			</Results>
+			<Labels>
+				<Label>i13</Label>
+				<Label>private</Label>
+				<Label>workchain</Label>
+			</Labels>
+		</Test>
+		<Test Status="passed">
+			<Name>test-workchain-i13-usage-acceptance-gates</Name>
+			<Path>.</Path>
+			<FullName>./test-workchain-i13-usage-acceptance-gates</FullName>
+			<FullCommandLine>/home/tomi/.local/bin/python3 "/home/tomi/tos-m2/crypto/test/workchain-i13-usage-acceptance.py" "--build" "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/usage/build" "--ctest-root" "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/usage/runs"</FullCommandLine>
+			<Results>
+				<NamedMeasurement type="numeric/double" name="Execution Time">
+					<Value>160.206</Value>
+				</NamedMeasurement>
+				<NamedMeasurement type="numeric/double" name="Processors">
+					<Value>1</Value>
+				</NamedMeasurement>
+				<NamedMeasurement type="text/string" name="Completion Status">
+					<Value>Completed</Value>
+				</NamedMeasurement>
+				<NamedMeasurement type="text/string" name="Command Line">
+					<Value>/home/tomi/.local/bin/python3 "/home/tomi/tos-m2/crypto/test/workchain-i13-usage-acceptance.py" "--build" "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/usage/build" "--ctest-root" "/tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/usage/runs"</Value>
+				</NamedMeasurement>
+				<NamedMeasurement type="text/string" name="Environment">
+					<Value>#CTEST_RESOURCE_GROUP_COUNT=</Value>
+				</NamedMeasurement>
+				<Measurement>
+					<Value>Private measurement evidence: /tmp/uno-i13-ctest-49adb250b/workchain-i13-ctest/usage/runs/run-b1zn0wv8/evidence
+PASS: three partial-state cases, eight compiled controls, restore audits; review pending
+</Value>
+				</Measurement>
+			</Results>
+			<Labels>
+				<Label>i13</Label>
+				<Label>private</Label>
+				<Label>workchain</Label>
+			</Labels>
+		</Test>
+		<EndDateTime>Sep 09 12:16 UTC</EndDateTime>
+		<EndTestTime>1788956178</EndTestTime>
+		<ElapsedMinutes>16</ElapsedMinutes>
+	</Testing>
+</Site>

@@ -1,0 +1,52 @@
+{
+  "scope": "Private construction and explicit CTest drivers only; no activation, live integration, D31 completion or I13e acceptance. Historical reports remain tied to their own commits. No compound replacements. Standard suite failure remains open pending A fix.",
+  "reports": [
+    {
+      "report": "uno-m1-construction-isolation/measurement.json",
+      "source_commit": "a0cca7b2ab575d8e39451994fbff755af48bb5f8",
+      "controls_reconstructed": 30,
+      "events_verified": 351
+    },
+    {
+      "report": "uno-m1-construction-isolation/legacy-order-reference/measurement.json",
+      "source_commit": "ea4e1c8700a5b56f1e0f6768ba6ad0be353be20f",
+      "controls_reconstructed": 29,
+      "events_verified": 307
+    },
+    {
+      "report": "uno-m1-i13-ctest-registration/measurement.json",
+      "source_commit": "6c4b7993a571d5fe631d20b8bc9c2ccfb2f832bd",
+      "controls_reconstructed": 4,
+      "events_verified": 13
+    },
+    {
+      "report": "uno-m1-i13-ctest-registration/construction/measurement.json",
+      "source_commit": "6c4b7993a571d5fe631d20b8bc9c2ccfb2f832bd",
+      "controls_reconstructed": 31,
+      "events_verified": 360
+    },
+    {
+      "report": "uno-m1-i13-ctest-registration/coverage/measurement.json",
+      "source_commit": "6c4b7993a571d5fe631d20b8bc9c2ccfb2f832bd",
+      "controls_reconstructed": 10,
+      "events_verified": 127
+    },
+    {
+      "report": "uno-m1-i13-ctest-registration/usage/measurement.json",
+      "source_commit": "6c4b7993a571d5fe631d20b8bc9c2ccfb2f832bd",
+      "controls_reconstructed": 8,
+      "events_verified": 105
+    }
+  ],
+  "current_construction_cases": 35,
+  "current_construction_controls": 31,
+  "current_coverage_controls": 10,
+  "current_usage_controls": 8,
+  "ctest_plumbing_controls": 4,
+  "current_oracles_match_prior_run": true,
+  "checkpoint_order_legacy_cases_passed": 34,
+  "checkpoint_presence_case34_still_passes": true,
+  "private_regression_cases": 19,
+  "standard_suite_passed": false,
+  "standard_suite_diagnostic": "uno-m1-disposal-predecessor/measurement.json"
+}

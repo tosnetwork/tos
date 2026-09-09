@@ -1,0 +1,9 @@
+{
+  "scope": "Historical complete calibration, not a run of the current harness. This committed predecessor-order version predates case 34 and the separation of missing-message/identity diagnostic 103 from missing-root diagnostic 99. It records the original 29 controls individually. The current single order replacement separately runs all original cases 0 through 33 unchanged; no two mutations are combined.",
+  "base_commit": "ea4e1c8700a5b56f1e0f6768ba6ad0be353be20f",
+  "measurement": "legacy-order-reference/measurement.json",
+  "measurement_sha256": "280c6a839c4f4c2dee9848af7a262ab425367e49532dbb0c0b174582a67dbe46",
+  "original_controls": 29,
+  "header_matches_current_order_mutant": true,
+  "oracles_match_current_baseline": true
+}
