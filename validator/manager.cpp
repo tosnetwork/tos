@@ -18,6 +18,7 @@
     Copyright 2025-2026 TOS Blockchain Teams
 */
 #include <algorithm>
+#include <cerrno>
 #include <fstream>
 #include <limits>
 #include <optional>
@@ -2377,19 +2378,35 @@ void ValidatorManagerImpl::sweep_destroyed_consensus_dbs() {
     // is not proof of removal: it ignores every unlink()/rmdir() error and
     // returns OK as long as the walk itself succeeded, so a permissions or
     // read-only-filesystem failure would leave the directory in place while
-    // rmrf() still reports success. Probe with stat() -- an error means the
-    // path no longer exists (the removal worked); a successful stat means the
-    // directory is still there. Only a confirmed removal counts as reclaimed;
-    // otherwise the destroyed-session record is kept so the next startup
-    // retries this directory.
+    // rmrf() still reports success. Probe with stat() -- but only a
+    // "not found" error proves the path is gone. Any other stat error
+    // (EACCES, EIO, ELOOP, ...) leaves existence unknown and the directory may
+    // well still be there, so it must NOT be counted as reclaimed. Only a
+    // confirmed removal counts; otherwise the destroyed-session record is kept
+    // so the next startup retries this directory.
     td::RocksDb::destroy(full + "/db/").ignore();
     td::rmrf(full).ignore();
-    if (td::stat(full).is_error()) {
+    auto probe = td::stat(full);
+    bool confirmed_gone = false;
+    if (probe.is_error()) {
+#if TD_PORT_WINDOWS
+      auto code = probe.error().code();
+      confirmed_gone = (code == ERROR_FILE_NOT_FOUND || code == ERROR_PATH_NOT_FOUND);
+#else
+      confirmed_gone = (probe.error().code() == ENOENT);
+#endif
+    }
+    if (confirmed_gone) {
       reclaimed++;
     } else {
       failed++;
-      LOG(WARNING) << "leftover consensus database still present after delete attempt: " << full
-                   << "; keeping its destroyed-session record so a later startup retries it";
+      if (probe.is_ok()) {
+        LOG(WARNING) << "leftover consensus database still present after delete attempt: " << full
+                     << "; keeping its destroyed-session record so a later startup retries it";
+      } else {
+        LOG(WARNING) << "could not confirm removal of consensus database " << full << " (stat: "
+                     << probe.error() << "); keeping its destroyed-session record so a later startup retries it";
+      }
     }
     return td::WalkPath::Action::SkipDir;
   }).ignore();
