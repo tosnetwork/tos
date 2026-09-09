@@ -30,7 +30,7 @@ The specification separately authorizes a payout and one aggregate operation-fee
 |---|---|---|
 | M0 | Consistent design decisions, configuration semantics and review | Existing design/review; implementation decisions tracked here. Production numeric calibration is not proven by research measurements. |
 | M1 | Multi-account wire, one logical execution, exact account coverage, native settlement, version gates, independent replay and synchronization | In progress. Private settlement/replay and outbound queue components exist; dual Native destination admission is integrated. Multi-account execution is not integrated into live collator/validator. None of these component results closes I13 acceptance. |
-| M2 | Complete deterministic relations, system encryption, prover/verifier, ABI and supply-chain gates | Existing kernel work is partial evidence; not marked complete. |
+| M2 | Complete deterministic relations, system encryption, prover/verifier, ABI and supply-chain gates | Kernel, separate wallet prover, patch-layer differential, RNG and supply-chain deliverables are integrated through `9556ab05d`. Optional verifier node-build linkage with execution gates closed remains an integration acceptance item. Deliverable completion does not establish cryptographic correctness or deployment authorization; this row does not mark the milestone complete. |
 | M3 | Registered accounts, real candidate source, SEND/COLLECT and pending lifecycle | Not accepted. |
 | M4 | Native deposits and fee isolation | Not accepted. |
 | M5 | Withdrawals, matched/late returns, reservations and settlement ordering | Not accepted. |
@@ -39,6 +39,34 @@ The specification separately authorizes a payout and one aggregate operation-fee
 | M8 | Real-value activation gates and operational rehearsal | Not authorized by a coding request. |
 
 ## Current integration boundary and next sequence
+
+### Owner-directed sequence after opt-in harness registration
+
+After the three private I13 harness modules have registered their Python
+drivers and demonstrated failing CTest controls, A first resumes the thin
+end-to-end connectivity smoke, then I13b, then I13a. B owns I13e publication
+work. This sequence supersedes older scheduling paragraphs below; it does not
+waive outstanding resource-admission prerequisites or authorize opening a gate.
+
+- Connectivity must use objects constructed by the production path. Record
+  the actual stopping point, counters and side effects; private fixture assembly
+  is not runtime connectivity evidence. If a closed gate or incomplete resource
+  admission prevents progress, report that boundary rather than bypassing it.
+- I13b requires a host-owned ledger created at candidate-block processing entry
+  and destroyed at its end, keyed by the admitted input root hash. Enforce it
+  at the stateful engine entry, rejecting a second execution in that scope.
+  Independent validator replay has its own scope. A per-call or process-global
+  ledger, or counting token copies, does not satisfy this contract.
+- I13a requires a bounded scan of all workchain-2 AccountBlocks, extraction of
+  actual batch identities, uniqueness enforcement and an independent count
+  compared with the claimed committed count. Never use the claim as the source
+  of truth. Isolate the guards with three controls: one identity with a wrong
+  count; two identities with the correct count of two; and a second identity
+  outside the first scanned account. The last must detect premature scan exit.
+
+No capability/profile activation is authorized by these tasks. Preserve all
+existing activation gates. Changes to live consensus judgement receive review
+at their delivery boundary, not only at milestone completion.
 
 ### Revalidated dependency frontier at `31e6ad1f5`
 
@@ -2976,15 +3004,19 @@ to expose type, lifetime and failure-provenance mismatches. A failed connection
 is a useful result to document and resolve, not a reason to relax a gate. Then
 resume the remaining D31 obligations.
 
-M2 also returns to the work cycle. First evaluate the narrowest safe optional
-node-build linkage for the existing verifier, with the existing CI gates and
-default disabled. Build/link availability must not imply engine registration
-or execution permission. If linking the prototype ABI is premature, record the
-concrete obstacle and use the smallest integration step that tests that seam
-without opening execution. Wallet prover work remains separate. Neither this
-scheduling change nor a successful link closes the outstanding differential or
-supply-chain acceptance requirements. Mutation controls, byte-exact restoration,
-full regression and independent review remain required for each completed unit.
+M2 status update after integration `9556ab05d`: deterministic relation and system
+encryption kernels, the separate wallet prover, patch-layer differential, RNG
+and supply-chain deliverables are present. The earlier scheduling statement
+that differential and supply-chain delivery remained outstanding is superseded.
+The remaining integration acceptance item here is optional verifier node-build
+linkage with capability/execution gates closed; the default-disabled link option
+already exists. Build/link availability must not imply engine registration or
+execution permission. Differential evidence covers primitives and local patches,
+not an independent oracle for the new SEND/COLLECT relations. Deliverables do
+not establish relation soundness/completeness or close the explicitly retained
+external cryptographic-review gap. Wallet prover dependencies remain separate
+from the node. Mutation controls, byte-exact restoration, full regression and
+independent review remain required for each completed unit.
 
 Connectivity investigation at `ffedd9d21` found the first missing seam before
 runtime replay: `resolve_account_binding` returns a validated `engine_config`,
