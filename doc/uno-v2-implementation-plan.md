@@ -3198,6 +3198,24 @@ inspection contract, rather than treating the token as such a proof.
 
 ### Next integration boundary: connectivity before deeper admission work
 
+Current scheduling constraint (coordinator decision, 2026-09-10): D45 forbids
+moving any execution refusal before C1/C2/C3 close; there is no isolated-test
+exception. The earlier scheduling text below is historical, not authorization
+to advance the four remaining visitor refusals. First establish their distinct
+runtime frontiers; the original five-site GDB sequence measured Collator only,
+not ValidateQuery. Unreached sites cannot establish that a change is harmless.
+
+AccountBatch scope rule `b2eeef278` is reviewed, but it connects no live call
+site. Mandatory acceptance for the eventual connection: the actual account
+branch must call `validate_workchain_candidate_scope` with the complete
+`WorkchainAccountCandidate`, not its extracted `candidate()` root. Add a
+call-site source or compile-time check and mutate that actual call to the
+single-root BlockTransition form; the check must fail. The current private
+`singleton-fallback` mutation does not discharge this live-call-site obligation.
+The legacy overload and public root accessor intentionally remain compatible,
+so explicit information erasure is still possible. Do not invent a dormant
+call site merely to close this item while D45 prohibits the real connection.
+
 After the current proof-admission unit completes its controls, full regression,
 follow-up review and commit, the next cut is a thin end-to-end connectivity
 smoke through account-engine registration, live dispatch and replay. Keep the
