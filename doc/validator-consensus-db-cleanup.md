@@ -1097,3 +1097,44 @@ cleanup decision components, and the manager wiring are implemented; production
 deletion is not enabled, and the concurrency, completion-acknowledgement,
 startup-ordering, and resource-reclamation work required to enable it safely is
 not yet done.
+
+## B2-8c progress — safety-logic prerequisites DONE; enablement bundle remains
+
+The B2-8c **safety-logic** prerequisites are implemented and unit-tested (gate
+still off):
+
+- **Durable-erase-ack + operation-token completion** (B2-8c-1): Pending/Deleting/
+  Erasing state machine; begin_eligible_deletes returns the incarnation generation
+  as an op token; on_delete_completed and on_erase_acknowledged reject a
+  wrong-generation or wrong-state completion; the record is dropped and the
+  reservation released ONLY on the acknowledged durable erase.
+- **Fair round-robin retry cursor** (B2-8c-2): a failing prefix can no longer
+  starve later records.
+- **Fence-before-create** (B2-8c-3): get_or_make_next_group defers creation while
+  is_delete_in_flight(session).
+- **Startup barrier** (B2-8c-3): validator records load before finish_start_up, so
+  on_loaded_at_startup precedes any group creation.
+
+Each has a falsifiable test (mutation-verified): durable-ack held until erase ack,
+token rejection, round-robin fairness, generation reclamation, the four-condition
+gate, and Case 6.
+
+**Remaining before the flip (the enablement bundle, post-genesis):**
+
+1. **Async delete worker.** Move the blocking RocksDb::destroy + rmrf off the
+   manager actor thread (a dedicated IO worker / executor), calling
+   on_delete_completed from the worker's completion, never inline. This is actor
+   infrastructure, not a safety-logic gap -- the completion state machine already
+   handles an async completion -- and it affects timing/liveness, so it is
+   validated together with the enablement soak. The current synchronous call is
+   behind the gate and documented in try_validator_consensus_db_cleanup.
+2. **Falsifiable INTEGRATION acceptance** (needs a manager harness and/or the async
+   worker): reopen during an in-flight delete, stale close/delete/erase callbacks
+   end-to-end, replacement-record preservation, restart reconciliation, and real
+   GC-oracle boundaries. The component-level equivalents exist; the end-to-end
+   manager-level proofs are the enablement gate.
+3. **The flip** (kValidatorConsensusCleanupEnabled -> true), only after 1 + 2 and a
+   disk/RSS soak, post-genesis.
+
+Finding 1 remains open until that bundle is done; the branch stays a deletion-safe
+staging state (no validator DB deleted anywhere).
