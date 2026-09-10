@@ -20,7 +20,7 @@ specs=[
  ('counter-extended','test/counter-network-config.fif','add-counter-network-workchain','a7','0xe000','0x434e5431','variable counter_network_descriptor\n'),
  ('uno-basic','crypto/smartcont/uno-genesis-config.fif','add-uno-genesis-workchain','a6','0xc000','uno_genesis_engine_key','uno-v2-engine-key constant uno_genesis_engine_key\nvariable uno_genesis_descriptor\n'),
 ]
-report={'baseline_commit':commit,'cases':[]}
+report={'baseline_commit':commit,'create_state_sha256':hashlib.sha256(a.create_state.read_bytes()).hexdigest(),'cases':[]}
 def execute(case,mode,body):
  script=a.out/(case+'.'+mode+'.fif');output=a.out/(case+'.'+mode+'.boc')
  script.write_text('4 setglobalid\ndictnew workchain-dict !\n'+body+'\n2 workchain-dict @ 32 idict@ 0= abort"missing descriptor"\ns>c 31 boc+>B "'+str(output)+'" B>file\n')
@@ -41,6 +41,7 @@ for name,source,word,tag,flags,key,prefix in specs:
  old=execute(name,'old',prefix+definition+'\n1 2 1788656400 0 0 0 2 baseline-constructor')
  new=execute(name,'new',prefix+f'1 2 1788656400 0 0 0 2 {flags} {key} '+('add-basic-workchain-v2' if tag=='a7' else 'add-basic-workchain')+' drop')
  entry={'name':name,'baseline_source':source,'baseline_source_sha256':hashlib.sha256(raw).hexdigest(),'baseline_boc_sha256':hashlib.sha256(old).hexdigest(),'library_boc_sha256':hashlib.sha256(new).hexdigest(),'equal':old==new}
+ if old!=new:report['failure_identity']=1221
  report['cases'].append(entry);(a.out/'report.json').write_text(json.dumps(report,indent=2)+'\n')
  assert old==new,f'1221: descriptor bytes changed: {name}'
 print('PASS: five descriptor encodings byte-identical to pinned predecessors')
