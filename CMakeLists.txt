@@ -849,6 +849,23 @@ if(NOT TARGET test-workchain-activation-control)
     "-Wl,--start-group" tos_crypto tos_block tos_crypto_core "-Wl,--end-group")
 endif()
 add_dependencies(all-tests test-workchain-activation-control)
+# Prepared local validator decisions are private in scope, but checked by the
+# default build/regression. The wrapper expires them if production is connected.
+if(NOT TARGET test-workchain-validator-local-visitors)
+  add_executable(test-workchain-validator-local-visitors
+    crypto/test/test-workchain-validator-local-visitors.cpp)
+  target_link_libraries(test-workchain-validator-local-visitors PRIVATE tos_block tos_crypto)
+endif()
+add_dependencies(all-tests test-workchain-validator-local-visitors)
+add_test(NAME test-workchain-validator-local-visitors
+  COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/crypto/test/workchain-validator-prepared-expiry.py"
+    --repo "${CMAKE_CURRENT_SOURCE_DIR}"
+    --probe $<TARGET_FILE:test-workchain-validator-local-visitors>
+    --fixture "${CMAKE_CURRENT_SOURCE_DIR}/doc/measurements/uno-local-profile/run-3/state/zerostate.boc")
+set_tests_properties(test-workchain-validator-local-visitors PROPERTIES
+  TIMEOUT 60 LABELS "private;workchain;prepared-not-connected")
+
 add_executable(test-workchain-ingress-transition crypto/test/test-workchain-ingress-transition.cpp)
 target_link_libraries(test-workchain-ingress-transition PRIVATE tos_block tos_crypto tdutils)
 add_dependencies(all-tests test-workchain-ingress-transition)

@@ -110,3 +110,12 @@ registered unconditionally in crypto/CMakeLists.txt as
 `test-workchain-validator-prepared-expiry`; it needs no native probe or optional
 include. The private opt-in test still runs the same guard before its probe.
 Historical opt-in evidence remains valid for that narrower registration scope.
+
+
+**Native registration follow-up:** The root CMakeLists.txt now also defines
+`test-workchain-validator-local-visitors` directly, adds it to `all-tests`, and
+registers its wrapper by default. The historical optional module is only a
+compatibility entry, with no duplicate definitions. Thus both the source-only
+expiry guard and the private native decision checks run in ordinary CTest.
+Private scope still means no live actor/call-site evidence; it no longer means
+optional registration. Earlier opt-in measurements keep their historical scope.
