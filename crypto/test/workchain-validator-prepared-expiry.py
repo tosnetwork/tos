@@ -29,7 +29,7 @@ def check(source):
             continue
         begin = source.index(start)
         finish = source.find(end, begin)
-        region = source[begin:finish] if finish >= 0 else ''
+        region = source[begin:finish + len(end)] if finish >= 0 else ''
         bodies = re.findall(
             r'\[\]\(const block::ResolvedWorkchainAccountBinding&\)'
             r'(?:\s*->\s*td::Result<bool>)?\s*\{([^{}]*)\}', region)
