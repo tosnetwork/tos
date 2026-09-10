@@ -16,73 +16,106 @@
 
     Copyright 2025-2026 TOS Blockchain Teams
 */
-// ACCEPTANCE-ONLY negative-test injector. Writes ONE deliberately INELIGIBLE validator
-// consensus-DB cleanup record into a (stopped) node's StateDb and creates its canonical
-// consensus directory, so a subsequent armed run can prove the four-condition safety gate
-// REFUSES to delete it (no VALCLEANUP reserve for it; the directory is retained).
+// ACCEPTANCE-ONLY test-fixture injector for the validator consensus-DB cleanup negative
+// matrix. Writes ONE validator cleanup record (with a caller-chosen retirement checkpoint,
+// directory workchain, and directory catchain seqno) into a STOPPED node's StateDb and
+// creates its canonical consensus directory. By choosing those fields, a driver builds a
+// DIFFERENTIAL set that isolates each veto of the four-condition gate:
+//   * eligible CONTROL   (ancestor retirement + obsolete cc + real shard) -> gets deleted;
+//   * poison "ancestry"  (FUTURE non-ancestor retirement, else eligible)  -> refused by B;
+//   * poison "obsolete"  (ancestor retirement + FUTURE cc)                -> refused by C;
+//   * poison "unknown-gc"(ancestor retirement + nonexistent workchain)    -> refused (sentinel).
+// The record is always read back through the production decoder (POISON_LOADABLE) so a
+// PASS cannot be vacuous.
 //
-// The injected record is ineligible on two independent conditions:
-//   * retirement_checkpoint is a FUTURE masterchain block (huge seqno) -> can never be an
-//     ancestor-or-equal of any GC floor the node reaches (fails condition B);
-//   * the directory's catchain seqno is FUTURE (huge) -> r < g is false, i.e. not on-chain
-//     obsolete (fails condition C).
-//
-// Usage:  inject-validator-cleanup-record <node_db_root>
-// Writes to <node_db_root>/state (StateDb RocksDB) and creates
-// <node_db_root>/consensus/consensus.0.<mcshard>.<cc>.<session_hex>/db/CURRENT.
-// The node engine MUST be stopped (RocksDB holds a single-process lock). Prints the
-// injected session hex and dir so a harness/analyzer can assert on exactly them.
+// Usage:
+//   inject-validator-cleanup-record write <db_root> <seed> <retire_seqno> <retire_root_b64> \
+//       <retire_file_b64> <dir_wc> <dir_cc>
+//   inject-validator-cleanup-record check <db_root> <seed>
+// Retirement is always a masterchain block id (wc -1, shard 0x8000000000000000); the
+// directory shard is 0x8000000000000000 with the given workchain. Session id is derived
+// deterministically from <seed>.
 #include "validator/consensus/db-path.h"
 #include "validator/consensus/validator-cleanup-store.h"
 
 #include "td/db/RocksDb.h"
-#include "td/utils/Slice.h"
+#include "td/utils/base64.h"
 #include "td/utils/filesystem.h"
 #include "td/utils/port/path.h"
 
 #include <cstdio>
+#include <cstdlib>
 #include <string>
 
 using namespace tos::validator::consensus;
 
+namespace {
+tos::ValidatorSessionId session_from_seed(int seed) {
+  tos::ValidatorSessionId sid;
+  for (size_t i = 0; i < sid.as_slice().size(); i++) {
+    sid.as_slice()[i] = static_cast<char>((seed + static_cast<int>(i) * 7) & 0xFF);
+  }
+  return sid;
+}
+
+bool decode_hash(const std::string& b64, tos::Bits256& out) {
+  auto r = td::base64_decode(b64);
+  if (r.is_error() || r.ok().size() != 32) {
+    return false;
+  }
+  out.as_slice().copy_from(td::Slice{r.ok()});
+  return true;
+}
+}  // namespace
+
 int main(int argc, char** argv) {
-  // Modes:
-  //   inject-validator-cleanup-record <node_db_root>            write poison + create dir + readback
-  //   inject-validator-cleanup-record --check <node_db_root>    readback only (post-run: is poison still present?)
-  bool check_only = false;
-  std::string db_root;
-  if (argc == 2) {
-    db_root = argv[1];
-  } else if (argc == 3 && std::string(argv[1]) == "--check") {
-    check_only = true;
-    db_root = argv[2];
-  } else {
-    std::fprintf(stderr, "usage: %s [--check] <node_db_root>\n", argv[0]);
+  const tos::ShardId mc_shard = static_cast<tos::ShardId>(0x8000000000000000ULL);
+
+  if (argc >= 4 && std::string(argv[1]) == "check") {
+    std::string db_root = argv[2];
+    auto sid = session_from_seed(std::atoi(argv[3]));
+    auto kv_res = td::RocksDb::open(db_root + "/state");
+    if (kv_res.is_error()) {
+      std::fprintf(stderr, "ERROR: cannot open StateDb: %s\n", kv_res.error().message().c_str());
+      return 1;
+    }
+    auto kv = kv_res.move_as_ok();
+    bool present = false;
+    for (const auto& r : load_validator_cleanup_records(kv)) {
+      if (r.session_id == sid) {
+        present = true;
+      }
+    }
+    std::printf("POISON_PRESENT=%d session=%s\n", present ? 1 : 0, sid.to_hex().c_str());
+    return 0;
+  }
+
+  if (argc != 9 || std::string(argv[1]) != "write") {
+    std::fprintf(stderr,
+                 "usage: %s write <db_root> <seed> <retire_seqno> <retire_root_b64> <retire_file_b64> <dir_wc> "
+                 "<dir_cc>\n       %s check <db_root> <seed>\n",
+                 argv[0], argv[0]);
+    return 2;
+  }
+  std::string db_root = argv[2];
+  int seed = std::atoi(argv[3]);
+  auto retire_seqno = static_cast<tos::BlockSeqno>(std::strtoul(argv[4], nullptr, 10));
+  std::string retire_root_b64 = argv[5];
+  std::string retire_file_b64 = argv[6];
+  auto dir_wc = static_cast<tos::WorkchainId>(std::atoi(argv[7]));
+  auto dir_cc = static_cast<tos::CatchainSeqno>(std::strtoul(argv[8], nullptr, 10));
+
+  tos::Bits256 root_hash, file_hash;
+  if (!decode_hash(retire_root_b64, root_hash) || !decode_hash(retire_file_b64, file_hash)) {
+    std::fprintf(stderr, "ERROR: retire root/file hash must be base64 of 32 bytes\n");
     return 2;
   }
 
-  // Deterministic "poison" session id (all 0xEE) so a harness/analyzer knows exactly
-  // what to look for.
-  tos::ValidatorSessionId sid;
-  for (size_t i = 0; i < sid.as_slice().size(); i++) {
-    sid.as_slice()[i] = static_cast<char>(0xEE);
-  }
-  const tos::ShardId mc_shard = static_cast<tos::ShardId>(0x8000000000000000ULL);
-  const tos::ShardIdFull shard{0, mc_shard};
-  const tos::CatchainSeqno future_cc = 9000000;  // future cc -> r < g is false
-
-  // Future masterchain retirement block, valid-full (non-zero hashes) but non-ancestor.
-  tos::Bits256 root_hash, file_hash;
-  for (size_t i = 0; i < root_hash.as_slice().size(); i++) {
-    root_hash.as_slice()[i] = static_cast<char>(0xA0 + (i % 16));
-    file_hash.as_slice()[i] = static_cast<char>(0x0B + (i % 16));
-  }
-  const tos::BlockIdExt retire{tos::masterchainId, mc_shard, 9000000u, root_hash, file_hash};
-
+  auto sid = session_from_seed(seed);
   PendingValidatorConsensusDbCleanup record;
   record.session_id = sid;
-  record.retirement_checkpoint = retire;
-  record.dir_name = consensus_db_dir_name(shard, future_cc, sid, td::Slice(""));
+  record.retirement_checkpoint = tos::BlockIdExt{tos::masterchainId, mc_shard, retire_seqno, root_hash, file_hash};
+  record.dir_name = consensus_db_dir_name(tos::ShardIdFull{dir_wc, mc_shard}, dir_cc, sid, td::Slice(""));
 
   auto kv_res = td::RocksDb::open(db_root + "/state");
   if (kv_res.is_error()) {
@@ -91,36 +124,19 @@ int main(int argc, char** argv) {
     return 1;
   }
   auto kv = kv_res.move_as_ok();
-
-  auto poison_is_loadable = [&]() {
-    // Load via the SAME production decode path the engine uses at startup; the poison
-    // counts only if it decodes AND its session matches (i.e. the engine WILL load it).
-    for (const auto& r : load_validator_cleanup_records(kv)) {
-      if (r.session_id == sid) {
-        return true;
-      }
-    }
-    return false;
-  };
-
-  if (check_only) {
-    // Post-run: a wrongful cleanup would have erased the durable record. Its survival
-    // (plus the surviving dir, checked by the caller) is session-specific refusal evidence.
-    bool present = poison_is_loadable();
-    std::printf("POISON_PRESENT=%d session=%s\n", present ? 1 : 0, sid.to_hex().c_str());
-    return 0;
-  }
-
   store_validator_cleanup_record(kv, record);
 
   auto db_dir = consensus_db_root(td::Slice{db_root}) + record.dir_name + "/db/";
   td::mkpath(db_dir).ensure();
-  td::write_file(db_dir + "CURRENT", td::Slice{"poison"}).ensure();
+  td::write_file(db_dir + "CURRENT", td::Slice{"fixture"}).ensure();
 
-  // Read back through the production decoder so a PASS cannot be vacuous: if this is 0 the
-  // engine would never load the record and "not reserved" would prove nothing.
-  int loadable = poison_is_loadable() ? 1 : 0;
-  std::printf("INJECTED session=%s dir=%s retirement_seqno=9000000 cc=9000000 POISON_LOADABLE=%d\n", sid.to_hex().c_str(),
-              record.dir_name.c_str(), loadable);
+  bool loadable = false;
+  for (const auto& r : load_validator_cleanup_records(kv)) {
+    if (r.session_id == sid) {
+      loadable = true;
+    }
+  }
+  std::printf("INJECTED seed=%d session=%s dir=%s retire_seqno=%u dir_wc=%d dir_cc=%u POISON_LOADABLE=%d\n", seed,
+              sid.to_hex().c_str(), record.dir_name.c_str(), retire_seqno, dir_wc, dir_cc, loadable ? 1 : 0);
   return loadable ? 0 : 1;
 }
