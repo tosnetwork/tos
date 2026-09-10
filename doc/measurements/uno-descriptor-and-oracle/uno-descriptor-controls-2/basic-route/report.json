@@ -1,0 +1,47 @@
+{
+  "baseline_commit": "a27ff2c77",
+  "create_state_sha256": "448c577bd00d6d2f1d9a33fc4ddb0563b24a310c8a423b0d7828db9fc8cf741a",
+  "cases": [
+    {
+      "name": "native-basic",
+      "baseline_source": "crypto/fift/lib/Workchain.fif",
+      "baseline_source_sha256": "c17c25e91c0c0c9c814ed77f57c7dbb472b2a01d605a695c3697c03acc1090b8",
+      "baseline_boc_sha256": "4506a6256cbad672aade9ece9072d6fab0483cf24e81c4bf3090beed5033da9b",
+      "library_boc_sha256": "4506a6256cbad672aade9ece9072d6fab0483cf24e81c4bf3090beed5033da9b",
+      "equal": true
+    },
+    {
+      "name": "native-extended",
+      "baseline_source": "test/tostester/src/tostester/zerostate.py",
+      "baseline_source_sha256": "31526c618de36ffdf843dcf882625c54ebb5a5e48b7b697b585db879c4961c84",
+      "baseline_boc_sha256": "9cf59a29af482a1e68039689d5c713ce31760f49e6105d242e50afecaf6d6125",
+      "library_boc_sha256": "9cf59a29af482a1e68039689d5c713ce31760f49e6105d242e50afecaf6d6125",
+      "equal": true
+    },
+    {
+      "name": "counter-basic",
+      "baseline_source": "test/counter-masterchain-genesis.fif",
+      "baseline_source_sha256": "48f3aa19415a7075c80e93cd063fb1ba28506209e553565dab3123a59c85929d",
+      "baseline_boc_sha256": "ac38bf401aa405b8296a8da7fe011bbadf786a64749fa6fb4668843573e15311",
+      "library_boc_sha256": "ac38bf401aa405b8296a8da7fe011bbadf786a64749fa6fb4668843573e15311",
+      "equal": true
+    },
+    {
+      "name": "counter-extended",
+      "baseline_source": "test/counter-network-config.fif",
+      "baseline_source_sha256": "572c4e8a97f70cd592c9d5bf01bef46034b783d355b54959cad6b292fe4425db",
+      "baseline_boc_sha256": "d2cb5a017d041b513a02b8a34ce6d13bd4dbdad33c5bfff07bfdec4cee92b9e9",
+      "library_boc_sha256": "d2cb5a017d041b513a02b8a34ce6d13bd4dbdad33c5bfff07bfdec4cee92b9e9",
+      "equal": true
+    },
+    {
+      "name": "uno-basic",
+      "baseline_source": "crypto/smartcont/uno-genesis-config.fif",
+      "baseline_source_sha256": "f57206792ec50829aaccdb107022966793970b9f2df160519681afc343c2ec7c",
+      "baseline_boc_sha256": "c5d4ff9ab210652d93e4de57b99bd111dde10629c64a000894f8c707d8c7f369",
+      "library_boc_sha256": "6a26055d738f9963229098108cf29b107353d4e6124b87969614da5d14e1908b",
+      "equal": false
+    }
+  ],
+  "failure_identity": 1221
+}

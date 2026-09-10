@@ -26,3 +26,10 @@ was unavailable; no complete old-BOC reconstruction is claimed.
 Binary and object files are omitted; compilation/link commands, source commits,
 input copies and binary hashes identify reconstruction. Large logs are losslessly
 gzipped with their original byte counts and hashes in artifact-manifest.json.
+
+The descriptor controls were subsequently rerun at 10b12dc6b as
+uno-descriptor-controls-2. This is the final failure-identity calibration: it
+reads numeric identity 1221 from report.json, not stderr text, and records the
+actual create-state SHA-256. All other preceding byte comparisons remain
+historical evidence. Both mutations and the five restored comparisons pass
+this strengthened measurement, with unchanged production Fift source.

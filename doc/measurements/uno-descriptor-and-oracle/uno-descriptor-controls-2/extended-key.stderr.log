@@ -1,0 +1,5 @@
+Traceback (most recent call last):
+  File "/home/tomi/tos-m2/test/workchain-descriptor-equivalence.py", line 46, in <module>
+    assert old==new,f'1221: descriptor bytes changed: {name}'
+           ^^^^^^^^
+AssertionError: 1221: descriptor bytes changed: counter-extended
