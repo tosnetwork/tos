@@ -75,10 +75,11 @@ bool confirming_deleter(td::CSlice full) {
 
 }  // namespace
 
-// The sweep at startup decides what to delete by recovering a session id
-// from a directory name. If the name cannot be parsed back, the sweep
-// reclaims nothing and the leak it exists for stays: the guard would be
-// there and do nothing. These pin the round trip in both directions.
+// A directory name must round-trip back to its session id: the validator cleanup
+// record decoder validates a directory against its session id via this parse, so
+// if the name cannot be parsed back the record is rejected. (The startup sweep
+// itself deletes by exact queued name, not by session id.) These pin the round
+// trip in both directions.
 TEST(ConsensusDbPath, name_round_trips_to_its_session) {
   auto session_id = make_session_id(3);
   tos::ShardIdFull shard{0, static_cast<tos::ShardId>(0x8000000000000000ULL)};
@@ -160,11 +161,11 @@ TEST(ConsensusDbSweep, never_sweeps_unqueued_validator_directory) {
   td::rmrf(root).ignore();
 }
 
-// A directory that is not queued is a live/unrelated group and must never be
-// touched (observer or validator alike).
-TEST(ConsensusDbSweep, leaves_unqueued_directory) {
+// An unqueued observer directory is a live/unrelated group and must never be
+// touched.
+TEST(ConsensusDbSweep, leaves_unqueued_observer_directory) {
   auto root = make_temp_root();
-  auto name = consensus_db_dir_name(kShard, 3, make_session_id(1), td::Slice(""));
+  auto name = consensus_db_dir_name(kShard, 3, make_session_id(1), td::Slice(".observer.zz"));
   create_group_dir(root, name);
 
   std::set<std::string> pending;
@@ -178,6 +179,30 @@ TEST(ConsensusDbSweep, leaves_unqueued_directory) {
   ASSERT_EQ(stats.reclaimed, static_cast<size_t>(0));
   ASSERT_TRUE(!deleter_called);
   ASSERT_TRUE(dir_exists(root, name));
+  td::rmrf(root).ignore();
+}
+
+// Deletion is by EXACT queued name, not by session id: a queued observer
+// directory and a validator directory sharing the same session id coexist, and
+// only the exact queued observer name is deleted. The validator directory (never
+// queued) survives. If the sweep matched on session id, the validator dir would
+// be wrongly deleted.
+TEST(ConsensusDbSweep, deletes_only_exact_queued_name_not_same_session_sibling) {
+  auto root = make_temp_root();
+  auto sid = make_session_id(21);
+  auto observer = consensus_db_dir_name(kShard, 5, sid, td::Slice(".observer.aa"));
+  auto validator = consensus_db_dir_name(kShard, 5, sid, td::Slice(""));  // same session id
+  create_group_dir(root, observer);
+  create_group_dir(root, validator);
+
+  std::set<std::string> pending{observer};  // only the observer name is queued
+  auto stats = sweep_orphaned_consensus_dbs(root, pending, confirming_deleter);
+
+  ASSERT_TRUE(stats.walk_succeeded);
+  ASSERT_EQ(stats.reclaimed, static_cast<size_t>(1));
+  ASSERT_TRUE(!dir_exists(root, observer));  // queued -> deleted
+  ASSERT_TRUE(dir_exists(root, validator));  // same session, not queued -> survives
+  ASSERT_TRUE(pending.empty());
   td::rmrf(root).ignore();
 }
 

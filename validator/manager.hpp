@@ -598,8 +598,8 @@ class ValidatorManagerImpl : public ValidatorManager {
   // (not only at the next startup sweep).
   void consensus_db_cleanup_done(std::string dir_name) override;
   void consensus_db_closed(ValidatorSessionId session_id, std::string dir_name) override;
-  // Reclaims per-group databases still queued for cleanup (or, for pre-upgrade
-  // databases, recorded only as a destroyed session); see the definition.
+  // Reclaims the observer per-group databases still queued for cleanup; see the
+  // definition. Validator directories are never reclaimed here.
   void sweep_destroyed_consensus_dbs();
   td::actor::Task<> finish_start_up();
   td::actor::Task<> start_up_advance_mc();

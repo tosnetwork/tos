@@ -2354,9 +2354,9 @@ void ValidatorManagerImpl::started(ValidatorManagerInitResult R) {
 
 void ValidatorManagerImpl::got_destroyed_validator_sessions(std::vector<ValidatorSessionId> sessions) {
   destroyed_validator_sessions_.insert(sessions.begin(), sessions.end());
-  // Load the cleanup queue before sweeping: both sets must be in hand so the
-  // sweep acts on the queue and migrates any pre-upgrade destroyed-session
-  // directories (recorded only by id) into it.
+  // Load the cleanup queue before sweeping. The queue holds only observer
+  // directory names; the sweep deletes exactly those. Validator directories are
+  // never swept here (their cleanup is checkpoint-bound in the manager).
   td::actor::send_closure(db_, &Db::get_pending_consensus_db_cleanup,
                           [SelfId = actor_id(this)](td::Result<std::vector<std::string>> R) {
                             R.ensure();
