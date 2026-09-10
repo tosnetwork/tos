@@ -78,6 +78,60 @@ void put_raw(td::RocksDb& kv, td::Slice key, td::Slice value) {
   kv.commit_write_batch().ensure();
 }
 
+// A thin KeyValue decorator that forwards everything to an inner RocksDb but
+// counts write-batch commits, so a test can assert store_validator_retirement
+// uses exactly ONE batch (crash-atomic) rather than a separate commit per record.
+class CommitCountingKeyValue : public td::KeyValue {
+ public:
+  explicit CommitCountingKeyValue(td::RocksDb& inner) : inner_(inner) {
+  }
+  size_t commits = 0;
+
+  td::Result<GetStatus> get(td::Slice key, std::string& value) override {
+    return inner_.get(key, value);
+  }
+  td::Result<std::vector<GetStatus>> get_multi(td::Span<td::Slice> keys, std::vector<std::string>* values) override {
+    return inner_.get_multi(keys, values);
+  }
+  td::Result<size_t> count(td::Slice prefix) override {
+    return inner_.count(prefix);
+  }
+  td::Status for_each_in_range(td::Slice begin, td::Slice end, std::function<td::Status(td::Slice, td::Slice)> f) override {
+    return inner_.for_each_in_range(begin, end, std::move(f));
+  }
+  td::Status set(td::Slice key, td::Slice value) override {
+    return inner_.set(key, value);
+  }
+  td::Status erase(td::Slice key) override {
+    return inner_.erase(key);
+  }
+  td::Status begin_write_batch() override {
+    return inner_.begin_write_batch();
+  }
+  td::Status commit_write_batch() override {
+    commits++;
+    return inner_.commit_write_batch();
+  }
+  td::Status abort_write_batch() override {
+    return inner_.abort_write_batch();
+  }
+  td::Status begin_transaction() override {
+    return inner_.begin_transaction();
+  }
+  td::Status commit_transaction() override {
+    return inner_.commit_transaction();
+  }
+  td::Status abort_transaction() override {
+    return inner_.abort_transaction();
+  }
+  std::unique_ptr<td::KeyValueReader> snapshot() override {
+    return inner_.snapshot();
+  }
+
+ private:
+  td::RocksDb& inner_;
+};
+
 std::string temp_db_path() {
   auto path = PSTRING() << "test-validator-cleanup-statedb-" << td::Random::fast_uint32();
   td::rmrf(path).ignore();
@@ -209,6 +263,38 @@ TEST(ValidatorCleanupStateDb, atomic_retirement_persists_fence_and_records) {
     }
     ASSERT_TRUE(got.count(make_session_id(9).to_hex()) == 1);
     ASSERT_TRUE(got.count(make_session_id(200).to_hex()) == 1);
+  }
+  td::rmrf(path).ignore();
+}
+
+// The retirement write must be ONE batch (crash-atomic), not a commit per
+// record. A commit-counting decorator proves it: three records + the fence must
+// produce exactly one commit. A split-per-record implementation would commit
+// more than once and fail here.
+TEST(ValidatorCleanupStateDb, retirement_uses_a_single_batch) {
+  auto path = temp_db_path();
+  {
+    auto inner = td::RocksDb::open(path).move_as_ok();
+    CommitCountingKeyValue counter{inner};
+    std::vector<PendingValidatorConsensusDbCleanup> records{make_record(9, 100), make_record(200, 150),
+                                                            make_record(201, 160)};
+    store_validator_retirement(counter, td::Slice{"test.fence"}, td::Slice{"blob"}, records);
+    ASSERT_EQ(counter.commits, static_cast<size_t>(1));
+  }
+  td::rmrf(path).ignore();
+}
+
+// An empty record list still writes the fence in one batch (a retirement update
+// that only prunes the fence), and loads no records.
+TEST(ValidatorCleanupStateDb, retirement_with_no_records_writes_fence_only) {
+  auto path = temp_db_path();
+  {
+    auto kv = td::RocksDb::open(path).move_as_ok();
+    store_validator_retirement(kv, td::Slice{"test.fence"}, td::Slice{"blob"}, {});
+    std::string got;
+    auto r = kv.get(td::Slice{"test.fence"}, got);
+    ASSERT_TRUE(r.is_ok() && r.move_as_ok() == td::KeyValue::GetStatus::Ok && got == "blob");
+    ASSERT_TRUE(load_validator_cleanup_records(kv).empty());
   }
   td::rmrf(path).ignore();
 }
