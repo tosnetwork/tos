@@ -26,11 +26,18 @@
 #include "td/db/RocksDb.h"
 #include "td/utils/Random.h"
 #include "td/utils/Slice.h"
+#include "td/utils/filesystem.h"
 #include "td/utils/port/path.h"
+#include "td/utils/port/Stat.h"
 #include "td/utils/tests.h"
 
 #include <set>
 #include <vector>
+
+#ifndef _WIN32
+#include <sys/stat.h>
+#include <unistd.h>
+#endif
 
 using namespace tos::validator::consensus;
 
@@ -132,11 +139,12 @@ class CommitCountingKeyValue : public td::KeyValue {
   td::RocksDb& inner_;
 };
 
-// Create <root>/consensus/<dir_name>/db/ with a file inside, so there is a real
-// directory tree for the delete helper to remove.
+// Create <root>/consensus/<dir_name>/db/ with a real file inside, so there is a
+// non-empty directory tree for the delete helper to remove.
 void create_consensus_dir(const std::string& root, const std::string& dir_name) {
-  auto full = consensus_db_root(root) + dir_name + "/db/";
-  td::mkpath(full).ensure();
+  auto db_dir = consensus_db_root(root) + dir_name + "/db/";
+  td::mkpath(db_dir).ensure();
+  td::write_file(db_dir + "CURRENT", td::Slice{"x"}).ensure();
 }
 bool consensus_dir_exists(const std::string& root, const std::string& dir_name) {
   return td::stat(consensus_db_root(root) + dir_name).is_ok();
@@ -257,6 +265,79 @@ TEST(ValidatorCleanupStateDb, delete_helper_refuses_non_canonical) {
   ASSERT_TRUE(!delete_validator_consensus_db(td::Slice{path}, sid, std::string("../escape")));
   td::rmrf(path).ignore();
 }
+
+// The confirmation primitive: a present path is NOT confirmed absent; a removed
+// path IS. If this returned true unconditionally, the delete helper would falsely
+// report success while a directory lingers -- so this pins the "stat proves gone"
+// contract independently of the delete flow.
+TEST(ValidatorCleanupStateDb, path_is_confirmed_absent_requires_real_absence) {
+  auto path = temp_db_path();
+  auto full = consensus_db_root(path) + "probe-dir";
+  td::mkpath(full + "/").ensure();
+  ASSERT_TRUE(!path_is_confirmed_absent(full));  // present -> not absent
+  td::rmrf(full).ignore();
+  ASSERT_TRUE(path_is_confirmed_absent(full));  // removed -> absent
+  td::rmrf(path).ignore();
+}
+
+#ifndef _WIN32
+// Containment: a canonical directory that is actually a SYMLINK to a directory
+// OUTSIDE the consensus root must be refused, and the external target must be left
+// completely intact -- the helper must never follow a planted symlink out of the
+// node's data dir. Deterministic and independent of euid. If the realpath
+// containment check were dropped, the external DB would be destroyed.
+TEST(ValidatorCleanupStateDb, delete_helper_refuses_symlink_escape) {
+  auto path = temp_db_path();
+  auto sid = make_session_id(9);
+  auto dir = consensus_db_dir_name(kShard, 7, sid, td::Slice(""));
+
+  // External directory (outside the consensus root) with a sentinel file.
+  auto external = PSTRING() << path << "-external";
+  td::rmrf(external).ignore();
+  td::mkpath(external + "/db/").ensure();
+  td::write_file(external + "/db/SENTINEL", td::Slice{"keep me"}).ensure();
+
+  // Make <root>/consensus/ exist, then plant the canonical name as a symlink to
+  // the external directory.
+  td::mkpath(consensus_db_root(path)).ensure();
+  auto link_path = consensus_db_root(path) + dir;
+  auto ext_abs = td::realpath(external).move_as_ok();
+  ASSERT_TRUE(::symlink(ext_abs.c_str(), link_path.c_str()) == 0);
+
+  ASSERT_TRUE(!delete_validator_consensus_db(td::Slice{path}, sid, dir));
+  ASSERT_TRUE(td::stat(external + "/db/SENTINEL").is_ok());  // external target untouched
+
+  td::rmrf(link_path).ignore();
+  td::rmrf(external).ignore();
+  td::rmrf(path).ignore();
+}
+
+// Removal failure: when the parent is not writable (non-root), rmrf cannot remove
+// the directory, so the helper must report false (unconfirmed) and the directory
+// must remain. This falsifies a helper that returns true without confirming. Root
+// bypasses directory permissions, so the assertion only runs as non-root; it is
+// skipped (with a log) under root rather than passing vacuously.
+TEST(ValidatorCleanupStateDb, delete_helper_returns_false_when_removal_blocked) {
+  if (::geteuid() == 0) {
+    LOG(WARNING) << "skipping removal-blocked assertion: running as root bypasses directory permissions";
+    return;
+  }
+  auto path = temp_db_path();
+  auto sid = make_session_id(9);
+  auto dir = consensus_db_dir_name(kShard, 7, sid, td::Slice(""));
+  create_consensus_dir(path, dir);
+
+  auto parent = consensus_db_root(path);  // <root>/consensus/
+  ASSERT_TRUE(::chmod(parent.c_str(), 0555) == 0);  // read+execute, no write -> child cannot be removed
+
+  bool deleted = delete_validator_consensus_db(td::Slice{path}, sid, dir);
+
+  ::chmod(parent.c_str(), 0755);  // restore so cleanup can proceed
+  ASSERT_TRUE(!deleted);
+  ASSERT_TRUE(consensus_dir_exists(path, dir));
+  td::rmrf(path).ignore();
+}
+#endif
 
 // A record whose VALUE is internally valid but is stored under a DIFFERENT
 // session's key must not be loaded: the key and the value's session id must

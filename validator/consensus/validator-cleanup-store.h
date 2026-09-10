@@ -97,26 +97,12 @@ inline std::vector<PendingValidatorConsensusDbCleanup> load_validator_cleanup_re
   return records;
 }
 
-// Physically delete a validator group's consensus directory. Does ONLY: revalidate
-// that dir_name is the exact canonical validator directory for session_id (never
-// trust a persisted path -- reject an observer name, a mismatched session, a
-// non-canonical name, a separator, or a NUL), build the path under the consensus
-// root, destroy the RocksDB and remove the directory, and confirm removal by stat
-// (rmrf ignores unlink/rmdir errors, so only a "not found" proves the directory is
-// gone). Returns true ONLY on confirmed removal (including already-absent).
-//
-// It performs NO eligibility check: the caller (the cleanup orchestrator, B2-6)
-// must have already established -- under the checkpoint-bound four-condition rule
-// -- that deleting this session's directory is safe. This primitive is the last
-// step, not the decision.
-inline bool delete_validator_consensus_db(td::Slice db_root, const ValidatorSessionId& session_id,
-                                          const std::string& dir_name) {
-  if (!is_canonical_validator_dir_name(dir_name, session_id)) {
-    return false;
-  }
-  auto full = consensus_db_root(db_root) + dir_name;
-  td::RocksDb::destroy(full + "/db/").ignore();
-  td::rmrf(full).ignore();
+// True only when a stat of `full` confirms it is absent (POSIX ENOENT / Windows
+// file-or-path-not-found). rmrf ignores unlink/rmdir errors, so its own status is
+// not proof of removal -- only a confirmed-absent stat is. Any other stat error
+// (e.g. permission) is NOT treated as absent, so an unconfirmed removal reports
+// false and the orchestrator retries.
+inline bool path_is_confirmed_absent(const std::string& full) {
   auto probe = td::stat(full);
   if (probe.is_ok()) {
     return false;
@@ -127,6 +113,65 @@ inline bool delete_validator_consensus_db(td::Slice db_root, const ValidatorSess
 #else
   return probe.error().code() == ENOENT;
 #endif
+}
+
+// True only when `resolved` (a realpath result) lies strictly inside `root_real`
+// (also a realpath). Any trailing slash on root_real is normalized away first, and
+// a boundary '/' is then required so "/a/consensusX" is not treated as inside
+// "/a/consensus".
+inline bool resolved_path_is_inside(std::string root_real, const std::string& resolved) {
+  while (!root_real.empty() && root_real.back() == '/') {
+    root_real.pop_back();
+  }
+  return resolved.size() > root_real.size() + 1 && resolved.compare(0, root_real.size(), root_real) == 0 &&
+         resolved[root_real.size()] == '/';
+}
+
+// Physically delete a validator group's consensus directory. Does ONLY:
+//  - revalidate that dir_name is the exact canonical validator directory for
+//    session_id (never trust a persisted path -- reject an observer name, a
+//    mismatched session, a non-canonical name, a separator, or a NUL);
+//  - CONTAIN the target: the resolved real path of the directory (and of its `db`
+//    subdirectory, which DestroyDB opens) must lie strictly inside the resolved
+//    consensus root, so a symlink planted in the data dir cannot make DestroyDB or
+//    rmrf follow it and delete something outside the root;
+//  - destroy the RocksDB and remove the directory, and confirm removal by stat.
+// Returns true ONLY on confirmed removal (an already-absent directory counts as
+// gone). Performs NO eligibility check: the caller (the cleanup orchestrator,
+// B2-6) must have already established -- under the checkpoint-bound four-condition
+// rule -- that deleting this session's directory is safe. This is the last step,
+// not the decision. It also assumes the consensus root itself is a node-owned,
+// trusted directory.
+inline bool delete_validator_consensus_db(td::Slice db_root, const ValidatorSessionId& session_id,
+                                          const std::string& dir_name) {
+  if (!is_canonical_validator_dir_name(dir_name, session_id)) {
+    return false;
+  }
+  auto root = consensus_db_root(db_root);
+  auto full = root + dir_name;
+
+  auto r_full = td::realpath(full);
+  if (r_full.is_error()) {
+    // Cannot resolve: if that is because it is absent, it is already gone;
+    // otherwise do not claim removal.
+    return path_is_confirmed_absent(full);
+  }
+  auto r_root = td::realpath(root);
+  if (r_root.is_error()) {
+    return false;
+  }
+  auto root_real = r_root.move_as_ok();
+  if (!resolved_path_is_inside(root_real, r_full.move_as_ok())) {
+    return false;  // the directory resolves outside the consensus root (symlink escape)
+  }
+  auto r_db = td::realpath(full + "/db");
+  if (r_db.is_ok() && !resolved_path_is_inside(root_real, r_db.move_as_ok())) {
+    return false;  // the db subdirectory resolves outside the consensus root
+  }
+
+  td::RocksDb::destroy(full + "/db/").ignore();
+  td::rmrf(full).ignore();
+  return path_is_confirmed_absent(full);
 }
 
 }  // namespace tos::validator::consensus
