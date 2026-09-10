@@ -321,6 +321,30 @@ TEST(ValidatorCleanup, retirement_ahead_of_safe_is_retained) {
   ASSERT_TRUE(!can_delete_validator_db(r, make_checkpoint(100), false, chain_oracle));
 }
 
+// Persistence-key bounds: every record key must start with the prefix and sort
+// strictly inside [prefix, range_end), so a prefix range scan brackets exactly
+// these records and nothing else. Session hex spanning the byte extremes (all
+// 0x00 -> "0000...", all 0xff -> "ffff...") must still fall in range. If the
+// range-end derivation were wrong, a boundary key would escape the scan.
+TEST(ValidatorCleanup, persistence_key_bounds) {
+  auto prefix = validator_cleanup_key_prefix().str();
+  auto end = validator_cleanup_key_range_end();
+  ASSERT_TRUE(prefix < end);
+
+  tos::ValidatorSessionId lo;
+  lo.as_slice().fill(0);
+  tos::ValidatorSessionId hi;
+  for (size_t i = 0; i < hi.as_slice().size(); i++) {
+    hi.as_slice()[i] = static_cast<char>(0xff);
+  }
+  for (const auto& sid : {lo, hi, make_session_id(9), make_session_id(200)}) {
+    auto key = validator_cleanup_key(sid);
+    ASSERT_TRUE(key.rfind(prefix, 0) == 0);              // starts with prefix
+    ASSERT_TRUE(key.substr(prefix.size()) == sid.to_hex());
+    ASSERT_TRUE(prefix <= key && key < end);             // inside the scan range
+  }
+}
+
 // Safe-checkpoint monotonicity under the argument-sensitive oracle: adopt a
 // strictly-ahead candidate; refuse a regression (NotAncestor with a valid
 // current), a forked candidate (Unknown), an equal candidate, and an invalid

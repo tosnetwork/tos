@@ -2338,6 +2338,18 @@ void ValidatorManagerImpl::started(ValidatorManagerInitResult R) {
                             td::actor::send_closure(SelfId, &ValidatorManagerImpl::got_destroyed_validator_sessions,
                                                     R.move_as_ok());
                           });
+
+  // Load validator-group cleanup records (Finding 1) into shadow state. This load
+  // is independent of the startup/sweep chain above and gates nothing: no path
+  // consults pending_validator_db_cleanup_ yet. It only establishes the durable
+  // persistence round trip; checkpoint-bound deletion from it is a later step.
+  td::actor::send_closure(
+      db_, &Db::get_pending_validator_consensus_db_cleanup,
+      [SelfId = actor_id(this)](td::Result<std::vector<consensus::PendingValidatorConsensusDbCleanup>> R) {
+        R.ensure();
+        td::actor::send_closure(SelfId, &ValidatorManagerImpl::got_pending_validator_consensus_db_cleanup,
+                                R.move_as_ok());
+      });
 }
 
 void ValidatorManagerImpl::got_destroyed_validator_sessions(std::vector<ValidatorSessionId> sessions) {
@@ -2365,6 +2377,14 @@ void ValidatorManagerImpl::got_pending_consensus_db_cleanup(std::vector<std::str
   }
   sweep_destroyed_consensus_dbs();
   finish_start_up().start().detach_ensure();
+}
+
+void ValidatorManagerImpl::got_pending_validator_consensus_db_cleanup(
+    std::vector<consensus::PendingValidatorConsensusDbCleanup> records) {
+  for (auto &record : records) {
+    auto session_id = record.session_id;
+    pending_validator_db_cleanup_[session_id] = std::move(record);
+  }
 }
 
 void ValidatorManagerImpl::sweep_destroyed_consensus_dbs() {

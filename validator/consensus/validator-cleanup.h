@@ -142,6 +142,23 @@ inline bool is_full_masterchain_checkpoint(const BlockIdExt& b) {
   return b.is_masterchain() && b.is_valid_full();
 }
 
+// Persistence keys. Each record lives under its own key (prefix + session hex) so
+// one retirement or one completed deletion is a single-key write/erase, never a
+// whole-table rewrite. The prefix ends in '.'; the 64-char lowercase session hex
+// that follows is always > '.', so incrementing the prefix's last byte gives an
+// exclusive upper bound that brackets exactly these records for a range scan.
+inline td::Slice validator_cleanup_key_prefix() {
+  return td::Slice{"tos.state.pending_validator_consensus_db_cleanup."};
+}
+inline std::string validator_cleanup_key(const ValidatorSessionId& session_id) {
+  return PSTRING() << validator_cleanup_key_prefix() << session_id.to_hex();
+}
+inline std::string validator_cleanup_key_range_end() {
+  std::string end = validator_cleanup_key_prefix().str();
+  end.back() = static_cast<char>(static_cast<unsigned char>(end.back()) + 1);
+  return end;
+}
+
 // Deterministic, architecture-independent (little-endian) encoding of one record.
 // The format is versioned so a future reader can reject or migrate old records
 // rather than silently misread them.

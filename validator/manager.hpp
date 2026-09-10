@@ -44,6 +44,7 @@
 #include "manager-init.h"
 #include "manager-resource-policy.h"
 #include "consensus/session-compat.h"
+#include "consensus/validator-cleanup.h"
 #include "queue-size-counter.hpp"
 #include "shard-block-retainer.hpp"
 #include "shard-block-verifier.hpp"
@@ -268,6 +269,12 @@ class ValidatorManagerImpl : public ValidatorManager {
   // session ids, because one session can own several directories (a validator
   // plus multiple observers).
   std::set<std::string> pending_consensus_db_cleanup_;
+
+  // Validator-group consensus-DB cleanup records (Finding 1), keyed by session id.
+  // Loaded durably at startup and kept as shadow state only: no retirement, sweep,
+  // or deletion path consults it yet. Enabling checkpoint-bound deletion from it
+  // is a later step (see doc/validator-consensus-db-cleanup.md).
+  std::map<ValidatorSessionId, consensus::PendingValidatorConsensusDbCleanup> pending_validator_db_cleanup_;
 
  private:
   // MASTERCHAIN LAST BLOCK
@@ -579,6 +586,7 @@ class ValidatorManagerImpl : public ValidatorManager {
   void started(ValidatorManagerInitResult result);
   void got_destroyed_validator_sessions(std::vector<ValidatorSessionId> sessions);
   void got_pending_consensus_db_cleanup(std::vector<std::string> dirs);
+  void got_pending_validator_consensus_db_cleanup(std::vector<consensus::PendingValidatorConsensusDbCleanup> records);
   // Called by a validator group once it has confirmed its own consensus
   // directory is deleted, so the cleanup queue is pruned during normal uptime
   // (not only at the next startup sweep).

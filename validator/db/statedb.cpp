@@ -215,6 +215,49 @@ void StateDb::get_pending_consensus_db_cleanup(td::Promise<std::vector<std::stri
   promise.set_value(decode_pending_cleanup(td::Slice{value}));
 }
 
+void StateDb::update_pending_validator_consensus_db_cleanup(consensus::PendingValidatorConsensusDbCleanup record,
+                                                            td::Promise<td::Unit> promise) {
+  auto key = consensus::validator_cleanup_key(record.session_id);
+  auto value = consensus::encode_validator_cleanup_record(record);
+
+  kv_->begin_write_batch().ensure();
+  kv_->set(td::Slice{key}, td::Slice{value}).ensure();
+  kv_->commit_write_batch().ensure();
+
+  promise.set_value(td::Unit());
+}
+
+void StateDb::erase_pending_validator_consensus_db_cleanup(ValidatorSessionId session_id,
+                                                           td::Promise<td::Unit> promise) {
+  auto key = consensus::validator_cleanup_key(session_id);
+
+  kv_->begin_write_batch().ensure();
+  kv_->erase(td::Slice{key}).ensure();
+  kv_->commit_write_batch().ensure();
+
+  promise.set_value(td::Unit());
+}
+
+void StateDb::get_pending_validator_consensus_db_cleanup(
+    td::Promise<std::vector<consensus::PendingValidatorConsensusDbCleanup>> promise) {
+  std::vector<consensus::PendingValidatorConsensusDbCleanup> records;
+  auto begin = consensus::validator_cleanup_key_prefix();
+  auto end = consensus::validator_cleanup_key_range_end();
+  // A malformed persisted record is dropped rather than trusted: losing a cleanup
+  // record can at worst leak an orphan directory, never authorize deleting the
+  // wrong one. decode enforces the full record contract.
+  kv_->for_each_in_range(begin, td::Slice{end}, [&records](td::Slice, td::Slice value) {
+          auto decoded = consensus::decode_validator_cleanup_record(value);
+          if (decoded) {
+            records.push_back(std::move(decoded.value()));
+          }
+          return td::Status::OK();
+        })
+      .ensure();
+
+  promise.set_value(std::move(records));
+}
+
 void StateDb::update_async_serializer_state(AsyncSerializerState state, td::Promise<td::Unit> promise) {
   auto key = create_hash_tl_object<tos_api::db_state_key_asyncSerializer>();
 
