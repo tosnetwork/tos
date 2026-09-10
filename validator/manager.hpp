@@ -284,11 +284,11 @@ class ValidatorManagerImpl : public ValidatorManager {
   // manager actor thread (created lazily on the first gated cleanup dispatch).
   td::actor::ActorOwn<consensus::ValidatorConsensusCleanupWorker> validator_cleanup_worker_;
 
-  // Compile-time gate for enabling validator consensus-DB deletion. Deliberately
-  // false: the B2-8 wiring is complete and dormant; flipping this to true (after
-  // the post-genesis soak and manager-level acceptance evidence) is the only
-  // change that turns on live validator-directory deletion.
-  static constexpr bool kValidatorConsensusCleanupEnabled = false;
+  // Compile-time gate for enabling validator consensus-DB deletion. Flipped to true to
+  // run live validator-directory deletion under a real multi-node localnet acceptance.
+  // The four-condition safety gate + GC-snapshot oracles remain the runtime protection
+  // against wrongful deletion of a live/recreatable/non-obsolete session.
+  static constexpr bool kValidatorConsensusCleanupEnabled = true;
   // Max directory deletions dispatched per cleanup pass, so a large backlog cannot
   // make a single manager turn do unbounded filesystem work.
   static constexpr size_t kValidatorConsensusCleanupBudget = 16;
