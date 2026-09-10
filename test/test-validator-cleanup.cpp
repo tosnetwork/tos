@@ -342,6 +342,69 @@ TEST(ValidatorCleanup, make_record_is_canonical_and_round_trips) {
   ASSERT_TRUE(back.value() == record);
 }
 
+// The parse recovers the shard and catchain seqno from a canonical validator
+// directory, and rejects observer/mismatched/non-canonical names.
+TEST(ValidatorCleanup, parse_validator_dir_exposes_shard_and_cc) {
+  auto sid = make_session_id(9);
+  tos::ShardIdFull shard{0, kMasterShard};
+  auto name = consensus_db_dir_name(shard, 4242, sid, td::Slice(""));
+  auto p = parse_canonical_validator_dir_name(name, sid);
+  ASSERT_TRUE(p.has_value());
+  ASSERT_TRUE(p->shard == shard);
+  ASSERT_EQ(p->catchain_seqno, static_cast<tos::CatchainSeqno>(4242));
+
+  ASSERT_TRUE(
+      !parse_canonical_validator_dir_name(consensus_db_dir_name(shard, 4242, sid, td::Slice(".observer.x")), sid)
+           .has_value());
+  ASSERT_TRUE(!parse_canonical_validator_dir_name(name, make_session_id(200)).has_value());  // session mismatch
+}
+
+// On-chain obsolescence: deletable (obsolescence portion) ONLY when the retirement
+// is the GC block or a verified ancestor of it AND the shard's catchain seqno at
+// GC is strictly greater than the record's (r < g excludes current g and next
+// g+1). Every uncertain case keeps the DB. Uses argument-controllable oracles so
+// each condition is pinned independently.
+TEST(ValidatorCleanup, onchain_obsolete_requires_ancestor_and_cc_strictly_past) {
+  auto sid = make_session_id(9);
+  tos::ShardIdFull shard{0, kMasterShard};
+  PendingValidatorConsensusDbCleanup r;
+  r.session_id = sid;
+  r.retirement_checkpoint = make_checkpoint(100);
+  r.dir_name = consensus_db_dir_name(shard, 7, sid, td::Slice(""));  // record cc = 7
+  auto gc = make_checkpoint(500);
+
+  auto ancestor_yes = [](const tos::BlockIdExt&) { return true; };
+  auto ancestor_no = [](const tos::BlockIdExt&) { return false; };
+  auto cc = [&](tos::CatchainSeqno v) {
+    return [&shard, v](tos::ShardIdFull s) -> std::optional<tos::CatchainSeqno> {
+      return s == shard ? std::optional<tos::CatchainSeqno>{v} : std::nullopt;
+    };
+  };
+
+  // ancestor + r(7) < g(10) -> obsolete.
+  ASSERT_TRUE(validator_session_is_onchain_obsolete(r, gc, ancestor_yes, cc(10)));
+  // Strict boundary: g == 8 (current=8,next=9) excludes 7 -> obsolete; g == 7 (7 is
+  // still the current set) -> keep.
+  ASSERT_TRUE(validator_session_is_onchain_obsolete(r, gc, ancestor_yes, cc(8)));
+  ASSERT_TRUE(!validator_session_is_onchain_obsolete(r, gc, ancestor_yes, cc(7)));
+  // Not a GC ancestor -> keep (retirement above / off the rollback floor).
+  ASSERT_TRUE(!validator_session_is_onchain_obsolete(r, gc, ancestor_no, cc(10)));
+  // Unknown shard catchain seqno -> keep.
+  auto cc_unknown = [](tos::ShardIdFull) -> std::optional<tos::CatchainSeqno> { return std::nullopt; };
+  ASSERT_TRUE(!validator_session_is_onchain_obsolete(r, gc, ancestor_yes, cc_unknown));
+  // Invalid / non-masterchain GC checkpoint -> keep.
+  ASSERT_TRUE(!validator_session_is_onchain_obsolete(r, tos::BlockIdExt{}, ancestor_yes, cc(10)));
+  // Non-canonical (observer) directory -> keep.
+  auto r_obs = r;
+  r_obs.dir_name = consensus_db_dir_name(shard, 7, sid, td::Slice(".observer.z"));
+  ASSERT_TRUE(!validator_session_is_onchain_obsolete(r_obs, gc, ancestor_yes, cc(10)));
+  // Equality path: retirement == GC is accepted without consulting the ancestor
+  // oracle (here ancestor_no would reject, so a pass proves the equality branch).
+  auto r_eq = r;
+  r_eq.retirement_checkpoint = gc;
+  ASSERT_TRUE(validator_session_is_onchain_obsolete(r_eq, gc, ancestor_no, cc(10)));
+}
+
 // Pin the literal key prefix and range end independently of the helpers, so a
 // change to the persisted key scheme (which would orphan existing on-disk
 // records) is caught, and the range end is exactly the prefix with its final

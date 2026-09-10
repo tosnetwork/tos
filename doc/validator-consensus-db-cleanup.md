@@ -961,3 +961,32 @@ prev-masterchain traversal -- do not hand-roll a new chain walk.
   state (`get_shard_cc_seqno(shard)` past the record's cc_seqno by the current+next
   margin), binding the whole decision to the GC rollback floor. The exact form
   (margin, shard split/merge monotonicity) is being settled before coding.
+
+## B2-4 obsolescence predicate — settled (Codex design verdict)
+
+From one durable GC snapshot (state `S`, `G = gc_masterchain_handle_->id()`), the
+on-chain obsolescence portion is true ONLY when:
+- `S.get_block_id() == G` (use the GC block's own state);
+- the record's directory is canonical for its session id (yielding shard + `r`);
+- `retirement == G` OR `S.check_old_mc_block_id(retirement, /*strict=*/true)`
+  (full-ID ancestor-of-GC; `prev_blocks_dict` keeps full history, so no false
+  ancestor; missing/unreadable -> keep);
+- `g = S.get_shard_cc_seqno(shard)` is known (reject the `UINT32_MAX` unknown
+  sentinel -> keep);
+- **`r < g`** (strict; `g` is the current set's counter and `g+1` the next set's,
+  so `r < g` excludes both; per-shard catchain seqno does not decrease on the
+  accepted chain -- splits copy, merges take max+1 -- so it cannot recur from GC
+  forward). No `+2` margin.
+
+Residual release-gate caveat: `CatchainSeqno` is uint32 and the chain's
+transition checks do not reject wrap; a no-wrap/no-reuse invariant (~4e9 catchain
+rotations away, not practically reachable) underpins the permanent "never recurs"
+claim and must be noted at enablement. This predicate is the obsolescence portion
+only; deletion additionally requires C-runtime (session not a live/pending group)
+and D (actor closed), and the delete-vs-reopen serialization.
+
+Implemented as the pure, injected-oracle `validator_session_is_onchain_obsolete`
+(B2-3's ancestor check and B2-4's cc check combined), plus
+`parse_canonical_validator_dir_name` exposing shard + cc. Falsifiable tests pin
+the strict `r < g` boundary, the ancestor/equality gate, the unknown-sentinel
+veto, invalid-GC, and non-canonical rejection.

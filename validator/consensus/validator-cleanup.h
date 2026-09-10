@@ -100,26 +100,36 @@ inline bool parse_full_int(const std::string& s, Int& out) {
 }
 }  // namespace detail
 
-// True only for a canonical validator (non-observer) consensus directory basename
-// whose session id is exactly `sid`. The authority is: parse the three numeric
-// fields, then require that re-rendering the canonical name equals the input.
-// That single equality rejects any trailing suffix or garbage, any separator or
-// NUL, any non-canonical numeric form, and any session-hex mismatch -- none of
-// which a directory we may later delete can contain.
-inline bool is_canonical_validator_dir_name(const std::string& name, const ValidatorSessionId& sid) {
+// The shard and catchain seqno recovered from a canonical validator directory
+// name. The on-chain obsolescence check (below) needs these to locate the shard's
+// current catchain seqno at the GC checkpoint.
+struct ParsedValidatorDir {
+  ShardIdFull shard;
+  CatchainSeqno catchain_seqno = 0;
+};
+
+// Parse a canonical validator (non-observer) consensus directory basename whose
+// session id is exactly `sid`, returning its shard and catchain seqno. The
+// authority is: parse the three numeric fields, then require that re-rendering the
+// canonical name equals the input. That single equality rejects any trailing
+// suffix or garbage, any separator or NUL, any non-canonical numeric form, and any
+// session-hex mismatch -- none of which a directory we may later delete can
+// contain. Returns nothing unless the name is exactly canonical for `sid`.
+inline std::optional<ParsedValidatorDir> parse_canonical_validator_dir_name(const std::string& name,
+                                                                            const ValidatorSessionId& sid) {
   std::array<size_t, 4> dot{};
   size_t found = 0;
   size_t pos = 0;
   while (found < 4) {
     pos = name.find('.', pos);
     if (pos == std::string::npos) {
-      return false;
+      return std::nullopt;
     }
     dot[found++] = pos;
     pos++;
   }
   if (name.compare(0, dot[0], "consensus") != 0) {
-    return false;
+    return std::nullopt;
   }
   std::string f_wc = name.substr(dot[0] + 1, dot[1] - dot[0] - 1);
   std::string f_shard = name.substr(dot[1] + 1, dot[2] - dot[1] - 1);
@@ -129,17 +139,74 @@ inline bool is_canonical_validator_dir_name(const std::string& name, const Valid
   uint32_t cc = 0;
   if (!detail::parse_full_int(f_wc, wc) || !detail::parse_full_int(f_shard, shard) ||
       !detail::parse_full_int(f_cc, cc)) {
-    return false;
+    return std::nullopt;
   }
-  auto canonical = consensus_db_dir_name(ShardIdFull{wc, static_cast<ShardId>(shard)},
-                                         static_cast<CatchainSeqno>(cc), sid, td::Slice(""));
-  return canonical == name;
+  ShardIdFull shard_full{wc, static_cast<ShardId>(shard)};
+  auto canonical = consensus_db_dir_name(shard_full, static_cast<CatchainSeqno>(cc), sid, td::Slice(""));
+  if (canonical != name) {
+    return std::nullopt;
+  }
+  return ParsedValidatorDir{shard_full, static_cast<CatchainSeqno>(cc)};
+}
+
+// True only for a canonical validator (non-observer) consensus directory basename
+// whose session id is exactly `sid`.
+inline bool is_canonical_validator_dir_name(const std::string& name, const ValidatorSessionId& sid) {
+  return parse_canonical_validator_dir_name(name, sid).has_value();
 }
 
 // A cleanup checkpoint must be a fully specified MASTERCHAIN block. is_valid_full
 // alone also accepts shardchain blocks, which are not a retirement/replay anchor.
 inline bool is_full_masterchain_checkpoint(const BlockIdExt& b) {
   return b.is_masterchain() && b.is_valid_full();
+}
+
+// Whether the retirement checkpoint is the GC block itself or a verified ancestor
+// of it on the accepted chain. The caller supplies this by calling the GC state's
+// check_old_mc_block_id(retirement, strict=true); fail-closed (false) on any
+// uncertainty.
+using CleanupAncestorOfGcFn = std::function<bool(const BlockIdExt& retirement)>;
+// The current catchain seqno for `shard` as of the GC state, or nothing when it
+// cannot be determined (the unknown sentinel / unsupported topology). Nothing
+// vetoes deletion.
+using GcShardCatchainSeqnoFn = std::function<std::optional<CatchainSeqno>(ShardIdFull shard)>;
+
+// On-chain obsolescence portion of the validator delete decision, bound entirely
+// to the durable GC floor. Returns true ONLY when, as of the GC checkpoint, the
+// session is provably off the on-chain validator schedule and can never recur at
+// or after GC:
+//   * the GC checkpoint is a full masterchain block;
+//   * the record's directory is canonical for its session id (yielding shard + r);
+//   * the retirement checkpoint is the GC block or a verified ancestor of it
+//     (so the retirement is below the rollback floor);
+//   * the shard's catchain seqno at GC, g, is known (not the unknown sentinel); and
+//   * r < g  -- since g is the current set's counter and g+1 the next set's, r < g
+//     excludes this session from both current and next at GC, and per-shard
+//     catchain seqno does not decrease on the accepted chain (splits copy, merges
+//     take max+1), so it cannot recur from GC forward.
+// Every uncertain case returns false (keep the DB). This is the obsolescence
+// portion only; the caller must additionally require the session is not a
+// live/pending group and its actor is closed (conditions C-runtime and D), and
+// treat the uint32 catchain-seqno no-wrap as a release-gate invariant.
+inline bool validator_session_is_onchain_obsolete(const PendingValidatorConsensusDbCleanup& record,
+                                                  const BlockIdExt& gc_checkpoint,
+                                                  const CleanupAncestorOfGcFn& ancestor_or_equal_of_gc,
+                                                  const GcShardCatchainSeqnoFn& gc_shard_catchain_seqno) {
+  if (!is_full_masterchain_checkpoint(gc_checkpoint)) {
+    return false;
+  }
+  auto parsed = parse_canonical_validator_dir_name(record.dir_name, record.session_id);
+  if (!parsed) {
+    return false;
+  }
+  if (!(record.retirement_checkpoint == gc_checkpoint || ancestor_or_equal_of_gc(record.retirement_checkpoint))) {
+    return false;
+  }
+  auto g = gc_shard_catchain_seqno(parsed->shard);
+  if (!g) {
+    return false;
+  }
+  return parsed->catchain_seqno < g.value();
 }
 
 // Persistence keys. Each record lives under its own key (prefix + session hex) so
