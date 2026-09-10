@@ -724,6 +724,11 @@ endif()
 tos_test(test-workchain-registration-proof)
 set_tests_properties(test-workchain-registration-proof PROPERTIES TIMEOUT 30 LABELS "workchain;m3")
 
+add_executable(test-workchain-confidential-transition ../test/test-td-main.cpp test/test-workchain-confidential-transition.cpp)
+target_link_libraries(test-workchain-confidential-transition PRIVATE tos_block tos_crypto)
+tos_test(test-workchain-confidential-transition)
+set_tests_properties(test-workchain-confidential-transition PROPERTIES TIMEOUT 30 LABELS "workchain;m3")
+
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 add_test(NAME test-workchain-handwritten-tags COMMAND ${Python3_EXECUTABLE}
   "${PROJECT_SOURCE_DIR}/crypto/test/workchain-handwritten-tags.py" --repo "${PROJECT_SOURCE_DIR}")

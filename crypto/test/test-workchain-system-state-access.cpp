@@ -35,7 +35,7 @@ td::Ref<vm::Cell> fixture(td::Ref<vm::Cell> data, bool include_coordinator = tru
 int main() {
   try {
     using namespace block;
-    auto encoded = encode_workchain_coordinator_state({1, {1, 1000000, 23, 2}});
+    auto encoded = encode_workchain_coordinator_state({2, {1, 1000000, 23, 2}, 230});
     require(encoded.is_ok(), "system record encoding");
     auto root = fixture(encoded.ok());
     auto acquired = read_workchain_system_state(root, td::Bits256::zero(), WorkchainSystemStateSource::AcquiredView);
