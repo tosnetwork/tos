@@ -90,3 +90,14 @@ commits. Rust migration is complete, genesis installation is legal under revised
 D40/D52, the former eleven-check deferrals are empty, and the full permission
 scan is green with fresh retired-content calibration. These changes do not
 retroactively alter older failed runs.
+
+## Prepared-code expiry
+
+The registered private CTest first runs
+`crypto/test/workchain-validator-prepared-expiry.py`. It scopes checks to the
+custom/ready AccountBinding arms and requires their current LocalUnavailable
+refusals (1350/1351). It does not compare the unrelated legacy arms bytewise.
+Changing either production refusal expires the private preparation; its file
+must be deleted and controls retargeted to actual production call sites when
+the gate opens. This is a source lifecycle guard, not a runtime gate measurement
+or a claim that the duplicated legacy branches cannot drift before that point.

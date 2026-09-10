@@ -6,6 +6,9 @@
 // local validator decisions. No production target includes this file. No
 // candidate content, admission verdict or batch execution is supplied here.
 // Moving either production refusal requires a separate gate decision.
+// EXPIRY: when the gate opens, DELETE this file and retarget its controls to
+// production call sites. The registered private test checks both real refusals
+// and must fail at that transition; do not retain two implementations.
 namespace prepared_validator {
 using Resolution = td::Result<std::optional<block::ResolvedScopedWorkchainExecution>>;
 
