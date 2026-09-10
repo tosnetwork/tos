@@ -29,6 +29,8 @@
 #include "block/workchain-payout-accounting.h"
 #include "block/workchain-native-allocation.h"
 #include "block/workchain-native-disposal.h"
+#include "block/workchain-confidential-native.h"
+#include "block/workchain-confidential-state.h"
 #include "crypto/openssl/rand.hpp"
 #include "td/utils/Timer.h"
 #include "td/utils/bits.h"
@@ -4907,6 +4909,49 @@ td::Status Transaction::prepare_workchain_entry_impl(Ref<vm::Cell> binding, Ref<
   return td::Status::OK();
 }
 
+td::Status Transaction::prepare_workchain_registration_participant(Ref<vm::Cell> binding, Ref<vm::Cell> data,
+                                                                  const SerializeConfig& cfg) {
+  if (cfg.global_version < kStorageParticipantMinGlobalVersion || trans_type != tr_workchain_batch ||
+      account.status != Account::acc_nonexist || account.workchain != 2 || account.is_special ||
+      account.now_ != now || start_lt >= end_lt || root.not_null() || new_total_state.not_null() ||
+      batch_description.not_null() || data.is_null() || account.code.not_null() || account.library.not_null() ||
+      account.tick || account.tock || in_msg.not_null() || !out_msgs.empty() || compute_phase || action_phase ||
+      storage_phase || credit_phase || bounce_phase || !account.balance.is_zero() || balance != account.balance ||
+      !total_fees.is_zero() || !blackhole_burned.is_zero()) {
+    return td::Status::Error("invalid registration participant preparation context");
+  }
+  gen::UnoV2HostRecord::Record record;
+  if (!tlb::unpack_cell(binding, record) || record.account_id != account.addr) {
+    return td::Status::Error("registration participant binding has wrong account");
+  }
+  TRY_RESULT(confidential, decode_workchain_confidential_account(data));
+  if (confidential.address.workchain_id != account.workchain || confidential.address.account != account.addr ||
+      !std::holds_alternative<WorkchainAccountActive>(confidential.lifecycle) || confidential.auth_nonce != 0 ||
+      confidential.available_revision != 0 || !confidential.pending.empty()) {
+    return td::Status::Error("registration participant data is not an initial active account");
+  }
+  // Native implementation choices: init_new supplies zero previous LT/hash,
+  // empty library and storage metadata. compute_state computes actual storage
+  // usage; commit supplies the transaction LT/hash. No StoragePhase is run.
+  new_code = workchain_confidential_native_code();
+  new_data = std::move(data);
+  new_tick = new_tock = false;
+  TRY_STATUS(check_state_limits(cfg.size_limits, cfg.global_version));
+  acc_status = Account::acc_active;
+  was_created = was_activated = true;
+  batch_registration = true;
+  batch_account_data = new_data;
+  batch_description = vm::CellBuilder()
+      .store_long(block::tlb::TransactionDescr::trans_workchain_storage_participant_v3, 4)
+      .store_ref(binding).finalize();
+  batch_balance = balance;
+  batch_fees = total_fees;
+  batch_out_msgs = out_msgs;
+  batch_end_lt = end_lt;
+  batch_metadata_sealed = true;
+  return td::Status::OK();
+}
+
 td::Status Transaction::prepare_workchain_storage_participant(Ref<vm::Cell> binding, Ref<vm::Cell> data,
                                                              const SerializeConfig& cfg) {
   if (cfg.global_version < kStorageParticipantMinGlobalVersion || trans_type != tr_workchain_batch || account.status != Account::acc_active ||
@@ -4945,7 +4990,10 @@ bool Transaction::serialize(const SerializeConfig& cfg) {
     return true;
   }
   if (batch_metadata_sealed &&
-      (cfg.global_version < kStorageParticipantMinGlobalVersion || new_code.get() != account.code.get() || new_library.get() != account.library.get() ||
+      (cfg.global_version < kStorageParticipantMinGlobalVersion ||
+       (batch_registration ? (account.status != Account::acc_nonexist ||
+          !is_workchain_confidential_native_wrapper(new_code, new_tick, new_tock)) :
+          new_code.get() != account.code.get()) || new_library.get() != account.library.get() ||
        my_addr.is_null() || account.my_addr.is_null() || !my_addr->contents_equal(*account.my_addr) ||
        new_tick != account.tick || new_tock != account.tock || new_fixed_prefix_length != account.fixed_prefix_length ||
        new_addr_rewrite_length != -1 || force_remove_anycast_address || last_paid != account.last_paid ||

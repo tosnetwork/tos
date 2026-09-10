@@ -11,6 +11,8 @@ struct WorkchainRegistrationPaymentResult {
   WorkchainRegistrationTransition registration;
   WorkchainAccountValueFlow coordinator_flow;
   td::Bits256 imported_message;
+  // Locally constructed snapshot binding, not a candidate-declared hash.
+  td::Bits256 old_coordinator_data_hash;
 };
 
 // Post-admission consumption of ONE final-import message. The enclosing batch
@@ -128,7 +130,9 @@ inline td::Result<WorkchainRegistrationPaymentResult> execute_workchain_registra
     // No Native StoragePhase runs for engine-owned accounts (§3.1). Deposit is
     // locked in refundable_deposits, not principal or a fee. Actual coordinator
     // operating fees must be separate explicit effects, never an implicit rent.
-    return WorkchainRegistrationPaymentResult{std::move(registration), std::move(flow), message_hash};
+    TRY_RESULT(old_data, encode_workchain_coordinator_state(old_coordinator));
+    return WorkchainRegistrationPaymentResult{std::move(registration), std::move(flow), message_hash,
+                                              td::Bits256(old_data->get_hash().bits())};
   } catch (const vm::VmVirtError&) {
     return local("registration payment view incomplete");
   } catch (const vm::VmError&) {

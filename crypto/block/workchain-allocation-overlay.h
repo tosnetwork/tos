@@ -34,7 +34,7 @@ inline td::Result<WorkchainInboundAllocationOverlay> build(
     const td::Bits256& custody,
     std::uint64_t max_reads, std::uint64_t max_writes, std::uint64_t max_transfers, std::uint64_t max_inbound,
     int extra_validation_cells, const SerializeConfig& cfg,
-    const WorkchainDisposalEntryContext* disposal) {
+    const WorkchainDisposalEntryContext* disposal, const td::Bits256* registration = nullptr) {
   gen::UnoV2HostInput::Record decoded;
   gen::UnoV2HostEffects::Record output;
   if (identity.workchain_id < 0 || coordinator == custody ||
@@ -85,9 +85,12 @@ inline td::Result<WorkchainInboundAllocationOverlay> build(
   std::vector<WorkchainParticipantTiming> timing;
   for (const auto& key : keys) {
     TRY_RESULT(old_hash, access.expected_read(key));
-    if (!old_hash) return td::Status::Error("allocation account creation requires registration settlement");
+    const bool creating = registration && key == *registration;
+    if (creating && old_hash) return td::Status::Error(-7200, "registration ShardAccount already exists");
+    if (!creating && !old_hash) return td::Status::Error("allocation account creation requires registration settlement");
     auto account = std::make_unique<Account>(identity.workchain_id, key.bits());
-    if (!account->unpack(staged.lookup(key), identity.gen_utime, false)) {
+    if (creating ? (!staged.lookup(key).is_null() || !account->init_new(identity.gen_utime)) :
+        !account->unpack(staged.lookup(key), identity.gen_utime, false)) {
       throw vm::VmError{vm::Excno::dict_err, "invalid authenticated allocation account"};
     }
     timing.push_back({key, account->last_trans_end_lt_, 0});
@@ -130,6 +133,12 @@ inline td::Result<WorkchainInboundAllocationOverlay> build(
     } else if (keys[i] == custody) {
       TRY_STATUS(tx.prepare_workchain_import_participant(bindings[i], input, effects, updates.lookup_ref(keys[i]),
                                                         cfg, max_transfers, extra_validation_cells));
+    } else if (registration && keys[i] == *registration) {
+      const auto& totals = plan.accounts.at(keys[i]);
+      if (!totals.incoming.is_zero() || !totals.outgoing.is_zero()) {
+        return td::Status::Error("registration participant cannot move Native value");
+      }
+      TRY_STATUS(tx.prepare_workchain_registration_participant(bindings[i], updates.lookup_ref(keys[i]), cfg));
     } else {
       const auto& totals = plan.accounts.at(keys[i]);
       TRY_STATUS(tx.prepare_workchain_allocation_participant(bindings[i], updates.lookup_ref(keys[i]),
@@ -144,14 +153,20 @@ inline td::Result<WorkchainInboundAllocationOverlay> build(
     gen::Transaction::Record record;
     gen::Account::Record_account old_record, next_record;
     gen::AccountStorage::Record old_storage, next_storage;
-    CurrencyCollection before, after, fees, exported(0);
+    CurrencyCollection before(0), after, fees, exported(0);
+    const bool creating = registration && keys[i] == *registration;
+    // Absence has exactly zero Native value. It is not an Account_account
+    // record with invented storage fields; the transaction commits account_none.
+    if (!creating && (!tlb::unpack_cell(account.total_state, old_record) ||
+        !tlb::csr_unpack(old_record.storage, old_storage) || !before.unpack(old_storage.balance))) {
+      return td::Status::Error("invalid old allocation Native account");
+    }
     // The fee equality below is a cross-derivation regression tripwire for
     // serialized output, not independent authorization by a fee schedule.
     if (!tlb::unpack_cell(tx.root, record) || record.account_addr != account.addr ||
         record.prev_trans_hash != account.last_trans_hash_ || record.prev_trans_lt != account.last_trans_lt_ ||
-        !tlb::unpack_cell(account.total_state, old_record) || !tlb::csr_unpack(old_record.storage, old_storage) ||
         !tlb::unpack_cell(tx.new_total_state, next_record) || !tlb::csr_unpack(next_record.storage, next_storage) ||
-        !before.unpack(old_storage.balance) || !after.unpack(next_storage.balance) || !fees.unpack(record.total_fees) ||
+        !after.unpack(next_storage.balance) || !fees.unpack(record.total_fees) ||
         (!is_prepared && fees != (keys[i] == custody ? aggregate_collected : CurrencyCollection(0))) ||
         next_storage.last_trans_lt != tx.end_lt || record.lt != tx.start_lt ||
         record.r1.in_msg->prefetch_ulong(1) != 0 ||
@@ -200,7 +215,8 @@ inline td::Result<WorkchainInboundAllocationOverlay> build(
     }
     entry.store_ref(account.total_state).store_bits(account.last_trans_hash_.bits(), 256)
         .store_long(account.last_trans_lt_, 64);
-    if (!staged.set_builder(account.addr, entry, vm::Dictionary::SetMode::Replace)) {
+    if (!staged.set_builder(account.addr, entry, creating ? vm::Dictionary::SetMode::Add : vm::Dictionary::SetMode::Replace)) {
+      if (creating) return td::Status::Error("cannot add registration ShardAccount");
       return td::Status::Error("cannot replace allocation ShardAccount");
     }
     TRY_STATUS(access.record_write(account.addr));

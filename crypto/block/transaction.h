@@ -462,6 +462,7 @@ struct Transaction {
   std::vector<Ref<vm::Cell>> batch_out_msgs;
   tos::LogicalTime batch_end_lt{0};
   bool batch_metadata_sealed{false};
+  bool batch_registration{false};
   td::Result<ActionPhase> stage_workchain_messages(const Ref<vm::Cell>& messages,
                                                   const ActionPhaseConfig& cfg,
                                                   const CurrencyCollection& initial_balance,
@@ -527,6 +528,10 @@ struct Transaction {
   // must classify them using input provenance, not this Status return type.
   // This construction floor is not the multi-account activation policy.
   static constexpr int kStorageParticipantMinGlobalVersion = 16;
+  // Post-registration authorization only. Reuses the storage participant wire:
+  // Native orig_status/end_status carry nonexist -> active without a new tag.
+  td::Status prepare_workchain_registration_participant(Ref<vm::Cell> binding, Ref<vm::Cell> data,
+                                                       const SerializeConfig& cfg);
   td::Status prepare_workchain_storage_participant(Ref<vm::Cell> binding, Ref<vm::Cell> data,
                                                   const SerializeConfig& cfg);
   // Internal settlement construction, not transfer authorization. The enclosing
