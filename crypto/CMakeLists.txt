@@ -710,6 +710,11 @@ add_test(NAME test-workchain-handwritten-tags COMMAND ${Python3_EXECUTABLE}
   "${PROJECT_SOURCE_DIR}/crypto/test/workchain-handwritten-tags.py" --repo "${PROJECT_SOURCE_DIR}")
 set_tests_properties(test-workchain-handwritten-tags PROPERTIES TIMEOUT 30 LABELS "workchain;d40")
 
+add_executable(test-workchain-system-state-access test/test-workchain-system-state-access.cpp)
+target_link_libraries(test-workchain-system-state-access PRIVATE tos_block tos_crypto)
+tos_test(test-workchain-system-state-access)
+set_tests_properties(test-workchain-system-state-access PROPERTIES TIMEOUT 30 LABELS "workchain;m3")
+
 # Default source-lifecycle check: opening either validator refusal must expire
 # the prepared copy, even when the optional native fixture is not enabled.
 add_test(NAME test-workchain-validator-prepared-expiry COMMAND ${Python3_EXECUTABLE}
