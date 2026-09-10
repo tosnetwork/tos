@@ -543,6 +543,103 @@ TEST(ValidatorCleanup, sweep_deletes_eligible_keeps_rest) {
   ASSERT_EQ(erased.size(), static_cast<size_t>(2));
 }
 
+// Fault-injection / crash-boundary scenarios driven through the pure coordinator
+// (a "restart" is just re-invoking the sweep with the post-crash injected state).
+// The retirement-side boundaries (persist-before-close) are established atomically
+// in B1; these pin the delete-side boundaries.
+TEST(ValidatorCleanup, fault_injection_scenarios) {
+  auto gc = make_checkpoint(500);
+  auto ancestor_ok = [](const tos::BlockIdExt&) { return true; };
+  auto closed = [](const tos::ValidatorSessionId&) { return true; };
+  auto cc = [](tos::CatchainSeqno v) {
+    return [v](tos::ShardIdFull s) -> std::optional<tos::CatchainSeqno> {
+      return s == kShard ? std::optional<tos::CatchainSeqno>{v} : std::nullopt;
+    };
+  };
+  std::set<std::string> live_hex;
+  auto is_live = [&](const tos::ValidatorSessionId& s) { return live_hex.count(s.to_hex()) > 0; };
+  std::set<std::string> deleter_called;
+  std::set<std::string> erased;
+  auto erase = [&](const tos::ValidatorSessionId& s) { erased.insert(s.to_hex()); };
+
+  auto r = make_record(1, 100);  // shard kShard, cc 7
+
+  // --- CASE 6 (the core safety history): delete fails, then the session is
+  // recreated (reopened), and a later pass MUST NOT delete it. ---
+  {
+    // Pass 1: eligible (not live, closed, obsolete g=10) but the delete fails.
+    live_hex.clear();
+    deleter_called.clear();
+    erased.clear();
+    auto fail_deleter = [&](const PendingValidatorConsensusDbCleanup& rec) {
+      deleter_called.insert(rec.session_id.to_hex());
+      return false;  // not confirmed gone
+    };
+    auto p1 = sweep_pending_validator_cleanup({r}, gc, ancestor_ok, cc(10), is_live, closed, fail_deleter, erase, 10);
+    ASSERT_EQ(p1.delete_attempts, static_cast<size_t>(1));
+    ASSERT_EQ(p1.deleted, static_cast<size_t>(0));
+    ASSERT_TRUE(erased.empty());  // record survives -- no orphan, no erase
+
+    // The session is now recreated/live. Pass 2: the record still exists, but the
+    // deleter MUST NOT be called and the record MUST NOT be erased.
+    live_hex = {r.session_id.to_hex()};
+    deleter_called.clear();
+    bool fatal_deleter_called = false;
+    auto forbidden_deleter = [&](const PendingValidatorConsensusDbCleanup&) {
+      fatal_deleter_called = true;
+      return true;
+    };
+    auto p2 = sweep_pending_validator_cleanup({r}, gc, ancestor_ok, cc(10), is_live, closed, forbidden_deleter, erase,
+                                              10);
+    ASSERT_TRUE(!fatal_deleter_called);  // a live-again session's DB is never deleted
+    ASSERT_EQ(p2.deleted, static_cast<size_t>(0));
+    ASSERT_TRUE(erased.empty());
+  }
+
+  // --- Transient failure then success: pass 1 fails (kept), pass 2 succeeds. ---
+  {
+    live_hex.clear();
+    erased.clear();
+    bool fail = true;
+    auto flaky = [&](const PendingValidatorConsensusDbCleanup&) { return !fail; };
+    auto a = sweep_pending_validator_cleanup({r}, gc, ancestor_ok, cc(10), is_live, closed, flaky, erase, 10);
+    ASSERT_EQ(a.deleted, static_cast<size_t>(0));
+    ASSERT_TRUE(erased.empty());
+    fail = false;
+    auto b = sweep_pending_validator_cleanup({r}, gc, ancestor_ok, cc(10), is_live, closed, flaky, erase, 10);
+    ASSERT_EQ(b.deleted, static_cast<size_t>(1));
+    ASSERT_TRUE(erased.count(r.session_id.to_hex()) == 1);
+  }
+
+  // --- Crash after delete, before dequeue: record still present, directory gone.
+  // Re-running the sweep reconciles it (deleter confirms absent -> erase). ---
+  {
+    live_hex.clear();
+    erased.clear();
+    auto already_gone = [&](const PendingValidatorConsensusDbCleanup&) { return true; };  // confirmed absent
+    auto res = sweep_pending_validator_cleanup({r}, gc, ancestor_ok, cc(10), is_live, closed, already_gone, erase, 10);
+    ASSERT_EQ(res.deleted, static_cast<size_t>(1));
+    ASSERT_TRUE(erased.count(r.session_id.to_hex()) == 1);
+  }
+
+  // --- Not obsolete yet, then GC advances: pass 1 (g=7, r not < g) keeps; pass 2
+  // (g=10) deletes. ---
+  {
+    live_hex.clear();
+    erased.clear();
+    bool called = false;
+    auto spy = [&](const PendingValidatorConsensusDbCleanup&) {
+      called = true;
+      return true;
+    };
+    auto a = sweep_pending_validator_cleanup({r}, gc, ancestor_ok, cc(7), is_live, closed, spy, erase, 10);
+    ASSERT_TRUE(!called);  // not yet obsolete -> not even attempted
+    ASSERT_EQ(a.deleted, static_cast<size_t>(0));
+    auto b = sweep_pending_validator_cleanup({r}, gc, ancestor_ok, cc(10), is_live, closed, spy, erase, 10);
+    ASSERT_EQ(b.deleted, static_cast<size_t>(1));
+  }
+}
+
 // Pin the literal key prefix and range end independently of the helpers, so a
 // change to the persisted key scheme (which would orphan existing on-disk
 // records) is caught, and the range end is exactly the prefix with its final
