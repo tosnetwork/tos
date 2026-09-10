@@ -2508,12 +2508,15 @@ void ValidatorManagerImpl::try_validator_consensus_db_cleanup() {
     auto session = item.record.session_id;
     auto generation = item.generation;
     auto attempt = item.attempt_id;
-    // Dispatch the blocking filesystem delete to the worker actor so it never stalls
-    // the manager's consensus processing. The worker reports completion exactly once
-    // via the promise, which forwards the confirmed-gone result AND the
-    // (session, generation, attempt) token back to this actor. The reservation (and
-    // the creation fence) stays held until that real completion -- never released on
-    // a timeout.
+    // Dispatch the blocking filesystem delete to the worker actor so it does not run
+    // inline on the manager's own message-processing stack (send_closure is deferred,
+    // not an immediate call). This is a separate actor context, NOT a dedicated I/O
+    // thread: both actors share the scheduler thread pool, so it bounds where the
+    // delete runs, not its effect on manager scheduling latency. The worker reports
+    // completion exactly once via the promise, which forwards the confirmed-gone
+    // result AND the (session, generation, attempt) token back to this actor. The
+    // reservation (and the creation fence) stays held until that real completion --
+    // never released on a timeout.
     auto promise = td::PromiseCreator::lambda(
         [SelfId = actor_id(this), session, generation, attempt](td::Result<bool> R) {
           R.ensure();
