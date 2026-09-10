@@ -1138,3 +1138,32 @@ gate, and Case 6.
 
 Finding 1 remains open until that bundle is done; the branch stays a deletion-safe
 staging state (no validator DB deleted anywhere).
+
+## B2-8c review round 2 — three gaps closed (gate still off)
+
+The three gaps from the second manager-wiring review are fixed and
+mutation-verified:
+
+1. **Startup-load no longer overwrites a runtime incarnation.** on_loaded_at_startup
+   is insert-if-absent: a session already known from runtime (live or pending) is
+   not clobbered with generation-0/closed=true. This makes correctness independent
+   of whether block application reaches update_shards before the startup load's
+   callback returns (the load is not the only path to group creation), rather than
+   relying on the finish_start_up ordering alone.
+2. **Per-attempt operation token.** A process-wide attempt_id distinguishes delete
+   attempts of the SAME incarnation; on_delete_completed / on_erase_acknowledged
+   require both generation and attempt_id to match, so a stale/duplicate completion
+   from an earlier attempt cannot release a later attempt's reservation. A timeout
+   must NOT be reported as a completion (the fence is held until the real attempt
+   finishes or is cancelled) -- documented as the worker contract.
+3. **Scan and outstanding budgets.** begin_eligible_deletes bounds entries examined
+   per pass (scan_budget; the round-robin cursor still covers all records) and the
+   total concurrent Deleting+Erasing reservations across passes (max_outstanding),
+   not just reservations per pass.
+
+Still remaining before the flip (async-worker enablement bundle): move the blocking
+FS delete off the manager actor with the worker honoring the per-attempt token and
+the no-speculative-completion-on-timeout rule; manager-level integration acceptance
+(reopen during delete, stale callbacks end-to-end, restart reconciliation, real GC
+oracle); then the flip after a disk/RSS soak, post-genesis. Finding 1 stays open;
+the branch remains a deletion-safe staging state.
