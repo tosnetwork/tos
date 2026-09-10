@@ -2,6 +2,13 @@
 
 // C3 host contract only: compiled by an opt-in private test, no production
 // call site. It does not close concrete-engine preflight work or memory bounds.
+// EXPIRY: when the first production proof_work implementation appears, make
+// this contract its sole budget entry, remove the private-only qualification,
+// and retarget controls to the actual production call site.
+// GUARD: default test-workchain-preflight-expiry rejects new production
+// implementations; it does not depend on the optional native fixture module.
+// LIMIT: this detects arrival without integration, not whether the integrated
+// engine charges every operation correctly. That is the engine unit's duty.
 
 #include "td/utils/Status.h"
 #include <cstdint>

@@ -716,3 +716,9 @@ add_test(NAME test-workchain-validator-prepared-expiry COMMAND ${Python3_EXECUTA
   "${PROJECT_SOURCE_DIR}/crypto/test/workchain-validator-prepared-expiry.py" --repo "${PROJECT_SOURCE_DIR}")
 set_tests_properties(test-workchain-validator-prepared-expiry PROPERTIES
   TIMEOUT 30 LABELS "workchain;prepared-expiry")
+
+# Default source-lifecycle check, even when the private budget fixture is off.
+add_test(NAME test-workchain-preflight-expiry COMMAND ${Python3_EXECUTABLE}
+  "${PROJECT_SOURCE_DIR}/crypto/test/workchain-preflight-expiry.py" --repo "${PROJECT_SOURCE_DIR}")
+set_tests_properties(test-workchain-preflight-expiry PROPERTIES
+  TIMEOUT 30 LABELS "workchain;prepared-expiry;c3")

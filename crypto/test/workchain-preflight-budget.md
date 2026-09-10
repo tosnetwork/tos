@@ -14,6 +14,27 @@ before comparing its returned verification-work declaration with
 `max_proof_units`. There is no production call site for the new helper. The
 four refusal branches remain collator 1 / validator 3, unchanged.
 
+## Default expiry check
+
+`test-workchain-preflight-expiry` is registered in `crypto/CMakeLists.txt`,
+independently of the opt-in native module. When a production implementation
+appears, connect this budget contract as its sole budget entry, delete the
+expiry guard, remove the private-only qualification and retarget controls to
+the actual production call site. This does not prove that the engine charges
+every operation: that remains the concrete-engine unit's obligation.
+
+The guard inventories every `proof_work` identifier in Git-visible first-party
+C/C++ sources (tracked and nonignored untracked additions). It excludes test,
+documentation and vendored directories, not all files except two known paths.
+Its five exact token identities in two production files cover two abstract
+declarations, the existing admission call, and the adapter body/forwarded call.
+There is no whole-file exemption. Additional occurrences and changes to those
+recorded tokens fail closed; preceding return types, enclosing class names and
+call receivers are not fingerprinted. Comments and whitespace cannot authorize a new body.
+This is a lexical lifecycle guard, not semantic C++ analysis: generated or
+token-pasted identifiers and code outside that source inventory are not claimed
+covered. Native private budget tests remain separately opt-in.
+
 Consequently C2 alone is a bound with a preflight-sized hole, **not a complete
 per-block resource bound**. The closed gate is the reason this incomplete
 state is acceptable. Completing these mechanisms does not authorize moving it.
