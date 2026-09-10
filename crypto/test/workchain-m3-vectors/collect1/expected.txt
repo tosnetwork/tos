@@ -1,0 +1,7 @@
+# TEST VECTOR ONLY. Not real chain data.
+initial_recipient_pending=4
+new_source_balance=3227
+old_source_balance=3107
+operation_id=b3084d6ecbf10fa2d6e36c9c3944075fac03c43b3d6c004484c7a47d88b870a1
+selected_count=1
+txid=0e56477ab95e8b3eca2eb03e468f07fbbdf9eaf699e493c9290123cfe0b3c889

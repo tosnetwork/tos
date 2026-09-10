@@ -736,6 +736,10 @@ if(TOS_UNO_CRYPTO_NODE_LINK)
 endif()
 tos_test(test-workchain-account-closure)
 set_tests_properties(test-workchain-account-closure PROPERTIES TIMEOUT 30 LABELS "workchain;m3")
+# Explicit vector generation tool: wallet prover remains outside the node build.
+add_executable(uno-m3-vector-tool EXCLUDE_FROM_ALL test/workchain-m3-vector-tool.cpp)
+target_link_libraries(uno-m3-vector-tool PRIVATE tos_block tos_crypto)
+
 add_executable(test-workchain-confidential-input ../test/test-td-main.cpp test/test-workchain-confidential-input.cpp)
 target_link_libraries(test-workchain-confidential-input PRIVATE tos_block tos_crypto)
 target_compile_definitions(test-workchain-confidential-input PRIVATE
