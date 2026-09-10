@@ -41,6 +41,13 @@ compatibility still needs the integration acceptance below.
 
 ## Not yet done: A's closed-gate frontier evidence
 
+Superseded status (2026-09-10): the focused collator observation is now archived
+in `doc/measurements/uno-a2-registry-closed/README.md` on merged tree
+`63aacc17989a9ff1fad17c2bcb05e0d5d8c14eb8`. Earlier-failure calibration precedes
+the gate run; all five layers and raw sidecars are retained. This awaits review,
+does not create an integration merge commit, and is not live validator evidence.
+The original requirements and limitations below are preserved for traceability.
+
 One shared readiness rule has two real host call sites: collator fetch and
 validator fetch. The current-source acceptance record must distinguish:
 
