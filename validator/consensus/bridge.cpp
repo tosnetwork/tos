@@ -338,8 +338,8 @@ class BridgeImpl final : public IValidatorGroup {
     destroy_inner().start().detach();
   }
 
-  void close_for_retirement() override {
-    close_for_retirement_inner().start().detach();
+  void close_for_retirement(td::uint64 generation) override {
+    close_for_retirement_inner(generation).start().detach();
   }
 
   void start_up() override {
@@ -551,7 +551,7 @@ class BridgeImpl final : public IValidatorGroup {
   // it safe to report closure. The physical deletion is the manager's job, under
   // a checkpoint-bound eligibility check -- never here -- so a still-recreatable
   // session can never lose its consensus state through retirement.
-  td::actor::Task<> close_for_retirement_inner() {
+  td::actor::Task<> close_for_retirement_inner(td::uint64 generation) {
     if (bus_) {
       LOG(INFO) << "Closing validator group for retirement (no delete)";
       bus_.publish<StopRequested>();
@@ -561,7 +561,7 @@ class BridgeImpl final : public IValidatorGroup {
       LOG(INFO) << "Consensus bus stopped (retirement close)";
       auto dir_name = consensus_db_dir_name(params_.shard, params_.validator_set->get_catchain_seqno(),
                                             params_.session_id, params_.db_suffix);
-      td::actor::send_closure(params_.manager, &ValidatorManager::consensus_db_closed, params_.session_id,
+      td::actor::send_closure(params_.manager, &ValidatorManager::consensus_db_closed, params_.session_id, generation,
                               std::move(dir_name));
     }
     stop();

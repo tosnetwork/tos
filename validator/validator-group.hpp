@@ -67,7 +67,10 @@ class IValidatorGroup : public td::actor::Actor {
   // on disk for a later checkpoint-bound deletion (validator-group cleanup,
   // Finding 1 / PR B). Unlike destroy(), this never removes the directory, so a
   // session that is still recreatable can never lose its consensus state here.
-  virtual void close_for_retirement() = 0;
+  // `generation` is the retiring incarnation tag the manager assigned; it is
+  // reported back in consensus_db_closed so a stale close from an older
+  // incarnation can be distinguished from the current one.
+  virtual void close_for_retirement(td::uint64 generation) = 0;
 };
 
 }  // namespace validator

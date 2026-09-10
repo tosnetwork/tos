@@ -356,11 +356,13 @@ class ValidatorManager : public ValidatorManagerInterface {
   virtual void consensus_db_cleanup_done(std::string dir_name) {
   }
   // A retiring validator group reports, after its consensus bus has stopped and
-  // its database is closed (but WITHOUT deleting the directory), the session id
-  // and exact directory name. The manager records that the actor no longer holds
-  // the DB, so a later checkpoint-bound cleanup may delete it. Default no-op for
-  // implementations that do not run validator-group cleanup (Finding 1 / PR B).
-  virtual void consensus_db_closed(ValidatorSessionId session_id, std::string dir_name) {
+  // its database is closed (but WITHOUT deleting the directory), the session id,
+  // the incarnation `generation` it was retired at, and the exact directory name.
+  // The manager records that this incarnation's actor no longer holds the DB, so
+  // a later checkpoint-bound cleanup may delete it; the generation lets a stale
+  // close from an older incarnation be ignored. Default no-op for implementations
+  // that do not run validator-group cleanup (Finding 1 / PR B).
+  virtual void consensus_db_closed(ValidatorSessionId session_id, td::uint64 generation, std::string dir_name) {
   }
   virtual void set_block_state(BlockHandle handle, td::Ref<ShardState> state, vm::StoreCellHint hint,
                                td::Promise<td::Ref<ShardState>> promise) = 0;
