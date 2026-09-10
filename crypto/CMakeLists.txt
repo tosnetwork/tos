@@ -770,6 +770,12 @@ set_tests_properties(test-workchain-test-execution-permit-guard PROPERTIES TIMEO
 add_test(NAME test-workchain-m3-closure-expiry COMMAND ${Python3_EXECUTABLE}
   "${PROJECT_SOURCE_DIR}/crypto/test/workchain-m3-closure-expiry.py" --repo "${PROJECT_SOURCE_DIR}" --controls)
 set_tests_properties(test-workchain-m3-closure-expiry PROPERTIES TIMEOUT 60 LABELS "workchain;m3;expiry")
+
+# Default lifecycle guard: a new direct crypto ABI caller needs disposition,
+# even when optional native metering fixtures are not configured.
+add_test(NAME test-workchain-crypto-abi-boundary COMMAND ${Python3_EXECUTABLE}
+  "${PROJECT_SOURCE_DIR}/crypto/test/workchain-crypto-abi-boundary.py" --repo "${PROJECT_SOURCE_DIR}")
+set_tests_properties(test-workchain-crypto-abi-boundary PROPERTIES TIMEOUT 60 LABELS "workchain;m3;boundary")
 add_test(NAME test-workchain-handwritten-tags COMMAND ${Python3_EXECUTABLE}
   "${PROJECT_SOURCE_DIR}/crypto/test/workchain-handwritten-tags.py" --repo "${PROJECT_SOURCE_DIR}")
 set_tests_properties(test-workchain-handwritten-tags PROPERTIES TIMEOUT 30 LABELS "workchain;d40")

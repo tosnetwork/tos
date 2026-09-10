@@ -301,9 +301,9 @@ class PureBackend final : public ScenarioBackend {
     std::vector<Root> messages{envelope};
     TRY_RESULT(inbox_root, encode_workchain_batch_inbound(messages));
     auto inbox = plan_workchain_native_inbox(inbox_root, 2, {coordinator_id_}, registration_lt_, 1);
-    TRY_RESULT(payment, replay_workchain_registration_payment(policy, registration_ingress_, registration_descriptor_,
+    TRY_RESULT(payment, block::WorkchainProofTestAccess::with_budget(100000, [&](auto& verification_budget) { return replay_workchain_registration_payment(policy, registration_ingress_, registration_descriptor_,
                                                                inbox, td::Bits256(msg->get_hash().bits()),
-                                                               coordinator(), old_coordinator.balance, {}, replay_root));
+                                                               coordinator(), old_coordinator.balance, {}, replay_root, verification_budget); }));
     WorkchainHostIdentity identity{env_.protocol.global_id,
                                    env_.protocol.genesis_hash,
                                    env_.protocol.workchain_instance,
@@ -385,9 +385,9 @@ class PureBackend final : public ScenarioBackend {
         if (!::tlb::unpack_cell(recorded_inbox.envelopes[0], recorded_envelope))
           return alarm("registration replay envelope malformed");
         const td::Bits256 recorded_message(recorded_envelope.msg->get_hash().bits());
-        TRY_RESULT(rebuilt, replay_workchain_registration_payment(
+        TRY_RESULT(rebuilt, block::WorkchainProofTestAccess::with_budget(100000, [&](auto& verification_budget) { return replay_workchain_registration_payment(
             policy, registration_ingress_, registration_descriptor_, recorded_inbox, recorded_message,
-            coordinator(), old_coordinator.balance, {}, host.candidate));
+            coordinator(), old_coordinator.balance, {}, host.candidate, verification_budget); }));
         if (rebuilt.registration.account_data->get_hash() != created.data->get_hash() ||
             rebuilt.registration.coordinator_data->get_hash() != funded.data->get_hash() ||
             rebuilt.coordinator_flow.new_balance != funded.balance)
@@ -397,9 +397,9 @@ class PureBackend final : public ScenarioBackend {
         if (!registered) return alarm("registration entry carries another operation");
         registered->claimed_operation_id.as_slice()[0] ^= 1;
         TRY_RESULT(wrong_id, encode_workchain_replay_input(wire));
-        auto rejected = replay_workchain_registration_payment(
+        auto rejected = block::WorkchainProofTestAccess::with_budget(100000, [&](auto& verification_budget) { return replay_workchain_registration_payment(
             policy, registration_ingress_, registration_descriptor_, recorded_inbox, recorded_message,
-            coordinator(), old_coordinator.balance, {}, wrong_id);
+            coordinator(), old_coordinator.balance, {}, wrong_id, verification_budget); });
         if (rejected.is_ok() || rejected.error().code() != -7200 ||
             rejected.error().message() != "claimed operationID mismatch")
           return alarm("registration payment accepted or misclassified a false operationID");
@@ -573,7 +573,7 @@ class PureBackend final : public ScenarioBackend {
     auto a = account(owner);
     auto p = proof<96>("close", owner, a);
     TRY_RESULT(result,
-               execute_workchain_account_closure(a, coordinator(), possession_policy(), env_.domain, p));
+               block::WorkchainProofTestAccess::with_budget(100000, [&](auto& verification_budget) { return execute_workchain_account_closure(a, coordinator(), possession_policy(), env_.domain, p, verification_budget); }));
     // Pure backend applies the refund to its Native balance state atomically. A
     // live backend must use the delivered Native transaction instead.
     auto next = state_;

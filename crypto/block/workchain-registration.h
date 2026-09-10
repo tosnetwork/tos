@@ -65,7 +65,7 @@ inline td::Result<WorkchainRegistrationTransition> prepare_workchain_registratio
     const WorkchainRegistrationSnapshot& old,
     const td::Bits256& destination_account,
     const td::Ref<vm::Cell>& registration_data,
-    const std::array<unsigned char, 64>& proof) {
+    const std::array<unsigned char, 64>& proof, WorkchainProofVerifier& verifier) {
   auto invalid = [](td::Slice message) {
     return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::CandidateInvalid), message);
   };
@@ -114,7 +114,7 @@ inline td::Result<WorkchainRegistrationTransition> prepare_workchain_registratio
       policy.deposit > UINT64_MAX - old.coordinator.refundable_deposits) {
     return invalid("registration counter or refundable deposit bucket exhausted");
   }
-  TRY_STATUS(verify_workchain_registration_possession(account, policy.possession, proof));
+  TRY_STATUS(verify_workchain_registration_possession(account, policy.possession, proof, verifier));
   auto coordinator = old.coordinator;
   ++coordinator.system.registered_accounts;  // Checked strictly below UINT64_MAX above.
   coordinator.refundable_deposits += policy.deposit;  // Checked above, no wrap.
@@ -132,13 +132,13 @@ inline td::Result<WorkchainRegistrationTransition> prepare_workchain_registratio
 inline td::Result<WorkchainRegistrationTransition> execute_workchain_registration(
     const WorkchainRegistrationPolicy& policy, const WorkchainRegistrationSnapshot& old,
     const td::Bits256& destination_account, const td::Ref<vm::Cell>& registration_data,
-    const std::array<unsigned char, 64>& proof) {
+    const std::array<unsigned char, 64>& proof, WorkchainProofVerifier& verifier) {
   auto local = [] {
     return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),
                             "registration construction unavailable");
   };
   try {
-    return prepare_workchain_registration_impl(policy, old, destination_account, registration_data, proof);
+    return prepare_workchain_registration_impl(policy, old, destination_account, registration_data, proof, verifier);
   } catch (const vm::CellBuilder::CellCreateError&) { return local();
   } catch (const vm::CellBuilder::CellWriteError&) { return local();
   } catch (const std::bad_alloc&) { return local();

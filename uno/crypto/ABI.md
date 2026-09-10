@@ -26,6 +26,33 @@ but their transcript/ABI content has changed to v2. Correspondence tests still
 do not constitute a reliability argument. The account nonce/revision, Native
 key-origin limitation and independent host state checks remain unchanged.
 
+## Profile 4 possession coverage
+
+Profile 4 now covers registration and closure verification through the same
+`WorkchainProofVerifier` precharge and sticky failure path as SEND/COLLECT.
+The SEND/COLLECT counting rules are unchanged. Possession counts are fixed:
+their context is exactly 426 bytes and their equations do not scale with a
+candidate-selected collection size. They reserve the full path even if a
+malformed proof exits early; failure does not refund work.
+
+| Existing v4 component | Registration | Closure |
+| --- | ---: | ---: |
+| Scalar multiplications | 2 | 4 |
+| Generated points | 1 | 2 |
+| Decoded points | 2 | 5 |
+| Encoded points | 0 | 1 |
+| Sigma equations | 1 | 2 |
+| Sigma witnesses | 1 | 1 |
+| Context bytes | 426 | 426 |
+| MSM terms / range rounds | 0 / 0 | 0 / 0 |
+| Total | 433 | 441 |
+
+These counts follow `key_possession.rs` and `closure_possession.rs`: closure
+constructs H for the challenge and again for its first equation, and compresses
+the challenge's H once. Fixed transcript fields use the existing v4 convention;
+no new hash, fee, or time unit is introduced. These are algorithm-boundary
+counts, not measured CPU instructions or a production preflight bound.
+
 ## Historical registration key possession v1 (superseded; rejected)
 
 `uno_crypto_verify_key_possession_v1` accepts a fixed-field

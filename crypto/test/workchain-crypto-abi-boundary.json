@@ -1,0 +1,201 @@
+{
+  "crypto/block/workchain-proof-backend.cpp": {
+    "symbols": [
+      "uno_crypto_verify_closure_possession_v2",
+      "uno_crypto_verify_key_possession_v2",
+      "uno_crypto_verify_v2"
+    ],
+    "sha256": "525f1017ff35292931bb90d956416203a61f0d5f67125bcea8c6bc98e61e32b1",
+    "disposition": "Three live node verification calls, each a private WorkchainProofVerifier backend reached after its shared precharge. No other node ABI caller."
+  },
+  "crypto/test/test-workchain-proof-backend.cpp": {
+    "symbols": [
+      "__real_uno_crypto_verify_v2",
+      "__wrap_uno_crypto_verify_v2"
+    ],
+    "sha256": "79f6eeb41b81943ff8491806aea5230fb7827c09424c135752745858d0e01118",
+    "disposition": "Test-only linker interception (__wrap/__real) measures the already-metered relation backend; not an engine entry."
+  },
+  "crypto/test/workchain-proof-boundary-gates.py": {
+    "symbols": [
+      "uno_crypto_verify_v2"
+    ],
+    "sha256": "c250b984a32ceab469dee0f8ad835ccd58149aea8e40b36f7671864d91e1b9c1",
+    "disposition": "Source assertion text naming the relation ABI; no ABI invocation."
+  },
+  "doc/measurements/uno-m2-rng-source-review/archived-symbol-reader.py": {
+    "symbols": [
+      "uno_crypto_system_encrypt_v1",
+      "uno_crypto_system_verify_v1",
+      "uno_crypto_verify_v2"
+    ],
+    "sha256": "b53171a4d6bec81db5579797d629a2e31c35d4495d1af2b0f031c8038a079dd2",
+    "disposition": "Historical source/symbol inspection or isolated linker control script, not a node execution entry. Included rather than exempted from the inventory."
+  },
+  "doc/measurements/uno-m2-rng-source-review/extract.py": {
+    "symbols": [
+      "uno_crypto_system_encrypt_v1",
+      "uno_crypto_system_verify_v1",
+      "uno_crypto_verify_v2"
+    ],
+    "sha256": "e47977025c937f7989686213c9f3517636631391d071b9e0951960d30b3c2b93",
+    "disposition": "Historical source/symbol inspection or isolated linker control script, not a node execution entry. Included rather than exempted from the inventory."
+  },
+  "doc/measurements/uno-m2-rng-source-review/resolve.py": {
+    "symbols": [
+      "uno_crypto_verify_v2"
+    ],
+    "sha256": "45937ec56c2a81dc352bfe261a4ede75801e14cb53291051042794b70104432f",
+    "disposition": "Historical source/symbol inspection or isolated linker control script, not a node execution entry. Included rather than exempted from the inventory."
+  },
+  "doc/measurements/uno-v2-c1-operation-controls/linkage/wrap-control.py": {
+    "symbols": [
+      "uno_crypto_verify_v2"
+    ],
+    "sha256": "1ebb55bfe17e2a99a24230d73354bb98d682f317658250434e135d77a5c5b005",
+    "disposition": "Historical source/symbol inspection or isolated linker control script, not a node execution entry. Included rather than exempted from the inventory."
+  },
+  "test/uno-m3-vectors.py": {
+    "symbols": [
+      "uno_crypto_verify_v2"
+    ],
+    "sha256": "7b5d940d5b6d26e65aaf0e0d316a41c8e02e4e486be9d1d43da2eeef201aa76d",
+    "disposition": "Wallet-vector subprocess tool checks ABI status output; does not invoke a node verification ABI."
+  },
+  "uno/archive/v1/core/crypto-verifier.h": {
+    "symbols": [
+      "uno_crypto_v0_retired",
+      "uno_crypto_verify_v0"
+    ],
+    "sha256": "238c1ee47ee7753e6869dc1b0da0e8a4b09fbd0dc515be56e37417354a2ab5ae",
+    "disposition": "Retired v0 verification adapter, not referenced by current CMake build. No live node entry; must not be restored without metering."
+  },
+  "uno/archive/v1/core/note-tree-state.h": {
+    "symbols": [
+      "uno_crypto_tree_append_v0",
+      "uno_crypto_v0_retired"
+    ],
+    "sha256": "51d5d8ddd1aa4a630ef63d9b98e3c6bbc0104bfecf545d7347db9cf4276b489d",
+    "disposition": "Retired v0 note-tree append adapter, not current CMake input; tree operation, not proof verification."
+  },
+  "uno/archive/v1/test/test-crypto-adapter.cpp": {
+    "symbols": [
+      "uno_crypto_verify_v0"
+    ],
+    "sha256": "070abeaac5e0c4a56bc6bca127f6a43c6e43900fbe962f6ad8aee70c02f35a04",
+    "disposition": "Retired v0 test stub defines a fake ABI symbol; not linked into current node."
+  },
+  "uno/crypto/include/uno_crypto.h": {
+    "symbols": [
+      "uno_crypto_system_encrypt_v1",
+      "uno_crypto_system_verify_v1",
+      "uno_crypto_verify_closure_possession_v1",
+      "uno_crypto_verify_closure_possession_v2",
+      "uno_crypto_verify_key_possession_v1",
+      "uno_crypto_verify_key_possession_v2",
+      "uno_crypto_verify_v2"
+    ],
+    "sha256": "400a2c318b136986ff0fee34a2c42f37970c29d4b173345121d20903c897ea0f",
+    "disposition": "Public ABI declarations only, no calls. System encryption and verification have no live node caller."
+  },
+  "uno/crypto/include/uno_crypto_v0_retired.h": {
+    "symbols": [
+      "uno_crypto_tree_append_v0",
+      "uno_crypto_verify_v0"
+    ],
+    "sha256": "cae5dff503702cef7f25b507077cbb920b044f2d95ac1dd72feb78fe1b268633",
+    "disposition": "Retired ABI declarations only, no calls."
+  },
+  "uno/crypto/src/closure_possession.rs": {
+    "symbols": [
+      "uno_crypto_verify_closure_possession_v1",
+      "uno_crypto_verify_closure_possession_v2"
+    ],
+    "sha256": "f09681d343c110214e0f7f72df8fce0c3cae7d3ea058ff3885bcf0fae25efbe8",
+    "disposition": "Direct calls/imports occur only in cfg(test) module; tests deliberately exercise ABI and retired-version rejection without a host."
+  },
+  "uno/crypto/src/ffi.rs": {
+    "symbols": [
+      "uno_crypto_system_encrypt_v1",
+      "uno_crypto_system_verify_v1",
+      "uno_crypto_verify_closure_possession_v1",
+      "uno_crypto_verify_closure_possession_v2",
+      "uno_crypto_verify_key_possession_v1",
+      "uno_crypto_verify_key_possession_v2",
+      "uno_crypto_verify_v2"
+    ],
+    "sha256": "3a72655d498da5cce72651427f184400c3381edcab2d399b86c8e561927d710e",
+    "disposition": "Rust ABI exports and rejection-only retired stubs, not host callers. Meter belongs to the node-side caller."
+  },
+  "uno/crypto/src/key_possession.rs": {
+    "symbols": [
+      "uno_crypto_verify_key_possession_v1",
+      "uno_crypto_verify_key_possession_v2"
+    ],
+    "sha256": "5c20414cfa8124d71249720b77576fdf3a981b5b9f2193943dd5f13ac7e4f3d4",
+    "disposition": "Direct calls/imports occur only in cfg(test) module; tests deliberately exercise ABI and retired-version rejection without a host."
+  },
+  "uno/crypto/src/system_encryption.rs": {
+    "symbols": [
+      "uno_crypto_system_encrypt_v1",
+      "uno_crypto_system_verify_v1"
+    ],
+    "sha256": "c1e1bbd2c975946f73c9e819b66d67e44eaf053c85d83e9860b706d55c0966cc",
+    "disposition": "Direct system encrypt/verify calls occur only in cfg(test); tests cover both construction and verification, not a live node path."
+  },
+  "uno/crypto/src/tests.rs": {
+    "symbols": [
+      "uno_crypto_verify_v2"
+    ],
+    "sha256": "b4e29d3dba112f12604bd376703cccd3a3c4ed58f981403dbdc617a9476c5f2a",
+    "disposition": "Rust unit tests call relation ABI directly to test its own contract, not node execution."
+  },
+  "uno/crypto/tests/balance-abi.cpp": {
+    "symbols": [
+      "uno_crypto_system_encrypt_v1",
+      "uno_crypto_system_verify_v1",
+      "uno_crypto_verify_v2"
+    ],
+    "sha256": "dbaa4a69c0741e194071f10e1d5f16febb9f164525e5b1c62b92f311d5f2cde7",
+    "disposition": "Standalone ABI conformance test exercises relation and system encrypt/verify directly, not a node entry."
+  },
+  "uno/crypto/tests/kernel-symbols.py": {
+    "symbols": [
+      "uno_crypto_system_encrypt_v1",
+      "uno_crypto_system_verify_v1",
+      "uno_crypto_verify_v2"
+    ],
+    "sha256": "d0917f132a8f9019efdb52ea68dbe785f89ea4b3ce96b7b6f72ed36cf6176d5a",
+    "disposition": "Symbol-table inspection, no cryptographic call."
+  },
+  "uno/crypto/tests/node-link.py": {
+    "symbols": [
+      "uno_crypto_system_encrypt_v1",
+      "uno_crypto_system_verify_v1",
+      "uno_crypto_verify_v2"
+    ],
+    "sha256": "f0c40063692502838c6f3672a8f56044c10cfc92ceac7af6436e2e894ed24870",
+    "disposition": "Build/link and symbol-table connectivity inspection, no direct cryptographic call."
+  },
+  "uno/crypto/tests/rng-acceptance.py": {
+    "symbols": [
+      "uno_crypto_verify_v2"
+    ],
+    "sha256": "a3f36388c9370f520cbc650c923f2d1cc41de08288ba8c534f90cb6147c15d88",
+    "disposition": "Test runner and symbol/output assertions, no direct cryptographic call."
+  },
+  "uno/crypto/tests/sanitizer-canary.cpp": {
+    "symbols": [
+      "uno_crypto_verify_v2"
+    ],
+    "sha256": "834c809fe8ca4b66fd2eca6bd5e1ef45fe3e3bdd0316b256076e1beb88bb5d64",
+    "disposition": "Standalone ABI memory-safety test; deliberately calls ABI without host policy."
+  },
+  "uno/prover/examples/m3-vectors.rs": {
+    "symbols": [
+      "uno_crypto_verify_v2"
+    ],
+    "sha256": "3fec48b9ff77e08acef5fc08f5372e60ed954b95888c7006ca5182c9a314b32e",
+    "disposition": "Wallet-side vector generator verifies generated proof and changed-context rejection; not node execution."
+  }
+}

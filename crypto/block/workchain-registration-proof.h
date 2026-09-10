@@ -2,6 +2,7 @@
 #include "block/workchain-confidential-state.h"
 #include "block/workchain-confidential-input.h"
 #include "block/workchain-execution-errors.h"
+#include "block/workchain-proof-work.h"
 #include "uno/crypto/include/uno_crypto.h"
 #include <array>
 
@@ -42,7 +43,7 @@ inline td::Status check_workchain_possession_replay_context(
 td::Status verify_workchain_registration_possession(
     const WorkchainConfidentialAccount& registration,
     const WorkchainPossessionPolicy& policy,
-    const std::array<unsigned char, 64>& proof);
+    const std::array<unsigned char, 64>& proof, WorkchainProofVerifier& verifier);
 
 // Reconstruct the zero-balance statement from the current authenticated account.
 // Domain comes from authenticated protocol configuration. Pending is a separate
@@ -52,5 +53,5 @@ td::Status verify_workchain_closure_possession(
     const WorkchainConfidentialAccount& account,
     const WorkchainPossessionPolicy& policy,
     const std::array<unsigned char, 80>& domain,
-    const std::array<unsigned char, 96>& proof);
+    const std::array<unsigned char, 96>& proof, WorkchainProofVerifier& verifier);
 }

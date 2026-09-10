@@ -155,12 +155,12 @@ inline td::Result<WorkchainRegistrationPaymentResult> execute_workchain_registra
     const WorkchainExecutionDescriptor& descriptor, const td::Result<WorkchainNativeInboxPlan>& admitted_inbox,
     const td::Bits256& message_hash, const WorkchainCoordinatorState& old_coordinator,
     const CurrencyCollection& old_coordinator_balance, const td::Ref<vm::Cell>& existing_account,
-    const std::array<unsigned char, 64>& proof) {
+    const std::array<unsigned char, 64>& proof, WorkchainProofVerifier& verifier) {
   return registration_payment_detail::execute(
       policy, ingress, descriptor, admitted_inbox, message_hash, old_coordinator, old_coordinator_balance,
       existing_account, [&](const WorkchainRegistrationSnapshot& old, const td::Bits256& destination,
                             const td::Ref<vm::Cell>& body) {
-        return execute_workchain_registration(policy, old, destination, body, proof);
+        return execute_workchain_registration(policy, old, destination, body, proof, verifier);
       });
 }
 
@@ -173,12 +173,12 @@ inline td::Result<WorkchainRegistrationPaymentResult> replay_workchain_registrat
     const WorkchainExecutionDescriptor& descriptor, const td::Result<WorkchainNativeInboxPlan>& admitted_inbox,
     const td::Bits256& message_hash, const WorkchainCoordinatorState& old_coordinator,
     const CurrencyCollection& old_coordinator_balance, const td::Ref<vm::Cell>& existing_account,
-    const td::Ref<vm::Cell>& replay_root) {
+    const td::Ref<vm::Cell>& replay_root, WorkchainProofVerifier& verifier) {
   return registration_payment_detail::execute(
       policy, ingress, descriptor, admitted_inbox, message_hash, old_coordinator, old_coordinator_balance,
       existing_account, [&](const WorkchainRegistrationSnapshot& old, const td::Bits256& destination,
                             const td::Ref<vm::Cell>& body) {
-        return replay_workchain_registration(policy, old, destination, body, replay_root);
+        return replay_workchain_registration(policy, old, destination, body, replay_root, verifier);
       });
 }
 

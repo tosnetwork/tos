@@ -1,3 +1,4 @@
+#include "workchain-proof-test-access.h"
 #include <algorithm>
 
 #include "block/workchain-confidential-native.h"
@@ -37,9 +38,30 @@ TEST(RegistrationProof, RustPossessionVectorAndHostBinding) {
   ASSERT_TRUE(encoded.is_ok());
   std::array<unsigned char, 64> proof;
   std::copy(encoded.ok().begin(), encoded.ok().end(), proof.begin());
-  auto result = block::verify_workchain_registration_possession(a, possession, proof);
+  auto meter = block::WorkchainProofTestAccess::create(433);
+  auto result = block::verify_workchain_registration_possession(a, possession, proof, meter);
+  ASSERT_EQ(meter.consumed(), 433u);
+  auto short_meter = block::WorkchainProofTestAccess::create(432);
+  auto short_result = block::verify_workchain_registration_possession(a, possession, proof, short_meter);
+  ASSERT_TRUE(short_result.is_error());
+  ASSERT_EQ(short_result.code(), -7201);
+  ASSERT_EQ(short_result.message(), "engine underestimated attempted verification work");
+  ASSERT_EQ(short_meter.consumed(), 0u);
 #if defined(TOS_CONFIDENTIAL_PROOF_BACKEND_LINKED)
   ASSERT_TRUE(result.is_ok());
+  ASSERT_TRUE(block::verify_workchain_registration_possession(a, possession, proof, meter).is_error());
+  ASSERT_EQ(meter.consumed(), 433u);
+  auto invalid_proof = proof;
+  invalid_proof[0] ^= 1;
+  auto failed_meter = block::WorkchainProofTestAccess::create(866);
+  auto invalid_result = block::verify_workchain_registration_possession(a, possession, invalid_proof, failed_meter);
+  ASSERT_TRUE(invalid_result.is_error());
+  ASSERT_EQ(invalid_result.code(), -7200);
+  ASSERT_EQ(failed_meter.consumed(), 433u);
+  auto sticky_result = block::verify_workchain_registration_possession(a, possession, proof, failed_meter);
+  ASSERT_TRUE(sticky_result.is_error());
+  ASSERT_EQ(sticky_result.code(), -7200);
+  ASSERT_EQ(failed_meter.consumed(), 433u);
   a.funding = {10, 0, fill(8)};
   a.available = {fill(0), fill(0)};
   a.auth_nonce = 0;
@@ -61,7 +83,7 @@ TEST(RegistrationProof, RustPossessionVectorAndHostBinding) {
   auto aliased = a;
   aliased.address.instance = policy.workchain_instance;
   auto alias_cell = block::encode_workchain_confidential_account(aliased).move_as_ok();
-  auto rejected_alias = block::execute_workchain_registration(policy, old, a.address.account, alias_cell, proof);
+  auto rejected_alias = block::WorkchainProofTestAccess::with_budget(100000, [&](auto& verification_budget) { return block::execute_workchain_registration(policy, old, a.address.account, alias_cell, proof, verification_budget); });
   ASSERT_TRUE(rejected_alias.is_error());
   ASSERT_EQ(rejected_alias.error().code(), -7200);
   ASSERT_EQ(rejected_alias.error().message(), "registration incarnation differs from operationID");
@@ -69,7 +91,7 @@ TEST(RegistrationProof, RustPossessionVectorAndHostBinding) {
       block::rebuild_workchain_possession_context(possession,a),proof};
   auto replay_root=block::encode_workchain_replay_input(replay).move_as_ok();
   ASSERT_EQ(vm::std_boc_serialize(replay_root,0).move_as_ok().size(),557u);
-  auto registered = block::replay_workchain_registration(policy, old, a.address.account, cell.ok(), replay_root);
+  auto registered = block::WorkchainProofTestAccess::with_budget(100000, [&](auto& verification_budget) { return block::replay_workchain_registration(policy, old, a.address.account, cell.ok(), replay_root, verification_budget); });
   ASSERT_TRUE(registered.is_ok());
   ASSERT_EQ(registered.ok().payer_balance, 90u);
   // X proof with authenticated Y. The wire also claims Y, so host comparison
@@ -81,13 +103,13 @@ TEST(RegistrationProof, RustPossessionVectorAndHostBinding) {
       block::WorkchainReplayOperation::Registration).is_ok());
   auto replay_y=replay; replay_y.context=claimed_y;
   auto root_y=block::encode_workchain_replay_input(replay_y).move_as_ok();
-  auto wrong_context_proof = block::replay_workchain_registration(policy_y, old, a.address.account, cell.ok(), root_y);
+  auto wrong_context_proof = block::WorkchainProofTestAccess::with_budget(100000, [&](auto& verification_budget) { return block::replay_workchain_registration(policy_y, old, a.address.account, cell.ok(), root_y, verification_budget); });
   ASSERT_TRUE(wrong_context_proof.is_error());
   ASSERT_EQ(wrong_context_proof.error().code(), -7200);
   ASSERT_EQ(wrong_context_proof.error().message(), "invalid registration key possession proof");
   auto wrong_id=replay; wrong_id.claimed_operation_id.as_slice()[0]^=1;
-  auto id_result=block::replay_workchain_registration(policy,old,a.address.account,cell.ok(),
-      block::encode_workchain_replay_input(wrong_id).move_as_ok());
+  auto id_result=block::WorkchainProofTestAccess::with_budget(100000, [&](auto& verification_budget) { return block::replay_workchain_registration(policy,old,a.address.account,cell.ok(),
+      block::encode_workchain_replay_input(wrong_id).move_as_ok(), verification_budget); });
   ASSERT_TRUE(id_result.is_error()); ASSERT_EQ(id_result.error().code(),-7200);
   ASSERT_EQ(id_result.error().message(),"claimed operationID mismatch");
   auto coordinator = block::decode_workchain_coordinator_state(registered.ok().coordinator_data);
@@ -144,8 +166,8 @@ TEST(RegistrationProof, RustPossessionVectorAndHostBinding) {
   auto payment = envelope_for(10, fill(8), ingress.executor_address);
   td::Result<block::WorkchainNativeInboxPlan> inbox{block::WorkchainNativeInboxPlan{{payment.first}, 1}};
   auto acquire = [&](const td::Result<block::WorkchainNativeInboxPlan>& messages, const td::Bits256& hash) {
-    return block::execute_workchain_registration_payment(policy, ingress, descriptor, messages, hash, old.coordinator,
-                                                         block::CurrencyCollection(50), {}, proof);
+    return block::WorkchainProofTestAccess::with_budget(100000, [&](auto& verification_budget) { return block::execute_workchain_registration_payment(policy, ingress, descriptor, messages, hash, old.coordinator,
+                                                         block::CurrencyCollection(50), {}, proof, verification_budget); });
   };
   auto paid = acquire(inbox, payment.second);
   if (paid.is_error())
@@ -329,36 +351,36 @@ TEST(RegistrationProof, RustPossessionVectorAndHostBinding) {
   ASSERT_EQ(acquire(inbox, fill(0)).error().code(), -7200);
   auto replay_old = old;
   replay_old.existing_account = registered.ok().account_data;
-  auto duplicate = block::execute_workchain_registration(policy, replay_old, a.address.account, cell.ok(), proof);
+  auto duplicate = block::WorkchainProofTestAccess::with_budget(100000, [&](auto& verification_budget) { return block::execute_workchain_registration(policy, replay_old, a.address.account, cell.ok(), proof, verification_budget); });
   ASSERT_TRUE(duplicate.is_error());
   ASSERT_EQ(duplicate.error().code(), static_cast<int>(block::WorkchainExecutionFailure::CandidateInvalid));
-  auto wrong_address = block::execute_workchain_registration(policy, old, fill(9), cell.ok(), proof);
+  auto wrong_address = block::WorkchainProofTestAccess::with_budget(100000, [&](auto& verification_budget) { return block::execute_workchain_registration(policy, old, fill(9), cell.ok(), proof, verification_budget); });
   ASSERT_TRUE(wrong_address.is_error());
   ASSERT_EQ(wrong_address.error().code(), static_cast<int>(block::WorkchainExecutionFailure::CandidateInvalid));
   auto poor = old;
   poor.payer_balance = 9;
-  ASSERT_TRUE(block::execute_workchain_registration(policy, poor, a.address.account, cell.ok(), proof).is_error());
+  ASSERT_TRUE(block::WorkchainProofTestAccess::with_budget(100000, [&](auto& verification_budget) { return block::execute_workchain_registration(policy, poor, a.address.account, cell.ok(), proof, verification_budget); }).is_error());
   ASSERT_EQ(poor.payer_balance, 9u);
   auto exhausted = old;
   exhausted.coordinator.refundable_deposits = UINT64_MAX;
-  ASSERT_TRUE(block::execute_workchain_registration(policy, exhausted, a.address.account, cell.ok(), proof).is_error());
+  ASSERT_TRUE(block::WorkchainProofTestAccess::with_budget(100000, [&](auto& verification_budget) { return block::execute_workchain_registration(policy, exhausted, a.address.account, cell.ok(), proof, verification_budget); }).is_error());
   exhausted = old;
   exhausted.coordinator.system.registered_accounts = UINT64_MAX;
-  ASSERT_TRUE(block::execute_workchain_registration(policy, exhausted, a.address.account, cell.ok(), proof).is_error());
+  ASSERT_TRUE(block::WorkchainProofTestAccess::with_budget(100000, [&](auto& verification_budget) { return block::execute_workchain_registration(policy, exhausted, a.address.account, cell.ok(), proof, verification_budget); }).is_error());
   auto bad_proof = proof;
   bad_proof[32] ^= 1;
-  auto denied = block::execute_workchain_registration(policy, old, a.address.account, cell.ok(), bad_proof);
+  auto denied = block::WorkchainProofTestAccess::with_budget(100000, [&](auto& verification_budget) { return block::execute_workchain_registration(policy, old, a.address.account, cell.ok(), bad_proof, verification_budget); });
   ASSERT_TRUE(denied.is_error());
   ASSERT_EQ(denied.error().code(), static_cast<int>(block::WorkchainExecutionFailure::CandidateInvalid));
   ASSERT_EQ(old.payer_balance, 100u);
   ASSERT_TRUE(old.existing_account.is_null());
   a.key_epoch = 1;
-  result = block::verify_workchain_registration_possession(a, possession, proof);
+  result = block::WorkchainProofTestAccess::with_budget(100000, [&](auto& verification_budget) { return block::verify_workchain_registration_possession(a, possession, proof, verification_budget); });
   ASSERT_TRUE(result.is_error());
   ASSERT_EQ(result.code(), static_cast<int>(block::WorkchainExecutionFailure::CandidateInvalid));
   a.key_epoch = 0;
   proof[32] ^= 1;
-  result = block::verify_workchain_registration_possession(a, possession, proof);
+  result = block::WorkchainProofTestAccess::with_budget(100000, [&](auto& verification_budget) { return block::verify_workchain_registration_possession(a, possession, proof, verification_budget); });
   ASSERT_TRUE(result.is_error());
   ASSERT_EQ(result.code(), static_cast<int>(block::WorkchainExecutionFailure::CandidateInvalid));
 #else

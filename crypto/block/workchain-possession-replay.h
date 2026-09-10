@@ -9,7 +9,7 @@ namespace block {
 inline td::Result<WorkchainRegistrationTransition> replay_workchain_registration(
     const WorkchainRegistrationPolicy& policy, const WorkchainRegistrationSnapshot& old,
     const td::Bits256& destination, const td::Ref<vm::Cell>& registration_body,
-    const td::Ref<vm::Cell>& replay_root) {
+    const td::Ref<vm::Cell>& replay_root, WorkchainProofVerifier& verifier) {
   TRY_RESULT(wire, decode_workchain_replay_input(replay_root));
   const auto* input = std::get_if<WorkchainRegistrationReplayInput>(&wire);
   if (!input) return td::Status::Error(-7200, "registration replay operation mismatch");
@@ -18,13 +18,14 @@ inline td::Result<WorkchainRegistrationTransition> replay_workchain_registration
   TRY_STATUS(check_workchain_claimed_operation_id(wire, id));
   TRY_STATUS(check_workchain_possession_replay_context(input->context, policy.possession, account,
                                                        WorkchainReplayOperation::Registration));
-  return execute_workchain_registration(policy, old, destination, registration_body, input->proof);
+  return execute_workchain_registration(policy, old, destination, registration_body, input->proof, verifier);
 }
 
 inline td::Result<WorkchainAccountClosureTransition> replay_workchain_account_closure(
     const WorkchainConfidentialAccount& old_account, const WorkchainCoordinatorState& old_coordinator,
     const WorkchainPossessionPolicy& policy,
-    const std::array<unsigned char, 80>& authenticated_domain, const td::Ref<vm::Cell>& replay_root) {
+    const std::array<unsigned char, 80>& authenticated_domain, const td::Ref<vm::Cell>& replay_root,
+    WorkchainProofVerifier& verifier) {
   TRY_RESULT(wire, decode_workchain_replay_input(replay_root));
   const auto* input = std::get_if<WorkchainClosureReplayInput>(&wire);
   if (!input) return td::Status::Error(-7200, "closure replay operation mismatch");
@@ -35,6 +36,6 @@ inline td::Result<WorkchainAccountClosureTransition> replay_workchain_account_cl
   TRY_STATUS(check_workchain_possession_replay_context(input->context, policy, old_account,
                                                        WorkchainReplayOperation::Closure));
   return execute_workchain_account_closure(old_account, old_coordinator,
-                                           policy, authenticated_domain, input->proof);
+                                           policy, authenticated_domain, input->proof, verifier);
 }
 }
