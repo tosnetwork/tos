@@ -33,7 +33,7 @@ TEST(AccountClosure, RandomizedZeroRefundAndReplay) {
   block::WorkchainClosureReplayInput replay{id,block::rebuild_workchain_possession_context(possession,a),proof};
   auto replay_root=block::encode_workchain_replay_input(replay).move_as_ok();
   ASSERT_EQ(vm::std_boc_serialize(replay_root,0).move_as_ok().size(),589u);
-  auto result=block::replay_workchain_account_closure(a,coordinator,0,possession,domain,replay_root);
+  auto result=block::replay_workchain_account_closure(a,coordinator,possession,domain,replay_root);
 #if defined(TOS_CONFIDENTIAL_PROOF_BACKEND_LINKED)
   ASSERT_TRUE(result.is_ok());
   auto policy_y=possession;
@@ -42,13 +42,13 @@ TEST(AccountClosure, RandomizedZeroRefundAndReplay) {
   ASSERT_TRUE(block::check_workchain_possession_replay_context(claimed_y,policy_y,a,
       block::WorkchainReplayOperation::Closure).is_ok());
   auto replay_y=replay; replay_y.context=claimed_y;
-  auto substituted=block::replay_workchain_account_closure(a,coordinator,0,policy_y,domain,
+  auto substituted=block::replay_workchain_account_closure(a,coordinator,policy_y,domain,
       block::encode_workchain_replay_input(replay_y).move_as_ok());
   ASSERT_TRUE(substituted.is_error());
   ASSERT_EQ(substituted.error().code(),-7200);
   ASSERT_EQ(substituted.error().message(),"invalid closure zero-balance possession proof");
   auto wrong_id=replay; wrong_id.claimed_operation_id.as_slice()[0]^=1;
-  auto rejected_id=block::replay_workchain_account_closure(a,coordinator,0,possession,domain,
+  auto rejected_id=block::replay_workchain_account_closure(a,coordinator,possession,domain,
       block::encode_workchain_replay_input(wrong_id).move_as_ok());
   ASSERT_TRUE(rejected_id.is_error()); ASSERT_EQ(rejected_id.error().code(),-7200);
   ASSERT_EQ(rejected_id.error().message(),"claimed operationID mismatch");
@@ -60,23 +60,20 @@ TEST(AccountClosure, RandomizedZeroRefundAndReplay) {
   ASSERT_EQ(after.ok().system.registered_accounts,9u); ASSERT_EQ(after.ok().refundable_deposits,80u);
   ASSERT_EQ(result.ok().refund.amount,10u); ASSERT_EQ(result.ok().refund.account,fill(8));
   ASSERT_EQ(a.auth_nonce,3u); ASSERT_EQ(coordinator.refundable_deposits,90u);
-  ASSERT_TRUE(block::execute_workchain_account_closure(closed.ok(),after.ok(),0,possession,domain,proof).is_error());
-  auto denied=block::execute_workchain_account_closure(a,coordinator,1,possession,domain,proof);
-  ASSERT_TRUE(denied.is_error());
-  ASSERT_EQ(denied.error().code(),static_cast<int>(block::WorkchainExecutionFailure::CandidateInvalid));
+  ASSERT_TRUE(block::execute_workchain_account_closure(closed.ok(),after.ok(),possession,domain,proof).is_error());
   auto pending=a; pending.pending.resize(1);
-  ASSERT_TRUE(block::execute_workchain_account_closure(pending,coordinator,0,possession,domain,proof).is_error());
+  ASSERT_TRUE(block::execute_workchain_account_closure(pending,coordinator,possession,domain,proof).is_error());
   auto stale=a; ++stale.available_revision;
-  denied=block::execute_workchain_account_closure(stale,coordinator,0,possession,domain,proof);
+  auto denied=block::execute_workchain_account_closure(stale,coordinator,possession,domain,proof);
   ASSERT_TRUE(denied.is_error());
   ASSERT_EQ(denied.error().code(),static_cast<int>(block::WorkchainExecutionFailure::CandidateInvalid));
   auto short_bucket=coordinator; short_bucket.refundable_deposits=9;
-  denied=block::execute_workchain_account_closure(a,short_bucket,0,possession,domain,proof);
+  denied=block::execute_workchain_account_closure(a,short_bucket,possession,domain,proof);
   ASSERT_TRUE(denied.is_error());
   ASSERT_EQ(denied.error().code(),static_cast<int>(block::WorkchainExecutionFailure::AuthenticatedStateCorrupt));
   ASSERT_EQ(short_bucket.refundable_deposits,9u);
   auto exhausted=a; exhausted.auth_nonce=UINT64_MAX;
-  ASSERT_TRUE(block::execute_workchain_account_closure(exhausted,coordinator,0,possession,domain,proof).is_error());
+  ASSERT_TRUE(block::execute_workchain_account_closure(exhausted,coordinator,possession,domain,proof).is_error());
 #else
   ASSERT_TRUE(result.is_error());
   ASSERT_EQ(result.error().code(),static_cast<int>(block::WorkchainExecutionFailure::LocalUnavailable));

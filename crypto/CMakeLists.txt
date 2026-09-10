@@ -765,6 +765,11 @@ set_tests_properties(test-workchain-test-execution-permit PROPERTIES TIMEOUT 30 
 add_test(NAME test-workchain-test-execution-permit-guard COMMAND ${Python3_EXECUTABLE}
   "${PROJECT_SOURCE_DIR}/crypto/test/workchain-test-execution-permit-guard.py" --repo "${PROJECT_SOURCE_DIR}" --controls)
 set_tests_properties(test-workchain-test-execution-permit-guard PROPERTIES TIMEOUT 60 LABELS "workchain;m3;d59")
+
+# Default lifecycle guard: M4/M5 must replace M3's structural closure premise.
+add_test(NAME test-workchain-m3-closure-expiry COMMAND ${Python3_EXECUTABLE}
+  "${PROJECT_SOURCE_DIR}/crypto/test/workchain-m3-closure-expiry.py" --repo "${PROJECT_SOURCE_DIR}" --controls)
+set_tests_properties(test-workchain-m3-closure-expiry PROPERTIES TIMEOUT 60 LABELS "workchain;m3;expiry")
 add_test(NAME test-workchain-handwritten-tags COMMAND ${Python3_EXECUTABLE}
   "${PROJECT_SOURCE_DIR}/crypto/test/workchain-handwritten-tags.py" --repo "${PROJECT_SOURCE_DIR}")
 set_tests_properties(test-workchain-handwritten-tags PROPERTIES TIMEOUT 30 LABELS "workchain;d40")

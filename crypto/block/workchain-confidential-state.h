@@ -18,9 +18,10 @@ struct WorkchainAccountMigrated {
   WorkchainConfidentialAddress successor;
   td::Bits256 migration_operation;
 };
-// Closed retains identity/replay state. The host must prove deposit refunded,
-// available exhausted, pending empty and no in-flight obligations. It must not
-// decrement registered_accounts. There is deliberately no dormant state.
+// Closed retains identity/replay state. The host must establish deposit refunded,
+// available exhausted and pending empty. M3's no-settlement-obligation premise
+// is structural, guarded by test-workchain-m3-closure-expiry, not a runtime
+// caller declaration. registered_accounts never decreases; no dormant state.
 struct WorkchainAccountClosed {};
 using WorkchainConfidentialLifecycle = std::variant<WorkchainAccountActive, WorkchainAccountReadOnly,
                                                   WorkchainAccountMigrated, WorkchainAccountClosed>;

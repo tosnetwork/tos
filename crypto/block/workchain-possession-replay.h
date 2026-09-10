@@ -23,7 +23,7 @@ inline td::Result<WorkchainRegistrationTransition> replay_workchain_registration
 
 inline td::Result<WorkchainAccountClosureTransition> replay_workchain_account_closure(
     const WorkchainConfidentialAccount& old_account, const WorkchainCoordinatorState& old_coordinator,
-    std::uint64_t authenticated_inflight_obligations, const WorkchainPossessionPolicy& policy,
+    const WorkchainPossessionPolicy& policy,
     const std::array<unsigned char, 80>& authenticated_domain, const td::Ref<vm::Cell>& replay_root) {
   TRY_RESULT(wire, decode_workchain_replay_input(replay_root));
   const auto* input = std::get_if<WorkchainClosureReplayInput>(&wire);
@@ -34,7 +34,7 @@ inline td::Result<WorkchainAccountClosureTransition> replay_workchain_account_cl
   TRY_STATUS(check_workchain_claimed_operation_id(wire, id));
   TRY_STATUS(check_workchain_possession_replay_context(input->context, policy, old_account,
                                                        WorkchainReplayOperation::Closure));
-  return execute_workchain_account_closure(old_account, old_coordinator, authenticated_inflight_obligations,
+  return execute_workchain_account_closure(old_account, old_coordinator,
                                            policy, authenticated_domain, input->proof);
 }
 }

@@ -45,8 +45,9 @@ td::Status verify_workchain_registration_possession(
     const std::array<unsigned char, 64>& proof);
 
 // Reconstruct the zero-balance statement from the current authenticated account.
-// Domain comes from authenticated protocol configuration. Pending and in-flight
-// obligations are separate host predicates; this proof says nothing about them.
+// Domain comes from authenticated protocol configuration. Pending is a separate
+// host predicate; M3's no-obligation condition is structural and expiry-guarded.
+// This proof says nothing about either condition.
 td::Status verify_workchain_closure_possession(
     const WorkchainConfidentialAccount& account,
     const WorkchainPossessionPolicy& policy,

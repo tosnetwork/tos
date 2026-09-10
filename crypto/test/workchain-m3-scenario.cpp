@@ -108,10 +108,6 @@ class PureBackend final : public ScenarioBackend {
   std::array<WorkchainConfidentialAccount, 2> templates_;
   std::array<Wallet, 2> wallets_{{{101, 0, 0}, {223, 0, 0}}};
   std::map<td::Bits256, PendingWitness> pending_;
-  // There is no queue in this pure atomic backend. SEND installs the destination
-  // pending in the same transition; no in-flight entry is created. A live backend
-  // must obtain this view from its actual authenticated obligation state instead.
-  std::array<std::map<td::Bits256, Root>, 2> obligations_;
   WorkchainTransferEnvironment env_;
   Root native_accounts_;
   td::Bits256 coordinator_id_;
@@ -577,7 +573,7 @@ class PureBackend final : public ScenarioBackend {
     auto a = account(owner);
     auto p = proof<96>("close", owner, a);
     TRY_RESULT(result,
-               execute_workchain_account_closure(a, coordinator(), obligations_.at(owner).size(), possession_policy(), env_.domain, p));
+               execute_workchain_account_closure(a, coordinator(), possession_policy(), env_.domain, p));
     // Pure backend applies the refund to its Native balance state atomically. A
     // live backend must use the delivered Native transaction instead.
     auto next = state_;

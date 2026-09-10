@@ -10,13 +10,20 @@ struct WorkchainAccountClosureTransition {
   WorkchainRegistrationRefund refund;
 };
 
-// All state arguments, including the obligation count, must be independently
-// acquired by the host. A missing obligation view is LocalUnavailable at that
-// boundary; it must never be converted to count=0. No mutable publication
-// handle is exposed: account closure, bucket debit and refund form one result.
+// No M3 operation can create a settlement obligation: registration settles its
+// deposit atomically, SEND creates a pending receipt (a separate closure
+// condition), COLLECT consumes receipts, and closure refunds within the same
+// transition. Withdrawal and deposit operations do not exist before M4/M5.
+// Nor can authenticated M3 state represent an obligation: account records carry
+// no settlement refs and there is no chain-state obligation view. This condition
+// is structurally satisfied, NOT checked at runtime or declared by a caller.
+// EXPIRY: test-workchain-m3-closure-expiry guards this premise. Before adding an
+// obligation representation or operation, replace it with an authenticated
+// obligation view. Never restore a caller-supplied count or empty table.
+// No mutable publication handle is exposed: closure, debit and refund form one
+// result, which the host must commit atomically.
 inline td::Result<WorkchainAccountClosureTransition> execute_workchain_account_closure(
     const WorkchainConfidentialAccount& old_account, const WorkchainCoordinatorState& old_coordinator,
-    std::uint64_t authenticated_inflight_obligations,
     const WorkchainPossessionPolicy& possession,
     const std::array<unsigned char, 80>& authenticated_domain,
     const std::array<unsigned char, 96>& proof) {
@@ -32,9 +39,8 @@ inline td::Result<WorkchainAccountClosureTransition> execute_workchain_account_c
         !std::holds_alternative<WorkchainAccountReadOnly>(old_account.lifecycle)) {
       return invalid("closed or migrated account cannot be refunded again");
     }
-    // These are plaintext authenticated-state properties, not DLEQ conclusions.
+    // Pending is an authenticated-state property, not a DLEQ conclusion.
     if (!old_account.pending.empty()) return invalid("closure has unconsumed pending receipts");
-    if (authenticated_inflight_obligations != 0) return invalid("closure has in-flight obligations");
     if (old_account.auth_nonce == UINT64_MAX) return invalid("closure nonce exhausted");
     // Randomized zero is not the identity ciphertext. This one DLEQ establishes
     // both possession and exhausted available; do not add registration Schnorr.

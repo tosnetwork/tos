@@ -13,8 +13,9 @@ struct WorkchainRegistrationRefund {
 };
 
 // Arithmetic preparation only, not closure authorization or a commit. The host
-// must independently establish exhausted available, empty pending and no
-// in-flight obligations, then atomically close the account and issue the refund.
+// must establish exhausted available and empty pending, then atomically close
+// the account and issue the refund. The M3 no-obligation condition is structural
+// and expiry-guarded at the closure API, never inferred by this arithmetic.
 // registered_accounts is deliberately absent: a refund never decrements it.
 inline td::Result<WorkchainRegistrationRefund> prepare_workchain_registration_refund(
     const WorkchainRegistrationFunding& historical_funding,
