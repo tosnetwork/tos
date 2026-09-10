@@ -887,3 +887,33 @@ Ordering rationale: B2-1..B2-6 add inputs, state, and gated machinery without ev
 deleting a validator DB; B2-7 supplies the end-to-end safety evidence and is the
 sole enablement. If B2 cannot be finished with that evidence, B1's safe
 no-deletion state stands.
+
+## B2 plan review — binding refinements (before B2-4 / B2-6)
+
+A Codex review of the B2 plan surfaced two binding refinements:
+
+**B2-4 obsolescence proof must be anchored on-chain, not "absent from today's
+head".** A session's absence from the current recreatable set does NOT prove it
+was off the on-chain validator schedule at its retirement checkpoint (the
+key-removal counterexample: local actor retired while the session was still
+scheduled on-chain). Condition C must therefore be derived from the on-chain
+validator schedule relative to the GC floor -- e.g. the session is not in the
+current+next validator schedule determined by the masterchain state at/after GC,
+verified against the actual validator sets (`ancestor_is_valid`,
+`get_old_mc_block_id`), not merely the live recreatable set at the head. The exact
+condition is being settled in a focused design query before B2-4 is coded.
+
+**Delete must be serialized against reopen (B2-5/B2-6), not only post-hoc
+rejected.** A per-session generation marker must prevent an IN-FLIGHT delete from
+racing a reopen of the same session/directory -- rejecting a stale `consensus_db_
+closed`/eligibility/delete callback after the fact is insufficient. The
+orchestrator must not begin (or must abort) a filesystem delete for a session that
+has reopened, and must hold a guard for the exact directory across the async
+delete.
+
+**Reusable primitives (ancestry oracle, B2-3):** use
+`MasterchainState::get_old_mc_block_id(seqno, blkid)` and `ancestor_is_valid(
+BlockIdExt)` (`validator/impl/shard.hpp`), and `BlockHandle::one_prev(true)` for
+prev-masterchain traversal -- do not hand-roll a new chain walk.
+
+**B2-1 (physical delete helper) is independent of the above** and proceeds first.
