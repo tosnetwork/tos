@@ -10,6 +10,16 @@ struct WorkchainAccountClosureTransition {
   WorkchainRegistrationRefund refund;
 };
 
+// The engine supplies this locally verified result to Native settlement. Hashes
+// bind it to the same authenticated read snapshot, not to candidate claims.
+// No decoder exists: a validator constructs its own result by replaying DLEQ.
+struct WorkchainAccountClosureExecution {
+  td::Bits256 account;
+  td::Bits256 old_account_data_hash;
+  td::Bits256 old_coordinator_data_hash;
+  WorkchainAccountClosureTransition transition;
+};
+
 // No M3 operation can create a settlement obligation: registration settles its
 // deposit atomically, SEND creates a pending receipt (a separate closure
 // condition), COLLECT consumes receipts, and closure commits a one-way refund

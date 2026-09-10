@@ -14,6 +14,7 @@
 
 #include "workchain-m3-scenario.h"
 #include "block/workchain-closure-settlement.h"
+#include "block/workchain-account-settlement.h"
 #include "workchain-m3-test-funding.h"
 #include "workchain-proof-test-access.h"
 using namespace block;
@@ -337,9 +338,6 @@ class PureBackend final : public ScenarioBackend {
     std::vector<Root> messages{envelope};
     TRY_RESULT(inbox_root, encode_workchain_batch_inbound(messages));
     auto inbox = plan_workchain_native_inbox(inbox_root, 2, {coordinator_id_}, registration_lt_, 1);
-    TRY_RESULT(payment, block::WorkchainProofTestAccess::with_budget(100000, [&](auto& verification_budget) { return replay_workchain_registration_payment(policy, registration_ingress_, registration_descriptor_,
-                                                               inbox, td::Bits256(msg->get_hash().bits()),
-                                                               coordinator(), old_coordinator.balance, {}, replay_root, verification_budget); }));
     WorkchainHostIdentity identity{env_.protocol.global_id,
                                    env_.protocol.genesis_hash,
                                    env_.protocol.workchain_instance,
@@ -373,8 +371,55 @@ class PureBackend final : public ScenarioBackend {
     const auto& input = std::get<AdmittedBatchInput>(admitted);
     SerializeConfig cfg;
     cfg.global_version = 16;
-    TRY_RESULT(settled, settle_workchain_registration(native_accounts_, identity, input.root(), payment,
-                                                      coordinator_id_, env_.rules.custody, 2, 2, 1, 4096, cfg));
+    struct Engine final : WorkchainAccountEngine {
+      std::function<td::Result<WorkchainAccountEffects>(const Root&, WorkchainAccountReadView&,
+                                                       WorkchainProofVerifier&)> execute;
+      td::Result<std::uint64_t> proof_work(const Root& candidate, const InputPolicyIdentity&) const override {
+        TRY_RESULT(wire, decode_workchain_replay_input(candidate));
+        if (!std::holds_alternative<WorkchainRegistrationReplayInput>(wire)) return alarm("expected registration");
+        return workchain_registration_operations_v4().total();
+      }
+      td::Result<WorkchainAccountEffects> execute_accounts(const Root&, WorkchainAccountReadView&) const override {
+        return alarm("registration fixture requires admitted verifier");
+      }
+      td::Result<WorkchainAccountEffects> execute_metered_accounts(const Root& input, WorkchainAccountReadView& view,
+                                                                 WorkchainProofVerifier& verifier) const override {
+        return execute(input, view, verifier);
+      }
+    } engine;
+    std::shared_ptr<const WorkchainRegistrationPaymentResult> verified_payment;
+    unsigned calls = 0;
+    engine.execute = [&](const Root& root, WorkchainAccountReadView& view, WorkchainProofVerifier& verifier)
+        -> td::Result<WorkchainAccountEffects> {
+      ++calls;
+      TRY_RESULT(old, view.read(coordinator_id_));
+      TRY_RESULT(absent, view.read(a.address.account));
+      if (old.is_null() || old->get_hash() != old_coordinator.total_state->get_hash())
+        return alarm("registration admitted coordinator differs from fixture snapshot");
+      gen::UnoV2HostInput::Record host;
+      if (!::tlb::unpack_cell(root, host)) return alarm("admitted registration unavailable");
+      TRY_RESULT(payment, replay_workchain_registration_payment(policy, registration_ingress_,
+          registration_descriptor_, inbox, td::Bits256(msg->get_hash().bits()), coordinator(),
+          old_coordinator.balance, absent, host.candidate, verifier));
+      if (verifier.consumed() != 433) return alarm("registration verification was not metered once");
+      verified_payment = std::make_shared<WorkchainRegistrationPaymentResult>(std::move(payment));
+      WorkchainAccountEffects effects;
+      effects.updates = {{a.address.account, verified_payment->registration.account_data},
+                        {coordinator_id_, verified_payment->registration.coordinator_data}};
+      std::sort(effects.updates.begin(), effects.updates.end(), [](const auto& x, const auto& y) {
+        return x.account < y.account;
+      });
+      effects.registration = verified_payment;
+      return effects;
+    };
+    auto native = NativeCellMaterializer::run(messages, {10000, 1000000, 1});
+    if (!std::holds_alternative<MaterializedNativeCells>(native)) return alarm("registration inbox unavailable");
+    ActionPhaseConfig prices; prices.global_version = 16;
+    TRY_RESULT(settled, execute_and_settle_workchain_accounts(engine, native_accounts_, identity, input,
+        std::get<MaterializedNativeCells>(native), env_.rules.custody, coordinator_id_, td::make_refint(0),
+        4096, cfg, prices));
+    if (calls != 1 || !verified_payment) return alarm("registration engine did not execute exactly once");
+    const auto& payment = *verified_payment;
     auto persisted = roundtrip(settled.state.accounts);
     vm::AugmentedDictionary next_dictionary(vm::load_cell_slice_ref(persisted), 256, block::tlb::aug_ShardAccounts);
     Account created(2, a.address.account.bits()), funded(2, coordinator_id_.bits());
@@ -645,11 +690,70 @@ class PureBackend final : public ScenarioBackend {
     SerializeConfig cfg; cfg.global_version = 16;
     ActionPhaseConfig prices; prices.global_version = 16; prices.workchains = &workchains;
     prices.fwd_std = prices.fwd_mc = MsgPrices(100, 0, 0, 0, 16384, 0);
-    auto meter = WorkchainProofTestAccess::create(441);
     auto before = native_accounts_;
-    TRY_RESULT(settled, settle_workchain_closure(before, admitted_entry.first, admitted_entry.second,
-        a.address.account, coordinator_id_, env_.rules.custody, policy, env_.domain, meter, 3, 3, 4096, cfg, prices));
-    if (meter.consumed() != 441 || settled.exports.size() != 1)
+    struct Engine final : WorkchainAccountEngine {
+      std::function<td::Result<WorkchainAccountEffects>(const Root&, WorkchainAccountReadView&,
+                                                       WorkchainProofVerifier&)> execute;
+      td::Result<std::uint64_t> proof_work(const Root& candidate, const InputPolicyIdentity&) const override {
+        TRY_RESULT(wire, decode_workchain_replay_input(candidate));
+        if (!std::holds_alternative<WorkchainClosureReplayInput>(wire)) return alarm("expected closure input");
+        return workchain_closure_operations_v4().total();
+      }
+      td::Result<WorkchainAccountEffects> execute_accounts(const Root&, WorkchainAccountReadView&) const override {
+        return alarm("closure fixture cannot run without admitted verifier");
+      }
+      td::Result<WorkchainAccountEffects> execute_metered_accounts(const Root& input, WorkchainAccountReadView& view,
+                                                                 WorkchainProofVerifier& verifier) const override {
+        return execute(input, view, verifier);
+      }
+    } engine;
+    unsigned calls = 0;
+    std::uint64_t consumed = 0;
+    engine.execute = [&](const Root& input, WorkchainAccountReadView& view, WorkchainProofVerifier& verifier)
+        -> td::Result<WorkchainAccountEffects> {
+      ++calls;
+      auto load = [&](const td::Bits256& key) -> td::Result<Root> {
+        TRY_RESULT(root, view.read(key));
+        if (root.is_null()) return alarm("closure fixture account missing");
+        auto wrapper = vm::CellBuilder().store_ref(root).store_zeroes(320).finalize();
+        Account native(2, key.bits());
+        if (!native.unpack(vm::load_cell_slice_ref(wrapper), 1234, false)) return alarm("Native read unavailable");
+        return native.data;
+      };
+      TRY_RESULT(account_data, load(a.address.account));
+      TRY_RESULT(coordinator_data, load(coordinator_id_));
+      TRY_RESULT(account, decode_workchain_confidential_account(account_data));
+      TRY_RESULT(system, decode_workchain_coordinator_state(coordinator_data));
+      gen::UnoV2HostInput::Record host;
+      if (!::tlb::unpack_cell(input, host)) return alarm("admitted closure input unavailable");
+      TRY_RESULT(transition, replay_workchain_account_closure(account, system, policy, env_.domain,
+                                                             host.candidate, verifier));
+      consumed = verifier.consumed();
+      WorkchainAccountEffects effects;
+      effects.updates = {{a.address.account, transition.account_data}, {coordinator_id_, transition.coordinator_data}};
+      std::sort(effects.updates.begin(), effects.updates.end(), [](const auto& x, const auto& y) {
+        return x.account < y.account;
+      });
+      effects.closure = std::make_shared<WorkchainAccountClosureExecution>(WorkchainAccountClosureExecution{
+          a.address.account, td::Bits256(account_data->get_hash().bits()),
+          td::Bits256(coordinator_data->get_hash().bits()), std::move(transition)});
+      return effects;
+    };
+    gen::UnoV2HostInput::Record host;
+    if (!::tlb::unpack_cell(admitted_entry.second, host)) return alarm("closure entry unavailable");
+    InputPolicyIdentity cut{registration_ingress_.engine_configuration->get_hash(), false, 0x554e4f32, 17, 2, 4};
+    auto resolved = ResolvedBatchInputPolicy::from_resolved_fields(registration_resources_, cut);
+    if (!std::holds_alternative<ResolvedBatchInputPolicy>(resolved)) return alarm("closure policy unavailable");
+    std::vector<Root> inbox;
+    BatchInputAdmissionSession session(std::get<ResolvedBatchInputPolicy>(resolved), host.candidate, host.access,
+                                       admitted_entry.first, inbox);
+    if (!std::holds_alternative<AdmittedBatchInput>(session.evaluate())) return alarm("closure admission failed");
+    auto native = NativeCellMaterializer::run(inbox, {10000, 1000000, 1});
+    if (!std::holds_alternative<MaterializedNativeCells>(native)) return alarm("empty Native inbox unavailable");
+    TRY_RESULT(settled, execute_and_settle_workchain_accounts(engine, before, admitted_entry.first,
+        std::get<AdmittedBatchInput>(session.evaluate()), std::get<MaterializedNativeCells>(native),
+        env_.rules.custody, coordinator_id_, td::make_refint(0), 4096, cfg, prices));
+    if (consumed != 441 || calls != 1 || settled.exports.size() != 1)
       return alarm("closure verifier or single outbound refund missing");
     auto persisted = roundtrip(settled.state.accounts);
     vm::AugmentedDictionary old(vm::load_cell_slice_ref(persisted), 256, block::tlb::aug_ShardAccounts);

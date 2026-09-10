@@ -99,6 +99,12 @@ struct Engine final : block::RegisteredWorkchainAccountEngine {
     effects.events = number(104);
     return effects;
   }
+  td::Result<block::WorkchainAccountEffects> execute_metered_accounts(const td::Ref<vm::Cell>& input,
+      block::WorkchainAccountReadView& view, const block::WorkchainEngineConfig& config,
+      block::WorkchainProofVerifier&) const override {
+    // This fixture performs no cryptography; it tests Native result dispatch.
+    return execute_accounts(input, view, config);
+  }
 };
 void owner_lifecycle(const block::ResolvedWorkchainAccountBinding& binding) {
   using Owner = block::WorkchainAccountBindingOwner;
@@ -145,6 +151,10 @@ void run(const std::string& scenario) {
   if (scenario == "effects") resources.work_output.max_effect_cells = 1;
   if (scenario == "output") resources.work_output.max_output_cells = 1;
   block::InputPolicyIdentity policy_id{vm::CellHash{}, false, 0x434e5431, 7, 5, 2};
+  if (scenario == "native-conflict" || scenario == "native-effects") {
+    resources.admission_version = 4;
+    policy_id.admission_version = 4;
+  }
   auto resolved = block::ResolvedBatchInputPolicy::from_resolved_fields(resources, policy_id);
   require(std::holds_alternative<block::ResolvedBatchInputPolicy>(resolved), "fixture.policy");
   auto policy = std::get<block::ResolvedBatchInputPolicy>(resolved);
@@ -168,7 +178,7 @@ void run(const std::string& scenario) {
   auto old = vm::UsageCell::create(dictionary.get_wrapped_dict_root(), tree->root_ptr());
   auto zero = td::Bits256::zero();
   block::WorkchainHostIdentity identity{0, zero, zero, 2, UINT64_C(0x8000000000000000),
-      zero, false, 0x434e5431, 7, 5, 2, zero, 1, 10, 20, number(42)};
+      zero, false, 0x434e5431, 7, 5, policy_id.admission_version, zero, 1, 10, 20, number(42)};
   const std::vector<td::Ref<vm::Cell>> inbox;
   auto access = block::encode_workchain_account_declarations(declarations, 2, 2).move_as_ok();
   block::BatchInputAdmissionSession session(policy, number(5), access, identity, inbox);
@@ -207,6 +217,24 @@ void run(const std::string& scenario) {
         declarations, settlement_tree->root_ptr(), 2, 2, 1, 2, key(16), key(32), td::make_refint(500),
         4096, cfg, prices, nullptr);
   };
+  if (scenario == "native-profile" || scenario == "native-conflict" || scenario == "native-effects") {
+    const auto zero = td::Bits256::zero();
+    auto changed = executed;
+    changed.effects.closure = std::make_shared<block::WorkchainAccountClosureExecution>(
+        block::WorkchainAccountClosureExecution{key(16), zero, zero,
+          {number(116), number(132), {0, 0, zero, 0}}});
+    if (scenario == "native-conflict")
+      changed.effects.registration = std::make_shared<block::WorkchainRegistrationPaymentResult>();
+    auto refused = settle(std::move(changed));
+    const char* expected = scenario == "native-profile" ? "registration/closure require operation-metered profile"
+        : scenario == "native-conflict" ? "conflicting locally executed Native settlement kinds"
+        : "Native settlement differs from locally executed effects";
+    require(refused.is_error() && refused.error().code() == -7201 && refused.error().message() == td::Slice(expected),
+            "native.exact_local_contract_failure");
+    require(engine.calls == 1, "native.no_reexecution");
+    std::cout << scenario << ": " << expected << '\n';
+    return;
+  }
   if (scenario == "input" || scenario == "state" || scenario == "observer") {
     auto changed = executed;
     if (scenario == "input") {
@@ -258,7 +286,8 @@ int main(int argc, char** argv) {
     candidate_transport();
     candidate_scope();
     if (argc == 2) run(argv[1]);
-    else for (const char* scenario : {"once", "input", "state", "observer", "tracking", "effects", "output"}) run(scenario);
+    else for (const char* scenario : {"once", "input", "state", "observer", "tracking", "effects", "output",
+                                      "native-profile", "native-conflict", "native-effects"}) run(scenario);
     return 0;
   }
   catch (const vm::VmError& error) { std::cerr << error.get_msg() << '\n'; return 1; }

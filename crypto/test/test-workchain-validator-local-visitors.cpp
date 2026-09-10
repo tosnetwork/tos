@@ -6,6 +6,7 @@
 #include "td/utils/filesystem.h"
 #include "td/utils/overloaded.h"
 #include "vm/boc.h"
+#include "validator/impl/workchain-account-decisions.h"
 
 namespace {
 void require(bool value, int identity) {
@@ -52,6 +53,22 @@ int main(int argc, char** argv) {
   auto resolved_execution = registry.resolve_scoped_workchain(2, *config.ok());
   require(resolved_execution.is_ok() && resolved_execution.ok().has_value(), 1305);
   require(std::holds_alternative<block::ResolvedWorkchainAccountBinding>(*resolved_execution.ok()), 1306);
+  // These are the actual production visitor decisions, not prepared copies.
+  // The earlier registry gate makes both unreachable in a closed full actor;
+  // invoking the decisions directly tests OFF behavior, not live reachability.
+  // Conditional D59 refusals invalidated the old unconditional-text criterion:
+  // default behavior, rather than spelling, is the property being preserved.
+  // LIMIT: this does not establish correctness of test-enabled execution.
+  const auto& binding = std::get<block::ResolvedWorkchainAccountBinding>(*resolved_execution.ok());
+  auto& production_registry = block::default_workchain_execution_registry();
+  require(!production_registry.test_only_account_instance_execution_enabled(binding), 1353);
+  auto actual_custom = tos::validator::validator_account_binding_custom(binding);
+  require(actual_custom.is_error(), 1350);
+  require(actual_custom.error().code() == static_cast<int>(block::WorkchainExecutionFailure::LocalUnavailable), 1354);
+  auto actual_ready = tos::validator::validator_account_binding_ready(binding);
+  require(actual_ready.is_error(), 1351);
+  require(actual_ready.code() == static_cast<int>(block::WorkchainExecutionFailure::LocalUnavailable), 1355);
+  std::cout << "default OFF: actual validator custom and ready both LocalUnavailable\n";
   // Real authenticated-config resolution feeds prepared local decisions only.
   // No ValidateQuery actor or production gate is invoked or modified here.
   if (selected == -1 || selected == 0) {

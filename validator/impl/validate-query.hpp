@@ -464,6 +464,7 @@ class ValidateQuery : public td::actor::Actor {
 
   void after_check_account_finished(StdSmcAddress address, CheckAccountTxs::Context context);
   bool check_transactions();
+  bool check_account_binding_transactions(const block::ResolvedWorkchainAccountBinding& binding);
   bool check_all_ticktock_processed();
   bool check_message_processing_order();
   bool check_special_message(Ref<vm::Cell> in_msg_root, const block::CurrencyCollection& amount,

@@ -7408,6 +7408,66 @@ TEST(WorkchainBlock, InboundCommitmentAndMembership) {
   ASSERT_TRUE(!tx.serialize(block::SerializeConfig{}));
 }
 
+TEST(WorkchainBlock, EntryV3InboundAssociation) {
+  auto candidate = number(11);
+  block::InputPolicyIdentity policy_id{candidate->get_hash(), false, 17, 9, 2, 1};
+  auto policy = block::ResolvedInputPolicy::from_resolved_fields({10, 1024, 1}, policy_id);
+  ASSERT_TRUE(std::holds_alternative<block::ResolvedInputPolicy>(policy));
+  block::CandidateAdmissionSession session(candidate, std::get<block::ResolvedInputPolicy>(policy));
+  ASSERT_TRUE(std::holds_alternative<block::AdmittedInput>(session.evaluate()));
+  const auto& admitted = std::get<block::AdmittedInput>(session.evaluate());
+  auto zero = td::Bits256::zero();
+  block::WorkchainHostIdentity identity{0, zero, zero, 2, UINT64_MAX, candidate->get_hash().bits(),
+      false, 17, 9, 2, 1, zero, 1, 1, 1, number(1)};
+  block::WorkchainAccountDeclarations access{{{zero, std::nullopt}}, {zero}};
+  auto envelope = inbound_envelope(3);
+  block::tlb::MsgEnvelope::Record_std message, other, wrong_recipient;
+  ASSERT_TRUE(tlb::unpack_cell(envelope, message));
+  ASSERT_TRUE(tlb::unpack_cell(inbound_envelope(4), other));
+  auto wrong_envelope = inbound_envelope(5, 0, {}, candidate->get_hash().bits());
+  ASSERT_TRUE(tlb::unpack_cell(wrong_envelope, wrong_recipient));
+  auto input = [&](std::vector<td::Ref<vm::Cell>> inbox) {
+    return block::encode_workchain_host_input(identity, admitted, access, inbox, 1, 1, 2).move_as_ok();
+  };
+  auto root = input({envelope});
+  auto effects = number(22);
+  auto describe = [&](td::Ref<vm::Cell> host, td::Bits256 commitment, td::Bits256 account) {
+    auto binding = block::build_workchain_participant_records(commitment, effects->get_hash().bits(),
+        {account}, 1).move_as_ok()[0];
+    return vm::CellBuilder().store_long(block::tlb::TransactionDescr::trans_workchain_entry_v3, 4)
+        .store_ref(binding).store_ref(host).store_ref(effects).finalize();
+  };
+  auto description = describe(root, root->get_hash().bits(), zero);
+  auto transaction = inbound_transaction(description);
+  ASSERT_TRUE(block::is_transaction_in_msg(transaction, message.msg));
+  // Actual block InMsg missing from the committed transaction inbox.
+  ASSERT_TRUE(!block::is_transaction_in_msg(transaction, other.msg));
+  ASSERT_TRUE(!block::is_transaction_in_msg(transaction, {}));
+  ASSERT_TRUE(!block::is_transaction_in_msg(inbound_transaction(
+      describe(root, candidate->get_hash().bits(), zero)), message.msg));
+  // Even membership plus a matching commitment cannot authorize another recipient.
+  auto foreign = input({wrong_envelope});
+  ASSERT_TRUE(!block::is_transaction_in_msg(inbound_transaction(
+      describe(foreign, foreign->get_hash().bits(), zero)), wrong_recipient.msg));
+  ASSERT_TRUE(!block::is_transaction_in_msg(inbound_transaction(
+      describe(root, root->get_hash().bits(), candidate->get_hash().bits())), message.msg));
+  ASSERT_TRUE(!block::is_transaction_in_msg(inbound_transaction(description, message.msg), message.msg));
+  auto empty = input({});
+  ASSERT_TRUE(block::is_transaction_in_msg(inbound_transaction(describe(empty, empty->get_hash().bits(), zero)), {}));
+  // Ordinary input semantics remain unchanged (including absent input).
+  auto ordinary = vm::CellBuilder().store_zeroes(14).finalize();
+  ASSERT_TRUE(block::gen::t_TransactionDescr.validate_ref(4096, ordinary));
+  ASSERT_TRUE(block::is_transaction_in_msg(inbound_transaction(ordinary, message.msg), message.msg));
+  ASSERT_TRUE(!block::is_transaction_in_msg(inbound_transaction(ordinary, message.msg), other.msg));
+  ASSERT_TRUE(!block::is_transaction_in_msg(inbound_transaction(ordinary, message.msg), {}));
+  ASSERT_TRUE(block::is_transaction_in_msg(inbound_transaction(ordinary), {}));
+  ASSERT_TRUE(!block::is_transaction_in_msg(inbound_transaction(ordinary), message.msg));
+  // Unknown future shapes never inherit either the ordinary or v3 path.
+  auto unknown = vm::CellBuilder().store_long(15, 4).finalize();
+  ASSERT_TRUE(!block::is_transaction_in_msg(inbound_transaction(unknown, message.msg), message.msg));
+  ASSERT_TRUE(!block::is_transaction_in_msg(inbound_transaction(unknown), {}));
+}
+
 TEST(WorkchainBlock, ExecutorWitnessEncoding) {
   CounterEngine engine;
   auto in = input();

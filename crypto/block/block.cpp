@@ -2335,6 +2335,46 @@ bool is_transaction_in_msg(Ref<vm::Cell> trans_ref, Ref<vm::Cell> msg) {
   if (trans_ref.is_null() || !tlb::unpack_cell(trans_ref, transaction)) {
     return false;
   }
+  if (block::tlb::t_TransactionDescr.get_tag(vm::load_cell_slice(transaction.description)) < 0) {
+    return false;  // Unknown execution shapes must not inherit ordinary input semantics.
+  }
+  if (block::tlb::t_TransactionDescr.get_tag(vm::load_cell_slice(transaction.description)) ==
+      block::tlb::TransactionDescr::trans_workchain_entry_v3) {
+    // The caller supplies an actual InMsg and first verifies that this exact
+    // transaction belongs to the block. Entry v3 commits its inbox through
+    // input, not through an invented ordinary in_msg. All mismatches here are
+    // candidate content failures; ValidateQuery routes false to reject_query.
+    // Acquisition exceptions propagate: missing local cells are not mismatches.
+    gen::TransactionDescr::Record_trans_workchain_entry_v3 description;
+    gen::UnoV2HostRecord::Record binding;
+    gen::UnoV2HostInput::Record input;
+    gen::UnoV2HostIdentity::Record identity;
+    gen::UnoV2HostDomain::Record domain;
+    if (transaction.r1.in_msg->prefetch_ref().not_null() ||
+        !tlb::unpack_cell(transaction.description, description) ||
+        !tlb::unpack_cell(description.binding, binding) ||
+        binding.account_id != transaction.account_addr ||
+        binding.input_hash != description.input->get_hash().bits() ||
+        !tlb::unpack_cell(description.input, input) ||
+        !tlb::unpack_cell(input.identity, identity) || !tlb::unpack_cell(identity.domain, domain)) {
+      return false;
+    }
+    auto inbox = input.inbox->prefetch_ref();
+    if (inbox.is_null()) return msg.is_null();
+    if (msg.is_null()) return false;
+    gen::WorkchainBatchInbound::Record inbound;
+    if (!tlb::unpack_cell(inbox, inbound) || !inbound.count) return false;
+    vm::Dictionary envelopes(inbound.envelopes, 256);
+    auto cell = envelopes.lookup_ref(msg->get_hash().bits(), 256);
+    block::tlb::MsgEnvelope::Record_std envelope;
+    gen::CommonMsgInfo::Record_int_msg_info info;
+    tos::WorkchainId destination_workchain;
+    tos::StdSmcAddress destination_account;
+    return cell.not_null() && tlb::unpack_cell(cell, envelope) &&
+           envelope.msg->get_hash() == msg->get_hash() && tlb::unpack_cell_inexact(msg, info) &&
+           block::tlb::t_MsgAddressInt.extract_std_address(info.dest, destination_workchain, destination_account) &&
+           destination_workchain == domain.workchain_id && destination_account == transaction.account_addr;
+  }
   if (block::tlb::t_TransactionDescr.get_tag(vm::load_cell_slice(transaction.description)) ==
       block::tlb::TransactionDescr::trans_workchain_batch_v2) {
     if (transaction.r1.in_msg->prefetch_ref().not_null()) {

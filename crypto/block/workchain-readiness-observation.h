@@ -11,7 +11,8 @@ enum class WorkchainReadinessPhase : std::uint8_t {
   Entered = 1,
   AccountBindingResolved = 2,
   AccountBindingRefused = 3,
-  Complete = 4
+  Complete = 4,
+  AccountCollationRefused = 5
 };
 struct WorkchainReadinessObservation {
   WorkchainReadinessPhase phase{WorkchainReadinessPhase::NotEntered};

@@ -30,6 +30,10 @@ EXPECTED = {
     'crypto/test/test-workchain-test-execution-permit.cpp': [
         '5b8975b723241a97f392197d4b3b2fbb0af72c51ddac56ca5e107b491422d6b3',
         'a75a023b318a4adbb1b7b96841e145e0f089924f9a7371d09769f8b694e19461'],
+    # Fixed closed/enabled fork pair on a freshly constructed test genesis.
+    # The disk tool's command-line parser cannot set this permission.
+    'test/test-m3-live.cpp': [
+        '4377103f11bba6897d8bbd1aec7b3b46735a43e9acb933058c24501a19af3213'],
 }
 ACTION = ('Remove deployment-side access to the test setter. Only test-constructed '
           'configuration may enable it; do not weaken the production refusal or broaden this allowlist.')

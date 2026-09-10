@@ -6,14 +6,12 @@
 // local validator decisions. No production target includes this file. No
 // candidate content, admission verdict or batch execution is supplied here.
 // Moving either production refusal requires a separate gate decision.
-// EXPIRY: when the gate opens, DELETE this file and retarget its controls to
-// production call sites. The registered private test checks both real refusals
-// and must fail at that transition; do not retain two implementations.
-// LIMIT: this guard detects removal of the two refusals, not an earlier bypass
-// or drift between this file's first two visitor branches and production.
-// While the gate stays closed, that drift affects only this test's currency,
-// not production behavior. At gate opening, EXPIRY requires deleting this file,
-// thereby removing the duplicate whose branches could drift.
+// EXPIRY: a separate production-enablement decision must retire this prepared
+// specification and retarget its controls. D59 test-only permission is not that
+// decision. The default guard executes actual production decisions with the
+// default-OFF registry; it no longer demands unconditional refusal text.
+// LIMIT: that guard detects default behavior changing, not correctness of
+// test-enabled execution or drift of this prepared specification.
 namespace prepared_validator {
 using Resolution = td::Result<std::optional<block::ResolvedScopedWorkchainExecution>>;
 
@@ -35,7 +33,7 @@ inline td::Result<bool> custom(Resolution resolution) {
 
 inline td::Status ready(Resolution resolution) {
   // Resolution success is a local binding fact, not proof of replay capability.
-  // The actual registry readiness gate and both actual visitors remain closed.
+  // The actual registry readiness gate and both visitors remain closed by default.
   if (resolution.is_error()) return resolution.move_as_error();
   if (!resolution.ok()) return td::Status::OK();
   return std::visit(td::overloaded(

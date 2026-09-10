@@ -749,7 +749,8 @@ set_tests_properties(test-workchain-account-closure PROPERTIES TIMEOUT 30 LABELS
 add_executable(uno-m3-vector-tool EXCLUDE_FROM_ALL test/workchain-m3-vector-tool.cpp)
 target_link_libraries(uno-m3-vector-tool PRIVATE tos_block tos_crypto)
 
-add_executable(test-workchain-confidential-input ../test/test-td-main.cpp test/test-workchain-confidential-input.cpp)
+add_executable(test-workchain-confidential-input ../test/test-td-main.cpp test/test-workchain-confidential-input.cpp
+  test/workchain-m3-registration-wallet-test.cpp)
 target_link_libraries(test-workchain-confidential-input PRIVATE tos_block tos_crypto)
 target_compile_definitions(test-workchain-confidential-input PRIVATE
   UNO_BALANCE_VECTOR_FILE="${PROJECT_SOURCE_DIR}/uno/crypto/fixtures/balance-kernel-v2.txt")
@@ -785,10 +786,12 @@ target_link_libraries(test-workchain-system-state-access PRIVATE tos_block tos_c
 tos_test(test-workchain-system-state-access)
 set_tests_properties(test-workchain-system-state-access PROPERTIES TIMEOUT 30 LABELS "workchain;m3")
 
-# Default source-lifecycle check: opening either validator refusal must expire
-# the prepared copy, even when the optional native fixture is not enabled.
+# Default behavior check: D59 conditional refusals retain production OFF
+# behavior. An unconditional-text check would reject this permitted test scope.
 add_test(NAME test-workchain-validator-prepared-expiry COMMAND ${Python3_EXECUTABLE}
-  "${PROJECT_SOURCE_DIR}/crypto/test/workchain-validator-prepared-expiry.py" --repo "${PROJECT_SOURCE_DIR}")
+  "${PROJECT_SOURCE_DIR}/crypto/test/workchain-validator-prepared-expiry.py" --repo "${PROJECT_SOURCE_DIR}"
+  --probe $<TARGET_FILE:test-workchain-validator-local-visitors>
+  --fixture "${PROJECT_SOURCE_DIR}/crypto/test/workchain-bounded-zerostate.boc")
 set_tests_properties(test-workchain-validator-prepared-expiry PROPERTIES
   TIMEOUT 30 LABELS "workchain;prepared-expiry")
 
