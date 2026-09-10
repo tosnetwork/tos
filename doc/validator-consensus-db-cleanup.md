@@ -1283,6 +1283,17 @@ Scenarios, each mutation-verified red against the SHARED glue:
    pass), the failing dir survives and is retried a finite number of times (observed 2),
    and the failing entry settles rather than spinning. Red when the erase-ack re-trigger
    is removed (the backlog beyond one dispatch budget never drains -- observed 8 of 20).
+5. **In-flight single-dimension token rejection** -- a "slow/controllable worker" is
+   modelled by reserving a delete (Pending -> Deleting) through the real adapter WITHOUT
+   dispatching it, so the entry is held genuinely in flight with a real
+   (generation, attempt_id). A completion that mismatches on EXACTLY ONE token dimension
+   must be rejected -- reservation held, durable record intact -- and only the
+   fully-matching token proceeds to erase. This is the per-dimension coverage scenario 2
+   cannot give (scenario 2's injection also mismatches on STATE, so its compound guard
+   hides which clause rejected). Red when ONLY the generation check is dropped from
+   `on_delete_completed` (the wrong-generation inject then erases the record), and
+   separately when ONLY the attempt_id check is dropped. This closes the earlier review's
+   note that scenario 2 alone could not prove the generation check was live.
 
 The completion path's re-trigger is a DIRECT synchronous call on the owner (not a
 deferred message), matching the pre-extraction manager so an erase-ack and a following
@@ -1290,11 +1301,16 @@ group-creation keep their original ordering against the in-flight fence; `attemp
 in the harness counts reservations, so the scenarios additionally gate on an observed
 completion and on the not-in-flight settle barrier before asserting.
 
+Scenario 5 also observes `is_delete_in_flight` TRUE across the in-flight window and back
+to FALSE after the erase -- the same query the manager's reopen fence
+(`get_or_make_next_group`) consults. The fence's own branch (defer group creation while
+`is_delete_in_flight`) still lives inline in the manager and is NOT extracted, so its
+end-to-end wiring remains deferred below.
+
 **Still deferred to the enablement bundle (needs seams this harness intentionally does
-not add):** observing `is_delete_in_flight` TRUE across the async gap and the
-reopen-during-delete fence mid-flight (needs a controllable/slow worker so the in-flight
-window is deterministic); real GC-oracle boundaries (needs a real `MasterchainState`,
-not injected oracles); reconciliation across an actual process restart (this harness
-reloads within one process); and the per-record-backoff decision from scenario 4's
-attempt profile under a production-like soak. Then the flip after a disk/RSS soak.
-Finding 1 stays open; the branch remains a deletion-safe staging state.
+not add):** the reopen-during-delete fence wiring itself (the manager's
+`get_or_make_next_group` branch, not extracted); real GC-oracle boundaries (needs a real
+`MasterchainState`, not injected oracles); reconciliation across an actual process
+restart (this harness reloads within one process); and the per-record-backoff decision
+from scenario 4's attempt profile under a production-like soak. Then the flip after a
+disk/RSS soak. Finding 1 stays open; the branch remains a deletion-safe staging state.

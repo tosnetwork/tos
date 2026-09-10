@@ -140,6 +140,14 @@ td::Ref<ValidatorManagerOptions> make_options() {
   return opts;
 }
 
+// Result of a non-dispatching reservation (the "slow worker" probe): whether an
+// eligible delete was reserved, and its live (generation, attempt_id) operation token.
+struct ReservedInfo {
+  bool reserved = false;
+  td::uint64 generation = 0;
+  td::uint64 attempt_id = 0;
+};
+
 // The harness actor. It owns the real adapter + worker + a real Db id, and exposes the
 // exact `Self` surface validator-cleanup-dispatch.h drives, so the shared glue runs
 // here identically to the manager. The GC oracles and the enable flag are injected.
@@ -199,6 +207,25 @@ class CleanupHarness : public td::actor::Actor {
   }
   void close_confirmed(tos::ValidatorSessionId session, td::uint64 generation) {
     adapter_.on_close_confirmed(session, generation);
+  }
+  // Reserve up to one eligible delete (Pending -> Deleting) WITHOUT dispatching it to
+  // the worker. This models a slow/controllable worker whose delete has been reserved
+  // but not yet completed: the entry stays in flight, with a real (generation,
+  // attempt_id), until a completion is injected -- letting a test hold it in Deleting
+  // and probe single-dimension token rejection. Uses the same oracles as a real pass.
+  void reserve_one(td::Promise<ReservedInfo> promise) {
+    auto ancestor = [](const tos::BlockIdExt&) { return true; };
+    auto cc = [this](tos::ShardIdFull) -> std::optional<tos::CatchainSeqno> { return gc_shard_cc_; };
+    auto is_live = [this](const tos::ValidatorSessionId& s) { return live_.count(s) > 0; };
+    auto reserved = adapter_.begin_eligible_deletes(gc_checkpoint_, ancestor, cc, is_live, /*dispatch_budget=*/1,
+                                                    scan_budget_, max_outstanding_);
+    ReservedInfo info;
+    if (!reserved.empty()) {
+      info.reserved = true;
+      info.generation = reserved.front().generation;
+      info.attempt_id = reserved.front().attempt_id;
+    }
+    promise.set_value(std::move(info));
   }
   // Inject a completion directly, as a stale/duplicate worker callback would arrive.
   // Synchronous: the promise resolves only AFTER validator_cleanup_delete_done has run,
@@ -294,6 +321,11 @@ class HarnessSession {
   }
   void close_confirmed(tos::ValidatorSessionId session, td::uint64 generation) {
     run_in_ctx([&] { td::actor::send_closure(harness_.get(), &CleanupHarness::close_confirmed, session, generation); });
+  }
+  ReservedInfo reserve_one() {
+    return ask<ReservedInfo>([&](td::Promise<ReservedInfo> promise) {
+      td::actor::send_closure(harness_.get(), &CleanupHarness::reserve_one, std::move(promise));
+    });
   }
   void inject_delete_done(tos::ValidatorSessionId session, td::uint64 generation, td::uint64 attempt_id, bool gone) {
     ask<td::Unit>([&](td::Promise<td::Unit> promise) {
@@ -631,12 +663,65 @@ void scenario_mixed_failure_bounded_retries() {
 }
 #endif  // !_WIN32
 
+// ---------------------------------------------------------------------------------
+// Scenario 5: single-dimension token rejection while the entry is genuinely IN FLIGHT.
+// Models a slow/controllable worker: reserve_one drives the real adapter to reserve the
+// delete (Pending -> Deleting) but does NOT dispatch it to the worker, so the entry
+// stays in flight with a real (generation, attempt_id) until a completion is injected.
+// A completion that mismatches on EXACTLY ONE token dimension must be rejected -- the
+// reservation held and the durable record intact -- and only the fully-matching
+// completion proceeds to erase. This is the per-dimension coverage scenario 2 cannot
+// give (scenario 2's injection also mismatches on STATE, so its compound guard hides
+// which dimension did the rejecting). No consensus-dir fixture: this is about in-flight
+// bookkeeping through the real glue + adapter + RootDb, not the filesystem delete.
+// Falsifying mutations, in on_delete_completed (the adapter):
+//   * drop ONLY the generation check -> the wrong-generation inject is accepted and
+//     erases the record (the size==1 assert after it fires);
+//   * drop ONLY the attempt_id check -> the wrong-attempt inject is accepted likewise.
+void scenario_inflight_single_dimension_token_rejection() {
+  LOG(INFO) << "=== scenario_inflight_single_dimension_token_rejection ===";
+  auto root = temp_root("inflight");
+  auto r = make_record(55, 100);
+
+  HarnessSession s(root, make_checkpoint(200), kRecordCc + 1, /*live=*/{}, 16, 256, 64);
+  s.persist_retirement({r});
+  s.load_startup_record(r);
+
+  // Reserve without dispatching: the entry is now genuinely Deleting (in flight) with a
+  // real token, and will stay so until we inject a completion.
+  auto resv = s.reserve_one();
+  LOG_CHECK(resv.reserved) << "reserve_one did not reserve the eligible delete";
+  LOG_CHECK(s.is_delete_in_flight(r.session_id)) << "entry is not in flight after reservation";
+  auto G = resv.generation;
+  auto A = resv.attempt_id;
+
+  // Wrong generation ONLY (attempt and Deleting state both correct): must be rejected.
+  s.inject_delete_done(r.session_id, G + 1, A, /*gone=*/true);
+  LOG_CHECK(s.is_delete_in_flight(r.session_id)) << "wrong-generation completion released the reservation";
+  LOG_CHECK(s.load_pending().size() == 1) << "wrong-generation completion erased the durable record";
+
+  // Wrong attempt_id ONLY (generation and Deleting state both correct): must be rejected.
+  s.inject_delete_done(r.session_id, G, A + 1, /*gone=*/true);
+  LOG_CHECK(s.is_delete_in_flight(r.session_id)) << "wrong-attempt completion released the reservation";
+  LOG_CHECK(s.load_pending().size() == 1) << "wrong-attempt completion erased the durable record";
+
+  // Fully-matching token: accepted -> Erasing -> durable erase committed -> removed.
+  s.inject_delete_done(r.session_id, G, A, /*gone=*/true);
+  bool done = s.wait_until([&] { return s.erase_ack_count() >= 1; }, 30.0);
+  LOG_CHECK(done) << "the correctly-tokened completion did not erase the record";
+  LOG_CHECK(!s.is_delete_in_flight(r.session_id)) << "entry still in flight after a correct completion + erase";
+  LOG_CHECK(s.load_pending().empty()) << "record not erased after the correct completion";
+  s.stop();
+  td::rmrf(root).ignore();
+}
+
 }  // namespace
 
 int main() {
   SET_VERBOSITY_LEVEL(verbosity_INFO);
   scenario_happy_drain();
   scenario_stale_completion_rejected();
+  scenario_inflight_single_dimension_token_rejection();
 
   // The two permission-based failure scenarios need an unprivileged POSIX user: they
   // are SKIPPED as root (directory permissions are bypassed) and not compiled on
@@ -656,8 +741,9 @@ int main() {
   LOG(WARNING) << "Windows build: persistent-failure and mixed-failure scenarios are not compiled";
 #endif
 
-  LOG(INFO) << "test-validator-cleanup-integration: executed happy_drain + stale_completion_rejected; "
-            << (ran_failure_scenarios ? "AND persistent-failure + mixed-failure (4/4 scenarios)"
-                                      : "persistent-failure + mixed-failure SKIPPED (2/4 scenarios)");
+  LOG(INFO) << "test-validator-cleanup-integration: executed happy_drain + stale_completion_rejected + "
+               "inflight_single_dimension_token_rejection; "
+            << (ran_failure_scenarios ? "AND persistent-failure + mixed-failure (5/5 scenarios)"
+                                      : "persistent-failure + mixed-failure SKIPPED (3/5 scenarios)");
   return 0;
 }
