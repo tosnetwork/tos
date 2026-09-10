@@ -321,6 +321,15 @@ TEST(ValidatorCleanup, retirement_ahead_of_safe_is_retained) {
   ASSERT_TRUE(!can_delete_validator_db(r, make_checkpoint(100), false, chain_oracle));
 }
 
+// Pin the literal key prefix and range end independently of the helpers, so a
+// change to the persisted key scheme (which would orphan existing on-disk
+// records) is caught, and the range end is exactly the prefix with its final
+// byte incremented.
+TEST(ValidatorCleanup, persistence_key_literals) {
+  ASSERT_TRUE(validator_cleanup_key_prefix().str() == "tos.state.pending_validator_consensus_db_cleanup.");
+  ASSERT_TRUE(validator_cleanup_key_range_end() == "tos.state.pending_validator_consensus_db_cleanup/");
+}
+
 // Persistence-key bounds: every record key must start with the prefix and sort
 // strictly inside [prefix, range_end), so a prefix range scan brackets exactly
 // these records and nothing else. Session hex spanning the byte extremes (all

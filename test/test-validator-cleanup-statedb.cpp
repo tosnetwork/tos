@@ -17,10 +17,11 @@
     Copyright 2025-2026 TOS Blockchain Teams
 */
 // Round-trips the validator cleanup records against a real RocksDb, exercising
-// the exact persistence scheme StateDb uses (per-session key + codec + prefix
-// range scan). This pins the scan bounds and the decode-skip of malformed or
-// unrelated keys -- behavior the pure codec tests cannot see.
-#include "validator/consensus/validator-cleanup.h"
+// the SAME production store/erase/load functions StateDb uses (validator-cleanup-
+// store.h). Disabling the production set/erase/scan fails these tests. Pins the
+// scan bounds with valid, decodable records placed just outside them, and the
+// decode-skip of malformed values.
+#include "validator/consensus/validator-cleanup-store.h"
 
 #include "td/db/RocksDb.h"
 #include "td/utils/Random.h"
@@ -69,34 +70,12 @@ PendingValidatorConsensusDbCleanup make_record(unsigned char sid_seed, tos::Bloc
   return r;
 }
 
-// Mirrors StateDb::update/erase/get, so the test covers the real code path.
-void put_record(td::RocksDb& kv, const PendingValidatorConsensusDbCleanup& r) {
-  auto key = validator_cleanup_key(r.session_id);
-  auto value = encode_validator_cleanup_record(r);
+// Write a raw value under an arbitrary key (for out-of-range and malformed
+// fixtures that the production store functions would never create).
+void put_raw(td::RocksDb& kv, td::Slice key, td::Slice value) {
   kv.begin_write_batch().ensure();
-  kv.set(td::Slice{key}, td::Slice{value}).ensure();
+  kv.set(key, value).ensure();
   kv.commit_write_batch().ensure();
-}
-
-void erase_record(td::RocksDb& kv, const tos::ValidatorSessionId& sid) {
-  kv.begin_write_batch().ensure();
-  kv.erase(td::Slice{validator_cleanup_key(sid)}).ensure();
-  kv.commit_write_batch().ensure();
-}
-
-std::vector<PendingValidatorConsensusDbCleanup> load_records(td::RocksDb& kv) {
-  std::vector<PendingValidatorConsensusDbCleanup> out;
-  auto end = validator_cleanup_key_range_end();
-  kv.for_each_in_range(validator_cleanup_key_prefix(), td::Slice{end},
-                       [&out](td::Slice, td::Slice value) {
-                         auto decoded = decode_validator_cleanup_record(value);
-                         if (decoded) {
-                           out.push_back(std::move(decoded.value()));
-                         }
-                         return td::Status::OK();
-                       })
-      .ensure();
-  return out;
 }
 
 std::string temp_db_path() {
@@ -107,32 +86,23 @@ std::string temp_db_path() {
 
 }  // namespace
 
-// Two records persist and reload intact; a malformed value stored under a
-// cleanup key is dropped on load; unrelated keys on either side of the range are
-// ignored; erasing one record removes exactly it. If the range-end derivation or
-// the decode-skip were wrong, one of these counts would be off.
-TEST(ValidatorCleanupStateDb, round_trip_scan_and_erase) {
+// Two records persist via the production store function and reload intact; a
+// malformed value under a real cleanup key is dropped; erasing one removes
+// exactly it.
+TEST(ValidatorCleanupStateDb, round_trip_and_erase) {
   auto path = temp_db_path();
   {
     auto kv = td::RocksDb::open(path).move_as_ok();
 
     auto r1 = make_record(9, 100);
     auto r2 = make_record(200, 150);
-    put_record(kv, r1);
-    put_record(kv, r2);
+    store_validator_cleanup_record(kv, r1);
+    store_validator_cleanup_record(kv, r2);
 
-    // A malformed value under a real cleanup key: must be skipped on load, never
-    // surface as a usable record.
-    auto bad_sid = make_session_id(50);
-    kv.begin_write_batch().ensure();
-    kv.set(td::Slice{validator_cleanup_key(bad_sid)}, td::Slice{"not-a-record"}).ensure();
-    // Unrelated keys that bracket the prefix range: one sorts before it, one at
-    // the exclusive upper bound. Neither may be returned.
-    kv.set(td::Slice{"tos.state.pending_validator_consensus_db_cleanu"}, td::Slice{"x"}).ensure();
-    kv.set(td::Slice{validator_cleanup_key_range_end()}, td::Slice{"y"}).ensure();
-    kv.commit_write_batch().ensure();
+    // Malformed value under a real cleanup key: skipped on load.
+    put_raw(kv, td::Slice{validator_cleanup_key(make_session_id(50))}, td::Slice{"not-a-record"});
 
-    auto loaded = load_records(kv);
+    auto loaded = load_validator_cleanup_records(kv);
     ASSERT_EQ(loaded.size(), static_cast<size_t>(2));
     std::set<std::string> got;
     for (const auto& r : loaded) {
@@ -141,29 +111,96 @@ TEST(ValidatorCleanupStateDb, round_trip_scan_and_erase) {
     ASSERT_TRUE(got.count(r1.session_id.to_hex()) == 1);
     ASSERT_TRUE(got.count(r2.session_id.to_hex()) == 1);
 
-    erase_record(kv, r1.session_id);
-    auto after = load_records(kv);
+    erase_validator_cleanup_record(kv, r1.session_id);
+    auto after = load_validator_cleanup_records(kv);
     ASSERT_EQ(after.size(), static_cast<size_t>(1));
-    ASSERT_TRUE(after[0].session_id.to_hex() == r2.session_id.to_hex());
     ASSERT_TRUE(after[0] == r2);
   }
   td::rmrf(path).ignore();
 }
 
-// A record survives closing and reopening the database: the write is durable,
-// not just in-memory.
-TEST(ValidatorCleanupStateDb, survives_reopen) {
+// Scan bounds: VALID, decodable records placed at keys just below the prefix and
+// exactly at the exclusive upper bound must NOT be returned, while an in-range
+// record is. Because these fixtures decode successfully, an over-broad begin or
+// an inclusive/over-broad end would change the returned set -- which undecodable
+// sentinels could not reveal.
+TEST(ValidatorCleanupStateDb, scan_excludes_valid_records_outside_bounds) {
+  auto path = temp_db_path();
+  {
+    auto kv = td::RocksDb::open(path).move_as_ok();
+
+    auto in_range = make_record(9, 100);
+    store_validator_cleanup_record(kv, in_range);
+
+    // LITERAL out-of-range keys, independent of the helpers, so mutating the
+    // helper's bound (without also moving these fixtures) is caught. The valid
+    // prefix is "...cleanup." (0x2e); a key with "...cleanup-" (0x2d) sorts just
+    // below begin, and keys under "...cleanup/" (0x2f) sort at/after the exclusive
+    // end. Both hold a VALID encoded record, so a too-low begin or an over-broad
+    // end would change the returned set.
+    const std::string below_key =
+        std::string("tos.state.pending_validator_consensus_db_cleanup-") + make_session_id(40).to_hex();
+    const std::string at_or_above_key =
+        std::string("tos.state.pending_validator_consensus_db_cleanup/") + make_session_id(41).to_hex();
+    put_raw(kv, td::Slice{below_key}, td::Slice{encode_validator_cleanup_record(make_record(40, 77))});
+    put_raw(kv, td::Slice{at_or_above_key}, td::Slice{encode_validator_cleanup_record(make_record(41, 88))});
+
+    auto loaded = load_validator_cleanup_records(kv);
+    ASSERT_EQ(loaded.size(), static_cast<size_t>(1));
+    ASSERT_TRUE(loaded[0] == in_range);
+  }
+  td::rmrf(path).ignore();
+}
+
+// Storing the same session again overwrites: one record, the latest value.
+TEST(ValidatorCleanupStateDb, same_session_overwrites) {
+  auto path = temp_db_path();
+  {
+    auto kv = td::RocksDb::open(path).move_as_ok();
+    store_validator_cleanup_record(kv, make_record(9, 100));
+    auto newer = make_record(9, 200);
+    store_validator_cleanup_record(kv, newer);
+    auto loaded = load_validator_cleanup_records(kv);
+    ASSERT_EQ(loaded.size(), static_cast<size_t>(1));
+    ASSERT_TRUE(loaded[0] == newer);
+  }
+  td::rmrf(path).ignore();
+}
+
+// Erasing a session that was never stored is a harmless no-op.
+TEST(ValidatorCleanupStateDb, erase_absent_is_noop) {
+  auto path = temp_db_path();
+  {
+    auto kv = td::RocksDb::open(path).move_as_ok();
+    auto r = make_record(9, 100);
+    store_validator_cleanup_record(kv, r);
+    erase_validator_cleanup_record(kv, make_session_id(123));  // never stored
+    auto loaded = load_validator_cleanup_records(kv);
+    ASSERT_EQ(loaded.size(), static_cast<size_t>(1));
+    ASSERT_TRUE(loaded[0] == r);
+  }
+  td::rmrf(path).ignore();
+}
+
+// A stored record survives reopen; an erase also survives reopen (not just an
+// in-memory deletion).
+TEST(ValidatorCleanupStateDb, store_and_erase_survive_reopen) {
   auto path = temp_db_path();
   auto r = make_record(9, 100);
   {
     auto kv = td::RocksDb::open(path).move_as_ok();
-    put_record(kv, r);
+    store_validator_cleanup_record(kv, r);
   }
   {
     auto kv = td::RocksDb::open(path).move_as_ok();
-    auto loaded = load_records(kv);
+    auto loaded = load_validator_cleanup_records(kv);
     ASSERT_EQ(loaded.size(), static_cast<size_t>(1));
     ASSERT_TRUE(loaded[0] == r);
+    erase_validator_cleanup_record(kv, r.session_id);
+  }
+  {
+    auto kv = td::RocksDb::open(path).move_as_ok();
+    ASSERT_TRUE(load_validator_cleanup_records(kv).empty());
   }
   td::rmrf(path).ignore();
 }
