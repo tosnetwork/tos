@@ -492,3 +492,231 @@ record-driven (not directory-driven) reconciliation; and the persist-before-
 destroy + stop/close-without-delete flow. Tests must exercise backward init,
 alternate branches, application-flush crashes, and delayed actor shutdown — the
 crash fault-injection matrix above — not merely helper predicates.
+
+---
+
+# PR B — enabling validator cleanup (finalized design)
+
+PR B turns the observational PR A state into a real, safe deletion state machine.
+It is **not** one big `manager.cpp` change; it lands around four components and is
+itself split into **B1 (lifecycle plumbing, no delete)** and **B2 (eligibility +
+deletion)**. The chosen safety floor is the **persisted GC checkpoint**, reused as
+the rollback/cleanup boundary rather than a new "never-regress watermark".
+
+## Safety rule (all four required to delete)
+
+```
+A. cleanup record is durably persisted
+B. retirement_checkpoint is an ancestor of (or equal to) the safe checkpoint
+C. session is NOT in the current/next recreatable set
+D. the owning actor has stopped and its DB is closed
+```
+
+Any condition unknown => DO NOT DELETE. The bias is explicit: **when in doubt,
+leak a directory; never risk deleting live validator consensus state.**
+
+## Safe checkpoint = persisted GC checkpoint
+
+Not `latest_applied_masterchain_block` ("applied" does not prove startup can
+never fall back before it). The danger is: delete at 100 -> restart rolls back to
+98 -> the session at 98 can legally reappear -> its DB is gone. So the cleanup
+floor must be bound to a boundary the node will never go back before. The existing
+`gc_masterchain_block` is exactly that boundary (hardfork startup requires its
+predecessor at/above GC, `manager-init.cpp:411`; StateDb truncation refuses to go
+above... i.e. cannot truncate below GC, `statedb.cpp:430`). Definition:
+
+```
+durable_safe_cleanup_checkpoint_ = gc_masterchain_block_id   // once durable
+can_delete = ancestor_or_equal(retirement_checkpoint, gc_checkpoint)
+          && !recreatable_sessions.contains(session_id)
+          && db_is_closed
+```
+
+Slower reclamation (a few epochs) is acceptable; one mis-delete is not.
+
+## Retirement flow (B1)
+
+```
+validator session should retire
+  -> build cleanup record
+  -> ONE atomic durable retirement write {fence + cleanup record}
+  -> fsync ok
+  -> stop/close actor, but DO NOT delete the DB
+  -> enter pending cleanup
+  (B2:) -> wait for safe floor -> eligible -> filesystem delete
+        -> ENOENT confirmed -> erase cleanup record
+```
+
+i.e. `persist -> close -> (wait until eligible) -> delete`, never
+`persist -> destroy() -> destroy() auto-deletes`.
+
+## Component 1 — atomic retirement persist (B1)
+
+New StateDb API writing the fence and the cleanup record in ONE synced batch, so
+"actor may begin retiring" implies "cleanup intent is already durable":
+
+```cpp
+void persist_validator_retirement(std::vector<ValidatorSessionId> destroyed_sessions,
+                                  consensus::PendingValidatorConsensusDbCleanup record,
+                                  td::Promise<td::Unit> promise);
+// begin_write_batch(); set destroyed_sessions; set validator_cleanup_record; commit(sync)
+```
+
+This replaces the two-independent-commit sequence and avoids PR A's single-record
+helper being nested inside an outer batch (see "PR B integration boundaries").
+
+## Component 2 — split BridgeImpl::destroy() (B1)
+
+`destroy()` currently stops the bus, waits actors, closes the DB, AND `rmrf`s the
+dir. Split into:
+
+- **close_for_retirement()** (a.k.a. retire-without-delete): stop bus -> wait
+  child actors -> close DbImpl -> `manager` callback
+  `consensus_db_closed(session_id, dir_name)` -> actor may exit. **No delete.**
+- **physical delete lives in the manager / a cleanup helper, not the old actor:**
+  `delete_validator_consensus_db(record)` => `RocksDb::destroy(dir/db)` + `rmrf`
+  + `stat`, success only on ENOENT / ERROR_FILE_NOT_FOUND / ERROR_PATH_NOT_FOUND.
+
+Validator actor lifetime and filesystem cleanup become fully independent.
+
+## Component 3 — manager state (B1 introduces, B2 consumes)
+
+```cpp
+std::map<ValidatorSessionId, PendingValidatorConsensusDbCleanup> pending_validator_db_cleanup_; // PR A
+std::set<ValidatorSessionId> recreatable_validator_sessions_;        // current+next that may be created
+std::set<ValidatorSessionId> closed_retiring_validator_sessions_;    // actor closed, no longer holds DB
+```
+
+Delete only when: `pending && !recreatable && (closed || startup-no-owner) &&
+checkpoint_safe(record)`.
+
+## Component 4 — recreatable set computed independently (B2)
+
+Must NOT be `validator_groups_.contains(sid) || next_validator_groups_.contains(sid)`
+(those maps may be empty at startup sweep time). Extract a **pure selection
+helper** from `update_shards()`:
+
+```cpp
+RecreatableValidatorSessions compute_recreatable_sessions(
+    masterchain_state, current_validator_set, next_validator_set,
+    local_validator_keys, consensus_config);   // no actor create / no mutation / no messages
+```
+
+`update_shards()` then reuses the same helper, so startup safety logic cannot
+drift from production selection. A tombstone-filtered-out session is NOT proven
+non-recreatable; an empty map from gating/missing keys is NOT retirement proof.
+
+## Tombstone vs cleanup record (decoupled)
+
+`destroyed_validator_sessions_` stays as the short-term do-not-recreate fence and
+may be pruned checkpoint-relatively, but the cleanup record is erased ONLY after
+the filesystem is confirmed gone — never because the fence was pruned.
+
+## Startup order (B2)
+
+```
+recovered MC state -> persisted GC checkpoint -> destroyed-session fences
+-> validator cleanup records -> compute recreatable current+next IDs
+-> validate every cleanup record -> eligibility from GC ancestry
+-> sweep eligible validator dirs -> reconcile ENOENT records
+-> finish_start_up -> update_shards creates groups
+```
+
+A startup dir with no actor owner may be treated as closed, but only after the
+recreatable-set and checkpoint-eligibility checks.
+
+## Ancestry oracle (B2)
+
+Async, not seqno-based; reuse any existing manager-init/block-handle traversal:
+
+```
+equal -> Ancestor-equal
+ancestor.seqno > descendant.seqno -> NotAncestor
+walk prev-masterchain from descendant to ancestor.seqno:
+    exact BlockIdExt match -> Ancestor ; mismatch -> NotAncestor
+handle unavailable / DB error -> Unknown (FAIL CLOSED)
+```
+
+## Pre-delete exact-directory re-validation (B2)
+
+Re-check before deleting even though decode already validated: canonical name for
+the session, no `.observer.`, no `/`, no NUL, a direct child of the consensus
+root. Always build the path as `consensus_db_root(db_root_) + record.dir_name`,
+never trust a persisted absolute path.
+
+## Runtime cleanup triggers (B2)
+
+Not startup-only: (1) startup, (2) GC checkpoint advances, (3) validator actor
+close completes. One entry point `try_cleanup_pending_validator_dbs()`, bounded
+work per turn (e.g. 16-64 records) to avoid heavy manager turns on a big backlog
+— but the budget limits WORK, it must never drop a queue record.
+
+## Record-centric reconciliation (B2)
+
+Iterate records, not filesystem dirs (a crash after delete but before record
+erase is only visible by iterating records):
+
+```
+for each pending cleanup record:
+  if not eligible: continue
+  stat(exact path)
+  ENOENT          -> erase durable record
+  exists          -> try delete; if confirmed ENOENT -> erase record
+  EACCES/EIO/...   -> keep (retry later)
+```
+
+## Deterministic fault injection (B2 test infra)
+
+Injectable coordinator / failpoints (not random kills):
+
+```
+AfterRetirementDecision, AfterRetirementPersist, AfterActorClosed,
+BeforeFilesystemDelete, AfterFilesystemDelete, BeforeRecordErase
+```
+
+covering crash before/after persist, after close, before/after delete, before
+dequeue.
+
+## Case 6 end-to-end (B2 hard acceptance)
+
+Not a pure-predicate assert (PR A already has that). Drive the real manager
+cleanup orchestration:
+
+```
+session X retired at checkpoint 100 -> cleanup record durable -> first delete
+fails -> tombstone later pruned -> restart on a state where X is recreatable
+-> pending record still exists -> deleter MUST NOT be called
+```
+
+It must prove the system actually feeds `recreatable = true` through the full
+state assembly, not just that the predicate is correct in isolation.
+
+## B1 / B2 split
+
+- **B1 — lifecycle plumbing (no delete):** atomic retirement persist,
+  close-without-delete, cleanup records actually produced, closed callback. DB may
+  linger temporarily; nothing is ever deleted, so no mis-delete is possible.
+- **B2 — eligibility + deletion:** GC floor, ancestry oracle, recreatable
+  selection-only pass, startup/runtime sweep, record reconciliation, fault
+  injection matrix.
+
+## PR B acceptance (hard blockers)
+
+| Item | Required |
+|---|---|
+| record durable before actor close | yes |
+| retirement fence + cleanup intent atomically committed | yes |
+| stop/close separated from delete | yes |
+| safe floor bound to persisted GC/rollback boundary | yes |
+| ancestry check is not a seqno comparison | yes |
+| current+next recreatable set computed independently | yes |
+| live/recreatable session never deleted | yes |
+| Unknown ancestry fails closed | yes |
+| cleanup record erased only after file confirmed gone | yes |
+| tombstone pruning does not erase cleanup record | yes |
+| Case 6 end-to-end red/green | yes |
+| crash-after-delete-before-dequeue recoverable | yes |
+
+Chosen route: **GC checkpoint as conservative cleanup floor + B1/B2 two-phase.**
+Slowest to reclaim, easiest to prove safe, least likely to disturb consensus
+recovery.
