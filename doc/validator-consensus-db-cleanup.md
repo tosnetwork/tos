@@ -812,3 +812,78 @@ recursive deletion time).
 **B2 tests must add:** the key-removal/rollback counterexample (1), stale-close-
 after-reopen (6), multi-session retirement persistence (3), and B1-restart-through-
 the-legacy-sweep (2) — each demonstrably failing when its guard is removed.
+
+---
+
+# PR B / B2 — implementation increment plan
+
+B2 enables the actual checkpoint-bound deletion. It is sequenced so deletion is
+the LAST thing turned on: every increment before the final one is inert or
+gated, and each is Codex-reviewed. The pure decision core (`can_delete_validator_db`,
+ancestry fail-closed, monotonic safe checkpoint) already exists and is tested
+(B1-1). B2 supplies the concrete inputs, the orchestration, and the enablement.
+
+**B2-1 — manager-owned physical delete helper (inert, testable).** A free/helper
+function `delete_validator_consensus_db(db_root, dir_name) -> bool` that does
+`RocksDb::destroy(dir/db)` + `rmrf` + `stat`, returning true only on confirmed
+ENOENT (POSIX) / FILE_NOT_FOUND (Windows) -- the same confirmation the bridge's
+destroy_inner uses and the sweep deleter uses. Plus exact-path re-validation:
+build the path only as `consensus_db_root(db_root) + dir_name`, require
+`is_canonical_validator_dir_name`, reject anything else. Inert: no caller. Tested
+against real temp dirs (deletes a real dir, confirms gone; refuses a non-canonical
+name; returns false when the dir persists).
+
+**B2-2 — durable GC safe-checkpoint tracking (inert).** Track
+`durable_safe_cleanup_checkpoint_` = the persisted GC masterchain block id,
+adopted monotonically via `should_adopt_safe_checkpoint` as GC advances
+(`advance_gc`/`got_next_gc_masterchain_state`) and loaded at startup
+(`get_gc_masterchain_block`). Shadow: consulted by nothing yet. Testability is
+limited (manager state); rely on the pure monotonic guard test + Codex review.
+
+**B2-3 — async full-ID ancestry oracle (inert, testable where possible).**
+`check_masterchain_ancestry(ancestor, descendant) -> Task<CleanupAncestry>`:
+equal -> ancestor-equal; `ancestor.seqno > descendant.seqno` -> NotAncestor;
+else walk prev-masterchain handles from descendant to ancestor.seqno, exact
+BlockIdExt match -> Ancestor else NotAncestor; any handle/DB unavailability ->
+Unknown (FAIL CLOSED). Reuse an existing manager-init/block-handle traversal if
+one exists rather than a new walk. Inert: not wired to deletion.
+
+**B2-4 — on-chain recreatable-session set (the obsolescence proof).** Extract a
+side-effect-free `compute_recreatable_sessions(...)` from `update_shards()`
+(shard topology, clock fsm_utime<now+60, current+next validator sets,
+consensus options/hash, last-key-block seq, max vertical seq, unsafe-rotation
+session-id rewrite, temp-key membership; honor tentative historical ownership).
+It yields the set of session ids that could still be legally created at the
+current head, or an explicit Unknown when inputs are missing (never an
+authoritative empty set). `update_shards()` reuses the same helper so startup
+safety cannot drift from live selection. Unit-test the pure extraction.
+
+**B2-5 — generation / reopen protection (inert).** Give each retiring session a
+generation/incarnation marker so a `consensus_db_closed` callback, an eligibility
+check, or a delete completion for an OLD incarnation is rejected once the session
+reopens. Track `closed_retiring_validator_sessions_` with its generation; a
+reopen invalidates the prior closed-ack.
+
+**B2-6 — the cleanup orchestrator (still gated OFF).** `try_cleanup_pending_
+validator_dbs()`: iterate RECORDS (not dirs), for each: skip if not eligible
+(`can_delete_validator_db(record, durable_safe_cleanup_checkpoint_, is_live,
+ancestry_oracle)` with is_live from the recreatable set AND the ownership/closed
+checks); stat the exact path; ENOENT -> erase record; exists -> delete (B2-1) ->
+confirm ENOENT -> erase; EACCES/EIO -> keep. Bounded work per turn (a cursor),
+FS work off the consensus path, fair scheduled retry. Behind a compile/runtime
+gate so it is a NO-OP until B2-7.
+
+**B2-7 — deterministic fault-injection harness + Case 6 + ENABLE.** An injectable
+coordinator with failpoints (AfterRetirementDecision, AfterRetirementPersist,
+AfterActorClosed, BeforeFilesystemDelete, AfterFilesystemDelete, BeforeRecordErase).
+Tests: Case 6 end-to-end (delete fail -> tombstone prune -> restart -> session
+recreatable -> deleter MUST NOT run); key-removal/rollback; stale-close-after-
+reopen; multi-session retirement; crash-after-delete-before-dequeue. Each must
+fail red when its guard is removed. Only when all pass is the orchestrator gate
+turned ON (triggers: startup, GC advance, close). This is the one increment that
+changes deletion behavior, under the five merge blockers.
+
+Ordering rationale: B2-1..B2-6 add inputs, state, and gated machinery without ever
+deleting a validator DB; B2-7 supplies the end-to-end safety evidence and is the
+sole enablement. If B2 cannot be finished with that evidence, B1's safe
+no-deletion state stands.
