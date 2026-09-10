@@ -12,6 +12,20 @@ struct M3TestRegistrationWalletInput {
   std::string context_bytes, prefix_bytes;
 };
 
+inline std::string m3_test_registration_prefix(const WorkchainConfidentialAccount& a) {
+  std::string prefix;
+  auto be=[&](std::uint64_t n,unsigned width) {
+    for (unsigned i=width;i>0;--i) prefix.push_back(static_cast<char>(n>>(8*(i-1))));
+  };
+  be(static_cast<std::uint32_t>(a.global_id),4);
+  prefix+=a.genesis_hash.as_slice().str();
+  be(static_cast<std::uint32_t>(a.address.workchain_id),4);
+  for (const auto& v:{a.address.account,a.address.instance,a.bindings.asset,a.bindings.custody,a.bindings.policy})
+    prefix+=v.as_slice().str();
+  be(a.schema_version,2); be(a.relation_profile,2); be(a.proof_profile,2); be(a.key_epoch,4);
+  return prefix;
+}
+
 // Policy is the host's actual registration policy, including mandatory possession
 // configuration (v2 host API). It is a template only to keep this test header
 // usable on the encoding branch before that host API is integrated. No fallback
@@ -39,16 +53,7 @@ inline td::Result<M3TestRegistrationWalletInput> make_m3_test_registration_walle
   TRY_RESULT(bytes,encode_workchain_replay_context(context,WorkchainReplayOperation::Registration));
   // Existing test-wallet register prefix, matching key_possession.rs numeric
   // BE fields after context and before P/R. Domain tag/context/P/R are NOT here.
-  std::string prefix;
-  auto be=[&](std::uint64_t n,unsigned width) {
-    for (unsigned i=width;i>0;--i) prefix.push_back(static_cast<char>(n>>(8*(i-1))));
-  };
-  be(static_cast<std::uint32_t>(a.global_id),4);
-  prefix+=a.genesis_hash.as_slice().str();
-  be(static_cast<std::uint32_t>(a.address.workchain_id),4);
-  for (const auto& v:{a.address.account,a.address.instance,a.bindings.asset,a.bindings.custody,a.bindings.policy})
-    prefix+=v.as_slice().str();
-  be(a.schema_version,2); be(a.relation_profile,2); be(a.proof_profile,2); be(a.key_epoch,4);
+  auto prefix=m3_test_registration_prefix(a);
   if (prefix.size()!=210 || bytes.size()!=426) return td::Status::Error("M3 test wallet context size mismatch");
   return M3TestRegistrationWalletInput{a,data,id,context,bytes,prefix};
 }
