@@ -1,0 +1,37 @@
+{
+  "baseline_commit": "ba6e289716ab35a54a2f2b6dff1a666fb22829f7",
+  "source_path": "validator/impl/validate-query.cpp",
+  "baseline_sha256": "df105fae6161fb1bee9a45da3dda56369c8d27943b355f7fafa0441b44ff157c",
+  "draft_sha256": "75068ce6d72631204017fdbd96a16b129b533ac81f477c51c7a9be3d8c06d13b",
+  "build_command": [
+    "cmake",
+    "--build",
+    "/tmp/uno-publication-build",
+    "--target",
+    "tos_validator",
+    "-j32"
+  ],
+  "build_exit": 0,
+  "earlier_wrong_target": "validator-common returned no work; it is not compilation evidence for this change",
+  "scope": "Uncommitted local-branch draft and source call-chain finding. No behavioral or mutation acceptance claimed. Registry readiness and transaction-selection refusal remain unchanged.",
+  "disposition": {
+    "status": "Withdrawn pending coordinator D45 frontier decision",
+    "draft_commit": "b87dc57b2",
+    "revert_commit": "daed6916f758f1761c5ca761cd503ede350b9d30",
+    "restored_source_sha256": "df105fae6161fb1bee9a45da3dda56369c8d27943b355f7fafa0441b44ff157c",
+    "byte_equal_to_baseline": true,
+    "explicit_rebuild_command": [
+      "cmake",
+      "--build",
+      "/tmp/uno-publication-build",
+      "--target",
+      "tos_validator",
+      "-j32"
+    ],
+    "rebuild_exit": 0,
+    "rebuilt_artifact_sha256": "4325fae4b9cd5fa1b53fe035dd1f621b14d59060c3a122cc8071f902d8c9237e",
+    "test_execution": false,
+    "mutation_execution": false,
+    "other_targets": "No downstream executable was linked with the draft library; only tos_validator was built. validator-common had reported no work and was not evidence."
+  }
+}
