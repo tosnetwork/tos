@@ -28,7 +28,7 @@ def check(repo: Path):
     generated = (repo / 'crypto/block/block-auto.h').read_text()
     fixture = (repo / 'test/test-counter-disk-integration.cmake').read_text()
     required = {'UnoV2ResourceInput', 'UnoV2ResourceState', 'UnoV2ResourceWorkOutput',
-                'UnoV2ResourcePolicy', 'UnoV2EngineConfiguration', 'WorkchainNativeIngressPolicy'}
+                'UnoV2ResourcePolicy', 'UnoV2EngineConfiguration', 'WorkchainNativeIngressPolicy', 'ParamLimits'}
     rows = re.findall(r'// @generated-tag (\w+) (\d+)\n[^\n]*?x\{([0-9a-fA-F]+)\}', fixture)
     require(len(rows) == len(required) and {r[0] for r in rows} == required, 960, 'incomplete tag inventory')
     for name, index, actual in rows:

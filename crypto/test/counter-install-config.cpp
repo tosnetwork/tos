@@ -47,7 +47,7 @@ int main(int argc, char** argv) {
   // These are explicit isolated-test limits and the historical acceptance
   // interval. No current cadence, deployment configuration, or default identity.
   block::WorkchainResourcePolicy resources{4, {64,4096,8,16,16,5},
-      {256,16384,128,8192,64}, {32,128,8192,256,16384,16}};
+      {256,16384,128,8192,64}, {32,128,8192,256,16384,16}, {1, 32, 64}, 7};
   auto shell = block::encode_workchain_engine_parameters(
       {400, identity.ok(), resources, vm::CellBuilder().finalize()});
   require(shell.is_ok(), 1114);

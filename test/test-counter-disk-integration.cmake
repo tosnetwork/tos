@@ -98,8 +98,10 @@ foreach(script ${genesis_scripts})
 <b x{90aef2dd} s, 256 64 u, 16384 64 u, 128 64 u, 8192 64 u, 64 16 u, b> constant probe_state
 // @generated-tag UnoV2ResourceWorkOutput 0
 <b x{7a310b92} s, 32 64 u, 128 64 u, 8192 64 u, 256 64 u, 16384 64 u, 16 32 u, b> constant probe_work
+// @generated-tag ParamLimits 0
+<b x{c3} s, 1 32 u, 32 32 u, 64 32 u, b> constant probe_preflight
 // @generated-tag UnoV2ResourcePolicy 0
-<b x{bbd8a9ec} s, 2 32 u, probe_input ref, probe_state ref, probe_work ref, b> constant probe_resources
+<b x{f37fed2f} s, 2 32 u, 7 64 u, probe_input ref, probe_state ref, probe_work ref, probe_preflight ref, b> constant probe_resources
 // Fixture K acceptance interval, explicitly recorded; not read from current Param30.
 // Claimed identity comes from the actual genesis descriptor. create-state
 // independently reissues it against the final configuration root.

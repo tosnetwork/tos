@@ -1,0 +1,92 @@
+{
+  "baseline": "dd2327c90",
+  "constructors": [
+    {
+      "path": "crypto/block/create-state.cpp",
+      "baseline_lines": [
+        737
+      ]
+    },
+    {
+      "path": "crypto/block/workchain-resource-policy.h",
+      "baseline_lines": [
+        116
+      ]
+    },
+    {
+      "path": "crypto/test/counter-install-config.cpp",
+      "baseline_lines": [
+        49
+      ]
+    },
+    {
+      "path": "crypto/test/test-workchain-activation-control.cpp",
+      "baseline_lines": [
+        35
+      ]
+    },
+    {
+      "path": "crypto/test/test-workchain-admission.cpp",
+      "baseline_lines": [
+        153
+      ]
+    },
+    {
+      "path": "crypto/test/test-workchain-batch-scan.cpp",
+      "baseline_lines": [
+        41
+      ]
+    },
+    {
+      "path": "crypto/test/test-workchain-block.cpp",
+      "baseline_lines": [
+        164,
+        225,
+        268,
+        300,
+        331,
+        346,
+        403,
+        434,
+        946,
+        1296,
+        1497,
+        9078,
+        9202,
+        9212,
+        9339,
+        9576
+      ]
+    },
+    {
+      "path": "crypto/test/test-workchain-collator-compute-mode.cpp",
+      "baseline_lines": [
+        27
+      ]
+    },
+    {
+      "path": "crypto/test/test-workchain-coverage.cpp",
+      "baseline_lines": [
+        52
+      ]
+    },
+    {
+      "path": "crypto/test/test-workchain-ingress-transition.cpp",
+      "baseline_lines": [
+        28
+      ]
+    },
+    {
+      "path": "crypto/test/test-workchain-instance-identity.cpp",
+      "baseline_lines": [
+        20
+      ]
+    },
+    {
+      "path": "crypto/test/test-workchain-settlement-continuation.cpp",
+      "baseline_lines": [
+        143
+      ]
+    }
+  ]
+}

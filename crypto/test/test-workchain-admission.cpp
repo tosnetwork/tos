@@ -151,7 +151,7 @@ TEST(WorkchainAdmission, ConfigurationFailureIsSeparate) {
 
 void check_batch_semantic_zero(unsigned field) {
   block::WorkchainResourcePolicy resources{2, {64,4096,8,16,16,5},
-      {256,16384,128,8192,64}, {32,128,8192,256,16384,16}};
+      {256,16384,128,8192,64}, {32,128,8192,256,16384,16}, {1, 32, 64}, 7};
   block::InputPolicyIdentity identity{leaf()->get_hash(), false, 1, 0, 1, 2};
   ASSERT_TRUE(std::holds_alternative<block::ResolvedBatchInputPolicy>(
       block::ResolvedBatchInputPolicy::from_resolved_fields(resources, identity)));

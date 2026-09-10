@@ -1,0 +1,41 @@
+{
+  "source_base": "dd2327c90a6fd2c4d74f2579bd6afaadcbf246d7",
+  "working_source_sha256": {
+    "CMakeLists.txt": "a4d5405f7aecc6287a1a23e37b37a7fb0439dfab4834782dd794e3ffc6bb07a8",
+    "crypto/block/block.tlb": "2e2db5046dcc8a17ecd9259af2cef40eeeb0ca435de3b747b55712ff972e3cc2",
+    "crypto/block/create-state.cpp": "247a8103ffe7cd73dd7f985281cae6ff523fbf326340eed64a2959af30646e43",
+    "crypto/block/workchain-resource-policy.h": "fa9614df0ea67a5549054b7d79257e7319ce4be4031341d1365ca0d0217fd849",
+    "crypto/test/counter-install-config.cpp": "bd9245bbba74c7f6418be4498228abd6a3d93a7476d26ce72a38f01ef49bbffe",
+    "crypto/test/test-smartcont.cpp": "2490bdf1e349c03e8f110ebd069fddb31fd16c71b2ada6b0ddd429af55e0def2",
+    "crypto/test/test-workchain-activation-control.cpp": "eaa46ad2efac55a9bd3b6a253578e21454747f7757f35aaefd579f989c9833da",
+    "crypto/test/test-workchain-admission.cpp": "83454ad020f3412511407e75c434ea7dd02384ff329f82467650446ab44ac6ef",
+    "crypto/test/test-workchain-batch-scan.cpp": "ef9a49491c85eaea65cb8a923b72679038f2597b49c5282f1b2f8f572a5b89ab",
+    "crypto/test/test-workchain-block.cpp": "24399fc37ad1ba61e084161ca01cec98bcd91379eabfbbe5d1a35fc0302a84b6",
+    "crypto/test/test-workchain-collator-compute-mode.cpp": "6c10fbffaa1a127442533dc122ed685a91c32c20bb65e25f4a60d8d18378950c",
+    "crypto/test/test-workchain-coverage.cpp": "a556330356364ce7afb17fa7e07c97c8cb87e89751af0a6426af4f95b0591d31",
+    "crypto/test/test-workchain-ingress-transition.cpp": "cde3b5889528a49a2d1d5ca4756b3a8227b2f0b4a34ae5743e1c70d99bfdeee8",
+    "crypto/test/test-workchain-instance-identity.cpp": "f1700f7f3fc2804d47f24cb5e663345e96c69b35f1e1d6d6f7d1fec048ec9774",
+    "crypto/test/test-workchain-settlement-continuation.cpp": "c00c033f9bc484d886525f733cdb5bc16869aa2844db52b53a86790b84927ef3",
+    "crypto/test/workchain-block-preflight-policy.md": "a250860deea1d6526ed929a3faeb80bc094fe2627bdb49acdaaa1865861def67",
+    "crypto/test/workchain-bounded-zerostate.boc": "894f9a606a0fe092d9719caad2df751dd2d6123d8a706b6d2b3d22171f19f30c",
+    "crypto/test/workchain-bounded-zerostate.md": "0343a4d3212a14a4f47dde9fbf6d4f27c4619826d9994e9452436677c432c654",
+    "crypto/test/workchain-handwritten-tags.py": "60f6ac792ad2b8eb0a17cb6404c69ed21a8ec214707a0b10c8e36db3360cf900",
+    "crypto/test/workchain-validator-local-controls.py": "8fb215d2bc52fc8b00dcbf2fecbdd68142f9a1f0ce8b6608298a41480f266c1f",
+    "crypto/test/workchain-wire-representations.json": "9b4e775fcea7c99c5868f9550e20270fae403b3da216d59a5f73f4e991a909e4",
+    "doc/measurements/uno-local-profile/README.md": "a2c534fa54a7d7eb81350b53a4b5746ddbac54aa871c2afcef4c8d91e243b6f8",
+    "doc/uno-v2-resource-policy-wire.md": "18e7bf44301b0b0dc6d1e9da79420312b2e849687867b3eb3c5e9ec6261abf26",
+    "test/regression-tests.ans": "513b0aa2d3f65e6a86269ed87a7c4d25774588190ac142c540d668b56f0735d2",
+    "test/test-counter-disk-integration.cmake": "43685f7303750ff30dc8853f54fe7feb192a029cb35cd64276351bd8dd8ba649",
+    "test/workchain-resource-fixture.py": "7d553784be3d92d2bb5973a8b685780d1358c6bc1e632a2e5839c6e7acc0ece0",
+    "tosctl/src/block/src/tests/data/mc_state_extra_instances.boc": "93d0601dde257523af3aaebeb5530db1e1d24c4f39fd9db7f1269c9c3e16d4ab"
+  },
+  "tool_sha256": {
+    "/tmp/uno-bounded-policy-private-build/crypto/create-state": "803c083cfb9fee0f4f1176a0f19d6b309eae008a82b66ff0be16926cdad55b0a",
+    "/tmp/uno-bounded-policy-private-build/crypto/tlbc": "0307da3428548aca6a8ebfc7fc5be7bbac4946d47ac58256d93bfc3ee4d737dd",
+    "/tmp/uno-bounded-policy-private-build/test-workchain-block": "eaafab59d831024dcc8d53558bd405dae5064a89b9dc2f82ca768aad66759f11",
+    "/tmp/uno-bounded-policy-private-build/test-smartcont": "a42952191561bff3d8f6ea3e275e012b25cd294ce1ed11c70ad4cb9e0c5ef0c4"
+  },
+  "raw_archive_sha256": "8fe6ed64c1c851063de6063d387c3bf7b9ebfd0df44f0dd87144f55521671a99",
+  "source_commit": "72c8e543b367245f63d9cfa80037b239394be6c6",
+  "source_tree": "7ebaf177c751e522fbd152ee601ec408513abe6e"
+}

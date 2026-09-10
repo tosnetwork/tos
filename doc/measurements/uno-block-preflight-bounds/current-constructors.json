@@ -1,0 +1,118 @@
+{
+  "scope": "Current explicit C++ constructions; all require the sixth allowance argument. Tests use explicit 7 except the separate width/zero control; production uses explicit 1. No value derives from max_proof_units.",
+  "count": 28,
+  "entries": [
+    {
+      "path": "crypto/block/create-state.cpp",
+      "line": 742
+    },
+    {
+      "path": "crypto/test/counter-install-config.cpp",
+      "line": 49
+    },
+    {
+      "path": "crypto/test/test-workchain-activation-control.cpp",
+      "line": 35
+    },
+    {
+      "path": "crypto/test/test-workchain-admission.cpp",
+      "line": 153
+    },
+    {
+      "path": "crypto/test/test-workchain-batch-scan.cpp",
+      "line": 43
+    },
+    {
+      "path": "crypto/test/test-workchain-block.cpp",
+      "line": 164
+    },
+    {
+      "path": "crypto/test/test-workchain-block.cpp",
+      "line": 235
+    },
+    {
+      "path": "crypto/test/test-workchain-block.cpp",
+      "line": 284
+    },
+    {
+      "path": "crypto/test/test-workchain-block.cpp",
+      "line": 337
+    },
+    {
+      "path": "crypto/test/test-workchain-block.cpp",
+      "line": 380
+    },
+    {
+      "path": "crypto/test/test-workchain-block.cpp",
+      "line": 412
+    },
+    {
+      "path": "crypto/test/test-workchain-block.cpp",
+      "line": 443
+    },
+    {
+      "path": "crypto/test/test-workchain-block.cpp",
+      "line": 458
+    },
+    {
+      "path": "crypto/test/test-workchain-block.cpp",
+      "line": 515
+    },
+    {
+      "path": "crypto/test/test-workchain-block.cpp",
+      "line": 548
+    },
+    {
+      "path": "crypto/test/test-workchain-block.cpp",
+      "line": 1065
+    },
+    {
+      "path": "crypto/test/test-workchain-block.cpp",
+      "line": 1415
+    },
+    {
+      "path": "crypto/test/test-workchain-block.cpp",
+      "line": 1616
+    },
+    {
+      "path": "crypto/test/test-workchain-block.cpp",
+      "line": 9197
+    },
+    {
+      "path": "crypto/test/test-workchain-block.cpp",
+      "line": 9321
+    },
+    {
+      "path": "crypto/test/test-workchain-block.cpp",
+      "line": 9331
+    },
+    {
+      "path": "crypto/test/test-workchain-block.cpp",
+      "line": 9458
+    },
+    {
+      "path": "crypto/test/test-workchain-block.cpp",
+      "line": 9695
+    },
+    {
+      "path": "crypto/test/test-workchain-collator-compute-mode.cpp",
+      "line": 27
+    },
+    {
+      "path": "crypto/test/test-workchain-coverage.cpp",
+      "line": 54
+    },
+    {
+      "path": "crypto/test/test-workchain-ingress-transition.cpp",
+      "line": 28
+    },
+    {
+      "path": "crypto/test/test-workchain-instance-identity.cpp",
+      "line": 20
+    },
+    {
+      "path": "crypto/test/test-workchain-settlement-continuation.cpp",
+      "line": 143
+    }
+  ]
+}

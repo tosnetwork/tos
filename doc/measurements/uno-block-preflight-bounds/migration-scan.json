@@ -1,0 +1,979 @@
+{
+  "commit": "dd2327c90a6fd2c4d74f2579bd6afaadcbf246d7",
+  "counts": {
+    "files": 66483,
+    "archive_members": 4921,
+    "base64_candidates": 867
+  },
+  "hits": [
+    {
+      "path": "crypto/test/test-workchain-block.cpp",
+      "representation": "hex-text"
+    },
+    {
+      "path": "doc/measurements/uno-a2-registry-closed/raw-run.tar.gz!./calibration-prefix-checkpoint/fixture/db/static/E4AFD13D6EA4E7B81150790A29B9A91ABA7639FD0DCA6AFDDE40C80CFB667BF9",
+      "representation": "binary-byte-match",
+      "offsets": [
+        1655
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-a2-registry-closed/raw-run.tar.gz!./calibration-prefix-checkpoint/fixture/db/celldb/000008.sst",
+      "representation": "binary-byte-match",
+      "offsets": [
+        4143
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-a2-registry-closed/raw-run.tar.gz!./calibration-prefix-checkpoint/fixture/db/archive/states/zerostate_-1_6C4EB05CAC2C55373BF1F698BE2833A3D31DB3FC2776D46D568B4FF22A722D3D",
+      "representation": "binary-byte-match",
+      "offsets": [
+        1655
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-a2-registry-closed/raw-run.tar.gz!./calibration-prefix-checkpoint/fixture/peer/db/static/E4AFD13D6EA4E7B81150790A29B9A91ABA7639FD0DCA6AFDDE40C80CFB667BF9",
+      "representation": "binary-byte-match",
+      "offsets": [
+        1655
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-a2-registry-closed/raw-run.tar.gz!./calibration-prefix-checkpoint/fixture/peer/db/celldb/000004.log",
+      "representation": "binary-byte-match",
+      "offsets": [
+        16185
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-a2-registry-closed/raw-run.tar.gz!./calibration-prefix-checkpoint/fixture/peer/db/archive/states/zerostate_-1_6C4EB05CAC2C55373BF1F698BE2833A3D31DB3FC2776D46D568B4FF22A722D3D",
+      "representation": "binary-byte-match",
+      "offsets": [
+        1655
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-a2-registry-closed/raw-run.tar.gz!./calibration-prefix-checkpoint/fixture/zerostate.boc",
+      "representation": "binary-byte-match",
+      "offsets": [
+        1655
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-a2-registry-closed/raw-run.tar.gz!./calibration-prefix-checkpoint/fixture/account-binding-genesis.fif",
+      "representation": "hex-text"
+    },
+    {
+      "path": "doc/measurements/uno-a2-registry-closed/raw-run.tar.gz!./fixture/db/static/2EA26035D9E7C6299D4C14D5F1ECE8E87C153320DC9173BD74937363E76EE36E",
+      "representation": "binary-byte-match",
+      "offsets": [
+        1655
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-a2-registry-closed/raw-run.tar.gz!./fixture/db/celldb/000008.sst",
+      "representation": "binary-byte-match",
+      "offsets": [
+        3820
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-a2-registry-closed/raw-run.tar.gz!./fixture/db/archive/states/zerostate_-1_6D2126120A317322A7107D53D0C3C9A63D566B8E2DC3A7C9C55406B9A50A75C0",
+      "representation": "binary-byte-match",
+      "offsets": [
+        1655
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-a2-registry-closed/raw-run.tar.gz!./fixture/peer/db/static/2EA26035D9E7C6299D4C14D5F1ECE8E87C153320DC9173BD74937363E76EE36E",
+      "representation": "binary-byte-match",
+      "offsets": [
+        1655
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-a2-registry-closed/raw-run.tar.gz!./fixture/peer/db/celldb/000004.log",
+      "representation": "binary-byte-match",
+      "offsets": [
+        16185
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-a2-registry-closed/raw-run.tar.gz!./fixture/peer/db/archive/states/zerostate_-1_6D2126120A317322A7107D53D0C3C9A63D566B8E2DC3A7C9C55406B9A50A75C0",
+      "representation": "binary-byte-match",
+      "offsets": [
+        1655
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-a2-registry-closed/raw-run.tar.gz!./fixture/zerostate.boc",
+      "representation": "binary-byte-match",
+      "offsets": [
+        1655
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-a2-registry-closed/raw-run.tar.gz!./fixture/account-binding-genesis.fif",
+      "representation": "hex-text"
+    },
+    {
+      "path": "doc/measurements/uno-a2-registry-closed/raw-run.tar.gz!./stack-overhead-checkpoint/fixture/db/static/C124B03068B7D81BD446D023165F16AD823D11043D4D9B99EF3D83F31CA27D4A",
+      "representation": "binary-byte-match",
+      "offsets": [
+        1655
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-a2-registry-closed/raw-run.tar.gz!./stack-overhead-checkpoint/fixture/db/celldb/000008.sst",
+      "representation": "binary-byte-match",
+      "offsets": [
+        3963
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-a2-registry-closed/raw-run.tar.gz!./stack-overhead-checkpoint/fixture/db/archive/states/zerostate_-1_7BFC003254AD9991CBD94A0F3ED1981283BC90055D44A27D2975867F58EC1AF8",
+      "representation": "binary-byte-match",
+      "offsets": [
+        1655
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-a2-registry-closed/raw-run.tar.gz!./stack-overhead-checkpoint/fixture/peer/db/static/C124B03068B7D81BD446D023165F16AD823D11043D4D9B99EF3D83F31CA27D4A",
+      "representation": "binary-byte-match",
+      "offsets": [
+        1655
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-a2-registry-closed/raw-run.tar.gz!./stack-overhead-checkpoint/fixture/peer/db/celldb/000004.log",
+      "representation": "binary-byte-match",
+      "offsets": [
+        16185
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-a2-registry-closed/raw-run.tar.gz!./stack-overhead-checkpoint/fixture/peer/db/archive/states/zerostate_-1_7BFC003254AD9991CBD94A0F3ED1981283BC90055D44A27D2975867F58EC1AF8",
+      "representation": "binary-byte-match",
+      "offsets": [
+        1655
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-a2-registry-closed/raw-run.tar.gz!./stack-overhead-checkpoint/fixture/zerostate.boc",
+      "representation": "binary-byte-match",
+      "offsets": [
+        1655
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-a2-registry-closed/raw-run.tar.gz!./stack-overhead-checkpoint/fixture/account-binding-genesis.fif",
+      "representation": "hex-text"
+    },
+    {
+      "path": "doc/measurements/uno-a2-validator-closed/raw-run.tar.gz!earlier-native/db/archive/states/zerostate_-1_6D2126120A317322A7107D53D0C3C9A63D566B8E2DC3A7C9C55406B9A50A75C0",
+      "representation": "binary-byte-match",
+      "offsets": [
+        1655
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-a2-validator-closed/raw-run.tar.gz!earlier-native/db/celldb/000008.sst",
+      "representation": "binary-byte-match",
+      "offsets": [
+        3820
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-a2-validator-closed/raw-run.tar.gz!earlier-native/db/static/2EA26035D9E7C6299D4C14D5F1ECE8E87C153320DC9173BD74937363E76EE36E",
+      "representation": "binary-byte-match",
+      "offsets": [
+        1655
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-a2-validator-closed/raw-run.tar.gz!final-accept/db/archive/states/zerostate_-1_B087CF889B8971F9241B6358EAECEB5A472EAB5A1E0DB4DC98F1A0C9776B2252",
+      "representation": "binary-byte-match",
+      "offsets": [
+        1623
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-a2-validator-closed/raw-run.tar.gz!final-accept/db/celldb/000031.sst",
+      "representation": "binary-byte-match",
+      "offsets": [
+        16791
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-a2-validator-closed/raw-run.tar.gz!final-accept/db/static/220DFD72D66523B86B0CF73A1BB2DDE5734F1296046491705F691F672703B841",
+      "representation": "binary-byte-match",
+      "offsets": [
+        1623
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-a2-validator-closed/raw-run.tar.gz!final-delivery-mutant/db/archive/states/zerostate_-1_6D2126120A317322A7107D53D0C3C9A63D566B8E2DC3A7C9C55406B9A50A75C0",
+      "representation": "binary-byte-match",
+      "offsets": [
+        1655
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-a2-validator-closed/raw-run.tar.gz!final-delivery-mutant/db/celldb/000008.sst",
+      "representation": "binary-byte-match",
+      "offsets": [
+        3820
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-a2-validator-closed/raw-run.tar.gz!final-delivery-mutant/db/static/2EA26035D9E7C6299D4C14D5F1ECE8E87C153320DC9173BD74937363E76EE36E",
+      "representation": "binary-byte-match",
+      "offsets": [
+        1655
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-a2-validator-closed/raw-run.tar.gz!final-earlier/db/archive/states/zerostate_-1_6D2126120A317322A7107D53D0C3C9A63D566B8E2DC3A7C9C55406B9A50A75C0",
+      "representation": "binary-byte-match",
+      "offsets": [
+        1655
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-a2-validator-closed/raw-run.tar.gz!final-earlier/db/celldb/000008.sst",
+      "representation": "binary-byte-match",
+      "offsets": [
+        3820
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-a2-validator-closed/raw-run.tar.gz!final-earlier/db/static/2EA26035D9E7C6299D4C14D5F1ECE8E87C153320DC9173BD74937363E76EE36E",
+      "representation": "binary-byte-match",
+      "offsets": [
+        1655
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-a2-validator-closed/raw-run.tar.gz!final-gate/db/archive/states/zerostate_-1_6D2126120A317322A7107D53D0C3C9A63D566B8E2DC3A7C9C55406B9A50A75C0",
+      "representation": "binary-byte-match",
+      "offsets": [
+        1655
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-a2-validator-closed/raw-run.tar.gz!final-gate/db/celldb/000008.sst",
+      "representation": "binary-byte-match",
+      "offsets": [
+        3820
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-a2-validator-closed/raw-run.tar.gz!final-gate/db/static/2EA26035D9E7C6299D4C14D5F1ECE8E87C153320DC9173BD74937363E76EE36E",
+      "representation": "binary-byte-match",
+      "offsets": [
+        1655
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-a2-validator-closed/raw-run.tar.gz!final-reject/db/archive/states/zerostate_-1_6D2126120A317322A7107D53D0C3C9A63D566B8E2DC3A7C9C55406B9A50A75C0",
+      "representation": "binary-byte-match",
+      "offsets": [
+        1655
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-a2-validator-closed/raw-run.tar.gz!final-reject/db/celldb/000008.sst",
+      "representation": "binary-byte-match",
+      "offsets": [
+        3820
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-a2-validator-closed/raw-run.tar.gz!final-reject/db/static/2EA26035D9E7C6299D4C14D5F1ECE8E87C153320DC9173BD74937363E76EE36E",
+      "representation": "binary-byte-match",
+      "offsets": [
+        1655
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-a2-validator-closed/raw-run.tar.gz!final-restored/db/archive/states/zerostate_-1_6D2126120A317322A7107D53D0C3C9A63D566B8E2DC3A7C9C55406B9A50A75C0",
+      "representation": "binary-byte-match",
+      "offsets": [
+        1655
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-a2-validator-closed/raw-run.tar.gz!final-restored/db/celldb/000008.sst",
+      "representation": "binary-byte-match",
+      "offsets": [
+        3820
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-a2-validator-closed/raw-run.tar.gz!final-restored/db/static/2EA26035D9E7C6299D4C14D5F1ECE8E87C153320DC9173BD74937363E76EE36E",
+      "representation": "binary-byte-match",
+      "offsets": [
+        1655
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-a2-validator-closed/raw-run.tar.gz!gate/db/archive/states/zerostate_-1_6D2126120A317322A7107D53D0C3C9A63D566B8E2DC3A7C9C55406B9A50A75C0",
+      "representation": "binary-byte-match",
+      "offsets": [
+        1655
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-a2-validator-closed/raw-run.tar.gz!gate/db/celldb/000008.sst",
+      "representation": "binary-byte-match",
+      "offsets": [
+        3820
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-a2-validator-closed/raw-run.tar.gz!gate/db/static/2EA26035D9E7C6299D4C14D5F1ECE8E87C153320DC9173BD74937363E76EE36E",
+      "representation": "binary-byte-match",
+      "offsets": [
+        1655
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-a2-validator-closed/raw-run.tar.gz!missing-delivery-native/db/archive/states/zerostate_-1_6D2126120A317322A7107D53D0C3C9A63D566B8E2DC3A7C9C55406B9A50A75C0",
+      "representation": "binary-byte-match",
+      "offsets": [
+        1655
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-a2-validator-closed/raw-run.tar.gz!missing-delivery-native/db/celldb/000008.sst",
+      "representation": "binary-byte-match",
+      "offsets": [
+        3820
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-a2-validator-closed/raw-run.tar.gz!missing-delivery-native/db/static/2EA26035D9E7C6299D4C14D5F1ECE8E87C153320DC9173BD74937363E76EE36E",
+      "representation": "binary-byte-match",
+      "offsets": [
+        1655
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-a2-validator-closed/raw-run.tar.gz!reject/db/archive/states/zerostate_-1_6D2126120A317322A7107D53D0C3C9A63D566B8E2DC3A7C9C55406B9A50A75C0",
+      "representation": "binary-byte-match",
+      "offsets": [
+        1655
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-a2-validator-closed/raw-run.tar.gz!reject/db/celldb/000008.sst",
+      "representation": "binary-byte-match",
+      "offsets": [
+        3820
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-a2-validator-closed/raw-run.tar.gz!reject/db/static/2EA26035D9E7C6299D4C14D5F1ECE8E87C153320DC9173BD74937363E76EE36E",
+      "representation": "binary-byte-match",
+      "offsets": [
+        1655
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-a2-validator-closed/raw-run.tar.gz!restored-complete/db/archive/states/zerostate_-1_6D2126120A317322A7107D53D0C3C9A63D566B8E2DC3A7C9C55406B9A50A75C0",
+      "representation": "binary-byte-match",
+      "offsets": [
+        1655
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-a2-validator-closed/raw-run.tar.gz!restored-complete/db/celldb/000008.sst",
+      "representation": "binary-byte-match",
+      "offsets": [
+        3820
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-a2-validator-closed/raw-run.tar.gz!restored-complete/db/static/2EA26035D9E7C6299D4C14D5F1ECE8E87C153320DC9173BD74937363E76EE36E",
+      "representation": "binary-byte-match",
+      "offsets": [
+        1655
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-a2-validator-closed/raw-run.tar.gz!restored-gate/db/archive/states/zerostate_-1_6D2126120A317322A7107D53D0C3C9A63D566B8E2DC3A7C9C55406B9A50A75C0",
+      "representation": "binary-byte-match",
+      "offsets": [
+        1655
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-a2-validator-closed/raw-run.tar.gz!restored-gate/db/celldb/000008.sst",
+      "representation": "binary-byte-match",
+      "offsets": [
+        3820
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-a2-validator-closed/raw-run.tar.gz!restored-gate/db/static/2EA26035D9E7C6299D4C14D5F1ECE8E87C153320DC9173BD74937363E76EE36E",
+      "representation": "binary-byte-match",
+      "offsets": [
+        1655
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-a2-validator-stable-round/raw-run.tar.gz!delivery-mutant/db/archive/states/zerostate_-1_6D2126120A317322A7107D53D0C3C9A63D566B8E2DC3A7C9C55406B9A50A75C0",
+      "representation": "binary-byte-match",
+      "offsets": [
+        1655
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-a2-validator-stable-round/raw-run.tar.gz!delivery-mutant/db/celldb/000008.sst",
+      "representation": "binary-byte-match",
+      "offsets": [
+        3820
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-a2-validator-stable-round/raw-run.tar.gz!delivery-mutant/db/static/2EA26035D9E7C6299D4C14D5F1ECE8E87C153320DC9173BD74937363E76EE36E",
+      "representation": "binary-byte-match",
+      "offsets": [
+        1655
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-a2-validator-stable-round/raw-run.tar.gz!final-accept/db/archive/states/zerostate_-1_B087CF889B8971F9241B6358EAECEB5A472EAB5A1E0DB4DC98F1A0C9776B2252",
+      "representation": "binary-byte-match",
+      "offsets": [
+        1623
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-a2-validator-stable-round/raw-run.tar.gz!final-accept/db/celldb/000031.sst",
+      "representation": "binary-byte-match",
+      "offsets": [
+        16791
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-a2-validator-stable-round/raw-run.tar.gz!final-accept/db/static/220DFD72D66523B86B0CF73A1BB2DDE5734F1296046491705F691F672703B841",
+      "representation": "binary-byte-match",
+      "offsets": [
+        1623
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-a2-validator-stable-round/raw-run.tar.gz!final-earlier/db/archive/states/zerostate_-1_6D2126120A317322A7107D53D0C3C9A63D566B8E2DC3A7C9C55406B9A50A75C0",
+      "representation": "binary-byte-match",
+      "offsets": [
+        1655
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-a2-validator-stable-round/raw-run.tar.gz!final-earlier/db/celldb/000008.sst",
+      "representation": "binary-byte-match",
+      "offsets": [
+        3820
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-a2-validator-stable-round/raw-run.tar.gz!final-earlier/db/static/2EA26035D9E7C6299D4C14D5F1ECE8E87C153320DC9173BD74937363E76EE36E",
+      "representation": "binary-byte-match",
+      "offsets": [
+        1655
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-a2-validator-stable-round/raw-run.tar.gz!final-gate/db/archive/states/zerostate_-1_6D2126120A317322A7107D53D0C3C9A63D566B8E2DC3A7C9C55406B9A50A75C0",
+      "representation": "binary-byte-match",
+      "offsets": [
+        1655
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-a2-validator-stable-round/raw-run.tar.gz!final-gate/db/celldb/000008.sst",
+      "representation": "binary-byte-match",
+      "offsets": [
+        3820
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-a2-validator-stable-round/raw-run.tar.gz!final-gate/db/static/2EA26035D9E7C6299D4C14D5F1ECE8E87C153320DC9173BD74937363E76EE36E",
+      "representation": "binary-byte-match",
+      "offsets": [
+        1655
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-a2-validator-stable-round/raw-run.tar.gz!final-reject/db/archive/states/zerostate_-1_6D2126120A317322A7107D53D0C3C9A63D566B8E2DC3A7C9C55406B9A50A75C0",
+      "representation": "binary-byte-match",
+      "offsets": [
+        1655
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-a2-validator-stable-round/raw-run.tar.gz!final-reject/db/celldb/000008.sst",
+      "representation": "binary-byte-match",
+      "offsets": [
+        3820
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-a2-validator-stable-round/raw-run.tar.gz!final-reject/db/static/2EA26035D9E7C6299D4C14D5F1ECE8E87C153320DC9173BD74937363E76EE36E",
+      "representation": "binary-byte-match",
+      "offsets": [
+        1655
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-a2-validator-stable-round/raw-run.tar.gz!restored-gate/db/archive/states/zerostate_-1_6D2126120A317322A7107D53D0C3C9A63D566B8E2DC3A7C9C55406B9A50A75C0",
+      "representation": "binary-byte-match",
+      "offsets": [
+        1655
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-a2-validator-stable-round/raw-run.tar.gz!restored-gate/db/celldb/000008.sst",
+      "representation": "binary-byte-match",
+      "offsets": [
+        3820
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-a2-validator-stable-round/raw-run.tar.gz!restored-gate/db/static/2EA26035D9E7C6299D4C14D5F1ECE8E87C153320DC9173BD74937363E76EE36E",
+      "representation": "binary-byte-match",
+      "offsets": [
+        1655
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-d40-caller-migration-2d5d7fa13/after-retention/test-counter-account-binding-readiness/account-binding-genesis.fif",
+      "representation": "hex-text"
+    },
+    {
+      "path": "doc/measurements/uno-d40-caller-migration-2d5d7fa13/after-retention/test-counter-account-binding-readiness/zerostate.boc",
+      "representation": "binary-byte-match",
+      "offsets": [
+        1633
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-d40-caller-migration-2d5d7fa13/final-regression.xml",
+      "representation": "hex-text"
+    },
+    {
+      "path": "doc/measurements/uno-d40-caller-migration-2d5d7fa13/fixture-scan.json",
+      "representation": "hex-text"
+    },
+    {
+      "path": "doc/measurements/uno-d40-caller-migration-2d5d7fa13/fixture-scan.stdout.log",
+      "representation": "hex-text"
+    },
+    {
+      "path": "doc/measurements/uno-d40-caller-migration-2d5d7fa13/full-regression.xml",
+      "representation": "hex-text"
+    },
+    {
+      "path": "doc/measurements/uno-d40-caller-migration-2d5d7fa13/generated-block-auto.h.txt",
+      "representation": "hex-text"
+    },
+    {
+      "path": "doc/measurements/uno-d40-caller-migration-2d5d7fa13/initial-control-attempt/tag-mutant.stdout.log",
+      "representation": "hex-text"
+    },
+    {
+      "path": "doc/measurements/uno-d40-caller-migration-2d5d7fa13/initial-control-attempt/tag-mutant.xml",
+      "representation": "hex-text"
+    },
+    {
+      "path": "doc/measurements/uno-d40-caller-migration-2d5d7fa13/tag-baseline.xml",
+      "representation": "hex-text"
+    },
+    {
+      "path": "doc/measurements/uno-d40-caller-migration-2d5d7fa13/tag-mutant.stdout.log",
+      "representation": "hex-text"
+    },
+    {
+      "path": "doc/measurements/uno-d40-caller-migration-2d5d7fa13/tag-mutant.xml",
+      "representation": "hex-text"
+    },
+    {
+      "path": "doc/measurements/uno-d40-caller-migration-2d5d7fa13/tag-restored.xml",
+      "representation": "hex-text"
+    },
+    {
+      "path": "doc/measurements/uno-d40-caller-migration-2d5d7fa13/tags.stdout.log",
+      "representation": "hex-text"
+    },
+    {
+      "path": "doc/measurements/uno-descriptor-routing-followup/run/serving/zerostate.boc",
+      "representation": "binary-byte-match",
+      "offsets": [
+        1623
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-descriptor-routing-followup/run/unserved/zerostate.boc",
+      "representation": "binary-byte-match",
+      "offsets": [
+        1623
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-five-items-regression/restored-routing/serving/zerostate.boc",
+      "representation": "binary-byte-match",
+      "offsets": [
+        1623
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-five-items-regression/restored-routing/unserved/zerostate.boc",
+      "representation": "binary-byte-match",
+      "offsets": [
+        1623
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-genesis-installation-ad87d9155/uno-genesis-delta-both-controls/remove-ledger-delta-guard/generate.stdout.log",
+      "representation": "hex-text"
+    },
+    {
+      "path": "doc/measurements/uno-genesis-installation-ad87d9155/uno-genesis-delta-both-controls/remove-ledger-delta-guard/zerostate.boc",
+      "representation": "binary-byte-match",
+      "offsets": [
+        9343
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-genesis-installation-ad87d9155/uno-genesis-four-items-bmy_xviv/stdout.log",
+      "representation": "hex-text"
+    },
+    {
+      "path": "doc/measurements/uno-genesis-installation-ad87d9155/uno-genesis-four-items-bmy_xviv/zerostate.boc",
+      "representation": "binary-byte-match",
+      "offsets": [
+        9343
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-genesis-installation-ad87d9155/uno-genesis-full-regression.xml",
+      "representation": "hex-text"
+    },
+    {
+      "path": "doc/measurements/uno-genesis-installation-ad87d9155/uno-genesis-routing-1/serving/zerostate.boc",
+      "representation": "binary-byte-match",
+      "offsets": [
+        1623
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-genesis-installation-ad87d9155/uno-genesis-routing-2/serving/zerostate.boc",
+      "representation": "binary-byte-match",
+      "offsets": [
+        1623
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-genesis-installation-ad87d9155/uno-genesis-routing-3/serving/zerostate.boc",
+      "representation": "binary-byte-match",
+      "offsets": [
+        1623
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-genesis-installation-ad87d9155/uno-genesis-routing-3/unserved/zerostate.boc",
+      "representation": "binary-byte-match",
+      "offsets": [
+        1623
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-genesis-installation-ad87d9155/uno-genesis-source-controls/remove-destination-routing-guard/serving/zerostate.boc",
+      "representation": "binary-byte-match",
+      "offsets": [
+        1623
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-genesis-installation-ad87d9155/uno-genesis-source-controls/remove-destination-routing-guard/unserved/zerostate.boc",
+      "representation": "binary-byte-match",
+      "offsets": [
+        1623
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-genesis-installation-ad87d9155/uno-genesis-source-controls/remove-genesis-issuance/generate.stdout.log",
+      "representation": "hex-text"
+    },
+    {
+      "path": "doc/measurements/uno-genesis-installation-ad87d9155/uno-genesis-source-controls/remove-genesis-issuance/zerostate.boc",
+      "representation": "binary-byte-match",
+      "offsets": [
+        9341
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-genesis-installation-ad87d9155/uno-genesis-source-controls/remove-ledger-delta-guard/generate.stdout.log",
+      "representation": "hex-text"
+    },
+    {
+      "path": "doc/measurements/uno-genesis-installation-ad87d9155/uno-genesis-source-controls/remove-ledger-delta-guard/zerostate.boc",
+      "representation": "binary-byte-match",
+      "offsets": [
+        9343
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-genesis-installation-ad87d9155/uno-genesis-tags.log",
+      "representation": "hex-text"
+    },
+    {
+      "path": "doc/measurements/uno-i13a-scan-controls/final/cases/test-counter-account-binding-readiness/zerostate.boc",
+      "representation": "binary-byte-match",
+      "offsets": [
+        1633
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-i13a-scan-controls/final/regression.xml",
+      "representation": "hex-text"
+    },
+    {
+      "path": "doc/measurements/uno-i13b-ledger-controls/final/cases/test-counter-account-binding-readiness/zerostate.boc",
+      "representation": "binary-byte-match",
+      "offsets": [
+        1633
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-i13b-ledger-controls/final/uno-ledger-regression-final.xml",
+      "representation": "hex-text"
+    },
+    {
+      "path": "doc/measurements/uno-i13cd-coverage-controls/checkpoint-regression/cases/test-counter-account-binding-readiness/zerostate.boc",
+      "representation": "binary-byte-match",
+      "offsets": [
+        1633
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-i13cd-coverage-controls/checkpoint-regression/regression.xml",
+      "representation": "hex-text"
+    },
+    {
+      "path": "doc/measurements/uno-i13cd-coverage-controls/final/cases/test-counter-account-binding-readiness/zerostate.boc",
+      "representation": "binary-byte-match",
+      "offsets": [
+        1633
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-i13cd-coverage-controls/final/regression.xml",
+      "representation": "hex-text"
+    },
+    {
+      "path": "doc/measurements/uno-local-profile/run-1/state/zerostate.boc",
+      "representation": "binary-byte-match",
+      "offsets": [
+        9823
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-local-profile/run-2/state/zerostate.boc",
+      "representation": "binary-byte-match",
+      "offsets": [
+        9823
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-local-profile/run-3/state/zerostate.boc",
+      "representation": "binary-byte-match",
+      "offsets": [
+        9823
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-rust-mc-codec/uno-rust-codec-controls.log",
+      "representation": "hex-text"
+    },
+    {
+      "path": "doc/measurements/uno-two-config-install/runs.tar.gz!6h7vhdly/install.84.boc",
+      "representation": "binary-byte-match",
+      "offsets": [
+        170
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-two-config-install/runs.tar.gz!6h7vhdly/message-84.boc",
+      "representation": "binary-byte-match",
+      "offsets": [
+        288
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-two-config-install/runs.tar.gz!6h7vhdly/sign-84.stdout.log",
+      "representation": "hex-text"
+    },
+    {
+      "path": "doc/measurements/uno-two-config-install/runs.tar.gz!dn6jq7ml/install.84.boc",
+      "representation": "binary-byte-match",
+      "offsets": [
+        170
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-two-config-install/runs.tar.gz!dn6jq7ml/message-84.boc",
+      "representation": "binary-byte-match",
+      "offsets": [
+        288
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-two-config-install/runs.tar.gz!dn6jq7ml/sign-84.stdout.log",
+      "representation": "hex-text"
+    },
+    {
+      "path": "doc/measurements/uno-two-config-install/runs.tar.gz!uqi37576/install.84.boc",
+      "representation": "binary-byte-match",
+      "offsets": [
+        170
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-two-config-install/runs.tar.gz!uqi37576/message-84.boc",
+      "representation": "binary-byte-match",
+      "offsets": [
+        288
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-two-config-install/runs.tar.gz!uqi37576/sign-84.stdout.log",
+      "representation": "hex-text"
+    },
+    {
+      "path": "doc/measurements/uno-two-config-install/runs.tar.gz!xwmzrlki/install.84.boc",
+      "representation": "binary-byte-match",
+      "offsets": [
+        170
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-two-config-install/runs.tar.gz!xwmzrlki/message-84.boc",
+      "representation": "binary-byte-match",
+      "offsets": [
+        288
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-two-config-install/runs.tar.gz!xwmzrlki/sign-84.stdout.log",
+      "representation": "hex-text"
+    },
+    {
+      "path": "doc/measurements/uno-v2-d40-merge-final/cases/test-counter-account-binding-readiness/zerostate.boc",
+      "representation": "binary-byte-match",
+      "offsets": [
+        1633
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-v2-d40-merge-final/d40-clean-final-junit.xml",
+      "representation": "hex-text"
+    },
+    {
+      "path": "doc/measurements/uno-v2-resource-policy-wire-evidence.json",
+      "representation": "hex-text"
+    },
+    {
+      "path": "doc/measurements/uno-validator-input-reachability/raw-input-run.tar.gz!uno-validator-input-CpeQvM7x/db/static/2EA26035D9E7C6299D4C14D5F1ECE8E87C153320DC9173BD74937363E76EE36E",
+      "representation": "binary-byte-match",
+      "offsets": [
+        1655
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-validator-input-reachability/raw-input-run.tar.gz!uno-validator-input-CpeQvM7x/db/celldb/000008.sst",
+      "representation": "binary-byte-match",
+      "offsets": [
+        3820
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-validator-input-reachability/raw-input-run.tar.gz!uno-validator-input-CpeQvM7x/db/archive/states/zerostate_-1_6D2126120A317322A7107D53D0C3C9A63D566B8E2DC3A7C9C55406B9A50A75C0",
+      "representation": "binary-byte-match",
+      "offsets": [
+        1655
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-validator-input-reachability/raw-input-run.tar.gz!singleton-input/db/static/220DFD72D66523B86B0CF73A1BB2DDE5734F1296046491705F691F672703B841",
+      "representation": "binary-byte-match",
+      "offsets": [
+        1623
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-validator-input-reachability/raw-input-run.tar.gz!singleton-input/db/celldb/000031.sst",
+      "representation": "binary-byte-match",
+      "offsets": [
+        16791
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-validator-input-reachability/raw-input-run.tar.gz!singleton-input/db/archive/states/zerostate_-1_B087CF889B8971F9241B6358EAECEB5A472EAB5A1E0DB4DC98F1A0C9776B2252",
+      "representation": "binary-byte-match",
+      "offsets": [
+        1623
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-validator-input-reachability/raw-input-run.tar.gz!singleton-input/peer/db/static/220DFD72D66523B86B0CF73A1BB2DDE5734F1296046491705F691F672703B841",
+      "representation": "binary-byte-match",
+      "offsets": [
+        1623
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-validator-input-reachability/raw-input-run.tar.gz!singleton-input/peer/db/celldb/000031.sst",
+      "representation": "binary-byte-match",
+      "offsets": [
+        16791
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-validator-input-reachability/raw-input-run.tar.gz!singleton-input/peer/db/archive/states/zerostate_-1_B087CF889B8971F9241B6358EAECEB5A472EAB5A1E0DB4DC98F1A0C9776B2252",
+      "representation": "binary-byte-match",
+      "offsets": [
+        1623
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-validator-input-reachability/raw-input-run.tar.gz!singleton-input/zerostate.boc",
+      "representation": "binary-byte-match",
+      "offsets": [
+        1623
+      ]
+    },
+    {
+      "path": "doc/measurements/uno-x2-merged-cadence/generated-block-auto.h.gz!decompressed",
+      "representation": "hex-text"
+    },
+    {
+      "path": "doc/uno-v2-resource-policy-wire.md",
+      "representation": "hex-text"
+    },
+    {
+      "path": "test/test-counter-disk-integration.cmake",
+      "representation": "hex-text"
+    },
+    {
+      "path": "tosctl/src/block/src/tests/data/mc_state_extra_instances.boc",
+      "representation": "binary-byte-match",
+      "offsets": [
+        1834
+      ]
+    }
+  ],
+  "errors": [],
+  "limits": "Binary byte/tag hits are candidates, not claims of full schema decoding. Traverses gzip/xz tar and zip members recursively (depth <=3), and magic-prefixed base64 payloads. Does not cover externally supplied files or encrypted archives."
+}

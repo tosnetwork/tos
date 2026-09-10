@@ -1,0 +1,257 @@
+{
+  "scope": "Policy encoding and migration only. C2 production accumulation/reconstruction and C3 concrete-engine enforcement remain blocked by the closed AccountBinding path.",
+  "base": "dd2327c90a6fd2c4d74f2579bd6afaadcbf246d7",
+  "schema": {
+    "canonical": "uno_v2_resource_policy_bounded admission_version:uint32 preflight_allowance:uint64 input:^UnoV2ResourceInput state:^UnoV2ResourceState work_output:^UnoV2ResourceWorkOutput block_preflight:^ParamLimits = UnoV2ResourcePolicy",
+    "tag": "0xf37fed2f",
+    "generated_tables": 118,
+    "tag_entries": 221,
+    "new_tag_occurrences": 1,
+    "allowance": 1,
+    "limits": [
+      0,
+      2,
+      2
+    ],
+    "root_hash": "5d8df532dc543630b9971794a62fb7714d8c915aeb74c34198b0af50aef9b731",
+    "policy_hash": "0d08232be12e3c647fcf22d5685c809405b988bb60321717df829ea4cf4bed74",
+    "fixture_sha256": "894f9a606a0fe092d9719caad2df751dd2d6123d8a706b6d2b3d22171f19f30c",
+    "rust_sha256": "93d0601dde257523af3aaebeb5530db1e1d24c4f39fd9db7f1269c9c3e16d4ab"
+  },
+  "controls": [
+    {
+      "name": "tag-reason",
+      "required_failure": "unrecognized resource policy constructor tag",
+      "mutation_sha256": "aed89c454a9ca3cf7540dda0a705486a0afdc70e1aef50e389a6b1fe58b40f81",
+      "restored_sha256": "fa9614df0ea67a5549054b7d79257e7319ce4be4031341d1365ca0d0217fd849",
+      "actual_binary": "/home/tomi/memo/reviews/uno-preflight-allowance/controls-final/test-workchain-block"
+    },
+    {
+      "name": "missing-field-reason",
+      "required_failure": "missing or truncated preflight allowance",
+      "mutation_sha256": "10b8e98c454c85b86c90e10fac3c40f1da89afeaf0146045c9f0894edbe33f73",
+      "restored_sha256": "fa9614df0ea67a5549054b7d79257e7319ce4be4031341d1365ca0d0217fd849",
+      "actual_binary": "/home/tomi/memo/reviews/uno-preflight-allowance/controls-final/test-workchain-block"
+    },
+    {
+      "name": "encode-discard",
+      "required_failure": "root.fetch_ulong(64)",
+      "mutation_sha256": "200e537e4acd76909affaf9e5fde8410c287e8f0b088fc8742c70e0207c2263a",
+      "restored_sha256": "fa9614df0ea67a5549054b7d79257e7319ce4be4031341d1365ca0d0217fd849",
+      "actual_binary": "/home/tomi/memo/reviews/uno-preflight-allowance/controls-final/test-workchain-block"
+    },
+    {
+      "name": "decode-discard",
+      "required_failure": "decoded.ok().preflight_allowance",
+      "mutation_sha256": "bee19c821de428efcb3b974dbcfe9f5ca39a0ca42dcd29b2b77b4554d2358c96",
+      "restored_sha256": "fa9614df0ea67a5549054b7d79257e7319ce4be4031341d1365ca0d0217fd849",
+      "actual_binary": "/home/tomi/memo/reviews/uno-preflight-allowance/controls-final/test-workchain-block"
+    },
+    {
+      "name": "derive-from-result",
+      "required_failure": "root.fetch_ulong(64)",
+      "mutation_sha256": "5310304c422775cefdde71fd5ae91268647f8d17ca7a16d6fa4e37b5a9573339",
+      "restored_sha256": "fa9614df0ea67a5549054b7d79257e7319ce4be4031341d1365ca0d0217fd849",
+      "actual_binary": "/home/tomi/memo/reviews/uno-preflight-allowance/controls-final/test-workchain-block"
+    },
+    {
+      "name": "narrow-allowance",
+      "required_failure": "decoded.ok().preflight_allowance",
+      "mutation_sha256": "5cca31c426dc2d554f4ba48980b4b1f3cbe59cc43bb020aa374e637cf7f62aba",
+      "restored_sha256": "fa9614df0ea67a5549054b7d79257e7319ce4be4031341d1365ca0d0217fd849",
+      "actual_binary": "/home/tomi/memo/reviews/uno-preflight-allowance/controls-final/test-workchain-block"
+    }
+  ],
+  "regression": [
+    {
+      "test": "test-workchain-proof-boundary-gates",
+      "exit": 0
+    },
+    {
+      "test": "test-workchain-proof-backend",
+      "exit": 0
+    },
+    {
+      "test": "test-workchain-proof-operation-trace",
+      "exit": 0
+    },
+    {
+      "test": "test-counter-disk-integration",
+      "exit": 0
+    },
+    {
+      "test": "test-counter-account-binding-readiness",
+      "exit": 0
+    },
+    {
+      "test": "test-counter-idle-replay",
+      "exit": 0
+    },
+    {
+      "test": "test-counter-self-delivery",
+      "exit": 0
+    },
+    {
+      "test": "test-counter-cross-delivery",
+      "exit": 0
+    },
+    {
+      "test": "test-counter-native-sender",
+      "exit": 0
+    },
+    {
+      "test": "test-workchain-validator-local-visitors",
+      "exit": 0
+    },
+    {
+      "test": "test-workchain-ingress-transition",
+      "exit": 0
+    },
+    {
+      "test": "test-counter-activation-missing_capability",
+      "exit": 0
+    },
+    {
+      "test": "test-counter-config-presence-missing_capability",
+      "exit": 0
+    },
+    {
+      "test": "test-counter-activation-old_version",
+      "exit": 0
+    },
+    {
+      "test": "test-counter-config-presence-old_version",
+      "exit": 0
+    },
+    {
+      "test": "test-counter-config-binding",
+      "exit": 0
+    },
+    {
+      "test": "test-counter-engine-config",
+      "exit": 0
+    },
+    {
+      "test": "test-workchain-block",
+      "exit": 0
+    },
+    {
+      "test": "test-workchain-settlement-continuation",
+      "exit": 0
+    },
+    {
+      "test": "test-workchain-collator-compute-mode",
+      "exit": 0
+    },
+    {
+      "test": "test-workchain-proof-work",
+      "exit": 0
+    },
+    {
+      "test": "test-workchain-proof-contracts",
+      "exit": 0
+    },
+    {
+      "test": "test-workchain-admission",
+      "exit": 0
+    },
+    {
+      "test": "test-smartcont",
+      "exit": 0
+    },
+    {
+      "test": "test-workchain-handwritten-tags",
+      "exit": 0
+    },
+    {
+      "test": "test-workchain-validator-prepared-expiry",
+      "exit": 0
+    }
+  ],
+  "excluded_in_current_related_batch": [],
+  "full_ctest_suite_claimed": false,
+  "earlier_generator_stop": "Prior draft Makefiles run excluded proof-operation-trace due to pre-existing Ninja introspection requirement. New 26-item Ninja batch includes it; the old run is historical.",
+  "preparation_failures": [
+    "First edit command used the wrong working directory before any file changed.",
+    "First isolated compiler command put -I before the compiler after ccache; baseline failed before any mutation.",
+    "First smartcont tool-binding compile required an explicit std::string conversion.",
+    "Empty CMAKE_PROJECT_TOS_INCLUDE was rejected as a directory; -U correctly removed the opt-in hook."
+  ],
+  "tool_binding": "TARGET_FILE create-state; wrong override fails explicitly; repository-root run uses bound tool.",
+  "root_difference": {
+    "identical_input_repeat_boc_equal": true,
+    "remaining_path_after_policy_reversion": "root/1/0/1/0",
+    "storage_used": {
+      "old_cells": 189,
+      "new_cells": 190,
+      "old_bits": 29645,
+      "new_bits": 29813
+    },
+    "old_root": "c26c6f0774f0d80a2a344fe578bca6e299ba3923f8000532072c3b274e27a9a9",
+    "new_root": "5d8df532dc543630b9971794a62fb7714d8c915aeb74c34198b0af50aef9b731",
+    "reverted_root": "c26c6f0774f0d80a2a344fe578bca6e299ba3923f8000532072c3b274e27a9a9",
+    "exact_match": true,
+    "explanation": "One 104-bit ParamLimits child plus 64 allowance bits; exactly +1 cell/+168 bits in configuration-account storage_used. Offline equality control only."
+  },
+  "default_build": [
+    {
+      "command": [
+        "cmake",
+        "-S",
+        "/home/tomi/tos-m2",
+        "-B",
+        "/tmp/uno-bounded-policy-private-build",
+        "-U",
+        "CMAKE_PROJECT_TOS_INCLUDE",
+        "-DTOS_WORKCHAIN_INSTANCE_TESTS=OFF"
+      ],
+      "exit": 0
+    },
+    {
+      "command": [
+        "cmake",
+        "--build",
+        "/tmp/uno-bounded-policy-private-build",
+        "-j32"
+      ],
+      "exit": 0
+    }
+  ],
+  "native_tests": "128 WorkchainBlock tests passed; four Rust McStateExtra tests passed.",
+  "mainnet": "Three approval and three guard cases pass; mainnet allowlist unchanged.",
+  "source_commit": "72c8e543b367245f63d9cfa80037b239394be6c6",
+  "post_review_recheck": [
+    {
+      "label": "review-build",
+      "command": [
+        "cmake",
+        "--build",
+        "/tmp/uno-bounded-policy-private-build",
+        "-j32"
+      ],
+      "exit": 0
+    },
+    {
+      "label": "review-block",
+      "command": [
+        "/tmp/uno-bounded-policy-private-build/test-workchain-block",
+        "--filter",
+        "WorkchainBlock"
+      ],
+      "exit": 0
+    },
+    {
+      "label": "review-genesis",
+      "command": [
+        "/tmp/uno-bounded-policy-private-build/test-smartcont",
+        "--filter",
+        "GenZerostateFiftRegression",
+        "--regression",
+        "/home/tomi/tos-m2/test/regression-tests.ans"
+      ],
+      "exit": 0
+    }
+  ],
+  "post_regression_changes": "Production header comments clarified diagnostic refinement only; added full-width tier test and richer smartcont missing/mismatched-tool diagnostics. Full all target, 128 block tests, genesis oracle and all six codec mutations rerun afterward. 26-item batch raw snapshot remains separately identified.",
+  "installation_decision_pending": "Codec represents zero and allowance>hard; no new semantic installation rejection was authorized or added. Such policies cannot start a preflight under the reservation contract; explicit installation compatibility needs owner decision."
+}

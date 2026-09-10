@@ -21,7 +21,7 @@ enum class LocalUnavailableCode { CellUnavailable, CellIdentity, Construction, A
 struct LocalUnavailable {
   LocalUnavailableCode code;
 };
-enum class ConfigInvalidCode { ZeroLimit };
+enum class ConfigInvalidCode { ZeroLimit, PreflightAllowanceExceedsBlockBudget };
 struct ConfigInvalid {
   ConfigInvalidCode code;
 };

@@ -38,14 +38,10 @@ td::Ref<vm::Cell> replace_ref(td::Ref<vm::Cell> root, unsigned index, td::Ref<vm
   return out.finalize();
 }
 block::ResolvedBatchInputPolicy policy(unsigned writes) {
-  block::WorkchainResourcePolicy p{};
-  p.admission_version = 4;
-  p.input.max_cells = 100; p.input.max_bits = 100000; p.input.max_roots = 3;
-  p.input.max_reads = 7; p.input.max_writes = writes; p.input.max_inbound = 9;
-  p.state.max_cells = 100; p.state.max_bits = 100000;
-  p.state.max_account_cells = 50; p.state.max_account_bits = 50000; p.state.max_account_depth = 32;
-  p.work_output.max_effect_cells = 100; p.work_output.max_effect_bits = 100000;
-  p.work_output.max_output_cells = 100; p.work_output.max_output_bits = 100000;
+  // Scanner-only fixture: preserve the former zero proof/transfer budgets;
+  // explicitly supply the new wire thresholds without implying execution.
+  block::WorkchainResourcePolicy p{4, {100, 100000, 3, 7, writes, 9},
+      {100, 100000, 50, 50000, 32}, {0, 100, 100000, 100, 100000, 0}, {1, 32, 64}, 7};
   auto resolved = block::ResolvedBatchInputPolicy::from_resolved_fields(p, {{}, false, 0, 0, 1, 4});
   require(std::holds_alternative<block::ResolvedBatchInputPolicy>(resolved), "fixture.policy");
   return std::get<block::ResolvedBatchInputPolicy>(resolved);

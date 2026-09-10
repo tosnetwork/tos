@@ -13,7 +13,7 @@
     {
       "id": "fift",
       "path": "test/test-counter-disk-integration.cmake",
-      "check": "six annotated constructor tags against generated declarations"
+      "check": "seven annotated constructor tags against generated declarations"
     },
     {
       "id": "python",
