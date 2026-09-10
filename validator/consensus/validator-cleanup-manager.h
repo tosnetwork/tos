@@ -122,21 +122,34 @@ class ValidatorCleanupManager {
                                                               const CleanupSessionIsLiveFn& is_live,
                                                               size_t delete_budget) {
     std::vector<ReservedValidatorDelete> reserved;
-    for (auto& [session, entry] : pending_) {
+    if (pending_.empty() || delete_budget == 0) {
+      return reserved;
+    }
+    // Round-robin: resume scanning at the cursor and wrap once, examining each entry
+    // at most once this pass, so a prefix of persistently-failing records cannot
+    // monopolize the budget every pass and starve later ones. The cursor is a
+    // session-id value, so a removed cursor session simply resolves to the next.
+    auto it = pending_.lower_bound(retry_cursor_);
+    for (size_t scanned = 0; scanned < pending_.size(); ++scanned) {
+      if (it == pending_.end()) {
+        it = pending_.begin();
+      }
+      auto& entry = it->second;
+      if (entry.state == EntryState::Pending) {
+        auto is_closed = [&entry](const ValidatorSessionId&) { return entry.closed; };
+        if (validator_cleanup_eligible(entry.record, gc_checkpoint, ancestor_or_equal_of_gc, gc_shard_catchain_seqno,
+                                       is_live, is_closed)) {
+          entry.state = EntryState::Deleting;
+          reserved.push_back(ReservedValidatorDelete{entry.record, entry.retired_generation});
+        }
+      }
+      ++it;
       if (reserved.size() >= delete_budget) {
         break;
       }
-      if (entry.state != EntryState::Pending) {
-        continue;  // already being deleted/erased
-      }
-      auto is_closed = [&entry](const ValidatorSessionId&) { return entry.closed; };
-      if (!validator_cleanup_eligible(entry.record, gc_checkpoint, ancestor_or_equal_of_gc, gc_shard_catchain_seqno,
-                                      is_live, is_closed)) {
-        continue;
-      }
-      entry.state = EntryState::Deleting;
-      reserved.push_back(ReservedValidatorDelete{entry.record, entry.retired_generation});
     }
+    // Resume the next pass after the last entry examined.
+    retry_cursor_ = (it == pending_.end()) ? ValidatorSessionId{} : it->first;
     return reserved;
   }
 
@@ -205,6 +218,9 @@ class ValidatorCleanupManager {
   // Process-wide monotonically increasing incarnation token source. Never reset, so
   // no two incarnations (across the whole process lifetime) ever share a token.
   uint64_t next_generation_ = 0;
+  // Round-robin resume point for begin_eligible_deletes, so retries are fair and a
+  // failing prefix cannot starve later records. Default-constructed sorts first.
+  ValidatorSessionId retry_cursor_{};
 };
 
 }  // namespace tos::validator::consensus

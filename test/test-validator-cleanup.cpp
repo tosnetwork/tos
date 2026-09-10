@@ -763,6 +763,39 @@ TEST(ValidatorCleanup, cleanup_manager_enforces_adapter_invariants) {
   }
 }
 
+// Retries are fair: with more eligible-but-failing records than the per-pass
+// budget, every record is attempted across successive passes (round-robin), so a
+// failing prefix cannot starve later records. Without the cursor, every pass would
+// re-attempt only the first `budget` records.
+TEST(ValidatorCleanup, cleanup_manager_retries_fairly) {
+  auto gc = make_checkpoint(500);
+  auto ancestor_ok = [](const tos::BlockIdExt&) { return true; };
+  auto cc_past = [](tos::ShardIdFull s) -> std::optional<tos::CatchainSeqno> {
+    return s == kShard ? std::optional<tos::CatchainSeqno>{10} : std::nullopt;
+  };
+  auto not_live = [](const tos::ValidatorSessionId&) { return false; };
+
+  ValidatorCleanupManager m;
+  const int kRecords = 5;
+  for (int i = 0; i < kRecords; i++) {
+    m.on_loaded_at_startup(make_record(static_cast<unsigned char>(i), 100));  // all eligible
+  }
+
+  std::set<std::string> attempted;
+  // 3 passes of budget 2, every delete fails (unconfirmed -> back to Pending).
+  for (int pass = 0; pass < 3; pass++) {
+    auto batch = m.begin_eligible_deletes(gc, ancestor_ok, cc_past, not_live, /*budget=*/2);
+    for (const auto& r : batch) {
+      attempted.insert(r.record.session_id.to_hex());
+      m.on_delete_completed(r.record.session_id, r.generation, /*confirmed_gone=*/false,
+                            [](const tos::ValidatorSessionId&, uint64_t) {});
+    }
+  }
+  // ceil(5/2)=3 passes suffice to touch all 5 under round-robin; a begin-anchored
+  // scan would have attempted only 2.
+  ASSERT_EQ(attempted.size(), static_cast<size_t>(kRecords));
+}
+
 // Generation bookkeeping must not grow with historical session churn, and a
 // re-created session must get a STRICTLY GREATER incarnation so a stale close ack
 // from an older incarnation can never match the newer one.
