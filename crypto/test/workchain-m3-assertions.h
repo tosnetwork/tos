@@ -103,7 +103,7 @@ inline td::Status assert_private_input(const Root& root) {
 // path. The caller selects the observed transaction, never a detached candidate.
 // This checks the confidential replay payload, not all unrelated public block
 // metadata or an arbitrary application's payload. It does not replace validation.
-inline td::Result<Root> input_from_block(const Root& block_root, const td::Bits256& account_id,
+inline td::Result<Root> replay_input_from_block(const Root& block_root, const td::Bits256& account_id,
                                          std::uint64_t logical_time) {
   using confidential_state_detail::unpack;
   TRY_RESULT(block, unpack<gen::Block::Record>(block_root));
@@ -125,8 +125,16 @@ inline td::Result<Root> input_from_block(const Root& block_root, const td::Bits2
   TRY_RESULT(binding, unpack<gen::UnoV2HostRecord::Record>(entry.binding));
   if (binding.input_hash != td::Bits256(entry.input->get_hash().bits()))
     return alarm("entry input commitment mismatch");
-  TRY_STATUS(assert_private_input(host.candidate));
+  auto decoded=decode_workchain_replay_input(host.candidate);
+  if (decoded.is_error()) return alarm("plaintext/noncanonical replay input layout alarm");
   return host.candidate;
+}
+// Keep the original transfer-only contract for SEND/COLLECT assertions.
+inline td::Result<Root> input_from_block(const Root& block_root, const td::Bits256& account_id,
+                                       std::uint64_t logical_time) {
+  TRY_RESULT(candidate,replay_input_from_block(block_root,account_id,logical_time));
+  TRY_STATUS(assert_private_input(candidate));
+  return candidate;
 }
 inline td::Status same_identity(const WorkchainConfidentialAccount& before, const WorkchainConfidentialAccount& after) {
   if (before.address.workchain_id != after.address.workchain_id || before.address.account != after.address.account ||

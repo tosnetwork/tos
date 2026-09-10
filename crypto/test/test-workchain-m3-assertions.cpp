@@ -247,3 +247,21 @@ TEST(M3Assertions, PermanentInputPath) {
   ASSERT_TRUE(bad.is_error());
   ASSERT_EQ(bad.error().message(), "plaintext/noncanonical replay input layout alarm");
 }
+
+TEST(M3Assertions, PermanentPossessionInputPath) {
+  WorkchainReplayContext context{{2,1,1,1,37,2,number(1),number(2)},
+      {number(3),number(4),number(5)},{number(6),number(7),number(8)},number(9),100,
+      {2,number(10),number(11)},12,13,14};
+  WorkchainRegistrationReplayInput registration{number(21),context,{}};
+  WorkchainClosureReplayInput closure{number(22),context,{}};
+  // Structural codec fixtures only; no possession verification is claimed here.
+  for (const WorkchainReplayInput& value:{WorkchainReplayInput{registration},WorkchainReplayInput{closure}}) {
+    auto candidate=encode_workchain_replay_input(value).move_as_ok();
+    auto persisted=vm::std_boc_deserialize(vm::std_boc_serialize(structural_block(candidate),0).move_as_ok()).move_as_ok();
+    auto recovered=m3_test::replay_input_from_block(persisted,number(1),1).move_as_ok();
+    ASSERT_EQ(recovered->get_hash(),candidate->get_hash());
+    ASSERT_TRUE(m3_test::input_from_block(persisted,number(1),1).is_error());
+    auto extra=vm::CellBuilder().append_cellslice(vm::load_cell_slice(candidate)).store_long(1,1).finalize();
+    ASSERT_TRUE(m3_test::replay_input_from_block(structural_block(extra),number(1),1).is_error());
+  }
+}
