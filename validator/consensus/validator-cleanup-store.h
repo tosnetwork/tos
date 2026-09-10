@@ -39,6 +39,27 @@ inline void store_validator_cleanup_record(td::KeyValue& kv, const PendingValida
   kv.commit_write_batch().ensure();
 }
 
+// Atomically persist a validator retirement: the destroyed-session fence (already
+// encoded by the caller as a single key/value) together with every newly-retiring
+// cleanup record, in ONE synced write batch. This is the durable precondition for
+// PR B's "persist intent before the actor is allowed to close" flow: if the actor
+// may begin retiring, the fence and the cleanup intents are already on disk
+// together. The record keys are written directly here (not via
+// store_validator_cleanup_record) because that helper opens its own batch and
+// RocksDb::begin_write_batch does not nest.
+inline void store_validator_retirement(td::KeyValue& kv, td::Slice destroyed_sessions_key,
+                                        td::Slice destroyed_sessions_value,
+                                        const std::vector<PendingValidatorConsensusDbCleanup>& records) {
+  kv.begin_write_batch().ensure();
+  kv.set(destroyed_sessions_key, destroyed_sessions_value).ensure();
+  for (const auto& record : records) {
+    kv.set(td::Slice{validator_cleanup_key(record.session_id)},
+           td::Slice{encode_validator_cleanup_record(record)})
+        .ensure();
+  }
+  kv.commit_write_batch().ensure();
+}
+
 // Remove one record by session id. Erasing an absent key is a no-op.
 inline void erase_validator_cleanup_record(td::KeyValue& kv, const ValidatorSessionId& session_id) {
   auto key = validator_cleanup_key(session_id);

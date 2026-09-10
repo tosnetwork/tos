@@ -181,6 +181,38 @@ TEST(ValidatorCleanupStateDb, mismatched_key_and_value_is_dropped) {
   td::rmrf(path).ignore();
 }
 
+// The atomic retirement write persists the destroyed-session fence (an opaque
+// key/value to this layer) together with every newly-retiring cleanup record in
+// one batch: after it, the fence value is readable AND all records load. Dropping
+// either the fence set or the record writes fails this test.
+TEST(ValidatorCleanupStateDb, atomic_retirement_persists_fence_and_records) {
+  auto path = temp_db_path();
+  {
+    auto kv = td::RocksDb::open(path).move_as_ok();
+
+    const std::string fence_key = "test.fence.destroyed_sessions";
+    const std::string fence_value = "opaque-encoded-fence-blob";
+    std::vector<PendingValidatorConsensusDbCleanup> records{make_record(9, 100), make_record(200, 150)};
+
+    store_validator_retirement(kv, td::Slice{fence_key}, td::Slice{fence_value}, records);
+
+    std::string got_fence;
+    auto r = kv.get(td::Slice{fence_key}, got_fence);
+    ASSERT_TRUE(r.is_ok() && r.move_as_ok() == td::KeyValue::GetStatus::Ok);
+    ASSERT_TRUE(got_fence == fence_value);
+
+    auto loaded = load_validator_cleanup_records(kv);
+    ASSERT_EQ(loaded.size(), static_cast<size_t>(2));
+    std::set<std::string> got;
+    for (const auto& rec : loaded) {
+      got.insert(rec.session_id.to_hex());
+    }
+    ASSERT_TRUE(got.count(make_session_id(9).to_hex()) == 1);
+    ASSERT_TRUE(got.count(make_session_id(200).to_hex()) == 1);
+  }
+  td::rmrf(path).ignore();
+}
+
 // Storing the same session again overwrites: one record, the latest value.
 TEST(ValidatorCleanupStateDb, same_session_overwrites) {
   auto path = temp_db_path();

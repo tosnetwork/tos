@@ -217,6 +217,15 @@ void StateDb::get_pending_consensus_db_cleanup(td::Promise<std::vector<std::stri
   promise.set_value(decode_pending_cleanup(td::Slice{value}));
 }
 
+void StateDb::persist_validator_retirement(std::vector<ValidatorSessionId> destroyed_sessions,
+                                           std::vector<consensus::PendingValidatorConsensusDbCleanup> records,
+                                           td::Promise<td::Unit> promise) {
+  auto key = create_hash_tl_object<tos_api::db_state_key_destroyedSessions>();
+  auto value = create_serialize_tl_object<tos_api::db_state_destroyedSessions>(std::move(destroyed_sessions));
+  consensus::store_validator_retirement(*kv_, key.as_slice(), value.as_slice(), records);
+  promise.set_value(td::Unit());
+}
+
 void StateDb::update_pending_validator_consensus_db_cleanup(consensus::PendingValidatorConsensusDbCleanup record,
                                                             td::Promise<td::Unit> promise) {
   consensus::store_validator_cleanup_record(*kv_, record);
