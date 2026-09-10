@@ -3091,6 +3091,18 @@ inventory item; this unit removed the duplicate decode, not that natural site.
 
 ### Proof-work inventory after independent review of `6034b6aaf`
 
+Post-M1 scope update (2026-09-10): the owner authorized resource caps along the
+existing base-workchain limit pattern, without opening D45. C3 is split: the
+host reservation/meter contract and private controls may be built now; concrete
+engine closure requires an identified production preflight implementation,
+which is currently absent. See [the host contract](../crypto/test/workchain-preflight-budget.md).
+C2 alone leaves a preflight-sized hole, not a complete per-block resource bound.
+The closed gate is what permits this incomplete state. No-grace for preflight
+depends on an advance inspection allowance and complete operation coverage;
+the returned `proof_work` declaration does not establish either. The historical
+inventory below is retained; host mechanism work must not be reported as C3
+closure, production enforcement, or permission to move any refusal.
+
 - At that checkpoint actual cost correspondence was not enforced. Closing it requires an actual
   verification-work meter using the same unit definitions as shape inspection,
   charging before expensive backend calls, and checking actual attempted work
