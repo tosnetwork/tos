@@ -56,6 +56,7 @@
 
 #if !defined(_WIN32)
 #include <sys/stat.h>
+#include <sys/wait.h>
 #include <unistd.h>
 #endif
 
@@ -63,6 +64,16 @@ using namespace tos::validator;
 using namespace tos::validator::consensus;
 
 namespace {
+
+// argv[0], captured in main, so the crash-recovery scenario can re-exec this same
+// binary for its child phases (execv, not bare fork, to avoid the fork-with-threads
+// hazard: the child gets a fresh single-threaded image).
+const char* g_argv0 = nullptr;
+
+// Fixed fixture identity shared across the crash-recovery child phases (separate
+// processes reconstruct the same record deterministically from these).
+constexpr unsigned char kCrashSeed = 111;
+constexpr tos::BlockSeqno kCrashRetireSeqno = 100;
 
 const tos::ShardId kMasterShard = static_cast<tos::ShardId>(0x8000000000000000ULL);
 const tos::ShardIdFull kShard{0, kMasterShard};
@@ -860,10 +871,124 @@ void scenario_reopen_reconciles_dangling_record() {
   td::rmrf(root).ignore();
 }
 
+#if !defined(_WIN32)
+// ---------------------------------------------------------------------------------
+// ABNORMAL-EXIT (crash) recovery -- the layer the orderly-reopen scenarios do NOT cover.
+// This runs the REAL production store in a child process, terminates that process
+// WITHOUT running any destructor (a hard _exit, so RocksDB is never cleanly closed),
+// and recovers in a fresh child process on the same db_root. It proves that the state
+// the production flow actually leaves on disk at an interruption point is what the
+// recovery logic expects, and that a synced write survives a hard kill + unclean reopen
+// (RocksDB's recovery) -- not assumed, but produced by a real crash. (It does not
+// isolate WAL replay specifically -- the record may already have reached an SST -- and
+// it is not a power-loss / machine-crash test.)
+//
+// Boundary implemented: "retirement synchronously committed, delete not started". The
+// second boundary ("real delete confirmed, record erase not committed") is inherently
+// racy without a controllable-worker seam and is left to the enablement bundle.
+//
+// Child entry points (re-exec'd, so each starts single-threaded):
+
+// Phase A: persist the retirement record (a synchronous, synced commit) and the dir,
+// then HARD-EXIT with no destructors -- the crash point. Returns process exit code.
+int run_crash_phase_a(const std::string& root) {
+  auto r = make_record(kCrashSeed, kCrashRetireSeqno);
+  HarnessSession s(root, make_checkpoint(200), kRecordCc + 1, /*live=*/{}, 16, 256, 64);
+  s.persist_retirement({r});          // synchronous: returns only after the synced commit
+  create_consensus_dir(root, r.dir_name);
+  // HARD exit: `_exit` skips atexit handlers and C++ destructors, so `s` (and its RootDb)
+  // is never cleanly closed -- RocksDB is left in the on-disk state a killed process
+  // leaves, exactly the crash point we want. (A stack HarnessSession is fine: _exit runs
+  // no destructor for it either.) fflush is safe here -- this is the exec'd child, a
+  // normal process, not the async-signal-only window between fork and exec.
+  std::fflush(nullptr);
+  _exit(0);
+}
+
+// Phase B: reopen the same db_root after the "crash" and reconcile. Asserts the record
+// survived the unclean reopen, then drives it to a clean delete + erase. Returns exit code.
+int run_crash_phase_b(const std::string& root) {
+  auto r = make_record(kCrashSeed, kCrashRetireSeqno);
+  HarnessSession s(root, make_checkpoint(200), kRecordCc + 1, /*live=*/{}, 16, 256, 64);
+  auto loaded = s.load_pending();
+  LOG_CHECK(loaded.size() == 1) << "retirement record did not survive a hard kill + unclean reopen: got "
+                                << loaded.size();
+  s.load_startup_record(loaded.front());
+  s.fire_cleanup_pass();
+  bool done = s.wait_until([&] { return s.erase_ack_count() >= 1; }, 30.0);
+  LOG_CHECK(done) << "post-crash drain did not erase the recovered record";
+  LOG_CHECK(!consensus_dir_exists(root, r.dir_name)) << "dir not deleted after crash recovery";
+  LOG_CHECK(s.load_pending().empty()) << "record not erased after crash recovery";
+  s.stop();
+  return 0;
+}
+
+// Fork a child that re-execs THIS binary with `phase_arg` + `root`, wait for it, and
+// return its raw wait status. execv (not bare fork) so the child is a fresh, single-
+// threaded image -- avoiding the fork-with-live-threads hazard.
+int run_crash_child(const char* phase_arg, const std::string& root) {
+  pid_t pid = fork();
+  LOG_CHECK(pid >= 0) << "fork failed";
+  if (pid == 0) {
+    // Between fork and a successful execv only async-signal-safe calls are permitted (a
+    // library lock could be held by a thread that did not survive the fork -- RocksDB's
+    // env keeps process-wide pools). So NO stdio here: report via write() and _exit.
+    const char* args[] = {g_argv0, phase_arg, root.c_str(), nullptr};
+    execv(g_argv0, const_cast<char* const*>(args));
+    // execv returns only on failure. NB: execv resolves g_argv0 relative to cwd, not
+    // PATH; under ctest it is an absolute path. On failure we _exit(127) -> the parent's
+    // status check fails the test (it never falls through to run parent code).
+    static const char kMsg[] = "execv failed for crash child\n";
+    ssize_t ignored = write(STDERR_FILENO, kMsg, sizeof(kMsg) - 1);
+    (void)ignored;
+    _exit(127);
+  }
+  int status = 0;
+  LOG_CHECK(waitpid(pid, &status, 0) == pid) << "waitpid failed";
+  return status;
+}
+
+void scenario_crash_recovery_via_subprocess() {
+  LOG(INFO) << "=== scenario_crash_recovery_via_subprocess ===";
+  LOG_CHECK(g_argv0 != nullptr) << "argv0 not captured";
+  auto root = temp_root("crash-recovery");
+  auto r = make_record(kCrashSeed, kCrashRetireSeqno);
+
+  // Phase A child: commit the retirement (synced), then hard-exit at the boundary.
+  int a_status = run_crash_child("--crash-phase-a", root);
+  LOG_CHECK(WIFEXITED(a_status) && WEXITSTATUS(a_status) == 0)
+      << "crash phase A child did not reach the boundary cleanly (status " << a_status << ")";
+  // The crash left the record on disk (uncleanly closed DB) and the dir present.
+  LOG_CHECK(consensus_dir_exists(root, r.dir_name)) << "phase A did not leave the consensus dir on disk";
+
+  // Phase B child: reopen after the crash and reconcile. Its asserts abort (non-zero)
+  // on any failure, which is surfaced here.
+  int b_status = run_crash_child("--crash-phase-b", root);
+  LOG_CHECK(WIFEXITED(b_status) && WEXITSTATUS(b_status) == 0)
+      << "crash recovery (phase B) failed after a hard-kill of phase A (status " << b_status
+      << "); see child output above";
+
+  td::rmrf(root).ignore();
+}
+#endif  // !_WIN32
+
 }  // namespace
 
-int main() {
+int main(int argc, char** argv) {
   SET_VERBOSITY_LEVEL(verbosity_INFO);
+  g_argv0 = (argc > 0) ? argv[0] : nullptr;
+
+#if !defined(_WIN32)
+  // Child-phase dispatch for the crash-recovery scenario: this same binary is re-exec'd
+  // with a phase flag + a db_root, and runs ONLY that phase (single-threaded at entry).
+  if (argc == 3 && std::string(argv[1]) == "--crash-phase-a") {
+    return run_crash_phase_a(argv[2]);
+  }
+  if (argc == 3 && std::string(argv[1]) == "--crash-phase-b") {
+    return run_crash_phase_b(argv[2]);
+  }
+#endif
+
   scenario_happy_drain();
   scenario_stale_completion_rejected();
   scenario_inflight_single_dimension_token_rejection();
@@ -871,27 +996,27 @@ int main() {
   scenario_reopen_no_resurrection();
   scenario_reopen_reconciles_dangling_record();
 
-  // The two permission-based failure scenarios need an unprivileged POSIX user: they
-  // are SKIPPED as root (directory permissions are bypassed) and not compiled on
-  // Windows. Report run identity and per-scenario executed/skipped explicitly, so a
-  // green exit on root/Windows is never mistaken for full four-scenario coverage when
-  // this log is kept as enablement evidence.
-  bool ran_failure_scenarios = false;
+  // POSIX-only scenarios and their run identity, reported explicitly so a green exit on
+  // root/Windows is never mistaken for full coverage when this log is kept as evidence.
+  //   * crash-recovery: needs fork/execv (POSIX); runs on any POSIX euid.
+  //   * persistent/mixed failure: need an UNPRIVILEGED user (root bypasses dir perms).
+  std::string ran = "happy_drain + stale_completion_rejected + inflight_token_rejection + 3 orderly-reopen";
 #if !defined(_WIN32)
+  scenario_crash_recovery_via_subprocess();
+  ran += " + crash_recovery";
   if (::geteuid() == 0) {
-    LOG(WARNING) << "running as root (euid 0): SKIPPED persistent-failure and mixed-failure scenarios";
+    LOG(WARNING) << "running as root (euid 0): SKIPPED persistent-failure and mixed-failure (dir perms bypassed)";
+    LOG(INFO) << "test-validator-cleanup-integration: executed " << ran
+              << "; persistent/mixed-failure SKIPPED as root (7/9 scenarios)";
   } else {
     scenario_persistent_failure_no_hot_loop();
     scenario_mixed_failure_bounded_retries();
-    ran_failure_scenarios = true;
+    LOG(INFO) << "test-validator-cleanup-integration: executed " << ran
+              << " + persistent-failure + mixed-failure (9/9 scenarios)";
   }
 #else
-  LOG(WARNING) << "Windows build: persistent-failure and mixed-failure scenarios are not compiled";
+  LOG(WARNING) << "Windows build: crash-recovery + persistent/mixed-failure scenarios are not compiled";
+  LOG(INFO) << "test-validator-cleanup-integration: executed " << ran << " (6/9 scenarios; 3 POSIX-only skipped)";
 #endif
-
-  LOG(INFO) << "test-validator-cleanup-integration: executed happy_drain + stale_completion_rejected + "
-               "inflight_single_dimension_token_rejection + 3 orderly-reopen reconciliation scenarios; "
-            << (ran_failure_scenarios ? "AND persistent-failure + mixed-failure (8/8 scenarios)"
-                                      : "persistent-failure + mixed-failure SKIPPED (6/8 scenarios)");
   return 0;
 }

@@ -1380,15 +1380,32 @@ matrix, asserted against a real `MasterchainState` (not just "runs for a while")
 | GC handle and state describe different full block ids | do not dispatch |
 | a current/next group may still use the session | do not delete; real creation fence holds |
 
+### Abnormal-exit (crash) recovery (scenario 9, added)
+
+A subprocess driver (`scenario_crash_recovery_via_subprocess`, POSIX) runs the REAL
+production store in a child process, terminates that child WITHOUT running any destructor
+(a hard `_exit`, so RocksDB is never cleanly closed), and recovers in a fresh child
+process on the same `db_root` (`fork` + `execv`, so each child is a fresh single-threaded
+image -- no fork-with-live-threads hazard). Boundary implemented: **retirement
+synchronously committed, delete not started** -- phase A calls the real
+`persist_validator_retirement` (which returns only after the synced commit), creates the
+dir, then hard-exits; phase B reopens and asserts the record survived the hard kill +
+unclean reopen (RocksDB recovery), then drives it to a clean delete + erase. Unlike the
+orderly-reopen scenarios this proves the recoverable on-disk state is produced by a real
+interruption, and that the synced write survives a hard kill -- not assumed. (It does not
+isolate WAL replay specifically -- the record may already have reached an SST -- nor test
+power-loss/machine-crash durability.) Mutation-verified: with
+`on_loaded_at_startup` a no-op, phase B aborts and the parent surfaces the non-zero child
+status (the failure propagates, no silent pass).
+
+Boundary still deferred: **real delete confirmed, record erase not committed** -- hitting
+it deterministically needs a controllable-worker seam (the delete/erase window is
+otherwise racy), so it is left to the enablement bundle.
+
 ### Still deferred to the enablement bundle (retained hard conditions)
 
-1. **Abnormal-exit (crash) recovery** -- a subprocess driver that runs the real shared
-   dispatch to a boundary, terminates the process WITHOUT destructors, and recovers in a
-   fresh process on the same `db_root`. Priority boundaries: "retirement committed, delete
-   not started" and "real delete confirmed, record erase not committed". Proves the
-   production flow leaves the expected recoverable on-disk state at an interruption point
-   (which state-construction scenarios 6-8 assume) and that a synced write survives a hard
-   kill + WAL replay. NOT covered by the orderly-reopen tests above.
+1. **Crash boundary 2** -- "real delete confirmed, record erase not committed" (needs the
+   controllable-worker seam; boundary 1 is done above).
 2. **Real-node GC-oracle boundaries** -- the acceptance matrix above, against a real
    `MasterchainState`.
 3. **Reopen-during-delete fence WIRING** -- the manager's `get_or_make_next_group` branch
