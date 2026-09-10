@@ -281,15 +281,37 @@ TEST(ValidatorCleanup, ancestry_decides_and_unknown_fails_closed) {
   ASSERT_TRUE(!can_delete_validator_db(r, make_fork_checkpoint(200), false, chain_oracle));  // unknown (fork)
 }
 
-// An invalid/non-masterchain checkpoint on either side is never deletable.
+// An invalid/non-masterchain checkpoint on either side is never deletable. This
+// uses an Ancestor-returning spy -- which WOULD authorize deletion if the
+// checkpoint guard were removed -- and asserts it is never called, so the test
+// fails red if the guard is dropped (chain_oracle's Unknown would have masked
+// that). Also covers equal-but-invalid checkpoints, pinning guard-before-equality
+// ordering.
 TEST(ValidatorCleanup, invalid_checkpoints_are_never_deletable) {
   auto r = make_record(9, 100);
+  bool oracle_called = false;
+  auto ancestor_spy = [&](const tos::BlockIdExt&, const tos::BlockIdExt&) {
+    oracle_called = true;
+    return CleanupAncestry::Ancestor;
+  };
+
   tos::BlockIdExt invalid;  // default-constructed
-  ASSERT_TRUE(!can_delete_validator_db(r, invalid, false, chain_oracle));
+  ASSERT_TRUE(!can_delete_validator_db(r, invalid, false, ancestor_spy));  // invalid safe
 
   auto r_shard = r;
   r_shard.retirement_checkpoint = tos::BlockIdExt{0, kMasterShard, 100, make_hash(1), make_hash(2)};  // shardchain
-  ASSERT_TRUE(!can_delete_validator_db(r_shard, make_checkpoint(200), false, chain_oracle));
+  ASSERT_TRUE(!can_delete_validator_db(r_shard, make_checkpoint(200), false, ancestor_spy));
+
+  auto r_zero = r;  // full masterchain id but zero hashes -> not valid_full
+  r_zero.retirement_checkpoint =
+      tos::BlockIdExt{tos::masterchainId, kMasterShard, 100, tos::Bits256::zero(), tos::Bits256::zero()};
+  ASSERT_TRUE(!can_delete_validator_db(r_zero, make_checkpoint(200), false, ancestor_spy));
+
+  auto r_eq_invalid = r;  // retirement == safe == invalid: guard must beat the equality fast path
+  r_eq_invalid.retirement_checkpoint = invalid;
+  ASSERT_TRUE(!can_delete_validator_db(r_eq_invalid, invalid, false, ancestor_spy));
+
+  ASSERT_TRUE(!oracle_called);  // the checkpoint guard short-circuits before the oracle
 }
 
 // Non-rotated retention: a session retired at R>C while the safe floor is only at
@@ -314,6 +336,18 @@ TEST(ValidatorCleanup, safe_checkpoint_is_monotonic) {
   ASSERT_TRUE(!should_adopt_safe_checkpoint(c200, c100, chain_oracle));   // regression -> refuse (NotAncestor)
   ASSERT_TRUE(!should_adopt_safe_checkpoint(c100, make_fork_checkpoint(200), chain_oracle));  // fork -> refuse
   ASSERT_TRUE(!should_adopt_safe_checkpoint(c100, c100, chain_oracle));   // equal -> no change
+
+  // A non-masterchain candidate must never be adopted, with either a valid or an
+  // absent current floor. The Ancestor spy would adopt it if the candidate guard
+  // were removed (and an absent current would first-adopt it), so "spy never
+  // called" + "never adopted" fails red if the guard is dropped.
+  bool adopt_oracle_called = false;
+  auto adopt_spy = [&](const tos::BlockIdExt&, const tos::BlockIdExt&) {
+    adopt_oracle_called = true;
+    return CleanupAncestry::Ancestor;
+  };
   tos::BlockIdExt shard_candidate{0, kMasterShard, 200, make_hash(1), make_hash(2)};
-  ASSERT_TRUE(!should_adopt_safe_checkpoint(c100, shard_candidate, chain_oracle));  // non-masterchain
+  ASSERT_TRUE(!should_adopt_safe_checkpoint(c100, shard_candidate, adopt_spy));  // valid current
+  ASSERT_TRUE(!should_adopt_safe_checkpoint(none, shard_candidate, adopt_spy));  // absent current
+  ASSERT_TRUE(!adopt_oracle_called);
 }
