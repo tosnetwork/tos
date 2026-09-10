@@ -1239,3 +1239,62 @@ harness: a timeout must never be reported as a worker completion, and the worker
 a separate actor is not the same as a dedicated I/O thread (shared scheduler pool).
 Then the flip after a disk/RSS soak. Finding 1 stays open; the branch remains a
 deletion-safe staging state.
+
+## Manager-level integration acceptance — implemented (gate still off)
+
+The real `ValidatorManagerImpl` is not constructible in a unit test (it needs live
+keyring/adnl/overlay actors and a DB seeded with an applied masterchain state). To get
+non-illusory evidence for the async composition anyway, the dispatch/continuation glue
+was extracted into template free functions (`validator-cleanup-dispatch.h`) that the
+production manager AND the integration harness both instantiate -- one copy of the
+code, so a bug in it is caught rather than hidden behind a hand-rolled mirror. The glue
+is the part no per-component test exercises and the part that carried the retry-pacing
+P2, so testing a copy would have proved nothing.
+
+`test/test-validator-cleanup-integration.cpp` drives that shared glue over the REAL
+pieces on a real `td::actor::Scheduler`: the real `ValidatorCleanupManager` adapter, the
+real `ValidatorConsensusCleanupWorker` doing real filesystem deletes, and a real
+`RootDb`/`StateDb`. Only the environment-specific head of the pass is substituted: the
+enable flag (true in the harness; compile-time false in production) and the GC-snapshot
+oracles (injected; built from a `MasterchainState` in production). The real manager's
+scheduler is never idle (background RootDb actors), so progress is asserted on scenario
+state and a hot loop shows up as an unbounded `attempt_count` after a fixed drive
+window, not as non-idleness.
+
+Scenarios, each mutation-verified red against the SHARED glue:
+
+1. **Happy drain** -- records persisted to the real RootDb are loaded back, all eligible
+   dirs deleted by the real worker, every record erased from the DB. Red when dispatch
+   is broken (no deletes) or the erase dispatch is removed (records survive).
+2. **Stale completion rejected** -- a completion carrying the wrong generation, injected
+   synchronously (so its effects are ordered before the following DB read, making the
+   assertion race-free) as a stale/duplicate worker callback would arrive, must not
+   erase or delete. Red when the glue erases directly instead of routing the completion
+   through the adapter's rejection (the record is then erased).
+3. **Persistent-failure no hot loop** -- a single permanently-failing delete (a dir with
+   write permission dropped) is attempted exactly once, completes once as a failure, and
+   never re-dispatches itself; the test waits for the real completion and then confirms
+   the entry has SETTLED (not in flight) before restoring permissions. The mutation that
+   makes the completed-delete path re-trigger unconditionally keeps the failing entry
+   perpetually in flight -- the settle barrier times out -- the exact P2 the earlier
+   review found, now caught by an instrument.
+4. **Mixed bounded retries** -- one permanently-failing dir plus a healthy backlog larger
+   than the dispatch budget: the healthy dirs all drain (each success re-triggers a
+   pass), the failing dir survives and is retried a finite number of times (observed 2),
+   and the failing entry settles rather than spinning. Red when the erase-ack re-trigger
+   is removed (the backlog beyond one dispatch budget never drains -- observed 8 of 20).
+
+The completion path's re-trigger is a DIRECT synchronous call on the owner (not a
+deferred message), matching the pre-extraction manager so an erase-ack and a following
+group-creation keep their original ordering against the in-flight fence; `attempt_count`
+in the harness counts reservations, so the scenarios additionally gate on an observed
+completion and on the not-in-flight settle barrier before asserting.
+
+**Still deferred to the enablement bundle (needs seams this harness intentionally does
+not add):** observing `is_delete_in_flight` TRUE across the async gap and the
+reopen-during-delete fence mid-flight (needs a controllable/slow worker so the in-flight
+window is deterministic); real GC-oracle boundaries (needs a real `MasterchainState`,
+not injected oracles); reconciliation across an actual process restart (this harness
+reloads within one process); and the per-record-backoff decision from scenario 4's
+attempt profile under a production-like soak. Then the flip after a disk/RSS soak.
+Finding 1 stays open; the branch remains a deletion-safe staging state.

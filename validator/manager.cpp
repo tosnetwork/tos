@@ -2521,8 +2521,7 @@ void ValidatorManagerImpl::validator_cleanup_erase_acked(ValidatorSessionId sess
   // A record was actually removed: release the reservation and re-trigger draining.
   // This is the only completion-path re-trigger, and it is loop-safe because each
   // re-trigger is paid for by a completed removal. See validator-cleanup-dispatch.h.
-  consensus::acknowledge_validator_erase(actor_id(this), validator_cleanup_manager_, session_id, generation,
-                                         attempt_id);
+  consensus::acknowledge_validator_erase(this, validator_cleanup_manager_, session_id, generation, attempt_id);
 }
 
 td::actor::Task<> ValidatorManagerImpl::finish_start_up() {

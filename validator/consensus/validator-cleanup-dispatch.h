@@ -112,11 +112,18 @@ void complete_validator_delete(td::actor::ActorId<Self> self_id, ValidatorCleanu
 // freed and the backlog shrank by one. Re-triggering a pass here is loop-safe because
 // each re-trigger is paid for by a completed removal -- the backlog is monotonically
 // decreasing -- so it cannot spin. This is the ONLY completion-path re-trigger.
+//
+// The re-trigger is a DIRECT, synchronous call on the owner (not a deferred
+// send_closure): it runs within the same actor turn as the erase-ack, before the next
+// mailbox message. That ordering matters -- e.g. an erase-ack immediately followed by a
+// group-creation request must reserve the freed session's next delete BEFORE the
+// creation runs, so creation hits the in-flight fence. `self` is the owner actor, on
+// whose thread this executes.
 template <class Self>
-void acknowledge_validator_erase(td::actor::ActorId<Self> self_id, ValidatorCleanupManager& adapter,
-                                 const ValidatorSessionId& session, td::uint64 generation, td::uint64 attempt_id) {
+void acknowledge_validator_erase(Self* self, ValidatorCleanupManager& adapter, const ValidatorSessionId& session,
+                                 td::uint64 generation, td::uint64 attempt_id) {
   adapter.on_erase_acknowledged(session, generation, attempt_id);
-  td::actor::send_closure(self_id, &Self::try_validator_consensus_db_cleanup);
+  self->try_validator_consensus_db_cleanup();
 }
 
 }  // namespace tos::validator::consensus

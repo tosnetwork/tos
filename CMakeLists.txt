@@ -778,6 +778,12 @@ target_include_directories(test-validator-cleanup-worker PRIVATE ${CMAKE_CURRENT
                            ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
 target_link_libraries(test-validator-cleanup-worker PRIVATE tos_crypto_core tddb tdactor tdutils)
 
+add_executable(test-validator-cleanup-integration test/test-validator-cleanup-integration.cpp)
+target_include_directories(test-validator-cleanup-integration PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                           ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
+target_link_libraries(test-validator-cleanup-integration PRIVATE tos_validator validator-common validator-db full-node
+                      tos_db tos_crypto tdutils tdactor adnl overlay tl_api dht)
+
 add_executable(test-json-rpc-parse test/test-td-main.cpp test/test-json-rpc-parse.cpp)
 target_link_libraries(test-json-rpc-parse PRIVATE json-rpc-parse tos_crypto tdutils)
 add_executable(test-json-rpc-source-ip test/test-json-rpc-source-ip.cpp)
@@ -1156,6 +1162,7 @@ tos_test(test-consensus-db-path)
 tos_test(test-validator-cleanup)
 tos_test(test-validator-cleanup-statedb)
 tos_test(test-validator-cleanup-worker)
+tos_test(test-validator-cleanup-integration)
 tos_test(test-json-rpc-rate-gate)
 tos_test(test-json-rpc-payload-waiter)
 # Source-level check: a route added to on_request bypasses the dispatcher's
