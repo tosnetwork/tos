@@ -792,3 +792,10 @@ target_link_libraries(test-workchain-m3-assertions PRIVATE tos_block tos_crypto)
 target_compile_definitions(test-workchain-m3-assertions PRIVATE M3_VECTOR_DIR="${CMAKE_CURRENT_SOURCE_DIR}/test/workchain-m3-vectors")
 tos_test(test-workchain-m3-assertions)
 set_tests_properties(test-workchain-m3-assertions PROPERTIES TIMEOUT 60 LABELS "workchain;m3")
+
+# Explicit continuous scenario: real kernel required; never substitute a stub.
+if(TOS_UNO_CRYPTO_NODE_LINK)
+  add_executable(workchain-m3-scenario EXCLUDE_FROM_ALL test/workchain-m3-scenario.cpp)
+  target_link_libraries(workchain-m3-scenario PRIVATE tos_block tos_crypto)
+  target_compile_definitions(workchain-m3-scenario PRIVATE M3_VECTOR_DIR="${CMAKE_CURRENT_SOURCE_DIR}/test/workchain-m3-vectors")
+endif()
