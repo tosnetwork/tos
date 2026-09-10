@@ -720,3 +720,95 @@ state assembly, not just that the predicate is correct in isolation.
 Chosen route: **GC checkpoint as conservative cleanup floor + B1/B2 two-phase.**
 Slowest to reclaim, easiest to prove safe, least likely to disturb consensus
 recovery.
+
+## Codex design review corrections (PR B) — binding
+
+A read-only Codex review of the PR B design returned **needs-changes**: keep GC as
+the floor and implement B1 first, with the following binding corrections.
+
+**1. Eligibility needs an ON-CHAIN obsolescence proof, not just GC ancestry.**
+`retirement_checkpoint ancestor-or-equal GC` proves the block cannot be rolled
+away; it does NOT prove the session is permanently obsolete. Current retirement
+(`manager.cpp:2997`) retires every active group absent from the new selection,
+without distinguishing an on-chain rotation from a LOCAL change (temporary key
+removed — `manager.hpp:347`, `manager.cpp:3599` — or validation/config gating).
+Counterexample: X's actor retires at R because its local key was removed; GC
+passes R while X is still an on-chain current session at GC; the head moves to a
+later session so X is absent from current+next; A–D would permit deletion, yet a
+permitted truncation back to GC plus key restoration recreates X. So condition B
+becomes:
+
+```
+B. retirement_checkpoint proves X is off the ON-CHAIN current+next validator
+   schedule (independent of local keys, gating, and tombstones)
+   AND retirement_checkpoint is ancestor-or-equal of the GC checkpoint
+```
+
+A cleanup record may therefore be produced with delete authority ONLY for a
+session proven off the on-chain schedule. A purely local-key/gating retirement
+must NOT yield a delete-authorizing record (record it as unknown-obsolescence, or
+do not record it). Also validate full-ID ancestry from GC to the recovered chain,
+not height alone.
+
+**2. B1 must disable legacy validator deletion in the startup sweep.** Replacing
+the retirement `destroy()` call is not enough: startup still calls
+`sweep_destroyed_consensus_dbs()` with the fences, and the helper authorizes
+deletion on a legacy destroyed-session match (`manager.cpp:2378/2408`,
+`db-path.h:129`). **B1 must remove validator deletion authority from that sweep**
+(observer cleanup continues); validator directories then linger until B2. Only
+with this + close-without-delete routing is B1 genuinely "no validator deletion".
+
+**3. Atomic retirement persist must preserve rotated/non-rotated semantics and
+multi-group retirement.** The rotated branch persists the init block then schedules
+`updated_init_block()` (which advances `last_rotate_block_id_`, prunes captured
+fences, persists the remaining set, and is a prerequisite GC depends on —
+`manager.cpp:3079/3142`); the non-rotated branch persists the destroyed-session
+set. The new batch must write the fence snapshot + ALL newly-retiring records
+(one update can retire several groups) in one synced batch, and must NOT replace
+`updated_init_block()` nor close the whole captured actor vector on a single
+record's ack. Encode and write record keys directly in the batch — do not call the
+single-record helper (it starts/commits its own batch, `validator-cleanup-store.h:34`).
+
+**4. Close-without-delete shutdown order.** Preserve the existing sequence
+(`StopRequested -> await writer close -> release bus ref -> await bus destruction
+-> [was: delete]`, `bridge.cpp:504`). The bus destructor destroys `db` BEFORE
+satisfying `stop_promise` (`bus.h:189`), so send the manager's
+`consensus_db_closed(session_id, dir_name)` callback AFTER that waiter completes;
+the bridge then exits without keeping the directory alive (manager holds copied
+identity/path). "No owner => closed" is sound only for a fresh process before
+group creation — NOT at runtime, where retirement releases actors from the maps
+before async shutdown completes (`manager.cpp:3000`).
+
+**5. Selection helper inputs (B2) are more than listed.** A side-effect-free
+candidate/session-id computation needs: MC shard topology + split/merge state; an
+explicit clock (future-shard uses `fsm_utime < now + 60`); per-shard current+next
+validator sets; consensus options/hash + last-key-block seq; max vertical seq and
+the unsafe catchain-rotation policy INCLUDING its session-id rewrite; and temporary-
+key membership (`manager.cpp:2741/2800/2860/3156`). `next_validator_groups_` also
+has historical ownership (tentative groups retained until superseded,
+`manager.cpp:3010`). Correction: share the deterministic candidate/session-id
+computation; cleanup uses a CONSERVATIVE candidate set or an explicit Unknown;
+keep active/tentative/retiring ownership checks separate; missing keys/config must
+not yield an authoritative empty set; and selection at today's head must not
+substitute for the permanent-retirement proof in (1).
+
+**6. Fence/record decoupling needs reopen/stale-callback protection.** When a
+retired session reopens, invalidate its previous closed acknowledgement, register
+the new owner, and reject stale eligibility/close/delete completions — else
+`closed_retiring_validator_sessions_` can describe an earlier incarnation. Keep
+observer persistence/callbacks separate (the queue is observer-filtered at
+startup, `manager.cpp:2368`).
+
+**7. Triggers + reconciliation need concurrency/retry rules.** Trigger after the
+durable GC ack and after confirmed bus/DB teardown; startup must AWAIT record
+loading (today the load gates nothing, `manager.cpp:2342`). Before a filesystem
+job: revalidate record version, owner/closed state, and selection snapshot, and
+serialize deletion against reopening that exact directory. The three triggers
+alone don't guarantee retry after a transient FS failure — add bounded scheduled
+retry, a fair continuation cursor, and bounded outstanding work; FS work must not
+block the manager's consensus processing (a 16-record turn cap doesn't bound
+recursive deletion time).
+
+**B2 tests must add:** the key-removal/rollback counterexample (1), stale-close-
+after-reopen (6), multi-session retirement persistence (3), and B1-restart-through-
+the-legacy-sweep (2) — each demonstrably failing when its guard is removed.
