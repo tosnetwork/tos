@@ -9,6 +9,11 @@
 // EXPIRY: when the gate opens, DELETE this file and retarget its controls to
 // production call sites. The registered private test checks both real refusals
 // and must fail at that transition; do not retain two implementations.
+// LIMIT: this guard detects removal of the two refusals, not an earlier bypass
+// or drift between this file's first two visitor branches and production.
+// While the gate stays closed, that drift affects only this test's currency,
+// not production behavior. At gate opening, EXPIRY requires deleting this file,
+// thereby removing the duplicate whose branches could drift.
 namespace prepared_validator {
 using Resolution = td::Result<std::optional<block::ResolvedScopedWorkchainExecution>>;
 

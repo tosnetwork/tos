@@ -60,6 +60,8 @@ def main():
     print('Prepared expiry guard passed: both production account refusals remain.', flush=True)
     # The default CTest is a source-only expiry check. It has no optional
     # native fixture dependency; the opt-in test additionally runs the probe.
+    # SUPERSEDED by f488facc2: the additional native-probe test now also runs
+    # by default. The preceding opt-in description is retained as history.
     if a.probe is None:
         return 0
     # Missing binary/fixture is a failure, never a skip. Do not synthesize a

@@ -13,6 +13,12 @@ and calls it in private tests. No production target includes it. Neither actual
 validator visitor nor registry refusal is replaced, and no dormant production
 call site is added. It is a preparation artifact, not a new validator path.
 
+**Superseded registration wording (f488facc2):** The preceding opt-in description
+records the initial arrangement. The root CMakeLists.txt now builds the native
+fixture through `all-tests` and registers its test by default. The source-only
+expiry guard is independently default. Original wording is retained as history;
+private scope does not mean optional registration.
+
 The custom flag feeds the legacy per-account `run_compute` context
 (`transaction.cpp:2211`), so AccountBinding returns false. Local readiness
 returns OK for a successfully resolved binding, without asserting complete
@@ -109,7 +115,9 @@ CTest catches production connection. The source-only expiry check is now
 registered unconditionally in crypto/CMakeLists.txt as
 `test-workchain-validator-prepared-expiry`; it needs no native probe or optional
 include. The private opt-in test still runs the same guard before its probe.
-Historical opt-in evidence remains valid for that narrower registration scope.
+**Superseded by f488facc2:** The preceding "private opt-in test" description is
+historical; the native fixture now also runs by default. Historical opt-in
+evidence remains valid only for the registration scope it actually measured.
 
 
 **Native registration follow-up:** The root CMakeLists.txt now also defines
