@@ -64,6 +64,7 @@
 #include "manager.hpp"
 
 #include "validator/consensus/db-path.h"
+#include "validator/consensus/validator-cleanup-dispatch.h"
 #include "validator/consensus/validator-cleanup-store.h"
 #include "td/db/RocksDb.h"
 #include "td/utils/PathView.h"
@@ -2497,80 +2498,31 @@ void ValidatorManagerImpl::try_validator_consensus_db_cleanup() {
   auto reserved = validator_cleanup_manager_.begin_eligible_deletes(
       gc_id, ancestor_or_equal_of_gc, gc_shard_catchain_seqno, is_live, kValidatorConsensusCleanupBudget,
       kValidatorConsensusCleanupScanBudget, kValidatorConsensusCleanupMaxOutstanding);
-  if (reserved.empty()) {
-    return;
-  }
-  if (validator_cleanup_worker_.empty()) {
-    validator_cleanup_worker_ =
-        td::actor::create_actor<consensus::ValidatorConsensusCleanupWorker>("valcleanupworker");
-  }
-  for (const auto &item : reserved) {
-    auto session = item.record.session_id;
-    auto generation = item.generation;
-    auto attempt = item.attempt_id;
-    // Dispatch the blocking filesystem delete to the worker actor so it does not run
-    // inline on the manager's own message-processing stack (send_closure is deferred,
-    // not an immediate call). This is a separate actor context, NOT a dedicated I/O
-    // thread: both actors share the scheduler thread pool, so it bounds where the
-    // delete runs, not its effect on manager scheduling latency. The worker reports
-    // completion exactly once via the promise, which forwards the confirmed-gone
-    // result AND the (session, generation, attempt) token back to this actor. The
-    // reservation (and the creation fence) stays held until that real completion --
-    // never released on a timeout.
-    auto promise = td::PromiseCreator::lambda(
-        [SelfId = actor_id(this), session, generation, attempt](td::Result<bool> R) {
-          R.ensure();
-          td::actor::send_closure(SelfId, &ValidatorManagerImpl::validator_cleanup_delete_done, session, generation,
-                                  attempt, R.move_as_ok());
-        });
-    td::actor::send_closure(validator_cleanup_worker_.get(), &consensus::ValidatorConsensusCleanupWorker::run_delete,
-                            db_root_, session, item.record.dir_name, std::move(promise));
-  }
+  // Dispatch the reserved deletes to the worker actor so the blocking filesystem work
+  // does not run inline on this manager's message-processing stack. The worker,
+  // completion token threading, durable-erase ordering, and retry pacing are shared
+  // with the integration harness via validator-cleanup-dispatch.h, so the production
+  // path and its end-to-end test exercise one copy of this glue.
+  consensus::dispatch_reserved_validator_deletes(actor_id(this), validator_cleanup_worker_, db_root_, reserved);
 }
 
 void ValidatorManagerImpl::validator_cleanup_delete_done(ValidatorSessionId session_id, td::uint64 generation,
                                                          td::uint64 attempt_id, bool confirmed_gone) {
-  // The worker finished this delete attempt. On a confirmed delete, dispatch the
-  // durable record erase; the reservation is released and the record dropped ONLY
-  // when that erase is acknowledged (validator_cleanup_erase_acked), so a crash
-  // between delete and erase leaves a record that a later pass reconciles. A stale
-  // completion (wrong generation/attempt/state) is ignored inside on_delete_completed.
-  validator_cleanup_manager_.on_delete_completed(
-      session_id, generation, attempt_id, confirmed_gone,
-      [this](const ValidatorSessionId &s, td::uint64 g, td::uint64 a) {
-        td::actor::send_closure(db_, &Db::erase_pending_validator_consensus_db_cleanup, s,
-                                [SelfId = actor_id(this), s, g, a](td::Result<td::Unit> R) {
-                                  R.ensure();
-                                  td::actor::send_closure(SelfId, &ValidatorManagerImpl::validator_cleanup_erase_acked,
-                                                          s, g, a);
-                                });
-      });
-  // Deliberately NOT re-triggering here. A delete that reports not-gone returns its
-  // entry to Pending; re-dispatching it immediately (an unconditional re-trigger)
-  // would spin a backoff-free retry loop against an undeletable directory (e.g. a
-  // parent that denies removal) with NO successes and NO external trigger required.
-  // Removing the re-trigger from this path buys exactly this guarantee:
-  //   absent any successful erase-ack and any external trigger, a failing delete
-  //   does not re-dispatch itself -- there is no infinite self-excitation.
-  // It does NOT buy a per-record minimum retry interval: a successful erase-ack for a
-  // DIFFERENT record re-triggers a pass (see validator_cleanup_erase_acked), and the
-  // round-robin cursor can re-select this still-Pending failing entry within that
-  // pass. So a persistently failing directory mixed with a healthy backlog is retried
-  // up to once per successful removal (finite, since the backlog strictly shrinks),
-  // not throttled to the GC cadence. Suppressing sustained delete I/O against a
-  // permanently failing directory would need per-record backoff / next_retry_at; that
-  // is an enablement-time decision, recorded as a manager-level integration-acceptance
-  // item, not built now while deletion is gated off.
+  // Feed the completed delete attempt to the adapter; on a confirmed delete this
+  // dispatches the durable record erase and releases the reservation only on the
+  // erase-ack. Deliberately does NOT re-trigger a pass (that would spin a backoff-free
+  // retry loop on a persistently failing delete). See validator-cleanup-dispatch.h.
+  consensus::complete_validator_delete(actor_id(this), validator_cleanup_manager_, db_.get(), session_id, generation,
+                                       attempt_id, confirmed_gone);
 }
 
 void ValidatorManagerImpl::validator_cleanup_erase_acked(ValidatorSessionId session_id, td::uint64 generation,
                                                          td::uint64 attempt_id) {
-  validator_cleanup_manager_.on_erase_acknowledged(session_id, generation, attempt_id);
-  // A record was actually removed: outstanding capacity freed and the backlog shrank
-  // by one. Draining the next eligible entry is safe from a loop standpoint because
-  // each re-trigger is paid for by a completed removal -- the backlog is monotonically
-  // decreasing, so this cannot spin.
-  try_validator_consensus_db_cleanup();
+  // A record was actually removed: release the reservation and re-trigger draining.
+  // This is the only completion-path re-trigger, and it is loop-safe because each
+  // re-trigger is paid for by a completed removal. See validator-cleanup-dispatch.h.
+  consensus::acknowledge_validator_erase(actor_id(this), validator_cleanup_manager_, session_id, generation,
+                                         attempt_id);
 }
 
 td::actor::Task<> ValidatorManagerImpl::finish_start_up() {
