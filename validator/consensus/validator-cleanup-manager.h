@@ -49,22 +49,35 @@ class ValidatorCleanupManager {
 
   // A group (initial creation or reopen) for `session` is about to be created. The
   // caller MUST first check !is_delete_in_flight(session) and defer creation while
-  // a delete is in flight. Bumps the live incarnation and drops any pending
-  // cleanup entry -- the directory is being reused by a live group, so its record
-  // is no longer a deletion target (the durable record is replaced when the
-  // session next retires; until then is_live also vetoes it).
+  // a delete is in flight. Assigns a PROCESS-WIDE monotonically increasing
+  // incarnation token (never per-session and never reset), so a later incarnation
+  // of a session always has a strictly greater generation than any earlier one --
+  // a stale close/delete callback carrying an older generation can therefore never
+  // match a newer incarnation. The token is retained only while the session is
+  // live (released at retirement), so this map is bounded by the number of
+  // concurrently-live sessions, not by all sessions ever created. Also drops any
+  // pending cleanup entry -- the directory is being reused by a live group.
   void on_group_created(const ValidatorSessionId& session) {
-    live_generation_[session]++;
+    live_generation_[session] = ++next_generation_;
     pending_.erase(session);
   }
 
   // The current incarnation of `session` retired; `record` is its durable cleanup
-  // record (persisted before the actor is allowed to close). Captures the
-  // incarnation generation and returns it so the manager can tag the close
-  // callback. A re-retirement overwrites the prior entry.
+  // record (persisted before the actor is allowed to close). Consumes and RELEASES
+  // the live incarnation token (the session is no longer live), returning it so the
+  // manager can tag the close callback. A retiring group must have been created; if
+  // its token is somehow absent, mint a fresh unique one rather than reuse a stale
+  // value. A re-retirement overwrites the prior pending entry.
   uint64_t on_group_retired(PendingValidatorConsensusDbCleanup record) {
     auto session = record.session_id;
-    auto gen = live_generation_[session];
+    uint64_t gen;
+    auto it = live_generation_.find(session);
+    if (it != live_generation_.end()) {
+      gen = it->second;
+      live_generation_.erase(it);
+    } else {
+      gen = ++next_generation_;
+    }
     pending_[session] = Entry{std::move(record), gen, /*closed=*/false, /*in_flight=*/false};
     return gen;
   }
@@ -139,6 +152,13 @@ class ValidatorCleanupManager {
     return pending_.size();
   }
 
+  // Number of currently-live sessions whose incarnation token is retained. Bounded
+  // by concurrently-live sessions (released at retirement); exposed so a test can
+  // prove the bookkeeping does not grow with historical session churn.
+  size_t live_session_count() const {
+    return live_generation_.size();
+  }
+
  private:
   struct Entry {
     PendingValidatorConsensusDbCleanup record;
@@ -147,7 +167,11 @@ class ValidatorCleanupManager {
     bool in_flight = false;
   };
   std::map<ValidatorSessionId, Entry> pending_;
+  // Incarnation token of each currently-live session (created, not yet retired).
   std::map<ValidatorSessionId, uint64_t> live_generation_;
+  // Process-wide monotonically increasing incarnation token source. Never reset, so
+  // no two incarnations (across the whole process lifetime) ever share a token.
+  uint64_t next_generation_ = 0;
 };
 
 }  // namespace tos::validator::consensus

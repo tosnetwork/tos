@@ -727,6 +727,54 @@ TEST(ValidatorCleanup, cleanup_manager_enforces_adapter_invariants) {
   }
 }
 
+// Generation bookkeeping must not grow with historical session churn, and a
+// re-created session must get a STRICTLY GREATER incarnation so a stale close ack
+// from an older incarnation can never match the newer one.
+TEST(ValidatorCleanup, cleanup_manager_reclaims_generation_state) {
+  auto gc = make_checkpoint(500);
+  auto ancestor_ok = [](const tos::BlockIdExt&) { return true; };
+  auto cc_past = [](tos::ShardIdFull s) -> std::optional<tos::CatchainSeqno> {
+    return s == kShard ? std::optional<tos::CatchainSeqno>{10} : std::nullopt;
+  };
+  auto not_live = [](const tos::ValidatorSessionId&) { return false; };
+  auto erase = [](const tos::ValidatorSessionId&) {};
+
+  // Full lifecycle for many distinct sessions; after each completes, NO per-session
+  // bookkeeping should remain. If the live-generation map were kept per session
+  // (the earlier unbounded design), live_session_count would grow to N.
+  ValidatorCleanupManager m;
+  const int kSessions = 200;
+  for (int i = 0; i < kSessions; i++) {
+    auto rec = make_record(static_cast<unsigned char>(i), 100);
+    auto sid = rec.session_id;
+    m.on_group_created(sid);
+    auto gen = m.on_group_retired(rec);
+    m.on_close_confirmed(sid, gen);
+    auto batch = m.begin_eligible_deletes(gc, ancestor_ok, cc_past, not_live, 100);
+    for (const auto& r : batch) {
+      m.on_delete_completed(r.session_id, /*confirmed_gone=*/true, erase);
+    }
+  }
+  ASSERT_EQ(m.pending_count(), static_cast<size_t>(0));
+  ASSERT_EQ(m.live_session_count(), static_cast<size_t>(0));  // reclaimed, not linear in kSessions
+
+  // Re-creation: the new incarnation's generation strictly exceeds the old, and a
+  // stale close ack for the old generation does not close the new entry.
+  ValidatorCleanupManager m2;
+  auto rec = make_record(1, 100);
+  auto sid = rec.session_id;
+  m2.on_group_created(sid);
+  auto gen_a = m2.on_group_retired(rec);
+  m2.on_group_created(sid);  // reopen -> new incarnation, drops the prior pending
+  auto rec2 = make_record(1, 100);
+  auto gen_b = m2.on_group_retired(rec2);
+  ASSERT_TRUE(gen_b > gen_a);                // globally monotonic
+  m2.on_close_confirmed(sid, gen_a);         // stale ack -> ignored
+  ASSERT_TRUE(m2.begin_eligible_deletes(gc, ancestor_ok, cc_past, not_live, 10).empty());
+  m2.on_close_confirmed(sid, gen_b);         // correct incarnation -> closes
+  ASSERT_EQ(m2.begin_eligible_deletes(gc, ancestor_ok, cc_past, not_live, 10).size(), static_cast<size_t>(1));
+}
+
 // Pin the literal key prefix and range end independently of the helpers, so a
 // change to the persisted key scheme (which would orphan existing on-disk
 // records) is caught, and the range end is exactly the prefix with its final
