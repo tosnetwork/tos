@@ -6,45 +6,47 @@ Reads the per-node engine logs of a run produced by
     uv run python scripts/validator-election-stage-a.py --mode experiment --stage a \
         --enable-consensus-cleanup --duration-seconds <N> ...
 
-and emits a verdict about the REAL validator-group cleanup path (Finding 1), keyed on the
-distinguishable `VALCLEANUP reserve|delete_done|erase_ack` trace (manager.cpp), NOT the
-observer startup sweep's "reclaimed ..." log.
+and emits a tri-state verdict (PASS / FAIL / INCONCLUSIVE) about the REAL validator-group
+cleanup path (Finding 1), keyed on the distinguishable `VALCLEANUP reserve|delete_done|
+erase_ack` trace (manager.cpp), NOT the observer startup sweep's "reclaimed ..." log.
 
-POSITIVE (should-delete fired and completed on the real path):
-  * >=1 reserved op whose SAME (session,generation,attempt) reached delete_done
-    confirmed_gone=1 AND erase_ack;
-  * the reserved directory is gone from disk at the end;
-  * the reserve carried gc_seqno>0 -> a post-genesis (election) key block advanced the
-    GC floor (otherwise the gated path can't run at all).
+What this run CAN establish (and only this):
+  POSITIVE (should-delete fired and completed on the real path), per completed op:
+    * the SAME (session,generation,attempt) ticket has reserve -> delete_done(gone=1) ->
+      erase_ack IN THAT ORDER (log position order within the node), and
+    * that op's OWN reserve carried gc_seqno>0 (its own GC snapshot, not a global max), and
+    * the reserved directory is gone from disk at the end.
+  ELIGIBILITY (necessary condition of the four-condition gate): every reserve had
+    retirement_seqno <= gc_seqno (a future retirement can never be an ancestor of GC).
+  NO OVER-REACH: live / not-yet-eligible validator-group dirs remain on disk; no session
+    is both deleted and present.
+  LIVENESS: every EXPECTED validator (from the run manifest, DHT excluded) has a log AND
+    applied at least one masterchain block AFTER its last delete whose seqno exceeds the
+    GC floor its deletes used -- i.e. it kept validating THROUGH the reclamations. Missing
+    a validator log / height signal is INCONCLUSIVE, never a silent pass.
 
-SAFETY (survived the live deletions):
-  * no FATAL / sanitizer / CHECK-failed / Aborted line in any node log;
-  * every node's log kept advancing PAST the last erase_ack timestamp (no node died or
-    stalled through the reclamations).
-
-This is the "should-delete + survived" half of the acceptance. The full "should-NOT-
-delete" negative matrix (current/next group, r>=g, unknown/mismatched GC -> no reserve,
-dir untouched) and recovery-after-delete are covered deterministically by the C++
-integration/pure tests (test-validator-cleanup*, scenario 5 in particular); this real-net
-run additionally demonstrates the safety gate does not break a live group on a real
-MasterchainState (survival + continued progress).
+What this run does NOT establish (still OPEN, not counted as passed here):
+  * the exhaustive real-node should-NOT-delete matrix by deliberate injection
+    (r>=g, current/next group, unknown/mismatched GC -> no dispatch);
+  * the production reopen fence wiring (get_or_make_next_group), and
+  * post-delete restart recovery on a real node.
+  (The C++ tests cover the adapter/eligibility/dispatch logic deterministically, but that
+  is a different level from a real-node negative/recovery pass.)
 
 Usage:
     uv run python test/integration/analyze_validator_cleanup_run.py [RUN_DIR]
-If RUN_DIR is omitted, the newest run under test/integration/.validator-election-experiment/
-is used.
 """
 
 from __future__ import annotations
 
 import json
 import re
+import subprocess
 import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 
-TS = r"\[\s*\d+\]\[t\s*\d+\]\[(?P<ts>[0-9:. \-]+)\]"
 RESERVE = re.compile(
     r"VALCLEANUP reserve session=(?P<session>\S+) generation=(?P<gen>\d+) "
     r"attempt=(?P<attempt>\d+) dir=(?P<dir>\S+) gc_seqno=(?P<gc>\d+) retirement_seqno=(?P<ret>\d+)"
@@ -56,19 +58,21 @@ DELETE_DONE = re.compile(
 ERASE_ACK = re.compile(
     r"VALCLEANUP erase_ack session=(?P<session>\S+) generation=(?P<gen>\d+) attempt=(?P<attempt>\d+)"
 )
-ANY_TS = re.compile(r"\[\s*\d\]\[t\s*\d+\]\[(?P<ts>\d{4}-\d\d-\d\d \d\d:\d\d:\d\d\.\d+)\]")
+# Coarse milestone (every 1024 blocks) -- reported, but too sparse for "after last delete".
+APPLIED_MC = re.compile(
+    r"applied masterchain block \(-1,8000000000000000,(?P<seqno>\d+)\):(?P<root>[0-9A-Fa-f]+)"
+)
+# Fine per-masterchain-block activity: the node runs validate-query on each mc block seqno.
+# This is the liveness signal ("kept validating masterchain blocks through the deletes").
+VALIDATE_MC = re.compile(r"validateblock\(-1,8000000000000000\):(?P<seqno>\d+)")
 FATAL = re.compile(
     r"\b(FATAL|PANIC|CHECK failed|LOG_CHECK failed|AddressSanitizer|UndefinedBehaviorSanitizer|Aborted)\b"
 )
 
 
 def _git_head() -> str:
-    import subprocess
-
     try:
-        return subprocess.check_output(
-            ["git", "-C", str(REPO), "rev-parse", "HEAD"], text=True
-        ).strip()
+        return subprocess.check_output(["git", "-C", str(REPO), "rev-parse", "HEAD"], text=True).strip()
     except Exception:
         return "unknown"
 
@@ -83,170 +87,240 @@ def _key(m: re.Match) -> tuple[str, str, str]:
     return (m.group("session"), m.group("gen"), m.group("attempt"))
 
 
-def _last_timestamp(text: str) -> str | None:
-    last = None
-    for m in ANY_TS.finditer(text):
-        last = m.group("ts")
-    return last
+def _expected_validator_count(run_dir: Path) -> int | None:
+    manifest = run_dir / "readiness-manifest.json"
+    if not manifest.is_file():
+        return None
+    try:
+        return int(json.load(manifest.open())["network"]["validator_count"])
+    except Exception:
+        return None
 
 
-def analyze(run_dir: Path) -> int:
+def _parse_node(text: str) -> dict:
+    # positions (byte offsets) give temporal order within a single node log.
+    reserves = {}
+    for m in RESERVE.finditer(text):
+        # keep the FIRST reserve position for a ticket
+        reserves.setdefault(_key(m), {"gc": int(m.group("gc")), "ret": int(m.group("ret")),
+                                      "dir": m.group("dir"), "pos": m.start()})
+    done_ok = {}
+    for m in DELETE_DONE.finditer(text):
+        if m.group("gone") == "1":
+            done_ok.setdefault(_key(m), m.start())
+    acked = {}
+    for m in ERASE_ACK.finditer(text):
+        acked.setdefault(_key(m), m.start())
+
+    applied = [(int(m.group("seqno")), m.start(), m.group("root")) for m in APPLIED_MC.finditer(text)]
+    validated = [(int(m.group("seqno")), m.start()) for m in VALIDATE_MC.finditer(text)]
+    fatals = [ln[:400] for ln in text.splitlines() if FATAL.search(ln)]
+
+    # ordered completed ops: reserve.pos < delete_done.pos < erase_ack.pos, and gc>0.
+    completed = []
+    ordering_violations = []
+    for k, r in reserves.items():
+        if k in done_ok and k in acked:
+            if r["pos"] < done_ok[k] < acked[k]:
+                completed.append({"key": k, "gc": r["gc"], "dir": r["dir"]})
+            else:
+                ordering_violations.append({"key": k, "reserve": r["pos"], "delete_done": done_ok[k], "ack": acked[k]})
+
+    last_delete_pos = max([done_ok.get(c["key"], 0) for c in completed] + [acked.get(c["key"], 0) for c in completed],
+                          default=None)
+    return {
+        "reserves": reserves,
+        "completed": completed,
+        "ordering_violations": ordering_violations,
+        "applied": applied,
+        "validated": validated,
+        "fatals": fatals,
+        "last_delete_pos": last_delete_pos,
+    }
+
+
+def analyze(run_dir: Path) -> tuple[str, dict]:
     network = run_dir / "network"
     node_dirs = sorted(p for p in network.glob("node*") if p.is_dir())
-    if not node_dirs:
-        print(f"ERROR: no node dirs under {network}", file=sys.stderr)
-        return 2
+    expected_validators = _expected_validator_count(run_dir)
 
-    reserves: list[dict] = []
-    completed: list[dict] = []  # reserve that reached delete_done(gone=1) AND erase_ack
-    fatal_lines: list[str] = []
+    failures: list[str] = []
+    inconclusive: list[str] = []
+
     per_node = []
-    max_gc_seqno = 0
-    eligibility_violations: list[str] = []  # reserves with retirement_seqno > gc_seqno
+    completed_total = 0
+    eligibility_violations = []
+    ordering_violations_total = 0
+    gc_zero_completed = 0
     deleted_sessions: set[str] = set()
-    present_sessions: set[str] = set()  # validator-group sessions still on disk at end
+    present_sessions: set[str] = set()
     present_validator_dirs_total = 0
+    validators_with_progress = 0
+    validator_nodes = []
+    applied_roots_by_node: dict[str, dict[int, str]] = {}  # node -> {mc_seqno: root_hash}
 
     for nd in node_dirs:
         log = nd / "log"
-        text = log.read_text(errors="replace") if log.is_file() else ""
-        res = {_key(m): m.groupdict() for m in RESERVE.finditer(text)}
-        done_ok = {_key(m) for m in DELETE_DONE.finditer(text) if m.group("gone") == "1"}
-        acked = {_key(m) for m in ERASE_ACK.finditer(text)}
-        # timestamp of the last erase_ack on this node (for the "alive after" check).
-        ack_iter = list(ERASE_ACK.finditer(text))
-        node_reserves = list(res.values())
-        node_completed = [res[k] for k in res if k in done_ok and k in acked]
-        for r in node_reserves:
-            max_gc_seqno = max(max_gc_seqno, int(r["gc"]))
-        node_fatals = [ln[:500] for ln in text.splitlines() if FATAL.search(ln)]
-        fatal_lines += [f"{nd.name}: {ln}" for ln in node_fatals]
+        if not log.is_file():
+            inconclusive.append(f"{nd.name}: no log file")
+            per_node.append({"node": nd.name, "has_log": False})
+            continue
+        text = log.read_text(errors="replace")
+        p = _parse_node(text)
+        applied_seqnos = [s for s, _, _ in p["applied"]]
+        validate_seqnos = [s for s, _ in p["validated"]]
+        is_validator = len(validate_seqnos) > 0  # DHT node runs no masterchain validate-query
+        n_completed = len(p["completed"])
+        completed_total += n_completed
+        ordering_violations_total += len(p["ordering_violations"])
 
-        # last erase_ack line position -> is there log activity AFTER it? (survival)
-        alive_after_last_delete = None
-        if ack_iter:
-            tail = text[ack_iter[-1].end():]
-            alive_after_last_delete = _last_timestamp(tail) is not None
+        # eligibility relation + per-op gc, over every reserve / completed op.
+        for r in p["reserves"].values():
+            if r["ret"] > r["gc"]:
+                eligibility_violations.append(f"{nd.name}: dir={r['dir']} retirement_seqno={r['ret']} > gc_seqno={r['gc']}")
+        node_gc_used = [c["gc"] for c in p["completed"]]
+        for c in p["completed"]:
+            if c["gc"] <= 0:
+                gc_zero_completed += 1
+            deleted_sessions.add(c["key"][0])
 
-        # confirm each completed reserve's dir is gone from disk now
-        gone_on_disk = []
-        for r in node_completed:
-            gone_on_disk.append(not (nd / "consensus" / r["dir"]).exists())
+        # completed-delete dirs must be gone from disk.
+        for c in p["completed"]:
+            if (nd / "consensus" / c["dir"]).exists():
+                failures.append(f"{nd.name}: completed-delete dir still on disk: {c['dir']}")
 
-        # NEGATIVE / eligibility relation: every reserved delete must have a retirement
-        # checkpoint at or behind the GC floor (a necessary condition of the four-
-        # condition gate -- a future retirement can never be an ancestor of GC). A
-        # reserve with retirement_seqno > gc_seqno would be a wrongful reservation.
-        for r in node_reserves:
-            if int(r["ret"]) > int(r["gc"]):
-                eligibility_violations.append(
-                    f"{nd.name}: reserved {r['dir']} with retirement_seqno={r['ret']} > gc_seqno={r['gc']}"
-                )
-
-        # RETENTION (should-NOT-delete over-reach): validator-group dirs (non-observer)
-        # still present on disk at run end are the live/not-yet-eligible groups the
-        # cleanup correctly left alone. Collect them and their session ids.
-        present_here = []
+        # retention: validator-group dirs still present at end (live/not-yet-eligible).
+        present_here = 0
         cdir = nd / "consensus"
         if cdir.is_dir():
             for child in cdir.iterdir():
                 if child.name.startswith("consensus.") and ".observer." not in child.name:
-                    present_here.append(child.name)
-                    # dir shape: consensus.<wc>.<shard>.<cc>.<session_hex>
+                    present_here += 1
                     parts = child.name.split(".")
                     if len(parts) >= 5:
                         present_sessions.add(parts[4])
-        present_validator_dirs_total += len(present_here)
+        present_validator_dirs_total += present_here
 
-        for r in node_completed:
-            deleted_sessions.add(r["session"])
+        # LIVENESS (per validator): applied an mc block AFTER its last delete, whose seqno
+        # exceeds the GC floor its deletes used -> it kept validating through cleanup.
+        progressed_after_delete = None
+        max_applied = max(applied_seqnos, default=None)
+        max_validated = max(validate_seqnos, default=None)
+        if is_validator:
+            validator_nodes.append(nd.name)
+            applied_roots_by_node[nd.name] = {s: root for s, _, root in p["applied"]}
+            if n_completed > 0:
+                gc_floor_used = max(node_gc_used, default=0)
+                after = [(s, pos) for s, pos in p["validated"]
+                         if (p["last_delete_pos"] is None or pos > p["last_delete_pos"]) and s > gc_floor_used]
+                progressed_after_delete = len(after) > 0
+                if progressed_after_delete:
+                    validators_with_progress += 1
+                else:
+                    failures.append(
+                        f"{nd.name}: no masterchain block applied after its last delete beyond gc_floor "
+                        f"{gc_floor_used} (possible stall/death through cleanup)"
+                    )
+            else:
+                progressed_after_delete = True  # no deletes on this node -> nothing to survive
+                validators_with_progress += 1
 
-        reserves += node_reserves
-        completed += node_completed
-        per_node.append(
-            {
-                "node": nd.name,
-                "reserves": len(node_reserves),
-                "completed_deletes": len(node_completed),
-                "completed_dirs_gone_from_disk": sum(1 for g in gone_on_disk if g),
-                "completed_dirs_still_present": sum(1 for g in gone_on_disk if not g),
-                "validator_dirs_present_at_end": len(present_here),
-                "last_log_ts": _last_timestamp(text),
-                "alive_after_last_delete": alive_after_last_delete,
-                "fatal_lines": len(node_fatals),
-            }
+        per_node.append({
+            "node": nd.name,
+            "has_log": True,
+            "is_validator": is_validator,
+            "completed_ordered_deletes": n_completed,
+            "ordering_violations": len(p["ordering_violations"]),
+            "gc_seqnos_used": sorted(set(node_gc_used)),
+            "max_applied_mc_seqno": max_applied,
+            "max_validated_mc_seqno": max_validated,
+            "validator_dirs_present_at_end": present_here,
+            "progressed_after_last_delete": progressed_after_delete,
+            "fatal_lines": len(p["fatals"]),
+        })
+
+    fatal_total = sum(n.get("fatal_lines", 0) for n in per_node)
+
+    # Cross-node full-block-ID agreement: at the highest masterchain milestone reached by
+    # ALL validators, every validator must have applied the SAME block (root hash) -- i.e.
+    # they are on one chain, validating together, not forked/diverged.
+    agreement_seqno = None
+    agreement_ok = True
+    if applied_roots_by_node and len(applied_roots_by_node) == (expected_validators or len(applied_roots_by_node)):
+        common = set.intersection(*(set(m.keys()) for m in applied_roots_by_node.values())) if applied_roots_by_node else set()
+        if common:
+            agreement_seqno = max(common)
+            roots = {m[agreement_seqno] for m in applied_roots_by_node.values()}
+            agreement_ok = len(roots) == 1
+
+    # --- completeness gating (INCONCLUSIVE, never silent pass) ---
+    if expected_validators is None:
+        inconclusive.append("run manifest missing validator_count; cannot confirm node completeness")
+    elif len(validator_nodes) != expected_validators:
+        inconclusive.append(
+            f"expected {expected_validators} validators (manifest) but found {len(validator_nodes)} with mc progress: "
+            f"{validator_nodes}"
         )
 
-    completed_total = len(completed)
-    all_completed_dirs_gone = all(
-        n["completed_dirs_still_present"] == 0 for n in per_node
-    )
-    # survival: on every node that did a delete, the log continued afterwards.
-    survived = all(
-        (n["alive_after_last_delete"] is None) or (n["alive_after_last_delete"] is True)
-        for n in per_node
-    )
-    # a session must never be both deleted and still present on disk.
-    deleted_and_present = sorted(deleted_sessions & present_sessions)
-
-    failures: list[str] = []
-    if completed_total == 0:
-        failures.append(
-            "no validator-group delete completed on the REAL path "
-            "(no reserve -> delete_done(gone=1) -> erase_ack triple)"
-        )
-    if max_gc_seqno == 0 and completed_total > 0:
-        failures.append("deletes fired but gc_seqno==0 (no post-genesis key block advanced the GC floor?)")
-    if not all_completed_dirs_gone:
-        failures.append("a completed-delete directory is still present on disk")
-    if not survived:
-        failures.append("a node's log did not continue after its last delete (possible death/stall through cleanup)")
-    if fatal_lines:
-        failures.append(f"{len(fatal_lines)} fatal/crash diagnostics in node logs")
-    # NEGATIVE-direction failures:
+    # --- hard failures ---
+    if ordering_violations_total:
+        failures.append(f"{ordering_violations_total} ticket(s) whose reserve/delete_done/erase_ack were OUT OF ORDER")
+    if gc_zero_completed:
+        failures.append(f"{gc_zero_completed} completed delete(s) whose own reserve had gc_seqno==0")
     if eligibility_violations:
-        failures.append(
-            f"{len(eligibility_violations)} reserve(s) with retirement_seqno > gc_seqno (deleted a non-obsolete session)"
-        )
+        failures.append(f"{len(eligibility_violations)} reserve(s) with retirement_seqno > gc_seqno")
     if completed_total > 0 and present_validator_dirs_total == 0:
         failures.append("cleanup deleted EVERY validator-group dir (no live group retained -> over-reach)")
+    deleted_and_present = sorted(deleted_sessions & present_sessions)
     if deleted_and_present:
         failures.append(f"{len(deleted_and_present)} session(s) both deleted AND still present on disk")
+    if fatal_total:
+        failures.append(f"{fatal_total} fatal/crash diagnostics in node logs")
+    if not agreement_ok:
+        failures.append(f"validators applied DIFFERENT masterchain block ids at seqno {agreement_seqno} (fork/divergence)")
+    if completed_total == 0:
+        inconclusive.append("no ordered validator-group delete completed on the real path (nothing to accept)")
 
-    verdict = "PASS" if not failures else "FAIL"
+    if failures:
+        verdict = "FAIL"
+    elif inconclusive:
+        verdict = "INCONCLUSIVE"
+    else:
+        verdict = "PASS"
+
     summary = {
         "verdict": verdict,
         "run_dir": str(run_dir),
         "source_head": _git_head(),
-        "real_path_completed_deletes": completed_total,
-        "distinct_reserved_ops": len({_key_from(r) for r in reserves}),
-        "max_gc_seqno_at_reserve": max_gc_seqno,
+        "expected_validators": expected_validators,
+        "validators_seen": validator_nodes,
+        "validators_with_progress_after_delete": validators_with_progress,
+        "real_path_ordered_completed_deletes": completed_total,
+        "max_gc_seqno_used_by_a_completed_delete": max(
+            (c for n in per_node for c in n.get("gc_seqnos_used", [])), default=0
+        ),
         "eligibility_relation_ok": not eligibility_violations,
         "eligibility_violations": eligibility_violations[:10],
+        "ordering_violations_total": ordering_violations_total,
+        "completed_with_gc_zero": gc_zero_completed,
         "validator_dirs_retained_at_end": present_validator_dirs_total,
         "sessions_both_deleted_and_present": deleted_and_present,
+        "cross_node_blockid_agreement_seqno": agreement_seqno,
+        "cross_node_blockid_agreement_ok": agreement_ok,
+        "fatal_total": fatal_total,
         "nodes": per_node,
         "failures": failures,
-        "fatal_sample": fatal_lines[:5],
-        "note": (
-            "PASS proves, on a real 4-node election-driven localnet with a real "
-            "MasterchainState GC oracle: the gated validator cleanup FIRED and COMPLETED "
-            "on the real path (positive); every reserved delete's retirement checkpoint was "
-            "at/behind the GC floor and live groups were retained (should-not-delete over-reach "
-            "guard); and every node survived past its last delete (no wrongful-deletion crash). "
-            "The EXHAUSTIVE should-NOT-delete matrix (r>=g, current/next group, unknown/mismatched "
-            "GC -> no dispatch) and post-delete restart recovery remain covered deterministically "
-            "by the C++ tests (test-validator-cleanup*, scenario 5), not by this run."
+        "inconclusive": inconclusive,
+        "scope_note": (
+            "A PASS establishes ONLY, for this run: ordered real-path deletes completed with their own "
+            "gc_seqno>0, eligibility relation held, no over-reach, and every manifest validator kept applying "
+            "masterchain blocks past its last delete. It does NOT establish the exhaustive real-node "
+            "should-NOT-delete matrix (r>=g / current-next group / unknown-mismatched GC -> no dispatch), the "
+            "production reopen fence wiring, or post-delete restart recovery -- those remain OPEN enablement "
+            "items and are NOT counted as passed by this run."
         ),
     }
-    out = run_dir / "validator-cleanup-analysis.json"
-    out.write_text(json.dumps(summary, indent=2) + "\n")
-    print(json.dumps(summary, indent=2))
-    return 0 if not failures else 1
-
-
-def _key_from(r: dict) -> tuple[str, str, str]:
-    return (r["session"], r["gen"], r["attempt"])
+    return verdict, summary
 
 
 def main() -> int:
@@ -254,7 +328,11 @@ def main() -> int:
     if run_dir is None or not run_dir.is_dir():
         print("ERROR: no run dir found; pass one explicitly", file=sys.stderr)
         return 2
-    return analyze(run_dir)
+    verdict, summary = analyze(run_dir)
+    (run_dir / "validator-cleanup-analysis.json").write_text(json.dumps(summary, indent=2) + "\n")
+    print(json.dumps(summary, indent=2))
+    # PASS -> 0, FAIL -> 1, INCONCLUSIVE -> 3 (distinct, so a wrapper never reads it as pass).
+    return {"PASS": 0, "FAIL": 1, "INCONCLUSIVE": 3}[verdict]
 
 
 if __name__ == "__main__":
