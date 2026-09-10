@@ -482,6 +482,67 @@ TEST(ValidatorCleanup, cleanup_eligible_requires_all_four_conditions) {
   ASSERT_TRUE(!validator_cleanup_eligible(r, gc, ancestor_never, cc_past, not_live, closed));
 }
 
+// The cleanup sweep deletes+erases only eligible records, keeps the rest, retries
+// unconfirmed deletions, reconciles already-gone directories, respects the delete
+// budget, and never touches a reopened (live) session.
+TEST(ValidatorCleanup, sweep_deletes_eligible_keeps_rest) {
+  // All records share shard kShard, cc 7; g=10 so cc=7 is obsolete; all closed.
+  auto gc = make_checkpoint(500);
+  auto ancestor_ok = [](const tos::BlockIdExt&) { return true; };
+  auto cc_past = [](tos::ShardIdFull s) -> std::optional<tos::CatchainSeqno> {
+    return s == kShard ? std::optional<tos::CatchainSeqno>{10} : std::nullopt;
+  };
+  auto closed = [](const tos::ValidatorSessionId&) { return true; };
+
+  std::set<std::string> live_hex;  // sessions considered live/reopened
+  auto is_live = [&](const tos::ValidatorSessionId& s) { return live_hex.count(s.to_hex()) > 0; };
+  std::set<std::string> deleter_called;
+  std::set<std::string> erased;
+  auto make_deleter = [&](const std::set<std::string>& fail_for) {
+    return [&, fail_for](const PendingValidatorConsensusDbCleanup& rec) {
+      deleter_called.insert(rec.session_id.to_hex());
+      return fail_for.count(rec.session_id.to_hex()) == 0;  // confirmed gone unless told to fail
+    };
+  };
+  auto erase = [&](const tos::ValidatorSessionId& s) { erased.insert(s.to_hex()); };
+
+  auto r1 = make_record(1, 100);
+  auto r2 = make_record(2, 100);
+  auto r3 = make_record(3, 100);
+
+  // Mixed: r2 is live (reopened) -> kept + deleter NOT called; r1, r3 deleted+erased.
+  live_hex = {r2.session_id.to_hex()};
+  deleter_called.clear();
+  erased.clear();
+  auto res = sweep_pending_validator_cleanup({r1, r2, r3}, gc, ancestor_ok, cc_past, is_live, closed,
+                                             make_deleter({}), erase, /*budget=*/10);
+  ASSERT_EQ(res.deleted, static_cast<size_t>(2));
+  ASSERT_EQ(res.kept, static_cast<size_t>(1));
+  ASSERT_TRUE(deleter_called.count(r2.session_id.to_hex()) == 0);
+  ASSERT_TRUE(erased.count(r1.session_id.to_hex()) == 1 && erased.count(r3.session_id.to_hex()) == 1);
+  ASSERT_TRUE(erased.count(r2.session_id.to_hex()) == 0);
+
+  // Unconfirmed deletion -> kept, NOT erased (retry next pass).
+  live_hex.clear();
+  deleter_called.clear();
+  erased.clear();
+  auto res2 = sweep_pending_validator_cleanup({r1}, gc, ancestor_ok, cc_past, is_live, closed,
+                                              make_deleter({r1.session_id.to_hex()}), erase, 10);
+  ASSERT_EQ(res2.deleted, static_cast<size_t>(0));
+  ASSERT_EQ(res2.kept, static_cast<size_t>(1));
+  ASSERT_TRUE(erased.empty());
+
+  // Budget limits delete attempts: 3 eligible, budget 2 -> 2 attempts, 1 deferred.
+  deleter_called.clear();
+  erased.clear();
+  auto res3 = sweep_pending_validator_cleanup({r1, r2, r3}, gc, ancestor_ok, cc_past, is_live, closed,
+                                              make_deleter({}), erase, /*budget=*/2);
+  ASSERT_EQ(res3.delete_attempts, static_cast<size_t>(2));
+  ASSERT_EQ(res3.deleted, static_cast<size_t>(2));
+  ASSERT_EQ(res3.kept, static_cast<size_t>(1));
+  ASSERT_EQ(erased.size(), static_cast<size_t>(2));
+}
+
 // Pin the literal key prefix and range end independently of the helpers, so a
 // change to the persisted key scheme (which would orphan existing on-disk
 // records) is caught, and the range end is exactly the prefix with its final

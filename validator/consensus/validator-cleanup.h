@@ -379,6 +379,58 @@ inline bool validator_cleanup_eligible(const PendingValidatorConsensusDbCleanup&
   return validator_session_is_onchain_obsolete(record, gc_checkpoint, ancestor_or_equal_of_gc, gc_shard_catchain_seqno);
 }
 
+// Outcome of one cleanup sweep pass.
+struct ValidatorCleanupSweepResult {
+  size_t deleted = 0;       // records whose directory was confirmed gone and then erased
+  size_t kept = 0;          // records retained (not eligible, deferred by budget, or delete unconfirmed)
+  size_t delete_attempts = 0;  // eligible records for which the deleter was invoked this pass
+};
+
+// Record-centric cleanup sweep (B2-6), pure over injected dependencies so the full
+// decision + delete + erase + reconciliation is unit-testable and can be driven by
+// deterministic fault injection. For each pending record:
+//   * if not eligible (validator_cleanup_eligible: not live, closed, on-chain
+//     obsolete) -> keep it;
+//   * else (bounded by `delete_budget` deleter invocations per pass) invoke the
+//     injected deleter, which deletes the directory and returns true only on
+//     confirmed removal (an already-absent directory confirms true -- this is how a
+//     crash after delete but before erase is reconciled: the still-present record
+//     is eligible, the deleter confirms absence, and the record is erased);
+//   * on confirmed removal, erase the durable record; otherwise keep it for retry.
+// Iterating RECORDS (not directories) is what lets an absent-directory record be
+// discovered and erased. The budget limits expensive filesystem work per pass; it
+// never drops a record. The caller must run this on the actor thread and keep the
+// deleter serialized against a concurrent reopen of the same session/directory
+// (validator_cleanup_eligible already re-checks is_live, but the async delete
+// itself must be fenced by the caller).
+inline ValidatorCleanupSweepResult sweep_pending_validator_cleanup(
+    const std::vector<PendingValidatorConsensusDbCleanup>& records, const BlockIdExt& gc_checkpoint,
+    const CleanupAncestorOfGcFn& ancestor_or_equal_of_gc, const GcShardCatchainSeqnoFn& gc_shard_catchain_seqno,
+    const CleanupSessionIsLiveFn& is_live, const CleanupSessionIsClosedFn& is_closed,
+    const std::function<bool(const PendingValidatorConsensusDbCleanup&)>& delete_dir,
+    const std::function<void(const ValidatorSessionId&)>& erase_record, size_t delete_budget) {
+  ValidatorCleanupSweepResult result;
+  for (const auto& record : records) {
+    if (!validator_cleanup_eligible(record, gc_checkpoint, ancestor_or_equal_of_gc, gc_shard_catchain_seqno, is_live,
+                                    is_closed)) {
+      result.kept++;
+      continue;
+    }
+    if (result.delete_attempts >= delete_budget) {
+      result.kept++;  // eligible but over budget this pass -- retried next pass
+      continue;
+    }
+    result.delete_attempts++;
+    if (delete_dir(record)) {
+      erase_record(record.session_id);
+      result.deleted++;
+    } else {
+      result.kept++;  // deletion not confirmed -- keep the record, retry later
+    }
+  }
+  return result;
+}
+
 // Monotonic adoption of a new safe checkpoint. The safe checkpoint must never
 // regress (a later-loaded older init block must not lower it), so a candidate is
 // adopted only when there is no current checkpoint or the candidate is a verified
