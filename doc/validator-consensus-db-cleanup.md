@@ -1167,3 +1167,54 @@ the no-speculative-completion-on-timeout rule; manager-level integration accepta
 (reopen during delete, stale callbacks end-to-end, restart reconciliation, real GC
 oracle); then the flip after a disk/RSS soak, post-genesis. Finding 1 stays open;
 the branch remains a deletion-safe staging state.
+
+## Async delete worker — wired (gate still off)
+
+Enablement bundle item 1 is now implemented as a separate actor,
+`ValidatorConsensusCleanupWorker` (`validator/consensus/validator-cleanup-worker.h`),
+and wired into the manager:
+
+- The blocking delete (`delete_validator_consensus_db` = RocksDb::destroy + rmrf +
+  confirmed-absent stat) runs on the worker actor, OUTSIDE the manager's own message
+  handling, instead of inline on the manager between its other messages.
+  `try_validator_consensus_db_cleanup` now dispatches each reserved delete to the
+  worker via `send_closure(..., run_delete, db_root, session, dir_name, promise)` and
+  returns; the worker is created lazily only after the gate check, so a gated-off node
+  never allocates the worker actor or its mailbox.
+- **Completion is reported exactly once, only on real completion.** The worker has no
+  timer and never reports a speculative/timeout completion; the `td::Promise<bool>`
+  continuation carries the confirmed-gone result plus the `(session, generation,
+  attempt_id)` token back to `validator_cleanup_delete_done`, which feeds
+  `on_delete_completed` (a stale/duplicate token is rejected there). The ownership
+  fence and the reservation stay held until this real completion; the durable record
+  is erased (sync) only after a confirmed delete, and the reservation released only on
+  the erase-ack. The worker re-validates the canonical directory name for the session
+  inside `delete_validator_consensus_db`, so a corrupt request cannot target an
+  arbitrary path.
+- **Threading caveat (honest):** the worker is a separate actor context, NOT a
+  dedicated OS thread. Both actors draw from the shared scheduler thread pool, so this
+  guarantees the blocking call is not a manager message, not full CPU isolation from
+  every manager message. Recorded in the worker header comment so the enablement soak
+  can decide whether a dedicated executor is warranted.
+- **Retry pacing (review P2 fix).** A completed delete attempt does NOT re-trigger the
+  cleanup pass: a delete that reports not-gone returns its entry to Pending, and an
+  unconditional re-trigger would spin a backoff-free retry loop against an undeletable
+  directory (e.g. a parent denying removal). Failed attempts instead wait for the next
+  GC-paced pass (`advance_gc`) -- that external cadence is the rate limit. Only an
+  acknowledged durable erase (`validator_cleanup_erase_acked`) re-triggers draining,
+  where re-triggers are paid for by a completed removal, so the backlog is
+  monotonically decreasing and cannot loop.
+
+Falsifiable coverage added: `test/test-validator-cleanup-worker.cpp` drives the worker
+through a real actor Scheduler -- a canonical dir is removed and reported gone
+(mutation-verified red against both a constant-`true` and a constant-`false` worker
+body), and a non-canonical dir name is refused and left on disk.
+
+**Still remaining (manager-level integration acceptance, post-genesis):** the
+retry-pacing property above (no hot loop on persistent failure; bounded re-trigger on
+progress) is structural in the manager glue and needs a manager/worker harness to
+exercise end-to-end -- it is NOT covered by the worker unit test and is added here as
+an explicit integration-acceptance item, alongside reopen-during-delete, stale
+callbacks end-to-end, restart reconciliation, and real GC-oracle boundaries. Then the
+flip after a disk/RSS soak. Finding 1 stays open; the branch remains a deletion-safe
+staging state.

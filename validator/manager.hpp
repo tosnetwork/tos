@@ -46,6 +46,7 @@
 #include "consensus/session-compat.h"
 #include "consensus/validator-cleanup.h"
 #include "consensus/validator-cleanup-manager.h"
+#include "consensus/validator-cleanup-worker.h"
 #include "queue-size-counter.hpp"
 #include "shard-block-retainer.hpp"
 #include "shard-block-verifier.hpp"
@@ -278,6 +279,10 @@ class ValidatorManagerImpl : public ValidatorManager {
   // by kValidatorConsensusCleanupEnabled until a post-genesis enablement; with the
   // gate off the adapter only accumulates shadow state and deletes nothing.
   consensus::ValidatorCleanupManager validator_cleanup_manager_;
+
+  // Dedicated actor that runs the blocking validator-DB filesystem delete off the
+  // manager actor thread (created lazily on the first gated cleanup dispatch).
+  td::actor::ActorOwn<consensus::ValidatorConsensusCleanupWorker> validator_cleanup_worker_;
 
   // Compile-time gate for enabling validator consensus-DB deletion. Deliberately
   // false: the B2-8 wiring is complete and dormant; flipping this to true (after
@@ -617,6 +622,10 @@ class ValidatorManagerImpl : public ValidatorManager {
   // builds the GC-snapshot oracles, deletes eligible directories, and erases their
   // durable records. A no-op while kValidatorConsensusCleanupEnabled is false.
   void try_validator_consensus_db_cleanup();
+  // The async delete worker reported a completed delete ATTEMPT (session,
+  // generation, attempt_id) with its confirmed-gone result: feed it to the adapter.
+  void validator_cleanup_delete_done(ValidatorSessionId session_id, td::uint64 generation, td::uint64 attempt_id,
+                                     bool confirmed_gone);
   // The durable erase for a completed validator-DB cleanup (session, generation,
   // attempt_id) committed: release the adapter reservation and drop the record.
   void validator_cleanup_erase_acked(ValidatorSessionId session_id, td::uint64 generation, td::uint64 attempt_id);
