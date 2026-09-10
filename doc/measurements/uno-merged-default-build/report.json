@@ -1,0 +1,145 @@
+{
+  "recorded_utc": "2026-09-10T01:30:47.225123+00:00",
+  "parents": {
+    "A": "98508fcfe16d1db283effe3306f860947d836f8c",
+    "B": "ca350360d07c667a4182d34f0b6cef8c7c485f4f"
+  },
+  "merged_tree": "20373d0a9f753517ffcf629c16566ff9423da486",
+  "merge_command": [
+    "git",
+    "merge",
+    "--no-ff",
+    "--no-commit",
+    "ca350360d07c667a4182d34f0b6cef8c7c485f4f"
+  ],
+  "conflicts": false,
+  "merge_commit_created": false,
+  "source": "/tmp/uno-merged-default-source",
+  "build": "/tmp/uno-merged-default-build",
+  "paths_are_real_not_symlinks": true,
+  "configure": {
+    "command": [
+      "cmake",
+      "-S",
+      "/tmp/uno-merged-default-source",
+      "-B",
+      "/tmp/uno-merged-default-build"
+    ],
+    "exit": 0,
+    "feature_overrides": [],
+    "resolved_build_type": "Debug",
+    "node_link": "OFF"
+  },
+  "attempts": [
+    {
+      "command": [
+        "cmake",
+        "--build",
+        "/tmp/uno-merged-default-build",
+        "-j32"
+      ],
+      "environment_overrides": {},
+      "exit": 2
+    },
+    {
+      "command": [
+        "cmake",
+        "--build",
+        "/tmp/uno-merged-default-build",
+        "-j32"
+      ],
+      "environment_overrides": {
+        "FUNC_BIN": "/tmp/uno-merged-default-build/crypto/func",
+        "FIFT_BIN": "/tmp/uno-merged-default-build/crypto/fift"
+      },
+      "exit": 2
+    },
+    {
+      "command": [
+        "cmake",
+        "--build",
+        "/tmp/uno-merged-default-build",
+        "-j32"
+      ],
+      "environment_overrides": {
+        "FUNC_BIN": "/tmp/uno-merged-default-build/crypto/func",
+        "FIFT_BIN": "/tmp/uno-merged-default-build/crypto/fift",
+        "TOL_STDLIB": "/tmp/uno-merged-default-source/crypto/smartcont/tol-stdlib"
+      },
+      "exit": 0
+    }
+  ],
+  "failure_inventory": [
+    {
+      "attempt": 1,
+      "target": "gen_fif_smartcont_auto_native_registry_code",
+      "reason": "required compiler is unavailable: /tmp/uno-merged-default-source/build/crypto/func",
+      "classification": "build-script tool-location dependency; actual func/fift exist under binary directory"
+    },
+    {
+      "attempt": 1,
+      "target": "gen_fif_smartcont_auto_tos_service_stablecoin_escrow_v1",
+      "reason": "required compiler is unavailable: /tmp/uno-merged-default-source/build/crypto/func",
+      "classification": "build-script tool-location dependency; actual func/fift exist under binary directory"
+    },
+    {
+      "attempt": 2,
+      "output": "jetton-minter-tol.boc",
+      "reason": "Failed to discover Tol stdlib. Please, provide env variable TOL_STDLIB referencing to tol-stdlib/ folder.",
+      "classification": "standard-library discovery dependency"
+    },
+    {
+      "attempt": 2,
+      "output": "jetton-wallet-tol.boc",
+      "reason": "Failed to discover Tol stdlib. Please, provide env variable TOL_STDLIB referencing to tol-stdlib/ folder.",
+      "classification": "standard-library discovery dependency"
+    },
+    {
+      "attempt": 2,
+      "output": "wallet-v5-tol.boc",
+      "reason": "Failed to discover Tol stdlib. Please, provide env variable TOL_STDLIB referencing to tol-stdlib/ folder.",
+      "classification": "standard-library discovery dependency"
+    },
+    {
+      "attempt": 2,
+      "output": "slice5-receive-context-tol.boc",
+      "reason": "Failed to discover Tol stdlib. Please, provide env variable TOL_STDLIB referencing to tol-stdlib/ folder.",
+      "classification": "standard-library discovery dependency"
+    },
+    {
+      "attempt": 2,
+      "output": "tos-report-bond-oracle.boc",
+      "reason": "Failed to discover Tol stdlib. Please, provide env variable TOL_STDLIB referencing to tol-stdlib/ folder.",
+      "classification": "standard-library discovery dependency"
+    }
+  ],
+  "logs": {
+    "uno-merged-default-merge.log.gz": {
+      "uncompressed_bytes": 107,
+      "uncompressed_sha256": "a8badbb2b81cdb80e3c6e7643dba5b8715b3ceac21037b3803f3c5d6b1d910f8"
+    },
+    "uno-merged-default-configure.log.gz": {
+      "uncompressed_bytes": 1186849,
+      "uncompressed_sha256": "dc432e1d146efe1a093f4e334ad2c4ccaf81f475994017e88e1a2d0235deb188"
+    },
+    "uno-merged-default-build.log.gz": {
+      "uncompressed_bytes": 232962,
+      "uncompressed_sha256": "069b5e06643f8676bcfbdfdac8540be7dcf4c383c48f2e55fe309c9f9f9e364d"
+    },
+    "uno-merged-default-build-explicit-tools.log.gz": {
+      "uncompressed_bytes": 24756,
+      "uncompressed_sha256": "a82ea6e3d49cd368e1c3af4a59d4337b90717b225c18448e8caae699f9981509"
+    },
+    "uno-merged-default-build-explicit-tools-stdlib.log.gz": {
+      "uncompressed_bytes": 40147,
+      "uncompressed_sha256": "7c5c8104c5759bb5e127bf5d526ae682dd117a57eb3cb0f977bee40fe437d1f9"
+    }
+  },
+  "tracked_worktree_changes_during_build": [],
+  "conclusion": "Default all target completed on the true merged source, starting with an empty independent build directory. Two failed attempts preceded completion; retries changed only explicit tool/stdlib environment paths, not merged source or CMake feature configuration. Unqualified out-of-source default build remains affected by these path-discovery assumptions.",
+  "scope": [
+    "Build only: no CTest regression or transfer of historical deferrals.",
+    "No activation or execution gate changed.",
+    "No merge commit created or pushed; the pending disposable merge is aborted after recording its exact tree."
+  ]
+}
