@@ -13,6 +13,7 @@
 #include "vm/vm.h"
 
 #include "workchain-m3-scenario.h"
+#include "workchain-m3-test-funding.h"
 #include "workchain-proof-test-access.h"
 using namespace block;
 using namespace block::m3_test;
@@ -409,9 +410,24 @@ class PureBackend final : public ScenarioBackend {
            {"aux_blind", "1"},
            {"fee", "0"}};
     auto pts = words(wallet("seed", q).at("available"));
-    a.available = {pts.at(0), pts.at(1)};
-    TRY_RESULT(encoded, encode_workchain_confidential_account(a));
-    state_.accounts[owner] = roundtrip(encoded);
+    WorkchainCiphertext available{pts.at(0), pts.at(1)};
+    TRY_RESULT(funded, fund_registered_test_account(native_accounts_, a.address.account, available, 1234));
+    auto persisted = roundtrip(funded);
+    vm::AugmentedDictionary dictionary(vm::load_cell_slice_ref(persisted), 256, block::tlb::aug_ShardAccounts);
+    Account readback(2, a.address.account.bits());
+    if (!readback.unpack(dictionary.lookup(a.address.account), 1234, false))
+      return alarm("funded Native account cannot reload");
+    TRY_RESULT(decoded, decode_workchain_confidential_account(readback.data));
+    TRY_RESULT(value_readback, decrypt(decoded.available, wallet_secret(owner), 1000000));
+    TRY_STATUS(assert_balance(value_readback, value));
+    // Repeat funding and missing-account edits must not silently replace state.
+    if (fund_registered_test_account(persisted, a.address.account, available, 1234).is_ok() ||
+        fund_registered_test_account(persisted, td::Bits256::zero(), available, 1234).is_ok())
+      return alarm("test funding accepted a nonempty or absent account");
+    native_accounts_ = std::move(persisted);
+    state_.accounts[owner] = readback.data;
+    std::cout << "TEST funding: Native ShardAccounts readback=" << value_readback
+              << "; assumed initial balance, NOT verified M4 Deposit\n";
     wallets_[owner].value = value;
     wallets_[owner].blind = 23;
     return td::Status::OK();
