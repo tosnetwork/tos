@@ -123,12 +123,11 @@ TEST(ConsensusDbPath, root_is_under_the_db_root) {
 // queued-only directory is skipped) makes reclaimed == 0 and leaves it queued.
 TEST(ConsensusDbSweep, reclaims_queued_directory) {
   auto root = make_temp_root();
-  auto name = consensus_db_dir_name(kShard, 7, make_session_id(9), td::Slice(""));
+  auto name = consensus_db_dir_name(kShard, 7, make_session_id(9), td::Slice(".observer.ab"));
   create_group_dir(root, name);
 
   std::set<std::string> pending{name};
-  std::set<tos::ValidatorSessionId> destroyed;
-  auto stats = sweep_orphaned_consensus_dbs(root, pending, destroyed, confirming_deleter);
+  auto stats = sweep_orphaned_consensus_dbs(root, pending, confirming_deleter);
 
   ASSERT_TRUE(stats.walk_succeeded);
   ASSERT_EQ(stats.reclaimed, static_cast<size_t>(1));
@@ -137,34 +136,19 @@ TEST(ConsensusDbSweep, reclaims_queued_directory) {
   td::rmrf(root).ignore();
 }
 
-// A pre-upgrade directory recorded only by destroyed session id (not queued) is
-// still migrated (deleted) as a legacy fallback.
-TEST(ConsensusDbSweep, migrates_legacy_destroyed_directory) {
+// A validator directory (no observer suffix) that is NOT in the queue must never
+// be deleted by the sweep, whatever else is on disk. Validator-group cleanup is
+// checkpoint-bound in the manager (Finding 1 / PR B), never a fence match here,
+// so a still-recreatable session can never lose its consensus state at startup.
+// If the sweep regained a by-session-id deletion path, this would fail.
+TEST(ConsensusDbSweep, never_sweeps_unqueued_validator_directory) {
   auto root = make_temp_root();
-  auto sid = make_session_id(11);
-  auto name = consensus_db_dir_name(kShard, 3, sid, td::Slice(""));
+  auto name = consensus_db_dir_name(kShard, 4, make_session_id(13), td::Slice(""));  // validator dir
   create_group_dir(root, name);
 
-  std::set<std::string> pending;
-  std::set<tos::ValidatorSessionId> destroyed{sid};
-  auto stats = sweep_orphaned_consensus_dbs(root, pending, destroyed, confirming_deleter);
-
-  ASSERT_EQ(stats.reclaimed, static_cast<size_t>(1));
-  ASSERT_TRUE(!dir_exists(root, name));
-  td::rmrf(root).ignore();
-}
-
-// A directory that is neither queued nor recorded destroyed is a live/unrelated
-// group and must never be touched.
-TEST(ConsensusDbSweep, leaves_unrelated_directory) {
-  auto root = make_temp_root();
-  auto name = consensus_db_dir_name(kShard, 3, make_session_id(1), td::Slice(""));
-  create_group_dir(root, name);
-
-  std::set<std::string> pending;
-  std::set<tos::ValidatorSessionId> destroyed;
+  std::set<std::string> pending;  // empty queue: validators are never queued
   bool deleter_called = false;
-  auto stats = sweep_orphaned_consensus_dbs(root, pending, destroyed, [&](td::CSlice) {
+  auto stats = sweep_orphaned_consensus_dbs(root, pending, [&](td::CSlice) {
     deleter_called = true;
     return true;
   });
@@ -176,36 +160,23 @@ TEST(ConsensusDbSweep, leaves_unrelated_directory) {
   td::rmrf(root).ignore();
 }
 
-// A legacy (destroyed-session) directory -- i.e. a validator directory reached
-// only via the tombstone gate -- whose deletion fails must NOT be queued. Its
-// retry stays gated on the tombstone, so once the tombstone is pruned the sweep
-// must leave it alone rather than delete it through the queue (which could
-// destroy the consensus state of a session that is recreated). This is the
-// safety property the observers-only narrowing must hold; queuing it on failure
-// (the earlier bug) makes the first assertion fail.
-TEST(ConsensusDbSweep, failed_legacy_deletion_is_not_queued_and_stays_tombstone_gated) {
+// A directory that is not queued is a live/unrelated group and must never be
+// touched (observer or validator alike).
+TEST(ConsensusDbSweep, leaves_unqueued_directory) {
   auto root = make_temp_root();
-  auto sid = make_session_id(13);
-  auto name = consensus_db_dir_name(kShard, 4, sid, td::Slice(""));  // validator dir (no suffix)
+  auto name = consensus_db_dir_name(kShard, 3, make_session_id(1), td::Slice(""));
   create_group_dir(root, name);
 
-  // First sweep: tombstone present, deletion fails -> must NOT enter the queue.
   std::set<std::string> pending;
-  std::set<tos::ValidatorSessionId> destroyed{sid};
-  auto s1 = sweep_orphaned_consensus_dbs(root, pending, destroyed, [](td::CSlice) { return false; });
-  ASSERT_EQ(s1.failed, static_cast<size_t>(1));
-  ASSERT_TRUE(pending.empty());
-
-  // Second sweep after the tombstone is pruned: no queue entry survives, so the
-  // directory must not be touched -- exactly as #72 would leave it.
-  destroyed.clear();
   bool deleter_called = false;
-  auto s2 = sweep_orphaned_consensus_dbs(root, pending, destroyed, [&](td::CSlice) {
+  auto stats = sweep_orphaned_consensus_dbs(root, pending, [&](td::CSlice) {
     deleter_called = true;
     return true;
   });
+
+  ASSERT_TRUE(stats.walk_succeeded);
+  ASSERT_EQ(stats.reclaimed, static_cast<size_t>(0));
   ASSERT_TRUE(!deleter_called);
-  ASSERT_EQ(s2.reclaimed, static_cast<size_t>(0));
   ASSERT_TRUE(dir_exists(root, name));
   td::rmrf(root).ignore();
 }
@@ -214,12 +185,11 @@ TEST(ConsensusDbSweep, failed_legacy_deletion_is_not_queued_and_stays_tombstone_
 // retry rather than dropping it (which would leak the orphan).
 TEST(ConsensusDbSweep, unconfirmed_deletion_stays_queued) {
   auto root = make_temp_root();
-  auto name = consensus_db_dir_name(kShard, 3, make_session_id(2), td::Slice(""));
+  auto name = consensus_db_dir_name(kShard, 3, make_session_id(2), td::Slice(".observer.cd"));
   create_group_dir(root, name);
 
   std::set<std::string> pending{name};
-  std::set<tos::ValidatorSessionId> destroyed;
-  auto stats = sweep_orphaned_consensus_dbs(root, pending, destroyed, [](td::CSlice) { return false; });
+  auto stats = sweep_orphaned_consensus_dbs(root, pending, [](td::CSlice) { return false; });
 
   ASSERT_EQ(stats.failed, static_cast<size_t>(1));
   ASSERT_TRUE(pending.count(name) == 1);
@@ -230,11 +200,10 @@ TEST(ConsensusDbSweep, unconfirmed_deletion_stays_queued) {
 // already deleted (its dequeue was lost to a crash), so it is reconciled away.
 TEST(ConsensusDbSweep, reconciles_already_gone_entry_after_successful_walk) {
   auto root = make_temp_root();  // consensus/ exists but is empty
-  auto name = consensus_db_dir_name(kShard, 3, make_session_id(5), td::Slice(""));
+  auto name = consensus_db_dir_name(kShard, 3, make_session_id(5), td::Slice(".observer.ef"));
 
   std::set<std::string> pending{name};
-  std::set<tos::ValidatorSessionId> destroyed;
-  auto stats = sweep_orphaned_consensus_dbs(root, pending, destroyed, confirming_deleter);
+  auto stats = sweep_orphaned_consensus_dbs(root, pending, confirming_deleter);
 
   ASSERT_TRUE(stats.walk_succeeded);
   ASSERT_TRUE(pending.empty());
@@ -246,11 +215,10 @@ TEST(ConsensusDbSweep, reconciles_already_gone_entry_after_successful_walk) {
 TEST(ConsensusDbSweep, keeps_queue_when_walk_fails) {
   auto root = PSTRING() << "test-consensus-sweep-missing-" << td::Random::fast_uint32();
   td::rmrf(root).ignore();  // neither root nor root/consensus exists
-  auto name = consensus_db_dir_name(kShard, 3, make_session_id(6), td::Slice(""));
+  auto name = consensus_db_dir_name(kShard, 3, make_session_id(6), td::Slice(".observer.gh"));
 
   std::set<std::string> pending{name};
-  std::set<tos::ValidatorSessionId> destroyed;
-  auto stats = sweep_orphaned_consensus_dbs(root, pending, destroyed, [](td::CSlice) { return true; });
+  auto stats = sweep_orphaned_consensus_dbs(root, pending, [](td::CSlice) { return true; });
 
   ASSERT_TRUE(!stats.walk_succeeded);
   ASSERT_TRUE(pending.count(name) == 1);

@@ -2395,18 +2395,19 @@ void ValidatorManagerImpl::sweep_destroyed_consensus_dbs() {
   // ever own that directory again, and nothing else deletes it.
   //
   // Reclaim those here, once, before any group starts. The authoritative list
-  // is pending_consensus_db_cleanup_ (exact directory names). A database written
-  // before that queue existed is recorded only by session id, so
-  // destroyed_validator_sessions_ is honored as a legacy fallback and any such
-  // directory is migrated into the queue by being deleted here too. A name this
-  // cannot parse belongs to something else and is left alone.
+  // is pending_consensus_db_cleanup_ (exact directory names), which holds only
+  // observer directories. Validator-group directories are NOT swept by fence
+  // match: a validator session can be legitimately recreated, so deleting its
+  // directory here would destroy live consensus state. Validator-group cleanup is
+  // checkpoint-bound and handled by the manager (Finding 1 / PR B), not this
+  // startup sweep.
   // The walk + decision + reconciliation logic lives in a testable helper; the
   // deleter here does the real removal and confirms it with stat() (rmrf()
   // ignores unlink/rmdir errors, so its own status is not proof of removal --
   // only a "not found" proves the directory is gone).
   auto before = pending_consensus_db_cleanup_;
   auto stats = consensus::sweep_orphaned_consensus_dbs(
-      db_root_, pending_consensus_db_cleanup_, destroyed_validator_sessions_, [](td::CSlice full) -> bool {
+      db_root_, pending_consensus_db_cleanup_, [](td::CSlice full) -> bool {
         td::RocksDb::destroy(full.str() + "/db/").ignore();
         td::rmrf(full).ignore();
         auto probe = td::stat(full);
