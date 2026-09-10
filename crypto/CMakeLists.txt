@@ -553,7 +553,9 @@ if (NOT CMAKE_CROSSCOMPILING OR USE_EMSCRIPTEN)
   add_custom_command(
     COMMENT "Verify and embed the frozen TOS Native Service Registry BOC"
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-    COMMAND ${CMAKE_SOURCE_DIR}/scripts/embed-tos-service-native-registry-v1.sh
+    COMMAND ${CMAKE_COMMAND} -E env
+      "FUNC_BIN=$<TARGET_FILE:func>" "FIFT_BIN=$<TARGET_FILE:fift>"
+      ${CMAKE_SOURCE_DIR}/scripts/embed-tos-service-native-registry-v1.sh
       ${NATIVE_REGISTRY_CPP} native-registry
     MAIN_DEPENDENCY smartcont/native-registry-code.fc
     DEPENDS func fift smartcont/stdlib.fc
@@ -570,7 +572,9 @@ if (NOT CMAKE_CROSSCOMPILING OR USE_EMSCRIPTEN)
   add_custom_command(
     COMMENT "Verify and embed the frozen TOS Service Protocol stablecoin escrow v1 BOC"
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-    COMMAND ${CMAKE_SOURCE_DIR}/scripts/embed-tos-service-stablecoin-escrow-v1.sh
+    COMMAND ${CMAKE_COMMAND} -E env
+      "FUNC_BIN=$<TARGET_FILE:func>" "FIFT_BIN=$<TARGET_FILE:fift>"
+      ${CMAKE_SOURCE_DIR}/scripts/embed-tos-service-stablecoin-escrow-v1.sh
       ${TOS_SERVICE_STABLECOIN_ESCROW_CPP} tos-service-stablecoin-escrow-v1
     MAIN_DEPENDENCY smartcont/tos-service-stablecoin-escrow-v1.fc
     DEPENDS func fift smartcont/stdlib.fc
@@ -588,7 +592,9 @@ if (NOT CMAKE_CROSSCOMPILING OR USE_EMSCRIPTEN)
   add_custom_command(
     COMMENT "Verify and embed the frozen TOS Service Protocol stablecoin escrow v2 BOC"
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-    COMMAND ${CMAKE_SOURCE_DIR}/scripts/embed-tos-service-stablecoin-escrow-v2.sh
+    COMMAND ${CMAKE_COMMAND} -E env
+      "FUNC_BIN=$<TARGET_FILE:func>" "FIFT_BIN=$<TARGET_FILE:fift>"
+      ${CMAKE_SOURCE_DIR}/scripts/embed-tos-service-stablecoin-escrow-v2.sh
       ${TOS_SERVICE_STABLECOIN_ESCROW_V2_CPP} tos-service-stablecoin-escrow-v2
     MAIN_DEPENDENCY smartcont/tos-service-stablecoin-escrow-v2.fc
     DEPENDS func fift smartcont/stdlib.fc
