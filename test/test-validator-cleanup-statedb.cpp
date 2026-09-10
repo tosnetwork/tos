@@ -152,6 +152,35 @@ TEST(ValidatorCleanupStateDb, scan_excludes_valid_records_outside_bounds) {
   td::rmrf(path).ignore();
 }
 
+// A record whose VALUE is internally valid but is stored under a DIFFERENT
+// session's key must not be loaded: the key and the value's session id must
+// agree, or an erase-by-session could never remove it and it would reappear.
+// Also covers a non-canonical in-range key carrying a valid value.
+TEST(ValidatorCleanupStateDb, mismatched_key_and_value_is_dropped) {
+  auto path = temp_db_path();
+  {
+    auto kv = td::RocksDb::open(path).move_as_ok();
+
+    auto good = make_record(9, 100);
+    store_validator_cleanup_record(kv, good);
+
+    // Valid record for session B stored under session A's key.
+    auto record_b = make_record(200, 150);
+    put_raw(kv, td::Slice{validator_cleanup_key(make_session_id(201))},
+            td::Slice{encode_validator_cleanup_record(record_b)});
+
+    // A valid record value under a non-canonical (too-short) in-range key.
+    auto record_c = make_record(202, 160);
+    put_raw(kv, td::Slice{std::string("tos.state.pending_validator_consensus_db_cleanup.deadbeef")},
+            td::Slice{encode_validator_cleanup_record(record_c)});
+
+    auto loaded = load_validator_cleanup_records(kv);
+    ASSERT_EQ(loaded.size(), static_cast<size_t>(1));
+    ASSERT_TRUE(loaded[0] == good);
+  }
+  td::rmrf(path).ignore();
+}
+
 // Storing the same session again overwrites: one record, the latest value.
 TEST(ValidatorCleanupStateDb, same_session_overwrites) {
   auto path = temp_db_path();

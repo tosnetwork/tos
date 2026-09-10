@@ -349,6 +349,30 @@ Two additional danger tests:
 5. There must be crash-boundary fault-injection tests — above all the
    "delete fail -> tombstone prune -> restart -> session recreated" history.
 
+## PR B integration boundaries (from the PR A review — not reusable as-is)
+
+These note where PR A's base components cannot simply be wired together when PR B
+activates deletion:
+
+1. **The store helper cannot nest inside a combined retirement transaction.**
+   `store_validator_cleanup_record` runs its own `begin_write_batch` /
+   `commit_write_batch`, and `RocksDb::begin_write_batch` creates a fresh batch
+   without protecting one already open. So PR B must NOT do
+   `outer begin -> write fence -> store_validator_cleanup_record() -> outer commit`
+   (that can reset the outer batch). Provide a single StateDb retirement operation
+   that writes {fence + cleanup record + checkpoint relation} in one batch, or
+   split "add to an existing batch" from "standalone synced write" as two explicit
+   APIs. (No current nesting exists; StateDb calls the helper standalone, so this
+   is not a PR A regression.)
+
+2. **Full-load is not a bounded-queue proof.** The loader reads all valid records
+   into a vector and the manager holds them in a resident map, so startup memory
+   grows with the backlog. There are no production enqueue callers yet, so this is
+   not a live leak. When PR B enables enqueue, cover a long-running
+   delete-failure backlog and consider chunked scanning, a per-record size bound,
+   and queue metrics — but memory must NOT be bounded by dropping cleanup records
+   (that turns a backlog back into unrecoverable orphan directories).
+
 ## One-line summary
 
 Split `destroyed_validator_sessions_` from a mixed lifecycle+GC-authority set
@@ -442,13 +466,29 @@ deletion for retention. Reconcile by **iterating records**, not only existing
 directories: a crash after removal but before dequeue leaves an absent-directory
 record that a directory walk (`manager.cpp:2362`) would never discover.
 
-### PR A acceptance (amended)
+### Acceptance split (PR A delivered vs PR B required)
 
-Name the post-applied handle-flush acknowledgement as the durable-applied signal;
-define the ancestry comparison and fail-closed rule; choose and document the
-enforceable rollback-floor policy (2a or 2b); keep all new state observational
-(defer fence-pruning and lifecycle changes to PR B); implement the selection-only
-startup reconstruction without using tombstones as proof; define non-rotated
-retention/progress and record-driven (not directory-driven) reconciliation. Tests
-must exercise backward init, alternate branches, application-flush crashes, and
-delayed actor shutdown — not merely helper predicates.
+The amendments above were written when the selection-only pass and checkpoint
+derivation were still scoped into PR A; they have since moved to PR B (see
+"Delivered / remaining" under the two-PR split). To avoid any misreading that
+PR A delivers the full state machine, the acceptance is split here:
+
+**PR A (delivered, observational):** the ancestry-based fail-closed predicate and
+the monotonic safe-checkpoint guard as pure functions; the masterchain/full
+checkpoint requirement; the canonical-directory codec; durable per-session
+persistence and the shadow startup load; the key/value session-id binding on
+load. All new state observational — no change to fence contents/pruning,
+selection, destroy scheduling, or sweep inputs. Covered by falsifiable unit and
+real-RocksDb tests.
+
+**PR B (required before deletion is enabled):** name the post-applied
+handle-flush acknowledgement as the durable-applied signal and build the
+`durable_safe_cleanup_checkpoint` derivation; supply the concrete ancestry oracle
+wired to real chain state; **choose and implement the enforceable rollback-floor
+policy (2a or 2b) — an unrevertable boundary, not merely a monotonic variable**;
+implement the side-effect-free current+next recreatable-session reconstruction
+without using tombstones as proof; define non-rotated retention/progress and
+record-driven (not directory-driven) reconciliation; and the persist-before-
+destroy + stop/close-without-delete flow. Tests must exercise backward init,
+alternate branches, application-flush crashes, and delayed actor shutdown — the
+crash fault-injection matrix above — not merely helper predicates.

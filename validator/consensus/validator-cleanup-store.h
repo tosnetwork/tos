@@ -53,11 +53,20 @@ inline void erase_validator_cleanup_record(td::KeyValue& kv, const ValidatorSess
 inline std::vector<PendingValidatorConsensusDbCleanup> load_validator_cleanup_records(td::KeyValueReader& kv) {
   std::vector<PendingValidatorConsensusDbCleanup> records;
   auto end = validator_cleanup_key_range_end();
-  kv.for_each_in_range(validator_cleanup_key_prefix(), td::Slice{end}, [&records](td::Slice, td::Slice value) {
+  kv.for_each_in_range(validator_cleanup_key_prefix(), td::Slice{end}, [&records](td::Slice key, td::Slice value) {
       auto decoded = decode_validator_cleanup_record(value);
-      if (decoded) {
-        records.push_back(std::move(decoded.value()));
+      if (!decoded) {
+        return td::Status::OK();
       }
+      // The value's session id is checked against its directory name by decode,
+      // but the record must ALSO sit under its own key. A record found under a
+      // different session's key is inconsistent persistence: drop it, so an
+      // erase-by-session (which targets validator_cleanup_key(session_id)) can
+      // never leave a mismatched record behind to reappear on the next load.
+      if (key != td::Slice{validator_cleanup_key(decoded.value().session_id)}) {
+        return td::Status::OK();
+      }
+      records.push_back(std::move(decoded.value()));
       return td::Status::OK();
     }).ensure();
   return records;
