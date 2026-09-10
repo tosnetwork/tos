@@ -36,6 +36,11 @@ uno_v2_operation_network_v1 global_id:int32 genesis_hash:bits256 workchain_insta
   = UnoV2OperationNetworkV1;
 uno_v2_operation_identity_v1 kind:(## 8) { kind >= 1 } { kind <= 2 } auth_nonce:uint64
   network:^UnoV2OperationNetworkV1 source:^UnoV2AccountAddress = UnoV2OperationIdentityV1;
+// Section 7.3 identity derivation; only the numeric Close=4 assignment is an
+// M3 implementation choice, not a frozen specification allocation. Keeping a
+// separate constructor in this family preserves existing SEND/COLLECT IDs.
+uno_v2_closure_identity_v1 kind:(## 8) { kind = 4 } auth_nonce:uint64
+  network:^UnoV2OperationNetworkV1 source:^UnoV2AccountAddress = UnoV2OperationIdentityV1;
 uno_v2_transfer_claims_v1 auth_nonce:uint64 available_revision:uint64 key_epoch:uint32
   expiry_height:uint32 authorized_fee:uint64 source:^UnoV2AccountAddress = UnoV2TransferClaimsV1;
 uno_v2_send_ciphertext_v1 commitment:bits256 sender_handle:bits256 recipient_handle:bits256

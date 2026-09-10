@@ -154,7 +154,27 @@ inline td::Result<td::Bits256> derive_workchain_operation_id(
   if (kind != 1 && kind != 2) return invalid("unknown confidential operation kind");
   TRY_RESULT(net, pack(network));
   TRY_RESULT(address, pack(source));
-  TRY_RESULT(root, pack(gen::UnoV2OperationIdentityV1::Record{kind, auth_nonce, net, address}));
+  TRY_RESULT(root, pack(gen::UnoV2OperationIdentityV1::Record_uno_v2_operation_identity_v1{kind, auth_nonce, net, address}));
+  return root->get_hash().bits();
+}
+
+// Section 7.3: network/workchain instance, full source/incarnation, operation
+// kind and consumed nonce derive the logical identity before applying anything.
+// Only the numeric host Close=4 assignment is an M3 implementation choice whose
+// specification allocation is unfrozen; it is NOT a new crypto relation ID.
+// Old revision is already known, not a future result: the proof context binds it
+// as the state being authorized. It is deliberately outside this identity tuple.
+// No resulting revision, proof, claimed digest, future LT or block hash enters
+// this preimage. The host supplies authenticated values and consumes nonce once;
+// this encoding helper performs neither acquisition nor a replay verdict.
+inline td::Result<td::Bits256> derive_workchain_closure_operation_id(
+    const gen::UnoV2OperationNetworkV1::Record& network, const WorkchainConfidentialAddress& source,
+    std::uint64_t consumed_nonce) {
+  using namespace confidential_input_detail;
+  TRY_RESULT(net, pack(network));
+  TRY_RESULT(address, pack(source));
+  TRY_RESULT(root, pack(gen::UnoV2OperationIdentityV1::Record_uno_v2_closure_identity_v1{
+      4, consumed_nonce, net, address}));
   return root->get_hash().bits();
 }
 

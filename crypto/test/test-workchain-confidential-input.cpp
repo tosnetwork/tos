@@ -323,3 +323,48 @@ TEST(ConfidentialInput, PermanentRegistrationAndClosure) {
     ASSERT_EQ(before->get_hash(), after->get_hash());
   }
 }
+
+TEST(ConfidentialInput, ClosureIdentityRecomputedFromAuthenticatedInputs) {
+  using namespace block;
+  const gen::UnoV2OperationNetworkV1::Record authenticated_network{37, number(31), number(32)};
+  const WorkchainConfidentialAddress authenticated_source{2, number(33), number(34)};
+  const std::uint64_t consumed_nonce = 19;
+  const auto recomputed = derive_workchain_closure_operation_id(
+      authenticated_network, authenticated_source, consumed_nonce).move_as_ok();
+  WorkchainClosureReplayInput closure{recomputed, replay_context(), {}};
+  closure.context.subject = authenticated_source;
+  closure.context.auth_nonce = consumed_nonce;
+  closure.context.protocol.global_id = authenticated_network.global_id;
+  closure.context.protocol.genesis_hash = authenticated_network.genesis_hash;
+  closure.context.protocol.workchain_instance = authenticated_network.workchain_instance;
+  auto persisted = encode_workchain_replay_input(WorkchainReplayInput{closure}).move_as_ok();
+  auto decoded = decode_workchain_replay_input(recover_input(structural_block(persisted))).move_as_ok();
+  ASSERT_TRUE(check_workchain_claimed_operation_id(decoded, recomputed).is_ok());
+  closure.claimed_operation_id = number(99);
+  auto forged = decode_workchain_replay_input(encode_workchain_replay_input(WorkchainReplayInput{closure})
+      .move_as_ok()).move_as_ok();
+  // The claimed digest is decoded, but never becomes any derivation input.
+  auto rejected = check_workchain_claimed_operation_id(forged,
+      derive_workchain_closure_operation_id(authenticated_network, authenticated_source, consumed_nonce).move_as_ok());
+  ASSERT_TRUE(rejected.is_error());
+  ASSERT_EQ(rejected.code(), static_cast<int>(WorkchainExecutionFailure::CandidateInvalid));
+  ASSERT_EQ(rejected.message(), "claimed operationID mismatch");
+
+  ASSERT_TRUE(derive_workchain_operation_id(authenticated_network, authenticated_source, 1, consumed_nonce)
+      .move_as_ok() != recomputed);
+  ASSERT_TRUE(derive_workchain_operation_id(authenticated_network, authenticated_source, 2, consumed_nonce)
+      .move_as_ok() != recomputed);
+  ASSERT_TRUE(derive_workchain_closure_operation_id(authenticated_network, authenticated_source, consumed_nonce + 1)
+      .move_as_ok() != recomputed);
+  auto network = authenticated_network; network.workchain_instance = number(35);
+  ASSERT_TRUE(derive_workchain_closure_operation_id(network, authenticated_source, consumed_nonce).move_as_ok() != recomputed);
+  auto source = authenticated_source; source.instance = number(36);
+  ASSERT_TRUE(derive_workchain_closure_operation_id(authenticated_network, source, consumed_nonce).move_as_ok() != recomputed);
+  source = authenticated_source; source.account = number(37);
+  ASSERT_TRUE(derive_workchain_closure_operation_id(authenticated_network, source, consumed_nonce).move_as_ok() != recomputed);
+  auto before = encode_workchain_replay_context(closure.context, WorkchainReplayOperation::Closure).move_as_ok();
+  ++closure.context.available_revision;
+  ASSERT_TRUE(encode_workchain_replay_context(closure.context, WorkchainReplayOperation::Closure).move_as_ok() != before);
+  ASSERT_EQ(derive_workchain_closure_operation_id(authenticated_network, authenticated_source, consumed_nonce)
+      .move_as_ok(), recomputed);
+}
