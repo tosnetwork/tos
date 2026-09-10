@@ -233,6 +233,40 @@ retirement record and the directory deletion) and is safe relative to #72; it
 does not claim the full no-recreation invariant, which requires the deferred
 checkpoint-relative pruning rework.
 
+## Final design (2026-09-10) — observers-only queue (supersedes the above)
+
+A second implementation review found the earlier "safe relative to #72" claim
+too strong: a *validator* directory placed in the cleanup queue can, across a
+failed-first-sweep plus the Finding-1 coarse-pruning replay plus another restart,
+be deleted after its tombstone is gone but while its session is again
+recreatable — deleting a live validator's consensus DB. #72 would skip that
+directory (its gate required the now-absent tombstone). Because the queue's whole
+benefit (surviving tombstone pruning) is also this risk, closing the *validator*
+orphan window safely genuinely requires the deferred checkpoint-relative pruning
+rework — it cannot be done in this PR's scope.
+
+The PR is therefore narrowed to **observer directories only**:
+
+- **Observers** are queued (exact directory names), persisted before the observer
+  actors are destroyed, and swept/reconciled at startup. An observer consensus DB
+  carries no votes or leader state, so deleting one and re-syncing loses nothing
+  consensus-relevant — the queue's premature-deletion risk is harmless here. And
+  observer directories are **not** covered by `destroyed_validator_sessions_`, so
+  #72 never cleaned their orphans at all; this closes a real leak with no safety
+  cost.
+- **Validator / tentative** directory cleanup is left **exactly as #72**: gated on
+  `destroyed_validator_sessions_`, never on the queue. This change does not alter
+  their retirement/persist/delete path, so it introduces no validator-safety
+  regression. Their orphan-on-tombstone-pruning window (Finding 1) is unchanged
+  and remains a tracked follow-up requiring checkpoint-relative pruning.
+
+The sweep helper (`sweep_orphaned_consensus_dbs`) still deletes a directory whose
+name is queued **or** whose parsed session id is in the destroyed set; with the
+manager only ever queuing observers, the queued path affects observers and the
+legacy destroyed-set path reproduces #72 for validators. `retire_consensus_sessions`
+(the atomic destroyed+pending batch) is removed: observers need no ordering
+against the destroyed set.
+
 ## Open questions for review
 
 1. Is a new persisted TL field the right mechanism, or should the pending queue

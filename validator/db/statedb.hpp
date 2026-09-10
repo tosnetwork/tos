@@ -44,8 +44,6 @@ class StateDb : public td::actor::Actor {
   void update_destroyed_validator_sessions(std::vector<ValidatorSessionId> sessions, td::Promise<td::Unit> promise);
   void get_destroyed_validator_sessions(td::Promise<std::vector<ValidatorSessionId>> promise);
 
-  void retire_consensus_sessions(std::vector<ValidatorSessionId> destroyed_sessions,
-                                 std::vector<std::string> pending_cleanup_dirs, td::Promise<td::Unit> promise);
   void update_pending_consensus_db_cleanup(std::vector<std::string> dirs, td::Promise<td::Unit> promise);
   void get_pending_consensus_db_cleanup(td::Promise<std::vector<std::string>> promise);
 

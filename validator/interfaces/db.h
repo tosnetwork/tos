@@ -132,22 +132,13 @@ class Db : public td::actor::Actor {
                                                    td::Promise<td::Unit> promise) = 0;
   virtual void get_destroyed_validator_sessions(td::Promise<std::vector<ValidatorSessionId>> promise) = 0;
 
-  // Consensus-DB cleanup queue: the exact directory names of retired validator
-  // groups whose per-group consensus RocksDB must still be deleted. Stored
-  // separately from destroyed_validator_sessions_ because the two have
-  // different lifetimes (see doc/consensus-db-cleanup-queue.md): a "do not
-  // recreate" id is pruned once the init block rotates past it, but a directory
-  // must stay queued until it is confirmed gone.
-  //
-  // retire_consensus_sessions writes the destroyed-session set and the pending
-  // cleanup directories in a single atomic batch, so a crash can never leave a
-  // directory queued for deletion without the durable retirement record that
-  // stops its session from being recreated (which would delete a live session's
-  // consensus state). Callers must persist retirement this way before deleting
-  // any directory.
-  virtual void retire_consensus_sessions(std::vector<ValidatorSessionId> destroyed_sessions,
-                                         std::vector<std::string> pending_cleanup_dirs,
-                                         td::Promise<td::Unit> promise) = 0;
+  // Consensus-DB cleanup queue: exact directory names of retired OBSERVER groups
+  // whose per-group consensus RocksDB must still be deleted. Observer databases
+  // carry no votes, so a premature deletion is only a harmless re-sync; but their
+  // directories are not covered by destroyed_validator_sessions_, so without this
+  // queue they leak on a crash mid-deletion. Validator/tentative directory
+  // cleanup stays gated on destroyed_validator_sessions_ (see
+  // doc/consensus-db-cleanup-queue.md).
   virtual void update_pending_consensus_db_cleanup(std::vector<std::string> dirs,
                                                    td::Promise<td::Unit> promise) = 0;
   virtual void get_pending_consensus_db_cleanup(td::Promise<std::vector<std::string>> promise) = 0;

@@ -2945,25 +2945,30 @@ void ValidatorManagerImpl::update_shards() {
       }
     }
   }
-  // Retire everything below, but do not delete any directory until the durable
-  // retirement + cleanup-queue record is written (see the atomic persist at the
-  // end): collect the exact directory names and the destroy handles first.
-  std::vector<td::actor::ActorId<IValidatorGroup>> to_destroy;
-  std::vector<std::string> pending_dirs;
-
+  // Observer groups: their consensus DB carries no votes, so a premature delete
+  // is only a harmless re-sync -- but their directories are never covered by the
+  // destroyed-session set, so without a cleanup queue they leak on crash. Queue
+  // their exact directory names (persisted below before they are destroyed) and
+  // defer the destroy.
+  std::vector<td::actor::ActorId<IValidatorGroup>> observer_actors;
+  std::vector<std::string> observer_dirs;
   for (auto &[observer_id, entry] : observer_groups_) {
     LOG(INFO) << "Destroying observer group " << entry.shard.to_str() << "." << entry.cc_seqno << " at "
               << observer_id.second;
-    // Observer dir suffix must match bridge.cpp's create_bridge_observer exactly.
-    pending_dirs.push_back(consensus::consensus_db_dir_name(
+    // Suffix must match bridge.cpp's create_bridge_observer exactly.
+    observer_dirs.push_back(consensus::consensus_db_dir_name(
         entry.shard, entry.cc_seqno, observer_id.first, PSTRING() << ".observer." << observer_id.second.pubkey_hash()));
-    to_destroy.push_back(entry.actor.release());
+    observer_actors.push_back(entry.actor.release());
   }
   observer_groups_ = std::move(new_observer_groups);
 
+  // Validator/tentative groups: recorded in the destroyed-session set and NOT in
+  // the cleanup queue. Deleting a validator DB for a session that could still be
+  // recreated would destroy its consensus state, so their directory cleanup
+  // stays gated on the destroyed-session set (unchanged from before this change).
+  std::vector<td::actor::ActorId<IValidatorGroup>> to_destroy;
   for (auto &[id, group] : validator_groups_) {
     LOG(INFO) << "Destroying active " << group.name() << ":" << id;
-    pending_dirs.push_back(consensus::consensus_db_dir_name(group.shard, group.cc_seqno, id, ""));
     to_destroy.push_back(group.actor.release());
     destroyed_validator_sessions_.insert(id);
   }
@@ -3000,7 +3005,6 @@ void ValidatorManagerImpl::update_shards() {
   for (auto [id, reason] : ids_to_remove) {
     auto &tentative = next_validator_groups_[id];
     LOG(INFO) << "Destroying tentative " << tentative.name() << ":" << id << " because of an active " << reason;
-    pending_dirs.push_back(consensus::consensus_db_dir_name(tentative.shard, tentative.cc_seqno, id, ""));
     to_destroy.push_back(tentative.actor.release());
     destroyed_validator_sessions_.insert(id);
     next_validator_groups_.erase(id);
@@ -3011,47 +3015,58 @@ void ValidatorManagerImpl::update_shards() {
     }
   };
 
-  for (const auto &dir : pending_dirs) {
-    pending_consensus_db_cleanup_.insert(dir);
+  // Observer cleanup queue: persist the observer directories, then destroy the
+  // observer actors, so a crash between the two leaves the directory queued for
+  // the startup sweep (fixing the observer-orphan leak). Premature deletion is a
+  // harmless re-sync, so this needs no ordering against the destroyed-session
+  // set.
+  bool observer_queue_changed = false;
+  for (const auto &dir : observer_dirs) {
+    if (pending_consensus_db_cleanup_.insert(dir).second) {
+      observer_queue_changed = true;
+    }
   }
-  // Persist retirement (destroyed sessions) and the cleanup queue (exact dirs)
-  // in one atomic batch, and delete directories only after it is durable. A
-  // crash before the batch loses nothing; a crash after it leaves the dirs
-  // queued and their sessions barred from recreation, so the startup sweep
-  // reclaims them -- it can never delete a directory whose session might still
-  // be recreated (which would destroy a live session's consensus state).
-  std::vector<ValidatorSessionId> destroyed_vec(destroyed_validator_sessions_.begin(),
-                                                destroyed_validator_sessions_.end());
-  std::vector<std::string> pending_vec(pending_consensus_db_cleanup_.begin(), pending_consensus_db_cleanup_.end());
+  auto destroy_observers = [observer_actors = std::move(observer_actors)]() {
+    for (const auto &s : observer_actors) {
+      td::actor::send_closure(s, &IValidatorGroup::destroy);
+    }
+  };
+  if (observer_queue_changed) {
+    td::actor::send_closure(db_, &Db::update_pending_consensus_db_cleanup,
+                            std::vector<std::string>(pending_consensus_db_cleanup_.begin(),
+                                                     pending_consensus_db_cleanup_.end()),
+                            [destroy_observers = std::move(destroy_observers)](td::Result<td::Unit> R) mutable {
+                              R.ensure();
+                              destroy_observers();
+                            });
+  } else {
+    destroy_observers();
+  }
 
+  // Validator/tentative retirement: persist the destroyed-session set (via the
+  // init-block rotation, or directly) and only then delete the directories --
+  // exactly as before this change. Their cleanup stays gated on that set at
+  // startup, so a validator directory is never deleted for a session that could
+  // still be recreated.
   if (last_masterchain_state_->rotated_all_shards()) {
     CHECK(last_masterchain_block_handle_->received_state());
-    auto retire_cb = td::PromiseCreator::lambda(
-        [SelfId = actor_id(this), db = db_.get(), block_id = last_masterchain_block_id_,
-         destroy_sessions = std::move(destroy_sessions),
+    auto P = td::PromiseCreator::lambda(
+        [SelfId = actor_id(this), block_id = last_masterchain_block_id_, destroy_sessions = std::move(destroy_sessions),
          old_destroyed_validator_sessions = destroyed_validator_sessions_](td::Result<td::Unit> R) mutable {
           R.ensure();
-          // Retirement + cleanup queue are durable. Rotate the init block, then
-          // prune the destroyed set and delete the directories.
-          auto P = td::PromiseCreator::lambda(
-              [SelfId, block_id, destroy_sessions = std::move(destroy_sessions),
-               old_destroyed_validator_sessions =
-                   std::move(old_destroyed_validator_sessions)](td::Result<td::Unit> R2) mutable {
-                R2.ensure();
-                td::actor::send_closure(SelfId, &ValidatorManagerImpl::updated_init_block, block_id,
-                                        std::move(old_destroyed_validator_sessions));
-                destroy_sessions();
-              });
-          td::actor::send_closure(db, &Db::update_init_masterchain_block, block_id, std::move(P));
+          td::actor::send_closure(SelfId, &ValidatorManagerImpl::updated_init_block, block_id,
+                                  std::move(old_destroyed_validator_sessions));
+          destroy_sessions();
         });
-    td::actor::send_closure(db_, &Db::retire_consensus_sessions, std::move(destroyed_vec), std::move(pending_vec),
-                            std::move(retire_cb));
+    td::actor::send_closure(db_, &Db::update_init_masterchain_block, last_masterchain_block_id_, std::move(P));
   } else {
-    td::actor::send_closure(db_, &Db::retire_consensus_sessions, std::move(destroyed_vec), std::move(pending_vec),
-                            [destroy_sessions = std::move(destroy_sessions)](td::Result<td::Unit> R) {
-                              R.ensure();
-                              destroy_sessions();
-                            });
+    td::actor::send_closure(
+        db_, &Db::update_destroyed_validator_sessions,
+        std::vector<ValidatorSessionId>(destroyed_validator_sessions_.begin(), destroyed_validator_sessions_.end()),
+        [destroy_sessions = std::move(destroy_sessions)](td::Result<td::Unit> R) {
+          R.ensure();
+          destroy_sessions();
+        });
   }
   if (!serializer_.empty()) {
     td::actor::send_closure(serializer_, &AsyncStateSerializer::auto_disable_serializer,

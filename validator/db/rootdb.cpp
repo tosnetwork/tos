@@ -511,12 +511,6 @@ void RootDb::get_destroyed_validator_sessions(td::Promise<std::vector<ValidatorS
   td::actor::send_closure(state_db_, &StateDb::get_destroyed_validator_sessions, std::move(promise));
 }
 
-void RootDb::retire_consensus_sessions(std::vector<ValidatorSessionId> destroyed_sessions,
-                                       std::vector<std::string> pending_cleanup_dirs, td::Promise<td::Unit> promise) {
-  td::actor::send_closure(state_db_, &StateDb::retire_consensus_sessions, std::move(destroyed_sessions),
-                          std::move(pending_cleanup_dirs), std::move(promise));
-}
-
 void RootDb::update_pending_consensus_db_cleanup(std::vector<std::string> dirs, td::Promise<td::Unit> promise) {
   td::actor::send_closure(state_db_, &StateDb::update_pending_consensus_db_cleanup, std::move(dirs),
                           std::move(promise));

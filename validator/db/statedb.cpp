@@ -193,25 +193,6 @@ std::vector<std::string> decode_pending_cleanup(td::Slice value) {
 }
 }  // namespace
 
-void StateDb::retire_consensus_sessions(std::vector<ValidatorSessionId> destroyed_sessions,
-                                        std::vector<std::string> pending_cleanup_dirs,
-                                        td::Promise<td::Unit> promise) {
-  // Persist the destroyed-session set and the pending cleanup directories in
-  // one batch: a retired session's cleanup record must not become durable
-  // without the durable retirement record that prevents its recreation.
-  auto destroyed_key = create_hash_tl_object<tos_api::db_state_key_destroyedSessions>();
-  auto cleanup_value = encode_pending_cleanup(pending_cleanup_dirs);
-
-  kv_->begin_write_batch().ensure();
-  kv_->set(destroyed_key.as_slice(),
-           create_serialize_tl_object<tos_api::db_state_destroyedSessions>(std::move(destroyed_sessions)))
-      .ensure();
-  kv_->set(pending_consensus_db_cleanup_key(), td::Slice{cleanup_value}).ensure();
-  kv_->commit_write_batch().ensure();
-
-  promise.set_value(td::Unit());
-}
-
 void StateDb::update_pending_consensus_db_cleanup(std::vector<std::string> dirs, td::Promise<td::Unit> promise) {
   auto value = encode_pending_cleanup(dirs);
 

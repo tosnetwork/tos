@@ -23,6 +23,7 @@
 #include "td/utils/port/path.h"
 #include "td/utils/tests.h"
 
+#include <cerrno>
 #include <set>
 
 using namespace tos::validator::consensus;
@@ -55,11 +56,21 @@ bool dir_exists(const std::string &root, const std::string &dir_name) {
   return td::stat(consensus_db_root(root) + dir_name).is_ok();
 }
 
-// A deleter that actually removes the directory and confirms via stat -- the
-// production shape (minus RocksDb::destroy, which needs no real DB here).
+// A deleter that removes the directory and confirms via stat, matching the
+// production deleter exactly: only a "not found" error counts as gone (minus
+// RocksDb::destroy, which needs no real DB here).
 bool confirming_deleter(td::CSlice full) {
   td::rmrf(full).ignore();
-  return td::stat(full).is_error();
+  auto probe = td::stat(full);
+  if (probe.is_ok()) {
+    return false;
+  }
+#if TD_PORT_WINDOWS
+  auto code = probe.error().code();
+  return code == ERROR_FILE_NOT_FOUND || code == ERROR_PATH_NOT_FOUND;
+#else
+  return probe.error().code() == ENOENT;
+#endif
 }
 
 }  // namespace
@@ -158,9 +169,28 @@ TEST(ConsensusDbSweep, leaves_unrelated_directory) {
     return true;
   });
 
+  ASSERT_TRUE(stats.walk_succeeded);
   ASSERT_EQ(stats.reclaimed, static_cast<size_t>(0));
   ASSERT_TRUE(!deleter_called);
   ASSERT_TRUE(dir_exists(root, name));
+  td::rmrf(root).ignore();
+}
+
+// A legacy (destroyed-session) directory that was NOT already queued and whose
+// deletion is not confirmed must be added to the queue for a later retry. This
+// starts with an empty queue so it fails if the failure-branch enqueue is removed.
+TEST(ConsensusDbSweep, failed_legacy_deletion_becomes_queued) {
+  auto root = make_temp_root();
+  auto sid = make_session_id(13);
+  auto name = consensus_db_dir_name(kShard, 4, sid, td::Slice(""));
+  create_group_dir(root, name);
+
+  std::set<std::string> pending;  // not queued yet
+  std::set<tos::ValidatorSessionId> destroyed{sid};
+  auto stats = sweep_orphaned_consensus_dbs(root, pending, destroyed, [](td::CSlice) { return false; });
+
+  ASSERT_EQ(stats.failed, static_cast<size_t>(1));
+  ASSERT_TRUE(pending.count(name) == 1);  // enqueued for retry
   td::rmrf(root).ignore();
 }
 
