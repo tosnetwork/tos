@@ -1,0 +1,33 @@
+{
+  "classifier_sha256": "e288832a3bae8fa395d2514e13a4905a213085f6ea8e114a69989d8454718ff8",
+  "real_inputs": {
+    "earlier": {
+      "verdict": "earlier_configuration_failure",
+      "matched_rules": [
+        "earlier_configuration_failure"
+      ]
+    },
+    "gate": {
+      "verdict": "account_readiness",
+      "matched_rules": [
+        "account_readiness"
+      ]
+    }
+  },
+  "crossed_inputs": [
+    {
+      "result": "earlier",
+      "counts": "gate",
+      "matched_rules": [],
+      "error": "unclassifiable: ('collate -7201\\n', 'cannot create block for configured workchain: configuration callback incorrectly classified a local failure as candidate invalid: injected account configuration fault', {'registry': 1, 'account_variant': 1, 'downstream_collator': 0, 'downstream_validator_config': 0, 'downstream_validator_ready': 0, 'downstream_validator_transactions': 0, 'account_refusal': 1})"
+    },
+    {
+      "result": "gate",
+      "counts": "earlier",
+      "matched_rules": [],
+      "error": "unclassifiable: ('collate -7201\\n', 'cannot execute configured workchain: multi-account admission and replay are not connected', {'registry': 0, 'account_variant': 0, 'downstream_collator': 0, 'downstream_validator_config': 0, 'downstream_validator_ready': 0, 'downstream_validator_transactions': 0, 'account_refusal': 0})"
+    }
+  ],
+  "exact_message_predicates_distinct": true,
+  "original_material_modified": false
+}

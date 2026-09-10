@@ -1,0 +1,7 @@
+Traceback (most recent call last):
+  File "/home/tomi/tos/doc/measurements/uno-a2-registry-closed/check-classifier-separation.py", line 63, in <module>
+    assert observed['gate'] == {'verdict': 'account_readiness',
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                                'matched_rules': ['account_readiness']}, observed
+                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: {'earlier': {'verdict': 'earlier_configuration_failure', 'matched_rules': ['earlier_configuration_failure']}, 'gate': {'verdict': 'account_readiness', 'matched_rules': ['account_readiness', 'earlier_configuration_failure']}}

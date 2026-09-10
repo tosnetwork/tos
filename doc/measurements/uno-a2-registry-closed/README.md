@@ -96,3 +96,24 @@ No production source, capability, registry return or binary was mutated. Tool
 hashes match before and after. Hence there are no mutation-bearing production
 targets to restore/rebuild in this unit. This is a focused acceptance run, not
 a new full regression or the yet-to-be-created integration merge acceptance.
+
+## Independent post-correction separation check
+
+`check-classifier-separation.py` rereads the original archive, validates its
+hash and each input's hash, and compiles the exact measured classifier source.
+`classifier-separation.json` records separate assertions: real earlier failure
+maps to earlier_configuration_failure; real gate result maps to account_readiness;
+each matches only its own predicate. The script extracts and evaluates both
+actual predicates independently, so first-match return order cannot hide overlap.
+Their mandatory exact-message predicates are different strings, establishing
+mutual exclusion beyond these two examples. Crossing the two real messages with
+the other trace's counts is unclassifiable in both directions.
+
+The `--inject-overlap` control changes only the in-memory earlier predicate to
+true. The ordinary two classifications remain correct, but the independent
+predicate-set assertion fails: the gate input matches both rules. Raw failure
+is in `classifier-overlap-control.log` (exit 1). Without the injection, the
+check was rerun and passes (exit 0). No archive, classifier file, production
+source or binary was changed. This is a separate post-run audit, not a claim
+that new checks ran before the original gate observation; the original
+before-gate calibration remains archived as recorded.
