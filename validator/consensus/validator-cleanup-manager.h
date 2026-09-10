@@ -103,6 +103,16 @@ class ValidatorCleanupManager {
   // value. A re-retirement overwrites the prior pending entry.
   uint64_t on_group_retired(PendingValidatorConsensusDbCleanup record) {
     auto session = record.session_id;
+    // Defensive: never overwrite an entry whose delete is already in flight
+    // (Deleting/Erasing). This cannot happen in production -- creation is fenced
+    // while in flight, so a session cannot be re-created and re-retired mid-delete
+    // -- but overwriting it would abandon the running worker and permanently
+    // elevate outstanding_. Keep the in-flight operation intact and report its
+    // generation.
+    auto existing = pending_.find(session);
+    if (existing != pending_.end() && existing->second.state != EntryState::Pending) {
+      return existing->second.retired_generation;
+    }
     uint64_t gen;
     auto it = live_generation_.find(session);
     if (it != live_generation_.end()) {

@@ -806,6 +806,41 @@ TEST(ValidatorCleanup, cleanup_manager_retries_fairly) {
   ASSERT_EQ(attempted.size(), static_cast<size_t>(kRecords));
 }
 
+// Defensive: re-retiring a session whose delete is already in flight must not
+// overwrite the in-flight entry or disturb the outstanding count (cannot happen in
+// production, but the adapter must stay robust).
+TEST(ValidatorCleanup, cleanup_manager_ignores_re_retire_while_in_flight) {
+  auto gc = make_checkpoint(500);
+  auto ancestor_ok = [](const tos::BlockIdExt&) { return true; };
+  auto cc_past = [](tos::ShardIdFull s) -> std::optional<tos::CatchainSeqno> {
+    return s == kShard ? std::optional<tos::CatchainSeqno>{10} : std::nullopt;
+  };
+  auto not_live = [](const tos::ValidatorSessionId&) { return false; };
+
+  ValidatorCleanupManager m;
+  auto rec = make_record(1, 100);
+  auto sid = rec.session_id;
+  m.on_loaded_at_startup(rec);
+  auto batch = m.begin_eligible_deletes(gc, ancestor_ok, cc_past, not_live, /*dispatch*/ 10, /*scan*/ 1000,
+                                        /*max_outstanding*/ 2);
+  ASSERT_EQ(batch.size(), static_cast<size_t>(1));
+  ASSERT_TRUE(m.is_delete_in_flight(sid));
+
+  // Re-retire the same session while its delete is in flight: must be a no-op on
+  // the in-flight entry, returning its existing generation and NOT consuming an
+  // outstanding slot. If it overwrote, a second begin would see max_outstanding
+  // already consumed by a phantom and the entry would be Pending again.
+  auto re_gen = m.on_group_retired(rec);
+  ASSERT_EQ(re_gen, batch[0].generation);
+  ASSERT_TRUE(m.is_delete_in_flight(sid));              // still in flight, not reset to Pending
+  ASSERT_EQ(m.pending_count(), static_cast<size_t>(1));
+  // max_outstanding is 2 and exactly one slot is used: another eligible record can
+  // still be reserved (proving outstanding_ was not corrupted to 2 by the overwrite).
+  m.on_loaded_at_startup(make_record(2, 100));
+  auto b2 = m.begin_eligible_deletes(gc, ancestor_ok, cc_past, not_live, 10, 1000, 2);
+  ASSERT_EQ(b2.size(), static_cast<size_t>(1));
+}
+
 // A late startup load (block application can create/retire a group before the
 // load callback returns) must NOT overwrite a runtime incarnation with
 // generation-0/closed=true.
