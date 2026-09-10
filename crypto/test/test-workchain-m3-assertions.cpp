@@ -4,6 +4,7 @@
 #include "td/utils/filesystem.h"
 #include "td/utils/tests.h"
 #include "vm/boc.h"
+#include "vm/vm.h"
 
 #include "workchain-m3-assertions.h"
 using namespace block;
@@ -70,6 +71,58 @@ m3_test::Point secret(unsigned n) {
   CHECK(n <= 255);
   s[0] = static_cast<unsigned char>(n);
   return s;
+}
+
+// Synthetic source-side artifacts test the assertion, not Native execution or
+// recipient delivery. The live backend supplies these from its actual overlay.
+m3_test::RefundObserved refund_artifacts(const m3_test::Root& before_data, const m3_test::Root& after_data,
+                                         const WorkchainRegistrationFunding& historical,
+                                         std::uint64_t emitted, std::uint64_t retained_operating = 4800) {
+  vm::init_vm().ensure();
+  const auto coordinator = number(77);
+  auto native = [&](const m3_test::Root& data, std::uint64_t balance, std::uint64_t lt) {
+    vm::CellBuilder storage;
+    storage.store_long(lt, 64);
+    CHECK(m3_test::refund_assertion_detail::amount(balance).store(storage));
+    storage.store_long(1, 1).store_long(0, 1).store_long(0, 1);
+    CHECK(storage.store_maybe_ref(vm::CellBuilder().finalize()));
+    CHECK(storage.store_maybe_ref(data));
+    storage.store_long(0, 1);
+    vm::CellBuilder account;
+    account.store_long(1, 1).store_long(4, 3).store_long(2, 8).store_bits(coordinator.bits(), 256);
+    CHECK(store_UInt7(account, 0)); CHECK(store_UInt7(account, 0));
+    account.store_long(0, 3).store_long(0, 32).store_long(0, 1)
+        .append_cellslice(vm::load_cell_slice(storage.finalize()));
+    return m3_test::Root{account.finalize()};
+  };
+  auto before = native(before_data, m3_test::checked_sum(historical.paid_deposit, 5000).move_as_ok(), 0);
+  auto after = native(after_data, retained_operating, 101);
+  vm::CellBuilder msg;
+  msg.store_long(6, 4).store_long(4, 3).store_long(2, 8).store_bits(coordinator.bits(), 256)
+      .store_long(4, 3).store_long(historical.refund_workchain, 8).store_bits(historical.refund_account.bits(), 256);
+  CHECK(m3_test::refund_assertion_detail::amount(emitted).store(msg));
+  CHECK(block::tlb::t_Tomis.store_integer_ref(msg, td::make_refint(0)));
+  CHECK(block::tlb::t_Tomis.store_integer_ref(msg, td::make_refint(150)));
+  msg.store_long(100, 64).store_long(1234, 32).store_long(0, 1).store_long(0, 1);
+  m3_test::Root message = msg.finalize();
+  vm::Dictionary outputs(15); CHECK(outputs.set_ref(td::BitArray<15>{0LL}, message));
+  gen::Transaction::Record tx;
+  tx.account_addr = coordinator; tx.lt = 100; tx.prev_trans_hash = number(0); tx.prev_trans_lt = 0;
+  tx.now = 1234; tx.outmsg_cnt = 1; tx.orig_status = -2; tx.end_status = -2; // Signed two-bit encoding of active (10).
+  tx.r1.in_msg = vm::CellBuilder().store_long(0, 1).as_cellslice_ref();
+  tx.r1.out_msgs = outputs.get_root();
+  vm::CellBuilder fees; CHECK(CurrencyCollection(50).store(fees)); tx.total_fees = fees.as_cellslice_ref();
+  tx.state_update = vm::CellBuilder().store_long(0x72, 8).store_bits(before->get_hash().bits(), 256)
+      .store_bits(after->get_hash().bits(), 256).finalize();
+  tx.description = vm::CellBuilder().finalize(); // assertion does not claim valid execution.
+  auto transaction = pack(tx);
+  auto dictionary = [&](const m3_test::Root& account, const td::Bits256& hash, std::uint64_t lt) {
+    vm::CellBuilder shard; shard.store_ref(account).store_bits(hash.bits(), 256).store_long(lt, 64);
+    vm::AugmentedDictionary dict(256, block::tlb::aug_ShardAccounts); CHECK(dict.set_builder(coordinator, shard));
+    return dict.get_wrapped_dict_root();
+  };
+  return {transaction, message, dictionary(before, number(0), 0),
+      dictionary(after, transaction->get_hash().bits(), 100), coordinator, 2, 1234};
 }
 }  // namespace
 TEST(M3Assertions, FormalTransfersAndPending) {
@@ -150,11 +203,29 @@ TEST(M3Assertions, RegistrationClosureAndClosedObservation) {
   closed.lifecycle = WorkchainAccountClosed{};
   auto end = next;
   end.refundable_deposits = 0;
-  ASSERT_TRUE(m3_test::assert_closure(
-                  c1, encode_workchain_coordinator_state(end).move_as_ok(), encoded(account), encoded(closed),
-                  secret(101), 1000000,
-                  {account.funding.paid_deposit, account.funding.refund_workchain, account.funding.refund_account})
-                  .is_ok());
+  auto end_data = encode_workchain_coordinator_state(end).move_as_ok();
+  const auto paid = account.funding.paid_deposit;
+  auto refund = refund_artifacts(c1, end_data, account.funding, paid);
+  auto check = [&](const m3_test::Root& data, const m3_test::RefundObserved& observation) {
+    return m3_test::assert_closure(c1, data, encoded(account), encoded(closed), secret(101), 1000000, observation);
+  };
+  ASSERT_TRUE(check(end_data, refund).is_ok());
+  auto missing = refund; missing.message.clear();
+  auto absent_message = check(end_data, missing);
+  ASSERT_TRUE(absent_message.is_error()); ASSERT_EQ(absent_message.message(), "refund enqueue observation missing");
+  auto no_debit = check(c1, refund_artifacts(c1, c1, account.funding, paid));
+  ASSERT_TRUE(no_debit.is_error());
+  ASSERT_TRUE(paid > 0);
+  auto wrong_value = check(end_data, refund_artifacts(c1, end_data, account.funding, paid - 1));
+  ASSERT_TRUE(wrong_value.is_error());
+  ASSERT_EQ(wrong_value.message(), "refund outbound value differs from historical deposit");
+  auto unpaid_fees = check(end_data, refund_artifacts(c1, end_data, account.funding, paid, 5000));
+  ASSERT_TRUE(unpaid_fees.is_error()); ASSERT_EQ(unpaid_fees.message(), "refund fees were not paid by operating budget");
+  auto unrelated = refund;
+  unrelated.message = refund_artifacts(c1, end_data, account.funding, paid - 1).message;
+  auto detached_message = check(end_data, unrelated);
+  ASSERT_TRUE(detached_message.is_error());
+  ASSERT_EQ(detached_message.message(), "refund message absent from transaction outputs");
   auto observed = m3_test::assert_closed({true, "test.activation.site", 0, 0}, "test.activation.site");
   ASSERT_TRUE(observed.is_ok());
   std::cout << observed.ok() << std::endl;

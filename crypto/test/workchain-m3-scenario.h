@@ -96,11 +96,9 @@ inline td::Result<std::string> run_m3_scenario(ScenarioBackend& backend) {
   TRY_RESULT(refund, backend.close(1));
   TRY_STATUS(assert_closure(before.coordinator, backend.state().coordinator, before.accounts[1],
                             backend.state().accounts[1], backend.wallet_secret(1), 1000000, refund));
-  TRY_RESULT(native, checked_sum(before.native_balances[1], refund.amount));
-  TRY_STATUS(assert_balance(backend.state().native_balances[1], native));
   TRY_RESULT(end, decode_workchain_coordinator_state(backend.state().coordinator));
   TRY_STATUS(assert_balance(end.system.registered_accounts, 2));
-  std::cout << "CLOSED B; historical refund=" << refund.amount << " registered_accounts=2\n";
+  std::cout << "CLOSED B; refund_message_materialized; no recipient-delivery claim; registered_accounts=2\n";
   return std::string("M3_SEQUENCE_PASS: registration; test funding; SEND; COLLECT k=1/k=2; zero-balance closure");
 }
 }  // namespace block::m3_test

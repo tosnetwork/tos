@@ -7,6 +7,7 @@
 #include <sodium/crypto_scalarmult_ristretto255.h>
 
 #include "block/block-parse.h"
+#include "block/transaction.h"
 #include "block/workchain-confidential-input.h"
 #include "block/workchain-coordinator-state.h"
 
@@ -248,13 +249,79 @@ inline td::Result<TransferBalances> assert_block_transfer(
   return assert_transfer(candidate, before, after, owner_secret, bound, expected_before, expected_after,
                          destination_before, destination_after, receiver_secret);
 }
-// Populate this from the observed Native receipt, not from the predicted refund
-// returned by the host. A predicted effect alone does not prove payment occurred.
+// Actual source-side artifacts only, never a predicted refund or a recipient
+// credit. Transaction output materialization is observable here; queue inclusion
+// and recipient delivery require separate observations and are not asserted.
 struct RefundObserved {
-  std::uint64_t amount;
-  int workchain;
-  td::Bits256 account;
+  Root transaction, message, accounts_before, accounts_after;
+  td::Bits256 coordinator;
+  std::int32_t coordinator_workchain;
+  std::uint32_t gen_utime;
 };
+namespace refund_assertion_detail {
+inline CurrencyCollection amount(std::uint64_t value) {
+  auto cell = vm::CellBuilder().store_long(value, 64).finalize();
+  return CurrencyCollection(vm::load_cell_slice(cell).fetch_int256(64, false));
+}
+inline td::Status assert_enqueued(const RefundObserved& observed, const Root& data_before, const Root& data_after,
+                                  const WorkchainRegistrationFunding& historical,
+                                  std::uint64_t bucket_before, std::uint64_t bucket_after) {
+  if (observed.transaction.is_null() || observed.message.is_null() || observed.accounts_before.is_null() ||
+      observed.accounts_after.is_null()) return alarm("refund enqueue observation missing");
+  vm::AugmentedDictionary before_dict(vm::load_cell_slice_ref(observed.accounts_before), 256, tlb::aug_ShardAccounts);
+  vm::AugmentedDictionary after_dict(vm::load_cell_slice_ref(observed.accounts_after), 256, tlb::aug_ShardAccounts);
+  Account before(observed.coordinator_workchain, observed.coordinator.bits());
+  Account after(observed.coordinator_workchain, observed.coordinator.bits());
+  if (!before.unpack(before_dict.lookup(observed.coordinator), observed.gen_utime, false) ||
+      !after.unpack(after_dict.lookup(observed.coordinator), observed.gen_utime, false) ||
+      before.data.is_null() || after.data.is_null() || before.data->get_hash() != data_before->get_hash() ||
+      after.data->get_hash() != data_after->get_hash()) return alarm("refund coordinator state observation mismatch");
+  TRY_RESULT(tx, confidential_input_detail::unpack<gen::Transaction::Record>(observed.transaction));
+  if (tx.account_addr != observed.coordinator || tx.outmsg_cnt != 1 ||
+      after.last_trans_hash_ != observed.transaction->get_hash().bits() || after.last_trans_lt_ != tx.lt)
+    return alarm("refund transaction not recorded by coordinator");
+  auto update = vm::load_cell_slice(tx.state_update);
+  td::Bits256 old_hash, new_hash;
+  if (update.size() != 520 || update.size_refs() != 0 || update.fetch_ulong(8) != 0x72 ||
+      !update.fetch_bits_to(old_hash) || !update.fetch_bits_to(new_hash) ||
+      old_hash != before.total_state->get_hash().bits() || new_hash != after.total_state->get_hash().bits())
+    return alarm("refund transaction state hashes mismatch");
+  vm::Dictionary outgoing(tx.r1.out_msgs, 15);
+  unsigned count = 0;
+  if (!outgoing.check_for_each([&](td::Ref<vm::CellSlice> entry, td::ConstBitPtr, int width) {
+        ++count;
+        return width == 15 && entry->size_ext() == 0x10000 &&
+               entry->prefetch_ref()->get_hash() == observed.message->get_hash();
+      }) || count != 1) return alarm("refund message absent from transaction outputs");
+  gen::Message::Record message;
+  gen::CommonMsgInfo::Record_int_msg_info info;
+  tos::WorkchainId source_wc, destination_wc;
+  td::Bits256 source, destination;
+  CurrencyCollection value, collected;
+  if (!tlb::type_unpack_cell(observed.message, gen::t_Message_Any, message) ||
+      !gen::csr_unpack(message.info, info) || !info.ihr_disabled || !info.bounce || info.bounced ||
+      !tlb::t_MsgAddressInt.extract_std_address(info.src, source_wc, source) ||
+      !tlb::t_MsgAddressInt.extract_std_address(info.dest, destination_wc, destination) ||
+      source_wc != observed.coordinator_workchain || source != observed.coordinator ||
+      destination_wc != historical.refund_workchain || destination != historical.refund_account ||
+      !value.unpack(info.value) || !collected.unpack(tx.total_fees))
+    return alarm("refund message address or profile mismatch");
+  if (value != amount(historical.paid_deposit)) return alarm("refund outbound value differs from historical deposit");
+  auto forward = tlb::t_Tomis.as_integer(info.fwd_fee);
+  if (forward.is_null() ||
+      !forward->is_valid() || !forward->unsigned_fits_bits(120)) return alarm("refund message forwarding fees malformed");
+  CurrencyCollection operating_before, operating_after, fees, expected;
+  if (!CurrencyCollection::sub(before.balance, amount(bucket_before), operating_before) ||
+      !CurrencyCollection::sub(after.balance, amount(bucket_after), operating_after))
+    return alarm("refund Native balance does not cover locked deposits");
+  // Mode 1: total_fees is the already-collected action share; fwd_fee is the
+  // remaining forwarding share in the message. IHR is disabled. Count each once.
+  if (!CurrencyCollection::add(collected, CurrencyCollection(forward), fees) ||
+      !CurrencyCollection::add(operating_after, fees, expected) || expected != operating_before)
+    return alarm("refund fees were not paid by operating budget");
+  return td::Status::OK();
+}
+}  // namespace refund_assertion_detail
 inline td::Status assert_registration(const Root& coordinator_before, const Root& coordinator_after,
                                       const Root& registered_account) {
   TRY_RESULT(before, decode_workchain_coordinator_state(coordinator_before));
@@ -270,7 +337,7 @@ inline td::Status assert_registration(const Root& coordinator_before, const Root
 }
 inline td::Status assert_closure(const Root& coordinator_before, const Root& coordinator_after,
                                  const Root& account_before, const Root& account_after, const Point& secret,
-                                 std::uint64_t bound, const RefundObserved& received_refund) {
+                                 std::uint64_t bound, const RefundObserved& enqueued_refund) {
   TRY_RESULT(before, decode_workchain_coordinator_state(coordinator_before));
   TRY_RESULT(after, decode_workchain_coordinator_state(coordinator_after));
   TRY_RESULT(old, decode_workchain_confidential_account(account_before));
@@ -279,16 +346,17 @@ inline td::Status assert_closure(const Root& coordinator_before, const Root& coo
   TRY_STATUS(assert_balance(after.system.registered_accounts, before.system.registered_accounts));
   if (!std::holds_alternative<WorkchainAccountClosed>(closed.lifecycle) || !closed.pending.empty())
     return alarm("closure lifecycle/pending mismatch");
-  if (old.funding.paid_deposit != closed.funding.paid_deposit)
+  if (old.funding.paid_deposit != closed.funding.paid_deposit ||
+      old.funding.refund_workchain != closed.funding.refund_workchain ||
+      old.funding.refund_account != closed.funding.refund_account)
     return alarm("closed historical record changed");
   TRY_RESULT(value, decrypt(closed.available, secret, bound));
   TRY_STATUS(assert_balance(value, 0));
-  if (received_refund.amount != old.funding.paid_deposit || received_refund.workchain != old.funding.refund_workchain ||
-      received_refund.account != old.funding.refund_account)
-    return alarm("historical deposit refund mismatch");
   if (old.funding.paid_deposit > before.refundable_deposits)
     return alarm("refund bucket underflow");
   TRY_STATUS(assert_balance(after.refundable_deposits, before.refundable_deposits - old.funding.paid_deposit));
+  TRY_STATUS(refund_assertion_detail::assert_enqueued(enqueued_refund, coordinator_before, coordinator_after,
+      old.funding, before.refundable_deposits, after.refundable_deposits));
   return td::Status::OK();
 }
 // Each optional is populated by an actual observer. Missing observation is NEVER
