@@ -32,6 +32,7 @@ uno_paths = (
     "crypto/block/workchain-*", "crypto/test/test-workchain*",
     "crypto/test/workchain-*", "test/test-uno-*", "test/counter-*", "test/test-counter-*",
     "test/uno-*", "test/workchain-*", "crypto/smartcont/uno-genesis-*",
+    "crypto/smartcont/gen-zerostate.fif",
     "crypto/block/create-state.cpp", "scripts/setup-testnet.sh",
     "test/tostester/src/tostester/zerostate.py",
     "crypto/block/block.tlb", "scripts/m1-real-manager-sync.py",
