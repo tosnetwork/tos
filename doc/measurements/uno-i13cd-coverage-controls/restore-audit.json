@@ -1,0 +1,174 @@
+{
+  "controls": 8,
+  "source_sha256": {
+    "crypto/block/workchain-coverage.h": "74626d20c4bf7e5f25e3a0f09a5a0cbaff6451c1e70104a6a0a447addc37a73f",
+    "crypto/block/workchain-read-phase.h": "6ff224115a1117e75591d9a489098e56dca44dc57cfaf0bfe80a3f1470435a83",
+    "crypto/test/test-workchain-coverage.cpp": "b4f8ed7d8a53c9c7db7bae16af79c49d06b9a606d6147553b16a466a0642e1f3",
+    "crypto/test/workchain-coverage.py": "41e1b2cc17558fb1a4095d6e6e21fb6f3ca82a2071ebf686a49bc9f1dbb7a29b",
+    "crypto/test/workchain-coverage.cmake": "ef27f00642b055b444988768a15651d05ea296a7c1b3b05b8eed5313a85d0e55"
+  },
+  "records": [
+    {
+      "name": "delta-comparison",
+      "path": "crypto/block/workchain-coverage.h",
+      "before": "if (delta != writes) return failure(delta_object, WorkchainCoverageReason::DeltaMismatch);",
+      "after": "if (false) return failure(delta_object, WorkchainCoverageReason::DeltaMismatch);",
+      "original_sha256": "74626d20c4bf7e5f25e3a0f09a5a0cbaff6451c1e70104a6a0a447addc37a73f",
+      "recorded_mutant_sha256": "b581a61d1b06881711fab1bf6a1be2897ed7bfeadce885064bedbabc29728815",
+      "reconstructed_mutant_sha256": "b581a61d1b06881711fab1bf6a1be2897ed7bfeadce885064bedbabc29728815",
+      "mutant_binary_sha256": "8ca083185ecbd9b56ca0cdbfe0d4e02256869e36a4f541e65a13141e30a6839b",
+      "expected_assertion": "coverage.delta_isolated",
+      "exit_code": 1,
+      "argv": [
+        "/tmp/uno-coverage-build/test-workchain-coverage"
+      ],
+      "restored_sha256": "74626d20c4bf7e5f25e3a0f09a5a0cbaff6451c1e70104a6a0a447addc37a73f",
+      "restored_binary_sha256": "6666e94c2ff4bc56d44fe9bc8eea68dfb1e20b745152f4816199ce6aafe22ec6",
+      "explicit_rebuild_targets": [
+        "test-workchain-coverage"
+      ]
+    },
+    {
+      "name": "participant-comparison",
+      "path": "crypto/block/workchain-coverage.h",
+      "before": "if (participants != writes) return failure(participant_object, WorkchainCoverageReason::ParticipantMismatch);",
+      "after": "if (false) return failure(participant_object, WorkchainCoverageReason::ParticipantMismatch);",
+      "original_sha256": "74626d20c4bf7e5f25e3a0f09a5a0cbaff6451c1e70104a6a0a447addc37a73f",
+      "recorded_mutant_sha256": "beb7b3ba75ee1dc1eb49454f2b6707bea4efd708f12588192768de83fda28f38",
+      "reconstructed_mutant_sha256": "beb7b3ba75ee1dc1eb49454f2b6707bea4efd708f12588192768de83fda28f38",
+      "mutant_binary_sha256": "53b1ca06de9aeb69456956d2675114f9b84b92e563a9eb4de7fc1f5d176f2686",
+      "expected_assertion": "coverage.participant_isolated",
+      "exit_code": 1,
+      "argv": [
+        "/tmp/uno-coverage-build/test-workchain-coverage"
+      ],
+      "restored_sha256": "74626d20c4bf7e5f25e3a0f09a5a0cbaff6451c1e70104a6a0a447addc37a73f",
+      "restored_binary_sha256": "6666e94c2ff4bc56d44fe9bc8eea68dfb1e20b745152f4816199ce6aafe22ec6",
+      "explicit_rebuild_targets": [
+        "test-workchain-coverage"
+      ]
+    },
+    {
+      "name": "later-subtree",
+      "path": "crypto/block/workchain-coverage.h",
+      "before": "delta(old.child(true, before), next.child(true, after), before, after, depth + 1, key, limit, keys);",
+      "after": "(void)after; // controlled omission of the right subtree",
+      "original_sha256": "74626d20c4bf7e5f25e3a0f09a5a0cbaff6451c1e70104a6a0a447addc37a73f",
+      "recorded_mutant_sha256": "080afb7acfe71a78682240e7bed3cc5ad22bbfc75ce0057007280d72eb8e01db",
+      "reconstructed_mutant_sha256": "080afb7acfe71a78682240e7bed3cc5ad22bbfc75ce0057007280d72eb8e01db",
+      "mutant_binary_sha256": "4a35f236d765b3e4b5f8880552765ce507c786224b0c08cc42b567702c32f803",
+      "expected_assertion": "delta.later_isolated",
+      "exit_code": 1,
+      "argv": [
+        "/tmp/uno-coverage-build/test-workchain-coverage",
+        "later"
+      ],
+      "restored_sha256": "74626d20c4bf7e5f25e3a0f09a5a0cbaff6451c1e70104a6a0a447addc37a73f",
+      "restored_binary_sha256": "6666e94c2ff4bc56d44fe9bc8eea68dfb1e20b745152f4816199ce6aafe22ec6",
+      "explicit_rebuild_targets": [
+        "test-workchain-coverage"
+      ]
+    },
+    {
+      "name": "whole-entry",
+      "path": "crypto/block/workchain-coverage.h",
+      "before": "!old.whole_value->contents_equal(*next.whole_value)",
+      "after": "!(old.whole_value->prefetch_ulong(5) == next.whole_value->prefetch_ulong(5) && old.value->prefetch_ref()->get_hash() == next.value->prefetch_ref()->get_hash())",
+      "original_sha256": "74626d20c4bf7e5f25e3a0f09a5a0cbaff6451c1e70104a6a0a447addc37a73f",
+      "recorded_mutant_sha256": "78a7833f39c637c431d825df6b4bc757990303395e0f391816fbfbb8b89f7d58",
+      "reconstructed_mutant_sha256": "78a7833f39c637c431d825df6b4bc757990303395e0f391816fbfbb8b89f7d58",
+      "mutant_binary_sha256": "f5b6289122e0ee973589f65b866e2645709b1705bfc5caa9e3fd8d3bcec238a4",
+      "expected_assertion": "delta.metadata.exact",
+      "exit_code": 1,
+      "argv": [
+        "/tmp/uno-coverage-build/test-workchain-coverage"
+      ],
+      "restored_sha256": "74626d20c4bf7e5f25e3a0f09a5a0cbaff6451c1e70104a6a0a447addc37a73f",
+      "restored_binary_sha256": "6666e94c2ff4bc56d44fe9bc8eea68dfb1e20b745152f4816199ce6aafe22ec6",
+      "explicit_rebuild_targets": [
+        "test-workchain-coverage"
+      ]
+    },
+    {
+      "name": "leaf-augmentation",
+      "path": "crypto/block/workchain-coverage.h",
+      "before": "!old.whole_value->contents_equal(*next.whole_value)",
+      "after": "!old.value->contents_equal(*next.value)",
+      "original_sha256": "74626d20c4bf7e5f25e3a0f09a5a0cbaff6451c1e70104a6a0a447addc37a73f",
+      "recorded_mutant_sha256": "5de3bd2989846d08279fb16211afe275ffc87b54c2e1a3961e683b052f9b8a48",
+      "reconstructed_mutant_sha256": "5de3bd2989846d08279fb16211afe275ffc87b54c2e1a3961e683b052f9b8a48",
+      "mutant_binary_sha256": "efd40eac3551ff6ee8d87b8d78a6ab8d4aa403d743360853e4c205d2b08d2427",
+      "expected_assertion": "delta.includes_leaf_extra",
+      "exit_code": 1,
+      "argv": [
+        "/tmp/uno-coverage-build/test-workchain-coverage"
+      ],
+      "restored_sha256": "74626d20c4bf7e5f25e3a0f09a5a0cbaff6451c1e70104a6a0a447addc37a73f",
+      "restored_binary_sha256": "6666e94c2ff4bc56d44fe9bc8eea68dfb1e20b745152f4816199ce6aafe22ec6",
+      "explicit_rebuild_targets": [
+        "test-workchain-coverage"
+      ]
+    },
+    {
+      "name": "key-bound",
+      "path": "crypto/block/workchain-coverage.h",
+      "before": "if (keys.size() >= limit) {",
+      "after": "if (false) {",
+      "original_sha256": "74626d20c4bf7e5f25e3a0f09a5a0cbaff6451c1e70104a6a0a447addc37a73f",
+      "recorded_mutant_sha256": "cb99fdf433b178a7d3f5c3875d43d8a74f9dcc957681ae418b73766d480985e9",
+      "reconstructed_mutant_sha256": "cb99fdf433b178a7d3f5c3875d43d8a74f9dcc957681ae418b73766d480985e9",
+      "mutant_binary_sha256": "32057f71f190811ef0a921a35fc54b47a4acce9c35aaf632f5355fd6906b4a5c",
+      "expected_assertion": "delta.bound.before_append",
+      "exit_code": 1,
+      "argv": [
+        "/tmp/uno-coverage-build/test-workchain-coverage"
+      ],
+      "restored_sha256": "74626d20c4bf7e5f25e3a0f09a5a0cbaff6451c1e70104a6a0a447addc37a73f",
+      "restored_binary_sha256": "6666e94c2ff4bc56d44fe9bc8eea68dfb1e20b745152f4816199ce6aafe22ec6",
+      "explicit_rebuild_targets": [
+        "test-workchain-coverage"
+      ]
+    },
+    {
+      "name": "participants-later",
+      "path": "crypto/block/workchain-coverage.h",
+      "before": "participants(edge.child(true, reader), reader, depth + 1, key, limit, keys);",
+      "after": "(void)reader; // controlled omission of a later physical participant",
+      "original_sha256": "74626d20c4bf7e5f25e3a0f09a5a0cbaff6451c1e70104a6a0a447addc37a73f",
+      "recorded_mutant_sha256": "1c62e18519e20e3d7bfd2141edc258ec465b25e4a297ec4ea81324efdbefca2e",
+      "reconstructed_mutant_sha256": "1c62e18519e20e3d7bfd2141edc258ec465b25e4a297ec4ea81324efdbefca2e",
+      "mutant_binary_sha256": "a93a1bfd4d1084c24f1551aa2e7c9e50081bdc265b5ed9af86ff4a36f6153cf4",
+      "expected_assertion": "participants.physical_later_account",
+      "exit_code": 1,
+      "argv": [
+        "/tmp/uno-coverage-build/test-workchain-coverage"
+      ],
+      "restored_sha256": "74626d20c4bf7e5f25e3a0f09a5a0cbaff6451c1e70104a6a0a447addc37a73f",
+      "restored_binary_sha256": "6666e94c2ff4bc56d44fe9bc8eea68dfb1e20b745152f4816199ce6aafe22ec6",
+      "explicit_rebuild_targets": [
+        "test-workchain-coverage"
+      ]
+    },
+    {
+      "name": "pruned-source",
+      "path": "crypto/block/workchain-coverage.h",
+      "before": "          fail(source == WorkchainCoverageSource::ReceivedCandidate ? object : WorkchainCoverageObject::AuthenticatedState,\n               WorkchainCoverageReason::ForbiddenPruning);",
+      "after": "          fail(object,\n               WorkchainCoverageReason::ForbiddenPruning);",
+      "original_sha256": "74626d20c4bf7e5f25e3a0f09a5a0cbaff6451c1e70104a6a0a447addc37a73f",
+      "recorded_mutant_sha256": "965fc363a82b0785d2f166d40b3d8d052625f90ed0f2546fb6b5a5fb6fd2ad3a",
+      "reconstructed_mutant_sha256": "965fc363a82b0785d2f166d40b3d8d052625f90ed0f2546fb6b5a5fb6fd2ad3a",
+      "mutant_binary_sha256": "20e84fc7a402f1b448d3fb4435c47369903b543ff82646c1604fa7527999d0ca",
+      "expected_assertion": "delta.pruned.source",
+      "exit_code": 1,
+      "argv": [
+        "/tmp/uno-coverage-build/test-workchain-coverage"
+      ],
+      "restored_sha256": "74626d20c4bf7e5f25e3a0f09a5a0cbaff6451c1e70104a6a0a447addc37a73f",
+      "restored_binary_sha256": "6666e94c2ff4bc56d44fe9bc8eea68dfb1e20b745152f4816199ce6aafe22ec6",
+      "explicit_rebuild_targets": [
+        "test-workchain-coverage"
+      ]
+    }
+  ],
+  "status": "Checkpoint only: eight completed, interrupted ninth excluded; final cohort pending"
+}

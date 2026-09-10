@@ -72,9 +72,9 @@ early refusals without their resource-admission and final-publication safeguards
 
 The private I13 harnesses have a separate, manual-only CI entry point:
 `.github/workflows/private-i13-acceptance.yml` (`workflow_dispatch`). It
-explicitly includes their modules, builds the four targets and selects only
+explicitly includes their modules, builds the six targets and selects only
 the `i13` label. Both the registered names and the JUnit execution results must
-contain exactly the four expected tests; skipped, missing and failed tests
+contain exactly the six expected tests; skipped, missing and failed tests
 are errors. There is no push, pull-request or scheduled trigger. This manual-only
 policy is the owner's decision of 2026-09-09, not an unfinished task. Ordinary
 "full regression passed" statements do **not** include these private harnesses;
@@ -89,8 +89,9 @@ The I13b mechanism added a fourth opt-in check through
 `crypto/test/workchain-private-i13.cmake`, which includes the original three
 modules and `workchain-execution-ledger.cmake`. The manual workflow builds all
 four targets at that checkpoint. I13a now adds `workchain-batch-scan.cmake` as
-the fifth private check: the workflow builds five targets and requires five
-exact driver names and five successful JUnit entries.
+the fifth private check. The private I13c/I13d coverage and read-phase mechanism
+adds the sixth: the workflow builds six targets and requires six exact driver
+names and six successful JUnit entries.
 The prior three-test merge-registration evidence remains historical. The ledger
 check is mechanism/private actor coverage, not live I13b acceptance; adding it
 does not authorize activation or connect the live execution seam.
@@ -118,7 +119,7 @@ counted as final-source evidence.
 JUnit failure controls require actual `status="fail"` plus a failure element;
 the workflow success observer requires `status="run"` and no failure/error/skip.
 These are intentionally opposite predicates on the same schema. The observer
-self-test runs five actual named tests with one forced driver failure, so a
+self-test runs six actual named tests with one forced driver failure, so a
 registration-count mismatch cannot substitute for detecting failed execution.
 
 Read-view finding (2026-09-09, source inspection, not live execution evidence):
@@ -159,6 +160,27 @@ AccountBlocks path. Entry roots are checked for nonzero level before comparing
 the producer's existing `get_hash()` commitment. This mechanism does not connect the live scan,
 establish I13a, or replace I13c/I13d replay. Exact mapping, boundedness and
 exclusions: `crypto/test/workchain-batch-scan.md`.
+
+The approved private I13c/I13d shape is implemented separately from live wiring:
+`workchain-coverage.h` independently reconstructs whole-entry changes and
+physical participants from immutable roots, then compares each with admitted
+writes. It does not reuse I13a counts or construction-loop output. A scoped
+synchronous read observer retains the original usage tree, checks admitted
+reads, and disappears before the next phase. Acquisition source and ownership
+of the checked claim are separate explicit axes: an acquired but complete
+candidate mismatch remains CandidateInvalid; a missing acquired view is local.
+Native augmentation/transaction validation and authenticated shared meters
+remain caller prerequisites, not properties established by this coverage report.
+Scope and controls: `crypto/test/workchain-coverage.md`. No live I13c/I13d
+acceptance is claimed; the proof-byte comparison is over a private controlled
+Merkle tree, not the live block-state proof.
+
+Owner-directed live order remains collator execution, validator execution, then
+registry readiness. The collator coroutine must positively observe the same
+retained adapter before and after suspension; actor membership alone is not
+that evidence. The current private unit neither edits those call sites nor
+removes their refusals. The ownership handoff waits for the coordinator after
+the genesis unit; it is not inferred from availability of these private pieces.
 
 After the three private I13 harness modules have registered their Python
 drivers and demonstrated failing CTest controls, A first resumes the thin

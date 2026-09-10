@@ -1,0 +1,31 @@
+delta-comparison: behavioral failure and byte-exact restored pass
+participant-comparison: behavioral failure and byte-exact restored pass
+later-subtree: behavioral failure and byte-exact restored pass
+whole-entry: behavioral failure and byte-exact restored pass
+leaf-augmentation: behavioral failure and byte-exact restored pass
+key-bound: behavioral failure and byte-exact restored pass
+participants-later: behavioral failure and byte-exact restored pass
+pruned-source: behavioral failure and byte-exact restored pass
+artifacts: /tmp/uno-coverage-controls-w9mz93_o
+Traceback (most recent call last):
+  File "/tmp/run-coverage-controls.py", line 132, in <module>
+    patch(path, after, before)
+    ~~~~~^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/run-coverage-controls.py", line 35, in patch
+    result = subprocess.run(['apply_patch'], input=text.encode(), capture_output=True)
+  File "/home/tomi/.local/share/uv/python/cpython-3.14.4-linux-x86_64-gnu/lib/python3.14/subprocess.py", line 555, in run
+    with Popen(*popenargs, **kwargs) as process:
+         ~~~~~^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/tomi/.local/share/uv/python/cpython-3.14.4-linux-x86_64-gnu/lib/python3.14/subprocess.py", line 1039, in __init__
+    self._execute_child(args, executable, preexec_fn, close_fds,
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                        pass_fds, cwd, env,
+                        ^^^^^^^^^^^^^^^^^^^
+    ...<5 lines>...
+                        gid, gids, uid, umask,
+                        ^^^^^^^^^^^^^^^^^^^^^^
+                        start_new_session, process_group)
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/tomi/.local/share/uv/python/cpython-3.14.4-linux-x86_64-gnu/lib/python3.14/subprocess.py", line 1990, in _execute_child
+    raise child_exception_type(errno_num, err_msg, err_filename)
+FileNotFoundError: [Errno 2] No such file or directory: 'apply_patch'

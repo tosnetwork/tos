@@ -1,0 +1,273 @@
+{
+  "base_commit": "5d8125ed5f636fc34064798caa7a58d6f5789f38",
+  "actual_entries": 130,
+  "passed": 121,
+  "deferred": 9,
+  "unresolved": 0,
+  "skipped": 0,
+  "rows": [
+    {
+      "name": "test-counter-disk-integration",
+      "fixture": "/home/tomi/tos/build/counter-integration-ac103faf03fe",
+      "reason": "malformed engine configuration framing",
+      "raw_diagnostics": [
+        [
+          "0",
+          "malformed engine configuration framing"
+        ],
+        [
+          "0",
+          "malformed engine configuration framing"
+        ]
+      ],
+      "artifact_sha256": {
+        "bootstrap.log": "35c4ebde8376701c6936b3a29dfa98e5bfec5b0946c31f31bc97d78ed03fd298",
+        "bootstrap.result": "b0b5464a5f290a15b6a78529508979e500a2ef2b88da01fca94db52c314fc8d0",
+        "bootstrap.result.kind": "81b2bd4ea98c8db66554fbc8d7637a1a69a130f331feb732b75caab4c4868fd5",
+        "bootstrap.result.message": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "zerostate.boc": "94deab91d49208d30ce801bbcc3c28ed186151ecfe8b123671131453c7137fae"
+      },
+      "disposition": "Owner-deferred pending genesis installation and matching identity/fixture migration; not a pass or unrelated waiver.",
+      "observation_boundary": "bootstrap.result is collator result only, not validator terminal classification; log locates cause only."
+    },
+    {
+      "name": "test-counter-account-binding-readiness",
+      "fixture": "/home/tomi/tos/build/counter-integration-5dbdb8954f52",
+      "reason": "configured genesis differs from authenticated genesis",
+      "raw_diagnostics": [
+        [
+          "7406",
+          "configured genesis differs from authenticated genesis"
+        ],
+        [
+          "7406",
+          "configured genesis differs from authenticated genesis"
+        ]
+      ],
+      "artifact_sha256": {
+        "bootstrap.log": "a9896fef0b4e4072555e73efcf0da94edc69b3511af9fb93a2cedf37c5778ad6",
+        "bootstrap.result": "b0b5464a5f290a15b6a78529508979e500a2ef2b88da01fca94db52c314fc8d0",
+        "bootstrap.result.kind": "81b2bd4ea98c8db66554fbc8d7637a1a69a130f331feb732b75caab4c4868fd5",
+        "bootstrap.result.message": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "zerostate.boc": "53c64e97252227b23583fe6312221cf376fe74dffe8c04649fc3e8ec05f2ac84"
+      },
+      "disposition": "Owner-deferred pending genesis installation and matching identity/fixture migration; not a pass or unrelated waiver.",
+      "observation_boundary": "bootstrap.result is collator result only, not validator terminal classification; log locates cause only."
+    },
+    {
+      "name": "test-counter-idle-replay",
+      "fixture": "/home/tomi/tos/build/counter-integration-c35e63501569",
+      "reason": "malformed engine configuration framing",
+      "raw_diagnostics": [
+        [
+          "0",
+          "malformed engine configuration framing"
+        ],
+        [
+          "0",
+          "malformed engine configuration framing"
+        ]
+      ],
+      "artifact_sha256": {
+        "bootstrap.log": "aa95d9f575657ce7738dab3d18f305bf6d164041bf318df105f31fd8d28be42e",
+        "bootstrap.result": "b0b5464a5f290a15b6a78529508979e500a2ef2b88da01fca94db52c314fc8d0",
+        "bootstrap.result.kind": "81b2bd4ea98c8db66554fbc8d7637a1a69a130f331feb732b75caab4c4868fd5",
+        "bootstrap.result.message": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "zerostate.boc": "94deab91d49208d30ce801bbcc3c28ed186151ecfe8b123671131453c7137fae"
+      },
+      "disposition": "Owner-deferred pending genesis installation and matching identity/fixture migration; not a pass or unrelated waiver.",
+      "observation_boundary": "bootstrap.result is collator result only, not validator terminal classification; log locates cause only."
+    },
+    {
+      "name": "test-counter-self-delivery",
+      "fixture": "/home/tomi/tos/build/counter-integration-2e2a5efa92f9",
+      "reason": "malformed engine configuration framing",
+      "raw_diagnostics": [
+        [
+          "0",
+          "malformed engine configuration framing"
+        ],
+        [
+          "0",
+          "malformed engine configuration framing"
+        ]
+      ],
+      "artifact_sha256": {
+        "bootstrap.log": "fa047bf59de7b19230387406d9f4bab006ac15550afb4b2f1e48641ba51da671",
+        "bootstrap.result": "b0b5464a5f290a15b6a78529508979e500a2ef2b88da01fca94db52c314fc8d0",
+        "bootstrap.result.kind": "81b2bd4ea98c8db66554fbc8d7637a1a69a130f331feb732b75caab4c4868fd5",
+        "bootstrap.result.message": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "zerostate.boc": "94deab91d49208d30ce801bbcc3c28ed186151ecfe8b123671131453c7137fae"
+      },
+      "disposition": "Owner-deferred pending genesis installation and matching identity/fixture migration; not a pass or unrelated waiver.",
+      "observation_boundary": "bootstrap.result is collator result only, not validator terminal classification; log locates cause only."
+    },
+    {
+      "name": "test-counter-cross-delivery",
+      "fixture": "/home/tomi/tos/build/counter-integration-bc382db8ad14",
+      "reason": "malformed engine configuration framing",
+      "raw_diagnostics": [
+        [
+          "0",
+          "malformed engine configuration framing"
+        ],
+        [
+          "0",
+          "malformed engine configuration framing"
+        ]
+      ],
+      "artifact_sha256": {
+        "bootstrap.log": "3cb85975f426fb070b8f2f195240416229563a8de69ce2abf2768aee25267f81",
+        "bootstrap.result": "b0b5464a5f290a15b6a78529508979e500a2ef2b88da01fca94db52c314fc8d0",
+        "bootstrap.result.kind": "81b2bd4ea98c8db66554fbc8d7637a1a69a130f331feb732b75caab4c4868fd5",
+        "bootstrap.result.message": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "zerostate.boc": "e73a8e866b73e96ad23052f13b649a06708ec2a8c958a0861892ae5fc91ee669"
+      },
+      "disposition": "Owner-deferred pending genesis installation and matching identity/fixture migration; not a pass or unrelated waiver.",
+      "observation_boundary": "bootstrap.result is collator result only, not validator terminal classification; log locates cause only."
+    },
+    {
+      "name": "test-counter-native-sender",
+      "fixture": "/home/tomi/tos/build/counter-integration-d8fb165919b5",
+      "reason": "malformed engine configuration framing",
+      "raw_diagnostics": [
+        [
+          "0",
+          "malformed engine configuration framing"
+        ],
+        [
+          "0",
+          "malformed engine configuration framing"
+        ]
+      ],
+      "artifact_sha256": {
+        "bootstrap.log": "3fedd4e5310d76146a7585c04c7ce322d0a37b07bab73494515e4605dc2cee87",
+        "bootstrap.result": "b0b5464a5f290a15b6a78529508979e500a2ef2b88da01fca94db52c314fc8d0",
+        "bootstrap.result.kind": "81b2bd4ea98c8db66554fbc8d7637a1a69a130f331feb732b75caab4c4868fd5",
+        "bootstrap.result.message": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "zerostate.boc": "3eb9681a91c668acf5cedfbea6b1b8c4d62178062e2d46cbe9197284c142371d"
+      },
+      "disposition": "Owner-deferred pending genesis installation and matching identity/fixture migration; not a pass or unrelated waiver.",
+      "observation_boundary": "bootstrap.result is collator result only, not validator terminal classification; log locates cause only."
+    },
+    {
+      "name": "test-counter-activation-missing_capability",
+      "fixture": "/home/tomi/tos/build/counter-integration-092f6142f6f5",
+      "reason": "instance configuration is missing",
+      "raw_diagnostics": [
+        [
+          "7409",
+          "instance configuration is missing"
+        ],
+        [
+          "7409",
+          "instance configuration is missing"
+        ]
+      ],
+      "artifact_sha256": {
+        "bootstrap.log": "66e6668ef73269f66826991b47c0236612784982731303ed0e600e1c43e4ee41",
+        "bootstrap.result": "b0b5464a5f290a15b6a78529508979e500a2ef2b88da01fca94db52c314fc8d0",
+        "bootstrap.result.kind": "81b2bd4ea98c8db66554fbc8d7637a1a69a130f331feb732b75caab4c4868fd5",
+        "bootstrap.result.message": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "zerostate.boc": "2935fb1926c0019726060aa222a925ae8e347d7baa3ce9df8db0d1bae000b5a9"
+      },
+      "disposition": "Owner-deferred pending genesis installation and matching identity/fixture migration; not a pass or unrelated waiver.",
+      "observation_boundary": "bootstrap.result is collator result only, not validator terminal classification; log locates cause only."
+    },
+    {
+      "name": "test-counter-activation-old_version",
+      "fixture": "/home/tomi/tos/build/counter-integration-b06a37b4a2bf",
+      "reason": "instance configuration is missing",
+      "raw_diagnostics": [
+        [
+          "7409",
+          "instance configuration is missing"
+        ],
+        [
+          "7409",
+          "instance configuration is missing"
+        ]
+      ],
+      "artifact_sha256": {
+        "bootstrap.log": "062cc13fd2059ff1415821e5fd4a3982727b00651b7edfa0c2adc4d4122d5449",
+        "bootstrap.result": "b0b5464a5f290a15b6a78529508979e500a2ef2b88da01fca94db52c314fc8d0",
+        "bootstrap.result.kind": "81b2bd4ea98c8db66554fbc8d7637a1a69a130f331feb732b75caab4c4868fd5",
+        "bootstrap.result.message": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "zerostate.boc": "ea518e8b09e26e0e3aa1ba2ebc2aacc654de3f7e617bbcf153d9d473cd2d6f09"
+      },
+      "disposition": "Owner-deferred pending genesis installation and matching identity/fixture migration; not a pass or unrelated waiver.",
+      "observation_boundary": "bootstrap.result is collator result only, not validator terminal classification; log locates cause only."
+    },
+    {
+      "name": "test-counter-engine-config",
+      "fixture": "/home/tomi/tos/build/counter-integration-c9ec0e7d45e5",
+      "reason": "malformed engine configuration framing",
+      "raw_diagnostics": [
+        [
+          "0",
+          "malformed engine configuration framing"
+        ],
+        [
+          "0",
+          "malformed engine configuration framing"
+        ]
+      ],
+      "artifact_sha256": {
+        "bootstrap.log": "89db23feb6d559b82573e17f8c01b1ca268cde5a07cf3abb87f35154e7234928",
+        "bootstrap.result": "b0b5464a5f290a15b6a78529508979e500a2ef2b88da01fca94db52c314fc8d0",
+        "bootstrap.result.kind": "81b2bd4ea98c8db66554fbc8d7637a1a69a130f331feb732b75caab4c4868fd5",
+        "bootstrap.result.message": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "zerostate.boc": "1835d69b1f67a04489a6c433c8d7fc1c3b454636d47c48d1a7fc9521d1e68cb8"
+      },
+      "disposition": "Owner-deferred pending genesis installation and matching identity/fixture migration; not a pass or unrelated waiver.",
+      "observation_boundary": "bootstrap.result is collator result only, not validator terminal classification; log locates cause only."
+    }
+  ],
+  "source_sha256": {
+    "crypto/block/workchain-coverage.h": "d4dbc9199102a302e3550b06e6ce5a05e0ee7b488ea753ab73830a39c17d7c67",
+    "crypto/block/workchain-read-phase.h": "6ff224115a1117e75591d9a489098e56dca44dc57cfaf0bfe80a3f1470435a83",
+    "crypto/test/test-workchain-coverage.cpp": "671df021f07e784eeea8b736cf6e0defdc525c00254a7fd325d3717b01909a66",
+    "crypto/test/workchain-coverage.py": "41e1b2cc17558fb1a4095d6e6e21fb6f3ca82a2071ebf686a49bc9f1dbb7a29b",
+    "crypto/test/workchain-coverage.cmake": "ef27f00642b055b444988768a15651d05ea296a7c1b3b05b8eed5313a85d0e55",
+    "crypto/test/workchain-private-i13.cmake": "1475b38e860e3d77ca19ecfd4c1f4d60601740fb8328b2d831a49ad9007ad126",
+    ".github/scripts/check-i13-results.py": "d26810759ccaad6534b4ce4cf0882a046b27cd2685edd9e231f35b570620f4a6",
+    ".github/scripts/test-i13-results.py": "058c4054b53adc33751bff677024b755fc51102ad3b5ed0283612e10aeaad194",
+    ".github/workflows/private-i13-acceptance.yml": "73ce97e02790d98c4e60b059b691d16c0274dd0ab6beff705ff951ae3e63f02e"
+  },
+  "binaries": {
+    "/tmp/uno-coverage-build/test-workchain-coverage": "05ad2cb651fb73098a9bc4fd222e3a9a6ed9c3892e83e09062d7303b8e3e93e1",
+    "/home/tomi/tos/build/test-tos-collator": "06f96010c5957b04f8283d34df5ee470ffc69abc8fe0b08ac85a089f66af5053",
+    "/home/tomi/tos/build/test-workchain-block": "1a02c90457a498e462b4e8b3f58632eb4c247e834d67c4ce1e02990f8d96091c"
+  },
+  "junit_sha256": "ba578c0372050d24bf8ee070c563be4a8ebeaeca78346440ef937b63a6b4e6ea",
+  "cleanup": {
+    "before": 9,
+    "after": 0,
+    "diagnostic_files": 194,
+    "archive": "/home/tomi/tos/build/counter-fixture-diagnostics-1788995450501824085.tar.gz"
+  },
+  "default_build_command": [
+    "cmake",
+    "--build",
+    "/home/tomi/tos/build",
+    "-j32"
+  ],
+  "regression_command": [
+    "ctest",
+    "--test-dir",
+    "/home/tomi/tos/build",
+    "-j32",
+    "--output-on-failure",
+    "--output-junit",
+    "/tmp/uno-coverage-final-regression.xml"
+  ],
+  "private_registered": 6,
+  "private_executed": [
+    "test-workchain-coverage-gates"
+  ],
+  "remaining_seams": {
+    "collator": 1,
+    "validator": 3,
+    "separate_registry_readiness": 1
+  }
+}

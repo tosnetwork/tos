@@ -1,0 +1,7 @@
+{
+  "crypto/block/workchain-coverage.h": "74626d20c4bf7e5f25e3a0f09a5a0cbaff6451c1e70104a6a0a447addc37a73f",
+  "crypto/block/workchain-read-phase.h": "6ff224115a1117e75591d9a489098e56dca44dc57cfaf0bfe80a3f1470435a83",
+  "crypto/test/test-workchain-coverage.cpp": "b4f8ed7d8a53c9c7db7bae16af79c49d06b9a606d6147553b16a466a0642e1f3",
+  "crypto/test/workchain-coverage.py": "41e1b2cc17558fb1a4095d6e6e21fb6f3ca82a2071ebf686a49bc9f1dbb7a29b",
+  "crypto/test/workchain-coverage.cmake": "ef27f00642b055b444988768a15651d05ea296a7c1b3b05b8eed5313a85d0e55"
+}

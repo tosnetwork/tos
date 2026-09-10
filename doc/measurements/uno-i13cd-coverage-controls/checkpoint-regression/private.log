@@ -1,0 +1,13 @@
+Internal ctest changing into directory: /tmp/uno-coverage-build
+Test project /tmp/uno-coverage-build
+    Start 6: test-workchain-coverage-gates
+1/1 Test #6: test-workchain-coverage-gates ....   Passed    0.30 sec
+
+100% tests passed, 0 tests failed out of 1
+
+Label Time Summary:
+i13          =   0.30 sec*proc (1 test)
+private      =   0.30 sec*proc (1 test)
+workchain    =   0.30 sec*proc (1 test)
+
+Total Test time (real) =   0.31 sec

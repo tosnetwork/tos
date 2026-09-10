@@ -1,0 +1,30 @@
+Internal ctest changing into directory: /tmp/uno-coverage-build
+Test project /tmp/uno-coverage-build
+    Start 6: test-workchain-coverage-gates
+1/1 Test #6: test-workchain-coverage-gates ....***Failed    0.35 sec
+[0m[ 4][t 0][2026-09-09 23:07:18.875641995][transaction.cpp:616]	unpacking account 1000000000000000000000000000000000000000000000000000000000000000[0m
+[0m[ 4][t 0][2026-09-09 23:07:18.875821948][transaction.cpp:449]	last_paid=0; cells=0 bits=0[0m
+[0m[ 4][t 0][2026-09-09 23:07:18.875833436][transaction.cpp:679]	end of Account.unpack() for 2:1000000000000000000000000000000000000000000000000000000000000000 (balance = 0ng ; last_trans_lt = 1..2)[0m
+[0m[ 4][t 0][2026-09-09 23:07:18.875855328][transaction.cpp:616]	unpacking account E000000000000000000000000000000000000000000000000000000000000000[0m
+[0m[ 4][t 0][2026-09-09 23:07:18.875862394][transaction.cpp:449]	last_paid=0; cells=0 bits=0[0m
+[0m[ 4][t 0][2026-09-09 23:07:18.875867909][transaction.cpp:679]	end of Account.unpack() for 2:E000000000000000000000000000000000000000000000000000000000000000 (balance = 0ng ; last_trans_lt = 1..2)[0m
+Traceback (most recent call last):
+  File "/home/tomi/tos/crypto/test/workchain-coverage.py", line 52, in <module>
+    main()
+    ~~~~^^
+  File "/home/tomi/tos/crypto/test/workchain-coverage.py", line 48, in main
+    raise RuntimeError(f'incomplete coverage: exit={result.returncode}, stdout={result.stdout!r}')
+RuntimeError: incomplete coverage: exit=0, stdout=''
+
+
+0% tests passed, 1 tests failed out of 1
+
+Label Time Summary:
+i13          =   0.35 sec*proc (1 test)
+private      =   0.35 sec*proc (1 test)
+workchain    =   0.35 sec*proc (1 test)
+
+Total Test time (real) =   0.35 sec
+
+The following tests FAILED:
+	  6 - test-workchain-coverage-gates (Failed)

@@ -1,0 +1,263 @@
+[
+  {
+    "name": "delta-comparison",
+    "path": "crypto/block/workchain-coverage.h",
+    "before": "if (delta != writes) return failure(WorkchainCoverageReason::DeltaMismatch);",
+    "after": "if (false) return failure(WorkchainCoverageReason::DeltaMismatch);",
+    "original_sha256": "d4dbc9199102a302e3550b06e6ce5a05e0ee7b488ea753ab73830a39c17d7c67",
+    "recorded_mutant_sha256": "d9948e2c6f5ce5aff0e034fe15bdc9a91385f33d547e32024c09459e935f317c",
+    "reconstructed_mutant_sha256": "d9948e2c6f5ce5aff0e034fe15bdc9a91385f33d547e32024c09459e935f317c",
+    "mutant_binary_sha256": "24dc01d76524c421044a1b06d63c59c1236d067d6b85422ec513f14c3c42505f",
+    "expected_assertion": "coverage.delta_isolated",
+    "exit_code": 1,
+    "argv": [
+      "/tmp/uno-coverage-build/test-workchain-coverage"
+    ],
+    "restored_sha256": "d4dbc9199102a302e3550b06e6ce5a05e0ee7b488ea753ab73830a39c17d7c67",
+    "restored_binary_sha256": "05ad2cb651fb73098a9bc4fd222e3a9a6ed9c3892e83e09062d7303b8e3e93e1",
+    "explicit_rebuild_targets": [
+      "test-workchain-coverage"
+    ]
+  },
+  {
+    "name": "participant-comparison",
+    "path": "crypto/block/workchain-coverage.h",
+    "before": "if (participants != writes) return failure(WorkchainCoverageReason::ParticipantMismatch);",
+    "after": "if (false) return failure(WorkchainCoverageReason::ParticipantMismatch);",
+    "original_sha256": "d4dbc9199102a302e3550b06e6ce5a05e0ee7b488ea753ab73830a39c17d7c67",
+    "recorded_mutant_sha256": "f0fa5f8a9cd6139f6fbc18539db4debc2e75e088946bdf54ef4f3f3d219bd215",
+    "reconstructed_mutant_sha256": "f0fa5f8a9cd6139f6fbc18539db4debc2e75e088946bdf54ef4f3f3d219bd215",
+    "mutant_binary_sha256": "5101f6557a95c870f036d12915dbe7b7eafd64b25dff15aab21d71fe7fbc730a",
+    "expected_assertion": "coverage.participant_isolated",
+    "exit_code": 1,
+    "argv": [
+      "/tmp/uno-coverage-build/test-workchain-coverage"
+    ],
+    "restored_sha256": "d4dbc9199102a302e3550b06e6ce5a05e0ee7b488ea753ab73830a39c17d7c67",
+    "restored_binary_sha256": "05ad2cb651fb73098a9bc4fd222e3a9a6ed9c3892e83e09062d7303b8e3e93e1",
+    "explicit_rebuild_targets": [
+      "test-workchain-coverage"
+    ]
+  },
+  {
+    "name": "later-subtree",
+    "path": "crypto/block/workchain-coverage.h",
+    "before": "delta(old.child(true, before), next.child(true, after), before, after, depth + 1, key, limit, keys);",
+    "after": "(void)after; // controlled omission of the right subtree",
+    "original_sha256": "d4dbc9199102a302e3550b06e6ce5a05e0ee7b488ea753ab73830a39c17d7c67",
+    "recorded_mutant_sha256": "60ad88bdfc121af775785335af80628552c243d253026b89a67bb01760a3e9f9",
+    "reconstructed_mutant_sha256": "60ad88bdfc121af775785335af80628552c243d253026b89a67bb01760a3e9f9",
+    "mutant_binary_sha256": "7b31798f4daf79fb0e31eaff501d473e54cc773f0b6bcdadd6550c1d287c83bb",
+    "expected_assertion": "delta.later_isolated",
+    "exit_code": 1,
+    "argv": [
+      "/tmp/uno-coverage-build/test-workchain-coverage",
+      "later"
+    ],
+    "restored_sha256": "d4dbc9199102a302e3550b06e6ce5a05e0ee7b488ea753ab73830a39c17d7c67",
+    "restored_binary_sha256": "05ad2cb651fb73098a9bc4fd222e3a9a6ed9c3892e83e09062d7303b8e3e93e1",
+    "explicit_rebuild_targets": [
+      "test-workchain-coverage"
+    ]
+  },
+  {
+    "name": "whole-entry",
+    "path": "crypto/block/workchain-coverage.h",
+    "before": "!old.whole_value->contents_equal(*next.whole_value)",
+    "after": "!(old.whole_value->prefetch_ulong(5) == next.whole_value->prefetch_ulong(5) && old.value->prefetch_ref()->get_hash() == next.value->prefetch_ref()->get_hash())",
+    "original_sha256": "d4dbc9199102a302e3550b06e6ce5a05e0ee7b488ea753ab73830a39c17d7c67",
+    "recorded_mutant_sha256": "0bd79006f7e0b6e6053ff54c8e9a6ec07fd07fa5fb2307fb1a8673cd92ca09b7",
+    "reconstructed_mutant_sha256": "0bd79006f7e0b6e6053ff54c8e9a6ec07fd07fa5fb2307fb1a8673cd92ca09b7",
+    "mutant_binary_sha256": "e5ca6f01e6670395927aa4c92b9990e0f838f2bbad1b231daecb501af745794b",
+    "expected_assertion": "delta.metadata.exact",
+    "exit_code": 1,
+    "argv": [
+      "/tmp/uno-coverage-build/test-workchain-coverage"
+    ],
+    "restored_sha256": "d4dbc9199102a302e3550b06e6ce5a05e0ee7b488ea753ab73830a39c17d7c67",
+    "restored_binary_sha256": "05ad2cb651fb73098a9bc4fd222e3a9a6ed9c3892e83e09062d7303b8e3e93e1",
+    "explicit_rebuild_targets": [
+      "test-workchain-coverage"
+    ]
+  },
+  {
+    "name": "leaf-augmentation",
+    "path": "crypto/block/workchain-coverage.h",
+    "before": "!old.whole_value->contents_equal(*next.whole_value)",
+    "after": "!old.value->contents_equal(*next.value)",
+    "original_sha256": "d4dbc9199102a302e3550b06e6ce5a05e0ee7b488ea753ab73830a39c17d7c67",
+    "recorded_mutant_sha256": "2220c1fc70e7177523d941d5878d9c813a57b3fd4bf0e55b9cb7a1be79211b9a",
+    "reconstructed_mutant_sha256": "2220c1fc70e7177523d941d5878d9c813a57b3fd4bf0e55b9cb7a1be79211b9a",
+    "mutant_binary_sha256": "6386adccb973e417471deeb6a2b280c77d6294eac02a2d1bbbdc9a66a93c8fe9",
+    "expected_assertion": "delta.includes_leaf_extra",
+    "exit_code": 1,
+    "argv": [
+      "/tmp/uno-coverage-build/test-workchain-coverage"
+    ],
+    "restored_sha256": "d4dbc9199102a302e3550b06e6ce5a05e0ee7b488ea753ab73830a39c17d7c67",
+    "restored_binary_sha256": "05ad2cb651fb73098a9bc4fd222e3a9a6ed9c3892e83e09062d7303b8e3e93e1",
+    "explicit_rebuild_targets": [
+      "test-workchain-coverage"
+    ]
+  },
+  {
+    "name": "key-bound",
+    "path": "crypto/block/workchain-coverage.h",
+    "before": "if (keys.size() >= limit) {",
+    "after": "if (false) {",
+    "original_sha256": "d4dbc9199102a302e3550b06e6ce5a05e0ee7b488ea753ab73830a39c17d7c67",
+    "recorded_mutant_sha256": "c9088cbf0cb009452107c17d0e5aae4e6e7b044bfc816933c8a988b8a4acb404",
+    "reconstructed_mutant_sha256": "c9088cbf0cb009452107c17d0e5aae4e6e7b044bfc816933c8a988b8a4acb404",
+    "mutant_binary_sha256": "188c14de28c7e1f3f0238d2f4b94564a98b17750d6e40f621dcac50858e74a06",
+    "expected_assertion": "delta.bound.before_append",
+    "exit_code": 1,
+    "argv": [
+      "/tmp/uno-coverage-build/test-workchain-coverage"
+    ],
+    "restored_sha256": "d4dbc9199102a302e3550b06e6ce5a05e0ee7b488ea753ab73830a39c17d7c67",
+    "restored_binary_sha256": "05ad2cb651fb73098a9bc4fd222e3a9a6ed9c3892e83e09062d7303b8e3e93e1",
+    "explicit_rebuild_targets": [
+      "test-workchain-coverage"
+    ]
+  },
+  {
+    "name": "participants-later",
+    "path": "crypto/block/workchain-coverage.h",
+    "before": "participants(edge.child(true, reader), reader, depth + 1, key, limit, keys);",
+    "after": "(void)reader; // controlled omission of a later physical participant",
+    "original_sha256": "d4dbc9199102a302e3550b06e6ce5a05e0ee7b488ea753ab73830a39c17d7c67",
+    "recorded_mutant_sha256": "c14dbd7f13bf8f0f438918fd5a14f87ff3b7dcf371216b82f4384de73c105d9f",
+    "reconstructed_mutant_sha256": "c14dbd7f13bf8f0f438918fd5a14f87ff3b7dcf371216b82f4384de73c105d9f",
+    "mutant_binary_sha256": "5c7005e1cb68ce080db6cf1aff230fbd36af965c0813caf648604acdb6dd850b",
+    "expected_assertion": "participants.physical_later_account",
+    "exit_code": 1,
+    "argv": [
+      "/tmp/uno-coverage-build/test-workchain-coverage"
+    ],
+    "restored_sha256": "d4dbc9199102a302e3550b06e6ce5a05e0ee7b488ea753ab73830a39c17d7c67",
+    "restored_binary_sha256": "05ad2cb651fb73098a9bc4fd222e3a9a6ed9c3892e83e09062d7303b8e3e93e1",
+    "explicit_rebuild_targets": [
+      "test-workchain-coverage"
+    ]
+  },
+  {
+    "name": "pruned-source",
+    "path": "crypto/block/workchain-coverage.h",
+    "before": "          fail(source == WorkchainCoverageSource::ReceivedCandidate ? object : WorkchainCoverageObject::AuthenticatedState,\n               WorkchainCoverageReason::ForbiddenPruning);",
+    "after": "          fail(object,\n               WorkchainCoverageReason::ForbiddenPruning);",
+    "original_sha256": "d4dbc9199102a302e3550b06e6ce5a05e0ee7b488ea753ab73830a39c17d7c67",
+    "recorded_mutant_sha256": "e18ca37e5f0239ff9e732d2a2d1859197b0d0d249f064c10f6e2735ed510bc5c",
+    "reconstructed_mutant_sha256": "e18ca37e5f0239ff9e732d2a2d1859197b0d0d249f064c10f6e2735ed510bc5c",
+    "mutant_binary_sha256": "175b727ac128ecdc23bd93609f60895bc2e088d5edec18640dfc87ec05e76380",
+    "expected_assertion": "delta.pruned.source",
+    "exit_code": 1,
+    "argv": [
+      "/tmp/uno-coverage-build/test-workchain-coverage"
+    ],
+    "restored_sha256": "d4dbc9199102a302e3550b06e6ce5a05e0ee7b488ea753ab73830a39c17d7c67",
+    "restored_binary_sha256": "05ad2cb651fb73098a9bc4fd222e3a9a6ed9c3892e83e09062d7303b8e3e93e1",
+    "explicit_rebuild_targets": [
+      "test-workchain-coverage"
+    ]
+  },
+  {
+    "name": "acquired-claim",
+    "path": "crypto/block/workchain-coverage.h",
+    "before": "compare_workchain_coverage(changed, participants, writes, object)",
+    "after": "compare_workchain_coverage(changed, participants, writes, source == WorkchainCoverageSource::AcquiredView ? WorkchainCoverageObject::HostRebuilt : object)",
+    "original_sha256": "d4dbc9199102a302e3550b06e6ce5a05e0ee7b488ea753ab73830a39c17d7c67",
+    "recorded_mutant_sha256": "74acfcd46decd5b89257eb2712acda1818cc4672c2083e176bba603da10f2e57",
+    "reconstructed_mutant_sha256": "74acfcd46decd5b89257eb2712acda1818cc4672c2083e176bba603da10f2e57",
+    "mutant_binary_sha256": "2b7974c59228afa455dfb3a908e8a52bef18a3285ed90d1509a74e646fd5e138",
+    "expected_assertion": "final_audit.late_mutation",
+    "exit_code": 1,
+    "argv": [
+      "/tmp/uno-coverage-build/test-workchain-coverage"
+    ],
+    "restored_sha256": "d4dbc9199102a302e3550b06e6ce5a05e0ee7b488ea753ab73830a39c17d7c67",
+    "restored_binary_sha256": "05ad2cb651fb73098a9bc4fd222e3a9a6ed9c3892e83e09062d7303b8e3e93e1",
+    "explicit_rebuild_targets": [
+      "test-workchain-coverage"
+    ]
+  },
+  {
+    "name": "provider-provenance",
+    "path": "crypto/block/workchain-coverage.h",
+    "before": "throw Stop{{WorkchainBatchScanDisposition::LocalUnavailable, reason}};",
+    "after": "throw Stop{{WorkchainBatchScanDisposition::CandidateInvalid, reason}};",
+    "original_sha256": "d4dbc9199102a302e3550b06e6ce5a05e0ee7b488ea753ab73830a39c17d7c67",
+    "recorded_mutant_sha256": "1839c2586524b4a96486251a6534f279537d9ed26d25095c64700f9cc7d57c4f",
+    "reconstructed_mutant_sha256": "1839c2586524b4a96486251a6534f279537d9ed26d25095c64700f9cc7d57c4f",
+    "mutant_binary_sha256": "54ffcdca90308be9233c406ebc3a27b021221f17cb1437e551a2e2a79f316032",
+    "expected_assertion": "provider.local_not_candidate",
+    "exit_code": 1,
+    "argv": [
+      "/tmp/uno-coverage-build/test-workchain-coverage"
+    ],
+    "restored_sha256": "d4dbc9199102a302e3550b06e6ce5a05e0ee7b488ea753ab73830a39c17d7c67",
+    "restored_binary_sha256": "05ad2cb651fb73098a9bc4fd222e3a9a6ed9c3892e83e09062d7303b8e3e93e1",
+    "explicit_rebuild_targets": [
+      "test-workchain-coverage"
+    ]
+  },
+  {
+    "name": "footprint",
+    "path": "crypto/block/workchain-read-phase.h",
+    "before": "!cell.get_tree_node().empty() || !admitted.count(cell.get_hash())",
+    "after": "!cell.get_tree_node().empty() /* footprint omitted */",
+    "original_sha256": "6ff224115a1117e75591d9a489098e56dca44dc57cfaf0bfe80a3f1470435a83",
+    "recorded_mutant_sha256": "f0a5632e63d1e1cdc8d3d0ec7f377e0b9cfee240323eefff9480347705a37a65",
+    "reconstructed_mutant_sha256": "f0a5632e63d1e1cdc8d3d0ec7f377e0b9cfee240323eefff9480347705a37a65",
+    "mutant_binary_sha256": "91721396ec511514e5bedbd35d723d8e938bafad55d21ed1f43ab75e59f4cad2",
+    "expected_assertion": "phase.swallowed_sticky",
+    "exit_code": 1,
+    "argv": [
+      "/tmp/uno-coverage-build/test-workchain-coverage"
+    ],
+    "restored_sha256": "6ff224115a1117e75591d9a489098e56dca44dc57cfaf0bfe80a3f1470435a83",
+    "restored_binary_sha256": "05ad2cb651fb73098a9bc4fd222e3a9a6ed9c3892e83e09062d7303b8e3e93e1",
+    "explicit_rebuild_targets": [
+      "test-workchain-coverage"
+    ]
+  },
+  {
+    "name": "sticky",
+    "path": "crypto/block/workchain-read-phase.h",
+    "before": "if (forbidden) return {WorkchainReadPhaseReason::OutsideFootprint, std::move(status), attempts};",
+    "after": "if (false) return {WorkchainReadPhaseReason::OutsideFootprint, std::move(status), attempts};",
+    "original_sha256": "6ff224115a1117e75591d9a489098e56dca44dc57cfaf0bfe80a3f1470435a83",
+    "recorded_mutant_sha256": "6099bb8019f5b2df9c268ef2b96e2c93dbf07b0dd69301ce0815f5967d990de0",
+    "reconstructed_mutant_sha256": "6099bb8019f5b2df9c268ef2b96e2c93dbf07b0dd69301ce0815f5967d990de0",
+    "mutant_binary_sha256": "b363046425ad0d00a0f5695768979c9a0d3db11e75f49da2b2a7f75768f336fa",
+    "expected_assertion": "phase.swallowed_sticky",
+    "exit_code": 1,
+    "argv": [
+      "/tmp/uno-coverage-build/test-workchain-coverage"
+    ],
+    "restored_sha256": "6ff224115a1117e75591d9a489098e56dca44dc57cfaf0bfe80a3f1470435a83",
+    "restored_binary_sha256": "05ad2cb651fb73098a9bc4fd222e3a9a6ed9c3892e83e09062d7303b8e3e93e1",
+    "explicit_rebuild_targets": [
+      "test-workchain-coverage"
+    ]
+  },
+  {
+    "name": "message-only",
+    "path": "crypto/block/workchain-read-phase.h",
+    "before": "if (status.is_error()) return {WorkchainReadPhaseReason::CallbackFailure, std::move(status), attempts};",
+    "after": "if (status.code() != 0) return {WorkchainReadPhaseReason::CallbackFailure, std::move(status), attempts};",
+    "original_sha256": "6ff224115a1117e75591d9a489098e56dca44dc57cfaf0bfe80a3f1470435a83",
+    "recorded_mutant_sha256": "9e12530cc802e409daea5e4dba9a0ea04abad11f9d049e432dd88ec4ae8778c7",
+    "reconstructed_mutant_sha256": "9e12530cc802e409daea5e4dba9a0ea04abad11f9d049e432dd88ec4ae8778c7",
+    "mutant_binary_sha256": "549855360ba2f01d65aadcefc3fdd7cb59fb631d0fd3e826e24bdaa8af9799e5",
+    "expected_assertion": "phase.message_only_error",
+    "exit_code": 1,
+    "argv": [
+      "/tmp/uno-coverage-build/test-workchain-coverage"
+    ],
+    "restored_sha256": "6ff224115a1117e75591d9a489098e56dca44dc57cfaf0bfe80a3f1470435a83",
+    "restored_binary_sha256": "05ad2cb651fb73098a9bc4fd222e3a9a6ed9c3892e83e09062d7303b8e3e93e1",
+    "explicit_rebuild_targets": [
+      "test-workchain-coverage"
+    ]
+  }
+]

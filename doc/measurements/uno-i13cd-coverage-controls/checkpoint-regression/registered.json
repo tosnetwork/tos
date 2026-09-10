@@ -1,0 +1,466 @@
+{
+  "backtraceGraph" : 
+  {
+    "commands" : 
+    [
+      "add_test",
+      "include",
+      "project"
+    ],
+    "files" : 
+    [
+      "/home/tomi/tos/crypto/test/workchain-i13-acceptance.cmake",
+      "/home/tomi/tos/crypto/test/workchain-construction-isolation.cmake",
+      "/home/tomi/tos/crypto/test/workchain-private-i13.cmake",
+      "/home/tomi/tos/CMakeLists.txt",
+      "/home/tomi/tos/crypto/test/workchain-i13-usage-acceptance.cmake",
+      "/home/tomi/tos/crypto/test/workchain-execution-ledger.cmake",
+      "/home/tomi/tos/crypto/test/workchain-batch-scan.cmake",
+      "/home/tomi/tos/crypto/test/workchain-coverage.cmake"
+    ],
+    "nodes" : 
+    [
+      {
+        "file" : 3
+      },
+      {
+        "command" : 2,
+        "file" : 3,
+        "line" : 13,
+        "parent" : 0
+      },
+      {
+        "file" : 2,
+        "parent" : 1
+      },
+      {
+        "command" : 1,
+        "file" : 2,
+        "line" : 2,
+        "parent" : 2
+      },
+      {
+        "file" : 1,
+        "parent" : 3
+      },
+      {
+        "command" : 1,
+        "file" : 1,
+        "line" : 17,
+        "parent" : 4
+      },
+      {
+        "file" : 0,
+        "parent" : 5
+      },
+      {
+        "command" : 0,
+        "file" : 0,
+        "line" : 18,
+        "parent" : 6
+      },
+      {
+        "file" : 3
+      },
+      {
+        "command" : 2,
+        "file" : 3,
+        "line" : 13,
+        "parent" : 8
+      },
+      {
+        "file" : 2,
+        "parent" : 9
+      },
+      {
+        "command" : 1,
+        "file" : 2,
+        "line" : 2,
+        "parent" : 10
+      },
+      {
+        "file" : 1,
+        "parent" : 11
+      },
+      {
+        "command" : 1,
+        "file" : 1,
+        "line" : 19,
+        "parent" : 12
+      },
+      {
+        "file" : 4,
+        "parent" : 13
+      },
+      {
+        "command" : 0,
+        "file" : 4,
+        "line" : 12,
+        "parent" : 14
+      },
+      {
+        "file" : 3
+      },
+      {
+        "command" : 2,
+        "file" : 3,
+        "line" : 13,
+        "parent" : 16
+      },
+      {
+        "file" : 2,
+        "parent" : 17
+      },
+      {
+        "command" : 1,
+        "file" : 2,
+        "line" : 2,
+        "parent" : 18
+      },
+      {
+        "file" : 1,
+        "parent" : 19
+      },
+      {
+        "command" : 0,
+        "file" : 1,
+        "line" : 24,
+        "parent" : 20
+      },
+      {
+        "file" : 3
+      },
+      {
+        "command" : 2,
+        "file" : 3,
+        "line" : 13,
+        "parent" : 22
+      },
+      {
+        "file" : 2,
+        "parent" : 23
+      },
+      {
+        "command" : 1,
+        "file" : 2,
+        "line" : 3,
+        "parent" : 24
+      },
+      {
+        "file" : 5,
+        "parent" : 25
+      },
+      {
+        "command" : 0,
+        "file" : 5,
+        "line" : 17,
+        "parent" : 26
+      },
+      {
+        "file" : 3
+      },
+      {
+        "command" : 2,
+        "file" : 3,
+        "line" : 13,
+        "parent" : 28
+      },
+      {
+        "file" : 2,
+        "parent" : 29
+      },
+      {
+        "command" : 1,
+        "file" : 2,
+        "line" : 4,
+        "parent" : 30
+      },
+      {
+        "file" : 6,
+        "parent" : 31
+      },
+      {
+        "command" : 0,
+        "file" : 6,
+        "line" : 20,
+        "parent" : 32
+      },
+      {
+        "file" : 3
+      },
+      {
+        "command" : 2,
+        "file" : 3,
+        "line" : 13,
+        "parent" : 34
+      },
+      {
+        "file" : 2,
+        "parent" : 35
+      },
+      {
+        "command" : 1,
+        "file" : 2,
+        "line" : 5,
+        "parent" : 36
+      },
+      {
+        "file" : 7,
+        "parent" : 37
+      },
+      {
+        "command" : 0,
+        "file" : 7,
+        "line" : 6,
+        "parent" : 38
+      }
+    ]
+  },
+  "kind" : "ctestInfo",
+  "tests" : 
+  [
+    {
+      "backtrace" : 7,
+      "command" : 
+      [
+        "/home/tomi/.local/bin/python3",
+        "/home/tomi/tos/crypto/test/workchain-i13-acceptance.py",
+        "--build",
+        "/tmp/uno-coverage-build/workchain-i13-ctest/coverage/build",
+        "--ctest-root",
+        "/tmp/uno-coverage-build/workchain-i13-ctest/coverage/runs"
+      ],
+      "name" : "test-workchain-i13-acceptance-gates",
+      "properties" : 
+      [
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "i13",
+            "private",
+            "workchain"
+          ]
+        },
+        {
+          "name" : "RESOURCE_LOCK",
+          "value" : 
+          [
+            "workchain_i13_measurements"
+          ]
+        },
+        {
+          "name" : "TIMEOUT",
+          "value" : 3600.0
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/uno-coverage-build"
+        }
+      ]
+    },
+    {
+      "backtrace" : 15,
+      "command" : 
+      [
+        "/home/tomi/.local/bin/python3",
+        "/home/tomi/tos/crypto/test/workchain-i13-usage-acceptance.py",
+        "--build",
+        "/tmp/uno-coverage-build/workchain-i13-ctest/usage/build",
+        "--ctest-root",
+        "/tmp/uno-coverage-build/workchain-i13-ctest/usage/runs"
+      ],
+      "name" : "test-workchain-i13-usage-acceptance-gates",
+      "properties" : 
+      [
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "i13",
+            "private",
+            "workchain"
+          ]
+        },
+        {
+          "name" : "RESOURCE_LOCK",
+          "value" : 
+          [
+            "workchain_i13_measurements"
+          ]
+        },
+        {
+          "name" : "TIMEOUT",
+          "value" : 3600.0
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/uno-coverage-build"
+        }
+      ]
+    },
+    {
+      "backtrace" : 21,
+      "command" : 
+      [
+        "/home/tomi/.local/bin/python3",
+        "/home/tomi/tos/crypto/test/workchain-construction-isolation.py",
+        "--build",
+        "/tmp/uno-coverage-build/workchain-i13-ctest/construction/build",
+        "--ctest-root",
+        "/tmp/uno-coverage-build/workchain-i13-ctest/construction/runs"
+      ],
+      "name" : "test-workchain-construction-isolation-gates",
+      "properties" : 
+      [
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "i13",
+            "private",
+            "workchain"
+          ]
+        },
+        {
+          "name" : "RESOURCE_LOCK",
+          "value" : 
+          [
+            "workchain_i13_measurements"
+          ]
+        },
+        {
+          "name" : "TIMEOUT",
+          "value" : 7200.0
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/uno-coverage-build"
+        }
+      ]
+    },
+    {
+      "backtrace" : 27,
+      "command" : 
+      [
+        "/home/tomi/.local/bin/python3",
+        "/home/tomi/tos/crypto/test/workchain-execution-ledger.py",
+        "--binary",
+        "/tmp/uno-coverage-build/test-workchain-execution-ledger",
+        "--build",
+        "/tmp/uno-coverage-build"
+      ],
+      "name" : "test-workchain-execution-ledger-gates",
+      "properties" : 
+      [
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "i13",
+            "private",
+            "workchain"
+          ]
+        },
+        {
+          "name" : "RESOURCE_LOCK",
+          "value" : 
+          [
+            "workchain_i13_measurements"
+          ]
+        },
+        {
+          "name" : "TIMEOUT",
+          "value" : 60.0
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/uno-coverage-build"
+        }
+      ]
+    },
+    {
+      "backtrace" : 33,
+      "command" : 
+      [
+        "/home/tomi/.local/bin/python3",
+        "/home/tomi/tos/crypto/test/workchain-batch-scan.py",
+        "--binary",
+        "/tmp/uno-coverage-build/test-workchain-batch-scan",
+        "--build",
+        "/tmp/uno-coverage-build"
+      ],
+      "name" : "test-workchain-batch-scan-gates",
+      "properties" : 
+      [
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "i13",
+            "private",
+            "workchain"
+          ]
+        },
+        {
+          "name" : "RESOURCE_LOCK",
+          "value" : 
+          [
+            "workchain_i13_measurements"
+          ]
+        },
+        {
+          "name" : "TIMEOUT",
+          "value" : 60.0
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/uno-coverage-build"
+        }
+      ]
+    },
+    {
+      "backtrace" : 39,
+      "command" : 
+      [
+        "/home/tomi/.local/bin/python3",
+        "/home/tomi/tos/crypto/test/workchain-coverage.py",
+        "--binary",
+        "/tmp/uno-coverage-build/test-workchain-coverage"
+      ],
+      "name" : "test-workchain-coverage-gates",
+      "properties" : 
+      [
+        {
+          "name" : "LABELS",
+          "value" : 
+          [
+            "i13",
+            "private",
+            "workchain"
+          ]
+        },
+        {
+          "name" : "RESOURCE_LOCK",
+          "value" : 
+          [
+            "workchain_i13_measurements"
+          ]
+        },
+        {
+          "name" : "TIMEOUT",
+          "value" : 60.0
+        },
+        {
+          "name" : "WORKING_DIRECTORY",
+          "value" : "/tmp/uno-coverage-build"
+        }
+      ]
+    }
+  ],
+  "version" : 
+  {
+    "major" : 1,
+    "minor" : 0
+  }
+}
