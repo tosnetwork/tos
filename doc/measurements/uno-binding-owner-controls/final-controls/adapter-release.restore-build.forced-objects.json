@@ -1,0 +1,8 @@
+[
+  "CMakeFiles/test-workchain-settlement-continuation.dir/crypto/test/test-workchain-settlement-continuation.cpp.o",
+  "validator/impl/CMakeFiles/tos_validator.dir/collator.cpp.o",
+  "validator/impl/CMakeFiles/tos_validator.dir/external-message.cpp.o",
+  "validator/impl/CMakeFiles/tos_validator.dir/fabric.cpp.o",
+  "validator/impl/CMakeFiles/tos_validator.dir/liteserver.cpp.o",
+  "validator/impl/CMakeFiles/tos_validator.dir/validate-query.cpp.o"
+]

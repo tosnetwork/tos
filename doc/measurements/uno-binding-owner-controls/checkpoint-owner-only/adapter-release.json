@@ -1,0 +1,43 @@
+{
+  "name": "adapter-release",
+  "path": "crypto/block/workchain-account-binding-owner.h",
+  "before": "    owner->adapter_.reset();",
+  "after": "    // mutation: omit adapter release",
+  "expected_assertion": "owner.release_adapter_before_binding",
+  "base_commit": "99160542ece39c708a3fb05b546911cab7883610",
+  "original_sha256": {
+    "crypto/block/workchain-account-binding-owner.h": "f43913931c9d58e408941bc404277110b2f165bebd995bfe5861062979ecc162",
+    "validator/impl/collator-impl.h": "505ce3cd07d23d02e60d58005c4edc0839d3c7f1373384d380404ee0ecf60039",
+    "validator/impl/collator.cpp": "ab2987b3829c6580802fbbdb4ffb8b04efed6557702fc0c326eb889843b24de1",
+    "crypto/test/test-workchain-settlement-continuation.cpp": "1af02f6b5cb4f28b87c6be68ebedb7aa82869fe4a1c695afa2ec68ed1d31ad5e"
+  },
+  "build_command": [
+    "cmake",
+    "--build",
+    "build",
+    "--target",
+    "test-workchain-settlement-continuation",
+    "test-tos-collator",
+    "-j32"
+  ],
+  "run_command": [
+    "/home/tomi/tos/build/test-workchain-settlement-continuation"
+  ],
+  "actual_executables": [
+    "test-workchain-settlement-continuation",
+    "test-tos-collator"
+  ],
+  "mutant_sha256": "1600d2686e6f8e1f49ede1ae5426b80d52f76f0949cea0d71ce9b7400ee80771",
+  "build_exit": 0,
+  "mutant_binary_sha256": "3c0e53727db8c78d3a6ac01c29552453f3576229bdfbd52224ef9f583193958f",
+  "run_exit": 1,
+  "restored_sha256": {
+    "crypto/block/workchain-account-binding-owner.h": "f43913931c9d58e408941bc404277110b2f165bebd995bfe5861062979ecc162",
+    "validator/impl/collator-impl.h": "505ce3cd07d23d02e60d58005c4edc0839d3c7f1373384d380404ee0ecf60039",
+    "validator/impl/collator.cpp": "ab2987b3829c6580802fbbdb4ffb8b04efed6557702fc0c326eb889843b24de1",
+    "crypto/test/test-workchain-settlement-continuation.cpp": "1af02f6b5cb4f28b87c6be68ebedb7aa82869fe4a1c695afa2ec68ed1d31ad5e"
+  },
+  "restore_build_exit": 0,
+  "restored_binary_sha256": "b27ec5591d18698b9f1321e05d29b1afb36eddd43c9d0fed03e1cc11b6f66581",
+  "restored_run_exit": 0
+}

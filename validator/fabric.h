@@ -19,6 +19,8 @@
 */
 #pragma once
 
+#include <optional>
+#include "block/workchain-account-candidate.h"
 #include "interfaces/db.h"
 #include "interfaces/validator-manager.h"
 #include "td/actor/coro_utils.h"
@@ -52,6 +54,10 @@ struct CollateParams {
   // Untrusted engine-specific candidate data; configuration/finality are loaded by the host.
   // Required only for block-transition collation. It is persisted for independent replay.
   td::Ref<vm::Cell> workchain_block_candidate = {};
+  // Account-family transport is distinct from the singleton candidate above.
+  // Context, limits and inbox must still be obtained by the production host;
+  // neither this optional nor the carrier certifies a successful admission.
+  std::optional<block::WorkchainAccountCandidate> workchain_account_candidate = std::nullopt;
 };
 
 struct ValidateParams {

@@ -1,0 +1,36 @@
+[1/36] Building CXX object validator/CMakeFiles/validator-common.dir/downloaders/download-state.cpp.o
+[2/36] Building CXX object validator/CMakeFiles/validator-db.dir/db/archive-slice.cpp.o
+[3/36] Building CXX object validator/CMakeFiles/validator-common.dir/manager-init.cpp.o
+[4/36] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/out-msg-queue-proof.cpp.o
+[5/36] Building CXX object validator/CMakeFiles/validator-common.dir/shard-client.cpp.o
+[6/36] Building CXX object validator/CMakeFiles/validator-db.dir/db/statedb.cpp.o
+[7/36] Building CXX object validator/CMakeFiles/validator-common.dir/validator-options.cpp.o
+[8/36] Building CXX object validator/CMakeFiles/validator-common.dir/block-handle.cpp.o
+[9/36] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/check-proof.cpp.o
+[10/36] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/ext-message-checker.cpp.o
+[11/36] Building CXX object validator/CMakeFiles/validator-db.dir/db/archiver.cpp.o
+[12/36] Building CXX object validator/CMakeFiles/validator-common.dir/downloaders/wait-block-state-merge.cpp.o
+[13/36] Building CXX object crypto/CMakeFiles/tos_db.dir/vm/db/DynamicBagOfCellsDbV2.cpp.o
+[14/36] Building CXX object validator/CMakeFiles/validator-common.dir/downloaders/wait-block-state.cpp.o
+[15/36] Building CXX object validator/CMakeFiles/validator-db.dir/db/archive-manager.cpp.o
+[16/36] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/accept-block.cpp.o
+[17/36] Building CXX object validator/CMakeFiles/validator-db.dir/db/rootdb.cpp.o
+[18/36] Building CXX object validator/CMakeFiles/validator-disk.dir/manager-disk.cpp.o
+[19/36] Building CXX object validator/CMakeFiles/validator-common.dir/apply-block.cpp.o
+[20/36] Building CXX object validator/CMakeFiles/validator-disk.dir/downloaders/wait-block-data-disk.cpp.o
+[21/36] Building CXX object validator/CMakeFiles/validator-common.dir/queue-size-counter.cpp.o
+[22/36] Building CXX object CMakeFiles/test-tos-collator.dir/test/test-tos-collator.cpp.o
+[23/36] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/ext-message-pool.cpp.o
+[24/36] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/top-shard-descr.cpp.o
+[25/36] Building CXX object validator/CMakeFiles/validator-db.dir/db/celldb.cpp.o
+[26/36] Linking CXX static library crypto/libtos_db.a
+[27/36] Linking CXX static library validator/libvalidator-disk.a
+[28/36] Building CXX object CMakeFiles/test-workchain-settlement-continuation.dir/crypto/test/test-workchain-settlement-continuation.cpp.o
+[29/36] Linking CXX executable test-workchain-settlement-continuation
+[30/36] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/external-message.cpp.o
+[31/36] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/fabric.cpp.o
+[32/36] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/collator.cpp.o
+[33/36] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/liteserver.cpp.o
+[34/36] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/validate-query.cpp.o
+[35/36] Linking CXX static library validator/impl/libtos_validator.a
+[36/36] Linking CXX executable test-tos-collator

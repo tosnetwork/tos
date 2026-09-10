@@ -24,6 +24,7 @@
 #include <vector>
 
 #include "adnl/adnl.h"
+#include "block/workchain-account-candidate.h"
 #include "dht/dht.h"
 #include "interfaces/block-handle.h"
 #include "interfaces/block.h"
@@ -61,6 +62,10 @@ struct CollatorOptions : public td::CntObject {
   // and thread-safe; returned data remains untrusted and is committed/replayed
   // exactly like an explicitly supplied candidate. Not a JSON configuration field.
   std::function<td::Result<td::Ref<vm::Cell>>(ShardIdFull)> workchain_candidate_source;
+  // Separate account-family acquisition: no reinterpretation of the singleton
+  // callback's opaque root. Bounded, non-blocking and thread-safe; carries no
+  // authenticated context or admission verdict. Not a deployment setting.
+  std::function<td::Result<block::WorkchainAccountCandidate>(ShardIdFull)> workchain_account_candidate_source;
   bool deferring_enabled = true;
 
   // Defer messages from account after Xth message in block (excluding first messages from transactions)

@@ -1,0 +1,13 @@
+{
+  "build_directory": "/home/tomi/tos/build",
+  "coordination": "B confirmed all test, fixture, mutation and native build activity stopped; cleanup-only window released immediately after cleanup.",
+  "command_preview": "python3 test/cleanup-counter-fixtures.py build --keep-newest 0",
+  "command_cleanup": "python3 test/cleanup-counter-fixtures.py build --keep-newest 0 --delete",
+  "directories_before": 9,
+  "directories_removed": 9,
+  "directories_after": 0,
+  "archived_top_level_diagnostic_files": 194,
+  "archive": "/home/tomi/tos/build/counter-fixture-diagnostics-1789002593287480277.tar.gz",
+  "recovery_scope": "Top-level diagnostic files are archived; removed fixture directory trees are not full backups.",
+  "idle_checks": "Script checks process names/arguments and readable /proc cwd/fd links before archiving and before deletion; inaccessible processes are not claimed checked."
+}

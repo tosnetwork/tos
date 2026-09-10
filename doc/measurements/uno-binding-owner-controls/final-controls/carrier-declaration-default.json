@@ -1,0 +1,49 @@
+{
+  "name": "carrier-declaration-default",
+  "path": "crypto/block/workchain-account-candidate.h",
+  "before": "      : candidate_(std::move(candidate)), declarations_(std::move(declarations)) {}",
+  "after": "      : candidate_(std::move(candidate)), declarations_(declarations.is_null() ? candidate_ : std::move(declarations)) {}",
+  "expected_assertion": "carrier.missing_declarations_preserved",
+  "base_commit": "99160542ece39c708a3fb05b546911cab7883610",
+  "original_sha256": {
+    "crypto/block/workchain-account-binding-owner.h": "5a70b012b038ba23cdbc9fb46a7a6ef04570e5c4b3faf515c797b1ec666dbede",
+    "validator/impl/collator-impl.h": "505ce3cd07d23d02e60d58005c4edc0839d3c7f1373384d380404ee0ecf60039",
+    "validator/impl/collator.cpp": "ab2987b3829c6580802fbbdb4ffb8b04efed6557702fc0c326eb889843b24de1",
+    "crypto/test/test-workchain-settlement-continuation.cpp": "218aa4a1c1a01f992b99ff83d21cdd161c5c02e914b96f64696113f2e9b00e9a",
+    "crypto/block/workchain-account-candidate.h": "d3af6507e614eb6f78efca453470d24f3fb9d747961a775525e11be8351fff86",
+    "validator/validator.h": "0572e27e4424d1e39cb88335b4e86f7e298a5f4610e7c0feff285f8ca7328686",
+    "validator/fabric.h": "291a1cfacf87d5851621b8d657cc6eb0078590bdf0950574928ff3492d88baa4"
+  },
+  "build_command": [
+    "cmake",
+    "--build",
+    "build",
+    "--target",
+    "test-workchain-settlement-continuation",
+    "test-tos-collator",
+    "-j32"
+  ],
+  "run_command": [
+    "/home/tomi/tos/build/test-workchain-settlement-continuation"
+  ],
+  "actual_executables": [
+    "test-workchain-settlement-continuation",
+    "test-tos-collator"
+  ],
+  "mutant_sha256": "5780054615ca7b1830f43767f80b3e13353f61a6f878581eaef77f26fea11b5c",
+  "build_exit": 0,
+  "mutant_binary_sha256": "324c91030614451c31bbb7f1f115dab6303c6cddf74e3fa99c2d4fa07d70447e",
+  "run_exit": 1,
+  "restored_sha256": {
+    "crypto/block/workchain-account-binding-owner.h": "5a70b012b038ba23cdbc9fb46a7a6ef04570e5c4b3faf515c797b1ec666dbede",
+    "validator/impl/collator-impl.h": "505ce3cd07d23d02e60d58005c4edc0839d3c7f1373384d380404ee0ecf60039",
+    "validator/impl/collator.cpp": "ab2987b3829c6580802fbbdb4ffb8b04efed6557702fc0c326eb889843b24de1",
+    "crypto/test/test-workchain-settlement-continuation.cpp": "218aa4a1c1a01f992b99ff83d21cdd161c5c02e914b96f64696113f2e9b00e9a",
+    "crypto/block/workchain-account-candidate.h": "d3af6507e614eb6f78efca453470d24f3fb9d747961a775525e11be8351fff86",
+    "validator/validator.h": "0572e27e4424d1e39cb88335b4e86f7e298a5f4610e7c0feff285f8ca7328686",
+    "validator/fabric.h": "291a1cfacf87d5851621b8d657cc6eb0078590bdf0950574928ff3492d88baa4"
+  },
+  "restore_build_exit": 0,
+  "restored_binary_sha256": "e471bf9c35a12515da917e6d262adffa1d7168b8f41cef40a38343d26815a4f6",
+  "restored_run_exit": 0
+}

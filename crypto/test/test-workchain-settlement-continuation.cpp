@@ -1,9 +1,12 @@
 #include "block/workchain-account-settlement.h"
 #include "block/workchain-execution-dispatch.h"
+#include "block/workchain-account-binding-owner.h"
+#include "block/workchain-account-candidate.h"
 #include "vm/boc.h"
 #include "vm/cells/MerkleProof.h"
 #include <iostream>
 #include <stdexcept>
+#include <type_traits>
 
 namespace {
 void require(bool value, const char* name) {
@@ -15,6 +18,24 @@ td::Bits256 key(unsigned n) {
   return value;
 }
 td::Ref<vm::Cell> number(unsigned n) { return vm::CellBuilder().store_long(n, 64).finalize(); }
+void candidate_transport() {
+  using Candidate = block::WorkchainAccountCandidate;
+  static_assert(!std::is_default_constructible_v<Candidate>);
+  static_assert(!std::is_constructible_v<Candidate, td::Ref<vm::Cell>>);
+  auto input = number(7), access = number(8);
+  Candidate roots{input, access};
+  require(roots.candidate().get() == input.get(), "carrier.original_candidate");
+  require(roots.declarations().get() == access.get(), "carrier.original_declarations");
+  auto copy = roots;
+  roots = Candidate{{}, {}};
+  require(copy.candidate().get() == input.get() && copy.declarations().get() == access.get(),
+          "carrier.independent_holder");
+  require(roots.candidate().is_null() && roots.declarations().is_null(), "carrier.no_empty_defaults");
+  Candidate absent_access{input, {}};
+  Candidate absent_input{{}, access};
+  require(absent_access.declarations().is_null(), "carrier.missing_declarations_preserved");
+  require(absent_input.candidate().is_null(), "carrier.missing_candidate_preserved");
+}
 td::Ref<vm::Cell> account(unsigned n) {
   vm::CellBuilder b;
   b.store_long(1, 1).store_long(4, 3).store_long(2, 8).store_bits(key(n).bits(), 256)
@@ -52,6 +73,44 @@ struct Engine final : block::RegisteredWorkchainAccountEngine {
     return effects;
   }
 };
+void owner_lifecycle(const block::ResolvedWorkchainAccountBinding& binding) {
+  using Owner = block::WorkchainAccountBindingOwner;
+  static_assert(!std::is_default_constructible_v<Owner>);
+  static_assert(!std::is_move_constructible_v<Owner> && !std::is_copy_constructible_v<Owner>);
+  static_assert(!std::is_constructible_v<Owner, block::ResolvedWorkchainAccountBinding,
+      std::unique_ptr<block::ConfiguredWorkchainAccountEngine>>);
+  const auto before = binding.engine_config.use_count();
+  auto created = Owner::bind(binding);
+  require(created.is_ok(), "owner.bind_positive");
+  auto owner = created.move_as_ok();
+  require(binding.engine_config.use_count() == before + 2, "owner.both_configuration_references");
+  const auto* adapter = &owner->adapter();
+  auto transferred = std::move(owner);
+  require(!owner && &transferred->adapter() == adapter, "owner.transfer_keeps_adapter_identity");
+  const auto after_adapter = Owner::release(std::move(transferred));
+  require(!transferred && after_adapter == before + 1, "owner.intermediate_count_sample");
+  require(binding.engine_config.use_count() == before, "owner.explicit_release_both_halves");
+  require(Owner::release(nullptr) == 0, "owner.already_released");
+  {
+    auto scoped = Owner::bind(binding).move_as_ok();
+    require(binding.engine_config.use_count() == before + 2, "owner.destructor_positive");
+  }
+  require(binding.engine_config.use_count() == before, "owner.destructor_releases_both_halves");
+  auto missing = binding;
+  missing.engine_config.reset();
+  require(Owner::bind(std::move(missing)).is_error(), "owner.missing_configuration_cannot_publish");
+  auto unregistered = binding;
+  unregistered.executor = nullptr;
+  require(Owner::bind(std::move(unregistered)).is_error(), "owner.missing_engine_cannot_publish");
+  require(binding.engine_config.use_count() == before, "owner.failed_bind_consumed_argument");
+  auto moved_binding = binding;
+  const auto before_move = binding.engine_config.use_count();
+  auto moved_owner = Owner::bind(std::move(moved_binding)).move_as_ok();
+  require(!moved_binding.engine_config, "owner.move_consumes_binding");
+  require(binding.engine_config.use_count() == before_move + 1, "owner.production_move_count");
+  require(Owner::release(std::move(moved_owner)) == before_move, "owner.production_release_count");
+  require(binding.engine_config.use_count() == before, "owner.production_release_both_halves");
+}
 void run(const std::string& scenario) {
   Engine engine;
   block::WorkchainResourcePolicy resources{2, {1000, 1000000, 3, 2, 2, 1},
@@ -64,7 +123,9 @@ void run(const std::string& scenario) {
   auto policy = std::get<block::ResolvedBatchInputPolicy>(resolved);
   block::ResolvedWorkchainAccountBinding binding{&engine, {}, {},
       std::make_shared<const block::WorkchainEngineConfig>(), number(9), policy};
-  auto adapter = block::ConfiguredWorkchainAccountEngine::bind(binding).move_as_ok();
+  owner_lifecycle(binding);
+  auto owner = block::WorkchainAccountBindingOwner::bind(binding).move_as_ok();
+  const auto* adapter = &owner->adapter();
   auto other = block::ConfiguredWorkchainAccountEngine::bind(binding).move_as_ok();
   vm::AugmentedDictionary dictionary(256, block::tlb::aug_ShardAccounts);
   block::WorkchainAccountDeclarations declarations;
@@ -167,6 +228,7 @@ void run(const std::string& scenario) {
 }  // namespace
 int main(int argc, char** argv) {
   try {
+    candidate_transport();
     if (argc == 2) run(argv[1]);
     else for (const char* scenario : {"once", "input", "state", "observer", "tracking", "effects", "output"}) run(scenario);
     return 0;

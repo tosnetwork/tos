@@ -27,6 +27,7 @@
 #include "block/output-queue-merger.h"
 #include "block/transaction.h"
 #include "block/workchain-execution-dispatch.h"
+#include "block/workchain-account-binding-owner.h"
 #include "block/workchain-execution-ledger.h"
 #include "common/global-version.h"
 #include "common/refcnt.hpp"
@@ -174,8 +175,7 @@ class Collator final : public td::actor::Actor {
   std::shared_ptr<vm::CellUsageTree> state_usage_tree_;  // used to construct Merkle update
   // One candidate actor owns the authenticated cut and its configured adapter.
   // Declared after the usage tree so destruction releases the adapter first.
-  std::optional<block::ResolvedWorkchainAccountBinding> account_binding_;
-  std::unique_ptr<block::ConfiguredWorkchainAccountEngine> account_adapter_;
+  std::unique_ptr<block::WorkchainAccountBindingOwner> account_binding_owner_;
   // Candidate-actor lifetime; reserved for the pending live execution seam.
   // Construct once from authenticated policy when the pending live seam binds it.
   std::optional<block::WorkchainExecutionLedger> account_execution_ledger_;

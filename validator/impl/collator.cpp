@@ -1605,12 +1605,11 @@ bool Collator::check_this_shard_mc_info() {
           // Resolve once, then retain this exact adapter across host stages.
           // No input/proof token or execution permission is manufactured here.
           stats_.account_config_owners_before = binding.engine_config.use_count();
-          auto adapter = block::ConfiguredWorkchainAccountEngine::bind(binding);
-          if (adapter.is_error()) return adapter.move_as_error();
-          account_adapter_ = adapter.move_as_ok();
-          account_binding_.emplace(std::move(binding));
-          stats_.account_adapter_bound = account_adapter_ != nullptr;
-          stats_.account_config_owners_during = account_binding_->engine_config.use_count();
+          auto owner = block::WorkchainAccountBindingOwner::bind(std::move(binding));
+          if (owner.is_error()) return owner.move_as_error();
+          account_binding_owner_ = owner.move_as_ok();
+          stats_.account_adapter_bound = account_binding_owner_ != nullptr;
+          stats_.account_config_owners_during = account_binding_owner_->binding().engine_config.use_count();
           return td::Status::OK();
         }), *execution);
     if (ready.is_error()) return fatal_error(std::move(ready));
@@ -1794,7 +1793,7 @@ bool Collator::do_preinit() {
     return fatal_error("cannot unpack previous state of current shardchain");
   }
   CHECK(account_dict);
-  stats_.account_adapter_retained_after_state = account_adapter_ != nullptr && account_binding_.has_value();
+  stats_.account_adapter_retained_after_state = account_binding_owner_ != nullptr;
   if (!init_utime()) {
     return fatal_error("cannot initialize unix time");
   }
@@ -6942,11 +6941,10 @@ td::uint32 Collator::get_skip_externals_queue_size() {
 }
 
 void Collator::release_account_adapter() {
-  if (!account_adapter_) return;
-  account_adapter_.reset();
+  if (!account_binding_owner_) return;
+  stats_.account_config_owners_after =
+      block::WorkchainAccountBindingOwner::release(std::move(account_binding_owner_));
   stats_.account_adapter_released = true;
-  stats_.account_config_owners_after = account_binding_->engine_config.use_count();
-  account_binding_.reset();
 }
 
 void Collator::finalize_stats() {
