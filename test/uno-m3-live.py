@@ -131,7 +131,7 @@ subprocess.run([str(build / 'test-tos-collator'), '-C', str(fixture / 'global.js
                 '-D', str(fixture / 'db'), '-w', '-1', '-M', str(fixture / 'payer-b-top1.boc'),
                 '--query-result', str(fixture / 'payer-b-master.result')], check=True)
 registration_pair()
-print('Both registrations accepted on real collator/validator with paired OFF runs; transfer sequence pending.')
+print('Both registrations accepted on real collator/validator with paired OFF runs.', flush=True)
 advance_pair(1)
 subprocess.run([str(build / 'test-tos-collator'), '-C', str(fixture / 'global.json'),
                 '-D', str(fixture / 'db'), '-w', '-1', '-M', str(fixture / '1-enabled-top1.boc'),
@@ -228,3 +228,11 @@ advance_operation(6)
 collect_pair(120, 67, 71, [(second_receipt, 251, 43), (third_receipt, 89, 61)])
 advance_operation(7)
 send_pair(1, 443, 71, 432, 73, 79)
+advance_operation(8)
+subprocess.run([str(build / 'test-m3-live'), '--closure-request', str(fixture)], check=True)
+subprocess.run([str(wallet), 'close', str(fixture / 'closure.request.txt'),
+                str(fixture / 'closure.proof.txt')], check=True)
+subprocess.run([str(build / 'test-m3-live'), '--closure-finish', str(fixture)], check=True)
+subprocess.run([str(build / 'test-m3-live'), str(fixture)], check=True)
+print('M3 sequence completed under test-constructed configuration, with paired OFF runs. '
+      'Test-only funding is not M4 Deposit; refund is a one-way message, delivery not guaranteed.')

@@ -4,6 +4,7 @@
 #include "m3-live-state.h"
 #include "block/workchain-confidential-execution.h"
 #include "crypto/test/workchain-m3-wallet-requests.h"
+#include "crypto/test/workchain-m3-closure-wallet.h"
 
 namespace m3_live {
 inline td::Bits256 wallet_account(unsigned owner) {
@@ -89,5 +90,28 @@ inline void prepare_transfer(const std::filesystem::path& fixture, bool finish, 
   std::string text;
   for (const auto& [key, value] : prepared.prover_fields) text += key + "=" + value + "\n";
   td::write_file((fixture / "operation.statement.txt").string(), text).ensure();
+}
+inline void prepare_closure(const std::filesystem::path& fixture, bool finish) {
+  const auto env = wallet_environment(fixture, 1);
+  const auto& p = env.protocol;
+  block::WorkchainPossessionPolicy policy{
+      {p.engine_version, p.relation_version, p.wire_version, p.proof_version,
+       p.global_id, p.workchain_id, p.genesis_hash, p.workchain_instance},
+      env.rules, env.profiles, env.fee_profile, env.fee_effective_height};
+  const auto account = wallet_state(fixture, 1);
+  const auto prepared = block::m3_test::make_m3_test_closure_wallet_input(policy, env.domain, account).move_as_ok();
+  if (finish) {
+    const auto bytes = td::hex_decode(field(fixture / "closure.proof.txt", "proof")).move_as_ok();
+    CHECK(bytes.size() == 96);
+    block::WorkchainClosureReplayInput input{prepared.operation_id, prepared.context, {}};
+    std::memcpy(input.proof.data(), bytes.data(), bytes.size());
+    save_operation(fixture, block::encode_workchain_replay_input(input).move_as_ok(), {wallet_account(1)});
+    return;
+  }
+  td::write_file((fixture / "closure.request.txt").string(),
+      "secret=223\ncontext=" + td::hex_encode(prepared.context_bytes) +
+      "\nprefix=" + td::hex_encode(prepared.prefix_bytes) +
+      "\nhandle=" + td::hex_encode(account.available.handle.as_slice()) +
+      "\ncommitment=" + td::hex_encode(account.available.commitment.as_slice()) + "\n").ensure();
 }
 }  // namespace m3_live

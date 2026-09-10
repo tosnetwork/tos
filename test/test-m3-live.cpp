@@ -13,6 +13,28 @@
 #include "m3-live-wallet.h"
 
 int main(int argc, char** argv) {
+  if (argc == 3 && std::string(argv[1]) == "--check-closure-result") {
+    vm::init_vm().ensure();
+    const std::filesystem::path fixture(argv[2]);
+    CHECK(std::filesystem::exists(fixture / ".counter-managed-v1"));
+    auto previous = m3_live::load(fixture / "current-state.boc");
+    auto accepted = m3_live::read_accepted_step(fixture / "enabled.candidate", previous);
+    block::gen::Transaction::Record tx;
+    CHECK(tlb::unpack_cell(m3_live::accepted_transaction(accepted, td::Bits256::zero()), tx));
+    auto input = block::m3_test::replay_input_from_block(accepted.block, td::Bits256::zero(), tx.lt).move_as_ok();
+    auto replay = block::decode_workchain_replay_input(input).move_as_ok();
+    CHECK(std::holds_alternative<block::WorkchainClosureReplayInput>(replay));
+    m3_live::assert_accepted_closure(previous, accepted,
+        std::get<block::WorkchainClosureReplayInput>(replay).context.subject.account);
+    return 0;
+  }
+  if (argc == 3 && (std::string(argv[1]) == "--closure-request" || std::string(argv[1]) == "--closure-finish")) {
+    vm::init_vm().ensure();
+    const std::filesystem::path fixture(argv[2]);
+    CHECK(std::filesystem::exists(fixture / ".counter-managed-v1"));
+    m3_live::prepare_closure(fixture, std::string(argv[1]) == "--closure-finish");
+    return 0;
+  }
   if (argc == 3 && (std::string(argv[1]) == "--send-request" || std::string(argv[1]) == "--send-finish" ||
                    std::string(argv[1]) == "--collect-request" || std::string(argv[1]) == "--collect-finish")) {
     vm::init_vm().ensure();

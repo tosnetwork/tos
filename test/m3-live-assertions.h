@@ -52,7 +52,11 @@ inline void assert_accepted_closure(const td::Ref<vm::Cell>& previous, const Acc
   block::gen::Transaction::Record tx;
   CHECK(tlb::unpack_cell(transaction, tx) && tx.outmsg_cnt == 1);
   vm::Dictionary outgoing(tx.r1.out_msgs, 15);
-  auto message = outgoing.lookup_ref(td::BitArray<15>(0));
+  // A literal 0 selects BitArray's non-template pointer constructor, not its
+  // templated integer constructor. Store the zero index explicitly.
+  td::BitArray<15> first_message;
+  first_message.bits().store_uint(0, 15);
+  auto message = outgoing.lookup_ref(first_message);
   CHECK(message.not_null());
   block::gen::ShardStateUnsplit::Record before, after;
   CHECK(tlb::unpack_cell(previous, before) && tlb::unpack_cell(step.state, after));
@@ -61,7 +65,14 @@ inline void assert_accepted_closure(const td::Ref<vm::Cell>& previous, const Acc
   block::m3_test::assert_closure(account_data(previous, coordinator), account_data(step.state, coordinator),
       account_data(previous, subject_from_block), account_data(step.state, subject_from_block),
       test_secret(subject_from_block), 100000, observed).ensure();
+  td::Bits256 a;
+  a.as_slice().fill(0x11);
+  auto sender = block::decode_workchain_confidential_account(account_data(step.state, a)).move_as_ok();
+  const auto value = block::m3_test::decrypt(sender.available, test_secret(a), 100000).move_as_ok();
+  block::m3_test::assert_balance(value, 49490).ensure();
+  auto system = block::decode_workchain_coordinator_state(account_data(step.state, coordinator)).move_as_ok();
+  CHECK(system.system.registered_accounts == 2);
   std::cout << "actual closure: zero available; historical deposit is an outbound message only; "
-               "delivery NOT guaranteed, no recipient credit asserted\n";
+               "delivery NOT guaranteed, no recipient credit asserted; A=49490 B=0 registered_accounts=2\n";
 }
 }  // namespace m3_live
