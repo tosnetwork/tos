@@ -3198,12 +3198,15 @@ inspection contract, rather than treating the token as such a proof.
 
 ### Next integration boundary: connectivity before deeper admission work
 
-Current scheduling constraint (coordinator decision, 2026-09-10): D45 forbids
-moving any execution refusal before C1/C2/C3 close; there is no isolated-test
+Current owner decision (2026-09-10): M1 ends at mechanisms complete, seams
+prepared, and evidence that the gate is correctly closed with correct
+classification. Opening D45 is deferred, not an M1 deliverable. C1/C2/C3 are
+necessary mechanism conditions, not sufficient permission to move a refusal;
+joint exposure acceptance belongs to the opening side. There is no isolated-test
 exception. The earlier scheduling text below is historical, not authorization
-to advance the four remaining visitor refusals. First establish their distinct
-runtime frontiers; the original five-site GDB sequence measured Collator only,
-not ValidateQuery. Unreached sites cannot establish that a change is harmless.
+to advance the four remaining visitor refusals. Measure the shared
+validate_required_workchains readiness frontier, not four independently
+reachable seams. Unreached sites cannot establish that a change is harmless.
 
 AccountBatch scope rule `b2eeef278` is reviewed, but it connects no live call
 site. Mandatory acceptance for the eventual connection: the actual account
