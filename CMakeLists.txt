@@ -1194,7 +1194,7 @@ tos_test(test-workchain-collator-compute-mode)
 tos_test(test-workchain-proof-work)
 tos_test(test-workchain-proof-contracts)
 tos_test(test-workchain-admission)
-tos_test(test-smartcont)
+tos_test(test-smartcont ${TEST_OPTIONS})
 tos_test(test-net)
 tos_test(test-tdactor)
 
