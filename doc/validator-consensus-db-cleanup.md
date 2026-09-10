@@ -290,6 +290,34 @@ eligible sweep, runtime confirmed dequeue, and the full fault-injection matrix.
 This avoids changing `update_shards` + `updated_init_block` + startup + StateDb +
 bridge destroy + sweep all at once.
 
+### Delivered / remaining (status)
+
+**PR A delivered (observational, not merged pre-genesis):**
+
+- *Increment 1 — safety core* (`validator/consensus/validator-cleanup.h`): the
+  record type; a versioned, architecture-independent codec that fails closed on
+  malformed/observer/non-canonical/session-mismatch/non-masterchain input; the
+  pure ancestry-based `can_delete_validator_db` predicate; and the monotonic
+  `should_adopt_safe_checkpoint` guard. Falsifiable unit tests, guards
+  mutation-verified.
+- *Increment 2 — persistence + shadow load* (`validator-cleanup-store.h`,
+  StateDb/RootDb/`Db`, `ValidatorManager`): per-session durable records with a
+  bracketed prefix-scan and decode-skip; a fire-and-forget startup load into the
+  shadow `pending_validator_db_cleanup_` that no retirement/sweep/selection/
+  destroy/deletion path consults. Real-RocksDb round-trip tests over the same
+  production store/erase/load functions, bounds and write/erase mutation-verified.
+
+**Deferred to PR B (post-genesis):** the `durable_safe_cleanup_checkpoint`
+derivation (amendment 1: post-`set_applied` handle-flush signal + replay anchor +
+rollback-floor policy), the concrete ancestry oracle wired to real chain state
+(amendment 2), and the **side-effect-free selection-only pass** computing the
+current+next recreatable session set (amendment 4). These were originally sketched
+as PR A items, but each is consumed only by deletion and requires the same deep
+consensus-selection / chain-ancestry integration as PR B; building them as inert
+shadow state pre-genesis would risk a subtle divergence from the live selection
+logic for no current behavioral benefit. They move to PR B, where their output is
+actually used and can be exercised by the fault-injection matrix.
+
 ## Fault-injection test matrix (hard acceptance — not helper-only)
 
 | Case | Crash point | Expected |
