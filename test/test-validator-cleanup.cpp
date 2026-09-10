@@ -321,6 +321,27 @@ TEST(ValidatorCleanup, retirement_ahead_of_safe_is_retained) {
   ASSERT_TRUE(!can_delete_validator_db(r, make_checkpoint(100), false, chain_oracle));
 }
 
+// The record builder produces a canonical VALIDATOR record (empty suffix) that
+// always satisfies the decode contract: it encodes and decodes back to an equal
+// record, and its directory is canonical for the session. A wrong suffix (e.g.
+// observer) or a non-masterchain checkpoint would make the round trip fail.
+TEST(ValidatorCleanup, make_record_is_canonical_and_round_trips) {
+  auto sid = make_session_id(9);
+  tos::ShardIdFull shard{0, kMasterShard};
+  auto checkpoint = make_checkpoint(123);
+  auto record = make_validator_cleanup_record(sid, shard, 4567, checkpoint);
+
+  ASSERT_TRUE(record.session_id == sid);
+  ASSERT_TRUE(record.retirement_checkpoint == checkpoint);
+  ASSERT_TRUE(record.dir_name == consensus_db_dir_name(shard, 4567, sid, td::Slice("")));
+  ASSERT_TRUE(is_canonical_validator_dir_name(record.dir_name, sid));
+
+  auto blob = encode_validator_cleanup_record(record);
+  auto back = decode_validator_cleanup_record(td::Slice(blob));
+  ASSERT_TRUE(back.has_value());
+  ASSERT_TRUE(back.value() == record);
+}
+
 // Pin the literal key prefix and range end independently of the helpers, so a
 // change to the persisted key scheme (which would orphan existing on-disk
 // records) is caught, and the range end is exactly the prefix with its final

@@ -227,6 +227,24 @@ inline std::optional<PendingValidatorConsensusDbCleanup> decode_validator_cleanu
   return r;
 }
 
+// Build the cleanup record for a retiring validator group. The directory name is
+// the canonical VALIDATOR name (empty suffix) for this session, matching exactly
+// what the bridge's db_path() produces for a validator group, so a later cleanup
+// acts on the real directory. `catchain_seqno` must be the group's catchain seqno
+// (the same value the bridge derives from its validator set). The result always
+// satisfies the decode contract (canonical name, masterchain checkpoint) when the
+// checkpoint is a full masterchain block.
+inline PendingValidatorConsensusDbCleanup make_validator_cleanup_record(const ValidatorSessionId& session_id,
+                                                                        ShardIdFull shard,
+                                                                        CatchainSeqno catchain_seqno,
+                                                                        const BlockIdExt& retirement_checkpoint) {
+  PendingValidatorConsensusDbCleanup record;
+  record.session_id = session_id;
+  record.retirement_checkpoint = retirement_checkpoint;
+  record.dir_name = consensus_db_dir_name(shard, catchain_seqno, session_id, td::Slice(""));
+  return record;
+}
+
 // Ancestry of the retirement checkpoint relative to the safe checkpoint on the
 // accepted masterchain. Unknown is distinct from NotAncestor: an oracle that
 // cannot resolve the relation (handle gone, foreign branch) must report Unknown,
