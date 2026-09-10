@@ -990,3 +990,45 @@ Implemented as the pure, injected-oracle `validator_session_is_onchain_obsolete`
 `parse_canonical_validator_dir_name` exposing shard + cc. Falsifiable tests pin
 the strict `r < g` boundary, the ancestor/equality gate, the unknown-sentinel
 veto, invalid-GC, and non-canonical rejection.
+
+## B2-8 adapter invariant checklist (Codex) + enablement gating
+
+The pure coordinator (B2-1..B2-7) is safe within its injected-oracle contract.
+Codex confirmed it is ready for the B2-8 adapter but **NOT for production
+enablement** until the adapter satisfies these invariants AND has its own red/green
+tests. To get that evidence without a full manager harness, the stateful adapter
+is extracted into a testable component (`ValidatorCleanupManager`, B2-8a); the
+`ValidatorManagerImpl` is a thin forwarder (B2-8b); the flip-on is B2-8c.
+
+Adapter invariants (all required before enablement):
+1. **Durable, current record authority.** Only committed records; one current
+   record per session; bind ops to record version + ownership generation; reject
+   stale snapshots. (Shadow-map membership alone is insufficient — retirement
+   updates the map before persistence completes.)
+2. **Complete current liveness.** `is_live` = in `validator_groups_` OR
+   `next_validator_groups_` OR any pending/in-progress creation/reopen; no false
+   "not live" interval across container transitions; unknown ownership vetoes.
+3. **Fence the entire async deletion.** Atomically establish eligibility and
+   RESERVE the exact session/dir before dispatching FS work; every reopen path
+   honors the reservation until the worker finishes; overlapping sweeps honor it.
+   A before/after re-check is NOT enough (an after-check can't restore deleted
+   votes).
+4. **Generation-scoped closure.** Accept close acks only for the retiring
+   incarnation; reopen invalidates prior closure; a bare session-id set with
+   unconditional insert is insufficient. After restart, establish closure from
+   completed recovery + exclusive ownership (no owner yet in the fresh process
+   before group creation), not an invented ack.
+5. **One coherent durable GC snapshot.** Match GC state's full block id to the
+   durable GC handle; use `check_old_mc_block_id(retirement, true)`; map
+   `UINT32_MAX` -> nullopt; fail closed on missing state/topology; preserve the
+   no-wrap/no-reuse premise under `r < g`.
+6. **Completion, not dispatch, is confirmed deletion.** The async adapter must not
+   translate "job queued" into a true deleter result; only a fenced, confirmed
+   absence counts.
+7. **Durable erase without re-add race.** Bind erase to the captured
+   record/generation; update the shadow entry only after durable success; a stale
+   completion must never remove a replacement record.
+Plus: bounded aggregate in-flight FS work + fair retry rotation; and adapter
+acceptance tests (reopen during FS work, stale close/delete/erase, replacement-
+record preservation, restart reconciliation) demonstrably red/green BEFORE the
+flip. Enablement (B2-8c) also remains post-genesis per the overall plan.
