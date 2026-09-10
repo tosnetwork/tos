@@ -30,6 +30,43 @@ uno_v2_account_state schema_version:uint16 relation_profile:uint16 proof_profile
   auth_nonce:uint64 available_revision:uint64 pending_count:(## 16) { pending_count <= 16 }
   identity:^UnoV2AccountIdentity crypto:^UnoV2AccountCrypto
   pending:(HashmapE 256 ^UnoV2PendingReceipt) lifecycle:^UnoV2AccountLifecycle = UnoV2AccountState;
+// Operation identity is a proof INPUT: including authorization would create a
+// cycle (proof -> operationID -> proof). No current block hash enters this DAG.
+uno_v2_operation_network_v1 global_id:int32 genesis_hash:bits256 workchain_instance:bits256
+  = UnoV2OperationNetworkV1;
+uno_v2_operation_identity_v1 kind:(## 8) { kind >= 1 } { kind <= 2 } auth_nonce:uint64
+  network:^UnoV2OperationNetworkV1 source:^UnoV2AccountAddress = UnoV2OperationIdentityV1;
+uno_v2_transfer_claims_v1 auth_nonce:uint64 available_revision:uint64 key_epoch:uint32
+  expiry_height:uint32 authorized_fee:uint64 source:^UnoV2AccountAddress = UnoV2TransferClaimsV1;
+uno_v2_send_ciphertext_v1 commitment:bits256 sender_handle:bits256 recipient_handle:bits256
+  = UnoV2SendCiphertextV1;
+uno_v2_send_data_v1 destination_key_epoch:uint32 auxiliary:bits256
+  claims:^UnoV2TransferClaimsV1 destination:^UnoV2AccountAddress
+  available:^UnoV2AccountCiphertext transfer:^UnoV2SendCiphertextV1 = UnoV2TransferDataV1;
+// selected is a canonical 127-byte snake: k ordered (receipt_id, Ji) pairs.
+// The codec preserves order. The crypto kernel enforces strict order/uniqueness.
+uno_v2_collect_data_v1 count:(## 8) { count >= 1 } { count <= 16 } auxiliary_old:bits256
+  claims:^UnoV2TransferClaimsV1 available:^UnoV2AccountCiphertext selected:^Cell = UnoV2TransferDataV1;
+// Authorization is T_j || z || range, exact relation-derived byte lengths.
+// T_j is authorization, NOT semantic data. txid hashes data only; the enclosing
+// block commits this entire input, including all authorization bytes.
+uno_v2_transfer_input_v1 claimed_operation_id:bits256 data:^UnoV2TransferDataV1
+  authorization:^Cell = UnoV2TransferInputV1;
+// Fixed-width context; all fields mandatory and rebuilt from authenticated
+// configuration/state by each host. Profile hashes identify manifests, never
+// caller-selected generators. These versions are independent of admission.
+uno_v2_transfer_protocol_v1 engine_version:uint32 relation_version:uint16 wire_version:uint16
+  proof_version:uint16 kind:(## 8) { kind >= 1 } { kind <= 2 }
+  global_id:int32 workchain_id:int32 genesis_hash:bits256 workchain_instance:bits256
+  = UnoV2TransferProtocolV1;
+uno_v2_transfer_rules_v1 asset:bits256 custody:bits256 policy:bits256 = UnoV2TransferRulesV1;
+uno_v2_transfer_profiles_v1 configuration:bits256 generator_profile:bits256 range_profile:bits256
+  = UnoV2TransferProfilesV1;
+uno_v2_transfer_binding_v1 operation_id:bits256 semantic_hash:bits256 authenticated_statement_hash:bits256
+  = UnoV2TransferBindingV1;
+uno_v2_transfer_context_v1 fee_profile:bits256 fee_effective_height:uint32
+  protocol:^UnoV2TransferProtocolV1 rules:^UnoV2TransferRulesV1
+  profiles:^UnoV2TransferProfilesV1 binding:^UnoV2TransferBindingV1 = UnoV2TransferContextV1;
 uno_v2_resource_input max_cells:uint64 max_bits:uint64 max_roots:uint64
   max_reads:uint32 max_writes:uint32 max_inbound:uint32 = UnoV2ResourceInput;
 uno_v2_resource_state max_cells:uint64 max_bits:uint64 max_account_cells:uint64

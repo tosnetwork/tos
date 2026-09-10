@@ -736,6 +736,12 @@ if(TOS_UNO_CRYPTO_NODE_LINK)
 endif()
 tos_test(test-workchain-account-closure)
 set_tests_properties(test-workchain-account-closure PROPERTIES TIMEOUT 30 LABELS "workchain;m3")
+add_executable(test-workchain-confidential-input ../test/test-td-main.cpp test/test-workchain-confidential-input.cpp)
+target_link_libraries(test-workchain-confidential-input PRIVATE tos_block tos_crypto)
+target_compile_definitions(test-workchain-confidential-input PRIVATE
+  UNO_BALANCE_VECTOR_FILE="${PROJECT_SOURCE_DIR}/uno/crypto/fixtures/balance-kernel-v2.txt")
+tos_test(test-workchain-confidential-input)
+set_tests_properties(test-workchain-confidential-input PROPERTIES TIMEOUT 30 LABELS "workchain;m3")
 
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 add_test(NAME test-workchain-handwritten-tags COMMAND ${Python3_EXECUTABLE}
