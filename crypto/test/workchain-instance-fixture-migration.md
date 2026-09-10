@@ -54,6 +54,13 @@ must carry a valid D40 identity too; there is no optional-identity or alternate
 identity-free shell. Counter tests the same UNO infrastructure. Its existing raw
 business-parameter consumption must be adapted as part of the separate Counter
 fixture reshaping unit, not by weakening identity validation in this migration.
+> **Superseded installation plan:** This retained paragraph describes the old
+> D40/D52 shape. The cyclic masterchain-root term was removed and the genesis
+> prohibition withdrawn; current fixtures install identity at genesis. Counter
+> framing/engine consumption was reconciled, and `c55fa45e7` records all eleven
+> merged checks passing without deferrals. The old search-method finding remains
+> valid; post-zerostate migration is no longer the current remedy.
+
 That unit covers readiness and both activation cases: zerostate contains no
 identity-bearing workchain configuration, installation occurs in a later block,
 and `genesis_hash` is the real zerostate root. The present caller/wire/tag migration
@@ -80,6 +87,13 @@ does not equate a coincidental byte match with a decoded constructor.
 The pending actual validator call-site harness is a separate unit. These caller
 migrations and tag measurements do not close its acceptance blocker or establish
 D40/D52 acceptance.
+
+> **Superseded installation plan:** This retained paragraph describes the old
+> D40/D52 shape. The cyclic masterchain-root term was removed and the genesis
+> prohibition withdrawn; current fixtures install identity at genesis. Counter
+> framing/engine consumption was reconciled, and `c55fa45e7` records all eleven
+> merged checks passing without deferrals. The old search-method finding remains
+> valid; post-zerostate migration is no longer the current remedy.
 
 ## Third producer found by executing bootstrap
 

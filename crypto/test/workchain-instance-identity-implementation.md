@@ -65,6 +65,15 @@ are retained as development failures, not behavior evidence.
 
 ## Still required before delivery
 
+> **Historical checkpoint, superseded:** The list below is preserved verbatim.
+> Producer staging subsequently landed in `275422ff5`; validator call-site and
+> provenance controls landed in `125e331e2` / `d51f962ff`. D40 removed the cyclic
+> masterchain-root input and D52 withdrew the genesis prohibition. Current
+> genesis uses shared issuance. The eleven merged checks at `c55fa45e7` pass
+> with zero deferrals. Runtime collator issuance entry coverage is still not
+> provided by genesis; it must not be described as covered.
+
+
 1. Collator producer call, after configuration validation and before installation.
    `collator.cpp` remains reserved to A at this checkpoint.
 2. Caller migration checkpoint `2d5d7fa13` supplies explicit identities at the

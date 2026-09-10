@@ -64,6 +64,11 @@ the specified fail-closed readiness result; it does not certify account-batch
 execution readiness. Activation's two redirected tests certify their stated
 predicate scope, not the removed invalid-bootstrap path.
 
+> **Superseding status (closed-gate M1):** Rust codec migration and controls are
+> complete (`58d0b7fc7`, `ca350360d`); the Rust limitation in the historical
+> paragraph below no longer describes current McStateExtra support. Runtime
+> first-installation entry coverage and D54 are still separate from genesis.
+
 Resource quotas remain provisional until M6. Runtime first-installation entry
 coverage, the D54 activation-transition issue and the independent Rust state
 codec limitations are not closed by these test-infrastructure changes.
@@ -77,6 +82,11 @@ retired inline-encoding locator. After the environment correction and narrow
 shared-call migration, both explicit follow-up tests passed with complete output
 retained. The initial result is not rewritten as a green run. Each of the former
 nine deferred tests passed in this tree; none remains deferred.
+
+> **Superseding status:** The following is the retained initial result. Full
+> topic/exact-path permission changes at `efe6b048a` and new-table calibration
+> at `95c663aff` establish baseline zero, one injected retired diagnostic, and
+> byte-identical restored output. Current scan is green.
 
 The additional removed-domain scan is not green: 83 Uno-path diagnostics cover
 14 files (31 exact lines already in a27ff2c77, 52 new or rewritten). Its allowlist
