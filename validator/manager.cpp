@@ -2339,18 +2339,6 @@ void ValidatorManagerImpl::started(ValidatorManagerInitResult R) {
                             td::actor::send_closure(SelfId, &ValidatorManagerImpl::got_destroyed_validator_sessions,
                                                     R.move_as_ok());
                           });
-
-  // Load validator-group cleanup records (Finding 1) into the cleanup adapter.
-  // This load is independent of the startup/sweep chain above; it feeds
-  // validator_cleanup_manager_ and attempts a cleanup pass that is a no-op while
-  // deletion is gated off (kValidatorConsensusCleanupEnabled == false).
-  td::actor::send_closure(
-      db_, &Db::get_pending_validator_consensus_db_cleanup,
-      [SelfId = actor_id(this)](td::Result<std::vector<consensus::PendingValidatorConsensusDbCleanup>> R) {
-        R.ensure();
-        td::actor::send_closure(SelfId, &ValidatorManagerImpl::got_pending_validator_consensus_db_cleanup,
-                                R.move_as_ok());
-      });
 }
 
 void ValidatorManagerImpl::got_destroyed_validator_sessions(std::vector<ValidatorSessionId> sessions) {
@@ -2377,19 +2365,31 @@ void ValidatorManagerImpl::got_pending_consensus_db_cleanup(std::vector<std::str
     }
   }
   sweep_destroyed_consensus_dbs();
-  finish_start_up().start().detach_ensure();
+  // Load the validator-group cleanup records BEFORE finishing startup, so they are
+  // in the adapter before update_shards can create any group. This is the startup
+  // barrier: on_group_created must never precede on_loaded_at_startup, or a load
+  // could overwrite a live group's state.
+  td::actor::send_closure(
+      db_, &Db::get_pending_validator_consensus_db_cleanup,
+      [SelfId = actor_id(this)](td::Result<std::vector<consensus::PendingValidatorConsensusDbCleanup>> R) {
+        R.ensure();
+        td::actor::send_closure(SelfId, &ValidatorManagerImpl::got_pending_validator_consensus_db_cleanup,
+                                R.move_as_ok());
+      });
 }
 
 void ValidatorManagerImpl::got_pending_validator_consensus_db_cleanup(
     std::vector<consensus::PendingValidatorConsensusDbCleanup> records) {
-  // Fresh process: no validator group has been created yet, so nothing owns these
-  // directories -- closure is established by exclusive ownership, not an invented
-  // ack. Load each record into the cleanup adapter, then attempt a cleanup pass
-  // (a no-op while deletion is gated off).
+  // Fresh process, and this runs before any group is created (startup barrier), so
+  // nothing owns these directories -- closure is established by exclusive ownership,
+  // not an invented ack. Load each record into the cleanup adapter, attempt a
+  // cleanup pass (a no-op while deletion is gated off), and only THEN finish
+  // startup (which triggers group creation via update_shards).
   for (auto &record : records) {
     validator_cleanup_manager_.on_loaded_at_startup(std::move(record));
   }
   try_validator_consensus_db_cleanup();
+  finish_start_up().start().detach_ensure();
 }
 
 void ValidatorManagerImpl::sweep_destroyed_consensus_dbs() {
@@ -2886,6 +2886,17 @@ void ValidatorManagerImpl::update_shards() {
     CHECK(!destroyed_validator_sessions_.contains(id));
     if (auto it = next_validator_groups_.find(id); it != next_validator_groups_.end()) {
       return it;
+    }
+
+    // Fence against a checkpoint-bound cleanup delete in flight for this exact
+    // session: do not reopen its directory until the delete completes (it will be
+    // retried on a later masterchain block). This is a secondary guard -- the
+    // eligibility check already refuses to delete a live/recreatable session -- and
+    // it cannot fire while the cleanup gate is off (nothing is ever in flight then).
+    if (validator_cleanup_manager_.is_delete_in_flight(id)) {
+      LOG(WARNING) << "deferring validator group creation for " << id
+                   << ": a consensus-DB cleanup delete is in flight";
+      return next_validator_groups_.end();
     }
 
     auto G = create_validator_group(id, shard, val_set, key_seqno, opts, started_);
