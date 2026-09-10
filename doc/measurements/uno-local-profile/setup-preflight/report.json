@@ -1,0 +1,12 @@
+{
+  "commit": "f7e8c2585dbffc1d76a32475e5cbe2a64738f8ad",
+  "source": "scripts/setup-testnet.sh",
+  "from": "[ -f \"$REPO_ROOT/test/tostester/src/tosapi/$module.py\" ]",
+  "to": "true",
+  "original_sha256": "b50cd8f84eafb1c0a7cbfc13f15295e79e0437f929ec89eaed8f01858b3f1af1",
+  "copy_before_sha256": "b50cd8f84eafb1c0a7cbfc13f15295e79e0437f929ec89eaed8f01858b3f1af1",
+  "mutant_sha256": "c7f11e08b7aeb3192d9b8e097bae417836bd79aac8cc98ef11b4f98bd879930c",
+  "restored_sha256": "b50cd8f84eafb1c0a7cbfc13f15295e79e0437f929ec89eaed8f01858b3f1af1",
+  "restore_audit_sha256": "c7f11e08b7aeb3192d9b8e097bae417836bd79aac8cc98ef11b4f98bd879930c",
+  "scope": "Shell ordering/dependency control. id and uv are stubs; rm is an exit-79 sentinel. No actual service, data deletion or application guard result is claimed. Shell interpreted afresh for every run; no compiled targets."
+}

@@ -1,0 +1,49 @@
+{
+   "@type" : "engine.validator.config",
+   "out_port" : 3278,
+   "addrs" : [
+      {
+         "@type" : "engine.addr",
+         "ip" : 2130706433,
+         "port" : 34201,
+         "categories" : [
+            0
+         ],
+         "priority_categories" : [
+         ]
+      }
+   ],
+   "adnl" : [
+      {
+         "@type" : "engine.adnl",
+         "id" : "q3cS+3qqcpBukJZyWTz+zRqtwCPWBE3+RBvc1DBIllo=",
+         "category" : 0
+      }
+   ],
+   "dht" : [
+      {
+         "@type" : "engine.dht",
+         "id" : "q3cS+3qqcpBukJZyWTz+zRqtwCPWBE3+RBvc1DBIllo="
+      }
+   ],
+   "validators" : [
+   ],
+   "collators" : [
+   ],
+   "fullnode" : "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+   "fullnodeslaves" : [
+   ],
+   "fullnodemasters" : [
+   ],
+   "liteservers" : [
+   ],
+   "control" : [
+   ],
+   "shards_to_monitor" : [
+   ],
+   "gc" : {
+      "@type" : "engine.gc",
+      "ids" : [
+      ]
+   }
+}

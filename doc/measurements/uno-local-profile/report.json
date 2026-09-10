@@ -1,0 +1,13 @@
+{
+  "profile_commit": "de68402cc",
+  "setup_control_commit": "f7e8c2585",
+  "scope": "Local global_id=4 network with production UNO descriptor and ingress; no UNO engine registration. Independent network under /tmp, existing /data chain untouched.",
+  "observations": {
+    "run_1": "Default all-active roles correctly failed local engine readiness; no block progress claim.",
+    "run_2": "Nodes observed masterchain seqno 14; restart queried before liteserver was ready, so no recovery success claim.",
+    "run_3": "All three validators observed seqno 14; restarted third validator subsequently observed seqno 22."
+  },
+  "roles": "--not-all-shards; explicitly monitor basechain shard 0. Masterchain implicit. No wc=2 local execution role.",
+  "scope_limit": "Progress is not confidential execution acceptance. No negative mutant was installed in a running validator. Genesis shared-issuance and delta predicate mutation evidence remains separately archived in uno-genesis-installation-ad87d9155.",
+  "archive_exclusions": "Keyring/private-key files and live database contents omitted. Full node logs and captured streams retained; large streams gzip compressed without truncation."
+}

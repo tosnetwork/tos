@@ -1,0 +1,32 @@
+{
+  "scope": "Independent local chain, no UNO engine registration; not account-batch execution acceptance.",
+  "global_id": 4,
+  "runs": [
+    {
+      "phase": "before_restart",
+      "node": "node-1",
+      "seqno": 14
+    },
+    {
+      "phase": "before_restart",
+      "node": "node-2",
+      "seqno": 14
+    },
+    {
+      "phase": "before_restart",
+      "node": "node-3",
+      "seqno": 14
+    }
+  ],
+  "binaries": {
+    "/tmp/uno-publication-build/crypto/create-state": "652e021480eeb3ff8a27c725dc3e6afc0c856ba7638952493d88002ec4ecf9e0",
+    "/tmp/uno-publication-build/validator-engine/validator-engine": "e636f8236d9fa873f26a765f506735edb609762ffffb0e5291258b1cb50834c8",
+    "/tmp/uno-publication-build/dht-server/dht-server": "6cc72b1ca4e093f2c1036f566f94f2916b7eeac326edcab421e35466eda08011"
+  },
+  "genesis": {
+    "root_hash": "fc5495fea056d6651086e8129831c2ed27b4176f8d4fb5b76d395ea9915ea751",
+    "file_hash": "f44faba8096a3c223ef5bd406a669f7750effab0d75e43b62e21517f88a09102",
+    "ledger_boc": "b5ee9c7201010201003b0001094a22c575c0010062a000000002410ed06c0000000000000001c7efdcf90b6c56e123d841580e43a1df1315b0a23c69b3ad4ae8e8e7865a2c08"
+  },
+  "error": "ToslibError()"
+}

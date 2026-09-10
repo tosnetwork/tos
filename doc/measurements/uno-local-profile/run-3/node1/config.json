@@ -1,0 +1,96 @@
+{
+   "@type" : "engine.validator.config",
+   "out_port" : 3278,
+   "addrs" : [
+      {
+         "@type" : "engine.addr",
+         "ip" : 2130706433,
+         "port" : 34202,
+         "categories" : [
+            0
+         ],
+         "priority_categories" : [
+         ]
+      }
+   ],
+   "adnl" : [
+      {
+         "@type" : "engine.adnl",
+         "id" : "z4IJtBaGFGHwiTXav1x375jftIACY3obFSuDLLNj+KE=",
+         "category" : 0
+      },
+      {
+         "@type" : "engine.adnl",
+         "id" : "3AB7JJmG6kIbbhTAcaV/JWTdGW3YcZSUFErGKi5cpVM=",
+         "category" : 0
+      }
+   ],
+   "dht" : [
+      {
+         "@type" : "engine.dht",
+         "id" : "3AB7JJmG6kIbbhTAcaV/JWTdGW3YcZSUFErGKi5cpVM="
+      }
+   ],
+   "validators" : [
+      {
+         "@type" : "engine.validator",
+         "id" : "z4IJtBaGFGHwiTXav1x375jftIACY3obFSuDLLNj+KE=",
+         "temp_keys" : [
+            {
+               "@type" : "engine.validatorTempKey",
+               "key" : "z4IJtBaGFGHwiTXav1x375jftIACY3obFSuDLLNj+KE=",
+               "expire_at" : 2147483647
+            }
+         ],
+         "adnl_addrs" : [
+            {
+               "@type" : "engine.validatorAdnlAddress",
+               "id" : "z4IJtBaGFGHwiTXav1x375jftIACY3obFSuDLLNj+KE=",
+               "expire_at" : 2147483647
+            }
+         ],
+         "election_date" : 0,
+         "expire_at" : 2147483647
+      }
+   ],
+   "collators" : [
+   ],
+   "fullnode" : "3AB7JJmG6kIbbhTAcaV/JWTdGW3YcZSUFErGKi5cpVM=",
+   "fullnodeslaves" : [
+   ],
+   "fullnodemasters" : [
+   ],
+   "liteservers" : [
+      {
+         "@type" : "engine.liteServer",
+         "id" : "qPhg5NeHrtaNhQBLLzVKu+QK6FDq3c85VPrSXN2m56g=",
+         "port" : 34203
+      }
+   ],
+   "control" : [
+      {
+         "@type" : "engine.controlInterface",
+         "id" : "nVaabywU7Xp0BYWmoOlxVdEcYiVu+SCzRsNNviziJQ8=",
+         "port" : 34204,
+         "allowed" : [
+            {
+               "@type" : "engine.controlProcess",
+               "id" : "zRt5/L3dJE0KyWV+s0tbkxEqJOV9eh5xlVWxWAsYksg=",
+               "permissions" : 15
+            }
+         ]
+      }
+   ],
+   "shards_to_monitor" : [
+      {
+         "@type" : "tosNode.shardId",
+         "workchain" : 0,
+         "shard" : "-9223372036854775808"
+      }
+   ],
+   "gc" : {
+      "@type" : "engine.gc",
+      "ids" : [
+      ]
+   }
+}
