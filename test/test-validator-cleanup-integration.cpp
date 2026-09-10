@@ -464,12 +464,21 @@ void scenario_happy_drain() {
 }
 
 // ---------------------------------------------------------------------------------
-// Scenario 2: a stale/duplicate delete completion carrying the WRONG generation must
-// be rejected end-to-end -- the record is neither erased nor its dir deleted -- while
-// a correctly-tokened drive still cleans it up. Proves the token threading through
-// complete_validator_delete, not just in the adapter unit test.
-// Falsifying mutation: drop the generation check in on_delete_completed -> the stale
-// completion erases the record and the final assert that it still existed fails.
+// Scenario 2: a stale/duplicate delete completion, injected as a worker callback would
+// arrive when the entry is NOT in flight, must not erase the record or delete the dir;
+// a correctly-tokened drive then cleans it up.
+//
+// What this PROVES: the glue routes every completion through the adapter's rejection
+// (complete_validator_delete -> on_delete_completed) instead of erasing directly. The
+// falsifying mutation is the glue bypass (erase without consulting the adapter): the
+// stale completion then erases the record and the assert below fires.
+//
+// What this does NOT prove: that the generation check specifically is live. The
+// injected completion here also mismatches on STATE (the entry is Pending, not
+// Deleting), so the adapter's compound guard rejects it even with the generation check
+// removed. A precise, single-dimension test of each token (generation, attempt_id)
+// needs the entry held in Deleting -- that belongs to the controllable/slow-worker
+// acceptance and to the pure adapter tests (test-validator-cleanup), not here.
 void scenario_stale_completion_rejected() {
   LOG(INFO) << "=== scenario_stale_completion_rejected ===";
   auto root = temp_root("stale");
@@ -628,10 +637,27 @@ int main() {
   SET_VERBOSITY_LEVEL(verbosity_INFO);
   scenario_happy_drain();
   scenario_stale_completion_rejected();
+
+  // The two permission-based failure scenarios need an unprivileged POSIX user: they
+  // are SKIPPED as root (directory permissions are bypassed) and not compiled on
+  // Windows. Report run identity and per-scenario executed/skipped explicitly, so a
+  // green exit on root/Windows is never mistaken for full four-scenario coverage when
+  // this log is kept as enablement evidence.
+  bool ran_failure_scenarios = false;
 #if !defined(_WIN32)
-  scenario_persistent_failure_no_hot_loop();
-  scenario_mixed_failure_bounded_retries();
+  if (::geteuid() == 0) {
+    LOG(WARNING) << "running as root (euid 0): SKIPPED persistent-failure and mixed-failure scenarios";
+  } else {
+    scenario_persistent_failure_no_hot_loop();
+    scenario_mixed_failure_bounded_retries();
+    ran_failure_scenarios = true;
+  }
+#else
+  LOG(WARNING) << "Windows build: persistent-failure and mixed-failure scenarios are not compiled";
 #endif
-  LOG(INFO) << "test-validator-cleanup-integration: all scenarios passed";
+
+  LOG(INFO) << "test-validator-cleanup-integration: executed happy_drain + stale_completion_rejected; "
+            << (ran_failure_scenarios ? "AND persistent-failure + mixed-failure (4/4 scenarios)"
+                                      : "persistent-failure + mixed-failure SKIPPED (2/4 scenarios)");
   return 0;
 }
