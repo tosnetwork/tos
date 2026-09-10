@@ -196,10 +196,12 @@ class PureBackend final : public ScenarioBackend {
   }
   td::Status register_account(unsigned owner) override {
     auto a = templates_.at(owner);
-    auto p = proof<64>("register", owner, a);
-    WorkchainRegistrationPolicy policy{a.global_id,     a.genesis_hash,        a.address.instance,
+    WorkchainRegistrationPolicy policy{a.global_id,     a.genesis_hash,        env_.protocol.workchain_instance,
                                        a.bindings,      a.schema_version,      a.relation_profile,
                                        a.proof_profile, a.funding.paid_deposit};
+    TRY_RESULT(registration_id, derive_workchain_registration_operation_id(policy, a));
+    a.address.instance = registration_id;
+    auto p = proof<64>("register", owner, a);
     WorkchainRegistrationSnapshot before{coordinator(), state_.accounts[owner], a.funding.refund_workchain,
                                          a.funding.refund_account, state_.native_balances[owner]};
     TRY_RESULT(encoded, encode_workchain_confidential_account(a));

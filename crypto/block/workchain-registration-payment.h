@@ -13,6 +13,7 @@ struct WorkchainRegistrationPaymentResult {
   td::Bits256 imported_message;
   // Locally constructed snapshot binding, not a candidate-declared hash.
   td::Bits256 old_coordinator_data_hash;
+  td::Bits256 workchain_instance;
 };
 
 // Post-admission consumption of ONE final-import message. The enclosing batch
@@ -45,7 +46,7 @@ inline td::Result<WorkchainRegistrationPaymentResult> execute_workchain_registra
     }
     auto parameters = decode_workchain_engine_parameters(ingress.engine_configuration);
     if (parameters.is_error() || parameters.ok().registration_deposit != policy.deposit ||
-        parameters.ok().instance_id != policy.instance) {
+        parameters.ok().instance_id != policy.workchain_instance) {
       return local("registration deposit differs from authenticated ingress configuration");
     }
     const auto& envelopes = admitted_inbox.ok().envelopes;
@@ -132,7 +133,7 @@ inline td::Result<WorkchainRegistrationPaymentResult> execute_workchain_registra
     // operating fees must be separate explicit effects, never an implicit rent.
     TRY_RESULT(old_data, encode_workchain_coordinator_state(old_coordinator));
     return WorkchainRegistrationPaymentResult{std::move(registration), std::move(flow), message_hash,
-                                              td::Bits256(old_data->get_hash().bits())};
+                                              td::Bits256(old_data->get_hash().bits()), policy.workchain_instance};
   } catch (const vm::VmVirtError&) {
     return local("registration payment view incomplete");
   } catch (const vm::VmError&) {

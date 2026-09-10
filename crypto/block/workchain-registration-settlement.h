@@ -25,7 +25,7 @@ inline td::Result<WorkchainInboundAllocationOverlay> build(
   TRY_RESULT(created, decode_workchain_confidential_account(payment.registration.account_data));
   const auto& key = created.address.account;
   if (identity.workchain_id != 2 || created.address.workchain_id != 2 ||
-      created.address.instance != identity.instance_id || created.global_id != identity.global_id ||
+      payment.workchain_instance != identity.instance_id || created.global_id != identity.global_id ||
       created.genesis_hash != identity.genesis_hash || key == coordinator || key == custody ||
       coordinator == custody || payment.coordinator_flow.account != coordinator ||
       payment.registration.payer_balance != 0 || !payment.coordinator_flow.fees.is_zero()) {
