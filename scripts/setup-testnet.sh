@@ -17,7 +17,7 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BUILD="$REPO_ROOT/build"
 DATA="/data"
-LOCKFILE="/tmp/tos-setup.lock"
+LOCKFILE="${TOS_SETUP_LOCKFILE:-/tmp/tos-setup.lock}"
 INSTALL_BIN="/usr/local/bin"
 INSTALL_SHARE="/usr/local/share/tos"
 
