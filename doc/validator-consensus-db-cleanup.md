@@ -1032,3 +1032,34 @@ Plus: bounded aggregate in-flight FS work + fair retry rotation; and adapter
 acceptance tests (reopen during FS work, stale close/delete/erase, replacement-
 record preservation, restart reconciliation) demonstrably red/green BEFORE the
 flip. Enablement (B2-8c) also remains post-genesis per the overall plan.
+
+## B2-8b done (gated OFF); B2-8c remaining checklist (Codex-refined)
+
+B2-8b wired ValidatorCleanupManager into ValidatorManagerImpl with
+kValidatorConsensusCleanupEnabled=false. Codex review: safe as-is, no
+consensus-safety regression; with the gate off no validator directory can be
+deleted (every delete is downstream of the gate check), and the only runtime
+change is adapter bookkeeping + the generation flowing through the close
+callback. Before flipping the gate (B2-8c, post-genesis), the following remain:
+
+1. **Fence creation before constructing the actor.** get_or_make_next_group must
+   check is_delete_in_flight and DEFER creation (with a retry path) before
+   building the actor, so an async delete cannot have its directory reopened mid
+   worker. (No-op while gated; required once async deletion exists.)
+2. **Async worker + separate durable-erase completion.** Move the filesystem
+   delete off the manager actor thread; call on_delete_completed only from the
+   worker's completion, and clear the reservation / drop the entry only after the
+   durable erase is ACKed (not merely queued). Preserve incarnation identity
+   through completion; demonstrate replacement-record protection.
+3. **Bound aggregate work + fair retry rotation.** The per-pass budget (16) bounds
+   attempts per pass, not total concurrent work or scan fairness; persistently
+   failing early entries can starve later ones. Add a continuation cursor / fair
+   rotation and an outstanding-work bound.
+4. **Startup ordering / exclusive ownership barrier.** Validator-record loading is
+   a separate async startup request; establish (or add an explicit barrier for)
+   the ordering before relying on the generation-0 closed=true startup load.
+5. **Falsifiable integration acceptance before the flip:** gate-off directory
+   preservation; delayed persistence/closure; stale generations; reopen during
+   deletion; overlapping passes; failed deletion/erase; restart reconciliation;
+   real GC-oracle boundaries. Keep the catchain no-wrap/no-reuse premise and the
+   post-genesis enablement gate.
