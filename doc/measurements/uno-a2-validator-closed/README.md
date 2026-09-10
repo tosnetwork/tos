@@ -21,6 +21,11 @@ archived-binary equality check, including `.text` equality. That relink is not
 measurement evidence. This does not identify the changed object or implicate
 other build directories. A fresh source archive and fresh build replaced it.
 The existing accepted collator archive and its original binary remain intact.
+Follow-up: [the independent provenance incident](link-input-provenance-incident.md)
+names the affected directories and records a separate section-dump side effect
+on the temporary measured-tool copy. The committed archives and original
+hash-matched executable remain intact; the rewritten temporary copy must not
+be treated as still hash-matched.
 
 The controlled configuration failure, supplied by the existing test option,
 reaches the native registry entry once but reaches
