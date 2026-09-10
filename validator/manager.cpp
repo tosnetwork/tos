@@ -2450,6 +2450,15 @@ void ValidatorManagerImpl::consensus_db_cleanup_done(std::string dir_name) {
   }
 }
 
+void ValidatorManagerImpl::consensus_db_closed(ValidatorSessionId session_id, std::string dir_name) {
+  // A retiring validator group reported its bus stopped and DB closed without
+  // deleting the directory. Record that the actor no longer holds the DB, so a
+  // later checkpoint-bound cleanup (PR B/B2) may delete it. Shadow state for
+  // now: nothing consults this set yet, and nothing is deleted here.
+  closed_retiring_validator_sessions_.insert(session_id);
+  LOG(INFO) << "Validator consensus DB closed for retirement (pending checkpoint-bound cleanup): " << dir_name;
+}
+
 td::actor::Task<> ValidatorManagerImpl::finish_start_up() {
   new_masterchain_block();
 

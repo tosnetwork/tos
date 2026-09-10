@@ -61,6 +61,13 @@ class IValidatorGroup : public td::actor::Actor {
   virtual void notify_mc_finalized(BlockIdExt block) = 0;
 
   virtual void destroy() = 0;
+
+  // Retire the group WITHOUT deleting its consensus DB: stop the consensus bus,
+  // close the database, and report closure to the manager, leaving the directory
+  // on disk for a later checkpoint-bound deletion (validator-group cleanup,
+  // Finding 1 / PR B). Unlike destroy(), this never removes the directory, so a
+  // session that is still recreatable can never lose its consensus state here.
+  virtual void close_for_retirement() = 0;
 };
 
 }  // namespace validator

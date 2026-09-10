@@ -276,6 +276,12 @@ class ValidatorManagerImpl : public ValidatorManager {
   // is a later step (see doc/validator-consensus-db-cleanup.md).
   std::map<ValidatorSessionId, consensus::PendingValidatorConsensusDbCleanup> pending_validator_db_cleanup_;
 
+  // Sessions whose retiring actor has reported its consensus bus stopped and DB
+  // closed (via consensus_db_closed), so the manager may later delete the
+  // directory. Shadow state for now: nothing consults it until PR B/B2 enables
+  // checkpoint-bound deletion. See doc/validator-consensus-db-cleanup.md.
+  std::set<ValidatorSessionId> closed_retiring_validator_sessions_;
+
  private:
   // MASTERCHAIN LAST BLOCK
   BlockSeqno last_masterchain_seqno_ = 0;
@@ -591,6 +597,7 @@ class ValidatorManagerImpl : public ValidatorManager {
   // directory is deleted, so the cleanup queue is pruned during normal uptime
   // (not only at the next startup sweep).
   void consensus_db_cleanup_done(std::string dir_name) override;
+  void consensus_db_closed(ValidatorSessionId session_id, std::string dir_name) override;
   // Reclaims per-group databases still queued for cleanup (or, for pre-upgrade
   // databases, recorded only as a destroyed session); see the definition.
   void sweep_destroyed_consensus_dbs();
