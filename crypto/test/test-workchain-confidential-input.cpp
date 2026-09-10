@@ -1,6 +1,8 @@
 #include "block/workchain-confidential-input.h"
 #include "workchain-m3-business-config.h"
 #include "workchain-m3-genesis-cells.h"
+#include "workchain-m3-state-fixture.h"
+#include "vm/vm.h"
 #include <limits>
 #include "td/utils/tests.h"
 #include "vm/boc.h"
@@ -497,4 +499,75 @@ TEST(ConfidentialInput, TestGenesisUsesParam84Payload) {
   auto replaced=make(business,policy);
   ASSERT_TRUE(replaced.is_error());
   ASSERT_EQ(replaced.error().message(),"M3 test fixture refuses to replace an existing engine configuration");
+}
+
+TEST(ConfidentialInput, ExplicitStateFixtureEdits) {
+  using namespace block;
+  using namespace block::m3_test;
+  vm::init_vm().ensure();
+  auto pack=[](const auto& r) { td::Ref<vm::Cell> c; CHECK(block::tlb::pack_cell(c,r)); return c; };
+  auto slice=[&](const auto& r) { return vm::load_cell_slice_ref(pack(r)); };
+  auto zero=vm::CellBuilder().store_long(0,1).as_cellslice_ref();
+  auto empty=vm::CellBuilder().finalize();
+  auto money=[](unsigned n) { vm::CellBuilder c; CHECK(CurrencyCollection(n).store(c)); return c.as_cellslice_ref(); };
+  auto key=number(77);
+  vm::Dictionary config(32);
+  CHECK(config.set_ref(td::BitArray<32>{84LL},empty));
+  auto descriptor=vm::CellBuilder().store_long(123,32).finalize();
+  CHECK(config.set_ref(td::BitArray<32>{12LL},descriptor));
+  auto old_config=config.get_root_cell();
+  auto data=vm::CellBuilder().store_long(42,32).store_ref(old_config).store_ref(empty).finalize();
+  vm::CellBuilder storage;
+  storage.store_long(19,64).append_cellslice(*money(900));
+  storage.store_long(1,1).store_long(0,1).store_long(0,1);
+  CHECK(storage.store_maybe_ref(empty)); CHECK(storage.store_maybe_ref(data)); storage.store_long(0,1);
+  vm::CellBuilder account;
+  account.store_long(1,1).store_long(4,3).store_long(-1,8).store_bits(key.bits(),256);
+  CHECK(store_UInt7(account,0)); CHECK(store_UInt7(account,0));
+  account.store_long(0,3).store_long(1234,32).store_long(0,1).append_cellslice(*storage.as_cellslice_ref());
+  vm::CellBuilder leaf; leaf.store_ref(account.finalize()).store_bits(number(99).bits(),256).store_long(18,64);
+  vm::AugmentedDictionary accounts(256,block::tlb::aug_ShardAccounts); CHECK(accounts.set_builder(key,leaf));
+  gen::McStateExtra::Record extra;
+  extra.shard_hashes=zero;
+  extra.config=slice(gen::ConfigParams::Record{key,old_config});
+  extra.r1.flags=0; extra.r1.validator_info=slice(gen::ValidatorInfo::Record{5,6,false});
+  extra.r1.prev_blocks=vm::CellBuilder().store_zeroes(66).as_cellslice_ref();
+  extra.r1.after_key_block=false; extra.r1.last_key_block=zero; extra.r1.block_create_stats={};
+  extra.r1.workchain_instances=pack(gen::WorkchainInstanceLedger::Record{zero});
+  extra.global_balance=money(900);
+  gen::ShardStateUnsplit::Record state;
+  state.global_id=3; state.shard_id=slice(gen::ShardIdent::Record{0,-1,0});
+  state.seq_no=7; state.vert_seq_no=0; state.gen_utime=1234; state.gen_lt=20; state.min_ref_mc_seqno=0;
+  state.out_msg_queue_info=empty; state.before_split=false; state.accounts=accounts.get_wrapped_dict_root();
+  state.r1={11,12,money(900),money(0),zero,zero};
+  state.custom=vm::CellBuilder().store_long(1,1).store_ref(pack(extra)).as_cellslice_ref();
+  auto root=pack(state);
+  auto replacement=vm::CellBuilder().store_long(456,32).finalize();
+  auto edited=replace_m3_test_param84(root,replacement).move_as_ok();
+  ASSERT_TRUE(edited.config_account_updated);
+  gen::ShardStateUnsplit::Record out; ASSERT_TRUE(block::tlb::unpack_cell(edited.root,out));
+  gen::McStateExtra::Record out_extra; ASSERT_TRUE(block::tlb::unpack_cell(out.custom->prefetch_ref(),out_extra));
+  gen::ConfigParams::Record out_config; ASSERT_TRUE(block::tlb::csr_unpack(out_extra.config,out_config));
+  vm::Dictionary found(out_config.config,32);
+  ASSERT_EQ(found.lookup_ref(td::BitArray<32>{84LL})->get_hash(),replacement->get_hash());
+  ASSERT_EQ(found.lookup_ref(td::BitArray<32>{12LL})->get_hash(),descriptor->get_hash());
+  ASSERT_EQ(out_extra.r1.workchain_instances->get_hash(),extra.r1.workchain_instances->get_hash());
+  vm::AugmentedDictionary result(vm::load_cell_slice_ref(out.accounts),256,block::tlb::aug_ShardAccounts);
+  Account native(-1,key.bits()); ASSERT_TRUE(native.unpack(result.lookup(key),1234,false));
+  ASSERT_TRUE(native.balance==CurrencyCollection(900)); ASSERT_EQ(native.last_trans_lt_,18u);
+  ASSERT_EQ(native.last_trans_hash_,number(99)); ASSERT_TRUE(native.storage_used.cells>0);
+  auto actual=vm::load_cell_slice(native.data);
+  ASSERT_EQ(actual.fetch_ulong(32),42u); ASSERT_EQ(actual.fetch_ref()->get_hash(),out_config.config->get_hash());
+  ASSERT_EQ(actual.fetch_ref()->get_hash(),empty->get_hash());
+  AccountStorageStat stats; stats.replace_roots(native.storage->prefetch_all_refs()).ensure();
+  ASSERT_EQ(native.storage_used.cells,stats.get_total_cells()+1);
+  ASSERT_EQ(native.storage_used.bits,stats.get_total_bits()+native.storage->size());
+  ASSERT_TRUE(out.r1.total_balance->contents_equal(*state.r1.total_balance));
+  auto wrong=replace_m3_test_active_account_data(root,key,vm::CellBuilder().store_ref(empty).finalize()).move_as_ok();
+  auto mismatch=replace_m3_test_param84(wrong,replacement);
+  ASSERT_TRUE(mismatch.is_error());
+  ASSERT_EQ(mismatch.error().message(),"M3 config account does not contain the old configuration root");
+  ASSERT_TRUE(replace_m3_test_active_account_data(root,number(78),empty).is_error());
+  vm::AugmentedDictionary absent(256,block::tlb::aug_ShardAccounts); state.accounts=absent.get_wrapped_dict_root();
+  ASSERT_TRUE(!replace_m3_test_param84(pack(state),replacement).move_as_ok().config_account_updated);
 }
