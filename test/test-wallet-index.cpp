@@ -430,3 +430,214 @@ TEST(WalletIndex, EventHistoryIsBoundedPerAccount) {
   }).ensure();
   ASSERT_EQ(other_rows, 1u);
 }
+
+// The per-account cap above bounds one account's history but not the number of
+// accounts: a fresh account with a single transaction never trips its own trim
+// and would be kept forever, so the index grew with distinct-account count.
+// The companion age index (0x14) + per-block time prune drops whole dormant
+// accounts once they fall out of the retention window, so the total is bounded
+// by the window, not by how many accounts were ever seen. Disabling either the
+// age writes or the prune below makes the "bounded" assertions fail.
+TEST(WalletIndex, EventHistoryIsGloballyBoundedByAge) {
+  auto path = std::string("test-wallet-index-db-age");
+  auto db = open_fresh_db(path);
+
+  constexpr uint32_t kDay = 24 * 60 * 60;
+  constexpr uint32_t kBase = 1700000000;
+  const uint32_t retention = tos_wallet_index::kEventRetentionSeconds;
+  const uint32_t window_blocks = retention / kDay;  // 7 for a 7-day window
+  ASSERT_TRUE(retention % kDay == 0);
+
+  auto make_account = [](uint32_t n) {
+    tos_wallet_index::HashKey a = td::Bits256::zero();
+    a.as_slice()[28] = static_cast<char>((n >> 24) & 0xff);
+    a.as_slice()[29] = static_cast<char>((n >> 16) & 0xff);
+    a.as_slice()[30] = static_cast<char>((n >> 8) & 0xff);
+    a.as_slice()[31] = static_cast<char>(n & 0xff);
+    return a;
+  };
+  auto count_prefix = [&](uint8_t tag) {
+    size_t n = 0;
+    char prefix[1] = {static_cast<char>(tag)};
+    db->for_each_key_with_prefix(td::Slice{prefix, 1}, size_t{1} << 30, [&](td::Slice) {
+      n++;
+      return td::Status::OK();
+    }).ensure();
+    return n;
+  };
+  // Mirror wc0_index_block's DB-level sequence: write (event, age) pairs, then
+  // advance the non-decreasing watermark and prune with a budget proportional
+  // to the rows just added (this is what keeps the bound from being outrun).
+  auto index_block = [&](const std::vector<std::pair<tos_wallet_index::HashKey, uint64_t>>& events,
+                         uint32_t gen_utime) {
+    ASSERT_TRUE(db->begin_batch().is_ok());
+    size_t age_added = 0;
+    for (const auto& [account, lt] : events) {
+      vm::CellBuilder builder;
+      builder.store_long(static_cast<long long>(lt), 64);
+      ASSERT_TRUE(db->put_event(account, lt, builder.finalize()).is_ok());
+      ASSERT_TRUE(db->put_event_age(account, lt, gen_utime).is_ok());
+      age_added++;
+    }
+    // Drive the real consolidated retention path (watermark max + prune),
+    // exactly as wc0_index_block does.
+    ASSERT_TRUE(db->advance_retention(gen_utime, age_added).is_ok());
+    ASSERT_TRUE(db->commit_batch().is_ok());
+  };
+
+  // One brand-new account per block, one event each, one block per day. Without
+  // the age prune this climbs to `total_blocks`; with it, it must hold at the
+  // window size.
+  const uint32_t total_blocks = window_blocks + 25;
+  for (uint32_t b = 0; b < total_blocks; b++) {
+    uint32_t gen_utime = kBase + b * kDay;
+    index_block({{make_account(b), 1}}, gen_utime);
+
+    // Every event has exactly one companion age row -- no orphans in either
+    // direction.
+    ASSERT_EQ(count_prefix(0x12), count_prefix(0x14));
+
+    if (b >= window_blocks) {
+      // Retained accounts are exactly those whose gen_utime >= cutoff =
+      // (kBase + b*kDay) - retention = kBase + (b - window_blocks)*kDay. The
+      // exclusive upper bound keeps the account exactly at the cutoff, so blocks
+      // [b - window_blocks .. b] survive: window_blocks + 1 rows, regardless of
+      // how many total blocks have been processed. The pre-fix index would be at
+      // b + 1 here and rising every block.
+      ASSERT_EQ(count_prefix(0x12), static_cast<size_t>(window_blocks + 1));
+      // The account exactly at the cutoff is retained; the one just older is gone.
+      ASSERT_TRUE(db->get_event(make_account(b - window_blocks), 1).is_ok());
+      ASSERT_TRUE(db->get_event(make_account(b - window_blocks - 1), 1).is_error());
+    }
+  }
+
+  // Burst: one block introduces far more fresh accounts than a single prune's
+  // drain, at a timestamp that is already outside the window relative to a later
+  // block. A fixed per-block budget could never catch up; the proportional
+  // budget + drain does, over a bounded number of later blocks.
+  const size_t burst = tos_wallet_index::kEventPruneDrainPerBlock + 500;
+  uint32_t burst_time = kBase + total_blocks * kDay;
+  {
+    std::vector<std::pair<tos_wallet_index::HashKey, uint64_t>> events;
+    for (size_t i = 0; i < burst; i++) {
+      events.emplace_back(make_account(1000000 + static_cast<uint32_t>(i)), 1);
+    }
+    index_block(events, burst_time);
+  }
+  // Now advance well past the window with empty blocks (age_added == 0, so each
+  // prune still gets a full drain budget) and confirm the burst fully drains --
+  // the backlog shrinks by at least the drain each block and reaches the steady
+  // window size, it does not plateau above it.
+  size_t drained_after = 0;
+  for (uint32_t k = 1; k <= 20; k++) {
+    index_block({}, burst_time + retention + k * kDay);
+    if (count_prefix(0x12) == 0) {
+      drained_after = k;
+      break;
+    }
+  }
+  ASSERT_TRUE(drained_after != 0);          // the burst was fully reclaimed
+  ASSERT_TRUE(drained_after <= burst / tos_wallet_index::kEventPruneDrainPerBlock + 2);
+  ASSERT_EQ(count_prefix(0x12), count_prefix(0x14));  // still paired at zero
+
+  // A late block carrying an old gen_utime must not regress the cutoff: its
+  // event is (correctly) already expired, so after its own prune nothing from
+  // before the true watermark reappears, and the count stays at zero.
+  index_block({{make_account(2000000), 1}}, kBase);  // far in the past
+  ASSERT_TRUE(count_prefix(0x12) <= 1);
+
+  td::rmrf(path).ignore();
+}
+
+TEST(WalletIndex, MigrationClearsEventNamespacesPreservesOthers) {
+  // A database written before schema versioning (no version key) can hold an
+  // unbounded 0x12 event namespace. Opening it migrates v0 -> v1, range-deleting
+  // the 0x12 and 0x14 namespaces (bounded work, not an enumerate-all that could
+  // OOM the very node this fixes), while leaving jetton (0x10), NFT (0x11),
+  // nft-owner (0x13) and incomplete-block (0x1E) data intact.
+  auto path = std::string("test-wallet-index-db-migration");
+  td::rmrf(path).ignore();
+  auto put_raw = [](td::RocksDb &raw, std::initializer_list<uint8_t> key) {
+    std::string k;
+    for (uint8_t b : key) {
+      k.push_back(static_cast<char>(b));
+    }
+    char v[1] = {0};
+    raw.set(td::Slice{k}, td::Slice{v, 1}).ensure();
+  };
+  auto count_raw_prefix = [](td::RocksDb &raw, uint8_t tag) {
+    size_t n = 0;
+    char begin[1] = {static_cast<char>(tag)};
+    char end[1] = {static_cast<char>(static_cast<uint8_t>(tag + 1))};
+    raw.for_each_in_range(td::Slice{begin, 1}, td::Slice{end, 1}, [&](td::Slice, td::Slice) {
+         n++;
+         return td::Status::OK();
+       }).ensure();
+    return n;
+  };
+  {
+    auto raw_r = td::RocksDb::open(path);
+    ASSERT_TRUE(raw_r.is_ok());
+    auto raw = raw_r.move_as_ok();
+    for (uint8_t i = 0; i < 5; i++) {
+      put_raw(raw, {0x12, i});  // old event rows (unbounded namespace)
+      put_raw(raw, {0x14, i});  // old age rows
+    }
+    put_raw(raw, {0x10, 0x01});  // jetton
+    put_raw(raw, {0x11, 0x01});  // nft
+    put_raw(raw, {0x13, 0x01});  // nft-owner
+    put_raw(raw, {0x1E, 0x01});  // incomplete-block marker
+    // No 0x00 schema key -> version 0.
+  }
+
+  {
+    auto db_r = tos_wallet_index::WalletIndexDb::open(path);  // triggers migration
+    ASSERT_TRUE(db_r.is_ok());
+  }
+
+  auto raw_r = td::RocksDb::open(path);
+  ASSERT_TRUE(raw_r.is_ok());
+  auto raw = raw_r.move_as_ok();
+  ASSERT_EQ(count_raw_prefix(raw, 0x12), 0u);  // event namespace cleared
+  ASSERT_EQ(count_raw_prefix(raw, 0x14), 0u);  // age namespace cleared
+  ASSERT_EQ(count_raw_prefix(raw, 0x10), 1u);  // jetton preserved
+  ASSERT_EQ(count_raw_prefix(raw, 0x11), 1u);  // nft preserved
+  ASSERT_EQ(count_raw_prefix(raw, 0x13), 1u);  // nft-owner preserved
+  ASSERT_EQ(count_raw_prefix(raw, 0x1E), 1u);  // marker preserved
+  ASSERT_EQ(count_raw_prefix(raw, 0x00), 1u);  // schema version key written
+
+  td::rmrf(path).ignore();
+}
+
+TEST(WalletIndex, RetentionMaintenanceFailsClosedOnWatermarkReadError) {
+  // The retention watermark must be non-decreasing; a read failure must never
+  // fall back to 0 and let a block write a lower watermark. advance_retention
+  // returns the error (so the writer aborts the block) and leaves the stored
+  // watermark untouched -- it does not overwrite it with a regressed value.
+  auto path = std::string("test-wallet-index-db-wm-failclosed");
+  td::rmrf(path).ignore();
+  const std::string wm_key = {static_cast<char>(0x00), static_cast<char>(0x02)};
+  {
+    auto raw_r = td::RocksDb::open(path);
+    ASSERT_TRUE(raw_r.is_ok());
+    auto raw = raw_r.move_as_ok();
+    char bad[3] = {0x01, 0x02, 0x03};  // not 4 bytes -> get_event_watermark errors
+    raw.set(td::Slice{wm_key}, td::Slice{bad, 3}).ensure();
+  }
+
+  auto db_r = tos_wallet_index::WalletIndexDb::open(path);
+  ASSERT_TRUE(db_r.is_ok());
+  auto db = db_r.move_as_ok();
+
+  ASSERT_TRUE(db->begin_batch().is_ok());
+  auto status = db->advance_retention(/*gen_utime=*/1000, /*age_rows_added=*/0);
+  ASSERT_TRUE(status.is_error());  // fails closed on the malformed watermark
+  db->abort_batch();
+
+  // The malformed watermark was not overwritten with a 0-fallback value: a fresh
+  // read still errors on the same malformed bytes.
+  auto again = db->get_event_watermark();
+  ASSERT_TRUE(again.is_error());
+
+  td::rmrf(path).ignore();
+}

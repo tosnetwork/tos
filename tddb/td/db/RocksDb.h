@@ -106,6 +106,11 @@ class RocksDb : public KeyValue {
   Status set(Slice key, Slice value) override;
   Status merge(Slice key, Slice value) override;
   Status erase(Slice key) override;
+  // Delete every key in [begin, end) with a single range tombstone, so the work
+  // and memory are independent of how many keys the range holds (unlike
+  // enumerate-then-erase). Joins the active write batch when one is open; not
+  // supported inside a transaction.
+  Status erase_range(Slice begin, Slice end);
   Status run_gc() override;
   Result<size_t> count(Slice prefix) override;
   Status for_each(std::function<Status(Slice, Slice)> f) override;
