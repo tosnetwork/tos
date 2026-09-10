@@ -2470,8 +2470,13 @@ void ValidatorManagerImpl::consensus_db_closed(ValidatorSessionId session_id, td
 }
 
 void ValidatorManagerImpl::try_validator_consensus_db_cleanup() {
-  if (!kValidatorConsensusCleanupEnabled) {
-    return;  // validator-directory deletion is gated off until post-genesis enablement
+  // Enablement: the runtime option is the sole opt-in and defaults false, so a normal
+  // build/deploy never deletes; only an explicit acceptance run
+  // (--enable-validator-consensus-cleanup) arms it. The compile-time constant stays
+  // false and is an OR override -- setting it true would force-enable regardless of the
+  // option, which is deliberately not done.
+  if (!kValidatorConsensusCleanupEnabled && !opts_->get_validator_consensus_cleanup_enabled()) {
+    return;
   }
   if (!gc_masterchain_handle_ || gc_masterchain_state_.is_null()) {
     return;  // no durable GC floor yet -> nothing is provably obsolete
@@ -2498,6 +2503,17 @@ void ValidatorManagerImpl::try_validator_consensus_db_cleanup() {
   auto reserved = validator_cleanup_manager_.begin_eligible_deletes(
       gc_id, ancestor_or_equal_of_gc, gc_shard_catchain_seqno, is_live, kValidatorConsensusCleanupBudget,
       kValidatorConsensusCleanupScanBudget, kValidatorConsensusCleanupMaxOutstanding);
+  // Distinguishable per-op trace for the REAL validator-group cleanup path (bound to
+  // session/generation/attempt/dir + the GC/retirement inputs). This is emitted only
+  // when cleanup is armed, so it is not noise in a normal build; it lets a real-node
+  // acceptance verify the SAME reserved op reaches fs-confirmed-gone and erase-ack --
+  // distinct from the observer startup sweep's "reclaimed ..." log.
+  for (const auto &item : reserved) {
+    LOG(WARNING) << "VALCLEANUP reserve session=" << item.record.session_id.to_hex()
+                 << " generation=" << item.generation << " attempt=" << item.attempt_id
+                 << " dir=" << item.record.dir_name << " gc_seqno=" << gc_id.seqno()
+                 << " retirement_seqno=" << item.record.retirement_checkpoint.seqno();
+  }
   // Dispatch the reserved deletes to the worker actor so the blocking filesystem work
   // does not run inline on this manager's message-processing stack. The worker,
   // completion token threading, durable-erase ordering, and retry pacing are shared
@@ -2508,6 +2524,8 @@ void ValidatorManagerImpl::try_validator_consensus_db_cleanup() {
 
 void ValidatorManagerImpl::validator_cleanup_delete_done(ValidatorSessionId session_id, td::uint64 generation,
                                                          td::uint64 attempt_id, bool confirmed_gone) {
+  LOG(WARNING) << "VALCLEANUP delete_done session=" << session_id.to_hex() << " generation=" << generation
+               << " attempt=" << attempt_id << " confirmed_gone=" << (confirmed_gone ? 1 : 0);
   // Feed the completed delete attempt to the adapter; on a confirmed delete this
   // dispatches the durable record erase and releases the reservation only on the
   // erase-ack. Deliberately does NOT re-trigger a pass (that would spin a backoff-free
@@ -2518,6 +2536,8 @@ void ValidatorManagerImpl::validator_cleanup_delete_done(ValidatorSessionId sess
 
 void ValidatorManagerImpl::validator_cleanup_erase_acked(ValidatorSessionId session_id, td::uint64 generation,
                                                          td::uint64 attempt_id) {
+  LOG(WARNING) << "VALCLEANUP erase_ack session=" << session_id.to_hex() << " generation=" << generation
+               << " attempt=" << attempt_id;
   // A record was actually removed: release the reservation and re-trigger draining.
   // This is the only completion-path re-trigger, and it is loop-safe because each
   // re-trigger is paid for by a completed removal. See validator-cleanup-dispatch.h.

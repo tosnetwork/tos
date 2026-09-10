@@ -175,6 +175,11 @@ struct ValidatorManagerOptions : public td::CntObject {
   virtual size_t get_max_open_archive_files() const = 0;
   virtual double get_archive_preload_period() const = 0;
   virtual bool get_disable_rocksdb_stats() const = 0;
+  // Runtime opt-in for live validator consensus-DB deletion (Finding 1). Default false:
+  // a normal build/deploy never deletes. Turned on ONLY for an explicit acceptance run
+  // (validator-engine --enable-validator-consensus-cleanup). Replaces the former
+  // compile-time gate so enablement is not baked into every build.
+  virtual bool get_validator_consensus_cleanup_enabled() const = 0;
   virtual bool nonfinal_ls_queries_enabled() const = 0;
   virtual td::optional<td::uint64> get_celldb_cache_size() const = 0;
   virtual bool get_celldb_direct_io() const = 0;
@@ -216,6 +221,7 @@ struct ValidatorManagerOptions : public td::CntObject {
   virtual void set_max_open_archive_files(size_t value) = 0;
   virtual void set_archive_preload_period(double value) = 0;
   virtual void set_disable_rocksdb_stats(bool value) = 0;
+  virtual void set_validator_consensus_cleanup_enabled(bool value) = 0;
   virtual void set_nonfinal_ls_queries_enabled(bool value) = 0;
   virtual void set_celldb_cache_size(td::uint64 value) = 0;
   virtual td::optional<td::uint64> get_celldb_cache_min_size() const = 0;

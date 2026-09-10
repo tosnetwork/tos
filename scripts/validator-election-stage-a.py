@@ -281,10 +281,20 @@ class ValidatorElectionRehearsal:
         sample_interval: float,
         profile: RehearsalProfile,
         experiment: ExperimentProfile | None = None,
+        enable_consensus_cleanup: bool = False,
+        consensus_cleanup_state_ttl: int = 0,
+        consensus_cleanup_archive_ttl: int = 0,
     ):
         self.run_dir = run_dir
         self.network_dir = run_dir / "network"
         self.artifacts_dir = run_dir / "artifacts"
+        # ACCEPTANCE-ONLY opt-in: arm the gated validator consensus-DB cleanup on every
+        # validator engine and shrink state/archive TTLs so the GC floor can advance
+        # once the election produces a post-genesis key block. Default off leaves the
+        # rehearsal's behaviour byte-for-byte unchanged.
+        self.enable_consensus_cleanup = enable_consensus_cleanup
+        self.consensus_cleanup_state_ttl = consensus_cleanup_state_ttl
+        self.consensus_cleanup_archive_ttl = consensus_cleanup_archive_ttl
         self.base_port = base_port
         self.original_build_dir = build_dir.absolute()
         self.install = Install(self.original_build_dir, REPO)
@@ -364,6 +374,12 @@ class ValidatorElectionRehearsal:
                 "--json-rpc-address",
                 self.experiment.rpc_addresses[validator_index],
             ]
+        if self.enable_consensus_cleanup:
+            args += ["--enable-validator-consensus-cleanup"]
+            if self.consensus_cleanup_state_ttl > 0:
+                args += ["--state-ttl", str(self.consensus_cleanup_state_ttl)]
+            if self.consensus_cleanup_archive_ttl > 0:
+                args += ["--archive-ttl", str(self.consensus_cleanup_archive_ttl)]
         return StartOptions(
             args=tuple(args),
             env={
@@ -880,11 +896,14 @@ class ValidatorElectionRehearsal:
             shutil.copy2(source, target)
             binaries[relative] = self.file_provenance(target)
 
-        toslib_source = (self.original_build_dir / "toslib/libtoslibjson.so").resolve(strict=True)
-        toslib_target = snapshot_build / "toslib/libtoslibjson.so"
+        # The toslib shared library is platform-specific: .dylib on macOS, .so elsewhere
+        # (install.py already loads the .dylib on darwin). Snapshot whichever exists.
+        toslib_rel = "toslib/libtoslibjson.dylib" if sys.platform == "darwin" else "toslib/libtoslibjson.so"
+        toslib_source = (self.original_build_dir / toslib_rel).resolve(strict=True)
+        toslib_target = snapshot_build / toslib_rel
         toslib_target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(toslib_source, toslib_target)
-        binaries["toslib/libtoslibjson.so"] = self.file_provenance(toslib_target)
+        binaries[toslib_rel] = self.file_provenance(toslib_target)
 
         # create-state includes generated contract code from the build tree.
         # Snapshot it with the binaries; source/crypto/smartcont intentionally
@@ -2431,6 +2450,27 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=DEFAULT_RPC_BASE_PORT,
         help="first of four consecutive experiment JSON-RPC ports",
     )
+    parser.add_argument(
+        "--enable-consensus-cleanup",
+        action="store_true",
+        help=(
+            "ACCEPTANCE ONLY: arm the gated validator consensus-DB cleanup on every "
+            "engine (--enable-validator-consensus-cleanup) so live deletion of obsolete "
+            "validator groups runs during this election experiment. Default off."
+        ),
+    )
+    parser.add_argument(
+        "--consensus-cleanup-state-ttl",
+        type=int,
+        default=30,
+        help="with --enable-consensus-cleanup: engine --state-ttl (s) so the GC floor advances",
+    )
+    parser.add_argument(
+        "--consensus-cleanup-archive-ttl",
+        type=int,
+        default=60,
+        help="with --enable-consensus-cleanup: engine --archive-ttl (s)",
+    )
     return parser.parse_args(argv)
 
 
@@ -2468,10 +2508,16 @@ async def async_main() -> int:
         sample_interval=sample_interval,
         profile=profile,
         experiment=experiment,
+        enable_consensus_cleanup=args.enable_consensus_cleanup,
+        consensus_cleanup_state_ttl=args.consensus_cleanup_state_ttl,
+        consensus_cleanup_archive_ttl=args.consensus_cleanup_archive_ttl,
     )
     try:
         await stage.execute()
     except Exception:
+        import traceback as _tb
+
+        _tb.print_exc()
         return 1
     return stage.completion_exit_code()
 
