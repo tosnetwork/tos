@@ -1,0 +1,500 @@
+[
+  {
+    "path": "crypto/block/create-state.cpp",
+    "line": 728,
+    "text": "void interpret_uno_engine_key(vm::Stack& stack) {",
+    "present_verbatim_at_a27ff2c77": true
+  },
+  {
+    "path": "crypto/block/create-state.cpp",
+    "line": 729,
+    "text": "  const auto key = block::uno_v2_workchain_engine_key();",
+    "present_verbatim_at_a27ff2c77": true
+  },
+  {
+    "path": "crypto/block/create-state.cpp",
+    "line": 736,
+    "text": "void interpret_uno_provisional_resources(vm::Stack& stack) {",
+    "present_verbatim_at_a27ff2c77": true
+  },
+  {
+    "path": "crypto/block/create-state.cpp",
+    "line": 746,
+    "text": "void interpret_uno_genesis_ingress(vm::Stack& stack) {",
+    "present_verbatim_at_a27ff2c77": true
+  },
+  {
+    "path": "crypto/block/create-state.cpp",
+    "line": 755,
+    "text": "  policy.engine_key = block::uno_v2_workchain_engine_key();",
+    "present_verbatim_at_a27ff2c77": true
+  },
+  {
+    "path": "crypto/block/create-state.cpp",
+    "line": 765,
+    "text": "void interpret_uno_initial_system(vm::Stack& stack) {",
+    "present_verbatim_at_a27ff2c77": true
+  },
+  {
+    "path": "crypto/block/create-state.cpp",
+    "line": 766,
+    "text": "  block::gen::UnoV2SystemState::Record initial{1, 1000000, 0, 0};",
+    "present_verbatim_at_a27ff2c77": true
+  },
+  {
+    "path": "crypto/block/create-state.cpp",
+    "line": 832,
+    "text": "  d.def_stack_word(\"uno-v2-engine-key \", interpret_uno_engine_key);",
+    "present_verbatim_at_a27ff2c77": true
+  },
+  {
+    "path": "crypto/block/create-state.cpp",
+    "line": 833,
+    "text": "  d.def_stack_word(\"uno-v2-provisional-resources \", interpret_uno_provisional_resources);",
+    "present_verbatim_at_a27ff2c77": true
+  },
+  {
+    "path": "crypto/block/create-state.cpp",
+    "line": 834,
+    "text": "  d.def_stack_word(\"uno-genesis-ingress \", interpret_uno_genesis_ingress);",
+    "present_verbatim_at_a27ff2c77": true
+  },
+  {
+    "path": "crypto/block/create-state.cpp",
+    "line": 835,
+    "text": "  d.def_stack_word(\"uno-initial-system \", interpret_uno_initial_system);",
+    "present_verbatim_at_a27ff2c77": true
+  },
+  {
+    "path": "crypto/smartcont/gen-zerostate.fif",
+    "line": 27,
+    "text": "\"uno-genesis-operators.fif\" include",
+    "present_verbatim_at_a27ff2c77": true
+  },
+  {
+    "path": "crypto/smartcont/gen-zerostate.fif",
+    "line": 28,
+    "text": "globalid@ uno_development_coordinator uno_development_custody require-uno-genesis-operators",
+    "present_verbatim_at_a27ff2c77": true
+  },
+  {
+    "path": "crypto/smartcont/gen-zerostate.fif",
+    "line": 74,
+    "text": "\"uno-genesis-config.fif\" include",
+    "present_verbatim_at_a27ff2c77": true
+  },
+  {
+    "path": "crypto/smartcont/gen-zerostate.fif",
+    "line": 75,
+    "text": "unostate0_rhash unostate0_fhash now 0 0 0 2 0xc000 uno_genesis_engine_key add-basic-workchain uno_genesis_descriptor !",
+    "present_verbatim_at_a27ff2c77": false
+  },
+  {
+    "path": "crypto/smartcont/gen-zerostate.fif",
+    "line": 141,
+    "text": "400 uno_genesis_descriptor @ 2 first-instance-identity",
+    "present_verbatim_at_a27ff2c77": true
+  },
+  {
+    "path": "crypto/smartcont/gen-zerostate.fif",
+    "line": 142,
+    "text": "uno_genesis_resources uno-initial-system instance-engine-configuration",
+    "present_verbatim_at_a27ff2c77": true
+  },
+  {
+    "path": "crypto/smartcont/gen-zerostate.fif",
+    "line": 143,
+    "text": "uno_development_coordinator 256 u>B uno_development_custody 256 u>B",
+    "present_verbatim_at_a27ff2c77": true
+  },
+  {
+    "path": "crypto/smartcont/gen-zerostate.fif",
+    "line": 144,
+    "text": "uno-genesis-ingress 84 config!",
+    "present_verbatim_at_a27ff2c77": true
+  },
+  {
+    "path": "crypto/smartcont/uno-genesis-config.fif",
+    "line": 2,
+    "text": "uno-v2-engine-key constant uno_genesis_engine_key",
+    "present_verbatim_at_a27ff2c77": true
+  },
+  {
+    "path": "crypto/smartcont/uno-genesis-config.fif",
+    "line": 3,
+    "text": "uno-v2-provisional-resources constant uno_genesis_resources",
+    "present_verbatim_at_a27ff2c77": true
+  },
+  {
+    "path": "crypto/smartcont/uno-genesis-config.fif",
+    "line": 8,
+    "text": "{ swap 1 = { drop false } { drop true } cond } : uno-genesis-resources-approved?",
+    "present_verbatim_at_a27ff2c77": true
+  },
+  {
+    "path": "crypto/smartcont/uno-genesis-config.fif",
+    "line": 9,
+    "text": "globalid@ uno_genesis_resources uno-genesis-resources-approved? not",
+    "present_verbatim_at_a27ff2c77": true
+  },
+  {
+    "path": "crypto/smartcont/uno-genesis-config.fif",
+    "line": 14,
+    "text": "variable uno_genesis_descriptor",
+    "present_verbatim_at_a27ff2c77": true
+  },
+  {
+    "path": "crypto/smartcont/uno-genesis-operators.fif",
+    "line": 4,
+    "text": "0 constant uno_development_coordinator",
+    "present_verbatim_at_a27ff2c77": true
+  },
+  {
+    "path": "crypto/smartcont/uno-genesis-operators.fif",
+    "line": 5,
+    "text": "1 constant uno_development_custody",
+    "present_verbatim_at_a27ff2c77": true
+  },
+  {
+    "path": "crypto/smartcont/uno-genesis-operators.fif",
+    "line": 11,
+    "text": "{ rot 1 = { 2drop false } { 2drop true } cond } : uno-genesis-operators-approved?",
+    "present_verbatim_at_a27ff2c77": true
+  },
+  {
+    "path": "crypto/smartcont/uno-genesis-operators.fif",
+    "line": 13,
+    "text": "{ uno-genesis-operators-approved? not",
+    "present_verbatim_at_a27ff2c77": true
+  },
+  {
+    "path": "crypto/smartcont/uno-genesis-operators.fif",
+    "line": 15,
+    "text": "} : require-uno-genesis-operators",
+    "present_verbatim_at_a27ff2c77": true
+  },
+  {
+    "path": "scripts/setup-testnet.sh",
+    "line": 9,
+    "text": "# UNO_WORKCHAIN_PROFILE=1 NETWORK_GLOBAL_ID=4 selects the independent UNO",
+    "present_verbatim_at_a27ff2c77": false
+  },
+  {
+    "path": "scripts/setup-testnet.sh",
+    "line": 60,
+    "text": " UNO_WORKCHAIN_PROFILE=\"${UNO_WORKCHAIN_PROFILE:-0}\" NETWORK_GLOBAL_ID=\"${NETWORK_GLOBAL_ID:-3}\" \\",
+    "present_verbatim_at_a27ff2c77": false
+  },
+  {
+    "path": "scripts/setup-testnet.sh",
+    "line": 67,
+    "text": "profile = os.environ[\"UNO_WORKCHAIN_PROFILE\"]",
+    "present_verbatim_at_a27ff2c77": false
+  },
+  {
+    "path": "scripts/setup-testnet.sh",
+    "line": 72,
+    "text": "    raise SystemExit(\"UNO local profile requires a non-mainnet, non-Counter global ID\")",
+    "present_verbatim_at_a27ff2c77": false
+  },
+  {
+    "path": "scripts/setup-testnet.sh",
+    "line": 120,
+    "text": "UNO_WORKCHAIN_PROFILE=\"${UNO_WORKCHAIN_PROFILE:-0}\" \\",
+    "present_verbatim_at_a27ff2c77": false
+  },
+  {
+    "path": "scripts/setup-testnet.sh",
+    "line": 140,
+    "text": "UNO_WORKCHAIN_PROFILE = os.environ.get(\"UNO_WORKCHAIN_PROFILE\", \"0\") == \"1\"",
+    "present_verbatim_at_a27ff2c77": false
+  },
+  {
+    "path": "scripts/setup-testnet.sh",
+    "line": 142,
+    "text": "if UNO_WORKCHAIN_PROFILE and NETWORK_GLOBAL_ID in (1, -23903):",
+    "present_verbatim_at_a27ff2c77": false
+  },
+  {
+    "path": "scripts/setup-testnet.sh",
+    "line": 143,
+    "text": "    raise SystemExit(\"UNO local profile requires a non-mainnet, non-Counter global ID\")",
+    "present_verbatim_at_a27ff2c77": false
+  },
+  {
+    "path": "scripts/setup-testnet.sh",
+    "line": 171,
+    "text": "        if UNO_WORKCHAIN_PROFILE:",
+    "present_verbatim_at_a27ff2c77": false
+  },
+  {
+    "path": "scripts/setup-testnet.sh",
+    "line": 172,
+    "text": "            network.config.uno_workchain = True",
+    "present_verbatim_at_a27ff2c77": false
+  },
+  {
+    "path": "scripts/setup-testnet.sh",
+    "line": 189,
+    "text": "            if UNO_WORKCHAIN_PROFILE:",
+    "present_verbatim_at_a27ff2c77": false
+  },
+  {
+    "path": "scripts/setup-testnet.sh",
+    "line": 272,
+    "text": "        port_info = {\"uno_workchain_profile\": UNO_WORKCHAIN_PROFILE, \"dht_port\": dht._addr.port, \"nodes\": [",
+    "present_verbatim_at_a27ff2c77": false
+  },
+  {
+    "path": "scripts/setup-testnet.sh",
+    "line": 304,
+    "text": "if [ \"${UNO_WORKCHAIN_PROFILE:-0}\" = \"1\" ]; then",
+    "present_verbatim_at_a27ff2c77": false
+  },
+  {
+    "path": "test/tostester/src/tostester/zerostate.py",
+    "line": 69,
+    "text": "    # Independent local production-posture profile: no registered UNO engine,",
+    "present_verbatim_at_a27ff2c77": false
+  },
+  {
+    "path": "test/tostester/src/tostester/zerostate.py",
+    "line": 71,
+    "text": "    uno_workchain: bool = False",
+    "present_verbatim_at_a27ff2c77": false
+  },
+  {
+    "path": "test/tostester/src/tostester/zerostate.py",
+    "line": 141,
+    "text": "{counter_workchain_config}{uno_workchain_config}config.workchains!",
+    "present_verbatim_at_a27ff2c77": false
+  },
+  {
+    "path": "test/tostester/src/tostester/zerostate.py",
+    "line": 420,
+    "text": "    if config.uno_workchain and (",
+    "present_verbatim_at_a27ff2c77": false
+  },
+  {
+    "path": "test/tostester/src/tostester/zerostate.py",
+    "line": 424,
+    "text": "        raise ValueError(\"UNO local profile requires version 16, unsplit shards and a distinct non-mainnet non-Counter global ID\")",
+    "present_verbatim_at_a27ff2c77": false
+  },
+  {
+    "path": "test/tostester/src/tostester/zerostate.py",
+    "line": 597,
+    "text": "    uno_workchain_config = \"\"",
+    "present_verbatim_at_a27ff2c77": false
+  },
+  {
+    "path": "test/tostester/src/tostester/zerostate.py",
+    "line": 598,
+    "text": "    if config.uno_workchain:",
+    "present_verbatim_at_a27ff2c77": false
+  },
+  {
+    "path": "test/tostester/src/tostester/zerostate.py",
+    "line": 599,
+    "text": "        uno_workchain_config = (install.source_dir / \"test/uno-local-network-config.fif\").read_text()",
+    "present_verbatim_at_a27ff2c77": false
+  },
+  {
+    "path": "test/tostester/src/tostester/zerostate.py",
+    "line": 609,
+    "text": "            uno_workchain_config=uno_workchain_config,",
+    "present_verbatim_at_a27ff2c77": false
+  },
+  {
+    "path": "test/tostester/src/tostester/zerostate.py",
+    "line": 610,
+    "text": "            counter_capability=\"1024 or \" if config.counter_workchain or config.uno_workchain else \"\",",
+    "present_verbatim_at_a27ff2c77": false
+  },
+  {
+    "path": "test/tostester/src/tostester/zerostate.py",
+    "line": 623,
+    "text": "    if config.uno_workchain:",
+    "present_verbatim_at_a27ff2c77": false
+  },
+  {
+    "path": "test/uno-local-network-config.fif",
+    "line": 1,
+    "text": "// Local UNO profile. The production constructor and approval predicates are",
+    "present_verbatim_at_a27ff2c77": false
+  },
+  {
+    "path": "test/uno-local-network-config.fif",
+    "line": 3,
+    "text": "\"uno-genesis-operators.fif\" include",
+    "present_verbatim_at_a27ff2c77": false
+  },
+  {
+    "path": "test/uno-local-network-config.fif",
+    "line": 4,
+    "text": "globalid@ uno_development_coordinator uno_development_custody require-uno-genesis-operators",
+    "present_verbatim_at_a27ff2c77": false
+  },
+  {
+    "path": "test/uno-local-network-config.fif",
+    "line": 9,
+    "text": "\"uno-genesis-config.fif\" include",
+    "present_verbatim_at_a27ff2c77": false
+  },
+  {
+    "path": "test/uno-local-network-config.fif",
+    "line": 11,
+    "text": "unostate0_rhash unostate0_fhash now 0 0 0 2 0xc000 uno_genesis_engine_key add-basic-workchain uno_genesis_descriptor !",
+    "present_verbatim_at_a27ff2c77": false
+  },
+  {
+    "path": "test/uno-local-network-config.fif",
+    "line": 12,
+    "text": "400 uno_genesis_descriptor @ 2 first-instance-identity",
+    "present_verbatim_at_a27ff2c77": false
+  },
+  {
+    "path": "test/uno-local-network-config.fif",
+    "line": 13,
+    "text": "uno_genesis_resources uno-initial-system instance-engine-configuration",
+    "present_verbatim_at_a27ff2c77": false
+  },
+  {
+    "path": "test/uno-local-network-config.fif",
+    "line": 14,
+    "text": "uno_development_coordinator 256 u>B uno_development_custody 256 u>B",
+    "present_verbatim_at_a27ff2c77": false
+  },
+  {
+    "path": "test/uno-local-network-config.fif",
+    "line": 15,
+    "text": "uno-genesis-ingress 84 config!",
+    "present_verbatim_at_a27ff2c77": false
+  },
+  {
+    "path": "test/uno-local-profile.md",
+    "line": 1,
+    "text": "# Independent local UNO network",
+    "present_verbatim_at_a27ff2c77": false
+  },
+  {
+    "path": "test/uno-local-profile.md",
+    "line": 3,
+    "text": "`UNO_WORKCHAIN_PROFILE=1 NETWORK_GLOBAL_ID=4 scripts/setup-testnet.sh` selects",
+    "present_verbatim_at_a27ff2c77": false
+  },
+  {
+    "path": "test/uno-local-profile.md",
+    "line": 6,
+    "text": "Existing non-UNO local profiles keep their default version until explicitly",
+    "present_verbatim_at_a27ff2c77": false
+  },
+  {
+    "path": "test/uno-local-profile.md",
+    "line": 15,
+    "text": "execution role correctly fails readiness because there is no registered UNO",
+    "present_verbatim_at_a27ff2c77": false
+  },
+  {
+    "path": "test/uno-local-profile.md",
+    "line": 23,
+    "text": "The standalone `test/uno-local-profile.py` runs a separate three-validator/DHT",
+    "present_verbatim_at_a27ff2c77": false
+  },
+  {
+    "path": "test/uno-local-profile.py",
+    "line": 2,
+    "text": "\"\"\"Run the independent UNO local profile on real unmodified node binaries.\"\"\"",
+    "present_verbatim_at_a27ff2c77": false
+  },
+  {
+    "path": "test/uno-local-profile.py",
+    "line": 25,
+    "text": "report = {'scope': 'Independent local chain, no UNO engine registration; not account-batch execution acceptance.', 'global_id': 4, 'runs': []}",
+    "present_verbatim_at_a27ff2c77": false
+  },
+  {
+    "path": "test/uno-local-profile.py",
+    "line": 34,
+    "text": "        network.config.uno_workchain = True",
+    "present_verbatim_at_a27ff2c77": false
+  },
+  {
+    "path": "test/uno-local-profile.py",
+    "line": 50,
+    "text": "        assert len(state.extra_shards) == 1, '1203: missing UNO shard zerostate'",
+    "present_verbatim_at_a27ff2c77": false
+  },
+  {
+    "path": "test/uno-local-profile.py",
+    "line": 92,
+    "text": "print(f'PASS: UNO local chain and restart; evidence={a.out}')",
+    "present_verbatim_at_a27ff2c77": false
+  },
+  {
+    "path": "test/uno-setup-preflight-controls.py",
+    "line": 23,
+    "text": "with tempfile.TemporaryDirectory(prefix='uno-setup-control-') as directory:",
+    "present_verbatim_at_a27ff2c77": false
+  },
+  {
+    "path": "test/workchain-descriptor-controls.py",
+    "line": 12,
+    "text": "specs=[('basic-route','{ <b x{a6} s, 7 roll 32 u, 6 roll 8 u, 5 roll 8 u, 4 roll 8 u,\\n  2 roll 16 u,','{ <b x{a6} s, 7 roll 32 u, 6 roll 8 u, 5 roll 8 u, 4 roll 8 u,\\n  2 roll drop 0xe000 16 u,','uno-basic'),('extended-key','swap 32 i, 0 64 u, x{0} s,','swap drop -1 32 i, 0 64 u, x{0} s,','counter-extended')]",
+    "present_verbatim_at_a27ff2c77": false
+  },
+  {
+    "path": "test/workchain-descriptor-controls.py",
+    "line": 17,
+    "text": " with tempfile.TemporaryDirectory(prefix='uno-descriptor-copy-') as directory:",
+    "present_verbatim_at_a27ff2c77": false
+  },
+  {
+    "path": "test/workchain-descriptor-equivalence.md",
+    "line": 7,
+    "text": "Production genesis, local UNO, both Counter paths and the Python network",
+    "present_verbatim_at_a27ff2c77": false
+  },
+  {
+    "path": "test/workchain-descriptor-equivalence.md",
+    "line": 18,
+    "text": "to 14 without UNO; isolated Counter remains 15 (singleton ingress); the",
+    "present_verbatim_at_a27ff2c77": false
+  },
+  {
+    "path": "test/workchain-descriptor-equivalence.md",
+    "line": 19,
+    "text": "production and independent local UNO profile require 16 (dual ingress).",
+    "present_verbatim_at_a27ff2c77": false
+  },
+  {
+    "path": "test/workchain-descriptor-equivalence.md",
+    "line": 22,
+    "text": "new UNO setup switch explicitly selects 16; it never inherits generic 14.",
+    "present_verbatim_at_a27ff2c77": false
+  },
+  {
+    "path": "test/workchain-descriptor-equivalence.py",
+    "line": 21,
+    "text": " ('uno-basic','crypto/smartcont/uno-genesis-config.fif','add-uno-genesis-workchain','a6','0xc000','uno_genesis_engine_key','uno-v2-engine-key constant uno_genesis_engine_key\\nvariable uno_genesis_descriptor\\n'),",
+    "present_verbatim_at_a27ff2c77": false
+  },
+  {
+    "path": "test/workchain-genesis-operator-controls.py",
+    "line": 16,
+    "text": "path = \"crypto/smartcont/uno-genesis-operators.fif\"",
+    "present_verbatim_at_a27ff2c77": true
+  },
+  {
+    "path": "test/workchain-genesis-operator-controls.py",
+    "line": 25,
+    "text": "driver = repo / \"test/test-uno-genesis-operators.py\"",
+    "present_verbatim_at_a27ff2c77": true
+  },
+  {
+    "path": "test/workchain-genesis-operator-controls.py",
+    "line": 46,
+    "text": "    with tempfile.TemporaryDirectory(prefix=\"uno-operator-control-\") as temporary:",
+    "present_verbatim_at_a27ff2c77": true
+  }
+]

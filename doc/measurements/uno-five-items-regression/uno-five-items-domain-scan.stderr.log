@@ -1,0 +1,84 @@
+crypto/block/create-state.cpp:728: Uno outside approved engine paths: void interpret_uno_engine_key(vm::Stack& stack) {
+crypto/block/create-state.cpp:729: Uno outside approved engine paths:   const auto key = block::uno_v2_workchain_engine_key();
+crypto/block/create-state.cpp:736: Uno outside approved engine paths: void interpret_uno_provisional_resources(vm::Stack& stack) {
+crypto/block/create-state.cpp:746: Uno outside approved engine paths: void interpret_uno_genesis_ingress(vm::Stack& stack) {
+crypto/block/create-state.cpp:755: Uno outside approved engine paths:   policy.engine_key = block::uno_v2_workchain_engine_key();
+crypto/block/create-state.cpp:765: Uno outside approved engine paths: void interpret_uno_initial_system(vm::Stack& stack) {
+crypto/block/create-state.cpp:766: Uno outside approved engine paths:   block::gen::UnoV2SystemState::Record initial{1, 1000000, 0, 0};
+crypto/block/create-state.cpp:832: Uno outside approved engine paths:   d.def_stack_word("uno-v2-engine-key ", interpret_uno_engine_key);
+crypto/block/create-state.cpp:833: Uno outside approved engine paths:   d.def_stack_word("uno-v2-provisional-resources ", interpret_uno_provisional_resources);
+crypto/block/create-state.cpp:834: Uno outside approved engine paths:   d.def_stack_word("uno-genesis-ingress ", interpret_uno_genesis_ingress);
+crypto/block/create-state.cpp:835: Uno outside approved engine paths:   d.def_stack_word("uno-initial-system ", interpret_uno_initial_system);
+crypto/smartcont/gen-zerostate.fif:27: Uno outside approved engine paths: "uno-genesis-operators.fif" include
+crypto/smartcont/gen-zerostate.fif:28: Uno outside approved engine paths: globalid@ uno_development_coordinator uno_development_custody require-uno-genesis-operators
+crypto/smartcont/gen-zerostate.fif:74: Uno outside approved engine paths: "uno-genesis-config.fif" include
+crypto/smartcont/gen-zerostate.fif:75: Uno outside approved engine paths: unostate0_rhash unostate0_fhash now 0 0 0 2 0xc000 uno_genesis_engine_key add-basic-workchain uno_genesis_descriptor !
+crypto/smartcont/gen-zerostate.fif:141: Uno outside approved engine paths: 400 uno_genesis_descriptor @ 2 first-instance-identity
+crypto/smartcont/gen-zerostate.fif:142: Uno outside approved engine paths: uno_genesis_resources uno-initial-system instance-engine-configuration
+crypto/smartcont/gen-zerostate.fif:143: Uno outside approved engine paths: uno_development_coordinator 256 u>B uno_development_custody 256 u>B
+crypto/smartcont/gen-zerostate.fif:144: Uno outside approved engine paths: uno-genesis-ingress 84 config!
+crypto/smartcont/uno-genesis-config.fif:2: Uno outside approved engine paths: uno-v2-engine-key constant uno_genesis_engine_key
+crypto/smartcont/uno-genesis-config.fif:3: Uno outside approved engine paths: uno-v2-provisional-resources constant uno_genesis_resources
+crypto/smartcont/uno-genesis-config.fif:8: Uno outside approved engine paths: { swap 1 = { drop false } { drop true } cond } : uno-genesis-resources-approved?
+crypto/smartcont/uno-genesis-config.fif:9: Uno outside approved engine paths: globalid@ uno_genesis_resources uno-genesis-resources-approved? not
+crypto/smartcont/uno-genesis-config.fif:14: Uno outside approved engine paths: variable uno_genesis_descriptor
+crypto/smartcont/uno-genesis-operators.fif:4: Uno outside approved engine paths: 0 constant uno_development_coordinator
+crypto/smartcont/uno-genesis-operators.fif:5: Uno outside approved engine paths: 1 constant uno_development_custody
+crypto/smartcont/uno-genesis-operators.fif:11: Uno outside approved engine paths: { rot 1 = { 2drop false } { 2drop true } cond } : uno-genesis-operators-approved?
+crypto/smartcont/uno-genesis-operators.fif:13: Uno outside approved engine paths: { uno-genesis-operators-approved? not
+crypto/smartcont/uno-genesis-operators.fif:15: Uno outside approved engine paths: } : require-uno-genesis-operators
+scripts/setup-testnet.sh:9: Uno outside approved engine paths: # UNO_WORKCHAIN_PROFILE=1 NETWORK_GLOBAL_ID=4 selects the independent UNO
+scripts/setup-testnet.sh:60: Uno outside approved engine paths:  UNO_WORKCHAIN_PROFILE="${UNO_WORKCHAIN_PROFILE:-0}" NETWORK_GLOBAL_ID="${NETWORK_GLOBAL_ID:-3}" \
+scripts/setup-testnet.sh:67: Uno outside approved engine paths: profile = os.environ["UNO_WORKCHAIN_PROFILE"]
+scripts/setup-testnet.sh:72: Uno outside approved engine paths:     raise SystemExit("UNO local profile requires a non-mainnet, non-Counter global ID")
+scripts/setup-testnet.sh:120: Uno outside approved engine paths: UNO_WORKCHAIN_PROFILE="${UNO_WORKCHAIN_PROFILE:-0}" \
+scripts/setup-testnet.sh:140: Uno outside approved engine paths: UNO_WORKCHAIN_PROFILE = os.environ.get("UNO_WORKCHAIN_PROFILE", "0") == "1"
+scripts/setup-testnet.sh:142: Uno outside approved engine paths: if UNO_WORKCHAIN_PROFILE and NETWORK_GLOBAL_ID in (1, -23903):
+scripts/setup-testnet.sh:143: Uno outside approved engine paths:     raise SystemExit("UNO local profile requires a non-mainnet, non-Counter global ID")
+scripts/setup-testnet.sh:171: Uno outside approved engine paths:         if UNO_WORKCHAIN_PROFILE:
+scripts/setup-testnet.sh:172: Uno outside approved engine paths:             network.config.uno_workchain = True
+scripts/setup-testnet.sh:189: Uno outside approved engine paths:             if UNO_WORKCHAIN_PROFILE:
+scripts/setup-testnet.sh:272: Uno outside approved engine paths:         port_info = {"uno_workchain_profile": UNO_WORKCHAIN_PROFILE, "dht_port": dht._addr.port, "nodes": [
+scripts/setup-testnet.sh:304: Uno outside approved engine paths: if [ "${UNO_WORKCHAIN_PROFILE:-0}" = "1" ]; then
+test/tostester/src/tostester/zerostate.py:69: Uno outside approved engine paths:     # Independent local production-posture profile: no registered UNO engine,
+test/tostester/src/tostester/zerostate.py:71: Uno outside approved engine paths:     uno_workchain: bool = False
+test/tostester/src/tostester/zerostate.py:141: Uno outside approved engine paths: {counter_workchain_config}{uno_workchain_config}config.workchains!
+test/tostester/src/tostester/zerostate.py:420: Uno outside approved engine paths:     if config.uno_workchain and (
+test/tostester/src/tostester/zerostate.py:424: Uno outside approved engine paths:         raise ValueError("UNO local profile requires version 16, unsplit shards and a distinct non-mainnet non-Counter global ID")
+test/tostester/src/tostester/zerostate.py:597: Uno outside approved engine paths:     uno_workchain_config = ""
+test/tostester/src/tostester/zerostate.py:598: Uno outside approved engine paths:     if config.uno_workchain:
+test/tostester/src/tostester/zerostate.py:599: Uno outside approved engine paths:         uno_workchain_config = (install.source_dir / "test/uno-local-network-config.fif").read_text()
+test/tostester/src/tostester/zerostate.py:609: Uno outside approved engine paths:             uno_workchain_config=uno_workchain_config,
+test/tostester/src/tostester/zerostate.py:610: Uno outside approved engine paths:             counter_capability="1024 or " if config.counter_workchain or config.uno_workchain else "",
+test/tostester/src/tostester/zerostate.py:623: Uno outside approved engine paths:     if config.uno_workchain:
+test/uno-local-network-config.fif:1: Uno outside approved engine paths: // Local UNO profile. The production constructor and approval predicates are
+test/uno-local-network-config.fif:3: Uno outside approved engine paths: "uno-genesis-operators.fif" include
+test/uno-local-network-config.fif:4: Uno outside approved engine paths: globalid@ uno_development_coordinator uno_development_custody require-uno-genesis-operators
+test/uno-local-network-config.fif:9: Uno outside approved engine paths: "uno-genesis-config.fif" include
+test/uno-local-network-config.fif:11: Uno outside approved engine paths: unostate0_rhash unostate0_fhash now 0 0 0 2 0xc000 uno_genesis_engine_key add-basic-workchain uno_genesis_descriptor !
+test/uno-local-network-config.fif:12: Uno outside approved engine paths: 400 uno_genesis_descriptor @ 2 first-instance-identity
+test/uno-local-network-config.fif:13: Uno outside approved engine paths: uno_genesis_resources uno-initial-system instance-engine-configuration
+test/uno-local-network-config.fif:14: Uno outside approved engine paths: uno_development_coordinator 256 u>B uno_development_custody 256 u>B
+test/uno-local-network-config.fif:15: Uno outside approved engine paths: uno-genesis-ingress 84 config!
+test/uno-local-profile.md:1: Uno outside approved engine paths: # Independent local UNO network
+test/uno-local-profile.md:3: Uno outside approved engine paths: `UNO_WORKCHAIN_PROFILE=1 NETWORK_GLOBAL_ID=4 scripts/setup-testnet.sh` selects
+test/uno-local-profile.md:6: Uno outside approved engine paths: Existing non-UNO local profiles keep their default version until explicitly
+test/uno-local-profile.md:15: Uno outside approved engine paths: execution role correctly fails readiness because there is no registered UNO
+test/uno-local-profile.md:23: Uno outside approved engine paths: The standalone `test/uno-local-profile.py` runs a separate three-validator/DHT
+test/uno-local-profile.py:2: Uno outside approved engine paths: """Run the independent UNO local profile on real unmodified node binaries."""
+test/uno-local-profile.py:25: Uno outside approved engine paths: report = {'scope': 'Independent local chain, no UNO engine registration; not account-batch execution acceptance.', 'global_id': 4, 'runs': []}
+test/uno-local-profile.py:34: Uno outside approved engine paths:         network.config.uno_workchain = True
+test/uno-local-profile.py:50: Uno outside approved engine paths:         assert len(state.extra_shards) == 1, '1203: missing UNO shard zerostate'
+test/uno-local-profile.py:92: Uno outside approved engine paths: print(f'PASS: UNO local chain and restart; evidence={a.out}')
+test/uno-setup-preflight-controls.py:23: Uno outside approved engine paths: with tempfile.TemporaryDirectory(prefix='uno-setup-control-') as directory:
+test/workchain-descriptor-controls.py:12: Uno outside approved engine paths: specs=[('basic-route','{ <b x{a6} s, 7 roll 32 u, 6 roll 8 u, 5 roll 8 u, 4 roll 8 u,\n  2 roll 16 u,','{ <b x{a6} s, 7 roll 32 u, 6 roll 8 u, 5 roll 8 u, 4 roll 8 u,\n  2 roll drop 0xe000 16 u,','uno-basic'),('extended-key','swap 32 i, 0 64 u, x{0} s,','swap drop -1 32 i, 0 64 u, x{0} s,','counter-extended')]
+test/workchain-descriptor-controls.py:17: Uno outside approved engine paths:  with tempfile.TemporaryDirectory(prefix='uno-descriptor-copy-') as directory:
+test/workchain-descriptor-equivalence.md:7: Uno outside approved engine paths: Production genesis, local UNO, both Counter paths and the Python network
+test/workchain-descriptor-equivalence.md:18: Uno outside approved engine paths: to 14 without UNO; isolated Counter remains 15 (singleton ingress); the
+test/workchain-descriptor-equivalence.md:19: Uno outside approved engine paths: production and independent local UNO profile require 16 (dual ingress).
+test/workchain-descriptor-equivalence.md:22: Uno outside approved engine paths: new UNO setup switch explicitly selects 16; it never inherits generic 14.
+test/workchain-descriptor-equivalence.py:21: Uno outside approved engine paths:  ('uno-basic','crypto/smartcont/uno-genesis-config.fif','add-uno-genesis-workchain','a6','0xc000','uno_genesis_engine_key','uno-v2-engine-key constant uno_genesis_engine_key\nvariable uno_genesis_descriptor\n'),
+test/workchain-genesis-operator-controls.py:16: Uno outside approved engine paths: path = "crypto/smartcont/uno-genesis-operators.fif"
+test/workchain-genesis-operator-controls.py:25: Uno outside approved engine paths: driver = repo / "test/test-uno-genesis-operators.py"
+test/workchain-genesis-operator-controls.py:46: Uno outside approved engine paths:     with tempfile.TemporaryDirectory(prefix="uno-operator-control-") as temporary:
+removed-execution-domain scan failed

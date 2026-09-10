@@ -1,0 +1,924 @@
+{
+  "scope": "Full ordinary run plus explicit corrected follow-up; not one retrospectively green full run. No milestone acceptance.",
+  "source_at_initial_start": "b7947b836",
+  "code_followups": [
+    "c434d2ac4",
+    "f7e5387f1"
+  ],
+  "initial": {
+    "entries": 138,
+    "passed": 136,
+    "failed": 2,
+    "skipped": 0,
+    "junit_sha256": "63c7e8dca564a032ea4b3371622ff11a65e932224a519be7c7674f7cc056b1ff",
+    "results": [
+      {
+        "name": "test-workchain-genesis-activation-missing-capability",
+        "time": "0.194164",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-workchain-genesis-activation-old-version",
+        "time": "0.18435",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-workchain-activation-control-gates",
+        "time": "0.203063",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-workchain-proof-boundary-gates",
+        "time": "0.263626",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-workchain-proof-backend",
+        "time": "0.871228",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-workchain-proof-operation-trace",
+        "time": "16.6371",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-quorum-static-grep",
+        "time": "0.0382858",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "plumtree-graph-sim-smoke",
+        "time": "0.867079",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "plumtree-graph-sim-simple-smoke",
+        "time": "0.0416885",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "plumtree-graph-sim-loss",
+        "time": "0.757213",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "plumtree-graph-sim-simple-loss",
+        "time": "0.0578228",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "plumtree-graph-sim-partition-recovery",
+        "time": "0.349171",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "plumtree-graph-sim-selective-forwarding",
+        "time": "0.530099",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "plumtree-graph-sim-rotating-outage",
+        "time": "0.760668",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "plumtree-graph-sim-simple-selective-forwarding",
+        "time": "0.0559191",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "plumtree-graph-sim-simple-rotating-outage",
+        "time": "0.0531642",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "plumtree-graph-sim-fec-stress",
+        "time": "2.3094",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "plumtree-graph-sim-simple-stress",
+        "time": "0.192357",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-counter-collator-admission",
+        "time": "0.0274243",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-counter-disk-integration",
+        "time": "1.17412",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-counter-account-binding-readiness",
+        "time": "1.50595",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-counter-fixture-lifecycle",
+        "time": "0.0889779",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-counter-idle-replay",
+        "time": "0.96904",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-counter-self-delivery",
+        "time": "0.637933",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-counter-cross-delivery",
+        "time": "0.927719",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-counter-native-sender",
+        "time": "0.87231",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-workchain-ingress-transition",
+        "time": "0.00616541",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-counter-activation-missing_capability",
+        "time": "0.16082",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-counter-config-presence-missing_capability",
+        "time": "0.138686",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-counter-activation-old_version",
+        "time": "0.105785",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-counter-config-presence-old_version",
+        "time": "0.131843",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-counter-config-binding",
+        "time": "0.133644",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-counter-engine-config",
+        "time": "0.310704",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-uno-partition-storage-smoke",
+        "time": "0.118331",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-uno-incremental-storage-smoke",
+        "time": "0.0968199",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-uno-split-storage-smoke",
+        "time": "0.112027",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-uno-split-prefix-storage-smoke",
+        "time": "0.11464",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-ed25519",
+        "time": "11.1675",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-bigint",
+        "time": "22.4502",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-vm",
+        "time": "38.6102",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-fift",
+        "time": "3.4374",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-cells",
+        "time": "0.0567999",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-workchain-block",
+        "time": "2.86244",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-workchain-settlement-continuation",
+        "time": "0.00708027",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-workchain-collator-compute-mode",
+        "time": "0.00218947",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-workchain-proof-work",
+        "time": "0.00573137",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-workchain-proof-contracts",
+        "time": "0.00401916",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-workchain-admission",
+        "time": "0.00441293",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-smartcont",
+        "time": "10.495",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-net",
+        "time": "0.540222",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-tdactor",
+        "time": "17.8399",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-tdutils",
+        "time": "140.821",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-toslib-offline",
+        "time": "23.0562",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-func",
+        "time": "0.940172",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-func-legacy",
+        "time": "1.2373",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-tol",
+        "time": "0.0608767",
+        "failed": true,
+        "skipped": false
+      },
+      {
+        "name": "test-adnl",
+        "time": "25.5611",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-dht",
+        "time": "12.0695",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-rldp2",
+        "time": "5.31617",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-rldp2-connection-cap",
+        "time": "0.0457591",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-rldp2-query-eviction",
+        "time": "1.49353",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-rldp-http-proxy-routing",
+        "time": "0.00868326",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-overlay-peer-cleanup",
+        "time": "0.00804691",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-download-state-budget",
+        "time": "5.32457",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-download-next-blocks-validation",
+        "time": "0.00703077",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-ext-message-pool",
+        "time": "0.00689367",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-msg-envelope",
+        "time": "0.00376459",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-rate-limiter",
+        "time": "0.00493657",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-config-transition",
+        "time": "0.0076091",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-json-rpc-parse",
+        "time": "0.00788404",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-http-server-limits",
+        "time": "2.01267",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-wallet-message-processor",
+        "time": "0.00955637",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-vm-exception-hardening",
+        "time": "0.00862045",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-celldb-streaming-import",
+        "time": "0.0242719",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-celldb-actor-restart",
+        "time": "1.22756",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-validator-options",
+        "time": "0.00671552",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-full-node-shard-routing",
+        "time": "0.00635269",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-uno-state-snapshot",
+        "time": "21.9033",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-counter-genesis-domain",
+        "time": "0.154338",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-uno-genesis-operators",
+        "time": "0.406972",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-workchain-genesis-routing",
+        "time": "0.669979",
+        "failed": true,
+        "skipped": false
+      },
+      {
+        "name": "test-counter-python-harness",
+        "time": "5.56859",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-uno-build-wiring",
+        "time": "38.857",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-block-handle-flags",
+        "time": "0.00653526",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-keyring-temp-key",
+        "time": "0.613505",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-collator-node-limits",
+        "time": "0.00512896",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-rldp2-connection-limits",
+        "time": "0.00710625",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-promise-loss-contract",
+        "time": "0.00713325",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-json-rpc-handler-guard",
+        "time": "0.00827671",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-metrics-label-bound",
+        "time": "0.0236877",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-rldp2-inbound-transfer-bound",
+        "time": "0.428402",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-consensus-config-admission",
+        "time": "0.00830459",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-weak-ptr-registry",
+        "time": "0.00904774",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-wallet-index",
+        "time": "0.0751703",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-quorum",
+        "time": "0.00519661",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-emulator",
+        "time": "0.0684423",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-fec",
+        "time": "0.496043",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-tddb",
+        "time": "1.35264",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-db",
+        "time": "429.683",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-uno-crypto-abi-real",
+        "time": "0.683343",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-uno-crypto-rust",
+        "time": "3.23395",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-uno-crypto-symbols",
+        "time": "0.744509",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-uno-crypto-kernel-gates",
+        "time": "1.45549",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-uno-crypto-header-guard",
+        "time": "3.74569",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-coro",
+        "time": "5.63856",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-workchain-instance-identity",
+        "time": "0.0059464",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-workchain-genesis-installation",
+        "time": "0.191348",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-workchain-handwritten-tags",
+        "time": "0.0745051",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-scheduler-stop",
+        "time": "0.0424312",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-runtime",
+        "time": "0.0125879",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-test-scheduler",
+        "time": "0.00723493",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-backpressure-queue",
+        "time": "0.00601571",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-persistent-treap",
+        "time": "1.24176",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-lru-cache",
+        "time": "0.00427706",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-ffi-awaitable",
+        "time": "0.0263725",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-ffi-event-loop",
+        "time": "0.113371",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-liteserver-admission",
+        "time": "0.0056763",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-consensus-simplex2-loss",
+        "time": "4.13259",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-consensus-simplex2-restart",
+        "time": "5.09207",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-consensus-simplex2-partition",
+        "time": "5.12859",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-consensus-simplex2-malicious-observer",
+        "time": "5.14016",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-consensus-simplex2-relay-loop",
+        "time": "5.1433",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-consensus-simplex2-adaptive-byzantine",
+        "time": "7.04701",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-consensus-simplex2-manager-ingress-adversarial",
+        "time": "7.04466",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-consensus-simplex2-candidate-relay-eviction",
+        "time": "0.030982",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-consensus-simplex2-state-resolver-cache-unit",
+        "time": "0.0269183",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-consensus-simplex2-state-resolver-inflight-admission-unit",
+        "time": "0.0247075",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-consensus-simplex2-skipped-slot-resolution-unit",
+        "time": "0.0273793",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-consensus-simplex2-candidate-resolver-retention-unit",
+        "time": "0.0265432",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-consensus-simplex2-candidate-resolver-interleaving-unit",
+        "time": "0.0309158",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-consensus-simplex2-db-finalized-slot-dedup-unit",
+        "time": "0.0303701",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-consensus-validator-manager-resource-policy-unit",
+        "time": "0.0286569",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-validator-manager-resource-policy-actor",
+        "time": "0.206041",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-consensus-simplex2-state-resolver-catch-up",
+        "time": "8.04636",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-consensus-simplex2-empty-chain-restart",
+        "time": "9.74175",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-consensus-simplex2-query-abuse",
+        "time": "5.13467",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-consensus-simplex2-codec-boundary",
+        "time": "0.254838",
+        "failed": false,
+        "skipped": false
+      },
+      {
+        "name": "test-consensus-simplex2-genesis-config",
+        "time": "0.0330743",
+        "failed": false,
+        "skipped": false
+      }
+    ]
+  },
+  "failure_reconciliation": [
+    {
+      "name": "test-tol",
+      "initial_reason": "Failed to discover Tol stdlib. TOL_STDLIB was supplied for the build but absent in the test invocation.",
+      "classification": "environment",
+      "fix": "Set TOL_STDLIB to the repository crypto/smartcont/tol-stdlib directory; no test expectation change.",
+      "followup": "passed"
+    },
+    {
+      "name": "test-workchain-genesis-routing",
+      "initial_reason": "AssertionError: 952 at master.count(\"x{e000}\") == 1. D57 removed that inline representation.",
+      "classification": "real test-input migration defect",
+      "fix": "Change the exact shared-word argument at the workchain-2 call. Transaction/queue expectations unchanged; omitting this change fails structured identity 957.",
+      "followup": "passed"
+    }
+  ],
+  "followup": {
+    "entries": 2,
+    "passed": 2,
+    "failed": 0,
+    "skipped": 0,
+    "junit_sha256": "fd4792ec8e77a4dfea224580e09a068715282a8385fc1eea4db26793a89223c0",
+    "TOL_STDLIB": "/home/tomi/tos-m2/crypto/smartcont/tol-stdlib"
+  },
+  "reconciled_distinct_tests_passed": 138,
+  "former_nine": [
+    {
+      "name": "test-counter-account-binding-readiness",
+      "initial_result": "passed",
+      "deferred": false
+    },
+    {
+      "name": "test-counter-activation-missing_capability",
+      "initial_result": "passed",
+      "deferred": false
+    },
+    {
+      "name": "test-counter-activation-old_version",
+      "initial_result": "passed",
+      "deferred": false
+    },
+    {
+      "name": "test-counter-disk-integration",
+      "initial_result": "passed",
+      "deferred": false
+    },
+    {
+      "name": "test-counter-idle-replay",
+      "initial_result": "passed",
+      "deferred": false
+    },
+    {
+      "name": "test-counter-self-delivery",
+      "initial_result": "passed",
+      "deferred": false
+    },
+    {
+      "name": "test-counter-cross-delivery",
+      "initial_result": "passed",
+      "deferred": false
+    },
+    {
+      "name": "test-counter-native-sender",
+      "initial_result": "passed",
+      "deferred": false
+    },
+    {
+      "name": "test-counter-engine-config",
+      "initial_result": "passed",
+      "deferred": false
+    }
+  ],
+  "extra_domain_scan": {
+    "status": "failed; allowlist unchanged",
+    "diagnostic_rows": 83,
+    "old_exact_lines": 31,
+    "new_or_rewritten_lines": 52,
+    "paths": 14
+  }
+}

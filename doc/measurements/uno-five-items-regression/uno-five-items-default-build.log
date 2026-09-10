@@ -1,0 +1,110 @@
+[1/109] cd /home/tomi/tos-m2/uno/crypto && /usr/bin/cmake -E env CARGO_NET_OFFLINE=true CARGO_TARGET_DIR=/tmp/uno-publication-build/uno/crypto/cargo-target /home/tomi/.cargo/bin/cargo build --locked --offline --release -j48
+    Finished `release` profile [optimized] target(s) in 0.08s
+[2/107] Checking the git repository for changes...
+[3/107] Building CXX object CMakeFiles/git.dir/git.cc.o
+[4/107] Linking CXX static library libgit.a
+[5/107] Linking CXX executable tol/tol
+[6/107] Linking CXX executable crypto/mintless-proof-generator
+[7/107] Linking CXX executable crypto/test-weight-distr
+[8/107] Linking CXX executable crypto/func
+[9/107] Compile FunC stdlib TVM v6 fee primitive coverage
+[10/107] Linking CXX executable crypto/dump-block
+[11/107] Linking CXX executable adnl/adnl-proxy
+[12/107] Linking CXX executable crypto/adjust-block
+[13/107] Linking CXX executable utils/json2tlo
+[14/107] Linking CXX executable utils/generate-random-id
+[15/107] Linking CXX executable crypto/fift
+[16/107] Linking CXX executable validator-engine-console/validator-engine-console
+[17/107] Generate /tmp/uno-publication-build/crypto/smartcont/auto/simple-wallet-code.fif
+[18/107] Generate /tmp/uno-publication-build/crypto/smartcont/auto/wallet-code.fif
+[19/107] Generate /tmp/uno-publication-build/crypto/smartcont/auto/wallet3-code.fif
+[20/107] Generate /tmp/uno-publication-build/crypto/smartcont/auto/highload-wallet-code.fif
+[21/107] Generate /tmp/uno-publication-build/crypto/smartcont/auto/wallet-v4-code.fif
+[22/107] Generate /tmp/uno-publication-build/crypto/smartcont/auto/highload-wallet-v2-code.fif
+[23/107] Generate /tmp/uno-publication-build/crypto/smartcont/auto/session-wallet-code.fif
+[24/107] Generate /tmp/uno-publication-build/crypto/smartcont/auto/restricted-wallet-code.fif
+[25/107] Generate /tmp/uno-publication-build/crypto/smartcont/auto/restricted-wallet2-code.fif
+[26/107] Generate /tmp/uno-publication-build/crypto/smartcont/auto/restricted-wallet3-code.fif
+[27/107] Generate /tmp/uno-publication-build/crypto/smartcont/auto/wallet-v5-code.fif
+[28/107] Generate /tmp/uno-publication-build/crypto/smartcont/auto/wallet-code.cpp
+[29/107] Generate /tmp/uno-publication-build/crypto/smartcont/auto/multisig-code.fif
+[30/107] Generate /tmp/uno-publication-build/crypto/smartcont/auto/simple-wallet-code.cpp
+[31/107] Generate /tmp/uno-publication-build/crypto/smartcont/auto/wallet3-code.cpp
+[32/107] Generate /tmp/uno-publication-build/crypto/smartcont/auto/highload-wallet-code.cpp
+[33/107] Generate /tmp/uno-publication-build/crypto/smartcont/auto/wallet-v4-code.cpp
+[34/107] Generate /tmp/uno-publication-build/crypto/smartcont/auto/session-wallet-code.cpp
+[35/107] Generate /tmp/uno-publication-build/crypto/smartcont/auto/restricted-wallet-code.cpp
+[36/107] Generate /tmp/uno-publication-build/crypto/smartcont/auto/highload-wallet-v2-code.cpp
+[37/107] Generate /tmp/uno-publication-build/crypto/smartcont/auto/restricted-wallet3-code.cpp
+[38/107] Generate /tmp/uno-publication-build/crypto/smartcont/auto/restricted-wallet2-code.cpp
+[39/107] Generate /tmp/uno-publication-build/crypto/smartcont/auto/config-code.fif
+[40/107] Generate /tmp/uno-publication-build/crypto/smartcont/auto/wallet-v5-code.cpp
+[41/107] Generate /tmp/uno-publication-build/crypto/smartcont/auto/simple-wallet-ext-code.fif
+[42/107] Compiling Tol contract slice5-receive-context-tol -> /tmp/uno-publication-build/slice1-gas-parity/slice5-receive-context-tol.boc
+[43/107] Generate /tmp/uno-publication-build/crypto/smartcont/auto/pow-testgiver-code.fif
+[44/107] Generate /tmp/uno-publication-build/crypto/smartcont/auto/dns-manual-code.fif
+[45/107] Compiling FunC contract jetton-minter-func -> /tmp/uno-publication-build/slice1-gas-parity/jetton-minter-func.boc
+[46/107] Generate /tmp/uno-publication-build/crypto/smartcont/auto/task-escrow-code.fif
+[47/107] Generate /tmp/uno-publication-build/crypto/smartcont/auto/multisig-code.cpp
+[48/107] Compiling FunC contract wallet-v5-func -> /tmp/uno-publication-build/slice1-gas-parity/wallet-v5-func.boc
+[49/107] Compiling Tol contract jetton-minter-tol -> /tmp/uno-publication-build/slice1-gas-parity/jetton-minter-tol.boc
+[50/107] Compiling FunC contract jetton-wallet-func -> /tmp/uno-publication-build/slice1-gas-parity/jetton-wallet-func.boc
+[51/107] Generate /tmp/uno-publication-build/crypto/smartcont/auto/simple-wallet-ext-code.cpp
+[52/107] Generate /tmp/uno-publication-build/crypto/smartcont/auto/payment-channel-code.fif
+[53/107] Compiling Tol contract jetton-wallet-tol -> /tmp/uno-publication-build/slice1-gas-parity/jetton-wallet-tol.boc
+[54/107] Generate /tmp/uno-publication-build/crypto/smartcont/auto/agent-account-code.fif
+[55/107] Generate /tmp/uno-publication-build/crypto/smartcont/auto/dns-auto-code.fif
+[56/107] Generate /tmp/uno-publication-build/crypto/smartcont/auto/config-code.cpp
+[57/107] Generate /tmp/uno-publication-build/crypto/smartcont/auto/pow-testgiver-code.cpp
+[58/107] Compiling Tol contract wallet-v5-tol -> /tmp/uno-publication-build/slice1-gas-parity/wallet-v5-tol.boc
+[59/107] Compiling Tol contract tos-report-bond-oracle -> /tmp/uno-publication-build/slice1-gas-parity/tos-report-bond-oracle.boc
+[60/107] Generate /tmp/uno-publication-build/crypto/smartcont/auto/dns-manual-code.cpp
+[61/107] Generate /tmp/uno-publication-build/crypto/smartcont/auto/task-escrow-code.cpp
+[62/107] Generate /tmp/uno-publication-build/crypto/smartcont/auto/elector-code.fif
+[63/107] Linking CXX executable utils/prepare-ls-slice-config
+[64/107] Generate /tmp/uno-publication-build/crypto/smartcont/auto/payment-channel-code.cpp
+[65/107] Generate /tmp/uno-publication-build/crypto/smartcont/auto/agent-account-code.cpp
+[66/107] Generate /tmp/uno-publication-build/crypto/smartcont/auto/dns-auto-code.cpp
+[67/107] Generate /tmp/uno-publication-build/crypto/smartcont/auto/elector-code.cpp
+[68/107] Linking CXX executable storage/storage-daemon/storage-daemon-cli
+[69/107] Linking CXX executable adnl/adnl-pong
+[70/107] Linking CXX executable lite-client/lite-client
+[71/107] Linking CXX executable adnl/tos-adnl-probe
+[72/107] Linking CXX executable dht-server/dht-server
+[73/107] Verify and embed the frozen TOS Service Protocol stablecoin escrow v1 BOC
+NOTE: escrow v1 is deprecated (superseded by v2); this build exists only to verify the frozen historical artifact.
+NOTE: escrow v1 is deprecated (superseded by v2); this build exists only to verify the frozen historical artifact.
+[74/107] Verify and embed the frozen TOS Service Protocol stablecoin escrow v2 BOC
+[75/107] Verify and embed the frozen TOS Native Service Registry BOC
+[76/107] Linking CXX executable utils/proxy-liteserver
+[77/107] Generate /tmp/uno-publication-build/crypto/smartcont/auto/prediction-market-code.fif
+[78/107] Generate /tmp/uno-publication-build/crypto/smartcont/auto/prediction-market-code.cpp
+[79/107] Building CXX object crypto/CMakeFiles/smc-envelope.dir/smc-envelope/SmartContractCode.cpp.o
+[80/107] Linking CXX static library crypto/libsmc-envelope.a
+[81/107] Linking CXX executable test-http
+[82/107] Linking CXX executable metrics/metrics-example
+[83/107] Linking CXX executable test-metrics-label-bound
+[84/107] Linking CXX executable http/http-proxy
+[85/107] Linking CXX executable quic/quic-example-server
+[86/107] Linking CXX executable storage/storage-cli
+[87/107] Linking CXX shared library emulator/libemulator.so
+[88/107] Linking CXX executable test-http-server-limits
+[89/107] Linking CXX executable quic/quic-example-client
+[90/107] Linking CXX executable crypto/create-state
+[91/107] Linking CXX executable test-workchain-block
+[92/107] Linking CXX executable test-wallet-message-processor
+[93/107] Linking CXX executable create-hardfork/create-hardfork
+[94/107] Linking CXX executable bench-rldp
+[95/107] Linking CXX executable test-toslib-offline
+[96/107] Linking CXX executable test/toslib/test-ffi-awaitable
+[97/107] Linking CXX executable test/toslib/test-ffi-event-loop
+[98/107] Linking CXX executable test-emulator
+[99/107] Linking CXX executable toslib/toslib-cli
+[100/107] Linking CXX executable test-quic-sender
+[101/107] Linking CXX executable test-smartcont
+[102/107] Linking CXX shared library toslib/libtoslibjson.so.0.5
+[103/107] Creating library symlink toslib/libtoslibjson.so
+[104/107] Linking CXX executable test-toslib
+[105/107] Linking CXX executable storage/storage-daemon/storage-daemon
+[106/107] Linking CXX executable rldp-http-proxy/rldp-http-proxy
+[107/107] Linking CXX executable validator-engine/validator-engine

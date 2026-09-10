@@ -1,0 +1,19 @@
+Start testing: Sep 10 01:04 UTC
+----------------------------------------------------------
+30/138 Testing: test-counter-activation-old_version
+30/138 Test: test-counter-activation-old_version
+Command: "/home/tomi/.local/bin/python3" "/home/tomi/tos-m2/crypto/test/workchain-genesis-activation.py" "--repo" "/home/tomi/tos-m2" "--probe" "/tmp/uno-publication-build/test-workchain-activation-control" "--mode" "old-version"
+Directory: /home/tomi/tos-m2/build
+"test-counter-activation-old_version" start time: Sep 10 01:04 UTC
+Output:
+----------------------------------------------------------
+PASS: scoped activation refusal with Param84 retained; evidence=/tmp/uno-genesis-activation-ora__n15/run
+<end of output>
+Test time =   0.16 sec
+----------------------------------------------------------
+Test Passed.
+"test-counter-activation-old_version" end time: Sep 10 01:04 UTC
+"test-counter-activation-old_version" time elapsed: 00:00:00
+----------------------------------------------------------
+
+End testing: Sep 10 01:04 UTC
