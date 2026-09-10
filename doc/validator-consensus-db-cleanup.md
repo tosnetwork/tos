@@ -1196,14 +1196,24 @@ and wired into the manager:
   guarantees the blocking call is not a manager message, not full CPU isolation from
   every manager message. Recorded in the worker header comment so the enablement soak
   can decide whether a dedicated executor is warranted.
-- **Retry pacing (review P2 fix).** A completed delete attempt does NOT re-trigger the
-  cleanup pass: a delete that reports not-gone returns its entry to Pending, and an
-  unconditional re-trigger would spin a backoff-free retry loop against an undeletable
-  directory (e.g. a parent denying removal). Failed attempts instead wait for the next
-  GC-paced pass (`advance_gc`) -- that external cadence is the rate limit. Only an
-  acknowledged durable erase (`validator_cleanup_erase_acked`) re-triggers draining,
-  where re-triggers are paid for by a completed removal, so the backlog is
-  monotonically decreasing and cannot loop.
+- **Retry pacing (review P2 fix) -- the precise guarantee.** A completed delete attempt
+  does NOT re-trigger the cleanup pass. An unconditional re-trigger would spin a
+  backoff-free retry loop against an undeletable directory (e.g. a parent denying
+  removal) with no successes and no external trigger required. Removing the re-trigger
+  from the completion path buys exactly one property:
+
+  > absent any successful erase-ack and any external trigger, a failing delete does
+  > not re-dispatch itself -- there is no infinite self-excitation.
+
+  It does NOT buy a per-record minimum retry interval. A successful erase-ack for a
+  *different* record re-triggers a pass (`validator_cleanup_erase_acked`), and the
+  round-robin cursor can re-select the still-Pending failing entry inside that pass.
+  So a persistently failing directory mixed with a healthy backlog is retried up to
+  once per successful removal (finite -- the backlog strictly shrinks -- so still no
+  infinite loop), NOT throttled to the GC cadence. Suppressing sustained delete I/O
+  against a permanently failing directory would require per-record backoff /
+  `next_retry_at`; that is an enablement-time decision, left unbuilt while deletion is
+  gated off and recorded as an integration-acceptance item below.
 
 Falsifiable coverage added: `test/test-validator-cleanup-worker.cpp` drives the worker
 through a real actor Scheduler -- a canonical dir is removed and reported gone
@@ -1211,10 +1221,21 @@ through a real actor Scheduler -- a canonical dir is removed and reported gone
 body), and a non-canonical dir name is refused and left on disk.
 
 **Still remaining (manager-level integration acceptance, post-genesis):** the
-retry-pacing property above (no hot loop on persistent failure; bounded re-trigger on
-progress) is structural in the manager glue and needs a manager/worker harness to
-exercise end-to-end -- it is NOT covered by the worker unit test and is added here as
-an explicit integration-acceptance item, alongside reopen-during-delete, stale
-callbacks end-to-end, restart reconciliation, and real GC-oracle boundaries. Then the
-flip after a disk/RSS soak. Finding 1 stays open; the branch remains a deletion-safe
-staging state.
+retry-pacing property above is structural in the manager glue and needs a
+manager/worker harness to exercise end-to-end -- it is NOT covered by the worker unit
+test. Two distinct scenarios must be separated in that harness:
+
+1. **All-failing, no external trigger** -- asserts the proved property: no infinite
+   self-excitation (no re-dispatch without a success/external trigger).
+2. **One permanently-failing directory mixed with a large healthy backlog** -- record
+   the failing directory's attempt count, the number of scheduler passes, and manager
+   responsiveness. This is where the decision lands on whether finite
+   success-driven retry is sufficient, or whether per-record backoff / `next_retry_at`
+   is required to cap sustained delete I/O against a permanently failing directory.
+
+Alongside: reopen-during-delete, stale callbacks end-to-end, restart reconciliation,
+and real GC-oracle boundaries. Also carried forward as worker-contract checks for that
+harness: a timeout must never be reported as a worker completion, and the worker being
+a separate actor is not the same as a dedicated I/O thread (shared scheduler pool).
+Then the flip after a disk/RSS soak. Finding 1 stays open; the branch remains a
+deletion-safe staging state.

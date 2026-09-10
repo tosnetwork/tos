@@ -2543,12 +2543,21 @@ void ValidatorManagerImpl::validator_cleanup_delete_done(ValidatorSessionId sess
                                 });
       });
   // Deliberately NOT re-triggering here. A delete that reports not-gone returns its
-  // entry to Pending; re-dispatching it immediately would spin a backoff-free retry
-  // loop against an undeletable directory (e.g. a parent that denies removal). Failed
-  // attempts instead wait for the next GC-paced pass (advance_gc) -- that external
-  // cadence is the rate limit. Forward progress (a record actually erased) re-triggers
-  // from validator_cleanup_erase_acked, where re-triggers are bounded by the shrinking
-  // backlog and cannot loop.
+  // entry to Pending; re-dispatching it immediately (an unconditional re-trigger)
+  // would spin a backoff-free retry loop against an undeletable directory (e.g. a
+  // parent that denies removal) with NO successes and NO external trigger required.
+  // Removing the re-trigger from this path buys exactly this guarantee:
+  //   absent any successful erase-ack and any external trigger, a failing delete
+  //   does not re-dispatch itself -- there is no infinite self-excitation.
+  // It does NOT buy a per-record minimum retry interval: a successful erase-ack for a
+  // DIFFERENT record re-triggers a pass (see validator_cleanup_erase_acked), and the
+  // round-robin cursor can re-select this still-Pending failing entry within that
+  // pass. So a persistently failing directory mixed with a healthy backlog is retried
+  // up to once per successful removal (finite, since the backlog strictly shrinks),
+  // not throttled to the GC cadence. Suppressing sustained delete I/O against a
+  // permanently failing directory would need per-record backoff / next_retry_at; that
+  // is an enablement-time decision, recorded as a manager-level integration-acceptance
+  // item, not built now while deletion is gated off.
 }
 
 void ValidatorManagerImpl::validator_cleanup_erase_acked(ValidatorSessionId session_id, td::uint64 generation,
