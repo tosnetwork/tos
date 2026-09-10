@@ -1,0 +1,92 @@
+{
+  "commit": "58d0b7fc78440442b7a1431072ca8113a7be86ac",
+  "path": "tosctl/src/block/src/master.rs",
+  "original_sha256": "211bd9e0b38f87ed0d11928fac80929cdf8118d5daafe378f8006f5723b49d84",
+  "source_copy": "/tmp/uno-rust-codec-controls-8xj_m0pu/source",
+  "build_targets": [
+    "chain_block library and unit-test executable"
+  ],
+  "controls": [
+    {
+      "name": "retired-tag",
+      "from": "const MC_STATE_EXTRA_TAG: u32 = 0x3214e578;",
+      "to": "const MC_STATE_EXTRA_TAG: u32 = 0xcc26;",
+      "copy_before_sha256": "211bd9e0b38f87ed0d11928fac80929cdf8118d5daafe378f8006f5723b49d84",
+      "mutant_sha256": "3dc9862a02473c22436ed4d440e87a32d016328a9123c6c04953e0b1b8865ace",
+      "restored_sha256": "211bd9e0b38f87ed0d11928fac80929cdf8118d5daafe378f8006f5723b49d84",
+      "restore_audit_sha256": "3dc9862a02473c22436ed4d440e87a32d016328a9123c6c04953e0b1b8865ace",
+      "guard_failure_code": 975,
+      "compile_exit": 0,
+      "behavior_exit": 101,
+      "failed_tests": [
+        "master::tests::test_mc_state_extra_instances_missing_ledger",
+        "master::tests::test_mc_state_extra_instances_native_fixture"
+      ],
+      "restored_exit": 0,
+      "explicit_rebuild_command": [
+        "cargo",
+        "test",
+        "--manifest-path",
+        "/tmp/uno-rust-codec-controls-8xj_m0pu/source/tosctl/src/Cargo.toml",
+        "-p",
+        "chain_block",
+        "-j32",
+        "test_mc_state_extra"
+      ]
+    },
+    {
+      "name": "omit-ledger-read",
+      "from": "        self.workchain_instances = WorkchainInstanceLedger::construct_from_cell(cell1.checked_drain_reference()?)?;",
+      "to": "        // Isolated control: leave the ledger unread.",
+      "copy_before_sha256": "211bd9e0b38f87ed0d11928fac80929cdf8118d5daafe378f8006f5723b49d84",
+      "mutant_sha256": "9b06051731e0c5d84d3df96ed4ad67c82f99e274cb0d17b3a4d7b06328fc49d5",
+      "restored_sha256": "211bd9e0b38f87ed0d11928fac80929cdf8118d5daafe378f8006f5723b49d84",
+      "restore_audit_sha256": "9b06051731e0c5d84d3df96ed4ad67c82f99e274cb0d17b3a4d7b06328fc49d5",
+      "guard_failure_code": 977,
+      "compile_exit": 0,
+      "behavior_exit": 101,
+      "failed_tests": [
+        "master::tests::test_mc_state_extra_instances_missing_ledger",
+        "master::tests::test_mc_state_extra_instances_native_fixture"
+      ],
+      "restored_exit": 0,
+      "explicit_rebuild_command": [
+        "cargo",
+        "test",
+        "--manifest-path",
+        "/tmp/uno-rust-codec-controls-8xj_m0pu/source/tosctl/src/Cargo.toml",
+        "-p",
+        "chain_block",
+        "-j32",
+        "test_mc_state_extra"
+      ]
+    },
+    {
+      "name": "omit-ledger-write",
+      "from": "        builder1.checked_append_reference(self.workchain_instances.serialize()?)?;",
+      "to": "        // Isolated control: omit the ledger reference.",
+      "copy_before_sha256": "211bd9e0b38f87ed0d11928fac80929cdf8118d5daafe378f8006f5723b49d84",
+      "mutant_sha256": "d9dbe2c88bd0293093cb460ce569a623625d61e824375202a635fd2313396e9b",
+      "restored_sha256": "211bd9e0b38f87ed0d11928fac80929cdf8118d5daafe378f8006f5723b49d84",
+      "restore_audit_sha256": "d9dbe2c88bd0293093cb460ce569a623625d61e824375202a635fd2313396e9b",
+      "guard_failure_code": 977,
+      "compile_exit": 0,
+      "behavior_exit": 101,
+      "failed_tests": [
+        "master::tests::test_mc_state_extra",
+        "master::tests::test_mc_state_extra_instances_native_fixture"
+      ],
+      "restored_exit": 0,
+      "explicit_rebuild_command": [
+        "cargo",
+        "test",
+        "--manifest-path",
+        "/tmp/uno-rust-codec-controls-8xj_m0pu/source/tosctl/src/Cargo.toml",
+        "-p",
+        "chain_block",
+        "-j32",
+        "test_mc_state_extra"
+      ]
+    }
+  ]
+}

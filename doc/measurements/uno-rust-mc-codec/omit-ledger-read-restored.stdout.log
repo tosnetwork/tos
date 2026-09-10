@@ -1,0 +1,9 @@
+
+running 4 tests
+test master::tests::test_mc_state_extra_instances_retired_tag ... ok
+test master::tests::test_mc_state_extra ... ok
+test master::tests::test_mc_state_extra_instances_missing_ledger ... ok
+test master::tests::test_mc_state_extra_instances_native_fixture ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 613 filtered out; finished in 0.01s
+

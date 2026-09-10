@@ -1,0 +1,38 @@
+{
+  "source_commit": "58d0b7fc78440442b7a1431072ca8113a7be86ac",
+  "fixture": {
+    "source": "doc/measurements/uno-local-profile/run-3/state/zerostate.boc",
+    "source_sha256": "aed3609870908eb8e9bd82b9cc414c5d3149425260220e74effd7c6500d74c3f",
+    "path": "tosctl/src/block/src/tests/data/mc_state_extra_instances.boc",
+    "sha256": "326cdd54a49d22a3f1fb2e5ae04f1b2e4eca1774201895516ba4ae4edbdf7d2e",
+    "extraction": "Cell.one_from_boc(source).refs[3].to_boc(); no field reconstruction",
+    "representation_hash": "8ba0f65042cbfb4f57029a50917de50e845e087d3128689a11534140c977ec4b"
+  },
+  "cargo_lock_sha256": "9743dc9e8123b4e8b185fc5f677726ed7f4a1285742ea3e68345cd462654d661",
+  "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)\nbinary: rustc\ncommit-hash: 8bab26f4f68e0e26f0bb7960be334d5b520ea452\ncommit-date: 2026-07-14\nhost: x86_64-unknown-linux-gnu\nrelease: 1.97.1\nLLVM version: 22.1.6\n",
+  "commands": [
+    "cargo test --manifest-path tosctl/src/Cargo.toml -p chain_block -j32 test_mc_state_extra",
+    "cargo check --manifest-path tosctl/src/Cargo.toml --workspace -j32"
+  ],
+  "results": {
+    "codec_tests": 4,
+    "codec_failed": 0,
+    "workspace_check_exit": 0,
+    "isolated_controls": 3
+  },
+  "scope": [
+    "Binary codec migration, not Rust issuance or independent validation of ledger transitions.",
+    "Current native masterchain custom cell round-trips exactly; no general acceptance of retired TON cc26 states.",
+    "JSON projection and JSON-driven genesis do not yet expose the new ledger. No lossless JSON conversion claim.",
+    "Static tag and layout guard already registered in CTest; Rust runtime tests run through Cargo."
+  ],
+  "consumer_search": [
+    "tosctl/src/block/src/master.rs",
+    "tosctl/src/block/src/tests/test_master.rs",
+    "tosctl/src/block/src/shard.rs",
+    "tosctl/src/executor/src/tests/common/mod.rs",
+    "tosctl/src/block-json/src/deserialize.rs",
+    "tosctl/src/block-json/src/serialize.rs",
+    "tosctl/src/sandbox/src/blockchain.rs"
+  ]
+}

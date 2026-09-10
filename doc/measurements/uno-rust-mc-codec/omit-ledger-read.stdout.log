@@ -1,0 +1,27 @@
+
+running 4 tests
+test master::tests::test_mc_state_extra_instances_retired_tag ... ok
+test master::tests::test_mc_state_extra ... ok
+test master::tests::test_mc_state_extra_instances_native_fixture ... FAILED
+test master::tests::test_mc_state_extra_instances_missing_ledger ... FAILED
+
+failures:
+
+---- master::tests::test_mc_state_extra_instances_native_fixture stdout ----
+
+thread 'master::tests::test_mc_state_extra_instances_native_fixture' (2793965) panicked at block/src/tests/test_master.rs:477:72:
+called `Option::unwrap()` on a `None` value
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- master::tests::test_mc_state_extra_instances_missing_ledger stdout ----
+
+thread 'master::tests::test_mc_state_extra_instances_missing_ledger' (2793964) panicked at block/src/tests/test_master.rs:503:81:
+called `Result::unwrap_err()` on an `Ok` value: McStateExtra { shards: ShardHashes(HashmapE { bit_len: 32, data: None }), config: ConfigParams { config_addr: 5555555555555555555555555555555555555555555555555555555555555555, config_params: HashmapE { bit_len: 32, data: Some(5173f74f41f54121d9da4f7a944e3c687ab76350449c132bb3c590f939537c7b) } }, validator_info: ValidatorInfo { validator_list_hash_short: 3473304180, catchain_seqno: 0, nx_cc_updated: true }, prev_blocks: OldMcBlocksInfo { extra: KeyMaxLt { key: false, max_end_lt: 0 }, data: None }, after_key_block: true, last_key_block: None, block_create_stats: None, global_balance: CurrencyCollection { coins: Coins(5000000000000000000), other: ExtraCurrencyCollection(HashmapE { bit_len: 32, data: None }) }, workchain_instances: WorkchainInstanceLedger { entries: WorkchainInstances(HashmapE { bit_len: 32, data: None }) } }
+
+
+failures:
+    master::tests::test_mc_state_extra_instances_missing_ledger
+    master::tests::test_mc_state_extra_instances_native_fixture
+
+test result: FAILED. 2 passed; 2 failed; 0 ignored; 0 measured; 613 filtered out; finished in 0.00s
+

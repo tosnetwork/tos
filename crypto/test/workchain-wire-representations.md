@@ -54,6 +54,7 @@ those synthetic augmentation values describe a consensus-valid state.
 
 Static checks prove consistency of declared tag/width/layout, not execution of
 the reader body. Real generated zerostates and separate runtime vectors cover
-that boundary. Body mutations are expected to leave the source guard green and
-to fail the applicable decoder test. Historical artifacts remain tied to their
+that boundary. Python body mutations can leave the source guard green and fail the decoder
+test. Rust omission of its mandatory auxiliary read/write reference is also
+checked statically; the independent runtime codec test must fail separately. Historical artifacts remain tied to their
 original source commits; new calibration records the current guard and reader.

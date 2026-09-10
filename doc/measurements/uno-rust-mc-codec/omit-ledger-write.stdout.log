@@ -1,0 +1,31 @@
+
+running 4 tests
+test master::tests::test_mc_state_extra_instances_retired_tag ... ok
+test master::tests::test_mc_state_extra ... FAILED
+test master::tests::test_mc_state_extra_instances_missing_ledger ... ok
+test master::tests::test_mc_state_extra_instances_native_fixture ... FAILED
+
+failures:
+
+---- master::tests::test_mc_state_extra stdout ----
+slice: data: 0..294, references: 0..3, data slice: 3214e578800000000000000000000000000000000000000000000000000000000000000000cell hash: 3812db4a34d33220965dfc974536cf7112e53c8039bc7b090dd2d6289392ec98
+
+
+thread 'master::tests::test_mc_state_extra' (2797419) panicked at block/src/./tests/test_utils.rs:211:47:
+called `Result::unwrap()` on an `Err` value: cell underflow
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- master::tests::test_mc_state_extra_instances_native_fixture stdout ----
+
+thread 'master::tests::test_mc_state_extra_instances_native_fixture' (2797421) panicked at block/src/tests/test_master.rs:480:5:
+assertion `left == right` failed
+  left: 77b30fc3c28332e93982846390aa3a4b2490a343ed2b2bb81cd8f12f4e1330e2
+ right: 8ba0f65042cbfb4f57029a50917de50e845e087d3128689a11534140c977ec4b
+
+
+failures:
+    master::tests::test_mc_state_extra
+    master::tests::test_mc_state_extra_instances_native_fixture
+
+test result: FAILED. 2 passed; 2 failed; 0 ignored; 0 measured; 613 filtered out; finished in 0.00s
+
