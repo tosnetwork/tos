@@ -2342,6 +2342,27 @@ void ValidatorManagerImpl::started(ValidatorManagerInitResult R) {
 
 void ValidatorManagerImpl::got_destroyed_validator_sessions(std::vector<ValidatorSessionId> sessions) {
   destroyed_validator_sessions_.insert(sessions.begin(), sessions.end());
+  // Load the cleanup queue before sweeping: both sets must be in hand so the
+  // sweep acts on the queue and migrates any pre-upgrade destroyed-session
+  // directories (recorded only by id) into it.
+  td::actor::send_closure(db_, &Db::get_pending_consensus_db_cleanup,
+                          [SelfId = actor_id(this)](td::Result<std::vector<std::string>> R) {
+                            R.ensure();
+                            td::actor::send_closure(SelfId, &ValidatorManagerImpl::got_pending_consensus_db_cleanup,
+                                                    R.move_as_ok());
+                          });
+}
+
+void ValidatorManagerImpl::got_pending_consensus_db_cleanup(std::vector<std::string> dirs) {
+  for (auto &dir : dirs) {
+    // Defensive: the queue is observer-only by construction. Honor only observer
+    // directory names (which carry the ".observer." suffix), so a stray or
+    // legacy-buggy persisted entry can never authorize deleting a validator
+    // directory independently of its tombstone.
+    if (dir.find(".observer.") != std::string::npos) {
+      pending_consensus_db_cleanup_.insert(std::move(dir));
+    }
+  }
   sweep_destroyed_consensus_dbs();
   finish_start_up().start().detach_ensure();
 }
@@ -2353,68 +2374,59 @@ void ValidatorManagerImpl::sweep_destroyed_consensus_dbs() {
   // the record survives, the group is never recreated -- so nothing will
   // ever own that directory again, and nothing else deletes it.
   //
-  // Reclaim those here, once, before any group starts. Only directories
-  // whose session is already recorded as destroyed are touched; a name
-  // this cannot parse belongs to something else and is left alone.
-  auto root = consensus::consensus_db_root(db_root_);
-  size_t reclaimed = 0;
-  size_t failed = 0;
-  td::WalkPath::run(root, [&](td::CSlice path, td::WalkPath::Type type) {
-    if (type != td::WalkPath::Type::EnterDir) {
-      return td::WalkPath::Action::Continue;
-    }
-    auto name = td::PathView(path).file_name().str();
-    if (name.empty() || path.str() == root || path.str() + "/" == root) {
-      return td::WalkPath::Action::Continue;
-    }
-    auto session_id = consensus::consensus_db_session_id(name);
-    if (!session_id || !destroyed_validator_sessions_.contains(session_id.value())) {
-      // Not ours, or still live: do not descend into a database we are
-      // about to open.
-      return td::WalkPath::Action::SkipDir;
-    }
-    auto full = path.str();
-    // Delete, then confirm the directory is actually gone. rmrf()'s own status
-    // is not proof of removal: it ignores every unlink()/rmdir() error and
-    // returns OK as long as the walk itself succeeded, so a permissions or
-    // read-only-filesystem failure would leave the directory in place while
-    // rmrf() still reports success. Probe with stat() -- but only a
-    // "not found" error proves the path is gone. Any other stat error
-    // (EACCES, EIO, ELOOP, ...) leaves existence unknown and the directory may
-    // well still be there, so it must NOT be counted as reclaimed. Only a
-    // confirmed removal counts; otherwise the destroyed-session record is kept
-    // so the next startup retries this directory.
-    td::RocksDb::destroy(full + "/db/").ignore();
-    td::rmrf(full).ignore();
-    auto probe = td::stat(full);
-    bool confirmed_gone = false;
-    if (probe.is_error()) {
+  // Reclaim those here, once, before any group starts. The authoritative list
+  // is pending_consensus_db_cleanup_ (exact directory names). A database written
+  // before that queue existed is recorded only by session id, so
+  // destroyed_validator_sessions_ is honored as a legacy fallback and any such
+  // directory is migrated into the queue by being deleted here too. A name this
+  // cannot parse belongs to something else and is left alone.
+  // The walk + decision + reconciliation logic lives in a testable helper; the
+  // deleter here does the real removal and confirms it with stat() (rmrf()
+  // ignores unlink/rmdir errors, so its own status is not proof of removal --
+  // only a "not found" proves the directory is gone).
+  auto before = pending_consensus_db_cleanup_;
+  auto stats = consensus::sweep_orphaned_consensus_dbs(
+      db_root_, pending_consensus_db_cleanup_, destroyed_validator_sessions_, [](td::CSlice full) -> bool {
+        td::RocksDb::destroy(full.str() + "/db/").ignore();
+        td::rmrf(full).ignore();
+        auto probe = td::stat(full);
+        if (probe.is_ok()) {
+          return false;
+        }
 #if TD_PORT_WINDOWS
-      auto code = probe.error().code();
-      confirmed_gone = (code == ERROR_FILE_NOT_FOUND || code == ERROR_PATH_NOT_FOUND);
+        auto code = probe.error().code();
+        return code == ERROR_FILE_NOT_FOUND || code == ERROR_PATH_NOT_FOUND;
 #else
-      confirmed_gone = (probe.error().code() == ENOENT);
+        return probe.error().code() == ENOENT;
 #endif
-    }
-    if (confirmed_gone) {
-      reclaimed++;
-    } else {
-      failed++;
-      if (probe.is_ok()) {
-        LOG(WARNING) << "leftover consensus database still present after delete attempt: " << full
-                     << "; keeping its destroyed-session record so a later startup retries it";
-      } else {
-        LOG(WARNING) << "could not confirm removal of consensus database " << full << " (stat: "
-                     << probe.error() << "); keeping its destroyed-session record so a later startup retries it";
-      }
-    }
-    return td::WalkPath::Action::SkipDir;
-  }).ignore();
-  if (reclaimed > 0) {
-    LOG(WARNING) << "reclaimed " << reclaimed << " consensus database(s) left behind by a destroyed session";
+      });
+
+  if (!stats.walk_succeeded) {
+    LOG(WARNING) << "consensus cleanup sweep could not fully enumerate " << consensus::consensus_db_root(db_root_)
+                 << "; not reconciling the cleanup queue this pass";
   }
-  if (failed > 0) {
-    LOG(ERROR) << failed << " leftover consensus database(s) could not be removed; will retry on next startup";
+  if (pending_consensus_db_cleanup_ != before) {
+    td::actor::send_closure(db_, &Db::update_pending_consensus_db_cleanup,
+                            std::vector<std::string>(pending_consensus_db_cleanup_.begin(),
+                                                     pending_consensus_db_cleanup_.end()),
+                            [](td::Result<td::Unit> R) { R.ensure(); });
+  }
+  if (stats.reclaimed > 0) {
+    LOG(WARNING) << "reclaimed " << stats.reclaimed << " consensus database(s) left behind by a retired group";
+  }
+  if (stats.failed > 0) {
+    LOG(ERROR) << stats.failed << " leftover consensus database(s) could not be removed; will retry on next startup";
+  }
+}
+
+void ValidatorManagerImpl::consensus_db_cleanup_done(std::string dir_name) {
+  // A retired group confirmed its own directory is gone; drop it from the queue
+  // during normal uptime so the queue does not grow until the next restart.
+  if (pending_consensus_db_cleanup_.erase(dir_name) > 0) {
+    td::actor::send_closure(db_, &Db::update_pending_consensus_db_cleanup,
+                            std::vector<std::string>(pending_consensus_db_cleanup_.begin(),
+                                                     pending_consensus_db_cleanup_.end()),
+                            [](td::Result<td::Unit> R) { R.ensure(); });
   }
 }
 
@@ -2941,15 +2953,28 @@ void ValidatorManagerImpl::update_shards() {
       }
     }
   }
+  // Observer groups: their consensus DB carries no votes, so a premature delete
+  // is only a harmless re-sync -- but their directories are never covered by the
+  // destroyed-session set, so without a cleanup queue they leak on crash. Queue
+  // their exact directory names (persisted below before they are destroyed) and
+  // defer the destroy.
+  std::vector<td::actor::ActorId<IValidatorGroup>> observer_actors;
+  std::vector<std::string> observer_dirs;
   for (auto &[observer_id, entry] : observer_groups_) {
     LOG(INFO) << "Destroying observer group " << entry.shard.to_str() << "." << entry.cc_seqno << " at "
               << observer_id.second;
-    td::actor::send_closure(entry.actor.release(), &IValidatorGroup::destroy);
+    // Suffix must match bridge.cpp's create_bridge_observer exactly.
+    observer_dirs.push_back(consensus::consensus_db_dir_name(
+        entry.shard, entry.cc_seqno, observer_id.first, PSTRING() << ".observer." << observer_id.second.pubkey_hash()));
+    observer_actors.push_back(entry.actor.release());
   }
   observer_groups_ = std::move(new_observer_groups);
 
+  // Validator/tentative groups: recorded in the destroyed-session set and NOT in
+  // the cleanup queue. Deleting a validator DB for a session that could still be
+  // recreated would destroy its consensus state, so their directory cleanup
+  // stays gated on the destroyed-session set (unchanged from before this change).
   std::vector<td::actor::ActorId<IValidatorGroup>> to_destroy;
-
   for (auto &[id, group] : validator_groups_) {
     LOG(INFO) << "Destroying active " << group.name() << ":" << id;
     to_destroy.push_back(group.actor.release());
@@ -2986,9 +3011,9 @@ void ValidatorManagerImpl::update_shards() {
   }
 
   for (auto [id, reason] : ids_to_remove) {
-    LOG(INFO) << "Destroying tentative " << next_validator_groups_[id].name() << ":" << id << " because of an active "
-              << reason;
-    to_destroy.push_back(next_validator_groups_[id].actor.release());
+    auto &tentative = next_validator_groups_[id];
+    LOG(INFO) << "Destroying tentative " << tentative.name() << ":" << id << " because of an active " << reason;
+    to_destroy.push_back(tentative.actor.release());
     destroyed_validator_sessions_.insert(id);
     next_validator_groups_.erase(id);
   }
@@ -2998,6 +3023,39 @@ void ValidatorManagerImpl::update_shards() {
     }
   };
 
+  // Observer cleanup queue: persist the observer directories, then destroy the
+  // observer actors, so a crash between the two leaves the directory queued for
+  // the startup sweep (fixing the observer-orphan leak). Premature deletion is a
+  // harmless re-sync, so this needs no ordering against the destroyed-session
+  // set.
+  bool observer_queue_changed = false;
+  for (const auto &dir : observer_dirs) {
+    if (pending_consensus_db_cleanup_.insert(dir).second) {
+      observer_queue_changed = true;
+    }
+  }
+  auto destroy_observers = [observer_actors = std::move(observer_actors)]() {
+    for (const auto &s : observer_actors) {
+      td::actor::send_closure(s, &IValidatorGroup::destroy);
+    }
+  };
+  if (observer_queue_changed) {
+    td::actor::send_closure(db_, &Db::update_pending_consensus_db_cleanup,
+                            std::vector<std::string>(pending_consensus_db_cleanup_.begin(),
+                                                     pending_consensus_db_cleanup_.end()),
+                            [destroy_observers = std::move(destroy_observers)](td::Result<td::Unit> R) mutable {
+                              R.ensure();
+                              destroy_observers();
+                            });
+  } else {
+    destroy_observers();
+  }
+
+  // Validator/tentative retirement: persist the destroyed-session set (via the
+  // init-block rotation, or directly) and only then delete the directories --
+  // exactly as before this change. Their cleanup stays gated on that set at
+  // startup, so a validator directory is never deleted for a session that could
+  // still be recreated.
   if (last_masterchain_state_->rotated_all_shards()) {
     CHECK(last_masterchain_block_handle_->received_state());
     auto P = td::PromiseCreator::lambda(
@@ -3013,7 +3071,7 @@ void ValidatorManagerImpl::update_shards() {
     td::actor::send_closure(
         db_, &Db::update_destroyed_validator_sessions,
         std::vector<ValidatorSessionId>(destroyed_validator_sessions_.begin(), destroyed_validator_sessions_.end()),
-        [destroy_sessions = std::move(destroy_sessions)](td::Result<> R) {
+        [destroy_sessions = std::move(destroy_sessions)](td::Result<td::Unit> R) {
           R.ensure();
           destroy_sessions();
         });

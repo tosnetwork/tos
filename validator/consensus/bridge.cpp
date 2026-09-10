@@ -4,7 +4,10 @@
  * SPDX-License-Identifier: LGPL-2.0-or-later
  */
 
+#include <cerrno>
+
 #include "td/db/RocksDb.h"
+#include "td/utils/port/Stat.h"
 #include "td/utils/port/path.h"
 #include "candidate-relay-policy.h"
 #include "tos/lite-tl.hpp"
@@ -506,12 +509,31 @@ class BridgeImpl final : public IValidatorGroup {
       bus_ = {};
       co_await std::move(stop_waiter_.value());
       LOG(INFO) << "Consensus bus stopped";
-      auto S = td::RocksDb::destroy(db_path() + "/db/");
+      td::RocksDb::destroy(db_path() + "/db/").ignore();
       td::rmrf(db_path()).ignore();
-      if (S.is_ok()) {
+      // Confirm the directory is actually gone before telling the manager to
+      // drop it from the cleanup queue. rmrf() ignores unlink/rmdir errors, so
+      // only a stat probe returning "not found" proves removal; otherwise leave
+      // it queued so the startup sweep retries it (fail-closed for cleanup).
+      auto full = db_path();
+      auto probe = td::stat(full);
+      bool gone = false;
+      if (probe.is_error()) {
+#if TD_PORT_WINDOWS
+        auto code = probe.error().code();
+        gone = (code == ERROR_FILE_NOT_FOUND || code == ERROR_PATH_NOT_FOUND);
+#else
+        gone = (probe.error().code() == ENOENT);
+#endif
+      }
+      if (gone) {
         LOG(INFO) << "Deleting consensus DB : done";
+        auto dir_name = consensus_db_dir_name(params_.shard, params_.validator_set->get_catchain_seqno(),
+                                              params_.session_id, params_.db_suffix);
+        td::actor::send_closure(params_.manager, &ValidatorManager::consensus_db_cleanup_done, std::move(dir_name));
       } else {
-        LOG(ERROR) << "Deleting consensus DB " << db_path() << " : " << S;
+        LOG(ERROR) << "Deleting consensus DB " << full
+                   << " could not be confirmed removed; the startup sweep will retry it";
       }
     }
     stop();

@@ -132,6 +132,17 @@ class Db : public td::actor::Actor {
                                                    td::Promise<td::Unit> promise) = 0;
   virtual void get_destroyed_validator_sessions(td::Promise<std::vector<ValidatorSessionId>> promise) = 0;
 
+  // Consensus-DB cleanup queue: exact directory names of retired OBSERVER groups
+  // whose per-group consensus RocksDB must still be deleted. Observer databases
+  // carry no votes, so a premature deletion is only a harmless re-sync; but their
+  // directories are not covered by destroyed_validator_sessions_, so without this
+  // queue they leak on a crash mid-deletion. Validator/tentative directory
+  // cleanup stays gated on destroyed_validator_sessions_ (see
+  // doc/consensus-db-cleanup-queue.md).
+  virtual void update_pending_consensus_db_cleanup(std::vector<std::string> dirs,
+                                                   td::Promise<td::Unit> promise) = 0;
+  virtual void get_pending_consensus_db_cleanup(td::Promise<std::vector<std::string>> promise) = 0;
+
   virtual void update_async_serializer_state(AsyncSerializerState state, td::Promise<td::Unit> promise) = 0;
   virtual void get_async_serializer_state(td::Promise<AsyncSerializerState> promise) = 0;
 

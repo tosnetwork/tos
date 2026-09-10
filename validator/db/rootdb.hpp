@@ -124,6 +124,9 @@ class RootDb : public Db {
                                            td::Promise<td::Unit> promise) override;
   void get_destroyed_validator_sessions(td::Promise<std::vector<ValidatorSessionId>> promise) override;
 
+  void update_pending_consensus_db_cleanup(std::vector<std::string> dirs, td::Promise<td::Unit> promise) override;
+  void get_pending_consensus_db_cleanup(td::Promise<std::vector<std::string>> promise) override;
+
   void update_async_serializer_state(AsyncSerializerState state, td::Promise<td::Unit> promise) override;
   void get_async_serializer_state(td::Promise<AsyncSerializerState> promise) override;
 

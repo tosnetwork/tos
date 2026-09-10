@@ -44,6 +44,9 @@ class StateDb : public td::actor::Actor {
   void update_destroyed_validator_sessions(std::vector<ValidatorSessionId> sessions, td::Promise<td::Unit> promise);
   void get_destroyed_validator_sessions(td::Promise<std::vector<ValidatorSessionId>> promise);
 
+  void update_pending_consensus_db_cleanup(std::vector<std::string> dirs, td::Promise<td::Unit> promise);
+  void get_pending_consensus_db_cleanup(td::Promise<std::vector<std::string>> promise);
+
   void update_async_serializer_state(AsyncSerializerState state, td::Promise<td::Unit> promise);
   void get_async_serializer_state(td::Promise<AsyncSerializerState> promise);
 
