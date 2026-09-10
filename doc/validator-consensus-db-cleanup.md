@@ -917,3 +917,25 @@ BlockIdExt)` (`validator/impl/shard.hpp`), and `BlockHandle::one_prev(true)` for
 prev-masterchain traversal -- do not hand-roll a new chain walk.
 
 **B2-1 (physical delete helper) is independent of the above** and proceeds first.
+
+### B2 plan review — additional points (completed verdict)
+
+- **Temp-key membership must NOT exclude candidates from the on-chain proof.** A
+  known local key set that happens to exclude X does not prove X obsolete;
+  obsolescence is an on-chain-schedule fact, independent of which keys this node
+  holds. "Unknown when inputs missing" vetoes deletion; a key-set exclusion must
+  not be read as proof.
+- **Record-version check on erase.** An old/stale erase must not remove a
+  replacement cleanup record written after a reopen. Bind erase (and close/delete
+  callbacks) to the owner generation AND the record version.
+- **Condition assembly (B2-6/7) must establish all four explicitly:** B =
+  checkpoint-specific on-chain obsolescence AND retirement->GC ancestry AND
+  GC->recovered-chain validation; C = known conservative non-membership (unknown
+  selection vetoes); D = confirmed closure for the relevant ownership generation,
+  with active/tentative/retiring owners each independently vetoing.
+- **Order ancestry before adopting a completed GC**, and **separate the
+  fault-injection harness + tests from the final enablement change** (split the
+  old B2-7 into B2-7 harness/tests and B2-8 enablement).
+- **B2-1 signature:** the physical-delete primitive does ONLY path revalidation +
+  filesystem delete + confirmed-gone; eligibility stays entirely in the
+  orchestrator (B2-6), never in this helper.
