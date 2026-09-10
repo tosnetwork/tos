@@ -182,16 +182,18 @@ inline td::Result<td::Ref<vm::Cell>> encode_workchain_confidential_account(const
   }
   if (value.pending.size() > 16) return td::Status::Error("pending capacity exceeded");
   vm::Dictionary pending(256);
-  const td::Bits256* previous = nullptr;
   for (const auto& receipt : value.pending) {
-    if (previous && !(*previous < receipt.receipt_id)) return td::Status::Error("pending IDs not strictly ordered");
     // Historical epochs survive key rotation; newly created receipt epoch
     // authorization is a host transition check, not a decoder default.
     if (receipt.target_instance != value.address.instance ||
         receipt.asset != value.bindings.asset) return td::Status::Error("pending target binding mismatch");
     TRY_RESULT(encoded, encode_workchain_pending_receipt(receipt));
-    if (!pending.set_ref(receipt.receipt_id, encoded)) return td::Status::Error("duplicate pending receipt");
-    previous = &receipt.receipt_id;
+    // A map cannot encode two values for one key; do not silently overwrite.
+    // Input vector order is irrelevant. COLLECT's selected-ID ordering and
+    // distinctness checks belong to the existing crypto relation, not here.
+    if (!pending.set_ref(receipt.receipt_id, encoded, vm::Dictionary::SetMode::Add)) {
+      return td::Status::Error("duplicate pending dictionary key");
+    }
   }
   TRY_RESULT(address, pack(value.address));
   TRY_RESULT(bindings, pack(value.bindings));

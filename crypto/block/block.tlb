@@ -4,6 +4,9 @@ uno_v2_system_state#bbd85560 layout_version:uint16 base_compute:uint64
 // Explicit frozen tag: do not regenerate it from the current definition.
 uno_v2_coordinator_state#46ff26c1 layout_version:uint16
   system:^UnoV2SystemState = UnoV2CoordinatorState;
+uno_v2_coordinator_budget refundable_deposits:uint64 = UnoV2CoordinatorBudget;
+uno_v2_coordinator_deposits layout_version:uint16 system:^UnoV2SystemState
+  budget:^UnoV2CoordinatorBudget = UnoV2CoordinatorDeposits;
 uno_v2_account_address workchain_id:int32 account:bits256 instance:bits256 = UnoV2AccountAddress;
 uno_v2_account_bindings asset:bits256 custody:bits256 policy:bits256 = UnoV2AccountBindings;
 uno_v2_registration_funding paid_deposit:uint64 refund_workchain:int32 refund_account:bits256
@@ -38,7 +41,7 @@ uno_v2_resource_policy_bounded admission_version:uint32 preflight_allowance:uint
   input:^UnoV2ResourceInput
   state:^UnoV2ResourceState work_output:^UnoV2ResourceWorkOutput
   block_preflight:^ParamLimits = UnoV2ResourcePolicy;
-uno_v2_engine_configuration_issued k_accepted_target_rate_ms:uint32
+uno_v2_engine_configuration_registered k_accepted_target_rate_ms:uint32 registration_deposit:uint64
   instance_id:bits256 resource_policy:^UnoV2ResourcePolicy parameters:^Cell = UnoV2EngineConfiguration;
 workchain_instance_record instance_seq:uint64 creation_descriptor_hash:bits256 = WorkchainInstanceRecord;
 workchain_instance_ledger entries:(HashmapE 32 WorkchainInstanceRecord) = WorkchainInstanceLedger;

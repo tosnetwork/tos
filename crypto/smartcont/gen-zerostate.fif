@@ -139,7 +139,7 @@ Masterchain swap
 // Historical K acceptance interval, not inferred from the current Param30.
 // The initial-system seed is encoded by the generated TL-B type in create-state.
 400 uno_genesis_descriptor @ 2 first-instance-identity
-uno_genesis_resources uno-initial-system instance-engine-configuration
+uno-registration-deposit uno_genesis_resources uno-initial-system instance-engine-configuration
 uno_development_coordinator 256 u>B uno_development_custody 256 u>B
 uno-genesis-ingress 84 config!
 // ConfigParam 19: global_id (must match setglobalid above)

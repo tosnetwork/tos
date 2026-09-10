@@ -10,7 +10,7 @@ variable counter_network_descriptor
 "counter-state.fhash" file>B 256 B>u@
 now 0 0 0 2 0xe000 0x434e5431 add-basic-workchain-v2 counter_network_descriptor !
 400 counter_network_descriptor @ 2 first-instance-identity
-uno-v2-provisional-resources empty_cell instance-engine-configuration constant counter_network_config
+uno-registration-deposit uno-v2-provisional-resources empty_cell instance-engine-configuration constant counter_network_config
 // Development ingress envelope already used by the disk host fixture. All
 // nodes in this isolated experiment run the new test binary. This does not
 // exercise old-node compatibility or the mandatory pre-activation upgrade.

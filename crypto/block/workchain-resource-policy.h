@@ -181,14 +181,18 @@ struct WorkchainEngineParameters {
   td::Bits256 instance_id;
   WorkchainResourcePolicy resources;
   td::Ref<vm::Cell> parameters;
+  // Authenticated Param84 amount in nanotomi. Refundable registration funding:
+  // not principal, never spendable revenue; refund only after available is
+  // exhausted, pending is empty and there are no in-flight obligations.
+  std::uint64_t registration_deposit;
 
   // A non-aggregate constructor with mandatory identity prevents omitted fields from
   // silently becoming zero through aggregate value initialization.
   WorkchainEngineParameters(std::uint32_t accepted_target_rate_ms, td::Bits256 instance,
                             WorkchainResourcePolicy resource_policy,
-                            td::Ref<vm::Cell> business_parameters)
+                            td::Ref<vm::Cell> business_parameters, std::uint64_t deposit)
       : k_accepted_target_rate_ms(accepted_target_rate_ms), instance_id(instance), resources(std::move(resource_policy)),
-        parameters(std::move(business_parameters)) {}
+        parameters(std::move(business_parameters)), registration_deposit(deposit) {}
 };
 
 inline td::Result<td::Ref<vm::Cell>> encode_workchain_engine_parameters(
@@ -197,6 +201,7 @@ inline td::Result<td::Ref<vm::Cell>> encode_workchain_engine_parameters(
   TRY_RESULT(resources, encode_workchain_resource_policy(value.resources));
   gen::UnoV2EngineConfiguration::Record record;
   record.k_accepted_target_rate_ms = value.k_accepted_target_rate_ms;
+  record.registration_deposit = value.registration_deposit;
   record.instance_id = value.instance_id;
   record.resource_policy = std::move(resources);
   record.parameters = value.parameters;
@@ -210,11 +215,23 @@ inline td::Result<WorkchainEngineParameters> decode_workchain_engine_parameters(
   // Only the identity-bearing constructor is legal. Earlier constructors
   // and unknown tags are rejected, never filled with default identities.
   gen::UnoV2EngineConfiguration::Record record;
-  if (!resource_policy_detail::unpack_exact(root, record)) {
+  if (root.is_null()) return td::Status::Error("missing engine configuration");
+  bool special = false;
+  auto slice = vm::load_cell_slice_special(root, special);
+  if (special || slice.size() < 32) return td::Status::Error("malformed engine configuration framing");
+  if (slice.prefetch_ulong(32) != gen::UnoV2EngineConfiguration::cons_tag[0]) {
+    return td::Status::Error("unrecognized engine configuration constructor tag");
+  }
+  // A current-tag record requires the deposit-bearing layout. Width failure
+  // alone cannot identify which original field was omitted; unlike tag failure
+  // it establishes that this required layout is incomplete.
+  if (slice.size() < 384) return td::Status::Error("missing fields in registration_deposit layout");
+  if (!gen::t_UnoV2EngineConfiguration.unpack(slice, record) || !slice.empty_ext()) {
     return td::Status::Error("malformed engine configuration framing");
   }
   TRY_RESULT(resources, decode_workchain_resource_policy(record.resource_policy));
-  return WorkchainEngineParameters{record.k_accepted_target_rate_ms, record.instance_id, std::move(resources), std::move(record.parameters)};
+  return WorkchainEngineParameters{record.k_accepted_target_rate_ms, record.instance_id, std::move(resources),
+                                  std::move(record.parameters), record.registration_deposit};
 }
 
 }  // namespace block

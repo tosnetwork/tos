@@ -106,7 +106,7 @@ foreach(script ${genesis_scripts})
 // Claimed identity comes from the actual genesis descriptor. create-state
 // independently reissues it against the final configuration root.
 // @generated-tag UnoV2EngineConfiguration 0
-<b x{41868cd4} s, 400 32 u, 2 configured-first-instance-identity B, probe_resources ref, <b x{50524231} s, b> ref, b> constant probe_config
+<b x{8eea16d6} s, 400 32 u, 10000000000 64 u, 2 configured-first-instance-identity B, probe_resources ref, <b x{50524231} s, b> ref, b> constant probe_config
 // @generated-tag WorkchainNativeIngressPolicy 0
 { dup <b x{4abd5ab4} s, swap 32 i, 0 1 u, 0x434e5431 64 i, 0 64 u,
   0 32 u, 0 256 u, 256 1<<1- 256 u, probe_config ref, b>]=])

@@ -28,7 +28,7 @@ td::Ref<vm::Cell> config(unsigned version, int ingress, bool dual = false) {
     block::WorkchainResourcePolicy resources{4, {64,4096,8,16,16,5},
         {256,16384,128,8192,64}, {32,128,8192,256,16384,16}, {1, 32, 64}, 7};
     policy.engine_configuration = block::encode_workchain_engine_parameters(
-        {400, td::Bits256::ones(), resources, vm::CellBuilder().finalize()}).move_as_ok();
+        {400, td::Bits256::ones(), resources, vm::CellBuilder().finalize(), 10000000000ULL}).move_as_ok();
     policies.push_back(std::move(policy));
   }
   vm::CellBuilder list;

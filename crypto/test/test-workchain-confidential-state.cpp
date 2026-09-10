@@ -1,4 +1,5 @@
 #include "block/workchain-confidential-state.h"
+#include "block/workchain-coordinator-state.h"
 #include "td/utils/tests.h"
 #include "td/utils/misc.h"
 #include <algorithm>
@@ -76,6 +77,8 @@ TEST(ConfidentialState, AccountRoundtripAndLifecycle) {
   sort_pending(value);
   auto encoded = block::encode_workchain_confidential_account(value);
   ASSERT_TRUE(encoded.is_ok());
+  std::reverse(value.pending.begin(), value.pending.end());
+  ASSERT_EQ(block::encode_workchain_confidential_account(value).move_as_ok()->get_hash(), encoded.ok()->get_hash());
   auto decoded = block::decode_workchain_confidential_account(encoded.ok());
   ASSERT_TRUE(decoded.is_ok());
   const auto& out = decoded.ok();
@@ -147,4 +150,73 @@ TEST(ConfidentialState, RejectMalformedAndExcessiveState) {
   value.pending = {receipt(0)};
   value.pending[0].target_instance = bits(18);
   ASSERT_TRUE(block::encode_workchain_confidential_account(value).is_error());
+}
+
+TEST(ConfidentialState, RegistrationDepositWire) {
+  block::WorkchainResourcePolicy resources{4, {64,4096,8,16,16,5},
+      {256,16384,128,8192,64}, {32,128,8192,256,16384,16}, {0,2,2}, 1};
+  auto business = vm::CellBuilder().finalize();
+  for (std::uint64_t deposit : {std::uint64_t{0}, std::uint64_t{10000000000ULL}, std::uint64_t{UINT64_MAX}}) {
+    auto encoded = block::encode_workchain_engine_parameters({400, bits(1), resources, business, deposit});
+    ASSERT_TRUE(encoded.is_ok());
+    auto cs = vm::load_cell_slice(encoded.ok());
+    ASSERT_EQ(cs.size(), 384u);
+    ASSERT_EQ(cs.fetch_ulong(32), block::gen::UnoV2EngineConfiguration::cons_tag[0]);
+    ASSERT_EQ(cs.fetch_ulong(32), 400u);
+    ASSERT_EQ(cs.fetch_ulong(64), deposit);  // Independent wire-order check.
+    auto decoded = block::decode_workchain_engine_parameters(encoded.ok());
+    ASSERT_TRUE(decoded.is_ok());
+    ASSERT_EQ(decoded.ok().registration_deposit, deposit);
+  }
+  auto policy = block::encode_workchain_resource_policy(resources).move_as_ok();
+  auto old = vm::CellBuilder().store_long(0x41868cd4, 32).store_long(400, 32)
+      .store_bits(bits(1).bits(), 256).store_ref(policy).store_ref(business).finalize();
+  auto retired = block::decode_workchain_engine_parameters(old);
+  ASSERT_TRUE(retired.is_error());
+  ASSERT_EQ(retired.error().message(), "unrecognized engine configuration constructor tag");
+  auto missing = vm::CellBuilder().store_long(block::gen::UnoV2EngineConfiguration::cons_tag[0], 32)
+      .store_long(400, 32).store_bits(bits(1).bits(), 256).store_ref(policy).store_ref(business).finalize();
+  auto incomplete = block::decode_workchain_engine_parameters(missing);
+  ASSERT_TRUE(incomplete.is_error());
+  ASSERT_EQ(incomplete.error().message(), "missing fields in registration_deposit layout");
+  static_assert(!std::is_constructible_v<block::WorkchainEngineParameters, std::uint32_t, td::Bits256,
+      block::WorkchainResourcePolicy, td::Ref<vm::Cell>>);
+}
+
+TEST(ConfidentialState, CoordinatorDepositMigration) {
+  block::WorkchainCoordinatorState state{2, {1, 1000000, 3, 0}, 30000000000ULL};
+  auto encoded = block::encode_workchain_coordinator_state(state);
+  ASSERT_TRUE(encoded.is_ok());
+  auto decoded = block::decode_workchain_coordinator_state(encoded.ok());
+  ASSERT_TRUE(decoded.is_ok());
+  ASSERT_EQ(decoded.ok().refundable_deposits, state.refundable_deposits);
+  ASSERT_EQ(decoded.ok().system.registered_accounts, 3u);
+  block::gen::UnoV2CoordinatorDeposits::Record raw;
+  ASSERT_TRUE(block::resource_policy_detail::unpack_exact(encoded.ok(), raw));
+  auto missing = vm::CellBuilder().store_long(block::gen::UnoV2CoordinatorDeposits::cons_tag[0], 32)
+      .store_long(2, 16).store_ref(raw.system).finalize();
+  ASSERT_TRUE(block::decode_workchain_coordinator_state(missing).is_error());
+  raw.budget = vm::CellBuilder().finalize();
+  td::Ref<vm::Cell> malformed;
+  ASSERT_TRUE(tlb::pack_cell(malformed, raw));
+  ASSERT_TRUE(block::decode_workchain_coordinator_state(malformed).is_error());
+  for (bool empty : {true, false}) {
+    td::Ref<vm::Cell> system, legacy;
+    ASSERT_TRUE(tlb::pack_cell(system, block::gen::UnoV2SystemState::Record{1, 1000000, empty ? 0ULL : 1ULL, 0}));
+    ASSERT_TRUE(tlb::pack_cell(legacy, block::gen::UnoV2CoordinatorState::Record{1, system}));
+    ASSERT_TRUE(block::decode_workchain_coordinator_state(legacy).is_error());  // No fallback.
+    auto migrated = block::migrate_empty_workchain_coordinator_state(legacy);
+    ASSERT_EQ(migrated.is_ok(), empty);
+    if (empty) {
+      auto current = block::decode_workchain_coordinator_state(migrated.ok());
+      ASSERT_TRUE(current.is_ok());
+      ASSERT_EQ(current.ok().layout_version, 2u);
+      ASSERT_EQ(current.ok().system.layout_version, 1);
+      ASSERT_EQ(current.ok().system.base_compute, 1000000u);
+      ASSERT_EQ(current.ok().system.registered_accounts, 0u);
+      ASSERT_EQ(current.ok().refundable_deposits, 0u);
+    } else {
+      ASSERT_EQ(migrated.error().message(), "legacy coordinator is not empty");
+    }
+  }
 }
