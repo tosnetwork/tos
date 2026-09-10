@@ -729,6 +729,14 @@ target_link_libraries(test-workchain-confidential-transition PRIVATE tos_block t
 tos_test(test-workchain-confidential-transition)
 set_tests_properties(test-workchain-confidential-transition PROPERTIES TIMEOUT 30 LABELS "workchain;m3")
 
+add_executable(test-workchain-account-closure ../test/test-td-main.cpp test/test-workchain-account-closure.cpp)
+target_link_libraries(test-workchain-account-closure PRIVATE tos_block tos_crypto)
+if(TOS_UNO_CRYPTO_NODE_LINK)
+  target_compile_definitions(test-workchain-account-closure PRIVATE TOS_CONFIDENTIAL_PROOF_BACKEND_LINKED)
+endif()
+tos_test(test-workchain-account-closure)
+set_tests_properties(test-workchain-account-closure PROPERTIES TIMEOUT 30 LABELS "workchain;m3")
+
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 add_test(NAME test-workchain-handwritten-tags COMMAND ${Python3_EXECUTABLE}
   "${PROJECT_SOURCE_DIR}/crypto/test/workchain-handwritten-tags.py" --repo "${PROJECT_SOURCE_DIR}")

@@ -34,6 +34,32 @@ typedef uint32_t UnoCryptoStatus;
 #endif // __cplusplus
 
 /**
+ * Fixed-width authenticated closure statement; no caller-supplied challenge.
+ */
+typedef struct {
+  uint32_t abi_version;
+  uint8_t domain[80];
+  int32_t global_id;
+  uint8_t genesis_hash[32];
+  int32_t workchain_id;
+  uint8_t account[32];
+  uint8_t incarnation[32];
+  uint8_t asset[32];
+  uint8_t custody[32];
+  uint8_t policy[32];
+  uint16_t schema_version;
+  uint16_t relation_profile;
+  uint16_t proof_profile;
+  uint32_t key_epoch;
+  uint64_t auth_nonce;
+  uint64_t available_revision;
+  uint8_t public_key[32];
+  uint8_t commitment[32];
+  uint8_t handle[32];
+  uint8_t proof[96];
+} UnoCryptoClosurePossessionRequestV1;
+
+/**
  * Public registration context, not native struct bytes in the transcript.
  * The host independently matches these fields to the address and configuration.
  */
@@ -103,6 +129,14 @@ typedef struct {
 #ifdef __cplusplus
 extern "C" {
 #endif // __cplusplus
+
+/**
+ * Verify zero available and possession; not pending/obligation emptiness.
+ * # Safety
+ * Request must be initialized, aligned, readable and unchanged until return.
+ * No pointer is retained; numeric checks cannot establish allocation validity.
+ */
+uint32_t uno_crypto_verify_closure_possession_v1(const UnoCryptoClosurePossessionRequestV1 *request);
 
 /**
  * Verify registration possession, not a new balance relation.

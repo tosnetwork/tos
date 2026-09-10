@@ -19,6 +19,19 @@ are not a reliability argument. Rotation is not authorized by this entry.
 
 ## Existing interfaces
 
+`uno_crypto_verify_closure_possession_v1` is the second independent M3 entry
+outside D34 relation-family review. Its 96-byte proof is R1 || R2 || z.
+It checks zP=R1+cH and zD=R2+cC; P and D must be nonidentity. Randomized zero
+(rH,rP) is accepted, not replaced by an all-identity encoding requirement.
+The SHA-512 challenge reduces the digest over the literal
+`TOS/UNO/CLOSE/KEY-POSSESSION/v1`, domain[80], the registration context fields
+through key_epoch in their order above, auth_nonce, available_revision, P,H,D,C,
+R1,R2. Integers are fixed-width big-endian, points canonical compressed bytes;
+z is canonical little-endian. H is the fixed Pedersen blinding generator.
+This proves possession and zero plaintext under the admitted v<l bound, not
+empty pending or absence of obligations. Those remain authenticated host checks.
+The host must supply the current revision/ciphertext, not a caller's old copy.
+
 This is a native process interface, not a TL-B constructor, network proof
 profile or M0 freeze. Balance versions 0 and 1 are retired; the library exports
 `uno_crypto_verify_v2`, not the previous fee-less balance verification entries

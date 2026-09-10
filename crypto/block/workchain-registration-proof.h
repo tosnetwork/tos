@@ -11,4 +11,12 @@ namespace block {
 td::Status verify_workchain_registration_possession(
     const WorkchainConfidentialAccount& registration,
     const std::array<unsigned char, 64>& proof);
+
+// Reconstruct the zero-balance statement from the current authenticated account.
+// Domain comes from authenticated protocol configuration. Pending and in-flight
+// obligations are separate host predicates; this proof says nothing about them.
+td::Status verify_workchain_closure_possession(
+    const WorkchainConfidentialAccount& account,
+    const std::array<unsigned char, 80>& domain,
+    const std::array<unsigned char, 96>& proof);
 }
