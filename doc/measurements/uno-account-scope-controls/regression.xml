@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="(empty)"
+	tests="2"
+	failures="0"
+	disabled="0"
+	skipped="0"
+	hostname=""
+	time="3"
+	timestamp="2026-09-10T01:24:13"
+	>
+	<testcase name="test-workchain-block" classname="test-workchain-block" time="3.39441" status="run">
+		<system-out>Running test Test_WorkchainBlock_CoordinatorStateLayout...
+PASS in 238.8us
+Running test Test_WorkchainBlock_CoordinatorStateExactFraming...
+PASS in 32.0us
+Running test Test_WorkchainBlock_ResourcePolicyWire...
+PASS in 44.7us
+Running test Test_WorkchainBlock_EngineConfigurationFraming...
+PASS in 41.3us
+Running test Test_WorkchainBlock_EngineConfigurationAcceptedCadence...
+PASS in 21.6us
+Running test Test_WorkchainBlock_BatchPolicyVersionIdentityAgreement...
+PASS in 2386.0ns
+Running test Test_WorkchainBlock_BatchProfileUnsupportedNodeProbe...
+PASS in 1056.0ns
+Running test Test_WorkchainBlock_ClaimedFeeOuterFraming...
+PASS in 21.5us
+Running test Test_WorkchainBlock_ClaimedFeeShortNativeFraming...
+PASS in 4733.0ns
+Running test Test_WorkchainBlock_ClaimedFeeSpecialNativeFraming...
+PASS in 4656.0ns
+Running test Test_WorkchainBlock_ClaimedFeeUnknownNativeFraming...
+PASS in 5062.0ns
+Running test Test_WorkchainBlock_ResourcePolicyRejectsSpecialBeforeDecoder...
+PASS in 8224.0ns
+Running test Test_WorkchainBlock_Resource...
+The rest of the test output was removed since it exceeds the threshold of 1024 bytes.
+</system-out>
+	</testcase>
+	<testcase name="test-workchain-settlement-continuation" classname="test-workchain-settlement-continuation" time="0.00754253" status="run">
+		<system-out>[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-10 01:24:16.898526545][transaction.cpp:616]	unpacking account 1000000000000000000000000000000000000000000000000000000000000000[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-10 01:24:16.898753055][transaction.cpp:449]	last_paid=0; cells=0 bits=0[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-10 01:24:16.898763947][transaction.cpp:679]	end of Account.unpack() for 2:1000000000000000000000000000000000000000000000000000000000000000 (balance = 1000ng ; last_trans_lt = 1..2)[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-10 01:24:16.898796196][transaction.cpp:616]	unpacking account 2000000000000000000000000000000000000000000000000000000000000000[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-10 01:24:16.898803305][transaction.cpp:449]	last_paid=0; cells=0 bits=0[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-10 01:24:16.898808640][transaction.cpp:679]	end of Account.unpack() for 2:2000000000000000000000000000000000000000000000000000000000000000 (balance = 1000ng ; last_trans_lt = 1..2)[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-10 01:24:16.899484497][transaction.cpp:616]	unpacking account 100000000000000000000000...
+The rest of the test output was removed since it exceeds the threshold of 1024 bytes.
+</system-out>
+	</testcase>
+</testsuite>

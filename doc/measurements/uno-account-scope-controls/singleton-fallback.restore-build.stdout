@@ -1,0 +1,4 @@
+[1/4] Building CXX object crypto/CMakeFiles/tos_block.dir/block/workchain-block-execution.cpp.o
+[2/4] Linking CXX static library crypto/libtos_block.a
+[3/4] Linking CXX executable test-workchain-settlement-continuation
+[4/4] Linking CXX executable test-tos-collator

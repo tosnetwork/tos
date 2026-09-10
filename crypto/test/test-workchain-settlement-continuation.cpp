@@ -36,6 +36,33 @@ void candidate_transport() {
   require(absent_access.declarations().is_null(), "carrier.missing_declarations_preserved");
   require(absent_input.candidate().is_null(), "carrier.missing_candidate_preserved");
 }
+void candidate_scope() {
+  using Scope = block::WorkchainExecutionScope;
+  const auto input = number(7), declarations = number(8);
+  const block::WorkchainAccountCandidate batch{input, declarations};
+  // This is the old false-green shape: stripping the carrier to one root
+  // gives the legacy checker no information with which to reject it.
+  require(block::validate_workchain_candidate_scope(batch.candidate(), Scope::BlockTransition).is_ok(),
+          "scope.legacy_nonnull_positive");
+  require(block::validate_workchain_candidate_scope(td::Ref<vm::Cell>{}, Scope::AccountCompute).is_ok(),
+          "scope.legacy_null_positive");
+  require(block::validate_workchain_candidate_scope(batch, Scope::AccountBatch).is_ok(),
+          "scope.account_positive");
+  require(block::validate_workchain_candidate_scope(batch, Scope::BlockTransition).is_error(),
+          "scope.account_not_singleton");
+  require(block::validate_workchain_candidate_scope(batch, Scope::AccountCompute).is_error(),
+          "scope.account_not_ordinary");
+  require(block::validate_workchain_candidate_scope(batch, static_cast<Scope>(255)).is_error(),
+          "scope.account_unknown_scope");
+  require(block::validate_workchain_candidate_scope(input, Scope::AccountBatch).is_error(),
+          "scope.single_root_not_account");
+  require(block::validate_workchain_candidate_scope(td::Ref<vm::Cell>{}, Scope::AccountBatch).is_error(),
+          "scope.null_single_root_not_account");
+  require(block::validate_workchain_candidate_scope(block::WorkchainAccountCandidate{{}, declarations},
+          Scope::AccountBatch).is_error(), "scope.missing_candidate");
+  require(block::validate_workchain_candidate_scope(block::WorkchainAccountCandidate{input, {}},
+          Scope::AccountBatch).is_error(), "scope.missing_declarations");
+}
 td::Ref<vm::Cell> account(unsigned n) {
   vm::CellBuilder b;
   b.store_long(1, 1).store_long(4, 3).store_long(2, 8).store_bits(key(n).bits(), 256)
@@ -229,6 +256,7 @@ void run(const std::string& scenario) {
 int main(int argc, char** argv) {
   try {
     candidate_transport();
+    candidate_scope();
     if (argc == 2) run(argv[1]);
     else for (const char* scenario : {"once", "input", "state", "observer", "tracking", "effects", "output"}) run(scenario);
     return 0;

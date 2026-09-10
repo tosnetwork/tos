@@ -1,0 +1,38 @@
+{
+  "name": "singleton-fallback",
+  "path": "crypto/block/workchain-block-execution.cpp",
+  "before": "  if (scope != WorkchainExecutionScope::AccountBatch) {",
+  "after": "  if (scope == WorkchainExecutionScope::BlockTransition) {\n    return validate_workchain_candidate_scope(candidate.candidate(), scope);\n  }\n  if (scope != WorkchainExecutionScope::AccountBatch) {",
+  "expected_assertion": "scope.account_not_singleton",
+  "base_commit": "98508fcfe16d1db283effe3306f860947d836f8c",
+  "original_sha256": {
+    "crypto/block/workchain-block-execution.h": "c985335565354085ebcf739d75047eeccfc9793152e70be8d43862a7b3e878c7",
+    "crypto/block/workchain-block-execution.cpp": "cb4ebd1ce59d37685c5bd5a7bfe787e9050d92754048772a3aeeb7473601cecc",
+    "crypto/test/test-workchain-settlement-continuation.cpp": "080e79ba162a91da89c14c4ca294aa632a644b8a2bd466dd906a2e16b94496ba"
+  },
+  "rebuild_command": [
+    "cmake",
+    "--build",
+    "build",
+    "--target",
+    "test-workchain-settlement-continuation",
+    "test-tos-collator",
+    "-j32"
+  ],
+  "actual_executables": [
+    "/home/tomi/tos/build/test-workchain-settlement-continuation",
+    "/home/tomi/tos/build/test-tos-collator"
+  ],
+  "mutant_sha256": "fa915527b8101058614e65073fb5f4f2a82ef353df68714886dcf7f89b678e83",
+  "build_exit": 0,
+  "mutant_binary_sha256": "b20f2acd3089877238ba32611747af3991861c995336d913fd214f4e14d76c4c",
+  "run_exit": 1,
+  "restored_sha256": {
+    "crypto/block/workchain-block-execution.h": "c985335565354085ebcf739d75047eeccfc9793152e70be8d43862a7b3e878c7",
+    "crypto/block/workchain-block-execution.cpp": "cb4ebd1ce59d37685c5bd5a7bfe787e9050d92754048772a3aeeb7473601cecc",
+    "crypto/test/test-workchain-settlement-continuation.cpp": "080e79ba162a91da89c14c4ca294aa632a644b8a2bd466dd906a2e16b94496ba"
+  },
+  "restore_build_exit": 0,
+  "restored_binary_sha256": "9f506fb29273899be34ef0c46df2ebd8ac8d8e2e8648b51893f7cb4c1955603e",
+  "restored_run_exit": 0
+}

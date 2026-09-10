@@ -17,8 +17,9 @@ namespace block {
 struct SerializeConfig;
 struct ActionPhaseConfig;
 class ResolvedBatchInputPolicy;
+class WorkchainAccountCandidate;
 
-enum class WorkchainExecutionScope : std::uint8_t { AccountCompute = 0, BlockTransition = 1 };
+enum class WorkchainExecutionScope : std::uint8_t { AccountCompute = 0, BlockTransition = 1, AccountBatch = 2 };
 
 // This host version pays ordinary native message fees from its operating balance.
 // Batch execution has no StoragePhase; this flag is not a storage-rent exemption.
@@ -167,6 +168,13 @@ td::Result<WorkchainBatchDescription> make_workchain_batch_description(const Wor
 // Scope check only; callers must separately validate the full transaction encoding.
 td::Status validate_transaction_execution_scope(const td::Ref<vm::Cell>& description, WorkchainExecutionScope scope);
 td::Status validate_workchain_candidate_scope(const td::Ref<vm::Cell>& candidate, WorkchainExecutionScope scope);
+// Requires explicit AccountBatch selection and presence of both roots. This
+// establishes no relationship between their contents, admission or provenance.
+// The legacy single-root overload cannot authorize AccountBatch. Keep both roots
+// in this overload: passing just candidate() erases the family distinction.
+// Callers classify a mismatch using the acquisition boundary, not this Status.
+td::Status validate_workchain_candidate_scope(const WorkchainAccountCandidate& candidate,
+                                            WorkchainExecutionScope scope);
 
 class WorkchainBlockEngine {
  public:

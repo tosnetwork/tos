@@ -1,0 +1,10 @@
+Internal ctest changing into directory: /home/tomi/tos/build
+Test project /home/tomi/tos/build
+    Start 39: test-workchain-block
+1/2 Test #39: test-workchain-block .....................   Passed    3.39 sec
+    Start 40: test-workchain-settlement-continuation
+2/2 Test #40: test-workchain-settlement-continuation ...   Passed    0.01 sec
+
+100% tests passed, 0 tests failed out of 2
+
+Total Test time (real) =   3.41 sec

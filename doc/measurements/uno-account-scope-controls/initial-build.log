@@ -1,0 +1,17 @@
+[1/17] Building CXX object crypto/CMakeFiles/tos_block.dir/block/workchain-instance-identity.cpp.o
+[2/17] Building CXX object crypto/CMakeFiles/tos_block.dir/block/workchain-block-execution.cpp.o
+[3/17] Building CXX object crypto/CMakeFiles/tos_block.dir/block/workchain-execution-dispatch.cpp.o
+[4/17] Building CXX object crypto/CMakeFiles/tos_block.dir/block/block.cpp.o
+[5/17] Building CXX object crypto/CMakeFiles/tos_block.dir/block/transaction.cpp.o
+[6/17] Linking CXX static library crypto/libtos_block.a
+[7/17] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/external-message.cpp.o
+[8/17] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/ext-message-checker.cpp.o
+[9/17] Building CXX object CMakeFiles/test-workchain-settlement-continuation.dir/crypto/test/test-workchain-settlement-continuation.cpp.o
+[10/17] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/fabric.cpp.o
+[11/17] Linking CXX executable test-workchain-settlement-continuation
+[12/17] Building CXX object CMakeFiles/test-tos-collator.dir/test/test-tos-collator.cpp.o
+[13/17] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/collator.cpp.o
+[14/17] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/liteserver.cpp.o
+[15/17] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/validate-query.cpp.o
+[16/17] Linking CXX static library validator/impl/libtos_validator.a
+[17/17] Linking CXX executable test-tos-collator

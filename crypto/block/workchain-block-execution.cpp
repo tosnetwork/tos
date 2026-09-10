@@ -1,4 +1,5 @@
 #include "block/workchain-block-execution.h"
+#include "block/workchain-account-candidate.h"
 #include "block/block-auto.h"
 #include "block/block-parse.h"
 #include "block/transaction.h"
@@ -474,6 +475,20 @@ td::Status validate_workchain_candidate_scope(const td::Ref<vm::Cell>& candidate
     return td::Status::OK();
   }
   return td::Status::Error("workchain candidate does not match configured execution scope");
+}
+
+td::Status validate_workchain_candidate_scope(const WorkchainAccountCandidate& candidate,
+                                            WorkchainExecutionScope scope) {
+  if (scope != WorkchainExecutionScope::AccountBatch) {
+    return td::Status::Error("account batch carrier does not match configured execution scope");
+  }
+  if (candidate.candidate().is_null()) {
+    return td::Status::Error("account batch candidate root is missing");
+  }
+  if (candidate.declarations().is_null()) {
+    return td::Status::Error("account batch declarations root is missing");
+  }
+  return td::Status::OK();
 }
 
 td::Status validate_workchain_block_result(const WorkchainBlockResult& result) {
