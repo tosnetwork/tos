@@ -284,3 +284,134 @@ against the destroyed set.
    that the queue is only pruned at restart during a long uptime)?
 4. Any ordering hazard in issuing the pending-set persist up front in the
    rotated-all-shards branch relative to `update_init_masterchain_block`.
+
+## Full lifecycle (v4, requested) — checkpoint-relative pruning + validator queue
+
+The observers-only scope (v3) was chosen because queuing *validator* directories
+was unsafe: the destroyed-session tombstone (which bars recreation) is pruned
+*coarsely* by `updated_init_block` (it erases the whole captured set), and
+replaying an old rotation checkpoint re-runs that pruning, so a validator
+retired *after* the durable checkpoint could lose its tombstone during replay and
+be recreated with a swept DB. This v4 fixes that root cause so the queue can
+safely cover validators too, giving one complete cleanup lifecycle.
+
+### Core fix: checkpoint-relative destroyed-session pruning
+
+- `destroyed_validator_sessions_` changes from `std::set<ValidatorSessionId>` to
+  `std::map<ValidatorSessionId, BlockSeqno>`, where the value is the **masterchain
+  seqno at which the session was retired** (`last_masterchain_block_id_.seqno()`
+  at the retire site, `manager.cpp:2981/3017`). Recreation checks
+  (`manager.cpp:2791/2836/2901`) become key lookups — unchanged behavior.
+- `updated_init_block(last_rotate_block_id)` no longer erases a captured set.
+  Instead it sets `last_rotate_block_id_` and prunes exactly the ids with
+  `retire_seqno <= last_rotate_block_id.seqno()`. Rationale: on restart the
+  manager replays from the init block, so an id retired at or before that
+  checkpoint is already absent from the replayed config and can never be
+  recreated — safe to forget. An id retired *after* the checkpoint keeps its
+  tombstone, so replaying an old checkpoint no longer prunes it prematurely.
+  (The rotated retire branch stops passing `old_destroyed_validator_sessions`.)
+- Non-rotated-branch retirements accumulate with their own `retire_seqno` and are
+  pruned at the next rotation whose checkpoint seqno reaches them — the same
+  bound the coarse sweep gave, but per-id and replay-safe.
+
+### Why this makes queuing validators safe
+
+With the tombstone lifetime now correct, a queued validator directory is only
+ever deleted while EITHER its tombstone is still present (recreation barred) OR
+the checkpoint has advanced past its retirement (session permanently
+unreferenceable). Both are safe, so validator + tentative directories can be
+added back to `pending_consensus_db_cleanup_` alongside observers, and the sweep
+deletes on (queued OR legacy-tombstone) as before. The load-time observer-only
+filter is removed.
+
+### Persistence + migration
+
+The destroyed-session record must now carry a seqno per id. To avoid a TL
+schema/codegen change (as with the pending queue), store it as a raw StateDb
+key/value: a list of `id_hex:seqno` lines under a new key, via new Db methods
+`update/get_destroyed_validator_sessions_v2` (map form). On load: read v2 if
+present; otherwise migrate the legacy `db.state.destroyedSessions` (ids only) by
+assigning each `retire_seqno = last_rotate_block_id_.seqno()` loaded from the
+init block (they were retired at or before the current checkpoint, so this is the
+conservative safe value — they prune at the next rotation, never earlier). The
+`{destroyed-with-seqnos + pending}` write is atomic again (re-add
+`retire_consensus_sessions`), so a crash cannot queue a directory without the
+durable tombstone that bars its recreation.
+
+### Fault-injection recovery test (hard acceptance)
+
+1. Retire a validator session at seqno R (atomic persist of tombstone{R} +
+   queued dir), simulate a crash before deletion, restart: assert the sweep
+   reclaims the directory and, because the durable checkpoint is < R, the
+   tombstone is still present (recreation barred) throughout.
+2. Replay an old rotation checkpoint C < R and assert `updated_init_block(C)`
+   does NOT prune the tombstone for a session retired at R > C (the premature
+   pruning that v3 could not prevent).
+3. A rotation checkpoint that advances past R prunes the tombstone, and a queued
+   dir deleted after that is safe (session unreferenceable).
+Plus the existing sweep-helper cases (observer + validator), migration, failed
+enumeration, false-success deletion.
+
+### Open questions for Codex
+
+1. Is `retire_seqno = last_masterchain_block_id_.seqno()` the correct retirement
+   point, and is `prune iff retire_seqno <= last_rotate_block_id.seqno()` the
+   correct, replay-safe condition — especially for retirements in non-rotated
+   blocks whose seqno exceeds the last rotation checkpoint?
+2. Does `last_rotate_block_id_` (the all-shards rotation checkpoint) advance such
+   that "replay starts at/after it" holds on every restart path
+   (`manager-init.cpp`), or must the reference be the last *applied* masterchain
+   block instead?
+3. Migration seqno assignment for legacy ids — is `last_rotate_block_id_.seqno()`
+   safe (never prematurely prunes a legacy id that a replay could still
+   reference), or should it be higher/lower?
+4. Any fork/liveness risk from changing the destroyed-set model or the pruning
+   timing; and is re-including validators in the queue now genuinely safe under
+   the same multi-restart history that broke v3?
+
+### Codex review outcome (v4) — DEFERRED, not safe as designed
+
+A read-only Codex review of the v4 design against the current source returned
+**"sound to implement: yes-with-changes"**, but the required changes are two
+genuine safety holes, not refinements. v4 is therefore **deferred**: the shipped
+scope stays observers-only (v3), and validator reclamation waits for a v5 design
+that resolves the durability-ordering proof below.
+
+**P1 — the prune reference is not a durable lower bound on replay.** Rotation
+persists the init-block id and calls `updated_init_block()` on the *StateDb write
+ack* (`manager.cpp:3059`, `statedb.cpp:31`), which covers only the checkpoint
+write — not that the block was durably *applied* (`apply-block.cpp:263/275/309`).
+After a crash, startup can fall back *below* checkpoint `C`
+(`manager-init.cpp:359`), while a prune-through-`C` may already be durable. So
+"a session retired at `R <= C` is permanently unreferenceable" is unproven: an
+over-prune plus a queued deletion can destroy a validator DB that a later replay
+recreates. A correct design must prune only against a checkpoint whose *usable
+applied state* is durable before the prune becomes durable; reading `is_applied()`
+in memory is not enough.
+
+**P1 — legacy migration `retire_seqno = last_rotate_block_id_.seqno()` is wrong.**
+Non-rotated retirements persist tombstones *without* advancing the init
+checkpoint (`manager.cpp:3070`), so real histories have a session retired at
+`R > C`. Stamping every legacy id with `C` makes it prunable at the first
+checkpoint replay, before replay reaches its true retirement `R` — reintroducing
+exactly the coarse-pruning failure v4 set out to fix. Legacy ids need an explicit
+*unknown-retirement* treatment with a defensible upper bound, absent from v4.
+
+**Supporting defects.** `last_rotate_block_id_` is not loaded into the manager at
+startup — it is only assigned by `updated_init_block()` (`manager.hpp:293`,
+`manager.cpp:2303`), so it is empty at sweep time. Deliberate rollback / hardfork
+truncation can move the init checkpoint *backward* (`manager-init.cpp:400/423`,
+`statedb.cpp:505`); numeric-seqno pruning does not preserve the session-expiry
+invariant across a rollback or a different chain history, so a recovery policy is
+required. The `CHECK(!destroyed_validator_sessions_.contains(id))` at
+`manager.cpp:2791` has a real exception via the unsafe-recovery rewritten-id path
+(`manager.cpp:2840/2859`) that longer tombstone retention can expose.
+
+**Decision (2026-09-10, one week before genesis).** Ship observers-only (this
+PR): it closes the observer orphan leak (the common case) and never regresses
+validator safety. Full validator reclamation is deferred post-genesis to a v5
+design that (a) prunes only against a checkpoint whose applied state is proven
+durable, (b) gives legacy ids a bounded unknown-retirement treatment, (c) loads
+the prune reference at startup, and (d) defines rollback/hardfork recovery — with
+the fault-injection recovery test above (extended to the crash-before-applied and
+rollback histories) as hard acceptance.
