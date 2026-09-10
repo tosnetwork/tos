@@ -18,6 +18,8 @@
 */
 #pragma once
 
+#include <array>
+#include <charconv>
 #include <cstdint>
 #include <functional>
 #include <optional>
@@ -81,7 +83,64 @@ inline uint64_t get_u64_le(const unsigned char* p) {
   }
   return v;
 }
+
+// Parse an entire field as an integer, rejecting empty input, stray characters,
+// leading '+', and anything std::from_chars cannot fully consume. Non-canonical
+// forms (e.g. leading zeros) survive parsing here but are rejected by the
+// canonical re-render comparison in is_canonical_validator_dir_name.
+template <typename Int>
+inline bool parse_full_int(const std::string& s, Int& out) {
+  if (s.empty()) {
+    return false;
+  }
+  const char* begin = s.data();
+  const char* end = s.data() + s.size();
+  auto [ptr, ec] = std::from_chars(begin, end, out);
+  return ec == std::errc() && ptr == end;
+}
 }  // namespace detail
+
+// True only for a canonical validator (non-observer) consensus directory basename
+// whose session id is exactly `sid`. The authority is: parse the three numeric
+// fields, then require that re-rendering the canonical name equals the input.
+// That single equality rejects any trailing suffix or garbage, any separator or
+// NUL, any non-canonical numeric form, and any session-hex mismatch -- none of
+// which a directory we may later delete can contain.
+inline bool is_canonical_validator_dir_name(const std::string& name, const ValidatorSessionId& sid) {
+  std::array<size_t, 4> dot{};
+  size_t found = 0;
+  size_t pos = 0;
+  while (found < 4) {
+    pos = name.find('.', pos);
+    if (pos == std::string::npos) {
+      return false;
+    }
+    dot[found++] = pos;
+    pos++;
+  }
+  if (name.compare(0, dot[0], "consensus") != 0) {
+    return false;
+  }
+  std::string f_wc = name.substr(dot[0] + 1, dot[1] - dot[0] - 1);
+  std::string f_shard = name.substr(dot[1] + 1, dot[2] - dot[1] - 1);
+  std::string f_cc = name.substr(dot[2] + 1, dot[3] - dot[2] - 1);
+  int32_t wc = 0;
+  uint64_t shard = 0;
+  uint32_t cc = 0;
+  if (!detail::parse_full_int(f_wc, wc) || !detail::parse_full_int(f_shard, shard) ||
+      !detail::parse_full_int(f_cc, cc)) {
+    return false;
+  }
+  auto canonical = consensus_db_dir_name(ShardIdFull{wc, static_cast<ShardId>(shard)},
+                                         static_cast<CatchainSeqno>(cc), sid, td::Slice(""));
+  return canonical == name;
+}
+
+// A cleanup checkpoint must be a fully specified MASTERCHAIN block. is_valid_full
+// alone also accepts shardchain blocks, which are not a retirement/replay anchor.
+inline bool is_full_masterchain_checkpoint(const BlockIdExt& b) {
+  return b.is_masterchain() && b.is_valid_full();
+}
 
 // Deterministic, architecture-independent (little-endian) encoding of one record.
 // The format is versioned so a future reader can reject or migrate old records
@@ -139,15 +198,13 @@ inline std::optional<PendingValidatorConsensusDbCleanup> decode_validator_cleanu
   r.retirement_checkpoint = BlockIdExt{workchain, static_cast<ShardId>(shard), seqno, root_hash, file_hash};
   r.dir_name = value.substr(off).str();
 
-  // A cleanup record is only ever for a validator directory. Reject anything that
-  // is empty, unparseable, an observer directory, or whose parsed session id does
-  // not match -- none of those is a record we may act on later.
-  if (r.dir_name.empty() || r.dir_name.find('\n') != std::string::npos ||
-      r.dir_name.find(".observer.") != std::string::npos) {
+  // The checkpoint must be a fully specified masterchain block, and the directory
+  // must be the exact canonical validator directory for this session id. Anything
+  // else is not a record we could ever safely act on, so drop it.
+  if (!is_full_masterchain_checkpoint(r.retirement_checkpoint)) {
     return std::nullopt;
   }
-  auto parsed = consensus_db_session_id(td::Slice(r.dir_name));
-  if (!parsed || !(parsed.value() == r.session_id)) {
+  if (!is_canonical_validator_dir_name(r.dir_name, r.session_id)) {
     return std::nullopt;
   }
   return r;
@@ -173,7 +230,8 @@ inline bool can_delete_validator_db(const PendingValidatorConsensusDbCleanup& re
   if (session_is_live) {
     return false;
   }
-  if (!record.retirement_checkpoint.is_valid_full() || !safe_checkpoint.is_valid_full()) {
+  if (!is_full_masterchain_checkpoint(record.retirement_checkpoint) ||
+      !is_full_masterchain_checkpoint(safe_checkpoint)) {
     return false;
   }
   if (record.retirement_checkpoint == safe_checkpoint) {
@@ -189,10 +247,10 @@ inline bool can_delete_validator_db(const PendingValidatorConsensusDbCleanup& re
 // candidate is refused -- the safe checkpoint holds.
 inline bool should_adopt_safe_checkpoint(const BlockIdExt& current, const BlockIdExt& candidate,
                                          const CleanupAncestryOracle& ancestry_of) {
-  if (!candidate.is_valid_full()) {
+  if (!is_full_masterchain_checkpoint(candidate)) {
     return false;
   }
-  if (!current.is_valid_full()) {
+  if (!is_full_masterchain_checkpoint(current)) {
     return true;
   }
   if (current == candidate) {
