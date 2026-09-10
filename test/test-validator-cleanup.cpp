@@ -343,15 +343,23 @@ TEST(ValidatorCleanup, make_record_is_canonical_and_round_trips) {
 }
 
 // The parse recovers the shard and catchain seqno from a canonical validator
-// directory, and rejects observer/mismatched/non-canonical names.
+// directory (across workchains and non-root shards), and rejects
+// observer/mismatched/non-canonical names.
 TEST(ValidatorCleanup, parse_validator_dir_exposes_shard_and_cc) {
   auto sid = make_session_id(9);
-  tos::ShardIdFull shard{0, kMasterShard};
+  // A non-root child shard on a non-zero workchain, so hardcoding {0, master}
+  // would be caught.
+  tos::ShardIdFull shard{1, static_cast<tos::ShardId>(0x4000000000000000ULL)};
   auto name = consensus_db_dir_name(shard, 4242, sid, td::Slice(""));
   auto p = parse_canonical_validator_dir_name(name, sid);
   ASSERT_TRUE(p.has_value());
   ASSERT_TRUE(p->shard == shard);
   ASSERT_EQ(p->catchain_seqno, static_cast<tos::CatchainSeqno>(4242));
+
+  // Masterchain workchain (-1) round-trips too.
+  tos::ShardIdFull mshard{tos::masterchainId, kMasterShard};
+  auto mp = parse_canonical_validator_dir_name(consensus_db_dir_name(mshard, 1, sid, td::Slice("")), sid);
+  ASSERT_TRUE(mp.has_value() && mp->shard == mshard && mp->catchain_seqno == static_cast<tos::CatchainSeqno>(1));
 
   ASSERT_TRUE(
       !parse_canonical_validator_dir_name(consensus_db_dir_name(shard, 4242, sid, td::Slice(".observer.x")), sid)
@@ -367,13 +375,28 @@ TEST(ValidatorCleanup, parse_validator_dir_exposes_shard_and_cc) {
 TEST(ValidatorCleanup, onchain_obsolete_requires_ancestor_and_cc_strictly_past) {
   auto sid = make_session_id(9);
   tos::ShardIdFull shard{0, kMasterShard};
-  PendingValidatorConsensusDbCleanup r;
-  r.session_id = sid;
-  r.retirement_checkpoint = make_checkpoint(100);
-  r.dir_name = consensus_db_dir_name(shard, 7, sid, td::Slice(""));  // record cc = 7
   auto gc = make_checkpoint(500);
 
-  auto ancestor_yes = [](const tos::BlockIdExt&) { return true; };
+  // Build a record for this shard with a chosen retirement checkpoint and cc.
+  auto record_with = [&](tos::BlockIdExt retirement, tos::CatchainSeqno rec_cc) {
+    PendingValidatorConsensusDbCleanup r;
+    r.session_id = sid;
+    r.retirement_checkpoint = retirement;
+    r.dir_name = consensus_db_dir_name(shard, rec_cc, sid, td::Slice(""));
+    return r;
+  };
+  auto retirement = make_checkpoint(100);
+  auto r = record_with(retirement, 7);  // cc = 7
+
+  // ARGUMENT-SENSITIVE ancestry oracle: only the EXACT retirement full id is an
+  // ancestor, so a predicate that passed the wrong block (e.g. gc) would fail.
+  int ancestor_calls = 0;
+  auto ancestor_is = [&](const tos::BlockIdExt& expected) {
+    return [&ancestor_calls, expected](const tos::BlockIdExt& queried) {
+      ancestor_calls++;
+      return queried == expected;
+    };
+  };
   auto ancestor_no = [](const tos::BlockIdExt&) { return false; };
   auto cc = [&](tos::CatchainSeqno v) {
     return [&shard, v](tos::ShardIdFull s) -> std::optional<tos::CatchainSeqno> {
@@ -381,28 +404,45 @@ TEST(ValidatorCleanup, onchain_obsolete_requires_ancestor_and_cc_strictly_past) 
     };
   };
 
-  // ancestor + r(7) < g(10) -> obsolete.
-  ASSERT_TRUE(validator_session_is_onchain_obsolete(r, gc, ancestor_yes, cc(10)));
-  // Strict boundary: g == 8 (current=8,next=9) excludes 7 -> obsolete; g == 7 (7 is
-  // still the current set) -> keep.
-  ASSERT_TRUE(validator_session_is_onchain_obsolete(r, gc, ancestor_yes, cc(8)));
-  ASSERT_TRUE(!validator_session_is_onchain_obsolete(r, gc, ancestor_yes, cc(7)));
-  // Not a GC ancestor -> keep (retirement above / off the rollback floor).
+  // ancestor(exact retirement) + r(7) < g(10) -> obsolete.
+  ASSERT_TRUE(validator_session_is_onchain_obsolete(r, gc, ancestor_is(retirement), cc(10)));
+  // The oracle must be queried with the retirement id, not gc: a fork at the same
+  // seqno (different hash) is NOT an ancestor -> keep.
+  auto forked = make_fork_checkpoint(100);
+  ASSERT_TRUE(!validator_session_is_onchain_obsolete(record_with(forked, 7), gc, ancestor_is(retirement), cc(10)));
+
+  // Strict r < g boundary: g == 8 (current=8,next=9) excludes r=7 -> obsolete;
+  // g == 7 (r is the current set) -> keep.
+  ASSERT_TRUE(validator_session_is_onchain_obsolete(r, gc, ancestor_is(retirement), cc(8)));
+  ASSERT_TRUE(!validator_session_is_onchain_obsolete(r, gc, ancestor_is(retirement), cc(7)));
+  // Next and future counters must be RETAINED: r = g+1 and r > g+1 -> keep. (A
+  // "!=" mutation of the strict compare would wrongly delete these.)
+  ASSERT_TRUE(!validator_session_is_onchain_obsolete(record_with(retirement, 8), gc, ancestor_is(retirement), cc(7)));
+  ASSERT_TRUE(!validator_session_is_onchain_obsolete(record_with(retirement, 20), gc, ancestor_is(retirement), cc(7)));
+
+  // Not a GC ancestor -> keep.
   ASSERT_TRUE(!validator_session_is_onchain_obsolete(r, gc, ancestor_no, cc(10)));
   // Unknown shard catchain seqno -> keep.
   auto cc_unknown = [](tos::ShardIdFull) -> std::optional<tos::CatchainSeqno> { return std::nullopt; };
-  ASSERT_TRUE(!validator_session_is_onchain_obsolete(r, gc, ancestor_yes, cc_unknown));
+  ASSERT_TRUE(!validator_session_is_onchain_obsolete(r, gc, ancestor_is(retirement), cc_unknown));
   // Invalid / non-masterchain GC checkpoint -> keep.
-  ASSERT_TRUE(!validator_session_is_onchain_obsolete(r, tos::BlockIdExt{}, ancestor_yes, cc(10)));
+  ASSERT_TRUE(!validator_session_is_onchain_obsolete(r, tos::BlockIdExt{}, ancestor_is(retirement), cc(10)));
   // Non-canonical (observer) directory -> keep.
   auto r_obs = r;
   r_obs.dir_name = consensus_db_dir_name(shard, 7, sid, td::Slice(".observer.z"));
-  ASSERT_TRUE(!validator_session_is_onchain_obsolete(r_obs, gc, ancestor_yes, cc(10)));
-  // Equality path: retirement == GC is accepted without consulting the ancestor
-  // oracle (here ancestor_no would reject, so a pass proves the equality branch).
-  auto r_eq = r;
-  r_eq.retirement_checkpoint = gc;
-  ASSERT_TRUE(validator_session_is_onchain_obsolete(r_eq, gc, ancestor_no, cc(10)));
+  ASSERT_TRUE(!validator_session_is_onchain_obsolete(r_obs, gc, ancestor_is(retirement), cc(10)));
+
+  // Equality path: retirement == GC is accepted WITHOUT consulting the ancestor
+  // oracle. A counting oracle that would REJECT proves both: the predicate still
+  // returns true (so it took the equality branch) AND never queried the oracle.
+  auto r_eq = record_with(gc, 7);
+  ancestor_calls = 0;
+  auto counting_reject = [&](const tos::BlockIdExt&) {
+    ancestor_calls++;
+    return false;
+  };
+  ASSERT_TRUE(validator_session_is_onchain_obsolete(r_eq, gc, counting_reject, cc(10)));
+  ASSERT_EQ(ancestor_calls, 0);
 }
 
 // Pin the literal key prefix and range end independently of the helpers, so a
