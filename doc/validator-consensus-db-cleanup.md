@@ -1307,10 +1307,55 @@ to FALSE after the erase -- the same query the manager's reopen fence
 `is_delete_in_flight`) still lives inline in the manager and is NOT extracted, so its
 end-to-end wiring remains deferred below.
 
-**Still deferred to the enablement bundle (needs seams this harness intentionally does
-not add):** the reopen-during-delete fence wiring itself (the manager's
-`get_or_make_next_group` branch, not extracted); real GC-oracle boundaries (needs a real
-`MasterchainState`, not injected oracles); reconciliation across an actual process
-restart (this harness reloads within one process); and the per-record-backoff decision
-from scenario 4's attempt profile under a production-like soak. Then the flip after a
-disk/RSS soak. Finding 1 stays open; the branch remains a deletion-safe staging state.
+### Restart reconciliation (scenarios 6-8, added)
+
+Three scenarios reopen a fresh RootDb + fresh adapter on the SAME `db_root` after the
+first session is fully destroyed -- the reconciliation path a real process restart
+exercises (nothing but the on-disk RocksDB records and the consensus dirs crosses a
+restart). The first session must leave scope before the second opens, because it is the
+first `Scheduler`'s destructor that drops the RocksDB handles and releases the exclusive
+on-disk LOCK; opening the second RootDb on the same path while the first is still alive
+would abort in `RocksDb::open`.
+
+6. **Reload-and-drain** -- records persisted (not deleted) before the restart reload via
+   the real `get_pending_validator_consensus_db_cleanup` and then fully drain. Red (shown)
+   when `on_loaded_at_startup` is a no-op: the post-restart drain erases nothing.
+7. **No resurrection** -- a cleanup completed before the restart does not reappear: the
+   reopened `load_pending` is empty and no deleted dir returns.
+8. **Dangling-record reconciliation** -- a crash AFTER the dir delete but BEFORE the
+   durable erase leaves a record whose dir is already gone; on restart the record
+   reloads, the worker's delete of the absent dir is confirmed-gone, and the record is
+   erased. This is the crash-safety invariant the durable-erase-ACK ordering exists for.
+
+These prove ORDERLY-reopen reconciliation. They do NOT prove fsync/power-loss
+durability -- that rests on the store's synced writes (`sync=true`), covered at the
+store level by `test-validator-cleanup-statedb` (`store_and_erase_survive_reopen`).
+
+### Real GC-oracle boundaries -- investigated; not a feasible synthetic test
+
+A real, controllable `MasterchainState` is NOT feasible to build in a unit test: its
+construction runs `block::ConfigInfo::extract_config`, which hard-requires a complete
+`McStateExtra` -- a valid config dict including params 34 (validator set) and 12
+(workchain info), `validator_info`, `shard_hashes`, and a `prev_blocks` dict -- so a
+trivial hand-built state cannot be constructed, and a real zerostate gives almost no
+control (empty old-mc-blocks => `check_old_mc_block_id(strict)` is uniformly false; only
+the genesis shard layout for cc seqnos). Mocking the interface is 43 pure-virtual
+methods for what are trivial fail-closed guards. The oracle SEMANTICS
+(`check_old_mc_block_id`, `get_shard_cc_seqno`, including the UINT32_MAX sentinel) belong
+to the masterchain layer and are tested there; the cleanup's CONSUMPTION of them (ancestor
+gating, `r < g` obsolescence, sentinel => veto, full-masterchain-checkpoint requirement)
+is already pure-tested in `test-validator-cleanup` with injected oracles that return the
+exact shapes a real `MasterchainState` produces (`std::nullopt` for the sentinel, bool for
+ancestry). The manager's own oracle-CONSTRUCTION head of `try_` (no-floor early return,
+handle/state block-id consistency, UINT32_MAX -> `nullopt` mapping) is trivial fail-closed
+code. Conclusion: a real-`MasterchainState` GC-oracle test would be either brittle
+(zerostate) or boilerplate-heavy and trivial (mock), i.e. test theater rather than
+evidence; the real-state boundary is best validated by the enablement bundle's real-node
+soak, where a real `MasterchainState` exists naturally.
+
+**Still deferred to the enablement bundle:** the reopen-during-delete fence WIRING
+itself (the manager's `get_or_make_next_group` branch, not extracted -- scenario 5 covers
+the `is_delete_in_flight` contract it depends on); the real-node GC-oracle boundary under
+soak (above); and the per-record-backoff decision from scenario 4's attempt profile under
+a production-like soak. Then the flip after a disk/RSS soak. Finding 1 stays open; the
+branch remains a deletion-safe staging state.

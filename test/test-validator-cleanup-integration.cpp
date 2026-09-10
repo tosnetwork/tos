@@ -715,6 +715,144 @@ void scenario_inflight_single_dimension_token_rejection() {
   td::rmrf(root).ignore();
 }
 
+// ---------------------------------------------------------------------------------
+// Cross-process restart reconciliation. The only state that survives a restart is the
+// on-disk RocksDB (cleanup records) and the consensus directories on disk. A "restart"
+// here is a fresh RootDb actor + fresh adapter opened on the SAME db_root after the
+// first session is fully destroyed -- which is exactly the reconciliation path a real
+// process restart exercises (a separate OS process would add nothing, since nothing
+// but the on-disk DB and dirs crosses the restart). These use the production store
+// functions via the real RootDb, so a non-durable persist/erase would change the
+// reloaded set.
+//
+// IMPORTANT: session A must leave SCOPE before session B is constructed. A.stop()
+// alone only requests teardown; it is A's Scheduler DESTRUCTOR (run at end of A's
+// scope) that drains the actor group and drops the StateDb/CellDb RocksDB handles,
+// releasing RocksDB's exclusive on-disk LOCK. Opening B's RootDb on the same path
+// while A is still in scope would race that LOCK and abort in RocksDb::open. Hence the
+// explicit `{ ... }` blocks below -- do not flatten them.
+//
+// SCOPE of these tests: they prove ORDERLY-reopen reconciliation (clean shutdown, then
+// reopen). They do NOT prove fsync/power-loss durability -- that rests on the store's
+// synced writes (sync=true), covered at the store level by test-validator-cleanup-
+// statedb (store_and_erase_survive_reopen).
+
+// R1: records persisted (but not deleted) before the restart must reload and then fully
+// drain. Red if the persist or the reload is not durable (the restart loses the records
+// and the post-restart drain erases nothing).
+void scenario_restart_reloads_and_drains() {
+  LOG(INFO) << "=== scenario_restart_reloads_and_drains ===";
+  auto root = temp_root("restart-reload");
+  const size_t N = 4;
+  std::vector<PendingValidatorConsensusDbCleanup> records;
+  for (size_t i = 0; i < N; i++) {
+    auto r = make_record(static_cast<unsigned char>(30 + i), 100);
+    create_consensus_dir(root, r.dir_name);
+    records.push_back(r);
+  }
+
+  // Session A: persist the retirement records, then "exit" without deleting anything.
+  {
+    HarnessSession a(root, make_checkpoint(200), kRecordCc + 1, /*live=*/{}, 16, 256, 64);
+    a.persist_retirement(records);
+    a.stop();
+  }
+  // Session B: fresh RootDb + fresh adapter on the SAME root. Reload and reconcile.
+  {
+    HarnessSession b(root, make_checkpoint(200), kRecordCc + 1, /*live=*/{}, 16, 256, 64);
+    auto loaded = b.load_pending();
+    LOG_CHECK(loaded.size() == N) << "restart did not reload the " << N << " persisted records: got " << loaded.size();
+    for (auto& r : loaded) {
+      b.load_startup_record(r);
+    }
+    b.fire_cleanup_pass();
+    bool done = b.wait_until([&] { return b.erase_ack_count() >= N; }, 30.0);
+    LOG_CHECK(done) << "post-restart drain did not erase all records (acked " << b.erase_ack_count() << ")";
+    for (const auto& r : records) {
+      LOG_CHECK(!consensus_dir_exists(root, r.dir_name)) << "dir not deleted after restart: " << r.dir_name;
+    }
+    LOG_CHECK(b.load_pending().empty()) << "records not erased after the post-restart drain";
+    b.stop();
+  }
+  td::rmrf(root).ignore();
+}
+
+// R2: a cleanup fully completed before the restart must NOT resurrect -- the durable
+// erase is permanent across a reopen. Red if the erase is not durable (the record
+// reappears after restart).
+void scenario_restart_no_resurrection() {
+  LOG(INFO) << "=== scenario_restart_no_resurrection ===";
+  auto root = temp_root("restart-noresurrect");
+  const size_t N = 3;
+  std::vector<PendingValidatorConsensusDbCleanup> records;
+  for (size_t i = 0; i < N; i++) {
+    auto r = make_record(static_cast<unsigned char>(70 + i), 100);
+    create_consensus_dir(root, r.dir_name);
+    records.push_back(r);
+  }
+
+  // Session A: persist, reconcile to completion (dirs deleted + records erased), exit.
+  {
+    HarnessSession a(root, make_checkpoint(200), kRecordCc + 1, /*live=*/{}, 16, 256, 64);
+    a.persist_retirement(records);
+    for (const auto& r : records) {
+      a.load_startup_record(r);
+    }
+    a.fire_cleanup_pass();
+    bool done = a.wait_until([&] { return a.erase_ack_count() >= N; }, 30.0);
+    LOG_CHECK(done) << "pre-restart drain did not complete";
+    LOG_CHECK(a.load_pending().empty()) << "records not erased before restart";
+    a.stop();
+  }
+  // Session B: nothing should reload, and no dir should reappear.
+  {
+    HarnessSession b(root, make_checkpoint(200), kRecordCc + 1, /*live=*/{}, 16, 256, 64);
+    auto loaded = b.load_pending();
+    LOG_CHECK(loaded.empty()) << "a fully-cleaned session resurrected " << loaded.size() << " records after restart";
+    for (const auto& r : records) {
+      LOG_CHECK(!consensus_dir_exists(root, r.dir_name)) << "a deleted dir reappeared after restart: " << r.dir_name;
+    }
+    b.stop();
+  }
+  td::rmrf(root).ignore();
+}
+
+// R3: crash AFTER the directory was deleted but BEFORE the durable erase committed. The
+// durable-erase-ACK design keeps the record until the erase commits, so this leaves a
+// dangling record whose directory is already gone. On restart the record reloads, the
+// worker's delete of the already-absent dir is confirmed-gone, and the record is erased
+// -- reconciled. Red if an absent directory is not treated as confirmed-gone (the
+// dangling record would never reconcile and the drain would time out).
+void scenario_restart_reconciles_dangling_record() {
+  LOG(INFO) << "=== scenario_restart_reconciles_dangling_record ===";
+  auto root = temp_root("restart-dangling");
+  auto r = make_record(90, 100);
+
+  // Session A: persist the record but never create (or already removed) the dir, i.e.
+  // the durable state of a crash between a completed delete and its erase.
+  {
+    HarnessSession a(root, make_checkpoint(200), kRecordCc + 1, /*live=*/{}, 16, 256, 64);
+    a.persist_retirement({r});
+    a.stop();
+  }
+  LOG_CHECK(!consensus_dir_exists(root, r.dir_name)) << "precondition: the dangling record's dir must be absent";
+
+  // Session B: reload the dangling record and reconcile it (erase), since its directory
+  // is already confirmed gone.
+  {
+    HarnessSession b(root, make_checkpoint(200), kRecordCc + 1, /*live=*/{}, 16, 256, 64);
+    auto loaded = b.load_pending();
+    LOG_CHECK(loaded.size() == 1) << "dangling record not reloaded after restart: got " << loaded.size();
+    b.load_startup_record(loaded.front());
+    b.fire_cleanup_pass();
+    bool done = b.wait_until([&] { return b.erase_ack_count() >= 1; }, 30.0);
+    LOG_CHECK(done) << "dangling record (dir already gone) was not reconciled/erased after restart";
+    LOG_CHECK(b.load_pending().empty()) << "dangling record still present after reconciliation";
+    b.stop();
+  }
+  td::rmrf(root).ignore();
+}
+
 }  // namespace
 
 int main() {
@@ -722,6 +860,9 @@ int main() {
   scenario_happy_drain();
   scenario_stale_completion_rejected();
   scenario_inflight_single_dimension_token_rejection();
+  scenario_restart_reloads_and_drains();
+  scenario_restart_no_resurrection();
+  scenario_restart_reconciles_dangling_record();
 
   // The two permission-based failure scenarios need an unprivileged POSIX user: they
   // are SKIPPED as root (directory permissions are bypassed) and not compiled on
@@ -742,8 +883,8 @@ int main() {
 #endif
 
   LOG(INFO) << "test-validator-cleanup-integration: executed happy_drain + stale_completion_rejected + "
-               "inflight_single_dimension_token_rejection; "
-            << (ran_failure_scenarios ? "AND persistent-failure + mixed-failure (5/5 scenarios)"
-                                      : "persistent-failure + mixed-failure SKIPPED (3/5 scenarios)");
+               "inflight_single_dimension_token_rejection + 3 restart-reconciliation scenarios; "
+            << (ran_failure_scenarios ? "AND persistent-failure + mixed-failure (8/8 scenarios)"
+                                      : "persistent-failure + mixed-failure SKIPPED (6/8 scenarios)");
   return 0;
 }
