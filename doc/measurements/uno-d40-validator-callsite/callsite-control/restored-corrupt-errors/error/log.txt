@@ -1,0 +1,1 @@
+[1788977311.325800] REJECT: aborting validation of block candidate for (-1,8000000000000000) : invalid workchain instance ledger transition : [Error : 7407 : instance ledger differs from reconstructed transition]: data=0000000000000000000000000000000000000000000000000000000000000000 collated_data=0000000000000000000000000000000000000000000000000000000000000000

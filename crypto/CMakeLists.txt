@@ -553,7 +553,9 @@ if (NOT CMAKE_CROSSCOMPILING OR USE_EMSCRIPTEN)
   add_custom_command(
     COMMENT "Verify and embed the frozen TOS Native Service Registry BOC"
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-    COMMAND ${CMAKE_SOURCE_DIR}/scripts/embed-tos-service-native-registry-v1.sh
+    COMMAND ${CMAKE_COMMAND} -E env
+      "FUNC_BIN=$<TARGET_FILE:func>" "FIFT_BIN=$<TARGET_FILE:fift>"
+      ${CMAKE_SOURCE_DIR}/scripts/embed-tos-service-native-registry-v1.sh
       ${NATIVE_REGISTRY_CPP} native-registry
     MAIN_DEPENDENCY smartcont/native-registry-code.fc
     DEPENDS func fift smartcont/stdlib.fc
@@ -570,7 +572,9 @@ if (NOT CMAKE_CROSSCOMPILING OR USE_EMSCRIPTEN)
   add_custom_command(
     COMMENT "Verify and embed the frozen TOS Service Protocol stablecoin escrow v1 BOC"
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-    COMMAND ${CMAKE_SOURCE_DIR}/scripts/embed-tos-service-stablecoin-escrow-v1.sh
+    COMMAND ${CMAKE_COMMAND} -E env
+      "FUNC_BIN=$<TARGET_FILE:func>" "FIFT_BIN=$<TARGET_FILE:fift>"
+      ${CMAKE_SOURCE_DIR}/scripts/embed-tos-service-stablecoin-escrow-v1.sh
       ${TOS_SERVICE_STABLECOIN_ESCROW_CPP} tos-service-stablecoin-escrow-v1
     MAIN_DEPENDENCY smartcont/tos-service-stablecoin-escrow-v1.fc
     DEPENDS func fift smartcont/stdlib.fc
@@ -588,7 +592,9 @@ if (NOT CMAKE_CROSSCOMPILING OR USE_EMSCRIPTEN)
   add_custom_command(
     COMMENT "Verify and embed the frozen TOS Service Protocol stablecoin escrow v2 BOC"
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-    COMMAND ${CMAKE_SOURCE_DIR}/scripts/embed-tos-service-stablecoin-escrow-v2.sh
+    COMMAND ${CMAKE_COMMAND} -E env
+      "FUNC_BIN=$<TARGET_FILE:func>" "FIFT_BIN=$<TARGET_FILE:fift>"
+      ${CMAKE_SOURCE_DIR}/scripts/embed-tos-service-stablecoin-escrow-v2.sh
       ${TOS_SERVICE_STABLECOIN_ESCROW_V2_CPP} tos-service-stablecoin-escrow-v2
     MAIN_DEPENDENCY smartcont/tos-service-stablecoin-escrow-v2.fc
     DEPENDS func fift smartcont/stdlib.fc
@@ -679,11 +685,23 @@ install(DIRECTORY smartcont DESTINATION share/tos)
 
 # Private D40 primitive tests; no activation or production configuration changes.
 option(TOS_WORKCHAIN_INSTANCE_TESTS "Build private workchain instance identity tests" OFF)
+add_executable(counter-install-config test/counter-install-config.cpp)
+target_link_libraries(counter-install-config PRIVATE tos_block tos_crypto)
 if(TOS_WORKCHAIN_INSTANCE_TESTS)
+  add_executable(test-workchain-instance-callsite test/test-workchain-instance-callsite.cpp)
+  target_include_directories(test-workchain-instance-callsite PRIVATE "${PROJECT_SOURCE_DIR}/common")
+  target_compile_options(test-workchain-instance-callsite PRIVATE -fno-access-control -g)
+  target_link_libraries(test-workchain-instance-callsite PRIVATE validator-disk validator-common validator-db tos_validator tos_block tos_crypto)
   add_executable(test-workchain-instance-identity test/test-workchain-instance-identity.cpp)
   target_link_libraries(test-workchain-instance-identity PRIVATE tos_block tos_crypto)
   add_test(NAME test-workchain-instance-identity COMMAND test-workchain-instance-identity)
   set_tests_properties(test-workchain-instance-identity PROPERTIES TIMEOUT 60 LABELS "private;workchain;d40")
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
+  add_test(NAME test-workchain-genesis-installation COMMAND ${Python3_EXECUTABLE}
+    "${PROJECT_SOURCE_DIR}/crypto/test/workchain-genesis-installation.py"
+    --repo "${PROJECT_SOURCE_DIR}" --create-state $<TARGET_FILE:create-state>
+    --probe $<TARGET_FILE:test-workchain-instance-callsite>)
+  set_tests_properties(test-workchain-genesis-installation PROPERTIES TIMEOUT 180 LABELS "private;workchain;d40")
 endif()
 
 # A generated constructor changing must invalidate its hand-written Fift consumer.
@@ -691,3 +709,10 @@ find_package(Python3 REQUIRED COMPONENTS Interpreter)
 add_test(NAME test-workchain-handwritten-tags COMMAND ${Python3_EXECUTABLE}
   "${PROJECT_SOURCE_DIR}/crypto/test/workchain-handwritten-tags.py" --repo "${PROJECT_SOURCE_DIR}")
 set_tests_properties(test-workchain-handwritten-tags PROPERTIES TIMEOUT 30 LABELS "workchain;d40")
+
+# Default source-lifecycle check: opening either validator refusal must expire
+# the prepared copy, even when the optional native fixture is not enabled.
+add_test(NAME test-workchain-validator-prepared-expiry COMMAND ${Python3_EXECUTABLE}
+  "${PROJECT_SOURCE_DIR}/crypto/test/workchain-validator-prepared-expiry.py" --repo "${PROJECT_SOURCE_DIR}")
+set_tests_properties(test-workchain-validator-prepared-expiry PROPERTIES
+  TIMEOUT 30 LABELS "workchain;prepared-expiry")

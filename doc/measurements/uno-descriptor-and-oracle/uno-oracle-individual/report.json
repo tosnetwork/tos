@@ -1,0 +1,58 @@
+[
+  {
+    "name": "GenZerostateFiftRegression",
+    "command": [
+      "/tmp/uno-publication-build/test-smartcont",
+      "--filter",
+      "GenZerostateFiftRegression",
+      "--regression",
+      "/tmp/uno-oracle-individual/GenZerostateFiftRegression.ans",
+      "--verbosity",
+      "0"
+    ],
+    "exit": 0,
+    "answer": "abce\nTest_Toslib_GenZerostateFiftRegression_default 512112d41e8d922c7bbe8432d751efdfb7fb552e11e3d796b7dc9af18d002998\n"
+  },
+  {
+    "name": "GovernanceProposalFiftScriptRegression",
+    "command": [
+      "/tmp/uno-publication-build/test-smartcont",
+      "--filter",
+      "GovernanceProposalFiftScriptRegression",
+      "--regression",
+      "/tmp/uno-oracle-individual/GovernanceProposalFiftScriptRegression.ans",
+      "--verbosity",
+      "0"
+    ],
+    "exit": 0,
+    "answer": "abce\nTest_Toslib_GovernanceProposalFiftScriptRegression_default 2292e0f590b99e86c755aa26819a932d05b3ef540a30ca9ffc1cde0cac80e973\n"
+  },
+  {
+    "name": "GovernanceVoteFiftScriptRegression",
+    "command": [
+      "/tmp/uno-publication-build/test-smartcont",
+      "--filter",
+      "GovernanceVoteFiftScriptRegression",
+      "--regression",
+      "/tmp/uno-oracle-individual/GovernanceVoteFiftScriptRegression.ans",
+      "--verbosity",
+      "0"
+    ],
+    "exit": 0,
+    "answer": "abce\nTest_Toslib_GovernanceVoteFiftScriptRegression_default db3f63cb9f5137c5bbce50367adbdaf7a3a43987af070987f483c48f40fe9fcd\n"
+  },
+  {
+    "name": "ValidatorFiftScriptRegression",
+    "command": [
+      "/tmp/uno-publication-build/test-smartcont",
+      "--filter",
+      "ValidatorFiftScriptRegression",
+      "--regression",
+      "/tmp/uno-oracle-individual/ValidatorFiftScriptRegression.ans",
+      "--verbosity",
+      "0"
+    ],
+    "exit": 0,
+    "answer": "abce\nTest_Toslib_ValidatorFiftScriptRegression_default 9db405bf1ebb42d58ecc8d3381c60a43185fcd42844ee9c98d0b4a03f6fd6614\n"
+  }
+]

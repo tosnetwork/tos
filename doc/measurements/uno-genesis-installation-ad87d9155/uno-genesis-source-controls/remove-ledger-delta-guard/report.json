@@ -1,0 +1,35 @@
+{
+  "scope": "Real genesis and production check_mc_state_extra method, not complete block validation.",
+  "runs": [
+    {
+      "name": "generate",
+      "command": [
+        "/tmp/uno-publication-build/crypto/create-state",
+        "-I",
+        "/home/tomi/tos-m2/crypto/fift/lib:/tmp/uno-publication-build/crypto/smartcont:/home/tomi/tos-m2/crypto/smartcont",
+        "/tmp/uno-genesis-source-controls/remove-ledger-delta-guard/genesis.fif"
+      ],
+      "exit": 0
+    },
+    {
+      "name": "genesis",
+      "command": [
+        "/tmp/uno-genesis-control-l2t7lg3f/test-workchain-instance-callsite",
+        "/tmp/uno-genesis-source-controls/remove-ledger-delta-guard/zerostate.boc",
+        "genesis",
+        "/tmp/uno-genesis-source-controls/remove-ledger-delta-guard/genesis-diagnostics"
+      ],
+      "exit": 0
+    },
+    {
+      "name": "missing-instance",
+      "command": [
+        "/tmp/uno-genesis-control-l2t7lg3f/test-workchain-instance-callsite",
+        "/tmp/uno-genesis-source-controls/remove-ledger-delta-guard/zerostate.boc",
+        "missing-instance",
+        "/tmp/uno-genesis-source-controls/remove-ledger-delta-guard/missing-instance-diagnostics"
+      ],
+      "exit": 1
+    }
+  ]
+}

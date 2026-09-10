@@ -1,0 +1,44 @@
+{
+  "source_commit": "f488facc24c8ad8b73db3c8a6feb6c26e857cf19",
+  "source_sha256": {
+    "CMakeLists.txt": "c4cb415a9a482b2d0ada9c2fc09cb40157a11c86718e97820a02900c21f4124f",
+    "crypto/CMakeLists.txt": "59f179949bc51e9631dbe304fa9cff7a428d9df1a5c7c06168c0ae290f68b4d3",
+    "crypto/test/workchain-validator-local-visitors.cmake": "d822008d3c6d07eef72a805f777ba0f1a0f778fc4d8d4d9e6604567e09e524b9",
+    "crypto/test/workchain-validator-prepared-expiry.py": "4680e17e74ec772b4a25427fc83fcba627b6274b111c7a16f29dcc4c6b806a2c",
+    "crypto/test/test-workchain-validator-local-visitors.cpp": "03bd637b86884dcacf72310a0333561653eaf9f35a339f510787d38590d5be4a",
+    "crypto/test/prepared/workchain-validator-local-decisions.h": "417cc06abf6b9d21177ea9da23008a53d60ff684cda0c213d8f60ce8df74f437",
+    "validator/impl/validate-query.cpp": "df105fae6161fb1bee9a45da3dda56369c8d27943b355f7fafa0441b44ff157c",
+    "doc/measurements/uno-local-profile/run-3/state/zerostate.boc": "aed3609870908eb8e9bd82b9cc414c5d3149425260220e74effd7c6500d74c3f"
+  },
+  "binary_sha256": "15f915809c0cb6fc57063afa012fac4b28696a135de078a75aa13a91deb73ede",
+  "python_realpath": "/home/tomi/.local/share/uv/python/cpython-3.14.4-linux-x86_64-gnu/bin/python3.14",
+  "python_sha256": "3033d7dd6bc07b45575eeb52dd886c05391f2464e4c51c9cac5e63226d41c9db",
+  "optional_include": false,
+  "all_tests_dependency": "test-workchain-validator-local-visitors",
+  "first_build_exit": 1,
+  "corrected_build_exit": 0,
+  "ctest_exit": 0,
+  "tests": [
+    {
+      "name": "test-workchain-validator-local-visitors",
+      "status": "run"
+    },
+    {
+      "name": "test-workchain-validator-prepared-expiry",
+      "status": "run"
+    }
+  ],
+  "raw_sha256": {
+    "crypto-CTestTestfile.cmake": "7eed7d243eaf8bcd9eb7ab6cb4060ddc5375136049635e24e612c96d67048b0a",
+    "CMakeCache.txt": "1829447f9c411f0a6878d109ff8fd49a92897962473262045350e5081b409e90",
+    "ctest.log": "3b11b6bb7b8357505f1273c5906233d65325c7ac974084800f95f065d23e66fb",
+    "root-CTestTestfile.cmake": "7f9c88e80110c12a4f71b2ef821281b0bcc0c29134e790baaab18900b494abea",
+    "all-tests-build.log": "b2a3e426d487f56d93a31d22030af2bde3da6d881104724e6325f3d2c4cdd133",
+    "ctest.xml": "f243397f5578b60941dca36e1da6d76f65c58c28dd5a2ccdd8d58179e65f0258",
+    "configure.log": "ac48b1e0c57a8a23e17b31578079d1e07d92175264db5e5928649f6a02dcc749",
+    "configure-corrected.log": "ac48b1e0c57a8a23e17b31578079d1e07d92175264db5e5928649f6a02dcc749",
+    "all-tests-build-corrected.log": "1e600abcddb2d9d7a42221c149289c05bf8bec735912e190443e8c03a2a169a0",
+    "ctest-list.log": "fe0577a93da75216ab10372d75972f7b71999af1885df9ac54877fb859fcef7c",
+    "all-tests-dependencies.txt": "dbf2e6feaa9d565580044ab76dc64357e75fa41fe3c72e9ab03e3205c94b6adf"
+  }
+}

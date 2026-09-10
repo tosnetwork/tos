@@ -6,6 +6,8 @@
 #   sudo VALIDATORS=3 GENESIS_VALIDATORS=4 \
 #     VALIDATOR_ECONOMICS_PROFILE=1 ./scripts/setup-testnet.sh [--clean]
 #
+# UNO_WORKCHAIN_PROFILE=1 NETWORK_GLOBAL_ID=4 selects the independent UNO
+# local profile (version 16, active wc=2, no engine registration or reception).
 # The zero-state pins the canonical TIP-1 DNS Root from the shared vectors by
 # default. Set DNS_ROOT_ADDR=-1:<64-hex-id> for a reviewed local DNS profile,
 # or DNS_ROOT_ADDR=none only when explicitly rehearsing fail-closed absence.
@@ -15,7 +17,7 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BUILD="$REPO_ROOT/build"
 DATA="/data"
-LOCKFILE="/tmp/tos-setup.lock"
+LOCKFILE="${TOS_SETUP_LOCKFILE:-/tmp/tos-setup.lock}"
 INSTALL_BIN="/usr/local/bin"
 INSTALL_SHARE="/usr/local/share/tos"
 
@@ -25,9 +27,51 @@ flock -n 200 || { echo "ERROR: another setup is running"; exit 1; }
 
 for bin in validator-engine/validator-engine dht-server/dht-server \
            validator-engine-console/validator-engine-console \
-           lite-client/lite-client utils/generate-random-id; do
+           lite-client/lite-client utils/generate-random-id crypto/create-state; do
     [ -x "$BUILD/$bin" ] || { echo "ERROR: $BUILD/$bin not found. Run ninja."; exit 1; }
 done
+
+# Validate the actual Python import chain before --clean can touch data.
+# Under sudo, the caller's ~/.local/bin is off PATH. Resolve uv from the
+# invoking user without overriding HOME; use an explicit uv cache directory
+# and pass the repository path to the embedded Python process.
+UV_HOME="$HOME"
+UV=$(command -v uv 2>/dev/null || true)
+if [ -n "${SUDO_USER:-}" ]; then
+    CALLER_HOME=$(getent passwd "$SUDO_USER" | cut -d: -f6)
+    if [ -n "$CALLER_HOME" ]; then
+        UV_HOME="$CALLER_HOME"
+        for cand in "$CALLER_HOME/.local/bin/uv" "$CALLER_HOME/.cargo/bin/uv"; do
+            [ -x "$cand" ] && UV="$cand" && break
+        done
+    fi
+fi
+if [ -z "$UV" ] || [ ! -x "$UV" ]; then
+    echo "ERROR: uv not found. Install it: https://docs.astral.sh/uv/"
+    exit 1
+fi
+for module in tos_api lite_api toslib_api; do
+    [ -f "$REPO_ROOT/test/tostester/src/tosapi/$module.py" ] || {
+        echo "ERROR: generated tosapi/$module.py missing; run uv run python test/tostester/generate_tl.py first"
+        exit 1
+    }
+done
+(cd "$REPO_ROOT" && UV_CACHE_DIR="$UV_HOME/.cache/uv" \
+ UNO_WORKCHAIN_PROFILE="${UNO_WORKCHAIN_PROFILE:-0}" NETWORK_GLOBAL_ID="${NETWORK_GLOBAL_ID:-3}" \
+ "$UV" run python3 -c '
+import os
+from pathlib import Path
+from tosapi import tos_api, lite_api, toslib_api
+from tostester.network import Network
+from tostester.install import Install
+profile = os.environ["UNO_WORKCHAIN_PROFILE"]
+global_id = int(os.environ["NETWORK_GLOBAL_ID"])
+if profile not in ("0", "1") or not -(1 << 31) <= global_id < (1 << 31):
+    raise SystemExit("Invalid local network profile or global ID")
+if profile == "1" and global_id in (1, -23903):
+    raise SystemExit("UNO local profile requires a non-mainnet, non-Counter global ID")
+Install(Path.cwd() / "build", Path.cwd()).toslibjson
+')
 
 # ── Clean ─────────────────────────────────────────────────────────
 if [ "${1:-}" = "--clean" ]; then
@@ -67,30 +111,14 @@ chown tos:tos "$DATA" "$DATA/testnet"
 
 # Python script that uses the tested tostester infrastructure
 cd "$REPO_ROOT"
-# Under sudo, the caller's ~/.local/bin is off PATH. Resolve uv from the
-# invoking user without overriding HOME; use an explicit uv cache directory
-# and pass the repository path to the embedded Python process.
-UV_HOME="$HOME"
-UV=$(command -v uv 2>/dev/null || true)
-if [ -n "${SUDO_USER:-}" ]; then
-    CALLER_HOME=$(getent passwd "$SUDO_USER" | cut -d: -f6)
-    if [ -n "$CALLER_HOME" ]; then
-        UV_HOME="$CALLER_HOME"
-        for cand in "$CALLER_HOME/.local/bin/uv" "$CALLER_HOME/.cargo/bin/uv"; do
-            [ -x "$cand" ] && UV="$cand" && break
-        done
-    fi
-fi
-if [ -z "$UV" ] || [ ! -x "$UV" ]; then
-    echo "ERROR: uv not found. Install it: https://docs.astral.sh/uv/"
-    exit 1
-fi
 REPO_ROOT="$REPO_ROOT" \
 UV_CACHE_DIR="$UV_HOME/.cache/uv" \
 VALIDATORS="${VALIDATORS:-1}" \
 GENESIS_VALIDATORS="${GENESIS_VALIDATORS:-${VALIDATORS:-1}}" \
 VALIDATOR_ECONOMICS_PROFILE="${VALIDATOR_ECONOMICS_PROFILE:-0}" \
 DNS_ROOT_ADDR="${DNS_ROOT_ADDR:-}" \
+UNO_WORKCHAIN_PROFILE="${UNO_WORKCHAIN_PROFILE:-0}" \
+NETWORK_GLOBAL_ID="${NETWORK_GLOBAL_ID:-3}" \
 "$UV" run python3 <<'PYEOF'
 import asyncio, json, os, sys, base64, hashlib
 from pathlib import Path
@@ -98,6 +126,7 @@ from ipaddress import IPv4Address
 
 from tostester.install import Install
 from tostester.network import Network, FullNode
+from tosapi import tos_api
 
 REPO = Path(os.environ.get("REPO_ROOT", Path.home() / "tos"))
 BUILD = REPO / "build"
@@ -108,6 +137,10 @@ GENESIS_VALIDATORS = int(os.environ.get("GENESIS_VALIDATORS", str(VALIDATORS)))
 VALIDATOR_ECONOMICS_PROFILE = os.environ.get(
     "VALIDATOR_ECONOMICS_PROFILE", "0"
 ) == "1"
+UNO_WORKCHAIN_PROFILE = os.environ.get("UNO_WORKCHAIN_PROFILE", "0") == "1"
+NETWORK_GLOBAL_ID = int(os.environ.get("NETWORK_GLOBAL_ID", "3"))
+if UNO_WORKCHAIN_PROFILE and NETWORK_GLOBAL_ID in (1, -23903):
+    raise SystemExit("UNO local profile requires a non-mainnet, non-Counter global ID")
 DNS_ROOT_ADDR = os.environ.get("DNS_ROOT_ADDR", "").strip().lower()
 if not DNS_ROOT_ADDR:
     vectors = json.loads(
@@ -134,6 +167,10 @@ install = Install(BUILD, REPO)
 
 async def setup():
     async with Network(install, TESTNET) as network:
+        network.config.global_id = NETWORK_GLOBAL_ID
+        if UNO_WORKCHAIN_PROFILE:
+            network.config.uno_workchain = True
+            network.config.global_version = 16
         network.config.shard_validators = GENESIS_VALIDATORS
         network.config.validator_economics_profile = VALIDATOR_ECONOMICS_PROFILE
         if DNS_ROOT_ADDR:
@@ -149,6 +186,10 @@ async def setup():
             node = network.create_full_node()
             node.make_initial_validator()
             node.announce_to(dht)
+            if UNO_WORKCHAIN_PROFILE:
+                node._local_config.shards_to_monitor = [
+                    tos_api.TosNode_shardId(workchain=0, shard=-(1 << 63))]
+
             nodes.append(node)
         running_nodes = nodes[:VALIDATORS]
 
@@ -164,7 +205,7 @@ async def setup():
             # Populate static dir
             static_dir = node._directory / "static"
             static_dir.mkdir(exist_ok=True)
-            for state in (zs.masterchain, zs.shardchain):
+            for state in (zs.masterchain, zs.shardchain, *zs.extra_shards):
                 link = static_dir / state.file_hash.hex().upper()
                 if not link.exists():
                     link.symlink_to(state.file)
@@ -228,7 +269,7 @@ async def setup():
         (dht_dir / "config.json").write_text(dht._local_config.to_json())
 
         # Port info for systemd generation.
-        port_info = {"dht_port": dht._addr.port, "nodes": [
+        port_info = {"uno_workchain_profile": UNO_WORKCHAIN_PROFILE, "dht_port": dht._addr.port, "nodes": [
             {"idx": i+1, "validator_port": n._addr.port,
              "liteserver_port": n._liteserver_addr.port,
              "console_port": n._engine_console_addr.port,
@@ -259,6 +300,10 @@ chmod 0644 "$DATA/tos-global.json"
 echo "Generating systemd service files..."
 
 PORTS=$(cat "$DATA/testnet-ports.json")
+ROLE_OPTIONS=""
+if [ "${UNO_WORKCHAIN_PROFILE:-0}" = "1" ]; then
+    ROLE_OPTIONS="--not-all-shards"
+fi
 DHT_PORT=$(echo "$PORTS" | python3 -c "import json,sys; print(json.load(sys.stdin)['dht_port'])")
 
 # DHT service
@@ -310,7 +355,7 @@ User=tos
 Group=tos
 UMask=0077
 WorkingDirectory=$NODE_DIR
-ExecStart=$INSTALL_BIN/tos-validator-engine \\
+ExecStart=$INSTALL_BIN/tos-validator-engine $ROLE_OPTIONS \\
   -C /data/tos-global.json \\
   -c $NODE_DIR/config.json \\
   -D $NODE_DIR \\

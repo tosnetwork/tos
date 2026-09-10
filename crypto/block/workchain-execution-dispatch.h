@@ -60,6 +60,8 @@ struct WorkchainEngineKey {
 
 std::string workchain_engine_key_to_string(const WorkchainEngineKey& key);
 WorkchainEngineKey tvm_workchain_engine_key();
+// Protocol identity only; declaring it neither registers nor enables an engine.
+WorkchainEngineKey uno_v2_workchain_engine_key();
 bool workchain_engine_key_is_tvm(const WorkchainEngineKey& key);
 
 struct WorkchainExecutionDescriptor {

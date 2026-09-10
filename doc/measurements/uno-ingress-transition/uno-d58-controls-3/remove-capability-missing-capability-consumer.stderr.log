@@ -1,0 +1,12 @@
+Traceback (most recent call last):
+  File "/home/tomi/tos-m2/crypto/test/workchain-genesis-activation.py", line 32, in <module>
+    helper.check_scoped_probe_output(result.stdout.decode())
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/tomi/tos-m2/crypto/test/workchain-activation-rejection.py", line 89, in check_scoped_probe_output
+    if row[:2] != flags or is_activation_rejection(int(row[2]), row[3]) is not expected:
+                           ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+  File "/home/tomi/tos-m2/crypto/test/workchain-activation-rejection.py", line 46, in is_activation_rejection
+    raise UnclassifiableActivationStatus(
+        f"unclassifiable activation status: boundary={boundary!r}, code={code!r}, message={message!r}"
+    )
+shared_activation.UnclassifiableActivationStatus: unclassifiable activation status: boundary='scoped', code=-7201, message='block workchain has no public native ingress policy'

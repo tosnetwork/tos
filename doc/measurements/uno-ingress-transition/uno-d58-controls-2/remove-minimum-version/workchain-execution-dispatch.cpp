@@ -1,0 +1,868 @@
+/*
+    Workchain execution registry and descriptor normalization.
+*/
+#include "block/workchain-execution-dispatch.h"
+
+#include <sstream>
+#include <limits>
+
+#include "block/block-auto.h"
+#include "block/block-parse.h"
+#include "block/transaction.h"
+#include "td/utils/logging.h"
+#include "td/utils/overloaded.h"
+
+namespace block {
+
+namespace {
+td::Status check_ingress_policy(const WorkchainNativeIngressPolicy& policy) {
+  bool basic = policy.engine_key.format == WorkchainFormat::Basic;
+  bool extended = policy.engine_key.format == WorkchainFormat::Extended;
+  // This policy promises addr_std ingress, whose workchain field is int8.
+  if (policy.workchain_id < 0 || policy.workchain_id > 127 || policy.engine_configuration.is_null() ||
+      (!basic && !extended) ||
+      (policy.custody_address && *policy.custody_address == policy.executor_address) ||
+      (basic && (policy.engine_key.selector < std::numeric_limits<std::int32_t>::min() ||
+                 policy.engine_key.selector > std::numeric_limits<std::int32_t>::max())) ||
+      (extended && (policy.engine_key.selector < 0 ||
+                    policy.engine_key.selector > std::numeric_limits<std::uint32_t>::max() || policy.vm_mode != 0))) {
+    return td::Status::Error("invalid native ingress policy fields");
+  }
+  return td::Status::OK();
+}
+}  // namespace
+
+td::Result<td::Ref<vm::Cell>> encode_workchain_native_ingress_policy(const WorkchainNativeIngressPolicy& policy) {
+  TRY_STATUS(check_ingress_policy(policy));
+  vm::CellBuilder cb;
+  cb.store_long(policy.custody_address ? 0x4abd5ab4 : 0x57495031, 32).store_long(policy.workchain_id, 32)
+      .store_long(policy.engine_key.format == WorkchainFormat::Extended, 1)
+      .store_long(policy.engine_key.selector, 64).store_long(policy.vm_mode, 64)
+      .store_long(policy.descriptor_version, 32).store_bits(policy.executor_address.bits(), 256);
+  if (policy.custody_address) cb.store_bits(policy.custody_address->bits(), 256);
+  return cb.store_ref(policy.engine_configuration).finalize();
+}
+
+td::Result<WorkchainNativeIngressPolicy> decode_workchain_native_ingress_policy(const td::Ref<vm::Cell>& root) {
+  if (root.is_null()) {
+    return td::Status::Error("missing native ingress policy");
+  }
+  try {
+    bool special = false;
+    auto cs = vm::load_cell_slice_special(root, special);
+    if (special || cs.size_refs() != 1 ||
+        !((cs.size() == 481 && cs.prefetch_ulong(32) == 0x57495031) ||
+          (cs.size() == 737 && cs.prefetch_ulong(32) == 0x4abd5ab4))) {
+      return td::Status::Error("invalid native ingress policy encoding");
+    }
+    const bool dual_entry = cs.fetch_ulong(32) == 0x4abd5ab4;
+    WorkchainNativeIngressPolicy policy;
+    policy.workchain_id = static_cast<std::int32_t>(cs.fetch_long(32));
+    policy.engine_key.format = cs.fetch_ulong(1) ? WorkchainFormat::Extended : WorkchainFormat::Basic;
+    policy.engine_key.selector = cs.fetch_long(64);
+    policy.vm_mode = cs.fetch_ulong(64);
+    policy.descriptor_version = static_cast<std::uint32_t>(cs.fetch_ulong(32));
+    if (!cs.fetch_bits_to(policy.executor_address)) {
+      return td::Status::Error("incomplete native ingress executor address");
+    }
+    if (dual_entry) {
+      policy.custody_address.emplace();
+      // Exact 737-bit shape was checked above; 256 bits remain here.
+      cs.fetch_bits_to(*policy.custody_address);
+    }
+    policy.engine_configuration = cs.fetch_ref();
+    TRY_STATUS(check_ingress_policy(policy));
+    return policy;
+  } catch (vm::VmError&) {
+    return td::Status::Error("invalid native ingress policy cells");
+  } catch (vm::VmVirtError&) {
+    return td::Status::Error("incomplete native ingress policy proof");
+  }
+}
+
+td::Result<td::Ref<vm::Cell>> encode_workchain_native_ingress_table(
+    const std::vector<WorkchainNativeIngressPolicy>& policies) {
+  vm::Dictionary dictionary(32);
+  for (const auto& policy : policies) {
+    TRY_RESULT(encoded, encode_workchain_native_ingress_policy(policy));
+    td::BitArray<32> key(static_cast<std::uint64_t>(policy.workchain_id));
+    if (!dictionary.set_ref(key, encoded, vm::Dictionary::SetMode::Add)) {
+      return td::Status::Error("duplicate native ingress workchain");
+    }
+  }
+  vm::CellBuilder cb;
+  if (!cb.store_long_bool(0x57495431, 32) || !std::move(dictionary).append_dict_to_bool(cb)) {
+    return td::Status::Error("cannot encode native ingress table");
+  }
+  return cb.finalize();
+}
+
+td::Result<WorkchainNativeIngressTable> decode_workchain_native_ingress_table(const td::Ref<vm::Cell>& root) {
+  if (root.is_null()) {
+    return td::Status::Error("missing native ingress table");
+  }
+  try {
+    bool special = false;
+    auto cs = vm::load_cell_slice_special(root, special);
+    if (special || cs.size() != 33 || cs.fetch_ulong(32) != 0x57495431 ||
+        cs.size_refs() != cs.prefetch_ulong(1)) {
+      return td::Status::Error("invalid native ingress table encoding");
+    }
+    vm::Dictionary dictionary(cs, 32);
+    WorkchainNativeIngressTable table;
+    if (!dictionary.check_for_each([&](td::Ref<vm::CellSlice> value, td::ConstBitPtr key, int) {
+          if (value->size_ext() != 0x10000) {
+            return false;
+          }
+          auto decoded = decode_workchain_native_ingress_policy(value->prefetch_ref());
+          if (decoded.is_error()) {
+            return false;
+          }
+          auto policy = decoded.move_as_ok();
+          if (key.get_int(32) != policy.workchain_id) {
+            return false;
+          }
+          auto id = policy.workchain_id;
+          return table.emplace(id, std::move(policy)).second;
+        })) {
+      return td::Status::Error("invalid native ingress table entry or key");
+    }
+    return table;
+  } catch (vm::VmError&) {
+    return td::Status::Error("invalid native ingress table cells");
+  } catch (vm::VmVirtError&) {
+    return td::Status::Error("incomplete native ingress table proof");
+  }
+}
+
+std::optional<WorkchainExecutionScope> reserved_workchain_engine_scope(const WorkchainEngineKey& key) {
+  if (workchain_engine_key_is_tvm(key)) return WorkchainExecutionScope::AccountCompute;
+  return std::nullopt;
+}
+
+td::Status validate_workchain_native_ingress_binding(const WorkchainNativeIngressPolicy& policy,
+                                                    const WorkchainExecutionDescriptor& descriptor) {
+  TRY_STATUS(check_ingress_policy(policy));
+  const auto reserved_scope = reserved_workchain_engine_scope(policy.engine_key);
+  if (reserved_scope && *reserved_scope != WorkchainExecutionScope::BlockTransition) {
+    return td::Status::Error("native ingress scope conflicts with reserved engine protocol scope");
+  }
+  if (!descriptor.active || descriptor.min_split != 0 || descriptor.max_split != 0 ||
+      policy.workchain_id != descriptor.workchain_id ||
+      !(policy.engine_key == workchain_engine_key_from_descriptor(descriptor)) ||
+      policy.descriptor_version != descriptor.version ||
+      policy.vm_mode != (descriptor.format == WorkchainFormat::Basic ? descriptor.vm_mode : 0)) {
+    return td::Status::Error("native ingress policy differs from execution descriptor");
+  }
+  return td::Status::OK();
+}
+
+td::Status validate_native_ingress_presence(vm::Dictionary& configuration) {
+  if (!configuration.int_key_exists(kWorkchainNativeIngressConfigParam)) {
+    return td::Status::OK();
+  }
+  block::gen::GlobalVersion::Record version;
+  auto root = configuration.lookup_ref(td::BitArray<32>{8});
+  if (root.is_null() || !tlb::unpack_cell(root, version) ||
+      version.version < kBlockTransitionMinGlobalVersion || !(version.capabilities & tos::capBlockTransition)) {
+    return td::Status::Error("native ingress parameter requires activated host version and capability");
+  }
+  TRY_RESULT(table, decode_workchain_native_ingress_table(
+      configuration.lookup_ref(td::BitArray<32>{kWorkchainNativeIngressConfigParam})));
+  for (const auto& [id, policy] : table) {
+    if (policy.custody_address && version.version < transaction::Transaction::kStorageParticipantMinGlobalVersion) {
+      return td::Status::Error("dual native ingress requires the multi-account host version");
+    }
+    if (policy.custody_address) {
+      // Configuration installation, not candidate admission: never reinterpret
+      // an unknown metering profile using the singleton prototype's rules.
+      TRY_RESULT(parameters, decode_workchain_engine_parameters(policy.engine_configuration));
+      if (!workchain_batch_admission_version_supported(parameters.resources.admission_version)) {
+        return td::Status::Error("unsupported multi-account admission version in configuration");
+      }
+      if (!workchain_batch_input_bounds_nonzero(parameters.resources)) {
+        return td::Status::Error("zero multi-account input bound in configuration");
+      }
+      // Business parameters remain opaque here and are validated by the engine.
+    }
+  }
+  return td::Status::OK();
+}
+
+td::Result<WorkchainNativeIngressTable> load_workchain_native_ingress_table(const block::Config& configuration) {
+  if (configuration.get_global_version() < kBlockTransitionMinGlobalVersion ||
+      !configuration.has_capability(tos::capBlockTransition)) {
+    return WorkchainNativeIngressTable{};
+  }
+  TRY_STATUS(validate_workchain_block_activation(configuration));
+  auto root = configuration.get_config_param(kWorkchainNativeIngressConfigParam);
+  // Host activation alone does not require a configured block workchain.
+  // Per-workchain resolution still requires its own explicit ingress policy.
+  if (root.is_null()) {
+    return WorkchainNativeIngressTable{};
+  }
+  TRY_RESULT(table, decode_workchain_native_ingress_table(root));
+  for (const auto& [id, policy] : table) {
+    if (policy.custody_address &&
+        configuration.get_global_version() < transaction::Transaction::kStorageParticipantMinGlobalVersion) {
+      return td::Status::Error("dual native ingress requires the multi-account host version");
+    }
+  }
+  return table;
+}
+
+td::Result<std::map<tos::WorkchainId, std::set<tos::StdSmcAddress>>> resolve_native_ingress_destinations(
+    const block::Config& configuration) {
+  TRY_RESULT(table, load_workchain_native_ingress_table(configuration));
+  std::map<tos::WorkchainId, std::set<tos::StdSmcAddress>> destinations;
+  for (const auto& [id, policy] : table) {
+    auto it = configuration.get_workchain_list().find(id);
+    if (it == configuration.get_workchain_list().end() || it->second.is_null()) {
+      return td::Status::Error("native ingress policy has no workchain descriptor");
+    }
+    TRY_RESULT(descriptor, normalize_workchain_descriptor(*it->second));
+    TRY_STATUS(validate_workchain_native_ingress_binding(policy, descriptor));
+    auto& allowed = destinations[id];
+    allowed.insert(policy.executor_address);
+    if (policy.custody_address) allowed.insert(*policy.custody_address);
+  }
+  return destinations;
+}
+
+namespace {
+
+constexpr std::int32_t kTvmVmVersion = -1;
+
+struct TvmEngineConfig final : public WorkchainEngineConfig {
+};
+
+class TvmDescriptorEngine final : public WorkchainEngine {
+ public:
+  WorkchainEngineKey engine_key() const override {
+    return tvm_workchain_engine_key();
+  }
+
+  td::Result<std::shared_ptr<const WorkchainEngineConfig>> validate_and_resolve_config(
+      const WorkchainExecutionDescriptor& descriptor,
+      const block::Config& /*block_transition_config*/) const override {
+    if (!workchain_engine_key_is_tvm(workchain_engine_key_from_descriptor(descriptor))) {
+      return td::Status::Error("TVM engine received non-TVM descriptor");
+    }
+    if (descriptor.vm_mode != 0) {
+      return td::Status::Error("TVM descriptor requires vm_mode=0");
+    }
+    std::shared_ptr<const WorkchainEngineConfig> result = std::make_shared<TvmEngineConfig>();
+    return result;
+  }
+
+  AccountExecutionPolicy account_policy(const WorkchainExecutionDescriptor& /*descriptor*/,
+                                        const WorkchainEngineConfig& /*engine_config*/) const override {
+    return AccountExecutionPolicy{};
+  }
+
+  td::Result<WorkchainComputeOutput> run_compute(const WorkchainComputeInput& /*input*/,
+                                                 const WorkchainComputeContext& /*context*/) const override {
+    return td::Status::Error("TVM uses the native transaction.cpp compute path");
+  }
+};
+
+}  // namespace
+
+std::string workchain_engine_key_to_string(const WorkchainEngineKey& key) {
+  std::ostringstream os;
+  os << (key.format == WorkchainFormat::Basic ? "Basic" : "Extended") << ":" << key.selector;
+  return os.str();
+}
+
+bool workchain_engine_key_is_tvm(const WorkchainEngineKey& key) {
+  return key == tvm_workchain_engine_key();
+}
+
+WorkchainEngineKey uno_v2_workchain_engine_key() {
+  return {WorkchainFormat::Basic, 0x554e4f32};  // ASCII UNO2, one production definition.
+}
+
+WorkchainEngineKey tvm_workchain_engine_key() {
+  return {WorkchainFormat::Basic, kTvmVmVersion};
+}
+
+td::Result<WorkchainExecutionDescriptor> normalize_workchain_descriptor(const WorkchainInfo& info) {
+  if (!info.is_valid()) {
+    return td::Status::Error("cannot normalize invalid WorkchainInfo");
+  }
+
+  WorkchainExecutionDescriptor descriptor;
+  descriptor.workchain_id = info.workchain;
+  descriptor.enabled_since = info.enabled_since;
+  descriptor.active = info.active;
+  descriptor.accept_msgs = info.accept_msgs;
+  descriptor.format = info.basic ? WorkchainFormat::Basic : WorkchainFormat::Extended;
+  descriptor.version = info.version;
+  descriptor.vm_version = info.vm_version;
+  descriptor.vm_mode = info.vm_mode;
+  descriptor.workchain_type_id = info.basic ? 0 : info.workchain_type_id;
+  descriptor.min_split = static_cast<std::uint8_t>(info.min_split);
+  descriptor.max_split = static_cast<std::uint8_t>(info.max_split);
+  descriptor.min_addr_len = static_cast<std::uint16_t>(info.min_addr_len);
+  descriptor.max_addr_len = static_cast<std::uint16_t>(info.max_addr_len);
+  descriptor.addr_len_step = static_cast<std::uint16_t>(info.addr_len_step);
+  descriptor.zerostate_root_hash = info.zerostate_root_hash;
+  descriptor.zerostate_file_hash = info.zerostate_file_hash;
+  return descriptor;
+}
+
+WorkchainEngineKey workchain_engine_key_from_descriptor(const WorkchainExecutionDescriptor& descriptor) {
+  if (descriptor.format == WorkchainFormat::Basic) {
+    return WorkchainEngineKey{descriptor.format, static_cast<std::int64_t>(descriptor.vm_version)};
+  }
+  return WorkchainEngineKey{descriptor.format, static_cast<std::int64_t>(descriptor.workchain_type_id)};
+}
+
+td::Status validate_workchain_execution_descriptor_transitions(
+    const WorkchainSet& old_workchains, const WorkchainSet& new_workchains) {
+  for (const auto& [workchain_id, old_info] : old_workchains) {
+    if (old_info.is_null()) {
+      continue;
+    }
+    auto new_it = new_workchains.find(workchain_id);
+    if (new_it == new_workchains.end() || new_it->second.is_null()) {
+      return td::Status::Error(PSTRING() << "workchain " << workchain_id
+                                         << " removes its execution descriptor"
+                                         << " without an explicit migration rule");
+    }
+    const auto& new_info = new_it->second;
+    TRY_RESULT(old_descriptor, normalize_workchain_descriptor(*old_info));
+    TRY_RESULT(new_descriptor, normalize_workchain_descriptor(*new_info));
+    auto old_key = workchain_engine_key_from_descriptor(old_descriptor);
+    auto new_key = workchain_engine_key_from_descriptor(new_descriptor);
+    if (!(old_key == new_key)) {
+      return td::Status::Error(PSTRING() << "active workchain " << workchain_id
+                                         << " changes execution key from "
+                                         << workchain_engine_key_to_string(old_key)
+                                         << " to "
+                                         << workchain_engine_key_to_string(new_key)
+                                         << " without an explicit migration rule");
+    }
+    if (old_descriptor.version != new_descriptor.version) {
+      return td::Status::Error(PSTRING() << "active workchain " << workchain_id
+                                         << " changes WorkchainDescr version from "
+                                         << old_descriptor.version << " to "
+                                         << new_descriptor.version
+                                         << " without an explicit migration rule");
+    }
+    if (old_descriptor.format == WorkchainFormat::Basic &&
+        old_descriptor.vm_mode != new_descriptor.vm_mode) {
+      return td::Status::Error(PSTRING() << "active workchain " << workchain_id
+                                         << " changes vm_mode from "
+                                         << old_descriptor.vm_mode << " to "
+                                         << new_descriptor.vm_mode
+                                         << " without an explicit migration rule");
+    }
+    if (old_descriptor.min_addr_len != new_descriptor.min_addr_len ||
+        old_descriptor.max_addr_len != new_descriptor.max_addr_len ||
+        old_descriptor.addr_len_step != new_descriptor.addr_len_step) {
+      return td::Status::Error(PSTRING() << "active workchain " << workchain_id
+                                         << " changes address-length shape"
+                                         << " without an explicit migration rule");
+    }
+    // Zerostate hash changes for active workchains are state forks unless a
+    // future migration rule explicitly defines otherwise.
+    if (old_descriptor.zerostate_root_hash != new_descriptor.zerostate_root_hash) {
+      return td::Status::Error(PSTRING() << "active workchain " << workchain_id
+                                         << " changes zerostate_root_hash"
+                                         << " without an explicit migration rule");
+    }
+    if (old_descriptor.zerostate_file_hash != new_descriptor.zerostate_file_hash) {
+      return td::Status::Error(PSTRING() << "active workchain " << workchain_id
+                                         << " changes zerostate_file_hash"
+                                         << " without an explicit migration rule");
+    }
+  }
+  return td::Status::OK();
+}
+
+void WorkchainExecutionRegistry::register_engine(std::unique_ptr<WorkchainEngine> engine) {
+  CHECK(engine != nullptr);
+  auto key = engine->engine_key();
+  CHECK(block_engines_.count(key) == 0 && account_engines_.count(key) == 0);
+  auto inserted = engines_.emplace(key, std::move(engine));
+  LOG_CHECK(inserted.second) << "duplicate workchain engine registration for "
+                             << workchain_engine_key_to_string(key);
+}
+
+bool WorkchainExecutionRegistry::register_engine_if_absent(std::unique_ptr<WorkchainEngine> engine) {
+  CHECK(engine != nullptr);
+  auto key = engine->engine_key();
+  if (has_engine(key)) {
+    return false;
+  }
+  auto inserted = engines_.emplace(key, std::move(engine));
+  LOG_CHECK(inserted.second) << "duplicate workchain engine registration for "
+                             << workchain_engine_key_to_string(key);
+  return true;
+}
+
+bool WorkchainExecutionRegistry::has_engine(const WorkchainEngineKey& key) const {
+  return engines_.count(key) != 0 || block_engines_.count(key) != 0 || account_engines_.count(key) != 0;
+}
+
+td::Status WorkchainExecutionRegistry::register_account_engine(
+    std::unique_ptr<RegisteredWorkchainAccountEngine> engine) {
+  if (!engine) return td::Status::Error("cannot register null account engine");
+  const auto key = engine->engine_key();
+  if (workchain_engine_key_is_tvm(key) || has_engine(key)) {
+    return td::Status::Error("account engine key is reserved or already registered");
+  }
+  account_engines_.emplace(key, std::move(engine));
+  return td::Status::OK();
+}
+
+td::Result<ResolvedWorkchainAccountBinding> WorkchainExecutionRegistry::resolve_account_binding(
+    const WorkchainExecutionDescriptor& descriptor, const block::Config& configuration) const {
+  auto it = account_engines_.find(workchain_engine_key_from_descriptor(descriptor));
+  if (it == account_engines_.end()) return td::Status::Error("descriptor has no registered account engine");
+  // The shared loader enforces activation; binding below enforces active and
+  // unsplit execution before the callback. Do not duplicate those predicates.
+  TRY_RESULT(table, load_workchain_native_ingress_table(configuration));
+  auto ingress = table.find(descriptor.workchain_id);
+  if (ingress == table.end() || !ingress->second.custody_address) {
+    return td::Status::Error("multi-account engine requires dual native ingress");
+  }
+  TRY_STATUS(validate_workchain_native_ingress_binding(ingress->second, descriptor));
+  auto decoded_parameters = decode_workchain_engine_parameters(ingress->second.engine_configuration);
+  if (decoded_parameters.is_error()) {
+    return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::AuthenticatedStateCorrupt),
+                             "authenticated engine configuration cannot be decoded");
+  }
+  auto parameters = decoded_parameters.move_as_ok();
+  auto configuration_root = configuration.get_root_cell();
+  if (configuration_root.is_null()) {
+    return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),
+                             "missing authenticated configuration root");
+  }
+  const auto& resources = parameters.resources;
+  auto input_policy = ResolvedBatchInputPolicy::from_resolved_fields(resources,
+      {configuration_root->get_hash(), descriptor.format == WorkchainFormat::Extended,
+       ingress->second.engine_key.selector, descriptor.vm_mode, descriptor.version, resources.admission_version});
+  if (std::holds_alternative<ConfigInvalid>(input_policy)) {
+    return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::AuthenticatedStateCorrupt),
+                             "invalid authenticated input resource limits");
+  }
+  if (std::holds_alternative<LocalUnavailable>(input_policy)) {
+    return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),
+                             "unsupported authenticated admission version");
+  }
+  TRY_RESULT(config, it->second->validate_and_resolve_config(descriptor, configuration,
+                                                           ingress->second.engine_configuration));
+  if (!config) return td::Status::Error("account engine returned null configuration");
+  return ResolvedWorkchainAccountBinding{it->second.get(), descriptor, ingress->second, std::move(config),
+                                         std::move(configuration_root),
+                                         std::get<ResolvedBatchInputPolicy>(std::move(input_policy))};
+}
+
+td::Status WorkchainExecutionRegistry::register_block_engine(std::unique_ptr<RegisteredWorkchainBlockEngine> engine) {
+  if (!engine) {
+    return td::Status::Error("cannot register null block engine");
+  }
+  auto key = engine->engine_key();
+  if (workchain_engine_key_is_tvm(key) || has_engine(key)) {
+    return td::Status::Error("block engine key is reserved or already registered");
+  }
+  block_engines_.emplace(key, std::move(engine));
+  return td::Status::OK();
+}
+
+td::Result<ResolvedWorkchainAccountBinding> WorkchainExecutionRegistry::resolve_account_binding_from_config(
+    tos::WorkchainId workchain_id, const block::Config& configuration) const {
+  constexpr int required = block::Config::needWorkchainInfo | block::Config::needCapabilities;
+  if ((configuration.mode & required) != required) {
+    return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),
+                             "account binding requires locally unpacked descriptors and capabilities");
+  }
+  const auto& workchains = configuration.get_workchain_list();
+  auto it = workchains.find(workchain_id);
+  if (it == workchains.end()) {
+    return td::Status::Error("account workchain descriptor is absent from configuration");
+  }
+  // Config's parser only inserts successfully unpacked, non-null entries and
+  // assigns their workchain identity from the dictionary key.
+  TRY_RESULT(descriptor, normalize_workchain_descriptor(*it->second));
+  return resolve_account_binding(descriptor, configuration);
+}
+
+std::optional<WorkchainExecutionScope> WorkchainExecutionRegistry::execution_scope(const WorkchainEngineKey& key) const {
+  if (engines_.count(key)) {
+    return WorkchainExecutionScope::AccountCompute;
+  }
+  if (block_engines_.count(key) || account_engines_.count(key)) {
+    // Scope identifies whole-block execution, not the accepted transaction
+    // record set. The singleton resolver remains separate from account binding.
+    return WorkchainExecutionScope::BlockTransition;
+  }
+  return std::nullopt;
+}
+
+td::Status validate_workchain_block_activation(const block::Config& configuration) {
+  if (false ||
+      !configuration.has_capability(tos::capBlockTransition)) {
+    return td::Status::Error("block transition is not activated by global version and capability");
+  }
+  return td::Status::OK();
+}
+
+td::Result<ResolvedWorkchainBlockExecution> WorkchainExecutionRegistry::resolve_block(
+    const WorkchainExecutionDescriptor& descriptor, const block::Config& configuration) const {
+  if (!descriptor.active) {
+    return td::Status::Error("block workchain is inactive");
+  }
+  auto key = workchain_engine_key_from_descriptor(descriptor);
+  auto it = block_engines_.find(key);
+  if (it == block_engines_.end()) {
+    return td::Status::Error("descriptor has no registered block engine");
+  }
+  TRY_STATUS(validate_workchain_block_activation(configuration));
+  TRY_RESULT(ingress_table, load_workchain_native_ingress_table(configuration));
+  auto ingress = ingress_table.find(descriptor.workchain_id);
+  if (ingress == ingress_table.end()) {
+    return td::Status::Error("block workchain has no public native ingress policy");
+  }
+  TRY_STATUS(validate_workchain_native_ingress_binding(ingress->second, descriptor));
+  if (ingress->second.custody_address) {
+    return td::Status::Error("single-account block engine cannot execute a dual-entry policy");
+  }
+  TRY_RESULT(config, it->second->validate_and_resolve_config(descriptor, configuration,
+                                                           ingress->second.engine_configuration));
+  if (!config) {
+    return td::Status::Error("block engine returned null configuration");
+  }
+  TRY_RESULT(policy, it->second->block_policy(descriptor, *config));
+  if (ingress->second.executor_address != policy.executor_address) {
+    return td::Status::Error("engine executor differs from public native ingress policy");
+  }
+  if (!policy.limits.wire_bytes || !policy.limits.verification_units || !policy.limits.written_cells) {
+    return td::Status::Error("block execution policy requires explicit nonzero resource limits");
+  }
+  return ResolvedWorkchainBlockExecution{it->second.get(), descriptor, std::move(config), std::move(policy)};
+}
+
+td::Result<WorkchainBlockResult> execute_resolved_workchain_block(
+    const ResolvedWorkchainBlockExecution& execution, const WorkchainBlockInput& input) try {
+  if (!execution.executor || !execution.engine_config) {
+    return td::Status::Error("missing resolved block execution configuration");
+  }
+  TRY_RESULT(context, encode_workchain_block_input(input));
+  TRY_RESULT(state, extract_workchain_engine_state(input.previous_shard_state, execution.descriptor.workchain_id,
+                                                  execution.policy.executor_address));
+  TRY_RESULT(result, execution.executor->execute_block(input));
+  TRY_STATUS(validate_workchain_block_result(result));
+  const auto& limits = execution.policy.limits;
+  if (result.usage.wire_bytes > limits.wire_bytes || result.usage.verification_units > limits.verification_units ||
+      result.usage.written_cells > limits.written_cells) {
+    return td::Status::Error("block execution exceeds configured resource limits");
+  }
+  return result;
+} catch (vm::VmError&) {
+  return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),
+                           "unclassified block engine VM failure");
+} catch (vm::VmVirtError&) {
+  return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),
+                           "unclassified block engine virtual-cell failure");
+} catch (vm::VmNoGas&) {
+  return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),
+                           "unclassified block engine gas failure");
+} catch (vm::CellBuilder::CellCreateError&) {
+  return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),
+                           "unclassified block engine cell construction failure");
+} catch (vm::CellBuilder::CellWriteError&) {
+  return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),
+                           "unclassified block engine cell write failure");
+}
+
+td::Result<std::unique_ptr<transaction::Transaction>> prepare_resolved_workchain_batch_transaction(
+    const ResolvedWorkchainBlockExecution& execution, const WorkchainBlockInput& input, Account& account,
+    std::uint64_t expected_lt, std::uint32_t expected_utime, const SerializeConfig& cfg,
+    const ActionPhaseConfig* message_cfg) {
+  if (account.workchain != execution.descriptor.workchain_id || account.addr != execution.policy.executor_address) {
+    return td::Status::Error("batch staging account differs from configured executor");
+  }
+  TRY_RESULT(effects, execute_resolved_workchain_block(execution, input));
+  auto batch = std::make_unique<transaction::Transaction>(
+      account, transaction::Transaction::tr_workchain_batch, expected_lt, expected_utime);
+  if (batch->start_lt != expected_lt) {
+    return td::Status::Error("batch staging logical time differs from requested time");
+  }
+  TRY_STATUS(batch->prepare_workchain_batch(input, effects, cfg, message_cfg));
+  if (!batch->serialize(cfg)) {
+    return td::Status::Error("cannot serialize staged block batch transaction");
+  }
+  return batch;
+}
+
+td::Result<td::Ref<vm::Cell>> replay_resolved_workchain_batch_state(
+    const ResolvedWorkchainBlockExecution& execution, const WorkchainBlockReplayContext& context,
+    const td::Ref<vm::Cell>& claimed_shard, const td::Ref<vm::Cell>& claimed_transaction,
+    std::uint64_t expected_lt, std::uint32_t expected_utime, const SerializeConfig& cfg,
+    const ActionPhaseConfig* message_cfg) {
+  class ConfiguredEngine final : public WorkchainBlockEngine {
+   public:
+    explicit ConfiguredEngine(const ResolvedWorkchainBlockExecution& execution) : execution_(execution) {
+    }
+    td::Result<WorkchainBlockResult> execute_block(const WorkchainBlockInput& input) const override {
+      return execute_resolved_workchain_block(execution_, input);
+    }
+   private:
+    const ResolvedWorkchainBlockExecution& execution_;
+  } engine(execution);
+  return replay_workchain_batch_state(engine, context, claimed_shard, claimed_transaction,
+                                      execution.descriptor.workchain_id, execution.policy.executor_address,
+                                      expected_lt, expected_utime, cfg, message_cfg);
+}
+
+td::Status replay_resolved_workchain_account_block(
+    const ResolvedWorkchainBlockExecution& execution, const WorkchainBlockReplayContext& context,
+    const td::Ref<vm::Cell>& claimed_shard, const td::Ref<vm::Cell>& account_block,
+    std::uint32_t expected_utime, const SerializeConfig& cfg, const ActionPhaseConfig* message_cfg) {
+  try {
+    gen::AccountBlock::Record record;
+    if (account_block.is_null() || !gen::t_AccountBlock.validate_ref(4096, account_block) ||
+        !tlb::unpack_cell(account_block, record)) {
+      return td::Status::Error("invalid block executor AccountBlock");
+    }
+    if (record.account_addr != execution.policy.executor_address) {
+      return td::Status::Error("AccountBlock differs from configured executor identity");
+    }
+    vm::AugmentedDictionary transactions(vm::DictNonEmpty(), record.transactions, 64, tlb::aug_AccountTransactions);
+    td::Ref<vm::Cell> transaction;
+    std::uint64_t lt = 0;
+    if (!transactions.validate_check_extra([&](td::Ref<vm::CellSlice> value, td::Ref<vm::CellSlice>,
+                                               td::ConstBitPtr key, int bits) {
+          if (bits != 64 || transaction.not_null() || value->size_ext() != 0x10000) {
+            return false;
+          }
+          lt = key.get_uint(64);
+          transaction = value->prefetch_ref();
+          return true;
+        }) || transaction.is_null()) {
+      return td::Status::Error("block executor requires exactly one batch transaction");
+    }
+    gen::Transaction::Record batch;
+    if (!tlb::unpack_cell(transaction, batch) || batch.state_update->get_hash() != record.state_update->get_hash()) {
+      return td::Status::Error("AccountBlock state update differs from its batch transaction");
+    }
+    TRY_RESULT(replayed, replay_resolved_workchain_batch_state(
+        execution, context, claimed_shard, transaction, lt, expected_utime, cfg, message_cfg));
+    return td::Status::OK();
+  } catch (vm::VmError&) {
+    return td::Status::Error("invalid block executor AccountBlock cells");
+  } catch (vm::VmVirtError&) {
+    return td::Status::Error("incomplete block executor AccountBlock proof");
+  }
+}
+
+td::Result<ResolvedWorkchainExecution> WorkchainExecutionRegistry::resolve(
+    const WorkchainExecutionDescriptor& descriptor, const block::Config& block_transition_config) const {
+  if (!descriptor.active) {
+    return td::Status::Error(PSTRING() << "workchain " << descriptor.workchain_id << " is inactive");
+  }
+  auto key = workchain_engine_key_from_descriptor(descriptor);
+  if (block_engines_.count(key)) {
+    return td::Status::Error("block engine cannot execute through account compute");
+  }
+  TRY_RESULT(ingress, load_workchain_native_ingress_table(block_transition_config));
+  if (ingress.count(descriptor.workchain_id)) {
+    return td::Status::Error("declared block scope cannot execute through account compute");
+  }
+  auto it = engines_.find(key);
+  if (it == engines_.end()) {
+    return td::Status::Error(PSTRING() << "missing workchain engine " << workchain_engine_key_to_string(key)
+                                       << " for workchain " << descriptor.workchain_id);
+  }
+  TRY_RESULT(engine_config, it->second->validate_and_resolve_config(descriptor, block_transition_config));
+  if (!engine_config) {
+    return td::Status::Error("account engine returned null configuration");
+  }
+  ResolvedWorkchainExecution resolved;
+  resolved.executor = it->second.get();
+  resolved.descriptor = descriptor;
+  resolved.engine_config = std::move(engine_config);
+  return resolved;
+}
+
+td::Result<ResolvedScopedWorkchainExecution> WorkchainExecutionRegistry::resolve_scoped(
+    const WorkchainExecutionDescriptor& descriptor, const block::Config& configuration) const {
+  TRY_RESULT(ingress, load_workchain_native_ingress_table(configuration));
+  auto policy = ingress.find(descriptor.workchain_id);
+  if (policy != ingress.end() && policy->second.custody_address) {
+    TRY_RESULT(binding, resolve_account_binding(descriptor, configuration));
+    return ResolvedScopedWorkchainExecution{std::move(binding)};
+  }
+  if (policy != ingress.end() ||
+      execution_scope(workchain_engine_key_from_descriptor(descriptor)) == WorkchainExecutionScope::BlockTransition) {
+    TRY_RESULT(resolved, resolve_block(descriptor, configuration));
+    return ResolvedScopedWorkchainExecution{std::move(resolved)};
+  }
+  TRY_RESULT(resolved, resolve(descriptor, configuration));
+  return ResolvedScopedWorkchainExecution{std::move(resolved)};
+}
+
+td::Result<std::optional<ResolvedScopedWorkchainExecution>> WorkchainExecutionRegistry::resolve_scoped_workchain(
+    const block::WorkchainSet& workchains, tos::WorkchainId workchain_id, const block::Config& configuration) const {
+  if (&workchains != &configuration.get_workchain_list()) {
+    return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),
+                             "execution descriptor map is not owned by this configuration");
+  }
+  if (workchain_id == tos::masterchainId) {
+    return std::optional<ResolvedScopedWorkchainExecution>{};
+  }
+  auto it = workchains.find(workchain_id);
+  if (it == workchains.end() || it->second.is_null() || !it->second->active) {
+    return std::optional<ResolvedScopedWorkchainExecution>{};
+  }
+  TRY_RESULT(descriptor, normalize_workchain_descriptor(*it->second));
+  if (descriptor.workchain_id != workchain_id) {
+    return td::Status::Error("workchain descriptor identity differs from configuration key");
+  }
+  TRY_RESULT(resolved, resolve_scoped(descriptor, configuration));
+  return std::optional<ResolvedScopedWorkchainExecution>{std::move(resolved)};
+}
+
+td::Result<std::optional<ResolvedScopedWorkchainExecution>> WorkchainExecutionRegistry::resolve_scoped_workchain(
+    tos::WorkchainId workchain_id, const block::Config& configuration) const {
+  if (workchain_id == tos::masterchainId) return std::optional<ResolvedScopedWorkchainExecution>{};
+  constexpr int required = block::Config::needWorkchainInfo | block::Config::needCapabilities;
+  if ((configuration.mode & required) != required) {
+    return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),
+                             "execution resolution requires unpacked descriptors and capabilities");
+  }
+  try {
+    auto result = resolve_scoped_workchain(configuration.get_workchain_list(), workchain_id, configuration);
+    if (result.is_ok() || workchain_execution_requires_local_failure(result.error())) return result;
+    // Resolution consumes only the caller-authenticated Config and local engine
+    // registry. A plain failure here says nothing about candidate validity.
+    if (result.error().code() == static_cast<int>(WorkchainExecutionFailure::CandidateInvalid)) {
+      return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),
+                               PSTRING() << "configuration callback incorrectly classified a local failure as candidate invalid: "
+                                         << result.error().message());
+    }
+    return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),
+                             result.error().message());
+  } catch (...) {
+    // This boundary includes local engine configuration callbacks, whose C++
+    // exception types are not restricted to VmError. No candidate enters it.
+    return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),
+                             "authenticated execution configuration unavailable");
+  }
+}
+
+td::Result<std::optional<ResolvedWorkchainExecution>> WorkchainExecutionRegistry::resolve_workchain(
+    const block::WorkchainSet& workchains, tos::WorkchainId workchain_id,
+    const block::Config& block_transition_config) const {
+  if (workchain_id == tos::masterchainId) {
+    return std::optional<ResolvedWorkchainExecution>{};
+  }
+  auto it = workchains.find(workchain_id);
+  if (it == workchains.end() || it->second.is_null() || !it->second->active) {
+    return std::optional<ResolvedWorkchainExecution>{};
+  }
+  TRY_RESULT(descriptor, normalize_workchain_descriptor(*it->second));
+  TRY_RESULT(resolved, resolve(descriptor, block_transition_config));
+  return std::optional<ResolvedWorkchainExecution>{std::move(resolved)};
+}
+
+td::Result<std::optional<AccountExecutionPolicy>> WorkchainExecutionRegistry::resolve_account_policy(
+    const block::WorkchainSet& workchains, tos::WorkchainId workchain_id,
+    const block::Config& block_transition_config) const {
+  TRY_RESULT(resolved, resolve_workchain(workchains, workchain_id, block_transition_config));
+  if (!resolved.has_value()) {
+    return std::optional<AccountExecutionPolicy>{};
+  }
+  auto policy = resolved->executor->account_policy(resolved->descriptor, *resolved->engine_config);
+  TRY_STATUS(validate_account_execution_policy_supported(policy));
+  return std::optional<AccountExecutionPolicy>{std::move(policy)};
+}
+
+td::Status WorkchainExecutionRegistry::validate_required_workchains(
+    const block::WorkchainSet& workchains, const block::Config& block_transition_config,
+    const LocalWorkchainRoleSet& local_roles) const {
+  if (&workchains != &block_transition_config.get_workchain_list()) {
+    return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),
+                             "required-role descriptor map is not owned by this configuration");
+  }
+  constexpr int required = block::Config::needWorkchainInfo | block::Config::needCapabilities;
+  if ((block_transition_config.mode & required) != required) {
+    return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),
+                             "required-role resolution requires unpacked descriptors and capabilities");
+  }
+  try {
+    for (const auto& [workchain_id, info] : workchains) {
+      if (info.is_null() || !info->active || !local_roles.requires_local_execution(workchain_id)) {
+        continue;
+      }
+      TRY_RESULT(resolved, resolve_scoped_workchain(workchain_id, block_transition_config));
+      if (resolved.has_value()) {
+        auto status = std::visit(td::overloaded(
+            [](const ResolvedWorkchainExecution& account) {
+              return validate_account_execution_policy_supported(
+                  account.executor->account_policy(account.descriptor, *account.engine_config));
+            },
+            [](const ResolvedWorkchainBlockExecution&) { return td::Status::OK(); },
+            [](const ResolvedWorkchainAccountBinding&) {
+              // Engine registration and successful configuration parsing do not
+              // establish that this binary can admit and replay account batches.
+              return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),
+                                       "multi-account admission and replay are not connected");
+            }), *resolved);
+        if (status.is_error()) {
+          return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable), status.message());
+        }
+      }
+    }
+    return td::Status::OK();
+  } catch (...) {
+    // Required-role checks run before candidate processing, including the
+    // engine's account-policy callback. No candidate data enters this scope.
+    return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),
+                             "authenticated required-role configuration unavailable");
+  }
+}
+
+td::Status validate_account_execution_policy_supported(const AccountExecutionPolicy& policy) {
+  switch (policy.kind) {
+    case AccountExecutionPolicyKind::AnyAccount:
+      return td::Status::OK();
+    case AccountExecutionPolicyKind::SingletonExecutor:
+      if (!policy.singleton_address.has_value()) {
+        return td::Status::Error("singleton executor policy is missing singleton_address");
+      }
+      return td::Status::OK();
+    case AccountExecutionPolicyKind::ShardLocalExecutor:
+      return td::Status::Error("shard-local executor policy is not implemented by the host");
+    case AccountExecutionPolicyKind::EngineDefined:
+      // Engine-defined policy: the engine owns address-space routing within
+      // its workchain. The host accepts any account in the workchain and
+      // optionally lets the engine emit `action_create_account` to
+      // materialize new accounts at deterministic addresses.
+      return td::Status::OK();
+  }
+  return td::Status::Error("unknown account execution policy kind");
+}
+
+bool resolved_workchain_execution_is_custom(const ResolvedWorkchainExecution& execution) {
+  return !workchain_engine_key_is_tvm(workchain_engine_key_from_descriptor(execution.descriptor));
+}
+
+td::uint32 workchain_execution_capability_flags(const WorkchainExecutionRegistry& /*registry*/) {
+  return 0;
+}
+
+WorkchainExecutionRegistry& default_workchain_execution_registry() {
+  static WorkchainExecutionRegistry registry;
+  static bool tvm_registered = [] {
+    registry.register_engine_if_absent(std::make_unique<TvmDescriptorEngine>());
+    return true;
+  }();
+  (void)tvm_registered;
+  return registry;
+}
+
+}  // namespace block

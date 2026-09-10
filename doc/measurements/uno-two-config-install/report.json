@@ -1,0 +1,59 @@
+{
+  "commit": "d51f962ff1a808bf48b9d5ca481cded4a5956102",
+  "scope": "Minimal two-message installation experiment, not acceptance. No production source changed. No calibration mutation was performed. Debugger observes the final CandidateReject variant directly; log text and process exit do not classify the result.",
+  "messages": [
+    {
+      "seqno": 0,
+      "parameter": 12,
+      "descriptor_active": true,
+      "accept_msgs": false
+    },
+    {
+      "seqno": 1,
+      "parameter": 84,
+      "identity_source": "Actual zerostate representation hash and creation descriptor commitment; proposal generator never writes ledger"
+    }
+  ],
+  "result": {
+    "final_type": "CandidateReject",
+    "reason": "workchain 2 is active, but is absent from new shard configuration",
+    "reject_source": "validator/impl/validate-query.cpp:2371",
+    "typed_observation": "xwmzrlki/install.stdout.log:169-173",
+    "collation_result": "success",
+    "final_validator_config_check": "Not reached; shard configuration check rejects earlier"
+  },
+  "attempts": [
+    {
+      "run": "6h7vhdly",
+      "kind": "ordinary run; collation sidecar is not final validator result"
+    },
+    {
+      "run": "dn6jq7ml",
+      "kind": "debug breakpoint unresolved; no typed observation evidence"
+    },
+    {
+      "run": "uqi37576",
+      "kind": "debug breakpoint unresolved after build recompiled object without debug; no typed observation evidence"
+    },
+    {
+      "run": "xwmzrlki",
+      "kind": "separate debug binary, unchanged source; CandidateReject visitor and payload observed"
+    }
+  ],
+  "build_note": "Separate debug binary uses a copied validator-disk archive with the same manager-disk.cpp compiled with additional -g. No source mutation. Canonical target was explicitly rebuilt with -j32; separate archive and link commands preserved. Debugger exit 0 is not application success.",
+  "sources": {
+    "validator/impl/collator.cpp": "79b47b3a150f061423f204692786724acca57349a169b26230bb57fb15705a8b",
+    "validator/impl/validate-query.cpp": "ddd6d68ffe9c98770f1924d7d46db68b1f4609d59a71dab1e7947cd67672023b",
+    "validator/manager-disk.cpp": "d312bef68a7c0f4d33a16abaa222023fda3ebf8360f7afbe3fcc6f1d97b2eef4",
+    "crypto/block/block.cpp": "dfb6837c85b128887800eda9a97f9a8e4e8cd16e1bda72215354f080aaaee1a3",
+    "crypto/smartcont/config-code.fc": "f18f6ee1af6c27c58a7c2e3f5b71df0f3d0325dce9f5b4e1b7812f30fc0c5c9c",
+    "crypto/smartcont/update-config.fif": "f89d1ef72af71078f5469aeb68f3f43425642113671c17bb9a7e1c31e1898af3",
+    "crypto/test/counter-install-config.cpp": "ae3b289fcb55bed480f50925a4474204a2f7f10b5e196906a15d8cc75790c155",
+    "crypto/test/workchain-counter-engine.h": "14c880ead239a66f553efa3b92c5fcb6010b1dd401f99885aaf2802ba2002e29"
+  },
+  "binaries": {
+    "/tmp/uno-publication-build/test-tos-collator": "dc9f25ff9017a7e2ed3b868041ea5d3bc853eaa352f0e77a428e63a0e81ff500",
+    "/tmp/uno-d40-postzero/test-tos-collator-typed": "faf61f1d824495575908d4f75c77f128c6a572d8b0760e7d15b69abd0cd50275",
+    "/tmp/uno-publication-build/crypto/counter-install-config": "025bfc731d7266c4141c1acc24d697c322f66d6437c6fb85fbd3e9a37dcefa41"
+  }
+}

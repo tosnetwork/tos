@@ -1,0 +1,55 @@
+{
+  "commit": "32545c25b123bc15fb2bcb36beb498adb20f74ec",
+  "source": "crypto/fift/lib/Workchain.fif",
+  "controls": [
+    {
+      "name": "basic-route",
+      "from": "{ <b x{a6} s, 7 roll 32 u, 6 roll 8 u, 5 roll 8 u, 4 roll 8 u,\n  2 roll 16 u,",
+      "to": "{ <b x{a6} s, 7 roll 32 u, 6 roll 8 u, 5 roll 8 u, 4 roll 8 u,\n  2 roll drop 0xe000 16 u,",
+      "original_sha256": "fd4a4cf8078823e264a801a112b64f2308fbfddc6c44367cee51dfaa589dec03",
+      "copy_before_sha256": "fd4a4cf8078823e264a801a112b64f2308fbfddc6c44367cee51dfaa589dec03",
+      "mutant_sha256": "9dd6e7abfa5fb229db5f8951a0ed1cf2138bc519669f5e7800e789073859fd63",
+      "restored_sha256": "fd4a4cf8078823e264a801a112b64f2308fbfddc6c44367cee51dfaa589dec03",
+      "restore_audit_sha256": "9dd6e7abfa5fb229db5f8951a0ed1cf2138bc519669f5e7800e789073859fd63",
+      "failing_case": "uno-basic",
+      "command": [
+        "python3",
+        "/home/tomi/tos-m2/test/workchain-descriptor-equivalence.py",
+        "--repo",
+        "/home/tomi/tos-m2",
+        "--create-state",
+        "/tmp/uno-publication-build/crypto/create-state",
+        "--library",
+        "/tmp/uno-descriptor-copy-brh9nqqj",
+        "--out",
+        "/tmp/uno-descriptor-controls-1/basic-route"
+      ],
+      "failure_identity": 1221
+    },
+    {
+      "name": "extended-key",
+      "from": "swap 32 i, 0 64 u, x{0} s,",
+      "to": "swap drop -1 32 i, 0 64 u, x{0} s,",
+      "original_sha256": "fd4a4cf8078823e264a801a112b64f2308fbfddc6c44367cee51dfaa589dec03",
+      "copy_before_sha256": "fd4a4cf8078823e264a801a112b64f2308fbfddc6c44367cee51dfaa589dec03",
+      "mutant_sha256": "08a519b5b4f93e010e74b7694ed45afba069e7cde1c7bd0f325870125f99abc0",
+      "restored_sha256": "fd4a4cf8078823e264a801a112b64f2308fbfddc6c44367cee51dfaa589dec03",
+      "restore_audit_sha256": "08a519b5b4f93e010e74b7694ed45afba069e7cde1c7bd0f325870125f99abc0",
+      "failing_case": "counter-extended",
+      "command": [
+        "python3",
+        "/home/tomi/tos-m2/test/workchain-descriptor-equivalence.py",
+        "--repo",
+        "/home/tomi/tos-m2",
+        "--create-state",
+        "/tmp/uno-publication-build/crypto/create-state",
+        "--library",
+        "/tmp/uno-descriptor-copy-lfunw5l5",
+        "--out",
+        "/tmp/uno-descriptor-controls-1/extended-key"
+      ],
+      "failure_identity": 1221
+    }
+  ],
+  "scope": "Single Fift source substitutions. create-state interprets library on each invocation; no compiled binary contains the Fift mutation."
+}

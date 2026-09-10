@@ -1,0 +1,207 @@
+{
+  "scope": "Native source behavior and queues; not UNO execution or global liveness.",
+  "SOURCE_DATE_EPOCH": 1788993593,
+  "cases": [
+    {
+      "accept_msgs": true,
+      "runs": [
+        {
+          "name": "counter-shard-genesis",
+          "command": [
+            "/tmp/uno-publication-build/crypto/create-state",
+            "-I",
+            "/home/tomi/tos-m2/crypto/fift/lib:/tmp/uno-publication-build/crypto/smartcont:/home/tomi/tos-m2/crypto/smartcont",
+            "/home/tomi/tos-m2/test/counter-shard-genesis.fif"
+          ],
+          "exit": 0
+        },
+        {
+          "name": "counter-native-sender",
+          "command": [
+            "/tmp/uno-publication-build/crypto/create-state",
+            "-I",
+            "/home/tomi/tos-m2/crypto/fift/lib:/tmp/uno-publication-build/crypto/smartcont:/home/tomi/tos-m2/crypto/smartcont",
+            "/home/tomi/tos-m2/test/counter-native-sender.fif"
+          ],
+          "exit": 0
+        },
+        {
+          "name": "master",
+          "command": [
+            "/tmp/uno-publication-build/crypto/create-state",
+            "-I",
+            "/home/tomi/tos-m2/crypto/fift/lib:/tmp/uno-publication-build/crypto/smartcont:/home/tomi/tos-m2/crypto/smartcont",
+            "/tmp/uno-genesis-source-controls/remove-destination-routing-guard/serving/master.fif"
+          ],
+          "exit": 0
+        },
+        {
+          "name": "bootstrap",
+          "command": [
+            "/tmp/uno-genesis-control-nwpfq1no/test-tos-collator",
+            "-C",
+            "/tmp/uno-genesis-source-controls/remove-destination-routing-guard/serving/global.json",
+            "-D",
+            "/tmp/uno-genesis-source-controls/remove-destination-routing-guard/serving/db",
+            "--query-result",
+            "/tmp/uno-genesis-source-controls/remove-destination-routing-guard/serving/bootstrap.result",
+            "-w",
+            "-1"
+          ],
+          "exit": 0
+        },
+        {
+          "name": "serving-engine",
+          "command": [
+            "/tmp/uno-genesis-control-nwpfq1no/test-tos-collator",
+            "-C",
+            "/tmp/uno-genesis-source-controls/remove-destination-routing-guard/serving/global.json",
+            "-D",
+            "/tmp/uno-genesis-source-controls/remove-destination-routing-guard/serving/db",
+            "--query-result",
+            "/tmp/uno-genesis-source-controls/remove-destination-routing-guard/serving/serving-engine.result",
+            "-w",
+            "2",
+            "--counter-increment",
+            "0",
+            "-T",
+            "(2,8000000000000000,0):7697f4fb0d7e193673aa35eae14c9daeff1aef6aeca6f4196e5d0e941cfa14ab:71f1a12be337bff4aec57d093cc2b7f25fee0bc7ea2d4eaa346fd4d80bc9f0a7"
+          ],
+          "exit": 0
+        },
+        {
+          "name": "source-1",
+          "command": [
+            "/tmp/uno-genesis-control-nwpfq1no/test-tos-collator",
+            "-C",
+            "/tmp/uno-genesis-source-controls/remove-destination-routing-guard/serving/global.json",
+            "-D",
+            "/tmp/uno-genesis-source-controls/remove-destination-routing-guard/serving/db",
+            "--query-result",
+            "/tmp/uno-genesis-source-controls/remove-destination-routing-guard/serving/source-1.result",
+            "-w",
+            "0",
+            "-m",
+            "/tmp/uno-genesis-source-controls/remove-destination-routing-guard/serving/sender-message.boc",
+            "--export-candidate",
+            "/tmp/uno-genesis-source-controls/remove-destination-routing-guard/serving/source-1.candidate"
+          ],
+          "exit": 0
+        },
+        {
+          "name": "source-2",
+          "command": [
+            "/tmp/uno-genesis-control-nwpfq1no/test-tos-collator",
+            "-C",
+            "/tmp/uno-genesis-source-controls/remove-destination-routing-guard/serving/global.json",
+            "-D",
+            "/tmp/uno-genesis-source-controls/remove-destination-routing-guard/serving/db",
+            "--query-result",
+            "/tmp/uno-genesis-source-controls/remove-destination-routing-guard/serving/source-2.result",
+            "-w",
+            "0",
+            "-m",
+            "/tmp/uno-genesis-source-controls/remove-destination-routing-guard/serving/sender-message.boc",
+            "--export-candidate",
+            "/tmp/uno-genesis-source-controls/remove-destination-routing-guard/serving/source-2.candidate",
+            "-T",
+            "(0,8000000000000000,1):94b9a25574d1afa7b15761c73d25c552ad256964f1a0abfd0aca1570ef3d26ae:7d71451e163b86f2e8fd357a83428114717f915405b6757dd001a0f84b1c7509"
+          ],
+          "exit": 0
+        }
+      ],
+      "transactions": [
+        {
+          "lt": 2000001,
+          "action_result_code": 0,
+          "aborted": false,
+          "out_messages": 1,
+          "queue_entries": 1,
+          "source_balance": 999999986350,
+          "source_fees": 13483,
+          "block": "(0,8000000000000000,1):94b9a25574d1afa7b15761c73d25c552ad256964f1a0abfd0aca1570ef3d26ae:7d71451e163b86f2e8fd357a83428114717f915405b6757dd001a0f84b1c7509"
+        },
+        {
+          "lt": 3000001,
+          "action_result_code": 0,
+          "aborted": false,
+          "out_messages": 1,
+          "queue_entries": 2,
+          "source_balance": 999999972700,
+          "source_fees": 13483,
+          "block": "(0,8000000000000000,2):0396ec67415e47362df887a58fd834f9d4fbfa0fdc94bd70b41896f1f4fd838e:c6a0edac76071223d0b46908bac4f310b341cf81d68cf4d1dbead7451b475e14"
+        }
+      ]
+    },
+    {
+      "accept_msgs": false,
+      "runs": [
+        {
+          "name": "counter-shard-genesis",
+          "command": [
+            "/tmp/uno-publication-build/crypto/create-state",
+            "-I",
+            "/home/tomi/tos-m2/crypto/fift/lib:/tmp/uno-publication-build/crypto/smartcont:/home/tomi/tos-m2/crypto/smartcont",
+            "/home/tomi/tos-m2/test/counter-shard-genesis.fif"
+          ],
+          "exit": 0
+        },
+        {
+          "name": "counter-native-sender",
+          "command": [
+            "/tmp/uno-publication-build/crypto/create-state",
+            "-I",
+            "/home/tomi/tos-m2/crypto/fift/lib:/tmp/uno-publication-build/crypto/smartcont:/home/tomi/tos-m2/crypto/smartcont",
+            "/home/tomi/tos-m2/test/counter-native-sender.fif"
+          ],
+          "exit": 0
+        },
+        {
+          "name": "master",
+          "command": [
+            "/tmp/uno-publication-build/crypto/create-state",
+            "-I",
+            "/home/tomi/tos-m2/crypto/fift/lib:/tmp/uno-publication-build/crypto/smartcont:/home/tomi/tos-m2/crypto/smartcont",
+            "/tmp/uno-genesis-source-controls/remove-destination-routing-guard/unserved/master.fif"
+          ],
+          "exit": 0
+        },
+        {
+          "name": "bootstrap",
+          "command": [
+            "/tmp/uno-genesis-control-nwpfq1no/test-tos-collator",
+            "-C",
+            "/tmp/uno-genesis-source-controls/remove-destination-routing-guard/unserved/global.json",
+            "-D",
+            "/tmp/uno-genesis-source-controls/remove-destination-routing-guard/unserved/db",
+            "--query-result",
+            "/tmp/uno-genesis-source-controls/remove-destination-routing-guard/unserved/bootstrap.result",
+            "-w",
+            "-1"
+          ],
+          "exit": 0
+        },
+        {
+          "name": "source-1",
+          "command": [
+            "/tmp/uno-genesis-control-nwpfq1no/test-tos-collator",
+            "-C",
+            "/tmp/uno-genesis-source-controls/remove-destination-routing-guard/unserved/global.json",
+            "-D",
+            "/tmp/uno-genesis-source-controls/remove-destination-routing-guard/unserved/db",
+            "--query-result",
+            "/tmp/uno-genesis-source-controls/remove-destination-routing-guard/unserved/source-1.result",
+            "-w",
+            "0",
+            "-m",
+            "/tmp/uno-genesis-source-controls/remove-destination-routing-guard/unserved/sender-message.boc",
+            "--export-candidate",
+            "/tmp/uno-genesis-source-controls/remove-destination-routing-guard/unserved/source-1.candidate"
+          ],
+          "exit": 0
+        }
+      ],
+      "transactions": []
+    }
+  ]
+}

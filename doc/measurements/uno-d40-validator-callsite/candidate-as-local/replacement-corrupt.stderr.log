@@ -1,0 +1,12 @@
+[1;36m[ 3][t 0][2026-09-09 18:11:40.787750290][validate-query.cpp:7262][!mc-extra-probe]	checking header of McStateExtra in the new masterchain state[0m
+[0m[ 4][t 0][2026-09-09 18:11:40.788167034][mc-config.cpp:572][!mc-extra-probe]	workchain description dictionary created[0m
+[0m[ 4][t 0][2026-09-09 18:11:40.788176868][mc-config.cpp:2347][!mc-extra-probe]	unpacked info for workchain 0: basic=true, active=true, accept_msgs=true, min_split=0, max_split=0[0m
+[0m[ 4][t 0][2026-09-09 18:11:40.788194750][mc-config.cpp:572][!mc-extra-probe]	workchain description dictionary created[0m
+[0m[ 4][t 0][2026-09-09 18:11:40.788200003][mc-config.cpp:2347][!mc-extra-probe]	unpacked info for workchain 0: basic=true, active=true, accept_msgs=true, min_split=0, max_split=0[0m
+[1;31m[ 1][t 0][2026-09-09 18:11:40.788224540][validate-query.cpp:208][!mc-extra-probe]	aborting validation of block candidate for (-1,8000000000000000) : [Error : 7407 : candidate delta incorrectly treated as local: instance ledger differs from reconstructed transition][0m
+[1;33m[ 2][t 0][2026-09-09 18:11:40.788251171][validate-query.cpp:8017][!mc-extra-probe]	validation took 0.001230s[0m
+[1;33m[ 2][t 0][2026-09-09 18:11:40.788274262][validate-query.cpp:8018][!mc-extra-probe]	Validate query work time = 0.000000s, cpu time = 0.000000s[0m
+[1;33m[ 2][t 0][2026-09-09 18:11:40.788281551][validate-query.cpp:8020][!mc-extra-probe]	{{
+}[0m
+local_status=[Error : 7407 : candidate delta incorrectly treated as local: instance ledger differs from reconstructed transition]
+failure_identity=931

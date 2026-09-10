@@ -1,0 +1,5 @@
+CMake Error at /home/tomi/tos-m2/test/test-counter-disk-integration.cmake:135 (message):
+  Genesis generation failed (2); see
+  /tmp/uno-publication-build/counter-integration-a2a7e793ee3b/counter-masterchain-genesis.log
+
+

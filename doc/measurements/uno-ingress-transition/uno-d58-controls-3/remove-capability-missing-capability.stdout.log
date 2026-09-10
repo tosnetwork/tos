@@ -1,0 +1,4 @@
+0	0	-7201	missing workchain engine Basic:1129206833 for workchain 2	350a5b02aec42483d9b63a5ca2e4279bfef7b80a2bfee81506e7da6af3a03cf9
+0	1	-7201	descriptor has no registered block engine	9f27bcc482001271cad47db46cf1ace6dc72a9e411636fc00de6da64e8bf2c12
+1	0	-7201	block workchain has no public native ingress policy	350a5b02aec42483d9b63a5ca2e4279bfef7b80a2bfee81506e7da6af3a03cf9
+1	1	0		9f27bcc482001271cad47db46cf1ace6dc72a9e411636fc00de6da64e8bf2c12

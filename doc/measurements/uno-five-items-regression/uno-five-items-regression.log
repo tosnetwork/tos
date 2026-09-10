@@ -1,0 +1,313 @@
+Test project /tmp/uno-publication-build
+        Start   1: test-workchain-genesis-activation-missing-capability
+  1/138 Test   #1: test-workchain-genesis-activation-missing-capability .............   Passed    0.19 sec
+        Start   2: test-workchain-genesis-activation-old-version
+  2/138 Test   #2: test-workchain-genesis-activation-old-version ....................   Passed    0.18 sec
+        Start   3: test-workchain-activation-control-gates
+  3/138 Test   #3: test-workchain-activation-control-gates ..........................   Passed    0.20 sec
+        Start   4: test-workchain-proof-boundary-gates
+  4/138 Test   #4: test-workchain-proof-boundary-gates ..............................   Passed    0.26 sec
+        Start   5: test-workchain-proof-backend
+  5/138 Test   #5: test-workchain-proof-backend .....................................   Passed    0.87 sec
+        Start   6: test-workchain-proof-operation-trace
+  6/138 Test   #6: test-workchain-proof-operation-trace .............................   Passed   16.64 sec
+        Start   7: test-quorum-static-grep
+  7/138 Test   #7: test-quorum-static-grep ..........................................   Passed    0.04 sec
+        Start   8: plumtree-graph-sim-smoke
+  8/138 Test   #8: plumtree-graph-sim-smoke .........................................   Passed    0.87 sec
+        Start   9: plumtree-graph-sim-simple-smoke
+  9/138 Test   #9: plumtree-graph-sim-simple-smoke ..................................   Passed    0.04 sec
+        Start  10: plumtree-graph-sim-loss
+ 10/138 Test  #10: plumtree-graph-sim-loss ..........................................   Passed    0.76 sec
+        Start  11: plumtree-graph-sim-simple-loss
+ 11/138 Test  #11: plumtree-graph-sim-simple-loss ...................................   Passed    0.06 sec
+        Start  12: plumtree-graph-sim-partition-recovery
+ 12/138 Test  #12: plumtree-graph-sim-partition-recovery ............................   Passed    0.35 sec
+        Start  13: plumtree-graph-sim-selective-forwarding
+ 13/138 Test  #13: plumtree-graph-sim-selective-forwarding ..........................   Passed    0.53 sec
+        Start  14: plumtree-graph-sim-rotating-outage
+ 14/138 Test  #14: plumtree-graph-sim-rotating-outage ...............................   Passed    0.76 sec
+        Start  15: plumtree-graph-sim-simple-selective-forwarding
+ 15/138 Test  #15: plumtree-graph-sim-simple-selective-forwarding ...................   Passed    0.06 sec
+        Start  16: plumtree-graph-sim-simple-rotating-outage
+ 16/138 Test  #16: plumtree-graph-sim-simple-rotating-outage ........................   Passed    0.05 sec
+        Start  17: plumtree-graph-sim-fec-stress
+ 17/138 Test  #17: plumtree-graph-sim-fec-stress ....................................   Passed    2.31 sec
+        Start  18: plumtree-graph-sim-simple-stress
+ 18/138 Test  #18: plumtree-graph-sim-simple-stress .................................   Passed    0.19 sec
+        Start  19: test-counter-collator-admission
+ 19/138 Test  #19: test-counter-collator-admission ..................................   Passed    0.03 sec
+        Start  20: test-counter-disk-integration
+ 20/138 Test  #20: test-counter-disk-integration ....................................   Passed    1.17 sec
+        Start  21: test-counter-account-binding-readiness
+ 21/138 Test  #21: test-counter-account-binding-readiness ...........................   Passed    1.51 sec
+        Start  22: test-counter-fixture-lifecycle
+ 22/138 Test  #22: test-counter-fixture-lifecycle ...................................   Passed    0.09 sec
+        Start  23: test-counter-idle-replay
+ 23/138 Test  #23: test-counter-idle-replay .........................................   Passed    0.97 sec
+        Start  24: test-counter-self-delivery
+ 24/138 Test  #24: test-counter-self-delivery .......................................   Passed    0.64 sec
+        Start  25: test-counter-cross-delivery
+ 25/138 Test  #25: test-counter-cross-delivery ......................................   Passed    0.93 sec
+        Start  26: test-counter-native-sender
+ 26/138 Test  #26: test-counter-native-sender .......................................   Passed    0.87 sec
+        Start  27: test-workchain-ingress-transition
+ 27/138 Test  #27: test-workchain-ingress-transition ................................   Passed    0.01 sec
+        Start  28: test-counter-activation-missing_capability
+ 28/138 Test  #28: test-counter-activation-missing_capability .......................   Passed    0.16 sec
+        Start  29: test-counter-config-presence-missing_capability
+ 29/138 Test  #29: test-counter-config-presence-missing_capability ..................   Passed    0.14 sec
+        Start  30: test-counter-activation-old_version
+ 30/138 Test  #30: test-counter-activation-old_version ..............................   Passed    0.11 sec
+        Start  31: test-counter-config-presence-old_version
+ 31/138 Test  #31: test-counter-config-presence-old_version .........................   Passed    0.13 sec
+        Start  32: test-counter-config-binding
+ 32/138 Test  #32: test-counter-config-binding ......................................   Passed    0.13 sec
+        Start  33: test-counter-engine-config
+ 33/138 Test  #33: test-counter-engine-config .......................................   Passed    0.31 sec
+        Start  34: test-uno-partition-storage-smoke
+ 34/138 Test  #34: test-uno-partition-storage-smoke .................................   Passed    0.12 sec
+        Start  35: test-uno-incremental-storage-smoke
+ 35/138 Test  #35: test-uno-incremental-storage-smoke ...............................   Passed    0.10 sec
+        Start  36: test-uno-split-storage-smoke
+ 36/138 Test  #36: test-uno-split-storage-smoke .....................................   Passed    0.11 sec
+        Start  37: test-uno-split-prefix-storage-smoke
+ 37/138 Test  #37: test-uno-split-prefix-storage-smoke ..............................   Passed    0.11 sec
+        Start  38: test-ed25519
+ 38/138 Test  #38: test-ed25519 .....................................................   Passed   11.17 sec
+        Start  39: test-bigint
+ 39/138 Test  #39: test-bigint ......................................................   Passed   22.45 sec
+        Start  40: test-vm
+ 40/138 Test  #40: test-vm ..........................................................   Passed   38.61 sec
+        Start  41: test-fift
+ 41/138 Test  #41: test-fift ........................................................   Passed    3.44 sec
+        Start  42: test-cells
+ 42/138 Test  #42: test-cells .......................................................   Passed    0.06 sec
+        Start  43: test-workchain-block
+ 43/138 Test  #43: test-workchain-block .............................................   Passed    2.86 sec
+        Start  44: test-workchain-settlement-continuation
+ 44/138 Test  #44: test-workchain-settlement-continuation ...........................   Passed    0.01 sec
+        Start  45: test-workchain-collator-compute-mode
+ 45/138 Test  #45: test-workchain-collator-compute-mode .............................   Passed    0.00 sec
+        Start  46: test-workchain-proof-work
+ 46/138 Test  #46: test-workchain-proof-work ........................................   Passed    0.01 sec
+        Start  47: test-workchain-proof-contracts
+ 47/138 Test  #47: test-workchain-proof-contracts ...................................   Passed    0.00 sec
+        Start  48: test-workchain-admission
+ 48/138 Test  #48: test-workchain-admission .........................................   Passed    0.00 sec
+        Start  49: test-smartcont
+ 49/138 Test  #49: test-smartcont ...................................................   Passed   10.50 sec
+        Start  50: test-net
+ 50/138 Test  #50: test-net .........................................................   Passed    0.54 sec
+        Start  51: test-tdactor
+ 51/138 Test  #51: test-tdactor .....................................................   Passed   17.84 sec
+        Start  52: test-tdutils
+ 52/138 Test  #52: test-tdutils .....................................................   Passed  140.82 sec
+        Start  53: test-toslib-offline
+ 53/138 Test  #53: test-toslib-offline ..............................................   Passed   23.06 sec
+        Start  54: test-func
+ 54/138 Test  #54: test-func ........................................................   Passed    0.94 sec
+        Start  55: test-func-legacy
+ 55/138 Test  #55: test-func-legacy .................................................   Passed    1.24 sec
+        Start  56: test-tol
+ 56/138 Test  #56: test-tol .........................................................***Failed    0.06 sec
+Found 669 tests
+Running test 1/669: a-tests.tol
+  Error compiling tol: tol exit_code = 2
+  stderr:
+Failed to discover Tol stdlib.
+Probably, you have a non-standard Tol installation.
+Please, provide env variable TOL_STDLIB referencing to tol-stdlib/ folder.
+
+        Start  57: test-adnl
+ 57/138 Test  #57: test-adnl ........................................................   Passed   25.56 sec
+        Start  58: test-dht
+ 58/138 Test  #58: test-dht .........................................................   Passed   12.07 sec
+        Start  59: test-rldp2
+ 59/138 Test  #59: test-rldp2 .......................................................   Passed    5.32 sec
+        Start  60: test-rldp2-connection-cap
+ 60/138 Test  #60: test-rldp2-connection-cap ........................................   Passed    0.05 sec
+        Start  61: test-rldp2-query-eviction
+ 61/138 Test  #61: test-rldp2-query-eviction ........................................   Passed    1.49 sec
+        Start  62: test-rldp-http-proxy-routing
+ 62/138 Test  #62: test-rldp-http-proxy-routing .....................................   Passed    0.01 sec
+        Start  63: test-overlay-peer-cleanup
+ 63/138 Test  #63: test-overlay-peer-cleanup ........................................   Passed    0.01 sec
+        Start  64: test-download-state-budget
+ 64/138 Test  #64: test-download-state-budget .......................................   Passed    5.32 sec
+        Start  65: test-download-next-blocks-validation
+ 65/138 Test  #65: test-download-next-blocks-validation .............................   Passed    0.01 sec
+        Start  66: test-ext-message-pool
+ 66/138 Test  #66: test-ext-message-pool ............................................   Passed    0.01 sec
+        Start  67: test-msg-envelope
+ 67/138 Test  #67: test-msg-envelope ................................................   Passed    0.00 sec
+        Start  68: test-rate-limiter
+ 68/138 Test  #68: test-rate-limiter ................................................   Passed    0.00 sec
+        Start  69: test-config-transition
+ 69/138 Test  #69: test-config-transition ...........................................   Passed    0.01 sec
+        Start  70: test-json-rpc-parse
+ 70/138 Test  #70: test-json-rpc-parse ..............................................   Passed    0.01 sec
+        Start  71: test-http-server-limits
+ 71/138 Test  #71: test-http-server-limits ..........................................   Passed    2.01 sec
+        Start  72: test-wallet-message-processor
+ 72/138 Test  #72: test-wallet-message-processor ....................................   Passed    0.01 sec
+        Start  73: test-vm-exception-hardening
+ 73/138 Test  #73: test-vm-exception-hardening ......................................   Passed    0.01 sec
+        Start  74: test-celldb-streaming-import
+ 74/138 Test  #74: test-celldb-streaming-import .....................................   Passed    0.02 sec
+        Start  75: test-celldb-actor-restart
+ 75/138 Test  #75: test-celldb-actor-restart ........................................   Passed    1.23 sec
+        Start  76: test-validator-options
+ 76/138 Test  #76: test-validator-options ...........................................   Passed    0.01 sec
+        Start  77: test-full-node-shard-routing
+ 77/138 Test  #77: test-full-node-shard-routing .....................................   Passed    0.01 sec
+        Start  78: test-uno-state-snapshot
+ 78/138 Test  #78: test-uno-state-snapshot ..........................................   Passed   21.90 sec
+        Start  79: test-counter-genesis-domain
+ 79/138 Test  #79: test-counter-genesis-domain ......................................   Passed    0.15 sec
+        Start  80: test-uno-genesis-operators
+ 80/138 Test  #80: test-uno-genesis-operators .......................................   Passed    0.41 sec
+        Start  81: test-workchain-genesis-routing
+ 81/138 Test  #81: test-workchain-genesis-routing ...................................***Failed    0.67 sec
+Traceback (most recent call last):
+  File "/home/tomi/tos-m2/crypto/test/workchain-genesis-routing.py", line 62, in <module>
+    require(master.count("x{e000}") == 1, 952)
+    ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/tomi/tos-m2/crypto/test/workchain-genesis-routing.py", line 35, in require
+    raise AssertionError(identity)
+AssertionError: 952
+
+        Start  82: test-counter-python-harness
+ 82/138 Test  #82: test-counter-python-harness ......................................   Passed    5.57 sec
+        Start  83: test-uno-build-wiring
+ 83/138 Test  #83: test-uno-build-wiring ............................................   Passed   38.86 sec
+        Start  84: test-block-handle-flags
+ 84/138 Test  #84: test-block-handle-flags ..........................................   Passed    0.01 sec
+        Start  85: test-keyring-temp-key
+ 85/138 Test  #85: test-keyring-temp-key ............................................   Passed    0.61 sec
+        Start  86: test-collator-node-limits
+ 86/138 Test  #86: test-collator-node-limits ........................................   Passed    0.01 sec
+        Start  87: test-rldp2-connection-limits
+ 87/138 Test  #87: test-rldp2-connection-limits .....................................   Passed    0.01 sec
+        Start  88: test-promise-loss-contract
+ 88/138 Test  #88: test-promise-loss-contract .......................................   Passed    0.01 sec
+        Start  89: test-json-rpc-handler-guard
+ 89/138 Test  #89: test-json-rpc-handler-guard ......................................   Passed    0.01 sec
+        Start  90: test-metrics-label-bound
+ 90/138 Test  #90: test-metrics-label-bound .........................................   Passed    0.02 sec
+        Start  91: test-rldp2-inbound-transfer-bound
+ 91/138 Test  #91: test-rldp2-inbound-transfer-bound ................................   Passed    0.43 sec
+        Start  92: test-consensus-config-admission
+ 92/138 Test  #92: test-consensus-config-admission ..................................   Passed    0.01 sec
+        Start  93: test-weak-ptr-registry
+ 93/138 Test  #93: test-weak-ptr-registry ...........................................   Passed    0.01 sec
+        Start  94: test-wallet-index
+ 94/138 Test  #94: test-wallet-index ................................................   Passed    0.08 sec
+        Start  95: test-quorum
+ 95/138 Test  #95: test-quorum ......................................................   Passed    0.01 sec
+        Start  96: test-emulator
+ 96/138 Test  #96: test-emulator ....................................................   Passed    0.07 sec
+        Start  97: test-fec
+ 97/138 Test  #97: test-fec .........................................................   Passed    0.50 sec
+        Start  98: test-tddb
+ 98/138 Test  #98: test-tddb ........................................................   Passed    1.35 sec
+        Start  99: test-db
+ 99/138 Test  #99: test-db ..........................................................   Passed  429.68 sec
+        Start 100: test-uno-crypto-abi-real
+100/138 Test #100: test-uno-crypto-abi-real .........................................   Passed    0.68 sec
+        Start 101: test-uno-crypto-rust
+101/138 Test #101: test-uno-crypto-rust .............................................   Passed    3.23 sec
+        Start 102: test-uno-crypto-symbols
+102/138 Test #102: test-uno-crypto-symbols ..........................................   Passed    0.74 sec
+        Start 103: test-uno-crypto-kernel-gates
+103/138 Test #103: test-uno-crypto-kernel-gates .....................................   Passed    1.46 sec
+        Start 104: test-uno-crypto-header-guard
+104/138 Test #104: test-uno-crypto-header-guard .....................................   Passed    3.75 sec
+        Start 105: test-coro
+105/138 Test #105: test-coro ........................................................   Passed    5.64 sec
+        Start 106: test-workchain-instance-identity
+106/138 Test #106: test-workchain-instance-identity .................................   Passed    0.01 sec
+        Start 107: test-workchain-genesis-installation
+107/138 Test #107: test-workchain-genesis-installation ..............................   Passed    0.19 sec
+        Start 108: test-workchain-handwritten-tags
+108/138 Test #108: test-workchain-handwritten-tags ..................................   Passed    0.07 sec
+        Start 109: test-scheduler-stop
+109/138 Test #109: test-scheduler-stop ..............................................   Passed    0.04 sec
+        Start 110: test-runtime
+110/138 Test #110: test-runtime .....................................................   Passed    0.01 sec
+        Start 111: test-test-scheduler
+111/138 Test #111: test-test-scheduler ..............................................   Passed    0.01 sec
+        Start 112: test-backpressure-queue
+112/138 Test #112: test-backpressure-queue ..........................................   Passed    0.01 sec
+        Start 113: test-persistent-treap
+113/138 Test #113: test-persistent-treap ............................................   Passed    1.24 sec
+        Start 114: test-lru-cache
+114/138 Test #114: test-lru-cache ...................................................   Passed    0.00 sec
+        Start 115: test-ffi-awaitable
+115/138 Test #115: test-ffi-awaitable ...............................................   Passed    0.03 sec
+        Start 116: test-ffi-event-loop
+116/138 Test #116: test-ffi-event-loop ..............................................   Passed    0.11 sec
+        Start 117: test-liteserver-admission
+117/138 Test #117: test-liteserver-admission ........................................   Passed    0.01 sec
+        Start 118: test-consensus-simplex2-loss
+118/138 Test #118: test-consensus-simplex2-loss .....................................   Passed    4.13 sec
+        Start 119: test-consensus-simplex2-restart
+119/138 Test #119: test-consensus-simplex2-restart ..................................   Passed    5.09 sec
+        Start 120: test-consensus-simplex2-partition
+120/138 Test #120: test-consensus-simplex2-partition ................................   Passed    5.13 sec
+        Start 121: test-consensus-simplex2-malicious-observer
+121/138 Test #121: test-consensus-simplex2-malicious-observer .......................   Passed    5.14 sec
+        Start 122: test-consensus-simplex2-relay-loop
+122/138 Test #122: test-consensus-simplex2-relay-loop ...............................   Passed    5.14 sec
+        Start 123: test-consensus-simplex2-adaptive-byzantine
+123/138 Test #123: test-consensus-simplex2-adaptive-byzantine .......................   Passed    7.05 sec
+        Start 124: test-consensus-simplex2-manager-ingress-adversarial
+124/138 Test #124: test-consensus-simplex2-manager-ingress-adversarial ..............   Passed    7.04 sec
+        Start 125: test-consensus-simplex2-candidate-relay-eviction
+125/138 Test #125: test-consensus-simplex2-candidate-relay-eviction .................   Passed    0.03 sec
+        Start 126: test-consensus-simplex2-state-resolver-cache-unit
+126/138 Test #126: test-consensus-simplex2-state-resolver-cache-unit ................   Passed    0.03 sec
+        Start 127: test-consensus-simplex2-state-resolver-inflight-admission-unit
+127/138 Test #127: test-consensus-simplex2-state-resolver-inflight-admission-unit ...   Passed    0.02 sec
+        Start 128: test-consensus-simplex2-skipped-slot-resolution-unit
+128/138 Test #128: test-consensus-simplex2-skipped-slot-resolution-unit .............   Passed    0.03 sec
+        Start 129: test-consensus-simplex2-candidate-resolver-retention-unit
+129/138 Test #129: test-consensus-simplex2-candidate-resolver-retention-unit ........   Passed    0.03 sec
+        Start 130: test-consensus-simplex2-candidate-resolver-interleaving-unit
+130/138 Test #130: test-consensus-simplex2-candidate-resolver-interleaving-unit .....   Passed    0.03 sec
+        Start 131: test-consensus-simplex2-db-finalized-slot-dedup-unit
+131/138 Test #131: test-consensus-simplex2-db-finalized-slot-dedup-unit .............   Passed    0.03 sec
+        Start 132: test-consensus-validator-manager-resource-policy-unit
+132/138 Test #132: test-consensus-validator-manager-resource-policy-unit ............   Passed    0.03 sec
+        Start 133: test-validator-manager-resource-policy-actor
+133/138 Test #133: test-validator-manager-resource-policy-actor .....................   Passed    0.21 sec
+        Start 134: test-consensus-simplex2-state-resolver-catch-up
+134/138 Test #134: test-consensus-simplex2-state-resolver-catch-up ..................   Passed    8.05 sec
+        Start 135: test-consensus-simplex2-empty-chain-restart
+135/138 Test #135: test-consensus-simplex2-empty-chain-restart ......................   Passed    9.74 sec
+        Start 136: test-consensus-simplex2-query-abuse
+136/138 Test #136: test-consensus-simplex2-query-abuse ..............................   Passed    5.13 sec
+        Start 137: test-consensus-simplex2-codec-boundary
+137/138 Test #137: test-consensus-simplex2-codec-boundary ...........................   Passed    0.25 sec
+        Start 138: test-consensus-simplex2-genesis-config
+138/138 Test #138: test-consensus-simplex2-genesis-config ...........................   Passed    0.03 sec
+
+99% tests passed, 2 tests failed out of 138
+
+Label Time Summary:
+d40          =   0.27 sec*proc (3 tests)
+genesis      =   1.46 sec*proc (4 tests)
+harness      =   6.24 sec*proc (2 tests)
+i13          =   0.20 sec*proc (1 test)
+private      =   0.78 sec*proc (5 tests)
+smoke        =   0.44 sec*proc (4 tests)
+storage      =   0.44 sec*proc (4 tests)
+uno          =   7.09 sec*proc (7 tests)
+workchain    =   0.85 sec*proc (6 tests)
+
+Total Test time (real) = 938.90 sec
+
+The following tests FAILED:
+	 56 - test-tol (Failed)
+	 81 - test-workchain-genesis-routing (Failed)
+Errors while running CTest

@@ -1,0 +1,83 @@
+[
+  {
+    "record": "uno-genesis-source-controls",
+    "name": "remove-genesis-issuance",
+    "commit": "ad87d9155f7ed38798d8b0a647cf209f289609b5",
+    "source": "crypto/block/create-state.cpp",
+    "original_sha256": "e36d93f8ce7fdeab6d3d84d24cbe853a4b42ce446ef4a19dbe19d28d6437d53c",
+    "mutant_sha256": "edd94c1679c04b787fa2ba2f478c48fa52e950eaf745da00f084be04186d6414",
+    "restoration_and_reapplication_match": true
+  },
+  {
+    "record": "uno-genesis-source-controls",
+    "name": "remove-destination-routing-guard",
+    "commit": "ad87d9155f7ed38798d8b0a647cf209f289609b5",
+    "source": "crypto/block/transaction.cpp",
+    "original_sha256": "c511848ba163d0c30a51bcbd03f06e38f4073c356117d3a2171235c3dc365e58",
+    "mutant_sha256": "1202789f6615913ecd248951caa1ca9e1ddc93ee55fbdc3cc984dd0674b27d8c",
+    "restoration_and_reapplication_match": true
+  },
+  {
+    "record": "uno-genesis-source-controls",
+    "name": "remove-ledger-delta-guard",
+    "commit": "ad87d9155f7ed38798d8b0a647cf209f289609b5",
+    "source": "crypto/block/workchain-instance-identity.cpp",
+    "original_sha256": "380a130fefd305c5f4d8171d58decf0aab39ed5e254969d71648ae0d299b7460",
+    "mutant_sha256": "364e2a4206864f6c79bf5f19fb9d585ebf36e1a77f1e4ac750b6d1a742b918e6",
+    "restoration_and_reapplication_match": true
+  },
+  {
+    "record": "uno-genesis-operators-serial",
+    "name": "approve-unlisted-mainnet",
+    "commit": "ad87d9155f7ed38798d8b0a647cf209f289609b5",
+    "source": "crypto/smartcont/uno-genesis-operators.fif",
+    "original_sha256": "91a17f158d7fa63503139132583732fb09410affdc37cab0363128fdd75de631",
+    "mutant_sha256": "956b42886063f7e5a42e7cb6b0e4453d92f33bcfcbbc453c4527a691f2a7d955",
+    "restoration_and_reapplication_match": true
+  },
+  {
+    "record": "uno-genesis-operators-serial",
+    "name": "remove-enforcement",
+    "commit": "ad87d9155f7ed38798d8b0a647cf209f289609b5",
+    "source": "crypto/smartcont/uno-genesis-operators.fif",
+    "original_sha256": "91a17f158d7fa63503139132583732fb09410affdc37cab0363128fdd75de631",
+    "mutant_sha256": "58da577fc39fee79482a5ca1170737a36ad81909069eb87797117f91bd65fd90",
+    "restoration_and_reapplication_match": true
+  },
+  {
+    "record": "uno-genesis-resources-serial",
+    "name": null,
+    "commit": "ad87d9155f7ed38798d8b0a647cf209f289609b5",
+    "source": "crypto/smartcont/uno-genesis-config.fif",
+    "original_sha256": "f57206792ec50829aaccdb107022966793970b9f2df160519681afc343c2ec7c",
+    "mutant_sha256": "13ecdc92433d6c673dfe203e40a1c2ab49f12b54e3dc38161ebd8b7f60fcb681",
+    "restoration_and_reapplication_match": true
+  },
+  {
+    "record": "uno-genesis-business-control-2",
+    "name": null,
+    "commit": "ad87d9155f7ed38798d8b0a647cf209f289609b5",
+    "source": "crypto/test/workchain-counter-engine.h",
+    "original_sha256": "14c880ead239a66f553efa3b92c5fcb6010b1dd401f99885aaf2802ba2002e29",
+    "mutant_sha256": "f6911b60e4570c41d4dff8c2d4f2b5f38ebfbaff9ad784beef0d9b26ef4408a8",
+    "restoration_and_reapplication_match": true
+  },
+  {
+    "record": "uno-genesis-delta-both-controls",
+    "name": "remove-ledger-delta-guard",
+    "commit": "ad87d9155f7ed38798d8b0a647cf209f289609b5",
+    "source": "crypto/block/workchain-instance-identity.cpp",
+    "original_sha256": "380a130fefd305c5f4d8171d58decf0aab39ed5e254969d71648ae0d299b7460",
+    "mutant_sha256": "364e2a4206864f6c79bf5f19fb9d585ebf36e1a77f1e4ac750b6d1a742b918e6",
+    "restoration_and_reapplication_match": true
+  },
+  {
+    "record": "uno-genesis-mode-control-3",
+    "name": null,
+    "commit": "573df2f3c24b168599fa21bc1db8af7a54b61d99",
+    "source": "crypto/test/test-workchain-activation-control.cpp",
+    "original_sha256": "f1015560ce491bc605889a7d7907f092714b7a2e7ac86b8f175347167e75e195",
+    "mutant_sha256": "f1bf47ae2a59df2c7413f9136dfc2f35375668d2554e70fa1693ea60cb4203cf",
+    "restoration_and_reapplication_match": true
+  }
+]

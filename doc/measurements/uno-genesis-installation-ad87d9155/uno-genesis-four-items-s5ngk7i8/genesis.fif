@@ -1,0 +1,335 @@
+#!/usr/bin/create-state -s
+"TosUtil.fif" include
+"Asm.fif" include
+"Lists.fif" include
+
+// =====================================================================
+//  CANONICAL MAINNET GENESIS — Native (wc=0) and confidential workchain (wc=2)
+// =====================================================================
+//
+// This is THE default mainnet template. It ships a ConfigParam 12 that
+// contains Native (wc=0) and wc=2; the masterchain is wc=-1.
+// Genesis contains only the bounded validator-bootstrap wallet and the two
+// system-contract reserves defined below. ConfigParam 14 validator block
+// rewards create approximately 500 million TOS of the network's supply
+// policy; the remaining community-agent allocation is created later through
+// a separate protocol reward mechanism and is not funded at genesis.
+// =====================================================================
+
+def? $1 { @' $1 } { "" } cond constant suffix
+{ suffix $+ } : +suffix
+256 1<<1- 15 / constant AllOnes
+
+wc_master setworkchain
+-23901 setglobalid   // TOS mainnet global_id
+// Fail before creating keys or writing genesis artifacts. Development account
+// IDs are explicit; changing them does not add them to the mainnet allowlist.
+"uno-genesis-operators.fif" include
+globalid@ uno_development_coordinator uno_development_custody require-uno-genesis-operators
+0x544F5301 default-subwallet-id!  // TOS-specific default subwallet id
+
+// Canonical mainnet genesis: 2026-09-15 10:00:00 JST
+//                         == 2026-09-15 01:00:00 UTC.
+// create-state and Fift both honor SOURCE_DATE_EPOCH. Refuse to emit a
+// production zero-state with a build-machine wall clock or a different epoch:
+//   SOURCE_DATE_EPOCH=1789434000 build/crypto/create-state ...
+1789434000 constant mainnet_genesis_utime
+now mainnet_genesis_utime = not abort"SOURCE_DATE_EPOCH must be 1789434000 for TOS mainnet genesis"
+
+// TIP-1 immutable .tos Root StateInit address. This must equal the reproducible
+// root_address in domains/packages/protocol/test/vectors.json. ConfigParam 4
+// stores only these 256 account-id bits; clients supply masterchain wc=-1.
+// Pinning the counterfactual address does not deploy the Root or open auctions:
+// the audited Root/Collection StateInit must still be deployed after genesis,
+// and the Collection independently enforces the TIP-1 activation timestamp.
+0x280e2d46c2bea67664609ad2df6db55ef92dd257ff5b16c3317eed59fa649a32
+constant dns_root_addr
+
+// Initial state of Workchain 0 (Basic workchain)
+
+0 mkemptyShardState
+
+cr ."initial basechain state is:" cr dup <s csr. cr
+dup dup 31 boc+>B dup Bx. cr
+dup "basestate0" +suffix +".boc" tuck B>file
+."(Initial basechain state saved to file " type .")" cr
+Bhashu dup =: basestate0_fhash
+."file hash=" dup 64x. space 256 u>B dup B>base64url type cr
+"basestate0" +suffix +".fhash" B>file
+hashu dup =: basestate0_rhash
+."root hash=" dup 64x. space 256 u>B dup B>base64url type cr
+"basestate0" +suffix +".rhash" B>file
+
+// root-hash file-hash start-at actual-min-split min-split-depth max-split-depth wc-id
+basestate0_rhash basestate0_fhash now 0 4 8 0 add-std-workchain
+
+// No confidential accounts exist at genesis. This shard root is built before
+// its descriptor or engine identity and cannot depend on the masterchain root.
+2 mkemptyShardState
+dup 31 boc+>B dup "unostate0" +suffix +".boc" B>file
+Bhashu dup constant unostate0_fhash
+256 u>B "unostate0" +suffix +".fhash" B>file
+hashu dup constant unostate0_rhash
+256 u>B "unostate0" +suffix +".rhash" B>file
+"uno-genesis-config.fif" include
+unostate0_rhash unostate0_fhash now 0 0 0 2 add-uno-genesis-workchain
+config.workchains!
+
+// Version 0.5 validator-led genesis balances. The 100,000-TOS main wallet is
+// a provisional cap: four original validator wallets receive 20,000 TOS of
+// overlapping-election principal plus at most 100 TOS of measured bootstrap
+// fees each, and the residual is burned after the bootstrap procedure.
+TM$100000 constant main_wallet_genesis_balance
+TM$500 constant elector_genesis_balance
+TM$500 constant config_genesis_balance
+
+// SmartContract #1 (Advanced wallet)
+
+// Create new advanced wallet; code adapted from `auto/wallet3-code.fif`
+WCode3 // code
+<b 0 32 u, 0 32 u,  // subwallet-id=0
+   "main-wallet" +suffix +".pk" load-generate-keypair drop
+   B,
+b> // data
+empty_cell // libs
+main_wallet_genesis_balance
+// balance: bounded validator-bootstrap funding only; not a treasury or premine
+0 // split_depth
+0 // ticktock
+AllOnes 1 * // address
+6 // mode: create+setaddr
+register_smc
+dup make_special dup constant smc1_addr
+Masterchain over
+2dup ."main wallet address = " .addr cr 2dup 6 .Addr cr
+"main-wallet" +suffix +".addr" save-address-verbose
+
+// No PoW/test giver, faucet, team wallet, investor wallet, foundation wallet,
+// ecosystem wallet, or general treasury is funded by production genesis.
+."Main wallet validator-bootstrap balance = " main_wallet_genesis_balance .TM cr
+."Total native genesis supply = "
+main_wallet_genesis_balance elector_genesis_balance + config_genesis_balance + .TM cr
+
+/*
+ *
+ * SmartContract #4 (elector)
+ *
+ */
+"auto/elector-code.fif" include   // code in separate source file
+<b 0 1 1+ 1+ 4 + 32 + u, 0 256 u, b>  // data: dict dict dict tomis uint32 uint256
+empty_cell  // libraries
+elector_genesis_balance  // balance
+0 // split_depth
+2 // ticktock: tick
+AllOnes 3 * // address: -1:333...333
+6 // mode: create + setaddr
+register_smc
+dup make_special dup constant smc4_addr dup constant elector_addr
+Masterchain swap
+."elector smart contract address = " 2dup .addr cr 2dup 7 .Addr cr
+"elector" +suffix +".addr" save-address-verbose
+
+/*
+ *
+ * Configuration Parameters
+ *
+ */
+// version capabilities (Native Registry SHA256C requires version 14)
+16 capCreateStats capBounceMsgBody or capReportVersion or capShortDequeue or capStoreOutMsgQueueSize or capMsgMetadata or capDeferMessages or 1024 or config.version!
+// Historical K acceptance interval, not inferred from the current Param30.
+// The initial-system seed is encoded by the generated TL-B type in create-state.
+400 uno_genesis_descriptor @ 2 first-instance-identity
+uno_genesis_resources uno-initial-system instance-engine-configuration
+uno_development_coordinator 256 u>B uno_development_custody 256 u>B
+uno-genesis-ingress 84 config!
+// ConfigParam 19: global_id (must match setglobalid above)
+<b globalid@ 32 i, b> 19 config!
+// max-validators max-main-validators min-validators
+400 100 4 config.validator_num!
+// min-stake max-stake min-total-stake max-factor
+TM$10000 TM$10000000 TM$40000 sg~1 config.validator_stake_limits!
+// elected-for elect-start-before elect-end-before stakes-frozen-for
+65536 32768 8192 32768 config.election_params!
+// misbehaviour punishment schedule (ConfigParam 40)
+//
+// The base pair is the mildest tier (ordinary severity, short interval); the
+// severity and interval multipliers scale it up from there:
+//
+//   ordinary + short   TM$62.5   + 1/256 of stake
+//   ordinary + medium  TM$250    + 1/64
+//   ordinary + long    TM$1000   + 1/16
+//   severe   + short   TM$156.25 + 1/64
+//   severe   + medium  TM$625    + 1/16
+//   severe   + long    TM$2500   + 1/4
+//
+// Interval tiers are expressed as fractions of the 65536-second validation
+// round so that every tier is reachable within a single round: nothing below
+// 1000 seconds is punishable, a quarter round is medium, three quarters is
+// long. Without this parameter the punishment path falls back to a flat
+// TM$101 with no proportional component, which makes stake size irrelevant to
+// the penalty and leaves pooled-stake contracts unable to size a validator's
+// required own funds.
+TM$62.5 16777216 640 1024 1000 49152 4096 4096 16384 1024 1024
+config.punishment_params!
+// config-addr = -1:5555...5555
+AllOnes 5 * constant config_addr
+config_addr config.config_smc!
+// elector-addr
+elector_addr config.elector_smc!
+
+// 1 sg* 100 sg* 1000 sg* 1000000 sg* config.storage_prices!  // old values (too high)
+1 500 1000 500000 config.storage_prices!
+config.special!
+
+// gas_price gas_limit special_gas_limit gas_credit block_gas_limit freeze_due_limit delete_due_limit flat_gas_limit flat_gas_price
+// Basechain gas limits for native TVM execution.
+26214400 30 *M 30 *M 10000 60 *M TM$0.1 TM$1.0 100 40000 config.gas_prices!
+// masterchain gas (aligned with production)
+655360000 1 *M 70 *M 10000 2500000 TM$0.1 TM$1.0 100 1000000 config.mc_gas_prices!
+// lump_price bit_price cell_price ihr_factor first_frac next_frac
+// basechain fwd (aligned with production)
+400000 26214400 2621440000 3/2 sg*/ 1/3 sg*/ 1/3 sg*/ config.fwd_prices!
+// masterchain fwd (aligned with production)
+10000000 655360000 65536000000 3/2 sg*/ 1/3 sg*/ 1/3 sg*/ config.mc_fwd_prices!
+// mc-cc-lifetime sh-cc-lifetime sh-val-lifetime sh-val-num mc-shuffle
+250 250 1000 23 true config.catchain_params!
+// round-candidates next-cand-delay-ms consensus-timeout-ms fast-attempts attempt-duration cc-max-deps max-block-size max-collated-size new-cc-ids
+3 2000 16000 3 8 4 2 *Mi 2 *Mi true config.consensus_params!
+// ConfigParam 30: first-testnet Simplex v2 (#22), with the 400 ms target
+// encoded as noncritical parameter 0. Reserved flags are zero, protocol
+// version is 2, QUIC is enabled, and each leader owns four slots.
+dictnew
+<b 400 32 u, b> <s 0 rot 8 udict! drop
+<b 1000 32 u, b> <s 1 rot 8 udict! drop
+<b 250 32 u, b> <s 10 rot 8 udict! drop
+<b x{22} s, 0 5 u, 2 2 u, 1 1 u, 4 32 u, swap dict, b>
+dictnew
+<b 400 32 u, b> <s 0 rot 8 udict! drop
+<b 1000 32 u, b> <s 1 rot 8 udict! drop
+<b 250 32 u, b> <s 10 rot 8 udict! drop
+<b x{22} s, 0 5 u, 2 2 u, 1 1 u, 4 32 u, swap dict, b>
+config.new_consensus_params_all!
+
+
+// masterchain block limits (aligned with production)
+128 *Ki 512 *Ki 1 *Mi triple      // bytes: underload soft hard
+500000 1000000 2500000 triple     // gas: underload soft hard
+1000 5000 10000 triple            // lt: underload soft hard
+triple untriple config.mc_block_limits!
+// basechain block limits — gas tiers aligned with ConfigParam 21 gas_limit/
+// block_gas_limit above so collator block-selection and per-tx gas admission
+// agree on the same size envelope. underload=5M, soft=60M, hard=120M
+// (2x soft headroom).
+256 *Ki 1 *Mi 2 *Mi triple           // bytes: underload soft hard
+5000000 60000000 120000000 triple    // gas: underload soft hard
+1000 5000 10000 triple               // lt: underload soft hard
+triple untriple config.block_limits!
+
+// Candidate values calibrated from a four-validator Simplex v2 rehearsal at
+// 2.5 finalized masterchain and basechain blocks per second, retaining the
+// 1.7:1 masterchain-to-basechain ratio and targeting approximately
+// 499,899,000 TOS of post-genesis validator creation over roughly seven
+// years. See the dated validator reward calibration report; production
+// launch still requires an independent sustained-network confirmation.
+TM$0.569879384 TM$0.335223167 config.block_create_fees!
+// smc1_addr config.collector_smc!
+// F3: mint authority (ConfigParam 2) is the governance config contract, NOT
+// the bootstrap wallet (smc1_addr). Decouples a single launch key from the
+// extra-currency mint power.
+config_addr config.minter_smc!
+
+// ConfigParam 4 pins the counterfactual masterchain Root address in the
+// canonical zero-state. Resolution still fails closed until the exact audited
+// StateInit is deployed at that address. Replacing it after launch is a
+// critical Config Contract proposal because parameter 4 is in ConfigParam 10.
+dns_root_addr config.dns_root_smc!
+
+// ConfigParam 7 governs extra currencies only and is intentionally omitted, so
+// genesis mints no extra currency. Native TOS creation is separate: each
+// produced block creates the amount configured by ConfigParam 14 above.
+
+// ConfigParam 19 (global_id) is what every wallet contract compares the signed
+// global_id against (GLOBALID throws when it is absent). It is therefore
+// mandatory, so no configuration without it can ever be installed, and
+// critical, so changing it needs a 3/4 vote like the other identity-defining
+// parameters.
+( 0 1 9 10 12 14 15 16 17 18 19 20 21 22 23 24 25 28 34 ) config.mandatory_params!
+( -999 -1000 -1001 0 1 3 4 9 10 12 14 15 16 17 19 32 34 36 ) config.critical_params!
+
+// [ min_tot_rounds max_tot_rounds min_wins max_losses min_store_sec max_store_sec bit_pps cell_pps ]
+// first for ordinary proposals, then for critical proposals
+_( 2 3 2 2 1000000 10000000 1 500 )
+_( 4 7 4 2 5000000 20000000 2 1000 )
+config.param_proposals_setup!
+
+// deposit bit_pps cell_pps
+TM$100 1 500 config.complaint_prices!
+
+variable genesis-validator-keys  dictnew genesis-validator-keys !
+// pubkey -- pubkey
+{ dup 256 B>u@ empty_cell <s swap genesis-validator-keys @ 256 udict!+
+  not abort"genesis validator public keys must be unique"
+  genesis-validator-keys !
+} : register-genesis-validator-key
+
+{ file>B
+  dup Blen 128 <> abort"validator key manifest must contain exactly four 32-byte public keys"
+  { dup Blen } {
+    32 B| swap dup ."Validator public key = " Bx. cr
+    register-genesis-validator-key
+    dup B{c6b41348} swap B+ Bhashu
+    17 add-adnl-validator
+  } while drop
+} : load-keys-from-file
+
+"validator-keys" +suffix +".pub" load-keys-from-file
+
+// Two complete 65,536-second election intervals. This conservative initial
+// value must still pass the production bootstrap timing rehearsal before the
+// zerostate hashes are frozen.
+131072 =: orig_vset_valid_for
+now dup orig_vset_valid_for + 0 config.validators!
+
+/*
+ *
+ * SmartContract #5 (Configuration smart contract)
+ *
+ */
+"auto/config-code.fif" include   // code in separate source file
+<b configdict ref,  // initial configuration
+   0 32 u,          // seqno
+   "config-master" +suffix +".pk" load-generate-keypair drop
+   B,
+   dictnew dict,   // vote dict
+b> // data
+empty_cell  // libraries
+config_genesis_balance  // balance
+0 1 config_addr 6 register_smc  // tock
+dup set_config_smc
+Masterchain swap
+."config smart contract address = " 2dup .addr cr 2dup 7 .Addr cr
+"config-master" +suffix +".addr" save-address-verbose
+// Other data
+
+/*
+ *
+ *  Create state
+ *
+ */
+
+main_wallet_genesis_balance elector_genesis_balance + config_genesis_balance +
+allocated-balance <> abort"unexpected native balance in production genesis"
+create_state
+cr cr ."new state is:" cr dup <s csr. cr
+dup 31 boc+>B dup Bx. cr
+dup "zerostate" +suffix +".boc" tuck B>file
+."(Initial masterchain state saved to file " type .")" cr
+Bhashu dup =: zerostate_fhash
+."file hash= " dup X. space 256 u>B dup B>base64url type cr
+"zerostate" +suffix +".fhash" B>file
+hashu dup =: zerostate_rhash ."root hash= " dup X. space 256 u>B dup B>base64url type cr
+"zerostate" +suffix +".rhash" B>file
+basestate0_rhash ."Basestate0 root hash= " dup X. space 256 u>B B>base64url type cr
+basestate0_fhash ."Basestate0 file hash= " dup X. space 256 u>B B>base64url type cr
+zerostate_rhash ."Zerostate root hash= " dup X. space 256 u>B B>base64url type cr
+zerostate_fhash ."Zerostate file hash= " dup X. space 256 u>B B>base64url type cr

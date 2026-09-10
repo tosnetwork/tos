@@ -1,0 +1,113 @@
+Internal ctest changing into directory: /tmp/uno-publication-build
+Test project /tmp/uno-publication-build
+    Start 18: test-counter-disk-integration
+1/9 Test #18: test-counter-disk-integration ................   Passed    1.24 sec
+    Start 19: test-counter-account-binding-readiness
+2/9 Test #19: test-counter-account-binding-readiness .......   Passed    1.52 sec
+    Start 21: test-counter-idle-replay
+3/9 Test #21: test-counter-idle-replay .....................   Passed    0.96 sec
+    Start 22: test-counter-self-delivery
+4/9 Test #22: test-counter-self-delivery ...................***Failed    0.34 sec
+-- Counter fixture active; retained if interrupted: /tmp/uno-publication-build/counter-integration-75f17ef46bae
+CMake Error at /home/tomi/tos-m2/test/test-counter-disk-integration.cmake:169 (message):
+  self_send: exit 2, expected 0; see
+  /tmp/uno-publication-build/counter-integration-75f17ef46bae/self_send.log
+Call Stack (most recent call first):
+  /home/tomi/tos-m2/test/test-counter-disk-integration.cmake:420 (run_node)
+
+
+
+CMake Error at /home/tomi/tos-m2/test/counter-fixture-lifecycle.cmake:58 (message):
+  Counter fixture FAILED (1); retained for inspection:
+  /tmp/uno-publication-build/counter-integration-75f17ef46bae
+Call Stack (most recent call first):
+  /home/tomi/tos-m2/test/test-counter-disk-integration.cmake:3 (counter_run_fixture)
+
+
+
+    Start 23: test-counter-cross-delivery
+5/9 Test #23: test-counter-cross-delivery ..................***Failed    0.42 sec
+-- Counter fixture active; retained if interrupted: /tmp/uno-publication-build/counter-integration-696516331865
+CMake Error at /home/tomi/tos-m2/test/test-counter-disk-integration.cmake:169 (message):
+  cross_send: exit 2, expected 0; see
+  /tmp/uno-publication-build/counter-integration-696516331865/cross_send.log
+Call Stack (most recent call first):
+  /home/tomi/tos-m2/test/test-counter-disk-integration.cmake:389 (run_node)
+
+
+
+CMake Error at /home/tomi/tos-m2/test/counter-fixture-lifecycle.cmake:58 (message):
+  Counter fixture FAILED (1); retained for inspection:
+  /tmp/uno-publication-build/counter-integration-696516331865
+Call Stack (most recent call first):
+  /home/tomi/tos-m2/test/test-counter-disk-integration.cmake:3 (counter_run_fixture)
+
+
+
+    Start 24: test-counter-native-sender
+6/9 Test #24: test-counter-native-sender ...................***Failed    0.44 sec
+-- Counter fixture active; retained if interrupted: /tmp/uno-publication-build/counter-integration-30f5bd49ef37
+CMake Error at /home/tomi/tos-m2/test/test-counter-disk-integration.cmake:193 (message):
+  native_send: missing 'outbound message queue size: 0 -> 1'; see
+  /tmp/uno-publication-build/counter-integration-30f5bd49ef37/native_send.log
+Call Stack (most recent call first):
+  /home/tomi/tos-m2/test/test-counter-disk-integration.cmake:366 (require_log)
+
+
+
+CMake Error at /home/tomi/tos-m2/test/counter-fixture-lifecycle.cmake:58 (message):
+  Counter fixture FAILED (1); retained for inspection:
+  /tmp/uno-publication-build/counter-integration-30f5bd49ef37
+Call Stack (most recent call first):
+  /home/tomi/tos-m2/test/test-counter-disk-integration.cmake:3 (counter_run_fixture)
+
+
+
+    Start 25: test-counter-activation-missing_capability
+7/9 Test #25: test-counter-activation-missing_capability ...***Failed    0.15 sec
+-- Counter fixture active; retained if interrupted: /tmp/uno-publication-build/counter-integration-ac9ad1deb56f
+CMake Error at /home/tomi/tos-m2/test/test-counter-disk-integration.cmake:135 (message):
+  Genesis generation failed (2); see
+  /tmp/uno-publication-build/counter-integration-ac9ad1deb56f/counter-masterchain-genesis.log
+
+
+
+CMake Error at /home/tomi/tos-m2/test/counter-fixture-lifecycle.cmake:58 (message):
+  Counter fixture FAILED (1); retained for inspection:
+  /tmp/uno-publication-build/counter-integration-ac9ad1deb56f
+Call Stack (most recent call first):
+  /home/tomi/tos-m2/test/test-counter-disk-integration.cmake:3 (counter_run_fixture)
+
+
+
+    Start 27: test-counter-activation-old_version
+8/9 Test #27: test-counter-activation-old_version ..........***Failed    0.15 sec
+-- Counter fixture active; retained if interrupted: /tmp/uno-publication-build/counter-integration-1b9bda53954b
+CMake Error at /home/tomi/tos-m2/test/test-counter-disk-integration.cmake:135 (message):
+  Genesis generation failed (2); see
+  /tmp/uno-publication-build/counter-integration-1b9bda53954b/counter-masterchain-genesis.log
+
+
+
+CMake Error at /home/tomi/tos-m2/test/counter-fixture-lifecycle.cmake:58 (message):
+  Counter fixture FAILED (1); retained for inspection:
+  /tmp/uno-publication-build/counter-integration-1b9bda53954b
+Call Stack (most recent call first):
+  /home/tomi/tos-m2/test/test-counter-disk-integration.cmake:3 (counter_run_fixture)
+
+
+
+    Start 30: test-counter-engine-config
+9/9 Test #30: test-counter-engine-config ...................   Passed    0.38 sec
+
+44% tests passed, 5 tests failed out of 9
+
+Total Test time (real) =   5.60 sec
+
+The following tests FAILED:
+	 22 - test-counter-self-delivery (Failed)
+	 23 - test-counter-cross-delivery (Failed)
+	 24 - test-counter-native-sender (Failed)
+	 25 - test-counter-activation-missing_capability (Failed)
+	 27 - test-counter-activation-old_version (Failed)
+Errors while running CTest

@@ -30,6 +30,7 @@
 #include "block/native-new-export.h"
 #include "block/validator-set.h"
 #include "block/workchain-execution-dispatch.h"
+#include "block/workchain-instance-identity.h"
 #include "crypto/openssl/rand.hpp"
 #include "td/actor/SharedFuture.h"
 #include "td/db/utils/BlobView.h"
@@ -5408,6 +5409,29 @@ bool Collator::create_mc_state_extra() {
     LOG(ERROR) << "configuration smart contract " << config_addr.to_hex()
                << " contains a configuration that cannot be installed: " << transition_status;
     return fatal_error(transition_status.move_as_error_prefix("attempting to install invalid new configuration: "));
+  }
+  // D52: stage issuance after validating the proposed configuration, before
+  // installing it. The predecessor ledger is authenticated MC state; a
+  // configuration transaction can supply a claim but cannot supply this root.
+  const auto instance_global_id = config_->get_global_blockchain_id();
+  if (!instance_global_id) {
+    return fatal_error("authenticated blockchain global id is missing");
+  }
+  try {
+    auto instances = block::reconstruct_configured_workchain_instances(
+        state_extra.r1.workchain_instances, cfg_smc_config, instance_global_id);
+    if (instances.is_error()) {
+      return fatal_error(instances.move_as_error_prefix("cannot stage workchain instance installation: "));
+    }
+    state_extra.r1.workchain_instances = instances.move_as_ok();
+  } catch (vm::VmError& error) {
+    return fatal_error(PSTRING() << "cannot read instance installation state: " << error.get_msg());
+  } catch (vm::VmVirtError& error) {
+    return fatal_error(PSTRING() << "instance installation state is unavailable: " << error.get_msg());
+  } catch (vm::CellBuilder::CellCreateError&) {
+    return fatal_error("cannot create staged instance ledger cells");
+  } catch (vm::CellBuilder::CellWriteError&) {
+    return fatal_error("cannot write staged instance ledger cells");
   }
   if (block::important_config_parameters_changed(cfg_smc_config, state_extra.config->prefetch_ref()) ||
       changed_cfg) {

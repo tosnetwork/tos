@@ -1,0 +1,11 @@
+4 setglobalid
+dictnew workchain-dict !
+{ <b x{a7} s, 5 roll 32 u, 4 roll 8 u, 3 roll 8 u, rot 8 u, x{e000} s,
+  3 roll 256 u, rot 256 u, 0 32 u, x{1} s, -1 32 i, 0 64 u, x{0} s, 20 32 u, 20 32 u, 10 32 u, 1000 32 u, 0 8 u, b>
+  dup isWorkchainDescr? not abort"invalid WorkchainDescr created"
+  <s swap workchain-dict @ 32 idict!+ 0= abort"cannot add workchain"
+  workchain-dict !
+} : baseline-constructor
+1 2 1788656400 0 0 0 2 baseline-constructor
+2 workchain-dict @ 32 idict@ 0= abort"missing descriptor"
+s>c 31 boc+>B "/tmp/uno-descriptor-controls-1/basic-route/native-extended.old.boc" B>file

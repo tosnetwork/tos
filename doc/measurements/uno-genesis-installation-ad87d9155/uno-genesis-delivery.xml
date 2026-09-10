@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="(empty)"
+	tests="3"
+	failures="0"
+	disabled="0"
+	skipped="0"
+	hostname=""
+	time="2"
+	timestamp="2026-09-09T22:23:04"
+	>
+	<testcase name="test-counter-self-delivery" classname="test-counter-self-delivery" time="0.611863" status="run">
+		<system-out>-- Counter fixture active; retained if interrupted: /tmp/uno-publication-build/counter-integration-a72afae21b75
+-- Counter fixture passed and removed: /tmp/uno-publication-build/counter-integration-a72afae21b75
+</system-out>
+	</testcase>
+	<testcase name="test-counter-cross-delivery" classname="test-counter-cross-delivery" time="0.943322" status="run">
+		<system-out>-- Counter fixture active; retained if interrupted: /tmp/uno-publication-build/counter-integration-26eafd4ec6a1
+-- Counter fixture passed and removed: /tmp/uno-publication-build/counter-integration-26eafd4ec6a1
+</system-out>
+	</testcase>
+	<testcase name="test-counter-native-sender" classname="test-counter-native-sender" time="0.83629" status="run">
+		<system-out>-- Counter fixture active; retained if interrupted: /tmp/uno-publication-build/counter-integration-0bc03f808074
+-- Native sender admission and independent replay passed: /tmp/uno-publication-build/counter-integration-0bc03f808074
+
+-- Counter fixture passed and removed: /tmp/uno-publication-build/counter-integration-0bc03f808074
+</system-out>
+	</testcase>
+</testsuite>

@@ -1,0 +1,122 @@
+{
+  "commit": "275422ff5e57d84054ba2ec1dbb1a45ca7d190dc",
+  "source": "validator/impl/validate-query.cpp",
+  "from": "auto delta = block::check_workchain_instance_ledger_delta(\n          expected.move_as_ok(), new_extra.r1.workchain_instances);",
+  "to": "auto delta = td::Status::OK();",
+  "original_sha256": "ddd6d68ffe9c98770f1924d7d46db68b1f4609d59a71dab1e7947cd67672023b",
+  "mutant_sha256": "36f4b25f879fe148701c50d924831f6d1759528113da2c5820b91f545cc0b6a3",
+  "scope": "Production check_mc_state_extra method with seeded private predecessor/candidate context and actual terminal typed-result handlers. Not full-block or live installation acceptance.",
+  "baseline": {
+    "unchanged": {
+      "command": [
+        "/tmp/uno-publication-build/crypto/test-workchain-instance-callsite",
+        "/tmp/uno-d40-postzero/callsite/zerostate.boc",
+        "unchanged",
+        "/tmp/uno-d40-postzero/callsite-control/baseline-unchanged-errors"
+      ],
+      "exit_status": 0,
+      "stdout_sha256": "d6b0337d8b19279e783a065f4d61d224844d048415a94c0a9f8272b0e2c135ee",
+      "stderr_sha256": "54091963cd4a8e758d55c7f896f5ac7c3947ff59b6ce8310b1d5f4718b0df583",
+      "stdout": "final_typed_kind=0\n"
+    },
+    "corrupt": {
+      "command": [
+        "/tmp/uno-publication-build/crypto/test-workchain-instance-callsite",
+        "/tmp/uno-d40-postzero/callsite/zerostate.boc",
+        "corrupt",
+        "/tmp/uno-d40-postzero/callsite-control/baseline-corrupt-errors"
+      ],
+      "exit_status": 0,
+      "stdout_sha256": "15cfd8da1cebfc14d233d801d70dfc40f105cb9e881a0041c018800824752ae9",
+      "stderr_sha256": "6a138f6b51251a568a7d4aecf9ed306616214e56b7a0554f1b6310a7e62b6477",
+      "stdout": "final_typed_kind=1\n"
+    }
+  },
+  "mutant_build": {
+    "command": [
+      "cmake",
+      "--build",
+      "/tmp/uno-publication-build",
+      "--target",
+      "test-workchain-instance-callsite",
+      "-j32"
+    ],
+    "exit_status": 0,
+    "stdout_sha256": "a79d8927cac5b07fc5feb6bbe42d3cd28474ffd6d2b8b57e813580366ff7a9de",
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "stdout": "[1/4] Building CXX object crypto/CMakeFiles/test-workchain-instance-callsite.dir/test/test-workchain-instance-callsite.cpp.o\n[2/4] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/validate-query.cpp.o\n[3/4] Linking CXX static library validator/impl/libtos_validator.a\n[4/4] Linking CXX executable crypto/test-workchain-instance-callsite\n"
+  },
+  "replacement": {
+    "unchanged": {
+      "command": [
+        "/tmp/uno-publication-build/crypto/test-workchain-instance-callsite",
+        "/tmp/uno-d40-postzero/callsite/zerostate.boc",
+        "unchanged",
+        "/tmp/uno-d40-postzero/callsite-control/replacement-unchanged-errors"
+      ],
+      "exit_status": 0,
+      "stdout_sha256": "d6b0337d8b19279e783a065f4d61d224844d048415a94c0a9f8272b0e2c135ee",
+      "stderr_sha256": "13171e97a7f02862403581deec51b7d5fde23dca16cb8ca137b84c4a3ec3f552",
+      "stdout": "final_typed_kind=0\n"
+    },
+    "corrupt": {
+      "command": [
+        "/tmp/uno-publication-build/crypto/test-workchain-instance-callsite",
+        "/tmp/uno-d40-postzero/callsite/zerostate.boc",
+        "corrupt",
+        "/tmp/uno-d40-postzero/callsite-control/replacement-corrupt-errors"
+      ],
+      "exit_status": 1,
+      "stdout_sha256": "d6b0337d8b19279e783a065f4d61d224844d048415a94c0a9f8272b0e2c135ee",
+      "stderr_sha256": "f0d8fd0e7a82365c3dea8b34ab69351b13641f3aa47020328944901eeb34ee5b",
+      "stdout": "final_typed_kind=0\n"
+    }
+  },
+  "restored_sha256": "ddd6d68ffe9c98770f1924d7d46db68b1f4609d59a71dab1e7947cd67672023b",
+  "restore_audit_sha256": "36f4b25f879fe148701c50d924831f6d1759528113da2c5820b91f545cc0b6a3",
+  "restored_build": {
+    "command": [
+      "cmake",
+      "--build",
+      "/tmp/uno-publication-build",
+      "--target",
+      "test-workchain-instance-callsite",
+      "test-tos-collator",
+      "-j32"
+    ],
+    "exit_status": 0,
+    "stdout_sha256": "b9f42c14569ea405cc3acdd315f17a08293981211aeebd77280ba755a03e8e3e",
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "stdout": "[1/4] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/validate-query.cpp.o\n[2/4] Linking CXX static library validator/impl/libtos_validator.a\n[3/4] Linking CXX executable crypto/test-workchain-instance-callsite\n[4/4] Linking CXX executable test-tos-collator\n"
+  },
+  "restored": {
+    "unchanged": {
+      "command": [
+        "/tmp/uno-publication-build/crypto/test-workchain-instance-callsite",
+        "/tmp/uno-d40-postzero/callsite/zerostate.boc",
+        "unchanged",
+        "/tmp/uno-d40-postzero/callsite-control/restored-unchanged-errors"
+      ],
+      "exit_status": 0,
+      "stdout_sha256": "d6b0337d8b19279e783a065f4d61d224844d048415a94c0a9f8272b0e2c135ee",
+      "stderr_sha256": "f0d84100e7d8b9b3a57cc3824e0263d091dab514c5f47389bf5695edb938bd27",
+      "stdout": "final_typed_kind=0\n"
+    },
+    "corrupt": {
+      "command": [
+        "/tmp/uno-publication-build/crypto/test-workchain-instance-callsite",
+        "/tmp/uno-d40-postzero/callsite/zerostate.boc",
+        "corrupt",
+        "/tmp/uno-d40-postzero/callsite-control/restored-corrupt-errors"
+      ],
+      "exit_status": 0,
+      "stdout_sha256": "15cfd8da1cebfc14d233d801d70dfc40f105cb9e881a0041c018800824752ae9",
+      "stderr_sha256": "95d5a186c3e909df136b1be52604f88a8c2e8b765b579d4c601b8a421d14ebfa",
+      "stdout": "final_typed_kind=1\n"
+    }
+  },
+  "executable_leaves": [
+    "crypto/test-workchain-instance-callsite",
+    "test-tos-collator"
+  ]
+}

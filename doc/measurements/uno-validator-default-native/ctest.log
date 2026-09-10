@@ -1,0 +1,42 @@
+Internal ctest changing into directory: /tmp/uno-publication-build
+UpdateCTestConfiguration  from :/tmp/uno-publication-build/DartConfiguration.tcl
+UpdateCTestConfiguration  from :/tmp/uno-publication-build/DartConfiguration.tcl
+Test project /tmp/uno-publication-build
+Constructing a list of tests
+Done constructing a list of tests
+Updating test list for fixtures
+Added 0 tests to meet fixture requirements
+Checking test dependency graph...
+Checking test dependency graph end
+test 24
+    Start  24: test-workchain-validator-local-visitors
+
+24: Test command: /home/tomi/.local/bin/python3 "/home/tomi/tos-m2/crypto/test/workchain-validator-prepared-expiry.py" "--repo" "/home/tomi/tos-m2" "--probe" "/tmp/uno-publication-build/test-workchain-validator-local-visitors" "--fixture" "/home/tomi/tos-m2/doc/measurements/uno-local-profile/run-3/state/zerostate.boc"
+24: Test timeout computed to be: 60
+24: Prepared expiry guard passed: both production account refusals remain.
+24: [0m[ 4][t 0][2026-09-10 02:55:27.527776380][mc-config.cpp:572]	workchain description dictionary created[0m
+24: [0m[ 4][t 0][2026-09-10 02:55:27.528078465][mc-config.cpp:2347]	unpacked info for workchain 0: basic=true, active=true, accept_msgs=true, min_split=0, max_split=0[0m
+24: [0m[ 4][t 0][2026-09-10 02:55:27.528091484][mc-config.cpp:2347]	unpacked info for workchain 2: basic=true, active=true, accept_msgs=false, min_split=0, max_split=0[0m
+24: prepared, not connected: custom=false; ready=OK; missing engine=LocalUnavailable
+1/2 Test  #24: test-workchain-validator-local-visitors ....   Passed    0.09 sec
+test 107
+    Start 107: test-workchain-validator-prepared-expiry
+
+107: Test command: /home/tomi/.local/bin/python3 "/home/tomi/tos-m2/crypto/test/workchain-validator-prepared-expiry.py" "--repo" "/home/tomi/tos-m2"
+107: Test timeout computed to be: 30
+107: Prepared expiry guard passed: both production account refusals remain.
+2/2 Test #107: test-workchain-validator-prepared-expiry ...   Passed    0.08 sec
+
+The following tests passed:
+	test-workchain-validator-local-visitors
+	test-workchain-validator-prepared-expiry
+
+100% tests passed, 0 tests failed out of 2
+
+Label Time Summary:
+prepared-expiry           =   0.08 sec*proc (1 test)
+prepared-not-connected    =   0.09 sec*proc (1 test)
+private                   =   0.09 sec*proc (1 test)
+workchain                 =   0.17 sec*proc (2 tests)
+
+Total Test time (real) =   0.18 sec

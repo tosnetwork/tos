@@ -1,0 +1,5 @@
+4 setglobalid
+dictnew workchain-dict !
+1 2 1788656400 0 0 0 2 0xe000 -1 add-basic-workchain drop
+2 workchain-dict @ 32 idict@ 0= abort"missing descriptor"
+s>c 31 boc+>B "/tmp/uno-descriptor-equivalence-1/native-basic.new.boc" B>file

@@ -25,7 +25,6 @@ def check(repo: Path):
             972, 'incomplete representation inventory')
     for role in roles:
         require((repo / role['path']).is_file(), 973, f'missing representation {role["id"]}')
-    print('Rust.McStateExtra: existence only; migration BLOCKED; not format-validated')
     generated = (repo / 'crypto/block/block-auto.h').read_text()
     fixture = (repo / 'test/test-counter-disk-integration.cmake').read_text()
     required = {'UnoV2ResourceInput', 'UnoV2ResourceState', 'UnoV2ResourceWorkOutput',
@@ -63,6 +62,33 @@ def check(repo: Path):
     require(compact(ast.get_docstring(cls) or '') == compact(layouts[0]), 970, 'Python McStateExtra layout declaration drift')
     auxiliary = re.search(r'struct McStateExtra_aux::Record \{(.*?)\n\};', generated, re.S)
     require(auxiliary and re.search(r'Ref<Cell> workchain_instances;.*// workchain_instances : \^WorkchainInstanceLedger', auxiliary[1]), 971, 'generated auxiliary ledger field changed')
+    rust = (repo / 'tosctl/src/block/src/master.rs').read_text()
+    rust_layout = re.search(r'/\*\n(masterchain_state_extra[^;]*= McStateExtra;)\n\*/', rust)
+    require(rust_layout and compact(rust_layout[1]) == compact(layouts[0]),
+            974, 'Rust McStateExtra layout declaration drift')
+    for name, constant in [('McStateExtra', 'MC_STATE_EXTRA_TAG'),
+                           ('WorkchainInstanceRecord', 'WORKCHAIN_INSTANCE_RECORD_TAG'),
+                           ('WorkchainInstanceLedger', 'WORKCHAIN_INSTANCE_LEDGER_TAG')]:
+        cpp = re.search(r'struct ' + name + r' final : TLB_Complex \{(.*?)\n\};', generated, re.S)
+        actual = re.search(r'const ' + constant + r': u(\d+) = 0x([0-9a-f]+);', rust)
+        expected = re.search(r'cons_tag\[1\] = \{ 0x([0-9a-fA-F]+)[Uu]? \}', cpp[1]) if cpp else None
+        bits = re.search(r'cons_len_exact = (\d+)', cpp[1]) if cpp else None
+        require(actual and expected and bits and int(actual[1]) == int(bits[1])
+                and int(actual[2], 16) == int(expected[1], 16), 975, f'Rust {name} tag or width drift')
+        reader = re.search(r'impl Deserializable for ' + name + r' \{(.*?)\n\}', rust, re.S)
+        writer = re.search(r'impl Serializable for ' + name + r' \{(.*?)\n\}', rust, re.S)
+        require(reader and writer and 'cell.get_next_u32()?' in reader[1]
+                and f'.append_u32({constant})?' in writer[1], 976, f'Rust {name} tag I/O width drift')
+    reader = re.search(r'impl Deserializable for McStateExtra \{(.*?)\n\}', rust, re.S)[1]
+    writer = re.search(r'impl Serializable for McStateExtra \{(.*?)\n\}', rust, re.S)[1]
+    require('self.workchain_instances = WorkchainInstanceLedger::construct_from_cell(cell1.checked_drain_reference()?)?;' in reader
+            and 'builder1.checked_append_reference(self.workchain_instances.serialize()?)?;' in writer,
+            977, 'Rust mandatory auxiliary ledger reference missing')
+    require(reader.index('self.workchain_instances =') < reader.index('self.global_balance.read_from')
+            and writer.index('builder1.checked_append_reference(self.workchain_instances')
+                < writer.index('builder.checked_append_reference(builder1.into_cell()?)'),
+            978, 'Rust ledger reference is outside auxiliary cell')
+    print('Rust.McStateExtra: generated tags, widths, declared layout and mandatory auxiliary reference checked')
     print(f'Python.McStateExtra\t{constants["WIRE_TAG_BITS"]}\t{constants["WIRE_TAG"]:08x}')
     return rows
 

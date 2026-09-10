@@ -1,0 +1,11 @@
+{
+  "tested_source_commit": "1fab9e6d6531ef3be85d9b30eed60d3e173f79aa",
+  "binary_source_note": "create-state also contains the uncommitted D40 identity/genesis implementation represented by build-working-tree.patch; this is not a claim that the binary was built from the commit alone. Approval predicates and driver are committed.",
+  "working_patch_sha256": "95ec72d4ea9c3043dbc6a7de87dadca7f212d8a7df24e891784911877509a091",
+  "initial_attempts": {
+    "1": "Invalid production-prefix evidence: ordinary Fift failed at wc_master before the guard; the first draft incorrectly counted this as a rejection. Superseded, not accepted.",
+    "2": "Dependency failure: CreateState.fif missing from include paths.",
+    "3": "Dependency failure: generated auto/wallet-code.fif missing from include paths.",
+    "4": "Correct create-state executable and complete include paths; both mainnet and testnet prefixes exercised."
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "source_commit": "f5043d9fc",
+  "source": "/tmp/uno-embedded-tool-path-source",
+  "build": "/tmp/uno-embedded-tool-path-build",
+  "fresh_source_no_build_shortcut": true,
+  "configure": [
+    "env",
+    "-u",
+    "FUNC_BIN",
+    "-u",
+    "FIFT_BIN",
+    "-u",
+    "TOL_STDLIB",
+    "cmake",
+    "-S",
+    "/tmp/uno-embedded-tool-path-source",
+    "-B",
+    "/tmp/uno-embedded-tool-path-build",
+    "-DUNO_CRYPTO_BUILD_JOBS=32"
+  ],
+  "first_default_build": {
+    "command": "env -u FUNC_BIN -u FIFT_BIN -u TOL_STDLIB cmake --build /tmp/uno-embedded-tool-path-build -j32",
+    "exit": 2,
+    "scope": "fresh independent default build, no tool-path overrides",
+    "known_failure": "Tol stdlib discovery",
+    "embedded_targets": "all three built successfully"
+  },
+  "second_default_build": {
+    "command": "env -u FUNC_BIN -u FIFT_BIN TOL_STDLIB=/tmp/uno-embedded-tool-path-source/crypto/smartcont/tol-stdlib cmake --build /tmp/uno-embedded-tool-path-build -j32",
+    "scope": "same new build resumed with only Tol workaround; not a second pristine build",
+    "exit": 0
+  }
+}

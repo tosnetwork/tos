@@ -1,0 +1,25 @@
+{
+  "commit": "f7e5387f1e2771ebbc617991b2ec7e35844de7f0",
+  "source": "crypto/test/workchain-genesis-routing.py",
+  "command": [
+    "/home/tomi/tos/.venv/bin/python",
+    "/tmp/uno-routing-call-control/routing.py",
+    "--repo",
+    "/home/tomi/tos-m2",
+    "--create-state",
+    "/tmp/uno-publication-build/crypto/create-state",
+    "--collator",
+    "/tmp/uno-publication-build/test-tos-collator",
+    "--evidence",
+    "/tmp/uno-routing-call-control/run"
+  ],
+  "from": "master.replace(serving_call, \"2 0xc000 0x434e5431 add-basic-workchain drop\")",
+  "to": "master.replace(serving_call, serving_call)",
+  "original_sha256": "345946170cfab55c6086de80d5b20ff2f4da3e9047d54adc15c5b319912e2264",
+  "copy_before_sha256": "345946170cfab55c6086de80d5b20ff2f4da3e9047d54adc15c5b319912e2264",
+  "mutant_sha256": "e110f0792fff9d1afe0277d9517e24396d8d882b8ce563e283ea9913ecf9775d",
+  "restored_sha256": "345946170cfab55c6086de80d5b20ff2f4da3e9047d54adc15c5b319912e2264",
+  "restore_audit_sha256": "e110f0792fff9d1afe0277d9517e24396d8d882b8ce563e283ea9913ecf9775d",
+  "failure_identity": 957,
+  "scope": "Interpreted driver mutation only. Native executables never contain the mutation; serving case completed two real transactions before the unserved action-code assertion failed."
+}

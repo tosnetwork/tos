@@ -1,0 +1,148 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="(empty)"
+	tests="9"
+	failures="5"
+	disabled="0"
+	skipped="0"
+	hostname=""
+	time="5"
+	timestamp="2026-09-09T22:17:38"
+	>
+	<testcase name="test-counter-disk-integration" classname="test-counter-disk-integration" time="1.23961" status="run">
+		<system-out>-- Counter fixture active; retained if interrupted: /tmp/uno-publication-build/counter-integration-bfd0c4af0ca7
+-- Counter collate/validate/restart checks passed; artifacts: /tmp/uno-publication-build/counter-integration-bfd0c4af0ca7
+
+-- Counter fixture passed and removed: /tmp/uno-publication-build/counter-integration-bfd0c4af0ca7
+</system-out>
+	</testcase>
+	<testcase name="test-counter-account-binding-readiness" classname="test-counter-account-binding-readiness" time="1.51832" status="run">
+		<system-out>-- Counter fixture active; retained if interrupted: /tmp/uno-publication-build/counter-integration-86ca4cdfade5
+-- Unconfirmed observation timing: wait_elapsed_seconds=1.002813
+wait_window_seconds=1.000000
+
+-- Closed-gate production observation: delivery=recorded
+visited=1
+adapter=1
+owners_before=1
+owners_during=2
+owners_after=1
+transactions=0
+
+-- Closed-gate observation timing: query_to_record_seconds=0.015348
+wait_window_seconds=1.000000
+headroom_ratio=65.153617
+
+-- Live account binding: one config callback, zero engine calls, no candidate export
+
+-- Counter fixture passed and removed: /tmp/uno-publication-build/counter-integration-86ca4cdfade5
+</system-out>
+	</testcase>
+	<testcase name="test-counter-idle-replay" classname="test-counter-idle-replay" time="0.963402" status="run">
+		<system-out>-- Counter fixture active; retained if interrupted: /tmp/uno-publication-build/counter-integration-aa58b4b75d2b
+-- Consecutive idle batches and independent disk replay passed: /tmp/uno-publication-build/counter-integration-aa58b4b75d2b
+
+-- Counter fixture passed and removed: /tmp/uno-publication-build/counter-integration-aa58b4b75d2b
+</system-out>
+	</testcase>
+	<testcase name="test-counter-self-delivery" classname="test-counter-self-delivery" time="0.336539" status="fail">
+		<failure message=""/>
+		<system-out>-- Counter fixture active; retained if interrupted: /tmp/uno-publication-build/counter-integration-75f17ef46bae
+CMake Error at /home/tomi/tos-m2/test/test-counter-disk-integration.cmake:169 (message):
+  self_send: exit 2, expected 0; see
+  /tmp/uno-publication-build/counter-integration-75f17ef46bae/self_send.log
+Call Stack (most recent call first):
+  /home/tomi/tos-m2/test/test-counter-disk-integration.cmake:420 (run_node)
+
+
+
+CMake Error at /home/tomi/tos-m2/test/counter-fixture-lifecycle.cmake:58 (message):
+  Counter fixture FAILED (1); retained for inspection:
+  /tmp/uno-publication-build/counter-integration-75f17ef46bae
+Call Stack (most recent call first):
+  /home/tomi/tos-m2/test/test-counter-disk-integration.cmake:3 (counter_run_fixture)
+
+
+</system-out>
+	</testcase>
+	<testcase name="test-counter-cross-delivery" classname="test-counter-cross-delivery" time="0.419236" status="fail">
+		<failure message=""/>
+		<system-out>-- Counter fixture active; retained if interrupted: /tmp/uno-publication-build/counter-integration-696516331865
+CMake Error at /home/tomi/tos-m2/test/test-counter-disk-integration.cmake:169 (message):
+  cross_send: exit 2, expected 0; see
+  /tmp/uno-publication-build/counter-integration-696516331865/cross_send.log
+Call Stack (most recent call first):
+  /home/tomi/tos-m2/test/test-counter-disk-integration.cmake:389 (run_node)
+
+
+
+CMake Error at /home/tomi/tos-m2/test/counter-fixture-lifecycle.cmake:58 (message):
+  Counter fixture FAILED (1); retained for inspection:
+  /tmp/uno-publication-build/counter-integration-696516331865
+Call Stack (most recent call first):
+  /home/tomi/tos-m2/test/test-counter-disk-integration.cmake:3 (counter_run_fixture)
+
+
+</system-out>
+	</testcase>
+	<testcase name="test-counter-native-sender" classname="test-counter-native-sender" time="0.436906" status="fail">
+		<failure message=""/>
+		<system-out>-- Counter fixture active; retained if interrupted: /tmp/uno-publication-build/counter-integration-30f5bd49ef37
+CMake Error at /home/tomi/tos-m2/test/test-counter-disk-integration.cmake:193 (message):
+  native_send: missing 'outbound message queue size: 0 -&gt; 1'; see
+  /tmp/uno-publication-build/counter-integration-30f5bd49ef37/native_send.log
+Call Stack (most recent call first):
+  /home/tomi/tos-m2/test/test-counter-disk-integration.cmake:366 (require_log)
+
+
+
+CMake Error at /home/tomi/tos-m2/test/counter-fixture-lifecycle.cmake:58 (message):
+  Counter fixture FAILED (1); retained for inspection:
+  /tmp/uno-publication-build/counter-integration-30f5bd49ef37
+Call Stack (most recent call first):
+  /home/tomi/tos-m2/test/test-counter-disk-integration.cmake:3 (counter_run_fixture)
+
+
+</system-out>
+	</testcase>
+	<testcase name="test-counter-activation-missing_capability" classname="test-counter-activation-missing_capability" time="0.147086" status="fail">
+		<failure message=""/>
+		<system-out>-- Counter fixture active; retained if interrupted: /tmp/uno-publication-build/counter-integration-ac9ad1deb56f
+CMake Error at /home/tomi/tos-m2/test/test-counter-disk-integration.cmake:135 (message):
+  Genesis generation failed (2); see
+  /tmp/uno-publication-build/counter-integration-ac9ad1deb56f/counter-masterchain-genesis.log
+
+
+
+CMake Error at /home/tomi/tos-m2/test/counter-fixture-lifecycle.cmake:58 (message):
+  Counter fixture FAILED (1); retained for inspection:
+  /tmp/uno-publication-build/counter-integration-ac9ad1deb56f
+Call Stack (most recent call first):
+  /home/tomi/tos-m2/test/test-counter-disk-integration.cmake:3 (counter_run_fixture)
+
+
+</system-out>
+	</testcase>
+	<testcase name="test-counter-activation-old_version" classname="test-counter-activation-old_version" time="0.146115" status="fail">
+		<failure message=""/>
+		<system-out>-- Counter fixture active; retained if interrupted: /tmp/uno-publication-build/counter-integration-1b9bda53954b
+CMake Error at /home/tomi/tos-m2/test/test-counter-disk-integration.cmake:135 (message):
+  Genesis generation failed (2); see
+  /tmp/uno-publication-build/counter-integration-1b9bda53954b/counter-masterchain-genesis.log
+
+
+
+CMake Error at /home/tomi/tos-m2/test/counter-fixture-lifecycle.cmake:58 (message):
+  Counter fixture FAILED (1); retained for inspection:
+  /tmp/uno-publication-build/counter-integration-1b9bda53954b
+Call Stack (most recent call first):
+  /home/tomi/tos-m2/test/test-counter-disk-integration.cmake:3 (counter_run_fixture)
+
+
+</system-out>
+	</testcase>
+	<testcase name="test-counter-engine-config" classname="test-counter-engine-config" time="0.381298" status="run">
+		<system-out>-- Counter fixture active; retained if interrupted: /tmp/uno-publication-build/counter-integration-098fbae62674
+-- Counter fixture passed and removed: /tmp/uno-publication-build/counter-integration-098fbae62674
+</system-out>
+	</testcase>
+</testsuite>

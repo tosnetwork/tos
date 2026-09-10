@@ -66,6 +66,9 @@ class NetworkConfig:
     # activation of ordinary parameters.
     enable_config_voting: bool = False
     # Isolated host network fixture, never a deployment profile.
+    # Independent local production-posture profile: no registered UNO engine,
+    # active descriptor, closed message routing, identity-bearing configuration.
+    uno_workchain: bool = False
     counter_workchain: bool = False
     counter_payload: bool = False
     # Test-only aged genesis for crossing the native persistent-state time
@@ -128,19 +131,14 @@ wc_master setworkchain
 
 0 mkemptyShardState
 
-{{ <b x{{a7}} s, 5 roll 32 u, 4 roll 8 u, 3 roll 8 u, rot 8 u, x{{e000}} s,
-  3 roll 256 u, rot 256 u, 0 32 u, x{{1}} s, -1 32 i, 0 64 u, x{{0}} s, 20 32 u, 20 32 u, 10 32 u, 1000 32 u, 0 8 u, b>
-  dup isWorkchainDescr? not abort"invalid WorkchainDescr created"
-  <s swap workchain-dict @ 32 idict!+ 0= abort"cannot add workchain"
-  workchain-dict !
-}} : add-std-workchain-v2
+
 
 dup dup 31 boc+>B dup "basestate0.boc" B>file
 Bhashu dup =: basestate0_fhash 256 u>B "basestate0.fhash" B>file
 hashu dup =: basestate0_rhash 256 u>B "basestate0.rhash" B>file
-basestate0_rhash basestate0_fhash now {monitor_min_split} {split} dup 0 add-std-workchain-v2
+basestate0_rhash basestate0_fhash now {monitor_min_split} {split} dup 0 0xe000 -1 add-basic-workchain-v2 drop
 
-{counter_workchain_config}config.workchains!
+{counter_workchain_config}{uno_workchain_config}config.workchains!
 
 // Genesis balances reserved for system contracts, carved out of the fixed
 // 5 B TOS total supply. Defined once here and reused at both the
@@ -419,6 +417,11 @@ def _punishment_params(election_params: str) -> str:
 def create_zerostate(
     install: Install, state_dir: Path, config: NetworkConfig, validator_keys: list[Key]
 ) -> Zerostate:
+    if config.uno_workchain and (
+        config.counter_workchain or config.global_id in (1, -23903)
+        or config.global_version != 16 or config.split != 0 or config.monitor_min_split != 0
+    ):
+        raise ValueError("UNO local profile requires version 16, unsplit shards and a distinct non-mainnet non-Counter global ID")
     if config.counter_payload and not config.counter_workchain:
         raise ValueError("Counter payload requires the Counter network profile")
     checkpoint_time = config.counter_checkpoint_genesis_time
@@ -591,6 +594,10 @@ def create_zerostate(
         ),)
         counter_workchain_config = (install.source_dir / "test/counter-network-config.fif").read_text()
 
+    uno_workchain_config = ""
+    if config.uno_workchain:
+        uno_workchain_config = (install.source_dir / "test/uno-local-network-config.fif").read_text()
+
     run_fift(
         install,
         _TEMPLATE.format(
@@ -599,7 +606,8 @@ def create_zerostate(
             global_id=config.global_id,
             global_version=config.global_version,
             counter_workchain_config=counter_workchain_config,
-            counter_capability="1024 or " if config.counter_workchain else "",
+            uno_workchain_config=uno_workchain_config,
+            counter_capability="1024 or " if config.counter_workchain or config.uno_workchain else "",
             block_limit_mul=config.block_limit_mul,
             validators="\n".join(keys),
             mc_validators=len(keys),
@@ -611,6 +619,13 @@ def create_zerostate(
         state_dir,
         source_date_epoch=checkpoint_time,
     )
+
+    if config.uno_workchain:
+        extra_shards = (WorkchainState(
+            file=state_dir / "unostate0.boc",
+            file_hash=(state_dir / "unostate0.fhash").read_bytes(),
+            root_hash=(state_dir / "unostate0.rhash").read_bytes(),
+        ),)
 
     pk = (state_dir / "main-wallet.pk").read_bytes()
     addr_file = (state_dir / "main-wallet.addr").read_bytes()

@@ -1,0 +1,222 @@
+diff --git a/crypto/test/test-workchain-activation-control.cpp b/crypto/test/test-workchain-activation-control.cpp
+index 7e32b0ea8..66a49b71e 100644
+--- a/crypto/test/test-workchain-activation-control.cpp
++++ b/crypto/test/test-workchain-activation-control.cpp
+@@ -28,7 +28,14 @@ int main() {
+       policy.workchain_id = 2;
+       policy.engine_key = {block::WorkchainFormat::Basic, 0x434e5431};
+       policy.executor_address.set_zero();
+-      policy.engine_configuration = vm::CellBuilder().finalize();
++      // Explicit resolver-only identity values, not an authenticated
++      // installation. The same shell is used for both capability settings.
++      block::WorkchainResourcePolicy resources{4, {64,4096,8,16,16,5},
++          {256,16384,128,8192,64}, {32,128,8192,256,16384,16}};
++      auto shell = block::encode_workchain_engine_parameters(
++          {400, td::Bits256::zero(), td::Bits256::ones(), resources, vm::CellBuilder().finalize()});
++      if (shell.is_error()) return 329;
++      policy.engine_configuration = shell.move_as_ok();
+       auto ingress = block::encode_workchain_native_ingress_table({policy});
+       if (ingress.is_error() || !dictionary.set_ref(td::BitArray<32>{84}, ingress.move_as_ok())) return 327;
+       auto config = block::Config::unpack_config(dictionary.get_root_cell(), td::Bits256::zero(),
+diff --git a/crypto/test/test-workchain-block.cpp b/crypto/test/test-workchain-block.cpp
+index 5f32cc926..5e73cec00 100644
+--- a/crypto/test/test-workchain-block.cpp
++++ b/crypto/test/test-workchain-block.cpp
+@@ -1296,6 +1296,17 @@ block::MaterializedNativeCells own_native_fixture(const std::vector<td::Ref<vm::
+ 
+ using CounterEngine = block::test::CounterEngine;
+ 
++td::Ref<vm::Cell> counter_configuration_shell(td::Ref<vm::Cell> business) {
++  // Resolver-only fixture: these explicit, distinct identities are wire values,
++  // not a claim of installation against an authenticated masterchain state.
++  // Live installation fixtures derive their claims from their actual zerostate.
++  block::WorkchainResourcePolicy fixture_resources{4, {64,4096,8,16,16,5},
++      {256,16384,128,8192,64}, {32,128,8192,256,16384,16}};
++  return block::encode_workchain_engine_parameters(
++      {400, number(4001)->get_hash().bits(), number(4002)->get_hash().bits(),
++       fixture_resources, std::move(business)}).move_as_ok();
++}
++
+ std::unique_ptr<block::Config> block_configuration(int version = block::kBlockTransitionMinGlobalVersion,
+                                                  td::uint64 capabilities = tos::capBlockTransition,
+                                                  td::uint64 vm_mode = 0, bool include_ingress = true) {
+@@ -1308,7 +1319,7 @@ std::unique_ptr<block::Config> block_configuration(int version = block::kBlockTr
+   policy.engine_key = {block::WorkchainFormat::Basic, 0x434e5431};
+   policy.vm_mode = vm_mode;
+   policy.executor_address.set_zero();
+-  policy.engine_configuration = vm::CellBuilder().finalize();
++  policy.engine_configuration = counter_configuration_shell(vm::CellBuilder().finalize());
+   if (include_ingress) {
+     CHECK(config.set_ref(td::BitArray<32>(84u), block::encode_workchain_native_ingress_table({policy}).move_as_ok()));
+   }
+@@ -1316,6 +1327,27 @@ std::unique_ptr<block::Config> block_configuration(int version = block::kBlockTr
+                                      block::Config::needCapabilities).move_as_ok();
+ }
+ 
++TEST(WorkchainBlock, CounterConfigurationEnvelope) {
++  auto config = block_configuration();
++  auto table = block::decode_workchain_native_ingress_table(config->get_config_param(84)).move_as_ok();
++  auto shell = table.at(2).engine_configuration;
++  block::WorkchainExecutionDescriptor descriptor;
++  descriptor.workchain_id = 2;
++  descriptor.active = true;
++  descriptor.vm_version = 0x434e5431;
++  CounterEngine engine;
++  ASSERT_EQ(engine.validate_and_resolve_config(descriptor, *config, shell).is_ok() ? 0 : 1125, 0);
++  // A bare empty cell must fail framing; it is not empty business parameters.
++  ASSERT_EQ(engine.validate_and_resolve_config(descriptor, *config, vm::CellBuilder().finalize()).is_error() ? 0 : 1126, 0);
++  auto decoded = block::decode_workchain_engine_parameters(shell).move_as_ok();
++  decoded.parameters = vm::CellBuilder().store_long(0, 1).finalize();
++  auto nonempty = block::encode_workchain_engine_parameters(decoded).move_as_ok();
++  ASSERT_TRUE(block::decode_workchain_engine_parameters(nonempty).is_ok());
++  // Framing and descriptor are valid; the independent business predicate alone
++  // rejects this input. No error-text matching substitutes for that isolation.
++  ASSERT_EQ(engine.validate_and_resolve_config(descriptor, *config, nonempty).is_error() ? 0 : 1127, 0);
++}
++
+ td::Ref<vm::Cell> shard_fixture(int shard_wc = 2, int account_wc = 2, bool active = true,
+                               unsigned account_count = 1, bool before_split = false, unsigned prefix_bits = 0,
+                               std::uint64_t counter_value = 40, bool wrong_dictionary_key = false,
+@@ -9104,8 +9136,8 @@ TEST(WorkchainBlock, DualNativeIngressCodecAndVersion) {
+       descriptor.vm_version = 0x434e5431;
+       ASSERT_TRUE(registry.resolve_block(descriptor, *unpacked.ok()).is_error());
+       policy.custody_address.reset();
+-      // The singleton engine retains its original, unframed empty payload.
+-      policy.engine_configuration = vm::CellBuilder().finalize();
++      // Singleton and dual policies share framing; Counter business parameters are empty.
++      policy.engine_configuration = counter_configuration_shell(vm::CellBuilder().finalize());
+       ASSERT_TRUE(config.set_ref(td::BitArray<32>{84},
+           block::encode_workchain_native_ingress_table({policy}).move_as_ok()));
+       auto legacy = block::Config::unpack_config(config.get_root_cell(), td::Bits256::zero(),
+@@ -9821,7 +9853,7 @@ TEST(WorkchainBlock, MultiAccountRegistryBinding) {
+   policy.custody_address.reset();
+   policy.descriptor_version = descriptor.version;
+   policy.vm_mode = descriptor.vm_mode;
+-  policy.engine_configuration = vm::CellBuilder().finalize();
++  policy.engine_configuration = counter_configuration_shell(vm::CellBuilder().finalize());
+   auto singleton_cut = configuration(16, tos::capBlockTransition, &descriptor);
+   auto live = reverse.resolve_scoped_workchain(2, *singleton_cut);
+   ASSERT_TRUE(live.is_ok() && live.ok().has_value());
+@@ -10233,7 +10265,7 @@ TEST(WorkchainBlock, ReceiverRequiresMatchingPublicIngressPolicy) {
+   policy.workchain_id = 2;
+   policy.engine_key = {block::WorkchainFormat::Basic, 0x434e5431};
+   policy.executor_address.set_zero();
+-  policy.engine_configuration = vm::CellBuilder().finalize();
++  policy.engine_configuration = counter_configuration_shell(vm::CellBuilder().finalize());
+   auto resolve = [&](std::vector<block::WorkchainNativeIngressPolicy> policies) {
+     auto cfg = configuration(block::encode_workchain_native_ingress_table(policies).move_as_ok());
+     return registry.resolve_block(descriptor, *cfg);
+@@ -10252,9 +10284,13 @@ TEST(WorkchainBlock, ReceiverRequiresMatchingPublicIngressPolicy) {
+   wrong.executor_address = td::Bits256::ones();
+   ASSERT_TRUE(resolve({wrong}).is_error());
+   wrong = policy;
+-  wrong.engine_configuration = number(0);
++  // Preserve the original nonempty-business defect inside valid framing.
++  wrong.engine_configuration = counter_configuration_shell(number(0));
++  ASSERT_TRUE(block::decode_workchain_engine_parameters(wrong.engine_configuration).is_ok());
+   ASSERT_TRUE(resolve({wrong}).is_error());
+-  wrong.engine_configuration = vm::CellBuilder().store_ref(policy.engine_configuration).finalize();
++  wrong.engine_configuration = counter_configuration_shell(
++      vm::CellBuilder().store_ref(vm::CellBuilder().finalize()).finalize());
++  ASSERT_TRUE(block::decode_workchain_engine_parameters(wrong.engine_configuration).is_ok());
+   ASSERT_TRUE(resolve({wrong}).is_error());
+   auto malformed = configuration(number(0));
+   ASSERT_TRUE(registry.resolve_block(descriptor, *malformed).is_error());
+diff --git a/crypto/test/workchain-counter-engine.h b/crypto/test/workchain-counter-engine.h
+index 4efc0330f..38e25eb2c 100644
+--- a/crypto/test/workchain-counter-engine.h
++++ b/crypto/test/workchain-counter-engine.h
+@@ -3,6 +3,7 @@
+ #include <limits>
+ 
+ #include "block/workchain-execution-dispatch.h"
++#include "block/workchain-resource-policy.h"
+ #include "vm/cells.h"
+ #include "vm/cellslice.h"
+ #include "vm/dict.h"
+@@ -52,8 +53,10 @@ class CounterEngine final : public block::RegisteredWorkchainBlockEngine {
+   td::Result<std::shared_ptr<const block::WorkchainEngineConfig>> validate_and_resolve_config(
+       const block::WorkchainExecutionDescriptor& descriptor, const block::Config&,
+       const td::Ref<vm::Cell>& engine_configuration) const override {
+-    if (engine_configuration.is_null() ||
+-        engine_configuration->get_hash() != vm::CellBuilder().finalize()->get_hash()) {
++    TRY_RESULT(shell, block::decode_workchain_engine_parameters(engine_configuration));
++    // The host installs the identity-bearing shell. Empty means the business
++    // parameters only; accepting a bare empty cell would bypass that contract.
++    if (shell.parameters->get_hash() != vm::CellBuilder().finalize()->get_hash()) {
+       return td::Status::Error("counter requires an empty engine configuration");
+     }
+     if (descriptor.min_split != 0 || descriptor.max_split != 0) {
+diff --git a/crypto/test/workchain-instance-fixture-migration.md b/crypto/test/workchain-instance-fixture-migration.md
+index 3567d4e1c..e680636a6 100644
+--- a/crypto/test/workchain-instance-fixture-migration.md
++++ b/crypto/test/workchain-instance-fixture-migration.md
+@@ -1,5 +1,14 @@
+ # D40 caller migration and Counter readiness blocker
+ 
++**Latest coordinator scope:** nine Counter cases are owner-deferred as obsolete
++zerostate installation shapes, neither regression failures nor passes: readiness,
++activation-missing_capability, activation-old_version, disk-integration,
++idle-replay, self-delivery, cross-delivery, native-sender and engine-config.
++The Python harness decoder is not deferred. The initial three-case disposition
++below is historical; the complete current set and limits are recorded in
++`doc/measurements/uno-d40-caller-migration-2d5d7fa13/coordinator-nine-case-extension.json`.
++Merged-run causes must still be checked individually.
++
+ Source checkpoint: `2d5d7fa13` (parent `dd7a9afa3`).
+ 
+ Nine `encode_workchain_engine_parameters` call sites in
+diff --git a/doc/measurements/uno-d40-caller-migration-2d5d7fa13/artifact-manifest.json b/doc/measurements/uno-d40-caller-migration-2d5d7fa13/artifact-manifest.json
+index 49af5967d..cd2c8f211 100644
+--- a/doc/measurements/uno-d40-caller-migration-2d5d7fa13/artifact-manifest.json
++++ b/doc/measurements/uno-d40-caller-migration-2d5d7fa13/artifact-manifest.json
+@@ -73,8 +73,9 @@
+   "control.stderr.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+   "control.stdout.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+   "coordinator-disposition.json": "b10321f812b75ff9167cc359f31d096a8de5398799ce1525138822bae6faedb3",
++  "coordinator-nine-case-extension.json": "6910821b9de0ca652e52bcb564e6176dca2a313eae6ec84ebf6236ebb1c91404",
+   "failure-comparison.json": "8511cd7f50cec97d1122f0476fd85da3c63dbd7c56e0288c210b1df68b80a5e1",
+-  "failure-comparison.md": "0490be0917785a17f84e2e01e73b5941f30e06a4f8d01053a3fb154b5bf2f01f",
++  "failure-comparison.md": "384d9eeed47c3f647b3f04ef94316b56e59449404c2417410f1d03148d3a52d2",
+   "final-build.stderr.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+   "final-build.stdout.log": "8ec4301eb5b13086d59c605385bde6f1e2ae156536400a6dadd6e9b97ff82db8",
+   "final-regression.stderr.log": "18e00877dc1071c85cd4f479d451bebeef8309022e46cf8c63b0bed5151984a4",
+@@ -235,7 +236,7 @@
+   "readiness.stdout.log": "f96cbe15d6eed53b0e4e695dbde71bd533492b2d293b45347420f39926311875",
+   "readiness.xml": "d155cd04f6d42aa7fdec7a3487b2e01e8dcee53faf58e009595d359b49345969",
+   "registered-tests.json": "d8ff701d59dd6e91ad8d54a34ea9bb8d26fec75ef326b0d85246cf9a087c0c18",
+-  "report.json": "9119c8197997a6610a228ae304441765779f77ea5f1125240148f59f88b33616",
++  "report.json": "1bf2df59a7b5924ee3ba419a7f867b6cf1e190614c68b6901e920084d579109d",
+   "restore-build.stderr.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+   "restore-build.stdout.log": "c5534836ed2f57c068131c2619585a5daaf1c804d224f2c2d4f27d6ad6441290",
+   "retain-fixtures.py": "8ec471e7f22c0820394cd25d43ca7ac036b912d7fe6908b0c0ff15beb3ad0737",
+diff --git a/doc/measurements/uno-d40-caller-migration-2d5d7fa13/failure-comparison.md b/doc/measurements/uno-d40-caller-migration-2d5d7fa13/failure-comparison.md
+index 8c4801025..0a65d97fb 100644
+--- a/doc/measurements/uno-d40-caller-migration-2d5d7fa13/failure-comparison.md
++++ b/doc/measurements/uno-d40-caller-migration-2d5d7fa13/failure-comparison.md
+@@ -32,3 +32,13 @@ framing failures, the six runs that never entered due to the fixture cap, and
+ the missing TOL_STDLIB failure. Raw JUnit and logs have not been rewritten.
+ Singleton has no identity exemption. See `coordinator-disposition.json` for the
+ machine-readable disposition and the boundary of the next fixture unit.
++
++## Subsequent nine-case scope extension
++
++The coordinator subsequently included all six singleton bootstrap framing cases
++in the same post-zerostate reshaping unit. The current owner-deferred set is
++therefore nine cases, neither passes nor regression failures. The earlier
++three-case disposition and original observations above remain historical.
++`coordinator-nine-case-extension.json` lists the complete set. The Python harness
++is explicitly not deferred and must pass. A verifies causes on the merged tree;
++matching a name or count does not replace that check.
+diff --git a/doc/measurements/uno-d40-caller-migration-2d5d7fa13/report.json b/doc/measurements/uno-d40-caller-migration-2d5d7fa13/report.json
+index b6b90d90a..3eaa158f1 100644
+--- a/doc/measurements/uno-d40-caller-migration-2d5d7fa13/report.json
++++ b/doc/measurements/uno-d40-caller-migration-2d5d7fa13/report.json
+@@ -78,5 +78,6 @@
+     "/proc permission denials and vanished links are enumerated; no claim of inspecting inaccessible processes. Successful new Counter runs follow their existing auto-removal lifecycle; moved historical directories were not deleted."
+   ],
+   "subsequent_coordinator_disposition": "coordinator-disposition.json",
+-  "historical_scope_note": "The original scope statement records the pending decision at evidence production. The subsequent coordinator disposition resolves singleton identity applicability and closes this migration scope without changing raw observations."
++  "historical_scope_note": "The original scope statement records the pending decision at evidence production. The subsequent coordinator disposition resolves singleton identity applicability and closes this migration scope without changing raw observations.",
++  "latest_coordinator_disposition": "coordinator-nine-case-extension.json"
+ }

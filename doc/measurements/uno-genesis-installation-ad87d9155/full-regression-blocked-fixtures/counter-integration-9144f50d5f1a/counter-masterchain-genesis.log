@@ -1,0 +1,4 @@
+[1;31m[ 1][t 0][2026-09-09 22:48:21.803002076][create-state.cpp:998]	{}[0m
+[1;31m[ 1][t 0][2026-09-09 22:48:21.845675238][Fift.cpp:67]	top: create_state
+level 1: <text interpreter continuation>[0m
+Error interpreting file `/tmp/uno-publication-build/counter-integration-9144f50d5f1a/activation-genesis.fif`: [Error : 0 : activation-genesis.fif:83:	create_state:[Error : 7409 : instance configuration is missing]]

@@ -1,0 +1,12 @@
+{
+  "mode": "missing-capability",
+  "command": [
+    "/tmp/uno-merged-default-build/test-workchain-activation-control"
+  ],
+  "scope": "Real scoped resolver with Param84 retained in every configuration. These negative configurations are not legal genesis installations; no node startup, transaction or export observations are claimed.",
+  "shared_helper": {
+    "path": "/tmp/uno-merged-default-source/crypto/test/workchain-activation-rejection.py",
+    "commit": "3822c76ed9dd10633b9cbc58c457ab55f373bc07",
+    "sha256": "8b27fa99e2801a97ff15ed456ad98e836e025dc94f849202f8a8a14920b03b81"
+  }
+}

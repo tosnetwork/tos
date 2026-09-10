@@ -1,0 +1,14 @@
+// Inputs are explicit: descriptor key comes from the production C++ identity.
+uno-v2-engine-key constant uno_genesis_engine_key
+uno-v2-provisional-resources constant uno_genesis_resources
+
+// global-id resource-cell -- approved?
+// Empty mainnet resource allowlist pending M6 capacity acceptance. Replacing
+// provisional numbers alone does not authorize the replacement on mainnet.
+{ swap 1 = { drop false } { drop true } cond } : uno-genesis-resources-approved?
+globalid@ uno_genesis_resources uno-genesis-resources-approved? not
+abort"mainnet resource policy lacks M6 approval"
+
+// D55: 0xc000 = basic:1 active:1 accept_msgs:0 flags:0000000000000.
+// The production descriptor wire encoder is shared in Workchain.fif.
+variable uno_genesis_descriptor

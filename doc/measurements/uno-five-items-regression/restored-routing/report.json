@@ -1,0 +1,249 @@
+{
+  "scope": "Native source behavior and queues; not UNO execution or global liveness.",
+  "SOURCE_DATE_EPOCH": 1789002224,
+  "cases": [
+    {
+      "accept_msgs": true,
+      "runs": [
+        {
+          "name": "counter-shard-genesis",
+          "command": [
+            "/tmp/uno-publication-build/crypto/create-state",
+            "-I",
+            "/home/tomi/tos-m2/crypto/fift/lib:/tmp/uno-publication-build/crypto/smartcont:/home/tomi/tos-m2/crypto/smartcont",
+            "/home/tomi/tos-m2/test/counter-shard-genesis.fif"
+          ],
+          "exit": 0
+        },
+        {
+          "name": "counter-native-sender",
+          "command": [
+            "/tmp/uno-publication-build/crypto/create-state",
+            "-I",
+            "/home/tomi/tos-m2/crypto/fift/lib:/tmp/uno-publication-build/crypto/smartcont:/home/tomi/tos-m2/crypto/smartcont",
+            "/home/tomi/tos-m2/test/counter-native-sender.fif"
+          ],
+          "exit": 0
+        },
+        {
+          "name": "master",
+          "command": [
+            "/tmp/uno-publication-build/crypto/create-state",
+            "-I",
+            "/home/tomi/tos-m2/crypto/fift/lib:/tmp/uno-publication-build/crypto/smartcont:/home/tomi/tos-m2/crypto/smartcont",
+            "/tmp/uno-routing-evidence-mn3au8t4/run/serving/master.fif"
+          ],
+          "exit": 0
+        },
+        {
+          "name": "bootstrap",
+          "command": [
+            "/tmp/uno-publication-build/test-tos-collator",
+            "-C",
+            "/tmp/uno-routing-evidence-mn3au8t4/run/serving/global.json",
+            "-D",
+            "/tmp/uno-routing-evidence-mn3au8t4/run/serving/db",
+            "--query-result",
+            "/tmp/uno-routing-evidence-mn3au8t4/run/serving/bootstrap.result",
+            "-w",
+            "-1"
+          ],
+          "exit": 0
+        },
+        {
+          "name": "serving-engine",
+          "command": [
+            "/tmp/uno-publication-build/test-tos-collator",
+            "-C",
+            "/tmp/uno-routing-evidence-mn3au8t4/run/serving/global.json",
+            "-D",
+            "/tmp/uno-routing-evidence-mn3au8t4/run/serving/db",
+            "--query-result",
+            "/tmp/uno-routing-evidence-mn3au8t4/run/serving/serving-engine.result",
+            "-w",
+            "2",
+            "--counter-increment",
+            "0",
+            "-T",
+            "(2,8000000000000000,0):189a06f1656942a87c917b94ac512e560ceee10c636aed07d8e562287f43e6ab:7379275303d2ad962b0c9926977db4188fd7c7779f17a5b9ee4874f34af571db"
+          ],
+          "exit": 0
+        },
+        {
+          "name": "source-1",
+          "command": [
+            "/tmp/uno-publication-build/test-tos-collator",
+            "-C",
+            "/tmp/uno-routing-evidence-mn3au8t4/run/serving/global.json",
+            "-D",
+            "/tmp/uno-routing-evidence-mn3au8t4/run/serving/db",
+            "--query-result",
+            "/tmp/uno-routing-evidence-mn3au8t4/run/serving/source-1.result",
+            "-w",
+            "0",
+            "-m",
+            "/tmp/uno-routing-evidence-mn3au8t4/run/serving/sender-message.boc",
+            "--export-candidate",
+            "/tmp/uno-routing-evidence-mn3au8t4/run/serving/source-1.candidate"
+          ],
+          "exit": 0
+        },
+        {
+          "name": "source-2",
+          "command": [
+            "/tmp/uno-publication-build/test-tos-collator",
+            "-C",
+            "/tmp/uno-routing-evidence-mn3au8t4/run/serving/global.json",
+            "-D",
+            "/tmp/uno-routing-evidence-mn3au8t4/run/serving/db",
+            "--query-result",
+            "/tmp/uno-routing-evidence-mn3au8t4/run/serving/source-2.result",
+            "-w",
+            "0",
+            "-m",
+            "/tmp/uno-routing-evidence-mn3au8t4/run/serving/sender-message.boc",
+            "--export-candidate",
+            "/tmp/uno-routing-evidence-mn3au8t4/run/serving/source-2.candidate",
+            "-T",
+            "(0,8000000000000000,1):21a3b018414994823bb71fce0dfbb148fcf594bc1a4b5ac207375143b866f424:16d097abdbd1cf08354c5562f734a2add6d6e71fb5e64c63cd2aadaf908bdbd1"
+          ],
+          "exit": 0
+        }
+      ],
+      "transactions": [
+        {
+          "lt": 2000001,
+          "action_result_code": 0,
+          "aborted": false,
+          "out_messages": 1,
+          "queue_entries": 1,
+          "source_balance": 999999986350,
+          "source_fees": 13483,
+          "block": "(0,8000000000000000,1):21a3b018414994823bb71fce0dfbb148fcf594bc1a4b5ac207375143b866f424:16d097abdbd1cf08354c5562f734a2add6d6e71fb5e64c63cd2aadaf908bdbd1"
+        },
+        {
+          "lt": 3000001,
+          "action_result_code": 0,
+          "aborted": false,
+          "out_messages": 1,
+          "queue_entries": 2,
+          "source_balance": 999999972699,
+          "source_fees": 13484,
+          "block": "(0,8000000000000000,2):58c605819e582df42d47c4c2c8fbee7a7aef4762d5df5095926caddf654375a1:0d4af9ff09a27398845ceab2930218c6471048f3da6845e42d64c217a83a0e4b"
+        }
+      ]
+    },
+    {
+      "accept_msgs": false,
+      "runs": [
+        {
+          "name": "counter-shard-genesis",
+          "command": [
+            "/tmp/uno-publication-build/crypto/create-state",
+            "-I",
+            "/home/tomi/tos-m2/crypto/fift/lib:/tmp/uno-publication-build/crypto/smartcont:/home/tomi/tos-m2/crypto/smartcont",
+            "/home/tomi/tos-m2/test/counter-shard-genesis.fif"
+          ],
+          "exit": 0
+        },
+        {
+          "name": "counter-native-sender",
+          "command": [
+            "/tmp/uno-publication-build/crypto/create-state",
+            "-I",
+            "/home/tomi/tos-m2/crypto/fift/lib:/tmp/uno-publication-build/crypto/smartcont:/home/tomi/tos-m2/crypto/smartcont",
+            "/home/tomi/tos-m2/test/counter-native-sender.fif"
+          ],
+          "exit": 0
+        },
+        {
+          "name": "master",
+          "command": [
+            "/tmp/uno-publication-build/crypto/create-state",
+            "-I",
+            "/home/tomi/tos-m2/crypto/fift/lib:/tmp/uno-publication-build/crypto/smartcont:/home/tomi/tos-m2/crypto/smartcont",
+            "/tmp/uno-routing-evidence-mn3au8t4/run/unserved/master.fif"
+          ],
+          "exit": 0
+        },
+        {
+          "name": "bootstrap",
+          "command": [
+            "/tmp/uno-publication-build/test-tos-collator",
+            "-C",
+            "/tmp/uno-routing-evidence-mn3au8t4/run/unserved/global.json",
+            "-D",
+            "/tmp/uno-routing-evidence-mn3au8t4/run/unserved/db",
+            "--query-result",
+            "/tmp/uno-routing-evidence-mn3au8t4/run/unserved/bootstrap.result",
+            "-w",
+            "-1"
+          ],
+          "exit": 0
+        },
+        {
+          "name": "source-1",
+          "command": [
+            "/tmp/uno-publication-build/test-tos-collator",
+            "-C",
+            "/tmp/uno-routing-evidence-mn3au8t4/run/unserved/global.json",
+            "-D",
+            "/tmp/uno-routing-evidence-mn3au8t4/run/unserved/db",
+            "--query-result",
+            "/tmp/uno-routing-evidence-mn3au8t4/run/unserved/source-1.result",
+            "-w",
+            "0",
+            "-m",
+            "/tmp/uno-routing-evidence-mn3au8t4/run/unserved/sender-message.boc",
+            "--export-candidate",
+            "/tmp/uno-routing-evidence-mn3au8t4/run/unserved/source-1.candidate"
+          ],
+          "exit": 0
+        },
+        {
+          "name": "source-2",
+          "command": [
+            "/tmp/uno-publication-build/test-tos-collator",
+            "-C",
+            "/tmp/uno-routing-evidence-mn3au8t4/run/unserved/global.json",
+            "-D",
+            "/tmp/uno-routing-evidence-mn3au8t4/run/unserved/db",
+            "--query-result",
+            "/tmp/uno-routing-evidence-mn3au8t4/run/unserved/source-2.result",
+            "-w",
+            "0",
+            "-m",
+            "/tmp/uno-routing-evidence-mn3au8t4/run/unserved/sender-message.boc",
+            "--export-candidate",
+            "/tmp/uno-routing-evidence-mn3au8t4/run/unserved/source-2.candidate",
+            "-T",
+            "(0,8000000000000000,1):19c24f657f626275e8bf0fd99c8c1d62b775c567b14cb39272eacfff1ffda811:dd8707f99d56fac0dc32ce51e09f483dcb919f479d3d7107c7d1c60c4ea9f3b0"
+          ],
+          "exit": 0
+        }
+      ],
+      "transactions": [
+        {
+          "lt": 2000001,
+          "action_result_code": 36,
+          "aborted": true,
+          "out_messages": 0,
+          "queue_entries": 0,
+          "source_balance": 999999986550,
+          "source_fees": 13450,
+          "block": "(0,8000000000000000,1):19c24f657f626275e8bf0fd99c8c1d62b775c567b14cb39272eacfff1ffda811:dd8707f99d56fac0dc32ce51e09f483dcb919f479d3d7107c7d1c60c4ea9f3b0"
+        },
+        {
+          "lt": 3000001,
+          "action_result_code": 36,
+          "aborted": true,
+          "out_messages": 0,
+          "queue_entries": 0,
+          "source_balance": 999999973100,
+          "source_fees": 13450,
+          "block": "(0,8000000000000000,2):3ee18ac4e64ecffddfa08b230066e7de593376c6cd69643b2804e04303631dbf:bdea24427675badcb3c9b121de531317f0b7dd7e6cbb4865329606b186aa79e6"
+        }
+      ]
+    }
+  ]
+}

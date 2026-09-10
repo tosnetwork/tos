@@ -1,0 +1,31 @@
+{
+  "original_sha256": "07a8dbb175136439e03e177c5f945f2b4f992aaa6f3b6369c685afe03f554831",
+  "mutant_sha256": "c4cb415a9a482b2d0ada9c2fc09cb40157a11c86718e97820a02900c21f4124f",
+  "targets": [
+    {
+      "name": "slice1_gas_parity_contracts",
+      "exit": 2,
+      "exact_failure": "Failed to discover Tol stdlib."
+    },
+    {
+      "name": "slice5_receive_context_contract",
+      "exit": 2,
+      "exact_failure": "Failed to discover Tol stdlib."
+    },
+    {
+      "name": "tos_report_bond_oracle_contract",
+      "exit": 2,
+      "exact_failure": "Failed to discover Tol stdlib."
+    }
+  ],
+  "baseline_outputs": {
+    "/tmp/tos-tol-stdlib-build/slice1-gas-parity/jetton-minter-tol.boc": "c5edaed00c9660411abd82ffc3a21924b564044de40bbac26d469bcddfe45c49",
+    "/tmp/tos-tol-stdlib-build/slice1-gas-parity/jetton-wallet-tol.boc": "7448e96820d6656b57e9c7e27411197e624f48efe4b9dcf4fae1efb13d86b798",
+    "/tmp/tos-tol-stdlib-build/slice1-gas-parity/wallet-v5-tol.boc": "c5298a00fe3f7bc5a481170412169eb6bd48e2850c2ce7ea9317cde8c25caf7f",
+    "/tmp/tos-tol-stdlib-build/slice1-gas-parity/slice5-receive-context-tol.boc": "bc81769ac428cc89af9c7fcfe36d93568c5781cdbc0f55e02bc6c58a06f03b76",
+    "/tmp/tos-tol-stdlib-build/slice1-gas-parity/tos-report-bond-oracle.boc": "7e6d523f909febf6beda37ea8dfdf3d5fb2695ecc445160bfb7b913e6f78c0f8"
+  },
+  "restored_sha256": "07a8dbb175136439e03e177c5f945f2b4f992aaa6f3b6369c685afe03f554831",
+  "restored_exit": 0,
+  "all_five_outputs_byte_identical": true
+}

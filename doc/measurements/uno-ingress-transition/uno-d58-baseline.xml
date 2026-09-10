@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="(empty)"
+	tests="3"
+	failures="0"
+	disabled="0"
+	skipped="0"
+	hostname=""
+	time="0"
+	timestamp="2026-09-10T00:38:52"
+	>
+	<testcase name="test-workchain-ingress-transition" classname="test-workchain-ingress-transition" time="0.00631518" status="run">
+		<system-out>[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-10 00:38:52.156139450][mc-config.cpp:572]	workchain description dictionary created[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-10 00:38:52.156360967][mc-config.cpp:2347]	unpacked info for workchain 2: basic=true, active=true, accept_msgs=false, min_split=0, max_split=0[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-10 00:38:52.156370518][mc-config.cpp:2347]	unpacked info for workchain 3: basic=true, active=true, accept_msgs=false, min_split=0, max_split=0[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-10 00:38:52.156378465][mc-config.cpp:572]	workchain description dictionary created[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-10 00:38:52.156383658][mc-config.cpp:2347]	unpacked info for workchain 2: basic=true, active=true, accept_msgs=false, min_split=0, max_split=0[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-10 00:38:52.156389595][mc-config.cpp:2347]	unpacked info for workchain 3: basic=true, active=true, accept_msgs=false, min_split=0, max_split=0[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-10 00:38:52.156466009][mc-config.cpp:572]	workchain description dictionary created[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09...
+The rest of the test output was removed since it exceeds the threshold of 1024 bytes.
+</system-out>
+	</testcase>
+	<testcase name="test-counter-activation-missing_capability" classname="test-counter-activation-missing_capability" time="0.161199" status="run">
+		<system-out>PASS: scoped activation refusal with Param84 retained; evidence=/tmp/uno-genesis-activation-pdjkycsx/run
+</system-out>
+	</testcase>
+	<testcase name="test-counter-activation-old_version" classname="test-counter-activation-old_version" time="0.156067" status="run">
+		<system-out>PASS: scoped activation refusal with Param84 retained; evidence=/tmp/uno-genesis-activation-0jm0g5dw/run
+</system-out>
+	</testcase>
+</testsuite>

@@ -1,0 +1,16 @@
+{
+  "scope": "Independent local chain, no UNO engine registration; not account-batch execution acceptance.",
+  "global_id": 4,
+  "runs": [],
+  "binaries": {
+    "/tmp/uno-publication-build/crypto/create-state": "652e021480eeb3ff8a27c725dc3e6afc0c856ba7638952493d88002ec4ecf9e0",
+    "/tmp/uno-publication-build/validator-engine/validator-engine": "e636f8236d9fa873f26a765f506735edb609762ffffb0e5291258b1cb50834c8",
+    "/tmp/uno-publication-build/dht-server/dht-server": "6cc72b1ca4e093f2c1036f566f94f2916b7eeac326edcab421e35466eda08011"
+  },
+  "genesis": {
+    "root_hash": "e70abb225cb8745c2bf2ef03463ebe4686b3a6ceb8b0d81dcdc2822485eb03fd",
+    "file_hash": "e3bb32efdf873bbf5d9a9a0aebaa29a44e25e1a156af71803524b8f599bc6884",
+    "ledger_boc": "b5ee9c7201010201003b0001094a22c575c0010062a000000002410ed06c00000000000000018d681a49d69a9bf6ab93cf99ca293041761be2c3c0f59006124b881eaef954d6"
+  },
+  "error": "KeyboardInterrupt()"
+}

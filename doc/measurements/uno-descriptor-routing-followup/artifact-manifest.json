@@ -1,0 +1,554 @@
+[
+  {
+    "source": "/tmp/uno-routing-call-control/control.json",
+    "artifact": "control.json",
+    "original_bytes": 1279,
+    "original_sha256": "273c110294acaf014c35443b9f1fffe8882e1db16d20a8695a37e9e3b27ec213"
+  },
+  {
+    "source": "/tmp/uno-routing-call-control/routing.py",
+    "artifact": "routing.py",
+    "original_bytes": 7620,
+    "original_sha256": "345946170cfab55c6086de80d5b20ff2f4da3e9047d54adc15c5b319912e2264"
+  },
+  {
+    "source": "/tmp/uno-routing-call-control/run/report.json",
+    "artifact": "run/report.json",
+    "original_bytes": 7387,
+    "original_sha256": "66e544f4bf8dc9d35a32ee455a13caa897f8559e737831d4d8c54f6fec9984f4"
+  },
+  {
+    "source": "/tmp/uno-routing-call-control/run/serving/basestate0.boc",
+    "artifact": "run/serving/basestate0.boc",
+    "original_bytes": 400,
+    "original_sha256": "6556e1c1a493e9c0696212c3a4f9c6c0687f4100cfe5b25420e34356d21605a2"
+  },
+  {
+    "source": "/tmp/uno-routing-call-control/run/serving/basestate0.fhash",
+    "artifact": "run/serving/basestate0.fhash",
+    "original_bytes": 32,
+    "original_sha256": "36316ee844f8c7edd0ccf90aebac751018961db6a1efa37c9d86282b34704b88"
+  },
+  {
+    "source": "/tmp/uno-routing-call-control/run/serving/basestate0.rhash",
+    "artifact": "run/serving/basestate0.rhash",
+    "original_bytes": 32,
+    "original_sha256": "32acc2338b04d3eb62bb55bddc2f0d969f9adfaa538a58c8cd11349390ce07c0"
+  },
+  {
+    "source": "/tmp/uno-routing-call-control/run/serving/bootstrap.result",
+    "artifact": "run/serving/bootstrap.result",
+    "original_bytes": 10,
+    "original_sha256": "b0b5464a5f290a15b6a78529508979e500a2ef2b88da01fca94db52c314fc8d0"
+  },
+  {
+    "source": "/tmp/uno-routing-call-control/run/serving/bootstrap.result.binding",
+    "artifact": "run/serving/bootstrap.result.binding",
+    "original_bytes": 34,
+    "original_sha256": "2d394a7a81ee2551de8d094575d71f8ab20352f8ad3a2c6503bc2c9b51db8dda"
+  },
+  {
+    "source": "/tmp/uno-routing-call-control/run/serving/bootstrap.result.kind",
+    "artifact": "run/serving/bootstrap.result.kind",
+    "original_bytes": 8,
+    "original_sha256": "81b2bd4ea98c8db66554fbc8d7637a1a69a130f331feb732b75caab4c4868fd5"
+  },
+  {
+    "source": "/tmp/uno-routing-call-control/run/serving/bootstrap.result.message",
+    "artifact": "run/serving/bootstrap.result.message",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/tmp/uno-routing-call-control/run/serving/bootstrap.result.stats",
+    "artifact": "run/serving/bootstrap.result.stats",
+    "original_bytes": 100,
+    "original_sha256": "a7314623d5c790e0fb09a9cfaf3739cf9eb9b000351e463ca20d975a752e6681"
+  },
+  {
+    "source": "/tmp/uno-routing-call-control/run/serving/bootstrap.result.stats.timing",
+    "artifact": "run/serving/bootstrap.result.stats.timing",
+    "original_bytes": 88,
+    "original_sha256": "064ea7084447b40d907f324d6e9fb75483bcb1eed9942377db6fcd5f85241b81"
+  },
+  {
+    "source": "/tmp/uno-routing-call-control/run/serving/bootstrap.stderr.log",
+    "artifact": "run/serving/bootstrap.stderr.log",
+    "original_bytes": 17667,
+    "original_sha256": "01976a2d10e874a43a6810bd5e6b8230447e5b522a75eb3f797f9f55109ff9d2"
+  },
+  {
+    "source": "/tmp/uno-routing-call-control/run/serving/bootstrap.stdout.log",
+    "artifact": "run/serving/bootstrap.stdout.log",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/tmp/uno-routing-call-control/run/serving/counter-native-sender.stderr.log",
+    "artifact": "run/serving/counter-native-sender.stderr.log",
+    "original_bytes": 77,
+    "original_sha256": "402ad5099bc09f907e1b5b09eaf2d5b0b28b50f1efb220af1cc51b0419061916"
+  },
+  {
+    "source": "/tmp/uno-routing-call-control/run/serving/counter-native-sender.stdout.log",
+    "artifact": "run/serving/counter-native-sender.stdout.log",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/tmp/uno-routing-call-control/run/serving/counter-shard-genesis.stderr.log",
+    "artifact": "run/serving/counter-shard-genesis.stderr.log",
+    "original_bytes": 77,
+    "original_sha256": "fe3a12e4adf64778e4a2df1e489b4e0c99bee11b29d32e6236b10fb3b0cd8a51"
+  },
+  {
+    "source": "/tmp/uno-routing-call-control/run/serving/counter-shard-genesis.stdout.log",
+    "artifact": "run/serving/counter-shard-genesis.stdout.log",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/tmp/uno-routing-call-control/run/serving/counter-state.boc",
+    "artifact": "run/serving/counter-state.boc",
+    "original_bytes": 245,
+    "original_sha256": "d5ade16879a1dc9fa16153b41e06091f434c8f2a54a7dbf21e3a708e8ee40263"
+  },
+  {
+    "source": "/tmp/uno-routing-call-control/run/serving/counter-state.fhash",
+    "artifact": "run/serving/counter-state.fhash",
+    "original_bytes": 32,
+    "original_sha256": "cf30199f7cece4deda798241ab865034226d59399052d210f90c45abbf1d0d48"
+  },
+  {
+    "source": "/tmp/uno-routing-call-control/run/serving/counter-state.rhash",
+    "artifact": "run/serving/counter-state.rhash",
+    "original_bytes": 32,
+    "original_sha256": "e5620c2d9dff51c74c9613c5682176091107304d940b279725fab71dbc941de6"
+  },
+  {
+    "source": "/tmp/uno-routing-call-control/run/serving/global.json",
+    "artifact": "run/serving/global.json",
+    "original_bytes": 400,
+    "original_sha256": "c85aae1e6b63df072d00292dad624cfd8916fd351e020cecf701f77550eb854b"
+  },
+  {
+    "source": "/tmp/uno-routing-call-control/run/serving/master.fif",
+    "artifact": "run/serving/master.fif",
+    "original_bytes": 3397,
+    "original_sha256": "80538301f50001ac0dead673b07093f84d546e28685b9ee0bb77521cebaa18ff"
+  },
+  {
+    "source": "/tmp/uno-routing-call-control/run/serving/master.stderr.log",
+    "artifact": "run/serving/master.stderr.log",
+    "original_bytes": 77,
+    "original_sha256": "f427f732b920db84cc083ec2f1c92f5b98dca86e0e9ea9ee126ec231c2ce37fb"
+  },
+  {
+    "source": "/tmp/uno-routing-call-control/run/serving/master.stdout.log",
+    "artifact": "run/serving/master.stdout.log",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/tmp/uno-routing-call-control/run/serving/sender-message.boc",
+    "artifact": "run/serving/sender-message.boc",
+    "original_bytes": 53,
+    "original_sha256": "710c7b4c4c975782893a3917510f938a7c77e93ec093abd94bb1f6fb6990cf4a"
+  },
+  {
+    "source": "/tmp/uno-routing-call-control/run/serving/serving-engine.result",
+    "artifact": "run/serving/serving-engine.result",
+    "original_bytes": 10,
+    "original_sha256": "b0b5464a5f290a15b6a78529508979e500a2ef2b88da01fca94db52c314fc8d0"
+  },
+  {
+    "source": "/tmp/uno-routing-call-control/run/serving/serving-engine.result.binding",
+    "artifact": "run/serving/serving-engine.result.binding",
+    "original_bytes": 34,
+    "original_sha256": "2d394a7a81ee2551de8d094575d71f8ab20352f8ad3a2c6503bc2c9b51db8dda"
+  },
+  {
+    "source": "/tmp/uno-routing-call-control/run/serving/serving-engine.result.kind",
+    "artifact": "run/serving/serving-engine.result.kind",
+    "original_bytes": 8,
+    "original_sha256": "81b2bd4ea98c8db66554fbc8d7637a1a69a130f331feb732b75caab4c4868fd5"
+  },
+  {
+    "source": "/tmp/uno-routing-call-control/run/serving/serving-engine.result.message",
+    "artifact": "run/serving/serving-engine.result.message",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/tmp/uno-routing-call-control/run/serving/serving-engine.result.stats",
+    "artifact": "run/serving/serving-engine.result.stats",
+    "original_bytes": 100,
+    "original_sha256": "a7314623d5c790e0fb09a9cfaf3739cf9eb9b000351e463ca20d975a752e6681"
+  },
+  {
+    "source": "/tmp/uno-routing-call-control/run/serving/serving-engine.result.stats.timing",
+    "artifact": "run/serving/serving-engine.result.stats.timing",
+    "original_bytes": 87,
+    "original_sha256": "1f44401692fdcfc61ea57fd32532923e64105925de4e2add4dfa773e877d28d6"
+  },
+  {
+    "source": "/tmp/uno-routing-call-control/run/serving/serving-engine.stderr.log",
+    "artifact": "run/serving/serving-engine.stderr.log",
+    "original_bytes": 15384,
+    "original_sha256": "7c67c839d6bd1c9aba1685bfbbb48c18759e8f52302a98cd07bb7ce8f6eaf39d"
+  },
+  {
+    "source": "/tmp/uno-routing-call-control/run/serving/serving-engine.stdout.log",
+    "artifact": "run/serving/serving-engine.stdout.log",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/tmp/uno-routing-call-control/run/serving/source-1.candidate",
+    "artifact": "run/serving/source-1.candidate",
+    "original_bytes": 2152,
+    "original_sha256": "3ce6ce3593e637762f83bcefe50169f0fa0eba2fa0d4fd23cd0a7f4dd60b937f"
+  },
+  {
+    "source": "/tmp/uno-routing-call-control/run/serving/source-1.result",
+    "artifact": "run/serving/source-1.result",
+    "original_bytes": 10,
+    "original_sha256": "b0b5464a5f290a15b6a78529508979e500a2ef2b88da01fca94db52c314fc8d0"
+  },
+  {
+    "source": "/tmp/uno-routing-call-control/run/serving/source-1.result.binding",
+    "artifact": "run/serving/source-1.result.binding",
+    "original_bytes": 34,
+    "original_sha256": "2d394a7a81ee2551de8d094575d71f8ab20352f8ad3a2c6503bc2c9b51db8dda"
+  },
+  {
+    "source": "/tmp/uno-routing-call-control/run/serving/source-1.result.kind",
+    "artifact": "run/serving/source-1.result.kind",
+    "original_bytes": 8,
+    "original_sha256": "81b2bd4ea98c8db66554fbc8d7637a1a69a130f331feb732b75caab4c4868fd5"
+  },
+  {
+    "source": "/tmp/uno-routing-call-control/run/serving/source-1.result.message",
+    "artifact": "run/serving/source-1.result.message",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/tmp/uno-routing-call-control/run/serving/source-1.result.stats",
+    "artifact": "run/serving/source-1.result.stats",
+    "original_bytes": 100,
+    "original_sha256": "a7314623d5c790e0fb09a9cfaf3739cf9eb9b000351e463ca20d975a752e6681"
+  },
+  {
+    "source": "/tmp/uno-routing-call-control/run/serving/source-1.result.stats.timing",
+    "artifact": "run/serving/source-1.result.stats.timing",
+    "original_bytes": 87,
+    "original_sha256": "37c80c7cf762375addeebd1761ea551f075da5cbf18cbe595eda6bd1d98cf55b"
+  },
+  {
+    "source": "/tmp/uno-routing-call-control/run/serving/source-1.stderr.log",
+    "artifact": "run/serving/source-1.stderr.log",
+    "original_bytes": 17044,
+    "original_sha256": "c0616a35a62efa5597e1882d672d136c56f1a4baf73ab507f2900250f97b9780"
+  },
+  {
+    "source": "/tmp/uno-routing-call-control/run/serving/source-1.stdout.log",
+    "artifact": "run/serving/source-1.stdout.log",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/tmp/uno-routing-call-control/run/serving/source-2.candidate",
+    "artifact": "run/serving/source-2.candidate",
+    "original_bytes": 2424,
+    "original_sha256": "796e3dd58f01ee06e0e85e04edb8772322916223f6a845d4985ba1d2ebbddd44"
+  },
+  {
+    "source": "/tmp/uno-routing-call-control/run/serving/source-2.result",
+    "artifact": "run/serving/source-2.result",
+    "original_bytes": 10,
+    "original_sha256": "b0b5464a5f290a15b6a78529508979e500a2ef2b88da01fca94db52c314fc8d0"
+  },
+  {
+    "source": "/tmp/uno-routing-call-control/run/serving/source-2.result.binding",
+    "artifact": "run/serving/source-2.result.binding",
+    "original_bytes": 34,
+    "original_sha256": "2d394a7a81ee2551de8d094575d71f8ab20352f8ad3a2c6503bc2c9b51db8dda"
+  },
+  {
+    "source": "/tmp/uno-routing-call-control/run/serving/source-2.result.kind",
+    "artifact": "run/serving/source-2.result.kind",
+    "original_bytes": 8,
+    "original_sha256": "81b2bd4ea98c8db66554fbc8d7637a1a69a130f331feb732b75caab4c4868fd5"
+  },
+  {
+    "source": "/tmp/uno-routing-call-control/run/serving/source-2.result.message",
+    "artifact": "run/serving/source-2.result.message",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/tmp/uno-routing-call-control/run/serving/source-2.result.stats",
+    "artifact": "run/serving/source-2.result.stats",
+    "original_bytes": 100,
+    "original_sha256": "a7314623d5c790e0fb09a9cfaf3739cf9eb9b000351e463ca20d975a752e6681"
+  },
+  {
+    "source": "/tmp/uno-routing-call-control/run/serving/source-2.result.stats.timing",
+    "artifact": "run/serving/source-2.result.stats.timing",
+    "original_bytes": 87,
+    "original_sha256": "030ccee1932660f91691fe6cdbc140a111e105a29e782e00c83d6cfb749bd60d"
+  },
+  {
+    "source": "/tmp/uno-routing-call-control/run/serving/source-2.stderr.log",
+    "artifact": "run/serving/source-2.stderr.log",
+    "original_bytes": 17539,
+    "original_sha256": "da739542087110b746cfcad29f8f92a459c636af4ec1f49902ae524c59a515b1"
+  },
+  {
+    "source": "/tmp/uno-routing-call-control/run/serving/source-2.stdout.log",
+    "artifact": "run/serving/source-2.stdout.log",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/tmp/uno-routing-call-control/run/serving/zerostate.boc",
+    "artifact": "run/serving/zerostate.boc",
+    "original_bytes": 4523,
+    "original_sha256": "5cb8ef6ac032549e34e782932ed08de9acd07bd3851efe38556f22ff2d940c56"
+  },
+  {
+    "source": "/tmp/uno-routing-call-control/run/serving/zerostate.fhash",
+    "artifact": "run/serving/zerostate.fhash",
+    "original_bytes": 32,
+    "original_sha256": "8bf7e1d948d6289b6727874d0812d3e29a186139fb0b73f12774853f37169d38"
+  },
+  {
+    "source": "/tmp/uno-routing-call-control/run/serving/zerostate.rhash",
+    "artifact": "run/serving/zerostate.rhash",
+    "original_bytes": 32,
+    "original_sha256": "5e2db036305ed94dc10f731e48140ac0785bdbd653e43cbb738301859b592b8f"
+  },
+  {
+    "source": "/tmp/uno-routing-call-control/run/unserved/basestate0.boc",
+    "artifact": "run/unserved/basestate0.boc",
+    "original_bytes": 400,
+    "original_sha256": "6556e1c1a493e9c0696212c3a4f9c6c0687f4100cfe5b25420e34356d21605a2"
+  },
+  {
+    "source": "/tmp/uno-routing-call-control/run/unserved/basestate0.fhash",
+    "artifact": "run/unserved/basestate0.fhash",
+    "original_bytes": 32,
+    "original_sha256": "36316ee844f8c7edd0ccf90aebac751018961db6a1efa37c9d86282b34704b88"
+  },
+  {
+    "source": "/tmp/uno-routing-call-control/run/unserved/basestate0.rhash",
+    "artifact": "run/unserved/basestate0.rhash",
+    "original_bytes": 32,
+    "original_sha256": "32acc2338b04d3eb62bb55bddc2f0d969f9adfaa538a58c8cd11349390ce07c0"
+  },
+  {
+    "source": "/tmp/uno-routing-call-control/run/unserved/bootstrap.result",
+    "artifact": "run/unserved/bootstrap.result",
+    "original_bytes": 10,
+    "original_sha256": "b0b5464a5f290a15b6a78529508979e500a2ef2b88da01fca94db52c314fc8d0"
+  },
+  {
+    "source": "/tmp/uno-routing-call-control/run/unserved/bootstrap.result.binding",
+    "artifact": "run/unserved/bootstrap.result.binding",
+    "original_bytes": 34,
+    "original_sha256": "2d394a7a81ee2551de8d094575d71f8ab20352f8ad3a2c6503bc2c9b51db8dda"
+  },
+  {
+    "source": "/tmp/uno-routing-call-control/run/unserved/bootstrap.result.kind",
+    "artifact": "run/unserved/bootstrap.result.kind",
+    "original_bytes": 8,
+    "original_sha256": "81b2bd4ea98c8db66554fbc8d7637a1a69a130f331feb732b75caab4c4868fd5"
+  },
+  {
+    "source": "/tmp/uno-routing-call-control/run/unserved/bootstrap.result.message",
+    "artifact": "run/unserved/bootstrap.result.message",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/tmp/uno-routing-call-control/run/unserved/bootstrap.result.stats",
+    "artifact": "run/unserved/bootstrap.result.stats",
+    "original_bytes": 100,
+    "original_sha256": "a7314623d5c790e0fb09a9cfaf3739cf9eb9b000351e463ca20d975a752e6681"
+  },
+  {
+    "source": "/tmp/uno-routing-call-control/run/unserved/bootstrap.result.stats.timing",
+    "artifact": "run/unserved/bootstrap.result.stats.timing",
+    "original_bytes": 88,
+    "original_sha256": "687df6d77538e32aabb31ae0dad02252ab27cd2e4c5d4ba0b153593a51127e2b"
+  },
+  {
+    "source": "/tmp/uno-routing-call-control/run/unserved/bootstrap.stderr.log",
+    "artifact": "run/unserved/bootstrap.stderr.log",
+    "original_bytes": 17667,
+    "original_sha256": "088519d32b8e161d7295d39d7250b9c9e57941a760221fb26888dd6c91df276c"
+  },
+  {
+    "source": "/tmp/uno-routing-call-control/run/unserved/bootstrap.stdout.log",
+    "artifact": "run/unserved/bootstrap.stdout.log",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/tmp/uno-routing-call-control/run/unserved/counter-native-sender.stderr.log",
+    "artifact": "run/unserved/counter-native-sender.stderr.log",
+    "original_bytes": 77,
+    "original_sha256": "a4ceed00fef8df6064aac37f2b18fb4efdda6fe7565a57e9c551078d39cde0af"
+  },
+  {
+    "source": "/tmp/uno-routing-call-control/run/unserved/counter-native-sender.stdout.log",
+    "artifact": "run/unserved/counter-native-sender.stdout.log",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/tmp/uno-routing-call-control/run/unserved/counter-shard-genesis.stderr.log",
+    "artifact": "run/unserved/counter-shard-genesis.stderr.log",
+    "original_bytes": 77,
+    "original_sha256": "6baa6e989a7abc804ff478e625e021f0b503c79baa08e3b3ec1b08715cd1c80a"
+  },
+  {
+    "source": "/tmp/uno-routing-call-control/run/unserved/counter-shard-genesis.stdout.log",
+    "artifact": "run/unserved/counter-shard-genesis.stdout.log",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/tmp/uno-routing-call-control/run/unserved/counter-state.boc",
+    "artifact": "run/unserved/counter-state.boc",
+    "original_bytes": 245,
+    "original_sha256": "d5ade16879a1dc9fa16153b41e06091f434c8f2a54a7dbf21e3a708e8ee40263"
+  },
+  {
+    "source": "/tmp/uno-routing-call-control/run/unserved/counter-state.fhash",
+    "artifact": "run/unserved/counter-state.fhash",
+    "original_bytes": 32,
+    "original_sha256": "cf30199f7cece4deda798241ab865034226d59399052d210f90c45abbf1d0d48"
+  },
+  {
+    "source": "/tmp/uno-routing-call-control/run/unserved/counter-state.rhash",
+    "artifact": "run/unserved/counter-state.rhash",
+    "original_bytes": 32,
+    "original_sha256": "e5620c2d9dff51c74c9613c5682176091107304d940b279725fab71dbc941de6"
+  },
+  {
+    "source": "/tmp/uno-routing-call-control/run/unserved/global.json",
+    "artifact": "run/unserved/global.json",
+    "original_bytes": 400,
+    "original_sha256": "c85aae1e6b63df072d00292dad624cfd8916fd351e020cecf701f77550eb854b"
+  },
+  {
+    "source": "/tmp/uno-routing-call-control/run/unserved/master.fif",
+    "artifact": "run/unserved/master.fif",
+    "original_bytes": 3397,
+    "original_sha256": "80538301f50001ac0dead673b07093f84d546e28685b9ee0bb77521cebaa18ff"
+  },
+  {
+    "source": "/tmp/uno-routing-call-control/run/unserved/master.stderr.log",
+    "artifact": "run/unserved/master.stderr.log",
+    "original_bytes": 77,
+    "original_sha256": "8678ecde311922e38c0c263bd229d6c883ad4d7b77f0c7879d9b305696088409"
+  },
+  {
+    "source": "/tmp/uno-routing-call-control/run/unserved/master.stdout.log",
+    "artifact": "run/unserved/master.stdout.log",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/tmp/uno-routing-call-control/run/unserved/sender-message.boc",
+    "artifact": "run/unserved/sender-message.boc",
+    "original_bytes": 53,
+    "original_sha256": "710c7b4c4c975782893a3917510f938a7c77e93ec093abd94bb1f6fb6990cf4a"
+  },
+  {
+    "source": "/tmp/uno-routing-call-control/run/unserved/source-1.candidate",
+    "artifact": "run/unserved/source-1.candidate",
+    "original_bytes": 2152,
+    "original_sha256": "7c265de71d49bf9fb3c13fc98eaf3ef56c1c853902cafb6995d773a6b11c156b"
+  },
+  {
+    "source": "/tmp/uno-routing-call-control/run/unserved/source-1.result",
+    "artifact": "run/unserved/source-1.result",
+    "original_bytes": 10,
+    "original_sha256": "b0b5464a5f290a15b6a78529508979e500a2ef2b88da01fca94db52c314fc8d0"
+  },
+  {
+    "source": "/tmp/uno-routing-call-control/run/unserved/source-1.result.binding",
+    "artifact": "run/unserved/source-1.result.binding",
+    "original_bytes": 34,
+    "original_sha256": "2d394a7a81ee2551de8d094575d71f8ab20352f8ad3a2c6503bc2c9b51db8dda"
+  },
+  {
+    "source": "/tmp/uno-routing-call-control/run/unserved/source-1.result.kind",
+    "artifact": "run/unserved/source-1.result.kind",
+    "original_bytes": 8,
+    "original_sha256": "81b2bd4ea98c8db66554fbc8d7637a1a69a130f331feb732b75caab4c4868fd5"
+  },
+  {
+    "source": "/tmp/uno-routing-call-control/run/unserved/source-1.result.message",
+    "artifact": "run/unserved/source-1.result.message",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/tmp/uno-routing-call-control/run/unserved/source-1.result.stats",
+    "artifact": "run/unserved/source-1.result.stats",
+    "original_bytes": 100,
+    "original_sha256": "a7314623d5c790e0fb09a9cfaf3739cf9eb9b000351e463ca20d975a752e6681"
+  },
+  {
+    "source": "/tmp/uno-routing-call-control/run/unserved/source-1.result.stats.timing",
+    "artifact": "run/unserved/source-1.result.stats.timing",
+    "original_bytes": 87,
+    "original_sha256": "11ee020106cfdc9f7885fb0c0b416abf076a557642e07241cf465415152de37a"
+  },
+  {
+    "source": "/tmp/uno-routing-call-control/run/unserved/source-1.stderr.log",
+    "artifact": "run/unserved/source-1.stderr.log",
+    "original_bytes": 16806,
+    "original_sha256": "34e846bc7c9fec52ae6bcefb2b2987b721645869a5926c56a592500d712b3d92"
+  },
+  {
+    "source": "/tmp/uno-routing-call-control/run/unserved/source-1.stdout.log",
+    "artifact": "run/unserved/source-1.stdout.log",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/tmp/uno-routing-call-control/run/unserved/zerostate.boc",
+    "artifact": "run/unserved/zerostate.boc",
+    "original_bytes": 4523,
+    "original_sha256": "5cb8ef6ac032549e34e782932ed08de9acd07bd3851efe38556f22ff2d940c56"
+  },
+  {
+    "source": "/tmp/uno-routing-call-control/run/unserved/zerostate.fhash",
+    "artifact": "run/unserved/zerostate.fhash",
+    "original_bytes": 32,
+    "original_sha256": "8bf7e1d948d6289b6727874d0812d3e29a186139fb0b73f12774853f37169d38"
+  },
+  {
+    "source": "/tmp/uno-routing-call-control/run/unserved/zerostate.rhash",
+    "artifact": "run/unserved/zerostate.rhash",
+    "original_bytes": 32,
+    "original_sha256": "5e2db036305ed94dc10f731e48140ac0785bdbd653e43cbb738301859b592b8f"
+  },
+  {
+    "source": "/tmp/uno-routing-call-control/stderr.log",
+    "artifact": "stderr.log",
+    "original_bytes": 410,
+    "original_sha256": "2343d99bed78f80b91d10ef70b7efd2b7702a4514e40772a95d1ccb50b1a7225"
+  },
+  {
+    "source": "/tmp/uno-routing-call-control/stdout.log",
+    "artifact": "stdout.log",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  }
+]

@@ -1,0 +1,12 @@
+   Compiling chain_block v1.11.22 (/tmp/uno-rust-codec-controls-8xj_m0pu/source/tosctl/src/block)
+warning: unused import: `define_HashmapAugE`
+  --> block/src/dictionary/tests/test_hashmapaug.rs:16:5
+   |
+16 |     define_HashmapAugE, dictionary::HashmapTraverser, error, AddSub, Coins, HashmapFilterResult,
+   |     ^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: `chain_block` (lib test) generated 1 warning (run `cargo fix --lib -p chain_block --tests` to apply 1 suggestion)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.70s
+  Executable unittests src/lib.rs (/tmp/uno-rust-codec-controls-8xj_m0pu/target/debug/deps/chain_block-78d3858a6b752a65)

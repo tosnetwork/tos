@@ -1,0 +1,1434 @@
+[1/402] Linking CXX executable test-quorum
+[2/402] Linking CXX executable test-bigint
+[3/402] Linking CXX executable test-cells
+[4/402] Linking CXX executable test-ed25519
+[5/402] Linking CXX executable test-json-rpc-parse
+[6/402] Linking CXX executable test-vm
+[7/402] Linking CXX executable test-fift
+[8/402] Linking CXX executable test-db
+[9/402] Linking CXX executable test-full-node-shard-routing
+[10/402] Linking CXX executable test-rldp2-query-eviction
+[11/402] Linking CXX executable test-overlay-peer-cleanup
+[12/402] Linking CXX executable plumtree-graph-sim
+[13/402] Linking CXX executable test-rldp2-connection-cap
+[14/402] Linking CXX executable test-rldp2
+[15/402] Linking CXX executable test-wallet-index
+[16/402] Linking CXX executable test-dht
+[17/402] Checking the git repository for changes...
+[18/347] Building CXX object CMakeFiles/test-storage.dir/test/test-td-main.cpp.o
+[19/347] Linking CXX executable test-adnl
+[20/347] Linking CXX executable test-rldp2-connection-limits
+[21/347] Linking CXX executable test-keyring-temp-key
+[22/347] Linking CXX executable test-json-rpc-handler-guard
+[23/347] Linking CXX executable test-rldp2-inbound-transfer-bound
+[24/347] Linking CXX executable test-workchain-block
+[25/347] Building CXX object CMakeFiles/test-rocksdb.dir/test/test-rocksdb.cpp.o
+[26/347] Linking CXX executable test-rocksdb
+[27/347] Building CXX object CMakeFiles/test-workchain-proof-work.dir/crypto/test/test-workchain-proof-work.cpp.o
+[28/347] Linking CXX executable test-workchain-proof-work
+[29/347] Linking CXX executable test-http-server-limits
+[30/347] Linking CXX executable test-metrics-label-bound
+[31/347] Building CXX object CMakeFiles/test-http.dir/test/test-http.cpp.o
+[32/347] Linking CXX executable test-http
+[33/347] cd /home/tomi/tos-m2/uno/crypto && /usr/bin/cmake -E env CARGO_NET_OFFLINE=true CARGO_TARGET_DIR=/tmp/uno-publication-build/uno/crypto/cargo-target /home/tomi/.cargo/bin/cargo build --locked --offline --release -j48
+    Finished `release` profile [optimized] target(s) in 0.07s
+[34/346] Building CXX object CMakeFiles/test-vm-exception-hardening.dir/test/test-vm-exception-hardening.cpp.o
+[35/346] Linking CXX executable test-workchain-proof-backend
+[36/346] Building CXX object CMakeFiles/test-workchain-admission.dir/crypto/test/test-workchain-admission.cpp.o
+[37/346] Building C object third-party/ngtcp2/lib/CMakeFiles/ngtcp2_static.dir/ngtcp2_pkt.c.o
+[38/346] Building C object third-party/ngtcp2/lib/CMakeFiles/ngtcp2_static.dir/ngtcp2_conv.c.o
+[39/346] Building CXX object CMakeFiles/test-msg-envelope.dir/test/test-msg-envelope.cpp.o
+[40/346] Building C object third-party/ngtcp2/lib/CMakeFiles/ngtcp2_static.dir/ngtcp2_str.c.o
+[41/346] Building C object third-party/ngtcp2/lib/CMakeFiles/ngtcp2_static.dir/ngtcp2_vec.c.o
+[42/346] Linking CXX executable test-workchain-admission
+[43/346] Building C object third-party/ngtcp2/lib/CMakeFiles/ngtcp2_static.dir/ngtcp2_buf.c.o
+[44/346] Building CXX object CMakeFiles/test-workchain-collator-compute-mode.dir/crypto/test/test-workchain-collator-compute-mode.cpp.o
+[45/346] Building C object third-party/ngtcp2/lib/CMakeFiles/ngtcp2_static.dir/ngtcp2_mem.c.o
+[46/346] Linking CXX executable test-vm-exception-hardening
+[47/346] Building C object third-party/ngtcp2/lib/CMakeFiles/ngtcp2_static.dir/ngtcp2_pq.c.o
+[48/346] Building CXX object CMakeFiles/test-workchain-proof-contracts.dir/crypto/test/test-workchain-proof-contracts.cpp.o
+[49/346] Building C object third-party/ngtcp2/lib/CMakeFiles/ngtcp2_static.dir/ngtcp2_rob.c.o
+[50/346] Building C object third-party/ngtcp2/lib/CMakeFiles/ngtcp2_static.dir/ngtcp2_map.c.o
+[51/346] Building C object third-party/ngtcp2/lib/CMakeFiles/ngtcp2_static.dir/ngtcp2_ppe.c.o
+[52/346] Building C object third-party/ngtcp2/lib/CMakeFiles/ngtcp2_static.dir/ngtcp2_crypto.c.o
+[53/346] Building C object third-party/ngtcp2/lib/CMakeFiles/ngtcp2_static.dir/ngtcp2_err.c.o
+[54/346] Building C object third-party/ngtcp2/lib/CMakeFiles/ngtcp2_static.dir/ngtcp2_range.c.o
+[55/346] Building C object third-party/ngtcp2/lib/CMakeFiles/ngtcp2_static.dir/ngtcp2_acktr.c.o
+[56/346] Building C object third-party/ngtcp2/lib/CMakeFiles/ngtcp2_static.dir/ngtcp2_frame_chain.c.o
+[57/346] Linking CXX executable test-msg-envelope
+[58/346] Linking CXX executable test-workchain-collator-compute-mode
+[59/346] Building C object third-party/ngtcp2/lib/CMakeFiles/ngtcp2_static.dir/ngtcp2_rtb.c.o
+[60/346] Building C object third-party/ngtcp2/lib/CMakeFiles/ngtcp2_static.dir/ngtcp2_idtr.c.o
+[61/346] Linking CXX executable test-workchain-proof-contracts
+[62/346] Building C object third-party/ngtcp2/lib/CMakeFiles/ngtcp2_static.dir/ngtcp2_ringbuf.c.o
+[63/346] Building C object third-party/ngtcp2/lib/CMakeFiles/ngtcp2_static.dir/ngtcp2_gaptr.c.o
+[64/346] Building C object third-party/ngtcp2/lib/CMakeFiles/ngtcp2_static.dir/ngtcp2_cid.c.o
+[65/346] Building C object third-party/ngtcp2/lib/CMakeFiles/ngtcp2_static.dir/ngtcp2_strm.c.o
+[66/346] Building C object third-party/ngtcp2/lib/CMakeFiles/ngtcp2_static.dir/ngtcp2_log.c.o
+[67/346] Building C object third-party/ngtcp2/lib/CMakeFiles/ngtcp2_static.dir/ngtcp2_addr.c.o
+[68/346] Building C object third-party/ngtcp2/lib/CMakeFiles/ngtcp2_static.dir/ngtcp2_qlog.c.o
+[69/346] Building C object third-party/ngtcp2/lib/CMakeFiles/ngtcp2_static.dir/ngtcp2_cc.c.o
+[70/346] Building C object third-party/ngtcp2/lib/CMakeFiles/ngtcp2_static.dir/ngtcp2_path.c.o
+[71/346] Building C object third-party/ngtcp2/lib/CMakeFiles/ngtcp2_static.dir/ngtcp2_ksl.c.o
+[72/346] Building C object third-party/ngtcp2/lib/CMakeFiles/ngtcp2_static.dir/ngtcp2_pv.c.o
+[73/346] Building C object third-party/ngtcp2/lib/CMakeFiles/ngtcp2_static.dir/ngtcp2_pmtud.c.o
+[74/346] Building C object third-party/ngtcp2/lib/CMakeFiles/ngtcp2_static.dir/ngtcp2_version.c.o
+[75/346] Building C object third-party/ngtcp2/lib/CMakeFiles/ngtcp2_static.dir/ngtcp2_opl.c.o
+[76/346] Building C object third-party/ngtcp2/lib/CMakeFiles/ngtcp2_static.dir/ngtcp2_window_filter.c.o
+[77/346] Building C object third-party/ngtcp2/lib/CMakeFiles/ngtcp2_static.dir/ngtcp2_rst.c.o
+[78/346] Building C object third-party/ngtcp2/lib/CMakeFiles/ngtcp2_static.dir/ngtcp2_balloc.c.o
+[79/346] Building C object third-party/ngtcp2/lib/CMakeFiles/ngtcp2_static.dir/ngtcp2_objalloc.c.o
+[80/346] Building C object third-party/ngtcp2/lib/CMakeFiles/ngtcp2_static.dir/ngtcp2_unreachable.c.o
+[81/346] Building C object third-party/ngtcp2/lib/CMakeFiles/ngtcp2_static.dir/ngtcp2_callbacks.c.o
+[82/346] Building C object third-party/ngtcp2/lib/CMakeFiles/ngtcp2_static.dir/ngtcp2_settings.c.o
+[83/346] Building C object third-party/ngtcp2/lib/CMakeFiles/ngtcp2_static.dir/ngtcp2_bbr.c.o
+[84/346] Building CXX object crypto/CMakeFiles/counter-install-config.dir/test/counter-install-config.cpp.o
+[85/346] Building CXX object CMakeFiles/test-consensus-config-admission.dir/test/test-consensus-config-admission.cpp.o
+[86/346] Building C object third-party/ngtcp2/lib/CMakeFiles/ngtcp2_static.dir/ngtcp2_pcg.c.o
+[87/346] Building C object third-party/ngtcp2/lib/CMakeFiles/ngtcp2_static.dir/ngtcp2_ratelim.c.o
+[88/346] Building C object third-party/ngtcp2/lib/CMakeFiles/ngtcp2_static.dir/ngtcp2_conn_info.c.o
+[89/346] Building C object third-party/ngtcp2/lib/CMakeFiles/ngtcp2_static.dir/ngtcp2_dcidtr.c.o
+[90/346] Building C object third-party/ngtcp2/lib/CMakeFiles/ngtcp2_static.dir/ngtcp2_transport_params.c.o
+[91/346] Building C object third-party/ngtcp2/crypto/ossl/CMakeFiles/ngtcp2_crypto_ossl_static.dir/__/shared.c.o
+[92/346] Building C object third-party/ngtcp2/crypto/ossl/CMakeFiles/ngtcp2_crypto_ossl_static.dir/ossl.c.o
+[93/346] Building C object tdactor/benchmark/CMakeFiles/benchmark.dir/third_party/mp-queue.c.o
+[94/346] Building CXX object CMakeFiles/test-config-transition.dir/test/test-config-transition.cpp.o
+[95/346] Linking CXX executable test-consensus-config-admission
+[96/346] Building C object third-party/ngtcp2/lib/CMakeFiles/ngtcp2_static.dir/ngtcp2_conn.c.o
+[97/346] Linking C static library third-party/ngtcp2/lib/libngtcp2.a
+[98/346] Linking C static library third-party/ngtcp2/crypto/ossl/libngtcp2_crypto_ossl.a
+[99/346] Linking CXX executable test-config-transition
+[100/346] Building CXX object crypto/CMakeFiles/mintless-proof-generator.dir/util/mintless-proof-generator.cpp.o
+[101/346] Building CXX object tl/generate/CMakeFiles/toslib_generate_java_api.dir/generate_java.cpp.o
+[102/346] Building CXX object tl/generate/CMakeFiles/toslib_generate_java_api.dir/tl_writer_java.cpp.o
+[103/346] Linking CXX executable tl/generate/toslib_generate_java_api
+[104/346] Building CXX object CMakeFiles/bench-rldp.dir/test/net/bench-rldp.cpp.o
+[105/346] Building CXX object CMakeFiles/test-validator-options.dir/test/test-validator-options.cpp.o
+[106/346] Building CXX object tdactor/benchmark/CMakeFiles/benchmark-coro.dir/benchmark-coro.cpp.o
+[107/346] Building CXX object tdnet/CMakeFiles/udp_ping_pong.dir/example/udp_ping_pong.cpp.o
+[108/346] Linking CXX executable tdactor/benchmark/benchmark-coro
+[109/346] Building CXX object CMakeFiles/test-workchain-settlement-continuation.dir/crypto/test/test-workchain-settlement-continuation.cpp.o
+[110/346] Building CXX object CMakeFiles/test-block-handle-flags.dir/test/test-block-handle-flags.cpp.o
+[111/346] Linking CXX executable tdnet/udp_ping_pong
+[112/346] Building CXX object tdnet/CMakeFiles/tcp_ping_pong.dir/example/tcp_ping_pong.cpp.o
+[113/346] Building CXX object CMakeFiles/test-overlay.dir/test/test-overlay.cpp.o
+[114/346] Linking CXX executable tdnet/tcp_ping_pong
+[115/346] Linking CXX executable crypto/mintless-proof-generator
+[116/346] Linking CXX executable test-workchain-settlement-continuation
+[117/346] Linking CXX executable test-validator-options
+[118/346] Building CXX object CMakeFiles/test-download-next-blocks-validation.dir/test/test-download-next-blocks-validation.cpp.o
+[119/346] Linking CXX executable test-block-handle-flags
+[120/346] Linking CXX executable crypto/counter-install-config
+[121/346] Building CXX object metrics/CMakeFiles/metrics-example.dir/metrics-example.cpp.o
+[122/346] Building CXX object terminal/CMakeFiles/terminal.dir/terminal.cpp.o
+[123/346] Linking CXX static library terminal/libterminal.a
+[124/346] Linking CXX executable metrics/metrics-example
+[125/346] Building CXX object tddb/CMakeFiles/io-bench.dir/test/io-bench.cpp.o
+[126/346] Linking CXX executable tol/tol
+[127/346] Compiling FunC contract wallet-v5-func -> /tmp/uno-publication-build/slice1-gas-parity/wallet-v5-func.boc
+[128/346] Compiling FunC contract jetton-minter-func -> /tmp/uno-publication-build/slice1-gas-parity/jetton-minter-func.boc
+[129/346] Building CXX object CMakeFiles/test-celldb-streaming-import.dir/test/test-celldb-streaming-import.cpp.o
+[130/346] Compiling Tol contract slice5-receive-context-tol -> /tmp/uno-publication-build/slice1-gas-parity/slice5-receive-context-tol.boc
+FAILED: slice1-gas-parity/slice5-receive-context-tol.boc /tmp/uno-publication-build/slice1-gas-parity/slice5-receive-context-tol.boc 
+cd /tmp/uno-publication-build/slice1-gas-parity && /usr/bin/cmake -E env FIFTPATH=/home/tomi/tos-m2/crypto/fift/lib /tmp/uno-publication-build/tol/tol --boc-output /tmp/uno-publication-build/slice1-gas-parity/slice5-receive-context-tol.boc -o /tmp/uno-publication-build/slice1-gas-parity/slice5-receive-context-tol.fif /home/tomi/tos-m2/emulator/test/slice-5-receive-context.tol && /usr/bin/cmake -E env FIFTPATH=/home/tomi/tos-m2/crypto/fift/lib /tmp/uno-publication-build/crypto/fift /tmp/uno-publication-build/slice1-gas-parity/slice5-receive-context-tol.fif
+Failed to discover Tol stdlib.
+Probably, you have a non-standard Tol installation.
+Please, provide env variable TOL_STDLIB referencing to tol-stdlib/ folder.
+[131/346] Linking CXX executable tddb/io-bench
+[132/346] Compiling FunC contract jetton-wallet-func -> /tmp/uno-publication-build/slice1-gas-parity/jetton-wallet-func.boc
+[133/346] Linking CXX executable test-overlay
+[134/346] Building CXX object CMakeFiles/test-ext-message-pool.dir/test/test-ext-message-pool.cpp.o
+[135/346] Building CXX object CMakeFiles/test-uno-state-snapshot.dir/test/uno-snapshot-transport.cpp.o
+[136/346] Building CXX object tdactor/benchmark/CMakeFiles/benchmark.dir/benchmark.cpp.o
+[137/346] Building CXX object validator/CMakeFiles/validator.dir/collation-manager.cpp.o
+[138/346] Building CXX object tdactor/CMakeFiles/tdactor-example-coroutines.dir/example/actor-example-coroutines.cpp.o
+[139/346] Building CXX object CMakeFiles/test-celldb-actor-restart.dir/test/test-celldb-actor-restart.cpp.o
+[140/346] Linking CXX shared library toslib/libtoslibjson.so.0.5
+[141/346] Building CXX object CMakeFiles/test-download-state-budget.dir/test/test-download-state-budget.cpp.o
+[142/346] Building CXX object CMakeFiles/test-storage.dir/storage/test/storage.cpp.o
+[143/346] Building CXX object CMakeFiles/test-wallet-message-processor.dir/test/test-wallet-message-processor.cpp.o
+[144/346] Building CXX object CMakeFiles/test-smartcont.dir/crypto/test/test-smartcont.cpp.o
+[145/346] Building CXX object adnl/CMakeFiles/adnl-proxy.dir/adnl-proxy-types.cpp.o
+[146/346] Building CXX object adnl/CMakeFiles/adnl-proxy.dir/adnl-proxy.cpp.o
+[147/346] Building CXX object lite-client/CMakeFiles/lite-client.dir/ext-client.cpp.o
+[148/346] Building CXX object crypto/CMakeFiles/test-weight-distr.dir/block/test-weight-distr.cpp.o
+[149/346] Building CXX object adnl/CMakeFiles/tos-adnl-probe.dir/tos-adnl-probe.cpp.o
+[150/346] Building CXX object CMakeFiles/test-uno-state-snapshot.dir/test/test-uno-state-snapshot.cpp.o
+[151/346] Building CXX object crypto/CMakeFiles/dump-block.dir/block/dump-block.cpp.o
+[152/346] Building CXX object crypto/CMakeFiles/adjust-block.dir/block/adjust-block.cpp.o
+[153/346] Building CXX object CMakeFiles/test-hello-world.dir/test/test-hello-world.cpp.o
+[154/346] Building CXX object CMakeFiles/test-toslib.dir/toslib/test/online.cpp.o
+[155/346] Building CXX object CMakeFiles/test-toslib-offline.dir/toslib/test/offline.cpp.o
+[156/346] Building CXX object emulator/CMakeFiles/emulator.dir/emulator-extern.cpp.o
+[157/346] Building CXX object CMakeFiles/test-quic-sender.dir/test/net/test-quic-sender.cpp.o
+[158/346] Building CXX object adnl/CMakeFiles/adnl-pong.dir/adnl-pong.cpp.o
+[159/346] Building CXX object toslib/CMakeFiles/toslib-cli.dir/toslib/toslib-cli.cpp.o
+[160/346] Building CXX object lite-client/CMakeFiles/lite-client.dir/lite-client.cpp.o
+[161/346] Build libmicrohttpd
+configure: WARNING: unrecognized options: --disable-tests, --disable-benchmark
+checking for build type... neutral. Defaults: use only user-specified compiler and linker flags
+checking for a BSD-compatible install... /usr/bin/install -c
+checking whether build environment is sane... yes
+checking for a race-free mkdir -p... /usr/bin/mkdir -p
+checking for gawk... gawk
+checking whether make sets $(MAKE)... yes
+checking whether make supports nested variables... yes
+checking for gawk... (cached) gawk
+checking for grep that handles long lines and -e... /usr/bin/grep
+checking for fgrep... /usr/bin/grep -F
+checking whether ln -s works... yes
+checking whether make sets $(MAKE)... (cached) yes
+checking build system type... x86_64-pc-linux-gnu
+checking host system type... x86_64-pc-linux-gnu
+checking for gcc... /usr/bin/clang
+checking whether the C compiler works... yes
+checking for C compiler default output file name... a.out
+checking for suffix of executables... 
+checking whether we are cross compiling... no
+checking for suffix of object files... o
+checking whether the compiler supports GNU C... yes
+checking whether /usr/bin/clang accepts -g... yes
+checking for /usr/bin/clang option to enable C11 features... none needed
+checking whether /usr/bin/clang understands -c and -o together... yes
+checking whether make supports the include directive... yes (GNU style)
+checking dependency style of /usr/bin/clang... gcc3
+checking how to run the C preprocessor... /usr/bin/clang -E
+checking for presence of stdio.h... yes
+checking for presence of wchar.h... yes
+checking for presence of stdlib.h... yes
+checking for presence of string.h... yes
+checking for presence of strings.h... yes
+checking for presence of stdint.h... yes
+checking for presence of fcntl.h... yes
+checking for presence of sys/types.h... yes
+checking for presence of time.h... yes
+checking for presence of unistd.h... yes
+checking whether _GNU_SOURCE is already defined... no
+checking whether headers accept _GNU_SOURCE... yes
+checking whether to try __BSD_VISIBLE macro... no
+checking whether to try _DARWIN_C_SOURCE macro... no
+checking whether to try __EXTENSIONS__ macro... no
+checking whether to try _NETBSD_SOURCE macro... no
+checking whether to try _BSD_SOURCE macro... no
+checking whether to try _TANDEM_SOURCE macro... no
+checking whether to try _ALL_SOURCE macro... no
+checking whether _XOPEN_SOURCE is already defined... no
+checking headers for POSIX.1-2008/SUSv4 features... available, works with _XOPEN_SOURCE=700, works with extension macro
+checking for useful system-specific features... no
+checking for final set of defined symbols... _GNU_SOURCE _XOPEN_SOURCE=700
+checking how to print strings... printf
+checking for a sed that does not truncate output... /usr/bin/sed
+checking for egrep... /usr/bin/grep -E
+checking for ld used by /usr/bin/clang... /usr/bin/ld
+checking if the linker (/usr/bin/ld) is GNU ld... yes
+checking for BSD- or MS-compatible name lister (nm)... /usr/bin/nm -B
+checking the name lister (/usr/bin/nm -B) interface... BSD nm
+checking the maximum length of command line arguments... 1572864
+checking how to convert x86_64-pc-linux-gnu file names to x86_64-pc-linux-gnu format... func_convert_file_noop
+checking how to convert x86_64-pc-linux-gnu file names to toolchain format... func_convert_file_noop
+checking for /usr/bin/ld option to reload object files... -r
+checking for file... file
+checking for objdump... objdump
+checking how to recognize dependent libraries... pass_all
+checking for dlltool... no
+checking how to associate runtime and link libraries... printf %s\n
+checking for archiver @FILE support... @
+checking for strip... strip
+checking for ranlib... /usr/bin/ranlib
+checking command to parse /usr/bin/nm -B output from /usr/bin/clang object... ok
+checking for sysroot... no
+checking for a working dd... /usr/bin/dd
+checking how to truncate binary pipes... /usr/bin/dd bs=4096 count=1
+checking for mt... mt
+checking if mt is a manifest tool... no
+checking for stdio.h... yes
+checking for stdlib.h... yes
+checking for string.h... yes
+checking for inttypes.h... yes
+checking for stdint.h... yes
+checking for strings.h... yes
+checking for sys/stat.h... yes
+checking for sys/types.h... yes
+checking for unistd.h... yes
+checking for errno.h... yes
+checking for limits.h... yes
+checking for fcntl.h... yes
+checking for dlfcn.h... yes
+checking for objdir... .libs
+checking if /usr/bin/clang supports -fno-rtti -fno-exceptions... yes
+checking for /usr/bin/clang option to produce PIC... -fPIC -DPIC
+checking if /usr/bin/clang PIC flag -fPIC -DPIC works... yes
+checking if /usr/bin/clang static flag -static works... yes
+checking if /usr/bin/clang supports -c -o file.o... yes
+checking if /usr/bin/clang supports -c -o file.o... (cached) yes
+checking whether the /usr/bin/clang linker (/usr/bin/ld -m elf_x86_64) supports shared libraries... yes
+checking dynamic linker characteristics... GNU/Linux ld.so
+checking how to hardcode library paths into programs... immediate
+checking whether stripping libraries is possible... yes
+checking if libtool supports shared libraries... yes
+checking whether to build shared libraries... no
+checking whether to build static libraries... yes
+checking for windres... no
+checking for /usr/bin/clang options needed to detect all undeclared functions... none needed
+checking whether MHD_FAVOR_SMALL_CODE is declared... no
+checking whether MHD_FAVOR_FAST_CODE is declared... no
+checking whether compiler is configured to optimize for size... no
+checking whether to use a reduced size version of the code... no (by default)
+checking for /usr/bin/clang flag to warn on unknown -W parameters... none needed
+checking whether /usr/bin/clang supports -Wunused-command-line-argument flag... yes
+checking whether /usr/bin/clang supports -Wignored-optimization-argument flag... yes
+checking whether /usr/bin/clang supports -Winvalid-command-line-argument flag... yes
+checking whether /usr/bin/clang supports -Wunknown-argument flag... yes
+checking whether /usr/bin/clang supports -fno-strict-aliasing flag... yes
+checking whether /usr/bin/clang supports -qlonglong flag... no
+checking for stddef.h... yes
+checking for stdlib.h... (cached) yes
+checking for inttypes.h... (cached) yes
+checking for sys/types.h... (cached) yes
+checking for sys/stat.h... (cached) yes
+checking for unistd.h... (cached) yes
+checking for sys/uio.h... yes
+checking for sys/time.h... yes
+checking for time.h... yes
+checking for endian.h... yes
+checking for machine/endian.h... no
+checking for sys/endian.h... no
+checking for sys/byteorder.h... no
+checking for sys/machine.h... no
+checking for machine/param.h... no
+checking for sys/param.h... yes
+checking for sys/isa_defs.h... no
+checking for sys/ioctl.h... yes
+checking for sys/socket.h... yes
+checking for sys/select.h... yes
+checking for netinet/in_systm.h... yes
+checking for netinet/in.h... yes
+checking for arpa/inet.h... yes
+checking for netinet/ip.h... yes
+checking for netinet/tcp.h... yes
+checking for net/if.h... yes
+checking for netdb.h... yes
+checking for sockLib.h... no
+checking for inetLib.h... no
+checking for sys/msg.h... yes
+checking for sys/mman.h... yes
+checking for signal.h... yes
+checking for search.h... yes
+checking for proper tsearch(), tfind() and tdelete()... yes
+checking for sys/sysctl.h... no
+checking for netinet/ip_icmp.h... yes
+checking for netinet/icmp_var.h... no
+checking for stdbool.h... yes
+checking for bool... yes
+checking whether "true" is defined or builtin... yes
+checking whether "false" is defined or builtin... yes
+checking whether "true" and "false" could be used... yes
+checking whether C compiler accepts -Werror=attributes... yes
+checking whether -Werror=attributes actually works... yes
+checking for function inline keywords supported by /usr/bin/clang... inline __attribute__((always_inline))
+checking for stdalign.h... yes
+checking for C11 'alignof()' support... yes
+checking for target host OS... Linux
+checking whether /usr/bin/clang is Clang... yes
+checking whether pthreads work with "-pthread" and "-lpthread"... yes
+checking whether Clang needs flag to prevent "argument unused" warning when linking with -pthread... no
+checking for joinable pthread attribute... PTHREAD_CREATE_JOINABLE
+checking whether more special flags are required for pthreads... no
+checking for PTHREAD_PRIO_INHERIT... yes
+checking whether pthread_sigmask(3) is available... yes
+checking for threading lib to use with libmicrohttpd (auto)... posix
+checking for pthread_np.h... no
+checking whether pthread_attr_setname_np is declared... no
+checking whether pthread_setname_np is declared... yes
+checking for pthread_setname_np(3) in NetBSD or OSF1 form... no
+checking for pthread_setname_np(3) in GNU/Linux form... yes
+checking whether to enable thread names... yes
+checking whether socket is declared... yes
+checking for library containing function socket... none required
+checking for sys/time.h... (cached) yes
+checking for time.h... (cached) yes
+checking whether gettimeofday is declared... yes
+checking for function gettimeofday... yes
+checking whether usleep is declared... yes
+checking for function usleep... yes
+checking whether nanosleep is declared... yes
+checking for function nanosleep... yes
+checking for string.h... (cached) yes
+checking for sys/types.h... (cached) yes
+checking for sys/socket.h... (cached) yes
+checking for netinet/in.h... (cached) yes
+checking for time.h... (cached) yes
+checking for sys/select.h... (cached) yes
+checking for netinet/tcp.h... (cached) yes
+checking whether shutdown of listen socket triggers select()... yes
+checking for system default FD_SETSIZE value... 1024
+checking for current FD_SETSIZE value... 1024
+checking whether FD_SETSIZE is overridable... no
+checking whether socket value is a signed type... yes
+checking whether writev is declared... yes
+checking for function writev... yes
+checking whether sendmsg is declared... yes
+checking for library containing function sendmsg... none required
+checking whether byte ordering is bigendian... no
+checking for variable-length arrays... yes
+checking whether __func__ magic-macro is available... yes
+checking whether __builtin_bswap32() is available... yes
+checking whether __builtin_bswap64() is available... yes
+checking for curl... yes
+checking for makeinfo... yes
+checking for poll.h... yes
+checking whether poll is declared... yes
+checking for function poll... yes
+checking for linux/version.h... yes
+checking for Linux epoll(7) interface... yes
+checking whether epoll_create1 is declared... yes
+checking for function epoll_create1... yes
+checking for supported 'noreturn' keyword... _Noreturn
+checking size of tv_sec member of struct timeval... 8
+checking size of int64_t... 8
+checking size of uint64_t... 8
+checking size of int... 4
+checking size of unsigned int... 4
+checking size of unsigned long long... 8
+checking size of size_t... 8
+checking for dlfcn.h... (cached) yes
+checking for zlib.h... yes
+checking whether random is declared... yes
+checking for function random... yes
+checking for struct sockaddr.sa_len... no
+checking for struct sockaddr_storage.ss_len... no
+checking for struct sockaddr_in.sin_len... no
+checking for struct sockaddr_in6.sin6_len... no
+checking for working getsockname()... yes
+checking for usable PAGESIZE macro... no
+checking for usable PAGE_SIZE macro... no
+checking for working eventfd(2)... yes
+checking whether accept4 is declared... yes
+checking for function accept4... yes
+checking whether gmtime_r is declared... yes
+checking for function gmtime_r... yes
+checking whether memmem is declared... yes
+checking for function memmem... yes
+checking whether snprintf is declared... yes
+checking for function snprintf... yes
+checking whether gmtime_s is declared... no
+checking whether SOCK_NONBLOCK is declared... yes
+checking whether clock_gettime is declared... yes
+checking for library containing function clock_gettime... none required
+checking whether clock_get_time is declared... no
+checking for function clock_get_time... no
+checking whether gethrtime is declared... no
+checking for function gethrtime... no
+checking whether timespec_get is declared... yes
+checking for function timespec_get... yes
+checking for sys/time.h... (cached) yes
+checking for time.h... (cached) yes
+checking for function gettimeofday... (cached) yes
+checking for IPv6... yes
+checking whether sysconf is declared... yes
+checking for function sysconf... yes
+checking whether sysctl is declared... no
+checking for function sysctl... no
+checking whether sysctlbyname is declared... no
+checking for function sysctlbyname... no
+checking for function usleep... (cached) yes
+checking for function nanosleep... (cached) yes
+checking whether /usr/bin/clang supports -fvisibility=hidden flag... yes
+checking whether /usr/bin/clang supports __attribute__((visibility("default")))... yes
+checking for gawk... (cached) gawk
+checking for curl-config... no
+checking whether libcurl is usable... no
+checking whether magic_open is declared... no
+checking for function magic_open... no
+checking for special C compiler options needed for large files... no
+checking for _FILE_OFFSET_BITS value needed for large files... no
+checking for _LARGEFILE_SOURCE value needed for large files... no
+checking whether lseek64 is declared... yes
+checking for function lseek64... yes
+checking whether pread64 is declared... yes
+checking for function pread64... yes
+checking whether pread is declared... yes
+checking for function pread... yes
+checking for Linux-style sendfile(2)... yes
+checking whether sendfile64 is declared... yes
+checking for function sendfile64... yes
+checking whether to generate text messages... yes
+checking whether to enable postprocessor... yes
+checking for pkg-config... /usr/bin/pkg-config
+checking pkg-config is at least version 0.9.0... yes
+checking whether to support HTTPS... no (disabled)
+checking whether to support HTTP Basic authentication... yes
+checking whether to support HTTP Digest authentication... yes
+checking for Digest Authentication default nonce timeout value... 90 seconds (default)
+checking for Digest Authentication default maximum nc value... 1000 (default)
+checking whether to support HTTP "Upgrade"... yes
+checking whether to support HTTP cookie parsing... yes
+checking whether to support MD5... yes, built-in
+checking whether to support SHA-256... yes, built-in
+checking whether to support SHA-512/256... yes, built-in
+checking for calloc()... yes
+checking whether IPv6 could be used for testing... yes
+checking for features.h... yes
+checking for sys/pstat.h... no
+checking for vxCpuLib.h... no
+checking whether _SC_NPROCESSORS_ONLN is declared... yes
+checking whether _SC_NPROC_ONLN is declared... no
+checking whether _SC_CRAY_NCPU is declared... no
+checking whether _SC_NPROCESSORS_CONF is declared... yes
+checking whether CTL_HW is declared... no
+checking whether HW_NCPUONLINE is declared... no
+checking whether HW_NCPU is declared... no
+checking whether HW_AVAILCPU is declared... no
+checking whether pstat_getdynamic is declared... no
+checking for function pstat_getdynamic... no
+checking whether vxCpuEnabledGet is declared... no
+checking for function vxCpuEnabledGet... no
+checking for sched.h... yes
+checking for sys/_cpuset.h... no
+checking for sys/cpuset.h... no
+checking whether getpid is declared... yes
+checking for function getpid... yes
+checking whether sched_getaffinity is declared... yes
+checking for function sched_getaffinity... yes
+checking whether CPU_COUNT is declared... yes
+checking for function CPU_COUNT... yes
+checking whether CPU_COUNT_S is declared... yes
+checking for function CPU_COUNT_S... yes
+checking whether CPU_SETSIZE is declared... yes
+checking whether sched_getaffinity_np is declared... no
+checking for function sched_getaffinity_np... no
+checking whether cpuset_getaffinity is declared... no
+checking for function cpuset_getaffinity... no
+checking whether CPU_COUNT_S() expects max CPU number as 'size' parameter... no
+checking for fork()... yes
+checking for waitpid()... yes
+checking whether to compile with support for code coverage analysis... no
+checking the number of available CPUs... 192
+checking for number of CPU cores to use in tests... 6
+checking whether NDEBUG macro is defined... no
+checking whether _DEBUG macro is defined... no
+checking whether DEBUG macro is defined... no
+checking whether to enable debug asserts... no
+checking whether to enable run-time sanitizers... no
+checking whether to compile experimental code... no
+checking that generated files are newer than configure... done
+configure: creating ./config.status
+config.status: creating src/microhttpd/microhttpd_dll_res.rc
+config.status: creating po/po-configure.ac
+config.status: creating libmicrohttpd.pc
+config.status: creating w32/common/microhttpd_dll_res_vc.rc
+config.status: creating Makefile
+config.status: creating contrib/Makefile
+config.status: creating doc/Makefile
+config.status: creating doc/doxygen/libmicrohttpd.doxy
+config.status: creating doc/doxygen/Makefile
+config.status: creating doc/examples/Makefile
+config.status: creating m4/Makefile
+config.status: creating src/Makefile
+config.status: creating src/include/Makefile
+config.status: creating src/lib/Makefile
+config.status: creating src/microhttpd/Makefile
+config.status: creating src/microhttpd_ws/Makefile
+config.status: creating src/examples/Makefile
+config.status: creating src/tools/Makefile
+config.status: creating src/testcurl/Makefile
+config.status: creating src/testcurl/https/Makefile
+config.status: creating src/testzzuf/Makefile
+config.status: creating MHD_config.h
+config.status: executing depfiles commands
+config.status: executing libtool commands
+config.status: executing po/Makefile.in commands
+Skipping update of po/Makefile.in
+Real update of po/Makefile.in for 'make dist' is performed by po-config.status
+config.status: executing po-directories commands
+Skipping po-directories command.
+Real po-directories command for 'make dist' is implemented in po-config.status
+configure: WARNING: unrecognized options: --disable-tests, --disable-benchmark
+configure: Toolchain settings:
+  CC=/usr/bin/clang
+  User/system/default flags:
+    CPPFLAGS=""
+    CFLAGS=  "-fPIC"
+    LDFLAGS= ""
+  Final set of the flags for tests and examples:
+    CPPFLAGS="-DNDEBUG=1  -D_GNU_SOURCE -D_XOPEN_SOURCE=700"
+    CFLAGS=  "-fno-strict-aliasing -fPIC"
+    LDFLAGS= ""
+  Final set of the flags for GNU libmicrohttpd library:
+    CPPFLAGS="-DNDEBUG=1  -D_GNU_SOURCE -D_XOPEN_SOURCE=700"
+    CFLAGS=  "-fno-strict-aliasing  -pthread -fPIC"
+    LDFLAGS= ""
+
+configure: GNU libmicrohttpd 1.0.1 Configuration Summary:
+  Target directory:  /tmp/uno-publication-build/third-party/libmicrohttpd
+  Cross-compiling:   no
+  Operating System:  Linux
+  Threading lib:     posix
+  Inter-thread comm: eventfd
+  Shutdown of listening socket triggers select: yes
+  poll support:      yes
+  epoll support:     yes
+  sendfile used:     yes, Linux-style
+  HTTPS support:     no (disabled)
+  Messages:          yes
+  Cookie parsing:    yes
+  Postproc:          yes
+  Basic auth.:       yes
+  Digest auth.:      yes
+  Digest auth. defaults: timeout: 90 seconds (default), max nc: 1000 (default)
+  MD5:               yes, built-in
+  SHA-256:           yes, built-in
+  SHA-512/256:       yes, built-in
+  HTTP "Upgrade":    yes
+  Compact code:      no (by default)
+  Use thread names:  yes
+  Use debug asserts: no
+  Use sanitizers:    no
+  Build static lib:  yes
+  Build shared lib:  no
+  Build docs:        no
+  Build examples:    yes
+  Build tools:       yes
+  Test with libcurl: no, many unit tests will not run
+  Heavy tests:       no
+  Fuzzing tests:     no, heavy tests are not enabled
+
+configure:
+  License         :  LGPLv2.1+ or eCos
+ 
+CDPATH="${ZSH_VERSION+.}:" && cd . && /bin/bash '/tmp/uno-publication-build/third-party/libmicrohttpd/src/build-aux/missing' aclocal-1.16 -I m4
+ cd . && /bin/bash /tmp/uno-publication-build/third-party/libmicrohttpd/src/build-aux/missing automake-1.16 --gnu
+CDPATH="${ZSH_VERSION+.}:" && cd . && /bin/bash '/tmp/uno-publication-build/third-party/libmicrohttpd/src/build-aux/missing' autoconf
+/bin/bash ./config.status --recheck
+running CONFIG_SHELL=/bin/bash /bin/bash ./configure --prefix=/tmp/uno-publication-build/third-party/libmicrohttpd --enable-static --disable-tests --disable-benchmark --disable-shared --disable-https --with-pic --disable-doc CC=/usr/bin/clang CFLAGS=-fPIC --no-create --no-recursion
+configure: WARNING: unrecognized options: --disable-tests, --disable-benchmark
+checking for build type... neutral. Defaults: use only user-specified compiler and linker flags
+checking for a BSD-compatible install... /usr/bin/install -c
+checking whether build environment is sane... yes
+checking for a race-free mkdir -p... /usr/bin/mkdir -p
+checking for gawk... gawk
+checking whether make sets $(MAKE)... yes
+checking whether make supports nested variables... yes
+checking for gawk... (cached) gawk
+checking for grep that handles long lines and -e... /usr/bin/grep
+checking for fgrep... /usr/bin/grep -F
+checking whether ln -s works... yes
+checking whether make sets $(MAKE)... (cached) yes
+checking build system type... x86_64-pc-linux-gnu
+checking host system type... x86_64-pc-linux-gnu
+checking for gcc... /usr/bin/clang
+checking whether the C compiler works... yes
+checking for C compiler default output file name... a.out
+checking for suffix of executables... 
+checking whether we are cross compiling... no
+checking for suffix of object files... o
+checking whether the compiler supports GNU C... yes
+checking whether /usr/bin/clang accepts -g... yes
+checking for /usr/bin/clang option to enable C11 features... none needed
+checking whether /usr/bin/clang understands -c and -o together... yes
+checking whether make supports the include directive... yes (GNU style)
+checking dependency style of /usr/bin/clang... gcc3
+checking how to run the C preprocessor... /usr/bin/clang -E
+checking for presence of stdio.h... yes
+checking for presence of wchar.h... yes
+checking for presence of stdlib.h... yes
+checking for presence of string.h... yes
+checking for presence of strings.h... yes
+checking for presence of stdint.h... yes
+checking for presence of fcntl.h... yes
+checking for presence of sys/types.h... yes
+checking for presence of time.h... yes
+checking for presence of unistd.h... yes
+checking whether _GNU_SOURCE is already defined... no
+checking whether headers accept _GNU_SOURCE... yes
+checking whether to try __BSD_VISIBLE macro... no
+checking whether to try _DARWIN_C_SOURCE macro... no
+checking whether to try __EXTENSIONS__ macro... no
+checking whether to try _NETBSD_SOURCE macro... no
+checking whether to try _BSD_SOURCE macro... no
+checking whether to try _TANDEM_SOURCE macro... no
+checking whether to try _ALL_SOURCE macro... no
+checking whether _XOPEN_SOURCE is already defined... no
+checking headers for POSIX.1-2008/SUSv4 features... available, works with _XOPEN_SOURCE=700, works with extension macro
+checking for useful system-specific features... no
+checking for final set of defined symbols... _GNU_SOURCE _XOPEN_SOURCE=700
+checking how to print strings... printf
+checking for a sed that does not truncate output... /usr/bin/sed
+checking for egrep... /usr/bin/grep -E
+checking for ld used by /usr/bin/clang... /usr/bin/ld
+checking if the linker (/usr/bin/ld) is GNU ld... yes
+checking for BSD- or MS-compatible name lister (nm)... /usr/bin/nm -B
+checking the name lister (/usr/bin/nm -B) interface... BSD nm
+checking the maximum length of command line arguments... 1572864
+checking how to convert x86_64-pc-linux-gnu file names to x86_64-pc-linux-gnu format... func_convert_file_noop
+checking how to convert x86_64-pc-linux-gnu file names to toolchain format... func_convert_file_noop
+checking for /usr/bin/ld option to reload object files... -r
+checking for file... file
+checking for objdump... objdump
+checking how to recognize dependent libraries... pass_all
+checking for dlltool... no
+checking how to associate runtime and link libraries... printf %s\n
+checking for archiver @FILE support... @
+checking for strip... strip
+checking for ranlib... /usr/bin/ranlib
+checking command to parse /usr/bin/nm -B output from /usr/bin/clang object... ok
+checking for sysroot... no
+checking for a working dd... /usr/bin/dd
+checking how to truncate binary pipes... /usr/bin/dd bs=4096 count=1
+checking for mt... mt
+checking if mt is a manifest tool... no
+checking for stdio.h... yes
+checking for stdlib.h... yes
+checking for string.h... yes
+checking for inttypes.h... yes
+checking for stdint.h... yes
+checking for strings.h... yes
+checking for sys/stat.h... yes
+checking for sys/types.h... yes
+checking for unistd.h... yes
+checking for errno.h... yes
+checking for limits.h... yes
+checking for fcntl.h... yes
+checking for dlfcn.h... yes
+checking for objdir... .libs
+checking if /usr/bin/clang supports -fno-rtti -fno-exceptions... yes
+checking for /usr/bin/clang option to produce PIC... -fPIC -DPIC
+checking if /usr/bin/clang PIC flag -fPIC -DPIC works... yes
+checking if /usr/bin/clang static flag -static works... yes
+checking if /usr/bin/clang supports -c -o file.o... yes
+checking if /usr/bin/clang supports -c -o file.o... (cached) yes
+checking whether the /usr/bin/clang linker (/usr/bin/ld -m elf_x86_64) supports shared libraries... yes
+checking dynamic linker characteristics... GNU/Linux ld.so
+checking how to hardcode library paths into programs... immediate
+checking whether stripping libraries is possible... yes
+checking if libtool supports shared libraries... yes
+checking whether to build shared libraries... no
+checking whether to build static libraries... yes
+checking for windres... no
+checking for /usr/bin/clang options needed to detect all undeclared functions... none needed
+checking whether MHD_FAVOR_SMALL_CODE is declared... no
+checking whether MHD_FAVOR_FAST_CODE is declared... no
+checking whether compiler is configured to optimize for size... no
+checking whether to use a reduced size version of the code... no (by default)
+checking for /usr/bin/clang flag to warn on unknown -W parameters... none needed
+checking whether /usr/bin/clang supports -Wunused-command-line-argument flag... yes
+checking whether /usr/bin/clang supports -Wignored-optimization-argument flag... yes
+checking whether /usr/bin/clang supports -Winvalid-command-line-argument flag... yes
+checking whether /usr/bin/clang supports -Wunknown-argument flag... yes
+checking whether /usr/bin/clang supports -fno-strict-aliasing flag... yes
+checking whether /usr/bin/clang supports -qlonglong flag... no
+checking for stddef.h... yes
+checking for stdlib.h... (cached) yes
+checking for inttypes.h... (cached) yes
+checking for sys/types.h... (cached) yes
+checking for sys/stat.h... (cached) yes
+checking for unistd.h... (cached) yes
+checking for sys/uio.h... yes
+checking for sys/time.h... yes
+checking for time.h... yes
+checking for endian.h... yes
+checking for machine/endian.h... no
+checking for sys/endian.h... no
+checking for sys/byteorder.h... no
+checking for sys/machine.h... no
+checking for machine/param.h... no
+checking for sys/param.h... yes
+checking for sys/isa_defs.h... no
+checking for sys/ioctl.h... yes
+checking for sys/socket.h... yes
+checking for sys/select.h... yes
+checking for netinet/in_systm.h... yes
+checking for netinet/in.h... yes
+checking for arpa/inet.h... yes
+checking for netinet/ip.h... yes
+checking for netinet/tcp.h... yes
+checking for net/if.h... yes
+checking for netdb.h... yes
+checking for sockLib.h... no
+checking for inetLib.h... no
+checking for sys/msg.h... yes
+checking for sys/mman.h... yes
+checking for signal.h... yes
+checking for search.h... yes
+checking for proper tsearch(), tfind() and tdelete()... yes
+checking for sys/sysctl.h... no
+checking for netinet/ip_icmp.h... yes
+checking for netinet/icmp_var.h... no
+checking for stdbool.h... yes
+checking for bool... yes
+checking whether "true" is defined or builtin... yes
+checking whether "false" is defined or builtin... yes
+checking whether "true" and "false" could be used... yes
+checking whether C compiler accepts -Werror=attributes... yes
+checking whether -Werror=attributes actually works... yes
+checking for function inline keywords supported by /usr/bin/clang... inline __attribute__((always_inline))
+checking for stdalign.h... yes
+checking for C11 'alignof()' support... yes
+checking for target host OS... Linux
+checking whether /usr/bin/clang is Clang... yes
+checking whether pthreads work with "-pthread" and "-lpthread"... yes
+checking whether Clang needs flag to prevent "argument unused" warning when linking with -pthread... no
+checking for joinable pthread attribute... PTHREAD_CREATE_JOINABLE
+checking whether more special flags are required for pthreads... no
+checking for PTHREAD_PRIO_INHERIT... yes
+checking whether pthread_sigmask(3) is available... yes
+checking for threading lib to use with libmicrohttpd (auto)... posix
+checking for pthread_np.h... no
+checking whether pthread_attr_setname_np is declared... no
+checking whether pthread_setname_np is declared... yes
+checking for pthread_setname_np(3) in NetBSD or OSF1 form... no
+checking for pthread_setname_np(3) in GNU/Linux form... yes
+checking whether to enable thread names... yes
+checking whether socket is declared... yes
+checking for library containing function socket... none required
+checking for sys/time.h... (cached) yes
+checking for time.h... (cached) yes
+checking whether gettimeofday is declared... yes
+checking for function gettimeofday... yes
+checking whether usleep is declared... yes
+checking for function usleep... yes
+checking whether nanosleep is declared... yes
+checking for function nanosleep... yes
+checking for string.h... (cached) yes
+checking for sys/types.h... (cached) yes
+checking for sys/socket.h... (cached) yes
+checking for netinet/in.h... (cached) yes
+checking for time.h... (cached) yes
+checking for sys/select.h... (cached) yes
+checking for netinet/tcp.h... (cached) yes
+checking whether shutdown of listen socket triggers select()... yes
+checking for system default FD_SETSIZE value... 1024
+checking for current FD_SETSIZE value... 1024
+checking whether FD_SETSIZE is overridable... no
+checking whether socket value is a signed type... yes
+checking whether writev is declared... yes
+checking for function writev... yes
+checking whether sendmsg is declared... yes
+checking for library containing function sendmsg... none required
+checking whether byte ordering is bigendian... no
+checking for variable-length arrays... yes
+checking whether __func__ magic-macro is available... yes
+checking whether __builtin_bswap32() is available... yes
+checking whether __builtin_bswap64() is available... yes
+checking for curl... yes
+checking for makeinfo... yes
+checking for poll.h... yes
+checking whether poll is declared... yes
+checking for function poll... yes
+checking for linux/version.h... yes
+checking for Linux epoll(7) interface... yes
+checking whether epoll_create1 is declared... yes
+checking for function epoll_create1... yes
+checking for supported 'noreturn' keyword... _Noreturn
+checking size of tv_sec member of struct timeval... 8
+checking size of int64_t... 8
+checking size of uint64_t... 8
+checking size of int... 4
+checking size of unsigned int... 4
+checking size of unsigned long long... 8
+checking size of size_t... 8
+checking for dlfcn.h... (cached) yes
+checking for zlib.h... yes
+checking whether random is declared... yes
+checking for function random... yes
+checking for struct sockaddr.sa_len... no
+checking for struct sockaddr_storage.ss_len... no
+checking for struct sockaddr_in.sin_len... no
+checking for struct sockaddr_in6.sin6_len... no
+checking for working getsockname()... yes
+checking for usable PAGESIZE macro... no
+checking for usable PAGE_SIZE macro... no
+checking for working eventfd(2)... yes
+checking whether accept4 is declared... yes
+checking for function accept4... yes
+checking whether gmtime_r is declared... yes
+checking for function gmtime_r... yes
+checking whether memmem is declared... yes
+checking for function memmem... yes
+checking whether snprintf is declared... yes
+checking for function snprintf... yes
+checking whether gmtime_s is declared... no
+checking whether SOCK_NONBLOCK is declared... yes
+checking whether clock_gettime is declared... yes
+checking for library containing function clock_gettime... none required
+checking whether clock_get_time is declared... no
+checking for function clock_get_time... no
+checking whether gethrtime is declared... no
+checking for function gethrtime... no
+checking whether timespec_get is declared... yes
+checking for function timespec_get... yes
+checking for sys/time.h... (cached) yes
+checking for time.h... (cached) yes
+checking for function gettimeofday... (cached) yes
+checking for IPv6... yes
+checking whether sysconf is declared... yes
+checking for function sysconf... yes
+checking whether sysctl is declared... no
+checking for function sysctl... no
+checking whether sysctlbyname is declared... no
+checking for function sysctlbyname... no
+checking for function usleep... (cached) yes
+checking for function nanosleep... (cached) yes
+checking whether /usr/bin/clang supports -fvisibility=hidden flag... yes
+checking whether /usr/bin/clang supports __attribute__((visibility("default")))... yes
+checking for gawk... (cached) gawk
+checking for curl-config... no
+checking whether libcurl is usable... no
+checking whether magic_open is declared... no
+checking for function magic_open... no
+checking for special C compiler options needed for large files... no
+checking for _FILE_OFFSET_BITS value needed for large files... no
+checking for _LARGEFILE_SOURCE value needed for large files... no
+checking whether lseek64 is declared... yes
+checking for function lseek64... yes
+checking whether pread64 is declared... yes
+checking for function pread64... yes
+checking whether pread is declared... yes
+checking for function pread... yes
+checking for Linux-style sendfile(2)... yes
+checking whether sendfile64 is declared... yes
+checking for function sendfile64... yes
+checking whether to generate text messages... yes
+checking whether to enable postprocessor... yes
+checking for pkg-config... /usr/bin/pkg-config
+checking pkg-config is at least version 0.9.0... yes
+checking whether to support HTTPS... no (disabled)
+checking whether to support HTTP Basic authentication... yes
+checking whether to support HTTP Digest authentication... yes
+checking for Digest Authentication default nonce timeout value... 90 seconds (default)
+checking for Digest Authentication default maximum nc value... 1000 (default)
+checking whether to support HTTP "Upgrade"... yes
+checking whether to support HTTP cookie parsing... yes
+checking whether to support MD5... yes, built-in
+checking whether to support SHA-256... yes, built-in
+checking whether to support SHA-512/256... yes, built-in
+checking for calloc()... yes
+checking whether IPv6 could be used for testing... yes
+checking for features.h... yes
+checking for sys/pstat.h... no
+checking for vxCpuLib.h... no
+checking whether _SC_NPROCESSORS_ONLN is declared... yes
+checking whether _SC_NPROC_ONLN is declared... no
+checking whether _SC_CRAY_NCPU is declared... no
+checking whether _SC_NPROCESSORS_CONF is declared... yes
+checking whether CTL_HW is declared... no
+checking whether HW_NCPUONLINE is declared... no
+checking whether HW_NCPU is declared... no
+checking whether HW_AVAILCPU is declared... no
+checking whether pstat_getdynamic is declared... no
+checking for function pstat_getdynamic... no
+checking whether vxCpuEnabledGet is declared... no
+checking for function vxCpuEnabledGet... no
+checking for sched.h... yes
+checking for sys/_cpuset.h... no
+checking for sys/cpuset.h... no
+checking whether getpid is declared... yes
+checking for function getpid... yes
+checking whether sched_getaffinity is declared... yes
+checking for function sched_getaffinity... yes
+checking whether CPU_COUNT is declared... yes
+checking for function CPU_COUNT... yes
+checking whether CPU_COUNT_S is declared... yes
+checking for function CPU_COUNT_S... yes
+checking whether CPU_SETSIZE is declared... yes
+checking whether sched_getaffinity_np is declared... no
+checking for function sched_getaffinity_np... no
+checking whether cpuset_getaffinity is declared... no
+checking for function cpuset_getaffinity... no
+checking whether CPU_COUNT_S() expects max CPU number as 'size' parameter... no
+checking for fork()... yes
+checking for waitpid()... yes
+checking whether to compile with support for code coverage analysis... no
+checking the number of available CPUs... 192
+checking for number of CPU cores to use in tests... 6
+checking whether NDEBUG macro is defined... no
+checking whether _DEBUG macro is defined... no
+checking whether DEBUG macro is defined... no
+checking whether to enable debug asserts... no
+checking whether to enable run-time sanitizers... no
+checking whether to compile experimental code... no
+checking that generated files are newer than configure... done
+configure: creating ./config.status
+configure: WARNING: unrecognized options: --disable-tests, --disable-benchmark
+configure: Toolchain settings:
+  CC=/usr/bin/clang
+  User/system/default flags:
+    CPPFLAGS=""
+    CFLAGS=  "-fPIC"
+    LDFLAGS= ""
+  Final set of the flags for tests and examples:
+    CPPFLAGS="-DNDEBUG=1  -D_GNU_SOURCE -D_XOPEN_SOURCE=700"
+    CFLAGS=  "-fno-strict-aliasing -fPIC"
+    LDFLAGS= ""
+  Final set of the flags for GNU libmicrohttpd library:
+    CPPFLAGS="-DNDEBUG=1  -D_GNU_SOURCE -D_XOPEN_SOURCE=700"
+    CFLAGS=  "-fno-strict-aliasing  -pthread -fPIC"
+    LDFLAGS= ""
+
+configure: GNU libmicrohttpd 1.0.1 Configuration Summary:
+  Target directory:  /tmp/uno-publication-build/third-party/libmicrohttpd
+  Cross-compiling:   no
+  Operating System:  Linux
+  Threading lib:     posix
+  Inter-thread comm: eventfd
+  Shutdown of listening socket triggers select: yes
+  poll support:      yes
+  epoll support:     yes
+  sendfile used:     yes, Linux-style
+  HTTPS support:     no (disabled)
+  Messages:          yes
+  Cookie parsing:    yes
+  Postproc:          yes
+  Basic auth.:       yes
+  Digest auth.:      yes
+  Digest auth. defaults: timeout: 90 seconds (default), max nc: 1000 (default)
+  MD5:               yes, built-in
+  SHA-256:           yes, built-in
+  SHA-512/256:       yes, built-in
+  HTTP "Upgrade":    yes
+  Compact code:      no (by default)
+  Use thread names:  yes
+  Use debug asserts: no
+  Use sanitizers:    no
+  Build static lib:  yes
+  Build shared lib:  no
+  Build docs:        no
+  Build examples:    yes
+  Build tools:       yes
+  Test with libcurl: no, many unit tests will not run
+  Heavy tests:       no
+  Fuzzing tests:     no, heavy tests are not enabled
+
+configure:
+  License         :  LGPLv2.1+ or eCos
+ 
+ /bin/bash ./config.status
+config.status: creating src/microhttpd/microhttpd_dll_res.rc
+config.status: creating po/po-configure.ac
+config.status: creating libmicrohttpd.pc
+config.status: creating w32/common/microhttpd_dll_res_vc.rc
+config.status: creating Makefile
+config.status: creating contrib/Makefile
+config.status: creating doc/Makefile
+config.status: creating doc/doxygen/libmicrohttpd.doxy
+config.status: creating doc/doxygen/Makefile
+config.status: creating doc/examples/Makefile
+config.status: creating m4/Makefile
+config.status: creating src/Makefile
+config.status: creating src/include/Makefile
+config.status: creating src/lib/Makefile
+config.status: creating src/microhttpd/Makefile
+config.status: creating src/microhttpd_ws/Makefile
+config.status: creating src/examples/Makefile
+config.status: creating src/tools/Makefile
+config.status: creating src/testcurl/Makefile
+config.status: creating src/testcurl/https/Makefile
+config.status: creating src/testzzuf/Makefile
+config.status: creating MHD_config.h
+config.status: MHD_config.h is unchanged
+config.status: executing depfiles commands
+config.status: executing libtool commands
+config.status: executing po/Makefile.in commands
+Skipping update of po/Makefile.in
+Real update of po/Makefile.in for 'make dist' is performed by po-config.status
+config.status: executing po-directories commands
+Skipping po-directories command.
+Real po-directories command for 'make dist' is implemented in po-config.status
+Making clean in contrib
+make[1]: Entering directory '/tmp/uno-publication-build/third-party/libmicrohttpd/src/contrib'
+rm -rf .libs _libs
+rm -f *.lo
+make[1]: Leaving directory '/tmp/uno-publication-build/third-party/libmicrohttpd/src/contrib'
+Making clean in m4
+make[1]: Entering directory '/tmp/uno-publication-build/third-party/libmicrohttpd/src/m4'
+rm -rf .libs _libs
+rm -f *.lo
+make[1]: Leaving directory '/tmp/uno-publication-build/third-party/libmicrohttpd/src/m4'
+Making clean in src
+make[1]: Entering directory '/tmp/uno-publication-build/third-party/libmicrohttpd/src/src'
+Making clean in include
+make[2]: Entering directory '/tmp/uno-publication-build/third-party/libmicrohttpd/src/src/include'
+Making clean in .
+make[3]: Entering directory '/tmp/uno-publication-build/third-party/libmicrohttpd/src/src/include'
+rm -rf .libs _libs
+rm -f *.lo
+make[3]: Leaving directory '/tmp/uno-publication-build/third-party/libmicrohttpd/src/src/include'
+make[2]: Leaving directory '/tmp/uno-publication-build/third-party/libmicrohttpd/src/src/include'
+Making clean in microhttpd
+make[2]: Entering directory '/tmp/uno-publication-build/third-party/libmicrohttpd/src/src/microhttpd'
+ rm -f test_str_compare test_str_to_value test_str_from_value test_str_token test_str_token_remove test_str_tokens_remove test_str_pct test_str_bin_hex test_http_reasons test_sha1 test_start_stop test_daemon test_response_entries test_postprocessor_md test_client_put_shutdown test_client_put_close test_client_put_hard_close test_client_put_steps_shutdown test_client_put_steps_close test_client_put_steps_hard_close test_client_put_chunked_shutdown test_client_put_chunked_close test_client_put_chunked_hard_close test_client_put_chunked_steps_shutdown test_client_put_chunked_steps_close test_client_put_chunked_steps_hard_close test_options test_mhd_version test_set_panic test_md5 test_sha256 test_sha512_256 test_upgrade test_upgrade_large test_upgrade_vlarge test_postprocessor test_postprocessor_large test_postprocessor_amp test_shutdown_select test_shutdown_poll test_auth_parse test_str_quote test_dauth_userdigest test_dauth_userhash test_str_base64
+test -z "libmicrohttpd.la" || rm -f libmicrohttpd.la
+rm -f ./so_locations
+rm -rf .libs _libs
+rm -f *.o
+test -z " " || rm -f  
+test -z "test_str_compare.log test_str_to_value.log test_str_from_value.log test_str_token.log test_str_token_remove.log test_str_tokens_remove.log test_str_pct.log test_str_bin_hex.log test_http_reasons.log test_sha1.log test_start_stop.log test_daemon.log test_response_entries.log test_postprocessor_md.log test_client_put_shutdown.log test_client_put_close.log test_client_put_hard_close.log test_client_put_steps_shutdown.log test_client_put_steps_close.log test_client_put_steps_hard_close.log test_client_put_chunked_shutdown.log test_client_put_chunked_close.log test_client_put_chunked_hard_close.log test_client_put_chunked_steps_shutdown.log test_client_put_chunked_steps_close.log test_client_put_chunked_steps_hard_close.log test_options.log test_mhd_version.log test_set_panic.log test_md5.log test_sha256.log test_sha512_256.log test_upgrade.log test_upgrade_large.log test_upgrade_vlarge.log test_postprocessor.log test_postprocessor_large.log test_postprocessor_amp.log test_shutdown_select.log test_shutdown_poll.log test_auth_parse.log test_str_quote.log test_dauth_userdigest.log test_dauth_userhash.log test_str_base64.log" || rm -f test_str_compare.log test_str_to_value.log test_str_from_value.log test_str_token.log test_str_token_remove.log test_str_tokens_remove.log test_str_pct.log test_str_bin_hex.log test_http_reasons.log test_sha1.log test_start_stop.log test_daemon.log test_response_entries.log test_postprocessor_md.log test_client_put_shutdown.log test_client_put_close.log test_client_put_hard_close.log test_client_put_steps_shutdown.log test_client_put_steps_close.log test_client_put_steps_hard_close.log test_client_put_chunked_shutdown.log test_client_put_chunked_close.log test_client_put_chunked_hard_close.log test_client_put_chunked_steps_shutdown.log test_client_put_chunked_steps_close.log test_client_put_chunked_steps_hard_close.log test_options.log test_mhd_version.log test_set_panic.log test_md5.log test_sha256.log test_sha512_256.log test_upgrade.log test_upgrade_large.log test_upgrade_vlarge.log test_postprocessor.log test_postprocessor_large.log test_postprocessor_amp.log test_shutdown_select.log test_shutdown_poll.log test_auth_parse.log test_str_quote.log test_dauth_userdigest.log test_dauth_userhash.log test_str_base64.log
+test -z "test_str_compare.trs test_str_to_value.trs test_str_from_value.trs test_str_token.trs test_str_token_remove.trs test_str_tokens_remove.trs test_str_pct.trs test_str_bin_hex.trs test_http_reasons.trs test_sha1.trs test_start_stop.trs test_daemon.trs test_response_entries.trs test_postprocessor_md.trs test_client_put_shutdown.trs test_client_put_close.trs test_client_put_hard_close.trs test_client_put_steps_shutdown.trs test_client_put_steps_close.trs test_client_put_steps_hard_close.trs test_client_put_chunked_shutdown.trs test_client_put_chunked_close.trs test_client_put_chunked_hard_close.trs test_client_put_chunked_steps_shutdown.trs test_client_put_chunked_steps_close.trs test_client_put_chunked_steps_hard_close.trs test_options.trs test_mhd_version.trs test_set_panic.trs test_md5.trs test_sha256.trs test_sha512_256.trs test_upgrade.trs test_upgrade_large.trs test_upgrade_vlarge.trs test_postprocessor.trs test_postprocessor_large.trs test_postprocessor_amp.trs test_shutdown_select.trs test_shutdown_poll.trs test_auth_parse.trs test_str_quote.trs test_dauth_userdigest.trs test_dauth_userhash.trs test_str_base64.trs" || rm -f test_str_compare.trs test_str_to_value.trs test_str_from_value.trs test_str_token.trs test_str_token_remove.trs test_str_tokens_remove.trs test_str_pct.trs test_str_bin_hex.trs test_http_reasons.trs test_sha1.trs test_start_stop.trs test_daemon.trs test_response_entries.trs test_postprocessor_md.trs test_client_put_shutdown.trs test_client_put_close.trs test_client_put_hard_close.trs test_client_put_steps_shutdown.trs test_client_put_steps_close.trs test_client_put_steps_hard_close.trs test_client_put_chunked_shutdown.trs test_client_put_chunked_close.trs test_client_put_chunked_hard_close.trs test_client_put_chunked_steps_shutdown.trs test_client_put_chunked_steps_close.trs test_client_put_chunked_steps_hard_close.trs test_options.trs test_mhd_version.trs test_set_panic.trs test_md5.trs test_sha256.trs test_sha512_256.trs test_upgrade.trs test_upgrade_large.trs test_upgrade_vlarge.trs test_postprocessor.trs test_postprocessor_large.trs test_postprocessor_amp.trs test_shutdown_select.trs test_shutdown_poll.trs test_auth_parse.trs test_str_quote.trs test_dauth_userdigest.trs test_dauth_userhash.trs test_str_base64.trs
+test -z "test-suite.log" || rm -f test-suite.log
+rm -f *.lo
+make[2]: Leaving directory '/tmp/uno-publication-build/third-party/libmicrohttpd/src/src/microhttpd'
+Making clean in .
+make[2]: Entering directory '/tmp/uno-publication-build/third-party/libmicrohttpd/src/src'
+rm -rf .libs _libs
+rm -f *.lo
+make[2]: Leaving directory '/tmp/uno-publication-build/third-party/libmicrohttpd/src/src'
+Making clean in examples
+make[2]: Entering directory '/tmp/uno-publication-build/third-party/libmicrohttpd/src/src/examples'
+Making clean in .
+make[3]: Entering directory '/tmp/uno-publication-build/third-party/libmicrohttpd/src/src/examples'
+rm -rf .libs _libs
+ rm -f benchmark benchmark_https chunked_example minimal_example minimal_example_empty dual_stack_example minimal_example_comet querystring_example timeout fileserver_example fileserver_example_dirs fileserver_example_external_select refuse_post_example suspend_resume_epoll post_example demo digest_auth_example digest_auth_example_adv authorization_example upgrade_example websocket_threaded_example http_compression http_chunked_compression
+rm -f *.o
+rm -f *.lo
+make[3]: Leaving directory '/tmp/uno-publication-build/third-party/libmicrohttpd/src/src/examples'
+make[2]: Leaving directory '/tmp/uno-publication-build/third-party/libmicrohttpd/src/src/examples'
+Making clean in tools
+make[2]: Entering directory '/tmp/uno-publication-build/third-party/libmicrohttpd/src/src/tools'
+Making clean in .
+make[3]: Entering directory '/tmp/uno-publication-build/third-party/libmicrohttpd/src/src/tools'
+rm -rf .libs _libs
+ rm -f perf_replies
+rm -f *.o
+rm -f *.lo
+make[3]: Leaving directory '/tmp/uno-publication-build/third-party/libmicrohttpd/src/src/tools'
+make[2]: Leaving directory '/tmp/uno-publication-build/third-party/libmicrohttpd/src/src/tools'
+make[1]: Leaving directory '/tmp/uno-publication-build/third-party/libmicrohttpd/src/src'
+Making clean in .
+make[1]: Entering directory '/tmp/uno-publication-build/third-party/libmicrohttpd/src'
+rm -rf .libs _libs
+test -z "pre-dist-hook-dummy" || rm -f pre-dist-hook-dummy
+rm -f *.lo
+test -d './po/autopoint-updating-lock' && rm -rf './po/autopoint-updating-lock'
+make[1]: [Makefile:1338: mostlyclean-autopoint-update] Error 1 (ignored)
+test -d './po/po' && rm -rf './po/po'
+make[1]: [Makefile:1339: mostlyclean-autopoint-update] Error 1 (ignored)
+rm -f './po/autopoint-timestamp-tmp'
+make[1]: Leaving directory '/tmp/uno-publication-build/third-party/libmicrohttpd/src'
+(CDPATH="${ZSH_VERSION+.}:" && cd . && /bin/bash '/tmp/uno-publication-build/third-party/libmicrohttpd/src/build-aux/missing' autoheader)
+rm -f stamp-h1
+touch MHD_config.h.in
+cd . && /bin/bash ./config.status MHD_config.h
+config.status: creating MHD_config.h
+config.status: MHD_config.h is unchanged
+make  all-recursive
+make[1]: Entering directory '/tmp/uno-publication-build/third-party/libmicrohttpd/src'
+Making all in contrib
+make[2]: Entering directory '/tmp/uno-publication-build/third-party/libmicrohttpd/src/contrib'
+make[2]: Nothing to be done for 'all'.
+make[2]: Leaving directory '/tmp/uno-publication-build/third-party/libmicrohttpd/src/contrib'
+Making all in m4
+make[2]: Entering directory '/tmp/uno-publication-build/third-party/libmicrohttpd/src/m4'
+make[2]: Nothing to be done for 'all'.
+make[2]: Leaving directory '/tmp/uno-publication-build/third-party/libmicrohttpd/src/m4'
+Making all in src
+make[2]: Entering directory '/tmp/uno-publication-build/third-party/libmicrohttpd/src/src'
+Making all in include
+make[3]: Entering directory '/tmp/uno-publication-build/third-party/libmicrohttpd/src/src/include'
+Making all in .
+make[4]: Entering directory '/tmp/uno-publication-build/third-party/libmicrohttpd/src/src/include'
+make[4]: Nothing to be done for 'all-am'.
+make[4]: Leaving directory '/tmp/uno-publication-build/third-party/libmicrohttpd/src/src/include'
+make[3]: Leaving directory '/tmp/uno-publication-build/third-party/libmicrohttpd/src/src/include'
+Making all in microhttpd
+make[3]: Entering directory '/tmp/uno-publication-build/third-party/libmicrohttpd/src/src/microhttpd'
+/bin/bash ../../libtool  --tag=CC   --mode=compile /usr/bin/clang -DHAVE_CONFIG_H -I. -I../..  -I../../src/include -DNDEBUG=1  -D_GNU_SOURCE -D_XOPEN_SOURCE=700   -DBUILDING_MHD_LIB=1  -fno-strict-aliasing -fvisibility=hidden  -pthread  -fPIC -MT libmicrohttpd_la-connection.lo -MD -MP -MF .deps/libmicrohttpd_la-connection.Tpo -c -o libmicrohttpd_la-connection.lo `test -f 'connection.c' || echo './'`connection.c
+/bin/bash ../../libtool  --tag=CC   --mode=compile /usr/bin/clang -DHAVE_CONFIG_H -I. -I../..  -I../../src/include -DNDEBUG=1  -D_GNU_SOURCE -D_XOPEN_SOURCE=700   -DBUILDING_MHD_LIB=1  -fno-strict-aliasing -fvisibility=hidden  -pthread  -fPIC -MT libmicrohttpd_la-reason_phrase.lo -MD -MP -MF .deps/libmicrohttpd_la-reason_phrase.Tpo -c -o libmicrohttpd_la-reason_phrase.lo `test -f 'reason_phrase.c' || echo './'`reason_phrase.c
+/bin/bash ../../libtool  --tag=CC   --mode=compile /usr/bin/clang -DHAVE_CONFIG_H -I. -I../..  -I../../src/include -DNDEBUG=1  -D_GNU_SOURCE -D_XOPEN_SOURCE=700   -DBUILDING_MHD_LIB=1  -fno-strict-aliasing -fvisibility=hidden  -pthread  -fPIC -MT libmicrohttpd_la-daemon.lo -MD -MP -MF .deps/libmicrohttpd_la-daemon.Tpo -c -o libmicrohttpd_la-daemon.lo `test -f 'daemon.c' || echo './'`daemon.c
+/bin/bash ../../libtool  --tag=CC   --mode=compile /usr/bin/clang -DHAVE_CONFIG_H -I. -I../..  -I../../src/include -DNDEBUG=1  -D_GNU_SOURCE -D_XOPEN_SOURCE=700   -DBUILDING_MHD_LIB=1  -fno-strict-aliasing -fvisibility=hidden  -pthread  -fPIC -MT libmicrohttpd_la-internal.lo -MD -MP -MF .deps/libmicrohttpd_la-internal.Tpo -c -o libmicrohttpd_la-internal.lo `test -f 'internal.c' || echo './'`internal.c
+/bin/bash ../../libtool  --tag=CC   --mode=compile /usr/bin/clang -DHAVE_CONFIG_H -I. -I../..  -I../../src/include -DNDEBUG=1  -D_GNU_SOURCE -D_XOPEN_SOURCE=700   -DBUILDING_MHD_LIB=1  -fno-strict-aliasing -fvisibility=hidden  -pthread  -fPIC -MT libmicrohttpd_la-memorypool.lo -MD -MP -MF .deps/libmicrohttpd_la-memorypool.Tpo -c -o libmicrohttpd_la-memorypool.lo `test -f 'memorypool.c' || echo './'`memorypool.c
+/bin/bash ../../libtool  --tag=CC   --mode=compile /usr/bin/clang -DHAVE_CONFIG_H -I. -I../..  -I../../src/include -DNDEBUG=1  -D_GNU_SOURCE -D_XOPEN_SOURCE=700   -DBUILDING_MHD_LIB=1  -fno-strict-aliasing -fvisibility=hidden  -pthread  -fPIC -MT libmicrohttpd_la-mhd_mono_clock.lo -MD -MP -MF .deps/libmicrohttpd_la-mhd_mono_clock.Tpo -c -o libmicrohttpd_la-mhd_mono_clock.lo `test -f 'mhd_mono_clock.c' || echo './'`mhd_mono_clock.c
+/bin/bash ../../libtool  --tag=CC   --mode=compile /usr/bin/clang -DHAVE_CONFIG_H -I. -I../..  -I../../src/include -DNDEBUG=1  -D_GNU_SOURCE -D_XOPEN_SOURCE=700   -DBUILDING_MHD_LIB=1  -fno-strict-aliasing -fvisibility=hidden  -pthread  -fPIC -MT libmicrohttpd_la-mhd_str.lo -MD -MP -MF .deps/libmicrohttpd_la-mhd_str.Tpo -c -o libmicrohttpd_la-mhd_str.lo `test -f 'mhd_str.c' || echo './'`mhd_str.c
+/bin/bash ../../libtool  --tag=CC   --mode=compile /usr/bin/clang -DHAVE_CONFIG_H -I. -I../..  -I../../src/include -DNDEBUG=1  -D_GNU_SOURCE -D_XOPEN_SOURCE=700   -DBUILDING_MHD_LIB=1  -fno-strict-aliasing -fvisibility=hidden  -pthread  -fPIC -MT libmicrohttpd_la-mhd_send.lo -MD -MP -MF .deps/libmicrohttpd_la-mhd_send.Tpo -c -o libmicrohttpd_la-mhd_send.lo `test -f 'mhd_send.c' || echo './'`mhd_send.c
+/bin/bash ../../libtool  --tag=CC   --mode=compile /usr/bin/clang -DHAVE_CONFIG_H -I. -I../..  -I../../src/include -DNDEBUG=1  -D_GNU_SOURCE -D_XOPEN_SOURCE=700   -DBUILDING_MHD_LIB=1  -fno-strict-aliasing -fvisibility=hidden  -pthread  -fPIC -MT libmicrohttpd_la-mhd_sockets.lo -MD -MP -MF .deps/libmicrohttpd_la-mhd_sockets.Tpo -c -o libmicrohttpd_la-mhd_sockets.lo `test -f 'mhd_sockets.c' || echo './'`mhd_sockets.c
+/bin/bash ../../libtool  --tag=CC   --mode=compile /usr/bin/clang -DHAVE_CONFIG_H -I. -I../..  -I../../src/include -DNDEBUG=1  -D_GNU_SOURCE -D_XOPEN_SOURCE=700   -DBUILDING_MHD_LIB=1  -fno-strict-aliasing -fvisibility=hidden  -pthread  -fPIC -MT libmicrohttpd_la-mhd_itc.lo -MD -MP -MF .deps/libmicrohttpd_la-mhd_itc.Tpo -c -o libmicrohttpd_la-mhd_itc.lo `test -f 'mhd_itc.c' || echo './'`mhd_itc.c
+/bin/bash ../../libtool  --tag=CC   --mode=compile /usr/bin/clang -DHAVE_CONFIG_H -I. -I../..  -I../../src/include -DNDEBUG=1  -D_GNU_SOURCE -D_XOPEN_SOURCE=700   -DBUILDING_MHD_LIB=1  -fno-strict-aliasing -fvisibility=hidden  -pthread  -fPIC -MT libmicrohttpd_la-mhd_compat.lo -MD -MP -MF .deps/libmicrohttpd_la-mhd_compat.Tpo -c -o libmicrohttpd_la-mhd_compat.lo `test -f 'mhd_compat.c' || echo './'`mhd_compat.c
+/bin/bash ../../libtool  --tag=CC   --mode=compile /usr/bin/clang -DHAVE_CONFIG_H -I. -I../..  -I../../src/include -DNDEBUG=1  -D_GNU_SOURCE -D_XOPEN_SOURCE=700   -DBUILDING_MHD_LIB=1  -fno-strict-aliasing -fvisibility=hidden  -pthread  -fPIC -MT libmicrohttpd_la-mhd_panic.lo -MD -MP -MF .deps/libmicrohttpd_la-mhd_panic.Tpo -c -o libmicrohttpd_la-mhd_panic.lo `test -f 'mhd_panic.c' || echo './'`mhd_panic.c
+/bin/bash ../../libtool  --tag=CC   --mode=compile /usr/bin/clang -DHAVE_CONFIG_H -I. -I../..  -I../../src/include -DNDEBUG=1  -D_GNU_SOURCE -D_XOPEN_SOURCE=700   -DBUILDING_MHD_LIB=1  -fno-strict-aliasing -fvisibility=hidden  -pthread  -fPIC -MT libmicrohttpd_la-response.lo -MD -MP -MF .deps/libmicrohttpd_la-response.Tpo -c -o libmicrohttpd_la-response.lo `test -f 'response.c' || echo './'`response.c
+/bin/bash ../../libtool  --tag=CC   --mode=compile /usr/bin/clang -DHAVE_CONFIG_H -I. -I../..  -I../../src/include -DNDEBUG=1  -D_GNU_SOURCE -D_XOPEN_SOURCE=700   -DBUILDING_MHD_LIB=1  -fno-strict-aliasing -fvisibility=hidden  -pthread  -fPIC -MT libmicrohttpd_la-mhd_threads.lo -MD -MP -MF .deps/libmicrohttpd_la-mhd_threads.Tpo -c -o libmicrohttpd_la-mhd_threads.lo `test -f 'mhd_threads.c' || echo './'`mhd_threads.c
+/bin/bash ../../libtool  --tag=CC   --mode=compile /usr/bin/clang -DHAVE_CONFIG_H -I. -I../..  -I../../src/include -DNDEBUG=1  -D_GNU_SOURCE -D_XOPEN_SOURCE=700   -DBUILDING_MHD_LIB=1  -fno-strict-aliasing -fvisibility=hidden  -pthread  -fPIC -MT libmicrohttpd_la-postprocessor.lo -MD -MP -MF .deps/libmicrohttpd_la-postprocessor.Tpo -c -o libmicrohttpd_la-postprocessor.lo `test -f 'postprocessor.c' || echo './'`postprocessor.c
+/bin/bash ../../libtool  --tag=CC   --mode=compile /usr/bin/clang -DHAVE_CONFIG_H -I. -I../..  -I../../src/include -DNDEBUG=1  -D_GNU_SOURCE -D_XOPEN_SOURCE=700   -DBUILDING_MHD_LIB=1  -fno-strict-aliasing -fvisibility=hidden  -pthread  -fPIC -MT libmicrohttpd_la-gen_auth.lo -MD -MP -MF .deps/libmicrohttpd_la-gen_auth.Tpo -c -o libmicrohttpd_la-gen_auth.lo `test -f 'gen_auth.c' || echo './'`gen_auth.c
+libtool: compile:  /usr/bin/clang -DHAVE_CONFIG_H -I. -I../.. -I../../src/include -DNDEBUG=1 -D_GNU_SOURCE -D_XOPEN_SOURCE=700 -DBUILDING_MHD_LIB=1 -fno-strict-aliasing -fvisibility=hidden -pthread -fPIC -MT libmicrohttpd_la-reason_phrase.lo -MD -MP -MF .deps/libmicrohttpd_la-reason_phrase.Tpo -c reason_phrase.c  -fPIC -DPIC -o libmicrohttpd_la-reason_phrase.o
+libtool: compile:  /usr/bin/clang -DHAVE_CONFIG_H -I. -I../.. -I../../src/include -DNDEBUG=1 -D_GNU_SOURCE -D_XOPEN_SOURCE=700 -DBUILDING_MHD_LIB=1 -fno-strict-aliasing -fvisibility=hidden -pthread -fPIC -MT libmicrohttpd_la-mhd_mono_clock.lo -MD -MP -MF .deps/libmicrohttpd_la-mhd_mono_clock.Tpo -c mhd_mono_clock.c  -fPIC -DPIC -o libmicrohttpd_la-mhd_mono_clock.o
+libtool: compile:  /usr/bin/clang -DHAVE_CONFIG_H -I. -I../.. -I../../src/include -DNDEBUG=1 -D_GNU_SOURCE -D_XOPEN_SOURCE=700 -DBUILDING_MHD_LIB=1 -fno-strict-aliasing -fvisibility=hidden -pthread -fPIC -MT libmicrohttpd_la-mhd_panic.lo -MD -MP -MF .deps/libmicrohttpd_la-mhd_panic.Tpo -c mhd_panic.c  -fPIC -DPIC -o libmicrohttpd_la-mhd_panic.o
+libtool: compile:  /usr/bin/clang -DHAVE_CONFIG_H -I. -I../.. -I../../src/include -DNDEBUG=1 -D_GNU_SOURCE -D_XOPEN_SOURCE=700 -DBUILDING_MHD_LIB=1 -fno-strict-aliasing -fvisibility=hidden -pthread -fPIC -MT libmicrohttpd_la-connection.lo -MD -MP -MF .deps/libmicrohttpd_la-connection.Tpo -c connection.c  -fPIC -DPIC -o libmicrohttpd_la-connection.o
+libtool: compile:  /usr/bin/clang -DHAVE_CONFIG_H -I. -I../.. -I../../src/include -DNDEBUG=1 -D_GNU_SOURCE -D_XOPEN_SOURCE=700 -DBUILDING_MHD_LIB=1 -fno-strict-aliasing -fvisibility=hidden -pthread -fPIC -MT libmicrohttpd_la-internal.lo -MD -MP -MF .deps/libmicrohttpd_la-internal.Tpo -c internal.c  -fPIC -DPIC -o libmicrohttpd_la-internal.o
+libtool: compile:  /usr/bin/clang -DHAVE_CONFIG_H -I. -I../.. -I../../src/include -DNDEBUG=1 -D_GNU_SOURCE -D_XOPEN_SOURCE=700 -DBUILDING_MHD_LIB=1 -fno-strict-aliasing -fvisibility=hidden -pthread -fPIC -MT libmicrohttpd_la-mhd_threads.lo -MD -MP -MF .deps/libmicrohttpd_la-mhd_threads.Tpo -c mhd_threads.c  -fPIC -DPIC -o libmicrohttpd_la-mhd_threads.o
+libtool: compile:  /usr/bin/clang -DHAVE_CONFIG_H -I. -I../.. -I../../src/include -DNDEBUG=1 -D_GNU_SOURCE -D_XOPEN_SOURCE=700 -DBUILDING_MHD_LIB=1 -fno-strict-aliasing -fvisibility=hidden -pthread -fPIC -MT libmicrohttpd_la-daemon.lo -MD -MP -MF .deps/libmicrohttpd_la-daemon.Tpo -c daemon.c  -fPIC -DPIC -o libmicrohttpd_la-daemon.o
+libtool: compile:  /usr/bin/clang -DHAVE_CONFIG_H -I. -I../.. -I../../src/include -DNDEBUG=1 -D_GNU_SOURCE -D_XOPEN_SOURCE=700 -DBUILDING_MHD_LIB=1 -fno-strict-aliasing -fvisibility=hidden -pthread -fPIC -MT libmicrohttpd_la-mhd_str.lo -MD -MP -MF .deps/libmicrohttpd_la-mhd_str.Tpo -c mhd_str.c  -fPIC -DPIC -o libmicrohttpd_la-mhd_str.o
+libtool: compile:  /usr/bin/clang -DHAVE_CONFIG_H -I. -I../.. -I../../src/include -DNDEBUG=1 -D_GNU_SOURCE -D_XOPEN_SOURCE=700 -DBUILDING_MHD_LIB=1 -fno-strict-aliasing -fvisibility=hidden -pthread -fPIC -MT libmicrohttpd_la-mhd_compat.lo -MD -MP -MF .deps/libmicrohttpd_la-mhd_compat.Tpo -c mhd_compat.c  -fPIC -DPIC -o libmicrohttpd_la-mhd_compat.o
+libtool: compile:  /usr/bin/clang -DHAVE_CONFIG_H -I. -I../.. -I../../src/include -DNDEBUG=1 -D_GNU_SOURCE -D_XOPEN_SOURCE=700 -DBUILDING_MHD_LIB=1 -fno-strict-aliasing -fvisibility=hidden -pthread -fPIC -MT libmicrohttpd_la-postprocessor.lo -MD -MP -MF .deps/libmicrohttpd_la-postprocessor.Tpo -c postprocessor.c  -fPIC -DPIC -o libmicrohttpd_la-postprocessor.o
+libtool: compile:  /usr/bin/clang -DHAVE_CONFIG_H -I. -I../.. -I../../src/include -DNDEBUG=1 -D_GNU_SOURCE -D_XOPEN_SOURCE=700 -DBUILDING_MHD_LIB=1 -fno-strict-aliasing -fvisibility=hidden -pthread -fPIC -MT libmicrohttpd_la-gen_auth.lo -MD -MP -MF .deps/libmicrohttpd_la-gen_auth.Tpo -c gen_auth.c  -fPIC -DPIC -o libmicrohttpd_la-gen_auth.o
+libtool: compile:  /usr/bin/clang -DHAVE_CONFIG_H -I. -I../.. -I../../src/include -DNDEBUG=1 -D_GNU_SOURCE -D_XOPEN_SOURCE=700 -DBUILDING_MHD_LIB=1 -fno-strict-aliasing -fvisibility=hidden -pthread -fPIC -MT libmicrohttpd_la-mhd_send.lo -MD -MP -MF .deps/libmicrohttpd_la-mhd_send.Tpo -c mhd_send.c  -fPIC -DPIC -o libmicrohttpd_la-mhd_send.o
+libtool: compile:  /usr/bin/clang -DHAVE_CONFIG_H -I. -I../.. -I../../src/include -DNDEBUG=1 -D_GNU_SOURCE -D_XOPEN_SOURCE=700 -DBUILDING_MHD_LIB=1 -fno-strict-aliasing -fvisibility=hidden -pthread -fPIC -MT libmicrohttpd_la-mhd_itc.lo -MD -MP -MF .deps/libmicrohttpd_la-mhd_itc.Tpo -c mhd_itc.c  -fPIC -DPIC -o libmicrohttpd_la-mhd_itc.o
+libtool: compile:  /usr/bin/clang -DHAVE_CONFIG_H -I. -I../.. -I../../src/include -DNDEBUG=1 -D_GNU_SOURCE -D_XOPEN_SOURCE=700 -DBUILDING_MHD_LIB=1 -fno-strict-aliasing -fvisibility=hidden -pthread -fPIC -MT libmicrohttpd_la-mhd_sockets.lo -MD -MP -MF .deps/libmicrohttpd_la-mhd_sockets.Tpo -c mhd_sockets.c  -fPIC -DPIC -o libmicrohttpd_la-mhd_sockets.o
+libtool: compile:  /usr/bin/clang -DHAVE_CONFIG_H -I. -I../.. -I../../src/include -DNDEBUG=1 -D_GNU_SOURCE -D_XOPEN_SOURCE=700 -DBUILDING_MHD_LIB=1 -fno-strict-aliasing -fvisibility=hidden -pthread -fPIC -MT libmicrohttpd_la-response.lo -MD -MP -MF .deps/libmicrohttpd_la-response.Tpo -c response.c  -fPIC -DPIC -o libmicrohttpd_la-response.o
+libtool: compile:  /usr/bin/clang -DHAVE_CONFIG_H -I. -I../.. -I../../src/include -DNDEBUG=1 -D_GNU_SOURCE -D_XOPEN_SOURCE=700 -DBUILDING_MHD_LIB=1 -fno-strict-aliasing -fvisibility=hidden -pthread -fPIC -MT libmicrohttpd_la-memorypool.lo -MD -MP -MF .deps/libmicrohttpd_la-memorypool.Tpo -c memorypool.c  -fPIC -DPIC -o libmicrohttpd_la-memorypool.o
+mv -f .deps/libmicrohttpd_la-mhd_compat.Tpo .deps/libmicrohttpd_la-mhd_compat.Plo
+mv -f .deps/libmicrohttpd_la-mhd_mono_clock.Tpo .deps/libmicrohttpd_la-mhd_mono_clock.Plo
+/bin/bash ../../libtool  --tag=CC   --mode=compile /usr/bin/clang -DHAVE_CONFIG_H -I. -I../..  -I../../src/include -DNDEBUG=1  -D_GNU_SOURCE -D_XOPEN_SOURCE=700   -DBUILDING_MHD_LIB=1  -fno-strict-aliasing -fvisibility=hidden  -pthread  -fPIC -MT libmicrohttpd_la-digestauth.lo -MD -MP -MF .deps/libmicrohttpd_la-digestauth.Tpo -c -o libmicrohttpd_la-digestauth.lo `test -f 'digestauth.c' || echo './'`digestauth.c
+/bin/bash ../../libtool  --tag=CC   --mode=compile /usr/bin/clang -DHAVE_CONFIG_H -I. -I../..  -I../../src/include -DNDEBUG=1  -D_GNU_SOURCE -D_XOPEN_SOURCE=700   -DBUILDING_MHD_LIB=1  -fno-strict-aliasing -fvisibility=hidden  -pthread  -fPIC -MT libmicrohttpd_la-md5.lo -MD -MP -MF .deps/libmicrohttpd_la-md5.Tpo -c -o libmicrohttpd_la-md5.lo `test -f 'md5.c' || echo './'`md5.c
+mv -f .deps/libmicrohttpd_la-mhd_threads.Tpo .deps/libmicrohttpd_la-mhd_threads.Plo
+/bin/bash ../../libtool  --tag=CC   --mode=compile /usr/bin/clang -DHAVE_CONFIG_H -I. -I../..  -I../../src/include -DNDEBUG=1  -D_GNU_SOURCE -D_XOPEN_SOURCE=700   -DBUILDING_MHD_LIB=1  -fno-strict-aliasing -fvisibility=hidden  -pthread  -fPIC -MT libmicrohttpd_la-sha256.lo -MD -MP -MF .deps/libmicrohttpd_la-sha256.Tpo -c -o libmicrohttpd_la-sha256.lo `test -f 'sha256.c' || echo './'`sha256.c
+mv -f .deps/libmicrohttpd_la-mhd_panic.Tpo .deps/libmicrohttpd_la-mhd_panic.Plo
+mv -f .deps/libmicrohttpd_la-reason_phrase.Tpo .deps/libmicrohttpd_la-reason_phrase.Plo
+/bin/bash ../../libtool  --tag=CC   --mode=compile /usr/bin/clang -DHAVE_CONFIG_H -I. -I../..  -I../../src/include -DNDEBUG=1  -D_GNU_SOURCE -D_XOPEN_SOURCE=700   -DBUILDING_MHD_LIB=1  -fno-strict-aliasing -fvisibility=hidden  -pthread  -fPIC -MT libmicrohttpd_la-sha512_256.lo -MD -MP -MF .deps/libmicrohttpd_la-sha512_256.Tpo -c -o libmicrohttpd_la-sha512_256.lo `test -f 'sha512_256.c' || echo './'`sha512_256.c
+/bin/bash ../../libtool  --tag=CC   --mode=compile /usr/bin/clang -DHAVE_CONFIG_H -I. -I../..  -I../../src/include -DNDEBUG=1  -D_GNU_SOURCE -D_XOPEN_SOURCE=700   -DBUILDING_MHD_LIB=1  -fno-strict-aliasing -fvisibility=hidden  -pthread  -fPIC -MT libmicrohttpd_la-basicauth.lo -MD -MP -MF .deps/libmicrohttpd_la-basicauth.Tpo -c -o libmicrohttpd_la-basicauth.lo `test -f 'basicauth.c' || echo './'`basicauth.c
+mv -f .deps/libmicrohttpd_la-memorypool.Tpo .deps/libmicrohttpd_la-memorypool.Plo
+mv -f .deps/libmicrohttpd_la-mhd_sockets.Tpo .deps/libmicrohttpd_la-mhd_sockets.Plo
+mv -f .deps/libmicrohttpd_la-internal.Tpo .deps/libmicrohttpd_la-internal.Plo
+mv -f .deps/libmicrohttpd_la-mhd_itc.Tpo .deps/libmicrohttpd_la-mhd_itc.Plo
+mv -f .deps/libmicrohttpd_la-gen_auth.Tpo .deps/libmicrohttpd_la-gen_auth.Plo
+mv -f .deps/libmicrohttpd_la-mhd_str.Tpo .deps/libmicrohttpd_la-mhd_str.Plo
+mv -f .deps/libmicrohttpd_la-mhd_send.Tpo .deps/libmicrohttpd_la-mhd_send.Plo
+mv -f .deps/libmicrohttpd_la-postprocessor.Tpo .deps/libmicrohttpd_la-postprocessor.Plo
+libtool: compile:  /usr/bin/clang -DHAVE_CONFIG_H -I. -I../.. -I../../src/include -DNDEBUG=1 -D_GNU_SOURCE -D_XOPEN_SOURCE=700 -DBUILDING_MHD_LIB=1 -fno-strict-aliasing -fvisibility=hidden -pthread -fPIC -MT libmicrohttpd_la-digestauth.lo -MD -MP -MF .deps/libmicrohttpd_la-digestauth.Tpo -c digestauth.c  -fPIC -DPIC -o libmicrohttpd_la-digestauth.o
+libtool: compile:  /usr/bin/clang -DHAVE_CONFIG_H -I. -I../.. -I../../src/include -DNDEBUG=1 -D_GNU_SOURCE -D_XOPEN_SOURCE=700 -DBUILDING_MHD_LIB=1 -fno-strict-aliasing -fvisibility=hidden -pthread -fPIC -MT libmicrohttpd_la-md5.lo -MD -MP -MF .deps/libmicrohttpd_la-md5.Tpo -c md5.c  -fPIC -DPIC -o libmicrohttpd_la-md5.o
+mv -f .deps/libmicrohttpd_la-response.Tpo .deps/libmicrohttpd_la-response.Plo
+libtool: compile:  /usr/bin/clang -DHAVE_CONFIG_H -I. -I../.. -I../../src/include -DNDEBUG=1 -D_GNU_SOURCE -D_XOPEN_SOURCE=700 -DBUILDING_MHD_LIB=1 -fno-strict-aliasing -fvisibility=hidden -pthread -fPIC -MT libmicrohttpd_la-sha256.lo -MD -MP -MF .deps/libmicrohttpd_la-sha256.Tpo -c sha256.c  -fPIC -DPIC -o libmicrohttpd_la-sha256.o
+libtool: compile:  /usr/bin/clang -DHAVE_CONFIG_H -I. -I../.. -I../../src/include -DNDEBUG=1 -D_GNU_SOURCE -D_XOPEN_SOURCE=700 -DBUILDING_MHD_LIB=1 -fno-strict-aliasing -fvisibility=hidden -pthread -fPIC -MT libmicrohttpd_la-basicauth.lo -MD -MP -MF .deps/libmicrohttpd_la-basicauth.Tpo -c basicauth.c  -fPIC -DPIC -o libmicrohttpd_la-basicauth.o
+libtool: compile:  /usr/bin/clang -DHAVE_CONFIG_H -I. -I../.. -I../../src/include -DNDEBUG=1 -D_GNU_SOURCE -D_XOPEN_SOURCE=700 -DBUILDING_MHD_LIB=1 -fno-strict-aliasing -fvisibility=hidden -pthread -fPIC -MT libmicrohttpd_la-sha512_256.lo -MD -MP -MF .deps/libmicrohttpd_la-sha512_256.Tpo -c sha512_256.c  -fPIC -DPIC -o libmicrohttpd_la-sha512_256.o
+mv -f .deps/libmicrohttpd_la-connection.Tpo .deps/libmicrohttpd_la-connection.Plo
+mv -f .deps/libmicrohttpd_la-md5.Tpo .deps/libmicrohttpd_la-md5.Plo
+mv -f .deps/libmicrohttpd_la-daemon.Tpo .deps/libmicrohttpd_la-daemon.Plo
+mv -f .deps/libmicrohttpd_la-sha256.Tpo .deps/libmicrohttpd_la-sha256.Plo
+mv -f .deps/libmicrohttpd_la-basicauth.Tpo .deps/libmicrohttpd_la-basicauth.Plo
+mv -f .deps/libmicrohttpd_la-sha512_256.Tpo .deps/libmicrohttpd_la-sha512_256.Plo
+mv -f .deps/libmicrohttpd_la-digestauth.Tpo .deps/libmicrohttpd_la-digestauth.Plo
+/bin/bash ../../libtool  --tag=CC   --mode=link /usr/bin/clang -fno-strict-aliasing -fvisibility=hidden  -pthread  -fPIC     -export-dynamic -no-undefined -version-info 74:1:62  -o libmicrohttpd.la -rpath /tmp/uno-publication-build/third-party/libmicrohttpd/lib libmicrohttpd_la-connection.lo libmicrohttpd_la-reason_phrase.lo libmicrohttpd_la-daemon.lo libmicrohttpd_la-internal.lo libmicrohttpd_la-memorypool.lo libmicrohttpd_la-mhd_mono_clock.lo libmicrohttpd_la-mhd_str.lo libmicrohttpd_la-mhd_send.lo libmicrohttpd_la-mhd_sockets.lo libmicrohttpd_la-mhd_itc.lo libmicrohttpd_la-mhd_compat.lo libmicrohttpd_la-mhd_panic.lo libmicrohttpd_la-response.lo libmicrohttpd_la-mhd_threads.lo    libmicrohttpd_la-postprocessor.lo libmicrohttpd_la-gen_auth.lo libmicrohttpd_la-digestauth.lo  libmicrohttpd_la-md5.lo   libmicrohttpd_la-sha256.lo  libmicrohttpd_la-sha512_256.lo libmicrohttpd_la-basicauth.lo  -lpthread    
+libtool: link: /usr/bin/ar cr .libs/libmicrohttpd.a  libmicrohttpd_la-connection.o libmicrohttpd_la-reason_phrase.o libmicrohttpd_la-daemon.o libmicrohttpd_la-internal.o libmicrohttpd_la-memorypool.o libmicrohttpd_la-mhd_mono_clock.o libmicrohttpd_la-mhd_str.o libmicrohttpd_la-mhd_send.o libmicrohttpd_la-mhd_sockets.o libmicrohttpd_la-mhd_itc.o libmicrohttpd_la-mhd_compat.o libmicrohttpd_la-mhd_panic.o libmicrohttpd_la-response.o libmicrohttpd_la-mhd_threads.o libmicrohttpd_la-postprocessor.o libmicrohttpd_la-gen_auth.o libmicrohttpd_la-digestauth.o libmicrohttpd_la-md5.o libmicrohttpd_la-sha256.o libmicrohttpd_la-sha512_256.o libmicrohttpd_la-basicauth.o
+libtool: link: /usr/bin/ranlib .libs/libmicrohttpd.a
+libtool: link: ( cd ".libs" && rm -f "libmicrohttpd.la" && ln -s "../libmicrohttpd.la" "libmicrohttpd.la" )
+make[3]: Leaving directory '/tmp/uno-publication-build/third-party/libmicrohttpd/src/src/microhttpd'
+Making all in .
+make[3]: Entering directory '/tmp/uno-publication-build/third-party/libmicrohttpd/src/src'
+make[3]: Nothing to be done for 'all-am'.
+make[3]: Leaving directory '/tmp/uno-publication-build/third-party/libmicrohttpd/src/src'
+Making all in examples
+make[3]: Entering directory '/tmp/uno-publication-build/third-party/libmicrohttpd/src/src/examples'
+Making all in .
+make[4]: Entering directory '/tmp/uno-publication-build/third-party/libmicrohttpd/src/src/examples'
+/usr/bin/clang -DHAVE_CONFIG_H -I. -I../..  -I../../src/include -DNDEBUG=1  -D_GNU_SOURCE -D_XOPEN_SOURCE=700 -DDATA_DIR=\"../../src/datadir/\" -DMHD_CPU_COUNT=6  -fno-strict-aliasing    -fPIC -MT benchmark-benchmark.o -MD -MP -MF .deps/benchmark-benchmark.Tpo -c -o benchmark-benchmark.o `test -f 'benchmark.c' || echo './'`benchmark.c
+/usr/bin/clang -DHAVE_CONFIG_H -I. -I../..  -I../../src/include -DNDEBUG=1  -D_GNU_SOURCE -D_XOPEN_SOURCE=700 -DDATA_DIR=\"../../src/datadir/\" -DMHD_CPU_COUNT=6  -fno-strict-aliasing    -fPIC -MT benchmark_https-benchmark_https.o -MD -MP -MF .deps/benchmark_https-benchmark_https.Tpo -c -o benchmark_https-benchmark_https.o `test -f 'benchmark_https.c' || echo './'`benchmark_https.c
+depbase=`echo chunked_example.o | sed 's|[^/]*$|.deps/&|;s|\.o$||'`;\
+/usr/bin/clang -DHAVE_CONFIG_H -I. -I../..  -I../../src/include -DNDEBUG=1  -D_GNU_SOURCE -D_XOPEN_SOURCE=700 -DDATA_DIR=\"../../src/datadir/\"  -fno-strict-aliasing    -fPIC -MT chunked_example.o -MD -MP -MF $depbase.Tpo -c -o chunked_example.o chunked_example.c &&\
+mv -f $depbase.Tpo $depbase.Po
+depbase=`echo minimal_example.o | sed 's|[^/]*$|.deps/&|;s|\.o$||'`;\
+/usr/bin/clang -DHAVE_CONFIG_H -I. -I../..  -I../../src/include -DNDEBUG=1  -D_GNU_SOURCE -D_XOPEN_SOURCE=700 -DDATA_DIR=\"../../src/datadir/\"  -fno-strict-aliasing    -fPIC -MT minimal_example.o -MD -MP -MF $depbase.Tpo -c -o minimal_example.o minimal_example.c &&\
+mv -f $depbase.Tpo $depbase.Po
+depbase=`echo minimal_example_empty.o | sed 's|[^/]*$|.deps/&|;s|\.o$||'`;\
+/usr/bin/clang -DHAVE_CONFIG_H -I. -I../..  -I../../src/include -DNDEBUG=1  -D_GNU_SOURCE -D_XOPEN_SOURCE=700 -DDATA_DIR=\"../../src/datadir/\"  -fno-strict-aliasing    -fPIC -MT minimal_example_empty.o -MD -MP -MF $depbase.Tpo -c -o minimal_example_empty.o minimal_example_empty.c &&\
+mv -f $depbase.Tpo $depbase.Po
+depbase=`echo dual_stack_example.o | sed 's|[^/]*$|.deps/&|;s|\.o$||'`;\
+/usr/bin/clang -DHAVE_CONFIG_H -I. -I../..  -I../../src/include -DNDEBUG=1  -D_GNU_SOURCE -D_XOPEN_SOURCE=700 -DDATA_DIR=\"../../src/datadir/\"  -fno-strict-aliasing    -fPIC -MT dual_stack_example.o -MD -MP -MF $depbase.Tpo -c -o dual_stack_example.o dual_stack_example.c &&\
+mv -f $depbase.Tpo $depbase.Po
+depbase=`echo minimal_example_comet.o | sed 's|[^/]*$|.deps/&|;s|\.o$||'`;\
+/usr/bin/clang -DHAVE_CONFIG_H -I. -I../..  -I../../src/include -DNDEBUG=1  -D_GNU_SOURCE -D_XOPEN_SOURCE=700 -DDATA_DIR=\"../../src/datadir/\"  -fno-strict-aliasing    -fPIC -MT minimal_example_comet.o -MD -MP -MF $depbase.Tpo -c -o minimal_example_comet.o minimal_example_comet.c &&\
+mv -f $depbase.Tpo $depbase.Po
+depbase=`echo querystring_example.o | sed 's|[^/]*$|.deps/&|;s|\.o$||'`;\
+/usr/bin/clang -DHAVE_CONFIG_H -I. -I../..  -I../../src/include -DNDEBUG=1  -D_GNU_SOURCE -D_XOPEN_SOURCE=700 -DDATA_DIR=\"../../src/datadir/\"  -fno-strict-aliasing    -fPIC -MT querystring_example.o -MD -MP -MF $depbase.Tpo -c -o querystring_example.o querystring_example.c &&\
+mv -f $depbase.Tpo $depbase.Po
+depbase=`echo timeout.o | sed 's|[^/]*$|.deps/&|;s|\.o$||'`;\
+/usr/bin/clang -DHAVE_CONFIG_H -I. -I../..  -I../../src/include -DNDEBUG=1  -D_GNU_SOURCE -D_XOPEN_SOURCE=700 -DDATA_DIR=\"../../src/datadir/\"  -fno-strict-aliasing    -fPIC -MT timeout.o -MD -MP -MF $depbase.Tpo -c -o timeout.o timeout.c &&\
+mv -f $depbase.Tpo $depbase.Po
+depbase=`echo fileserver_example.o | sed 's|[^/]*$|.deps/&|;s|\.o$||'`;\
+/usr/bin/clang -DHAVE_CONFIG_H -I. -I../..  -I../../src/include -DNDEBUG=1  -D_GNU_SOURCE -D_XOPEN_SOURCE=700 -DDATA_DIR=\"../../src/datadir/\"  -fno-strict-aliasing    -fPIC -MT fileserver_example.o -MD -MP -MF $depbase.Tpo -c -o fileserver_example.o fileserver_example.c &&\
+mv -f $depbase.Tpo $depbase.Po
+depbase=`echo fileserver_example_dirs.o | sed 's|[^/]*$|.deps/&|;s|\.o$||'`;\
+/usr/bin/clang -DHAVE_CONFIG_H -I. -I../..  -I../../src/include -DNDEBUG=1  -D_GNU_SOURCE -D_XOPEN_SOURCE=700 -DDATA_DIR=\"../../src/datadir/\"  -fno-strict-aliasing    -fPIC -MT fileserver_example_dirs.o -MD -MP -MF $depbase.Tpo -c -o fileserver_example_dirs.o fileserver_example_dirs.c &&\
+mv -f $depbase.Tpo $depbase.Po
+depbase=`echo fileserver_example_external_select.o | sed 's|[^/]*$|.deps/&|;s|\.o$||'`;\
+/usr/bin/clang -DHAVE_CONFIG_H -I. -I../..  -I../../src/include -DNDEBUG=1  -D_GNU_SOURCE -D_XOPEN_SOURCE=700 -DDATA_DIR=\"../../src/datadir/\"  -fno-strict-aliasing    -fPIC -MT fileserver_example_external_select.o -MD -MP -MF $depbase.Tpo -c -o fileserver_example_external_select.o fileserver_example_external_select.c &&\
+mv -f $depbase.Tpo $depbase.Po
+depbase=`echo refuse_post_example.o | sed 's|[^/]*$|.deps/&|;s|\.o$||'`;\
+/usr/bin/clang -DHAVE_CONFIG_H -I. -I../..  -I../../src/include -DNDEBUG=1  -D_GNU_SOURCE -D_XOPEN_SOURCE=700 -DDATA_DIR=\"../../src/datadir/\"  -fno-strict-aliasing    -fPIC -MT refuse_post_example.o -MD -MP -MF $depbase.Tpo -c -o refuse_post_example.o refuse_post_example.c &&\
+mv -f $depbase.Tpo $depbase.Po
+/usr/bin/clang -DHAVE_CONFIG_H -I. -I../..  -I../../src/include -DNDEBUG=1  -D_GNU_SOURCE -D_XOPEN_SOURCE=700 -DDATA_DIR=\"../../src/datadir/\" -DMHD_CPU_COUNT=6  -fno-strict-aliasing    -fPIC -MT suspend_resume_epoll-suspend_resume_epoll.o -MD -MP -MF .deps/suspend_resume_epoll-suspend_resume_epoll.Tpo -c -o suspend_resume_epoll-suspend_resume_epoll.o `test -f 'suspend_resume_epoll.c' || echo './'`suspend_resume_epoll.c
+depbase=`echo post_example.o | sed 's|[^/]*$|.deps/&|;s|\.o$||'`;\
+/usr/bin/clang -DHAVE_CONFIG_H -I. -I../..  -I../../src/include -DNDEBUG=1  -D_GNU_SOURCE -D_XOPEN_SOURCE=700 -DDATA_DIR=\"../../src/datadir/\"  -fno-strict-aliasing    -fPIC -MT post_example.o -MD -MP -MF $depbase.Tpo -c -o post_example.o post_example.c &&\
+mv -f $depbase.Tpo $depbase.Po
+/usr/bin/clang -DHAVE_CONFIG_H -I. -I../..  -I../../src/include -DNDEBUG=1  -D_GNU_SOURCE -D_XOPEN_SOURCE=700 -DDATA_DIR=\"../../src/datadir/\" -DMHD_CPU_COUNT=6  -pthread -fno-strict-aliasing    -fPIC -MT demo-demo.o -MD -MP -MF .deps/demo-demo.Tpo -c -o demo-demo.o `test -f 'demo.c' || echo './'`demo.c
+mv -f .deps/benchmark_https-benchmark_https.Tpo .deps/benchmark_https-benchmark_https.Po
+mv -f .deps/benchmark-benchmark.Tpo .deps/benchmark-benchmark.Po
+depbase=`echo digest_auth_example.o | sed 's|[^/]*$|.deps/&|;s|\.o$||'`;\
+/usr/bin/clang -DHAVE_CONFIG_H -I. -I../..  -I../../src/include -DNDEBUG=1  -D_GNU_SOURCE -D_XOPEN_SOURCE=700 -DDATA_DIR=\"../../src/datadir/\"  -fno-strict-aliasing    -fPIC -MT digest_auth_example.o -MD -MP -MF $depbase.Tpo -c -o digest_auth_example.o digest_auth_example.c &&\
+mv -f $depbase.Tpo $depbase.Po
+mv -f .deps/suspend_resume_epoll-suspend_resume_epoll.Tpo .deps/suspend_resume_epoll-suspend_resume_epoll.Po
+depbase=`echo digest_auth_example_adv.o | sed 's|[^/]*$|.deps/&|;s|\.o$||'`;\
+/usr/bin/clang -DHAVE_CONFIG_H -I. -I../..  -I../../src/include -DNDEBUG=1  -D_GNU_SOURCE -D_XOPEN_SOURCE=700 -DDATA_DIR=\"../../src/datadir/\"  -fno-strict-aliasing    -fPIC -MT digest_auth_example_adv.o -MD -MP -MF $depbase.Tpo -c -o digest_auth_example_adv.o digest_auth_example_adv.c &&\
+mv -f $depbase.Tpo $depbase.Po
+depbase=`echo authorization_example.o | sed 's|[^/]*$|.deps/&|;s|\.o$||'`;\
+/usr/bin/clang -DHAVE_CONFIG_H -I. -I../..  -I../../src/include -DNDEBUG=1  -D_GNU_SOURCE -D_XOPEN_SOURCE=700 -DDATA_DIR=\"../../src/datadir/\"  -fno-strict-aliasing    -fPIC -MT authorization_example.o -MD -MP -MF $depbase.Tpo -c -o authorization_example.o authorization_example.c &&\
+mv -f $depbase.Tpo $depbase.Po
+/usr/bin/clang -DHAVE_CONFIG_H -I. -I../..  -I../../src/include -DNDEBUG=1  -D_GNU_SOURCE -D_XOPEN_SOURCE=700 -DDATA_DIR=\"../../src/datadir/\"  -pthread -fno-strict-aliasing    -fPIC -MT upgrade_example-upgrade_example.o -MD -MP -MF .deps/upgrade_example-upgrade_example.Tpo -c -o upgrade_example-upgrade_example.o `test -f 'upgrade_example.c' || echo './'`upgrade_example.c
+/usr/bin/clang -DHAVE_CONFIG_H -I. -I../..  -I../../src/include -DNDEBUG=1  -D_GNU_SOURCE -D_XOPEN_SOURCE=700 -DDATA_DIR=\"../../src/datadir/\"  -pthread -fno-strict-aliasing    -fPIC -MT websocket_threaded_example-websocket_threaded_example.o -MD -MP -MF .deps/websocket_threaded_example-websocket_threaded_example.Tpo -c -o websocket_threaded_example-websocket_threaded_example.o `test -f 'websocket_threaded_example.c' || echo './'`websocket_threaded_example.c
+depbase=`echo http_compression.o | sed 's|[^/]*$|.deps/&|;s|\.o$||'`;\
+/usr/bin/clang -DHAVE_CONFIG_H -I. -I../..  -I../../src/include -DNDEBUG=1  -D_GNU_SOURCE -D_XOPEN_SOURCE=700 -DDATA_DIR=\"../../src/datadir/\"  -fno-strict-aliasing    -fPIC -MT http_compression.o -MD -MP -MF $depbase.Tpo -c -o http_compression.o http_compression.c &&\
+mv -f $depbase.Tpo $depbase.Po
+depbase=`echo http_chunked_compression.o | sed 's|[^/]*$|.deps/&|;s|\.o$||'`;\
+/usr/bin/clang -DHAVE_CONFIG_H -I. -I../..  -I../../src/include -DNDEBUG=1  -D_GNU_SOURCE -D_XOPEN_SOURCE=700 -DDATA_DIR=\"../../src/datadir/\"  -fno-strict-aliasing    -fPIC -MT http_chunked_compression.o -MD -MP -MF $depbase.Tpo -c -o http_chunked_compression.o http_chunked_compression.c &&\
+mv -f $depbase.Tpo $depbase.Po
+/bin/bash ../../libtool  --tag=CC   --mode=link /usr/bin/clang -fno-strict-aliasing    -fPIC   -o benchmark benchmark-benchmark.o ../../src/microhttpd/libmicrohttpd.la 
+/bin/bash ../../libtool  --tag=CC   --mode=link /usr/bin/clang -fno-strict-aliasing    -fPIC   -o chunked_example chunked_example.o ../../src/microhttpd/libmicrohttpd.la 
+/bin/bash ../../libtool  --tag=CC   --mode=link /usr/bin/clang -fno-strict-aliasing    -fPIC   -o minimal_example minimal_example.o ../../src/microhttpd/libmicrohttpd.la 
+/bin/bash ../../libtool  --tag=CC   --mode=link /usr/bin/clang -fno-strict-aliasing    -fPIC   -o benchmark_https benchmark_https-benchmark_https.o ../../src/microhttpd/libmicrohttpd.la 
+/bin/bash ../../libtool  --tag=CC   --mode=link /usr/bin/clang -fno-strict-aliasing    -fPIC   -o minimal_example_empty minimal_example_empty.o ../../src/microhttpd/libmicrohttpd.la 
+/bin/bash ../../libtool  --tag=CC   --mode=link /usr/bin/clang -fno-strict-aliasing    -fPIC   -o dual_stack_example dual_stack_example.o ../../src/microhttpd/libmicrohttpd.la 
+/bin/bash ../../libtool  --tag=CC   --mode=link /usr/bin/clang -fno-strict-aliasing    -fPIC   -o minimal_example_comet minimal_example_comet.o ../../src/microhttpd/libmicrohttpd.la 
+/bin/bash ../../libtool  --tag=CC   --mode=link /usr/bin/clang -fno-strict-aliasing    -fPIC   -o querystring_example querystring_example.o ../../src/microhttpd/libmicrohttpd.la 
+mv -f .deps/demo-demo.Tpo .deps/demo-demo.Po
+/bin/bash ../../libtool  --tag=CC   --mode=link /usr/bin/clang -fno-strict-aliasing    -fPIC   -o timeout timeout.o ../../src/microhttpd/libmicrohttpd.la 
+mv -f .deps/upgrade_example-upgrade_example.Tpo .deps/upgrade_example-upgrade_example.Po
+/bin/bash ../../libtool  --tag=CC   --mode=link /usr/bin/clang -fno-strict-aliasing    -fPIC   -o fileserver_example fileserver_example.o ../../src/microhttpd/libmicrohttpd.la 
+/bin/bash ../../libtool  --tag=CC   --mode=link /usr/bin/clang -fno-strict-aliasing    -fPIC   -o fileserver_example_dirs fileserver_example_dirs.o ../../src/microhttpd/libmicrohttpd.la 
+/bin/bash ../../libtool  --tag=CC   --mode=link /usr/bin/clang -fno-strict-aliasing    -fPIC   -o fileserver_example_external_select fileserver_example_external_select.o ../../src/microhttpd/libmicrohttpd.la 
+/bin/bash ../../libtool  --tag=CC   --mode=link /usr/bin/clang -fno-strict-aliasing    -fPIC   -o refuse_post_example refuse_post_example.o ../../src/microhttpd/libmicrohttpd.la 
+/bin/bash ../../libtool  --tag=CC   --mode=link /usr/bin/clang -fno-strict-aliasing    -fPIC   -o suspend_resume_epoll suspend_resume_epoll-suspend_resume_epoll.o ../../src/microhttpd/libmicrohttpd.la 
+/bin/bash ../../libtool  --tag=CC   --mode=link /usr/bin/clang -fno-strict-aliasing    -fPIC   -o post_example post_example.o ../../src/microhttpd/libmicrohttpd.la 
+mv -f .deps/websocket_threaded_example-websocket_threaded_example.Tpo .deps/websocket_threaded_example-websocket_threaded_example.Po
+/bin/bash ../../libtool  --tag=CC   --mode=link /usr/bin/clang -pthread -fno-strict-aliasing    -fPIC   -o demo demo-demo.o ../../src/microhttpd/libmicrohttpd.la -lpthread  
+libtool: link: /usr/bin/clang -fno-strict-aliasing -fPIC -o minimal_example_empty minimal_example_empty.o  ../../src/microhttpd/.libs/libmicrohttpd.a -lpthread -pthread
+libtool: link: /usr/bin/clang -fno-strict-aliasing -fPIC -o benchmark benchmark-benchmark.o  ../../src/microhttpd/.libs/libmicrohttpd.a -lpthread -pthread
+libtool: link: /usr/bin/clang -fno-strict-aliasing -fPIC -o timeout timeout.o  ../../src/microhttpd/.libs/libmicrohttpd.a -lpthread -pthread
+libtool: link: /usr/bin/clang -fno-strict-aliasing -fPIC -o chunked_example chunked_example.o  ../../src/microhttpd/.libs/libmicrohttpd.a -lpthread -pthread
+libtool: link: /usr/bin/clang -fno-strict-aliasing -fPIC -o benchmark_https benchmark_https-benchmark_https.o  ../../src/microhttpd/.libs/libmicrohttpd.a -lpthread -pthread
+libtool: link: /usr/bin/clang -fno-strict-aliasing -fPIC -o minimal_example_comet minimal_example_comet.o  ../../src/microhttpd/.libs/libmicrohttpd.a -lpthread -pthread
+libtool: link: /usr/bin/clang -fno-strict-aliasing -fPIC -o querystring_example querystring_example.o  ../../src/microhttpd/.libs/libmicrohttpd.a -lpthread -pthread
+libtool: link: /usr/bin/clang -fno-strict-aliasing -fPIC -o minimal_example minimal_example.o  ../../src/microhttpd/.libs/libmicrohttpd.a -lpthread -pthread
+libtool: link: /usr/bin/clang -fno-strict-aliasing -fPIC -o dual_stack_example dual_stack_example.o  ../../src/microhttpd/.libs/libmicrohttpd.a -lpthread -pthread
+libtool: link: /usr/bin/clang -fno-strict-aliasing -fPIC -o fileserver_example_dirs fileserver_example_dirs.o  ../../src/microhttpd/.libs/libmicrohttpd.a -lpthread -pthread
+/bin/bash ../../libtool  --tag=CC   --mode=link /usr/bin/clang -fno-strict-aliasing    -fPIC   -o digest_auth_example digest_auth_example.o ../../src/microhttpd/libmicrohttpd.la 
+/bin/bash ../../libtool  --tag=CC   --mode=link /usr/bin/clang -fno-strict-aliasing    -fPIC   -o digest_auth_example_adv digest_auth_example_adv.o ../../src/microhttpd/libmicrohttpd.la 
+/bin/bash ../../libtool  --tag=CC   --mode=link /usr/bin/clang -fno-strict-aliasing    -fPIC   -o authorization_example authorization_example.o ../../src/microhttpd/libmicrohttpd.la 
+/bin/bash ../../libtool  --tag=CC   --mode=link /usr/bin/clang -pthread -fno-strict-aliasing    -fPIC   -o upgrade_example upgrade_example-upgrade_example.o ../../src/microhttpd/libmicrohttpd.la -lpthread 
+/bin/bash ../../libtool  --tag=CC   --mode=link /usr/bin/clang -pthread -fno-strict-aliasing    -fPIC   -o websocket_threaded_example websocket_threaded_example-websocket_threaded_example.o ../../src/microhttpd/libmicrohttpd.la -lpthread 
+/bin/bash ../../libtool  --tag=CC   --mode=link /usr/bin/clang -fno-strict-aliasing    -fPIC   -o http_compression http_compression.o ../../src/microhttpd/libmicrohttpd.la -lz 
+/bin/bash ../../libtool  --tag=CC   --mode=link /usr/bin/clang -fno-strict-aliasing    -fPIC   -o http_chunked_compression http_chunked_compression.o ../../src/microhttpd/libmicrohttpd.la -lz 
+libtool: link: /usr/bin/clang -fno-strict-aliasing -fPIC -o fileserver_example fileserver_example.o  ../../src/microhttpd/.libs/libmicrohttpd.a -lpthread -pthread
+libtool: link: /usr/bin/clang -fno-strict-aliasing -fPIC -o refuse_post_example refuse_post_example.o  ../../src/microhttpd/.libs/libmicrohttpd.a -lpthread -pthread
+libtool: link: /usr/bin/clang -fno-strict-aliasing -fPIC -o post_example post_example.o  ../../src/microhttpd/.libs/libmicrohttpd.a -lpthread -pthread
+libtool: link: /usr/bin/clang -fno-strict-aliasing -fPIC -o suspend_resume_epoll suspend_resume_epoll-suspend_resume_epoll.o  ../../src/microhttpd/.libs/libmicrohttpd.a -lpthread -pthread
+libtool: link: /usr/bin/clang -fno-strict-aliasing -fPIC -o fileserver_example_external_select fileserver_example_external_select.o  ../../src/microhttpd/.libs/libmicrohttpd.a -lpthread -pthread
+libtool: link: /usr/bin/clang -fno-strict-aliasing -fPIC -o demo demo-demo.o  ../../src/microhttpd/.libs/libmicrohttpd.a -lpthread -pthread
+libtool: link: /usr/bin/clang -fno-strict-aliasing -fPIC -o authorization_example authorization_example.o  ../../src/microhttpd/.libs/libmicrohttpd.a -lpthread -pthread
+libtool: link: /usr/bin/clang -fno-strict-aliasing -fPIC -o http_compression http_compression.o  ../../src/microhttpd/.libs/libmicrohttpd.a -lpthread -lz -pthread
+libtool: link: /usr/bin/clang -fno-strict-aliasing -fPIC -o websocket_threaded_example websocket_threaded_example-websocket_threaded_example.o  ../../src/microhttpd/.libs/libmicrohttpd.a -lpthread -pthread
+libtool: link: /usr/bin/clang -fno-strict-aliasing -fPIC -o http_chunked_compression http_chunked_compression.o  ../../src/microhttpd/.libs/libmicrohttpd.a -lpthread -lz -pthread
+libtool: link: /usr/bin/clang -fno-strict-aliasing -fPIC -o upgrade_example upgrade_example-upgrade_example.o  ../../src/microhttpd/.libs/libmicrohttpd.a -lpthread -pthread
+libtool: link: /usr/bin/clang -fno-strict-aliasing -fPIC -o digest_auth_example_adv digest_auth_example_adv.o  ../../src/microhttpd/.libs/libmicrohttpd.a -lpthread -pthread
+libtool: link: /usr/bin/clang -fno-strict-aliasing -fPIC -o digest_auth_example digest_auth_example.o  ../../src/microhttpd/.libs/libmicrohttpd.a -lpthread -pthread
+make[4]: Leaving directory '/tmp/uno-publication-build/third-party/libmicrohttpd/src/src/examples'
+make[3]: Leaving directory '/tmp/uno-publication-build/third-party/libmicrohttpd/src/src/examples'
+Making all in tools
+make[3]: Entering directory '/tmp/uno-publication-build/third-party/libmicrohttpd/src/src/tools'
+Making all in .
+make[4]: Entering directory '/tmp/uno-publication-build/third-party/libmicrohttpd/src/src/tools'
+depbase=`echo perf_replies.o | sed 's|[^/]*$|.deps/&|;s|\.o$||'`;\
+/usr/bin/clang -DHAVE_CONFIG_H -I. -I../..  -I../../src/include -DMHD_REAL_CPU_COUNT=192 -DMHD_CPU_COUNT=6 -DNDEBUG=1  -D_GNU_SOURCE -D_XOPEN_SOURCE=700 -DDATA_DIR=\"../../src/datadir/\"  -fno-strict-aliasing   -fPIC -MT perf_replies.o -MD -MP -MF $depbase.Tpo -c -o perf_replies.o perf_replies.c &&\
+mv -f $depbase.Tpo $depbase.Po
+depbase=`echo mhd_tool_get_cpu_count.o | sed 's|[^/]*$|.deps/&|;s|\.o$||'`;\
+/usr/bin/clang -DHAVE_CONFIG_H -I. -I../..  -I../../src/include -DMHD_REAL_CPU_COUNT=192 -DMHD_CPU_COUNT=6 -DNDEBUG=1  -D_GNU_SOURCE -D_XOPEN_SOURCE=700 -DDATA_DIR=\"../../src/datadir/\"  -fno-strict-aliasing   -fPIC -MT mhd_tool_get_cpu_count.o -MD -MP -MF $depbase.Tpo -c -o mhd_tool_get_cpu_count.o mhd_tool_get_cpu_count.c &&\
+mv -f $depbase.Tpo $depbase.Po
+/bin/bash ../../libtool  --tag=CC   --mode=link /usr/bin/clang -fno-strict-aliasing   -fPIC   -o perf_replies perf_replies.o mhd_tool_get_cpu_count.o ../../src/microhttpd/libmicrohttpd.la 
+libtool: link: /usr/bin/clang -fno-strict-aliasing -fPIC -o perf_replies perf_replies.o mhd_tool_get_cpu_count.o  ../../src/microhttpd/.libs/libmicrohttpd.a -lpthread -pthread
+make[4]: Leaving directory '/tmp/uno-publication-build/third-party/libmicrohttpd/src/src/tools'
+make[3]: Leaving directory '/tmp/uno-publication-build/third-party/libmicrohttpd/src/src/tools'
+make[2]: Leaving directory '/tmp/uno-publication-build/third-party/libmicrohttpd/src/src'
+Making all in .
+make[2]: Entering directory '/tmp/uno-publication-build/third-party/libmicrohttpd/src'
+make[2]: Leaving directory '/tmp/uno-publication-build/third-party/libmicrohttpd/src'
+make[1]: Leaving directory '/tmp/uno-publication-build/third-party/libmicrohttpd/src'
+Making install in contrib
+make[1]: Entering directory '/tmp/uno-publication-build/third-party/libmicrohttpd/src/contrib'
+make[2]: Entering directory '/tmp/uno-publication-build/third-party/libmicrohttpd/src/contrib'
+make[2]: Nothing to be done for 'install-exec-am'.
+make[2]: Nothing to be done for 'install-data-am'.
+make[2]: Leaving directory '/tmp/uno-publication-build/third-party/libmicrohttpd/src/contrib'
+make[1]: Leaving directory '/tmp/uno-publication-build/third-party/libmicrohttpd/src/contrib'
+Making install in m4
+make[1]: Entering directory '/tmp/uno-publication-build/third-party/libmicrohttpd/src/m4'
+make[2]: Entering directory '/tmp/uno-publication-build/third-party/libmicrohttpd/src/m4'
+make[2]: Nothing to be done for 'install-exec-am'.
+make[2]: Nothing to be done for 'install-data-am'.
+make[2]: Leaving directory '/tmp/uno-publication-build/third-party/libmicrohttpd/src/m4'
+make[1]: Leaving directory '/tmp/uno-publication-build/third-party/libmicrohttpd/src/m4'
+Making install in src
+make[1]: Entering directory '/tmp/uno-publication-build/third-party/libmicrohttpd/src/src'
+Making install in include
+make[2]: Entering directory '/tmp/uno-publication-build/third-party/libmicrohttpd/src/src/include'
+Making install in .
+make[3]: Entering directory '/tmp/uno-publication-build/third-party/libmicrohttpd/src/src/include'
+make[4]: Entering directory '/tmp/uno-publication-build/third-party/libmicrohttpd/src/src/include'
+make[4]: Nothing to be done for 'install-exec-am'.
+ /usr/bin/mkdir -p '/tmp/uno-publication-build/third-party/libmicrohttpd/include'
+ /usr/bin/install -c -m 644 microhttpd.h '/tmp/uno-publication-build/third-party/libmicrohttpd/include'
+make[4]: Leaving directory '/tmp/uno-publication-build/third-party/libmicrohttpd/src/src/include'
+make[3]: Leaving directory '/tmp/uno-publication-build/third-party/libmicrohttpd/src/src/include'
+make[2]: Leaving directory '/tmp/uno-publication-build/third-party/libmicrohttpd/src/src/include'
+Making install in microhttpd
+make[2]: Entering directory '/tmp/uno-publication-build/third-party/libmicrohttpd/src/src/microhttpd'
+make[3]: Entering directory '/tmp/uno-publication-build/third-party/libmicrohttpd/src/src/microhttpd'
+ /usr/bin/mkdir -p '/tmp/uno-publication-build/third-party/libmicrohttpd/lib'
+ /bin/bash ../../libtool   --mode=install /usr/bin/install -c   libmicrohttpd.la '/tmp/uno-publication-build/third-party/libmicrohttpd/lib'
+libtool: install: /usr/bin/install -c .libs/libmicrohttpd.lai /tmp/uno-publication-build/third-party/libmicrohttpd/lib/libmicrohttpd.la
+libtool: install: /usr/bin/install -c .libs/libmicrohttpd.a /tmp/uno-publication-build/third-party/libmicrohttpd/lib/libmicrohttpd.a
+libtool: install: chmod 644 /tmp/uno-publication-build/third-party/libmicrohttpd/lib/libmicrohttpd.a
+libtool: install: /usr/bin/ranlib /tmp/uno-publication-build/third-party/libmicrohttpd/lib/libmicrohttpd.a
+libtool: finish: PATH="/usr/local/go/bin:/home/tomi/.local/bin:/home/tomi/bin:/home/tomi/.codex/packages/standalone/releases/0.153.4-x86_64-unknown-linux-musl/codex-path:/home/tomi/.codex/tmp/arg0/codex-arg04IDe9F:/home/tomi/.codex/tmp/arg0/codex-arg0maG5f1:/usr/local/go/bin:/home/tomi/.local/bin:/home/tomi/bin:/home/tomi/.local/bin:/home/tomi/.local/share/pnpm:/usr/local/go/bin:/home/tomi/.local/bin:/home/tomi/.nvm/versions/node/v24.13.0/bin:/home/tomi/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin:/home/tomi/.foundry/bin:/sbin" ldconfig -n /tmp/uno-publication-build/third-party/libmicrohttpd/lib
+----------------------------------------------------------------------
+Libraries have been installed in:
+   /tmp/uno-publication-build/third-party/libmicrohttpd/lib
+
+If you ever happen to want to link against installed libraries
+in a given directory, LIBDIR, you must either use libtool, and
+specify the full pathname of the library, or use the '-LLIBDIR'
+flag during linking and do at least one of the following:
+   - add LIBDIR to the 'LD_LIBRARY_PATH' environment variable
+     during execution
+   - add LIBDIR to the 'LD_RUN_PATH' environment variable
+     during linking
+   - use the '-Wl,-rpath -Wl,LIBDIR' linker flag
+   - have your system administrator add LIBDIR to '/etc/ld.so.conf'
+
+See any operating system documentation about shared libraries for
+more information, such as the ld(1) and ld.so(8) manual pages.
+----------------------------------------------------------------------
+make[3]: Nothing to be done for 'install-data-am'.
+make[3]: Leaving directory '/tmp/uno-publication-build/third-party/libmicrohttpd/src/src/microhttpd'
+make[2]: Leaving directory '/tmp/uno-publication-build/third-party/libmicrohttpd/src/src/microhttpd'
+Making install in .
+make[2]: Entering directory '/tmp/uno-publication-build/third-party/libmicrohttpd/src/src'
+make[3]: Entering directory '/tmp/uno-publication-build/third-party/libmicrohttpd/src/src'
+make[3]: Nothing to be done for 'install-exec-am'.
+make[3]: Nothing to be done for 'install-data-am'.
+make[3]: Leaving directory '/tmp/uno-publication-build/third-party/libmicrohttpd/src/src'
+make[2]: Leaving directory '/tmp/uno-publication-build/third-party/libmicrohttpd/src/src'
+Making install in examples
+make[2]: Entering directory '/tmp/uno-publication-build/third-party/libmicrohttpd/src/src/examples'
+Making install in .
+make[3]: Entering directory '/tmp/uno-publication-build/third-party/libmicrohttpd/src/src/examples'
+make[4]: Entering directory '/tmp/uno-publication-build/third-party/libmicrohttpd/src/src/examples'
+make[4]: Nothing to be done for 'install-exec-am'.
+make[4]: Nothing to be done for 'install-data-am'.
+make[4]: Leaving directory '/tmp/uno-publication-build/third-party/libmicrohttpd/src/src/examples'
+make[3]: Leaving directory '/tmp/uno-publication-build/third-party/libmicrohttpd/src/src/examples'
+make[2]: Leaving directory '/tmp/uno-publication-build/third-party/libmicrohttpd/src/src/examples'
+Making install in tools
+make[2]: Entering directory '/tmp/uno-publication-build/third-party/libmicrohttpd/src/src/tools'
+Making install in .
+make[3]: Entering directory '/tmp/uno-publication-build/third-party/libmicrohttpd/src/src/tools'
+make[4]: Entering directory '/tmp/uno-publication-build/third-party/libmicrohttpd/src/src/tools'
+make[4]: Nothing to be done for 'install-exec-am'.
+make[4]: Nothing to be done for 'install-data-am'.
+make[4]: Leaving directory '/tmp/uno-publication-build/third-party/libmicrohttpd/src/src/tools'
+make[3]: Leaving directory '/tmp/uno-publication-build/third-party/libmicrohttpd/src/src/tools'
+make[2]: Leaving directory '/tmp/uno-publication-build/third-party/libmicrohttpd/src/src/tools'
+make[1]: Leaving directory '/tmp/uno-publication-build/third-party/libmicrohttpd/src/src'
+Making install in .
+make[1]: Entering directory '/tmp/uno-publication-build/third-party/libmicrohttpd/src'
+make[2]: Entering directory '/tmp/uno-publication-build/third-party/libmicrohttpd/src'
+make[2]: Nothing to be done for 'install-exec-am'.
+ /usr/bin/mkdir -p '/tmp/uno-publication-build/third-party/libmicrohttpd/lib/pkgconfig'
+ /usr/bin/install -c -m 644 libmicrohttpd.pc '/tmp/uno-publication-build/third-party/libmicrohttpd/lib/pkgconfig'
+make[2]: Leaving directory '/tmp/uno-publication-build/third-party/libmicrohttpd/src'
+make[1]: Leaving directory '/tmp/uno-publication-build/third-party/libmicrohttpd/src'
+ninja: build stopped: subcommand failed.

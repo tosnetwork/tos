@@ -30,7 +30,11 @@ bridge_excluded = {
 uno_paths = (
     "uno/**", "doc/uno-*", "doc/measurements/uno-*",
     "crypto/block/workchain-*", "crypto/test/test-workchain*",
-    "crypto/test/workchain-*", "test/test-uno-*", "test/counter-*",
+    "crypto/test/workchain-*", "test/test-uno-*", "test/counter-*", "test/test-counter-*",
+    "test/uno-*", "test/workchain-*", "crypto/smartcont/uno-genesis-*",
+    "crypto/smartcont/gen-zerostate.fif",
+    "crypto/block/create-state.cpp", "scripts/setup-testnet.sh",
+    "test/tostester/src/tostester/zerostate.py",
     "crypto/block/block.tlb", "scripts/m1-real-manager-sync.py",
     "crypto/block/block-parse.cpp", "crypto/block/transaction.cpp",
     "assembly/native/build-ubuntu-shared.sh",

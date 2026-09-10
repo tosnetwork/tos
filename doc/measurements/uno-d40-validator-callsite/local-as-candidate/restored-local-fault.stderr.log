@@ -1,0 +1,11 @@
+[1;36m[ 3][t 0][2026-09-09 18:12:07.807532768][validate-query.cpp:7262][!mc-extra-probe]	checking header of McStateExtra in the new masterchain state[0m
+[0m[ 4][t 0][2026-09-09 18:12:07.807929463][mc-config.cpp:572][!mc-extra-probe]	workchain description dictionary created[0m
+[0m[ 4][t 0][2026-09-09 18:12:07.807938474][mc-config.cpp:2347][!mc-extra-probe]	unpacked info for workchain 0: basic=true, active=true, accept_msgs=true, min_split=0, max_split=0[0m
+[0m[ 4][t 0][2026-09-09 18:12:07.807952575][mc-config.cpp:572][!mc-extra-probe]	workchain description dictionary created[0m
+[0m[ 4][t 0][2026-09-09 18:12:07.807957821][mc-config.cpp:2347][!mc-extra-probe]	unpacked info for workchain 0: basic=true, active=true, accept_msgs=true, min_split=0, max_split=0[0m
+[1;31m[ 1][t 0][2026-09-09 18:12:07.807974863][validate-query.cpp:208][!mc-extra-probe]	aborting validation of block candidate for (-1,8000000000000000) : [Error : 7402 : authenticated instance ledger: malformed instance ledger][0m
+[1;33m[ 2][t 0][2026-09-09 18:12:07.808004860][validate-query.cpp:8017][!mc-extra-probe]	validation took 0.001162s[0m
+[1;33m[ 2][t 0][2026-09-09 18:12:07.808025746][validate-query.cpp:8018][!mc-extra-probe]	Validate query work time = 0.000000s, cpu time = 0.000000s[0m
+[1;33m[ 2][t 0][2026-09-09 18:12:07.808031839][validate-query.cpp:8020][!mc-extra-probe]	{{
+}[0m
+local_status=[Error : 7402 : authenticated instance ledger: malformed instance ledger]

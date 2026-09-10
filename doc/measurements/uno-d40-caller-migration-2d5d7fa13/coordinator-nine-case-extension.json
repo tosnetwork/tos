@@ -1,0 +1,23 @@
+{
+  "authority": "Subsequent coordinator decision: nine owner-deferred obsolete-shape cases; A checks exact merged-run causes",
+  "supersedes_three_case_scope_in": "coordinator-disposition.json",
+  "count_as_pass": false,
+  "count_as_regression_failure": false,
+  "classification": "obsolete fixture shape / awaiting coordinated post-zerostate reshaping",
+  "cases": [
+    "test-counter-account-binding-readiness",
+    "test-counter-activation-missing_capability",
+    "test-counter-activation-old_version",
+    "test-counter-disk-integration",
+    "test-counter-idle-replay",
+    "test-counter-self-delivery",
+    "test-counter-cross-delivery",
+    "test-counter-native-sender",
+    "test-counter-engine-config"
+  ],
+  "not_deferred": [
+    "test-counter-python-harness"
+  ],
+  "scope": "No raw observation is changed. Name matching alone does not establish a cause match; A owns per-row merged-run cause verification. Any additional case or unrelated cause requires a new coordinator decision.",
+  "historical_notice": "Superseded as a current exception by revised D40/D52 and genesis implementation. Retained to explain historical runs; see ../uno-genesis-installation-ad87d9155/report.json for new observations."
+}

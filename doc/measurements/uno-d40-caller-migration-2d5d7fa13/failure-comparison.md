@@ -32,3 +32,13 @@ framing failures, the six runs that never entered due to the fixture cap, and
 the missing TOL_STDLIB failure. Raw JUnit and logs have not been rewritten.
 Singleton has no identity exemption. See `coordinator-disposition.json` for the
 machine-readable disposition and the boundary of the next fixture unit.
+
+## Subsequent nine-case scope extension
+
+The coordinator subsequently included all six singleton bootstrap framing cases
+in the same post-zerostate reshaping unit. The current owner-deferred set is
+therefore nine cases, neither passes nor regression failures. The earlier
+three-case disposition and original observations above remain historical.
+`coordinator-nine-case-extension.json` lists the complete set. The Python harness
+is explicitly not deferred and must pass. A verifies causes on the merged tree;
+matching a name or count does not replace that check.

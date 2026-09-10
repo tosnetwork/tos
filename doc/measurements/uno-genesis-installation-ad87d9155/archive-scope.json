@@ -1,0 +1,4 @@
+{
+  "scope": "Full captured logs, including empty stderr, source mutation records, zerostates, exported candidates and typed result sidecars. Live node db subtrees excluded. One verbose log is losslessly compressed; see compressed-log.json. Initial failures remain separate from successful runs.",
+  "runtime_databases": "Rebuild from retained fixture source and zerostates; this archive makes no persistence/recovery proof claim."
+}

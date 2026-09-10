@@ -2,13 +2,28 @@ library Workchain  // Workchain descriptor builders
 "State.fif" include
 
 variable workchain-dict
-// root-hash file-hash enable-utime actual-min-split min-split max-split workchain-id --
-{ <b x{a6} s, 5 roll 32 u, 4 roll 8 u, 3 roll 8 u, rot 8 u, x{e000} s,
-  3 roll 256 u, rot 256 u, 0 32 u, x{1} s, -1 32 i, 0 64 u, b>
+// root-hash file-hash enable-utime actual-min-split min-split max-split
+// workchain-id routing-flags vm-version -- descriptor-cell
+// routing-flags includes basic/active/accept_msgs and thirteen reserved bits;
+// native descriptor validation enforces reserved bits and the basic format.
+{ <b x{a6} s, 7 roll 32 u, 6 roll 8 u, 5 roll 8 u, 4 roll 8 u,
+  2 roll 16 u, 4 roll 256 u, 3 roll 256 u, 0 32 u, x{1} s,
+  swap 32 i, 0 64 u, b>
   dup isWorkchainDescr? not abort"invalid WorkchainDescr created"
-  <s swap workchain-dict @ 32 idict!+ 0= abort"cannot add workchain"
+  dup <s rot workchain-dict @ 32 idict!+ 0= abort"cannot add workchain"
   workchain-dict !
-} : add-std-workchain
+} : add-basic-workchain
+// Same inputs, extended descriptor with the existing split/merge timings.
+{ <b x{a7} s, 7 roll 32 u, 6 roll 8 u, 5 roll 8 u, 4 roll 8 u,
+  2 roll 16 u, 4 roll 256 u, 3 roll 256 u, 0 32 u, x{1} s,
+  swap 32 i, 0 64 u, x{0} s, 20 32 u, 20 32 u, 10 32 u, 1000 32 u, 0 8 u, b>
+  dup isWorkchainDescr? not abort"invalid WorkchainDescr created"
+  dup <s rot workchain-dict @ 32 idict!+ 0= abort"cannot add workchain"
+  workchain-dict !
+} : add-basic-workchain-v2
+// Compatibility convenience for an active, receiving native workchain.
+// All wire construction remains in add-basic-workchain.
+{ 0xe000 -1 add-basic-workchain drop } : add-std-workchain
 // --
 { workchain-dict @ dict>s s>c 12 config! } : config.workchains!
 

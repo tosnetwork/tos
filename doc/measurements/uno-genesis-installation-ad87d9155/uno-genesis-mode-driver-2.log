@@ -1,0 +1,4 @@
+Traceback (most recent call last):
+  File "/tmp/uno-genesis-mode-control.py", line 20, in <module>
+    entry=next(e for e in json.loads((build/'compile_commands.json').read_text()) if Path(e['file']).resolve()==repo/source)
+StopIteration

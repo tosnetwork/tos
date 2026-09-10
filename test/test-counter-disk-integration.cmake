@@ -38,12 +38,12 @@ foreach(script ${genesis_scripts})
   endif()
   if(script STREQUAL "counter-masterchain-genesis" AND DEFINED CROSS_DELIVERY)
     file(READ "${script_path}" genesis)
-    set(marker "now 0 0 0 2 add-counter-workchain")
+    set(marker "now 0 0 0 2 0xe000 0x434e5431 add-basic-workchain drop")
     string(FIND "${genesis}" "${marker}" found)
     if(found EQUAL -1)
       message(FATAL_ERROR "Missing Counter descriptor marker in cross-workchain fixture")
     endif()
-    string(REPLACE "${marker}" "${marker}\n\"counter-peer-state.rhash\" file>B 256 B>u@\n\"counter-peer-state.fhash\" file>B 256 B>u@\nnow 0 0 0 3 add-counter-workchain" genesis "${genesis}")
+    string(REPLACE "${marker}" "${marker}\n\"counter-peer-state.rhash\" file>B 256 B>u@\n\"counter-peer-state.fhash\" file>B 256 B>u@\nnow 0 0 0 3 0xe000 0x434e5431 add-basic-workchain drop" genesis "${genesis}")
     string(REPLACE "2 add-counter-ingress" "2 add-counter-ingress\n3 add-counter-ingress" genesis "${genesis}")
     set(script_path "${fixture}/cross-genesis.fif")
     file(WRITE "${script_path}" "${genesis}")
@@ -55,15 +55,15 @@ foreach(script ${genesis_scripts})
       set(original "1024 or config.version!")
       set(replacement "0 or config.version!")
     elseif(ACTIVATION_MODE STREQUAL "old_version")
-      set(original "15 capCreateStats")
+      set(original "16 capCreateStats")
       set(replacement "14 capCreateStats")
     elseif(ACTIVATION_MODE STREQUAL "policy_version")
-      set(original "0 32 u, 0 256 u, empty_cell ref, b>")
-      set(replacement "1 32 u, 0 256 u, empty_cell ref, b>")
+      set(original "0 32 u, 0 256 u, rot ref, b>")
+      set(replacement "1 32 u, 0 256 u, rot ref, b>")
       set(expected_config_error "native ingress policy differs from execution descriptor")
     elseif(ACTIVATION_MODE STREQUAL "engine_payload")
-      set(original "0 32 u, 0 256 u, empty_cell ref, b>")
-      set(replacement "0 32 u, 0 256 u, <b 0 1 u, b> ref, b>")
+      set(original "uno-v2-provisional-resources empty_cell instance-engine-configuration")
+      set(replacement "uno-v2-provisional-resources <b 0 1 u, b> instance-engine-configuration")
     else()
       message(FATAL_ERROR "Unknown activation test mode: ${ACTIVATION_MODE}")
     endif()
@@ -85,7 +85,7 @@ foreach(script ${genesis_scripts})
   endif()
   if(script STREQUAL "counter-masterchain-genesis" AND ACCOUNT_BINDING_ONLY)
     file(READ "${script_path}" genesis)
-    set(old_ingress "{ dup <b x{57495031} s, swap 32 i, 0 1 u, 0x434e5431 64 i, 0 64 u,\n  0 32 u, 0 256 u, empty_cell ref, b>")
+    set(old_ingress "{ dup counter-instance-config swap dup <b x{57495031} s, swap 32 i, 0 1 u, 0x434e5431 64 i, 0 64 u,\n  0 32 u, 0 256 u, rot ref, b>")
     string(FIND "${genesis}" "${old_ingress}" marker)
     if(marker EQUAL -1)
       message(FATAL_ERROR "Missing singleton ingress marker for account binding fixture")
@@ -101,12 +101,10 @@ foreach(script ${genesis_scripts})
 // @generated-tag UnoV2ResourcePolicy 0
 <b x{bbd8a9ec} s, 2 32 u, probe_input ref, probe_state ref, probe_work ref, b> constant probe_resources
 // Fixture K acceptance interval, explicitly recorded; not read from current Param30.
-// Explicit framing-only identities: genesis = zero bits256, instance = one bits256.
-// Both are legal wire values; this readiness fixture does not assert D40 issuance.
-// Its MC zerostate cannot embed its own final hash. No authenticated installation
-// or bootstrap identity is supplied by these synthetic values.
+// Claimed identity comes from the actual genesis descriptor. create-state
+// independently reissues it against the final configuration root.
 // @generated-tag UnoV2EngineConfiguration 0
-<b x{ff68187c} s, 400 32 u, 0 256 u, 256 1<<1- 256 u, probe_resources ref, <b x{50524231} s, b> ref, b> constant probe_config
+<b x{41868cd4} s, 400 32 u, 2 configured-first-instance-identity B, probe_resources ref, <b x{50524231} s, b> ref, b> constant probe_config
 // @generated-tag WorkchainNativeIngressPolicy 0
 { dup <b x{4abd5ab4} s, swap 32 i, 0 1 u, 0x434e5431 64 i, 0 64 u,
   0 32 u, 0 256 u, 256 1<<1- 256 u, probe_config ref, b>]=])

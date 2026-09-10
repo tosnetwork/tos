@@ -1,0 +1,91 @@
+{
+   "@type" : "engine.validator.config",
+   "out_port" : 3278,
+   "addrs" : [
+      {
+         "@type" : "engine.addr",
+         "ip" : 2130706433,
+         "port" : 34005,
+         "categories" : [
+            0
+         ],
+         "priority_categories" : [
+         ]
+      }
+   ],
+   "adnl" : [
+      {
+         "@type" : "engine.adnl",
+         "id" : "BVii2frYx+yy5osN/k24Y7mXOOy6dNsrqrc8SVSs6bQ=",
+         "category" : 0
+      },
+      {
+         "@type" : "engine.adnl",
+         "id" : "2+qWsHm4mNcGgtCtcyzdI9zq/Iu+pz6MRLFog5zt8n4=",
+         "category" : 0
+      }
+   ],
+   "dht" : [
+      {
+         "@type" : "engine.dht",
+         "id" : "2+qWsHm4mNcGgtCtcyzdI9zq/Iu+pz6MRLFog5zt8n4="
+      }
+   ],
+   "validators" : [
+      {
+         "@type" : "engine.validator",
+         "id" : "BVii2frYx+yy5osN/k24Y7mXOOy6dNsrqrc8SVSs6bQ=",
+         "temp_keys" : [
+            {
+               "@type" : "engine.validatorTempKey",
+               "key" : "BVii2frYx+yy5osN/k24Y7mXOOy6dNsrqrc8SVSs6bQ=",
+               "expire_at" : 2147483647
+            }
+         ],
+         "adnl_addrs" : [
+            {
+               "@type" : "engine.validatorAdnlAddress",
+               "id" : "BVii2frYx+yy5osN/k24Y7mXOOy6dNsrqrc8SVSs6bQ=",
+               "expire_at" : 2147483647
+            }
+         ],
+         "election_date" : 0,
+         "expire_at" : 2147483647
+      }
+   ],
+   "collators" : [
+   ],
+   "fullnode" : "2+qWsHm4mNcGgtCtcyzdI9zq/Iu+pz6MRLFog5zt8n4=",
+   "fullnodeslaves" : [
+   ],
+   "fullnodemasters" : [
+   ],
+   "liteservers" : [
+      {
+         "@type" : "engine.liteServer",
+         "id" : "nVa+ItbBQ+Fosw6Gpo9SSSLSRVI/VoqTZ4fONlWuLBE=",
+         "port" : 34006
+      }
+   ],
+   "control" : [
+      {
+         "@type" : "engine.controlInterface",
+         "id" : "5/APpjUD11fV+GG2RhHZXWmxUtyO4Rx088Htfx47pUg=",
+         "port" : 34007,
+         "allowed" : [
+            {
+               "@type" : "engine.controlProcess",
+               "id" : "1ZzIKYO4cVwdv18WdW1Xeka7ndlfSsdFun0I8Lf36kA=",
+               "permissions" : 15
+            }
+         ]
+      }
+   ],
+   "shards_to_monitor" : [
+   ],
+   "gc" : {
+      "@type" : "engine.gc",
+      "ids" : [
+      ]
+   }
+}

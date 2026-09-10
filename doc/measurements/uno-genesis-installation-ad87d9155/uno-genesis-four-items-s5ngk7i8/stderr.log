@@ -1,0 +1,5 @@
+[1;31m[ 1][t 0][2026-09-09 22:10:25.473533364][create-state.cpp:982]	{}[0m
+[1;31m[ 1][t 0][2026-09-09 22:10:25.549442351][block.cpp:1910]	[Error : 0 : unsupported multi-account admission version in configuration][0m
+[1;31m[ 1][t 0][2026-09-09 22:10:25.549671467][Fift.cpp:67]	top: set_config_smc
+level 1: <text interpreter continuation>[0m
+Error interpreting file `/tmp/uno-genesis-four-items-s5ngk7i8/genesis.fif`: [Error : 0 : genesis.fif:308:	set_config_smc:invalid smart contract configuration data]

@@ -1,0 +1,5 @@
+Traceback (most recent call last):
+  File "/home/tomi/tos-m2/test/workchain-smartcont-oracle-controls.py", line 105, in <module>
+    assert wa.is_file()
+           ~~~~~~~~~~^^
+AssertionError

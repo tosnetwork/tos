@@ -1,0 +1,123 @@
+{
+  "scope": "Retrospective environment annotation, not a new behavioral test. Original evidence remains unchanged.",
+  "source_commit": "312533766045ef96b20d3250fd7c38a792e5ccdc",
+  "incident_window_utc": [
+    "2026-09-09T23:28:00Z",
+    "2026-09-10T00:24:00Z"
+  ],
+  "incident_source": "Coordinator report: sudo setup replaced B venv; coordinator rebuilt it as tomi.",
+  "trace_source": "/home/tomi/.codex/sessions/2026/09/09/rollout-2026-09-09T06-49-18-01a084ed-9631-73b2-9449-52044a0d604a.jsonl",
+  "launches": [
+    {
+      "measurement": "local-profile-1",
+      "timestamp_utc": "2026-09-10T00:08:51.680Z",
+      "call_id": "call_390t7GZ4uZGwyGcfILIaJAV0",
+      "tool_input_sha256": "2b02110dd86d6a14d203959480e574e11245959737edc7e2a30ab912e0c94c0f",
+      "launch_excerpt": "PYTHONPATH=/home/tomi/tos-m2/test/tostester/src /home/tomi/tos/.venv/bin/python test/uno-local-profile.py --build /tmp/uno-publication-build --out /tmp/uno-local-profile-1 > /tmp/uno-local-profile-1.stdout.log 2> /tmp/uno-local-profile-1.stderr.log",
+      "interpreter_selection": "explicit unaffected A venv"
+    },
+    {
+      "measurement": "local-profile-2",
+      "timestamp_utc": "2026-09-10T00:10:07.421Z",
+      "call_id": "call_QYckU6m2l8Kv4qjwuEgQIVSq",
+      "tool_input_sha256": "f0cef6ed83593d6578b3bd97cb63f31da9b04b4361522d865159e87f97e6502d",
+      "launch_excerpt": "PYTHONPATH=/home/tomi/tos-m2/test/tostester/src /home/tomi/tos/.venv/bin/python test/uno-local-profile.py --build /tmp/uno-publication-build --out /tmp/uno-local-profile-2 --port 34100 > /tmp/uno-local-profile-2.stdout.log 2> /tmp/uno-local-profile-2.stderr.log",
+      "interpreter_selection": "explicit unaffected A venv"
+    },
+    {
+      "measurement": "local-profile-3",
+      "timestamp_utc": "2026-09-10T00:11:32.075Z",
+      "call_id": "call_l78RjIjzzyoQfvwZCaDTAmv3",
+      "tool_input_sha256": "764c97e7d9ae93fba3e57cd7409f5cfcada02db3e487224bb27194c0686a779e",
+      "launch_excerpt": "PYTHONPATH=/home/tomi/tos-m2/test/tostester/src /home/tomi/tos/.venv/bin/python test/uno-local-profile.py --build /tmp/uno-publication-build --out /tmp/uno-local-profile-3 --port 34200 > /tmp/uno-local-profile-3.stdout.log 2> /tmp/uno-local-profile-3.stderr.log",
+      "interpreter_selection": "explicit unaffected A venv"
+    },
+    {
+      "measurement": "setup-preflight",
+      "timestamp_utc": "2026-09-10T00:14:21.230Z",
+      "call_id": "call_W3vJOgDUyhIf1NrioDghaReT",
+      "tool_input_sha256": "1e73a76a2edbbfdb0a64f067e990c77a363aaddcfc002096a98ef2ec571fad3a",
+      "launch_excerpt": "python3 test/uno-setup-preflight-controls.py --out /tmp/uno-setup-preflight-1 > /tmp/uno-setup-preflight-1.log 2>&1",
+      "interpreter_selection": "bare python3; historical resolved executable not recorded"
+    },
+    {
+      "measurement": "individual-oracles",
+      "timestamp_utc": "2026-09-10T00:16:58.511Z",
+      "call_id": "call_XhW8Ti5pC6j0QDO0vCR0qpKj",
+      "tool_input_sha256": "812ce7e409f2ad782a0d5ece7d83a48c32bd526203e3053cd9b12f3ac06df351",
+      "launch_excerpt": "mkdir /tmp/uno-oracle-individual\npython3 - <<'PY'\nfrom pathlib import Path\nimport subprocess,json\nnames=['GenZerostateFiftRegression','GovernanceProposalFiftScriptRegression','GovernanceVoteFiftScriptRegression','ValidatorFiftScriptRegression']\nr=Path('/tmp/uno-oracle-individual');report=[]\nfor n in names:\n db=r/(n+'.ans');db.write_text('')\n command=['/tmp/uno-publication-build/test-smartcont','--filter',n,'--regression',str(db),'--verbosity','0']\n run=subprocess.run(command,capture_output=True)\n (r/(n+'.stdout.log')).write_bytes(run.stdout);(r/(n+'.stderr.log')).write_bytes(run.stderr)\n report.append({'name':n,'command':command,'exit':run.returncode,'answer':db.read_text()})\n (r/'report.json').write_text(json.dumps(report,indent=2)+'\\n')\n assert run.returncode==0\nprint([(x['name'],x['answer'].strip()) for x in report])\nPY",
+      "interpreter_selection": "bare python3; historical resolved executable not recorded"
+    },
+    {
+      "measurement": "counter-python-harness",
+      "timestamp_utc": "2026-09-10T00:20:21.747Z",
+      "call_id": "call_YHAYXVumd7FlAGGBsnDP6z96",
+      "tool_input_sha256": "c8e1dcf4dbde9342ac74a67397df937cb420847bad119257e1a3f50a448a91e3",
+      "launch_excerpt": "PYTHONPATH=/home/tomi/tos-m2/test/tostester/src /home/tomi/tos/.venv/bin/python -m pytest -q test/tostester/test_counter_genesis.py > /tmp/uno-descriptor-python.log 2>&1",
+      "interpreter_selection": "explicit unaffected A venv"
+    },
+    {
+      "measurement": "descriptor-equivalence",
+      "timestamp_utc": "2026-09-10T00:23:03.710Z",
+      "call_id": "call_pr14PbVXa78i6wbhd29lCIbp",
+      "tool_input_sha256": "45512ef8a5f06ad9b2f837058f52fc73c37eff2c06cb1fadc4c5369521825be5",
+      "launch_excerpt": "python3 test/workchain-descriptor-equivalence.py --repo /home/tomi/tos-m2 --create-state /tmp/uno-publication-build/crypto/create-state --out /tmp/uno-descriptor-equivalence-1 > /tmp/uno-descriptor-equivalence-1.log 2>&1",
+      "interpreter_selection": "bare python3; historical resolved executable not recorded"
+    }
+  ],
+  "historical_uid_probe": {
+    "call_id": "call_yIAkSR6leuz2eVbCVKaCeFPc",
+    "output": [
+      {
+        "type": "input_text",
+        "text": "Script completed\nWall time 0.2 seconds\nOutput:\n"
+      },
+      {
+        "type": "input_text",
+        "text": "{\"chunk_id\":\"8bbae3\",\"wall_time_seconds\":0.037948819,\"exit_code\":0,\"original_token_count\":82,\"output\":\"1000\\n-rw-r--r-- 1 root root 0 Sep  9 23:28 /tmp/tos-setup.lock\\nconfig smart contract address = -1:5555555555555555555555555555555555555555555555555555555555555555 \\n0f9VVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVoo\\n(Saving address to file config-master.addr)\\nPASS: UNO local chain and restart; evidence=/tmp/uno-local-profile-3\\n\"}"
+      }
+    ]
+  },
+  "post_repair_observation": {
+    "timestamp_utc": "2026-09-10T01:14:40.355993+00:00",
+    "uid": 1000,
+    "interpreters": {
+      "/home/tomi/tos-m2/.venv/bin/python": {
+        "link": "/home/tomi/.local/share/uv/python/cpython-3.14-linux-x86_64-gnu/bin/python3.14",
+        "resolved_now": "/home/tomi/.local/share/uv/python/cpython-3.14.4-linux-x86_64-gnu/bin/python3.14",
+        "owner_uid_now": 1000,
+        "symlink_mtime_utc": "2026-09-10T00:23:41.894865+00:00"
+      },
+      "/home/tomi/tos/.venv/bin/python": {
+        "link": "/home/tomi/.local/share/uv/python/cpython-3.14-linux-x86_64-gnu/bin/python3.14",
+        "resolved_now": "/home/tomi/.local/share/uv/python/cpython-3.14.4-linux-x86_64-gnu/bin/python3.14",
+        "owner_uid_now": 1000,
+        "symlink_mtime_utc": "2026-08-11T04:26:29.479334+00:00"
+      },
+      "/home/tomi/.local/bin/python3": {
+        "link": "/home/tomi/.local/bin/python3.14",
+        "resolved_now": "/home/tomi/.local/share/uv/python/cpython-3.14.4-linux-x86_64-gnu/bin/python3.14",
+        "owner_uid_now": 1000,
+        "symlink_mtime_utc": "2026-04-26T00:26:47.666080+00:00"
+      }
+    },
+    "warning": "Current resolution is not evidence of historical bare-python3 resolution."
+  },
+  "existing_descriptor_repetition": {
+    "initial_report": "doc/measurements/uno-descriptor-and-oracle/uno-descriptor-equivalence-1/report.json",
+    "later_restored_report": "doc/measurements/uno-descriptor-and-oracle/uno-descriptor-controls-2/restored/report.json",
+    "all_five_case_records_equal": true,
+    "report_sha256": {
+      "doc/measurements/uno-descriptor-and-oracle/uno-descriptor-equivalence-1/report.json": "7967e5ee47e0c42473133f8f25b4ef1fe44010af99cf23c64a5bf863f87dc19a",
+      "doc/measurements/uno-descriptor-and-oracle/uno-descriptor-controls-2/restored/report.json": "29c93c8987fe7da891e024de5052e079abc17bbf0eec7c80e1254a57737ee387"
+    }
+  },
+  "conclusion": "The four package-dependent launches explicitly selected A venv, not the replaced B venv. No selected launch uses sudo or the root interpreter path. Three bare-python3 launches orchestrated native tools or shell stubs using the standard library; their historical interpreter executable/hash was not captured, so exact interpreter reproducibility is not claimed. No evidence of a measurement completed under the replaced root interpreter was found in these launch records.",
+  "rerun_disposition": "No incident-driven rerun: explicit A-venv launches were unaffected; historical bare-python3 provenance is annotated rather than reconstructed from current paths. The descriptor comparison already has a later matching restored run.",
+  "limits": [
+    "The trace records commands, not every process execve.",
+    "Source editing and evidence packaging also used bare python3; these were not application measurements.",
+    "Setup-preflight uses a stub id returning 0 and a stub uv; this is not execution as root.",
+    "Local profile demonstrates execution of issuance on real nodes and short restart progress, not long-term stability."
+  ]
+}

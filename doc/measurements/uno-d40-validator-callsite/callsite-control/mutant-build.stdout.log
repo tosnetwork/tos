@@ -1,0 +1,4 @@
+[1/4] Building CXX object crypto/CMakeFiles/test-workchain-instance-callsite.dir/test/test-workchain-instance-callsite.cpp.o
+[2/4] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/validate-query.cpp.o
+[3/4] Linking CXX static library validator/impl/libtos_validator.a
+[4/4] Linking CXX executable crypto/test-workchain-instance-callsite

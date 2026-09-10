@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="(empty)"
+	tests="5"
+	failures="0"
+	disabled="0"
+	skipped="0"
+	hostname=""
+	time="44"
+	timestamp="2026-09-09T23:03:38"
+	>
+	<testcase name="test-workchain-genesis-activation-missing-capability" classname="test-workchain-genesis-activation-missing-capability" time="0.159518" status="run">
+		<system-out>PASS: scoped activation refusal with Param84 retained; evidence=/tmp/uno-genesis-activation-giggwgz1/run
+</system-out>
+	</testcase>
+	<testcase name="test-workchain-genesis-activation-old-version" classname="test-workchain-genesis-activation-old-version" time="0.157925" status="run">
+		<system-out>PASS: scoped activation refusal with Param84 retained; evidence=/tmp/uno-genesis-activation-fl0rf3hh/run
+</system-out>
+	</testcase>
+	<testcase name="test-workchain-activation-control-gates" classname="test-workchain-activation-control-gates" time="0.178306" status="run">
+		<system-out>........
+----------------------------------------------------------------------
+Ran 8 tests in 0.004s
+
+OK
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 23:03:38.852130374][mc-config.cpp:572]	workchain description dictionary created[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 23:03:38.852329375][mc-config.cpp:2347]	unpacked info for workchain 2: basic=true, active=true, accept_msgs=true, min_split=0, max_split=0[NON-XML-CHAR-0x1B][0m
+input_configuration	16	0	1
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 23:03:38.852386458][mc-config.cpp:572]	workchain description dictionary created[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 23:03:38.852392521][mc-config.cpp:2347]	unpacked info for workchain 2: basic=true, active=true, accept_msgs=true, min_split=0, max_split=0[NON-XML-CHAR-0x1B][0m
+input_configuration	16	1	1
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 23:03:38.852421316][mc-config.cpp:572]	workchain description dictionary created[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 23:03:38.852427076][mc-config.cpp:2347]	unpacked info for workchain 2: basic=true, active=true, accept_msgs=true, min_split=0, max_split=0[NON-XML-CHAR-0x1B][0m
+input_configuration	16	0	1
+[NON-XML-CHAR-0x1B][0m[ ...
+The rest of the test output was removed since it exceeds the threshold of 1024 bytes.
+</system-out>
+	</testcase>
+	<testcase name="test-smartcont" classname="test-smartcont" time="9.46512" status="run">
+		<system-out>Running test Test_Toslib_WalletV3...
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 23:03:38.879136947][words.cpp:3418]	import_cmdlist_args(aba,2)[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 23:03:38.899612070][SmartContract.cpp:358]	VM stack:
+ [ 85143 ] [NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 23:03:38.899650998][SmartContract.cpp:410]	VM log
+execute SETCP 0
+execute DICTPUSHCONST 19 (xC_,1)
+execute DICTIGETJMPZ
+execute PUSH c4
+execute CTOS
+execute PLDU 32
+execute implicit RET[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 23:03:38.899658188][SmartContract.cpp:413]	VM stack:
+ [ 0 ] [NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 23:03:38.899661629][SmartContract.cpp:414]	VM exit code: 0[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 23:03:38.899664608][SmartContract.cpp:415]	VM accepted: true[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 23:03:38.899667631][SmartContract.cpp:416]	VM success: true[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 23:03:38.899670881][SmartContract.cpp:426]	output actions:
+out_list_empty[NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 23:03:38.899704252][SmartContract.cpp:358]	VM stack:
+ [ 85143 ] [NON-XML-CHAR-0x1B][0m
+[NON-XML-CHAR-0x1B][0m[ 4][t 0][2026-09-09 23:03:3...
+The rest of the test output was removed since it exceeds the threshold of 1024 bytes.
+</system-out>
+	</testcase>
+	<testcase name="test-uno-build-wiring" classname="test-uno-build-wiring" time="34.2198" status="run">
+		<system-out>...
+----------------------------------------------------------------------
+Ran 3 tests in 34.141s
+
+OK
+</system-out>
+	</testcase>
+</testsuite>

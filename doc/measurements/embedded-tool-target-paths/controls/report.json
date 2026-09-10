@@ -1,0 +1,71 @@
+{
+  "source_commit": "f5043d9fc737306dd5d6f2c41a0a1550c7e7a07e",
+  "cases": [
+    {
+      "name": "native-registry-v1-func",
+      "mutation_sha256": "a33bf2788b2bf9a5dbdc8e191ea8baf89d0ea9f1254524e4b9e028ed3c628a0a",
+      "original_sha256": "14e5c9dfff387fbb015f7d6126ff53bd37699e3d27eccb927651fa3624e939e1",
+      "target": "gen_fif_smartcont_auto_native_registry_code",
+      "exit": 2,
+      "exact_diagnostic": "required compiler is unavailable: /tmp/uno-embedded-tool-path-source/build/crypto/func",
+      "restored_sha256": "14e5c9dfff387fbb015f7d6126ff53bd37699e3d27eccb927651fa3624e939e1",
+      "restored_artifact_sha256": "d4d018ffe3e911eb6e23cb7aefea81c0405e901bb869f9f0f7637d02446f4da9",
+      "restored_exit": 0
+    },
+    {
+      "name": "native-registry-v1-fift",
+      "mutation_sha256": "a161a5cf19aa5f80b5e655b41b4f8b69b49dbd225b3f2331ec61f106dca467cf",
+      "original_sha256": "14e5c9dfff387fbb015f7d6126ff53bd37699e3d27eccb927651fa3624e939e1",
+      "target": "gen_fif_smartcont_auto_native_registry_code",
+      "exit": 2,
+      "exact_diagnostic": "required compiler is unavailable: /tmp/uno-embedded-tool-path-source/build/crypto/fift",
+      "restored_sha256": "14e5c9dfff387fbb015f7d6126ff53bd37699e3d27eccb927651fa3624e939e1",
+      "restored_artifact_sha256": "d4d018ffe3e911eb6e23cb7aefea81c0405e901bb869f9f0f7637d02446f4da9",
+      "restored_exit": 0
+    },
+    {
+      "name": "stablecoin-escrow-v1-func",
+      "mutation_sha256": "121495c33914a62c4a3eb1a96ab5f4e7276a30f55010aa8c0bb69d6ddfd8ab0c",
+      "original_sha256": "14e5c9dfff387fbb015f7d6126ff53bd37699e3d27eccb927651fa3624e939e1",
+      "target": "gen_fif_smartcont_auto_tos_service_stablecoin_escrow_v1",
+      "exit": 2,
+      "exact_diagnostic": "required compiler is unavailable: /tmp/uno-embedded-tool-path-source/build/crypto/func",
+      "restored_sha256": "14e5c9dfff387fbb015f7d6126ff53bd37699e3d27eccb927651fa3624e939e1",
+      "restored_artifact_sha256": "c1d2493c785aac9c99a707d4373af0389fd6045324011824a35aca2ea3e0c449",
+      "restored_exit": 0
+    },
+    {
+      "name": "stablecoin-escrow-v1-fift",
+      "mutation_sha256": "9bad935e47d2a166ab0d8cae21b38d08650c407483a7c712b449def02d8a402a",
+      "original_sha256": "14e5c9dfff387fbb015f7d6126ff53bd37699e3d27eccb927651fa3624e939e1",
+      "target": "gen_fif_smartcont_auto_tos_service_stablecoin_escrow_v1",
+      "exit": 2,
+      "exact_diagnostic": "required compiler is unavailable: /tmp/uno-embedded-tool-path-source/build/crypto/fift",
+      "restored_sha256": "14e5c9dfff387fbb015f7d6126ff53bd37699e3d27eccb927651fa3624e939e1",
+      "restored_artifact_sha256": "c1d2493c785aac9c99a707d4373af0389fd6045324011824a35aca2ea3e0c449",
+      "restored_exit": 0
+    },
+    {
+      "name": "stablecoin-escrow-v2-func",
+      "mutation_sha256": "fcc3579fc0e7f28a2497a36add993736e6305ea9540e669313d8686651b848b6",
+      "original_sha256": "14e5c9dfff387fbb015f7d6126ff53bd37699e3d27eccb927651fa3624e939e1",
+      "target": "gen_fif_smartcont_auto_tos_service_stablecoin_escrow_v2",
+      "exit": 2,
+      "exact_diagnostic": "required compiler is unavailable: /tmp/uno-embedded-tool-path-source/build/crypto/func",
+      "restored_sha256": "14e5c9dfff387fbb015f7d6126ff53bd37699e3d27eccb927651fa3624e939e1",
+      "restored_artifact_sha256": "98f1e3254b828d77bc5e0b3e5a2a60d8c53cfa43db8fef5c83f0b0ceb9169805",
+      "restored_exit": 0
+    },
+    {
+      "name": "stablecoin-escrow-v2-fift",
+      "mutation_sha256": "5eced5eb8bf6320bb4f8dd9b884e50cebc25aa3fa4ef40620f150cbd2d2cb745",
+      "original_sha256": "14e5c9dfff387fbb015f7d6126ff53bd37699e3d27eccb927651fa3624e939e1",
+      "target": "gen_fif_smartcont_auto_tos_service_stablecoin_escrow_v2",
+      "exit": 2,
+      "exact_diagnostic": "required compiler is unavailable: /tmp/uno-embedded-tool-path-source/build/crypto/fift",
+      "restored_sha256": "14e5c9dfff387fbb015f7d6126ff53bd37699e3d27eccb927651fa3624e939e1",
+      "restored_artifact_sha256": "98f1e3254b828d77bc5e0b3e5a2a60d8c53cfa43db8fef5c83f0b0ceb9169805",
+      "restored_exit": 0
+    }
+  ]
+}

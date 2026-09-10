@@ -1,0 +1,1729 @@
+CMakeLists.txt                                     |   33 +-
+ crypto/CMakeLists.txt                              |   12 +
+ crypto/block/block.tlb                             |    6 +-
+ crypto/block/create-state.cpp                      |  108 +-
+ crypto/block/workchain-execution-dispatch.cpp      |    4 +
+ crypto/block/workchain-execution-dispatch.h        |    2 +
+ crypto/block/workchain-instance-identity.cpp       |   51 +-
+ crypto/block/workchain-instance-identity.h         |   23 +-
+ crypto/block/workchain-resource-policy.h           |    8 +-
+ crypto/fift/lib/Workchain.fif                      |   25 +-
+ crypto/smartcont/gen-zerostate.fif                 |   26 +-
+ crypto/smartcont/uno-genesis-config.fif            |   14 +
+ crypto/smartcont/uno-genesis-operators.fif         |   15 +
+ crypto/test/counter-install-config.cpp             |   74 +
+ crypto/test/test-smartcont.cpp                     |    7 +
+ crypto/test/test-workchain-activation-control.cpp  |   23 +-
+ crypto/test/test-workchain-block.cpp               |  123 +-
+ crypto/test/test-workchain-ingress-transition.cpp  |   77 +
+ crypto/test/test-workchain-instance-callsite.cpp   |  166 +
+ crypto/test/test-workchain-instance-identity.cpp   |   57 +-
+ crypto/test/workchain-activation-control.cmake     |    9 +
+ crypto/test/workchain-counter-engine.h             |    7 +-
+ crypto/test/workchain-genesis-activation.py        |   42 +
+ crypto/test/workchain-genesis-business-controls.py |   79 +
+ crypto/test/workchain-genesis-controls.py          |  132 +
+ crypto/test/workchain-genesis-installation.md      |  111 +
+ crypto/test/workchain-genesis-installation.py      |   48 +
+ crypto/test/workchain-genesis-resource-controls.py |   54 +
+ crypto/test/workchain-genesis-routing.py           |  132 +
+ crypto/test/workchain-handwritten-tags.py          |   28 +-
+ .../test/workchain-instance-callsite-genesis.fif   |   59 +
+ .../test/workchain-instance-fixture-migration.md   |   14 +
+ .../test/workchain-post-zerostate-installation.md  |   79 +
+ crypto/test/workchain-wire-representations.json    |   58 +-
+ crypto/test/workchain-wire-representations.md      |   26 +-
+ doc/measurements/uno-counter-domain-path/README.md |    1 +
+ .../uno-counter-domain-path/baseline.stderr.log.gz |  Bin 0 -> 20 bytes
+ .../uno-counter-domain-path/baseline.stdout.log.gz |  Bin 0 -> 107 bytes
+ .../replacement.stderr.log.gz                      |  Bin 0 -> 137 bytes
+ .../replacement.stdout.log.gz                      |  Bin 0 -> 20 bytes
+ .../uno-counter-domain-path/report.json            |   23 +
+ .../uno-counter-domain-path/restored.stderr.log.gz |  Bin 0 -> 20 bytes
+ .../uno-counter-domain-path/restored.stdout.log.gz |  Bin 0 -> 107 bytes
+ .../uno-counter-interruption-audit/report.json     |  139 +
+ .../reviewed-working.patch                         |  222 +
+ .../artifact-manifest.json                         |    5 +-
+ .../coordinator-nine-case-extension.json           |   23 +
+ .../failure-comparison.md                          |   10 +
+ .../uno-d40-caller-migration-2d5d7fa13/report.json |    4 +-
+ .../uno-d40-validator-callsite/README.md           |   11 +
+ .../artifact-manifest.json                         |  110 +
+ .../uno-d40-validator-callsite/callsite-control.py |   48 +
+ ...AFBF4C8996FB92427AE41E4649B934CA495991B7852B855 |    0
+ .../baseline-corrupt-errors/error/log.txt          |    1 +
+ .../callsite-control/baseline-corrupt.stderr.log   |   11 +
+ .../callsite-control/baseline-corrupt.stdout.log   |    1 +
+ .../baseline-unchanged-errors/error/log.txt        |    0
+ .../callsite-control/baseline-unchanged.stderr.log |   10 +
+ .../callsite-control/baseline-unchanged.stdout.log |    1 +
+ .../callsite-control/mutant-build.stderr.log       |    0
+ .../callsite-control/mutant-build.stdout.log       |    4 +
+ .../replacement-corrupt-errors/error/log.txt       |    0
+ .../replacement-corrupt.stderr.log                 |   11 +
+ .../replacement-corrupt.stdout.log                 |    1 +
+ .../replacement-unchanged-errors/error/log.txt     |    0
+ .../replacement-unchanged.stderr.log               |   10 +
+ .../replacement-unchanged.stdout.log               |    1 +
+ .../callsite-control/report.json                   |  122 +
+ .../callsite-control/restored-build.stderr.log     |    0
+ .../callsite-control/restored-build.stdout.log     |    4 +
+ ...AFBF4C8996FB92427AE41E4649B934CA495991B7852B855 |    0
+ .../restored-corrupt-errors/error/log.txt          |    1 +
+ .../callsite-control/restored-corrupt.stderr.log   |   11 +
+ .../callsite-control/restored-corrupt.stdout.log   |    1 +
+ .../restored-unchanged-errors/error/log.txt        |    0
+ .../callsite-control/restored-unchanged.stderr.log |   10 +
+ .../callsite-control/restored-unchanged.stdout.log |    1 +
+ .../candidate-as-local.py                          |   48 +
+ ...AFBF4C8996FB92427AE41E4649B934CA495991B7852B855 |    0
+ .../baseline-corrupt-errors/error/log.txt          |    1 +
+ .../candidate-as-local/baseline-corrupt.stderr.log |   11 +
+ .../candidate-as-local/baseline-corrupt.stdout.log |    1 +
+ .../baseline-local-fault-errors/error/log.txt      |    0
+ .../baseline-local-fault.stderr.log                |   11 +
+ .../baseline-local-fault.stdout.log                |    1 +
+ .../baseline-unchanged-errors/error/log.txt        |    0
+ .../baseline-unchanged.stderr.log                  |   10 +
+ .../baseline-unchanged.stdout.log                  |    1 +
+ .../candidate-as-local/mutant-build.stderr.log     |    0
+ .../candidate-as-local/mutant-build.stdout.log     |    3 +
+ .../replacement-corrupt-errors/error/log.txt       |    0
+ .../replacement-corrupt.stderr.log                 |   12 +
+ .../replacement-corrupt.stdout.log                 |    1 +
+ .../replacement-local-fault-errors/error/log.txt   |    0
+ .../replacement-local-fault.stderr.log             |   11 +
+ .../replacement-local-fault.stdout.log             |    1 +
+ .../replacement-unchanged-errors/error/log.txt     |    0
+ .../replacement-unchanged.stderr.log               |   10 +
+ .../replacement-unchanged.stdout.log               |    1 +
+ .../candidate-as-local/report.json                 |  158 +
+ .../candidate-as-local/restored-build.stderr.log   |    0
+ .../candidate-as-local/restored-build.stdout.log   |    4 +
+ ...AFBF4C8996FB92427AE41E4649B934CA495991B7852B855 |    0
+ .../restored-corrupt-errors/error/log.txt          |    1 +
+ .../candidate-as-local/restored-corrupt.stderr.log |   11 +
+ .../candidate-as-local/restored-corrupt.stdout.log |    1 +
+ .../restored-local-fault-errors/error/log.txt      |    0
+ .../restored-local-fault.stderr.log                |   11 +
+ .../restored-local-fault.stdout.log                |    1 +
+ .../restored-unchanged-errors/error/log.txt        |    0
+ .../restored-unchanged.stderr.log                  |   10 +
+ .../restored-unchanged.stdout.log                  |    1 +
+ .../fixture/corrupt.stderr.log                     |    1 +
+ .../fixture/corrupt.stdout.log                     |    0
+ .../fixture/genesis.stderr.log                     |    1 +
+ .../fixture/genesis.stdout.log                     |    0
+ .../fixture/unchanged.stderr.log                   |    1 +
+ .../fixture/unchanged.stdout.log                   |    0
+ .../fixture/zerostate.boc                          |  Bin 0 -> 4064 bytes
+ .../fixture/zerostate.boc.fhash                    |    1 +
+ .../fixture/zerostate.rhash                        |    1 +
+ .../local-as-candidate.py                          |   48 +
+ ...AFBF4C8996FB92427AE41E4649B934CA495991B7852B855 |    0
+ .../baseline-corrupt-errors/error/log.txt          |    1 +
+ .../local-as-candidate/baseline-corrupt.stderr.log |   11 +
+ .../local-as-candidate/baseline-corrupt.stdout.log |    1 +
+ .../baseline-local-fault-errors/error/log.txt      |    0
+ .../baseline-local-fault.stderr.log                |   11 +
+ .../baseline-local-fault.stdout.log                |    1 +
+ .../baseline-unchanged-errors/error/log.txt        |    0
+ .../baseline-unchanged.stderr.log                  |   10 +
+ .../baseline-unchanged.stdout.log                  |    1 +
+ .../local-as-candidate/mutant-build.stderr.log     |    0
+ .../local-as-candidate/mutant-build.stdout.log     |    3 +
+ ...AFBF4C8996FB92427AE41E4649B934CA495991B7852B855 |    0
+ .../replacement-corrupt-errors/error/log.txt       |    1 +
+ .../replacement-corrupt.stderr.log                 |   11 +
+ .../replacement-corrupt.stdout.log                 |    1 +
+ ...AFBF4C8996FB92427AE41E4649B934CA495991B7852B855 |    0
+ .../replacement-local-fault-errors/error/log.txt   |    1 +
+ .../replacement-local-fault.stderr.log             |   12 +
+ .../replacement-local-fault.stdout.log             |    1 +
+ .../replacement-unchanged-errors/error/log.txt     |    0
+ .../replacement-unchanged.stderr.log               |   10 +
+ .../replacement-unchanged.stdout.log               |    1 +
+ .../local-as-candidate/report.json                 |  158 +
+ .../local-as-candidate/restored-build.stderr.log   |    0
+ .../local-as-candidate/restored-build.stdout.log   |    4 +
+ ...AFBF4C8996FB92427AE41E4649B934CA495991B7852B855 |    0
+ .../restored-corrupt-errors/error/log.txt          |    1 +
+ .../local-as-candidate/restored-corrupt.stderr.log |   11 +
+ .../local-as-candidate/restored-corrupt.stdout.log |    1 +
+ .../restored-local-fault-errors/error/log.txt      |    0
+ .../restored-local-fault.stderr.log                |   11 +
+ .../restored-local-fault.stdout.log                |    1 +
+ .../restored-unchanged-errors/error/log.txt        |    0
+ .../restored-unchanged.stderr.log                  |   10 +
+ .../restored-unchanged.stdout.log                  |    1 +
+ .../artifact-manifest.json                         | 2270 ++++++++
+ .../uno-descriptor-and-oracle/scope.md             |   35 +
+ .../basic-route.stderr.log                         |    5 +
+ .../basic-route.stdout.log                         |    0
+ .../basic-route/counter-basic.new.boc              |  Bin 0 -> 109 bytes
+ .../basic-route/counter-basic.new.fif              |    6 +
+ .../basic-route/counter-basic.new.stderr.log       |    1 +
+ .../basic-route/counter-basic.new.stdout.log       |    0
+ .../basic-route/counter-basic.old.boc              |  Bin 0 -> 109 bytes
+ .../basic-route/counter-basic.old.fif              |   13 +
+ .../basic-route/counter-basic.old.stderr.log       |    1 +
+ .../basic-route/counter-basic.old.stdout.log       |    0
+ .../basic-route/counter-extended.new.boc           |  Bin 0 -> 126 bytes
+ .../basic-route/counter-extended.new.fif           |    6 +
+ .../basic-route/counter-extended.new.stderr.log    |    1 +
+ .../basic-route/counter-extended.new.stdout.log    |    0
+ .../basic-route/counter-extended.old.boc           |  Bin 0 -> 126 bytes
+ .../basic-route/counter-extended.old.fif           |   14 +
+ .../basic-route/counter-extended.old.stderr.log    |    1 +
+ .../basic-route/counter-extended.old.stdout.log    |    0
+ .../basic-route/native-basic.new.boc               |  Bin 0 -> 109 bytes
+ .../basic-route/native-basic.new.fif               |    5 +
+ .../basic-route/native-basic.new.stderr.log        |    1 +
+ .../basic-route/native-basic.new.stdout.log        |    0
+ .../basic-route/native-basic.old.boc               |  Bin 0 -> 109 bytes
+ .../basic-route/native-basic.old.fif               |   11 +
+ .../basic-route/native-basic.old.stderr.log        |    1 +
+ .../basic-route/native-basic.old.stdout.log        |    0
+ .../basic-route/native-extended.new.boc            |  Bin 0 -> 126 bytes
+ .../basic-route/native-extended.new.fif            |    5 +
+ .../basic-route/native-extended.new.stderr.log     |    1 +
+ .../basic-route/native-extended.new.stdout.log     |    0
+ .../basic-route/native-extended.old.boc            |  Bin 0 -> 126 bytes
+ .../basic-route/native-extended.old.fif            |   11 +
+ .../basic-route/native-extended.old.stderr.log     |    1 +
+ .../basic-route/native-extended.old.stdout.log     |    0
+ .../basic-route/report.json                        |   45 +
+ .../basic-route/uno-basic.new.boc                  |  Bin 0 -> 109 bytes
+ .../basic-route/uno-basic.new.fif                  |    7 +
+ .../basic-route/uno-basic.new.stderr.log           |    1 +
+ .../basic-route/uno-basic.new.stdout.log           |    0
+ .../basic-route/uno-basic.old.boc                  |  Bin 0 -> 109 bytes
+ .../basic-route/uno-basic.old.fif                  |   14 +
+ .../basic-route/uno-basic.old.stderr.log           |    1 +
+ .../basic-route/uno-basic.old.stdout.log           |    0
+ .../extended-key.stderr.log                        |    5 +
+ .../extended-key.stdout.log                        |    0
+ .../extended-key/counter-basic.new.boc             |  Bin 0 -> 109 bytes
+ .../extended-key/counter-basic.new.fif             |    6 +
+ .../extended-key/counter-basic.new.stderr.log      |    1 +
+ .../extended-key/counter-basic.new.stdout.log      |    0
+ .../extended-key/counter-basic.old.boc             |  Bin 0 -> 109 bytes
+ .../extended-key/counter-basic.old.fif             |   13 +
+ .../extended-key/counter-basic.old.stderr.log      |    1 +
+ .../extended-key/counter-basic.old.stdout.log      |    0
+ .../extended-key/counter-extended.new.boc          |  Bin 0 -> 126 bytes
+ .../extended-key/counter-extended.new.fif          |    6 +
+ .../extended-key/counter-extended.new.stderr.log   |    1 +
+ .../extended-key/counter-extended.new.stdout.log   |    0
+ .../extended-key/counter-extended.old.boc          |  Bin 0 -> 126 bytes
+ .../extended-key/counter-extended.old.fif          |   14 +
+ .../extended-key/counter-extended.old.stderr.log   |    1 +
+ .../extended-key/counter-extended.old.stdout.log   |    0
+ .../extended-key/native-basic.new.boc              |  Bin 0 -> 109 bytes
+ .../extended-key/native-basic.new.fif              |    5 +
+ .../extended-key/native-basic.new.stderr.log       |    1 +
+ .../extended-key/native-basic.new.stdout.log       |    0
+ .../extended-key/native-basic.old.boc              |  Bin 0 -> 109 bytes
+ .../extended-key/native-basic.old.fif              |   11 +
+ .../extended-key/native-basic.old.stderr.log       |    1 +
+ .../extended-key/native-basic.old.stdout.log       |    0
+ .../extended-key/native-extended.new.boc           |  Bin 0 -> 126 bytes
+ .../extended-key/native-extended.new.fif           |    5 +
+ .../extended-key/native-extended.new.stderr.log    |    1 +
+ .../extended-key/native-extended.new.stdout.log    |    0
+ .../extended-key/native-extended.old.boc           |  Bin 0 -> 126 bytes
+ .../extended-key/native-extended.old.fif           |   11 +
+ .../extended-key/native-extended.old.stderr.log    |    1 +
+ .../extended-key/native-extended.old.stdout.log    |    0
+ .../extended-key/report.json                       |   37 +
+ .../uno-descriptor-controls-1/report.json          |   55 +
+ .../uno-descriptor-controls-1/restored.stderr.log  |    0
+ .../uno-descriptor-controls-1/restored.stdout.log  |    1 +
+ .../restored/counter-basic.new.boc                 |  Bin 0 -> 109 bytes
+ .../restored/counter-basic.new.fif                 |    6 +
+ .../restored/counter-basic.new.stderr.log          |    1 +
+ .../restored/counter-basic.new.stdout.log          |    0
+ .../restored/counter-basic.old.boc                 |  Bin 0 -> 109 bytes
+ .../restored/counter-basic.old.fif                 |   13 +
+ .../restored/counter-basic.old.stderr.log          |    1 +
+ .../restored/counter-basic.old.stdout.log          |    0
+ .../restored/counter-extended.new.boc              |  Bin 0 -> 126 bytes
+ .../restored/counter-extended.new.fif              |    6 +
+ .../restored/counter-extended.new.stderr.log       |    1 +
+ .../restored/counter-extended.new.stdout.log       |    0
+ .../restored/counter-extended.old.boc              |  Bin 0 -> 126 bytes
+ .../restored/counter-extended.old.fif              |   14 +
+ .../restored/counter-extended.old.stderr.log       |    1 +
+ .../restored/counter-extended.old.stdout.log       |    0
+ .../restored/native-basic.new.boc                  |  Bin 0 -> 109 bytes
+ .../restored/native-basic.new.fif                  |    5 +
+ .../restored/native-basic.new.stderr.log           |    1 +
+ .../restored/native-basic.new.stdout.log           |    0
+ .../restored/native-basic.old.boc                  |  Bin 0 -> 109 bytes
+ .../restored/native-basic.old.fif                  |   11 +
+ .../restored/native-basic.old.stderr.log           |    1 +
+ .../restored/native-basic.old.stdout.log           |    0
+ .../restored/native-extended.new.boc               |  Bin 0 -> 126 bytes
+ .../restored/native-extended.new.fif               |    5 +
+ .../restored/native-extended.new.stderr.log        |    1 +
+ .../restored/native-extended.new.stdout.log        |    0
+ .../restored/native-extended.old.boc               |  Bin 0 -> 126 bytes
+ .../restored/native-extended.old.fif               |   11 +
+ .../restored/native-extended.old.stderr.log        |    1 +
+ .../restored/native-extended.old.stdout.log        |    0
+ .../uno-descriptor-controls-1/restored/report.json |   45 +
+ .../restored/uno-basic.new.boc                     |  Bin 0 -> 109 bytes
+ .../restored/uno-basic.new.fif                     |    7 +
+ .../restored/uno-basic.new.stderr.log              |    1 +
+ .../restored/uno-basic.new.stdout.log              |    0
+ .../restored/uno-basic.old.boc                     |  Bin 0 -> 109 bytes
+ .../restored/uno-basic.old.fif                     |   14 +
+ .../restored/uno-basic.old.stderr.log              |    1 +
+ .../restored/uno-basic.old.stdout.log              |    0
+ .../uno-descriptor-controls-2.log                  |    1 +
+ .../basic-route.stderr.log                         |    5 +
+ .../basic-route.stdout.log                         |    0
+ .../basic-route/counter-basic.new.boc              |  Bin 0 -> 109 bytes
+ .../basic-route/counter-basic.new.fif              |    6 +
+ .../basic-route/counter-basic.new.stderr.log       |    1 +
+ .../basic-route/counter-basic.new.stdout.log       |    0
+ .../basic-route/counter-basic.old.boc              |  Bin 0 -> 109 bytes
+ .../basic-route/counter-basic.old.fif              |   13 +
+ .../basic-route/counter-basic.old.stderr.log       |    1 +
+ .../basic-route/counter-basic.old.stdout.log       |    0
+ .../basic-route/counter-extended.new.boc           |  Bin 0 -> 126 bytes
+ .../basic-route/counter-extended.new.fif           |    6 +
+ .../basic-route/counter-extended.new.stderr.log    |    1 +
+ .../basic-route/counter-extended.new.stdout.log    |    0
+ .../basic-route/counter-extended.old.boc           |  Bin 0 -> 126 bytes
+ .../basic-route/counter-extended.old.fif           |   14 +
+ .../basic-route/counter-extended.old.stderr.log    |    1 +
+ .../basic-route/counter-extended.old.stdout.log    |    0
+ .../basic-route/native-basic.new.boc               |  Bin 0 -> 109 bytes
+ .../basic-route/native-basic.new.fif               |    5 +
+ .../basic-route/native-basic.new.stderr.log        |    1 +
+ .../basic-route/native-basic.new.stdout.log        |    0
+ .../basic-route/native-basic.old.boc               |  Bin 0 -> 109 bytes
+ .../basic-route/native-basic.old.fif               |   11 +
+ .../basic-route/native-basic.old.stderr.log        |    1 +
+ .../basic-route/native-basic.old.stdout.log        |    0
+ .../basic-route/native-extended.new.boc            |  Bin 0 -> 126 bytes
+ .../basic-route/native-extended.new.fif            |    5 +
+ .../basic-route/native-extended.new.stderr.log     |    1 +
+ .../basic-route/native-extended.new.stdout.log     |    0
+ .../basic-route/native-extended.old.boc            |  Bin 0 -> 126 bytes
+ .../basic-route/native-extended.old.fif            |   11 +
+ .../basic-route/native-extended.old.stderr.log     |    1 +
+ .../basic-route/native-extended.old.stdout.log     |    0
+ .../basic-route/report.json                        |   47 +
+ .../basic-route/uno-basic.new.boc                  |  Bin 0 -> 109 bytes
+ .../basic-route/uno-basic.new.fif                  |    7 +
+ .../basic-route/uno-basic.new.stderr.log           |    1 +
+ .../basic-route/uno-basic.new.stdout.log           |    0
+ .../basic-route/uno-basic.old.boc                  |  Bin 0 -> 109 bytes
+ .../basic-route/uno-basic.old.fif                  |   14 +
+ .../basic-route/uno-basic.old.stderr.log           |    1 +
+ .../basic-route/uno-basic.old.stdout.log           |    0
+ .../extended-key.stderr.log                        |    5 +
+ .../extended-key.stdout.log                        |    0
+ .../extended-key/counter-basic.new.boc             |  Bin 0 -> 109 bytes
+ .../extended-key/counter-basic.new.fif             |    6 +
+ .../extended-key/counter-basic.new.stderr.log      |    1 +
+ .../extended-key/counter-basic.new.stdout.log      |    0
+ .../extended-key/counter-basic.old.boc             |  Bin 0 -> 109 bytes
+ .../extended-key/counter-basic.old.fif             |   13 +
+ .../extended-key/counter-basic.old.stderr.log      |    1 +
+ .../extended-key/counter-basic.old.stdout.log      |    0
+ .../extended-key/counter-extended.new.boc          |  Bin 0 -> 126 bytes
+ .../extended-key/counter-extended.new.fif          |    6 +
+ .../extended-key/counter-extended.new.stderr.log   |    1 +
+ .../extended-key/counter-extended.new.stdout.log   |    0
+ .../extended-key/counter-extended.old.boc          |  Bin 0 -> 126 bytes
+ .../extended-key/counter-extended.old.fif          |   14 +
+ .../extended-key/counter-extended.old.stderr.log   |    1 +
+ .../extended-key/counter-extended.old.stdout.log   |    0
+ .../extended-key/native-basic.new.boc              |  Bin 0 -> 109 bytes
+ .../extended-key/native-basic.new.fif              |    5 +
+ .../extended-key/native-basic.new.stderr.log       |    1 +
+ .../extended-key/native-basic.new.stdout.log       |    0
+ .../extended-key/native-basic.old.boc              |  Bin 0 -> 109 bytes
+ .../extended-key/native-basic.old.fif              |   11 +
+ .../extended-key/native-basic.old.stderr.log       |    1 +
+ .../extended-key/native-basic.old.stdout.log       |    0
+ .../extended-key/native-extended.new.boc           |  Bin 0 -> 126 bytes
+ .../extended-key/native-extended.new.fif           |    5 +
+ .../extended-key/native-extended.new.stderr.log    |    1 +
+ .../extended-key/native-extended.new.stdout.log    |    0
+ .../extended-key/native-extended.old.boc           |  Bin 0 -> 126 bytes
+ .../extended-key/native-extended.old.fif           |   11 +
+ .../extended-key/native-extended.old.stderr.log    |    1 +
+ .../extended-key/native-extended.old.stdout.log    |    0
+ .../extended-key/report.json                       |   39 +
+ .../uno-descriptor-controls-2/report.json          |   56 +
+ .../uno-descriptor-controls-2/restored.stderr.log  |    0
+ .../uno-descriptor-controls-2/restored.stdout.log  |    1 +
+ .../restored/counter-basic.new.boc                 |  Bin 0 -> 109 bytes
+ .../restored/counter-basic.new.fif                 |    6 +
+ .../restored/counter-basic.new.stderr.log          |    1 +
+ .../restored/counter-basic.new.stdout.log          |    0
+ .../restored/counter-basic.old.boc                 |  Bin 0 -> 109 bytes
+ .../restored/counter-basic.old.fif                 |   13 +
+ .../restored/counter-basic.old.stderr.log          |    1 +
+ .../restored/counter-basic.old.stdout.log          |    0
+ .../restored/counter-extended.new.boc              |  Bin 0 -> 126 bytes
+ .../restored/counter-extended.new.fif              |    6 +
+ .../restored/counter-extended.new.stderr.log       |    1 +
+ .../restored/counter-extended.new.stdout.log       |    0
+ .../restored/counter-extended.old.boc              |  Bin 0 -> 126 bytes
+ .../restored/counter-extended.old.fif              |   14 +
+ .../restored/counter-extended.old.stderr.log       |    1 +
+ .../restored/counter-extended.old.stdout.log       |    0
+ .../restored/native-basic.new.boc                  |  Bin 0 -> 109 bytes
+ .../restored/native-basic.new.fif                  |    5 +
+ .../restored/native-basic.new.stderr.log           |    1 +
+ .../restored/native-basic.new.stdout.log           |    0
+ .../restored/native-basic.old.boc                  |  Bin 0 -> 109 bytes
+ .../restored/native-basic.old.fif                  |   11 +
+ .../restored/native-basic.old.stderr.log           |    1 +
+ .../restored/native-basic.old.stdout.log           |    0
+ .../restored/native-extended.new.boc               |  Bin 0 -> 126 bytes
+ .../restored/native-extended.new.fif               |    5 +
+ .../restored/native-extended.new.stderr.log        |    1 +
+ .../restored/native-extended.new.stdout.log        |    0
+ .../restored/native-extended.old.boc               |  Bin 0 -> 126 bytes
+ .../restored/native-extended.old.fif               |   11 +
+ .../restored/native-extended.old.stderr.log        |    1 +
+ .../restored/native-extended.old.stdout.log        |    0
+ .../uno-descriptor-controls-2/restored/report.json |   46 +
+ .../restored/uno-basic.new.boc                     |  Bin 0 -> 109 bytes
+ .../restored/uno-basic.new.fif                     |    7 +
+ .../restored/uno-basic.new.stderr.log              |    1 +
+ .../restored/uno-basic.new.stdout.log              |    0
+ .../restored/uno-basic.old.boc                     |  Bin 0 -> 109 bytes
+ .../restored/uno-basic.old.fif                     |   14 +
+ .../restored/uno-basic.old.stderr.log              |    1 +
+ .../restored/uno-basic.old.stdout.log              |    0
+ .../counter-basic.new.boc                          |  Bin 0 -> 109 bytes
+ .../counter-basic.new.fif                          |    6 +
+ .../counter-basic.new.stderr.log                   |    1 +
+ .../counter-basic.new.stdout.log                   |    0
+ .../counter-basic.old.boc                          |  Bin 0 -> 109 bytes
+ .../counter-basic.old.fif                          |   13 +
+ .../counter-basic.old.stderr.log                   |    1 +
+ .../counter-basic.old.stdout.log                   |    0
+ .../counter-extended.new.boc                       |  Bin 0 -> 126 bytes
+ .../counter-extended.new.fif                       |    6 +
+ .../counter-extended.new.stderr.log                |    1 +
+ .../counter-extended.new.stdout.log                |    0
+ .../counter-extended.old.boc                       |  Bin 0 -> 126 bytes
+ .../counter-extended.old.fif                       |   14 +
+ .../counter-extended.old.stderr.log                |    1 +
+ .../counter-extended.old.stdout.log                |    0
+ .../native-basic.new.boc                           |  Bin 0 -> 109 bytes
+ .../native-basic.new.fif                           |    5 +
+ .../native-basic.new.stderr.log                    |    1 +
+ .../native-basic.new.stdout.log                    |    0
+ .../native-basic.old.boc                           |  Bin 0 -> 109 bytes
+ .../native-basic.old.fif                           |   11 +
+ .../native-basic.old.stderr.log                    |    1 +
+ .../native-basic.old.stdout.log                    |    0
+ .../native-extended.new.boc                        |  Bin 0 -> 126 bytes
+ .../native-extended.new.fif                        |    5 +
+ .../native-extended.new.stderr.log                 |    1 +
+ .../native-extended.new.stdout.log                 |    0
+ .../native-extended.old.boc                        |  Bin 0 -> 126 bytes
+ .../native-extended.old.fif                        |   11 +
+ .../native-extended.old.stderr.log                 |    1 +
+ .../native-extended.old.stdout.log                 |    0
+ .../uno-descriptor-equivalence-1/report.json       |   45 +
+ .../uno-descriptor-equivalence-1/uno-basic.new.boc |  Bin 0 -> 109 bytes
+ .../uno-descriptor-equivalence-1/uno-basic.new.fif |    7 +
+ .../uno-basic.new.stderr.log                       |    1 +
+ .../uno-basic.new.stdout.log                       |    0
+ .../uno-descriptor-equivalence-1/uno-basic.old.boc |  Bin 0 -> 109 bytes
+ .../uno-descriptor-equivalence-1/uno-basic.old.fif |   14 +
+ .../uno-basic.old.stderr.log                       |    1 +
+ .../uno-basic.old.stdout.log                       |    0
+ .../uno-descriptor-python.log                      |    2 +
+ .../uno-descriptor-shared-first.stderr.log         |    3 +
+ .../uno-descriptor-shared-first.stdout.log         |    0
+ .../GenZerostateFiftRegression.ans                 |    2 +
+ ...bbe8432d751efdfb7fb552e11e3d796b7dc9af18d002998 |   10 +
+ .../GenZerostateFiftRegression.stderr.log          |    3 +
+ .../GenZerostateFiftRegression.stdout.log          |    0
+ .../GovernanceProposalFiftScriptRegression.ans     |    2 +
+ ...755aa26819a932d05b3ef540a30ca9ffc1cde0cac80e973 |    4 +
+ ...vernanceProposalFiftScriptRegression.stderr.log |    3 +
+ ...vernanceProposalFiftScriptRegression.stdout.log |    0
+ .../GovernanceVoteFiftScriptRegression.ans         |    2 +
+ ...bce50367adbdaf7a3a43987af070987f483c48f40fe9fcd |    6 +
+ .../GovernanceVoteFiftScriptRegression.stderr.log  |    3 +
+ .../GovernanceVoteFiftScriptRegression.stdout.log  |    0
+ .../ValidatorFiftScriptRegression.ans              |    2 +
+ ...ecc8d3381c60a43185fcd42844ee9c98d0b4a03f6fd6614 |    4 +
+ .../ValidatorFiftScriptRegression.stderr.log       |    3 +
+ .../ValidatorFiftScriptRegression.stdout.log       |    0
+ .../uno-oracle-individual/report.json              |   58 +
+ .../uno-oracle-ninja-explain.log                   |  191 +
+ .../uno-oracle-wiring-build.log                    |  132 +
+ .../uno-physical-build-configure.log               |   73 +
+ .../uno-smartcont-oracle-controls-1.log            |    5 +
+ .../baseline.stderr.log                            |    0
+ .../baseline.stdout.log                            |    7 +
+ .../uno-smartcont-oracle-controls-1/baseline.xml   |   17 +
+ .../compile.stderr.log                             |    0
+ .../compile.stdout.log                             |    0
+ .../ctest/CTestTestfile.cmake                      |    1 +
+ .../ctest/Testing/Temporary/LastTest.log           |  139 +
+ .../ctest/Testing/Temporary/LastTestsFailed.log    |    1 +
+ .../ctest/result.xml                               |  136 +
+ .../link.stderr.log                                |    0
+ .../link.stdout.log                                |    0
+ .../mutant-with-oracle.stderr.log                  |    1 +
+ .../mutant-with-oracle.stdout.log                  |  132 +
+ .../mutant-with-oracle.xml                         |  136 +
+ .../mutant-without-oracle.stderr.log               |    3 +
+ .../mutant-without-oracle.stdout.log               |    0
+ .../regression-tests.ans                           |   91 +
+ ...bbe8432d751efdfb7fb552e11e3d796b7dc9af18d002998 |   10 +
+ .../regression-tests.cache/WA                      |   10 +
+ .../uno-smartcont-oracle-controls-1/report.json    |  197 +
+ .../source/crypto/smartcont/gen-zerostate.fif      |  335 ++
+ .../source/crypto/test/test-smartcont.cpp          | 2860 ++++++++++
+ .../uno-smartcont-oracle-controls-2.log            |    5 +
+ .../baseline.stderr.log                            |    0
+ .../baseline.stdout.log                            |    7 +
+ .../uno-smartcont-oracle-controls-2/baseline.xml   |   17 +
+ .../compile.stderr.log                             |    0
+ .../compile.stdout.log                             |    0
+ .../ctest/CTestTestfile.cmake                      |    1 +
+ .../ctest/Testing/Temporary/LastTest.log           |   21 +
+ .../ctest/Testing/Temporary/LastTestsFailed.log    |    1 +
+ .../ctest/result.xml                               |   17 +
+ .../link.stderr.log                                |    0
+ .../link.stdout.log                                |    0
+ .../mutant-with-oracle.stderr.log                  |    1 +
+ .../mutant-with-oracle.stdout.log                  |  132 +
+ .../mutant-with-oracle.xml                         |  136 +
+ .../mutant-without-oracle.stderr.log               |    3 +
+ .../mutant-without-oracle.stdout.log               |    0
+ .../regression-tests.ans                           |   91 +
+ ...bbe8432d751efdfb7fb552e11e3d796b7dc9af18d002998 |   10 +
+ .../regression-tests.cache/WA                      |   10 +
+ .../uno-smartcont-oracle-controls-2/report.json    |  236 +
+ .../restored-native-targets.stderr.log             | 1373 +++++
+ .../restored-native-targets.stdout.log             | 5771 ++++++++++++++++++++
+ .../restored.stderr.log                            |    0
+ .../restored.stdout.log                            |    7 +
+ .../uno-smartcont-oracle-controls-2/restored.xml   |   17 +
+ .../source/crypto/smartcont/gen-zerostate.fif      |  335 ++
+ .../source/crypto/test/test-smartcont.cpp          | 2860 ++++++++++
+ .../uno-smartcont-oracle-controls-3.log            |    1 +
+ .../baseline.stderr.log                            |    0
+ .../baseline.stdout.log                            |    7 +
+ .../uno-smartcont-oracle-controls-3/baseline.xml   |   17 +
+ .../compile.stderr.log                             |    0
+ .../compile.stdout.log                             |    0
+ .../ctest/CTestTestfile.cmake                      |    1 +
+ .../ctest/Testing/Temporary/LastTest.log           |   21 +
+ .../ctest/Testing/Temporary/LastTestsFailed.log    |    1 +
+ .../ctest/result.xml                               |   17 +
+ .../link.stderr.log                                |    0
+ .../link.stdout.log                                |    0
+ .../mutant-with-oracle.stderr.log                  |    1 +
+ .../mutant-with-oracle.stdout.log                  |  132 +
+ .../mutant-with-oracle.xml                         |  136 +
+ .../mutant-without-oracle.stderr.log               |    3 +
+ .../mutant-without-oracle.stdout.log               |    0
+ .../regression-tests.ans                           |   91 +
+ ...bbe8432d751efdfb7fb552e11e3d796b7dc9af18d002998 |   10 +
+ .../regression-tests.cache/WA                      |   10 +
+ .../uno-smartcont-oracle-controls-3/report.json    |  240 +
+ .../restored-native-targets.stderr.log             |    0
+ .../restored-native-targets.stdout.log             |   59 +
+ .../restored.stderr.log                            |    0
+ .../restored.stdout.log                            |    7 +
+ .../uno-smartcont-oracle-controls-3/restored.xml   |   17 +
+ .../source/crypto/smartcont/gen-zerostate.fif      |  335 ++
+ .../source/crypto/test/test-smartcont.cpp          | 2860 ++++++++++
+ .../artifact-manifest.json                         |  554 ++
+ .../uno-descriptor-routing-followup/control.json   |   25 +
+ .../native-provenance.json                         |    4 +
+ .../uno-descriptor-routing-followup/routing.py     |  132 +
+ .../run/report.json                                |  208 +
+ .../run/serving/basestate0.boc                     |  Bin 0 -> 400 bytes
+ .../run/serving/basestate0.fhash                   |  Bin 0 -> 32 bytes
+ .../run/serving/basestate0.rhash                   |    1 +
+ .../run/serving/bootstrap.result                   |    1 +
+ .../run/serving/bootstrap.result.binding           |    2 +
+ .../run/serving/bootstrap.result.kind              |    1 +
+ .../run/serving/bootstrap.result.message           |    0
+ .../run/serving/bootstrap.result.stats             |    7 +
+ .../run/serving/bootstrap.result.stats.timing      |    3 +
+ .../run/serving/bootstrap.stderr.log               |  113 +
+ .../run/serving/bootstrap.stdout.log               |    0
+ .../run/serving/counter-native-sender.stderr.log   |    1 +
+ .../run/serving/counter-native-sender.stdout.log   |    0
+ .../run/serving/counter-shard-genesis.stderr.log   |    1 +
+ .../run/serving/counter-shard-genesis.stdout.log   |    0
+ .../run/serving/counter-state.boc                  |  Bin 0 -> 245 bytes
+ .../run/serving/counter-state.fhash                |    1 +
+ .../run/serving/counter-state.rhash                |    1 +
+ .../run/serving/global.json                        |    1 +
+ .../run/serving/master.fif                         |   77 +
+ .../run/serving/master.stderr.log                  |    1 +
+ .../run/serving/master.stdout.log                  |    0
+ .../run/serving/sender-message.boc                 |  Bin 0 -> 53 bytes
+ .../run/serving/serving-engine.result              |    1 +
+ .../run/serving/serving-engine.result.binding      |    2 +
+ .../run/serving/serving-engine.result.kind         |    1 +
+ .../run/serving/serving-engine.result.message      |    0
+ .../run/serving/serving-engine.result.stats        |    7 +
+ .../run/serving/serving-engine.result.stats.timing |    3 +
+ .../run/serving/serving-engine.stderr.log          |  106 +
+ .../run/serving/serving-engine.stdout.log          |    0
+ .../run/serving/source-1.candidate                 |  Bin 0 -> 2152 bytes
+ .../run/serving/source-1.result                    |    1 +
+ .../run/serving/source-1.result.binding            |    2 +
+ .../run/serving/source-1.result.kind               |    1 +
+ .../run/serving/source-1.result.message            |    0
+ .../run/serving/source-1.result.stats              |    7 +
+ .../run/serving/source-1.result.stats.timing       |    3 +
+ .../run/serving/source-1.stderr.log                |  117 +
+ .../run/serving/source-1.stdout.log                |    0
+ .../run/serving/source-2.candidate                 |  Bin 0 -> 2424 bytes
+ .../run/serving/source-2.result                    |    1 +
+ .../run/serving/source-2.result.binding            |    2 +
+ .../run/serving/source-2.result.kind               |    1 +
+ .../run/serving/source-2.result.message            |    0
+ .../run/serving/source-2.result.stats              |    7 +
+ .../run/serving/source-2.result.stats.timing       |    3 +
+ .../run/serving/source-2.stderr.log                |  120 +
+ .../run/serving/source-2.stdout.log                |    0
+ .../run/serving/zerostate.boc                      |  Bin 0 -> 4523 bytes
+ .../run/serving/zerostate.fhash                    |    1 +
+ .../run/serving/zerostate.rhash                    |    1 +
+ .../run/unserved/basestate0.boc                    |  Bin 0 -> 400 bytes
+ .../run/unserved/basestate0.fhash                  |  Bin 0 -> 32 bytes
+ .../run/unserved/basestate0.rhash                  |    1 +
+ .../run/unserved/bootstrap.result                  |    1 +
+ .../run/unserved/bootstrap.result.binding          |    2 +
+ .../run/unserved/bootstrap.result.kind             |    1 +
+ .../run/unserved/bootstrap.result.message          |    0
+ .../run/unserved/bootstrap.result.stats            |    7 +
+ .../run/unserved/bootstrap.result.stats.timing     |    3 +
+ .../run/unserved/bootstrap.stderr.log              |  113 +
+ .../run/unserved/bootstrap.stdout.log              |    0
+ .../run/unserved/counter-native-sender.stderr.log  |    1 +
+ .../run/unserved/counter-native-sender.stdout.log  |    0
+ .../run/unserved/counter-shard-genesis.stderr.log  |    1 +
+ .../run/unserved/counter-shard-genesis.stdout.log  |    0
+ .../run/unserved/counter-state.boc                 |  Bin 0 -> 245 bytes
+ .../run/unserved/counter-state.fhash               |    1 +
+ .../run/unserved/counter-state.rhash               |    1 +
+ .../run/unserved/global.json                       |    1 +
+ .../run/unserved/master.fif                        |   77 +
+ .../run/unserved/master.stderr.log                 |    1 +
+ .../run/unserved/master.stdout.log                 |    0
+ .../run/unserved/sender-message.boc                |  Bin 0 -> 53 bytes
+ .../run/unserved/source-1.candidate                |  Bin 0 -> 2152 bytes
+ .../run/unserved/source-1.result                   |    1 +
+ .../run/unserved/source-1.result.binding           |    2 +
+ .../run/unserved/source-1.result.kind              |    1 +
+ .../run/unserved/source-1.result.message           |    0
+ .../run/unserved/source-1.result.stats             |    7 +
+ .../run/unserved/source-1.result.stats.timing      |    3 +
+ .../run/unserved/source-1.stderr.log               |  116 +
+ .../run/unserved/source-1.stdout.log               |    0
+ .../run/unserved/zerostate.boc                     |  Bin 0 -> 4523 bytes
+ .../run/unserved/zerostate.fhash                   |    1 +
+ .../run/unserved/zerostate.rhash                   |    1 +
+ .../uno-descriptor-routing-followup/scope.md       |   16 +
+ .../uno-descriptor-routing-followup/stderr.log     |    7 +
+ .../uno-descriptor-routing-followup/stdout.log     |    0
+ .../artifact-manifest.json                         |  557 ++
+ .../uno-five-items-regression/domain-scan-scope.md |   28 +
+ .../followup-full-LastTest.log                     |   19 +
+ .../uno-five-items-regression/report.json          |  924 ++++
+ .../restored-routing/report.json                   |  249 +
+ .../restored-routing/serving/basestate0.boc        |  Bin 0 -> 400 bytes
+ .../restored-routing/serving/basestate0.fhash      |    1 +
+ .../restored-routing/serving/basestate0.rhash      |    1 +
+ .../restored-routing/serving/bootstrap.result      |    1 +
+ .../serving/bootstrap.result.binding               |    2 +
+ .../restored-routing/serving/bootstrap.result.kind |    1 +
+ .../serving/bootstrap.result.message               |    0
+ .../serving/bootstrap.result.stats                 |    7 +
+ .../serving/bootstrap.result.stats.timing          |    3 +
+ .../restored-routing/serving/bootstrap.stderr.log  |  113 +
+ .../restored-routing/serving/bootstrap.stdout.log  |    0
+ .../serving/counter-native-sender.stderr.log       |    1 +
+ .../serving/counter-native-sender.stdout.log       |    0
+ .../serving/counter-shard-genesis.stderr.log       |    1 +
+ .../serving/counter-shard-genesis.stdout.log       |    0
+ .../restored-routing/serving/counter-state.boc     |  Bin 0 -> 245 bytes
+ .../restored-routing/serving/counter-state.fhash   |    1 +
+ .../restored-routing/serving/counter-state.rhash   |    1 +
+ .../restored-routing/serving/global.json           |    1 +
+ .../restored-routing/serving/master.fif            |   77 +
+ .../restored-routing/serving/master.stderr.log     |    1 +
+ .../restored-routing/serving/master.stdout.log     |    0
+ .../restored-routing/serving/sender-message.boc    |  Bin 0 -> 53 bytes
+ .../restored-routing/serving/serving-engine.result |    1 +
+ .../serving/serving-engine.result.binding          |    2 +
+ .../serving/serving-engine.result.kind             |    1 +
+ .../serving/serving-engine.result.message          |    0
+ .../serving/serving-engine.result.stats            |    7 +
+ .../serving/serving-engine.result.stats.timing     |    3 +
+ .../serving/serving-engine.stderr.log              |  106 +
+ .../serving/serving-engine.stdout.log              |    0
+ .../restored-routing/serving/source-1.candidate    |  Bin 0 -> 2152 bytes
+ .../restored-routing/serving/source-1.result       |    1 +
+ .../serving/source-1.result.binding                |    2 +
+ .../restored-routing/serving/source-1.result.kind  |    1 +
+ .../serving/source-1.result.message                |    0
+ .../restored-routing/serving/source-1.result.stats |    7 +
+ .../serving/source-1.result.stats.timing           |    3 +
+ .../restored-routing/serving/source-1.stderr.log   |  117 +
+ .../restored-routing/serving/source-1.stdout.log   |    0
+ .../restored-routing/serving/source-2.candidate    |  Bin 0 -> 2428 bytes
+ .../restored-routing/serving/source-2.result       |    1 +
+ .../serving/source-2.result.binding                |    2 +
+ .../restored-routing/serving/source-2.result.kind  |    1 +
+ .../serving/source-2.result.message                |    0
+ .../restored-routing/serving/source-2.result.stats |    7 +
+ .../serving/source-2.result.stats.timing           |    3 +
+ .../restored-routing/serving/source-2.stderr.log   |  120 +
+ .../restored-routing/serving/source-2.stdout.log   |    0
+ .../restored-routing/serving/zerostate.boc         |  Bin 0 -> 4523 bytes
+ .../restored-routing/serving/zerostate.fhash       |    1 +
+ .../restored-routing/serving/zerostate.rhash       |    1 +
+ .../restored-routing/unserved/basestate0.boc       |  Bin 0 -> 400 bytes
+ .../restored-routing/unserved/basestate0.fhash     |    1 +
+ .../restored-routing/unserved/basestate0.rhash     |    1 +
+ .../restored-routing/unserved/bootstrap.result     |    1 +
+ .../unserved/bootstrap.result.binding              |    2 +
+ .../unserved/bootstrap.result.kind                 |    1 +
+ .../unserved/bootstrap.result.message              |    0
+ .../unserved/bootstrap.result.stats                |    7 +
+ .../unserved/bootstrap.result.stats.timing         |    3 +
+ .../restored-routing/unserved/bootstrap.stderr.log |  113 +
+ .../restored-routing/unserved/bootstrap.stdout.log |    0
+ .../unserved/counter-native-sender.stderr.log      |    1 +
+ .../unserved/counter-native-sender.stdout.log      |    0
+ .../unserved/counter-shard-genesis.stderr.log      |    1 +
+ .../unserved/counter-shard-genesis.stdout.log      |    0
+ .../restored-routing/unserved/counter-state.boc    |  Bin 0 -> 245 bytes
+ .../restored-routing/unserved/counter-state.fhash  |    1 +
+ .../restored-routing/unserved/counter-state.rhash  |    1 +
+ .../restored-routing/unserved/global.json          |    1 +
+ .../restored-routing/unserved/master.fif           |   77 +
+ .../restored-routing/unserved/master.stderr.log    |    1 +
+ .../restored-routing/unserved/master.stdout.log    |    0
+ .../restored-routing/unserved/sender-message.boc   |  Bin 0 -> 53 bytes
+ .../restored-routing/unserved/source-1.candidate   |  Bin 0 -> 1852 bytes
+ .../restored-routing/unserved/source-1.result      |    1 +
+ .../unserved/source-1.result.binding               |    2 +
+ .../restored-routing/unserved/source-1.result.kind |    1 +
+ .../unserved/source-1.result.message               |    0
+ .../unserved/source-1.result.stats                 |    7 +
+ .../unserved/source-1.result.stats.timing          |    3 +
+ .../restored-routing/unserved/source-1.stderr.log  |  116 +
+ .../restored-routing/unserved/source-1.stdout.log  |    0
+ .../restored-routing/unserved/source-2.candidate   |  Bin 0 -> 1956 bytes
+ .../restored-routing/unserved/source-2.result      |    1 +
+ .../unserved/source-2.result.binding               |    2 +
+ .../restored-routing/unserved/source-2.result.kind |    1 +
+ .../unserved/source-2.result.message               |    0
+ .../unserved/source-2.result.stats                 |    7 +
+ .../unserved/source-2.result.stats.timing          |    3 +
+ .../restored-routing/unserved/source-2.stderr.log  |  119 +
+ .../restored-routing/unserved/source-2.stdout.log  |    0
+ .../restored-routing/unserved/zerostate.boc        |  Bin 0 -> 4523 bytes
+ .../restored-routing/unserved/zerostate.fhash      |  Bin 0 -> 32 bytes
+ .../restored-routing/unserved/zerostate.rhash      |    1 +
+ .../uno-five-items-regression/scope.md             |   27 +
+ .../uno-five-items-cleanup-preflight.log           |    1 +
+ .../uno-five-items-default-build.log               |  110 +
+ .../uno-five-items-domain-scan-comparison.json     |  500 ++
+ .../uno-five-items-domain-scan.stderr.log          |   84 +
+ .../uno-five-items-domain-scan.stdout.log          |    0
+ .../uno-five-items-followup-complete.log           |   14 +
+ .../uno-five-items-followup-complete.xml           | 1358 +++++
+ .../uno-five-items-followup.log                    |   14 +
+ .../uno-five-items-regression.log                  |  313 ++
+ .../uno-routing-restored-build.log                 |   58 +
+ .../uno-genesis-installation-ad87d9155/README.md   |   59 +
+ .../archive-scope.json                             |    4 +
+ .../artifact-manifest.json                         |  614 +++
+ .../compressed-log.json                            |    7 +
+ .../.completed-failure                             |    1 +
+ .../.counter-managed-v1                            |    1 +
+ .../activation-genesis.fif                         |   86 +
+ .../basestate0.boc                                 |  Bin 0 -> 105 bytes
+ .../counter-masterchain-genesis.log                |    4 +
+ .../counter-shard-genesis.log                      |    1 +
+ .../counter-state.boc                              |  Bin 0 -> 245 bytes
+ .../counter-state.fhash                            |    1 +
+ .../counter-state.rhash                            |    1 +
+ .../counter-integration-9144f50d5f1a/lifecycle.log |    5 +
+ .../.completed-failure                             |    1 +
+ .../.counter-managed-v1                            |    1 +
+ .../activation-genesis.fif                         |   86 +
+ .../basestate0.boc                                 |  Bin 0 -> 105 bytes
+ .../counter-masterchain-genesis.log                |    4 +
+ .../counter-shard-genesis.log                      |    1 +
+ .../counter-state.boc                              |  Bin 0 -> 245 bytes
+ .../counter-state.fhash                            |    1 +
+ .../counter-state.rhash                            |    1 +
+ .../counter-integration-a2a7e793ee3b/lifecycle.log |    5 +
+ .../uno-genesis-installation-ad87d9155/report.json |  113 +
+ .../restore-audit.json                             |   83 +
+ .../report.json                                    |   12 +
+ .../stderr.log                                     |   12 +
+ .../stdout.log                                     |    4 +
+ .../report.json                                    |   13 +
+ .../stderr.log                                     |   12 +
+ .../stdout.log                                     |    4 +
+ .../source-provenance.json                         |   62 +
+ .../uno-genesis-activation-build.log               |    2 +
+ .../baseline.stderr.log                            |    3 +
+ .../baseline.stdout.log                            |    0
+ .../compile.stderr.log                             |    0
+ .../compile.stdout.log                             |    0
+ .../explicit-restored-target.stderr.log            |    0
+ .../explicit-restored-target.stdout.log            |    1 +
+ .../uno-genesis-business-control-2/link.stderr.log |    0
+ .../uno-genesis-business-control-2/link.stdout.log |    0
+ .../mutant.stderr.log                              |  117 +
+ .../mutant.stdout.log                              |    0
+ .../uno-genesis-business-control-2/report.json     |  149 +
+ .../restored.stderr.log                            |    3 +
+ .../restored.stdout.log                            |    0
+ .../uno-genesis-business-control-driver-2.log      |    1 +
+ .../uno-genesis-business-control-driver.log        |    5 +
+ .../baseline.stderr.log                            |    3 +
+ .../baseline.stdout.log                            |    0
+ .../uno-genesis-cleanup-delete.log                 |    2 +
+ .../uno-genesis-cleanup-dry.log                    |    1 +
+ .../uno-genesis-consumer-followup.log              |   22 +
+ .../uno-genesis-consumer-followup.xml              |   72 +
+ .../uno-genesis-consumer-rebuild.log               |    3 +
+ .../uno-genesis-delivery.log                       |   12 +
+ .../uno-genesis-delivery.xml                       |   28 +
+ .../explicit-restored-targets.stderr.log           |    0
+ .../explicit-restored-targets.stdout.log           |    1 +
+ .../remove-ledger-delta-guard-archive.stderr.log   |    0
+ .../remove-ledger-delta-guard-archive.stdout.log   |    0
+ .../remove-ledger-delta-guard-compile.stderr.log   |    0
+ .../remove-ledger-delta-guard-compile.stdout.log   |    0
+ .../remove-ledger-delta-guard-link.stderr.log      |    0
+ .../remove-ledger-delta-guard-link.stdout.log      |    0
+ ...-ledger-delta-guard-wrong-descriptor.stderr.log |   22 +
+ ...-ledger-delta-guard-wrong-descriptor.stdout.log |    1 +
+ .../remove-ledger-delta-guard.stderr.log           |    7 +
+ .../remove-ledger-delta-guard.stdout.log           |    0
+ .../remove-ledger-delta-guard/basestate0.boc       |  Bin 0 -> 105 bytes
+ .../remove-ledger-delta-guard/basestate0.fhash     |    1 +
+ .../remove-ledger-delta-guard/basestate0.rhash     |    1 +
+ .../remove-ledger-delta-guard/config-master.addr   |    1 +
+ .../remove-ledger-delta-guard/config-master.pk     |    1 +
+ .../remove-ledger-delta-guard/elector.addr         |    1 +
+ .../remove-ledger-delta-guard/generate.stderr.log  |    1 +
+ .../remove-ledger-delta-guard/generate.stdout.log  |  141 +
+ .../genesis-diagnostics/error/log.txt              |    0
+ .../remove-ledger-delta-guard/genesis.fif          |  335 ++
+ .../remove-ledger-delta-guard/genesis.stderr.log   |   21 +
+ .../remove-ledger-delta-guard/genesis.stdout.log   |    1 +
+ .../remove-ledger-delta-guard/main-wallet.addr     |    1 +
+ .../remove-ledger-delta-guard/main-wallet.pk       |    1 +
+ .../missing-instance-diagnostics/error/log.txt     |    0
+ .../missing-instance.stderr.log                    |   22 +
+ .../missing-instance.stdout.log                    |    1 +
+ .../remove-ledger-delta-guard/report.json          |   35 +
+ .../remove-ledger-delta-guard/unostate0.boc        |  Bin 0 -> 105 bytes
+ .../remove-ledger-delta-guard/unostate0.fhash      |    2 +
+ .../remove-ledger-delta-guard/unostate0.rhash      |    1 +
+ .../remove-ledger-delta-guard/validator-keys.pub   |    1 +
+ .../error/log.txt                                  |    0
+ .../remove-ledger-delta-guard/zerostate.boc        |  Bin 0 -> 10583 bytes
+ .../remove-ledger-delta-guard/zerostate.boc.fhash  |    1 +
+ .../remove-ledger-delta-guard/zerostate.fhash      |    1 +
+ .../remove-ledger-delta-guard/zerostate.rhash      |    1 +
+ .../uno-genesis-delta-both-controls/report.json    |  211 +
+ .../uno-genesis-delta-both-driver.log              |    0
+ .../uno-genesis-focused.log                        |   22 +
+ .../uno-genesis-focused.xml                        |   28 +
+ .../uno-genesis-four-items-bmy_xviv/basestate0.boc |  Bin 0 -> 105 bytes
+ .../basestate0.fhash                               |    1 +
+ .../basestate0.rhash                               |    1 +
+ .../config-master.addr                             |    1 +
+ .../config-master.pk                               |    1 +
+ .../uno-genesis-four-items-bmy_xviv/elector.addr   |    1 +
+ .../uno-genesis-four-items-bmy_xviv/genesis.fif    |  335 ++
+ .../invocation.json                                |   11 +
+ .../main-wallet.addr                               |    1 +
+ .../uno-genesis-four-items-bmy_xviv/main-wallet.pk |    1 +
+ .../uno-genesis-four-items-bmy_xviv/stderr.log     |    1 +
+ .../uno-genesis-four-items-bmy_xviv/stdout.log     |  141 +
+ .../uno-genesis-four-items-bmy_xviv/unostate0.boc  |  Bin 0 -> 105 bytes
+ .../unostate0.fhash                                |    2 +
+ .../unostate0.rhash                                |    1 +
+ .../validator-keys.pub                             |    1 +
+ ...AFBF4C8996FB92427AE41E4649B934CA495991B7852B855 |    0
+ .../validator-missing-instance/error/log.txt       |    1 +
+ .../validator-missing-instance/stderr.log          |   19 +
+ .../validator-missing-instance/stdout.log          |    1 +
+ .../validator-unchanged/error/log.txt              |    0
+ .../validator-unchanged/stderr.log                 |   18 +
+ .../validator-unchanged/stdout.log                 |    1 +
+ ...AFBF4C8996FB92427AE41E4649B934CA495991B7852B855 |    0
+ .../validator-wrong-descriptor/error/log.txt       |    1 +
+ .../validator-wrong-descriptor/stderr.log          |   19 +
+ .../validator-wrong-descriptor/stdout.log          |    1 +
+ .../uno-genesis-four-items-bmy_xviv/zerostate.boc  |  Bin 0 -> 10583 bytes
+ .../zerostate.boc.fhash                            |    1 +
+ .../zerostate.fhash                                |    1 +
+ .../zerostate.rhash                                |    1 +
+ .../uno-genesis-four-items-gee4tajh/basestate0.boc |  Bin 0 -> 105 bytes
+ .../basestate0.fhash                               |    1 +
+ .../basestate0.rhash                               |    1 +
+ .../uno-genesis-four-items-gee4tajh/elector.addr   |    1 +
+ .../uno-genesis-four-items-gee4tajh/genesis.fif    |  335 ++
+ .../invocation.json                                |   10 +
+ .../main-wallet.addr                               |    1 +
+ .../uno-genesis-four-items-gee4tajh/main-wallet.pk |    1 +
+ .../uno-genesis-four-items-gee4tajh/stderr.log     |    5 +
+ .../uno-genesis-four-items-gee4tajh/stdout.log     |   20 +
+ .../uno-genesis-four-items-gee4tajh/unostate0.boc  |  Bin 0 -> 105 bytes
+ .../unostate0.fhash                                |    2 +
+ .../unostate0.rhash                                |    1 +
+ .../uno-genesis-four-items-s5ngk7i8/basestate0.boc |  Bin 0 -> 105 bytes
+ .../basestate0.fhash                               |    1 +
+ .../basestate0.rhash                               |    1 +
+ .../config-master.pk                               |    2 +
+ .../uno-genesis-four-items-s5ngk7i8/elector.addr   |    1 +
+ .../uno-genesis-four-items-s5ngk7i8/genesis.fif    |  335 ++
+ .../invocation.json                                |   11 +
+ .../main-wallet.addr                               |    1 +
+ .../uno-genesis-four-items-s5ngk7i8/main-wallet.pk |    1 +
+ .../uno-genesis-four-items-s5ngk7i8/stderr.log     |    5 +
+ .../uno-genesis-four-items-s5ngk7i8/stdout.log     |   25 +
+ .../uno-genesis-four-items-s5ngk7i8/unostate0.boc  |  Bin 0 -> 105 bytes
+ .../unostate0.fhash                                |    2 +
+ .../unostate0.rhash                                |    1 +
+ .../validator-keys.pub                             |    1 +
+ .../uno-genesis-full-build-2.log                   |  264 +
+ .../uno-genesis-full-build.log                     | 1434 +++++
+ .../uno-genesis-full-regression.log                | 3717 +++++++++++++
+ .../uno-genesis-full-regression.xml                | 3478 ++++++++++++
+ .../uno-genesis-mode-control-3/compile.stderr.log  |    0
+ .../uno-genesis-mode-control-3/compile.stdout.log  |    0
+ .../uno-genesis-mode-control-3/link.stderr.log     |    0
+ .../uno-genesis-mode-control-3/link.stdout.log     |    0
+ .../uno-genesis-mode-control-3/mutant.stderr.log   |    5 +
+ .../uno-genesis-mode-control-3/mutant.stdout.log   |    0
+ .../uno-genesis-mode-control-3/probe.stderr.log    |    9 +
+ .../uno-genesis-mode-control-3/probe.stdout.log    |    2 +
+ .../uno-genesis-mode-control-3/report.json         |  137 +
+ .../restored-target.stderr.log                     |    0
+ .../restored-target.stdout.log                     |    1 +
+ .../uno-genesis-mode-control-3/run/stderr.log      |    9 +
+ .../uno-genesis-mode-control-3/run/stdout.log      |    2 +
+ .../uno-genesis-mode-control-first.py              |   36 +
+ .../uno-genesis-mode-control-second.py             |   36 +
+ .../uno-genesis-mode-control.py                    |   39 +
+ .../uno-genesis-mode-driver-2.log                  |    4 +
+ .../uno-genesis-mode-driver-3.log                  |    0
+ .../uno-genesis-mode-driver.log                    |    4 +
+ .../uno-genesis-nine.log                           |  113 +
+ .../uno-genesis-nine.xml                           |  148 +
+ .../approve-unlisted-mainnet.load.stderr.log       |    1 +
+ .../approve-unlisted-mainnet.load.stdout.log       |    0
+ .../approve-unlisted-mainnet.stderr.log            |    8 +
+ .../approve-unlisted-mainnet.stdout.log            |    0
+ .../mainnet-development.stderr.log                 |    1 +
+ .../mainnet-development.stdout.log                 |    1 +
+ .../baseline.stderr.log                            |    0
+ .../baseline.stdout.log                            |    2 +
+ .../baseline/mainnet-development-guard.stderr.log  |    5 +
+ .../baseline/mainnet-development-guard.stdout.log  |    0
+ .../baseline/mainnet-development.stderr.log        |    1 +
+ .../baseline/mainnet-development.stdout.log        |    1 +
+ .../baseline/mainnet-unapproved-guard.stderr.log   |    5 +
+ .../baseline/mainnet-unapproved-guard.stdout.log   |    0
+ .../baseline/mainnet-unapproved.stderr.log         |    1 +
+ .../baseline/mainnet-unapproved.stdout.log         |    1 +
+ .../baseline/production-prefix.stderr.log          |    5 +
+ .../baseline/production-prefix.stdout.log          |    0
+ .../baseline/resource-mainnet.stderr.log           |    7 +
+ .../baseline/resource-mainnet.stdout.log           |    0
+ .../baseline/resource-testnet.stderr.log           |    1 +
+ .../baseline/resource-testnet.stdout.log           |    1 +
+ .../baseline/testnet-development-guard.stderr.log  |    1 +
+ .../baseline/testnet-development-guard.stdout.log  |    1 +
+ .../baseline/testnet-development.stderr.log        |    1 +
+ .../baseline/testnet-development.stdout.log        |    1 +
+ .../baseline/testnet-prefix.stderr.log             |    1 +
+ .../baseline/testnet-prefix.stdout.log             |    1 +
+ .../remove-enforcement.load.stderr.log             |    1 +
+ .../remove-enforcement.load.stdout.log             |    0
+ .../remove-enforcement.stderr.log                  |    8 +
+ .../remove-enforcement.stdout.log                  |    0
+ .../mainnet-development-guard.stderr.log           |    1 +
+ .../mainnet-development-guard.stdout.log           |    1 +
+ .../mainnet-development.stderr.log                 |    1 +
+ .../mainnet-development.stdout.log                 |    1 +
+ .../uno-genesis-operators-serial/report.json       |  109 +
+ .../restored-build.stderr.log                      |    0
+ .../restored-build.stdout.log                      |    1 +
+ .../restored.stderr.log                            |    0
+ .../restored.stdout.log                            |    2 +
+ .../restored/mainnet-development-guard.stderr.log  |    5 +
+ .../restored/mainnet-development-guard.stdout.log  |    0
+ .../restored/mainnet-development.stderr.log        |    1 +
+ .../restored/mainnet-development.stdout.log        |    1 +
+ .../restored/mainnet-unapproved-guard.stderr.log   |    5 +
+ .../restored/mainnet-unapproved-guard.stdout.log   |    0
+ .../restored/mainnet-unapproved.stderr.log         |    1 +
+ .../restored/mainnet-unapproved.stdout.log         |    1 +
+ .../restored/production-prefix.stderr.log          |    5 +
+ .../restored/production-prefix.stdout.log          |    0
+ .../restored/resource-mainnet.stderr.log           |    7 +
+ .../restored/resource-mainnet.stdout.log           |    0
+ .../restored/resource-testnet.stderr.log           |    1 +
+ .../restored/resource-testnet.stdout.log           |    1 +
+ .../restored/testnet-development-guard.stderr.log  |    1 +
+ .../restored/testnet-development-guard.stdout.log  |    1 +
+ .../restored/testnet-development.stderr.log        |    1 +
+ .../restored/testnet-development.stdout.log        |    1 +
+ .../restored/testnet-prefix.stderr.log             |    1 +
+ .../restored/testnet-prefix.stdout.log             |    1 +
+ .../uno-genesis-python.log                         |   12 +
+ .../uno-genesis-python.xml                         |   27 +
+ .../uno-genesis-resources-serial/report.json       |   34 +
+ .../restored-build.stderr.log                      |    0
+ .../restored-build.stdout.log                      |    1 +
+ .../run/mainnet-development-guard.stderr.log       |    5 +
+ .../run/mainnet-development-guard.stdout.log       |    0
+ .../run/mainnet-development.stderr.log             |    1 +
+ .../run/mainnet-development.stdout.log             |    1 +
+ .../run/mainnet-unapproved-guard.stderr.log        |    5 +
+ .../run/mainnet-unapproved-guard.stdout.log        |    0
+ .../run/mainnet-unapproved.stderr.log              |    1 +
+ .../run/mainnet-unapproved.stdout.log              |    1 +
+ .../run/production-prefix.stderr.log               |    5 +
+ .../run/production-prefix.stdout.log               |    0
+ .../run/resource-mainnet.stderr.log                |    1 +
+ .../run/resource-mainnet.stdout.log                |    1 +
+ .../run/resource-testnet.stderr.log                |    1 +
+ .../run/resource-testnet.stdout.log                |    1 +
+ .../run/testnet-development-guard.stderr.log       |    1 +
+ .../run/testnet-development-guard.stdout.log       |    1 +
+ .../run/testnet-development.stderr.log             |    1 +
+ .../run/testnet-development.stdout.log             |    1 +
+ .../run/testnet-prefix.stderr.log                  |    1 +
+ .../run/testnet-prefix.stdout.log                  |    1 +
+ .../uno-genesis-resources-serial/stderr.log        |    8 +
+ .../uno-genesis-resources-serial/stdout.log        |    0
+ .../uno-genesis-routing-1/report.json              |   56 +
+ .../uno-genesis-routing-1/serving/basestate0.boc   |  Bin 0 -> 400 bytes
+ .../uno-genesis-routing-1/serving/basestate0.fhash |    1 +
+ .../uno-genesis-routing-1/serving/basestate0.rhash |    2 +
+ .../serving/bootstrap.stderr.log                   | 1150 ++++
+ .../serving/bootstrap.stdout.log                   |    0
+ .../serving/counter-native-sender.stderr.log       |    1 +
+ .../serving/counter-native-sender.stdout.log       |    0
+ .../serving/counter-shard-genesis.stderr.log       |    1 +
+ .../serving/counter-shard-genesis.stdout.log       |    0
+ .../serving/counter-state.boc                      |  Bin 0 -> 245 bytes
+ .../serving/counter-state.fhash                    |  Bin 0 -> 32 bytes
+ .../serving/counter-state.rhash                    |    1 +
+ .../uno-genesis-routing-1/serving/global.json      |    1 +
+ .../uno-genesis-routing-1/serving/master.fif       |   84 +
+ .../serving/master.stderr.log                      |    1 +
+ .../serving/master.stdout.log                      |    0
+ .../serving/sender-message.boc                     |  Bin 0 -> 53 bytes
+ .../uno-genesis-routing-1/serving/zerostate.boc    |  Bin 0 -> 4523 bytes
+ .../uno-genesis-routing-1/serving/zerostate.fhash  |    1 +
+ .../uno-genesis-routing-1/serving/zerostate.rhash  |    1 +
+ .../uno-genesis-routing-2/report.json              |   95 +
+ .../uno-genesis-routing-2/serving/basestate0.boc   |  Bin 0 -> 400 bytes
+ .../uno-genesis-routing-2/serving/basestate0.fhash |    1 +
+ .../uno-genesis-routing-2/serving/basestate0.rhash |    1 +
+ .../uno-genesis-routing-2/serving/bootstrap.result |    1 +
+ .../serving/bootstrap.result.binding               |    2 +
+ .../serving/bootstrap.result.kind                  |    1 +
+ .../serving/bootstrap.result.message               |    0
+ .../serving/bootstrap.result.stats                 |    7 +
+ .../serving/bootstrap.result.stats.timing          |    3 +
+ .../serving/bootstrap.stderr.log                   |  113 +
+ .../serving/bootstrap.stdout.log                   |    0
+ .../serving/counter-native-sender.stderr.log       |    1 +
+ .../serving/counter-native-sender.stdout.log       |    0
+ .../serving/counter-shard-genesis.stderr.log       |    1 +
+ .../serving/counter-shard-genesis.stdout.log       |    0
+ .../serving/counter-state.boc                      |  Bin 0 -> 245 bytes
+ .../serving/counter-state.fhash                    |    1 +
+ .../serving/counter-state.rhash                    |  Bin 0 -> 32 bytes
+ .../uno-genesis-routing-2/serving/global.json      |    1 +
+ .../uno-genesis-routing-2/serving/master.fif       |   84 +
+ .../serving/master.stderr.log                      |    1 +
+ .../serving/master.stdout.log                      |    0
+ .../serving/sender-message.boc                     |  Bin 0 -> 53 bytes
+ .../serving/serving-engine.result                  |    1 +
+ .../serving/serving-engine.result.binding          |    2 +
+ .../serving/serving-engine.result.kind             |    1 +
+ .../serving/serving-engine.result.message          |    0
+ .../serving/serving-engine.result.stats            |    7 +
+ .../serving/serving-engine.result.stats.timing     |    3 +
+ .../serving/serving-engine.stderr.log              |  106 +
+ .../serving/serving-engine.stdout.log              |    0
+ .../serving/source-1.candidate                     |  Bin 0 -> 2152 bytes
+ .../uno-genesis-routing-2/serving/source-1.result  |    1 +
+ .../serving/source-1.result.binding                |    2 +
+ .../serving/source-1.result.kind                   |    1 +
+ .../serving/source-1.result.message                |    0
+ .../serving/source-1.result.stats                  |    7 +
+ .../serving/source-1.result.stats.timing           |    3 +
+ .../serving/source-1.stderr.log                    |  117 +
+ .../serving/source-1.stdout.log                    |    0
+ .../uno-genesis-routing-2/serving/zerostate.boc    |  Bin 0 -> 4523 bytes
+ .../uno-genesis-routing-2/serving/zerostate.fhash  |    1 +
+ .../uno-genesis-routing-2/serving/zerostate.rhash  |    1 +
+ .../uno-genesis-routing-3/report.json              |  249 +
+ .../uno-genesis-routing-3/serving/basestate0.boc   |  Bin 0 -> 400 bytes
+ .../uno-genesis-routing-3/serving/basestate0.fhash |    1 +
+ .../uno-genesis-routing-3/serving/basestate0.rhash |    1 +
+ .../uno-genesis-routing-3/serving/bootstrap.result |    1 +
+ .../serving/bootstrap.result.binding               |    2 +
+ .../serving/bootstrap.result.kind                  |    1 +
+ .../serving/bootstrap.result.message               |    0
+ .../serving/bootstrap.result.stats                 |    7 +
+ .../serving/bootstrap.result.stats.timing          |    3 +
+ .../serving/bootstrap.stderr.log                   |  113 +
+ .../serving/bootstrap.stdout.log                   |    0
+ .../serving/counter-native-sender.stderr.log       |    1 +
+ .../serving/counter-native-sender.stdout.log       |    0
+ .../serving/counter-shard-genesis.stderr.log       |    1 +
+ .../serving/counter-shard-genesis.stdout.log       |    0
+ .../serving/counter-state.boc                      |  Bin 0 -> 245 bytes
+ .../serving/counter-state.fhash                    |    1 +
+ .../serving/counter-state.rhash                    |  Bin 0 -> 32 bytes
+ .../uno-genesis-routing-3/serving/global.json      |    1 +
+ .../uno-genesis-routing-3/serving/master.fif       |   84 +
+ .../serving/master.stderr.log                      |    1 +
+ .../serving/master.stdout.log                      |    0
+ .../serving/sender-message.boc                     |  Bin 0 -> 53 bytes
+ .../serving/serving-engine.result                  |    1 +
+ .../serving/serving-engine.result.binding          |    2 +
+ .../serving/serving-engine.result.kind             |    1 +
+ .../serving/serving-engine.result.message          |    0
+ .../serving/serving-engine.result.stats            |    7 +
+ .../serving/serving-engine.result.stats.timing     |    3 +
+ .../serving/serving-engine.stderr.log              |  106 +
+ .../serving/serving-engine.stdout.log              |    0
+ .../serving/source-1.candidate                     |  Bin 0 -> 2152 bytes
+ .../uno-genesis-routing-3/serving/source-1.result  |    1 +
+ .../serving/source-1.result.binding                |    2 +
+ .../serving/source-1.result.kind                   |    1 +
+ .../serving/source-1.result.message                |    0
+ .../serving/source-1.result.stats                  |    7 +
+ .../serving/source-1.result.stats.timing           |    3 +
+ .../serving/source-1.stderr.log                    |  117 +
+ .../serving/source-1.stdout.log                    |    0
+ .../serving/source-2.candidate                     |  Bin 0 -> 2424 bytes
+ .../uno-genesis-routing-3/serving/source-2.result  |    1 +
+ .../serving/source-2.result.binding                |    2 +
+ .../serving/source-2.result.kind                   |    1 +
+ .../serving/source-2.result.message                |    0
+ .../serving/source-2.result.stats                  |    7 +
+ .../serving/source-2.result.stats.timing           |    3 +
+ .../serving/source-2.stderr.log                    |  120 +
+ .../serving/source-2.stdout.log                    |    0
+ .../uno-genesis-routing-3/serving/zerostate.boc    |  Bin 0 -> 4523 bytes
+ .../uno-genesis-routing-3/serving/zerostate.fhash  |    1 +
+ .../uno-genesis-routing-3/serving/zerostate.rhash  |    1 +
+ .../uno-genesis-routing-3/unserved/basestate0.boc  |  Bin 0 -> 400 bytes
+ .../unserved/basestate0.fhash                      |    1 +
+ .../unserved/basestate0.rhash                      |    1 +
+ .../unserved/bootstrap.result                      |    1 +
+ .../unserved/bootstrap.result.binding              |    2 +
+ .../unserved/bootstrap.result.kind                 |    1 +
+ .../unserved/bootstrap.result.message              |    0
+ .../unserved/bootstrap.result.stats                |    7 +
+ .../unserved/bootstrap.result.stats.timing         |    3 +
+ .../unserved/bootstrap.stderr.log                  |  113 +
+ .../unserved/bootstrap.stdout.log                  |    0
+ .../unserved/counter-native-sender.stderr.log      |    1 +
+ .../unserved/counter-native-sender.stdout.log      |    0
+ .../unserved/counter-shard-genesis.stderr.log      |    1 +
+ .../unserved/counter-shard-genesis.stdout.log      |    0
+ .../unserved/counter-state.boc                     |  Bin 0 -> 245 bytes
+ .../unserved/counter-state.fhash                   |    1 +
+ .../unserved/counter-state.rhash                   |  Bin 0 -> 32 bytes
+ .../uno-genesis-routing-3/unserved/global.json     |    1 +
+ .../uno-genesis-routing-3/unserved/master.fif      |   84 +
+ .../unserved/master.stderr.log                     |    1 +
+ .../unserved/master.stdout.log                     |    0
+ .../unserved/sender-message.boc                    |  Bin 0 -> 53 bytes
+ .../unserved/source-1.candidate                    |  Bin 0 -> 1852 bytes
+ .../uno-genesis-routing-3/unserved/source-1.result |    1 +
+ .../unserved/source-1.result.binding               |    2 +
+ .../unserved/source-1.result.kind                  |    1 +
+ .../unserved/source-1.result.message               |    0
+ .../unserved/source-1.result.stats                 |    7 +
+ .../unserved/source-1.result.stats.timing          |    3 +
+ .../unserved/source-1.stderr.log                   |  116 +
+ .../unserved/source-1.stdout.log                   |    0
+ .../unserved/source-2.candidate                    |  Bin 0 -> 1956 bytes
+ .../uno-genesis-routing-3/unserved/source-2.result |    1 +
+ .../unserved/source-2.result.binding               |    2 +
+ .../unserved/source-2.result.kind                  |    1 +
+ .../unserved/source-2.result.message               |    0
+ .../unserved/source-2.result.stats                 |    7 +
+ .../unserved/source-2.result.stats.timing          |    3 +
+ .../unserved/source-2.stderr.log                   |  119 +
+ .../unserved/source-2.stdout.log                   |    0
+ .../uno-genesis-routing-3/unserved/zerostate.boc   |  Bin 0 -> 4523 bytes
+ .../uno-genesis-routing-3/unserved/zerostate.fhash |    1 +
+ .../uno-genesis-routing-3/unserved/zerostate.rhash |  Bin 0 -> 32 bytes
+ .../uno-genesis-smartcont-restored.stderr.log.gz   |  Bin 0 -> 5150412 bytes
+ .../uno-genesis-smartcont-restored.stdout.log      |    0
+ .../explicit-restored-targets.stderr.log           |    0
+ .../explicit-restored-targets.stdout.log           |   58 +
+ ...ve-destination-routing-guard-archive.stderr.log |    0
+ ...ve-destination-routing-guard-archive.stdout.log |    0
+ ...ve-destination-routing-guard-compile.stderr.log |    0
+ ...ve-destination-routing-guard-compile.stdout.log |    0
+ ...emove-destination-routing-guard-link.stderr.log |    0
+ ...emove-destination-routing-guard-link.stdout.log |    0
+ .../remove-destination-routing-guard.stderr.log    |    7 +
+ .../remove-destination-routing-guard.stdout.log    |    0
+ .../remove-destination-routing-guard/report.json   |  207 +
+ .../serving/basestate0.boc                         |  Bin 0 -> 400 bytes
+ .../serving/basestate0.fhash                       |  Bin 0 -> 32 bytes
+ .../serving/basestate0.rhash                       |  Bin 0 -> 32 bytes
+ .../serving/bootstrap.result                       |    1 +
+ .../serving/bootstrap.result.binding               |    2 +
+ .../serving/bootstrap.result.kind                  |    1 +
+ .../serving/bootstrap.result.message               |    0
+ .../serving/bootstrap.result.stats                 |    7 +
+ .../serving/bootstrap.result.stats.timing          |    3 +
+ .../serving/bootstrap.stderr.log                   |  113 +
+ .../serving/bootstrap.stdout.log                   |    0
+ .../serving/counter-native-sender.stderr.log       |    1 +
+ .../serving/counter-native-sender.stdout.log       |    0
+ .../serving/counter-shard-genesis.stderr.log       |    1 +
+ .../serving/counter-shard-genesis.stdout.log       |    0
+ .../serving/counter-state.boc                      |  Bin 0 -> 245 bytes
+ .../serving/counter-state.fhash                    |    1 +
+ .../serving/counter-state.rhash                    |    1 +
+ .../serving/global.json                            |    1 +
+ .../serving/master.fif                             |   84 +
+ .../serving/master.stderr.log                      |    1 +
+ .../serving/master.stdout.log                      |    0
+ .../serving/sender-message.boc                     |  Bin 0 -> 53 bytes
+ .../serving/serving-engine.result                  |    1 +
+ .../serving/serving-engine.result.binding          |    2 +
+ .../serving/serving-engine.result.kind             |    1 +
+ .../serving/serving-engine.result.message          |    0
+ .../serving/serving-engine.result.stats            |    7 +
+ .../serving/serving-engine.result.stats.timing     |    3 +
+ .../serving/serving-engine.stderr.log              |  106 +
+ .../serving/serving-engine.stdout.log              |    0
+ .../serving/source-1.candidate                     |  Bin 0 -> 2152 bytes
+ .../serving/source-1.result                        |    1 +
+ .../serving/source-1.result.binding                |    2 +
+ .../serving/source-1.result.kind                   |    1 +
+ .../serving/source-1.result.message                |    0
+ .../serving/source-1.result.stats                  |    7 +
+ .../serving/source-1.result.stats.timing           |    3 +
+ .../serving/source-1.stderr.log                    |  117 +
+ .../serving/source-1.stdout.log                    |    0
+ .../serving/source-2.candidate                     |  Bin 0 -> 2424 bytes
+ .../serving/source-2.result                        |    1 +
+ .../serving/source-2.result.binding                |    2 +
+ .../serving/source-2.result.kind                   |    1 +
+ .../serving/source-2.result.message                |    0
+ .../serving/source-2.result.stats                  |    7 +
+ .../serving/source-2.result.stats.timing           |    3 +
+ .../serving/source-2.stderr.log                    |  120 +
+ .../serving/source-2.stdout.log                    |    0
+ .../serving/zerostate.boc                          |  Bin 0 -> 4523 bytes
+ .../serving/zerostate.fhash                        |    1 +
+ .../serving/zerostate.rhash                        |    1 +
+ .../unserved/basestate0.boc                        |  Bin 0 -> 400 bytes
+ .../unserved/basestate0.fhash                      |  Bin 0 -> 32 bytes
+ .../unserved/basestate0.rhash                      |  Bin 0 -> 32 bytes
+ .../unserved/bootstrap.result                      |    1 +
+ .../unserved/bootstrap.result.binding              |    2 +
+ .../unserved/bootstrap.result.kind                 |    1 +
+ .../unserved/bootstrap.result.message              |    0
+ .../unserved/bootstrap.result.stats                |    7 +
+ .../unserved/bootstrap.result.stats.timing         |    3 +
+ .../unserved/bootstrap.stderr.log                  |  113 +
+ .../unserved/bootstrap.stdout.log                  |    0
+ .../unserved/counter-native-sender.stderr.log      |    1 +
+ .../unserved/counter-native-sender.stdout.log      |    0
+ .../unserved/counter-shard-genesis.stderr.log      |    1 +
+ .../unserved/counter-shard-genesis.stdout.log      |    0
+ .../unserved/counter-state.boc                     |  Bin 0 -> 245 bytes
+ .../unserved/counter-state.fhash                   |    1 +
+ .../unserved/counter-state.rhash                   |    1 +
+ .../unserved/global.json                           |    1 +
+ .../unserved/master.fif                            |   84 +
+ .../unserved/master.stderr.log                     |    1 +
+ .../unserved/master.stdout.log                     |    0
+ .../unserved/sender-message.boc                    |  Bin 0 -> 53 bytes
+ .../unserved/source-1.candidate                    |  Bin 0 -> 2152 bytes
+ .../unserved/source-1.result                       |    1 +
+ .../unserved/source-1.result.binding               |    2 +
+ .../unserved/source-1.result.kind                  |    1 +
+ .../unserved/source-1.result.message               |    0
+ .../unserved/source-1.result.stats                 |    7 +
+ .../unserved/source-1.result.stats.timing          |    3 +
+ .../unserved/source-1.stderr.log                   |  116 +
+ .../unserved/source-1.stdout.log                   |    0
+ .../unserved/zerostate.boc                         |  Bin 0 -> 4523 bytes
+ .../unserved/zerostate.fhash                       |    1 +
+ .../unserved/zerostate.rhash                       |    2 +
+ .../remove-genesis-issuance-compile.stderr.log     |    0
+ .../remove-genesis-issuance-compile.stdout.log     |    0
+ .../remove-genesis-issuance-link.stderr.log        |    0
+ .../remove-genesis-issuance-link.stdout.log        |    0
+ .../remove-genesis-issuance.stderr.log             |    7 +
+ .../remove-genesis-issuance.stdout.log             |    0
+ .../remove-genesis-issuance/basestate0.boc         |  Bin 0 -> 105 bytes
+ .../remove-genesis-issuance/basestate0.fhash       |    1 +
+ .../remove-genesis-issuance/basestate0.rhash       |    1 +
+ .../remove-genesis-issuance/config-master.addr     |    1 +
+ .../remove-genesis-issuance/config-master.pk       |    1 +
+ .../remove-genesis-issuance/elector.addr           |    1 +
+ .../remove-genesis-issuance/generate.stderr.log    |    1 +
+ .../remove-genesis-issuance/generate.stdout.log    |  141 +
+ .../genesis-diagnostics/error/log.txt              |    0
+ .../remove-genesis-issuance/genesis.fif            |  335 ++
+ .../remove-genesis-issuance/genesis.stderr.log     |    1 +
+ .../remove-genesis-issuance/genesis.stdout.log     |    0
+ .../remove-genesis-issuance/main-wallet.addr       |    1 +
+ .../remove-genesis-issuance/main-wallet.pk         |    1 +
+ .../remove-genesis-issuance/report.json            |   25 +
+ .../remove-genesis-issuance/unostate0.boc          |  Bin 0 -> 105 bytes
+ .../remove-genesis-issuance/unostate0.fhash        |    2 +
+ .../remove-genesis-issuance/unostate0.rhash        |    1 +
+ .../remove-genesis-issuance/validator-keys.pub     |    1 +
+ .../remove-genesis-issuance/zerostate.boc          |  Bin 0 -> 10528 bytes
+ .../remove-genesis-issuance/zerostate.boc.fhash    |  Bin 0 -> 32 bytes
+ .../remove-genesis-issuance/zerostate.fhash        |  Bin 0 -> 32 bytes
+ .../remove-genesis-issuance/zerostate.rhash        |    1 +
+ .../remove-ledger-delta-guard-archive.stderr.log   |    0
+ .../remove-ledger-delta-guard-archive.stdout.log   |    0
+ .../remove-ledger-delta-guard-compile.stderr.log   |    0
+ .../remove-ledger-delta-guard-compile.stdout.log   |    0
+ .../remove-ledger-delta-guard-link.stderr.log      |    0
+ .../remove-ledger-delta-guard-link.stdout.log      |    0
+ .../remove-ledger-delta-guard.stderr.log           |    7 +
+ .../remove-ledger-delta-guard.stdout.log           |    0
+ .../remove-ledger-delta-guard/basestate0.boc       |  Bin 0 -> 105 bytes
+ .../remove-ledger-delta-guard/basestate0.fhash     |    1 +
+ .../remove-ledger-delta-guard/basestate0.rhash     |    1 +
+ .../remove-ledger-delta-guard/config-master.addr   |    1 +
+ .../remove-ledger-delta-guard/config-master.pk     |    1 +
+ .../remove-ledger-delta-guard/elector.addr         |    1 +
+ .../remove-ledger-delta-guard/generate.stderr.log  |    1 +
+ .../remove-ledger-delta-guard/generate.stdout.log  |  141 +
+ .../genesis-diagnostics/error/log.txt              |    0
+ .../remove-ledger-delta-guard/genesis.fif          |  335 ++
+ .../remove-ledger-delta-guard/genesis.stderr.log   |   21 +
+ .../remove-ledger-delta-guard/genesis.stdout.log   |    1 +
+ .../remove-ledger-delta-guard/main-wallet.addr     |    1 +
+ .../remove-ledger-delta-guard/main-wallet.pk       |    1 +
+ .../missing-instance-diagnostics/error/log.txt     |    0
+ .../missing-instance.stderr.log                    |   22 +
+ .../missing-instance.stdout.log                    |    1 +
+ .../remove-ledger-delta-guard/report.json          |   35 +
+ .../remove-ledger-delta-guard/unostate0.boc        |  Bin 0 -> 105 bytes
+ .../remove-ledger-delta-guard/unostate0.fhash      |    2 +
+ .../remove-ledger-delta-guard/unostate0.rhash      |    1 +
+ .../remove-ledger-delta-guard/validator-keys.pub   |    1 +
+ .../remove-ledger-delta-guard/zerostate.boc        |  Bin 0 -> 10583 bytes
+ .../remove-ledger-delta-guard/zerostate.boc.fhash  |    1 +
+ .../remove-ledger-delta-guard/zerostate.fhash      |    1 +
+ .../remove-ledger-delta-guard/zerostate.rhash      |    1 +
+ .../uno-genesis-source-controls/report.json        |  553 ++
+ .../uno-genesis-tags.log                           |    8 +
+ .../uno-genesis-wiring-restored.stderr.log         |    5 +
+ .../uno-genesis-wiring-restored.stdout.log         |    0
+ .../uno-genesis-workchain-2.stderr.log             |  253 +
+ .../uno-genesis-workchain-2.stdout.log             |    0
+ .../uno-genesis-workchain.stderr.log               |    1 +
+ .../uno-genesis-workchain.stdout.log               |    0
+ doc/measurements/uno-genesis-operators/README.md   |   37 +
+ .../uno-genesis-operators/build-working-tree.patch |  795 +++
+ doc/measurements/uno-genesis-operators/build.log   |   74 +
+ .../approve-unlisted-mainnet.load.stderr.log       |    1 +
+ .../approve-unlisted-mainnet.load.stdout.log       |    0
+ .../controls/approve-unlisted-mainnet.stderr.log   |    8 +
+ .../controls/approve-unlisted-mainnet.stdout.log   |    0
+ .../mainnet-development.stderr.log                 |    1 +
+ .../mainnet-development.stdout.log                 |    1 +
+ .../controls/baseline.stderr.log                   |    0
+ .../controls/baseline.stdout.log                   |    2 +
+ .../baseline/mainnet-development-guard.stderr.log  |    5 +
+ .../baseline/mainnet-development-guard.stdout.log  |    0
+ .../baseline/mainnet-development.stderr.log        |    1 +
+ .../baseline/mainnet-development.stdout.log        |    1 +
+ .../baseline/mainnet-unapproved-guard.stderr.log   |    5 +
+ .../baseline/mainnet-unapproved-guard.stdout.log   |    0
+ .../baseline/mainnet-unapproved.stderr.log         |    1 +
+ .../baseline/mainnet-unapproved.stdout.log         |    1 +
+ .../controls/baseline/production-prefix.stderr.log |    5 +
+ .../controls/baseline/production-prefix.stdout.log |    0
+ .../baseline/testnet-development-guard.stderr.log  |    1 +
+ .../baseline/testnet-development-guard.stdout.log  |    1 +
+ .../baseline/testnet-development.stderr.log        |    1 +
+ .../baseline/testnet-development.stdout.log        |    1 +
+ .../controls/baseline/testnet-prefix.stderr.log    |    1 +
+ .../controls/baseline/testnet-prefix.stdout.log    |    1 +
+ .../controls/remove-enforcement.load.stderr.log    |    1 +
+ .../controls/remove-enforcement.load.stdout.log    |    0
+ .../controls/remove-enforcement.stderr.log         |    8 +
+ .../controls/remove-enforcement.stdout.log         |    0
+ .../mainnet-development-guard.stderr.log           |    1 +
+ .../mainnet-development-guard.stdout.log           |    1 +
+ .../mainnet-development.stderr.log                 |    1 +
+ .../mainnet-development.stdout.log                 |    1 +
+ .../uno-genesis-operators/controls/report.json     |  109 +
+ .../controls/restored-build.stderr.log             |    0
+ .../controls/restored-build.stdout.log             |   58 +
+ .../controls/restored.stderr.log                   |    0
+ .../controls/restored.stdout.log                   |    2 +
+ .../restored/mainnet-development-guard.stderr.log  |    5 +
+ .../restored/mainnet-development-guard.stdout.log  |    0
+ .../restored/mainnet-development.stderr.log        |    1 +
+ .../restored/mainnet-development.stdout.log        |    1 +
+ .../restored/mainnet-unapproved-guard.stderr.log   |    5 +
+ .../restored/mainnet-unapproved-guard.stdout.log   |    0
+ .../restored/mainnet-unapproved.stderr.log         |    1 +
+ .../restored/mainnet-unapproved.stdout.log         |    1 +
+ .../controls/restored/production-prefix.stderr.log |    5 +
+ .../controls/restored/production-prefix.stdout.log |    0
+ .../restored/testnet-development-guard.stderr.log  |    1 +
+ .../restored/testnet-development-guard.stdout.log  |    1 +
+ .../restored/testnet-development.stderr.log        |    1 +
+ .../restored/testnet-development.stdout.log        |    1 +
+ .../controls/restored/testnet-prefix.stderr.log    |    1 +
+ .../controls/restored/testnet-prefix.stdout.log    |    1 +
+ doc/measurements/uno-genesis-operators/ctest.log   |   12 +
+ .../mainnet-development-guard.stderr.log           |    4 +
+ .../mainnet-development-guard.stdout.log           |    0
+ .../mainnet-development.stderr.log                 |    0
+ .../mainnet-development.stdout.log                 |    1 +
+ .../mainnet-unapproved-guard.stderr.log            |    4 +
+ .../mainnet-unapproved-guard.stdout.log            |    0
+ .../mainnet-unapproved.stderr.log                  |    0
+ .../mainnet-unapproved.stdout.log                  |    1 +
+ .../initial-attempt-1/production-prefix.stderr.log |    4 +
+ .../initial-attempt-1/production-prefix.stdout.log |    0
+ .../testnet-development-guard.stderr.log           |    0
+ .../testnet-development-guard.stdout.log           |    1 +
+ .../testnet-development.stderr.log                 |    0
+ .../testnet-development.stdout.log                 |    1 +
+ .../mainnet-development.stderr.log                 |    3 +
+ .../mainnet-development.stdout.log                 |    0
+ .../mainnet-development.stderr.log                 |    5 +
+ .../mainnet-development.stdout.log                 |    0
+ .../mainnet-development-guard.stderr.log           |    5 +
+ .../mainnet-development-guard.stdout.log           |    0
+ .../mainnet-development.stderr.log                 |    1 +
+ .../mainnet-development.stdout.log                 |    1 +
+ .../mainnet-unapproved-guard.stderr.log            |    5 +
+ .../mainnet-unapproved-guard.stdout.log            |    0
+ .../mainnet-unapproved.stderr.log                  |    1 +
+ .../mainnet-unapproved.stdout.log                  |    1 +
+ .../initial-attempt-4/production-prefix.stderr.log |    5 +
+ .../initial-attempt-4/production-prefix.stdout.log |    0
+ .../testnet-development-guard.stderr.log           |    1 +
+ .../testnet-development-guard.stdout.log           |    1 +
+ .../testnet-development.stderr.log                 |    1 +
+ .../testnet-development.stdout.log                 |    1 +
+ .../initial-attempt-4/testnet-prefix.stderr.log    |    1 +
+ .../initial-attempt-4/testnet-prefix.stdout.log    |    1 +
+ .../uno-genesis-operators/provenance.json          |   11 +
+ .../uno-ingress-transition/artifact-manifest.json  |  728 +++
+ doc/measurements/uno-ingress-transition/scope.md   |   30 +
+ .../uno-ingress-transition/uno-d58-baseline.log    |   11 +
+ .../uno-ingress-transition/uno-d58-baseline.xml    |   31 +
+ .../uno-ingress-transition/uno-d58-build-1.log     | 1093 ++++
+ .../uno-ingress-transition/uno-d58-build-2.log     |  151 +
+ .../uno-ingress-transition/uno-d58-build-3.log     |    3 +
+ .../uno-ingress-transition/uno-d58-controls-1.log  |    5 +
+ .../remove-entry-check-baseline.stderr.log         |   30 +
+ .../remove-entry-check-baseline.stdout.log         |   13 +
+ .../remove-entry-check-compile.stderr.log          |    0
+ .../remove-entry-check-compile.stdout.log          |    0
+ .../remove-entry-check-link.stderr.log             |    0
+ .../remove-entry-check-link.stdout.log             |    0
+ .../remove-entry-check-run.stderr.log              |   30 +
+ .../remove-entry-check-run.stdout.log              |   13 +
+ .../remove-entry-check/block.cpp                   | 2663 +++++++++
+ .../remove-table-check-baseline.stderr.log         |   30 +
+ .../remove-table-check-baseline.stdout.log         |   13 +
+ .../remove-table-check-compile.stderr.log          |    0
+ .../remove-table-check-compile.stdout.log          |    0
+ .../remove-table-check-link.stderr.log             |    0
+ .../remove-table-check-link.stdout.log             |    0
+ .../remove-table-check-run.stderr.log              |   30 +
+ .../remove-table-check-run.stdout.log              |   13 +
+ .../remove-table-check/block.cpp                   | 2663 +++++++++
+ .../uno-d58-controls-1/report.json                 |  366 ++
+ .../uno-ingress-transition/uno-d58-controls-2.log  |    5 +
+ .../remove-entry-check-baseline.stderr.log         |   30 +
+ .../remove-entry-check-baseline.stdout.log         |   13 +
+ .../remove-entry-check-compile.stderr.log          |    0
+ .../remove-entry-check-compile.stdout.log          |    0
+ .../remove-entry-check-link.stderr.log             |    0
+ .../remove-entry-check-link.stdout.log             |    0
+ .../remove-entry-check-run.stderr.log              |   30 +
+ .../remove-entry-check-run.stdout.log              |   13 +
+ .../remove-entry-check/block.cpp                   | 2663 +++++++++
+ .../remove-minimum-version-baseline.stderr.log     |   12 +
+ .../remove-minimum-version-baseline.stdout.log     |    4 +
+ .../remove-minimum-version-compile.stderr.log      |    0
+ .../remove-minimum-version-compile.stdout.log      |    0
+ .../remove-minimum-version-link.stderr.log         |    0
+ .../remove-minimum-version-link.stdout.log         |    0
+ ...e-minimum-version-missing-capability.stderr.log |   12 +
+ ...e-minimum-version-missing-capability.stdout.log |    4 +
+ .../remove-minimum-version-old-version.stderr.log  |   12 +
+ .../remove-minimum-version-old-version.stdout.log  |    4 +
+ .../workchain-execution-dispatch.cpp               |  868 +++
+ .../remove-table-check-baseline.stderr.log         |   30 +
+ .../remove-table-check-baseline.stdout.log         |   13 +
+ .../remove-table-check-compile.stderr.log          |    0
+ .../remove-table-check-compile.stdout.log          |    0
+ .../remove-table-check-link.stderr.log             |    0
+ .../remove-table-check-link.stdout.log             |    0
+ .../remove-table-check-run.stderr.log              |   30 +
+ .../remove-table-check-run.stdout.log              |   13 +
+ .../remove-table-check/block.cpp                   | 2663 +++++++++
+ .../uno-d58-controls-2/report.json                 |  523 ++
+ .../uno-ingress-transition/uno-d58-controls-3.log  |    1 +
+ .../remove-capability-baseline.stderr.log          |   12 +
+ .../remove-capability-baseline.stdout.log          |    4 +
+ .../remove-capability-compile.stderr.log           |    0
+ .../remove-capability-compile.stdout.log           |    0
+ .../remove-capability-link.stderr.log              |    0
+ .../remove-capability-link.stdout.log              |    0
+ ...pability-missing-capability-consumer.stderr.log |   12 +
+ ...pability-missing-capability-consumer.stdout.log |    0
+ ...pability-missing-capability-original.stderr.log |   12 +
+ ...pability-missing-capability-original.stdout.log |    4 +
+ ...remove-capability-missing-capability.stderr.log |   12 +
+ ...remove-capability-missing-capability.stdout.log |    4 +
+ ...move-capability-old-version-consumer.stderr.log |    0
+ ...move-capability-old-version-consumer.stdout.log |    1 +
+ ...move-capability-old-version-original.stderr.log |   12 +
+ ...move-capability-old-version-original.stdout.log |    4 +
+ .../remove-capability-old-version.stderr.log       |   12 +
+ .../remove-capability-old-version.stdout.log       |    4 +
+ .../missing-capability-consumer/stderr.log         |   12 +
+ .../missing-capability-consumer/stdout.log         |    4 +
+ .../old-version-consumer/report.json               |   13 +
+ .../old-version-consumer/stderr.log                |   12 +
+ .../old-version-consumer/stdout.log                |    4 +
+ .../workchain-execution-dispatch.cpp               |  868 +++
+ .../remove-entry-check-baseline.stderr.log         |   30 +
+ .../remove-entry-check-baseline.stdout.log         |   13 +
+ .../remove-entry-check-compile.stderr.log          |    0
+ .../remove-entry-check-compile.stdout.log          |    0
+ .../remove-entry-check-link.stderr.log             |    0
+ .../remove-entry-check-link.stdout.log             |    0
+ .../remove-entry-check-run.stderr.log              |   30 +
+ .../remove-entry-check-run.stdout.log              |   13 +
+ .../remove-entry-check/block.cpp                   | 2663 +++++++++
+ .../remove-minimum-version-baseline.stderr.log     |   12 +
+ .../remove-minimum-version-baseline.stdout.log     |    4 +
+ .../remove-minimum-version-compile.stderr.log      |    0
+ .../remove-minimum-version-compile.stdout.log      |    0
+ .../remove-minimum-version-link.stderr.log         |    0
+ .../remove-minimum-version-link.stdout.log         |    0
+ ...-version-missing-capability-consumer.stderr.log |    0
+ ...-version-missing-capability-consumer.stdout.log |    1 +
+ ...-version-missing-capability-original.stderr.log |   12 +
+ ...-version-missing-capability-original.stdout.log |    4 +
+ ...e-minimum-version-missing-capability.stderr.log |   12 +
+ ...e-minimum-version-missing-capability.stdout.log |    4 +
+ ...minimum-version-old-version-consumer.stderr.log |   12 +
+ ...minimum-version-old-version-consumer.stdout.log |    0
+ ...minimum-version-old-version-original.stderr.log |   12 +
+ ...minimum-version-old-version-original.stdout.log |    4 +
+ .../remove-minimum-version-old-version.stderr.log  |   12 +
+ .../remove-minimum-version-old-version.stdout.log  |    4 +
+ .../missing-capability-consumer/report.json        |   12 +
+ .../missing-capability-consumer/stderr.log         |   12 +
+ .../missing-capability-consumer/stdout.log         |    4 +
+ .../old-version-consumer/stderr.log                |   12 +
+ .../old-version-consumer/stdout.log                |    4 +
+ .../workchain-execution-dispatch.cpp               |  868 +++
+ .../remove-table-check-baseline.stderr.log         |   30 +
+ .../remove-table-check-baseline.stdout.log         |   13 +
+ .../remove-table-check-compile.stderr.log          |    0
+ .../remove-table-check-compile.stdout.log          |    0
+ .../remove-table-check-link.stderr.log             |    0
+ .../remove-table-check-link.stdout.log             |    0
+ .../remove-table-check-run.stderr.log              |   30 +
+ .../remove-table-check-run.stdout.log              |   13 +
+ .../remove-table-check/block.cpp                   | 2663 +++++++++
+ .../uno-d58-controls-3/report.json                 |  861 +++
+ .../uno-d58-controls-3/restored-build.stderr.log   |    0
+ .../uno-d58-controls-3/restored-build.stdout.log   |    1 +
+ .../uno-d58-controls-3/restored-ctest.stderr.log   |    0
+ .../uno-d58-controls-3/restored-ctest.stdout.log   |   11 +
+ .../uno-d58-controls-3/restored.xml                |   31 +
+ doc/measurements/uno-local-profile/manifest.json   |   70 +
+ doc/measurements/uno-local-profile/report.json     |   13 +
+ .../uno-local-profile/run-1/node0/config.json      |   49 +
+ doc/measurements/uno-local-profile/run-1/node0/log |    0
+ .../uno-local-profile/run-1/node1/config.json      |   91 +
+ doc/measurements/uno-local-profile/run-1/node1/log |  921 ++++
+ .../uno-local-profile/run-1/node2/config.json      |   91 +
+ doc/measurements/uno-local-profile/run-1/node2/log |  921 ++++
+ .../uno-local-profile/run-1/node3/config.json      |   91 +
+ doc/measurements/uno-local-profile/run-1/node3/log |  921 ++++
+ .../uno-local-profile/run-1/report.json            |   16 +
+ .../uno-local-profile/run-1/state/basestate0.boc   |  Bin 0 -> 105 bytes
+ .../uno-local-profile/run-1/state/basestate0.fhash |    1 +
+ .../uno-local-profile/run-1/state/basestate0.rhash |    1 +
+ .../uno-local-profile/run-1/state/unostate0.boc    |  Bin 0 -> 105 bytes
+ .../uno-local-profile/run-1/state/unostate0.fhash  |    1 +
+ .../uno-local-profile/run-1/state/unostate0.rhash  |    1 +
+ .../uno-local-profile/run-1/state/zerostate.boc    |  Bin 0 -> 10992 bytes
+ .../uno-local-profile/run-1/state/zerostate.fhash  |    2 +
+ .../uno-local-profile/run-1/state/zerostate.rhash  |    2 +
+ .../uno-local-profile/run-1/stderr.log.gz          |  Bin 0 -> 4248 bytes
+ .../uno-local-profile/run-1/stdout.log.gz          |  Bin 0 -> 243 bytes
+ .../uno-local-profile/run-2/node0/config.json      |   49 +
+ doc/measurements/uno-local-profile/run-2/node0/log |    0
+ .../uno-local-profile/run-2/node1/config.json      |   91 +
+ doc/measurements/uno-local-profile/run-2/node1/log | 1211 ++++
+ .../uno-local-profile/run-2/node2/config.json      |   91 +
+ doc/measurements/uno-local-profile/run-2/node2/log | 1277 +++++
+ .../uno-local-profile/run-2/node3/config.json      |   91 +
+ doc/measurements/uno-local-profile/run-2/node3/log |    1 +
+ .../uno-local-profile/run-2/report.json            |   32 +
+ .../uno-local-profile/run-2/state/basestate0.boc   |  Bin 0 -> 105 bytes
+ .../uno-local-profile/run-2/state/basestate0.fhash |  Bin 0 -> 32 bytes
+ .../uno-local-profile/run-2/state/basestate0.rhash |    1 +
+ .../uno-local-profile/run-2/state/unostate0.boc    |  Bin 0 -> 105 bytes
+ .../uno-local-profile/run-2/state/unostate0.fhash  |    1 +
+ .../uno-local-profile/run-2/state/unostate0.rhash  |    1 +
+ .../uno-local-profile/run-2/state/zerostate.boc    |  Bin 0 -> 10992 bytes
+ .../uno-local-profile/run-2/state/zerostate.fhash  |    1 +
+ .../uno-local-profile/run-2/state/zerostate.rhash  |    1 +
+ .../uno-local-profile/run-2/stderr.log.gz          |  Bin 0 -> 5073 bytes
+ .../uno-local-profile/run-2/stdout.log.gz          |  Bin 0 -> 243 bytes
+ .../uno-local-profile/run-3/node0/config.json      |   49 +
+ doc/measurements/uno-local-profile/run-3/node0/log |    0
+ .../uno-local-profile/run-3/node1/config.json      |   96 +
+ doc/measurements/uno-local-profile/run-3/node1/log | 2611 +++++++++
+ .../uno-local-profile/run-3/node2/config.json      |   96 +
+ doc/measurements/uno-local-profile/run-3/node2/log | 2767 ++++++++++
+ .../uno-local-profile/run-3/node3/config.json      |   96 +
+ doc/measurements/uno-local-profile/run-3/node3/log | 1072 ++++
+ .../uno-local-profile/run-3/report.json            |   36 +
+ .../uno-local-profile/run-3/state/basestate0.boc   |  Bin 0 -> 105 bytes
+ .../uno-local-profile/run-3/state/basestate0.fhash |    2 +
+ .../uno-local-profile/run-3/state/basestate0.rhash |    1 +
+ .../uno-local-profile/run-3/state/unostate0.boc    |  Bin 0 -> 105 bytes
+ .../uno-local-profile/run-3/state/unostate0.fhash  |    1 +
+ .../uno-local-profile/run-3/state/unostate0.rhash  |    1 +
+ .../uno-local-profile/run-3/state/zerostate.boc    |  Bin 0 -> 10992 bytes
+ .../uno-local-profile/run-3/state/zerostate.fhash  |  Bin 0 -> 32 bytes
+ .../uno-local-profile/run-3/state/zerostate.rhash  |    1 +
+ .../uno-local-profile/run-3/stderr.log.gz          |  Bin 0 -> 10438 bytes
+ .../uno-local-profile/run-3/stdout.log.gz          |  Bin 0 -> 292 bytes
+ .../setup-preflight/baseline.stderr.log            |    0
+ .../setup-preflight/baseline.stdout.log            |    1 +
+ .../setup-preflight/mutant.stderr.log              |    0
+ .../setup-preflight/mutant.stdout.log              |    2 +
+ .../uno-local-profile/setup-preflight/report.json  |   12 +
+ .../setup-preflight/restored.stderr.log            |    0
+ .../setup-preflight/restored.stdout.log            |    1 +
+ .../uno-python-environment-audit/report.json       |  123 +
+ .../uno-rust-mc-codec/baseline.stderr.log          |  191 +
+ .../uno-rust-mc-codec/baseline.stdout.log          |    9 +
+ doc/measurements/uno-rust-mc-codec/controls.json   |   92 +
+ .../omit-ledger-read-build.stderr.log              |   12 +
+ .../omit-ledger-read-build.stdout.log              |    0
+ .../omit-ledger-read-restored.stderr.log           |   12 +
+ .../omit-ledger-read-restored.stdout.log           |    9 +
+ .../uno-rust-mc-codec/omit-ledger-read.stderr.log  |   12 +
+ .../uno-rust-mc-codec/omit-ledger-read.stdout.log  |   27 +
+ .../omit-ledger-write-build.stderr.log             |   12 +
+ .../omit-ledger-write-build.stdout.log             |    0
+ .../omit-ledger-write-restored.stderr.log          |   12 +
+ .../omit-ledger-write-restored.stdout.log          |    9 +
+ .../uno-rust-mc-codec/omit-ledger-write.stderr.log |   12 +
+ .../uno-rust-mc-codec/omit-ledger-write.stdout.log |   31 +
+ doc/measurements/uno-rust-mc-codec/report.json     |   38 +
+ doc/measurements/uno-rust-mc-codec/reproduce.py    |   37 +
+ .../uno-rust-mc-codec/retired-tag-build.stderr.log |   12 +
+ .../uno-rust-mc-codec/retired-tag-build.stdout.log |    0
+ .../retired-tag-restored.stderr.log                |   12 +
+ .../retired-tag-restored.stdout.log                |    9 +
+ .../uno-rust-mc-codec/retired-tag.stderr.log       |   12 +
+ .../uno-rust-mc-codec/retired-tag.stdout.log       |   28 +
+ .../uno-rust-mc-codec/uno-rust-codec-controls.log  |   51 +
+ .../uno-rust-mc-codec/uno-rust-mc-tests.log        |   21 +
+ .../uno-rust-mc-codec/uno-rust-workspace-check.log |  453 ++
+ .../uno-two-config-install/build-typed-probe.py    |    8 +
+ .../uno-two-config-install/manifest.json           |   22 +
+ .../minimal-install-typed-copy.py                  |   27 +
+ .../minimal-install-typed.py                       |   27 +
+ .../uno-two-config-install/minimal-install.py      |   27 +
+ .../uno-two-config-install/report.json             |   59 +
+ .../uno-two-config-install/runs.tar.gz             |  Bin 0 -> 55838 bytes
+ .../typed-copy-archive.command.json                |    1 +
+ .../typed-copy-archive.stderr.log                  |    0
+ .../typed-copy-archive.stdout.log                  |    0
+ .../typed-copy-compile.command.json                |    1 +
+ .../typed-copy-compile.stderr.log                  |    0
+ .../typed-copy-compile.stdout.log                  |    0
+ .../typed-copy-link.command.json                   |    1 +
+ .../typed-copy-link.stderr.log                     |    0
+ .../typed-copy-link.stdout.log                     |    0
+ .../typed-debug-compile.command.json               |    1 +
+ .../typed-debug-compile.stderr.log                 |    0
+ .../typed-debug-compile.stdout.log                 |    0
+ .../uno-two-config-install/typed-debug-link.log    |    3 +
+ .../uno-two-config-install/typed-install.gdb       |   12 +
+ doc/uno-m1-five-item-closeout.md                   |   88 +
+ scripts/check-no-removed-execution-domains.sh      |    2 +-
+ scripts/setup-testnet.sh                           |   91 +-
+ test/counter-masterchain-genesis.fif               |   22 +-
+ test/counter-network-config.fif                    |   17 +-
+ test/regression-tests.ans                          |    4 +-
+ test/test-counter-disk-integration.cmake           |   24 +-
+ test/test-uno-build-wiring.py                      |    4 +-
+ test/test-uno-genesis-operators.py                 |   70 +
+ test/tostester/src/tostester/zerostate.py          |   33 +-
+ test/uno-local-network-config.fif                  |   15 +
+ test/uno-local-profile.md                          |   27 +
+ test/uno-local-profile.py                          |   92 +
+ test/uno-setup-preflight-controls.py               |   46 +
+ test/workchain-descriptor-controls.py              |   29 +
+ test/workchain-descriptor-equivalence.md           |   23 +
+ test/workchain-descriptor-equivalence.py           |   47 +
+ test/workchain-genesis-operator-controls.py        |   80 +
+ test/workchain-ingress-transition-controls.py      |   83 +
+ test/workchain-ingress-transition.md               |   41 +
+ test/workchain-smartcont-oracle-controls.py        |  118 +
+ test/workchain-smartcont-oracle.md                 |   19 +
+ tosctl/src/block/src/master.rs                     |   77 +-
+ .../src/tests/data/mc_state_extra_instances.boc    |  Bin 0 -> 2084 bytes
+ tosctl/src/block/src/tests/test_master.rs          |   37 +
+ validator/impl/collator.cpp                        |   24 +
+ validator/impl/validate-query.cpp                  |   16 +-
+ 1728 files changed, 93042 insertions(+), 217 deletions(-)

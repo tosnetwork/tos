@@ -1,0 +1,795 @@
+diff --git a/crypto/block/block.tlb b/crypto/block/block.tlb
+index 2678098ae..2d5a1daf3 100644
+--- a/crypto/block/block.tlb
++++ b/crypto/block/block.tlb
+@@ -13,11 +13,11 @@ uno_v2_resource_work_output max_proof_units:uint64 max_effect_cells:uint64
+   max_transfers:uint32 = UnoV2ResourceWorkOutput;
+ uno_v2_resource_policy admission_version:uint32 input:^UnoV2ResourceInput
+   state:^UnoV2ResourceState work_output:^UnoV2ResourceWorkOutput = UnoV2ResourcePolicy;
+-uno_v2_engine_configuration_instance k_accepted_target_rate_ms:uint32
+-  genesis_hash:bits256 instance_id:bits256 resource_policy:^UnoV2ResourcePolicy parameters:^Cell = UnoV2EngineConfiguration;
++uno_v2_engine_configuration_issued k_accepted_target_rate_ms:uint32
++  instance_id:bits256 resource_policy:^UnoV2ResourcePolicy parameters:^Cell = UnoV2EngineConfiguration;
+ workchain_instance_record instance_seq:uint64 creation_descriptor_hash:bits256 = WorkchainInstanceRecord;
+ workchain_instance_ledger entries:(HashmapE 32 WorkchainInstanceRecord) = WorkchainInstanceLedger;
+-workchain_instance_identity genesis_hash:bits256 workchain_id:int32
++workchain_instance_identity_descriptor global_id:int32 workchain_id:int32
+   creation_descriptor_hash:bits256 instance_seq:uint64 = WorkchainInstanceIdentity;
+ uno_v2_host_domain global_id:int32 genesis_hash:bits256 instance_id:bits256
+   workchain_id:int32 shard_id:uint64 = UnoV2HostDomain;
+diff --git a/crypto/block/create-state.cpp b/crypto/block/create-state.cpp
+index 267fb8f99..be26a0802 100644
+--- a/crypto/block/create-state.cpp
++++ b/crypto/block/create-state.cpp
+@@ -448,7 +448,14 @@ bool store_custom(vm::CellBuilder& cb) {
+   bool ok = true;
+   auto ledger_result = block::make_initial_workchain_instance_ledger();
+   if (ledger_result.is_error()) return false;
+-  auto ledger = ledger_result.move_as_ok();
++  // Use the exact configuration root being serialized below, not config_dict.
++  // The empty ledger is a private issuance input, never the installed result.
++  auto issued = block::reconstruct_configured_workchain_instances(
++      ledger_result.move_as_ok(), config_param_root, global_id);
++  if (issued.is_error()) {
++    throw fift::IntError{issued.move_as_error().to_string()};
++  }
++  auto ledger = issued.move_as_ok();
+   PDO(cb2.store_long_bool(block::gen::McStateExtra::cons_tag[0], 32)
+       && cb2.store_long_bool(0, 1)           // shard_hashes:ShardHashes = (HashmapE 32 ^(BinTree ShardDescr))
+       && store_config_params(cb2)            // config:ConfigParams
+diff --git a/crypto/block/workchain-instance-identity.cpp b/crypto/block/workchain-instance-identity.cpp
+index 39f4c1cd6..04289972d 100644
+--- a/crypto/block/workchain-instance-identity.cpp
++++ b/crypto/block/workchain-instance-identity.cpp
+@@ -46,12 +46,10 @@ td::Result<std::optional<gen::WorkchainInstanceRecord::Record>> read_workchain_i
+ }
+ 
+ td::Result<td::Bits256> derive_workchain_instance_id(
+-    const std::optional<td::Bits256>& authenticated_genesis, std::int32_t workchain,
+-    const gen::WorkchainInstanceRecord::Record& record) {
+-  if (!authenticated_genesis) return error(InstanceIdentityError::MissingGenesis, "authenticated genesis is missing");
++    std::int32_t authenticated_global_id, std::int32_t workchain, const gen::WorkchainInstanceRecord::Record& record) {
++  if (!authenticated_global_id) return error(InstanceIdentityError::InvalidConfiguration, "authenticated global id is zero");
+   if (!record.instance_seq) return error(InstanceIdentityError::MalformedRecord, "issued sequence is zero");
+-  gen::WorkchainInstanceIdentity::Record identity{*authenticated_genesis, workchain,
+-                                               record.creation_descriptor_hash, record.instance_seq};
++  gen::WorkchainInstanceIdentity::Record identity{authenticated_global_id, workchain, record.creation_descriptor_hash, record.instance_seq};
+   td::Ref<vm::Cell> root;
+   if (!tlb::pack_cell(root, identity)) return error(InstanceIdentityError::MalformedRecord, "cannot encode instance identity");
+   return root->get_hash().bits();
+@@ -59,14 +57,14 @@ td::Result<td::Bits256> derive_workchain_instance_id(
+ 
+ td::Result<StagedFirstInstance> stage_first_workchain_instance(
+     const td::Ref<vm::Cell>& predecessor_ledger, std::int32_t workchain,
+-    const std::optional<td::Bits256>& authenticated_genesis,
++    std::int32_t authenticated_global_id,
+     const td::Ref<vm::Cell>& creation_descriptor, const td::Bits256& claimed_id) {
+   TRY_RESULT(header, read_workchain_instance_ledger(predecessor_ledger));
+   if (creation_descriptor.is_null()) return error(InstanceIdentityError::MissingDescriptor, "creation descriptor is missing");
+   // No prior issuance exists. First installation issues exactly 1; no caller
+   // counter, arithmetic wrap, or successor reset is available in this phase.
+   gen::WorkchainInstanceRecord::Record record{1, creation_descriptor->get_hash().bits()};
+-  TRY_RESULT(instance_id, derive_workchain_instance_id(authenticated_genesis, workchain, record));
++  TRY_RESULT(instance_id, derive_workchain_instance_id(authenticated_global_id, workchain, record));
+   vm::CellBuilder value;
+   if (!tlb::pack(value, record)) return error(InstanceIdentityError::MalformedRecord, "cannot encode instance record");
+   vm::Dictionary staged(header.entries, 32);
+@@ -84,7 +82,7 @@ td::Result<StagedFirstInstance> stage_first_workchain_instance(
+ 
+ td::Result<td::Ref<vm::Cell>> reconstruct_workchain_instance_ledger(
+     const td::Ref<vm::Cell>& predecessor, const td::Ref<vm::Cell>& proposed_config,
+-    const std::optional<td::Bits256>& authenticated_genesis, std::int32_t workchain) {
++    std::int32_t authenticated_global_id, std::int32_t workchain) {
+   TRY_RESULT(header, read_workchain_instance_ledger(predecessor));
+   if (proposed_config.is_null()) return error(InstanceIdentityError::InvalidConfiguration, "configuration is missing");
+   vm::Dictionary config(proposed_config, 32);
+@@ -103,18 +101,14 @@ td::Result<td::Ref<vm::Cell>> reconstruct_workchain_instance_ledger(
+   auto policy = ingress.find(workchain);
+   if (policy == ingress.end()) return error(InstanceIdentityError::InvalidConfiguration, "instance policy is missing");
+   TRY_RESULT(shell, decode_workchain_engine_parameters(policy->second.engine_configuration));
+-  if (!authenticated_genesis) return error(InstanceIdentityError::MissingGenesis, "authenticated genesis is missing");
+-  if (shell.genesis_hash != *authenticated_genesis) {
+-    return error(InstanceIdentityError::IdentityMismatch, "configured genesis differs from authenticated genesis");
+-  }
+   TRY_RESULT(record, read_workchain_instance_record(predecessor, workchain));
+   if (!record) {
+-    TRY_RESULT(staged, stage_first_workchain_instance(predecessor, workchain, authenticated_genesis,
++    TRY_RESULT(staged, stage_first_workchain_instance(predecessor, workchain, authenticated_global_id,
+                                                      descriptor, shell.instance_id));
+     return staged.ledger;
+   }
+   // Historical descriptor comes from the ledger, never the proposed descriptor.
+-  TRY_RESULT(expected_id, derive_workchain_instance_id(authenticated_genesis, workchain, *record));
++  TRY_RESULT(expected_id, derive_workchain_instance_id(authenticated_global_id, workchain, *record));
+   if (shell.instance_id != expected_id) {
+     return error(InstanceIdentityError::SuccessorUnsupported, "successor identity issuance is not supported");
+   }
+@@ -135,16 +129,16 @@ td::Status validate_workchain_instance_ledger_records(const td::Ref<vm::Cell>& l
+ 
+ td::Result<td::Ref<vm::Cell>> reconstruct_configured_workchain_instances(
+     const td::Ref<vm::Cell>& predecessor, const td::Ref<vm::Cell>& proposed_config,
+-    const std::optional<td::Bits256>& authenticated_genesis) {
++    std::int32_t authenticated_global_id) {
+   TRY_STATUS(validate_workchain_instance_ledger_records(predecessor));
+-  TRY_RESULT(staged, reconstruct_workchain_instance_ledger(predecessor, proposed_config, authenticated_genesis, 2));
++  TRY_RESULT(staged, reconstruct_workchain_instance_ledger(predecessor, proposed_config, authenticated_global_id, 2));
+   vm::Dictionary config(proposed_config, 32);
+   auto ingress_root = config.lookup_ref(td::BitArray<32>{84});
+   if (ingress_root.is_null()) return staged;
+   TRY_RESULT(ingress, decode_workchain_native_ingress_table(ingress_root));
+   for (const auto& entry : ingress) {
+     if (entry.first == 2) continue;
+-    TRY_RESULT(next, reconstruct_workchain_instance_ledger(staged, proposed_config, authenticated_genesis, entry.first));
++    TRY_RESULT(next, reconstruct_workchain_instance_ledger(staged, proposed_config, authenticated_global_id, entry.first));
+     staged = std::move(next);
+   }
+   return staged;
+diff --git a/crypto/block/workchain-instance-identity.h b/crypto/block/workchain-instance-identity.h
+index 9eef8046b..97876ac3d 100644
+--- a/crypto/block/workchain-instance-identity.h
++++ b/crypto/block/workchain-instance-identity.h
+@@ -32,8 +32,10 @@ td::Result<gen::WorkchainInstanceLedger::Record> read_workchain_instance_ledger(
+     const td::Ref<vm::Cell>& root);
+ td::Result<std::optional<gen::WorkchainInstanceRecord::Record>> read_workchain_instance_record(
+     const td::Ref<vm::Cell>& ledger, std::int32_t workchain);
++// The frozen creation descriptor commits the workchain zerostate. No masterchain
++// root is an input: this identity can be issued while constructing genesis.
+ td::Result<td::Bits256> derive_workchain_instance_id(
+-    const std::optional<td::Bits256>& authenticated_genesis, std::int32_t workchain,
++    std::int32_t authenticated_global_id, std::int32_t workchain,
+     const gen::WorkchainInstanceRecord::Record& record);
+ 
+ // The host triggers first installation only for a descriptor whose workchain
+@@ -42,7 +44,7 @@ td::Result<td::Bits256> derive_workchain_instance_id(
+ // Returned cells are private until the containing masterchain state commits.
+ td::Result<StagedFirstInstance> stage_first_workchain_instance(
+     const td::Ref<vm::Cell>& predecessor_ledger, std::int32_t workchain,
+-    const std::optional<td::Bits256>& authenticated_genesis,
++    std::int32_t authenticated_global_id,
+     const td::Ref<vm::Cell>& creation_descriptor, const td::Bits256& claimed_id);
+ 
+ // Reconstruct this workchain's permitted change from the proposed configuration.
+@@ -51,7 +53,7 @@ td::Result<StagedFirstInstance> stage_first_workchain_instance(
+ // workchain, retaining all historical entries.
+ td::Result<td::Ref<vm::Cell>> reconstruct_workchain_instance_ledger(
+     const td::Ref<vm::Cell>& predecessor, const td::Ref<vm::Cell>& proposed_config,
+-    const std::optional<td::Bits256>& authenticated_genesis, std::int32_t workchain);
++    std::int32_t authenticated_global_id, std::int32_t workchain);
+ 
+ // Traverse authenticated records before inspecting candidate configuration so
+ // unavailable predecessor cells cannot be classified as candidate faults.
+@@ -61,7 +63,7 @@ td::Status validate_workchain_instance_ledger_records(const td::Ref<vm::Cell>& l
+ // instances. The result starts from the entire predecessor, not a projection.
+ td::Result<td::Ref<vm::Cell>> reconstruct_configured_workchain_instances(
+     const td::Ref<vm::Cell>& predecessor, const td::Ref<vm::Cell>& proposed_config,
+-    const std::optional<td::Bits256>& authenticated_genesis);
++    std::int32_t authenticated_global_id);
+ 
+ // Compare the complete independently reconstructed root, including unread keys
+ // and deletions. For a non-creation block expected is the predecessor root.
+diff --git a/crypto/block/workchain-resource-policy.h b/crypto/block/workchain-resource-policy.h
+index 2d190fdfd..a5079b0d3 100644
+--- a/crypto/block/workchain-resource-policy.h
++++ b/crypto/block/workchain-resource-policy.h
+@@ -131,17 +131,16 @@ struct WorkchainEngineParameters {
+   // This codec has no current Config/Param30 input and performs no installation
+   // comparison. Callers must supply the acceptance record, not today's cadence.
+   std::uint32_t k_accepted_target_rate_ms;
+-  td::Bits256 genesis_hash;
+   td::Bits256 instance_id;
+   WorkchainResourcePolicy resources;
+   td::Ref<vm::Cell> parameters;
+ 
+   // A non-aggregate constructor with mandatory identity prevents omitted fields from
+   // silently becoming zero through aggregate value initialization.
+-  WorkchainEngineParameters(std::uint32_t accepted_target_rate_ms, td::Bits256 genesis, td::Bits256 instance,
++  WorkchainEngineParameters(std::uint32_t accepted_target_rate_ms, td::Bits256 instance,
+                             WorkchainResourcePolicy resource_policy,
+                             td::Ref<vm::Cell> business_parameters)
+-      : k_accepted_target_rate_ms(accepted_target_rate_ms), genesis_hash(genesis), instance_id(instance), resources(std::move(resource_policy)),
++      : k_accepted_target_rate_ms(accepted_target_rate_ms), instance_id(instance), resources(std::move(resource_policy)),
+         parameters(std::move(business_parameters)) {}
+ };
+ 
+@@ -151,7 +150,6 @@ inline td::Result<td::Ref<vm::Cell>> encode_workchain_engine_parameters(
+   TRY_RESULT(resources, encode_workchain_resource_policy(value.resources));
+   gen::UnoV2EngineConfiguration::Record record;
+   record.k_accepted_target_rate_ms = value.k_accepted_target_rate_ms;
+-  record.genesis_hash = value.genesis_hash;
+   record.instance_id = value.instance_id;
+   record.resource_policy = std::move(resources);
+   record.parameters = value.parameters;
+@@ -169,7 +167,7 @@ inline td::Result<WorkchainEngineParameters> decode_workchain_engine_parameters(
+     return td::Status::Error("malformed engine configuration framing");
+   }
+   TRY_RESULT(resources, decode_workchain_resource_policy(record.resource_policy));
+-  return WorkchainEngineParameters{record.k_accepted_target_rate_ms, record.genesis_hash, record.instance_id, std::move(resources), std::move(record.parameters)};
++  return WorkchainEngineParameters{record.k_accepted_target_rate_ms, record.instance_id, std::move(resources), std::move(record.parameters)};
+ }
+ 
+ }  // namespace block
+diff --git a/crypto/test/counter-install-config.cpp b/crypto/test/counter-install-config.cpp
+index 995f1e585..d3f4528f3 100644
+--- a/crypto/test/counter-install-config.cpp
++++ b/crypto/test/counter-install-config.cpp
+@@ -43,13 +43,13 @@ int main(int argc, char** argv) {
+       shard.ok()->get_hash().bits(), shard_file, 0, vm::load_cell_slice_ref(format)};
+   td::Ref<vm::Cell> closed; require(tlb::pack_cell(closed, descriptor), 1112);
+   block::gen::WorkchainInstanceRecord::Record first{1, closed->get_hash().bits()};
+-  auto identity = block::derive_workchain_instance_id(zero.root_hash, wc, first); require(identity.is_ok(), 1113);
++  auto identity = block::derive_workchain_instance_id(state.global_id, wc, first); require(identity.is_ok(), 1113);
+   // These are explicit isolated-test limits and the historical acceptance
+   // interval. No current cadence, deployment configuration, or default identity.
+   block::WorkchainResourcePolicy resources{4, {64,4096,8,16,16,5},
+       {256,16384,128,8192,64}, {32,128,8192,256,16384,16}};
+   auto shell = block::encode_workchain_engine_parameters(
+-      {400, zero.root_hash, identity.ok(), resources, vm::CellBuilder().finalize()});
++      {400, identity.ok(), resources, vm::CellBuilder().finalize()});
+   require(shell.is_ok(), 1114);
+   block::WorkchainNativeIngressPolicy policy;
+   policy.workchain_id = wc;
+diff --git a/crypto/test/test-workchain-activation-control.cpp b/crypto/test/test-workchain-activation-control.cpp
+index 7e32b0ea8..0ae0062b7 100644
+--- a/crypto/test/test-workchain-activation-control.cpp
++++ b/crypto/test/test-workchain-activation-control.cpp
+@@ -28,7 +28,14 @@ int main() {
+       policy.workchain_id = 2;
+       policy.engine_key = {block::WorkchainFormat::Basic, 0x434e5431};
+       policy.executor_address.set_zero();
+-      policy.engine_configuration = vm::CellBuilder().finalize();
++      // Explicit resolver-only identity values, not an authenticated
++      // installation. The same shell is used for both capability settings.
++      block::WorkchainResourcePolicy resources{4, {64,4096,8,16,16,5},
++          {256,16384,128,8192,64}, {32,128,8192,256,16384,16}};
++      auto shell = block::encode_workchain_engine_parameters(
++          {400, td::Bits256::ones(), resources, vm::CellBuilder().finalize()});
++      if (shell.is_error()) return 329;
++      policy.engine_configuration = shell.move_as_ok();
+       auto ingress = block::encode_workchain_native_ingress_table({policy});
+       if (ingress.is_error() || !dictionary.set_ref(td::BitArray<32>{84}, ingress.move_as_ok())) return 327;
+       auto config = block::Config::unpack_config(dictionary.get_root_cell(), td::Bits256::zero(),
+diff --git a/crypto/test/test-workchain-block.cpp b/crypto/test/test-workchain-block.cpp
+index 5f32cc926..779b6b5bf 100644
+--- a/crypto/test/test-workchain-block.cpp
++++ b/crypto/test/test-workchain-block.cpp
+@@ -219,34 +219,31 @@ TEST(WorkchainBlock, ResourcePolicyWire) {
+ }
+ 
+ TEST(WorkchainBlock, EngineConfigurationFraming) {
+-  // Explicit codec/resolver fixture identities: all-zero genesis and all-one
+-  // instance are distinct, representable bits256 values. These tests do not
+-  // authenticate an MC installation or claim that this pair is D40-issued.
+-  const auto fixture_genesis = td::Bits256::zero();
++  // Explicit codec/resolver fixture instance. This representable wire value
++  // does not authenticate an installation or claim a production-issued identity.
+   const auto fixture_instance = td::Bits256::ones();
+   block::WorkchainResourcePolicy value{2, {1,2,3,4,5,6}, {7,8,9,10,11}, {12,13,14,15,16,17}};
+   // Test-only tagged business payload: the host must preserve, not interpret it.
+   auto payload = vm::CellBuilder().store_long(0x12345678, 32).finalize();
+   for (std::uint32_t version : {2u, 3u, 0x10002u, 0x10003u, 0x80000002u}) {
+     value.admission_version = version;
+-    auto encoded = block::encode_workchain_engine_parameters({400, fixture_genesis, fixture_instance, value, payload});
++    auto encoded = block::encode_workchain_engine_parameters({400, fixture_instance, value, payload});
+     ASSERT_TRUE(encoded.is_ok());
+     auto root = encoded.move_as_ok();
+     auto cs = vm::load_cell_slice(root);
+-    ASSERT_EQ(cs.size(), 576u);
++    ASSERT_EQ(cs.size(), 320u);
+     ASSERT_EQ(cs.size_refs(), 2u);
+     ASSERT_EQ(cs.fetch_ulong(32), block::gen::UnoV2EngineConfiguration::cons_tag[0]);
+     ASSERT_EQ(cs.fetch_ulong(32), 400u);
+     auto decoded = block::decode_workchain_engine_parameters(root);
+     ASSERT_TRUE(decoded.is_ok());
+-    ASSERT_EQ(decoded.ok().genesis_hash, fixture_genesis);
+     ASSERT_EQ(decoded.ok().instance_id, fixture_instance);
+     ASSERT_EQ(decoded.ok().resources.admission_version, version);
+     ASSERT_EQ(decoded.ok().parameters->get_hash(), payload->get_hash());
+     auto resources = cs.fetch_ref();
+     for (unsigned defect = 0; defect < 5; ++defect) {
+       vm::CellBuilder b;
+-      b.store_long(defect == 0 ? 0 : block::gen::UnoV2EngineConfiguration::cons_tag[0], 32).store_long(400, 32).store_bits(fixture_genesis.bits(), 256).store_bits(fixture_instance.bits(), 256);
++      b.store_long(defect == 0 ? 0 : block::gen::UnoV2EngineConfiguration::cons_tag[0], 32).store_long(400, 32).store_bits(fixture_instance.bits(), 256);
+       if (defect != 1) b.store_ref(resources);
+       if (defect != 2) b.store_ref(payload);
+       if (defect == 3) b.store_long(0, 1);
+@@ -255,16 +252,14 @@ TEST(WorkchainBlock, EngineConfigurationFraming) {
+     }
+   }
+   ASSERT_TRUE(block::decode_workchain_engine_parameters({}).is_error());
+-  ASSERT_TRUE(block::encode_workchain_engine_parameters({400, fixture_genesis, fixture_instance, value, {}}).is_error());
++  ASSERT_TRUE(block::encode_workchain_engine_parameters({400, fixture_instance, value, {}}).is_error());
+ }
+ 
+ // These are fixture acceptance records, not production defaults or a claim
+ // that a deployment has passed K acceptance at these intervals.
+ TEST(WorkchainBlock, EngineConfigurationAcceptedCadence) {
+-  // Explicit codec/resolver fixture identities: all-zero genesis and all-one
+-  // instance are distinct, representable bits256 values. These tests do not
+-  // authenticate an MC installation or claim that this pair is D40-issued.
+-  const auto fixture_genesis = td::Bits256::zero();
++  // Explicit codec/resolver fixture instance. This representable wire value
++  // does not authenticate an installation or claim a production-issued identity.
+   const auto fixture_instance = td::Bits256::ones();
+   static_assert(!std::is_default_constructible_v<block::WorkchainEngineParameters>);
+   static_assert(!std::is_aggregate_v<block::WorkchainEngineParameters>);
+@@ -275,17 +270,17 @@ TEST(WorkchainBlock, EngineConfigurationAcceptedCadence) {
+   for (std::uint32_t accepted : {0u, 1u, 400u, 401u, UINT32_MAX}) {
+     // Recording and installation validation are separate; even zero is a
+     // representable explicit value, never an omitted-field default.
+-    auto encoded = block::encode_workchain_engine_parameters({accepted, fixture_genesis, fixture_instance, resources, payload});
++    auto encoded = block::encode_workchain_engine_parameters({accepted, fixture_instance, resources, payload});
+     ASSERT_EQ(encoded.is_ok() ? 0 : 401, 0);
+     auto cs = vm::load_cell_slice(encoded.ok());
+-    ASSERT_EQ(cs.size() == 576 && cs.size_refs() == 2 ? 0 : 402, 0);
++    ASSERT_EQ(cs.size() == 320 && cs.size_refs() == 2 ? 0 : 402, 0);
+     ASSERT_EQ(cs.fetch_ulong(32) == block::gen::UnoV2EngineConfiguration::cons_tag[0] && cs.fetch_ulong(32) == accepted ? 0 : 403, 0);
+     auto decoded = block::decode_workchain_engine_parameters(encoded.ok());
+     ASSERT_EQ(decoded.is_ok() ? 0 : 404, 0);
+     ASSERT_EQ(decoded.ok().k_accepted_target_rate_ms == accepted ? 0 : 405, 0);
+   }
+   auto resource = block::encode_workchain_resource_policy(resources).move_as_ok();
+-  auto missing = vm::CellBuilder().store_long(block::gen::UnoV2EngineConfiguration::cons_tag[0], 32).store_bits(fixture_genesis.bits(), 256).store_bits(fixture_instance.bits(), 256).store_ref(resource).store_ref(payload).finalize();
++  auto missing = vm::CellBuilder().store_long(block::gen::UnoV2EngineConfiguration::cons_tag[0], 32).store_bits(fixture_instance.bits(), 256).store_ref(resource).store_ref(payload).finalize();
+   ASSERT_EQ(block::decode_workchain_engine_parameters(missing).is_error() ? 0 : 406, 0);
+   auto retired_cadence = vm::CellBuilder().store_long(0x6e1fa05f, 32).store_long(400, 32)
+       .store_ref(resource).store_ref(payload).finalize();
+@@ -402,10 +397,8 @@ TEST(WorkchainBlock, ResourcePolicyRejectsSpecialBeforeDecoder) {
+ }
+ 
+ TEST(WorkchainBlock, ResourcePolicyEncodedSpecialCells) {
+-  // Explicit codec/resolver fixture identities: all-zero genesis and all-one
+-  // instance are distinct, representable bits256 values. These tests do not
+-  // authenticate an MC installation or claim that this pair is D40-issued.
+-  const auto fixture_genesis = td::Bits256::zero();
++  // Explicit codec/resolver fixture instance. This representable wire value
++  // does not authenticate an installation or claim a production-issued identity.
+   const auto fixture_instance = td::Bits256::ones();
+   block::WorkchainResourcePolicy value{2, {1,2,3,4,5,6}, {7,8,9,10,11}, {12,13,14,15,16,17}};
+   auto resource = block::encode_workchain_resource_policy(value).move_as_ok();
+@@ -426,13 +419,13 @@ TEST(WorkchainBlock, ResourcePolicyEncodedSpecialCells) {
+                 .store_ref(position == 3 ? special : state)
+                 .store_ref(position == 4 ? special : work).finalize();
+       auto framing = position == 0 ? special
+-          : vm::CellBuilder().store_long(block::gen::UnoV2EngineConfiguration::cons_tag[0], 32).store_long(400, 32).store_bits(fixture_genesis.bits(), 256).store_bits(fixture_instance.bits(), 256)
++          : vm::CellBuilder().store_long(block::gen::UnoV2EngineConfiguration::cons_tag[0], 32).store_long(400, 32).store_bits(fixture_instance.bits(), 256)
+                 .store_ref(altered_resource).store_ref(plain).finalize();
+       ASSERT_TRUE(block::decode_workchain_engine_parameters(framing).is_error());
+       if (position != 0) ASSERT_TRUE(block::decode_workchain_resource_policy(altered_resource).is_error());
+     }
+     // Business contents are not the host's wire profile to interpret.
+-    auto opaque = block::encode_workchain_engine_parameters({400, fixture_genesis, fixture_instance, value, special}).move_as_ok();
++    auto opaque = block::encode_workchain_engine_parameters({400, fixture_instance, value, special}).move_as_ok();
+     ASSERT_TRUE(block::decode_workchain_engine_parameters(opaque).is_ok());
+   }
+ }
+@@ -1296,6 +1289,17 @@ block::MaterializedNativeCells own_native_fixture(const std::vector<td::Ref<vm::
+ 
+ using CounterEngine = block::test::CounterEngine;
+ 
++td::Ref<vm::Cell> counter_configuration_shell(td::Ref<vm::Cell> business) {
++  // Resolver-only fixture: this explicit instance identity is a wire value,
++  // not a claim of installation against an authenticated masterchain state.
++  // Live installation fixtures derive their claims from their actual zerostate.
++  block::WorkchainResourcePolicy fixture_resources{4, {64,4096,8,16,16,5},
++      {256,16384,128,8192,64}, {32,128,8192,256,16384,16}};
++  return block::encode_workchain_engine_parameters(
++      {400, number(4002)->get_hash().bits(),
++       fixture_resources, std::move(business)}).move_as_ok();
++}
++
+ std::unique_ptr<block::Config> block_configuration(int version = block::kBlockTransitionMinGlobalVersion,
+                                                  td::uint64 capabilities = tos::capBlockTransition,
+                                                  td::uint64 vm_mode = 0, bool include_ingress = true) {
+@@ -1308,7 +1312,7 @@ std::unique_ptr<block::Config> block_configuration(int version = block::kBlockTr
+   policy.engine_key = {block::WorkchainFormat::Basic, 0x434e5431};
+   policy.vm_mode = vm_mode;
+   policy.executor_address.set_zero();
+-  policy.engine_configuration = vm::CellBuilder().finalize();
++  policy.engine_configuration = counter_configuration_shell(vm::CellBuilder().finalize());
+   if (include_ingress) {
+     CHECK(config.set_ref(td::BitArray<32>(84u), block::encode_workchain_native_ingress_table({policy}).move_as_ok()));
+   }
+@@ -1316,6 +1320,27 @@ std::unique_ptr<block::Config> block_configuration(int version = block::kBlockTr
+                                      block::Config::needCapabilities).move_as_ok();
+ }
+ 
++TEST(WorkchainBlock, CounterConfigurationEnvelope) {
++  auto config = block_configuration();
++  auto table = block::decode_workchain_native_ingress_table(config->get_config_param(84)).move_as_ok();
++  auto shell = table.at(2).engine_configuration;
++  block::WorkchainExecutionDescriptor descriptor;
++  descriptor.workchain_id = 2;
++  descriptor.active = true;
++  descriptor.vm_version = 0x434e5431;
++  CounterEngine engine;
++  ASSERT_EQ(engine.validate_and_resolve_config(descriptor, *config, shell).is_ok() ? 0 : 1125, 0);
++  // A bare empty cell must fail framing; it is not empty business parameters.
++  ASSERT_EQ(engine.validate_and_resolve_config(descriptor, *config, vm::CellBuilder().finalize()).is_error() ? 0 : 1126, 0);
++  auto decoded = block::decode_workchain_engine_parameters(shell).move_as_ok();
++  decoded.parameters = vm::CellBuilder().store_long(0, 1).finalize();
++  auto nonempty = block::encode_workchain_engine_parameters(decoded).move_as_ok();
++  ASSERT_TRUE(block::decode_workchain_engine_parameters(nonempty).is_ok());
++  // Framing and descriptor are valid; the independent business predicate alone
++  // rejects this input. No error-text matching substitutes for that isolation.
++  ASSERT_EQ(engine.validate_and_resolve_config(descriptor, *config, nonempty).is_error() ? 0 : 1127, 0);
++}
++
+ td::Ref<vm::Cell> shard_fixture(int shard_wc = 2, int account_wc = 2, bool active = true,
+                               unsigned account_count = 1, bool before_split = false, unsigned prefix_bits = 0,
+                               std::uint64_t counter_value = 40, bool wrong_dictionary_key = false,
+@@ -9042,10 +9067,8 @@ TEST(WorkchainBlock, PublicIngressRequiresStandardWorkchainRange) {
+ }
+ 
+ TEST(WorkchainBlock, DualNativeIngressCodecAndVersion) {
+-  // Explicit codec/resolver fixture identities: all-zero genesis and all-one
+-  // instance are distinct, representable bits256 values. These tests do not
+-  // authenticate an MC installation or claim that this pair is D40-issued.
+-  const auto fixture_genesis = td::Bits256::zero();
++  // Explicit codec/resolver fixture instance. This representable wire value
++  // does not authenticate an installation or claim a production-issued identity.
+   const auto fixture_instance = td::Bits256::ones();
+   block::WorkchainNativeIngressPolicy policy;
+   policy.workchain_id = 2;
+@@ -9055,7 +9078,7 @@ TEST(WorkchainBlock, DualNativeIngressCodecAndVersion) {
+   block::WorkchainResourcePolicy resources{2, {64,4096,8,16,16,5},
+       {256,16384,128,8192,64}, {32,128,8192,256,16384,16}};
+   auto business = vm::CellBuilder().store_long(0x12345678, 32).finalize();
+-  policy.engine_configuration = block::encode_workchain_engine_parameters({400, fixture_genesis, fixture_instance, resources, business}).move_as_ok();
++  policy.engine_configuration = block::encode_workchain_engine_parameters({400, fixture_instance, resources, business}).move_as_ok();
+   auto encoded = block::encode_workchain_native_ingress_policy(policy);
+   ASSERT_TRUE(encoded.is_ok());
+   auto root = encoded.move_as_ok();
+@@ -9104,8 +9127,8 @@ TEST(WorkchainBlock, DualNativeIngressCodecAndVersion) {
+       descriptor.vm_version = 0x434e5431;
+       ASSERT_TRUE(registry.resolve_block(descriptor, *unpacked.ok()).is_error());
+       policy.custody_address.reset();
+-      // The singleton engine retains its original, unframed empty payload.
+-      policy.engine_configuration = vm::CellBuilder().finalize();
++      // Singleton and dual policies share framing; Counter business parameters are empty.
++      policy.engine_configuration = counter_configuration_shell(vm::CellBuilder().finalize());
+       ASSERT_TRUE(config.set_ref(td::BitArray<32>{84},
+           block::encode_workchain_native_ingress_table({policy}).move_as_ok()));
+       auto legacy = block::Config::unpack_config(config.get_root_cell(), td::Bits256::zero(),
+@@ -9117,10 +9140,8 @@ TEST(WorkchainBlock, DualNativeIngressCodecAndVersion) {
+ }
+ 
+ TEST(WorkchainBlock, MultiAccountAdmissionVersionInstallation) {
+-  // Explicit codec/resolver fixture identities: all-zero genesis and all-one
+-  // instance are distinct, representable bits256 values. These tests do not
+-  // authenticate an MC installation or claim that this pair is D40-issued.
+-  const auto fixture_genesis = td::Bits256::zero();
++  // Explicit codec/resolver fixture instance. This representable wire value
++  // does not authenticate an installation or claim a production-issued identity.
+   const auto fixture_instance = td::Bits256::ones();
+   vm::Dictionary configuration(32);
+   // A complete, test-only configuration makes this exercise valid_config_data,
+@@ -9180,7 +9201,7 @@ TEST(WorkchainBlock, MultiAccountAdmissionVersionInstallation) {
+   for (std::uint32_t admission : {0u, 1u, 2u, 3u, 4u, 5u, 0x10002u, 0x10003u, 0x10004u, 0x80000002u}) {
+     block::WorkchainResourcePolicy resources{admission, {64,4096,8,16,16,5},
+         {256,16384,128,8192,64}, {32,128,8192,256,16384,16}};
+-    policy.engine_configuration = block::encode_workchain_engine_parameters({400, fixture_genesis, fixture_instance, resources, business}).move_as_ok();
++    policy.engine_configuration = block::encode_workchain_engine_parameters({400, fixture_instance, resources, business}).move_as_ok();
+     ASSERT_TRUE(configuration.set_ref(td::BitArray<32>{84},
+         block::encode_workchain_native_ingress_table({policy}).move_as_ok()));
+     ASSERT_EQ(block::validate_native_ingress_presence(configuration).is_ok(), admission == 2 || admission == 3 || admission == 4);
+@@ -9202,7 +9223,7 @@ TEST(WorkchainBlock, MultiAccountAdmissionVersionInstallation) {
+     if (field == 9) resources.work_output.max_effect_bits = 0;
+     if (field == 10) resources.work_output.max_output_cells = 0;
+     if (field == 11) resources.work_output.max_output_bits = 0;
+-    policy.engine_configuration = block::encode_workchain_engine_parameters({400, fixture_genesis, fixture_instance, resources, business}).move_as_ok();
++    policy.engine_configuration = block::encode_workchain_engine_parameters({400, fixture_instance, resources, business}).move_as_ok();
+     ASSERT_TRUE(configuration.set_ref(td::BitArray<32>{84},
+         block::encode_workchain_native_ingress_table({policy}).move_as_ok()));
+     ASSERT_TRUE(!block::valid_config_data(configuration.get_root_cell(), td::Bits256::zero()));
+@@ -9210,7 +9231,7 @@ TEST(WorkchainBlock, MultiAccountAdmissionVersionInstallation) {
+   // Missing either mandatory reference is rejected by the installation gate.
+   for (unsigned refs = 0; refs < 2; ++refs) {
+     vm::CellBuilder malformed;
+-    malformed.store_long(block::gen::UnoV2EngineConfiguration::cons_tag[0], 32).store_long(400, 32).store_bits(fixture_genesis.bits(), 256).store_bits(fixture_instance.bits(), 256);
++    malformed.store_long(block::gen::UnoV2EngineConfiguration::cons_tag[0], 32).store_long(400, 32).store_bits(fixture_instance.bits(), 256);
+     if (refs) malformed.store_ref(business);
+     policy.engine_configuration = malformed.finalize();
+     ASSERT_TRUE(configuration.set_ref(td::BitArray<32>{84},
+@@ -9220,10 +9241,8 @@ TEST(WorkchainBlock, MultiAccountAdmissionVersionInstallation) {
+ }
+ 
+ TEST(WorkchainBlock, AccountRegistryReplayConnectivity) {
+-  // Explicit codec/resolver fixture identities: all-zero genesis and all-one
+-  // instance are distinct, representable bits256 values. These tests do not
+-  // authenticate an MC installation or claim that this pair is D40-issued.
+-  const auto fixture_genesis = td::Bits256::zero();
++  // Explicit codec/resolver fixture instance. This representable wire value
++  // does not authenticate an installation or claim a production-issued identity.
+   const auto fixture_instance = td::Bits256::ones();
+   // Connectivity only: a local registry and explicit synthetic parameters.
+   // No live actor gate is opened and no confidential proof is implemented here.
+@@ -9326,7 +9345,7 @@ TEST(WorkchainBlock, AccountRegistryReplayConnectivity) {
+   ingress.vm_mode = 7;
+   ingress.executor_address = a;
+   ingress.custody_address = b;
+-  ingress.engine_configuration = block::encode_workchain_engine_parameters({400, fixture_genesis, fixture_instance, resources,
++  ingress.engine_configuration = block::encode_workchain_engine_parameters({400, fixture_instance, resources,
+       vm::CellBuilder().store_long(0x50524231,32).store_long(37,8).finalize()}).move_as_ok();
+   vm::Dictionary config_dict(32);
+   vm::CellBuilder version;
+@@ -9500,10 +9519,8 @@ TEST(WorkchainBlock, AccountRegistryReplayConnectivity) {
+ }
+ 
+ TEST(WorkchainBlock, MultiAccountRegistryBinding) {
+-  // Explicit codec/resolver fixture identities: all-zero genesis and all-one
+-  // instance are distinct, representable bits256 values. These tests do not
+-  // authenticate an MC installation or claim that this pair is D40-issued.
+-  const auto fixture_genesis = td::Bits256::zero();
++  // Explicit codec/resolver fixture instance. This representable wire value
++  // does not authenticate an installation or claim a production-issued identity.
+   const auto fixture_instance = td::Bits256::ones();
+   struct Engine final : block::RegisteredWorkchainAccountEngine {
+     td::Result<std::uint64_t> proof_work(
+@@ -9560,7 +9577,7 @@ TEST(WorkchainBlock, MultiAccountRegistryBinding) {
+       {256,16384,128,8192,64}, {32,128,8192,256,16384,16}};
+   auto engine_parameters = [&](unsigned value) {
+     return block::encode_workchain_engine_parameters(
+-        {400, fixture_genesis, fixture_instance, resource_policy, vm::CellBuilder().store_long(value, 8).finalize()}).move_as_ok();
++        {400, fixture_instance, resource_policy, vm::CellBuilder().store_long(value, 8).finalize()}).move_as_ok();
+   };
+   block::WorkchainNativeIngressPolicy policy;
+   policy.workchain_id = 2;
+@@ -9821,7 +9838,7 @@ TEST(WorkchainBlock, MultiAccountRegistryBinding) {
+   policy.custody_address.reset();
+   policy.descriptor_version = descriptor.version;
+   policy.vm_mode = descriptor.vm_mode;
+-  policy.engine_configuration = vm::CellBuilder().finalize();
++  policy.engine_configuration = counter_configuration_shell(vm::CellBuilder().finalize());
+   auto singleton_cut = configuration(16, tos::capBlockTransition, &descriptor);
+   auto live = reverse.resolve_scoped_workchain(2, *singleton_cut);
+   ASSERT_TRUE(live.is_ok() && live.ok().has_value());
+@@ -10233,7 +10250,7 @@ TEST(WorkchainBlock, ReceiverRequiresMatchingPublicIngressPolicy) {
+   policy.workchain_id = 2;
+   policy.engine_key = {block::WorkchainFormat::Basic, 0x434e5431};
+   policy.executor_address.set_zero();
+-  policy.engine_configuration = vm::CellBuilder().finalize();
++  policy.engine_configuration = counter_configuration_shell(vm::CellBuilder().finalize());
+   auto resolve = [&](std::vector<block::WorkchainNativeIngressPolicy> policies) {
+     auto cfg = configuration(block::encode_workchain_native_ingress_table(policies).move_as_ok());
+     return registry.resolve_block(descriptor, *cfg);
+@@ -10252,9 +10269,13 @@ TEST(WorkchainBlock, ReceiverRequiresMatchingPublicIngressPolicy) {
+   wrong.executor_address = td::Bits256::ones();
+   ASSERT_TRUE(resolve({wrong}).is_error());
+   wrong = policy;
+-  wrong.engine_configuration = number(0);
++  // Preserve the original nonempty-business defect inside valid framing.
++  wrong.engine_configuration = counter_configuration_shell(number(0));
++  ASSERT_TRUE(block::decode_workchain_engine_parameters(wrong.engine_configuration).is_ok());
+   ASSERT_TRUE(resolve({wrong}).is_error());
+-  wrong.engine_configuration = vm::CellBuilder().store_ref(policy.engine_configuration).finalize();
++  wrong.engine_configuration = counter_configuration_shell(
++      vm::CellBuilder().store_ref(vm::CellBuilder().finalize()).finalize());
++  ASSERT_TRUE(block::decode_workchain_engine_parameters(wrong.engine_configuration).is_ok());
+   ASSERT_TRUE(resolve({wrong}).is_error());
+   auto malformed = configuration(number(0));
+   ASSERT_TRUE(registry.resolve_block(descriptor, *malformed).is_error());
+diff --git a/crypto/test/test-workchain-instance-identity.cpp b/crypto/test/test-workchain-instance-identity.cpp
+index c99732162..644eb77c9 100644
+--- a/crypto/test/test-workchain-instance-identity.cpp
++++ b/crypto/test/test-workchain-instance-identity.cpp
+@@ -12,15 +12,15 @@ td::Bits256 bits(unsigned byte) {
+ }
+ td::Ref<vm::Cell> issue(const td::Ref<vm::Cell>& ledger, int wc, const td::Ref<vm::Cell>& descriptor) {
+   block::gen::WorkchainInstanceRecord::Record record{1, descriptor->get_hash().bits()};
+-  auto id = block::derive_workchain_instance_id(bits(7), wc, record); require(id.is_ok(), 800);
+-  auto next = block::stage_first_workchain_instance(ledger, wc, bits(7), descriptor, id.move_as_ok());
++  auto id = block::derive_workchain_instance_id(-23901, wc, record); require(id.is_ok(), 800);
++  auto next = block::stage_first_workchain_instance(ledger, wc, -23901, descriptor, id.move_as_ok());
+   require(next.is_ok(), 801); return next.move_as_ok().ledger;
+ }
+ td::Ref<vm::Cell> configuration_for(std::int32_t workchain, const td::Ref<vm::Cell>& descriptor, const td::Bits256& id) {
+   block::WorkchainResourcePolicy resources{4, {64,4096,8,16,16,5},
+       {256,16384,128,8192,64}, {32,128,8192,256,16384,16}};
+   auto payload = vm::CellBuilder().finalize();
+-  auto shell = block::encode_workchain_engine_parameters({400, bits(7), id, resources, payload});
++  auto shell = block::encode_workchain_engine_parameters({400, id, resources, payload});
+   require(shell.is_ok(), 830);
+   block::WorkchainNativeIngressPolicy policy;
+   policy.workchain_id = workchain;
+@@ -65,49 +65,49 @@ int main(int argc, char** argv) {
+   auto missing = block::read_workchain_instance_ledger({});
+   require(missing.is_error() && missing.error().code() == int(block::InstanceIdentityError::MissingLedger), 803);
+   auto frozen = two->get_hash();
+-  auto failed = block::stage_first_workchain_instance(two, 11, bits(7), descriptor, bits(99));
++  auto failed = block::stage_first_workchain_instance(two, 11, -23901, descriptor, bits(99));
+   require(failed.is_error() && failed.error().code() == int(block::InstanceIdentityError::IdentityMismatch), 807);
+   require(two->get_hash() == frozen, 808);
+   auto absent = block::read_workchain_instance_record(two, 11);
+   require(absent.is_ok() && !absent.move_as_ok(), 809);
+   auto prior = block::read_workchain_instance_record(two, 2); require(prior.is_ok(), 810);
+   auto record = prior.move_as_ok(); require(bool(record), 811);
+-  auto before = block::derive_workchain_instance_id(bits(7), 2, *record); require(before.is_ok(), 812);
++  auto before = block::derive_workchain_instance_id(-23901, 2, *record); require(before.is_ok(), 812);
+   auto updated_descriptor = descriptor_at(13);
+   require(updated_descriptor->get_hash() != descriptor->get_hash(), 813);
+   auto identity = before.move_as_ok();
+-  auto first = block::reconstruct_workchain_instance_ledger(empty, configuration(descriptor, identity), bits(7), 2);
++  auto first = block::reconstruct_workchain_instance_ledger(empty, configuration(descriptor, identity), -23901, 2);
+   require(first.is_ok(), 840);
+   auto installed = first.move_as_ok();
+   auto installed_record = block::read_workchain_instance_record(installed, 2); require(installed_record.is_ok(), 841);
+   auto actual = installed_record.move_as_ok(); require(bool(actual), 842);
+   require(actual->instance_seq == 1 && actual->creation_descriptor_hash == descriptor->get_hash().bits(), 843);
+   require(block::check_workchain_instance_ledger_delta(installed, one).is_ok(), 844);
+-  auto update = block::reconstruct_workchain_instance_ledger(installed, configuration(updated_descriptor, identity), bits(7), 2);
++  auto update = block::reconstruct_workchain_instance_ledger(installed, configuration(updated_descriptor, identity), -23901, 2);
+   require(update.is_ok(), 814);
+   require(update.move_as_ok()->get_hash() == installed->get_hash(), 815);
+-  auto second = block::stage_first_workchain_instance(installed, 2, bits(7), descriptor, identity);
++  auto second = block::stage_first_workchain_instance(installed, 2, -23901, descriptor, identity);
+   require(second.is_error() && second.error().code() == int(block::InstanceIdentityError::SuccessorUnsupported), 846);
+   // Removing the record cannot change the authenticated predecessor used by
+   // reconstruction. Even though the configuration still contains wc=2, the
+   // candidate with an empty ledger must fail the complete-root comparison.
+-  auto expected = block::reconstruct_workchain_instance_ledger(installed, configuration(descriptor, identity), bits(7), 2);
++  auto expected = block::reconstruct_workchain_instance_ledger(installed, configuration(descriptor, identity), -23901, 2);
+   require(expected.is_ok(), 847);
+   auto reset = block::check_workchain_instance_ledger_delta(expected.move_as_ok(), empty);
+   if (selected == 0 || selected == 7) require(reset.is_error() && reset.error().code() == int(block::InstanceIdentityError::UnexpectedLedgerDelta), 848);
+-  auto successor = block::stage_first_workchain_instance(two, 2, bits(7), updated_descriptor, bits(99));
++  auto successor = block::stage_first_workchain_instance(two, 2, -23901, updated_descriptor, bits(99));
+   require(successor.is_error() && successor.error().code() == int(block::InstanceIdentityError::SuccessorUnsupported), 816);
+   // A legitimate first wc=3 installation must survive the same host-wide
+   // reconstruction that retains unrelated historical entries.
+   block::gen::WorkchainInstanceRecord::Record peer_record{1, descriptor->get_hash().bits()};
+-  auto peer_id = block::derive_workchain_instance_id(bits(7), 3, peer_record); require(peer_id.is_ok(), 850);
++  auto peer_id = block::derive_workchain_instance_id(-23901, 3, peer_record); require(peer_id.is_ok(), 850);
+   auto peer_config = configuration_for(3, descriptor, peer_id.move_as_ok());
+-  auto peer = block::reconstruct_configured_workchain_instances(two, peer_config, bits(7));
++  auto peer = block::reconstruct_configured_workchain_instances(two, peer_config, -23901);
+   require(peer.is_ok(), 851);
+   auto peer_ledger = peer.move_as_ok();
+   auto peer_expected = issue(two, 3, descriptor);
+   require(peer_ledger->get_hash() == peer_expected->get_hash(), 852);
+-  auto unchanged_peer = block::reconstruct_configured_workchain_instances(peer_ledger, peer_config, bits(7));
++  auto unchanged_peer = block::reconstruct_configured_workchain_instances(peer_ledger, peer_config, -23901);
+   require(unchanged_peer.is_ok(), 853);
+   require(unchanged_peer.move_as_ok()->get_hash() == peer_ledger->get_hash(), 854);
+   // A candidate cannot substitute wc=3's commitment, even though wc=2 and
+diff --git a/crypto/test/workchain-counter-engine.h b/crypto/test/workchain-counter-engine.h
+index 4efc0330f..38e25eb2c 100644
+--- a/crypto/test/workchain-counter-engine.h
++++ b/crypto/test/workchain-counter-engine.h
+@@ -3,6 +3,7 @@
+ #include <limits>
+ 
+ #include "block/workchain-execution-dispatch.h"
++#include "block/workchain-resource-policy.h"
+ #include "vm/cells.h"
+ #include "vm/cellslice.h"
+ #include "vm/dict.h"
+@@ -52,8 +53,10 @@ class CounterEngine final : public block::RegisteredWorkchainBlockEngine {
+   td::Result<std::shared_ptr<const block::WorkchainEngineConfig>> validate_and_resolve_config(
+       const block::WorkchainExecutionDescriptor& descriptor, const block::Config&,
+       const td::Ref<vm::Cell>& engine_configuration) const override {
+-    if (engine_configuration.is_null() ||
+-        engine_configuration->get_hash() != vm::CellBuilder().finalize()->get_hash()) {
++    TRY_RESULT(shell, block::decode_workchain_engine_parameters(engine_configuration));
++    // The host installs the identity-bearing shell. Empty means the business
++    // parameters only; accepting a bare empty cell would bypass that contract.
++    if (shell.parameters->get_hash() != vm::CellBuilder().finalize()->get_hash()) {
+       return td::Status::Error("counter requires an empty engine configuration");
+     }
+     if (descriptor.min_split != 0 || descriptor.max_split != 0) {
+diff --git a/crypto/test/workchain-instance-fixture-migration.md b/crypto/test/workchain-instance-fixture-migration.md
+index 3567d4e1c..e680636a6 100644
+--- a/crypto/test/workchain-instance-fixture-migration.md
++++ b/crypto/test/workchain-instance-fixture-migration.md
+@@ -1,5 +1,14 @@
+ # D40 caller migration and Counter readiness blocker
+ 
++**Latest coordinator scope:** nine Counter cases are owner-deferred as obsolete
++zerostate installation shapes, neither regression failures nor passes: readiness,
++activation-missing_capability, activation-old_version, disk-integration,
++idle-replay, self-delivery, cross-delivery, native-sender and engine-config.
++The Python harness decoder is not deferred. The initial three-case disposition
++below is historical; the complete current set and limits are recorded in
++`doc/measurements/uno-d40-caller-migration-2d5d7fa13/coordinator-nine-case-extension.json`.
++Merged-run causes must still be checked individually.
++
+ Source checkpoint: `2d5d7fa13` (parent `dd7a9afa3`).
+ 
+ Nine `encode_workchain_engine_parameters` call sites in
+diff --git a/doc/measurements/uno-d40-caller-migration-2d5d7fa13/artifact-manifest.json b/doc/measurements/uno-d40-caller-migration-2d5d7fa13/artifact-manifest.json
+index 49af5967d..cd2c8f211 100644
+--- a/doc/measurements/uno-d40-caller-migration-2d5d7fa13/artifact-manifest.json
++++ b/doc/measurements/uno-d40-caller-migration-2d5d7fa13/artifact-manifest.json
+@@ -73,8 +73,9 @@
+   "control.stderr.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+   "control.stdout.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+   "coordinator-disposition.json": "b10321f812b75ff9167cc359f31d096a8de5398799ce1525138822bae6faedb3",
++  "coordinator-nine-case-extension.json": "6910821b9de0ca652e52bcb564e6176dca2a313eae6ec84ebf6236ebb1c91404",
+   "failure-comparison.json": "8511cd7f50cec97d1122f0476fd85da3c63dbd7c56e0288c210b1df68b80a5e1",
+-  "failure-comparison.md": "0490be0917785a17f84e2e01e73b5941f30e06a4f8d01053a3fb154b5bf2f01f",
++  "failure-comparison.md": "384d9eeed47c3f647b3f04ef94316b56e59449404c2417410f1d03148d3a52d2",
+   "final-build.stderr.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+   "final-build.stdout.log": "8ec4301eb5b13086d59c605385bde6f1e2ae156536400a6dadd6e9b97ff82db8",
+   "final-regression.stderr.log": "18e00877dc1071c85cd4f479d451bebeef8309022e46cf8c63b0bed5151984a4",
+@@ -235,7 +236,7 @@
+   "readiness.stdout.log": "f96cbe15d6eed53b0e4e695dbde71bd533492b2d293b45347420f39926311875",
+   "readiness.xml": "d155cd04f6d42aa7fdec7a3487b2e01e8dcee53faf58e009595d359b49345969",
+   "registered-tests.json": "d8ff701d59dd6e91ad8d54a34ea9bb8d26fec75ef326b0d85246cf9a087c0c18",
+-  "report.json": "9119c8197997a6610a228ae304441765779f77ea5f1125240148f59f88b33616",
++  "report.json": "1bf2df59a7b5924ee3ba419a7f867b6cf1e190614c68b6901e920084d579109d",
+   "restore-build.stderr.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+   "restore-build.stdout.log": "c5534836ed2f57c068131c2619585a5daaf1c804d224f2c2d4f27d6ad6441290",
+   "retain-fixtures.py": "8ec471e7f22c0820394cd25d43ca7ac036b912d7fe6908b0c0ff15beb3ad0737",
+diff --git a/doc/measurements/uno-d40-caller-migration-2d5d7fa13/failure-comparison.md b/doc/measurements/uno-d40-caller-migration-2d5d7fa13/failure-comparison.md
+index 8c4801025..0a65d97fb 100644
+--- a/doc/measurements/uno-d40-caller-migration-2d5d7fa13/failure-comparison.md
++++ b/doc/measurements/uno-d40-caller-migration-2d5d7fa13/failure-comparison.md
+@@ -32,3 +32,13 @@ framing failures, the six runs that never entered due to the fixture cap, and
+ the missing TOL_STDLIB failure. Raw JUnit and logs have not been rewritten.
+ Singleton has no identity exemption. See `coordinator-disposition.json` for the
+ machine-readable disposition and the boundary of the next fixture unit.
++
++## Subsequent nine-case scope extension
++
++The coordinator subsequently included all six singleton bootstrap framing cases
++in the same post-zerostate reshaping unit. The current owner-deferred set is
++therefore nine cases, neither passes nor regression failures. The earlier
++three-case disposition and original observations above remain historical.
++`coordinator-nine-case-extension.json` lists the complete set. The Python harness
++is explicitly not deferred and must pass. A verifies causes on the merged tree;
++matching a name or count does not replace that check.
+diff --git a/doc/measurements/uno-d40-caller-migration-2d5d7fa13/report.json b/doc/measurements/uno-d40-caller-migration-2d5d7fa13/report.json
+index b6b90d90a..3eaa158f1 100644
+--- a/doc/measurements/uno-d40-caller-migration-2d5d7fa13/report.json
++++ b/doc/measurements/uno-d40-caller-migration-2d5d7fa13/report.json
+@@ -78,5 +78,6 @@
+     "/proc permission denials and vanished links are enumerated; no claim of inspecting inaccessible processes. Successful new Counter runs follow their existing auto-removal lifecycle; moved historical directories were not deleted."
+   ],
+   "subsequent_coordinator_disposition": "coordinator-disposition.json",
+-  "historical_scope_note": "The original scope statement records the pending decision at evidence production. The subsequent coordinator disposition resolves singleton identity applicability and closes this migration scope without changing raw observations."
++  "historical_scope_note": "The original scope statement records the pending decision at evidence production. The subsequent coordinator disposition resolves singleton identity applicability and closes this migration scope without changing raw observations.",
++  "latest_coordinator_disposition": "coordinator-nine-case-extension.json"
+ }
+diff --git a/validator/impl/collator.cpp b/validator/impl/collator.cpp
+index fbb4444fa..dc78b3d7d 100644
+--- a/validator/impl/collator.cpp
++++ b/validator/impl/collator.cpp
+@@ -5414,13 +5414,13 @@ bool Collator::create_mc_state_extra() {
+   // D52: stage issuance after validating the proposed configuration, before
+   // installing it. The predecessor ledger is authenticated MC state; a
+   // configuration transaction can supply a claim but cannot supply this root.
+-  auto genesis = config_->get_zerostate_id();
+-  if (!genesis.is_masterchain() || !genesis.is_valid_full()) {
+-    return fatal_error("authenticated masterchain genesis identity is missing");
++  const auto instance_global_id = config_->get_global_blockchain_id();
++  if (!instance_global_id) {
++    return fatal_error("authenticated blockchain global id is missing");
+   }
+   try {
+     auto instances = block::reconstruct_configured_workchain_instances(
+-        state_extra.r1.workchain_instances, cfg_smc_config, genesis.root_hash);
++        state_extra.r1.workchain_instances, cfg_smc_config, instance_global_id);
+     if (instances.is_error()) {
+       return fatal_error(instances.move_as_error_prefix("cannot stage workchain instance installation: "));
+     }
+diff --git a/validator/impl/validate-query.cpp b/validator/impl/validate-query.cpp
+index cca0dc778..9cb73226d 100644
+--- a/validator/impl/validate-query.cpp
++++ b/validator/impl/validate-query.cpp
+@@ -7294,13 +7294,13 @@ bool ValidateQuery::check_mc_state_extra() {
+     } catch (vm::VmVirtError& error) {
+       return fatal_error(PSTRING() << "authenticated instance ledger: " << error.get_msg());
+     }
+-    auto genesis = config_->get_zerostate_id();
+-    if (!genesis.is_masterchain() || !genesis.is_valid_full()) {
+-      return fatal_error("authenticated masterchain genesis identity is missing");
++    const auto instance_global_id = config_->get_global_blockchain_id();
++    if (!instance_global_id) {
++      return fatal_error("authenticated blockchain global id is missing");
+     }
+     try {
+       auto expected = block::reconstruct_configured_workchain_instances(
+-          old_extra.r1.workchain_instances, new_extra.config->prefetch_ref(), genesis.root_hash);
++          old_extra.r1.workchain_instances, new_extra.config->prefetch_ref(), instance_global_id);
+       if (expected.is_error()) {
+         return reject_query("invalid instance installation", expected.move_as_error());
+       }

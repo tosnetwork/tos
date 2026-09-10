@@ -1,0 +1,109 @@
+{
+  "commit": "1fab9e6d6531ef3be85d9b30eed60d3e173f79aa",
+  "source": "crypto/smartcont/uno-genesis-operators.fif",
+  "source_sha256": "0d5638e2d403794aef29903d9edda51e22bab11a0dd3427433c9e861c1d78a13",
+  "executable": "/tmp/uno-publication-build/crypto/create-state",
+  "executable_sha256": "d263ad46236ef438a36469e15e6da4c83bc7550383a37ebf45e87a663583f1f2",
+  "actual_executable_targets": [
+    "create-state"
+  ],
+  "scope": "Approval predicate and generator pre-artifact boundary only; not completed genesis or D40 acceptance.",
+  "controls": [
+    {
+      "name": "approve-unlisted-mainnet",
+      "from": "{ 2drop false }",
+      "to": "{ 2drop true }",
+      "copy_before_sha256": "0d5638e2d403794aef29903d9edda51e22bab11a0dd3427433c9e861c1d78a13",
+      "mutant_sha256": "9eb1b417cb173e2ab71c756bf0edad295eceb42c667faecd575e5d1fb0dd3821",
+      "restored_sha256": "0d5638e2d403794aef29903d9edda51e22bab11a0dd3427433c9e861c1d78a13",
+      "restore_audit_sha256": "9eb1b417cb173e2ab71c756bf0edad295eceb42c667faecd575e5d1fb0dd3821",
+      "load_exit_code": 0,
+      "observation": {
+        "command": [
+          "/home/tomi/.local/bin/python3",
+          "/home/tomi/tos-m2/test/test-uno-genesis-operators.py",
+          "--repo",
+          "/home/tomi/tos-m2",
+          "--create-state",
+          "/tmp/uno-publication-build/crypto/create-state",
+          "--operators",
+          "/tmp/uno-operator-control-2a9rmyfv/operators.fif",
+          "--evidence",
+          "/home/tomi/tos-m2/doc/measurements/uno-genesis-operators/controls/approve-unlisted-mainnet"
+        ],
+        "exit_code": 1,
+        "failure_identity": 984
+      }
+    },
+    {
+      "name": "remove-enforcement",
+      "from": "abort\"mainnet coordinator/custody pair is not owner-approved\"",
+      "to": "drop",
+      "copy_before_sha256": "0d5638e2d403794aef29903d9edda51e22bab11a0dd3427433c9e861c1d78a13",
+      "mutant_sha256": "fa7f68b0035a948b55b91365596030f2a261772ef659caf31142e517b5802b86",
+      "restored_sha256": "0d5638e2d403794aef29903d9edda51e22bab11a0dd3427433c9e861c1d78a13",
+      "restore_audit_sha256": "fa7f68b0035a948b55b91365596030f2a261772ef659caf31142e517b5802b86",
+      "load_exit_code": 0,
+      "observation": {
+        "command": [
+          "/home/tomi/.local/bin/python3",
+          "/home/tomi/tos-m2/test/test-uno-genesis-operators.py",
+          "--repo",
+          "/home/tomi/tos-m2",
+          "--create-state",
+          "/tmp/uno-publication-build/crypto/create-state",
+          "--operators",
+          "/tmp/uno-operator-control-55mbys3n/operators.fif",
+          "--evidence",
+          "/home/tomi/tos-m2/doc/measurements/uno-genesis-operators/controls/remove-enforcement"
+        ],
+        "exit_code": 1,
+        "failure_identity": 985
+      }
+    }
+  ],
+  "baseline": {
+    "command": [
+      "/home/tomi/.local/bin/python3",
+      "/home/tomi/tos-m2/test/test-uno-genesis-operators.py",
+      "--repo",
+      "/home/tomi/tos-m2",
+      "--create-state",
+      "/tmp/uno-publication-build/crypto/create-state",
+      "--operators",
+      "/home/tomi/tos-m2/crypto/smartcont/uno-genesis-operators.fif",
+      "--evidence",
+      "/home/tomi/tos-m2/doc/measurements/uno-genesis-operators/controls/baseline"
+    ],
+    "exit_code": 0,
+    "failure_identity": 0
+  },
+  "restored_build": {
+    "command": [
+      "cmake",
+      "--build",
+      "/tmp/uno-publication-build",
+      "--target",
+      "create-state",
+      "-j32"
+    ],
+    "exit_code": 0
+  },
+  "restored": {
+    "command": [
+      "/home/tomi/.local/bin/python3",
+      "/home/tomi/tos-m2/test/test-uno-genesis-operators.py",
+      "--repo",
+      "/home/tomi/tos-m2",
+      "--create-state",
+      "/tmp/uno-publication-build/crypto/create-state",
+      "--operators",
+      "/home/tomi/tos-m2/crypto/smartcont/uno-genesis-operators.fif",
+      "--evidence",
+      "/home/tomi/tos-m2/doc/measurements/uno-genesis-operators/controls/restored"
+    ],
+    "exit_code": 0,
+    "failure_identity": 0
+  },
+  "source_unchanged": true
+}

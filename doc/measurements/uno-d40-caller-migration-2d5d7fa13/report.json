@@ -78,5 +78,7 @@
     "/proc permission denials and vanished links are enumerated; no claim of inspecting inaccessible processes. Successful new Counter runs follow their existing auto-removal lifecycle; moved historical directories were not deleted."
   ],
   "subsequent_coordinator_disposition": "coordinator-disposition.json",
-  "historical_scope_note": "The original scope statement records the pending decision at evidence production. The subsequent coordinator disposition resolves singleton identity applicability and closes this migration scope without changing raw observations."
+  "historical_scope_note": "The original scope statement records the pending decision at evidence production. The subsequent coordinator disposition resolves singleton identity applicability and closes this migration scope without changing raw observations.",
+  "latest_coordinator_disposition": "coordinator-nine-case-extension.json",
+  "latest_coordinator_disposition_is_historical": true
 }

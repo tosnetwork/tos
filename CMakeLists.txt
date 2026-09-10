@@ -841,13 +841,42 @@ add_test(NAME test-counter-native-sender
     -DBUILD_DIR=${CMAKE_CURRENT_BINARY_DIR} -DNATIVE_SENDER=ON
     -P ${CMAKE_CURRENT_SOURCE_DIR}/test/test-counter-disk-integration.cmake)
 set_tests_properties(test-counter-native-sender PROPERTIES TIMEOUT 120)
+# Direct predicate controls retain Param84; inconsistent configurations must not
+# be routed through a genesis generator which correctly refuses to build them.
+if(NOT TARGET test-workchain-activation-control)
+  add_executable(test-workchain-activation-control crypto/test/test-workchain-activation-control.cpp)
+  target_link_libraries(test-workchain-activation-control PRIVATE
+    "-Wl,--start-group" tos_crypto tos_block tos_crypto_core "-Wl,--end-group")
+endif()
+add_dependencies(all-tests test-workchain-activation-control)
+# Prepared local validator decisions are private in scope, but checked by the
+# default build/regression. The wrapper expires them if production is connected.
+if(NOT TARGET test-workchain-validator-local-visitors)
+  add_executable(test-workchain-validator-local-visitors
+    crypto/test/test-workchain-validator-local-visitors.cpp)
+  target_link_libraries(test-workchain-validator-local-visitors PRIVATE tos_block tos_crypto)
+endif()
+add_dependencies(all-tests test-workchain-validator-local-visitors)
+add_test(NAME test-workchain-validator-local-visitors
+  COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/crypto/test/workchain-validator-prepared-expiry.py"
+    --repo "${CMAKE_CURRENT_SOURCE_DIR}"
+    --probe $<TARGET_FILE:test-workchain-validator-local-visitors>
+    --fixture "${CMAKE_CURRENT_SOURCE_DIR}/doc/measurements/uno-local-profile/run-3/state/zerostate.boc")
+set_tests_properties(test-workchain-validator-local-visitors PROPERTIES
+  TIMEOUT 60 LABELS "private;workchain;prepared-not-connected")
+
+add_executable(test-workchain-ingress-transition crypto/test/test-workchain-ingress-transition.cpp)
+target_link_libraries(test-workchain-ingress-transition PRIVATE tos_block tos_crypto tdutils)
+add_dependencies(all-tests test-workchain-ingress-transition)
+add_test(NAME test-workchain-ingress-transition COMMAND test-workchain-ingress-transition)
+set_tests_properties(test-workchain-ingress-transition PROPERTIES TIMEOUT 60)
 foreach(activation_mode missing_capability old_version)
+  string(REPLACE "_" "-" activation_probe_mode "${activation_mode}")
   add_test(NAME test-counter-activation-${activation_mode}
-    COMMAND ${CMAKE_COMMAND} -DCREATE_STATE=$<TARGET_FILE:create-state>
-      -DCOLLATOR=$<TARGET_FILE:test-tos-collator>
-      -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR} -DBUILD_DIR=${CMAKE_CURRENT_BINARY_DIR}
-      -DACTIVATION_MODE=${activation_mode}
-      -P ${CMAKE_CURRENT_SOURCE_DIR}/test/test-counter-disk-integration.cmake)
+    COMMAND ${Python3_EXECUTABLE} "${CMAKE_CURRENT_SOURCE_DIR}/crypto/test/workchain-genesis-activation.py"
+      --repo "${CMAKE_CURRENT_SOURCE_DIR}" --probe $<TARGET_FILE:test-workchain-activation-control>
+      --mode ${activation_probe_mode})
   set_tests_properties(test-counter-activation-${activation_mode} PROPERTIES TIMEOUT 90)
   add_test(NAME test-counter-config-presence-${activation_mode}
     COMMAND ${CMAKE_COMMAND} -DCREATE_STATE=$<TARGET_FILE:create-state>
@@ -1020,6 +1049,7 @@ function(slice1_tol_to_boc TOL_SOURCE OUT_BOC)
     add_custom_command(
         OUTPUT ${OUT_BOC}
         COMMAND ${CMAKE_COMMAND} -E env FIFTPATH=${CMAKE_CURRENT_SOURCE_DIR}/crypto/fift/lib
+                "TOL_STDLIB=${CMAKE_CURRENT_SOURCE_DIR}/crypto/smartcont/tol-stdlib"
                 $<TARGET_FILE:tol> --boc-output ${OUT_BOC} -o ${_fif} ${TOL_SOURCE}
         COMMAND ${CMAKE_COMMAND} -E env FIFTPATH=${CMAKE_CURRENT_SOURCE_DIR}/crypto/fift/lib
                 $<TARGET_FILE:fift> ${_fif}
@@ -1194,7 +1224,7 @@ tos_test(test-workchain-collator-compute-mode)
 tos_test(test-workchain-proof-work)
 tos_test(test-workchain-proof-contracts)
 tos_test(test-workchain-admission)
-tos_test(test-smartcont)
+tos_test(test-smartcont ${TEST_OPTIONS})
 tos_test(test-net)
 tos_test(test-tdactor)
 
@@ -1295,6 +1325,10 @@ add_test(NAME test-counter-genesis-domain COMMAND "${CMAKE_COMMAND}"
   "-DCREATE_STATE=$<TARGET_FILE:create-state>" "-DSOURCE_DIR=${CMAKE_SOURCE_DIR}"
   "-DBUILD_DIR=${CMAKE_BINARY_DIR}" -P "${CMAKE_SOURCE_DIR}/test/test-counter-genesis-domain.cmake")
 set_tests_properties(test-counter-genesis-domain PROPERTIES TIMEOUT 30)
+add_test(NAME test-uno-genesis-operators COMMAND ${Python3_EXECUTABLE}
+  "${CMAKE_CURRENT_SOURCE_DIR}/test/test-uno-genesis-operators.py"
+  --create-state $<TARGET_FILE:create-state> --repo "${CMAKE_CURRENT_SOURCE_DIR}")
+set_tests_properties(test-uno-genesis-operators PROPERTIES TIMEOUT 120 LABELS "uno;genesis")
 option(TOS_UNO_COUNTER_PYTEST "Register the Counter Python harness tests" OFF)
 option(TOS_UNO_COUNTER_NETWORK_TEST "Register the independent-process Counter cold-join experiment" OFF)
 if (TOS_UNO_COUNTER_PYTEST OR TOS_UNO_COUNTER_NETWORK_TEST)
@@ -1304,6 +1338,11 @@ if (TOS_UNO_COUNTER_PYTEST OR TOS_UNO_COUNTER_NETWORK_TEST)
   endif()
 endif()
 if (TOS_UNO_COUNTER_PYTEST)
+  add_test(NAME test-workchain-genesis-routing COMMAND "${TOS_UNO_TEST_PYTHON}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/crypto/test/workchain-genesis-routing.py"
+    --repo "${CMAKE_CURRENT_SOURCE_DIR}" --create-state $<TARGET_FILE:create-state>
+    --collator $<TARGET_FILE:test-tos-collator>)
+  set_tests_properties(test-workchain-genesis-routing PROPERTIES TIMEOUT 300 LABELS "uno;genesis;harness")
   add_test(NAME test-counter-python-harness COMMAND "${TOS_UNO_TEST_PYTHON}" -m pytest
     test/tostester/test_counter_committee.py test/tostester/test_counter_genesis.py test/tostester/test_counter_state_check.py)
   set_tests_properties(test-counter-python-harness PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" LABELS "uno;harness" TIMEOUT 300)

@@ -1,0 +1,78 @@
+[1/88] cd /home/tomi/tos-m2/uno/crypto && /usr/bin/cmake -E env CARGO_NET_OFFLINE=true CARGO_TARGET_DIR=/tmp/uno-publication-build/uno/crypto/cargo-target /home/tomi/.cargo/bin/cargo build --locked --offline --release -j48
+    Finished `release` profile [optimized] target(s) in 0.08s
+[2/86] Checking the git repository for changes...
+[3/86] Building CXX object CMakeFiles/git.dir/git.cc.o
+[4/86] Linking CXX static library libgit.a
+[5/86] Linking CXX executable test-vm-exception-hardening
+[6/86] Linking CXX executable tol/tol
+[7/86] Linking CXX executable test-ext-message-pool
+[8/86] Linking CXX executable crypto/func
+[9/86] Compile FunC stdlib TVM v6 fee primitive coverage
+[10/86] Linking CXX executable crypto/fift
+[11/86] Generate /tmp/uno-publication-build/crypto/smartcont/auto/simple-wallet-code.fif
+[12/86] Generate /tmp/uno-publication-build/crypto/smartcont/auto/wallet-code.fif
+[13/86] Generate /tmp/uno-publication-build/crypto/smartcont/auto/highload-wallet-v2-code.fif
+[14/86] Generate /tmp/uno-publication-build/crypto/smartcont/auto/restricted-wallet-code.fif
+[15/86] Generate /tmp/uno-publication-build/crypto/smartcont/auto/wallet3-code.fif
+[16/86] Generate /tmp/uno-publication-build/crypto/smartcont/auto/simple-wallet-ext-code.fif
+[17/86] Generate /tmp/uno-publication-build/crypto/smartcont/auto/wallet-v4-code.fif
+[18/86] Compiling Tol contract jetton-minter-tol -> /tmp/uno-publication-build/slice1-gas-parity/jetton-minter-tol.boc
+FAILED: slice1-gas-parity/jetton-minter-tol.boc /tmp/uno-publication-build/slice1-gas-parity/jetton-minter-tol.boc 
+cd /tmp/uno-publication-build/slice1-gas-parity && /usr/bin/cmake -E env FIFTPATH=/home/tomi/tos-m2/crypto/fift/lib /tmp/uno-publication-build/tol/tol --boc-output /tmp/uno-publication-build/slice1-gas-parity/jetton-minter-tol.boc -o /tmp/uno-publication-build/slice1-gas-parity/jetton-minter-tol.fif /home/tomi/tos-m2/crypto/smartcont/jetton-minter.tol && /usr/bin/cmake -E env FIFTPATH=/home/tomi/tos-m2/crypto/fift/lib /tmp/uno-publication-build/crypto/fift /tmp/uno-publication-build/slice1-gas-parity/jetton-minter-tol.fif
+Failed to discover Tol stdlib.
+Probably, you have a non-standard Tol installation.
+Please, provide env variable TOL_STDLIB referencing to tol-stdlib/ folder.
+[19/86] Generate /tmp/uno-publication-build/crypto/smartcont/auto/highload-wallet-code.fif
+[20/86] Generate /tmp/uno-publication-build/crypto/smartcont/auto/session-wallet-code.fif
+[21/86] Generate /tmp/uno-publication-build/crypto/smartcont/auto/multisig-code.fif
+[22/86] Compiling Tol contract wallet-v5-tol -> /tmp/uno-publication-build/slice1-gas-parity/wallet-v5-tol.boc
+FAILED: slice1-gas-parity/wallet-v5-tol.boc /tmp/uno-publication-build/slice1-gas-parity/wallet-v5-tol.boc 
+cd /tmp/uno-publication-build/slice1-gas-parity && /usr/bin/cmake -E env FIFTPATH=/home/tomi/tos-m2/crypto/fift/lib /tmp/uno-publication-build/tol/tol --boc-output /tmp/uno-publication-build/slice1-gas-parity/wallet-v5-tol.boc -o /tmp/uno-publication-build/slice1-gas-parity/wallet-v5-tol.fif /home/tomi/tos-m2/crypto/smartcont/wallet-v5.tol && /usr/bin/cmake -E env FIFTPATH=/home/tomi/tos-m2/crypto/fift/lib /tmp/uno-publication-build/crypto/fift /tmp/uno-publication-build/slice1-gas-parity/wallet-v5-tol.fif
+Failed to discover Tol stdlib.
+Probably, you have a non-standard Tol installation.
+Please, provide env variable TOL_STDLIB referencing to tol-stdlib/ folder.
+[23/86] Compiling Tol contract tos-report-bond-oracle -> /tmp/uno-publication-build/slice1-gas-parity/tos-report-bond-oracle.boc
+FAILED: slice1-gas-parity/tos-report-bond-oracle.boc /tmp/uno-publication-build/slice1-gas-parity/tos-report-bond-oracle.boc 
+cd /tmp/uno-publication-build/slice1-gas-parity && /usr/bin/cmake -E env FIFTPATH=/home/tomi/tos-m2/crypto/fift/lib /tmp/uno-publication-build/tol/tol --boc-output /tmp/uno-publication-build/slice1-gas-parity/tos-report-bond-oracle.boc -o /tmp/uno-publication-build/slice1-gas-parity/tos-report-bond-oracle.fif /home/tomi/tos-m2/examples/slice5/tos-report-bond-oracle/src/tos-report-bond-oracle.tol && /usr/bin/cmake -E env FIFTPATH=/home/tomi/tos-m2/crypto/fift/lib /tmp/uno-publication-build/crypto/fift /tmp/uno-publication-build/slice1-gas-parity/tos-report-bond-oracle.fif
+Failed to discover Tol stdlib.
+Probably, you have a non-standard Tol installation.
+Please, provide env variable TOL_STDLIB referencing to tol-stdlib/ folder.
+[24/86] Compiling Tol contract jetton-wallet-tol -> /tmp/uno-publication-build/slice1-gas-parity/jetton-wallet-tol.boc
+FAILED: slice1-gas-parity/jetton-wallet-tol.boc /tmp/uno-publication-build/slice1-gas-parity/jetton-wallet-tol.boc 
+cd /tmp/uno-publication-build/slice1-gas-parity && /usr/bin/cmake -E env FIFTPATH=/home/tomi/tos-m2/crypto/fift/lib /tmp/uno-publication-build/tol/tol --boc-output /tmp/uno-publication-build/slice1-gas-parity/jetton-wallet-tol.boc -o /tmp/uno-publication-build/slice1-gas-parity/jetton-wallet-tol.fif /home/tomi/tos-m2/crypto/smartcont/jetton-wallet.tol && /usr/bin/cmake -E env FIFTPATH=/home/tomi/tos-m2/crypto/fift/lib /tmp/uno-publication-build/crypto/fift /tmp/uno-publication-build/slice1-gas-parity/jetton-wallet-tol.fif
+Failed to discover Tol stdlib.
+Probably, you have a non-standard Tol installation.
+Please, provide env variable TOL_STDLIB referencing to tol-stdlib/ folder.
+[25/86] Generate /tmp/uno-publication-build/crypto/smartcont/auto/restricted-wallet3-code.fif
+[26/86] Generate /tmp/uno-publication-build/crypto/smartcont/auto/restricted-wallet2-code.fif
+[27/86] Compiling Tol contract slice5-receive-context-tol -> /tmp/uno-publication-build/slice1-gas-parity/slice5-receive-context-tol.boc
+FAILED: slice1-gas-parity/slice5-receive-context-tol.boc /tmp/uno-publication-build/slice1-gas-parity/slice5-receive-context-tol.boc 
+cd /tmp/uno-publication-build/slice1-gas-parity && /usr/bin/cmake -E env FIFTPATH=/home/tomi/tos-m2/crypto/fift/lib /tmp/uno-publication-build/tol/tol --boc-output /tmp/uno-publication-build/slice1-gas-parity/slice5-receive-context-tol.boc -o /tmp/uno-publication-build/slice1-gas-parity/slice5-receive-context-tol.fif /home/tomi/tos-m2/emulator/test/slice-5-receive-context.tol && /usr/bin/cmake -E env FIFTPATH=/home/tomi/tos-m2/crypto/fift/lib /tmp/uno-publication-build/crypto/fift /tmp/uno-publication-build/slice1-gas-parity/slice5-receive-context-tol.fif
+Failed to discover Tol stdlib.
+Probably, you have a non-standard Tol installation.
+Please, provide env variable TOL_STDLIB referencing to tol-stdlib/ folder.
+[28/86] Generate /tmp/uno-publication-build/crypto/smartcont/auto/wallet-v5-code.fif
+[29/86] Generate /tmp/uno-publication-build/crypto/smartcont/auto/wallet-code.cpp
+[30/86] Generate /tmp/uno-publication-build/crypto/smartcont/auto/restricted-wallet-code.cpp
+[31/86] Generate /tmp/uno-publication-build/crypto/smartcont/auto/wallet3-code.cpp
+[32/86] Generate /tmp/uno-publication-build/crypto/smartcont/auto/highload-wallet-v2-code.cpp
+[33/86] Generate /tmp/uno-publication-build/crypto/smartcont/auto/wallet-v4-code.cpp
+[34/86] Generate /tmp/uno-publication-build/crypto/smartcont/auto/simple-wallet-code.cpp
+[35/86] Generate /tmp/uno-publication-build/crypto/smartcont/auto/config-code.fif
+[36/86] Generate /tmp/uno-publication-build/crypto/smartcont/auto/agent-account-code.fif
+[37/86] Compiling FunC contract jetton-minter-func -> /tmp/uno-publication-build/slice1-gas-parity/jetton-minter-func.boc
+[38/86] Generate /tmp/uno-publication-build/crypto/smartcont/auto/task-escrow-code.fif
+[39/86] Compiling FunC contract wallet-v5-func -> /tmp/uno-publication-build/slice1-gas-parity/wallet-v5-func.boc
+[40/86] Compiling FunC contract jetton-wallet-func -> /tmp/uno-publication-build/slice1-gas-parity/jetton-wallet-func.boc
+[41/86] Generate /tmp/uno-publication-build/crypto/smartcont/auto/elector-code.fif
+[42/86] Linking CXX executable test-uno-state-snapshot
+[43/86] Verify and embed the frozen TOS Service Protocol stablecoin escrow v1 BOC
+NOTE: escrow v1 is deprecated (superseded by v2); this build exists only to verify the frozen historical artifact.
+NOTE: escrow v1 is deprecated (superseded by v2); this build exists only to verify the frozen historical artifact.
+[44/86] Verify and embed the frozen TOS Service Protocol stablecoin escrow v2 BOC
+[45/86] Verify and embed the frozen TOS Native Service Registry BOC
+[46/86] Building CXX object CMakeFiles/test-workchain-validator-local-visitors.dir/crypto/test/test-workchain-validator-local-visitors.cpp.o
+[47/86] Building CXX object CMakeFiles/test-workchain-activation-control.dir/crypto/test/test-workchain-activation-control.cpp.o
+[48/86] Building CXX object CMakeFiles/test-uno-storage-measurement.dir/test/uno-snapshot-transport.cpp.o
+[49/86] Building CXX object CMakeFiles/test-uno-storage-measurement.dir/test/test-uno-state-snapshot.cpp.o
+ninja: build stopped: subcommand failed.

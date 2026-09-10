@@ -1,0 +1,151 @@
+[1/59] Checking the git repository for changes...
+[2/59] Building CXX object CMakeFiles/git.dir/git.cc.o
+[3/59] Linking CXX static library libgit.a
+[4/59] Linking CXX executable crypto/func
+[5/59] Compile FunC stdlib TVM v6 fee primitive coverage
+[6/59] Linking CXX executable crypto/fift
+[7/59] Generate /tmp/uno-publication-build/crypto/smartcont/auto/simple-wallet-code.fif
+[8/59] Generate /tmp/uno-publication-build/crypto/smartcont/auto/wallet-v4-code.fif
+[9/59] Generate /tmp/uno-publication-build/crypto/smartcont/auto/wallet-code.fif
+[10/59] Generate /tmp/uno-publication-build/crypto/smartcont/auto/wallet3-code.fif
+[11/59] Generate /tmp/uno-publication-build/crypto/smartcont/auto/highload-wallet-code.fif
+[12/59] Generate /tmp/uno-publication-build/crypto/smartcont/auto/session-wallet-code.fif
+[13/59] Generate /tmp/uno-publication-build/crypto/smartcont/auto/restricted-wallet-code.fif
+[14/59] Generate /tmp/uno-publication-build/crypto/smartcont/auto/highload-wallet-v2-code.fif
+[15/59] Generate /tmp/uno-publication-build/crypto/smartcont/auto/restricted-wallet2-code.fif
+[16/59] Generate /tmp/uno-publication-build/crypto/smartcont/auto/restricted-wallet3-code.fif
+[17/59] Generate /tmp/uno-publication-build/crypto/smartcont/auto/simple-wallet-ext-code.fif
+[18/59] Generate /tmp/uno-publication-build/crypto/smartcont/auto/wallet-v5-code.fif
+[19/59] Generate /tmp/uno-publication-build/crypto/smartcont/auto/dns-manual-code.fif
+[20/59] Generate /tmp/uno-publication-build/crypto/smartcont/auto/pow-testgiver-code.fif
+[21/59] Generate /tmp/uno-publication-build/crypto/smartcont/auto/multisig-code.fif
+[22/59] Generate /tmp/uno-publication-build/crypto/smartcont/auto/payment-channel-code.fif
+[23/59] Generate /tmp/uno-publication-build/crypto/smartcont/auto/wallet-code.cpp
+[24/59] Generate /tmp/uno-publication-build/crypto/smartcont/auto/highload-wallet-code.cpp
+[25/59] Generate /tmp/uno-publication-build/crypto/smartcont/auto/wallet-v4-code.cpp
+[26/59] Generate /tmp/uno-publication-build/crypto/smartcont/auto/session-wallet-code.cpp
+[27/59] Generate /tmp/uno-publication-build/crypto/smartcont/auto/simple-wallet-code.cpp
+[28/59] Generate /tmp/uno-publication-build/crypto/smartcont/auto/wallet3-code.cpp
+[29/59] Generate /tmp/uno-publication-build/crypto/smartcont/auto/highload-wallet-v2-code.cpp
+[30/59] Generate /tmp/uno-publication-build/crypto/smartcont/auto/restricted-wallet-code.cpp
+[31/59] Generate /tmp/uno-publication-build/crypto/smartcont/auto/simple-wallet-ext-code.cpp
+[32/59] Generate /tmp/uno-publication-build/crypto/smartcont/auto/restricted-wallet3-code.cpp
+[33/59] Generate /tmp/uno-publication-build/crypto/smartcont/auto/agent-account-code.fif
+[34/59] Generate /tmp/uno-publication-build/crypto/smartcont/auto/restricted-wallet2-code.cpp
+[35/59] Generate /tmp/uno-publication-build/crypto/smartcont/auto/dns-auto-code.fif
+[36/59] Generate /tmp/uno-publication-build/crypto/smartcont/auto/config-code.fif
+[37/59] Generate /tmp/uno-publication-build/crypto/smartcont/auto/wallet-v5-code.cpp
+[38/59] Generate /tmp/uno-publication-build/crypto/smartcont/auto/pow-testgiver-code.cpp
+[39/59] Generate /tmp/uno-publication-build/crypto/smartcont/auto/dns-manual-code.cpp
+[40/59] Generate /tmp/uno-publication-build/crypto/smartcont/auto/multisig-code.cpp
+[41/59] Generate /tmp/uno-publication-build/crypto/smartcont/auto/task-escrow-code.fif
+[42/59] Generate /tmp/uno-publication-build/crypto/smartcont/auto/payment-channel-code.cpp
+[43/59] Generate /tmp/uno-publication-build/crypto/smartcont/auto/agent-account-code.cpp
+[44/59] Generate /tmp/uno-publication-build/crypto/smartcont/auto/dns-auto-code.cpp
+[45/59] Generate /tmp/uno-publication-build/crypto/smartcont/auto/config-code.cpp
+[46/59] Generate /tmp/uno-publication-build/crypto/smartcont/auto/task-escrow-code.cpp
+[47/59] Generate /tmp/uno-publication-build/crypto/smartcont/auto/elector-code.fif
+[48/59] Generate /tmp/uno-publication-build/crypto/smartcont/auto/elector-code.cpp
+[49/59] Verify and embed the frozen TOS Service Protocol stablecoin escrow v1 BOC
+NOTE: escrow v1 is deprecated (superseded by v2); this build exists only to verify the frozen historical artifact.
+NOTE: escrow v1 is deprecated (superseded by v2); this build exists only to verify the frozen historical artifact.
+[50/59] Verify and embed the frozen TOS Service Protocol stablecoin escrow v2 BOC
+[51/59] Verify and embed the frozen TOS Native Service Registry BOC
+[52/59] Generate /tmp/uno-publication-build/crypto/smartcont/auto/prediction-market-code.fif
+[53/59] Generate /tmp/uno-publication-build/crypto/smartcont/auto/prediction-market-code.cpp
+[54/59] Building CXX object crypto/CMakeFiles/smc-envelope.dir/smc-envelope/SmartContractCode.cpp.o
+[55/59] Linking CXX static library crypto/libsmc-envelope.a
+[56/59] Linking CXX executable crypto/create-state
+[57/59] Linking CXX executable test-smartcont
+[58/59] Building CXX object CMakeFiles/test-workchain-ingress-transition.dir/crypto/test/test-workchain-ingress-transition.cpp.o
+FAILED: CMakeFiles/test-workchain-ingress-transition.dir/crypto/test/test-workchain-ingress-transition.cpp.o 
+ccache /usr/bin/clang++ -DSODIUM_STATIC -D_FILE_OFFSET_BITS=64 -D_INTERNAL_COMPILE=1 -D_TOSLIB_COMPILE=1 -I/home/tomi/tos-m2/crypto -I/home/tomi/tos-m2/crypto/block -I/home/tomi/tos-m2/crypto/.. -I/tmp/uno-publication-build/third-party/secp256k1/include -I/tmp/uno-publication-build/third-party/sodium/include -I/home/tomi/tos-m2/tdutils -I/tmp/uno-publication-build/tdutils -I/home/tomi/tos-m2/tddb -I/home/tomi/tos-m2/tdactor -I/home/tomi/tos-m2/tl -I/home/tomi/tos-m2/tl/.. -I/home/tomi/tos-m2/tl/../crypto -I/home/tomi/tos-m2/tl/generate -isystem /tmp/uno-publication-build/third-party/openssl/include -isystem /home/tomi/tos-m2/third-party/abseil-cpp -march=native -fno-omit-frame-pointer -ffunction-sections -fdata-sections -O3 -DNDEBUG -fPIE -Wall -Wextra -Wpointer-arith -Wcast-qual -Wsign-compare -Wvla -Wnon-virtual-dtor -Wconversion -Wno-tautological-compare -Wno-unused-parameter -Wno-sign-conversion -Wno-unused-private-field -Wno-redundant-move -std=c++20 -MD -MT CMakeFiles/test-workchain-ingress-transition.dir/crypto/test/test-workchain-ingress-transition.cpp.o -MF CMakeFiles/test-workchain-ingress-transition.dir/crypto/test/test-workchain-ingress-transition.cpp.o.d -o CMakeFiles/test-workchain-ingress-transition.dir/crypto/test/test-workchain-ingress-transition.cpp.o -c /home/tomi/tos-m2/crypto/test/test-workchain-ingress-transition.cpp
+In file included from /home/tomi/tos-m2/crypto/test/test-workchain-ingress-transition.cpp:5:
+/home/tomi/tos-m2/crypto/block/workchain-resource-policy.h:88:8: error: no member named 'pack_cell' in namespace 'block::tlb'; did you mean '::tlb::pack_cell'?
+   88 |   if (!tlb::pack_cell(root.input, value.input) || !tlb::pack_cell(root.state, value.state) ||
+      |        ^~~~~~~~~~~~~~
+      |        ::tlb::pack_cell
+/home/tomi/tos-m2/crypto/tl/tlblib.hpp:479:6: note: '::tlb::pack_cell' declared here
+  479 | bool pack_cell(Ref<vm::Cell>& cell, const R& rec, Args&... args) {
+      |      ^
+In file included from /home/tomi/tos-m2/crypto/test/test-workchain-ingress-transition.cpp:5:
+/home/tomi/tos-m2/crypto/block/workchain-resource-policy.h:88:52: error: no member named 'pack_cell' in namespace 'block::tlb'; did you mean '::tlb::pack_cell'?
+   88 |   if (!tlb::pack_cell(root.input, value.input) || !tlb::pack_cell(root.state, value.state) ||
+      |                                                    ^~~~~~~~~~~~~~
+      |                                                    ::tlb::pack_cell
+/home/tomi/tos-m2/crypto/tl/tlblib.hpp:479:6: note: '::tlb::pack_cell' declared here
+  479 | bool pack_cell(Ref<vm::Cell>& cell, const R& rec, Args&... args) {
+      |      ^
+In file included from /home/tomi/tos-m2/crypto/test/test-workchain-ingress-transition.cpp:5:
+/home/tomi/tos-m2/crypto/block/workchain-resource-policy.h:89:8: error: no member named 'pack_cell' in namespace 'block::tlb'; did you mean '::tlb::pack_cell'?
+   89 |       !tlb::pack_cell(root.work_output, value.work_output) || !tlb::pack_cell(result, root)) {
+      |        ^~~~~~~~~~~~~~
+      |        ::tlb::pack_cell
+/home/tomi/tos-m2/crypto/tl/tlblib.hpp:479:6: note: '::tlb::pack_cell' declared here
+  479 | bool pack_cell(Ref<vm::Cell>& cell, const R& rec, Args&... args) {
+      |      ^
+In file included from /home/tomi/tos-m2/crypto/test/test-workchain-ingress-transition.cpp:5:
+/home/tomi/tos-m2/crypto/block/workchain-resource-policy.h:89:64: error: no member named 'pack_cell' in namespace 'block::tlb'; did you mean '::tlb::pack_cell'?
+   89 |       !tlb::pack_cell(root.work_output, value.work_output) || !tlb::pack_cell(result, root)) {
+      |                                                                ^~~~~~~~~~~~~~
+      |                                                                ::tlb::pack_cell
+/home/tomi/tos-m2/crypto/tl/tlblib.hpp:479:6: note: '::tlb::pack_cell' declared here
+  479 | bool pack_cell(Ref<vm::Cell>& cell, const R& rec, Args&... args) {
+      |      ^
+In file included from /home/tomi/tos-m2/crypto/test/test-workchain-ingress-transition.cpp:5:
+/home/tomi/tos-m2/crypto/block/workchain-resource-policy.h:157:8: error: no member named 'pack_cell' in namespace 'block::tlb'; did you mean '::tlb::pack_cell'?
+  157 |   if (!tlb::pack_cell(result, record)) return td::Status::Error("cannot encode engine configuration");
+      |        ^~~~~~~~~~~~~~
+      |        ::tlb::pack_cell
+/home/tomi/tos-m2/crypto/tl/tlblib.hpp:479:6: note: '::tlb::pack_cell' declared here
+  479 | bool pack_cell(Ref<vm::Cell>& cell, const R& rec, Args&... args) {
+      |      ^
+/home/tomi/tos-m2/crypto/test/test-workchain-ingress-transition.cpp:15:15: error: no member named 'WorkchainNativeIngressPolicy' in namespace 'block'; did you mean 'block::gen::WorkchainNativeIngressPolicy'?
+   15 |   std::vector<block::WorkchainNativeIngressPolicy> policies;
+      |               ^      ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/tomi/tos-m2/crypto/block/block-auto.h:995:8: note: 'block::gen::WorkchainNativeIngressPolicy' declared here
+  995 | struct WorkchainNativeIngressPolicy final : TLB_Complex {
+      |        ^
+/home/tomi/tos-m2/crypto/test/test-workchain-ingress-transition.cpp:23:5: error: no type named 'WorkchainNativeIngressPolicy' in namespace 'block'; did you mean 'block::gen::WorkchainNativeIngressPolicy'?
+   23 |     block::WorkchainNativeIngressPolicy policy;
+      |     ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+      |     block::gen::WorkchainNativeIngressPolicy
+/home/tomi/tos-m2/crypto/block/block-auto.h:995:8: note: 'block::gen::WorkchainNativeIngressPolicy' declared here
+  995 | struct WorkchainNativeIngressPolicy final : TLB_Complex {
+      |        ^
+/home/tomi/tos-m2/crypto/test/test-workchain-ingress-transition.cpp:24:12: error: no member named 'workchain_id' in 'block::gen::WorkchainNativeIngressPolicy'
+   24 |     policy.workchain_id = wc;
+      |     ~~~~~~ ^
+/home/tomi/tos-m2/crypto/test/test-workchain-ingress-transition.cpp:25:12: error: no member named 'engine_key' in 'block::gen::WorkchainNativeIngressPolicy'
+   25 |     policy.engine_key = {block::WorkchainFormat::Basic, 0x434e5431};
+      |     ~~~~~~ ^
+/home/tomi/tos-m2/crypto/test/test-workchain-ingress-transition.cpp:25:26: error: no member named 'WorkchainFormat' in namespace 'block'; did you mean 'block::gen::WorkchainFormat'?
+   25 |     policy.engine_key = {block::WorkchainFormat::Basic, 0x434e5431};
+      |                          ^~~~~~~~~~~~~~~~~~~~~~
+      |                          block::gen::WorkchainFormat
+/home/tomi/tos-m2/crypto/block/block-auto.h:7830:8: note: 'block::gen::WorkchainFormat' declared here
+ 7830 | struct WorkchainFormat final : TLB_Complex {
+      |        ^
+/home/tomi/tos-m2/crypto/test/test-workchain-ingress-transition.cpp:25:50: error: no member named 'Basic' in 'block::gen::WorkchainFormat'
+   25 |     policy.engine_key = {block::WorkchainFormat::Basic, 0x434e5431};
+      |                                                  ^~~~~
+/home/tomi/tos-m2/crypto/test/test-workchain-ingress-transition.cpp:26:12: error: no member named 'executor_address' in 'block::gen::WorkchainNativeIngressPolicy'
+   26 |     policy.executor_address.set_zero();
+      |     ~~~~~~ ^
+/home/tomi/tos-m2/crypto/test/test-workchain-ingress-transition.cpp:27:22: error: no member named 'custody_address' in 'block::gen::WorkchainNativeIngressPolicy'
+   27 |     if (dual) policy.custody_address = td::Bits256::ones();
+      |               ~~~~~~ ^
+/home/tomi/tos-m2/crypto/test/test-workchain-ingress-transition.cpp:30:12: error: no member named 'engine_configuration' in 'block::gen::WorkchainNativeIngressPolicy'
+   30 |     policy.engine_configuration = block::encode_workchain_engine_parameters(
+      |     ~~~~~~ ^
+/home/tomi/tos-m2/crypto/test/test-workchain-ingress-transition.cpp:38:25: error: no member named 'encode_workchain_native_ingress_table' in namespace 'block'
+   38 |     auto table = block::encode_workchain_native_ingress_table(policies).move_as_ok();
+      |                         ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/tomi/tos-m2/crypto/test/test-workchain-ingress-transition.cpp:39:18: error: no member named 'decode_workchain_native_ingress_table' in namespace 'block'
+   39 |     CHECK(block::decode_workchain_native_ingress_table(table).is_ok());
+      |                  ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/tomi/tos-m2/crypto/test/test-workchain-ingress-transition.cpp:46:17: error: no member named 'validate_native_ingress_presence' in namespace 'block'
+   46 |   return block::validate_native_ingress_presence(dictionary).is_ok();
+      |                 ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+17 errors generated.
+ninja: build stopped: subcommand failed.

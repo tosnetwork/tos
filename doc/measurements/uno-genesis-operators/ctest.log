@@ -1,0 +1,12 @@
+Internal ctest changing into directory: /tmp/uno-publication-build
+Test project /tmp/uno-publication-build
+    Start 77: test-uno-genesis-operators
+1/1 Test #77: test-uno-genesis-operators .......   Passed    0.34 sec
+
+100% tests passed, 0 tests failed out of 1
+
+Label Time Summary:
+genesis    =   0.34 sec*proc (1 test)
+uno        =   0.34 sec*proc (1 test)
+
+Total Test time (real) =   0.35 sec

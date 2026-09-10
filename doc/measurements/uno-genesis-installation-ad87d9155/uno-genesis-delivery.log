@@ -1,0 +1,12 @@
+Internal ctest changing into directory: /tmp/uno-publication-build
+Test project /tmp/uno-publication-build
+    Start 22: test-counter-self-delivery
+1/3 Test #22: test-counter-self-delivery .......   Passed    0.61 sec
+    Start 23: test-counter-cross-delivery
+2/3 Test #23: test-counter-cross-delivery ......   Passed    0.94 sec
+    Start 24: test-counter-native-sender
+3/3 Test #24: test-counter-native-sender .......   Passed    0.84 sec
+
+100% tests passed, 0 tests failed out of 3
+
+Total Test time (real) =   2.40 sec

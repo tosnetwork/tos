@@ -1,0 +1,7 @@
+[1;31m[ 1][t 0][2026-09-09 22:50:43.410789825][create-state.cpp:998]	{}[0m
+[1;31m[ 1][t 0][2026-09-09 22:50:43.439172388][Fift.cpp:67]	top: abort
+level 1: swap { <continuation 0x5deae4103650> } if **HERE** drop 
+level 2: <text interpreter continuation>
+level 3: <continuation 0x5deae40d4350>
+level 4: <text interpreter continuation>[0m
+Error interpreting file `/tmp/uno-genesis-operators-_nu5dt74/resource-mainnet.fif`: [Error : 0 : uno-genesis-config.fif:10:	abort":mainnet resource policy lacks M6 approval]

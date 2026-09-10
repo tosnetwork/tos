@@ -1,0 +1,28 @@
+
+running 4 tests
+test master::tests::test_mc_state_extra_instances_retired_tag ... ok
+test master::tests::test_mc_state_extra ... ok
+test master::tests::test_mc_state_extra_instances_missing_ledger ... FAILED
+test master::tests::test_mc_state_extra_instances_native_fixture ... FAILED
+
+failures:
+
+---- master::tests::test_mc_state_extra_instances_missing_ledger stdout ----
+
+thread 'master::tests::test_mc_state_extra_instances_missing_ledger' (2790469) panicked at block/src/tests/test_master.rs:504:5:
+assertion failed: matches!(error.downcast_ref::<crate::ExceptionCode>(),
+    Some(crate::ExceptionCode::CellUnderflow))
+
+---- master::tests::test_mc_state_extra_instances_native_fixture stdout ----
+
+thread 'master::tests::test_mc_state_extra_instances_native_fixture' (2790470) panicked at block/src/tests/test_master.rs:476:65:
+called `Result::unwrap()` on an `Err` value: Invalid TL-B constructor tag `#3214e578` while parsing `chain_block::master::McStateExtra` struct
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    master::tests::test_mc_state_extra_instances_missing_ledger
+    master::tests::test_mc_state_extra_instances_native_fixture
+
+test result: FAILED. 2 passed; 2 failed; 0 ignored; 0 measured; 613 filtered out; finished in 0.00s
+
