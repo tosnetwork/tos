@@ -1,0 +1,13 @@
+{
+  "source_commit": "f5043d9fc",
+  "log_sha256": "ce41493d4e1f69bd46314d119de75e83cffd8a4de6846bba11d62d19b2a99032",
+  "diagnostics": [
+    "Failed to discover Tol stdlib.",
+    "gmake[2]: *** [CMakeFiles/slice5_receive_context_contract.dir/build.make:75: slice1-gas-parity/slice5-receive-context-tol.boc] Error 2",
+    "gmake[1]: *** [CMakeFiles/Makefile2:7911: CMakeFiles/slice5_receive_context_contract.dir/all] Error 2",
+    "Failed to discover Tol stdlib.",
+    "gmake[2]: *** [CMakeFiles/slice1_gas_parity_contracts.dir/build.make:87: slice1-gas-parity/jetton-minter-tol.boc] Error 2",
+    "gmake[1]: *** [CMakeFiles/Makefile2:7884: CMakeFiles/slice1_gas_parity_contracts.dir/all] Error 2",
+    "gmake: *** [Makefile:146: all] Error 2"
+  ]
+}
