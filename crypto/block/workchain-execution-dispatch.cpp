@@ -819,7 +819,8 @@ td::Result<std::optional<AccountExecutionPolicy>> WorkchainExecutionRegistry::re
 
 td::Status WorkchainExecutionRegistry::validate_required_workchains(
     const block::WorkchainSet& workchains, const block::Config& block_transition_config,
-    const LocalWorkchainRoleSet& local_roles) const {
+    const LocalWorkchainRoleSet& local_roles, WorkchainReadinessObservation* observation) const {
+  if (observation) *observation = {WorkchainReadinessPhase::Entered, -1};
   if (&workchains != &block_transition_config.get_workchain_list()) {
     return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),
                              "required-role descriptor map is not owned by this configuration");
@@ -842,9 +843,15 @@ td::Status WorkchainExecutionRegistry::validate_required_workchains(
                   account.executor->account_policy(account.descriptor, *account.engine_config));
             },
             [](const ResolvedWorkchainBlockExecution&) { return td::Status::OK(); },
-            [](const ResolvedWorkchainAccountBinding&) {
+            [&](const ResolvedWorkchainAccountBinding& binding) {
+              if (observation) *observation = {WorkchainReadinessPhase::AccountBindingResolved, workchain_id};
+              // D59: only a test-owned, explicitly permitted workchain instance
+              // may proceed. Deployment configuration cannot grant this permit.
+              // This does not authorize or bypass any downstream execution gate.
+              if (test_only_account_instance_execution_enabled(binding)) return td::Status::OK();
               // Engine registration and successful configuration parsing do not
               // establish that this binary can admit and replay account batches.
+              if (observation) observation->phase = WorkchainReadinessPhase::AccountBindingRefused;
               return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),
                                        "multi-account admission and replay are not connected");
             }), *resolved);
@@ -853,6 +860,7 @@ td::Status WorkchainExecutionRegistry::validate_required_workchains(
         }
       }
     }
+    if (observation) observation->phase = WorkchainReadinessPhase::Complete;
     return td::Status::OK();
   } catch (...) {
     // Required-role checks run before candidate processing, including the

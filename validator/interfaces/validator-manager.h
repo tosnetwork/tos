@@ -26,6 +26,7 @@
 
 #include "auto/tl/lite_api.h"
 #include "block/signature-set.h"
+#include "block/workchain-readiness-observation.h"
 #include "crypto/vm/db/DynamicBagOfCellsDb.h"
 #include "impl/out-msg-queue-proof.hpp"
 #include "td/actor/BackpressureQueue.h"
@@ -179,6 +180,7 @@ struct CollationStats {
   // Closed account-engine seam observations, not execution authorization.
   // Counts are sampled from the authenticated configuration's shared owner.
   bool account_binding_visited = false;
+  block::WorkchainReadinessObservation account_readiness;
   bool account_adapter_bound = false;
   bool account_adapter_retained_after_state = false;
   bool account_adapter_released = false;

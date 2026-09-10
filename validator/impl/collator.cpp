@@ -2284,7 +2284,7 @@ bool Collator::fetch_config_params() {
     block::LocalWorkchainRoleSet local_roles;
     local_roles.required_workchains.insert(workchain());
     auto status = block::default_workchain_execution_registry().validate_required_workchains(
-        config_->get_workchain_list(), *config_, local_roles);
+        config_->get_workchain_list(), *config_, local_roles, &stats_.account_readiness);
     if (status.is_error()) {
       return fatal_error(status.move_as_error_prefix("cannot execute configured workchain: "));
     }

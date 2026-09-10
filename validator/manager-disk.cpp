@@ -54,6 +54,11 @@ void ValidatorManagerImpl::log_collate_query_stats(CollationStats stats) {
   td::write_file(query_result_path_ + ".binding",
                  PSLICE() << "retained_after_state=" << (stats.account_adapter_retained_after_state ? 1 : 0)
                           << "\nreleased=" << (stats.account_adapter_released ? 1 : 0) << "\n").ensure();
+  // The exact registry branch supplies this enum; error prose and -7201 do not.
+  td::write_file(query_result_path_ + ".readiness",
+                 PSLICE() << "phase=" << static_cast<unsigned>(stats.account_readiness.phase)
+                          << "\nworkchain=" << stats.account_readiness.workchain
+                          << "\ndelivery=recorded\n").ensure();
   // This interval includes the whole query up to the completed stats write,
   // not just message delivery. It is a conservative normal-run observation,
   // not an upper bound under arbitrary scheduler or storage delays.

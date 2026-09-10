@@ -7,6 +7,7 @@
     declared workchain format.
 */
 #pragma once
+#include "block/workchain-readiness-observation.h"
 
 #include <array>
 #include <cstdint>
@@ -449,7 +450,8 @@ class WorkchainExecutionRegistry {
 
   td::Status validate_required_workchains(const block::WorkchainSet& workchains,
                                           const block::Config& block_transition_config,
-                                          const LocalWorkchainRoleSet& local_roles) const;
+                                          const LocalWorkchainRoleSet& local_roles,
+                                          WorkchainReadinessObservation* observation = nullptr) const;
 
  private:
   // G: engines_ is written only during node startup (before any collation or
