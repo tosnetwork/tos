@@ -466,7 +466,8 @@ struct Transaction {
   td::Result<ActionPhase> stage_workchain_messages(const Ref<vm::Cell>& messages,
                                                   const ActionPhaseConfig& cfg,
                                                   const CurrencyCollection& initial_balance,
-                                                  bool preserve_vm_exceptions = false);
+                                                  bool preserve_vm_exceptions = false,
+                                                  int* native_send_error = nullptr);
   td::Result<CurrencyCollection> stage_workchain_credit(const WorkchainBlockInput& input,
                                                        const SerializeConfig& cfg,
                                                        bool select_destination = false) const;
@@ -555,6 +556,11 @@ struct Transaction {
   td::Status prepare_workchain_entry(Ref<vm::Cell> binding, Ref<vm::Cell> input,
                                     Ref<vm::Cell> effects, Ref<vm::Cell> data, const SerializeConfig& cfg,
                                     std::uint64_t max_transfers, int extra_validation_cells);
+  // Post-authorization, private coordinator entry only. Atomically stage the
+  // historical registration refund using Native mode 1, never a custody payout.
+  // Caller must discard this transaction on failure; no account is committed.
+  td::Status prepare_workchain_refund_message(const gen::UnoV2RegistrationFunding::Record& historical,
+                                             const ActionPhaseConfig& cfg);
   // Explicit coordinator variant: settle foreign final destinations from the
   // committed inbox, retaining original messages and deterministic bounce LTs.
   // Custody arrivals remain that participant's obligation. Complete detached

@@ -2,6 +2,7 @@
 
 #include "block/workchain-coordinator-state.h"
 #include "block/workchain-registration-proof.h"
+#include "block/workchain-refund-message.h"
 #include <limits>
 #include "vm/excno.hpp"
 
@@ -16,6 +17,7 @@ struct WorkchainRegistrationPolicy {
   std::uint16_t schema_version, relation_profile, proof_profile;
   std::uint64_t deposit;
   WorkchainPossessionPolicy possession;
+  const WorkchainSet& refund_workchains;  // Mandatory authenticated table, no local fallback.
 };
 
 // M3 implementation choice; incarnation semantics are NOT frozen by the
@@ -109,6 +111,7 @@ inline td::Result<WorkchainRegistrationTransition> prepare_workchain_registratio
       account.funding.refund_account != old.payer_account) {
     return invalid("registration funding does not match authenticated payer and deposit");
   }
+  TRY_STATUS(validate_workchain_refund_destination(account.funding, policy.refund_workchains));
   if (old.payer_balance < policy.deposit) return invalid("insufficient registration deposit");
   if (old.coordinator.system.registered_accounts == UINT64_MAX ||
       policy.deposit > UINT64_MAX - old.coordinator.refundable_deposits) {

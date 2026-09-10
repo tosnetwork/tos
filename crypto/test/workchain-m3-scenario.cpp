@@ -13,6 +13,7 @@
 #include "vm/vm.h"
 
 #include "workchain-m3-scenario.h"
+#include "block/workchain-closure-settlement.h"
 #include "workchain-m3-test-funding.h"
 #include "workchain-proof-test-access.h"
 using namespace block;
@@ -113,7 +114,7 @@ class PureBackend final : public ScenarioBackend {
   td::Bits256 coordinator_id_;
   std::uint64_t registration_lt_ = 1;
   WorkchainResourcePolicy registration_resources_{4,
-                                                  {4096, 1048576, 32, 2, 2, 1},
+                                                  {4096, 1048576, 32, 3, 3, 1},
                                                   {4096, 1048576, 2048, 524288, 128},
                                                   {100000, 4096, 1048576, 4096, 1048576, 2},
                                                   {0, 2, 2},
@@ -146,6 +147,33 @@ class PureBackend final : public ScenarioBackend {
     return {{p.engine_version, p.relation_version, p.wire_version, p.proof_version,
              p.global_id, p.workchain_id, p.genesis_hash, p.workchain_instance},
             env_.rules, env_.profiles, env_.fee_profile, env_.fee_effective_height};
+  }
+  td::Result<std::pair<WorkchainHostIdentity, Root>> entry(Root candidate, std::vector<td::Bits256> keys) {
+    std::sort(keys.begin(), keys.end());
+    keys.erase(std::unique(keys.begin(), keys.end()), keys.end());
+    WorkchainHostIdentity identity{env_.protocol.global_id, env_.protocol.genesis_hash,
+        env_.protocol.workchain_instance, 2, tos::shardIdAll,
+        td::Bits256(registration_ingress_.engine_configuration->get_hash().bits()), false,
+        0x554e4f32, 17, 2, 4, td::Bits256(native_accounts_->get_hash().bits()),
+        1234, 1234, registration_lt_, vm::CellBuilder().finalize()};
+    vm::AugmentedDictionary old(vm::load_cell_slice_ref(native_accounts_), 256, block::tlb::aug_ShardAccounts);
+    WorkchainAccountDeclarations declarations;
+    declarations.writes = keys;
+    for (const auto& key : keys) {
+      Account account(2, key.bits());
+      if (!account.unpack(old.lookup(key), 1234, false)) return alarm("entry old account unavailable");
+      declarations.reads.push_back({key, td::Bits256(account.total_state->get_hash().bits())});
+    }
+    TRY_RESULT(access, encode_workchain_account_declarations(declarations, 3, 3));
+    InputPolicyIdentity cut{registration_ingress_.engine_configuration->get_hash(), false, 0x554e4f32, 17, 2, 4};
+    auto resolved = ResolvedBatchInputPolicy::from_resolved_fields(registration_resources_, cut);
+    if (!std::holds_alternative<ResolvedBatchInputPolicy>(resolved)) return alarm("entry resource policy unavailable");
+    const std::vector<Root> inbox;
+    BatchInputAdmissionSession session(std::get<ResolvedBatchInputPolicy>(resolved), candidate, access, identity, inbox);
+    const auto& admitted = session.evaluate();
+    if (const auto* failure = std::get_if<BatchInputAdmissionFailure>(&admitted))
+      return td::Status::Error(static_cast<int>(failure->category), td::Slice(failure->reason));
+    return std::make_pair(identity, std::get<AdmittedBatchInput>(admitted).root());
   }
   template <size_t N>
   std::array<unsigned char, N> proof(const std::string& mode, unsigned owner, const WorkchainConfidentialAccount& a) {
@@ -220,7 +248,8 @@ class PureBackend final : public ScenarioBackend {
     registration_descriptor_.version = 2;
     vm::CellBuilder storage;
     storage.store_long(0, 64);
-    CHECK(CurrencyCollection(0).store(storage));
+    // Assumed TEST operating budget, separate from later refundable deposits.
+    CHECK(CurrencyCollection(1000).store(storage));
     storage.store_long(1, 1).store_long(0, 1).store_long(0, 1);
     CHECK(storage.store_maybe_ref(workchain_confidential_native_code()));
     CHECK(storage.store_maybe_ref(state_.coordinator));
@@ -252,9 +281,16 @@ class PureBackend final : public ScenarioBackend {
   }
   td::Status register_account(unsigned owner) override {
     auto a = templates_.at(owner);
+    // Test-scope authenticated destination table, not a deployment default.
+    WorkchainSet refund_workchains;
+    td::Ref<WorkchainInfo> basechain{true};
+    basechain.write().workchain = 0;
+    basechain.write().basic = basechain.write().active = basechain.write().accept_msgs = true;
+    basechain.write().min_addr_len = basechain.write().max_addr_len = 256;
+    refund_workchains.emplace(0, basechain);
     WorkchainRegistrationPolicy policy{a.global_id,     a.genesis_hash,        env_.protocol.workchain_instance,
                                        a.bindings,      a.schema_version,      a.relation_profile,
-                                       a.proof_profile, a.funding.paid_deposit, possession_policy()};
+                                       a.proof_profile, a.funding.paid_deposit, possession_policy(), refund_workchains};
     TRY_RESULT(incarnation, derive_workchain_registration_operation_id(policy, a));
     a.address.instance = incarnation;
     auto p = proof<64>("register", owner, a);
@@ -546,11 +582,32 @@ class PureBackend final : public ScenarioBackend {
     TRY_RESULT(effects, execute_workchain_confidential_transfer(config, decoded, historical(a), historical(b), meter));
     if (meter.consumed() == 0)
       return alarm("real proof verifier was not charged");
+    std::vector<td::Bits256> keys{coordinator_id_, a.address.account};
+    if (effects.destination_data.not_null()) keys.push_back(b.address.account);
+    TRY_RESULT(admitted_entry, entry(persisted, keys));
+    WorkchainAccountEffects native_effects;
+    native_effects.updates = {{coordinator_id_, state_.coordinator}, {a.address.account, effects.source_data}};
+    if (effects.destination_data.not_null()) native_effects.updates.push_back({b.address.account, effects.destination_data});
+    std::sort(native_effects.updates.begin(), native_effects.updates.end(),
+              [](const auto& x, const auto& y) { return x.account < y.account; });
+    TRY_RESULT(encoded_effects, encode_workchain_account_effects(native_effects, 3, 0, 4096));
+    SerializeConfig cfg; cfg.global_version = 16;
+    TRY_RESULT(settled, build_workchain_inbound_allocation_overlay(native_accounts_, admitted_entry.first,
+        admitted_entry.second, encoded_effects, coordinator_id_, env_.rules.custody, 3, 3, 0, 0, 4096, cfg));
+    auto settled_root = roundtrip(settled.state.accounts);
+    vm::AugmentedDictionary stored(vm::load_cell_slice_ref(settled_root), 256, block::tlb::aug_ShardAccounts);
+    for (const auto& update : native_effects.updates) {
+      Account readback(2, update.account.bits());
+      if (!readback.unpack(stored.lookup(update.account), 1234, false) ||
+          readback.data->get_hash() != update.data->get_hash()) return alarm("Native transfer state readback mismatch");
+    }
     auto next = state_;
     next.accounts[owner] = roundtrip(effects.source_data);
     if (effects.destination_data.not_null())
       next.accounts[receiver] = roundtrip(effects.destination_data);
     state_ = std::move(next);
+    native_accounts_ = settled_root;
+    registration_lt_ = settled.state.end_lt;
     wallets_[owner].value = std::stoull(result.at("new_value"));
     wallets_[owner].blind = rho;
     if (kind == 1) {
@@ -572,18 +629,43 @@ class PureBackend final : public ScenarioBackend {
   td::Result<RefundObserved> close(unsigned owner) override {
     auto a = account(owner);
     auto p = proof<96>("close", owner, a);
-    TRY_RESULT(result,
-               block::WorkchainProofTestAccess::with_budget(100000, [&](auto& verification_budget) { return execute_workchain_account_closure(a, coordinator(), possession_policy(), env_.domain, p, verification_budget); }));
-    // Pure backend applies the refund to its Native balance state atomically. A
-    // live backend must use the delivered Native transaction instead.
+    auto policy = possession_policy();
+    TRY_RESULT(id, derive_workchain_closure_operation_id(
+        {a.global_id, a.genesis_hash, env_.protocol.workchain_instance}, a.address, a.auth_nonce));
+    WorkchainReplayInput replay = WorkchainClosureReplayInput{
+        id, rebuild_workchain_possession_context(policy, a), p};
+    TRY_RESULT(replay_root, encode_workchain_replay_input(replay));
+    TRY_RESULT(admitted_entry, entry(roundtrip(replay_root), {a.address.account, coordinator_id_}));
+    WorkchainSet workchains;
+    td::Ref<WorkchainInfo> basechain{true};
+    basechain.write().workchain = 0;
+    basechain.write().basic = basechain.write().active = basechain.write().accept_msgs = true;
+    basechain.write().min_addr_len = basechain.write().max_addr_len = 256;
+    workchains.emplace(0, basechain);
+    SerializeConfig cfg; cfg.global_version = 16;
+    ActionPhaseConfig prices; prices.global_version = 16; prices.workchains = &workchains;
+    prices.fwd_std = prices.fwd_mc = MsgPrices(100, 0, 0, 0, 16384, 0);
+    auto meter = WorkchainProofTestAccess::create(441);
+    auto before = native_accounts_;
+    TRY_RESULT(settled, settle_workchain_closure(before, admitted_entry.first, admitted_entry.second,
+        a.address.account, coordinator_id_, env_.rules.custody, policy, env_.domain, meter, 3, 3, 4096, cfg, prices));
+    if (meter.consumed() != 441 || settled.exports.size() != 1)
+      return alarm("closure verifier or single outbound refund missing");
+    auto persisted = roundtrip(settled.state.accounts);
+    vm::AugmentedDictionary old(vm::load_cell_slice_ref(persisted), 256, block::tlb::aug_ShardAccounts);
+    Account closed(2, a.address.account.bits()), coordinator(2, coordinator_id_.bits());
+    if (!closed.unpack(old.lookup(a.address.account), 1234, false) ||
+        !coordinator.unpack(old.lookup(coordinator_id_), 1234, false)) return alarm("closure Native readback failed");
+    // One-way push only: there is no recipient balance credit in this fixture.
+    // Delivery/compensation/claim is not established by an outbound transaction.
     auto next = state_;
-    TRY_RESULT(balance, checked_sum(next.native_balances[owner], result.refund.amount));
-    next.accounts[owner] = roundtrip(result.account_data);
-    next.coordinator = roundtrip(result.coordinator_data);
-    next.native_balances[owner] = balance;
-    auto credited = balance - state_.native_balances[owner];  // checked_sum established no wrap and nonnegative delta.
+    next.accounts[owner] = closed.data;
+    next.coordinator = coordinator.data;
     state_ = std::move(next);
-    return RefundObserved{credited, result.refund.workchain, result.refund.account};
+    native_accounts_ = persisted;
+    registration_lt_ = settled.state.end_lt;
+    return RefundObserved{settled.exports[0].trans, settled.exports[0].msg, before, persisted,
+                          coordinator_id_, 2, 1234};
   }
 };
 }  // namespace

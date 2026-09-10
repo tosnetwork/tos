@@ -12,8 +12,11 @@ struct WorkchainAccountClosureTransition {
 
 // No M3 operation can create a settlement obligation: registration settles its
 // deposit atomically, SEND creates a pending receipt (a separate closure
-// condition), COLLECT consumes receipts, and closure refunds within the same
-// transition. Withdrawal and deposit operations do not exist before M4/M5.
+// condition), COLLECT consumes receipts, and closure commits a one-way refund
+// message within the same transition, NOT guaranteed delivery. M3 creates no
+// asynchronous return association, recredit, compensation or claim. Ordinary
+// Native processing may consume value or produce no bounce; reliable delivery
+// belongs to M5. Withdrawal and deposit operations do not exist before M4/M5.
 // Nor can authenticated M3 state represent an obligation: account records carry
 // no settlement refs and there is no chain-state obligation view. This condition
 // is structurally satisfied, NOT checked at runtime or declared by a caller.

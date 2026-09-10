@@ -6,6 +6,9 @@ absence of one field spelling. Additionally inventory obligation/deposit/
 withdrawal identifiers throughout Git-visible first-party production sources,
 including new files. Existing refundable registration deposits are NOT M4
 Deposit operations; their recorded occurrences are retained, not excluded.
+The one-way refund materializer's bucket arithmetic is inventoried too: it adds
+no authenticated representation or operation, no return association/recredit,
+and promises no delivery. The frozen state/schema identities remain unchanged.
 
 LIMIT: lexical source check, not a semantic C++/Rust proof. Generated or renamed
 operations outside the frozen representations require human identification.

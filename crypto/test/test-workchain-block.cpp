@@ -29,6 +29,8 @@
 #include "block/workchain-host-identity.h"
 #include "block/workchain-resource-policy.h"
 #include "block/workchain-coordinator-state.h"
+#include "block/workchain-refund-message.h"
+#include "block/workchain-closure-settlement.h"
 #include "block/workchain-host-input.h"
 #include "block/workchain-account-engine.h"
 #include "block/workchain-account-settlement.h"
@@ -4772,6 +4774,105 @@ TEST(WorkchainBlock, NativeDisposalEntry) {
   ASSERT_TRUE(!entry.serialize(cfg));
   ASSERT_TRUE(coordinator.balance == block::CurrencyCollection(1000));
   ASSERT_TRUE(custody.balance == block::CurrencyCollection(1000));
+}
+
+TEST(WorkchainBlock, NativeCoordinatorRefundMessage) {
+  auto candidate = number(11);
+  auto hash = td::Bits256(candidate->get_hash().bits());
+  auto address = td::Bits256::zero();
+  block::InputPolicyIdentity policy_id{candidate->get_hash(), false, 17, 9, 2, 1};
+  auto policy = block::ResolvedInputPolicy::from_resolved_fields({10, 1024, 1}, policy_id);
+  block::CandidateAdmissionSession admission(candidate, std::get<block::ResolvedInputPolicy>(policy));
+  const auto& admitted = std::get<block::AdmittedInput>(admission.evaluate());
+  block::WorkchainHostIdentity identity{-1, hash, hash, 2, UINT64_MAX, hash, false,
+      17, 9, 2, 1, hash, 1, 10, 20, number(1)};
+  block::gen::ShardStateUnsplit::Record state;
+  ASSERT_TRUE(tlb::unpack_cell(shard_fixture(2, 2, true, 1, false, 0, 40, false, 1000), state));
+  vm::AugmentedDictionary accounts(vm::load_cell_slice_ref(state.accounts), 256, block::tlb::aug_ShardAccounts);
+  block::Account coordinator(2, address.bits());
+  ASSERT_TRUE(coordinator.unpack(accounts.lookup(address), 10, false));
+  // Private transaction-construction fixture, not live authenticated-state evidence.
+  coordinator.data = block::encode_workchain_coordinator_state({2, {1, 1, 2, 0}, 300}).move_as_ok();
+  auto next_data = block::encode_workchain_coordinator_state({2, {1, 1, 2, 0}, 200}).move_as_ok();
+  block::WorkchainAccountDeclarations access{{{address, td::Bits256(coordinator.total_state->get_hash().bits())}}, {address}};
+  auto input = block::encode_workchain_host_input(identity, admitted, access, {}, 1, 1, 0).move_as_ok();
+  block::WorkchainAccountEffects effects;
+  effects.updates.push_back({address, next_data});
+  auto effects_root = block::encode_workchain_account_effects(effects, 1, 0, 4096).move_as_ok();
+  auto binding = block::build_workchain_participant_records(td::Bits256(input->get_hash().bits()),
+      td::Bits256(effects_root->get_hash().bits()), {address}, 1).move_as_ok()[0];
+  block::SerializeConfig cfg; cfg.global_version = 16; cfg.disable_anycast = true;
+  block::WorkchainSet workchains;
+  td::Ref<block::WorkchainInfo> basechain{true};
+  basechain.write().workchain = 0;
+  basechain.write().basic = basechain.write().active = basechain.write().accept_msgs = true;
+  basechain.write().min_addr_len = basechain.write().max_addr_len = 256;
+  workchains.emplace(0, basechain);
+  block::ActionPhaseConfig prices;
+  prices.global_version = 16; prices.workchains = &workchains;
+  prices.fwd_std = prices.fwd_mc = block::MsgPrices(100, 0, 0, 0, 16384, 0);
+  block::WorkchainRegistrationFunding historical{100, 0, hash};
+  using Transaction = block::transaction::Transaction;
+  Transaction tx(coordinator, Transaction::tr_workchain_batch, 21, 10);
+  ASSERT_TRUE(tx.prepare_workchain_entry(binding, input, effects_root, next_data, cfg, 0, 4096).is_ok());
+  ASSERT_TRUE(tx.prepare_workchain_refund_message(historical, prices).is_ok());
+  ASSERT_TRUE(tx.balance == block::CurrencyCollection(800));
+  ASSERT_EQ(tx.out_msgs.size(), 1u);
+  auto check = [&](std::uint64_t after_bucket, const std::vector<td::Ref<vm::Cell>>& messages,
+                   const block::WorkchainRegistrationFunding& paid) {
+    return block::verify_workchain_refund_message(paid, 300, after_bucket, coordinator.balance,
+        tx.balance, tx.total_fees, 2, address, messages);
+  };
+  ASSERT_TRUE(check(200, tx.out_msgs, historical).is_ok());
+  auto missing = check(200, {}, historical);
+  ASSERT_TRUE(missing.is_error());
+  ASSERT_EQ(missing.message(), "refund requires exactly one outbound message");
+  auto no_debit = check(300, tx.out_msgs, historical);
+  ASSERT_TRUE(no_debit.is_error());
+  ASSERT_EQ(no_debit.message(), "refund bucket debit differs from historical payment");
+  auto altered = tx.out_msgs;
+  block::gen::Message::Record changed_message;
+  block::gen::CommonMsgInfo::Record_int_msg_info changed_info;
+  ASSERT_TRUE(tlb::type_unpack_cell(altered[0], block::gen::t_Message_Any, changed_message));
+  ASSERT_TRUE(block::gen::csr_unpack(changed_message.info, changed_info));
+  vm::CellBuilder reduced_value;
+  ASSERT_TRUE(block::CurrencyCollection(99).store(reduced_value));
+  changed_info.value = vm::load_cell_slice_ref(reduced_value.finalize());
+  ASSERT_TRUE(tlb::csr_pack(changed_message.info, changed_info));
+  ASSERT_TRUE(tlb::type_pack_cell(altered[0], block::gen::t_Message_Any, changed_message));
+  auto mismatch = check(200, altered, historical);
+  ASSERT_TRUE(mismatch.is_error());
+  ASSERT_EQ(mismatch.message(), "refund message value differs from historical payment");
+  auto bucket_fees = check(100, tx.out_msgs, historical);
+  ASSERT_TRUE(bucket_fees.is_error());
+  ASSERT_EQ(bucket_fees.message(), "refund bucket debit differs from historical payment");
+  auto unknown = historical; unknown.refund_workchain = 7;
+  auto invalid_address = block::validate_workchain_refund_destination(unknown, workchains);
+  ASSERT_TRUE(invalid_address.is_error()); ASSERT_EQ(invalid_address.code(), -7200);
+  unknown.refund_workchain = 256;
+  ASSERT_TRUE(block::validate_workchain_refund_destination(unknown, workchains).is_error());
+  ASSERT_TRUE(tx.serialize(cfg));
+  block::gen::Transaction::Record record;
+  ASSERT_TRUE(tlb::unpack_cell(tx.root, record));
+  ASSERT_EQ(record.outmsg_cnt, 1);
+  // A second send cannot be attached to the same already sealed transaction.
+  ASSERT_TRUE(tx.prepare_workchain_refund_message(historical, prices).is_error());
+  ASSERT_TRUE(coordinator.balance == block::CurrencyCollection(1000));
+  coordinator.balance = block::CurrencyCollection(300);
+  Transaction unfunded(coordinator, Transaction::tr_workchain_batch, 21, 10);
+  ASSERT_TRUE(unfunded.prepare_workchain_entry(binding, input, effects_root, next_data, cfg, 0, 4096).is_ok());
+  auto insufficient = unfunded.prepare_workchain_refund_message(historical, prices);
+  ASSERT_TRUE(insufficient.is_error()); ASSERT_EQ(insufficient.code(), -7200);
+  ASSERT_EQ(insufficient.message(), "refund operating budget insufficient");
+  ASSERT_TRUE(unfunded.out_msgs.empty());
+  ASSERT_TRUE(coordinator.balance == block::CurrencyCollection(300));
+  coordinator.balance = block::CurrencyCollection(299);
+  Transaction corrupt(coordinator, Transaction::tr_workchain_batch, 21, 10);
+  ASSERT_TRUE(corrupt.prepare_workchain_entry(binding, input, effects_root, next_data, cfg, 0, 4096).is_ok());
+  auto unavailable = corrupt.prepare_workchain_refund_message(historical, prices);
+  ASSERT_TRUE(unavailable.is_error()); ASSERT_EQ(unavailable.code(), -7201);
+  ASSERT_EQ(unavailable.message(), "authenticated refund bucket is not fully backed");
+  ASSERT_TRUE(corrupt.out_msgs.empty());
 }
 
 TEST(WorkchainBlock, NativeCoordinatorEntry) {

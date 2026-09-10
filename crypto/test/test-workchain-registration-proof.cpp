@@ -67,7 +67,14 @@ TEST(RegistrationProof, RustPossessionVectorAndHostBinding) {
   a.auth_nonce = 0;
   a.available_revision = 0;
   a.lifecycle = block::WorkchainAccountActive{};
-  block::WorkchainRegistrationPolicy policy{a.global_id, a.genesis_hash, fill(7), a.bindings, 1, 1, 2, 10, possession};
+  block::WorkchainSet refund_workchains;
+  td::Ref<block::WorkchainInfo> basechain{true};
+  basechain.write().workchain = 0;
+  basechain.write().basic = basechain.write().active = basechain.write().accept_msgs = true;
+  basechain.write().min_addr_len = basechain.write().max_addr_len = 256;
+  refund_workchains.emplace(0, basechain);
+  block::WorkchainRegistrationPolicy policy{a.global_id, a.genesis_hash, fill(7), a.bindings, 1, 1, 2, 10, possession,
+                                           refund_workchains};
   a.address.instance = block::derive_workchain_registration_operation_id(policy,a).move_as_ok();
   ASSERT_EQ(a.address.instance.to_hex(), "0DB963E03494EF62B42EBF2CDB9A69F109DAE126399C80801DDACF8E98660A12");
   ASSERT_TRUE(a.address.instance != policy.workchain_instance);
@@ -94,6 +101,15 @@ TEST(RegistrationProof, RustPossessionVectorAndHostBinding) {
   auto registered = block::WorkchainProofTestAccess::with_budget(100000, [&](auto& verification_budget) { return block::replay_workchain_registration(policy, old, a.address.account, cell.ok(), replay_root, verification_budget); });
   ASSERT_TRUE(registered.is_ok());
   ASSERT_EQ(registered.ok().payer_balance, 90u);
+  refund_workchains.clear();
+  auto destination_meter = block::WorkchainProofTestAccess::create(433);
+  auto bad_destination = block::replay_workchain_registration(policy, old, a.address.account,
+      cell.ok(), replay_root, destination_meter);
+  ASSERT_TRUE(bad_destination.is_error());
+  ASSERT_EQ(bad_destination.error().code(), -7200);
+  ASSERT_EQ(bad_destination.error().message(), "refund destination workchain does not accept messages");
+  ASSERT_EQ(destination_meter.consumed(), 0u);
+  refund_workchains.emplace(0, basechain);
   // X proof with authenticated Y. The wire also claims Y, so host comparison
   // passes. Only transcript verification can reject this substitution.
   auto policy_y = policy;

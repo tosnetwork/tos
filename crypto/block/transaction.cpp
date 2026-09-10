@@ -31,6 +31,8 @@
 #include "block/workchain-native-disposal.h"
 #include "block/workchain-confidential-native.h"
 #include "block/workchain-confidential-state.h"
+#include "block/workchain-coordinator-state.h"
+#include "block/workchain-refund-message.h"
 #include "crypto/openssl/rand.hpp"
 #include "td/utils/Timer.h"
 #include "td/utils/bits.h"
@@ -4353,7 +4355,8 @@ bool Transaction::compute_state(const SerializeConfig& cfg) {
 td::Result<ActionPhase> Transaction::stage_workchain_messages(const Ref<vm::Cell>& messages,
                                                               const ActionPhaseConfig& cfg,
                                                               const CurrencyCollection& initial_balance,
-                                                              bool preserve_vm_exceptions) {
+                                                              bool preserve_vm_exceptions, int* native_send_error) {
+  if (native_send_error) *native_send_error = 0;
   if (!cfg.workchains || cfg.max_actions < 0) {
     return td::Status::Error("missing batch native message configuration");
   }
@@ -4395,6 +4398,7 @@ td::Result<ActionPhase> Transaction::stage_workchain_messages(const Ref<vm::Cell
           ++index;
           return send_error == 0;
         })) {
+      if (native_send_error) *native_send_error = send_error;
       return send_error ? td::Status::Error("batch native message send failed")
                         : td::Status::Error("invalid batch outbound requests");
     }
@@ -4905,6 +4909,72 @@ td::Status Transaction::prepare_workchain_entry_impl(Ref<vm::Cell> binding, Ref<
   out_msgs = std::move(disposed_messages);
   batch_out_msgs = std::move(sealed_messages);
   end_lt = disposal_end_lt;
+  batch_end_lt = end_lt;
+  return td::Status::OK();
+}
+
+td::Status Transaction::prepare_workchain_refund_message(const WorkchainRegistrationFunding& historical,
+                                                        const ActionPhaseConfig& cfg) {
+  if (trans_type != tr_workchain_batch || account.workchain != 2 || cfg.workchains == nullptr ||
+      batch_description.is_null() || new_data.is_null() || root.not_null() || new_total_state.not_null() ||
+      !out_msgs.empty() || in_msg.not_null() || storage_phase || compute_phase || action_phase || bounce_phase ||
+      !total_fees.is_zero() || balance != account.balance ||
+      vm::load_cell_slice(batch_description).prefetch_ulong(4) != tlb::TransactionDescr::trans_workchain_entry_v3)
+    return td::Status::Error("refund requires a private uncommitted coordinator entry without other value flow");
+  TRY_RESULT(before, decode_workchain_coordinator_state(account.data));
+  TRY_RESULT(after, decode_workchain_coordinator_state(new_data));
+  TRY_STATUS(validate_workchain_refund_destination(historical, *cfg.workchains));
+  CurrencyCollection operating;
+  // An already under-backed authenticated bucket is a state-availability/
+  // integrity failure, not evidence against this candidate's closure proof.
+  if (!CurrencyCollection::sub(balance, workchain_refund_value(before.refundable_deposits), operating))
+    return td::Status::Error(-7201, "authenticated refund bucket is not fully backed");
+  auto destination = tlb::t_MsgAddressInt.pack_std_address(historical.refund_workchain, historical.refund_account);
+  vm::CellBuilder request;
+  // Implementation choice: empty body, absent StateInit, mode 1, ordinary bounce
+  // enabled. Native construction supplies the source, LT/time and forwarding fee.
+  request.store_long(6, 4).store_long(0, 2).append_cellslice(destination);
+  if (!workchain_refund_value(historical.paid_deposit).store(request) ||
+      !tlb::t_Tomis.store_long(request, 0) || !tlb::t_Tomis.store_long(request, 0))
+    return td::Status::Error("cannot encode historical refund amount");
+  request.store_zeroes(64 + 32).store_long(0, 2);
+  vm::Dictionary requests(15);
+  td::BitArray<15> key; key.set_zero();
+  if (!requests.set_ref(key, request.finalize(), vm::Dictionary::SetMode::Add))
+    return td::Status::Error("cannot construct refund message request");
+  vm::CellBuilder wrapper;
+  if (!std::move(requests).append_dict_to_bool(wrapper))
+    return td::Status::Error("cannot encode refund message request dictionary");
+  int native_error = 0;
+  auto sending = stage_workchain_messages(wrapper.finalize(), cfg, balance, true, &native_error);
+  if (sending.is_error()) {
+    // 37 is Native's insufficient-TOS result. This is determined entirely by
+    // authenticated balance/prices, unlike an unavailable local view.
+    if (native_error == 37) return td::Status::Error(-7200, "refund operating budget insufficient");
+    return sending.move_as_error();
+  }
+  auto staged = sending.move_as_ok();
+  CurrencyCollection unreserved;
+  // Checked subtraction: fees must leave all other deposits fully backed.
+  if (!CurrencyCollection::sub(staged.remaining_balance,
+                              workchain_refund_value(after.refundable_deposits), unreserved))
+    return td::Status::Error(-7200, "refund operating budget insufficient");
+  TRY_STATUS(verify_workchain_refund_message(historical, before.refundable_deposits, after.refundable_deposits,
+      balance, staged.remaining_balance, CurrencyCollection(staged.total_action_fees),
+      account.workchain, account.addr, staged.out_msgs));
+  // M3 only materializes a one-way outbound message, delivery NOT guaranteed.
+  // Destination execution/forwarding may consume value or produce no bounce.
+  // No return association, bucket recredit, compensation or claim is created.
+  // Reliable delivery/claim handling belongs to M5, not this closure transition.
+  // Copy both retained artifacts before changing this private transaction.
+  auto sealed = staged.out_msgs;
+  balance = staged.remaining_balance;
+  batch_balance = balance;
+  total_fees = CurrencyCollection(staged.total_action_fees);
+  batch_fees = total_fees;
+  out_msgs = std::move(staged.out_msgs);
+  batch_out_msgs = std::move(sealed);
+  end_lt = staged.end_lt;
   batch_end_lt = end_lt;
   return td::Status::OK();
 }
