@@ -1,0 +1,15 @@
+// Local UNO profile. The production constructor and approval predicates are
+// reused; no Counter engine or registration is involved.
+"uno-genesis-operators.fif" include
+globalid@ uno_development_coordinator uno_development_custody require-uno-genesis-operators
+2 mkemptyShardState
+dup 31 boc+>B dup "unostate0.boc" B>file
+Bhashu dup constant unostate0_fhash 256 u>B "unostate0.fhash" B>file
+hashu dup constant unostate0_rhash 256 u>B "unostate0.rhash" B>file
+"uno-genesis-config.fif" include
+// Production basic/active/closed-routing descriptor: 0xc000, reserved flags=0.
+unostate0_rhash unostate0_fhash now 0 0 0 2 add-uno-genesis-workchain
+400 uno_genesis_descriptor @ 2 first-instance-identity
+uno_genesis_resources uno-initial-system instance-engine-configuration
+uno_development_coordinator 256 u>B uno_development_custody 256 u>B
+uno-genesis-ingress 84 config!
