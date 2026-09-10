@@ -939,3 +939,25 @@ prev-masterchain traversal -- do not hand-roll a new chain walk.
 - **B2-1 signature:** the physical-delete primitive does ONLY path revalidation +
   filesystem delete + confirmed-gone; eligibility stays entirely in the
   orchestrator (B2-6), never in this helper.
+
+## B2 implementation — structural updates (from reading the source)
+
+- **B2-2 folds into B2-6.** The manager already tracks the durable GC block via
+  `gc_masterchain_handle_` (persisted by `update_gc_block_handle` before
+  `advance_gc` installs it, loaded at startup, monotonic by construction, kept a
+  non-regression floor by the existing startup/truncation checks). The safe
+  cleanup checkpoint is simply `gc_masterchain_handle_->id()`; no separate tracked
+  member is needed (adding an unused one would also trip -Werror). B2-6 reads it
+  directly.
+- **B2-3 needs no custom async chain walk.** `MasterchainState::ancestor_is_valid`
+  == `check_old_mc_block_id(blkid, strict)` (full-ID ancestor check against the
+  state's prev-blocks dict). So condition B is
+  `gc_masterchain_state_->check_old_mc_block_id(retirement, /*strict=*/true)` (or
+  retirement == GC id), synchronous, using validated chain data. Depth-limited:
+  a retirement older than the dict returns false -> we keep (leak) conservatively,
+  never a false "is ancestor".
+- **B2-4 obsolescence** is under a focused design query: the candidate predicate
+  is condition B AND a per-shard catchain-seqno obsolescence check against the GC
+  state (`get_shard_cc_seqno(shard)` past the record's cc_seqno by the current+next
+  margin), binding the whole decision to the GC rollback floor. The exact form
+  (margin, shard split/merge monotonicity) is being settled before coding.
