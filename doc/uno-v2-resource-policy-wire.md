@@ -28,6 +28,12 @@ are not authenticated-profile entry points. These private checks neither open
 the live execution gate nor implement fee-table recomputation, hidden-balance
 accounting, or system-state layout.
 
+**Superseded by the allowance-bearing bounded-policy migration:** the table
+and four-slice count below describe the historical policy. Current policy:
+`uno_v2_resource_policy_bounded`, tag `f37fed2f`, 128 bits / four references;
+its five cells contain 1,240 bits and decoding loads five slices. The issued
+engine shell is `41868cd4`, 320 bits / two references. Historical text follows.
+
 The five constructors omit explicit tags in `crypto/block/block.tlb`; `tlbc`
 derives CRC32 tags from its normalized constructor definitions. Recompute with:
 

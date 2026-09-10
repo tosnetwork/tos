@@ -733,9 +733,14 @@ void interpret_uno_engine_key(vm::Stack& stack) {
 
 // Deliberately restrictive development admission envelope. These are not fee
 // units or measured production capacities; mainnet approval is a separate gate.
+// Provisional block preflight thresholds (0/2/2): no underload headroom,
+// soft and hard thresholds both 2. These are deliberately tiny wire
+// values, not a work-unit calibration or an M6 capacity acceptance. The
+// mainnet resource allowlist remains closed. Preflight allowance is separately
+// supplied as 1; it is not derived from the declared proof-result bound.
 void interpret_uno_provisional_resources(vm::Stack& stack) {
   block::WorkchainResourcePolicy value{4, {384, 392832, 4, 8, 8, 1},
-      {2048, 2095104, 256, 261888, 32}, {1, 48, 49104, 384, 392832, 12}};
+      {2048, 2095104, 256, 261888, 32}, {1, 48, 49104, 384, 392832, 12}, {0, 2, 2}, 1};
   auto result = block::encode_workchain_resource_policy(value);
   if (result.is_error()) throw fift::IntError{result.move_as_error().to_string()};
   stack.push_cell(result.move_as_ok());

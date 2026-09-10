@@ -631,6 +631,7 @@ target_link_libraries(test-vm PRIVATE tos_crypto fift-lib)
 add_executable(test-smartcont test/test-td-main.cpp ${SMARTCONT_TEST_SOURCE})
 target_link_libraries(test-smartcont PRIVATE smc-envelope fift-lib tos_db)
 target_compile_definitions(test-smartcont PRIVATE TOS_CRYPTO_BUILD_DIR="${CMAKE_CURRENT_BINARY_DIR}/crypto")
+target_compile_definitions(test-smartcont PRIVATE TOS_CREATE_STATE_TARGET="$<TARGET_FILE:create-state>")
 add_dependencies(test-smartcont create-state)
 
 add_executable(test-bigint ${BIGINT_TEST_SOURCE})
@@ -862,7 +863,7 @@ add_test(NAME test-workchain-validator-local-visitors
     "${CMAKE_CURRENT_SOURCE_DIR}/crypto/test/workchain-validator-prepared-expiry.py"
     --repo "${CMAKE_CURRENT_SOURCE_DIR}"
     --probe $<TARGET_FILE:test-workchain-validator-local-visitors>
-    --fixture "${CMAKE_CURRENT_SOURCE_DIR}/doc/measurements/uno-local-profile/run-3/state/zerostate.boc")
+    --fixture "${CMAKE_CURRENT_SOURCE_DIR}/crypto/test/workchain-bounded-zerostate.boc")
 set_tests_properties(test-workchain-validator-local-visitors PROPERTIES
   TIMEOUT 60 LABELS "private;workchain;prepared-not-connected")
 

@@ -146,27 +146,25 @@ std::string replace_word_token(std::string input, td::Slice from, td::Slice to) 
 }
 
 std::string create_state_binary() {
-  std::vector<std::string> candidates;
-  if (const char* env_path = std::getenv("TOS_CREATE_STATE_BINARY")) {
-    candidates.emplace_back(env_path);
+  // Bind to this target's build graph, never a cwd-relative build/ directory.
+  // An explicit override is only a consistency assertion, not tool selection.
+  auto bound = td::realpath(TOS_CREATE_STATE_TARGET);
+  if (bound.is_error()) {
+    LOG(FATAL) << "Bound create-state target is unavailable: " << TOS_CREATE_STATE_TARGET;
   }
-  candidates.emplace_back("crypto/create-state");        // CTest from build/
-  candidates.emplace_back("build/crypto/create-state");  // direct run from repo root
-  candidates.emplace_back("../crypto/create-state");     // direct run from build/test/
-
-  for (const auto& candidate : candidates) {
-    auto real = td::realpath(candidate);
-    if (real.is_error()) {
-      continue;
-    }
-    auto path = real.move_as_ok();
-    auto info = td::stat(path);
-    if (info.is_ok() && info.ok().is_reg_) {
-      return path;
+  const auto path = bound.move_as_ok();
+  if (const char* override_path = std::getenv("TOS_CREATE_STATE_BINARY")) {
+    auto requested = td::realpath(std::string(override_path));
+    if (requested.is_error() || requested.ok() != path) {
+      LOG(FATAL) << "create-state tool binding mismatch: expected " << path << ", requested " << override_path;
     }
   }
-  LOG(FATAL) << "Unable to locate crypto/create-state; set TOS_CREATE_STATE_BINARY";
-  return {};
+  auto info = td::stat(path);
+  if (info.is_error() || !info.ok().is_reg_) {
+    LOG(FATAL) << "Bound create-state target is not a regular file: " << path;
+  }
+  LOG(INFO) << "Bound create-state tool: " << path;
+  return path;
 }
 
 std::string fift_lib_dir() {

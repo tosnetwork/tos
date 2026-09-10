@@ -11,8 +11,10 @@ uno_v2_resource_state max_cells:uint64 max_bits:uint64 max_account_cells:uint64
 uno_v2_resource_work_output max_proof_units:uint64 max_effect_cells:uint64
   max_effect_bits:uint64 max_output_cells:uint64 max_output_bits:uint64
   max_transfers:uint32 = UnoV2ResourceWorkOutput;
-uno_v2_resource_policy admission_version:uint32 input:^UnoV2ResourceInput
-  state:^UnoV2ResourceState work_output:^UnoV2ResourceWorkOutput = UnoV2ResourcePolicy;
+uno_v2_resource_policy_bounded admission_version:uint32 preflight_allowance:uint64
+  input:^UnoV2ResourceInput
+  state:^UnoV2ResourceState work_output:^UnoV2ResourceWorkOutput
+  block_preflight:^ParamLimits = UnoV2ResourcePolicy;
 uno_v2_engine_configuration_issued k_accepted_target_rate_ms:uint32
   instance_id:bits256 resource_policy:^UnoV2ResourcePolicy parameters:^Cell = UnoV2EngineConfiguration;
 workchain_instance_record instance_seq:uint64 creation_descriptor_hash:bits256 = WorkchainInstanceRecord;

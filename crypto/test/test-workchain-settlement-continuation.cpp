@@ -141,7 +141,7 @@ void owner_lifecycle(const block::ResolvedWorkchainAccountBinding& binding) {
 void run(const std::string& scenario) {
   Engine engine;
   block::WorkchainResourcePolicy resources{2, {1000, 1000000, 3, 2, 2, 1},
-      {1000, 1000000, 128, 65536, 64}, {32, 128, 65536, 1000, 1000000, 2}};
+      {1000, 1000000, 128, 65536, 64}, {32, 128, 65536, 1000, 1000000, 2}, {1, 32, 64}, 7};
   if (scenario == "effects") resources.work_output.max_effect_cells = 1;
   if (scenario == "output") resources.work_output.max_output_cells = 1;
   block::InputPolicyIdentity policy_id{vm::CellHash{}, false, 0x434e5431, 7, 5, 2};

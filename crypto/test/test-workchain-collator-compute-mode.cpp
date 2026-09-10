@@ -25,7 +25,7 @@ int main() {
     check(account, true, "custom.legacy_mode_unchanged");
     check(block::ResolvedWorkchainBlockExecution{}, false, "singleton.not_account_compute");
     block::WorkchainResourcePolicy resources{2, {1000, 1000000, 3, 2, 2, 1},
-        {1000, 1000000, 128, 65536, 64}, {32, 128, 65536, 1000, 1000000, 2}};
+        {1000, 1000000, 128, 65536, 64}, {32, 128, 65536, 1000, 1000000, 2}, {1, 32, 64}, 7};
     block::InputPolicyIdentity identity{vm::CellHash{}, false, 0x434e5431, 7, 5, 2};
     auto policy = block::ResolvedBatchInputPolicy::from_resolved_fields(resources, identity);
     require(std::holds_alternative<block::ResolvedBatchInputPolicy>(policy), "fixture.policy");

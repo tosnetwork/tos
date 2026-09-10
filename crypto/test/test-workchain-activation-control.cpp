@@ -33,7 +33,7 @@ int main(int argc, char** argv) {
       // Explicit resolver-only identity values, not an authenticated
       // installation. The same shell is used for both capability settings.
       block::WorkchainResourcePolicy resources{4, {64,4096,8,16,16,5},
-          {256,16384,128,8192,64}, {32,128,8192,256,16384,16}};
+          {256,16384,128,8192,64}, {32,128,8192,256,16384,16}, {1, 32, 64}, 7};
       auto shell = block::encode_workchain_engine_parameters(
           {400, td::Bits256::ones(), resources, vm::CellBuilder().finalize()});
       if (shell.is_error()) return 329;

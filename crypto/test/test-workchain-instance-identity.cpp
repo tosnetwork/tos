@@ -18,7 +18,7 @@ td::Ref<vm::Cell> issue(const td::Ref<vm::Cell>& ledger, int wc, const td::Ref<v
 }
 td::Ref<vm::Cell> configuration_for(std::int32_t workchain, const td::Ref<vm::Cell>& descriptor, const td::Bits256& id) {
   block::WorkchainResourcePolicy resources{4, {64,4096,8,16,16,5},
-      {256,16384,128,8192,64}, {32,128,8192,256,16384,16}};
+      {256,16384,128,8192,64}, {32,128,8192,256,16384,16}, {1, 32, 64}, 7};
   auto payload = vm::CellBuilder().finalize();
   auto shell = block::encode_workchain_engine_parameters({400, id, resources, payload});
   require(shell.is_ok(), 830);

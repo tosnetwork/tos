@@ -29,7 +29,7 @@ def ok(label,cmd):
  return r
 ok('configure',['cmake','-S',a.copy,'-B',a.build,'-DCMAKE_PROJECT_TOS_INCLUDE=crypto/test/workchain-validator-local-visitors.cmake'])
 target='test-workchain-validator-local-visitors'; rebuild=['cmake','--build',a.build,'--target',target,'-j32']
-fixture=a.copy/'doc/measurements/uno-local-profile/run-3/state/zerostate.boc'
+fixture=a.copy/'crypto/test/workchain-bounded-zerostate.boc'
 command=[a.build/target,fixture]
 report.update(explicit_rebuild_command=list(map(str,rebuild)),actual_executables=[str(a.build/target)],fixture_sha256=sha(fixture.read_bytes()))
 ok('baseline-build',rebuild)

@@ -164,16 +164,17 @@ TEST(WorkchainBlock, ResourcePolicyWire) {
   block::WorkchainResourcePolicy policy{0x80010001u,
       {UINT64_MAX, 2, 3, UINT32_MAX, 5, 6},
       {7, UINT64_MAX, 9, 10, UINT16_MAX},
-      {11, 12, 13, 14, UINT64_MAX, UINT32_MAX}};
+      {11, 12, 13, 14, UINT64_MAX, UINT32_MAX}, {1, 32, 64}, 7};
   auto encoded = block::encode_workchain_resource_policy(policy);
   ASSERT_TRUE(encoded.is_ok());
   auto root = encoded.move_as_ok();
   ASSERT_TRUE(block::gen::t_UnoV2ResourcePolicy.validate_ref(16, root));
   auto cs = vm::load_cell_slice(root);
-  ASSERT_EQ(cs.size(), 64u);
-  ASSERT_EQ(cs.size_refs(), 3u);
-  ASSERT_EQ(cs.fetch_ulong(32), 0xbbd8a9ecu);
+  ASSERT_EQ(cs.size(), 128u);
+  ASSERT_EQ(cs.size_refs(), 4u);
+  ASSERT_EQ(cs.fetch_ulong(32), 0xf37fed2fu);
   ASSERT_EQ(cs.fetch_ulong(32), policy.admission_version);
+  ASSERT_EQ(cs.fetch_ulong(64), policy.preflight_allowance);
   const unsigned widths[] = {320, 304, 384};
   const unsigned tags[] = {0xc5defa2au, 0x90aef2ddu, 0x7a310b92u};
   // Read wire order independently of generated unpack: a self-consistent
@@ -192,6 +193,13 @@ TEST(WorkchainBlock, ResourcePolicyWire) {
     }
     ASSERT_TRUE(child.empty_ext());
   }
+  auto preflight = vm::load_cell_slice(cs.fetch_ref());
+  ASSERT_EQ(preflight.size(), 104u);
+  ASSERT_EQ(preflight.fetch_ulong(8), 0xc3u);
+  ASSERT_EQ(preflight.fetch_ulong(32), 1u);
+  ASSERT_EQ(preflight.fetch_ulong(32), 32u);
+  ASSERT_EQ(preflight.fetch_ulong(32), 64u);
+  ASSERT_TRUE(preflight.empty_ext());
   auto decoded = block::decode_workchain_resource_policy(root);
   ASSERT_TRUE(decoded.is_ok());
   const auto& v = decoded.ok();
@@ -213,16 +221,127 @@ TEST(WorkchainBlock, ResourcePolicyWire) {
   ASSERT_EQ(v.work_output.max_output_cells, 14u);
   ASSERT_EQ(v.work_output.max_output_bits, UINT64_MAX);
   ASSERT_EQ(v.work_output.max_transfers, UINT32_MAX);
+  ASSERT_EQ(v.block_preflight.underload, 1u);
+  ASSERT_EQ(v.block_preflight.soft_limit, 32u);
+  ASSERT_EQ(v.block_preflight.hard_limit, 64u);
   auto again = block::encode_workchain_resource_policy(v);
   ASSERT_TRUE(again.is_ok());
   ASSERT_EQ(again.ok()->get_hash(), root->get_hash());
+}
+
+TEST(WorkchainBlock, ResourcePolicyBlockPreflight) {
+  // Three wire thresholds, with deliberately distinct values. This is not a
+  // production work-unit calibration or a block-accumulation implementation.
+  block::WorkchainResourcePolicy policy{4, {1,2,3,4,5,6}, {7,8,9,10,11},
+      {12,13,14,15,16,17}, {3,7,11}, 7};
+  static_assert(!std::is_default_constructible_v<block::WorkchainResourcePolicy>);
+  static_assert(!std::is_constructible_v<block::WorkchainResourcePolicy,
+      std::uint32_t, block::gen::UnoV2ResourceInput::Record,
+      block::gen::UnoV2ResourceState::Record, block::gen::UnoV2ResourceWorkOutput::Record>);
+  auto encoded = block::encode_workchain_resource_policy(policy);
+  ASSERT_TRUE(encoded.is_ok());
+  auto decoded = block::decode_workchain_resource_policy(encoded.ok());
+  ASSERT_TRUE(decoded.is_ok());
+  ASSERT_EQ(decoded.ok().block_preflight.underload, 3u);
+  ASSERT_EQ(decoded.ok().block_preflight.soft_limit, 7u);
+  ASSERT_EQ(decoded.ok().block_preflight.hard_limit, 11u);
+  ASSERT_EQ(decoded.ok().work_output.max_proof_units, 12u);
+  auto cs = vm::load_cell_slice(encoded.ok());
+  auto in = cs.fetch_ref(), state = cs.fetch_ref(), work = cs.fetch_ref(), limits = cs.fetch_ref();
+  auto reframe = [&](unsigned tag, td::Ref<vm::Cell> bound) {
+    vm::CellBuilder b;
+    b.store_long(tag, 32).store_long(4, 32).store_long(7, 64).store_ref(in).store_ref(state).store_ref(work);
+    if (bound.not_null()) b.store_ref(bound);
+    return b.finalize();
+  };
+  // Historical three-reference encoding AND an otherwise current, four-ref
+  // cell with only its tag changed must fail at the constructor check itself.
+  for (auto bound : {td::Ref<vm::Cell>{}, limits}) {
+    auto old = block::decode_workchain_resource_policy(reframe(0xbbd8a9ec, bound));
+    ASSERT_TRUE(old.is_error());
+    ASSERT_EQ(old.error().message(), "unrecognized resource policy constructor tag");
+  }
+  auto missing = block::decode_workchain_resource_policy(
+      reframe(block::gen::UnoV2ResourcePolicy::cons_tag[0], {}));
+  ASSERT_TRUE(missing.is_error());
+  ASSERT_EQ(missing.error().message(), "malformed resource policy encoding");
+  // Raw construction bypasses the generated packer's own ordering checks, so
+  // the following assertions exercise decoding, not a fixture creation error.
+  for (auto fields : {std::array<unsigned, 3>{8,7,11}, std::array<unsigned, 3>{3,12,11}}) {
+    auto invalid = vm::CellBuilder().store_long(0xc3, 8)
+        .store_long(fields[0], 32).store_long(fields[1], 32).store_long(fields[2], 32).finalize();
+    ASSERT_TRUE(block::decode_workchain_resource_policy(
+        reframe(block::gen::UnoV2ResourcePolicy::cons_tag[0], invalid)).is_error());
+    policy.block_preflight = {fields[0], fields[1], fields[2]};
+    ASSERT_TRUE(block::encode_workchain_resource_policy(policy).is_error());
+  }
+  policy.block_preflight = {0, 0x10000, UINT32_MAX};
+  auto wide = block::encode_workchain_resource_policy(policy);
+  ASSERT_TRUE(wide.is_ok());
+  auto wide_decoded = block::decode_workchain_resource_policy(wide.ok());
+  ASSERT_TRUE(wide_decoded.is_ok());
+  ASSERT_EQ(wide_decoded.ok().block_preflight.soft_limit, 0x10000u);
+  ASSERT_EQ(wide_decoded.ok().block_preflight.hard_limit, UINT32_MAX);
+  policy.block_preflight = {UINT32_MAX, UINT32_MAX, UINT32_MAX};
+  ASSERT_TRUE(block::encode_workchain_resource_policy(policy).is_ok());
+}
+
+TEST(WorkchainBlock, PreflightAllowanceWire) {
+  // Deliberately unequal budgets prove this field is not the proof-work result.
+  block::WorkchainResourcePolicy p{4, {1,2,3,4,5,6}, {7,8,9,10,11},
+      {12,13,14,15,16,17}, {0,2,2}, UINT64_MAX};
+  static_assert(!std::is_constructible_v<block::WorkchainResourcePolicy,
+      std::uint32_t, block::gen::UnoV2ResourceInput::Record,
+      block::gen::UnoV2ResourceState::Record, block::gen::UnoV2ResourceWorkOutput::Record,
+      block::gen::ParamLimits::Record>);
+  auto encoded = block::encode_workchain_resource_policy(p);
+  ASSERT_TRUE(encoded.is_ok());
+  auto root = vm::load_cell_slice(encoded.ok());
+  ASSERT_EQ(root.size(), 128u);
+  ASSERT_EQ(root.fetch_ulong(32), block::gen::UnoV2ResourcePolicy::cons_tag[0]);
+  ASSERT_EQ(root.fetch_ulong(32), 4u);
+  ASSERT_EQ(root.fetch_ulong(64), UINT64_MAX);
+  auto decoded = block::decode_workchain_resource_policy(encoded.ok());
+  ASSERT_TRUE(decoded.is_ok());
+  ASSERT_EQ(decoded.ok().preflight_allowance, UINT64_MAX);
+  ASSERT_EQ(decoded.ok().work_output.max_proof_units, 12u);
+  // No runtime host rule is inferred from a codec: zero is carried, not replaced
+  // by the unrelated proof-result limit. The C3 runner rejects zero allowances.
+  p.preflight_allowance = 0;
+  auto zero = block::encode_workchain_resource_policy(p);
+  ASSERT_TRUE(zero.is_ok());
+  auto zero_decoded = block::decode_workchain_resource_policy(zero.ok());
+  ASSERT_TRUE(zero_decoded.is_ok());
+  ASSERT_EQ(zero_decoded.ok().preflight_allowance, 0u);
+  auto old_fields = [&](unsigned tag, unsigned allowance_bits) {
+    vm::CellBuilder b;
+    b.store_long(tag,32).store_long(4,32);
+    if (allowance_bits) b.store_zeroes(allowance_bits);
+    auto refs = vm::load_cell_slice(encoded.ok());
+    for (unsigned i=0;i<4;++i) b.store_ref(refs.fetch_ref());
+    return b.finalize();
+  };
+  // First isolate the tag cause using both historical tags and complete refs.
+  for (unsigned tag : {0xbbd8a9ecu, 0xfb8a7703u}) {
+    auto result = block::decode_workchain_resource_policy(old_fields(tag,0));
+    ASSERT_TRUE(result.is_error());
+    ASSERT_EQ(result.error().message(), "unrecognized resource policy constructor tag");
+  }
+  // Then retain the current tag and all four valid references: only the
+  // allowance is absent/truncated. This must not be mistaken for an old tag.
+  for (unsigned bits : {0u,63u}) {
+    auto result = block::decode_workchain_resource_policy(
+        old_fields(block::gen::UnoV2ResourcePolicy::cons_tag[0],bits));
+    ASSERT_TRUE(result.is_error());
+    ASSERT_EQ(result.error().message(), "missing or truncated preflight allowance");
+  }
 }
 
 TEST(WorkchainBlock, EngineConfigurationFraming) {
   // Explicit codec/resolver fixture instance. This representable wire value
   // does not authenticate an installation or claim a production-issued identity.
   const auto fixture_instance = td::Bits256::ones();
-  block::WorkchainResourcePolicy value{2, {1,2,3,4,5,6}, {7,8,9,10,11}, {12,13,14,15,16,17}};
+  block::WorkchainResourcePolicy value{2, {1,2,3,4,5,6}, {7,8,9,10,11}, {12,13,14,15,16,17}, {1, 32, 64}, 7};
   // Test-only tagged business payload: the host must preserve, not interpret it.
   auto payload = vm::CellBuilder().store_long(0x12345678, 32).finalize();
   for (std::uint32_t version : {2u, 3u, 0x10002u, 0x10003u, 0x80000002u}) {
@@ -265,7 +384,7 @@ TEST(WorkchainBlock, EngineConfigurationAcceptedCadence) {
   static_assert(!std::is_aggregate_v<block::WorkchainEngineParameters>);
   static_assert(!std::is_constructible_v<block::WorkchainEngineParameters,
       block::WorkchainResourcePolicy, td::Ref<vm::Cell>>);
-  block::WorkchainResourcePolicy resources{2, {1,2,3,4,5,6}, {7,8,9,10,11}, {12,13,14,15,16,17}};
+  block::WorkchainResourcePolicy resources{2, {1,2,3,4,5,6}, {7,8,9,10,11}, {12,13,14,15,16,17}, {1, 32, 64}, 7};
   auto payload = vm::CellBuilder().store_long(0x12345678, 32).finalize();
   for (std::uint32_t accepted : {0u, 1u, 400u, 401u, UINT32_MAX}) {
     // Recording and installation validation are separate; even zero is a
@@ -298,7 +417,7 @@ TEST(WorkchainBlock, EngineConfigurationAcceptedCadence) {
 
 TEST(WorkchainBlock, BatchPolicyVersionIdentityAgreement) {
   block::WorkchainResourcePolicy resources{2, {64,4096,8,16,16,5},
-      {256,16384,128,8192,64}, {32,128,8192,256,16384,16}};
+      {256,16384,128,8192,64}, {32,128,8192,256,16384,16}, {1, 32, 64}, 7};
   auto root = vm::CellBuilder().finalize();
   block::InputPolicyIdentity identity{root->get_hash(), false, 0x434e5431, 7, 5, 2};
   for (const auto& versions : {std::pair{2u, 2u}, std::pair{3u, 3u}, std::pair{4u, 4u},
@@ -329,7 +448,7 @@ TEST(WorkchainBlock, BatchProfileUnsupportedNodeProbe) {
   // implementation. This observes old-node execution binding, not installation.
   for (auto version : {3u, 4u}) {
   block::WorkchainResourcePolicy resources{version, {64,4096,8,16,16,5},
-      {256,16384,128,8192,64}, {32,128,8192,256,16384,16}};
+      {256,16384,128,8192,64}, {32,128,8192,256,16384,16}, {1, 32, 64}, 7};
   block::InputPolicyIdentity identity{vm::CellBuilder().finalize()->get_hash(), false, 0x434e5431, 7, 5, version};
   auto result = block::ResolvedBatchInputPolicy::from_resolved_fields(resources, identity);
   if (block::workchain_batch_admission_version_supported(version)) {
@@ -344,7 +463,7 @@ TEST(WorkchainBlock, BatchProfileUnsupportedNodeProbe) {
 
 void check_claimed_fee_framing(unsigned defect) {
   block::WorkchainResourcePolicy resources{3, {64,4096,8,16,16,5},
-      {256,16384,128,8192,64}, {32,128,8192,256,16384,16}};
+      {256,16384,128,8192,64}, {32,128,8192,256,16384,16}, {1, 32, 64}, 7};
   auto empty = vm::CellBuilder().finalize();
   block::InputPolicyIdentity identity{empty->get_hash(), false, 0x434e5431, 7, 5, 3};
   auto resolved = block::ResolvedBatchInputPolicy::from_resolved_fields(resources, identity);
@@ -400,24 +519,26 @@ TEST(WorkchainBlock, ResourcePolicyEncodedSpecialCells) {
   // Explicit codec/resolver fixture instance. This representable wire value
   // does not authenticate an installation or claim a production-issued identity.
   const auto fixture_instance = td::Bits256::ones();
-  block::WorkchainResourcePolicy value{2, {1,2,3,4,5,6}, {7,8,9,10,11}, {12,13,14,15,16,17}};
+  block::WorkchainResourcePolicy value{2, {1,2,3,4,5,6}, {7,8,9,10,11}, {12,13,14,15,16,17}, {1, 32, 64}, 7};
   auto resource = block::encode_workchain_resource_policy(value).move_as_ok();
   auto cs = vm::load_cell_slice(resource);
   auto input = cs.fetch_ref();
   auto state = cs.fetch_ref();
   auto work = cs.fetch_ref();
+  auto preflight = cs.fetch_ref();
   auto plain = vm::CellBuilder().store_long(17, 8).finalize();
   std::vector<td::Ref<vm::Cell>> special_cells{
       vm::CellBuilder().store_long(2, 8).store_zeroes(256).finalize(true),
       vm::CellBuilder::do_create_pruned_branch(plain, 1, 0),
       vm::CellBuilder::create_merkle_proof(plain)};
   for (const auto& special : special_cells) {
-    for (unsigned position = 0; position < 5; ++position) {
+    for (unsigned position = 0; position < 6; ++position) {
       auto altered_resource = position == 1 ? special
-          : vm::CellBuilder().store_long(0xbbd8a9ec, 32).store_long(2, 32)
+          : vm::CellBuilder().store_long(0xf37fed2f, 32).store_long(2, 32).store_long(7, 64)
                 .store_ref(position == 2 ? special : input)
                 .store_ref(position == 3 ? special : state)
-                .store_ref(position == 4 ? special : work).finalize();
+                .store_ref(position == 4 ? special : work)
+                .store_ref(position == 5 ? special : preflight).finalize();
       auto framing = position == 0 ? special
           : vm::CellBuilder().store_long(block::gen::UnoV2EngineConfiguration::cons_tag[0], 32).store_long(400, 32).store_bits(fixture_instance.bits(), 256)
                 .store_ref(altered_resource).store_ref(plain).finalize();
@@ -431,15 +552,19 @@ TEST(WorkchainBlock, ResourcePolicyEncodedSpecialCells) {
 }
 
 TEST(WorkchainBlock, ResourcePolicyMalformedClosure) {
-  block::WorkchainResourcePolicy value{1, {1,2,3,4,5,6}, {7,8,9,10,11}, {12,13,14,15,16,17}};
+  block::WorkchainResourcePolicy value{1, {1,2,3,4,5,6}, {7,8,9,10,11}, {12,13,14,15,16,17}, {1, 32, 64}, 7};
   auto packed = block::encode_workchain_resource_policy(value);
   ASSERT_TRUE(packed.is_ok());
   auto root = packed.move_as_ok();
   auto top = vm::load_cell_slice(root);
-  td::Ref<vm::Cell> cells[] = {root, top.fetch_ref(), top.fetch_ref(), top.fetch_ref()};
+  td::Ref<vm::Cell> cells[] = {root, top.fetch_ref(), top.fetch_ref(), top.fetch_ref(), top.fetch_ref()};
   auto empty = vm::CellBuilder().finalize();
-  for (unsigned location = 0; location < 4; ++location) {
+  for (unsigned location = 0; location < 5; ++location) {
     for (unsigned defect = 0; defect < 3; ++defect) {
+      // A root with four references cannot acquire a fifth in a valid Cell.
+      // Test the extra-reference defect on every child; missing root refs are
+      // exercised below. Do not count an unconstructible fifth ref as rejection.
+      if (location == 0 && defect == 1) continue;
       vm::CellBuilder b;
       auto cs = vm::load_cell_slice(cells[location]);
       if (defect == 2) { cs.fetch_ulong(32); b.store_long(0, 32); }
@@ -448,16 +573,17 @@ TEST(WorkchainBlock, ResourcePolicyMalformedClosure) {
       if (defect == 1) b.store_ref(empty);
       auto malformed = b.finalize();
       if (location != 0) {
-        malformed = vm::CellBuilder().store_long(0xbbd8a9ec, 32).store_long(1, 32)
+        malformed = vm::CellBuilder().store_long(0xf37fed2f, 32).store_long(1, 32).store_long(7, 64)
             .store_ref(location == 1 ? malformed : cells[1])
             .store_ref(location == 2 ? malformed : cells[2])
-            .store_ref(location == 3 ? malformed : cells[3]).finalize();
+            .store_ref(location == 3 ? malformed : cells[3])
+            .store_ref(location == 4 ? malformed : cells[4]).finalize();
       }
       ASSERT_TRUE(block::decode_workchain_resource_policy(malformed).is_error());
     }
   }
   ASSERT_TRUE(block::decode_workchain_resource_policy({}).is_error());
-  auto missing = vm::CellBuilder().store_long(0xbbd8a9ec, 32).store_long(1, 32)
+  auto missing = vm::CellBuilder().store_long(0xf37fed2f, 32).store_long(1, 32).store_long(7, 64)
       .store_ref(cells[1]).store_ref(cells[2]).finalize();
   ASSERT_TRUE(block::decode_workchain_resource_policy(missing).is_error());
   value.state.max_account_depth = 65536;
@@ -943,7 +1069,7 @@ class PreflightObservedCell final : public vm::Cell {
 };
 
 TEST(WorkchainBlock, ResourcePolicyLocalLoadFailure) {
-  block::WorkchainResourcePolicy value{1, {1,2,3,4,5,6}, {7,8,9,10,11}, {12,13,14,15,16,17}};
+  block::WorkchainResourcePolicy value{1, {1,2,3,4,5,6}, {7,8,9,10,11}, {12,13,14,15,16,17}, {1, 32, 64}, 7};
   auto root = block::encode_workchain_resource_policy(value).move_as_ok();
   unsigned loads = 0;
   td::Ref<PreflightObservedCell> missing{true, root, &loads, true};
@@ -1294,7 +1420,7 @@ td::Ref<vm::Cell> counter_configuration_shell(td::Ref<vm::Cell> business) {
   // not a claim of installation against an authenticated masterchain state.
   // Live installation fixtures derive their claims from their actual zerostate.
   block::WorkchainResourcePolicy fixture_resources{4, {64,4096,8,16,16,5},
-      {256,16384,128,8192,64}, {32,128,8192,256,16384,16}};
+      {256,16384,128,8192,64}, {32,128,8192,256,16384,16}, {1, 32, 64}, 7};
   return block::encode_workchain_engine_parameters(
       {400, number(4002)->get_hash().bits(),
        fixture_resources, std::move(business)}).move_as_ok();
@@ -1495,7 +1621,7 @@ block::ResolvedBatchInputPolicy inbox_test_policy(
     std::uint32_t max_inbound, block::WorkchainInputLimits limits = {100000, 100000000, 100000},
     std::uint32_t max_reads = 16, std::uint32_t max_writes = 16) {
   block::WorkchainResourcePolicy resources{2, {limits.cells, limits.bits, limits.roots, max_reads, max_writes, max_inbound},
-      {256,16384,128,8192,64}, {32,128,8192,256,16384,16}};
+      {256,16384,128,8192,64}, {32,128,8192,256,16384,16}, {1, 32, 64}, 7};
   block::InputPolicyIdentity identity{vm::CellHash{}, false, 0x434e5431, 7, 5, 2};
   auto result = block::ResolvedBatchInputPolicy::from_resolved_fields(resources, identity);
   ASSERT_TRUE(std::holds_alternative<block::ResolvedBatchInputPolicy>(result));
@@ -9076,7 +9202,7 @@ TEST(WorkchainBlock, DualNativeIngressCodecAndVersion) {
   policy.executor_address = td::Bits256::zero();
   policy.custody_address = td::Bits256::ones();
   block::WorkchainResourcePolicy resources{2, {64,4096,8,16,16,5},
-      {256,16384,128,8192,64}, {32,128,8192,256,16384,16}};
+      {256,16384,128,8192,64}, {32,128,8192,256,16384,16}, {1, 32, 64}, 7};
   auto business = vm::CellBuilder().store_long(0x12345678, 32).finalize();
   policy.engine_configuration = block::encode_workchain_engine_parameters({400, fixture_instance, resources, business}).move_as_ok();
   auto encoded = block::encode_workchain_native_ingress_policy(policy);
@@ -9200,7 +9326,7 @@ TEST(WorkchainBlock, MultiAccountAdmissionVersionInstallation) {
   auto business = vm::CellBuilder().store_long(0x12345678, 32).finalize();
   for (std::uint32_t admission : {0u, 1u, 2u, 3u, 4u, 5u, 0x10002u, 0x10003u, 0x10004u, 0x80000002u}) {
     block::WorkchainResourcePolicy resources{admission, {64,4096,8,16,16,5},
-        {256,16384,128,8192,64}, {32,128,8192,256,16384,16}};
+        {256,16384,128,8192,64}, {32,128,8192,256,16384,16}, {1, 32, 64}, 7};
     policy.engine_configuration = block::encode_workchain_engine_parameters({400, fixture_instance, resources, business}).move_as_ok();
     ASSERT_TRUE(configuration.set_ref(td::BitArray<32>{84},
         block::encode_workchain_native_ingress_table({policy}).move_as_ok()));
@@ -9210,7 +9336,7 @@ TEST(WorkchainBlock, MultiAccountAdmissionVersionInstallation) {
   // Every semantic zero is rejected at installation, before candidate admission.
   for (unsigned field = 0; field < 12; ++field) {
     block::WorkchainResourcePolicy resources{2, {64,4096,8,16,16,5},
-        {256,16384,128,8192,64}, {32,128,8192,256,16384,16}};
+        {256,16384,128,8192,64}, {32,128,8192,256,16384,16}, {1, 32, 64}, 7};
     if (field == 0) resources.input.max_reads = 0;
     if (field == 1) resources.input.max_writes = 0;
     if (field == 2) resources.input.max_inbound = 0;
@@ -9337,7 +9463,7 @@ TEST(WorkchainBlock, AccountRegistryReplayConnectivity) {
   static_assert(!std::is_base_of_v<block::WorkchainAccountEngine, block::RegisteredWorkchainAccountEngine>);
 
   block::WorkchainResourcePolicy resources{2, {100,100000,3,2,2,1},
-      {256,16384,128,8192,64}, {64,128,8192,256,65536,16}};
+      {256,16384,128,8192,64}, {64,128,8192,256,65536,16}, {1, 32, 64}, 7};
   block::WorkchainNativeIngressPolicy ingress;
   ingress.workchain_id = 2;
   ingress.engine_key = observed->engine_key();
@@ -9574,7 +9700,7 @@ TEST(WorkchainBlock, MultiAccountRegistryBinding) {
   auto engine = std::make_unique<Engine>();
   auto* observed = engine.get();
   block::WorkchainResourcePolicy resource_policy{2, {64,4096,8,16,16,5},
-      {256,16384,128,8192,64}, {32,128,8192,256,16384,16}};
+      {256,16384,128,8192,64}, {32,128,8192,256,16384,16}, {1, 32, 64}, 7};
   auto engine_parameters = [&](unsigned value) {
     return block::encode_workchain_engine_parameters(
         {400, fixture_instance, resource_policy, vm::CellBuilder().store_long(value, 8).finalize()}).move_as_ok();
