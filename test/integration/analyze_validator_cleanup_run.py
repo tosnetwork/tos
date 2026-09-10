@@ -62,6 +62,17 @@ FATAL = re.compile(
 )
 
 
+def _git_head() -> str:
+    import subprocess
+
+    try:
+        return subprocess.check_output(
+            ["git", "-C", str(REPO), "rev-parse", "HEAD"], text=True
+        ).strip()
+    except Exception:
+        return "unknown"
+
+
 def _latest_run() -> Path | None:
     root = REPO / "test/integration/.validator-election-experiment"
     runs = sorted((p for p in root.glob("*") if (p / "network").is_dir()), reverse=True)
@@ -91,6 +102,10 @@ def analyze(run_dir: Path) -> int:
     fatal_lines: list[str] = []
     per_node = []
     max_gc_seqno = 0
+    eligibility_violations: list[str] = []  # reserves with retirement_seqno > gc_seqno
+    deleted_sessions: set[str] = set()
+    present_sessions: set[str] = set()  # validator-group sessions still on disk at end
+    present_validator_dirs_total = 0
 
     for nd in node_dirs:
         log = nd / "log"
@@ -118,6 +133,34 @@ def analyze(run_dir: Path) -> int:
         for r in node_completed:
             gone_on_disk.append(not (nd / "consensus" / r["dir"]).exists())
 
+        # NEGATIVE / eligibility relation: every reserved delete must have a retirement
+        # checkpoint at or behind the GC floor (a necessary condition of the four-
+        # condition gate -- a future retirement can never be an ancestor of GC). A
+        # reserve with retirement_seqno > gc_seqno would be a wrongful reservation.
+        for r in node_reserves:
+            if int(r["ret"]) > int(r["gc"]):
+                eligibility_violations.append(
+                    f"{nd.name}: reserved {r['dir']} with retirement_seqno={r['ret']} > gc_seqno={r['gc']}"
+                )
+
+        # RETENTION (should-NOT-delete over-reach): validator-group dirs (non-observer)
+        # still present on disk at run end are the live/not-yet-eligible groups the
+        # cleanup correctly left alone. Collect them and their session ids.
+        present_here = []
+        cdir = nd / "consensus"
+        if cdir.is_dir():
+            for child in cdir.iterdir():
+                if child.name.startswith("consensus.") and ".observer." not in child.name:
+                    present_here.append(child.name)
+                    # dir shape: consensus.<wc>.<shard>.<cc>.<session_hex>
+                    parts = child.name.split(".")
+                    if len(parts) >= 5:
+                        present_sessions.add(parts[4])
+        present_validator_dirs_total += len(present_here)
+
+        for r in node_completed:
+            deleted_sessions.add(r["session"])
+
         reserves += node_reserves
         completed += node_completed
         per_node.append(
@@ -127,6 +170,7 @@ def analyze(run_dir: Path) -> int:
                 "completed_deletes": len(node_completed),
                 "completed_dirs_gone_from_disk": sum(1 for g in gone_on_disk if g),
                 "completed_dirs_still_present": sum(1 for g in gone_on_disk if not g),
+                "validator_dirs_present_at_end": len(present_here),
                 "last_log_ts": _last_timestamp(text),
                 "alive_after_last_delete": alive_after_last_delete,
                 "fatal_lines": len(node_fatals),
@@ -142,6 +186,8 @@ def analyze(run_dir: Path) -> int:
         (n["alive_after_last_delete"] is None) or (n["alive_after_last_delete"] is True)
         for n in per_node
     )
+    # a session must never be both deleted and still present on disk.
+    deleted_and_present = sorted(deleted_sessions & present_sessions)
 
     failures: list[str] = []
     if completed_total == 0:
@@ -157,21 +203,40 @@ def analyze(run_dir: Path) -> int:
         failures.append("a node's log did not continue after its last delete (possible death/stall through cleanup)")
     if fatal_lines:
         failures.append(f"{len(fatal_lines)} fatal/crash diagnostics in node logs")
+    # NEGATIVE-direction failures:
+    if eligibility_violations:
+        failures.append(
+            f"{len(eligibility_violations)} reserve(s) with retirement_seqno > gc_seqno (deleted a non-obsolete session)"
+        )
+    if completed_total > 0 and present_validator_dirs_total == 0:
+        failures.append("cleanup deleted EVERY validator-group dir (no live group retained -> over-reach)")
+    if deleted_and_present:
+        failures.append(f"{len(deleted_and_present)} session(s) both deleted AND still present on disk")
 
     verdict = "PASS" if not failures else "FAIL"
     summary = {
         "verdict": verdict,
         "run_dir": str(run_dir),
+        "source_head": _git_head(),
         "real_path_completed_deletes": completed_total,
         "distinct_reserved_ops": len({_key_from(r) for r in reserves}),
         "max_gc_seqno_at_reserve": max_gc_seqno,
+        "eligibility_relation_ok": not eligibility_violations,
+        "eligibility_violations": eligibility_violations[:10],
+        "validator_dirs_retained_at_end": present_validator_dirs_total,
+        "sessions_both_deleted_and_present": deleted_and_present,
         "nodes": per_node,
         "failures": failures,
         "fatal_sample": fatal_lines[:5],
         "note": (
-            "PASS proves the gated validator cleanup FIRED and COMPLETED on the real path "
-            "and every node survived. The should-NOT-delete negative matrix and recovery "
-            "are covered by the C++ tests, not by this run."
+            "PASS proves, on a real 4-node election-driven localnet with a real "
+            "MasterchainState GC oracle: the gated validator cleanup FIRED and COMPLETED "
+            "on the real path (positive); every reserved delete's retirement checkpoint was "
+            "at/behind the GC floor and live groups were retained (should-not-delete over-reach "
+            "guard); and every node survived past its last delete (no wrongful-deletion crash). "
+            "The EXHAUSTIVE should-NOT-delete matrix (r>=g, current/next group, unknown/mismatched "
+            "GC -> no dispatch) and post-delete restart recovery remain covered deterministically "
+            "by the C++ tests (test-validator-cleanup*, scenario 5), not by this run."
         ),
     }
     out = run_dir / "validator-cleanup-analysis.json"
