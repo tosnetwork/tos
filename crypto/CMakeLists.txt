@@ -757,6 +757,14 @@ tos_test(test-workchain-confidential-input)
 set_tests_properties(test-workchain-confidential-input PROPERTIES TIMEOUT 30 LABELS "workchain;m3")
 
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
+add_executable(test-workchain-test-execution-permit ../test/test-td-main.cpp test/test-workchain-test-execution-permit.cpp)
+target_link_libraries(test-workchain-test-execution-permit PRIVATE tos_block tos_crypto)
+tos_test(test-workchain-test-execution-permit)
+set_tests_properties(test-workchain-test-execution-permit PROPERTIES TIMEOUT 30 LABELS "workchain;m3;d59")
+# Default source guard, independent of optional crypto/native fixture builds.
+add_test(NAME test-workchain-test-execution-permit-guard COMMAND ${Python3_EXECUTABLE}
+  "${PROJECT_SOURCE_DIR}/crypto/test/workchain-test-execution-permit-guard.py" --repo "${PROJECT_SOURCE_DIR}" --controls)
+set_tests_properties(test-workchain-test-execution-permit-guard PROPERTIES TIMEOUT 60 LABELS "workchain;m3;d59")
 add_test(NAME test-workchain-handwritten-tags COMMAND ${Python3_EXECUTABLE}
   "${PROJECT_SOURCE_DIR}/crypto/test/workchain-handwritten-tags.py" --repo "${PROJECT_SOURCE_DIR}")
 set_tests_properties(test-workchain-handwritten-tags PROPERTIES TIMEOUT 30 LABELS "workchain;d40")

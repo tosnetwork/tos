@@ -392,6 +392,17 @@ struct LocalWorkchainRoleSet {
 
 class WorkchainExecutionRegistry {
  public:
+  // TEST ONLY (D59). Default off. Only a test constructing its own authenticated
+  // configuration may call this; never set from deployment configuration,
+  // environment variables or command-line options. Default CTest inventories
+  // every occurrence of this setter, including address-taking and new files.
+  // Like engine registration, change permits only before actors start or after
+  // they have all stopped. Read-only lookups during execution need no lock.
+  td::Status enable_test_only_account_instance_execution(tos::WorkchainId workchain,
+                                                        const td::Bits256& instance, bool enabled);
+  bool test_only_account_instance_execution_enabled(tos::WorkchainId workchain,
+                                                    const td::Bits256& instance) const;
+  bool test_only_account_instance_execution_enabled(const ResolvedWorkchainAccountBinding& binding) const;
   void register_engine(std::unique_ptr<WorkchainEngine> engine);
   bool register_engine_if_absent(std::unique_ptr<WorkchainEngine> engine);
   bool has_engine(const WorkchainEngineKey& key) const;
@@ -448,6 +459,9 @@ class WorkchainExecutionRegistry {
   std::map<WorkchainEngineKey, std::unique_ptr<WorkchainEngine>> engines_;
   std::map<WorkchainEngineKey, std::unique_ptr<RegisteredWorkchainBlockEngine>> block_engines_;
   std::map<WorkchainEngineKey, std::unique_ptr<RegisteredWorkchainAccountEngine>> account_engines_;
+  // An empty per-registry, per-workchain, per-instance set is the production
+  // default. No configuration decoder writes it; no global process bool exists.
+  std::map<tos::WorkchainId, std::set<td::Bits256>> test_instance_execution_;
 };
 
 td::uint32 workchain_execution_capability_flags(const WorkchainExecutionRegistry& registry);

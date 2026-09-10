@@ -384,6 +384,39 @@ td::Status validate_workchain_execution_descriptor_transitions(
   return td::Status::OK();
 }
 
+td::Status WorkchainExecutionRegistry::enable_test_only_account_instance_execution(
+    tos::WorkchainId workchain, const td::Bits256& instance, bool enabled) {
+  if (workchain != 2 || instance.is_zero()) {
+    return td::Status::Error("test execution permit requires wc=2 and a nonzero instance");
+  }
+  if (enabled) {
+    test_instance_execution_[workchain].insert(instance);
+  } else {
+    auto found = test_instance_execution_.find(workchain);
+    if (found != test_instance_execution_.end()) {
+      found->second.erase(instance);
+      if (found->second.empty()) test_instance_execution_.erase(found);
+    }
+  }
+  return td::Status::OK();
+}
+
+bool WorkchainExecutionRegistry::test_only_account_instance_execution_enabled(
+    tos::WorkchainId workchain, const td::Bits256& instance) const {
+  auto found = test_instance_execution_.find(workchain);
+  return found != test_instance_execution_.end() && found->second.count(instance) != 0;
+}
+
+bool WorkchainExecutionRegistry::test_only_account_instance_execution_enabled(
+    const ResolvedWorkchainAccountBinding& binding) const {
+  // Closed production behavior incurs no extra configuration parsing, reads or
+  // exceptions. Only an explicitly permitted test workchain reaches the decoder.
+  if (test_instance_execution_.count(binding.descriptor.workchain_id) == 0) return false;
+  auto parameters = decode_workchain_engine_parameters(binding.ingress.engine_configuration);
+  return parameters.is_ok() && test_only_account_instance_execution_enabled(
+      binding.descriptor.workchain_id, parameters.ok().instance_id);
+}
+
 void WorkchainExecutionRegistry::register_engine(std::unique_ptr<WorkchainEngine> engine) {
   CHECK(engine != nullptr);
   auto key = engine->engine_key();
