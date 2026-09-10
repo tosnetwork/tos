@@ -32,6 +32,8 @@ report = {"scope": "Native source behavior and queues; not UNO execution or glob
 
 def require(value, identity):
     if not value:
+        report["failure_identity"] = identity
+        (out / "report.json").write_text(json.dumps(report, indent=2) + "\n")
         raise AssertionError(identity)
 
 for accepting in [True, False]:
