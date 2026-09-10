@@ -1,6 +1,6 @@
 #include "block/workchain-confidential-input.h"
 #include "workchain-m3-business-config.h"
-#include "workchain-m3-genesis-fixture.h"
+#include "workchain-m3-genesis-cells.h"
 #include <limits>
 #include "td/utils/tests.h"
 #include "vm/boc.h"
@@ -489,7 +489,7 @@ TEST(ConfidentialInput, TestGenesisUsesParam84Payload) {
   ASSERT_EQ(decoded.send_fee,11u); ASSERT_EQ(decoded.collect_fee,17u); ASSERT_EQ(decoded.domain,domain);
   auto initial=decode_workchain_coordinator_state(cells.coordinator_data).move_as_ok();
   ASSERT_EQ(initial.system.base_compute,1234u); ASSERT_EQ(initial.system.registered_accounts,0u);
-  ASSERT_EQ(initial.system.system_pending_count,0u); ASSERT_EQ(initial.refundable_deposits,0u);
+  ASSERT_EQ(initial.system.system_pending_count,0); ASSERT_EQ(initial.refundable_deposits,0u);
   auto changed=business; ++changed.send_fee;
   auto changed_cells=make(changed,ingress).move_as_ok();
   ASSERT_TRUE(changed_cells.param84->get_hash()!=cells.param84->get_hash());
