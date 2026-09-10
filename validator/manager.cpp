@@ -2354,7 +2354,15 @@ void ValidatorManagerImpl::got_destroyed_validator_sessions(std::vector<Validato
 }
 
 void ValidatorManagerImpl::got_pending_consensus_db_cleanup(std::vector<std::string> dirs) {
-  pending_consensus_db_cleanup_.insert(dirs.begin(), dirs.end());
+  for (auto &dir : dirs) {
+    // Defensive: the queue is observer-only by construction. Honor only observer
+    // directory names (which carry the ".observer." suffix), so a stray or
+    // legacy-buggy persisted entry can never authorize deleting a validator
+    // directory independently of its tombstone.
+    if (dir.find(".observer.") != std::string::npos) {
+      pending_consensus_db_cleanup_.insert(std::move(dir));
+    }
+  }
   sweep_destroyed_consensus_dbs();
   finish_start_up().start().detach_ensure();
 }
