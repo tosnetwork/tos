@@ -6,6 +6,7 @@
 #include "td/utils/misc.h"
 #include "td/utils/tests.h"
 #include "test/workchain-proof-test-access.h"
+#include "test/workchain-m3-assertions.h"
 #include "vm/boc.h"
 
 namespace {
@@ -132,6 +133,13 @@ TEST(ConfidentialExecution, SendFreshProofRetryConsumesNonceNotId) {
   ASSERT_TRUE(one.ok().destination_data->get_hash() == two.ok().destination_data->get_hash());
   auto a = decode_workchain_confidential_account(one.ok().source_data).move_as_ok();
   auto b = decode_workchain_confidential_account(one.ok().destination_data).move_as_ok();
+  m3_test::Point alice_secret{}, bob_secret{};
+  alice_secret[0] = 101; bob_secret[0] = 223;  // Known test-wallet keys only.
+  auto balances = m3_test::assert_transfer(boc(f.path / "candidate-1.boc"),
+      encode_workchain_confidential_account(f.alice).move_as_ok(), one.ok().source_data,
+      alice_secret, 1000000, 50000, 49852,
+      encode_workchain_confidential_account(f.bob).move_as_ok(), one.ok().destination_data, bob_secret);
+  ASSERT_TRUE(balances.is_ok()); ASSERT_EQ(balances.ok().transferred, 137u);
   ASSERT_EQ(a.auth_nonce, f.alice.auth_nonce + 1);
   ASSERT_EQ(a.available_revision, f.alice.available_revision + 1);
   const auto& send = std::get<WorkchainSendData>(first.data);
@@ -188,6 +196,12 @@ TEST(ConfidentialExecution, CollectOneAndThreeRetainUnselected) {
     ASSERT_TRUE(units > 0);
     ASSERT_TRUE(result.ok().destination_data.is_null());
     auto next = decode_workchain_confidential_account(result.ok().source_data).move_as_ok();
+    m3_test::Point bob_secret{}; bob_secret[0] = 223;
+    const auto expected = read_text(f.path / "expected.txt");
+    auto balances = m3_test::assert_transfer(boc(f.path / "candidate-1.boc"),
+        encode_workchain_confidential_account(f.bob).move_as_ok(), result.ok().source_data,
+        bob_secret, 1000000, 3107, std::stoull(expected.at("new_source_balance")));
+    ASSERT_TRUE(balances.is_ok());
     ASSERT_EQ(next.auth_nonce, f.bob.auth_nonce + 1);
     ASSERT_EQ(next.available_revision, f.bob.available_revision + 1);
     ASSERT_TRUE(next.available.commitment == collect.available.commitment);
