@@ -257,10 +257,13 @@ void FullNodeFastSyncOverlay::process_telemetry_broadcast(
   std::ofstream file;
   file.open(telemetry_filename_, std::ios_base::app);
   file << s << "\n";
+  file.close();
+  // Check the stream state after close(): a small record can stay buffered
+  // until close, so a flush error there (e.g. disk full) would be missed by a
+  // pre-close check.
   if (file.fail()) {
     VLOG(FULL_NODE_WARNING) << "Failed to write telemetry to file " << telemetry_filename_;
   }
-  file.close();
 }
 
 void FullNodeFastSyncOverlay::receive_broadcast(PublicKeyHash src, td::BufferSlice broadcast) {
