@@ -2999,14 +2999,23 @@ void ValidatorManagerImpl::update_shards() {
   }
   observer_groups_ = std::move(new_observer_groups);
 
-  // Validator/tentative groups: recorded in the destroyed-session set and NOT in
-  // the cleanup queue. Deleting a validator DB for a session that could still be
-  // recreated would destroy its consensus state, so their directory cleanup
-  // stays gated on the destroyed-session set (unchanged from before this change).
-  std::vector<td::actor::ActorId<IValidatorGroup>> to_destroy;
+  // Validator/tentative groups: retired by CLOSING (stop bus + close DB) without
+  // deleting the directory, and recorded as a durable cleanup record. The record
+  // is the delete authority; physical deletion happens later only under a
+  // checkpoint-bound eligibility check (PR B/B2), never here -- so a session that
+  // could still be recreated can never lose its consensus state at retirement.
+  // The destroyed-session fence still guards recreation, as before.
+  std::vector<td::actor::ActorId<IValidatorGroup>> to_close;
+  std::vector<consensus::PendingValidatorConsensusDbCleanup> retirement_records;
+  auto record_retirement = [&](ValidatorSessionId id, ShardIdFull shard, CatchainSeqno cc_seqno) {
+    auto record = consensus::make_validator_cleanup_record(id, shard, cc_seqno, last_masterchain_block_id_);
+    pending_validator_db_cleanup_[id] = record;
+    retirement_records.push_back(std::move(record));
+  };
   for (auto &[id, group] : validator_groups_) {
-    LOG(INFO) << "Destroying active " << group.name() << ":" << id;
-    to_destroy.push_back(group.actor.release());
+    LOG(INFO) << "Retiring active " << group.name() << ":" << id << " (close without delete)";
+    record_retirement(id, group.shard, group.cc_seqno);
+    to_close.push_back(group.actor.release());
     destroyed_validator_sessions_.insert(id);
   }
   validator_groups_ = std::move(new_validator_groups);
@@ -3041,14 +3050,16 @@ void ValidatorManagerImpl::update_shards() {
 
   for (auto [id, reason] : ids_to_remove) {
     auto &tentative = next_validator_groups_[id];
-    LOG(INFO) << "Destroying tentative " << tentative.name() << ":" << id << " because of an active " << reason;
-    to_destroy.push_back(tentative.actor.release());
+    LOG(INFO) << "Retiring tentative " << tentative.name() << ":" << id << " because of an active " << reason
+              << " (close without delete)";
+    record_retirement(id, tentative.shard, tentative.cc_seqno);
+    to_close.push_back(tentative.actor.release());
     destroyed_validator_sessions_.insert(id);
     next_validator_groups_.erase(id);
   }
-  auto destroy_sessions = [to_destroy = std::move(to_destroy)]() {
-    for (const auto &s : to_destroy) {
-      td::actor::send_closure(s, &IValidatorGroup::destroy);
+  auto close_sessions = [to_close = std::move(to_close)]() {
+    for (const auto &s : to_close) {
+      td::actor::send_closure(s, &IValidatorGroup::close_for_retirement);
     }
   };
 
@@ -3080,30 +3091,35 @@ void ValidatorManagerImpl::update_shards() {
     destroy_observers();
   }
 
-  // Validator/tentative retirement: persist the destroyed-session set (via the
-  // init-block rotation, or directly) and only then delete the directories --
-  // exactly as before this change. Their cleanup stays gated on that set at
-  // startup, so a validator directory is never deleted for a session that could
-  // still be recreated.
+  // Retirement persistence (both rotated and non-rotated): atomically persist the
+  // destroyed-session fence together with the new cleanup records in one synced
+  // batch, and only AFTER that durable write close the retiring actors. So if an
+  // actor can begin closing, its cleanup intent is already on disk -- a crash
+  // mid-close cannot leave a directory with no record. This writes the same fence
+  // key/value the old update_destroyed_validator_sessions did, plus the records.
+  td::actor::send_closure(
+      db_, &Db::persist_validator_retirement,
+      std::vector<ValidatorSessionId>(destroyed_validator_sessions_.begin(), destroyed_validator_sessions_.end()),
+      std::move(retirement_records), [close_sessions = std::move(close_sessions)](td::Result<td::Unit> R) mutable {
+        R.ensure();
+        close_sessions();
+      });
+
+  // Init-block rotation is independent of retirement teardown: on an all-shards
+  // rotation, advance and persist the init masterchain block, then prune the
+  // fence for sessions the rotation made unrecreatable (updated_init_block).
+  // Pruning the fence never erases a cleanup record -- the two lifetimes are
+  // decoupled; a record is removed only once its directory is confirmed gone.
   if (last_masterchain_state_->rotated_all_shards()) {
     CHECK(last_masterchain_block_handle_->received_state());
     auto P = td::PromiseCreator::lambda(
-        [SelfId = actor_id(this), block_id = last_masterchain_block_id_, destroy_sessions = std::move(destroy_sessions),
+        [SelfId = actor_id(this), block_id = last_masterchain_block_id_,
          old_destroyed_validator_sessions = destroyed_validator_sessions_](td::Result<td::Unit> R) mutable {
           R.ensure();
           td::actor::send_closure(SelfId, &ValidatorManagerImpl::updated_init_block, block_id,
                                   std::move(old_destroyed_validator_sessions));
-          destroy_sessions();
         });
     td::actor::send_closure(db_, &Db::update_init_masterchain_block, last_masterchain_block_id_, std::move(P));
-  } else {
-    td::actor::send_closure(
-        db_, &Db::update_destroyed_validator_sessions,
-        std::vector<ValidatorSessionId>(destroyed_validator_sessions_.begin(), destroyed_validator_sessions_.end()),
-        [destroy_sessions = std::move(destroy_sessions)](td::Result<td::Unit> R) {
-          R.ensure();
-          destroy_sessions();
-        });
   }
   if (!serializer_.empty()) {
     td::actor::send_closure(serializer_, &AsyncStateSerializer::auto_disable_serializer,
