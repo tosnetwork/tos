@@ -59,8 +59,9 @@ for accepting in [True, False]:
     require(master.count(marker) == 1, 951)
     master = master.replace(marker, '"basestate0.fhash" file>B 256 B>u@ constant base_fhash\n"basestate0.rhash" file>B 256 B>u@ constant base_rhash')
     if not accepting:
-        require(master.count("x{e000}") == 1, 952)
-        master = master.replace("x{e000}", "x{c000}")
+        serving_call = "2 0xe000 0x434e5431 add-basic-workchain drop"
+        require(master.count(serving_call) == 1, 952)
+        master = master.replace(serving_call, "2 0xc000 0x434e5431 add-basic-workchain drop")
     (directory / "master.fif").write_text(master)
     run("master", [args.create_state, "-I", includes, directory / "master.fif"])
     static = directory / "db/static"
