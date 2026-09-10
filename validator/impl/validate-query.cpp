@@ -1146,9 +1146,8 @@ bool ValidateQuery::fetch_config_params() {
           },
           [](const block::ResolvedWorkchainBlockExecution&) -> td::Result<bool> { return false; },
           [](const block::ResolvedWorkchainAccountBinding&) -> td::Result<bool> {
-            // This flag supplies the legacy per-account run_compute context.
-            // Batch replay has its own admitted input, not that compute context.
-            return false;
+            return td::Status::Error(static_cast<int>(block::WorkchainExecutionFailure::LocalUnavailable),
+                                     "multi-account admission and replay are not connected");
           }), *resolved_execution.ok());
       if (custom.is_error()) return fatal_error(custom.move_as_error());
       custom_workchain = custom.move_as_ok();
@@ -1293,9 +1292,8 @@ bool ValidateQuery::check_this_shard_mc_info() {
         [](const block::ResolvedWorkchainExecution&) { return td::Status::OK(); },
         [](const block::ResolvedWorkchainBlockExecution&) { return td::Status::OK(); },
         [](const block::ResolvedWorkchainAccountBinding&) {
-          // Resolution supplies authenticated configuration for these shard
-          // checks. This is not an admission, replay or node-readiness verdict.
-          return td::Status::OK();
+          return td::Status::Error(static_cast<int>(block::WorkchainExecutionFailure::LocalUnavailable),
+                                   "multi-account admission and replay are not connected");
         }), *execution_res.ok());
     if (ready.is_error()) return fatal_error(std::move(ready));
   }
