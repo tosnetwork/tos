@@ -1063,3 +1063,37 @@ callback. Before flipping the gate (B2-8c, post-genesis), the following remain:
    deletion; overlapping passes; failed deletion/erase; restart reconciliation;
    real GC-oracle boundaries. Keep the catchain no-wrap/no-reuse premise and the
    post-genesis enablement gate.
+
+## Honest current-state (branch fix/validator-consensus-db-cleanup-prb, gated)
+
+Correcting two over-claims:
+
+1. **"Only the flip remains" is wrong.** Safely enabling deletion (B2-8c) needs
+   real code, not just changing the constant: the async worker + durable-erase-ACK
+   completion (release the reservation / drop the entry only after the durable
+   erase is acknowledged, not merely dispatched); a delete/erase completion that
+   carries an operation token (session + incarnation + record revision + delete-op
+   id) so a late completion cannot act on a replacement entry (the current
+   on_delete_completed interface has no such binding -- safe only because the
+   synchronous caller cannot produce a stale completion); the startup
+   ordering/exclusive-ownership barrier (the generation-0 closed=true load must be
+   proven to precede any group creation/retirement, and must not overwrite a newer
+   entry); fence-before-create (defer group creation while is_delete_in_flight);
+   and bounded/fair retry (a continuation cursor, not just a per-pass attempt
+   budget). Finding 1 is NOT "fixed pending a flip".
+
+2. **The gated branch is not resource-neutral.** Relative to current main it
+   changes normal validator retirement from "close + delete" to "close only" and
+   removes the startup sweep's validator deletion, while deletion stays gated off.
+   So even with no crash or FS failure, normally-retired validator DBs now
+   ACCUMULATE and their pending metadata grows. This is a deliberate
+   deletion-safe STAGING state, suitable for a dev/acceptance environment with a
+   test window and disk monitoring -- NOT a long-term production version that has
+   closed the disk-growth finding. "Safe to not delete" and "safe to complete
+   reclamation" are different acceptance goals; only the former is met so far.
+
+Accurate progress: retirement persistence, the close-without-delete flow, the
+cleanup decision components, and the manager wiring are implemented; production
+deletion is not enabled, and the concurrency, completion-acknowledgement,
+startup-ordering, and resource-reclamation work required to enable it safely is
+not yet done.
