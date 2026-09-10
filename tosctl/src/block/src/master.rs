@@ -1015,8 +1015,71 @@ impl Serializable for BlockCreateStats {
     }
 }
 
+// Tagged records preserve the authenticated ledger; this codec does not issue identities.
+/// workchain_instance_record instance_seq:uint64 creation_descriptor_hash:bits256 = WorkchainInstanceRecord;
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct WorkchainInstanceRecord {
+    pub instance_seq: u64,
+    pub creation_descriptor_hash: UInt256,
+}
+
+const WORKCHAIN_INSTANCE_RECORD_TAG: u32 = 0x410ed06c;
+const WORKCHAIN_INSTANCE_LEDGER_TAG: u32 = 0x4a22c575;
+
+impl Deserializable for WorkchainInstanceRecord {
+    fn read_from(&mut self, cell: &mut SliceData) -> Result<()> {
+        let tag = cell.get_next_u32()?;
+        if tag != WORKCHAIN_INSTANCE_RECORD_TAG {
+            fail!(BlockError::InvalidConstructorTag {
+                t: tag, s: std::any::type_name::<Self>().to_string()
+            })
+        }
+        self.instance_seq.read_from(cell)?;
+        self.creation_descriptor_hash.read_from(cell)?;
+        Ok(())
+    }
+}
+
+impl Serializable for WorkchainInstanceRecord {
+    fn write_to(&self, cell: &mut BuilderData) -> Result<()> {
+        cell.append_u32(WORKCHAIN_INSTANCE_RECORD_TAG)?;
+        self.instance_seq.write_to(cell)?;
+        self.creation_descriptor_hash.write_to(cell)?;
+        Ok(())
+    }
+}
+
+define_HashmapE! {WorkchainInstances, 32, WorkchainInstanceRecord}
+
+/// workchain_instance_ledger entries:(HashmapE 32 WorkchainInstanceRecord) = WorkchainInstanceLedger;
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct WorkchainInstanceLedger {
+    pub entries: WorkchainInstances,
+}
+
+impl Deserializable for WorkchainInstanceLedger {
+    fn read_from(&mut self, cell: &mut SliceData) -> Result<()> {
+        let tag = cell.get_next_u32()?;
+        if tag != WORKCHAIN_INSTANCE_LEDGER_TAG {
+            fail!(BlockError::InvalidConstructorTag {
+                t: tag, s: std::any::type_name::<Self>().to_string()
+            })
+        }
+        self.entries.read_from(cell)?;
+        Ok(())
+    }
+}
+
+impl Serializable for WorkchainInstanceLedger {
+    fn write_to(&self, cell: &mut BuilderData) -> Result<()> {
+        cell.append_u32(WORKCHAIN_INSTANCE_LEDGER_TAG)?;
+        self.entries.write_to(cell)?;
+        Ok(())
+    }
+}
+
 /*
-masterchain_state_extra#cc26
+masterchain_state_extra_instances
   shard_hashes:ShardHashes
   config:ConfigParams
   ^[ flags:(## 16) { flags <= 1 }
@@ -1024,7 +1087,8 @@ masterchain_state_extra#cc26
      prev_blocks:OldMcBlocksInfo
      after_key_block:Bool
      last_key_block:(Maybe ExtBlkRef)
-     block_create_stats:(flags . 0)?BlockCreateStats ]
+     block_create_stats:(flags . 0)?BlockCreateStats
+     workchain_instances:^WorkchainInstanceLedger ]
   global_balance:CurrencyCollection
 = McStateExtra;
 */
@@ -1038,9 +1102,10 @@ pub struct McStateExtra {
     pub last_key_block: Option<ExtBlkRef>,
     pub block_create_stats: Option<BlockCreateStats>,
     pub global_balance: CurrencyCollection,
+    pub workchain_instances: WorkchainInstanceLedger,
 }
 
-const MC_STATE_EXTRA_TAG: u16 = 0xcc26;
+const MC_STATE_EXTRA_TAG: u32 = 0x3214e578;
 const MC_STATE_CREATE_STATS_FLAG: u16 = 0b0001;
 
 impl McStateExtra {
@@ -1091,7 +1156,7 @@ impl McStateExtra {
 
 impl Deserializable for McStateExtra {
     fn read_from(&mut self, cell: &mut SliceData) -> Result<()> {
-        let tag = cell.get_next_u16()?;
+        let tag = cell.get_next_u32()?;
         if tag != MC_STATE_EXTRA_TAG {
             fail!(BlockError::InvalidConstructorTag {
                 t: tag.into(),
@@ -1119,6 +1184,7 @@ impl Deserializable for McStateExtra {
         } else {
             Some(BlockCreateStats::construct_from(cell1)?) // 1 + 1
         };
+        self.workchain_instances = WorkchainInstanceLedger::construct_from_cell(cell1.checked_drain_reference()?)?;
         self.global_balance.read_from(cell)?;
         Ok(())
     }
@@ -1126,7 +1192,7 @@ impl Deserializable for McStateExtra {
 
 impl Serializable for McStateExtra {
     fn write_to(&self, builder: &mut BuilderData) -> Result<()> {
-        builder.append_u16(MC_STATE_EXTRA_TAG)?;
+        builder.append_u32(MC_STATE_EXTRA_TAG)?;
         self.shards.write_to(builder)?;
         self.config.write_to(builder)?;
 
@@ -1143,6 +1209,7 @@ impl Serializable for McStateExtra {
         if let Some(ref block_create_stats) = self.block_create_stats {
             block_create_stats.write_to(&mut builder1)?;
         }
+        builder1.checked_append_reference(self.workchain_instances.serialize()?)?;
         builder.checked_append_reference(builder1.into_cell()?)?;
 
         self.global_balance.write_to(builder)?;

@@ -467,3 +467,40 @@ fn test_counters() {
     assert!(c.increase_by(1, 100503));
     assert_eq!(c.total(), 4);
 }
+
+#[test]
+fn test_mc_state_extra_instances_native_fixture() {
+    // Extracted without re-encoding fields from the production create-state output.
+    // Provenance and original root are recorded in the codec measurement artifact.
+    let root = read_single_root_boc(include_bytes!("data/mc_state_extra_instances.boc")).unwrap();
+    let extra = McStateExtra::construct_from_cell(root.clone()).unwrap();
+    let record = extra.workchain_instances.entries.get(&2i32).unwrap().unwrap();
+    assert_eq!(record.instance_seq, 1);
+    assert_ne!(record.creation_descriptor_hash, UInt256::default());
+    assert_eq!(extra.serialize().unwrap().repr_hash(), root.repr_hash());
+}
+
+#[test]
+fn test_mc_state_extra_instances_retired_tag() {
+    let mut old = BuilderData::new();
+    old.append_u16(0xcc26).unwrap().append_u16(0).unwrap();
+    let error = McStateExtra::construct_from_cell(old.into_cell().unwrap()).unwrap_err();
+    assert!(matches!(error.downcast_ref::<BlockError>(),
+        Some(BlockError::InvalidConstructorTag { t: 0xcc260000, .. })));
+}
+
+#[test]
+fn test_mc_state_extra_instances_missing_ledger() {
+    let root = read_single_root_boc(include_bytes!("data/mc_state_extra_instances.boc")).unwrap();
+    let aux_index = root.references_count() - 1;
+    let aux = root.reference(aux_index).unwrap();
+    let mut incomplete = BuilderData::with_raw(aux.data().to_vec(), aux.bit_length()).unwrap();
+    for i in 0..aux.references_count() - 1 {
+        incomplete.checked_append_reference(aux.reference(i).unwrap()).unwrap();
+    }
+    let mut changed = BuilderData::from_cell(&root).unwrap();
+    changed.replace_reference_cell(aux_index, incomplete.into_cell().unwrap());
+    let error = McStateExtra::construct_from_cell(changed.into_cell().unwrap()).unwrap_err();
+    assert!(matches!(error.downcast_ref::<crate::ExceptionCode>(),
+        Some(crate::ExceptionCode::CellUnderflow)));
+}
