@@ -778,6 +778,11 @@ target_include_directories(test-validator-cleanup-worker PRIVATE ${CMAKE_CURRENT
                            ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
 target_link_libraries(test-validator-cleanup-worker PRIVATE tos_crypto_core tddb tdactor tdutils)
 
+add_executable(inject-validator-cleanup-record test/inject-validator-cleanup-record.cpp)
+target_include_directories(inject-validator-cleanup-record PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                           ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
+target_link_libraries(inject-validator-cleanup-record PRIVATE tos_crypto_core tddb tdutils)
+
 add_executable(test-validator-cleanup-integration test/test-validator-cleanup-integration.cpp)
 target_include_directories(test-validator-cleanup-integration PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
                            ${CMAKE_CURRENT_SOURCE_DIR}/crypto)

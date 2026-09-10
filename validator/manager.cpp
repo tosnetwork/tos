@@ -2503,6 +2503,11 @@ void ValidatorManagerImpl::try_validator_consensus_db_cleanup() {
   auto reserved = validator_cleanup_manager_.begin_eligible_deletes(
       gc_id, ancestor_or_equal_of_gc, gc_shard_catchain_seqno, is_live, kValidatorConsensusCleanupBudget,
       kValidatorConsensusCleanupScanBudget, kValidatorConsensusCleanupMaxOutstanding);
+  // Observable proof that a cleanup pass actually RAN and examined the durable records
+  // against this GC snapshot (so "record X was not reserved" is evidence of refusal, not
+  // of the pass never running). Emitted only when cleanup is armed.
+  LOG(WARNING) << "VALCLEANUP pass gc_seqno=" << gc_id.seqno()
+               << " pending=" << validator_cleanup_manager_.pending_count() << " reserved=" << reserved.size();
   // Distinguishable per-op trace for the REAL validator-group cleanup path (bound to
   // session/generation/attempt/dir + the GC/retirement inputs). This is emitted only
   // when cleanup is armed, so it is not noise in a normal build; it lets a real-node
