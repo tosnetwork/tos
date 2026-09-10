@@ -1,7 +1,9 @@
 # Explicit inclusion only. This calibrates infrastructure, not live activation.
+if(NOT TARGET test-workchain-activation-control)
 add_executable(test-workchain-activation-control
   "${PROJECT_SOURCE_DIR}/crypto/test/test-workchain-activation-control.cpp")
 target_link_libraries(test-workchain-activation-control PRIVATE "-Wl,--start-group" tos_crypto tos_block tos_crypto_core "-Wl,--end-group")
+endif()
 if(NOT WORKCHAIN_ACTIVATION_HELPER)
   set(WORKCHAIN_ACTIVATION_HELPER "${PROJECT_SOURCE_DIR}/crypto/test/workchain-activation-rejection.py")
 endif()

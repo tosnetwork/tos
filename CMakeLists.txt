@@ -841,13 +841,25 @@ add_test(NAME test-counter-native-sender
     -DBUILD_DIR=${CMAKE_CURRENT_BINARY_DIR} -DNATIVE_SENDER=ON
     -P ${CMAKE_CURRENT_SOURCE_DIR}/test/test-counter-disk-integration.cmake)
 set_tests_properties(test-counter-native-sender PROPERTIES TIMEOUT 120)
+# Direct predicate controls retain Param84; inconsistent configurations must not
+# be routed through a genesis generator which correctly refuses to build them.
+if(NOT TARGET test-workchain-activation-control)
+  add_executable(test-workchain-activation-control crypto/test/test-workchain-activation-control.cpp)
+  target_link_libraries(test-workchain-activation-control PRIVATE
+    "-Wl,--start-group" tos_crypto tos_block tos_crypto_core "-Wl,--end-group")
+endif()
+add_dependencies(all-tests test-workchain-activation-control)
+add_executable(test-workchain-ingress-transition crypto/test/test-workchain-ingress-transition.cpp)
+target_link_libraries(test-workchain-ingress-transition PRIVATE tos_block tos_crypto tdutils)
+add_dependencies(all-tests test-workchain-ingress-transition)
+add_test(NAME test-workchain-ingress-transition COMMAND test-workchain-ingress-transition)
+set_tests_properties(test-workchain-ingress-transition PROPERTIES TIMEOUT 60)
 foreach(activation_mode missing_capability old_version)
+  string(REPLACE "_" "-" activation_probe_mode "${activation_mode}")
   add_test(NAME test-counter-activation-${activation_mode}
-    COMMAND ${CMAKE_COMMAND} -DCREATE_STATE=$<TARGET_FILE:create-state>
-      -DCOLLATOR=$<TARGET_FILE:test-tos-collator>
-      -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR} -DBUILD_DIR=${CMAKE_CURRENT_BINARY_DIR}
-      -DACTIVATION_MODE=${activation_mode}
-      -P ${CMAKE_CURRENT_SOURCE_DIR}/test/test-counter-disk-integration.cmake)
+    COMMAND ${Python3_EXECUTABLE} "${CMAKE_CURRENT_SOURCE_DIR}/crypto/test/workchain-genesis-activation.py"
+      --repo "${CMAKE_CURRENT_SOURCE_DIR}" --probe $<TARGET_FILE:test-workchain-activation-control>
+      --mode ${activation_probe_mode})
   set_tests_properties(test-counter-activation-${activation_mode} PROPERTIES TIMEOUT 90)
   add_test(NAME test-counter-config-presence-${activation_mode}
     COMMAND ${CMAKE_COMMAND} -DCREATE_STATE=$<TARGET_FILE:create-state>
