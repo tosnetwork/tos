@@ -16,7 +16,6 @@
 */
 #pragma once
 
-#include <fstream>
 
 #include "full-node.h"
 #include "validator-telemetry.hpp"
@@ -131,7 +130,13 @@ class FullNodeFastSyncOverlay : public td::actor::Actor {
 
   td::actor::ActorOwn<ValidatorTelemetry> telemetry_sender_;
   bool collect_telemetry_ = false;
-  std::ofstream telemetry_file_;
+  std::string telemetry_filename_;
+  bool telemetry_rotate_failed_ = false;
+  // Cap on the append-only validator-telemetry file. It grows with every
+  // collected broadcast, so over a node's lifetime it is otherwise unbounded.
+  // When it reaches the cap the file is rotated to a single ".old" sidecar,
+  // bounding total on-disk size to ~2x the cap. Mirrors the session-stats bound.
+  static constexpr td::int64 kMaxTelemetryFileBytes = 256 * (1 << 20);
 };
 
 class FullNodeFastSyncOverlays {

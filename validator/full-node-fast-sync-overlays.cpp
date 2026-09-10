@@ -18,7 +18,11 @@
 #include "auto/tl/tos_api_json.h"
 #include "common/delay.h"
 #include "interfaces/validator-full-id.h"
+#include <fstream>
+
 #include "td/utils/JsonBuilder.h"
+#include "td/utils/port/Stat.h"
+#include "td/utils/port/path.h"
 #include "tl/tl_json.h"
 #include "tos/tos-tl.hpp"
 
@@ -230,11 +234,33 @@ void FullNodeFastSyncOverlay::process_telemetry_broadcast(
   VLOG(FULL_NODE_DEBUG) << "Got telemetry broadcast from " << src;
   auto s = td::json_encode<std::string>(td::ToJson(*telemetry), false);
   std::erase_if(s, [](char c) { return c == '\n' || c == '\r'; });
-  telemetry_file_ << s << "\n";
-  telemetry_file_.flush();
-  if (telemetry_file_.fail()) {
-    VLOG(FULL_NODE_WARNING) << "Failed to write telemetry to file";
+  // Bound the append-only telemetry file. It grows with every collected
+  // broadcast, so over a node's lifetime it is otherwise unbounded. When it
+  // reaches the cap, rotate to a single ".old" sidecar and start fresh; total
+  // on-disk size stays within ~2x the cap. Best-effort: a telemetry file must
+  // never take the node down, so a rotate failure only warns (once per failure
+  // transition) and keeps appending. Mirrors the session-stats file bound.
+  auto r_stat = td::stat(telemetry_filename_);
+  if (r_stat.is_ok() && r_stat.ok().size_ >= kMaxTelemetryFileBytes) {
+    auto rotated = td::rename(telemetry_filename_, telemetry_filename_ + ".old");
+    if (rotated.is_error()) {
+      if (!telemetry_rotate_failed_) {
+        telemetry_rotate_failed_ = true;
+        LOG(WARNING) << "cannot rotate validator telemetry file " << telemetry_filename_
+                     << ", it will keep growing: " << rotated;
+      }
+    } else {
+      telemetry_rotate_failed_ = false;
+    }
   }
+
+  std::ofstream file;
+  file.open(telemetry_filename_, std::ios_base::app);
+  file << s << "\n";
+  if (file.fail()) {
+    VLOG(FULL_NODE_WARNING) << "Failed to write telemetry to file " << telemetry_filename_;
+  }
+  file.close();
 }
 
 void FullNodeFastSyncOverlay::receive_broadcast(PublicKeyHash src, td::BufferSlice broadcast) {
@@ -338,15 +364,11 @@ void FullNodeFastSyncOverlay::send_validator_telemetry(tl_object_ptr<tos_api::va
 }
 
 void FullNodeFastSyncOverlay::collect_validator_telemetry(std::string filename) {
-  if (collect_telemetry_) {
-    telemetry_file_.close();
-  }
   collect_telemetry_ = true;
-  LOG(FULL_NODE_WARNING) << "Collecting validator telemetry to " << filename << " (local id: " << local_id_ << ")";
-  telemetry_file_.open(filename, std::ios_base::app);
-  if (!telemetry_file_.is_open()) {
-    LOG(WARNING) << "Cannot open file " << filename << " for validator telemetry";
-  }
+  telemetry_filename_ = std::move(filename);
+  telemetry_rotate_failed_ = false;
+  LOG(FULL_NODE_WARNING) << "Collecting validator telemetry to " << telemetry_filename_
+                         << " (local id: " << local_id_ << ")";
 }
 
 void FullNodeFastSyncOverlay::send_out_msg_queue_proof_broadcast(td::Ref<OutMsgQueueProofBroadcast> broadcast) {
