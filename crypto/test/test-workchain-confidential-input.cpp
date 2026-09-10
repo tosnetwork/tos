@@ -1,4 +1,6 @@
 #include "block/workchain-confidential-input.h"
+#include "workchain-m3-business-config.h"
+#include <limits>
 #include "td/utils/tests.h"
 #include "vm/boc.h"
 #include "block/block-parse.h"
@@ -367,4 +369,91 @@ TEST(ConfidentialInput, ClosureIdentityRecomputedFromAuthenticatedInputs) {
   ASSERT_TRUE(encode_workchain_replay_context(closure.context, WorkchainReplayOperation::Closure).move_as_ok() != before);
   ASSERT_EQ(derive_workchain_closure_operation_id(authenticated_network, authenticated_source, consumed_nonce)
       .move_as_ok(), recomputed);
+}
+
+
+TEST(ConfidentialInput, TestBusinessParametersExactCodec) {
+  using namespace block;
+  using namespace block::m3_test;
+  static_assert(!std::is_default_constructible_v<M3TestBusinessParameters>);
+  std::array<unsigned char, 80> domain;
+  domain.fill(0x2a);
+  M3TestBusinessParameters value{{1000000, 10000, 8, 1024, 4096}, domain, 11, 17,
+      {number(1), number(2), number(3)}, number(4), number(5), number(6), 100, 2, 1, 2};
+  auto root = encode_m3_test_business_parameters(value).move_as_ok();
+  auto bytes = vm::std_boc_serialize(root, 0).move_as_ok();
+  auto decoded = decode_m3_test_business_parameters(vm::std_boc_deserialize(bytes).move_as_ok()).move_as_ok();
+  ASSERT_EQ(decoded.limits.max_balance, 1000000u);
+  ASSERT_EQ(decoded.limits.max_value, 10000u);
+  ASSERT_EQ(decoded.limits.max_collect, 8u);
+  ASSERT_EQ(decoded.limits.max_context_bytes, 1024u);
+  ASSERT_EQ(decoded.limits.max_proof_bytes, 4096u);
+  ASSERT_EQ(decoded.domain, domain);
+  ASSERT_EQ(decoded.send_fee, 11u); ASSERT_EQ(decoded.collect_fee, 17u);
+  ASSERT_EQ(decoded.rules.asset, number(1)); ASSERT_EQ(decoded.rules.custody, number(2));
+  ASSERT_EQ(decoded.rules.policy, number(3));
+  ASSERT_EQ(decoded.generator_profile, number(4)); ASSERT_EQ(decoded.range_profile, number(5));
+  ASSERT_EQ(decoded.fee_profile, number(6)); ASSERT_EQ(decoded.fee_effective_height, 100u);
+  ASSERT_EQ(decoded.account_schema, 2u); ASSERT_EQ(decoded.relation_profile, 1u); ASSERT_EQ(decoded.proof_profile, 2u);
+  ASSERT_EQ(encode_m3_test_business_parameters(decoded).move_as_ok()->get_hash(), root->get_hash());
+  // Each explicit field contributes to the parameter cell. The host separately
+  // tests its authenticated enclosing-config binding into the proof statement.
+  std::vector<M3TestBusinessParameters> changed;
+  auto alter = [&](auto f) { auto copy = value; f(copy); changed.push_back(copy); };
+  alter([](auto& x) { ++x.limits.max_balance; });
+  alter([](auto& x) { ++x.limits.max_value; });
+  alter([](auto& x) { ++x.limits.max_collect; });
+  alter([](auto& x) { ++x.limits.max_context_bytes; });
+  alter([](auto& x) { ++x.limits.max_proof_bytes; });
+  alter([](auto& x) { x.domain[79] ^= 1; });
+  alter([](auto& x) { ++x.send_fee; }); alter([](auto& x) { ++x.collect_fee; });
+  alter([](auto& x) { x.rules.asset = number(20); });
+  alter([](auto& x) { x.rules.custody = number(20); });
+  alter([](auto& x) { x.rules.policy = number(20); });
+  alter([](auto& x) { x.generator_profile = number(20); });
+  alter([](auto& x) { x.range_profile = number(20); });
+  alter([](auto& x) { x.fee_profile = number(20); });
+  alter([](auto& x) { ++x.fee_effective_height; });
+  alter([](auto& x) { ++x.account_schema; });
+  alter([](auto& x) { ++x.relation_profile; });
+  alter([](auto& x) { ++x.proof_profile; });
+  for (const auto& copy : changed)
+    ASSERT_TRUE(encode_m3_test_business_parameters(copy).move_as_ok()->get_hash() != root->get_hash());
+
+  auto slice = vm::load_cell_slice(root);
+  std::array<td::Ref<vm::Cell>, 4> refs;
+  for (auto& ref : refs) ref = slice.fetch_ref();
+  auto rebuild = [&](const vm::CellSlice& bits, const auto& children) {
+    vm::CellBuilder b; b.append_cellslice(bits);
+    for (const auto& ref : children) b.store_ref(ref);
+    return td::Ref<vm::Cell>{b.finalize()};
+  };
+  auto tail = slice; tail.advance(32);
+  auto unknown_bits = vm::CellBuilder().store_long(0, 32).append_cellslice(tail).finalize();
+  auto unknown = decode_m3_test_business_parameters(rebuild(vm::load_cell_slice(unknown_bits), refs));
+  ASSERT_TRUE(unknown.is_error()); ASSERT_EQ(unknown.error().message(), "unknown M3 test business tag");
+  tail = slice; tail.advance(48);
+  auto version_bits = vm::CellBuilder().store_long(business_config_detail::tag, 32).store_long(2, 16)
+      .append_cellslice(tail).finalize();
+  auto version = decode_m3_test_business_parameters(rebuild(vm::load_cell_slice(version_bits), refs));
+  ASSERT_TRUE(version.is_error()); ASSERT_EQ(version.error().message(), "unsupported M3 test business version");
+  std::vector<td::Ref<vm::Cell>> missing{refs[0], refs[1], refs[2]};
+  ASSERT_TRUE(decode_m3_test_business_parameters(rebuild(slice, missing)).is_error());
+  auto truncated_bits = slice; truncated_bits.advance(16);
+  ASSERT_TRUE(decode_m3_test_business_parameters(rebuild(truncated_bits, refs)).is_error());
+  for (unsigned i = 0; i < refs.size(); ++i) {
+    auto bad = refs;
+    bad[i] = vm::CellBuilder().append_cellslice(vm::load_cell_slice(refs[i]))
+        .store_ref(vm::CellBuilder().finalize()).finalize();
+    ASSERT_TRUE(decode_m3_test_business_parameters(rebuild(slice, bad)).is_error());
+    bad = refs;
+    auto short_cell = vm::load_cell_slice(refs[i]); short_cell.advance(8);
+    bad[i] = vm::CellBuilder().append_cellslice(short_cell).finalize();
+    ASSERT_TRUE(decode_m3_test_business_parameters(rebuild(slice, bad)).is_error());
+  }
+  value.send_fee = UINT64_MAX; value.limits.max_balance = UINT64_MAX;
+  value.limits.max_collect = std::numeric_limits<std::size_t>::max();
+  auto wide = decode_m3_test_business_parameters(encode_m3_test_business_parameters(value).move_as_ok()).move_as_ok();
+  ASSERT_EQ(wide.send_fee, UINT64_MAX); ASSERT_EQ(wide.limits.max_balance, UINT64_MAX);
+  ASSERT_EQ(wide.limits.max_collect, std::numeric_limits<std::size_t>::max());
 }
