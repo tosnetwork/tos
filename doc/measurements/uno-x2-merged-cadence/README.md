@@ -22,8 +22,17 @@ pinned inputs.
 The current constructor is `uno_v2_engine_configuration_issued`, generated tag
 `0x41868cd4`. Old 7008e8a40 controls predate mandatory instance_id and used a
 64-bit expected layout. These adaptations preserve the original defects:
-402 still tests omission of the cadence field, not an obsolete tag/identity;
-405 still tests loss of the decoded value, not malformed framing. The 405
+402 tests shell-shape completeness: in this mutation, omitting cadence32 makes
+`cs.size() == 320 && cs.size_refs() == 2` fail. The assertion does not identify
+which field is missing; omission of any 32-bit field would produce the same
+width failure. It is not a field-specific cadence check.
+405 tests cadence-value transmission: the decoded value must equal the explicitly
+supplied acceptance cadence. It detects loss of that value after successful
+framing checks, rather than malformed framing.
+
+The two controls are not interchangeable. Together they cover complete shell
+shape (with cadence omission manifesting as insufficient width) and transmission
+of the cadence value. Neither result makes the other control redundant. The 405
 mutation preserves the wire encoder and successful checks 401–404. The unchanged
 input loop starts at zero and then one; the first nonzero recorded value exposes
 substitution with zero. No current-cadence input or lookup was introduced.
