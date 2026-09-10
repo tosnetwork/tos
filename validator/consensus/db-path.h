@@ -104,11 +104,13 @@ struct ConsensusDbSweepStats {
 // and return true only when the directory is confirmed gone (e.g. via stat).
 //
 // `pending` is updated in place: a confirmed-deleted name is removed; a name
-// whose deletion was not confirmed is kept (added if it was only a legacy entry)
-// so a later pass retries it; and -- only if the walk fully succeeded -- a queued
-// name not present on disk is dropped (it was deleted before a crash lost the
-// dequeue). An incomplete/failed walk proves nothing about absence, so no
-// reconciliation is done then. A name this cannot parse is left alone.
+// whose deletion was not confirmed but was already queued stays queued (a legacy
+// destroyed-session name is deliberately NOT added to the queue on failure, so
+// validator directories never gain queue-based deletion authority); and -- only
+// if the walk fully succeeded -- a queued name not present on disk is dropped (it
+// was deleted before a crash lost the dequeue). An incomplete/failed walk proves
+// nothing about absence, so no reconciliation is done then. A name this cannot
+// parse is left alone.
 inline ConsensusDbSweepStats sweep_orphaned_consensus_dbs(
     td::Slice db_root, std::set<std::string>& pending, const std::set<ValidatorSessionId>& destroyed,
     const std::function<bool(td::CSlice full_path)>& delete_dir) {
@@ -136,7 +138,13 @@ inline ConsensusDbSweepStats sweep_orphaned_consensus_dbs(
       pending.erase(name);
     } else {
       stats.failed++;
-      pending.insert(name);
+      // Do NOT newly queue a directory that is here only via the legacy
+      // destroyed-session gate (a validator directory). Its retry stays gated on
+      // the tombstone, exactly as before this change, so it can never be deleted
+      // through the queue after the tombstone is pruned -- which could otherwise
+      // destroy the consensus state of a session that is recreated. An
+      // already-queued directory (an observer) simply stays queued (it was not
+      // erased above), so a failed observer deletion is retried next sweep.
     }
     return td::WalkPath::Action::SkipDir;
   });

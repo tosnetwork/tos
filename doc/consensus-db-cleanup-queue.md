@@ -250,10 +250,16 @@ The PR is therefore narrowed to **observer directories only**:
 - **Observers** are queued (exact directory names), persisted before the observer
   actors are destroyed, and swept/reconciled at startup. An observer consensus DB
   carries no votes or leader state, so deleting one and re-syncing loses nothing
-  consensus-relevant — the queue's premature-deletion risk is harmless here. And
-  observer directories are **not** covered by `destroyed_validator_sessions_`, so
-  #72 never cleaned their orphans at all; this closes a real leak with no safety
-  cost.
+  consensus-relevant — the queue's premature-deletion risk is harmless here. An
+  observer-only session's directory is **not** covered by
+  `destroyed_validator_sessions_` (only validator/tentative retirement adds a
+  tombstone), so #72 cleaned it only incidentally — when the same session id also
+  belonged to a destroyed validator group — and otherwise left it to leak; the
+  queue closes that leak with no safety cost. On a failed sweep deletion, only an
+  already-queued (observer) directory stays queued; a directory reached only via
+  the legacy destroyed-session gate (a validator) is never added to the queue, so
+  validator cleanup can never gain queue-based deletion authority that outlives
+  its tombstone.
 - **Validator / tentative** directory cleanup is left **exactly as #72**: gated on
   `destroyed_validator_sessions_`, never on the queue. This change does not alter
   their retirement/persist/delete path, so it introduces no validator-safety

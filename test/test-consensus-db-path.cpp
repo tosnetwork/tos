@@ -176,21 +176,37 @@ TEST(ConsensusDbSweep, leaves_unrelated_directory) {
   td::rmrf(root).ignore();
 }
 
-// A legacy (destroyed-session) directory that was NOT already queued and whose
-// deletion is not confirmed must be added to the queue for a later retry. This
-// starts with an empty queue so it fails if the failure-branch enqueue is removed.
-TEST(ConsensusDbSweep, failed_legacy_deletion_becomes_queued) {
+// A legacy (destroyed-session) directory -- i.e. a validator directory reached
+// only via the tombstone gate -- whose deletion fails must NOT be queued. Its
+// retry stays gated on the tombstone, so once the tombstone is pruned the sweep
+// must leave it alone rather than delete it through the queue (which could
+// destroy the consensus state of a session that is recreated). This is the
+// safety property the observers-only narrowing must hold; queuing it on failure
+// (the earlier bug) makes the first assertion fail.
+TEST(ConsensusDbSweep, failed_legacy_deletion_is_not_queued_and_stays_tombstone_gated) {
   auto root = make_temp_root();
   auto sid = make_session_id(13);
-  auto name = consensus_db_dir_name(kShard, 4, sid, td::Slice(""));
+  auto name = consensus_db_dir_name(kShard, 4, sid, td::Slice(""));  // validator dir (no suffix)
   create_group_dir(root, name);
 
-  std::set<std::string> pending;  // not queued yet
+  // First sweep: tombstone present, deletion fails -> must NOT enter the queue.
+  std::set<std::string> pending;
   std::set<tos::ValidatorSessionId> destroyed{sid};
-  auto stats = sweep_orphaned_consensus_dbs(root, pending, destroyed, [](td::CSlice) { return false; });
+  auto s1 = sweep_orphaned_consensus_dbs(root, pending, destroyed, [](td::CSlice) { return false; });
+  ASSERT_EQ(s1.failed, static_cast<size_t>(1));
+  ASSERT_TRUE(pending.empty());
 
-  ASSERT_EQ(stats.failed, static_cast<size_t>(1));
-  ASSERT_TRUE(pending.count(name) == 1);  // enqueued for retry
+  // Second sweep after the tombstone is pruned: no queue entry survives, so the
+  // directory must not be touched -- exactly as #72 would leave it.
+  destroyed.clear();
+  bool deleter_called = false;
+  auto s2 = sweep_orphaned_consensus_dbs(root, pending, destroyed, [&](td::CSlice) {
+    deleter_called = true;
+    return true;
+  });
+  ASSERT_TRUE(!deleter_called);
+  ASSERT_EQ(s2.reclaimed, static_cast<size_t>(0));
+  ASSERT_TRUE(dir_exists(root, name));
   td::rmrf(root).ignore();
 }
 
