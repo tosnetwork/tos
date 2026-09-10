@@ -3,6 +3,7 @@
 #include "block/workchain-execution-dispatch.h"
 #include "block/workchain-native-inbox.h"
 #include "block/workchain-registration.h"
+#include "block/workchain-possession-replay.h"
 #include "block/workchain-value-flow.h"
 
 namespace block {
@@ -26,12 +27,14 @@ struct WorkchainRegistrationPaymentResult {
 // it commits the Native payer to the account and historical refund destination.
 // The possession proof is separate authorization, never an alternative source
 // for the message value. This introduces no second account-record encoding.
-inline td::Result<WorkchainRegistrationPaymentResult> execute_workchain_registration_payment(
+namespace registration_payment_detail {
+template <class Authorize>
+inline td::Result<WorkchainRegistrationPaymentResult> execute(
     const WorkchainRegistrationPolicy& policy, const WorkchainNativeIngressPolicy& ingress,
     const WorkchainExecutionDescriptor& descriptor, const td::Result<WorkchainNativeInboxPlan>& admitted_inbox,
     const td::Bits256& message_hash, const WorkchainCoordinatorState& old_coordinator,
     const CurrencyCollection& old_coordinator_balance, const td::Ref<vm::Cell>& existing_account,
-    const std::array<unsigned char, 64>& proof) {
+    const Authorize& authorize) {
   auto invalid = [](td::Slice text) {
     return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::CandidateInvalid), text);
   };
@@ -109,8 +112,7 @@ inline td::Result<WorkchainRegistrationPaymentResult> execute_workchain_registra
     // it again during final import. Exact payment above leaves no unowned excess.
     WorkchainRegistrationSnapshot old{old_coordinator, existing_account, payer.workchain_id, payer.address,
                                       policy.deposit};
-    TRY_RESULT(registration,
-               execute_workchain_registration(policy, old, account.ok().address.account, registration_data, proof));
+    TRY_RESULT(registration, authorize(old, account.ok().address.account, registration_data));
     CurrencyCollection new_balance;
     if (!old_coordinator_balance.is_valid() || !old_coordinator_balance.tomis->is_valid() ||
         !old_coordinator_balance.tomis->unsigned_fits_bits(256) ||
@@ -145,6 +147,39 @@ inline td::Result<WorkchainRegistrationPaymentResult> execute_workchain_registra
   } catch (const std::bad_alloc&) {
     return local("registration payment allocation failure");
   }
+}
+}  // namespace registration_payment_detail
+
+inline td::Result<WorkchainRegistrationPaymentResult> execute_workchain_registration_payment(
+    const WorkchainRegistrationPolicy& policy, const WorkchainNativeIngressPolicy& ingress,
+    const WorkchainExecutionDescriptor& descriptor, const td::Result<WorkchainNativeInboxPlan>& admitted_inbox,
+    const td::Bits256& message_hash, const WorkchainCoordinatorState& old_coordinator,
+    const CurrencyCollection& old_coordinator_balance, const td::Ref<vm::Cell>& existing_account,
+    const std::array<unsigned char, 64>& proof) {
+  return registration_payment_detail::execute(
+      policy, ingress, descriptor, admitted_inbox, message_hash, old_coordinator, old_coordinator_balance,
+      existing_account, [&](const WorkchainRegistrationSnapshot& old, const td::Bits256& destination,
+                            const td::Ref<vm::Cell>& body) {
+        return execute_workchain_registration(policy, old, destination, body, proof);
+      });
+}
+
+// The enclosing live replay must extract replay_root from entry.input.candidate
+// and authenticate the inbox from that same input. No wallet-file or detached
+// proof argument exists here. Recompute operationID and the full context from
+// authenticated configuration and the paid registration body before verifying.
+inline td::Result<WorkchainRegistrationPaymentResult> replay_workchain_registration_payment(
+    const WorkchainRegistrationPolicy& policy, const WorkchainNativeIngressPolicy& ingress,
+    const WorkchainExecutionDescriptor& descriptor, const td::Result<WorkchainNativeInboxPlan>& admitted_inbox,
+    const td::Bits256& message_hash, const WorkchainCoordinatorState& old_coordinator,
+    const CurrencyCollection& old_coordinator_balance, const td::Ref<vm::Cell>& existing_account,
+    const td::Ref<vm::Cell>& replay_root) {
+  return registration_payment_detail::execute(
+      policy, ingress, descriptor, admitted_inbox, message_hash, old_coordinator, old_coordinator_balance,
+      existing_account, [&](const WorkchainRegistrationSnapshot& old, const td::Bits256& destination,
+                            const td::Ref<vm::Cell>& body) {
+        return replay_workchain_registration(policy, old, destination, body, replay_root);
+      });
 }
 
 }  // namespace block

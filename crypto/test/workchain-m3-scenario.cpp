@@ -262,6 +262,9 @@ class PureBackend final : public ScenarioBackend {
     TRY_RESULT(incarnation, derive_workchain_registration_operation_id(policy, a));
     a.address.instance = incarnation;
     auto p = proof<64>("register", owner, a);
+    WorkchainReplayInput registration_input = WorkchainRegistrationReplayInput{
+        incarnation, rebuild_workchain_possession_context(policy.possession, a), p};
+    TRY_RESULT(replay_root, encode_workchain_replay_input(registration_input));
     if (a.funding.paid_deposit > state_.native_balances[owner])
       return alarm("registration source lacks deposit");
     TRY_RESULT(encoded, encode_workchain_confidential_account(a));
@@ -302,9 +305,9 @@ class PureBackend final : public ScenarioBackend {
     std::vector<Root> messages{envelope};
     TRY_RESULT(inbox_root, encode_workchain_batch_inbound(messages));
     auto inbox = plan_workchain_native_inbox(inbox_root, 2, {coordinator_id_}, registration_lt_, 1);
-    TRY_RESULT(payment, execute_workchain_registration_payment(policy, registration_ingress_, registration_descriptor_,
+    TRY_RESULT(payment, replay_workchain_registration_payment(policy, registration_ingress_, registration_descriptor_,
                                                                inbox, td::Bits256(msg->get_hash().bits()),
-                                                               coordinator(), old_coordinator.balance, {}, p));
+                                                               coordinator(), old_coordinator.balance, {}, replay_root));
     WorkchainHostIdentity identity{env_.protocol.global_id,
                                    env_.protocol.genesis_hash,
                                    env_.protocol.workchain_instance,
@@ -330,7 +333,7 @@ class PureBackend final : public ScenarioBackend {
     auto resolved = ResolvedBatchInputPolicy::from_resolved_fields(registration_resources_, cut);
     if (!std::holds_alternative<ResolvedBatchInputPolicy>(resolved))
       return alarm("test registration resource cut invalid");
-    BatchInputAdmissionSession session(std::get<ResolvedBatchInputPolicy>(resolved), encoded, access, identity,
+    BatchInputAdmissionSession session(std::get<ResolvedBatchInputPolicy>(resolved), replay_root, access, identity,
                                        messages);
     const auto& admitted = session.evaluate();
     if (const auto* failure = std::get_if<BatchInputAdmissionFailure>(&admitted))
@@ -369,6 +372,42 @@ class PureBackend final : public ScenarioBackend {
       if (!::tlb::unpack_cell(transaction, tx) || tx.orig_status != (participant == &created ? 3 : 2) ||
           tx.end_status != 2 || tx.outmsg_cnt != 0)
         return alarm("registration transition statuses differ");
+      if (participant == &funded) {
+        // Read authorization back from the serialized entry, not the wallet's
+        // proof buffer. This is settlement readback, not an actor-validation claim.
+        gen::TransactionDescr::Record_trans_workchain_entry_v3 entry;
+        gen::UnoV2HostInput::Record host;
+        gen::UnoV2HostRecord::Record binding;
+        if (!::tlb::unpack_cell(tx.description, entry) || !::tlb::unpack_cell(entry.input, host) ||
+            !::tlb::unpack_cell(entry.binding, binding) ||
+            binding.input_hash != entry.input->get_hash().bits() || !host.inbox->prefetch_ulong(1))
+          return alarm("registration entry authorization missing or uncommitted");
+        TRY_RESULT(recorded_inbox, plan_workchain_native_inbox(host.inbox->prefetch_ref(), 2,
+                                                              {coordinator_id_}, registration_lt_, 1));
+        if (recorded_inbox.envelopes.size() != 1) return alarm("registration replay inbox is not singular");
+        block::tlb::MsgEnvelope::Record_std recorded_envelope;
+        if (!::tlb::unpack_cell(recorded_inbox.envelopes[0], recorded_envelope))
+          return alarm("registration replay envelope malformed");
+        const td::Bits256 recorded_message(recorded_envelope.msg->get_hash().bits());
+        TRY_RESULT(rebuilt, replay_workchain_registration_payment(
+            policy, registration_ingress_, registration_descriptor_, recorded_inbox, recorded_message,
+            coordinator(), old_coordinator.balance, {}, host.candidate));
+        if (rebuilt.registration.account_data->get_hash() != created.data->get_hash() ||
+            rebuilt.registration.coordinator_data->get_hash() != funded.data->get_hash() ||
+            rebuilt.coordinator_flow.new_balance != funded.balance)
+          return alarm("registration entry replay differs from Native state");
+        TRY_RESULT(wire, decode_workchain_replay_input(host.candidate));
+        auto* registered = std::get_if<WorkchainRegistrationReplayInput>(&wire);
+        if (!registered) return alarm("registration entry carries another operation");
+        registered->claimed_operation_id.as_slice()[0] ^= 1;
+        TRY_RESULT(wrong_id, encode_workchain_replay_input(wire));
+        auto rejected = replay_workchain_registration_payment(
+            policy, registration_ingress_, registration_descriptor_, recorded_inbox, recorded_message,
+            coordinator(), old_coordinator.balance, {}, wrong_id);
+        if (rejected.is_ok() || rejected.error().code() != -7200 ||
+            rejected.error().message() != "claimed operationID mismatch")
+          return alarm("registration payment accepted or misclassified a false operationID");
+      }
     }
     if (owner == 1) {
       Account retained(2, templates_[0].address.account.bits());
