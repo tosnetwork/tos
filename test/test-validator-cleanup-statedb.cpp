@@ -132,6 +132,16 @@ class CommitCountingKeyValue : public td::KeyValue {
   td::RocksDb& inner_;
 };
 
+// Create <root>/consensus/<dir_name>/db/ with a file inside, so there is a real
+// directory tree for the delete helper to remove.
+void create_consensus_dir(const std::string& root, const std::string& dir_name) {
+  auto full = consensus_db_root(root) + dir_name + "/db/";
+  td::mkpath(full).ensure();
+}
+bool consensus_dir_exists(const std::string& root, const std::string& dir_name) {
+  return td::stat(consensus_db_root(root) + dir_name).is_ok();
+}
+
 std::string temp_db_path() {
   auto path = PSTRING() << "test-validator-cleanup-statedb-" << td::Random::fast_uint32();
   td::rmrf(path).ignore();
@@ -203,6 +213,48 @@ TEST(ValidatorCleanupStateDb, scan_excludes_valid_records_outside_bounds) {
     ASSERT_EQ(loaded.size(), static_cast<size_t>(1));
     ASSERT_TRUE(loaded[0] == in_range);
   }
+  td::rmrf(path).ignore();
+}
+
+// The physical delete helper removes a canonical validator directory and confirms
+// it is gone. An already-absent canonical directory also reports gone (idempotent).
+TEST(ValidatorCleanupStateDb, delete_helper_removes_canonical_dir) {
+  auto path = temp_db_path();
+  auto sid = make_session_id(9);
+  auto dir = consensus_db_dir_name(kShard, 7, sid, td::Slice(""));
+  create_consensus_dir(path, dir);
+  ASSERT_TRUE(consensus_dir_exists(path, dir));
+
+  ASSERT_TRUE(delete_validator_consensus_db(td::Slice{path}, sid, dir));
+  ASSERT_TRUE(!consensus_dir_exists(path, dir));
+
+  // Already gone: canonical name, nothing on disk -> still reports confirmed gone.
+  ASSERT_TRUE(delete_validator_consensus_db(td::Slice{path}, sid, dir));
+  td::rmrf(path).ignore();
+}
+
+// The delete helper REFUSES a non-canonical / mismatched / observer directory name
+// and does not touch the filesystem -- it never trusts a persisted path. If the
+// revalidation were dropped, the directory would be deleted and this fails.
+TEST(ValidatorCleanupStateDb, delete_helper_refuses_non_canonical) {
+  auto path = temp_db_path();
+  auto sid = make_session_id(9);
+
+  // Observer directory for the same session: must be refused (this helper is
+  // validator-only).
+  auto observer = consensus_db_dir_name(kShard, 7, sid, td::Slice(".observer.xy"));
+  create_consensus_dir(path, observer);
+  ASSERT_TRUE(!delete_validator_consensus_db(td::Slice{path}, sid, observer));
+  ASSERT_TRUE(consensus_dir_exists(path, observer));
+
+  // Canonical validator name but a DIFFERENT session id than claimed: refused.
+  auto dir = consensus_db_dir_name(kShard, 7, make_session_id(200), td::Slice(""));
+  create_consensus_dir(path, dir);
+  ASSERT_TRUE(!delete_validator_consensus_db(td::Slice{path}, sid, dir));  // sid != dir's session
+  ASSERT_TRUE(consensus_dir_exists(path, dir));
+
+  // A name with a path separator: refused, nothing deleted.
+  ASSERT_TRUE(!delete_validator_consensus_db(td::Slice{path}, sid, std::string("../escape")));
   td::rmrf(path).ignore();
 }
 

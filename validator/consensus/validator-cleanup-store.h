@@ -18,9 +18,13 @@
 */
 #pragma once
 
+#include <cerrno>
 #include <vector>
 
 #include "td/db/KeyValue.h"
+#include "td/db/RocksDb.h"
+#include "td/utils/port/Stat.h"
+#include "td/utils/port/path.h"
 #include "validator/consensus/validator-cleanup.h"
 
 // Key-value persistence for validator cleanup records (Finding 1), kept separate
@@ -91,6 +95,38 @@ inline std::vector<PendingValidatorConsensusDbCleanup> load_validator_cleanup_re
       return td::Status::OK();
     }).ensure();
   return records;
+}
+
+// Physically delete a validator group's consensus directory. Does ONLY: revalidate
+// that dir_name is the exact canonical validator directory for session_id (never
+// trust a persisted path -- reject an observer name, a mismatched session, a
+// non-canonical name, a separator, or a NUL), build the path under the consensus
+// root, destroy the RocksDB and remove the directory, and confirm removal by stat
+// (rmrf ignores unlink/rmdir errors, so only a "not found" proves the directory is
+// gone). Returns true ONLY on confirmed removal (including already-absent).
+//
+// It performs NO eligibility check: the caller (the cleanup orchestrator, B2-6)
+// must have already established -- under the checkpoint-bound four-condition rule
+// -- that deleting this session's directory is safe. This primitive is the last
+// step, not the decision.
+inline bool delete_validator_consensus_db(td::Slice db_root, const ValidatorSessionId& session_id,
+                                          const std::string& dir_name) {
+  if (!is_canonical_validator_dir_name(dir_name, session_id)) {
+    return false;
+  }
+  auto full = consensus_db_root(db_root) + dir_name;
+  td::RocksDb::destroy(full + "/db/").ignore();
+  td::rmrf(full).ignore();
+  auto probe = td::stat(full);
+  if (probe.is_ok()) {
+    return false;
+  }
+#if TD_PORT_WINDOWS
+  auto code = probe.error().code();
+  return code == ERROR_FILE_NOT_FOUND || code == ERROR_PATH_NOT_FOUND;
+#else
+  return probe.error().code() == ENOENT;
+#endif
 }
 
 }  // namespace tos::validator::consensus
