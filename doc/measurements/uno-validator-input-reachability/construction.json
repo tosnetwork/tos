@@ -1,0 +1,12 @@
+{
+  "template": "singleton-input/idle1.candidate",
+  "changes": [
+    "BlockInfo master reference",
+    "BlockInfo previous reference",
+    "archive root/file hashes"
+  ],
+  "scope": "Adversarial input for prefix reachability only. No claim that transaction/state-update contents are valid under target configuration. No gate changed.",
+  "candidate_sha256": "5f329b3f740d9ba0cdec523454feeea707525342eac4d2ef89bdf62f19be5de4",
+  "master_root": "7CF4F6F367E73E33D3DE42B54FDC76B25B1911F12EDCDF77AEF0C8A26C38618C",
+  "master_file": "59E1E2BFA9550FC57F99ABB25087DC583D3E8B68F928625324E8ACC3CA4C5C9E"
+}

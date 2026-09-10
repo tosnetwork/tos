@@ -1,0 +1,79 @@
+{
+  "counts": {
+    "registry": 1,
+    "account_variant": 1,
+    "downstream_collator": 0,
+    "downstream_validator_config": 0,
+    "downstream_validator_ready": 0,
+    "downstream_validator_transactions": 0,
+    "account_refusal": 1
+  },
+  "events": [
+    {
+      "site": "registry",
+      "stack": [
+        {
+          "name": "block::WorkchainExecutionRegistry::validate_required_workchains",
+          "pc": 93825015042112
+        },
+        {
+          "name": "tos::validator::ValidateQuery::fetch_config_params",
+          "pc": 93825000679863
+        },
+        {
+          "name": "tos::validator::ValidateQuery::try_unpack_mc_state",
+          "pc": 93825000671659
+        },
+        {
+          "name": "tos::validator::ValidateQuery::process_mc_state",
+          "pc": 93825000659459
+        }
+      ]
+    },
+    {
+      "site": "account_variant",
+      "stack": [
+        {
+          "name": "block::WorkchainExecutionRegistry::validate_required_workchains(std::map<int, td::Ref<block::WorkchainInfo>, std::less<int>, std::allocator<std::pair<int const, td::Ref<block::WorkchainInfo> > > > const&, block::Config const&, block::LocalWorkchainRoleSet const&) const::$_2::operator()(block::ResolvedWorkchainAccountBinding const&) const",
+          "pc": 93825015050128
+        },
+        {
+          "name": "std::__invoke_impl<td::Status, td::detail::overload<block::WorkchainExecutionRegistry::validate_required_workchains(std::map<int, td::Ref<block::WorkchainInfo>, std::less<int>, std::allocator<std::pair<int const, td::Ref<block::WorkchainInfo> > > > const&, block::Config const&, block::LocalWorkchainRoleSet const&) const::$_0, block::WorkchainExecutionRegistry::validate_required_workchains(std::map<int, td::Ref<block::WorkchainInfo>, std::less<int>, std::allocator<std::pair<int const, td::Ref<block::WorkchainInfo> > > > const&, block::Config const&, block::LocalWorkchainRoleSet const&) const::$_1, block::WorkchainExecutionRegistry::validate_required_workchains(std::map<int, td::Ref<block::WorkchainInfo>, std::less<int>, std::allocator<std::pair<int const, td::Ref<block::WorkchainInfo> > > > const&, block::Config const&, block::LocalWorkchainRoleSet const&) const::$_2>, block::ResolvedWorkchainAccountBinding&>(std::__invoke_other, td::detail::overload<block::WorkchainExecutionRegistry::validate_required_workchains(std::map<int, td::Ref<block::WorkchainInfo>, std::less<int>, std::allocator<std::pair<int const, td::Ref<block::WorkchainInfo> > > > const&, block::Config const&, block::LocalWorkchainRoleSet const&) const::$_0, block::WorkchainExecutionRegistry::validate_required_workchains(std::map<int, td::Ref<block::WorkchainInfo>, std::less<int>, std::allocator<std::pair<int const, td::Ref<block::WorkchainInfo> > > > const&, block::Config const&, block::LocalWorkchainRoleSet const&) const::$_1, block::WorkchainExecutionRegistry::validate_required_workchains(std::map<int, td::Ref<block::WorkchainInfo>, std::less<int>, std::allocator<std::pair<int const, td::Ref<block::WorkchainInfo> > > > const&, block::Config const&, block::LocalWorkchainRoleSet const&) const::$_2>&&, block::ResolvedWorkchainAccountBinding&)",
+          "pc": 93825015050104
+        },
+        {
+          "name": "std::__invoke<td::detail::overload<block::WorkchainExecutionRegistry::validate_required_workchains(std::map<int, td::Ref<block::WorkchainInfo>, std::less<int>, std::allocator<std::pair<int const, td::Ref<block::WorkchainInfo> > > > const&, block::Config const&, block::LocalWorkchainRoleSet const&) const::$_0, block::WorkchainExecutionRegistry::validate_required_workchains(std::map<int, td::Ref<block::WorkchainInfo>, std::less<int>, std::allocator<std::pair<int const, td::Ref<block::WorkchainInfo> > > > const&, block::Config const&, block::LocalWorkchainRoleSet const&) const::$_1, block::WorkchainExecutionRegistry::validate_required_workchains(std::map<int, td::Ref<block::WorkchainInfo>, std::less<int>, std::allocator<std::pair<int const, td::Ref<block::WorkchainInfo> > > > const&, block::Config const&, block::LocalWorkchainRoleSet const&) const::$_2>, block::ResolvedWorkchainAccountBinding&>(td::detail::overload<block::WorkchainExecutionRegistry::validate_required_workchains(std::map<int, td::Ref<block::WorkchainInfo>, std::less<int>, std::allocator<std::pair<int const, td::Ref<block::WorkchainInfo> > > > const&, block::Config const&, block::LocalWorkchainRoleSet const&) const::$_0, block::WorkchainExecutionRegistry::validate_required_workchains(std::map<int, td::Ref<block::WorkchainInfo>, std::less<int>, std::allocator<std::pair<int const, td::Ref<block::WorkchainInfo> > > > const&, block::Config const&, block::LocalWorkchainRoleSet const&) const::$_1, block::WorkchainExecutionRegistry::validate_required_workchains(std::map<int, td::Ref<block::WorkchainInfo>, std::less<int>, std::allocator<std::pair<int const, td::Ref<block::WorkchainInfo> > > > const&, block::Config const&, block::LocalWorkchainRoleSet const&) const::$_2>&&, block::ResolvedWorkchainAccountBinding&)",
+          "pc": 93825015050008
+        },
+        {
+          "name": "std::__detail::__variant::__gen_vtable_impl<std::__detail::__variant::_Multi_array<std::__detail::__variant::__deduce_visit_result<td::Status> (*)(td::detail::overload<block::WorkchainExecutionRegistry::validate_required_workchains(std::map<int, td::Ref<block::WorkchainInfo>, std::less<int>, std::allocator<std::pair<int const, td::Ref<block::WorkchainInfo> > > > const&, block::Config const&, block::LocalWorkchainRoleSet const&) const::$_0, block::WorkchainExecutionRegistry::validate_required_workchains(std::map<int, td::Ref<block::WorkchainInfo>, std::less<int>, std::allocator<std::pair<int const, td::Ref<block::WorkchainInfo> > > > const&, block::Config const&, block::LocalWorkchainRoleSet const&) const::$_1, block::WorkchainExecutionRegistry::validate_required_workchains(std::map<int, td::Ref<block::WorkchainInfo>, std::less<int>, std::allocator<std::pair<int const, td::Ref<block::WorkchainInfo> > > > const&, block::Config const&, block::LocalWorkchainRoleSet const&) const::$_2>&&, std::variant<block::ResolvedWorkchainExecution, block::ResolvedWorkchainBlockExecution, block::ResolvedWorkchainAccountBinding>&)>, std::integer_sequence<unsigned long, 2ul> >::__visit_invoke(td::detail::overload<block::WorkchainExecutionRegistry::validate_required_workchains(std::map<int, td::Ref<block::WorkchainInfo>, std::less<int>, std::allocator<std::pair<int const, td::Ref<block::WorkchainInfo> > > > const&, block::Config const&, block::LocalWorkchainRoleSet const&) const::$_0, block::WorkchainExecutionRegistry::validate_required_workchains(std::map<int, td::Ref<block::WorkchainInfo>, std::less<int>, std::allocator<std::pair<int const, td::Ref<block::WorkchainInfo> > > > const&, block::Config const&, block::LocalWorkchainRoleSet const&) const::$_1, block::WorkchainExecutionRegistry::validate_required_workchains(std::map<int, td::Ref<block::WorkchainInfo>, std::less<int>, std::allocator<std::pair<int const, td::Ref<block::WorkchainInfo> > > > const&, block::Config const&, block::LocalWorkchainRoleSet const&) const::$_2>&&, std::variant<block::ResolvedWorkchainExecution, block::ResolvedWorkchainBlockExecution, block::ResolvedWorkchainAccountBinding>&)",
+          "pc": 93825015049408
+        }
+      ]
+    },
+    {
+      "site": "account_refusal",
+      "stack": [
+        {
+          "name": "block::WorkchainExecutionRegistry::validate_required_workchains(std::map<int, td::Ref<block::WorkchainInfo>, std::less<int>, std::allocator<std::pair<int const, td::Ref<block::WorkchainInfo> > > > const&, block::Config const&, block::LocalWorkchainRoleSet const&) const::$_2::operator()(block::ResolvedWorkchainAccountBinding const&) const",
+          "pc": 93825015050159
+        },
+        {
+          "name": "std::__invoke_impl<td::Status, td::detail::overload<block::WorkchainExecutionRegistry::validate_required_workchains(std::map<int, td::Ref<block::WorkchainInfo>, std::less<int>, std::allocator<std::pair<int const, td::Ref<block::WorkchainInfo> > > > const&, block::Config const&, block::LocalWorkchainRoleSet const&) const::$_0, block::WorkchainExecutionRegistry::validate_required_workchains(std::map<int, td::Ref<block::WorkchainInfo>, std::less<int>, std::allocator<std::pair<int const, td::Ref<block::WorkchainInfo> > > > const&, block::Config const&, block::LocalWorkchainRoleSet const&) const::$_1, block::WorkchainExecutionRegistry::validate_required_workchains(std::map<int, td::Ref<block::WorkchainInfo>, std::less<int>, std::allocator<std::pair<int const, td::Ref<block::WorkchainInfo> > > > const&, block::Config const&, block::LocalWorkchainRoleSet const&) const::$_2>, block::ResolvedWorkchainAccountBinding&>(std::__invoke_other, td::detail::overload<block::WorkchainExecutionRegistry::validate_required_workchains(std::map<int, td::Ref<block::WorkchainInfo>, std::less<int>, std::allocator<std::pair<int const, td::Ref<block::WorkchainInfo> > > > const&, block::Config const&, block::LocalWorkchainRoleSet const&) const::$_0, block::WorkchainExecutionRegistry::validate_required_workchains(std::map<int, td::Ref<block::WorkchainInfo>, std::less<int>, std::allocator<std::pair<int const, td::Ref<block::WorkchainInfo> > > > const&, block::Config const&, block::LocalWorkchainRoleSet const&) const::$_1, block::WorkchainExecutionRegistry::validate_required_workchains(std::map<int, td::Ref<block::WorkchainInfo>, std::less<int>, std::allocator<std::pair<int const, td::Ref<block::WorkchainInfo> > > > const&, block::Config const&, block::LocalWorkchainRoleSet const&) const::$_2>&&, block::ResolvedWorkchainAccountBinding&)",
+          "pc": 93825015050104
+        },
+        {
+          "name": "std::__invoke<td::detail::overload<block::WorkchainExecutionRegistry::validate_required_workchains(std::map<int, td::Ref<block::WorkchainInfo>, std::less<int>, std::allocator<std::pair<int const, td::Ref<block::WorkchainInfo> > > > const&, block::Config const&, block::LocalWorkchainRoleSet const&) const::$_0, block::WorkchainExecutionRegistry::validate_required_workchains(std::map<int, td::Ref<block::WorkchainInfo>, std::less<int>, std::allocator<std::pair<int const, td::Ref<block::WorkchainInfo> > > > const&, block::Config const&, block::LocalWorkchainRoleSet const&) const::$_1, block::WorkchainExecutionRegistry::validate_required_workchains(std::map<int, td::Ref<block::WorkchainInfo>, std::less<int>, std::allocator<std::pair<int const, td::Ref<block::WorkchainInfo> > > > const&, block::Config const&, block::LocalWorkchainRoleSet const&) const::$_2>, block::ResolvedWorkchainAccountBinding&>(td::detail::overload<block::WorkchainExecutionRegistry::validate_required_workchains(std::map<int, td::Ref<block::WorkchainInfo>, std::less<int>, std::allocator<std::pair<int const, td::Ref<block::WorkchainInfo> > > > const&, block::Config const&, block::LocalWorkchainRoleSet const&) const::$_0, block::WorkchainExecutionRegistry::validate_required_workchains(std::map<int, td::Ref<block::WorkchainInfo>, std::less<int>, std::allocator<std::pair<int const, td::Ref<block::WorkchainInfo> > > > const&, block::Config const&, block::LocalWorkchainRoleSet const&) const::$_1, block::WorkchainExecutionRegistry::validate_required_workchains(std::map<int, td::Ref<block::WorkchainInfo>, std::less<int>, std::allocator<std::pair<int const, td::Ref<block::WorkchainInfo> > > > const&, block::Config const&, block::LocalWorkchainRoleSet const&) const::$_2>&&, block::ResolvedWorkchainAccountBinding&)",
+          "pc": 93825015050008
+        },
+        {
+          "name": "std::__detail::__variant::__gen_vtable_impl<std::__detail::__variant::_Multi_array<std::__detail::__variant::__deduce_visit_result<td::Status> (*)(td::detail::overload<block::WorkchainExecutionRegistry::validate_required_workchains(std::map<int, td::Ref<block::WorkchainInfo>, std::less<int>, std::allocator<std::pair<int const, td::Ref<block::WorkchainInfo> > > > const&, block::Config const&, block::LocalWorkchainRoleSet const&) const::$_0, block::WorkchainExecutionRegistry::validate_required_workchains(std::map<int, td::Ref<block::WorkchainInfo>, std::less<int>, std::allocator<std::pair<int const, td::Ref<block::WorkchainInfo> > > > const&, block::Config const&, block::LocalWorkchainRoleSet const&) const::$_1, block::WorkchainExecutionRegistry::validate_required_workchains(std::map<int, td::Ref<block::WorkchainInfo>, std::less<int>, std::allocator<std::pair<int const, td::Ref<block::WorkchainInfo> > > > const&, block::Config const&, block::LocalWorkchainRoleSet const&) const::$_2>&&, std::variant<block::ResolvedWorkchainExecution, block::ResolvedWorkchainBlockExecution, block::ResolvedWorkchainAccountBinding>&)>, std::integer_sequence<unsigned long, 2ul> >::__visit_invoke(td::detail::overload<block::WorkchainExecutionRegistry::validate_required_workchains(std::map<int, td::Ref<block::WorkchainInfo>, std::less<int>, std::allocator<std::pair<int const, td::Ref<block::WorkchainInfo> > > > const&, block::Config const&, block::LocalWorkchainRoleSet const&) const::$_0, block::WorkchainExecutionRegistry::validate_required_workchains(std::map<int, td::Ref<block::WorkchainInfo>, std::less<int>, std::allocator<std::pair<int const, td::Ref<block::WorkchainInfo> > > > const&, block::Config const&, block::LocalWorkchainRoleSet const&) const::$_1, block::WorkchainExecutionRegistry::validate_required_workchains(std::map<int, td::Ref<block::WorkchainInfo>, std::less<int>, std::allocator<std::pair<int const, td::Ref<block::WorkchainInfo> > > > const&, block::Config const&, block::LocalWorkchainRoleSet const&) const::$_2>&&, std::variant<block::ResolvedWorkchainExecution, block::ResolvedWorkchainBlockExecution, block::ResolvedWorkchainAccountBinding>&)",
+          "pc": 93825015049408
+        }
+      ]
+    }
+  ],
+  "errors": [],
+  "exit_code": 2,
+  "breakpoints": "No breakpoints or watchpoints.\n"
+}
