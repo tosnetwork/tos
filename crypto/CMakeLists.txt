@@ -705,6 +705,10 @@ if(TOS_WORKCHAIN_INSTANCE_TESTS)
 endif()
 
 # A generated constructor changing must invalidate its hand-written Fift consumer.
+add_executable(test-workchain-confidential-state ../test/test-td-main.cpp test/test-workchain-confidential-state.cpp)
+target_link_libraries(test-workchain-confidential-state PRIVATE tos_block tos_crypto)
+add_test(NAME test-workchain-confidential-state COMMAND test-workchain-confidential-state)
+
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 add_test(NAME test-workchain-handwritten-tags COMMAND ${Python3_EXECUTABLE}
   "${PROJECT_SOURCE_DIR}/crypto/test/workchain-handwritten-tags.py" --repo "${PROJECT_SOURCE_DIR}")
