@@ -1,0 +1,5 @@
+Traceback (most recent call last):
+  File "/home/tomi/tos-m2/test/workchain-ingress-transition-controls.py", line 31, in <module>
+    assert (repo/source).read_bytes()==original and original.count(before.encode())==1
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError

@@ -1,0 +1,21 @@
+Start testing: Sep 10 00:39 UTC
+----------------------------------------------------------
+1/1 Testing: test-smartcont
+1/1 Test: test-smartcont
+Command: "/tmp/uno-smartcont-oracle-controls-3/test-smartcont" "--regression" "/tmp/uno-smartcont-oracle-controls-3/regression-tests.ans" "--filter" "-Bench" "--filter" "GenZerostateFiftRegression" "--verbosity" "0"
+Directory: /tmp/uno-smartcont-oracle-controls-3/ctest
+"test-smartcont" start time: Sep 10 00:39 UTC
+Output:
+----------------------------------------------------------
+Running test Test_Toslib_GenZerostateFiftRegression...
+PASS in 90.8ms
+1 test(s) passed
+<end of output>
+Test time =   0.10 sec
+----------------------------------------------------------
+Test Passed.
+"test-smartcont" end time: Sep 10 00:39 UTC
+"test-smartcont" time elapsed: 00:00:00
+----------------------------------------------------------
+
+End testing: Sep 10 00:39 UTC

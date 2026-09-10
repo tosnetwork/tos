@@ -1,0 +1,6 @@
+4 setglobalid
+dictnew workchain-dict !
+variable counter_network_descriptor
+1 2 1788656400 0 0 0 2 0xe000 0x434e5431 add-basic-workchain-v2 drop
+2 workchain-dict @ 32 idict@ 0= abort"missing descriptor"
+s>c 31 boc+>B "/tmp/uno-descriptor-controls-1/extended-key/counter-extended.new.boc" B>file

@@ -1,0 +1,139 @@
+Start testing: Sep 10 00:33 UTC
+----------------------------------------------------------
+1/1 Testing: test-smartcont
+1/1 Test: test-smartcont
+Command: "/tmp/uno-smartcont-oracle-controls-1/test-smartcont" "--regression" "/tmp/uno-smartcont-oracle-controls-1/regression-tests.ans" "--filter" "-Bench" "--filter" "GenZerostateFiftRegression" "--verbosity" "0"
+Directory: /tmp/uno-smartcont-oracle-controls-1/ctest
+"test-smartcont" start time: Sep 10 00:33 UTC
+Output:
+----------------------------------------------------------
+Running test Test_Toslib_GenZerostateFiftRegression...
+[1;31m[ 0][t 0][2026-09-10 00:33:07.473747025][Status.h:274]	Unexpected Status [Error : 0 : Test Test_Toslib_GenZerostateFiftRegression_default changed: [expected:512112d41e8d922c7bbe8432d751efdfb7fb552e11e3d796b7dc9af18d002998][got:3f3bb9e32fc26351108127beb870cb98cb8b59101a8044986c6edce0ddf90c65]] in file /tmp/uno-smartcont-oracle-controls-1/source/crypto/test/test-smartcont.cpp at line 1091[0m
+[pid 3730521] [time 1789000387] Signal: 6
+------- Stack Backtrace -------
+/tmp/uno-smartcont-oracle-controls-1/test-smartcont(+0x3c2497)[0x5612bc688497]
+/tmp/uno-smartcont-oracle-controls-1/test-smartcont(+0xb234d)[0x5612bc37834d]
+/lib/x86_64-linux-gnu/libc.so.6(+0x42520)[0x767565042520]
+/lib/x86_64-linux-gnu/libc.so.6(pthread_kill+0x12c)[0x7675650969bc]
+/lib/x86_64-linux-gnu/libc.so.6(raise+0x16)[0x767565042476]
+/lib/x86_64-linux-gnu/libc.so.6(abort+0xd3)[0x7675650287f3]
+/tmp/uno-smartcont-oracle-controls-1/test-smartcont(+0x3ca9b7)[0x5612bc6909b7]
+/tmp/uno-smartcont-oracle-controls-1/test-smartcont(+0x3caab7)[0x5612bc690ab7]
+/tmp/uno-smartcont-oracle-controls-1/test-smartcont(+0x3ca677)[0x5612bc690677]
+/tmp/uno-smartcont-oracle-controls-1/test-smartcont(+0xb47f7)[0x5612bc37a7f7]
+/tmp/uno-smartcont-oracle-controls-1/test-smartcont(+0xe0946)[0x5612bc3a6946]
+/tmp/uno-smartcont-oracle-controls-1/test-smartcont(+0x10a67a)[0x5612bc3d067a]
+/tmp/uno-smartcont-oracle-controls-1/test-smartcont(+0x3d5d2c)[0x5612bc69bd2c]
+/tmp/uno-smartcont-oracle-controls-1/test-smartcont(+0x3d5858)[0x5612bc69b858]
+/tmp/uno-smartcont-oracle-controls-1/test-smartcont(+0xb429f)[0x5612bc37a29f]
+/lib/x86_64-linux-gnu/libc.so.6(+0x29d90)[0x767565029d90]
+/lib/x86_64-linux-gnu/libc.so.6(__libc_start_main+0x80)[0x767565029e40]
+/tmp/uno-smartcont-oracle-controls-1/test-smartcont(+0xb4145)[0x5612bc37a145]
+-------------------------------
+--- Enhanced Backtrace (libbacktrace) ---
+    #0  ?? (test-smartcont+0xb234c) [0x5612bc37834c]
+    #1  ?? at libc_sigaction.c (libc.so.6+0x4251f) [0x76756504251f]
+    #2  __pthread_kill_implementation at pthread_kill.c:44 (libc.so.6+0x969bc) [0x7675650969bc]
+    #3  __pthread_kill_internal at pthread_kill.c:78 (libc.so.6+0x969bc) [0x7675650969bc]
+    #4  __GI___pthread_kill at pthread_kill.c:89 (libc.so.6+0x969bc) [0x7675650969bc]
+    #5  __GI_raise at raise.c:26 (libc.so.6+0x42475) [0x767565042475]
+    #6  __GI_abort at abort.c:79 (libc.so.6+0x287f2) [0x7675650287f2]
+    #7  ?? (test-smartcont+0x3ca9b6) [0x5612bc6909b6]
+    #8  ?? (test-smartcont+0x3caab6) [0x5612bc690ab6]
+    #9  ?? (test-smartcont+0x3ca676) [0x5612bc690676]
+    #10  ?? (test-smartcont+0xb47f6) [0x5612bc37a7f6]
+    #11  ?? (test-smartcont+0xe0945) [0x5612bc3a6945]
+    #12  ?? (test-smartcont+0x10a679) [0x5612bc3d0679]
+    #13  ?? (test-smartcont+0x3d5d2b) [0x5612bc69bd2b]
+    #14  ?? (test-smartcont+0x3d5857) [0x5612bc69b857]
+    #15  ?? (test-smartcont+0xb429e) [0x5612bc37a29e]
+    #16  __libc_start_call_main at libc_start_call_main.h:58 (libc.so.6+0x29d8f) [0x767565029d8f]
+    #17  __libc_start_main_impl at libc-start.c:392 (libc.so.6+0x29e3f) [0x767565029e3f]
+    #18  ?? (test-smartcont+0xb4144) [0x5612bc37a144]
+    #19  `®j¾ü (unknown+0xffffffffffffffff) [0xffffffffffffffff]
+------------------------------------------
+[Thread debugging using libthread_db enabled]
+Using host libthread_db library "/lib/x86_64-linux-gnu/libthread_db.so.1".
+0x00007675650ea3aa in __GI___wait4 (pid=3730524, stat_loc=0x0, options=0, usage=0x0) at ../sysdeps/unix/sysv/linux/wait4.c:30
+30	../sysdeps/unix/sysv/linux/wait4.c: No such file or directory.
+[Current thread is 1 (Thread 0x7675656b4840 (LWP 3730521))]
+
+Thread 1 (Thread 0x7675656b4840 (LWP 3730521) "test-smartcont"):
+#0  0x00007675650ea3aa in __GI___wait4 (pid=3730524, stat_loc=0x0, options=0, usage=0x0) at ../sysdeps/unix/sysv/linux/wait4.c:30
+        sc_ret = -512
+        sc_ret = <optimized out>
+#1  0x00005612bc688712 in td::Stacktrace::print_to_stderr(td::Stacktrace::PrintOptions const&) ()
+No symbol table info available.
+#2  0x00005612bc37834d in td::default_failure_signal_handler(int) ()
+No symbol table info available.
+#3  <signal handler called>
+No locals.
+#4  __pthread_kill_implementation (no_tid=0, signo=6, threadid=130246584780864) at ./nptl/pthread_kill.c:44
+        tid = <optimized out>
+        ret = 0
+        pd = 0x7675656b4840
+        old_mask = {__val = {0 <repeats 16 times>}}
+        ret = <optimized out>
+        pd = <optimized out>
+        old_mask = <optimized out>
+        ret = <optimized out>
+        tid = <optimized out>
+        ret = <optimized out>
+        resultvar = <optimized out>
+        resultvar = <optimized out>
+        __arg3 = <optimized out>
+        __arg2 = <optimized out>
+        __arg1 = <optimized out>
+        _a3 = <optimized out>
+        _a2 = <optimized out>
+        _a1 = <optimized out>
+        __futex = <optimized out>
+        resultvar = <optimized out>
+        __arg3 = <optimized out>
+        __arg2 = <optimized out>
+        __arg1 = <optimized out>
+        _a3 = <optimized out>
+        _a2 = <optimized out>
+        _a1 = <optimized out>
+        __futex = <optimized out>
+        __private = <optimized out>
+        __oldval = <optimized out>
+        result = <optimized out>
+#5  __pthread_kill_internal (signo=6, threadid=130246584780864) at ./nptl/pthread_kill.c:78
+No locals.
+#6  __GI___pthread_kill (threadid=130246584780864, signo=signo@entry=6) at ./nptl/pthread_kill.c:89
+No locals.
+#7  0x0000767565042476 in __GI_raise (sig=sig@entry=6) at ../sysdeps/posix/raise.c:26
+        ret = <optimized out>
+#8  0x00007675650287f3 in __GI_abort () at ./stdlib/abort.c:79
+        save_stage = 1
+        act = {__sigaction_handler = {sa_handler = 0x0, sa_sigaction = 0x0}, sa_mask = {__val = {0 <repeats 14 times>, 140723503147319, 0}}, sa_flags = 1, sa_restorer = 0x0}
+        sigs = {__val = {32, 0 <repeats 15 times>}}
+#9  0x00005612bc6909b7 in td::process_fatal_error(td::CSlice) ()
+No symbol table info available.
+#10 0x00005612bc690ab7 in td::DefaultLog::append(td::CSlice, int) ()
+No symbol table info available.
+#11 0x00005612bc690677 in td::Logger::~Logger() ()
+No symbol table info available.
+#12 0x00005612bc37a7f7 in td::Status::ensure_impl(td::CSlice, int) const ()
+No symbol table info available.
+#13 0x00005612bc3a6946 in Test_Toslib_GenZerostateFiftRegression::run() ()
+No symbol table info available.
+#14 0x00005612bc3d067a in td::Test::step() ()
+No symbol table info available.
+#15 0x00005612bc69bd2c in td::TestsRunner::run_all_step() ()
+No symbol table info available.
+#16 0x00005612bc69b858 in td::TestsRunner::run_all() ()
+No symbol table info available.
+#17 0x00005612bc37a29f in main ()
+No symbol table info available.
+[Inferior 1 (process 3730521) detached]
+<end of output>
+Test time =   0.69 sec
+----------------------------------------------------------
+Test Failed.
+"test-smartcont" end time: Sep 10 00:33 UTC
+"test-smartcont" time elapsed: 00:00:00
+----------------------------------------------------------
+
+End testing: Sep 10 00:33 UTC

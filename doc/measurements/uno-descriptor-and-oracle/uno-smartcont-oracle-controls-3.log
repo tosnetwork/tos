@@ -1,0 +1,1 @@
+PASS: valid changed genesis is green without oracle, failed CTest with oracle, restored green

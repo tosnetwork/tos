@@ -1,0 +1,1538 @@
+[
+  {
+    "source": "/tmp/uno-descriptor-equivalence-1/counter-basic.new.fif",
+    "artifact": "uno-descriptor-equivalence-1/counter-basic.new.fif",
+    "original_bytes": 278,
+    "original_sha256": "709798339901d0127f2de6402d2a1d28de9f8ee400eaa70c290feeeae7865092"
+  },
+  {
+    "source": "/tmp/uno-descriptor-equivalence-1/counter-basic.new.stderr.log",
+    "artifact": "uno-descriptor-equivalence-1/counter-basic.new.stderr.log",
+    "original_bytes": 77,
+    "original_sha256": "6c5ea090b43dd649805b7585e570d0a6727b0e1b0b2fbafeaf23fe9ddb704370"
+  },
+  {
+    "source": "/tmp/uno-descriptor-equivalence-1/counter-basic.new.stdout.log",
+    "artifact": "uno-descriptor-equivalence-1/counter-basic.new.stdout.log",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/tmp/uno-descriptor-equivalence-1/counter-basic.old.fif",
+    "artifact": "uno-descriptor-equivalence-1/counter-basic.old.fif",
+    "original_bytes": 615,
+    "original_sha256": "7fa7acf82ef9317119a0338602e8e57510604099f9c8d2d68f90445b6a665997"
+  },
+  {
+    "source": "/tmp/uno-descriptor-equivalence-1/counter-basic.old.stderr.log",
+    "artifact": "uno-descriptor-equivalence-1/counter-basic.old.stderr.log",
+    "original_bytes": 77,
+    "original_sha256": "865b1db8ab7f90a43b5c5bf65782d79744bf17baad628406ddb45a794d0792de"
+  },
+  {
+    "source": "/tmp/uno-descriptor-equivalence-1/counter-basic.old.stdout.log",
+    "artifact": "uno-descriptor-equivalence-1/counter-basic.old.stdout.log",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/tmp/uno-descriptor-equivalence-1/counter-extended.new.fif",
+    "artifact": "uno-descriptor-equivalence-1/counter-extended.new.fif",
+    "original_bytes": 284,
+    "original_sha256": "5c7c88f38c31d13d93fce65dd1bf9651ccbd7340faafece4565564db87234a52"
+  },
+  {
+    "source": "/tmp/uno-descriptor-equivalence-1/counter-extended.new.stderr.log",
+    "artifact": "uno-descriptor-equivalence-1/counter-extended.new.stderr.log",
+    "original_bytes": 77,
+    "original_sha256": "2a16b1aa221da3c1dd8afbf77ea2e56b1cfcef701e529fe1b6baeb48917bbd83"
+  },
+  {
+    "source": "/tmp/uno-descriptor-equivalence-1/counter-extended.new.stdout.log",
+    "artifact": "uno-descriptor-equivalence-1/counter-extended.new.stdout.log",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/tmp/uno-descriptor-equivalence-1/counter-extended.old.fif",
+    "artifact": "uno-descriptor-equivalence-1/counter-extended.old.fif",
+    "original_bytes": 681,
+    "original_sha256": "501e1e3e21ef03a86fe65b121da4e13b19775d14332f6791811eaa5a6380eff3"
+  },
+  {
+    "source": "/tmp/uno-descriptor-equivalence-1/counter-extended.old.stderr.log",
+    "artifact": "uno-descriptor-equivalence-1/counter-extended.old.stderr.log",
+    "original_bytes": 77,
+    "original_sha256": "24a82bdc2aa708af889db49497978aeadbf066ca1c7163c77f8a68cb5bf87b76"
+  },
+  {
+    "source": "/tmp/uno-descriptor-equivalence-1/counter-extended.old.stdout.log",
+    "artifact": "uno-descriptor-equivalence-1/counter-extended.old.stdout.log",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/tmp/uno-descriptor-equivalence-1/native-basic.new.fif",
+    "artifact": "uno-descriptor-equivalence-1/native-basic.new.fif",
+    "original_bytes": 233,
+    "original_sha256": "12236191e0c065d55e6dafba7e0fbbad19117c18c49161afc1ca5d1122660baf"
+  },
+  {
+    "source": "/tmp/uno-descriptor-equivalence-1/native-basic.new.stderr.log",
+    "artifact": "uno-descriptor-equivalence-1/native-basic.new.stderr.log",
+    "original_bytes": 77,
+    "original_sha256": "2a0bbd963347f2be0343aabb0bf83319fc82e951910d22306c267e2a2226d5a2"
+  },
+  {
+    "source": "/tmp/uno-descriptor-equivalence-1/native-basic.new.stdout.log",
+    "artifact": "uno-descriptor-equivalence-1/native-basic.new.stdout.log",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/tmp/uno-descriptor-equivalence-1/native-basic.old.fif",
+    "artifact": "uno-descriptor-equivalence-1/native-basic.old.fif",
+    "original_bytes": 532,
+    "original_sha256": "0e83cf9cf77df972a1981cd94db7ccb5a52dc389c68c17608cd9c59cc7fffa25"
+  },
+  {
+    "source": "/tmp/uno-descriptor-equivalence-1/native-basic.old.stderr.log",
+    "artifact": "uno-descriptor-equivalence-1/native-basic.old.stderr.log",
+    "original_bytes": 77,
+    "original_sha256": "373f8cd09e365f0597d92b5b1eca494d47528653da5410c120e55395e3c09ccc"
+  },
+  {
+    "source": "/tmp/uno-descriptor-equivalence-1/native-basic.old.stdout.log",
+    "artifact": "uno-descriptor-equivalence-1/native-basic.old.stdout.log",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/tmp/uno-descriptor-equivalence-1/native-extended.new.fif",
+    "artifact": "uno-descriptor-equivalence-1/native-extended.new.fif",
+    "original_bytes": 239,
+    "original_sha256": "3055152542a1489a0697cdd8909a890c0d902b4d20d20061c618148e40354f55"
+  },
+  {
+    "source": "/tmp/uno-descriptor-equivalence-1/native-extended.new.stderr.log",
+    "artifact": "uno-descriptor-equivalence-1/native-extended.new.stderr.log",
+    "original_bytes": 77,
+    "original_sha256": "18f8e7356bed6e1dc1d110010298422b55a590f30bea9b7a0ce40b43e0aa3d79"
+  },
+  {
+    "source": "/tmp/uno-descriptor-equivalence-1/native-extended.new.stdout.log",
+    "artifact": "uno-descriptor-equivalence-1/native-extended.new.stdout.log",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/tmp/uno-descriptor-equivalence-1/native-extended.old.fif",
+    "artifact": "uno-descriptor-equivalence-1/native-extended.old.fif",
+    "original_bytes": 588,
+    "original_sha256": "d38e328f780a4e11bd5c15abf78c8547af1fb50b41e5c55348b7ae1d54d114fe"
+  },
+  {
+    "source": "/tmp/uno-descriptor-equivalence-1/native-extended.old.stderr.log",
+    "artifact": "uno-descriptor-equivalence-1/native-extended.old.stderr.log",
+    "original_bytes": 77,
+    "original_sha256": "9d45fd93e2fac0a132e4d65dd1cf61eb245815bff3b7d59defd90202775e9f7d"
+  },
+  {
+    "source": "/tmp/uno-descriptor-equivalence-1/native-extended.old.stdout.log",
+    "artifact": "uno-descriptor-equivalence-1/native-extended.old.stdout.log",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/tmp/uno-descriptor-equivalence-1/report.json",
+    "artifact": "uno-descriptor-equivalence-1/report.json",
+    "original_bytes": 2160,
+    "original_sha256": "7967e5ee47e0c42473133f8f25b4ef1fe44010af99cf23c64a5bf863f87dc19a"
+  },
+  {
+    "source": "/tmp/uno-descriptor-equivalence-1/uno-basic.new.fif",
+    "artifact": "uno-descriptor-equivalence-1/uno-basic.new.fif",
+    "original_bytes": 332,
+    "original_sha256": "927e68a995ab3763e47a511937fd145de5e5407f5aff62a6b37a85cfbb63dedc"
+  },
+  {
+    "source": "/tmp/uno-descriptor-equivalence-1/uno-basic.new.stderr.log",
+    "artifact": "uno-descriptor-equivalence-1/uno-basic.new.stderr.log",
+    "original_bytes": 77,
+    "original_sha256": "d18266c498cbddb3371fc2fbac0fe9d33315d86644333bcceeecae271390fa6c"
+  },
+  {
+    "source": "/tmp/uno-descriptor-equivalence-1/uno-basic.new.stdout.log",
+    "artifact": "uno-descriptor-equivalence-1/uno-basic.new.stdout.log",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/tmp/uno-descriptor-equivalence-1/uno-basic.old.fif",
+    "artifact": "uno-descriptor-equivalence-1/uno-basic.old.fif",
+    "original_bytes": 675,
+    "original_sha256": "5e6cfd2aa4fa214f3b0ae564cb799baf9a3ca41274536eafabbf88548303104f"
+  },
+  {
+    "source": "/tmp/uno-descriptor-equivalence-1/uno-basic.old.stderr.log",
+    "artifact": "uno-descriptor-equivalence-1/uno-basic.old.stderr.log",
+    "original_bytes": 77,
+    "original_sha256": "8aae1c2ab34c77b69499e1befbf5af7057fb1ea4ec32d37014b64c78a99bf5b1"
+  },
+  {
+    "source": "/tmp/uno-descriptor-equivalence-1/uno-basic.old.stdout.log",
+    "artifact": "uno-descriptor-equivalence-1/uno-basic.old.stdout.log",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/basic-route/counter-basic.new.fif",
+    "artifact": "uno-descriptor-controls-1/basic-route/counter-basic.new.fif",
+    "original_bytes": 287,
+    "original_sha256": "577106063642a7f505bd1cdce9918f48c03a55924d6ca20ae8637370debdc398"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/basic-route/counter-basic.new.stderr.log",
+    "artifact": "uno-descriptor-controls-1/basic-route/counter-basic.new.stderr.log",
+    "original_bytes": 77,
+    "original_sha256": "72158e2473d6bd72ab84e4b133eeb38dbdeac7da0813feeca88700ec132b787e"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/basic-route/counter-basic.new.stdout.log",
+    "artifact": "uno-descriptor-controls-1/basic-route/counter-basic.new.stdout.log",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/basic-route/counter-basic.old.fif",
+    "artifact": "uno-descriptor-controls-1/basic-route/counter-basic.old.fif",
+    "original_bytes": 624,
+    "original_sha256": "9d63c67f5e27e264706bdc8947f56e9313c24520f101828d254f7c275839d6d5"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/basic-route/counter-basic.old.stderr.log",
+    "artifact": "uno-descriptor-controls-1/basic-route/counter-basic.old.stderr.log",
+    "original_bytes": 77,
+    "original_sha256": "8cb276569b0a103aacf7667cd6a714334210a4b5d282f305bba06cbf78bc6209"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/basic-route/counter-basic.old.stdout.log",
+    "artifact": "uno-descriptor-controls-1/basic-route/counter-basic.old.stdout.log",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/basic-route/counter-extended.new.fif",
+    "artifact": "uno-descriptor-controls-1/basic-route/counter-extended.new.fif",
+    "original_bytes": 293,
+    "original_sha256": "07cde1ce41c75f731bb6d48d27ff2569b75117b1709d61fbd7e282b58018f691"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/basic-route/counter-extended.new.stderr.log",
+    "artifact": "uno-descriptor-controls-1/basic-route/counter-extended.new.stderr.log",
+    "original_bytes": 77,
+    "original_sha256": "8d55b41fa35660e1d97f9023058634a228596225fcc4f3fc5e5e638b6d779638"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/basic-route/counter-extended.new.stdout.log",
+    "artifact": "uno-descriptor-controls-1/basic-route/counter-extended.new.stdout.log",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/basic-route/counter-extended.old.fif",
+    "artifact": "uno-descriptor-controls-1/basic-route/counter-extended.old.fif",
+    "original_bytes": 690,
+    "original_sha256": "3a55b4a915c4ce090fdbef9bf3cc18aa01c18af372deab576068c1e6c8cc2124"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/basic-route/counter-extended.old.stderr.log",
+    "artifact": "uno-descriptor-controls-1/basic-route/counter-extended.old.stderr.log",
+    "original_bytes": 77,
+    "original_sha256": "0b260631f9e966d5f16706ac3ed2022e9dda2babc347d414a901b1e81feae511"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/basic-route/counter-extended.old.stdout.log",
+    "artifact": "uno-descriptor-controls-1/basic-route/counter-extended.old.stdout.log",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/basic-route/native-basic.new.fif",
+    "artifact": "uno-descriptor-controls-1/basic-route/native-basic.new.fif",
+    "original_bytes": 242,
+    "original_sha256": "2a1ef86c5a56904b67217893cca2dd5c460d1f2c0bdb1a5163bac98b4cc3dd75"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/basic-route/native-basic.new.stderr.log",
+    "artifact": "uno-descriptor-controls-1/basic-route/native-basic.new.stderr.log",
+    "original_bytes": 77,
+    "original_sha256": "d9c2b1dde88b4242d09731720cd67348c8eea4ad9e36b7ba74aefbbead81853c"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/basic-route/native-basic.new.stdout.log",
+    "artifact": "uno-descriptor-controls-1/basic-route/native-basic.new.stdout.log",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/basic-route/native-basic.old.fif",
+    "artifact": "uno-descriptor-controls-1/basic-route/native-basic.old.fif",
+    "original_bytes": 541,
+    "original_sha256": "ff19baef8b3d46f875ed319b08a33a9e241af44a3be0d7810a088c43076c85ce"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/basic-route/native-basic.old.stderr.log",
+    "artifact": "uno-descriptor-controls-1/basic-route/native-basic.old.stderr.log",
+    "original_bytes": 77,
+    "original_sha256": "7939c71bbd674ceb9278bd5cd01f1e6bc91f26de086a98309cc990a0f38d9026"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/basic-route/native-basic.old.stdout.log",
+    "artifact": "uno-descriptor-controls-1/basic-route/native-basic.old.stdout.log",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/basic-route/native-extended.new.fif",
+    "artifact": "uno-descriptor-controls-1/basic-route/native-extended.new.fif",
+    "original_bytes": 248,
+    "original_sha256": "1e460bc489bff954961870e0bd452cc0bdda0d29a129fba510996e29f618e20d"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/basic-route/native-extended.new.stderr.log",
+    "artifact": "uno-descriptor-controls-1/basic-route/native-extended.new.stderr.log",
+    "original_bytes": 77,
+    "original_sha256": "f3133eeb54d89ccc2398be0530aba6e991c40800a67720414516b77432bbfd67"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/basic-route/native-extended.new.stdout.log",
+    "artifact": "uno-descriptor-controls-1/basic-route/native-extended.new.stdout.log",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/basic-route/native-extended.old.fif",
+    "artifact": "uno-descriptor-controls-1/basic-route/native-extended.old.fif",
+    "original_bytes": 597,
+    "original_sha256": "4cb5d3d59b0d07a1dc6bd6bf538fc52c59705c6708310144c001db7b88a8f141"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/basic-route/native-extended.old.stderr.log",
+    "artifact": "uno-descriptor-controls-1/basic-route/native-extended.old.stderr.log",
+    "original_bytes": 77,
+    "original_sha256": "4e8d071bf37854f2805bf04bf7dc16d774b7ddedd24ced87949e4f0fca33a42e"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/basic-route/native-extended.old.stdout.log",
+    "artifact": "uno-descriptor-controls-1/basic-route/native-extended.old.stdout.log",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/basic-route/report.json",
+    "artifact": "uno-descriptor-controls-1/basic-route/report.json",
+    "original_bytes": 2161,
+    "original_sha256": "bd79f0d7181b0c9dba50d6d491205915bd3f0a4e4b10ba800bf67e8aa1e07570"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/basic-route/uno-basic.new.fif",
+    "artifact": "uno-descriptor-controls-1/basic-route/uno-basic.new.fif",
+    "original_bytes": 341,
+    "original_sha256": "aaa386fadb1d59962943346e7ec9c818676420f3554691f52c3f1cd62275453a"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/basic-route/uno-basic.new.stderr.log",
+    "artifact": "uno-descriptor-controls-1/basic-route/uno-basic.new.stderr.log",
+    "original_bytes": 77,
+    "original_sha256": "2c95374b3eef48e164d7f577c63212fda4ee87cabef6ccb3ef1ca18dd42be378"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/basic-route/uno-basic.new.stdout.log",
+    "artifact": "uno-descriptor-controls-1/basic-route/uno-basic.new.stdout.log",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/basic-route/uno-basic.old.fif",
+    "artifact": "uno-descriptor-controls-1/basic-route/uno-basic.old.fif",
+    "original_bytes": 684,
+    "original_sha256": "6354cd18839fff18e47f06da563a0c29895141e7180811d087c6d27855503b5b"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/basic-route/uno-basic.old.stderr.log",
+    "artifact": "uno-descriptor-controls-1/basic-route/uno-basic.old.stderr.log",
+    "original_bytes": 77,
+    "original_sha256": "5eefbfcfaa19e8d76725b49e1439f89658eee882fcf5a963ca101b6bc7593a25"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/basic-route/uno-basic.old.stdout.log",
+    "artifact": "uno-descriptor-controls-1/basic-route/uno-basic.old.stdout.log",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/basic-route.stderr.log",
+    "artifact": "uno-descriptor-controls-1/basic-route.stderr.log",
+    "original_bytes": 265,
+    "original_sha256": "707581d6c86ba8ae23b2aa86389b8ec5221aea41249ce316a46f81b28259e0d1"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/basic-route.stdout.log",
+    "artifact": "uno-descriptor-controls-1/basic-route.stdout.log",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/extended-key/counter-basic.new.fif",
+    "artifact": "uno-descriptor-controls-1/extended-key/counter-basic.new.fif",
+    "original_bytes": 288,
+    "original_sha256": "52cf94247a41b98325c41b902cb9101b8ae3e9a5b34dcd39ca3c1c7204b46c2e"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/extended-key/counter-basic.new.stderr.log",
+    "artifact": "uno-descriptor-controls-1/extended-key/counter-basic.new.stderr.log",
+    "original_bytes": 77,
+    "original_sha256": "b25a0963aa424ae4418f12d02d6a6a14ff317b25fa5b4ae5ff43e3654613da3a"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/extended-key/counter-basic.new.stdout.log",
+    "artifact": "uno-descriptor-controls-1/extended-key/counter-basic.new.stdout.log",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/extended-key/counter-basic.old.fif",
+    "artifact": "uno-descriptor-controls-1/extended-key/counter-basic.old.fif",
+    "original_bytes": 625,
+    "original_sha256": "ff99440c3cafaa5f0daec2818d2150e4274119f8b695e5bc54c0875d6799b9d0"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/extended-key/counter-basic.old.stderr.log",
+    "artifact": "uno-descriptor-controls-1/extended-key/counter-basic.old.stderr.log",
+    "original_bytes": 77,
+    "original_sha256": "3cec67f07e92ef11175532c6a5336b45f2104036a2545a9fe8cb5c739842dfb3"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/extended-key/counter-basic.old.stdout.log",
+    "artifact": "uno-descriptor-controls-1/extended-key/counter-basic.old.stdout.log",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/extended-key/counter-extended.new.fif",
+    "artifact": "uno-descriptor-controls-1/extended-key/counter-extended.new.fif",
+    "original_bytes": 294,
+    "original_sha256": "4643027528e0638df6ba9ade1efb9ff0284626a78fed1487cf389d9ac27dc235"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/extended-key/counter-extended.new.stderr.log",
+    "artifact": "uno-descriptor-controls-1/extended-key/counter-extended.new.stderr.log",
+    "original_bytes": 77,
+    "original_sha256": "b90f07c474749248453417c16bd87a6d2459f6b869d7afeb4db14b9849b12580"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/extended-key/counter-extended.new.stdout.log",
+    "artifact": "uno-descriptor-controls-1/extended-key/counter-extended.new.stdout.log",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/extended-key/counter-extended.old.fif",
+    "artifact": "uno-descriptor-controls-1/extended-key/counter-extended.old.fif",
+    "original_bytes": 691,
+    "original_sha256": "f6fbaead19fe9fe5e85f1b69856d837632468f14e4ea8f5f5a66b55eb94d288d"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/extended-key/counter-extended.old.stderr.log",
+    "artifact": "uno-descriptor-controls-1/extended-key/counter-extended.old.stderr.log",
+    "original_bytes": 77,
+    "original_sha256": "547b6e89b90fa6599f515a954051c1754a92c68a0ef6d5af7a351c2140f64185"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/extended-key/counter-extended.old.stdout.log",
+    "artifact": "uno-descriptor-controls-1/extended-key/counter-extended.old.stdout.log",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/extended-key/native-basic.new.fif",
+    "artifact": "uno-descriptor-controls-1/extended-key/native-basic.new.fif",
+    "original_bytes": 243,
+    "original_sha256": "5b4321e2592fdf216c61f5cfa2c99a314ba13844ec8067f93fbf00237c8b268c"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/extended-key/native-basic.new.stderr.log",
+    "artifact": "uno-descriptor-controls-1/extended-key/native-basic.new.stderr.log",
+    "original_bytes": 77,
+    "original_sha256": "e912aba2a7aaa56e4d1c6ec5b262ed6c13b8e53d6526edb3750bc42ece9279b1"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/extended-key/native-basic.new.stdout.log",
+    "artifact": "uno-descriptor-controls-1/extended-key/native-basic.new.stdout.log",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/extended-key/native-basic.old.fif",
+    "artifact": "uno-descriptor-controls-1/extended-key/native-basic.old.fif",
+    "original_bytes": 542,
+    "original_sha256": "7c2be38404e39f94c7f95212a8262fe89c4d1a0a3507ad0ec434c87fa41bfaa3"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/extended-key/native-basic.old.stderr.log",
+    "artifact": "uno-descriptor-controls-1/extended-key/native-basic.old.stderr.log",
+    "original_bytes": 77,
+    "original_sha256": "d3bf23fc5bd243fdcfe141c9d6beb90a054fd8bfc04f42c7066a4d0c8405fc2a"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/extended-key/native-basic.old.stdout.log",
+    "artifact": "uno-descriptor-controls-1/extended-key/native-basic.old.stdout.log",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/extended-key/native-extended.new.fif",
+    "artifact": "uno-descriptor-controls-1/extended-key/native-extended.new.fif",
+    "original_bytes": 249,
+    "original_sha256": "fb5ed1c0a3682a12c8583ea7a2e90a3362c8394bc6f72806f641a39de76b52fb"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/extended-key/native-extended.new.stderr.log",
+    "artifact": "uno-descriptor-controls-1/extended-key/native-extended.new.stderr.log",
+    "original_bytes": 77,
+    "original_sha256": "05f59205c799252b1f1a470df52efebb814dd5580f8dc9acda9d7c422097058e"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/extended-key/native-extended.new.stdout.log",
+    "artifact": "uno-descriptor-controls-1/extended-key/native-extended.new.stdout.log",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/extended-key/native-extended.old.fif",
+    "artifact": "uno-descriptor-controls-1/extended-key/native-extended.old.fif",
+    "original_bytes": 598,
+    "original_sha256": "4f80d369e960e85164c41f8b766ea70bc7e67dd4f016039234749d16ec4195f1"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/extended-key/native-extended.old.stderr.log",
+    "artifact": "uno-descriptor-controls-1/extended-key/native-extended.old.stderr.log",
+    "original_bytes": 77,
+    "original_sha256": "eb88bdff9acf771c298bc7f0d5baacf3260af143f2a62840480c0ef9234ef935"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/extended-key/native-extended.old.stdout.log",
+    "artifact": "uno-descriptor-controls-1/extended-key/native-extended.old.stdout.log",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/extended-key/report.json",
+    "artifact": "uno-descriptor-controls-1/extended-key/report.json",
+    "original_bytes": 1740,
+    "original_sha256": "c5c32bc8220c0d49fac8a25e926595c7880ff14f1864e9a6ad6018ea1139a10b"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/extended-key.stderr.log",
+    "artifact": "uno-descriptor-controls-1/extended-key.stderr.log",
+    "original_bytes": 272,
+    "original_sha256": "058c6e92255e45bc0adfe9dc025271de0daf81668faa8453076299b1bd93c4dc"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/extended-key.stdout.log",
+    "artifact": "uno-descriptor-controls-1/extended-key.stdout.log",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/report.json",
+    "artifact": "uno-descriptor-controls-1/report.json",
+    "original_bytes": 2502,
+    "original_sha256": "f9d631116edfac7c3ebe1fe3e2dd088fb0d34adceb75246c4d2a028b12193d7c"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/restored/counter-basic.new.fif",
+    "artifact": "uno-descriptor-controls-1/restored/counter-basic.new.fif",
+    "original_bytes": 284,
+    "original_sha256": "6b0f41cc815e89e76ad4b9f9a17b0519606066417da202b57ae44034fb53dc92"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/restored/counter-basic.new.stderr.log",
+    "artifact": "uno-descriptor-controls-1/restored/counter-basic.new.stderr.log",
+    "original_bytes": 77,
+    "original_sha256": "0fc0e611560c877130790076a86558789063d35245e262b35dd0dfc068b648e5"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/restored/counter-basic.new.stdout.log",
+    "artifact": "uno-descriptor-controls-1/restored/counter-basic.new.stdout.log",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/restored/counter-basic.old.fif",
+    "artifact": "uno-descriptor-controls-1/restored/counter-basic.old.fif",
+    "original_bytes": 621,
+    "original_sha256": "1f72e7f8c9f2f3a3f300b3e4c935b89a2993c495606c311312b094e1001cab27"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/restored/counter-basic.old.stderr.log",
+    "artifact": "uno-descriptor-controls-1/restored/counter-basic.old.stderr.log",
+    "original_bytes": 77,
+    "original_sha256": "98b45939539b64a0c91e5d50cce5c8ed8bc494087f89e011b6d6294071751ff4"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/restored/counter-basic.old.stdout.log",
+    "artifact": "uno-descriptor-controls-1/restored/counter-basic.old.stdout.log",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/restored/counter-extended.new.fif",
+    "artifact": "uno-descriptor-controls-1/restored/counter-extended.new.fif",
+    "original_bytes": 290,
+    "original_sha256": "fe0556414126d2da0f0809b9cb6ce1ec73bb281366c9928d1f40bfb390c63a93"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/restored/counter-extended.new.stderr.log",
+    "artifact": "uno-descriptor-controls-1/restored/counter-extended.new.stderr.log",
+    "original_bytes": 77,
+    "original_sha256": "0d36e46d98863a4d0fb8d9ba8c5e78d319116c9741afc2de89938c6b2fbece9b"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/restored/counter-extended.new.stdout.log",
+    "artifact": "uno-descriptor-controls-1/restored/counter-extended.new.stdout.log",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/restored/counter-extended.old.fif",
+    "artifact": "uno-descriptor-controls-1/restored/counter-extended.old.fif",
+    "original_bytes": 687,
+    "original_sha256": "526b25fe2edb4a2edbcd9ccf8aa4af025c679af363903360b4b15177874ff8ef"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/restored/counter-extended.old.stderr.log",
+    "artifact": "uno-descriptor-controls-1/restored/counter-extended.old.stderr.log",
+    "original_bytes": 77,
+    "original_sha256": "25bb8e21c2921f1f1b686886539d6a20fa207851856305b7063b7d2c5734f293"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/restored/counter-extended.old.stdout.log",
+    "artifact": "uno-descriptor-controls-1/restored/counter-extended.old.stdout.log",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/restored/native-basic.new.fif",
+    "artifact": "uno-descriptor-controls-1/restored/native-basic.new.fif",
+    "original_bytes": 239,
+    "original_sha256": "2740d0c72df491c39040b68fd350964e560b6a3f1904ede90373e2976c66c0a8"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/restored/native-basic.new.stderr.log",
+    "artifact": "uno-descriptor-controls-1/restored/native-basic.new.stderr.log",
+    "original_bytes": 77,
+    "original_sha256": "c4e41168592eef797b7f21b45e0c4fbdaf9d6ca3b1237a3210b4796f5956ac41"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/restored/native-basic.new.stdout.log",
+    "artifact": "uno-descriptor-controls-1/restored/native-basic.new.stdout.log",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/restored/native-basic.old.fif",
+    "artifact": "uno-descriptor-controls-1/restored/native-basic.old.fif",
+    "original_bytes": 538,
+    "original_sha256": "c5089fab4689aa77c51f0045aabf73df9f27796783b646e2e38246afb0e47095"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/restored/native-basic.old.stderr.log",
+    "artifact": "uno-descriptor-controls-1/restored/native-basic.old.stderr.log",
+    "original_bytes": 77,
+    "original_sha256": "2d78e45fd79435ee0d2292b236c34516a863eb526023767d37d1a187bfc44ee3"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/restored/native-basic.old.stdout.log",
+    "artifact": "uno-descriptor-controls-1/restored/native-basic.old.stdout.log",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/restored/native-extended.new.fif",
+    "artifact": "uno-descriptor-controls-1/restored/native-extended.new.fif",
+    "original_bytes": 245,
+    "original_sha256": "27b8fb9c91cef042af5283e768b5fff18fbe06aa4c4901eef03e830f6a38f6b2"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/restored/native-extended.new.stderr.log",
+    "artifact": "uno-descriptor-controls-1/restored/native-extended.new.stderr.log",
+    "original_bytes": 77,
+    "original_sha256": "b94d3a49ba65584ebdf1ce783ada1ad21266c046d1784c81ab0040a71750a376"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/restored/native-extended.new.stdout.log",
+    "artifact": "uno-descriptor-controls-1/restored/native-extended.new.stdout.log",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/restored/native-extended.old.fif",
+    "artifact": "uno-descriptor-controls-1/restored/native-extended.old.fif",
+    "original_bytes": 594,
+    "original_sha256": "743b977ff7bd7f0983e0be2e5bee2826ebcde6bab1f8e842999460f3048850d7"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/restored/native-extended.old.stderr.log",
+    "artifact": "uno-descriptor-controls-1/restored/native-extended.old.stderr.log",
+    "original_bytes": 77,
+    "original_sha256": "9cbff7ba963ea772172fa132f3dc4e92c5d6a3237fda62d8768681ccdfa94e07"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/restored/native-extended.old.stdout.log",
+    "artifact": "uno-descriptor-controls-1/restored/native-extended.old.stdout.log",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/restored/report.json",
+    "artifact": "uno-descriptor-controls-1/restored/report.json",
+    "original_bytes": 2160,
+    "original_sha256": "7967e5ee47e0c42473133f8f25b4ef1fe44010af99cf23c64a5bf863f87dc19a"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/restored/uno-basic.new.fif",
+    "artifact": "uno-descriptor-controls-1/restored/uno-basic.new.fif",
+    "original_bytes": 338,
+    "original_sha256": "8fcb183d03f908186902f9ca57cd4d1d3f87e866acd814c93c681b7e81a0f763"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/restored/uno-basic.new.stderr.log",
+    "artifact": "uno-descriptor-controls-1/restored/uno-basic.new.stderr.log",
+    "original_bytes": 77,
+    "original_sha256": "273db1abe3c037641c13a9ec7fa2f89c6af442b608718db8966a3b12f80aae63"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/restored/uno-basic.new.stdout.log",
+    "artifact": "uno-descriptor-controls-1/restored/uno-basic.new.stdout.log",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/restored/uno-basic.old.fif",
+    "artifact": "uno-descriptor-controls-1/restored/uno-basic.old.fif",
+    "original_bytes": 681,
+    "original_sha256": "3e8d0f872c440cde2ff97825df62759a9ca300d7a69237444ea0897759bcf4e8"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/restored/uno-basic.old.stderr.log",
+    "artifact": "uno-descriptor-controls-1/restored/uno-basic.old.stderr.log",
+    "original_bytes": 77,
+    "original_sha256": "66ee97257ae7f052c6b97f1eaad7ab95748e1460f42852802fe8133cb24db80e"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/restored/uno-basic.old.stdout.log",
+    "artifact": "uno-descriptor-controls-1/restored/uno-basic.old.stdout.log",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/restored.stderr.log",
+    "artifact": "uno-descriptor-controls-1/restored.stderr.log",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/restored.stdout.log",
+    "artifact": "uno-descriptor-controls-1/restored.stdout.log",
+    "original_bytes": 70,
+    "original_sha256": "6244015d3692862ec480a1554da3f023377b79c64709be2230cdccaa05debcad"
+  },
+  {
+    "source": "/tmp/uno-oracle-individual/GenZerostateFiftRegression.ans",
+    "artifact": "uno-oracle-individual/GenZerostateFiftRegression.ans",
+    "original_bytes": 117,
+    "original_sha256": "e82ea483bdf65e04b10f10c955eed9a812746394c83ecd0e18e48cd88b347452"
+  },
+  {
+    "source": "/tmp/uno-oracle-individual/GenZerostateFiftRegression.cache/512112d41e8d922c7bbe8432d751efdfb7fb552e11e3d796b7dc9af18d002998",
+    "artifact": "uno-oracle-individual/GenZerostateFiftRegression.cache/512112d41e8d922c7bbe8432d751efdfb7fb552e11e3d796b7dc9af18d002998",
+    "original_bytes": 684,
+    "original_sha256": "512112d41e8d922c7bbe8432d751efdfb7fb552e11e3d796b7dc9af18d002998"
+  },
+  {
+    "source": "/tmp/uno-oracle-individual/GenZerostateFiftRegression.stderr.log",
+    "artifact": "uno-oracle-individual/GenZerostateFiftRegression.stderr.log",
+    "original_bytes": 88,
+    "original_sha256": "16e18e4a8a2e25a253d5e4904c40b2e18b5ea0d8dd4f35f34d39926b20145ff3"
+  },
+  {
+    "source": "/tmp/uno-oracle-individual/GenZerostateFiftRegression.stdout.log",
+    "artifact": "uno-oracle-individual/GenZerostateFiftRegression.stdout.log",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/tmp/uno-oracle-individual/GovernanceProposalFiftScriptRegression.ans",
+    "artifact": "uno-oracle-individual/GovernanceProposalFiftScriptRegression.ans",
+    "original_bytes": 129,
+    "original_sha256": "d1862e95c964f656fe7286c0513a58be907bd4caed582dc0700e65a00a21a0a7"
+  },
+  {
+    "source": "/tmp/uno-oracle-individual/GovernanceProposalFiftScriptRegression.cache/2292e0f590b99e86c755aa26819a932d05b3ef540a30ca9ffc1cde0cac80e973",
+    "artifact": "uno-oracle-individual/GovernanceProposalFiftScriptRegression.cache/2292e0f590b99e86c755aa26819a932d05b3ef540a30ca9ffc1cde0cac80e973",
+    "original_bytes": 366,
+    "original_sha256": "2292e0f590b99e86c755aa26819a932d05b3ef540a30ca9ffc1cde0cac80e973"
+  },
+  {
+    "source": "/tmp/uno-oracle-individual/GovernanceProposalFiftScriptRegression.stderr.log",
+    "artifact": "uno-oracle-individual/GovernanceProposalFiftScriptRegression.stderr.log",
+    "original_bytes": 99,
+    "original_sha256": "6948149a7cb04e143e7ed93cf62b513a75a87ef740bab727d3ec35decf16d25a"
+  },
+  {
+    "source": "/tmp/uno-oracle-individual/GovernanceProposalFiftScriptRegression.stdout.log",
+    "artifact": "uno-oracle-individual/GovernanceProposalFiftScriptRegression.stdout.log",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/tmp/uno-oracle-individual/GovernanceVoteFiftScriptRegression.ans",
+    "artifact": "uno-oracle-individual/GovernanceVoteFiftScriptRegression.ans",
+    "original_bytes": 125,
+    "original_sha256": "fa23f7977d18c55e5455c31159495bc99890b3a941dc7427f497f076280c6d4a"
+  },
+  {
+    "source": "/tmp/uno-oracle-individual/GovernanceVoteFiftScriptRegression.cache/db3f63cb9f5137c5bbce50367adbdaf7a3a43987af070987f483c48f40fe9fcd",
+    "artifact": "uno-oracle-individual/GovernanceVoteFiftScriptRegression.cache/db3f63cb9f5137c5bbce50367adbdaf7a3a43987af070987f483c48f40fe9fcd",
+    "original_bytes": 582,
+    "original_sha256": "db3f63cb9f5137c5bbce50367adbdaf7a3a43987af070987f483c48f40fe9fcd"
+  },
+  {
+    "source": "/tmp/uno-oracle-individual/GovernanceVoteFiftScriptRegression.stderr.log",
+    "artifact": "uno-oracle-individual/GovernanceVoteFiftScriptRegression.stderr.log",
+    "original_bytes": 95,
+    "original_sha256": "703b94312c3727684e6f0fec5dcc74de9953efd255e81836a211481641011890"
+  },
+  {
+    "source": "/tmp/uno-oracle-individual/GovernanceVoteFiftScriptRegression.stdout.log",
+    "artifact": "uno-oracle-individual/GovernanceVoteFiftScriptRegression.stdout.log",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/tmp/uno-oracle-individual/ValidatorFiftScriptRegression.ans",
+    "artifact": "uno-oracle-individual/ValidatorFiftScriptRegression.ans",
+    "original_bytes": 120,
+    "original_sha256": "a389299c3c1dae0c24f4c5a7c225f58aa7b3acb7af7b1a81259cd65bfc74d935"
+  },
+  {
+    "source": "/tmp/uno-oracle-individual/ValidatorFiftScriptRegression.cache/9db405bf1ebb42d58ecc8d3381c60a43185fcd42844ee9c98d0b4a03f6fd6614",
+    "artifact": "uno-oracle-individual/ValidatorFiftScriptRegression.cache/9db405bf1ebb42d58ecc8d3381c60a43185fcd42844ee9c98d0b4a03f6fd6614",
+    "original_bytes": 452,
+    "original_sha256": "9db405bf1ebb42d58ecc8d3381c60a43185fcd42844ee9c98d0b4a03f6fd6614"
+  },
+  {
+    "source": "/tmp/uno-oracle-individual/ValidatorFiftScriptRegression.stderr.log",
+    "artifact": "uno-oracle-individual/ValidatorFiftScriptRegression.stderr.log",
+    "original_bytes": 90,
+    "original_sha256": "0527586c509b4119d371df4e798e78457f5832798a939e424e9b079a49d2d22f"
+  },
+  {
+    "source": "/tmp/uno-oracle-individual/ValidatorFiftScriptRegression.stdout.log",
+    "artifact": "uno-oracle-individual/ValidatorFiftScriptRegression.stdout.log",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/tmp/uno-oracle-individual/report.json",
+    "artifact": "uno-oracle-individual/report.json",
+    "original_bytes": 1899,
+    "original_sha256": "6f70eca61e25c8126d62ed64b270e3086fb9485ea5d69c668aa31a67467b4d06"
+  },
+  {
+    "source": "/tmp/uno-smartcont-oracle-controls-1/baseline.stderr.log",
+    "artifact": "uno-smartcont-oracle-controls-1/baseline.stderr.log",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/tmp/uno-smartcont-oracle-controls-1/baseline.stdout.log",
+    "artifact": "uno-smartcont-oracle-controls-1/baseline.stdout.log",
+    "original_bytes": 234,
+    "original_sha256": "b8f6c615cf5f5a641d3fb359d8046e1b9788cbab9a57d75bd9070cd8f9b7d63e"
+  },
+  {
+    "source": "/tmp/uno-smartcont-oracle-controls-1/baseline.xml",
+    "artifact": "uno-smartcont-oracle-controls-1/baseline.xml",
+    "original_bytes": 407,
+    "original_sha256": "7ddb60b9c2528d15e723fa132f0c6df822fe8a160d3e661e0d0213914ace8a36"
+  },
+  {
+    "source": "/tmp/uno-smartcont-oracle-controls-1/compile.stderr.log",
+    "artifact": "uno-smartcont-oracle-controls-1/compile.stderr.log",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/tmp/uno-smartcont-oracle-controls-1/compile.stdout.log",
+    "artifact": "uno-smartcont-oracle-controls-1/compile.stdout.log",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/tmp/uno-smartcont-oracle-controls-1/ctest/CTestTestfile.cmake",
+    "artifact": "uno-smartcont-oracle-controls-1/ctest/CTestTestfile.cmake",
+    "original_bytes": 232,
+    "original_sha256": "38a17c9e846fa9bfb333f5cd2ba363ba182ad692d63a208c1a798ae8401ba262"
+  },
+  {
+    "source": "/tmp/uno-smartcont-oracle-controls-1/ctest/Testing/Temporary/LastTest.log",
+    "artifact": "uno-smartcont-oracle-controls-1/ctest/Testing/Temporary/LastTest.log",
+    "original_bytes": 7580,
+    "original_sha256": "6887b7981e4b5ba4409a70506d2f8311b9e06d3b5f717eb1a15ad4a1cd822904"
+  },
+  {
+    "source": "/tmp/uno-smartcont-oracle-controls-1/ctest/Testing/Temporary/LastTestsFailed.log",
+    "artifact": "uno-smartcont-oracle-controls-1/ctest/Testing/Temporary/LastTestsFailed.log",
+    "original_bytes": 17,
+    "original_sha256": "34eaf1e15b77e4a0558f6bbbcc57c65cbf55ed451f7294b156de1b2d588bd0b4"
+  },
+  {
+    "source": "/tmp/uno-smartcont-oracle-controls-1/ctest/result.xml",
+    "artifact": "uno-smartcont-oracle-controls-1/ctest/result.xml",
+    "original_bytes": 7411,
+    "original_sha256": "502787e56e65b69145230f686894b90b0657ca880c2112ea5cde9a536a1ec298"
+  },
+  {
+    "source": "/tmp/uno-smartcont-oracle-controls-1/link.stderr.log",
+    "artifact": "uno-smartcont-oracle-controls-1/link.stderr.log",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/tmp/uno-smartcont-oracle-controls-1/link.stdout.log",
+    "artifact": "uno-smartcont-oracle-controls-1/link.stdout.log",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/tmp/uno-smartcont-oracle-controls-1/mutant-with-oracle.stderr.log",
+    "artifact": "uno-smartcont-oracle-controls-1/mutant-with-oracle.stderr.log",
+    "original_bytes": 27,
+    "original_sha256": "18e00877dc1071c85cd4f479d451bebeef8309022e46cf8c63b0bed5151984a4"
+  },
+  {
+    "source": "/tmp/uno-smartcont-oracle-controls-1/mutant-with-oracle.stdout.log",
+    "artifact": "uno-smartcont-oracle-controls-1/mutant-with-oracle.stdout.log",
+    "original_bytes": 7061,
+    "original_sha256": "91b1c0a3c2341ccc17a032cdc4ef6b37eb1a95d8d564d01c4f47f962072fb63a"
+  },
+  {
+    "source": "/tmp/uno-smartcont-oracle-controls-1/mutant-with-oracle.xml",
+    "artifact": "uno-smartcont-oracle-controls-1/mutant-with-oracle.xml",
+    "original_bytes": 7411,
+    "original_sha256": "502787e56e65b69145230f686894b90b0657ca880c2112ea5cde9a536a1ec298"
+  },
+  {
+    "source": "/tmp/uno-smartcont-oracle-controls-1/mutant-without-oracle.stderr.log",
+    "artifact": "uno-smartcont-oracle-controls-1/mutant-without-oracle.stderr.log",
+    "original_bytes": 87,
+    "original_sha256": "8e1a6c3320683b1fd26d3b0471ab7cb9bf5de24c98fd7534336188a949e44f6c"
+  },
+  {
+    "source": "/tmp/uno-smartcont-oracle-controls-1/mutant-without-oracle.stdout.log",
+    "artifact": "uno-smartcont-oracle-controls-1/mutant-without-oracle.stdout.log",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/tmp/uno-smartcont-oracle-controls-1/regression-tests.ans",
+    "artifact": "uno-smartcont-oracle-controls-1/regression-tests.ans",
+    "original_bytes": 8720,
+    "original_sha256": "b46a7476a16ce07fe0485df2d87cecff96a5c5684a663aa22ee2900fa8cdf8a1"
+  },
+  {
+    "source": "/tmp/uno-smartcont-oracle-controls-1/regression-tests.cache/512112d41e8d922c7bbe8432d751efdfb7fb552e11e3d796b7dc9af18d002998",
+    "artifact": "uno-smartcont-oracle-controls-1/regression-tests.cache/512112d41e8d922c7bbe8432d751efdfb7fb552e11e3d796b7dc9af18d002998",
+    "original_bytes": 684,
+    "original_sha256": "512112d41e8d922c7bbe8432d751efdfb7fb552e11e3d796b7dc9af18d002998"
+  },
+  {
+    "source": "/tmp/uno-smartcont-oracle-controls-1/regression-tests.cache/WA",
+    "artifact": "uno-smartcont-oracle-controls-1/regression-tests.cache/WA",
+    "original_bytes": 684,
+    "original_sha256": "3f3bb9e32fc26351108127beb870cb98cb8b59101a8044986c6edce0ddf90c65"
+  },
+  {
+    "source": "/tmp/uno-smartcont-oracle-controls-1/report.json",
+    "artifact": "uno-smartcont-oracle-controls-1/report.json",
+    "original_bytes": 7799,
+    "original_sha256": "21c604250331aa28d657dad3eba2e5fcb6d5150bba5b31b4d3350bce1e493319"
+  },
+  {
+    "source": "/tmp/uno-smartcont-oracle-controls-1/source/crypto/smartcont/gen-zerostate.fif",
+    "artifact": "uno-smartcont-oracle-controls-1/source/crypto/smartcont/gen-zerostate.fif",
+    "original_bytes": 15024,
+    "original_sha256": "2e96236ffe2770a2001d0afed0070879abcedb1c43338ae47c563c27fabdca93"
+  },
+  {
+    "source": "/tmp/uno-smartcont-oracle-controls-1/source/crypto/test/test-smartcont.cpp",
+    "artifact": "uno-smartcont-oracle-controls-1/source/crypto/test/test-smartcont.cpp",
+    "original_bytes": 121327,
+    "original_sha256": "7ce31e6131d696918a22b795b76e97ddc725da91f9ec41c9a5985836f0cd7327"
+  },
+  {
+    "source": "/tmp/uno-smartcont-oracle-controls-2/baseline.stderr.log",
+    "artifact": "uno-smartcont-oracle-controls-2/baseline.stderr.log",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/tmp/uno-smartcont-oracle-controls-2/baseline.stdout.log",
+    "artifact": "uno-smartcont-oracle-controls-2/baseline.stdout.log",
+    "original_bytes": 234,
+    "original_sha256": "bba5b55843421c8837393301b7ae3324a68686f626820db8ce70de5b8bf4caa2"
+  },
+  {
+    "source": "/tmp/uno-smartcont-oracle-controls-2/baseline.xml",
+    "artifact": "uno-smartcont-oracle-controls-2/baseline.xml",
+    "original_bytes": 408,
+    "original_sha256": "6c12fbda2c1c881898b7e492ae1926afc2edbaae5dc76d100203a0bf91d790c7"
+  },
+  {
+    "source": "/tmp/uno-smartcont-oracle-controls-2/compile.stderr.log",
+    "artifact": "uno-smartcont-oracle-controls-2/compile.stderr.log",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/tmp/uno-smartcont-oracle-controls-2/compile.stdout.log",
+    "artifact": "uno-smartcont-oracle-controls-2/compile.stdout.log",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/tmp/uno-smartcont-oracle-controls-2/ctest/CTestTestfile.cmake",
+    "artifact": "uno-smartcont-oracle-controls-2/ctest/CTestTestfile.cmake",
+    "original_bytes": 232,
+    "original_sha256": "449439e1c246017ca53e62782784c475856cc8c39eb7fe78a357b1eab0e574be"
+  },
+  {
+    "source": "/tmp/uno-smartcont-oracle-controls-2/ctest/Testing/Temporary/LastTest.log",
+    "artifact": "uno-smartcont-oracle-controls-2/ctest/Testing/Temporary/LastTest.log",
+    "original_bytes": 899,
+    "original_sha256": "6a523f7bae0440bc4d4152ba4fff4bbc4a8d6645018377d86bd1f08450076946"
+  },
+  {
+    "source": "/tmp/uno-smartcont-oracle-controls-2/ctest/Testing/Temporary/LastTestsFailed.log",
+    "artifact": "uno-smartcont-oracle-controls-2/ctest/Testing/Temporary/LastTestsFailed.log",
+    "original_bytes": 17,
+    "original_sha256": "34eaf1e15b77e4a0558f6bbbcc57c65cbf55ed451f7294b156de1b2d588bd0b4"
+  },
+  {
+    "source": "/tmp/uno-smartcont-oracle-controls-2/ctest/result.xml",
+    "artifact": "uno-smartcont-oracle-controls-2/ctest/result.xml",
+    "original_bytes": 407,
+    "original_sha256": "814314e4a6c4dd24bff0ab8dfd2a093d72c68f47b7fd730a2436ebe2b6be559b"
+  },
+  {
+    "source": "/tmp/uno-smartcont-oracle-controls-2/link.stderr.log",
+    "artifact": "uno-smartcont-oracle-controls-2/link.stderr.log",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/tmp/uno-smartcont-oracle-controls-2/link.stdout.log",
+    "artifact": "uno-smartcont-oracle-controls-2/link.stdout.log",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/tmp/uno-smartcont-oracle-controls-2/mutant-with-oracle.stderr.log",
+    "artifact": "uno-smartcont-oracle-controls-2/mutant-with-oracle.stderr.log",
+    "original_bytes": 27,
+    "original_sha256": "18e00877dc1071c85cd4f479d451bebeef8309022e46cf8c63b0bed5151984a4"
+  },
+  {
+    "source": "/tmp/uno-smartcont-oracle-controls-2/mutant-with-oracle.stdout.log",
+    "artifact": "uno-smartcont-oracle-controls-2/mutant-with-oracle.stdout.log",
+    "original_bytes": 7081,
+    "original_sha256": "c2eb28b00eb6a52766acff88b3597ceedb7f0fdf91d35d43a1a8eb34ec3ee7e3"
+  },
+  {
+    "source": "/tmp/uno-smartcont-oracle-controls-2/mutant-with-oracle.xml",
+    "artifact": "uno-smartcont-oracle-controls-2/mutant-with-oracle.xml",
+    "original_bytes": 7411,
+    "original_sha256": "bca8ac7287321cc747675f05710feaae3b3da1a0e465a1b8670dd2eba760c925"
+  },
+  {
+    "source": "/tmp/uno-smartcont-oracle-controls-2/mutant-without-oracle.stderr.log",
+    "artifact": "uno-smartcont-oracle-controls-2/mutant-without-oracle.stderr.log",
+    "original_bytes": 87,
+    "original_sha256": "386eece93ff9f40a139ef3a36d89c86ee8869640d386b2d6f6d73f00f71ebf7e"
+  },
+  {
+    "source": "/tmp/uno-smartcont-oracle-controls-2/mutant-without-oracle.stdout.log",
+    "artifact": "uno-smartcont-oracle-controls-2/mutant-without-oracle.stdout.log",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/tmp/uno-smartcont-oracle-controls-2/regression-tests.ans",
+    "artifact": "uno-smartcont-oracle-controls-2/regression-tests.ans",
+    "original_bytes": 8720,
+    "original_sha256": "b46a7476a16ce07fe0485df2d87cecff96a5c5684a663aa22ee2900fa8cdf8a1"
+  },
+  {
+    "source": "/tmp/uno-smartcont-oracle-controls-2/regression-tests.cache/512112d41e8d922c7bbe8432d751efdfb7fb552e11e3d796b7dc9af18d002998",
+    "artifact": "uno-smartcont-oracle-controls-2/regression-tests.cache/512112d41e8d922c7bbe8432d751efdfb7fb552e11e3d796b7dc9af18d002998",
+    "original_bytes": 684,
+    "original_sha256": "512112d41e8d922c7bbe8432d751efdfb7fb552e11e3d796b7dc9af18d002998"
+  },
+  {
+    "source": "/tmp/uno-smartcont-oracle-controls-2/regression-tests.cache/WA",
+    "artifact": "uno-smartcont-oracle-controls-2/regression-tests.cache/WA",
+    "original_bytes": 684,
+    "original_sha256": "3f3bb9e32fc26351108127beb870cb98cb8b59101a8044986c6edce0ddf90c65"
+  },
+  {
+    "source": "/tmp/uno-smartcont-oracle-controls-2/report.json",
+    "artifact": "uno-smartcont-oracle-controls-2/report.json",
+    "original_bytes": 9159,
+    "original_sha256": "dfa5c6ca5c65f9fb82f4663d7ff2f2f118111c78c0e234524580aba32db694bc"
+  },
+  {
+    "source": "/tmp/uno-smartcont-oracle-controls-2/restored-native-targets.stderr.log",
+    "artifact": "uno-smartcont-oracle-controls-2/restored-native-targets.stderr.log",
+    "original_bytes": 43180,
+    "original_sha256": "f37942c7cf01e59cfc7c54402e6a62412b6c0f14ee609889d4aae6502afec630"
+  },
+  {
+    "source": "/tmp/uno-smartcont-oracle-controls-2/restored-native-targets.stdout.log",
+    "artifact": "uno-smartcont-oracle-controls-2/restored-native-targets.stdout.log",
+    "original_bytes": 342040,
+    "original_sha256": "01fc19a38cbfd72f10c54ed4cddd184bca61c6641b6e5ff0fd5c826f26b5fbf0"
+  },
+  {
+    "source": "/tmp/uno-smartcont-oracle-controls-2/restored.stderr.log",
+    "artifact": "uno-smartcont-oracle-controls-2/restored.stderr.log",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/tmp/uno-smartcont-oracle-controls-2/restored.stdout.log",
+    "artifact": "uno-smartcont-oracle-controls-2/restored.stdout.log",
+    "original_bytes": 234,
+    "original_sha256": "bba5b55843421c8837393301b7ae3324a68686f626820db8ce70de5b8bf4caa2"
+  },
+  {
+    "source": "/tmp/uno-smartcont-oracle-controls-2/restored.xml",
+    "artifact": "uno-smartcont-oracle-controls-2/restored.xml",
+    "original_bytes": 407,
+    "original_sha256": "814314e4a6c4dd24bff0ab8dfd2a093d72c68f47b7fd730a2436ebe2b6be559b"
+  },
+  {
+    "source": "/tmp/uno-smartcont-oracle-controls-2/source/crypto/smartcont/gen-zerostate.fif",
+    "artifact": "uno-smartcont-oracle-controls-2/source/crypto/smartcont/gen-zerostate.fif",
+    "original_bytes": 15024,
+    "original_sha256": "fe481ca698d892391a5236bad1b738d0f09e56ba6679c6f7192199484d147b95"
+  },
+  {
+    "source": "/tmp/uno-smartcont-oracle-controls-2/source/crypto/test/test-smartcont.cpp",
+    "artifact": "uno-smartcont-oracle-controls-2/source/crypto/test/test-smartcont.cpp",
+    "original_bytes": 121327,
+    "original_sha256": "7ce31e6131d696918a22b795b76e97ddc725da91f9ec41c9a5985836f0cd7327"
+  },
+  {
+    "source": "/tmp/uno-smartcont-oracle-controls-3/baseline.stderr.log",
+    "artifact": "uno-smartcont-oracle-controls-3/baseline.stderr.log",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/tmp/uno-smartcont-oracle-controls-3/baseline.stdout.log",
+    "artifact": "uno-smartcont-oracle-controls-3/baseline.stdout.log",
+    "original_bytes": 234,
+    "original_sha256": "bb39d2ae142954ed2dbdd4f213fed645b0435ef276d3203f5d9e671bd3bc73e2"
+  },
+  {
+    "source": "/tmp/uno-smartcont-oracle-controls-3/baseline.xml",
+    "artifact": "uno-smartcont-oracle-controls-3/baseline.xml",
+    "original_bytes": 408,
+    "original_sha256": "ad28a47d406e20f31fe08b59089d0e306cf91897b33e2ecd8d807d19f73429b9"
+  },
+  {
+    "source": "/tmp/uno-smartcont-oracle-controls-3/compile.stderr.log",
+    "artifact": "uno-smartcont-oracle-controls-3/compile.stderr.log",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/tmp/uno-smartcont-oracle-controls-3/compile.stdout.log",
+    "artifact": "uno-smartcont-oracle-controls-3/compile.stdout.log",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/tmp/uno-smartcont-oracle-controls-3/ctest/CTestTestfile.cmake",
+    "artifact": "uno-smartcont-oracle-controls-3/ctest/CTestTestfile.cmake",
+    "original_bytes": 232,
+    "original_sha256": "5defb98d49e1f1503e87a29ef5929ca79ce3ff4bef13dff3b45b2a892fd8c247"
+  },
+  {
+    "source": "/tmp/uno-smartcont-oracle-controls-3/ctest/Testing/Temporary/LastTest.log",
+    "artifact": "uno-smartcont-oracle-controls-3/ctest/Testing/Temporary/LastTest.log",
+    "original_bytes": 899,
+    "original_sha256": "aa5d297443c36dcaeeb8f9d23144619584748c52e6e886ea5c4b9f1382f039ed"
+  },
+  {
+    "source": "/tmp/uno-smartcont-oracle-controls-3/ctest/Testing/Temporary/LastTestsFailed.log",
+    "artifact": "uno-smartcont-oracle-controls-3/ctest/Testing/Temporary/LastTestsFailed.log",
+    "original_bytes": 17,
+    "original_sha256": "34eaf1e15b77e4a0558f6bbbcc57c65cbf55ed451f7294b156de1b2d588bd0b4"
+  },
+  {
+    "source": "/tmp/uno-smartcont-oracle-controls-3/ctest/result.xml",
+    "artifact": "uno-smartcont-oracle-controls-3/ctest/result.xml",
+    "original_bytes": 408,
+    "original_sha256": "69a973c6e7e40aaf454ce8dfe5579519aeb7988413dc5de25321d993ebd0506e"
+  },
+  {
+    "source": "/tmp/uno-smartcont-oracle-controls-3/link.stderr.log",
+    "artifact": "uno-smartcont-oracle-controls-3/link.stderr.log",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/tmp/uno-smartcont-oracle-controls-3/link.stdout.log",
+    "artifact": "uno-smartcont-oracle-controls-3/link.stdout.log",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/tmp/uno-smartcont-oracle-controls-3/mutant-with-oracle.stderr.log",
+    "artifact": "uno-smartcont-oracle-controls-3/mutant-with-oracle.stderr.log",
+    "original_bytes": 27,
+    "original_sha256": "18e00877dc1071c85cd4f479d451bebeef8309022e46cf8c63b0bed5151984a4"
+  },
+  {
+    "source": "/tmp/uno-smartcont-oracle-controls-3/mutant-with-oracle.stdout.log",
+    "artifact": "uno-smartcont-oracle-controls-3/mutant-with-oracle.stdout.log",
+    "original_bytes": 7082,
+    "original_sha256": "f9acdd4f0514eb91575e2332cc6717424054584b62093612199760c4ed589af5"
+  },
+  {
+    "source": "/tmp/uno-smartcont-oracle-controls-3/mutant-with-oracle.xml",
+    "artifact": "uno-smartcont-oracle-controls-3/mutant-with-oracle.xml",
+    "original_bytes": 7470,
+    "original_sha256": "f31cd461555182e7991e74da6fa84d3abafc2c36d586f04e0617d5e96b69de28"
+  },
+  {
+    "source": "/tmp/uno-smartcont-oracle-controls-3/mutant-without-oracle.stderr.log",
+    "artifact": "uno-smartcont-oracle-controls-3/mutant-without-oracle.stderr.log",
+    "original_bytes": 87,
+    "original_sha256": "e123584c63074dbe7793b63e19a4ced95851778f818d743cc06a99621b25ccc3"
+  },
+  {
+    "source": "/tmp/uno-smartcont-oracle-controls-3/mutant-without-oracle.stdout.log",
+    "artifact": "uno-smartcont-oracle-controls-3/mutant-without-oracle.stdout.log",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/tmp/uno-smartcont-oracle-controls-3/regression-tests.ans",
+    "artifact": "uno-smartcont-oracle-controls-3/regression-tests.ans",
+    "original_bytes": 8720,
+    "original_sha256": "b46a7476a16ce07fe0485df2d87cecff96a5c5684a663aa22ee2900fa8cdf8a1"
+  },
+  {
+    "source": "/tmp/uno-smartcont-oracle-controls-3/regression-tests.cache/512112d41e8d922c7bbe8432d751efdfb7fb552e11e3d796b7dc9af18d002998",
+    "artifact": "uno-smartcont-oracle-controls-3/regression-tests.cache/512112d41e8d922c7bbe8432d751efdfb7fb552e11e3d796b7dc9af18d002998",
+    "original_bytes": 684,
+    "original_sha256": "512112d41e8d922c7bbe8432d751efdfb7fb552e11e3d796b7dc9af18d002998"
+  },
+  {
+    "source": "/tmp/uno-smartcont-oracle-controls-3/regression-tests.cache/WA",
+    "artifact": "uno-smartcont-oracle-controls-3/regression-tests.cache/WA",
+    "original_bytes": 684,
+    "original_sha256": "3f3bb9e32fc26351108127beb870cb98cb8b59101a8044986c6edce0ddf90c65"
+  },
+  {
+    "source": "/tmp/uno-smartcont-oracle-controls-3/report.json",
+    "artifact": "uno-smartcont-oracle-controls-3/report.json",
+    "original_bytes": 9188,
+    "original_sha256": "5d07eacb2e836326a4aa1616e8f26582aa79763e2924156ad13fc7238cc5e9fc"
+  },
+  {
+    "source": "/tmp/uno-smartcont-oracle-controls-3/restored-native-targets.stderr.log",
+    "artifact": "uno-smartcont-oracle-controls-3/restored-native-targets.stderr.log",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/tmp/uno-smartcont-oracle-controls-3/restored-native-targets.stdout.log",
+    "artifact": "uno-smartcont-oracle-controls-3/restored-native-targets.stdout.log",
+    "original_bytes": 4887,
+    "original_sha256": "c816e8a8891308d0a226466d8ebcd02dfe7cda7f2f5f076d19044429d069253e"
+  },
+  {
+    "source": "/tmp/uno-smartcont-oracle-controls-3/restored.stderr.log",
+    "artifact": "uno-smartcont-oracle-controls-3/restored.stderr.log",
+    "original_bytes": 0,
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": "/tmp/uno-smartcont-oracle-controls-3/restored.stdout.log",
+    "artifact": "uno-smartcont-oracle-controls-3/restored.stdout.log",
+    "original_bytes": 234,
+    "original_sha256": "92c3a88ef7c4aaf5f1b6cfe9fae2db5e8191ffa33a9e9898eddb86abfb0d21b1"
+  },
+  {
+    "source": "/tmp/uno-smartcont-oracle-controls-3/restored.xml",
+    "artifact": "uno-smartcont-oracle-controls-3/restored.xml",
+    "original_bytes": 408,
+    "original_sha256": "69a973c6e7e40aaf454ce8dfe5579519aeb7988413dc5de25321d993ebd0506e"
+  },
+  {
+    "source": "/tmp/uno-smartcont-oracle-controls-3/source/crypto/smartcont/gen-zerostate.fif",
+    "artifact": "uno-smartcont-oracle-controls-3/source/crypto/smartcont/gen-zerostate.fif",
+    "original_bytes": 15024,
+    "original_sha256": "fe481ca698d892391a5236bad1b738d0f09e56ba6679c6f7192199484d147b95"
+  },
+  {
+    "source": "/tmp/uno-smartcont-oracle-controls-3/source/crypto/test/test-smartcont.cpp",
+    "artifact": "uno-smartcont-oracle-controls-3/source/crypto/test/test-smartcont.cpp",
+    "original_bytes": 121327,
+    "original_sha256": "7ce31e6131d696918a22b795b76e97ddc725da91f9ec41c9a5985836f0cd7327"
+  },
+  {
+    "source": "/tmp/uno-descriptor-equivalence-1/counter-basic.new.boc",
+    "artifact": "uno-descriptor-equivalence-1/counter-basic.new.boc",
+    "original_bytes": 109,
+    "original_sha256": "ac38bf401aa405b8296a8da7fe011bbadf786a64749fa6fb4668843573e15311"
+  },
+  {
+    "source": "/tmp/uno-descriptor-equivalence-1/counter-basic.old.boc",
+    "artifact": "uno-descriptor-equivalence-1/counter-basic.old.boc",
+    "original_bytes": 109,
+    "original_sha256": "ac38bf401aa405b8296a8da7fe011bbadf786a64749fa6fb4668843573e15311"
+  },
+  {
+    "source": "/tmp/uno-descriptor-equivalence-1/counter-extended.new.boc",
+    "artifact": "uno-descriptor-equivalence-1/counter-extended.new.boc",
+    "original_bytes": 126,
+    "original_sha256": "d2cb5a017d041b513a02b8a34ce6d13bd4dbdad33c5bfff07bfdec4cee92b9e9"
+  },
+  {
+    "source": "/tmp/uno-descriptor-equivalence-1/counter-extended.old.boc",
+    "artifact": "uno-descriptor-equivalence-1/counter-extended.old.boc",
+    "original_bytes": 126,
+    "original_sha256": "d2cb5a017d041b513a02b8a34ce6d13bd4dbdad33c5bfff07bfdec4cee92b9e9"
+  },
+  {
+    "source": "/tmp/uno-descriptor-equivalence-1/native-basic.new.boc",
+    "artifact": "uno-descriptor-equivalence-1/native-basic.new.boc",
+    "original_bytes": 109,
+    "original_sha256": "4506a6256cbad672aade9ece9072d6fab0483cf24e81c4bf3090beed5033da9b"
+  },
+  {
+    "source": "/tmp/uno-descriptor-equivalence-1/native-basic.old.boc",
+    "artifact": "uno-descriptor-equivalence-1/native-basic.old.boc",
+    "original_bytes": 109,
+    "original_sha256": "4506a6256cbad672aade9ece9072d6fab0483cf24e81c4bf3090beed5033da9b"
+  },
+  {
+    "source": "/tmp/uno-descriptor-equivalence-1/native-extended.new.boc",
+    "artifact": "uno-descriptor-equivalence-1/native-extended.new.boc",
+    "original_bytes": 126,
+    "original_sha256": "9cf59a29af482a1e68039689d5c713ce31760f49e6105d242e50afecaf6d6125"
+  },
+  {
+    "source": "/tmp/uno-descriptor-equivalence-1/native-extended.old.boc",
+    "artifact": "uno-descriptor-equivalence-1/native-extended.old.boc",
+    "original_bytes": 126,
+    "original_sha256": "9cf59a29af482a1e68039689d5c713ce31760f49e6105d242e50afecaf6d6125"
+  },
+  {
+    "source": "/tmp/uno-descriptor-equivalence-1/uno-basic.new.boc",
+    "artifact": "uno-descriptor-equivalence-1/uno-basic.new.boc",
+    "original_bytes": 109,
+    "original_sha256": "c5d4ff9ab210652d93e4de57b99bd111dde10629c64a000894f8c707d8c7f369"
+  },
+  {
+    "source": "/tmp/uno-descriptor-equivalence-1/uno-basic.old.boc",
+    "artifact": "uno-descriptor-equivalence-1/uno-basic.old.boc",
+    "original_bytes": 109,
+    "original_sha256": "c5d4ff9ab210652d93e4de57b99bd111dde10629c64a000894f8c707d8c7f369"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/basic-route/counter-basic.new.boc",
+    "artifact": "uno-descriptor-controls-1/basic-route/counter-basic.new.boc",
+    "original_bytes": 109,
+    "original_sha256": "ac38bf401aa405b8296a8da7fe011bbadf786a64749fa6fb4668843573e15311"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/basic-route/counter-basic.old.boc",
+    "artifact": "uno-descriptor-controls-1/basic-route/counter-basic.old.boc",
+    "original_bytes": 109,
+    "original_sha256": "ac38bf401aa405b8296a8da7fe011bbadf786a64749fa6fb4668843573e15311"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/basic-route/counter-extended.new.boc",
+    "artifact": "uno-descriptor-controls-1/basic-route/counter-extended.new.boc",
+    "original_bytes": 126,
+    "original_sha256": "d2cb5a017d041b513a02b8a34ce6d13bd4dbdad33c5bfff07bfdec4cee92b9e9"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/basic-route/counter-extended.old.boc",
+    "artifact": "uno-descriptor-controls-1/basic-route/counter-extended.old.boc",
+    "original_bytes": 126,
+    "original_sha256": "d2cb5a017d041b513a02b8a34ce6d13bd4dbdad33c5bfff07bfdec4cee92b9e9"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/basic-route/native-basic.new.boc",
+    "artifact": "uno-descriptor-controls-1/basic-route/native-basic.new.boc",
+    "original_bytes": 109,
+    "original_sha256": "4506a6256cbad672aade9ece9072d6fab0483cf24e81c4bf3090beed5033da9b"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/basic-route/native-basic.old.boc",
+    "artifact": "uno-descriptor-controls-1/basic-route/native-basic.old.boc",
+    "original_bytes": 109,
+    "original_sha256": "4506a6256cbad672aade9ece9072d6fab0483cf24e81c4bf3090beed5033da9b"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/basic-route/native-extended.new.boc",
+    "artifact": "uno-descriptor-controls-1/basic-route/native-extended.new.boc",
+    "original_bytes": 126,
+    "original_sha256": "9cf59a29af482a1e68039689d5c713ce31760f49e6105d242e50afecaf6d6125"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/basic-route/native-extended.old.boc",
+    "artifact": "uno-descriptor-controls-1/basic-route/native-extended.old.boc",
+    "original_bytes": 126,
+    "original_sha256": "9cf59a29af482a1e68039689d5c713ce31760f49e6105d242e50afecaf6d6125"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/basic-route/uno-basic.new.boc",
+    "artifact": "uno-descriptor-controls-1/basic-route/uno-basic.new.boc",
+    "original_bytes": 109,
+    "original_sha256": "6a26055d738f9963229098108cf29b107353d4e6124b87969614da5d14e1908b"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/basic-route/uno-basic.old.boc",
+    "artifact": "uno-descriptor-controls-1/basic-route/uno-basic.old.boc",
+    "original_bytes": 109,
+    "original_sha256": "c5d4ff9ab210652d93e4de57b99bd111dde10629c64a000894f8c707d8c7f369"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/extended-key/counter-basic.new.boc",
+    "artifact": "uno-descriptor-controls-1/extended-key/counter-basic.new.boc",
+    "original_bytes": 109,
+    "original_sha256": "ac38bf401aa405b8296a8da7fe011bbadf786a64749fa6fb4668843573e15311"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/extended-key/counter-basic.old.boc",
+    "artifact": "uno-descriptor-controls-1/extended-key/counter-basic.old.boc",
+    "original_bytes": 109,
+    "original_sha256": "ac38bf401aa405b8296a8da7fe011bbadf786a64749fa6fb4668843573e15311"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/extended-key/counter-extended.new.boc",
+    "artifact": "uno-descriptor-controls-1/extended-key/counter-extended.new.boc",
+    "original_bytes": 126,
+    "original_sha256": "9cf59a29af482a1e68039689d5c713ce31760f49e6105d242e50afecaf6d6125"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/extended-key/counter-extended.old.boc",
+    "artifact": "uno-descriptor-controls-1/extended-key/counter-extended.old.boc",
+    "original_bytes": 126,
+    "original_sha256": "d2cb5a017d041b513a02b8a34ce6d13bd4dbdad33c5bfff07bfdec4cee92b9e9"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/extended-key/native-basic.new.boc",
+    "artifact": "uno-descriptor-controls-1/extended-key/native-basic.new.boc",
+    "original_bytes": 109,
+    "original_sha256": "4506a6256cbad672aade9ece9072d6fab0483cf24e81c4bf3090beed5033da9b"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/extended-key/native-basic.old.boc",
+    "artifact": "uno-descriptor-controls-1/extended-key/native-basic.old.boc",
+    "original_bytes": 109,
+    "original_sha256": "4506a6256cbad672aade9ece9072d6fab0483cf24e81c4bf3090beed5033da9b"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/extended-key/native-extended.new.boc",
+    "artifact": "uno-descriptor-controls-1/extended-key/native-extended.new.boc",
+    "original_bytes": 126,
+    "original_sha256": "9cf59a29af482a1e68039689d5c713ce31760f49e6105d242e50afecaf6d6125"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/extended-key/native-extended.old.boc",
+    "artifact": "uno-descriptor-controls-1/extended-key/native-extended.old.boc",
+    "original_bytes": 126,
+    "original_sha256": "9cf59a29af482a1e68039689d5c713ce31760f49e6105d242e50afecaf6d6125"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/restored/counter-basic.new.boc",
+    "artifact": "uno-descriptor-controls-1/restored/counter-basic.new.boc",
+    "original_bytes": 109,
+    "original_sha256": "ac38bf401aa405b8296a8da7fe011bbadf786a64749fa6fb4668843573e15311"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/restored/counter-basic.old.boc",
+    "artifact": "uno-descriptor-controls-1/restored/counter-basic.old.boc",
+    "original_bytes": 109,
+    "original_sha256": "ac38bf401aa405b8296a8da7fe011bbadf786a64749fa6fb4668843573e15311"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/restored/counter-extended.new.boc",
+    "artifact": "uno-descriptor-controls-1/restored/counter-extended.new.boc",
+    "original_bytes": 126,
+    "original_sha256": "d2cb5a017d041b513a02b8a34ce6d13bd4dbdad33c5bfff07bfdec4cee92b9e9"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/restored/counter-extended.old.boc",
+    "artifact": "uno-descriptor-controls-1/restored/counter-extended.old.boc",
+    "original_bytes": 126,
+    "original_sha256": "d2cb5a017d041b513a02b8a34ce6d13bd4dbdad33c5bfff07bfdec4cee92b9e9"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/restored/native-basic.new.boc",
+    "artifact": "uno-descriptor-controls-1/restored/native-basic.new.boc",
+    "original_bytes": 109,
+    "original_sha256": "4506a6256cbad672aade9ece9072d6fab0483cf24e81c4bf3090beed5033da9b"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/restored/native-basic.old.boc",
+    "artifact": "uno-descriptor-controls-1/restored/native-basic.old.boc",
+    "original_bytes": 109,
+    "original_sha256": "4506a6256cbad672aade9ece9072d6fab0483cf24e81c4bf3090beed5033da9b"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/restored/native-extended.new.boc",
+    "artifact": "uno-descriptor-controls-1/restored/native-extended.new.boc",
+    "original_bytes": 126,
+    "original_sha256": "9cf59a29af482a1e68039689d5c713ce31760f49e6105d242e50afecaf6d6125"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/restored/native-extended.old.boc",
+    "artifact": "uno-descriptor-controls-1/restored/native-extended.old.boc",
+    "original_bytes": 126,
+    "original_sha256": "9cf59a29af482a1e68039689d5c713ce31760f49e6105d242e50afecaf6d6125"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/restored/uno-basic.new.boc",
+    "artifact": "uno-descriptor-controls-1/restored/uno-basic.new.boc",
+    "original_bytes": 109,
+    "original_sha256": "c5d4ff9ab210652d93e4de57b99bd111dde10629c64a000894f8c707d8c7f369"
+  },
+  {
+    "source": "/tmp/uno-descriptor-controls-1/restored/uno-basic.old.boc",
+    "artifact": "uno-descriptor-controls-1/restored/uno-basic.old.boc",
+    "original_bytes": 109,
+    "original_sha256": "c5d4ff9ab210652d93e4de57b99bd111dde10629c64a000894f8c707d8c7f369"
+  }
+]

@@ -1,0 +1,1 @@
+add_test(test-smartcont "/tmp/uno-smartcont-oracle-controls-3/test-smartcont" "--regression" "/tmp/uno-smartcont-oracle-controls-3/regression-tests.ans" "--filter" "-Bench" "--filter" "GenZerostateFiftRegression" "--verbosity" "0")

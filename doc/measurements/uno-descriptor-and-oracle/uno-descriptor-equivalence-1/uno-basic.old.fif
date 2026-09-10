@@ -1,0 +1,14 @@
+4 setglobalid
+dictnew workchain-dict !
+uno-v2-engine-key constant uno_genesis_engine_key
+variable uno_genesis_descriptor
+{ <b x{a6} s, 5 roll 32 u, 4 roll 8 u, 3 roll 8 u, rot 8 u, x{c000} s,
+  3 roll 256 u, rot 256 u, 0 32 u, x{1} s, uno_genesis_engine_key 32 i, 0 64 u, b>
+  dup isWorkchainDescr? not abort"invalid genesis workchain descriptor"
+  dup uno_genesis_descriptor !
+  <s swap workchain-dict @ 32 idict!+ 0= abort"duplicate genesis workchain"
+  workchain-dict !
+} : baseline-constructor
+1 2 1788656400 0 0 0 2 baseline-constructor
+2 workchain-dict @ 32 idict@ 0= abort"missing descriptor"
+s>c 31 boc+>B "/tmp/uno-descriptor-equivalence-1/uno-basic.old.boc" B>file
