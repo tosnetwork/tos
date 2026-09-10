@@ -342,6 +342,43 @@ inline bool can_delete_validator_db(const PendingValidatorConsensusDbCleanup& re
   return ancestry_of(record.retirement_checkpoint, safe_checkpoint) == CleanupAncestry::Ancestor;
 }
 
+// Whether the session currently has a live or pending validator/tentative group
+// (so it may still be used / was reopened). True vetoes deletion (condition
+// C-runtime). Generation-aware: the manager adapter answers for the CURRENT
+// incarnation, so a session reopened after retirement reads as live.
+using CleanupSessionIsLiveFn = std::function<bool(const ValidatorSessionId&)>;
+// Whether the retiring actor for this session has confirmed its consensus bus is
+// stopped and DB closed, for the SAME incarnation that produced the record (not a
+// stale earlier close). False vetoes deletion (condition D).
+using CleanupSessionIsClosedFn = std::function<bool(const ValidatorSessionId&)>;
+
+// The full four-condition deletion gate for one cleanup record, all conditions
+// combined, pure over injected oracles:
+//   A: the record exists durably (the caller only passes persisted records);
+//   B + C-onchain: validator_session_is_onchain_obsolete (ancestor-of-GC and
+//      r < g at the GC floor);
+//   C-runtime: the session is NOT currently live/recreatable (is_live == false),
+//      which also covers a reopen after retirement;
+//   D: the retiring actor has closed for THIS incarnation (is_closed == true).
+// Returns true only when all hold; any uncertain input makes a sub-check return
+// false, so the bias is always to keep the directory. The caller must still
+// serialize the actual delete against a concurrent reopen of the same directory
+// (re-checking is_live immediately before and after the async delete).
+inline bool validator_cleanup_eligible(const PendingValidatorConsensusDbCleanup& record,
+                                       const BlockIdExt& gc_checkpoint,
+                                       const CleanupAncestorOfGcFn& ancestor_or_equal_of_gc,
+                                       const GcShardCatchainSeqnoFn& gc_shard_catchain_seqno,
+                                       const CleanupSessionIsLiveFn& is_live,
+                                       const CleanupSessionIsClosedFn& is_closed) {
+  if (is_live(record.session_id)) {
+    return false;  // C-runtime: live or reopened -- never delete
+  }
+  if (!is_closed(record.session_id)) {
+    return false;  // D: the actor must have closed (bus stopped, DB closed)
+  }
+  return validator_session_is_onchain_obsolete(record, gc_checkpoint, ancestor_or_equal_of_gc, gc_shard_catchain_seqno);
+}
+
 // Monotonic adoption of a new safe checkpoint. The safe checkpoint must never
 // regress (a later-loaded older init block must not lower it), so a candidate is
 // adopted only when there is no current checkpoint or the candidate is a verified

@@ -445,6 +445,43 @@ TEST(ValidatorCleanup, onchain_obsolete_requires_ancestor_and_cc_strictly_past) 
   ASSERT_EQ(ancestor_calls, 0);
 }
 
+// The full four-condition delete gate: eligible ONLY when not live (C-runtime),
+// closed (D), and on-chain obsolete (B + C-onchain). Each condition independently
+// vetoes; live is checked first (reopen safety). Removing any guard makes one of
+// these go red.
+TEST(ValidatorCleanup, cleanup_eligible_requires_all_four_conditions) {
+  auto sid = make_session_id(9);
+  tos::ShardIdFull shard{0, kMasterShard};
+  PendingValidatorConsensusDbCleanup r;
+  r.session_id = sid;
+  auto retirement = make_checkpoint(100);
+  r.retirement_checkpoint = retirement;
+  r.dir_name = consensus_db_dir_name(shard, 7, sid, td::Slice(""));  // cc = 7
+  auto gc = make_checkpoint(500);
+
+  auto ancestor_ok = [retirement](const tos::BlockIdExt& q) { return q == retirement; };
+  auto cc_past = [&shard](tos::ShardIdFull s) -> std::optional<tos::CatchainSeqno> {
+    return s == shard ? std::optional<tos::CatchainSeqno>{10} : std::nullopt;  // g=10 > r=7
+  };
+  auto not_live = [](const tos::ValidatorSessionId&) { return false; };
+  auto live = [](const tos::ValidatorSessionId&) { return true; };
+  auto closed = [](const tos::ValidatorSessionId&) { return true; };
+  auto not_closed = [](const tos::ValidatorSessionId&) { return false; };
+
+  // All four hold -> eligible.
+  ASSERT_TRUE(validator_cleanup_eligible(r, gc, ancestor_ok, cc_past, not_live, closed));
+  // Live/reopened -> keep (even though closed + obsolete).
+  ASSERT_TRUE(!validator_cleanup_eligible(r, gc, ancestor_ok, cc_past, live, closed));
+  // Not closed -> keep.
+  ASSERT_TRUE(!validator_cleanup_eligible(r, gc, ancestor_ok, cc_past, not_live, not_closed));
+  // Not on-chain obsolete (cc unknown) -> keep.
+  auto cc_unknown = [](tos::ShardIdFull) -> std::optional<tos::CatchainSeqno> { return std::nullopt; };
+  ASSERT_TRUE(!validator_cleanup_eligible(r, gc, ancestor_ok, cc_unknown, not_live, closed));
+  // Not on-chain obsolete (not a GC ancestor) -> keep.
+  auto ancestor_never = [](const tos::BlockIdExt&) { return false; };
+  ASSERT_TRUE(!validator_cleanup_eligible(r, gc, ancestor_never, cc_past, not_live, closed));
+}
+
 // Pin the literal key prefix and range end independently of the helpers, so a
 // change to the persisted key scheme (which would orphan existing on-disk
 // records) is caught, and the range end is exactly the prefix with its final
