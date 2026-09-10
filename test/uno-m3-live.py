@@ -94,4 +94,137 @@ subprocess.run([str(build / 'test-tos-collator'), '-C', str(fixture / 'global.js
 subprocess.run([str(build / 'test-tos-collator'), '-C', str(fixture / 'global.json'),
                 '-D', str(fixture / 'db'), '-w', '-1', '-M', str(fixture / 'payer-top-1.boc'),
                 '--query-result', str(fixture / 'payer-master.result')], check=True)
+def registration_pair():
+    shutil.copyfile(fixture / 'registration-0.candidate.boc', fixture / 'operation.candidate.boc')
+    shutil.copyfile(fixture / 'registration-0.declarations.boc', fixture / 'operation.declarations.boc')
+    subprocess.run([str(build / 'test-m3-live'), str(fixture)], check=True)
+
+registration_pair()
+
+# Continue on the accepted database, not a PureBackend account side table.
+# Keep each pair's observations distinct so no earlier sidecar can satisfy a
+# later step. These are temporary run files, not a separate evidence archive.
+def advance_pair(number):
+    (fixture / 'db').rename(fixture / f'before-{number}-db')
+    (fixture / 'enabled-db').rename(fixture / 'db')
+    (fixture / 'closed-db').rename(fixture / f'closed-{number}-db')
+    for path in list(fixture.iterdir()):
+        if path.is_file() and path.name.startswith(('closed.', 'enabled.', 'enabled-top')):
+            path.rename(fixture / f'{number}-{path.name}')
+    shutil.copyfile(fixture / 'accepted-state.boc', fixture / 'current-state.boc')
+
+advance_pair(0)
+subprocess.run([str(build / 'test-tos-collator'), '-C', str(fixture / 'global.json'),
+                '-D', str(fixture / 'db'), '-w', '-1', '-M', str(fixture / '0-enabled-top1.boc'),
+                '--query-result', str(fixture / 'register-a-master.result')], check=True)
+(fixture / 'wallet-key.request.txt').write_text('secret=223\n')
+subprocess.run([str(wallet), 'key', str(fixture / 'wallet-key.request.txt'),
+                str(fixture / 'wallet-key.txt')], check=True)
+subprocess.run([str(build / 'test-m3-live'), '--registration-request-b', str(fixture)], check=True)
+subprocess.run([str(wallet), 'register', str(fixture / 'registration-0.request.txt'),
+                str(fixture / 'registration-0.proof.txt')], check=True)
+subprocess.run([str(build / 'test-m3-live'), '--registration-finish', str(fixture)], check=True)
+subprocess.run([str(build / 'test-tos-collator'), '-C', str(fixture / 'global.json'),
+                '-D', str(fixture / 'db'), '-w', '0', '-m', str(fixture / 'registration-0.message.boc'),
+                '-s', str(fixture / 'payer-b-top'), '--query-result', str(fixture / 'payer-b.result')], check=True)
+subprocess.run([str(build / 'test-tos-collator'), '-C', str(fixture / 'global.json'),
+                '-D', str(fixture / 'db'), '-w', '-1', '-M', str(fixture / 'payer-b-top1.boc'),
+                '--query-result', str(fixture / 'payer-b-master.result')], check=True)
+registration_pair()
+print('Both registrations accepted on real collator/validator with paired OFF runs; transfer sequence pending.')
+advance_pair(1)
+subprocess.run([str(build / 'test-tos-collator'), '-C', str(fixture / 'global.json'),
+                '-D', str(fixture / 'db'), '-w', '-1', '-M', str(fixture / '1-enabled-top1.boc'),
+                '--query-result', str(fixture / 'register-b-master.result')], check=True)
+(fixture / 'seed.request.txt').write_text(
+    'secret=101\nold_value=50000\nold_blind=23\nnew_blind=1\naux_blind=1\nfee=0\n')
+subprocess.run([str(wallet), 'seed', str(fixture / 'seed.request.txt'), str(fixture / 'seed.result.txt')], check=True)
+subprocess.run([str(build / 'test-m3-live'), '--test-funding-request', str(fixture)], check=True)
 subprocess.run([str(build / 'test-m3-live'), str(fixture)], check=True)
+advance_pair(2)
+subprocess.run([str(build / 'test-tos-collator'), '-C', str(fixture / 'global.json'),
+                '-D', str(fixture / 'db'), '-w', '-1', '-M', str(fixture / '2-enabled-top1.boc'),
+                '--query-result', str(fixture / 'test-funding-master.result')], check=True)
+
+# Wallet witnesses remain proposer-side only. Each validator obtains the full
+# public statement and authorization from the emitted permanent block.
+def send_pair(owner, old_value, old_blind, value, new_blind, transfer_blind):
+    secret, receiver = (101, 223) if owner == 0 else (223, 101)
+    witness = dict(secret=secret, receiver_secret=receiver, old_value=old_value,
+                   old_blind=old_blind, value=value, new_blind=new_blind,
+                   transfer_blind=transfer_blind, aux_blind=43)
+    def write_fields(path, fields):
+        path.write_text(''.join(f'{k}={v}\n' for k, v in fields.items()))
+    write_fields(fixture / 'operation.wallet.txt', dict(owner=owner))
+    write_fields(fixture / 'operation.request.txt',
+                 dict(witness, kind=1, fee=11, max_balance=1000000, max_value=10000))
+    subprocess.run([str(wallet), 'points', str(fixture / 'operation.request.txt'),
+                    str(fixture / 'operation.points.txt')], check=True)
+    subprocess.run([str(build / 'test-m3-live'), '--send-request', str(fixture)], check=True)
+    statement = dict(line.split('=', 1) for line in
+                     (fixture / 'operation.statement.txt').read_text().splitlines())
+    if set(statement) & set(witness):
+        raise RuntimeError('wallet witness overwrites authenticated statement fields')
+    write_fields(fixture / 'operation.request.txt', dict(witness, **statement))
+    subprocess.run([str(wallet), 'prove', str(fixture / 'operation.request.txt'),
+                    str(fixture / 'operation.proof.txt')], check=True)
+    subprocess.run([str(build / 'test-m3-live'), '--send-finish', str(fixture)], check=True)
+    if value + 11 > old_value:
+        raise RuntimeError('test SEND expectation underflow')
+    write_fields(fixture / 'operation.expected.txt', dict(before=old_value, after=old_value-value-11))
+    subprocess.run([str(build / 'test-m3-live'), str(fixture)], check=True)
+
+send_pair(0, 50000, 23, 137, 31, 37)
+first_receipt = (fixture / 'accepted-receipt.id').read_text()
+
+def advance_operation(number):
+    advance_pair(number)
+    subprocess.run([str(build / 'test-tos-collator'), '-C', str(fixture / 'global.json'),
+                    '-D', str(fixture / 'db'), '-w', '-1', '-M', str(fixture / f'{number}-enabled-top1.boc'),
+                    '--query-result', str(fixture / f'operation-{number}-master.result')], check=True)
+
+advance_operation(3)
+send_pair(0, 49852, 31, 251, 47, 43)
+second_receipt = (fixture / 'accepted-receipt.id').read_text()
+advance_operation(4)
+
+def collect_pair(old_value, old_blind, new_blind, receipts):
+    # Wallet selection is sorted here. Host does not duplicate the kernel's
+    # strict sorted/unique ID check. Witnesses travel in exactly the same order.
+    selected = sorted(receipts)
+    fields = dict(secret=223, old_value=old_value, old_blind=old_blind,
+                  new_blind=new_blind, aux_blind=83,
+                  values=','.join(str(value) for _, value, _ in selected),
+                  blinds=','.join(str(blind) for _, _, blind in selected),
+                  auxiliaries=','.join(str(89+i) for i in range(len(selected))))
+    def write_fields(path, values):
+        path.write_text(''.join(f'{k}={v}\n' for k, v in values.items()))
+    write_fields(fixture / 'operation.wallet.txt',
+                 dict(owner=1, selected=''.join(receipt for receipt, _, _ in selected)))
+    write_fields(fixture / 'operation.request.txt',
+                 dict(fields, kind=2, fee=17, max_balance=1000000, max_value=10000))
+    subprocess.run([str(wallet), 'points', str(fixture / 'operation.request.txt'),
+                    str(fixture / 'operation.points.txt')], check=True)
+    subprocess.run([str(build / 'test-m3-live'), '--collect-request', str(fixture)], check=True)
+    statement = dict(line.split('=', 1) for line in
+                     (fixture / 'operation.statement.txt').read_text().splitlines())
+    if set(statement) & set(fields):
+        raise RuntimeError('COLLECT witness overwrites authenticated statement')
+    write_fields(fixture / 'operation.request.txt', dict(fields, **statement))
+    subprocess.run([str(wallet), 'prove', str(fixture / 'operation.request.txt'),
+                    str(fixture / 'operation.proof.txt')], check=True)
+    subprocess.run([str(build / 'test-m3-live'), '--collect-finish', str(fixture)], check=True)
+    total = old_value + sum(value for _, value, _ in selected)
+    if total < 17 or total > 2**64-1:
+        raise RuntimeError('COLLECT expected balance out of range')
+    write_fields(fixture / 'operation.expected.txt', dict(before=old_value, after=total-17))
+    subprocess.run([str(build / 'test-m3-live'), str(fixture)], check=True)
+
+collect_pair(0, 0, 67, [(first_receipt, 137, 37)])
+advance_operation(5)
+send_pair(0, 49590, 47, 89, 59, 61)
+third_receipt = (fixture / 'accepted-receipt.id').read_text()
+advance_operation(6)
+collect_pair(120, 67, 71, [(second_receipt, 251, 43), (third_receipt, 89, 61)])
+advance_operation(7)
+send_pair(1, 443, 71, 432, 73, 79)

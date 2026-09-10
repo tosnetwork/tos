@@ -27,6 +27,7 @@ EXCLUDED = {'test', 'tests', 'doc', 'third-party', 'third_party', 'vendor'}
 SUFFIXES = {'.h', '.hpp', '.cpp', '.cc', '.c', '.rs', '.tlb', '.inc', '.ipp', '.tpp'}
 STATE = {'crypto/block/workchain-confidential-state.h',
          'crypto/block/workchain-coordinator-state.h'}
+TEST_OPERATION = 'crypto/test/workchain-m3-test-funding-operation.h'
 TOKEN = re.compile(r'//[^\n]*|/\*[\s\S]*?\*/|"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'|[A-Za-z_]\w*|[^\s]')
 WATCH = re.compile(r'obligation|settlement_?refs?|withdraw|deposit', re.I)
 
@@ -45,6 +46,11 @@ def inventory(sources):
     result = {}
     for name, source in sorted(sources.items()):
         ts = tokens(source)
+        if name == TEST_OPERATION:
+            # This explicitly inventoried test operation completes its balance
+            # write in the same batch. No async association/obligation survives.
+            # Freeze its whole definition; do not exempt future test operations.
+            result[name + ':test-operation'] = digest(ts)
         if name in STATE:
             result[name + ':state'] = digest(ts)
         if Path(name).suffix == '.tlb':
@@ -58,7 +64,7 @@ def inventory(sources):
         watched = [t for t in ts if re.fullmatch(r'[A-Za-z_]\w*', t) and WATCH.search(t)]
         if watched:
             result[name + ':identifiers'] = digest(watched)
-    for name in STATE:
+    for name in STATE | {TEST_OPERATION}:
         if name not in sources:
             raise ValueError('missing authenticated state representation: ' + name)
     if 'crypto/block/block.tlb' not in sources:
@@ -70,7 +76,8 @@ def read_sources(repo):
     names = subprocess.check_output(['git', '-C', str(repo), 'ls-files', '-z',
                                     '--cached', '--others', '--exclude-standard']).decode().split('\0')
     return {name: (repo / name).read_text() for name in sorted(set(names) - {''})
-            if Path(name).suffix in SUFFIXES and not EXCLUDED.intersection(Path(name).parts)}
+            if Path(name).suffix in SUFFIXES and
+            (name == TEST_OPERATION or not EXCLUDED.intersection(Path(name).parts))}
 
 
 def controls(sources, expected):
@@ -92,9 +99,14 @@ def controls(sources, expected):
     changed['crypto/block/new-operation.tlb'] = 'uno_v2_withdraw amount:uint64 = UnoV2TransferInputV1;'
     if inventory(changed) == expected:
         raise ValueError('new operation was not detected')
+    changed = dict(sources)
+    changed[TEST_OPERATION] += '\nstruct TestFundingSettlementObligation { unsigned count; };\n'
+    if inventory(changed) == expected:
+        raise ValueError('changed test funding operation was not detected')
     if inventory(sources) != expected:
         raise ValueError('unchanged source no longer passes')
-    print('Expiry controls: obligation field, third-file view, new operation rejected; unchanged source accepted.')
+    print('Expiry controls: obligation field, third-file view, new operation, changed test operation rejected; '
+          'unchanged source accepted.')
 
 
 def main():

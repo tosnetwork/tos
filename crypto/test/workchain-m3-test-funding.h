@@ -7,8 +7,10 @@
 
 namespace block::m3_test {
 
-// Edit the actual Native dictionary AFTER registration, before the first SEND.
-// The harness must install the resulting shard-state root for BOTH actors.
+// Pure-transition fixtures only: edit their Native dictionary after registration.
+// Do NOT install this edit as the predecessor of a real block: the preceding
+// block's MerkleUpdate would still commit the old root. Live tests instead use
+// the D59-scoped test-only block-contained funding operation.
 // This is not a transaction: no authorization, AccountBlock, nonce increment or
 // fictional history is created. M3 tests transfers from an assumed balance;
 // they do not establish how that balance was legally created (M4 Deposit).
@@ -82,16 +84,4 @@ inline td::Result<td::Ref<vm::Cell>> fund_registered_test_account(td::Ref<vm::Ce
   return dictionary.get_wrapped_dict_root();
 }
 
-inline td::Result<td::Ref<vm::Cell>> fund_registered_test_shard(td::Ref<vm::Cell> root, const td::Bits256& key,
-                                                                const WorkchainCiphertext& available) {
-  gen::ShardStateUnsplit::Record state;
-  if (!tlb::unpack_cell(root, state))
-    return td::Status::Error("invalid M3 test shard state");
-  TRY_RESULT(accounts, fund_registered_test_account(state.accounts, key, available, state.gen_utime));
-  state.accounts = std::move(accounts);
-  td::Ref<vm::Cell> result;
-  if (!tlb::pack_cell(result, state))
-    return td::Status::Error("cannot encode M3 funded test state");
-  return result;
-}
 }  // namespace block::m3_test

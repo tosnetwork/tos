@@ -32,4 +32,25 @@ inline td::Ref<vm::Cell> account_data(const td::Ref<vm::Cell>& root, const td::B
   CHECK(account.status == block::Account::acc_active && account.data.not_null());
   return account.data;
 }
+inline td::Ref<vm::Cell> accepted_transaction(const AcceptedStep& step, const td::Bits256& key) {
+  block::gen::ShardStateUnsplit::Record state;
+  CHECK(tlb::unpack_cell(step.state, state));
+  vm::AugmentedDictionary accounts(vm::load_cell_slice_ref(state.accounts), 256, block::tlb::aug_ShardAccounts);
+  block::Account account(2, key.bits());
+  CHECK(account.unpack(accounts.lookup(key), state.gen_utime, false));
+  block::gen::Block::Record header;
+  block::gen::BlockExtra::Record extra;
+  CHECK(tlb::unpack_cell(step.block, header) && tlb::unpack_cell(header.extra, extra));
+  vm::AugmentedDictionary blocks(vm::load_cell_slice_ref(extra.account_blocks), 256,
+                                block::tlb::aug_ShardAccountBlocks);
+  auto leaf = blocks.lookup(key);
+  block::gen::AccountBlock::Record record;
+  CHECK(leaf.not_null() && block::gen::t_AccountBlock.unpack(leaf.write(), record) && leaf->empty());
+  CHECK(record.account_addr == key);
+  vm::AugmentedDictionary transactions(vm::DictNonEmpty(), record.transactions, 64,
+                                      block::tlb::aug_AccountTransactions);
+  auto transaction = transactions.lookup_ref(td::BitArray<64>(account.last_trans_lt_));
+  CHECK(transaction.not_null() && account.last_trans_hash_ == transaction->get_hash().bits());
+  return transaction;
+}
 }  // namespace m3_live

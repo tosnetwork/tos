@@ -1,0 +1,93 @@
+#pragma once
+// TEST wallet requests use the actual issued configuration and accepted state.
+// This is not a production business-config codec or a deployment wallet.
+#include "m3-live-state.h"
+#include "block/workchain-confidential-execution.h"
+#include "crypto/test/workchain-m3-wallet-requests.h"
+
+namespace m3_live {
+inline td::Bits256 wallet_account(unsigned owner) {
+  CHECK(owner < 2);
+  td::Bits256 result;
+  result.as_slice().fill(owner == 0 ? 0x11 : 0x22);
+  return result;
+}
+inline block::WorkchainTransferEnvironment wallet_environment(const std::filesystem::path& fixture, unsigned kind) {
+  CHECK(kind == 1 || kind == 2);
+  auto root = load(fixture / "zerostate.boc");
+  tos::BlockIdExt zero{tos::BlockId{tos::masterchainId, tos::shardIdAll, 0},
+                      root->get_hash().bits(), td::Bits256::zero()};
+  auto config = block::ConfigInfo::extract_config(root, zero,
+      block::Config::needWorkchainInfo | block::Config::needCapabilities).move_as_ok();
+  const auto ingress = block::load_workchain_native_ingress_table(*config).move_as_ok().at(2);
+  const auto parameters = block::decode_workchain_engine_parameters(ingress.engine_configuration).move_as_ok();
+  const auto b = block::m3_test::decode_m3_test_business_parameters(parameters.parameters).move_as_ok();
+  block::gen::ShardStateUnsplit::Record previous;
+  CHECK(tlb::unpack_cell(load(fixture / "current-state.boc"), previous));
+  CHECK(previous.seq_no < UINT32_MAX);
+  return {b.limits, b.domain,
+      {2, 1, 1, 2, kind, config->get_global_blockchain_id(), 2, root->get_hash().bits(), parameters.instance_id},
+      b.rules, {config->get_root_cell()->get_hash().bits(), b.generator_profile, b.range_profile},
+      b.fee_profile, b.fee_effective_height, previous.seq_no + 1,
+      kind == 1 ? b.send_fee : b.collect_fee, 16, b.account_schema, b.relation_profile, b.proof_profile};
+}
+inline block::WorkchainConfidentialAccount wallet_state(const std::filesystem::path& fixture, unsigned owner) {
+  return block::decode_workchain_confidential_account(
+      account_data(load(fixture / "current-state.boc"), wallet_account(owner))).move_as_ok();
+}
+inline void save_operation(const std::filesystem::path& fixture, td::Ref<vm::Cell> candidate,
+                           std::vector<td::Bits256> accounts) {
+  accounts.push_back(td::Bits256::zero());  // Actual coordinator entry participant.
+  std::sort(accounts.begin(), accounts.end());
+  CHECK(std::adjacent_find(accounts.begin(), accounts.end()) == accounts.end());
+  block::gen::ShardStateUnsplit::Record state;
+  CHECK(tlb::unpack_cell(load(fixture / "current-state.boc"), state));
+  vm::AugmentedDictionary dictionary(vm::load_cell_slice_ref(state.accounts), 256, block::tlb::aug_ShardAccounts);
+  block::WorkchainAccountDeclarations declarations;
+  for (const auto& key : accounts) {
+    block::Account old(2, key.bits());
+    CHECK(old.unpack(dictionary.lookup(key), state.gen_utime, false));
+    CHECK(old.total_state.not_null());
+    declarations.reads.push_back({key, td::Bits256(old.total_state->get_hash().bits())});
+    declarations.writes.push_back(key);
+  }
+  save(fixture / "operation.candidate.boc", std::move(candidate));
+  save(fixture / "operation.declarations.boc",
+       block::encode_workchain_account_declarations(declarations, 3, 3).move_as_ok());
+}
+inline std::vector<td::Bits256> wallet_words(const std::string& hex) {
+  const auto bytes = td::hex_decode(hex).move_as_ok();
+  CHECK(bytes.size() % 32 == 0);
+  std::vector<td::Bits256> words;
+  for (std::size_t offset = 0; offset < bytes.size(); offset += 32) {
+    td::Bits256 value;
+    value.as_slice().copy_from(td::Slice(bytes).substr(offset, 32));
+    words.push_back(value);
+  }
+  return words;
+}
+inline void prepare_transfer(const std::filesystem::path& fixture, bool finish, unsigned kind) {
+  const auto parsed_owner = std::stoul(field(fixture / "operation.wallet.txt", "owner"));
+  CHECK(parsed_owner < 2);
+  const auto owner = static_cast<unsigned>(parsed_owner);
+  const auto env = wallet_environment(fixture, kind);
+  const auto points = wallet_words(field(fixture / "operation.points.txt", "points"));
+  auto prepared = (kind == 1 ? block::m3_test::prepare_m3_test_send(env, wallet_state(fixture, owner),
+      wallet_state(fixture, owner == 0 ? 1 : 0), UINT32_MAX, points)
+      : block::m3_test::prepare_m3_test_collect(env, wallet_state(fixture, owner), UINT32_MAX,
+          wallet_words(field(fixture / "operation.wallet.txt", "selected")), points)).move_as_ok();
+  if (finish) {
+    block::WorkchainTransferAuthorization authorization{
+        wallet_words(field(fixture / "operation.proof.txt", "commitments")),
+        wallet_words(field(fixture / "operation.proof.txt", "responses")),
+        td::hex_decode(field(fixture / "operation.proof.txt", "range_proof")).move_as_ok()};
+    save_operation(fixture, block::m3_test::finish_m3_test_transfer(prepared, std::move(authorization)).move_as_ok(),
+                   kind == 1 ? std::vector<td::Bits256>{wallet_account(0), wallet_account(1)}
+                             : std::vector<td::Bits256>{wallet_account(owner)});
+    return;
+  }
+  std::string text;
+  for (const auto& [key, value] : prepared.prover_fields) text += key + "=" + value + "\n";
+  td::write_file((fixture / "operation.statement.txt").string(), text).ensure();
+}
+}  // namespace m3_live

@@ -9,8 +9,34 @@
 #include "m3-live-config.h"
 #include "m3-live-registration.h"
 #include "m3-live-state.h"
+#include "m3-live-assertions.h"
+#include "m3-live-wallet.h"
 
 int main(int argc, char** argv) {
+  if (argc == 3 && (std::string(argv[1]) == "--send-request" || std::string(argv[1]) == "--send-finish" ||
+                   std::string(argv[1]) == "--collect-request" || std::string(argv[1]) == "--collect-finish")) {
+    vm::init_vm().ensure();
+    const std::filesystem::path fixture(argv[2]);
+    CHECK(std::filesystem::exists(fixture / ".counter-managed-v1"));
+    const std::string mode(argv[1]);
+    m3_live::prepare_transfer(fixture, mode.ends_with("finish"), mode.starts_with("--send") ? 1 : 2);
+    return 0;
+  }
+  if (argc == 3 && std::string(argv[1]) == "--test-funding-request") {
+    vm::init_vm().ensure();
+    const std::filesystem::path fixture(argv[2]);
+    CHECK(std::filesystem::exists(fixture / ".counter-managed-v1"));
+    auto bytes = td::hex_decode(m3_live::field(fixture / "seed.result.txt", "available")).move_as_ok();
+    CHECK(bytes.size() == 64);
+    block::WorkchainCiphertext available;
+    available.commitment.as_slice().copy_from(td::Slice(bytes).substr(0, 32));
+    available.handle.as_slice().copy_from(td::Slice(bytes).substr(32, 32));
+    td::Bits256 account;
+    account.as_slice().fill(0x11);
+    m3_live::save_operation(fixture, block::m3_test::encode_m3_test_funding({account, available}), {account});
+    std::cout << "Test-only block-contained funding requested; NOT M4 Deposit.\n";
+    return 0;
+  }
   if (argc == 3 && (std::string(argv[1]) == "--registration-request" ||
                     std::string(argv[1]) == "--registration-request-b" ||
                     std::string(argv[1]) == "--registration-finish")) {
@@ -54,9 +80,16 @@ int main(int argc, char** argv) {
   // Proposer input acquisition only. Validator replay must obtain authorization
   // from the resulting serialized block, never from either of these files.
   auto candidate = vm::std_boc_deserialize(
-      td::read_file_str((fixture / "registration-0.candidate.boc").string()).move_as_ok()).move_as_ok();
+      td::read_file_str((fixture / "operation.candidate.boc").string()).move_as_ok()).move_as_ok();
   auto declarations = vm::std_boc_deserialize(
-      td::read_file_str((fixture / "registration-0.declarations.boc").string()).move_as_ok()).move_as_ok();
+      td::read_file_str((fixture / "operation.declarations.boc").string()).move_as_ok()).move_as_ok();
+  const bool test_funding = block::m3_test::is_m3_test_funding(candidate);
+  unsigned transaction_count = 2;
+  if (!test_funding) {
+    const auto operation = block::decode_workchain_replay_input(candidate).move_as_ok();
+    const auto* transfer = std::get_if<block::WorkchainTransferInput>(&operation);
+    if (transfer && std::holds_alternative<block::WorkchainSendData>(transfer->data)) transaction_count = 3;
+  }
   for (const bool enabled : {false, true}) {
     const std::string name = enabled ? "enabled" : "closed";
     auto db = fixture / (name + "-db");
@@ -90,9 +123,11 @@ int main(int argc, char** argv) {
             2, block::decode_workchain_engine_parameters(binding.ingress.engine_configuration).move_as_ok().instance_id,
             enabled).ensure();
       };
-      const auto previous = "(2,8000000000000000,0):" +
-          td::hex_encode(td::read_file_str((fixture / "counter-state.rhash").string()).move_as_ok()) + ":" +
-          td::hex_encode(td::read_file_str((fixture / "counter-state.fhash").string()).move_as_ok());
+      const auto previous = std::filesystem::exists(fixture / "accepted-block.id")
+          ? td::read_file_str((fixture / "accepted-block.id").string()).move_as_ok()
+          : "(2,8000000000000000,0):" +
+              td::hex_encode(td::read_file_str((fixture / "counter-state.rhash").string()).move_as_ok()) + ":" +
+              td::hex_encode(td::read_file_str((fixture / "counter-state.fhash").string()).move_as_ok());
       std::vector<std::string> args{"test-m3-live", "-C", (fixture / "global.json").string(),
           "-D", db.string(), "-w", "2", "-T", previous,
           "--query-result", result, "--export-candidate", exported,
@@ -106,7 +141,7 @@ int main(int argc, char** argv) {
     if (waitpid(pid, &status, 0) != pid || !WIFEXITED(status) || WEXITSTATUS(status) != (enabled ? 0 : 2)) return 2;
     auto read = [&](const std::string& suffix) { return td::read_file_str(result + suffix).move_as_ok(); };
     const auto observation = read(".readiness");
-    // This initial run measures the next refusal, not successful M3 execution.
+    // Missing/unknown observation is not evidence of a closed gate.
     const std::string expected = enabled ? "phase=4\nworkchain=2\ndelivery=recorded\n"
                                          : "phase=3\nworkchain=2\ndelivery=recorded\n";
     const auto stats = read(".stats");
@@ -116,23 +151,51 @@ int main(int argc, char** argv) {
           read(".kind") != "success\n" || read("") != "collate 0\n" ||
           read(".validation.kind") != "accept\n" || read(".validation.result") != "validate accept\n" ||
           read(".validation.delivery") != "recorded\n" ||
-          stats != "delivery=recorded\nvisited=1\nadapter=1\nowners_before=1\nowners_during=2\nowners_after=1\ntransactions=2\n" ||
+          stats != "delivery=recorded\nvisited=1\nadapter=1\nowners_before=1\nowners_during=2\nowners_after=1\ntransactions=" +
+              std::to_string(transaction_count) + "\n" ||
           calls != "config=9\nexecute=2\n" || !std::filesystem::exists(exported)) {
-        std::cerr << "Unexpected enabled registration observation: " << observation << stats << calls;
+        std::cerr << "Unexpected enabled operation observation: " << observation << stats << calls;
         return 2;
       }
-      auto previous = m3_live::load(fixture / "counter-state.boc");
+      auto previous = m3_live::load(fixture / "current-state.boc");
       auto accepted = m3_live::read_accepted_step(exported, previous);
-      td::Bits256 account;
-      account.as_slice().fill(0x11);
-      block::m3_test::assert_registration(m3_live::account_data(previous, td::Bits256::zero()),
-          m3_live::account_data(accepted.state, td::Bits256::zero()),
-          m3_live::account_data(accepted.state, account)).ensure();
+      auto transaction = m3_live::accepted_transaction(accepted, td::Bits256::zero());
+      block::gen::Transaction::Record tx;
+      CHECK(tlb::unpack_cell(transaction, tx));
+      if (test_funding) {
+        block::gen::TransactionDescr::Record_trans_workchain_entry_v3 entry;
+        block::gen::UnoV2HostInput::Record host;
+        CHECK(tlb::unpack_cell(tx.description, entry) &&
+              tlb::unpack_cell(entry.input, host));
+        auto funding = block::m3_test::decode_m3_test_funding(host.candidate).move_as_ok();
+        auto before = m3_live::account_data(previous, funding.account);
+        auto after = m3_live::account_data(accepted.state, funding.account);
+        auto recomputed = block::m3_test::apply_m3_test_funding(before, funding).move_as_ok();
+        CHECK(recomputed->get_hash() == after->get_hash());
+        CHECK(block::m3_test::apply_m3_test_funding(after, funding).is_error());
+        auto record = block::decode_workchain_confidential_account(after).move_as_ok();
+        block::m3_test::assert_balance(block::m3_test::decrypt(record.available,
+            m3_live::test_secret(funding.account), 100000).move_as_ok(), 50000).ensure();
+        std::cout << "Test-only block-contained funding accepted: A=50000; NOT M4 Deposit.\n";
+      } else {
+        auto recorded = block::m3_test::replay_input_from_block(accepted.block, td::Bits256::zero(), tx.lt).move_as_ok();
+        auto replay = block::decode_workchain_replay_input(recorded).move_as_ok();
+        if (const auto* registration = std::get_if<block::WorkchainRegistrationReplayInput>(&replay)) {
+          block::m3_test::assert_registration(m3_live::account_data(previous, td::Bits256::zero()),
+              m3_live::account_data(accepted.state, td::Bits256::zero()),
+              m3_live::account_data(accepted.state, registration->context.subject.account)).ensure();
+        } else if (std::holds_alternative<block::WorkchainTransferInput>(replay)) {
+          m3_live::assert_accepted_transfer(fixture, previous, accepted);
+        } else {
+          const auto& closure = std::get<block::WorkchainClosureReplayInput>(replay);
+          m3_live::assert_accepted_closure(previous, accepted, closure.context.subject.account);
+        }
+      }
       m3_live::save(fixture / "accepted-state.boc", accepted.state);
       m3_live::save(fixture / "accepted-block.boc", accepted.block);
       td::write_file((fixture / "accepted-block.id").string(), accepted.id.to_str()).ensure();
-      std::cout << "enabled: registration accepted " << accepted.id.to_str()
-                << "; actual state registration assertions passed; NOT seven-step completion\n";
+      std::cout << "enabled: operation accepted " << accepted.id.to_str()
+                << "; actual state read back; NOT seven-step completion\n";
       continue;
     }
     const std::string expected_stats = "delivery=recorded\nvisited=1\nadapter=1\nowners_before=1\n"
@@ -147,6 +210,6 @@ int main(int argc, char** argv) {
     }
     std::cout << name << ": " << observation << read(".stats.timing") << std::flush;
   }
-  std::cout << "Paired closed registry refusal / accepted first registration; NOT live sequence acceptance.\n";
+  std::cout << "Paired closed registry refusal / accepted operation; NOT full live sequence acceptance.\n";
   return 0;
 }

@@ -4,6 +4,7 @@
 // layout must not become its precedent. Authorizations come only from input.
 
 #include "workchain-m3-business-config.h"
+#include "workchain-m3-test-funding-operation.h"
 #include "block/workchain-confidential-execution.h"
 #include "block/workchain-confidential-native.h"
 #include "block/workchain-registration-payment.h"
@@ -97,6 +98,16 @@ class M3NodeEngine final : public RegisteredWorkchainAccountEngine {
     const auto* cfg = dynamic_cast<const Configuration*>(&configuration);
     if (!cfg || td::Bits256(identity.configuration_hash.bits()) != cfg->configuration_hash)
       return local("M3 proof inspection configuration mismatch");
+    if (is_m3_test_funding(candidate)) {
+      if (!default_workchain_execution_registry().test_only_account_instance_execution_enabled(
+              cfg->descriptor.workchain_id, cfg->parameters.instance_id))
+        return local("test funding requires the same D59 instance permit");
+      TRY_RESULT(funding, decode_m3_test_funding(candidate));
+      (void)funding;
+      // No cryptographic assertion is made by assumed test funding, and no
+      // cryptographic ABI is called. Zero is not an unmetered proof bypass.
+      return 0;
+    }
     TRY_RESULT(wire, decode_candidate(candidate));
     if (std::holds_alternative<WorkchainRegistrationReplayInput>(wire))
       return workchain_registration_operations_v4().total();
@@ -155,6 +166,20 @@ class M3NodeEngine final : public RegisteredWorkchainAccountEngine {
     auto system_result = decode_workchain_coordinator_state(coordinator.data);
     if (system_result.is_error()) return local("authenticated coordinator record unavailable");
     auto system = system_result.move_as_ok();
+    if (is_m3_test_funding(host.candidate)) {
+      if (!default_workchain_execution_registry().test_only_account_instance_execution_enabled(
+              domain.workchain_id, domain.instance_id))
+        return local("test funding requires the same D59 instance permit");
+      TRY_RESULT(funding, decode_m3_test_funding(host.candidate));
+      TRY_RESULT(native, read(accounts, funding.account, clock.gen_utime, true));
+      TRY_RESULT(data, apply_m3_test_funding(native.data, funding));
+      WorkchainAccountEffects result;
+      result.updates = {{funding.account, data}, {cfg->ingress.executor_address, coordinator.data}};
+      std::sort(result.updates.begin(), result.updates.end(), [](const auto& a, const auto& b) {
+        return a.account < b.account;
+      });
+      return result;
+    }
     TRY_RESULT(wire, decode_candidate(host.candidate));
     WorkchainAccountEffects result;
     if (const auto* registration = std::get_if<WorkchainRegistrationReplayInput>(&wire)) {
