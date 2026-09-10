@@ -1049,6 +1049,7 @@ function(slice1_tol_to_boc TOL_SOURCE OUT_BOC)
     add_custom_command(
         OUTPUT ${OUT_BOC}
         COMMAND ${CMAKE_COMMAND} -E env FIFTPATH=${CMAKE_CURRENT_SOURCE_DIR}/crypto/fift/lib
+                "TOL_STDLIB=${CMAKE_CURRENT_SOURCE_DIR}/crypto/smartcont/tol-stdlib"
                 $<TARGET_FILE:tol> --boc-output ${OUT_BOC} -o ${_fif} ${TOL_SOURCE}
         COMMAND ${CMAKE_COMMAND} -E env FIFTPATH=${CMAKE_CURRENT_SOURCE_DIR}/crypto/fift/lib
                 $<TARGET_FILE:fift> ${_fif}
