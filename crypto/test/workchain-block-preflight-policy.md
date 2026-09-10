@@ -149,6 +149,13 @@ tests, not C2/C3 or live call-site evidence.
 
 ## Installation compatibility decision still required
 
+**Superseded by the approved static-consistency follow-up:** the following
+paragraph describes the 72c8e543b encoding-only state. Resolution now rejects zero
+allowance as ZeroLimit and allowance greater than hard as
+PreflightAllowanceExceedsBlockBudget. Installation applies the same pure
+compatibility check; the comparison widens hard to uint64. Equality is accepted.
+Original limitation follows for historical context.
+
 The codec intentionally represents zero and allowance>hard policies. Neither a
 positive preflight allowance nor allowance<=hard is currently enforced at
 installation. Before claiming an executable preflight profile, the installation
@@ -162,3 +169,11 @@ whose create-state path it supplies: TOS_CREATE_STATE_BINARY now checks equality
 with TARGET_FILE, rather than selecting another executable. Handwritten tag
 checks cover numeric tag values; broader Fift literal-width checking is not
 claimed by this migration.
+
+The static-consistency controls exercise both the typed factory and the real
+valid_config_data installation path. A factory-only check would not protect
+installation, which invokes validate_native_ingress_presence separately. Tests
+cover zero, hard+1, 2^32 against hard=2, UINT64_MAX, and exact equality. They do
+not claim that a production accumulator rejects a second call; that call sequence
+remains blocked. The codec still represents these values so invalid-policy
+fixtures reach the semantic check rather than failing at unrelated framing.

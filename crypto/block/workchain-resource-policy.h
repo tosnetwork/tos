@@ -40,7 +40,15 @@ inline bool workchain_batch_input_bounds_nonzero(const WorkchainResourcePolicy& 
          resources.state.max_cells && resources.state.max_bits && resources.state.max_account_cells &&
          resources.state.max_account_bits && resources.state.max_account_depth > 0 &&
          resources.work_output.max_effect_cells && resources.work_output.max_effect_bits &&
-         resources.work_output.max_output_cells && resources.work_output.max_output_bits;
+         resources.work_output.max_output_cells && resources.work_output.max_output_bits &&
+         resources.preflight_allowance;
+}
+
+// Static configuration compatibility, shared by installation and resolution.
+// Widen the uint32 threshold: narrowing the allowance could turn 2^32 into zero.
+// Equality permits one full reservation; this is not a block accumulator.
+inline bool workchain_batch_preflight_fits_block(const WorkchainResourcePolicy& resources) {
+  return resources.preflight_allowance <= static_cast<std::uint64_t>(resources.block_preflight.hard_limit);
 }
 
 inline bool workchain_batch_admission_version_supported(std::uint32_t version) {
@@ -62,6 +70,9 @@ class ResolvedBatchInputPolicy {
     }
     if (!workchain_batch_input_bounds_nonzero(resources)) {
       return ConfigInvalid{ConfigInvalidCode::ZeroLimit};
+    }
+    if (!workchain_batch_preflight_fits_block(resources)) {
+      return ConfigInvalid{ConfigInvalidCode::PreflightAllowanceExceedsBlockBudget};
     }
     if (resources.admission_version != identity.admission_version) {
       // Both fields are host-resolved configuration, never candidate data.

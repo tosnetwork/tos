@@ -415,6 +415,37 @@ TEST(WorkchainBlock, EngineConfigurationAcceptedCadence) {
   }
 }
 
+TEST(WorkchainBlock, PreflightAllowanceConsistency) {
+  block::WorkchainResourcePolicy resources{4, {64,4096,8,16,16,5},
+      {256,16384,128,8192,64}, {32,128,8192,256,16384,16}, {0,2,2}, 1};
+  auto root = vm::CellBuilder().finalize();
+  block::InputPolicyIdentity identity{root->get_hash(), false, 0x434e5431, 0, 0, 4};
+  auto classify = [&](std::uint64_t allowance) {
+    resources.preflight_allowance = allowance;
+    auto wire = block::encode_workchain_resource_policy(resources);
+    ASSERT_TRUE(wire.is_ok());
+    auto decoded = block::decode_workchain_resource_policy(wire.ok());
+    ASSERT_TRUE(decoded.is_ok());
+    ASSERT_EQ(decoded.ok().preflight_allowance, allowance);
+    return block::ResolvedBatchInputPolicy::from_resolved_fields(decoded.move_as_ok(), identity);
+  };
+  ASSERT_TRUE(std::holds_alternative<block::ResolvedBatchInputPolicy>(classify(1)));
+  auto zero = classify(0);
+  ASSERT_TRUE(std::holds_alternative<block::ConfigInvalid>(zero));
+  ASSERT_EQ(std::get<block::ConfigInvalid>(zero).code, block::ConfigInvalidCode::ZeroLimit);
+  for (std::uint64_t allowance : {std::uint64_t{3}, std::uint64_t{1} << 32, UINT64_MAX}) {
+    auto excessive = classify(allowance);
+    ASSERT_TRUE(std::holds_alternative<block::ConfigInvalid>(excessive));
+    ASSERT_EQ(std::get<block::ConfigInvalid>(excessive).code,
+              block::ConfigInvalidCode::PreflightAllowanceExceedsBlockBudget);
+  }
+  auto equal = classify(2);
+  ASSERT_TRUE(std::holds_alternative<block::ResolvedBatchInputPolicy>(equal));
+  ASSERT_EQ(std::get<block::ResolvedBatchInputPolicy>(equal).resources().preflight_allowance, 2u);
+  // Configuration equality only. The closed production call path still lacks
+  // evidence for a second call being refused after this full reservation.
+}
+
 TEST(WorkchainBlock, BatchPolicyVersionIdentityAgreement) {
   block::WorkchainResourcePolicy resources{2, {64,4096,8,16,16,5},
       {256,16384,128,8192,64}, {32,128,8192,256,16384,16}, {1, 32, 64}, 7};
@@ -9334,7 +9365,7 @@ TEST(WorkchainBlock, MultiAccountAdmissionVersionInstallation) {
     ASSERT_EQ(block::valid_config_data(configuration.get_root_cell(), td::Bits256::zero()), admission == 2 || admission == 3 || admission == 4);
   }
   // Every semantic zero is rejected at installation, before candidate admission.
-  for (unsigned field = 0; field < 12; ++field) {
+  for (unsigned field = 0; field < 13; ++field) {
     block::WorkchainResourcePolicy resources{2, {64,4096,8,16,16,5},
         {256,16384,128,8192,64}, {32,128,8192,256,16384,16}, {1, 32, 64}, 7};
     if (field == 0) resources.input.max_reads = 0;
@@ -9349,10 +9380,31 @@ TEST(WorkchainBlock, MultiAccountAdmissionVersionInstallation) {
     if (field == 9) resources.work_output.max_effect_bits = 0;
     if (field == 10) resources.work_output.max_output_cells = 0;
     if (field == 11) resources.work_output.max_output_bits = 0;
+    if (field == 12) resources.preflight_allowance = 0;
     policy.engine_configuration = block::encode_workchain_engine_parameters({400, fixture_instance, resources, business}).move_as_ok();
     ASSERT_TRUE(configuration.set_ref(td::BitArray<32>{84},
         block::encode_workchain_native_ingress_table({policy}).move_as_ok()));
     ASSERT_TRUE(!block::valid_config_data(configuration.get_root_cell(), td::Bits256::zero()));
+  }
+  // Exercise the actual installation path: it does not call the resolved-policy
+  // factory, so factory-only controls cannot establish installation rejection.
+  for (std::uint64_t allowance : {std::uint64_t{0}, std::uint64_t{1}, std::uint64_t{2},
+                                  std::uint64_t{3}, std::uint64_t{1} << 32}) {
+    block::WorkchainResourcePolicy resources{4, {64,4096,8,16,16,5},
+        {256,16384,128,8192,64}, {32,128,8192,256,16384,16}, {0,2,2}, allowance};
+    policy.engine_configuration = block::encode_workchain_engine_parameters(
+        {400, fixture_instance, resources, business}).move_as_ok();
+    ASSERT_TRUE(configuration.set_ref(td::BitArray<32>{84},
+        block::encode_workchain_native_ingress_table({policy}).move_as_ok()));
+    auto installed = block::validate_native_ingress_presence(configuration);
+    const bool valid = allowance == 1 || allowance == 2;
+    ASSERT_EQ(installed.is_ok(), valid);
+    if (allowance == 0) {
+      ASSERT_EQ(installed.error().message(), "zero multi-account input bound in configuration");
+    } else if (!valid) {
+      ASSERT_EQ(installed.error().message(), "preflight allowance exceeds block budget in configuration");
+    }
+    ASSERT_EQ(block::valid_config_data(configuration.get_root_cell(), td::Bits256::zero()), valid);
   }
   // Missing either mandatory reference is rejected by the installation gate.
   for (unsigned refs = 0; refs < 2; ++refs) {

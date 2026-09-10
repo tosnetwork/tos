@@ -110,6 +110,10 @@ Source commit: `72c8e543b367245f63d9cfa80037b239394be6c6`. Final six-control mat
 width assertions; the full all target, all 128 block cases, genesis oracle and
 six isolated controls were rerun. No blanket post-review full-CTest claim.
 
+**Superseded by the approved static-consistency follow-up:** zero and
+allowance>hard are now rejected at resolution and installation. The paragraph
+below records the earlier encoding-only limitation and is retained unchanged.
+
 Installation compatibility remains an explicit decision: the codec represents
 zero allowance and allowance greater than hard. No semantic installation
 rejection was added. The reservation contract cannot start such invocations;

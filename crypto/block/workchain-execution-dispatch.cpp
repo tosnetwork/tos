@@ -183,6 +183,9 @@ td::Status validate_native_ingress_presence(vm::Dictionary& configuration) {
       if (!workchain_batch_input_bounds_nonzero(parameters.resources)) {
         return td::Status::Error("zero multi-account input bound in configuration");
       }
+      if (!workchain_batch_preflight_fits_block(parameters.resources)) {
+        return td::Status::Error("preflight allowance exceeds block budget in configuration");
+      }
       // Business parameters remain opaque here and are validated by the engine.
     }
   }
