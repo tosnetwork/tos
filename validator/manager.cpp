@@ -2495,34 +2495,38 @@ void ValidatorManagerImpl::try_validator_consensus_db_cleanup() {
     return validator_groups_.contains(session) || next_validator_groups_.contains(session);
   };
   auto reserved = validator_cleanup_manager_.begin_eligible_deletes(
-      gc_id, ancestor_or_equal_of_gc, gc_shard_catchain_seqno, is_live, kValidatorConsensusCleanupBudget);
+      gc_id, ancestor_or_equal_of_gc, gc_shard_catchain_seqno, is_live, kValidatorConsensusCleanupBudget,
+      kValidatorConsensusCleanupScanBudget, kValidatorConsensusCleanupMaxOutstanding);
   for (const auto &item : reserved) {
     auto session = item.record.session_id;
     auto generation = item.generation;
+    auto attempt = item.attempt_id;
     // NOTE (B2-8c): this filesystem delete runs synchronously on the manager actor
-    // thread. Before enabling the gate it must be dispatched to a worker so a large
-    // or slow deletion cannot stall consensus processing; on_delete_completed is
-    // then called from the worker's completion, never from dispatch. While the gate
-    // is off this code does not run.
+    // thread, and is reported as completed inline. Before enabling the gate it must
+    // be dispatched to a worker so a large or slow deletion cannot stall consensus
+    // processing; on_delete_completed must then be called ONLY from the worker's
+    // real completion (never on a timeout), carrying the same (generation,
+    // attempt_id) token. While the gate is off this code does not run.
     bool gone = consensus::delete_validator_consensus_db(db_root_, session, item.record.dir_name);
     // On a confirmed delete, dispatch the durable record erase; the reservation is
     // released and the record dropped ONLY when that erase is acknowledged
     // (validator_cleanup_erase_acked), so a crash between delete and erase leaves a
     // record that a later pass reconciles.
     validator_cleanup_manager_.on_delete_completed(
-        session, generation, gone, [this](const ValidatorSessionId &s, td::uint64 g) {
+        session, generation, attempt, gone, [this](const ValidatorSessionId &s, td::uint64 g, td::uint64 a) {
           td::actor::send_closure(db_, &Db::erase_pending_validator_consensus_db_cleanup, s,
-                                  [SelfId = actor_id(this), s, g](td::Result<td::Unit> R) {
+                                  [SelfId = actor_id(this), s, g, a](td::Result<td::Unit> R) {
                                     R.ensure();
                                     td::actor::send_closure(SelfId, &ValidatorManagerImpl::validator_cleanup_erase_acked,
-                                                            s, g);
+                                                            s, g, a);
                                   });
         });
   }
 }
 
-void ValidatorManagerImpl::validator_cleanup_erase_acked(ValidatorSessionId session_id, td::uint64 generation) {
-  validator_cleanup_manager_.on_erase_acknowledged(session_id, generation);
+void ValidatorManagerImpl::validator_cleanup_erase_acked(ValidatorSessionId session_id, td::uint64 generation,
+                                                         td::uint64 attempt_id) {
+  validator_cleanup_manager_.on_erase_acknowledged(session_id, generation, attempt_id);
 }
 
 td::actor::Task<> ValidatorManagerImpl::finish_start_up() {

@@ -284,9 +284,15 @@ class ValidatorManagerImpl : public ValidatorManager {
   // the post-genesis soak and manager-level acceptance evidence) is the only
   // change that turns on live validator-directory deletion.
   static constexpr bool kValidatorConsensusCleanupEnabled = false;
-  // Max directory deletions attempted per cleanup pass, so a large backlog cannot
+  // Max directory deletions dispatched per cleanup pass, so a large backlog cannot
   // make a single manager turn do unbounded filesystem work.
   static constexpr size_t kValidatorConsensusCleanupBudget = 16;
+  // Max records examined per cleanup pass (bounds scan cost on a big backlog; the
+  // round-robin cursor still covers all records over successive passes).
+  static constexpr size_t kValidatorConsensusCleanupScanBudget = 256;
+  // Max concurrent in-flight (Deleting+Erasing) cleanup operations across passes,
+  // bounding outstanding filesystem/erase work once deletion runs asynchronously.
+  static constexpr size_t kValidatorConsensusCleanupMaxOutstanding = 64;
 
  private:
   // MASTERCHAIN LAST BLOCK
@@ -611,9 +617,9 @@ class ValidatorManagerImpl : public ValidatorManager {
   // builds the GC-snapshot oracles, deletes eligible directories, and erases their
   // durable records. A no-op while kValidatorConsensusCleanupEnabled is false.
   void try_validator_consensus_db_cleanup();
-  // The durable erase for a completed validator-DB cleanup (session, generation)
-  // committed: release the adapter reservation and drop the record.
-  void validator_cleanup_erase_acked(ValidatorSessionId session_id, td::uint64 generation);
+  // The durable erase for a completed validator-DB cleanup (session, generation,
+  // attempt_id) committed: release the adapter reservation and drop the record.
+  void validator_cleanup_erase_acked(ValidatorSessionId session_id, td::uint64 generation, td::uint64 attempt_id);
   td::actor::Task<> finish_start_up();
   td::actor::Task<> start_up_advance_mc();
 

@@ -667,15 +667,17 @@ TEST(ValidatorCleanup, cleanup_manager_enforces_adapter_invariants) {
     ASSERT_TRUE(m.is_delete_in_flight(sid));  // reserved/fenced during the async delete
     erased.clear();
     uint64_t erase_gen = 0;
-    m.on_delete_completed(batch[0].record.session_id, batch[0].generation, /*confirmed_gone=*/true,
-                          [&](const tos::ValidatorSessionId& s, uint64_t g) {
+    uint64_t erase_attempt = 0;
+    m.on_delete_completed(batch[0].record.session_id, batch[0].generation, batch[0].attempt_id, /*confirmed_gone=*/true,
+                          [&](const tos::ValidatorSessionId& s, uint64_t g, uint64_t a) {
                             erased.insert(s.to_hex());
                             erase_gen = g;
+                            erase_attempt = a;
                           });
     ASSERT_TRUE(erased.count(sid.to_hex()) == 1);
     ASSERT_TRUE(m.is_delete_in_flight(sid));                // reservation HELD until the erase is acked
     ASSERT_EQ(m.pending_count(), static_cast<size_t>(1));   // record NOT dropped yet
-    m.on_erase_acknowledged(sid, erase_gen);
+    m.on_erase_acknowledged(sid, erase_gen, erase_attempt);
     ASSERT_TRUE(!m.is_delete_in_flight(sid));
     ASSERT_EQ(m.pending_count(), static_cast<size_t>(0));   // dropped only after the durable ack
   }
@@ -719,8 +721,9 @@ TEST(ValidatorCleanup, cleanup_manager_enforces_adapter_invariants) {
     auto batch = m.begin_eligible_deletes(gc, ancestor_ok, cc_past, not_live, 10);
     ASSERT_EQ(batch.size(), static_cast<size_t>(1));
     bool erase_dispatched = false;
-    m.on_delete_completed(batch[0].record.session_id, batch[0].generation, /*confirmed_gone=*/false,
-                          [&](const tos::ValidatorSessionId&, uint64_t) { erase_dispatched = true; });
+    m.on_delete_completed(batch[0].record.session_id, batch[0].generation, batch[0].attempt_id,
+                          /*confirmed_gone=*/false,
+                          [&](const tos::ValidatorSessionId&, uint64_t, uint64_t) { erase_dispatched = true; });
     ASSERT_TRUE(!erase_dispatched);  // no durable erase on an unconfirmed delete
     ASSERT_TRUE(!m.is_delete_in_flight(sid));
     ASSERT_EQ(m.pending_count(), static_cast<size_t>(1));
@@ -738,27 +741,34 @@ TEST(ValidatorCleanup, cleanup_manager_enforces_adapter_invariants) {
   }
 
   // --- Operation-token binding: a completion or erase-ack for the WRONG generation
-  // must not act on the current entry. ---
+  // OR the WRONG attempt must not act on the current entry. ---
   {
     ValidatorCleanupManager m;
     m.on_loaded_at_startup(rec);  // retired_generation 0
     auto batch = m.begin_eligible_deletes(gc, ancestor_ok, cc_past, not_live, 10);
     ASSERT_EQ(batch.size(), static_cast<size_t>(1));
     auto gen = batch[0].generation;
+    auto att = batch[0].attempt_id;
     bool wrong_erase = false;
-    // Stale delete completion (wrong generation) -> ignored; entry stays Deleting.
-    m.on_delete_completed(sid, gen + 1, /*confirmed_gone=*/true,
-                          [&](const tos::ValidatorSessionId&, uint64_t) { wrong_erase = true; });
+    auto record_erase = [&](const tos::ValidatorSessionId&, uint64_t, uint64_t) { wrong_erase = true; };
+    // Wrong generation, and wrong attempt -> both ignored; entry stays Deleting.
+    m.on_delete_completed(sid, gen + 1, att, /*confirmed_gone=*/true, record_erase);
+    m.on_delete_completed(sid, gen, att + 1, /*confirmed_gone=*/true, record_erase);
     ASSERT_TRUE(!wrong_erase);
     ASSERT_TRUE(m.is_delete_in_flight(sid));
     ASSERT_EQ(m.pending_count(), static_cast<size_t>(1));
-    // Correct completion -> dispatches erase; then a WRONG-generation erase ack is
-    // ignored, and the correct one drops the record.
+    // Correct completion -> dispatches erase; then WRONG-generation and WRONG-attempt
+    // erase acks are ignored, and only the correct one drops the record.
     uint64_t erase_gen = 0;
-    m.on_delete_completed(sid, gen, true, [&](const tos::ValidatorSessionId&, uint64_t g) { erase_gen = g; });
-    m.on_erase_acknowledged(sid, erase_gen + 1);  // wrong gen -> ignored
+    uint64_t erase_att = 0;
+    m.on_delete_completed(sid, gen, att, true, [&](const tos::ValidatorSessionId&, uint64_t g, uint64_t a) {
+      erase_gen = g;
+      erase_att = a;
+    });
+    m.on_erase_acknowledged(sid, erase_gen + 1, erase_att);  // wrong gen -> ignored
+    m.on_erase_acknowledged(sid, erase_gen, erase_att + 1);  // wrong attempt -> ignored
     ASSERT_EQ(m.pending_count(), static_cast<size_t>(1));
-    m.on_erase_acknowledged(sid, erase_gen);  // correct
+    m.on_erase_acknowledged(sid, erase_gen, erase_att);  // correct
     ASSERT_EQ(m.pending_count(), static_cast<size_t>(0));
   }
 }
@@ -787,13 +797,87 @@ TEST(ValidatorCleanup, cleanup_manager_retries_fairly) {
     auto batch = m.begin_eligible_deletes(gc, ancestor_ok, cc_past, not_live, /*budget=*/2);
     for (const auto& r : batch) {
       attempted.insert(r.record.session_id.to_hex());
-      m.on_delete_completed(r.record.session_id, r.generation, /*confirmed_gone=*/false,
-                            [](const tos::ValidatorSessionId&, uint64_t) {});
+      m.on_delete_completed(r.record.session_id, r.generation, r.attempt_id, /*confirmed_gone=*/false,
+                            [](const tos::ValidatorSessionId&, uint64_t, uint64_t) {});
     }
   }
   // ceil(5/2)=3 passes suffice to touch all 5 under round-robin; a begin-anchored
   // scan would have attempted only 2.
   ASSERT_EQ(attempted.size(), static_cast<size_t>(kRecords));
+}
+
+// A late startup load (block application can create/retire a group before the
+// load callback returns) must NOT overwrite a runtime incarnation with
+// generation-0/closed=true.
+TEST(ValidatorCleanup, startup_load_does_not_overwrite_runtime_incarnation) {
+  auto gc = make_checkpoint(500);
+  auto ancestor_ok = [](const tos::BlockIdExt&) { return true; };
+  auto cc_past = [](tos::ShardIdFull s) -> std::optional<tos::CatchainSeqno> {
+    return s == kShard ? std::optional<tos::CatchainSeqno>{10} : std::nullopt;
+  };
+  auto not_live = [](const tos::ValidatorSessionId&) { return false; };
+  auto rec = make_record(1, 100);
+  auto sid = rec.session_id;
+
+  // Runtime incarnation retired but NOT yet closed; then a late load arrives.
+  {
+    ValidatorCleanupManager m;
+    m.on_group_created(sid);
+    auto gen = m.on_group_retired(rec);   // closed == false
+    m.on_loaded_at_startup(rec);          // late load -> must be ignored (runtime wins)
+    // If the load had overwritten the entry to closed=true it would be eligible now.
+    ASSERT_TRUE(m.begin_eligible_deletes(gc, ancestor_ok, cc_past, not_live, 10).empty());
+    // The real incarnation's close makes it eligible -- proving the retained entry
+    // is the runtime one awaiting close, not an overwritten closed=true load.
+    m.on_close_confirmed(sid, gen);
+    ASSERT_EQ(m.begin_eligible_deletes(gc, ancestor_ok, cc_past, not_live, 10).size(), static_cast<size_t>(1));
+  }
+
+  // A live (created, not retired) session: a late load must not create a pending
+  // entry for it at all.
+  {
+    ValidatorCleanupManager m;
+    m.on_group_created(sid);
+    m.on_loaded_at_startup(rec);
+    ASSERT_EQ(m.pending_count(), static_cast<size_t>(0));
+  }
+}
+
+// begin_eligible_deletes bounds both the entries examined per pass (scan_budget)
+// and the total concurrent in-flight reservations across passes (max_outstanding),
+// independently of the per-pass dispatch budget.
+TEST(ValidatorCleanup, cleanup_manager_bounds_scan_and_outstanding) {
+  auto gc = make_checkpoint(500);
+  auto ancestor_ok = [](const tos::BlockIdExt&) { return true; };
+  auto cc_past = [](tos::ShardIdFull s) -> std::optional<tos::CatchainSeqno> {
+    return s == kShard ? std::optional<tos::CatchainSeqno>{10} : std::nullopt;
+  };
+  auto not_live = [](const tos::ValidatorSessionId&) { return false; };
+
+  // scan_budget=1 with two eligible records and a large dispatch budget: only ONE
+  // entry is examined, so only one is reserved (unbounded scan would reserve both).
+  {
+    ValidatorCleanupManager m;
+    m.on_loaded_at_startup(make_record(1, 100));
+    m.on_loaded_at_startup(make_record(2, 100));
+    auto b = m.begin_eligible_deletes(gc, ancestor_ok, cc_past, not_live, /*dispatch*/ 10, /*scan*/ 1);
+    ASSERT_EQ(b.size(), static_cast<size_t>(1));
+  }
+
+  // max_outstanding=2 with five eligible records and a large dispatch budget: the
+  // first pass reserves 2; a second pass (nothing completed) reserves 0 because the
+  // outstanding cap is reached (unbounded would reserve all 5 in one pass).
+  {
+    ValidatorCleanupManager m;
+    for (int i = 0; i < 5; i++) {
+      m.on_loaded_at_startup(make_record(static_cast<unsigned char>(i), 100));
+    }
+    auto a = m.begin_eligible_deletes(gc, ancestor_ok, cc_past, not_live, /*dispatch*/ 10, /*scan*/ 1000,
+                                      /*max_outstanding*/ 2);
+    ASSERT_EQ(a.size(), static_cast<size_t>(2));
+    auto b = m.begin_eligible_deletes(gc, ancestor_ok, cc_past, not_live, 10, 1000, 2);
+    ASSERT_TRUE(b.empty());  // outstanding == max -> none reserved
+  }
 }
 
 // Generation bookkeeping must not grow with historical session churn, and a
@@ -820,8 +904,9 @@ TEST(ValidatorCleanup, cleanup_manager_reclaims_generation_state) {
     m.on_close_confirmed(sid, gen);
     auto batch = m.begin_eligible_deletes(gc, ancestor_ok, cc_past, not_live, 100);
     for (const auto& r : batch) {
-      m.on_delete_completed(r.record.session_id, r.generation, /*confirmed_gone=*/true,
-                            [&m](const tos::ValidatorSessionId& s, uint64_t g) { m.on_erase_acknowledged(s, g); });
+      m.on_delete_completed(
+          r.record.session_id, r.generation, r.attempt_id, /*confirmed_gone=*/true,
+          [&m](const tos::ValidatorSessionId& s, uint64_t g, uint64_t a) { m.on_erase_acknowledged(s, g, a); });
     }
   }
   ASSERT_EQ(m.pending_count(), static_cast<size_t>(0));
