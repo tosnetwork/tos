@@ -2340,10 +2340,10 @@ void ValidatorManagerImpl::started(ValidatorManagerInitResult R) {
                                                     R.move_as_ok());
                           });
 
-  // Load validator-group cleanup records (Finding 1) into shadow state. This load
-  // is independent of the startup/sweep chain above and gates nothing: no path
-  // consults pending_validator_db_cleanup_ yet. It only establishes the durable
-  // persistence round trip; checkpoint-bound deletion from it is a later step.
+  // Load validator-group cleanup records (Finding 1) into the cleanup adapter.
+  // This load is independent of the startup/sweep chain above; it feeds
+  // validator_cleanup_manager_ and attempts a cleanup pass that is a no-op while
+  // deletion is gated off (kValidatorConsensusCleanupEnabled == false).
   td::actor::send_closure(
       db_, &Db::get_pending_validator_consensus_db_cleanup,
       [SelfId = actor_id(this)](td::Result<std::vector<consensus::PendingValidatorConsensusDbCleanup>> R) {
