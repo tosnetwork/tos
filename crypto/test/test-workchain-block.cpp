@@ -60,6 +60,19 @@ struct AllowsImplicitAccountPathMode<Cell, std::void_t<decltype(block::lookup_wo
 static_assert(!AllowsImplicitAccountPathMode<td::Ref<vm::Cell>>::value,
               "Account lookup callers must explicitly choose Read or Replace");
 
+TEST(WorkchainBlock, SystemStateRegistration) {
+  auto first = block::checked_increment_workchain_registered_accounts(0);
+  ASSERT_TRUE(first.is_ok());
+  ASSERT_EQ(first.ok(), 1u);
+  auto last = block::checked_increment_workchain_registered_accounts(UINT64_MAX - 1);
+  ASSERT_TRUE(last.is_ok());
+  ASSERT_EQ(last.ok(), UINT64_MAX);
+  auto overflow = block::checked_increment_workchain_registered_accounts(last.ok());
+  ASSERT_TRUE(overflow.is_error());
+  ASSERT_EQ(overflow.error().message(), "registered_accounts overflow");
+  ASSERT_EQ(last.ok(), UINT64_MAX);
+}
+
 TEST(WorkchainBlock, CoordinatorStateLayout) {
   block::WorkchainCoordinatorState input{1, {1, UINT64_MAX, UINT64_MAX, UINT16_MAX}};
   auto encoded = block::encode_workchain_coordinator_state(input);

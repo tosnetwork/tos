@@ -50,4 +50,14 @@ inline td::Result<WorkchainCoordinatorState> decode_workchain_coordinator_state(
   return WorkchainCoordinatorState{static_cast<std::uint16_t>(record.layout_version), std::move(system)};
 }
 
+// Checked scalar operation only. The host determines which registrations were
+// admitted; validator transition derivation remains independent. Account closure
+// must not decrement registered_accounts. This helper does not commit a state.
+inline td::Result<std::uint64_t> checked_increment_workchain_registered_accounts(std::uint64_t count) {
+  if (count == UINT64_MAX) {
+    return td::Status::Error("registered_accounts overflow");
+  }
+  return count + 1;  // Checked above: count is strictly below UINT64_MAX.
+}
+
 }  // namespace block
