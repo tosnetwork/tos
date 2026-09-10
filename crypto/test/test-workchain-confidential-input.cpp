@@ -1,5 +1,6 @@
 #include "block/workchain-confidential-input.h"
 #include "workchain-m3-business-config.h"
+#include "workchain-m3-genesis-fixture.h"
 #include <limits>
 #include "td/utils/tests.h"
 #include "vm/boc.h"
@@ -456,4 +457,44 @@ TEST(ConfidentialInput, TestBusinessParametersExactCodec) {
   auto wide = decode_m3_test_business_parameters(encode_m3_test_business_parameters(value).move_as_ok()).move_as_ok();
   ASSERT_EQ(wide.send_fee, UINT64_MAX); ASSERT_EQ(wide.limits.max_balance, UINT64_MAX);
   ASSERT_EQ(wide.limits.max_collect, std::numeric_limits<std::size_t>::max());
+}
+
+TEST(ConfidentialInput, TestGenesisUsesParam84Payload) {
+  using namespace block;
+  using namespace block::m3_test;
+  std::array<unsigned char, 80> domain; domain.fill(0x2a);
+  M3TestBusinessParameters business{{1000000, 10000, 8, 1024, 4096}, domain, 11, 17,
+      {number(1), number(2), number(3)}, number(4), number(5), number(6), 100, 1, 1, 2};
+  WorkchainResourcePolicy resources{4, {64,4096,8,16,16,5}, {256,16384,128,8192,64},
+      {32,128,8192,256,16384,16}, {0,2,2}, 1};
+  WorkchainNativeIngressPolicy ingress;
+  ingress.workchain_id=2; ingress.engine_key=uno_v2_workchain_engine_key();
+  ingress.vm_mode=17; ingress.descriptor_version=2; ingress.executor_address=number(77);
+  ingress.custody_address=number(78);
+  WorkchainCoordinatorState coordinator{2, {1,1234,0,0}, 0};
+  auto make = [&](const auto& value, const auto& identity) {
+    return make_m3_test_genesis_cells(value, resources, 400, number(9), 123, identity, coordinator);
+  };
+  auto cells=make(business,ingress).move_as_ok();
+  auto table=decode_workchain_native_ingress_table(cells.param84).move_as_ok();
+  ASSERT_EQ(table.size(),1u);
+  auto policy=table.at(2);
+  ASSERT_EQ(policy.executor_address,number(77)); ASSERT_EQ(*policy.custody_address,number(78));
+  ASSERT_EQ(policy.engine_configuration->get_hash(),cells.engine_configuration->get_hash());
+  auto engine=decode_workchain_engine_parameters(policy.engine_configuration).move_as_ok();
+  ASSERT_EQ(engine.instance_id,number(9)); ASSERT_EQ(engine.registration_deposit,123u);
+  ASSERT_EQ(engine.k_accepted_target_rate_ms,400u);
+  ASSERT_EQ(engine.parameters->get_hash(),cells.business_parameters->get_hash());
+  auto decoded=decode_m3_test_business_parameters(engine.parameters).move_as_ok();
+  ASSERT_EQ(decoded.send_fee,11u); ASSERT_EQ(decoded.collect_fee,17u); ASSERT_EQ(decoded.domain,domain);
+  auto initial=decode_workchain_coordinator_state(cells.coordinator_data).move_as_ok();
+  ASSERT_EQ(initial.system.base_compute,1234u); ASSERT_EQ(initial.system.registered_accounts,0u);
+  ASSERT_EQ(initial.system.system_pending_count,0u); ASSERT_EQ(initial.refundable_deposits,0u);
+  auto changed=business; ++changed.send_fee;
+  auto changed_cells=make(changed,ingress).move_as_ok();
+  ASSERT_TRUE(changed_cells.param84->get_hash()!=cells.param84->get_hash());
+  ASSERT_EQ(changed_cells.coordinator_data->get_hash(),cells.coordinator_data->get_hash());
+  auto replaced=make(business,policy);
+  ASSERT_TRUE(replaced.is_error());
+  ASSERT_EQ(replaced.error().message(),"M3 test fixture refuses to replace an existing engine configuration");
 }
