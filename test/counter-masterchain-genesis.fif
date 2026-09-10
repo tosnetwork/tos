@@ -14,19 +14,12 @@ Bhashu constant base_fhash
 hashu constant base_rhash
 base_rhash base_fhash now 0 0 0 0 add-std-workchain
 
-variable counter_genesis_descriptor
 // basic:1 active:1 accept_msgs:1, thirteen reserved zero bits. This isolated
 // network registers a serving Counter engine; production has no such engine.
-{ <b x{a6} s, 5 roll 32 u, 4 roll 8 u, 3 roll 8 u, rot 8 u, x{e000} s,
-  3 roll 256 u, rot 256 u, 0 32 u, x{1} s, 0x434e5431 32 i, 0 64 u, b>
-  dup isWorkchainDescr? not abort"invalid Counter descriptor"
-  dup counter_genesis_descriptor !
-  <s swap workchain-dict @ 32 idict!+ 0= abort"duplicate Counter workchain"
-  workchain-dict !
-} : add-counter-workchain
+
 "counter-state.rhash" file>B 256 B>u@
 "counter-state.fhash" file>B 256 B>u@
-now 0 0 0 2 add-counter-workchain
+now 0 0 0 2 0xe000 0x434e5431 add-basic-workchain drop
 config.workchains!
 // Explicit development profile and empty Counter business parameters, encoded
 // through the same generated shell type and identity derivation as production.

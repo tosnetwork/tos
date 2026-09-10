@@ -72,7 +72,7 @@ Bhashu dup constant unostate0_fhash
 hashu dup constant unostate0_rhash
 256 u>B "unostate0" +suffix +".rhash" B>file
 "uno-genesis-config.fif" include
-unostate0_rhash unostate0_fhash now 0 0 0 2 add-uno-genesis-workchain
+unostate0_rhash unostate0_fhash now 0 0 0 2 0xc000 uno_genesis_engine_key add-basic-workchain uno_genesis_descriptor !
 config.workchains!
 
 // Version 0.5 validator-led genesis balances. The 100,000-TOS main wallet is

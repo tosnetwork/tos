@@ -131,17 +131,12 @@ wc_master setworkchain
 
 0 mkemptyShardState
 
-{{ <b x{{a7}} s, 5 roll 32 u, 4 roll 8 u, 3 roll 8 u, rot 8 u, x{{e000}} s,
-  3 roll 256 u, rot 256 u, 0 32 u, x{{1}} s, -1 32 i, 0 64 u, x{{0}} s, 20 32 u, 20 32 u, 10 32 u, 1000 32 u, 0 8 u, b>
-  dup isWorkchainDescr? not abort"invalid WorkchainDescr created"
-  <s swap workchain-dict @ 32 idict!+ 0= abort"cannot add workchain"
-  workchain-dict !
-}} : add-std-workchain-v2
+
 
 dup dup 31 boc+>B dup "basestate0.boc" B>file
 Bhashu dup =: basestate0_fhash 256 u>B "basestate0.fhash" B>file
 hashu dup =: basestate0_rhash 256 u>B "basestate0.rhash" B>file
-basestate0_rhash basestate0_fhash now {monitor_min_split} {split} dup 0 add-std-workchain-v2
+basestate0_rhash basestate0_fhash now {monitor_min_split} {split} dup 0 0xe000 -1 add-basic-workchain-v2 drop
 
 {counter_workchain_config}{uno_workchain_config}config.workchains!
 
