@@ -33,8 +33,10 @@ No transaction, export or live visitor counts are fabricated by this fixture.
 No candidate carrier is needed here: these decisions only consume authenticated
 configuration resolution, and do not acquire or interpret candidate input.
 
-B-2 execution results and source hash chains are archived separately after the
-prepared source commit. The first compiler stop (explicit CSlice conversion)
+B-2 is complete: five isolated mutants each fail only the specified one of
+four cases (1311, 1310, 1320, 1331, 1341); all restored cases and both registered
+CTest runs pass. Source-bound records are in
+`doc/measurements/uno-validator-prepared-decisions/`, pinned to `9eff940be`. The first compiler stop (explicit CSlice conversion)
 is development evidence, not a guard result.
 
 ## X-1: mechanisms checked in implementation, not inferred from filenames
