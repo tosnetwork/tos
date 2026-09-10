@@ -312,8 +312,33 @@ void ValidatorManagerImpl::sync_complete(td::Promise<td::Unit> promise) {
 
 void ValidatorManagerImpl::validate_fake(BlockCandidate candidate, std::vector<BlockIdExt> prev, BlockIdExt last,
                                          td::Ref<block::ValidatorSet> val_set) {
+  if (!query_result_path_.empty()) {
+    td::write_file(query_result_path_ + ".validation.delivery", "pending\n").ensure();
+  }
   auto P = td::PromiseCreator::lambda([SelfId = actor_id(this), c = candidate.clone(), prev, last,
-                                       val_set](td::Result<ValidateCandidateResult> R) mutable {
+                                       val_set, result_path = query_result_path_](td::Result<ValidateCandidateResult> R) mutable {
+    // Disk-tool observation only. Preserve the terminal variant before moving
+    // it or logging: a local error and CandidateReject are different outcomes,
+    // even though this tool exits with status 2 for both. Never overwrite the
+    // collator sidecars when successful collation proceeds to validation.
+    if (!result_path.empty()) {
+      const auto prefix = result_path + ".validation";
+      auto record = [&](td::Slice kind, td::Slice result, td::Slice message) {
+        td::write_file(prefix + ".kind", kind).ensure();
+        td::write_file(prefix + ".result", result).ensure();
+        td::write_file(prefix + ".message", message).ensure();
+        // Last write confirms the result callback was received and all three
+        // typed fields were persisted; absence is not a zero-work observation.
+        td::write_file(prefix + ".delivery", "recorded\n").ensure();
+      };
+      if (R.is_error()) {
+        record("error\n", PSLICE() << "validate " << R.error().code() << "\n", R.error().message());
+      } else {
+        R.ok().visit(td::overloaded(
+            [&](const CandidateAccept&) { record("accept\n", "validate accept\n", td::Slice{}); },
+            [&](const CandidateReject& reject) { record("reject\n", "validate reject\n", reject.reason); }));
+      }
+    }
     if (R.is_ok()) {
       auto v = R.move_as_ok();
       v.visit(td::overloaded(
