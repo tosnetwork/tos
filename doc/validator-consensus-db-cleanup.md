@@ -64,7 +64,8 @@ The central invariant:
 A cleanup record authorizes deletion only when **both** hold:
 
 ```
-record.retirement_checkpoint <= durable_safe_cleanup_checkpoint
+record.retirement_checkpoint is the safe checkpoint, OR a VERIFIED ANCESTOR of
+    it on the accepted masterchain
 AND
 session_id is not currently live/recreatable
 ```
@@ -73,9 +74,16 @@ The first is the real, durable safety basis. The second is defense-in-depth
 (the group map may not be fully reconstructed yet at startup, so it cannot be
 the primary basis).
 
+**The comparison is ancestry, not `<=`.** `BlockIdExt::operator<` is a
+structural/lexicographic ordering that includes hashes (`tos/tos-types.h:280`),
+not chain ancestry. Using `<=` on it is wrong. Eligibility must mean
+`retirement == safe` or `retirement` is a verified ancestor of `safe` on the
+accepted masterchain; **unknown ancestry or a different branch must fail
+closed** (retain, do not delete).
+
 ```cpp
 can_delete_validator_db(record) =
-    record.retirement_checkpoint <= cleanup_safe_checkpoint
+    is_ancestor_or_equal(record.retirement_checkpoint, cleanup_safe_checkpoint)
     && !current_validator_sessions.contains(record.session_id);
 ```
 
@@ -137,8 +145,9 @@ Crash after persist => restart still has the record => delete authority is
 re-derivable => no orphan.
 
 **Phase C — become eligible.** A record becomes `DELETE_ELIGIBLE` when
-`durable_safe_cleanup_checkpoint >= record.retirement_checkpoint` and the
-session is not live (see eligibility above).
+`record.retirement_checkpoint` is a verified ancestor of (or equal to)
+`durable_safe_cleanup_checkpoint` and the session is not live (see the
+ancestry-based eligibility above — not a `<=` on `BlockIdExt`).
 
 **Phase D — confirmed delete + dequeue.** `RocksDb::destroy` + `rmrf`, then the
 record is removed **only** after the directory is confirmed gone by `stat`
@@ -148,7 +157,9 @@ and the dequeue is persisted.
 ## durable_safe_cleanup_checkpoint
 
 Meaning: the node has durably advanced to this checkpoint, and any old validator
-session whose `retirement_checkpoint <= it` can never again be legally created.
+session whose `retirement_checkpoint` is an ancestor of (or equal to) it can
+never again be legally created. See amendment 1 below for the concrete durable
+signal and the application-durability-vs-replay-floor distinction.
 
 ```
 retirement_checkpoint = MC block N
@@ -259,11 +270,19 @@ never drop a cleanup record merely because its fence was pruned.
 
 ## Two-PR split
 
-**PR A — persistent state machine only, deletion authority NOT widened.**
+**PR A — persistent state machine only, strictly observational (shadow state).**
 `PendingValidatorConsensusDbCleanup` record + checkpoint fields, persistence
 APIs, startup loading, `durable_safe_cleanup_checkpoint` computation, and tests.
-Validator sweep still behaves exactly as #72 (no new deletions). This proves the
-checkpoint state machine does not perturb validator creation/rotation.
+The split is only real if PR A changes **nothing** that validator behavior
+depends on: **no change to fence (`destroyed_validator_sessions_`) contents or
+pruning, to session selection, to destroy scheduling, or to sweep inputs.** The
+fence is consulted at group creation (`manager.cpp:2824/2889`) and is itself the
+deletion authority in the existing sweep (`manager.cpp:2370`), so the fence-prune
+change (below) is **deferred to PR B**, not PR A. The new records/checkpoint are
+shadow state that baseline code never reads. Baseline validator decisions are
+left unchanged (this preserves baseline behavior; it does not by itself prove the
+baseline is fully safe — and "byte-for-byte" is not claimed, since PR A adds real
+persistence and asynchronous work).
 
 **PR B — enable validator cleanup.** Enqueue-before-destroy retirement, startup
 eligible sweep, runtime confirmed dequeue, and the full fault-injection matrix.
@@ -311,3 +330,97 @@ session is permanently retired; and remove the record only after `ENOENT`
 confirms the physical delete — so the validator-group orphan is genuinely closed
 without ever trading "may leave a stale directory" for "may occasionally delete a
 live validator DB".
+
+## Codex directional review outcome (v5) — binding amendments before PR A
+
+A read-only Codex review against source returned **"sound to implement:
+yes-with-changes"**. The split architecture is correct; the following six
+amendments are binding and must be reflected in the code (and tests) before PR A
+is considered done. Inline sections above already carry the two most load-bearing
+corrections (ancestry comparison; PR A = shadow state).
+
+**1. `durable_safe_cleanup_checkpoint` needs a concrete durable protocol, not a
+property statement.** The usable durable signal is the **post-`set_applied()`
+handle flush that persists `dbf_applied` for the exact masterchain block id**
+(`apply-block.cpp:309`); the archive serializes the handle and acknowledges after
+a `sync=true` transaction commit (`archive-slice.cpp:343`, `RocksDb.cpp:549`).
+`is_applied()` on an in-memory handle is **not** sufficient, and `applied_stored()`
+is not a separately persisted flag (`block-handle.cpp:34`, `archive-slice.cpp:469`).
+But application durability is **not** the same as "where startup resumes":
+startup loads the persisted init pointer and walks backward across unapplied
+handles (`manager-init.cpp:334/359`). So the protocol must be: (a) durable
+application of checkpoint C, (b) a durable replay anchor at C or a proven
+descendant, (c) rollback enforcement below the authorized floor. Do **not** await
+application inside a path that withholds `new_block`'s acknowledgement (that would
+wait on application which itself needs that acknowledgement).
+
+**2. Fork/rollback: ancestry + an enforceable rollback floor.** Eligibility is
+ancestry (amendment above), failing closed on unknown/foreign branches. Startup
+can truncate for a hardfork or explicit request (`manager-init.cpp:400/423`) and
+StateDb rewrites the init pointer backward (`statedb.cpp:448`). A monotonic
+watermark alone cannot restore a DB already deleted at safe=100 if startup then
+resumes at 98. Pick one policy: (a) an enforced durable cleanup/replay floor that
+**rejects incompatible rollback before validation resumes**; or (b) a
+conservative existing boundary — the **persisted GC checkpoint** — with
+durable-applied + ancestry validation (hardfork startup requires its predecessor
+at/above GC, `manager-init.cpp:411`; StateDb truncation checks GC is not above the
+target, `statedb.cpp:430`). Policy (b) sacrifices cleanup latency but reuses a
+proven boundary; it is **not** equivalent to taking the max init checkpoint.
+
+**3. Separate stop/close from delete (PR B).** The manager already releases actor
+ownership into a retained list and sends `destroy` only from persistence
+callbacks (`manager.cpp:2951/2995`; synced batch ack `statedb.cpp:121`,
+`RocksDb.cpp:558`), so persist-before-destroy is achievable without blocking
+`update_shards()`. **But `destroy()` unconditionally stops the bus, closes the DB,
+waits for actors, and then removes the directory** with no eligibility check or
+completion ack (`bridge.cpp:334/501`). Literal `persist -> destroy -> delete`
+would therefore delete before Phase C whenever the safe checkpoint lags
+retirement. Required: a **stop/close-without-delete** operation, then
+eligibility-controlled deletion with a confirmed-completion ack back to the
+manager. Track retiring/stopping actors as owners until closure completes —
+**absence from `validator_groups_`/`next_validator_groups_` does not prove the DB
+is closed** (entries disappear before the async stop completes). The rotated
+callback sends `updated_init_block` and actor-destroy to different actors and
+awaits neither (`manager.cpp:3003`); the protocol must not infer cross-actor
+completion from those sends.
+
+**4. Startup needs a side-effect-free selection-only pass.** Groups do not
+precede the current sweep — order is recovered-state -> tombstones -> sweep ->
+`finish_start_up` -> `new_masterchain_block` -> `update_shards`
+(`manager.cpp:2303/2343/2421`). But creation and selection are interleaved inside
+`update_shards()` (`manager.cpp:2784` create, `2865` start), so populated group
+maps cannot supply the "live/recreatable" set at sweep time. Extract a
+**side-effect-free computation of potentially recreatable current AND next
+session ids** and await metadata/eligibility before the sweep. Do **not** treat
+sessions omitted by the tombstone filter as proven non-recreatable, and an empty
+map from validation gating or unavailable local keys is **not** permanent
+retirement proof (`manager.cpp:2806/2880/3521`).
+
+**5. PR A must be strictly observational.** (Captured inline in the two-PR split
+section.) No change to fence contents/pruning, selection, destroy scheduling, or
+sweep inputs; the fence-prune rewrite moves to PR B. The fence is read at creation
+(`manager.cpp:2824/2889`) and is the deletion authority in the existing sweep
+(`manager.cpp:2370`), and current pruning erases the captured set
+(`manager.cpp:3064`); retaining fences longer would both suppress recreation and
+widen what the unchanged sweep deletes — so none of that may move in PR A.
+
+**6. Non-rotated retention + record-driven reconciliation.** The non-rotated path
+persists tombstones without advancing init (`manager.cpp:3012`), so for retirement
+R>C with the floor stuck at C the record must stay **ineligible** (conditional
+liveness: retain until a verified replay/rollback floor passes R; retry when it
+advances). Do **not** assign retirement=C, and do **not** promote safe to the
+latest applied R while startup still selects C — either substitutes premature
+deletion for retention. Reconcile by **iterating records**, not only existing
+directories: a crash after removal but before dequeue leaves an absent-directory
+record that a directory walk (`manager.cpp:2362`) would never discover.
+
+### PR A acceptance (amended)
+
+Name the post-applied handle-flush acknowledgement as the durable-applied signal;
+define the ancestry comparison and fail-closed rule; choose and document the
+enforceable rollback-floor policy (2a or 2b); keep all new state observational
+(defer fence-pruning and lifecycle changes to PR B); implement the selection-only
+startup reconstruction without using tombstones as proof; define non-rotated
+retention/progress and record-driven (not directory-driven) reconciliation. Tests
+must exercise backward init, alternate branches, application-flush crashes, and
+delayed actor shutdown — not merely helper predicates.
