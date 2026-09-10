@@ -611,6 +611,9 @@ class ValidatorManagerImpl : public ValidatorManager {
   // builds the GC-snapshot oracles, deletes eligible directories, and erases their
   // durable records. A no-op while kValidatorConsensusCleanupEnabled is false.
   void try_validator_consensus_db_cleanup();
+  // The durable erase for a completed validator-DB cleanup (session, generation)
+  // committed: release the adapter reservation and drop the record.
+  void validator_cleanup_erase_acked(ValidatorSessionId session_id, td::uint64 generation);
   td::actor::Task<> finish_start_up();
   td::actor::Task<> start_up_advance_mc();
 

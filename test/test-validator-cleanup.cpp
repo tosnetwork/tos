@@ -652,12 +652,13 @@ TEST(ValidatorCleanup, cleanup_manager_enforces_adapter_invariants) {
   auto not_live = [](const tos::ValidatorSessionId&) { return false; };
   auto live = [](const tos::ValidatorSessionId&) { return true; };
   std::set<std::string> erased;
-  auto erase = [&](const tos::ValidatorSessionId& s) { erased.insert(s.to_hex()); };
 
   auto rec = make_record(1, 100);  // shard kShard, cc 7
   auto sid = rec.session_id;
 
-  // --- Startup-loaded obsolete record: eligible -> reserved -> confirmed -> erased. ---
+  // --- Startup-loaded obsolete record: eligible -> reserved -> confirmed delete ->
+  // durable erase dispatched (reservation still held, record NOT dropped) -> erase
+  // acknowledged -> record dropped and reservation released. ---
   {
     ValidatorCleanupManager m;
     m.on_loaded_at_startup(rec);
@@ -665,10 +666,18 @@ TEST(ValidatorCleanup, cleanup_manager_enforces_adapter_invariants) {
     ASSERT_EQ(batch.size(), static_cast<size_t>(1));
     ASSERT_TRUE(m.is_delete_in_flight(sid));  // reserved/fenced during the async delete
     erased.clear();
-    m.on_delete_completed(sid, /*confirmed_gone=*/true, erase);
-    ASSERT_TRUE(!m.is_delete_in_flight(sid));
+    uint64_t erase_gen = 0;
+    m.on_delete_completed(batch[0].record.session_id, batch[0].generation, /*confirmed_gone=*/true,
+                          [&](const tos::ValidatorSessionId& s, uint64_t g) {
+                            erased.insert(s.to_hex());
+                            erase_gen = g;
+                          });
     ASSERT_TRUE(erased.count(sid.to_hex()) == 1);
-    ASSERT_EQ(m.pending_count(), static_cast<size_t>(0));
+    ASSERT_TRUE(m.is_delete_in_flight(sid));                // reservation HELD until the erase is acked
+    ASSERT_EQ(m.pending_count(), static_cast<size_t>(1));   // record NOT dropped yet
+    m.on_erase_acknowledged(sid, erase_gen);
+    ASSERT_TRUE(!m.is_delete_in_flight(sid));
+    ASSERT_EQ(m.pending_count(), static_cast<size_t>(0));   // dropped only after the durable ack
   }
 
   // --- Generation-scoped closure: a stale close ack (older incarnation) does NOT
@@ -702,16 +711,18 @@ TEST(ValidatorCleanup, cleanup_manager_enforces_adapter_invariants) {
     ASSERT_TRUE(m.begin_eligible_deletes(gc, ancestor_ok, cc_past, live, 10).empty());
   }
 
-  // --- Unconfirmed delete: reservation cleared, record retained, eligible again. ---
+  // --- Unconfirmed delete: no erase dispatched, reservation cleared (back to
+  // Pending), record retained, eligible again. ---
   {
     ValidatorCleanupManager m;
     m.on_loaded_at_startup(rec);
     auto batch = m.begin_eligible_deletes(gc, ancestor_ok, cc_past, not_live, 10);
     ASSERT_EQ(batch.size(), static_cast<size_t>(1));
-    erased.clear();
-    m.on_delete_completed(sid, /*confirmed_gone=*/false, erase);
+    bool erase_dispatched = false;
+    m.on_delete_completed(batch[0].record.session_id, batch[0].generation, /*confirmed_gone=*/false,
+                          [&](const tos::ValidatorSessionId&, uint64_t) { erase_dispatched = true; });
+    ASSERT_TRUE(!erase_dispatched);  // no durable erase on an unconfirmed delete
     ASSERT_TRUE(!m.is_delete_in_flight(sid));
-    ASSERT_TRUE(erased.empty());
     ASSERT_EQ(m.pending_count(), static_cast<size_t>(1));
     // Retried next pass.
     ASSERT_EQ(m.begin_eligible_deletes(gc, ancestor_ok, cc_past, not_live, 10).size(), static_cast<size_t>(1));
@@ -725,6 +736,31 @@ TEST(ValidatorCleanup, cleanup_manager_enforces_adapter_invariants) {
     ASSERT_TRUE(m.begin_eligible_deletes(gc, ancestor_ok, cc_past, not_live, 10).empty());  // already in flight
     ASSERT_TRUE(m.is_delete_in_flight(sid));
   }
+
+  // --- Operation-token binding: a completion or erase-ack for the WRONG generation
+  // must not act on the current entry. ---
+  {
+    ValidatorCleanupManager m;
+    m.on_loaded_at_startup(rec);  // retired_generation 0
+    auto batch = m.begin_eligible_deletes(gc, ancestor_ok, cc_past, not_live, 10);
+    ASSERT_EQ(batch.size(), static_cast<size_t>(1));
+    auto gen = batch[0].generation;
+    bool wrong_erase = false;
+    // Stale delete completion (wrong generation) -> ignored; entry stays Deleting.
+    m.on_delete_completed(sid, gen + 1, /*confirmed_gone=*/true,
+                          [&](const tos::ValidatorSessionId&, uint64_t) { wrong_erase = true; });
+    ASSERT_TRUE(!wrong_erase);
+    ASSERT_TRUE(m.is_delete_in_flight(sid));
+    ASSERT_EQ(m.pending_count(), static_cast<size_t>(1));
+    // Correct completion -> dispatches erase; then a WRONG-generation erase ack is
+    // ignored, and the correct one drops the record.
+    uint64_t erase_gen = 0;
+    m.on_delete_completed(sid, gen, true, [&](const tos::ValidatorSessionId&, uint64_t g) { erase_gen = g; });
+    m.on_erase_acknowledged(sid, erase_gen + 1);  // wrong gen -> ignored
+    ASSERT_EQ(m.pending_count(), static_cast<size_t>(1));
+    m.on_erase_acknowledged(sid, erase_gen);  // correct
+    ASSERT_EQ(m.pending_count(), static_cast<size_t>(0));
+  }
 }
 
 // Generation bookkeeping must not grow with historical session churn, and a
@@ -737,7 +773,6 @@ TEST(ValidatorCleanup, cleanup_manager_reclaims_generation_state) {
     return s == kShard ? std::optional<tos::CatchainSeqno>{10} : std::nullopt;
   };
   auto not_live = [](const tos::ValidatorSessionId&) { return false; };
-  auto erase = [](const tos::ValidatorSessionId&) {};
 
   // Full lifecycle for many distinct sessions; after each completes, NO per-session
   // bookkeeping should remain. If the live-generation map were kept per session
@@ -752,7 +787,8 @@ TEST(ValidatorCleanup, cleanup_manager_reclaims_generation_state) {
     m.on_close_confirmed(sid, gen);
     auto batch = m.begin_eligible_deletes(gc, ancestor_ok, cc_past, not_live, 100);
     for (const auto& r : batch) {
-      m.on_delete_completed(r.session_id, /*confirmed_gone=*/true, erase);
+      m.on_delete_completed(r.record.session_id, r.generation, /*confirmed_gone=*/true,
+                            [&m](const tos::ValidatorSessionId& s, uint64_t g) { m.on_erase_acknowledged(s, g); });
     }
   }
   ASSERT_EQ(m.pending_count(), static_cast<size_t>(0));

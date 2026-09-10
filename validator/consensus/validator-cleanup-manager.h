@@ -35,6 +35,13 @@
 // wired to call this and the gate is flipped (B2-8b/B2-8c).
 namespace tos::validator::consensus {
 
+// A record reserved for deletion, with its incarnation generation as the operation
+// token the caller threads back through completion.
+struct ReservedValidatorDelete {
+  PendingValidatorConsensusDbCleanup record;
+  uint64_t generation = 0;
+};
+
 class ValidatorCleanupManager {
  public:
   // Records loaded from durable storage at a fresh startup. Before any group is
@@ -44,7 +51,7 @@ class ValidatorCleanupManager {
   // a later on_group_created bumps it and drops the record.
   void on_loaded_at_startup(PendingValidatorConsensusDbCleanup record) {
     auto session = record.session_id;
-    pending_[session] = Entry{std::move(record), /*retired_generation=*/0, /*closed=*/true, /*in_flight=*/false};
+    pending_[session] = Entry{std::move(record), /*retired_generation=*/0, /*closed=*/true, EntryState::Pending};
   }
 
   // A group (initial creation or reopen) for `session` is about to be created. The
@@ -78,7 +85,7 @@ class ValidatorCleanupManager {
     } else {
       gen = ++next_generation_;
     }
-    pending_[session] = Entry{std::move(record), gen, /*closed=*/false, /*in_flight=*/false};
+    pending_[session] = Entry{std::move(record), gen, /*closed=*/false, EntryState::Pending};
     return gen;
   }
 
@@ -93,59 +100,80 @@ class ValidatorCleanupManager {
     }
   }
 
-  // True while a delete has been dispatched but not completed for `session`. The
-  // group-creation path MUST refuse/defer creating a group for it until the delete
-  // completes, so a reopen can never race an in-flight delete of the same
-  // directory.
+  // True while a delete (or its durable erase) is in progress for `session`. The
+  // reservation is held from delete dispatch through the durable-erase ack, so the
+  // group-creation path MUST refuse/defer creating a group for it that whole time
+  // -- a reopen can never race an in-flight delete of the same directory.
   bool is_delete_in_flight(const ValidatorSessionId& session) const {
     auto it = pending_.find(session);
-    return it != pending_.end() && it->second.in_flight;
+    return it != pending_.end() && it->second.state != EntryState::Pending;
   }
 
-  // Select up to `delete_budget` eligible records, RESERVE them (mark in-flight),
-  // and return them for the caller to delete asynchronously. Eligibility is the
+  // Select up to `delete_budget` eligible records, RESERVE them (Pending ->
+  // Deleting), and return each with its incarnation generation as an operation
+  // token. The caller deletes each directory asynchronously and MUST thread the
+  // (session, generation) back through on_delete_completed / on_erase_acknowledged,
+  // so a stale completion cannot act on a replacement entry. Eligibility is the
   // four-condition gate with is_closed taken from this adapter's per-incarnation
-  // closure. A reserved session is fenced against reopen until on_delete_completed.
-  std::vector<PendingValidatorConsensusDbCleanup> begin_eligible_deletes(
-      const BlockIdExt& gc_checkpoint, const CleanupAncestorOfGcFn& ancestor_or_equal_of_gc,
-      const GcShardCatchainSeqnoFn& gc_shard_catchain_seqno, const CleanupSessionIsLiveFn& is_live,
-      size_t delete_budget) {
-    std::vector<PendingValidatorConsensusDbCleanup> reserved;
+  // closure.
+  std::vector<ReservedValidatorDelete> begin_eligible_deletes(const BlockIdExt& gc_checkpoint,
+                                                              const CleanupAncestorOfGcFn& ancestor_or_equal_of_gc,
+                                                              const GcShardCatchainSeqnoFn& gc_shard_catchain_seqno,
+                                                              const CleanupSessionIsLiveFn& is_live,
+                                                              size_t delete_budget) {
+    std::vector<ReservedValidatorDelete> reserved;
     for (auto& [session, entry] : pending_) {
       if (reserved.size() >= delete_budget) {
         break;
       }
-      if (entry.in_flight) {
-        continue;  // already being deleted
+      if (entry.state != EntryState::Pending) {
+        continue;  // already being deleted/erased
       }
       auto is_closed = [&entry](const ValidatorSessionId&) { return entry.closed; };
       if (!validator_cleanup_eligible(entry.record, gc_checkpoint, ancestor_or_equal_of_gc, gc_shard_catchain_seqno,
                                       is_live, is_closed)) {
         continue;
       }
-      entry.in_flight = true;
-      reserved.push_back(entry.record);
+      entry.state = EntryState::Deleting;
+      reserved.push_back(ReservedValidatorDelete{entry.record, entry.retired_generation});
     }
     return reserved;
   }
 
-  // Report the result of a dispatched delete. Clears the in-flight reservation.
-  // On confirmed removal, durably erases (via the injected callback) and drops the
-  // entry; otherwise the entry is retained for a later retry. Because reopen is
-  // fenced while in-flight, the entry's incarnation cannot have changed, so the
-  // erase is bound to the retiring record. An unknown session (already dropped) is
-  // a no-op.
-  void on_delete_completed(const ValidatorSessionId& session, bool confirmed_gone,
-                           const std::function<void(const ValidatorSessionId&)>& erase_record) {
+  // Report the result of a dispatched delete for the operation identified by
+  // (session, generation). Rejected unless the entry still exists, its incarnation
+  // matches `generation`, and it is in the Deleting state -- so a stale completion
+  // (e.g. for an incarnation replaced despite the fence) cannot act on a newer
+  // entry. On confirmed removal, DISPATCH the durable erase (via the injected
+  // callback) and move to Erasing; the reservation is NOT released and the record
+  // is NOT dropped until on_erase_acknowledged. On unconfirmed removal, return to
+  // Pending for a later retry.
+  void on_delete_completed(const ValidatorSessionId& session, uint64_t generation, bool confirmed_gone,
+                           const std::function<void(const ValidatorSessionId&, uint64_t)>& dispatch_durable_erase) {
     auto it = pending_.find(session);
-    if (it == pending_.end()) {
+    if (it == pending_.end() || it->second.retired_generation != generation ||
+        it->second.state != EntryState::Deleting) {
+      return;  // stale / replaced / not in flight -> ignore
+    }
+    if (confirmed_gone) {
+      it->second.state = EntryState::Erasing;
+      dispatch_durable_erase(session, generation);
+    } else {
+      it->second.state = EntryState::Pending;  // retry on a later pass
+    }
+  }
+
+  // The durable erase for the operation (session, generation) has been acknowledged
+  // as committed. Only now is the record dropped and the reservation released.
+  // Rejected unless the entry still matches that incarnation and is in Erasing, so
+  // a late erase ack cannot remove a replacement record.
+  void on_erase_acknowledged(const ValidatorSessionId& session, uint64_t generation) {
+    auto it = pending_.find(session);
+    if (it == pending_.end() || it->second.retired_generation != generation ||
+        it->second.state != EntryState::Erasing) {
       return;
     }
-    it->second.in_flight = false;
-    if (confirmed_gone) {
-      erase_record(session);
-      pending_.erase(it);
-    }
+    pending_.erase(it);
   }
 
   size_t pending_count() const {
@@ -160,11 +188,16 @@ class ValidatorCleanupManager {
   }
 
  private:
+  // Pending: retired, not yet being reclaimed. Deleting: a filesystem delete is in
+  // flight. Erasing: the directory is confirmed gone and the durable record erase
+  // is in flight. The reservation (is_delete_in_flight) is held in Deleting and
+  // Erasing; the entry is dropped only after the erase is acknowledged.
+  enum class EntryState { Pending, Deleting, Erasing };
   struct Entry {
     PendingValidatorConsensusDbCleanup record;
     uint64_t retired_generation = 0;
     bool closed = false;
-    bool in_flight = false;
+    EntryState state = EntryState::Pending;
   };
   std::map<ValidatorSessionId, Entry> pending_;
   // Incarnation token of each currently-live session (created, not yet retired).
