@@ -729,6 +729,15 @@ target_link_libraries(test-workchain-confidential-transition PRIVATE tos_block t
 tos_test(test-workchain-confidential-transition)
 set_tests_properties(test-workchain-confidential-transition PROPERTIES TIMEOUT 30 LABELS "workchain;m3")
 
+if(TOS_UNO_CRYPTO_NODE_LINK)
+  add_executable(test-workchain-confidential-execution ../test/test-td-main.cpp test/test-workchain-confidential-execution.cpp)
+  target_link_libraries(test-workchain-confidential-execution PRIVATE tos_block tos_crypto)
+  target_compile_definitions(test-workchain-confidential-execution PRIVATE
+    UNO_M3_VECTORS="${PROJECT_SOURCE_DIR}/crypto/test/workchain-m3-vectors")
+  tos_test(test-workchain-confidential-execution)
+  set_tests_properties(test-workchain-confidential-execution PROPERTIES TIMEOUT 60 LABELS "workchain;m3;real-crypto")
+endif()
+
 add_executable(test-workchain-account-closure ../test/test-td-main.cpp test/test-workchain-account-closure.cpp)
 target_link_libraries(test-workchain-account-closure PRIVATE tos_block tos_crypto)
 if(TOS_UNO_CRYPTO_NODE_LINK)

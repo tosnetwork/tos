@@ -1,6 +1,8 @@
 #include "block/workchain-confidential-transition.h"
 #include "block/workchain-transfer-statement.h"
+#include "block/workchain-confidential-execution.h"
 #include "td/utils/tests.h"
+#include "td/utils/misc.h"
 
 TEST(ConfidentialTransition, CheckedCountersAndStaleRetry) {
   block::WorkchainConfidentialAccount account{};
@@ -45,4 +47,38 @@ TEST(ConfidentialTransition, OldStatementBindsRevisionAndDestination) {
   statement.available_revision=9;
   ++statement.destination_key_epoch;
   ASSERT_TRUE(block::hash_workchain_transfer_old_statement(1,statement).move_as_ok()!=original.ok());
+}
+
+TEST(ConfidentialTransition, HistoricalFailureNonceAndExpiry) {
+  using namespace block;
+  auto zero=td::Bits256::zero();
+  auto one=zero; one.as_slice()[31]=1;
+  auto two=zero; two.as_slice()[31]=2;
+  auto key_bytes=td::hex_decode("e2f2ae0a6abc4e71a884a961c500515f58e30b6aa582dd8db6a65945e08d2d76").move_as_ok();
+  td::Bits256 key; key.as_slice().copy_from(key_bytes);
+  WorkchainConfidentialAccount a{1,1,2,3,zero,{2,one,zero},{zero,zero,zero},
+      {10,0,one},key,0,{zero,zero},7,9,{},WorkchainAccountActive{}};
+  auto b=a; b.address.account=two;
+  WorkchainTransferEnvironment env{{10000,100,16,1024,4096},{},
+      {2,1,1,2,1,3,2,zero,zero},{zero,zero,zero},{zero,zero,zero},zero,0,100,3,16,1,1,2};
+  WorkchainTransferClaims claims{a.address,7,9,0,100,3};
+  WorkchainTransferData data=WorkchainSendData{claims,b.address,0,{zero,zero},{zero,zero,zero},zero};
+  auto id=derive_workchain_operation_id({3,zero,zero},a.address,1,7).move_as_ok();
+  WorkchainTransferInput input{id,data,{}};
+  WorkchainHistoricalConfidentialAccount source{std::optional{a}},target{std::optional{b}};
+  auto prepared=prepare_workchain_transfer_statement(env,input,source,target);
+  ASSERT_TRUE(prepared.is_ok()); ASSERT_EQ(prepared.ok().context.size(),427u);
+  ASSERT_EQ(prepared.ok().points.size(),10u);
+  // Equal expiry height is valid, strictly greater is not.
+  ++env.height;
+  ASSERT_EQ(prepare_workchain_transfer_statement(env,input,source,target).error().code(),-7200);
+  --env.height;
+  WorkchainHistoricalConfidentialAccount unavailable{td::Status::Error("historical account not loaded")};
+  ASSERT_EQ(prepare_workchain_transfer_statement(env,input,unavailable,target).error().code(),-7201);
+  auto advanced=a; ++advanced.auth_nonce;
+  WorkchainHistoricalConfidentialAccount already_consumed{std::optional{advanced}};
+  auto retry=prepare_workchain_transfer_statement(env,input,already_consumed,target);
+  ASSERT_TRUE(retry.is_error());
+  ASSERT_EQ(retry.error().message(),"confidential nonce or available revision mismatch");
+  ASSERT_EQ(retry.error().code(),-7200);
 }
