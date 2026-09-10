@@ -1,0 +1,57 @@
+[
+  {
+    "path": "scripts/build-tos-service-native-registry-v1.sh",
+    "sha256": "f55f3f89fad7482de54bb662d26f36366267c7ebe953d1fbe2cae561d3db5616",
+    "unchanged_from_parent": true
+  },
+  {
+    "path": "scripts/build-tos-service-stablecoin-escrow-v1.sh",
+    "sha256": "a02d10532cc4a57a1a0680a39c2f3add0aee19faed4b6031b9af9f817bc58d69",
+    "unchanged_from_parent": true
+  },
+  {
+    "path": "scripts/build-tos-service-stablecoin-escrow-v2.sh",
+    "sha256": "36d4bb0f370adf22ff3b1fd5faed4656f2bc57c3477b6bddd187c8a8bdce7dfb",
+    "unchanged_from_parent": true
+  },
+  {
+    "path": "scripts/build-nominator-pool-v1.sh",
+    "sha256": "679602142574a86d5ae7770ba7affbabdda80bfe5761e29b2c3cf896ff9c088c",
+    "unchanged_from_parent": true
+  },
+  {
+    "path": "scripts/build-local-stablecoin-fixture.sh",
+    "sha256": "3d2287887b95140c19ce065855899b8a9532bc32118e1adbbe67ff0a12c96d2f",
+    "unchanged_from_parent": true
+  },
+  {
+    "path": "crypto/smartcont/tos-service-native-registry-v1.boc.base64",
+    "sha256": "e5ae9e284844a939b3a944269f4a8a8b49574d1075acb94b5bafd08fad91e0b5",
+    "unchanged_from_parent": true
+  },
+  {
+    "path": "crypto/smartcont/tos-service-native-registry-v1.release.json",
+    "sha256": "a5f5202215ba7e69001322ea8d9acfc931e9313c31d2748f34679e58adf7375d",
+    "unchanged_from_parent": true
+  },
+  {
+    "path": "crypto/smartcont/tos-service-stablecoin-escrow-v1.boc.base64",
+    "sha256": "f25c4112585ec296679d4d66f4b1d68ec4dab76b84169e5de4e29d3dee056c66",
+    "unchanged_from_parent": true
+  },
+  {
+    "path": "crypto/smartcont/tos-service-stablecoin-escrow-v1.release.json",
+    "sha256": "ff7994de6789599a4b131556cb294324b82e8075f33f97a43e7ffa9908da1511",
+    "unchanged_from_parent": true
+  },
+  {
+    "path": "crypto/smartcont/tos-service-stablecoin-escrow-v2.boc.base64",
+    "sha256": "3ab16d0f9bd8118d7f6ff5c079dee2c32aef9edf11c8a3ab8cb644a28b708610",
+    "unchanged_from_parent": true
+  },
+  {
+    "path": "crypto/smartcont/tos-service-stablecoin-escrow-v2.release.json",
+    "sha256": "9247facfcf98977f93647bf79fb2db12e6ee6b4b8149105542f77a5a61d5f4d8",
+    "unchanged_from_parent": true
+  }
+]

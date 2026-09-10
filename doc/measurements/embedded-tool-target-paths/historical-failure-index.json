@@ -1,0 +1,8 @@
+{
+  "source_archive": "doc/measurements/uno-merged-default-build",
+  "log_sha256": "f5c2aa7e6a2d853502ee3744d9cb7a0633a7c0d53f3b1dd9c2c0e564dc8f015c",
+  "observed_errors": [
+    "required compiler is unavailable: /tmp/uno-merged-default-source/build/crypto/func",
+    "required compiler is unavailable: /tmp/uno-merged-default-source/build/crypto/func"
+  ]
+}
