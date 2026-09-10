@@ -1,4 +1,23 @@
-# Borrowed balance verification ABI v2 and system encryption ABI v1
+# Borrowed balance verification ABI v2 and independent v1 entries
+
+## Registration key possession v1
+
+`uno_crypto_verify_key_possession_v1` accepts a fixed-field
+`UnoCryptoKeyPossessionRequestV1`, not a new balance relation. The 64-byte
+proof is canonical Ristretto `R[32] || z[32]` (canonical little-endian scalar).
+It verifies `zP = R + cH`, with nonidentity P/R and the existing Pedersen
+blinding generator H. The challenge is SHA-512 reduced modulo the scalar
+order over `TOS/UNO/REGISTER/KEY-POSSESSION/v1` followed by global_id,
+genesis_hash, workchain_id, account, incarnation, asset, custody, policy,
+schema_version, relation_profile, proof_profile, key_epoch, public_key, R.
+All integers are fixed-width big-endian; ABI padding is never hashed.
+The host must independently check address/configuration bindings. Knowledge
+of s does not prove its origin or independence from Native signing secrets;
+independent key generation is wallet discipline, not a chain-verifiable claim.
+This entry has not undergone D34 relation-family review. Correspondence tests
+are not a reliability argument. Rotation is not authorized by this entry.
+
+## Existing interfaces
 
 This is a native process interface, not a TL-B constructor, network proof
 profile or M0 freeze. Balance versions 0 and 1 are retired; the library exports

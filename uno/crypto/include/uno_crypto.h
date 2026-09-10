@@ -34,6 +34,28 @@ typedef uint32_t UnoCryptoStatus;
 #endif // __cplusplus
 
 /**
+ * Public registration context, not native struct bytes in the transcript.
+ * The host independently matches these fields to the address and configuration.
+ */
+typedef struct {
+  uint32_t abi_version;
+  int32_t global_id;
+  uint8_t genesis_hash[32];
+  int32_t workchain_id;
+  uint8_t account[32];
+  uint8_t incarnation[32];
+  uint8_t asset[32];
+  uint8_t custody[32];
+  uint8_t policy[32];
+  uint16_t schema_version;
+  uint16_t relation_profile;
+  uint16_t proof_profile;
+  uint32_t key_epoch;
+  uint8_t public_key[32];
+  uint8_t proof[64];
+} UnoCryptoKeyPossessionRequestV1;
+
+/**
  * Fixed-width encoded public inputs. Numeric policy and domain provenance
  * must be resolved by the host; ABI version is not a network activation gate.
  */
@@ -81,6 +103,15 @@ typedef struct {
 #ifdef __cplusplus
 extern "C" {
 #endif // __cplusplus
+
+/**
+ * Verify registration possession, not a new balance relation.
+ *
+ * # Safety
+ * Request must be initialized, aligned, readable and unchanged until return.
+ * No pointer is retained. Span checks cannot establish allocation validity.
+ */
+uint32_t uno_crypto_verify_key_possession_v1(const UnoCryptoKeyPossessionRequestV1 *request);
 
 /**
  * Construct a public system ciphertext. Output is untouched unless successful.

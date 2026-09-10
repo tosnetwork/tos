@@ -390,9 +390,10 @@ target_include_directories(src_parser PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_S
 target_link_libraries(src_parser PUBLIC tos_crypto_core)
 
 add_library(tos_block STATIC ${BLOCK_SOURCE})
-target_sources(tos_block PRIVATE block/workchain-proof-backend.cpp block/workchain-instance-identity.cpp)
+target_sources(tos_block PRIVATE block/workchain-proof-backend.cpp block/workchain-instance-identity.cpp
+  block/workchain-registration-proof.cpp)
 if (TOS_UNO_CRYPTO_NODE_LINK)
-  set_source_files_properties(block/workchain-proof-backend.cpp PROPERTIES
+  set_source_files_properties(block/workchain-proof-backend.cpp block/workchain-registration-proof.cpp PROPERTIES
     COMPILE_DEFINITIONS TOS_CONFIDENTIAL_PROOF_BACKEND_LINKED)
   target_link_libraries(tos_block PUBLIC confidential-crypto-kernel)
 endif()
@@ -707,7 +708,21 @@ endif()
 # A generated constructor changing must invalidate its hand-written Fift consumer.
 add_executable(test-workchain-confidential-state ../test/test-td-main.cpp test/test-workchain-confidential-state.cpp)
 target_link_libraries(test-workchain-confidential-state PRIVATE tos_block tos_crypto)
-add_test(NAME test-workchain-confidential-state COMMAND test-workchain-confidential-state)
+tos_test(test-workchain-confidential-state)
+set_tests_properties(test-workchain-confidential-state PROPERTIES TIMEOUT 30 LABELS "workchain;m3")
+
+add_executable(test-workchain-registration-refund ../test/test-td-main.cpp test/test-workchain-registration-refund.cpp)
+target_link_libraries(test-workchain-registration-refund PRIVATE tos_block tos_crypto)
+tos_test(test-workchain-registration-refund)
+set_tests_properties(test-workchain-registration-refund PROPERTIES TIMEOUT 30 LABELS "workchain;m3")
+
+add_executable(test-workchain-registration-proof ../test/test-td-main.cpp test/test-workchain-registration-proof.cpp)
+target_link_libraries(test-workchain-registration-proof PRIVATE tos_block tos_crypto)
+if(TOS_UNO_CRYPTO_NODE_LINK)
+  target_compile_definitions(test-workchain-registration-proof PRIVATE TOS_CONFIDENTIAL_PROOF_BACKEND_LINKED)
+endif()
+tos_test(test-workchain-registration-proof)
+set_tests_properties(test-workchain-registration-proof PROPERTIES TIMEOUT 30 LABELS "workchain;m3")
 
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 add_test(NAME test-workchain-handwritten-tags COMMAND ${Python3_EXECUTABLE}
