@@ -1,5 +1,6 @@
 #include "block/workchain-registration-proof.h"
 #include "block/workchain-registration.h"
+#include "block/workchain-registration-payment.h"
 #include "td/utils/tests.h"
 #include "td/utils/misc.h"
 #include <algorithm>
@@ -51,6 +52,63 @@ TEST(RegistrationProof, RustPossessionVectorAndHostBinding) {
   ASSERT_EQ(old.payer_balance, 100u);
   ASSERT_EQ(old.coordinator.system.registered_accounts, 0u);
   ASSERT_EQ(old.coordinator.refundable_deposits, 0u);
+  // Actual Native final-import acquisition: message value is consumed once,
+  // while the coordinator gains the same value and locks it in the sub-bucket.
+  block::WorkchainResourcePolicy resources{4, {64,4096,8,16,16,5},
+      {256,16384,128,8192,64}, {32,128,8192,256,16384,16}, {0,2,2},1};
+  auto config=block::encode_workchain_engine_parameters({400,policy.instance,resources,
+      vm::CellBuilder().finalize(),10});
+  ASSERT_TRUE(config.is_ok());
+  block::WorkchainNativeIngressPolicy ingress;
+  ingress.workchain_id=2; ingress.engine_key={block::WorkchainFormat::Basic,0x554e4f32};
+  ingress.vm_mode=17; ingress.descriptor_version=2;
+  ingress.executor_address=fill(9); ingress.engine_configuration=config.ok();
+  block::WorkchainExecutionDescriptor descriptor;
+  descriptor.workchain_id=2; descriptor.active=true; descriptor.vm_version=0x554e4f32;
+  descriptor.vm_mode=17; descriptor.version=2;
+  auto envelope_for=[&](long long amount,const td::Bits256& sender,const td::Bits256& recipient) {
+    vm::CellBuilder cb;
+    cb.store_long(4,4).store_long(4,3).store_long(0,8).store_bits(sender.bits(),256)
+      .store_long(4,3).store_long(2,8).store_bits(recipient.bits(),256);
+    ASSERT_TRUE(block::CurrencyCollection(amount).store(cb));
+    // ihr_fee=0, fwd_fee=0, created_lt/time, absent init, body by reference.
+    cb.store_long(0,4).store_long(0,4).store_long(1,64).store_long(1,32)
+      .store_long(0,1).store_long(1,1).store_ref(cell.ok());
+    auto message=cb.finalize();
+    block::tlb::MsgEnvelope::Record_std rec{0x60,0x60,td::make_refint(0),message,{},{}};
+    td::Ref<vm::Cell> envelope;
+    ASSERT_TRUE(tlb::pack_cell(envelope,rec));
+    return std::make_pair(envelope,td::Bits256(message->get_hash().bits()));
+  };
+  auto payment=envelope_for(10,fill(8),ingress.executor_address);
+  td::Result<block::WorkchainNativeInboxPlan> inbox{block::WorkchainNativeInboxPlan{{payment.first},1}};
+  auto acquire=[&](const td::Result<block::WorkchainNativeInboxPlan>& messages,const td::Bits256& hash) {
+    return block::execute_workchain_registration_payment(policy,ingress,descriptor,messages,hash,
+        old.coordinator,block::CurrencyCollection(50),{},proof);
+  };
+  auto paid=acquire(inbox,payment.second);
+  if (paid.is_error()) LOG(ERROR) << paid.error();
+  ASSERT_TRUE(paid.is_ok());
+  ASSERT_EQ(paid.ok().registration.payer_balance,0u);
+  ASSERT_TRUE(paid.ok().coordinator_flow.old_balance==block::CurrencyCollection(50));
+  ASSERT_TRUE(paid.ok().coordinator_flow.imported==block::CurrencyCollection(10));
+  ASSERT_TRUE(paid.ok().coordinator_flow.new_balance==block::CurrencyCollection(60));
+  ASSERT_TRUE(paid.ok().coordinator_flow.fees.is_zero());
+  ASSERT_EQ(block::decode_workchain_coordinator_state(paid.ok().registration.coordinator_data)
+      .move_as_ok().refundable_deposits,10u);
+  auto wrong=envelope_for(9,fill(8),ingress.executor_address);
+  td::Result<block::WorkchainNativeInboxPlan> too_small{block::WorkchainNativeInboxPlan{{wrong.first},1}};
+  auto underpaid=acquire(too_small,wrong.second);
+  ASSERT_TRUE(underpaid.is_error()); ASSERT_EQ(underpaid.error().code(),-7200);
+  wrong=envelope_for(10,fill(7),ingress.executor_address);
+  td::Result<block::WorkchainNativeInboxPlan> wrong_sender{block::WorkchainNativeInboxPlan{{wrong.first},1}};
+  auto unauthorized=acquire(wrong_sender,wrong.second);
+  ASSERT_TRUE(unauthorized.is_error()); ASSERT_EQ(unauthorized.error().code(),-7200);
+  td::Result<block::WorkchainNativeInboxPlan> duplicate_payment{block::WorkchainNativeInboxPlan{{payment.first,payment.first},1}};
+  ASSERT_EQ(acquire(duplicate_payment,payment.second).error().code(),-7200);
+  td::Result<block::WorkchainNativeInboxPlan> unavailable_payment{td::Status::Error("queue proof unavailable")};
+  ASSERT_EQ(acquire(unavailable_payment,payment.second).error().code(),-7201);
+  ASSERT_EQ(acquire(inbox,fill(0)).error().code(),-7200);
   auto replay_old = old;
   replay_old.existing_account = registered.ok().account_data;
   auto duplicate = block::execute_workchain_registration(policy, replay_old, a.address.account, cell.ok(), proof);
