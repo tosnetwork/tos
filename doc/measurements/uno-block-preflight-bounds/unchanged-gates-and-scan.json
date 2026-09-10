@@ -1,0 +1,10 @@
+{
+  "base": "dd2327c90",
+  "sha256": {
+    "validator/impl/collator.cpp": "7d3343a85029ee65c2d0383e0a6891da67323a013de94e00866844abedc26bcf",
+    "validator/impl/validate-query.cpp": "df105fae6161fb1bee9a45da3dda56369c8d27943b355f7fafa0441b44ff157c",
+    "crypto/block/workchain-execution-dispatch.cpp": "6966728eed275637c96af1c783d913d2c90f82af1845e0cfe7cc499a465ede00",
+    "crypto/smartcont/uno-genesis-config.fif": "cecd0ea89b5c04ff234e5f5adcc8a003661305fad6286e3f8e84847fd93ecb11",
+    "scripts/check-no-removed-execution-domains.sh": "2a1e3cbaee65372e9542976f60ae995f147f3e887dd56dab3da6b1fe80f6a00b"
+  }
+}

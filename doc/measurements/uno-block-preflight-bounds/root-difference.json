@@ -1,0 +1,15 @@
+{
+  "identical_input_repeat_boc_equal": true,
+  "remaining_path_after_policy_reversion": "root/1/0/1/0",
+  "storage_used": {
+    "old_cells": 189,
+    "new_cells": 190,
+    "old_bits": 29645,
+    "new_bits": 29813
+  },
+  "old_root": "c26c6f0774f0d80a2a344fe578bca6e299ba3923f8000532072c3b274e27a9a9",
+  "new_root": "5d8df532dc543630b9971794a62fb7714d8c915aeb74c34198b0af50aef9b731",
+  "reverted_root": "c26c6f0774f0d80a2a344fe578bca6e299ba3923f8000532072c3b274e27a9a9",
+  "exact_match": true,
+  "explanation": "One 104-bit ParamLimits child plus 64 allowance bits; exactly +1 cell/+168 bits in configuration-account storage_used. Offline equality control only."
+}

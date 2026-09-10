@@ -1,0 +1,17 @@
+{
+  "canonical": "uno_v2_resource_policy_bounded admission_version:uint32 preflight_allowance:uint64 input:^UnoV2ResourceInput state:^UnoV2ResourceState work_output:^UnoV2ResourceWorkOutput block_preflight:^ParamLimits = UnoV2ResourcePolicy",
+  "tag": "0xf37fed2f",
+  "generated_tables": 118,
+  "tag_entries": 221,
+  "new_tag_occurrences": 1,
+  "allowance": 1,
+  "limits": [
+    0,
+    2,
+    2
+  ],
+  "root_hash": "5d8df532dc543630b9971794a62fb7714d8c915aeb74c34198b0af50aef9b731",
+  "policy_hash": "0d08232be12e3c647fcf22d5685c809405b988bb60321717df829ea4cf4bed74",
+  "fixture_sha256": "894f9a606a0fe092d9719caad2df751dd2d6123d8a706b6d2b3d22171f19f30c",
+  "rust_sha256": "93d0601dde257523af3aaebeb5530db1e1d24c4f39fd9db7f1269c9c3e16d4ab"
+}
