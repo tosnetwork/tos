@@ -2372,94 +2372,42 @@ void ValidatorManagerImpl::sweep_destroyed_consensus_dbs() {
   // destroyed_validator_sessions_ is honored as a legacy fallback and any such
   // directory is migrated into the queue by being deleted here too. A name this
   // cannot parse belongs to something else and is left alone.
-  auto root = consensus::consensus_db_root(db_root_);
-  size_t reclaimed = 0;
-  size_t failed = 0;
-  bool queue_changed = false;
-  std::set<std::string> seen_dirs;
-
-  // rmrf()'s status is not proof of removal: it ignores unlink()/rmdir() errors
-  // and returns OK as long as the walk itself succeeded. Confirm with stat() --
-  // only a "not found" error proves the path is gone; any other error leaves
-  // existence unknown, so the directory stays queued for a later retry.
-  auto confirmed_gone = [](const std::string &full) -> bool {
-    auto probe = td::stat(full);
-    if (probe.is_ok()) {
-      return false;
-    }
+  // The walk + decision + reconciliation logic lives in a testable helper; the
+  // deleter here does the real removal and confirms it with stat() (rmrf()
+  // ignores unlink/rmdir errors, so its own status is not proof of removal --
+  // only a "not found" proves the directory is gone).
+  auto before = pending_consensus_db_cleanup_;
+  auto stats = consensus::sweep_orphaned_consensus_dbs(
+      db_root_, pending_consensus_db_cleanup_, destroyed_validator_sessions_, [](td::CSlice full) -> bool {
+        td::RocksDb::destroy(full.str() + "/db/").ignore();
+        td::rmrf(full).ignore();
+        auto probe = td::stat(full);
+        if (probe.is_ok()) {
+          return false;
+        }
 #if TD_PORT_WINDOWS
-    auto code = probe.error().code();
-    return code == ERROR_FILE_NOT_FOUND || code == ERROR_PATH_NOT_FOUND;
+        auto code = probe.error().code();
+        return code == ERROR_FILE_NOT_FOUND || code == ERROR_PATH_NOT_FOUND;
 #else
-    return probe.error().code() == ENOENT;
+        return probe.error().code() == ENOENT;
 #endif
-  };
+      });
 
-  auto walk_status = td::WalkPath::run(root, [&](td::CSlice path, td::WalkPath::Type type) {
-    if (type != td::WalkPath::Type::EnterDir) {
-      return td::WalkPath::Action::Continue;
-    }
-    auto name = td::PathView(path).file_name().str();
-    if (name.empty() || path.str() == root || path.str() + "/" == root) {
-      return td::WalkPath::Action::Continue;
-    }
-    seen_dirs.insert(name);
-    auto session_id = consensus::consensus_db_session_id(name);
-    bool queued = pending_consensus_db_cleanup_.contains(name);
-    bool legacy = session_id && destroyed_validator_sessions_.contains(session_id.value());
-    if (!queued && !legacy) {
-      // Not ours, or still live: do not descend into a database we may open.
-      return td::WalkPath::Action::SkipDir;
-    }
-    auto full = path.str();
-    td::RocksDb::destroy(full + "/db/").ignore();
-    td::rmrf(full).ignore();
-    if (confirmed_gone(full)) {
-      reclaimed++;
-      if (pending_consensus_db_cleanup_.erase(name) > 0) {
-        queue_changed = true;
-      }
-    } else {
-      failed++;
-      // Queue it (covers a legacy directory whose first delete attempt failed)
-      // so a later startup retries it.
-      if (pending_consensus_db_cleanup_.insert(name).second) {
-        queue_changed = true;
-      }
-      LOG(WARNING) << "could not confirm removal of consensus database " << full
-                   << "; keeping it queued so a later startup retries it";
-    }
-    return td::WalkPath::Action::SkipDir;
-  });
-
-  if (walk_status.is_ok()) {
-    // Reconcile only after a fully successful traversal: a queued directory not
-    // seen on disk is already gone (deleted before a crash lost the dequeue), so
-    // drop it. An incomplete or failed walk proves nothing about absence.
-    for (auto it = pending_consensus_db_cleanup_.begin(); it != pending_consensus_db_cleanup_.end();) {
-      if (!seen_dirs.contains(*it)) {
-        it = pending_consensus_db_cleanup_.erase(it);
-        queue_changed = true;
-      } else {
-        ++it;
-      }
-    }
-  } else {
-    LOG(WARNING) << "consensus cleanup sweep could not fully enumerate " << root << " (" << walk_status
-                 << "); not reconciling the cleanup queue this pass";
+  if (!stats.walk_succeeded) {
+    LOG(WARNING) << "consensus cleanup sweep could not fully enumerate " << consensus::consensus_db_root(db_root_)
+                 << "; not reconciling the cleanup queue this pass";
   }
-
-  if (queue_changed) {
+  if (pending_consensus_db_cleanup_ != before) {
     td::actor::send_closure(db_, &Db::update_pending_consensus_db_cleanup,
                             std::vector<std::string>(pending_consensus_db_cleanup_.begin(),
                                                      pending_consensus_db_cleanup_.end()),
                             [](td::Result<td::Unit> R) { R.ensure(); });
   }
-  if (reclaimed > 0) {
-    LOG(WARNING) << "reclaimed " << reclaimed << " consensus database(s) left behind by a retired group";
+  if (stats.reclaimed > 0) {
+    LOG(WARNING) << "reclaimed " << stats.reclaimed << " consensus database(s) left behind by a retired group";
   }
-  if (failed > 0) {
-    LOG(ERROR) << failed << " leftover consensus database(s) could not be removed; will retry on next startup";
+  if (stats.failed > 0) {
+    LOG(ERROR) << stats.failed << " leftover consensus database(s) could not be removed; will retry on next startup";
   }
 }
 

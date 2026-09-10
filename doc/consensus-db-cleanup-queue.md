@@ -190,6 +190,49 @@ below supersedes the sketch above.
 TL declarations are at `tos_api.tl:601` / `:614`; the `tosctl`/`tostester` `.tl`
 copies do **not** need lockstep for C++ codegen (Rust/Python read their own).
 
+## Implementation review outcome (2026-09-10) — scope decision
+
+Codex reviewed the implementation and confirmed the core is sound: the manager
+computes directory names that match `bridge` exactly (validator `""`, observer
+`.observer.<adnl pubkey_hash>`, tentative `""`), both retire branches delete only
+after the atomic `{destroyed + pending}` batch is durable, there is no
+stale-snapshot overwrite race (single-threaded actor), and the raw StateDb
+key/value round-trips. It also found three items; this PR is deliberately scoped
+to close the orphan window it set out to fix, and documents the rest:
+
+- **Finding 1 (P1) — full recreation invariant needs checkpoint-relative
+  pruning (deferred, pre-existing).** The safety guarantee relies on the
+  destroyed-session tombstone barring recreation until the directory is gone.
+  But `updated_init_block` prunes the tombstone set *coarsely* (the whole set),
+  and replaying an old rotation checkpoint at startup re-runs that pruning, so a
+  session retired *after* the durable checkpoint can have its tombstone pruned
+  during replay and then be recreated with its just-swept DB. This is a
+  **pre-existing** weakness (present since the #72 sweep; not introduced here —
+  #72 deletes the same directory in the same scenario), and the obvious contained
+  fix (prune only this rotation's ids) breaks the set's growth bound because
+  non-rotated-branch retirements are only ever pruned by the coarse whole-set
+  sweep. A correct fix tracks each id's retirement block and prunes only those the
+  persisted checkpoint has passed — a delicate change to consensus rotation
+  logic, out of this PR's F4 orphan-window scope. **Tracked as a follow-up.** This
+  PR does not make it worse than #72.
+- **Finding 2 (P2) — observer premature-deletion → recreation is a harmless
+  re-sync.** Observer consensus DBs hold no votes/own-state, so deleting one and
+  re-syncing loses nothing consensus-relevant (Codex agrees this is not vote
+  loss). The queue still tracks observer directories to prevent disk leaks;
+  premature deletion under the same crash/replay window only forces a re-sync.
+- **Finding 3 (P2) — legacy migration completeness depends on a successful
+  enumeration.** A pre-upgrade directory recorded only by session id is migrated
+  (deleted) when the startup walk reaches it; if the walk fails before reaching
+  it, it is retried on a later startup as long as its tombstone survives — which
+  is bounded by the same coarse-pruning caveat as Finding 1. The sweep already
+  skips reconciliation on a failed/partial walk so it never drops a still-needed
+  queue entry.
+
+Net: the PR closes the intended orphan window (a crash between the durable
+retirement record and the directory deletion) and is safe relative to #72; it
+does not claim the full no-recreation invariant, which requires the deferred
+checkpoint-relative pruning rework.
+
 ## Open questions for review
 
 1. Is a new persisted TL field the right mechanism, or should the pending queue

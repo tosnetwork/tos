@@ -18,11 +18,15 @@
 */
 #pragma once
 
+#include <functional>
 #include <optional>
+#include <set>
 #include <string>
 
+#include "td/utils/PathView.h"
 #include "td/utils/Slice.h"
 #include "td/utils/misc.h"
+#include "td/utils/port/path.h"
 #include "tos/tos-types.h"
 
 namespace tos::validator::consensus {
@@ -85,6 +89,68 @@ inline std::optional<ValidatorSessionId> consensus_db_session_id(td::Slice dir_n
   }
   session_id.as_slice().copy_from(td::Slice(bytes));
   return session_id;
+}
+
+struct ConsensusDbSweepStats {
+  size_t reclaimed = 0;  // directories confirmed deleted this pass
+  size_t failed = 0;     // deletions attempted but not confirmed gone (kept queued)
+  bool walk_succeeded = false;
+};
+
+// Reclaim per-group consensus directories under `db_root`/consensus. A directory
+// is deleted if its name is in `pending` (the durable cleanup queue) or, as a
+// legacy fallback for databases written before the queue existed, if its parsed
+// session id is in `destroyed`. `delete_dir(full_path)` must attempt the removal
+// and return true only when the directory is confirmed gone (e.g. via stat).
+//
+// `pending` is updated in place: a confirmed-deleted name is removed; a name
+// whose deletion was not confirmed is kept (added if it was only a legacy entry)
+// so a later pass retries it; and -- only if the walk fully succeeded -- a queued
+// name not present on disk is dropped (it was deleted before a crash lost the
+// dequeue). An incomplete/failed walk proves nothing about absence, so no
+// reconciliation is done then. A name this cannot parse is left alone.
+inline ConsensusDbSweepStats sweep_orphaned_consensus_dbs(
+    td::Slice db_root, std::set<std::string>& pending, const std::set<ValidatorSessionId>& destroyed,
+    const std::function<bool(td::CSlice full_path)>& delete_dir) {
+  ConsensusDbSweepStats stats;
+  auto root = consensus_db_root(db_root);
+  std::set<std::string> seen;
+  auto walk_status = td::WalkPath::run(root, [&](td::CSlice path, td::WalkPath::Type type) {
+    if (type != td::WalkPath::Type::EnterDir) {
+      return td::WalkPath::Action::Continue;
+    }
+    auto name = td::PathView(path).file_name().str();
+    if (name.empty() || path.str() == root || path.str() + "/" == root) {
+      return td::WalkPath::Action::Continue;
+    }
+    seen.insert(name);
+    auto session_id = consensus_db_session_id(name);
+    bool queued = pending.count(name) > 0;
+    bool legacy = session_id && destroyed.count(session_id.value()) > 0;
+    if (!queued && !legacy) {
+      // Not ours, or still live: do not descend into a database we may open.
+      return td::WalkPath::Action::SkipDir;
+    }
+    if (delete_dir(path)) {
+      stats.reclaimed++;
+      pending.erase(name);
+    } else {
+      stats.failed++;
+      pending.insert(name);
+    }
+    return td::WalkPath::Action::SkipDir;
+  });
+  stats.walk_succeeded = walk_status.is_ok();
+  if (stats.walk_succeeded) {
+    for (auto it = pending.begin(); it != pending.end();) {
+      if (seen.count(*it) == 0) {
+        it = pending.erase(it);
+      } else {
+        ++it;
+      }
+    }
+  }
+  return stats;
 }
 
 }  // namespace tos::validator::consensus
