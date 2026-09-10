@@ -41,9 +41,11 @@ def check(source):
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--repo', type=Path, required=True)
-    p.add_argument('--probe', type=Path, required=True)
-    p.add_argument('--fixture', type=Path, required=True)
+    p.add_argument('--probe', type=Path)
+    p.add_argument('--fixture', type=Path)
     a = p.parse_args()
+    if (a.probe is None) != (a.fixture is None):
+        p.error("--probe and --fixture must be supplied together")
     try:
         source = (a.repo / 'validator/impl/validate-query.cpp').read_text()
     except OSError as error:
@@ -56,6 +58,10 @@ def main():
     if failures:
         return 1
     print('Prepared expiry guard passed: both production account refusals remain.', flush=True)
+    # The default CTest is a source-only expiry check. It has no optional
+    # native fixture dependency; the opt-in test additionally runs the probe.
+    if a.probe is None:
+        return 0
     # Missing binary/fixture is a failure, never a skip. Do not synthesize a
     # successful private run merely because the source guard passed.
     return subprocess.run([str(a.probe), str(a.fixture)]).returncode

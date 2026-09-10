@@ -703,3 +703,10 @@ find_package(Python3 REQUIRED COMPONENTS Interpreter)
 add_test(NAME test-workchain-handwritten-tags COMMAND ${Python3_EXECUTABLE}
   "${PROJECT_SOURCE_DIR}/crypto/test/workchain-handwritten-tags.py" --repo "${PROJECT_SOURCE_DIR}")
 set_tests_properties(test-workchain-handwritten-tags PROPERTIES TIMEOUT 30 LABELS "workchain;d40")
+
+# Default source-lifecycle check: opening either validator refusal must expire
+# the prepared copy, even when the optional native fixture is not enabled.
+add_test(NAME test-workchain-validator-prepared-expiry COMMAND ${Python3_EXECUTABLE}
+  "${PROJECT_SOURCE_DIR}/crypto/test/workchain-validator-prepared-expiry.py" --repo "${PROJECT_SOURCE_DIR}")
+set_tests_properties(test-workchain-validator-prepared-expiry PROPERTIES
+  TIMEOUT 30 LABELS "workchain;prepared-expiry")

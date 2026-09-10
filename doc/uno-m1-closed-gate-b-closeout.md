@@ -101,3 +101,12 @@ Changing either production refusal expires the private preparation; its file
 must be deleted and controls retargeted to actual production call sites when
 the gate opens. This is a source lifecycle guard, not a runtime gate measurement
 or a claim that the duplicated legacy branches cannot drift before that point.
+
+
+**Registration correction:** The initial expiry implementation was registered
+only with the opt-in private fixture. That was insufficient to ensure ordinary
+CTest catches production connection. The source-only expiry check is now
+registered unconditionally in crypto/CMakeLists.txt as
+`test-workchain-validator-prepared-expiry`; it needs no native probe or optional
+include. The private opt-in test still runs the same guard before its probe.
+Historical opt-in evidence remains valid for that narrower registration scope.
