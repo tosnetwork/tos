@@ -5,9 +5,12 @@
 
 #include "block/workchain-account-closure.h"
 #include "block/workchain-confidential-execution.h"
+#include "block/workchain-confidential-native.h"
+#include "block/workchain-registration-settlement.h"
 #include "td/utils/filesystem.h"
 #include "td/utils/misc.h"
 #include "vm/boc.h"
+#include "vm/vm.h"
 
 #include "workchain-m3-scenario.h"
 #include "workchain-proof-test-access.h"
@@ -109,6 +112,17 @@ class PureBackend final : public ScenarioBackend {
   // must obtain this view from its actual authenticated obligation state instead.
   std::array<std::map<td::Bits256, Root>, 2> obligations_;
   WorkchainTransferEnvironment env_;
+  Root native_accounts_;
+  td::Bits256 coordinator_id_;
+  std::uint64_t registration_lt_ = 1;
+  WorkchainResourcePolicy registration_resources_{4,
+                                                  {4096, 1048576, 32, 2, 2, 1},
+                                                  {4096, 1048576, 2048, 524288, 128},
+                                                  {100000, 4096, 1048576, 4096, 1048576, 2},
+                                                  {0, 2, 2},
+                                                  1};
+  WorkchainNativeIngressPolicy registration_ingress_;
+  WorkchainExecutionDescriptor registration_descriptor_;
   std::filesystem::path tool_, tmp_;
   unsigned step_ = 0;
   Text wallet(const std::string& mode, Text m) {
@@ -180,6 +194,42 @@ class PureBackend final : public ScenarioBackend {
     }
     state_.coordinator = encode_workchain_coordinator_state({2, {1, 1, 0, 0}, 0}).move_as_ok();
     state_.native_balances = {100000000000ULL, 100000000000ULL};
+    vm::init_vm().ensure();
+    auto label = vm::CellBuilder().store_bytes("M3 TEST registration coordinator").finalize();
+    coordinator_id_ = td::Bits256(label->get_hash().bits());
+    registration_ingress_.workchain_id = 2;
+    registration_ingress_.engine_key = {WorkchainFormat::Basic, 0x554e4f32};
+    registration_ingress_.vm_mode = 17;
+    registration_ingress_.descriptor_version = 2;
+    registration_ingress_.executor_address = coordinator_id_;
+    // TEST registration shell only, not a production M3 business-config codec.
+    registration_ingress_.engine_configuration =
+        encode_workchain_engine_parameters({400, env_.protocol.workchain_instance, registration_resources_,
+                                            vm::CellBuilder().finalize(), templates_[0].funding.paid_deposit})
+            .move_as_ok();
+    registration_descriptor_.workchain_id = 2;
+    registration_descriptor_.active = true;
+    registration_descriptor_.vm_version = 0x554e4f32;
+    registration_descriptor_.vm_mode = 17;
+    registration_descriptor_.version = 2;
+    vm::CellBuilder storage;
+    storage.store_long(0, 64);
+    CHECK(CurrencyCollection(0).store(storage));
+    storage.store_long(1, 1).store_long(0, 1).store_long(0, 1);
+    CHECK(storage.store_maybe_ref(workchain_confidential_native_code()));
+    CHECK(storage.store_maybe_ref(state_.coordinator));
+    storage.store_long(0, 1);
+    vm::CellBuilder native;
+    native.store_long(1, 1).store_long(4, 3).store_long(2, 8).store_bits(coordinator_id_.bits(), 256);
+    CHECK(store_UInt7(native, 0));
+    CHECK(store_UInt7(native, 0));
+    native.store_long(0, 3).store_long(0, 32).store_long(0, 1).append_cellslice(
+        vm::load_cell_slice(storage.finalize()));
+    vm::CellBuilder shard;
+    shard.store_ref(native.finalize()).store_zeroes(256).store_long(0, 64);
+    vm::AugmentedDictionary dictionary(256, block::tlb::aug_ShardAccounts);
+    CHECK(dictionary.set_builder(coordinator_id_, shard, vm::Dictionary::SetMode::Add));
+    native_accounts_ = dictionary.get_wrapped_dict_root();
   }
   const ScenarioState& state() const override {
     return state_;
@@ -199,18 +249,146 @@ class PureBackend final : public ScenarioBackend {
     WorkchainRegistrationPolicy policy{a.global_id,     a.genesis_hash,        env_.protocol.workchain_instance,
                                        a.bindings,      a.schema_version,      a.relation_profile,
                                        a.proof_profile, a.funding.paid_deposit};
-    TRY_RESULT(registration_id, derive_workchain_registration_operation_id(policy, a));
-    a.address.instance = registration_id;
+    TRY_RESULT(incarnation, derive_workchain_registration_operation_id(policy, a));
+    a.address.instance = incarnation;
     auto p = proof<64>("register", owner, a);
-    WorkchainRegistrationSnapshot before{coordinator(), state_.accounts[owner], a.funding.refund_workchain,
-                                         a.funding.refund_account, state_.native_balances[owner]};
+    if (a.funding.paid_deposit > state_.native_balances[owner])
+      return alarm("registration source lacks deposit");
     TRY_RESULT(encoded, encode_workchain_confidential_account(a));
-    TRY_RESULT(result, execute_workchain_registration(policy, before, a.address.account, encoded, p));
+    vm::AugmentedDictionary prior(vm::load_cell_slice_ref(native_accounts_), 256, block::tlb::aug_ShardAccounts);
+    Account old_coordinator(2, coordinator_id_.bits());
+    if (!old_coordinator.unpack(prior.lookup(coordinator_id_), 1234, false))
+      return alarm("native coordinator unavailable");
+    if (old_coordinator.data->get_hash() != state_.coordinator->get_hash())
+      return alarm("scenario coordinator snapshots differ");
+    if (prior.lookup(a.address.account).not_null())
+      return alarm("new account already exists in Native dictionary");
+    // This is a TEST final-import boundary. Source emission/queue inclusion is
+    // outside this post-admission settlement test, never claimed as live evidence.
+    vm::CellBuilder message;
+    message.store_long(4, 4)
+        .store_long(4, 3)
+        .store_long(a.funding.refund_workchain, 8)
+        .store_bits(a.funding.refund_account.bits(), 256)
+        .store_long(4, 3)
+        .store_long(2, 8)
+        .store_bits(coordinator_id_.bits(), 256);
+    auto amount = vm::CellBuilder().store_long(a.funding.paid_deposit, 64).finalize();
+    CurrencyCollection payment_value(vm::load_cell_slice(amount).fetch_int256(64, false));
+    if (!payment_value.store(message))
+      return alarm("registration message value cannot encode");
+    message.store_long(0, 4)
+        .store_long(0, 4)
+        .store_long(registration_lt_, 64)
+        .store_long(1234, 32)
+        .store_long(0, 1)
+        .store_long(1, 1)
+        .store_ref(encoded);
+    auto msg = message.finalize();
+    block::tlb::MsgEnvelope::Record_std env{0x60, 0x60, td::make_refint(0), msg, {}, {}};
+    Root envelope;
+    if (!::tlb::pack_cell(envelope, env))
+      return alarm("registration envelope cannot encode");
+    std::vector<Root> messages{envelope};
+    TRY_RESULT(inbox_root, encode_workchain_batch_inbound(messages));
+    auto inbox = plan_workchain_native_inbox(inbox_root, 2, {coordinator_id_}, registration_lt_, 1);
+    TRY_RESULT(payment, execute_workchain_registration_payment(policy, registration_ingress_, registration_descriptor_,
+                                                               inbox, td::Bits256(msg->get_hash().bits()),
+                                                               coordinator(), old_coordinator.balance, {}, p));
+    WorkchainHostIdentity identity{env_.protocol.global_id,
+                                   env_.protocol.genesis_hash,
+                                   env_.protocol.workchain_instance,
+                                   2,
+                                   tos::shardIdAll,
+                                   td::Bits256(registration_ingress_.engine_configuration->get_hash().bits()),
+                                   false,
+                                   0x554e4f32,
+                                   17,
+                                   2,
+                                   4,
+                                   td::Bits256(native_accounts_->get_hash().bits()),
+                                   1234,
+                                   1234,
+                                   registration_lt_,
+                                   vm::CellBuilder().finalize()};
+    WorkchainAccountDeclarations declarations{
+        {{coordinator_id_, td::Bits256(old_coordinator.total_state->get_hash().bits())},
+         {a.address.account, std::nullopt}},
+        {coordinator_id_, a.address.account}};
+    TRY_RESULT(access, encode_workchain_account_declarations(declarations, 2, 2));
+    InputPolicyIdentity cut{registration_ingress_.engine_configuration->get_hash(), false, 0x554e4f32, 17, 2, 4};
+    auto resolved = ResolvedBatchInputPolicy::from_resolved_fields(registration_resources_, cut);
+    if (!std::holds_alternative<ResolvedBatchInputPolicy>(resolved))
+      return alarm("test registration resource cut invalid");
+    BatchInputAdmissionSession session(std::get<ResolvedBatchInputPolicy>(resolved), encoded, access, identity,
+                                       messages);
+    const auto& admitted = session.evaluate();
+    if (const auto* failure = std::get_if<BatchInputAdmissionFailure>(&admitted))
+      return td::Status::Error(static_cast<int>(failure->category), td::Slice(failure->reason));
+    const auto& input = std::get<AdmittedBatchInput>(admitted);
+    SerializeConfig cfg;
+    cfg.global_version = 16;
+    TRY_RESULT(settled, settle_workchain_registration(native_accounts_, identity, input.root(), payment,
+                                                      coordinator_id_, env_.rules.custody, 2, 2, 1, 4096, cfg));
+    auto persisted = roundtrip(settled.state.accounts);
+    vm::AugmentedDictionary next_dictionary(vm::load_cell_slice_ref(persisted), 256, block::tlb::aug_ShardAccounts);
+    Account created(2, a.address.account.bits()), funded(2, coordinator_id_.bits());
+    if (!created.unpack(next_dictionary.lookup(a.address.account), 1234, false) ||
+        !funded.unpack(next_dictionary.lookup(coordinator_id_), 1234, false))
+      return alarm("settled Native accounts cannot reload");
+    if (created.status != Account::acc_active || !created.balance.is_zero() ||
+        !is_workchain_confidential_native_wrapper(created.code, created.tick, created.tock))
+      return alarm("registered Native wrapper invalid");
+    if (created.data->get_hash() != payment.registration.account_data->get_hash() ||
+        funded.data->get_hash() != payment.registration.coordinator_data->get_hash() ||
+        funded.balance != payment.coordinator_flow.new_balance)
+      return alarm("settlement differs from verified payment");
+    vm::AugmentedDictionary blocks(vm::load_cell_slice_ref(settled.state.account_blocks), 256,
+                                   block::tlb::aug_ShardAccountBlocks);
+    for (const auto* participant : {&created, &funded}) {
+      auto leaf = blocks.lookup(participant->addr);
+      gen::AccountBlock::Record ab;
+      if (leaf.is_null() || !gen::t_AccountBlock.unpack(leaf.write(), ab) || !leaf->empty())
+        return alarm("registration AccountBlock missing");
+      vm::AugmentedDictionary txs(vm::DictNonEmpty(), ab.transactions, 64, block::tlb::aug_AccountTransactions);
+      auto transaction = txs.lookup_ref(td::BitArray<64>(participant->last_trans_lt_));
+      if (transaction.is_null() || !gen::t_Transaction.validate_ref(4096, transaction) ||
+          !block::tlb::t_Transaction.validate_ref(4096, transaction))
+        return alarm("registration transaction invalid");
+      gen::Transaction::Record tx;
+      if (!::tlb::unpack_cell(transaction, tx) || tx.orig_status != (participant == &created ? 3 : 2) ||
+          tx.end_status != 2 || tx.outmsg_cnt != 0)
+        return alarm("registration transition statuses differ");
+    }
+    if (owner == 1) {
+      Account retained(2, templates_[0].address.account.bits());
+      if (!retained.unpack(next_dictionary.lookup(templates_[0].address.account), 1234, false) ||
+          retained.data->get_hash() != state_.accounts[0]->get_hash())
+        return alarm("second registration changed first account");
+    }
+    TRY_RESULT(created_record, decode_workchain_confidential_account(created.data));
+    gen::UnoV2HostInput::Record persisted_input;
+    gen::UnoV2HostIdentity::Record persisted_identity;
+    gen::UnoV2HostDomain::Record persisted_domain;
+    if (!resource_policy_detail::unpack_exact(input.root(), persisted_input) ||
+        !resource_policy_detail::unpack_exact(persisted_input.identity, persisted_identity) ||
+        !resource_policy_detail::unpack_exact(persisted_identity.domain, persisted_domain) ||
+        persisted_domain.instance_id != env_.protocol.workchain_instance ||
+        created_record.address.instance != incarnation ||
+        created_record.address.instance == persisted_domain.instance_id)
+      return alarm("test registration collapsed account incarnation and workchain identity");
     auto next = state_;
-    next.accounts[owner] = roundtrip(result.account_data);
-    next.coordinator = roundtrip(result.coordinator_data);
-    next.native_balances[owner] = result.payer_balance;
+    next.accounts[owner] = created.data;
+    next.coordinator = funded.data;
+    // The message represents an already-debited TEST source payment. Final import
+    // does not debit again: registration.payer_balance is the message remainder.
+    if (payment.registration.payer_balance != 0)
+      return alarm("unowned registration payment remainder");
+    next.native_balances[owner] -= a.funding.paid_deposit;  // checked source coverage above.
     state_ = std::move(next);
+    native_accounts_ = std::move(persisted);
+    registration_lt_ = settled.state.end_lt;
+    std::cout << "Native registration settled: 2 transactions; account_none->active; readback verified\n";
     return td::Status::OK();
   }
   td::Status seed(unsigned owner, std::uint64_t value) override {
