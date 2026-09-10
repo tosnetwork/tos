@@ -2342,6 +2342,19 @@ void ValidatorManagerImpl::started(ValidatorManagerInitResult R) {
 
 void ValidatorManagerImpl::got_destroyed_validator_sessions(std::vector<ValidatorSessionId> sessions) {
   destroyed_validator_sessions_.insert(sessions.begin(), sessions.end());
+  // Load the cleanup queue before sweeping: both sets must be in hand so the
+  // sweep acts on the queue and migrates any pre-upgrade destroyed-session
+  // directories (recorded only by id) into it.
+  td::actor::send_closure(db_, &Db::get_pending_consensus_db_cleanup,
+                          [SelfId = actor_id(this)](td::Result<std::vector<std::string>> R) {
+                            R.ensure();
+                            td::actor::send_closure(SelfId, &ValidatorManagerImpl::got_pending_consensus_db_cleanup,
+                                                    R.move_as_ok());
+                          });
+}
+
+void ValidatorManagerImpl::got_pending_consensus_db_cleanup(std::vector<std::string> dirs) {
+  pending_consensus_db_cleanup_.insert(dirs.begin(), dirs.end());
   sweep_destroyed_consensus_dbs();
   finish_start_up().start().detach_ensure();
 }
@@ -2353,13 +2366,36 @@ void ValidatorManagerImpl::sweep_destroyed_consensus_dbs() {
   // the record survives, the group is never recreated -- so nothing will
   // ever own that directory again, and nothing else deletes it.
   //
-  // Reclaim those here, once, before any group starts. Only directories
-  // whose session is already recorded as destroyed are touched; a name
-  // this cannot parse belongs to something else and is left alone.
+  // Reclaim those here, once, before any group starts. The authoritative list
+  // is pending_consensus_db_cleanup_ (exact directory names). A database written
+  // before that queue existed is recorded only by session id, so
+  // destroyed_validator_sessions_ is honored as a legacy fallback and any such
+  // directory is migrated into the queue by being deleted here too. A name this
+  // cannot parse belongs to something else and is left alone.
   auto root = consensus::consensus_db_root(db_root_);
   size_t reclaimed = 0;
   size_t failed = 0;
-  td::WalkPath::run(root, [&](td::CSlice path, td::WalkPath::Type type) {
+  bool queue_changed = false;
+  std::set<std::string> seen_dirs;
+
+  // rmrf()'s status is not proof of removal: it ignores unlink()/rmdir() errors
+  // and returns OK as long as the walk itself succeeded. Confirm with stat() --
+  // only a "not found" error proves the path is gone; any other error leaves
+  // existence unknown, so the directory stays queued for a later retry.
+  auto confirmed_gone = [](const std::string &full) -> bool {
+    auto probe = td::stat(full);
+    if (probe.is_ok()) {
+      return false;
+    }
+#if TD_PORT_WINDOWS
+    auto code = probe.error().code();
+    return code == ERROR_FILE_NOT_FOUND || code == ERROR_PATH_NOT_FOUND;
+#else
+    return probe.error().code() == ENOENT;
+#endif
+  };
+
+  auto walk_status = td::WalkPath::run(root, [&](td::CSlice path, td::WalkPath::Type type) {
     if (type != td::WalkPath::Type::EnterDir) {
       return td::WalkPath::Action::Continue;
     }
@@ -2367,54 +2403,74 @@ void ValidatorManagerImpl::sweep_destroyed_consensus_dbs() {
     if (name.empty() || path.str() == root || path.str() + "/" == root) {
       return td::WalkPath::Action::Continue;
     }
+    seen_dirs.insert(name);
     auto session_id = consensus::consensus_db_session_id(name);
-    if (!session_id || !destroyed_validator_sessions_.contains(session_id.value())) {
-      // Not ours, or still live: do not descend into a database we are
-      // about to open.
+    bool queued = pending_consensus_db_cleanup_.contains(name);
+    bool legacy = session_id && destroyed_validator_sessions_.contains(session_id.value());
+    if (!queued && !legacy) {
+      // Not ours, or still live: do not descend into a database we may open.
       return td::WalkPath::Action::SkipDir;
     }
     auto full = path.str();
-    // Delete, then confirm the directory is actually gone. rmrf()'s own status
-    // is not proof of removal: it ignores every unlink()/rmdir() error and
-    // returns OK as long as the walk itself succeeded, so a permissions or
-    // read-only-filesystem failure would leave the directory in place while
-    // rmrf() still reports success. Probe with stat() -- but only a
-    // "not found" error proves the path is gone. Any other stat error
-    // (EACCES, EIO, ELOOP, ...) leaves existence unknown and the directory may
-    // well still be there, so it must NOT be counted as reclaimed. Only a
-    // confirmed removal counts; otherwise the destroyed-session record is kept
-    // so the next startup retries this directory.
     td::RocksDb::destroy(full + "/db/").ignore();
     td::rmrf(full).ignore();
-    auto probe = td::stat(full);
-    bool confirmed_gone = false;
-    if (probe.is_error()) {
-#if TD_PORT_WINDOWS
-      auto code = probe.error().code();
-      confirmed_gone = (code == ERROR_FILE_NOT_FOUND || code == ERROR_PATH_NOT_FOUND);
-#else
-      confirmed_gone = (probe.error().code() == ENOENT);
-#endif
-    }
-    if (confirmed_gone) {
+    if (confirmed_gone(full)) {
       reclaimed++;
+      if (pending_consensus_db_cleanup_.erase(name) > 0) {
+        queue_changed = true;
+      }
     } else {
       failed++;
-      if (probe.is_ok()) {
-        LOG(WARNING) << "leftover consensus database still present after delete attempt: " << full
-                     << "; keeping its destroyed-session record so a later startup retries it";
-      } else {
-        LOG(WARNING) << "could not confirm removal of consensus database " << full << " (stat: "
-                     << probe.error() << "); keeping its destroyed-session record so a later startup retries it";
+      // Queue it (covers a legacy directory whose first delete attempt failed)
+      // so a later startup retries it.
+      if (pending_consensus_db_cleanup_.insert(name).second) {
+        queue_changed = true;
       }
+      LOG(WARNING) << "could not confirm removal of consensus database " << full
+                   << "; keeping it queued so a later startup retries it";
     }
     return td::WalkPath::Action::SkipDir;
-  }).ignore();
+  });
+
+  if (walk_status.is_ok()) {
+    // Reconcile only after a fully successful traversal: a queued directory not
+    // seen on disk is already gone (deleted before a crash lost the dequeue), so
+    // drop it. An incomplete or failed walk proves nothing about absence.
+    for (auto it = pending_consensus_db_cleanup_.begin(); it != pending_consensus_db_cleanup_.end();) {
+      if (!seen_dirs.contains(*it)) {
+        it = pending_consensus_db_cleanup_.erase(it);
+        queue_changed = true;
+      } else {
+        ++it;
+      }
+    }
+  } else {
+    LOG(WARNING) << "consensus cleanup sweep could not fully enumerate " << root << " (" << walk_status
+                 << "); not reconciling the cleanup queue this pass";
+  }
+
+  if (queue_changed) {
+    td::actor::send_closure(db_, &Db::update_pending_consensus_db_cleanup,
+                            std::vector<std::string>(pending_consensus_db_cleanup_.begin(),
+                                                     pending_consensus_db_cleanup_.end()),
+                            [](td::Result<td::Unit> R) { R.ensure(); });
+  }
   if (reclaimed > 0) {
-    LOG(WARNING) << "reclaimed " << reclaimed << " consensus database(s) left behind by a destroyed session";
+    LOG(WARNING) << "reclaimed " << reclaimed << " consensus database(s) left behind by a retired group";
   }
   if (failed > 0) {
     LOG(ERROR) << failed << " leftover consensus database(s) could not be removed; will retry on next startup";
+  }
+}
+
+void ValidatorManagerImpl::consensus_db_cleanup_done(std::string dir_name) {
+  // A retired group confirmed its own directory is gone; drop it from the queue
+  // during normal uptime so the queue does not grow until the next restart.
+  if (pending_consensus_db_cleanup_.erase(dir_name) > 0) {
+    td::actor::send_closure(db_, &Db::update_pending_consensus_db_cleanup,
+                            std::vector<std::string>(pending_consensus_db_cleanup_.begin(),
+                                                     pending_consensus_db_cleanup_.end()),
+                            [](td::Result<td::Unit> R) { R.ensure(); });
   }
 }
 
@@ -2941,17 +2997,25 @@ void ValidatorManagerImpl::update_shards() {
       }
     }
   }
+  // Retire everything below, but do not delete any directory until the durable
+  // retirement + cleanup-queue record is written (see the atomic persist at the
+  // end): collect the exact directory names and the destroy handles first.
+  std::vector<td::actor::ActorId<IValidatorGroup>> to_destroy;
+  std::vector<std::string> pending_dirs;
+
   for (auto &[observer_id, entry] : observer_groups_) {
     LOG(INFO) << "Destroying observer group " << entry.shard.to_str() << "." << entry.cc_seqno << " at "
               << observer_id.second;
-    td::actor::send_closure(entry.actor.release(), &IValidatorGroup::destroy);
+    // Observer dir suffix must match bridge.cpp's create_bridge_observer exactly.
+    pending_dirs.push_back(consensus::consensus_db_dir_name(
+        entry.shard, entry.cc_seqno, observer_id.first, PSTRING() << ".observer." << observer_id.second.pubkey_hash()));
+    to_destroy.push_back(entry.actor.release());
   }
   observer_groups_ = std::move(new_observer_groups);
 
-  std::vector<td::actor::ActorId<IValidatorGroup>> to_destroy;
-
   for (auto &[id, group] : validator_groups_) {
     LOG(INFO) << "Destroying active " << group.name() << ":" << id;
+    pending_dirs.push_back(consensus::consensus_db_dir_name(group.shard, group.cc_seqno, id, ""));
     to_destroy.push_back(group.actor.release());
     destroyed_validator_sessions_.insert(id);
   }
@@ -2986,9 +3050,10 @@ void ValidatorManagerImpl::update_shards() {
   }
 
   for (auto [id, reason] : ids_to_remove) {
-    LOG(INFO) << "Destroying tentative " << next_validator_groups_[id].name() << ":" << id << " because of an active "
-              << reason;
-    to_destroy.push_back(next_validator_groups_[id].actor.release());
+    auto &tentative = next_validator_groups_[id];
+    LOG(INFO) << "Destroying tentative " << tentative.name() << ":" << id << " because of an active " << reason;
+    pending_dirs.push_back(consensus::consensus_db_dir_name(tentative.shard, tentative.cc_seqno, id, ""));
+    to_destroy.push_back(tentative.actor.release());
     destroyed_validator_sessions_.insert(id);
     next_validator_groups_.erase(id);
   }
@@ -2998,25 +3063,47 @@ void ValidatorManagerImpl::update_shards() {
     }
   };
 
+  for (const auto &dir : pending_dirs) {
+    pending_consensus_db_cleanup_.insert(dir);
+  }
+  // Persist retirement (destroyed sessions) and the cleanup queue (exact dirs)
+  // in one atomic batch, and delete directories only after it is durable. A
+  // crash before the batch loses nothing; a crash after it leaves the dirs
+  // queued and their sessions barred from recreation, so the startup sweep
+  // reclaims them -- it can never delete a directory whose session might still
+  // be recreated (which would destroy a live session's consensus state).
+  std::vector<ValidatorSessionId> destroyed_vec(destroyed_validator_sessions_.begin(),
+                                                destroyed_validator_sessions_.end());
+  std::vector<std::string> pending_vec(pending_consensus_db_cleanup_.begin(), pending_consensus_db_cleanup_.end());
+
   if (last_masterchain_state_->rotated_all_shards()) {
     CHECK(last_masterchain_block_handle_->received_state());
-    auto P = td::PromiseCreator::lambda(
-        [SelfId = actor_id(this), block_id = last_masterchain_block_id_, destroy_sessions = std::move(destroy_sessions),
+    auto retire_cb = td::PromiseCreator::lambda(
+        [SelfId = actor_id(this), db = db_.get(), block_id = last_masterchain_block_id_,
+         destroy_sessions = std::move(destroy_sessions),
          old_destroyed_validator_sessions = destroyed_validator_sessions_](td::Result<td::Unit> R) mutable {
           R.ensure();
-          td::actor::send_closure(SelfId, &ValidatorManagerImpl::updated_init_block, block_id,
-                                  std::move(old_destroyed_validator_sessions));
-          destroy_sessions();
+          // Retirement + cleanup queue are durable. Rotate the init block, then
+          // prune the destroyed set and delete the directories.
+          auto P = td::PromiseCreator::lambda(
+              [SelfId, block_id, destroy_sessions = std::move(destroy_sessions),
+               old_destroyed_validator_sessions =
+                   std::move(old_destroyed_validator_sessions)](td::Result<td::Unit> R2) mutable {
+                R2.ensure();
+                td::actor::send_closure(SelfId, &ValidatorManagerImpl::updated_init_block, block_id,
+                                        std::move(old_destroyed_validator_sessions));
+                destroy_sessions();
+              });
+          td::actor::send_closure(db, &Db::update_init_masterchain_block, block_id, std::move(P));
         });
-    td::actor::send_closure(db_, &Db::update_init_masterchain_block, last_masterchain_block_id_, std::move(P));
+    td::actor::send_closure(db_, &Db::retire_consensus_sessions, std::move(destroyed_vec), std::move(pending_vec),
+                            std::move(retire_cb));
   } else {
-    td::actor::send_closure(
-        db_, &Db::update_destroyed_validator_sessions,
-        std::vector<ValidatorSessionId>(destroyed_validator_sessions_.begin(), destroyed_validator_sessions_.end()),
-        [destroy_sessions = std::move(destroy_sessions)](td::Result<> R) {
-          R.ensure();
-          destroy_sessions();
-        });
+    td::actor::send_closure(db_, &Db::retire_consensus_sessions, std::move(destroyed_vec), std::move(pending_vec),
+                            [destroy_sessions = std::move(destroy_sessions)](td::Result<td::Unit> R) {
+                              R.ensure();
+                              destroy_sessions();
+                            });
   }
   if (!serializer_.empty()) {
     td::actor::send_closure(serializer_, &AsyncStateSerializer::auto_disable_serializer,

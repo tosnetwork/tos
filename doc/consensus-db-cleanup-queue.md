@@ -135,6 +135,61 @@ queue. Reverting the sweep's gate change (back to `destroyed_validator_sessions_
 or the add-before-destroy persist must turn it red. Also cover: reconciliation
 drops an id whose dir is already gone; a deletion failure keeps the id queued.
 
+## Codex review outcome (2026-09-10) — corrected design (v2)
+
+Codex confirmed the problem AUTHENTIC and the approach SOUND-WITH-CHANGES, and
+found two consensus-safety blockers plus several required changes. The design
+below supersedes the sketch above.
+
+1. **Retirement proof must be durable atomically with (or before) the cleanup
+   record — never after.** Persisting a pending-cleanup record *before* durable
+   proof the session is retired allows: persist pending `S` → crash before the
+   new init checkpoint / destroyed tombstone → restart from the *old* init block
+   → sweep deletes `S`'s dir (pending) → group creation *recreates* `S` (creation
+   checks `destroyed_validator_sessions_`, not pending, `manager.cpp:2824`).
+   Deleting a live session's consensus DB (its own votes / leader recovery,
+   `simplex/db.cpp:75/114/153`) is a **safety** issue. Fix: in **one StateDb
+   write batch**, persist the destroyed-session set (with the newly retired ids)
+   **and** the pending-cleanup dirs, and only run `destroy_sessions()` after that
+   batch is acknowledged — in **both** branches. Recreation is then barred by the
+   durable destroyed set even after a restart from the old init block.
+2. **One session id is not one directory.** Dir names carry a suffix
+   (`db-path.h:39`): validators empty, observers `.observer.<identity>`, and a
+   session can have several observer dirs (`manager.cpp:2919`), destroyed on a
+   path (`manager.cpp:2944`) that bypasses the id-insertion sites. Fix: the queue
+   holds **exact directory names**, not session ids; each retired group (active,
+   tentative, observer) contributes its own dir name; removal is per directory,
+   after that directory is confirmed gone.
+3. **Reconciliation needs a complete successful inventory.** The sweep walk
+   swallows its overall error (`manager.cpp:2412`); "not seen" ≠ "absent". Only
+   reconcile (drop a queue entry whose dir is absent) after a fully successful
+   walk. Storing dir names (not bare ids) lets reconciliation and deletion act on
+   an exact path.
+4. **Confirmed-absence on the live path too.** `destroy_inner` ignores `rmrf`'s
+   result (`bridge.cpp:509-510`); the cleanup-done callback must `stat`-probe for
+   absence (like the sweep, `manager.cpp:2389`) before dequeuing, and carry the
+   exact dir name.
+5. **Migration.** A fresh (empty) pending key would silently drop #72's recovery.
+   On first startup after upgrade, import into the pending queue every existing
+   `consensus/` directory whose parsed session id is in the loaded
+   `destroyed_validator_sessions_` (and keep the destroyed-set gate as a legacy
+   fallback in the sweep). Acknowledge that a dir whose id was already pruned pre
+   upgrade cannot be recovered from either set.
+6. **Load ordering.** Load both `destroyed_validator_sessions_` and the pending
+   queue before the sweep and before `finish_start_up` (chain the two `get`s).
+7. **Consensus safety wording.** The record is local StateDb metadata (off the
+   state tree), but the change still touches consensus-DB deletion and startup
+   latency; deletion stays async, startup sweep stays bounded.
+8. **Test.** Drive the *real* retirement path (both branches) with a simulated
+   crash between the atomic persist and the deletion, asserting recovery; plus
+   multi-directory (validator + observer) completion, migration import, a walk
+   that fails enumeration (no reconciliation), and a false-success deletion
+   (rmrf ok but dir remains → stays queued). Each corresponding code mutation
+   must turn its test red.
+
+TL declarations are at `tos_api.tl:601` / `:614`; the `tosctl`/`tostester` `.tl`
+copies do **not** need lockstep for C++ codegen (Rust/Python read their own).
+
 ## Open questions for review
 
 1. Is a new persisted TL field the right mechanism, or should the pending queue

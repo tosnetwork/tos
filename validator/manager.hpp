@@ -260,6 +260,14 @@ class ValidatorManagerImpl : public ValidatorManager {
   std::map<ObserverGroupId, ValidatorGroupEntry> observer_groups_;
   std::map<adnl::AdnlNodeIdShort, td::actor::ActorOwn<CollationManager>> collation_managers_;
   std::set<ValidatorSessionId> destroyed_validator_sessions_;
+  // Exact directory names of retired consensus groups whose per-group RocksDB
+  // still needs deleting. Separate from destroyed_validator_sessions_ because
+  // the two have different lifetimes (see doc/consensus-db-cleanup-queue.md):
+  // an id here stays until its directory is confirmed gone, so a crash during
+  // deletion cannot leave an unrecognized orphan. Stores directory names, not
+  // session ids, because one session can own several directories (a validator
+  // plus multiple observers).
+  std::set<std::string> pending_consensus_db_cleanup_;
 
  private:
   // MASTERCHAIN LAST BLOCK
@@ -570,8 +578,13 @@ class ValidatorManagerImpl : public ValidatorManager {
   void init_last_masterchain_state(td::Ref<MasterchainState> state) override;
   void started(ValidatorManagerInitResult result);
   void got_destroyed_validator_sessions(std::vector<ValidatorSessionId> sessions);
-  // Reclaims per-group databases whose session is already recorded as
-  // destroyed; see the definition for why nothing else can.
+  void got_pending_consensus_db_cleanup(std::vector<std::string> dirs);
+  // Called by a validator group once it has confirmed its own consensus
+  // directory is deleted, so the cleanup queue is pruned during normal uptime
+  // (not only at the next startup sweep).
+  void consensus_db_cleanup_done(std::string dir_name) override;
+  // Reclaims per-group databases still queued for cleanup (or, for pre-upgrade
+  // databases, recorded only as a destroyed session); see the definition.
   void sweep_destroyed_consensus_dbs();
   td::actor::Task<> finish_start_up();
   td::actor::Task<> start_up_advance_mc();

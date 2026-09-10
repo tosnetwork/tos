@@ -349,6 +349,12 @@ class ValidatorManager : public ValidatorManagerInterface {
  public:
   virtual void init_last_masterchain_state(td::Ref<MasterchainState> state) {
   }
+  // A retired validator group reports, after confirming its own per-group
+  // consensus directory is deleted, the exact directory name so the manager can
+  // drop it from the cleanup queue. Default no-op for implementations that do
+  // not run the cleanup queue.
+  virtual void consensus_db_cleanup_done(std::string dir_name) {
+  }
   virtual void set_block_state(BlockHandle handle, td::Ref<ShardState> state, vm::StoreCellHint hint,
                                td::Promise<td::Ref<ShardState>> promise) = 0;
   virtual void store_block_state_part(BlockId effective_block, td::Ref<vm::Cell> cell,
