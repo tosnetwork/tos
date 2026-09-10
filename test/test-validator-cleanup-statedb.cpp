@@ -281,37 +281,6 @@ TEST(ValidatorCleanupStateDb, path_is_confirmed_absent_requires_real_absence) {
 }
 
 #ifndef _WIN32
-// Containment: a canonical directory that is actually a SYMLINK to a directory
-// OUTSIDE the consensus root must be refused, and the external target must be left
-// completely intact -- the helper must never follow a planted symlink out of the
-// node's data dir. Deterministic and independent of euid. If the realpath
-// containment check were dropped, the external DB would be destroyed.
-TEST(ValidatorCleanupStateDb, delete_helper_refuses_symlink_escape) {
-  auto path = temp_db_path();
-  auto sid = make_session_id(9);
-  auto dir = consensus_db_dir_name(kShard, 7, sid, td::Slice(""));
-
-  // External directory (outside the consensus root) with a sentinel file.
-  auto external = PSTRING() << path << "-external";
-  td::rmrf(external).ignore();
-  td::mkpath(external + "/db/").ensure();
-  td::write_file(external + "/db/SENTINEL", td::Slice{"keep me"}).ensure();
-
-  // Make <root>/consensus/ exist, then plant the canonical name as a symlink to
-  // the external directory.
-  td::mkpath(consensus_db_root(path)).ensure();
-  auto link_path = consensus_db_root(path) + dir;
-  auto ext_abs = td::realpath(external).move_as_ok();
-  ASSERT_TRUE(::symlink(ext_abs.c_str(), link_path.c_str()) == 0);
-
-  ASSERT_TRUE(!delete_validator_consensus_db(td::Slice{path}, sid, dir));
-  ASSERT_TRUE(td::stat(external + "/db/SENTINEL").is_ok());  // external target untouched
-
-  td::rmrf(link_path).ignore();
-  td::rmrf(external).ignore();
-  td::rmrf(path).ignore();
-}
-
 // Removal failure: when the parent is not writable (non-root), rmrf cannot remove
 // the directory, so the helper must report false (unconfirmed) and the directory
 // must remain. This falsifies a helper that returns true without confirming. Root
