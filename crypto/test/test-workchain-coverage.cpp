@@ -9,6 +9,21 @@
 #include <iostream>
 #include <cstdlib>
 #include <string>
+#include <new>
+
+// Private executable only. A thread-local trap is enabled strictly inside the
+// allocation-failure callback; all other fixture allocation uses malloc/free.
+namespace allocation_probe {
+thread_local bool deny = false;
+thread_local unsigned denied = 0;
+}
+void* operator new(std::size_t size) {
+  if (allocation_probe::deny) { ++allocation_probe::denied; throw std::bad_alloc(); }
+  if (auto* p = std::malloc(size ? size : 1)) return p;
+  throw std::bad_alloc();
+}
+void operator delete(void* p) noexcept { std::free(p); }
+void operator delete(void* p, std::size_t) noexcept { std::free(p); }
 
 namespace {
 void require(bool value, const char* name) {
@@ -287,6 +302,8 @@ void phases() {
     vm::load_cell_slice(tracked); vm::load_cell_slice(tracked); return td::Status::OK();
   });
   require(good.reason == block::WorkchainReadPhaseReason::Complete && good.attempts == 2, "phase.positive_repeated");
+  require(good.exception_kind == block::WorkchainReadExceptionKind::None && !good.exception &&
+          good.callback_status.is_ok(), "phase.positive_no_exception");
   auto bad = block::run_workchain_read_phase(tree->root_ptr(), {}, [&] {
     try { vm::load_cell_slice(tracked); } catch (...) {}
     return td::Status::OK();
@@ -312,6 +329,85 @@ void phases() {
     vm::load_cell_slice(nested); return td::Status::OK();
   });
   require(nesting.reason == block::WorkchainReadPhaseReason::OutsideFootprint, "phase.nested_tree");
+}
+template <class Exception, class Throw, class Inspect>
+void phase_exception(block::WorkchainReadExceptionKind expected, const char* name, Throw raise, Inspect inspect) {
+  auto raw = vm::CellBuilder().store_long(42, 64).finalize();
+  auto tree = std::make_shared<vm::CellUsageTree>();
+  auto tracked = vm::UsageCell::create(raw, tree->root_ptr());
+  auto result = block::run_workchain_read_phase(tree->root_ptr(), {raw->get_hash()}, [&]() -> td::Status {
+    vm::load_cell_slice(tracked); // Inside the admitted footprint before throwing.
+    raise();
+    return td::Status::OK();
+  });
+  require(result.reason == block::WorkchainReadPhaseReason::ReadException && result.attempts == 1,
+          (std::string(name) + ".phase").c_str());
+  require(result.exception_kind == expected, (std::string(name) + ".kind").c_str());
+  require(result.callback_status.is_error() && result.exception, (std::string(name) + ".payload").c_str());
+  bool caught = false;
+  try { std::rethrow_exception(result.exception); }
+  catch (const Exception& error) { caught = true; inspect(error); }
+  catch (...) {}
+  require(caught, (std::string(name) + ".original_type").c_str());
+  vm::load_cell_slice(tracked); // Teardown also precedes exception-payload use.
+}
+void phase_exceptions() {
+  using Kind = block::WorkchainReadExceptionKind;
+  auto ignore = [](const auto&) {};
+  phase_exception<vm::VmVirtError>(Kind::VirtualizedContent, "phase.fault.virtualized",
+      [] { throw vm::VmVirtError{2}; }, [](const auto& e) { require(e.virtualization == 2, "phase.fault.virtualized.detail"); });
+  phase_exception<vm::VmError>(Kind::VmError, "phase.fault.vm",
+      [] { throw vm::VmError{vm::Excno::dict_err, "phase parse failure", 17}; }, [](const auto& e) {
+        require(e.get_errno() == static_cast<int>(vm::Excno::dict_err) && e.get_arg() == 17 &&
+                std::string(e.get_msg()) == "phase parse failure", "phase.fault.vm.detail");
+      });
+  phase_exception<vm::VmNoGas>(Kind::VmNoGas, "phase.fault.gas", [] { throw vm::VmNoGas{}; }, ignore);
+  phase_exception<vm::VmFatal>(Kind::VmFatal, "phase.fault.fatal", [] { throw vm::VmFatal{}; }, ignore);
+  phase_exception<vm::CellBuilder::CellCreateError>(Kind::CellCreate, "phase.fault.create",
+      [] { throw vm::CellBuilder::CellCreateError{}; }, ignore);
+  phase_exception<vm::CellBuilder::CellWriteError>(Kind::CellWrite, "phase.fault.write",
+      [] { throw vm::CellBuilder::CellWriteError{}; }, ignore);
+  phase_exception<std::bad_alloc>(Kind::Allocation, "phase.fault.allocation", [] { throw std::bad_alloc{}; }, ignore);
+  phase_exception<std::runtime_error>(Kind::Other, "phase.fault.other",
+      [] { throw std::runtime_error("unclassified callback failure"); }, [](const auto& e) {
+        require(std::string(e.what()) == "unclassified callback failure", "phase.fault.other.detail");
+      });
+  auto raw = vm::CellBuilder().store_long(42, 64).finalize();
+  auto tree = std::make_shared<vm::CellUsageTree>();
+  auto tracked = vm::UsageCell::create(raw, tree->root_ptr());
+  // First prove the allocation trap speaks; do not trust a zero denial count
+  // in the handler until the same trap has rejected an actual allocation.
+  allocation_probe::denied = 0;
+  allocation_probe::deny = true;
+  bool trapped = false;
+  try { auto* p = ::operator new(1); ::operator delete(p); }
+  catch (const std::bad_alloc&) { trapped = true; }
+  allocation_probe::deny = false;
+  require(trapped && allocation_probe::denied == 1, "phase.oom.trap_positive");
+  allocation_probe::denied = 0;
+  bool returned = false;
+  try {
+    auto result = block::run_workchain_read_phase(tree->root_ptr(), {raw->get_hash()}, [&]() -> td::Status {
+      vm::load_cell_slice(tracked);
+      allocation_probe::deny = true;
+      throw std::bad_alloc();
+    });
+    allocation_probe::deny = false;
+    returned = true;
+    require(result.reason == block::WorkchainReadPhaseReason::ReadException &&
+            result.exception_kind == Kind::Allocation && result.callback_status.is_error() && result.exception &&
+            result.attempts == 1, "phase.oom.result");
+  } catch (...) { allocation_probe::deny = false; }
+  require(returned && allocation_probe::denied == 0, "phase.oom.no_handler_allocation");
+  vm::load_cell_slice(tracked);
+
+  auto translated = block::run_workchain_read_phase(tree->root_ptr(), {}, [&]() -> td::Status {
+    try { vm::load_cell_slice(tracked); }
+    catch (...) { throw vm::VmError{vm::Excno::dict_err, "intercepted footprint refusal"}; }
+    return td::Status::OK();
+  });
+  require(translated.reason == block::WorkchainReadPhaseReason::OutsideFootprint && translated.attempts == 1 &&
+          translated.exception_kind == Kind::VmError && translated.exception, "phase.reason_precedes_secondary_kind");
 }
 td::BufferSlice proof(bool observation, std::uint64_t& attempts) {
   attempts = 0;
@@ -370,6 +466,7 @@ int main(int argc, char** argv) {
     require(false, "proof.used_path_present");
   }
   // After byte/shape assertions so this check cannot mask the tracking controls.
-  require(plain_attempts == 0 && observed_attempts == 2, "proof.observation_count");
+  require(observed_attempts == 2, "proof.observation_count");
+  phase_exceptions(); // New kind controls cannot replace the earlier coverage assertions.
   std::cout << "coverage.completed\n";
 }

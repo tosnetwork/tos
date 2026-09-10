@@ -1,0 +1,110 @@
+[1/109] cd /home/tomi/tos/uno/crypto && /usr/bin/cmake -E env CARGO_NET_OFFLINE=true CARGO_TARGET_DIR=/home/tomi/tos/build/uno/crypto/cargo-target /home/tomi/.cargo/bin/cargo build --locked --offline --release -j32
+    Finished `release` profile [optimized] target(s) in 0.08s
+[2/107] Checking the git repository for changes...
+[3/107] Building CXX object CMakeFiles/git.dir/git.cc.o
+[4/107] Linking CXX static library libgit.a
+[5/107] Linking CXX executable tol/tol
+[6/107] Linking CXX executable crypto/mintless-proof-generator
+[7/107] Linking CXX executable crypto/func
+[8/107] Linking CXX executable crypto/test-weight-distr
+[9/107] Compile FunC stdlib TVM v6 fee primitive coverage
+[10/107] Linking CXX executable utils/generate-random-id
+[11/107] Linking CXX executable crypto/fift
+[12/107] Generate /home/tomi/tos/build/crypto/smartcont/auto/wallet3-code.fif
+[13/107] Generate /home/tomi/tos/build/crypto/smartcont/auto/restricted-wallet-code.fif
+[14/107] Linking CXX executable crypto/adjust-block
+[15/107] Generate /home/tomi/tos/build/crypto/smartcont/auto/restricted-wallet2-code.fif
+[16/107] Generate /home/tomi/tos/build/crypto/smartcont/auto/wallet-v4-code.fif
+[17/107] Generate /home/tomi/tos/build/crypto/smartcont/auto/highload-wallet-code.fif
+[18/107] Generate /home/tomi/tos/build/crypto/smartcont/auto/highload-wallet-v2-code.fif
+[19/107] Generate /home/tomi/tos/build/crypto/smartcont/auto/wallet-v5-code.fif
+[20/107] Generate /home/tomi/tos/build/crypto/smartcont/auto/simple-wallet-code.fif
+[21/107] Linking CXX executable adnl/adnl-proxy
+[22/107] Linking CXX executable crypto/dump-block
+[23/107] Generate /home/tomi/tos/build/crypto/smartcont/auto/wallet-code.fif
+[24/107] Generate /home/tomi/tos/build/crypto/smartcont/auto/wallet3-code.cpp
+[25/107] Generate /home/tomi/tos/build/crypto/smartcont/auto/simple-wallet-code.cpp
+[26/107] Generate /home/tomi/tos/build/crypto/smartcont/auto/wallet-v4-code.cpp
+[27/107] Generate /home/tomi/tos/build/crypto/smartcont/auto/highload-wallet-v2-code.cpp
+[28/107] Generate /home/tomi/tos/build/crypto/smartcont/auto/restricted-wallet-code.cpp
+[29/107] Generate /home/tomi/tos/build/crypto/smartcont/auto/restricted-wallet2-code.cpp
+[30/107] Generate /home/tomi/tos/build/crypto/smartcont/auto/highload-wallet-code.cpp
+[31/107] Generate /home/tomi/tos/build/crypto/smartcont/auto/wallet-v5-code.cpp
+[32/107] Generate /home/tomi/tos/build/crypto/smartcont/auto/task-escrow-code.fif
+[33/107] Compiling Tol contract slice5-receive-context-tol -> /home/tomi/tos/build/slice1-gas-parity/slice5-receive-context-tol.boc
+[34/107] Generate /home/tomi/tos/build/crypto/smartcont/auto/session-wallet-code.fif
+[35/107] Compiling FunC contract jetton-wallet-func -> /home/tomi/tos/build/slice1-gas-parity/jetton-wallet-func.boc
+[36/107] Generate /home/tomi/tos/build/crypto/smartcont/auto/restricted-wallet3-code.fif
+[37/107] Compiling FunC contract jetton-minter-func -> /home/tomi/tos/build/slice1-gas-parity/jetton-minter-func.boc
+[38/107] Compiling Tol contract jetton-minter-tol -> /home/tomi/tos/build/slice1-gas-parity/jetton-minter-tol.boc
+[39/107] Compiling FunC contract wallet-v5-func -> /home/tomi/tos/build/slice1-gas-parity/wallet-v5-func.boc
+[40/107] Generate /home/tomi/tos/build/crypto/smartcont/auto/config-code.fif
+[41/107] Generate /home/tomi/tos/build/crypto/smartcont/auto/wallet-code.cpp
+[42/107] Generate /home/tomi/tos/build/crypto/smartcont/auto/simple-wallet-ext-code.fif
+[43/107] Generate /home/tomi/tos/build/crypto/smartcont/auto/pow-testgiver-code.fif
+[44/107] Generate /home/tomi/tos/build/crypto/smartcont/auto/multisig-code.fif
+[45/107] Generate /home/tomi/tos/build/crypto/smartcont/auto/dns-manual-code.fif
+[46/107] Generate /home/tomi/tos/build/crypto/smartcont/auto/task-escrow-code.cpp
+[47/107] Compiling Tol contract jetton-wallet-tol -> /home/tomi/tos/build/slice1-gas-parity/jetton-wallet-tol.boc
+[48/107] Generate /home/tomi/tos/build/crypto/smartcont/auto/session-wallet-code.cpp
+[49/107] Generate /home/tomi/tos/build/crypto/smartcont/auto/agent-account-code.fif
+[50/107] Compiling Tol contract tos-report-bond-oracle -> /home/tomi/tos/build/slice1-gas-parity/tos-report-bond-oracle.boc
+[51/107] Compiling Tol contract wallet-v5-tol -> /home/tomi/tos/build/slice1-gas-parity/wallet-v5-tol.boc
+[52/107] Generate /home/tomi/tos/build/crypto/smartcont/auto/restricted-wallet3-code.cpp
+[53/107] Generate /home/tomi/tos/build/crypto/smartcont/auto/payment-channel-code.fif
+[54/107] Generate /home/tomi/tos/build/crypto/smartcont/auto/dns-auto-code.fif
+[55/107] Generate /home/tomi/tos/build/crypto/smartcont/auto/elector-code.fif
+[56/107] Generate /home/tomi/tos/build/crypto/smartcont/auto/simple-wallet-ext-code.cpp
+[57/107] Linking CXX executable validator-engine-console/validator-engine-console
+[58/107] Generate /home/tomi/tos/build/crypto/smartcont/auto/pow-testgiver-code.cpp
+[59/107] Generate /home/tomi/tos/build/crypto/smartcont/auto/config-code.cpp
+[60/107] Generate /home/tomi/tos/build/crypto/smartcont/auto/dns-manual-code.cpp
+[61/107] Generate /home/tomi/tos/build/crypto/smartcont/auto/multisig-code.cpp
+[62/107] Linking CXX executable utils/json2tlo
+[63/107] Generate /home/tomi/tos/build/crypto/smartcont/auto/agent-account-code.cpp
+[64/107] Generate /home/tomi/tos/build/crypto/smartcont/auto/payment-channel-code.cpp
+[65/107] Generate /home/tomi/tos/build/crypto/smartcont/auto/dns-auto-code.cpp
+[66/107] Generate /home/tomi/tos/build/crypto/smartcont/auto/elector-code.cpp
+[67/107] Linking CXX executable adnl/adnl-pong
+[68/107] Verify and embed the frozen TOS Service Protocol stablecoin escrow v1 BOC
+NOTE: escrow v1 is deprecated (superseded by v2); this build exists only to verify the frozen historical artifact.
+NOTE: escrow v1 is deprecated (superseded by v2); this build exists only to verify the frozen historical artifact.
+[69/107] Linking CXX executable utils/prepare-ls-slice-config
+[70/107] Verify and embed the frozen TOS Service Protocol stablecoin escrow v2 BOC
+[71/107] Verify and embed the frozen TOS Native Service Registry BOC
+[72/107] Linking CXX executable storage/storage-daemon/storage-daemon-cli
+[73/107] Generate /home/tomi/tos/build/crypto/smartcont/auto/prediction-market-code.fif
+[74/107] Linking CXX executable adnl/tos-adnl-probe
+[75/107] Generate /home/tomi/tos/build/crypto/smartcont/auto/prediction-market-code.cpp
+[76/107] Linking CXX executable utils/proxy-liteserver
+[77/107] Building CXX object crypto/CMakeFiles/smc-envelope.dir/smc-envelope/SmartContractCode.cpp.o
+[78/107] Linking CXX executable lite-client/lite-client
+[79/107] Linking CXX static library crypto/libsmc-envelope.a
+[80/107] Linking CXX executable dht-server/dht-server
+[81/107] Linking CXX executable test-http
+[82/107] Linking CXX executable metrics/metrics-example
+[83/107] Linking CXX executable test-metrics-label-bound
+[84/107] Linking CXX executable create-hardfork/create-hardfork
+[85/107] Linking CXX executable http/http-proxy
+[86/107] Linking CXX shared library emulator/libemulator.so
+[87/107] Linking CXX executable test-http-server-limits
+[88/107] Linking CXX executable quic/quic-example-server
+[89/107] Linking CXX executable quic/quic-example-client
+[90/107] Linking CXX executable storage/storage-cli
+[91/107] Linking CXX executable crypto/create-state
+[92/107] Linking CXX executable test-workchain-block
+[93/107] Linking CXX executable test-toslib
+[94/107] Linking CXX executable test-wallet-message-processor
+[95/107] Linking CXX executable test-quic-sender
+[96/107] Linking CXX shared library toslib/libtoslibjson.so.0.5
+[97/107] Creating library symlink toslib/libtoslibjson.so
+[98/107] Linking CXX executable test/toslib/test-ffi-event-loop
+[99/107] Linking CXX executable test-emulator
+[100/107] Linking CXX executable test/toslib/test-ffi-awaitable
+[101/107] Linking CXX executable test-toslib-offline
+[102/107] Linking CXX executable bench-rldp
+[103/107] Linking CXX executable test-smartcont
+[104/107] Linking CXX executable toslib/toslib-cli
+[105/107] Linking CXX executable storage/storage-daemon/storage-daemon
+[106/107] Linking CXX executable rldp-http-proxy/rldp-http-proxy
+[107/107] Linking CXX executable validator-engine/validator-engine

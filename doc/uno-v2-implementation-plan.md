@@ -175,6 +175,20 @@ Scope and controls: `crypto/test/workchain-coverage.md`. No live I13c/I13d
 acceptance is claimed; the proof-byte comparison is over a private controlled
 Merkle tree, not the live block-state proof.
 
+The read-phase follow-up preserves eight thrown exception kinds and the original
+exception payload separately from stage reason. Callers classify from kind plus
+the operation's explicit source/ownership, never from a generic catch-all Status.
+The stage reason is primary: an intercepted footprint refusal remains primary
+even if the callback rethrows a different exception. The payload is consumed
+within the synchronous owner's lifetime, not stored in a continuation. Diagnostic
+storage is reserved before the callback; the allocation-failure handler only
+moves it. These are private contract properties, not live error-code mappings.
+For M6 aggregation, this unit adds O(256) edge frames, two O(W) reconstructed
+key vectors (W is the authenticated write bound), and constant phase-observer /
+diagnostic storage. Add them to simultaneously resident meter/footprint storage;
+do not treat them as separate allowances. Arbitrary callback-owned exception
+payloads are not bounded by this helper or duplicated by exception_ptr.
+
 Owner-directed live order remains collator execution, validator execution, then
 registry readiness. The collator coroutine must positively observe the same
 retained adapter before and after suspension; actor membership alone is not
@@ -221,6 +235,12 @@ retention cap to fail a test, bypass the cap, or classify a cap failure as an
 expected protocol rejection. Recheck each deferred failure's actual cause on
 fresh fixtures after cleanup; previous-run names and reasons are not evidence
 for the next run.
+
+Merge acceptance additionally re-derives deferred dispositions on the **merged
+result**, not either parent's exception list (owner requirement, 2026-09-10).
+A previously deferred test repaired on the other branch must pass after merging;
+carrying its old waiver forward would hide a merge regression. Preserve actual
+JUnit results and compare each remaining failure's fresh cause independently.
 
 - Connectivity must use objects constructed by the production path. Record
   the actual stopping point, counters and side effects; private fixture assembly

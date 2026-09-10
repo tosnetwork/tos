@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="(empty)"
+	tests="1"
+	failures="1"
+	disabled="0"
+	skipped="0"
+	hostname=""
+	time="0"
+	timestamp="2026-09-10T00:20:32"
+	>
+	<testcase name="test-workchain-coverage-gates" classname="test-workchain-coverage-gates" time="0.0657899" status="fail">
+		<failure message=""/>
+		<system-out>Traceback (most recent call last):
+  File "/home/tomi/tos/crypto/test/workchain-coverage.py", line 53, in &lt;module&gt;
+    main()
+    ~~~~^^
+  File "/home/tomi/tos/crypto/test/workchain-coverage.py", line 11, in main
+    raise RuntimeError("forced registered driver failure")
+RuntimeError: forced registered driver failure
+</system-out>
+	</testcase>
+</testsuite>

@@ -1,0 +1,24 @@
+Internal ctest changing into directory: /tmp/uno-coverage-build
+Test project /tmp/uno-coverage-build
+    Start 6: test-workchain-coverage-gates
+1/1 Test #6: test-workchain-coverage-gates ....***Failed    0.07 sec
+Traceback (most recent call last):
+  File "/home/tomi/tos/crypto/test/workchain-coverage.py", line 53, in <module>
+    main()
+    ~~~~^^
+  File "/home/tomi/tos/crypto/test/workchain-coverage.py", line 11, in main
+    raise RuntimeError("forced registered driver failure")
+RuntimeError: forced registered driver failure
+
+
+0% tests passed, 1 tests failed out of 1
+
+Label Time Summary:
+i13          =   0.07 sec*proc (1 test)
+private      =   0.07 sec*proc (1 test)
+workchain    =   0.07 sec*proc (1 test)
+
+Total Test time (real) =   0.07 sec
+
+The following tests FAILED:
+	  6 - test-workchain-coverage-gates (Failed)

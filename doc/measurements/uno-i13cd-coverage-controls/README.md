@@ -1,17 +1,42 @@
 # Private coverage / read-phase controls
 
-Baseline: `5d8125ed5f636fc34064798caa7a58d6f5789f38`. This is mechanism evidence,
-not live I13c/I13d acceptance or permission to publish.
+Final control baseline: `88fee830660688e97282c45c00786f9467bef48b`.
+`restore-audit.json` and `final-controls/` contain **37 final-source controls**.
+All compiled, failed at the recorded behavioral assertion, restored all five
+source hashes, explicitly rebuilt the actual executable, and passed its full
+positive run. `verify-restore.py` reconstructs every mutant from the checked-out
+sources. No historical record below is counted among these 37. This is private
+mechanism evidence, not live I13c/I13d acceptance or permission to publish.
+
+`final/final-checks.json` binds the post-fix source and executable hashes,
+complete default build, positive private driver, static six-test registration,
+and ordinary JUnit: **130 = 121 passed + 9 deferred + 0 unresolved + 0 skipped**.
+CTest's raw exit is 8, not zero. Each deferred case includes this run's fresh
+bootstrap artifacts and cause; this unmerged tree's dispositions must not be
+carried into a future merge. Cleanup was 9 to 0 fixtures, with 194 top-level
+diagnostic files archived before deletion. B's cleanup-only window was released
+before regression. The separate removed-domain scan remains red on five
+existing Counter fixture tag-comment path hits; no new exception was made.
+
+The exception-kind portion separately degenerates all eight classes, removes
+the error Status, removes the original exception_ptr, allocates while handling
+bad_alloc, and demotes the primary footprint reason behind a secondary throw.
+The collapse control removes only VmVirtError through bad_alloc catches,
+retaining Outside; it reaches the new virtualized-kind assertion after all older
+coverage, phase and proof assertions pass. ReadException tests require one
+admitted observed read, the phase reason, kind, error Status, retained exact type
+and original details. A positive allocation trap precedes the zero-allocation
+handler test; this is not a claim of surviving arbitrary runtime-wide OOM.
 
 Coordinator-directed checkpoint, 2026-09-10: commit before the next contract
-revision. This is NOT a closed unit. The revised cohort completed eight controls
-(`revised-checkpoint8`, `restore-audit.json`); its ninth stopped at restoration
+revision. That checkpoint was NOT a closed unit. Its cohort completed eight controls
+(`revised-checkpoint8`; the old root audit is preserved in that commit); its ninth stopped at restoration
 because the subprocess could no longer locate apply_patch after an environment
 change. That mutation is excluded. The exact recorded before bytes were restored,
 all five source hashes rechecked, the actual target explicitly rebuilt, and its
 registered CTest passed. Raw interruption and recovery outputs are retained.
-The planned 24-control cohort has not completed. The read-phase exception-kind
-contract must next be revised under the coordinator's instruction and tested.
+That planned 24-control cohort did not complete. The final 37 supersede it and
+include the coordinator-required exception-kind contract revision.
 
 `checkpoint-restore-audit.json` contains 18 superseded-source controls and the five measured
 source hashes. Each mutation is reconstructible from its exact before/after
@@ -20,7 +45,7 @@ before archival. `first13` and `last5` use exactly the same five source hashes.
 They precede the second review's artifact-provenance and bound-owner fixes and
 are not evidence for the revised final source. The same limitation applies to
 `checkpoint-regression`: 130 = 121 passed + 9 individually checked deferrals,
-not the pending post-fix regression. A new 24-control cohort is in progress.
+not the post-fix regression.
 Each mutation compiled successfully, failed at its recorded assertion, restored
 all measured bytes, explicitly rebuilt `test-workchain-coverage`, and passed
 the full positive executable with its completion marker.
@@ -29,7 +54,7 @@ The execution chain is CTest -> Python driver -> `test-workchain-coverage`.
 The driver additionally invokes its isolated `later` mode. There are no hidden
 fixture tools in this harness. The explicit restore target is the executable,
 not `all-tests`. Python-only changes can legitimately leave binary hashes
-unchanged. The last two controls require a real CTest `status="fail"` and failure
+unchanged. The completion-marker and registered-driver controls require a real CTest `status="fail"` and failure
 element, not skip/not-run; the positive driver requires both completion markers.
 
 Controls isolate whole-entry/leaf-extra changes, the later subtree, separate
