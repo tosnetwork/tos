@@ -31,6 +31,8 @@ uno_paths = (
     "uno/**", "doc/uno-*", "doc/measurements/uno-*",
     "crypto/block/workchain-*", "crypto/test/test-workchain*",
     "crypto/test/workchain-*", "test/test-uno-*", "test/counter-*", "test/test-counter-*",
+    "crypto/smartcont/uno-genesis-config.fif",
+    "crypto/smartcont/uno-genesis-operators.fif",
     "crypto/block/block.tlb", "scripts/m1-real-manager-sync.py",
     "crypto/block/block-parse.cpp", "crypto/block/transaction.cpp",
     "assembly/native/build-ubuntu-shared.sh",
