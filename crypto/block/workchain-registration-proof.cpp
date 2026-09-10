@@ -3,11 +3,18 @@
 
 namespace block {
 td::Status verify_workchain_closure_possession(
-    const WorkchainConfidentialAccount& a, const std::array<unsigned char, 80>& domain,
+    const WorkchainConfidentialAccount& a, const WorkchainPossessionPolicy& policy,
+    const std::array<unsigned char, 80>& domain,
     const std::array<unsigned char, 96>& proof) {
 #if defined(TOS_CONFIDENTIAL_PROOF_BACKEND_LINKED)
-  UnoCryptoClosurePossessionRequestV1 r{};
-  r.abi_version = 1;
+  UnoCryptoClosurePossessionRequestV2 r{};
+  r.abi_version = 2;
+  auto encoded = encode_workchain_replay_context(rebuild_workchain_possession_context(policy, a),
+                                                WorkchainReplayOperation::Closure);
+  if (encoded.is_error()) return td::Status::Error(-7201, "authenticated closure context unavailable");
+  auto context = encoded.move_as_ok();
+  if (context.size() != sizeof(r.context)) return td::Status::Error(-7201, "closure context ABI mismatch");
+  std::copy(context.begin(), context.end(), r.context);
   std::copy(domain.begin(), domain.end(), r.domain);
   r.global_id = a.global_id;
   r.workchain_id = a.address.workchain_id;
@@ -23,7 +30,7 @@ td::Status verify_workchain_closure_possession(
   r.proof_profile = a.proof_profile; r.key_epoch = a.key_epoch;
   r.auth_nonce = a.auth_nonce; r.available_revision = a.available_revision;
   std::copy(proof.begin(), proof.end(), r.proof);
-  switch (uno_crypto_verify_closure_possession_v1(&r)) {
+  switch (uno_crypto_verify_closure_possession_v2(&r)) {
     case UNO_CRYPTO_OK: return td::Status::OK();
     case UNO_CRYPTO_DECODE:
     case UNO_CRYPTO_VERIFY:
@@ -40,10 +47,17 @@ td::Status verify_workchain_closure_possession(
 }
 
 td::Status verify_workchain_registration_possession(
-    const WorkchainConfidentialAccount& a, const std::array<unsigned char, 64>& proof) {
+    const WorkchainConfidentialAccount& a, const WorkchainPossessionPolicy& policy,
+    const std::array<unsigned char, 64>& proof) {
 #if defined(TOS_CONFIDENTIAL_PROOF_BACKEND_LINKED)
-  UnoCryptoKeyPossessionRequestV1 r{};
-  r.abi_version = 1;
+  UnoCryptoKeyPossessionRequestV2 r{};
+  r.abi_version = 2;
+  auto encoded = encode_workchain_replay_context(rebuild_workchain_possession_context(policy, a),
+                                                WorkchainReplayOperation::Registration);
+  if (encoded.is_error()) return td::Status::Error(-7201, "authenticated registration context unavailable");
+  auto context = encoded.move_as_ok();
+  if (context.size() != sizeof(r.context)) return td::Status::Error(-7201, "registration context ABI mismatch");
+  std::copy(context.begin(), context.end(), r.context);
   r.global_id = a.global_id;
   r.workchain_id = a.address.workchain_id;
   auto copy = [](const td::Bits256& source, auto& target) {
@@ -61,7 +75,7 @@ td::Status verify_workchain_registration_possession(
   r.proof_profile = a.proof_profile;
   r.key_epoch = a.key_epoch;
   std::copy(proof.begin(), proof.end(), r.proof);
-  switch (uno_crypto_verify_key_possession_v1(&r)) {
+  switch (uno_crypto_verify_key_possession_v2(&r)) {
     case UNO_CRYPTO_OK: return td::Status::OK();
     case UNO_CRYPTO_DECODE:
     case UNO_CRYPTO_VERIFY:

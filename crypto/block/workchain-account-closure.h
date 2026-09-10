@@ -17,6 +17,7 @@ struct WorkchainAccountClosureTransition {
 inline td::Result<WorkchainAccountClosureTransition> execute_workchain_account_closure(
     const WorkchainConfidentialAccount& old_account, const WorkchainCoordinatorState& old_coordinator,
     std::uint64_t authenticated_inflight_obligations,
+    const WorkchainPossessionPolicy& possession,
     const std::array<unsigned char, 80>& authenticated_domain,
     const std::array<unsigned char, 96>& proof) {
   auto invalid = [](td::Slice text) {
@@ -37,7 +38,7 @@ inline td::Result<WorkchainAccountClosureTransition> execute_workchain_account_c
     if (old_account.auth_nonce == UINT64_MAX) return invalid("closure nonce exhausted");
     // Randomized zero is not the identity ciphertext. This one DLEQ establishes
     // both possession and exhausted available; do not add registration Schnorr.
-    TRY_STATUS(verify_workchain_closure_possession(old_account, authenticated_domain, proof));
+    TRY_STATUS(verify_workchain_closure_possession(old_account, possession, authenticated_domain, proof));
     TRY_RESULT(refund, prepare_workchain_registration_refund(old_account.funding,
                                                            old_coordinator.refundable_deposits));
     auto account = old_account;

@@ -144,12 +144,21 @@ class PureBackend final : public ScenarioBackend {
   WorkchainCoordinatorState coordinator() const {
     return decode_workchain_coordinator_state(state_.coordinator).move_as_ok();
   }
+  WorkchainPossessionPolicy possession_policy() const {
+    const auto& p = env_.protocol;
+    return {{p.engine_version, p.relation_version, p.wire_version, p.proof_version,
+             p.global_id, p.workchain_id, p.genesis_hash, p.workchain_instance},
+            env_.rules, env_.profiles, env_.fee_profile, env_.fee_effective_height};
+  }
   template <size_t N>
   std::array<unsigned char, N> proof(const std::string& mode, unsigned owner, const WorkchainConfidentialAccount& a) {
     Text q{{"secret", std::to_string(wallets_[owner].secret)},
            {"prefix", prefix(a, mode == "close" ? &env_.domain : nullptr)},
            {"commitment", hex(a.available.commitment)},
            {"handle", hex(a.available.handle)}};
+    auto context = encode_workchain_replay_context(rebuild_workchain_possession_context(possession_policy(), a),
+        mode == "close" ? WorkchainReplayOperation::Closure : WorkchainReplayOperation::Registration).move_as_ok();
+    q["context"] = td::hex_encode(context);
     auto r = td::hex_decode(wallet(mode, q).at("proof")).move_as_ok();
     CHECK(r.size() == N);
     std::array<unsigned char, N> out;
@@ -248,7 +257,7 @@ class PureBackend final : public ScenarioBackend {
     auto a = templates_.at(owner);
     WorkchainRegistrationPolicy policy{a.global_id,     a.genesis_hash,        env_.protocol.workchain_instance,
                                        a.bindings,      a.schema_version,      a.relation_profile,
-                                       a.proof_profile, a.funding.paid_deposit};
+                                       a.proof_profile, a.funding.paid_deposit, possession_policy()};
     TRY_RESULT(incarnation, derive_workchain_registration_operation_id(policy, a));
     a.address.instance = incarnation;
     auto p = proof<64>("register", owner, a);
@@ -513,7 +522,7 @@ class PureBackend final : public ScenarioBackend {
     auto a = account(owner);
     auto p = proof<96>("close", owner, a);
     TRY_RESULT(result,
-               execute_workchain_account_closure(a, coordinator(), obligations_.at(owner).size(), env_.domain, p));
+               execute_workchain_account_closure(a, coordinator(), obligations_.at(owner).size(), possession_policy(), env_.domain, p));
     // Pure backend applies the refund to its Native balance state atomically. A
     // live backend must use the delivered Native transaction instead.
     auto next = state_;

@@ -15,6 +15,7 @@ struct WorkchainRegistrationPolicy {
   WorkchainConfidentialBindings bindings;
   std::uint16_t schema_version, relation_profile, proof_profile;
   std::uint64_t deposit;
+  WorkchainPossessionPolicy possession;
 };
 
 // M3 implementation choice; incarnation semantics are NOT frozen by the
@@ -113,7 +114,7 @@ inline td::Result<WorkchainRegistrationTransition> prepare_workchain_registratio
       policy.deposit > UINT64_MAX - old.coordinator.refundable_deposits) {
     return invalid("registration counter or refundable deposit bucket exhausted");
   }
-  TRY_STATUS(verify_workchain_registration_possession(account, proof));
+  TRY_STATUS(verify_workchain_registration_possession(account, policy.possession, proof));
   auto coordinator = old.coordinator;
   ++coordinator.system.registered_accounts;  // Checked strictly below UINT64_MAX above.
   coordinator.refundable_deposits += policy.deposit;  // Checked above, no wrap.

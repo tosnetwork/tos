@@ -58,10 +58,13 @@ fn main() -> Result<()> {
         let mut hash = Sha512::new();
         let closing = args[1] == "close";
         hash.update(if closing {
-            b"TOS/UNO/CLOSE/KEY-POSSESSION/v1".as_slice()
+            b"TOS/UNO/CLOSE/KEY-POSSESSION/v2".as_slice()
         } else {
-            b"TOS/UNO/REGISTER/KEY-POSSESSION/v1".as_slice()
+            b"TOS/UNO/REGISTER/KEY-POSSESSION/v2".as_slice()
         });
+        let context = unhex(f("context")?)?;
+        if context.len() != 426 { return Err(fail("possession v2 requires 426 context bytes").into()); }
+        hash.update(context);
         hash.update(unhex(f("prefix")?)?);
         hash.update(p.compress().as_bytes());
         let r2 = if closing {

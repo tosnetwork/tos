@@ -5,13 +5,15 @@ pub const UNO_CRYPTO_ABI_VERSION: u32 = 1;
 pub const UNO_BALANCE_ABI_VERSION: u32 = 2;
 pub const UNO_RELATION_SEND: u32 = 1;
 pub const UNO_RELATION_COLLECT: u32 = 2;
+pub const UNO_POSSESSION_CONTEXT_BYTES: usize = 426;
 
 /// Public registration context, not native struct bytes in the transcript.
 /// The host independently matches these fields to the address and configuration.
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub struct KeyPossessionRequestV1 {
+pub struct KeyPossessionRequestV2 {
     pub abi_version: u32,
+    pub context: [u8; UNO_POSSESSION_CONTEXT_BYTES],
     pub global_id: i32,
     pub genesis_hash: [u8; 32],
     pub workchain_id: i32,
@@ -31,8 +33,9 @@ pub struct KeyPossessionRequestV1 {
 /// Fixed-width authenticated closure statement; no caller-supplied challenge.
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub struct ClosurePossessionRequestV1 {
+pub struct ClosurePossessionRequestV2 {
     pub abi_version: u32,
+    pub context: [u8; UNO_POSSESSION_CONTEXT_BYTES],
     pub domain: [u8; 80],
     pub global_id: i32,
     pub genesis_hash: [u8; 32],
@@ -59,11 +62,11 @@ pub struct ClosurePossessionRequestV1 {
 /// Request must be initialized, aligned, readable and unchanged until return.
 /// No pointer is retained; numeric checks cannot establish allocation validity.
 #[no_mangle]
-pub unsafe extern "C" fn uno_crypto_verify_closure_possession_v1(request: *const ClosurePossessionRequestV1) -> u32 {
+pub unsafe extern "C" fn uno_crypto_verify_closure_possession_v2(request: *const ClosurePossessionRequestV2) -> u32 {
     contain_unwind(|| {
         if !bounded_span(request, 1) { return Err(AbiStatus::UNO_CRYPTO_ARGUMENTS); }
         let request = unsafe { &*request };
-        if request.abi_version != 1 { return Err(AbiStatus::UNO_CRYPTO_ARGUMENTS); }
+        if request.abi_version != 2 { return Err(AbiStatus::UNO_CRYPTO_ARGUMENTS); }
         crate::closure_possession::verify(request)
     })
 }
@@ -74,13 +77,25 @@ pub unsafe extern "C" fn uno_crypto_verify_closure_possession_v1(request: *const
 /// Request must be initialized, aligned, readable and unchanged until return.
 /// No pointer is retained. Span checks cannot establish allocation validity.
 #[no_mangle]
-pub unsafe extern "C" fn uno_crypto_verify_key_possession_v1(request: *const KeyPossessionRequestV1) -> u32 {
+pub unsafe extern "C" fn uno_crypto_verify_key_possession_v2(request: *const KeyPossessionRequestV2) -> u32 {
     contain_unwind(|| {
         if !bounded_span(request, 1) { return Err(AbiStatus::UNO_CRYPTO_ARGUMENTS); }
         let request = unsafe { &*request };
-        if request.abi_version != 1 { return Err(AbiStatus::UNO_CRYPTO_ARGUMENTS); }
+        if request.abi_version != 2 { return Err(AbiStatus::UNO_CRYPTO_ARGUMENTS); }
         crate::key_possession::verify(request)
     })
+}
+
+// Retired ABI symbols reject without dereferencing the old, smaller request.
+// Keeping rejection stubs prevents a linked old caller from selecting the
+// transcript that did not bind the complete authenticated replay context.
+#[no_mangle]
+pub extern "C" fn uno_crypto_verify_key_possession_v1(_: *const std::ffi::c_void) -> u32 {
+    AbiStatus::UNO_CRYPTO_ARGUMENTS as u32
+}
+#[no_mangle]
+pub extern "C" fn uno_crypto_verify_closure_possession_v1(_: *const std::ffi::c_void) -> u32 {
+    AbiStatus::UNO_CRYPTO_ARGUMENTS as u32
 }
 
 #[allow(non_camel_case_types)]

@@ -1,6 +1,32 @@
-# Borrowed balance verification ABI v2 and independent v1 entries
+# Borrowed balance verification ABI v2 and independent possession v2 entries
 
-## Registration key possession v1
+## Possession transcript upgrade (2026-09-10)
+
+The two independent M3 entries are now `uno_crypto_verify_key_possession_v2`
+and `uno_crypto_verify_closure_possession_v2`, with request `abi_version=2`.
+Their v1 symbols are rejection-only stubs (`UNO_CRYPTO_ARGUMENTS`), and a v2
+request bearing version 1 is rejected before verification. There is no legacy
+verification fallback. The equations and 64/96-byte proof formats are unchanged.
+
+Both challenges use their `/v2` literal domain, then absorb `context[426]`,
+then the previously listed statement fields and commitments. These are precisely
+the bytes returned by `encode_workchain_replay_context`: operation constructor
+tag, context, subject, address, protocol, rules and profiles, all fixed-width.
+The host constructs them from authenticated policy and the relevant account;
+the candidate's context is compared separately and is never passed to the ABI.
+The wallet consumes the same canonical encoding, not a parallel layout.
+
+Carrying context in a block proves that the block commits it; absorbing context
+in Fiat-Shamir proves that the prover authorized it. Neither substitutes for
+the other. Tests submit an X proof with wire context Y and authenticated Y:
+the host comparison passes and each cryptographic verifier rejects the proof.
+
+There remain **two** independent entries outside D34 relation-family review,
+but their transcript/ABI content has changed to v2. Correspondence tests still
+do not constitute a reliability argument. The account nonce/revision, Native
+key-origin limitation and independent host state checks remain unchanged.
+
+## Historical registration key possession v1 (superseded; rejected)
 
 `uno_crypto_verify_key_possession_v1` accepts a fixed-field
 `UnoCryptoKeyPossessionRequestV1`, not a new balance relation. The 64-byte
@@ -17,7 +43,7 @@ independent key generation is wallet discipline, not a chain-verifiable claim.
 This entry has not undergone D34 relation-family review. Correspondence tests
 are not a reliability argument. Rotation is not authorized by this entry.
 
-## Existing interfaces
+## Historical closure possession v1 (superseded; rejected)
 
 `uno_crypto_verify_closure_possession_v1` is the second independent M3 entry
 outside D34 relation-family review. Its 96-byte proof is R1 || R2 || z.
@@ -37,10 +63,12 @@ profile or M0 freeze. Balance versions 0 and 1 are retired; the library exports
 `uno_crypto_verify_v2`, not the previous fee-less balance verification entries
 or the old Note-tree function. The system-encryption entries remain version 1.
 
-The existing boundary discipline is retained: every exported entry contains
+The existing boundary discipline is retained: every active verifier entry contains
 the entire call in catch_unwind, no AssertUnwindSafe, no pointer retention or
 ownership transfer, and checked bounded_span before nonempty slice creation.
 Both Cargo profiles require unwind; cfg(panic = "abort") is a compile error.
+Retired possession v1 stubs only return an error constant: no dereference,
+allocation, cryptographic operation or unwinding code runs in them.
 OOM abort, process termination and invalid caller allocations are not
 recoverable panics. No mutable verifier cache or partially initialized key is
 retained. Generator construction is currently per call.

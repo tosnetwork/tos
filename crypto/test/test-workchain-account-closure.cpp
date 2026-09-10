@@ -1,7 +1,10 @@
 #include "block/workchain-account-closure.h"
 #include "td/utils/tests.h"
 #include "td/utils/misc.h"
+#include "vm/boc.h"
 #include <algorithm>
+#include "workchain-possession-test-policy.h"
+#include "block/workchain-possession-replay.h"
 
 TEST(AccountClosure, RandomizedZeroRefundAndReplay) {
   auto fill = [](unsigned char byte) { td::Bits256 r;
@@ -17,15 +20,38 @@ TEST(AccountClosure, RandomizedZeroRefundAndReplay) {
   a.available={point("7a3349e9a50cf9a20a3a92994fecbf9b19ac50d4e743de192a162bb053278767"),
                point("9a3085e444e85dc98eebe3373235c06c71793402885014ce760aff7a0691d124")};
   std::array<unsigned char,80> domain; domain.fill(7);
-  auto bytes=td::hex_decode("a226f594e835391bcb4b5e737dc2e7f797679527a174cc45d28effc268b3b401"
-      "bc954825d11340ad13eace250298c57ab77f119a98bea4439dffae0b04d31922"
-      "c042f742accc9303f0fb75ae3ba9b2b453f7e78a585b63b424db7a23c0860a00");
+  auto possession = block::test::possession_policy(a);
+  // v2 wallet vector, test-only s=71/k=997, with this canonical host context.
+  auto bytes=td::hex_decode("b4262c4f436f97163b68860a20fda0f8b34b8baa176bb5e1f44a5c85b1785c6f"
+      "ac6aaea780f6c80dd569fae7000ccda4554ee2885bc3e2320a8f1ab1f53a790b"
+      "e71bb3630effd6eddf79f4fee9f8df6db78d24c3a94574ccde5a518186b1880d");
   ASSERT_TRUE(bytes.is_ok());
   std::array<unsigned char,96> proof; std::copy(bytes.ok().begin(),bytes.ok().end(),proof.begin());
   block::WorkchainCoordinatorState coordinator{2,{1,1000000,9,0},90};
-  auto result=block::execute_workchain_account_closure(a,coordinator,0,domain,proof);
+  auto id=block::derive_workchain_closure_operation_id({a.global_id,a.genesis_hash,possession.protocol.workchain_instance},
+      a.address,a.auth_nonce).move_as_ok();
+  block::WorkchainClosureReplayInput replay{id,block::rebuild_workchain_possession_context(possession,a),proof};
+  auto replay_root=block::encode_workchain_replay_input(replay).move_as_ok();
+  ASSERT_EQ(vm::std_boc_serialize(replay_root,0).move_as_ok().size(),589u);
+  auto result=block::replay_workchain_account_closure(a,coordinator,0,possession,domain,replay_root);
 #if defined(TOS_CONFIDENTIAL_PROOF_BACKEND_LINKED)
   ASSERT_TRUE(result.is_ok());
+  auto policy_y=possession;
+  policy_y.profiles.configuration.as_slice()[0]^=1;
+  auto claimed_y=block::rebuild_workchain_possession_context(policy_y,a);
+  ASSERT_TRUE(block::check_workchain_possession_replay_context(claimed_y,policy_y,a,
+      block::WorkchainReplayOperation::Closure).is_ok());
+  auto replay_y=replay; replay_y.context=claimed_y;
+  auto substituted=block::replay_workchain_account_closure(a,coordinator,0,policy_y,domain,
+      block::encode_workchain_replay_input(replay_y).move_as_ok());
+  ASSERT_TRUE(substituted.is_error());
+  ASSERT_EQ(substituted.error().code(),-7200);
+  ASSERT_EQ(substituted.error().message(),"invalid closure zero-balance possession proof");
+  auto wrong_id=replay; wrong_id.claimed_operation_id.as_slice()[0]^=1;
+  auto rejected_id=block::replay_workchain_account_closure(a,coordinator,0,possession,domain,
+      block::encode_workchain_replay_input(wrong_id).move_as_ok());
+  ASSERT_TRUE(rejected_id.is_error()); ASSERT_EQ(rejected_id.error().code(),-7200);
+  ASSERT_EQ(rejected_id.error().message(),"claimed operationID mismatch");
   auto closed=block::decode_workchain_confidential_account(result.ok().account_data);
   auto after=block::decode_workchain_coordinator_state(result.ok().coordinator_data);
   ASSERT_TRUE(closed.is_ok()); ASSERT_TRUE(after.is_ok());
@@ -34,23 +60,23 @@ TEST(AccountClosure, RandomizedZeroRefundAndReplay) {
   ASSERT_EQ(after.ok().system.registered_accounts,9u); ASSERT_EQ(after.ok().refundable_deposits,80u);
   ASSERT_EQ(result.ok().refund.amount,10u); ASSERT_EQ(result.ok().refund.account,fill(8));
   ASSERT_EQ(a.auth_nonce,3u); ASSERT_EQ(coordinator.refundable_deposits,90u);
-  ASSERT_TRUE(block::execute_workchain_account_closure(closed.ok(),after.ok(),0,domain,proof).is_error());
-  auto denied=block::execute_workchain_account_closure(a,coordinator,1,domain,proof);
+  ASSERT_TRUE(block::execute_workchain_account_closure(closed.ok(),after.ok(),0,possession,domain,proof).is_error());
+  auto denied=block::execute_workchain_account_closure(a,coordinator,1,possession,domain,proof);
   ASSERT_TRUE(denied.is_error());
   ASSERT_EQ(denied.error().code(),static_cast<int>(block::WorkchainExecutionFailure::CandidateInvalid));
   auto pending=a; pending.pending.resize(1);
-  ASSERT_TRUE(block::execute_workchain_account_closure(pending,coordinator,0,domain,proof).is_error());
+  ASSERT_TRUE(block::execute_workchain_account_closure(pending,coordinator,0,possession,domain,proof).is_error());
   auto stale=a; ++stale.available_revision;
-  denied=block::execute_workchain_account_closure(stale,coordinator,0,domain,proof);
+  denied=block::execute_workchain_account_closure(stale,coordinator,0,possession,domain,proof);
   ASSERT_TRUE(denied.is_error());
   ASSERT_EQ(denied.error().code(),static_cast<int>(block::WorkchainExecutionFailure::CandidateInvalid));
   auto short_bucket=coordinator; short_bucket.refundable_deposits=9;
-  denied=block::execute_workchain_account_closure(a,short_bucket,0,domain,proof);
+  denied=block::execute_workchain_account_closure(a,short_bucket,0,possession,domain,proof);
   ASSERT_TRUE(denied.is_error());
   ASSERT_EQ(denied.error().code(),static_cast<int>(block::WorkchainExecutionFailure::AuthenticatedStateCorrupt));
   ASSERT_EQ(short_bucket.refundable_deposits,9u);
   auto exhausted=a; exhausted.auth_nonce=UINT64_MAX;
-  ASSERT_TRUE(block::execute_workchain_account_closure(exhausted,coordinator,0,domain,proof).is_error());
+  ASSERT_TRUE(block::execute_workchain_account_closure(exhausted,coordinator,0,possession,domain,proof).is_error());
 #else
   ASSERT_TRUE(result.is_error());
   ASSERT_EQ(result.error().code(),static_cast<int>(block::WorkchainExecutionFailure::LocalUnavailable));

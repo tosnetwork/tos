@@ -17,6 +17,8 @@
 
 #define UNO_RELATION_COLLECT 2
 
+#define UNO_POSSESSION_CONTEXT_BYTES 426
+
 enum UnoCryptoStatus
 #ifdef __cplusplus
   : uint32_t
@@ -38,6 +40,7 @@ typedef uint32_t UnoCryptoStatus;
  */
 typedef struct {
   uint32_t abi_version;
+  uint8_t context[UNO_POSSESSION_CONTEXT_BYTES];
   uint8_t domain[80];
   int32_t global_id;
   uint8_t genesis_hash[32];
@@ -57,7 +60,7 @@ typedef struct {
   uint8_t commitment[32];
   uint8_t handle[32];
   uint8_t proof[96];
-} UnoCryptoClosurePossessionRequestV1;
+} UnoCryptoClosurePossessionRequestV2;
 
 /**
  * Public registration context, not native struct bytes in the transcript.
@@ -65,6 +68,7 @@ typedef struct {
  */
 typedef struct {
   uint32_t abi_version;
+  uint8_t context[UNO_POSSESSION_CONTEXT_BYTES];
   int32_t global_id;
   uint8_t genesis_hash[32];
   int32_t workchain_id;
@@ -79,7 +83,7 @@ typedef struct {
   uint32_t key_epoch;
   uint8_t public_key[32];
   uint8_t proof[64];
-} UnoCryptoKeyPossessionRequestV1;
+} UnoCryptoKeyPossessionRequestV2;
 
 /**
  * Fixed-width encoded public inputs. Numeric policy and domain provenance
@@ -136,7 +140,7 @@ extern "C" {
  * Request must be initialized, aligned, readable and unchanged until return.
  * No pointer is retained; numeric checks cannot establish allocation validity.
  */
-uint32_t uno_crypto_verify_closure_possession_v1(const UnoCryptoClosurePossessionRequestV1 *request);
+uint32_t uno_crypto_verify_closure_possession_v2(const UnoCryptoClosurePossessionRequestV2 *request);
 
 /**
  * Verify registration possession, not a new balance relation.
@@ -145,7 +149,11 @@ uint32_t uno_crypto_verify_closure_possession_v1(const UnoCryptoClosurePossessio
  * Request must be initialized, aligned, readable and unchanged until return.
  * No pointer is retained. Span checks cannot establish allocation validity.
  */
-uint32_t uno_crypto_verify_key_possession_v1(const UnoCryptoKeyPossessionRequestV1 *request);
+uint32_t uno_crypto_verify_key_possession_v2(const UnoCryptoKeyPossessionRequestV2 *request);
+
+uint32_t uno_crypto_verify_key_possession_v1(const void*);
+
+uint32_t uno_crypto_verify_closure_possession_v1(const void*);
 
 /**
  * Construct a public system ciphertext. Output is untouched unless successful.

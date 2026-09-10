@@ -6,14 +6,19 @@
 //! P. The host must additionally match address/configuration fields independently.
 //! It cannot establish the origin or independence of s: not reusing a Native
 //! signing secret is wallet-side generation discipline, unverifiable on chain.
+//! ABI/transcript v2 adds the complete canonical 426-byte replay context.
+//! Carrying context in a block is not prover authorization of that context:
+//! it must enter this challenge. Still one of two unreviewed independent M3
+//! entries; the v2 content changed, not the equations or D34 review status.
 use bulletproofs::PedersenGens;
 use curve25519_dalek::{ristretto::CompressedRistretto, Scalar, traits::IsIdentity};
 use sha2::{Digest, Sha512};
-use crate::ffi::{AbiStatus as Error, KeyPossessionRequestV1};
+use crate::ffi::{AbiStatus as Error, KeyPossessionRequestV2};
 
-fn challenge(r: &KeyPossessionRequestV1, commitment: &[u8; 32]) -> Scalar {
+fn challenge(r: &KeyPossessionRequestV2, commitment: &[u8; 32]) -> Scalar {
     let mut hash = Sha512::new();
-    hash.update(b"TOS/UNO/REGISTER/KEY-POSSESSION/v1");
+    hash.update(b"TOS/UNO/REGISTER/KEY-POSSESSION/v2");
+    hash.update(r.context);
     // Fixed-width fields, in ABI declaration order, excluding abi_version and
     // proof response. Integer encodings are big-endian, never C padding/native
     // byte order. Version separation is provided by the literal domain above.
@@ -34,7 +39,7 @@ fn challenge(r: &KeyPossessionRequestV1, commitment: &[u8; 32]) -> Scalar {
     Scalar::from_bytes_mod_order_wide(&hash.finalize().into())
 }
 
-pub(crate) fn verify(request: &KeyPossessionRequestV1) -> Result<(), Error> {
+pub(crate) fn verify(request: &KeyPossessionRequestV2) -> Result<(), Error> {
     let p = CompressedRistretto(request.public_key).decompress().ok_or(Error::UNO_CRYPTO_DECODE)?;
     let encoded_r: [u8; 32] = request.proof[..32].try_into().unwrap();
     let r = CompressedRistretto(encoded_r).decompress().ok_or(Error::UNO_CRYPTO_DECODE)?;
@@ -51,15 +56,15 @@ pub(crate) fn verify(request: &KeyPossessionRequestV1) -> Result<(), Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ffi::uno_crypto_verify_key_possession_v1;
+    use crate::ffi::uno_crypto_verify_key_possession_v2;
 
-    fn signed() -> KeyPossessionRequestV1 {
+    fn signed() -> KeyPossessionRequestV2 {
         // Test-only fixed secrets/nonces; never a wallet generation routine.
         let s = Scalar::from(71u64);
         let k = Scalar::from(93u64);
         let p = s.invert() * PedersenGens::default().B_blinding;
         let commitment = (k * p).compress().to_bytes();
-        let mut r = KeyPossessionRequestV1 { abi_version: 1, global_id: -23903,
+        let mut r = KeyPossessionRequestV2 { abi_version: 2, context: [9;426], global_id: -23903,
             genesis_hash: [1;32], workchain_id: 2, account: [2;32], incarnation: [3;32],
             asset: [4;32], custody: [5;32], policy: [6;32], schema_version: 1,
             relation_profile: 1, proof_profile: 2, key_epoch: 0,
@@ -72,32 +77,36 @@ mod tests {
     #[test]
     fn possession_and_every_context_field() {
         let r = signed();
-        assert_eq!(unsafe { uno_crypto_verify_key_possession_v1(&r) }, 0);
-        let changes: &[fn(&mut KeyPossessionRequestV1)] = &[
+        assert_eq!(unsafe { uno_crypto_verify_key_possession_v2(&r) }, 0);
+        let changes: &[fn(&mut KeyPossessionRequestV2)] = &[
             |r| r.global_id += 1, |r| r.genesis_hash[0] ^= 1,
             |r| r.workchain_id += 1, |r| r.account[0] ^= 1,
             |r| r.incarnation[0] ^= 1, |r| r.asset[0] ^= 1,
             |r| r.custody[0] ^= 1, |r| r.policy[0] ^= 1,
             |r| r.schema_version += 1, |r| r.relation_profile += 1,
             |r| r.proof_profile += 1, |r| r.key_epoch += 1,
+            |r| r.context[170] ^= 1,
         ];
         for change in changes {
             let mut other = r;
             change(&mut other);
-            assert_eq!(unsafe { uno_crypto_verify_key_possession_v1(&other) }, Error::UNO_CRYPTO_VERIFY as u32);
+            assert_eq!(unsafe { uno_crypto_verify_key_possession_v2(&other) }, Error::UNO_CRYPTO_VERIFY as u32);
         }
     }
     #[test]
     fn malformed_and_wrong_proof() {
         let mut r = signed();
         r.proof[32] ^= 1;
-        assert_ne!(unsafe { uno_crypto_verify_key_possession_v1(&r) }, 0);
+        assert_ne!(unsafe { uno_crypto_verify_key_possession_v2(&r) }, 0);
         r = signed(); r.public_key = [0;32];
-        assert_eq!(unsafe { uno_crypto_verify_key_possession_v1(&r) }, Error::UNO_CRYPTO_DECODE as u32);
+        assert_eq!(unsafe { uno_crypto_verify_key_possession_v2(&r) }, Error::UNO_CRYPTO_DECODE as u32);
         r = signed(); r.proof[32..].fill(255);
-        assert_eq!(unsafe { uno_crypto_verify_key_possession_v1(&r) }, Error::UNO_CRYPTO_DECODE as u32);
-        r = signed(); r.abi_version = 2;
-        assert_eq!(unsafe { uno_crypto_verify_key_possession_v1(&r) }, Error::UNO_CRYPTO_ARGUMENTS as u32);
-        assert_eq!(unsafe { uno_crypto_verify_key_possession_v1(std::ptr::null()) }, Error::UNO_CRYPTO_ARGUMENTS as u32);
+        assert_eq!(unsafe { uno_crypto_verify_key_possession_v2(&r) }, Error::UNO_CRYPTO_DECODE as u32);
+        r = signed(); r.abi_version = 1;
+        assert_eq!(unsafe { uno_crypto_verify_key_possession_v2(&r) }, Error::UNO_CRYPTO_ARGUMENTS as u32);
+        assert_eq!(unsafe { uno_crypto_verify_key_possession_v2(std::ptr::null()) }, Error::UNO_CRYPTO_ARGUMENTS as u32);
+        assert_eq!(crate::ffi::uno_crypto_verify_key_possession_v1(std::ptr::null()), Error::UNO_CRYPTO_ARGUMENTS as u32);
+        assert_eq!(crate::ffi::uno_crypto_verify_key_possession_v1(
+            (&r as *const KeyPossessionRequestV2).cast()), Error::UNO_CRYPTO_ARGUMENTS as u32);
     }
 }
