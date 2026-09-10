@@ -67,6 +67,21 @@ uno_v2_transfer_binding_v1 operation_id:bits256 semantic_hash:bits256 authentica
 uno_v2_transfer_context_v1 fee_profile:bits256 fee_effective_height:uint32
   protocol:^UnoV2TransferProtocolV1 rules:^UnoV2TransferRulesV1
   profiles:^UnoV2TransferProfilesV1 binding:^UnoV2TransferBindingV1 = UnoV2TransferContextV1;
+// Permanent replay shares the transfer input family and existing HostInput.candidate.
+// Initial registration account data is in the authenticated inbox message body;
+// closure P/C/D and obligations come from authenticated old state, never this wire.
+uno_v2_replay_protocol_v1 engine_version:uint32 relation_version:uint16 wire_version:uint16
+  proof_version:uint16 global_id:int32 workchain_id:int32 genesis_hash:bits256
+  workchain_instance:bits256 = UnoV2ReplayProtocolV1;
+uno_v2_replay_subject_v1 auth_nonce:uint64 available_revision:uint64 key_epoch:uint32
+  address:^UnoV2AccountAddress = UnoV2ReplaySubjectV1;
+uno_v2_replay_context_v1 fee_profile:bits256 fee_effective_height:uint32
+  subject:^UnoV2ReplaySubjectV1 protocol:^UnoV2ReplayProtocolV1
+  rules:^UnoV2TransferRulesV1 profiles:^UnoV2TransferProfilesV1 = UnoV2ReplayContextV1;
+uno_v2_registration_replay_v1 claimed_operation_id:bits256
+  context:^UnoV2ReplayContextV1 authorization:^Cell = UnoV2TransferInputV1;
+uno_v2_closure_replay_v1 claimed_operation_id:bits256
+  context:^UnoV2ReplayContextV1 authorization:^Cell = UnoV2TransferInputV1;
 uno_v2_resource_input max_cells:uint64 max_bits:uint64 max_roots:uint64
   max_reads:uint32 max_writes:uint32 max_inbound:uint32 = UnoV2ResourceInput;
 uno_v2_resource_state max_cells:uint64 max_bits:uint64 max_account_cells:uint64

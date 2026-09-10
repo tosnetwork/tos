@@ -3,6 +3,7 @@
 #include "block/workchain-confidential-state.h"
 #include "block/workchain-execution-errors.h"
 #include <algorithm>
+#include <array>
 #include <string>
 
 namespace block {
@@ -40,6 +41,33 @@ struct WorkchainTransferInput {
   WorkchainTransferData data;
   WorkchainTransferAuthorization authorization;
 };
+
+// All fields are untrusted claims. Each validator reconstructs them from the
+// authenticated configuration and account, then compares; they are not defaults
+// or inputs to old-state acquisition. Account incarnation and workchain_instance
+// occupy different slots. The enclosing constructor identifies the operation.
+struct WorkchainReplayContext {
+  gen::UnoV2ReplayProtocolV1::Record protocol;
+  gen::UnoV2TransferRulesV1::Record rules;
+  gen::UnoV2TransferProfilesV1::Record profiles;
+  td::Bits256 fee_profile;
+  std::uint32_t fee_effective_height;
+  WorkchainConfidentialAddress subject;
+  std::uint64_t auth_nonce, available_revision;
+  std::uint32_t key_epoch;
+};
+struct WorkchainRegistrationReplayInput {
+  td::Bits256 claimed_operation_id;
+  WorkchainReplayContext context;
+  std::array<unsigned char, 64> proof;
+};
+struct WorkchainClosureReplayInput {
+  td::Bits256 claimed_operation_id;
+  WorkchainReplayContext context;
+  std::array<unsigned char, 96> proof;
+};
+using WorkchainReplayInput = std::variant<WorkchainTransferInput,
+    WorkchainRegistrationReplayInput, WorkchainClosureReplayInput>;
 
 namespace confidential_input_detail {
 inline td::Status invalid(td::Slice message) {
@@ -251,12 +279,12 @@ inline td::Result<td::Ref<vm::Cell>> encode_workchain_transfer_input(const Workc
   for (const auto& word : auth.responses) append_word(bytes, word);
   bytes.append(auth.range_proof);
   TRY_RESULT(authorization, encode_bytes(bytes, (s.commitments + s.responses) * 32 + s.range));
-  return pack(gen::UnoV2TransferInputV1::Record{input.claimed_operation_id, data, authorization});
+  return pack(gen::UnoV2TransferInputV1::Record_uno_v2_transfer_input_v1{input.claimed_operation_id, data, authorization});
 }
 
 inline td::Result<WorkchainTransferInput> decode_workchain_transfer_input(const td::Ref<vm::Cell>& root) {
   using namespace confidential_input_detail;
-  TRY_RESULT(wire, unpack<gen::UnoV2TransferInputV1::Record>(root));
+  TRY_RESULT(wire, unpack<gen::UnoV2TransferInputV1::Record_uno_v2_transfer_input_v1>(root));
   TRY_RESULT(data, decode_workchain_transfer_data(wire.data));
   TRY_RESULT(s, shape(data));
   TRY_RESULT(bytes, decode_bytes(wire.authorization, (s.commitments + s.responses) * 32 + s.range));
@@ -268,6 +296,125 @@ inline td::Result<WorkchainTransferInput> decode_workchain_transfer_input(const 
   // No fallback, no signature/point validity verdict and no state acquisition.
   // Cell-loading/allocation exceptions reach the host's local-failure boundary.
   return WorkchainTransferInput{wire.claimed_operation_id, std::move(data), std::move(auth)};
+}
+
+namespace confidential_input_detail {
+inline td::Result<td::Ref<vm::Cell>> pack_replay_context(const WorkchainReplayContext& value) {
+  TRY_RESULT(address, pack(value.subject));
+  TRY_RESULT(subject, pack(gen::UnoV2ReplaySubjectV1::Record{
+      value.auth_nonce, value.available_revision, value.key_epoch, address}));
+  TRY_RESULT(protocol, pack(value.protocol));
+  TRY_RESULT(rules, pack(value.rules));
+  TRY_RESULT(profiles, pack(value.profiles));
+  return pack(gen::UnoV2ReplayContextV1::Record{
+      value.fee_profile, value.fee_effective_height, subject, protocol, rules, profiles});
+}
+inline td::Result<WorkchainReplayContext> unpack_replay_context(const td::Ref<vm::Cell>& root) {
+  TRY_RESULT(wire, unpack<gen::UnoV2ReplayContextV1::Record>(root));
+  TRY_RESULT(subject, unpack<gen::UnoV2ReplaySubjectV1::Record>(wire.subject));
+  TRY_RESULT(address, unpack<WorkchainConfidentialAddress>(subject.address));
+  TRY_RESULT(protocol, unpack<gen::UnoV2ReplayProtocolV1::Record>(wire.protocol));
+  TRY_RESULT(rules, unpack<gen::UnoV2TransferRulesV1::Record>(wire.rules));
+  TRY_RESULT(profiles, unpack<gen::UnoV2TransferProfilesV1::Record>(wire.profiles));
+  return WorkchainReplayContext{protocol, rules, profiles, wire.fee_profile,
+      wire.fee_effective_height, address, subject.auth_nonce, subject.available_revision, subject.key_epoch};
+}
+template <class Input, class Wire>
+inline td::Result<td::Ref<vm::Cell>> pack_possession_input(const Input& input) {
+  TRY_RESULT(context, pack_replay_context(input.context));
+  TRY_RESULT(authorization, encode_bytes(td::Slice(input.proof.data(), input.proof.size()), input.proof.size()));
+  return pack(Wire{input.claimed_operation_id, context, authorization});
+}
+template <class Input, class Wire>
+inline td::Result<WorkchainReplayInput> unpack_possession_input(const td::Ref<vm::Cell>& root) {
+  TRY_RESULT(wire, unpack<Wire>(root));
+  TRY_RESULT(context, unpack_replay_context(wire.context));
+  Input result{wire.claimed_operation_id, std::move(context), {}};
+  TRY_RESULT(bytes, decode_bytes(wire.authorization, result.proof.size()));
+  std::copy(bytes.begin(), bytes.end(), result.proof.begin());
+  return WorkchainReplayInput{std::move(result)};
+}
+}  // namespace confidential_input_detail
+
+// One permanent input family. No fallback to account records or test files;
+// loading/allocation exceptions propagate to the host's provenance boundary.
+inline td::Result<td::Ref<vm::Cell>> encode_workchain_replay_input(const WorkchainReplayInput& input) {
+  using namespace confidential_input_detail;
+  if (const auto* transfer = std::get_if<WorkchainTransferInput>(&input))
+    return encode_workchain_transfer_input(*transfer);
+  if (const auto* registration = std::get_if<WorkchainRegistrationReplayInput>(&input))
+    return pack_possession_input<WorkchainRegistrationReplayInput,
+        gen::UnoV2TransferInputV1::Record_uno_v2_registration_replay_v1>(*registration);
+  return pack_possession_input<WorkchainClosureReplayInput,
+      gen::UnoV2TransferInputV1::Record_uno_v2_closure_replay_v1>(std::get<WorkchainClosureReplayInput>(input));
+}
+inline td::Result<WorkchainReplayInput> decode_workchain_replay_input(const td::Ref<vm::Cell>& root) {
+  using namespace confidential_input_detail;
+  if (root.is_null()) return invalid("missing confidential replay input");
+  bool special = false;
+  auto slice = vm::load_cell_slice_special(root, special);
+  if (special || slice.size() < 32) return invalid("invalid confidential replay tag");
+  const auto tag = slice.prefetch_ulong(32);
+  using Wire = gen::UnoV2TransferInputV1;
+  if (tag == Wire::cons_tag[Wire::uno_v2_transfer_input_v1]) {
+    TRY_RESULT(transfer, decode_workchain_transfer_input(root));
+    return WorkchainReplayInput{std::move(transfer)};
+  }
+  if (tag == Wire::cons_tag[Wire::uno_v2_registration_replay_v1])
+    return unpack_possession_input<WorkchainRegistrationReplayInput, Wire::Record_uno_v2_registration_replay_v1>(root);
+  if (tag == Wire::cons_tag[Wire::uno_v2_closure_replay_v1])
+    return unpack_possession_input<WorkchainClosureReplayInput, Wire::Record_uno_v2_closure_replay_v1>(root);
+  return invalid("unknown confidential replay tag");
+}
+inline td::Status check_workchain_claimed_operation_id(const WorkchainReplayInput& input,
+                                                       const td::Bits256& recomputed) {
+  return std::visit([&](const auto& value) {
+    if (value.claimed_operation_id != recomputed)
+      return confidential_input_detail::invalid("claimed operationID mismatch");
+    return td::Status::OK();
+  }, input);
+}
+
+// Fixed 426-byte context encoding: operation constructor tag, context bits,
+// subject bits, full address bits, protocol bits, rules bits, profiles bits.
+// The host rebuilds every field from authenticated data before passing these
+// bytes to the versioned Schnorr/DLEQ transcript. Never pass candidate claims
+// directly to a proof verifier. Neither the claimed operationID nor authorization enters this encoding:
+// proofs consume independently derived identities, so hashing proofs into those
+// identities would create a cycle. The full block still commits every proof byte.
+enum class WorkchainReplayOperation { Registration, Closure };
+inline td::Result<std::string> encode_workchain_replay_context(
+    const WorkchainReplayContext& value, WorkchainReplayOperation operation) {
+  using namespace confidential_input_detail;
+  using Wire = gen::UnoV2TransferInputV1;
+  unsigned tag;
+  switch (operation) {
+    case WorkchainReplayOperation::Registration: tag = Wire::cons_tag[Wire::uno_v2_registration_replay_v1]; break;
+    case WorkchainReplayOperation::Closure: tag = Wire::cons_tag[Wire::uno_v2_closure_replay_v1]; break;
+    default: return invalid("unknown possession replay operation");
+  }
+  TRY_RESULT(root, pack_replay_context(value));
+  TRY_RESULT(wire, unpack<gen::UnoV2ReplayContextV1::Record>(root));
+  TRY_RESULT(subject, unpack<gen::UnoV2ReplaySubjectV1::Record>(wire.subject));
+  td::Ref<vm::Cell> prefix = vm::CellBuilder().store_long(tag, 32).finalize();
+  std::string out;
+  for (const auto& cell : {prefix, root, wire.subject, subject.address, wire.protocol, wire.rules, wire.profiles}) {
+    auto slice = vm::load_cell_slice(cell);
+    if (slice.size() % 8) return invalid("non-byte-aligned replay context");
+    std::string bytes(slice.size() / 8, '\0');
+    if (!slice.fetch_bytes(td::MutableSlice(bytes))) return invalid("truncated replay context");
+    out += bytes;
+  }
+  if (out.size() != 426) return invalid("fixed replay context size mismatch");
+  return out;
+}
+
+inline td::Result<std::string> encode_workchain_replay_context(const WorkchainReplayInput& input) {
+  if (const auto* registration = std::get_if<WorkchainRegistrationReplayInput>(&input))
+    return encode_workchain_replay_context(registration->context, WorkchainReplayOperation::Registration);
+  if (const auto* closure = std::get_if<WorkchainClosureReplayInput>(&input))
+    return encode_workchain_replay_context(closure->context, WorkchainReplayOperation::Closure);
+  return confidential_input_detail::invalid("transfer context requires independently rebuilt transfer binding");
 }
 
 struct WorkchainTransferContext {

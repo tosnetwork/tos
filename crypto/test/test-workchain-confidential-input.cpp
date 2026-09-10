@@ -177,7 +177,7 @@ TEST(ConfidentialInput, ProofIsPermanentlyCommittedButNotIdentity) {
   std::cout << "structural_block_bytes=" << bytes.size() << " empty_candidate_block_bytes="
             << empty_bytes.size() << " input_delta_bytes=" << bytes.size() - empty_bytes.size() << std::endl;
   // Change each authorization byte, not merely one representative segment.
-  auto wire = block::confidential_input_detail::unpack<block::gen::UnoV2TransferInputV1::Record>(original).move_as_ok();
+  auto wire = block::confidential_input_detail::unpack<block::gen::UnoV2TransferInputV1::Record_uno_v2_transfer_input_v1>(original).move_as_ok();
   auto auth = block::confidential_input_detail::decode_bytes(wire.authorization, 1312).move_as_ok();
   for (std::size_t i = 0; i < auth.size(); ++i) {
     auto changed = auth; changed[i] ^= 1;
@@ -223,4 +223,103 @@ TEST(ConfidentialInput, ExactFramingAndFixedContext) {
   ASSERT_TRUE(block::encode_workchain_transfer_context(context).move_as_ok() != bytes);
   context.protocol.wire_version = 0;
   ASSERT_TRUE(block::encode_workchain_transfer_context(context).is_error());
+}
+
+namespace {
+block::WorkchainReplayContext replay_context() {
+  return {{2, 1, 1, 1, 37, 2, number(1), number(2)},
+          {number(3), number(4), number(5)}, {number(6), number(7), number(8)},
+          number(9), 100, {2, number(10), number(11)}, 12, 13, 14};
+}
+}
+TEST(ConfidentialInput, PermanentRegistrationAndClosure) {
+  using namespace block;
+  WorkchainRegistrationReplayInput registration{number(21), replay_context(), {}};
+  WorkchainClosureReplayInput closure{number(22), replay_context(), {}};
+  for (unsigned i = 0; i < registration.proof.size(); ++i) registration.proof[i] = static_cast<unsigned char>(i);
+  for (unsigned i = 0; i < closure.proof.size(); ++i) closure.proof[i] = static_cast<unsigned char>(i + 1);
+  for (const WorkchainReplayInput& input : {WorkchainReplayInput{registration}, WorkchainReplayInput{closure}}) {
+    auto root = encode_workchain_replay_input(input).move_as_ok();
+    auto context = encode_workchain_replay_context(input).move_as_ok();
+    ASSERT_EQ(context.size(), 426u);
+    auto bytes = vm::std_boc_serialize(root, 0).move_as_ok();
+    auto decoded = decode_workchain_replay_input(vm::std_boc_deserialize(bytes).move_as_ok()).move_as_ok();
+    ASSERT_EQ(decoded.index(), input.index());
+    ASSERT_EQ(encode_workchain_replay_input(decoded).move_as_ok()->get_hash(), root->get_hash());
+    ASSERT_EQ(encode_workchain_replay_context(decoded).move_as_ok(), context);
+    ASSERT_TRUE(decode_workchain_transfer_input(root).is_error());
+    auto block_root = structural_block(root);
+    auto block_bytes = vm::std_boc_serialize(block_root, 0).move_as_ok();
+    auto persisted = recover_input(vm::std_boc_deserialize(block_bytes).move_as_ok());
+    ASSERT_EQ(encode_workchain_replay_input(decode_workchain_replay_input(persisted).move_as_ok())
+                  .move_as_ok()->get_hash(), root->get_hash());
+    std::cout << "replay_variant=" << input.index() << " input_boc_bytes=" << bytes.size()
+              << " structural_block_bytes=" << block_bytes.size() << std::endl;
+    std::visit([&](const auto& value) {
+      using T = std::decay_t<decltype(value)>;
+      if constexpr (!std::is_same_v<T, WorkchainTransferInput>) {
+        ASSERT_TRUE(check_workchain_claimed_operation_id(input, value.claimed_operation_id).is_ok());
+        auto mismatch = check_workchain_claimed_operation_id(input, number(99));
+        ASSERT_TRUE(mismatch.is_error());
+        ASSERT_EQ(mismatch.code(), -7200);
+        ASSERT_EQ(mismatch.message(), "claimed operationID mismatch");
+        // Each byte survives extraction from the permanent transaction path and
+        // is committed by the enclosing block, not merely by a sidecar/file.
+        for (std::size_t i = 0; i < value.proof.size(); ++i) {
+          auto changed = value; changed.proof[i] ^= 1;
+          auto changed_root = encode_workchain_replay_input(WorkchainReplayInput{changed}).move_as_ok();
+          ASSERT_TRUE(structural_block(changed_root)->get_hash() != block_root->get_hash());
+          auto round = decode_workchain_replay_input(recover_input(structural_block(changed_root))).move_as_ok();
+          ASSERT_EQ(std::get<T>(round).proof[i], changed.proof[i]);
+          ASSERT_EQ(encode_workchain_replay_context(WorkchainReplayInput{changed}).move_as_ok(), context);
+          ASSERT_EQ(std::get<T>(round).claimed_operation_id, value.claimed_operation_id);
+        }
+        auto changed = value;
+        ++changed.context.available_revision;
+        ASSERT_TRUE(encode_workchain_replay_context(WorkchainReplayInput{changed}).move_as_ok() != context);
+      }
+    }, input);
+    // Old non-family tag with otherwise identical framing: tag, not truncation.
+    auto old = vm::load_cell_slice(root);
+    old.advance(32);
+    auto unknown = vm::CellBuilder().store_long(0x55534e31, 32).append_cellslice(old).finalize();
+    auto bad_tag = decode_workchain_replay_input(unknown);
+    ASSERT_TRUE(bad_tag.is_error());
+    ASSERT_EQ(bad_tag.error().message(), "unknown confidential replay tag");
+    auto extra = vm::CellBuilder().append_cellslice(vm::load_cell_slice(root))
+        .store_ref(vm::CellBuilder().finalize()).finalize();
+    ASSERT_TRUE(decode_workchain_replay_input(extra).is_error());
+    auto slice = vm::load_cell_slice(root);
+    auto context_ref = slice.fetch_ref();
+    auto auth_ref = slice.fetch_ref();
+    auto missing = vm::CellBuilder().append_cellslice(slice).store_ref(context_ref).finalize();
+    ASSERT_TRUE(decode_workchain_replay_input(missing).is_error());
+    auto proof_slice = vm::load_cell_slice(auth_ref);
+    proof_slice.advance(8);
+    auto short_proof = vm::CellBuilder().append_cellslice(proof_slice).finalize();
+    auto short_input = vm::CellBuilder().append_cellslice(slice)
+        .store_ref(context_ref).store_ref(short_proof).finalize();
+    auto bad_proof = decode_workchain_replay_input(short_input);
+    ASSERT_TRUE(bad_proof.is_error());
+    ASSERT_EQ(bad_proof.error().message(), "noncanonical confidential authorization chain");
+    // Revision must physically exist, even when a caller would prefer zero.
+    auto ctx = confidential_input_detail::unpack<gen::UnoV2ReplayContextV1::Record>(context_ref).move_as_ok();
+    auto subject = confidential_input_detail::unpack<gen::UnoV2ReplaySubjectV1::Record>(ctx.subject).move_as_ok();
+    auto sub_slice = vm::load_cell_slice(ctx.subject);
+    const auto sub_tag = sub_slice.fetch_ulong(32);
+    ctx.subject = vm::CellBuilder().store_long(sub_tag, 32).store_long(subject.auth_nonce, 64)
+        .store_long(subject.key_epoch, 32).store_ref(subject.address).finalize();
+    auto missing_revision = vm::CellBuilder().append_cellslice(slice)
+        .store_ref(pack(ctx)).store_ref(auth_ref).finalize();
+    auto bad_revision = decode_workchain_replay_input(missing_revision);
+    ASSERT_TRUE(bad_revision.is_error());
+    ASSERT_EQ(bad_revision.error().message(), "malformed confidential input record");
+  }
+  // Existing SEND/COLLECT encodings remain accepted with identical bytes by
+  // the unified entry; their crypto relation IDs have not been extended.
+  for (const auto& transfer : vectors()) {
+    auto before = encode_workchain_transfer_input(transfer).move_as_ok();
+    auto after = encode_workchain_replay_input(decode_workchain_replay_input(before).move_as_ok()).move_as_ok();
+    ASSERT_EQ(before->get_hash(), after->get_hash());
+  }
 }
