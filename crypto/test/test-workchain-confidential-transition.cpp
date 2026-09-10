@@ -1,4 +1,5 @@
 #include "block/workchain-confidential-transition.h"
+#include "block/workchain-transfer-statement.h"
 #include "td/utils/tests.h"
 
 TEST(ConfidentialTransition, CheckedCountersAndStaleRetry) {
@@ -32,4 +33,16 @@ TEST(ConfidentialTransition, PendingCapacityIsCandidateProperty) {
   ASSERT_TRUE(full.is_error());
   ASSERT_EQ(full.code(), static_cast<int>(block::WorkchainExecutionFailure::CandidateInvalid));
   ASSERT_EQ(target.pending.size(), 16u);
+}
+
+TEST(ConfidentialTransition, OldStatementBindsRevisionAndDestination) {
+  auto zero=td::Bits256::zero();
+  block::WorkchainTransferOldStatement statement{zero,{zero,zero},0,7,9,zero,0,{}};
+  auto original=block::hash_workchain_transfer_old_statement(1,statement);
+  ASSERT_TRUE(original.is_ok());
+  ++statement.available_revision;
+  ASSERT_TRUE(block::hash_workchain_transfer_old_statement(1,statement).move_as_ok()!=original.ok());
+  statement.available_revision=9;
+  ++statement.destination_key_epoch;
+  ASSERT_TRUE(block::hash_workchain_transfer_old_statement(1,statement).move_as_ok()!=original.ok());
 }
