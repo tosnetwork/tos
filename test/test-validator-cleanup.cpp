@@ -17,6 +17,7 @@
     Copyright 2025-2026 TOS Blockchain Teams
 */
 #include "validator/consensus/validator-cleanup.h"
+#include "validator/consensus/validator-cleanup-manager.h"
 
 #include "td/utils/tests.h"
 
@@ -637,6 +638,92 @@ TEST(ValidatorCleanup, fault_injection_scenarios) {
     ASSERT_EQ(a.deleted, static_cast<size_t>(0));
     auto b = sweep_pending_validator_cleanup({r}, gc, ancestor_ok, cc(10), is_live, closed, spy, erase, 10);
     ASSERT_EQ(b.deleted, static_cast<size_t>(1));
+  }
+}
+
+// The stateful adapter (B2-8a): generation-scoped closure, in-flight-delete
+// fencing, reopen handling, and incarnation-bound erase.
+TEST(ValidatorCleanup, cleanup_manager_enforces_adapter_invariants) {
+  auto gc = make_checkpoint(500);
+  auto ancestor_ok = [](const tos::BlockIdExt&) { return true; };
+  auto cc_past = [](tos::ShardIdFull s) -> std::optional<tos::CatchainSeqno> {
+    return s == kShard ? std::optional<tos::CatchainSeqno>{10} : std::nullopt;  // g=10 > r=7
+  };
+  auto not_live = [](const tos::ValidatorSessionId&) { return false; };
+  auto live = [](const tos::ValidatorSessionId&) { return true; };
+  std::set<std::string> erased;
+  auto erase = [&](const tos::ValidatorSessionId& s) { erased.insert(s.to_hex()); };
+
+  auto rec = make_record(1, 100);  // shard kShard, cc 7
+  auto sid = rec.session_id;
+
+  // --- Startup-loaded obsolete record: eligible -> reserved -> confirmed -> erased. ---
+  {
+    ValidatorCleanupManager m;
+    m.on_loaded_at_startup(rec);
+    auto batch = m.begin_eligible_deletes(gc, ancestor_ok, cc_past, not_live, 10);
+    ASSERT_EQ(batch.size(), static_cast<size_t>(1));
+    ASSERT_TRUE(m.is_delete_in_flight(sid));  // reserved/fenced during the async delete
+    erased.clear();
+    m.on_delete_completed(sid, /*confirmed_gone=*/true, erase);
+    ASSERT_TRUE(!m.is_delete_in_flight(sid));
+    ASSERT_TRUE(erased.count(sid.to_hex()) == 1);
+    ASSERT_EQ(m.pending_count(), static_cast<size_t>(0));
+  }
+
+  // --- Generation-scoped closure: a stale close ack (older incarnation) does NOT
+  // make the record eligible; only the matching generation does. ---
+  {
+    ValidatorCleanupManager m;
+    m.on_group_created(sid);                 // gen 1
+    auto gen = m.on_group_retired(rec);      // retired at gen 1
+    ASSERT_EQ(gen, static_cast<uint64_t>(1));
+    m.on_close_confirmed(sid, 0);            // stale ack (gen 0) -> ignored
+    ASSERT_TRUE(m.begin_eligible_deletes(gc, ancestor_ok, cc_past, not_live, 10).empty());  // not closed yet
+    m.on_close_confirmed(sid, 1);            // correct generation -> closed
+    ASSERT_EQ(m.begin_eligible_deletes(gc, ancestor_ok, cc_past, not_live, 10).size(), static_cast<size_t>(1));
+  }
+
+  // --- Reopen drops the pending record (directory reused by a live group). ---
+  {
+    ValidatorCleanupManager m;
+    m.on_group_created(sid);      // gen 1
+    m.on_group_retired(rec);      // pending
+    m.on_close_confirmed(sid, 1);
+    m.on_group_created(sid);      // reopen -> gen 2, pending dropped
+    ASSERT_EQ(m.pending_count(), static_cast<size_t>(0));
+    ASSERT_TRUE(m.begin_eligible_deletes(gc, ancestor_ok, cc_past, not_live, 10).empty());
+  }
+
+  // --- A live session is never reserved even if loaded + (would be) closed. ---
+  {
+    ValidatorCleanupManager m;
+    m.on_loaded_at_startup(rec);
+    ASSERT_TRUE(m.begin_eligible_deletes(gc, ancestor_ok, cc_past, live, 10).empty());
+  }
+
+  // --- Unconfirmed delete: reservation cleared, record retained, eligible again. ---
+  {
+    ValidatorCleanupManager m;
+    m.on_loaded_at_startup(rec);
+    auto batch = m.begin_eligible_deletes(gc, ancestor_ok, cc_past, not_live, 10);
+    ASSERT_EQ(batch.size(), static_cast<size_t>(1));
+    erased.clear();
+    m.on_delete_completed(sid, /*confirmed_gone=*/false, erase);
+    ASSERT_TRUE(!m.is_delete_in_flight(sid));
+    ASSERT_TRUE(erased.empty());
+    ASSERT_EQ(m.pending_count(), static_cast<size_t>(1));
+    // Retried next pass.
+    ASSERT_EQ(m.begin_eligible_deletes(gc, ancestor_ok, cc_past, not_live, 10).size(), static_cast<size_t>(1));
+  }
+
+  // --- In-flight fence: while reserved, a second begin must not re-reserve it. ---
+  {
+    ValidatorCleanupManager m;
+    m.on_loaded_at_startup(rec);
+    ASSERT_EQ(m.begin_eligible_deletes(gc, ancestor_ok, cc_past, not_live, 10).size(), static_cast<size_t>(1));
+    ASSERT_TRUE(m.begin_eligible_deletes(gc, ancestor_ok, cc_past, not_live, 10).empty());  // already in flight
+    ASSERT_TRUE(m.is_delete_in_flight(sid));
   }
 }
 
