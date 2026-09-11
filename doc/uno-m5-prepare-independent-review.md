@@ -59,6 +59,11 @@ historical replay was inspected, not independently rerun in this artifact test.
 
 ## D76: which public components have independent anchors?
 
+Subsequent evidence: the f matching-proof admission and removal control has now
+been executed; see [the follow-up](uno-m5-fee-admission-independent-review.md).
+The table below preserves the status at the original review, rather than silently
+claiming those later tests had already run.
+
 All implementation locations below refer to `65b819639` (unchanged in the
 relevant paths by `7f23ceb79`). Decision, implementation, and mutation evidence
 are separate columns deliberately.

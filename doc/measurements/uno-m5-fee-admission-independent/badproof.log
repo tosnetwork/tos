@@ -1,0 +1,14 @@
+[ 4][t 0][2026-09-11 15:17:10.408025538][mc-config.cpp:572]	workchain description dictionary created
+[ 4][t 0][2026-09-11 15:17:10.408410866][mc-config.cpp:2347]	unpacked info for workchain 0: basic=true, active=true, accept_msgs=true, min_split=0, max_split=0
+[ 4][t 0][2026-09-11 15:17:10.408420839][mc-config.cpp:2347]	unpacked info for workchain 2: basic=true, active=true, accept_msgs=true, min_split=0, max_split=0
+AUTHENTICATED_FLOOR state=250 base=2 units=1 floor=252 fee=251
+[ 4][t 0][2026-09-11 15:17:10.408867935][transaction.cpp:621]	unpacking account 1111111111111111111111111111111111111111111111111111111111111111
+[ 4][t 0][2026-09-11 15:17:10.408891204][transaction.cpp:454]	last_paid=0; cells=10 bits=3308
+[ 4][t 0][2026-09-11 15:17:10.408901635][transaction.cpp:684]	end of Account.unpack() for 2:1111111111111111111111111111111111111111111111111111111111111111 (balance = 0ng ; last_trans_lt = 14000001..14000002)
+[ 4][t 0][2026-09-11 15:17:10.409015808][transaction.cpp:621]	unpacking account 0000000000000000000000000000000000000000000000000000000000000000
+[ 4][t 0][2026-09-11 15:17:10.409023790][transaction.cpp:454]	last_paid=0; cells=6 bits=966
+[ 4][t 0][2026-09-11 15:17:10.409029752][transaction.cpp:684]	end of Account.unpack() for 2:0000000000000000000000000000000000000000000000000000000000000000 (balance = 21003000000ng ; last_trans_lt = 14000001..14000002)
+[ 4][t 0][2026-09-11 15:17:10.409036618][transaction.cpp:621]	unpacking account FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF
+[ 4][t 0][2026-09-11 15:17:10.409042926][transaction.cpp:454]	last_paid=0; cells=3 bits=124
+[ 4][t 0][2026-09-11 15:17:10.409048259][transaction.cpp:684]	end of Account.unpack() for 2:FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF (balance = 1000000000ng ; last_trans_lt = 14000001..14000002)
+REAL_KERNEL_BAD_PROOF_REJECTED
