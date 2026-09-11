@@ -1,0 +1,3 @@
+M5-REMAINING HANDOFF_NOT_READY: missing=['test-workchain-m5-remaining-phase-transition', 'test-workchain-m5-remaining-paid-lazy', 'test-workchain-m5-remaining-late-return', 'test-workchain-m5-remaining-validator-unknown', 'test-workchain-m5-remaining-source-classification', 'test-workchain-m5-remaining-integrated-regression', 'test-workchain-m5-remaining-activation-freeze']; disabled=[]; duplicated=[]
+
+exit=1

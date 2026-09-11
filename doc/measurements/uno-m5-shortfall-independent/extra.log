@@ -1,0 +1,41 @@
+Running test Test_BReview_FailedActualComponents...
+[0m[ 4][t 0][2026-09-11 19:07:17.694596283][mc-config.cpp:572]	workchain description dictionary created[0m
+[0m[ 4][t 0][2026-09-11 19:07:17.694789077][mc-config.cpp:2347]	unpacked info for workchain 0: basic=true, active=true, accept_msgs=true, min_split=0, max_split=0[0m
+[0m[ 4][t 0][2026-09-11 19:07:17.694798367][mc-config.cpp:2347]	unpacked info for workchain 2: basic=true, active=true, accept_msgs=true, min_split=0, max_split=0[0m
+[0m[ 4][t 0][2026-09-11 19:07:17.694919089][transaction.cpp:621]	unpacking account 1111111111111111111111111111111111111111111111111111111111111111[0m
+[0m[ 4][t 0][2026-09-11 19:07:17.694937933][transaction.cpp:454]	last_paid=0; cells=16 bits=5120[0m
+[0m[ 4][t 0][2026-09-11 19:07:17.694946324][transaction.cpp:684]	end of Account.unpack() for 2:1111111111111111111111111111111111111111111111111111111111111111 (balance = 0ng ; last_trans_lt = 16000001..16000002)[0m
+[0m[ 4][t 0][2026-09-11 19:07:17.694967842][transaction.cpp:621]	unpacking account 1111111111111111111111111111111111111111111111111111111111111111[0m
+[0m[ 4][t 0][2026-09-11 19:07:17.694975706][transaction.cpp:454]	last_paid=0; cells=16 bits=5448[0m
+[0m[ 4][t 0][2026-09-11 19:07:17.694980722][transaction.cpp:684]	end of Account.unpack() for 2:1111111111111111111111111111111111111111111111111111111111111111 (balance = 0ng ; last_trans_lt = 20000001..20000002)[0m
+[0m[ 4][t 0][2026-09-11 19:07:17.695296545][transaction.cpp:621]	unpacking account FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF[0m
+[0m[ 4][t 0][2026-09-11 19:07:17.695304298][transaction.cpp:454]	last_paid=0; cells=3 bits=124[0m
+[0m[ 4][t 0][2026-09-11 19:07:17.695311608][transaction.cpp:684]	end of Account.unpack() for 2:FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF (balance = 989999643ng ; last_trans_lt = 16000001..16000003)[0m
+[0m[ 4][t 0][2026-09-11 19:07:17.695317356][transaction.cpp:621]	unpacking account FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF[0m
+[0m[ 4][t 0][2026-09-11 19:07:17.695324285][transaction.cpp:454]	last_paid=0; cells=3 bits=124[0m
+[0m[ 4][t 0][2026-09-11 19:07:17.695329566][transaction.cpp:684]	end of Account.unpack() for 2:FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF (balance = 996995705ng ; last_trans_lt = 20000001..20000002)[0m
+[0m[ 4][t 0][2026-09-11 19:07:17.695340376][transaction.cpp:621]	unpacking account 0000000000000000000000000000000000000000000000000000000000000000[0m
+[0m[ 4][t 0][2026-09-11 19:07:17.695346591][transaction.cpp:454]	last_paid=0; cells=6 bits=966[0m
+[0m[ 4][t 0][2026-09-11 19:07:17.695352268][transaction.cpp:684]	end of Account.unpack() for 2:0000000000000000000000000000000000000000000000000000000000000000 (balance = 21003000250ng ; last_trans_lt = 16000001..16000002)[0m
+[0m[ 4][t 0][2026-09-11 19:07:17.695358315][transaction.cpp:621]	unpacking account 0000000000000000000000000000000000000000000000000000000000000000[0m
+[0m[ 4][t 0][2026-09-11 19:07:17.695364266][transaction.cpp:454]	last_paid=0; cells=6 bits=966[0m
+[0m[ 4][t 0][2026-09-11 19:07:17.695369220][transaction.cpp:684]	end of Account.unpack() for 2:0000000000000000000000000000000000000000000000000000000000000000 (balance = 21006000250ng ; last_trans_lt = 20000001..20000002)[0m
+[0m[ 4][t 0][2026-09-11 19:07:17.695611302][transaction.cpp:621]	unpacking account 0000000000000000000000000000000000000000000000000000000000000000[0m
+[0m[ 4][t 0][2026-09-11 19:07:17.695618588][transaction.cpp:454]	last_paid=0; cells=6 bits=966[0m
+[0m[ 4][t 0][2026-09-11 19:07:17.695624112][transaction.cpp:684]	end of Account.unpack() for 2:0000000000000000000000000000000000000000000000000000000000000000 (balance = 21003000250ng ; last_trans_lt = 16000001..16000002)[0m
+CUSTODY before=989999643 after=996995705 delta=6996062
+COORDINATOR before=21003000250 after=21006000250 delta=3000000
+BLOCK_FEES_COLLECTED=2629
+ACTUAL_CUSTODY_TX_FEE=8
+NATIVE_EXPLICIT_TRANSFERS=0
+PARAMETER_CONTROL variant=0 base=2 units=4 g=8 slot=3000000 receipt=7996062
+PARAMETER_CONTROL variant=1 base=3 units=4 g=12 slot=3000000 receipt=7996058
+PARAMETER_CONTROL variant=2 base=2 units=5 g=10 slot=3000000 receipt=7996060
+PARAMETER_CONTROL variant=3 base=2 units=4 g=8 slot=3000001 receipt=7996061
+ARITHMETIC_REFUSAL variant=4 stage=Failed no-issuance or arithmetic branch unsupported
+ARITHMETIC_REFUSAL variant=5 stage=Failed no-issuance or arithmetic branch unsupported
+ARITHMETIC_REFUSAL variant=6 stage=Failed no-issuance or arithmetic branch unsupported
+ACTUAL_NATIVE_BOUNCE collected=1309 forwarded=2621 sum=3930 matched_inbound_and_outbound=1
+COMPONENTS x=10000000 y=9996070 b=1000000 base=2 units=4 g=8 slot=3000000 installed_receipt=7996062
+PASS in 4183.3us
+1 test(s) passed

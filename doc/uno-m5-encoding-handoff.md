@@ -346,3 +346,12 @@ The observed base=2 is the fixture's authenticated tariff input, not a newly
 frozen base. This checklist grants no production activation, guard retirement,
 or full Failed-contract acceptance. The independent review remains retrospective;
 full three-site validator refusal behavior remains unestablished by that review.
+
+## Current limitation-to-obligation index
+
+See [limits tracking](uno-m5-limits-tracking.md) for the baseline-bound inventory,
+existing handoff mappings, additional pending real-host gates and explicit
+non-M5 boundaries. D62/D63 are now the eight mandatory BUCKET-SWEEP items;
+validator unknown injection, phase/Paid/late paths and remaining acceptance
+boundaries have their own fail-closed runner. No historical prediction or
+review result has been rewritten as later execution evidence.
