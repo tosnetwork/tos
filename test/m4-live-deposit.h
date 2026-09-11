@@ -288,8 +288,14 @@ inline void assert_m4_block_backing(const std::filesystem::path& fixture, const 
       if (m4_deposit_was_rejected(root)) next = book;
       else CHECK(CurrencyCollection::add(book, CurrencyCollection(workchain_unsigned_fee(deposit.principal)), next));
     } else {
-      auto operation = decode_workchain_replay_input(candidate).move_as_ok();
-      if (const auto* transfer = std::get_if<WorkchainTransferInput>(&operation)) {
+      auto replay = m3_test::decode_m5_accounting_replay(candidate).move_as_ok();
+      if (const auto* withdrawal = std::get_if<WorkchainWithdrawalInput>(&replay)) {
+        // This debit-only checkpoint has not emitted a payout. Its claimed q
+        // is NOT an already paid Native fee. R_book therefore loses only F;
+        // the missing W/payout must remain visible to the second comparison.
+        CHECK(CurrencyCollection::sub(book, CurrencyCollection(workchain_unsigned_fee(
+            withdrawal->data.amounts.operation_fee)), next));
+      } else if (const auto* transfer = std::get_if<WorkchainTransferInput>(&std::get<WorkchainReplayInput>(replay))) {
         // Each accepted operation already verified this public fee against the
         // authenticated tariff. Insufficient book backing must fail subtraction.
         CHECK(CurrencyCollection::sub(book, CurrencyCollection(workchain_unsigned_fee(
@@ -313,11 +319,19 @@ inline void assert_m4_block_backing(const std::filesystem::path& fixture, const 
   CHECK(native.unpack(accounts.lookup(custody), state.gen_utime, false));
   check_m4_backing(native.balance.tomis, book.tomis, td::make_refint(0)).ensure();
   const auto liabilities = m4_wallet_liabilities(step.state);
+  std::cout << "BACKING_REPLAY block=" << step.id.id.seqno << " R_actual=" << native.balance.tomis
+            << " R_book=" << book.tomis << " N_hidden=" << liabilities.tomis
+            << "; first-layer=OK; checking second-layer (no W/P in debit checkpoint)" << std::endl;
   check_m4_backing(native.balance.tomis, liabilities.tomis, td::make_refint(0)).ensure();
   const auto candidate = m4_recorded_candidate(step.block);
   if (!m3_test::is_m4_test_deposit(candidate)) {
-    const auto operation = decode_workchain_replay_input(candidate).move_as_ok();
-    if (const auto* transfer = std::get_if<WorkchainTransferInput>(&operation)) {
+    const auto replay = m3_test::decode_m5_accounting_replay(candidate).move_as_ok();
+    std::optional<std::uint64_t> public_fee;
+    if (const auto* withdrawal = std::get_if<WorkchainWithdrawalInput>(&replay))
+      public_fee = withdrawal->data.amounts.operation_fee;
+    else if (const auto* transfer = std::get_if<WorkchainTransferInput>(&std::get<WorkchainReplayInput>(replay)))
+      public_fee = workchain_transfer_claims(transfer->data).authorized_fee;
+    if (public_fee) {
       const auto previous = load(fixture / "current-state.boc");
       gen::ShardStateUnsplit::Record old;
       CHECK(::tlb::unpack_cell(previous, old));
@@ -325,7 +339,7 @@ inline void assert_m4_block_backing(const std::filesystem::path& fixture, const 
       Account old_native(2, custody.bits());
       CHECK(old_native.unpack(previous_accounts.lookup(custody), old.gen_utime, false));
       const auto old_liabilities = m4_wallet_liabilities(previous);
-      const CurrencyCollection fee(workchain_unsigned_fee(workchain_transfer_claims(transfer->data).authorized_fee));
+      const CurrencyCollection fee(workchain_unsigned_fee(*public_fee));
       check_m4_fee_pair(old_native.balance, native.balance, old_liabilities, liabilities, fee).ensure();
       CurrencyCollection corrupted;
       CHECK(CurrencyCollection::add(liabilities, CurrencyCollection(1), corrupted));

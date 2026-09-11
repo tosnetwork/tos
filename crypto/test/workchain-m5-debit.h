@@ -19,6 +19,18 @@ inline td::Result<WorkchainWithdrawalInput> decode_m5_test_debit(const td::Ref<v
   if (!is_m5_test_debit(root)) return td::Status::Error(-7200, "invalid test debit selector");
   return decode_workchain_withdrawal_input(vm::load_cell_slice(root).prefetch_ref());
 }
+// Test replay dispatch only: retain all old typed decoders, and decode the
+// checkpoint's real Withdrawal payload rather than treating an unknown tag
+// as an operation with no accounting effect.
+using M5AccountingReplay = std::variant<WorkchainReplayInput, WorkchainWithdrawalInput>;
+inline td::Result<M5AccountingReplay> decode_m5_accounting_replay(const td::Ref<vm::Cell>& root) {
+  if (is_m5_test_debit(root)) {
+    TRY_RESULT(input, decode_m5_test_debit(root));
+    return M5AccountingReplay{std::move(input)};
+  }
+  TRY_RESULT(input, decode_workchain_replay_input(root));
+  return M5AccountingReplay{std::move(input)};
+}
 inline td::Result<std::string> m5_debit_context(const WorkchainTransferEnvironment& env,
     const M5TestPrepareParameters& policy, const WorkchainConfidentialAccount& old,
     const WorkchainWithdrawalInput& input) {
@@ -63,6 +75,9 @@ inline td::Result<td::Ref<vm::Cell>> execute_m5_test_debit(const WorkchainTransf
   unsigned i = 0;
   for (const auto& point : {old.public_key, old.available.commitment, old.available.handle,
        input.data.available.commitment, input.data.available.handle, input.data.auxiliary}) copy(request.balance_points[i++], point);
+  // Length is host-built: encode_workchain_withdrawal_context rejects unless
+  // its fixed-width traversal yields exactly 566. Candidate values affect
+  // bytes, not the number of bytes; no candidate length field reaches here.
   request.context = reinterpret_cast<const unsigned char*>(context.data()); request.context_bytes = context.size();
   request.commitments = reinterpret_cast<const unsigned char (*)[32]>(a.commitments.data());
   request.commitment_count = a.commitments.size();

@@ -126,7 +126,7 @@ inline td::Result<WorkchainProofOperations> workchain_proof_operations_v4(
   UnoCryptoVerifyRequestV2 send{};
   send.abi_version = 2; send.relation = UNO_RELATION_SEND; send.limits = request.limits;
   // Rust statement tag + two IDs + four u64 fields + canonical host context.
-  send.context_bytes = 28 + 96 + 566;
+  send.context_bytes = (sizeof("uno-v2/withdrawal-statement/v1") - 1) + 96 + 566;
   send.point_count = 10; send.commitment_count = request.commitment_count;
   send.response_count = request.response_count; send.proof_bytes = request.proof_bytes;
   TRY_RESULT(work, workchain_proof_operations_v4(send));
