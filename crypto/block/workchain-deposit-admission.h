@@ -34,7 +34,7 @@ using WorkchainDepositDecision = std::variant<WorkchainDepositRejection, Workcha
 inline td::Result<WorkchainDepositDecision> admit_workchain_deposit(
     const WorkchainDepositPolicy& policy, const td::Bits256& message,
     const WorkchainConfidentialAddress& destination, const td::Bits256& asset,
-    const td::Bits256& custody, const td::RefInt256& imported_tomis,
+    const td::Bits256& custody, std::uint64_t declared_principal, const td::RefInt256& imported_tomis,
     std::uint64_t sequence,
     const td::Result<std::optional<WorkchainConfidentialAccount>>& historical) {
   auto local = [](td::Slice reason) {
@@ -58,16 +58,20 @@ inline td::Result<WorkchainDepositDecision> admit_workchain_deposit(
   if (account.schema_version != 2) return local("authenticated account schema cannot store system receipts");
   if (imported_tomis.is_null() || !imported_tomis->is_valid() || td::sgn(imported_tomis) < 0)
     return local("invalid authenticated Native message value");
-  auto fee = td::make_refint(policy.slot_fee);
-  if (td::cmp(imported_tomis, fee) < 0) return reject(WorkchainDepositRejection::SlotFee);
-  // Invariant: imported_tomis >= fee above. Arbitrary-precision subtraction
-  // cannot underflow. Only the remainder is principal; the fee never enters R
-  // or N_book. No body-supplied amount may disagree with this one value.
-  auto principal = imported_tomis - fee;
-  if (!principal->is_valid()) return local("Deposit principal arithmetic failed");
-  if (td::cmp(principal, td::make_refint(policy.minimum)) < 0 ||
-      td::cmp(principal, td::make_refint(policy.maximum)) > 0)
+  // Principal is explicit in the authenticated message body. Subtracting the
+  // current tariff from the message total would silently change the intended
+  // principal after a governance price change while the message is in transit.
+  // Exact payment rejects both shortfall and excess; neither is reassigned.
+  // V_min/V_max constrain principal, NOT the message total. The smallest valid
+  // payment is V_min + slot_fee. The fee never enters custody R or N_book.
+  if (declared_principal < policy.minimum || declared_principal > policy.maximum)
     return reject(WorkchainDepositRejection::Amount);
+  std::uint64_t required;
+  if (__builtin_add_overflow(declared_principal, policy.slot_fee, &required))
+    return reject(WorkchainDepositRejection::Amount);
+  // The policy bounds above ensure required fits signed int64 for make_refint.
+  if (td::cmp(imported_tomis, td::make_refint(required)) != 0)
+    return reject(WorkchainDepositRejection::SlotFee);
   if (account.system_pending.size() >= policy.system_slots)
     return reject(WorkchainDepositRejection::Capacity);
   auto next = next_workchain_deposit_sequence(sequence);
@@ -80,6 +84,6 @@ inline td::Result<WorkchainDepositDecision> admit_workchain_deposit(
   // Bounds checked above; no narrowing before the comparison. Counter and
   // receipt installation happen together with both Native balance updates.
   return WorkchainDepositDecision{WorkchainDepositAdmission{
-      id, next.ok(), static_cast<std::uint64_t>(principal->to_long()), policy.slot_fee}};
+      id, next.ok(), declared_principal, policy.slot_fee}};
 }
 }  // namespace block

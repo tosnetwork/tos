@@ -29,9 +29,9 @@ TEST(WorkchainUnexpectedBucket, DepositAdmissionSeparatesPrincipalAndOperatingFe
   // pure test passes them explicitly; live resolution must read the payload.
   WorkchainDepositPolicy policy{1000000000, (std::uint64_t{1} << 62) - 1, 3000000, 16, 4};
   const auto message = sender(8).account;
-  auto decide = [&](std::int64_t total, std::uint64_t sequence = 0) {
+  auto decide = [&](std::int64_t total, std::uint64_t sequence = 0, std::uint64_t principal = 1000000000) {
     return admit_workchain_deposit(policy, message, account.address, account.bindings.asset,
-        account.bindings.custody, td::make_refint(total), sequence,
+        account.bindings.custody, principal, td::make_refint(total), sequence,
         std::optional<WorkchainConfidentialAccount>{account});
   };
   auto accepted = decide(1003000000).move_as_ok();
@@ -47,11 +47,19 @@ TEST(WorkchainUnexpectedBucket, DepositAdmissionSeparatesPrincipalAndOperatingFe
     ASSERT_TRUE(std::get<WorkchainDepositRejection>(result.ok()) == reason);
   };
   rejected(decide(2999999), WorkchainDepositRejection::SlotFee);
-  rejected(decide(1002999999), WorkchainDepositRejection::Amount);
-  rejected(decide(INT64_MAX), WorkchainDepositRejection::Amount);
+  rejected(decide(3000000, 0, 0), WorkchainDepositRejection::Amount);
+  rejected(decide(1002999999, 0, 999999999), WorkchainDepositRejection::Amount);
+  rejected(decide(INT64_MAX, 0, UINT64_MAX), WorkchainDepositRejection::Amount);
+  rejected(decide(1002999999), WorkchainDepositRejection::SlotFee);
+  rejected(decide(1003000001), WorkchainDepositRejection::SlotFee);
+  policy.slot_fee = 5000000;  // In-transit price rise rejects, never reduces principal.
+  rejected(decide(1003000000), WorkchainDepositRejection::SlotFee);
+  policy.slot_fee = 2000000;  // Price reduction also rejects the excess deterministically.
+  rejected(decide(1003000000), WorkchainDepositRejection::SlotFee);
+  policy.slot_fee = 3000000;
   rejected(decide(1003000000, UINT64_MAX), WorkchainDepositRejection::SequenceExhausted);
   ASSERT_TRUE(std::holds_alternative<WorkchainDepositAdmission>(
-      decide(static_cast<std::int64_t>(policy.maximum) + 3000000).move_as_ok()));
+      decide(static_cast<std::int64_t>(policy.maximum) + 3000000, 0, policy.maximum).move_as_ok()));
   account.lifecycle = WorkchainAccountClosed{};
   rejected(decide(1003000000), WorkchainDepositRejection::Lifecycle);
   account.lifecycle = WorkchainAccountActive{};
@@ -64,12 +72,12 @@ TEST(WorkchainUnexpectedBucket, DepositAdmissionSeparatesPrincipalAndOperatingFe
   rejected(decide(1003000000, 4), WorkchainDepositRejection::Capacity);
   ASSERT_EQ(account.system_pending.size(), 4u);  // Every decision leaves its input untouched.
   auto missing = admit_workchain_deposit(policy, message, account.address, account.bindings.asset,
-      account.bindings.custody, td::make_refint(1003000000), 0,
+      account.bindings.custody, 1000000000, td::make_refint(1003000000), 0,
       td::Status::Error("database unavailable"));
   ASSERT_TRUE(missing.is_error());
   ASSERT_EQ(missing.error().code(), -7201);
   auto absent = admit_workchain_deposit(policy, message, account.address, account.bindings.asset,
-      account.bindings.custody, td::make_refint(1003000000), 0,
+      account.bindings.custody, 1000000000, td::make_refint(1003000000), 0,
       std::optional<WorkchainConfidentialAccount>{});
   rejected(std::move(absent), WorkchainDepositRejection::Unregistered);
 }
