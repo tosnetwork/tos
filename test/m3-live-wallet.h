@@ -108,7 +108,9 @@ inline void prepare_closure(const std::filesystem::path& fixture, bool finish) {
       {p.engine_version, p.relation_version, p.wire_version, p.proof_version,
        p.global_id, p.workchain_id, p.genesis_hash, p.workchain_instance},
       env.rules, env.profiles, env.fee_profile, env.fee_effective_height};
-  const unsigned owner = env.proof_profile == 4 ? 0 : 1;
+  const unsigned owner = std::filesystem::exists(fixture / "closure.owner.txt")
+      ? std::stoul(field(fixture / "closure.owner.txt", "owner")) : (env.proof_profile == 4 ? 0 : 1);
+  CHECK(owner < 2);
   const auto account = wallet_state(fixture, owner);
   const auto prepared = block::m3_test::make_m3_test_closure_wallet_input(policy, env.domain, account).move_as_ok();
   if (finish) {

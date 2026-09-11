@@ -2,7 +2,7 @@
 import subprocess
 
 
-def run(build, fixture, wallet, advance_pair):
+def run(build, fixture, wallet, advance_pair, initial_only=False, initial_principal=1000000000):
     def node(mode):
         subprocess.run([str(build / 'test-m3-live'), mode, str(fixture)], check=True)
 
@@ -55,8 +55,10 @@ def run(build, fixture, wallet, advance_pair):
         return after
 
     first = (fixture / 'deposit-2.id').read_text()
+    a1 = collect(0, 0, 0, 67, first, initial_principal, 3 if initial_only else 4)
+    if initial_only:
+        return a1, 67, send_fee, collect_fee, limits
     retained = (fixture / 'deposit-3.id').read_text()
-    a1 = collect(0, 0, 0, 67, first, 1000000000, 4)
     a2 = collect(0, a1, 67, 71, retained, 1000000000, 5)
     # Section 10 closure requires available=0. The one SEND therefore spends
     # exactly the remaining available less its authenticated fee, not a later
