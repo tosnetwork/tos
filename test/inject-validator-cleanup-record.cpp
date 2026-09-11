@@ -28,9 +28,17 @@
 // The record is always read back through the production decoder (POISON_LOADABLE) so a
 // PASS cannot be vacuous.
 //
+// A trailing "predelete" arg reconstructs the mid-flight crash state {dir gone, record
+// present}: after writing the record and creating the dir, it runs the REAL deleter
+// (delete_validator_consensus_db -- the exact function the cleanup worker calls), so on
+// disk the durable record outlives its directory. That is what a crash between the
+// erase-commit and the record-drop leaves behind. A restarted engine must reconcile it
+// (an already-absent dir counts as a confirmed delete, so the pass completes the erase
+// and drops the orphan record) rather than loop or fault.
+//
 // Usage:
 //   inject-validator-cleanup-record write <db_root> <seed> <retire_seqno> <retire_root_b64> \
-//       <retire_file_b64> <dir_wc> <dir_cc>
+//       <retire_file_b64> <dir_wc> <dir_cc> [predelete]
 //   inject-validator-cleanup-record check <db_root> <seed>
 // Retirement is always a masterchain block id (wc -1, shard 0x8000000000000000); the
 // directory shard is 0x8000000000000000 with the given workchain. Session id is derived
@@ -90,10 +98,11 @@ int main(int argc, char** argv) {
     return 0;
   }
 
-  if (argc != 9 || std::string(argv[1]) != "write") {
+  bool predelete = (argc == 10 && std::string(argv[9]) == "predelete");
+  if (!((argc == 9 || argc == 10) && std::string(argv[1]) == "write")) {
     std::fprintf(stderr,
                  "usage: %s write <db_root> <seed> <retire_seqno> <retire_root_b64> <retire_file_b64> <dir_wc> "
-                 "<dir_cc>\n       %s check <db_root> <seed>\n",
+                 "<dir_cc> [predelete]\n       %s check <db_root> <seed>\n",
                  argv[0], argv[0]);
     return 2;
   }
@@ -136,7 +145,24 @@ int main(int argc, char** argv) {
       loadable = true;
     }
   }
-  std::printf("INJECTED seed=%d session=%s dir=%s retire_seqno=%u dir_wc=%d dir_cc=%u POISON_LOADABLE=%d\n", seed,
-              sid.to_hex().c_str(), record.dir_name.c_str(), retire_seqno, dir_wc, dir_cc, loadable ? 1 : 0);
+
+  // Crash-boundary-2 reconstruction: run the REAL deleter (the exact function the
+  // cleanup worker calls) so the directory is removed while the durable record still
+  // stands. This is the mid-flight on-disk state {dir gone, record present} that a
+  // crash between erase-commit and record-drop leaves behind -- reconstructed with the
+  // production code path, not simulated. The engine must reconcile it on restart.
+  int dir_gone = 0;
+  if (predelete) {
+    // Returns true only on stat-confirmed removal (see delete_validator_consensus_db).
+    dir_gone = delete_validator_consensus_db(td::Slice{db_root}, sid, record.dir_name) ? 1 : 0;
+    if (!dir_gone) {
+      auto full = consensus_db_root(td::Slice{db_root}) + record.dir_name;
+      std::fprintf(stderr, "ERROR: predelete did not confirm removal of dir %s\n", full.c_str());
+      return 1;
+    }
+  }
+  std::printf(
+      "INJECTED seed=%d session=%s dir=%s retire_seqno=%u dir_wc=%d dir_cc=%u POISON_LOADABLE=%d PREDELETE_DIR_GONE=%d\n",
+      seed, sid.to_hex().c_str(), record.dir_name.c_str(), retire_seqno, dir_wc, dir_cc, loadable ? 1 : 0, dir_gone);
   return loadable ? 0 : 1;
 }

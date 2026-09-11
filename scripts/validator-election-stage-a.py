@@ -80,6 +80,10 @@ ROCKSDB_CACHE_BYTES = 256 * 1024 * 1024
 DEFAULT_EXPERIMENT_DURATION = 3 * 60 * 60
 DEFAULT_SETTLEMENT_TAIL = 15 * 60
 DEFAULT_RPC_BASE_PORT = 8111
+# A restarted node's own log (truncated to its post-restart run) must contain no fault.
+_FATAL_RE = re.compile(
+    r"\b(FATAL|PANIC|CHECK failed|LOG_CHECK failed|AddressSanitizer|UndefinedBehaviorSanitizer|Aborted)\b"
+)
 T = TypeVar("T")
 
 
@@ -284,10 +288,19 @@ class ValidatorElectionRehearsal:
         enable_consensus_cleanup: bool = False,
         consensus_cleanup_state_ttl: int = 0,
         consensus_cleanup_archive_ttl: int = 0,
+        measure_live_rejoin: bool = False,
+        live_rejoin_only: bool = False,
     ):
         self.run_dir = run_dir
         self.network_dir = run_dir / "network"
         self.artifacts_dir = run_dir / "artifacts"
+        # ACCEPTANCE-ONLY opt-in: after readiness, restart a non-zero validator while its
+        # peers keep producing and prove it rejoins live consensus (syncs the blocks it
+        # missed and tracks the advancing tip). live_rejoin_only returns right after, for
+        # a fast dedicated rejoin run instead of the full election window. Default off.
+        self.measure_live_rejoin = measure_live_rejoin
+        self.live_rejoin_only = live_rejoin_only
+        self.live_rejoin_result: dict[str, Any] | None = None
         # ACCEPTANCE-ONLY opt-in: arm the gated validator consensus-DB cleanup on every
         # validator engine and shrink state/archive TTLs so the GC floor can advance
         # once the election produces a post-genesis key block. Default off leaves the
@@ -1371,6 +1384,102 @@ class ValidatorElectionRehearsal:
         await self.nodes[3].run(self.validator_start_options(3))
         self.event("three_of_four_passed", before=before, after=after)
 
+    async def _node_mc_seqno(self, index: int) -> int:
+        """Masterchain tip as seen by node <index>'s OWN JSON-RPC endpoint, not the shared
+        lite-client. A restarted node's independent catch-up is only observable through its
+        own view; the per-run log is truncated on restart, so it cannot serve this."""
+        assert self.experiment is not None
+        address = self.experiment.rpc_addresses[index]
+        response = await asyncio.to_thread(json_rpc_call, address, "getMasterchainInfo")
+        last = response["result"].get("last") or {}
+        return int(last["seqno"])
+
+    async def verify_live_rejoin(self, node_index: int = 3) -> dict[str, Any]:
+        """Prove a NON-ZERO validator, restarted while its peers keep producing blocks,
+        REJOINS live consensus rather than merely replaying its frozen DB.
+
+        The falsifiable core: capture the network tip when the node is stopped; require the
+        peers to advance past it while the node is down (they can, 3 of 4 equal validators
+        is a BFT quorum); restart the node with the cleanup worker armed; then require the
+        node's OWN view to reach that during-downtime tip -- blocks only its peers could
+        have produced -- and then a still-fresher tip, so it is tracking the moving chain.
+        A node that fails to rejoin stays at its pre-stop tip and the sync poll times out.
+        node 0 is off limits: it hosts the shared lite-client this run depends on."""
+        assert self.experiment is not None
+        if node_index == 0:
+            raise ValueError("live-rejoin target must be non-zero (node 0 hosts the lite-client)")
+
+        tip_at_stop = await self.masterchain_seqno()
+        target_before = await self._node_mc_seqno(node_index)
+        self.event("live_rejoin_begin", node=node_index + 1, network_tip=tip_at_stop, target_tip=target_before)
+
+        await self.nodes[node_index].stop()
+
+        # Peers must advance past the stop tip while the target is down; that gap is what
+        # the target has to catch up to. If the network stalls here, we cannot attribute a
+        # later catch-up to live rejoin -- so this poll failing is itself a real failure.
+        advance_margin = 4
+        tip_during_downtime = await self.retry(
+            self.masterchain_seqno,
+            timeout=180,
+            interval=2,
+            description=f"peers advance to >= {tip_at_stop + advance_margin} while node {node_index + 1} is down",
+            predicate=lambda seqno: seqno >= tip_at_stop + advance_margin,
+        )
+
+        # Restart with cleanup armed (validator_start_options carries the flag when enabled).
+        await self.nodes[node_index].run(self.validator_start_options(node_index))
+
+        # REJOIN PROOF: the target's own view must reach the tip its peers reached while it
+        # was down. It can only hold those blocks by rejoining consensus and syncing them.
+        target_after_sync = await self.retry(
+            lambda: self._node_mc_seqno(node_index),
+            timeout=240,
+            interval=2,
+            description=f"node {node_index + 1} syncs past the downtime tip {tip_during_downtime}",
+            predicate=lambda seqno: seqno >= tip_during_downtime,
+        )
+
+        # LIVE-TRACKING PROOF: sample a fresh tip now, then require the target to reach it
+        # too -- so it follows the advancing chain, not just replays to a frozen point.
+        fresh_tip = await self.masterchain_seqno()
+        target_tracking = await self.retry(
+            lambda: self._node_mc_seqno(node_index),
+            timeout=180,
+            interval=2,
+            description=f"node {node_index + 1} tracks the live tip {fresh_tip}",
+            predicate=lambda seqno: seqno >= fresh_tip,
+        )
+
+        # The rejoined node's post-restart log (truncated to this run) must carry no fault;
+        # record whether the armed cleanup worker ran a pass on it as supporting evidence.
+        log_text = self.nodes[node_index].log_path.read_text(errors="replace")
+        cleanup_passes = len(re.findall(r"VALCLEANUP pass ", log_text))
+        fatals = [ln[:400] for ln in log_text.splitlines() if _FATAL_RE.search(ln)]
+
+        result = {
+            "verdict": "passed" if not fatals else "failed",
+            "node": node_index + 1,
+            "cleanup_armed": self.enable_consensus_cleanup,
+            "network_tip_at_stop": tip_at_stop,
+            "target_tip_at_stop": target_before,
+            "network_tip_during_downtime": tip_during_downtime,
+            "target_tip_after_sync": target_after_sync,
+            "fresh_network_tip": fresh_tip,
+            "target_tip_tracking": target_tracking,
+            "cleanup_passes_after_rejoin": cleanup_passes,
+            "fatals": fatals[:5],
+        }
+        self.live_rejoin_result = result
+        (self.run_dir / "live-rejoin-analysis.json").write_text(json.dumps(result, indent=2) + "\n")
+        self.event(
+            "live_rejoin_passed" if not fatals else "live_rejoin_failed",
+            **{k: v for k, v in result.items() if k != "fatals"},
+        )
+        if fatals:
+            raise AssertionError(f"live rejoin saw fault diagnostics on node {node_index + 1}: {fatals[:3]}")
+        return result
+
     async def verify_two_of_four_safe_halt(self) -> None:
         self.event("two_of_four_begin", stopped_nodes=[3, 4])
         await self.nodes[2].stop()
@@ -1761,6 +1870,14 @@ class ValidatorElectionRehearsal:
     async def run_experiment(self) -> None:
         assert self.experiment is not None
         self.rpc_readiness = await self.wait_json_rpc_readiness()
+        # Opt-in live-rejoin check runs against the freshly-ready network (already
+        # producing blocks) before the long election window. live_rejoin_only exits right
+        # after, for a fast dedicated rejoin run.
+        if self.measure_live_rejoin:
+            await self.verify_live_rejoin()
+            if self.live_rejoin_only:
+                self.event("live_rejoin_only_complete")
+                return
         started_wall = time.time()
         started_monotonic = time.monotonic()
         deadline_monotonic = started_monotonic + self.experiment.duration_seconds
@@ -1916,7 +2033,7 @@ class ValidatorElectionRehearsal:
                     logical_bytes += stat.st_size
                     allocated_bytes += stat.st_blocks * 512
                     file_count += 1
-            except FileNotFoundError, PermissionError:
+            except (FileNotFoundError, PermissionError):
                 continue
         return {
             "network_storage_logical_bytes": logical_bytes,
@@ -1957,7 +2074,11 @@ class ValidatorElectionRehearsal:
 
             processes: list[dict[str, Any]] = []
             network_marker = str(self.network_dir).encode()
-            for proc_dir in Path("/proc").iterdir():
+            # Per-process RSS/fd sampling reads Linux procfs; it does not exist on macOS,
+            # where this harness also runs. Skip the sample there rather than fault -- the
+            # rest of the metrics (config34, balances, storage) are portable.
+            proc_root = Path("/proc")
+            for proc_dir in (proc_root.iterdir() if proc_root.is_dir() else []):
                 if not proc_dir.name.isdigit():
                     continue
                 try:
@@ -2004,7 +2125,7 @@ class ValidatorElectionRehearsal:
                             "cpu_system_ticks": int(stat_fields[12]),
                         }
                     )
-                except FileNotFoundError, PermissionError, ProcessLookupError:
+                except (FileNotFoundError, PermissionError, ProcessLookupError):
                     continue
             sample["validator_processes"] = processes
             try:
@@ -2471,6 +2592,20 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=60,
         help="with --enable-consensus-cleanup: engine --archive-ttl (s)",
     )
+    parser.add_argument(
+        "--measure-live-rejoin",
+        action="store_true",
+        help=(
+            "ACCEPTANCE ONLY (experiment mode): after readiness, restart a non-zero "
+            "validator while its peers keep producing and prove it rejoins live consensus. "
+            "Default off."
+        ),
+    )
+    parser.add_argument(
+        "--live-rejoin-only",
+        action="store_true",
+        help="with --measure-live-rejoin: exit right after the rejoin check (fast dedicated run)",
+    )
     return parser.parse_args(argv)
 
 
@@ -2511,6 +2646,8 @@ async def async_main() -> int:
         enable_consensus_cleanup=args.enable_consensus_cleanup,
         consensus_cleanup_state_ttl=args.consensus_cleanup_state_ttl,
         consensus_cleanup_archive_ttl=args.consensus_cleanup_archive_ttl,
+        measure_live_rejoin=args.measure_live_rejoin,
+        live_rejoin_only=args.live_rejoin_only,
     )
     try:
         await stage.execute()
