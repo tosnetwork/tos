@@ -1,0 +1,9 @@
+WithdrawalAmounts::fn total (& self) -> Result < u64 , AbiStatus >
+fn public_opening (domain : & [u8 ; 80] , withdrawal : & [u8 ; 32] , attempt : & [u8 ; 32] , owner : & [u8 ; 32] , total : u64) -> Result < Scalar , AbiStatus >
+fn nonzero_opening (wide : & [u8 ; 64]) -> Result < Scalar , AbiStatus >
+WithdrawalStatement::fn new (limits : & KernelLimits , domain : [u8 ; 80] , withdrawal : [u8 ; 32] , attempt : [u8 ; 32] , amounts : WithdrawalAmounts , authenticated_context : & [u8] , balance_points : [[u8 ; 32] ; 6]) -> Result < Self , AbiStatus >
+WithdrawalStatement::fn domain (& self) -> & [u8 ; 80]
+WithdrawalStatement::fn fee (& self) -> u64
+WithdrawalStatement::fn context (& self) -> & [u8]
+WithdrawalStatement::fn points (& self) -> & [[u8 ; 32] ; 10]
+WithdrawalStatement::fn verify (& self , limits : & KernelLimits , commitments : & [[u8 ; 32]] , responses : & [[u8 ; 32]] , range_proof : & [u8]) -> Result < () , AbiStatus >

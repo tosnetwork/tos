@@ -46,3 +46,25 @@ No production code or guard criteria changed for this finding. No host
 no-pending enforcement, mutation-control success, live Withdrawal execution or
 completed D34 review is claimed. The item remains an explicit integration gate,
 not a completed minting-safety check.
+
+## D51 executable expiry trigger
+
+Specification update: memo `cba2d107`, SHA-256 prefix `4f80cceb2f287885`.
+Default CTest `test-workchain-withdrawal-statement-expiry` parses the statement
+module with pinned Syn, checking its field types, signatures and call-target
+inventory. It rejects new mutable outlets, new module capabilities and unknown
+calls. No file hash is used; comments and formatting are immaterial. Missing
+Cargo or offline dependencies fail rather than skip the test.
+
+Controls mutate the actual source in memory: add a mutable installer method,
+add global mutable storage, and insert an unknown account-write call. Each must
+expire the boundary. A comment-only control must remain accepted. These are
+parser-level structural controls, not executable illicit Native transactions.
+
+LIMIT: this is a bounded interface/dependency inventory, not Rust name resolution
+or a whole-program side-effect proof. Indirect effects introduced inside existing
+callees, aliasing and independent Native entry points are outside its guarantee.
+It does not establish that every conceivable first write will be detected.
+Expiry requires installing the authenticated-cut host controls described above,
+not automatically accepting a larger API inventory. No node-enforcement claim is
+made by passing this guard.

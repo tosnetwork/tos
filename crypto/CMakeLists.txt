@@ -806,6 +806,15 @@ add_test(NAME test-workchain-preflight-expiry COMMAND ${Python3_EXECUTABLE}
 set_tests_properties(test-workchain-preflight-expiry PROPERTIES
   TIMEOUT 30 LABELS "workchain;prepared-expiry;c3")
 
+# Missing Cargo/dependencies fail this default gate, never silently skip it.
+add_test(NAME test-workchain-withdrawal-statement-expiry COMMAND cargo run
+  --locked --offline --manifest-path
+  "${PROJECT_SOURCE_DIR}/crypto/test/withdrawal-structure/Cargo.toml"
+  --target-dir "${CMAKE_CURRENT_BINARY_DIR}/withdrawal-structure-target" --
+  "${PROJECT_SOURCE_DIR}/uno/crypto/src/withdrawal_statement.rs")
+set_tests_properties(test-workchain-withdrawal-statement-expiry PROPERTIES
+  TIMEOUT 120 LABELS "workchain;m5;expiry")
+
 add_executable(test-workchain-m3-assertions ../test/test-td-main.cpp test/test-workchain-m3-assertions.cpp)
 target_link_libraries(test-workchain-m3-assertions PRIVATE tos_block tos_crypto)
 target_compile_definitions(test-workchain-m3-assertions PRIVATE M3_VECTOR_DIR="${CMAKE_CURRENT_SOURCE_DIR}/test/workchain-m3-vectors")
