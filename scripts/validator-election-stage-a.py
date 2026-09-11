@@ -389,6 +389,9 @@ class ValidatorElectionRehearsal:
             args += [
                 "--json-rpc-address",
                 self.experiment.rpc_addresses[validator_index],
+                # Loopback JSON-RPC in this harness: expose the read-only consensus-status
+                # admin method so the acceptance probe can cross-check nodes for divergence.
+                "--json-rpc-expose-consensus-status",
             ]
         if self.enable_consensus_cleanup:
             args += ["--enable-validator-consensus-cleanup"]
@@ -1413,6 +1416,61 @@ class ValidatorElectionRehearsal:
             raise RuntimeError(f"node {index + 1} getBlockHeader({seqno}) returned no block-id hashes: {response}")
         return (root_hash, file_hash)
 
+    async def _node_consensus_status(self, index: int) -> dict[str, Any]:
+        """The read-only getNodeConsensusStatus admin result from node <index>."""
+        assert self.experiment is not None
+        address = self.experiment.rpc_addresses[index]
+        response = await asyncio.to_thread(json_rpc_call, address, "getNodeConsensusStatus")
+        return response["result"]
+
+    async def probe_consensus_status(self) -> dict[str, Any]:
+        """Cross-check every node via getNodeConsensusStatus, verifying the admin endpoint on
+        a live network (not just that it compiles). On this genesis-validator localnet each
+        node must report itself a validator, all must agree on the last key block, and their
+        applied masterchain blocks must share the same block id at the lowest common seqno --
+        a divergence would disagree there."""
+        assert self.experiment is not None
+        count = len(self.experiment.rpc_addresses)
+        statuses = []
+        for i in range(count):
+            statuses.append(await self.retry(
+                lambda i=i: self._node_consensus_status(i),
+                timeout=60, interval=2, description=f"node {i + 1} consensus status",
+            ))
+        failures = []
+        for i, s in enumerate(statuses):
+            vset = s.get("validator_set") or {}
+            if vset.get("is_validator") is not True:
+                failures.append(f"node {i + 1} is_validator={vset.get('is_validator')} (expected true)")
+        key_blocks = {json.dumps(s.get("last_key_block"), sort_keys=True) for s in statuses}
+        if len(key_blocks) != 1:
+            failures.append(f"nodes disagree on last_key_block: {key_blocks}")
+        applied_seqnos = [int(s["applied_masterchain_block"]["seqno"]) for s in statuses]
+        common_height = min(applied_seqnos)
+        block_ids = set()
+        for i in range(count):
+            block_ids.add(await self.retry(
+                lambda i=i: self._node_mc_block_id(i, common_height),
+                timeout=60, interval=2, description=f"node {i + 1} block id at {common_height}",
+            ))
+        if len(block_ids) != 1:
+            failures.append(f"nodes disagree on masterchain block id at seqno {common_height}: {block_ids}")
+        result = {
+            "verdict": "passed" if not failures else "failed",
+            "nodes": count,
+            "common_height": common_height,
+            "all_report_is_validator": all((s.get("validator_set") or {}).get("is_validator") is True for s in statuses),
+            "agree_on_last_key_block": len(key_blocks) == 1,
+            "agree_on_block_id_at_common_height": len(block_ids) == 1,
+            "statuses": statuses,
+            "failures": failures,
+        }
+        (self.run_dir / "consensus-status-probe.json").write_text(json.dumps(result, indent=2) + "\n")
+        self.event("consensus_status_probe", verdict=result["verdict"], common_height=common_height, failures=failures)
+        if failures:
+            raise AssertionError(f"consensus-status probe failed: {failures}")
+        return result
+
     async def verify_live_rejoin(self, node_index: int = 3) -> dict[str, Any]:
         """Prove a NON-ZERO validator, restarted while its peers keep producing blocks,
         RECOVERS SYNC and keeps tracking the live chain rather than merely replaying its
@@ -1990,6 +2048,8 @@ class ValidatorElectionRehearsal:
         # after, for a fast dedicated rejoin run.
         if self.measure_live_rejoin:
             await self.verify_live_rejoin()
+            # Verify the read-only consensus-status admin endpoint on the live network too.
+            await self.probe_consensus_status()
             if self.live_rejoin_only:
                 self.event("live_rejoin_only_complete")
                 return

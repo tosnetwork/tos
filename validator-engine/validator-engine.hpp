@@ -545,6 +545,7 @@ class ValidatorEngine : public td::actor::Actor {
   void export_metrics(td::IPAddress address);
   void serve_json_rpc(td::IPAddress address);
   void set_json_rpc_readonly(bool readonly);
+  void set_json_rpc_expose_consensus_status(bool expose);
   void set_json_rpc_cors_origin(std::string origin);
   void set_json_rpc_readyz_threshold(td::int32 threshold);
   void set_json_rpc_request_timeout(double seconds);

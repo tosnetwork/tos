@@ -201,6 +201,113 @@ void JsonRpcServer::finish_getConsensusBlock(td::uint32 seqno, td::uint32 last_b
   promise.set_value(make_json_ok(sb.as_cslice().str(), req_id));
 }
 
+// ─── getNodeConsensusStatus (read-only admin) ────────────────────────
+//
+// Reports this node's internal masterchain consensus view: the applied top block, the
+// consensus (liteserver-served) block, the last key block, the current masterchain
+// validator set (catchain seqno, set hash, total weight, count), whether this node is in
+// that set, and the applied-minus-consensus gap. Two manager reads (top applied state, then
+// consensus state) resolve off-actor; the reply is built there and returned via the static
+// make_json_ok overload, so this handler never touches server members and needs no hop back.
+namespace {
+// Emit a masterchain block id as a JSON object field. Hashes are base64, matching the
+// getMasterchainInfo / getBlockHeader shape.
+void emit_block_id(td::StringBuilder &sb, const char *field, const BlockIdExt &id) {
+  sb << "\"" << field << "\":{\"workchain\":" << id.id.workchain << ",\"shard\":" << (td::int64)id.id.shard
+     << ",\"seqno\":" << id.id.seqno << ",\"root_hash\":\"" << td::base64_encode(id.root_hash.as_slice())
+     << "\",\"file_hash\":\"" << td::base64_encode(id.file_hash.as_slice()) << "\"}";
+}
+}  // namespace
+
+void JsonRpcServer::handle_getNodeConsensusStatus(td::JsonObject &params, std::string req_id,
+                                                  td::Promise<HttpReturn> promise) {
+  auto mgr = validator_manager_;         // ActorId copy: usable from the off-actor continuation
+  auto cors = opts_.cors_origin;
+  auto node_ids = opts_.node_validator_ids;  // copied: continuation runs off-actor
+  td::actor::send_closure(
+      mgr, &validator::ValidatorManagerInterface::get_top_masterchain_state_block,
+      td::PromiseCreator::lambda(
+          [mgr, cors, node_ids, req_id = std::move(req_id), promise = std::move(promise)](
+              td::Result<std::pair<td::Ref<validator::MasterchainState>, BlockIdExt>> R_top) mutable {
+        guard_handler("getNodeConsensusStatus top", [&] {
+          if (R_top.is_error()) {
+            promise.set_value(make_json_error(-32603, PSTRING() << "getNodeConsensusStatus: " << R_top.error(),
+                                              req_id, cors));
+            return;
+          }
+          auto top = R_top.move_as_ok();
+          if (top.first.is_null()) {
+            promise.set_value(make_json_error(-32603, "getNodeConsensusStatus: no masterchain state", req_id, cors));
+            return;
+          }
+          // Second read: the consensus (liteserver-served) masterchain block, for the
+          // applied-minus-consensus gap. Both are immutable snapshots, safe to read here.
+          td::actor::send_closure(
+              mgr, &validator::ValidatorManagerInterface::get_last_liteserver_state_block,
+              td::PromiseCreator::lambda(
+                  [cors, node_ids, top_state = top.first, req_id = std::move(req_id),
+                   promise = std::move(promise)](
+                      td::Result<std::pair<td::Ref<validator::MasterchainState>, BlockIdExt>> R_ls) mutable {
+                guard_handler("getNodeConsensusStatus consensus", [&] {
+                  BlockSeqno consensus_seqno = 0;
+                  bool have_consensus = false;
+                  if (R_ls.is_ok()) {
+                    auto ls = R_ls.move_as_ok();
+                    if (ls.first.not_null()) {
+                      consensus_seqno = ls.second.seqno();
+                      have_consensus = true;
+                    }
+                  }
+                  auto mc_shard = ShardIdFull{masterchainId};
+                  auto vset = top_state->get_validator_set(mc_shard);
+                  BlockIdExt applied_id = top_state->get_block_id();
+                  BlockIdExt key_block_id = top_state->last_key_block_id();
+
+                  td::StringBuilder sb;
+                  sb << "{\"@type\":\"ext.node.consensusStatus\"";
+                  sb << ",\"unix_time\":" << top_state->get_unix_time();
+                  sb << ",";
+                  emit_block_id(sb, "applied_masterchain_block", applied_id);
+                  sb << ",\"consensus_block_seqno\":";
+                  if (have_consensus) {
+                    sb << consensus_seqno;
+                    sb << ",\"applied_minus_consensus\":" << (td::int64)applied_id.seqno() - (td::int64)consensus_seqno;
+                  } else {
+                    sb << "null";
+                  }
+                  sb << ",";
+                  emit_block_id(sb, "last_key_block", key_block_id);
+                  sb << ",\"masterchain_cc_seqno\":" << top_state->get_shard_cc_seqno(mc_shard);
+                  if (vset.not_null()) {
+                    bool have_ids = !node_ids.empty();
+                    bool is_val = false;
+                    for (const auto &id : node_ids) {
+                      if (vset->is_validator(id)) {
+                        is_val = true;
+                        break;
+                      }
+                    }
+                    sb << ",\"validator_set\":{\"catchain_seqno\":" << vset->get_catchain_seqno()
+                       << ",\"set_hash\":" << vset->get_validator_set_hash()
+                       << ",\"total_weight\":" << (td::uint64)vset->get_total_weight()
+                       << ",\"count\":" << vset->export_vector().size() << ",\"is_validator\":";
+                    if (have_ids) {
+                      sb << (is_val ? "true" : "false");
+                    } else {
+                      sb << "null";  // this node's validator ids were not plumbed in
+                    }
+                    sb << "}";
+                  } else {
+                    sb << ",\"validator_set\":null";
+                  }
+                  sb << "}";
+                  promise.set_value(make_json_ok(sb.as_cslice().str(), req_id, cors));
+                });
+              }));
+        });
+      }));
+}
+
 // ─── shards ──────────────────────────────────────────────────────────
 
 void JsonRpcServer::handle_shards(td::JsonObject &params, std::string req_id,
