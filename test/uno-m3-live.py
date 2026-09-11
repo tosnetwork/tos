@@ -240,6 +240,7 @@ if a.m5_debit:
                             '--query-result', str(fixture / 'return-master.result')], check=True)
             subprocess.run([str(build / 'test-m3-live'), '--failed-request', str(fixture)], check=True)
             subprocess.run([str(build / 'test-m3-live'), '--failed-incarnation-control', str(fixture)], check=True)
+            subprocess.run([str(build / 'test-m3-live'), '--failed-unknown-control', str(fixture)], check=True)
             subprocess.run([str(build / 'test-m3-live'), str(fixture)], check=True)
     raise SystemExit(0)
 # Keep the final B->A receipt at 432: compensate only the changed SEND/COLLECT

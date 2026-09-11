@@ -2530,7 +2530,8 @@ td::actor::Task<> Collator::do_collate_inner() {
     allow_repeat_collation_ = false;
     if (!process_dispatch_queue() || !process_inbound_internal_messages())
       co_return td::Status::Error(-7201, "cannot acquire account batch Native imports");
-    auto result = create_workchain_account_batch(*account_execution);
+    auto result = block::observe_workchain_execution_status(
+        create_workchain_account_batch(*account_execution), "collator-account-batch");
     if (result.is_error()) co_return result;
     bool enqueue_only = true;
     if (!process_new_messages(enqueue_only))

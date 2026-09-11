@@ -1,4 +1,5 @@
 #include "block/workchain-execution-dispatch.h"
+#include "block/workchain-unknown-origin.h"
 #include "workchain-proof-test-access.h"
 #include "td/utils/tests.h"
 #include <type_traits>
@@ -6,6 +7,24 @@
 static_assert(!std::is_constructible_v<block::WorkchainProofVerifier, std::uint64_t>);
 static_assert(!std::is_copy_constructible_v<block::WorkchainProofVerifier>);
 static_assert(!std::is_move_constructible_v<block::WorkchainProofVerifier>);
+
+TEST(WorkchainProofContract, UnknownOriginTripwire) {
+  const auto before = block::workchain_unknown_origin_count();
+  for (int code : {0, -7300, -7399}) {
+    auto unknown = block::observe_workchain_execution_status(td::Status::Error(code, "same symptom"), "contract");
+    ASSERT_EQ(unknown.code(), -7201);
+    auto again = block::observe_workchain_execution_status(std::move(unknown), "outer-contract");
+    ASSERT_EQ(again.code(), -7201); // Normalization is not a second unknown event.
+  }
+  ASSERT_EQ(block::workchain_unknown_origin_count() - before, 3u);
+  for (int code : {-7200, -7201, -7202}) {
+    auto known = block::observe_workchain_execution_status(td::Status::Error(code, "same symptom"), "contract");
+    ASSERT_EQ(known.code(), code);
+    ASSERT_EQ(known.message(), "same symptom");
+  }
+  ASSERT_TRUE(block::observe_workchain_execution_status(td::Status::OK(), "contract").is_ok());
+  ASSERT_EQ(block::workchain_unknown_origin_count() - before, 3u);
+}
 
 TEST(WorkchainProofContract, UnmeteredEngineCannotFallback) {
   struct Legacy final : block::WorkchainAccountEngine {

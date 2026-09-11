@@ -4,6 +4,7 @@
 #include "block/workchain-host-input.h"
 #include "block/workchain-value-flow.h"
 #include "block/workchain-execution-errors.h"
+#include "block/workchain-unknown-origin.h"
 #include "block/workchain-fee-settlement.h"
 #include "block/workchain-proof-work.h"
 
@@ -180,6 +181,8 @@ inline td::Result<ProofAdmittedBatchInput> ProofAdmittedBatchInput::admit(
       if (work.is_error() &&
           work.error().code() != static_cast<int>(WorkchainExecutionFailure::CandidateInvalid) &&
           work.error().code() != static_cast<int>(WorkchainExecutionFailure::LocalUnavailable)) {
+        auto observed = observe_workchain_execution_status(work.move_as_error(), "account-proof-preflight");
+        (void)observed;
         return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),
                                  "proof preflight returned an invalid failure category");
       }

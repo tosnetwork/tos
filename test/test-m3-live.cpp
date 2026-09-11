@@ -15,6 +15,7 @@
 #include "m3-live-wallet.h"
 #include "m4-live-deposit.h"
 #include "m5-live-failed.h"
+#include "m5-live-unknown-control.h"
 
 int main(int argc, char** argv) {
   if (argc == 3 && std::string(argv[1]) == "--validate-archive-off") {
@@ -246,8 +247,10 @@ int main(int argc, char** argv) {
     return 0;
   }
   const bool incarnation_control = argc == 3 && std::string(argv[1]) == "--failed-incarnation-control";
-  if (argc != 2 && !incarnation_control) return 2;
-  const std::filesystem::path fixture(argv[incarnation_control ? 2 : 1]);
+  const bool unknown_control = argc == 3 && std::string(argv[1]) == "--failed-unknown-control";
+  const bool negative_control = incarnation_control || unknown_control;
+  if (argc != 2 && !negative_control) return 2;
+  const std::filesystem::path fixture(argv[negative_control ? 2 : 1]);
   if (!std::filesystem::exists(fixture / "prepare.cmake") ||
       !std::filesystem::exists(fixture / ".counter-managed-v1")) return 2;
   vm::init_vm().ensure();
@@ -267,6 +270,7 @@ int main(int argc, char** argv) {
   const bool deposit = block::m3_test::is_m4_test_deposit(candidate);
   const bool debit = block::m3_test::is_m5_test_debit(candidate);
   const bool failed = block::m3_test::is_m5_test_failed(candidate);
+  CHECK(!unknown_control || failed);
   if (incarnation_control) {
     CHECK(failed);
     auto selector = block::m3_test::decode_m5_test_failed(candidate).move_as_ok();
@@ -287,7 +291,7 @@ int main(int argc, char** argv) {
         (std::holds_alternative<block::WorkchainSendData>(transfer->data) ? 3 : 2) + (m4 ? 1 : 0);
   }
   for (const bool enabled : {false, true}) {
-    const std::string name = (incarnation_control ? "incarnation-" : "") + std::string(enabled ? "enabled" : "closed");
+    const std::string name = (incarnation_control ? "incarnation-" : unknown_control ? "unknown-" : "") + std::string(enabled ? "enabled" : "closed");
     auto db = fixture / (name + "-db");
     std::filesystem::copy(fixture / "db", db, std::filesystem::copy_options::recursive);
     const auto result = (fixture / (name + ".result")).string();
@@ -296,6 +300,8 @@ int main(int argc, char** argv) {
     const auto pid = fork();
     if (pid < 0) return 2;
     if (pid == 0) {
+      m3_live::unknown_observation_path = counter + ".unknown-origin";
+      CHECK(std::atexit(m3_live::save_unknown_observation) == 0);
       disk_collator_test_options_setup = [&](tos::validator::ValidatorManagerOptions& options) {
         auto collator = td::make_ref<tos::validator::CollatorOptions>();
         collator.write().workchain_account_candidate_source =
@@ -308,8 +314,11 @@ int main(int argc, char** argv) {
       };
       disk_collator_test_engine_setup = [&] {
         auto& registry = block::default_workchain_execution_registry();
-        registry.register_account_engine(std::make_unique<block::m3_test::M3NodeEngine>(
-            block::WorkchainEngineKey{block::WorkchainFormat::Basic, 0x434e5431}, counter)).ensure();
+        const block::WorkchainEngineKey key{block::WorkchainFormat::Basic,0x434e5431};
+        if (unknown_control)
+          registry.register_account_engine(std::make_unique<m3_live::UnknownAfterExecution>(key,counter)).ensure();
+        else
+          registry.register_account_engine(std::make_unique<block::m3_test::M3NodeEngine>(key,counter)).ensure();
         auto resolved = registry.resolve_scoped_workchain(2, *config).move_as_ok();
         CHECK(resolved && std::holds_alternative<block::ResolvedWorkchainAccountBinding>(*resolved));
         const auto& binding = std::get<block::ResolvedWorkchainAccountBinding>(*resolved);
@@ -335,7 +344,7 @@ int main(int argc, char** argv) {
     }
     int status;
     if (waitpid(pid, &status, 0) != pid || !WIFEXITED(status) ||
-        WEXITSTATUS(status) != (enabled && !incarnation_control ? 0 : 2)) return 2;
+        WEXITSTATUS(status) != (enabled && !negative_control ? 0 : 2)) return 2;
     auto read = [&](const std::string& suffix) { return td::read_file_str(result + suffix).move_as_ok(); };
     const auto observation = read(".readiness");
     // Missing/unknown observation is not evidence of a closed gate.
@@ -343,6 +352,20 @@ int main(int argc, char** argv) {
                                          : "phase=3\nworkchain=2\ndelivery=recorded\n";
     const auto stats = read(".stats");
     const auto calls = td::read_file_str(counter).move_as_ok();
+    const auto unknowns = td::read_file_str(counter + ".unknown-origin").move_as_ok();
+    CHECK(unknowns == (enabled && unknown_control ? "1\n" : "0\n"));
+    std::cout << name << " observed unknown-origin=" << unknowns;
+    if (enabled && unknown_control) {
+      CHECK(read("") == "collate -7201\n");
+      CHECK(read(".message") == "unclassified workchain execution failure");
+      CHECK(observation == expected && read(".kind") == "error\n");
+      CHECK(stats == "delivery=recorded\nvisited=1\nadapter=1\nowners_before=1\nowners_during=2\nowners_after=1\ntransactions=0\n");
+      CHECK(calls == "config=5\nexecute=1\n");
+      CHECK(td::read_file_str(counter + ".units.1").move_as_ok() == "7\n");
+      CHECK(!std::filesystem::exists(counter + ".units.2") && !std::filesystem::exists(exported));
+      std::cout << "UNKNOWN_ORIGIN_CONTROL: real execution, LocalUnavailable, count=1, no publication\n";
+      continue;
+    }
     if (enabled && incarnation_control) {
       std::cout << "FAILED_INCARNATION observed=" << read("") << " reason=" << read(".message") << std::endl;
       CHECK(read("") == "collate -7200\n");
@@ -495,8 +518,8 @@ int main(int argc, char** argv) {
     }
     std::cout << name << ": " << observation << read(".stats.timing") << std::flush;
   }
-  std::cout << (incarnation_control
-      ? "Paired OFF registry refusal / ON CandidateInvalid; no operation published.\n"
+  std::cout << (negative_control
+      ? "Paired OFF refusal / ON specified negative result; no operation published.\n"
       : "Paired closed registry refusal / accepted operation; NOT full live sequence acceptance.\n");
   return 0;
 }

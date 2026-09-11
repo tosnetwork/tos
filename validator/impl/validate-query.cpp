@@ -6718,7 +6718,7 @@ bool ValidateQuery::check_account_binding_transactions(const block::ResolvedWork
   if (result.is_error()) {
     if (result.code() == static_cast<int>(block::WorkchainExecutionFailure::CandidateInvalid))
       return reject_query(result.to_string());
-    return fatal_error(std::move(result));
+    return fatal_error(block::observe_workchain_execution_status(std::move(result), "validator-account-replay"));
   }
   // Rebuilt transactions still owe the existing Native outbound-message
   // checks and validation-context bookkeeping; replay does not bypass them.
