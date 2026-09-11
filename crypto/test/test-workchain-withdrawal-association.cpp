@@ -1,6 +1,10 @@
 #include "td/utils/tests.h"
 #include "block/workchain-withdrawal-association.h"
+#include "workchain-m5-failed-input.h"
 #include "block/native-bounce-body.h"
+#include "block/workchain-failed-funded.h"
+#include "block/workchain-unexpected-bucket.h"
+#include "workchain-proof-test-access.h"
 
 using namespace block;
 namespace {
@@ -45,6 +49,62 @@ void error_is(td::Result<std::optional<WorkchainWithdrawalAssociation>> result, 
 }
 }
 
+TEST(WithdrawalAssociation, TestFailedSelectorExactCodec) {
+  m3_test::M5TestFailedInput selector{{2, word(1), word(2)}, word(3)};
+  auto root = m3_test::encode_m5_test_failed(selector);
+  auto decoded = m3_test::decode_m5_test_failed(root).move_as_ok();
+  ASSERT_EQ(decoded.owner.workchain_id, 2);
+  ASSERT_EQ(decoded.owner.account, word(1));
+  ASSERT_EQ(decoded.owner.instance, word(2));
+  ASSERT_EQ(decoded.inbound_message, word(3));
+  auto extra = vm::CellBuilder().append_cellslice(vm::load_cell_slice(root)).store_long(0, 1).finalize();
+  auto rejected = m3_test::decode_m5_test_failed(extra);
+  ASSERT_TRUE(rejected.is_error());
+  ASSERT_EQ(rejected.error().code(), -7200);
+  ASSERT_EQ(rejected.error().message(), "malformed test Failed selector");
+}
+
+TEST(WithdrawalAssociation, CodecFailureCategoriesSurviveProtection) {
+  // Observe the real codec exception boundary, not a diagnostic string. This
+  // preserves mechanisms, NOT arena provenance or a Native DB fault test.
+  auto vm_failure = withdrawal_codec_detail::protect([]() -> td::Result<int> {
+    throw vm::VmError{vm::Excno::cell_und};
+  });
+  auto acquisition = withdrawal_codec_detail::protect([]() -> td::Result<int> {
+    throw vm::VmVirtError{1};
+  });
+  ASSERT_TRUE(vm_failure.is_error());
+  ASSERT_TRUE(acquisition.is_error());
+  ASSERT_EQ(vm_failure.error().code() != acquisition.error().code(), true);
+  ASSERT_EQ(vm_failure.error().code(), static_cast<int>(WorkchainCodecFailure::VmBase) -
+      static_cast<int>(vm::Excno::cell_und));
+  ASSERT_EQ(acquisition.error().code(), static_cast<int>(WorkchainCodecFailure::Virtualization));
+  auto nested = withdrawal_codec_detail::protect([&]() -> td::Result<int> {
+    TRY_RESULT(value, acquisition.clone());
+    return value;
+  });
+  ASSERT_TRUE(nested.is_error());
+  ASSERT_EQ(nested.error().code(), acquisition.error().code());
+  ASSERT_EQ(withdrawal_codec_detail::error("check failed").code(), static_cast<int>(WorkchainCodecFailure::Rejected));
+  auto legacy = withdrawal_codec_detail::protect([]() -> td::Result<int> {
+    return td::Status::Error("legacy unknown");
+  });
+  ASSERT_TRUE(legacy.is_error());
+  ASSERT_EQ(legacy.error().code(), 0);
+  auto write = withdrawal_codec_detail::protect([]() -> td::Result<int> {
+    vm::CellBuilder().store_zeroes(1024);
+    return 1;
+  });
+  auto create = withdrawal_codec_detail::protect([]() -> td::Result<int> {
+    vm::CellBuilder().ensure_pass(false);
+    return 1;
+  });
+  ASSERT_TRUE(write.is_error());
+  ASSERT_TRUE(create.is_error());
+  ASSERT_EQ(write.error().code(), static_cast<int>(WorkchainCodecFailure::Construction));
+  ASSERT_EQ(create.error().code(), static_cast<int>(WorkchainCodecFailure::Construction));
+}
+
 TEST(WithdrawalAssociation, ActualMessageHashAndOriginalLt) {
   auto c = control(); auto m = message();
   auto result = associate(m, c); ASSERT_TRUE(result.is_ok()); ASSERT_TRUE(result.ok().has_value());
@@ -78,4 +138,79 @@ TEST(WithdrawalAssociation, IdentityAndOriginalEvidenceChecks) {
       "matched return source differs from payout destination");
   error_is(associate(message(77, true, true, 3, 101), control()),
       "matched return original value differs from payout principal");
+}
+
+TEST(FailedFunded, RealIssuanceAndEncodedSequencePair) {
+  auto pending = control();
+  pending.withdrawals[0].costs = {4, 100, 0, 100};
+  pending.withdrawals[0].timing = {1, 77, 10, 12, 30};
+  td::Bits256 point;
+  point.as_slice().copy_from(td::hex_decode(
+      "b6ec3baa39a7357ab9ca16c61373385f7cfb04ab10c4bc20c8bd3cc6db9a6100").move_as_ok());
+  WorkchainConfidentialAccount core{3, 1, 4, -99, word(1), {2, word(1), word(2)},
+      {word(4), word(99), word(6)}, {10000000000ULL, 0, word(7)}, point, 0,
+      {word(0), word(0)}, 8, 0, {}, WorkchainAccountActive{}, {}};
+  auto owner = encode_workchain_withdrawal_account({core, pending, {}}, 2).move_as_ok();
+  // Walk a real descendant through the lower account decoder. The root header
+  // remains readable; only its identity ref is pruned. This is not a callback
+  // that merely returns a previously classified error, nor a DB-fault test.
+  auto legacy_core = core;
+  legacy_core.schema_version = 2;
+  auto legacy_root = encode_workchain_confidential_account(legacy_core).move_as_ok();
+  gen::UnoV2AccountStateDeposits::Record legacy_record;
+  ASSERT_TRUE(resource_policy_detail::unpack_exact(legacy_root, legacy_record));
+  legacy_record.identity = vm::CellBuilder::do_create_pruned_branch(legacy_record.identity, 1);
+  td::Ref<vm::Cell> partial;
+  ASSERT_TRUE(block::tlb::pack_cell(partial, legacy_record));
+  auto view = partial->virtualize(0);
+  gen::UnoV2AccountStateDeposits::Record readable_header;
+  ASSERT_TRUE(resource_policy_detail::unpack_exact(view, readable_header));
+  auto traversed = withdrawal_codec_detail::protect([&]() {
+    return decode_workchain_confidential_account(view);
+  });
+  ASSERT_TRUE(traversed.is_error());
+  ASSERT_EQ(traversed.error().code(), static_cast<int>(WorkchainCodecFailure::Virtualization));
+  auto bucket = encode_workchain_unexpected_bucket({{}, {}, td::make_refint(0), {}, 0}, {256, 256}, 100).move_as_ok();
+  auto coordinator = encode_workchain_coordinator_state({3, {1, 0, 1, 4}, 0, 10, bucket}).move_as_ok();
+  auto m = message();
+  block::tlb::MsgEnvelope::Record_std wire{96, 96, td::make_refint(0), m, {}, {}};
+  td::Ref<vm::Cell> envelope;
+  ASSERT_TRUE(block::tlb::pack_cell(envelope, wire));
+  WorkchainNativeInboxPlan inbox{{envelope}, 900};
+  // Explicit synthetic transition inputs, NOT authenticated business config or
+  // frozen tariff defaults. This fixture does not claim a real node block.
+  WorkchainFailedFundedPolicy policy{2, 4, 2, 3, 4};
+  auto run = [&](WorkchainProofVerifier& meter, std::uint32_t height = 20) {
+    return prepare_workchain_failed_funded(inbox, owner, coordinator, policy, {}, network(),
+        word(99), word(98), height, meter);
+  };
+  auto a = WorkchainProofTestAccess::create(7);
+  auto b = WorkchainProofTestAccess::create(7);
+  auto result = run(a), replay = run(b);
+  if (result.is_error()) LOG(ERROR) << result.error();
+  ASSERT_TRUE(result.is_ok()); ASSERT_TRUE(replay.is_ok());
+  ASSERT_EQ(a.consumed(), 7u); ASSERT_EQ(a.consumed(), b.consumed());
+  ASSERT_TRUE(result.ok().owner_data->get_hash() == replay.ok().owner_data->get_hash());
+  auto next_owner = decode_workchain_withdrawal_account(result.ok().owner_data, 2).move_as_ok();
+  auto next_coordinator = decode_workchain_coordinator_state(result.ok().coordinator_data).move_as_ok();
+  ASSERT_EQ(next_owner.origin_pending.size(), 1u);
+  ASSERT_TRUE(next_owner.control.withdrawals.empty());
+  ASSERT_EQ(*next_coordinator.deposit_sequence, 11u);
+  ASSERT_EQ(workchain_system_origin_sequence(next_owner.origin_pending[0].origin), 11u);
+  ASSERT_EQ(next_owner.origin_pending[0].amount, 156u);
+  ASSERT_TRUE(std::get<WorkchainSettlementOrigin>(next_owner.origin_pending[0].origin).attempt_id ==
+              pending.withdrawals[0].attempt_id);
+  ASSERT_TRUE(result.ok().inbound_message == td::Bits256(m->get_hash().bits()));
+  ASSERT_EQ(result.ok().recovered, 70u); ASSERT_EQ(result.ok().released_p, 100u);
+  ASSERT_EQ(result.ok().released_w, 200u);
+  ASSERT_EQ(td::cmp(result.ok().fees.state_fee, 2), 0);
+  ASSERT_EQ(td::cmp(result.ok().fees.compute_fee, 12), 0);
+  ASSERT_EQ(*decode_workchain_coordinator_state(coordinator).move_as_ok().deposit_sequence, 10u);
+  auto short_budget = WorkchainProofTestAccess::create(6);
+  ASSERT_TRUE(run(short_budget).is_error()); ASSERT_EQ(short_budget.consumed(), 0u);
+  auto late = WorkchainProofTestAccess::create(7);
+  auto unsupported = run(late, 43);
+  ASSERT_TRUE(unsupported.is_error());
+  ASSERT_EQ(unsupported.error().message(), "funded Failed requires an open height window");
+  ASSERT_EQ(late.consumed(), 0u);
 }

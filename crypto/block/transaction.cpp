@@ -27,6 +27,7 @@
 #include "block/workchain-execution-dispatch.h"
 #include "block/workchain-participant-lt.h"
 #include "block/workchain-payout-accounting.h"
+#include "block/workchain-operation-fees.h"
 #include "block/workchain-native-allocation.h"
 #include "block/workchain-native-disposal.h"
 #include "block/workchain-confidential-native.h"
@@ -4611,7 +4612,8 @@ td::Result<PreparedWorkchainPayoutPair> Transaction::build_workchain_payout_pair
     td::RefInt256 fee_budget, std::uint64_t max_transfers, int extra_validation_cells,
     const SerializeConfig& cfg, const ActionPhaseConfig& message_cfg,
     Ref<vm::Cell> entry_input, Ref<vm::Cell> entry_effects,
-    const WorkchainDisposalEntryContext* disposal) {
+    const WorkchainDisposalEntryContext* disposal, std::optional<std::uint64_t> exact_outward_fee,
+    std::optional<std::uint64_t> exact_principal) {
   if (extra_validation_cells <= 0) return td::Status::Error("invalid payout currency validation budget");
   if (custody.workchain != coordinator.workchain) return td::Status::Error("payout pair workchains differ");
   if (custody.addr == coordinator.addr) return td::Status::Error("payout pair requires distinct accounts");
@@ -4655,7 +4657,12 @@ td::Result<PreparedWorkchainPayoutPair> Transaction::build_workchain_payout_pair
   // covers principal only; the combined principal/forwarding debit below is
   // checked against the post-import/allocation custody balance. Withdrawal
   // authorization must separately bind both amounts to the confidential debit.
-  TRY_RESULT(priced, price_workchain_payout(custody, request, start_lt, now, fee_budget, message_cfg));
+  // D75 exact-q callers must reach the equality check in both directions.
+  // This is a private pricing scratch balance, NOT permission to spend it.
+  // Actual debiting below remains bounded by custody and must equal x+q.
+  // Legacy callers retain precisely their previous pricing ceiling.
+  TRY_RESULT(priced, price_workchain_payout(custody, request, start_lt, now,
+      exact_outward_fee ? custody.balance.tomis : fee_budget, message_cfg));
   // Pricing checked both LT additions. Both old end LTs are <= start_lt,
   // so neither constructor's max(requested_start, old_end) can raise that bound.
   std::vector<std::unique_ptr<Transaction>> pair;
@@ -4679,6 +4686,7 @@ td::Result<PreparedWorkchainPayoutPair> Transaction::build_workchain_payout_pair
     TRY_STATUS(pair[0]->prepare_workchain_storage_participant(custody_binding, custody_data, cfg));
     TRY_STATUS(pair[1]->prepare_workchain_storage_participant(coordinator_binding, coordinator_data, cfg));
   }
+  const auto before_payout = pair[0]->balance;
   TRY_RESULT(allocation, account_workchain_payout(custody.addr, coordinator.addr, pair[0]->balance,
       pair[1]->balance, priced.payment, priced.total_fee, priced.collected_fee, extra_validation_cells));
   // D61: the priced outward fee and principal are both custody debits.
@@ -4706,6 +4714,29 @@ td::Result<PreparedWorkchainPayoutPair> Transaction::build_workchain_payout_pair
     tx.batch_end_lt = tx.end_lt;
     // Retain restricted-metadata and cached-root revalidation for both roles.
     if (!tx.serialize(cfg)) return td::Status::Error("cannot serialize payout pair participant");
+  }
+  if (exact_outward_fee || exact_principal) {
+    // Observe the serialized Native result, not the engine's quote. Imports,
+    // allocations and D32 fees precede before_payout, so only x and q remain.
+    gen::Account::Record_account published_account;
+    gen::AccountStorage::Record published_storage;
+    gen::Message::Record published_message;
+    gen::CommonMsgInfo::Record_int_msg_info published_info;
+    CurrencyCollection after, payment, debit, paid_fee;
+    if (!tlb::unpack_cell(pair[0]->new_total_state, published_account) ||
+        !tlb::csr_unpack(published_account.storage, published_storage) ||
+        !after.unpack(published_storage.balance) || pair[0]->out_msgs.size() != 1 ||
+        !tlb::type_unpack_cell(pair[0]->out_msgs.front(), gen::t_Message_Any, published_message) ||
+        !tlb::csr_unpack(published_message.info, published_info) || !payment.unpack(published_info.value) ||
+        !CurrencyCollection::sub(before_payout, after, debit) ||
+        !CurrencyCollection::sub(debit, payment, paid_fee))
+      return td::Status::Error(-7201, "constructed Native payout fee unavailable");
+    // D76: the authorized x has its own anchor. Conservation cancels x and
+    // cannot substitute for comparing the actual serialized message value.
+    if (exact_principal && payment != CurrencyCollection(workchain_unsigned_fee(*exact_principal)))
+      return td::Status::Error(-7200, "Native payout value differs from authenticated exact x");
+    if (exact_outward_fee && paid_fee != CurrencyCollection(workchain_unsigned_fee(*exact_outward_fee)))
+      return td::Status::Error(-7200, "Native payout fee differs from authenticated exact q");
   }
   return PreparedWorkchainPayoutPair{std::move(pair), std::move(allocation)};
 }

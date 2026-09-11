@@ -13,7 +13,11 @@ p = argparse.ArgumentParser(description=__doc__)
 p.add_argument('--build', required=True, type=Path)
 p.add_argument('--m4', action='store_true', help='use explicit M4 test parameters and real Native Deposit')
 p.add_argument('--m4-rejections', action='store_true', help='run separate rejection cases after two real Deposits')
+p.add_argument('--m5-debit', action='store_true', help='stop after authenticated Withdrawal debit checkpoint')
+p.add_argument('--m5-return-route', action='store_true', help='deliver a funded payout to wc0 and observe the actual return')
 a = p.parse_args()
+if a.m5_return_route:
+    a.m5_debit = True
 repo = Path(__file__).resolve().parents[1]
 build = a.build.resolve()
 cache = (build / 'CMakeCache.txt').read_text()
@@ -81,7 +85,8 @@ subprocess.run(['cmake', '-DCOUNTER_FIXTURE_CHILD=ON', f'-DCOUNTER_FIXTURE_PATH=
                 f'-DCOLLATOR={build / "test-m3-live"}', '-P', str(prepare)], check=True)
 print(f'Test-owned fixture: {fixture}', flush=True)
 shutil.copyfile(fixture / 'counter-state.boc', fixture / 'current-state.boc')
-subprocess.run([str(build / 'test-m3-live'), '--prepare-m4-config', str(fixture)], check=True)
+subprocess.run([str(build / 'test-m3-live'), '--prepare-m5-return-config' if a.m5_return_route else
+                '--prepare-m5-debit-config' if a.m5_debit else '--prepare-m4-config', str(fixture)], check=True)
 # Bind disk lookup and global.json to the actual edited TEST genesis bytes.
 # No prior DB is reused and no deployment configuration is read or written.
 zero_bytes = (fixture / 'zerostate.boc').read_bytes()
@@ -194,6 +199,39 @@ if True:
 from uno_m4_live_sequence import run
 initial, initial_blind, send_fee, collect_fee, limits = run(
     build, fixture, wallet, advance_pair, initial_only=True, initial_principal=principal)
+if a.m5_debit:
+    request = dict(secret=101, old_value=initial, old_blind=initial_blind, new_blind=71, aux_blind=83,
+                   principal=10000000 if a.m5_return_route else 137, outward_fee=17,
+                   return_reserve=4000000 if a.m5_return_route else 23, fee=257, **limits)
+    def debit_write(name, values):
+        (fixture / name).write_text(''.join(f'{k}={v}\n' for k,v in values.items()))
+    debit_write('operation.request.txt',request)
+    subprocess.run([str(build / 'test-m3-live'),'--withdrawal-payout-quote',str(fixture)],check=True)
+    request['outward_fee'] = int((fixture / 'payout.quote.txt').read_text())
+    debit_write('operation.request.txt',request)
+    subprocess.run([str(wallet),'withdrawal-points',str(fixture / 'operation.request.txt'),str(fixture / 'operation.points.txt')],check=True)
+    subprocess.run([str(build / 'test-m3-live'),'--withdrawal-debit-request',str(fixture)],check=True)
+    statement = dict(line.split('=',1) for line in (fixture / 'operation.statement.txt').read_text().splitlines())
+    debit_write('operation.request.txt',dict(request,**statement))
+    subprocess.run([str(wallet),'withdrawal-prove',str(fixture / 'operation.request.txt'),str(fixture / 'operation.proof.txt')],check=True)
+    subprocess.run([str(build / 'test-m3-live'),'--withdrawal-debit-finish',str(fixture)],check=True)
+    debit_write('operation.expected.txt',dict(before=initial,after=initial-request['principal']-request['outward_fee']-request['return_reserve']-request['fee']))
+    print(f'DEBIT_FIXTURE={fixture}',flush=True)
+    subprocess.run([str(build / 'test-m3-live'),str(fixture)],check=True)
+    subprocess.run([str(build / 'test-m3-live'),'--check-m5-reserve-admission',str(fixture)],check=True)
+    if a.m5_return_route:
+        advance_pair(4)
+        subprocess.run([str(build / 'test-tos-collator'), '-C', str(fixture / 'global.json'),
+                        '-D', str(fixture / 'db'), '-w', '-1', '-M', str(fixture / '4-enabled-top1.boc'),
+                        '--query-result', str(fixture / 'payout-master.result')], check=True)
+        subprocess.run([str(build / 'test-tos-collator'), '-C', str(fixture / 'global.json'),
+                        '-D', str(fixture / 'db'), '-w', '0', '-s', str(fixture / 'payout-recipient-top'),
+                        '--query-result', str(fixture / 'payout-recipient.result'),
+                        '--export-candidate', str(fixture / 'payout-recipient.candidate')], check=True)
+        subprocess.run([str(build / 'test-m3-live'), '--observe-m5-payout-recipient', str(fixture)], check=True)
+        if not (fixture / 'failed-bounce.boc').is_file():
+            raise RuntimeError('funded return route did not produce a real bounce')
+    raise SystemExit(0)
 # Keep the final B->A receipt at 432: compensate only the changed SEND/COLLECT
 # tariffs in the first receipt. The remaining two receipts retain 251 and 89.
 first_value = 137 + (send_fee - 11) + 2 * (collect_fee - 17)

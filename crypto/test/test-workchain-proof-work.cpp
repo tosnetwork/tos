@@ -23,6 +23,16 @@ UnoCryptoVerifyRequestV2 send_request() {
 // Dedicated boundary fixture, not a substitute for the separate real-kernel
 // correspondence test. It makes precharge order observable without crypto CPU.
 namespace block {
+WorkchainProofVerdict WorkchainProofVerifier::run_system_backend(
+    const UnoCryptoSystemEncryptionRequestV2&, UnoCryptoSystemCiphertext&) {
+  ++backend_calls;
+  return verdict;
+}
+WorkchainProofVerdict WorkchainProofVerifier::run_system_verify_backend(
+    const UnoCryptoSystemEncryptionRequestV2&, const UnoCryptoSystemCiphertext&) {
+  ++backend_calls;
+  return verdict;
+}
 WorkchainProofVerdict WorkchainProofVerifier::run_backend(const UnoCryptoVerifyRequestV2&) {
   ++backend_calls;
   return verdict;
@@ -58,6 +68,67 @@ TEST(WorkchainProofWork, SystemPairChargesBeforeEitherBackend) {
   ASSERT_EQ(backend_calls, 2u);
   ASSERT_EQ(proposer.consumed(), 7u);
   ASSERT_EQ(validator.consumed(), proposer.consumed());
+}
+
+TEST(WorkchainProofWork, OriginPairPrechargeAndStickyFailure) {
+  for (auto width : {41u, 115u}) {
+    UnoCryptoSystemEncryptionRequestV2 request{};
+    request.abi_version = 2; request.amount = 1; request.origin_bytes = width;
+    request.origin[0] = width == 41 ? 1 : 2;
+    request.origin[width == 41 ? 40 : 8] = 1;
+    UnoCryptoSystemCiphertext ciphertext{};
+    backend_calls = 0;
+    verdict = block::WorkchainProofVerdict::Valid;
+    auto short_a = block::WorkchainProofTestAccess::create(6);
+    auto short_b = block::WorkchainProofTestAccess::create(6);
+    ASSERT_TRUE(short_a.system_encrypt(request).is_error());
+    ASSERT_TRUE(short_b.verify(request, ciphertext).is_error());
+    ASSERT_EQ(backend_calls, 0u);
+    ASSERT_EQ(short_a.consumed(), 0u); ASSERT_EQ(short_b.consumed(), 0u);
+    auto a = block::WorkchainProofTestAccess::create(14);
+    auto b = block::WorkchainProofTestAccess::create(14);
+    ASSERT_TRUE(a.system_encrypt(request).is_ok());
+    ASSERT_TRUE(b.verify(request, ciphertext).is_ok());
+    ASSERT_EQ(a.consumed(), 7u); ASSERT_EQ(a.consumed(), b.consumed());
+    verdict = block::WorkchainProofVerdict::LocalContractFailure;
+    ASSERT_TRUE(a.system_encrypt(request).is_error());
+    ASSERT_TRUE(b.verify(request, ciphertext).is_error());
+    ASSERT_EQ(a.consumed(), 14u); ASSERT_EQ(a.consumed(), b.consumed());
+    ASSERT_EQ(backend_calls, 4u);
+    verdict = block::WorkchainProofVerdict::Valid;
+    ASSERT_TRUE(a.system_encrypt(request).is_error());
+    ASSERT_TRUE(b.verify(request, ciphertext).is_error());
+    ASSERT_EQ(backend_calls, 4u);
+  }
+}
+
+TEST(WorkchainProofWork, OriginFramingFailsBeforeBackend) {
+  UnoCryptoSystemEncryptionRequestV2 valid{};
+  valid.abi_version = 2; valid.amount = 1;
+  valid.origin_bytes = 41; valid.origin[0] = 1; valid.origin[40] = 1;
+  for (unsigned mutation = 0; mutation != 6; ++mutation) {
+    auto request = valid;
+    switch (mutation) {
+      case 0: request.abi_version = 1; break;
+      case 1: request.amount = 0; break;
+      case 2: request.origin_bytes = 42; break;
+      case 3: request.origin[0] = 2; break;
+      case 4: request.origin[41] = 1; break;
+      case 5: request.origin_bytes = 115; request.origin[0] = 2; request.origin[114] = 1; break;
+    }
+    backend_calls = 0;
+    verdict = block::WorkchainProofVerdict::Valid;
+    auto a = block::WorkchainProofTestAccess::create(7);
+    auto b = block::WorkchainProofTestAccess::create(7);
+    auto generated = a.system_encrypt(request);
+    auto verified = b.verify(request, UnoCryptoSystemCiphertext{});
+    LOG(INFO) << "origin framing mutation=" << mutation << " calls=" << backend_calls;
+    ASSERT_TRUE(generated.is_error());
+    ASSERT_EQ(generated.error().code(), -7201);
+    ASSERT_TRUE(verified.is_error()); ASSERT_EQ(verified.code(), -7201);
+    ASSERT_EQ(a.consumed(), 0u); ASSERT_EQ(b.consumed(), 0u);
+    ASSERT_EQ(backend_calls, 0u);
+  }
 }
 
 TEST(WorkchainProofWork, ExactSendComponents) {

@@ -119,6 +119,28 @@ inline td::Result<WorkchainProofOperations> workchain_proof_operations_v4(
 }
 
 // A typed boundary, not an arbitrary Status whose name determines provenance.
+inline td::Result<WorkchainProofOperations> workchain_proof_operations_v4(
+    const UnoCryptoWithdrawalVerifyRequestV1& request) {
+  if (request.abi_version != 1 || request.context_bytes != 566)
+    return td::Status::Error(-7201, "inconsistent Withdrawal verification shape");
+  UnoCryptoVerifyRequestV2 send{};
+  send.abi_version = 2; send.relation = UNO_RELATION_SEND; send.limits = request.limits;
+  // Rust statement tag + two IDs + four u64 fields + canonical host context.
+  send.context_bytes = (sizeof("uno-v2/withdrawal-statement/v1") - 1) + 96 + 566;
+  send.point_count = 10; send.commitment_count = request.commitment_count;
+  send.response_count = request.response_count; send.proof_bytes = request.proof_bytes;
+  TRY_RESULT(work, workchain_proof_operations_v4(send));
+  // Existing constructor additionally derives the opening/points and calls
+  // relation::prepare once before verify calls prepare again. Count both;
+  // these are proof-work units, NEVER Withdrawal's one billing unit.
+  work.scalar_multiplications += 6;
+  work.generated_points += 2;
+  work.decoded_points += 12;
+  work.encoded_points += 10;
+  work.context_bytes += send.context_bytes;
+  return work;
+}
+
 enum class WorkchainProofVerdict { Valid, InvalidProof, LocalContractFailure, BackendUnavailable };
 
 // Fixed-shape v2 possession verification, in the existing v4 operation basis.
@@ -164,6 +186,31 @@ inline td::Result<WorkchainProofOperations> workchain_proof_operations_v4(
   return workchain_system_operations_v4();
 }
 
+inline td::Result<WorkchainProofOperations> workchain_proof_operations_v4(
+    const UnoCryptoSystemEncryptionRequestV2& request) {
+  if (request.abi_version != 2 || !request.amount ||
+      (request.origin_bytes != 41 && request.origin_bytes != 115)) {
+    return td::Status::Error(-7201, "inconsistent local system origin encryption request");
+  }
+  const bool short_origin = request.origin_bytes == 41 && request.origin[0] <= 1;
+  const bool sweep_origin = request.origin_bytes == 115 && request.origin[0] == 2 &&
+                            (request.origin[114] & 0x7f) == 0;
+  if (!short_origin && !sweep_origin)
+    return td::Status::Error(-7201, "inconsistent local system origin framing");
+  for (std::size_t i = request.origin_bytes; i < sizeof(request.origin); ++i) {
+    if (request.origin[i] != 0)
+      return td::Status::Error(-7201, "nonzero local system origin tail");
+  }
+  // D72: fixed transcript per authenticated event kind, not variable context.
+  // Keep each profile independent even while all three have equal curve work.
+  switch (request.origin[0]) {
+    case 0: return WorkchainProofOperations{0, 3, 1, 1, 2, 0, 0, 0, 0};  // Deposit
+    case 1: return WorkchainProofOperations{0, 3, 1, 1, 2, 0, 0, 0, 0};  // Settlement
+    case 2: return WorkchainProofOperations{0, 3, 1, 1, 2, 0, 0, 0, 0};  // Sweep
+  }
+  return td::Status::Error(-7201, "unknown local system origin kind");
+}
+
 class WorkchainProofVerifier {
  public:
   WorkchainProofVerifier(const WorkchainProofVerifier&) = delete;
@@ -173,6 +220,9 @@ class WorkchainProofVerifier {
 
   td::Status verify(const UnoCryptoVerifyRequestV2& request) {
     return verify_request(request, "cryptographic proof rejected");
+  }
+  td::Status verify(const UnoCryptoWithdrawalVerifyRequestV1& request) {
+    return verify_request(request, "Withdrawal cryptographic proof rejected");
   }
   td::Status verify(const UnoCryptoKeyPossessionRequestV2& request) {
     return verify_request(request, "invalid registration key possession proof");
@@ -195,6 +245,17 @@ class WorkchainProofVerifier {
                    [&] { return run_system_verify_backend(request, supplied); });
   }
   std::uint64_t consumed() const { return consumed_; }
+  td::Result<UnoCryptoSystemCiphertext> system_encrypt(const UnoCryptoSystemEncryptionRequestV2& request) {
+    UnoCryptoSystemCiphertext result{};
+    TRY_STATUS(attempt(request, "system ciphertext construction failed",
+                       [&] { return run_system_backend(request, result); }));
+    return result;
+  }
+  td::Status verify(const UnoCryptoSystemEncryptionRequestV2& request,
+                    const UnoCryptoSystemCiphertext& supplied) {
+    return attempt(request, "system ciphertext differs from authenticated derivation",
+                   [&] { return run_system_verify_backend(request, supplied); });
+  }
  private:
   // Every request family uses this one precharge and sticky failure path.
   // No public raw backend entry or unmetered possession overload exists.
@@ -235,6 +296,7 @@ class WorkchainProofVerifier {
   friend struct WorkchainProofTestAccess;
   explicit WorkchainProofVerifier(std::uint64_t declared) : declared_(declared) {}
   static WorkchainProofVerdict run_backend(const UnoCryptoVerifyRequestV2& request);
+  static WorkchainProofVerdict run_backend(const UnoCryptoWithdrawalVerifyRequestV1& request);
   static WorkchainProofVerdict run_backend(const UnoCryptoKeyPossessionRequestV2& request);
   static WorkchainProofVerdict run_backend(const UnoCryptoClosurePossessionRequestV2& request);
   static WorkchainProofVerdict run_system_backend(const UnoCryptoSystemEncryptionRequest& request,
@@ -242,6 +304,10 @@ class WorkchainProofVerifier {
   static WorkchainProofVerdict run_system_verify_backend(const UnoCryptoSystemEncryptionRequest& request,
                                                         const UnoCryptoSystemCiphertext& supplied);
   td::Status fail(td::Status error) { failure_ = std::move(error); return failure_.clone(); }
+  static WorkchainProofVerdict run_system_backend(const UnoCryptoSystemEncryptionRequestV2& request,
+                                                 UnoCryptoSystemCiphertext& output);
+  static WorkchainProofVerdict run_system_verify_backend(const UnoCryptoSystemEncryptionRequestV2& request,
+                                                        const UnoCryptoSystemCiphertext& supplied);
   const std::uint64_t declared_;
   std::uint64_t consumed_{0};
   td::Status failure_;

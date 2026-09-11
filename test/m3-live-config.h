@@ -4,7 +4,8 @@
 #include "crypto/test/workchain-m3-genesis-cells.h"
 #include "crypto/test/workchain-m3-state-fixture.h"
 
-inline td::Result<td::Ref<vm::Cell>> prepare_m3_live_configuration(td::Ref<vm::Cell> root, bool m4 = false) {
+inline td::Result<td::Ref<vm::Cell>> prepare_m3_live_configuration(td::Ref<vm::Cell> root, bool m4 = false, bool debit = false,
+                                                              bool funded_return = false) {
   using namespace block;
   using namespace block::m3_test;
   tos::BlockIdExt zero{tos::BlockId{tos::masterchainId, tos::shardIdAll, 0},
@@ -46,6 +47,11 @@ inline td::Result<td::Ref<vm::Cell>> prepare_m3_live_configuration(td::Ref<vm::C
     business.proof_profile = 4;
     business.deposit = WorkchainDepositPolicy{1000000000, maximum, 3000000, 16, 4};
     business.operation_tariff = WorkchainStaticOperationTariff{2, 5, 7};
+    if (debit) business.prepare = M5TestPrepareParameters{250, 4, 30, 23};  // Explicit test inputs, not frozen defaults.
+    if (funded_return) {
+      business.prepare = M5TestPrepareParameters{250, 4, 30, 4000000};
+      business.failed = M5TestFailedParameters{4, 4}; // Explicit D70 test input, NOT seven proof-work units.
+    }
     resources.input.max_reads = resources.input.max_writes = 4;
     auto bucket = encode_workchain_unexpected_bucket({{}, {}, td::make_refint(0), {}, 0},
                                                      {256, 256}, 4096);

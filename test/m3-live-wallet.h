@@ -6,8 +6,30 @@
 #include "crypto/test/workchain-m3-wallet-requests.h"
 #include "crypto/test/workchain-m3-closure-wallet.h"
 #include "crypto/test/workchain-m4-wallet-receipts.h"
+#include "crypto/test/workchain-m5-debit.h"
+#include "crypto/test/workchain-m5-payout.h"
 
 namespace m3_live {
+inline std::optional<std::uint32_t> m5_live_withdrawal_limit(const std::filesystem::path& fixture) {
+  auto root = load(fixture / "zerostate.boc");
+  tos::BlockIdExt zero{tos::BlockId{tos::masterchainId,tos::shardIdAll,0},root->get_hash().bits(),td::Bits256::zero()};
+  auto config = block::ConfigInfo::extract_config(root,zero,block::Config::needWorkchainInfo | block::Config::needCapabilities).move_as_ok();
+  auto ingress = block::load_workchain_native_ingress_table(*config).move_as_ok().at(2);
+  auto business = block::m3_test::decode_m3_test_business_parameters(
+      block::decode_workchain_engine_parameters(ingress.engine_configuration).move_as_ok().parameters).move_as_ok();
+  if (!business.prepare) return {};
+  return business.prepare->withdrawal_limit;
+}
+inline block::WorkchainWithdrawalAccount m5_live_account(const td::Ref<vm::Cell>& root,
+                                                        std::optional<std::uint32_t> limit) {
+  auto slice = vm::load_cell_slice(root);
+  if (slice.prefetch_ulong(32) == block::gen::UnoV2AccountStateWithdrawals::cons_tag[0]) {
+    CHECK(limit);
+    return block::decode_workchain_withdrawal_account(root,*limit).move_as_ok();
+  }
+  auto account = block::decode_workchain_confidential_account(root).move_as_ok();
+  return {account,{account.lifecycle,{}},{}};
+}
 inline td::Bits256 wallet_account(unsigned owner) {
   CHECK(owner < 2);
   td::Bits256 result;
@@ -72,6 +94,52 @@ inline std::vector<td::Bits256> wallet_words(const std::string& hex) {
     words.push_back(value);
   }
   return words;
+}
+inline void prepare_debit(const std::filesystem::path& fixture, bool finish, bool quote = false) {
+  auto env = wallet_environment(fixture, 1); env.protocol.kind = 5;
+  auto old = wallet_state(fixture, 0);
+  auto zero = load(fixture / "zerostate.boc");
+  tos::BlockIdExt zid{tos::BlockId{tos::masterchainId,tos::shardIdAll,0},zero->get_hash().bits(),td::Bits256::zero()};
+  auto cfg = block::ConfigInfo::extract_config(zero,zid,block::Config::needWorkchainInfo | block::Config::needCapabilities).move_as_ok();
+  auto ingress = block::load_workchain_native_ingress_table(*cfg).move_as_ok().at(2);
+  auto business = block::m3_test::decode_m3_test_business_parameters(
+      block::decode_workchain_engine_parameters(ingress.engine_configuration).move_as_ok().parameters).move_as_ok();
+  CHECK(business.prepare && business.operation_tariff);
+  auto points = quote ? std::vector<td::Bits256>(3) : wallet_words(field(fixture / "operation.points.txt", "points")); CHECK(points.size()==3);
+  auto number = [&](const char* key) {return std::stoull(field(fixture / "operation.request.txt",key));};
+  auto wid = block::derive_workchain_withdrawal_id(block::confidential_execution_detail::network(env),old.address,old.auth_nonce).move_as_ok();
+  auto aid = block::derive_workchain_attempt_id(wid).move_as_ok();
+  block::WorkchainWithdrawalInput input{wid,aid,
+      {{old.address, old.auth_nonce, old.available_revision, old.key_epoch, UINT32_MAX, number("fee")},
+       {0,wallet_account(1)}, {number("principal"),number("outward_fee"),number("return_reserve"),number("fee")},
+       {points[0],points[1]},points[2]}, {}};
+  if (quote) {
+    block::gen::ShardStateUnsplit::Record state;
+    CHECK(tlb::unpack_cell(load(fixture / "current-state.boc"), state));
+    vm::AugmentedDictionary dictionary(vm::load_cell_slice_ref(state.accounts),256,block::tlb::aug_ShardAccounts);
+    block::Account payer(2, env.rules.custody.bits());
+    CHECK(payer.unpack(dictionary.lookup(env.rules.custody),state.gen_utime,false));
+    auto prices = block::m3_test::m5_payout_prices(*cfg,state.gen_utime).move_as_ok();
+    auto request = block::m3_test::m5_payout_request(input).move_as_ok();
+    std::uint64_t start;
+    CHECK(!__builtin_add_overflow(payer.last_trans_end_lt_,std::uint64_t{1},&start));
+    auto priced = block::transaction::Transaction::price_workchain_payout(payer,request,start,state.gen_utime,
+        payer.balance.tomis,prices).move_as_ok();
+    td::write_file((fixture / "payout.quote.txt").string(),priced.total_fee->to_dec_string()+"\n").ensure();
+    return;
+  }
+  auto context = block::m3_test::m5_debit_context(env,*business.prepare,old,input).move_as_ok();
+  if (finish) {
+    input.authorization = {wallet_words(field(fixture / "operation.proof.txt","commitments")),
+        wallet_words(field(fixture / "operation.proof.txt","responses")),
+        td::hex_decode(field(fixture / "operation.proof.txt","range_proof")).move_as_ok()};
+    save_operation(fixture,block::m3_test::wrap_m5_test_debit(block::encode_workchain_withdrawal_input(input).move_as_ok()),
+        {wallet_account(0),env.rules.custody});
+  } else {
+    td::write_file((fixture / "operation.statement.txt").string(),
+        "context="+td::hex_encode(context)+"\ndomain="+td::hex_encode(td::Slice(env.domain.data(),env.domain.size()))+
+        "\nwithdrawal_id="+td::hex_encode(wid.as_slice())+"\nattempt_id="+td::hex_encode(aid.as_slice())+"\n").ensure();
+  }
 }
 inline void prepare_transfer(const std::filesystem::path& fixture, bool finish, unsigned kind) {
   const auto parsed_owner = std::stoul(field(fixture / "operation.wallet.txt", "owner"));

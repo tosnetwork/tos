@@ -806,6 +806,21 @@ add_test(NAME test-workchain-preflight-expiry COMMAND ${Python3_EXECUTABLE}
 set_tests_properties(test-workchain-preflight-expiry PROPERTIES
   TIMEOUT 30 LABELS "workchain;prepared-expiry;c3")
 
+# Missing Cargo/dependencies fail this default gate, never silently skip it.
+add_test(NAME test-workchain-withdrawal-statement-expiry COMMAND cargo run
+  --locked --offline --manifest-path
+  "${PROJECT_SOURCE_DIR}/crypto/test/withdrawal-structure/Cargo.toml"
+  --target-dir "${CMAKE_CURRENT_BINARY_DIR}/withdrawal-structure-target" --
+  "${PROJECT_SOURCE_DIR}/uno/crypto/src/withdrawal_statement.rs")
+set_tests_properties(test-workchain-withdrawal-statement-expiry PROPERTIES
+  TIMEOUT 120 LABELS "workchain;m5;expiry")
+
+add_test(NAME test-workchain-withdrawal-statement-effects COMMAND ${Python3_EXECUTABLE}
+  "${PROJECT_SOURCE_DIR}/crypto/test/workchain-withdrawal-effects.py"
+  --repo "${PROJECT_SOURCE_DIR}" --target "${CMAKE_CURRENT_BINARY_DIR}/withdrawal-effects-target")
+set_tests_properties(test-workchain-withdrawal-statement-effects PROPERTIES
+  TIMEOUT 300 LABELS "workchain;m5;effects")
+
 add_executable(test-workchain-m3-assertions ../test/test-td-main.cpp test/test-workchain-m3-assertions.cpp)
 target_link_libraries(test-workchain-m3-assertions PRIVATE tos_block tos_crypto)
 target_compile_definitions(test-workchain-m3-assertions PRIVATE M3_VECTOR_DIR="${CMAKE_CURRENT_SOURCE_DIR}/test/workchain-m3-vectors")
@@ -825,6 +840,11 @@ set_tests_properties(test-workchain-withdrawal-association PROPERTIES TIMEOUT 60
 target_link_libraries(test-workchain-withdrawal-codec PRIVATE tos_block tos_crypto)
 tos_test(test-workchain-withdrawal-codec)
 set_tests_properties(test-workchain-withdrawal-codec PROPERTIES TIMEOUT 60 LABELS "workchain;m5")
+
+add_executable(test-workchain-origin-length ../test/test-td-main.cpp test/test-workchain-origin-length.cpp)
+target_link_libraries(test-workchain-origin-length PRIVATE tos_block tos_crypto)
+tos_test(test-workchain-origin-length)
+set_tests_properties(test-workchain-origin-length PROPERTIES TIMEOUT 60 LABELS "workchain;m5;expiry")
 
 add_test(NAME test-workchain-state-loader-inventory COMMAND ${Python3_EXECUTABLE}
   "${PROJECT_SOURCE_DIR}/crypto/test/workchain-state-loader-inventory.py" --repo "${PROJECT_SOURCE_DIR}")

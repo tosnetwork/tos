@@ -9,11 +9,32 @@
 #include "m3-live-config.h"
 #include "m3-live-registration.h"
 #include "m3-live-state.h"
+#include "m5-live-return.h"
+#include "m5-live-reserve-control.h"
 #include "m3-live-assertions.h"
 #include "m3-live-wallet.h"
 #include "m4-live-deposit.h"
 
 int main(int argc, char** argv) {
+  if (argc == 3 && std::string(argv[1]) == "--withdrawal-payout-quote") {
+    vm::init_vm().ensure();
+    m3_live::prepare_debit(argv[2], false, true); return 0;
+  }
+  if (argc == 3 && (std::string(argv[1]) == "--withdrawal-debit-request" || std::string(argv[1]) == "--withdrawal-debit-finish")) {
+    vm::init_vm().ensure();
+    m3_live::prepare_debit(argv[2], std::string(argv[1]).ends_with("finish"));
+    return 0;
+  }
+  if ((argc == 3 || argc == 4) && std::string(argv[1]) == "--check-m5-reserve-admission") {
+    vm::init_vm(true).ensure();
+    m3_live::check_m5_reserve_admission(std::filesystem::path(argv[2]), argc == 4 ? std::stoi(argv[3]) : 0);
+    return 0;
+  }
+  if (argc == 3 && std::string(argv[1]) == "--observe-m5-payout-recipient") {
+    vm::init_vm(true).ensure();
+    m3_live::observe_m5_payout_recipient(std::filesystem::path(argv[2]));
+    return 0;
+  }
   if (argc == 3 && std::string(argv[1]) == "--check-m4-bounce-received") {
     vm::init_vm().ensure();
     const std::filesystem::path fixture(argv[2]);
@@ -175,13 +196,14 @@ int main(int argc, char** argv) {
     else m3_live::registration_finish(fixture);
     return 0;
   }
-  if (argc == 3 && (std::string(argv[1]) == "--prepare-config" || std::string(argv[1]) == "--prepare-m4-config")) {
+  if (argc == 3 && (std::string(argv[1]) == "--prepare-config" || std::string(argv[1]) == "--prepare-m4-config" || std::string(argv[1]) == "--prepare-m5-debit-config" || std::string(argv[1]) == "--prepare-m5-return-config")) {
     vm::init_vm().ensure();
     const std::filesystem::path fixture(argv[2]);
     CHECK(std::filesystem::exists(fixture / ".counter-managed-v1"));
     auto bytes = td::read_file_str((fixture / "zerostate.boc").string()).move_as_ok();
     auto root = prepare_m3_live_configuration(vm::std_boc_deserialize(bytes).move_as_ok(),
-        std::string(argv[1]) == "--prepare-m4-config").move_as_ok();
+        std::string(argv[1]) != "--prepare-config", std::string(argv[1]) == "--prepare-m5-debit-config",
+        std::string(argv[1]) == "--prepare-m5-return-config").move_as_ok();
     td::write_file((fixture / "zerostate.boc").string(), vm::std_boc_serialize(root, 31).move_as_ok()).ensure();
     td::write_file((fixture / "zerostate.rhash").string(), root->get_hash().as_slice()).ensure();
     return 0;
@@ -219,11 +241,12 @@ int main(int argc, char** argv) {
       td::read_file_str((fixture / "operation.declarations.boc").string()).move_as_ok()).move_as_ok();
   const bool test_funding = block::m3_test::is_m3_test_funding(candidate);
   const bool deposit = block::m3_test::is_m4_test_deposit(candidate);
+  const bool debit = block::m3_test::is_m5_test_debit(candidate);
   const auto ingress = block::load_workchain_native_ingress_table(*config).move_as_ok().at(2);
   const auto params = block::decode_workchain_engine_parameters(ingress.engine_configuration).move_as_ok();
   const bool m4 = block::m3_test::decode_m3_test_business_parameters(params.parameters).move_as_ok().deposit.has_value();
   unsigned transaction_count = 2;
-  if (deposit) transaction_count = 3;
+  if (deposit || debit) transaction_count = 3;
   else if (!test_funding) {
     const auto operation = block::decode_workchain_replay_input(candidate).move_as_ok();
     const auto* transfer = std::get_if<block::WorkchainTransferInput>(&operation);
@@ -304,6 +327,64 @@ int main(int argc, char** argv) {
       CHECK(!std::filesystem::exists(counter + ".units.3"));
       std::cout << "Paired proof-work units collator=validator=" << collation_units;
       auto accepted = m3_live::read_accepted_step(exported, previous);
+      if (debit) {
+        auto operation = block::m3_test::decode_m5_test_debit(candidate).move_as_ok();
+        const auto key = operation.data.claims.source.account;
+        auto old = block::decode_workchain_confidential_account(m3_live::account_data(previous,key)).move_as_ok();
+        auto complete = m3_live::m5_live_account(m3_live::account_data(accepted.state,key),m3_live::m5_live_withdrawal_limit(fixture));
+        auto next = complete.account;
+        CHECK(complete.control.withdrawals.size() == 1);
+        const auto& obligation = complete.control.withdrawals.front();
+        CHECK(obligation.principal == operation.data.amounts.principal);
+        const auto custody_key = block::load_workchain_native_ingress_table(*config).move_as_ok().at(2).custody_address;
+        CHECK(custody_key);
+        block::gen::Transaction::Record payout_tx;
+        CHECK(tlb::unpack_cell(m3_live::accepted_transaction(accepted,*custody_key),payout_tx));
+        vm::Dictionary outputs(payout_tx.r1.out_msgs,15);
+        const auto payout = outputs.lookup_ref(td::BitArray<15>::zero());
+        CHECK(payout.not_null() && payout_tx.outmsg_cnt == 1);
+        block::gen::Message::Record payout_wire;
+        block::gen::CommonMsgInfo::Record_int_msg_info payout_info;
+        CHECK(tlb::type_unpack_cell(payout,block::gen::t_Message_Any,payout_wire) && tlb::csr_unpack(payout_wire.info,payout_info));
+        CHECK(payout_info.created_lt == obligation.timing.payout_created_lt && obligation.timing.phase == 0);
+        CHECK(block::tlb::t_Tomis.as_integer(payout_info.extra_flags)->to_long() == 3);
+        CHECK(obligation.withdrawal_id == operation.claimed_operation_id && obligation.attempt_id == operation.claimed_attempt_id);
+        block::CurrencyCollection payment; CHECK(payment.unpack(payout_info.value));
+        CHECK(payment == block::CurrencyCollection(block::workchain_unsigned_fee(operation.data.amounts.principal)));
+        block::gen::ShardStateUnsplit::Record published;
+        block::gen::OutMsgQueueInfo::Record queue_info;
+        CHECK(tlb::unpack_cell(accepted.state,published) && tlb::unpack_cell(published.out_msg_queue_info,queue_info));
+        vm::AugmentedDictionary queue(queue_info.out_queue,352,block::tlb::aug_OutMsgQueue);
+        unsigned found = 0;
+        CHECK(queue.check_for_each([&](td::Ref<vm::CellSlice> value, td::ConstBitPtr queue_key, int bits) {
+          block::EnqueuedMsgDescr entry;
+          unsigned long long augmentation;
+          CHECK(bits == 352 && value.write().fetch_ulong_bool(64,augmentation) && entry.unpack(value.write()) && entry.check_key(queue_key));
+          if (entry.msg_->get_hash() == payout->get_hash()) {
+            CHECK(entry.lt_ == obligation.timing.payout_created_lt); ++found;
+          }
+          return true;
+        }));
+        CHECK(found == 1);
+        m3_live::save(fixture / "prepare-payout.boc",payout);
+        std::cout << "WITHDRAWAL_ENQUEUED hash=" << payout->get_hash().to_hex()
+                  << " created_lt=" << payout_info.created_lt << " x=" << obligation.principal
+                  << " q=" << obligation.costs.outward_fee_paid << " b=" << obligation.costs.original_reserve << std::endl;
+        auto expected = block::next_workchain_confidential_counters(old,old.auth_nonce,old.available_revision).move_as_ok();
+        CHECK(next.auth_nonce == expected.auth_nonce && next.available_revision == expected.available_revision);
+        CHECK(next.available.commitment == operation.data.available.commitment && next.available.handle == operation.data.available.handle);
+        CHECK(next.available.commitment != old.available.commitment);
+        const auto before_value = std::stoull(m3_live::field(fixture / "operation.expected.txt","before"));
+        const auto after_value = std::stoull(m3_live::field(fixture / "operation.expected.txt","after"));
+        CHECK(after_value < before_value);
+        block::m3_test::assert_balance(block::m3_test::decrypt(old.available,m3_live::test_secret(key),before_value).move_as_ok(),before_value).ensure();
+        block::m3_test::assert_balance(block::m3_test::decrypt(next.available,m3_live::test_secret(key),before_value).move_as_ok(),after_value).ensure();
+        m3_live::save(fixture / "debit-authenticated-state.boc",accepted.state);
+        m3_live::save(fixture / "debit-authenticated-block.boc",accepted.block);
+        std::cout << "WITHDRAWAL_DEBIT_AUTHENTICATED before=" << before_value << " after=" << after_value
+                  << " revision=" << old.available_revision << "->" << next.available_revision << std::endl;
+        // Read the obligation from the accepted root, not the proposed effects.
+      }
       auto ingress_table = block::load_workchain_native_ingress_table(*config).move_as_ok();
       CHECK(ingress_table.count(2) && ingress_table.at(2).custody_address);
       if (m4) m3_live::assert_m4_block_backing(fixture, accepted, *ingress_table.at(2).custody_address);
@@ -315,6 +396,8 @@ int main(int argc, char** argv) {
         if (m3_live::m4_deposit_was_rejected(accepted.block))
           m3_live::assert_rejected_deposit(fixture, previous, accepted, *ingress_table.at(2).custody_address);
         else m3_live::assert_accepted_deposit(fixture, previous, accepted);
+      } else if (debit) {
+        // Withdrawal is independently checked above and by the backing replay.
       } else if (test_funding) {
         block::gen::TransactionDescr::Record_trans_workchain_entry_v3 entry;
         block::gen::UnoV2HostInput::Record host;

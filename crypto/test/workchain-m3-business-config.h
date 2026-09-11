@@ -12,6 +12,22 @@
 #include <utility>
 
 namespace block::m3_test {
+struct M5TestPrepareParameters {
+  std::uint64_t state_fee;
+  std::uint32_t withdrawal_limit, settlement_blocks;
+  std::optional<std::uint64_t> max_bounce_cost;
+};
+struct M5TestFailedParameters {
+  std::uint32_t withdrawal_limit;
+  std::uint64_t issuance_billing_units;
+};
+inline td::Status check_m5_test_reserve(const M5TestPrepareParameters& policy, std::uint64_t value) {
+  if (!policy.max_bounce_cost)
+    return td::Status::Error(-7201, "ConfigInvalid: explicit max_bounce_cost absent");
+  if (value != *policy.max_bounce_cost)
+    return td::Status::Error(-7200, "Withdrawal reserve differs from authenticated max_bounce_cost");
+  return td::Status::OK();
+}
 struct M3TestBusinessParameters {
   UnoCryptoLimits limits;
   std::array<unsigned char, 80> domain;
@@ -29,6 +45,10 @@ struct M3TestBusinessParameters {
   // Legacy aggregate send_fee/collect_fee must be zero reserved fields here;
   // they are not split, inferred, or used as a fallback for missing components.
   std::optional<WorkchainStaticOperationTariff> operation_tariff;
+  // Version 4: explicit test-profile inputs, not frozen initial values. Neither
+  // K_withdrawal nor D70 billing units may be inferred from proof-work units.
+  std::optional<M5TestFailedParameters> failed;
+  std::optional<M5TestPrepareParameters> prepare;
 
   M3TestBusinessParameters() = delete;
   M3TestBusinessParameters(UnoCryptoLimits limits_value, std::array<unsigned char, 80> domain_value,
@@ -80,7 +100,15 @@ inline td::Result<td::Ref<vm::Cell>> encode_m3_test_business_parameters(const M3
     return td::Status::Error("Deposit maximum differs from authenticated kernel limit");
   if (value.operation_tariff && (!value.deposit || value.send_fee || value.collect_fee || value.proof_profile != 4))
     return td::Status::Error("component tariff requires Deposit policy, profile 4 and zero legacy fee fields");
-  if (!root.store_long_bool(tag, 32) || !root.store_long_bool(value.operation_tariff ? 3 : value.deposit ? 2 : version, 16) ||
+  if (value.failed && (!value.operation_tariff || !value.failed->withdrawal_limit))
+    return td::Status::Error("Failed profile requires explicit tariff and withdrawal limit");
+  if (value.prepare && (!value.operation_tariff || !value.prepare->withdrawal_limit ||
+      (value.failed && (!value.prepare->max_bounce_cost ||
+                       value.failed->withdrawal_limit != value.prepare->withdrawal_limit))))
+    return td::Status::Error("prepare requires explicit tariff and bounded policy");
+  const unsigned encoded_version = value.prepare && value.prepare->max_bounce_cost
+      ? (value.failed ? 7 : 6) : value.prepare ? 5 : value.failed ? 4 : value.operation_tariff ? 3 : value.deposit ? 2 : version;
+  if (!root.store_long_bool(tag, 32) || !root.store_long_bool(encoded_version, 16) ||
       !root.store_long_bool(value.send_fee, 64) || !root.store_long_bool(value.collect_fee, 64) ||
       !root.store_long_bool(value.fee_effective_height, 32) || !root.store_long_bool(value.account_schema, 16) ||
       !root.store_long_bool(value.relation_profile, 16) || !root.store_long_bool(value.proof_profile, 16) ||
@@ -93,6 +121,13 @@ inline td::Result<td::Ref<vm::Cell>> encode_m3_test_business_parameters(const M3
   if (value.operation_tariff && (!root.store_long_bool(value.operation_tariff->base, 64) ||
       !root.store_long_bool(value.operation_tariff->send_tip, 64) ||
       !root.store_long_bool(value.operation_tariff->collect_tip, 64))) return malformed();
+  if (value.failed && (!root.store_long_bool(value.failed->withdrawal_limit, 32) ||
+      !root.store_long_bool(value.failed->issuance_billing_units, 64))) return malformed();
+  if (value.prepare && (!root.store_long_bool(value.prepare->state_fee, 64) ||
+      !root.store_long_bool(value.prepare->withdrawal_limit, 32) ||
+      !root.store_long_bool(value.prepare->settlement_blocks, 32))) return malformed();
+  if (value.prepare && value.prepare->max_bounce_cost &&
+      !root.store_long_bool(*value.prepare->max_bounce_cost, 64)) return malformed();
   return td::Ref<vm::Cell>{root.finalize()};
 }
 
@@ -101,12 +136,12 @@ inline td::Result<M3TestBusinessParameters> decode_m3_test_business_parameters(c
   if (cell.is_null()) return malformed();
   bool special = false;
   auto root = vm::load_cell_slice_special(cell, special);
-  if (special || root.size_refs() != 4 || (root.size() != 256 && root.size() != 448 && root.size() != 640)) return malformed();
+  if (special || root.size_refs() != 4 || (root.size() != 256 && root.size() != 448 && root.size() != 640 && root.size() != 736 && root.size() != 768 && root.size() != 832 && root.size() != 928)) return malformed();
   if (root.fetch_ulong(32) != tag) return td::Status::Error("unknown M3 test business tag");
   auto wire_version = root.fetch_ulong(16);
-  if (wire_version != version && wire_version != 2 && wire_version != 3)
+  if (wire_version < 1 || wire_version > 7)
     return td::Status::Error("unsupported M3 test business version");
-  if (root.size() != (wire_version == 3 ? 592u : wire_version == 2 ? 400u : 208u)) return malformed();
+  if (root.size() != (wire_version == 7 ? 880u : wire_version == 6 ? 784u : wire_version == 5 ? 720u : wire_version == 4 ? 688u : wire_version == 3 ? 592u : wire_version == 2 ? 400u : 208u)) return malformed();
   const auto send = root.fetch_ulong(64), collect = root.fetch_ulong(64);
   const auto height = static_cast<std::uint32_t>(root.fetch_ulong(32));
   const auto schema = static_cast<std::uint16_t>(root.fetch_ulong(16));
@@ -137,10 +172,26 @@ inline td::Result<M3TestBusinessParameters> decode_m3_test_business_parameters(c
     auto system_slots = static_cast<std::uint32_t>(root.fetch_ulong(32));
     result.deposit = WorkchainDepositPolicy{minimum, max_value, slot_fee, user_slots, system_slots};
   }
-  if (wire_version == 3) {
+  if (wire_version >= 3) {
     if (send || collect || proof != 4) return td::Status::Error("component tariff has incompatible legacy fee fields or profile");
     const auto base = root.fetch_ulong(64), send_tip = root.fetch_ulong(64), collect_tip = root.fetch_ulong(64);
     result.operation_tariff = WorkchainStaticOperationTariff{base, send_tip, collect_tip};
+  }
+  if (wire_version == 4 || wire_version == 7) {
+    const auto limit = static_cast<std::uint32_t>(root.fetch_ulong(32));
+    const auto units = root.fetch_ulong(64);
+    if (!limit) return td::Status::Error("Failed profile withdrawal limit is zero");
+    result.failed = M5TestFailedParameters{limit, units};
+  }
+  if (wire_version >= 5) {
+    const auto state_fee = root.fetch_ulong(64);
+    const auto limit = static_cast<std::uint32_t>(root.fetch_ulong(32));
+    const auto blocks = static_cast<std::uint32_t>(root.fetch_ulong(32));
+    if (!limit) return td::Status::Error("prepare withdrawal limit is zero");
+    result.prepare = M5TestPrepareParameters{state_fee, limit, blocks, {}};
+    if (wire_version >= 6) result.prepare->max_bounce_cost = root.fetch_ulong(64);
+    if (result.failed && result.failed->withdrawal_limit != limit)
+      return td::Status::Error("prepare and Failed withdrawal limits differ");
   }
   return result;
 }

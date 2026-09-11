@@ -2,13 +2,15 @@
   "crypto/block/workchain-proof-backend.cpp": {
     "symbols": [
       "uno_crypto_system_encrypt_v1",
+      "uno_crypto_system_encrypt_v2",
       "uno_crypto_system_verify_v1",
+      "uno_crypto_system_verify_v2",
       "uno_crypto_verify_closure_possession_v2",
       "uno_crypto_verify_key_possession_v2",
       "uno_crypto_verify_v2"
     ],
-    "sha256": "24e3303088e1abbb8e13bf796f0ee205b82b769319b466fd9233e7cd50fb7ee4",
-    "disposition": "Five private WorkchainProofVerifier ABI boundaries, all reached after the same precharge. System generation/reconstruction entries exist before Deposit host integration; no other node ABI caller."
+    "sha256": "f6139f9723b9b575d65b45e3f46f0d93e249ed8cd1421f7df41f0f5e77090e40",
+    "disposition": "Seven private WorkchainProofVerifier ABI boundaries, all reached after the same precharge. D69 v2 system generation/reconstruction is metered before Failed host issuance integration; v1 Deposit remains unchanged. This inventory is not a completed review or live acceptance claim."
   },
   "crypto/test/test-workchain-proof-backend.cpp": {
     "symbols": [
@@ -90,14 +92,17 @@
   "uno/crypto/include/uno_crypto.h": {
     "symbols": [
       "uno_crypto_system_encrypt_v1",
+      "uno_crypto_system_encrypt_v2",
       "uno_crypto_system_verify_v1",
+      "uno_crypto_system_verify_v2",
       "uno_crypto_verify_closure_possession_v1",
       "uno_crypto_verify_closure_possession_v2",
       "uno_crypto_verify_key_possession_v1",
       "uno_crypto_verify_key_possession_v2",
-      "uno_crypto_verify_v2"
+      "uno_crypto_verify_v2",
+      "uno_crypto_verify_withdrawal_v1"
     ],
-    "sha256": "400a2c318b136986ff0fee34a2c42f37970c29d4b173345121d20903c897ea0f",
+    "sha256": "a0d2fd3351780622f6c6b33591b8ddd094d4092974dab6466cc8b3427348a9bd",
     "disposition": "Public ABI declarations only, no calls. System encryption and verification may only be reached through the metered host backend."
   },
   "uno/crypto/include/uno_crypto_v0_retired.h": {
@@ -119,14 +124,17 @@
   "uno/crypto/src/ffi.rs": {
     "symbols": [
       "uno_crypto_system_encrypt_v1",
+      "uno_crypto_system_encrypt_v2",
       "uno_crypto_system_verify_v1",
+      "uno_crypto_system_verify_v2",
       "uno_crypto_verify_closure_possession_v1",
       "uno_crypto_verify_closure_possession_v2",
       "uno_crypto_verify_key_possession_v1",
       "uno_crypto_verify_key_possession_v2",
-      "uno_crypto_verify_v2"
+      "uno_crypto_verify_v2",
+      "uno_crypto_verify_withdrawal_v1"
     ],
-    "sha256": "3a72655d498da5cce72651427f184400c3381edcab2d399b86c8e561927d710e",
+    "sha256": "caed9a15f352fd112d406e2925bc7d08bebe13957b09c0ba6f68864a132b9f69",
     "disposition": "Rust ABI exports and rejection-only retired stubs, not host callers. Meter belongs to the node-side caller."
   },
   "uno/crypto/src/key_possession.rs": {
@@ -200,6 +208,11 @@
     ],
     "sha256": "32628bb457b7322dfaa7605b370edb0253cf5a62d4dbf72f94aa1c08199c4fe0",
     "disposition": "Private cfg(test) prover tests call D33 ABI directly to test existing COLLECT algebra and error layers, including mixed SEND/system inputs. No production caller, Native admission or persisted pending removal."
+  },
+  "uno/prover/src/tests/withdrawal.rs": {
+    "symbols": ["uno_crypto_verify_withdrawal_v1"],
+    "sha256": "d3dd4a1f0b1bec3ebfa65b47be066445d31255948da33483ceb4ddfd8c0df739",
+    "disposition": "Private prover test exercises the dedicated D64 ABI with a real proof, changed-fee VERIFY rejection and malformed-context DECODE rejection. No node caller or authenticated Native publication."
   },
   "uno/prover/examples/m3-vectors.rs": {
     "symbols": [

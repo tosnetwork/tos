@@ -56,6 +56,11 @@ struct WorkchainAccountEffects {
   // Optional single custody payout request, not a finalized Native message.
   // The settlement host must authenticate its role, amount and authorization.
   td::Ref<vm::Cell> payout_request;
+  // Local result of independently executing an authenticated operation, not a
+  // wire capability. This is Withdrawal's EXACT public q (D75), not a ceiling:
+  // the final serialized Native debit must spend precisely this fee.
+  // Absent preserves the enclosing host's existing allowance (including zero).
+  std::optional<std::uint64_t> payout_forward_fee;
   std::optional<WorkchainFeeSettlement> fees;
   td::Ref<vm::Cell> receipts, events;
   WorkchainBlockResourceUsage usage;
@@ -69,6 +74,9 @@ struct WorkchainAccountEffects {
   // Local registered-engine snapshot, never a wire/configuration capability.
   // Selects current-state protected-budget checks after Native materialization.
   std::optional<td::Bits256> protected_coordinator_snapshot;
+  // Local result from the verified operation's x, never decoded from effects
+  // supplied by a claimant. Settlement compares it to the actual Native value.
+  std::optional<std::uint64_t> payout_principal;
 };
 
 class WorkchainAccountEngine {

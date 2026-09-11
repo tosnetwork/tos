@@ -105,6 +105,40 @@ fn main() -> Result<()> {
         fs::write(&args[3], format!("available={}\n", points(&[oldc, oldd])))?;
         return Ok(());
     }
+    if args[1] == "withdrawal-points" || args[1] == "withdrawal-prove" {
+        use tos_uno_crypto_prototype::withdrawal_statement::{WithdrawalAmounts, WithdrawalStatement, public_opening};
+        let amounts = WithdrawalAmounts { principal: n("principal")?, outward_fee: n("outward_fee")?,
+            return_reserve: n("return_reserve")?, operation_fee: fee };
+        let total = amounts.total().map_err(|e| fail(&format!("total {e:?}")))?;
+        let new = old.checked_sub(total).and_then(|v| v.checked_sub(fee)).ok_or_else(|| fail("Withdrawal debit"))?;
+        let balance = [p, oldc, oldd, Scalar::from(new)*g + rho*h, rho*p, Scalar::from(old)*g+t*h];
+        if args[1] == "withdrawal-points" {
+            fs::write(&args[3], format!("points={}\n", points(&balance[3..])))?;
+            return Ok(());
+        }
+        let limits = KernelLimits { max_balance:n("max_balance")?, max_value:n("max_value")?,
+            max_collect:8, max_context_bytes:1024, max_proof_bytes:4096 };
+        let domain:[u8;80] = unhex(f("domain")?)?.try_into().map_err(|_| fail("domain"))?;
+        let wid = bytes32(f("withdrawal_id")?)?[0]; let aid = bytes32(f("attempt_id")?)?[0];
+        let encoded = balance.map(|v| v.compress().to_bytes());
+        let statement = WithdrawalStatement::new(&limits, domain, wid, aid, amounts,
+            &unhex(f("context")?)?, encoded).map_err(|e| fail(&format!("statement {e:?}")))?;
+        let r = public_opening(&domain, &wid, &aid, &encoded[0], total).map_err(|e| fail(&format!("opening {e:?}")))?;
+        let values = [old, limits.max_balance.checked_sub(old).ok_or_else(||fail("old bound"))?,
+            new, limits.max_balance.checked_sub(new).ok_or_else(||fail("new bound"))?,
+            total.checked_sub(1).ok_or_else(||fail("positive total"))?,
+            limits.max_value.checked_sub(total).ok_or_else(||fail("total bound"))?,0,0];
+        let scalars = [s, Scalar::from(new), Scalar::from(total), r, rho, t];
+        let blinds = [t,-t,rho,-rho,r,-r,Scalar::ZERO,Scalar::ZERO];
+        let proof = prove(&Statement {kind:1,limits:&limits,domain:statement.domain(),fee,
+            context:statement.context(),points:statement.points(),receipt_ids:&[]},
+            &Witness {scalars:&scalars,range_values:&values,range_blindings:&blinds})
+            .map_err(|e|fail(&format!("prove {e:?}")))?;
+        fs::write(&args[3],format!("commitments={}\nresponses={}\nrange_proof={}\n",
+            proof.commitments.iter().map(|p|hex(p)).collect::<String>(),
+            proof.responses.iter().map(|p|hex(p)).collect::<String>(),hex(&proof.range_proof)))?;
+        return Ok(());
+    }
     let kind = n("kind")? as u32;
     let maxb = n("max_balance")?;
     let maxv = n("max_value")?;
