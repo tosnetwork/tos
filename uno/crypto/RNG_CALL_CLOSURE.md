@@ -13,10 +13,17 @@ or a declaration of milestone acceptance.
 
 ## 1. Minimum verifier dependency/features graph
 
-`fixtures/verifier-feature-graph.json` freezes 32 distinct normal
+`fixtures/verifier-feature-graph.json` freezes 38 distinct normal
 package/feature rows. `kernel-gates.py` compares the resolved graph against it,
 in addition to the existing revision, source, archive and provider checks.
-The graph is obtained with normal edges only, without enabling test features.
+The graph is obtained with normal edges only, without enabling test features. This is an
+inventory of resolved dependencies/features, not an assertion that each package
+has been audited. The M4 regression baseline exposed the M3 inventory omission
+from `6101a8759`: SHA2 0.10.9 and its five additional normal-graph rows were
+version/checksum locked but absent from this snapshot. They are now inventoried,
+not audited. The earlier `matches_reviewed_snapshot` test name overstated what
+the format and comparison checked; that name predates M3 and was retained during
+M3. Neither the former nor current comparison establishes package review.
 
 * Bulletproofs has no default features: no `std`, `kernel-test`, `yoloproofs`,
   randomized convenience entry points or R1CS verifier are admitted through

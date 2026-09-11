@@ -119,7 +119,7 @@ target_link_libraries(entropy-probe PRIVATE "{rust_target}/release/libtos_uno_cr
     command("normal-full-corpus", [binary, corpus])
     normal_tree = command("normal-features", ["cargo", "tree", "--locked", "--offline", "-e", "normal,features", "--prefix", "none"]).stdout.decode()
     command("normal-dependency-gate", [sys.executable, fixture / "tests/kernel-gates.py", "KernelGates.test_normal_dependency_graph_has_no_entropy_provider"])
-    command("normal-feature-gate", [sys.executable, fixture / "tests/kernel-gates.py", "KernelGates.test_normal_feature_graph_matches_reviewed_snapshot"])
+    command("normal-feature-gate", [sys.executable, fixture / "tests/kernel-gates.py", "KernelGates.test_normal_feature_graph_matches_inventory_snapshot"])
     normal_lock = digest((fixture / "Cargo.lock").read_bytes())
 
     # This feature change adds no entropy provider. Only the exact feature gate
@@ -132,7 +132,7 @@ target_link_libraries(entropy-probe PRIVATE "{rust_target}/release/libtos_uno_cr
         observation = observe("changed-transcript-feature", False)
         actual = gates.normal_feature_rows()
         assert actual != expected_features
-        command("changed-feature-gate", [sys.executable, fixture / "tests/kernel-gates.py", "KernelGates.test_normal_feature_graph_matches_reviewed_snapshot"], expected=1)
+        command("changed-feature-gate", [sys.executable, fixture / "tests/kernel-gates.py", "KernelGates.test_normal_feature_graph_matches_inventory_snapshot"], expected=1)
         return {"guard": "normal-feature-snapshot", "added": sorted(set(actual)-set(expected_features)),
                 "removed": sorted(set(expected_features)-set(actual)), "other_gates": observation}
     mutate("changed-transcript-feature", "Cargo.toml", feature_before, feature_after, change_feature)
@@ -217,7 +217,7 @@ target_link_libraries(entropy-probe PRIVATE "{rust_target}/release/libtos_uno_cr
     assert digest((fixture / "Cargo.lock").read_bytes()) == normal_lock
     build("normal-restored")
     observe("normal-restored", False)
-    command("restored-feature-gate", [sys.executable, fixture / "tests/kernel-gates.py", "KernelGates.test_normal_feature_graph_matches_reviewed_snapshot"])
+    command("restored-feature-gate", [sys.executable, fixture / "tests/kernel-gates.py", "KernelGates.test_normal_feature_graph_matches_inventory_snapshot"])
     # Empty PATH removes the actual disassembler dependency. Failure must not
     # become a skipped or successful symbol inspection.
     empty_path = work / "empty-path"

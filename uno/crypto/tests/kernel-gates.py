@@ -116,7 +116,8 @@ def validate_checkout_status(directory):
 
 
 class KernelGates(unittest.TestCase):
-    def test_normal_feature_graph_matches_reviewed_snapshot(self):
+    # Set/feature equality is an inventory check, not evidence of dependency auditing.
+    def test_normal_feature_graph_matches_inventory_snapshot(self):
         expected = json.loads((ROOT / "fixtures/verifier-feature-graph.json").read_text())
         self.assertEqual(normal_feature_rows(), expected["normal_package_features"])
 
