@@ -11,7 +11,8 @@
     "WorkchainTransferOldStatement old { a . public_key , a . available , a . key_epoch , a . auth_nonce , a . available_revision , td : : Bits256 : : zero ( ) , 0 , { } }",
     "if ( ! matches_policy ( b , env ) | | ! same_address ( b . address , send . destination ) | | b . key_epoch ! = send . destination_key_epoch | | ! std : : holds_alternative < WorkchainAccountActive > ( b . lifecycle ) ) { return invalid ( )",
     "old . destination_key_epoch = b . key_epoch",
-    "if ( it - > status ! = 0 | | it - > target_instance ! = a . address . instance | | it - > target_key_epoch ! = a . key_epoch | | it - > asset ! = a . bindings . asset | | it - > source . workchain_id ! = env . protocol . workchain_id ) { return invalid ( )",
+    "if ( system - > status ! = 0 | | system - > target_instance ! = a . address . instance | | system - > target_key_epoch ! = a . key_epoch | | system - > asset ! = a . bindings . asset ) return invalid ( )",
+    "} if ( it - > status ! = 0 | | it - > target_instance ! = a . address . instance | | it - > target_key_epoch ! = a . key_epoch | | it - > asset ! = a . bindings . asset | | it - > source . workchain_id ! = env . protocol . workchain_id ) { return invalid ( )",
     "} target . pending . push_back ( { receipt_id , a . address , a . auth_nonce , target . address . instance , target . key_epoch , a . bindings . asset , { send - > transfer . commitment , send - > transfer . recipient_handle } , statement . operation_id , 0 , 0 } )"
   ],
   "crypto/block/workchain-confidential-input.h": [
@@ -44,7 +45,7 @@
     "inline WorkchainReplayContext rebuild_workchain_possession_context ( const WorkchainPossessionPolicy & policy , const WorkchainConfidentialAccount & account ) { return { policy . protocol , policy . rules , policy . profiles , policy . fee_profile , policy . fee_effective_height , account . address , account . auth_nonce , account . available_revision , account . key_epoch }"
   ],
   "crypto/block/workchain-registration.h": [
-    "if ( ! std : : holds_alternative < WorkchainAccountActive > ( account . lifecycle ) | | account . auth_nonce ! = 0 | | account . available_revision ! = 0 | | account . key_epoch ! = 0 | | ! account . pending . empty ( ) | | ! account . available . commitment . is_zero ( ) | | ! account . available . handle . is_zero ( ) ) { return invalid ( )"
+    "if ( ! std : : holds_alternative < WorkchainAccountActive > ( account . lifecycle ) | | account . auth_nonce ! = 0 | | account . available_revision ! = 0 | | account . key_epoch ! = 0 | | ! account . pending . empty ( ) | | ! account . system_pending . empty ( ) | | ! account . available . commitment . is_zero ( ) | | ! account . available . handle . is_zero ( ) ) { return invalid ( )"
   ],
   "crypto/block/workchain-transfer-statement.h": [
     "std : : uint32_t key_epoch",
@@ -84,5 +85,8 @@
     "hash . update ( r . key_epoch . to_be_bytes ( ) )",
     "3 2 ] , schema_version : 1 , relation_profile : 1 , proof_profile : 2 , key_epoch : 0 , public_key : p . compress ( ) . to_bytes ( ) , proof : [ 0",
     "let changes : & [ fn ( & mut KeyPossessionRequestV2 ) ] = & [ | r | r . global_id + = 1 , | r | r . genesis_hash [ 0 ] ^ = 1 , | r | r . workchain_id + = 1 , | r | r . account [ 0 ] ^ = 1 , | r | r . incarnation [ 0 ] ^ = 1 , | r | r . asset [ 0 ] ^ = 1 , | r | r . custody [ 0 ] ^ = 1 , | r | r . policy [ 0 ] ^ = 1 , | r | r . schema_version + = 1 , | r | r . relation_profile + = 1 , | r | r . proof_profile + = 1 , | r | r . key_epoch + = 1 , | r | r . context [ 1 7 0 ] ^ = 1 , ]"
+  ],
+  "crypto/block/workchain-deposit-transition.h": [
+    "WorkchainDepositReceipt receipt { admitted . id , message , admitted . next_sequence , admitted . amount , old_account . address . instance , old_account . key_epoch , asset , encrypted , 0 }"
   ]
 }

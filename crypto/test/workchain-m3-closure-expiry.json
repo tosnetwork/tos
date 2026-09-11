@@ -71,5 +71,8 @@
   "uno/crypto/src/system_encryption.rs:identifiers": "90d496481faeb043a074c78696bd0c387958d1cc3249f9ff4a653fe5d8d32167",
   "validator-engine/json-rpc-server-account-capability.cpp:identifiers": "3f20e44022080bd30401db01c794cbe48aef3fe1b0185ed3b80a2ccbbed50e25",
   "crypto/block/workchain-confidential-state.h:identifiers": "97246868bed15827f093c9f3d47d55c8e959594f594dc1a42018dc33c4e698e1",
-  "crypto/block/workchain-deposit-admission.h:identifiers": "71658d6b8d029cec1b775ee5cc3118960768b14544d7d769e77f48d8f170ccb8"
+  "crypto/block/workchain-deposit-admission.h:identifiers": "71658d6b8d029cec1b775ee5cc3118960768b14544d7d769e77f48d8f170ccb8",
+  "crypto/block/workchain-transfer-statement.h:identifiers": "6db99c8ea7977d0d8bd1fbc18e9bc53c596049c5f01d312531c9260a75441701",
+  "crypto/block/workchain-confidential-execution.h:identifiers": "c4dbb9ec44cc53a48b26f076087a044f5e83808c83de2150639cad4950afdbff",
+  "crypto/block/workchain-deposit-transition.h:identifiers": "77518ff65a806f158e444b63fe2579e8a989f2a91c978cba13aaf6f0a2ba2d74"
 }
