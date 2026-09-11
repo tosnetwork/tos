@@ -13,7 +13,15 @@ inline td::Result<WorkchainRegistrationTransition> replay_workchain_registration
   TRY_RESULT(wire, decode_workchain_replay_input(replay_root));
   const auto* input = std::get_if<WorkchainRegistrationReplayInput>(&wire);
   if (!input) return td::Status::Error(-7200, "registration replay operation mismatch");
-  TRY_RESULT(account, decode_workchain_confidential_account(registration_body));
+  // The caller acquired this body from the candidate's authenticated inbox.
+  // Unlike an AcquiredView historical-state read, a malformed body is a
+  // candidate verdict. The Native payment wrapper checks it too, but direct
+  // replay must not leak the codec's deliberately neutral error category.
+  auto decoded = decode_workchain_confidential_account(registration_body);
+  if (decoded.is_error())
+    return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::CandidateInvalid),
+                             "malformed candidate registration body");
+  auto account = decoded.move_as_ok();
   TRY_RESULT(id, derive_workchain_registration_operation_id(policy, account));
   TRY_STATUS(check_workchain_claimed_operation_id(wire, id));
   TRY_STATUS(check_workchain_possession_replay_context(input->context, policy.possession, account,

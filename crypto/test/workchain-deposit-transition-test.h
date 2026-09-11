@@ -61,6 +61,28 @@ inline void test_metered_deposit_transition() {
     require(unavailable.is_error() && unavailable.error().code() == -7201 && unused.consumed() == 0,
             "special historical bucket escaped classification or reached encryption");
   }
+  // Native extra-currency decoding is AFTER encryption, unlike the bucket
+  // decoder above. This is an acquired historical dictionary, not a candidate
+  // ciphertext. Both reconstructions retain the precharge on local failure.
+  auto post_generate = WorkchainProofTestAccess::create(7);
+  auto post_replay = WorkchainProofTestAccess::create(7);
+  const CurrencyCollection broken_extra(0, special);
+  require(broken_extra.is_valid() && !broken_extra.validate_extra(100),
+          "post-charge control must fail dictionary validation, not balance framing");
+  auto post_a = run(account, coordinator, broken_extra,
+                    CurrencyCollection(10000000000ULL), post_generate);
+  auto post_b = run(account, coordinator, broken_extra,
+                    CurrencyCollection(10000000000ULL), post_replay);
+  require(post_a.is_error() && post_b.is_error() &&
+          post_a.error().code() == -7201 && post_b.error().code() == -7201 &&
+          post_a.error().message() == "Deposit Native balance arithmetic failed" &&
+          post_a.error().message() == post_b.error().message(),
+          "post-charge historical dictionary failure lost local provenance");
+  require(post_generate.consumed() == post_replay.consumed() && post_generate.consumed() == 7 &&
+          coordinator.deposit_sequence == 0 && account.system_pending.empty(),
+          "post-charge codec failure refunded units or partially installed state");
+  std::cout << "Deposit post-charge extra dictionary: " << post_a.error().message().str()
+            << "; LocalUnavailable; paired consumed=7/7; no partial install\n";
   auto changed_price = WorkchainProofTestAccess::create(7);
   policy.slot_fee = 5000000;
   auto rejection = run(account, coordinator, CurrencyCollection(0), CurrencyCollection(10000000000ULL), changed_price);
