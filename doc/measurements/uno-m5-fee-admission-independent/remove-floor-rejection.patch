@@ -1,0 +1,8 @@
+--- a/crypto/block/workchain-operation-fees.h
++++ b/crypto/block/workchain-operation-fees.h
+@@ -37,4 +37,3 @@
+     return td::Status::Error(-7200, "Withdrawal authenticated fee floor overflow");
+-  if (__builtin_sub_overflow(claimed_fee, floor, &tip))
+-    return td::Status::Error(-7200, "Withdrawal public fee below authenticated fee floor");
++  (void)__builtin_sub_overflow(claimed_fee, floor, &tip); // isolated removal of floor rejection
+   return WorkchainOperationFeeAmounts{authenticated_state_fee, compute, tip, claimed_fee};

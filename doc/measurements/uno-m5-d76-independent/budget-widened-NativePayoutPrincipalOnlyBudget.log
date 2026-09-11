@@ -1,0 +1,134 @@
+Running test Test_BReview_NativePayoutPrincipalOnlyBudget...
+[ 4][t 0][2026-09-11 15:36:23.987417586][transaction.cpp:622]	unpacking account 0000000000000000000000000000000000000000000000000000000000000000
+[ 4][t 0][2026-09-11 15:36:23.987662111][transaction.cpp:455]	last_paid=0; cells=0 bits=0
+[ 4][t 0][2026-09-11 15:36:23.987676074][transaction.cpp:685]	end of Account.unpack() for 2:0000000000000000000000000000000000000000000000000000000000000000 (balance = 1000ng ; last_trans_lt = 1..2)
+[ 4][t 0][2026-09-11 15:36:23.987701953][transaction.cpp:622]	unpacking account 31CF8E61894D648E857CC6D14F8352C20C14D12F92A5F8DCE26F01224A63376D
+[ 4][t 0][2026-09-11 15:36:23.987709129][transaction.cpp:455]	last_paid=0; cells=0 bits=0
+[ 4][t 0][2026-09-11 15:36:23.987714324][transaction.cpp:685]	end of Account.unpack() for 2:31CF8E61894D648E857CC6D14F8352C20C14D12F92A5F8DCE26F01224A63376D (balance = 1000ng ; last_trans_lt = 1..2)
+[ 4][t 0][2026-09-11 15:36:23.987780292][transaction.cpp:3555]	storage paid for a message: 0 cells, 0 bits
+[ 4][t 0][2026-09-11 15:36:23.987785048][transaction.cpp:3559]	computed fwd fees = 100 + 0
+[ 4][t 0][2026-09-11 15:36:23.987795470][transaction.cpp:3644]	not enough tomis to transfer with the message : remaining balance is 137ng, need 237 (including forwarding fees)
+[ 4][t 0][2026-09-11 15:36:23.987836561][transaction.cpp:622]	unpacking account 0000000000000000000000000000000000000000000000000000000000000000
+[ 4][t 0][2026-09-11 15:36:23.987843843][transaction.cpp:455]	last_paid=0; cells=0 bits=0
+[ 4][t 0][2026-09-11 15:36:23.987848865][transaction.cpp:685]	end of Account.unpack() for 2:0000000000000000000000000000000000000000000000000000000000000000 (balance = 1000ng ; last_trans_lt = 1..2)
+[ 4][t 0][2026-09-11 15:36:23.987854102][transaction.cpp:622]	unpacking account 31CF8E61894D648E857CC6D14F8352C20C14D12F92A5F8DCE26F01224A63376D
+[ 4][t 0][2026-09-11 15:36:23.987860973][transaction.cpp:455]	last_paid=0; cells=0 bits=0
+[ 4][t 0][2026-09-11 15:36:23.987865845][transaction.cpp:685]	end of Account.unpack() for 2:31CF8E61894D648E857CC6D14F8352C20C14D12F92A5F8DCE26F01224A63376D (balance = 1000ng ; last_trans_lt = 1..2)
+[ 4][t 0][2026-09-11 15:36:23.987886956][transaction.cpp:3555]	storage paid for a message: 0 cells, 0 bits
+[ 4][t 0][2026-09-11 15:36:23.987891324][transaction.cpp:3559]	computed fwd fees = 100 + 0
+[ 0][t 0][2026-09-11 15:36:23.987989484][test-workchain-block.cpp:10984]	Expectation failed: principal_only.is_error()!
+[pid 1663698] [time 1789140983] Signal: 6
+------- Stack Backtrace -------
+/tmp/b-d76-independent/budget-widened(+0x6f9ad7)[0x641f4aa81ad7]
+/tmp/b-d76-independent/budget-widened(+0xe0bdd)[0x641f4a468bdd]
+/lib/x86_64-linux-gnu/libc.so.6(+0x42520)[0x72be94642520]
+/lib/x86_64-linux-gnu/libc.so.6(pthread_kill+0x12c)[0x72be946969bc]
+/lib/x86_64-linux-gnu/libc.so.6(raise+0x16)[0x72be94642476]
+/lib/x86_64-linux-gnu/libc.so.6(abort+0xd3)[0x72be946287f3]
+/tmp/b-d76-independent/budget-widened(+0x6fced7)[0x641f4aa84ed7]
+/tmp/b-d76-independent/budget-widened(+0x6fcfd7)[0x641f4aa84fd7]
+/tmp/b-d76-independent/budget-widened(+0x6fcb87)[0x641f4aa84b87]
+/tmp/b-d76-independent/budget-widened(+0x1cfe76)[0x641f4a557e76]
+/tmp/b-d76-independent/budget-widened(+0x1d069a)[0x641f4a55869a]
+/tmp/b-d76-independent/budget-widened(+0x706caf)[0x641f4aa8ecaf]
+/tmp/b-d76-independent/budget-widened(+0x7067d8)[0x641f4aa8e7d8]
+/tmp/b-d76-independent/budget-widened(+0xe888f)[0x641f4a47088f]
+/lib/x86_64-linux-gnu/libc.so.6(+0x29d90)[0x72be94629d90]
+/lib/x86_64-linux-gnu/libc.so.6(__libc_start_main+0x80)[0x72be94629e40]
+/tmp/b-d76-independent/budget-widened(+0xe8735)[0x641f4a470735]
+-------------------------------
+--- Enhanced Backtrace (libbacktrace) ---
+    #0  ?? (budget-widened+0xe0bdc) [0x641f4a468bdc]
+    #1  ?? at libc_sigaction.c (libc.so.6+0x4251f) [0x72be9464251f]
+    #2  __pthread_kill_implementation at pthread_kill.c:44 (libc.so.6+0x969bc) [0x72be946969bc]
+    #3  __pthread_kill_internal at pthread_kill.c:78 (libc.so.6+0x969bc) [0x72be946969bc]
+    #4  __GI___pthread_kill at pthread_kill.c:89 (libc.so.6+0x969bc) [0x72be946969bc]
+    #5  __GI_raise at raise.c:26 (libc.so.6+0x42475) [0x72be94642475]
+    #6  __GI_abort at abort.c:79 (libc.so.6+0x287f2) [0x72be946287f2]
+    #7  ?? (budget-widened+0x6fced6) [0x641f4aa84ed6]
+    #8  ?? (budget-widened+0x6fcfd6) [0x641f4aa84fd6]
+    #9  ?? (budget-widened+0x6fcb86) [0x641f4aa84b86]
+    #10  ?? (budget-widened+0x1cfe75) [0x641f4a557e75]
+    #11  ?? (budget-widened+0x1d0699) [0x641f4a558699]
+    #12  ?? (budget-widened+0x706cae) [0x641f4aa8ecae]
+    #13  ?? (budget-widened+0x7067d7) [0x641f4aa8e7d7]
+    #14  ?? (budget-widened+0xe888e) [0x641f4a47088e]
+    #15  __libc_start_call_main at libc_start_call_main.h:58 (libc.so.6+0x29d8f) [0x72be94629d8f]
+    #16  __libc_start_main_impl at libc-start.c:392 (libc.so.6+0x29e3f) [0x72be94629e3f]
+    #17  ?? (budget-widened+0xe8734) [0x641f4a470734]
+    #18   (unknown+0xffffffffffffffff) [0xffffffffffffffff]
+------------------------------------------
+[Thread debugging using libthread_db enabled]
+Using host libthread_db library "/lib/x86_64-linux-gnu/libthread_db.so.1".
+0x000072be946ea3aa in __GI___wait4 (pid=1663796, stat_loc=0x0, options=0, usage=0x0) at ../sysdeps/unix/sysv/linux/wait4.c:30
+30	../sysdeps/unix/sysv/linux/wait4.c: No such file or directory.
+[Current thread is 1 (Thread 0x72be94e4a840 (LWP 1663698))]
+
+Thread 1 (Thread 0x72be94e4a840 (LWP 1663698) "budget-widened"):
+#0  0x000072be946ea3aa in __GI___wait4 (pid=1663796, stat_loc=0x0, options=0, usage=0x0) at ../sysdeps/unix/sysv/linux/wait4.c:30
+        sc_ret = -512
+        sc_ret = <optimized out>
+#1  0x0000641f4aa81d52 in td::Stacktrace::print_to_stderr(td::Stacktrace::PrintOptions const&) ()
+No symbol table info available.
+#2  0x0000641f4a468bdd in td::default_failure_signal_handler(int) ()
+No symbol table info available.
+#3  <signal handler called>
+No locals.
+#4  __pthread_kill_implementation (no_tid=0, signo=6, threadid=126162867365952) at ./nptl/pthread_kill.c:44
+        tid = <optimized out>
+        ret = 0
+        pd = 0x72be94e4a840
+        old_mask = {__val = {140724711516128, 2183987989484, 110085562594274, 140724711516912, 140724711516072, 184, 140724711516112, 110085559308906, 140724711516240, 125378870446058, 15, 14058996444736070400, 23, 18446744073709551184, 0, 110085562594274}}
+        ret = <optimized out>
+        pd = <optimized out>
+        old_mask = <optimized out>
+        ret = <optimized out>
+        tid = <optimized out>
+        ret = <optimized out>
+        resultvar = <optimized out>
+        resultvar = <optimized out>
+        __arg3 = <optimized out>
+        __arg2 = <optimized out>
+        __arg1 = <optimized out>
+        _a3 = <optimized out>
+        _a2 = <optimized out>
+        _a1 = <optimized out>
+        __futex = <optimized out>
+        resultvar = <optimized out>
+        __arg3 = <optimized out>
+        __arg2 = <optimized out>
+        __arg1 = <optimized out>
+        _a3 = <optimized out>
+        _a2 = <optimized out>
+        _a1 = <optimized out>
+        __futex = <optimized out>
+        __private = <optimized out>
+        __oldval = <optimized out>
+        result = <optimized out>
+#5  __pthread_kill_internal (signo=6, threadid=126162867365952) at ./nptl/pthread_kill.c:78
+No locals.
+#6  __GI___pthread_kill (threadid=126162867365952, signo=signo@entry=6) at ./nptl/pthread_kill.c:89
+No locals.
+#7  0x000072be94642476 in __GI_raise (sig=sig@entry=6) at ../sysdeps/posix/raise.c:26
+        ret = <optimized out>
+#8  0x000072be946287f3 in __GI_abort () at ./stdlib/abort.c:79
+        save_stage = 1
+        act = {__sigaction_handler = {sa_handler = 0x0, sa_sigaction = 0x0}, sa_mask = {__val = {21474840578, 0, 110085567273656, 0, 140724711516384, 1, 1, 110085567273656, 140724711516384, 7, 110085564095593, 140724711516448, 110085559307755, 0, 140724711516487, 0}}, sa_flags = 1, sa_restorer = 0x0}
+        sigs = {__val = {32, 126162865589144, 2, 1, 7, 126162867365520, 140724711516352, 110085559285679, 110085564113223, 266, 110085955611408, 16, 512, 14419223944114481, 126162865569888, 6}}
+#9  0x0000641f4aa84ed7 in td::process_fatal_error(td::CSlice) ()
+No symbol table info available.
+#10 0x0000641f4aa84fd7 in td::DefaultLog::append(td::CSlice, int) ()
+No symbol table info available.
+#11 0x0000641f4aa84b87 in td::Logger::~Logger() ()
+No symbol table info available.
+#12 0x0000641f4a557e76 in Test_BReview_NativePayoutPrincipalOnlyBudget::run() ()
+No symbol table info available.
+#13 0x0000641f4a55869a in td::Test::step() ()
+No symbol table info available.
+#14 0x0000641f4aa8ecaf in td::TestsRunner::run_all_step() ()
+No symbol table info available.
+#15 0x0000641f4aa8e7d8 in td::TestsRunner::run_all() ()
+No symbol table info available.
+#16 0x0000641f4a47088f in main ()
+No symbol table info available.
+[Inferior 1 (process 1663698) detached]

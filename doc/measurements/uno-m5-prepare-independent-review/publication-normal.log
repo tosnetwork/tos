@@ -1,0 +1,12 @@
+Running test Test_WorkchainBlock_NativePayoutExactFeeNonpublication...
+[ 4][t 0][2026-09-11 15:02:37.936151312][transaction.cpp:622]	unpacking account 0000000000000000000000000000000000000000000000000000000000000000
+[ 4][t 0][2026-09-11 15:02:37.936372672][transaction.cpp:455]	last_paid=0; cells=0 bits=0
+[ 4][t 0][2026-09-11 15:02:37.936387329][transaction.cpp:685]	end of Account.unpack() for 2:0000000000000000000000000000000000000000000000000000000000000000 (balance = 1000ng ; last_trans_lt = 1..2)
+[ 4][t 0][2026-09-11 15:02:37.936410907][transaction.cpp:622]	unpacking account 31CF8E61894D648E857CC6D14F8352C20C14D12F92A5F8DCE26F01224A63376D
+[ 4][t 0][2026-09-11 15:02:37.936419077][transaction.cpp:455]	last_paid=0; cells=0 bits=0
+[ 4][t 0][2026-09-11 15:02:37.936424509][transaction.cpp:685]	end of Account.unpack() for 2:31CF8E61894D648E857CC6D14F8352C20C14D12F92A5F8DCE26F01224A63376D (balance = 1000ng ; last_trans_lt = 1..2)
+[ 4][t 0][2026-09-11 15:02:37.936492853][transaction.cpp:3555]	storage paid for a message: 0 cells, 0 bits
+[ 4][t 0][2026-09-11 15:02:37.936497800][transaction.cpp:3559]	computed fwd fees = 100 + 0
+D75_NONPUBLICATION: account BOCs unchanged; committed out_msgs empty; no returned pair
+PASS in 1349.5us
+1 test(s) passed

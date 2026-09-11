@@ -1,0 +1,22 @@
+{
+  "badproof.log": "6481025dd89f0e45582491a6dc9d02accbf35dabe8065c290e315509eb15d004",
+  "external-tool-sha256.json": "e70e29293cee1045022678dec2efe0640034b8429d0fa3fad4b8b3066c1ba294",
+  "fixture/current-state.boc": "7aa444810ed1c8e89dc4f656de7a8f1ab79b9cd6cb294fe47c3546d23d123f0a",
+  "fixture/debit-authenticated-block.boc": "3409b0a4b2fe56fcc8c6cfb270609e2a431b4e70bc8bcb82d9ae02309aef0e6d",
+  "fixture/operation.candidate.boc": "2d491ee41139414ea4bd24eae366c783f2989ef76947084c352dcc53bad6ff24",
+  "fixture/operation.request.txt": "683e2d59fe66110c2690a2e93d6e76658d5bbf388380ede078011c09da05b3f4",
+  "fixture/zerostate.boc": "0123672f5f90e200e746b1fd5a1440aae1e63313b6019999c0e2a55b29e72c15",
+  "floor-removed.log": "4f48bf73bbf32ac67cb2da4ef217c5a09b7ab4ec2e85a09a58872d00f4dec0c2",
+  "high/points.txt": "9d27726d76c28900a32da7c2031ce14fe33f5403d407a4e2113988bde33f6bfe",
+  "high/proof.txt": "808954415c15026f04a8381d37fa7ce2b54fe54485113c80eea2afec6a7528b6",
+  "high/request.txt": "7b2dbf74ba4fa1c320fd23bde2626f99adf55fc865c2e0c231761d08f948ddcd",
+  "high-check.log": "aae5c0d4d47399092b09875ed1c3294c0c82182c226ca814e29a3c5920a6c741",
+  "high-restored.log": "245c7d528de1900e037d13692bee0a781fe4ae9f0e2801c246b2a6e8b3a3d1bd",
+  "low/points.txt": "a1c1198ed828d4aedd4aa118dfe9bacc26dc0faf3b011fc523a50ea09cf74572",
+  "low/proof.txt": "52ee0745e8ff7848ab9b250a6539ce5ced18216b027932b345dc9a8091427c58",
+  "low/request.txt": "d926bc635cd2fde5c45c60fcd68d25765e6b0210102711e2f73512068cad8e2e",
+  "low-check.log": "abe7a7d715a9419b5a74f5d75f58d042fcf7991d290d55567fa0c3a5aaa9d51d",
+  "low-restored.log": "a5e03795d3687b9ce3bc4e8f3f7b36318a3ed80befb80870db3ed1cfb5120eaa",
+  "probe.cpp": "f2eb718311a8cc231e76a95da1df4b65765b5ecbf964294c718afac0310bfd3e",
+  "remove-floor-rejection.patch": "9d615d93ebed1da97f40a804370a477180a3e2381fc1728e6f99319f30426914"
+}

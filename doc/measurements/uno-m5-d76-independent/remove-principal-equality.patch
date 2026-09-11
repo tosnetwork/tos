@@ -1,0 +1,8 @@
+--- a/crypto/block/transaction.cpp
++++ b/crypto/block/transaction.cpp
+@@ -4735,4 +4735,3 @@
+     // cannot substitute for comparing the actual serialized message value.
+-    if (exact_principal && payment != CurrencyCollection(workchain_unsigned_fee(*exact_principal)))
+-      return td::Status::Error(-7200, "Native payout value differs from authenticated exact x");
++    // Isolated removal of the serialized principal equality.
+     if (exact_outward_fee && paid_fee != CurrencyCollection(workchain_unsigned_fee(*exact_outward_fee)))

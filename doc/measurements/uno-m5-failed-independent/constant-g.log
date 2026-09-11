@@ -1,0 +1,157 @@
+Running test Test_BReview_FailedActualComponents...
+[0m[ 4][t 0][2026-09-11 16:13:20.549890310][mc-config.cpp:572]	workchain description dictionary created[0m
+[0m[ 4][t 0][2026-09-11 16:13:20.550081731][mc-config.cpp:2347]	unpacked info for workchain 0: basic=true, active=true, accept_msgs=true, min_split=0, max_split=0[0m
+[0m[ 4][t 0][2026-09-11 16:13:20.550091106][mc-config.cpp:2347]	unpacked info for workchain 2: basic=true, active=true, accept_msgs=true, min_split=0, max_split=0[0m
+[0m[ 4][t 0][2026-09-11 16:13:20.550218602][transaction.cpp:621]	unpacking account 1111111111111111111111111111111111111111111111111111111111111111[0m
+[0m[ 4][t 0][2026-09-11 16:13:20.550237638][transaction.cpp:454]	last_paid=0; cells=16 bits=5120[0m
+[0m[ 4][t 0][2026-09-11 16:13:20.550245623][transaction.cpp:684]	end of Account.unpack() for 2:1111111111111111111111111111111111111111111111111111111111111111 (balance = 0ng ; last_trans_lt = 16000001..16000002)[0m
+[0m[ 4][t 0][2026-09-11 16:13:20.550264363][transaction.cpp:621]	unpacking account 1111111111111111111111111111111111111111111111111111111111111111[0m
+[0m[ 4][t 0][2026-09-11 16:13:20.550271177][transaction.cpp:454]	last_paid=0; cells=16 bits=5448[0m
+[0m[ 4][t 0][2026-09-11 16:13:20.550276671][transaction.cpp:684]	end of Account.unpack() for 2:1111111111111111111111111111111111111111111111111111111111111111 (balance = 0ng ; last_trans_lt = 20000001..20000002)[0m
+[0m[ 4][t 0][2026-09-11 16:13:20.550578253][transaction.cpp:621]	unpacking account FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF[0m
+[0m[ 4][t 0][2026-09-11 16:13:20.550586098][transaction.cpp:454]	last_paid=0; cells=3 bits=124[0m
+[0m[ 4][t 0][2026-09-11 16:13:20.550592653][transaction.cpp:684]	end of Account.unpack() for 2:FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF (balance = 989999643ng ; last_trans_lt = 16000001..16000003)[0m
+[0m[ 4][t 0][2026-09-11 16:13:20.550598661][transaction.cpp:621]	unpacking account FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF[0m
+[0m[ 4][t 0][2026-09-11 16:13:20.550604945][transaction.cpp:454]	last_paid=0; cells=3 bits=124[0m
+[0m[ 4][t 0][2026-09-11 16:13:20.550610803][transaction.cpp:684]	end of Account.unpack() for 2:FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF (balance = 996995705ng ; last_trans_lt = 20000001..20000002)[0m
+[0m[ 4][t 0][2026-09-11 16:13:20.550622138][transaction.cpp:621]	unpacking account 0000000000000000000000000000000000000000000000000000000000000000[0m
+[0m[ 4][t 0][2026-09-11 16:13:20.550628278][transaction.cpp:454]	last_paid=0; cells=6 bits=966[0m
+[0m[ 4][t 0][2026-09-11 16:13:20.550634284][transaction.cpp:684]	end of Account.unpack() for 2:0000000000000000000000000000000000000000000000000000000000000000 (balance = 21003000250ng ; last_trans_lt = 16000001..16000002)[0m
+[0m[ 4][t 0][2026-09-11 16:13:20.550640265][transaction.cpp:621]	unpacking account 0000000000000000000000000000000000000000000000000000000000000000[0m
+[0m[ 4][t 0][2026-09-11 16:13:20.550645511][transaction.cpp:454]	last_paid=0; cells=6 bits=966[0m
+[0m[ 4][t 0][2026-09-11 16:13:20.550650842][transaction.cpp:684]	end of Account.unpack() for 2:0000000000000000000000000000000000000000000000000000000000000000 (balance = 21006000250ng ; last_trans_lt = 20000001..20000002)[0m
+[0m[ 4][t 0][2026-09-11 16:13:20.550898717][transaction.cpp:621]	unpacking account 0000000000000000000000000000000000000000000000000000000000000000[0m
+[0m[ 4][t 0][2026-09-11 16:13:20.550905330][transaction.cpp:454]	last_paid=0; cells=6 bits=966[0m
+[0m[ 4][t 0][2026-09-11 16:13:20.550911370][transaction.cpp:684]	end of Account.unpack() for 2:0000000000000000000000000000000000000000000000000000000000000000 (balance = 21003000250ng ; last_trans_lt = 16000001..16000002)[0m
+[1;31m[ 0][t 0][2026-09-11 16:13:20.551819506][parameter.cpp:61]	Check `td::cmp(outcome.ok().fees.compute_fee,td::make_refint(expected_g))==0` failed[0m
+[pid 2568995] [time 1789143200] Signal: 6
+------- Stack Backtrace -------
+/tmp/b-failed-review/constant-g(+0x26e8b7)[0x5fd12a8d58b7]
+/tmp/b-failed-review/constant-g(+0xcbfed)[0x5fd12a732fed]
+/lib/x86_64-linux-gnu/libc.so.6(+0x42520)[0x76c828c42520]
+/lib/x86_64-linux-gnu/libc.so.6(pthread_kill+0x12c)[0x76c828c969bc]
+/lib/x86_64-linux-gnu/libc.so.6(raise+0x16)[0x76c828c42476]
+/lib/x86_64-linux-gnu/libc.so.6(abort+0xd3)[0x76c828c287f3]
+/tmp/b-failed-review/constant-g(+0x272727)[0x5fd12a8d9727]
+/tmp/b-failed-review/constant-g(+0x272827)[0x5fd12a8d9827]
+/tmp/b-failed-review/constant-g(+0x2723d7)[0x5fd12a8d93d7]
+/tmp/b-failed-review/constant-g(+0x270e24)[0x5fd12a8d7e24]
+/tmp/b-failed-review/constant-g(+0xed915)[0x5fd12a754915]
+/tmp/b-failed-review/constant-g(+0x2202f5)[0x5fd12a8872f5]
+/tmp/b-failed-review/constant-g(+0x2206ab)[0x5fd12a8876ab]
+/tmp/b-failed-review/constant-g(+0xcf564)[0x5fd12a736564]
+/tmp/b-failed-review/constant-g(+0xd3fca)[0x5fd12a73afca]
+/tmp/b-failed-review/constant-g(+0x27c35f)[0x5fd12a8e335f]
+/tmp/b-failed-review/constant-g(+0x27be88)[0x5fd12a8e2e88]
+/tmp/b-failed-review/constant-g(+0xcd03f)[0x5fd12a73403f]
+/lib/x86_64-linux-gnu/libc.so.6(+0x29d90)[0x76c828c29d90]
+/lib/x86_64-linux-gnu/libc.so.6(__libc_start_main+0x80)[0x76c828c29e40]
+/tmp/b-failed-review/constant-g(+0xccee5)[0x5fd12a733ee5]
+-------------------------------
+--- Enhanced Backtrace (libbacktrace) ---
+    #0  ?? (constant-g+0xcbfec) [0x5fd12a732fec]
+    #1  ?? at libc_sigaction.c (libc.so.6+0x4251f) [0x76c828c4251f]
+    #2  __pthread_kill_implementation at pthread_kill.c:44 (libc.so.6+0x969bc) [0x76c828c969bc]
+    #3  __pthread_kill_internal at pthread_kill.c:78 (libc.so.6+0x969bc) [0x76c828c969bc]
+    #4  __GI___pthread_kill at pthread_kill.c:89 (libc.so.6+0x969bc) [0x76c828c969bc]
+    #5  __GI_raise at raise.c:26 (libc.so.6+0x42475) [0x76c828c42475]
+    #6  __GI_abort at abort.c:79 (libc.so.6+0x287f2) [0x76c828c287f2]
+    #7  ?? (constant-g+0x272726) [0x5fd12a8d9726]
+    #8  ?? (constant-g+0x272826) [0x5fd12a8d9826]
+    #9  ?? (constant-g+0x2723d6) [0x5fd12a8d93d6]
+    #10  ?? (constant-g+0x270e23) [0x5fd12a8d7e23]
+    #11  ?? (constant-g+0xed914) [0x5fd12a754914]
+    #12  ?? (constant-g+0x2202f4) [0x5fd12a8872f4]
+    #13  ?? (constant-g+0x2206aa) [0x5fd12a8876aa]
+    #14  ?? (constant-g+0xcf563) [0x5fd12a736563]
+    #15  ?? (constant-g+0xd3fc9) [0x5fd12a73afc9]
+    #16  ?? (constant-g+0x27c35e) [0x5fd12a8e335e]
+    #17  ?? (constant-g+0x27be87) [0x5fd12a8e2e87]
+    #18  ?? (constant-g+0xcd03e) [0x5fd12a73403e]
+    #19  __libc_start_call_main at libc_start_call_main.h:58 (libc.so.6+0x29d8f) [0x76c828c29d8f]
+    #20  __libc_start_main_impl at libc-start.c:392 (libc.so.6+0x29e3f) [0x76c828c29e3f]
+    #21  ?? (constant-g+0xccee4) [0x5fd12a733ee4]
+    #22  P"%� (unknown+0xffffffffffffffff) [0xffffffffffffffff]
+------------------------------------------
+[Thread debugging using libthread_db enabled]
+Using host libthread_db library "/lib/x86_64-linux-gnu/libthread_db.so.1".
+0x000076c828cea3aa in __GI___wait4 (pid=2568997, stat_loc=0x0, options=0, usage=0x0) at ../sysdeps/unix/sysv/linux/wait4.c:30
+30	../sysdeps/unix/sysv/linux/wait4.c: No such file or directory.
+[Current thread is 1 (Thread 0x76c829392840 (LWP 2568995))]
+
+Thread 1 (Thread 0x76c829392840 (LWP 2568995) "constant-g"):
+#0  0x000076c828cea3aa in __GI___wait4 (pid=2568997, stat_loc=0x0, options=0, usage=0x0) at ../sysdeps/unix/sysv/linux/wait4.c:30
+        sc_ret = -512
+        sc_ret = <optimized out>
+#1  0x00005fd12a8d5b32 in td::Stacktrace::print_to_stderr(td::Stacktrace::PrintOptions const&) ()
+No symbol table info available.
+#2  0x00005fd12a732fed in td::default_failure_signal_handler(int) ()
+No symbol table info available.
+#3  <signal handler called>
+No locals.
+#4  __pthread_kill_implementation (no_tid=0, signo=6, threadid=130602057148480) at ./nptl/pthread_kill.c:44
+        tid = <optimized out>
+        ret = 0
+        pd = 0x76c829392840
+        old_mask = {__val = {140720612898896, 800551819506, 105351970005545, 140720612899464, 140720612898840, 184, 140720612898880, 105351966726842, 140720612899008, 129776916957162, 16, 4831625156661933312, 20, 18446744073709551192, 0, 105351970005545}}
+        ret = <optimized out>
+        pd = <optimized out>
+        old_mask = <optimized out>
+        ret = <optimized out>
+        tid = <optimized out>
+        ret = <optimized out>
+        resultvar = <optimized out>
+        resultvar = <optimized out>
+        __arg3 = <optimized out>
+        __arg2 = <optimized out>
+        __arg1 = <optimized out>
+        _a3 = <optimized out>
+        _a2 = <optimized out>
+        _a1 = <optimized out>
+        __futex = <optimized out>
+        resultvar = <optimized out>
+        __arg3 = <optimized out>
+        __arg2 = <optimized out>
+        __arg1 = <optimized out>
+        _a3 = <optimized out>
+        _a2 = <optimized out>
+        _a1 = <optimized out>
+        __futex = <optimized out>
+        __private = <optimized out>
+        __oldval = <optimized out>
+        result = <optimized out>
+#5  __pthread_kill_internal (signo=6, threadid=130602057148480) at ./nptl/pthread_kill.c:78
+No locals.
+#6  __GI___pthread_kill (threadid=130602057148480, signo=signo@entry=6) at ./nptl/pthread_kill.c:89
+No locals.
+#7  0x000076c828c42476 in __GI_raise (sig=sig@entry=6) at ../sysdeps/posix/raise.c:26
+        ret = <optimized out>
+#8  0x000076c828c287f3 in __GI_abort () at ./stdlib/abort.c:79
+        save_stage = 1
+        act = {__sigaction_handler = {sa_handler = 0x0, sa_sigaction = 0x0}, sa_mask = {__val = {21474840578, 5997972792945934336, 105351972738536, 0, 140720612899152, 1, 1, 105351972738536, 140720612899152, 7, 105351970155545, 140720612899216, 105351966725691, 0, 140720612899255, 0}}, sa_flags = 1, sa_restorer = 0x0}
+        sigs = {__val = {32, 130602056125336, 2, 1, 7, 130602057148056, 140720612899120, 105351966700943, 105351970197687, 13218337701180211466, 105352451692592, 16, 512, 85913872323588401, 130602056106080, 6}}
+#9  0x00005fd12a8d9727 in td::process_fatal_error(td::CSlice) ()
+No symbol table info available.
+#10 0x00005fd12a8d9827 in td::DefaultLog::append(td::CSlice, int) ()
+No symbol table info available.
+#11 0x00005fd12a8d93d7 in td::Logger::~Logger() ()
+No symbol table info available.
+#12 0x00005fd12a8d7e24 in td::detail::process_check_error(char const*, char const*, int) ()
+No symbol table info available.
+#13 0x00005fd12a754915 in std::_Function_handler<bool (td::Ref<vm::CellSlice>, td::BitPtrGen<unsigned char const>, int), Test_BReview_FailedActualComponents::run()::$_0>::_M_invoke(std::_Any_data const&, td::Ref<vm::CellSlice>&&, td::BitPtrGen<unsigned char const>&&, int&&) ()
+No symbol table info available.
+#14 0x00005fd12a8872f5 in vm::DictionaryFixed::dict_check_for_each(td::Ref<vm::Cell>, td::BitPtrGen<unsigned char>, int, int, std::function<bool (td::Ref<vm::CellSlice>, td::BitPtrGen<unsigned char const>, int)> const&, bool, bool) const ()
+No symbol table info available.
+#15 0x00005fd12a8876ab in vm::DictionaryFixed::check_for_each(std::function<bool (td::Ref<vm::CellSlice>, td::BitPtrGen<unsigned char const>, int)> const&, bool, bool) ()
+No symbol table info available.
+#16 0x00005fd12a736564 in Test_BReview_FailedActualComponents::run() ()
+No symbol table info available.
+#17 0x00005fd12a73afca in td::Test::step() ()
+No symbol table info available.
+#18 0x00005fd12a8e335f in td::TestsRunner::run_all_step() ()
+No symbol table info available.
+#19 0x00005fd12a8e2e88 in td::TestsRunner::run_all() ()
+No symbol table info available.
+#20 0x00005fd12a73403f in main ()
+No symbol table info available.
+[Inferior 1 (process 2568995) detached]

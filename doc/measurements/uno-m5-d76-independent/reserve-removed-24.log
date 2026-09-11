@@ -1,0 +1,5 @@
+[ 4][t 0][2026-09-11 15:35:56.595920012][mc-config.cpp:572]	workchain description dictionary created
+[ 4][t 0][2026-09-11 15:35:56.596116992][mc-config.cpp:2347]	unpacked info for workchain 0: basic=true, active=true, accept_msgs=true, min_split=0, max_split=0
+[ 4][t 0][2026-09-11 15:35:56.596125319][mc-config.cpp:2347]	unpacked info for workchain 2: basic=true, active=true, accept_msgs=true, min_split=0, max_split=0
+B_REGISTERED_POSITIVE b=23 OK (pre-proof hook)
+[ 0][t 0][2026-09-11 15:35:56.597900419][reserve.cpp:20]	Check `result.is_error()` failed

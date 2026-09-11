@@ -1,0 +1,7 @@
+--- a/crypto/block/transaction.cpp
++++ b/crypto/block/transaction.cpp
+@@ -4664,3 +4664,3 @@
+   TRY_RESULT(priced, price_workchain_payout(custody, request, start_lt, now,
+-      exact_outward_fee ? custody.balance.tomis : fee_budget, message_cfg));
++      (exact_outward_fee || exact_principal) ? custody.balance.tomis : fee_budget, message_cfg));
+   // Pricing checked both LT additions. Both old end LTs are <= start_lt,

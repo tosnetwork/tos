@@ -1,0 +1,18 @@
+[ 4][t 0][2026-09-11 15:18:18.493435723][mc-config.cpp:572]	workchain description dictionary created
+[ 4][t 0][2026-09-11 15:18:18.493666035][mc-config.cpp:2347]	unpacked info for workchain 0: basic=true, active=true, accept_msgs=true, min_split=0, max_split=0
+[ 4][t 0][2026-09-11 15:18:18.493674769][mc-config.cpp:2347]	unpacked info for workchain 2: basic=true, active=true, accept_msgs=true, min_split=0, max_split=0
+AUTHENTICATED_FLOOR state=250 base=2 units=1 floor=252 fee=251
+[ 4][t 0][2026-09-11 15:18:18.494066268][transaction.cpp:621]	unpacking account 1111111111111111111111111111111111111111111111111111111111111111
+[ 4][t 0][2026-09-11 15:18:18.494083956][transaction.cpp:454]	last_paid=0; cells=10 bits=3308
+[ 4][t 0][2026-09-11 15:18:18.494092545][transaction.cpp:684]	end of Account.unpack() for 2:1111111111111111111111111111111111111111111111111111111111111111 (balance = 0ng ; last_trans_lt = 14000001..14000002)
+[ 4][t 0][2026-09-11 15:18:18.494187544][transaction.cpp:621]	unpacking account 0000000000000000000000000000000000000000000000000000000000000000
+[ 4][t 0][2026-09-11 15:18:18.494195595][transaction.cpp:454]	last_paid=0; cells=6 bits=966
+[ 4][t 0][2026-09-11 15:18:18.494200967][transaction.cpp:684]	end of Account.unpack() for 2:0000000000000000000000000000000000000000000000000000000000000000 (balance = 21003000000ng ; last_trans_lt = 14000001..14000002)
+[ 4][t 0][2026-09-11 15:18:18.494207936][transaction.cpp:621]	unpacking account FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF
+[ 4][t 0][2026-09-11 15:18:18.494213291][transaction.cpp:454]	last_paid=0; cells=3 bits=124
+[ 4][t 0][2026-09-11 15:18:18.494218937][transaction.cpp:684]	end of Account.unpack() for 2:FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF (balance = 1000000000ng ; last_trans_lt = 14000001..14000002)
+KERNEL_MATCHING_PROOF_OK fee=251 units=3636
+[ 4][t 0][2026-09-11 15:18:18.522465338][transaction.cpp:621]	unpacking account 0000000000000000000000000000000000000000000000000000000000000000
+[ 4][t 0][2026-09-11 15:18:18.522486696][transaction.cpp:454]	last_paid=0; cells=6 bits=966
+[ 4][t 0][2026-09-11 15:18:18.522494772][transaction.cpp:684]	end of Account.unpack() for 2:0000000000000000000000000000000000000000000000000000000000000000 (balance = 21003000000ng ; last_trans_lt = 0..14000002)
+FEE_ADMISSION_EXACT_REJECTION -7200, proof prechecked; engine proof units=0

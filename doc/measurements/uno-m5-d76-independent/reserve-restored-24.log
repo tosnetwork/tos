@@ -1,0 +1,6 @@
+[ 4][t 0][2026-09-11 15:35:58.034501049][mc-config.cpp:572]	workchain description dictionary created
+[ 4][t 0][2026-09-11 15:35:58.034702166][mc-config.cpp:2347]	unpacked info for workchain 0: basic=true, active=true, accept_msgs=true, min_split=0, max_split=0
+[ 4][t 0][2026-09-11 15:35:58.034710916][mc-config.cpp:2347]	unpacked info for workchain 2: basic=true, active=true, accept_msgs=true, min_split=0, max_split=0
+B_REGISTERED_POSITIVE b=23 OK (pre-proof hook)
+-7200 Withdrawal reserve differs from authenticated max_bounce_cost
+B_REGISTERED_RESERVE b=24 -7200 at authenticated reserve equality

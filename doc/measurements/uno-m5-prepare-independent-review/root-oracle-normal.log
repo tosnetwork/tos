@@ -1,0 +1,17 @@
+Running test Test_BReview_ActualArtifactPairing...
+[ 4][t 0][2026-09-11 15:02:08.855112158][transaction.cpp:621]	unpacking account 1111111111111111111111111111111111111111111111111111111111111111
+[ 4][t 0][2026-09-11 15:02:08.855324902][transaction.cpp:454]	last_paid=0; cells=16 bits=5120
+[ 4][t 0][2026-09-11 15:02:08.855335889][transaction.cpp:684]	end of Account.unpack() for 2:1111111111111111111111111111111111111111111111111111111111111111 (balance = 0ng ; last_trans_lt = 16000001..16000002)
+[ 4][t 0][2026-09-11 15:02:10.707124379][transaction.cpp:621]	unpacking account 2222222222222222222222222222222222222222222222222222222222222222
+[ 4][t 0][2026-09-11 15:02:10.707147670][transaction.cpp:454]	last_paid=0; cells=10 bits=3308
+[ 4][t 0][2026-09-11 15:02:10.707153255][transaction.cpp:684]	end of Account.unpack() for 2:2222222222222222222222222222222222222222222222222222222222222222 (balance = 0ng ; last_trans_lt = 8000001..8000002)
+[ 4][t 0][2026-09-11 15:02:11.710523065][transaction.cpp:621]	unpacking account FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF
+[ 4][t 0][2026-09-11 15:02:11.710540543][transaction.cpp:454]	last_paid=0; cells=3 bits=124
+[ 4][t 0][2026-09-11 15:02:11.710545525][transaction.cpp:684]	end of Account.unpack() for 2:FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF (balance = 999999506ng ; last_trans_lt = 16000001..16000003)
+B_ROOT_MUTATION component=0 decoded=OK pair_error=0
+B_ROOT_MUTATION component=1 decoded=OK pair_error=0
+B_ROOT_MUTATION component=2 decoded=OK pair_error=1
+B_ARTIFACT R=999999506 N=999999483 P=137 W=160
+B_ORACLE principal-cancel=OK reserve-perturb=ERROR q-absent=OK
+PASS in 2856.3ms
+1 test(s) passed

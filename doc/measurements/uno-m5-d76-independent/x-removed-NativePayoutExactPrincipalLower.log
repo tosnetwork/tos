@@ -1,0 +1,125 @@
+Running test Test_WorkchainBlock_NativePayoutExactPrincipalLower...
+[ 4][t 0][2026-09-11 15:36:11.885751432][transaction.cpp:622]	unpacking account 0000000000000000000000000000000000000000000000000000000000000000
+[ 4][t 0][2026-09-11 15:36:11.885899976][transaction.cpp:455]	last_paid=0; cells=0 bits=0
+[ 4][t 0][2026-09-11 15:36:11.885907218][transaction.cpp:685]	end of Account.unpack() for 2:0000000000000000000000000000000000000000000000000000000000000000 (balance = 1000ng ; last_trans_lt = 1..2)
+[ 4][t 0][2026-09-11 15:36:11.885933022][transaction.cpp:622]	unpacking account 31CF8E61894D648E857CC6D14F8352C20C14D12F92A5F8DCE26F01224A63376D
+[ 4][t 0][2026-09-11 15:36:11.885936223][transaction.cpp:455]	last_paid=0; cells=0 bits=0
+[ 4][t 0][2026-09-11 15:36:11.885939486][transaction.cpp:685]	end of Account.unpack() for 2:31CF8E61894D648E857CC6D14F8352C20C14D12F92A5F8DCE26F01224A63376D (balance = 1000ng ; last_trans_lt = 1..2)
+[ 4][t 0][2026-09-11 15:36:11.886002699][transaction.cpp:3555]	storage paid for a message: 0 cells, 0 bits
+[ 4][t 0][2026-09-11 15:36:11.886005978][transaction.cpp:3559]	computed fwd fees = 100 + 0
+[ 0][t 0][2026-09-11 15:36:11.886085809][test-workchain-block.cpp:8101]	Expectation failed: result.is_error()!
+[pid 1658297] [time 1789140971] Signal: 6
+------- Stack Backtrace -------
+/tmp/b-d76-independent/x-removed(+0x6f9957)[0x5b57f5934957]
+/tmp/b-d76-independent/x-removed(+0xe0bdd)[0x5b57f531bbdd]
+/lib/x86_64-linux-gnu/libc.so.6(+0x42520)[0x717244a42520]
+/lib/x86_64-linux-gnu/libc.so.6(pthread_kill+0x12c)[0x717244a969bc]
+/lib/x86_64-linux-gnu/libc.so.6(raise+0x16)[0x717244a42476]
+/lib/x86_64-linux-gnu/libc.so.6(abort+0xd3)[0x717244a287f3]
+/tmp/b-d76-independent/x-removed(+0x6fcd57)[0x5b57f5937d57]
+/tmp/b-d76-independent/x-removed(+0x6fce57)[0x5b57f5937e57]
+/tmp/b-d76-independent/x-removed(+0x6fca07)[0x5b57f5937a07]
+/tmp/b-d76-independent/x-removed(+0x132783)[0x5b57f536d783]
+/tmp/b-d76-independent/x-removed(+0x1d069a)[0x5b57f540b69a]
+/tmp/b-d76-independent/x-removed(+0x706b2f)[0x5b57f5941b2f]
+/tmp/b-d76-independent/x-removed(+0x706658)[0x5b57f5941658]
+/tmp/b-d76-independent/x-removed(+0xe888f)[0x5b57f532388f]
+/lib/x86_64-linux-gnu/libc.so.6(+0x29d90)[0x717244a29d90]
+/lib/x86_64-linux-gnu/libc.so.6(__libc_start_main+0x80)[0x717244a29e40]
+/tmp/b-d76-independent/x-removed(+0xe8735)[0x5b57f5323735]
+-------------------------------
+--- Enhanced Backtrace (libbacktrace) ---
+    #0  ?? (x-removed+0xe0bdc) [0x5b57f531bbdc]
+    #1  ?? at libc_sigaction.c (libc.so.6+0x4251f) [0x717244a4251f]
+    #2  __pthread_kill_implementation at pthread_kill.c:44 (libc.so.6+0x969bc) [0x717244a969bc]
+    #3  __pthread_kill_internal at pthread_kill.c:78 (libc.so.6+0x969bc) [0x717244a969bc]
+    #4  __GI___pthread_kill at pthread_kill.c:89 (libc.so.6+0x969bc) [0x717244a969bc]
+    #5  __GI_raise at raise.c:26 (libc.so.6+0x42475) [0x717244a42475]
+    #6  __GI_abort at abort.c:79 (libc.so.6+0x287f2) [0x717244a287f2]
+    #7  ?? (x-removed+0x6fcd56) [0x5b57f5937d56]
+    #8  ?? (x-removed+0x6fce56) [0x5b57f5937e56]
+    #9  ?? (x-removed+0x6fca06) [0x5b57f5937a06]
+    #10  ?? (x-removed+0x132782) [0x5b57f536d782]
+    #11  ?? (x-removed+0x1d0699) [0x5b57f540b699]
+    #12  ?? (x-removed+0x706b2e) [0x5b57f5941b2e]
+    #13  ?? (x-removed+0x706657) [0x5b57f5941657]
+    #14  ?? (x-removed+0xe888e) [0x5b57f532388e]
+    #15  __libc_start_call_main at libc_start_call_main.h:58 (libc.so.6+0x29d8f) [0x717244a29d8f]
+    #16  __libc_start_main_impl at libc-start.c:392 (libc.so.6+0x29e3f) [0x717244a29e3f]
+    #17  ?? (x-removed+0xe8734) [0x5b57f5323734]
+    #18  �5G�� (unknown+0xffffffffffffffff) [0xffffffffffffffff]
+------------------------------------------
+[Thread debugging using libthread_db enabled]
+Using host libthread_db library "/lib/x86_64-linux-gnu/libthread_db.so.1".
+0x0000717244aea3aa in __GI___wait4 (pid=1658298, stat_loc=0x0, options=0, usage=0x0) at ../sysdeps/unix/sysv/linux/wait4.c:30
+30	../sysdeps/unix/sysv/linux/wait4.c: No such file or directory.
+[Current thread is 1 (Thread 0x71724511c840 (LWP 1658297))]
+
+Thread 1 (Thread 0x71724511c840 (LWP 1658297) "x-removed"):
+#0  0x0000717244aea3aa in __GI___wait4 (pid=1658298, stat_loc=0x0, options=0, usage=0x0) at ../sysdeps/unix/sysv/linux/wait4.c:30
+        sc_ret = -512
+        sc_ret = <optimized out>
+#1  0x00005b57f5934bd2 in td::Stacktrace::print_to_stderr(td::Stacktrace::PrintOptions const&) ()
+No symbol table info available.
+#2  0x00005b57f531bbdd in td::default_failure_signal_handler(int) ()
+No symbol table info available.
+#3  <signal handler called>
+No locals.
+#4  __pthread_kill_implementation (no_tid=0, signo=6, threadid=124735599003712) at ./nptl/pthread_kill.c:44
+        tid = <optimized out>
+        ret = 0
+        pd = 0x71724511c840
+        old_mask = {__val = {0, 511101108348, 390842024046, 140732023648728, 140732023648040, 124735593753728, 31, 1, 140732023648728, 30, 100433345177383, 3276004447792723712, 11, 18446744073709551184, 0, 100433343652834}}
+        ret = <optimized out>
+        pd = <optimized out>
+        old_mask = <optimized out>
+        ret = <optimized out>
+        tid = <optimized out>
+        ret = <optimized out>
+        resultvar = <optimized out>
+        resultvar = <optimized out>
+        __arg3 = <optimized out>
+        __arg2 = <optimized out>
+        __arg1 = <optimized out>
+        _a3 = <optimized out>
+        _a2 = <optimized out>
+        _a1 = <optimized out>
+        __futex = <optimized out>
+        resultvar = <optimized out>
+        __arg3 = <optimized out>
+        __arg2 = <optimized out>
+        __arg1 = <optimized out>
+        _a3 = <optimized out>
+        _a2 = <optimized out>
+        _a1 = <optimized out>
+        __futex = <optimized out>
+        __private = <optimized out>
+        __oldval = <optimized out>
+        result = <optimized out>
+#5  __pthread_kill_internal (signo=6, threadid=124735599003712) at ./nptl/pthread_kill.c:78
+No locals.
+#6  __GI___pthread_kill (threadid=124735599003712, signo=signo@entry=6) at ./nptl/pthread_kill.c:89
+No locals.
+#7  0x0000717244a42476 in __GI_raise (sig=sig@entry=6) at ../sysdeps/posix/raise.c:26
+        ret = <optimized out>
+#8  0x0000717244a287f3 in __GI_abort () at ./stdlib/abort.c:79
+        save_stage = 1
+        act = {__sigaction_handler = {sa_handler = 0x0, sa_sigaction = 0x0}, sa_mask = {__val = {21474840578, 0, 100433348332216, 0, 140732023648352, 1, 1, 100433348332216, 140732023648352, 7, 100433345154153, 140732023648416, 100433340365931, 0, 140732023648455, 0}}, sa_flags = 1, sa_restorer = 0x0}
+        sigs = {__val = {32, 124735598463896, 2, 1, 7, 124735599003280, 140732023648320, 100433340343855, 100433345171783, 266, 100433433832208, 16, 512, 14419223944114481, 124735598444640, 6}}
+#9  0x00005b57f5937d57 in td::process_fatal_error(td::CSlice) ()
+No symbol table info available.
+#10 0x00005b57f5937e57 in td::DefaultLog::append(td::CSlice, int) ()
+No symbol table info available.
+#11 0x00005b57f5937a07 in td::Logger::~Logger() ()
+No symbol table info available.
+#12 0x00005b57f536d783 in Test_WorkchainBlock_NativePayoutExactPrincipalLower::run() ()
+No symbol table info available.
+#13 0x00005b57f540b69a in td::Test::step() ()
+No symbol table info available.
+#14 0x00005b57f5941b2f in td::TestsRunner::run_all_step() ()
+No symbol table info available.
+#15 0x00005b57f5941658 in td::TestsRunner::run_all() ()
+No symbol table info available.
+#16 0x00005b57f532388f in main ()
+No symbol table info available.
+[Inferior 1 (process 1658297) detached]

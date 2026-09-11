@@ -327,3 +327,22 @@ backed pending, while the prepare event must preserve the complete pending cut.
 No A file, production source, CMake registration or frozen prediction was changed.
 Specification: 45b20d8f6678edeb. Return to read-only review after delivery; a
 committed prepare integration triggers B's independent shadow-build review.
+
+## Outstanding parameter freezes after funded Failed review
+
+Owner confirmation following `d08348b31`: successful live execution does not
+freeze protocol parameters. Keep these open through the specification's §12.1
+freeze process; explicit implementation-test inputs are not deployment defaults.
+
+| Parameter | Status / boundary |
+|---|---|
+| `failed.issuance_billing_units` (D70) | Not frozen. The reviewed fixture explicitly encoded 4; with authenticated test base 2 it produced g=8. Neither 4 nor 8 is a frozen protocol constant. Billing units remain distinct from proof-work units. |
+| Withdrawal `f_state` | Not frozen; explicit test configuration only, no local default. |
+| `max_bounce_cost` | Not frozen; reserve must match authenticated configuration. Apply D68's pricing-change margin criteria, not a universal network-cost guarantee. |
+| `payout_settlement_blocks` | Not frozen; explicit policy, not a finite delivery bound or safety guarantee. |
+| `K_withdrawal` (D67) | Initial value likewise remains separately conditional on freezing; do not infer it from test fixtures or from this list's other entries. |
+
+The observed base=2 is the fixture's authenticated tariff input, not a newly
+frozen base. This checklist grants no production activation, guard retirement,
+or full Failed-contract acceptance. The independent review remains retrospective;
+full three-site validator refusal behavior remains unestablished by that review.

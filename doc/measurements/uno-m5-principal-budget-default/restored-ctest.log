@@ -1,0 +1,85 @@
+Internal ctest changing into directory: /tmp/b-budget-default
+UpdateCTestConfiguration  from :/tmp/b-budget-default/DartConfiguration.tcl
+UpdateCTestConfiguration  from :/tmp/b-budget-default/DartConfiguration.tcl
+Test project /tmp/b-budget-default
+Constructing a list of tests
+Done constructing a list of tests
+Updating test list for fixtures
+Added 0 tests to meet fixture requirements
+Checking test dependency graph...
+Checking test dependency graph end
+test 42
+    Start 42: test-workchain-payout-principal-budget
+
+42: Test command: /tmp/b-budget-default/test-workchain-block "--filter" "NativePayoutPrincipalOnlyBudget"
+42: Test timeout computed to be: 60
+42: Running test Test_WorkchainBlock_NativePayoutPrincipalOnlyBudget...
+42: [0m[ 4][t 0][2026-09-11 15:47:53.523537168][current.cpp:622]	unpacking account 0000000000000000000000000000000000000000000000000000000000000000[0m
+42: [0m[ 4][t 0][2026-09-11 15:47:53.523750966][current.cpp:455]	last_paid=0; cells=0 bits=0[0m
+42: [0m[ 4][t 0][2026-09-11 15:47:53.523762252][current.cpp:685]	end of Account.unpack() for 2:0000000000000000000000000000000000000000000000000000000000000000 (balance = 1000ng ; last_trans_lt = 1..2)[0m
+42: [0m[ 4][t 0][2026-09-11 15:47:53.523792162][current.cpp:622]	unpacking account 31CF8E61894D648E857CC6D14F8352C20C14D12F92A5F8DCE26F01224A63376D[0m
+42: [0m[ 4][t 0][2026-09-11 15:47:53.523798897][current.cpp:455]	last_paid=0; cells=0 bits=0[0m
+42: [0m[ 4][t 0][2026-09-11 15:47:53.523804644][current.cpp:685]	end of Account.unpack() for 2:31CF8E61894D648E857CC6D14F8352C20C14D12F92A5F8DCE26F01224A63376D (balance = 1000ng ; last_trans_lt = 1..2)[0m
+42: [0m[ 4][t 0][2026-09-11 15:47:53.523888707][current.cpp:3555]	storage paid for a message: 0 cells, 0 bits[0m
+42: [0m[ 4][t 0][2026-09-11 15:47:53.523894110][current.cpp:3559]	computed fwd fees = 100 + 0[0m
+42: [0m[ 4][t 0][2026-09-11 15:47:53.523905444][current.cpp:3644]	not enough tomis to transfer with the message : remaining balance is 137ng, need 237 (including forwarding fees)[0m
+42: [0m[ 4][t 0][2026-09-11 15:47:53.523952090][current.cpp:622]	unpacking account 0000000000000000000000000000000000000000000000000000000000000000[0m
+42: [0m[ 4][t 0][2026-09-11 15:47:53.523959995][current.cpp:455]	last_paid=0; cells=0 bits=0[0m
+42: [0m[ 4][t 0][2026-09-11 15:47:53.523964940][current.cpp:685]	end of Account.unpack() for 2:0000000000000000000000000000000000000000000000000000000000000000 (balance = 1000ng ; last_trans_lt = 1..2)[0m
+42: [0m[ 4][t 0][2026-09-11 15:47:53.523970803][current.cpp:622]	unpacking account 31CF8E61894D648E857CC6D14F8352C20C14D12F92A5F8DCE26F01224A63376D[0m
+42: [0m[ 4][t 0][2026-09-11 15:47:53.523976755][current.cpp:455]	last_paid=0; cells=0 bits=0[0m
+42: [0m[ 4][t 0][2026-09-11 15:47:53.523982189][current.cpp:685]	end of Account.unpack() for 2:31CF8E61894D648E857CC6D14F8352C20C14D12F92A5F8DCE26F01224A63376D (balance = 1000ng ; last_trans_lt = 1..2)[0m
+42: [0m[ 4][t 0][2026-09-11 15:47:53.524003043][current.cpp:3555]	storage paid for a message: 0 cells, 0 bits[0m
+42: [0m[ 4][t 0][2026-09-11 15:47:53.524007810][current.cpp:3559]	computed fwd fees = 100 + 0[0m
+42: [0m[ 4][t 0][2026-09-11 15:47:53.524011961][current.cpp:3644]	not enough tomis to transfer with the message : remaining balance is 137ng, need 237 (including forwarding fees)[0m
+42: [0m[ 4][t 0][2026-09-11 15:47:53.524045295][current.cpp:622]	unpacking account 0000000000000000000000000000000000000000000000000000000000000000[0m
+42: [0m[ 4][t 0][2026-09-11 15:47:53.524054471][current.cpp:455]	last_paid=0; cells=0 bits=0[0m
+42: [0m[ 4][t 0][2026-09-11 15:47:53.524060128][current.cpp:685]	end of Account.unpack() for 2:0000000000000000000000000000000000000000000000000000000000000000 (balance = 1000ng ; last_trans_lt = 1..2)[0m
+42: [0m[ 4][t 0][2026-09-11 15:47:53.524065707][current.cpp:622]	unpacking account 31CF8E61894D648E857CC6D14F8352C20C14D12F92A5F8DCE26F01224A63376D[0m
+42: [0m[ 4][t 0][2026-09-11 15:47:53.524072193][current.cpp:455]	last_paid=0; cells=0 bits=0[0m
+42: [0m[ 4][t 0][2026-09-11 15:47:53.524077135][current.cpp:685]	end of Account.unpack() for 2:31CF8E61894D648E857CC6D14F8352C20C14D12F92A5F8DCE26F01224A63376D (balance = 1000ng ; last_trans_lt = 1..2)[0m
+42: [0m[ 4][t 0][2026-09-11 15:47:53.524098047][current.cpp:3555]	storage paid for a message: 0 cells, 0 bits[0m
+42: [0m[ 4][t 0][2026-09-11 15:47:53.524102863][current.cpp:3559]	computed fwd fees = 100 + 0[0m
+42: [0m[ 4][t 0][2026-09-11 15:47:53.524108407][current.cpp:3644]	not enough tomis to transfer with the message : remaining balance is 236ng, need 237 (including forwarding fees)[0m
+42: [0m[ 4][t 0][2026-09-11 15:47:53.524136723][current.cpp:622]	unpacking account 0000000000000000000000000000000000000000000000000000000000000000[0m
+42: [0m[ 4][t 0][2026-09-11 15:47:53.524144136][current.cpp:455]	last_paid=0; cells=0 bits=0[0m
+42: [0m[ 4][t 0][2026-09-11 15:47:53.524148774][current.cpp:685]	end of Account.unpack() for 2:0000000000000000000000000000000000000000000000000000000000000000 (balance = 1000ng ; last_trans_lt = 1..2)[0m
+42: [0m[ 4][t 0][2026-09-11 15:47:53.524154247][current.cpp:622]	unpacking account 31CF8E61894D648E857CC6D14F8352C20C14D12F92A5F8DCE26F01224A63376D[0m
+42: [0m[ 4][t 0][2026-09-11 15:47:53.524159675][current.cpp:455]	last_paid=0; cells=0 bits=0[0m
+42: [0m[ 4][t 0][2026-09-11 15:47:53.524164211][current.cpp:685]	end of Account.unpack() for 2:31CF8E61894D648E857CC6D14F8352C20C14D12F92A5F8DCE26F01224A63376D (balance = 1000ng ; last_trans_lt = 1..2)[0m
+42: [0m[ 4][t 0][2026-09-11 15:47:53.524182090][current.cpp:3555]	storage paid for a message: 0 cells, 0 bits[0m
+42: [0m[ 4][t 0][2026-09-11 15:47:53.524186945][current.cpp:3559]	computed fwd fees = 100 + 0[0m
+42: [0m[ 4][t 0][2026-09-11 15:47:53.524190878][current.cpp:3644]	not enough tomis to transfer with the message : remaining balance is 236ng, need 237 (including forwarding fees)[0m
+42: [0m[ 4][t 0][2026-09-11 15:47:53.524214702][current.cpp:622]	unpacking account 0000000000000000000000000000000000000000000000000000000000000000[0m
+42: [0m[ 4][t 0][2026-09-11 15:47:53.524221919][current.cpp:455]	last_paid=0; cells=0 bits=0[0m
+42: [0m[ 4][t 0][2026-09-11 15:47:53.524226509][current.cpp:685]	end of Account.unpack() for 2:0000000000000000000000000000000000000000000000000000000000000000 (balance = 1000ng ; last_trans_lt = 1..2)[0m
+42: [0m[ 4][t 0][2026-09-11 15:47:53.524232417][current.cpp:622]	unpacking account 31CF8E61894D648E857CC6D14F8352C20C14D12F92A5F8DCE26F01224A63376D[0m
+42: [0m[ 4][t 0][2026-09-11 15:47:53.524238684][current.cpp:455]	last_paid=0; cells=0 bits=0[0m
+42: [0m[ 4][t 0][2026-09-11 15:47:53.524243929][current.cpp:685]	end of Account.unpack() for 2:31CF8E61894D648E857CC6D14F8352C20C14D12F92A5F8DCE26F01224A63376D (balance = 1000ng ; last_trans_lt = 1..2)[0m
+42: [0m[ 4][t 0][2026-09-11 15:47:53.524260734][current.cpp:3555]	storage paid for a message: 0 cells, 0 bits[0m
+42: [0m[ 4][t 0][2026-09-11 15:47:53.524265607][current.cpp:3559]	computed fwd fees = 100 + 0[0m
+42: [0m[ 4][t 0][2026-09-11 15:47:53.524392618][current.cpp:622]	unpacking account 0000000000000000000000000000000000000000000000000000000000000000[0m
+42: [0m[ 4][t 0][2026-09-11 15:47:53.524400586][current.cpp:455]	last_paid=0; cells=0 bits=0[0m
+42: [0m[ 4][t 0][2026-09-11 15:47:53.524405354][current.cpp:685]	end of Account.unpack() for 2:0000000000000000000000000000000000000000000000000000000000000000 (balance = 1000ng ; last_trans_lt = 1..2)[0m
+42: [0m[ 4][t 0][2026-09-11 15:47:53.524411226][current.cpp:622]	unpacking account 31CF8E61894D648E857CC6D14F8352C20C14D12F92A5F8DCE26F01224A63376D[0m
+42: [0m[ 4][t 0][2026-09-11 15:47:53.524416916][current.cpp:455]	last_paid=0; cells=0 bits=0[0m
+42: [0m[ 4][t 0][2026-09-11 15:47:53.524422163][current.cpp:685]	end of Account.unpack() for 2:31CF8E61894D648E857CC6D14F8352C20C14D12F92A5F8DCE26F01224A63376D (balance = 1000ng ; last_trans_lt = 1..2)[0m
+42: [0m[ 4][t 0][2026-09-11 15:47:53.524441360][current.cpp:3555]	storage paid for a message: 0 cells, 0 bits[0m
+42: [0m[ 4][t 0][2026-09-11 15:47:53.524446286][current.cpp:3559]	computed fwd fees = 100 + 0[0m
+42: B_PRINCIPAL_ONLY ceiling=0 same legacy refusal: batch native message send failed
+42: B_PRINCIPAL_ONLY ceiling=99 same legacy refusal: batch native message send failed
+42: PRINCIPAL_BUDGET_OBSERVED ceiling100 accepted; exact-q ceiling0 accepted
+42: PASS in 1952.8us
+42: 1 test(s) passed
+1/1 Test #42: test-workchain-payout-principal-budget ...   Passed    0.01 sec
+
+The following tests passed:
+	test-workchain-payout-principal-budget
+
+100% tests passed, 0 tests failed out of 1
+
+Label Time Summary:
+m5           =   0.01 sec*proc (1 test)
+workchain    =   0.01 sec*proc (1 test)
+
+Total Test time (real) =   0.01 sec

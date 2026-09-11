@@ -1,0 +1,47 @@
+{
+  "validator-off.calls": {
+    "paths": {
+      "before": "/tmp/uno-m3-live-8x3sz5uk/validator-off.calls",
+      "after": "/tmp/uno-m3-live-8x3sz5uk/validator-off-after-evidence/validator-off.calls"
+    },
+    "length": 19,
+    "sha256": "e4557d54138146766690989bcc6b0da5bbaceb972d97f009b70c65cd1075f69e",
+    "text": "config=1\nexecute=0\n"
+  },
+  "validator-off.result.validation.delivery": {
+    "paths": {
+      "before": "/tmp/uno-m3-live-8x3sz5uk/validator-off.result.validation.delivery",
+      "after": "/tmp/uno-m3-live-8x3sz5uk/validator-off-after-evidence/validator-off.result.validation.delivery"
+    },
+    "length": 9,
+    "sha256": "a92849bddf0867f641d022b88f2b038adc779a975d5f6325c36a4c57208d814c",
+    "text": "recorded\n"
+  },
+  "validator-off.result.validation.kind": {
+    "paths": {
+      "before": "/tmp/uno-m3-live-8x3sz5uk/validator-off.result.validation.kind",
+      "after": "/tmp/uno-m3-live-8x3sz5uk/validator-off-after-evidence/validator-off.result.validation.kind"
+    },
+    "length": 6,
+    "sha256": "f097b5f4f46cda2da21b954c9ff4097e1e14ae7064ecdee2c2cec2d3c1f08e6b",
+    "text": "error\n"
+  },
+  "validator-off.result.validation.message": {
+    "paths": {
+      "before": "/tmp/uno-m3-live-8x3sz5uk/validator-off.result.validation.message",
+      "after": "/tmp/uno-m3-live-8x3sz5uk/validator-off-after-evidence/validator-off.result.validation.message"
+    },
+    "length": 89,
+    "sha256": "ead83ddd0f4b7df49ca0c2e299d6c8eb6da31392de59b3a80a6cdc527d2bd860",
+    "text": "cannot execute configured workchain: multi-account admission and replay are not connected"
+  },
+  "validator-off.result.validation.result": {
+    "paths": {
+      "before": "/tmp/uno-m3-live-8x3sz5uk/validator-off.result.validation.result",
+      "after": "/tmp/uno-m3-live-8x3sz5uk/validator-off-after-evidence/validator-off.result.validation.result"
+    },
+    "length": 15,
+    "sha256": "b2f3bfdf3b1abc794da5d2d9833ef717de1171244a74ab1358f0ac5a4345eac7",
+    "text": "validate -7201\n"
+  }
+}

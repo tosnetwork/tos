@@ -1,0 +1,120 @@
+Running test Test_BReview_ActualArtifactPairing...
+[ 4][t 0][2026-09-11 15:02:19.270691554][transaction.cpp:621]	unpacking account 1111111111111111111111111111111111111111111111111111111111111111
+[ 4][t 0][2026-09-11 15:02:19.270875372][transaction.cpp:454]	last_paid=0; cells=16 bits=5120
+[ 4][t 0][2026-09-11 15:02:19.270886519][transaction.cpp:684]	end of Account.unpack() for 2:1111111111111111111111111111111111111111111111111111111111111111 (balance = 0ng ; last_trans_lt = 16000001..16000002)
+[ 0][t 0][2026-09-11 15:02:19.271486871][root-oracle.cpp:47]	Expectation failed: check.is_error() is not equal to component==2 (0 != 1)
+[pid 833897] [time 1789138939] Signal: 6
+------- Stack Backtrace -------
+/tmp/b-d75-independent/root-oracle-disabled(+0x1fb357)[0x5983f4ccf357]
+/tmp/b-d75-independent/root-oracle-disabled(+0xb2f0d)[0x5983f4b86f0d]
+/lib/x86_64-linux-gnu/libc.so.6(+0x42520)[0x7f3784242520]
+/lib/x86_64-linux-gnu/libc.so.6(pthread_kill+0x12c)[0x7f37842969bc]
+/lib/x86_64-linux-gnu/libc.so.6(raise+0x16)[0x7f3784242476]
+/lib/x86_64-linux-gnu/libc.so.6(abort+0xd3)[0x7f37842287f3]
+/tmp/b-d75-independent/root-oracle-disabled(+0x1fe6c7)[0x5983f4cd26c7]
+/tmp/b-d75-independent/root-oracle-disabled(+0x1fe7c7)[0x5983f4cd27c7]
+/tmp/b-d75-independent/root-oracle-disabled(+0x1fe377)[0x5983f4cd2377]
+/tmp/b-d75-independent/root-oracle-disabled(+0xb6373)[0x5983f4b8a373]
+/tmp/b-d75-independent/root-oracle-disabled(+0xbbd6a)[0x5983f4b8fd6a]
+/tmp/b-d75-independent/root-oracle-disabled(+0x2081ff)[0x5983f4cdc1ff]
+/tmp/b-d75-independent/root-oracle-disabled(+0x207d28)[0x5983f4cdbd28]
+/tmp/b-d75-independent/root-oracle-disabled(+0xb3f5f)[0x5983f4b87f5f]
+/lib/x86_64-linux-gnu/libc.so.6(+0x29d90)[0x7f3784229d90]
+/lib/x86_64-linux-gnu/libc.so.6(__libc_start_main+0x80)[0x7f3784229e40]
+/tmp/b-d75-independent/root-oracle-disabled(+0xb3e05)[0x5983f4b87e05]
+-------------------------------
+--- Enhanced Backtrace (libbacktrace) ---
+    #0  ?? (root-oracle-disabled+0xb2f0c) [0x5983f4b86f0c]
+    #1  ?? at libc_sigaction.c (libc.so.6+0x4251f) [0x7f378424251f]
+    #2  __pthread_kill_implementation at pthread_kill.c:44 (libc.so.6+0x969bc) [0x7f37842969bc]
+    #3  __pthread_kill_internal at pthread_kill.c:78 (libc.so.6+0x969bc) [0x7f37842969bc]
+    #4  __GI___pthread_kill at pthread_kill.c:89 (libc.so.6+0x969bc) [0x7f37842969bc]
+    #5  __GI_raise at raise.c:26 (libc.so.6+0x42475) [0x7f3784242475]
+    #6  __GI_abort at abort.c:79 (libc.so.6+0x287f2) [0x7f37842287f2]
+    #7  ?? (root-oracle-disabled+0x1fe6c6) [0x5983f4cd26c6]
+    #8  ?? (root-oracle-disabled+0x1fe7c6) [0x5983f4cd27c6]
+    #9  ?? (root-oracle-disabled+0x1fe376) [0x5983f4cd2376]
+    #10  ?? (root-oracle-disabled+0xb6372) [0x5983f4b8a372]
+    #11  ?? (root-oracle-disabled+0xbbd69) [0x5983f4b8fd69]
+    #12  ?? (root-oracle-disabled+0x2081fe) [0x5983f4cdc1fe]
+    #13  ?? (root-oracle-disabled+0x207d27) [0x5983f4cdbd27]
+    #14  ?? (root-oracle-disabled+0xb3f5e) [0x5983f4b87f5e]
+    #15  __libc_start_call_main at libc_start_call_main.h:58 (libc.so.6+0x29d8f) [0x7f3784229d8f]
+    #16  __libc_start_main_impl at libc-start.c:392 (libc.so.6+0x29e3f) [0x7f3784229e3f]
+    #17  ?? (root-oracle-disabled+0xb3e04) [0x5983f4b87e04]
+    #18  ��� (unknown+0xffffffffffffffff) [0xffffffffffffffff]
+------------------------------------------
+[Thread debugging using libthread_db enabled]
+Using host libthread_db library "/lib/x86_64-linux-gnu/libthread_db.so.1".
+0x00007f37842ea3aa in __GI___wait4 (pid=833898, stat_loc=0x0, options=0, usage=0x0) at ../sysdeps/unix/sysv/linux/wait4.c:30
+30	../sysdeps/unix/sysv/linux/wait4.c: No such file or directory.
+[Current thread is 1 (Thread 0x7f3784931840 (LWP 833897))]
+
+Thread 1 (Thread 0x7f3784931840 (LWP 833897) "root-oracle-dis"):
+#0  0x00007f37842ea3aa in __GI___wait4 (pid=833898, stat_loc=0x0, options=0, usage=0x0) at ../sysdeps/unix/sysv/linux/wait4.c:30
+        sc_ret = -512
+        sc_ret = <optimized out>
+#1  0x00005983f4ccf5d2 in td::Stacktrace::print_to_stderr(td::Stacktrace::PrintOptions const&) ()
+No symbol table info available.
+#2  0x00005983f4b86f0d in td::default_failure_signal_handler(int) ()
+No symbol table info available.
+#3  <signal handler called>
+No locals.
+#4  __pthread_kill_implementation (no_tid=0, signo=6, threadid=139876424161344) at ./nptl/pthread_kill.c:44
+        tid = <optimized out>
+        ret = 0
+        pd = 0x7f3784931840
+        old_mask = {__val = {140724017850256, 139271486871, 98423285957130, 140724017853784, 140724017850200, 184, 140724017850240, 98423282674266, 140724017850368, 139672521607146, 15, 15692377064083235072, 19, 18446744073709551192, 0, 98423285957130}}
+        ret = <optimized out>
+        pd = <optimized out>
+        old_mask = <optimized out>
+        ret = <optimized out>
+        tid = <optimized out>
+        ret = <optimized out>
+        resultvar = <optimized out>
+        resultvar = <optimized out>
+        __arg3 = <optimized out>
+        __arg2 = <optimized out>
+        __arg1 = <optimized out>
+        _a3 = <optimized out>
+        _a2 = <optimized out>
+        _a1 = <optimized out>
+        __futex = <optimized out>
+        resultvar = <optimized out>
+        __arg3 = <optimized out>
+        __arg2 = <optimized out>
+        __arg1 = <optimized out>
+        _a3 = <optimized out>
+        _a2 = <optimized out>
+        _a1 = <optimized out>
+        __futex = <optimized out>
+        __private = <optimized out>
+        __oldval = <optimized out>
+        result = <optimized out>
+#5  __pthread_kill_internal (signo=6, threadid=139876424161344) at ./nptl/pthread_kill.c:78
+No locals.
+#6  __GI___pthread_kill (threadid=139876424161344, signo=signo@entry=6) at ./nptl/pthread_kill.c:89
+No locals.
+#7  0x00007f3784242476 in __GI_raise (sig=sig@entry=6) at ../sysdeps/posix/raise.c:26
+        ret = <optimized out>
+#8  0x00007f37842287f3 in __GI_abort () at ./stdlib/abort.c:79
+        save_stage = 1
+        act = {__sigaction_handler = {sa_handler = 0x0, sa_sigaction = 0x0}, sa_mask = {__val = {21474840578, 0, 98423288522008, 0, 140724017850512, 1, 1, 98423288522008, 140724017850512, 7, 98423286083561, 140724017850576, 98423282673115, 0, 140724017850615, 0}}, sa_flags = 1, sa_restorer = 0x0}
+        sigs = {__val = {32, 139876423535512, 2, 1, 7, 139876424160920, 140724017850480, 98423282651183, 98423286100167, 98423470555402, 98424332499648, 16, 512, 13574799013982513, 139876423516256, 6}}
+#9  0x00005983f4cd26c7 in td::process_fatal_error(td::CSlice) ()
+No symbol table info available.
+#10 0x00005983f4cd27c7 in td::DefaultLog::append(td::CSlice, int) ()
+No symbol table info available.
+#11 0x00005983f4cd2377 in td::Logger::~Logger() ()
+No symbol table info available.
+#12 0x00005983f4b8a373 in Test_BReview_ActualArtifactPairing::run() ()
+No symbol table info available.
+#13 0x00005983f4b8fd6a in td::Test::step() ()
+No symbol table info available.
+#14 0x00005983f4cdc1ff in td::TestsRunner::run_all_step() ()
+No symbol table info available.
+#15 0x00005983f4cdbd28 in td::TestsRunner::run_all() ()
+No symbol table info available.
+#16 0x00005983f4b87f5f in main ()
+No symbol table info available.
+[Inferior 1 (process 833897) detached]

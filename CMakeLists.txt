@@ -1277,6 +1277,11 @@ tos_test(test-vm ${TEST_OPTIONS})
 tos_test(test-fift ${TEST_OPTIONS})
 tos_test(test-cells ${TEST_OPTIONS})
 tos_test(test-workchain-block)
+add_test(NAME test-workchain-payout-principal-budget
+  COMMAND $<TARGET_FILE:test-workchain-block> --filter NativePayoutPrincipalOnlyBudget)
+set_tests_properties(test-workchain-payout-principal-budget PROPERTIES
+  TIMEOUT 60 LABELS "workchain;m5"
+  PASS_REGULAR_EXPRESSION "PRINCIPAL_BUDGET_OBSERVED")
 tos_test(test-workchain-settlement-continuation)
 tos_test(test-workchain-collator-compute-mode)
 tos_test(test-workchain-proof-work)
