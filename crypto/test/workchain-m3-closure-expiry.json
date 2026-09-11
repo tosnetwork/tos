@@ -5,7 +5,7 @@
   "crypto/block/block.tlb:identifiers": "d6c3d73cac6992b60e70d050664acf1921f9ff5600090a1e57188374c082ba35",
   "crypto/block/block.tlb:schema": "ff4cc1b18d637fbcc67ed0e9459a71767b8afc2d1af9972e1be585326923a6ee",
   "crypto/block/create-state.cpp:identifiers": "3956841aab72b783b082b40cec3c3237b4e64dcb2c290faec2e0749cdfe44215",
-  "crypto/block/transaction.cpp:identifiers": "c53e3c52135f7d704f93879a753808e9712ea396285157fbbb55228ab900346b",
+  "crypto/block/transaction.cpp:identifiers": "a379774b83cdd9cae9bd0ed1d2e151871b2c9fb4846ae213886d7222278ec96b",
   "crypto/block/workchain-account-closure.h:identifiers": "fe1d22121db7ab77817db062daf39eb1236dbc954c928f85280f61b5ffb3b0cd",
   "crypto/block/workchain-confidential-state.h:state": "639d9a30d6db9971cb32062fda62938255eb068985638981b404d5f43afed951",
   "crypto/block/workchain-coordinator-state.h:identifiers": "ccc5a8a3da96370d40d799390e9c66152d9adfbc52dcdda180637fd5705631ec",
@@ -74,5 +74,8 @@
   "crypto/block/workchain-deposit-admission.h:identifiers": "71658d6b8d029cec1b775ee5cc3118960768b14544d7d769e77f48d8f170ccb8",
   "crypto/block/workchain-transfer-statement.h:identifiers": "6db99c8ea7977d0d8bd1fbc18e9bc53c596049c5f01d312531c9260a75441701",
   "crypto/block/workchain-confidential-execution.h:identifiers": "c4dbb9ec44cc53a48b26f076087a044f5e83808c83de2150639cad4950afdbff",
-  "crypto/block/workchain-deposit-transition.h:identifiers": "77518ff65a806f158e444b63fe2579e8a989f2a91c978cba13aaf6f0a2ba2d74"
+  "crypto/block/workchain-deposit-transition.h:identifiers": "77518ff65a806f158e444b63fe2579e8a989f2a91c978cba13aaf6f0a2ba2d74",
+  "crypto/block/workchain-account-engine.h:identifiers": "6718597fa8a8060d15a57c236a5a8111373e8de446a5b6fa6eb855bca37a31ae",
+  "crypto/block/workchain-account-settlement.h:identifiers": "2f78c8bc78dccd48f39d5ec56acf9e2734ce6b4dcce463786172fba65e5bf74c",
+  "crypto/block/workchain-deposit-rejection-settlement.h:identifiers": "3b96cc482aef994b89531fd3a27498340221d4f86d918a34150ced19671b2d52"
 }
