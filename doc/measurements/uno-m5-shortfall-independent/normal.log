@@ -1,0 +1,36 @@
+Running test Test_BReview_FailedActualComponents...
+[0m[ 4][t 0][2026-09-11 19:06:06.968148417][mc-config.cpp:572]	workchain description dictionary created[0m
+[0m[ 4][t 0][2026-09-11 19:06:06.968422237][mc-config.cpp:2347]	unpacked info for workchain 0: basic=true, active=true, accept_msgs=true, min_split=0, max_split=0[0m
+[0m[ 4][t 0][2026-09-11 19:06:06.968431669][mc-config.cpp:2347]	unpacked info for workchain 2: basic=true, active=true, accept_msgs=true, min_split=0, max_split=0[0m
+[0m[ 4][t 0][2026-09-11 19:06:06.968577441][transaction.cpp:621]	unpacking account 1111111111111111111111111111111111111111111111111111111111111111[0m
+[0m[ 4][t 0][2026-09-11 19:06:06.968593090][transaction.cpp:454]	last_paid=0; cells=16 bits=5120[0m
+[0m[ 4][t 0][2026-09-11 19:06:06.968600844][transaction.cpp:684]	end of Account.unpack() for 2:1111111111111111111111111111111111111111111111111111111111111111 (balance = 0ng ; last_trans_lt = 16000001..16000002)[0m
+[0m[ 4][t 0][2026-09-11 19:06:06.968618301][transaction.cpp:621]	unpacking account 1111111111111111111111111111111111111111111111111111111111111111[0m
+[0m[ 4][t 0][2026-09-11 19:06:06.968626269][transaction.cpp:454]	last_paid=0; cells=16 bits=5448[0m
+[0m[ 4][t 0][2026-09-11 19:06:06.968631666][transaction.cpp:684]	end of Account.unpack() for 2:1111111111111111111111111111111111111111111111111111111111111111 (balance = 0ng ; last_trans_lt = 20000001..20000002)[0m
+[0m[ 4][t 0][2026-09-11 19:06:06.968955323][transaction.cpp:621]	unpacking account FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF[0m
+[0m[ 4][t 0][2026-09-11 19:06:06.968963167][transaction.cpp:454]	last_paid=0; cells=3 bits=124[0m
+[0m[ 4][t 0][2026-09-11 19:06:06.968969168][transaction.cpp:684]	end of Account.unpack() for 2:FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF (balance = 989999643ng ; last_trans_lt = 16000001..16000003)[0m
+[0m[ 4][t 0][2026-09-11 19:06:06.968975536][transaction.cpp:621]	unpacking account FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF[0m
+[0m[ 4][t 0][2026-09-11 19:06:06.968981637][transaction.cpp:454]	last_paid=0; cells=3 bits=124[0m
+[0m[ 4][t 0][2026-09-11 19:06:06.968986963][transaction.cpp:684]	end of Account.unpack() for 2:FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF (balance = 996995705ng ; last_trans_lt = 20000001..20000002)[0m
+[0m[ 4][t 0][2026-09-11 19:06:06.968998275][transaction.cpp:621]	unpacking account 0000000000000000000000000000000000000000000000000000000000000000[0m
+[0m[ 4][t 0][2026-09-11 19:06:06.969004435][transaction.cpp:454]	last_paid=0; cells=6 bits=966[0m
+[0m[ 4][t 0][2026-09-11 19:06:06.969009940][transaction.cpp:684]	end of Account.unpack() for 2:0000000000000000000000000000000000000000000000000000000000000000 (balance = 21003000250ng ; last_trans_lt = 16000001..16000002)[0m
+[0m[ 4][t 0][2026-09-11 19:06:06.969015728][transaction.cpp:621]	unpacking account 0000000000000000000000000000000000000000000000000000000000000000[0m
+[0m[ 4][t 0][2026-09-11 19:06:06.969022068][transaction.cpp:454]	last_paid=0; cells=6 bits=966[0m
+[0m[ 4][t 0][2026-09-11 19:06:06.969027063][transaction.cpp:684]	end of Account.unpack() for 2:0000000000000000000000000000000000000000000000000000000000000000 (balance = 21006000250ng ; last_trans_lt = 20000001..20000002)[0m
+[0m[ 4][t 0][2026-09-11 19:06:06.969279298][transaction.cpp:621]	unpacking account 0000000000000000000000000000000000000000000000000000000000000000[0m
+[0m[ 4][t 0][2026-09-11 19:06:06.969286864][transaction.cpp:454]	last_paid=0; cells=6 bits=966[0m
+[0m[ 4][t 0][2026-09-11 19:06:06.969292515][transaction.cpp:684]	end of Account.unpack() for 2:0000000000000000000000000000000000000000000000000000000000000000 (balance = 21003000250ng ; last_trans_lt = 16000001..16000002)[0m
+CUSTODY before=989999643 after=996995705 delta=6996062
+COORDINATOR before=21003000250 after=21006000250 delta=3000000
+ACTUAL_CUSTODY_TX_FEE=8
+PARAMETER_CONTROL variant=0 base=2 units=4 g=8 slot=3000000 receipt=7996062
+PARAMETER_CONTROL variant=1 base=3 units=4 g=12 slot=3000000 receipt=7996058
+PARAMETER_CONTROL variant=2 base=2 units=5 g=10 slot=3000000 receipt=7996060
+PARAMETER_CONTROL variant=3 base=2 units=4 g=8 slot=3000001 receipt=7996061
+ACTUAL_NATIVE_BOUNCE collected=1309 forwarded=2621 sum=3930 matched_inbound_and_outbound=1
+COMPONENTS x=10000000 y=9996070 b=1000000 base=2 units=4 g=8 slot=3000000 installed_receipt=7996062
+PASS in 3983.0us
+1 test(s) passed
