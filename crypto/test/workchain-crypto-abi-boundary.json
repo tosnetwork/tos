@@ -149,7 +149,7 @@
     "symbols": [
       "uno_crypto_verify_v2"
     ],
-    "sha256": "b4e29d3dba112f12604bd376703cccd3a3c4ed58f981403dbdc617a9476c5f2a",
+      "sha256": "f748ccbbefdb6b8919f9e6d4b3caa1f35871ea0bba0676fb28cc12c091269596",
     "disposition": "Rust unit tests call relation ABI directly to test its own contract, not node execution."
   },
   "uno/crypto/tests/balance-abi.cpp": {

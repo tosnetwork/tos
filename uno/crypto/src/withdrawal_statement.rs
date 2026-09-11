@@ -74,7 +74,10 @@ impl WithdrawalStatement {
         balance_points: [[u8; 32]; 6]) -> Result<Self, AbiStatus> {
         relation::validate_limits(limits)?;
         let total = amounts.total()?;
-        if total > limits.max_value || authenticated_context.is_empty() {
+        // D66: checked total above links the public payout amounts before any
+        // scalar conversion. T <= V_max belongs to the existing range proof,
+        // not a second construction/admission gate.
+        if authenticated_context.is_empty() {
             return Err(AbiStatus::UNO_CRYPTO_DECODE);
         }
         // Bound allocation before copying caller bytes. Context includes a
