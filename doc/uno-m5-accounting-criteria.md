@@ -126,3 +126,10 @@ build objects were not changed by these controls:
 These results establish that the intended assertion branches are exercised.
 They do not establish M5 host compliance, complete lineage reconstruction,
 governance sweep authorization, or a full regression result.
+
+## Tracked successor (2026-09-11; does not rewrite frozen evidence)
+
+The D62/D63 synthetic-only limitation is now a mandatory outstanding real-host
+contract: [BUCKET-SWEEP](uno-m5-bucket-sweep-handoff.md). Its readiness runner exits
+1 and names missing tests. Later D70/D71 fee splitting applies there; the original
+pre-D70 arithmetic above remains historical, not the current sweep prescription.

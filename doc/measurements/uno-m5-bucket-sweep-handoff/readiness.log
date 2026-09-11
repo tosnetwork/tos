@@ -1,0 +1,3 @@
+BUCKET-SWEEP HANDOFF_NOT_READY: missing=['test-workchain-bucket-sweep-return-once', 'test-workchain-bucket-sweep-terminal', 'test-workchain-bucket-sweep-close', 'test-workchain-bucket-sweep-transfer', 'test-workchain-bucket-sweep-fee-routing', 'test-workchain-bucket-sweep-sequence', 'test-workchain-bucket-sweep-atomicity', 'test-workchain-bucket-sweep-oracle-control']; disabled=[]; duplicated=[]
+
+exit=1
