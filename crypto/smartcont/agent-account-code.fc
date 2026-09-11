@@ -91,31 +91,41 @@ const int max_controller_epoch = 18446744073709551615; ;; 2^64 - 1
 ;; inclusion.
 ;;
 ;; A skipped action would still consume the seqno and daily spend without any
-;; output, which observers can never resolve. For the ordinary-cell deploy
-;; profile produced by the Rust signing API, every action-phase rejection is
-;; therefore excluded before accept_message(): the destination is a plain
-;; standard address in this account's own workchain, the StateInit has the
-;; plain code+data shape, the message fits the validator's live size limits,
-;; and the balance covers the value, exact forward fee and bounded compute
-;; fee. A controller that bypasses the signing API can still sign exotic
-;; level-zero cells; that controller already has authority to spend the
-;; account, and such payloads are explicitly outside the supported profile.
+;; output, which observers can never resolve, so every action-phase rejection
+;; is still excluded before the outbound message is built. The checks are
+;; split by what they cost, not by what they check:
+;;
+;;   * Before accept_message() runs only work this contract prices itself:
+;;     loading state, verifying the controller signature, and the shape
+;;     checks on the destination and on the StateInit root. An unaccepted
+;;     external message is executed on a fixed allowance (the gas_credit of
+;;     ConfigParam 20/21), granted for free to whoever sent it, so nothing
+;;     whose cost the sender controls can be paid for here.
+;;   * Sizing the attached trees charges one cell load per distinct cell,
+;;     which makes its price a function of the payload. It runs after
+;;     accept_message(), under the post-accept gas limit, together with the
+;;     fee reserve computed from its result.
+;;
+;; Putting a payload-priced check in the first group does not make it strict;
+;; it makes it unreachable. Walking a tree up to the ConfigParam 43 cell
+;; limit costs orders of magnitude more than the whole credit, so such a
+;; check stops the transaction by exhausting the allowance -- the collator
+;; then drops the message with no trace on chain -- long before it can report
+;; err::message_too_large. Keeping the second group after acceptance is what
+;; makes that error reachable and the payload limit real.
+;;
+;; Accepting first would let a rejected request be replayed, so the path
+;; consumes and commit()s seqno + 1 immediately after acceptance: a later
+;; throw aborts the action and leaves the advance in place, while the daily
+;; spend, recorded only once the send is authorised, stays untouched.
 ;;
 ;; Fees and limits come from the TVM configuration primitives (global version
 ;; >= 6), pricing the message exactly like the action phase: the forward fee
 ;; scales with the distinct cells and bits behind the attached StateInit and
 ;; body, both fees depend on the workchain, and the size limits are the live
-;; ConfigParam 43 values. The compute fee is bounded by max_action_gas:
-;; everything before accept_message() must fit in the external-message gas
-;; credit (10k gas by configuration). That pre-accept portion has almost no
-;; headroom left: signature verification, the domain hash, the StateInit
-;; shape check, the size preflight and the fee reserve computation already
-;; consume nearly all of it, confirmed empirically by the sandbox test suite
-;; -- one CLEVEL call fits, a second does not. The 30k figure bounds only the
-;; post-accept tail (building and sending the outbound message plus
-;; re-serializing state), which runs under the full gas_limit once
-;; accept_message() has switched off the credit, and 30k leaves about 2x
-;; margin over that tail alone.
+;; ConfigParam 43 values. The compute fee is bounded by max_action_gas, which
+;; bounds the post-accept execution tail, not the cost of an arbitrary
+;; StateInit.
 const int max_action_gas = 30000;
 ;; Protocol defaults for max_msg_bits / max_msg_cells, used only while the
 ;; network carries no ConfigParam 43.
@@ -226,9 +236,11 @@ cell pack_agent_state(
 }
 
 ;; Policy invariants are checked where a policy is written, before that
-;; message is accepted. Nothing that runs after accept_message() may throw:
-;; an accepted transaction that fails would leave its external message valid
-;; and replayable, so pack_agent_state() re-stores values without re-checking.
+;; message is accepted, so pack_agent_state() re-stores values without
+;; re-checking. A throw after accept_message() is only safe once seqno + 1 has
+;; been committed -- otherwise the accepted-but-failed transaction leaves its
+;; external message valid and replayable. Every path that throws past that
+;; point commits first; no path throws out of pack_agent_state() itself.
 () require_valid_policy(int max_per_tx, int daily_limit, int default_task_timeout) impure inline {
   throw_if(err::invalid_policy, max_per_tx < 0);
   throw_if(err::invalid_policy, max_per_tx > max_signed_action_value);
@@ -236,10 +248,12 @@ cell pack_agent_state(
   throw_if(err::invalid_policy, default_task_timeout <= 0);
 }
 
-;; Every path that stores seqno + 1 must call this first: pack_agent_state()
-;; runs after accept_message() and must never throw (see above), but
+;; Every path that stores seqno + 1 must call this before accept_message():
+;; pack_agent_state() runs after acceptance and must never throw, but
 ;; store_uint(seqno + 1, 32) would do exactly that once seqno is already at
-;; its uint32 maximum.
+;; its uint32 maximum -- and on the action path it would throw before the
+;; seqno advance could be committed, which is precisely the replayable state
+;; the commit exists to prevent.
 () require_seqno_not_saturated(int seqno) impure inline {
   throw_if(err::seqno_exhausted, seqno == max_seqno);
 }
@@ -331,7 +345,9 @@ int outbound_priced_as_masterchain(slice target, int my_wc) inline {
 ;; Distinct cells and data bits reachable through the references left in
 ;; [attachments] — exactly what the action phase charges for the attached
 ;; StateInit and body, since the message root itself is never counted.
-;; Throws before accept_message() when the trees exceed the cell limit.
+;; Walking the trees costs one cell load per distinct cell, so the caller's
+;; payload sets the price: this runs after accept_message(), never inside the
+;; fixed admission credit. Throws when the trees exceed the cell limit.
 (int, int) outbound_payload_size(slice attachments, int max_msg_cells) inline {
   (int cells, int bits, _, int ok) = attachments.slice_data_size?(max_msg_cells);
   throw_unless(err::message_too_large, ok);
@@ -586,15 +602,47 @@ int outbound_priced_as_masterchain(slice target, int my_wc) inline {
   }
   throw_unless(err::policy_exceeded, spent_today + value <= daily_limit);
 
+  ;; A payload-independent floor, cheap enough for the admission credit: an
+  ;; account that cannot cover the transfer itself is rejected before
+  ;; acceptance at no cost, and those signed bytes stay submittable after a
+  ;; top-up. The exact reserve needs the payload-priced size walk and is
+  ;; therefore checked after acceptance.
+  [int balance, _] = get_balance();
+  throw_unless(err::insufficient_balance, value <= balance);
+
+  accept_message();
+  ;; Consume the seqno before anything that can still reject this request, and
+  ;; commit it. A later throw aborts the action while that advance survives,
+  ;; so the signed bytes cannot be replayed until valid_until -- the same
+  ;; guarantee the pre-accept checks used to provide. The daily spend is
+  ;; deliberately not recorded yet: no value has been authorised to move.
+  set_data(pack_agent_state(
+    owner,
+    controller_pubkey,
+    deployment_id,
+    controller_epoch,
+    seqno + 1,
+    spend_day,
+    spent_today,
+    max_per_tx,
+    daily_limit,
+    default_task_timeout,
+    metadata_hash,
+    service_endpoint_hash
+  ));
+  commit();
+
+  ;; Sizing the attached trees costs one cell load per distinct cell, so the
+  ;; caller's payload sets the price. That is the one thing a fixed admission
+  ;; credit can never pay for, so it runs here under the post-accept gas
+  ;; limit, together with the fee reserve computed from its result.
   (int max_msg_bits, int max_msg_cells) = outbound_size_limits();
   (int msg_cells, int msg_bits) = outbound_payload_size(attachments, max_msg_cells);
   throw_unless(err::message_too_large, msg_bits <= max_msg_bits);
   int fee_reserve = get_forward_fee(priced_as_masterchain, msg_bits, msg_cells)
     + get_compute_fee(wc == -1, max_action_gas);
-  [int balance, _] = get_balance();
   throw_unless(err::insufficient_balance, value + fee_reserve <= balance);
 
-  accept_message();
   builder outbound = begin_cell()
     ;; 0x18 sets bounce=1. Legacy operations retain their frozen 0x10 header.
     .store_uint(checked_call ? 0x18 : 0x10, 6)

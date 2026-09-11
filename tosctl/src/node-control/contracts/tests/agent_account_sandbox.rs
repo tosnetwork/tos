@@ -603,10 +603,18 @@ fn deploy_send_atomically_installs_exact_state_init_and_funds_task() {
 #[test]
 fn deploy_send_reserves_the_real_forward_fee_instead_of_skipping_silently() {
     // A deploy carries the whole StateInit, so its forward fee is an order of
-    // magnitude above what a bodyless transfer costs. The compute phase must
-    // reserve the fee for the actual message size and fee schedule before
-    // accepting: an underfunded action is then rejected without gas or a
-    // replayable transaction, and the identical signed bytes stay submittable.
+    // magnitude above what a bodyless transfer costs. The reserve is computed
+    // from the actual message size and fee schedule, which means walking the
+    // attached trees -- work the sender's payload prices, so it runs after
+    // acceptance. The shortfall is therefore reported as an exit code on an
+    // included transaction, and the consumed seqno makes those signed bytes
+    // unusable rather than leaving them replayable.
+    //
+    // The funding below matters: the account comfortably covers the transfer
+    // itself, so the cheap pre-accept floor passes and this really does
+    // exercise the fee reserve. Tightening it further would make the message
+    // bounce off that floor instead, and the test would stop measuring the
+    // thing it is named after.
     let mut fixture = Fixture::with_controller_limit_and_funding([0x51; 32], 5 * TOS, 3 * TOS);
     let init = TaskEscrowInit {
         creator: fixture.account.clone(),
@@ -621,9 +629,11 @@ fn deploy_send_reserves_the_real_forward_fee_instead_of_skipping_silently() {
     };
     let target = TaskEscrowContract::calculate_address(-1, &init).expect("task address");
     let state_init = TaskEscrowContract::build_state_init(&init).expect("task StateInit");
-    // Leave 0.05 TOS above the transfer: several times a bodyless send's fee,
-    // but far below the masterchain forward fee of a ~2 KB StateInit.
-    let value = fixture.balance() - TOS / 20;
+    // Leave 0.25 TOS above the transfer: comfortably above the storage fee
+    // this transaction pays before the compute phase reads the balance, and
+    // still far below the masterchain forward fee of a ~2 KB StateInit plus
+    // the bounded compute reserve.
+    let value = fixture.balance() - TOS / 4;
     let action = fixture.signed_deploy(
         &fixture.controller_secret,
         0,
@@ -633,25 +643,39 @@ fn deploy_send_reserves_the_real_forward_fee_instead_of_skipping_silently() {
         state_init,
         Cell::default(),
     );
-    fixture.expect_external_exit(action.clone(), 1711);
-    assert_eq!(fixture.seqno(), 0);
+    let rejected = fixture.send_external(action).expect("shortfall is reported, not dropped");
+    rejected.expect_exit_code(1711).expect_out_msgs(0);
+    // The seqno advance was committed before the reserve was checked, so the
+    // request cannot be replayed; the daily budget records nothing, because
+    // no value moved.
+    assert_eq!(fixture.seqno(), 1);
     assert_eq!(fixture.spent_today(), 0);
     assert!(fixture.bc.get_account(&target).is_none(), "nothing may reach the target");
 
-    // Fund the account, then resubmit the very same signed bytes.
+    // Fund the account, then sign the request again at the consumed seqno.
     let top_up = MessageBuilder::internal(fixture.owner.address(), &fixture.account, 2 * TOS)
         .bounce(false)
         .body(Cell::default())
         .build();
     fixture.bc.send_message(top_up).expect("top up").expect_success();
-    let result = fixture.send_external(action).expect("funded resend");
+    let state_init = TaskEscrowContract::build_state_init(&init).expect("task StateInit");
+    let funded = fixture.signed_deploy(
+        &fixture.controller_secret,
+        1,
+        fixture.bc.now() + 300,
+        &target,
+        value,
+        state_init,
+        Cell::default(),
+    );
+    let result = fixture.send_external(funded).expect("funded resend");
     result.expect_success().expect_out_msgs(1);
     let gas_used = compute_gas_used(&result);
     assert!(
         gas_used * 3 <= AGENT_ACCOUNT_MAX_ACTION_GAS * 2,
         "reserved compute budget must keep at least 1.5x margin over real usage ({gas_used} gas)"
     );
-    assert_eq!(fixture.seqno(), 1);
+    assert_eq!(fixture.seqno(), 2);
     assert_eq!(fixture.spent_today(), value as i128);
     let target_tx = result
         .transactions_for(&target)
@@ -982,12 +1006,75 @@ fn deploy_send_outside_the_account_workchain_is_rejected_before_acceptance() {
     assert!(fixture.bc.get_account(&target).is_none(), "nothing may reach the target");
 }
 
+/// Nests `cells` references so the attached body is a tree of that depth.
+fn cell_chain(cells: usize) -> Cell {
+    let mut cell = Cell::default();
+    for _ in 0..cells {
+        let mut builder = BuilderData::new();
+        builder.checked_append_reference(cell).expect("chain reference");
+        cell = builder.into_cell().expect("chain cell");
+    }
+    cell
+}
+
+/// An unaccepted external message runs on a fixed allowance that the network
+/// grants for free to whoever sent it, so nothing priced by the sender's
+/// payload may be spent before accept_message(). Measuring the attached trees
+/// costs one cell load per distinct cell, and while that measurement sat
+/// inside the allowance the account admitted a deploy only while the payload
+/// stayed tiny: three extra body cells were already enough to exhaust the
+/// credit, after which the collator dropped the message with nothing on chain
+/// to read -- never reaching err::message_too_large, which is what the size
+/// limit is supposed to report.
+///
+/// Moving a payload-priced check back before acceptance turns this red.
 #[test]
-fn deploy_send_above_the_configured_message_limit_is_rejected_before_acceptance() {
-    // The size preflight reads the live ConfigParam 43 through the unpacked
+fn admission_does_not_depend_on_the_size_of_the_payload() {
+    for cells in [0usize, 3, 16, 64] {
+        let mut fixture = Fixture::new();
+        let init = TaskEscrowInit {
+            creator: fixture.account.clone(),
+            assigned_agent: None,
+            verifier: None,
+            budget: TOS,
+            deadline: u64::from(fixture.bc.now()) + 3_600,
+            review_period: 3_600,
+            settlement_policy_hash: [0x71; 32],
+            permission_hash: [0x72; 32],
+            attestor_pubkey: None,
+        };
+        let target = TaskEscrowContract::calculate_address(-1, &init).expect("task address");
+        let state_init = TaskEscrowContract::build_state_init(&init).expect("task StateInit");
+        let action = fixture.signed_deploy(
+            &fixture.controller_secret,
+            0,
+            fixture.bc.now() + 300,
+            &target,
+            TOS,
+            state_init,
+            cell_chain(cells),
+        );
+        let result = fixture
+            .send_external(action)
+            .unwrap_or_else(|e| panic!("a {cells}-cell payload must still be admitted: {e}"));
+        result.expect_success().expect_out_msgs(1);
+        assert_eq!(fixture.seqno(), 1);
+        assert!(fixture.bc.get_account(&target).is_some(), "the deploy reached the target");
+    }
+}
+
+#[test]
+fn deploy_send_above_the_configured_message_limit_is_reported_not_skipped() {
+    // The size check reads the live ConfigParam 43 through the unpacked
     // configuration register, so a network that tightens the limits below the
-    // protocol defaults refuses the deploy up front instead of letting the
-    // action phase skip it after seqno and daily spend were committed.
+    // protocol defaults reports the deploy as a failed transaction instead of
+    // letting the action phase skip it after the daily spend was committed.
+    //
+    // Measuring the payload costs one cell load per distinct cell, which is
+    // why this runs after acceptance rather than inside the fixed admission
+    // credit. Keeping it before acceptance is what made this error
+    // unreachable in practice: the walk exhausted the credit and the message
+    // was dropped by the collator with nothing on chain to read.
     let mut fixture = Fixture::new();
     let init = TaskEscrowInit {
         creator: fixture.account.clone(),
@@ -1014,17 +1101,31 @@ fn deploy_send_above_the_configured_message_limit_is_rejected_before_acceptance(
 
     let tightened = SizeLimitsConfig { max_msg_cells: 8, ..SizeLimitsConfig::default() };
     fixture.bc.set_size_limits_config(tightened).expect("tighten");
-    fixture.expect_external_exit(action.clone(), 1713);
-    assert_eq!(fixture.seqno(), 0);
+    let rejected = fixture.send_external(action).expect("oversize is reported, not dropped");
+    rejected.expect_exit_code(1713).expect_out_msgs(0);
+    // The seqno was consumed and committed before the size was measured, so
+    // the oversized request cannot be replayed. No value moved, so the daily
+    // budget records nothing.
+    assert_eq!(fixture.seqno(), 1);
     assert_eq!(fixture.spent_today(), 0);
     assert!(fixture.bc.get_account(&target).is_none(), "nothing may reach the target");
 
-    // Once the limit allows the message again, the identical signed bytes go
-    // through: nothing was consumed by the rejection.
+    // Once the limit allows the message again, a request signed at the
+    // consumed seqno goes through.
     fixture.bc.set_size_limits_config(SizeLimitsConfig::default()).expect("restore");
-    let result = fixture.send_external(action).expect("same bytes after the fix");
+    let state_init = TaskEscrowContract::build_state_init(&init).expect("task StateInit");
+    let retried = fixture.signed_deploy(
+        &fixture.controller_secret,
+        1,
+        fixture.bc.now() + 300,
+        &target,
+        2 * TOS,
+        state_init,
+        Cell::default(),
+    );
+    let result = fixture.send_external(retried).expect("resigned after the fix");
     result.expect_success().expect_out_msgs(1);
-    assert_eq!(fixture.seqno(), 1);
+    assert_eq!(fixture.seqno(), 2);
     assert_eq!(fixture.spent_today(), 2 * TOS as i128);
     assert!(fixture.bc.get_account(&target).is_some(), "the deploy reached the target");
 }
