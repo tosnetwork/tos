@@ -1,5 +1,33 @@
 # Funded in-window Failed: transition checkpoint
 
+## Review returned: adapter is not acceptance-ready
+
+The review of `b1b53ca7b` is now available locally at
+`/home/tomi/memo/reviews/uno-failed-host-dispatch-review.txt` (read-only review;
+syntax compilation only, no host execution). It identifies these blockers for
+the next implementation pass:
+
+- Candidate-selected wrong owner schema/binding currently becomes -7201.
+- Neutral association and transition errors are collapsed into -7201, including
+  deterministic content and unsupported branch cases. Split by provenance;
+  preserve genuine acquisition/backend failures. Do not blindly convert every
+  neutral codec error to CandidateInvalid or rely on error-message prefixes.
+- Zero aggregate fee effects and insufficient actual custody funding need
+  explicit handling and behavioral tests at the correct layer.
+- The one-custody-envelope adapter cannot execute mixed-source batches. Prove
+  supported scheduling restrictions rather than pretending it satisfies the
+  staged contract.
+
+The review also challenges missing-profile classification. That overlaps the
+existing owner rule for absent authenticated configuration (§18), so do not
+silently change that convention along with the new adapter's error fixes.
+The review's atomicity and precharge conclusions are source inspection, not
+real publication/ON-OFF evidence. No new acceptance claims follow from them.
+
+The separate Withdrawal prepare fee item is now executable as a fail-closed
+readiness check; see `workchain-withdrawal-fee-acceptance.md`. It remains missing,
+and is not one of the six sequence tests or evidence for this Failed adapter.
+
 ## Registered adapter WIP (after the configuration checkpoint)
 
 `M3NodeEngine` now recognizes a TEST-only Failed selector committing the owner
