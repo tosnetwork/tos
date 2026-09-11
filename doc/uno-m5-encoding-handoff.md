@@ -288,3 +288,14 @@ preserves the proof-system soundness premise and handle-redundancy distinction.
 It is not an audit or commissioning action. Current D34/D44 still say no further
 external audit while spec line 67 recommends budgeting one; the draft reports
 that governance inconsistency rather than silently changing the decision.
+
+## Independent D64 implementation recheck
+
+`doc/uno-m5-d64-implementation-recheck.md` binds six requested checks to original
+5f628635d source lines, with a full 8x6 matrix/target table and six ordered ranges.
+Independent isolated tests pass 2/2; witness-index and range-object mutations each
+exit 101, restoration passes. The original T>Vmax gate is historical and was
+removed by 15c34b205. No authenticated tariff lookup or actual Withdrawal host
+caller exists in that original commit; f is bound separately but its source
+cannot be certified there. The runnable review script and expectation module
+are committed; no production or A-owned code is changed.
