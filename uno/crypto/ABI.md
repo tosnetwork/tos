@@ -17,8 +17,9 @@ construction step.
 
 D34 scope: M5 does not expand the relation family, but adds critical verifier
 checks. C_t reconstruction and the no-pending host branch prevent under-debit
-or double issuance; handle derivation supplies the unconditional algebraic
-binding, with one redundant handle when P_B=P_A. All remain review subjects.
+or double issuance. Under the existing proof system's soundness assumption,
+the public-opening algebra adds no computational assumption; one handle is
+redundant when P_B=P_A. All remain review subjects.
 This is not a claim of no new unreviewed cryptographic surface. The host
 no-pending branch is not implemented or evidenced by these kernel tests.
 

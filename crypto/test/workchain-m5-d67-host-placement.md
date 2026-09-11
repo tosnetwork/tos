@@ -3,6 +3,15 @@
 Specification: `0301d7fdb5676510` (memo commit `eec5f8e0`). This is a
 placement proposal for confirmation, not an implemented or frozen codec.
 
+Confirmed by the coordinator in memo `dcbcd28c`, specification
+`c7da55fddeee326e`: the placement is now frozen, but the codec is not implemented
+by this document. Enforce both Withdrawal identity uniqueness and created_lt
+uniqueness regardless of dictionary key choice, and independently enumerate
+the stored open count. Introduce authenticated closure inspection together
+with this representation; do not retire the structural guard before the
+replacement check exists. The historical proposal below is retained as the
+basis of the decision.
+
 ## Authenticated location
 
 Place the bounded set of open Withdrawal records inside the withdrawing

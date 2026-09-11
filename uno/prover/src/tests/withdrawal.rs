@@ -83,6 +83,20 @@ fn run_case(mutation: Option<usize>) {
 fn withdrawal_real_proof_and_wrong_generated_points() { run_case(None); }
 
 #[test]
+fn withdrawal_public_bound_is_not_a_constructor_gate() {
+    let limits = KernelLimits { max_balance: 10000, max_value: 1000,
+        max_collect: 8, max_context_bytes: 1024, max_proof_bytes: 4096 };
+    let p = PedersenGens::default().B_blinding.compress().to_bytes();
+    let amounts = WithdrawalAmounts { principal: 1001, outward_fee: 0,
+        return_reserve: 0, operation_fee: 0 };
+    assert!(WithdrawalStatement::new(&limits, [42; 80], [7; 32], [8; 32],
+        amounts, b"D66 constructor boundary", [p; 6]).is_ok(),
+        "D66: the existing range proof, not construction, enforces T <= V_max");
+    // This only tests construction. It does not claim an out-of-range proof
+    // can be produced or accepted, or count a transcript mismatch as a range test.
+}
+
+#[test]
 fn withdrawal_smaller_debit_raw_send_passes_specialization_rejects() { run_case(Some(6)); }
 
 #[test]

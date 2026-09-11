@@ -7,10 +7,27 @@ it does not close that inventory's host, state, routing or funding-retirement ga
 
 ## Implemented boundary
 
+D66 follow-up (specification `c7da55fddeee326e`): added
+`withdrawal_public_bound_is_not_a_constructor_gate` before removing the
+redundant public bound check. The test first exited 101 at its named D66
+assertion, then passed after the check was removed. The full prover library
+run (`cargo test --manifest-path uno/prover/Cargo.toml --locked --offline
+--release --lib`) passed 12 tests. This control establishes the constructor
+boundary, not a new proof of range-proof soundness.
+
+B's committed `uno/crypto/src/tests.rs` changes were inspected: shared witness
+slots, equal handles and canonically decoded wrong points exercise the same
+direct relation ABI purpose. The ABI inventory first exited 1 with
+`crypto.abi.boundary_changed`; after independently hashing the file, only its
+identity was updated, and the guard exited 0. Neither its purpose nor the
+scanner rules changed. This identity acceptance is not an external audit.
+
 The Rust-only `WithdrawalStatement` reconstructs a SEND-shaped statement from
 P_A, old C/D, new C/D and J. It accepts no P_B, C_t, D_tA or D_tB parameters.
 Principal, outward fee and return reserve are added with checked arithmetic;
-the positive total is bounded by V_max. Operation fee remains the separate f.
+the positive total is formed before scalar conversion. Under D66, T <= V_max
+is enforced by the existing range proof, not a second constructor gate.
+Operation fee remains the separate f.
 The opening transcript uses `uno-v2/withdrawal-opening`, with explicit domain,
 Withdrawal ID, Attempt ID, owner P and total; zero reduced scalars are rejected.
 P_B=P_A and both handles use the same derived r. The original relation file
@@ -74,7 +91,9 @@ The D61 independent accounting prediction was not requested or read.
 
 D34 wording: no new relation family, but additional review surface. C_t
 derivation and the no-pending branch are minting-critical; handle derivation
-supplies unconditional algebraic binding, with redundancy when P_B=P_A.
+supplies algebraic binding with redundancy when P_B=P_A. Under the existing
+proof system's soundness assumption, this public-opening algebra adds no
+computational assumption.
 No cryptographic reliability, production availability, M5 live acceptance or
 completed test-funding retirement is claimed. No production C++ consensus file,
 Native schema, refusal branch or D59 default has changed in this step.
