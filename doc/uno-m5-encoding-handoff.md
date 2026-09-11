@@ -268,3 +268,13 @@ or reserve top-up. Legitimate late-return issuance is observed separately and
 must not be mistaken for reserve use. Replacing the height test with record-open
 status is the prescribed isolated mutation. Owner-triggered Paid evaluation is
 a separate observed event. Spec prefix 1df942bd8a8dae0b; prospective contract only.
+
+## Independent D61 recheck
+
+`doc/uno-m5-d61-independent-recheck.md` records direct B runs on A's committed
+293fc152a: D61 CTest 1/1, five Native selectors green, isolated old-helper red
+at the custody 270 assertion. Actual serialized custody debit and nonempty
+outbound message are checked. Eight consumer files versus A's seven unique
+listed files: only the M5 accounting assertion test was omitted from prose;
+it was already changed and now executed. Construction-isolation was inventoried
+but not run in this selection. No full M5 or full regression claim.
