@@ -258,3 +258,13 @@ height, with seven concrete Native controls. Current codec allows equality
 between removal and opened heights; D73 does not. That difference is reported
 for integration, not silently changed in this documentation task. The codec
 cannot attest queue presence/absence. Source spec: 3b4413b390f43969.
+
+## D74 late bounce with an unevaluated open record
+
+D73 handoff control 8 now requires real paired prepare, phase 1 and a matching
+bounce arriving strictly after the checked deadline while no owner has touched
+the account. The bounce must use the outside-window path without W/P release
+or reserve top-up. Legitimate late-return issuance is observed separately and
+must not be mistaken for reserve use. Replacing the height test with record-open
+status is the prescribed isolated mutation. Owner-triggered Paid evaluation is
+a separate observed event. Spec prefix 1df942bd8a8dae0b; prospective contract only.

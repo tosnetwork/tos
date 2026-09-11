@@ -95,3 +95,59 @@ These controls supplement, not replace, the six sequence successor tests. No
 new mandatory CTest registration is claimed here while their Native adapters
 remain unavailable. This is a precise implementation handoff, not evidence of
 complete authenticated queue validation or M5 host compliance.
+
+## D74 supplementary control 8: open record, expired window
+
+Specification: memo 614abc00, SHA256
+1df942bd8a8dae0b6a37de30e03041b4497daa06341cfb9ffe207ac94f06f6f2.
+This supplements the earlier contract; it does not change its evidence version
+or report a completed test. Paid evaluation occurs on the owner's next account
+touch, not automatically at the deadline. Earlier references to window-close
+Paid issuance must be read with that lazy trigger, not as a timer callback.
+
+**Actual execution setup:** use control 1's paired Native prepare and a valid
+D73 phase-1 transition. Read the authenticated record's removal height hr and
+captured settlement interval L. Compute d=checked(hr+L), then choose an actual
+bounce import height hb=checked(d+1). Missing configuration or arithmetic
+overflow is not permission to invent a value. Do not include an owner-touch
+operation between phase 1 and the observed bounce event. Independently read
+that the Withdrawal record still exists immediately before importing the bounce.
+Do not manufacture an orphan open record instead of running prepare.
+
+Import at custody a genuinely associated bounced payout envelope with the
+matching Attempt identity. All matching prerequisites other than arrival time
+must succeed, so an identity mismatch cannot accidentally satisfy this test.
+Use explicit authenticated policy and sufficient slots for the intended late
+return path; observe and report any separate admission rejection rather than
+counting it as evidence of temporal routing.
+
+**Observation slice:** compare the committed matching W record (including its
+original, consumed and refundable reserve amounts), W/P accounting and custody
+branch result before/after this isolated bounce event. Require the outside-window
+path, delta W=delta P=0, no reserve consumption/top-up and no Failed termination
+of the still-open record. Do not assert that all account balances or pending
+entries stay unchanged: a late return may legitimately issue a new system
+receipt from its own carried value, with its own fees and sequence consumption.
+It must not obtain funds from this record's reserve. Reconstruct these deltas
+from authenticated artifacts, not merely a supplied branch label.
+
+**Designated mutation:** in an isolated host source copy replace the height
+comparison with "record is open" as the eligibility predicate for the in-window
+return path. Preserve matching, fees and all other setup. Require the test to
+reach the time-routing boundary and fail on the outside-window routing and/or
+unchanged-W/P/reserve assertions. A build failure, unavailable history or earlier
+unrelated admission failure does not count. Restore and require green; disable
+the designated oracle in isolation and require the mutation driver to fail when
+its expected red disappears.
+
+**Separate owner-touch observation:** subsequently execute the owner's qualifying
+operation to evaluate the still-open record. Attribute any Paid closure and
+reserve issuance to that event, not retroactively to bounce arrival. If batching
+both events in one test, retain their individual authenticated event cuts; a net
+block delta cannot prove that the bounce itself left W/P unchanged. Reaching d
+without owner action is not itself a Paid transition.
+
+This control deliberately uses hb>d; it does not independently decide the
+exact-deadline equality convention. Its pending status is unchanged until the
+actual Native late-return and owner-touch adapters execute. No host implementation,
+consensus classification or frozen accounting prediction is changed here.
