@@ -7,6 +7,7 @@
 #include "workchain-m3-test-funding-operation.h"
 #include "workchain-m4-deposit-input.h"
 #include "block/workchain-deposit-transition.h"
+#include "block/workchain-deposit-rejection-settlement.h"
 #include "block/workchain-confidential-execution.h"
 #include "block/workchain-confidential-native.h"
 #include "block/workchain-registration-payment.h"
@@ -202,6 +203,10 @@ class M3NodeEngine final : public RegisteredWorkchainAccountEngine {
     auto system_result = decode_workchain_coordinator_state(coordinator.data);
     if (system_result.is_error()) return local("authenticated coordinator record unavailable");
     auto system = system_result.move_as_ok();
+    auto finish = [&](WorkchainAccountEffects result) -> td::Result<WorkchainAccountEffects> {
+      result.protected_coordinator_snapshot = td::Bits256(coordinator.data->get_hash().bits());
+      return result;
+    };
     if (is_m4_test_deposit(host.candidate)) {
       TRY_RESULT(deposit, decode_m4_test_deposit(host.candidate));
       TRY_RESULT(limits, require_m4_deposit_policy(b));
@@ -229,24 +234,36 @@ class M3NodeEngine final : public RegisteredWorkchainAccountEngine {
       else return invalid("malformed Deposit message body selector");
       if (contents->get_hash() != host.candidate->get_hash())
         return invalid("Deposit candidate body differs from authenticated message");
-      // Rejection is a normal protocol outcome, not a candidate fault. This
-      // initial accepted-path connection abstains until disposal is connected;
-      // it must never turn missing rejection materialization into acceptance.
-      if (sender.workchain_id != 0 || sender.anycast->size() != 1 || destination.anycast->size() != 1 ||
-          info.bounced || !info.bounce || message.init->size() != 1 || message.init->prefetch_ulong(1) != 0)
-        return local("test Deposit rejection settlement not connected");
       CurrencyCollection received;
       if (!received.unpack(info.value)) return invalid("invalid Deposit Native value encoding");
       TRY_RESULT(target, read(accounts, deposit.destination.account, clock.gen_utime, true));
       auto old_target = decode_workchain_confidential_account(target.data);
       if (old_target.is_error()) return local("authenticated Deposit account record unavailable");
       TRY_RESULT(custody, read(accounts, *cfg->ingress.custody_address, clock.gen_utime, false));
+      auto reject = [&]() -> td::Result<WorkchainAccountEffects> {
+        WorkchainAccountEffects result;
+        result.updates = {{deposit.destination.account, target.data},
+            {cfg->ingress.executor_address, coordinator.data}, {*cfg->ingress.custody_address, custody.data}};
+        std::sort(result.updates.begin(), result.updates.end(), [](const auto& a, const auto& b) {
+          return a.account < b.account;
+        });
+        result.rejected_deposit = std::make_shared<WorkchainDepositRejectionExecution>(
+            WorkchainDepositRejectionExecution{td::Bits256(envelope.msg->get_hash().bits()),
+                td::Bits256(coordinator.data->get_hash().bits()), cfg->ingress, cfg->descriptor,
+                cfg->workchains, {256, 256}});
+        return finish(std::move(result));
+      };
+      // Rejection is a normal protocol result. Native prices and outgoing LT
+      // are supplied by the settlement host, never guessed inside the engine.
+      if (sender.workchain_id != 0 || sender.anycast->size() != 1 || destination.anycast->size() != 1 ||
+          info.bounced || !info.bounce || message.init->size() != 1 || message.init->prefetch_ulong(1) != 0)
+        return reject();
       TRY_RESULT(applied, prepare_workchain_deposit_transition(limits, b.domain, cfg->ingress.executor_address,
           *cfg->ingress.custody_address, b.rules.asset, td::Bits256(envelope.msg->get_hash().bits()),
           deposit.destination, deposit.principal, received, std::optional{old_target.move_as_ok()}, system,
           custody.balance, coordinator.balance, {256, 256}, 4096, verifier));
       if (std::holds_alternative<WorkchainDepositRejection>(applied))
-        return local("test Deposit rejection settlement not connected");
+        return reject();
       auto accepted = std::get<WorkchainDepositTransition>(std::move(applied));
       WorkchainAccountEffects result;
       result.updates = {{deposit.destination.account, accepted.account_data},
@@ -255,7 +272,7 @@ class M3NodeEngine final : public RegisteredWorkchainAccountEngine {
       std::sort(result.updates.begin(), result.updates.end(), [](const auto& a, const auto& b) {
         return a.account < b.account;
       });
-      return result;
+      return finish(std::move(result));
     }
     if (is_m3_test_funding(host.candidate)) {
       if (!default_workchain_execution_registry().test_only_account_instance_execution_enabled(
@@ -269,7 +286,7 @@ class M3NodeEngine final : public RegisteredWorkchainAccountEngine {
       std::sort(result.updates.begin(), result.updates.end(), [](const auto& a, const auto& b) {
         return a.account < b.account;
       });
-      return result;
+      return finish(std::move(result));
     }
     TRY_RESULT(wire, decode_candidate(host.candidate));
     WorkchainAccountEffects result;
@@ -359,7 +376,7 @@ class M3NodeEngine final : public RegisteredWorkchainAccountEngine {
     std::sort(result.updates.begin(), result.updates.end(), [](const auto& a, const auto& b) {
       return a.account < b.account;
     });
-    return result;
+    return finish(std::move(result));
   }
 };
 }  // namespace block::m3_test

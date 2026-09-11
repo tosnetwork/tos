@@ -14,6 +14,13 @@
 #include "m4-live-deposit.h"
 
 int main(int argc, char** argv) {
+  if (argc == 3 && std::string(argv[1]) == "--check-m4-bounce-received") {
+    vm::init_vm().ensure();
+    const std::filesystem::path fixture(argv[2]);
+    CHECK(std::filesystem::exists(fixture / ".counter-managed-v1"));
+    m3_live::assert_m4_bounce_received(fixture);
+    return 0;
+  }
   if (argc == 3 && std::string(argv[1]) == "--inspect-m4-final") {
     vm::init_vm().ensure();
     const std::filesystem::path fixture(argv[2]);
@@ -305,7 +312,9 @@ int main(int argc, char** argv) {
       block::gen::Transaction::Record tx;
       CHECK(tlb::unpack_cell(transaction, tx));
       if (deposit) {
-        m3_live::assert_accepted_deposit(fixture, previous, accepted);
+        if (m3_live::m4_deposit_was_rejected(accepted.block))
+          m3_live::assert_rejected_deposit(fixture, previous, accepted, *ingress_table.at(2).custody_address);
+        else m3_live::assert_accepted_deposit(fixture, previous, accepted);
       } else if (test_funding) {
         block::gen::TransactionDescr::Record_trans_workchain_entry_v3 entry;
         block::gen::UnoV2HostInput::Record host;

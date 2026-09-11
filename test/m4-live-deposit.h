@@ -3,8 +3,52 @@
 // No detached balances, deployment configuration, or execution permission.
 #include "m3-live-wallet.h"
 #include "crypto/test/workchain-m4-deposit-input.h"
+#include "block/workchain-budget-backing.h"
 
 namespace m3_live {
+inline void assert_m4_bounce_received(const std::filesystem::path& fixture) {
+  const auto expected = load(fixture / "rejected-bounce.boc");
+  block::gen::CommonMsgInfo::Record_int_msg_info info;
+  CHECK(tlb::unpack_cell_inexact(expected, info));
+  tos::WorkchainId wc; td::Bits256 recipient;
+  CHECK(block::tlb::t_MsgAddressInt.extract_std_address(info.dest, wc, recipient) && wc == 0);
+  auto archive = tos::fetch_tl_object<tos::tos_api::db_candidate>(
+      td::read_file((fixture / "bounce-recipient.candidate").string()).move_as_ok(), true).move_as_ok();
+  const auto id = tos::create_block_id(archive->id_);
+  const auto root = vm::std_boc_deserialize(archive->data_.as_slice()).move_as_ok();
+  CHECK(id.id.workchain == wc && td::Bits256(root->get_hash().bits()) == id.root_hash &&
+        td::sha256_bits256(archive->data_) == id.file_hash);
+  block::gen::Block::Record block;
+  block::gen::BlockExtra::Record extra;
+  CHECK(tlb::unpack_cell(root, block) && tlb::unpack_cell(block.extra, extra));
+  vm::AugmentedDictionary accounts(vm::load_cell_slice_ref(extra.account_blocks), 256, block::tlb::aug_ShardAccountBlocks);
+  auto leaf = accounts.lookup(recipient);
+  block::gen::AccountBlock::Record account;
+  CHECK(leaf.not_null() && block::gen::t_AccountBlock.unpack(leaf.write(), account));
+  vm::AugmentedDictionary txs(vm::DictNonEmpty(), account.transactions, 64, block::tlb::aug_AccountTransactions);
+  unsigned matched = 0;
+  CHECK(txs.check_for_each_extra([&](auto value, auto, td::ConstBitPtr, int) {
+    block::gen::Transaction::Record tx;
+    if (!tlb::unpack_cell(value->prefetch_ref(), tx)) return false;
+    auto input = *tx.r1.in_msg;
+    if (input.fetch_ulong(1) != 1) return true;
+    const auto message = input.fetch_ref();
+    if (message.is_null() || message->get_hash() != expected->get_hash()) return true;
+    block::gen::TransactionDescr::Record_trans_ord ordinary;
+    if (!tlb::unpack_cell(tx.description, ordinary)) return false;
+    auto phase = ordinary.credit_ph;
+    if (phase.write().fetch_ulong(1) != 1) return false;
+    block::gen::TrCreditPhase::Record credit;
+    if (!tlb::csr_unpack(phase, credit)) return false;
+    block::CurrencyCollection amount;
+    if (!amount.unpack(credit.credit)) return false;
+    ++matched;
+    std::cout << "Actual wc0 sender received exact bounce message; Native credit=" << amount.tomis
+              << "; block=" << id.to_str() << '\n';
+    return true;
+  }));
+  CHECK(matched == 1);
+}
 inline void assert_m4_master_import(const std::filesystem::path& fixture) {
   auto archive = tos::fetch_tl_object<tos::tos_api::db_candidate>(
       td::read_file((fixture / "m4-master.candidate").string()).move_as_ok(), true).move_as_ok();
@@ -48,12 +92,19 @@ inline void prepare_m4_deposit(const std::filesystem::path& fixture) {
   const auto principal = std::stoull(field(fixture / "deposit.request.txt", "principal"));
   std::uint64_t value;
   CHECK(!__builtin_add_overflow(principal, limits.slot_fee, &value));
+  const bool rejection_fixture = std::filesystem::exists(fixture / "deposit.rejection.txt");
+  bool bounce = true;
+  if (rejection_fixture) {
+    const auto extra = std::stoull(field(fixture / "deposit.rejection.txt", "extra"));
+    CHECK(!__builtin_add_overflow(value, extra, &value));
+    bounce = field(fixture / "deposit.rejection.txt", "bounce") == "1";
+  }
   auto body = m3_test::encode_m4_test_deposit({target.address, principal});
   save_operation(fixture, body, {target.address.account, *ingress.custody_address});
   // Exactly the registration payer route: wc=0 supplies src/LT/time, mode 1
   // pays forwarding separately. No fabricated final-import envelope.
   vm::CellBuilder internal;
-  internal.store_long(6, 4).store_long(0, 2).store_long(4, 3).store_long(2, 8)
+  internal.store_long(bounce ? 6 : 4, 4).store_long(0, 2).store_long(4, 3).store_long(2, 8)
       .store_bits(ingress.executor_address.bits(), 256);
   CHECK(CurrencyCollection(workchain_unsigned_fee(value)).store(internal));
   internal.store_zeroes(8).store_zeroes(96).store_long(0, 1).store_long(1, 1).store_ref(body);
@@ -64,7 +115,75 @@ inline void prepare_m4_deposit(const std::filesystem::path& fixture) {
   save(fixture / "deposit.message.boc", external.finalize());
 }
 
-inline td::Ref<vm::Cell> m4_recorded_candidate(const td::Ref<vm::Cell>& root);
+inline td::Ref<vm::Cell> m4_recorded_candidate(const td::Ref<vm::Cell>& root,
+                                             td::Ref<vm::Cell>* effects = nullptr);
+inline bool m4_deposit_was_rejected(const td::Ref<vm::Cell>& root) {
+  td::Ref<vm::Cell> effects;
+  m4_recorded_candidate(root, &effects);
+  block::gen::UnoV2HostEffects::Record record;
+  CHECK(tlb::unpack_cell(effects, record));
+  auto events = *record.events;
+  if (events.fetch_ulong(1) == 0) { CHECK(events.empty_ext()); return false; }
+  CHECK(events.size() == 0 && events.size_refs() == 1);
+  const auto event = vm::load_cell_slice(events.fetch_ref());
+  CHECK(event.size() == 291 && event.size_refs() == 0 && event.prefetch_ulong(32) == 0x55445234);
+  return true;
+}
+inline void assert_rejected_deposit(const std::filesystem::path& fixture,
+    const td::Ref<vm::Cell>& previous, const AcceptedStep& step, const td::Bits256& custody) {
+  using namespace block;
+  CHECK(m4_deposit_was_rejected(step.block));
+  const auto candidate = m4_recorded_candidate(step.block);
+  const auto deposit = m3_test::decode_m4_test_deposit(candidate).move_as_ok();
+  CHECK(account_data(previous, deposit.destination.account)->get_hash() ==
+        account_data(step.state, deposit.destination.account)->get_hash());
+  gen::ShardStateUnsplit::Record before, after;
+  CHECK(::tlb::unpack_cell(previous, before) && ::tlb::unpack_cell(step.state, after));
+  auto read_native = [&](const auto& state, const td::Bits256& key) {
+    vm::AugmentedDictionary dict(vm::load_cell_slice_ref(state.accounts), 256, block::tlb::aug_ShardAccounts);
+    Account account(2, key.bits());
+    CHECK(account.unpack(dict.lookup(key), state.gen_utime, false));
+    return account.balance;
+  };
+  // Section 11.3: this rejected Deposit was addressed to the coordinator;
+  // its value never entered custody. This is NOT a general assertion that
+  // bucket bookkeeping alone preserves custody's directly auditable balance.
+  CHECK(read_native(before, custody) == read_native(after, custody));
+  const auto coordinator = td::Bits256::zero();
+  const auto old = decode_workchain_coordinator_state(account_data(previous, coordinator)).move_as_ok();
+  const auto next = decode_workchain_coordinator_state(account_data(step.state, coordinator)).move_as_ok();
+  CHECK(old.deposit_sequence == next.deposit_sequence && old.system.registered_accounts == next.system.registered_accounts);
+  gen::Transaction::Record tx;
+  CHECK(::tlb::unpack_cell(accepted_transaction(step, coordinator), tx));
+  if (tx.outmsg_cnt == 1) {
+    vm::Dictionary outputs(tx.r1.out_msgs, 15);
+    td::BitArray<15> key; key.bits().store_uint(0, 15);
+    const auto outgoing = outputs.lookup_ref(key);
+    gen::CommonMsgInfo::Record_int_msg_info info;
+    CHECK(::tlb::unpack_cell_inexact(outgoing, info) && info.bounced && !info.bounce);
+    tos::WorkchainId wc; td::Bits256 address;
+    CHECK(block::tlb::t_MsgAddressInt.extract_std_address(info.src, wc, address) && wc == 2 && address == coordinator);
+    CHECK(block::tlb::t_MsgAddressInt.extract_std_address(info.dest, wc, address) && wc == 0);
+    CurrencyCollection returned; CHECK(returned.unpack(info.value));
+    CHECK(old.unexpected->get_hash() == next.unexpected->get_hash());
+    CHECK(read_native(before, coordinator) == read_native(after, coordinator));
+    save(fixture / "rejected-bounce.boc", outgoing);
+    std::cout << "Actual rejected Deposit bounce value=" << returned.tomis << "; custody unchanged\n";
+  } else {
+    CHECK(tx.outmsg_cnt == 0);
+    const auto bucket = decode_workchain_unexpected_bucket(next.unexpected, {256, 256}, 4096).move_as_ok();
+    CHECK(!bucket.entries.empty());
+    const auto& retained = bucket.entries.back();
+    CHECK(retained.sender.workchain == 0);
+    CurrencyCollection increase;
+    // Authenticated after balance includes the inbound credit; checked
+    // subtraction establishes a nonnegative measured bucket increase.
+    CHECK(CurrencyCollection::sub(read_native(after, coordinator), read_native(before, coordinator), increase));
+    CHECK(td::cmp(increase.tomis, retained.tomis) == 0);
+    std::cout << "Actual rejected Deposit sender bucket value=" << retained.tomis
+              << "; no account_id; custody unchanged because destination was coordinator\n";
+  }
+}
 inline void assert_accepted_deposit(const std::filesystem::path& fixture,
     const td::Ref<vm::Cell>& previous, const AcceptedStep& step) {
   using namespace block;
@@ -89,7 +208,7 @@ inline void assert_accepted_deposit(const std::filesystem::path& fixture,
             << " system_pending=" << after.system_pending.size() << '\n';
 }
 
-inline td::Ref<vm::Cell> m4_recorded_candidate(const td::Ref<vm::Cell>& root) {
+inline td::Ref<vm::Cell> m4_recorded_candidate(const td::Ref<vm::Cell>& root, td::Ref<vm::Cell>* effects) {
   block::gen::Block::Record block;
   block::gen::BlockExtra::Record extra;
   CHECK(tlb::unpack_cell(root, block) && tlb::unpack_cell(block.extra, extra));
@@ -107,6 +226,7 @@ inline td::Ref<vm::Cell> m4_recorded_candidate(const td::Ref<vm::Cell>& root) {
     if (candidate.not_null() || !tlb::unpack_cell(value->prefetch_ref(), tx) ||
         !tlb::unpack_cell(tx.description, entry) || !tlb::unpack_cell(entry.input, host)) return false;
     candidate = host.candidate;
+    if (effects) *effects = entry.effects;
     return true;
   }));
   CHECK(candidate.not_null());
@@ -165,7 +285,8 @@ inline void assert_m4_block_backing(const std::filesystem::path& fixture, const 
     CurrencyCollection next;
     if (m3_test::is_m4_test_deposit(candidate)) {
       auto deposit = m3_test::decode_m4_test_deposit(candidate).move_as_ok();
-      CHECK(CurrencyCollection::add(book, CurrencyCollection(workchain_unsigned_fee(deposit.principal)), next));
+      if (m4_deposit_was_rejected(root)) next = book;
+      else CHECK(CurrencyCollection::add(book, CurrencyCollection(workchain_unsigned_fee(deposit.principal)), next));
     } else {
       auto operation = decode_workchain_replay_input(candidate).move_as_ok();
       if (const auto* transfer = std::get_if<WorkchainTransferInput>(&operation)) {
@@ -180,6 +301,14 @@ inline void assert_m4_block_backing(const std::filesystem::path& fixture, const 
   gen::ShardStateUnsplit::Record state;
   CHECK(::tlb::unpack_cell(step.state, state));
   vm::AugmentedDictionary accounts(vm::load_cell_slice_ref(state.accounts), 256, block::tlb::aug_ShardAccounts);
+  Account coordinator(2, td::Bits256::zero().bits());
+  CHECK(coordinator.unpack(accounts.lookup(td::Bits256::zero()), state.gen_utime, false));
+  const auto budget = decode_workchain_coordinator_state(coordinator.data).move_as_ok();
+  const auto held = workchain_budget_bucket_holdings(budget, 4096).move_as_ok();
+  const auto refundable = workchain_protected_refundable(budget.refundable_deposits);
+  check_workchain_budget_backing(coordinator.balance, refundable, held).ensure();
+  std::cout << "Actual coordinator protected backing: balance=" << coordinator.balance.tomis
+            << " refundable=" << refundable.tomis << " unexpected=" << held.tomis << " OK\n";
   Account native(2, custody.bits());
   CHECK(native.unpack(accounts.lookup(custody), state.gen_utime, false));
   check_m4_backing(native.balance.tomis, book.tomis, td::make_refint(0)).ensure();

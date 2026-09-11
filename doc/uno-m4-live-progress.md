@@ -2,9 +2,9 @@
 
 The nine-step successful sequence passed on 2026-09-11 using the real local
 collator and validator actors under test-constructed authenticated parameters.
-This is not closure of the full M4 acceptance checklist. In particular, the
-test node engine still lacks the rejected-Deposit settlement connection; its
-placeholder is not a valid protocol rejection result.
+This is not closure of the full M4 acceptance checklist. The rejection and
+protected-budget follow-up below records the newly connected paths separately
+from the original nine-step observation.
 
 Commands:
 
@@ -84,3 +84,105 @@ usability, capacity or hardware sufficiency, multi-node execution, M5 support,
 or audited supply-chain dependencies. Closure materializes a one-way historical
 deposit refund message; delivery is not guaranteed and recipient credit is not
 asserted. D45 remains in effect; production activation is unchanged.
+
+## Specification synchronization (rejection work in progress)
+
+The rejection path now targets specification SHA-256 prefix
+`f436123d9476e00e`, memo commit `f491cad9`. Earlier frozen predictions retain
+their original specification identity; this note does not rewrite them.
+
+Section 11.3 requires sender-only attribution for the M4 bucket, never the
+original message body or a confidential account ID. An unparseable body cannot
+authorize type-2 attribution. Bucket value belongs to the coordinator's
+dedicated, non-spendable bucket, not custody or unlocked operating funds.
+Rejection assertions read custody before and after: R_actual is unchanged
+because these incoming Deposits address the coordinator and never enter
+custody, not because bucket bookkeeping can exclude coins from custody's
+Native balance. Direct-to-custody handling is outside this tested path; its
+physical destination is now specified, but is not claimed implemented here.
+
+This synchronization is not additional live acceptance evidence. In
+particular, the dedicated bucket's exclusion from other operating expenditure
+must be checked before claiming that its non-spendability is enforced.
+
+### Enforcement boundary clarification (applies to M3 and M4 reports)
+
+Per-batch Native value-flow conservation is enforced by the node (I13).
+Cumulative ledger reconstruction currently runs only in the test assertion
+helper; the node has no genesis-rebuilt ledger context. Thus references in M3
+and M4 reports to successful Section 3.2 per-block assertions mean test-side
+cross-checks, not a demonstrated node rejection by that cumulative check.
+This absence alone does not demonstrate a candidate bypass of the existing
+per-batch checks; any such bypass would require its own construction.
+
+The current budget work targets node enforcement of Native balance covering
+both independently recorded protected holdings, plus classification fixed by
+the authenticated event. It does not introduce a historical budget context.
+Classification catches funds never marked protected; backing catches spending
+that leaves protected claims underfunded. Neither substitutes for the other.
+The earlier statement "bucket non-diversion is not yet claimed fully enforced"
+described the pre-fix state, not an assumed guarantee supplied by the schema.
+
+### Rejection and protected-budget follow-up
+
+The registered test engine now binds each locally executed result to its old
+coordinator snapshot. Shared node settlement checks old-state backing, new
+backing and event-derived protected credits/debits before publishing its result.
+Registration value is refundable; non-bounced rejected value is bucket value;
+Deposit slot fees and D32 S do not increase either protected category. Both
+actors independently reconstruct these events. No spendable field, historical
+ledger context, deployment switch or new schema was introduced.
+
+`build-m3-host/test-workchain-block` passed 133 tests. Before the fix, the new
+closure control exited 1 at `protected_failure.is_error()`: the old code really
+accepted a fee invading the unexpected bucket. After the fix the same path
+returns -7200, `refund fees invade unexpected bucket holdings`, publishes no
+message and leaves the account unchanged. Increasing operating funds restores
+success. The fixture has Native balance 1000, refundable claims 300, unexpected
+holdings 650, historical refund 100 and forwarding fee 100; only 50 was free.
+
+The production predicates also reject missing bucket credits (-7200), bucket
+credits mislabeled as operating income (-7200, despite sufficient total
+backing), and balances below protected claims. Removing the backing predicate
+in an isolated copy makes the `below.is_error()` control fail; removing the
+classification predicate makes `missing.is_error()` fail. Unmodified controls
+exit 0. These are predicate-level controls, not claims of four separately
+submitted malformed live candidates.
+
+Commands, both exit 0 after node integration:
+
+```
+python3 test/uno-m3-live.py --build build-m3-host --m4 --m4-rejections
+python3 test/uno-m3-live.py --build build-m3-host --m4
+```
+
+Three rejection ON/OFF pairs cover below-minimum principal, an overpaid slot
+fee, and protocol-non-bounceable input. Actual wc0 receiving transactions match
+the exact outbound hashes and contain Native credit phases of 1002999899 and
+1002999901, respectively. This is receipt evidence, not just export evidence.
+The third case records 1002999999 in the sender-only bucket, with no outbound.
+Final coordinator balance 22008999999 covers refundable claims 20000000000
+and bucket holdings 1002999999. Custody remains 2000000000 throughout rejection
+because the rejected value entered the coordinator, not custody. All three
+rejections consume 0/0 proof units: admission rejects before cryptographic work.
+The independent nine-step rerun still ends A=0, B=1996999954, with the same
+nine paired proof counts. Every disabled run identifies the registry refusal,
+zero executions/transactions and no candidate export.
+
+Consensus-file change, reported separately: `transaction.cpp` changes only
+`prepare_workchain_entry_impl` (exact independently rejected input selection)
+and `prepare_workchain_refund_message` (both protected amounts checked before
+publication). The former is reached through `prepare_workchain_entry` and
+`prepare_workchain_disposal_entry`; their callers are allocation-overlay entry
+construction, `prepare_workchain_import_participant` and
+`prepare_workchain_payout_pair`. Refund construction is called only by the
+allocation overlay's closure continuation and requires wc=2. The disposal
+context is a workchain-method parameter/local object, not ordinary Account or
+Transaction state. These generic helpers are workchain-specific, not all
+hardcoded wc=2; ordinary wc0 execution does not call them. No ordinary Native
+phase behavior was changed. No before/after byte-comparison result is claimed.
+
+At this follow-up checkpoint seven of eight targeted guards pass. The closure
+inventory correctly reports changed source identities and awaits its owner's
+baseline update; no scanner criterion has been relaxed. No full M4 completion
+or universal coverage of other engines' budget expenditure is claimed.

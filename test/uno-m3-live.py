@@ -12,6 +12,7 @@ import tempfile
 p = argparse.ArgumentParser(description=__doc__)
 p.add_argument('--build', required=True, type=Path)
 p.add_argument('--m4', action='store_true', help='use explicit M4 test parameters and real Native Deposit')
+p.add_argument('--m4-rejections', action='store_true', help='run separate rejection cases after two real Deposits')
 a = p.parse_args()
 repo = Path(__file__).resolve().parents[1]
 build = a.build.resolve()
@@ -174,6 +175,10 @@ if a.m4:
         subprocess.run([str(build / 'test-tos-collator'), '-C', str(fixture / 'global.json'),
                         '-D', str(fixture / 'db'), '-w', '-1', '-M', str(fixture / f'{number}-enabled-top1.boc'),
                         '--query-result', str(fixture / f'deposit-{number}-accepted-master.result')], check=True)
+    if a.m4_rejections:
+        from uno_m4_rejection_sequence import run
+        run(build, fixture, advance_pair)
+        raise SystemExit(0)
     from uno_m4_live_sequence import run
     run(build, fixture, wallet, advance_pair)
     raise SystemExit(0)

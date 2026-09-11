@@ -21,6 +21,7 @@
 #include "block/workchain-payout-accounting.h"
 #include "block/workchain-bounce-accounting.h"
 #include "block/workchain-native-disposal.h"
+#include "block/workchain-unexpected-bucket.h"
 #include "block/workchain-storage-overlay.h"
 #include "block/workchain-payout-overlay.h"
 #include "block/workchain-account-access.h"
@@ -30,6 +31,7 @@
 #include "block/workchain-resource-policy.h"
 #include "block/workchain-coordinator-state.h"
 #include "block/workchain-refund-message.h"
+#include "block/workchain-budget-backing.h"
 #include "block/workchain-closure-settlement.h"
 #include "block/workchain-host-input.h"
 #include "block/workchain-account-engine.h"
@@ -3076,6 +3078,43 @@ TEST(WorkchainBlock, NativeDisposalEntry) {
   block::NativeDisposalProfile profile{block::NativeDisposalSource::OriginalDestination,
       {0, -block::ComputePhase::sk_no_state, {}}, false};
   block::WorkchainDisposalEntryContext context{b, messages, workchains, profile, 5, 2};
+  {
+    // Rejected Deposit is addressed to the coordinator, unlike misdelivery.
+    // Without the explicit one-message continuation it remains ordinary credit.
+    block::tlb::MsgEnvelope::Record_std env;
+    ASSERT_TRUE(tlb::unpack_cell(inbound_envelope(1, 1, {}, a, block::CurrencyCollection(300)), env));
+    auto body = vm::load_cell_slice(env.msg);
+    ASSERT_EQ(body.fetch_ulong(4), 4u);
+    env.msg = vm::CellBuilder().store_long(6, 4).append_cellslice(body).finalize();
+    td::Ref<vm::Cell> envelope;
+    ASSERT_TRUE(tlb::pack_cell(envelope, env));
+    block::WorkchainAccountEffects unchanged;
+    unchanged.updates = effects.updates;
+    auto encoded = block::encode_workchain_account_effects(unchanged, 2, 0, 4096).move_as_ok();
+    auto single = block::encode_workchain_host_input(identity, admitted, access, {envelope}, 2, 2, 1).move_as_ok();
+    auto records = block::build_workchain_participant_records(td::Bits256(single->get_hash().bits()),
+        td::Bits256(encoded->get_hash().bits()), {a, b}, 2).move_as_ok();
+    auto run = [&](Transaction& tx, const block::WorkchainDisposalEntryContext& selected) {
+      return tx.prepare_workchain_disposal_entry(records[0], single, encoded, number(321), cfg, 0, 4096, selected);
+    };
+    Transaction ordinary(coordinator, Transaction::tr_workchain_batch, 21, 10);
+    ASSERT_TRUE(run(ordinary, context).is_ok());
+    ASSERT_TRUE(ordinary.balance == block::CurrencyCollection(1300) && ordinary.out_msgs.empty());
+    auto selected = context;
+    selected.rejected_coordinator_message = td::Bits256(env.msg->get_hash().bits());
+    Transaction rejected(coordinator, Transaction::tr_workchain_batch, 21, 10);
+    ASSERT_TRUE(run(rejected, selected).is_ok());
+    ASSERT_TRUE(rejected.balance == block::CurrencyCollection(1000));
+    ASSERT_TRUE(rejected.total_fees == block::CurrencyCollection(50));
+    ASSERT_EQ(rejected.out_msgs.size(), 1u);
+    ASSERT_TRUE(!rejected.storage_phase && !rejected.compute_phase && !rejected.action_phase && !rejected.bounce_phase);
+    ASSERT_TRUE(rejected.serialize(cfg));
+    selected.rejected_coordinator_message = foreign;
+    Transaction absent(coordinator, Transaction::tr_workchain_batch, 21, 10);
+    const auto absent_status = run(absent, selected);
+    ASSERT_TRUE(absent_status.is_error());
+    ASSERT_EQ(absent_status.message(), "rejected Deposit absent from entry inbox");
+  }
   auto prepare = [&](Transaction& tx, const block::WorkchainDisposalEntryContext& resolved) {
     return tx.prepare_workchain_disposal_entry(bindings[0], input, effects_root, number(321), cfg, 2, 4096, resolved);
   };
@@ -4771,6 +4810,32 @@ TEST(WorkchainBlock, NativeDisposalEntry) {
   ASSERT_TRUE(custody.balance == block::CurrencyCollection(1000));
 }
 
+TEST(WorkchainBlock, ProtectedBudgetBackingAndClassification) {
+  using block::CurrencyCollection;
+  auto below = block::check_workchain_budget_backing(CurrencyCollection(949), CurrencyCollection(300),
+                                                    CurrencyCollection(650));
+  ASSERT_TRUE(below.is_error());
+  ASSERT_EQ(below.message(), "coordinator balance below protected holdings");
+  ASSERT_TRUE(block::check_workchain_budget_backing(CurrencyCollection(950), CurrencyCollection(300),
+                                                    CurrencyCollection(650)).is_ok());
+  auto missing = block::check_workchain_bucket_credit_pair(CurrencyCollection(0), CurrencyCollection(0),
+                                                           CurrencyCollection(650));
+  ASSERT_TRUE(missing.is_error()); ASSERT_EQ(missing.code(), -7200);
+  ASSERT_EQ(missing.message(), "unexpected bucket credit differs from authenticated event");
+  // Misclassifying this authenticated receipt as operating income leaves total Native coins
+  // intact and passes backing; the independent event-classification check MUST
+  // still reject it, specifically at that check rather than at the inequality.
+  ASSERT_TRUE(block::check_workchain_budget_backing(CurrencyCollection(1650), CurrencyCollection(300),
+                                                    CurrencyCollection(0)).is_ok());
+  auto operating = block::check_workchain_bucket_credit_pair(CurrencyCollection(0), CurrencyCollection(0),
+                                                             CurrencyCollection(650));
+  ASSERT_TRUE(operating.is_error()); ASSERT_EQ(operating.code(), -7200);
+  ASSERT_EQ(operating.message(), "unexpected bucket credit differs from authenticated event");
+  ASSERT_TRUE(block::check_workchain_bucket_credit_pair(CurrencyCollection(0), CurrencyCollection(650),
+                                                        CurrencyCollection(650)).is_ok());
+  LOG(INFO) << "Budget controls: under-backed balance rejected, missing/misclassified bucket credit -7200, restored OK";
+}
+
 TEST(WorkchainBlock, NativeCoordinatorRefundMessage) {
   auto candidate = number(11);
   auto hash = td::Bits256(candidate->get_hash().bits());
@@ -4810,7 +4875,7 @@ TEST(WorkchainBlock, NativeCoordinatorRefundMessage) {
   using Transaction = block::transaction::Transaction;
   Transaction tx(coordinator, Transaction::tr_workchain_batch, 21, 10);
   ASSERT_TRUE(tx.prepare_workchain_entry(binding, input, effects_root, next_data, cfg, 0, 4096).is_ok());
-  ASSERT_TRUE(tx.prepare_workchain_refund_message(historical, prices).is_ok());
+  ASSERT_TRUE(tx.prepare_workchain_refund_message(historical, prices, 4096).is_ok());
   ASSERT_TRUE(tx.balance == block::CurrencyCollection(800));
   ASSERT_EQ(tx.out_msgs.size(), 1u);
   auto check = [&](std::uint64_t after_bucket, const std::vector<td::Ref<vm::Cell>>& messages,
@@ -4851,12 +4916,12 @@ TEST(WorkchainBlock, NativeCoordinatorRefundMessage) {
   ASSERT_TRUE(tlb::unpack_cell(tx.root, record));
   ASSERT_EQ(record.outmsg_cnt, 1);
   // A second send cannot be attached to the same already sealed transaction.
-  ASSERT_TRUE(tx.prepare_workchain_refund_message(historical, prices).is_error());
+  ASSERT_TRUE(tx.prepare_workchain_refund_message(historical, prices, 4096).is_error());
   ASSERT_TRUE(coordinator.balance == block::CurrencyCollection(1000));
   coordinator.balance = block::CurrencyCollection(300);
   Transaction unfunded(coordinator, Transaction::tr_workchain_batch, 21, 10);
   ASSERT_TRUE(unfunded.prepare_workchain_entry(binding, input, effects_root, next_data, cfg, 0, 4096).is_ok());
-  auto insufficient = unfunded.prepare_workchain_refund_message(historical, prices);
+  auto insufficient = unfunded.prepare_workchain_refund_message(historical, prices, 4096);
   ASSERT_TRUE(insufficient.is_error()); ASSERT_EQ(insufficient.code(), -7200);
   ASSERT_EQ(insufficient.message(), "refund operating budget insufficient");
   ASSERT_TRUE(unfunded.out_msgs.empty());
@@ -4864,10 +4929,38 @@ TEST(WorkchainBlock, NativeCoordinatorRefundMessage) {
   coordinator.balance = block::CurrencyCollection(299);
   Transaction corrupt(coordinator, Transaction::tr_workchain_batch, 21, 10);
   ASSERT_TRUE(corrupt.prepare_workchain_entry(binding, input, effects_root, next_data, cfg, 0, 4096).is_ok());
-  auto unavailable = corrupt.prepare_workchain_refund_message(historical, prices);
+  auto unavailable = corrupt.prepare_workchain_refund_message(historical, prices, 4096);
   ASSERT_TRUE(unavailable.is_error()); ASSERT_EQ(unavailable.code(), -7201);
   ASSERT_EQ(unavailable.message(), "authenticated refund bucket is not fully backed");
   ASSERT_TRUE(corrupt.out_msgs.empty());
+
+  // A real, independently recorded sender bucket leaves only 50 operating
+  // coins. The 100 forwarding fee must not consume those protected coins.
+  block::WorkchainUnexpectedBucket held{{}, {}, td::make_refint(650), {}, 0};
+  auto held_root = block::encode_workchain_unexpected_bucket(held, {256, 256}, 4096).move_as_ok();
+  coordinator.data = block::encode_workchain_coordinator_state(
+      {3, {1, 1, 2, 0}, 300, 0, held_root}).move_as_ok();
+  auto held_next = block::encode_workchain_coordinator_state(
+      {3, {1, 1, 2, 0}, 200, 0, held_root}).move_as_ok();
+  effects.updates[0].data = held_next;
+  auto held_effects = block::encode_workchain_account_effects(effects, 1, 0, 4096).move_as_ok();
+  auto held_binding = block::build_workchain_participant_records(td::Bits256(input->get_hash().bits()),
+      td::Bits256(held_effects->get_hash().bits()), {address}, 1).move_as_ok()[0];
+  coordinator.balance = block::CurrencyCollection(1000);
+  Transaction invading(coordinator, Transaction::tr_workchain_batch, 21, 10);
+  ASSERT_TRUE(invading.prepare_workchain_entry(held_binding, input, held_effects, held_next, cfg, 0, 4096).is_ok());
+  auto protected_failure = invading.prepare_workchain_refund_message(historical, prices, 4096);
+  ASSERT_TRUE(protected_failure.is_error());
+  ASSERT_EQ(protected_failure.code(), -7200);
+  ASSERT_EQ(protected_failure.message(), "refund fees invade unexpected bucket holdings");
+  ASSERT_TRUE(invading.out_msgs.empty());
+  ASSERT_TRUE(invading.balance == coordinator.balance);
+  coordinator.balance = block::CurrencyCollection(1050);
+  Transaction restored(coordinator, Transaction::tr_workchain_batch, 21, 10);
+  ASSERT_TRUE(restored.prepare_workchain_entry(held_binding, input, held_effects, held_next, cfg, 0, 4096).is_ok());
+  ASSERT_TRUE(restored.prepare_workchain_refund_message(historical, prices, 4096).is_ok());
+  ASSERT_TRUE(restored.balance == block::CurrencyCollection(850));
+  LOG(INFO) << "Protected unexpected holdings: invading closure rejected -7200; restored operating funds accepted";
 }
 
 TEST(WorkchainBlock, NativeCoordinatorEntry) {
