@@ -2500,9 +2500,15 @@ void ValidatorManagerImpl::try_validator_consensus_db_cleanup() {
   auto is_live = [this](const ValidatorSessionId &session) {
     return validator_groups_.contains(session) || next_validator_groups_.contains(session);
   };
+  // Per-record examination trace (armed-only): proves, per session, that a record was
+  // evaluated this pass and the eligibility decision -- so an acceptance harness need not
+  // infer examination from budget arithmetic.
+  auto on_examined = [](const ValidatorSessionId &session, bool eligible) {
+    LOG(WARNING) << "VALCLEANUP eval session=" << session.to_hex() << " eligible=" << (eligible ? 1 : 0);
+  };
   auto reserved = validator_cleanup_manager_.begin_eligible_deletes(
       gc_id, ancestor_or_equal_of_gc, gc_shard_catchain_seqno, is_live, kValidatorConsensusCleanupBudget,
-      kValidatorConsensusCleanupScanBudget, kValidatorConsensusCleanupMaxOutstanding);
+      kValidatorConsensusCleanupScanBudget, kValidatorConsensusCleanupMaxOutstanding, on_examined);
   // Observable proof that a cleanup pass actually RAN and examined the durable records
   // against this GC snapshot (so "record X was not reserved" is evidence of refusal, not
   // of the pass never running). Emitted only when cleanup is armed.

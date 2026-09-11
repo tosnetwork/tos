@@ -43,6 +43,7 @@ SCAN_BUDGET = 256  # kValidatorConsensusCleanupScanBudget
 FATAL = re.compile(r"\b(FATAL|PANIC|CHECK failed|LOG_CHECK failed|AddressSanitizer|UndefinedBehaviorSanitizer|Aborted)\b")
 RESERVE = re.compile(r"VALCLEANUP reserve session=(?P<session>\S+)")
 PASS = re.compile(r"VALCLEANUP pass gc_seqno=(?P<gc>\d+) pending=(?P<pending>\d+) reserved=(?P<reserved>\d+)")
+EVAL = re.compile(r"VALCLEANUP eval session=(?P<session>\S+) eligible=(?P<eligible>[01])")
 FUTURE_SEQNO = 9000000
 
 
@@ -72,9 +73,18 @@ def _inject(node: Path, seed: int, retire_seqno: int, root_b64: str, file_b64: s
     return m.group("s"), m.group("d")
 
 
-def _record_present(node: Path, seed: int) -> bool:
+def _record_state(node: Path, seed: int) -> str:
+    """Tri-state: PRESENT / ABSENT / UNKNOWN. A failed check (bad rc, malformed output) is
+    UNKNOWN, never silently 'absent' (which would let a control's query failure masquerade
+    as 'record erased')."""
     r = subprocess.run([str(INJECT), "check", str(node), str(seed)], capture_output=True, text=True)
-    return "POISON_PRESENT=1" in r.stdout
+    if r.returncode != 0:
+        return "UNKNOWN"
+    if "POISON_PRESENT=1" in r.stdout:
+        return "PRESENT"
+    if "POISON_PRESENT=0" in r.stdout:
+        return "ABSENT"
+    return "UNKNOWN"
 
 
 def main() -> int:
@@ -136,43 +146,54 @@ def main() -> int:
     fatals = [ln[:400] for ln in text.splitlines() if FATAL.search(ln)]
     reserves = {m.group("session") for m in RESERVE.finditer(text)}
     passes = [(int(m.group("gc")), int(m.group("pending")), int(m.group("reserved"))) for m in PASS.finditer(text)]
-    max_pending = max((p for _g, p, _r in passes), default=0)
+    # per-session eligibility DECISIONS the engine actually made this run (definitive: a
+    # session appears here iff a pass examined it, with the decision it reached).
+    evals: dict[str, set[int]] = {}
+    for m in EVAL.finditer(text):
+        evals.setdefault(m.group("session"), set()).add(int(m.group("eligible")))
 
-    # per-fixture disk + record state after the run
     results = {}
     for name, info in injected.items():
-        dir_present = (node / "consensus" / info["dir"]).exists()
-        rec_present = _record_present(node, info["seed"])
-        reserved = info["session"] in reserves
-        results[name] = {**info, "dir_present": dir_present, "record_present": rec_present, "reserved": reserved}
+        s = info["session"]
+        results[name] = {
+            **info,
+            "dir_present": (node / "consensus" / info["dir"]).exists(),
+            "record_state": _record_state(node, info["seed"]),
+            "reserved": s in reserves,
+            "evaluated": s in evals,
+            "eligible_decisions": sorted(evals.get(s, set())),
+        }
 
     failures = []
-    # recovery
     if fatals:
         failures.append(f"{len(fatals)} fatal/crash diagnostics after restart")
     if exited_early:
         failures.append(f"engine exited on its own before shutdown (code {early_exit_code}) -- crash/early-exit")
     if not passes:
         failures.append("no VALCLEANUP cleanup pass ran after reopen")
-    if not (0 < max_pending < SCAN_BUDGET):
-        failures.append(f"max_pending={max_pending} is 0 or >= scan budget {SCAN_BUDGET} (fixtures may not all be examined)")
-    # instrument-live: control must be deleted (reserved + dir gone + record erased)
+    # instrument-live: control must be EXAMINED, judged eligible, reserved, deleted, erased.
     c = results["control"]
+    if not c["evaluated"] or c["eligible_decisions"] != [1]:
+        failures.append(f"CONTROL not examined-as-eligible (evaluated={c['evaluated']} decisions={c['eligible_decisions']})")
     if not c["reserved"]:
-        failures.append("CONTROL (eligible) was NOT reserved -- the cleanup pass did not act; instrument not proven live")
+        failures.append("CONTROL (eligible) was NOT reserved -- instrument not proven live")
     if c["dir_present"]:
-        failures.append("CONTROL dir was not deleted (instrument not proven to delete anything)")
-    if c["record_present"]:
-        failures.append("CONTROL record was not erased")
-    # per-veto negatives: each poison retained, record present, not reserved
+        failures.append("CONTROL dir was not deleted")
+    if c["record_state"] != "ABSENT":
+        failures.append(f"CONTROL record not confirmed erased (record_state={c['record_state']})")
+    # per-veto negatives: each poison must be EXAMINED, judged INELIGIBLE, not reserved,
+    # dir retained, and record confirmed still present.
     for name in ("poison_ancestry", "poison_obsolete", "poison_sentinel"):
         p = results[name]
+        if not p["evaluated"] or p["eligible_decisions"] != [0]:
+            failures.append(f"{name} not examined-as-ineligible (evaluated={p['evaluated']} decisions={p['eligible_decisions']}); "
+                            f"cannot attribute retention to veto '{p['vetoed_by']}'")
         if p["reserved"]:
             failures.append(f"{name} was RESERVED for deletion (veto '{p['vetoed_by']}' failed)")
         if not p["dir_present"]:
             failures.append(f"{name} dir was DELETED (veto '{p['vetoed_by']}' failed)")
-        if not p["record_present"]:
-            failures.append(f"{name} record was ERASED (veto '{p['vetoed_by']}' failed)")
+        if p["record_state"] != "PRESENT":
+            failures.append(f"{name} record not confirmed present (record_state={p['record_state']})")
 
     verdict = "PASS" if not failures else "FAIL"
     summary = {
@@ -181,8 +202,6 @@ def main() -> int:
         "reopened_no_fatal": not fatals,
         "engine_alive_until_shutdown": not exited_early,
         "cleanup_passes_after_reopen": len(passes),
-        "max_pending_seen_in_a_pass": max_pending,
-        "scan_budget": SCAN_BUDGET,
         "fixtures": results,
         "failures": failures,
         "fatal_sample": fatals[:5],

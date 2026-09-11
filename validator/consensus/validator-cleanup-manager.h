@@ -158,11 +158,16 @@ class ValidatorCleanupManager {
   // Deleting+Erasing reservations ACROSS passes (so a slow async worker cannot let
   // in-flight work grow unbounded). scan_budget / max_outstanding default to
   // unbounded for callers that only want the dispatch cap.
+  // `on_examined`, if set, is called for EVERY Pending record this pass actually examined,
+  // with (session, eligible). It lets an acceptance harness prove -- per session -- that a
+  // record was evaluated and what the decision was, rather than inferring examination from
+  // budget arithmetic (the scan can stop early on dispatch_budget / max_outstanding).
+  using CleanupExaminedFn = std::function<void(const ValidatorSessionId&, bool /*eligible*/)>;
   std::vector<ReservedValidatorDelete> begin_eligible_deletes(
       const BlockIdExt& gc_checkpoint, const CleanupAncestorOfGcFn& ancestor_or_equal_of_gc,
       const GcShardCatchainSeqnoFn& gc_shard_catchain_seqno, const CleanupSessionIsLiveFn& is_live,
       size_t dispatch_budget, size_t scan_budget = std::numeric_limits<size_t>::max(),
-      size_t max_outstanding = std::numeric_limits<size_t>::max()) {
+      size_t max_outstanding = std::numeric_limits<size_t>::max(), const CleanupExaminedFn& on_examined = {}) {
     std::vector<ReservedValidatorDelete> reserved;
     if (pending_.empty() || dispatch_budget == 0) {
       return reserved;
@@ -182,8 +187,12 @@ class ValidatorCleanupManager {
       auto& entry = it->second;
       if (entry.state == EntryState::Pending) {
         auto is_closed = [&entry](const ValidatorSessionId&) { return entry.closed; };
-        if (validator_cleanup_eligible(entry.record, gc_checkpoint, ancestor_or_equal_of_gc, gc_shard_catchain_seqno,
-                                       is_live, is_closed)) {
+        bool eligible = validator_cleanup_eligible(entry.record, gc_checkpoint, ancestor_or_equal_of_gc,
+                                                   gc_shard_catchain_seqno, is_live, is_closed);
+        if (on_examined) {
+          on_examined(it->first, eligible);
+        }
+        if (eligible) {
           entry.state = EntryState::Deleting;
           entry.attempt_id = ++next_attempt_;  // fresh per-attempt token
           ++outstanding_;

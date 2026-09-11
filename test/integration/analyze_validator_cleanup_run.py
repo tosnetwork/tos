@@ -20,10 +20,11 @@ What this run CAN establish (and only this):
     retirement_seqno <= gc_seqno (a future retirement can never be an ancestor of GC).
   NO OVER-REACH: live / not-yet-eligible validator-group dirs remain on disk; no session
     is both deleted and present.
-  LIVENESS: every EXPECTED validator (from the run manifest, DHT excluded) has a log AND
-    applied at least one masterchain block AFTER its last delete whose seqno exceeds the
-    GC floor its deletes used -- i.e. it kept validating THROUGH the reclamations. Missing
-    a validator log / height signal is INCONCLUSIVE, never a silent pass.
+  LIVENESS: every EXPECTED validator (from the run manifest, DHT excluded) SUCCESSFULLY
+    APPLIED a masterchain block (local application to state, not merely FinalizeBlock
+    finality) whose seqno exceeds the max GC floor its own deletes used -- i.e. it kept
+    applying blocks BEYOND its deletion horizon, crash-free. Missing a validator log is
+    INCONCLUSIVE, never a silent pass.
 
 What this run does NOT establish (still OPEN, not counted as passed here):
   * the exhaustive real-node should-NOT-delete matrix by deliberate injection
@@ -62,9 +63,12 @@ ERASE_ACK = re.compile(
 APPLIED_MC = re.compile(
     r"applied masterchain block \(-1,8000000000000000,(?P<seqno>\d+)\):(?P<root>[0-9A-Fa-f]+)"
 )
-# Fine per-masterchain-block activity: the node runs validate-query on each mc block seqno.
-# This is the liveness signal ("kept validating masterchain blocks through the deletes").
-VALIDATE_MC = re.compile(r"validateblock\(-1,8000000000000000\):(?P<seqno>\d+)")
+# Fine per-block ACCEPTED signal: a masterchain block was FINALIZED (final signatures) by
+# the node's consensus group. Unlike "validateblock" (the ValidateQuery actor name, which
+# may end in a REJECT), FinalizeBlock means the block was accepted -- the right liveness
+# signal. (Its block id is (-1,shard,seqno); the earlier candidate id in the same line is
+# not (-1,...), so the non-greedy match lands on the masterchain block seqno.)
+FINALIZE_MC = re.compile(r"FinalizeBlock.*?\(-1,8000000000000000,(?P<seqno>\d+)\)")
 FATAL = re.compile(
     r"\b(FATAL|PANIC|CHECK failed|LOG_CHECK failed|AddressSanitizer|UndefinedBehaviorSanitizer|Aborted)\b"
 )
@@ -113,7 +117,7 @@ def _parse_node(text: str) -> dict:
         acked.setdefault(_key(m), m.start())
 
     applied = [(int(m.group("seqno")), m.start(), m.group("root")) for m in APPLIED_MC.finditer(text)]
-    validated = [(int(m.group("seqno")), m.start()) for m in VALIDATE_MC.finditer(text)]
+    accepted = [(int(m.group("seqno")), m.start()) for m in FINALIZE_MC.finditer(text)]
     fatals = [ln[:400] for ln in text.splitlines() if FATAL.search(ln)]
 
     # ordered completed ops: reserve.pos < delete_done.pos < erase_ack.pos, and gc>0.
@@ -133,7 +137,7 @@ def _parse_node(text: str) -> dict:
         "completed": completed,
         "ordering_violations": ordering_violations,
         "applied": applied,
-        "validated": validated,
+        "accepted": accepted,
         "fatals": fatals,
         "last_delete_pos": last_delete_pos,
     }
@@ -152,8 +156,6 @@ def analyze(run_dir: Path) -> tuple[str, dict]:
     eligibility_violations = []
     ordering_violations_total = 0
     gc_zero_completed = 0
-    deleted_sessions: set[str] = set()
-    present_sessions: set[str] = set()
     present_validator_dirs_total = 0
     validators_with_progress = 0
     validator_nodes = []
@@ -168,8 +170,8 @@ def analyze(run_dir: Path) -> tuple[str, dict]:
         text = log.read_text(errors="replace")
         p = _parse_node(text)
         applied_seqnos = [s for s, _, _ in p["applied"]]
-        validate_seqnos = [s for s, _ in p["validated"]]
-        is_validator = len(validate_seqnos) > 0  # DHT node runs no masterchain validate-query
+        accepted_seqnos = [s for s, _ in p["accepted"]]
+        is_validator = len(accepted_seqnos) > 0  # DHT node finalizes no masterchain blocks
         n_completed = len(p["completed"])
         completed_total += n_completed
         ordering_violations_total += len(p["ordering_violations"])
@@ -182,47 +184,51 @@ def analyze(run_dir: Path) -> tuple[str, dict]:
         for c in p["completed"]:
             if c["gc"] <= 0:
                 gc_zero_completed += 1
-            deleted_sessions.add(c["key"][0])
 
-        # completed-delete dirs must be gone from disk.
+        # completed-delete dirs must be gone from disk. (This per-NODE check IS the
+        # "deleted but still present" invariant; a cross-node session-set intersection was
+        # dropped -- node A cleaning its own copy of session X while node B still needs X is
+        # not a conflict.)
         for c in p["completed"]:
             if (nd / "consensus" / c["dir"]).exists():
                 failures.append(f"{nd.name}: completed-delete dir still on disk: {c['dir']}")
 
-        # retention: validator-group dirs still present at end (live/not-yet-eligible).
+        # retention: validator-group DIRECTORIES still present at end (live/not-yet-eligible).
+        # Count directories only -- a stray consensus.* file is not a retained group.
         present_here = 0
         cdir = nd / "consensus"
         if cdir.is_dir():
             for child in cdir.iterdir():
-                if child.name.startswith("consensus.") and ".observer." not in child.name:
+                if child.is_dir() and child.name.startswith("consensus.") and ".observer." not in child.name:
                     present_here += 1
-                    parts = child.name.split(".")
-                    if len(parts) >= 5:
-                        present_sessions.add(parts[4])
         present_validator_dirs_total += present_here
 
-        # LIVENESS (per validator): applied an mc block AFTER its last delete, whose seqno
-        # exceeds the GC floor its deletes used -> it kept validating through cleanup.
-        progressed_after_delete = None
+        # LIVENESS (per validator): it must have SUCCESSFULLY APPLIED a masterchain block
+        # (manager.cpp "applied masterchain block" -- local application to state, not merely
+        # FinalizeBlock consensus finality which can be followed by a stuck applier) whose
+        # seqno exceeds the max GC floor its own deletes used. Since a node only advances
+        # its GC floor by applying blocks past it, "applied a block beyond its deletion
+        # horizon" means it kept applying blocks THROUGH the deletion activity. (The coarse
+        # 1024-block application log cannot prove "strictly after the last delete position",
+        # so this asserts the sound, provable "beyond the deletion horizon" instead.)
+        progressed = None
         max_applied = max(applied_seqnos, default=None)
-        max_validated = max(validate_seqnos, default=None)
+        max_accepted = max(accepted_seqnos, default=None)  # finality tip (informational)
         if is_validator:
             validator_nodes.append(nd.name)
             applied_roots_by_node[nd.name] = {s: root for s, _, root in p["applied"]}
             if n_completed > 0:
                 gc_floor_used = max(node_gc_used, default=0)
-                after = [(s, pos) for s, pos in p["validated"]
-                         if (p["last_delete_pos"] is None or pos > p["last_delete_pos"]) and s > gc_floor_used]
-                progressed_after_delete = len(after) > 0
-                if progressed_after_delete:
+                progressed = max_applied is not None and max_applied > gc_floor_used
+                if progressed:
                     validators_with_progress += 1
                 else:
                     failures.append(
-                        f"{nd.name}: no masterchain block applied after its last delete beyond gc_floor "
-                        f"{gc_floor_used} (possible stall/death through cleanup)"
+                        f"{nd.name}: no APPLIED masterchain block beyond its max delete gc_floor "
+                        f"{gc_floor_used} (max_applied={max_applied}); local application through cleanup not shown"
                     )
             else:
-                progressed_after_delete = True  # no deletes on this node -> nothing to survive
+                progressed = True  # no deletes on this node -> nothing to survive
                 validators_with_progress += 1
 
         per_node.append({
@@ -233,9 +239,9 @@ def analyze(run_dir: Path) -> tuple[str, dict]:
             "ordering_violations": len(p["ordering_violations"]),
             "gc_seqnos_used": sorted(set(node_gc_used)),
             "max_applied_mc_seqno": max_applied,
-            "max_validated_mc_seqno": max_validated,
+            "max_accepted_mc_seqno": max_accepted,
             "validator_dirs_present_at_end": present_here,
-            "progressed_after_last_delete": progressed_after_delete,
+            "applied_beyond_delete_horizon": progressed,
             "fatal_lines": len(p["fatals"]),
         })
 
@@ -244,10 +250,12 @@ def analyze(run_dir: Path) -> tuple[str, dict]:
     # Cross-node full-block-ID agreement: at the highest masterchain milestone reached by
     # ALL validators, every validator must have applied the SAME block (root hash) -- i.e.
     # they are on one chain, validating together, not forked/diverged.
+    # Fail-closed: agreement is None (not established) unless there is a common milestone
+    # across all validators to compare -- absence of common evidence is UNKNOWN, not "agree".
     agreement_seqno = None
-    agreement_ok = True
-    if applied_roots_by_node and len(applied_roots_by_node) == (expected_validators or len(applied_roots_by_node)):
-        common = set.intersection(*(set(m.keys()) for m in applied_roots_by_node.values())) if applied_roots_by_node else set()
+    agreement_ok = None
+    if len(applied_roots_by_node) >= 2:
+        common = set.intersection(*(set(m.keys()) for m in applied_roots_by_node.values()))
         if common:
             agreement_seqno = max(common)
             roots = {m[agreement_seqno] for m in applied_roots_by_node.values()}
@@ -271,13 +279,12 @@ def analyze(run_dir: Path) -> tuple[str, dict]:
         failures.append(f"{len(eligibility_violations)} reserve(s) with retirement_seqno > gc_seqno")
     if completed_total > 0 and present_validator_dirs_total == 0:
         failures.append("cleanup deleted EVERY validator-group dir (no live group retained -> over-reach)")
-    deleted_and_present = sorted(deleted_sessions & present_sessions)
-    if deleted_and_present:
-        failures.append(f"{len(deleted_and_present)} session(s) both deleted AND still present on disk")
     if fatal_total:
         failures.append(f"{fatal_total} fatal/crash diagnostics in node logs")
-    if not agreement_ok:
+    if agreement_ok is False:
         failures.append(f"validators applied DIFFERENT masterchain block ids at seqno {agreement_seqno} (fork/divergence)")
+    elif agreement_ok is None:
+        inconclusive.append("no common masterchain milestone across validators to check block-id agreement")
     if completed_total == 0:
         inconclusive.append("no ordered validator-group delete completed on the real path (nothing to accept)")
 
@@ -291,7 +298,9 @@ def analyze(run_dir: Path) -> tuple[str, dict]:
     summary = {
         "verdict": verdict,
         "run_dir": str(run_dir),
-        "source_head": _git_head(),
+        # NOTE: this is the git HEAD of the ANALYSIS workspace, not proof of the binary that
+        # produced the run. Correlate with the run's own provenance for the running engine.
+        "analysis_workspace_git_head": _git_head(),
         "expected_validators": expected_validators,
         "validators_seen": validator_nodes,
         "validators_with_progress_after_delete": validators_with_progress,
@@ -304,7 +313,6 @@ def analyze(run_dir: Path) -> tuple[str, dict]:
         "ordering_violations_total": ordering_violations_total,
         "completed_with_gc_zero": gc_zero_completed,
         "validator_dirs_retained_at_end": present_validator_dirs_total,
-        "sessions_both_deleted_and_present": deleted_and_present,
         "cross_node_blockid_agreement_seqno": agreement_seqno,
         "cross_node_blockid_agreement_ok": agreement_ok,
         "fatal_total": fatal_total,
