@@ -54,3 +54,18 @@ TEST(M5Accounting, D62SingleReturnTrace) {
   error_is(single_return({{false, false, 1, false, 0}, {false, false, 1, false, 0}}),
       "D62: repeated ordinary return attempt");
 }
+
+TEST(M5Accounting, D64NoPendingInstallation) {
+  // Synthetic commitment observations, not a host-executed Withdrawal.
+  auto account = td::Bits256::zero(), original = account, installed = account;
+  original.as_slice().back() = 1;
+  installed.as_slice().back() = 2;
+  PendingCommitments before{{account, original}};
+  ASSERT_TRUE(withdrawal_pending(before, before).is_ok());
+  error_is(withdrawal_pending(before, {{account, installed}}), "D64: Withdrawal changed pending state");
+  auto extra_account = account;
+  extra_account.as_slice().back() = 3;
+  auto after = before;
+  after.emplace(extra_account, installed);
+  error_is(withdrawal_pending(before, after), "D64: Withdrawal changed pending state");
+}

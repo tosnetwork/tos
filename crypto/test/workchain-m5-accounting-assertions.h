@@ -5,9 +5,21 @@
 // net balances can hide spending behind unrelated income. No default policy.
 #include "block/block-parse.h"
 #include "block/workchain-budget-backing.h"
+#include <map>
 
 namespace block::m5_test {
 using C = CurrencyCollection;
+
+// Complete account-to-pending commitments at the isolated operation boundary,
+// including both pending kinds and their counts. An adapter must derive these
+// from authenticated states, not just inspect the source account's effects.
+// This test interface does not implement that adapter or a consensus encoding.
+using PendingCommitments = std::map<td::Bits256, td::Bits256>;
+inline td::Status withdrawal_pending(const PendingCommitments& before, const PendingCommitments& after) {
+  if (before != after)
+    return td::Status::Error("D64: Withdrawal changed pending state");
+  return td::Status::OK();
+}
 
 // Isolated payout forwarding stage: principal and outgoing fee leave custody;
 // the separately locked return allowance stays there. Other fees/income must

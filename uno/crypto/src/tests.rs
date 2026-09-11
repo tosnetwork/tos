@@ -26,6 +26,10 @@ impl Fixture {
 fn fixture(k: usize) -> Fixture { fixture_with_fee(k, 3) }
 
 fn fixture_with_fee(k: usize, fee: u64) -> Fixture {
+    fixture_with_recipient(k, fee, false)
+}
+
+fn fixture_with_recipient(k: usize, fee: u64, same_recipient: bool) -> Fixture {
     let pc = PedersenGens::default(); let g = pc.B; let h = pc.B_blinding;
     let s = S::from(11u64); let p = s.invert()*h; let rho = S::from(19u64);
     let blind = S::from(23u64); let old_r = S::from(29u64);
@@ -33,7 +37,7 @@ fn fixture_with_fee(k: usize, fee: u64) -> Fixture {
     let ca = S::from(b)*g+old_r*h; let da=old_r*p;
     let (points, witnesses, mut values, mut blinds) = if k == 0 {
         let v=7u64; let new=b.checked_sub(v).and_then(|n| n.checked_sub(fee)).expect("funded transfer and fee");
-        let r=S::from(17u64); let pb=S::from(13u64).invert()*h;
+        let r=S::from(17u64); let pb=if same_recipient {p} else {S::from(13u64).invert()*h};
         (vec![p,pb,ca,da,S::from(new)*g+rho*h,rho*p,S::from(v)*g+r*h,r*p,r*pb,S::from(b)*g+blind*h],
             vec![s,S::from(new),S::from(v),r,rho,blind],
             vec![b,bmax.checked_sub(b).expect("old bound"),new,bmax.checked_sub(new).expect("new bound"),
@@ -232,6 +236,35 @@ fn nonidentity_handles_are_checked_before_proof_verification() {
                 "identity handle k={k}, index={index}");
         }
     }
+}
+
+#[test]
+fn d64_shared_witness_and_equal_handles() {
+    // Algebra/verification fixture only: this is NOT a Withdrawal operation,
+    // opening transcript, authenticated host context, or settlement test.
+    let mut f = fixture_with_recipient(0, 3, true);
+    assert_eq!(f.verify(), Ok(()));
+    let relation = prepare(f.kind, &f.limits, &f.domain, f.fee, &f.context, &f.points, &f.ids)
+        .expect("same-key SEND relation");
+    let pc = PedersenGens::default();
+    assert_eq!(relation.rows.len(), 8);
+    assert!(relation.rows.iter().all(|row| row.len() == 6));
+    assert_eq!(relation.rows[5][2], pc.B, "equation 6 uses shared v slot 2");
+    assert_eq!(relation.rows[5][3], pc.B_blinding, "equation 6 uses shared r slot 3");
+    assert_eq!(relation.rows[6][3], CompressedPoint(f.points[0]), "equation 7 uses r slot 3");
+    assert_eq!(relation.rows[6], relation.rows[7], "equal keys make handle equations redundant");
+    assert_eq!(relation.targets[6], relation.targets[7]);
+    // These are point-corruption tests with the original proof, NOT evidence
+    // that removing either redundant public handle check permits a bad amount.
+    for index in [6, 7, 8] {
+        let saved = f.points[index];
+        f.points[index] = (CompressedPoint(saved) + pc.B).compress().to_bytes();
+        assert!(prepare(f.kind, &f.limits, &f.domain, f.fee, &f.context, &f.points, &f.ids).is_ok(),
+            "point corruption remains decodable: {index}");
+        assert_eq!(f.verify(), Err(UNO_CRYPTO_VERIFY), "point mutation reaches verification: {index}");
+        f.points[index] = saved;
+    }
+    assert_eq!(f.verify(), Ok(()));
 }
 
 #[test]
