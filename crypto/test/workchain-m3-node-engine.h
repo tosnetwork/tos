@@ -86,13 +86,12 @@ class M3NodeEngine final : public RegisteredWorkchainAccountEngine {
     return operations.total();
   }
   static td::Result<WorkchainOperationFeeAmounts> operation_fees(const Configuration& cfg,
-      const WorkchainTransferInput& transfer, std::uint64_t units) {
+      const WorkchainTransferInput& transfer) {
     TRY_RESULT(tariff, require_m4_operation_tariff(cfg.business));
     TRY_RESULT(deposit, require_m4_deposit_policy(cfg.business));
     TRY_RESULT(amounts, derive_workchain_operation_fee_amounts(tariff, deposit.slot_fee,
-        workchain_transfer_kind(transfer.data), units));
-    if (workchain_transfer_claims(transfer.data).authorized_fee != amounts.total)
-      return invalid("operation public fee differs from authenticated static components");
+        workchain_transfer_kind(transfer.data)));
+    TRY_STATUS(check_workchain_operation_public_fee(amounts, workchain_transfer_claims(transfer.data).authorized_fee));
     return amounts;
   }
 
@@ -153,7 +152,7 @@ class M3NodeEngine final : public RegisteredWorkchainAccountEngine {
     const auto& transfer = std::get<WorkchainTransferInput>(wire);
     TRY_RESULT(units, transfer_units(*cfg, transfer));
     if (cfg->business.deposit) {
-      TRY_RESULT(fees, operation_fees(*cfg, transfer, units));
+      TRY_RESULT(fees, operation_fees(*cfg, transfer));
       (void)fees;
     }
     return units;
@@ -303,7 +302,7 @@ class M3NodeEngine final : public RegisteredWorkchainAccountEngine {
       if (b.deposit) {
         TRY_RESULT(units, transfer_units(*cfg, transfer));
         expected_units = units;
-        TRY_RESULT(reconstructed, operation_fees(*cfg, transfer, units));
+        TRY_RESULT(reconstructed, operation_fees(*cfg, transfer));
         amounts = reconstructed;
       }
       TRY_RESULT(native, read(accounts, claims.source.account, clock.gen_utime, true));
@@ -333,9 +332,10 @@ class M3NodeEngine final : public RegisteredWorkchainAccountEngine {
       if (amounts) {
         std::uint64_t actual_units;
         // Checked subtraction: a verifier regression must not turn a backwards
-        // counter into a huge authorized debit, nor use a candidate usage field.
+        // counter into a huge proof-work count. This checks resource accounting,
+        // NOT the separate D28 billing units; proof work never prices the fee.
         if (__builtin_sub_overflow(verifier.consumed(), consumed_before, &actual_units) || actual_units != expected_units)
-          return local("verified operation units differ from fee reconstruction");
+          return local("verified proof work differs from admitted resource count");
         TRY_RESULT(custody, read(accounts, *cfg->ingress.custody_address, clock.gen_utime, false));
         result.updates.push_back({*cfg->ingress.custody_address, custody.data});
         if (amounts->total) result.fees = materialize_workchain_operation_fees(*amounts,

@@ -55,16 +55,37 @@ static void exercise_static_fee_settlement(block::WorkchainStaticOperationTariff
   truncated.append_cellslice(*bits);
   while (short_slice.size_refs()) truncated.store_ref(short_slice.fetch_ref());
   ASSERT_TRUE(decode_m3_test_business_parameters(truncated.finalize()).is_error());
-  auto send = derive_workchain_operation_fee_amounts(tariff, business.deposit->slot_fee, 1, 2288).move_as_ok();
-  auto collect = derive_workchain_operation_fee_amounts(tariff, business.deposit->slot_fee, 2, 2639).move_as_ok();
+  auto send = derive_workchain_operation_fee_amounts(tariff, business.deposit->slot_fee, 1).move_as_ok();
+  auto collect = derive_workchain_operation_fee_amounts(tariff, business.deposit->slot_fee, 2).move_as_ok();
   if (original) {
   ASSERT_EQ(send.state, 3000000u);
-  ASSERT_EQ(send.compute, 4576u);
+  ASSERT_EQ(send.compute, 2u);
   ASSERT_EQ(send.tip, 5u);
-  ASSERT_EQ(send.total, 3004581u);
+  ASSERT_EQ(send.total, 3000007u);
   ASSERT_EQ(collect.state, 0u);
-  ASSERT_EQ(collect.compute, 5278u);
-  ASSERT_EQ(collect.total, 5285u);
+  ASSERT_EQ(collect.compute, 6u);
+  ASSERT_EQ(collect.total, 13u);
+  } else {
+    // Coordinator's independently predicted case, not expected values computed
+    // by repeating the implementation's formula inside the assertion.
+    ASSERT_EQ(send.compute, 1000u);
+    ASSERT_EQ(send.total, 1257u);
+    ASSERT_EQ(collect.compute, 3000u);
+    ASSERT_EQ(collect.total, 3011u);
+  }
+  // Run the same public-fee gate consumed by the node engine. Deliberately quote
+  // the former proof-work formula; it must fail here, before proof verification.
+  for (const auto& pair : {std::pair{send, std::uint64_t{2288}},
+                          std::pair{collect, std::uint64_t{2639}}}) {
+    std::uint64_t wrong_compute, subtotal, wrong_total;
+    ASSERT_TRUE(!__builtin_mul_overflow(tariff.base, pair.second, &wrong_compute));
+    ASSERT_TRUE(!__builtin_add_overflow(pair.first.state, wrong_compute, &subtotal));
+    ASSERT_TRUE(!__builtin_add_overflow(subtotal, pair.first.tip, &wrong_total));
+    auto rejected = check_workchain_operation_public_fee(pair.first, wrong_total);
+    ASSERT_TRUE(rejected.is_error());
+    ASSERT_EQ(rejected.code(), -7200);
+    ASSERT_EQ(rejected.message(), "operation public fee differs from authenticated static components");
+    ASSERT_TRUE(check_workchain_operation_public_fee(pair.first, pair.first.total).is_ok());
   }
   auto expected = materialize_workchain_operation_fees(send, custody, coordinator);
   ASSERT_TRUE(compare_workchain_operation_fee_claim(expected, expected).is_ok());
@@ -73,14 +94,24 @@ static void exercise_static_fee_settlement(block::WorkchainStaticOperationTariff
     if (defect == 0) std::swap(claim.state_fee, claim.compute_fee);
     if (defect == 1) std::swap(claim.compute_fee, claim.tip);
     if (defect == 2) std::swap(claim.state_fee, claim.tip);
-    if (defect == 3) { claim.state_fee = td::make_refint(3000001); claim.compute_fee = td::make_refint(4575); }
+    if (defect == 3) {
+      std::uint64_t shifted_state, shifted_compute;
+      ASSERT_TRUE(!__builtin_add_overflow(send.state, std::uint64_t{1}, &shifted_state));
+      // The tested base is positive, so C >= 1; enforce the subtraction too.
+      ASSERT_TRUE(!__builtin_sub_overflow(send.compute, std::uint64_t{1}, &shifted_compute));
+      claim.state_fee = workchain_unsigned_fee(shifted_state);
+      claim.compute_fee = workchain_unsigned_fee(shifted_compute);
+      auto before = checked_workchain_fee_totals(expected).move_as_ok();
+      auto after = checked_workchain_fee_totals(claim).move_as_ok();
+      ASSERT_TRUE(before.total == after.total);
+    }
     if (defect == 4) claim.coordinator = custody;
     auto rejected = compare_workchain_operation_fee_claim(expected, claim);
     ASSERT_TRUE(rejected.is_error());
     ASSERT_EQ(rejected.code(), -7200);
     ASSERT_EQ(rejected.message(), "candidate fee components or authenticated recipients differ");
   }
-  auto overflow = derive_workchain_operation_fee_amounts({UINT64_MAX, 0, 0}, 3000000, 1, 2);
+  auto overflow = derive_workchain_operation_fee_amounts({UINT64_MAX, 0, 0}, 3000000, 2);
   ASSERT_TRUE(overflow.is_error());
   ASSERT_EQ(overflow.error().code(), -7200);
   auto empty = vm::CellBuilder().finalize();
@@ -191,7 +222,8 @@ static void exercise_static_fee_settlement(block::WorkchainStaticOperationTariff
   }
   std::cout << "static inputs: base=" << tariff.base << " slot_fee=" << business.deposit->slot_fee
             << " send_tip=" << tariff.send_tip << " collect_tip=" << tariff.collect_tip
-            << "; SEND units=2288; COLLECT units=2639; five component negatives passed\n";
+            << "; billing SEND=1 COLLECT=3; proof work SEND=2288 COLLECT=2639 is NOT billing; "
+               "proof-priced quotes rejected at public-fee gate (-7200); five component negatives passed\n";
 }
 
 TEST(ConfidentialInput, StaticFeeComponentsAndStateAllocation) {
