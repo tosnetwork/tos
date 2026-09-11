@@ -1,0 +1,5 @@
+"Asm.fif" include
+library TOS_PQ_Asm
+Asm definitions
+x{F93100} @Defop PQCHECKSIG_MLDSA44
+Fift definitions

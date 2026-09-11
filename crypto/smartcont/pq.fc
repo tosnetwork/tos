@@ -1,0 +1,4 @@
+;; Requires TVM version 16. Include PQ.fif when assembling the compiler output.
+;; All operands are canonical ordinary-cell byte chains; see docs/tvm-mldsa44.md.
+int pq_check_mldsa44(cell message, cell context, cell signature, cell public_key)
+  asm "PQCHECKSIG_MLDSA44";
