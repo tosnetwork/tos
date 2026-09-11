@@ -1,3 +1,4 @@
+#include "workchain-m4-wallet-receipts.h"
 #include "block/workchain-confidential-state.h"
 #include "block/workchain-coordinator-state.h"
 #include "td/utils/tests.h"
@@ -406,4 +407,24 @@ TEST(ConfidentialState, SystemCollectIdentityInputs) {
   std::cout << "M4_COLLECT_ID send=" << td::hex_encode(send.as_slice())
             << " system1=" << td::hex_encode(first.as_slice())
             << " system2=" << td::hex_encode(second.as_slice()) << '\n';
+}
+
+TEST(ConfidentialState, SystemCollectWalletFields) {
+  auto a = account();
+  auto user = receipt(1);
+  auto id = block::derive_workchain_deposit_id(bits(101), 1).move_as_ok();
+  a.pending = {user};
+  a.system_pending.push_back({id, bits(101), 1, 1000000019, a.address.instance,
+      a.key_epoch, a.bindings.asset, {public_point(), public_point()}, 0});
+  auto fields = block::m3_test::prepare_m4_test_collect_receipt_fields(a,
+      {id, user.receipt_id}, {1000000019, 137}).move_as_ok();
+  ASSERT_EQ(fields.at("values"), "1000000019,137");
+  ASSERT_EQ(fields.at("receipt_ciphertexts"),
+      td::hex_encode(a.system_pending[0].ciphertext.commitment.as_slice()) +
+      td::hex_encode(a.system_pending[0].ciphertext.handle.as_slice()) +
+      td::hex_encode(user.ciphertext.commitment.as_slice()) + td::hex_encode(user.ciphertext.handle.as_slice()));
+  ASSERT_TRUE(block::m3_test::prepare_m4_test_collect_receipt_fields(a, {id}, {1}).is_error());
+  ASSERT_TRUE(block::m3_test::prepare_m4_test_collect_receipt_fields(a, {bits(233)}, {1}).is_error());
+  a.pending[0].receipt_id = id;
+  ASSERT_TRUE(block::m3_test::prepare_m4_test_collect_receipt_fields(a, {id}, {1000000019}).is_error());
 }
