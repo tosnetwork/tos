@@ -344,3 +344,5 @@ fn system_collect_unselected_input_is_not_a_statement_dependency() {
     // NOT exercise host pending removal or claim a persisted post-state.
     println!("two system inputs; selected k=1 OK; borrowed unselected input unchanged; host removal NOT tested");
 }
+
+mod boundaries;
