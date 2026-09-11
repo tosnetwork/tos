@@ -1,0 +1,30 @@
+{
+  "before": {
+    "validator_account_binding_custom": {
+      "sha256": "ffc1f20338e5934110c811dc6ae6fb19962518e2593152d352d4f7e53b83db4f",
+      "source": "td::Result<bool> validator_account_binding_custom(const block::ResolvedWorkchainAccountBinding& binding) {\n  // D59 permits only the explicitly selected test instance. Account batches\n  // never use ordinary per-account compute configuration.\n  if (block::default_workchain_execution_registry().test_only_account_instance_execution_enabled(binding))\n    return false;\n  return td::Status::Error(static_cast<int>(block::WorkchainExecutionFailure::LocalUnavailable),\n                           \"multi-account admission and replay are not connected\");\n}"
+    },
+    "validator_account_binding_ready": {
+      "sha256": "9c62bb8b5525d627a71e3d4c67961d8aeb4a278e00e96ec13e4db537e366db5c",
+      "source": "td::Status validator_account_binding_ready(const block::ResolvedWorkchainAccountBinding& binding) {\n  if (block::default_workchain_execution_registry().test_only_account_instance_execution_enabled(binding))\n    return td::Status::OK();\n  return td::Status::Error(static_cast<int>(block::WorkchainExecutionFailure::LocalUnavailable),\n                           \"multi-account admission and replay are not connected\");\n}"
+    },
+    "check_transactions_account_binding": {
+      "sha256": "8b5d2fc606d43b4e056c9a2653cb9db9d34842ecc68ea5d38ec209808ce015eb",
+      "source": "        // D59: this refusal was reached in the paired real validator run.\n        // An enabled batch has its own replay, never the ordinary account loop.\n        if (block::default_workchain_execution_registry().test_only_account_instance_execution_enabled(binding)) {\n          account_binding = &binding;\n          return nullptr;\n        }\n        return td::Status::Error(static_cast<int>(block::WorkchainExecutionFailure::LocalUnavailable),\n                                 \"multi-account admission and replay are not connected\");"
+    }
+  },
+  "after": {
+    "validator_account_binding_custom": {
+      "sha256": "ffc1f20338e5934110c811dc6ae6fb19962518e2593152d352d4f7e53b83db4f",
+      "source": "td::Result<bool> validator_account_binding_custom(const block::ResolvedWorkchainAccountBinding& binding) {\n  // D59 permits only the explicitly selected test instance. Account batches\n  // never use ordinary per-account compute configuration.\n  if (block::default_workchain_execution_registry().test_only_account_instance_execution_enabled(binding))\n    return false;\n  return td::Status::Error(static_cast<int>(block::WorkchainExecutionFailure::LocalUnavailable),\n                           \"multi-account admission and replay are not connected\");\n}"
+    },
+    "validator_account_binding_ready": {
+      "sha256": "9c62bb8b5525d627a71e3d4c67961d8aeb4a278e00e96ec13e4db537e366db5c",
+      "source": "td::Status validator_account_binding_ready(const block::ResolvedWorkchainAccountBinding& binding) {\n  if (block::default_workchain_execution_registry().test_only_account_instance_execution_enabled(binding))\n    return td::Status::OK();\n  return td::Status::Error(static_cast<int>(block::WorkchainExecutionFailure::LocalUnavailable),\n                           \"multi-account admission and replay are not connected\");\n}"
+    },
+    "check_transactions_account_binding": {
+      "sha256": "8b5d2fc606d43b4e056c9a2653cb9db9d34842ecc68ea5d38ec209808ce015eb",
+      "source": "        // D59: this refusal was reached in the paired real validator run.\n        // An enabled batch has its own replay, never the ordinary account loop.\n        if (block::default_workchain_execution_registry().test_only_account_instance_execution_enabled(binding)) {\n          account_binding = &binding;\n          return nullptr;\n        }\n        return td::Status::Error(static_cast<int>(block::WorkchainExecutionFailure::LocalUnavailable),\n                                 \"multi-account admission and replay are not connected\");"
+    }
+  }
+}
