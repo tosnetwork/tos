@@ -75,17 +75,17 @@ The ABI does not independently parse/authenticate TL-B attribution or its ID.
 
 ## Exact next steps
 
-1. Run `crypto/test/workchain-d69-sequence-controls.py --repo /home/tomi/tos-m2
-   --build /home/tomi/uno-m3-refund-assert-build`. It creates isolated headers and
-   removes only the required sequence check, separately for each member. The
-   first local attempt FAILED AS A TOOL invocation: -I was inserted before the
-   compiler, so ccache rejected it. No mutation result was obtained. The saved
-   script now inserts -I among compiler arguments; that fix is not yet run.
+1. COMPLETED after the handoff commit: run
+   `python3 crypto/test/workchain-d69-sequence-controls.py --repo /home/tomi/tos-m2 --build /home/tomi/uno-m3-refund-assert-build`.
+   Deposit, Settlement and Sweep each exited 1 at `missing.is_error()` after
+   removing only the required-sequence check. The initial ccache argument-order
+   tool failure was corrected; it was not counted as a mutation result.
 2. Add/run removal controls for the new complete-account combined system count,
    account binding and dictionary Add checks as appropriate. Do not claim the
    nine passing tests alone prove these checks detect their targeted changes.
-3. Rerun unchanged M3 wallet-vector tests AFTER fc55a5590's new TL-B constructors;
-   the last roundtrip evidence predates those constructors (at ccc24052e).
+3. COMPLETED after fc55a5590: rebuild `test-workchain-confidential-execution`,
+   run its `--filter M3WalletRequests`. FormalVectorFields passed (one named
+   test covers all three existing vectors). No vectors or expectations changed.
 4. Give A the committed interfaces above. A must add the V2 metering entry and
    register changed Rust files/new ABI test call sites in its owned
    `crypto/test/workchain-crypto-abi-boundary.json` BEFORE any node caller is wired.
