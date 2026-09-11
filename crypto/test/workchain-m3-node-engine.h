@@ -7,6 +7,7 @@
 #include "workchain-m3-test-funding-operation.h"
 #include "workchain-m4-deposit-input.h"
 #include "workchain-m5-failed-input.h"
+#include "workchain-m5-debit.h"
 #include "block/workchain-failed-funded.h"
 #include "block/workchain-deposit-transition.h"
 #include "block/workchain-deposit-rejection-settlement.h"
@@ -131,6 +132,17 @@ class M3NodeEngine final : public RegisteredWorkchainAccountEngine {
     const auto* cfg = dynamic_cast<const Configuration*>(&configuration);
     if (!cfg || td::Bits256(identity.configuration_hash.bits()) != cfg->configuration_hash)
       return local("M3 proof inspection configuration mismatch");
+    if (is_m5_test_debit(candidate)) {
+      TRY_RESULT(debit, decode_m5_test_debit(candidate));
+      if (!cfg->business.prepare || !cfg->business.operation_tariff)
+        return local("ConfigInvalid: explicit test prepare policy absent");
+      TRY_RESULT(fees, derive_workchain_withdrawal_fee_amounts(cfg->business.operation_tariff->base,
+          cfg->business.prepare->state_fee, debit.data.amounts.operation_fee)); (void)fees;
+      UnoCryptoWithdrawalVerifyRequestV1 shape{};
+      shape.abi_version = 1; shape.limits = cfg->business.limits; shape.context_bytes = 566;
+      shape.commitment_count = 8; shape.response_count = 6; shape.proof_bytes = 864;
+      TRY_RESULT(work, workchain_proof_operations_v4(shape)); return work.total();
+    }
     if (is_m5_test_failed(candidate)) {
       TRY_RESULT(selector, decode_m5_test_failed(candidate));
       (void)selector;
@@ -220,6 +232,27 @@ class M3NodeEngine final : public RegisteredWorkchainAccountEngine {
       result.protected_coordinator_snapshot = td::Bits256(coordinator.data->get_hash().bits());
       return result;
     };
+    if (is_m5_test_debit(host.candidate)) {
+      TRY_RESULT(debit, decode_m5_test_debit(host.candidate));
+      if (!b.prepare || !b.operation_tariff) return local("ConfigInvalid: explicit test prepare policy absent");
+      TRY_RESULT(fees, derive_workchain_withdrawal_fee_amounts(b.operation_tariff->base,
+          b.prepare->state_fee, debit.data.amounts.operation_fee));
+      TRY_RESULT(native, read(accounts, debit.data.claims.source.account, clock.gen_utime, true));
+      TRY_RESULT(source, decode_workchain_confidential_account(native.data));
+      WorkchainTransferEnvironment env{b.limits, b.domain,
+          {2, 1, 1, 2, 5, domain.global_id, 2, domain.genesis_hash, domain.instance_id},
+          b.rules, profiles, b.fee_profile, b.fee_effective_height, clock.height,
+          fees.total, 16, b.account_schema, b.relation_profile, b.proof_profile};
+      TRY_RESULT(updated, execute_m5_test_debit(env, *b.prepare, source, debit, verifier));
+      TRY_RESULT(custody, read(accounts, *cfg->ingress.custody_address, clock.gen_utime, false));
+      WorkchainAccountEffects result;
+      result.updates = {{source.address.account, updated}, {cfg->ingress.executor_address, coordinator.data},
+                        {*cfg->ingress.custody_address, custody.data}};
+      std::sort(result.updates.begin(), result.updates.end(), [](const auto& a, const auto& b) { return a.account < b.account; });
+      if (fees.total) result.fees = materialize_workchain_operation_fees(fees,
+          *cfg->ingress.custody_address, cfg->ingress.executor_address);
+      return finish(std::move(result));
+    }
     if (is_m5_test_failed(host.candidate)) {
       TRY_RESULT(selector, decode_m5_test_failed(host.candidate));
       if (!b.failed || !b.deposit || !b.operation_tariff)

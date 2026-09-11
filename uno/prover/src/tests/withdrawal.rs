@@ -66,7 +66,7 @@ fn run_case_context(mutation: Option<usize>, context: &[u8], check_abi: bool) {
             proof: proof.range_proof.as_ptr(), proof_bytes: proof.range_proof.len(),
         };
         assert_eq!(unsafe { uno_crypto_verify_withdrawal_v1(&request) }, 0, "real proof through dedicated ABI");
-        request.operation_fee += 1;
+        request.operation_fee = request.operation_fee.checked_add(1).expect("fee mutation fits");
         assert_eq!(unsafe { uno_crypto_verify_withdrawal_v1(&request) }, 3, "changed statement must fail verification, not decoding");
         request.context_bytes = 565;
         assert_eq!(unsafe { uno_crypto_verify_withdrawal_v1(&request) }, 2, "noncanonical context length");

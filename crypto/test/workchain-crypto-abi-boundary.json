@@ -211,7 +211,7 @@
   },
   "uno/prover/src/tests/withdrawal.rs": {
     "symbols": ["uno_crypto_verify_withdrawal_v1"],
-    "sha256": "7fcc789ecff305ffbad98c363b75243c89f060ae3463714035f8180f878e5fc3",
+    "sha256": "d3dd4a1f0b1bec3ebfa65b47be066445d31255948da33483ceb4ddfd8c0df739",
     "disposition": "Private prover test exercises the dedicated D64 ABI with a real proof, changed-fee VERIFY rejection and malformed-context DECODE rejection. No node caller or authenticated Native publication."
   },
   "uno/prover/examples/m3-vectors.rs": {

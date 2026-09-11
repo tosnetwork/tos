@@ -99,4 +99,12 @@ WorkchainProofVerdict WorkchainProofVerifier::run_backend(const UnoCryptoVerifyR
 #endif
 }
 
+WorkchainProofVerdict WorkchainProofVerifier::run_backend(const UnoCryptoWithdrawalVerifyRequestV1& request) {
+#if defined(TOS_CONFIDENTIAL_PROOF_BACKEND_LINKED)
+  return classify_backend_status(uno_crypto_verify_withdrawal_v1(&request));
+#else
+  return WorkchainProofVerdict::BackendUnavailable;
+#endif
+}
+
 }  // namespace block
