@@ -249,3 +249,12 @@ sweep therefore increases D60 slack by s, not s+g. Both conservation equations
 hold symbolically in funded and no-receipt Paid/Failed branches. No billing-unit
 number was chosen. Prior files retain their original evidence versions; the
 D70 questions are resolved by this new addendum, not by rewriting them.
+
+## D73 phase prerequisite review
+
+`doc/uno-m5-d73-phase-handoff.md` records the paired prepare/queue prerequisite,
+strictly later authenticated absence, and truthful rather than earliest removal
+height, with seven concrete Native controls. Current codec allows equality
+between removal and opened heights; D73 does not. That difference is reported
+for integration, not silently changed in this documentation task. The codec
+cannot attest queue presence/absence. Source spec: 3b4413b390f43969.
