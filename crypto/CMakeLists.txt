@@ -812,6 +812,11 @@ target_compile_definitions(test-workchain-m3-assertions PRIVATE M3_VECTOR_DIR="$
 tos_test(test-workchain-m3-assertions)
 set_tests_properties(test-workchain-m3-assertions PROPERTIES TIMEOUT 60 LABELS "workchain;m3")
 
+add_executable(test-workchain-m5-accounting-assertions ../test/test-td-main.cpp test/test-workchain-m5-accounting-assertions.cpp)
+target_link_libraries(test-workchain-m5-accounting-assertions PRIVATE tos_block tos_crypto)
+tos_test(test-workchain-m5-accounting-assertions)
+set_tests_properties(test-workchain-m5-accounting-assertions PROPERTIES TIMEOUT 60 LABELS "workchain;m5")
+
 add_test(NAME test-workchain-state-loader-inventory COMMAND ${Python3_EXECUTABLE}
   "${PROJECT_SOURCE_DIR}/crypto/test/workchain-state-loader-inventory.py" --repo "${PROJECT_SOURCE_DIR}")
 set_tests_properties(test-workchain-state-loader-inventory PROPERTIES TIMEOUT 30 LABELS "workchain;expiry")
