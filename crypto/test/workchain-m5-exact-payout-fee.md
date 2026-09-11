@@ -64,6 +64,46 @@ pair boundary; they do **not** claim signed-candidate mutation or the full
 prepare handoff contracts. They do not use entry_input; the live run below
 provides the evidence for the D32/import-isolation entry path.
 
+## Follow-up: rejection must not publish
+
+`NativePayoutExactFeeNonpublication` runs the same real Native builder with
+x=137, actual q=100, declared q=101 and legacy ceiling zero. Its observation
+boundary is both caller-owned Native Accounts (full serialized Account BOCs),
+their committed transactions' decoded `out_msgs` dictionaries and counts, and
+the returned pair. It requires unchanged BOCs, no committed transaction or
+message residue, and no returned pair, then checks the specified -7200 error.
+It does not infer nonpublication from that error code alone.
+
+Before accepting this oracle, two temporary production mutations were run
+separately inside the existing exact-fee mismatch branch, **retaining the same
+-7200 return**:
+
+- `const_cast<Account&>(custody).push_transaction(pair[0]->root, pair[0]->start_lt);`
+  actually exposed the serialized transaction through the caller's Account.
+  Exit **1** at `out_msgs.is_empty()`, not at the return-code check.
+  Log: `/tmp/uno-d75-nonpublication-red.log`.
+- `CHECK(pair[0]->commit(const_cast<Account&>(custody)).not_null());`
+  actually committed the private transaction before returning the rejection.
+  Exit **1** at the custody BOC byte comparison.
+  Log: `/tmp/uno-d75-nonpublication-state-red.log`.
+
+The const casts deliberately violate the builder's existing read-only Account
+interface; ordinary direct writes are already blocked by that interface. The
+red observations above are runtime failures from executing the bad writes,
+not the preliminary compile rejection of a write through a const reference.
+Neither mutation is retained; `transaction.cpp` is unchanged by this follow-up.
+After restoration, `test-workchain-block --filter NativePayout` passes **6/6**
+(exit **0**), including the new nonpublication test. Log:
+`/tmp/uno-d75-nonpublication-green.log`.
+
+Scope: real Native pair construction and its caller-visible Account/transaction
+outputs. Private, unreturned transaction `out_msgs` may exist before rejection;
+the test does not assert they were never constructed. It is **not** a live
+collator queue/nonpublication mutation, does not exercise entry_input here,
+and does not complete a prepare handoff item. The earlier live evidence below
+has not been rerun for this test-only follow-up. Unknown-source counter remains
+absent/unmeasured and the prepare contract remains 0/9.
+
 ## Actual accepted prepare
 
 `python3 test/uno-m3-live.py --build /tmp/uno-merge-6ea2fbf80-tL5Uih --m5-debit`

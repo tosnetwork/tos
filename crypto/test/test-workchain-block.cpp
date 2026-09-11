@@ -7996,7 +7996,8 @@ TEST(WorkchainBlock, BatchPreparationRejectsUnsettledState) {
 // The generous legacy ceiling lets BOTH mismatches reach the missing equality
 // check in the pre-fix run, instead of failing an earlier insufficient-funds gate.
 static td::Status native_payout_exact_fee_fixture(std::optional<std::uint64_t> expected,
-                                                std::uint64_t legacy_ceiling = 500) {
+                                                std::uint64_t legacy_ceiling = 500,
+                                                bool check_nonpublication = false) {
   block::gen::ShardStateUnsplit::Record state;
   ASSERT_TRUE(tlb::unpack_cell(shard_fixture(2, 2, true, 2, false, 0, 40, false, 1000), state));
   vm::AugmentedDictionary accounts(vm::load_cell_slice_ref(state.accounts), 256, block::tlb::aug_ShardAccounts);
@@ -8019,8 +8020,41 @@ static td::Status native_payout_exact_fee_fixture(std::optional<std::uint64_t> e
   pricing.action_fine_enabled=pricing.bounce_on_fail_enabled=pricing.message_skip_enabled=true;
   block::WorkchainSet workchains; pricing.workchains=&workchains;
   pricing.fwd_mc.lump_price=100; pricing.fwd_mc.first_frac=16384;
+  const auto custody_before = vm::std_boc_serialize(custody.total_state).move_as_ok();
+  const auto coordinator_before = vm::std_boc_serialize(coordinator.total_state).move_as_ok();
+  ASSERT_TRUE(custody.transactions.empty() && coordinator.transactions.empty());
   auto result = block::transaction::Transaction::build_workchain_payout_pair(custody,coordinator,bindings[0],bindings[1],
       number(70),number(71),request,20,10,block::workchain_unsigned_fee(legacy_ceiling),0,4096,cfg,pricing,{}, {},nullptr,expected);
+  if (check_nonpublication) {
+    // Observation boundary: the actual caller-owned Native Accounts, their
+    // committed Transaction.out_msgs dictionaries, and the returned pair.
+    // Private serialized transactions may exist inside the builder; they must
+    // not escape on rejection. This is not a live collator queue observation.
+    ASSERT_TRUE(vm::std_boc_serialize(custody.total_state).move_as_ok().as_slice() == custody_before.as_slice());
+    ASSERT_TRUE(vm::std_boc_serialize(coordinator.total_state).move_as_ok().as_slice() == coordinator_before.as_slice());
+    for (const auto* account : {&custody, &coordinator}) {
+      for (const auto& committed : account->transactions) {
+        block::gen::Transaction::Record transaction;
+        ASSERT_TRUE(tlb::unpack_cell(committed.second, transaction));
+        vm::Dictionary out_msgs(transaction.r1.out_msgs, 15);
+        ASSERT_TRUE(out_msgs.is_empty());
+        ASSERT_EQ(transaction.outmsg_cnt, 0);
+      }
+      ASSERT_TRUE(account->transactions.empty());
+    }
+    // Do not consume the status as a substitute for inspecting the output:
+    // if a pair escapes, inspect its real output vectors and fail here.
+    if (result.is_ok()) {
+      for (const auto& transaction : result.ok().transactions) {
+        ASSERT_TRUE(transaction->out_msgs.empty());
+      }
+      ASSERT_TRUE(result.ok().transactions.empty());
+    }
+    ASSERT_TRUE(result.is_error());
+    ASSERT_EQ(result.error().code(), -7200);
+    ASSERT_EQ(result.error().message(), "Native payout fee differs from authenticated exact q");
+    std::cout << "D75_NONPUBLICATION: account BOCs unchanged; committed out_msgs empty; no returned pair\n";
+  }
   // Preparation never publishes into the authenticated predecessor, on either outcome.
   ASSERT_TRUE(custody.balance == block::CurrencyCollection(1000));
   ASSERT_TRUE(coordinator.balance == block::CurrencyCollection(1000));
@@ -8055,6 +8089,10 @@ TEST(WorkchainBlock, NativePayoutExactFeeAndLegacy) {
   ASSERT_TRUE(native_payout_exact_fee_fixture(100).is_ok());
   ASSERT_TRUE(native_payout_exact_fee_fixture(100,0).is_ok());
   ASSERT_TRUE(native_payout_exact_fee_fixture({}).is_ok());
+}
+
+TEST(WorkchainBlock, NativePayoutExactFeeNonpublication) {
+  ASSERT_TRUE(native_payout_exact_fee_fixture(101, 0, true).is_error());
 }
 
 TEST(WorkchainBlock, NativePayoutPair) {
