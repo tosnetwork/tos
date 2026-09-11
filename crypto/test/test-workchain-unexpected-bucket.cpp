@@ -1,6 +1,8 @@
 #include "block/workchain-unexpected-bucket.h"
 #include "block/block-parse.h"
 #include "block/workchain-rejected-deposit.h"
+#include "block/workchain-deposit-admission.h"
+#include "td/utils/misc.h"
 #include "td/utils/tests.h"
 
 namespace {
@@ -13,6 +15,64 @@ block::WorkchainUnexpectedBucket empty_bucket() {
   return {{}, {}, td::make_refint(0), {}, 0};
 }
 }  // namespace
+
+TEST(WorkchainUnexpectedBucket, DepositAdmissionSeparatesPrincipalAndOperatingFee) {
+  using namespace block;
+  auto point_bytes = td::hex_decode("e2f2ae0a6abc4e71a884a961c500515f58e30b6aa582dd8db6a65945e08d2d76").move_as_ok();
+  td::Bits256 point;
+  point.as_slice().copy_from(point_bytes);
+  WorkchainConfidentialAccount account{2, 1, 4, -23903, sender(1).account,
+      {2, sender(2).account, sender(3).account}, {sender(4).account, sender(5).account, sender(6).account},
+      {10000000000ULL, 0, sender(7).account}, point, 0, {td::Bits256::zero(), td::Bits256::zero()},
+      0, 0, {}, WorkchainAccountActive{}, {}};
+  // Frozen ConfigParam 84 initial values, not implementation defaults. This
+  // pure test passes them explicitly; live resolution must read the payload.
+  WorkchainDepositPolicy policy{1000000000, (std::uint64_t{1} << 62) - 1, 3000000, 16, 4};
+  const auto message = sender(8).account;
+  auto decide = [&](std::int64_t total, std::uint64_t sequence = 0) {
+    return admit_workchain_deposit(policy, message, account.address, account.bindings.asset,
+        account.bindings.custody, td::make_refint(total), sequence,
+        std::optional<WorkchainConfidentialAccount>{account});
+  };
+  auto accepted = decide(1003000000).move_as_ok();
+  ASSERT_TRUE(std::holds_alternative<WorkchainDepositAdmission>(accepted));
+  auto charge = std::get<WorkchainDepositAdmission>(accepted);
+  ASSERT_EQ(charge.amount, 1000000000u);
+  ASSERT_EQ(charge.operating_fee, 3000000u);
+  ASSERT_EQ(charge.next_sequence, 1u);
+  ASSERT_EQ(charge.id, derive_workchain_deposit_id(message, 1).move_as_ok());
+  auto rejected = [&](auto result, WorkchainDepositRejection reason) {
+    ASSERT_TRUE(result.is_ok());
+    ASSERT_TRUE(std::holds_alternative<WorkchainDepositRejection>(result.ok()));
+    ASSERT_TRUE(std::get<WorkchainDepositRejection>(result.ok()) == reason);
+  };
+  rejected(decide(2999999), WorkchainDepositRejection::SlotFee);
+  rejected(decide(1002999999), WorkchainDepositRejection::Amount);
+  rejected(decide(INT64_MAX), WorkchainDepositRejection::Amount);
+  rejected(decide(1003000000, UINT64_MAX), WorkchainDepositRejection::SequenceExhausted);
+  ASSERT_TRUE(std::holds_alternative<WorkchainDepositAdmission>(
+      decide(static_cast<std::int64_t>(policy.maximum) + 3000000).move_as_ok()));
+  account.lifecycle = WorkchainAccountClosed{};
+  rejected(decide(1003000000), WorkchainDepositRejection::Lifecycle);
+  account.lifecycle = WorkchainAccountActive{};
+  account.system_pending.push_back({charge.id, message, 1, charge.amount, account.address.instance,
+      0, account.bindings.asset, {point, point}, 0});
+  rejected(decide(1003000000), WorkchainDepositRejection::Duplicate);
+  for (unsigned i = 2; i <= 4; ++i)
+    account.system_pending.push_back({derive_workchain_deposit_id(message, i).move_as_ok(), message, i,
+        charge.amount, account.address.instance, 0, account.bindings.asset, {point, point}, 0});
+  rejected(decide(1003000000, 4), WorkchainDepositRejection::Capacity);
+  ASSERT_EQ(account.system_pending.size(), 4u);  // Every decision leaves its input untouched.
+  auto missing = admit_workchain_deposit(policy, message, account.address, account.bindings.asset,
+      account.bindings.custody, td::make_refint(1003000000), 0,
+      td::Status::Error("database unavailable"));
+  ASSERT_TRUE(missing.is_error());
+  ASSERT_EQ(missing.error().code(), -7201);
+  auto absent = admit_workchain_deposit(policy, message, account.address, account.bindings.asset,
+      account.bindings.custody, td::make_refint(1003000000), 0,
+      std::optional<WorkchainConfidentialAccount>{});
+  rejected(std::move(absent), WorkchainDepositRejection::Unregistered);
+}
 
 TEST(WorkchainUnexpectedBucket, BothFullNeverRejectsAndPreservesValue) {
   // Small explicit test limits reach both boundaries; M4 configuration uses
