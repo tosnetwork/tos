@@ -14,8 +14,31 @@
 #include "m3-live-assertions.h"
 #include "m3-live-wallet.h"
 #include "m4-live-deposit.h"
+#include "m5-live-failed.h"
 
 int main(int argc, char** argv) {
+  if (argc == 3 && std::string(argv[1]) == "--validate-archive-off") {
+    const std::filesystem::path fixture(argv[2]);
+    disk_collator_test_engine_setup = [fixture] {
+      block::default_workchain_execution_registry().register_account_engine(
+          std::make_unique<block::m3_test::M3NodeEngine>(
+              block::WorkchainEngineKey{block::WorkchainFormat::Basic,0x434e5431},
+              (fixture / "validator-off.calls").string())).ensure();
+      // No test execution permit is enabled. Exercise the real validator, not
+      // the earlier collator refusal, against the exact accepted candidate.
+    };
+    std::vector<std::string> args{"test-m3-live","-C",(fixture / "global.json").string(),
+        "-D",(fixture / "validator-off-db").string(),"-w","2",
+        "--import-candidate",(fixture / "enabled.candidate").string(),
+        "--query-result",(fixture / "validator-off.result").string(),
+        "--export-candidate",(fixture / "validator-off.candidate").string()};
+    std::vector<char*> raw; for (auto& arg : args) raw.push_back(arg.data());
+    raw.push_back(nullptr);
+    return disk_collator_tool_main(static_cast<int>(args.size()),raw.data());
+  }
+  if (argc == 3 && std::string(argv[1]) == "--failed-request") {
+    vm::init_vm().ensure(); m3_live::prepare_m5_failed_request(argv[2]); return 0;
+  }
   if (argc == 3 && std::string(argv[1]) == "--withdrawal-payout-quote") {
     vm::init_vm().ensure();
     m3_live::prepare_debit(argv[2], false, true); return 0;
@@ -242,11 +265,12 @@ int main(int argc, char** argv) {
   const bool test_funding = block::m3_test::is_m3_test_funding(candidate);
   const bool deposit = block::m3_test::is_m4_test_deposit(candidate);
   const bool debit = block::m3_test::is_m5_test_debit(candidate);
+  const bool failed = block::m3_test::is_m5_test_failed(candidate);
   const auto ingress = block::load_workchain_native_ingress_table(*config).move_as_ok().at(2);
   const auto params = block::decode_workchain_engine_parameters(ingress.engine_configuration).move_as_ok();
   const bool m4 = block::m3_test::decode_m3_test_business_parameters(params.parameters).move_as_ok().deposit.has_value();
   unsigned transaction_count = 2;
-  if (deposit || debit) transaction_count = 3;
+  if (deposit || debit || failed) transaction_count = 3;
   else if (!test_funding) {
     const auto operation = block::decode_workchain_replay_input(candidate).move_as_ok();
     const auto* transfer = std::get_if<block::WorkchainTransferInput>(&operation);
@@ -396,6 +420,8 @@ int main(int argc, char** argv) {
         if (m3_live::m4_deposit_was_rejected(accepted.block))
           m3_live::assert_rejected_deposit(fixture, previous, accepted, *ingress_table.at(2).custody_address);
         else m3_live::assert_accepted_deposit(fixture, previous, accepted);
+      } else if (failed) {
+        m3_live::assert_m5_failed(fixture, previous, accepted, *ingress_table.at(2).custody_address);
       } else if (debit) {
         // Withdrawal is independently checked above and by the backing replay.
       } else if (test_funding) {

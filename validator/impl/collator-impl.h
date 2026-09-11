@@ -136,6 +136,9 @@ class Collator final : public td::actor::Actor {
   };
   bool collect_batch_imports_{false};
   StdSmcAddress batch_executor_address_;
+  // Local to the D59 account-batch continuation; never a wire capability.
+  // Admission/engine replay still establishes the return's Attempt association.
+  std::optional<StdSmcAddress> batch_return_custody_;
   std::vector<BatchImport> batch_imports_;
   void start_up() override;
   void load_prev_states_blocks();

@@ -390,6 +390,13 @@ class ValidateQuery : public td::actor::Actor {
   bool precheck_account_transactions();
   Ref<vm::Cell> lookup_transaction(const tos::StdSmcAddress& addr, tos::LogicalTime lt) const;
   bool is_valid_transaction_ref(Ref<vm::Cell> trans_ref) const;
+  struct AccountReturnImportScope {
+    tos::StdSmcAddress coordinator, custody;
+    std::uint64_t max_inbound;
+  };
+  // Set only after resolving an enabled D59 account binding, never from wire.
+  std::optional<AccountReturnImportScope> account_return_import_scope_;
+  bool is_account_custody_import(Ref<vm::Cell> transaction, Ref<vm::Cell> message) const;
   bool precheck_one_message_queue_update(td::ConstBitPtr out_msg_id, Ref<vm::CellSlice> old_value,
                                          Ref<vm::CellSlice> new_value);
   bool precheck_message_queue_update();

@@ -3,6 +3,7 @@
 // No detached balances, deployment configuration, or execution permission.
 #include "m3-live-wallet.h"
 #include "crypto/test/workchain-m4-deposit-input.h"
+#include "crypto/test/workchain-m5-failed-input.h"
 #include "block/workchain-budget-backing.h"
 
 namespace m3_live {
@@ -233,6 +234,47 @@ inline td::Ref<vm::Cell> m4_recorded_candidate(const td::Ref<vm::Cell>& root, td
   return candidate;
 }
 
+// Accepted final-import evidence, not a selector's claimed value or a proposed
+// effects list. The node has authenticated this dictionary through block replay.
+inline block::CurrencyCollection m5_recorded_return(const td::Ref<vm::Cell>& root) {
+  using namespace block;
+  const auto selector = m3_test::decode_m5_test_failed(m4_recorded_candidate(root)).move_as_ok();
+  gen::Block::Record header; gen::BlockExtra::Record extra;
+  CHECK(::tlb::unpack_cell(root, header) && ::tlb::unpack_cell(header.extra, extra));
+  vm::AugmentedDictionary inputs(vm::load_cell_slice_ref(extra.in_msg_descr), 256, block::tlb::aug_InMsgDescrDefault);
+  auto leaf = inputs.lookup(selector.inbound_message);
+  gen::InMsg::Record_msg_import_fin imported;
+  CHECK(leaf.not_null() && gen::t_InMsg.unpack(leaf.write(), imported));
+  block::tlb::MsgEnvelope::Record_std envelope;
+  gen::CommonMsgInfo::Record_int_msg_info info;
+  CHECK(::tlb::unpack_cell(imported.in_msg, envelope) &&
+        ::tlb::unpack_cell_inexact(envelope.msg, info) && info.bounced);
+  CHECK(td::Bits256(envelope.msg->get_hash().bits()) == selector.inbound_message);
+  tos::WorkchainId wc; td::Bits256 destination;
+  CHECK(block::tlb::t_MsgAddressInt.extract_std_address(info.dest, wc, destination) && wc == 2);
+  gen::Transaction::Record transaction;
+  CHECK(::tlb::unpack_cell(imported.transaction, transaction) && transaction.account_addr == destination);
+  CurrencyCollection amount; CHECK(amount.unpack(info.value));
+  return amount;
+}
+
+inline block::WorkchainOperationFeeAmounts m5_live_return_fee_components(const std::filesystem::path& fixture) {
+  auto root = load(fixture / "zerostate.boc");
+  tos::BlockIdExt zero{tos::BlockId{tos::masterchainId,tos::shardIdAll,0},root->get_hash().bits(),td::Bits256::zero()};
+  auto config = block::ConfigInfo::extract_config(root,zero,block::Config::needWorkchainInfo | block::Config::needCapabilities).move_as_ok();
+  auto ingress = block::load_workchain_native_ingress_table(*config).move_as_ok().at(2);
+  auto business = block::m3_test::decode_m3_test_business_parameters(
+      block::decode_workchain_engine_parameters(ingress.engine_configuration).move_as_ok().parameters).move_as_ok();
+  CHECK(business.failed && business.deposit && business.operation_tariff);
+  std::uint64_t compute, fee;
+  CHECK(!__builtin_mul_overflow(business.operation_tariff->base,business.failed->issuance_billing_units,&compute));
+  CHECK(!__builtin_add_overflow(business.deposit->slot_fee,compute,&fee));
+  return {business.deposit->slot_fee,compute,0,fee};
+}
+inline std::uint64_t m5_live_return_fee(const std::filesystem::path& fixture) {
+  return m5_live_return_fee_components(fixture).total;
+}
+
 inline block::CurrencyCollection m4_wallet_liabilities(const td::Ref<vm::Cell>& root,
     std::optional<std::uint32_t> withdrawal_limit = {}) {
   using namespace block;
@@ -290,6 +332,10 @@ inline void assert_m4_block_backing(const std::filesystem::path& fixture, const 
       auto deposit = m3_test::decode_m4_test_deposit(candidate).move_as_ok();
       if (m4_deposit_was_rejected(root)) next = book;
       else CHECK(CurrencyCollection::add(book, CurrencyCollection(workchain_unsigned_fee(deposit.principal)), next));
+    } else if (m3_test::is_m5_test_failed(candidate)) {
+      CHECK(CurrencyCollection::add(book, m5_recorded_return(root), next));
+      book = next;
+      CHECK(CurrencyCollection::sub(book, CurrencyCollection(workchain_unsigned_fee(m5_live_return_fee(fixture))), next));
     } else {
       auto replay = m3_test::decode_m5_accounting_replay(candidate).move_as_ok();
       if (const auto* withdrawal = std::get_if<WorkchainWithdrawalInput>(&replay)) {
@@ -335,7 +381,7 @@ inline void assert_m4_block_backing(const std::filesystem::path& fixture, const 
     if (leaf.is_null()) continue;
     Account account(2,key.bits()); CHECK(account.unpack(leaf,state.gen_utime,false));
     for (const auto& record : m5_live_account(account.data,limit).control.withdrawals) {
-      CHECK(record.timing.phase == 0); // This oracle currently covers prepare, not settlement.
+      CHECK(record.timing.phase == 0); // No phase-1/Paid/late profile in this live sequence.
       CurrencyCollection next;
       CHECK(CurrencyCollection::add(p,CurrencyCollection(workchain_unsigned_fee(record.principal)),next)); p=next;
       CHECK(CurrencyCollection::add(w,CurrencyCollection(workchain_unsigned_fee(record.principal)),next)); w=next;
@@ -350,7 +396,7 @@ inline void assert_m4_block_backing(const std::filesystem::path& fixture, const 
             << " P=" << p.tomis << " W=" << w.tomis << "; first-layer=OK; checking R+P=N+W" << std::endl;
   check_m4_backing(lhs.tomis, rhs.tomis, td::make_refint(0)).ensure();
   const auto candidate = m4_recorded_candidate(step.block);
-  if (!m3_test::is_m4_test_deposit(candidate)) {
+  if (!m3_test::is_m4_test_deposit(candidate) && !m3_test::is_m5_test_failed(candidate)) {
     const auto replay = m3_test::decode_m5_accounting_replay(candidate).move_as_ok();
     std::optional<std::uint64_t> public_fee;
     if (const auto* withdrawal = std::get_if<WorkchainWithdrawalInput>(&replay))

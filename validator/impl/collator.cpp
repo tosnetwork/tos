@@ -2526,6 +2526,7 @@ td::actor::Task<> Collator::do_collate_inner() {
       co_return td::Status::Error(-7201, "account batch requires unsplit state");
     collect_batch_imports_ = true;
     batch_executor_address_ = account_execution->ingress.executor_address;
+    batch_return_custody_ = account_execution->ingress.custody_address;
     allow_repeat_collation_ = false;
     if (!process_dispatch_queue() || !process_inbound_internal_messages())
       co_return td::Status::Error(-7201, "cannot acquire account batch Native imports");
@@ -4490,7 +4491,8 @@ bool Collator::process_inbound_message(Ref<vm::CellSlice> enq_msg, tos::LogicalT
     WorkchainId destination_wc;
     StdSmcAddress destination;
     if (!block::tlb::t_MsgAddressInt.extract_std_address(info.dest, destination_wc, destination) ||
-        destination_wc != workchain() || destination != batch_executor_address_) {
+        destination_wc != workchain() || (destination != batch_executor_address_ &&
+        !(info.bounced && batch_return_custody_ && destination == *batch_return_custody_))) {
       return fatal_error("batch message destination is not the configured executor");
     }
     batch_imports_.push_back({msg_env, our, td::BitArray<352>(key)});

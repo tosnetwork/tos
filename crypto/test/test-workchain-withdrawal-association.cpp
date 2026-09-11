@@ -213,4 +213,17 @@ TEST(FailedFunded, RealIssuanceAndEncodedSequencePair) {
   ASSERT_TRUE(unsupported.is_error());
   ASSERT_EQ(unsupported.error().message(), "funded Failed requires an open height window");
   ASSERT_EQ(late.consumed(), 0u);
+  // D77: phase 0 has not started a window. A strongly matched return at a
+  // height beyond 0 + settlement_blocks must still issue, not become late.
+  pending.withdrawals[0].timing = {0, 77, 10, 0, 30};
+  owner = encode_workchain_withdrawal_account({core, pending, {}}, 2).move_as_ok();
+  auto phase_zero = WorkchainProofTestAccess::create(7);
+  auto early_return = run(phase_zero, 100);
+  if (early_return.is_error()) LOG(ERROR) << "D77_PHASE_ZERO " << early_return.error();
+  ASSERT_TRUE(early_return.is_ok());
+  const auto issued = decode_workchain_withdrawal_account(early_return.ok().owner_data, 2).move_as_ok();
+  ASSERT_TRUE(issued.control.withdrawals.empty());
+  ASSERT_EQ(issued.origin_pending.size(), 1u);
+  ASSERT_EQ(issued.origin_pending[0].amount, 156u);
+  ASSERT_EQ(phase_zero.consumed(), 7u);
 }

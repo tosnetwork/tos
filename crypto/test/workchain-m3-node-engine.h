@@ -315,7 +315,9 @@ class M3NodeEngine final : public RegisteredWorkchainAccountEngine {
       TRY_RESULT(selector, decode_m5_test_failed(host.candidate));
       if (!b.failed || !b.deposit || !b.operation_tariff)
         return local("authenticated funded Failed profile absent");
-      if (selector.owner.workchain_id != 2 || selector.owner.instance != domain.instance_id ||
+      // owner.instance is the registration incarnation, not the workchain
+      // instance in domain. Compare it with the authenticated owner below.
+      if (selector.owner.workchain_id != 2 ||
           selector.owner.account == cfg->ingress.executor_address ||
           selector.owner.account == *cfg->ingress.custody_address)
         return invalid("Failed selector owner differs from authenticated instance or roles");

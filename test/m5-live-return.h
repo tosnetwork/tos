@@ -64,6 +64,18 @@ inline void observe_m5_payout_recipient(const std::filesystem::path& fixture) {
     CHECK(info.dest->contents_equal(*sent.src) && info.src->contents_equal(*sent.dest));
     block::CurrencyCollection received;
     CHECK(received.unpack(info.value));
+    block::gen::TrBouncePhase::Record_tr_phase_bounce_ok phase;
+    CHECK(block::gen::t_TrBouncePhase.unpack(bounce, phase));
+    auto collected = block::tlb::t_Tomis.as_integer(phase.msg_fees);
+    auto forwarded = block::tlb::t_Tomis.as_integer(phase.fwd_fees);
+    CHECK(collected.not_null() && forwarded.not_null());
+    block::CurrencyCollection total_return_fee, principal, loss;
+    CHECK(block::CurrencyCollection::add(block::CurrencyCollection(collected),
+        block::CurrencyCollection(forwarded), total_return_fee));
+    CHECK(principal.unpack(sent.value) && block::CurrencyCollection::sub(principal,received,loss));
+    CHECK(loss == total_return_fee);
+    std::cout << "M5_RETURN_NATIVE_FEE collected=" << collected << " forwarded=" << forwarded
+              << " total=" << total_return_fee.tomis << "; equals x-y\n";
     save(fixture / "failed-bounce.boc", message);
     std::cout << "M5_NATIVE_RETURN payout=" << payout->get_hash().to_hex()
               << " bounce=" << message->get_hash().to_hex() << " original_lt=" << original.created_lt

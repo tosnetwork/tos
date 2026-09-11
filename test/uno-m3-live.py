@@ -15,7 +15,10 @@ p.add_argument('--m4', action='store_true', help='use explicit M4 test parameter
 p.add_argument('--m4-rejections', action='store_true', help='run separate rejection cases after two real Deposits')
 p.add_argument('--m5-debit', action='store_true', help='stop after authenticated Withdrawal debit checkpoint')
 p.add_argument('--m5-return-route', action='store_true', help='deliver a funded payout to wc0 and observe the actual return')
+p.add_argument('--m5-failed', action='store_true', help='publish the funded phase-0 return atomically at custody')
 a = p.parse_args()
+if a.m5_failed:
+    a.m5_return_route = True
 if a.m5_return_route:
     a.m5_debit = True
 repo = Path(__file__).resolve().parents[1]
@@ -231,6 +234,12 @@ if a.m5_debit:
         subprocess.run([str(build / 'test-m3-live'), '--observe-m5-payout-recipient', str(fixture)], check=True)
         if not (fixture / 'failed-bounce.boc').is_file():
             raise RuntimeError('funded return route did not produce a real bounce')
+        if a.m5_failed:
+            subprocess.run([str(build / 'test-tos-collator'), '-C', str(fixture / 'global.json'),
+                            '-D', str(fixture / 'db'), '-w', '-1', '-M', str(fixture / 'payout-recipient-top1.boc'),
+                            '--query-result', str(fixture / 'return-master.result')], check=True)
+            subprocess.run([str(build / 'test-m3-live'), '--failed-request', str(fixture)], check=True)
+            subprocess.run([str(build / 'test-m3-live'), str(fixture)], check=True)
     raise SystemExit(0)
 # Keep the final B->A receipt at 432: compensate only the changed SEND/COLLECT
 # tariffs in the first receipt. The remaining two receipts retain 251 and 89.

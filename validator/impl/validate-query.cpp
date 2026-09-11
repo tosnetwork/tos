@@ -1165,7 +1165,12 @@ bool ValidateQuery::fetch_config_params() {
             return block::resolved_workchain_execution_is_custom(account);
           },
           [](const block::ResolvedWorkchainBlockExecution&) -> td::Result<bool> { return false; },
-          [](const block::ResolvedWorkchainAccountBinding& binding) -> td::Result<bool> {
+          [this](const block::ResolvedWorkchainAccountBinding& binding) -> td::Result<bool> {
+            if (block::default_workchain_execution_registry().test_only_account_instance_execution_enabled(binding) &&
+                binding.ingress.custody_address) {
+              account_return_import_scope_ = AccountReturnImportScope{binding.ingress.executor_address,
+                  *binding.ingress.custody_address, binding.input_policy.resources().input.max_inbound};
+            }
             return validator_account_binding_custom(binding);
           }), *resolved_execution.ok());
       if (custom.is_error()) return fatal_error(custom.move_as_error());
@@ -3444,6 +3449,59 @@ Ref<vm::Cell> ValidateQuery::lookup_transaction(const tos::StdSmcAddress& addr, 
   return trans_dict.lookup_ref(td::BitArray<64>{(long long)lt});
 }
 
+// D59-only participant attribution; full account-batch replay remains mandatory.
+bool ValidateQuery::is_account_custody_import(Ref<vm::Cell> transaction, Ref<vm::Cell> message) const {
+  if (!account_return_import_scope_ || !account_blocks_dict_ || transaction.is_null() || message.is_null())
+    return false;
+  const auto& scope = *account_return_import_scope_;
+  block::gen::Transaction::Record participant;
+  block::gen::TransactionDescr::Record_trans_workchain_settlement_participant_v3 part_description;
+  block::gen::UnoV2HostRecord::Record part_binding;
+  block::gen::CommonMsgInfo::Record_int_msg_info info;
+  WorkchainId destination_wc; StdSmcAddress destination;
+  if (!tlb::unpack_cell(transaction, participant) || participant.account_addr != scope.custody ||
+      participant.r1.in_msg->prefetch_ref().not_null() ||
+      !tlb::unpack_cell(participant.description, part_description) ||
+      !tlb::unpack_cell(part_description.binding, part_binding) || part_binding.account_id != scope.custody ||
+      !tlb::unpack_cell_inexact(message, info) || !info.bounced ||
+      !block::tlb::t_MsgAddressInt.extract_std_address(info.dest, destination_wc, destination) ||
+      destination_wc != workchain() || destination != scope.custody) return false;
+  // A participant has only binding refs, not an independent inbox. Locate the
+  // unique coordinator transaction in this candidate, and require the SAME
+  // committed input/effects identities. Later full Native replay still rebuilds
+  // all artifacts; this precheck is not proof of engine execution or payment.
+  block::gen::AccountBlock::Record account;
+  if (!tlb::csr_unpack_safe(account_blocks_dict_->lookup(scope.coordinator), account)) return false;
+  vm::AugmentedDictionary transactions(vm::DictNonEmpty(), account.transactions, 64, block::tlb::aug_AccountTransactions);
+  unsigned count = 0;
+  bool matched = false;
+  if (!transactions.check_for_each_extra([&](Ref<vm::CellSlice> leaf, Ref<vm::CellSlice>, td::ConstBitPtr, int) {
+    if (count != 0) return false;
+    ++count;
+    block::gen::Transaction::Record entry;
+    block::gen::TransactionDescr::Record_trans_workchain_entry_v3 description;
+    block::gen::UnoV2HostRecord::Record binding;
+    block::gen::UnoV2HostInput::Record input;
+    if (!tlb::unpack_cell(leaf->prefetch_ref(), entry) || entry.account_addr != scope.coordinator ||
+        entry.r1.in_msg->prefetch_ref().not_null() || !tlb::unpack_cell(entry.description, description) ||
+        !tlb::unpack_cell(description.binding, binding) || binding.account_id != scope.coordinator ||
+        binding.input_hash != part_binding.input_hash || binding.effects_hash != part_binding.effects_hash ||
+        binding.input_hash != description.input->get_hash().bits() ||
+        binding.effects_hash != description.effects->get_hash().bits() ||
+        !tlb::unpack_cell(description.input, input)) return false;
+    auto inbox = input.inbox->prefetch_ref();
+    block::gen::WorkchainBatchInbound::Record inbound;
+    if (inbox.is_null() || !tlb::unpack_cell(inbox, inbound) || !inbound.count ||
+        inbound.count > scope.max_inbound) return false;
+    vm::Dictionary envelopes(inbound.envelopes, 256);
+    auto cell = envelopes.lookup_ref(message->get_hash().bits(), 256);
+    block::tlb::MsgEnvelope::Record_std envelope;
+    matched = cell.not_null() && tlb::unpack_cell(cell, envelope) && envelope.msg->get_hash() == message->get_hash();
+    return matched;
+  })) return false;
+  return count == 1 && matched;
+}
+
 /**
  * Checks that a Transaction cell refers to a transaction present in the ShardAccountBlocks.
  *
@@ -4316,7 +4374,7 @@ bool ValidateQuery::check_in_msg(td::ConstBitPtr key, Ref<vm::CellSlice> in_msg)
           "InMsg corresponding to inbound message with key "s + key.to_hex(256) +
           " contains an invalid Transaction reference (transaction not in the block's transaction list)");
     }
-    if (!block::is_transaction_in_msg(transaction, msg)) {
+    if (!block::is_transaction_in_msg(transaction, msg) && !is_account_custody_import(transaction, msg)) {
       return reject_query("InMsg corresponding to inbound message with key "s + key.to_hex(256) +
                           " refers to transaction that does not process this inbound message");
     }

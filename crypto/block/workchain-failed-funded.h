@@ -55,11 +55,16 @@ inline td::Result<WorkchainFailedFundedResult> prepare_workchain_failed_funded(
         [&](const auto& record) { return record.attempt_id == association->attempt_id; });
     if (found == owner.control.withdrawals.end()) return error("funded Failed associated record missing");
     const auto record = *found;
-    std::uint32_t deadline;
-    if (record.timing.phase != 1 ||
-        __builtin_add_overflow(record.timing.queue_removed_height, record.timing.settlement_blocks, &deadline) ||
-        arrival_height < record.timing.queue_removed_height || arrival_height > deadline)
-      return error("funded Failed requires an open height window");
+    // D77: a strongly matched bounce is positive delivery evidence. Phase 0
+    // has no running window; its zero removed-height is NOT a deadline origin.
+    // Phase 1 still uses the authenticated height window, not record presence.
+    if (record.timing.phase != 0) {
+      std::uint32_t deadline;
+      if (record.timing.phase != 1 ||
+          __builtin_add_overflow(record.timing.queue_removed_height, record.timing.settlement_blocks, &deadline) ||
+          arrival_height < record.timing.queue_removed_height || arrival_height > deadline)
+        return error("funded Failed requires an open height window");
+    }
     if (!std::holds_alternative<WorkchainAccountActive>(owner.account.lifecycle) ||
         owner.account.system_pending.size() + owner.origin_pending.size() >= policy.system_slots)
       return error("funded Failed receipt admission unsupported");
