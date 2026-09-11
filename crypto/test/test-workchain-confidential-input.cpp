@@ -766,6 +766,26 @@ TEST(ConfidentialInput, TestBusinessParametersExactCodec) {
   ASSERT_EQ(wide.limits.max_collect, std::numeric_limits<std::size_t>::max());
 }
 
+TEST(ConfidentialInput, WithdrawalFeeFloorAndSenderTip) {
+  using namespace block;
+  auto exact = derive_workchain_withdrawal_fee_amounts(1000, 250, 1250).move_as_ok();
+  ASSERT_EQ(exact.state, 250u);
+  ASSERT_EQ(exact.compute, 1000u);
+  ASSERT_EQ(exact.tip, 0u);
+  ASSERT_EQ(exact.total, 1250u);
+  auto tipped = derive_workchain_withdrawal_fee_amounts(1000, 250, 1257).move_as_ok();
+  ASSERT_EQ(tipped.tip, 7u);
+  auto low = derive_workchain_withdrawal_fee_amounts(1000, 250, 1249);
+  ASSERT_TRUE(low.is_error());
+  ASSERT_EQ(low.error().code(), -7200);
+  ASSERT_EQ(low.error().message(), "Withdrawal public fee below authenticated fee floor");
+  auto overflow = derive_workchain_withdrawal_fee_amounts(UINT64_MAX, 1, UINT64_MAX);
+  ASSERT_TRUE(overflow.is_error());
+  ASSERT_EQ(overflow.error().code(), -7200);
+  ASSERT_EQ(overflow.error().message(), "Withdrawal authenticated fee floor overflow");
+  // This tests the fee arithmetic only, NOT the host FEE-ADMISSION contract.
+}
+
 TEST(ConfidentialInput, FailedParametersExplicitAndBound) {
   using namespace block;
   using namespace block::m3_test;

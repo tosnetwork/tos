@@ -31,3 +31,13 @@ Next: install the metered C++ caller and explicit test-only prepare policy, then
 connect registered-engine prepare to account/control updates and the existing
 Native payout overlay. Preserve default-off gates and pending checks; do not
 retire the prepare trigger before authenticated-state replacement tests pass.
+
+Fee helper checkpoint: explicit state/base inputs reconstruct the one-unit
+compute charge and sender-chosen tip. Focused CTest passed; an isolated shadow
+header disabling underpayment rejection failed at `low.is_error()` (exit 1),
+then the original target passed again. This is arithmetic-layer evidence only.
+Claude reviewed the helper and its classification: missing configuration is
+not an input accepted by this helper; an overflowing authenticated floor is a
+deterministic content rejection, matching the existing operation-fee helper.
+The actual low-fee gate is checked subtraction, not the tautological later
+comparison of reconstructed total with claimed f. No new host gate is claimed.

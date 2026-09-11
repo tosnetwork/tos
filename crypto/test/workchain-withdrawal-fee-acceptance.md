@@ -15,9 +15,10 @@ python3 crypto/test/workchain-withdrawal-fee-handoff.py --build BUILD_DIRECTORY
 ## Fixture, path and observation
 
 Use explicit authenticated Withdrawal tariff configuration with a positive
-required operation fee. Do not infer a Withdrawal tariff from its reuse of
-R_SEND, substitute proof-work units, or supply local defaults for missing
-configuration. D65 gives Withdrawal zero state/slot fee. Keep x, outward fee
+required operation fee. Per memo 6f440f8d, billing units are 1; W-state fee is
+an explicit authenticated test parameter, not a frozen value or SEND slot fee.
+Do not substitute proof-work units or supply local defaults for missing
+configuration. This supersedes the earlier zero-state-fee wording. Keep x, outward fee
 and reserve fixed: their checked sum T is distinct from operation fee f.
 
 Run real Withdrawal prepare admission through the registered host. Use valid
