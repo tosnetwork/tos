@@ -164,3 +164,27 @@ its isolated check-removal control was recorded in 8683606c8.
 This is the exact identical-entry derivation case, not merely a codec
 roundtrip. It is still not a host sweep or atomic counter-installation test;
 those are distinct obligations in queue items 3 and 4.
+
+## Ordered queue item 3: actual sequencing producer not yet present
+
+Read-only inspection of A's committed tree `2353777c7` (not WIP) found the
+only issuance counter install in `workchain-deposit-transition.h:81`.
+`workchain-deposit-admission.h:80` calls the checked helper; the helper at
+`workchain-coordinator-state.h:131` rejects UINT64_MAX before increment.
+The new `associate_workchain_withdrawal_return` explicitly performs read-only
+association: no receipt issuance, counter advance or W/P release.
+
+Consequently three-source same-batch sequencing cannot yet be tested against
+actual host producers. This item is NOT complete. When A commits those producers,
+feed their actual before/after coordinator and pending roots into controls for:
+(1) chained staged counters, (2) two competing successors of the same old value,
+and (3) failure/no-receipt paths publishing an increment. Do not substitute a
+hand-built synthetic counter trace and call it three-source host evidence.
+Queue item 4 (real D62/D63 integration) likewise remains pending, not skipped
+or declared covered. No A implementation or prediction fixture was modified.
+
+Queue item 5 was already frozen separately in `475214710` (English-reference
+follow-up `9be4f9c67`), before these queue instructions. Both invariant equations
+hold algebraically in the deficient Failed branch; it is not an actual host
+observation. Do not duplicate or rewrite that prediction while waiting for
+items 3/4. The earlier specification SHA remains its evidence provenance.
