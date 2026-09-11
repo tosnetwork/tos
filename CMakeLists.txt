@@ -126,25 +126,6 @@ if ((ARCHITECTURE MATCHES "arm64") AND (CMAKE_SYSTEM_NAME STREQUAL "Darwin") AND
 endif()
 #END M1 support
 
-# Configure CCache if available.
-#
-# This must stay ahead of every add_subdirectory() below. A compiler launcher
-# is a directory-scoped variable: subdirectories added before this point never
-# see it. Setting it further down left the vendored third-party trees --
-# rocksdb and abseil, together the largest compile units in the build -- out of
-# the cache entirely, so CI recompiled roughly 356 objects from scratch on
-# every run while the rest of the tree was served from cache.
-find_program(CCACHE_FOUND ccache)
-if (CCACHE_FOUND)
-  if (NOT DEFINED CMAKE_C_COMPILER_LAUNCHER AND NOT DEFINED CMAKE_CXX_COMPILER_LAUNCHER)
-    message(STATUS "Using ccache")
-    set(CMAKE_C_COMPILER_LAUNCHER ccache)
-    set(CMAKE_CXX_COMPILER_LAUNCHER ccache)
-  endif()
-else()
-  message(STATUS "Could NOT find ccache")
-endif()
-
 option(TOS_WERROR_BUILD "Use -Werror" OFF)
 
 # If we want to check -Werror build in CI, we want to use it for third party projects as well but we
@@ -325,6 +306,17 @@ include(BuildZlib)
 
 
 
+# Configure CCache if available
+find_program(CCACHE_FOUND ccache)
+if (CCACHE_FOUND)
+  if (NOT DEFINED CMAKE_C_COMPILER_LAUNCHER AND NOT DEFINED CMAKE_CXX_COMPILER_LAUNCHER)
+    message(STATUS "Using ccache")
+    set(CMAKE_C_COMPILER_LAUNCHER ccache)
+    set(CMAKE_CXX_COMPILER_LAUNCHER ccache)
+  endif()
+else()
+  message(STATUS "Could NOT find ccache")
+endif()
 
 include(CheckCXXCompilerFlag)
 
