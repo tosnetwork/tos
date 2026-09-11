@@ -24,7 +24,9 @@ from workchain_guard_reachability import Sources, reach
 
 ACTION = ('system sequence premise expired: before enabling another issuance path, '
           'install real host controls for staged shared counters, competing successors, '
-          'and failure/no-receipt paths publishing no increment; do not refresh the inventory alone')
+          'and failure/no-receipt paths publishing no increment; do not refresh the inventory alone; '
+          'follow doc/uno-m5-sequence-handoff.md and run '
+          'crypto/test/workchain-system-sequence-handoff.py --build BUILD_DIRECTORY')
 ROOTS = ('crypto/block/workchain-account-settlement.h',
          'crypto/block/workchain-deposit-transition.h',
          'crypto/block/workchain-coordinator-state.h',

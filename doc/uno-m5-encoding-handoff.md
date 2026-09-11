@@ -214,3 +214,15 @@ The effective queue's D68 item is complete: see
 `doc/uno-m5-d68-d51-applicability.md` for the current specification hash and
 explicit algebra checking both equations. The earlier frozen prediction is
 unchanged. This is not a report of host execution or fee measurements.
+
+## Executable successor handoff
+
+See `doc/uno-m5-sequence-handoff.md` for the six exact host test contracts,
+fixture provenance, committed-state assertions and mutation failure points.
+`workchain-system-sequence-handoff.py --build BUILD_DIRECTORY` fails closed
+when successor tests are missing or disabled. Current run exits 1 listing all
+six missing tests; this is readiness evidence, not host sequencing evidence.
+The default expiry diagnostic now points to that procedure. Its scanning scope
+and predicate are unchanged. Only B's sequence premise expires on a new issuer;
+A's prepare guard remains until its separate Native prepare evidence exists.
+Specification: memo 19d0446e / SHA256 prefix 71968ef2afb0d917.
