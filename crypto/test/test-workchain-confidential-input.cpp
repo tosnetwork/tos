@@ -7,9 +7,95 @@
 #include "td/utils/tests.h"
 #include "vm/boc.h"
 #include "block/block-parse.h"
+#include "block/workchain-operation-fees.h"
+#include "block/workchain-account-effects.h"
+#include "block/workchain-native-allocation.h"
 #include <fstream>
 #include <iostream>
 #include <sstream>
+
+TEST(ConfidentialInput, StaticFeeComponentsAndStateAllocation) {
+  using namespace block;
+  using namespace block::m3_test;
+  auto coordinator = td::Bits256::zero(), custody = td::Bits256::zero();
+  custody.as_slice()[31] = 1;
+  std::array<unsigned char, 80> domain{};
+  const auto maximum = (std::uint64_t{1} << 62) - 1;
+  M3TestBusinessParameters business{{maximum, maximum, 8, 1024, 4096}, domain, 0, 0,
+      {coordinator, custody, coordinator}, coordinator, coordinator, coordinator, 1, 2, 1, 4};
+  business.deposit = WorkchainDepositPolicy{1000000000, maximum, 3000000, 16, 4};
+  auto legacy = encode_m3_test_business_parameters(business).move_as_ok();
+  auto absent = require_m4_operation_tariff(decode_m3_test_business_parameters(legacy).move_as_ok());
+  ASSERT_TRUE(absent.is_error());
+  ASSERT_EQ(absent.error().code(), -7201);
+  business.operation_tariff = WorkchainStaticOperationTariff{2, 5, 7};
+  auto root = encode_m3_test_business_parameters(business).move_as_ok();
+  auto decoded = decode_m3_test_business_parameters(root).move_as_ok();
+  auto tariff = require_m4_operation_tariff(decoded).move_as_ok();
+  ASSERT_EQ(tariff.base, 2u);
+  ASSERT_EQ(tariff.send_tip, 5u);
+  ASSERT_EQ(tariff.collect_tip, 7u);
+  ASSERT_EQ(encode_m3_test_business_parameters(decoded).move_as_ok()->get_hash(), root->get_hash());
+  for (unsigned field = 0; field < 3; ++field) {
+    auto changed = business;
+    if (field == 0) ++changed.operation_tariff->base;
+    if (field == 1) ++changed.operation_tariff->send_tip;
+    if (field == 2) ++changed.operation_tariff->collect_tip;
+    ASSERT_TRUE(encode_m3_test_business_parameters(changed).move_as_ok()->get_hash() != root->get_hash());
+  }
+  auto conflicting = business;
+  conflicting.collect_fee = 17;
+  ASSERT_TRUE(encode_m3_test_business_parameters(conflicting).is_error());
+  auto short_slice = vm::load_cell_slice(root);
+  auto bits = short_slice.fetch_subslice(576);
+  vm::CellBuilder truncated;
+  truncated.append_cellslice(*bits);
+  while (short_slice.size_refs()) truncated.store_ref(short_slice.fetch_ref());
+  ASSERT_TRUE(decode_m3_test_business_parameters(truncated.finalize()).is_error());
+  auto send = derive_workchain_operation_fee_amounts(tariff, business.deposit->slot_fee, 1, 2288).move_as_ok();
+  auto collect = derive_workchain_operation_fee_amounts(tariff, business.deposit->slot_fee, 2, 2639).move_as_ok();
+  ASSERT_EQ(send.state, 3000000u);
+  ASSERT_EQ(send.compute, 4576u);
+  ASSERT_EQ(send.tip, 5u);
+  ASSERT_EQ(send.total, 3004581u);
+  ASSERT_EQ(collect.state, 0u);
+  ASSERT_EQ(collect.compute, 5278u);
+  ASSERT_EQ(collect.total, 5285u);
+  auto expected = materialize_workchain_operation_fees(send, custody, coordinator);
+  ASSERT_TRUE(compare_workchain_operation_fee_claim(expected, expected).is_ok());
+  for (unsigned defect = 0; defect < 5; ++defect) {
+    auto claim = expected;
+    if (defect == 0) std::swap(claim.state_fee, claim.compute_fee);
+    if (defect == 1) std::swap(claim.compute_fee, claim.tip);
+    if (defect == 2) std::swap(claim.state_fee, claim.tip);
+    if (defect == 3) { claim.state_fee = td::make_refint(3000001); claim.compute_fee = td::make_refint(4575); }
+    if (defect == 4) claim.coordinator = custody;
+    auto rejected = compare_workchain_operation_fee_claim(expected, claim);
+    ASSERT_TRUE(rejected.is_error());
+    ASSERT_EQ(rejected.code(), -7200);
+    ASSERT_EQ(rejected.message(), "candidate fee components or authenticated recipients differ");
+  }
+  auto overflow = derive_workchain_operation_fee_amounts({UINT64_MAX, 0, 0}, 3000000, 1, 2);
+  ASSERT_TRUE(overflow.is_error());
+  ASSERT_EQ(overflow.error().code(), -7200);
+  auto empty = vm::CellBuilder().finalize();
+  WorkchainAccountEffects effects;
+  effects.updates = {{coordinator, empty}, {custody, empty}};
+  effects.fees = expected;
+  auto encoded = encode_workchain_account_effects(effects, 2, 1, 100).move_as_ok();
+  gen::UnoV2HostEffects::Record record;
+  ASSERT_TRUE(::tlb::unpack_cell(encoded, record));
+  // The existing allocation edge moves S only. C+T belongs to the subsequent
+  // Native total_fees stage; do not accidentally allocate it to coordinator.
+  auto from = allocate_workchain_native_balance(custody, CurrencyCollection(10000000), record, 1, 100).move_as_ok();
+  auto to = allocate_workchain_native_balance(coordinator, CurrencyCollection(100), record, 1, 100).move_as_ok();
+  ASSERT_EQ(td::cmp(from.tomis, 7000000), 0);
+  ASSERT_EQ(td::cmp(to.tomis, 3000100), 0);
+  auto native = decode_workchain_native_effects(record.native).move_as_ok();
+  ASSERT_EQ(native.payout->prefetch_ulong(1), 0u);
+  std::cout << "static fee components: SEND S=3000000 C=4576 T=5; COLLECT S=0 C=5278 T=7; "
+               "five negative claims rejected at component comparison (-7200); S Native allocation passed\n";
+}
 
 TEST(ConfidentialInput, AuthorizationChain) {
   using namespace block::confidential_input_detail;
@@ -436,7 +522,7 @@ TEST(ConfidentialInput, TestBusinessParametersExactCodec) {
   auto unknown = decode_m3_test_business_parameters(rebuild(vm::load_cell_slice(unknown_bits), refs));
   ASSERT_TRUE(unknown.is_error()); ASSERT_EQ(unknown.error().message(), "unknown M3 test business tag");
   tail = slice; tail.advance(48);
-  auto version_bits = vm::CellBuilder().store_long(business_config_detail::tag, 32).store_long(3, 16)
+  auto version_bits = vm::CellBuilder().store_long(business_config_detail::tag, 32).store_long(4, 16)
       .append_cellslice(tail).finalize();
   auto version = decode_m3_test_business_parameters(rebuild(vm::load_cell_slice(version_bits), refs));
   ASSERT_TRUE(version.is_error()); ASSERT_EQ(version.error().message(), "unsupported M3 test business version");
