@@ -1,0 +1,8 @@
+--- a/crypto/test/workchain-m3-business-config.h
++++ b/crypto/test/workchain-m3-business-config.h
+@@ -26,4 +26,3 @@
+     return td::Status::Error(-7201, "ConfigInvalid: explicit max_bounce_cost absent");
+-  if (value != *policy.max_bounce_cost)
+-    return td::Status::Error(-7200, "Withdrawal reserve differs from authenticated max_bounce_cost");
++  // Isolated removal: keep absence check and registered call path.
+   return td::Status::OK();

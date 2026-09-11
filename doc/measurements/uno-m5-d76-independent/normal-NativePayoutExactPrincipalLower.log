@@ -1,0 +1,12 @@
+Running test Test_WorkchainBlock_NativePayoutExactPrincipalLower...
+[ 4][t 0][2026-09-11 15:35:59.052192898][transaction.cpp:622]	unpacking account 0000000000000000000000000000000000000000000000000000000000000000
+[ 4][t 0][2026-09-11 15:35:59.052411131][transaction.cpp:455]	last_paid=0; cells=0 bits=0
+[ 4][t 0][2026-09-11 15:35:59.052426143][transaction.cpp:685]	end of Account.unpack() for 2:0000000000000000000000000000000000000000000000000000000000000000 (balance = 1000ng ; last_trans_lt = 1..2)
+[ 4][t 0][2026-09-11 15:35:59.052449182][transaction.cpp:622]	unpacking account 31CF8E61894D648E857CC6D14F8352C20C14D12F92A5F8DCE26F01224A63376D
+[ 4][t 0][2026-09-11 15:35:59.052456647][transaction.cpp:455]	last_paid=0; cells=0 bits=0
+[ 4][t 0][2026-09-11 15:35:59.052462069][transaction.cpp:685]	end of Account.unpack() for 2:31CF8E61894D648E857CC6D14F8352C20C14D12F92A5F8DCE26F01224A63376D (balance = 1000ng ; last_trans_lt = 1..2)
+[ 4][t 0][2026-09-11 15:35:59.052537224][transaction.cpp:3555]	storage paid for a message: 0 cells, 0 bits
+[ 4][t 0][2026-09-11 15:35:59.052542184][transaction.cpp:3559]	computed fwd fees = 100 + 0
+D76_EXACT_X declared=136 Native_payment=137: -7200 at principal equality
+PASS in 1364.7us
+1 test(s) passed

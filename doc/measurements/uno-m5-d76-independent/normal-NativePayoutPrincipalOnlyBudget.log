@@ -1,0 +1,58 @@
+Running test Test_BReview_NativePayoutPrincipalOnlyBudget...
+[ 4][t 0][2026-09-11 15:35:59.072515031][transaction.cpp:622]	unpacking account 0000000000000000000000000000000000000000000000000000000000000000
+[ 4][t 0][2026-09-11 15:35:59.072737623][transaction.cpp:455]	last_paid=0; cells=0 bits=0
+[ 4][t 0][2026-09-11 15:35:59.072755480][transaction.cpp:685]	end of Account.unpack() for 2:0000000000000000000000000000000000000000000000000000000000000000 (balance = 1000ng ; last_trans_lt = 1..2)
+[ 4][t 0][2026-09-11 15:35:59.072784983][transaction.cpp:622]	unpacking account 31CF8E61894D648E857CC6D14F8352C20C14D12F92A5F8DCE26F01224A63376D
+[ 4][t 0][2026-09-11 15:35:59.072792398][transaction.cpp:455]	last_paid=0; cells=0 bits=0
+[ 4][t 0][2026-09-11 15:35:59.072797884][transaction.cpp:685]	end of Account.unpack() for 2:31CF8E61894D648E857CC6D14F8352C20C14D12F92A5F8DCE26F01224A63376D (balance = 1000ng ; last_trans_lt = 1..2)
+[ 4][t 0][2026-09-11 15:35:59.072880902][transaction.cpp:3555]	storage paid for a message: 0 cells, 0 bits
+[ 4][t 0][2026-09-11 15:35:59.072885481][transaction.cpp:3559]	computed fwd fees = 100 + 0
+[ 4][t 0][2026-09-11 15:35:59.072894497][transaction.cpp:3644]	not enough tomis to transfer with the message : remaining balance is 137ng, need 237 (including forwarding fees)
+[ 4][t 0][2026-09-11 15:35:59.072934439][transaction.cpp:622]	unpacking account 0000000000000000000000000000000000000000000000000000000000000000
+[ 4][t 0][2026-09-11 15:35:59.072941914][transaction.cpp:455]	last_paid=0; cells=0 bits=0
+[ 4][t 0][2026-09-11 15:35:59.072947721][transaction.cpp:685]	end of Account.unpack() for 2:0000000000000000000000000000000000000000000000000000000000000000 (balance = 1000ng ; last_trans_lt = 1..2)
+[ 4][t 0][2026-09-11 15:35:59.072953835][transaction.cpp:622]	unpacking account 31CF8E61894D648E857CC6D14F8352C20C14D12F92A5F8DCE26F01224A63376D
+[ 4][t 0][2026-09-11 15:35:59.072958786][transaction.cpp:455]	last_paid=0; cells=0 bits=0
+[ 4][t 0][2026-09-11 15:35:59.072963331][transaction.cpp:685]	end of Account.unpack() for 2:31CF8E61894D648E857CC6D14F8352C20C14D12F92A5F8DCE26F01224A63376D (balance = 1000ng ; last_trans_lt = 1..2)
+[ 4][t 0][2026-09-11 15:35:59.072984360][transaction.cpp:3555]	storage paid for a message: 0 cells, 0 bits
+[ 4][t 0][2026-09-11 15:35:59.072988911][transaction.cpp:3559]	computed fwd fees = 100 + 0
+[ 4][t 0][2026-09-11 15:35:59.072992418][transaction.cpp:3644]	not enough tomis to transfer with the message : remaining balance is 137ng, need 237 (including forwarding fees)
+[ 4][t 0][2026-09-11 15:35:59.073027312][transaction.cpp:622]	unpacking account 0000000000000000000000000000000000000000000000000000000000000000
+[ 4][t 0][2026-09-11 15:35:59.073035496][transaction.cpp:455]	last_paid=0; cells=0 bits=0
+[ 4][t 0][2026-09-11 15:35:59.073041450][transaction.cpp:685]	end of Account.unpack() for 2:0000000000000000000000000000000000000000000000000000000000000000 (balance = 1000ng ; last_trans_lt = 1..2)
+[ 4][t 0][2026-09-11 15:35:59.073046913][transaction.cpp:622]	unpacking account 31CF8E61894D648E857CC6D14F8352C20C14D12F92A5F8DCE26F01224A63376D
+[ 4][t 0][2026-09-11 15:35:59.073052641][transaction.cpp:455]	last_paid=0; cells=0 bits=0
+[ 4][t 0][2026-09-11 15:35:59.073057659][transaction.cpp:685]	end of Account.unpack() for 2:31CF8E61894D648E857CC6D14F8352C20C14D12F92A5F8DCE26F01224A63376D (balance = 1000ng ; last_trans_lt = 1..2)
+[ 4][t 0][2026-09-11 15:35:59.073079169][transaction.cpp:3555]	storage paid for a message: 0 cells, 0 bits
+[ 4][t 0][2026-09-11 15:35:59.073083585][transaction.cpp:3559]	computed fwd fees = 100 + 0
+[ 4][t 0][2026-09-11 15:35:59.073087150][transaction.cpp:3644]	not enough tomis to transfer with the message : remaining balance is 236ng, need 237 (including forwarding fees)
+[ 4][t 0][2026-09-11 15:35:59.073112074][transaction.cpp:622]	unpacking account 0000000000000000000000000000000000000000000000000000000000000000
+[ 4][t 0][2026-09-11 15:35:59.073118981][transaction.cpp:455]	last_paid=0; cells=0 bits=0
+[ 4][t 0][2026-09-11 15:35:59.073124040][transaction.cpp:685]	end of Account.unpack() for 2:0000000000000000000000000000000000000000000000000000000000000000 (balance = 1000ng ; last_trans_lt = 1..2)
+[ 4][t 0][2026-09-11 15:35:59.073134642][transaction.cpp:622]	unpacking account 31CF8E61894D648E857CC6D14F8352C20C14D12F92A5F8DCE26F01224A63376D
+[ 4][t 0][2026-09-11 15:35:59.073142302][transaction.cpp:455]	last_paid=0; cells=0 bits=0
+[ 4][t 0][2026-09-11 15:35:59.073147582][transaction.cpp:685]	end of Account.unpack() for 2:31CF8E61894D648E857CC6D14F8352C20C14D12F92A5F8DCE26F01224A63376D (balance = 1000ng ; last_trans_lt = 1..2)
+[ 4][t 0][2026-09-11 15:35:59.073166775][transaction.cpp:3555]	storage paid for a message: 0 cells, 0 bits
+[ 4][t 0][2026-09-11 15:35:59.073170938][transaction.cpp:3559]	computed fwd fees = 100 + 0
+[ 4][t 0][2026-09-11 15:35:59.073174312][transaction.cpp:3644]	not enough tomis to transfer with the message : remaining balance is 236ng, need 237 (including forwarding fees)
+[ 4][t 0][2026-09-11 15:35:59.073199982][transaction.cpp:622]	unpacking account 0000000000000000000000000000000000000000000000000000000000000000
+[ 4][t 0][2026-09-11 15:35:59.073206690][transaction.cpp:455]	last_paid=0; cells=0 bits=0
+[ 4][t 0][2026-09-11 15:35:59.073211723][transaction.cpp:685]	end of Account.unpack() for 2:0000000000000000000000000000000000000000000000000000000000000000 (balance = 1000ng ; last_trans_lt = 1..2)
+[ 4][t 0][2026-09-11 15:35:59.073217031][transaction.cpp:622]	unpacking account 31CF8E61894D648E857CC6D14F8352C20C14D12F92A5F8DCE26F01224A63376D
+[ 4][t 0][2026-09-11 15:35:59.073222011][transaction.cpp:455]	last_paid=0; cells=0 bits=0
+[ 4][t 0][2026-09-11 15:35:59.073228067][transaction.cpp:685]	end of Account.unpack() for 2:31CF8E61894D648E857CC6D14F8352C20C14D12F92A5F8DCE26F01224A63376D (balance = 1000ng ; last_trans_lt = 1..2)
+[ 4][t 0][2026-09-11 15:35:59.073245514][transaction.cpp:3555]	storage paid for a message: 0 cells, 0 bits
+[ 4][t 0][2026-09-11 15:35:59.073249408][transaction.cpp:3559]	computed fwd fees = 100 + 0
+[ 4][t 0][2026-09-11 15:35:59.073376027][transaction.cpp:622]	unpacking account 0000000000000000000000000000000000000000000000000000000000000000
+[ 4][t 0][2026-09-11 15:35:59.073384273][transaction.cpp:455]	last_paid=0; cells=0 bits=0
+[ 4][t 0][2026-09-11 15:35:59.073390371][transaction.cpp:685]	end of Account.unpack() for 2:0000000000000000000000000000000000000000000000000000000000000000 (balance = 1000ng ; last_trans_lt = 1..2)
+[ 4][t 0][2026-09-11 15:35:59.073395989][transaction.cpp:622]	unpacking account 31CF8E61894D648E857CC6D14F8352C20C14D12F92A5F8DCE26F01224A63376D
+[ 4][t 0][2026-09-11 15:35:59.073402911][transaction.cpp:455]	last_paid=0; cells=0 bits=0
+[ 4][t 0][2026-09-11 15:35:59.073408119][transaction.cpp:685]	end of Account.unpack() for 2:31CF8E61894D648E857CC6D14F8352C20C14D12F92A5F8DCE26F01224A63376D (balance = 1000ng ; last_trans_lt = 1..2)
+[ 4][t 0][2026-09-11 15:35:59.073429272][transaction.cpp:3555]	storage paid for a message: 0 cells, 0 bits
+[ 4][t 0][2026-09-11 15:35:59.073433118][transaction.cpp:3559]	computed fwd fees = 100 + 0
+B_PRINCIPAL_ONLY ceiling=0 same legacy refusal: batch native message send failed
+B_PRINCIPAL_ONLY ceiling=99 same legacy refusal: batch native message send failed
+B_PRINCIPAL_ONLY ceiling100 accepted; exact-q ceiling0 accepted
+PASS in 1913.8us
+1 test(s) passed

@@ -1,0 +1,27 @@
+Running test Test_WorkchainBlock_NativePayoutExactPrincipalMatches...
+[ 4][t 0][2026-09-11 15:35:59.066009652][transaction.cpp:622]	unpacking account 0000000000000000000000000000000000000000000000000000000000000000
+[ 4][t 0][2026-09-11 15:35:59.066238833][transaction.cpp:455]	last_paid=0; cells=0 bits=0
+[ 4][t 0][2026-09-11 15:35:59.066253086][transaction.cpp:685]	end of Account.unpack() for 2:0000000000000000000000000000000000000000000000000000000000000000 (balance = 1000ng ; last_trans_lt = 1..2)
+[ 4][t 0][2026-09-11 15:35:59.066276626][transaction.cpp:622]	unpacking account 31CF8E61894D648E857CC6D14F8352C20C14D12F92A5F8DCE26F01224A63376D
+[ 4][t 0][2026-09-11 15:35:59.066283961][transaction.cpp:455]	last_paid=0; cells=0 bits=0
+[ 4][t 0][2026-09-11 15:35:59.066289270][transaction.cpp:685]	end of Account.unpack() for 2:31CF8E61894D648E857CC6D14F8352C20C14D12F92A5F8DCE26F01224A63376D (balance = 1000ng ; last_trans_lt = 1..2)
+[ 4][t 0][2026-09-11 15:35:59.066355206][transaction.cpp:3555]	storage paid for a message: 0 cells, 0 bits
+[ 4][t 0][2026-09-11 15:35:59.066360070][transaction.cpp:3559]	computed fwd fees = 100 + 0
+[ 4][t 0][2026-09-11 15:35:59.066496139][transaction.cpp:622]	unpacking account 0000000000000000000000000000000000000000000000000000000000000000
+[ 4][t 0][2026-09-11 15:35:59.066504097][transaction.cpp:455]	last_paid=0; cells=0 bits=0
+[ 4][t 0][2026-09-11 15:35:59.066510022][transaction.cpp:685]	end of Account.unpack() for 2:0000000000000000000000000000000000000000000000000000000000000000 (balance = 1000ng ; last_trans_lt = 1..2)
+[ 4][t 0][2026-09-11 15:35:59.066515707][transaction.cpp:622]	unpacking account 31CF8E61894D648E857CC6D14F8352C20C14D12F92A5F8DCE26F01224A63376D
+[ 4][t 0][2026-09-11 15:35:59.066521799][transaction.cpp:455]	last_paid=0; cells=0 bits=0
+[ 4][t 0][2026-09-11 15:35:59.066527016][transaction.cpp:685]	end of Account.unpack() for 2:31CF8E61894D648E857CC6D14F8352C20C14D12F92A5F8DCE26F01224A63376D (balance = 1000ng ; last_trans_lt = 1..2)
+[ 4][t 0][2026-09-11 15:35:59.066548904][transaction.cpp:3555]	storage paid for a message: 0 cells, 0 bits
+[ 4][t 0][2026-09-11 15:35:59.066553483][transaction.cpp:3559]	computed fwd fees = 100 + 0
+[ 4][t 0][2026-09-11 15:35:59.066623234][transaction.cpp:622]	unpacking account 0000000000000000000000000000000000000000000000000000000000000000
+[ 4][t 0][2026-09-11 15:35:59.066630320][transaction.cpp:455]	last_paid=0; cells=0 bits=0
+[ 4][t 0][2026-09-11 15:35:59.066637526][transaction.cpp:685]	end of Account.unpack() for 2:0000000000000000000000000000000000000000000000000000000000000000 (balance = 1000ng ; last_trans_lt = 1..2)
+[ 4][t 0][2026-09-11 15:35:59.066642770][transaction.cpp:622]	unpacking account 31CF8E61894D648E857CC6D14F8352C20C14D12F92A5F8DCE26F01224A63376D
+[ 4][t 0][2026-09-11 15:35:59.066649091][transaction.cpp:455]	last_paid=0; cells=0 bits=0
+[ 4][t 0][2026-09-11 15:35:59.066653901][transaction.cpp:685]	end of Account.unpack() for 2:31CF8E61894D648E857CC6D14F8352C20C14D12F92A5F8DCE26F01224A63376D (balance = 1000ng ; last_trans_lt = 1..2)
+[ 4][t 0][2026-09-11 15:35:59.066672439][transaction.cpp:3555]	storage paid for a message: 0 cells, 0 bits
+[ 4][t 0][2026-09-11 15:35:59.066676787][transaction.cpp:3559]	computed fwd fees = 100 + 0
+PASS in 1678.5us
+1 test(s) passed

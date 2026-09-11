@@ -1,0 +1,20 @@
+Running test Test_WorkchainBlock_NativePayoutExactFeeLower...
+[ 4][t 0][2026-09-11 15:37:38.508510459][transaction.cpp:622]	unpacking account 0000000000000000000000000000000000000000000000000000000000000000
+[ 4][t 0][2026-09-11 15:37:38.508852481][transaction.cpp:455]	last_paid=0; cells=0 bits=0
+[ 4][t 0][2026-09-11 15:37:38.508874745][transaction.cpp:685]	end of Account.unpack() for 2:0000000000000000000000000000000000000000000000000000000000000000 (balance = 1000ng ; last_trans_lt = 1..2)
+[ 4][t 0][2026-09-11 15:37:38.508909942][transaction.cpp:622]	unpacking account 31CF8E61894D648E857CC6D14F8352C20C14D12F92A5F8DCE26F01224A63376D
+[ 4][t 0][2026-09-11 15:37:38.508918850][transaction.cpp:455]	last_paid=0; cells=0 bits=0
+[ 4][t 0][2026-09-11 15:37:38.508925306][transaction.cpp:685]	end of Account.unpack() for 2:31CF8E61894D648E857CC6D14F8352C20C14D12F92A5F8DCE26F01224A63376D (balance = 1000ng ; last_trans_lt = 1..2)
+[ 4][t 0][2026-09-11 15:37:38.509037490][transaction.cpp:3555]	storage paid for a message: 0 cells, 0 bits
+[ 4][t 0][2026-09-11 15:37:38.509043710][transaction.cpp:3559]	computed fwd fees = 100 + 0
+[ 4][t 0][2026-09-11 15:37:38.509227725][transaction.cpp:622]	unpacking account 0000000000000000000000000000000000000000000000000000000000000000
+[ 4][t 0][2026-09-11 15:37:38.509237468][transaction.cpp:455]	last_paid=0; cells=0 bits=0
+[ 4][t 0][2026-09-11 15:37:38.509249938][transaction.cpp:685]	end of Account.unpack() for 2:0000000000000000000000000000000000000000000000000000000000000000 (balance = 1000ng ; last_trans_lt = 1..2)
+[ 4][t 0][2026-09-11 15:37:38.509256770][transaction.cpp:622]	unpacking account 31CF8E61894D648E857CC6D14F8352C20C14D12F92A5F8DCE26F01224A63376D
+[ 4][t 0][2026-09-11 15:37:38.509262039][transaction.cpp:455]	last_paid=0; cells=0 bits=0
+[ 4][t 0][2026-09-11 15:37:38.509272239][transaction.cpp:685]	end of Account.unpack() for 2:31CF8E61894D648E857CC6D14F8352C20C14D12F92A5F8DCE26F01224A63376D (balance = 1000ng ; last_trans_lt = 1..2)
+[ 4][t 0][2026-09-11 15:37:38.509299373][transaction.cpp:3555]	storage paid for a message: 0 cells, 0 bits
+[ 4][t 0][2026-09-11 15:37:38.509305048][transaction.cpp:3559]	computed fwd fees = 100 + 0
+D75_EXACT_Q declared=99 Native_paid=100: -7200 at exact-fee equality
+PASS in 2289.5us
+1 test(s) passed
