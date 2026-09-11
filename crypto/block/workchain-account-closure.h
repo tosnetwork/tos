@@ -30,6 +30,13 @@ struct WorkchainAccountClosureExecution {
 // Nor can authenticated M3 state represent an obligation: account records carry
 // no settlement refs and there is no chain-state obligation view. This condition
 // is structurally satisfied, NOT checked at runtime or declared by a caller.
+// M4 extends the scoped argument: accepted Deposit clears D in the same batch;
+// a rejected Deposit can only return to src or credit sender-only unexpected
+// funds. No confidential account_id can be recorded in that bucket. This does
+// NOT assert that Native senders have no rights, only that this confidential
+// account has no bucket entitlement. M5's account_id category is a claim to
+// future Deposit credit (D29); once reachable, closure must also authenticate
+// that no bucket entry belongs to this account, in addition to its obligations.
 // EXPIRY: test-workchain-m3-closure-expiry guards this premise. Before adding an
 // obligation representation or operation, replace it with an authenticated
 // obligation view. Never restore a caller-supplied count or empty table.

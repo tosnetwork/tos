@@ -1,4 +1,6 @@
 {
+  "crypto/block/workchain-rejected-deposit.h:identifiers": "553fa88a3c8e4788159e4f1f47c05ee7386c9a37e03d44ed5700a1fefe52693a",
+  "crypto/block/workchain-unexpected-bucket.h:state": "864e6e2f6cf2e53f93262a4d730ed13208e44584249041cf3cc40aa6718cfda0",
   "crypto/test/workchain-m3-test-funding-operation.h:test-operation": "8896f4e7cbbf2538f97ffc41a45076a733a35de28fc0147f2d092fe7c258b172",
   "crypto/block/block.tlb:identifiers": "4983b577247dbb0e32e9021fec7ea1295bd80c37f416994f1091a6c1bfdde399",
   "crypto/block/block.tlb:schema": "7ed594822bd56e5aa00535a34b3e0854eebcf11bcc597fd1c22ae9d689072437",

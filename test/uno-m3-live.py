@@ -19,6 +19,18 @@ if f'CMAKE_HOME_DIRECTORY:INTERNAL={repo}' not in cache:
     p.error('build belongs to another tree')
 if 'TOS_UNO_CRYPTO_NODE_LINK:BOOL=ON' not in cache:
     p.error('real node verification requires TOS_UNO_CRYPTO_NODE_LINK=ON')
+# Establish that the same numeric predicate used after each accepted block
+# rejects unpaired principal and nonzero cross-block D, then restores to green.
+# A crash, unknown mode or missing binary is not an expected rejection.
+for mode, expected in [('unpaired', 1), ('cross-block-d', 1), ('restored', 0)]:
+    control = subprocess.run([str(build / 'test-m3-live'), '--m4-backing-control', mode],
+                             text=True, capture_output=True)
+    if control.returncode != expected or f'M4 backing control {mode}:' not in control.stdout:
+        raise RuntimeError(f'backing control {mode}: rc={control.returncode}, '
+                           f'stdout={control.stdout}, stderr={control.stderr}')
+    if expected and 'M4 per-block backing mismatch or nonzero cross-block D' not in control.stdout:
+        raise RuntimeError('backing control failed for an unrelated reason')
+    print(f'Backing control exit={control.returncode}: {control.stdout.strip()}', flush=True)
 fixture = Path(tempfile.mkdtemp(prefix='uno-m3-live-'))
 # Reuse the existing test-owned genesis construction without its collation
 # scenarios or cleanup. Never import a deployment DB/configuration. This prefix

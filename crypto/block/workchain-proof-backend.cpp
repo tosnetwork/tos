@@ -2,6 +2,33 @@
 
 namespace block {
 
+WorkchainProofVerdict WorkchainProofVerifier::run_system_backend(
+    const UnoCryptoSystemEncryptionRequest& request, UnoCryptoSystemCiphertext& output) {
+#if defined(TOS_CONFIDENTIAL_PROOF_BACKEND_LINKED)
+  // No candidate ciphertext is consumed here. DECODE means authenticated-input
+  // reconstruction failed (including a zero derived scalar), not an invalid proof.
+  return uno_crypto_system_encrypt_v1(&request, &output) == UNO_CRYPTO_OK
+             ? WorkchainProofVerdict::Valid : WorkchainProofVerdict::LocalContractFailure;
+#else
+  return WorkchainProofVerdict::BackendUnavailable;
+#endif
+}
+
+WorkchainProofVerdict WorkchainProofVerifier::run_system_verify_backend(
+    const UnoCryptoSystemEncryptionRequest& request, const UnoCryptoSystemCiphertext& supplied) {
+#if defined(TOS_CONFIDENTIAL_PROOF_BACKEND_LINKED)
+  switch (uno_crypto_system_verify_v1(&request, &supplied)) {
+    case UNO_CRYPTO_OK: return WorkchainProofVerdict::Valid;
+    // Only VERIFY identifies disagreement with the candidate's ciphertext.
+    // DECODE concerns reconstruction from the host's authenticated inputs.
+    case UNO_CRYPTO_VERIFY: return WorkchainProofVerdict::InvalidProof;
+    default: return WorkchainProofVerdict::LocalContractFailure;
+  }
+#else
+  return WorkchainProofVerdict::BackendUnavailable;
+#endif
+}
+
 namespace {
 WorkchainProofVerdict classify_backend_status(unsigned status) {
   switch (status) {
