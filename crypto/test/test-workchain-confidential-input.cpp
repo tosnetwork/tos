@@ -16,7 +16,8 @@
 #include <iostream>
 #include <sstream>
 
-TEST(ConfidentialInput, StaticFeeComponentsAndStateAllocation) {
+static void exercise_static_fee_settlement(block::WorkchainStaticOperationTariff supplied,
+                                           std::uint64_t slot_price, bool original) {
   using namespace block;
   using namespace block::m3_test;
   auto coordinator = td::Bits256::zero(), custody = td::Bits256::zero();
@@ -25,18 +26,18 @@ TEST(ConfidentialInput, StaticFeeComponentsAndStateAllocation) {
   const auto maximum = (std::uint64_t{1} << 62) - 1;
   M3TestBusinessParameters business{{maximum, maximum, 8, 1024, 4096}, domain, 0, 0,
       {coordinator, custody, coordinator}, coordinator, coordinator, coordinator, 1, 2, 1, 4};
-  business.deposit = WorkchainDepositPolicy{1000000000, maximum, 3000000, 16, 4};
+  business.deposit = WorkchainDepositPolicy{1000000000, maximum, slot_price, 16, 4};
   auto legacy = encode_m3_test_business_parameters(business).move_as_ok();
   auto absent = require_m4_operation_tariff(decode_m3_test_business_parameters(legacy).move_as_ok());
   ASSERT_TRUE(absent.is_error());
   ASSERT_EQ(absent.error().code(), -7201);
-  business.operation_tariff = WorkchainStaticOperationTariff{2, 5, 7};
+  business.operation_tariff = supplied;
   auto root = encode_m3_test_business_parameters(business).move_as_ok();
   auto decoded = decode_m3_test_business_parameters(root).move_as_ok();
   auto tariff = require_m4_operation_tariff(decoded).move_as_ok();
-  ASSERT_EQ(tariff.base, 2u);
-  ASSERT_EQ(tariff.send_tip, 5u);
-  ASSERT_EQ(tariff.collect_tip, 7u);
+  ASSERT_EQ(tariff.base, supplied.base);
+  ASSERT_EQ(tariff.send_tip, supplied.send_tip);
+  ASSERT_EQ(tariff.collect_tip, supplied.collect_tip);
   ASSERT_EQ(encode_m3_test_business_parameters(decoded).move_as_ok()->get_hash(), root->get_hash());
   for (unsigned field = 0; field < 3; ++field) {
     auto changed = business;
@@ -56,6 +57,7 @@ TEST(ConfidentialInput, StaticFeeComponentsAndStateAllocation) {
   ASSERT_TRUE(decode_m3_test_business_parameters(truncated.finalize()).is_error());
   auto send = derive_workchain_operation_fee_amounts(tariff, business.deposit->slot_fee, 1, 2288).move_as_ok();
   auto collect = derive_workchain_operation_fee_amounts(tariff, business.deposit->slot_fee, 2, 2639).move_as_ok();
+  if (original) {
   ASSERT_EQ(send.state, 3000000u);
   ASSERT_EQ(send.compute, 4576u);
   ASSERT_EQ(send.tip, 5u);
@@ -63,6 +65,7 @@ TEST(ConfidentialInput, StaticFeeComponentsAndStateAllocation) {
   ASSERT_EQ(collect.state, 0u);
   ASSERT_EQ(collect.compute, 5278u);
   ASSERT_EQ(collect.total, 5285u);
+  }
   auto expected = materialize_workchain_operation_fees(send, custody, coordinator);
   ASSERT_TRUE(compare_workchain_operation_fee_claim(expected, expected).is_ok());
   for (unsigned defect = 0; defect < 5; ++defect) {
@@ -91,8 +94,10 @@ TEST(ConfidentialInput, StaticFeeComponentsAndStateAllocation) {
   // Native total_fees stage; do not accidentally allocate it to coordinator.
   auto from = allocate_workchain_native_balance(custody, CurrencyCollection(10000000), record, 1, 100).move_as_ok();
   auto to = allocate_workchain_native_balance(coordinator, CurrencyCollection(100), record, 1, 100).move_as_ok();
-  ASSERT_EQ(td::cmp(from.tomis, 7000000), 0);
-  ASSERT_EQ(td::cmp(to.tomis, 3000100), 0);
+  if (original) {
+    ASSERT_EQ(td::cmp(from.tomis, 7000000), 0);
+    ASSERT_EQ(td::cmp(to.tomis, 3000100), 0);
+  }
   auto native = decode_workchain_native_effects(record.native).move_as_ok();
   ASSERT_EQ(native.payout->prefetch_ulong(1), 0u);
   // Exercise the real Native transaction constructors and serialized fee
@@ -178,11 +183,27 @@ TEST(ConfidentialInput, StaticFeeComponentsAndStateAllocation) {
     ASSERT_TRUE(replay_workchain_inbound_allocation_overlay(old_accounts, host_identity, input, output,
         coordinator, custody, 2, 2, 1, 0, 4096, serialization, built.ok()).is_ok());
     std::cout << "Native fee settlement: S=" << amounts.state << " C=" << amounts.compute
-              << " T=" << amounts.tip << "; serialized total_fees=" << totals.collected.tomis->to_dec_string()
+              << " T=" << amounts.tip << " F=" << amounts.total
+              << "; serialized total_fees=" << totals.collected.tomis->to_dec_string()
+              << "; coordinator credit=" << totals.state.tomis->to_dec_string()
+              << "; custody debit=" << totals.total.tomis->to_dec_string()
               << "; zero exports; allocation replay passed\n";
   }
-  std::cout << "static fee components: SEND S=3000000 C=4576 T=5; COLLECT S=0 C=5278 T=7; "
-               "five negative claims rejected at component comparison (-7200); S Native allocation passed\n";
+  std::cout << "static inputs: base=" << tariff.base << " slot_fee=" << business.deposit->slot_fee
+            << " send_tip=" << tariff.send_tip << " collect_tip=" << tariff.collect_tip
+            << "; SEND units=2288; COLLECT units=2639; five component negatives passed\n";
+}
+
+TEST(ConfidentialInput, StaticFeeComponentsAndStateAllocation) {
+  exercise_static_fee_settlement({2, 5, 7}, 3000000, true);
+}
+
+TEST(ConfidentialInput, CoordinatorSpecifiedStaticFeeObservation) {
+  // Parameters supplied after the other implementer's committed prediction.
+  // No prediction value is read here. This measures tariff/Native settlement,
+  // not Deposit admission or a cryptographic N_hidden transition. In particular
+  // slot_fee=250 does not satisfy the separate Deposit policy admission floor.
+  exercise_static_fee_settlement({1000, 7, 11}, 250, false);
 }
 
 TEST(ConfidentialInput, AuthorizationChain) {
