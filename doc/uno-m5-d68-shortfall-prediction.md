@@ -104,7 +104,7 @@ a finite worst-case network delay. D68 changes their freezing conditions;
 both configuration values still require freezing.
 
 The specified file still contains the older absolute assertion at line 838,
-"bounce 回来时补足金已锁定，不存在短缺状态", whereas lines 994-1003
+that locked funds make a shortfall impossible, whereas lines 994-1003
 and D68 explicitly reject it. This prediction follows the explicit D68
 replacement; the residual sentence needs a specification edit by its owner.
 The previous prediction's fully funded branch remains conditional, rather
