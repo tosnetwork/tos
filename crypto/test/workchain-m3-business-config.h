@@ -6,6 +6,7 @@
 
 #include "block/workchain-confidential-input.h"
 #include "block/workchain-deposit-admission.h"
+#include "block/workchain-operation-fees.h"
 #include "uno/crypto/include/uno_crypto.h"
 #include <array>
 #include <utility>
@@ -22,6 +23,11 @@ struct M3TestBusinessParameters {
   // Absence represents the old M3-only layout, NEVER a Deposit default.
   // Version 2 carries all four additional fields; maximum comes from limits.
   std::optional<WorkchainDepositPolicy> deposit;
+  // Version 3: explicit static C unit price and operation-specific T. S is the
+  // authenticated Deposit slot price for SEND and zero for COLLECT (D25).
+  // Legacy aggregate send_fee/collect_fee must be zero reserved fields here;
+  // they are not split, inferred, or used as a fallback for missing components.
+  std::optional<WorkchainStaticOperationTariff> operation_tariff;
 
   M3TestBusinessParameters() = delete;
   M3TestBusinessParameters(UnoCryptoLimits limits_value, std::array<unsigned char, 80> domain_value,
@@ -71,7 +77,9 @@ inline td::Result<td::Ref<vm::Cell>> encode_m3_test_business_parameters(const M3
   TRY_RESULT(rules, confidential_input_detail::pack(value.rules));
   if (value.deposit && value.deposit->maximum != value.limits.max_value)
     return td::Status::Error("Deposit maximum differs from authenticated kernel limit");
-  if (!root.store_long_bool(tag, 32) || !root.store_long_bool(value.deposit ? 2 : version, 16) ||
+  if (value.operation_tariff && (!value.deposit || value.send_fee || value.collect_fee || value.proof_profile != 4))
+    return td::Status::Error("component tariff requires Deposit policy, profile 4 and zero legacy fee fields");
+  if (!root.store_long_bool(tag, 32) || !root.store_long_bool(value.operation_tariff ? 3 : value.deposit ? 2 : version, 16) ||
       !root.store_long_bool(value.send_fee, 64) || !root.store_long_bool(value.collect_fee, 64) ||
       !root.store_long_bool(value.fee_effective_height, 32) || !root.store_long_bool(value.account_schema, 16) ||
       !root.store_long_bool(value.relation_profile, 16) || !root.store_long_bool(value.proof_profile, 16) ||
@@ -81,6 +89,9 @@ inline td::Result<td::Ref<vm::Cell>> encode_m3_test_business_parameters(const M3
       !root.store_long_bool(value.deposit->slot_fee, 64) ||
       !root.store_long_bool(value.deposit->user_slots, 32) ||
       !root.store_long_bool(value.deposit->system_slots, 32))) return malformed();
+  if (value.operation_tariff && (!root.store_long_bool(value.operation_tariff->base, 64) ||
+      !root.store_long_bool(value.operation_tariff->send_tip, 64) ||
+      !root.store_long_bool(value.operation_tariff->collect_tip, 64))) return malformed();
   return td::Ref<vm::Cell>{root.finalize()};
 }
 
@@ -89,11 +100,12 @@ inline td::Result<M3TestBusinessParameters> decode_m3_test_business_parameters(c
   if (cell.is_null()) return malformed();
   bool special = false;
   auto root = vm::load_cell_slice_special(cell, special);
-  if (special || root.size_refs() != 4 || (root.size() != 256 && root.size() != 448)) return malformed();
+  if (special || root.size_refs() != 4 || (root.size() != 256 && root.size() != 448 && root.size() != 640)) return malformed();
   if (root.fetch_ulong(32) != tag) return td::Status::Error("unknown M3 test business tag");
   auto wire_version = root.fetch_ulong(16);
-  if (wire_version != version && wire_version != 2) return td::Status::Error("unsupported M3 test business version");
-  if (root.size() != (wire_version == 2 ? 400u : 208u)) return malformed();
+  if (wire_version != version && wire_version != 2 && wire_version != 3)
+    return td::Status::Error("unsupported M3 test business version");
+  if (root.size() != (wire_version == 3 ? 592u : wire_version == 2 ? 400u : 208u)) return malformed();
   const auto send = root.fetch_ulong(64), collect = root.fetch_ulong(64);
   const auto height = static_cast<std::uint32_t>(root.fetch_ulong(32));
   const auto schema = static_cast<std::uint16_t>(root.fetch_ulong(16));
@@ -118,11 +130,16 @@ inline td::Result<M3TestBusinessParameters> decode_m3_test_business_parameters(c
   M3TestBusinessParameters result{{max_balance, max_value, static_cast<std::size_t>(max_collect),
       static_cast<std::size_t>(max_context), static_cast<std::size_t>(max_proof)}, domain_bytes, send, collect,
       rules, generator, range, fee, height, schema, relation, proof};
-  if (wire_version == 2) {
+  if (wire_version >= 2) {
     auto minimum = root.fetch_ulong(64), slot_fee = root.fetch_ulong(64);
     auto user_slots = static_cast<std::uint32_t>(root.fetch_ulong(32));
     auto system_slots = static_cast<std::uint32_t>(root.fetch_ulong(32));
     result.deposit = WorkchainDepositPolicy{minimum, max_value, slot_fee, user_slots, system_slots};
+  }
+  if (wire_version == 3) {
+    if (send || collect || proof != 4) return td::Status::Error("component tariff has incompatible legacy fee fields or profile");
+    const auto base = root.fetch_ulong(64), send_tip = root.fetch_ulong(64), collect_tip = root.fetch_ulong(64);
+    result.operation_tariff = WorkchainStaticOperationTariff{base, send_tip, collect_tip};
   }
   return result;
 }
@@ -130,5 +147,10 @@ inline td::Result<M3TestBusinessParameters> decode_m3_test_business_parameters(c
 inline td::Result<WorkchainDepositPolicy> require_m4_deposit_policy(const M3TestBusinessParameters& parameters) {
   if (!parameters.deposit) return td::Status::Error(-7201, "authenticated Deposit parameters absent");
   return *parameters.deposit;
+}
+inline td::Result<WorkchainStaticOperationTariff> require_m4_operation_tariff(const M3TestBusinessParameters& parameters) {
+  if (!parameters.operation_tariff || !parameters.deposit)
+    return td::Status::Error(-7201, "authenticated operation fee components absent");
+  return *parameters.operation_tariff;
 }
 }  // namespace block::m3_test

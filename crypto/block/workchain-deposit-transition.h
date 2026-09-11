@@ -79,6 +79,9 @@ inline td::Result<WorkchainDepositTransitionResult> prepare_workchain_deposit_tr
   next_account.system_pending.push_back(receipt);
   auto next_coordinator = coordinator;
   next_coordinator.deposit_sequence = admitted.next_sequence;
+  // These are locally rebuilt outputs AFTER the 7-unit precharge, not
+  // candidate bytes. Encoding failure propagates to the local-failure boundary;
+  // it does not refund proof work or return partial state for installation.
   TRY_RESULT(account_data, encode_workchain_confidential_account(next_account));
   TRY_RESULT(coordinator_data, encode_workchain_coordinator_state(next_coordinator));
   CurrencyCollection principal(td::make_refint(admitted.amount)), fee(td::make_refint(admitted.operating_fee));

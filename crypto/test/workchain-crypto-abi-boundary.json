@@ -198,7 +198,7 @@
       "uno_crypto_system_encrypt_v1",
       "uno_crypto_system_verify_v1"
     ],
-    "sha256": "82318eedd881e09035e95950a7b2ec188bfffc31a4cf5a531e50d99216d729d1",
+    "sha256": "32628bb457b7322dfaa7605b370edb0253cf5a62d4dbf72f94aa1c08199c4fe0",
     "disposition": "Private cfg(test) prover tests call D33 ABI directly to test existing COLLECT algebra and error layers, including mixed SEND/system inputs. No production caller, Native admission or persisted pending removal."
   },
   "uno/prover/examples/m3-vectors.rs": {

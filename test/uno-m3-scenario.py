@@ -13,6 +13,8 @@ p = argparse.ArgumentParser()
 p.add_argument('--build', type=Path, required=True)
 p.add_argument('--output', type=Path)
 p.add_argument('--jobs', type=int, default=8)
+p.add_argument('--m4-system-collect', action='store_true',
+               help='run two persisted system-receipt COLLECTs instead of the M3 sequence (not live blocks)')
 a = p.parse_args()
 repo = Path(__file__).resolve().parents[1]
 build = a.build.resolve()
@@ -33,4 +35,6 @@ wallet_target = build / 'm3-vector-wallet-target'
 subprocess.run(['cargo', 'build', '--locked', '--offline', '--release', '--manifest-path', str(repo / 'uno/prover/Cargo.toml'),
                 '--example', 'm3-scenario', '--target-dir', str(wallet_target)], check=True, cwd=repo)
 print(f'TEST-only wallet inputs and outputs: {run}', flush=True)
-subprocess.run([str(build / 'crypto/workchain-m3-scenario'), str(wallet_target / 'release/examples/m3-scenario'), str(run)], check=True)
+mode = ['--m4-system-collect'] if a.m4_system_collect else []
+subprocess.run([str(build / 'crypto/workchain-m3-scenario'), *mode,
+                str(wallet_target / 'release/examples/m3-scenario'), str(run)], check=True)

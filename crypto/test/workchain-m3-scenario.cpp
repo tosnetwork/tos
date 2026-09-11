@@ -775,7 +775,13 @@ class PureBackend final : public ScenarioBackend {
   }
 };
 }  // namespace
+#include "workchain-m4-retention-test.h"
 int main(int argc, char** argv) {
+  if (argc == 4 && std::string(argv[1]) == "--m4-system-collect") {
+    auto result = test_m4_system_retention(argv[2], argv[3]);
+    if (result.is_error()) std::cerr << result.to_string() << '\n';
+    return result.is_ok() ? 0 : 1;
+  }
   if (argc != 3) {
     std::cerr << "usage: workchain-m3-scenario WALLET_EXECUTABLE TEMP_DIRECTORY\n";
     return 2;
