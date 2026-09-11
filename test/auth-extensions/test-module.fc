@@ -1,0 +1,29 @@
+;; TEST FIXTURE ONLY. This Ed25519 module is deliberately NOT post-quantum.
+;; It proves two-hop message provenance, not the strength of a PQ verifier.
+;; Data: public_key:uint256 nonce:uint32.
+() recv_internal(slice body) impure { }
+
+() recv_external(slice body) impure {
+  slice signature = body~load_bits(512);
+  slice signed = body;
+  slice ds = get_data().begin_parse();
+  int key = ds~load_uint(256);
+  int nonce = ds~load_uint(32);
+  ds.end_parse();
+  throw_unless(1900, check_signature(slice_hash(signed), signature, key));
+  throw_unless(1901, body~load_uint(32) == nonce);
+  throw_if(1902, nonce == 4294967295);
+  cell envelope = body~load_ref();
+  body.end_parse();
+  slice auth = envelope.begin_parse();
+  throw_unless(1903, auth~load_uint(32) == 0x41555448);
+  slice request = auth~load_ref().begin_parse();
+  request~skip_bits(32);
+  slice account = request~load_msg_addr();
+  accept_message();
+  set_data(begin_cell().store_uint(key, 256).store_uint(nonce + 1, 32).end_cell());
+  cell msg = begin_cell().store_uint(0x18, 6).store_slice(account)
+    .store_coins(1000000000).store_uint(0, 1 + 4 + 4 + 64 + 32 + 1)
+    .store_uint(1, 1).store_ref(envelope).end_cell();
+  send_raw_message(msg, 3);
+}

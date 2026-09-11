@@ -1,0 +1,127 @@
+// Shared authentication envelope. A module address is an authorization root,
+// not evidence that its verifier is post-quantum secure. See auth-extension.fc.
+import "@stdlib/common"
+
+const AUTH_OPCODE: uint32 = 0x41555448
+const AUTH_STAGED = 1
+const AUTH_MODULE_ONLY = 2
+const AUTH_HYBRID = 3
+const AUTH_EXECUTE = 0
+const AUTH_CONFIGURE = 1
+const AUTH_MAX_COUNTER = 18446744073709551615
+
+fun authGlobalId(): int asm "GLOBALID";
+fun authAddressSlice(a: any_address): slice asm "NOP";
+fun authInternalAddressSlice(a: address): slice asm "NOP";
+
+@inline
+fun authUnpack(state: cell?): (int, int, int, int) {
+    if (state == null) { return (0, 0, 0, 0); }
+    var cs = state!.beginParse();
+    val mode = cs.loadUint(2);
+    val epoch = cs.loadUint(64);
+    val nonce = cs.loadUint(64);
+    val moduleHash = cs.loadUint(256);
+    cs.assertEnd();
+    assert (mode >= AUTH_STAGED && mode <= AUTH_HYBRID) throw 1806;
+    return (mode, epoch, nonce, moduleHash);
+}
+
+@inline
+fun authPack(mode: int, epoch: int, nonce: int, moduleHash: int): cell {
+    return beginCell().storeUint(mode, 2).storeUint(epoch, 64)
+        .storeUint(nonce, 64).storeUint(moduleHash, 256).endCell();
+}
+
+@inline
+fun authRequireLegacy(state: cell?): void {
+    if (state != null) {
+        assert (state!.beginParse().preloadUint(2) < AUTH_MODULE_ONLY) throw 1807;
+    }
+}
+
+@inline
+fun authModuleHash(module: any_address): int {
+    val bits = authAddressSlice(module);
+    assert (bits.remainingBitsCount() == 267 && bits.remainingRefsCount() == 0) throw 1809;
+    assert (bits.preloadUint(3) == 4) throw 1809;
+    val (wc, hash) = module.getWorkchainAndHash();
+    val (myWc, myHash) = contract.getAddress().getWorkchainAndHash();
+    assert (wc == myWc && hash != myHash) throw 1809;
+    return hash;
+}
+
+@inline
+fun authStage(state: cell?, expectedEpoch: int, module: any_address): cell {
+    val (mode, epoch, _, _) = authUnpack(state);
+    assert (mode < AUTH_MODULE_ONLY) throw 1807;
+    assert (expectedEpoch == epoch) throw 1803;
+    assert (epoch != AUTH_MAX_COUNTER) throw 1810;
+    return authPack(AUTH_STAGED, epoch + 1, 0, authModuleHash(module));
+}
+
+@inline
+fun authRequestHash(request: cell): int {
+    return beginCell().storeUint(0x544f532d41555448, 64).storeRef(request).endCell().hash();
+}
+
+@inline
+fun authRequireStrongClassicalKey(key: int): void {
+    val last = (key & 255) & 127;
+    val middle = (key >> 8) & ((1 << 240) - 1);
+    val first = key >> 248;
+    assert (!(last == 127 && middle == ((1 << 240) - 1) && first >= 237)) throw 1808;
+    assert (key != 0x0100000000000000000000000000000000000000000000000000000000000000) throw 1808;
+    assert (key != 0xc7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a) throw 1808;
+    assert (key != 0x0000000000000000000000000000000000000000000000000000000000000080) throw 1808;
+    assert (key != 0x26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc05) throw 1808;
+    assert (key != 0xecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f) throw 1808;
+    assert (key != 0x26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc85) throw 1808;
+    assert (key != 0x0000000000000000000000000000000000000000000000000000000000000000) throw 1808;
+    assert (key != 0xc7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac03fa) throw 1808;
+}
+
+fun authValidate(state: cell?, sender: any_address, body: slice, classicalKey: int, maxTtl: int): (cell, int, cell) {
+    val (mode, epoch, nonce, moduleHash) = authUnpack(state);
+    assert (mode != 0) throw 1800;
+    assert (authModuleHash(sender) == moduleHash) throw 1800;
+    assert (body.loadUint(32) == AUTH_OPCODE) throw 1811;
+    val request = body.loadRef();
+    val cosignature = body.loadMaybeRef();
+    body.assertEnd();
+    var cs = request.beginParse();
+    assert (cs.loadInt(32) == authGlobalId()) throw 1801;
+    val account = cs.loadAddressAny();
+    assert (authAddressSlice(account).bitsEqual(authInternalAddressSlice(contract.getAddress()))) throw 1802;
+    assert (cs.loadUint(64) == epoch) throw 1803;
+    assert (cs.loadUint(64) == nonce) throw 1804;
+    assert (nonce != AUTH_MAX_COUNTER) throw 1810;
+    val validUntil = cs.loadUint(32);
+    assert (validUntil > blockchain.now() && validUntil <= blockchain.now() + maxTtl) throw 1805;
+    val kind = cs.loadUint(8);
+    val payload = cs.loadRef();
+    cs.assertEnd();
+    if (mode == AUTH_HYBRID) {
+        authRequireStrongClassicalKey(classicalKey);
+        assert (cosignature != null) throw 1808;
+        val sig = cosignature!.beginParse();
+        assert (sig.remainingBitsCount() == 512 && sig.remainingRefsCount() == 0) throw 1808;
+        assert (isSignatureValid(authRequestHash(request), sig, classicalKey)) throw 1808;
+    } else {
+        assert (cosignature == null) throw 1808;
+    }
+    return (authPack(mode, epoch, nonce + 1, moduleHash), kind, payload);
+}
+
+@inline
+fun authReconfigure(state: cell, payload: cell): cell {
+    val (oldMode, epoch, _, _) = authUnpack(state);
+    var cs = payload.beginParse();
+    val mode = cs.loadUint(2);
+    val module = cs.loadAddressAny();
+    cs.assertEnd();
+    assert (mode >= AUTH_STAGED && mode <= AUTH_HYBRID) throw 1806;
+    assert (!(oldMode >= AUTH_MODULE_ONLY && mode == AUTH_STAGED)) throw 1806;
+    assert (epoch != AUTH_MAX_COUNTER) throw 1810;
+    return authPack(mode, epoch + 1, 0, authModuleHash(module));
+}

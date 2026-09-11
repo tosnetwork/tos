@@ -1,0 +1,167 @@
+;; Replaceable authentication for contract accounts. This is a verifier
+;; interface, NOT an implementation or certification of a PQ signature scheme.
+;; A single root module may implement thresholds, delegation or hybrid proofs.
+;; Account policy and replay checks remain in the account, not in the module.
+;;
+;; Optional trailing account-data reference (absent means legacy mode):
+;;   mode:uint2 epoch:uint64 nonce:uint64 module_hash:uint256
+;; Modes: 1 = staged (legacy OR module), 2 = module-only, 3 = hybrid AND.
+;; An installed module must send an authenticated request to enter modes 2/3.
+;; There is deliberately no transition from a strict mode back to legacy.
+;;
+;; Internal body: auth#41555448 request:^Cell cosignature:(Maybe ^Cell)
+;; Request: global_id:int32 account:MsgAddressInt epoch:uint64 nonce:uint64
+;;          valid_until:uint32 kind:uint8 payload:^Cell
+;; The module MUST authenticate the entire request, including payload and
+;; destination. In hybrid mode the account also checks an Ed25519 signature
+;; of auth_request_hash(request); approvals cannot be mixed across requests.
+
+const int auth::opcode = 0x41555448;
+const int auth::staged = 1;
+const int auth::module_only = 2;
+const int auth::hybrid = 3;
+const int auth::execute = 0;
+const int auth::configure = 1;
+const int auth::manage = 2;
+const int auth::max_counter = 18446744073709551615;
+
+const int auth::not_module = 1800;
+const int auth::wrong_network = 1801;
+const int auth::wrong_account = 1802;
+const int auth::stale_epoch = 1803;
+const int auth::bad_nonce = 1804;
+const int auth::expired = 1805;
+const int auth::bad_mode = 1806;
+const int auth::legacy_disabled = 1807;
+const int auth::bad_signature = 1808;
+const int auth::bad_module = 1809;
+const int auth::counter_exhausted = 1810;
+const int auth::bad_operation = 1811;
+
+int auth_global_id() asm "GLOBALID";
+
+(int, int, int, int) auth_unpack(cell state) inline {
+  if (cell_null?(state)) {
+    return (0, 0, 0, 0);
+  }
+  slice cs = state.begin_parse();
+  int mode = cs~load_uint(2);
+  int epoch = cs~load_uint(64);
+  int nonce = cs~load_uint(64);
+  int module_hash = cs~load_uint(256);
+  cs.end_parse();
+  throw_unless(auth::bad_mode, (mode >= auth::staged) & (mode <= auth::hybrid));
+  return (mode, epoch, nonce, module_hash);
+}
+
+cell auth_pack(int mode, int epoch, int nonce, int module_hash) inline {
+  return begin_cell().store_uint(mode, 2).store_uint(epoch, 64)
+    .store_uint(nonce, 64).store_uint(module_hash, 256).end_cell();
+}
+
+() auth_require_legacy(cell state) impure inline {
+  ifnot (cell_null?(state)) {
+    throw_if(auth::legacy_disabled, state.begin_parse().preload_uint(2) >= auth::module_only);
+  }
+}
+
+int auth_module_hash(slice address) inline {
+  ;; Reject addr_none, anycast and non-standard encodings, not just a parsed
+  ;; address that happens to resolve to the same workchain/hash.
+  throw_unless(auth::bad_module, (address.slice_bits() == 267) & (address.slice_refs() == 0));
+  throw_unless(auth::bad_module, address.preload_uint(3) == 4);
+  (int wc, int hash) = parse_std_addr(address);
+  (int my_wc, int my_hash) = parse_std_addr(my_address());
+  throw_unless(auth::bad_module, (wc == my_wc) & (hash != my_hash));
+  return hash;
+}
+
+cell auth_stage(cell state, int expected_epoch, slice module) inline {
+  var (mode, epoch, _, _) = auth_unpack(state);
+  throw_if(auth::legacy_disabled, mode >= auth::module_only);
+  throw_unless(auth::stale_epoch, expected_epoch == epoch);
+  throw_if(auth::counter_exhausted, epoch == auth::max_counter);
+  return auth_pack(auth::staged, epoch + 1, 0, auth_module_hash(module));
+}
+
+int auth_request_hash(cell request) inline {
+  ;; ASCII domain tag "TOS-AUTH" plus the full cell commitment. The request
+  ;; itself contains chain ID, exact account, epoch, nonce, expiry and kind.
+  return cell_hash(begin_cell().store_uint(0x544f532d41555448, 64)
+    .store_ref(request).end_cell());
+}
+
+() auth_require_strong_classical_key(int public_key) impure inline {
+  ;; Ed25519 encodes y little-endian in 255 bits and x's sign in the high bit
+  ;; of the last byte. y >= 2^255-19 is non-canonical. In byte order this can
+  ;; only happen at 0x[ed..ff]ff..ff[7f|ff], so the comparison is O(1).
+  int y_last = (public_key & 255) & 127;
+  int y_middle = (public_key >> 8) & ((1 << 240) - 1);
+  int y_first = public_key >> 248;
+  throw_if(auth::bad_signature,
+    (y_last == 127) & (y_middle == ((1 << 240) - 1)) & (y_first >= 237));
+  throw_if(auth::bad_signature, public_key ==
+    0x0100000000000000000000000000000000000000000000000000000000000000);
+  throw_if(auth::bad_signature, public_key ==
+    0xc7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a);
+  throw_if(auth::bad_signature, public_key ==
+    0x0000000000000000000000000000000000000000000000000000000000000080);
+  throw_if(auth::bad_signature, public_key ==
+    0x26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc05);
+  throw_if(auth::bad_signature, public_key ==
+    0xecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f);
+  throw_if(auth::bad_signature, public_key ==
+    0x26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc85);
+  throw_if(auth::bad_signature, public_key ==
+    0x0000000000000000000000000000000000000000000000000000000000000000);
+  throw_if(auth::bad_signature, public_key ==
+    0xc7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac03fa);
+}
+
+(cell, int, cell) auth_validate(cell state, slice sender, slice body, int classical_key, int max_ttl) inline_ref {
+  var (mode, epoch, nonce, module_hash) = auth_unpack(state);
+  throw_unless(auth::not_module, mode != 0);
+  throw_unless(auth::not_module, auth_module_hash(sender) == module_hash);
+  throw_unless(auth::bad_operation, body~load_uint(32) == auth::opcode);
+  cell request = body~load_ref();
+  cell cosignature = body~load_maybe_ref();
+  body.end_parse();
+
+  slice cs = request.begin_parse();
+  throw_unless(auth::wrong_network, cs~load_int(32) == auth_global_id());
+  slice account = cs~load_msg_addr();
+  throw_unless(auth::wrong_account, equal_slice_bits(account, my_address()));
+  throw_unless(auth::stale_epoch, cs~load_uint(64) == epoch);
+  throw_unless(auth::bad_nonce, cs~load_uint(64) == nonce);
+  throw_if(auth::counter_exhausted, nonce == auth::max_counter);
+  int valid_until = cs~load_uint(32);
+  throw_unless(auth::expired, (valid_until > now()) & (valid_until <= now() + max_ttl));
+  int kind = cs~load_uint(8);
+  cell payload = cs~load_ref();
+  cs.end_parse();
+
+  if (mode == auth::hybrid) {
+    auth_require_strong_classical_key(classical_key);
+    throw_if(auth::bad_signature, cell_null?(cosignature));
+    slice sig = cosignature.begin_parse();
+    throw_unless(auth::bad_signature, (sig.slice_bits() == 512) & (sig.slice_refs() == 0));
+    throw_unless(auth::bad_signature, check_signature(auth_request_hash(request), sig, classical_key));
+  } else {
+    throw_unless(auth::bad_signature, cell_null?(cosignature));
+  }
+  return (auth_pack(mode, epoch, nonce + 1, module_hash), kind, payload);
+}
+
+cell auth_reconfigure(cell state, cell payload) inline {
+  var (old_mode, epoch, _, _) = auth_unpack(state);
+  slice cs = payload.begin_parse();
+  int mode = cs~load_uint(2);
+  slice module = cs~load_msg_addr();
+  cs.end_parse();
+  throw_unless(auth::bad_mode, (mode >= auth::staged) & (mode <= auth::hybrid));
+  ;; A strict module may rotate to a new PQ/hybrid verifier, but cannot reopen
+  ;; a classical fallback. This also applies to recovery/admin requests.
+  throw_if(auth::bad_mode, (old_mode >= auth::module_only) & (mode == auth::staged));
+  throw_if(auth::counter_exhausted, epoch == auth::max_counter);
+  return auth_pack(mode, epoch + 1, 0, auth_module_hash(module));
+}
