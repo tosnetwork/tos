@@ -238,3 +238,14 @@ compute component versus D63's old all-fee-to-coordinator wording, and the
 `s < m <= s+g` no-positive-receipt branch, remain explicit questions. No actual
 host execution or complete D70 branch coverage is claimed. Earlier frozen
 prediction files are unchanged. Spec prefix: f900bb4b043c82e2.
+
+## D71 resolves D70's two open accounting questions
+
+See `doc/uno-m5-d71-accounting-addendum.md` (spec b01d284b511b1607).
+The no-receipt threshold is now s+g; that entire band sends m to coordinator,
+with no issuance, issuance compute revenue or sequence increment. Funded
+issuance sends s to coordinator and g to fees_collected. Successful type-2
+sweep therefore increases D60 slack by s, not s+g. Both conservation equations
+hold symbolically in funded and no-receipt Paid/Failed branches. No billing-unit
+number was chosen. Prior files retain their original evidence versions; the
+D70 questions are resolved by this new addendum, not by rewriting them.
