@@ -278,3 +278,13 @@ outbound message are checked. Eight consumer files versus A's seven unique
 listed files: only the M5 accounting assertion test was omitted from prose;
 it was already changed and now executed. Construction-isolation was inventoried
 but not run in this selection. No full M5 or full regression claim.
+
+## External review scope draft
+
+`doc/uno-d34-external-review-scope-draft.md` separately names SEND/COLLECT,
+registration Schnorr, closure DLEQ, Withdrawal amount derivation and prepare
+pending prohibition, and D33/D69 verification plus actual host callers. It
+preserves the proof-system soundness premise and handle-redundancy distinction.
+It is not an audit or commissioning action. Current D34/D44 still say no further
+external audit while spec line 67 recommends budgeting one; the draft reports
+that governance inconsistency rather than silently changing the decision.
