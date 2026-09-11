@@ -188,3 +188,24 @@ follow-up `9be4f9c67`), before these queue instructions. Both invariant equation
 hold algebraically in the deficient Failed branch; it is not an actual host
 observation. Do not duplicate or rewrite that prediction while waiting for
 items 3/4. The earlier specification SHA remains its evidence provenance.
+
+## D51 arrival trigger for the pending sequencing controls
+
+`test-workchain-system-sequence-expiry` is now in default CTest. It inventories
+counter/allocator syntax units over explicit Native/account roots plus the named
+test-scope registered Native adapter. Initial reachability is 221 files, printed
+on every run; exceeding 442 requires scope review. Current installation is the
+Deposit successor only; serialization and read references are explicitly pinned.
+
+Default CTest passed in 1.65 seconds. New reachable-file writer, same-file writer
+and changed existing writer each trigger the expiry action. Unrelated adjacent
+fields and disconnected files do not. In an isolated script variant, disabling
+the inventory comparison exits 1 at the new-writer control. No production source
+was mutated for these controls.
+
+This is a lexical/static arrival trigger, not three-source sequencing evidence.
+New reads conservatively require review too. Aliases, indirect writes/runtime
+coupling and separately linked units outside named roots are not inferred.
+When it expires, install real host controls for staged increments, competing
+successors and failure/no-receipt nonpublication before accepting another writer;
+do not merely refresh the baseline. Actual D62/D63 remains deferred as directed.

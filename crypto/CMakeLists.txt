@@ -832,6 +832,11 @@ set_tests_properties(test-workchain-state-loader-inventory PROPERTIES TIMEOUT 30
 
 # Epoch expiry is a default integrity check; test-only kernel linkage does not
 # change node linkage or any execution permit. Missing dependencies fail loudly.
+# D51/D69: expire the Deposit-only counter premise before another issuer lands.
+add_test(NAME test-workchain-system-sequence-expiry COMMAND ${Python3_EXECUTABLE}
+  "${PROJECT_SOURCE_DIR}/crypto/test/workchain-system-sequence-expiry.py" --repo "${PROJECT_SOURCE_DIR}")
+set_tests_properties(test-workchain-system-sequence-expiry PROPERTIES TIMEOUT 30 LABELS "workchain;m5;expiry")
+
 add_test(NAME test-workchain-key-epoch-inventory COMMAND ${Python3_EXECUTABLE}
   "${PROJECT_SOURCE_DIR}/crypto/test/workchain-key-epoch-expiry.py" --repo "${PROJECT_SOURCE_DIR}")
 set_tests_properties(test-workchain-key-epoch-inventory PROPERTIES TIMEOUT 60 LABELS "workchain;expiry")
