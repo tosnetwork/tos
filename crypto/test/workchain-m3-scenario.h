@@ -26,6 +26,21 @@ class ScenarioBackend {
   virtual td::Result<Root> collect(unsigned owner, const std::vector<td::Bits256>& selected) = 0;
   virtual td::Result<RefundObserved> close(unsigned owner) = 0;
 };
+// EXPIRY: before rotation, preserve old pending/refund rights (specification
+// section 5). COLLECT currently requires the receipt epoch to equal the current
+// account epoch; using historical keys needs a section 6.2/D34 scope decision.
+// LIMIT: these observations cover executed operations, not unknown future paths.
+inline td::Status assert_epoch_preserved(const ScenarioState& before, const ScenarioState& after) {
+  for (unsigned owner : {0u, 1u}) {
+    if (before.accounts[owner].is_null()) continue;  // Registration initializes a new identity.
+    if (after.accounts[owner].is_null()) return alarm("epoch guard: account disappeared");
+    TRY_RESULT(old, decode_workchain_confidential_account(before.accounts[owner]));
+    TRY_RESULT(next, decode_workchain_confidential_account(after.accounts[owner]));
+    if (old.key_epoch != next.key_epoch || old.public_key != next.public_key)
+      return alarm("epoch guard expired: preserve old pending before implementing rotation (section 5 / D34)");
+  }
+  return td::Status::OK();
+}
 inline td::Result<std::string> run_m3_scenario(ScenarioBackend& backend) {
   auto decoded = [](const Root& r) { return decode_workchain_confidential_account(r); };
   TRY_RESULT(initial, decode_workchain_coordinator_state(backend.state().coordinator));
@@ -35,6 +50,7 @@ inline td::Result<std::string> run_m3_scenario(ScenarioBackend& backend) {
     auto before = backend.state();
     TRY_STATUS(backend.register_account(owner));
     const auto& after = backend.state();
+    TRY_STATUS(assert_epoch_preserved(before, after));
     TRY_STATUS(assert_registration(before.coordinator, after.coordinator, after.accounts[owner]));
     TRY_RESULT(account, decoded(after.accounts[owner]));
     if (account.funding.paid_deposit > before.native_balances[owner])
@@ -43,14 +59,29 @@ inline td::Result<std::string> run_m3_scenario(ScenarioBackend& backend) {
         assert_balance(after.native_balances[owner], before.native_balances[owner] - account.funding.paid_deposit));
     std::cout << "registered " << owner << "\n";
   }
+  auto before_seed = backend.state();
   TRY_STATUS(backend.seed(0, 50000));
+  TRY_STATUS(assert_epoch_preserved(before_seed, backend.state()));
   TRY_RESULT(seeded, decoded(backend.state().accounts[0]));
   TRY_RESULT(seed_value, decrypt(seeded.available, backend.wallet_secret(0), 1000000));
   TRY_STATUS(assert_balance(seed_value, 50000));
+  // Positive control uses the exact comparison applied after real transitions.
+  // Change only the persisted epoch; no alternate comparison or fake verdict.
+  auto altered = backend.state();
+  auto altered_account = seeded;
+  if (altered_account.key_epoch == UINT32_MAX) return alarm("epoch control cannot increment");
+  ++altered_account.key_epoch;
+  TRY_RESULT(altered_root, encode_workchain_confidential_account(altered_account));
+  altered.accounts[0] = altered_root;
+  auto refused = assert_epoch_preserved(backend.state(), altered);
+  if (refused.is_ok() || refused.message() !=
+      "epoch guard expired: preserve old pending before implementing rotation (section 5 / D34)")
+    return alarm("epoch behavior control did not identify a changed persisted epoch");
   std::array<std::uint64_t, 2> balances{50000, 0};
   auto send = [&](unsigned from, unsigned to, std::uint64_t amount) -> td::Result<td::Bits256> {
     auto before = backend.state();
     TRY_RESULT(candidate, backend.send(from, to, amount));
+    TRY_STATUS(assert_epoch_preserved(before, backend.state()));
     TRY_RESULT(debit, checked_sum(amount, backend.fee(1)));
     if (debit > balances[from])
       return alarm("scenario SEND underflow");
@@ -70,6 +101,7 @@ inline td::Result<std::string> run_m3_scenario(ScenarioBackend& backend) {
     std::sort(ids.begin(), ids.end());
     auto before = backend.state();
     TRY_RESULT(candidate, backend.collect(1, ids));
+    TRY_STATUS(assert_epoch_preserved(before, backend.state()));
     TRY_RESULT(sum, checked_sum(balances[1], total));
     if (backend.fee(2) > sum)
       return alarm("scenario COLLECT underflow");
@@ -94,6 +126,7 @@ inline td::Result<std::string> run_m3_scenario(ScenarioBackend& backend) {
   TRY_STATUS(assert_balance(balances[1], 0));
   auto before = backend.state();
   TRY_RESULT(refund, backend.close(1));
+  TRY_STATUS(assert_epoch_preserved(before, backend.state()));
   TRY_STATUS(assert_closure(before.coordinator, backend.state().coordinator, before.accounts[1],
                             backend.state().accounts[1], backend.wallet_secret(1), 1000000, refund));
   TRY_RESULT(end, decode_workchain_coordinator_state(backend.state().coordinator));

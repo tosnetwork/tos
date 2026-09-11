@@ -493,6 +493,8 @@ class PureBackend final : public ScenarioBackend {
         return alarm("second registration changed first account");
     }
     TRY_RESULT(created_record, decode_workchain_confidential_account(created.data));
+    if (created_record.key_epoch != a.key_epoch || created_record.public_key != a.public_key)
+      return alarm("epoch guard: registration changed the authenticated initial key");
     gen::UnoV2HostInput::Record persisted_input;
     gen::UnoV2HostIdentity::Record persisted_identity;
     gen::UnoV2HostDomain::Record persisted_domain;
