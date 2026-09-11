@@ -1,6 +1,9 @@
 #include "td/utils/tests.h"
 #include "block/workchain-withdrawal-association.h"
 #include "block/native-bounce-body.h"
+#include "block/workchain-failed-funded.h"
+#include "block/workchain-unexpected-bucket.h"
+#include "workchain-proof-test-access.h"
 
 using namespace block;
 namespace {
@@ -78,4 +81,60 @@ TEST(WithdrawalAssociation, IdentityAndOriginalEvidenceChecks) {
       "matched return source differs from payout destination");
   error_is(associate(message(77, true, true, 3, 101), control()),
       "matched return original value differs from payout principal");
+}
+
+TEST(FailedFunded, RealIssuanceAndEncodedSequencePair) {
+  auto pending = control();
+  pending.withdrawals[0].costs = {4, 100, 0, 100};
+  pending.withdrawals[0].timing = {1, 77, 10, 12, 30};
+  td::Bits256 point;
+  point.as_slice().copy_from(td::hex_decode(
+      "b6ec3baa39a7357ab9ca16c61373385f7cfb04ab10c4bc20c8bd3cc6db9a6100").move_as_ok());
+  WorkchainConfidentialAccount core{3, 1, 4, -99, word(1), {2, word(1), word(2)},
+      {word(4), word(99), word(6)}, {10000000000ULL, 0, word(7)}, point, 0,
+      {word(0), word(0)}, 8, 0, {}, WorkchainAccountActive{}, {}};
+  auto owner = encode_workchain_withdrawal_account({core, pending, {}}, 2).move_as_ok();
+  auto bucket = encode_workchain_unexpected_bucket({{}, {}, td::make_refint(0), {}, 0}, {256, 256}, 100).move_as_ok();
+  auto coordinator = encode_workchain_coordinator_state({3, {1, 0, 1, 4}, 0, 10, bucket}).move_as_ok();
+  auto m = message();
+  block::tlb::MsgEnvelope::Record_std wire{96, 96, td::make_refint(0), m, {}, {}};
+  td::Ref<vm::Cell> envelope;
+  ASSERT_TRUE(block::tlb::pack_cell(envelope, wire));
+  WorkchainNativeInboxPlan inbox{{envelope}, 900};
+  // Explicit synthetic transition inputs, NOT authenticated business config or
+  // frozen tariff defaults. This fixture does not claim a real node block.
+  WorkchainFailedFundedPolicy policy{2, 4, 2, 3, 4};
+  auto run = [&](WorkchainProofVerifier& meter, std::uint32_t height = 20) {
+    return prepare_workchain_failed_funded(inbox, owner, coordinator, policy, {}, network(),
+        word(99), word(98), height, meter);
+  };
+  auto a = WorkchainProofTestAccess::create(7);
+  auto b = WorkchainProofTestAccess::create(7);
+  auto result = run(a), replay = run(b);
+  if (result.is_error()) LOG(ERROR) << result.error();
+  ASSERT_TRUE(result.is_ok()); ASSERT_TRUE(replay.is_ok());
+  ASSERT_EQ(a.consumed(), 7u); ASSERT_EQ(a.consumed(), b.consumed());
+  ASSERT_TRUE(result.ok().owner_data->get_hash() == replay.ok().owner_data->get_hash());
+  auto next_owner = decode_workchain_withdrawal_account(result.ok().owner_data, 2).move_as_ok();
+  auto next_coordinator = decode_workchain_coordinator_state(result.ok().coordinator_data).move_as_ok();
+  ASSERT_EQ(next_owner.origin_pending.size(), 1u);
+  ASSERT_TRUE(next_owner.control.withdrawals.empty());
+  ASSERT_EQ(*next_coordinator.deposit_sequence, 11u);
+  ASSERT_EQ(workchain_system_origin_sequence(next_owner.origin_pending[0].origin), 11u);
+  ASSERT_EQ(next_owner.origin_pending[0].amount, 156u);
+  ASSERT_TRUE(std::get<WorkchainSettlementOrigin>(next_owner.origin_pending[0].origin).attempt_id ==
+              pending.withdrawals[0].attempt_id);
+  ASSERT_TRUE(result.ok().inbound_message == td::Bits256(m->get_hash().bits()));
+  ASSERT_EQ(result.ok().recovered, 70u); ASSERT_EQ(result.ok().released_p, 100u);
+  ASSERT_EQ(result.ok().released_w, 200u);
+  ASSERT_EQ(td::cmp(result.ok().fees.state_fee, 2), 0);
+  ASSERT_EQ(td::cmp(result.ok().fees.compute_fee, 12), 0);
+  ASSERT_EQ(*decode_workchain_coordinator_state(coordinator).move_as_ok().deposit_sequence, 10u);
+  auto short_budget = WorkchainProofTestAccess::create(6);
+  ASSERT_TRUE(run(short_budget).is_error()); ASSERT_EQ(short_budget.consumed(), 0u);
+  auto late = WorkchainProofTestAccess::create(7);
+  auto unsupported = run(late, 43);
+  ASSERT_TRUE(unsupported.is_error());
+  ASSERT_EQ(unsupported.error().message(), "funded Failed requires an open height window");
+  ASSERT_EQ(late.consumed(), 0u);
 }
