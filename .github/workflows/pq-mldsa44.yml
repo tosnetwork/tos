@@ -6,7 +6,7 @@ on:
       - 'common/global-version.h'
       - 'CMakeLists.txt'
       - 'test/pq-mldsa44/**'
-      - 'docs/tvm-mldsa44.md'
+      - 'docs/tvm-mldsa44*'
       - '.github/workflows/pq-mldsa44.yml'
 defaults:
   run:
@@ -29,46 +29,58 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - name: Record architecture and compiler
+      - name: Record architecture
         run: |
           test "$(uname -m)" = '${{ matrix.arch }}'
           uname -a
-          cc --version
-          c++ --version
-      - name: Build verifier, real VM and compiler bindings
+      - name: Build verifier, VM, FunC, Fift and Tol
+        id: build
         run: |
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
-          cmake --build build --target test-pq-mldsa44 test-pq-mldsa44-wrapper func fift -j2
+          cmake -LA -N build | grep -E '(CMAKE_.*COMPILER|CMAKE_BUILD_TYPE|TOS_ARCH)'
+          cmake --build build --target test-pq-mldsa44 test-pq-mldsa44-wrapper func fift tol -j2
       - name: Prepare pinned public vectors
+        id: vectors
         run: python3 test/pq-mldsa44/prepare_vectors.py --out pq-results
-      - name: Run wrapper, VM and resource-boundary tests
+      - name: Verify wrapper vectors
+        id: wrapper
+        run: build/crypto/pq/test-pq-mldsa44-wrapper pq-results/vectors.tsv pq-results/wrapper.tsv
+      - name: Verify VM, resource boundaries and CPU/gas calibration
+        id: vm
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && steps.vectors.outcome == 'success' }}
         run: |
-          build/crypto/pq/test-pq-mldsa44-wrapper pq-results/vectors.tsv pq-results/wrapper.tsv
           build/crypto/pq/test-pq-mldsa44 pq-results/vectors.tsv pq-results/native.tsv --benchmark | tee pq-results/benchmark.txt
-          python3 test/pq-mldsa44/bindings.py --build build --vectors pq-results/vectors.tsv --out pq-results
-      - name: Prove tests detect removed verification, version and gas guards
-        if: matrix.arch == 'x86_64'
+      - name: Compile and execute both public language bindings
+        id: bindings
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && steps.vectors.outcome == 'success' }}
+        run: python3 test/pq-mldsa44/bindings.py --build build --vectors pq-results/vectors.tsv --out pq-results
+      - name: Kill verification, version and gas guard mutations
+        if: ${{ !cancelled() && matrix.arch == 'x86_64' && steps.vm.outcome == 'success' }}
         run: |
-          python3 test/pq-mldsa44/mutations.py --build build --vectors pq-results/vectors.tsv
+          python3 test/pq-mldsa44/mutations.py --build build --vectors pq-results/vectors.tsv | tee pq-results/mutations.txt
           git diff --exit-code
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
         with:
           name: pq-${{ matrix.arch }}
           path: |
             pq-results/manifest.json
-            pq-results/native.tsv
-            pq-results/wrapper.tsv
-            pq-results/func-transcript.tsv
+            pq-results/vectors.tsv
+            pq-results/*.tsv
+            pq-results/*.boc
+            pq-results/*.calibration.json
             pq-results/benchmark.txt
-          if-no-files-found: error
+            pq-results/mutations.txt
+          if-no-files-found: warn
+          retention-days: 14
   sanitizers:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
       - name: Build portable verifier with Clang ASan and UBSan
@@ -79,32 +91,67 @@ jobs:
             '-DCMAKE_CXX_FLAGS=-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer' \
             '-DCMAKE_EXE_LINKER_FLAGS=-fsanitize=address,undefined'
           cmake --build build-pq --target test-pq-mldsa44-wrapper -j2
-      - name: Execute all public verifier vectors under sanitizers
+      - name: Execute public vectors under sanitizers
         run: |
           python3 test/pq-mldsa44/prepare_vectors.py --out pq-results
           build-pq/test-pq-mldsa44-wrapper pq-results/vectors.tsv pq-results/wrapper.tsv
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
         with:
           name: pq-clang-sanitized
           path: |
             pq-results/manifest.json
             pq-results/wrapper.tsv
-          if-no-files-found: error
+          if-no-files-found: warn
+          retention-days: 14
+  vm-sanitizers:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Build actual VM and byte-chain parser under ASan and UBSan
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DTOS_USE_ASAN=ON -DTOS_USE_UBSAN=ON \
+            -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
+          cmake --build build --target test-pq-mldsa44 -j2
+      - name: Run native vectors and parser boundaries under sanitizers
+        env:
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+        run: |
+          python3 test/pq-mldsa44/prepare_vectors.py --out pq-results
+          build/crypto/pq/test-pq-mldsa44 pq-results/vectors.tsv pq-results/native.tsv
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: pq-vm-sanitized
+          path: |
+            pq-results/manifest.json
+            pq-results/native.tsv
+          if-no-files-found: warn
+          retention-days: 14
   determinism:
-    needs: [native, sanitizers]
+    needs: [native, sanitizers, vm-sanitizers]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: pq-*
           path: results
-      - name: Compare exact corpus, verdicts, gas, stack and commit-state transcripts
+      - name: Compare corpus, verdicts, gas, state and both compiled bindings
         run: |
           cmp results/pq-x86_64/manifest.json results/pq-aarch64/manifest.json
           cmp results/pq-x86_64/manifest.json results/pq-clang-sanitized/manifest.json
+          cmp results/pq-x86_64/manifest.json results/pq-vm-sanitized/manifest.json
           cmp results/pq-x86_64/wrapper.tsv results/pq-aarch64/wrapper.tsv
           cmp results/pq-x86_64/wrapper.tsv results/pq-clang-sanitized/wrapper.tsv
           cmp results/pq-x86_64/native.tsv results/pq-aarch64/native.tsv
+          cmp results/pq-x86_64/native.tsv results/pq-vm-sanitized/native.tsv
           cmp results/pq-x86_64/func-transcript.tsv results/pq-aarch64/func-transcript.tsv
-          sha256sum results/pq-*/native.tsv results/pq-*/wrapper.tsv
+          cmp results/pq-x86_64/tol-transcript.tsv results/pq-aarch64/tol-transcript.tsv
+          cmp results/pq-x86_64/func-verify.boc results/pq-aarch64/func-verify.boc
+          cmp results/pq-x86_64/tol-verify.boc results/pq-aarch64/tol-verify.boc
+          sha256sum results/pq-x86_64/*.tsv results/pq-x86_64/*.boc

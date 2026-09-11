@@ -12,6 +12,7 @@
 #include <string>
 #include <vector>
 #ifdef TOS_PQ_TEST_VM
+#include "Ed25519.h"
 #include "td/utils/logging.h"
 #include "vm/boc.h"
 #include "vm/cells/CellBuilder.h"
@@ -219,6 +220,8 @@ void vm_boundaries(const Vector& good, std::ostream& out) {
   require(eleven.gas >= 11 * floor, "verification received a free-call allowance");
   print_execution(out, "eleven-paid-calls", eleven);
 }
+
+#include "vm-extra-tests.h"
 #endif
 }  // namespace
 
@@ -255,6 +258,9 @@ int main(int argc, char** argv) {
       auto r = execute(cells(v), 16, 1000000, false, compiled, compiled.not_null());
       check_execution(v, r);
       print_execution(transcript, v.id, r);
+      if (compiled.is_null() && v.expected != 'M') {
+        require(r.gas == expected_raw_gas(cells(v)), v.id + ": exact gas mismatch");
+      }
 #else
       transcript << v.id << '\t' << result << '\n';
 #endif
@@ -262,6 +268,7 @@ int main(int argc, char** argv) {
     require(positives >= 3 && negatives >= 18, "positive and negative controls did not execute");
 #ifdef TOS_PQ_TEST_VM
     vm_boundaries(control, transcript);
+    extended_boundaries(control, compiled, transcript);
 #endif
     transcript.flush();
     require(bool(transcript), "could not write transcript");
@@ -284,6 +291,9 @@ int main(int argc, char** argv) {
 #endif
         std::cout << '\n';
       }
+#ifdef TOS_PQ_TEST_VM
+      calibrate_gas(vectors, std::string(argv[2]) + ".calibration.json");
+#endif
     }
     return 0;
   } catch (const std::exception& e) {

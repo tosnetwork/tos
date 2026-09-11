@@ -21,8 +21,15 @@ def run(build: Path, vectors: Path):
          'if (result == 0) {', 'if (result == 0 || result == MLD_ERR_INVALID_SIGNATURE) {'),
         ('version', ROOT / 'crypto/vm/pqops.cpp',
          '->require_version(pq_mldsa44_min_version)', '->require_version(15)'),
-        ('gas', ROOT / 'crypto/vm/pqops.cpp',
+        ('base-gas', ROOT / 'crypto/vm/pqops.cpp',
          'st->consume_gas_chk(pq_mldsa44_base_gas);', 'st->consume_gas_chk(0);'),
+        ('byte-gas', ROOT / 'crypto/vm/pqops.cpp',
+         'st->consume_gas_chk(static_cast<long long>(size) * pq_mldsa44_byte_gas);',
+         'st->consume_gas_chk(0);'),
+        ('message-bound', ROOT / 'crypto/pq/mldsa44.cpp',
+         'message.size() > mldsa44_max_message_bytes || ', ''),
+        ('context', ROOT / 'crypto/pq/mldsa44.cpp',
+         'm, message.size(), c, context.size(),', 'm, message.size(), c, 0,'),
     ]
     with tempfile.TemporaryDirectory() as tmp:
         out = Path(tmp) / 'result.tsv'
