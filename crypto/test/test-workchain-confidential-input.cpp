@@ -10,6 +10,8 @@
 #include "block/workchain-operation-fees.h"
 #include "block/workchain-account-effects.h"
 #include "block/workchain-native-allocation.h"
+#include "block/workchain-allocation-overlay.h"
+#include "block/workchain-confidential-native.h"
 #include <fstream>
 #include <iostream>
 #include <sstream>
@@ -93,6 +95,92 @@ TEST(ConfidentialInput, StaticFeeComponentsAndStateAllocation) {
   ASSERT_EQ(td::cmp(to.tomis, 3000100), 0);
   auto native = decode_workchain_native_effects(record.native).move_as_ok();
   ASSERT_EQ(native.payout->prefetch_ulong(1), 0u);
+  // Exercise the real Native transaction constructors and serialized fee
+  // augmentation, not just allocation arithmetic. This is post-admission
+  // settlement; it does not claim actor validation or masterchain import.
+  vm::AugmentedDictionary accounts(256, block::tlb::aug_ShardAccounts);
+  WorkchainAccountDeclarations access;
+  for (const auto& key : {coordinator, custody}) {
+    vm::CellBuilder storage;
+    storage.store_long(0, 64);
+    ASSERT_TRUE(CurrencyCollection(key == custody ? 10000000 : 100).store(storage));
+    storage.store_long(1, 1).store_zeroes(2);
+    ASSERT_TRUE(storage.store_maybe_ref(workchain_confidential_native_code()));
+    ASSERT_TRUE(storage.store_maybe_ref(empty));
+    storage.store_long(0, 1);
+    vm::CellBuilder account;
+    account.store_long(1, 1).store_long(4, 3).store_long(2, 8).store_bits(key.bits(), 256);
+    ASSERT_TRUE(store_UInt7(account, 0));
+    ASSERT_TRUE(store_UInt7(account, 0));
+    account.store_zeroes(36).append_cellslice(vm::load_cell_slice(storage.finalize()));
+    auto account_root = account.finalize();
+    vm::CellBuilder leaf;
+    leaf.store_ref(account_root).store_zeroes(256).store_long(0, 64);
+    ASSERT_TRUE(accounts.set_builder(key, leaf, vm::Dictionary::SetMode::Add));
+    access.reads.push_back({key, td::Bits256(account_root->get_hash().bits())});
+    access.writes.push_back(key);
+  }
+  const td::Bits256 configuration_hash(root->get_hash().bits());
+  InputPolicyIdentity input_identity{root->get_hash(), false, 17, 9, 2, 4};
+  WorkchainResourcePolicy resources{4, {256, 65536, 8, 2, 2, 1},
+      {256, 65536, 128, 32768, 64}, {10000, 128, 32768, 256, 65536, 1}, {0, 2, 2}, 1};
+  auto resolved = ResolvedBatchInputPolicy::from_resolved_fields(resources, input_identity);
+  ASSERT_TRUE(std::holds_alternative<ResolvedBatchInputPolicy>(resolved));
+  WorkchainHostIdentity host_identity{-1, configuration_hash, configuration_hash, 2, tos::shardIdAll,
+      configuration_hash, false, 17, 9, 2, 4, configuration_hash, 1, 10, 20, empty};
+  const std::vector<td::Ref<vm::Cell>> inbox;
+  auto declarations = encode_workchain_account_declarations(access, 2, 2).move_as_ok();
+  BatchInputAdmissionSession admission(std::get<ResolvedBatchInputPolicy>(resolved), empty,
+                                       declarations, host_identity, inbox);
+  ASSERT_TRUE(std::holds_alternative<AdmittedBatchInput>(admission.evaluate()));
+  auto input = std::get<AdmittedBatchInput>(admission.evaluate()).root();
+  SerializeConfig serialization;
+  serialization.global_version = 16;
+  serialization.disable_anycast = true;
+  auto old_accounts = accounts.get_wrapped_dict_root();
+  for (const auto& amounts : {send, collect}) {
+    effects.fees = materialize_workchain_operation_fees(amounts, custody, coordinator);
+    auto output = encode_workchain_account_effects(effects, 2, 1, 4096).move_as_ok();
+    auto built = build_workchain_inbound_allocation_overlay(old_accounts, host_identity, input, output,
+        coordinator, custody, 2, 2, 1, 0, 4096, serialization);
+    if (built.is_error()) LOG(ERROR) << built.error();
+    ASSERT_TRUE(built.is_ok());
+    ASSERT_TRUE(built.ok().exports.empty());
+    vm::AugmentedDictionary next(vm::load_cell_slice_ref(built.ok().state.accounts), 256,
+                                  block::tlb::aug_ShardAccounts);
+    vm::AugmentedDictionary blocks(vm::load_cell_slice_ref(built.ok().state.account_blocks), 256,
+                                    block::tlb::aug_ShardAccountBlocks);
+    auto totals = checked_workchain_fee_totals(*effects.fees).move_as_ok();
+    CurrencyCollection augmented;
+    ASSERT_TRUE(augmented.unpack(blocks.get_root_extra()));
+    ASSERT_TRUE(augmented == totals.collected);
+    for (const auto& key : {coordinator, custody}) {
+      Account after(2, key.bits());
+      ASSERT_TRUE(after.unpack(next.lookup(key), 10, false));
+      // Initial backing exceeds the entire charge. Checked Native subtraction
+      // below still enforces this precondition instead of trusting the fixture.
+      CurrencyCollection expected_balance;
+      ASSERT_TRUE(key == custody
+          ? CurrencyCollection::sub(CurrencyCollection(10000000), totals.total, expected_balance)
+          : CurrencyCollection::add(CurrencyCollection(100), CurrencyCollection(effects.fees->state_fee), expected_balance));
+      ASSERT_TRUE(after.balance == expected_balance);
+      gen::AccountBlock::Record account_block;
+      ASSERT_TRUE(gen::t_AccountBlock.unpack(blocks.lookup(key).write(), account_block));
+      vm::AugmentedDictionary txs(vm::DictNonEmpty(), account_block.transactions, 64,
+                                   block::tlb::aug_AccountTransactions);
+      gen::Transaction::Record tx;
+      ASSERT_TRUE(::tlb::unpack_cell(txs.lookup_ref(td::BitArray<64>(after.last_trans_lt_)), tx));
+      CurrencyCollection actual_fees;
+      ASSERT_TRUE(actual_fees.unpack(tx.total_fees));
+      ASSERT_TRUE(actual_fees == (key == custody ? totals.collected : CurrencyCollection(0)));
+      ASSERT_EQ(tx.outmsg_cnt, 0);
+    }
+    ASSERT_TRUE(replay_workchain_inbound_allocation_overlay(old_accounts, host_identity, input, output,
+        coordinator, custody, 2, 2, 1, 0, 4096, serialization, built.ok()).is_ok());
+    std::cout << "Native fee settlement: S=" << amounts.state << " C=" << amounts.compute
+              << " T=" << amounts.tip << "; serialized total_fees=" << totals.collected.tomis->to_dec_string()
+              << "; zero exports; allocation replay passed\n";
+  }
   std::cout << "static fee components: SEND S=3000000 C=4576 T=5; COLLECT S=0 C=5278 T=7; "
                "five negative claims rejected at component comparison (-7200); S Native allocation passed\n";
 }
