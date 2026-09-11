@@ -245,8 +245,9 @@ int main(int argc, char** argv) {
     td::write_file(td::CSlice(argv[2]), vm::std_boc_serialize(data).move_as_ok()).ensure();
     return 0;
   }
-  if (argc != 2) return 2;
-  const std::filesystem::path fixture(argv[1]);
+  const bool incarnation_control = argc == 3 && std::string(argv[1]) == "--failed-incarnation-control";
+  if (argc != 2 && !incarnation_control) return 2;
+  const std::filesystem::path fixture(argv[incarnation_control ? 2 : 1]);
   if (!std::filesystem::exists(fixture / "prepare.cmake") ||
       !std::filesystem::exists(fixture / ".counter-managed-v1")) return 2;
   vm::init_vm().ensure();
@@ -266,6 +267,14 @@ int main(int argc, char** argv) {
   const bool deposit = block::m3_test::is_m4_test_deposit(candidate);
   const bool debit = block::m3_test::is_m5_test_debit(candidate);
   const bool failed = block::m3_test::is_m5_test_failed(candidate);
+  if (incarnation_control) {
+    CHECK(failed);
+    auto selector = block::m3_test::decode_m5_test_failed(candidate).move_as_ok();
+    // Only candidate provenance changes; the authenticated predecessor,
+    // account key, inbox Message and declarations remain byte-identical.
+    selector.owner.instance.as_slice().back() ^= 1;
+    candidate = block::m3_test::encode_m5_test_failed(selector);
+  }
   const auto ingress = block::load_workchain_native_ingress_table(*config).move_as_ok().at(2);
   const auto params = block::decode_workchain_engine_parameters(ingress.engine_configuration).move_as_ok();
   const bool m4 = block::m3_test::decode_m3_test_business_parameters(params.parameters).move_as_ok().deposit.has_value();
@@ -278,7 +287,7 @@ int main(int argc, char** argv) {
         (std::holds_alternative<block::WorkchainSendData>(transfer->data) ? 3 : 2) + (m4 ? 1 : 0);
   }
   for (const bool enabled : {false, true}) {
-    const std::string name = enabled ? "enabled" : "closed";
+    const std::string name = (incarnation_control ? "incarnation-" : "") + std::string(enabled ? "enabled" : "closed");
     auto db = fixture / (name + "-db");
     std::filesystem::copy(fixture / "db", db, std::filesystem::copy_options::recursive);
     const auto result = (fixture / (name + ".result")).string();
@@ -325,7 +334,8 @@ int main(int argc, char** argv) {
       std::_Exit(disk_collator_tool_main(static_cast<int>(args.size()), raw.data()));
     }
     int status;
-    if (waitpid(pid, &status, 0) != pid || !WIFEXITED(status) || WEXITSTATUS(status) != (enabled ? 0 : 2)) return 2;
+    if (waitpid(pid, &status, 0) != pid || !WIFEXITED(status) ||
+        WEXITSTATUS(status) != (enabled && !incarnation_control ? 0 : 2)) return 2;
     auto read = [&](const std::string& suffix) { return td::read_file_str(result + suffix).move_as_ok(); };
     const auto observation = read(".readiness");
     // Missing/unknown observation is not evidence of a closed gate.
@@ -333,6 +343,17 @@ int main(int argc, char** argv) {
                                          : "phase=3\nworkchain=2\ndelivery=recorded\n";
     const auto stats = read(".stats");
     const auto calls = td::read_file_str(counter).move_as_ok();
+    if (enabled && incarnation_control) {
+      std::cout << "FAILED_INCARNATION observed=" << read("") << " reason=" << read(".message") << std::endl;
+      CHECK(read("") == "collate -7200\n");
+      CHECK(read(".message") == "Failed selector incarnation differs from authenticated owner");
+      CHECK(observation == expected && read(".kind") == "error\n");
+      CHECK(stats == "delivery=recorded\nvisited=1\nadapter=1\nowners_before=1\nowners_during=2\nowners_after=1\ntransactions=0\n");
+      CHECK(td::read_file_str(counter + ".units.1").move_as_ok() == "0\n");
+      CHECK(!std::filesystem::exists(exported));
+      std::cout << "FAILED_INCARNATION: CandidateInvalid before issuance; zero transactions, no export\n";
+      continue;
+    }
     if (enabled) {
       if (observation != "phase=4\nworkchain=2\ndelivery=recorded\n" ||
           read(".kind") != "success\n" || read("") != "collate 0\n" ||
@@ -474,6 +495,8 @@ int main(int argc, char** argv) {
     }
     std::cout << name << ": " << observation << read(".stats.timing") << std::flush;
   }
-  std::cout << "Paired closed registry refusal / accepted operation; NOT full live sequence acceptance.\n";
+  std::cout << (incarnation_control
+      ? "Paired OFF registry refusal / ON CandidateInvalid; no operation published.\n"
+      : "Paired closed registry refusal / accepted operation; NOT full live sequence acceptance.\n");
   return 0;
 }

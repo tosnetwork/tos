@@ -4,6 +4,15 @@ Specification: memo `569ff21f`, SHA256 prefix `725e9e4dbd964e25`.
 No independent accounting prediction was read. This is the narrow window-in,
 strongly matched, sufficiently reserved branch, not M5 acceptance.
 
+## Outstanding parameter freezes
+
+The live fixture's `failed.issuance_billing_units=4` is an explicitly encoded
+test value, NOT a frozen protocol constant or an absent-field fallback.
+Its base=2 gives g=8 in this run; successful execution does not freeze either
+test value. Under D70/section 12.1, system-issuance billing units still require
+the freeze process, alongside Withdrawal state fee, max_bounce_cost, and
+payout_settlement_blocks. No production default is established by this fixture.
+
 ## Three real integration refusals, then publication
 
 The initial live route in `/tmp/uno-m3-live-2t35rtrk` produced a real wc0 bounce
@@ -163,3 +172,46 @@ followed was disproved by the separate real linkage refusal; it is not evidence.
 Not claimed: shortfall, phase-1/late/Paid completion, split-wc0 route coverage,
 full authenticated pending mutation evidence, production availability, external
 cryptographic review, cumulative node ledger enforcement, or supply-chain audit.
+
+## Follow-up: candidate incarnation classification
+
+Owner clarification: memo `8cc604dc`, specification SHA256 prefix
+`6cf757e0bda63b1e`; the original checkpoint above retains its original version.
+
+The regression recorded above is addressed separately from the publication
+checkpoint. The acquired owner's Native account key/workchain/custody checks
+remain local-state checks. Only the candidate selector's incarnation comparison
+now returns `-7200: Failed selector incarnation differs from authenticated owner`.
+It does not infer provenance from an exception class or error string.
+
+`test-m3-live --failed-incarnation-control` flips only the candidate incarnation,
+leaving the real pre-Failed DB, account key, declarations and bounce unchanged.
+The ordinary live script runs this control immediately before funded Failed.
+Observation surface: real collator result/code/reason, transaction count,
+proof-work counter and candidate export. It is not a direct malformed-candidate
+validator replay or an injected local DB fault test.
+
+Before the fix, `/tmp/uno-incarnation-red-live.log` observed `collate -7201` /
+`authenticated Failed owner binding mismatch`; the exact `collate -7200`
+assertion aborted. After the fix the same predecessor fixture
+`/tmp/uno-m3-live-3nygkohf` passes with the specified -7200 reason, zero issuance
+work, zero transactions and no export (`/tmp/uno-incarnation-green-control.log`).
+Unchanged input then passes real ON/OFF publication
+(`/tmp/uno-incarnation-positive-live.log`): R_actual=R_book=N_hidden=996995705,
+sequence 1->2, actual recovery 9996070, receipt 10996062.
+
+This closes that candidate-incarnation regression only. Unknown-source counting
+and broader exception/provenance coverage remain incomplete; no contract item
+or expiry guard is marked complete by this focused control. The unrelated full
+association codec exception assertion is untouched.
+
+Claude Code's focused classification review found no blocker and confirmed that
+the accepted set is unchanged. Its "AFTER pending" note reflects the review
+request time: the subsequent fresh full `--m5-failed` run exited 0, including
+the new control and normal publication (`/tmp/uno-incarnation-final-live.log`,
+fixture `/tmp/uno-m3-live-mxu2mivp`). The review also identified a separate
+remaining surface: selecting an existing pre-Withdrawal account reaches the
+schema decoder's blanket local error. That path requires its own source/route
+classification and control; it is not covered by the incarnation fix.
+The negative checks zero issuance work and no export, not a standalone
+validator-replay-count assertion. No broader claim is made on that basis.

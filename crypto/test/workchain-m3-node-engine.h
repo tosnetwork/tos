@@ -337,9 +337,13 @@ class M3NodeEngine final : public RegisteredWorkchainAccountEngine {
       auto owner = owner_result.move_as_ok();
       if (owner.account.address.workchain_id != selector.owner.workchain_id ||
           owner.account.address.account != selector.owner.account ||
-          owner.account.address.instance != selector.owner.instance ||
           owner.account.bindings.custody != *cfg->ingress.custody_address)
         return local("authenticated Failed owner binding mismatch");
+      // The read-view account is the authenticated predecessor. Its binding
+      // checks above are local-state checks; this field instead came from the
+      // candidate selector. A wrong incarnation is not missing local state.
+      if (owner.account.address.instance != selector.owner.instance)
+        return invalid("Failed selector incarnation differs from authenticated owner");
       gen::UnoV2OperationNetworkV1::Record network{domain.global_id, domain.genesis_hash, domain.instance_id};
       // This check belongs to the acquired predecessor, not the submitted
       // selector. Do not turn corrupt old identities into candidate rejection.
