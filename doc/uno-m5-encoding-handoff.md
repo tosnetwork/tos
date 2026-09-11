@@ -226,3 +226,104 @@ The default expiry diagnostic now points to that procedure. Its scanning scope
 and predicate are unchanged. Only B's sequence premise expires on a new issuer;
 A's prepare guard remains until its separate Native prepare evidence exists.
 Specification: memo 19d0446e / SHA256 prefix 71968ef2afb0d917.
+
+## D70 symbolic extension
+
+`doc/uno-m5-d70-accounting-addendum.md` reserves issuance compute as
+`g = checked(base_compute * u)` with no local billing-unit value. It covers
+funded Paid/Failed and sweep book/physical deltas symbolically and names the
+future observation slice, execution paths and omission controls. The old
+slot-only synthetic sweep predicate is not D70 coverage. Routing of the new
+compute component versus D63's old all-fee-to-coordinator wording, and the
+`s < m <= s+g` no-positive-receipt branch, remain explicit questions. No actual
+host execution or complete D70 branch coverage is claimed. Earlier frozen
+prediction files are unchanged. Spec prefix: f900bb4b043c82e2.
+
+## D71 resolves D70's two open accounting questions
+
+See `doc/uno-m5-d71-accounting-addendum.md` (spec b01d284b511b1607).
+The no-receipt threshold is now s+g; that entire band sends m to coordinator,
+with no issuance, issuance compute revenue or sequence increment. Funded
+issuance sends s to coordinator and g to fees_collected. Successful type-2
+sweep therefore increases D60 slack by s, not s+g. Both conservation equations
+hold symbolically in funded and no-receipt Paid/Failed branches. No billing-unit
+number was chosen. Prior files retain their original evidence versions; the
+D70 questions are resolved by this new addendum, not by rewriting them.
+
+## D73 phase prerequisite review
+
+`doc/uno-m5-d73-phase-handoff.md` records the paired prepare/queue prerequisite,
+strictly later authenticated absence, and truthful rather than earliest removal
+height, with seven concrete Native controls. Current codec allows equality
+between removal and opened heights; D73 does not. That difference is reported
+for integration, not silently changed in this documentation task. The codec
+cannot attest queue presence/absence. Source spec: 3b4413b390f43969.
+
+## D74 late bounce with an unevaluated open record
+
+D73 handoff control 8 now requires real paired prepare, phase 1 and a matching
+bounce arriving strictly after the checked deadline while no owner has touched
+the account. The bounce must use the outside-window path without W/P release
+or reserve top-up. Legitimate late-return issuance is observed separately and
+must not be mistaken for reserve use. Replacing the height test with record-open
+status is the prescribed isolated mutation. Owner-triggered Paid evaluation is
+a separate observed event. Spec prefix 1df942bd8a8dae0b; prospective contract only.
+
+## Independent D61 recheck
+
+`doc/uno-m5-d61-independent-recheck.md` records direct B runs on A's committed
+293fc152a: D61 CTest 1/1, five Native selectors green, isolated old-helper red
+at the custody 270 assertion. Actual serialized custody debit and nonempty
+outbound message are checked. Eight consumer files versus A's seven unique
+listed files: only the M5 accounting assertion test was omitted from prose;
+it was already changed and now executed. Construction-isolation was inventoried
+but not run in this selection. No full M5 or full regression claim.
+
+## External review scope draft
+
+`doc/uno-d34-external-review-scope-draft.md` separately names SEND/COLLECT,
+registration Schnorr, closure DLEQ, Withdrawal amount derivation and prepare
+pending prohibition, and D33/D69 verification plus actual host callers. It
+preserves the proof-system soundness premise and handle-redundancy distinction.
+It is not an audit or commissioning action. Current D34/D44 still say no further
+external audit while spec line 67 recommends budgeting one; the draft reports
+that governance inconsistency rather than silently changing the decision.
+
+## Independent D64 implementation recheck
+
+`doc/uno-m5-d64-implementation-recheck.md` binds six requested checks to original
+5f628635d source lines, with a full 8x6 matrix/target table and six ordered ranges.
+Independent isolated tests pass 2/2; witness-index and range-object mutations each
+exit 101, restoration passes. The original T>Vmax gate is historical and was
+removed by 15c34b205. No authenticated tariff lookup or actual Withdrawal host
+caller exists in that original commit; f is bound separately but its source
+cannot be certified there. The runnable review script and expectation module
+are committed; no production or A-owned code is changed.
+
+## Withdrawal fee admission: control 9
+
+The phase/acceptance handoff now specifies a proof-valid underpriced Withdrawal
+(f=f_required-1) and an independently generated floor-priced positive case.
+It distinguishes kernel proof validity, host admission refusal, and validator
+rejection of claimed successful underpriced execution. Two future default CTest
+names and a host-comparison removal control are specified; no current execution
+is claimed. Billing inputs must come from explicit authenticated test policy,
+not proof-work units. Implementing A must supply actual admission diagnostics
+and authenticated before/after artifacts before closing this item.
+
+## WITHDRAWAL-PREPARE acceptance handoff
+
+`doc/uno-m5-withdrawal-prepare-handoff.md` specifies nine real Native contracts
+and exact future CTest names. The dedicated Python runner currently exits 1,
+WITHDRAWAL-PREPARE_NOT_READY, listing all nine missing targets. Disabled/skipped
+execution, absent observation markers and test/tool failures cannot pass.
+Mocked runner-only controls exercised disabled, skipped, missing marker, failed
+test and successful execution reports; these validate the runner, not Native
+behavior. Each actual target must implement the documented positive, isolated
+mutation and restoration evidence before emitting its marker.
+
+The cap test separates owner-touch settlement from prepare: settlement may add
+backed pending, while the prepare event must preserve the complete pending cut.
+No A file, production source, CMake registration or frozen prediction was changed.
+Specification: 45b20d8f6678edeb. Return to read-only review after delivery; a
+committed prepare integration triggers B's independent shadow-build review.
