@@ -112,6 +112,8 @@ void same_receipt(const WorkchainPendingReceipt& a, const WorkchainPendingReceip
 }
 }  // namespace
 
+#include "workchain-m3-wallet-request-tests.inc"
+
 TEST(ConfidentialExecution, SendFreshProofRetryConsumesNonceNotId) {
   Fixture f("send");
   auto first = f.input(), second = f.input("candidate-2.boc");
