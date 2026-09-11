@@ -5,8 +5,9 @@
       "code_hash": "e56efc6c2c9e1da65c36008e78baeb9974d2779c05f29edf4adf39b4dbabd994"
     },
     "wallet_v5r1": {
-      "address": "0:2871c41d18bd1420b2e3233cdabcd7c8cbf70a2297e2a31cb0daeaf58c661ccb",
-      "code_hash": "e6c006f19fbabccd0d4852c1cc4ca3c6410914dc86f6611ccf8165cdcaafc6e0"
+      "address": null,
+      "code_hash": "086a86aa9913c0ec52277adbb7e4b5695964dbb8c817ad0c305cdd345bbfac69",
+      "error": "Wallet V5 code changed; no account deployed from it yet. Re-run deployer.py to redeploy and refill this entry."
     },
     "session_wallet": {
       "address": "0:b01a439342902e8cbf63f079ca103dff53a9183810f78c518630fac5169abea3",

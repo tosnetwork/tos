@@ -492,7 +492,7 @@ if (NOT CMAKE_CROSSCOMPILING OR USE_EMSCRIPTEN)
   function(GenFif)
     set(options )
     set(oneValueArgs DEST NAME)
-    set(multiValueArgs SOURCE)
+    set(multiValueArgs SOURCE EXTRA_DEPS)
     set(FUNC_LIB_SOURCE smartcont/stdlib.fc)
     cmake_parse_arguments(ARG "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN} )
     string(REGEX REPLACE "[^0-9a-zA-Z_]" "_" ID ${ARG_DEST})
@@ -503,7 +503,7 @@ if (NOT CMAKE_CROSSCOMPILING OR USE_EMSCRIPTEN)
       WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
       COMMAND $<TARGET_FILE:func> -PS -o ${ARG_DEST_FIF} ${FUNC_LIB_SOURCE} ${ARG_SOURCE}
       MAIN_DEPENDENCY ${ARG_SOURCE}
-      DEPENDS func ${FUNC_LIB_SOURCE}
+      DEPENDS func ${FUNC_LIB_SOURCE} ${ARG_EXTRA_DEPS}
       OUTPUT ${ARG_DEST_FIF}
     )
     set(ARG_DEST_CPP "${SMARTCONT_AUTO_DIR}/${ARG_DEST_NAME}.cpp")
@@ -530,7 +530,7 @@ if (NOT CMAKE_CROSSCOMPILING OR USE_EMSCRIPTEN)
   GenFif(DEST smartcont/auto/wallet-code SOURCE smartcont/wallet-code.fc NAME wallet)
   GenFif(DEST smartcont/auto/wallet3-code SOURCE smartcont/wallet3-code.fc NAME wallet3)
   GenFif(DEST smartcont/auto/wallet-v4-code SOURCE smartcont/wallet-v4-code.fc NAME wallet_v4)
-  GenFif(DEST smartcont/auto/wallet-v5-code SOURCE smartcont/wallet-v5-code.fc NAME wallet_v5)
+  GenFif(DEST smartcont/auto/wallet-v5-code SOURCE smartcont/wallet-v5-code.fc NAME wallet_v5 EXTRA_DEPS smartcont/auth-extension.fc)
   GenFif(DEST smartcont/auto/simple-wallet-code SOURCE smartcont/simple-wallet-code.fc NAME simple-wallet)
   GenFif(DEST smartcont/auto/highload-wallet-code SOURCE smartcont/highload-wallet-code.fc NAME highload-wallet)
   GenFif(DEST smartcont/auto/highload-wallet-v2-code SOURCE smartcont/highload-wallet-v2-code.fc NAME highload-wallet-v2)
@@ -594,7 +594,7 @@ if (NOT CMAKE_CROSSCOMPILING OR USE_EMSCRIPTEN)
   add_custom_target(gen_fif_smartcont_auto_tos_service_stablecoin_escrow_v2
     DEPENDS ${TOS_SERVICE_STABLECOIN_ESCROW_V2_CPP})
   add_dependencies(gen_fif gen_fif_smartcont_auto_tos_service_stablecoin_escrow_v2)
-  GenFif(DEST smartcont/auto/agent-account-code SOURCE smartcont/agent-account-code.fc NAME agent-account)
+  GenFif(DEST smartcont/auto/agent-account-code SOURCE smartcont/agent-account-code.fc NAME agent-account EXTRA_DEPS smartcont/auth-extension.fc)
   GenFif(DEST smartcont/auto/prediction-market-code SOURCE smartcont/prediction-market-code.fc NAME prediction-market)
   GenFif(DEST smartcont/auto/pow-testgiver-code SOURCE smartcont/pow-testgiver-code.fc NAME pow-testgiver)
 

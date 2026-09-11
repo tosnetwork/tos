@@ -1,0 +1,46 @@
+name: Authentication extension validation
+
+on:
+  pull_request:
+    paths:
+      - 'crypto/smartcont/**'
+      - 'crypto/CMakeLists.txt'
+      - 'tosctl/src/node-control/contracts/**'
+      - 'sdk/js/packages/wallets/src/codes.ts'
+      - 'test/auth-extensions/**'
+      - 'scripts/update-auth-contract-code.py'
+      - '.github/workflows/auth-extension-validation.yml'
+    types: [opened, reopened, synchronize, ready_for_review]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: auth-extension-validation-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  authentication:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Configure and build native contract tools
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --target func fift tol emulator -j2
+      - name: Install deterministic-signature test dependency
+        run: python3 -m pip install cryptography==46.0.4
+      - name: Native action-phase authentication tests and mutation checks
+        env:
+          FUNC_PATH: ${{ github.workspace }}/build/crypto/func
+          FIFT_PATH: ${{ github.workspace }}/build/crypto/fift
+          TOL_PATH: ${{ github.workspace }}/build/tol/tol
+          EMULATOR_PATH: ${{ github.workspace }}/build/emulator/libemulator.so
+        run: |
+          python3 scripts/update-auth-contract-code.py --check
+          python3 test/auth-extensions/test_auth.py
+          python3 test/auth-extensions/mutations.py
+          git diff --exit-code
