@@ -70,5 +70,6 @@
   "uno/crypto/src/ffi.rs:identifiers": "34f99564dc2484a9e95fd46238ae8d67e5ac57c3e448f6bb0e1c6dd2612a2254",
   "uno/crypto/src/system_encryption.rs:identifiers": "90d496481faeb043a074c78696bd0c387958d1cc3249f9ff4a653fe5d8d32167",
   "validator-engine/json-rpc-server-account-capability.cpp:identifiers": "3f20e44022080bd30401db01c794cbe48aef3fe1b0185ed3b80a2ccbbed50e25",
-  "crypto/block/workchain-confidential-state.h:identifiers": "97246868bed15827f093c9f3d47d55c8e959594f594dc1a42018dc33c4e698e1"
+  "crypto/block/workchain-confidential-state.h:identifiers": "97246868bed15827f093c9f3d47d55c8e959594f594dc1a42018dc33c4e698e1",
+  "crypto/block/workchain-deposit-admission.h:identifiers": "71658d6b8d029cec1b775ee5cc3118960768b14544d7d769e77f48d8f170ccb8"
 }
