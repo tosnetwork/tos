@@ -49,6 +49,18 @@ inline void test_metered_deposit_transition() {
   auto stopped = run(account, coordinator, CurrencyCollection(0), CurrencyCollection(10000000000ULL), short_budget);
   require(stopped.is_error() && stopped.error().code() == -7201 && short_budget.consumed() == 0,
           "Deposit bypassed precharge");
+  auto special = vm::CellBuilder().store_long(2, 8).store_zeroes(256).finalize(true);
+  auto malformed_tree = vm::CellBuilder().store_long(0x554e5834, 32).store_long(1, 16)
+      .store_long(1, 32).store_long(0, 32).store_long(0, 64).store_zeroes(256)
+      .store_long(1, 1).store_ref(special).store_long(0, 2).finalize();
+  for (const auto& root : {special, malformed_tree}) {
+    auto broken = coordinator;
+    broken.unexpected = root;
+    auto unused = WorkchainProofTestAccess::create(7);
+    auto unavailable = run(account, broken, CurrencyCollection(0), CurrencyCollection(10000000000ULL), unused);
+    require(unavailable.is_error() && unavailable.error().code() == -7201 && unused.consumed() == 0,
+            "special historical bucket escaped classification or reached encryption");
+  }
   auto changed_price = WorkchainProofTestAccess::create(7);
   policy.slot_fee = 5000000;
   auto rejection = run(account, coordinator, CurrencyCollection(0), CurrencyCollection(10000000000ULL), changed_price);
