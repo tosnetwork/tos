@@ -64,14 +64,16 @@ inline td::Result<td::Ref<vm::Cell>> encode_workchain_coordinator_state(
 // requires an opaque bucket root; that root is parsed by its owning codec. No
 // missing sequence is reinterpreted as zero. This is not
 // account authentication or validation of counter transitions/fee parameters.
-// Acquisition exceptions propagate to the caller's provenance boundary, as
-// for resource-policy decoding; malformed data is not itself a consensus code.
+// Cell loading errors are returned without a consensus classification. The caller
+// distinguishes candidate bytes from unavailable authenticated state by provenance.
 inline td::Result<WorkchainCoordinatorState> decode_workchain_coordinator_state(
-    const td::Ref<vm::Cell>& root) {
+    const td::Ref<vm::Cell>& root) try {
   using resource_policy_detail::unpack_exact;
   if (root.is_null()) return td::Status::Error("missing coordinator state");
   // Dispatch by the generated constructor tag, never by trying legacy fallback.
-  auto slice = vm::load_cell_slice(root);
+  bool special = false;
+  auto slice = vm::load_cell_slice_special(root, special);
+  if (special || slice.size() < 32) return td::Status::Error("invalid coordinator root framing");
   if (slice.prefetch_ulong(32) == gen::UnoV2CoordinatorIngress::cons_tag[0]) {
     gen::UnoV2CoordinatorIngress::Record record;
     gen::UnoV2SystemState::Record system;
@@ -100,6 +102,10 @@ inline td::Result<WorkchainCoordinatorState> decode_workchain_coordinator_state(
   gen::UnoV2CoordinatorBudget::Record budget;
   if (!unpack_exact(record.budget, budget)) return td::Status::Error("malformed coordinator budget");
   return WorkchainCoordinatorState{static_cast<std::uint16_t>(record.layout_version), std::move(system), budget.refundable_deposits};
+} catch (const vm::VmError& error) {
+  return error.as_status("coordinator cell loading: ");
+} catch (const vm::VmVirtError& error) {
+  return error.as_status("coordinator cell acquisition: ");
 }
 
 // Explicit migration only; ordinary decoding never takes this branch. No prior

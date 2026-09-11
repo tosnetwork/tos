@@ -278,14 +278,16 @@ inline td::Result<td::Ref<vm::Cell>> encode_workchain_confidential_account(const
 
 // Fixed-width records: layout 1 has at most 16 user receipts; layout 2 has
 // at most 16 user plus 4 system receipts. Explicit tags, no fallback formats,
-// no hash-only restoration, and no exception-to-malformed conversion. Callers
+// no hash-only restoration. Cell errors carry no consensus classification. Callers
 // classify candidate bytes versus unavailable authenticated state themselves.
-inline td::Result<WorkchainConfidentialAccount> decode_workchain_confidential_account(const td::Ref<vm::Cell>& root) {
+inline td::Result<WorkchainConfidentialAccount> decode_workchain_confidential_account(const td::Ref<vm::Cell>& root) try {
   using confidential_state_detail::unpack;
   if (root.is_null()) return td::Status::Error("missing confidential account");
   gen::UnoV2AccountState::Record record;
   unsigned system_count = 0;
-  auto slice = vm::load_cell_slice(root);
+  bool special = false;
+  auto slice = vm::load_cell_slice_special(root, special);
+  if (special || slice.size() < 32) return td::Status::Error("invalid confidential root framing");
   if (slice.prefetch_ulong(32) == gen::UnoV2AccountStateDeposits::cons_tag[0]) {
     TRY_RESULT(new_record, unpack<gen::UnoV2AccountStateDeposits::Record>(root));
     if (new_record.schema_version != 2) return td::Status::Error("unsupported confidential account schema");
@@ -314,7 +316,10 @@ inline td::Result<WorkchainConfidentialAccount> decode_workchain_confidential_ac
   if (!pending.check_for_each([&](td::Ref<vm::CellSlice> leaf, td::ConstBitPtr key, int width) {
         if (width != 256 || leaf->size_ext() != 0x10000) return false;
         auto entry = leaf->prefetch_ref();
-        auto tag = gen::t_UnoV2PendingReceipt.get_tag(vm::load_cell_slice(entry));
+        bool special = false;
+        auto entry_slice = vm::load_cell_slice_special(entry, special);
+        if (special || entry_slice.size() < 32) return false;
+        auto tag = gen::t_UnoV2PendingReceipt.get_tag(entry_slice);
         if (tag == gen::UnoV2PendingReceipt::uno_v2_system_pending_receipt) {
           if (value.schema_version != 2 || value.system_pending.size() >= 4) return false;
           auto decoded = decode_workchain_deposit_receipt(entry);
@@ -339,6 +344,10 @@ inline td::Result<WorkchainConfidentialAccount> decode_workchain_confidential_ac
   TRY_RESULT(canonical, encode_workchain_confidential_account(value));
   if (canonical->get_hash() != root->get_hash()) return td::Status::Error("noncanonical confidential account");
   return value;
+} catch (const vm::VmError& error) {
+  return error.as_status("confidential account loading: ");
+} catch (const vm::VmVirtError& error) {
+  return error.as_status("confidential account acquisition: ");
 }
 
 }  // namespace block

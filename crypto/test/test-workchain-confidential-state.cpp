@@ -428,3 +428,112 @@ TEST(ConfidentialState, SystemCollectWalletFields) {
   a.pending[0].receipt_id = id;
   ASSERT_TRUE(block::m3_test::prepare_m4_test_collect_receipt_fields(a, {id}, {1000000019}).is_error());
 }
+
+TEST(ConfidentialState, SpecialCellDispatchReturnsErrors) {
+  auto value = account();
+  value.schema_version = 2;
+  auto valid = block::encode_workchain_confidential_account(value).move_as_ok();
+  auto plain = vm::CellBuilder().store_long(17, 8).finalize();
+  std::vector<td::Ref<vm::Cell>> invalid{
+      {}, vm::CellBuilder().finalize(), plain,
+      vm::CellBuilder().store_long(2, 8).store_zeroes(256).finalize(true),
+      vm::CellBuilder::do_create_pruned_branch(plain, 1, 0),
+      vm::CellBuilder::create_merkle_proof(plain)};
+  for (const auto& root : invalid) {
+    ASSERT_TRUE(block::decode_workchain_confidential_account(root).is_error());
+    ASSERT_TRUE(block::decode_workchain_deposit_receipt(root).is_error());
+    if (root.is_null()) continue;
+    block::gen::UnoV2AccountStateDeposits::Record record;
+    ASSERT_TRUE(block::resource_policy_detail::unpack_exact(valid, record));
+    vm::Dictionary entries(256);
+    auto key = bits(19);
+    ASSERT_TRUE(entries.set_ref(key.bits(), 256, root, vm::Dictionary::SetMode::Add));
+    record.pending = std::move(entries).extract_root();
+    record.system_pending_count = 1;
+    td::Ref<vm::Cell> malformed;
+    ASSERT_TRUE(tlb::pack_cell(malformed, record));
+    ASSERT_TRUE(block::decode_workchain_confidential_account(malformed).is_error());
+    // Also exercise acquisition while walking the dictionary, before leaf dispatch.
+    record.pending = vm::load_cell_slice_ref(
+        vm::CellBuilder().store_long(1, 1).store_ref(root).finalize());
+    ASSERT_TRUE(tlb::pack_cell(malformed, record));
+    ASSERT_TRUE(block::decode_workchain_confidential_account(malformed).is_error());
+  }
+  auto special = invalid[4];
+  block::gen::UnoV2AccountStateDeposits::Record base;
+  ASSERT_TRUE(block::resource_policy_detail::unpack_exact(valid, base));
+  for (unsigned field = 0; field < 3; ++field) {
+    auto r = base;
+    if (field == 0) r.identity = special;
+    if (field == 1) r.crypto = special;
+    if (field == 2) r.lifecycle = special;
+    td::Ref<vm::Cell> root;
+    ASSERT_TRUE(tlb::pack_cell(root, r));
+    ASSERT_TRUE(block::decode_workchain_confidential_account(root).is_error());
+  }
+  block::gen::UnoV2AccountIdentity::Record identity;
+  ASSERT_TRUE(block::resource_policy_detail::unpack_exact(base.identity, identity));
+  for (unsigned field = 0; field < 3; ++field) {
+    auto r = identity;
+    if (field == 0) r.address = special;
+    if (field == 1) r.bindings = special;
+    if (field == 2) r.funding = special;
+    auto container = base;
+    ASSERT_TRUE(tlb::pack_cell(container.identity, r));
+    td::Ref<vm::Cell> root;
+    ASSERT_TRUE(tlb::pack_cell(root, container));
+    ASSERT_TRUE(block::decode_workchain_confidential_account(root).is_error());
+  }
+  block::gen::UnoV2AccountCrypto::Record crypto;
+  ASSERT_TRUE(block::resource_policy_detail::unpack_exact(base.crypto, crypto));
+  crypto.available = special;
+  auto with_bad_available = base;
+  ASSERT_TRUE(tlb::pack_cell(with_bad_available.crypto, crypto));
+  td::Ref<vm::Cell> bad_available;
+  ASSERT_TRUE(tlb::pack_cell(bad_available, with_bad_available));
+  ASSERT_TRUE(block::decode_workchain_confidential_account(bad_available).is_error());
+  auto user = receipt(3);
+  auto good_receipt = block::encode_workchain_pending_receipt(user).move_as_ok();
+  block::gen::UnoV2PendingReceipt::Record_uno_v2_pending_receipt original;
+  ASSERT_TRUE(block::resource_policy_detail::unpack_exact(good_receipt, original));
+  for (unsigned field = 0; field < 4; ++field) {
+    auto r = original;
+    if (field == 0) r.source = special;
+    if (field == 1) r.target = special;
+    if (field == 2) r.ciphertext = special;
+    if (field == 3) r.origin = special;
+    td::Ref<vm::Cell> entry;
+    ASSERT_TRUE(tlb::pack_cell(entry, r));
+    vm::Dictionary entries(256);
+    ASSERT_TRUE(entries.set_ref(user.receipt_id.bits(), 256, entry, vm::Dictionary::SetMode::Add));
+    auto container = base;
+    container.pending = std::move(entries).extract_root();
+    container.pending_count = 1;
+    td::Ref<vm::Cell> root;
+    ASSERT_TRUE(tlb::pack_cell(root, container));
+    ASSERT_TRUE(block::decode_workchain_confidential_account(root).is_error());
+  }
+  block::WorkchainDepositReceipt deposit{
+      block::derive_workchain_deposit_id(bits(100), 1).move_as_ok(), bits(100), 1, 1000000000ULL,
+      value.address.instance, value.key_epoch, value.bindings.asset, {public_point(), public_point()}, 0};
+  auto good_deposit = block::encode_workchain_deposit_receipt(deposit).move_as_ok();
+  block::gen::UnoV2PendingReceipt::Record_uno_v2_system_pending_receipt system;
+  ASSERT_TRUE(block::resource_policy_detail::unpack_exact(good_deposit, system));
+  for (unsigned field = 0; field < 3; ++field) {
+    auto r = system;
+    if (field == 0) r.target = special;
+    if (field == 1) r.ciphertext = special;
+    if (field == 2) r.origin = special;
+    td::Ref<vm::Cell> entry;
+    ASSERT_TRUE(tlb::pack_cell(entry, r));
+    vm::Dictionary entries(256);
+    ASSERT_TRUE(entries.set_ref(deposit.receipt_id.bits(), 256, entry, vm::Dictionary::SetMode::Add));
+    auto container = base;
+    container.pending = std::move(entries).extract_root();
+    container.system_pending_count = 1;
+    td::Ref<vm::Cell> root;
+    ASSERT_TRUE(tlb::pack_cell(root, container));
+    ASSERT_TRUE(block::decode_workchain_confidential_account(root).is_error());
+  }
+  ASSERT_TRUE(block::decode_workchain_confidential_account(valid).is_ok());
+}
