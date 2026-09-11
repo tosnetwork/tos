@@ -8,6 +8,9 @@ on:
       - 'test/pq-mldsa44/**'
       - 'docs/tvm-mldsa44.md'
       - '.github/workflows/pq-mldsa44.yml'
+defaults:
+  run:
+    shell: bash
 permissions:
   contents: read
 concurrency:

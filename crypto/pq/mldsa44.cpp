@@ -17,7 +17,9 @@ VerifyResult verify_mldsa44(std::string_view message, std::string_view context,
   static constexpr std::uint8_t empty = 0;
   const auto* m = message.empty() ? &empty : reinterpret_cast<const std::uint8_t*>(message.data());
   const auto* c = context.empty() ? &empty : reinterpret_cast<const std::uint8_t*>(context.data());
-  const int result = MLD_API_NAMESPACE(verify)(
+  // The public header cleans up its internal namespace-prefix macro.
+  // Call the fixed symbol declared under our pinned build configuration.
+  const int result = tos_mldsa44_native_verify(
       reinterpret_cast<const std::uint8_t*>(signature.data()), m, message.size(), c, context.size(),
       reinterpret_cast<const std::uint8_t*>(public_key.data()));
   if (result == 0) {
