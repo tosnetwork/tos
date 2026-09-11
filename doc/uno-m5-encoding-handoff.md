@@ -226,3 +226,15 @@ The default expiry diagnostic now points to that procedure. Its scanning scope
 and predicate are unchanged. Only B's sequence premise expires on a new issuer;
 A's prepare guard remains until its separate Native prepare evidence exists.
 Specification: memo 19d0446e / SHA256 prefix 71968ef2afb0d917.
+
+## D70 symbolic extension
+
+`doc/uno-m5-d70-accounting-addendum.md` reserves issuance compute as
+`g = checked(base_compute * u)` with no local billing-unit value. It covers
+funded Paid/Failed and sweep book/physical deltas symbolically and names the
+future observation slice, execution paths and omission controls. The old
+slot-only synthetic sweep predicate is not D70 coverage. Routing of the new
+compute component versus D63's old all-fee-to-coordinator wording, and the
+`s < m <= s+g` no-positive-receipt branch, remain explicit questions. No actual
+host execution or complete D70 branch coverage is claimed. Earlier frozen
+prediction files are unchanged. Spec prefix: f900bb4b043c82e2.
