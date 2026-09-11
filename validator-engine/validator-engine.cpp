@@ -1775,6 +1775,9 @@ td::Status ValidatorEngine::load_global_config() {
   if (enable_validator_consensus_cleanup_) {
     validator_options_.write().set_validator_consensus_cleanup_enabled(true);
   }
+  if (test_crash_cleanup_before_erase_) {
+    validator_options_.write().set_test_crash_cleanup_before_erase(true);
+  }
   if (max_mempool_num_ != 0) {
     validator_options_.write().set_max_mempool_num(max_mempool_num_);
   }
@@ -6128,6 +6131,15 @@ int main(int argc, char *argv[]) {
                [&]() {
                  acts.push_back(
                      [&x]() { td::actor::send_closure(x, &ValidatorEngine::set_enable_validator_consensus_cleanup, true); });
+               });
+  p.add_option('\0', "test-consensus-cleanup-crash-before-erase",
+               "ACCEPTANCE FAULT INJECTION ONLY: after the consensus directory is confirmed deleted but before the "
+               "durable cleanup record is erased, exit abruptly to reproduce the mid-flight crash state. Default off; "
+               "a normal deployment must never set this.",
+               [&]() {
+                 acts.push_back([&x]() {
+                   td::actor::send_closure(x, &ValidatorEngine::set_test_crash_cleanup_before_erase, true);
+                 });
                });
   p.add_checked_option('S', "sync-before", "in initial sync download all blocks for last given seconds default=3600",
                        [&](td::Slice fname) {

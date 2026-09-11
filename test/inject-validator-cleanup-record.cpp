@@ -28,13 +28,15 @@
 // The record is always read back through the production decoder (POISON_LOADABLE) so a
 // PASS cannot be vacuous.
 //
-// A trailing "predelete" arg reconstructs the mid-flight crash state {dir gone, record
-// present}: after writing the record and creating the dir, it runs the REAL deleter
+// A trailing "predelete" arg RECONSTRUCTS the mid-flight state {dir gone, record present}:
+// after writing the record and creating the dir, it runs the REAL deleter
 // (delete_validator_consensus_db -- the exact function the cleanup worker calls), so on
-// disk the durable record outlives its directory. That is what a crash between the
-// erase-commit and the record-drop leaves behind. A restarted engine must reconcile it
-// (an already-absent dir counts as a confirmed delete, so the pass completes the erase
-// and drops the orphan record) rather than loop or fault.
+// disk the durable record outlives its directory. That is the state left AFTER the
+// directory is physically removed but BEFORE the durable record erase commits. A restarted
+// engine must reconcile it (an already-absent dir counts as a confirmed delete, so the pass
+// completes the erase and drops the orphan record) rather than loop or fault. This is a
+// reconstruction; crash_boundary_recovery.py drives the real dispatch path and interrupts
+// it at that exact point.
 //
 // Usage:
 //   inject-validator-cleanup-record write <db_root> <seed> <retire_seqno> <retire_root_b64> \
@@ -89,12 +91,35 @@ int main(int argc, char** argv) {
     }
     auto kv = kv_res.move_as_ok();
     bool present = false;
+    int dir_present = -1;  // -1 = record absent so undefined; 0/1 when the record is present
     for (const auto& r : load_validator_cleanup_records(kv)) {
       if (r.session_id == sid) {
         present = true;
+        auto full = consensus_db_root(td::Slice{db_root}) + r.dir_name;
+        dir_present = path_is_confirmed_absent(full) ? 0 : 1;
       }
     }
-    std::printf("POISON_PRESENT=%d session=%s\n", present ? 1 : 0, sid.to_hex().c_str());
+    std::printf("POISON_PRESENT=%d DIR_PRESENT=%d session=%s\n", present ? 1 : 0, dir_present, sid.to_hex().c_str());
+    return 0;
+  }
+
+  // reset: erase EVERY durable cleanup record so a following injection is the only eligible
+  // record (a deterministic slate for the crash-boundary driver). Leftover directories
+  // without a record are inert -- the deleter only ever acts on a record.
+  if (argc == 3 && std::string(argv[1]) == "reset") {
+    std::string db_root = argv[2];
+    auto kv_res = td::RocksDb::open(db_root + "/state");
+    if (kv_res.is_error()) {
+      std::fprintf(stderr, "ERROR: cannot open StateDb: %s\n", kv_res.error().message().c_str());
+      return 1;
+    }
+    auto kv = kv_res.move_as_ok();
+    int erased = 0;
+    for (const auto& r : load_validator_cleanup_records(kv)) {
+      erase_validator_cleanup_record(kv, r.session_id);
+      erased++;
+    }
+    std::printf("RESET erased=%d\n", erased);
     return 0;
   }
 

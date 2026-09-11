@@ -19,6 +19,7 @@
 */
 #include <algorithm>
 #include <cerrno>
+#include <cstdlib>
 #include <fstream>
 #include <limits>
 #include <optional>
@@ -2537,6 +2538,18 @@ void ValidatorManagerImpl::validator_cleanup_delete_done(ValidatorSessionId sess
                                                          td::uint64 attempt_id, bool confirmed_gone) {
   LOG(WARNING) << "VALCLEANUP delete_done session=" << session_id.to_hex() << " generation=" << generation
                << " attempt=" << attempt_id << " confirmed_gone=" << (confirmed_gone ? 1 : 0);
+  // ACCEPTANCE FAULT INJECTION (default off): the worker has just confirmed the consensus
+  // directory removed, and the durable record erase below has NOT been dispatched yet. On
+  // disk this is exactly {directory gone, durable record present}. Exiting abruptly here
+  // reproduces the crash a validator could take at this instant, so a restart can be shown
+  // to reconcile that mid-flight state. This is the real dispatch path, not a fixture.
+  if (confirmed_gone && opts_->get_test_crash_cleanup_before_erase()) {
+    LOG(WARNING) << "VALCLEANUP test_crash_before_erase session=" << session_id.to_hex()
+                 << " generation=" << generation << " attempt=" << attempt_id
+                 << " (fault injection: exiting before durable erase)";
+    // Abrupt exit: skip destructors and the pending durable erase, like a real crash.
+    std::_Exit(137);
+  }
   // Feed the completed delete attempt to the adapter; on a confirmed delete this
   // dispatches the durable record erase and releases the reservation only on the
   // erase-ack. Deliberately does NOT re-trigger a pass (that would spin a backoff-free

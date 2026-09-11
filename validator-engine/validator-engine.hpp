@@ -248,6 +248,7 @@ class ValidatorEngine : public td::actor::Actor {
 
   double state_ttl_ = 0;
   bool enable_validator_consensus_cleanup_ = false;
+  bool test_crash_cleanup_before_erase_ = false;
   size_t max_mempool_num_ = 0;
   double block_ttl_ = 0;
   double sync_ttl_ = 0;
@@ -321,6 +322,9 @@ class ValidatorEngine : public td::actor::Actor {
   }
   void set_enable_validator_consensus_cleanup(bool v) {
     enable_validator_consensus_cleanup_ = v;
+  }
+  void set_test_crash_cleanup_before_erase(bool v) {
+    test_crash_cleanup_before_erase_ = v;
   }
   void set_max_mempool_num(size_t t) {
     max_mempool_num_ = t;

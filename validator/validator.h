@@ -180,6 +180,13 @@ struct ValidatorManagerOptions : public td::CntObject {
   // (validator-engine --enable-validator-consensus-cleanup). Replaces the former
   // compile-time gate so enablement is not baked into every build.
   virtual bool get_validator_consensus_cleanup_enabled() const = 0;
+  // ACCEPTANCE FAULT INJECTION (Finding 1 crash boundary), default false. When armed, the
+  // manager exits abruptly after the worker has confirmed the consensus directory removed
+  // but before the durable cleanup record is erased -- reproducing, through the real
+  // dispatch path, the {directory gone, record present} state a crash leaves at that
+  // instant. A normal build/deploy never sets this; it exists only so a restart can be
+  // shown to reconcile that mid-flight state.
+  virtual bool get_test_crash_cleanup_before_erase() const = 0;
   virtual bool nonfinal_ls_queries_enabled() const = 0;
   virtual td::optional<td::uint64> get_celldb_cache_size() const = 0;
   virtual bool get_celldb_direct_io() const = 0;
@@ -222,6 +229,7 @@ struct ValidatorManagerOptions : public td::CntObject {
   virtual void set_archive_preload_period(double value) = 0;
   virtual void set_disable_rocksdb_stats(bool value) = 0;
   virtual void set_validator_consensus_cleanup_enabled(bool value) = 0;
+  virtual void set_test_crash_cleanup_before_erase(bool value) = 0;
   virtual void set_nonfinal_ls_queries_enabled(bool value) = 0;
   virtual void set_celldb_cache_size(td::uint64 value) = 0;
   virtual td::optional<td::uint64> get_celldb_cache_min_size() const = 0;

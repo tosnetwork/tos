@@ -80,6 +80,9 @@ ROCKSDB_CACHE_BYTES = 256 * 1024 * 1024
 DEFAULT_EXPERIMENT_DURATION = 3 * 60 * 60
 DEFAULT_SETTLEMENT_TAIL = 15 * 60
 DEFAULT_RPC_BASE_PORT = 8111
+# Masterchain full-shard prefix (0x8000000000000000) as the signed-int64 string the
+# JSON-RPC block-lookup methods expect.
+MASTERCHAIN_SHARD_STR = "-9223372036854775808"
 # A restarted node's own log (truncated to its post-restart run) must contain no fault.
 _FATAL_RE = re.compile(
     r"\b(FATAL|PANIC|CHECK failed|LOG_CHECK failed|AddressSanitizer|UndefinedBehaviorSanitizer|Aborted)\b"
@@ -1394,44 +1397,95 @@ class ValidatorElectionRehearsal:
         last = response["result"].get("last") or {}
         return int(last["seqno"])
 
+    async def _node_mc_block_id(self, index: int, seqno: int) -> tuple[str, str]:
+        """The (root_hash, file_hash) of the masterchain block at <seqno> as node <index>'s
+        own JSON-RPC getBlockHeader reports it. Comparing this between the target and the
+        reference AT THE SAME HEIGHT detects a target that reports a high seqno on a
+        divergent chain -- something a seqno-only check would silently accept."""
+        assert self.experiment is not None
+        address = self.experiment.rpc_addresses[index]
+        params = {"workchain": -1, "shard": MASTERCHAIN_SHARD_STR, "seqno": int(seqno)}
+        response = await asyncio.to_thread(json_rpc_call, address, "getBlockHeader", params)
+        block_id = response["result"].get("id") or {}
+        root_hash = block_id.get("root_hash")
+        file_hash = block_id.get("file_hash")
+        if not root_hash or not file_hash:
+            raise RuntimeError(f"node {index + 1} getBlockHeader({seqno}) returned no block-id hashes: {response}")
+        return (root_hash, file_hash)
+
     async def verify_live_rejoin(self, node_index: int = 3) -> dict[str, Any]:
         """Prove a NON-ZERO validator, restarted while its peers keep producing blocks,
-        REJOINS live consensus rather than merely replaying its frozen DB.
+        RECOVERS SYNC and keeps tracking the live chain rather than merely replaying its
+        frozen DB. This proves catch-up and continued tracking; it does NOT by itself prove
+        the validator re-signed consensus (that would need per-block signature/quorum
+        evidence), so it is deliberately not called "rejoins consensus".
 
-        The falsifiable core: capture the network tip when the node is stopped; require the
-        peers to advance past it while the node is down (they can, 3 of 4 equal validators
-        is a BFT quorum); restart the node with the cleanup worker armed; then require the
-        node's OWN view to reach that during-downtime tip -- blocks only its peers could
-        have produced -- and then a still-fresher tip, so it is tracking the moving chain.
-        A node that fails to rejoin stays at its pre-stop tip and the sync poll times out.
-        node 0 is off limits: it hosts the shared lite-client this run depends on."""
+        The falsifiable core, with every progress bar measured against BOTH pre-stop heights
+        so a node that was already ahead cannot pass by standing still:
+          - baseline = max(network tip at stop, target's own tip at stop);
+          - while the target is down its peers must advance to baseline + margin (3 of 4
+            equal validators is a BFT quorum) -- a strictly higher chain than anything seen
+            before the stop;
+          - after restart the target's OWN view must reach that during-downtime tip (blocks
+            only its peers could have produced while it was gone);
+          - then the reference must reach a STRICTLY fresher tip than the sync point, and the
+            target must reach that too -- so it is following the moving chain, not replaying
+            to a frozen point. A frozen chain, or a target that never advances past its own
+            pre-stop tip, makes one of these polls time out (a real failure).
+        node 0 is off limits: it hosts the shared lite-client this run depends on.
+
+        Post-cleanup scope: a generic sync recovery is NOT evidence that a node recovers
+        AFTER a real validator cleanup. That stronger property is asserted only when the
+        target actually completed a durable erase (a real VALCLEANUP erase_ack) before the
+        restart; otherwise it is reported NOT_EXERCISED, never passed."""
         assert self.experiment is not None
         if node_index == 0:
             raise ValueError("live-rejoin target must be non-zero (node 0 hosts the lite-client)")
 
         tip_at_stop = await self.masterchain_seqno()
         target_before = await self._node_mc_seqno(node_index)
-        self.event("live_rejoin_begin", node=node_index + 1, network_tip=tip_at_stop, target_tip=target_before)
+        # Any genuine catch-up must exceed the highest height EITHER endpoint already had:
+        # if the target was ahead of the reference before the stop, standing still must not
+        # count as progress.
+        pre_stop_baseline = max(tip_at_stop, target_before)
+        # Did a REAL validator cleanup (durable erase) already complete on this target? The
+        # log is truncated on restart, so this can only be read now, before we stop it.
+        pre_restart_erase_acks = 0
+        try:
+            pre_text = self.nodes[node_index].log_path.read_text(errors="replace")
+            pre_restart_erase_acks = len(re.findall(r"VALCLEANUP erase_ack ", pre_text))
+        except FileNotFoundError:
+            pass
+        self.event(
+            "live_rejoin_begin",
+            node=node_index + 1,
+            network_tip=tip_at_stop,
+            target_tip=target_before,
+            pre_stop_baseline=pre_stop_baseline,
+            pre_restart_erase_acks=pre_restart_erase_acks,
+        )
 
         await self.nodes[node_index].stop()
 
-        # Peers must advance past the stop tip while the target is down; that gap is what
-        # the target has to catch up to. If the network stalls here, we cannot attribute a
-        # later catch-up to live rejoin -- so this poll failing is itself a real failure.
+        # Peers must advance strictly past the pre-stop baseline while the target is down;
+        # that gap is what the target has to catch up to. A stalled network here is itself a
+        # real failure (we could not then attribute any later catch-up to live progress).
         advance_margin = 4
+        downtime_target = pre_stop_baseline + advance_margin
         tip_during_downtime = await self.retry(
             self.masterchain_seqno,
             timeout=180,
             interval=2,
-            description=f"peers advance to >= {tip_at_stop + advance_margin} while node {node_index + 1} is down",
-            predicate=lambda seqno: seqno >= tip_at_stop + advance_margin,
+            description=f"peers advance to >= {downtime_target} while node {node_index + 1} is down",
+            predicate=lambda seqno: seqno >= downtime_target,
         )
 
         # Restart with cleanup armed (validator_start_options carries the flag when enabled).
         await self.nodes[node_index].run(self.validator_start_options(node_index))
 
-        # REJOIN PROOF: the target's own view must reach the tip its peers reached while it
-        # was down. It can only hold those blocks by rejoining consensus and syncing them.
+        # SYNC PROOF: the target's own view must reach the tip its peers reached while it was
+        # down (>= tip_during_downtime > pre_stop_baseline), so it cannot be satisfied by the
+        # target's own frozen DB.
         target_after_sync = await self.retry(
             lambda: self._node_mc_seqno(node_index),
             timeout=240,
@@ -1440,42 +1494,90 @@ class ValidatorElectionRehearsal:
             predicate=lambda seqno: seqno >= tip_during_downtime,
         )
 
-        # LIVE-TRACKING PROOF: sample a fresh tip now, then require the target to reach it
-        # too -- so it follows the advancing chain, not just replays to a frozen point.
-        fresh_tip = await self.masterchain_seqno()
+        # LIVE-TRACKING PROOF: require the reference to reach a STRICTLY fresher tip than the
+        # sync point, then require the target to reach that too. Re-reading the same tip is
+        # not "the chain advanced": the fresh tip must exceed max(downtime tip, sync point).
+        tracking_baseline = max(tip_during_downtime, target_after_sync)
+        fresh_tip = await self.retry(
+            self.masterchain_seqno,
+            timeout=180,
+            interval=2,
+            description=f"reference advances strictly past {tracking_baseline} after node {node_index + 1} resyncs",
+            predicate=lambda seqno: seqno > tracking_baseline,
+        )
         target_tracking = await self.retry(
             lambda: self._node_mc_seqno(node_index),
             timeout=180,
             interval=2,
-            description=f"node {node_index + 1} tracks the live tip {fresh_tip}",
+            description=f"node {node_index + 1} tracks the fresher live tip {fresh_tip}",
             predicate=lambda seqno: seqno >= fresh_tip,
         )
 
-        # The rejoined node's post-restart log (truncated to this run) must carry no fault;
+        # BLOCK-ID AGREEMENT: at a common confirmed height both nodes have passed, the
+        # target's masterchain block id must equal the reference's. This proves the target
+        # advanced on the SAME chain; a fork reporting a high seqno of its own would be
+        # caught here where a seqno-only comparison would not.
+        agreement_height = tip_during_downtime
+        reference_block_id = await self.retry(
+            lambda: self._node_mc_block_id(0, agreement_height),
+            timeout=60,
+            interval=2,
+            description=f"reference block id at masterchain seqno {agreement_height}",
+        )
+        target_block_id = await self.retry(
+            lambda: self._node_mc_block_id(node_index, agreement_height),
+            timeout=60,
+            interval=2,
+            description=f"node {node_index + 1} block id at masterchain seqno {agreement_height}",
+        )
+        block_ids_agree = reference_block_id == target_block_id
+
+        # The recovered node's post-restart log (truncated to this run) must carry no fault;
         # record whether the armed cleanup worker ran a pass on it as supporting evidence.
         log_text = self.nodes[node_index].log_path.read_text(errors="replace")
         cleanup_passes = len(re.findall(r"VALCLEANUP pass ", log_text))
         fatals = [ln[:400] for ln in log_text.splitlines() if _FATAL_RE.search(ln)]
 
+        # Sync + tracking + block-id agreement must all hold. Sync/tracking failures time
+        # out above; a fork or a fault fails here. The separate post-cleanup-recovery
+        # property is asserted only if a real durable erase completed on this target before
+        # the restart.
+        healthy = (not fatals) and block_ids_agree
+        sync_recovery = "passed" if healthy else "failed"
+        post_cleanup_recovery = (
+            sync_recovery if pre_restart_erase_acks > 0 else "NOT_EXERCISED"
+        )
         result = {
-            "verdict": "passed" if not fatals else "failed",
+            "verdict": sync_recovery,
+            "property": "target node recovered sync and keeps tracking the same chain",
+            "does_not_prove": "re-participation in consensus block signing (needs signature/quorum evidence)",
+            "post_cleanup_recovery": post_cleanup_recovery,
             "node": node_index + 1,
             "cleanup_armed": self.enable_consensus_cleanup,
+            "pre_restart_erase_acks": pre_restart_erase_acks,
             "network_tip_at_stop": tip_at_stop,
             "target_tip_at_stop": target_before,
+            "pre_stop_baseline": pre_stop_baseline,
             "network_tip_during_downtime": tip_during_downtime,
             "target_tip_after_sync": target_after_sync,
             "fresh_network_tip": fresh_tip,
             "target_tip_tracking": target_tracking,
+            "block_id_agreement_height": agreement_height,
+            "block_ids_agree": block_ids_agree,
             "cleanup_passes_after_rejoin": cleanup_passes,
             "fatals": fatals[:5],
         }
         self.live_rejoin_result = result
         (self.run_dir / "live-rejoin-analysis.json").write_text(json.dumps(result, indent=2) + "\n")
         self.event(
-            "live_rejoin_passed" if not fatals else "live_rejoin_failed",
+            "live_rejoin_passed" if healthy else "live_rejoin_failed",
             **{k: v for k, v in result.items() if k != "fatals"},
         )
+        if not block_ids_agree:
+            raise AssertionError(
+                f"live rejoin block-id disagreement at masterchain seqno {agreement_height}: "
+                f"reference={reference_block_id} target={target_block_id} (node {node_index + 1} on a divergent chain)"
+            )
         if fatals:
             raise AssertionError(f"live rejoin saw fault diagnostics on node {node_index + 1}: {fatals[:3]}")
         return result

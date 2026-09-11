@@ -17,8 +17,9 @@ cleanup ARMED. One startup cleanup pass evaluates them all. Asserts:
     and its durable record still present. Since each poison differs from the deleted
     control in only its one veto condition, that veto is what saved it.
   CRASH BOUNDARY 2 RECONCILED: one eligible record is injected with its dir ALREADY
-    removed by the real deleter (the mid-flight {dir gone, record present} state a crash
-    can leave between erase-commit and record-drop). On restart the engine reconciles it
+    removed by the real deleter (the mid-flight {dir gone, record present} state left after
+    the directory is removed but before the durable record erase commits). On restart the
+    engine reconciles it
     via the ordinary path -- examined eligible, reserved, the deleter confirms the
     already-absent dir gone, and the durable orphan record is erase-acked -- with no fault.
   NON-VACUOUS: every injected record was read back through the production decoder
@@ -212,8 +213,10 @@ def main() -> int:
     # crash boundary 2 (mid-flight {dir gone, record present}): the engine must RECONCILE
     # the orphan record via the real path -- examine it eligible, reserve it, have the
     # deleter confirm the already-absent dir gone, and erase the durable record -- with no
-    # fault. This is the reconstructed crash state a delete leaves between erase-commit and
-    # record-drop; recovery is the normal pass treating already-absent as a confirmed delete.
+    # fault. This is the reconstructed crash state left after the directory is removed but
+    # before the durable record erase commits; recovery is the normal pass treating an
+    # already-absent directory as a confirmed delete. (The real dispatch-path interruption
+    # is exercised separately by crash_boundary_recovery.py.)
     b2 = results["crash_boundary2"]
     if not b2["evaluated"] or b2["eligible_decisions"] != [1]:
         failures.append(f"BOUNDARY2 not examined-as-eligible (evaluated={b2['evaluated']} decisions={b2['eligible_decisions']})")
