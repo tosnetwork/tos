@@ -5,6 +5,7 @@
 // or deployment-config hook for this test fixture representation.
 
 #include "block/workchain-confidential-input.h"
+#include "block/workchain-deposit-admission.h"
 #include "uno/crypto/include/uno_crypto.h"
 #include <array>
 #include <utility>
@@ -18,6 +19,9 @@ struct M3TestBusinessParameters {
   td::Bits256 generator_profile, range_profile, fee_profile;
   std::uint32_t fee_effective_height;
   std::uint16_t account_schema, relation_profile, proof_profile;
+  // Absence represents the old M3-only layout, NEVER a Deposit default.
+  // Version 2 carries all four additional fields; maximum comes from limits.
+  std::optional<WorkchainDepositPolicy> deposit;
 
   M3TestBusinessParameters() = delete;
   M3TestBusinessParameters(UnoCryptoLimits limits_value, std::array<unsigned char, 80> domain_value,
@@ -65,20 +69,31 @@ inline td::Result<td::Ref<vm::Cell>> encode_m3_test_business_parameters(const M3
       !profiles.store_bits_bool(value.range_profile.bits(), 256) ||
       !profiles.store_bits_bool(value.fee_profile.bits(), 256)) return malformed();
   TRY_RESULT(rules, confidential_input_detail::pack(value.rules));
-  if (!root.store_long_bool(tag, 32) || !root.store_long_bool(version, 16) ||
+  if (value.deposit && value.deposit->maximum != value.limits.max_value)
+    return td::Status::Error("Deposit maximum differs from authenticated kernel limit");
+  if (!root.store_long_bool(tag, 32) || !root.store_long_bool(value.deposit ? 2 : version, 16) ||
       !root.store_long_bool(value.send_fee, 64) || !root.store_long_bool(value.collect_fee, 64) ||
       !root.store_long_bool(value.fee_effective_height, 32) || !root.store_long_bool(value.account_schema, 16) ||
       !root.store_long_bool(value.relation_profile, 16) || !root.store_long_bool(value.proof_profile, 16) ||
       !root.store_ref_bool(limits.finalize()) || !root.store_ref_bool(domain.finalize()) ||
       !root.store_ref_bool(rules) || !root.store_ref_bool(profiles.finalize())) return malformed();
+  if (value.deposit && (!root.store_long_bool(value.deposit->minimum, 64) ||
+      !root.store_long_bool(value.deposit->slot_fee, 64) ||
+      !root.store_long_bool(value.deposit->user_slots, 32) ||
+      !root.store_long_bool(value.deposit->system_slots, 32))) return malformed();
   return td::Ref<vm::Cell>{root.finalize()};
 }
 
 inline td::Result<M3TestBusinessParameters> decode_m3_test_business_parameters(const td::Ref<vm::Cell>& cell) {
   using namespace business_config_detail;
-  TRY_RESULT(root, exact(cell, 256, 4));
+  if (cell.is_null()) return malformed();
+  bool special = false;
+  auto root = vm::load_cell_slice_special(cell, special);
+  if (special || root.size_refs() != 4 || (root.size() != 256 && root.size() != 448)) return malformed();
   if (root.fetch_ulong(32) != tag) return td::Status::Error("unknown M3 test business tag");
-  if (root.fetch_ulong(16) != version) return td::Status::Error("unsupported M3 test business version");
+  auto wire_version = root.fetch_ulong(16);
+  if (wire_version != version && wire_version != 2) return td::Status::Error("unsupported M3 test business version");
+  if (root.size() != (wire_version == 2 ? 400u : 208u)) return malformed();
   const auto send = root.fetch_ulong(64), collect = root.fetch_ulong(64);
   const auto height = static_cast<std::uint32_t>(root.fetch_ulong(32));
   const auto schema = static_cast<std::uint16_t>(root.fetch_ulong(16));
@@ -100,8 +115,20 @@ inline td::Result<M3TestBusinessParameters> decode_m3_test_business_parameters(c
   if (!domain.fetch_bytes(td::MutableSlice(domain_bytes.data(), domain_bytes.size())) ||
       !profiles.fetch_bits_to(generator) || !profiles.fetch_bits_to(range) || !profiles.fetch_bits_to(fee))
     return malformed();
-  return M3TestBusinessParameters{{max_balance, max_value, static_cast<std::size_t>(max_collect),
+  M3TestBusinessParameters result{{max_balance, max_value, static_cast<std::size_t>(max_collect),
       static_cast<std::size_t>(max_context), static_cast<std::size_t>(max_proof)}, domain_bytes, send, collect,
       rules, generator, range, fee, height, schema, relation, proof};
+  if (wire_version == 2) {
+    auto minimum = root.fetch_ulong(64), slot_fee = root.fetch_ulong(64);
+    auto user_slots = static_cast<std::uint32_t>(root.fetch_ulong(32));
+    auto system_slots = static_cast<std::uint32_t>(root.fetch_ulong(32));
+    result.deposit = WorkchainDepositPolicy{minimum, max_value, slot_fee, user_slots, system_slots};
+  }
+  return result;
+}
+
+inline td::Result<WorkchainDepositPolicy> require_m4_deposit_policy(const M3TestBusinessParameters& parameters) {
+  if (!parameters.deposit) return td::Status::Error(-7201, "authenticated Deposit parameters absent");
+  return *parameters.deposit;
 }
 }  // namespace block::m3_test

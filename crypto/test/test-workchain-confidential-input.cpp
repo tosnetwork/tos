@@ -436,7 +436,7 @@ TEST(ConfidentialInput, TestBusinessParametersExactCodec) {
   auto unknown = decode_m3_test_business_parameters(rebuild(vm::load_cell_slice(unknown_bits), refs));
   ASSERT_TRUE(unknown.is_error()); ASSERT_EQ(unknown.error().message(), "unknown M3 test business tag");
   tail = slice; tail.advance(48);
-  auto version_bits = vm::CellBuilder().store_long(business_config_detail::tag, 32).store_long(2, 16)
+  auto version_bits = vm::CellBuilder().store_long(business_config_detail::tag, 32).store_long(3, 16)
       .append_cellslice(tail).finalize();
   auto version = decode_m3_test_business_parameters(rebuild(vm::load_cell_slice(version_bits), refs));
   ASSERT_TRUE(version.is_error()); ASSERT_EQ(version.error().message(), "unsupported M3 test business version");
@@ -499,6 +499,37 @@ TEST(ConfidentialInput, TestGenesisUsesParam84Payload) {
   auto replaced=make(business,policy);
   ASSERT_TRUE(replaced.is_error());
   ASSERT_EQ(replaced.error().message(),"M3 test fixture refuses to replace an existing engine configuration");
+}
+
+TEST(ConfidentialInput, DepositPolicyRequiresAuthenticatedFields) {
+  using namespace block;
+  using namespace block::m3_test;
+  std::array<unsigned char, 80> domain{};
+  M3TestBusinessParameters business{{(std::uint64_t{1} << 62) - 1, (std::uint64_t{1} << 62) - 1,
+      8, 1024, 4096}, domain, 11, 17, {number(1), number(2), number(3)},
+      number(4), number(5), number(6), 100, 2, 1, 4};
+  auto legacy = encode_m3_test_business_parameters(business).move_as_ok();
+  auto missing = require_m4_deposit_policy(decode_m3_test_business_parameters(legacy).move_as_ok());
+  ASSERT_TRUE(missing.is_error());
+  ASSERT_EQ(missing.error().message(), "authenticated Deposit parameters absent");
+  // D8/D19 frozen authenticated initial prices. Shape remains test-scope,
+  // unfrozen: neither a production codec nor a runtime fallback is supplied.
+  business.deposit = WorkchainDepositPolicy{1000000000, business.limits.max_value, 3000000, 16, 4};
+  auto root = encode_m3_test_business_parameters(business).move_as_ok();
+  auto restored = decode_m3_test_business_parameters(root).move_as_ok();
+  auto policy = require_m4_deposit_policy(restored).move_as_ok();
+  ASSERT_EQ(policy.minimum, 1000000000u); ASSERT_EQ(policy.slot_fee, 3000000u);
+  ASSERT_EQ(policy.maximum, business.limits.max_value);
+  ASSERT_EQ(policy.user_slots, 16u); ASSERT_EQ(policy.system_slots, 4u);
+  ASSERT_EQ(encode_m3_test_business_parameters(restored).move_as_ok()->get_hash(), root->get_hash());
+  auto altered = business; ++altered.deposit->minimum;
+  ASSERT_TRUE(encode_m3_test_business_parameters(altered).move_as_ok()->get_hash() != root->get_hash());
+  altered = business; ++altered.deposit->slot_fee;
+  ASSERT_TRUE(encode_m3_test_business_parameters(altered).move_as_ok()->get_hash() != root->get_hash());
+  auto short_slice = vm::load_cell_slice(root);
+  short_slice.only_first(384, 4);  // Mandatory slot capacities absent.
+  auto short_root = vm::CellBuilder().append_cellslice(short_slice).finalize();
+  ASSERT_TRUE(decode_m3_test_business_parameters(short_root).is_error());
 }
 
 TEST(ConfidentialInput, ExplicitStateFixtureEdits) {
