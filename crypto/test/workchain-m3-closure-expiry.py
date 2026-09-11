@@ -18,6 +18,10 @@ has a right: the structural premise concerns this confidential account's closure
 Accepted Deposit clears D within its batch; rejection either returns value or
 credits sender-only unexpected funds, never a confidential account's obligation.
 The full bucket representation is frozen below, not excluded by its name.
+The rejected-ingress planner consumes the one authenticated inbox message for
+its source/destination and reuses Native bounce rules; it returns no retained
+return association. It only plans same-batch Native credit or return plus bucket
+update, never deferred confidential credit.
 
 LIMIT: lexical source check, not a semantic C++/Rust proof. Generated or renamed
 operations outside the frozen representations require human identification.

@@ -1,5 +1,6 @@
 #include "block/workchain-unexpected-bucket.h"
 #include "block/block-parse.h"
+#include "block/workchain-rejected-deposit.h"
 #include "td/utils/tests.h"
 
 namespace {
@@ -72,4 +73,90 @@ TEST(WorkchainUnexpectedBucket, ExtraCurrenciesAreRetainedWithoutBodyOrAttributi
   auto root = block::encode_workchain_unexpected_bucket(result.bucket, {1, 1}, 100).move_as_ok();
   auto read = block::decode_workchain_unexpected_bucket(root, {1, 1}, 100).move_as_ok();
   ASSERT_TRUE(block::workchain_unexpected_balance(read).move_as_ok() == imported);
+}
+
+TEST(WorkchainUnexpectedBucket, RejectedIngressUsesNativeBounceOrSenderBucket) {
+  block::WorkchainResourcePolicy resources{4, {64, 4096, 8, 16, 16, 5},
+      {256, 16384, 128, 8192, 64}, {32, 128, 8192, 256, 16384, 16}, {0, 2, 2}, 1};
+  block::WorkchainNativeIngressPolicy ingress;
+  ingress.workchain_id = 2;
+  ingress.engine_key = {block::WorkchainFormat::Basic, 0x554e4f32};
+  ingress.vm_mode = 17;
+  ingress.descriptor_version = 2;
+  ingress.executor_address = sender(1).account;
+  ingress.custody_address = sender(2).account;
+  ingress.engine_configuration = block::encode_workchain_engine_parameters(
+      {400, sender(7).account, resources, vm::CellBuilder().finalize(), 10}).move_as_ok();
+  block::WorkchainExecutionDescriptor descriptor;
+  descriptor.workchain_id = 2;
+  descriptor.active = true;
+  descriptor.vm_version = 0x554e4f32;
+  descriptor.vm_mode = 17;
+  descriptor.version = 2;
+  block::WorkchainSet workchains;
+  td::Ref<block::WorkchainInfo> basechain{true};
+  basechain.write().workchain = 0;
+  basechain.write().basic = basechain.write().active = basechain.write().accept_msgs = true;
+  basechain.write().min_addr_len = basechain.write().max_addr_len = 256;
+  workchains.emplace(0, basechain);
+  block::ActionPhaseConfig prices;
+  prices.global_version = 16;
+  prices.bounce_msg_body = 256;
+  prices.fwd_std = block::MsgPrices(200, 0, 0, 0, 16384, 0);
+  prices.fwd_mc = block::MsgPrices(100, 0, 0, 0, 16384, 0);
+  for (bool bounced : {false, true}) {
+    vm::CellBuilder body;
+    body.store_long(bounced ? 7 : 6, 4).store_long(4, 3).store_long(0, 8)
+        .store_bits(sender(8).account.bits(), 256).store_long(4, 3).store_long(2, 8)
+        .store_bits(ingress.custody_address->bits(), 256);
+    ASSERT_TRUE(block::CurrencyCollection(300).store(body));
+    auto message = body.store_zeroes(8).store_long(1, 64).store_long(1, 32)
+        .store_zeroes(2).store_long(123, 32).finalize();
+    td::Ref<vm::Cell> envelope;
+    ASSERT_TRUE(tlb::pack_cell(envelope,
+        block::tlb::MsgEnvelope::Record_std{0x60, 0x60, td::make_refint(0), message, {}, {}}));
+    const td::Bits256 id(message->get_hash().bits());
+    block::WorkchainNativeInboxPlan inbox{{envelope}, 1};
+    auto plan = [&](const auto& messages, const td::Bits256& identity, const auto& costs) {
+      return block::plan_workchain_rejected_deposit(ingress, descriptor, messages, identity,
+          block::CurrencyCollection(200), empty_bucket(), {1, 1}, 2, 1, costs, workchains, 100);
+    };
+    auto result = plan(inbox, id, prices).move_as_ok();
+    if (bounced) {
+      ASSERT_TRUE(result.native.branch == block::NativeDisposalBranch::UnexpectedCredit);
+      ASSERT_TRUE(result.native.bounce.is_null());
+      ASSERT_EQ(result.unexpected.entries.size(), 1u);
+      ASSERT_TRUE(result.unexpected.entries[0].sender.account == sender(8).account);
+      ASSERT_EQ(td::cmp(result.unexpected.entries[0].tomis, 300), 0);
+    } else {
+      ASSERT_TRUE(result.native.branch == block::NativeDisposalBranch::Bounce);
+      ASSERT_TRUE(result.unexpected.entries.empty());
+      block::gen::CommonMsgInfo::Record_int_msg_info bounced_info;
+      ASSERT_TRUE(tlb::unpack_cell_inexact(result.native.bounce, bounced_info));
+      int wc;
+      td::Bits256 address;
+      ASSERT_TRUE(block::tlb::t_MsgAddressInt.extract_std_address(bounced_info.src, wc, address));
+      ASSERT_EQ(wc, 2);
+      ASSERT_TRUE(address == *ingress.custody_address && address != ingress.executor_address);
+      ASSERT_TRUE(block::tlb::t_MsgAddressInt.extract_std_address(bounced_info.dest, wc, address));
+      ASSERT_EQ(wc, 0);
+      ASSERT_TRUE(address == sender(8).account);
+      block::CurrencyCollection returned;
+      ASSERT_TRUE(returned.unpack(bounced_info.value) && returned == block::CurrencyCollection(100));
+      ASSERT_TRUE(bounced_info.bounced);
+    }
+    ASSERT_TRUE(plan(inbox, sender(9).account, prices).is_error());
+    inbox.envelopes.push_back(envelope);
+    ASSERT_TRUE(plan(inbox, id, prices).is_error());
+    inbox.envelopes.pop_back();
+    auto invalid_prices = prices;
+    invalid_prices.fwd_std.first_frac = 65536;
+    ASSERT_TRUE(plan(inbox, id, invalid_prices).is_error());  // Never fall back on local context error.
+    auto unaffordable = prices;
+    unaffordable.fwd_std.lump_price = 301;
+    auto bucket = plan(inbox, id, unaffordable).move_as_ok();
+    ASSERT_TRUE(bucket.native.branch == block::NativeDisposalBranch::UnexpectedCredit);
+    ASSERT_TRUE(bucket.native.bounce.is_null());
+    ASSERT_EQ(td::cmp(bucket.unexpected.entries[0].tomis, 300), 0);
+  }
 }
