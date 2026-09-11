@@ -177,10 +177,19 @@ TEST(WorkchainBlock, CoordinatorStateExactFraming) {
       vm::CellBuilder().store_long(2, 8).store_zeroes(256).finalize(true),
       vm::CellBuilder::do_create_pruned_branch(plain, 1, 0),
       vm::CellBuilder::create_merkle_proof(plain)};
+  // Every call must return an error; an escaping VM exception fails this test.
+  ASSERT_TRUE(block::decode_workchain_coordinator_state(vm::CellBuilder().finalize()).is_error());
+  ASSERT_TRUE(block::decode_workchain_coordinator_state(
+      vm::CellBuilder().store_long(1, 7).finalize()).is_error());
   for (const auto& special : special_cells) {
     ASSERT_TRUE(block::decode_workchain_coordinator_state(special).is_error());
     ASSERT_TRUE(block::decode_workchain_coordinator_state(wrap(special)).is_error());
+    auto bad_budget = vm::CellBuilder()
+        .store_long(block::gen::UnoV2CoordinatorDeposits::cons_tag[0], 32)
+        .store_long(2, 16).store_ref(system).store_ref(special).finalize();
+    ASSERT_TRUE(block::decode_workchain_coordinator_state(bad_budget).is_error());
   }
+  ASSERT_TRUE(block::decode_workchain_coordinator_state(valid).is_ok());
 }
 
 TEST(WorkchainBlock, ResourcePolicyWire) {
@@ -1154,45 +1163,31 @@ TEST(WorkchainBlock, CoordinatorStateLocalLoadFailure) {
   unsigned loads = 0;
   td::Ref<PreflightObservedCell> available{true, root, &loads, false};
   ASSERT_TRUE(block::decode_workchain_coordinator_state(available).is_ok());
-  ASSERT_EQ(loads, 1u);
+  ASSERT_EQ(loads, 2u);  // Explicit tag dispatch, then exact record decoding.
   loads = 0;
   td::Ref<PreflightObservedCell> missing{true, root, &loads, true};
-  bool unavailable = false;
-  try {
-    (void)block::decode_workchain_coordinator_state(missing);
-  } catch (const vm::VmError&) {
-    unavailable = true;
-  }
-  ASSERT_TRUE(unavailable);
+  auto unavailable = block::decode_workchain_coordinator_state(missing);
+  ASSERT_TRUE(unavailable.is_error());
+  ASSERT_TRUE(unavailable.error().code() != -7200 && unavailable.error().code() != -7201);
   ASSERT_EQ(loads, 1u);
   loads = 0;
   td::Ref<PreflightObservedCell> hidden{true, root, &loads, false, 1};
-  bool virtual_failure = false;
-  try {
-    (void)block::decode_workchain_coordinator_state(hidden);
-  } catch (const vm::VmVirtError&) {
-    virtual_failure = true;
-  }
-  ASSERT_TRUE(virtual_failure);
+  auto virtual_failure = block::decode_workchain_coordinator_state(hidden);
+  ASSERT_TRUE(virtual_failure.is_error());
+  ASSERT_TRUE(virtual_failure.error().code() != -7200 && virtual_failure.error().code() != -7201);
   ASSERT_EQ(loads, 1u);
   auto system = vm::load_cell_slice(root).prefetch_ref();
   for (unsigned fault = 0; fault != 3; ++fault) {
     loads = 0;
     td::Ref<PreflightObservedCell> child{true, system, &loads, fault == 1, fault == 2 ? 1u : 0u};
-    auto wrapper = vm::CellBuilder().store_long(block::gen::UnoV2CoordinatorDeposits::cons_tag[0], 32).store_long(2, 16).store_ref(child).store_ref(coordinator_budget_fixture()).finalize();
-    bool failed = false;
-    try {
-      ASSERT_TRUE(block::decode_workchain_coordinator_state(wrapper).is_ok());
-    } catch (const vm::VmError&) {
-      ASSERT_EQ(fault, 1u);
-      failed = true;
-    } catch (const vm::VmVirtError&) {
-      ASSERT_EQ(fault, 2u);
-      failed = true;
-    }
-    ASSERT_EQ(failed, fault != 0);
+    auto wrapper = vm::CellBuilder().store_long(block::gen::UnoV2CoordinatorDeposits::cons_tag[0], 32)
+        .store_long(2, 16).store_ref(child).store_ref(coordinator_budget_fixture()).finalize();
+    auto decoded = block::decode_workchain_coordinator_state(wrapper);
+    ASSERT_EQ(decoded.is_error(), fault != 0);
+    if (decoded.is_error()) ASSERT_TRUE(decoded.error().code() != -7200 && decoded.error().code() != -7201);
     ASSERT_EQ(loads, 1u);
   }
+  ASSERT_TRUE(block::decode_workchain_coordinator_state(root).is_ok());
 }
 
 td::Ref<vm::Cell> number(std::uint64_t value) {
