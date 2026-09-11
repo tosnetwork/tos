@@ -30,6 +30,8 @@ def run(build: Path, vectors: Path):
          'message.size() > mldsa44_max_message_bytes || ', ''),
         ('context', ROOT / 'crypto/pq/mldsa44.cpp',
          'm, message.size(), c, context.size(),', 'm, message.size(), c, 0,'),
+        ('canonical-chunks', ROOT / 'crypto/vm/pqops.cpp',
+         '(cs.size_refs() && size != 127)', '(false)'),
     ]
     with tempfile.TemporaryDirectory() as tmp:
         out = Path(tmp) / 'result.tsv'

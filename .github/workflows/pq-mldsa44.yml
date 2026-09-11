@@ -3,6 +3,7 @@ on:
   pull_request:
     paths:
       - 'crypto/**'
+      - 'tol/**'
       - 'common/global-version.h'
       - 'CMakeLists.txt'
       - 'test/pq-mldsa44/**'
@@ -57,7 +58,10 @@ jobs:
         id: bindings
         if: ${{ !cancelled() && steps.build.outcome == 'success' && steps.vectors.outcome == 'success' }}
         run: python3 test/pq-mldsa44/bindings.py --build build --vectors pq-results/vectors.tsv --out pq-results
-      - name: Kill verification, version and gas guard mutations
+      - name: Reject silent test-harness command-line fallbacks
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && steps.vectors.outcome == 'success' }}
+        run: python3 test/pq-mldsa44/check_cli.py --build build --vectors pq-results/vectors.tsv --out pq-results
+      - name: Kill verification, version, gas and canonical-chunk guard mutations
         if: ${{ !cancelled() && matrix.arch == 'x86_64' && steps.vm.outcome == 'success' }}
         run: |
           python3 test/pq-mldsa44/mutations.py --build build --vectors pq-results/vectors.tsv | tee pq-results/mutations.txt
@@ -72,6 +76,7 @@ jobs:
             pq-results/*.tsv
             pq-results/*.boc
             pq-results/*.calibration.json
+            pq-results/cli-checks.json
             pq-results/benchmark.txt
             pq-results/mutations.txt
           if-no-files-found: warn
@@ -134,9 +139,24 @@ jobs:
           retention-days: 14
   determinism:
     needs: [native, sanitizers, vm-sanitizers]
+    if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
+      - name: Require every upstream job to succeed
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: |
+          python3 - <<'PY_GATE'
+          import json, os
+          needs = json.loads(os.environ['NEEDS_JSON'])
+          expected = {'native', 'sanitizers', 'vm-sanitizers'}
+          if set(needs) != expected:
+              raise SystemExit('Incomplete prerequisite job evidence')
+          bad = {name: info['result'] for name, info in needs.items() if info['result'] != 'success'}
+          if bad:
+              raise SystemExit(f'Required native PQ checks did not pass: {bad}')
+          PY_GATE
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: pq-*

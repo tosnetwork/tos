@@ -186,7 +186,11 @@ void vm_boundaries(const Vector& good, std::ostream& out) {
   auto empty = vm::CellBuilder().finalize();
   reject("non-byte-aligned", vm::CellBuilder().store_long(1, 1).finalize());
   reject("branching", vm::CellBuilder().store_ref(empty).store_ref(empty).finalize());
-  reject("short-nonterminal", vm::CellBuilder().store_long(65, 8).store_ref(canonical[3]).finalize());
+  // Same VALID key bytes, deliberately split at an illegal chunk boundary.
+  // Prepending an extra byte would instead exercise the independent size bound
+  // and could mask a missing canonical-chunk check.
+  reject("short-nonterminal", vm::CellBuilder().store_bytes(good.key.substr(0, 1))
+                                  .store_ref(bytes_cell(good.key.substr(1))).finalize());
   reject("empty-nonterminal", vm::CellBuilder().store_ref(canonical[3]).finalize());
   reject("trailing-empty", vm::CellBuilder().store_bytes(std::string(127, 'x')).store_ref(empty).finalize(), 0);
   auto library = vm::CellBuilder().store_long(2, 8).store_bytes(std::string(32, '\0')).finalize(true);
@@ -227,7 +231,12 @@ void vm_boundaries(const Vector& good, std::ostream& out) {
 
 int main(int argc, char** argv) {
   try {
-    require(argc >= 3, "usage: test vectors.tsv transcript.txt [--benchmark | --code program.boc]");
+    require(argc == 3 || (argc == 4 && std::string(argv[3]) == "--benchmark") ||
+            (argc == 5 && std::string(argv[3]) == "--code"),
+            "usage: test vectors.tsv transcript.txt [--benchmark | --code program.boc]");
+#ifndef TOS_PQ_TEST_VM
+    require(argc != 5, "compiled code requires the native VM test executable");
+#endif
     auto vectors = read_vectors(argv[1]);
     auto good = std::find_if(vectors.begin(), vectors.end(), [](const auto& v) { return v.id == "openssl-auth-commitment"; });
     require(good != vectors.end() && !good->message.empty() && !good->context.empty(), "missing positive control");
