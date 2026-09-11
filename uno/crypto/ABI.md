@@ -1,5 +1,27 @@
 # Borrowed balance verification ABI v2 and independent possession v2 entries
 
+## D64 construction work in progress (2026-09-11)
+
+`withdrawal_statement` is a read-only Rust construction and verification API;
+it exposes no C ABI and has no node-host caller. It specializes the unchanged
+SEND matrix with P_B=P_A and locally derived C_t/D_tA/D_tB. Its explicit
+Withdrawal context binds the two IDs and the separate principal, outward fee,
+return reserve and operation fee; the enclosing authenticated host context is
+still a caller obligation. This is not a completed Native wire/context contract
+or a Withdrawal execution path. No new relation number is allocated.
+
+Before adding any host caller, provide the admitted metering entry and the
+canonical authenticated Native context interface. No unmetered ABI is to be
+connected temporarily. Profile 4 coverage is not expanded by this Rust-only
+construction step.
+
+D34 scope: M5 does not expand the relation family, but adds critical verifier
+checks. C_t reconstruction and the no-pending host branch prevent under-debit
+or double issuance; handle derivation supplies the unconditional algebraic
+binding, with one redundant handle when P_B=P_A. All remain review subjects.
+This is not a claim of no new unreviewed cryptographic surface. The host
+no-pending branch is not implemented or evidenced by these kernel tests.
+
 ## Possession transcript upgrade (2026-09-10)
 
 The two independent M3 entries are now `uno_crypto_verify_key_possession_v2`

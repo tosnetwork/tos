@@ -1,5 +1,6 @@
 use super::*;
 use rand::TryRng;
+mod withdrawal;
 
 fn hex(s: &str) -> Vec<u8> {
     assert_eq!(s.len() % 2, 0);
