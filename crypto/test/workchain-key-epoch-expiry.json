@@ -27,9 +27,12 @@
   ],
   "crypto/block/workchain-confidential-state.h": [
     "std : : uint32_t target_key_epoch",
+    "std : : uint32_t target_key_epoch",
     "std : : uint32_t key_epoch",
     "TRY_RESULT ( target , pack ( gen : : UnoV2PendingTarget : : Record { value . target_instance , value . target_key_epoch , value . asset } ) )",
     "WorkchainPendingReceipt value { record . receipt_id , source , record . source_operation_nonce , target . instance , target . key_epoch , target . asset , ciphertext , origin . operation_id , origin . output_index , static_cast < std : : uint8_t > ( record . status ) }",
+    "TRY_RESULT ( target , pack ( gen : : UnoV2PendingTarget : : Record { value . target_instance , value . target_key_epoch , value . asset } ) )",
+    "WorkchainDepositReceipt value { record . receipt_id , origin . inbound_message , origin . sequence , record . amount , target . instance , target . key_epoch , target . asset , ciphertext , static_cast < std : : uint8_t > ( record . status ) }",
     "TRY_RESULT ( crypto , pack ( gen : : UnoV2AccountCrypto : : Record { value . public_key , value . key_epoch , available } ) )",
     "WorkchainConfidentialAccount value { static_cast < std : : uint16_t > ( record . schema_version ) , static_cast < std : : uint16_t > ( record . relation_profile ) , static_cast < std : : uint16_t > ( record . proof_profile ) , identity . global_id , identity . genesis_hash , address , bindings , funding , crypto . public_key , crypto . key_epoch , available , record . auth_nonce , record . available_revision , { } , lifecycle }"
   ],
