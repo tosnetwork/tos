@@ -426,7 +426,7 @@ mod tests {
         );
         assert_eq!(
             format!("{:x}", v5r1.repr_hash()),
-            "e6c006f19fbabccd0d4852c1cc4ca3c6410914dc86f6611ccf8165cdcaafc6e0"
+            "086a86aa9913c0ec52277adbb7e4b5695964dbb8c817ad0c305cdd345bbfac69"
         );
     }
 
@@ -467,7 +467,7 @@ mod tests {
         assert_eq!(
             v5r1,
             MsgAddressInt::from_str(
-                "0:008d8e5221f7983fca6259ad68388e9201672254ac8944d35d8a616c1863aa3d"
+                "0:5a53cbbbf3e7a01a3de3f6447010bb72f02dabf427d672c9dc11cccdc19067fc"
             )
             .unwrap()
         );
