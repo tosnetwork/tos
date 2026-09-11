@@ -180,11 +180,28 @@ TEST(WithdrawalAccount, AuthenticatedEnvelopeAndCombinedPending) {
   auto origin = WorkchainSystemOrigin{WorkchainSettlementOrigin{word(8), 1}};
   value.origin_pending.push_back({derive_workchain_system_receipt_id(origin).move_as_ok(), 100,
       {owner().instance, 0, word(4)}, {point, point}, origin});
+  // Exercise all three typed views of the single authenticated dictionary.
+  auto legacy_id = derive_workchain_deposit_id(word(40), 2).move_as_ok();
+  value.account.system_pending.push_back({legacy_id, word(40), 2, 101, owner().instance,
+      0, word(4), {point, point}, 0});
+  auto user_id = derive_workchain_receipt_id(word(41), word(42), 0).move_as_ok();
+  value.account.pending.push_back({user_id, {2, word(43), word(41)}, 9,
+      owner().instance, 0, word(4), {point, point}, word(42), 0, 0});
   auto root = encode_workchain_withdrawal_account(value, 2); ASSERT_TRUE(root.is_ok());
   ASSERT_EQ(vm::load_cell_slice(root.ok()).size_refs(), 4u);
   auto decoded = decode_workchain_withdrawal_account(root.ok(), 2); ASSERT_TRUE(decoded.is_ok());
   ASSERT_EQ(decoded.ok().control.withdrawals.size(), 1u);
   ASSERT_EQ(decoded.ok().origin_pending.size(), 1u);
+  ASSERT_EQ(decoded.ok().account.system_pending.size(), 1u);
+  ASSERT_EQ(decoded.ok().account.pending.size(), 1u);
+  ASSERT_TRUE(encode_workchain_deposit_receipt(decoded.ok().account.system_pending[0]).move_as_ok()->get_hash() ==
+              encode_workchain_deposit_receipt(value.account.system_pending[0]).move_as_ok()->get_hash());
+  auto too_many = value;
+  too_many.origin_pending.resize(4, value.origin_pending.front());
+  auto capacity = encode_workchain_withdrawal_account(too_many, 2);
+  ASSERT_TRUE(capacity.is_error());
+  ASSERT_EQ(capacity.error().message(), "invalid Withdrawal account schema or system capacity");
+
   ASSERT_TRUE(check_workchain_withdrawal_closure(decoded.ok().control).is_error());
   ASSERT_TRUE(decode_workchain_confidential_account(root.ok()).is_error());
   auto old = core; old.schema_version = 2;

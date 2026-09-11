@@ -123,3 +123,25 @@ The ABI does not independently parse/authenticate TL-B attribution or its ID.
 - Communication to A repeatedly fails at localhost:42881. Do not retry the same
   message. Coordinator relays; `/tmp/uno-m5-codec-handoff.txt` is only a local
   convenience and older than this committed handoff until explicitly updated.
+
+## Ordered queue item 1: complete account codec delivery
+
+The full-root API was already committed in fc55a5590; it is not awaiting
+implementation. `block/workchain-withdrawal-account.h` exports
+`encode_workchain_withdrawal_account(value, authenticated_limit)` and
+`decode_workchain_withdrawal_account(root, authenticated_limit)`, returning
+`WorkchainWithdrawalAccount { account, control, origin_pending }`.
+Generic old-account decoding is intentionally not widened. Host dispatch,
+explicit migration authorization and calling the closure check remain A's work.
+
+The focused account test now simultaneously installs user, legacy Deposit and
+new-origin receipts into the same root. It passes and checks that the retained
+legacy Deposit cell hash is unchanged. Combined legacy/new system capacity is
+four. Isolated removal of the combined-capacity check and record-account binding
+check each exits 1 at the corresponding assertion. Reproduce with:
+
+    python3 crypto/test/workchain-withdrawal-account-controls.py --repo /home/tomi/tos-m2 --build /home/tomi/uno-m3-refund-assert-build
+
+These complete the two new-account checks previously listed under next step 2;
+they do not replace the already committed control ID/LT/count/closure checks or
+claim actual node invocation of the full-root decoder.
