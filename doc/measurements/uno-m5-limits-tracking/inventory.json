@@ -1,0 +1,2995 @@
+{
+  "baseline": "2c78106f1",
+  "files": [
+    {
+      "file": "doc/uno-d34-external-review-scope-draft.md",
+      "sha256": "dddfb933ecd997de606f41733772e3dfa7ff635699d78edcf9cf1e5d535cf953",
+      "scope_lines": [
+        {
+          "line": 1,
+          "text": "# D34 external cryptographic review scope input (draft)"
+        },
+        {
+          "line": 6,
+          "text": "snapshots, not a claim that a final M5 integrated tree exists. Before contracting"
+        },
+        {
+          "line": 9,
+          "text": "This document is a scope proposal, not an external review or approval."
+        },
+        {
+          "line": 11,
+          "text": "Governance status must not be inferred from this request: current D34 (line"
+        },
+        {
+          "line": 14,
+          "text": "This draft fulfills the coordinator's new scope-writing request; it does not"
+        },
+        {
+          "line": 22,
+          "text": "| SEND and COLLECT relations (\u00a76) | `uno/crypto/src/relation.rs`, `statement.rs`, `lib.rs`, `ffi.rs::uno_crypto_verify_v2` | Reconstruct every equation, shared witness index, range object and challenge binding; verify amounts, fees, old/new balances, receipt ordering/distinctness, arity and limits. Check that accepted proofs imply the intended relation under precisely stated assumptions. Include system/user mixed COLLECT and V_max/B_max boundaries. |"
+        },
+        {
+          "line": 23,
+          "text": "| M3 registration Schnorr | `key_possession.rs`, `uno_crypto_verify_key_possession_v2`; `workchain-registration-proof.cpp` and registration host callers | Separate authorization relation and transcript, key encoding/nonidentity, canonical responses and challenge, operation/domain identity, authentication and persistence. This is NOT included automatically by reviewing SEND/COLLECT. |"
+        },
+        {
+          "line": 24,
+          "text": "| M3 closure DLEQ | `closure_possession.rs`, `uno_crypto_verify_closure_possession_v2`; `workchain-account-closure.h`, `workchain-closure-settlement.h` | Establish possession/equality statement, authenticated binding and zero-balance closure semantics; trace the statement actually verified to the account actually closed. This is another independent kernel entrypoint outside \u00a76. Host obligations must be reviewed separately from proof validity. |"
+        },
+        {
+          "line": 25,
+          "text": "| M5 public-opening specialization | `withdrawal_statement.rs`, `workchain-withdrawal-codec.h`, eventual Native prepare caller | Check checked x+q+b before scalar conversion, unchanged SEND witness sharing/equations/ranges, authenticated owner P, P_B=P_A, derived C_t and handles, and f remaining the separate operation fee. Compare the exact externally paid x/q and locked b to those used in derivation, not two copies of the same untrusted value. |"
+        },
+        {
+          "line": 26,
+          "text": "| M5 prepare must not install pending | eventual Native prepare state publisher/validator; full account/control/pending codecs | Compare the complete authenticated account-to-pending cut, user/system entries and both counts, across prepare. A valid proof alone does not prohibit a host from also creating a receipt. Settlement Paid/Failed legitimately creates backed pending: this prohibition applies only to prepare/statement. |"
+        },
+        {
+          "line": 27,
+          "text": "| D33/D69 deterministic system issuance | `system_encryption.rs`, `uno_crypto_system_encrypt_v1/v2`, `uno_crypto_system_verify_v1/v2`; `workchain-system-origin.h` and actual issuance callers | Verify authenticated amount/key/domain/origin, fixed member encoding and ID derivation, wide reduction, zero rejection without resampling, and actual independent point recomputation before credit installation. No proof is required, but omitted amount/ciphertext checking can install unbacked claims. Test each member and actual caller, not only primitive success. |"
+        },
+        {
+          "line": 38,
+          "text": "It must not be shortened to \"accepted withdrawals are unconditionally sound.\""
+        },
+        {
+          "line": 48,
+          "text": "  only one derived-handle constraint is not independently a minting result."
+        },
+        {
+          "line": 50,
+          "text": "  the residual amount binding relies on Pedersen binding. Do not describe that"
+        },
+        {
+          "line": 52,
+          "text": "* Installing pending during prepare while also paying externally violates the"
+        },
+        {
+          "line": 57,
+          "text": "former does not establish the latter's protection. Preserve all eight equations"
+        },
+        {
+          "line": 64,
+          "text": "   Attempt identities, nonce/sequence provenance and limits. Distinguish bytes"
+        },
+        {
+          "line": 68,
+          "text": "   the generated header and its producer, not just hand-transcribed types."
+        },
+        {
+          "line": 70,
+          "text": "   node verification remains the consensus acceptance boundary, and prover"
+        },
+        {
+          "line": 71,
+          "text": "   success is not evidence that the verifier enforced a constraint. Include"
+        },
+        {
+          "line": 75,
+          "text": "   their modifications/lockfiles in the selected dependency scope. Inventory"
+        },
+        {
+          "line": 76,
+          "text": "   matching and checksums do not mean dependencies were audited. Shared forks"
+        },
+        {
+          "line": 77,
+          "text": "   are not independent implementations for differential evidence."
+        },
+        {
+          "line": 80,
+          "text": "   not collision-free hashes/scalars; authenticated duplicate-ID rejection"
+        },
+        {
+          "line": 81,
+          "text": "   across both pending kinds remains necessary. Trace actual staged counter"
+        },
+        {
+          "line": 91,
+          "text": "   prepare integration remains a delivery gap until that path is tested."
+        },
+        {
+          "line": 99,
+          "text": "relations added after the frozen snapshot require a scope delta."
+        },
+        {
+          "line": 101,
+          "text": "This cryptographic scope is not a full audit of consensus, networking, queue"
+        },
+        {
+          "line": 104,
+          "text": "above ARE in scope where a cryptographic claim depends on them. Full side-channel,"
+        },
+        {
+          "line": 106,
+          "text": "not silently imply them from functional verification. This document neither"
+        },
+        {
+          "line": 109,
+          "text": "A favorable review would not prove bug absence, authorize activation of unfrozen"
+        },
+        {
+          "line": 112,
+          "text": "M5's use of existing relations does not remove the new host/public-derivation"
+        },
+        {
+          "line": 113,
+          "text": "checks from D34. Engineering tests and this scope draft do not discharge the"
+        }
+      ]
+    },
+    {
+      "file": "doc/uno-m5-accounting-criteria.md",
+      "sha256": "ce2014a8f5133b555f1c89621b6eed53425bc6d2dde41d873cfe3342b2c09115",
+      "scope_lines": [
+        {
+          "line": 8,
+          "text": "inputs have been requested, and the two interpretation questions below remain"
+        },
+        {
+          "line": 9,
+          "text": "open. Do not fill missing inputs from observations after a run."
+        },
+        {
+          "line": 14,
+          "text": "observations, not production state. No new codec, authorization, proof relation,"
+        },
+        {
+          "line": 18,
+          "text": "  `x` is principal and `q` is outgoing Native fee. Operating funds do not change."
+        },
+        {
+          "line": 19,
+          "text": "  The return allowance `b` remains in custody, separately locked in W. Other"
+        },
+        {
+          "line": 21,
+          "text": "  could hide unauthorized spending behind simultaneous income."
+        },
+        {
+          "line": 25,
+          "text": "  The fee remains at coordinator and never enters custody."
+        },
+        {
+          "line": 30,
+          "text": "  separate responsibility and is not tested here."
+        },
+        {
+          "line": 36,
+          "text": "custody 270 and operating 100. This does not declare the production helper"
+        },
+        {
+          "line": 39,
+          "text": "D62 and D63 use assertion-only synthetic states/traces. There is not yet an"
+        },
+        {
+          "line": 41,
+          "text": "Assigning the same test trace to an entry is not proof of authenticated"
+        },
+        {
+          "line": 59,
+          "text": "| Operating remainder | C - Q - U | C - Q - U + s |"
+        },
+        {
+          "line": 63,
+          "text": "the final inequality remains true: its slack increases by s. The balance"
+        },
+        {
+          "line": 64,
+          "text": "debit and protected-holdings release are **not equal**; their difference is"
+        },
+        {
+          "line": 69,
+          "text": "old Q=100 and U=100 fails D60. This is a mixed snapshot, not a committed"
+        },
+        {
+          "line": 73,
+          "text": "installation-order defect is claimed: that transition has not been implemented."
+        },
+        {
+          "line": 76,
+          "text": "still passes. Thus D60 is not an authorization test for the source of fees."
+        },
+        {
+          "line": 78,
+          "text": "## Questions pending before the complete live prediction"
+        },
+        {
+          "line": 85,
+          "text": "   also saying it is not counted in R_book / not chosen for R_actual. Line 195"
+        },
+        {
+          "line": 87,
+          "text": "   locking does not **increase** reserves (existing backing remains counted),"
+        },
+        {
+          "line": 94,
+          "text": "Independence is behavioral, not structural: A's existing files are in the same"
+        },
+        {
+          "line": 95,
+          "text": "tree. Reading was limited to the specified current payout red sample, D60's"
+        },
+        {
+          "line": 102,
+          "text": "do not establish a finite worst-case delay under arbitrary network conditions."
+        },
+        {
+          "line": 114,
+          "text": "only the test header was adjusted, not production code or predicates."
+        },
+        {
+          "line": 118,
+          "text": "build objects were not changed by these controls:"
+        },
+        {
+          "line": 127,
+          "text": "They do not establish M5 host compliance, complete lineage reconstruction,"
+        },
+        {
+          "line": 130,
+          "text": "## Tracked successor (2026-09-11; does not rewrite frozen evidence)"
+        },
+        {
+          "line": 132,
+          "text": "The D62/D63 synthetic-only limitation is now a mandatory outstanding real-host"
+        },
+        {
+          "line": 135,
+          "text": "pre-D70 arithmetic above remains historical, not the current sweep prescription."
+        }
+      ]
+    },
+    {
+      "file": "doc/uno-m5-bucket-sweep-handoff.md",
+      "sha256": "c9a636ec8b1794fe82635d53b2198068ae503e7b2811b9c012ba69f407b9a764",
+      "scope_lines": [
+        {
+          "line": 5,
+          "text": "The live memo file has advanced; this contract does not silently substitute its"
+        },
+        {
+          "line": 8,
+          "text": "This replaces no frozen prediction. The synthetic scope limitation in"
+        },
+        {
+          "line": 18,
+          "text": "messages, registered account/control/pending state, explicit authenticated fee"
+        },
+        {
+          "line": 20,
+          "text": "bucket dispatch and Native publication, then validator replay. Do not assign"
+        },
+        {
+          "line": 25,
+          "text": "contents and protected holdings, account lifecycle/control, both pending maps"
+        },
+        {
+          "line": 28,
+          "text": "Individual predicates on manually supplied observations are not these tests."
+        },
+        {
+          "line": 36,
+          "text": "| `return-once` | Ordinary return of one entry, authenticated return failure, then a second sweep touching its successor | At most one ordinary return over that lineage; successor retains return_failed. Mutate flag propagation or permit a second send: `BUCKET_RETURN_ONCE` fails on actual second message, not an unrelated admission error. Observe actual fees and K_sweep consumption; unrelated entries must not supply a fresh retry identity. |"
+        },
+        {
+          "line": 39,
+          "text": "| `transfer` | Eligible type-2 entry value y, enough slot/fees, actual same-shard coordinator-to-custody move | Installed credit and actual custody increment both equal y-s-g. Delete physical transfer but retain book/receipt credit: `BUCKET_CUSTODY_TRANSFER` fails on actual custody balance/message, not just conservation. Also perturb book or receipt credit independently at `BUCKET_CREDIT_COMPONENT`. |"
+        },
+        {
+          "line": 41,
+          "text": "| `sequence` | Two distinct bucket entries with identical fixed attribution fields swept consecutively, also mixed with another system origin in one batch | Real receipts have different IDs and ciphertexts using the shared staged checked sequence; keep both duplicate-ID checks. Mutate reuse of the old counter or consume on a failed/non-issuance path: `BUCKET_SEQUENCE_STAGED` / `BUCKET_SEQUENCE_NO_ISSUE` fails on committed counts/receipts. This complements, does not retire, the six-item sequence handoff. |"
+        },
+        {
+          "line": 43,
+          "text": "| `oracle-control` | For every preceding isolated mutation, run with its oracle enabled, disabled, restored | Enabled must produce that named red; disable only that oracle with mutation retained: driver fails `BUCKET_ORACLE_MISSING:<name>` when its expected red disappears. Earlier errors cannot satisfy the driver. All \"X passes before Y\" premises need independent corrupt-X rejection controls. |"
+        },
+        {
+          "line": 51,
+          "text": "- D/P/W unchanged; D60 slack C-Q-U increases **s**, not s+g."
+        },
+        {
+          "line": 53,
+          "text": "No operating subsidy is permitted; normal slot income is not an illicit change."
+        },
+        {
+          "line": 55,
+          "text": "cross-check, not a substitute for independent source/destination assertions."
+        },
+        {
+          "line": 56,
+          "text": "Schema/codec round trips alone cannot prove lineage, closure dispatch, governance"
+        },
+        {
+          "line": 61,
+          "text": "NOT READY: no real host execution is claimed by this delivery. The runner is an"
+        },
+        {
+          "line": 62,
+          "text": "acceptance readiness gate, not a placeholder green default CTest. Future named"
+        },
+        {
+          "line": 63,
+          "text": "host tests belong in the default suite. The original synthetic tests remain useful"
+        },
+        {
+          "line": 64,
+          "text": "unit evidence, but cannot discharge any of these real-host obligations."
+        }
+      ]
+    },
+    {
+      "file": "doc/uno-m5-d61-independent-recheck.md",
+      "sha256": "65a99256d07a0144160675196707b2851d5caa0ad2ff1e6b0572d662f9b19b09",
+      "scope_lines": [
+        {
+          "line": 5,
+          "text": "This is an after-the-fact recheck, not a new pre-observation prediction. The"
+        },
+        {
+          "line": 7,
+          "text": "below; results here are not observations relayed by the coordinator."
+        },
+        {
+          "line": 9,
+          "text": "## Execution and why this is not an empty green"
+        },
+        {
+          "line": 27,
+          "text": "The initially guessed `build/crypto/test-workchain-block` path did not exist;"
+        },
+        {
+          "line": 28,
+          "text": "the rebuilt target is `build/test-workchain-block`. That path lookup was not a"
+        },
+        {
+          "line": 37,
+          "text": "Thus this red is a real wrong-debit observation, not a malformed-input error or"
+        },
+        {
+          "line": 47,
+          "text": "  custody; coordinator is retained; exported principal+remaining fee and local"
+        },
+        {
+          "line": 48,
+          "text": "  fee remain explicit. The synthetic coordinator funding transfer is gone."
+        },
+        {
+          "line": 54,
+          "text": "  zero on coordinator). The remaining forwarded value is exported, not erased."
+        },
+        {
+          "line": 61,
+          "text": "edge an insufficient way to pass. They do not prove confidential authorization,"
+        },
+        {
+          "line": 64,
+          "text": "## Consumer set comparison (not counts alone)"
+        },
+        {
+          "line": 75,
+          "text": "lexical direct-reference sets, not proof against aliases or indirect runtime"
+        },
+        {
+          "line": 93,
+          "text": "this is an inventory omission, not a discovered unfixed consumer. No remaining"
+        },
+        {
+          "line": 99,
+          "text": "The construction-isolation consumer was statically checked, not rebuilt/run in"
+        },
+        {
+          "line": 102,
+          "text": "this does not enumerate every branch of each file. No full CTest, M5 live run,"
+        },
+        {
+          "line": 105,
+          "text": "A's worktree had uncommitted Failed-related work while this ran. HEAD remained"
+        },
+        {
+          "line": 108,
+          "text": "fixture and untracked Failed header were not part of these selected target"
+        },
+        {
+          "line": 114,
+          "text": "already implemented and tested, plus the explicit execution/lexical limits"
+        },
+        {
+          "line": 115,
+          "text": "above. This is not a claim that every future payout caller is D61-compliant."
+        }
+      ]
+    },
+    {
+      "file": "doc/uno-m5-d64-implementation-recheck.md",
+      "sha256": "28e361023c815e0bed8ca604386457cc92ac27cd150013026f402d51351cc45e",
+      "scope_lines": [
+        {
+          "line": 3,
+          "text": "Reviewed commit: 5f628635d6afebbc11e9ccec8065ec1691c4e850, not an unspecified"
+        },
+        {
+          "line": 25,
+          "text": "  commitments are separate inputs; they do not replace the statement points."
+        },
+        {
+          "line": 28,
+          "text": "This does NOT establish an actual verifier-side wire path: the commit explicitly"
+        },
+        {
+          "line": 32,
+          "text": "it is outside this constructor's enforcement, not a hidden fallback inside it."
+        },
+        {
+          "line": 34,
+          "text": "are likewise host obligations, not established by adding three u64 parameters."
+        },
+        {
+          "line": 58,
+          "text": "In particular, rows 6,7,8 share w3, not three independently indexed openings."
+        },
+        {
+          "line": 64,
+          "text": "They are not removed when v is publicly pinned. Lines 19-25 and 131-134 pad"
+        },
+        {
+          "line": 66,
+          "text": "those are padding, not two new value constraints."
+        },
+        {
+          "line": 73,
+          "text": "values and creates redundancy, not coefficients or witness indexing rules."
+        },
+        {
+          "line": 77,
+          "text": "## 4: f separation established; authenticated tariff origin NOT established"
+        },
+        {
+          "line": 81,
+          "text": "line 113 verifies with it. x/q/b are not added into f on any constructor path."
+        },
+        {
+          "line": 90,
+          "text": "three points do not. This is binding/separation evidence, NOT fee authorization"
+        },
+        {
+          "line": 98,
+          "text": "caller can vary; getters do not permit replacing either slot. The ordinary SEND"
+        },
+        {
+          "line": 101,
+          "text": "an enforced specialization, not merely a convention in A's test caller."
+        },
+        {
+          "line": 102,
+          "text": "It does not constrain callers that bypass this type and invoke generic SEND."
+        },
+        {
+          "line": 111,
+          "text": "The strings are different; this is domain separation, not a claim that scalar"
+        },
+        {
+          "line": 113,
+          "text": "this review's new tests do not claim independent execution of that private"
+        },
+        {
+          "line": 119,
+          "text": "T>limits.max_value before constructing a statement. That is an extra public"
+        },
+        {
+          "line": 121,
+          "text": "bound to the existing proof. It is not a changed matrix or unchecked overflow."
+        },
+        {
+          "line": 123,
+          "text": "the correction is already an ancestor of B's current tree. Do not report the"
+        },
+        {
+          "line": 139,
+          "text": "point placement. It does not construct proofs or run a Native node."
+        },
+        {
+          "line": 151,
+          "text": "physical payout-to-statement linkage cannot be established from this partial"
+        },
+        {
+          "line": 154,
+          "text": "observations, not proof-system soundness or a completed D34 external review."
+        }
+      ]
+    },
+    {
+      "file": "doc/uno-m5-d64-review.md",
+      "sha256": "6ba1b37d3d512d395a4e040c043cb56517ca37b8dc2728052e1bd0c19acb6039",
+      "scope_lines": [
+        {
+          "line": 6,
+          "text": "This review does not change the relation or prescribe a new proof system."
+        },
+        {
+          "line": 26,
+          "text": "algebra fixture with an explicit test opening, not an implementation of the"
+        },
+        {
+          "line": 31,
+          "text": "The kernel imports `RistrettoPoint`, not unrestricted Edwards points"
+        },
+        {
+          "line": 49,
+          "text": "it is not an independent audit of the curve implementation."
+        },
+        {
+          "line": 62,
+          "text": "equations and the Bulletproof, not an extracted witness. Fiat-Shamir derives"
+        },
+        {
+          "line": 66,
+          "text": "It must not be shortened to unconditional soundness of accepted Withdrawals."
+        },
+        {
+          "line": 77,
+          "text": "An admitted u64 sum is below l, so this is not a scalar-wrap issue. u64"
+        },
+        {
+          "line": 83,
+          "text": "has been run in this review, and no limit is enlarged to accommodate it."
+        },
+        {
+          "line": 94,
+          "text": "D64 supplies those points by reconstruction, not on wire. Therefore the"
+        },
+        {
+          "line": 97,
+          "text": "That host path does not exist in this baseline, so it cannot yet be certified."
+        },
+        {
+          "line": 102,
+          "text": "C_t remain, the remaining handle still fixes r0; C_t still fixes T."
+        },
+        {
+          "line": 104,
+          "text": "handle check must permit a wrong amount is not valid. Corrupting a point while"
+        },
+        {
+          "line": 105,
+          "text": "retaining the original proof is a different experiment and cannot substitute"
+        },
+        {
+          "line": 107,
+          "text": "coverage claim, not the relation, to acknowledge this redundancy."
+        },
+        {
+          "line": 109,
+          "text": "## Host pending criterion"
+        },
+        {
+          "line": 111,
+          "text": "The test-only `withdrawal_pending` predicate compares complete account-to-"
+        },
+        {
+          "line": 112,
+          "text": "pending commitments at an isolated operation boundary, including user/system"
+        },
+        {
+          "line": 115,
+          "text": "authenticated artifacts; inspecting only a proposed effects list is not enough."
+        },
+        {
+          "line": 122,
+          "text": "also passed. The three point corruptions reach verification error 3, not decode."
+        },
+        {
+          "line": 127,
+          "text": "removing only the pending-comparison branch made the D64 test exit 1 at its"
+        },
+        {
+          "line": 128,
+          "text": "expected-error assertion. These are not live host observations."
+        },
+        {
+          "line": 132,
+          "text": "added or removed. B has not edited that shared inventory or claimed it green."
+        }
+      ]
+    },
+    {
+      "file": "doc/uno-m5-d64-symbolic-prediction.md",
+      "sha256": "a307092225ed40eeaafef7bf5f91bfe960d2ca9a25b49915dfcb858f74acca9d",
+      "scope_lines": [
+        {
+          "line": 7,
+          "text": "uses explicit symbols; it does not derive inputs from subsequent results."
+        },
+        {
+          "line": 9,
+          "text": "## Inputs and scope"
+        },
+        {
+          "line": 14,
+          "text": "are mutually exclusive, not two releases of the same record."
+        },
+        {
+          "line": 20,
+          "text": "  the computation tariff remains an explicit authenticated input, not an"
+        },
+        {
+          "line": 21,
+          "text": "  invented work-unit formula. q and b are not included in D32 F."
+        },
+        {
+          "line": 22,
+          "text": "* s is the authenticated system-pending slot fee. No numeric default is used."
+        },
+        {
+          "line": 31,
+          "text": "  The window's total cost charged against the allowance is c+s, not c alone."
+        },
+        {
+          "line": 58,
+          "text": "custody debit; it must not disappear from the cumulative event accounting."
+        },
+        {
+          "line": 60,
+          "text": "| Boundary | Coordinator Native | Refundable | Bucket holdings | Source available | Newly installed system pending |"
+        },
+        {
+          "line": 69,
+          "text": "`a0-q-f-c-s`. Pending credit is not available credit: a later COLLECT must"
+        },
+        {
+          "line": 70,
+          "text": "be listed and charged separately. User-pending entries are unchanged in all"
+        },
+        {
+          "line": 72,
+          "text": "Capacity reservations associated with W are not installed pending entries;"
+        },
+        {
+          "line": 73,
+          "text": "this table does not invent their future encoding. registered_accounts remains"
+        },
+        {
+          "line": 95,
+          "text": "## Scope limits and open inputs"
+        },
+        {
+          "line": 106,
+          "text": "or these branch-specific costs have been supplied. Do not claim the conditional"
+        },
+        {
+          "line": 107,
+          "text": "rows as predictions of unnamed events. D62's one-attempt predicate remains"
+        },
+        {
+          "line": 110,
+          "text": "The older fee-table shorthand `f_send + max_bounce_cost` must not be read as"
+        },
+        {
+          "line": 115,
+          "text": "Independence is behavioral, not structural: A's existing files share the tree."
+        },
+        {
+          "line": 116,
+          "text": "Future coordinator-relayed observations must be labeled as relayed, not as B's"
+        },
+        {
+          "line": 118,
+          "text": "provide operating envelopes and alarms, not delivery or finite-delay guarantees."
+        }
+      ]
+    },
+    {
+      "file": "doc/uno-m5-d66-prediction-addendum.md",
+      "sha256": "930614f418fae4f88a93594359376beea41cce629d31169780ad831c2c63adba",
+      "scope_lines": [
+        {
+          "line": 6,
+          "text": "`doc/uno-m5-d64-symbolic-prediction.md`; it is not edited by this addendum."
+        },
+        {
+          "line": 15,
+          "text": "  inequalities in the frozen table are **not additional host admission gates**."
+        },
+        {
+          "line": 16,
+          "text": "* A wallet may precheck for diagnostics; that is not a consensus rule."
+        },
+        {
+          "line": 18,
+          "text": "The prepare row remains:"
+        },
+        {
+          "line": 28,
+          "text": "The confidential debit's sum with f is an arithmetic description, not a new"
+        },
+        {
+          "line": 30,
+          "text": "the distinct outgoing Native fee term in R_book, not part of F or W. b stays"
+        },
+        {
+          "line": 31,
+          "text": "in custody and is not added to D60's coordinator protected holdings."
+        },
+        {
+          "line": 38,
+          "text": "zero, and the system receipt is `y+b-s`. These remain alternative terminal"
+        },
+        {
+          "line": 39,
+          "text": "rows with available capacity, not an assertion about unspecified overflow"
+        },
+        {
+          "line": 42,
+          "text": "The settlement window and return allowance remain symbolic authenticated"
+        },
+        {
+          "line": 43,
+          "text": "inputs, not local defaults. Empirical envelopes are not network delay bounds."
+        }
+      ]
+    },
+    {
+      "file": "doc/uno-m5-d68-d51-applicability.md",
+      "sha256": "e3d80a2c368b61166f0fbf0a411b45de2891106078287837e34a2c122cd5101d",
+      "scope_lines": [
+        {
+          "line": 8,
+          "text": "This is an applicability note, not a replacement of the pre-observation"
+        },
+        {
+          "line": 11,
+          "text": "arrival trigger for deferred tests; it does not change these accounting inputs."
+        },
+        {
+          "line": 19,
+          "text": "The shortfall branch has z<x. If m>s, issue pending z; otherwise transfer m"
+        },
+        {
+          "line": 20,
+          "text": "as D65 income and issue no pending. Do not promise the unpaid difference or"
+        },
+        {
+          "line": 29,
+          "text": "neither side. Thus BOTH equations remain satisfied even when z<x or z=0."
+        },
+        {
+          "line": 33,
+          "text": "already reflected in y: do not subtract it a second time. Reserve spending is"
+        },
+        {
+          "line": 37,
+          "text": "branch, not host observations. No-bounce, full-slot, bucket and late-return"
+        },
+        {
+          "line": 39,
+          "text": "frozen tables remain in `uno-m5-d68-shortfall-prediction.md`. The effective"
+        },
+        {
+          "line": 41,
+          "text": "A's committed producers and must not rewrite these predictions."
+        }
+      ]
+    },
+    {
+      "file": "doc/uno-m5-d68-shortfall-prediction.md",
+      "sha256": "22c5a904604d3227a45d35b2bd62f93ba38a34ef76de3f44581301213ca92468",
+      "scope_lines": [
+        {
+          "line": 8,
+          "text": "prediction. Independence is behavioral, not structural. Future observations"
+        },
+        {
+          "line": 29,
+          "text": "pending receipt of value z. If m<=s, transfer all m, create no receipt, and"
+        },
+        {
+          "line": 30,
+          "text": "z=0. These are complete batch boundaries, not intermediate snapshots."
+        },
+        {
+          "line": 32,
+          "text": "c+s>b (mathematical integers; do not perform an unchecked u64 c+s)."
+        },
+        {
+          "line": 38,
+          "text": "The dust rule is D65's existing m<=s rule, not an invented subsidy or loan."
+        },
+        {
+          "line": 50,
+          "text": "`R0-q-f-c-d`. Source available remains `a0-x-q-b-f`; adding the new pending"
+        },
+        {
+          "line": 57,
+          "text": "balance funds the shortfall. Registered account count and user-pending slots"
+        },
+        {
+          "line": 78,
+          "text": "and R_actual=N_book. This remains true for z=0, d=m."
+        },
+        {
+          "line": 82,
+          "text": "removed it. Also do not charge b as an additional custody debit: it never left."
+        },
+        {
+          "line": 85,
+          "text": "incoming value but uses old W/P/N_book is not this atomic boundary and cannot"
+        },
+        {
+          "line": 87,
+          "text": "paired deltas; this prediction does not assert invariants for partial batches."
+        },
+        {
+          "line": 90,
+          "text": "Native loss and `b-min(b,c)` as the nonnegative remainder before slot costs."
+        },
+        {
+          "line": 92,
+          "text": "also asserting consumption+remainder=b. The terminal total returned z is"
+        },
+        {
+          "line": 93,
+          "text": "computed from actual assets y+b, not from a promise to return x."
+        },
+        {
+          "line": 95,
+          "text": "## Limits and specification maintenance"
+        },
+        {
+          "line": 97,
+          "text": "This is algebraic prediction, not executed host evidence. It covers a matching"
+        },
+        {
+          "line": 101,
+          "text": "must be identified and paired, not silently absorbed into y or q twice."
+        },
+        {
+          "line": 110,
+          "text": "The previous prediction's fully funded branch remains conditional, rather"
+        }
+      ]
+    },
+    {
+      "file": "doc/uno-m5-d70-accounting-addendum.md",
+      "sha256": "618d3273083b530b3034c5f2366201b0ced5d57a21ee6f80560b02800d948fcf",
+      "scope_lines": [
+        {
+          "line": 5,
+          "text": "This is an additive prospective criterion, not an edit to frozen predictions"
+        },
+        {
+          "line": 6,
+          "text": "and not a host execution result. No A execution outputs were used."
+        },
+        {
+          "line": 13,
+          "text": "the reported seven proof-work units do not supply u. These expressions are for"
+        },
+        {
+          "line": 15,
+          "text": "aggregation; do not assume one operation always means one receipt."
+        },
+        {
+          "line": 23,
+          "text": "pre-D70 slot-only formula; it must not be used as D70 coverage without extension."
+        },
+        {
+          "line": 46,
+          "text": "is already reflected in y and must not be deducted a second time. The total"
+        },
+        {
+          "line": 48,
+          "text": "that is a normal shortfall, not an operating-budget receivable. The branch"
+        },
+        {
+          "line": 49,
+          "text": "requires m>h, not that reserve b cover all costs."
+        },
+        {
+          "line": 56,
+          "text": "Paid classification itself does not move principal again. Only issuing the"
+        },
+        {
+          "line": 58,
+          "text": "R_actual=R_book and R_actual+P=D+N_book+W remain algebraically true for the"
+        },
+        {
+          "line": 60,
+          "text": "must not underflow; algebraic cancellation is not a substitute for those checks."
+        },
+        {
+          "line": 70,
+          "text": "without moving t remains an independent failing case under D63."
+        },
+        {
+          "line": 72,
+          "text": "## Routing question: unresolved, not silently decided"
+        },
+        {
+          "line": 75,
+          "text": "1421) still says the entire fee remains coordinator operating income. D32"
+        },
+        {
+          "line": 88,
+          "text": "would be s, not h, and event fees_collected would increase by g. These routing"
+        },
+        {
+          "line": 89,
+          "text": "rows await confirmation; they are not a chosen implementation. Do not route g"
+        },
+        {
+          "line": 95,
+          "text": "D70 adds g but does not explicitly settle s < m <= s+g. Charging both fees in"
+        },
+        {
+          "line": 97,
+          "text": "insufficient; partial principal compensation under D68 does not determine fee"
+        },
+        {
+          "line": 103,
+          "text": "claim to cover this branch. It is not a reason to assert that reserves are"
+        },
+        {
+          "line": 110,
+          "text": "   independently reconstructed R/N delta, not at unrelated admission checks."
+        },
+        {
+          "line": 120,
+          "text": "These are reserved tests, not registered or executed host controls. Their"
+        },
+        {
+          "line": 122,
+          "text": "cannot establish these new obligations. No production helper, frozen tariff,"
+        }
+      ]
+    },
+    {
+      "file": "doc/uno-m5-d71-accounting-addendum.md",
+      "sha256": "920952cb1e0b8dd804a53e47a65bd6604f24c43d9e59ff6d17a59561212cae15",
+      "scope_lines": [
+        {
+          "line": 6,
+          "text": "That earlier prospective document and all frozen predictions remain unchanged."
+        },
+        {
+          "line": 7,
+          "text": "This addendum is algebra and a future observation contract, not host evidence."
+        },
+        {
+          "line": 20,
+          "text": "remain separate. After prepare:"
+        },
+        {
+          "line": 34,
+          "text": "| Condition | New pending amount | Coordinator income | Event fees_collected | Issued receipts / sequence increments |"
+        },
+        {
+          "line": 41,
+          "text": "g is only a prospective threshold component there: issuance does not happen,"
+        },
+        {
+          "line": 42,
+          "text": "so it is not charged or credited to validators. Do not execute issuance and"
+        },
+        {
+          "line": 43,
+          "text": "then discard its output. This does not claim all other settlement work is free."
+        },
+        {
+          "line": 69,
+          "text": "listed terminal branches. The no-receipt branch does not create an unpaid"
+        },
+        {
+          "line": 72,
+          "text": "(refundable deposits and unexpected holdings) do not change in these isolated"
+        },
+        {
+          "line": 87,
+          "text": "h takes a round trip through custody. D60 slack increases by s, not h."
+        },
+        {
+          "line": 89,
+          "text": "They do not invent a new disposition for a bucket entry whose sweep admission"
+        },
+        {
+          "line": 90,
+          "text": "fails: bucket return/terminal rules remain separately applicable."
+        },
+        {
+          "line": 95,
+          "text": "fees, the full authenticated account/pending dictionary and both slot counters,"
+        },
+        {
+          "line": 99,
+          "text": "block income must be separated so it cannot hide a wrong fee destination."
+        },
+        {
+          "line": 109,
+          "text": "  no-issuance observation and fail there; an unrelated rejection is not evidence."
+        },
+        {
+          "line": 117,
+          "text": "These controls are specified, not run. No production code, A-owned guard or"
+        },
+        {
+          "line": 119,
+          "text": "sweep test remains pre-D70 evidence, not validation of the new split fee."
+        }
+      ]
+    },
+    {
+      "file": "doc/uno-m5-d73-phase-handoff.md",
+      "sha256": "4a77aecf994675b0597225a886281cbf66c4f295d3f1ac37ae95dca260868620",
+      "scope_lines": [
+        {
+          "line": 6,
+          "text": "Existing frozen accounting predictions remain unchanged."
+        },
+        {
+          "line": 13,
+          "text": "checked settlement deadline capacity. It does not read an authenticated queue."
+        },
+        {
+          "line": 17,
+          "text": "height check when implementing D73. This review does not change either check"
+        },
+        {
+          "line": 18,
+          "text": "or classify caller errors. Codec acceptance is not phase authorization."
+        },
+        {
+          "line": 21,
+          "text": "stage before authenticated removal observation, not proof that every later"
+        },
+        {
+          "line": 30,
+          "text": "message in the queue does not establish this record's prerequisite. An emitted"
+        },
+        {
+          "line": 31,
+          "text": "action or proposed effects entry is not by itself a committed enqueue."
+        },
+        {
+          "line": 38,
+          "text": "installation. Queue removal alone must not issue a receipt, advance the system"
+        },
+        {
+          "line": 40,
+          "text": "must not be confused with the phase transition."
+        },
+        {
+          "line": 42,
+          "text": "The prepare pairing is established at creation, not reconstructed from absence"
+        },
+        {
+          "line": 43,
+          "text": "at phase 1. Historical availability/error classification remains the caller's"
+        },
+        {
+          "line": 44,
+          "text": "responsibility; do not convert unavailable queue data into authenticated absence."
+        },
+        {
+          "line": 53,
+          "text": "2. **Not absence alone:** feed an absent queue together with an orphan proposed"
+        },
+        {
+          "line": 54,
+          "text": "   record from control 1. It must not establish successful phase transition by"
+        },
+        {
+          "line": 56,
+          "text": "   candidate validation boundary; do not install the orphan as trusted history"
+        },
+        {
+          "line": 69,
+          "text": "   required. Do not mutate an already installed phase-1 record to postpone its"
+        },
+        {
+          "line": 70,
+          "text": "   deadline. Its origin record's settlement_blocks remains the captured value."
+        },
+        {
+          "line": 72,
+          "text": "   wrong-height binding cannot establish this payout's absence. Mutate each"
+        },
+        {
+          "line": 76,
+          "text": "   earlier. Overflow is an error. This is a settlement policy deadline, not a"
+        },
+        {
+          "line": 82,
+          "text": "lost. Missing host adapter is pending, not a passed control. Do not retire A's"
+        },
+        {
+          "line": 91,
+          "text": "uses its authenticated bounce/Attempt path; this addendum does not require"
+        },
+        {
+          "line": 94,
+          "text": "These controls supplement, not replace, the six sequence successor tests. No"
+        },
+        {
+          "line": 96,
+          "text": "remain unavailable. This is a precise implementation handoff, not evidence of"
+        },
+        {
+          "line": 103,
+          "text": "This supplements the earlier contract; it does not change its evidence version"
+        },
+        {
+          "line": 105,
+          "text": "touch, not automatically at the deadline. Earlier references to window-close"
+        },
+        {
+          "line": 106,
+          "text": "Paid issuance must be read with that lazy trigger, not as a timer callback."
+        },
+        {
+          "line": 112,
+          "text": "overflow is not permission to invent a value. Do not include an owner-touch"
+        },
+        {
+          "line": 115,
+          "text": "Do not manufacture an orphan open record instead of running prepare."
+        },
+        {
+          "line": 119,
+          "text": "must succeed, so an identity mismatch cannot accidentally satisfy this test."
+        },
+        {
+          "line": 126,
+          "text": "branch result before/after this isolated bounce event. Require the outside-window"
+        },
+        {
+          "line": 128,
+          "text": "of the still-open record. Do not assert that all account balances or pending"
+        },
+        {
+          "line": 131,
+          "text": "It must not obtain funds from this record's reserve. Reconstruct these deltas"
+        },
+        {
+          "line": 132,
+          "text": "from authenticated artifacts, not merely a supplied branch label."
+        },
+        {
+          "line": 137,
+          "text": "reach the time-routing boundary and fail on the outside-window routing and/or"
+        },
+        {
+          "line": 139,
+          "text": "unrelated admission failure does not count. Restore and require green; disable"
+        },
+        {
+          "line": 145,
+          "text": "reserve issuance to that event, not retroactively to bounce arrival. If batching"
+        },
+        {
+          "line": 147,
+          "text": "block delta cannot prove that the bounce itself left W/P unchanged. Reaching d"
+        },
+        {
+          "line": 148,
+          "text": "without owner action is not itself a Paid transition."
+        },
+        {
+          "line": 150,
+          "text": "This control deliberately uses hb>d; it does not independently decide the"
+        },
+        {
+          "line": 151,
+          "text": "exact-deadline equality convention. Its pending status is unchanged until the"
+        },
+        {
+          "line": 159,
+          "text": "contract, not another cryptographic relation or a completed test. Implementer:"
+        },
+        {
+          "line": 160,
+          "text": "A; independent expected behavior: B. This adds to, not replaces, the six"
+        },
+        {
+          "line": 171,
+          "text": "no-pending state-fee rule (D65), not SEND's slot fee or proof-work units. The"
+        },
+        {
+          "line": 173,
+          "text": "unfrozen inputs explicitly as test configuration; do not create defaults."
+        },
+        {
+          "line": 182,
+          "text": "balance/context. In particular, do not edit f in an existing proof: the changed"
+        },
+        {
+          "line": 185,
+          "text": "This verifies a setup prerequisite; it does not authorize either fee at host."
+        },
+        {
+          "line": 191,
+          "text": "   payout and account update; record that the path was not bypassed."
+        },
+        {
+          "line": 194,
+          "text": "   payout. Record the named diagnostic and admission stage, not just is_error."
+        },
+        {
+          "line": 195,
+          "text": "   Do not count a failed kernel proof, unrelated limit or unavailable state as"
+        },
+        {
+          "line": 198,
+          "text": "   underpriced prepare to validator reconstruction. It must not be accepted"
+        },
+        {
+          "line": 201,
+          "text": "   rejection. Do not infer block invalidity merely from operation rejection."
+        },
+        {
+          "line": 203,
+          "text": "**Observation slice:** authenticated account/control/pending roots and counts,"
+        },
+        {
+          "line": 208,
+          "text": "Withdrawal, no pending installation and no emitted payout. Observe separately"
+        },
+        {
+          "line": 209,
+          "text": "any legitimate enclosing rejection effects; do not demand that unrelated block"
+        },
+        {
+          "line": 210,
+          "text": "activity vanish. An effects proposal or constructor fee() getter is not this"
+        },
+        {
+          "line": 220,
+          "text": "its exact stage; do not claim the entire fee requirement was removed or that"
+        },
+        {
+          "line": 230,
+          "text": "CTest when the adapters land. Missing/disabled/skipped targets remain incomplete."
+        },
+        {
+          "line": 232,
+          "text": "prepare guard is not evidence that tariff authentication has been installed;"
+        },
+        {
+          "line": 233,
+          "text": "its retirement must not be used to silently mark this separate item complete."
+        }
+      ]
+    },
+    {
+      "file": "doc/uno-m5-d76-independent-review.md",
+      "sha256": "f1d461f1ee620b8e5b9690d5ecfa236d8a8d00b97cbddf6ad914a802b043f8cc",
+      "scope_lines": [
+        {
+          "line": 6,
+          "text": "This is post-implementation review, not a frozen prediction. A's files were"
+        },
+        {
+          "line": 7,
+          "text": "not edited. All mutations/build products were isolated under `/tmp`."
+        },
+        {
+          "line": 23,
+          "text": "the principal-equality -7200, not an earlier send/pricing error. x=137 passes."
+        },
+        {
+          "line": 30,
+          "text": "checking test. This is rejection at the intended boundary, not proof that a"
+        },
+        {
+          "line": 33,
+          "text": "Observation/execution scope: actual Native pair construction and returned"
+        },
+        {
+          "line": 34,
+          "text": "status. This is not a signed-candidate mutation through the live collator."
+        },
+        {
+          "line": 47,
+          "text": "`WorkchainExecutionRegistry::resolve_scoped_workchain` and called its"
+        },
+        {
+          "line": 50,
+          "text": "resolution remain active; this is not a detached call to the reserve helper."
+        },
+        {
+          "line": 64,
+          "text": "**Limit:** this hook intentionally precedes cryptographic verification. The"
+        },
+        {
+          "line": 68,
+          "text": "review did not independently inject an erroneous stored reserve after the"
+        },
+        {
+          "line": 70,
+          "text": "behavior was inspected, not counted as a new independent positive/negative test."
+        },
+        {
+          "line": 80,
+          "text": "The pricing expression at `transaction.cpp:4664\u20134665` remains:"
+        },
+        {
+          "line": 95,
+          "text": "Thus principal-only does not accidentally get the whole custody pricing"
+        },
+        {
+          "line": 97,
+          "text": "is **the intended observation for this budget control**; it is not reused as"
+        },
+        {
+          "line": 105,
+          "text": "retained as an isolated `.inc` artifact; it is **not yet included in default"
+        },
+        {
+          "line": 109,
+          "text": "own exact-fee -7200, confirming that the two optional anchors remain separate."
+        },
+        {
+          "line": 111,
+          "text": "## Source-to-anchor chain and remaining scope"
+        },
+        {
+          "line": 118,
+          "text": "This is a lexical/direct-call inventory, not exclusion of every alias or"
+        },
+        {
+          "line": 120,
+          "text": "not tested here; the x mutations target the final Native equality."
+        },
+        {
+          "line": 130,
+          "text": "its unused execution backend is the real linked backend, not a success stub."
+        },
+        {
+          "line": 131,
+          "text": "This was not a hermetic rebuild of every dependency. Scope remains the Native"
+        },
+        {
+          "line": 132,
+          "text": "pair boundary and registered pre-proof reserve hook, not the full materialized"
+        },
+        {
+          "line": 136,
+          "text": "this review. The f matching-proof evidence remains in its separate report."
+        },
+        {
+          "line": 137,
+          "text": "Four anchored components do not imply all nine prepare contract items are done."
+        }
+      ]
+    },
+    {
+      "file": "doc/uno-m5-encoding-handoff.md",
+      "sha256": "ebaf03eaf79b58ffe2272baa5da19d48ce4ed4d032cdad47d8d9e614fe40e304",
+      "scope_lines": [
+        {
+          "line": 21,
+          "text": "  correction. Do not rewrite these or the older prediction to fit observations."
+        },
+        {
+          "line": 40,
+          "text": "These are codec/primitive results, not successful host issuance/settlement."
+        },
+        {
+          "line": 43,
+          "text": "Logs are convenient, not required inputs to reproduce the committed tests."
+        },
+        {
+          "line": 53,
+          "text": "  constructors and Deposit identity derivation remain unchanged."
+        },
+        {
+          "line": 55,
+          "text": "  value and return_failed. Host must enforce D62 eligibility, not trust encoding."
+        },
+        {
+          "line": 59,
+          "text": "- `encode/decode_workchain_withdrawal_account(value/root, authenticated_limit)`."
+        },
+        {
+          "line": 61,
+          "text": "  `origin_pending`. The legacy system receipts in `account.system_pending` and"
+        },
+        {
+          "line": 62,
+          "text": "  new `origin_pending` share ONE capacity of four and ONE Add-only dictionary."
+        },
+        {
+          "line": 66,
+          "text": "- Existing generic account/ReplayInput decoders have NOT been expanded. A must"
+        },
+        {
+          "line": 74,
+          "text": "The ABI does not independently parse/authenticate TL-B attribution or its ID."
+        },
+        {
+          "line": 82,
+          "text": "   tool failure was corrected; it was not counted as a mutation result."
+        },
+        {
+          "line": 84,
+          "text": "   account binding and dictionary Add checks as appropriate. Do not claim the"
+        },
+        {
+          "line": 92,
+          "text": "   B has not changed that file or claimed the guard green."
+        },
+        {
+          "line": 95,
+          "text": "   nonempty-control predicate is not evidence that the node calls it."
+        },
+        {
+          "line": 97,
+          "text": "   authenticated-set check. Do not merely delete/update the guard to turn green."
+        },
+        {
+          "line": 99,
+          "text": "   source-aware error classification remains the caller's responsibility."
+        },
+        {
+          "line": 106,
+          "text": "  installation, no-pending host behavior or complete closure integration is"
+        },
+        {
+          "line": 108,
+          "text": "- Deposit transcript and existing vectors MUST NOT be regenerated to fit code."
+        },
+        {
+          "line": 109,
+          "text": "- Do not weaken coordinator `info.bounced` rejection. Failed/late bounce belongs"
+        },
+        {
+          "line": 113,
+          "text": "  Failed issuance or no-receipt dust MUST NOT install increment. Two constructors"
+        },
+        {
+          "line": 114,
+          "text": "  reading the same batch-old value do not establish sequencing. Pending ID"
+        },
+        {
+          "line": 115,
+          "text": "  collision checks remain mandatory even with a counter and domain separation."
+        },
+        {
+          "line": 117,
+          "text": "  not total actual return loss c when c>b. Shortfall is an event-derived amount,"
+        },
+        {
+          "line": 118,
+          "text": "  not a persistent payable claim or an operating-budget subsidy."
+        },
+        {
+          "line": 120,
+          "text": "  The latter is not a delivery/safety bound. D68 freezing conditions still apply."
+        },
+        {
+          "line": 121,
+          "text": "- Do not read A's expected accounting outputs before freezing new predictions."
+        },
+        {
+          "line": 122,
+          "text": "  Independence is behavioral; coordinator-relayed outputs are not B observations."
+        },
+        {
+          "line": 123,
+          "text": "- Communication to A repeatedly fails at localhost:42881. Do not retry the same"
+        },
+        {
+          "line": 129,
+          "text": "The full-root API was already committed in fc55a5590; it is not awaiting"
+        },
+        {
+          "line": 131,
+          "text": "`encode_workchain_withdrawal_account(value, authenticated_limit)` and"
+        },
+        {
+          "line": 132,
+          "text": "`decode_workchain_withdrawal_account(root, authenticated_limit)`, returning"
+        },
+        {
+          "line": 133,
+          "text": "`WorkchainWithdrawalAccount { account, control, origin_pending }`."
+        },
+        {
+          "line": 134,
+          "text": "Generic old-account decoding is intentionally not widened. Host dispatch,"
+        },
+        {
+          "line": 135,
+          "text": "explicit migration authorization and calling the closure check remain A's work."
+        },
+        {
+          "line": 146,
+          "text": "they do not replace the already committed control ID/LT/count/closure checks or"
+        },
+        {
+          "line": 164,
+          "text": "This is the exact identical-entry derivation case, not merely a codec"
+        },
+        {
+          "line": 165,
+          "text": "roundtrip. It is still not a host sweep or atomic counter-installation test;"
+        },
+        {
+          "line": 168,
+          "text": "## Ordered queue item 3: actual sequencing producer not yet present"
+        },
+        {
+          "line": 170,
+          "text": "Read-only inspection of A's committed tree `2353777c7` (not WIP) found the"
+        },
+        {
+          "line": 177,
+          "text": "Consequently three-source same-batch sequencing cannot yet be tested against"
+        },
+        {
+          "line": 178,
+          "text": "actual host producers. This item is NOT complete. When A commits those producers,"
+        },
+        {
+          "line": 179,
+          "text": "feed their actual before/after coordinator and pending roots into controls for:"
+        },
+        {
+          "line": 181,
+          "text": "and (3) failure/no-receipt paths publishing an increment. Do not substitute a"
+        },
+        {
+          "line": 183,
+          "text": "Queue item 4 (real D62/D63 integration) likewise remains pending, not skipped"
+        },
+        {
+          "line": 188,
+          "text": "hold algebraically in the deficient Failed branch; it is not an actual host"
+        },
+        {
+          "line": 189,
+          "text": "observation. Do not duplicate or rewrite that prediction while waiting for"
+        },
+        {
+          "line": 190,
+          "text": "items 3/4. The earlier specification SHA remains its evidence provenance."
+        },
+        {
+          "line": 192,
+          "text": "## D51 arrival trigger for the pending sequencing controls"
+        },
+        {
+          "line": 196,
+          "text": "test-scope registered Native adapter. Initial reachability is 221 files, printed"
+        },
+        {
+          "line": 197,
+          "text": "on every run; exceeding 442 requires scope review. Current installation is the"
+        },
+        {
+          "line": 206,
+          "text": "This is a lexical/static arrival trigger, not three-source sequencing evidence."
+        },
+        {
+          "line": 208,
+          "text": "coupling and separately linked units outside named roots are not inferred."
+        },
+        {
+          "line": 211,
+          "text": "do not merely refresh the baseline. Actual D62/D63 remains deferred as directed."
+        },
+        {
+          "line": 216,
+          "text": "unchanged. This is not a report of host execution or fee measurements."
+        },
+        {
+          "line": 224,
+          "text": "six missing tests; this is readiness evidence, not host sequencing evidence."
+        },
+        {
+          "line": 225,
+          "text": "The default expiry diagnostic now points to that procedure. Its scanning scope"
+        },
+        {
+          "line": 227,
+          "text": "A's prepare guard remains until its separate Native prepare evidence exists."
+        },
+        {
+          "line": 236,
+          "text": "slot-only synthetic sweep predicate is not D70 coverage. Routing of the new"
+        },
+        {
+          "line": 238,
+          "text": "`s < m <= s+g` no-positive-receipt branch, remain explicit questions. No actual"
+        },
+        {
+          "line": 248,
+          "text": "sweep therefore increases D60 slack by s, not s+g. Both conservation equations"
+        },
+        {
+          "line": 251,
+          "text": "D70 questions are resolved by this new addendum, not by rewriting them."
+        },
+        {
+          "line": 259,
+          "text": "for integration, not silently changed in this documentation task. The codec"
+        },
+        {
+          "line": 260,
+          "text": "cannot attest queue presence/absence. Source spec: 3b4413b390f43969."
+        },
+        {
+          "line": 266,
+          "text": "the account. The bounce must use the outside-window path without W/P release"
+        },
+        {
+          "line": 268,
+          "text": "must not be mistaken for reserve use. Replacing the height test with record-open"
+        },
+        {
+          "line": 280,
+          "text": "but not run in this selection. No full M5 or full regression claim."
+        },
+        {
+          "line": 282,
+          "text": "## External review scope draft"
+        },
+        {
+          "line": 284,
+          "text": "`doc/uno-d34-external-review-scope-draft.md` separately names SEND/COLLECT,"
+        },
+        {
+          "line": 286,
+          "text": "pending prohibition, and D33/D69 verification plus actual host callers. It"
+        },
+        {
+          "line": 288,
+          "text": "It is not an audit or commissioning action. Current D34/D44 still say no further"
+        },
+        {
+          "line": 300,
+          "text": "cannot be certified there. The runnable review script and expectation module"
+        },
+        {
+          "line": 311,
+          "text": "not proof-work units. Implementing A must supply actual admission diagnostics"
+        },
+        {
+          "line": 319,
+          "text": "execution, absent observation markers and test/tool failures cannot pass."
+        },
+        {
+          "line": 321,
+          "text": "test and successful execution reports; these validate the runner, not Native"
+        },
+        {
+          "line": 326,
+          "text": "backed pending, while the prepare event must preserve the complete pending cut."
+        },
+        {
+          "line": 335,
+          "text": "freeze process; explicit implementation-test inputs are not deployment defaults."
+        },
+        {
+          "line": 339,
+          "text": "| `failed.issuance_billing_units` (D70) | Not frozen. The reviewed fixture explicitly encoded 4; with authenticated test base 2 it produced g=8. Neither 4 nor 8 is a frozen protocol constant. Billing units remain distinct from proof-work units. |"
+        },
+        {
+          "line": 340,
+          "text": "| Withdrawal `f_state` | Not frozen; explicit test configuration only, no local default. |"
+        },
+        {
+          "line": 341,
+          "text": "| `max_bounce_cost` | Not frozen; reserve must match authenticated configuration. Apply D68's pricing-change margin criteria, not a universal network-cost guarantee. |"
+        },
+        {
+          "line": 342,
+          "text": "| `payout_settlement_blocks` | Not frozen; explicit policy, not a finite delivery bound or safety guarantee. |"
+        },
+        {
+          "line": 343,
+          "text": "| `K_withdrawal` (D67) | Initial value likewise remains separately conditional on freezing; do not infer it from test fixtures or from this list's other entries. |"
+        },
+        {
+          "line": 345,
+          "text": "The observed base=2 is the fixture's authenticated tariff input, not a newly"
+        },
+        {
+          "line": 347,
+          "text": "or full Failed-contract acceptance. The independent review remains retrospective;"
+        },
+        {
+          "line": 348,
+          "text": "full three-site validator refusal behavior remains unestablished by that review."
+        }
+      ]
+    },
+    {
+      "file": "doc/uno-m5-failed-independent-review.md",
+      "sha256": "ceb0bd38fd70ada39f7f16132cc8819f2ca24ebe190ca26bb791fcd301b543dd",
+      "scope_lines": [
+        {
+          "line": 4,
+          "text": "`09a94d798ea9b9b7c68f10a128c00de817d89141`. B source remains based on"
+        },
+        {
+          "line": 7,
+          "text": "seeing A's report, not a new pre-observation prediction."
+        },
+        {
+          "line": 16,
+          "text": "| Gross custody recovery | Actual y=9996070, not x=10000000 | Actual message/transaction/account artifacts and direct source chain |"
+        },
+        {
+          "line": 17,
+          "text": "| Five stable OFF artifacts | Byte-identical | B compared bytes directly, not A's comparison script |"
+        },
+        {
+          "line": 18,
+          "text": "| Three old refusal sites | Bodies byte-identical; complete three-site behavior not established | Independent occurrence-aware source extraction plus one concrete OFF artifact pair |"
+        },
+        {
+          "line": 20,
+          "text": "No missing g was found. This does NOT establish the full Failed contract, all"
+        },
+        {
+          "line": 28,
+          "text": "TEST configuration, not frozen production defaults. `workchain-m3-business-config.h`"
+        },
+        {
+          "line": 30,
+          "text": "has a value, not an omitted-field fallback to four. A zero/other future policy's"
+        },
+        {
+          "line": 31,
+          "text": "legality or the production business-config codec is outside this review."
+        },
+        {
+          "line": 42,
+          "text": "it does not retain C as coordinator revenue. This explains why a helper fee"
+        },
+        {
+          "line": 49,
+          "text": "`workchain-failed-funded.h:71-85` uses received for y; it does not substitute x."
+        },
+        {
+          "line": 56,
+          "text": "`recovered/released_p/released_w` numbers are not themselves Native balance edits."
+        },
+        {
+          "line": 60,
+          "text": "B wrote a separate decoder (`observe.cpp`), not a call to A's live observer."
+        },
+        {
+          "line": 67,
+          "text": "3930 with x-y. Thus 3930 is not merely a name given to a subtraction."
+        },
+        {
+          "line": 84,
+          "text": "receipt=y+b-slot-g. It does not infer these from equal conservation sums."
+        },
+        {
+          "line": 85,
+          "text": "It reads actual installed receipt amount and roots, but does not independently"
+        },
+        {
+          "line": 87,
+          "text": "Artifact creation/acceptance remains A's execution; decoding/comparison is B's."
+        },
+        {
+          "line": 108,
+          "text": "Native artifact reading, decoder and expectations were not changed for the mutant."
+        },
+        {
+          "line": 109,
+          "text": "This excludes a hardcoded eight in the helper. It is NOT an authenticated"
+        },
+        {
+          "line": 116,
+          "text": "system-encryption backend. They are not a full clean build. Initial missing"
+        },
+        {
+          "line": 122,
+          "text": "## OFF: independent byte comparison, with honest scope"
+        },
+        {
+          "line": 132,
+          "text": "| validation.message | 89 | cannot execute configured workchain: multi-account admission and replay are not connected |"
+        },
+        {
+          "line": 136,
+          "text": "are retained. B did not rerun A's script or use its `cmp` result as evidence."
+        },
+        {
+          "line": 138,
+          "text": "B did not independently rebuild/re-run the validator pair or certify its binary"
+        },
+        {
+          "line": 139,
+          "text": "provenance. Logs/timings/DB files are not included in the byte-equivalence claim."
+        },
+        {
+          "line": 140,
+          "text": "These five files alone do not prove absence of every possible publication side"
+        },
+        {
+          "line": 148,
+          "text": "`multi-account admission and replay are not connected`, are byte-identical."
+        },
+        {
+          "line": 149,
+          "text": "The comparison retains position/identity and multiplicity, not a set of strings"
+        },
+        {
+          "line": 155,
+          "text": "contract's full `vq-refusals` item remains unclosed despite this correct byte"
+        },
+        {
+          "line": 156,
+          "text": "comparison and unchanged bodies. Collator's fourth refusal was not independently"
+        },
+        {
+          "line": 159,
+          "text": "## Remaining boundaries"
+        },
+        {
+          "line": 161,
+          "text": "Known incarnation classification/unknown-source-counter gaps remain outside this"
+        },
+        {
+          "line": 162,
+          "text": "narrow component review; they are not fixed or accepted. No sequence guard is"
+        },
+        {
+          "line": 165,
+          "text": "publication mutation/oracle-control matrix remain separate acceptance work."
+        }
+      ]
+    },
+    {
+      "file": "doc/uno-m5-fee-admission-independent-review.md",
+      "sha256": "7b286d61b77fb2cc3a4b4c4f4112157d2002694c15e363bbf7e94cc76018d341",
+      "scope_lines": [
+        {
+          "line": 10,
+          "text": "SHA256 prefix `21e3852817331916`). This is not a new live block run or completion"
+        },
+        {
+          "line": 11,
+          "text": "of the entire WITHDRAWAL-PREPARE contract. Default CTest registration remains"
+        },
+        {
+          "line": 12,
+          "text": "a separate integration step; the fail-closed runner has not been weakened."
+        },
+        {
+          "line": 22,
+          "text": "It does not substitute a newly invented fee-only host function."
+        },
+        {
+          "line": 26,
+          "text": "subtraction for the latter. The old fixture's f=257 is not used as the floor."
+        },
+        {
+          "line": 27,
+          "text": "Principal=137, q=100 and b=23 remain identical. Explicit fixture values are not"
+        },
+        {
+          "line": 41,
+          "text": "The low case is therefore not green because of a mismatching proof. The exact"
+        },
+        {
+          "line": 55,
+          "text": "the builtin but ignores its result. It does not alter the fees, config, proof,"
+        },
+        {
+          "line": 66,
+          "text": "   Its process terminates with **SIGABRT** (Python returncode **-6**), not exit 1."
+        },
+        {
+          "line": 82,
+          "text": "  Full outer registry admission/materialized-arena construction is not rerun;"
+        },
+        {
+          "line": 84,
+          "text": "- `WorkchainProofTestAccess` supplies an explicit test budget of 100000, not a"
+        },
+        {
+          "line": 90,
+          "text": "- This is post-implementation review, not a prediction. No frozen prediction was"
+        },
+        {
+          "line": 107,
+          "text": "fresh environment; do not overwrite another worker's live fixture."
+        },
+        {
+          "line": 113,
+          "text": "binary hashes are recorded. This is not a hermetic rebuild of all dependencies."
+        },
+        {
+          "line": 117,
+          "text": "That link failure was a tool/dependency mismatch, not a fee-admission failure."
+        }
+      ]
+    },
+    {
+      "file": "doc/uno-m5-prepare-independent-review.md",
+      "sha256": "bca5ae72bbb1fcbc13ad443f34b7d0c71ecbecaac2f0d83ca35214993cbf1449",
+      "scope_lines": [
+        {
+          "line": 8,
+          "text": "`24291053f8c289fe`; it does not claim that"
+        },
+        {
+          "line": 11,
+          "text": "This is independent **post-implementation review**, not a frozen prediction."
+        },
+        {
+          "line": 14,
+          "text": "production files were not edited. No new live collation/validation run was made."
+        },
+        {
+          "line": 20,
+          "text": "| Component perturbations | A's accepted state independently yields R=999999506, N=999999483, P=137, W=160. Re-encoded account-root mutations: record x+1 passes the pairing oracle because P and W both increase; record q+1 also passes because neither reads q; reserve b+1 fails the second equation. These are post-acceptance artifact mutations, not candidate-acceptance experiments. |"
+        },
+        {
+          "line": 21,
+          "text": "| Oracle control | Keeping the same reserve mutation but disabling the copied actual `check_m4_backing` predicate makes the control fail at `check.is_error() == (component == 2)`, exit 1. The oracle is not empty. |"
+        },
+        {
+          "line": 22,
+          "text": "| D75, both directions | Normal q=99 and q=101 reach the specific -7200 exact-fee equality error. Removing only the equality block, retaining the expanded pricing ceiling and actual Native construction, makes both tests fail at `result.is_error()`, exit 1. The check carries enforcement; earlier pricing rejection does not explain the green. |"
+        },
+        {
+          "line": 24,
+          "text": "| Legacy optional absent | Four canonical BOCs compared byte for byte, all identical: the two Native transaction roots and two resulting Account roots. One legacy fixture, principal 137, actual fee 100, ceiling 500, absent exact-q. This is not universal legacy equivalence or a full regression claim. |"
+        },
+        {
+          "line": 36,
+          "text": "Thus the equation cannot independently authenticate the record's principal,"
+        },
+        {
+          "line": 39,
+          "text": "the inspected data dependencies, not a new live first-equation mutation run."
+        },
+        {
+          "line": 43,
+          "text": "principal. Those are **test assertions**. They must not be presented as D76's"
+        },
+        {
+          "line": 51,
+          "text": "not an authenticated policy value or a proposed K_withdrawal default."
+        },
+        {
+          "line": 53,
+          "text": "The input state is from A's `/tmp/uno-m3-live-grcv32yz` accepted run, not a new B"
+        },
+        {
+          "line": 58,
+          "text": "historical replay was inspected, not independently rerun in this artifact test."
+        },
+        {
+          "line": 71,
+          "text": "| Component/link | Required independent anchor | Implemented evidence | Remaining boundary |"
+        },
+        {
+          "line": 73,
+          "text": "| x: authorized principal to actual outbound value | D76: published message value == authorized x, mismatch CandidateInvalid | Live test compares record to operation (`test/test-m3-live.cpp:325`) and payout to operation (`:340`). Pricing checks sent payment against its request (`transaction.cpp:4599\u20134603`). | Those checks do not establish the new serialized publication-boundary D76 consensus check. D76 is newer than reviewed code; x\u00b11 controls at that new assertion are pending. Do not substitute principal cancellation in P/W for this anchor. |"
+        },
+        {
+          "line": 74,
+          "text": "| q: authorized outward fee to actual fee spent | D75: decoded custody debit minus actual payout value == q | `transaction.cpp:4717\u20134735`; before-payout balance is captured after entry/D32 allocation. Both q directions reject at equality; removal controls fail. | This anchors actual q spending, not every historical copy of q. It is opt-in for exact-q callers. |"
+        },
+        {
+          "line": 75,
+          "text": "| q: authorized fee to W record's `outward_fee_paid` | Stored historical cost must retain the authorized value | Engine copies it from the operation at `crypto/test/workchain-m3-node-engine.h:289\u2013293`. | No independent field equality assertion found in the inspected live oracle. Re-encoding q=101 instead of 100 leaves pairing green. Correct copying in current code is not mutation evidence against a shared reconstruction error. This does not demonstrate acceptance of a forged candidate. |"
+        },
+        {
+          "line": 76,
+          "text": "| b: authorized reserve to W and refundable balance | `record.original_reserve == authorized b`; initially consumed=0 and refundable=b, W=x+b | Same engine construction `:289\u2013293` copies b into both original and refundable fields. Proof request receives the same b at `crypto/test/workchain-m5-debit.h:73\u201374`; context binds encoded operation data at `:49\u201358`. Codec checks consumed+refundable=original at `workchain-withdrawal-codec.h:184\u2013185`. | No separate record-b versus operation-b assertion found. The codec is an internal reconciliation, not an authorization comparison. The single-record reserve perturbation is caught by the second equation, but a common mistake on both sides is outside that control. No native reexecution mutation proving this independent link was run. |"
+        },
+        {
+          "line": 77,
+          "text": "| b: authorized reserve to required authenticated reserve policy | D76 supplement: stored b must equal authenticated max_bounce_cost; mismatch CandidateInvalid; no local default | Prepare parameters at `workchain-m3-business-config.h:15\u201318` contain state_fee, withdrawal_limit and settlement_blocks, not max_bounce_cost. The inspected debit path checks the sum and proof, but has no authenticated required-reserve comparison. | **Not found in this test prepare profile.** Distinct from the proof binding the b it was given. No default value is proposed here. |"
+        },
+        {
+          "line": 78,
+          "text": "| f: authorized operation fee to authenticated floor | f >= state_fee + base \u00d7 SEND's one billing unit; sender remainder is tip | **Now wired:** node engine `:246\u2013248` requires explicit prepare/tariff and calls `derive_workchain_withdrawal_fee_amounts`. `workchain-operation-fees.h:35\u201339` checks arithmetic and rejects below floor with -7200. This occurs before proof verification. | The earlier statement \u201cno host fee check exists\u201d is stale for this commit. FEE-ADMISSION readiness still requires the independent pair of matching proofs (both first verified separately by the kernel) and the targeted admission/removal evidence. That evidence was not produced in this review. |"
+        },
+        {
+          "line": 83,
+          "text": "pending handoff test is not proof that its check is absent, and a present helper"
+        },
+        {
+          "line": 84,
+          "text": "is not proof that all handoff requirements have been met."
+        },
+        {
+          "line": 92,
+          "text": "returned pair. It does not inspect only the builder's private scratch."
+        },
+        {
+          "line": 105,
+          "text": "the advertised mutation shape; it cannot attest to unretained historical edits"
+        },
+        {
+          "line": 110,
+          "text": "  later error-code assertions. Account BOC alone would not catch this specific"
+        },
+        {
+          "line": 118,
+          "text": "log, not independently rerun here. B's direct evidence is the transaction-list"
+        },
+        {
+          "line": 126,
+          "text": "The actual funded/debited Native pair remains private until the final return"
+        },
+        {
+          "line": 130,
+          "text": "review plus the Native boundary experiment, not an exhaustive claim about all"
+        },
+        {
+          "line": 135,
+          "text": "signature remained to compile the common translation unit. A dedicated caller"
+        },
+        {
+          "line": 137,
+          "text": "serialized all four roots; full BOC bytes, not just hashes, matched. This is a"
+        },
+        {
+          "line": 138,
+          "text": "comparison of the changed behavior with that behavior restored, not a claim to"
+        },
+        {
+          "line": 141,
+          "text": "## Execution/provenance limits"
+        },
+        {
+          "line": 145,
+          "text": "libraries. It was not a hermetic rebuild of every dependency. No A WIP source"
+        },
+        {
+          "line": 149,
+          "text": "Initial harness failures were not business findings: a missing shadow test"
+        }
+      ]
+    },
+    {
+      "file": "doc/uno-m5-principal-budget-default.md",
+      "sha256": "9395df99c1b13d184f9528f35d9b22786aec4d42f42b0f55af70cf6362d21767",
+      "scope_lines": [
+        {
+          "line": 3,
+          "text": "This supersedes only the integration-status limitation in"
+        },
+        {
+          "line": 15,
+          "text": "With exact q=100, ceiling 0 succeeds. This does not observe a live queue or"
+        },
+        {
+          "line": 21,
+          "text": "this tree, linking existing Native dependency libraries. This is not a full"
+        },
+        {
+          "line": 35,
+          "text": "establishes that its assertion can fail. This does not retire any handoff guard."
+        }
+      ]
+    },
+    {
+      "file": "doc/uno-m5-sequence-handoff.md",
+      "sha256": "3a4cddfca1b315bcc0c2758030b6d6c21b839c208e66369303588bb201c7f76d",
+      "scope_lines": [
+        {
+          "line": 5,
+          "text": "This is a prospective test contract, not host execution evidence."
+        },
+        {
+          "line": 7,
+          "text": "The first non-Deposit issuer expires B's inventory. Do not refresh its snapshot"
+        },
+        {
+          "line": 9,
+          "text": "Native prepare has an authenticated account/pending-cut mutation test. Settlement"
+        },
+        {
+          "line": 10,
+          "text": "is allowed to install backed pending; prepare is not."
+        },
+        {
+          "line": 22,
+          "text": "in default CTest when their real adapters exist. The runner alone is not an"
+        },
+        {
+          "line": 23,
+          "text": "oracle and cannot certify what a named test actually does. Review their bodies."
+        },
+        {
+          "line": 24,
+          "text": "Do not retire the inventory until all contracts and their mutation evidence are"
+        },
+        {
+          "line": 27,
+          "text": "three sources covered. Do not invent a sweep implementation for these tests."
+        },
+        {
+          "line": 35,
+          "text": "their function names are not yet prescribed by this contract. No direct codec"
+        },
+        {
+          "line": 39,
+          "text": "and a valid type-2 bucket entry. Fees, limits and reserve come from explicit test"
+        },
+        {
+          "line": 40,
+          "text": "configuration, including the unfrozen D70 issuance tariff; do not infer tariff"
+        },
+        {
+          "line": 46,
+          "text": "full authenticated account/pending dictionary after each commit. Inspect all"
+        },
+        {
+          "line": 47,
+          "text": "origin variants and both counters, not only proposed effects. Preserve an"
+        },
+        {
+          "line": 50,
+          "text": "Count actual installed receipts, not operations: one operation may issue more"
+        },
+        {
+          "line": 57,
+          "text": "| `staged` | Starting at authenticated sequence n, execute Deposit, Failed issuance and sweep in one supported atomic batch, in each supported source order. For actual issuance number j require decoded origin sequence checked(n+j); final coordinator sequence checked(n+k), k actual receipts. Require all new keys unique across user/system pending and their source identities correct; retained sentinel unchanged. If the scheduler forbids an order, demonstrate that restriction rather than simulating the order. Repeat at UINT64_MAX to verify rejection/nonpublication, never wrap. |"
+        },
+        {
+          "line": 58,
+          "text": "| `competing` | From the same authenticated predecessor construct two actual producer candidates that each propose n+1. Individually validate against that predecessor. Attempt to combine their stale successors at the real batch validator/install boundary. Require no committed batch with both receipts and only one increment. Then reconstruct the second against staged state and require n+2. Do not fabricate matching counter expectations from either candidate's effects. |"
+        },
+        {
+          "line": 59,
+          "text": "| `nonpublication` | For every available issuer execute an admission rejection and a permitted no-receipt outcome, plus failure after preparation but before batch installation. Read committed roots: no receipt and no sequence increment for that event. Other normal rejection effects (bounce, bucket or fees) need not be unchanged. In a successful mixed batch containing a no-receipt event, only actual receipts consume increments. In an aborted batch, none of its staged increments is installed. |"
+        },
+        {
+          "line": 60,
+          "text": "| `stale-read-control` | In an isolated source copy make the second real issuer read the original coordinator counter instead of the staged successor. Compile and reach that issuer. The staged/competing oracle must fail specifically on reused sequence or publication inconsistency. A build error or earlier unrelated admission error is not the expected red. Restore and require green. |"
+        },
+        {
+          "line": 61,
+          "text": "| `publish-control` | In isolated copies (a) omit sequence installation on successful issuance and (b) publish an increment on rejection/no-receipt. Each must reach the corresponding committed-state observation and fail its sequence/receipt pairing assertion. Restore and require green. Cover both directions, not just the no-receipt case. |"
+        },
+        {
+          "line": 62,
+          "text": "| `oracle-control` | Disable the pairing assertions in the isolated test oracle while retaining the preceding producer mutations. The mutation driver itself must fail because its expected red disappears. This checks that a failing setup is not masquerading as the sequencing oracle. |"
+        },
+        {
+          "line": 70,
+          "text": "## Current evidence and limits"
+        },
+        {
+          "line": 73,
+          "text": "tests are not registered. That proves missing implementation is visible; it does"
+        },
+        {
+          "line": 74,
+          "text": "not prove any of the host invariants above. The existing expiry inventory and"
+        },
+        {
+          "line": 75,
+          "text": "its original controls remain active and unchanged in scope and predicates."
+        }
+      ]
+    },
+    {
+      "file": "doc/uno-m5-statement-guard-callee-probe.md",
+      "sha256": "34838b6f8fa0adccf17e8bf1169d6fcda935bdeaf2254840c8eb10f4cddbc446",
+      "scope_lines": [
+        {
+          "line": 1,
+          "text": "# Statement guard callee probe and scope comparison"
+        },
+        {
+          "line": 5,
+          "text": "All mutated source files and execution fixtures remained under"
+        },
+        {
+          "line": 11,
+          "text": "The unchanged statement constructor calls `relation::validate_limits` at"
+        },
+        {
+          "line": 15,
+          "text": "normal limit validation. Its signature remained unchanged. The statement's"
+        },
+        {
+          "line": 16,
+          "text": "fields, signatures, call targets and entire bytes remained unchanged."
+        },
+        {
+          "line": 20,
+          "text": "record. These are explicitly synthetic account fixtures, not real chain data."
+        },
+        {
+          "line": 21,
+          "text": "The operation wrote an actual file containing account-state bytes, not merely"
+        },
+        {
+          "line": 22,
+          "text": "a log or a flag named \"account written\". It did NOT install an authenticated"
+        },
+        {
+          "line": 24,
+          "text": "was introduced inside the callee by the mutation; it is not present in baseline."
+        },
+        {
+          "line": 27,
+          "text": "explicit limits and an identity point that eventually yields DECODE=2. That"
+        },
+        {
+          "line": 29,
+          "text": "mutation, showing that identical statement error output does not imply absence"
+        },
+        {
+          "line": 45,
+          "text": "both runs. Thus they do not cover this body-only dependency change. This is"
+        },
+        {
+          "line": 46,
+          "text": "outcome 2 for indirect filesystem/account-fixture effects, not outcome 1 or a"
+        },
+        {
+          "line": 54,
+          "text": "It is intentionally not installed on the shared branch as a mutation."
+        },
+        {
+          "line": 63,
+          "text": "executions compiled successfully. Shared-tree source status remained clean"
+        },
+        {
+          "line": 65,
+          "text": "not source modifications; later normal builds must use their normal manifest."
+        },
+        {
+          "line": 67,
+          "text": "## Scope comparison of the two new guards"
+        },
+        {
+          "line": 70,
+          "text": "the latter chooses what facts to inspect within them. One does not replace the"
+        },
+        {
+          "line": 73,
+          "text": "| Guard | File selection | Within-file predicate | Reason and limit |"
+        },
+        {
+          "line": 75,
+          "text": "| Existing key-epoch / closure-expiry | Explicit roots and static include/module traversal | Syntax units / tokens plus selected representation identities | Finds newly referenced files; does not resolve aliases or runtime coupling |"
+        },
+        {
+          "line": 77,
+          "text": "| A statement-expiry, 28b4e3001 | One supplied statement source file | Parsed fields, signatures and call-target names | Intentionally bounded interface inventory; does not traverse or inspect existing callee bodies |"
+        },
+        {
+          "line": 80,
+          "text": "because the root set concerns counter installation, not rotation or closure."
+        },
+        {
+          "line": 81,
+          "text": "A documented its one-module boundary before this probe, so it is not an"
+        },
+        {
+          "line": 83,
+          "text": "unchanged statement interface, NOT unchanged effects of the full execution"
+        },
+        {
+          "line": 89,
+          "text": "checking callee bodies would not close this example. Extending to local modules"
+        },
+        {
+          "line": 90,
+          "text": "would still not prove absence of effects in external callees or resolved aliases."
+        },
+        {
+          "line": 92,
+          "text": "scope. No general no-side-effect, no-pending host enforcement, or complete"
+        }
+      ]
+    },
+    {
+      "file": "doc/uno-m5-unknown-origin-independent-review.md",
+      "sha256": "534c5f24257b64d341998b2593aae0609ee7eb84ffa4ddf1c294644f4131a97c",
+      "scope_lines": [
+        {
+          "line": 4,
+          "text": "This is a retrospective review, not an independent pre-observation prediction."
+        },
+        {
+          "line": 8,
+          "text": "libraries; this is not a clean full build or complete M5 acceptance."
+        },
+        {
+          "line": 17,
+          "text": "   execution. It was not already classified as a known local error upstream."
+        },
+        {
+          "line": 22,
+          "text": "4. Validator direct unknown injection is NOT established. Shared normalization"
+        },
+        {
+          "line": 23,
+          "text": "   code is shared implementation, not shared end-to-end execution evidence."
+        },
+        {
+          "line": 39,
+          "text": "library observers remain unchanged; this probes this collator's returned-unknown"
+        },
+        {
+          "line": 40,
+          "text": "path, not removal of every observer across the program."
+        },
+        {
+          "line": 44,
+          "text": "file hash. The original source DB was not modified. A first attempt used the"
+        },
+        {
+          "line": 45,
+          "text": "wrong earlier DB snapshot and stopped with `651: not in db`, before execution;"
+        },
+        {
+          "line": 46,
+          "text": "that was a fixture acquisition failure, NOT a business/control red. The correct"
+        },
+        {
+          "line": 61,
+          "text": "negative control passed; count=1 is NOT a successful wiring acceptance run."
+        },
+        {
+          "line": 70,
+          "text": "not produce this observation."
+        },
+        {
+          "line": 78,
+          "text": "log `account-proof-preflight`, and could not have this successful execution/work"
+        },
+        {
+          "line": 82,
+          "text": "path, created deliberately by the test. It is not a demonstration of a natural"
+        },
+        {
+          "line": 84,
+          "text": "categories bypass counting; zero cannot certify their correctness."
+        },
+        {
+          "line": 101,
+          "text": "aborts before reaching them. It does not derive zero transactions from -7201."
+        },
+        {
+          "line": 106,
+          "text": "Observation limit: statistics and candidate-file publication at the collator"
+        },
+        {
+          "line": 107,
+          "text": "boundary, not a fresh exhaustive account/queue/DB-root equivalence proof. No"
+        },
+        {
+          "line": 111,
+          "text": "\u201czero transactions\u201d must not be rewritten as \u201czero execution.\u201d"
+        },
+        {
+          "line": 113,
+          "text": "## Validator: exact remaining gap"
+        },
+        {
+          "line": 117,
+          "text": "at 6701-6717 may already assign known local/candidate codes based on that scope."
+        },
+        {
+          "line": 122,
+          "text": "and increment semantics apply to that function. They do NOT demonstrate that a"
+        },
+        {
+          "line": 124,
+          "text": "replay, that earlier normalization/catches do not intercept it, or that the"
+        },
+        {
+          "line": 128,
+          "text": "close the gap either. Normal replay reporting zero is not fault-injection evidence."
+        },
+        {
+          "line": 135,
+          "text": "counter assertion to fail. It remains **not measured**, not structurally implied."
+        },
+        {
+          "line": 136,
+          "text": "Proof-preflight's own actual unknown injection was not added in this review."
+        },
+        {
+          "line": 138,
+          "text": "## Process-local scope and remaining limitations"
+        },
+        {
+          "line": 144,
+          "text": "`m5-live-unknown-control.h:7-9` is a test observation written at exit, not restored"
+        },
+        {
+          "line": 146,
+          "text": "expected, not a defect. Saturation is inspected here, not stress-tested to its"
+        },
+        {
+          "line": 147,
+          "text": "maximum. Log filters do not guard the increment in the source."
+        },
+        {
+          "line": 151,
+          "text": "assignments and unexecuted paths are not certified by zero. No persistence change"
+        }
+      ]
+    },
+    {
+      "file": "doc/uno-m5-withdrawal-codec-interface-proposal.md",
+      "sha256": "0ecc4af67270128f463b33a1b6eb665c8bafdf96761f3569049490f1c7aa78bd",
+      "scope_lines": [
+        {
+          "line": 4,
+          "text": "This is a field/API proposal, **not a callable interface or frozen wire layout**."
+        },
+        {
+          "line": 19,
+          "text": "not change SEND/COLLECT or Close preimages. The second uses a distinct Attempt"
+        },
+        {
+          "line": 21,
+          "text": "The helper accepts an explicit sequence; accepting it does not authenticate it."
+        },
+        {
+          "line": 24,
+          "text": "tags will be included in the actual codec delivery, not guessed by consumers."
+        },
+        {
+          "line": 26,
+          "text": "**A input required:** where the independent Attempt sequence lives, its scope"
+        },
+        {
+          "line": 28,
+          "text": "not substitute account auth_nonce or Native LT for that independent sequence."
+        },
+        {
+          "line": 41,
+          "text": "  unchanged range proof. All authorization bytes remain committed in the block."
+        },
+        {
+          "line": 46,
+          "text": "compared with independently rebuilt inputs, not used as their sources."
+        },
+        {
+          "line": 77,
+          "text": "| refundable_reserve | Remaining reserve attributable to this owner |"
+        },
+        {
+          "line": 81,
+          "text": "At opening they are respectively 0 and b. This is reserve accounting, not a"
+        },
+        {
+          "line": 82,
+          "text": "definition of the returned principal or the whole pending credit. In particular,"
+        },
+        {
+          "line": 83,
+          "text": "on Failed the gross returned principal and the remaining reserve must not be"
+        },
+        {
+          "line": 84,
+          "text": "conflated. Terminal dust disposition remains explicit under D65."
+        },
+        {
+          "line": 88,
+          "text": "obligation, not the pre-proof Attempt identity. Terminal records are removed"
+        },
+        {
+          "line": 89,
+          "text": "according to the specification; this proposal does not introduce permanent"
+        },
+        {
+          "line": 94,
+          "text": "The proposed record does not choose coordinator vs account vs custody storage,"
+        },
+        {
+          "line": 95,
+          "text": "invent an index, or infer a capacity limit. Until those inputs arrive, a record"
+        },
+        {
+          "line": 96,
+          "text": "codec cannot be represented as a usable authenticated obligation interface."
+        }
+      ]
+    },
+    {
+      "file": "doc/uno-m5-withdrawal-failed-handoff.md",
+      "sha256": "48a6f3201fca106f46c6825989e2142f1860aa013ec1a09de5f4d2c3d0ac262b",
+      "scope_lines": [
+        {
+          "line": 5,
+          "text": "This pins the supplied D35/D65/D69/D70/D71/D77 decisions, not moving memo HEAD."
+        },
+        {
+          "line": 9,
+          "text": "behavioral independence, not structural isolation or a new cryptographic review."
+        },
+        {
+          "line": 10,
+          "text": "Old predictions/contracts are unchanged. This is prospective acceptance, not a"
+        },
+        {
+          "line": 24,
+          "text": "qualifies. The runner itself is not registered as an expected failing test."
+        },
+        {
+          "line": 27,
+          "text": "A marker cannot prove provenance or adequate coverage: independently review its"
+        },
+        {
+          "line": 28,
+          "text": "emission site, fixture and oracle. Names alone do not establish acceptance."
+        },
+        {
+          "line": 31,
+          "text": "or earlier rejection cannot substitute for its designated red."
+        },
+        {
+          "line": 40,
+          "text": "publish. Do not feed claimed effects to an accounting helper and call it host"
+        },
+        {
+          "line": 45,
+          "text": "No local/default freeze values; the reported seven proof-work units are NOT u."
+        },
+        {
+          "line": 50,
+          "text": "Verify Native fee artifacts independently account for c; do not infer away"
+        },
+        {
+          "line": 62,
+          "text": "coordinator Native balances; full account-to-pending cut (user/system entries,"
+        },
+        {
+          "line": 66,
+          "text": "additional observation, not the authority for expected values. D/P structural"
+        },
+        {
+          "line": 67,
+          "text": "zeros are labeled as such, not fabricated persistent counters. Evaluate batch"
+        },
+        {
+          "line": 78,
+          "text": "W1 = W0 - (x+b)                    # q is NOT in W"
+        },
+        {
+          "line": 82,
+          "text": "remaining reserve = b-(c+s+g)"
+        },
+        {
+          "line": 83,
+          "text": "z = x + remaining reserve"
+        },
+        {
+          "line": 87,
+          "text": "do not charge them again. Return c is already reflected in y: do not subtract c"
+        },
+        {
+          "line": 89,
+          "text": "paired, not silently folded into these expected values. A discrepancy is a"
+        },
+        {
+          "line": 90,
+          "text": "finding; do not update the oracle to match the implementation."
+        },
+        {
+          "line": 106,
+          "text": "alone is not evidence for the gross-y anchor."
+        },
+        {
+          "line": 116,
+          "text": "comparison), not codec failure or an unrelated balance check. Also vary valid"
+        },
+        {
+          "line": 119,
+          "text": "These are input anchors, not merely equality of two recomputed wrong totals."
+        },
+        {
+          "line": 128,
+          "text": "remain intact. Mutations separately use a wrong origin/Attempt with internally"
+        },
+        {
+          "line": 132,
+          "text": "ciphertext rejected by crypto earlier is not this identity control. Failed or"
+        },
+        {
+          "line": 134,
+          "text": "both pending dictionaries' duplicate-ID rejection. This supplements, not replaces,"
+        },
+        {
+          "line": 141,
+          "text": "c=x-y from actual prior payout and actual bounce; observe original b and remaining"
+        },
+        {
+          "line": 147,
+          "text": "Do not mislabel a resulting codec inconsistency as proof of funding isolation."
+        },
+        {
+          "line": 148,
+          "text": "D68 shortfall cannot use operating subsidy either; this funded fixture alone"
+        },
+        {
+          "line": 149,
+          "text": "does not certify all shortfall paths."
+        },
+        {
+          "line": 158,
+          "text": "alone does not demonstrate collection of g. Remove each component separately"
+        },
+        {
+          "line": 161,
+          "text": "settlement (not admission or ciphertext-format rejection). Separately route g"
+        },
+        {
+          "line": 163,
+          "text": "match. Missing u remains NOT_READY/ConfigInvalid, never silently g=0."
+        },
+        {
+          "line": 165,
+          "text": "### remainder"
+        },
+        {
+          "line": 169,
+          "text": "`FAILED_RESERVE_REMAINDER`=b-(c+s+g) and installed user rights x+that remainder;"
+        },
+        {
+          "line": 170,
+          "text": "refund goes to the same owner, not another account or an unbacked available credit."
+        },
+        {
+          "line": 171,
+          "text": "In the one-receipt convention m is the TOTAL issuance pot, not the residual"
+        },
+        {
+          "line": 172,
+          "text": "reserve after an aggregate receipt already includes it. Do not charge s/g twice."
+        },
+        {
+          "line": 175,
+          "text": "otherwise install m-h with costs s/g. The small-pot cases need not be funded;"
+        },
+        {
+          "line": 177,
+          "text": "remainder, use threshold s instead of h, or advance sequence/charge g without"
+        },
+        {
+          "line": 178,
+          "text": "issuance. Fail the named remainder/threshold/no-issuance assertions, not earlier"
+        },
+        {
+          "line": 192,
+          "text": "association, not bad identity. A phase-1 companion with record still open but"
+        },
+        {
+          "line": 194,
+          "text": "(D74); phase 0 must not accidentally weaken that height rule."
+        },
+        {
+          "line": 206,
+          "text": "is forbidden. Structural D=0 is labeled; unrelated pending rights remain included."
+        },
+        {
+          "line": 210,
+          "text": "This protects OLD default behavior, not successful Failed execution. Baseline"
+        },
+        {
+          "line": 212,
+          "text": "of the exact diagnostic `multi-account admission and replay are not connected`:"
+        },
+        {
+          "line": 217,
+          "text": "The M3 record's fourth refusal is in collator and outside this item's three-site"
+        },
+        {
+          "line": 218,
+          "text": "scope; do not claim four-site regression coverage from this test."
+        },
+        {
+          "line": 226,
+          "text": "not hide the other two; disclose adapter boundaries, do not fake literal returns."
+        },
+        {
+          "line": 229,
+          "text": "refusal is not evidence. Source text comparison alone cannot pass this item."
+        },
+        {
+          "line": 240,
+          "text": "`FAILED_OFF_NO_PUBLICATION`; inability to construct the ON candidate is not an"
+        },
+        {
+          "line": 251,
+          "text": "cannot satisfy the driver. Record `FAILED_ORACLE_MISSING:<oracle-name>` and exit"
+        },
+        {
+          "line": 255,
+          "text": "is acceptable. Drivers must compare failure identity, not just nonzero status."
+        },
+        {
+          "line": 260,
+          "text": "exercise only readiness mechanics, NOT these eleven host behaviors. The suite"
+        },
+        {
+          "line": 261,
+          "text": "is not completed by A's narrower funded helper or by a reported algebraic match."
+        },
+        {
+          "line": 266,
+          "text": "layer. A's files are not changed by this delivery. No sequence guard retirement"
+        },
+        {
+          "line": 267,
+          "text": "or baseline refresh is authorized: red means a transition obligation, not expiry"
+        },
+        {
+          "line": 288,
+          "text": "scope and delivery observations above remain historical evidence. This addendum"
+        },
+        {
+          "line": 289,
+          "text": "turns D68 shortfall into an outstanding mandatory obligation, not merely a scope"
+        },
+        {
+          "line": 290,
+          "text": "limitation. It is retrospective to the funded run, prospective to the missing"
+        },
+        {
+          "line": 291,
+          "text": "shortfall execution; it does not rewrite a frozen prediction."
+        },
+        {
+          "line": 305,
+          "text": "prepare configuration with a matching authorization/proof. Do NOT edit `b` in"
+        },
+        {
+          "line": 313,
+          "text": "remainder is zero. Total loss `c+h` is NOT a value to store in the bounded"
+        },
+        {
+          "line": 315,
+          "text": "under item `remainder`; passing that branch alone cannot satisfy shortfall."
+        },
+        {
+          "line": 320,
+          "text": "and pending dictionaries and enumerated counts, actual bounce value, outbound"
+        },
+        {
+          "line": 322,
+          "text": "receipt. Observe after the atomic batch and after validator replay, not merely"
+        },
+        {
+          "line": 335,
+          "text": "  field in the authenticated record schema; terminal W is removed, not replaced"
+        },
+        {
+          "line": 336,
+          "text": "  with a debt. Event-only reporting of a shortage is permitted, not a payable claim."
+        },
+        {
+          "line": 338,
+          "text": "  `W1=W0-(x+b)`, matching actual R/book/decrypted values. q is not released again."
+        },
+        {
+          "line": 340,
+          "text": "  not evidence against a symmetric error. One successful receipt advances the"
+        },
+        {
+          "line": 348,
+          "text": "   does not satisfy this control."
+        },
+        {
+          "line": 350,
+          "text": "   wrapped remainder: fail at `FAILED_SHORTFALL_CHECKED` / the precise refund"
+        },
+        {
+          "line": 353,
+          "text": "   cut, not an unrelated earlier error. Valid unmutated shortfall must succeed."
+        },
+        {
+          "line": 356,
+          "text": "   panic of this ordinary input is the defect, not successful admission defense."
+        },
+        {
+          "line": 358,
+          "text": "   authenticated record/obligation cut, not just a missing proposed effect."
+        },
+        {
+          "line": 365,
+          "text": "only after the real executions and controls complete. Runner mocks are not these"
+        },
+        {
+          "line": 366,
+          "text": "executions; all policy combinations and arbitrary network delay remain outside"
+        },
+        {
+          "line": 367,
+          "text": "this fixture's claim. This obligation is currently NOT READY."
+        },
+        {
+          "line": 375,
+          "text": "protocol observations, not host shortfall evidence; A's implementation is untouched."
+        }
+      ]
+    },
+    {
+      "file": "doc/uno-m5-withdrawal-prepare-handoff.md",
+      "sha256": "75e31d5a08f9f29427ab8e46823ab8d91cbd2b9b410b81100664fbcebfbb08ca",
+      "scope_lines": [
+        {
+          "line": 6,
+          "text": "contract, not a host acceptance result. A owns implementation; B independently"
+        },
+        {
+          "line": 19,
+          "text": "A marker is an execution protocol, not proof of a test's honesty: review its"
+        },
+        {
+          "line": 21,
+          "text": "not acceptable. No test registration or host behavior is implemented by this"
+        },
+        {
+          "line": 22,
+          "text": "runner. Do not label NOT_READY as a passing acceptance test or suppress it with"
+        },
+        {
+          "line": 29,
+          "text": "account and configuration arenas. Reuse real Native payout pricing, not a stub"
+        },
+        {
+          "line": 32,
+          "text": "unavailable local data is not a candidate content failure. Unknown code 0"
+        },
+        {
+          "line": 33,
+          "text": "remains unknown and must not be accepted as the expected diagnostic."
+        },
+        {
+          "line": 37,
+          "text": "Do not populate unfrozen fields with local defaults or confuse billing units"
+        },
+        {
+          "line": 41,
+          "text": "Read authentic predecessor/successor account roots, the full account-to-pending"
+        },
+        {
+          "line": 50,
+          "text": "exit code; compile errors, missing tools or earlier rejection do not count."
+        },
+        {
+          "line": 68,
+          "text": "or component-equality assertion after valid setup, not proof mismatch caused"
+        },
+        {
+          "line": 80,
+          "text": "proof/range check rejects. That later rejection is not evidence of overflow"
+        },
+        {
+          "line": 83,
+          "text": "### no-pending"
+        },
+        {
+          "line": 86,
+          "text": "including another account's pending slice. Observe the complete authenticated"
+        },
+        {
+          "line": 87,
+          "text": "account-to-pending map and both counts before/after prepare, byte-for-byte;"
+        },
+        {
+          "line": 88,
+          "text": "available and W are allowed to change. Effects alone are not the oracle."
+        },
+        {
+          "line": 90,
+          "text": "a pending counter in the produced candidate state. Require rejection by the"
+        },
+        {
+          "line": 91,
+          "text": "prepare no-pending validation/paired-cut assertion; prove the mutation reached"
+        },
+        {
+          "line": 92,
+          "text": "that boundary. A malformed cell rejected earlier does not qualify. This is"
+        },
+        {
+          "line": 93,
+          "text": "Native prepare coverage, not the prior standalone account-BOC file-write probe."
+        },
+        {
+          "line": 100,
+          "text": "pending references remain correctly bound. Compare stored count to dictionary"
+        },
+        {
+          "line": 105,
+          "text": "assertion, not an unrelated serialization error. No new global W dictionary."
+        },
+        {
+          "line": 112,
+          "text": "observations, not fabricated expiry. Supply enough funds and system slots for"
+        },
+        {
+          "line": 118,
+          "text": "the settlement event's legitimate pending issuance from prepare's no-pending"
+        },
+        {
+          "line": 119,
+          "text": "cut; comparing only whole-operation pending equality here would be wrong."
+        },
+        {
+          "line": 133,
+          "text": "rejected as CandidateInvalid. An operation refusal does not by itself mean its"
+        },
+        {
+          "line": 144,
+          "text": "committed in the same batch (D73's prior presence), not merely an action emitted."
+        },
+        {
+          "line": 148,
+          "text": "repair failed paired creation. This control does not claim recipient delivery."
+        },
+        {
+          "line": 156,
+          "text": "not OFF evidence. Mutation: bypass the switch and require the OFF oracle to"
+        },
+        {
+          "line": 157,
+          "text": "fail while the ON fixture remains viable. Do not introduce a second switch."
+        },
+        {
+          "line": 164,
+          "text": "oracle was disabled and prove unrelated checks did not supply a substitute red."
+        },
+        {
+          "line": 169,
+          "text": "## Handoff and limits"
+        },
+        {
+          "line": 173,
+          "text": "then runs its claimed green tests. Merely registering nine names does not close"
+        },
+        {
+          "line": 175,
+          "text": "acceptance is authorized by this document. A's current AST/BOC guard is not the"
+        },
+        {
+          "line": 176,
+          "text": "Native authenticated no-pending control above."
+        },
+        {
+          "line": 178,
+          "text": "D62/D63/Failed integration remains a separate queue. This contract does not"
+        },
+        {
+          "line": 181,
+          "text": "actual execution paths above; arithmetic predictions are not host observations."
+        }
+      ]
+    }
+  ]
+}
