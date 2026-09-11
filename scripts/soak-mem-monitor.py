@@ -143,8 +143,18 @@ def compute_verdict(samples: list[dict], threshold: float, samples_file: str, mi
             "rss_growth_frac": round(frac, 4), "early_max_fds": early_fds, "late_max_fds": late_fds,
             "suspected_leak": pid_leak,
         })
+    verdict = "LEAK_SUSPECTED" if leaked else ("OK" if judged else "INSUFFICIENT_SAMPLES")
+    note = {
+        "OK": "No memory-leak signal over this soak window: post-warm-up RSS did not grow "
+              "past the threshold on any judged process. This is a window/load observation, "
+              "NOT a proof that no leak exists.",
+        "LEAK_SUSPECTED": "Sustained post-warm-up RSS growth past the threshold on at least one "
+                          "process; investigate before trusting the run.",
+        "INSUFFICIENT_SAMPLES": "No process had enough samples to be judged.",
+    }[verdict]
     return {
-        "verdict": "LEAK_SUSPECTED" if leaked else ("OK" if judged else "INSUFFICIENT_SAMPLES"),
+        "verdict": verdict,
+        "scope_note": note,
         "samples_file": samples_file,
         "sample_count": len(samples),
         "leak_threshold_frac": threshold,

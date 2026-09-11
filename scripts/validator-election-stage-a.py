@@ -1549,7 +1549,9 @@ class ValidatorElectionRehearsal:
                 failures.append(f"transfer {src_name}->{dst_name} amount={amount} failed: {error}")
                 continue
             transfers += 1
-            # 到账 on the authoritative (node 0) view: the destination must be credited.
+            # 到账 on the authoritative (node 0) view: the destination must be credited. The
+            # node-0 tip AFTER crediting is the confirmed height H -- the transfer is applied
+            # by H.
             try:
                 await self.retry(
                     lambda: self.balance(dst.address), timeout=60, interval=1,
@@ -1558,19 +1560,45 @@ class ValidatorElectionRehearsal:
             except Exception as error:  # noqa: BLE001
                 failures.append(f"{src_name}->{dst_name} not credited on node 1: {error}")
                 continue
-            # Cross-node consistency: compare all nodes at a common confirmed height.
-            tips = [await self._node_mc_seqno(i) for i in range(node_count)]
-            common = min(tips)
+            confirmed_height = await self._node_mc_seqno(0)
+            # Require EVERY node to advance to >= H. Comparing an older common height (min tip)
+            # would let a node stuck behind H pass by agreeing on stale state it shares; making
+            # each node reach H means a node that has not seen this transfer fails here.
+            caught_up = True
+            for i in range(node_count):
+                try:
+                    await self.retry(
+                        lambda i=i: self._node_mc_seqno(i), timeout=60, interval=1,
+                        description=f"node {i + 1} reaches confirmed height {confirmed_height}",
+                        predicate=lambda s: s >= confirmed_height,
+                    )
+                except Exception as error:  # noqa: BLE001
+                    failures.append(f"node {i + 1} did not reach confirmed height {confirmed_height}: {error}")
+                    caught_up = False
+            if not caught_up:
+                continue
+            # At H every node must agree on all three balances AND show the destination credited
+            # past its pre-transfer value -- i.e. this transfer is visible in every node's chain
+            # state at H, not just at an older shared height.
+            checked_ok = True
             for name, wallet in wallets.items():
                 seen = set()
                 for i in range(node_count):
                     try:
-                        seen.add(await self._node_account_balance(i, wallet.address, seqno=common))
+                        seen.add(await self._node_account_balance(i, wallet.address, seqno=confirmed_height))
                     except Exception as error:  # noqa: BLE001
-                        failures.append(f"node {i + 1} balance {name}@{common} query failed: {error}")
+                        failures.append(f"node {i + 1} balance {name}@{confirmed_height} query failed: {error}")
+                        checked_ok = False
                 if len(seen) > 1:
-                    failures.append(f"nodes disagree on {name} balance at seqno {common}: {sorted(seen)}")
-            consistency_checks += 1
+                    failures.append(f"nodes disagree on {name} balance at seqno {confirmed_height}: {sorted(seen)}")
+                    checked_ok = False
+                if name == dst_name and seen and min(seen) <= dst_before:
+                    failures.append(
+                        f"{dst_name}@{confirmed_height} not credited on all nodes: {sorted(seen)} <= before {dst_before}"
+                    )
+                    checked_ok = False
+            if checked_ok:
+                consistency_checks += 1
             if transfers % 10 == 0:
                 self.event("soak_progress", transfers=transfers, consistency_checks=consistency_checks,
                            failures=len(failures))
