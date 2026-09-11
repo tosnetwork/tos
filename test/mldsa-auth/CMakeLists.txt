@@ -1,0 +1,13 @@
+cmake_minimum_required(VERSION 3.16)
+project(tos_mldsa_auth_test_signer LANGUAGES C CXX)
+# An explicitly separate TEST ONLY build: signing never enters the VM library.
+set(MLDSA "${CMAKE_CURRENT_SOURCE_DIR}/../../third-party/mldsa-native/mldsa")
+add_library(mldsa_auth_test_backend STATIC "${MLDSA}/mldsa_native.c")
+set_target_properties(mldsa_auth_test_backend PROPERTIES C_STANDARD 90 C_STANDARD_REQUIRED YES)
+target_include_directories(mldsa_auth_test_backend PRIVATE "${MLDSA}" "${CMAKE_CURRENT_SOURCE_DIR}")
+target_compile_definitions(mldsa_auth_test_backend PRIVATE MLD_CONFIG_FILE="signer-config.h")
+add_executable(test-mldsa44-sign signer.cpp)
+target_compile_features(test-mldsa44-sign PRIVATE cxx_std_17)
+target_include_directories(test-mldsa44-sign PRIVATE "${MLDSA}" "${CMAKE_CURRENT_SOURCE_DIR}")
+target_compile_definitions(test-mldsa44-sign PRIVATE MLD_CONFIG_FILE="signer-config.h")
+target_link_libraries(test-mldsa44-sign PRIVATE mldsa_auth_test_backend)

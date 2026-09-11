@@ -1,0 +1,74 @@
+;; Copyright 2026 TOS Blockchain Teams. SPDX-License-Identifier: LGPL-2.0-or-later
+;; Immutable, relayer-funded ML-DSA-44 root for the existing AUTH protocol.
+;; Data: global_id:int32 public_key:^Cell (canonical 1312-byte chain).
+;; No ACCEPT, SETCODE, SETDATA, owner, signing key, or recovery bypass.
+#include "auth-extension.fc";
+#include "pq.fc";
+
+const int mldsa_auth::submit = 0x4d4c4434;
+
+() recv_external(slice body) impure {
+  throw(1900);  ;; PQ verification must not spend external admission credit.
+}
+
+() recv_internal(int balance, int value, cell full_message, slice body) impure {
+  if (full_message.begin_parse().preload_uint(4) & 1) { return (); }
+  ;; Unknown/empty internal messages are deposits only, like the Tol dispatcher.
+  if (body.slice_bits() < 32) { return (); }
+  if (body.preload_uint(32) != mldsa_auth::submit) { return (); }
+  body~load_uint(32);
+  body~load_uint(64);  ;; unsigned relayer query_id, not an authorization field
+  cell envelope = body~load_ref();
+  cell signature = body~load_ref();
+  body.end_parse();
+
+  slice ds = get_data().begin_parse();
+  int network = ds~load_int(32);
+  cell public_key = ds~load_ref();
+  ds.end_parse();
+  throw_unless(auth::wrong_network, network == auth_global_id());
+
+  slice auth = envelope.begin_parse();
+  throw_unless(auth::bad_operation, auth~load_uint(32) == auth::opcode);
+  cell request = auth~load_ref();
+  cell cosignature = auth~load_maybe_ref();
+  auth.end_parse();
+  ifnot (cell_null?(cosignature)) {
+    slice co = cosignature.begin_parse();
+    throw_unless(auth::bad_signature, (co.slice_bits() == 512) & (co.slice_refs() == 0));
+  }
+
+  slice cs = request.begin_parse();
+  throw_unless(auth::wrong_network, cs~load_int(32) == network);
+  slice account = cs~load_msg_addr();
+  ;; This also excludes a self-send. The target is signed, never relayer-chosen.
+  throw_unless(auth::bad_module, auth_module_hash(account) >= 0);
+  cs~load_uint(64);  ;; epoch: authenticated here, enforced by the account
+  cs~load_uint(64);  ;; nonce: authenticated here, enforced by the account
+  int valid_until = cs~load_uint(32);
+  throw_unless(auth::expired, (valid_until > now()) & (valid_until <= now() + 3600));
+  throw_unless(auth::bad_operation, cs~load_uint(8) <= auth::manage);
+  cs~load_ref();
+  cs.end_parse();
+
+  cell message = begin_cell().store_uint(auth_request_hash(request), 256).end_cell();
+  ;; Pure ML-DSA over the 32 raw commitment bytes, NOT HashML-DSA or external-mu.
+  cell context = begin_cell().store_uint(0x544f532d415554482d4d4c2d4453412d34342d7631, 168).end_cell();
+  throw_unless(auth::bad_signature, pq_check_mldsa44(message, context, signature, public_key));
+
+  ;; Preserve the pre-message balance (after storage charges). Mode 64 carries
+  ;; only the incoming remainder; no +1, +2, +32, +128 or subsidy from storage.
+  raw_reserve(max(0, balance - value), 2);
+  cell relay = begin_cell().store_uint(0x18, 6).store_slice(account)
+    .store_coins(0).store_uint(0, 1 + 4 + 4 + 64 + 32 + 1)
+    .store_uint(1, 1).store_ref(envelope).end_cell();
+  send_raw_message(relay, 64);
+}
+
+(int, cell) get_mldsa44_config() method_id {
+  slice ds = get_data().begin_parse();
+  int network = ds~load_int(32);
+  cell key = ds~load_ref();
+  ds.end_parse();
+  return (network, key);
+}
