@@ -8,7 +8,16 @@ including new files. Existing refundable registration deposits are NOT M4
 Deposit operations; their recorded occurrences are retained, not excluded.
 The one-way refund materializer's bucket arithmetic is inventoried too: it adds
 no authenticated representation or operation, no return association/recredit,
-and promises no delivery. The frozen state/schema identities remain unchanged.
+and promises no delivery.
+
+M4's sender-only unexpected bucket cannot attribute a right to a confidential
+account. It does not carry account_id. D29's account_id category mechanically
+credits a confidential account, but only follows M5 late-return rejection and
+is unreachable in M4. Sender attribution is not a claim that no Native sender
+has a right: the structural premise concerns this confidential account's closure.
+Accepted Deposit clears D within its batch; rejection either returns value or
+credits sender-only unexpected funds, never a confidential account's obligation.
+The full bucket representation is frozen below, not excluded by its name.
 
 LIMIT: lexical source check, not a semantic C++/Rust proof. Generated or renamed
 operations outside the frozen representations require human identification.
@@ -22,11 +31,14 @@ import re
 import subprocess
 
 ACTION = ("closure's no-obligation condition was structurally satisfied and no longer is; "
-          "implement an authenticated obligation view before allowing closure")
+          "implement an authenticated obligation view before allowing closure; "
+          "when M5 account_id bucket attribution becomes reachable, also require "
+          "no bucket entries attributable to the closing account (D29/section 10)")
 EXCLUDED = {'test', 'tests', 'doc', 'third-party', 'third_party', 'vendor'}
 SUFFIXES = {'.h', '.hpp', '.cpp', '.cc', '.c', '.rs', '.tlb', '.inc', '.ipp', '.tpp'}
 STATE = {'crypto/block/workchain-confidential-state.h',
-         'crypto/block/workchain-coordinator-state.h'}
+         'crypto/block/workchain-coordinator-state.h',
+         'crypto/block/workchain-unexpected-bucket.h'}
 TEST_OPERATION = 'crypto/test/workchain-m3-test-funding-operation.h'
 TOKEN = re.compile(r'//[^\n]*|/\*[\s\S]*?\*/|"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'|[A-Za-z_]\w*|[^\s]')
 WATCH = re.compile(r'obligation|settlement_?refs?|withdraw|deposit', re.I)
@@ -103,9 +115,17 @@ def controls(sources, expected):
     changed[TEST_OPERATION] += '\nstruct TestFundingSettlementObligation { unsigned count; };\n'
     if inventory(changed) == expected:
         raise ValueError('changed test funding operation was not detected')
+    changed = dict(sources)
+    path = 'crypto/block/workchain-unexpected-bucket.h'
+    marker = 'struct WorkchainUnexpectedEntry {'
+    if changed[path].count(marker) != 1:
+        raise ValueError('bucket attribution insertion point unavailable')
+    changed[path] = changed[path].replace(marker, marker + '\n  td::Bits256 account_id;')
+    if inventory(changed) == expected:
+        raise ValueError('confidential bucket attribution was not detected')
     if inventory(sources) != expected:
         raise ValueError('unchanged source no longer passes')
-    print('Expiry controls: obligation field, third-file view, new operation, changed test operation rejected; '
+    print('Expiry controls: obligation field, third-file view, new operation, changed test operation, bucket account_id rejected; '
           'unchanged source accepted.')
 
 
@@ -125,7 +145,8 @@ def main():
             return 1
         if args.controls:
             controls(sources, expected)
-        print('M3 no-obligation structural premise unchanged; no runtime obligation check claimed.')
+        print('M3/M4 confidential closure premise checked, including sender-only bucket; '
+              'no runtime obligation check or absence of Native sender rights claimed.')
         return 0
     except (OSError, ValueError, subprocess.SubprocessError) as error:
         print(json.dumps({'identity': 'm3.closure.inventory_unavailable', 'detail': str(error), 'action': ACTION}))

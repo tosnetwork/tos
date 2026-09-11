@@ -706,6 +706,11 @@ if(TOS_WORKCHAIN_INSTANCE_TESTS)
 endif()
 
 # A generated constructor changing must invalidate its hand-written Fift consumer.
+add_executable(test-workchain-unexpected-bucket ../test/test-td-main.cpp test/test-workchain-unexpected-bucket.cpp)
+target_link_libraries(test-workchain-unexpected-bucket PRIVATE tos_block tos_crypto)
+tos_test(test-workchain-unexpected-bucket)
+set_tests_properties(test-workchain-unexpected-bucket PROPERTIES TIMEOUT 30 LABELS "workchain;m4")
+
 add_executable(test-workchain-confidential-state ../test/test-td-main.cpp test/test-workchain-confidential-state.cpp)
 target_link_libraries(test-workchain-confidential-state PRIVATE tos_block tos_crypto)
 tos_test(test-workchain-confidential-state)
