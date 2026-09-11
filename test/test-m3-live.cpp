@@ -9,6 +9,7 @@
 #include "m3-live-config.h"
 #include "m3-live-registration.h"
 #include "m3-live-state.h"
+#include "m5-live-return.h"
 #include "m3-live-assertions.h"
 #include "m3-live-wallet.h"
 #include "m4-live-deposit.h"
@@ -21,6 +22,11 @@ int main(int argc, char** argv) {
   if (argc == 3 && (std::string(argv[1]) == "--withdrawal-debit-request" || std::string(argv[1]) == "--withdrawal-debit-finish")) {
     vm::init_vm().ensure();
     m3_live::prepare_debit(argv[2], std::string(argv[1]).ends_with("finish"));
+    return 0;
+  }
+  if (argc == 3 && std::string(argv[1]) == "--observe-m5-payout-recipient") {
+    vm::init_vm(true).ensure();
+    m3_live::observe_m5_payout_recipient(std::filesystem::path(argv[2]));
     return 0;
   }
   if (argc == 3 && std::string(argv[1]) == "--check-m4-bounce-received") {
