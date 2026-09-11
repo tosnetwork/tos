@@ -3,8 +3,8 @@
 
 Freeze the exact UNO TL-B family and C++ state representations, not just the
 absence of one field spelling. Additionally inventory obligation/deposit/
-withdrawal identifiers throughout Git-visible first-party production sources,
-including new files. Existing refundable registration deposits are NOT M4
+withdrawal identifiers reachable from the explicit operation roots, including
+new files connected through literal includes. Existing refundable registration deposits are NOT M4
 Deposit operations; their recorded occurrences are retained, not excluded.
 The one-way refund materializer's bucket arithmetic is inventoried too: it adds
 no authenticated representation or operation, no return association/recredit,
@@ -23,27 +23,43 @@ its source/destination and reuses Native bounce rules; it returns no retained
 return association. It only plans same-batch Native credit or return plus bucket
 update, never deferred confidential credit.
 
-LIMIT: lexical source check, not a semantic C++/Rust proof. Generated or renamed
-operations outside the frozen representations require human identification.
-Tests/docs/vendors are excluded by path component, not directory prefix.
+LIMIT: literal include/module reachability, not a semantic C++/Rust proof.
+Runtime coupling, indirect references and aliases are outside coverage. New
+separately linked translation units or schema generators require explicit roots.
+The test-funding operation is an explicit exception, not a test-directory scan.
+Within reachable files, identifier tokens are inventoried (not semicolon chunks).
+The three state representations and test-funding operation deliberately retain
+whole-definition hashes: any new representation requires a premise review.
+TL-B semicolons delimit complete schema declarations, not C++/Rust fragments.
 """
 import argparse
 import hashlib
 import json
 from pathlib import Path
 import re
-import subprocess
+from workchain_guard_reachability import Sources, reach, controls as reachability_controls
 
 ACTION = ("closure's no-obligation condition was structurally satisfied and no longer is; "
           "implement an authenticated obligation view before allowing closure; "
           "when M5 account_id bucket attribution becomes reachable, also require "
           "no bucket entries attributable to the closing account (D29/section 10)")
-EXCLUDED = {'test', 'tests', 'doc', 'third-party', 'third_party', 'vendor'}
-SUFFIXES = {'.h', '.hpp', '.cpp', '.cc', '.c', '.rs', '.tlb', '.inc', '.ipp', '.tpp'}
 STATE = {'crypto/block/workchain-confidential-state.h',
          'crypto/block/workchain-coordinator-state.h',
          'crypto/block/workchain-unexpected-bucket.h'}
 TEST_OPERATION = 'crypto/test/workchain-m3-test-funding-operation.h'
+# Native installation/refund and all current confidential transitions. Schema
+# is the generated codec input; test funding is separately explicit below.
+ROOTS = (
+    'crypto/block/workchain-account-settlement.h',
+    'crypto/block/workchain-confidential-execution.h',
+    'crypto/block/workchain-deposit-transition.h',
+    'crypto/block/transaction.cpp',
+    'crypto/block/block.tlb',
+    TEST_OPERATION,
+)
+# Baseline 6ea2fbf80: 215 reachable files; over twice that requires
+# entrypoint review rather than accepting an unexpectedly large subtree.
+MAX_REACHABLE = 430
 TOKEN = re.compile(r'//[^\n]*|/\*[\s\S]*?\*/|"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'|[A-Za-z_]\w*|[^\s]')
 WATCH = re.compile(r'obligation|settlement_?refs?|withdraw|deposit', re.I)
 
@@ -61,6 +77,10 @@ def digest(value):
 def inventory(sources):
     result = {}
     for name, source in sorted(sources.items()):
+        # Generated native RPC schemas/configuration templates are dependency
+        # inputs, not C++/Rust state declarations or UNO TL-B constructors.
+        if Path(name).suffix not in {'.h', '.hpp', '.cpp', '.cc', '.c', '.rs', '.tlb', '.inc', '.ipp', '.tpp'}:
+            continue
         ts = tokens(source)
         if name == TEST_OPERATION:
             # This explicitly inventoried test operation completes its balance
@@ -71,7 +91,7 @@ def inventory(sources):
             result[name + ':state'] = digest(ts)
         if Path(name).suffix == '.tlb':
             # Every UNO constructor, including future additional records or
-            # operations in a third file. Comments and layout whitespace do not
+            # operations in a reachable schema input. Comments and layout whitespace do not
             # establish or erase a schema identity.
             records = ' '.join(ts).split(';')
             uno = [r.strip() for r in records if re.search(r'\b(?:uno_|Uno)', r)]
@@ -88,15 +108,11 @@ def inventory(sources):
     return result
 
 
-def read_sources(repo):
-    names = subprocess.check_output(['git', '-C', str(repo), 'ls-files', '-z',
-                                    '--cached', '--others', '--exclude-standard']).decode().split('\0')
-    return {name: (repo / name).read_text() for name in sorted(set(names) - {''})
-            if Path(name).suffix in SUFFIXES and
-            (name == TEST_OPERATION or not EXCLUDED.intersection(Path(name).parts))}
+def read_sources(repo, edits=None, emit=False):
+    return reach(Sources(repo, edits), ROOTS, MAX_REACHABLE, 'closure-expiry', emit)
 
 
-def controls(sources, expected):
+def controls(repo, sources, expected):
     # Same inventory used by the real check, with a temporary source snapshot;
     # never mutate a repository or a concurrent compilation's input.
     changed = dict(sources)
@@ -105,19 +121,22 @@ def controls(sources, expected):
     if changed[path].count(marker) != 1:
         raise ValueError('field control insertion point unavailable')
     changed[path] = changed[path].replace(marker, marker + '\n  td::Ref<vm::Cell> settlement_refs;')
-    if inventory(changed) == expected:
+    if inventory(read_sources(repo, changed)) == expected:
         raise ValueError('added obligation field was not detected')
     changed = dict(sources)
+    changed[path] += '\n#include "validator/new-obligation-view.h"\n'
     changed['validator/new-obligation-view.h'] = 'struct SettlementObligationView { unsigned count; };'
-    if inventory(changed) == expected:
+    if inventory(read_sources(repo, changed)) == expected:
         raise ValueError('new obligation view was not detected')
     changed = dict(sources)
-    changed['crypto/block/new-operation.tlb'] = 'uno_v2_withdraw amount:uint64 = UnoV2TransferInputV1;'
-    if inventory(changed) == expected:
+    # TL-B has no include syntax. Extend the actual generated codec input,
+    # rather than pretend an unreferenced third schema is part of this build.
+    changed['crypto/block/block.tlb'] += '\nuno_v2_withdraw amount:uint64 = UnoV2TransferInputV1;\n'
+    if inventory(read_sources(repo, changed)) == expected:
         raise ValueError('new operation was not detected')
     changed = dict(sources)
     changed[TEST_OPERATION] += '\nstruct TestFundingSettlementObligation { unsigned count; };\n'
-    if inventory(changed) == expected:
+    if inventory(read_sources(repo, changed)) == expected:
         raise ValueError('changed test funding operation was not detected')
     changed = dict(sources)
     path = 'crypto/block/workchain-unexpected-bucket.h'
@@ -125,7 +144,7 @@ def controls(sources, expected):
     if changed[path].count(marker) != 1:
         raise ValueError('bucket attribution insertion point unavailable')
     changed[path] = changed[path].replace(marker, marker + '\n  td::Bits256 account_id;')
-    if inventory(changed) == expected:
+    if inventory(read_sources(repo, changed)) == expected:
         raise ValueError('confidential bucket attribution was not detected')
     if inventory(sources) != expected:
         raise ValueError('unchanged source no longer passes')
@@ -140,7 +159,7 @@ def main():
     args = parser.parse_args()
     try:
         expected = json.loads(Path(__file__).with_suffix('.json').read_text())
-        sources = read_sources(args.repo)
+        sources = read_sources(args.repo, emit=True)
         actual = inventory(sources)
         if actual != expected:
             print(json.dumps({'identity': 'm3.closure.structural_expiry', 'action': ACTION,
@@ -148,11 +167,12 @@ def main():
                                                 if actual.get(k) != expected.get(k))}))
             return 1
         if args.controls:
-            controls(sources, expected)
+            reachability_controls(args.repo, ROOTS, MAX_REACHABLE, 'closure-expiry')
+            controls(args.repo, sources, expected)
         print('M3/M4 confidential closure premise checked, including sender-only bucket; '
               'no runtime obligation check or absence of Native sender rights claimed.')
         return 0
-    except (OSError, ValueError, subprocess.SubprocessError) as error:
+    except (OSError, ValueError) as error:
         print(json.dumps({'identity': 'm3.closure.inventory_unavailable', 'detail': str(error), 'action': ACTION}))
         return 1
 
