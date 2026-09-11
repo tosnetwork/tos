@@ -94,7 +94,7 @@ Deposit/withdraw identifiers encode staking and nominator requests or index thei
 
 All 42 previous `tosctl/` and `storage/` entries are individually listed above. The three prediction-market epoch entries are also listed: the CLI, wrapper and TL-B contract schema. This does not claim these modules cannot use cells; their matched identifiers do not carry either guarded UNO property.
 
-## Scope decision still pending
+## Initial scope decision request (df8b10885)
 
 A fixed file list does not automatically detect an unconnected new source file. The existing new-file controls must not be retained only by injecting files which the real source reader cannot discover. A proposed alternative is explicit property entrypoints plus their referenced source closure, with new-file controls connected through that same path. That changes the boundary of the old unconnected-file controls and requires an explicit decision before claiming equivalent coverage.
 
@@ -108,3 +108,130 @@ A fixed file list does not automatically detect an unconnected new source file. 
 - Both unique `KernelGates.test_*` selectors referenced by `rng-acceptance.py` resolved and executed successfully. This is selector validation, not a rerun of the full RNG acceptance harness.
 - The original closure inventory with all five existing controls passed, as did state-loader inventory and its controls. These are pre-narrowing results.
 - `ctest --test-dir /home/tomi/uno-m3-refund-assert-build -R '^test-workchain-key-epoch-(inventory|behavior)$' --output-on-failure`: 2 passed. The inventory used the rejected directory-scope draft; only the unchanged seven-step behavior result is retained as evidence for the final scope work.
+
+## Adopted reachability boundary
+
+The coordinator subsequently approved explicit entrypoints plus static references.
+Both guards use `workchain_guard_reachability.py`; neither searches a directory
+for matching identifiers. Their computed sets each contain 215 files on
+`6ea2fbf80`. Both limits are 430 (twice that measured baseline). The limit is not
+a snapshot to refresh automatically: exceeding it requests entrypoint review.
+Each invocation emits the complete entrypoint/file list, count and external
+include boundaries as JSON. Generated headers resolve to their committed inputs,
+so building locally does not change this set.
+
+Common roots and their roles:
+
+- `crypto/block/workchain-account-settlement.h`: installs account effects and
+  dispatches registration, rejection and closure Native settlement.
+- `crypto/block/workchain-confidential-execution.h`: SEND/COLLECT state changes.
+- `crypto/block/workchain-deposit-transition.h`: atomic Deposit state changes.
+- `crypto/block/block.tlb`: input to the generated account/operation codec.
+
+Epoch adds two roots: `crypto/block/workchain-registration-proof.cpp` is the
+separately compiled host possession bridge; `uno/crypto/src/lib.rs` declares the
+kernel modules that consume the epoch-bound requests. Closure instead adds
+`crypto/block/transaction.cpp` for the Native refund/message materializer and
+`crypto/test/workchain-m3-test-funding-operation.h` as the existing explicit test
+operation exception. A header include does not imply its separately linked
+implementation: that is why these source roots are named explicitly.
+
+The closure token scan accepts C++/Rust/TL-B source suffixes. Native RPC `.tl`
+inputs and generated platform `.in` templates appear in the dependency report,
+but are not interpreted as confidential state declarations. Generated external
+library code is not traversed. Rust module declarations follow local module
+files; external dependency crates are not a second supply-chain scan.
+
+LIMIT: this is lexical, static include/module reachability, not a call graph.
+Runtime coupling, indirect references, macro-generated references and aliases
+are not covered. New separately linked source units or schema generators need
+explicit entrypoint review. Same-name identifiers outside this reachable set
+are not covered. Existing inline test code within reached Rust source files is
+still lexically inventoried; external test modules are not production roots.
+
+## Additional removed closure entries
+
+The previous audit enumerated the 42 `tosctl/`/`storage/` files and related native
+contract schemas. These additional files account for the rest of the **55**
+removed closure entries:
+
+- `crypto/block/create-state.cpp`: Fift configuration-building words consume a
+  `registration_deposit` amount and build the resource policy. They do not execute
+  a confidential account transition or create its retained obligation view.
+- `uno/archive/v1/core/accounting.h`: archived notes/withdrawals accounting and
+  ShieldClaim operations, not the current account state.
+- `uno/archive/v1/core/bundle-context.h`: archived ShieldClaim, Unshield and
+  WithdrawalRefund bundle discriminators.
+- `uno/archive/v1/core/crypto-verifier.h`: translates those archived bundle
+  discriminators to the retired ABI.
+- `uno/archive/v1/core/private-transfer-state.h`: archived note/fee/withdrawal
+  state serialization.
+- `uno/archive/v1/core/transition-budget.h`: archived `checked_prepare_withdrawal`
+  arithmetic wrapper.
+- `uno/crypto/include/uno_crypto_v0_retired.h`: version-0 ABI constants including
+  UNO_WITHDRAWAL_REFUND. No current closure entrypoint includes it.
+- `uno/crypto/src/ffi.rs`: the matched `deposit_id` is a borrowed D33 request field,
+  not a persisted obligation representation. This file remains in the epoch
+  guard through the explicit kernel root; it is not a closure source root.
+- `uno/crypto/src/system_encryption.rs`: stateless D33 derivation/verification
+  and its inline tests bind `deposit_id`, without retaining a lifecycle right.
+
+Every retained closure hash is byte-for-byte unchanged from the prior snapshot;
+only the 55 unreachable entries were removed. The epoch snapshot is re-expressed
+using the extraction rule below; its matching file set drops exactly the three
+prediction-market files identified above.
+
+## Syntax units and controls
+
+Epoch records a named epoch member declaration, an epoch-bearing expression, or
+an epoch-bearing control header, qualified by its enclosing declaration scopes.
+Calls and aggregate initializers remain balanced expressions: receivers and
+argument/field positions affect what is written or bound. A neighboring field
+or neighboring struct is not the same unit. Rust comma-delimited fields and
+C++ semicolon-delimited fields are separated; TL-B records retain constructor
+identity plus the named epoch member type. This is a lexical approximation,
+not a full C++/Rust parser or proof of the absence of aliased writes.
+
+Closure does not use C++/Rust semicolon fragments: it inventories selected
+identifier tokens. Its three state representations and explicit test operation
+retain whole-definition hashes intentionally, to detect new state that could
+represent an obligation. TL-B semicolons terminate actual constructor records;
+only UNO constructors enter the schema hash.
+
+Controls retain the original properties and exercise the normal disk resolver:
+
+- Epoch: a referenced new header writes epoch (unconditional and conditional);
+  a retained member type and an existing assignment change; all are rejected.
+- Epoch: unrelated adjacent C++ and Rust fields, an adjacent Rust struct and an
+  unconnected same-name source do not change the inventory.
+- Closure: new obligation field, referenced third-file obligation view, added
+  operation constructor, changed explicit funding operation, and bucket
+  `account_id` attribution all change the inventory. These are five controls,
+  including the account-id control, not five plus a sixth existing control.
+- The operation control extends the actual `block.tlb` generator input. TL-B
+  has no include directive; a disconnected third schema is not falsely treated
+  as part of the build. New-file discovery is exercised by the referenced view.
+- Both resolvers reject an excessive include chain at the size-specific limit.
+  Connected versus disconnected new-file controls use the same `Sources` reader;
+  epoch also exercises a newly declared Rust module.
+
+An isolated copy replacing the syntax-unit extractor with the old semicolon
+split failed with `adjacent Rust field polluted an epoch declaration`.
+An isolated copy removing literal-include traversal failed with
+`literal new-file reference was not traversed`. Production sources were not
+modified for either control. The first adjacent-struct fixture alone did not
+expose the old splitter: intervening Rust array-type semicolons cut the old
+fragment earlier. The adjacent-field fixture was added to exercise that actual
+failure mechanism; the adjacent-struct check remains as well.
+
+Validation mapping: Python reachability/extraction changes run in the existing
+default closure/epoch inventory targets; the seven-step epoch behavior target
+checks persisted transitions; the state-loader target checks that its independent
+narrow inventory is unaffected. No production execution, ABI, schema, CMake or
+Rust implementation is changed by this scope correction.
+
+Final focused run: `ctest --test-dir /home/tomi/uno-m3-refund-assert-build
+-R '^test-workchain-(m3-closure-expiry|state-loader-inventory|key-epoch-inventory|key-epoch-behavior)$'
+--output-on-failure` passed **4/4**, 7.58 seconds. The epoch behavior target
+executes the real seven-step sequence. This is not a claim of a full C++
+regression run or of semantic completeness for either lexical guard.
