@@ -29,7 +29,18 @@ def compile_contract(name, output):
     return from_boc(output.read_bytes())
 
 
-def config(global_version=6):
+def size_limits(max_msg_cells, max_msg_bits=1 << 21):
+    """ConfigParam 43, size_limits_config#01, as the account reads it.
+
+    Only max_msg_bits and max_msg_cells are consulted by the contract, but the
+    whole constructor is written so the emulator can unpack it into the
+    configuration tuple the contract indexes.
+    """
+    return Cell().uint(0x01, 8).uint(max_msg_bits, 32).uint(max_msg_cells, 32) \
+        .uint(1000, 32).uint(512, 16).uint(65535, 32).uint(512, 16)
+
+
+def config(global_version=6, max_msg_cells=None):
     fixture = from_boc((ROOT / 'tosctl/src/executor/real_boc/default_config.boc').read_bytes())
     entries = read_dict(fixture.refs[0], 32)
     entries[0] = Cell().ref(Cell().uint(int(fixture.bits, 2), 256))
@@ -39,6 +50,8 @@ def config(global_version=6):
     caps = old.uint(64)
     entries[8] = Cell().ref(Cell().uint(0xc4, 8).uint(global_version, 32).uint(caps, 64))
     entries[19] = Cell().ref(Cell().sint(GLOBAL_ID, 32))
+    if max_msg_cells is not None:
+        entries[43] = Cell().ref(size_limits(max_msg_cells))
     return make_dict(entries, 32)
 
 
@@ -129,7 +142,7 @@ def outgoing(transaction):
 
 
 class Emulator:
-    def __init__(self, global_version=6):
+    def __init__(self, global_version=6, max_msg_cells=None):
         self.lib = ctypes.CDLL(os.environ['EMULATOR_PATH'])
         self.lib.transaction_emulator_create.argtypes = [ctypes.c_char_p, ctypes.c_int]
         self.lib.transaction_emulator_create.restype = ctypes.c_void_p
@@ -141,7 +154,8 @@ class Emulator:
         self.lib.transaction_emulator_set_lt.argtypes = [ctypes.c_void_p, ctypes.c_uint64]
         self.lib.transaction_emulator_set_ignore_chksig.argtypes = [ctypes.c_void_p, ctypes.c_bool]
         self.lib.emulator_set_verbosity_level(0)
-        self.ptr = self.lib.transaction_emulator_create(config(global_version).b64(), 1)
+        self.ptr = self.lib.transaction_emulator_create(
+            config(global_version, max_msg_cells).b64(), 1)
         assert self.ptr, 'native emulator must load the test configuration'
         self.lib.transaction_emulator_set_unixtime(self.ptr, NOW)
         self.lib.transaction_emulator_set_ignore_chksig(self.ptr, False)

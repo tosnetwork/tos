@@ -106,13 +106,30 @@ account data; a successful mode-3 send retains the existing ignore-action-errors
 semantics and may consume the action/nonce even when the action phase skips a
 send. Integrators must inspect the transaction result, not only acceptance.
 
+A refusal can also arrive after the account has accepted the request. Agent
+Account accepts, commits the consumed seqno, and only then measures the
+attached trees and reserves the exact fee, because that measurement is priced
+by the caller's payload rather than by the contract and so cannot be charged
+to the fixed external admission credit. A refusal on that side of the commit
+moves no value and leaves the daily budget untouched, but it does spend the
+seqno and the authentication nonce, and the transaction is not aborted --
+so no bounce is produced. A module must read the account state to distinguish
+this outcome from a completed send; waiting for a bounce will wait forever.
+Spending the counters is deliberate: leaving them unspent is what would make
+the refused request replayable until its expiry.
+
 `kind = 1` reconfigures the root. Payload is `mode:uint2 module:MsgAddressInt`.
 It is authorized by the CURRENT mode/root. Strict-to-staged downgrade is
 forbidden. Wallet V5 clears its old extension dictionary and signature flag in
 strict mode. Agent Account also advances controller_epoch and seqno, invalidating
 old controller requests. Provision and validate a replacement verifier before
-rotating: an unusable root can lock the account; there is intentionally no
-classical recovery bypass.
+rotating: an unusable root can lock the account permanently. Once the mode is
+strict, the owner cannot stage a replacement, rotate the controller, change
+policy, or spend; only the installed root can install its successor. A root
+that is lost, unresponsive or itself broken therefore ends the account's
+usable life, and there is intentionally no classical recovery bypass. Treat
+entry into a strict mode as irreversible and rehearse the replacement path
+before using it in production.
 
 `kind = 2` is Agent Account management only. Payload is the existing owner
 message body (opcode, query_id and fields) for update_policy or rotate_controller.
