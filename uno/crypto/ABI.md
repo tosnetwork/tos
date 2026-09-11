@@ -28,6 +28,17 @@ key-origin limitation and independent host state checks remain unchanged.
 
 ## Profile 4 possession coverage
 
+M4 extends the same profile to system ciphertext generation and reconstruction,
+before adding Deposit execution callers. Each reserves 7 existing v4 units:
+3 scalar multiplications, 1 generated blinding base, 1 decoded point, and 2
+encoded points. Reconstruction runs the same generation algorithm and then
+compares bytes. Fixed transcript fields do not count as variable context bytes,
+consistent with the existing profile; these units are not CPU time or fees.
+Both entries share precharge, no refund, and sticky failure with proof verification.
+Only a reconstruction mismatch is candidate-invalid; failure to reconstruct the
+host's authenticated request is local-unavailable. Deposit admission must precede
+request construction and is not implied by cryptographic success.
+
 Profile 4 now covers registration and closure verification through the same
 `WorkchainProofVerifier` precharge and sticky failure path as SEND/COLLECT.
 The SEND/COLLECT counting rules are unchanged. Possession counts are fixed:

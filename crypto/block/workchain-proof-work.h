@@ -148,6 +148,22 @@ inline td::Result<WorkchainProofOperations> workchain_proof_operations_v4(
   return workchain_closure_operations_v4();
 }
 
+// system_encryption.rs::encrypt_encoded/finish: one point decode, three
+// scalar multiplications, one Pedersen blinding-base construction, two point
+// encodings. Verification reconstructs exactly the same ciphertext and compares
+// bytes, not another curve equation. As for the other v4 families, fixed
+// transcript fields are not variable context absorption or hash-round units.
+inline WorkchainProofOperations workchain_system_operations_v4() {
+  return {0, 3, 1, 1, 2, 0, 0, 0, 0};
+}
+inline td::Result<WorkchainProofOperations> workchain_proof_operations_v4(
+    const UnoCryptoSystemEncryptionRequest& request) {
+  if (request.abi_version != UNO_CRYPTO_ABI_VERSION || !request.amount) {
+    return td::Status::Error(-7201, "inconsistent local system encryption request");
+  }
+  return workchain_system_operations_v4();
+}
+
 class WorkchainProofVerifier {
  public:
   WorkchainProofVerifier(const WorkchainProofVerifier&) = delete;
@@ -165,12 +181,29 @@ class WorkchainProofVerifier {
     return verify_request(request, "invalid closure zero-balance possession proof");
   }
   td::Status status() const { return failure_.clone(); }
+  // Request must be independently rebuilt from authenticated ingress/state.
+  // A result is published only on success; neither operation authorizes credit.
+  td::Result<UnoCryptoSystemCiphertext> system_encrypt(const UnoCryptoSystemEncryptionRequest& request) {
+    UnoCryptoSystemCiphertext result{};
+    TRY_STATUS(attempt(request, "system ciphertext construction failed",
+                       [&] { return run_system_backend(request, result); }));
+    return result;
+  }
+  td::Status verify(const UnoCryptoSystemEncryptionRequest& request,
+                    const UnoCryptoSystemCiphertext& supplied) {
+    return attempt(request, "system ciphertext differs from authenticated derivation",
+                   [&] { return run_system_verify_backend(request, supplied); });
+  }
   std::uint64_t consumed() const { return consumed_; }
  private:
   // Every request family uses this one precharge and sticky failure path.
   // No public raw backend entry or unmetered possession overload exists.
   template <class Request>
   td::Status verify_request(const Request& request, td::Slice invalid_message) {
+    return attempt(request, invalid_message, [&] { return run_backend(request); });
+  }
+  template <class Request, class Backend>
+  td::Status attempt(const Request& request, td::Slice invalid_message, Backend&& backend) {
     if (failure_.is_error()) return failure_.clone();
     auto operations = workchain_proof_operations_v4(request);
     if (operations.is_error()) return fail(operations.move_as_error());
@@ -185,7 +218,7 @@ class WorkchainProofVerifier {
     consumed_ += units.ok();
     // The only expensive backend boundary. Failed proofs consume the same
     // reservation; an engine ignoring this Result cannot erase sticky failure.
-    switch (run_backend(request)) {
+    switch (backend()) {
       case WorkchainProofVerdict::Valid: return td::Status::OK();
       case WorkchainProofVerdict::InvalidProof:
         return fail(td::Status::Error(static_cast<int>(WorkchainExecutionFailure::CandidateInvalid),
@@ -204,6 +237,10 @@ class WorkchainProofVerifier {
   static WorkchainProofVerdict run_backend(const UnoCryptoVerifyRequestV2& request);
   static WorkchainProofVerdict run_backend(const UnoCryptoKeyPossessionRequestV2& request);
   static WorkchainProofVerdict run_backend(const UnoCryptoClosurePossessionRequestV2& request);
+  static WorkchainProofVerdict run_system_backend(const UnoCryptoSystemEncryptionRequest& request,
+                                                 UnoCryptoSystemCiphertext& output);
+  static WorkchainProofVerdict run_system_verify_backend(const UnoCryptoSystemEncryptionRequest& request,
+                                                        const UnoCryptoSystemCiphertext& supplied);
   td::Status fail(td::Status error) { failure_ = std::move(error); return failure_.clone(); }
   const std::uint64_t declared_;
   std::uint64_t consumed_{0};

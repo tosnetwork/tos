@@ -13,6 +13,21 @@
 #include "m3-live-wallet.h"
 
 int main(int argc, char** argv) {
+  if (argc == 3 && std::string(argv[1]) == "--m4-backing-control") {
+    const std::string mode(argv[2]);
+    if (mode != "unpaired" && mode != "cross-block-d" && mode != "restored") return 2;
+    auto status = m3_live::check_m4_backing(td::make_refint(mode == "unpaired" ? 1 : 0),
+        td::make_refint(0), td::make_refint(mode == "cross-block-d" ? 1 : 0));
+    std::cout << "M4 backing control " << mode << ": "
+              << (status.is_ok() ? "OK" : status.message().str()) << '\n';
+    return status.is_ok() ? 0 : 1;
+  }
+  // Make the zero-stage block check demonstrably capable of rejecting a
+  // discrepancy, rather than only exercising equality of three constants.
+  m3_live::check_m4_backing(td::make_refint(0), td::make_refint(0), td::make_refint(0)).ensure();
+  CHECK(m3_live::check_m4_backing(td::make_refint(1), td::make_refint(0), td::make_refint(0)).is_error());
+  CHECK(m3_live::check_m4_backing(td::make_refint(0), td::make_refint(1), td::make_refint(0)).is_error());
+  CHECK(m3_live::check_m4_backing(td::make_refint(0), td::make_refint(0), td::make_refint(1)).is_error());
   if (argc == 3 && std::string(argv[1]) == "--check-closure-result") {
     vm::init_vm().ensure();
     const std::filesystem::path fixture(argv[2]);
@@ -181,6 +196,9 @@ int main(int argc, char** argv) {
       }
       auto previous = m3_live::load(fixture / "current-state.boc");
       auto accepted = m3_live::read_accepted_step(exported, previous);
+      auto ingress_table = block::load_workchain_native_ingress_table(*config).move_as_ok();
+      CHECK(ingress_table.count(2) && ingress_table.at(2).custody_address);
+      m3_live::assert_pre_deposit_backing(accepted, *ingress_table.at(2).custody_address);
       auto transaction = m3_live::accepted_transaction(accepted, td::Bits256::zero());
       block::gen::Transaction::Record tx;
       CHECK(tlb::unpack_cell(transaction, tx));

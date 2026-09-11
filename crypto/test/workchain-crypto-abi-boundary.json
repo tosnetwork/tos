@@ -1,19 +1,21 @@
 {
   "crypto/block/workchain-proof-backend.cpp": {
     "symbols": [
+      "uno_crypto_system_encrypt_v1",
+      "uno_crypto_system_verify_v1",
       "uno_crypto_verify_closure_possession_v2",
       "uno_crypto_verify_key_possession_v2",
       "uno_crypto_verify_v2"
     ],
-    "sha256": "525f1017ff35292931bb90d956416203a61f0d5f67125bcea8c6bc98e61e32b1",
-    "disposition": "Three live node verification calls, each a private WorkchainProofVerifier backend reached after its shared precharge. No other node ABI caller."
+    "sha256": "24e3303088e1abbb8e13bf796f0ee205b82b769319b466fd9233e7cd50fb7ee4",
+    "disposition": "Five private WorkchainProofVerifier ABI boundaries, all reached after the same precharge. System generation/reconstruction entries exist before Deposit host integration; no other node ABI caller."
   },
   "crypto/test/test-workchain-proof-backend.cpp": {
     "symbols": [
       "__real_uno_crypto_verify_v2",
       "__wrap_uno_crypto_verify_v2"
     ],
-    "sha256": "79f6eeb41b81943ff8491806aea5230fb7827c09424c135752745858d0e01118",
+    "sha256": "8ce7506a072f14a17b156a4ffbb51af4ce096e58f70c015727a58f331bf610d7",
     "disposition": "Test-only linker interception (__wrap/__real) measures the already-metered relation backend; not an engine entry."
   },
   "crypto/test/workchain-proof-boundary-gates.py": {
@@ -96,7 +98,7 @@
       "uno_crypto_verify_v2"
     ],
     "sha256": "400a2c318b136986ff0fee34a2c42f37970c29d4b173345121d20903c897ea0f",
-    "disposition": "Public ABI declarations only, no calls. System encryption and verification have no live node caller."
+    "disposition": "Public ABI declarations only, no calls. System encryption and verification may only be reached through the metered host backend."
   },
   "uno/crypto/include/uno_crypto_v0_retired.h": {
     "symbols": [
