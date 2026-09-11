@@ -68,3 +68,23 @@ It does not establish that every conceivable first write will be detected.
 Expiry requires installing the authenticated-cut host controls described above,
 not automatically accepting a larger API inventory. No node-enforcement claim is
 made by passing this guard.
+
+## Separate executed-effect check
+
+Specification clarification: memo `443a1905`, SHA-256 prefix
+`d446dbcefff0db35`. Both predicates remain in default CTest.
+`test-workchain-withdrawal-statement-effects` runs the actual statement
+constructor from an isolated source copy on both a successful construction and
+a designated DECODE=2 path. It compares the complete Alice/Bob serialized account
+fixture files before and after execution. Its own control changes only the
+existing `relation::validate_limits` body to replace Alice's file with Bob's.
+The unchanged statement executes the write, and the comparison reports
+`withdrawal.account_fixture_changed`; restored source and fixtures pass again.
+
+This is an observed fixture-file effect, not a Native authenticated account-root
+publication. Successful statement construction is not proof acceptance or a
+successful Withdrawal. Effects outside those two observed files are not covered.
+The three AST mutations remain controls of the capability inventory only; they
+are not required to change fixture bytes. The effect control neither modifies
+the AST predicate nor relies on an AST rejection. Both guards remain until the
+Native prepare integration supplies the real authenticated-cut controls.
