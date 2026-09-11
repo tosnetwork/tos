@@ -43,6 +43,21 @@ struct WorkchainPendingReceipt {
   std::uint8_t status;
 };
 
+// Public system ciphertext: pending only, never an available-balance update.
+// Full identity preimage is retained so a validator can recompute the dictionary
+// key. Native message authentication and admission bounds remain host duties.
+struct WorkchainDepositReceipt {
+  td::Bits256 receipt_id;
+  td::Bits256 inbound_message;
+  std::uint64_t sequence;
+  std::uint64_t amount;
+  td::Bits256 target_instance;
+  std::uint32_t target_key_epoch;
+  td::Bits256 asset;
+  WorkchainCiphertext ciphertext;
+  std::uint8_t status;
+};
+
 struct WorkchainConfidentialAccount {
   // Independent axes, never inferred from admission_version or one another.
   std::uint16_t schema_version, relation_profile, proof_profile;
@@ -59,6 +74,9 @@ struct WorkchainConfidentialAccount {
   std::uint64_t auth_nonce, available_revision;
   std::vector<WorkchainPendingReceipt> pending;
   WorkchainConfidentialLifecycle lifecycle;
+  // Two typed in-memory views of ONE authenticated ID dictionary. Both insert
+  // with Add; no origin can overwrite the other. Layout 1 has no system entries.
+  std::vector<WorkchainDepositReceipt> system_pending;
   // No settlement refs in M3. Withdrawal adds them through a future tag migration.
 };
 
@@ -110,13 +128,13 @@ inline td::Result<td::Ref<vm::Cell>> encode_workchain_pending_receipt(const Work
   TRY_RESULT(target, pack(gen::UnoV2PendingTarget::Record{value.target_instance, value.target_key_epoch, value.asset}));
   TRY_RESULT(ciphertext, pack(value.ciphertext));
   TRY_RESULT(origin, pack(gen::UnoV2PendingOrigin::Record{value.operation_id, value.output_index}));
-  return pack(gen::UnoV2PendingReceipt::Record{value.receipt_id, value.source_operation_nonce,
+  return pack(gen::UnoV2PendingReceipt::Record_uno_v2_pending_receipt{value.receipt_id, value.source_operation_nonce,
       value.status, source, target, ciphertext, origin});
 }
 
 inline td::Result<WorkchainPendingReceipt> decode_workchain_pending_receipt(const td::Ref<vm::Cell>& root) {
   using confidential_state_detail::unpack;
-  TRY_RESULT(record, unpack<gen::UnoV2PendingReceipt::Record>(root));
+  TRY_RESULT(record, unpack<gen::UnoV2PendingReceipt::Record_uno_v2_pending_receipt>(root));
   TRY_RESULT(source, unpack<WorkchainConfidentialAddress>(record.source));
   TRY_RESULT(target, unpack<gen::UnoV2PendingTarget::Record>(record.target));
   TRY_RESULT(ciphertext, unpack<WorkchainCiphertext>(record.ciphertext));
@@ -126,6 +144,40 @@ inline td::Result<WorkchainPendingReceipt> decode_workchain_pending_receipt(cons
       origin.output_index, static_cast<std::uint8_t>(record.status)};
   TRY_RESULT(canonical, encode_workchain_pending_receipt(value));
   if (canonical->get_hash() != root->get_hash()) return td::Status::Error("noncanonical pending receipt");
+  return value;
+}
+
+inline td::Result<td::Bits256> derive_workchain_deposit_id(const td::Bits256& inbound_message,
+    std::uint64_t sequence) {
+  if (sequence == 0) return td::Status::Error("deposit sequence must be incremented before issuance");
+  TRY_RESULT(root, confidential_state_detail::pack(gen::UnoV2DepositIdentity::Record{inbound_message, sequence}));
+  return td::Bits256(root->get_hash().bits());  // Native CellRepr, never BoC bytes.
+}
+
+inline td::Result<td::Ref<vm::Cell>> encode_workchain_deposit_receipt(const WorkchainDepositReceipt& value) {
+  using confidential_state_detail::pack;
+  if (!value.amount || !confidential_state_detail::canonical_ciphertext(value.ciphertext) ||
+      value.ciphertext.handle == td::Bits256::zero())
+    return td::Status::Error("invalid system ciphertext or amount");
+  TRY_RESULT(id, derive_workchain_deposit_id(value.inbound_message, value.sequence));
+  if (id != value.receipt_id) return td::Status::Error("deposit receipt identity mismatch");
+  TRY_RESULT(target, pack(gen::UnoV2PendingTarget::Record{value.target_instance, value.target_key_epoch, value.asset}));
+  TRY_RESULT(ciphertext, pack(value.ciphertext));
+  TRY_RESULT(origin, pack(gen::UnoV2DepositIdentity::Record{value.inbound_message, value.sequence}));
+  return pack(gen::UnoV2PendingReceipt::Record_uno_v2_system_pending_receipt{
+      value.receipt_id, value.amount, value.status, target, ciphertext, origin});
+}
+
+inline td::Result<WorkchainDepositReceipt> decode_workchain_deposit_receipt(const td::Ref<vm::Cell>& root) {
+  using confidential_state_detail::unpack;
+  TRY_RESULT(record, unpack<gen::UnoV2PendingReceipt::Record_uno_v2_system_pending_receipt>(root));
+  TRY_RESULT(target, unpack<gen::UnoV2PendingTarget::Record>(record.target));
+  TRY_RESULT(ciphertext, unpack<WorkchainCiphertext>(record.ciphertext));
+  TRY_RESULT(origin, unpack<gen::UnoV2DepositIdentity::Record>(record.origin));
+  WorkchainDepositReceipt value{record.receipt_id, origin.inbound_message, origin.sequence, record.amount,
+      target.instance, target.key_epoch, target.asset, ciphertext, static_cast<std::uint8_t>(record.status)};
+  TRY_RESULT(canonical, encode_workchain_deposit_receipt(value));
+  if (canonical->get_hash() != root->get_hash()) return td::Status::Error("noncanonical deposit receipt");
   return value;
 }
 
@@ -174,14 +226,17 @@ inline td::Result<WorkchainConfidentialLifecycle> decode_workchain_account_lifec
 
 inline td::Result<td::Ref<vm::Cell>> encode_workchain_confidential_account(const WorkchainConfidentialAccount& value) {
   using confidential_state_detail::pack;
-  if (value.schema_version != 1) return td::Status::Error("unsupported confidential account schema");
+  if (value.schema_version != 1 && value.schema_version != 2) return td::Status::Error("unsupported confidential account schema");
   if (value.public_key.is_zero() || !confidential_state_detail::canonical_point(value.public_key)) {
     return td::Status::Error("invalid confidential public key");
   }
   if (!confidential_state_detail::canonical_ciphertext(value.available)) {
     return td::Status::Error("noncanonical available ciphertext");
   }
-  if (value.pending.size() > 16) return td::Status::Error("pending capacity exceeded");
+  if (value.pending.size() > 16 || value.system_pending.size() > 4)
+    return td::Status::Error("pending capacity exceeded");
+  if (value.schema_version == 1 && !value.system_pending.empty())
+    return td::Status::Error("system pending requires account schema 2");
   vm::Dictionary pending(256);
   for (const auto& receipt : value.pending) {
     // Historical epochs survive key rotation; newly created receipt epoch
@@ -196,6 +251,13 @@ inline td::Result<td::Ref<vm::Cell>> encode_workchain_confidential_account(const
       return td::Status::Error("duplicate pending dictionary key");
     }
   }
+  for (const auto& receipt : value.system_pending) {
+    if (receipt.target_instance != value.address.instance || receipt.asset != value.bindings.asset)
+      return td::Status::Error("system pending target binding mismatch");
+    TRY_RESULT(encoded, encode_workchain_deposit_receipt(receipt));
+    if (!pending.set_ref(receipt.receipt_id, encoded, vm::Dictionary::SetMode::Add))
+      return td::Status::Error("duplicate pending dictionary key");
+  }
   TRY_RESULT(address, pack(value.address));
   TRY_RESULT(bindings, pack(value.bindings));
   TRY_RESULT(funding, pack(value.funding));
@@ -203,18 +265,39 @@ inline td::Result<td::Ref<vm::Cell>> encode_workchain_confidential_account(const
   TRY_RESULT(available, pack(value.available));
   TRY_RESULT(crypto, pack(gen::UnoV2AccountCrypto::Record{value.public_key, value.key_epoch, available}));
   TRY_RESULT(lifecycle, encode_workchain_account_lifecycle(value.lifecycle));
+  if (value.schema_version == 2) {
+    return pack(gen::UnoV2AccountStateDeposits::Record{value.schema_version, value.relation_profile, value.proof_profile,
+      value.auth_nonce, value.available_revision, static_cast<unsigned>(value.pending.size()),
+      static_cast<unsigned>(value.system_pending.size()), identity, crypto,
+      std::move(pending).extract_root(), lifecycle});
+  }
   return pack(gen::UnoV2AccountState::Record{value.schema_version, value.relation_profile, value.proof_profile,
       value.auth_nonce, value.available_revision, static_cast<unsigned>(value.pending.size()), identity, crypto,
       std::move(pending).extract_root(), lifecycle});
 }
 
-// Fixed-width records plus at most 16 complete receipts. No fallback formats,
+// Fixed-width records: layout 1 has at most 16 user receipts; layout 2 has
+// at most 16 user plus 4 system receipts. Explicit tags, no fallback formats,
 // no hash-only restoration, and no exception-to-malformed conversion. Callers
 // classify candidate bytes versus unavailable authenticated state themselves.
 inline td::Result<WorkchainConfidentialAccount> decode_workchain_confidential_account(const td::Ref<vm::Cell>& root) {
   using confidential_state_detail::unpack;
-  TRY_RESULT(record, unpack<gen::UnoV2AccountState::Record>(root));
-  if (record.schema_version != 1) return td::Status::Error("unsupported confidential account schema");
+  if (root.is_null()) return td::Status::Error("missing confidential account");
+  gen::UnoV2AccountState::Record record;
+  unsigned system_count = 0;
+  auto slice = vm::load_cell_slice(root);
+  if (slice.prefetch_ulong(32) == gen::UnoV2AccountStateDeposits::cons_tag[0]) {
+    TRY_RESULT(new_record, unpack<gen::UnoV2AccountStateDeposits::Record>(root));
+    if (new_record.schema_version != 2) return td::Status::Error("unsupported confidential account schema");
+    system_count = new_record.system_pending_count;
+    record = {new_record.schema_version, new_record.relation_profile, new_record.proof_profile,
+        new_record.auth_nonce, new_record.available_revision, new_record.pending_count,
+        new_record.identity, new_record.crypto, new_record.pending, new_record.lifecycle};
+  } else {
+    TRY_RESULT(old_record, unpack<gen::UnoV2AccountState::Record>(root));
+    if (old_record.schema_version != 1) return td::Status::Error("unsupported confidential account schema");
+    record = std::move(old_record);
+  }
   TRY_RESULT(identity, unpack<gen::UnoV2AccountIdentity::Record>(record.identity));
   TRY_RESULT(address, unpack<WorkchainConfidentialAddress>(identity.address));
   TRY_RESULT(bindings, unpack<WorkchainConfidentialBindings>(identity.bindings));
@@ -229,8 +312,19 @@ inline td::Result<WorkchainConfidentialAccount> decode_workchain_confidential_ac
   vm::Dictionary pending(record.pending, 256);
   td::Status error = td::Status::OK();
   if (!pending.check_for_each([&](td::Ref<vm::CellSlice> leaf, td::ConstBitPtr key, int width) {
-        if (value.pending.size() >= 16 || width != 256 || leaf->size_ext() != 0x10000) return false;
-        auto decoded = decode_workchain_pending_receipt(leaf->prefetch_ref());
+        if (width != 256 || leaf->size_ext() != 0x10000) return false;
+        auto entry = leaf->prefetch_ref();
+        auto tag = gen::t_UnoV2PendingReceipt.get_tag(vm::load_cell_slice(entry));
+        if (tag == gen::UnoV2PendingReceipt::uno_v2_system_pending_receipt) {
+          if (value.schema_version != 2 || value.system_pending.size() >= 4) return false;
+          auto decoded = decode_workchain_deposit_receipt(entry);
+          if (decoded.is_error()) { error = decoded.move_as_error(); return false; }
+          if (decoded.ok().receipt_id != td::Bits256(key)) return false;
+          value.system_pending.push_back(decoded.move_as_ok());
+          return true;
+        }
+        if (value.pending.size() >= 16) return false;
+        auto decoded = decode_workchain_pending_receipt(entry);
         if (decoded.is_error()) { error = decoded.move_as_error(); return false; }
         if (decoded.ok().receipt_id != td::Bits256(key)) return false;
         value.pending.push_back(decoded.move_as_ok());
@@ -239,6 +333,8 @@ inline td::Result<WorkchainConfidentialAccount> decode_workchain_confidential_ac
     if (error.is_error()) return std::move(error);
     return td::Status::Error("invalid or excessive pending dictionary");
   }
+  // D39: enumerate authenticated entries and compare, do not trust counts.
+  if (value.system_pending.size() != system_count) return td::Status::Error("system pending count mismatch");
   if (value.pending.size() != record.pending_count) return td::Status::Error("pending count mismatch");
   TRY_RESULT(canonical, encode_workchain_confidential_account(value));
   if (canonical->get_hash() != root->get_hash()) return td::Status::Error("noncanonical confidential account");

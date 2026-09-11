@@ -140,7 +140,7 @@
       "uno_crypto_system_encrypt_v1",
       "uno_crypto_system_verify_v1"
     ],
-    "sha256": "c1e1bbd2c975946f73c9e819b66d67e44eaf053c85d83e9860b706d55c0966cc",
+    "sha256": "033e705b65f659acab27bfc619ad6e3e758e4200cd8c6b826bf920ff20922e93",
     "disposition": "Direct system encrypt/verify calls occur only in cfg(test); tests cover both construction and verification, not a live node path."
   },
   "uno/crypto/src/tests.rs": {

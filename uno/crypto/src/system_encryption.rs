@@ -155,4 +155,24 @@ mod tests {
         // D only changes with amount if amount was absorbed, not just added to C.
         assert_ne!(changed_amount[1], baseline[1]);
     }
+    #[test]
+    fn system_verify_rejects_ciphertext_from_another_transcript_domain() {
+        use crate::ffi::*;
+        let p = PedersenGens::default().B_blinding;
+        let recipient = p.compress().to_bytes();
+        let request = SystemEncryptionRequest { abi_version: UNO_CRYPTO_ABI_VERSION,
+            domain: domain(), deposit_id: [10; 32], recipient, amount: 123 };
+        let mut other = Transcript::new(b"uno-v2/system-encryption-wrong-domain");
+        other.append_message(b"protocol-domain", &request.domain);
+        other.append_message(b"deposit-id", &request.deposit_id);
+        other.append_message(b"recipient-P", &request.recipient);
+        other.append_message(b"amount", &request.amount.to_le_bytes());
+        let mut wide = [0; 64];
+        other.challenge_bytes(b"r", &mut wide);
+        let [commitment, handle] = finish(p, request.amount, &wide).expect("nonzero test challenge");
+        let supplied = SystemCiphertext { commitment, handle };
+        // Valid encodings reach the actual reconstruction/comparison ABI.
+        assert_eq!(unsafe { uno_crypto_system_verify_v1(&request, &supplied) }, 3);
+    }
+
 }

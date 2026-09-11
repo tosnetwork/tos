@@ -231,6 +231,14 @@ There are no optional fields or implicit defaults. The transcript is:
 
 Reject zero r, zero amount, or a malformed/identity recipient with DECODE.
 The primitive accepts every positive u64 amount; it imposes no Deposit policy.
+M4 reuses these entries without adding a proof relation. The test suite also
+constructs canonical ciphertexts under a different transcript domain and checks
+that the reconstruction ABI returns VERIFY, rather than a parsing error.
+The authenticated pending codec retains the original Native Message CellRepr
+hash and checked sequence to recompute DepositID; neither is authenticated by
+this ABI. System receipts occupy separate per-account capacity in the shared
+Add-only receipt dictionary and never overwrite available balance.
+
 The host MUST check V_min <= x <= V_max from the same authenticated policy
 slice: every pending item must later satisfy the COLLECT range relation.
 Ordinary over-limit deposits must follow the specified bounce path without
