@@ -383,3 +383,27 @@ TEST(ConfidentialState, M4SerializedFullAccountSize) {
     << "shared cells deduplicated; measured fixture, not a frozen maximum\n";
   ASSERT_TRUE(bytes(full) > bytes(user_only));
 }
+
+TEST(ConfidentialState, SystemCollectIdentityInputs) {
+  auto base = std::filesystem::path(__FILE__).parent_path() / "workchain-m3-vectors/send";
+  auto load = [&](const char* name) {
+    std::ifstream file(base / name, std::ios::binary);
+    CHECK(file.good());
+    std::string bytes((std::istreambuf_iterator<char>(file)), {});
+    return vm::std_boc_deserialize(bytes).move_as_ok();
+  };
+  auto a = block::decode_workchain_confidential_account(load("alice.boc")).move_as_ok();
+  auto input = block::decode_workchain_transfer_input(load("candidate-1.boc")).move_as_ok();
+  auto send = block::derive_workchain_receipt_id(a.address.instance, input.claimed_operation_id, 0).move_as_ok();
+  auto first = block::derive_workchain_deposit_id(bits(101), 1).move_as_ok();
+  auto second = block::derive_workchain_deposit_id(bits(102), 2).move_as_ok();
+  std::ifstream fixture(std::filesystem::path(__FILE__).parent_path() / "workchain-m4-collect-ids.txt");
+  ASSERT_TRUE(fixture.good());
+  std::string contents((std::istreambuf_iterator<char>(fixture)), {});
+  ASSERT_TRUE(contents.find("send=" + td::hex_encode(send.as_slice()) + "\n") != std::string::npos);
+  ASSERT_TRUE(contents.find("system1=" + td::hex_encode(first.as_slice()) + "\n") != std::string::npos);
+  ASSERT_TRUE(contents.find("system2=" + td::hex_encode(second.as_slice()) + "\n") != std::string::npos);
+  std::cout << "M4_COLLECT_ID send=" << td::hex_encode(send.as_slice())
+            << " system1=" << td::hex_encode(first.as_slice())
+            << " system2=" << td::hex_encode(second.as_slice()) << '\n';
+}
