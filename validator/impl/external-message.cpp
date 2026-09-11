@@ -22,6 +22,7 @@
 
 #include "block/block-auto.h"
 #include "block/block-parse.h"
+#include "crypto/smc-envelope/SmartContractCode.h"
 #include "crypto/openssl/rand.hpp"
 #include "td/actor/actor.h"
 #include "td/utils/Random.h"
@@ -437,9 +438,7 @@ class NetworkBoundWalletV5 : public WalletV5 {
 const WalletMessageProcessor* WalletMessageProcessor::get(td::Bits256 code_hash) {
   static auto wallets = []() -> std::map<td::Bits256, std::shared_ptr<WalletMessageProcessor>> {
     std::map<td::Bits256, std::shared_ptr<WalletMessageProcessor>> wallets;
-    auto add_wallet = [&](td::Slice s, std::shared_ptr<WalletMessageProcessor> wallet) {
-      td::Bits256 code_hash;
-      CHECK(code_hash.from_hex(s) == 256);
+    auto register_code = [&](td::Bits256 code_hash, std::shared_ptr<WalletMessageProcessor> wallet) {
       wallets[code_hash] = wallet;
       // Make library cell
       vm::CellBuilder cb;
@@ -447,6 +446,23 @@ const WalletMessageProcessor* WalletMessageProcessor::get(td::Bits256 code_hash)
       cb.store_bytes(code_hash.as_slice());
       td::Bits256 library_code_hash = cb.finalize_novm(true)->get_hash().bits();
       wallets[library_code_hash] = wallet;
+    };
+    // Foreign wallet code this chain did not build: the hash is the only
+    // description we have of it, so it stays a literal.
+    auto add_wallet = [&](td::Slice s, std::shared_ptr<WalletMessageProcessor> wallet) {
+      td::Bits256 code_hash;
+      CHECK(code_hash.from_hex(s) == 256);
+      register_code(code_hash, wallet);
+    };
+    // Wallet code this build compiles from crypto/smartcont. Deriving the key
+    // from that code instead of repeating its hash here means a contract
+    // change cannot leave the table pointing at bytecode that no longer
+    // exists: there is no second copy of the value to forget to update.
+    auto add_compiled_wallet = [&](SmartContractCode::Type type,
+                                   std::shared_ptr<WalletMessageProcessor> wallet) {
+      auto code = SmartContractCode::get_code(type);
+      CHECK(code.not_null());
+      register_code(code->get_hash().bits(), wallet);
     };
 
     add_wallet("A0CFC2C48AEE16A271F2CFC0B7382D81756CECB1017D077FAAAB3BB602F6868C", std::make_shared<WalletV1>());
@@ -466,12 +482,9 @@ const WalletMessageProcessor* WalletMessageProcessor::get(td::Bits256 code_hash)
 
     // Wallets compiled from this repository's sources: their signed bodies
     // carry the network's global_id before subwallet_id/valid_until/seqno.
-    add_wallet("6C6CAAF194AF3660E7AE4C584785C1BDA0D85FAFD80E947D725105947CD11D7D",
-               std::make_shared<NetworkBoundWalletV3>());
-    add_wallet("F15BC24CBC229A1B72CAB39345DB191E761EF913E6D066E76D3836CF1600CB47",
-               std::make_shared<NetworkBoundWalletV4>());
-    add_wallet("E6C006F19FBABCCD0D4852C1CC4CA3C6410914DC86F6611CCF8165CDCAAFC6E0",
-               std::make_shared<NetworkBoundWalletV5>());
+    add_compiled_wallet(SmartContractCode::WalletV3, std::make_shared<NetworkBoundWalletV3>());
+    add_compiled_wallet(SmartContractCode::WalletV4, std::make_shared<NetworkBoundWalletV4>());
+    add_compiled_wallet(SmartContractCode::WalletV5, std::make_shared<NetworkBoundWalletV5>());
 
     return wallets;
   }();

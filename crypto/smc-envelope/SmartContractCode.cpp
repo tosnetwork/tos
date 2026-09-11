@@ -51,6 +51,7 @@ const auto& get_map() {
 #include "smartcont/auto/wallet3-code.cpp"
 #include "smartcont/auto/wallet-v4-code.cpp"
 #include "smartcont/auto/wallet-v5-code.cpp"
+#include "smartcont/auto/agent-account-code.cpp"
     return map;
   }();
   return map;
@@ -108,6 +109,10 @@ td::Span<int> SmartContractCode::get_revisions(Type type) {
       static int res[] = {-1};
       return res;
     }
+    case Type::AgentAccount: {
+      static int res[] = {-1};
+      return res;
+    }
   }
   return {};
 }
@@ -162,6 +167,8 @@ td::Ref<vm::Cell> SmartContractCode::get_code(Type type, int ext_revision) {
         return "wallet_v5";
       case Type::SessionWallet:
         return "session-wallet";
+      case Type::AgentAccount:
+        return "agent-account";
     }
     return {};
   }(type);
