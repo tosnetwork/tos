@@ -41,7 +41,7 @@ struct WorkchainWithdrawalRecord {
 };
 
 namespace withdrawal_codec_detail {
-inline td::Status error(td::Slice message) { return workchain_codec_content_error(message); }
+inline td::Status error(td::Slice message) { return workchain_codec_rejected(message); }
 // No consensus classification here. A source-aware caller distinguishes an
 // unavailable historical closure from malformed candidate input.
 template <class F> auto protect(F&& f) -> decltype(f()) {

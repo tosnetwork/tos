@@ -85,7 +85,24 @@ TEST(WithdrawalAssociation, CodecFailureCategoriesSurviveProtection) {
   });
   ASSERT_TRUE(nested.is_error());
   ASSERT_EQ(nested.error().code(), acquisition.error().code());
-  ASSERT_EQ(withdrawal_codec_detail::error("content").code(), static_cast<int>(WorkchainCodecFailure::Content));
+  ASSERT_EQ(withdrawal_codec_detail::error("check failed").code(), static_cast<int>(WorkchainCodecFailure::Rejected));
+  auto legacy = withdrawal_codec_detail::protect([]() -> td::Result<int> {
+    return td::Status::Error("legacy unknown");
+  });
+  ASSERT_TRUE(legacy.is_error());
+  ASSERT_EQ(legacy.error().code(), 0);
+  auto write = withdrawal_codec_detail::protect([]() -> td::Result<int> {
+    vm::CellBuilder().store_zeroes(1024);
+    return 1;
+  });
+  auto create = withdrawal_codec_detail::protect([]() -> td::Result<int> {
+    vm::CellBuilder().ensure_pass(false);
+    return 1;
+  });
+  ASSERT_TRUE(write.is_error());
+  ASSERT_TRUE(create.is_error());
+  ASSERT_EQ(write.error().code(), static_cast<int>(WorkchainCodecFailure::Construction));
+  ASSERT_EQ(create.error().code(), static_cast<int>(WorkchainCodecFailure::Construction));
 }
 
 TEST(WithdrawalAssociation, ActualMessageHashAndOriginalLt) {
@@ -134,6 +151,25 @@ TEST(FailedFunded, RealIssuanceAndEncodedSequencePair) {
       {word(4), word(99), word(6)}, {10000000000ULL, 0, word(7)}, point, 0,
       {word(0), word(0)}, 8, 0, {}, WorkchainAccountActive{}, {}};
   auto owner = encode_workchain_withdrawal_account({core, pending, {}}, 2).move_as_ok();
+  // Walk a real descendant through the lower account decoder. The root header
+  // remains readable; only its identity ref is pruned. This is not a callback
+  // that merely returns a previously classified error, nor a DB-fault test.
+  auto legacy_core = core;
+  legacy_core.schema_version = 2;
+  auto legacy_root = encode_workchain_confidential_account(legacy_core).move_as_ok();
+  gen::UnoV2AccountStateDeposits::Record legacy_record;
+  ASSERT_TRUE(resource_policy_detail::unpack_exact(legacy_root, legacy_record));
+  legacy_record.identity = vm::CellBuilder::do_create_pruned_branch(legacy_record.identity, 1);
+  td::Ref<vm::Cell> partial;
+  ASSERT_TRUE(block::tlb::pack_cell(partial, legacy_record));
+  auto view = partial->virtualize(0);
+  gen::UnoV2AccountStateDeposits::Record readable_header;
+  ASSERT_TRUE(resource_policy_detail::unpack_exact(view, readable_header));
+  auto traversed = withdrawal_codec_detail::protect([&]() {
+    return decode_workchain_confidential_account(view);
+  });
+  ASSERT_TRUE(traversed.is_error());
+  ASSERT_EQ(traversed.error().code(), static_cast<int>(WorkchainCodecFailure::Virtualization));
   auto bucket = encode_workchain_unexpected_bucket({{}, {}, td::make_refint(0), {}, 0}, {256, 256}, 100).move_as_ok();
   auto coordinator = encode_workchain_coordinator_state({3, {1, 0, 1, 4}, 0, 10, bucket}).move_as_ok();
   auto m = message();
