@@ -45,6 +45,15 @@ not throughput measurements. Actual masterchain imports contain 13 for each
 COLLECT and 7 for SEND. SEND moves S=3000000 to the coordinator; its F=3000007.
 Final custody and liability totals both equal 1996999954.
 
+A read-only inspection of the accepted final state reports registered_accounts=2,
+A system/user slots=0/0, B system/user slots=0/0, and coordinator Native
+balance=11008999900. D/P/W are zero by the implemented atomic operation set;
+they are not three separately stored counters being read from the state.
+Reading each actual Block.value_flow gives fees_collected of
+21567, 21567, 4341, 4341, 13, 13, 7, 13, 33: total 51895 across the nine wc=2
+blocks, excluding source wc=0 and masterchain blocks. These include Native
+components and must not be inferred from the D32 tariff alone.
+
 The block-loop checks include nonzero R mismatch, nonzero cross-block D, and
 an unpaired confidential fee debit, followed by restored successful checks.
 Test keys decrypt available and pending, directly measuring N_hidden for this

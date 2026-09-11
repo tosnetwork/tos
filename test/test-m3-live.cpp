@@ -14,6 +14,44 @@
 #include "m4-live-deposit.h"
 
 int main(int argc, char** argv) {
+  if (argc == 3 && std::string(argv[1]) == "--inspect-m4-final") {
+    vm::init_vm().ensure();
+    const std::filesystem::path fixture(argv[2]);
+    CHECK(std::filesystem::exists(fixture / ".counter-managed-v1"));
+    const auto root = m3_live::load(fixture / "accepted-state.boc");
+    const auto coordinator = block::decode_workchain_coordinator_state(
+        m3_live::account_data(root, td::Bits256::zero())).move_as_ok();
+    std::cout << "registered_accounts=" << coordinator.system.registered_accounts << '\n';
+    for (const auto byte : {0x11, 0x22}) {
+      td::Bits256 address;
+      address.as_slice().fill(static_cast<char>(byte));
+      const auto account = block::decode_workchain_confidential_account(
+          m3_live::account_data(root, address)).move_as_ok();
+      std::cout << (byte == 0x11 ? "A" : "B") << " system_slots=" << account.system_pending.size()
+                << " user_slots=" << account.pending.size() << '\n';
+      CHECK(account.system_pending.empty() && account.pending.empty());
+    }
+    block::gen::ShardStateUnsplit::Record state;
+    CHECK(tlb::unpack_cell(root, state));
+    vm::AugmentedDictionary accounts(vm::load_cell_slice_ref(state.accounts), 256, block::tlb::aug_ShardAccounts);
+    block::Account native(2, td::Bits256::zero().bits());
+    CHECK(native.unpack(accounts.lookup(td::Bits256::zero()), state.gen_utime, false));
+    std::cout << "coordinator_native=" << native.balance.tomis << '\n';
+    block::CurrencyCollection total(0);
+    for (unsigned seqno = 1; seqno <= 9; ++seqno) {
+      block::gen::Block::Record record;
+      CHECK(tlb::unpack_cell(m3_live::load(fixture / "m4-blocks" /
+            (std::to_string(seqno) + ".boc")), record));
+      block::ValueFlow flow;
+      CHECK(flow.unpack(vm::load_cell_slice_ref(record.value_flow)));
+      block::CurrencyCollection next;
+      CHECK(block::CurrencyCollection::add(total, flow.fees_collected, next));
+      total = std::move(next);
+      std::cout << "block=" << seqno << " fees_collected=" << flow.fees_collected.tomis << '\n';
+    }
+    std::cout << "nine_wc2_blocks_fees_collected=" << total.tomis << '\n';
+    return 0;
+  }
   if (argc == 3 && std::string(argv[1]) == "--check-m4-master") {
     vm::init_vm().ensure();
     const std::filesystem::path fixture(argv[2]);
