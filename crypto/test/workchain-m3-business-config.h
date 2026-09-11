@@ -23,7 +23,8 @@ struct M3TestBusinessParameters {
   // Absence represents the old M3-only layout, NEVER a Deposit default.
   // Version 2 carries all four additional fields; maximum comes from limits.
   std::optional<WorkchainDepositPolicy> deposit;
-  // Version 3: explicit static C unit price and operation-specific T. S is the
+  // Version 3: explicit static D28 billing-unit price and operation-specific T.
+  // Billing units (SEND=1, COLLECT=3) are not profile-4 proof-work units. S is the
   // authenticated Deposit slot price for SEND and zero for COLLECT (D25).
   // Legacy aggregate send_fee/collect_fee must be zero reserved fields here;
   // they are not split, inferred, or used as a fallback for missing components.

@@ -33,6 +33,7 @@
 #include "block/workchain-confidential-state.h"
 #include "block/workchain-coordinator-state.h"
 #include "block/workchain-refund-message.h"
+#include "block/workchain-budget-backing.h"
 #include "crypto/openssl/rand.hpp"
 #include "td/utils/Timer.h"
 #include "td/utils/bits.h"
@@ -4843,6 +4844,7 @@ td::Status Transaction::prepare_workchain_entry_impl(Ref<vm::Cell> binding, Ref<
   TRY_RESULT(credited, stage_workchain_credit(credit, cfg, true));
   CurrencyCollection disposal_fees(0);
   auto disposal_end_lt = end_lt;
+  bool rejected_message_seen = false;
   for (const auto& root : envelopes) {
     tlb::MsgEnvelope::Record_std envelope;
     gen::CommonMsgInfo::Record_int_msg_info info;
@@ -4853,7 +4855,23 @@ td::Status Transaction::prepare_workchain_entry_impl(Ref<vm::Cell> binding, Ref<
         info.created_at > now || (envelope.emitted_lt && envelope.emitted_lt.value() >= start_lt)) {
       return td::Status::Error("invalid disposal final-import context");
     }
-    if (destination.address == account.addr || destination.address == disposal->custody) continue;
+    const bool explicitly_rejected = disposal->rejected_coordinator_message &&
+        *disposal->rejected_coordinator_message == envelope.msg->get_hash().bits();
+    if (explicitly_rejected) {
+      if (rejected_message_seen || destination.address != account.addr)
+        return td::Status::Error("rejected Deposit is not a unique coordinator input");
+      rejected_message_seen = true;
+      CurrencyCollection incoming, before_credit;
+      // stage_workchain_credit has already included this exact coordinator
+      // input. Remove that temporary credit before the pure disposal planner
+      // accounts for it once. Checked subtraction enforces the invariant.
+      if (!incoming.validate_unpack(info.value) ||
+          !CurrencyCollection::sub(credited, incoming, before_credit))
+        return td::Status::Error("rejected Deposit temporary credit mismatch");
+      credited = std::move(before_credit);
+    } else if (destination.address == account.addr || destination.address == disposal->custody) {
+      continue;
+    }
     TRY_RESULT(planned, plan_workchain_native_disposal(envelope.msg, account.workchain,
         destination.address, account.addr, credited, disposal_end_lt, now, disposal->messages,
         disposal->workchains, extra_validation_cells, disposal->profile));
@@ -4877,6 +4895,8 @@ td::Status Transaction::prepare_workchain_entry_impl(Ref<vm::Cell> binding, Ref<
       disposal_end_lt = next_lt;
     }
   }
+  if (disposal && disposal->rejected_coordinator_message && !rejected_message_seen)
+    return td::Status::Error("rejected Deposit absent from entry inbox");
   TRY_RESULT(allocated, allocate_workchain_native_balance(account.addr, credited, output,
       max_transfers, extra_validation_cells));
   if (native.fees && native.fees->custody == account.addr) {
@@ -4914,7 +4934,7 @@ td::Status Transaction::prepare_workchain_entry_impl(Ref<vm::Cell> binding, Ref<
 }
 
 td::Status Transaction::prepare_workchain_refund_message(const WorkchainRegistrationFunding& historical,
-                                                        const ActionPhaseConfig& cfg) {
+                                                        const ActionPhaseConfig& cfg, int extra_validation_cells) {
   if (trans_type != tr_workchain_batch || account.workchain != 2 || cfg.workchains == nullptr ||
       batch_description.is_null() || new_data.is_null() || root.not_null() || new_total_state.not_null() ||
       !out_msgs.empty() || in_msg.not_null() || storage_phase || compute_phase || action_phase || bounce_phase ||
@@ -4923,12 +4943,19 @@ td::Status Transaction::prepare_workchain_refund_message(const WorkchainRegistra
     return td::Status::Error("refund requires a private uncommitted coordinator entry without other value flow");
   TRY_RESULT(before, decode_workchain_coordinator_state(account.data));
   TRY_RESULT(after, decode_workchain_coordinator_state(new_data));
+  TRY_RESULT(bucket_before, workchain_budget_bucket_holdings(before, extra_validation_cells));
+  TRY_RESULT(bucket_after, workchain_budget_bucket_holdings(after, extra_validation_cells));
+  if (bucket_before != bucket_after)
+    return td::Status::Error(-7200, "closure must preserve unexpected bucket holdings");
   TRY_STATUS(validate_workchain_refund_destination(historical, *cfg.workchains));
   CurrencyCollection operating;
   // An already under-backed authenticated bucket is a state-availability/
   // integrity failure, not evidence against this candidate's closure proof.
   if (!CurrencyCollection::sub(balance, workchain_refund_value(before.refundable_deposits), operating))
     return td::Status::Error(-7201, "authenticated refund bucket is not fully backed");
+  if (check_workchain_budget_backing(balance, workchain_refund_value(before.refundable_deposits),
+                                    bucket_before).is_error())
+    return td::Status::Error(-7201, "authenticated coordinator protected holdings are not fully backed");
   auto destination = tlb::t_MsgAddressInt.pack_std_address(historical.refund_workchain, historical.refund_account);
   vm::CellBuilder request;
   // Implementation choice: empty body, absent StateInit, mode 1, ordinary bounce
@@ -4959,6 +4986,9 @@ td::Status Transaction::prepare_workchain_refund_message(const WorkchainRegistra
   if (!CurrencyCollection::sub(staged.remaining_balance,
                               workchain_refund_value(after.refundable_deposits), unreserved))
     return td::Status::Error(-7200, "refund operating budget insufficient");
+  if (check_workchain_budget_backing(staged.remaining_balance,
+          workchain_refund_value(after.refundable_deposits), bucket_after).is_error())
+    return td::Status::Error(-7200, "refund fees invade unexpected bucket holdings");
   TRY_STATUS(verify_workchain_refund_message(historical, before.refundable_deposits, after.refundable_deposits,
       balance, staged.remaining_balance, CurrencyCollection(staged.total_action_fees),
       account.workchain, account.addr, staged.out_msgs));

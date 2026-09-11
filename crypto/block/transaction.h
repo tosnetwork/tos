@@ -61,6 +61,11 @@ struct WorkchainDisposalEntryContext {
   // Standalone disposal has one emitter; joint settlement additionally charges
   // the custody payout. The inner disposal guard is a necessary partial bound.
   std::uint64_t max_inbound, max_outbound;
+  // Local continuation of an independently rejected Deposit, never a wire or
+  // configuration capability. Only this exact coordinator-addressed message
+  // may use disposal instead of ordinary credit. The enclosing host must
+  // independently establish admission rejection before setting it.
+  std::optional<td::Bits256> rejected_coordinator_message;
 };
 
 namespace transaction {
@@ -560,7 +565,7 @@ struct Transaction {
   // historical registration refund using Native mode 1, never a custody payout.
   // Caller must discard this transaction on failure; no account is committed.
   td::Status prepare_workchain_refund_message(const gen::UnoV2RegistrationFunding::Record& historical,
-                                             const ActionPhaseConfig& cfg);
+                                             const ActionPhaseConfig& cfg, int extra_validation_cells);
   // Explicit coordinator variant: settle foreign final destinations from the
   // committed inbox, retaining original messages and deterministic bounce LTs.
   // Custody arrivals remain that participant's obligation. Complete detached

@@ -4,7 +4,7 @@
 #include "crypto/test/workchain-m3-genesis-cells.h"
 #include "crypto/test/workchain-m3-state-fixture.h"
 
-inline td::Result<td::Ref<vm::Cell>> prepare_m3_live_configuration(td::Ref<vm::Cell> root) {
+inline td::Result<td::Ref<vm::Cell>> prepare_m3_live_configuration(td::Ref<vm::Cell> root, bool m4 = false) {
   using namespace block;
   using namespace block::m3_test;
   tos::BlockIdExt zero{tos::BlockId{tos::masterchainId, tos::shardIdAll, 0},
@@ -35,9 +35,26 @@ inline td::Result<td::Ref<vm::Cell>> prepare_m3_live_configuration(td::Ref<vm::C
   WorkchainResourcePolicy resources{4, {65536, 16777216, 32, 3, 3, 1},
       {65536, 16777216, 4096, 1048576, 128},
       {100000, 4096, 1048576, 65536, 16777216, 2}, {0, 2, 2}, 1};
+  WorkchainCoordinatorState coordinator{2, {1, 1, 0, 0}, 0};
+  if (m4) {
+    // Explicit authenticated TEST inputs, not defaults or the coordinator's
+    // separately scheduled independent-prediction experiment. D28 is absent.
+    const auto maximum = (std::uint64_t{1} << 62) - 1;
+    business.limits.max_balance = business.limits.max_value = maximum;
+    business.send_fee = business.collect_fee = 0;
+    business.account_schema = 2;
+    business.proof_profile = 4;
+    business.deposit = WorkchainDepositPolicy{1000000000, maximum, 3000000, 16, 4};
+    business.operation_tariff = WorkchainStaticOperationTariff{2, 5, 7};
+    resources.input.max_reads = resources.input.max_writes = 4;
+    auto bucket = encode_workchain_unexpected_bucket({{}, {}, td::make_refint(0), {}, 0},
+                                                     {256, 256}, 4096);
+    TRY_RESULT(empty_bucket, std::move(bucket));
+    coordinator = WorkchainCoordinatorState{3, {1, 1, 0, 0}, 0, 0, empty_bucket};
+  }
   TRY_RESULT(cells, make_m3_test_genesis_cells(business, resources,
       old.k_accepted_target_rate_ms, old.instance_id, old.registration_deposit,
-      ingress, WorkchainCoordinatorState{2, {1, 1, 0, 0}, 0}));
+      ingress, coordinator));
   TRY_RESULT(updated, replace_m3_test_param84(root, cells.param84));
   if (!updated.config_account_updated)
     return td::Status::Error("M3 fixture requires synchronized Native configuration account");

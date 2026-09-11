@@ -11,8 +11,98 @@
 #include "m3-live-state.h"
 #include "m3-live-assertions.h"
 #include "m3-live-wallet.h"
+#include "m4-live-deposit.h"
 
 int main(int argc, char** argv) {
+  if (argc == 3 && std::string(argv[1]) == "--check-m4-bounce-received") {
+    vm::init_vm().ensure();
+    const std::filesystem::path fixture(argv[2]);
+    CHECK(std::filesystem::exists(fixture / ".counter-managed-v1"));
+    m3_live::assert_m4_bounce_received(fixture);
+    return 0;
+  }
+  if (argc == 3 && std::string(argv[1]) == "--inspect-m4-final") {
+    vm::init_vm().ensure();
+    const std::filesystem::path fixture(argv[2]);
+    CHECK(std::filesystem::exists(fixture / ".counter-managed-v1"));
+    const auto root = m3_live::load(fixture / "accepted-state.boc");
+    const auto coordinator = block::decode_workchain_coordinator_state(
+        m3_live::account_data(root, td::Bits256::zero())).move_as_ok();
+    std::cout << "registered_accounts=" << coordinator.system.registered_accounts << '\n';
+    for (const auto byte : {0x11, 0x22}) {
+      td::Bits256 address;
+      address.as_slice().fill(static_cast<char>(byte));
+      const auto account = block::decode_workchain_confidential_account(
+          m3_live::account_data(root, address)).move_as_ok();
+      std::cout << (byte == 0x11 ? "A" : "B") << " system_slots=" << account.system_pending.size()
+                << " user_slots=" << account.pending.size() << '\n';
+      CHECK(account.system_pending.empty() && account.pending.empty());
+    }
+    block::gen::ShardStateUnsplit::Record state;
+    CHECK(tlb::unpack_cell(root, state));
+    vm::AugmentedDictionary accounts(vm::load_cell_slice_ref(state.accounts), 256, block::tlb::aug_ShardAccounts);
+    block::Account native(2, td::Bits256::zero().bits());
+    CHECK(native.unpack(accounts.lookup(td::Bits256::zero()), state.gen_utime, false));
+    std::cout << "coordinator_native=" << native.balance.tomis << '\n';
+    block::CurrencyCollection total(0);
+    for (unsigned seqno = 1; seqno <= 9; ++seqno) {
+      block::gen::Block::Record record;
+      CHECK(tlb::unpack_cell(m3_live::load(fixture / "m4-blocks" /
+            (std::to_string(seqno) + ".boc")), record));
+      block::ValueFlow flow;
+      CHECK(flow.unpack(vm::load_cell_slice_ref(record.value_flow)));
+      block::CurrencyCollection next;
+      CHECK(block::CurrencyCollection::add(total, flow.fees_collected, next));
+      total = std::move(next);
+      std::cout << "block=" << seqno << " fees_collected=" << flow.fees_collected.tomis << '\n';
+    }
+    std::cout << "nine_wc2_blocks_fees_collected=" << total.tomis << '\n';
+    return 0;
+  }
+  if (argc == 3 && std::string(argv[1]) == "--check-m4-master") {
+    vm::init_vm().ensure();
+    const std::filesystem::path fixture(argv[2]);
+    CHECK(std::filesystem::exists(fixture / ".counter-managed-v1"));
+    m3_live::assert_m4_master_import(fixture);
+    return 0;
+  }
+  if (argc == 3 && std::string(argv[1]) == "--wallet-policy") {
+    vm::init_vm().ensure();
+    const std::filesystem::path fixture(argv[2]);
+    CHECK(std::filesystem::exists(fixture / ".counter-managed-v1"));
+    const auto send = m3_live::wallet_environment(fixture, 1);
+    const auto collect = m3_live::wallet_environment(fixture, 2);
+    td::write_file((fixture / "wallet-policy.txt").string(),
+        "send_fee=" + std::to_string(send.execution_fee) + "\ncollect_fee=" + std::to_string(collect.execution_fee) +
+        "\nmax_balance=" + std::to_string(send.limits.max_balance) +
+        "\nmax_value=" + std::to_string(send.limits.max_value) + "\n").ensure();
+    return 0;
+  }
+  if (argc == 3 && std::string(argv[1]) == "--collect-receipts") {
+    vm::init_vm().ensure();
+    const std::filesystem::path fixture(argv[2]);
+    CHECK(std::filesystem::exists(fixture / ".counter-managed-v1"));
+    const auto owner = std::stoul(m3_live::field(fixture / "operation.wallet.txt", "owner"));
+    CHECK(owner < 2);
+    const auto ids = m3_live::wallet_words(m3_live::field(fixture / "operation.wallet.txt", "selected"));
+    // This live sequence selects exactly one entry at a time. Reuse B's
+    // multi-source helper, not a separate ciphertext/receipt codec.
+    CHECK(ids.size() == 1);
+    auto fields = block::m3_test::prepare_m4_test_collect_receipt_fields(
+        m3_live::wallet_state(fixture, static_cast<unsigned>(owner)), ids,
+        {std::stoull(m3_live::field(fixture / "operation.wallet.txt", "value"))}).move_as_ok();
+    std::string text;
+    for (const auto& [key, value] : fields) text += key + "=" + value + "\n";
+    td::write_file((fixture / "operation.receipts.txt").string(), text).ensure();
+    return 0;
+  }
+  if (argc == 3 && std::string(argv[1]) == "--deposit-request") {
+    vm::init_vm().ensure();
+    const std::filesystem::path fixture(argv[2]);
+    CHECK(std::filesystem::exists(fixture / ".counter-managed-v1"));
+    m3_live::prepare_m4_deposit(fixture);
+    return 0;
+  }
   if (argc == 3 && std::string(argv[1]) == "--m4-backing-control") {
     const std::string mode(argv[2]);
     if (mode != "unpaired" && mode != "cross-block-d" && mode != "restored") return 2;
@@ -85,21 +175,28 @@ int main(int argc, char** argv) {
     else m3_live::registration_finish(fixture);
     return 0;
   }
-  if (argc == 3 && std::string(argv[1]) == "--prepare-config") {
+  if (argc == 3 && (std::string(argv[1]) == "--prepare-config" || std::string(argv[1]) == "--prepare-m4-config")) {
     vm::init_vm().ensure();
     const std::filesystem::path fixture(argv[2]);
     CHECK(std::filesystem::exists(fixture / ".counter-managed-v1"));
     auto bytes = td::read_file_str((fixture / "zerostate.boc").string()).move_as_ok();
-    auto root = prepare_m3_live_configuration(vm::std_boc_deserialize(bytes).move_as_ok()).move_as_ok();
+    auto root = prepare_m3_live_configuration(vm::std_boc_deserialize(bytes).move_as_ok(),
+        std::string(argv[1]) == "--prepare-m4-config").move_as_ok();
     td::write_file((fixture / "zerostate.boc").string(), vm::std_boc_serialize(root, 31).move_as_ok()).ensure();
     td::write_file((fixture / "zerostate.rhash").string(), root->get_hash().as_slice()).ensure();
     return 0;
   }
-  if (argc == 3 && std::string(argv[1]) == "--coordinator-data") {
+  if (argc == 3 && (std::string(argv[1]) == "--coordinator-data" || std::string(argv[1]) == "--m4-coordinator-data")) {
     vm::init_vm().ensure();
     // Assumed TEST initial coordinator state; no registrations or deposits.
     // This mode writes only a caller-owned fixture file, never deployment state.
-    auto data = block::encode_workchain_coordinator_state({2, {1, 1, 0, 0}, 0}).move_as_ok();
+    block::WorkchainCoordinatorState state{2, {1, 1, 0, 0}, 0};
+    if (std::string(argv[1]) == "--m4-coordinator-data") {
+      auto bucket = block::encode_workchain_unexpected_bucket({{}, {}, td::make_refint(0), {}, 0},
+                                                              {256, 256}, 4096).move_as_ok();
+      state = {3, {1, 1, 0, 0}, 0, 0, bucket};
+    }
+    auto data = block::encode_workchain_coordinator_state(state).move_as_ok();
     td::write_file(td::CSlice(argv[2]), vm::std_boc_serialize(data).move_as_ok()).ensure();
     return 0;
   }
@@ -121,11 +218,17 @@ int main(int argc, char** argv) {
   auto declarations = vm::std_boc_deserialize(
       td::read_file_str((fixture / "operation.declarations.boc").string()).move_as_ok()).move_as_ok();
   const bool test_funding = block::m3_test::is_m3_test_funding(candidate);
+  const bool deposit = block::m3_test::is_m4_test_deposit(candidate);
+  const auto ingress = block::load_workchain_native_ingress_table(*config).move_as_ok().at(2);
+  const auto params = block::decode_workchain_engine_parameters(ingress.engine_configuration).move_as_ok();
+  const bool m4 = block::m3_test::decode_m3_test_business_parameters(params.parameters).move_as_ok().deposit.has_value();
   unsigned transaction_count = 2;
-  if (!test_funding) {
+  if (deposit) transaction_count = 3;
+  else if (!test_funding) {
     const auto operation = block::decode_workchain_replay_input(candidate).move_as_ok();
     const auto* transfer = std::get_if<block::WorkchainTransferInput>(&operation);
-    if (transfer && std::holds_alternative<block::WorkchainSendData>(transfer->data)) transaction_count = 3;
+    if (transfer) transaction_count =
+        (std::holds_alternative<block::WorkchainSendData>(transfer->data) ? 3 : 2) + (m4 ? 1 : 0);
   }
   for (const bool enabled : {false, true}) {
     const std::string name = enabled ? "enabled" : "closed";
@@ -195,14 +298,24 @@ int main(int argc, char** argv) {
         return 2;
       }
       auto previous = m3_live::load(fixture / "current-state.boc");
+      const auto collation_units = td::read_file_str(counter + ".units.1").move_as_ok();
+      const auto replay_units = td::read_file_str(counter + ".units.2").move_as_ok();
+      CHECK(collation_units == replay_units && !collation_units.empty());
+      CHECK(!std::filesystem::exists(counter + ".units.3"));
+      std::cout << "Paired proof-work units collator=validator=" << collation_units;
       auto accepted = m3_live::read_accepted_step(exported, previous);
       auto ingress_table = block::load_workchain_native_ingress_table(*config).move_as_ok();
       CHECK(ingress_table.count(2) && ingress_table.at(2).custody_address);
-      m3_live::assert_pre_deposit_backing(accepted, *ingress_table.at(2).custody_address);
+      if (m4) m3_live::assert_m4_block_backing(fixture, accepted, *ingress_table.at(2).custody_address);
+      else m3_live::assert_pre_deposit_backing(accepted, *ingress_table.at(2).custody_address);
       auto transaction = m3_live::accepted_transaction(accepted, td::Bits256::zero());
       block::gen::Transaction::Record tx;
       CHECK(tlb::unpack_cell(transaction, tx));
-      if (test_funding) {
+      if (deposit) {
+        if (m3_live::m4_deposit_was_rejected(accepted.block))
+          m3_live::assert_rejected_deposit(fixture, previous, accepted, *ingress_table.at(2).custody_address);
+        else m3_live::assert_accepted_deposit(fixture, previous, accepted);
+      } else if (test_funding) {
         block::gen::TransactionDescr::Record_trans_workchain_entry_v3 entry;
         block::gen::UnoV2HostInput::Record host;
         CHECK(tlb::unpack_cell(tx.description, entry) &&
@@ -228,7 +341,8 @@ int main(int argc, char** argv) {
           m3_live::assert_accepted_transfer(fixture, previous, accepted);
         } else {
           const auto& closure = std::get<block::WorkchainClosureReplayInput>(replay);
-          m3_live::assert_accepted_closure(previous, accepted, closure.context.subject.account);
+          m3_live::assert_accepted_closure(previous, accepted, closure.context.subject.account,
+              m4 ? std::stoull(m3_live::field(fixture / "closure.expected.txt", "other")) : 49490);
         }
       }
       m3_live::save(fixture / "accepted-state.boc", accepted.state);
@@ -244,7 +358,8 @@ int main(int argc, char** argv) {
     // permitted instance before starting the actor; these are not proof calls.
     const std::string expected_calls = enabled ? "config=5\nexecute=0\n" : "config=3\nexecute=0\n";
     if (observation != expected || read(".kind") != "error\n" || read("") != "collate -7201\n" ||
-        stats != expected_stats || calls != expected_calls || std::filesystem::exists(exported)) {
+        stats != expected_stats || calls != expected_calls || std::filesystem::exists(exported) ||
+        std::filesystem::exists(counter + ".units.1")) {
       std::cerr << "Unexpected paired observation: " << observation << stats << calls;
       return 2;
     }

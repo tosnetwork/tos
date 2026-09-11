@@ -46,6 +46,7 @@ struct WorkchainAccountUpdate {
 
 struct WorkchainRegistrationPaymentResult;
 struct WorkchainAccountClosureExecution;
+struct WorkchainDepositRejectionExecution;
 
 struct WorkchainAccountEffects {
   std::vector<WorkchainAccountUpdate> updates;
@@ -64,6 +65,10 @@ struct WorkchainAccountEffects {
   // At most one may be present; ordinary transfers/payouts cannot accompany it.
   std::shared_ptr<const WorkchainRegistrationPaymentResult> registration;
   std::shared_ptr<const WorkchainAccountClosureExecution> closure;
+  std::shared_ptr<const WorkchainDepositRejectionExecution> rejected_deposit;
+  // Local registered-engine snapshot, never a wire/configuration capability.
+  // Selects current-state protected-budget checks after Native materialization.
+  std::optional<td::Bits256> protected_coordinator_snapshot;
 };
 
 class WorkchainAccountEngine {

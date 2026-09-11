@@ -15,23 +15,32 @@ struct WorkchainOperationFeeAmounts {
   std::uint64_t state, compute, tip, total;
 };
 
-// Units must be reconstructed from the verified operation, never effects.usage
-// or a collator-declared aggregate. The existing kernel binds total in its
-// challenge; this host reconstruction supplies the independent allocation.
+// D28 / section 12.1: billing units are SEND=1, COLLECT=3. They are NOT
+// proof-work units. Profile-4 operation counts enforce resource admission only;
+// accepting such a count as a fee input previously multiplied prices by orders
+// of magnitude. Derive billing units from the relation, never effects.usage or
+// a caller-supplied count. This does not implement D28's dynamic base update.
 inline td::Result<WorkchainOperationFeeAmounts> derive_workchain_operation_fee_amounts(
     const WorkchainStaticOperationTariff& tariff, std::uint64_t authenticated_slot_fee,
-    unsigned relation, std::uint64_t verified_units) {
-  if ((relation != 1 && relation != 2) || !verified_units)
+    unsigned relation) {
+  if (relation != 1 && relation != 2)
     return td::Status::Error(-7201, "unsupported operation fee reconstruction input");
   // D25: SEND's state component is the authenticated slot price; COLLECT has
   // zero state fee. Do not charge COLLECT for freeing an existing receipt slot.
   const auto state = relation == 1 ? authenticated_slot_fee : 0;
   const auto tip = relation == 1 ? tariff.send_tip : tariff.collect_tip;
+  const std::uint64_t billing_units = relation == 1 ? 1 : 3;
   std::uint64_t compute, subtotal, total;
-  if (__builtin_mul_overflow(tariff.base, verified_units, &compute) ||
+  if (__builtin_mul_overflow(tariff.base, billing_units, &compute) ||
       __builtin_add_overflow(state, compute, &subtotal) || __builtin_add_overflow(subtotal, tip, &total))
     return td::Status::Error(-7200, "operation fee exceeds representable public authorization");
   return WorkchainOperationFeeAmounts{state, compute, tip, total};
+}
+inline td::Status check_workchain_operation_public_fee(const WorkchainOperationFeeAmounts& amounts,
+                                                       std::uint64_t claimed_fee) {
+  if (claimed_fee != amounts.total)
+    return td::Status::Error(-7200, "operation public fee differs from authenticated static components");
+  return td::Status::OK();
 }
 inline td::RefInt256 workchain_unsigned_fee(std::uint64_t amount) {
   // Do not narrow unsigned amounts through make_refint's signed constructor.

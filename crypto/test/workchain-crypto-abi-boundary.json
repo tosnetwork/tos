@@ -183,7 +183,7 @@
     "symbols": [
       "uno_crypto_verify_v2"
     ],
-    "sha256": "a3f36388c9370f520cbc650c923f2d1cc41de08288ba8c534f90cb6147c15d88",
+    "sha256": "2c5baff2c978758124694130013b6fba977ff23b3fe21ced058bcd716e307da6",
     "disposition": "Test runner and symbol/output assertions, no direct cryptographic call."
   },
   "uno/crypto/tests/sanitizer-canary.cpp": {
