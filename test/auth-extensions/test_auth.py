@@ -76,7 +76,7 @@ class Account:
         a = s.ref().slice()
         return a.uint(2), a.uint(64), a.uint(64), a.uint(256)
 
-    def send(self, body, sender=MODULE, ext=False, expected=0, bounced=False):
+    def send(self, body, sender=MODULE, ext=False, expected=0, bounced=False, commits=False):
         before = self.data.hash
         message = external(self.address, body) if ext else internal(sender, self.address, body, bounced=bounced)
         result = self.e.send(self.shard, message)
@@ -88,8 +88,14 @@ class Account:
             actual = result.get('vm_exit_code')
             details = result
         assert actual == expected, f'{self.impl}: expected exit {expected}, got {details}\n{result.get("vm_log", "")[-7000:]}'
-        if expected:
+        if expected and not commits:
             assert self.data.hash == before, 'rejection must not commit authentication or account data'
+        elif expected:
+            # `commits` marks the one family of rejections that deliberately
+            # keeps state: those raised after the account has already accepted
+            # the message and committed the consumed seqno. Leaving that
+            # advance uncommitted is what would make the request replayable.
+            assert self.data.hash != before, 'a committing rejection must advance the account'
         else:
             assert result['success'] and not details['aborted'], str(details)
             assert details['action'] is None or details['action']['success'], str(details)
@@ -266,6 +272,37 @@ class AuthenticationTests(unittest.TestCase):
             a.configure(2, expected=1810)
         for a in self.accounts(mode=2, seqno=(1 << 32)-1):
             a.send(a.envelope(a.request()), expected=1716 if a.agent else 1810)
+
+    def test_module_request_rejected_after_acceptance_is_consumed_not_bounced(self):
+        """A module request can still be refused after the account accepted it.
+
+        The agent account accepts, commits the consumed seqno, and only then
+        measures the attached trees -- that measurement is priced by the
+        caller's payload and cannot be paid for out of the fixed admission
+        credit. A refusal at that point therefore behaves differently from one
+        raised earlier, and the difference is worth pinning: no value moves and
+        the daily budget is untouched, but the seqno and the authentication
+        nonce are spent, and the transaction is not aborted, so the module
+        receives no bounce and has to read the chain to learn what happened.
+
+        A ConfigParam 43 of zero cells makes any attached tree oversized, which
+        is the cheapest way to reach a refusal on that side of the commit.
+        """
+        a = Account('agent', mode=2, )
+        self.addCleanup(a.close)
+        a.e = Emulator(max_msg_cells=0)
+        before_nonce, before_seqno = a.auth()[2], a.counters()[1]
+        request = a.request(payload=a.execute_payload(operation=0x41475003))
+        result = a.send(a.envelope(request), expected=1713, commits=True)
+
+        self.assertFalse(result['details']['aborted'], 'a committed refusal must not abort')
+        self.assertEqual(len(outgoing(from_boc(result['transaction']))), 0)
+        self.assertEqual(a.counters()[2], 0, 'a refused transfer must not spend the daily budget')
+        self.assertEqual(a.auth()[2], before_nonce + 1, 'the nonce must be consumed')
+        self.assertEqual(a.counters()[1], before_seqno + 1, 'the seqno must be consumed')
+
+        # Consuming them is the point: the identical request is now dead.
+        a.send(a.envelope(request), expected=1804)
 
     def test_agent_policy_still_applies(self):
         a = Account('agent', mode=2); self.addCleanup(a.close)
