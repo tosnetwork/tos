@@ -353,7 +353,8 @@ inline td::Result<WorkchainAccountSettlement> settle_executed(
           identity.host_after_lt, input_hash, effects_hash, writes, custody, coordinator,
           executed.effects.payout_request, fee_budget,
           max_reads, max_writes, max_transfers, extra_validation_cells, cfg, message_cfg,
-          executed.input, effects_root, max_inbound, disposal, {}, executed.effects.payout_forward_fee));
+          executed.input, effects_root, max_inbound, disposal, {}, executed.effects.payout_forward_fee,
+          executed.effects.payout_principal));
       state = std::move(payout.state);
       message = std::move(payout.message);
       imports = std::move(payout.imports);

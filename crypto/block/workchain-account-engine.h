@@ -74,6 +74,9 @@ struct WorkchainAccountEffects {
   // Local registered-engine snapshot, never a wire/configuration capability.
   // Selects current-state protected-budget checks after Native materialization.
   std::optional<td::Bits256> protected_coordinator_snapshot;
+  // Local result from the verified operation's x, never decoded from effects
+  // supplied by a claimant. Settlement compares it to the actual Native value.
+  std::optional<std::uint64_t> payout_principal;
 };
 
 class WorkchainAccountEngine {

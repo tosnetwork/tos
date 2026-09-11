@@ -85,7 +85,8 @@ subprocess.run(['cmake', '-DCOUNTER_FIXTURE_CHILD=ON', f'-DCOUNTER_FIXTURE_PATH=
                 f'-DCOLLATOR={build / "test-m3-live"}', '-P', str(prepare)], check=True)
 print(f'Test-owned fixture: {fixture}', flush=True)
 shutil.copyfile(fixture / 'counter-state.boc', fixture / 'current-state.boc')
-subprocess.run([str(build / 'test-m3-live'), '--prepare-m5-debit-config' if a.m5_debit else '--prepare-m4-config', str(fixture)], check=True)
+subprocess.run([str(build / 'test-m3-live'), '--prepare-m5-return-config' if a.m5_return_route else
+                '--prepare-m5-debit-config' if a.m5_debit else '--prepare-m4-config', str(fixture)], check=True)
 # Bind disk lookup and global.json to the actual edited TEST genesis bytes.
 # No prior DB is reused and no deployment configuration is read or written.
 zero_bytes = (fixture / 'zerostate.boc').read_bytes()
@@ -217,6 +218,7 @@ if a.m5_debit:
     debit_write('operation.expected.txt',dict(before=initial,after=initial-request['principal']-request['outward_fee']-request['return_reserve']-request['fee']))
     print(f'DEBIT_FIXTURE={fixture}',flush=True)
     subprocess.run([str(build / 'test-m3-live'),str(fixture)],check=True)
+    subprocess.run([str(build / 'test-m3-live'),'--check-m5-reserve-admission',str(fixture)],check=True)
     if a.m5_return_route:
         advance_pair(4)
         subprocess.run([str(build / 'test-tos-collator'), '-C', str(fixture / 'global.json'),

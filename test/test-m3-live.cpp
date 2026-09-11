@@ -10,6 +10,7 @@
 #include "m3-live-registration.h"
 #include "m3-live-state.h"
 #include "m5-live-return.h"
+#include "m5-live-reserve-control.h"
 #include "m3-live-assertions.h"
 #include "m3-live-wallet.h"
 #include "m4-live-deposit.h"
@@ -22,6 +23,11 @@ int main(int argc, char** argv) {
   if (argc == 3 && (std::string(argv[1]) == "--withdrawal-debit-request" || std::string(argv[1]) == "--withdrawal-debit-finish")) {
     vm::init_vm().ensure();
     m3_live::prepare_debit(argv[2], std::string(argv[1]).ends_with("finish"));
+    return 0;
+  }
+  if ((argc == 3 || argc == 4) && std::string(argv[1]) == "--check-m5-reserve-admission") {
+    vm::init_vm(true).ensure();
+    m3_live::check_m5_reserve_admission(std::filesystem::path(argv[2]), argc == 4 ? std::stoi(argv[3]) : 0);
     return 0;
   }
   if (argc == 3 && std::string(argv[1]) == "--observe-m5-payout-recipient") {
@@ -190,13 +196,14 @@ int main(int argc, char** argv) {
     else m3_live::registration_finish(fixture);
     return 0;
   }
-  if (argc == 3 && (std::string(argv[1]) == "--prepare-config" || std::string(argv[1]) == "--prepare-m4-config" || std::string(argv[1]) == "--prepare-m5-debit-config")) {
+  if (argc == 3 && (std::string(argv[1]) == "--prepare-config" || std::string(argv[1]) == "--prepare-m4-config" || std::string(argv[1]) == "--prepare-m5-debit-config" || std::string(argv[1]) == "--prepare-m5-return-config")) {
     vm::init_vm().ensure();
     const std::filesystem::path fixture(argv[2]);
     CHECK(std::filesystem::exists(fixture / ".counter-managed-v1"));
     auto bytes = td::read_file_str((fixture / "zerostate.boc").string()).move_as_ok();
     auto root = prepare_m3_live_configuration(vm::std_boc_deserialize(bytes).move_as_ok(),
-        std::string(argv[1]) != "--prepare-config", std::string(argv[1]) == "--prepare-m5-debit-config").move_as_ok();
+        std::string(argv[1]) != "--prepare-config", std::string(argv[1]) == "--prepare-m5-debit-config",
+        std::string(argv[1]) == "--prepare-m5-return-config").move_as_ok();
     td::write_file((fixture / "zerostate.boc").string(), vm::std_boc_serialize(root, 31).move_as_ok()).ensure();
     td::write_file((fixture / "zerostate.rhash").string(), root->get_hash().as_slice()).ensure();
     return 0;

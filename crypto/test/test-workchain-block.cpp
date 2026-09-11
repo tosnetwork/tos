@@ -7997,7 +7997,8 @@ TEST(WorkchainBlock, BatchPreparationRejectsUnsettledState) {
 // check in the pre-fix run, instead of failing an earlier insufficient-funds gate.
 static td::Status native_payout_exact_fee_fixture(std::optional<std::uint64_t> expected,
                                                 std::uint64_t legacy_ceiling = 500,
-                                                bool check_nonpublication = false) {
+                                                bool check_nonpublication = false,
+                                                std::optional<std::uint64_t> expected_principal = {}) {
   block::gen::ShardStateUnsplit::Record state;
   ASSERT_TRUE(tlb::unpack_cell(shard_fixture(2, 2, true, 2, false, 0, 40, false, 1000), state));
   vm::AugmentedDictionary accounts(vm::load_cell_slice_ref(state.accounts), 256, block::tlb::aug_ShardAccounts);
@@ -8024,7 +8025,7 @@ static td::Status native_payout_exact_fee_fixture(std::optional<std::uint64_t> e
   const auto coordinator_before = vm::std_boc_serialize(coordinator.total_state).move_as_ok();
   ASSERT_TRUE(custody.transactions.empty() && coordinator.transactions.empty());
   auto result = block::transaction::Transaction::build_workchain_payout_pair(custody,coordinator,bindings[0],bindings[1],
-      number(70),number(71),request,20,10,block::workchain_unsigned_fee(legacy_ceiling),0,4096,cfg,pricing,{}, {},nullptr,expected);
+      number(70),number(71),request,20,10,block::workchain_unsigned_fee(legacy_ceiling),0,4096,cfg,pricing,{}, {},nullptr,expected,expected_principal);
   if (check_nonpublication) {
     // Observation boundary: the actual caller-owned Native Accounts, their
     // committed Transaction.out_msgs dictionaries, and the returned pair.
@@ -8093,6 +8094,30 @@ TEST(WorkchainBlock, NativePayoutExactFeeAndLegacy) {
 
 TEST(WorkchainBlock, NativePayoutExactFeeNonpublication) {
   ASSERT_TRUE(native_payout_exact_fee_fixture(101, 0, true).is_error());
+}
+
+TEST(WorkchainBlock, NativePayoutExactPrincipalLower) {
+  auto result = native_payout_exact_fee_fixture(100, 0, false, 136);
+  ASSERT_TRUE(result.is_error());
+  ASSERT_EQ(result.code(), -7200);
+  ASSERT_EQ(result.message(), "Native payout value differs from authenticated exact x");
+  std::cout << "D76_EXACT_X declared=136 Native_payment=137: -7200 at principal equality\n";
+}
+
+TEST(WorkchainBlock, NativePayoutExactPrincipalHigher) {
+  auto result = native_payout_exact_fee_fixture(100, 0, false, 138);
+  ASSERT_TRUE(result.is_error());
+  ASSERT_EQ(result.code(), -7200);
+  ASSERT_EQ(result.message(), "Native payout value differs from authenticated exact x");
+  std::cout << "D76_EXACT_X declared=138 Native_payment=137: -7200 at principal equality\n";
+}
+
+TEST(WorkchainBlock, NativePayoutExactPrincipalMatches) {
+  ASSERT_TRUE(native_payout_exact_fee_fixture(100, 0, false, 137).is_ok());
+  ASSERT_TRUE(native_payout_exact_fee_fixture({}, 500, false, 137).is_ok());
+  auto principal_only = native_payout_exact_fee_fixture({}, 500, false, 136);
+  ASSERT_EQ(principal_only.code(), -7200);
+  ASSERT_EQ(principal_only.message(), "Native payout value differs from authenticated exact x");
 }
 
 TEST(WorkchainBlock, NativePayoutPair) {

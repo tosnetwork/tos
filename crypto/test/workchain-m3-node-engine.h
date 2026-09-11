@@ -122,6 +122,8 @@ class M3NodeEngine final : public RegisteredWorkchainAccountEngine {
       return local("M3 test engine lacks bound coordinator/custody configuration");
     TRY_RESULT(parameters, decode_workchain_engine_parameters(payload));
     TRY_RESULT(business, decode_m3_test_business_parameters(parameters.parameters));
+    if (business.prepare && !business.prepare->max_bounce_cost)
+      return local("ConfigInvalid: explicit max_bounce_cost absent");
     if (descriptor.workchain_id != 2 || business.rules.custody != *found->second.custody_address ||
         parameters.resources.admission_version != 4)
       return local("M3 test engine configuration incompatible with metered execution");
@@ -145,6 +147,7 @@ class M3NodeEngine final : public RegisteredWorkchainAccountEngine {
       TRY_RESULT(debit, decode_m5_test_debit(candidate));
       if (!cfg->business.prepare || !cfg->business.operation_tariff)
         return local("ConfigInvalid: explicit test prepare policy absent");
+      TRY_STATUS(check_m5_test_reserve(*cfg->business.prepare, debit.data.amounts.return_reserve));
       TRY_RESULT(fees, derive_workchain_withdrawal_fee_amounts(cfg->business.operation_tariff->base,
           cfg->business.prepare->state_fee, debit.data.amounts.operation_fee)); (void)fees;
       UnoCryptoWithdrawalVerifyRequestV1 shape{};
@@ -244,6 +247,7 @@ class M3NodeEngine final : public RegisteredWorkchainAccountEngine {
     if (is_m5_test_debit(host.candidate)) {
       TRY_RESULT(debit, decode_m5_test_debit(host.candidate));
       if (!b.prepare || !b.operation_tariff) return local("ConfigInvalid: explicit test prepare policy absent");
+      TRY_STATUS(check_m5_test_reserve(*b.prepare, debit.data.amounts.return_reserve));
       TRY_RESULT(fees, derive_workchain_withdrawal_fee_amounts(b.operation_tariff->base,
           b.prepare->state_fee, debit.data.amounts.operation_fee));
       TRY_RESULT(native, read(accounts, debit.data.claims.source.account, clock.gen_utime, true));
@@ -291,9 +295,15 @@ class M3NodeEngine final : public RegisteredWorkchainAccountEngine {
           {debit.data.amounts.outward_fee, debit.data.amounts.return_reserve, 0, debit.data.amounts.return_reserve},
           {0, info.created_lt, clock.height, 0, b.prepare->settlement_blocks}});
       TRY_RESULT(with_obligation, encode_workchain_withdrawal_account(migrated, b.prepare->withdrawal_limit));
+      // Also anchor the encoded W record, not merely the operation proposal.
+      TRY_RESULT(installed, decode_workchain_withdrawal_account(with_obligation, b.prepare->withdrawal_limit));
+      if (installed.control.withdrawals.size() != 1)
+        return local("constructed prepare record count mismatch");
+      TRY_STATUS(check_m5_test_reserve(*b.prepare, installed.control.withdrawals.front().costs.original_reserve));
       WorkchainAccountEffects result;
       result.payout_request = request;
       result.payout_forward_fee = debit.data.amounts.outward_fee;
+      result.payout_principal = debit.data.amounts.principal;
       result.updates = {{source.address.account, with_obligation}, {cfg->ingress.executor_address, coordinator.data},
                         {*cfg->ingress.custody_address, custody.data}};
       std::sort(result.updates.begin(), result.updates.end(), [](const auto& a, const auto& b) { return a.account < b.account; });

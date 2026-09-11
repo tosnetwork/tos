@@ -4612,7 +4612,8 @@ td::Result<PreparedWorkchainPayoutPair> Transaction::build_workchain_payout_pair
     td::RefInt256 fee_budget, std::uint64_t max_transfers, int extra_validation_cells,
     const SerializeConfig& cfg, const ActionPhaseConfig& message_cfg,
     Ref<vm::Cell> entry_input, Ref<vm::Cell> entry_effects,
-    const WorkchainDisposalEntryContext* disposal, std::optional<std::uint64_t> exact_outward_fee) {
+    const WorkchainDisposalEntryContext* disposal, std::optional<std::uint64_t> exact_outward_fee,
+    std::optional<std::uint64_t> exact_principal) {
   if (extra_validation_cells <= 0) return td::Status::Error("invalid payout currency validation budget");
   if (custody.workchain != coordinator.workchain) return td::Status::Error("payout pair workchains differ");
   if (custody.addr == coordinator.addr) return td::Status::Error("payout pair requires distinct accounts");
@@ -4714,7 +4715,7 @@ td::Result<PreparedWorkchainPayoutPair> Transaction::build_workchain_payout_pair
     // Retain restricted-metadata and cached-root revalidation for both roles.
     if (!tx.serialize(cfg)) return td::Status::Error("cannot serialize payout pair participant");
   }
-  if (exact_outward_fee) {
+  if (exact_outward_fee || exact_principal) {
     // Observe the serialized Native result, not the engine's quote. Imports,
     // allocations and D32 fees precede before_payout, so only x and q remain.
     gen::Account::Record_account published_account;
@@ -4730,7 +4731,11 @@ td::Result<PreparedWorkchainPayoutPair> Transaction::build_workchain_payout_pair
         !CurrencyCollection::sub(before_payout, after, debit) ||
         !CurrencyCollection::sub(debit, payment, paid_fee))
       return td::Status::Error(-7201, "constructed Native payout fee unavailable");
-    if (paid_fee != CurrencyCollection(workchain_unsigned_fee(*exact_outward_fee)))
+    // D76: the authorized x has its own anchor. Conservation cancels x and
+    // cannot substitute for comparing the actual serialized message value.
+    if (exact_principal && payment != CurrencyCollection(workchain_unsigned_fee(*exact_principal)))
+      return td::Status::Error(-7200, "Native payout value differs from authenticated exact x");
+    if (exact_outward_fee && paid_fee != CurrencyCollection(workchain_unsigned_fee(*exact_outward_fee)))
       return td::Status::Error(-7200, "Native payout fee differs from authenticated exact q");
   }
   return PreparedWorkchainPayoutPair{std::move(pair), std::move(allocation)};
