@@ -11,7 +11,7 @@ import sys
 
 TESTS = tuple('test-workchain-withdrawal-failed-' + suffix for suffix in (
     'credit-y', 'release', 'identity', 'topup', 'return-cost', 'remainder',
-    'phase0', 'conservation', 'vq-refusals', 'onoff', 'oracle-control',
+    'phase0', 'conservation', 'vq-refusals', 'onoff', 'oracle-control', 'shortfall',
 ))
 MARKER = 'WITHDRAWAL-FAILED_OBSERVED:'
 

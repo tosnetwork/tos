@@ -1,0 +1,16 @@
+......F....
+======================================================================
+FAIL: test_shortfall_is_mandatory_even_when_original_eleven_are_ready (__main__.Readiness.test_shortfall_is_mandatory_even_when_original_eleven_are_ready)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/b-shortfall-removal-3bm334kq/workchain-withdrawal-failed-handoff-test.py", line 47, in test_shortfall_is_mandatory_even_when_original_eleven_are_ready
+    self.assertIn(name, handoff.TESTS)
+    ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'test-workchain-withdrawal-failed-shortfall' not found in ('test-workchain-withdrawal-failed-credit-y', 'test-workchain-withdrawal-failed-release', 'test-workchain-withdrawal-failed-identity', 'test-workchain-withdrawal-failed-topup', 'test-workchain-withdrawal-failed-return-cost', 'test-workchain-withdrawal-failed-remainder', 'test-workchain-withdrawal-failed-phase0', 'test-workchain-withdrawal-failed-conservation', 'test-workchain-withdrawal-failed-vq-refusals', 'test-workchain-withdrawal-failed-onoff', 'test-workchain-withdrawal-failed-oracle-control')
+
+----------------------------------------------------------------------
+Ran 11 tests in 0.007s
+
+FAILED (failures=1)
+
+exit=1
