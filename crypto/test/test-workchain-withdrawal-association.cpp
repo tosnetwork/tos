@@ -32,8 +32,8 @@ td::Ref<vm::Cell> message(std::uint64_t original_lt = 77, bool bounced = true,
   result.store_long(4, 3).store_long(0, 8).store_bits(word(source).bits(), 256);
   result.store_long(4, 3).store_long(2, 8).store_bits(word(99).bits(), 256);
   CHECK(CurrencyCollection(70).store(result));
-  CHECK(tlb::t_Tomis.store_integer_ref(result, td::make_refint(0)));
-  CHECK(tlb::t_Tomis.store_integer_ref(result, td::make_refint(0)));
+  CHECK(block::tlb::t_Tomis.store_integer_ref(result, td::make_refint(0)));
+  CHECK(block::tlb::t_Tomis.store_integer_ref(result, td::make_refint(0)));
   return result.store_long(inbound_lt, 64).store_long(20, 32).store_long(0, 1)
       .store_long(1, 1).store_ref(payload.finalize()).finalize();
 }

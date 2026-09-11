@@ -26,7 +26,9 @@ inline td::Result<std::optional<WorkchainWithdrawalAssociation>> associate_workc
       -> td::Result<std::optional<WorkchainWithdrawalAssociation>> {
     using withdrawal_codec_detail::unpack;
     using withdrawal_codec_detail::error;
-    TRY_RESULT(message, unpack<gen::Message::Record>(message_root));
+    gen::Message::Record message;
+    if (message_root.is_null() || !tlb::type_unpack_cell(message_root, gen::t_Message_Any, message))
+      return error("malformed withdrawal record");
     gen::CommonMsgInfo::Record_int_msg_info info;
     if (!tlb::csr_unpack(message.info, info)) return error("return is not an internal Message");
     tos::WorkchainId destination_wc, source_wc;
