@@ -280,3 +280,96 @@ observation-marker/skip gate each makes those controls exit 1 at `0 != 1`.
 The original runner is unchanged; raw results are in
 `measurements/uno-m5-withdrawal-failed-handoff/`. No Native test was run or claimed
 by this delivery, and no A implementation/guard was modified.
+
+## Addendum: mandatory item 12, shortfall (2026-09-11)
+
+Current applicability: memo `86e775a9`, specification SHA256 prefix
+`1f756b55faf2820c` (version supplied by coordinator). The original eleven-item
+scope and delivery observations above remain historical evidence. This addendum
+turns D68 shortfall into an outstanding mandatory obligation, not merely a scope
+limitation. It is retrospective to the funded run, prospective to the missing
+shortfall execution; it does not rewrite a frozen prediction.
+
+CTest: **`test-workchain-withdrawal-failed-shortfall`**. The readiness runner now
+requires this twelfth name with the same execution marker, skip, disabled and
+failure rules as all other items. No placeholder passing host test is registered.
+
+### Fixture and execution path
+
+Start with an authenticated prepare predecessor, a real strongly matched custody
+bounce and a registered owner with an available system slot. Execute custody
+association, settlement, real system encryption and atomic Native/account
+publication, then validator replay. Require positive issuance with actual return
+cost exceeding the reserve. Use explicitly authenticated test fee configuration;
+raise settlement fees after prepare or choose a smaller reserve in the original
+prepare configuration with a matching authorization/proof. Do NOT edit `b` in
+an already authorized record or bypass its D76 configuration anchor. No local
+production defaults for unsettled configuration values.
+
+Let `c = x - y`, `g = base_compute * issuance_billing_units`, `h = s + g`,
+`m = y + b`. Choose `0 <= y < x`, `m > h`, and `c + h > b`, with every operation
+checked. The mandatory positive result is `z = m - h`, hence `0 < z < x`.
+The complete reserve is consumed (`consumed_return_cost = b`), its refundable
+remainder is zero. Total loss `c+h` is NOT a value to store in the bounded
+consumed-reserve field. Also exercise the adjacent `m <= h` no-issuance branch
+under item `remainder`; passing that branch alone cannot satisfy shortfall.
+
+### Observation cut and independent component assertions
+
+Read accepted custody/coordinator Native account bytes, complete owner control
+and pending dictionaries and enumerated counts, actual bounce value, outbound
+transfers, transaction fees, sequence, and independently decrypt the installed
+receipt. Observe after the atomic batch and after validator replay, not merely
+proposed effects. Require:
+
+- `FAILED_SHORTFALL_ACCEPTED`: the valid shortfall is accepted as a normal branch.
+- `FAILED_SHORTFALL_CREDIT`: receipt value `z = y+b-s-g`, positive and less than x.
+- `FAILED_SHORTFALL_CHECKED`: no subtraction of a larger cost from b, no wrapping,
+  and consumed reserve bounded by b; no unchecked intermediate arithmetic.
+- `FAILED_SHORTFALL_NO_SUBSIDY`: no operator-funded top-up edge or expense.
+  Coordinator receives normal slot income: `coordinator_after = coordinator_before+s`
+  for this isolated batch; equivalently remove that income before comparing with
+  the initial balance. Literal unchanged total coordinator balance would reject
+  legitimate slot income. Independently require `fees_collected` increment g.
+- `FAILED_SHORTFALL_NO_DEBT`: no residual W/debt/claim for `x-z`, no new obligation
+  field in the authenticated record schema; terminal W is removed, not replaced
+  with a debt. Event-only reporting of a shortage is permitted, not a payable claim.
+- Independently assert `R1=R0+y-h`, `N1=N0+z`, `P1=P0-x`,
+  `W1=W0-(x+b)`, matching actual R/book/decrypted values. q is not released again.
+  Check each component before both conservation equalities; equality alone is
+  not evidence against a symmetric error. One successful receipt advances the
+  shared authenticated sequence exactly once.
+
+### Required isolated reds and oracle control
+
+1. Pay the shortfall from operator funds while retaining a valid matched bounce:
+   fail at `FAILED_SHORTFALL_NO_SUBSIDY` on actual expense/Native balances, even
+   if final conservation still balances. Earlier proof/association rejection
+   does not satisfy this control.
+2. Replace bounded reserve consumption with wrapping `b-(c+h)` or publish its
+   wrapped remainder: fail at `FAILED_SHORTFALL_CHECKED` / the precise refund
+   component oracle. If checked arithmetic catches the deliberate wrap before
+   publication, record that exact arithmetic rejection and unchanged publication
+   cut, not an unrelated earlier error. Valid unmutated shortfall must succeed.
+3. Restore the "funded Failed shortfall ... unsupported"/unreachable rejection:
+   fail at `FAILED_SHORTFALL_ACCEPTED` after valid association. Rejection or a
+   panic of this ordinary input is the defect, not successful admission defense.
+4. Install a residual shortage debt: fail at `FAILED_SHORTFALL_NO_DEBT` on the
+   authenticated record/obligation cut, not just a missing proposed effect.
+
+For each mutation disable only its designated oracle, retain the mutation and
+require the driver to report `FAILED_ORACLE_MISSING:<oracle-name>` when that named
+red vanishes. Distinguish assertion identity from generic nonzero exit. Any
+premise "X first passes" additionally needs a corrupt-X control proving X can
+fail. Print `WITHDRAWAL-FAILED_OBSERVED:test-workchain-withdrawal-failed-shortfall`
+only after the real executions and controls complete. Runner mocks are not these
+executions; all policy combinations and arbitrary network delay remain outside
+this fixture's claim. This obligation is currently NOT READY.
+
+Addendum delivery evidence: runner controls 11/11; a simulated registration with
+all original eleven names but no shortfall exits 1 and names shortfall. Removing
+the shortfall obligation in an isolated runner copy makes its independent
+mandatory-membership control fail (exit 1). The real B CTest inventory at
+`/tmp/b-budget-default` exits 1 and lists twelve missing names, including shortfall.
+Raw logs: `measurements/uno-m5-withdrawal-shortfall-handoff/`. These are readiness
+protocol observations, not host shortfall evidence; A's implementation is untouched.

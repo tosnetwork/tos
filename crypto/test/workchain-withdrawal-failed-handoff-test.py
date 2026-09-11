@@ -41,6 +41,18 @@ class Readiness(unittest.TestCase):
     def test_missing(self):
         self.assertEqual(self.run_case(lambda entries: entries.pop()), 1)
 
+    def test_shortfall_is_mandatory_even_when_original_eleven_are_ready(self):
+        name = 'test-workchain-withdrawal-failed-shortfall'
+        # Independent expected obligation: deleting it from TESTS must fail this control.
+        self.assertIn(name, handoff.TESTS)
+        entries = [{'name': item, 'properties': []} for item in handoff.TESTS if item != name]
+        output = io.StringIO()
+        with patch.object(handoff.subprocess, 'run', return_value=subprocess.CompletedProcess(
+                ['ctest'], 0, json.dumps({'tests': entries}), '')), contextlib.redirect_stdout(output):
+            self.assertEqual(handoff.check('SIMULATED'), 1)
+        self.assertIn('HANDOFF_NOT_READY', output.getvalue())
+        self.assertIn(name, output.getvalue())
+
     def test_disabled(self):
         self.assertEqual(self.run_case(lambda entries: entries[0]['properties'].append(
             {'name': 'DISABLED', 'value': True})), 1)

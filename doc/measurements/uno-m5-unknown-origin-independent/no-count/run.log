@@ -1,0 +1,107 @@
+[0m[ 4][t 0][2026-09-11 18:44:34.014745492][mc-config.cpp:572]	workchain description dictionary created[0m
+[0m[ 4][t 0][2026-09-11 18:44:34.014959609][mc-config.cpp:2347]	unpacked info for workchain 0: basic=true, active=true, accept_msgs=true, min_split=0, max_split=0[0m
+[0m[ 4][t 0][2026-09-11 18:44:34.014973385][mc-config.cpp:2347]	unpacked info for workchain 2: basic=true, active=true, accept_msgs=true, min_split=0, max_split=0[0m
+[1;36m[ 3][t 0][2026-09-11 18:44:34.018987868][test-tos-collator.cpp:597]	setting previous block to (2,8000000000000000,5):0D7A00DB1A69FE4F8E825B8D01BF4FA1732BDDA697E76B7627A95709B1F263EF:DF0C70BBB094D4B55D0406AE3121DB2EF69770B547095520796FB98A82B95F95[0m
+[1;36m[ 3][t 1][2026-09-11 18:44:34.023177645][test-tos-collator.cpp:339][!testnode]	no init block in config. using zero state[0m
+[1;36m[ 3][t 1][2026-09-11 18:44:34.023203484][test-tos-collator.cpp:364][!testnode]	Hardforks num in config: 0[0m
+[1;36m[ 3][t 7][2026-09-11 18:44:34.024850582][manager-init.cpp:333][!starter]	Starting validator manager[0m
+[1;36m[ 3][t 1][2026-09-11 18:44:34.032747314][manager-init.cpp:344][!starter]	init_block_id = (-1,8000000000000000,10):38D5AA6CB082B8E25771AB42785DD201BEDC401DF0C653B01C7A868921C3D54D:FC10A971EDFB1D7F5E4A2C908AD50A48F81C9A77F0C2B387C0BCC16CDFBDC066[0m
+[1;36m[ 3][t 1][2026-09-11 18:44:34.032769426][manager-init.cpp:345][!starter]	config init_block_id = (-1,8000000000000000,0):97E32F019FA7BDECDB09F3D90927E2DA7001CB278A8192916A806C8F18E044D0:B9DAB46118F72DDA3E5456D00BFA33C23B6C9B2D02FD0F58A98BFB9802FF6494[0m
+[1;33m[ 2][t 3][2026-09-11 18:44:34.035959063][celldb.cpp:371][!celldbin]	Using V1 DynamicBagOfCells with options V1{}[0m
+[1;31m[ 1][t 6][2026-09-11 18:44:34.039012777][archive-manager.cpp:1045][!archive]	checking file /tmp/b-unknown-review/fixture-no-count/unknown-closed-db/archive/states/zerostate_2_5998E8992B6AB8039DFE4A38D5C4F09C7006E543460AE91626FABD45C2A2594F[0m
+[1;31m[ 1][t 6][2026-09-11 18:44:34.039047585][archive-manager.cpp:1045][!archive]	checking file /tmp/b-unknown-review/fixture-no-count/unknown-closed-db/archive/states/zerostate_-1_FA444962503170F7526375300D7D65C498335D261C7486608E6260685E45CA36[0m
+[1;31m[ 1][t 6][2026-09-11 18:44:34.039053817][archive-manager.cpp:1045][!archive]	checking file /tmp/b-unknown-review/fixture-no-count/unknown-closed-db/archive/states/zerostate_0_8EC44C527FE771D8226DF19D6B833E24B6BB926194B670AE1CBFE84EBD372DB4[0m
+[1;36m[ 3][t 3][2026-09-11 18:44:34.043420412][celldb.cpp:251][!celldbin]	Validating metadata[0m
+[1;36m[ 3][t 3][2026-09-11 18:44:34.043811250][celldb.cpp:307][!celldbin]	Validating metadata: OK[0m
+[1;36m[ 3][t 5][2026-09-11 18:44:34.046629389][manager-init.cpp:384][!starter]	gc_block_id = (-1,8000000000000000,0):97E32F019FA7BDECDB09F3D90927E2DA7001CB278A8192916A806C8F18E044D0:B9DAB46118F72DDA3E5456D00BFA33C23B6C9B2D02FD0F58A98BFB9802FF6494[0m
+[1;36m[ 3][t 6][2026-09-11 18:44:34.047029325][manager-init.cpp:434][!starter]	Starting shard client[0m
+[1;36m[ 3][t 5][2026-09-11 18:44:34.047149021][manager-init.cpp:438][!starter]	Started shard client[0m
+[1;36m[ 3][t 5][2026-09-11 18:44:34.047174899][manager-init.cpp:448][!starter]	Last key block is (-1,8000000000000000,0):97E32F019FA7BDECDB09F3D90927E2DA7001CB278A8192916A806C8F18E044D0:B9DAB46118F72DDA3E5456D00BFA33C23B6C9B2D02FD0F58A98BFB9802FF6494[0m
+[1;31m[ 1][t 3][2026-09-11 18:44:34.047943874][manager-disk.cpp:296][!manager]	running collate query[0m
+[1;33m[ 2][t 3][2026-09-11 18:44:34.047974510][collator.cpp:146][!collate(2,8000000000000000):6]	Collator for shard (2,8000000000000000) started[0m
+[1;36m[ 3][t 5][2026-09-11 18:44:34.048024764][collator.cpp:847][!collate(2,8000000000000000):6]	after_get_storage_stat_cache : [Error : 0 : not implemented][0m
+[1;33m[ 2][t 5][2026-09-11 18:44:34.053917794][collator.cpp:670][!collate(2,8000000000000000):6]	in Collator::after_get_shard_state(0)[0m
+[1;33m[ 2][t 5][2026-09-11 18:44:34.054205744][collator.cpp:632][!collate(2,8000000000000000):6]	in Collator::after_get_mc_state()[0m
+[1;33m[ 2][t 7][2026-09-11 18:44:34.054420433][collator.cpp:2086][!collate(2,8000000000000000):6]	running do_preinit()[0m
+[1;36m[ 3][t 7][2026-09-11 18:44:34.054456604][collator.cpp:1779][!collate(2,8000000000000000):6]	unpacking most recent masterchain state[0m
+[1;31m[ 1][t 7][2026-09-11 18:44:34.054654450][collator.cpp:929][!collate(2,8000000000000000):6]	block version 16 have been enabled in global configuration, but we support only 15 (upgrade validator software?)[0m
+[1;36m[ 3][t 7][2026-09-11 18:44:34.056220958][collator.cpp:2266][!collate(2,8000000000000000):6]	start_lt set to 20000000[0m
+[1;36m[ 3][t 6][2026-09-11 18:44:34.056650861][out-msg-queue-proof.cpp:437][!disk-outmsgqueueimporter]	Done importing neighbor msg queues for shard (2,8000000000000000) from (-1,8000000000000000,10) (0,8000000000000000,4) in 0.000342s sources{ local=2} cache_size=1[0m
+[1;36m[ 3][t 6][2026-09-11 18:44:34.056675655][collator.cpp:1048][!collate(2,8000000000000000):6]	neighbor output queues fetched, took 0.000381s[0m
+[1;33m[ 2][t 6][2026-09-11 18:44:34.056707466][collator.cpp:1104][!collate(2,8000000000000000):6]	obtained outbound queue for neighbor #0((-1,8000000000000000))[0m
+[1;33m[ 2][t 6][2026-09-11 18:44:34.056736131][collator.cpp:1104][!collate(2,8000000000000000):6]	obtained outbound queue for neighbor #1((0,8000000000000000))[0m
+[1;33m[ 2][t 6][2026-09-11 18:44:34.056757191][collator.cpp:1104][!collate(2,8000000000000000):6]	obtained outbound queue for neighbor #2((2,8000000000000000))[0m
+[1;33m[ 2][t 5][2026-09-11 18:44:34.056997892][collator.cpp:2439][!collate(2,8000000000000000):6]	do_collate() : start[0m
+[1;31m[ 1][t 5][2026-09-11 18:44:34.058507955][collator.cpp:395][!collate(2,8000000000000000):6]	cannot generate block candidate for 2:_ : [Error : -7201 : cannot execute configured workchain: multi-account admission and replay are not connected][0m
+[1;36m[ 3][t 5][2026-09-11 18:44:34.058522442][collator.cpp:404][!collate(2,8000000000000000):6]	collation failed in 0.010557 s [Error : -7201 : cannot execute configured workchain: multi-account admission and replay are not connected][0m
+[1;36m[ 3][t 5][2026-09-11 18:44:34.058534625][collator.cpp:405][!collate(2,8000000000000000):6]	{{
+	{wait_block_data #0:103129.662860->103129.668983(0.006123)}
+	{wait_block_state #0:103129.662855->103129.668801(0.005946)}
+	{neighbor_msg_queues:103129.671168->103129.671549(0.000381)}
+	{auxiliary wait_block_state 8:103129.671075->103129.671390(0.000315)}
+	{get_top_masterchain_state_block:103129.668803->103129.669086(0.000283)}
+	{auxiliary wait_block_state 9:103129.671623->103129.671850(0.000226)}
+	{wait_block_data #-1:103129.669089->103129.669287(0.000198)}
+	{get_storage_stat_cache:103129.662868->103129.662898(0.000029)[Error : 0 : not implemented]}
+	{do_collate:103129.671868->0.000000(-103129.671868)}
+}[0m
+[1;33m[ 2][t 5][2026-09-11 18:44:34.058563097][collator.cpp:7138][!collate(2,8000000000000000):6]	Collate query work time = 0.003453s, cpu time = 0.002483s[0m
+[1;31m[ 1][t 5][2026-09-11 18:44:34.058608109][collator.cpp:395][!collate(2,8000000000000000):6]	cannot generate block candidate for 2:_ : [Error : 0 : cannot fetch required configuration parameters from masterchain state][0m
+[1;31m[ 1][t 1][2026-09-11 18:44:34.062782545][manager-disk.cpp:273][!manager]	failed to create block: [Error : -7201 : cannot execute configured workchain: multi-account admission and replay are not connected][0m
+unknown-closed observed unknown-origin=0
+unknown-closed: phase=3
+workchain=2
+delivery=recorded
+query_to_record_seconds=0.012630
+wait_window_seconds=1.000000
+headroom_ratio=79.176319
+[1;36m[ 3][t 0][2026-09-11 18:44:34.074318777][test-tos-collator.cpp:597]	setting previous block to (2,8000000000000000,5):0D7A00DB1A69FE4F8E825B8D01BF4FA1732BDDA697E76B7627A95709B1F263EF:DF0C70BBB094D4B55D0406AE3121DB2EF69770B547095520796FB98A82B95F95[0m
+[1;36m[ 3][t 1][2026-09-11 18:44:34.078038134][test-tos-collator.cpp:339][!testnode]	no init block in config. using zero state[0m
+[1;36m[ 3][t 1][2026-09-11 18:44:34.078061121][test-tos-collator.cpp:364][!testnode]	Hardforks num in config: 0[0m
+[1;36m[ 3][t 7][2026-09-11 18:44:34.079713041][manager-init.cpp:333][!starter]	Starting validator manager[0m
+[1;36m[ 3][t 1][2026-09-11 18:44:34.087879631][manager-init.cpp:344][!starter]	init_block_id = (-1,8000000000000000,10):38D5AA6CB082B8E25771AB42785DD201BEDC401DF0C653B01C7A868921C3D54D:FC10A971EDFB1D7F5E4A2C908AD50A48F81C9A77F0C2B387C0BCC16CDFBDC066[0m
+[1;36m[ 3][t 1][2026-09-11 18:44:34.087899438][manager-init.cpp:345][!starter]	config init_block_id = (-1,8000000000000000,0):97E32F019FA7BDECDB09F3D90927E2DA7001CB278A8192916A806C8F18E044D0:B9DAB46118F72DDA3E5456D00BFA33C23B6C9B2D02FD0F58A98BFB9802FF6494[0m
+[1;33m[ 2][t 5][2026-09-11 18:44:34.090590774][celldb.cpp:371][!celldbin]	Using V1 DynamicBagOfCells with options V1{}[0m
+[1;36m[ 3][t 5][2026-09-11 18:44:34.097986131][celldb.cpp:251][!celldbin]	Validating metadata[0m
+[1;36m[ 3][t 5][2026-09-11 18:44:34.098339026][celldb.cpp:307][!celldbin]	Validating metadata: OK[0m
+[1;31m[ 1][t 6][2026-09-11 18:44:34.099356765][archive-manager.cpp:1045][!archive]	checking file /tmp/b-unknown-review/fixture-no-count/unknown-enabled-db/archive/states/zerostate_2_5998E8992B6AB8039DFE4A38D5C4F09C7006E543460AE91626FABD45C2A2594F[0m
+[1;31m[ 1][t 6][2026-09-11 18:44:34.099391415][archive-manager.cpp:1045][!archive]	checking file /tmp/b-unknown-review/fixture-no-count/unknown-enabled-db/archive/states/zerostate_-1_FA444962503170F7526375300D7D65C498335D261C7486608E6260685E45CA36[0m
+[1;31m[ 1][t 6][2026-09-11 18:44:34.099401883][archive-manager.cpp:1045][!archive]	checking file /tmp/b-unknown-review/fixture-no-count/unknown-enabled-db/archive/states/zerostate_0_8EC44C527FE771D8226DF19D6B833E24B6BB926194B670AE1CBFE84EBD372DB4[0m
+[1;36m[ 3][t 1][2026-09-11 18:44:34.105813301][manager-init.cpp:384][!starter]	gc_block_id = (-1,8000000000000000,0):97E32F019FA7BDECDB09F3D90927E2DA7001CB278A8192916A806C8F18E044D0:B9DAB46118F72DDA3E5456D00BFA33C23B6C9B2D02FD0F58A98BFB9802FF6494[0m
+[1;36m[ 3][t 6][2026-09-11 18:44:34.106212182][manager-init.cpp:434][!starter]	Starting shard client[0m
+[1;36m[ 3][t 1][2026-09-11 18:44:34.106357234][manager-init.cpp:438][!starter]	Started shard client[0m
+[1;36m[ 3][t 1][2026-09-11 18:44:34.106376099][manager-init.cpp:448][!starter]	Last key block is (-1,8000000000000000,0):97E32F019FA7BDECDB09F3D90927E2DA7001CB278A8192916A806C8F18E044D0:B9DAB46118F72DDA3E5456D00BFA33C23B6C9B2D02FD0F58A98BFB9802FF6494[0m
+[1;31m[ 1][t 1][2026-09-11 18:44:34.107178952][manager-disk.cpp:296][!manager]	running collate query[0m
+[1;33m[ 2][t 1][2026-09-11 18:44:34.107216221][collator.cpp:146][!collate(2,8000000000000000):6]	Collator for shard (2,8000000000000000) started[0m
+[1;36m[ 3][t 5][2026-09-11 18:44:34.107265292][collator.cpp:847][!collate(2,8000000000000000):6]	after_get_storage_stat_cache : [Error : 0 : not implemented][0m
+[1;33m[ 2][t 4][2026-09-11 18:44:34.114237546][collator.cpp:670][!collate(2,8000000000000000):6]	in Collator::after_get_shard_state(0)[0m
+[1;33m[ 2][t 4][2026-09-11 18:44:34.114405425][collator.cpp:632][!collate(2,8000000000000000):6]	in Collator::after_get_mc_state()[0m
+[1;33m[ 2][t 4][2026-09-11 18:44:34.114607938][collator.cpp:2086][!collate(2,8000000000000000):6]	running do_preinit()[0m
+[1;36m[ 3][t 4][2026-09-11 18:44:34.114623504][collator.cpp:1779][!collate(2,8000000000000000):6]	unpacking most recent masterchain state[0m
+[1;31m[ 1][t 4][2026-09-11 18:44:34.114767335][collator.cpp:929][!collate(2,8000000000000000):6]	block version 16 have been enabled in global configuration, but we support only 15 (upgrade validator software?)[0m
+[1;36m[ 3][t 4][2026-09-11 18:44:34.115965352][collator.cpp:2266][!collate(2,8000000000000000):6]	start_lt set to 20000000[0m
+[1;36m[ 3][t 7][2026-09-11 18:44:34.116515241][out-msg-queue-proof.cpp:437][!disk-outmsgqueueimporter]	Done importing neighbor msg queues for shard (2,8000000000000000) from (-1,8000000000000000,10) (0,8000000000000000,4) in 0.000532s sources{ local=2} cache_size=1[0m
+[1;36m[ 3][t 7][2026-09-11 18:44:34.116588264][collator.cpp:1048][!collate(2,8000000000000000):6]	neighbor output queues fetched, took 0.000590s[0m
+[1;33m[ 2][t 7][2026-09-11 18:44:34.116668759][collator.cpp:1104][!collate(2,8000000000000000):6]	obtained outbound queue for neighbor #0((-1,8000000000000000))[0m
+[1;33m[ 2][t 7][2026-09-11 18:44:34.116814237][collator.cpp:1104][!collate(2,8000000000000000):6]	obtained outbound queue for neighbor #1((0,8000000000000000))[0m
+[1;33m[ 2][t 7][2026-09-11 18:44:34.116891581][collator.cpp:1104][!collate(2,8000000000000000):6]	obtained outbound queue for neighbor #2((2,8000000000000000))[0m
+[1;33m[ 2][t 1][2026-09-11 18:44:34.117382169][collator.cpp:2439][!collate(2,8000000000000000):6]	do_collate() : start[0m
+[1;36m[ 3][t 1][2026-09-11 18:44:34.120150057][collator.cpp:2717][!collate(2,8000000000000000):6]	cleaning outbound queue from messages already imported by neighbors[0m
+[1;33m[ 2][t 1][2026-09-11 18:44:34.120233051][collator.cpp:2884][!collate(2,8000000000000000):6]	deleted 1 messages from out_msg_queue, remaining queue size is 0[0m
+[1;31m[ 1][t 1][2026-09-11 18:44:34.123509461][workchain-unknown-origin.h:26][!collate(2,8000000000000000):6]	WORKCHAIN_UNKNOWN_ORIGIN boundary=collator-account-batch code=0 cause=injected unclassified failure after real Failed execution[0m
+[1;31m[ 1][t 1][2026-09-11 18:44:34.123526651][collator.cpp:395][!collate(2,8000000000000000):6]	cannot generate block candidate for 2:_ : [Error : -7201 : unclassified workchain execution failure][0m
+[1;36m[ 3][t 1][2026-09-11 18:44:34.123534728][collator.cpp:404][!collate(2,8000000000000000):6]	collation failed in 0.016329 s [Error : -7201 : unclassified workchain execution failure][0m
+[1;36m[ 3][t 1][2026-09-11 18:44:34.123545386][collator.cpp:405][!collate(2,8000000000000000):6]	{{
+	{wait_block_data #0:103129.722104->103129.729144(0.007040)}
+	{wait_block_state #0:103129.722099->103129.729131(0.007032)}
+	{neighbor_msg_queues:103129.730871->103129.731461(0.000590)}
+	{auxiliary wait_block_state 9:103129.731744->103129.732232(0.000488)}
+	{auxiliary wait_block_state 8:103129.730828->103129.731138(0.000310)}
+	{wait_block_data #-1:103129.729290->103129.729478(0.000188)}
+	{get_top_masterchain_state_block:103129.729134->103129.729287(0.000153)}
+	{get_storage_stat_cache:103129.722116->103129.722138(0.000023)[Error : 0 : not implemented]}
+	{do_collate:103129.732252->0.000000(-103129.732252)}
+}[0m
+[1;33m[ 2][t 1][2026-09-11 18:44:34.123572541][collator.cpp:7138][!collate(2,8000000000000000):6]	Collate query work time = 0.007546s, cpu time = 0.004551s[0m
+[1;31m[ 1][t 1][2026-09-11 18:44:34.127435030][manager-disk.cpp:273][!manager]	failed to create block: [Error : -7201 : unclassified workchain execution failure][0m
+[1;31m[ 0][t 0][2026-09-11 18:44:34.135630010][test-m3-live.cpp:356]	Check `unknowns == (enabled && unknown_control ? "1\n" : "0\n")` failed[0m

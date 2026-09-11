@@ -1,0 +1,4 @@
+Running test Test_BReview_PredecessorIdentity...
+PREDECESSOR seqno=5 root=0D7A00DB1A69FE4F8E825B8D01BF4FA1732BDDA697E76B7627A95709B1F263EF
+PASS in 409.2us
+1 test(s) passed

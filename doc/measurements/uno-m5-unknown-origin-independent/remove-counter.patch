@@ -1,0 +1,14 @@
+--- original/workchain-unknown-origin.h
++++ isolated/workchain-unknown-origin.h
+@@ -21,10 +21,7 @@
+ inline td::Status observe_workchain_execution_status(td::Status status, const char* boundary) {
+   if (status.is_ok() || status.code() == static_cast<int>(WorkchainExecutionFailure::CandidateInvalid) ||
+       workchain_execution_requires_local_failure(status)) return status;
+-  auto previous = unknown_origin_detail::count.load(std::memory_order_relaxed);
+-  while (previous != std::numeric_limits<std::uint64_t>::max() &&
+-         !unknown_origin_detail::count.compare_exchange_weak(previous, previous + 1,
+-                                                            std::memory_order_relaxed)) {}
++  // Isolated mutation: retain classification/logging; omit only increment.
+   // Saturate rather than wrap to zero. Counting is independent of log filters.
+   LOG(ERROR) << "WORKCHAIN_UNKNOWN_ORIGIN boundary=" << boundary
+              << " code=" << status.code() << " cause=" << status.message();
