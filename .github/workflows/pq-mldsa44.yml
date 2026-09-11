@@ -1,0 +1,107 @@
+name: Native ML-DSA-44 verification
+on:
+  pull_request:
+    paths:
+      - 'crypto/**'
+      - 'common/global-version.h'
+      - 'CMakeLists.txt'
+      - 'test/pq-mldsa44/**'
+      - 'docs/tvm-mldsa44.md'
+      - '.github/workflows/pq-mldsa44.yml'
+permissions:
+  contents: read
+concurrency:
+  group: pq-mldsa44-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  native:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            arch: x86_64
+          - runner: ubuntu-24.04-arm
+            arch: aarch64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Record architecture and compiler
+        run: |
+          test "$(uname -m)" = '${{ matrix.arch }}'
+          uname -a
+          cc --version
+          c++ --version
+      - name: Build verifier, real VM and compiler bindings
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --target test-pq-mldsa44 test-pq-mldsa44-wrapper func fift -j2
+      - name: Prepare pinned public vectors
+        run: python3 test/pq-mldsa44/prepare_vectors.py --out pq-results
+      - name: Run wrapper, VM and resource-boundary tests
+        run: |
+          build/crypto/pq/test-pq-mldsa44-wrapper pq-results/vectors.tsv pq-results/wrapper.tsv
+          build/crypto/pq/test-pq-mldsa44 pq-results/vectors.tsv pq-results/native.tsv --benchmark | tee pq-results/benchmark.txt
+          python3 test/pq-mldsa44/bindings.py --build build --vectors pq-results/vectors.tsv --out pq-results
+      - name: Prove tests detect removed verification, version and gas guards
+        if: matrix.arch == 'x86_64'
+        run: |
+          python3 test/pq-mldsa44/mutations.py --build build --vectors pq-results/vectors.tsv
+          git diff --exit-code
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pq-${{ matrix.arch }}
+          path: |
+            pq-results/manifest.json
+            pq-results/native.tsv
+            pq-results/wrapper.tsv
+            pq-results/func-transcript.tsv
+            pq-results/benchmark.txt
+          if-no-files-found: error
+  sanitizers:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Build portable verifier with Clang ASan and UBSan
+        run: |
+          cmake -S crypto/pq -B build-pq -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
+            '-DCMAKE_C_FLAGS=-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer' \
+            '-DCMAKE_CXX_FLAGS=-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer' \
+            '-DCMAKE_EXE_LINKER_FLAGS=-fsanitize=address,undefined'
+          cmake --build build-pq --target test-pq-mldsa44-wrapper -j2
+      - name: Execute all public verifier vectors under sanitizers
+        run: |
+          python3 test/pq-mldsa44/prepare_vectors.py --out pq-results
+          build-pq/test-pq-mldsa44-wrapper pq-results/vectors.tsv pq-results/wrapper.tsv
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pq-clang-sanitized
+          path: |
+            pq-results/manifest.json
+            pq-results/wrapper.tsv
+          if-no-files-found: error
+  determinism:
+    needs: [native, sanitizers]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: pq-*
+          path: results
+      - name: Compare exact corpus, verdicts, gas, stack and commit-state transcripts
+        run: |
+          cmp results/pq-x86_64/manifest.json results/pq-aarch64/manifest.json
+          cmp results/pq-x86_64/manifest.json results/pq-clang-sanitized/manifest.json
+          cmp results/pq-x86_64/wrapper.tsv results/pq-aarch64/wrapper.tsv
+          cmp results/pq-x86_64/wrapper.tsv results/pq-clang-sanitized/wrapper.tsv
+          cmp results/pq-x86_64/native.tsv results/pq-aarch64/native.tsv
+          cmp results/pq-x86_64/func-transcript.tsv results/pq-aarch64/func-transcript.tsv
+          sha256sum results/pq-*/native.tsv results/pq-*/wrapper.tsv
