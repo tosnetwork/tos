@@ -50,6 +50,17 @@ B's prior kernel/codec tests did not implement this fee settlement. This is not
 evidence that either test suite independently detected the pricing error.
 No repaired implementation result or complete M4 regression is claimed here.
 
+The specification was not ambiguous about these units. Line 765 explicitly
+warns that D28 billing units are an accounting abstraction, not the D31
+proof-work admission units, and that the two cannot substitute for each other
+despite coming from the same authenticated configuration. That warning was
+already present in the September 8 implementation-check corrections. The
+implementation and its tests nevertheless shared the same contrary formula.
+The written warning did not prevent this occurrence; the committed independent
+prediction and subsequent comparison exposed it. Documentation states a
+constraint, while mechanical checks and independent comparisons can detect
+violations; neither is a proof that every future violation will be detected.
+
 ## What k means in the current specification
 
 Source: `/home/tomi/memo/TOS_UNO_PRIVACY_WORKCHAIN_V2.md`, read without consulting
