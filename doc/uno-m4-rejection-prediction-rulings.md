@@ -60,9 +60,13 @@ or assert that M4 supplies their missing mechanisms.
 The coordinator identifies two instances in this round of the same pattern:
 section 3.2's earlier absolute statements were not updated after later decisions
 introduced paired changes, first D32 fees and then D29 type-2 admission.
-Every absolute prohibition in section 3.2 therefore needs a cross-check against
-the decision series. This records the required follow-up; it does not claim
-that the wider cross-check has already been performed.
+The coordinator subsequently reports completing the section 3.2 cross-check,
+finding four defects: the missing fee term, the statement that SEND/COLLECT
+do not change N_book, the blanket bucket-sweep prohibition, and residual
+Claim/ack/Deposit-refund text after deletion of the Claim mechanism. The
+physical location of bucket value is separately an unanswered design question.
+This completion is attributed to the coordinator; it is not a claim that B
+performed that section's scan or that the specification has been corrected.
 
 Behavioral independence and observation provenance remain as stated in the
 prediction. No rejection result is inferred from these rulings.
