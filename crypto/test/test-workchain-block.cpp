@@ -19,6 +19,7 @@
 #include "block/native-bounce-storage.h"
 #include "block/native-bounce-message.h"
 #include "block/workchain-payout-accounting.h"
+#include "workchain-m5-accounting-assertions.h"
 #include "block/workchain-bounce-accounting.h"
 #include "block/workchain-native-disposal.h"
 #include "block/workchain-unexpected-bucket.h"
@@ -697,27 +698,34 @@ TEST(WorkchainBlock, PayoutPrincipalAndFees) {
                                              td::make_refint(30), td::make_refint(10), 100);
   ASSERT_TRUE(plan.is_ok());
   auto result = plan.move_as_ok();
-  ASSERT_TRUE(result.custody_after == C(300));
-  ASSERT_TRUE(result.operator_after == C(70));
+  ASSERT_TRUE(result.custody_after == C(270));
+  ASSERT_TRUE(result.operator_after == C(100));
+  ASSERT_TRUE(block::m5_test::payout_forwarding(C(1000), result.custody_after,
+      C(100), result.operator_after, C(700), C(30)).is_ok());
   ASSERT_TRUE(result.exported == C(720));
-  ASSERT_TRUE(result.fee_funding.value == C(30));
   ASSERT_TRUE(result.rows[0].fees == C(10));
-  ASSERT_TRUE(block::verify_workchain_value_flow(result.rows, {result.fee_funding}, 2, 1, 100).is_ok());
+  ASSERT_TRUE(block::verify_workchain_value_flow(result.rows, {}, 2, 0, 100).is_ok());
   ASSERT_TRUE(block::account_workchain_payout(custody, coordinator, C(1000), C(29), C(700),
-      td::make_refint(30), td::make_refint(10), 100).is_error());
+      td::make_refint(30), td::make_refint(10), 100).is_ok());
   ASSERT_TRUE(block::account_workchain_payout(custody, coordinator, C(699), C(1000), C(700),
       td::make_refint(30), td::make_refint(10), 100).is_error());
+  auto missing_fee = block::account_workchain_payout(custody, coordinator, C(729), C(1000), C(700),
+      td::make_refint(30), td::make_refint(10), 100);
+  ASSERT_TRUE(missing_fee.is_error());
+  ASSERT_EQ(missing_fee.error().message(), "payout principal or fee arithmetic out of bounds");
+  ASSERT_TRUE(block::account_workchain_payout(custody, coordinator, C(730), C(1000), C(700),
+      td::make_refint(30), td::make_refint(10), 100).is_ok());
   ASSERT_TRUE(block::account_workchain_payout(custody, coordinator, C(1000), C(100), C(700),
       td::make_refint(30), td::make_refint(31), 100).is_error());
   ASSERT_TRUE(block::account_workchain_payout(custody, custody, C(1000), C(100), C(700),
       td::make_refint(30), td::make_refint(10), 100).is_error());
   auto reverse = block::account_workchain_payout(coordinator, custody, C(1000), C(100), C(700),
       td::make_refint(30), td::make_refint(10), 100).move_as_ok();
-  ASSERT_TRUE(reverse.rows[0].account == custody && reverse.rows[0].new_balance == C(70));
-  ASSERT_TRUE(reverse.rows[1].account == coordinator && reverse.rows[1].new_balance == C(300));
-  auto free = block::account_workchain_payout(custody, coordinator, C(700), C(0), C(700),
+  ASSERT_TRUE(reverse.rows[0].account == custody && reverse.rows[0].new_balance == C(100));
+  ASSERT_TRUE(reverse.rows[1].account == coordinator && reverse.rows[1].new_balance == C(270));
+  auto free = block::account_workchain_payout(custody, coordinator, C(700), C(17), C(700),
       td::make_refint(0), td::make_refint(0), 100).move_as_ok();
-  ASSERT_TRUE(free.custody_after.is_zero() && free.operator_after.is_zero());
+  ASSERT_TRUE(free.custody_after.is_zero() && free.operator_after == C(17));
   ASSERT_TRUE(free.exported == C(700));
 }
 
@@ -3390,15 +3398,14 @@ TEST(WorkchainBlock, NativeDisposalEntry) {
   if (joint_result.is_error()) LOG(ERROR) << "joint payout preparation failed: " << joint_result.error();
   ASSERT_TRUE(joint_result.is_ok());
   const auto& pair = joint_result.ok().transactions;
-  ASSERT_TRUE(pair[0]->balance == block::CurrencyCollection(1090));
-  ASSERT_TRUE(pair[1]->balance == block::CurrencyCollection(973));
+  ASSERT_TRUE(pair[0]->balance == block::CurrencyCollection(990));
+  ASSERT_TRUE(pair[1]->balance == block::CurrencyCollection(1073));
   ASSERT_TRUE(pair[0]->total_fees == block::CurrencyCollection(25));
   ASSERT_TRUE(pair[1]->total_fees == block::CurrencyCollection(100));
   ASSERT_EQ(pair[0]->out_msgs.size(), 1u);
   ASSERT_EQ(pair[1]->out_msgs.size(), 2u);
   ASSERT_EQ(pair[0]->end_lt, 23u);
   ASSERT_EQ(pair[1]->end_lt, 24u);
-  ASSERT_TRUE(joint_result.ok().accounting.fee_funding.value == block::CurrencyCollection(100));
   for (unsigned i = 0; i < 2; ++i) {
     ASSERT_EQ(pair[1]->out_msgs[i]->get_hash(), entry.out_msgs[i]->get_hash());
   }
@@ -3433,8 +3440,8 @@ TEST(WorkchainBlock, NativeDisposalEntry) {
     if (charged_pair_result.is_error()) LOG(ERROR) << charged_pair_result.error();
     ASSERT_TRUE(charged_pair_result.is_ok());
     const auto& charged_pair = charged_pair_result.ok().transactions;
-    ASSERT_TRUE(charged_pair[0]->balance == block::CurrencyCollection(1045));
-    ASSERT_TRUE(charged_pair[1]->balance == block::CurrencyCollection(990));
+    ASSERT_TRUE(charged_pair[0]->balance == block::CurrencyCollection(945));
+    ASSERT_TRUE(charged_pair[1]->balance == block::CurrencyCollection(1090));
     ASSERT_TRUE(charged_pair[0]->total_fees == block::CurrencyCollection(53));
     ASSERT_TRUE(charged_pair[1]->total_fees == block::CurrencyCollection(100));
     ASSERT_EQ(charged_pair[0]->out_msgs.size(), 1u);
@@ -3486,7 +3493,7 @@ TEST(WorkchainBlock, NativeDisposalEntry) {
     for (const auto& key : {a, b}) {
       block::Account account(2, key.bits());
       ASSERT_TRUE(account.unpack(states.lookup(key), 10, false));
-      ASSERT_TRUE(account.balance == block::CurrencyCollection(key == b ? 1045 : 990));
+      ASSERT_TRUE(account.balance == block::CurrencyCollection(key == b ? 945 : 1090));
       block::gen::AccountBlock::Record ab;
       ASSERT_TRUE(tlb::unpack_cell(vm::CellBuilder().append_cellslice(*account_blocks.lookup(key)).finalize(), ab));
       vm::AugmentedDictionary txs(vm::DictNonEmpty(), ab.transactions, 64, block::tlb::aug_AccountTransactions);
@@ -4671,7 +4678,7 @@ TEST(WorkchainBlock, NativeDisposalEntry) {
   ASSERT_TRUE(next_third.unpack(expanded_accounts.lookup(third), 10, false));
   ASSERT_TRUE(expanded_coordinator.unpack(expanded_accounts.lookup(a), 10, false));
   ASSERT_TRUE(next_third.balance == block::CurrencyCollection(1000));
-  ASSERT_TRUE(expanded_coordinator.balance == block::CurrencyCollection(1073));
+  ASSERT_TRUE(expanded_coordinator.balance == block::CurrencyCollection(1173));
   ASSERT_EQ(next_third.data->get_hash(), number(323)->get_hash());
   ASSERT_EQ(next_third.last_trans_lt_, 21u);
   ASSERT_EQ(old.accounts->get_hash(), original_hash);
@@ -4726,7 +4733,6 @@ TEST(WorkchainBlock, NativeDisposalEntry) {
   }
   auto joint_transfers = effects.native_transfers;
   std::sort(joint_rows.begin(), joint_rows.end(), [](const auto& x, const auto& y) { return x.account < y.account; });
-  joint_transfers.push_back(joint_result.ok().accounting.fee_funding);
   ASSERT_TRUE(block::verify_workchain_value_flow(joint_rows, joint_transfers, 2, 3, 4096).is_ok());
   ASSERT_TRUE(coordinator.balance == block::CurrencyCollection(1000));
   ASSERT_TRUE(custody.balance == block::CurrencyCollection(1000));
@@ -6217,6 +6223,7 @@ TEST(WorkchainBlock, AccountEngineExecution) {
     }
     engine.calls = 0;
     auto settled = settle();
+    if (settled.is_error()) LOG(ERROR) << "payout settlement: " << settled.error();
     ASSERT_TRUE(settled.is_ok());
     ASSERT_EQ(engine.calls, 1u);
     const auto& value = settled.ok();
@@ -6265,7 +6272,7 @@ TEST(WorkchainBlock, AccountEngineExecution) {
       ASSERT_TRUE(account.unpack(next.lookup(key), identity.gen_utime, false));
       ASSERT_TRUE(account.data->get_hash() == number(key == a ? 101 : 102)->get_hash());
       ASSERT_TRUE(updates.lookup_ref(key)->get_hash() == account.data->get_hash());
-      ASSERT_TRUE(account.balance == block::CurrencyCollection(with_payout ? (key == a ? 863 : 900) : 1000));
+      ASSERT_TRUE(account.balance == block::CurrencyCollection(with_payout && key == a ? 763 : 1000));
       auto block_root = vm::CellBuilder().append_cellslice(*blocks.lookup(key)).finalize();
       block::gen::AccountBlock::Record ab;
       ASSERT_TRUE(tlb::unpack_cell(block_root, ab));
@@ -6320,8 +6327,8 @@ TEST(WorkchainBlock, AccountEngineExecution) {
       unsupported_effects.native_transfers = {{a, b, block::CurrencyCollection(1)}};
       auto with_transfer = block::encode_workchain_account_effects(unsupported_effects, 2, 1, 4096).move_as_ok();
       auto mixed_pair = direct_pair(value.input, with_transfer, engine.payout, number(101)).move_as_ok();
-      ASSERT_TRUE(mixed_pair.transactions[0]->balance == block::CurrencyCollection(862));
-      ASSERT_TRUE(mixed_pair.transactions[1]->balance == block::CurrencyCollection(901));
+      ASSERT_TRUE(mixed_pair.transactions[0]->balance == block::CurrencyCollection(762));
+      ASSERT_TRUE(mixed_pair.transactions[1]->balance == block::CurrencyCollection(1001));
       ASSERT_TRUE(direct_pair(value.input, with_transfer, engine.payout, number(101), 0, 0).is_error());
       ASSERT_TRUE(direct_pair(value.input, value.effects, engine.payout, number(333)).is_error());
       // Requests use the relaxed source form; only the priced Native message
@@ -6350,18 +6357,18 @@ TEST(WorkchainBlock, AccountEngineExecution) {
       auto imported_payout_input = block::encode_workchain_host_input(identity, admitted, declarations,
           {inbound_envelope(0, 0, {}, a), inbound_envelope(1, 1, {}, b)}, 2, 2, 2).move_as_ok();
       auto imported_pair = direct_pair(imported_payout_input, with_transfer, engine.payout, number(101)).move_as_ok();
-      ASSERT_TRUE(imported_pair.transactions[0]->balance == block::CurrencyCollection(962));
-      ASSERT_TRUE(imported_pair.transactions[1]->balance == block::CurrencyCollection(1001));
+      ASSERT_TRUE(imported_pair.transactions[0]->balance == block::CurrencyCollection(862));
+      ASSERT_TRUE(imported_pair.transactions[1]->balance == block::CurrencyCollection(1101));
       ASSERT_TRUE(direct_pair(imported_payout_input, incoming_root, over_message, number(101)).is_error());
       // Old principal permits the payout, but the committed outgoing graph
       // must leave enough credited custody balance to fund it as well.
       auto depleted = unsupported_effects;
-      depleted.native_transfers = {{a, b, block::CurrencyCollection(963)}};
+      depleted.native_transfers = {{a, b, block::CurrencyCollection(863)}};
       auto exact_funding = block::encode_workchain_account_effects(depleted, 2, 1, 4096).move_as_ok();
       auto exact_pair = direct_pair(imported_payout_input, exact_funding, engine.payout, number(101)).move_as_ok();
       ASSERT_TRUE(exact_pair.transactions[0]->balance == block::CurrencyCollection(0));
       ASSERT_TRUE(exact_pair.transactions[1]->balance == block::CurrencyCollection(1963));
-      depleted.native_transfers = {{a, b, block::CurrencyCollection(964)}};
+      depleted.native_transfers = {{a, b, block::CurrencyCollection(864)}};
       auto insufficient_funding = block::encode_workchain_account_effects(depleted, 2, 1, 4096).move_as_ok();
       ASSERT_TRUE(direct_pair(imported_payout_input, insufficient_funding, engine.payout, number(101)).is_error());
       std::vector<block::WorkchainStorageWrite> payout_writes;
@@ -6397,7 +6404,7 @@ TEST(WorkchainBlock, AccountEngineExecution) {
       for (auto key : {a, b}) {
         block::Account updated(2, key.bits());
         ASSERT_TRUE(updated.unpack(imported_accounts.lookup(key), identity.gen_utime, false));
-        ASSERT_TRUE(updated.balance == block::CurrencyCollection(key == a ? 962 : 1001));
+        ASSERT_TRUE(updated.balance == block::CurrencyCollection(key == a ? 862 : 1101));
         ASSERT_TRUE(imported_overlay.imports.account_credits.at(key) == block::CurrencyCollection(100));
         ASSERT_EQ(updated.last_trans_lt_, 41u);
         ASSERT_EQ(updated.last_trans_end_lt_, key == a ? 43u : 42u);
@@ -6508,7 +6515,7 @@ TEST(WorkchainBlock, AccountEngineExecution) {
       for (auto key : {a, b, third}) {
         block::Account updated(2, key.bits());
         ASSERT_TRUE(updated.unpack(mixed_accounts.lookup(key), identity.gen_utime, false));
-        ASSERT_TRUE(updated.balance == block::CurrencyCollection(key == a ? 863 : key == b ? 901 : 999));
+        ASSERT_TRUE(updated.balance == block::CurrencyCollection(key == a ? 763 : key == b ? 1001 : 999));
       }
       third_tag(mixed_three);
       block::ClaimedWorkchainPayoutOverlay mixed_claim{mixed_three.state.accounts,
@@ -6585,16 +6592,16 @@ TEST(WorkchainBlock, AccountEngineExecution) {
       ASSERT_TRUE(updated.balance == block::CurrencyCollection(key == a ? custody_balance : operator_balance));
     }
   };
-  check_mixed(false, 1, 862, 901);
-  // The explicit reverse edge and the host fee-funding edge share endpoints.
-  check_mixed(true, 1, 864, 899);
-  check_mixed(false, 863, 0, 1763);
-  engine.transfer_value = 864;
+  check_mixed(false, 1, 762, 1001);
+  // Only explicit authenticated allocation edges remain; payout fees are local.
+  check_mixed(true, 1, 764, 999);
+  check_mixed(false, 763, 0, 1763);
+  engine.transfer_value = 764;
   engine.calls = 0;
   ASSERT_TRUE(settle().is_error());
   ASSERT_EQ(engine.calls, 1u);
-  check_mixed(true, 900, 1763, 0);
-  engine.transfer_value = 901;
+  check_mixed(true, 1000, 1763, 0);
+  engine.transfer_value = 1001;
   engine.calls = 0;
   ASSERT_TRUE(settle().is_error());
   ASSERT_EQ(engine.calls, 1u);
@@ -6870,7 +6877,7 @@ TEST(WorkchainBlock, AccountEngineExecution) {
     for (auto key : {a, b}) {
       block::Account account(2, key.bits());
       ASSERT_TRUE(account.unpack(next.lookup(key), identity.gen_utime, false));
-      ASSERT_TRUE(account.balance == block::CurrencyCollection(key == a ? (payout ? 880 : 1017) : (payout ? 923 : 1023)));
+      ASSERT_TRUE(account.balance == block::CurrencyCollection(key == a ? (payout ? 780 : 1017) : 1023));
       ASSERT_TRUE(account.last_trans_lt_ > 40);
     }
     ASSERT_TRUE(state.accounts->get_hash() == old_accounts_hash);
@@ -8021,6 +8028,14 @@ TEST(WorkchainBlock, NativePayoutPair) {
   };
   auto result = build(number(71));
   ASSERT_TRUE(result.is_ok());
+  // D61: observe the constructed Native pair before any overlay can mask a
+  // wrong funding role with a later value-flow rejection.
+  ASSERT_TRUE(result.ok().transactions[0]->balance == block::CurrencyCollection(763));
+  ASSERT_TRUE(result.ok().transactions[1]->balance == block::CurrencyCollection(1000));
+  ASSERT_TRUE(block::m5_test::payout_forwarding(custody.balance,
+      result.ok().transactions[0]->balance, coordinator.balance,
+      result.ok().transactions[1]->balance, block::CurrencyCollection(137),
+      block::CurrencyCollection(100)).is_ok());
   ASSERT_TRUE(Transaction::build_workchain_payout_pair(custody, coordinator, bindings[0], bindings[1],
       number(70), number(71), request, 20, 10, td::make_refint(500), 0, 0, cfg, pricing, {}, {}).is_error());
   unsigned binding_loads = 0;
@@ -8050,21 +8065,21 @@ TEST(WorkchainBlock, NativePayoutPair) {
         number(70), number(71), request, 20, 10, td::make_refint(500), 0, budget, cfg, pricing, {}, {});
   };
   auto enough = build_extra(4096).move_as_ok();
-  ASSERT_TRUE(enough.transactions[1]->balance == block::CurrencyCollection(900, extra_values.get_root_cell()));
+  ASSERT_TRUE(enough.transactions[1]->balance == block::CurrencyCollection(1000, extra_values.get_root_cell()));
   block::gen::Account::Record_account serialized_extra;
   block::gen::AccountStorage::Record serialized_storage;
   block::CurrencyCollection serialized_balance;
   ASSERT_TRUE(tlb::unpack_cell(enough.transactions[1]->new_total_state, serialized_extra));
   ASSERT_TRUE(tlb::csr_unpack(serialized_extra.storage, serialized_storage));
   ASSERT_TRUE(serialized_balance.unpack(serialized_storage.balance));
-  ASSERT_TRUE(serialized_balance == block::CurrencyCollection(900, extra_values.get_root_cell()));
+  ASSERT_TRUE(serialized_balance == block::CurrencyCollection(1000, extra_values.get_root_cell()));
   ASSERT_TRUE(build_extra(1).is_error());
   ASSERT_TRUE(extra_coordinator.balance == opening_extra);
   auto prepared = result.move_as_ok();
   auto& pair = prepared.transactions;
   ASSERT_EQ(pair.size(), 2u);
-  ASSERT_TRUE(pair[0]->balance == block::CurrencyCollection(863));
-  ASSERT_TRUE(pair[1]->balance == block::CurrencyCollection(900));
+  ASSERT_TRUE(pair[0]->balance == block::CurrencyCollection(763));
+  ASSERT_TRUE(pair[1]->balance == block::CurrencyCollection(1000));
   ASSERT_TRUE(pair[0]->total_fees == block::CurrencyCollection(25));
   ASSERT_TRUE(pair[1]->total_fees.is_zero());
   ASSERT_EQ(pair[0]->out_msgs.size(), 1u);
@@ -8072,9 +8087,7 @@ TEST(WorkchainBlock, NativePayoutPair) {
   ASSERT_EQ(pair[0]->end_lt, 22u);
   ASSERT_EQ(pair[1]->end_lt, 21u);
   ASSERT_TRUE(prepared.accounting.exported == block::CurrencyCollection(212));
-  ASSERT_TRUE(prepared.accounting.fee_funding.from == b);
-  ASSERT_TRUE(prepared.accounting.fee_funding.to == a);
-  ASSERT_TRUE(prepared.accounting.fee_funding.value == block::CurrencyCollection(100));
+  ASSERT_TRUE(block::verify_workchain_value_flow(prepared.accounting.rows, {}, 2, 0, 4096).is_ok());
   for (std::size_t i = 0; i < pair.size(); ++i) {
     auto& tx = pair[i];
     ASSERT_TRUE(block::gen::t_Transaction.validate_ref(4096, tx->root));
@@ -8092,7 +8105,7 @@ TEST(WorkchainBlock, NativePayoutPair) {
         .store_bits(tx->root->get_hash().bits(), 256).store_long(20, 64).finalize();
     block::Account decoded(2, key.bits());
     ASSERT_TRUE(decoded.unpack(vm::load_cell_slice_ref(entry), 10, false));
-    ASSERT_TRUE(decoded.balance == block::CurrencyCollection(i == 0 ? 863 : 900));
+    ASSERT_TRUE(decoded.balance == block::CurrencyCollection(i == 0 ? 763 : 1000));
     ASSERT_EQ(decoded.last_trans_end_lt_, i == 0 ? 22u : 21u);
     ASSERT_TRUE(decoded.data->get_hash() == number(i == 0 ? 70 : 71)->get_hash());
     ASSERT_EQ(vm::load_cell_slice(record.description).prefetch_ulong(4), 11u);
@@ -8120,7 +8133,7 @@ TEST(WorkchainBlock, NativePayoutPair) {
   block::Account poor_coordinator(2, b.bits());
   ASSERT_TRUE(poor_coordinator.unpack(poor_accounts.lookup(b), 10, false));
   ASSERT_TRUE(Transaction::build_workchain_payout_pair(custody, poor_coordinator, bindings[0], bindings[1],
-      number(70), number(71), request, 20, 10, td::make_refint(500), 0, 4096, cfg, pricing, {}, {}).is_error());
+      number(70), number(71), request, 20, 10, td::make_refint(500), 0, 4096, cfg, pricing, {}, {}).is_ok());
   auto mismatch = pricing;
   mismatch.global_version = 17;
   ASSERT_TRUE(Transaction::build_workchain_payout_pair(custody, coordinator, bindings[0], bindings[1],
@@ -8157,10 +8170,8 @@ TEST(WorkchainBlock, NativePayoutPair) {
   ASSERT_TRUE(block::build_workchain_payout_overlay(observed_state, 2, 10, 20, a, b, writes,
       a, b, request, td::make_refint(500), 4, 4, 2, 0, cfg, pricing, {}, {}, 0).is_error());
   ASSERT_EQ(state_loads, 0u);
-  ASSERT_TRUE(block::build_workchain_payout_overlay(observed_state, 2, 10, 20, a, b, writes,
-      a, b, request, td::make_refint(500), 4, 4, std::numeric_limits<std::uint64_t>::max(),
-      4096, cfg, pricing, {}, {}, 0).is_error());
-  ASSERT_EQ(state_loads, 0u);
+  // D61 removes the synthetic +1 transfer allowance, so UINT64_MAX no longer
+  // overflows that removed arithmetic. Actual transfers remain bounded.
   vm::AugmentedDictionary extra_accounts(vm::load_cell_slice_ref(larger.accounts), 256,
                                         block::tlb::aug_ShardAccounts);
   vm::CellBuilder extra_entry;
@@ -8190,8 +8201,6 @@ TEST(WorkchainBlock, NativePayoutPair) {
   auto materialized = overlay.move_as_ok();
   ASSERT_EQ(materialized.state.end_lt, 23u);
   ASSERT_TRUE(materialized.message.not_null());
-  ASSERT_TRUE(materialized.fee_funding.from == a && materialized.fee_funding.to == b);
-  ASSERT_TRUE(materialized.fee_funding.value == block::CurrencyCollection(100));
   block::gen::CommonMsgInfo::Record_int_msg_info actual_message;
   ASSERT_TRUE(tlb::unpack_cell_inexact(materialized.message, actual_message));
   ASSERT_EQ(actual_message.created_lt, 22u);
@@ -8205,7 +8214,7 @@ TEST(WorkchainBlock, NativePayoutPair) {
   for (auto key : {a, b, third}) {
     block::Account updated(2, key.bits());
     ASSERT_TRUE(updated.unpack(next.lookup(key), 10, false));
-    ASSERT_TRUE(updated.balance == block::CurrencyCollection(key == b ? 863 : key == a ? 900 : 1000));
+    ASSERT_TRUE(updated.balance == block::CurrencyCollection(key == b ? 763 : 1000));
     ASSERT_EQ(updated.last_trans_lt_, 21u);
     ASSERT_EQ(updated.last_trans_end_lt_, key == b ? 23u : 22u);
     ASSERT_TRUE(updated.data->get_hash() == number(72)->get_hash());
@@ -8227,6 +8236,12 @@ TEST(WorkchainBlock, NativePayoutPair) {
   }
   auto repeat = block::build_workchain_payout_overlay(larger.accounts, 2, 10, 20, a, b, writes,
       b, a, request, td::make_refint(500), 4, 4, 2, 4096, cfg, pricing, {}, {}, 0);
+  block::Account observed_custody(2, b.bits()), observed_operator(2, a.bits());
+  ASSERT_TRUE(observed_custody.unpack(next.lookup(b), 10, false));
+  ASSERT_TRUE(observed_operator.unpack(next.lookup(a), 10, false));
+  ASSERT_TRUE(block::m5_test::payout_forwarding(block::CurrencyCollection(1000), observed_custody.balance,
+      block::CurrencyCollection(1000), observed_operator.balance,
+      block::CurrencyCollection(137), block::CurrencyCollection(100)).is_ok());
   ASSERT_TRUE(repeat.is_ok());
   ASSERT_TRUE(repeat.ok().state.accounts->get_hash() == materialized.state.accounts->get_hash());
   ASSERT_TRUE(repeat.ok().state.account_blocks->get_hash() == materialized.state.account_blocks->get_hash());
@@ -8239,7 +8254,6 @@ TEST(WorkchainBlock, NativePayoutPair) {
   auto replayed = replay(claim);
   ASSERT_TRUE(replayed.is_ok());
   ASSERT_TRUE(replayed.ok().state.accounts->get_hash() == claim.accounts->get_hash());
-  ASSERT_TRUE(replayed.ok().fee_funding.value == block::CurrencyCollection(100));
   auto changed = claim;
   changed.end_lt = block::participant_lt_detail::checked_add(claim.end_lt, 1).move_as_ok();
   ASSERT_TRUE(replay(changed).is_error());
@@ -8331,8 +8345,8 @@ TEST(WorkchainBlock, NativePayoutPricing) {
   ASSERT_TRUE(src.address == key);
   auto settlement = block::account_workchain_payout(key, operator_key, account.balance,
       block::CurrencyCollection(100), result.payment, result.total_fee, result.collected_fee, 100).move_as_ok();
-  ASSERT_TRUE(settlement.custody_after == block::CurrencyCollection(900));
-  ASSERT_TRUE(settlement.operator_after.is_zero());
+  ASSERT_TRUE(settlement.custody_after == block::CurrencyCollection(800));
+  ASSERT_TRUE(settlement.operator_after == block::CurrencyCollection(100));
   ASSERT_TRUE(settlement.exported == block::CurrencyCollection(150));
   ASSERT_TRUE(Transaction::price_workchain_payout(account, request, 20, 10, td::make_refint(99), cfg).is_error());
   cfg.fwd_mc.lump_price = 102;

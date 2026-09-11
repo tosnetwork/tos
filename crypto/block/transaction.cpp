@@ -4651,8 +4651,10 @@ td::Result<PreparedWorkchainPayoutPair> Transaction::build_workchain_payout_pair
       return td::Status::Error("payout custody data differs from effects");
     }
   }
-  // Pricing still checks the old custody principal independently. Incoming
-  // imports or allocations cannot increase the prior authorization envelope.
+  // Pricing still checks the old custody principal independently. This envelope
+  // covers principal only; the combined principal/forwarding debit below is
+  // checked against the post-import/allocation custody balance. Withdrawal
+  // authorization must separately bind both amounts to the confidential debit.
   TRY_RESULT(priced, price_workchain_payout(custody, request, start_lt, now, fee_budget, message_cfg));
   // Pricing checked both LT additions. Both old end LTs are <= start_lt,
   // so neither constructor's max(requested_start, old_end) can raise that bound.
@@ -4679,6 +4681,8 @@ td::Result<PreparedWorkchainPayoutPair> Transaction::build_workchain_payout_pair
   }
   TRY_RESULT(allocation, account_workchain_payout(custody.addr, coordinator.addr, pair[0]->balance,
       pair[1]->balance, priced.payment, priced.total_fee, priced.collected_fee, extra_validation_cells));
+  // D61: the priced outward fee and principal are both custody debits.
+  // Coordinator's post-import/allocation balance is unchanged by payout.
   pair[0]->balance = allocation.custody_after;
   pair[1]->balance = allocation.operator_after;
   // Preserve the independently staged aggregate fee when a payout shares the
