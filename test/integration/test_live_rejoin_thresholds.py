@@ -83,13 +83,14 @@ class Fixture:
     """A `self` for the real methods: real verify_live_rejoin / _node_mc_seqno bound
     below, everything they reach is a double."""
 
-    def __init__(self, name, ref_tips, target_tips, *, armed=True, log="", restart=True, fork=False):
+    def __init__(self, name, ref_tips, target_tips, *, armed=True, log="", restart=True, fork=False, fork_after=None):
         self.run_dir = Path(tempfile.mkdtemp(prefix=f"rejoin_{name}_"))
         self.experiment = SimpleNamespace(rpc_addresses=[f"127.0.0.1:{8111 + i}" for i in range(4)])
         self.enable_consensus_cleanup = armed
         self._reference = _Sequence(ref_tips)
         self._target = _Sequence(target_tips)
-        self._fork = fork  # target reports a different block id at the agreement height
+        self._fork = fork  # target diverges at every height
+        self._fork_after = fork_after  # target shares prefix up to this height, diverges above it
         self.live_rejoin_result = None
         self.events = []
         self.rpc_calls = []
@@ -115,7 +116,13 @@ class Fixture:
         if method == "getBlockHeader":
             # Queried on BOTH the reference (node 0) and the target for same-height agreement.
             seqno = params["seqno"]
-            if self._fork and address == target:
+            # fork: target diverges at every height. fork_after: target shares the canonical
+            # prefix up to and including that height, then diverges above it (a fork after a
+            # shared during-downtime height -- agreement at the early height would miss it).
+            diverges = address == target and (
+                self._fork or (self._fork_after is not None and seqno > self._fork_after)
+            )
+            if diverges:
                 root, file = f"TARGETFORK@{seqno}", f"TARGETFORK@{seqno}"
             else:
                 root, file = f"canonical-root@{seqno}", f"canonical-file@{seqno}"
@@ -151,8 +158,8 @@ Fixture._node_mc_seqno = REAL._node_mc_seqno
 Fixture._node_mc_block_id = REAL._node_mc_block_id
 
 
-async def _run(name, ref_tips, target_tips, *, armed=True, log="", restart=True, fork=False):
-    fixture = Fixture(name, ref_tips, target_tips, armed=armed, log=log, restart=restart, fork=fork)
+async def _run(name, ref_tips, target_tips, *, armed=True, log="", restart=True, fork=False, fork_after=None):
+    fixture = Fixture(name, ref_tips, target_tips, armed=armed, log=log, restart=restart, fork=fork, fork_after=fork_after)
     VESTAGE.json_rpc_call = fixture.rpc
     try:
         result = await fixture.verify_live_rejoin()
@@ -220,12 +227,24 @@ async def main() -> int:
         res.get("post_cleanup_recovery"),
     )
 
-    # 6b. Target advances by seqno but on a DIVERGENT chain: block-id disagreement at the
-    # common height must reject it (a seqno-only check would have passed this).
+    # 6b. Target advances by seqno but on a DIVERGENT chain at every height: block-id
+    # disagreement must reject it (a seqno-only check would have passed this).
     outcome, res = await _run("target_on_divergent_chain", [27, 33, 49], [27, 35, 55], log=PASSLOG, fork=True)
     check(
         "target_on_divergent_chain rejected by block-id agreement",
         outcome == "AssertionError" and "block-id disagreement" in res.get("error", ""),
+        f"{outcome}: {res.get('error', res)}",
+    )
+
+    # 6c. Target shares the canonical chain THROUGH the during-downtime height (33) but forks
+    # ABOVE it, so it disagrees at fresh_tip (49). Comparing only at the early height would
+    # accept this; comparing at fresh_tip must reject it. This is the reviewer's narrow P2.
+    outcome, res = await _run(
+        "fork_after_shared_downtime_height", [27, 33, 49], [27, 35, 55], log=PASSLOG, fork_after=33,
+    )
+    check(
+        "fork_after_shared_downtime_height rejected at fresh_tip",
+        outcome == "AssertionError" and "block-id disagreement" in res.get("error", "") and "seqno 49" in res.get("error", ""),
         f"{outcome}: {res.get('error', res)}",
     )
 

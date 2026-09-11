@@ -1513,24 +1513,31 @@ class ValidatorElectionRehearsal:
             predicate=lambda seqno: seqno >= fresh_tip,
         )
 
-        # BLOCK-ID AGREEMENT: at a common confirmed height both nodes have passed, the
-        # target's masterchain block id must equal the reference's. This proves the target
-        # advanced on the SAME chain; a fork reporting a high seqno of its own would be
-        # caught here where a seqno-only comparison would not.
-        agreement_height = tip_during_downtime
-        reference_block_id = await self.retry(
-            lambda: self._node_mc_block_id(0, agreement_height),
-            timeout=60,
-            interval=2,
-            description=f"reference block id at masterchain seqno {agreement_height}",
-        )
-        target_block_id = await self.retry(
-            lambda: self._node_mc_block_id(node_index, agreement_height),
-            timeout=60,
-            interval=2,
-            description=f"node {node_index + 1} block id at masterchain seqno {agreement_height}",
-        )
-        block_ids_agree = reference_block_id == target_block_id
+        # BLOCK-ID AGREEMENT: the target's masterchain block id must equal the reference's at
+        # the LATEST height the target just caught up to (fresh_tip). Agreeing at the freshest
+        # common height subsumes all ancestors -- a masterchain block commits its history --
+        # so it rejects a target that shared an old prefix but forked after it. Comparing only
+        # at the earlier during-downtime height would miss exactly that: agreement at height H
+        # does not imply agreement at a later height. The earlier height is kept as extra
+        # evidence, but the decisive gate is fresh_tip.
+        async def _agree_at(height: int) -> tuple[bool, tuple[str, str], tuple[str, str]]:
+            ref = await self.retry(
+                lambda: self._node_mc_block_id(0, height),
+                timeout=60, interval=2,
+                description=f"reference block id at masterchain seqno {height}",
+            )
+            tgt = await self.retry(
+                lambda: self._node_mc_block_id(node_index, height),
+                timeout=60, interval=2,
+                description=f"node {node_index + 1} block id at masterchain seqno {height}",
+            )
+            return (ref == tgt, ref, tgt)
+
+        agreement_height = fresh_tip
+        agree_fresh, reference_block_id, target_block_id = await _agree_at(agreement_height)
+        early_agreement_height = tip_during_downtime
+        agree_early, _, _ = await _agree_at(early_agreement_height)
+        block_ids_agree = agree_fresh and agree_early
 
         # The recovered node's post-restart log (truncated to this run) must carry no fault;
         # record whether the armed cleanup worker ran a pass on it as supporting evidence.
@@ -1564,6 +1571,9 @@ class ValidatorElectionRehearsal:
             "target_tip_tracking": target_tracking,
             "block_id_agreement_height": agreement_height,
             "block_ids_agree": block_ids_agree,
+            "block_ids_agree_fresh_tip": agree_fresh,
+            "block_ids_agree_downtime_height": agree_early,
+            "block_id_early_agreement_height": early_agreement_height,
             "cleanup_passes_after_rejoin": cleanup_passes,
             "fatals": fatals[:5],
         }
@@ -1574,9 +1584,12 @@ class ValidatorElectionRehearsal:
             **{k: v for k, v in result.items() if k != "fatals"},
         )
         if not block_ids_agree:
+            bad_height = agreement_height if not agree_fresh else early_agreement_height
             raise AssertionError(
-                f"live rejoin block-id disagreement at masterchain seqno {agreement_height}: "
-                f"reference={reference_block_id} target={target_block_id} (node {node_index + 1} on a divergent chain)"
+                f"live rejoin block-id disagreement at masterchain seqno {bad_height} "
+                f"(fresh_tip agree={agree_fresh}, downtime-height agree={agree_early}): "
+                f"reference={reference_block_id} target={target_block_id} (node {node_index + 1} forked after the "
+                f"shared prefix)"
             )
         if fatals:
             raise AssertionError(f"live rejoin saw fault diagnostics on node {node_index + 1}: {fatals[:3]}")
