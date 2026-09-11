@@ -18,7 +18,7 @@ HEX_FILE=$(printf '%s\n' "$BUILD_OUTPUT" | sed -n 's/^hex=\(.*\)$/\1/p')
 BUILT_HEX=$(tr -d '[:space:]' < "$HEX_FILE")
 
 RUST_SOURCE="$REPO_ROOT/tosctl/src/node-control/contracts/src/contract_codes.rs"
-CPP_SOURCE="$REPO_ROOT/validator-engine/json-rpc-server-account-capability.cpp"
+CPP_SOURCE="$REPO_ROOT/validator-engine/json-rpc-account-model.cpp"
 
 status=0
 
