@@ -10975,3 +10975,5 @@ TEST(WorkchainBlock, ScopedWorkchainConfigurationResolution) {
   ASSERT_TRUE(block::workchain_execution_requires_local_failure(
       registry.validate_required_workchains(workchains, configuration, {})));
 }
+
+#include "workchain-payout-principal-budget-tests.inc"

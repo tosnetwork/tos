@@ -1,0 +1,165 @@
+Internal ctest changing into directory: /tmp/b-budget-default
+UpdateCTestConfiguration  from :/tmp/b-budget-default/DartConfiguration.tcl
+UpdateCTestConfiguration  from :/tmp/b-budget-default/DartConfiguration.tcl
+Test project /tmp/b-budget-default
+Constructing a list of tests
+Done constructing a list of tests
+Updating test list for fixtures
+Added 0 tests to meet fixture requirements
+Checking test dependency graph...
+Checking test dependency graph end
+test 42
+    Start 42: test-workchain-payout-principal-budget
+
+42: Test command: /tmp/b-budget-default/test-workchain-block "--filter" "NativePayoutPrincipalOnlyBudget"
+42: Test timeout computed to be: 60
+42: Running test Test_WorkchainBlock_NativePayoutPrincipalOnlyBudget...
+42: [0m[ 4][t 0][2026-09-11 15:47:52.842358653][widened.cpp:622]	unpacking account 0000000000000000000000000000000000000000000000000000000000000000[0m
+42: [0m[ 4][t 0][2026-09-11 15:47:52.842561976][widened.cpp:455]	last_paid=0; cells=0 bits=0[0m
+42: [0m[ 4][t 0][2026-09-11 15:47:52.842573312][widened.cpp:685]	end of Account.unpack() for 2:0000000000000000000000000000000000000000000000000000000000000000 (balance = 1000ng ; last_trans_lt = 1..2)[0m
+42: [0m[ 4][t 0][2026-09-11 15:47:52.842604063][widened.cpp:622]	unpacking account 31CF8E61894D648E857CC6D14F8352C20C14D12F92A5F8DCE26F01224A63376D[0m
+42: [0m[ 4][t 0][2026-09-11 15:47:52.842611335][widened.cpp:455]	last_paid=0; cells=0 bits=0[0m
+42: [0m[ 4][t 0][2026-09-11 15:47:52.842617466][widened.cpp:685]	end of Account.unpack() for 2:31CF8E61894D648E857CC6D14F8352C20C14D12F92A5F8DCE26F01224A63376D (balance = 1000ng ; last_trans_lt = 1..2)[0m
+42: [0m[ 4][t 0][2026-09-11 15:47:52.842683525][widened.cpp:3555]	storage paid for a message: 0 cells, 0 bits[0m
+42: [0m[ 4][t 0][2026-09-11 15:47:52.842688821][widened.cpp:3559]	computed fwd fees = 100 + 0[0m
+42: [0m[ 4][t 0][2026-09-11 15:47:52.842699348][widened.cpp:3644]	not enough tomis to transfer with the message : remaining balance is 137ng, need 237 (including forwarding fees)[0m
+42: [0m[ 4][t 0][2026-09-11 15:47:52.842739550][widened.cpp:622]	unpacking account 0000000000000000000000000000000000000000000000000000000000000000[0m
+42: [0m[ 4][t 0][2026-09-11 15:47:52.842747423][widened.cpp:455]	last_paid=0; cells=0 bits=0[0m
+42: [0m[ 4][t 0][2026-09-11 15:47:52.842752618][widened.cpp:685]	end of Account.unpack() for 2:0000000000000000000000000000000000000000000000000000000000000000 (balance = 1000ng ; last_trans_lt = 1..2)[0m
+42: [0m[ 4][t 0][2026-09-11 15:47:52.842758356][widened.cpp:622]	unpacking account 31CF8E61894D648E857CC6D14F8352C20C14D12F92A5F8DCE26F01224A63376D[0m
+42: [0m[ 4][t 0][2026-09-11 15:47:52.842764001][widened.cpp:455]	last_paid=0; cells=0 bits=0[0m
+42: [0m[ 4][t 0][2026-09-11 15:47:52.842768998][widened.cpp:685]	end of Account.unpack() for 2:31CF8E61894D648E857CC6D14F8352C20C14D12F92A5F8DCE26F01224A63376D (balance = 1000ng ; last_trans_lt = 1..2)[0m
+42: [0m[ 4][t 0][2026-09-11 15:47:52.842790814][widened.cpp:3555]	storage paid for a message: 0 cells, 0 bits[0m
+42: [0m[ 4][t 0][2026-09-11 15:47:52.842795751][widened.cpp:3559]	computed fwd fees = 100 + 0[0m
+42: [1;31m[ 0][t 0][2026-09-11 15:47:52.842890555][workchain-payout-principal-budget-tests.inc:9]	Expectation failed: principal_only.is_error()![0m
+42: [pid 1955898] [time 1789141672] Signal: 6
+42: ------- Stack Backtrace -------
+42: /tmp/b-budget-default/test-workchain-block(+0x6f9ad7)[0x5a910b122ad7]
+42: /tmp/b-budget-default/test-workchain-block(+0xe0bdd)[0x5a910ab09bdd]
+42: /lib/x86_64-linux-gnu/libc.so.6(+0x42520)[0x7ec959e42520]
+42: /lib/x86_64-linux-gnu/libc.so.6(pthread_kill+0x12c)[0x7ec959e969bc]
+42: /lib/x86_64-linux-gnu/libc.so.6(raise+0x16)[0x7ec959e42476]
+42: /lib/x86_64-linux-gnu/libc.so.6(abort+0xd3)[0x7ec959e287f3]
+42: /tmp/b-budget-default/test-workchain-block(+0x6fced7)[0x5a910b125ed7]
+42: /tmp/b-budget-default/test-workchain-block(+0x6fcfd7)[0x5a910b125fd7]
+42: /tmp/b-budget-default/test-workchain-block(+0x6fcb87)[0x5a910b125b87]
+42: /tmp/b-budget-default/test-workchain-block(+0x1cfe76)[0x5a910abf8e76]
+42: /tmp/b-budget-default/test-workchain-block(+0x1d069a)[0x5a910abf969a]
+42: /tmp/b-budget-default/test-workchain-block(+0x706caf)[0x5a910b12fcaf]
+42: /tmp/b-budget-default/test-workchain-block(+0x7067d8)[0x5a910b12f7d8]
+42: /tmp/b-budget-default/test-workchain-block(+0xe888f)[0x5a910ab1188f]
+42: /lib/x86_64-linux-gnu/libc.so.6(+0x29d90)[0x7ec959e29d90]
+42: /lib/x86_64-linux-gnu/libc.so.6(__libc_start_main+0x80)[0x7ec959e29e40]
+42: /tmp/b-budget-default/test-workchain-block(+0xe8735)[0x5a910ab11735]
+42: -------------------------------
+42: --- Enhanced Backtrace (libbacktrace) ---
+42:     #0  ?? (test-workchain-block+0xe0bdc) [0x5a910ab09bdc]
+42:     #1  ?? at libc_sigaction.c (libc.so.6+0x4251f) [0x7ec959e4251f]
+42:     #2  __pthread_kill_implementation at pthread_kill.c:44 (libc.so.6+0x969bc) [0x7ec959e969bc]
+42:     #3  __pthread_kill_internal at pthread_kill.c:78 (libc.so.6+0x969bc) [0x7ec959e969bc]
+42:     #4  __GI___pthread_kill at pthread_kill.c:89 (libc.so.6+0x969bc) [0x7ec959e969bc]
+42:     #5  __GI_raise at raise.c:26 (libc.so.6+0x42475) [0x7ec959e42475]
+42:     #6  __GI_abort at abort.c:79 (libc.so.6+0x287f2) [0x7ec959e287f2]
+42:     #7  ?? (test-workchain-block+0x6fced6) [0x5a910b125ed6]
+42:     #8  ?? (test-workchain-block+0x6fcfd6) [0x5a910b125fd6]
+42:     #9  ?? (test-workchain-block+0x6fcb86) [0x5a910b125b86]
+42:     #10  ?? (test-workchain-block+0x1cfe75) [0x5a910abf8e75]
+42:     #11  ?? (test-workchain-block+0x1d0699) [0x5a910abf9699]
+42:     #12  ?? (test-workchain-block+0x706cae) [0x5a910b12fcae]
+42:     #13  ?? (test-workchain-block+0x7067d7) [0x5a910b12f7d7]
+42:     #14  ?? (test-workchain-block+0xe888e) [0x5a910ab1188e]
+42:     #15  __libc_start_call_main at libc_start_call_main.h:58 (libc.so.6+0x29d8f) [0x7ec959e29d8f]
+42:     #16  __libc_start_main_impl at libc-start.c:392 (libc.so.6+0x29e3f) [0x7ec959e29e3f]
+42:     #17  ?? (test-workchain-block+0xe8734) [0x5a910ab11734]
+42:     #18   ��f� (unknown+0xffffffffffffffff) [0xffffffffffffffff]
+42: ------------------------------------------
+42: [Thread debugging using libthread_db enabled]
+42: Using host libthread_db library "/lib/x86_64-linux-gnu/libthread_db.so.1".
+42: 0x00007ec959eea3aa in __GI___wait4 (pid=1956085, stat_loc=0x0, options=0, usage=0x0) at ../sysdeps/unix/sysv/linux/wait4.c:30
+42: 30	../sysdeps/unix/sysv/linux/wait4.c: No such file or directory.
+42: [Current thread is 1 (Thread 0x7ec95a4e5840 (LWP 1955898))]
+42: 
+42: Thread 1 (Thread 0x7ec95a4e5840 (LWP 1955898) "test-workchain-"):
+42: #0  0x00007ec959eea3aa in __GI___wait4 (pid=1956085, stat_loc=0x0, options=0, usage=0x0) at ../sysdeps/unix/sysv/linux/wait4.c:30
+42:         sc_ret = -512
+42:         sc_ret = <optimized out>
+42: #1  0x00005a910b122d52 in td::Stacktrace::print_to_stderr(td::Stacktrace::PrintOptions const&) ()
+42: No symbol table info available.
+42: #2  0x00005a910ab09bdd in td::default_failure_signal_handler(int) ()
+42: No symbol table info available.
+42: #3  <signal handler called>
+42: No locals.
+42: #4  __pthread_kill_implementation (no_tid=0, signo=6, threadid=139403268610112) at ./nptl/pthread_kill.c:44
+42:         tid = <optimized out>
+42:         ret = 0
+42:         pd = 0x7ec95a4e5840
+42:         old_mask = {__val = {140722035672320, 2872842890555, 99579005854294, 140722035673104, 140722035672264, 184, 140722035672304, 99579002511978, 140722035672432, 138573009979370, 15, 7547919956790449408, 52, 18446744073709551184, 0, 99579005854294}}
+42:         ret = <optimized out>
+42:         pd = <optimized out>
+42:         old_mask = <optimized out>
+42:         ret = <optimized out>
+42:         tid = <optimized out>
+42:         ret = <optimized out>
+42:         resultvar = <optimized out>
+42:         resultvar = <optimized out>
+42:         __arg3 = <optimized out>
+42:         __arg2 = <optimized out>
+42:         __arg1 = <optimized out>
+42:         _a3 = <optimized out>
+42:         _a2 = <optimized out>
+42:         _a1 = <optimized out>
+42:         __futex = <optimized out>
+42:         resultvar = <optimized out>
+42:         __arg3 = <optimized out>
+42:         __arg2 = <optimized out>
+42:         __arg1 = <optimized out>
+42:         _a3 = <optimized out>
+42:         _a2 = <optimized out>
+42:         _a1 = <optimized out>
+42:         __futex = <optimized out>
+42:         __private = <optimized out>
+42:         __oldval = <optimized out>
+42:         result = <optimized out>
+42: #5  __pthread_kill_internal (signo=6, threadid=139403268610112) at ./nptl/pthread_kill.c:78
+42: No locals.
+42: #6  __GI___pthread_kill (threadid=139403268610112, signo=signo@entry=6) at ./nptl/pthread_kill.c:89
+42: No locals.
+42: #7  0x00007ec959e42476 in __GI_raise (sig=sig@entry=6) at ../sysdeps/posix/raise.c:26
+42:         ret = <optimized out>
+42: #8  0x00007ec959e287f3 in __GI_abort () at ./stdlib/abort.c:79
+42:         save_stage = 1
+42:         act = {__sigaction_handler = {sa_handler = 0x0, sa_sigaction = 0x0}, sa_mask = {__val = {21474840578, 0, 99579010476728, 0, 140722035672576, 1, 1, 99579010476728, 140722035672576, 7, 99579007299049, 140722035672640, 99579002510827, 0, 140722035672679, 0}}, sa_flags = 1, sa_restorer = 0x0}
+42:         sigs = {__val = {32, 139403268295576, 2, 1, 7, 139403268609680, 140722035672544, 99579002488751, 99579007316679, 20618424296145162, 99579926997776, 16, 512, 14700698920825137, 139403268276320, 6}}
+42: #9  0x00005a910b125ed7 in td::process_fatal_error(td::CSlice) ()
+42: No symbol table info available.
+42: #10 0x00005a910b125fd7 in td::DefaultLog::append(td::CSlice, int) ()
+42: No symbol table info available.
+42: #11 0x00005a910b125b87 in td::Logger::~Logger() ()
+42: No symbol table info available.
+42: #12 0x00005a910abf8e76 in Test_WorkchainBlock_NativePayoutPrincipalOnlyBudget::run() ()
+42: No symbol table info available.
+42: #13 0x00005a910abf969a in td::Test::step() ()
+42: No symbol table info available.
+42: #14 0x00005a910b12fcaf in td::TestsRunner::run_all_step() ()
+42: No symbol table info available.
+42: #15 0x00005a910b12f7d8 in td::TestsRunner::run_all() ()
+42: No symbol table info available.
+42: #16 0x00005a910ab1188f in main ()
+42: No symbol table info available.
+42: [Inferior 1 (process 1955898) detached]
+1/1 Test #42: test-workchain-payout-principal-budget ...***Failed  Required regular expression not found. Regex=[PRINCIPAL_BUDGET_OBSERVED
+]  0.64 sec
+
+0% tests passed, 1 tests failed out of 1
+
+Label Time Summary:
+m5           =   0.64 sec*proc (1 test)
+workchain    =   0.64 sec*proc (1 test)
+
+Total Test time (real) =   0.64 sec
+
+The following tests FAILED:
+	 42 - test-workchain-payout-principal-budget (Failed)
+Errors while running CTest
+Output from these tests are in: /tmp/b-budget-default/Testing/Temporary/LastTest.log
+Use "--rerun-failed --output-on-failure" to re-run the failed cases verbosely.
