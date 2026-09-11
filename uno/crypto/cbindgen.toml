@@ -20,3 +20,5 @@ SystemEncryptionRequest = "UnoCryptoSystemEncryptionRequest"
 SystemCiphertext = "UnoCryptoSystemCiphertext"
 KeyPossessionRequestV2 = "UnoCryptoKeyPossessionRequestV2"
 ClosurePossessionRequestV2 = "UnoCryptoClosurePossessionRequestV2"
+
+SystemEncryptionRequestV2 = "UnoCryptoSystemEncryptionRequestV2"

@@ -34,6 +34,17 @@ uno_v2_deposit_identity inbound_message:bits256 sequence:uint64 = UnoV2DepositId
 uno_v2_system_pending_receipt receipt_id:bits256 amount:uint64 status:(## 8) { status = 0 }
   target:^UnoV2PendingTarget ciphertext:^UnoV2AccountCiphertext
   origin:^UnoV2DepositIdentity = UnoV2PendingReceipt;
+// D69 versioned origins. Old Deposit identity/receipt constructors stay exact.
+// Explicit kind tags are domain separation, not collision-free output IDs.
+uno_v2_system_origin_deposit_v1#00 inbound_message:bits256 sequence:uint64 = UnoV2SystemOriginV1;
+uno_v2_system_origin_settlement_v1#01 attempt_id:bits256 sequence:uint64 = UnoV2SystemOriginV1;
+uno_v2_system_origin_sweep_v1#02 sequence:uint64 attribution:^UnoV2SweepAttributionV1 = UnoV2SystemOriginV1;
+// D29/D62 type-2 attribution. No message body or made-up inbound identity.
+uno_v2_sweep_attribution_v1 kind:(## 8) { kind = 2 } src_workchain:int32 src:bits256
+  account_id:bits256 value:uint256 return_failed:Bool = UnoV2SweepAttributionV1;
+uno_v2_system_pending_origin_v1 receipt_id:bits256 amount:uint64 status:(## 8) { status = 0 }
+  target:^UnoV2PendingTarget ciphertext:^UnoV2AccountCiphertext origin:^UnoV2SystemOriginV1
+  = UnoV2PendingReceipt;
 uno_v2_account_active = UnoV2AccountLifecycle;
 uno_v2_account_read_only = UnoV2AccountLifecycle;
 uno_v2_account_migrated successor:^UnoV2AccountAddress migration_operation:bits256 = UnoV2AccountLifecycle;

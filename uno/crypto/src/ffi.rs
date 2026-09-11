@@ -153,6 +153,20 @@ pub struct SystemEncryptionRequest {
     pub amount: u64,
 }
 
+/// D69 fixed-width request. origin_bytes is exactly 41 or 115; unused tail
+/// bytes are zero. Canonical origin framing comes from the host codec.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct SystemEncryptionRequestV2 {
+    pub abi_version: u32,
+    pub domain: [u8; 80],
+    pub receipt_id: [u8; 32],
+    pub recipient: [u8; 32],
+    pub amount: u64,
+    pub origin: [u8; 115],
+    pub origin_bytes: u32,
+}
+
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SystemCiphertext {
@@ -202,6 +216,44 @@ pub unsafe extern "C" fn uno_crypto_system_verify_v1(
     contain_unwind(|| {
         if !bounded_span(supplied, 1) { return Err(AbiStatus::UNO_CRYPTO_ARGUMENTS); }
         let expected = unsafe { system_ciphertext(request)? };
+        if expected != unsafe { *supplied } { return Err(AbiStatus::UNO_CRYPTO_VERIFY); }
+        Ok(())
+    })
+}
+
+unsafe fn system_ciphertext_v2(request: *const SystemEncryptionRequestV2) -> Result<SystemCiphertext, AbiStatus> {
+    if !bounded_span(request, 1) { return Err(AbiStatus::UNO_CRYPTO_ARGUMENTS); }
+    let r = unsafe { &*request };
+    let n = r.origin_bytes as usize;
+    if r.abi_version != 2 || !matches!(n, 41 | 115) || r.origin[n..].iter().any(|&x| x != 0) {
+        return Err(AbiStatus::UNO_CRYPTO_ARGUMENTS);
+    }
+    let [commitment, handle] = crate::system_encryption::encrypt_origin_encoded(
+        &r.domain, &r.receipt_id, &r.origin[..n], &r.recipient, r.amount)?;
+    Ok(SystemCiphertext { commitment, handle })
+}
+/// D69 construction; no host issuance or counter mutation is authorized.
+/// # Safety
+/// Same readable, aligned, disjoint request/output requirements as v1.
+#[no_mangle]
+pub unsafe extern "C" fn uno_crypto_system_encrypt_v2(
+    request: *const SystemEncryptionRequestV2, output: *mut SystemCiphertext) -> u32 {
+    contain_unwind(|| {
+        if !bounded_span(output, 1) { return Err(AbiStatus::UNO_CRYPTO_ARGUMENTS); }
+        let expected = unsafe { system_ciphertext_v2(request)? };
+        unsafe { output.write(expected); }
+        Ok(())
+    })
+}
+/// D69 reconstruction and exact comparison of both ciphertext components.
+/// # Safety
+/// Same readable, aligned request/ciphertext requirements as v1.
+#[no_mangle]
+pub unsafe extern "C" fn uno_crypto_system_verify_v2(
+    request: *const SystemEncryptionRequestV2, supplied: *const SystemCiphertext) -> u32 {
+    contain_unwind(|| {
+        if !bounded_span(supplied, 1) { return Err(AbiStatus::UNO_CRYPTO_ARGUMENTS); }
+        let expected = unsafe { system_ciphertext_v2(request)? };
         if expected != unsafe { *supplied } { return Err(AbiStatus::UNO_CRYPTO_VERIFY); }
         Ok(())
     })

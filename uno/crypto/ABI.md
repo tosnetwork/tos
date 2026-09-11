@@ -316,3 +316,45 @@ complete call-graph proofs.
 with the committed header before exporting any copy. After an intentional ABI
 change, inspect the generated OUT_DIR header, update the committed artifact
 and run the header guard. Never bypass the comparison to make a build pass.
+
+### D69 versioned system origins
+
+The additive `uno_crypto_system_encrypt_v2` / `uno_crypto_system_verify_v2`
+use `UnoCryptoSystemEncryptionRequestV2`, with `abi_version=2`, the same
+80-byte domain, 32-byte receipt ID, 32-byte recipient, u64 amount, then a
+115-byte origin buffer and u32 `origin_bytes`. The used length is exactly
+41 (Deposit or settlement) or 115 (sweep); unused tail bytes must be zero.
+The v1 symbols, request layout and Deposit transcript remain unchanged.
+
+The host's `encode_workchain_system_origin_transcript` is the canonical
+encoder: root data bits followed by attribution data bits, with zero low-bit
+padding after the trailing Bool. Integers in these TL-B data bits are big
+endian, unlike the domain's explicitly defined little-endian integers.
+Kinds 0/1 use one tag byte, 32 identity bytes and a nonzero u64 sequence.
+Kind 2 uses one tag byte, a nonzero u64 sequence, then the tagged type-2
+attribution (source workchain/address, account ID, uint256 value, return_failed).
+The sequence remains the host's shared authenticated `deposit_sequence`.
+
+Kind 0 delegates to the exact original D33 transcript above. Kinds 1 and 2
+use `uno-v2/system-encryption/withdrawal-settlement` and
+`uno-v2/system-encryption/bucket-sweep`, respectively. Append order is
+`protocol-domain`, `receipt-id`, `origin`, `recipient-P`, `amount` (LE u64),
+then the same 64-byte `r` challenge and existing wide reduction/zero rejection.
+There is no new proof relation. Transcript byte differences are domain
+separation, not a claim that finite hashes or scalars cannot collide.
+
+The ABI checks kind, payload length, nonzero sequence and padding. It does not
+parse/authenticate the attribution's TL-B fields or recompute CellRepr IDs:
+the dedicated host codec performs that reconstruction, and the caller must
+compare it to authenticated state. A successful primitive call does not prove
+counter consumption, pending uniqueness, eligibility for type-2 sweep, or
+atomic installation. New node callers require A's metering entry and ABI
+inventory registration before connection; none is installed by this patch.
+
+The new account codec exposes schema 3 through
+`decode_workchain_withdrawal_account(root, authenticated_limit)` and its paired
+encoder. The wrapper contains common account fields, the authenticated control
+envelope and new-origin receipts. Legacy and new-origin system receipt views
+share a total capacity of four in the same Add-only dictionary; user capacity
+remains sixteen. Decoding an old account through this API is an error, not an
+implicit migration. The old account decoder likewise rejects the new root.
