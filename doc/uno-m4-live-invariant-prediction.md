@@ -18,20 +18,18 @@ SEND/COLLECT do not change N_book is also incompatible with D32 when fees are
 nonzero; this prediction uses D32's paired fee reduction, not that old sentence.
 No implementation, tariff, or specification is changed by this document.
 
-## Required interpretation of the input sequence
+## Coordinator-confirmed input sequence
 
-The written sequence contains **three COLLECT operations**, not two:
-first system receipt, retained system receipt, and the receipt created by SEND.
-The fee-count instruction saying two COLLECTs therefore cannot describe that
-same sequence. This document predicts the explicitly enumerated sequence.
+The coordinator confirmed the following sequence after the initial symbolic
+prediction in `170b379c8`, still before the live observation:
 
-For role-based notation, A is the newly registered account receiving both
-Deposits and subsequently sending to newly registered B. These roles must be
-mapped to the actual authenticated addresses before comparing a run; they are
-not inferred from a fixture. With initially empty accounts, the first k=1
-collection can retain the second receipt only if both Deposits reached A.
-If the actual sequence uses other destinations or pre-existing receipts, report
-that different input rather than silently applying this table.
+Register A, register B; Deposit x1 to A, Deposit x2 to A; A COLLECTs the first
+system receipt with k=1 while retaining the other; A COLLECTs the retained
+receipt; A SENDs to B; B COLLECTs that user receipt; **close A**.
+There are exactly three COLLECTs. Both Deposits target A's system_pending.
+The first and second receipts below are labeled by collection order. Map these
+roles to the authenticated account addresses when supplying observations;
+a different flow is not this committed test sequence.
 
 Inputs:
 
@@ -39,7 +37,8 @@ Inputs:
   V_min/V_max and paid in addition to its slot fee. X = x1 + x2.
 - p1, p2: externally paid Deposit slot fees at their respective authenticated
   configuration cuts; dA, dB: historical registration deposits actually paid.
-- v: SEND amount A to B, satisfying the authenticated amount bounds.
+- v: SEND amount A to B, fixed to X-q1-q2-h, not freely adjusted; it must
+  satisfy V_min <= v <= V_max and all intermediate balance bounds.
 - q1, q2, q3: public fees for the three COLLECTs; h: public SEND fee.
 - Each operation uses its own authenticated price cut. Write
   qi = 3*bi + ti, and h = ps + bs + ts. There is no multiplication by receipt
@@ -72,7 +71,7 @@ Available columns denote test-key-decrypted amounts, not public scalar fields.
 | A COLLECT retained receipt, k=1 | X-q1-q2 | X-q1-q2 | 0 | 0 | 0 | 0 | 0 | G0+2 |
 | A SEND v to B | X-q1-q2-h | X-q1-q2-h-v | 0 | 0 | 0 | 0 | 1 | G0+2 |
 | B COLLECT SEND receipt | X-q1-q2-h-q3 | X-q1-q2-h-v | v-q3 | 0 | 0 | 0 | 0 | G0+2 |
-| Close a qualifying zero-balance account | unchanged | unchanged | unchanged | 0 | 0 | 0 | 0 | G0+2 |
+| Close A | X-q1-q2-h-q3 | 0 (closed) | X-q1-q2-h-q3 | 0 | 0 | 0 | 0 | G0+2 |
 
 At the first collection, the retained receipt still represents x2. Its complete
 record (ID, authenticated origin, target/epoch, ciphertext and status) is
@@ -117,36 +116,46 @@ must not be mixed into the D32 fee total or paid from confidential backing.
 If E is the explicitly accounted net operating-budget expenditure through a
 step, and no other operating credits occur, spendable O equals
 O0 + admitted Deposit slot fees + committed SEND state fee - E.
-Before closure the refundable bucket is L0+dA+dB. On closing account J it
-becomes L0+dA+dB-dJ. The refund output's value is historical dJ, not today's
+Before closure the refundable bucket is L0+dA+dB. Closing A reduces it by dA
+to L0+dB. The refund output's value is historical dA, not today's
 registration price; its Native forwarding costs belong in E, not in custody
 or a reduced refund value. A successful push is not evidence of recipient
 delivery. No bounce recredit or retained refund obligation is assumed.
 
-## Closure prerequisite and final balances: missing inputs must remain visible
+Registration deposits and their refunds explicitly participate in **neither**
+R_actual=R_book **nor** R_actual+P=D+N_book+W. They are public restricted
+coordinator funds, not custody backing, confidential liabilities, or Deposit
+principal. The Native coordinator debit and refund export still have to balance
+in Native value flow; their exclusion from these two principal equations does
+not exclude them from overall money conservation. The refund is a one-way
+outbound value transfer, with fees from spendable operating budget.
 
-The instruction does not name the account to close. Let Z=X-q1-q2.
-Immediately before closure:
+## Fixed closure prerequisite and final balances
 
-- A available = Z-h-v.
-- B available = v-q3.
-- Both pending collections are empty; registered_accounts remains G0+2.
+Let Z=X-q1-q2. The confirmed SEND amount is exactly v=Z-h. Consequently:
 
-If A is closed, its zero-balance prerequisite requires v=Z-h. B then holds
-X-Fsum. If B is closed, its prerequisite requires v=q3. A then holds X-Fsum.
-Both conditions must also respect all amount/range/fee constraints. Neither is
-silently chosen here. If neither zero condition holds, the listed sequence
-cannot end in a successful closure without another explicitly authorized step.
-Do not clear a nonzero balance or invent a Withdrawal/test-funding step to make
-the observation fit. Both balances can be zero only if X=Fsum and the individual
-operation constraints also hold; that is not an assumed input condition.
+- A available after SEND and at closure = Z-h-v = 0.
+- B available after its COLLECT = v-q3 = X-Fsum.
+- Both accounts have zero system/user pending slots at closure.
+- A is closed, B remains registered; registered_accounts remains G0+2
+  (exactly 2 when G0=0).
+- Final R_actual=R_book=N_book=R0+X-Fsum, and D=P=W=0.
+
+Feasibility must be established from the actual input before treating a failure
+as an implementation discrepancy. In particular require **v >= V_min** (also
+v <= V_max), x1-q1 >= 0, 0 <= Z <= B_max, and 0 <= v-q3 <= B_max,
+with the other authenticated amount/lifecycle/capacity constraints unchanged.
+If v < V_min, the selected amounts make this sequence infeasible. Report that
+input problem; do not adjust fees, insert a clearing/Withdrawal/test-funding
+step, or change the transfer amount away from v=Z-h. The final zero balance
+must be the result of SEND and its authorized fee, not an additional edit.
 
 Closing retains the identity record, marks its lifecycle closed, preserves the
 registration count, and does not change backing or confidential liabilities.
 The no-settlement-obligation condition rests on the scoped structural premise
 and expiry guard, not on a caller-supplied zero or an observed empty table.
 
-## Invariants and items requiring coordinator input
+## Invariants and observation inputs
 
 - Deposit changes neither account's available, registered_accounts, nor user
   slot count. It increases backing, N_book, and one system receipt atomically.
@@ -160,10 +169,10 @@ and expiry guard, not on a caller-supplied zero or an observed empty table.
 - An uncommitted/failed atomic step installs none of the successful-step
   receipt, counter, balance, or D32 fee changes. Native processing of a rejected
   inbox event is a separate protocol event, not a successful Deposit row.
-- Required missing sequence inputs: confirm three rather than two COLLECTs;
-  map the Deposit/SEND roles to actual accounts; identify the closing account
-  and a feasible v satisfying its zero-balance condition. These are input
-  omissions/inconsistencies, not yet evidence of a new specification defect.
+- The three formerly missing choices are now fixed: three COLLECTs, both
+  Deposits to A followed by A-to-B SEND, and closure of A with v=X-q1-q2-h.
+  Supply actual amounts, authenticated prices and addresses to instantiate
+  these equations; do not choose a different sequence after observing results.
 - Total block fees/final coordinator Native balance additionally require actual
   Native/system fee inputs; the D32 tariff alone cannot determine them.
 
