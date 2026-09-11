@@ -1,0 +1,129 @@
+Running test Test_WorkchainBlock_NativePayoutExactFeeNonpublication...
+[ 4][t 0][2026-09-11 15:03:01.134912011][transaction.cpp:622]	unpacking account 0000000000000000000000000000000000000000000000000000000000000000
+[ 4][t 0][2026-09-11 15:03:01.135094261][transaction.cpp:455]	last_paid=0; cells=0 bits=0
+[ 4][t 0][2026-09-11 15:03:01.135104551][transaction.cpp:685]	end of Account.unpack() for 2:0000000000000000000000000000000000000000000000000000000000000000 (balance = 1000ng ; last_trans_lt = 1..2)
+[ 4][t 0][2026-09-11 15:03:01.135119708][transaction.cpp:622]	unpacking account 31CF8E61894D648E857CC6D14F8352C20C14D12F92A5F8DCE26F01224A63376D
+[ 4][t 0][2026-09-11 15:03:01.135123408][transaction.cpp:455]	last_paid=0; cells=0 bits=0
+[ 4][t 0][2026-09-11 15:03:01.135132735][transaction.cpp:685]	end of Account.unpack() for 2:31CF8E61894D648E857CC6D14F8352C20C14D12F92A5F8DCE26F01224A63376D (balance = 1000ng ; last_trans_lt = 1..2)
+[ 4][t 0][2026-09-11 15:03:01.135178361][transaction.cpp:3555]	storage paid for a message: 0 cells, 0 bits
+[ 4][t 0][2026-09-11 15:03:01.135181641][transaction.cpp:3559]	computed fwd fees = 100 + 0
+[ 0][t 0][2026-09-11 15:03:01.135247325][test-workchain-block.cpp:8040]	Expectation failed: out_msgs.is_empty()!
+[pid 852243] [time 1789138981] Signal: 6
+------- Stack Backtrace -------
+/tmp/b-d75-independent/publication-mutant(+0x6f7e97)[0x5e977d8cee97]
+/tmp/b-d75-independent/publication-mutant(+0xe0bdd)[0x5e977d2b7bdd]
+/lib/x86_64-linux-gnu/libc.so.6(+0x42520)[0x79cbb2842520]
+/lib/x86_64-linux-gnu/libc.so.6(pthread_kill+0x12c)[0x79cbb28969bc]
+/lib/x86_64-linux-gnu/libc.so.6(raise+0x16)[0x79cbb2842476]
+/lib/x86_64-linux-gnu/libc.so.6(abort+0xd3)[0x79cbb28287f3]
+/tmp/b-d75-independent/publication-mutant(+0x6fb297)[0x5e977d8d2297]
+/tmp/b-d75-independent/publication-mutant(+0x6fb397)[0x5e977d8d2397]
+/tmp/b-d75-independent/publication-mutant(+0x6faf47)[0x5e977d8d1f47]
+/tmp/b-d75-independent/publication-mutant(+0x12f1a7)[0x5e977d3061a7]
+/tmp/b-d75-independent/publication-mutant(+0x13289c)[0x5e977d30989c]
+/tmp/b-d75-independent/publication-mutant(+0x1cedda)[0x5e977d3a5dda]
+/tmp/b-d75-independent/publication-mutant(+0x70506f)[0x5e977d8dc06f]
+/tmp/b-d75-independent/publication-mutant(+0x704b98)[0x5e977d8dbb98]
+/tmp/b-d75-independent/publication-mutant(+0xe869f)[0x5e977d2bf69f]
+/lib/x86_64-linux-gnu/libc.so.6(+0x29d90)[0x79cbb2829d90]
+/lib/x86_64-linux-gnu/libc.so.6(__libc_start_main+0x80)[0x79cbb2829e40]
+/tmp/b-d75-independent/publication-mutant(+0xe8545)[0x5e977d2bf545]
+-------------------------------
+--- Enhanced Backtrace (libbacktrace) ---
+    #0  ?? (publication-mutant+0xe0bdc) [0x5e977d2b7bdc]
+    #1  ?? at libc_sigaction.c (libc.so.6+0x4251f) [0x79cbb284251f]
+    #2  __pthread_kill_implementation at pthread_kill.c:44 (libc.so.6+0x969bc) [0x79cbb28969bc]
+    #3  __pthread_kill_internal at pthread_kill.c:78 (libc.so.6+0x969bc) [0x79cbb28969bc]
+    #4  __GI___pthread_kill at pthread_kill.c:89 (libc.so.6+0x969bc) [0x79cbb28969bc]
+    #5  __GI_raise at raise.c:26 (libc.so.6+0x42475) [0x79cbb2842475]
+    #6  __GI_abort at abort.c:79 (libc.so.6+0x287f2) [0x79cbb28287f2]
+    #7  ?? (publication-mutant+0x6fb296) [0x5e977d8d2296]
+    #8  ?? (publication-mutant+0x6fb396) [0x5e977d8d2396]
+    #9  ?? (publication-mutant+0x6faf46) [0x5e977d8d1f46]
+    #10  ?? (publication-mutant+0x12f1a6) [0x5e977d3061a6]
+    #11  ?? (publication-mutant+0x13289b) [0x5e977d30989b]
+    #12  ?? (publication-mutant+0x1cedd9) [0x5e977d3a5dd9]
+    #13  ?? (publication-mutant+0x70506e) [0x5e977d8dc06e]
+    #14  ?? (publication-mutant+0x704b97) [0x5e977d8dbb97]
+    #15  ?? (publication-mutant+0xe869e) [0x5e977d2bf69e]
+    #16  __libc_start_call_main at libc_start_call_main.h:58 (libc.so.6+0x29d8f) [0x79cbb2829d8f]
+    #17  __libc_start_main_impl at libc-start.c:392 (libc.so.6+0x29e3f) [0x79cbb2829e3f]
+    #18  ?? (publication-mutant+0xe8544) [0x5e977d2bf544]
+    #19  pҞ�� (unknown+0xffffffffffffffff) [0xffffffffffffffff]
+------------------------------------------
+[Thread debugging using libthread_db enabled]
+Using host libthread_db library "/lib/x86_64-linux-gnu/libthread_db.so.1".
+0x000079cbb28ea3aa in __GI___wait4 (pid=852244, stat_loc=0x0, options=0, usage=0x0) at ../sysdeps/unix/sysv/linux/wait4.c:30
+30	../sysdeps/unix/sysv/linux/wait4.c: No such file or directory.
+[Current thread is 1 (Thread 0x79cbb2fc6840 (LWP 852243))]
+
+Thread 1 (Thread 0x79cbb2fc6840 (LWP 852243) "publication-mut"):
+#0  0x000079cbb28ea3aa in __GI___wait4 (pid=852244, stat_loc=0x0, options=0, usage=0x0) at ../sysdeps/unix/sysv/linux/wait4.c:30
+        sc_ret = -512
+        sc_ret = <optimized out>
+#1  0x00005e977d8cf112 in td::Stacktrace::print_to_stderr(td::Stacktrace::PrintOptions const&) ()
+No symbol table info available.
+#2  0x00005e977d2b7bdd in td::default_failure_signal_handler(int) ()
+No symbol table info available.
+#3  <signal handler called>
+No locals.
+#4  __pthread_kill_implementation (no_tid=0, signo=6, threadid=133915788208192) at ./nptl/pthread_kill.c:44
+        tid = <optimized out>
+        ret = 0
+        pd = 0x79cbb2fc6840
+        old_mask = {__val = {140735787482880, 181135247325, 104004742763490, 140735787486648, 140735787482824, 184, 140735787482864, 104004739474986, 140735787482992, 133075451840490, 15, 6599494602516397312, 1, 18446744073709551184, 0, 104004742763490}}
+        ret = <optimized out>
+        pd = <optimized out>
+        old_mask = <optimized out>
+        ret = <optimized out>
+        tid = <optimized out>
+        ret = <optimized out>
+        resultvar = <optimized out>
+        resultvar = <optimized out>
+        __arg3 = <optimized out>
+        __arg2 = <optimized out>
+        __arg1 = <optimized out>
+        _a3 = <optimized out>
+        _a2 = <optimized out>
+        _a1 = <optimized out>
+        __futex = <optimized out>
+        resultvar = <optimized out>
+        __arg3 = <optimized out>
+        __arg2 = <optimized out>
+        __arg1 = <optimized out>
+        _a3 = <optimized out>
+        _a2 = <optimized out>
+        _a1 = <optimized out>
+        __futex = <optimized out>
+        __private = <optimized out>
+        __oldval = <optimized out>
+        result = <optimized out>
+#5  __pthread_kill_internal (signo=6, threadid=133915788208192) at ./nptl/pthread_kill.c:78
+No locals.
+#6  __GI___pthread_kill (threadid=133915788208192, signo=signo@entry=6) at ./nptl/pthread_kill.c:89
+No locals.
+#7  0x000079cbb2842476 in __GI_raise (sig=sig@entry=6) at ../sysdeps/posix/raise.c:26
+        ret = <optimized out>
+#8  0x000079cbb28287f3 in __GI_abort () at ./stdlib/abort.c:79
+        save_stage = 1
+        act = {__sigaction_handler = {sa_handler = 0x0, sa_sigaction = 0x0}, sa_mask = {__val = {21474840578, 140733193388032, 104004747438776, 0, 140735787483136, 1, 1, 104004747438776, 140735787483136, 7, 104004744263657, 140735787483200, 104004739473835, 0, 140735787483239, 0}}, sa_flags = 1, sa_restorer = 0x0}
+        sigs = {__val = {32, 133915786972056, 2, 1, 7, 133915788207760, 140735787483104, 104004739451759, 104004744281287, 104002633072906, 104005566659664, 16, 512, 13574799013982513, 133915786952800, 6}}
+#9  0x00005e977d8d2297 in td::process_fatal_error(td::CSlice) ()
+No symbol table info available.
+#10 0x00005e977d8d2397 in td::DefaultLog::append(td::CSlice, int) ()
+No symbol table info available.
+#11 0x00005e977d8d1f47 in td::Logger::~Logger() ()
+No symbol table info available.
+#12 0x00005e977d3061a7 in native_payout_exact_fee_fixture(std::optional<unsigned long>, unsigned long, bool) ()
+No symbol table info available.
+#13 0x00005e977d30989c in Test_WorkchainBlock_NativePayoutExactFeeNonpublication::run() ()
+No symbol table info available.
+#14 0x00005e977d3a5dda in td::Test::step() ()
+No symbol table info available.
+#15 0x00005e977d8dc06f in td::TestsRunner::run_all_step() ()
+No symbol table info available.
+#16 0x00005e977d8dbb98 in td::TestsRunner::run_all() ()
+No symbol table info available.
+#17 0x00005e977d2bf69f in main ()
+No symbol table info available.
+[Inferior 1 (process 852243) detached]

@@ -1,0 +1,20 @@
+{
+  "artifact-oracle.cpp": "e51c56fe7f2e76a1e539bd628430146478672fbafbcf67cd2a706a216325d524",
+  "debit-authenticated-block.boc": "3409b0a4b2fe56fcc8c6cfb270609e2a431b4e70bc8bcb82d9ae02309aef0e6d",
+  "debit-authenticated-state.boc": "e002041ede75ff7d92c2adb484b17a4f7f96aa3ca04ea5ade9083542f7d1ea03",
+  "legacy-byte-comparison.log": "acc4d4d34e38ca9919619d12c7ec7fcce7465847682ce77e2e20cd10fca7a572",
+  "legacy-only-after.log": "e37220c781f3780d490ab09bd3f0c5f230728d0f3a95f0b6ebc65c067d099d03",
+  "legacy-only-before.log": "61ddba0180363a73d145fd8ee6e990c360613287db4a8106117fe5af39908768",
+  "normal-NativePayoutExactFeeHigher.log": "5d9f1e61cbdf0b916a50f5ca380586516555c6ecdee74aa665d073065f05a62c",
+  "normal-NativePayoutExactFeeLower.log": "76a061c6a18d159c24e881152e8d94897a6e024569693f6054fac1603f174cbb",
+  "publication-disabled.log": "307960c123c5511faa42197ca94143996a6f7d07d10ef65232c4c5ecd57faf89",
+  "publication-driver.py": "b90323f79ed5e6276476360c39564a1b0f14d2f62d58261dc962359c4b8a8684",
+  "publication-mutant.log": "0b16bfc182f259e0ca55407c35cb662d5dffdf1070ce5141626b523ec3700b8d",
+  "publication-normal.log": "d2dcd756d1cba9eae5b3cabb4507b37d562748bf617855e330018e760dfd6de8",
+  "publication-only.patch": "408a33f2e0d3abb1bdce6a337bac35b6ff7e265cdbfc22392b5c24c2eadb744b",
+  "publication-oracle-control.log": "1c35c3913187e664866bc87fa5cc679e29ff56df49e063efc9e8e2da7e10d497",
+  "removed-Higher.log": "6de7e91a4830c199d838c7917e19cff43c93be0a3a41e1e6ffc132dd519cc29a",
+  "removed-Lower.log": "9e0179a1a265fe9a93e6277869264ac8f105972742ecbc68fdae64f6e43d045e",
+  "root-oracle-disabled.log": "34bc830abc1797ac5f07242c023048f32420c1e774ed9462ef89bbcc81389294",
+  "root-oracle-normal.log": "85f94b090a59eeb04d1f142d457086492300dbdc375323a6cf1f2007ebeaf104"
+}
