@@ -3,6 +3,13 @@
 Specification SHA-256 prefix `89b34a01128fbf18`; checked locally. This review
 does not read B's accounting predictions or claim installed M5 settlement.
 
+Compatibility clarification checked against specification `1fd13648aa54a65f`:
+retain Deposit's exact D33 transcript and existing vectors. New origin members
+use distinct transcript labels, not an added kind byte in the old Deposit
+transcript. Failed and late return enter through custody, not the coordinator's
+Deposit entry; retain the latter's bounced-message rejection. These corrections
+agree with the representation/dispatch distinction documented below.
+
 ## Sources and representation
 
 The current `uno_v2_system_pending_receipt` requires
