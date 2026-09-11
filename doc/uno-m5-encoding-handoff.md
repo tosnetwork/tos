@@ -310,3 +310,20 @@ names and a host-comparison removal control are specified; no current execution
 is claimed. Billing inputs must come from explicit authenticated test policy,
 not proof-work units. Implementing A must supply actual admission diagnostics
 and authenticated before/after artifacts before closing this item.
+
+## WITHDRAWAL-PREPARE acceptance handoff
+
+`doc/uno-m5-withdrawal-prepare-handoff.md` specifies nine real Native contracts
+and exact future CTest names. The dedicated Python runner currently exits 1,
+WITHDRAWAL-PREPARE_NOT_READY, listing all nine missing targets. Disabled/skipped
+execution, absent observation markers and test/tool failures cannot pass.
+Mocked runner-only controls exercised disabled, skipped, missing marker, failed
+test and successful execution reports; these validate the runner, not Native
+behavior. Each actual target must implement the documented positive, isolated
+mutation and restoration evidence before emitting its marker.
+
+The cap test separates owner-touch settlement from prepare: settlement may add
+backed pending, while the prepare event must preserve the complete pending cut.
+No A file, production source, CMake registration or frozen prediction was changed.
+Specification: 45b20d8f6678edeb. Return to read-only review after delivery; a
+committed prepare integration triggers B's independent shadow-build review.
