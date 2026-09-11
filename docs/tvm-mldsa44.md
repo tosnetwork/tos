@@ -11,10 +11,13 @@ route has a separately reviewed compatible implementation.
 
 `PQCHECKSIG_MLDSA44` is codepage-0 instruction **F93100 (24 bits)**, registered
 with `require_version(16)`. Versions 0 through 15 reject it as invalid opcode
-(6). `SUPPORTED_VERSION=16` advertises binary support; it does not edit
-ConfigParam 8, genesis or capability masks, or activate a running network.
-Activation requires coordinated validator deployment and a separate protocol
-configuration decision. Local feature toggles must never change its semantics.
+(6). `SUPPORTED_VERSION` deliberately stays at **15**, so no node built from
+this source can run at version 16 and the instruction is unreachable outside
+tests that construct the VM at that version directly. ConfigParam 8, genesis and
+capability masks are untouched. Activation therefore needs two separate
+decisions: raising the supported version in a later change, and a coordinated
+protocol configuration decision with validator deployment. Local feature toggles
+must never change its semantics.
 
 ## Exact interface
 
