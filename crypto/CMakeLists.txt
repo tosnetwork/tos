@@ -817,6 +817,11 @@ target_link_libraries(test-workchain-m5-accounting-assertions PRIVATE tos_block 
 tos_test(test-workchain-m5-accounting-assertions)
 set_tests_properties(test-workchain-m5-accounting-assertions PROPERTIES TIMEOUT 60 LABELS "workchain;m5")
 
+add_executable(test-workchain-withdrawal-codec ../test/test-td-main.cpp test/test-workchain-withdrawal-codec.cpp)
+target_link_libraries(test-workchain-withdrawal-codec PRIVATE tos_block tos_crypto)
+tos_test(test-workchain-withdrawal-codec)
+set_tests_properties(test-workchain-withdrawal-codec PROPERTIES TIMEOUT 60 LABELS "workchain;m5")
+
 add_test(NAME test-workchain-state-loader-inventory COMMAND ${Python3_EXECUTABLE}
   "${PROJECT_SOURCE_DIR}/crypto/test/workchain-state-loader-inventory.py" --repo "${PROJECT_SOURCE_DIR}")
 set_tests_properties(test-workchain-state-loader-inventory PROPERTIES TIMEOUT 30 LABELS "workchain;expiry")
