@@ -102,6 +102,20 @@ typedef struct {
   uint8_t handle[32];
 } UnoCryptoSystemCiphertext;
 
+/**
+ * D69 fixed-width request. origin_bytes is exactly 41 or 115; unused tail
+ * bytes are zero. Canonical origin framing comes from the host codec.
+ */
+typedef struct {
+  uint32_t abi_version;
+  uint8_t domain[80];
+  uint8_t receipt_id[32];
+  uint8_t recipient[32];
+  uint64_t amount;
+  uint8_t origin[115];
+  uint32_t origin_bytes;
+} UnoCryptoSystemEncryptionRequestV2;
+
 typedef struct {
   uint64_t max_balance;
   uint64_t max_value;
@@ -175,6 +189,22 @@ uint32_t uno_crypto_system_encrypt_v1(const UnoCryptoSystemEncryptionRequest *re
  * This call does not authorize issuance, bind an account or consume a message.
  */
 uint32_t uno_crypto_system_verify_v1(const UnoCryptoSystemEncryptionRequest *request,
+                                     const UnoCryptoSystemCiphertext *supplied);
+
+/**
+ * D69 construction; no host issuance or counter mutation is authorized.
+ * # Safety
+ * Same readable, aligned, disjoint request/output requirements as v1.
+ */
+uint32_t uno_crypto_system_encrypt_v2(const UnoCryptoSystemEncryptionRequestV2 *request,
+                                      UnoCryptoSystemCiphertext *output);
+
+/**
+ * D69 reconstruction and exact comparison of both ciphertext components.
+ * # Safety
+ * Same readable, aligned request/ciphertext requirements as v1.
+ */
+uint32_t uno_crypto_system_verify_v2(const UnoCryptoSystemEncryptionRequestV2 *request,
                                      const UnoCryptoSystemCiphertext *supplied);
 
 /**

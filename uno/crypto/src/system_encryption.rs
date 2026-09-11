@@ -21,6 +21,38 @@ pub(crate) fn encrypt_encoded(domain: &[u8; 80], id: &[u8; 32], recipient: &[u8;
     finish(p, amount, &wide)
 }
 
+// D69: canonical origin bytes come from the host codec. This layer checks
+// framing/kind/required sequence; authentication and CellRepr ID reconstruction
+// remain host duties. Deposit retains the exact original D33 transcript.
+pub(crate) fn encrypt_origin_encoded(domain: &[u8; 80], id: &[u8; 32],
+    origin: &[u8], recipient: &[u8; 32], amount: u64) -> Result<[[u8; 32]; 2], Error> {
+    let kind = *origin.first().ok_or(Error::UNO_CRYPTO_ARGUMENTS)?;
+    let sequence = match (kind, origin.len()) {
+        (0 | 1, 41) => &origin[33..41],
+        (2, 115) if origin[114] & 0x7f == 0 => &origin[1..9],
+        _ => return Err(Error::UNO_CRYPTO_ARGUMENTS),
+    };
+    if sequence.iter().all(|&x| x == 0) { return Err(Error::UNO_CRYPTO_DECODE); }
+    if kind == 0 { return encrypt_encoded(domain, id, recipient, amount); }
+    if amount == 0 { return Err(Error::UNO_CRYPTO_DECODE); }
+    let p = CompressedRistretto(*recipient).decompress().ok_or(Error::UNO_CRYPTO_DECODE)?;
+    if p.is_identity() { return Err(Error::UNO_CRYPTO_DECODE); }
+    let label: &'static [u8] = match kind {
+        1 => b"uno-v2/system-encryption/withdrawal-settlement",
+        2 => b"uno-v2/system-encryption/bucket-sweep",
+        _ => return Err(Error::UNO_CRYPTO_ARGUMENTS),
+    };
+    let mut transcript = Transcript::new(label);
+    transcript.append_message(b"protocol-domain", domain);
+    transcript.append_message(b"receipt-id", id);
+    transcript.append_message(b"origin", origin);
+    transcript.append_message(b"recipient-P", recipient);
+    transcript.append_message(b"amount", &amount.to_le_bytes());
+    let mut wide = [0; 64];
+    transcript.challenge_bytes(b"r", &mut wide);
+    finish(p, amount, &wide)
+}
+
 // The caller has decoded a nonidentity recipient and checked a positive u64 amount.
 // Wide reduction has negligible statistical bias, not exact uniformity.
 fn finish(p: RistrettoPoint, amount: u64, wide: &[u8; 64]) -> Result<[[u8; 32]; 2], Error> {
@@ -175,4 +207,47 @@ mod tests {
         assert_eq!(unsafe { uno_crypto_system_verify_v1(&request, &supplied) }, 3);
     }
 
+}
+
+#[cfg(test)]
+mod origin_tests {
+    use super::*;
+    use crate::ffi::*;
+    #[test]
+    fn origin_abi_preserves_deposit_and_separates_new_members() {
+        let p = (Scalar::from(11u64).invert() * PedersenGens::default().B_blinding).compress().to_bytes();
+        let mut request = SystemEncryptionRequestV2 { abi_version: 2, domain: [3;80],
+            receipt_id: [4;32], recipient: p, amount: 100, origin: [0;115], origin_bytes: 41 };
+        request.origin[1..33].fill(5); request.origin[40] = 1;
+        let mut output = SystemCiphertext { commitment: [0;32], handle: [0;32] };
+        unsafe {
+            assert_eq!(uno_crypto_system_encrypt_v2(&request, &mut output), 0);
+            let legacy = encrypt_encoded(&request.domain, &request.receipt_id, &p, 100).unwrap();
+            assert_eq!([output.commitment, output.handle], legacy);
+            request.origin[0] = 1;
+            assert_eq!(uno_crypto_system_encrypt_v2(&request, &mut output), 0);
+            assert_ne!([output.commitment, output.handle], legacy);
+            let settlement = output;
+            assert_eq!(uno_crypto_system_verify_v2(&request, &output), 0);
+            request.origin[40] = 2;
+            assert_eq!(uno_crypto_system_verify_v2(&request, &settlement), 3);
+            request.origin[40] = 0;
+            assert_eq!(uno_crypto_system_encrypt_v2(&request, &mut output), 2);
+            assert_eq!(output, settlement);
+            request.origin = [0;115]; request.origin[0] = 2; request.origin[8] = 1;
+            request.origin_bytes = 115;
+            assert_eq!(uno_crypto_system_encrypt_v2(&request, &mut output), 0);
+            let sweep = output;
+            request.origin[8] = 2;
+            assert_eq!(uno_crypto_system_verify_v2(&request, &sweep), 3);
+            request.origin[8] = 0;
+            assert_eq!(uno_crypto_system_encrypt_v2(&request, &mut output), 2);
+            request.origin_bytes = 116;
+            assert_eq!(uno_crypto_system_encrypt_v2(&request, &mut output), 1);
+            assert_eq!(uno_crypto_system_encrypt_v2(std::ptr::null(), &mut output), 1);
+            request.origin_bytes = 115; request.origin[8] = 1;
+            request.recipient = [0;32];
+            assert_eq!(uno_crypto_system_encrypt_v2(&request, &mut output), 2);
+        }
+    }
 }
