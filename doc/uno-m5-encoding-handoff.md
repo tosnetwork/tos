@@ -299,3 +299,14 @@ removed by 15c34b205. No authenticated tariff lookup or actual Withdrawal host
 caller exists in that original commit; f is bound separately but its source
 cannot be certified there. The runnable review script and expectation module
 are committed; no production or A-owned code is changed.
+
+## Withdrawal fee admission: control 9
+
+The phase/acceptance handoff now specifies a proof-valid underpriced Withdrawal
+(f=f_required-1) and an independently generated floor-priced positive case.
+It distinguishes kernel proof validity, host admission refusal, and validator
+rejection of claimed successful underpriced execution. Two future default CTest
+names and a host-comparison removal control are specified; no current execution
+is claimed. Billing inputs must come from explicit authenticated test policy,
+not proof-work units. Implementing A must supply actual admission diagnostics
+and authenticated before/after artifacts before closing this item.
