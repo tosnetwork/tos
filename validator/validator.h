@@ -175,6 +175,18 @@ struct ValidatorManagerOptions : public td::CntObject {
   virtual size_t get_max_open_archive_files() const = 0;
   virtual double get_archive_preload_period() const = 0;
   virtual bool get_disable_rocksdb_stats() const = 0;
+  // Runtime opt-in for live validator consensus-DB deletion (Finding 1). Default false:
+  // a normal build/deploy never deletes. Turned on ONLY for an explicit acceptance run
+  // (validator-engine --enable-validator-consensus-cleanup). Replaces the former
+  // compile-time gate so enablement is not baked into every build.
+  virtual bool get_validator_consensus_cleanup_enabled() const = 0;
+  // ACCEPTANCE FAULT INJECTION (Finding 1 crash boundary), default false. When armed, the
+  // manager exits abruptly after the worker has confirmed the consensus directory removed
+  // but before the durable cleanup record is erased -- reproducing, through the real
+  // dispatch path, the {directory gone, record present} state a crash leaves at that
+  // instant. A normal build/deploy never sets this; it exists only so a restart can be
+  // shown to reconcile that mid-flight state.
+  virtual bool get_test_crash_cleanup_before_erase() const = 0;
   virtual bool nonfinal_ls_queries_enabled() const = 0;
   virtual td::optional<td::uint64> get_celldb_cache_size() const = 0;
   virtual bool get_celldb_direct_io() const = 0;
@@ -216,6 +228,8 @@ struct ValidatorManagerOptions : public td::CntObject {
   virtual void set_max_open_archive_files(size_t value) = 0;
   virtual void set_archive_preload_period(double value) = 0;
   virtual void set_disable_rocksdb_stats(bool value) = 0;
+  virtual void set_validator_consensus_cleanup_enabled(bool value) = 0;
+  virtual void set_test_crash_cleanup_before_erase(bool value) = 0;
   virtual void set_nonfinal_ls_queries_enabled(bool value) = 0;
   virtual void set_celldb_cache_size(td::uint64 value) = 0;
   virtual td::optional<td::uint64> get_celldb_cache_min_size() const = 0;
@@ -247,6 +261,29 @@ struct ValidatorManagerOptions : public td::CntObject {
                                                  double block_ttl = 86400, double state_ttl = 86400,
                                                  double archive_ttl = 86400 * 7, double key_proof_ttl = 86400 * 3650,
                                                  size_t max_mempool_num = 999999, bool initial_sync_disabled = false);
+};
+
+// A self-consistent snapshot of a node's masterchain consensus view, assembled in one
+// actor turn by ValidatorManagerInterface::get_node_consensus_status so that the applied and
+// served points cannot be read at different instants (which could otherwise show a negative
+// applied-minus-served gap that never existed). Membership is computed from the node's
+// CURRENT local validator keys, not a startup copy. is_validator is meaningful only when
+// has_local_validator_keys is true; it reports configured-identity set membership and does
+// NOT prove the node is actively signing / participating in consensus.
+struct NodeConsensusStatus {
+  BlockIdExt applied_block_id;
+  UnixTime unix_time{0};
+  bool have_served{false};
+  BlockIdExt served_block_id;
+  BlockIdExt last_key_block_id;
+  CatchainSeqno masterchain_cc_seqno{0};
+  bool have_validator_set{false};
+  CatchainSeqno validator_set_catchain_seqno{0};
+  td::uint32 validator_set_hash{0};
+  td::uint64 validator_set_total_weight{0};
+  td::uint32 validator_set_count{0};
+  bool has_local_validator_keys{false};
+  bool is_validator{false};
 };
 
 class ValidatorManagerInterface : public td::actor::Actor {
@@ -333,6 +370,11 @@ class ValidatorManagerInterface : public td::actor::Actor {
       td::Promise<std::pair<td::Ref<MasterchainState>, BlockIdExt>> promise) = 0;
   virtual void get_last_liteserver_state_block(
       td::Promise<std::pair<td::Ref<MasterchainState>, BlockIdExt>> promise) = 0;
+  // Single-turn consistent snapshot of this node's masterchain consensus view (read-only,
+  // for the getNodeConsensusStatus admin RPC). Assembling applied + served + key block +
+  // validator-set + live-key membership in one message handling avoids the cross-read
+  // inconsistencies of composing several separate queries.
+  virtual void get_node_consensus_status(td::Promise<NodeConsensusStatus> promise) = 0;
 
   virtual void get_block_data(BlockHandle handle, td::Promise<td::BufferSlice> promise) = 0;
   virtual void check_zero_state_exists(BlockIdExt block_id, td::Promise<bool> promise) = 0;

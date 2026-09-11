@@ -1772,6 +1772,12 @@ td::Status ValidatorEngine::load_global_config() {
   if (state_ttl_ != 0) {
     validator_options_.write().set_state_ttl(state_ttl_);
   }
+  if (enable_validator_consensus_cleanup_) {
+    validator_options_.write().set_validator_consensus_cleanup_enabled(true);
+  }
+  if (test_crash_cleanup_before_erase_) {
+    validator_options_.write().set_test_crash_cleanup_before_erase(true);
+  }
   if (max_mempool_num_ != 0) {
     validator_options_.write().set_max_mempool_num(max_mempool_num_);
   }
@@ -5897,6 +5903,10 @@ void ValidatorEngine::set_json_rpc_readonly(bool readonly) {
   json_rpc_opts_.readonly = readonly;
 }
 
+void ValidatorEngine::set_json_rpc_expose_consensus_status(bool expose) {
+  json_rpc_opts_.expose_consensus_status = expose;
+}
+
 void ValidatorEngine::set_json_rpc_cors_origin(std::string origin) {
   json_rpc_opts_.cors_origin = std::move(origin);
 }
@@ -6119,6 +6129,22 @@ int main(int argc, char *argv[]) {
     acts.push_back([&x, v]() { td::actor::send_closure(x, &ValidatorEngine::set_key_proof_ttl, v); });
     return td::Status::OK();
   });
+  p.add_option('\0', "enable-validator-consensus-cleanup",
+               "ACCEPTANCE ONLY: arm live deletion of obsolete validator consensus-DB directories (Finding 1). "
+               "Default off; a normal deployment must not set this.",
+               [&]() {
+                 acts.push_back(
+                     [&x]() { td::actor::send_closure(x, &ValidatorEngine::set_enable_validator_consensus_cleanup, true); });
+               });
+  p.add_option('\0', "test-consensus-cleanup-crash-before-erase",
+               "ACCEPTANCE FAULT INJECTION ONLY: after the consensus directory is confirmed deleted but before the "
+               "durable cleanup record is erased, exit abruptly to reproduce the mid-flight crash state. Default off; "
+               "a normal deployment must never set this.",
+               [&]() {
+                 acts.push_back([&x]() {
+                   td::actor::send_closure(x, &ValidatorEngine::set_test_crash_cleanup_before_erase, true);
+                 });
+               });
   p.add_checked_option('S', "sync-before", "in initial sync download all blocks for last given seconds default=3600",
                        [&](td::Slice fname) {
                          auto v = td::to_double(fname);
@@ -6491,6 +6517,14 @@ int main(int argc, char *argv[]) {
   });
   p.add_option('\0', "json-rpc-readonly", "disable write methods (sendBoc, sendQuery) on JSON-RPC server", [&]() {
     acts.push_back([&x] { td::actor::send_closure(x, &ValidatorEngine::set_json_rpc_readonly, true); });
+  });
+  p.add_option('\0', "json-rpc-expose-consensus-status",
+               "expose the read-only getNodeConsensusStatus admin method (applied/consensus block, key block, "
+               "validator-set membership). Default off. This flag does NOT enforce a loopback-only listener: "
+               "restricting access is the operator's responsibility (bind --json-rpc-address to loopback).",
+               [&]() {
+    acts.push_back(
+        [&x] { td::actor::send_closure(x, &ValidatorEngine::set_json_rpc_expose_consensus_status, true); });
   });
   p.add_checked_option('\0', "json-rpc-cors-origin",
                        "CORS origin for the JSON-RPC server (default: unset, no CORS header is sent)",

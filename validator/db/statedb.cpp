@@ -24,6 +24,8 @@
 
 #include "statedb.hpp"
 
+#include "validator/consensus/validator-cleanup-store.h"
+
 namespace tos {
 
 namespace validator {
@@ -213,6 +215,32 @@ void StateDb::get_pending_consensus_db_cleanup(td::Promise<std::vector<std::stri
     return;
   }
   promise.set_value(decode_pending_cleanup(td::Slice{value}));
+}
+
+void StateDb::persist_validator_retirement(std::vector<ValidatorSessionId> destroyed_sessions,
+                                           std::vector<consensus::PendingValidatorConsensusDbCleanup> records,
+                                           td::Promise<td::Unit> promise) {
+  auto key = create_hash_tl_object<tos_api::db_state_key_destroyedSessions>();
+  auto value = create_serialize_tl_object<tos_api::db_state_destroyedSessions>(std::move(destroyed_sessions));
+  consensus::store_validator_retirement(*kv_, key.as_slice(), value.as_slice(), records);
+  promise.set_value(td::Unit());
+}
+
+void StateDb::update_pending_validator_consensus_db_cleanup(consensus::PendingValidatorConsensusDbCleanup record,
+                                                            td::Promise<td::Unit> promise) {
+  consensus::store_validator_cleanup_record(*kv_, record);
+  promise.set_value(td::Unit());
+}
+
+void StateDb::erase_pending_validator_consensus_db_cleanup(ValidatorSessionId session_id,
+                                                           td::Promise<td::Unit> promise) {
+  consensus::erase_validator_cleanup_record(*kv_, session_id);
+  promise.set_value(td::Unit());
+}
+
+void StateDb::get_pending_validator_consensus_db_cleanup(
+    td::Promise<std::vector<consensus::PendingValidatorConsensusDbCleanup>> promise) {
+  promise.set_value(consensus::load_validator_cleanup_records(*kv_));
 }
 
 void StateDb::update_async_serializer_state(AsyncSerializerState state, td::Promise<td::Unit> promise) {

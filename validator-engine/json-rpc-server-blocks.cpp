@@ -201,6 +201,77 @@ void JsonRpcServer::finish_getConsensusBlock(td::uint32 seqno, td::uint32 last_b
   promise.set_value(make_json_ok(sb.as_cslice().str(), req_id));
 }
 
+// ─── getNodeConsensusStatus (read-only admin) ────────────────────────
+//
+// Reports this node's internal masterchain consensus view: the applied top block, the
+// consensus (liteserver-served) block and the applied-minus-consensus gap, the last key
+// block, the current masterchain validator set (catchain seqno, set hash, total weight,
+// count), and whether this node's CURRENT local keys are in that set. The whole snapshot is
+// produced by a single manager method in one actor turn, so the applied and served points
+// cannot be read at different instants (the gap is a true non-negative value), and the
+// membership reflects live keys rather than a startup copy. The reply is built in the
+// continuation via the static make_json_ok overload, touching no server members.
+namespace {
+// Emit a masterchain block id as a JSON object field. Hashes are base64, matching the
+// getMasterchainInfo / getBlockHeader shape.
+void emit_block_id(td::StringBuilder &sb, const char *field, const BlockIdExt &id) {
+  sb << "\"" << field << "\":{\"workchain\":" << id.id.workchain << ",\"shard\":" << (td::int64)id.id.shard
+     << ",\"seqno\":" << id.id.seqno << ",\"root_hash\":\"" << td::base64_encode(id.root_hash.as_slice())
+     << "\",\"file_hash\":\"" << td::base64_encode(id.file_hash.as_slice()) << "\"}";
+}
+}  // namespace
+
+void JsonRpcServer::handle_getNodeConsensusStatus(td::JsonObject &params, std::string req_id,
+                                                  td::Promise<HttpReturn> promise) {
+  auto cors = opts_.cors_origin;
+  td::actor::send_closure(
+      validator_manager_, &validator::ValidatorManagerInterface::get_node_consensus_status,
+      td::PromiseCreator::lambda(
+          [cors, req_id = std::move(req_id), promise = std::move(promise)](
+              td::Result<validator::NodeConsensusStatus> R) mutable {
+        guard_handler("getNodeConsensusStatus", [&] {
+          if (R.is_error()) {
+            promise.set_value(make_json_error(-32603, PSTRING() << "getNodeConsensusStatus: " << R.error(), req_id,
+                                              cors));
+            return;
+          }
+          auto s = R.move_as_ok();
+          td::StringBuilder sb;
+          sb << "{\"@type\":\"ext.node.consensusStatus\"";
+          sb << ",\"unix_time\":" << s.unix_time;
+          sb << ",";
+          emit_block_id(sb, "applied_masterchain_block", s.applied_block_id);
+          sb << ",\"consensus_block_seqno\":";
+          if (s.have_served) {
+            sb << s.served_block_id.seqno();
+            // Same-turn snapshot, so this is always >= 0 (served never leads applied).
+            sb << ",\"applied_minus_consensus\":"
+               << ((td::int64)s.applied_block_id.seqno() - (td::int64)s.served_block_id.seqno());
+          } else {
+            sb << "null";
+          }
+          sb << ",";
+          emit_block_id(sb, "last_key_block", s.last_key_block_id);
+          sb << ",\"masterchain_cc_seqno\":" << s.masterchain_cc_seqno;
+          if (s.have_validator_set) {
+            sb << ",\"validator_set\":{\"catchain_seqno\":" << s.validator_set_catchain_seqno
+               << ",\"set_hash\":" << s.validator_set_hash << ",\"total_weight\":" << s.validator_set_total_weight
+               << ",\"count\":" << s.validator_set_count << ",\"is_validator\":";
+            if (s.has_local_validator_keys) {
+              sb << (s.is_validator ? "true" : "false");
+            } else {
+              sb << "null";  // this node holds no validator keys -> membership is unknown
+            }
+            sb << "}";
+          } else {
+            sb << ",\"validator_set\":null";
+          }
+          sb << "}";
+          promise.set_value(make_json_ok(sb.as_cslice().str(), req_id, cors));
+        });
+      }));
+}
+
 // ─── shards ──────────────────────────────────────────────────────────
 
 void JsonRpcServer::handle_shards(td::JsonObject &params, std::string req_id,

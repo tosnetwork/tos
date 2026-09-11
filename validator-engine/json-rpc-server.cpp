@@ -1245,6 +1245,15 @@ void JsonRpcServer::dispatch_method_impl(const std::string &method, td::JsonObje
     handle_getMasterchainInfo(params, std::move(req_id), std::move(promise));
   } else if (method == "getConsensusBlock") {
     handle_getConsensusBlock(params, std::move(req_id), std::move(promise));
+  } else if (method == "getNodeConsensusStatus") {
+    // Read-only admin method, off unless the operator explicitly enabled it. When off it
+    // is indistinguishable from an unknown method, so it is not discoverable by default.
+    if (!opts_.expose_consensus_status) {
+      promise.set_value(make_json_rpc_error(-32601, "Method not found: getNodeConsensusStatus", req_id,
+                                            opts_.cors_origin));
+    } else {
+      handle_getNodeConsensusStatus(params, std::move(req_id), std::move(promise));
+    }
   } else if (method == "lookupBlock") {
     handle_lookupBlock(params, std::move(req_id), std::move(promise));
   } else if (method == "shards" || method == "getShards") {

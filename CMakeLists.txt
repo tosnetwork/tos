@@ -763,6 +763,37 @@ target_include_directories(test-consensus-db-path PRIVATE ${CMAKE_CURRENT_SOURCE
                            ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
 target_link_libraries(test-consensus-db-path PRIVATE tos_crypto_core tdutils)
 
+add_executable(test-validator-cleanup test/test-td-main.cpp test/test-validator-cleanup.cpp)
+target_include_directories(test-validator-cleanup PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                           ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
+target_link_libraries(test-validator-cleanup PRIVATE tos_crypto_core tdutils)
+
+add_executable(test-validator-cleanup-statedb test/test-td-main.cpp test/test-validator-cleanup-statedb.cpp)
+target_include_directories(test-validator-cleanup-statedb PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                           ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
+target_link_libraries(test-validator-cleanup-statedb PRIVATE tos_crypto_core tddb tdutils)
+
+add_executable(test-validator-cleanup-worker test/test-validator-cleanup-worker.cpp)
+target_include_directories(test-validator-cleanup-worker PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                           ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
+target_link_libraries(test-validator-cleanup-worker PRIVATE tos_crypto_core tddb tdactor tdutils)
+
+add_executable(inject-validator-cleanup-record test/inject-validator-cleanup-record.cpp)
+target_include_directories(inject-validator-cleanup-record PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                           ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
+target_link_libraries(inject-validator-cleanup-record PRIVATE tos_crypto_core tddb tdutils)
+
+add_executable(test-node-consensus-membership test/test-node-consensus-membership.cpp)
+target_include_directories(test-node-consensus-membership PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                           ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
+target_link_libraries(test-node-consensus-membership PRIVATE tos_block keys tos_crypto tos_crypto_core tl_api tdutils tdactor)
+
+add_executable(test-validator-cleanup-integration test/test-validator-cleanup-integration.cpp)
+target_include_directories(test-validator-cleanup-integration PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                           ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
+target_link_libraries(test-validator-cleanup-integration PRIVATE tos_validator validator-common validator-db full-node
+                      tos_db tos_crypto tdutils tdactor adnl overlay tl_api dht)
+
 add_executable(test-json-rpc-parse test/test-td-main.cpp test/test-json-rpc-parse.cpp)
 target_link_libraries(test-json-rpc-parse PRIVATE json-rpc-parse tos_crypto tdutils)
 add_executable(test-json-rpc-source-ip test/test-json-rpc-source-ip.cpp)
@@ -1138,6 +1169,11 @@ tos_test(test-json-rpc-parse)
 tos_test(test-json-rpc-source-ip)
 tos_test(test-json-rpc-signing-payload)
 tos_test(test-consensus-db-path)
+tos_test(test-validator-cleanup)
+tos_test(test-validator-cleanup-statedb)
+tos_test(test-validator-cleanup-worker)
+tos_test(test-validator-cleanup-integration)
+tos_test(test-node-consensus-membership)
 tos_test(test-json-rpc-rate-gate)
 tos_test(test-json-rpc-payload-waiter)
 # Source-level check: a route added to on_request bypasses the dispatcher's

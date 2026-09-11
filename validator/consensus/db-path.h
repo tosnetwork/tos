@@ -98,21 +98,26 @@ struct ConsensusDbSweepStats {
 };
 
 // Reclaim per-group consensus directories under `db_root`/consensus. A directory
-// is deleted if its name is in `pending` (the durable cleanup queue) or, as a
-// legacy fallback for databases written before the queue existed, if its parsed
-// session id is in `destroyed`. `delete_dir(full_path)` must attempt the removal
-// and return true only when the directory is confirmed gone (e.g. via stat).
+// is deleted ONLY if its name is in `pending` (the durable cleanup queue).
+// `delete_dir(full_path)` must attempt the removal and return true only when the
+// directory is confirmed gone (e.g. via stat).
+//
+// There is deliberately no deletion by "parsed session id is in the destroyed
+// set": a validator directory must never be deleted by a fence match here,
+// because a session can be legitimately recreated and would then need its
+// consensus state. Validator-group directory cleanup is checkpoint-bound and
+// lives in the manager (Finding 1 / PR B), not in this sweep. Only observer
+// directories are ever queued into `pending`, so in practice this sweep reclaims
+// observer databases only.
 //
 // `pending` is updated in place: a confirmed-deleted name is removed; a name
-// whose deletion was not confirmed but was already queued stays queued (a legacy
-// destroyed-session name is deliberately NOT added to the queue on failure, so
-// validator directories never gain queue-based deletion authority); and -- only
+// whose deletion was not confirmed stays queued (retried next sweep); and -- only
 // if the walk fully succeeded -- a queued name not present on disk is dropped (it
 // was deleted before a crash lost the dequeue). An incomplete/failed walk proves
-// nothing about absence, so no reconciliation is done then. A name this cannot
-// parse is left alone.
+// nothing about absence, so no reconciliation is done then. A name not in the
+// queue is left alone.
 inline ConsensusDbSweepStats sweep_orphaned_consensus_dbs(
-    td::Slice db_root, std::set<std::string>& pending, const std::set<ValidatorSessionId>& destroyed,
+    td::Slice db_root, std::set<std::string>& pending,
     const std::function<bool(td::CSlice full_path)>& delete_dir) {
   ConsensusDbSweepStats stats;
   auto root = consensus_db_root(db_root);
@@ -126,11 +131,11 @@ inline ConsensusDbSweepStats sweep_orphaned_consensus_dbs(
       return td::WalkPath::Action::Continue;
     }
     seen.insert(name);
-    auto session_id = consensus_db_session_id(name);
-    bool queued = pending.count(name) > 0;
-    bool legacy = session_id && destroyed.count(session_id.value()) > 0;
-    if (!queued && !legacy) {
-      // Not ours, or still live: do not descend into a database we may open.
+    if (pending.count(name) == 0) {
+      // Not queued: never a deletion target. A validator directory is never
+      // queued here -- so a still-recreatable session can never lose its
+      // consensus state at startup -- and an unrelated/live directory is left
+      // untouched. Do not descend into a database we may open.
       return td::WalkPath::Action::SkipDir;
     }
     if (delete_dir(path)) {
@@ -138,13 +143,8 @@ inline ConsensusDbSweepStats sweep_orphaned_consensus_dbs(
       pending.erase(name);
     } else {
       stats.failed++;
-      // Do NOT newly queue a directory that is here only via the legacy
-      // destroyed-session gate (a validator directory). Its retry stays gated on
-      // the tombstone, exactly as before this change, so it can never be deleted
-      // through the queue after the tombstone is pruned -- which could otherwise
-      // destroy the consensus state of a session that is recreated. An
-      // already-queued directory (an observer) simply stays queued (it was not
-      // erased above), so a failed observer deletion is retried next sweep.
+      // Deletion not confirmed: the name stays queued (it was not erased above),
+      // so it is retried on the next sweep.
     }
     return td::WalkPath::Action::SkipDir;
   });

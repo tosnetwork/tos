@@ -20,6 +20,7 @@
 #pragma once
 
 #include "tos/tos-types.h"
+#include "validator/consensus/validator-cleanup.h"
 #include "validator/interfaces/block-handle.h"
 #include "validator/interfaces/persistent-state.h"
 #include "validator/interfaces/validator-manager.h"
@@ -142,6 +143,24 @@ class Db : public td::actor::Actor {
   virtual void update_pending_consensus_db_cleanup(std::vector<std::string> dirs,
                                                    td::Promise<td::Unit> promise) = 0;
   virtual void get_pending_consensus_db_cleanup(td::Promise<std::vector<std::string>> promise) = 0;
+
+  // Validator-group consensus-DB cleanup (Finding 1): one durable, checkpoint-
+  // bound record per retired validator session. Unlike the observer queue above,
+  // a validator directory may be deleted only once its retirement checkpoint is
+  // proven permanent (see doc/validator-consensus-db-cleanup.md). These records
+  // are persisted per session id; enabling deletion from them is a later step.
+  // Atomically persist the destroyed-session fence together with the newly
+  // retiring validator cleanup records in one synced batch (PR B: the durable
+  // precondition before a retiring validator actor is allowed to close).
+  virtual void persist_validator_retirement(std::vector<ValidatorSessionId> destroyed_sessions,
+                                            std::vector<consensus::PendingValidatorConsensusDbCleanup> records,
+                                            td::Promise<td::Unit> promise) = 0;
+  virtual void update_pending_validator_consensus_db_cleanup(consensus::PendingValidatorConsensusDbCleanup record,
+                                                             td::Promise<td::Unit> promise) = 0;
+  virtual void erase_pending_validator_consensus_db_cleanup(ValidatorSessionId session_id,
+                                                            td::Promise<td::Unit> promise) = 0;
+  virtual void get_pending_validator_consensus_db_cleanup(
+      td::Promise<std::vector<consensus::PendingValidatorConsensusDbCleanup>> promise) = 0;
 
   virtual void update_async_serializer_state(AsyncSerializerState state, td::Promise<td::Unit> promise) = 0;
   virtual void get_async_serializer_state(td::Promise<AsyncSerializerState> promise) = 0;

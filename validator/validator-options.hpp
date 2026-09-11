@@ -126,6 +126,12 @@ struct ValidatorManagerOptionsImpl : public ValidatorManagerOptions {
   bool get_disable_rocksdb_stats() const override {
     return disable_rocksdb_stats_;
   }
+  bool get_validator_consensus_cleanup_enabled() const override {
+    return validator_consensus_cleanup_enabled_;
+  }
+  bool get_test_crash_cleanup_before_erase() const override {
+    return test_crash_cleanup_before_erase_;
+  }
   bool nonfinal_ls_queries_enabled() const override {
     return nonfinal_ls_queries_enabled_;
   }
@@ -261,6 +267,12 @@ struct ValidatorManagerOptionsImpl : public ValidatorManagerOptions {
   void set_disable_rocksdb_stats(bool value) override {
     disable_rocksdb_stats_ = value;
   }
+  void set_validator_consensus_cleanup_enabled(bool value) override {
+    validator_consensus_cleanup_enabled_ = value;
+  }
+  void set_test_crash_cleanup_before_erase(bool value) override {
+    test_crash_cleanup_before_erase_ = value;
+  }
   void set_nonfinal_ls_queries_enabled(bool value) override {
     nonfinal_ls_queries_enabled_ = value;
   }
@@ -380,6 +392,8 @@ struct ValidatorManagerOptionsImpl : public ValidatorManagerOptions {
   size_t max_open_archive_files_ = ValidatorManagerOptions::default_max_open_archive_files();
   double archive_preload_period_ = 0.0;
   bool disable_rocksdb_stats_;
+  bool validator_consensus_cleanup_enabled_ = false;
+  bool test_crash_cleanup_before_erase_ = false;
   bool nonfinal_ls_queries_enabled_ = false;
   td::optional<td::uint64> celldb_cache_size_;
   td::optional<td::uint64> celldb_cache_min_size_;

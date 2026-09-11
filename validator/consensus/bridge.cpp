@@ -338,6 +338,10 @@ class BridgeImpl final : public IValidatorGroup {
     destroy_inner().start().detach();
   }
 
+  void close_for_retirement(td::uint64 generation) override {
+    close_for_retirement_inner(generation).start().detach();
+  }
+
   void start_up() override {
     manager_facade_ = td::actor::create_actor<ManagerFacadeImpl>(params_.name + ".ManagerFacade", params_.manager,
                                                                  params_.collation_manager, params_.validator_set,
@@ -535,6 +539,30 @@ class BridgeImpl final : public IValidatorGroup {
         LOG(ERROR) << "Deleting consensus DB " << full
                    << " could not be confirmed removed; the startup sweep will retry it";
       }
+    }
+    stop();
+    co_return td::Unit{};
+  }
+
+  // Retirement close (validator-group cleanup, Finding 1 / PR B): mirror the
+  // stop/close sequence of destroy_inner() WITHOUT deleting the directory. The
+  // bus destructor destroys `db` before satisfying stop_waiter_, so by the time
+  // that waiter completes the actor no longer holds the database; only then is
+  // it safe to report closure. The physical deletion is the manager's job, under
+  // a checkpoint-bound eligibility check -- never here -- so a still-recreatable
+  // session can never lose its consensus state through retirement.
+  td::actor::Task<> close_for_retirement_inner(td::uint64 generation) {
+    if (bus_) {
+      LOG(INFO) << "Closing validator group for retirement (no delete)";
+      bus_.publish<StopRequested>();
+      co_await bus_->db->close();
+      bus_ = {};
+      co_await std::move(stop_waiter_.value());
+      LOG(INFO) << "Consensus bus stopped (retirement close)";
+      auto dir_name = consensus_db_dir_name(params_.shard, params_.validator_set->get_catchain_seqno(),
+                                            params_.session_id, params_.db_suffix);
+      td::actor::send_closure(params_.manager, &ValidatorManager::consensus_db_closed, params_.session_id, generation,
+                              std::move(dir_name));
     }
     stop();
     co_return td::Unit{};

@@ -65,8 +65,18 @@ jobs:
           -DCMAKE_BUILD_TYPE=Debug \
           -DTOS_USE_ASAN=ON
 
+    - name: Build the compilers the frozen contracts are verified with
+      run: ninja -C build-asan func fift
+
     - name: Build the instrumented JSON-RPC tests
+      # Some of these targets transitively pull in the frozen-contract embedding step,
+      # whose scripts look for func/fift under a directory named exactly `build` and report
+      # a missing compiler otherwise. Point them at this build-asan dir (same as the corpus
+      # job below), so the embed succeeds instead of failing with
+      # "required compiler is unavailable: .../build/crypto/func".
       run: |
+        export FUNC_BIN="$PWD/build-asan/crypto/func"
+        export FIFT_BIN="$PWD/build-asan/crypto/fift"
         ninja -C build-asan \
           test-json-rpc-rate-gate \
           test-json-rpc-parse \
