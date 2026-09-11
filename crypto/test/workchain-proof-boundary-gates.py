@@ -9,6 +9,23 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class Boundary(unittest.TestCase):
+    def assert_raw_abi_paths(self, hits):
+        # Node verification must still use the sole metered host wrapper.
+        # The independent wallet workspace's exact test-vector tool invokes v2
+        # to verify generated/read-back SEND/COLLECT proofs and reject a changed
+        # context. It is not linked into the node; no directory-wide exemption.
+        self.assertEqual(hits, ["crypto/block/workchain-proof-backend.cpp",
+                                "uno/crypto/include/uno_crypto.h", "uno/crypto/src/ffi.rs",
+                                "uno/prover/examples/m3-vectors.rs"])
+
+    def test_additional_callers_are_rejected(self):
+        allowed = ["crypto/block/workchain-proof-backend.cpp",
+                   "uno/crypto/include/uno_crypto.h", "uno/crypto/src/ffi.rs",
+                   "uno/prover/examples/m3-vectors.rs"]
+        for extra in ["validator/unmetered.cpp", "uno/prover/examples/another.rs"]:
+            with self.subTest(extra=extra), self.assertRaises(AssertionError):
+                self.assert_raw_abi_paths(sorted(allowed + [extra]))
+
     def test_profile_permissions_are_explicit_sets(self):
         source = (ROOT / "crypto/block/workchain-resource-policy.h").read_text()
         for method, expected in {
@@ -30,8 +47,7 @@ class Boundary(unittest.TestCase):
                     continue
                 if re.search(r"\buno_crypto_verify_v2\b", path.read_text()):
                     hits.append(str(path.relative_to(ROOT)))
-        self.assertEqual(hits, ["crypto/block/workchain-proof-backend.cpp",
-                                "uno/crypto/include/uno_crypto.h", "uno/crypto/src/ffi.rs"])
+        self.assert_raw_abi_paths(hits)
         source = (ROOT / hits[0]).read_text()
         self.assertEqual(source.count("uno_crypto_verify_v2(&request)"), 1)
 

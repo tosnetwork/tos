@@ -22,7 +22,7 @@
     "symbols": [
       "uno_crypto_verify_v2"
     ],
-    "sha256": "c250b984a32ceab469dee0f8ad835ccd58149aea8e40b36f7671864d91e1b9c1",
+    "sha256": "2d101ecb1680d0a57e56ccd9b847a9a810ce7b93d7c72381fb746322e1f8925c",
     "disposition": "Source assertion text naming the relation ABI; no ABI invocation."
   },
   "doc/measurements/uno-m2-rng-source-review/archived-symbol-reader.py": {
