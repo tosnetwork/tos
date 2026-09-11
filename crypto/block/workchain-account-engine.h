@@ -57,7 +57,8 @@ struct WorkchainAccountEffects {
   // The settlement host must authenticate its role, amount and authorization.
   td::Ref<vm::Cell> payout_request;
   // Local result of independently executing an authenticated operation, not a
-  // wire capability. Withdrawal binds this Native allowance as its public q.
+  // wire capability. This is Withdrawal's EXACT public q (D75), not a ceiling:
+  // the final serialized Native debit must spend precisely this fee.
   // Absent preserves the enclosing host's existing allowance (including zero).
   std::optional<std::uint64_t> payout_forward_fee;
   std::optional<WorkchainFeeSettlement> fees;

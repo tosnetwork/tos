@@ -15,6 +15,7 @@
 
 int main(int argc, char** argv) {
   if (argc == 3 && std::string(argv[1]) == "--withdrawal-payout-quote") {
+    vm::init_vm().ensure();
     m3_live::prepare_debit(argv[2], false, true); return 0;
   }
   if (argc == 3 && (std::string(argv[1]) == "--withdrawal-debit-request" || std::string(argv[1]) == "--withdrawal-debit-finish")) {
@@ -321,6 +322,7 @@ int main(int argc, char** argv) {
         auto next = complete.account;
         CHECK(complete.control.withdrawals.size() == 1);
         const auto& obligation = complete.control.withdrawals.front();
+        CHECK(obligation.principal == operation.data.amounts.principal);
         const auto custody_key = block::load_workchain_native_ingress_table(*config).move_as_ok().at(2).custody_address;
         CHECK(custody_key);
         block::gen::Transaction::Record payout_tx;
@@ -332,6 +334,7 @@ int main(int argc, char** argv) {
         block::gen::CommonMsgInfo::Record_int_msg_info payout_info;
         CHECK(tlb::type_unpack_cell(payout,block::gen::t_Message_Any,payout_wire) && tlb::csr_unpack(payout_wire.info,payout_info));
         CHECK(payout_info.created_lt == obligation.timing.payout_created_lt && obligation.timing.phase == 0);
+        CHECK(block::tlb::t_Tomis.as_integer(payout_info.extra_flags)->to_long() == 3);
         CHECK(obligation.withdrawal_id == operation.claimed_operation_id && obligation.attempt_id == operation.claimed_attempt_id);
         block::CurrencyCollection payment; CHECK(payment.unpack(payout_info.value));
         CHECK(payment == block::CurrencyCollection(block::workchain_unsigned_fee(operation.data.amounts.principal)));
@@ -352,7 +355,8 @@ int main(int argc, char** argv) {
         CHECK(found == 1);
         m3_live::save(fixture / "prepare-payout.boc",payout);
         std::cout << "WITHDRAWAL_ENQUEUED hash=" << payout->get_hash().to_hex()
-                  << " created_lt=" << payout_info.created_lt << " q=" << obligation.costs.outward_fee_paid << std::endl;
+                  << " created_lt=" << payout_info.created_lt << " x=" << obligation.principal
+                  << " q=" << obligation.costs.outward_fee_paid << " b=" << obligation.costs.original_reserve << std::endl;
         auto expected = block::next_workchain_confidential_counters(old,old.auth_nonce,old.available_revision).move_as_ok();
         CHECK(next.auth_nonce == expected.auth_nonce && next.available_revision == expected.available_revision);
         CHECK(next.available.commitment == operation.data.available.commitment && next.available.handle == operation.data.available.handle);

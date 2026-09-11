@@ -622,6 +622,9 @@ struct Transaction {
   // An explicit disposal context prepares the coordinator's bounces in this
   // same pair. Its output bound includes the custody payout, and its pricing
   // reference must be the very same resolved source as message_cfg.
+  // D75: optional exact_outward_fee is independently reconstructed from the
+  // authorized operation's q, NOT a ceiling. The serialized Native debit less
+  // actual message value must equal it before any overlay can publish the pair.
   static td::Result<PreparedWorkchainPayoutPair> build_workchain_payout_pair(
       const Account& custody, const Account& coordinator, Ref<vm::Cell> custody_binding,
       Ref<vm::Cell> coordinator_binding, Ref<vm::Cell> custody_data, Ref<vm::Cell> coordinator_data,
@@ -629,7 +632,8 @@ struct Transaction {
       td::RefInt256 fee_budget, std::uint64_t max_transfers, int extra_validation_cells,
       const SerializeConfig& cfg, const ActionPhaseConfig& message_cfg,
       Ref<vm::Cell> entry_input, Ref<vm::Cell> entry_effects,
-      const WorkchainDisposalEntryContext* disposal = nullptr);
+      const WorkchainDisposalEntryContext* disposal = nullptr,
+      std::optional<std::uint64_t> exact_outward_fee = {});
   bool serialize(const SerializeConfig& cfg);
   td::uint64 gas_used() const {
     return compute_phase ? compute_phase->gas_used : 0;

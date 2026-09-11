@@ -7992,6 +7992,71 @@ TEST(WorkchainBlock, BatchPreparationRejectsUnsettledState) {
   ASSERT_TRUE(account.total_state->get_hash() == account.orig_total_state->get_hash());
 }
 
+// Actual Native pair, not a detached arithmetic oracle. Distinct x=137, q=100.
+// The generous legacy ceiling lets BOTH mismatches reach the missing equality
+// check in the pre-fix run, instead of failing an earlier insufficient-funds gate.
+static td::Status native_payout_exact_fee_fixture(std::optional<std::uint64_t> expected,
+                                                std::uint64_t legacy_ceiling = 500) {
+  block::gen::ShardStateUnsplit::Record state;
+  ASSERT_TRUE(tlb::unpack_cell(shard_fixture(2, 2, true, 2, false, 0, 40, false, 1000), state));
+  vm::AugmentedDictionary accounts(vm::load_cell_slice_ref(state.accounts), 256, block::tlb::aug_ShardAccounts);
+  auto a = td::Bits256::zero();
+  td::Bits256 b(number(1)->get_hash().bits());
+  block::Account custody(2,a.bits()), coordinator(2,b.bits());
+  ASSERT_TRUE(custody.unpack(accounts.lookup(a),10,false));
+  ASSERT_TRUE(coordinator.unpack(accounts.lookup(b),10,false));
+  auto bindings = block::build_workchain_participant_records(a,b,{a,b},2).move_as_ok();
+  vm::CellBuilder cb;
+  cb.store_long(6,4).store_zeroes(2).store_long(4,3).store_long(-1,8).store_zeroes(256);
+  ASSERT_TRUE(block::CurrencyCollection(137).store(cb));
+  ASSERT_TRUE(block::tlb::t_Tomis.store_integer_ref(cb,td::make_refint(3)));
+  auto request = cb.store_zeroes(4).store_zeroes(96).store_zeroes(2).store_bits(b.bits(),256).finalize();
+  block::SerializeConfig cfg;
+  cfg.global_version=16; cfg.disable_anycast=cfg.extra_currency_v2=true;
+  block::ActionPhaseConfig pricing;
+  pricing.global_version=16;
+  pricing.disable_custom_fess=pricing.disable_anycast=pricing.extra_currency_v2=true;
+  pricing.action_fine_enabled=pricing.bounce_on_fail_enabled=pricing.message_skip_enabled=true;
+  block::WorkchainSet workchains; pricing.workchains=&workchains;
+  pricing.fwd_mc.lump_price=100; pricing.fwd_mc.first_frac=16384;
+  auto result = block::transaction::Transaction::build_workchain_payout_pair(custody,coordinator,bindings[0],bindings[1],
+      number(70),number(71),request,20,10,block::workchain_unsigned_fee(legacy_ceiling),0,4096,cfg,pricing,{}, {},nullptr,expected);
+  // Preparation never publishes into the authenticated predecessor, on either outcome.
+  ASSERT_TRUE(custody.balance == block::CurrencyCollection(1000));
+  ASSERT_TRUE(coordinator.balance == block::CurrencyCollection(1000));
+  if (result.is_error()) return result.move_as_error();
+  ASSERT_TRUE(result.ok().transactions[0]->balance == block::CurrencyCollection(763));
+  ASSERT_TRUE(result.ok().transactions[1]->balance == block::CurrencyCollection(1000));
+  return td::Status::OK();
+}
+TEST(WorkchainBlock, NativePayoutExactFeeLower) {
+  auto result = native_payout_exact_fee_fixture(99);
+  ASSERT_TRUE(result.is_error());
+  ASSERT_EQ(result.code(),-7200);
+  ASSERT_EQ(result.message(),"Native payout fee differs from authenticated exact q");
+  // The real registered caller still supplies zero as its legacy ceiling.
+  // Exact-q validation must not become an earlier Native funds failure there.
+  auto zero_ceiling = native_payout_exact_fee_fixture(99,0);
+  ASSERT_EQ(zero_ceiling.code(),-7200);
+  ASSERT_EQ(zero_ceiling.message(),"Native payout fee differs from authenticated exact q");
+  std::cout << "D75_EXACT_Q declared=99 Native_paid=100: -7200 at exact-fee equality\n";
+}
+TEST(WorkchainBlock, NativePayoutExactFeeHigher) {
+  auto result = native_payout_exact_fee_fixture(101);
+  ASSERT_TRUE(result.is_error());
+  ASSERT_EQ(result.code(),-7200);
+  ASSERT_EQ(result.message(),"Native payout fee differs from authenticated exact q");
+  auto zero_ceiling = native_payout_exact_fee_fixture(101,0);
+  ASSERT_EQ(zero_ceiling.code(),-7200);
+  ASSERT_EQ(zero_ceiling.message(),"Native payout fee differs from authenticated exact q");
+  std::cout << "D75_EXACT_Q declared=101 Native_paid=100: -7200 at exact-fee equality\n";
+}
+TEST(WorkchainBlock, NativePayoutExactFeeAndLegacy) {
+  ASSERT_TRUE(native_payout_exact_fee_fixture(100).is_ok());
+  ASSERT_TRUE(native_payout_exact_fee_fixture(100,0).is_ok());
+  ASSERT_TRUE(native_payout_exact_fee_fixture({}).is_ok());
+}
+
 TEST(WorkchainBlock, NativePayoutPair) {
   block::gen::ShardStateUnsplit::Record state;
   ASSERT_TRUE(tlb::unpack_cell(shard_fixture(2, 2, true, 2, false, 0, 40, false, 1000), state));

@@ -43,7 +43,8 @@ inline td::Result<WorkchainPayoutOverlay> build_workchain_payout_overlay(
     const SerializeConfig& cfg, const ActionPhaseConfig& message_cfg,
     td::Ref<vm::Cell> entry_input, td::Ref<vm::Cell> entry_effects, std::uint64_t max_inbound,
     const WorkchainDisposalEntryContext* disposal = nullptr,
-    const WorkchainConstructionObserver& observer = {}) {
+    const WorkchainConstructionObserver& observer = {},
+    std::optional<std::uint64_t> exact_outward_fee = {}) {
   if (extra_validation_cells <= 0) return td::Status::Error("invalid payout overlay currency budget");
   if (workchain < 0 || writes.empty() || writes.size() > max_participants || custody == coordinator) {
     return td::Status::Error("invalid payout overlay domain or count");
@@ -133,7 +134,7 @@ inline td::Result<WorkchainPayoutOverlay> build_workchain_payout_overlay(
   TRY_RESULT(pair, Transaction::build_workchain_payout_pair(*accounts[custody_index], *accounts[coordinator_index],
       bindings[custody_index], bindings[coordinator_index], writes[custody_index].data, writes[coordinator_index].data,
       request, schedule.start_lt, now, fee_budget, max_transfers, extra_validation_cells, cfg, message_cfg,
-      entry_input, entry_effects, disposal));
+      entry_input, entry_effects, disposal, exact_outward_fee));
   // Preparation is performed once. Actual coordinator output count changes
   // end LTs, not the common start determined by old state and the inbox.
   timing[coordinator_index].outbound_count = pair.transactions[1]->out_msgs.size();

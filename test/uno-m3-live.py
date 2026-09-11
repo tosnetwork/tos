@@ -197,7 +197,7 @@ initial, initial_blind, send_fee, collect_fee, limits = run(
     build, fixture, wallet, advance_pair, initial_only=True, initial_principal=principal)
 if a.m5_debit:
     request = dict(secret=101, old_value=initial, old_blind=initial_blind, new_blind=71, aux_blind=83,
-                   principal=100, outward_fee=17, return_reserve=23, fee=257, **limits)
+                   principal=137, outward_fee=17, return_reserve=23, fee=257, **limits)
     def debit_write(name, values):
         (fixture / name).write_text(''.join(f'{k}={v}\n' for k,v in values.items()))
     debit_write('operation.request.txt',request)
@@ -210,7 +210,7 @@ if a.m5_debit:
     debit_write('operation.request.txt',dict(request,**statement))
     subprocess.run([str(wallet),'withdrawal-prove',str(fixture / 'operation.request.txt'),str(fixture / 'operation.proof.txt')],check=True)
     subprocess.run([str(build / 'test-m3-live'),'--withdrawal-debit-finish',str(fixture)],check=True)
-    debit_write('operation.expected.txt',dict(before=initial,after=initial-100-request['outward_fee']-23-257))
+    debit_write('operation.expected.txt',dict(before=initial,after=initial-request['principal']-request['outward_fee']-request['return_reserve']-request['fee']))
     print(f'DEBIT_FIXTURE={fixture}',flush=True)
     subprocess.run([str(build / 'test-m3-live'),str(fixture)],check=True)
     raise SystemExit(0)

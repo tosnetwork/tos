@@ -275,7 +275,7 @@ class M3NodeEngine final : public RegisteredWorkchainAccountEngine {
       auto prices = *cfg->payout_prices;
       prices.workchains = &cfg->workchains;
       TRY_RESULT(priced, transaction::Transaction::price_workchain_payout(payer, request,
-          schedule.start_lt, clock.gen_utime, workchain_unsigned_fee(debit.data.amounts.outward_fee), prices));
+          schedule.start_lt, clock.gen_utime, payer.balance.tomis, prices));
       if (td::cmp(priced.total_fee, workchain_unsigned_fee(debit.data.amounts.outward_fee)) != 0)
         return invalid("Withdrawal outward fee differs from authenticated Native pricing");
       gen::Message::Record message;
