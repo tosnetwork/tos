@@ -1,36 +1,34 @@
-# Native ML-DSA-44 verification (proposed TVM version 16)
+# Native ML-DSA-44 verification (TVM version 16)
 
 ## Scope and activation
 
 This adds a C/C++ verifier and a general-purpose TVM instruction, not a wallet,
-key store, authentication module, validator signature migration, or claim that
-the entire chain is post-quantum secure. Existing account contracts and their
-bytecode are unchanged. The separate Rust VM under `tosctl/src/vm` does not gain
-this instruction from the C++ integration; use the native VM/emulator for these
-tests until a separately reviewed compatible implementation exists.
+key store, authentication module or validator-signature migration. Existing
+Wallet V5 and Agent Account contracts and their bytecode are unchanged. The
+separate Rust VM under `tosctl/src/vm` does not gain this instruction from this
+C++ integration; callers must use the native VM/emulator until that execution
+route has a separately reviewed compatible implementation.
 
-`PQCHECKSIG_MLDSA44` has the proposed 24-bit code `F93100`. It is registered in
-codepage 0 with `require_version(16)`. Versions 0 through 15 reject it as an
-invalid opcode. Raising the binary's `SUPPORTED_VERSION` to 16 advertises
-implementation support; this change does **not** edit ConfigParam 8, genesis,
-capability masks or activate version 16 on a running network. Activation needs
-coordinated validator deployment and a separate configuration decision. No
-local feature toggle may change validation results after activation.
+`PQCHECKSIG_MLDSA44` is codepage-0 instruction **F93100 (24 bits)**, registered
+with `require_version(16)`. Versions 0 through 15 reject it as invalid opcode
+(6). `SUPPORTED_VERSION=16` advertises binary support; it does not edit
+ConfigParam 8, genesis or capability masks, or activate a running network.
+Activation requires coordinated validator deployment and a separate protocol
+configuration decision. Local feature toggles must never change its semantics.
 
 ## Exact interface
 
-Stack (bottom to top):
+Stack, bottom to top:
 
 ```
 message:Cell context:Cell signature:Cell public_key:Cell -> valid:Int
 ```
 
-The algorithm is FIPS 204 **Pure ML-DSA-44**, using its external message/context
-interface. There is no implicit message prehash, no external-mu input, no
-pre-standard Dilithium variant and no HashML-DSA mode. Applications may sign a
-32-byte account-request commitment as the message, but must define that
-commitment and the application context themselves. This general VM instruction
-does not pin an account-specific context string.
+The algorithm is FIPS 204 **Pure ML-DSA-44**, using the external message/context
+interface. There is no implicit prehash, external-mu input, pre-standard
+Dilithium variant or HashML-DSA mode. An application may sign a 32-byte account
+commitment as its message, but it must specify that commitment and its own
+context. The generic instruction does not hard-code a TOS-AUTH context.
 
 | Operand | Byte length |
 | --- | --- |
@@ -39,110 +37,96 @@ does not pin an account-specific context string.
 | Signature | exactly 2420 |
 | Raw public key | exactly 1312 |
 
-Each operand is a canonical byte-chain Cell: ordinary level-zero cells only,
-byte-aligned, at most one continuation reference. Every non-final cell has
-exactly 127 bytes and one reference. A final cell has 1 to 127 bytes and no
-references. Only the sole root of an empty byte string may contain zero bytes.
-This is intentionally stricter than the arbitrary-chunk SHA256C interface.
-No BOC headers, length prefixes, DER wrappers, exotic/library cells, branches,
-trailing empty cells, or unused data are accepted as part of these operands.
+All operands use canonical byte chains: ordinary level-zero cells, byte-aligned,
+with at most one continuation reference. Every non-final cell has exactly 127
+bytes and one reference. A final cell has 1..127 bytes and no references. Only
+the sole root of an empty byte string may have zero bytes. This is stricter
+than SHA256C's arbitrary-chunk interface. BOC/DER wrappers are not payload;
+exotic/library cells, branches, partial intermediate cells and trailing empty
+cells are rejected. BOC transport must decode to these same operand cells.
 
-Valid signatures return `-1`; mathematically invalid signatures return `0`.
-Incorrect lengths or cell encodings throw cell-underflow (9). Wrong stack types
-and stack underflow retain normal VM errors. A backend operational failure is
-not silently converted to a mathematical rejection: it throws fatal (12).
-An exhausted gas budget stops execution, rather than returning false.
+A valid signature returns `-1`; a mathematically invalid signature returns `0`.
+Incorrect lengths or cell encodings throw cell-underflow (9). Stack underflow
+and wrong types retain VM errors (2 and 7). A backend operational failure is
+not reported as an invalid proof: it throws VM fatal error (12). Out-of-gas
+stops execution, not verification-false. The instruction neither honors
+`chksig_always_succeed` nor uses the classic free-signature-call allowance.
 
-The instruction deliberately does not honor `chksig_always_succeed` and does not
-reuse the classical signature instruction's free-call allowance.
+## Deterministic gas
 
-## Gas: deterministic draft schedule, not a final activation recommendation
+Every invocation with sufficient stack depth pays **50,000 gas before operand
+decoding**, then **1 gas per decoded byte before copying**, plus ordinary VM
+cell-load/reload and instruction overhead. Invalid proofs pay the same base.
+For a raw one-instruction program, ordinary overhead is 34 instruction gas,
+5 implicit-return gas, and 100/25 gas for first/repeated cell loads. Loads are
+identified by representation hash, not pointer identity. Compiled programs may
+add their own dispatch overhead. Bounds constrain memory, hashing and traversal.
 
-Every invocation pays a base **50,000 gas**, charged after stack-depth checking
-and before operand decoding or signature work. It then pays **1 gas per decoded
-byte**, charged before copying those bytes, plus the existing VM cell
-load/reload charges and normal opcode/return overhead. Size limits bound
-allocation, hashing and cell traversal. Invalid proofs pay the same base fee.
+The price is fixed protocol data, never derived from a validator's CPU clock.
+The validation workflow measures full-VM CPU cost across valid and invalid
+vectors against the existing paid Ed25519 tariff, and exercises repeated-call
+workloads. See [validation and calibration](tvm-mldsa44-validation.md) for the
+formula, gate, model budget and limitations. Runner measurements do not replace
+production-hardware load testing or protocol approval before activation.
 
-These constants are an initial conservative engineering proposal. CI records
-actual wall-clock timings for a short valid proof, an 8192-byte message and a
-full-length invalid proof on x86-64 and AArch64. Timings are diagnostic, never
-consensus input. Final CPU/DoS calibration against existing instructions,
-production validator hardware and a block-wide workload is an activation gate.
-Do not increase network limits to make verification pass.
-
-The base fee exceeds the ordinary 10,000-gas external admission credit. A
-production authentication module therefore needs an explicit funded-internal
-message / relayer design, including its replay and fee-abuse policy. It must
-not accept unauthenticated external traffic and spend unlimited account gas.
-This PR does not implement that module or promise its end-to-end economics.
+The base fee exceeds the ordinary 10,000-gas external admission credit. A PQ
+Auth Module needs an explicit funded-internal-message/relayer design, including
+replay and fee-abuse policy. Do not ACCEPT unauthenticated external traffic just
+to bypass the credit or raise network limits to make a test pass. The module's
+authority, funding and transaction/action-phase lifecycle are separate scope.
 
 ## Dependency and build
 
-The backend is `pq-code-package/mldsa-native` release **v2.0.0**, pinned to
-`834a90d5e846ffa1e1611bd24e160bb2e9b86d35`. CMake builds the fixed-level single
-compilation unit with ML-DSA-44 only, key generation/signing/randomized APIs
-disabled, and portable C arithmetic/FIPS202 backends. No CPU dispatch, AVX2/NEON
-backend, runtime OpenSSL provider, private key or RNG is required by this build.
-C is linked through a small C++17 wrapper; a pure-C++ reimplementation is not
-necessary. Upstream's verify API assumes fixed-size keys/signatures, so the
-wrapper independently checks all lengths before calling it.
+The backend is `pq-code-package/mldsa-native` **v2.0.0**, fixed to commit
+`834a90d5e846ffa1e1611bd24e160bb2e9b86d35`. CMake builds the single fixed-level
+ML-DSA-44 compilation unit with keypair/sign/randomized APIs disabled and
+portable C arithmetic/FIPS202. No native-backend CPU dispatch, runtime OpenSSL
+provider, private key or RNG is used by this verifier. The C++17 wrapper checks
+all lengths before calling the upstream fixed-size API. Test-only calibration
+uses the existing Ed25519 implementation and a public fixed test seed.
 
-CMake FetchContent downloads the fixed commit at configure time, never at node
-runtime. An offline build can prepopulate that exact source and set
-`FETCHCONTENT_SOURCE_DIR_TOS_MLDSA_SOURCE` to its directory. Pin verification and
-upstream release review remain supply-chain responsibilities; do not substitute
-a moving branch. Upstream source is licensed `Apache-2.0 OR ISC OR MIT`; preserve
-its license and copyright notices in source/binary redistributions. The wrapper
-and VM glue use the repository's LGPL-2.0-or-later license.
+FetchContent retrieves the fixed source at configure time, not node runtime.
+Offline builds can prepopulate the exact source and pass
+`FETCHCONTENT_SOURCE_DIR_TOS_MLDSA_SOURCE`. Source provenance and local changes
+remain build/release responsibilities; do not replace the pin with a branch.
+Upstream uses `Apache-2.0 OR ISC OR MIT`; preserve its license and notices in
+source/binary distributions. Its LICENSE is installed under
+`share/tos/licenses/mldsa-native`. VM glue and wrapper use LGPL-2.0-or-later.
 
-```
+```sh
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
-cmake --build build --target test-pq-mldsa44 test-pq-mldsa44-wrapper func fift -j2
+cmake --build build --target test-pq-mldsa44 test-pq-mldsa44-wrapper func fift tol -j2
 python3 test/pq-mldsa44/prepare_vectors.py --out pq-results
+build/crypto/pq/test-pq-mldsa44-wrapper pq-results/vectors.tsv pq-results/wrapper.tsv
 build/crypto/pq/test-pq-mldsa44 pq-results/vectors.tsv pq-results/native.tsv --benchmark
 python3 test/pq-mldsa44/bindings.py --build build --vectors pq-results/vectors.tsv --out pq-results
 python3 test/pq-mldsa44/mutations.py --build build --vectors pq-results/vectors.tsv
 ```
 
-The verifier alone can be built using `cmake -S crypto/pq -B build-pq`.
-FunC callers include `crypto/smartcont/pq.fc`. Fift assembly must explicitly
-include `PQ.fif` before including compiler output that uses the new mnemonic.
-The matching low-level Tol declaration is in `crypto/smartcont/pq.tol`.
+The standalone wrapper builds with `cmake -S crypto/pq -B build-pq`. FunC uses
+`crypto/smartcont/pq.fc`; Tol uses `crypto/smartcont/pq.tol`. Assembly must load
+`PQ.fif` before compiler output using the new mnemonic. Binding tests compile
+both public declarations and execute both resulting BOCs in the actual VM.
+The node build prefers Clang by default; CI records actual CMake compiler
+selection rather than inferring it from `cc --version`.
 
-## Evidence and its limits
+## Public vectors and execution evidence
 
-`prepare_vectors.py` retrieves and checks fixed Git blob hashes for:
+`prepare_vectors.py` checks fixed Git blob hashes for ACVP-Server commit
+`975de31eb83d87039ec88934fdc47d8c312b892d` (v1.1.0.43) and Wycheproof commit
+`3fa63dd0344abb611f1fb1d77e119938603ea230`. It selects external Pure ML-DSA-44
+sigVer cases, reports excluded profiles/out-of-bound valid inputs separately,
+and adds three public OpenSSL 3.5.5 positive fixtures. Missing data, hash
+mismatches and absent positive/negative controls fail, rather than skip, CI.
 
-- NIST ACVP-Server `975de31eb83d87039ec88934fdc47d8c312b892d` (v1.1.0.43),
-  ML-DSA-sigVer-FIPS204 prompts and expected results. Only the external Pure
-  ML-DSA-44 profile is included; other profiles are explicitly counted separately.
-- Wycheproof `3fa63dd0344abb611f1fb1d77e119938603ea230`,
-  `mldsa_44_verify_test.json`, including malformed-signature checks. Algorithm-valid
-  inputs outside this instruction's bounded profile are reported separately,
-  not counted as passed conformance tests.
-- Three independently generated public OpenSSL 3.5.5 fixtures: empty inputs,
-  a domain-bound 32-byte account commitment, and maximum message/context lengths.
-  These contain no private keys. They are test data, not production credentials.
+The final commit must pass native x86-64/AArch64 execution, both compiled
+bindings, six guard mutations, wrapper and full-VM ASan/UBSan, and byte-identical
+transcript/BOC comparisons. Artifacts contain corpus manifests, verdicts, gas,
+commit-state hashes and diagnostic timing. Definitions are not execution proof;
+use the final commit's successful jobs and artifacts. The detailed acceptance
+matrix is in [tvm-mldsa44-validation.md](tvm-mldsa44-validation.md).
 
-A missing download, mismatched source hash, empty corpus or absent positive /
-negative controls fails the job. Both the C++ wrapper and actual TVM instruction
-must agree with the expected results; a failure for the wrong reason is not a
-passing negative test. Structural rejection, version gating, exact gas boundary,
-BOC transport, ignored-classic-signature flag and eleven paid calls are also
-exercised. A compiled FunC caller is executed, not just syntax-checked.
-
-The workflow runs native GCC builds on x86-64 and AArch64, a Clang ASan/UBSan
-verifier build, and compares exact public-vector manifests and transcripts.
-Native transcripts include exit code, stack boolean, gas and committed data /
-action cell hashes. This establishes consistency for the tested corpus, not a
-mathematical proof over all inputs. Guard mutations remove signature checking,
-version gating and base-gas charging; each must compile and make a previously
-passing test fail, followed by restoration and a passing baseline.
-
-Passing public vectors is **not** NIST certification, FIPS 140 validation,
-independent cryptographic audit, or proof of complete post-quantum wallet support.
-Before network activation: review opcode allocation, bounded encoding, native
-backend errors and supply chain; calibrate gas; audit a real immutable/PQ-governed
-authentication module and account relay lifecycle; and cover transaction/action
-phase execution under target network funding and limits.
+Public-vector success is not NIST/FIPS certification, an independent audit or a
+claim that the whole chain or production wallets are quantum-safe. Activation
+still requires protocol/security review, production-limit validation and a
+separately audited immutable or PQ-governed authentication module.
