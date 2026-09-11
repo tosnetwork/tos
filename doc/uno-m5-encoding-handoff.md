@@ -209,3 +209,8 @@ coupling and separately linked units outside named roots are not inferred.
 When it expires, install real host controls for staged increments, competing
 successors and failure/no-receipt nonpublication before accepting another writer;
 do not merely refresh the baseline. Actual D62/D63 remains deferred as directed.
+
+The effective queue's D68 item is complete: see
+`doc/uno-m5-d68-d51-applicability.md` for the current specification hash and
+explicit algebra checking both equations. The earlier frozen prediction is
+unchanged. This is not a report of host execution or fee measurements.
