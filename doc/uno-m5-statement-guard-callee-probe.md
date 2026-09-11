@@ -9,7 +9,7 @@ source was modified. No accounting prediction inputs or observations were read.
 ## Observed result: the declared blind spot is real
 
 The unchanged statement constructor calls `relation::validate_limits` at
-`uno/crypto/src/withdrawal_statement.rs:81` in the reviewed tree. The callee is
+`uno/crypto/src/withdrawal_statement.rs:75` in the reviewed tree. The callee is
 `uno/crypto/src/relation.rs:45`. Only the latter's body was changed in the
 isolated copy: a filesystem copy replaced a serialized account fixture before
 normal limit validation. Its signature remained unchanged. The statement's
