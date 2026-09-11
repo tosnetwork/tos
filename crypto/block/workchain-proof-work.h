@@ -164,6 +164,16 @@ inline td::Result<WorkchainProofOperations> workchain_proof_operations_v4(
   return workchain_system_operations_v4();
 }
 
+inline td::Result<WorkchainProofOperations> workchain_proof_operations_v4(
+    const UnoCryptoSystemEncryptionRequestV2& request) {
+  if (request.abi_version != 2 || !request.amount ||
+      (request.origin_bytes != 41 && request.origin_bytes != 115)) {
+    return td::Status::Error(-7201, "inconsistent local system origin encryption request");
+  }
+  // D69 changes fixed transcript members, not the curve-operation count.
+  return workchain_system_operations_v4();
+}
+
 class WorkchainProofVerifier {
  public:
   WorkchainProofVerifier(const WorkchainProofVerifier&) = delete;
@@ -195,6 +205,17 @@ class WorkchainProofVerifier {
                    [&] { return run_system_verify_backend(request, supplied); });
   }
   std::uint64_t consumed() const { return consumed_; }
+  td::Result<UnoCryptoSystemCiphertext> system_encrypt(const UnoCryptoSystemEncryptionRequestV2& request) {
+    UnoCryptoSystemCiphertext result{};
+    TRY_STATUS(attempt(request, "system ciphertext construction failed",
+                       [&] { return run_system_backend(request, result); }));
+    return result;
+  }
+  td::Status verify(const UnoCryptoSystemEncryptionRequestV2& request,
+                    const UnoCryptoSystemCiphertext& supplied) {
+    return attempt(request, "system ciphertext differs from authenticated derivation",
+                   [&] { return run_system_verify_backend(request, supplied); });
+  }
  private:
   // Every request family uses this one precharge and sticky failure path.
   // No public raw backend entry or unmetered possession overload exists.
@@ -242,6 +263,10 @@ class WorkchainProofVerifier {
   static WorkchainProofVerdict run_system_verify_backend(const UnoCryptoSystemEncryptionRequest& request,
                                                         const UnoCryptoSystemCiphertext& supplied);
   td::Status fail(td::Status error) { failure_ = std::move(error); return failure_.clone(); }
+  static WorkchainProofVerdict run_system_backend(const UnoCryptoSystemEncryptionRequestV2& request,
+                                                 UnoCryptoSystemCiphertext& output);
+  static WorkchainProofVerdict run_system_verify_backend(const UnoCryptoSystemEncryptionRequestV2& request,
+                                                        const UnoCryptoSystemCiphertext& supplied);
   const std::uint64_t declared_;
   std::uint64_t consumed_{0};
   td::Status failure_;

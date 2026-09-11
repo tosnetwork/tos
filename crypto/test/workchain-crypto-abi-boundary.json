@@ -2,13 +2,15 @@
   "crypto/block/workchain-proof-backend.cpp": {
     "symbols": [
       "uno_crypto_system_encrypt_v1",
+      "uno_crypto_system_encrypt_v2",
       "uno_crypto_system_verify_v1",
+      "uno_crypto_system_verify_v2",
       "uno_crypto_verify_closure_possession_v2",
       "uno_crypto_verify_key_possession_v2",
       "uno_crypto_verify_v2"
     ],
-    "sha256": "24e3303088e1abbb8e13bf796f0ee205b82b769319b466fd9233e7cd50fb7ee4",
-    "disposition": "Five private WorkchainProofVerifier ABI boundaries, all reached after the same precharge. System generation/reconstruction entries exist before Deposit host integration; no other node ABI caller."
+    "sha256": "f6139f9723b9b575d65b45e3f46f0d93e249ed8cd1421f7df41f0f5e77090e40",
+    "disposition": "Seven private WorkchainProofVerifier ABI boundaries, all reached after the same precharge. D69 v2 system generation/reconstruction is metered before Failed host issuance integration; v1 Deposit remains unchanged. This inventory is not a completed review or live acceptance claim."
   },
   "crypto/test/test-workchain-proof-backend.cpp": {
     "symbols": [
