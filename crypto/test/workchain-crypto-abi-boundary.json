@@ -92,14 +92,17 @@
   "uno/crypto/include/uno_crypto.h": {
     "symbols": [
       "uno_crypto_system_encrypt_v1",
+      "uno_crypto_system_encrypt_v2",
       "uno_crypto_system_verify_v1",
+      "uno_crypto_system_verify_v2",
       "uno_crypto_verify_closure_possession_v1",
       "uno_crypto_verify_closure_possession_v2",
       "uno_crypto_verify_key_possession_v1",
       "uno_crypto_verify_key_possession_v2",
-      "uno_crypto_verify_v2"
+      "uno_crypto_verify_v2",
+      "uno_crypto_verify_withdrawal_v1"
     ],
-    "sha256": "400a2c318b136986ff0fee34a2c42f37970c29d4b173345121d20903c897ea0f",
+    "sha256": "a0d2fd3351780622f6c6b33591b8ddd094d4092974dab6466cc8b3427348a9bd",
     "disposition": "Public ABI declarations only, no calls. System encryption and verification may only be reached through the metered host backend."
   },
   "uno/crypto/include/uno_crypto_v0_retired.h": {
@@ -121,14 +124,17 @@
   "uno/crypto/src/ffi.rs": {
     "symbols": [
       "uno_crypto_system_encrypt_v1",
+      "uno_crypto_system_encrypt_v2",
       "uno_crypto_system_verify_v1",
+      "uno_crypto_system_verify_v2",
       "uno_crypto_verify_closure_possession_v1",
       "uno_crypto_verify_closure_possession_v2",
       "uno_crypto_verify_key_possession_v1",
       "uno_crypto_verify_key_possession_v2",
-      "uno_crypto_verify_v2"
+      "uno_crypto_verify_v2",
+      "uno_crypto_verify_withdrawal_v1"
     ],
-    "sha256": "3a72655d498da5cce72651427f184400c3381edcab2d399b86c8e561927d710e",
+    "sha256": "caed9a15f352fd112d406e2925bc7d08bebe13957b09c0ba6f68864a132b9f69",
     "disposition": "Rust ABI exports and rejection-only retired stubs, not host callers. Meter belongs to the node-side caller."
   },
   "uno/crypto/src/key_possession.rs": {
@@ -202,6 +208,11 @@
     ],
     "sha256": "32628bb457b7322dfaa7605b370edb0253cf5a62d4dbf72f94aa1c08199c4fe0",
     "disposition": "Private cfg(test) prover tests call D33 ABI directly to test existing COLLECT algebra and error layers, including mixed SEND/system inputs. No production caller, Native admission or persisted pending removal."
+  },
+  "uno/prover/src/tests/withdrawal.rs": {
+    "symbols": ["uno_crypto_verify_withdrawal_v1"],
+    "sha256": "7fcc789ecff305ffbad98c363b75243c89f060ae3463714035f8180f878e5fc3",
+    "disposition": "Private prover test exercises the dedicated D64 ABI with a real proof, changed-fee VERIFY rejection and malformed-context DECODE rejection. No node caller or authenticated Native publication."
   },
   "uno/prover/examples/m3-vectors.rs": {
     "symbols": [

@@ -3,7 +3,9 @@
 ## D64 construction work in progress (2026-09-11)
 
 `withdrawal_statement` is a read-only Rust construction and verification API;
-it exposes no C ABI and has no node-host caller. It specializes the unchanged
+it now exposes the dedicated `uno_crypto_verify_withdrawal_v1` C ABI but has no
+node-host caller yet. The request supplies six balance points and a 566-byte
+host context, never P_B or the three derived transfer points. It specializes the unchanged
 SEND matrix with P_B=P_A and locally derived C_t/D_tA/D_tB. Its explicit
 Withdrawal context binds the two IDs and the separate principal, outward fee,
 return reserve and operation fee; the enclosing authenticated host context is

@@ -3,6 +3,10 @@ use tos_uno_crypto_prototype::{ffi::UNO_RELATION_SEND,
     withdrawal_statement::{WithdrawalAmounts, WithdrawalStatement, public_opening}};
 
 fn run_case(mutation: Option<usize>) {
+    run_case_context(mutation, b"authenticated Native destination, account and fee-policy test context", false);
+}
+
+fn run_case_context(mutation: Option<usize>, context: &[u8], check_abi: bool) {
     let limits = KernelLimits { max_balance: 10000, max_value: 1000, max_collect: 8,
         max_context_bytes: 1024, max_proof_bytes: 4096 };
     let domain = [42; 80];
@@ -28,7 +32,7 @@ fn run_case(mutation: Option<usize>) {
         (old_r * p).compress().to_bytes(), gens.commit(Scalar::from(new), rho).compress().to_bytes(),
         (rho * p).compress().to_bytes(), gens.commit(Scalar::from(old), t).compress().to_bytes()];
     let rebuilt = WithdrawalStatement::new(&limits, domain, withdrawal, attempt, amounts,
-        b"authenticated Native destination, account and fee-policy test context", balance_points).expect("statement");
+        context, balance_points).expect("statement");
     let mut points = *rebuilt.points();
     if mutation == Some(6) { points[6] = gens.commit(Scalar::from(v), r).compress().to_bytes(); }
     let statement = Statement { kind: UNO_RELATION_SEND, limits: &limits, domain: rebuilt.domain(),
@@ -50,11 +54,28 @@ fn run_case(mutation: Option<usize>) {
         return;
     }
     assert!(checked.is_ok());
+    if check_abi {
+        use tos_uno_crypto_prototype::ffi::{WithdrawalVerifyRequestV1, uno_crypto_verify_withdrawal_v1};
+        let mut request = WithdrawalVerifyRequestV1 {
+            abi_version: 1, limits, domain, withdrawal_id: withdrawal, attempt_id: attempt,
+            principal: amounts.principal, outward_fee: amounts.outward_fee,
+            return_reserve: amounts.return_reserve, operation_fee: amounts.operation_fee,
+            balance_points, context: context.as_ptr(), context_bytes: context.len(),
+            commitments: proof.commitments.as_ptr(), commitment_count: proof.commitments.len(),
+            responses: proof.responses.as_ptr(), response_count: proof.responses.len(),
+            proof: proof.range_proof.as_ptr(), proof_bytes: proof.range_proof.len(),
+        };
+        assert_eq!(unsafe { uno_crypto_verify_withdrawal_v1(&request) }, 0, "real proof through dedicated ABI");
+        request.operation_fee += 1;
+        assert_eq!(unsafe { uno_crypto_verify_withdrawal_v1(&request) }, 3, "changed statement must fail verification, not decoding");
+        request.context_bytes = 565;
+        assert_eq!(unsafe { uno_crypto_verify_withdrawal_v1(&request) }, 2, "noncanonical context length");
+    }
     let split = WithdrawalAmounts { outward_fee: amounts.outward_fee.checked_add(1).expect("fee increment"),
         return_reserve: amounts.return_reserve.checked_sub(1).expect("reserve decrement"), ..amounts };
     assert_eq!(split.total().expect("same total"), total);
     let changed = WithdrawalStatement::new(&limits, domain, withdrawal, attempt, split,
-        b"authenticated Native destination, account and fee-policy test context", balance_points).expect("new split");
+        context, balance_points).expect("new split");
     assert_eq!(changed.points(), rebuilt.points());
     assert_eq!(changed.verify(&limits, &proof.commitments, &proof.responses, &proof.range_proof),
         Err(AbiStatus::UNO_CRYPTO_VERIFY), "same total must not erase the fee/reserve split from the challenge");
@@ -81,6 +102,9 @@ fn run_case(mutation: Option<usize>) {
 
 #[test]
 fn withdrawal_real_proof_and_wrong_generated_points() { run_case(None); }
+
+#[test]
+fn withdrawal_dedicated_abi_real_proof() { run_case_context(None, &[42; 566], true); }
 
 #[test]
 fn withdrawal_public_bound_is_not_a_constructor_gate() {

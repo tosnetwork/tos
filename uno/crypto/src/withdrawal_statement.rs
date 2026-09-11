@@ -1,6 +1,6 @@
 //! D64 specialization of the existing SEND relation, not a new relation.
 //!
-//! No C ABI or host caller is connected here. Authentication of the context,
+//! A dedicated C ABI exposes this construction; no node host caller is connected yet. Authentication of the context,
 //! fee components, identities and state is a host obligation. Success neither
 //! authorizes a payout nor permits installing a pending receipt.
 use bulletproofs::PedersenGens;

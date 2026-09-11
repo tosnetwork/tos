@@ -85,6 +85,39 @@ typedef struct {
   uint8_t proof[64];
 } UnoCryptoKeyPossessionRequestV2;
 
+typedef struct {
+  uint64_t max_balance;
+  uint64_t max_value;
+  size_t max_collect;
+  size_t max_context_bytes;
+  size_t max_proof_bytes;
+} UnoCryptoLimits;
+
+/**
+ * Dedicated D64 input: six balance points only. The three public transfer
+ * points and P_B are constructed inside WithdrawalStatement, never supplied.
+ */
+typedef struct {
+  uint32_t abi_version;
+  UnoCryptoLimits limits;
+  uint8_t domain[80];
+  uint8_t withdrawal_id[32];
+  uint8_t attempt_id[32];
+  uint64_t principal;
+  uint64_t outward_fee;
+  uint64_t return_reserve;
+  uint64_t operation_fee;
+  uint8_t balance_points[6][32];
+  const uint8_t *context;
+  size_t context_bytes;
+  const uint8_t (*commitments)[32];
+  size_t commitment_count;
+  const uint8_t (*responses)[32];
+  size_t response_count;
+  const uint8_t *proof;
+  size_t proof_bytes;
+} UnoCryptoWithdrawalVerifyRequestV1;
+
 /**
  * Fixed-width encoded public inputs. Numeric policy and domain provenance
  * must be resolved by the host; ABI version is not a network activation gate.
@@ -115,14 +148,6 @@ typedef struct {
   uint8_t origin[115];
   uint32_t origin_bytes;
 } UnoCryptoSystemEncryptionRequestV2;
-
-typedef struct {
-  uint64_t max_balance;
-  uint64_t max_value;
-  size_t max_collect;
-  size_t max_context_bytes;
-  size_t max_proof_bytes;
-} UnoCryptoLimits;
 
 typedef struct {
   uint32_t abi_version;
@@ -168,6 +193,12 @@ uint32_t uno_crypto_verify_key_possession_v2(const UnoCryptoKeyPossessionRequest
 uint32_t uno_crypto_verify_key_possession_v1(const void*);
 
 uint32_t uno_crypto_verify_closure_possession_v1(const void*);
+
+/**
+ * Borrowed host-owned buffers; all pointers must remain valid until return.
+ * This verifies a statement, not authenticated fee/configuration provenance.
+ */
+uint32_t uno_crypto_verify_withdrawal_v1(const UnoCryptoWithdrawalVerifyRequestV1 *request);
 
 /**
  * Construct a public system ciphertext. Output is untouched unless successful.
