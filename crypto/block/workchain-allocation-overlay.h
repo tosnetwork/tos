@@ -121,7 +121,8 @@ inline td::Result<WorkchainInboundAllocationOverlay> build(
     } else {
       TRY_STATUS(prepared_entry->prepare_workchain_entry(bindings[index], input, effects,
           updates.lookup_ref(coordinator), cfg, max_transfers, extra_validation_cells));
-      TRY_STATUS(prepared_entry->prepare_workchain_refund_message(refund->historical, refund->messages));
+      TRY_STATUS(prepared_entry->prepare_workchain_refund_message(refund->historical, refund->messages,
+                                                                 extra_validation_cells));
     }
     timing[index].outbound_count = prepared_entry->out_msgs.size();
     TRY_RESULT(with_outputs, plan_workchain_participant_lts(inbox.after_lt, timing,

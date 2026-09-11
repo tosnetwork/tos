@@ -147,3 +147,5 @@ fn invalid_public_statement_is_local_and_precedes_entropy() {
         Err(ProverError::Statement(AbiStatus::UNO_CRYPTO_DECODE)));
     assert_eq!(entropy.calls, 0);
 }
+
+mod system_collect;

@@ -6634,13 +6634,8 @@ bool ValidateQuery::check_account_binding_transactions(const block::ResolvedWork
     // local cells into a candidate verdict. Comparisons below are exact claims.
     block::gen::ShardStateUnsplit::Record next;
     if (!tlb::unpack_cell(state_root_, next)) return local("account replay resulting state unavailable");
-    if (rebuilt.effects->get_hash() != claimed_effects->get_hash() ||
-        rebuilt.state.accounts->get_hash() != next.accounts->get_hash() ||
-        rebuilt.state.account_blocks->get_hash() != extra.account_blocks->get_hash() ||
-        rebuilt.imports.in_msg_descr->get_hash() != extra.in_msg_descr->get_hash() ||
-        rebuilt.state.end_lt != end_lt_)
-      return invalid("account replay artifacts differ from independently rebuilt settlement");
-    return td::Status::OK();
+    return block::compare_workchain_account_replay_artifacts(rebuilt, claimed_effects,
+        next.accounts, extra.account_blocks, extra.in_msg_descr, end_lt_);
   };
   auto result = local("account replay interrupted");
   try {

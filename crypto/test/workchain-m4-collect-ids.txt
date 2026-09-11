@@ -1,0 +1,4 @@
+# TEST ONLY. Checked against canonical Native identity derivation by SystemCollectIdentityInputs.
+send=b4c1f660d40ec87e01a1b4e9e2b9d27b57d1b1313c4f0b83eda3ead084b9dfe2
+system1=5722da71dcafd527858e31baa8acd70cc75e72795bd972d0e676136f9727d965
+system2=6bb3ad8f36de9a886f1565dfb32439771399e7c1afe809079f7c9c3944d2fedb

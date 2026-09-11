@@ -5,10 +5,14 @@
 
 #include "workchain-m3-business-config.h"
 #include "workchain-m3-test-funding-operation.h"
+#include "workchain-m4-deposit-input.h"
+#include "block/workchain-deposit-transition.h"
+#include "block/workchain-deposit-rejection-settlement.h"
 #include "block/workchain-confidential-execution.h"
 #include "block/workchain-confidential-native.h"
 #include "block/workchain-registration-payment.h"
 #include "td/utils/filesystem.h"
+#include "td/utils/ScopeGuard.h"
 
 namespace block::m3_test {
 class M3NodeEngine final : public RegisteredWorkchainAccountEngine {
@@ -65,6 +69,33 @@ class M3NodeEngine final : public RegisteredWorkchainAccountEngine {
       return local("authenticated confidential Native wrapper mismatch");
     return NativeAccount{account.data, account.balance};
   }
+  static td::Result<std::uint64_t> transfer_units(const Configuration& cfg, const WorkchainTransferInput& transfer) {
+    TRY_RESULT(shape, confidential_input_detail::shape(transfer.data));
+    UnoCryptoVerifyRequestV2 request{};
+    request.abi_version = UNO_BALANCE_ABI_VERSION;
+    request.relation = workchain_transfer_kind(transfer.data);
+    request.limits = cfg.business.limits;
+    request.context_bytes = 427;
+    request.receipt_count = request.relation == UNO_RELATION_COLLECT
+        ? std::get<WorkchainCollectData>(transfer.data).selected.size() : 0;
+    request.point_count = request.relation == UNO_RELATION_SEND ? 10 : 6 + 3 * request.receipt_count;
+    request.commitment_count = shape.commitments;
+    request.response_count = shape.responses;
+    request.proof_bytes = shape.range;
+    if (request.receipt_count > cfg.business.limits.max_collect || request.proof_bytes > cfg.business.limits.max_proof_bytes)
+      return invalid("candidate exceeds authenticated proof shape limits");
+    TRY_RESULT(operations, workchain_proof_operations_v4(request));
+    return operations.total();
+  }
+  static td::Result<WorkchainOperationFeeAmounts> operation_fees(const Configuration& cfg,
+      const WorkchainTransferInput& transfer) {
+    TRY_RESULT(tariff, require_m4_operation_tariff(cfg.business));
+    TRY_RESULT(deposit, require_m4_deposit_policy(cfg.business));
+    TRY_RESULT(amounts, derive_workchain_operation_fee_amounts(tariff, deposit.slot_fee,
+        workchain_transfer_kind(transfer.data)));
+    TRY_STATUS(check_workchain_operation_public_fee(amounts, workchain_transfer_claims(transfer.data).authorized_fee));
+    return amounts;
+  }
 
  public:
   M3NodeEngine(WorkchainEngineKey key, std::string observation_path)
@@ -98,6 +129,13 @@ class M3NodeEngine final : public RegisteredWorkchainAccountEngine {
     const auto* cfg = dynamic_cast<const Configuration*>(&configuration);
     if (!cfg || td::Bits256(identity.configuration_hash.bits()) != cfg->configuration_hash)
       return local("M3 proof inspection configuration mismatch");
+    if (is_m4_test_deposit(candidate)) {
+      TRY_RESULT(deposit, decode_m4_test_deposit(candidate));
+      TRY_RESULT(limits, require_m4_deposit_policy(cfg->business));
+      (void)deposit;
+      (void)limits;
+      return workchain_system_operations_v4().total();
+    }
     if (is_m3_test_funding(candidate)) {
       if (!default_workchain_execution_registry().test_only_account_instance_execution_enabled(
               cfg->descriptor.workchain_id, cfg->parameters.instance_id))
@@ -114,23 +152,12 @@ class M3NodeEngine final : public RegisteredWorkchainAccountEngine {
     if (std::holds_alternative<WorkchainClosureReplayInput>(wire))
       return workchain_closure_operations_v4().total();
     const auto& transfer = std::get<WorkchainTransferInput>(wire);
-    TRY_RESULT(shape, confidential_input_detail::shape(transfer.data));
-    UnoCryptoVerifyRequestV2 request{};
-    request.abi_version = UNO_BALANCE_ABI_VERSION;
-    request.relation = workchain_transfer_kind(transfer.data);
-    request.limits = cfg->business.limits;
-    request.context_bytes = 427;  // Existing fixed transfer-context v1 encoding.
-    request.receipt_count = request.relation == UNO_RELATION_COLLECT
-        ? std::get<WorkchainCollectData>(transfer.data).selected.size() : 0;
-    request.point_count = request.relation == UNO_RELATION_SEND ? 10 : 6 + 3 * request.receipt_count;
-    request.commitment_count = shape.commitments;
-    request.response_count = shape.responses;
-    request.proof_bytes = shape.range;
-    if (request.receipt_count > cfg->business.limits.max_collect ||
-        request.proof_bytes > cfg->business.limits.max_proof_bytes)
-      return invalid("candidate exceeds authenticated proof shape limits");
-    TRY_RESULT(operations, workchain_proof_operations_v4(request));
-    return operations.total();
+    TRY_RESULT(units, transfer_units(*cfg, transfer));
+    if (cfg->business.deposit) {
+      TRY_RESULT(fees, operation_fees(*cfg, transfer));
+      (void)fees;
+    }
+    return units;
   }
   td::Result<WorkchainAccountEffects> execute_accounts(const td::Ref<vm::Cell>&,
       WorkchainAccountReadView&, const WorkchainEngineConfig&) const override {
@@ -142,6 +169,16 @@ class M3NodeEngine final : public RegisteredWorkchainAccountEngine {
     CHECK(executions_ != UINT_MAX);
     ++executions_;
     observe();
+    const auto before_units = verifier.consumed();
+    // Test observation only, never an input to validation or fee rebuilding.
+    // Missing/extra observations fail the paired driver instead of counting as
+    // zero work. Record failures too: precharged work must not be refunded.
+    SCOPE_EXIT {
+      std::uint64_t units;
+      CHECK(!__builtin_sub_overflow(verifier.consumed(), before_units, &units));
+      td::write_file(observation_path_ + ".units." + std::to_string(executions_),
+                     std::to_string(units) + "\n").ensure();
+    };
     const auto* cfg = dynamic_cast<const Configuration*>(&configuration);
     if (!cfg) return local("M3 test engine configuration type mismatch");
     gen::UnoV2HostInput::Record host;
@@ -166,6 +203,77 @@ class M3NodeEngine final : public RegisteredWorkchainAccountEngine {
     auto system_result = decode_workchain_coordinator_state(coordinator.data);
     if (system_result.is_error()) return local("authenticated coordinator record unavailable");
     auto system = system_result.move_as_ok();
+    auto finish = [&](WorkchainAccountEffects result) -> td::Result<WorkchainAccountEffects> {
+      result.protected_coordinator_snapshot = td::Bits256(coordinator.data->get_hash().bits());
+      return result;
+    };
+    if (is_m4_test_deposit(host.candidate)) {
+      TRY_RESULT(deposit, decode_m4_test_deposit(host.candidate));
+      TRY_RESULT(limits, require_m4_deposit_policy(b));
+      auto inbox_root = host.inbox->prefetch_ulong(1) ? host.inbox->prefetch_ref() : td::Ref<vm::Cell>{};
+      TRY_RESULT(inbox, plan_workchain_native_inbox(inbox_root, 2, {cfg->ingress.executor_address},
+          clock.host_after_lt, cfg->parameters.resources.input.max_inbound));
+      if (inbox.envelopes.size() != 1) return invalid("Deposit requires one authenticated Native input");
+      tlb::MsgEnvelope::Record_std envelope;
+      gen::Message::Record message;
+      gen::CommonMsgInfo::Record_int_msg_info info;
+      gen::MsgAddressInt::Record_addr_std sender, destination;
+      if (!tlb::unpack_cell(inbox.envelopes.front(), envelope) ||
+          !tlb::type_unpack_cell(envelope.msg, gen::t_Message_Any, message) || !gen::csr_unpack(message.info, info) ||
+          !gen::csr_unpack(info.src, sender) || !gen::csr_unpack(info.dest, destination))
+        return invalid("malformed authenticated Deposit message");
+      if (destination.workchain_id != 2 || destination.address != cfg->ingress.executor_address)
+        return invalid("Deposit candidate does not name its authenticated processing account");
+      // The final import commits all public body fields. A proposer cannot
+      // pair a payment for one address/amount with another candidate body.
+      auto body = *message.body;
+      td::Ref<vm::Cell> contents;
+      auto selector = body.fetch_ulong(1);
+      if (selector == 0) contents = vm::CellBuilder().append_cellslice(body).finalize();
+      else if (selector == 1 && body.size() == 0 && body.size_refs() == 1) contents = body.fetch_ref();
+      else return invalid("malformed Deposit message body selector");
+      if (contents->get_hash() != host.candidate->get_hash())
+        return invalid("Deposit candidate body differs from authenticated message");
+      CurrencyCollection received;
+      if (!received.unpack(info.value)) return invalid("invalid Deposit Native value encoding");
+      TRY_RESULT(target, read(accounts, deposit.destination.account, clock.gen_utime, true));
+      auto old_target = decode_workchain_confidential_account(target.data);
+      if (old_target.is_error()) return local("authenticated Deposit account record unavailable");
+      TRY_RESULT(custody, read(accounts, *cfg->ingress.custody_address, clock.gen_utime, false));
+      auto reject = [&]() -> td::Result<WorkchainAccountEffects> {
+        WorkchainAccountEffects result;
+        result.updates = {{deposit.destination.account, target.data},
+            {cfg->ingress.executor_address, coordinator.data}, {*cfg->ingress.custody_address, custody.data}};
+        std::sort(result.updates.begin(), result.updates.end(), [](const auto& a, const auto& b) {
+          return a.account < b.account;
+        });
+        result.rejected_deposit = std::make_shared<WorkchainDepositRejectionExecution>(
+            WorkchainDepositRejectionExecution{td::Bits256(envelope.msg->get_hash().bits()),
+                td::Bits256(coordinator.data->get_hash().bits()), cfg->ingress, cfg->descriptor,
+                cfg->workchains, {256, 256}});
+        return finish(std::move(result));
+      };
+      // Rejection is a normal protocol result. Native prices and outgoing LT
+      // are supplied by the settlement host, never guessed inside the engine.
+      if (sender.workchain_id != 0 || sender.anycast->size() != 1 || destination.anycast->size() != 1 ||
+          info.bounced || !info.bounce || message.init->size() != 1 || message.init->prefetch_ulong(1) != 0)
+        return reject();
+      TRY_RESULT(applied, prepare_workchain_deposit_transition(limits, b.domain, cfg->ingress.executor_address,
+          *cfg->ingress.custody_address, b.rules.asset, td::Bits256(envelope.msg->get_hash().bits()),
+          deposit.destination, deposit.principal, received, std::optional{old_target.move_as_ok()}, system,
+          custody.balance, coordinator.balance, {256, 256}, 4096, verifier));
+      if (std::holds_alternative<WorkchainDepositRejection>(applied))
+        return reject();
+      auto accepted = std::get<WorkchainDepositTransition>(std::move(applied));
+      WorkchainAccountEffects result;
+      result.updates = {{deposit.destination.account, accepted.account_data},
+          {cfg->ingress.executor_address, accepted.coordinator_data}, {*cfg->ingress.custody_address, custody.data}};
+      result.native_transfers = {accepted.principal_transfer};
+      std::sort(result.updates.begin(), result.updates.end(), [](const auto& a, const auto& b) {
+        return a.account < b.account;
+      });
+      return finish(std::move(result));
+    }
     if (is_m3_test_funding(host.candidate)) {
       if (!default_workchain_execution_registry().test_only_account_instance_execution_enabled(
               domain.workchain_id, domain.instance_id))
@@ -178,7 +286,7 @@ class M3NodeEngine final : public RegisteredWorkchainAccountEngine {
       std::sort(result.updates.begin(), result.updates.end(), [](const auto& a, const auto& b) {
         return a.account < b.account;
       });
-      return result;
+      return finish(std::move(result));
     }
     TRY_RESULT(wire, decode_candidate(host.candidate));
     WorkchainAccountEffects result;
@@ -217,6 +325,14 @@ class M3NodeEngine final : public RegisteredWorkchainAccountEngine {
       const auto& transfer = std::get<WorkchainTransferInput>(wire);
       const auto& claims = workchain_transfer_claims(transfer.data);
       const unsigned kind = workchain_transfer_kind(transfer.data);
+      std::optional<WorkchainOperationFeeAmounts> amounts;
+      std::uint64_t expected_units = 0;
+      if (b.deposit) {
+        TRY_RESULT(units, transfer_units(*cfg, transfer));
+        expected_units = units;
+        TRY_RESULT(reconstructed, operation_fees(*cfg, transfer));
+        amounts = reconstructed;
+      }
       TRY_RESULT(native, read(accounts, claims.source.account, clock.gen_utime, true));
       auto decoded_source = decode_workchain_confidential_account(native.data);
       if (decoded_source.is_error()) return local("authenticated source record unavailable");
@@ -233,17 +349,34 @@ class M3NodeEngine final : public RegisteredWorkchainAccountEngine {
       WorkchainTransferEnvironment env{b.limits, b.domain,
           {2, 1, 1, 2, kind, domain.global_id, 2, domain.genesis_hash, domain.instance_id},
           b.rules, profiles, b.fee_profile, b.fee_effective_height, clock.height,
-          kind == 1 ? b.send_fee : b.collect_fee, 16, b.account_schema, b.relation_profile, b.proof_profile};
+          amounts ? amounts->total : kind == 1 ? b.send_fee : b.collect_fee,
+          16, b.account_schema, b.relation_profile, b.proof_profile};
+      const auto consumed_before = verifier.consumed();
       TRY_RESULT(applied, execute_workchain_confidential_transfer(env, transfer, std::optional{source},
                                                                  destination, verifier));
       result.updates = {{claims.source.account, applied.source_data},
                         {cfg->ingress.executor_address, coordinator.data}};
       if (applied.destination_data.not_null()) result.updates.push_back({target, applied.destination_data});
+      if (amounts) {
+        std::uint64_t actual_units;
+        // Checked subtraction: a verifier regression must not turn a backwards
+        // counter into a huge proof-work count. This checks resource accounting,
+        // NOT the separate D28 billing units; proof work never prices the fee.
+        if (__builtin_sub_overflow(verifier.consumed(), consumed_before, &actual_units) || actual_units != expected_units)
+          return local("verified proof work differs from admitted resource count");
+        TRY_RESULT(custody, read(accounts, *cfg->ingress.custody_address, clock.gen_utime, false));
+        result.updates.push_back({*cfg->ingress.custody_address, custody.data});
+        if (amounts->total) result.fees = materialize_workchain_operation_fees(*amounts,
+            *cfg->ingress.custody_address, cfg->ingress.executor_address);
+        // Native settlement derives S's existing internal edge and C+T's
+        // total_fees from this independently reconstructed result. No fee
+        // message, payout or asynchronous receipt is manufactured.
+      }
     }
     std::sort(result.updates.begin(), result.updates.end(), [](const auto& a, const auto& b) {
       return a.account < b.account;
     });
-    return result;
+    return finish(std::move(result));
   }
 };
 }  // namespace block::m3_test

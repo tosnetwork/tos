@@ -3,6 +3,8 @@
 
 namespace block {
 
+using WorkchainSelectedReceipt = std::variant<WorkchainPendingReceipt, WorkchainDepositReceipt>;
+
 // Canonical commitment encoding only. No state acquisition, receipt selection,
 // authentication or verdict is performed here. Each host independently supplies
 // exactly the old public fields and the selected COMPLETE authenticated receipts.
@@ -13,7 +15,7 @@ struct WorkchainTransferOldStatement {
   std::uint64_t auth_nonce, available_revision;
   td::Bits256 destination_public_key;
   std::uint32_t destination_key_epoch;
-  std::vector<WorkchainPendingReceipt> selected;
+  std::vector<WorkchainSelectedReceipt> selected;
 };
 
 inline td::Result<td::Bits256> hash_workchain_transfer_old_statement(
@@ -40,7 +42,16 @@ inline td::Result<td::Bits256> hash_workchain_transfer_old_statement(
     // terminator is an empty ordinary cell. Kernel checks selected-ID ordering.
     relation_state = vm::CellBuilder().finalize();
     for (auto it=value.selected.rbegin(); it!=value.selected.rend(); ++it) {
-      TRY_RESULT(receipt, encode_workchain_pending_receipt(*it));
+      // Retain the exact original constructor: system origin is message/sequence,
+      // never a fabricated SEND nonce. Existing SEND-only commitments keep their
+      // bytes. Mixed selections retain the kernel's selected-ID order.
+      auto encoded = std::visit([](const auto& receipt) -> td::Result<td::Ref<vm::Cell>> {
+        if constexpr (std::is_same_v<std::decay_t<decltype(receipt)>, WorkchainPendingReceipt>)
+          return encode_workchain_pending_receipt(receipt);
+        else
+          return encode_workchain_deposit_receipt(receipt);
+      }, *it);
+      TRY_RESULT(receipt, std::move(encoded));
       relation_state = vm::CellBuilder().store_ref(receipt).store_ref(relation_state).finalize();
     }
   }

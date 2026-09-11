@@ -82,3 +82,45 @@ TEST(ConfidentialTransition, HistoricalFailureNonceAndExpiry) {
   ASSERT_EQ(retry.error().message(),"confidential nonce or available revision mismatch");
   ASSERT_EQ(retry.error().code(),-7200);
 }
+
+TEST(ConfidentialTransition, CollectBindsCompleteSystemOrigin) {
+  using namespace block;
+  auto zero = td::Bits256::zero();
+  auto one = zero; one.as_slice()[31] = 1;
+  auto key_bytes = td::hex_decode("e2f2ae0a6abc4e71a884a961c500515f58e30b6aa582dd8db6a65945e08d2d76").move_as_ok();
+  td::Bits256 key; key.as_slice().copy_from(key_bytes);
+  WorkchainConfidentialAccount a{2, 1, 4, 3, zero, {2, one, zero}, {zero, zero, zero},
+      {10, 0, one}, key, 0, {zero, zero}, 7, 9, {}, WorkchainAccountActive{}, {}};
+  auto receipt_id = derive_workchain_deposit_id(one, 1).move_as_ok();
+  a.system_pending.push_back({receipt_id, one, 1, 1000000000, a.address.instance, 0,
+      a.bindings.asset, {key, key}, 0});
+  WorkchainTransferEnvironment env{{(std::uint64_t{1} << 62) - 1, (std::uint64_t{1} << 62) - 1, 8, 1024, 4096}, {},
+      {2, 1, 1, 2, 2, 3, 2, zero, zero}, {zero, zero, zero}, {zero, zero, zero}, zero, 0, 100, 3, 16, 2, 1, 4};
+  WorkchainTransferClaims claims{a.address, 7, 9, 0, 100, 3};
+  WorkchainTransferInput input{derive_workchain_operation_id({3, zero, zero}, a.address, 2, 7).move_as_ok(),
+      WorkchainCollectData{claims, {key, key}, key, {{receipt_id, key}}}, {}};
+  auto prepare = [&] {
+    return prepare_workchain_transfer_statement(env, input, std::optional<WorkchainConfidentialAccount>{a},
+        std::optional<WorkchainConfidentialAccount>{});
+  };
+  auto original = prepare();
+  ASSERT_TRUE(original.is_ok());
+  ASSERT_EQ(original.ok().receipt_ids.size(), 1u);
+  ASSERT_EQ(original.ok().points.size(), 9u);
+  ASSERT_EQ(a.pending.size(), 0u);  // No fabricated SEND source was needed.
+  a.system_pending.front().target_key_epoch = 1;
+  auto wrong_epoch = prepare();
+  ASSERT_TRUE(wrong_epoch.is_error());
+  ASSERT_EQ(wrong_epoch.error().message(), "system pending consumption, ownership or source domain mismatch");
+  ASSERT_EQ(wrong_epoch.error().code(), -7200);
+  a.system_pending.front().target_key_epoch = 0;
+  // Same ID/ciphertext but a different authenticated public amount changes the
+  // old-statement commitment. The complete system receipt is bound, not just C,D.
+  ++a.system_pending.front().amount;
+  ASSERT_TRUE(prepare().move_as_ok().context != original.ok().context);
+  a.system_pending.clear();
+  auto missing = prepare();
+  ASSERT_TRUE(missing.is_error());
+  ASSERT_EQ(missing.error().message(), "selected pending receipt does not exist");
+  ASSERT_EQ(missing.error().code(), -7200);
+}

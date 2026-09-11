@@ -27,6 +27,37 @@ WorkchainProofVerdict WorkchainProofVerifier::run_backend(const UnoCryptoVerifyR
   ++backend_calls;
   return verdict;
 }
+WorkchainProofVerdict WorkchainProofVerifier::run_system_backend(
+    const UnoCryptoSystemEncryptionRequest&, UnoCryptoSystemCiphertext&) {
+  ++backend_calls;
+  return verdict;
+}
+WorkchainProofVerdict WorkchainProofVerifier::run_system_verify_backend(
+    const UnoCryptoSystemEncryptionRequest&, const UnoCryptoSystemCiphertext&) {
+  ++backend_calls;
+  return verdict;
+}
+}
+
+TEST(WorkchainProofWork, SystemPairChargesBeforeEitherBackend) {
+  UnoCryptoSystemEncryptionRequest request{};
+  request.abi_version = UNO_CRYPTO_ABI_VERSION;
+  request.amount = 1;
+  UnoCryptoSystemCiphertext ciphertext{};
+  backend_calls = 0;
+  verdict = block::WorkchainProofVerdict::Valid;
+  auto generation = block::WorkchainProofTestAccess::create(6);
+  auto verification = block::WorkchainProofTestAccess::create(6);
+  ASSERT_TRUE(generation.system_encrypt(request).is_error());
+  ASSERT_TRUE(verification.verify(request, ciphertext).is_error());
+  ASSERT_EQ(backend_calls, 0u);
+  auto proposer = block::WorkchainProofTestAccess::create(7);
+  auto validator = block::WorkchainProofTestAccess::create(7);
+  ASSERT_TRUE(proposer.system_encrypt(request).is_ok());
+  ASSERT_TRUE(validator.verify(request, ciphertext).is_ok());
+  ASSERT_EQ(backend_calls, 2u);
+  ASSERT_EQ(proposer.consumed(), 7u);
+  ASSERT_EQ(validator.consumed(), proposer.consumed());
 }
 
 TEST(WorkchainProofWork, ExactSendComponents) {

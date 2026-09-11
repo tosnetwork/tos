@@ -7,9 +7,314 @@
 #include "td/utils/tests.h"
 #include "vm/boc.h"
 #include "block/block-parse.h"
+#include "block/workchain-operation-fees.h"
+#include "block/workchain-account-effects.h"
+#include "block/workchain-native-allocation.h"
+#include "block/workchain-allocation-overlay.h"
+#include "block/workchain-account-settlement.h"
+#include "block/workchain-confidential-native.h"
 #include <fstream>
 #include <iostream>
 #include <sstream>
+
+static void exercise_static_fee_settlement(block::WorkchainStaticOperationTariff supplied,
+                                           std::uint64_t slot_price, bool original) {
+  using namespace block;
+  using namespace block::m3_test;
+  auto coordinator = td::Bits256::zero(), custody = td::Bits256::zero();
+  custody.as_slice()[31] = 1;
+  std::array<unsigned char, 80> domain{};
+  const auto maximum = (std::uint64_t{1} << 62) - 1;
+  M3TestBusinessParameters business{{maximum, maximum, 8, 1024, 4096}, domain, 0, 0,
+      {coordinator, custody, coordinator}, coordinator, coordinator, coordinator, 1, 2, 1, 4};
+  business.deposit = WorkchainDepositPolicy{1000000000, maximum, slot_price, 16, 4};
+  auto legacy = encode_m3_test_business_parameters(business).move_as_ok();
+  auto absent = require_m4_operation_tariff(decode_m3_test_business_parameters(legacy).move_as_ok());
+  ASSERT_TRUE(absent.is_error());
+  ASSERT_EQ(absent.error().code(), -7201);
+  business.operation_tariff = supplied;
+  auto root = encode_m3_test_business_parameters(business).move_as_ok();
+  auto decoded = decode_m3_test_business_parameters(root).move_as_ok();
+  auto tariff = require_m4_operation_tariff(decoded).move_as_ok();
+  ASSERT_EQ(tariff.base, supplied.base);
+  ASSERT_EQ(tariff.send_tip, supplied.send_tip);
+  ASSERT_EQ(tariff.collect_tip, supplied.collect_tip);
+  ASSERT_EQ(encode_m3_test_business_parameters(decoded).move_as_ok()->get_hash(), root->get_hash());
+  for (unsigned field = 0; field < 3; ++field) {
+    auto changed = business;
+    if (field == 0) ++changed.operation_tariff->base;
+    if (field == 1) ++changed.operation_tariff->send_tip;
+    if (field == 2) ++changed.operation_tariff->collect_tip;
+    ASSERT_TRUE(encode_m3_test_business_parameters(changed).move_as_ok()->get_hash() != root->get_hash());
+  }
+  auto conflicting = business;
+  conflicting.collect_fee = 17;
+  ASSERT_TRUE(encode_m3_test_business_parameters(conflicting).is_error());
+  auto short_slice = vm::load_cell_slice(root);
+  auto bits = short_slice.fetch_subslice(576);
+  vm::CellBuilder truncated;
+  truncated.append_cellslice(*bits);
+  while (short_slice.size_refs()) truncated.store_ref(short_slice.fetch_ref());
+  ASSERT_TRUE(decode_m3_test_business_parameters(truncated.finalize()).is_error());
+  auto send = derive_workchain_operation_fee_amounts(tariff, business.deposit->slot_fee, 1).move_as_ok();
+  auto collect = derive_workchain_operation_fee_amounts(tariff, business.deposit->slot_fee, 2).move_as_ok();
+  if (original) {
+  ASSERT_EQ(send.state, 3000000u);
+  ASSERT_EQ(send.compute, 2u);
+  ASSERT_EQ(send.tip, 5u);
+  ASSERT_EQ(send.total, 3000007u);
+  ASSERT_EQ(collect.state, 0u);
+  ASSERT_EQ(collect.compute, 6u);
+  ASSERT_EQ(collect.total, 13u);
+  } else {
+    // Coordinator's independently predicted case, not expected values computed
+    // by repeating the implementation's formula inside the assertion.
+    ASSERT_EQ(send.compute, 1000u);
+    ASSERT_EQ(send.total, 1257u);
+    ASSERT_EQ(collect.compute, 3000u);
+    ASSERT_EQ(collect.total, 3011u);
+  }
+  // Run the same public-fee gate consumed by the node engine. Deliberately quote
+  // the former proof-work formula; it must fail here, before proof verification.
+  for (const auto& pair : {std::pair{send, std::uint64_t{2288}},
+                          std::pair{collect, std::uint64_t{2639}}}) {
+    std::uint64_t wrong_compute, subtotal, wrong_total;
+    ASSERT_TRUE(!__builtin_mul_overflow(tariff.base, pair.second, &wrong_compute));
+    ASSERT_TRUE(!__builtin_add_overflow(pair.first.state, wrong_compute, &subtotal));
+    ASSERT_TRUE(!__builtin_add_overflow(subtotal, pair.first.tip, &wrong_total));
+    auto rejected = check_workchain_operation_public_fee(pair.first, wrong_total);
+    ASSERT_TRUE(rejected.is_error());
+    ASSERT_EQ(rejected.code(), -7200);
+    ASSERT_EQ(rejected.message(), "operation public fee differs from authenticated static components");
+    ASSERT_TRUE(check_workchain_operation_public_fee(pair.first, pair.first.total).is_ok());
+  }
+  auto expected = materialize_workchain_operation_fees(send, custody, coordinator);
+  ASSERT_TRUE(compare_workchain_operation_fee_claim(expected, expected).is_ok());
+  for (unsigned defect = 0; defect < 5; ++defect) {
+    auto claim = expected;
+    if (defect == 0) std::swap(claim.state_fee, claim.compute_fee);
+    if (defect == 1) std::swap(claim.compute_fee, claim.tip);
+    if (defect == 2) std::swap(claim.state_fee, claim.tip);
+    if (defect == 3) {
+      std::uint64_t shifted_state, shifted_compute;
+      ASSERT_TRUE(!__builtin_add_overflow(send.state, std::uint64_t{1}, &shifted_state));
+      // The tested base is positive, so C >= 1; enforce the subtraction too.
+      ASSERT_TRUE(!__builtin_sub_overflow(send.compute, std::uint64_t{1}, &shifted_compute));
+      claim.state_fee = workchain_unsigned_fee(shifted_state);
+      claim.compute_fee = workchain_unsigned_fee(shifted_compute);
+      auto before = checked_workchain_fee_totals(expected).move_as_ok();
+      auto after = checked_workchain_fee_totals(claim).move_as_ok();
+      ASSERT_TRUE(before.total == after.total);
+    }
+    if (defect == 4) claim.coordinator = custody;
+    auto rejected = compare_workchain_operation_fee_claim(expected, claim);
+    ASSERT_TRUE(rejected.is_error());
+    ASSERT_EQ(rejected.code(), -7200);
+    ASSERT_EQ(rejected.message(), "candidate fee components or authenticated recipients differ");
+  }
+  auto overflow = derive_workchain_operation_fee_amounts({UINT64_MAX, 0, 0}, 3000000, 2);
+  ASSERT_TRUE(overflow.is_error());
+  ASSERT_EQ(overflow.error().code(), -7200);
+  auto empty = vm::CellBuilder().finalize();
+  WorkchainAccountEffects effects;
+  effects.updates = {{coordinator, empty}, {custody, empty}};
+  effects.fees = expected;
+  auto encoded = encode_workchain_account_effects(effects, 2, 1, 100).move_as_ok();
+  gen::UnoV2HostEffects::Record record;
+  ASSERT_TRUE(::tlb::unpack_cell(encoded, record));
+  // The existing allocation edge moves S only. C+T belongs to the subsequent
+  // Native total_fees stage; do not accidentally allocate it to coordinator.
+  auto from = allocate_workchain_native_balance(custody, CurrencyCollection(10000000), record, 1, 100).move_as_ok();
+  auto to = allocate_workchain_native_balance(coordinator, CurrencyCollection(100), record, 1, 100).move_as_ok();
+  if (original) {
+    ASSERT_EQ(td::cmp(from.tomis, 7000000), 0);
+    ASSERT_EQ(td::cmp(to.tomis, 3000100), 0);
+  }
+  auto native = decode_workchain_native_effects(record.native).move_as_ok();
+  ASSERT_EQ(native.payout->prefetch_ulong(1), 0u);
+  // Exercise the real Native transaction constructors and serialized fee
+  // augmentation, not just allocation arithmetic. This is post-admission
+  // settlement; it does not claim actor validation or masterchain import.
+  vm::AugmentedDictionary accounts(256, block::tlb::aug_ShardAccounts);
+  WorkchainAccountDeclarations access;
+  for (const auto& key : {coordinator, custody}) {
+    vm::CellBuilder storage;
+    storage.store_long(0, 64);
+    ASSERT_TRUE(CurrencyCollection(key == custody ? 10000000 : 100).store(storage));
+    storage.store_long(1, 1).store_zeroes(2);
+    ASSERT_TRUE(storage.store_maybe_ref(workchain_confidential_native_code()));
+    ASSERT_TRUE(storage.store_maybe_ref(empty));
+    storage.store_long(0, 1);
+    vm::CellBuilder account;
+    account.store_long(1, 1).store_long(4, 3).store_long(2, 8).store_bits(key.bits(), 256);
+    ASSERT_TRUE(store_UInt7(account, 0));
+    ASSERT_TRUE(store_UInt7(account, 0));
+    account.store_zeroes(36).append_cellslice(vm::load_cell_slice(storage.finalize()));
+    auto account_root = account.finalize();
+    vm::CellBuilder leaf;
+    leaf.store_ref(account_root).store_zeroes(256).store_long(0, 64);
+    ASSERT_TRUE(accounts.set_builder(key, leaf, vm::Dictionary::SetMode::Add));
+    access.reads.push_back({key, td::Bits256(account_root->get_hash().bits())});
+    access.writes.push_back(key);
+  }
+  const td::Bits256 configuration_hash(root->get_hash().bits());
+  InputPolicyIdentity input_identity{root->get_hash(), false, 17, 9, 2, 4};
+  WorkchainResourcePolicy resources{4, {256, 65536, 8, 2, 2, 1},
+      {256, 65536, 128, 32768, 64}, {10000, 128, 32768, 256, 65536, 1}, {0, 2, 2}, 1};
+  auto resolved = ResolvedBatchInputPolicy::from_resolved_fields(resources, input_identity);
+  ASSERT_TRUE(std::holds_alternative<ResolvedBatchInputPolicy>(resolved));
+  WorkchainHostIdentity host_identity{-1, configuration_hash, configuration_hash, 2, tos::shardIdAll,
+      configuration_hash, false, 17, 9, 2, 4, configuration_hash, 1, 10, 20, empty};
+  const std::vector<td::Ref<vm::Cell>> inbox;
+  auto declarations = encode_workchain_account_declarations(access, 2, 2).move_as_ok();
+  BatchInputAdmissionSession admission(std::get<ResolvedBatchInputPolicy>(resolved), empty,
+                                       declarations, host_identity, inbox);
+  ASSERT_TRUE(std::holds_alternative<AdmittedBatchInput>(admission.evaluate()));
+  auto input = std::get<AdmittedBatchInput>(admission.evaluate()).root();
+  SerializeConfig serialization;
+  serialization.global_version = 16;
+  serialization.disable_anycast = true;
+  auto old_accounts = accounts.get_wrapped_dict_root();
+  for (const auto& amounts : {send, collect}) {
+    effects.fees = materialize_workchain_operation_fees(amounts, custody, coordinator);
+    auto output = encode_workchain_account_effects(effects, 2, 1, 4096).move_as_ok();
+    auto built = build_workchain_inbound_allocation_overlay(old_accounts, host_identity, input, output,
+        coordinator, custody, 2, 2, 1, 0, 4096, serialization);
+    if (built.is_error()) LOG(ERROR) << built.error();
+    ASSERT_TRUE(built.is_ok());
+    ASSERT_TRUE(built.ok().exports.empty());
+    WorkchainAccountSettlement rebuilt;
+    rebuilt.effects = output;
+    rebuilt.state = built.ok().state;
+    rebuilt.imports = built.ok().imports;
+    auto verdict = [&](const td::Ref<vm::Cell>& claim_effects, const td::Ref<vm::Cell>& claim_blocks) {
+      return compare_workchain_account_replay_artifacts(rebuilt, claim_effects,
+          rebuilt.state.accounts, claim_blocks, rebuilt.imports.in_msg_descr, rebuilt.state.end_lt);
+    };
+    ASSERT_TRUE(verdict(output, rebuilt.state.account_blocks).is_ok());
+    for (unsigned defect = 0; defect < 5; ++defect) {
+      auto changed = effects;
+      auto& claim = *changed.fees;
+      if (defect == 0) std::swap(claim.state_fee, claim.compute_fee);
+      if (defect == 1) std::swap(claim.compute_fee, claim.tip);
+      if (defect == 2) std::swap(claim.state_fee, claim.tip);
+      if (defect == 3) {
+        std::uint64_t s, c;
+        ASSERT_TRUE(!__builtin_add_overflow(amounts.state, std::uint64_t{1}, &s));
+        // C is positive in both cases; checked subtraction still enforces it.
+        ASSERT_TRUE(!__builtin_sub_overflow(amounts.compute, std::uint64_t{1}, &c));
+        claim.state_fee = workchain_unsigned_fee(s);
+        claim.compute_fee = workchain_unsigned_fee(c);
+      }
+      if (defect == 4) std::swap(claim.custody, claim.coordinator);
+      auto wire = encode_workchain_account_effects(changed, 2, 1, 4096).move_as_ok();
+      const auto rejected = verdict(wire, rebuilt.state.account_blocks);
+      ASSERT_EQ(rejected.code(), -7200);
+      ASSERT_EQ(rejected.message(), "account replay artifacts differ from independently rebuilt settlement");
+    }
+    vm::AugmentedDictionary next(vm::load_cell_slice_ref(built.ok().state.accounts), 256,
+                                  block::tlb::aug_ShardAccounts);
+    vm::AugmentedDictionary blocks(vm::load_cell_slice_ref(built.ok().state.account_blocks), 256,
+                                    block::tlb::aug_ShardAccountBlocks);
+    auto totals = checked_workchain_fee_totals(*effects.fees).move_as_ok();
+    CurrencyCollection augmented;
+    ASSERT_TRUE(augmented.unpack(blocks.get_root_extra()));
+    ASSERT_TRUE(augmented == totals.collected);
+    for (const auto& key : {coordinator, custody}) {
+      Account after(2, key.bits());
+      ASSERT_TRUE(after.unpack(next.lookup(key), 10, false));
+      // Initial backing exceeds the entire charge. Checked Native subtraction
+      // below still enforces this precondition instead of trusting the fixture.
+      CurrencyCollection expected_balance;
+      ASSERT_TRUE(key == custody
+          ? CurrencyCollection::sub(CurrencyCollection(10000000), totals.total, expected_balance)
+          : CurrencyCollection::add(CurrencyCollection(100), CurrencyCollection(effects.fees->state_fee), expected_balance));
+      ASSERT_TRUE(after.balance == expected_balance);
+      gen::AccountBlock::Record account_block;
+      ASSERT_TRUE(gen::t_AccountBlock.unpack(blocks.lookup(key).write(), account_block));
+      vm::AugmentedDictionary txs(vm::DictNonEmpty(), account_block.transactions, 64,
+                                   block::tlb::aug_AccountTransactions);
+      gen::Transaction::Record tx;
+      ASSERT_TRUE(::tlb::unpack_cell(txs.lookup_ref(td::BitArray<64>(after.last_trans_lt_)), tx));
+      CurrencyCollection actual_fees;
+      ASSERT_TRUE(actual_fees.unpack(tx.total_fees));
+      ASSERT_TRUE(actual_fees == (key == custody ? totals.collected : CurrencyCollection(0)));
+      ASSERT_EQ(tx.outmsg_cnt, 0);
+      if (key == custody) {
+        // A canonical transaction claiming an actual custody-sourced message,
+        // not a malformed-cell failure. D32 reconstruction emits none. Exercise
+        // the validator's final claim comparison and its CandidateInvalid code.
+        vm::CellBuilder message;
+        message.store_long(4, 4).store_long(4, 3).store_long(2, 8).store_bits(custody.bits(), 256)
+            .store_long(4, 3).store_long(2, 8).store_bits(coordinator.bits(), 256);
+        ASSERT_TRUE(CurrencyCollection(1).store(message));
+        std::uint64_t message_lt;
+        ASSERT_TRUE(!__builtin_add_overflow(tx.lt, std::uint64_t{1}, &message_lt));
+        message.store_zeroes(8).store_long(message_lt, 64).store_long(tx.now, 32).store_zeroes(2);
+        auto outgoing_message = message.finalize();
+        ASSERT_TRUE(gen::t_Message_Any.validate_ref(outgoing_message));
+        vm::Dictionary outgoing(15);
+        td::BitArray<15> index;
+        index.bits().store_uint(0, 15);
+        ASSERT_TRUE(outgoing.set_ref(index, outgoing_message));
+        tx.outmsg_cnt = 1;
+        tx.r1.out_msgs = outgoing.get_root();
+        ASSERT_TRUE(gen::t_HashmapE_15_Ref_Message_Any.validate_upto(4096, *tx.r1.out_msgs));
+        td::Ref<vm::Cell> aux;
+        ASSERT_TRUE(gen::t_Transaction_aux.cell_pack(aux, tx.r1));
+        // Match Native Transaction::serialize's unsigned two-bit status
+        // encoding. The generated enum writer uses signed range checking and
+        // cannot repack active=2, even for the unmodified valid transaction.
+        vm::CellBuilder transaction;
+        transaction.store_long(7, 4).store_bits(tx.account_addr.bits(), 256).store_long(tx.lt, 64)
+            .store_bits(tx.prev_trans_hash.bits(), 256).store_long(tx.prev_trans_lt, 64)
+            .store_long(tx.now, 32).store_long(tx.outmsg_cnt, 15)
+            .store_long(tx.orig_status, 2).store_long(tx.end_status, 2).store_ref(aux)
+            .append_cellslice(*tx.total_fees).store_ref(tx.state_update).store_ref(tx.description);
+        auto modified_tx = transaction.finalize();
+        ASSERT_TRUE(gen::t_Transaction.validate_ref(4096, modified_tx));
+        ASSERT_TRUE(txs.set_ref(td::BitArray<64>(after.last_trans_lt_), modified_tx));
+        account_block.transactions = vm::load_cell_slice_ref(txs.get_root_cell());
+        vm::CellBuilder modified_account;
+        ASSERT_TRUE(gen::t_AccountBlock.pack(modified_account, account_block));
+        vm::AugmentedDictionary changed(vm::load_cell_slice_ref(rebuilt.state.account_blocks), 256,
+                                        block::tlb::aug_ShardAccountBlocks);
+        ASSERT_TRUE(changed.set_builder(custody, modified_account));
+        auto rejected = verdict(output, changed.get_wrapped_dict_root());
+        ASSERT_EQ(rejected.code(), -7200);
+        ASSERT_EQ(rejected.message(), "account replay artifacts differ from independently rebuilt settlement");
+        ASSERT_TRUE(verdict(output, rebuilt.state.account_blocks).is_ok());
+      }
+    }
+    ASSERT_TRUE(replay_workchain_inbound_allocation_overlay(old_accounts, host_identity, input, output,
+        coordinator, custody, 2, 2, 1, 0, 4096, serialization, built.ok()).is_ok());
+    std::cout << "Validator final-artifact comparison: component swaps, same-F redistribution, role forgery, "
+                 "and canonical custody outbound transaction rejected (-7200); restored claim accepted; "
+                 "not actor-level candidate mutation coverage\n";
+    std::cout << "Native fee settlement: S=" << amounts.state << " C=" << amounts.compute
+              << " T=" << amounts.tip << " F=" << amounts.total
+              << "; serialized total_fees=" << totals.collected.tomis->to_dec_string()
+              << "; coordinator credit=" << totals.state.tomis->to_dec_string()
+              << "; custody debit=" << totals.total.tomis->to_dec_string()
+              << "; zero exports; allocation replay passed\n";
+  }
+  std::cout << "static inputs: base=" << tariff.base << " slot_fee=" << business.deposit->slot_fee
+            << " send_tip=" << tariff.send_tip << " collect_tip=" << tariff.collect_tip
+            << "; billing SEND=1 COLLECT=3; proof work SEND=2288 COLLECT=2639 is NOT billing; "
+               "proof-priced quotes rejected at public-fee gate (-7200); five component negatives passed\n";
+}
+
+TEST(ConfidentialInput, StaticFeeComponentsAndStateAllocation) {
+  exercise_static_fee_settlement({2, 5, 7}, 3000000, true);
+}
+
+TEST(ConfidentialInput, CoordinatorSpecifiedStaticFeeObservation) {
+  // Parameters supplied after the other implementer's committed prediction.
+  // No prediction value is read here. This measures tariff/Native settlement,
+  // not Deposit admission or a cryptographic N_hidden transition. In particular
+  // slot_fee=250 does not satisfy the separate Deposit policy admission floor.
+  exercise_static_fee_settlement({1000, 7, 11}, 250, false);
+}
 
 TEST(ConfidentialInput, AuthorizationChain) {
   using namespace block::confidential_input_detail;
@@ -436,7 +741,7 @@ TEST(ConfidentialInput, TestBusinessParametersExactCodec) {
   auto unknown = decode_m3_test_business_parameters(rebuild(vm::load_cell_slice(unknown_bits), refs));
   ASSERT_TRUE(unknown.is_error()); ASSERT_EQ(unknown.error().message(), "unknown M3 test business tag");
   tail = slice; tail.advance(48);
-  auto version_bits = vm::CellBuilder().store_long(business_config_detail::tag, 32).store_long(2, 16)
+  auto version_bits = vm::CellBuilder().store_long(business_config_detail::tag, 32).store_long(4, 16)
       .append_cellslice(tail).finalize();
   auto version = decode_m3_test_business_parameters(rebuild(vm::load_cell_slice(version_bits), refs));
   ASSERT_TRUE(version.is_error()); ASSERT_EQ(version.error().message(), "unsupported M3 test business version");
@@ -499,6 +804,37 @@ TEST(ConfidentialInput, TestGenesisUsesParam84Payload) {
   auto replaced=make(business,policy);
   ASSERT_TRUE(replaced.is_error());
   ASSERT_EQ(replaced.error().message(),"M3 test fixture refuses to replace an existing engine configuration");
+}
+
+TEST(ConfidentialInput, DepositPolicyRequiresAuthenticatedFields) {
+  using namespace block;
+  using namespace block::m3_test;
+  std::array<unsigned char, 80> domain{};
+  M3TestBusinessParameters business{{(std::uint64_t{1} << 62) - 1, (std::uint64_t{1} << 62) - 1,
+      8, 1024, 4096}, domain, 11, 17, {number(1), number(2), number(3)},
+      number(4), number(5), number(6), 100, 2, 1, 4};
+  auto legacy = encode_m3_test_business_parameters(business).move_as_ok();
+  auto missing = require_m4_deposit_policy(decode_m3_test_business_parameters(legacy).move_as_ok());
+  ASSERT_TRUE(missing.is_error());
+  ASSERT_EQ(missing.error().message(), "authenticated Deposit parameters absent");
+  // D8/D19 frozen authenticated initial prices. Shape remains test-scope,
+  // unfrozen: neither a production codec nor a runtime fallback is supplied.
+  business.deposit = WorkchainDepositPolicy{1000000000, business.limits.max_value, 3000000, 16, 4};
+  auto root = encode_m3_test_business_parameters(business).move_as_ok();
+  auto restored = decode_m3_test_business_parameters(root).move_as_ok();
+  auto policy = require_m4_deposit_policy(restored).move_as_ok();
+  ASSERT_EQ(policy.minimum, 1000000000u); ASSERT_EQ(policy.slot_fee, 3000000u);
+  ASSERT_EQ(policy.maximum, business.limits.max_value);
+  ASSERT_EQ(policy.user_slots, 16u); ASSERT_EQ(policy.system_slots, 4u);
+  ASSERT_EQ(encode_m3_test_business_parameters(restored).move_as_ok()->get_hash(), root->get_hash());
+  auto altered = business; ++altered.deposit->minimum;
+  ASSERT_TRUE(encode_m3_test_business_parameters(altered).move_as_ok()->get_hash() != root->get_hash());
+  altered = business; ++altered.deposit->slot_fee;
+  ASSERT_TRUE(encode_m3_test_business_parameters(altered).move_as_ok()->get_hash() != root->get_hash());
+  auto short_slice = vm::load_cell_slice(root);
+  short_slice.only_first(384, 4);  // Mandatory slot capacities absent.
+  auto short_root = vm::CellBuilder().append_cellslice(short_slice).finalize();
+  ASSERT_TRUE(decode_m3_test_business_parameters(short_root).is_error());
 }
 
 TEST(ConfidentialInput, ExplicitStateFixtureEdits) {

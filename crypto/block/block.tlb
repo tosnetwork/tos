@@ -7,6 +7,12 @@ uno_v2_coordinator_state#46ff26c1 layout_version:uint16
 uno_v2_coordinator_budget refundable_deposits:uint64 = UnoV2CoordinatorBudget;
 uno_v2_coordinator_deposits layout_version:uint16 system:^UnoV2SystemState
   budget:^UnoV2CoordinatorBudget = UnoV2CoordinatorDeposits;
+// Deposit sequence is authenticated state, never configuration. The host
+// installs its checked increment only with successful atomic admission (D52).
+uno_v2_coordinator_ingress layout_version:uint16 deposit_sequence:uint64
+  system:^UnoV2SystemState budget:^UnoV2CoordinatorBudget unexpected:^Cell = UnoV2CoordinatorIngress;
+// instance below denotes per-account incarnation, not HostDomain.instance_id.
+// M3 uses registration operationID; this choice does not freeze specification semantics.
 uno_v2_account_address workchain_id:int32 account:bits256 instance:bits256 = UnoV2AccountAddress;
 uno_v2_account_bindings asset:bits256 custody:bits256 policy:bits256 = UnoV2AccountBindings;
 uno_v2_registration_funding paid_deposit:uint64 refund_workchain:int32 refund_account:bits256
@@ -22,6 +28,12 @@ uno_v2_pending_target instance:bits256 key_epoch:uint32 asset:bits256 = UnoV2Pen
 uno_v2_pending_receipt receipt_id:bits256 source_operation_nonce:uint64 status:(## 8) { status = 0 }
   source:^UnoV2AccountAddress target:^UnoV2PendingTarget ciphertext:^UnoV2AccountCiphertext
   origin:^UnoV2PendingOrigin = UnoV2PendingReceipt;
+// Native authenticated original Message representation hash, not envelope,
+// body or BoC hash. Encoding does not authenticate the supplied identity.
+uno_v2_deposit_identity inbound_message:bits256 sequence:uint64 = UnoV2DepositIdentity;
+uno_v2_system_pending_receipt receipt_id:bits256 amount:uint64 status:(## 8) { status = 0 }
+  target:^UnoV2PendingTarget ciphertext:^UnoV2AccountCiphertext
+  origin:^UnoV2DepositIdentity = UnoV2PendingReceipt;
 uno_v2_account_active = UnoV2AccountLifecycle;
 uno_v2_account_read_only = UnoV2AccountLifecycle;
 uno_v2_account_migrated successor:^UnoV2AccountAddress migration_operation:bits256 = UnoV2AccountLifecycle;
@@ -30,6 +42,13 @@ uno_v2_account_state schema_version:uint16 relation_profile:uint16 proof_profile
   auth_nonce:uint64 available_revision:uint64 pending_count:(## 16) { pending_count <= 16 }
   identity:^UnoV2AccountIdentity crypto:^UnoV2AccountCrypto
   pending:(HashmapE 256 ^UnoV2PendingReceipt) lifecycle:^UnoV2AccountLifecycle = UnoV2AccountState;
+// One Add-only key space covers both receipt origins. Counts are independently
+// checked by enumerating authenticated entries (D39), never trusted scalars.
+uno_v2_account_state_deposits schema_version:uint16 relation_profile:uint16 proof_profile:uint16
+  auth_nonce:uint64 available_revision:uint64 pending_count:(## 16) { pending_count <= 16 }
+  system_pending_count:(## 16) { system_pending_count <= 4 }
+  identity:^UnoV2AccountIdentity crypto:^UnoV2AccountCrypto
+  pending:(HashmapE 256 ^UnoV2PendingReceipt) lifecycle:^UnoV2AccountLifecycle = UnoV2AccountStateDeposits;
 // Operation identity is a proof INPUT: including authorization would create a
 // cycle (proof -> operationID -> proof). No current block hash enters this DAG.
 uno_v2_operation_network_v1 global_id:int32 genesis_hash:bits256 workchain_instance:bits256

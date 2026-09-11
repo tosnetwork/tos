@@ -11,7 +11,9 @@
 #include "block/workchain-native-materialization.h"
 #include "block/workchain-native-inbox.h"
 #include "block/workchain-registration-settlement.h"
+#include "block/workchain-deposit-rejection-settlement.h"
 #include "block/workchain-closure-settlement.h"
+#include "block/workchain-budget-backing.h"
 #include "vm/cells/UsageCell.h"
 
 namespace block {
@@ -35,6 +37,25 @@ struct WorkchainAccountSettlement {
   std::shared_ptr<const NativeStateReadMeter> state_admission;
   vm::CellUsageTree::NodePtr state_usage_node;
 };
+
+// Candidate-only comparison after independent execution/settlement. Extracted
+// from the validator's final boundary so controls exercise its actual verdict,
+// not a test-only approximation. Rebuilt data never comes from these claims.
+inline td::Status compare_workchain_account_replay_artifacts(
+    const WorkchainAccountSettlement& rebuilt, const td::Ref<vm::Cell>& effects,
+    const td::Ref<vm::Cell>& accounts, const td::Ref<vm::Cell>& account_blocks,
+    const td::Ref<vm::Cell>& imports, std::uint64_t end_lt) {
+  if (rebuilt.effects.is_null() || rebuilt.state.accounts.is_null() ||
+      rebuilt.state.account_blocks.is_null() || rebuilt.imports.in_msg_descr.is_null())
+    return td::Status::Error(-7201, "account replay rebuilt artifacts unavailable");
+  if (effects.is_null() || accounts.is_null() || account_blocks.is_null() || imports.is_null() ||
+      rebuilt.effects->get_hash() != effects->get_hash() ||
+      rebuilt.state.accounts->get_hash() != accounts->get_hash() ||
+      rebuilt.state.account_blocks->get_hash() != account_blocks->get_hash() ||
+      rebuilt.imports.in_msg_descr->get_hash() != imports->get_hash() || rebuilt.state.end_lt != end_lt)
+    return td::Status::Error(-7200, "account replay artifacts differ from independently rebuilt settlement");
+  return td::Status::OK();
+}
 
 // One engine invocation followed by private Native materialization. No caller
 // supplies the input/effects hashes or a second set of account data updates.
@@ -173,6 +194,42 @@ inline td::Result<WorkchainAccountSettlement> settle_executed(
     });
   }
   auto settle = [&]() -> td::Result<WorkchainAccountSettlement> {
+    std::optional<WorkchainDepositRejectionMaterial> rejected_material;
+    std::optional<WorkchainDisposalEntryContext> rejected_context;
+    NativeDisposalProfile rejected_profile{NativeDisposalSource::OriginalDestination,
+        {0, -ComputePhase::sk_no_state, {}}, false};
+    if (executed.effects.rejected_deposit) {
+      if (disposal || executed.effects.registration || executed.effects.closure ||
+          executed.effects.payout_request.not_null() || executed.effects.fees ||
+          !executed.effects.native_transfers.empty() || executed.effects.events.not_null())
+        return td::Status::Error(-7201, "rejected Deposit cannot carry unrelated settlement effects");
+      const auto& rejected = *executed.effects.rejected_deposit;
+      if (rejected.ingress.executor_address != coordinator || !rejected.ingress.custody_address ||
+          *rejected.ingress.custody_address != custody)
+        return td::Status::Error(-7201, "rejected Deposit settlement roles unavailable");
+      TRY_RESULT(material, prepare_workchain_deposit_rejection_settlement(rejected, old_accounts,
+          identity, executed.input, declarations, max_writes, max_inbound, extra_validation_cells, message_cfg));
+      bool replaced = false;
+      for (auto& update : executed.effects.updates) {
+        if (update.account != coordinator) continue;
+        if (replaced || update.data.is_null() || rejected.old_coordinator_data != update.data->get_hash().bits())
+          return td::Status::Error(-7201, "rejected Deposit coordinator update mismatch");
+        update.data = material.coordinator_data;
+        replaced = true;
+      }
+      if (!replaced) return td::Status::Error(-7201, "rejected Deposit lacks coordinator update");
+      // Implementation event encoding (not a frozen business-config schema):
+      // the block commits rejection/branch and any attribution-loss alarm.
+      executed.effects.events = vm::CellBuilder().store_long(0x55445234, 32)
+            .store_long(material.plan.native.branch == NativeDisposalBranch::Bounce, 1)
+            .store_long(material.plan.sender_attribution_lost, 1)
+            .store_long(material.plan.extra_attribution_lost, 1)
+            .store_bits(rejected.message.bits(), 256).finalize();
+      rejected_material.emplace(std::move(material));
+      rejected_context.emplace(WorkchainDisposalEntryContext{custody, message_cfg, rejected.workchains,
+          rejected_profile, max_inbound, 1, rejected.message});
+      disposal = &*rejected_context;
+    }
     std::optional<NativeStateReadMeter> effect_meter;
     if constexpr (std::is_same_v<Admission, ProofAdmittedBatchInput>) {
       const auto& bounds = admitted.policy().resources().work_output;
@@ -299,6 +356,46 @@ inline td::Result<WorkchainAccountSettlement> settle_executed(
       message = std::move(payout.message);
       imports = std::move(payout.imports);
       exports = std::move(payout.exports);
+    }
+    if (executed.effects.protected_coordinator_snapshot) {
+      vm::AugmentedDictionary previous(vm::load_cell_slice_ref(old_accounts), 256, tlb::aug_ShardAccounts);
+      vm::AugmentedDictionary produced(vm::load_cell_slice_ref(state.accounts), 256, tlb::aug_ShardAccounts);
+      Account old_budget(identity.workchain_id, coordinator.bits()), new_budget(identity.workchain_id, coordinator.bits());
+      if (!old_budget.unpack(previous.lookup(coordinator), identity.gen_utime, false) || old_budget.data.is_null() ||
+          *executed.effects.protected_coordinator_snapshot != old_budget.data->get_hash().bits() ||
+          !new_budget.unpack(produced.lookup(coordinator), identity.gen_utime, false) || new_budget.data.is_null())
+        return td::Status::Error(-7201, "protected coordinator snapshot unavailable");
+      TRY_RESULT(before, decode_workchain_coordinator_state(old_budget.data));
+      TRY_RESULT(after, decode_workchain_coordinator_state(new_budget.data));
+      TRY_RESULT(old_holdings, workchain_budget_bucket_holdings(before, extra_validation_cells));
+      TRY_RESULT(new_holdings, workchain_budget_bucket_holdings(after, extra_validation_cells));
+      auto refundable_before = workchain_protected_refundable(before.refundable_deposits);
+      auto refundable_after = workchain_protected_refundable(after.refundable_deposits);
+      if (check_workchain_budget_backing(old_budget.balance, refundable_before, old_holdings).is_error())
+        return td::Status::Error(-7201, "authenticated coordinator protected holdings are not fully backed");
+      CurrencyCollection expected_refundable = refundable_before, bucket_credit(0);
+      // Classification is fixed by independent execution, not candidate events:
+      // registration imports are refundable, rejected non-bounced imports are
+      // bucket holdings, Deposit slot fees and D32 S are operating income.
+      if (executed.effects.registration) {
+        if (!CurrencyCollection::add(refundable_before,
+                executed.effects.registration->coordinator_flow.imported, expected_refundable))
+          return td::Status::Error(-7200, "registration protected credit overflow");
+      } else if (executed.effects.closure) {
+        // Checked subtraction: only the historically authorized refund may
+        // reduce this protected claim, never its forwarding fee.
+        if (!CurrencyCollection::sub(refundable_before,
+                workchain_protected_refundable(executed.effects.closure->transition.refund.amount), expected_refundable))
+          return td::Status::Error(-7200, "closure protected debit exceeds recorded claim");
+      } else if (rejected_material &&
+                 rejected_material->plan.native.branch == NativeDisposalBranch::UnexpectedCredit) {
+        bucket_credit = rejected_material->plan.native.row.imported;
+      }
+      if (refundable_after != expected_refundable)
+        return td::Status::Error(-7200, "refundable classification differs from authenticated event");
+      TRY_STATUS(check_workchain_bucket_credit_pair(old_holdings, new_holdings, bucket_credit));
+      auto backing = check_workchain_budget_backing(new_budget.balance, refundable_after, new_holdings);
+      if (backing.is_error()) return td::Status::Error(-7200, backing.message());
     }
     std::shared_ptr<const NativeStateReadMeter> output_snapshot;
     if constexpr (std::is_same_v<Admission, ProofAdmittedBatchInput>) {

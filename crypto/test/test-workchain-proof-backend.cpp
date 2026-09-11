@@ -4,6 +4,7 @@
 #undef main
 #include "block/workchain-proof-work.h"
 #include "workchain-proof-test-access.h"
+#include "workchain-deposit-transition-test.h"
 
 static std::uint64_t backend_calls = 0;
 static std::uint32_t forced_status = UINT32_MAX;
@@ -23,6 +24,42 @@ int main(int argc, char** argv) {
   try {
     require(argc == 2, "expected the frozen vector corpus");
     auto fixtures = load(argv[1]);
+    test_metered_deposit_transition();
+    UnoCryptoSystemEncryptionRequest system{};
+    system.abi_version = UNO_CRYPTO_ABI_VERSION;
+    system.amount = 123;
+    auto recipient = bytes("b6ec3baa39a7357ab9ca16c61373385f7cfb04ab10c4bc20c8bd3cc6db9a6100");
+    std::memcpy(system.recipient, recipient.data(), 32);
+    auto generation = block::WorkchainProofTestAccess::create(7);
+    auto ciphertext = generation.system_encrypt(system);
+    require(ciphertext.is_ok() && generation.consumed() == 7, "system generation was not charged");
+    auto verification = block::WorkchainProofTestAccess::create(7);
+    require(verification.verify(system, ciphertext.ok()).is_ok() && verification.consumed() == 7,
+            "system reconstruction was not charged");
+    require(generation.consumed() == verification.consumed(),
+            "proposer generation and validator reconstruction charges differ");
+    auto short_generation = block::WorkchainProofTestAccess::create(6);
+    require(short_generation.system_encrypt(system).is_error() && short_generation.consumed() == 0,
+            "underfunded system generation succeeded");
+    auto short_verification = block::WorkchainProofTestAccess::create(6);
+    require(short_verification.verify(system, ciphertext.ok()).is_error() && short_verification.consumed() == 0,
+            "underfunded system verification succeeded");
+    auto altered = ciphertext.ok();
+    altered.handle[0] ^= 1;
+    auto mismatch = block::WorkchainProofTestAccess::create(14);
+    auto rejected = mismatch.verify(system, altered);
+    require(rejected.is_error() && rejected.code() == -7200 && mismatch.consumed() == 7,
+            "candidate system ciphertext mismatch misclassified or refunded");
+    require(mismatch.verify(system, ciphertext.ok()).is_error() && mismatch.consumed() == 7,
+            "system mismatch was not sticky");
+    std::memset(system.recipient, 0, 32);
+    auto malformed = block::WorkchainProofTestAccess::create(14);
+    auto unavailable = malformed.system_encrypt(system);
+    require(unavailable.is_error() && unavailable.error().code() == -7201 && malformed.consumed() == 7,
+            "invalid authenticated system recipient became candidate-invalid or refunded");
+    require(malformed.system_encrypt(system).is_error() && malformed.consumed() == 7,
+            "system generation failure was not sticky");
+    std::cout << "system generation/reconstruction: 7 units each; exact, short, mismatch, sticky failure passed\n";
     for (auto& fixture : fixtures) {
       const auto request = fixture.request();
       auto ops_result = block::workchain_proof_operations_v4(request);

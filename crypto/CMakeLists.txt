@@ -706,6 +706,11 @@ if(TOS_WORKCHAIN_INSTANCE_TESTS)
 endif()
 
 # A generated constructor changing must invalidate its hand-written Fift consumer.
+add_executable(test-workchain-unexpected-bucket ../test/test-td-main.cpp test/test-workchain-unexpected-bucket.cpp)
+target_link_libraries(test-workchain-unexpected-bucket PRIVATE tos_block tos_crypto)
+tos_test(test-workchain-unexpected-bucket)
+set_tests_properties(test-workchain-unexpected-bucket PROPERTIES TIMEOUT 30 LABELS "workchain;m4")
+
 add_executable(test-workchain-confidential-state ../test/test-td-main.cpp test/test-workchain-confidential-state.cpp)
 target_link_libraries(test-workchain-confidential-state PRIVATE tos_block tos_crypto)
 tos_test(test-workchain-confidential-state)
@@ -807,9 +812,33 @@ target_compile_definitions(test-workchain-m3-assertions PRIVATE M3_VECTOR_DIR="$
 tos_test(test-workchain-m3-assertions)
 set_tests_properties(test-workchain-m3-assertions PROPERTIES TIMEOUT 60 LABELS "workchain;m3")
 
-# Explicit continuous scenario: real kernel required; never substitute a stub.
-if(TOS_UNO_CRYPTO_NODE_LINK)
-  add_executable(workchain-m3-scenario EXCLUDE_FROM_ALL test/workchain-m3-scenario.cpp)
-  target_link_libraries(workchain-m3-scenario PRIVATE tos_block tos_crypto)
+add_test(NAME test-workchain-state-loader-inventory COMMAND ${Python3_EXECUTABLE}
+  "${PROJECT_SOURCE_DIR}/crypto/test/workchain-state-loader-inventory.py" --repo "${PROJECT_SOURCE_DIR}")
+set_tests_properties(test-workchain-state-loader-inventory PROPERTIES TIMEOUT 30 LABELS "workchain;expiry")
+
+# Epoch expiry is a default integrity check; test-only kernel linkage does not
+# change node linkage or any execution permit. Missing dependencies fail loudly.
+add_test(NAME test-workchain-key-epoch-inventory COMMAND ${Python3_EXECUTABLE}
+  "${PROJECT_SOURCE_DIR}/crypto/test/workchain-key-epoch-expiry.py" --repo "${PROJECT_SOURCE_DIR}")
+set_tests_properties(test-workchain-key-epoch-inventory PROPERTIES TIMEOUT 60 LABELS "workchain;expiry")
+if(TARGET confidential-crypto-kernel)
+  add_executable(workchain-m3-scenario test/workchain-m3-scenario.cpp)
+  target_link_libraries(workchain-m3-scenario PRIVATE tos_block tos_crypto confidential-crypto-kernel)
+  if(NOT TOS_UNO_CRYPTO_NODE_LINK)
+    # These executable objects resolve the existing backend symbols before the
+    # static archive's unavailable-backend members. No production target changes.
+    target_sources(workchain-m3-scenario PRIVATE block/workchain-proof-backend.cpp block/workchain-registration-proof.cpp)
+    target_compile_definitions(workchain-m3-scenario PRIVATE TOS_CONFIDENTIAL_PROOF_BACKEND_LINKED)
+  endif()
   target_compile_definitions(workchain-m3-scenario PRIVATE M3_VECTOR_DIR="${CMAKE_CURRENT_SOURCE_DIR}/test/workchain-m3-vectors")
+  add_dependencies(all-tests workchain-m3-scenario)
+  add_test(NAME test-workchain-key-epoch-behavior COMMAND ${Python3_EXECUTABLE}
+    "${PROJECT_SOURCE_DIR}/crypto/test/workchain-key-epoch-behavior.py"
+    --repo "${PROJECT_SOURCE_DIR}" --build "${PROJECT_BINARY_DIR}/epoch-wallet"
+    --scenario $<TARGET_FILE:workchain-m3-scenario>)
+else()
+  add_test(NAME test-workchain-key-epoch-behavior COMMAND ${Python3_EXECUTABLE}
+    "${PROJECT_SOURCE_DIR}/crypto/test/workchain-key-epoch-behavior.py" --unavailable)
 endif()
+set_tests_properties(test-workchain-key-epoch-behavior PROPERTIES TIMEOUT 600 LABELS "workchain;expiry;real-crypto"
+  RESOURCE_LOCK uno_crypto_cargo)

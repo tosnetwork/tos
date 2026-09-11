@@ -101,6 +101,31 @@ TEST(RegistrationProof, RustPossessionVectorAndHostBinding) {
   auto registered = block::WorkchainProofTestAccess::with_budget(100000, [&](auto& verification_budget) { return block::replay_workchain_registration(policy, old, a.address.account, cell.ok(), replay_root, verification_budget); });
   ASSERT_TRUE(registered.is_ok());
   ASSERT_EQ(registered.ok().payer_balance, 90u);
+  // A valid replay carrier reaches the body decoder, not a preceding tag or
+  // operationID guard. This direct consumer must not leak a neutral codec code.
+  auto malformed_body = vm::CellBuilder().finalize();
+  auto malformed_meter = block::WorkchainProofTestAccess::create(433);
+  auto malformed_registration = block::replay_workchain_registration(
+      policy, old, a.address.account, malformed_body, replay_root, malformed_meter);
+  ASSERT_TRUE(malformed_registration.is_error());
+  ASSERT_EQ(malformed_registration.error().code(), -7200);
+  ASSERT_EQ(malformed_registration.error().message(), "malformed candidate registration body");
+  ASSERT_EQ(malformed_meter.consumed(), 0u);
+  auto nonempty_policy = policy;
+  nonempty_policy.schema_version = 2;
+  auto nonempty_registration = a;
+  nonempty_registration.schema_version = 2;
+  auto incoming_id = block::derive_workchain_deposit_id(fill(41), 1).move_as_ok();
+  nonempty_registration.system_pending.push_back({incoming_id, fill(41), 1, 1000000000,
+      a.address.instance, a.key_epoch, a.bindings.asset, {a.public_key, a.public_key}, 0});
+  auto nonempty_cell = block::encode_workchain_confidential_account(nonempty_registration).move_as_ok();
+  auto nonempty_budget = block::WorkchainProofTestAccess::create(433);
+  auto nonempty_result = block::prepare_workchain_registration_impl(nonempty_policy, old,
+      a.address.account, nonempty_cell, proof, nonempty_budget);
+  ASSERT_TRUE(nonempty_result.is_error());
+  ASSERT_EQ(nonempty_result.error().message(), "registration must initialize an active empty confidential account");
+  ASSERT_EQ(nonempty_result.error().code(), -7200);
+  ASSERT_EQ(nonempty_budget.consumed(), 0u);
   refund_workchains.clear();
   auto destination_meter = block::WorkchainProofTestAccess::create(433);
   auto bad_destination = block::replay_workchain_registration(policy, old, a.address.account,
@@ -155,7 +180,8 @@ TEST(RegistrationProof, RustPossessionVectorAndHostBinding) {
   descriptor.vm_version = 0x554e4f32;
   descriptor.vm_mode = 17;
   descriptor.version = 2;
-  auto envelope_for = [&](long long amount, const td::Bits256& sender, const td::Bits256& recipient) {
+  auto envelope_for = [&](long long amount, const td::Bits256& sender, const td::Bits256& recipient,
+                          td::Ref<vm::Cell> body_override = {}) {
     vm::CellBuilder cb;
     cb.store_long(4, 4)
         .store_long(4, 3)
@@ -172,7 +198,7 @@ TEST(RegistrationProof, RustPossessionVectorAndHostBinding) {
         .store_long(1, 32)
         .store_long(0, 1)
         .store_long(1, 1)
-        .store_ref(cell.ok());
+        .store_ref(body_override.is_null() ? cell.ok() : body_override);
     auto message = cb.finalize();
     block::tlb::MsgEnvelope::Record_std rec{0x60, 0x60, td::make_refint(0), message, {}, {}};
     td::Ref<vm::Cell> envelope;
@@ -189,6 +215,19 @@ TEST(RegistrationProof, RustPossessionVectorAndHostBinding) {
   if (paid.is_error())
     LOG(ERROR) << paid.error();
   ASSERT_TRUE(paid.is_ok());
+  // The actual payment wrapper already classifies the candidate body before
+  // invoking the replay helper. Keep this separate from the direct-entry test.
+  auto malformed_payment = envelope_for(10, fill(8), ingress.executor_address, malformed_body);
+  td::Result<block::WorkchainNativeInboxPlan> malformed_inbox{
+      block::WorkchainNativeInboxPlan{{malformed_payment.first}, 1}};
+  auto payment_meter = block::WorkchainProofTestAccess::create(433);
+  auto malformed_replay = block::replay_workchain_registration_payment(
+      policy, ingress, descriptor, malformed_inbox, malformed_payment.second, old.coordinator,
+      block::CurrencyCollection(50), {}, replay_root, payment_meter);
+  ASSERT_TRUE(malformed_replay.is_error());
+  ASSERT_EQ(malformed_replay.error().code(), -7200);
+  ASSERT_EQ(malformed_replay.error().message(), "Native payment body is not a confidential registration");
+  ASSERT_EQ(payment_meter.consumed(), 0u);
   ASSERT_EQ(paid.ok().registration.payer_balance, 0u);
   ASSERT_TRUE(paid.ok().coordinator_flow.old_balance == block::CurrencyCollection(50));
   ASSERT_TRUE(paid.ok().coordinator_flow.imported == block::CurrencyCollection(10));

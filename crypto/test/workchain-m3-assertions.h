@@ -36,7 +36,9 @@ inline td::Status assert_balance(std::uint64_t actual, std::uint64_t expected) {
 // linear scan of the test balance range. No production decryption API is added.
 inline td::Result<std::uint64_t> decrypt(const WorkchainCiphertext& ciphertext, const Point& secret,
                                          std::uint64_t bound) {
-  if (bound > 1000000000ULL)
+  // Two minimum-size M4 Deposits require a two-TOS test decryption range.
+  // This remains a bounded wallet assertion, not node-side decryption.
+  if (bound > 2000000000ULL)
     return alarm("test decryption bound too large");
   if (!confidential_state_detail::canonical_ciphertext(ciphertext))
     return alarm("noncanonical ciphertext");
@@ -58,7 +60,7 @@ inline td::Result<std::uint64_t> decrypt(const WorkchainCiphertext& ciphertext, 
     return alarm("basepoint failed");
   std::uint64_t width = 1;
   while (width * width <= bound)
-    ++width;  // width <= 31623, checked bound above.
+    ++width;  // width <= 44722, checked bound above; square fits uint64.
   std::map<Point, std::uint64_t> baby;
   Point cursor{};
   for (std::uint64_t j = 0; j < width; ++j) {
@@ -149,6 +151,13 @@ inline td::Result<std::map<td::Bits256, td::Bits256>> receipt_hashes(const Workc
     if (!hashes.emplace(receipt.receipt_id, td::Bits256(root->get_hash().bits())).second)
       return alarm("duplicate receipt");
   }
+  // Both origins share one authenticated ID keyspace. Hash the complete formal
+  // record, including its origin constructor, so retention also preserves kind.
+  for (const auto& receipt : account.system_pending) {
+    TRY_RESULT(root, encode_workchain_deposit_receipt(receipt));
+    if (!hashes.emplace(receipt.receipt_id, td::Bits256(root->get_hash().bits())).second)
+      return alarm("duplicate receipt");
+  }
   return hashes;
 }
 struct TransferBalances {
@@ -189,6 +198,15 @@ inline td::Result<TransferBalances> assert_transfer(const Root& candidate, const
       for (const auto& receipt : before.pending)
         if (receipt.receipt_id == selected.receipt_id) {
           TRY_RESULT(value, decrypt(receipt.ciphertext, owner_secret, bound));
+          TRY_RESULT(sum, checked_sum(moved, value));
+          moved = sum;
+        }
+      for (const auto& receipt : before.system_pending)
+        if (receipt.receipt_id == selected.receipt_id) {
+          TRY_RESULT(value, decrypt(receipt.ciphertext, owner_secret, bound));
+          // The public Deposit amount must agree with the actual ciphertext;
+          // never substitute the declared amount for wallet decryption.
+          TRY_STATUS(assert_balance(value, receipt.amount));
           TRY_RESULT(sum, checked_sum(moved, value));
           moved = sum;
         }

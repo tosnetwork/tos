@@ -1,20 +1,22 @@
 {
   "crypto/block/workchain-proof-backend.cpp": {
     "symbols": [
+      "uno_crypto_system_encrypt_v1",
+      "uno_crypto_system_verify_v1",
       "uno_crypto_verify_closure_possession_v2",
       "uno_crypto_verify_key_possession_v2",
       "uno_crypto_verify_v2"
     ],
-    "sha256": "525f1017ff35292931bb90d956416203a61f0d5f67125bcea8c6bc98e61e32b1",
-    "disposition": "Three live node verification calls, each a private WorkchainProofVerifier backend reached after its shared precharge. No other node ABI caller."
+    "sha256": "24e3303088e1abbb8e13bf796f0ee205b82b769319b466fd9233e7cd50fb7ee4",
+    "disposition": "Five private WorkchainProofVerifier ABI boundaries, all reached after the same precharge. System generation/reconstruction entries exist before Deposit host integration; no other node ABI caller."
   },
   "crypto/test/test-workchain-proof-backend.cpp": {
     "symbols": [
       "__real_uno_crypto_verify_v2",
       "__wrap_uno_crypto_verify_v2"
     ],
-    "sha256": "79f6eeb41b81943ff8491806aea5230fb7827c09424c135752745858d0e01118",
-    "disposition": "Test-only linker interception (__wrap/__real) measures the already-metered relation backend; not an engine entry."
+    "sha256": "03b037441876121d7fd1bb1b7abdbfa1f9bb847157b9ee12e193b2bfcb6bbbdf",
+    "disposition": "Test-only linker interception (__wrap/__real) measures the already-metered relation backend; also runs paired Deposit preparation through the existing metered system entry. No new raw ABI call or engine entry."
   },
   "crypto/test/workchain-proof-boundary-gates.py": {
     "symbols": [
@@ -96,7 +98,7 @@
       "uno_crypto_verify_v2"
     ],
     "sha256": "400a2c318b136986ff0fee34a2c42f37970c29d4b173345121d20903c897ea0f",
-    "disposition": "Public ABI declarations only, no calls. System encryption and verification have no live node caller."
+    "disposition": "Public ABI declarations only, no calls. System encryption and verification may only be reached through the metered host backend."
   },
   "uno/crypto/include/uno_crypto_v0_retired.h": {
     "symbols": [
@@ -140,7 +142,7 @@
       "uno_crypto_system_encrypt_v1",
       "uno_crypto_system_verify_v1"
     ],
-    "sha256": "c1e1bbd2c975946f73c9e819b66d67e44eaf053c85d83e9860b706d55c0966cc",
+    "sha256": "033e705b65f659acab27bfc619ad6e3e758e4200cd8c6b826bf920ff20922e93",
     "disposition": "Direct system encrypt/verify calls occur only in cfg(test); tests cover both construction and verification, not a live node path."
   },
   "uno/crypto/src/tests.rs": {
@@ -181,7 +183,7 @@
     "symbols": [
       "uno_crypto_verify_v2"
     ],
-    "sha256": "a3f36388c9370f520cbc650c923f2d1cc41de08288ba8c534f90cb6147c15d88",
+    "sha256": "2c5baff2c978758124694130013b6fba977ff23b3fe21ced058bcd716e307da6",
     "disposition": "Test runner and symbol/output assertions, no direct cryptographic call."
   },
   "uno/crypto/tests/sanitizer-canary.cpp": {
@@ -190,6 +192,14 @@
     ],
     "sha256": "834c809fe8ca4b66fd2eca6bd5e1ef45fe3e3bdd0316b256076e1beb88bb5d64",
     "disposition": "Standalone ABI memory-safety test; deliberately calls ABI without host policy."
+  },
+  "uno/prover/src/tests/system_collect.rs": {
+    "symbols": [
+      "uno_crypto_system_encrypt_v1",
+      "uno_crypto_system_verify_v1"
+    ],
+    "sha256": "32628bb457b7322dfaa7605b370edb0253cf5a62d4dbf72f94aa1c08199c4fe0",
+    "disposition": "Private cfg(test) prover tests call D33 ABI directly to test existing COLLECT algebra and error layers, including mixed SEND/system inputs. No production caller, Native admission or persisted pending removal."
   },
   "uno/prover/examples/m3-vectors.rs": {
     "symbols": [

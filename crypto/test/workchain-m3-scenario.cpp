@@ -493,6 +493,8 @@ class PureBackend final : public ScenarioBackend {
         return alarm("second registration changed first account");
     }
     TRY_RESULT(created_record, decode_workchain_confidential_account(created.data));
+    if (created_record.key_epoch != a.key_epoch || created_record.public_key != a.public_key)
+      return alarm("epoch guard: registration changed the authenticated initial key");
     gen::UnoV2HostInput::Record persisted_input;
     gen::UnoV2HostIdentity::Record persisted_identity;
     gen::UnoV2HostDomain::Record persisted_domain;
@@ -773,7 +775,13 @@ class PureBackend final : public ScenarioBackend {
   }
 };
 }  // namespace
+#include "workchain-m4-retention-test.h"
 int main(int argc, char** argv) {
+  if (argc == 4 && std::string(argv[1]) == "--m4-system-collect") {
+    auto result = test_m4_system_retention(argv[2], argv[3]);
+    if (result.is_error()) std::cerr << result.to_string() << '\n';
+    return result.is_ok() ? 0 : 1;
+  }
   if (argc != 3) {
     std::cerr << "usage: workchain-m3-scenario WALLET_EXECUTABLE TEMP_DIRECTORY\n";
     return 2;

@@ -98,14 +98,17 @@ inline td::Result<WorkchainRegistrationTransition> prepare_workchain_registratio
   // Closed identities remain present, preventing repeated registration/refund
   // cycles from reusing the same incarnation or erasing its replay history.
   if (old.existing_account.not_null()) return invalid("confidential account already exists");
-  TRY_RESULT(registration_id, derive_workchain_registration_operation_id(policy, account));
-  if (account.address.instance != registration_id) return invalid("registration incarnation differs from operationID");
+  // Reject nonempty candidate state before constructing the registration-ID
+  // preimage. Zeroing incarnation there would mismatch a receipt's target and
+  // produce a neutral codec error instead of this candidate-invalid decision.
   if (!std::holds_alternative<WorkchainAccountActive>(account.lifecycle) ||
       account.auth_nonce != 0 || account.available_revision != 0 || account.key_epoch != 0 ||
-      !account.pending.empty() || !account.available.commitment.is_zero() ||
+      !account.pending.empty() || !account.system_pending.empty() || !account.available.commitment.is_zero() ||
       !account.available.handle.is_zero()) {
     return invalid("registration must initialize an active empty confidential account");
   }
+  TRY_RESULT(registration_id, derive_workchain_registration_operation_id(policy, account));
+  if (account.address.instance != registration_id) return invalid("registration incarnation differs from operationID");
   if (account.funding.paid_deposit != policy.deposit ||
       account.funding.refund_workchain != old.payer_workchain ||
       account.funding.refund_account != old.payer_account) {
