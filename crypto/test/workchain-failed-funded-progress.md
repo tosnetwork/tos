@@ -1,5 +1,34 @@
 # Funded in-window Failed: transition checkpoint
 
+## Native connection prerequisite: explicit test configuration
+
+Against memo `d8c6b463` / specification `cf7f0f4569e2638e`, the test business
+configuration now has an optional version 4 carrying `withdrawal_limit` and
+`issuance_billing_units`. It requires the existing explicit component tariff;
+old layouts do not synthesize either new field. The 736-bit root retains four
+references. This is a TEST layout, not frozen protocol initial values.
+
+`ConfidentialInput.FailedParametersExplicitAndBound` checks round trip, absence,
+field binding and incompatible inputs. Default focused CTest passes 1/1.
+An isolated decoder mutant substitutes the seven proof-work units for the
+explicit four billing units: the actual test exits 1 at `7 != 4`. The first
+control build accidentally included both original and shadow headers and failed
+to compile; that failure is NOT evidence. The corrected isolated build executes
+the named test. Restoring the normal build returns to green. Local logs:
+`/tmp/uno-failed-config-control-H8ZGw8/{build.log,red.log}`.
+
+This prerequisite does not yet connect `M3NodeEngine` custody dispatch or Native
+publication. The six-test host contract remains 0/6; neither sequence expiry nor
+the prepare AST trigger is retired. Next: consume these explicit fields in the
+registered engine and pass the complete three-account write set and fee effects
+through the existing inbound allocation overlay, then test serialized Native
+outputs and failed publication. No production consensus file changed here.
+
+D61 inventory correction: the earlier eight numbered points covered seven
+unique files, while B counted eight unique files including its own
+`test/test-workchain-m5-accounting-assertions.cpp`. Equal counts did not identify
+equal sets; this test consumer must remain in the union inventory.
+
 Normative basis: memo `271b2d86`, SHA-256 prefix `d309dc6a5158f3fe`.
 
 `prepare_workchain_failed_funded` executes real metered v2 system encryption

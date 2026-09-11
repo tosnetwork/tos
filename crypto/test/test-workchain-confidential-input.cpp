@@ -741,7 +741,7 @@ TEST(ConfidentialInput, TestBusinessParametersExactCodec) {
   auto unknown = decode_m3_test_business_parameters(rebuild(vm::load_cell_slice(unknown_bits), refs));
   ASSERT_TRUE(unknown.is_error()); ASSERT_EQ(unknown.error().message(), "unknown M3 test business tag");
   tail = slice; tail.advance(48);
-  auto version_bits = vm::CellBuilder().store_long(business_config_detail::tag, 32).store_long(4, 16)
+  auto version_bits = vm::CellBuilder().store_long(business_config_detail::tag, 32).store_long(65535, 16)
       .append_cellslice(tail).finalize();
   auto version = decode_m3_test_business_parameters(rebuild(vm::load_cell_slice(version_bits), refs));
   ASSERT_TRUE(version.is_error()); ASSERT_EQ(version.error().message(), "unsupported M3 test business version");
@@ -764,6 +764,45 @@ TEST(ConfidentialInput, TestBusinessParametersExactCodec) {
   auto wide = decode_m3_test_business_parameters(encode_m3_test_business_parameters(value).move_as_ok()).move_as_ok();
   ASSERT_EQ(wide.send_fee, UINT64_MAX); ASSERT_EQ(wide.limits.max_balance, UINT64_MAX);
   ASSERT_EQ(wide.limits.max_collect, std::numeric_limits<std::size_t>::max());
+}
+
+TEST(ConfidentialInput, FailedParametersExplicitAndBound) {
+  using namespace block;
+  using namespace block::m3_test;
+  std::array<unsigned char, 80> domain{};
+  M3TestBusinessParameters value{{1000000, 1000000, 8, 1024, 4096}, domain, 0, 0,
+      {number(1), number(2), number(3)}, number(4), number(5), number(6), 100, 3, 1, 4};
+  value.deposit = WorkchainDepositPolicy{1, 1000000, 2, 16, 4};
+  value.operation_tariff = WorkchainStaticOperationTariff{3, 0, 0};
+  auto prior = encode_m3_test_business_parameters(value).move_as_ok();
+  auto old = decode_m3_test_business_parameters(prior).move_as_ok();
+  ASSERT_TRUE(!old.failed.has_value());
+  ASSERT_EQ(encode_m3_test_business_parameters(old).move_as_ok()->get_hash(), prior->get_hash());
+  // Explicit synthetic profile, NOT frozen K_withdrawal or D70 initial values.
+  value.failed = M5TestFailedParameters{2, 4};
+  auto root = encode_m3_test_business_parameters(value).move_as_ok();
+  auto decoded = decode_m3_test_business_parameters(root).move_as_ok();
+  ASSERT_TRUE(decoded.failed.has_value());
+  ASSERT_EQ(decoded.failed->withdrawal_limit, 2u);
+  ASSERT_EQ(decoded.failed->issuance_billing_units, 4u);
+  ASSERT_EQ(vm::load_cell_slice(root).size(), 736u);
+  ASSERT_EQ(encode_m3_test_business_parameters(decoded).move_as_ok()->get_hash(), root->get_hash());
+  for (int field = 0; field < 2; ++field) {
+    auto changed = value;
+    if (field == 0) ++changed.failed->withdrawal_limit;
+    else ++changed.failed->issuance_billing_units;
+    ASSERT_TRUE(encode_m3_test_business_parameters(changed).move_as_ok()->get_hash() != root->get_hash());
+  }
+  auto invalid = value;
+  invalid.failed->withdrawal_limit = 0;
+  auto rejected = encode_m3_test_business_parameters(invalid);
+  ASSERT_TRUE(rejected.is_error());
+  ASSERT_EQ(rejected.error().message(), "Failed profile requires explicit tariff and withdrawal limit");
+  invalid = value;
+  invalid.operation_tariff.reset();
+  rejected = encode_m3_test_business_parameters(invalid);
+  ASSERT_TRUE(rejected.is_error());
+  ASSERT_EQ(rejected.error().message(), "Failed profile requires explicit tariff and withdrawal limit");
 }
 
 TEST(ConfidentialInput, TestGenesisUsesParam84Payload) {
