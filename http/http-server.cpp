@@ -60,7 +60,14 @@ void HttpServer::accepted(td::SocketFd fd) {
   // and connection actors. Slow or silent headers on accepted connections
   // are bounded by the per-connection request-header deadline.
   if (limits_.max_connections != 0 && metrics_.connections->get() >= limits_.max_connections) {
-    LOG(WARNING) << "HTTP connection limit of " << limits_.max_connections << " reached, refusing new connection";
+    ++refused_since_last_log_;
+    if (next_limit_log_.is_in_past()) {
+      LOG(WARNING) << "HTTP connection limit of " << limits_.max_connections
+                   << " reached, refusing new connections (" << refused_since_last_log_
+                   << " refused since last report)";
+      refused_since_last_log_ = 0;
+      next_limit_log_ = td::Timestamp::in(10.0);
+    }
     return;
   }
   td::actor::create_actor<HttpInboundConnection>(td::actor::ActorOptions().with_name("inhttpconn").with_poll(),

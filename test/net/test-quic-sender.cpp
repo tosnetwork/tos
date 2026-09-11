@@ -15,6 +15,7 @@
     along with TOS Blockchain.  If not, see <http://www.gnu.org/licenses/>.
 */
 #include <atomic>
+#include <iostream>
 #include <mutex>
 #include <optional>
 #include <unordered_set>
@@ -521,6 +522,48 @@ class RawQuicCallback final : public tos::quic::QuicServer::Callback {
   std::shared_ptr<RawQuicEndpointState> state_;
 };
 
+// A server-side callback that, on receiving an inbound stream (a peer's query),
+// sends back a single byte WITHOUT a FIN and then stalls. The peer is left with
+// a half-received response on the stream it opened.
+class PartialResponderCallback final : public tos::quic::QuicServer::Callback {
+ public:
+  explicit PartialResponderCallback(std::shared_ptr<RawQuicEndpointState> state) : state_(std::move(state)) {
+  }
+
+  void set_server(td::actor::ActorId<tos::quic::QuicServer> server) {
+    server_ = server;
+  }
+
+  td::Status on_connected(tos::quic::QuicConnectionId cid, td::SecureString local_public_key,
+                          td::SecureString peer_public_key, bool is_outbound) override {
+    state_->remember_connection(cid, std::move(local_public_key), std::move(peer_public_key), is_outbound);
+    return td::Status::OK();
+  }
+
+  td::Status on_stream(tos::quic::QuicConnectionId cid, tos::quic::QuicStreamID sid, td::BufferSlice,
+                       bool is_end) override {
+    if (is_end && !state_->is_local_stream(sid)) {
+      // Send one byte back on the peer's stream and never finish it.
+      td::BufferSlice partial(1);
+      partial.as_slice()[0] = 'x';
+      td::actor::send_closure(server_, &tos::quic::QuicServer::send_stream_data, cid, sid, std::move(partial));
+    }
+    return td::Status::OK();
+  }
+
+  void on_closed(tos::quic::QuicConnectionId) override {
+  }
+  void on_stream_closed(tos::quic::QuicConnectionId, tos::quic::QuicStreamID sid) override {
+    state_->remember_closed_stream(sid);
+  }
+  void set_peer_mtu_callback(std::function<td::uint64(tos::adnl::AdnlNodeIdShort, tos::adnl::AdnlNodeIdShort)>) override {
+  }
+
+ private:
+  td::actor::ActorId<tos::quic::QuicServer> server_;
+  std::shared_ptr<RawQuicEndpointState> state_;
+};
+
 struct RawQuicEndpoint {
   int port;
   td::Ed25519::PrivateKey key;
@@ -532,7 +575,8 @@ class RawQuicTestRunner final : public td::actor::Actor {
  public:
   using TestFunc = std::function<td::actor::Task<td::Unit>(RawQuicTestRunner&)>;
 
-  RawQuicTestRunner(double timeout, TestFunc test) : timeout_(timeout), test_(std::move(test)) {
+  RawQuicTestRunner(std::string db_root, double timeout, TestFunc test)
+      : db_root_(std::move(db_root)), timeout_(timeout), test_(std::move(test)) {
   }
 
   void start_up() override {
@@ -569,6 +613,101 @@ class RawQuicTestRunner final : public td::actor::Actor {
 
     co_await td::actor::Yield{};
     co_return RawQuicEndpoint{port, std::move(key), std::move(server), std::move(state)};
+  }
+
+  // Like create_endpoint, but the server replies to every inbound query with a
+  // single byte and no FIN (a half-received response), never completing it.
+  td::actor::Task<RawQuicEndpoint> create_partial_responder_endpoint() {
+    auto port = next_port();
+    auto key = make_quic_key(port);
+    auto state = std::make_shared<RawQuicEndpointState>();
+
+    auto callback = std::make_unique<PartialResponderCallback>(state);
+    auto* callback_ptr = callback.get();
+    auto local_id = tos::adnl::AdnlNodeIdFull(tos::PublicKey(tos::pubkeys::Ed25519(key.get_public_key().move_as_ok())))
+                        .compute_short_id();
+    auto identity = tos::quic::ServerIdentity{.local_id = local_id, .key = clone_quic_key(key)};
+    auto server_result = tos::quic::QuicServer::create(port, std::move(callback), 4096, std::move(identity), "tos",
+                                                       "127.0.0.1", quic_test_options());
+    ASSERT_TRUE(server_result.is_ok());
+    auto server = server_result.move_as_ok();
+    callback_ptr->set_server(server.get());
+
+    co_await td::actor::Yield{};
+    co_return RawQuicEndpoint{port, std::move(key), std::move(server), std::move(state)};
+  }
+
+  // Create a full QuicSender-backed node (the production inbound path, including
+  // the ServerCallback that owns the inbound-stream timeout). Mirrors the setup
+  // in TestRunner::create_node; the node's QUIC server listens on
+  // port + QuicSender::NODE_PORT_OFFSET.
+  td::actor::Task<TestNode> create_sender_node(std::string name, int port, tos::quic::QuicServer::Options options) {
+    TestNode node;
+    node.ip = "127.0.0.1";
+    node.port = port;
+    node.key = make_key(port);
+    node.id = tos::adnl::AdnlNodeIdShort{node.key.compute_public_key().compute_short_id()};
+
+    std::string db = db_root_ + "/" + name;
+    td::rmrf(db).ignore();
+    td::mkdir(db).ensure();
+
+    node.keyring = tos::keyring::Keyring::create(db);
+    node.network_manager = tos::adnl::AdnlNetworkManager::create(static_cast<td::uint16>(port));
+    node.adnl = tos::adnl::Adnl::create(db, node.keyring.get());
+    td::actor::send_closure(node.adnl, &tos::adnl::Adnl::register_network_manager, node.network_manager.get());
+
+    tos::adnl::AdnlCategoryMask cat_mask;
+    cat_mask[0] = true;
+    td::IPAddress addr;
+    addr.init_host_port(PSTRING() << node.ip << ":" << port).ensure();
+    td::actor::send_closure(node.network_manager, &tos::adnl::AdnlNetworkManager::add_self_addr, addr,
+                            std::move(cat_mask), 0);
+
+    co_await td::actor::ask(node.keyring, &tos::keyring::Keyring::add_key, node.key, true);
+
+    auto addr_list = make_addr_list(node.ip, port);
+    td::actor::send_closure(node.adnl, &tos::adnl::Adnl::add_id,
+                            tos::adnl::AdnlNodeIdFull{node.key.compute_public_key()}, addr_list, td::uint8(0));
+    td::actor::send_closure(node.adnl, &tos::adnl::Adnl::subscribe, node.id, "Q", std::make_unique<EchoCallback>());
+
+    node.quic_sender = td::actor::create_actor<tos::quic::QuicSender>(
+        "quic-" + name, td::actor::actor_dynamic_cast<tos::adnl::AdnlPeerTable>(node.adnl.get()), node.keyring.get(),
+        std::move(options));
+    td::actor::send_closure(node.quic_sender, &tos::quic::QuicSender::add_id, node.id);
+
+    co_await td::actor::coro_sleep(td::Timestamp::in(0.2));
+    co_return std::move(node);
+  }
+
+  // Connect a raw client to an arbitrary host:port (e.g. a QuicSender node's
+  // QUIC port). Unlike connect(), this only waits for the client side to record
+  // its outbound connection, since the peer is not a RawQuicEndpoint whose
+  // inbound state we can observe.
+  td::actor::Task<tos::quic::QuicConnectionId> connect_raw_to(RawQuicEndpoint& client, int port) {
+    auto outbound_cid_result =
+        co_await td::actor::ask(client.server, &tos::quic::QuicServer::connect, td::Slice("127.0.0.1"), port,
+                                clone_quic_key(client.key), td::Slice("tos"), td::Slice(""))
+            .wrap();
+    LOG_CHECK(outbound_cid_result.is_ok()) << "connect failed: " << outbound_cid_result.error();
+    auto outbound_cid = outbound_cid_result.move_as_ok();
+    co_await wait_until([&] { return client.state->get_outbound_cid().has_value(); }, 5.0);
+    ASSERT_EQ(client.state->get_outbound_cid().value(), outbound_cid);
+    co_return outbound_cid;
+  }
+
+  // Open a stream and send one byte WITHOUT a FIN, leaving it half-received on
+  // the peer. Returns the stream id.
+  td::actor::Task<tos::quic::QuicStreamID> send_partial_stream(RawQuicEndpoint& endpoint,
+                                                               tos::quic::QuicConnectionId cid, char byte) {
+    auto sid = co_await open_stream_with_retry(endpoint, cid);
+    td::BufferSlice data(1);
+    data.as_slice()[0] = byte;
+    auto sent =
+        co_await td::actor::ask(endpoint.server, &tos::quic::QuicServer::send_stream, cid, sid, std::move(data), false)
+            .wrap();
+    LOG_CHECK(sent.is_ok()) << "send_stream(partial) failed for sid=" << sid << ": " << sent.error();
+    co_return sid;
   }
 
   td::actor::Task<std::pair<tos::quic::QuicConnectionId, tos::quic::QuicConnectionId>> connect(
@@ -667,16 +806,23 @@ class RawQuicTestRunner final : public td::actor::Actor {
     co_return td::Unit{};
   }
 
+  std::string db_root_;
   double timeout_;
   TestFunc test_;
 };
 
 void run_raw_quic_test(RawQuicTestRunner::TestFunc test) {
+  std::string db_root = "tmp-dir-test-quic-sender-raw";
+  td::rmrf(db_root).ignore();
+  td::mkdir(db_root).ensure();
+
   td::actor::Scheduler scheduler({g_config.threads});
   scheduler.run_in_context([&] {
-    td::actor::create_actor<RawQuicTestRunner>("raw quic test", g_config.timeout, std::move(test)).release();
+    td::actor::create_actor<RawQuicTestRunner>("raw quic test", db_root, g_config.timeout, std::move(test)).release();
   });
   scheduler.run();
+
+  td::rmrf(db_root).ignore();
 }
 
 void jump_time_to(double at, double epsilon = 0.00) {
@@ -1857,6 +2003,146 @@ TEST(QuicRateLimiter, CapacityOneDoesNotAllowExtraBurst) {
   expect_take(false);
 }
 
+TEST(QuicInboundStreamTimeout, AbandonedInboundStreamIsReaped) {
+  run_raw_quic_test([](RawQuicTestRunner& t) -> td::actor::Task<td::Unit> {
+    // NODE_PORT_OFFSET: a QuicSender node listens for QUIC on adnl_port + 1000.
+    constexpr int kQuicPortOffset = 1000;
+
+    // The receiver reaps an inbound stream after 3s of inactivity. That window
+    // is shorter than the QUIC connection idle timeout (15s). We advance time
+    // by 5s — past the stream window but well under the idle timeout — and keep
+    // the post-jump polling short, so the connection cannot tear down in the
+    // window. The stream's disappearance is therefore attributable only to the
+    // inactivity reaper, not to connection teardown.
+    auto recv_options = quic_test_options();
+    recv_options.inbound_stream_timeout = 3.0;
+    auto receiver = co_await t.create_sender_node("timeout-recv", next_port(), recv_options);
+
+    auto client = co_await t.create_endpoint(quic_test_options());
+    auto cid = co_await t.connect_raw_to(client, receiver.port + kQuicPortOffset);
+
+    // Open a stream and send one byte without FIN. The receiver buffers the
+    // partial stream and arms its inactivity timeout.
+    auto sid = co_await t.send_partial_stream(client, cid, 'x');
+    static_cast<void>(sid);
+
+    auto inbound_streams = [&]() -> td::actor::Task<size_t> {
+      auto stats = co_await td::actor::ask(receiver.quic_sender, &tos::quic::QuicSender::collect_stats);
+      co_return stats.inbound_streams;
+    };
+
+    // The half-received stream is buffered on the receiver.
+    {
+      auto deadline = td::Timestamp::in(5.0);
+      while ((co_await inbound_streams()) < 1) {
+        ASSERT_TRUE(!deadline.is_in_past());
+        co_await td::actor::coro_sleep(td::Timestamp::in(0.05));
+      }
+    }
+
+    // Jump past the 3s stream window but under the 15s connection idle timeout.
+    jump_time_by(5.0);
+
+    // The reaper frees the abandoned stream. The poll window is kept short so
+    // total elapsed time stays under the idle timeout (keep-alives, sent in
+    // real time, hold the connection up meanwhile); if the stream were only
+    // removed by connection teardown it would not drop here.
+    {
+      auto deadline = td::Timestamp::in(3.0);
+      while ((co_await inbound_streams()) != 0) {
+        ASSERT_TRUE(!deadline.is_in_past());
+        co_await td::actor::coro_sleep(td::Timestamp::in(0.05));
+      }
+    }
+    co_return td::Unit{};
+  });
+}
+
+TEST(QuicOutboundQueryDeadline, PartialResponseDoesNotExtendDeadline) {
+  run_raw_quic_test([](RawQuicTestRunner& t) -> td::actor::Task<td::Unit> {
+    constexpr int kQuicPortOffset = 1000;  // QuicSender::NODE_PORT_OFFSET
+
+    // A client whose inbound inactivity window (6s) is longer than the query
+    // deadline below (2s). The regression re-armed an outbound query's response
+    // stream with this inactivity window on receiving a partial response, which
+    // would push the query's effective deadline out to ~6s.
+    auto client_options = quic_test_options();
+    client_options.inbound_stream_timeout = 6.0;
+    auto client = co_await t.create_sender_node("f2-client", next_port(), client_options);
+
+    // A peer that replies to the query with one byte and no FIN, then stalls.
+    auto responder = co_await t.create_partial_responder_endpoint();
+
+    // Register the responder as an ADNL peer of the client. The client's
+    // QuicSender dials adnl_port + NODE_PORT_OFFSET, so point the adnl address
+    // at responder.port - NODE_PORT_OFFSET.
+    auto responder_full = tos::adnl::AdnlNodeIdFull(
+        tos::PublicKey(tos::pubkeys::Ed25519(responder.key.get_public_key().move_as_ok())));
+    auto responder_id = responder_full.compute_short_id();
+    auto responder_addr = make_addr_list("127.0.0.1", responder.port - kQuicPortOffset);
+    td::actor::send_closure(client.adnl, &tos::adnl::Adnl::add_peer, client.id, responder_full,
+                            std::move(responder_addr));
+
+    // Issue a query with a 2s deadline and wait for its result.
+    auto start = td::Timestamp::now();
+    auto [future, promise] = td::actor::StartedTask<td::BufferSlice>::make_bridge();
+    td::actor::send_closure(client.quic_sender, &tos::quic::QuicSender::send_query_ex, client.id, responder_id,
+                            std::string("Q"), std::move(promise), td::Timestamp::in(2.0),
+                            td::BufferSlice("Qdeadline-probe"), static_cast<td::uint64>(1u << 20));
+    auto result = co_await std::move(future).wrap();
+    auto elapsed = td::Timestamp::now().at() - start.at();
+
+    // The query must have actually reached the responder (guards against a false
+    // pass from a failed connection rather than a deadline).
+    ASSERT_TRUE(responder.state->get_inbound_cid().has_value());
+    // It must fail (no complete response ever arrives) at roughly the 2s
+    // deadline: not instantly (a connect failure), and not pushed out to the 6s
+    // inactivity window. With the regression, the partial response re-arms the
+    // stream and the query fails only near ~6s.
+    ASSERT_TRUE(result.is_error());
+    ASSERT_TRUE(elapsed > 1.0 && elapsed < 4.0);
+    co_return td::Unit{};
+  });
+}
+
+TEST(QuicConnectionLimit, MaxConnectionsRejectsBeyondCap) {
+  run_raw_quic_test([](RawQuicTestRunner& t) -> td::actor::Task<td::Unit> {
+    // The server accepts at most one connection. quic_test_options() disables
+    // flood control and the per-IP/global rate limiters, so the connection
+    // count ceiling is the only gate left on the inbound accept path.
+    auto server_options = quic_test_options();
+    server_options.max_connections = 1;
+    auto server = co_await t.create_endpoint(server_options);
+
+    // First client connects and occupies the single slot.
+    auto client1 = co_await t.create_endpoint(quic_test_options());
+    auto [c1_out, c1_in] = co_await t.connect(client1, server);
+    static_cast<void>(c1_out);
+    ASSERT_TRUE(server.state->get_inbound_cid().has_value());
+    ASSERT_EQ(server.state->get_inbound_cid().value(), c1_in);
+
+    // Second client initiates against a full table. The client-side connect
+    // only emits the initial packet, so it succeeds locally; the server must
+    // refuse the inbound connection in get_or_create_connection, so it never
+    // reaches on_connected and the server's recorded inbound connection stays
+    // client1's. With the ceiling removed the server would accept client2 and
+    // the recorded inbound cid would change, failing the assertion below.
+    auto client2 = co_await t.create_endpoint(quic_test_options());
+    auto connect_result =
+        co_await td::actor::ask(client2.server, &tos::quic::QuicServer::connect, td::Slice("127.0.0.1"), server.port,
+                                clone_quic_key(client2.key), td::Slice("tos"), td::Slice(""))
+            .wrap();
+    ASSERT_TRUE(connect_result.is_ok());
+
+    // Give the server ample time to (not) complete a second handshake.
+    co_await td::actor::coro_sleep(td::Timestamp::in(2.0));
+
+    ASSERT_TRUE(server.state->get_inbound_cid().has_value());
+    ASSERT_EQ(server.state->get_inbound_cid().value(), c1_in);
+    co_return td::Unit{};
+  });
+}
+
 int main(int argc, char* argv[]) {
   SET_VERBOSITY_LEVEL(verbosity_INFO);
   td::set_default_failure_signal_handler().ensure();
@@ -1874,8 +2160,11 @@ int main(int argc, char* argv[]) {
   });
   p.add_option('T', "timeout", "test timeout in seconds (default 60)",
                [](td::Slice arg) { g_config.timeout = td::to_double(arg); });
-  p.add_option('f', "filter", "run only tests matching filter",
-               [](td::Slice arg) { td::TestsRunner::get_default().add_substr_filter(arg.str()); });
+  bool filter_set = false;
+  p.add_option('f', "filter", "run only tests matching filter", [&filter_set](td::Slice arg) {
+    filter_set = true;
+    td::TestsRunner::get_default().add_substr_filter(arg.str());
+  });
   p.add_checked_option('N', "nodes", "large scale test: number of nodes (default 5, 0 to skip)", [](td::Slice arg) {
     TRY_RESULT(v, td::to_integer_safe<int>(arg));
     g_config.large_nodes = v;
@@ -1893,6 +2182,14 @@ int main(int argc, char* argv[]) {
   });
   p.run(argc, argv).ensure();
 
-  td::TestsRunner::get_default().run_all();
-  return td::TestsRunner::get_default().any_test_failed() ? 1 : 0;
+  auto& runner = td::TestsRunner::get_default();
+  runner.run_all();
+  if (filter_set && runner.executed_test_count() == 0) {
+    // A filter that matches no test must fail rather than exit successfully
+    // having run nothing — otherwise a stale name in a CTest -f entry would
+    // silently gate on zero coverage.
+    std::cerr << "error: test filter matched no tests" << std::endl;
+    return 1;
+  }
+  return runner.any_test_failed() ? 1 : 0;
 }

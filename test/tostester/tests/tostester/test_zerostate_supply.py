@@ -116,6 +116,32 @@ def test_local_genesis_total_supply_is_exactly_five_billion_tos(tmp_path):
     )
 
 
+def test_ordinary_local_profile_can_explicitly_extend_bootstrap_validator_set(tmp_path):
+    install = Install(BUILD_DIR, REPO)
+    zerostate = create_zerostate(
+        install,
+        tmp_path,
+        NetworkConfig(bootstrap_validator_set_valid_for=86_400),
+        [Key()],
+    )
+
+    state = _load_masterchain_state(zerostate.masterchain.file)
+    validator_set = _config(state, 34, ConfigParam34).cur_validators
+    assert validator_set.utime_until - validator_set.utime_since == 86_400
+
+
+@pytest.mark.parametrize("duration", [False, 0, -1, 0x1_0000_0000])
+def test_bootstrap_validator_set_lifetime_rejects_invalid_duration(tmp_path, duration):
+    install = Install(BUILD_DIR, REPO)
+    with pytest.raises(ValueError, match="bootstrap validator-set lifetime"):
+        create_zerostate(
+            install,
+            tmp_path,
+            NetworkConfig(bootstrap_validator_set_valid_for=duration),
+            [Key()],
+        )
+
+
 def test_validator_economics_profile_requires_exactly_four_keys(tmp_path):
     install = Install(BUILD_DIR, REPO)
     config = NetworkConfig(validator_economics_profile=True)
@@ -181,8 +207,8 @@ def test_validator_election_stage_a_profile_is_isolated_and_accelerated(tmp_path
         10_000 * NANOTOS_PER_TOS
     )
     rewards = _config(state, 14, ConfigParam14)
-    assert rewards.masterchain_block_fee == 569_879_384
-    assert rewards.basechain_block_fee == 335_223_167
+    assert rewards.masterchain_block_fee == 39_496_630
+    assert rewards.basechain_block_fee == 23_233_312
     assert _config(state, 2, ConfigParam2).minter_addr == _config(
         state, 0, ConfigParam0
     ).config_addr
@@ -286,8 +312,8 @@ def test_validator_economics_profile_matches_bootstrap_spec(tmp_path):
     assert 19 in state.custom.config.config
 
     param14 = _config(state, 14, ConfigParam14)
-    assert param14.masterchain_block_fee == 569_879_384
-    assert param14.basechain_block_fee == 335_223_167
+    assert param14.masterchain_block_fee == 39_496_630
+    assert param14.basechain_block_fee == 23_233_312
 
     param15 = _config(state, 15, ConfigParam15)
     assert (
@@ -481,8 +507,8 @@ def test_canonical_genesis_script_accepts_only_four_validator_keys(tmp_path):
     assert _config(state, 4, ConfigParam4).dns_root_addr_hex == EXPECTED_DNS_ROOT_ID
     assert 3 not in state.custom.config.config
     canonical_rewards = _config(state, 14, ConfigParam14)
-    assert canonical_rewards.masterchain_block_fee == 569_879_384
-    assert canonical_rewards.basechain_block_fee == 335_223_167
+    assert canonical_rewards.masterchain_block_fee == 39_496_630
+    assert canonical_rewards.basechain_block_fee == 23_233_312
     assert _config(state, 16, ConfigParam16).min_validators == 4
     assert _config(state, 17, ConfigParam17).max_stake_factor == 1 << 16
     canonical_catchain = _config(state, 28, ConfigParam28)

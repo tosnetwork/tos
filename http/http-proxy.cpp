@@ -71,6 +71,10 @@ class HttpRemote : public td::actor::Actor {
     client_ = tos::http::HttpClient::create_multi(domain_, td::IPAddress(), 1, 1, std::make_shared<Cb>(actor_id(this)));
     fail_at_ = td::Timestamp::in(10.0);
     close_at_ = td::Timestamp::in(60.0);
+    // Arm the alarm. Without this the timeout logic in alarm() -- the only
+    // path that erases a remote from HttpProxy::clients_ -- never runs, so
+    // every distinct Host string left one HttpRemote parked forever.
+    alarm_timestamp().relax(fail_at_);
   }
   void set_ready(bool ready) {
     if (ready == ready_) {
@@ -170,7 +174,11 @@ class HttpProxy : public td::actor::Actor {
       td::actor::ActorId<HttpProxy> proxy_;
     };
 
-    server_ = tos::http::HttpServer::create(port_, std::make_shared<Cb>(actor_id(this)));
+    // A proxy fans out many concurrent client connections, so it needs more
+    // headroom than the library default, but still a finite bound.
+    tos::http::HttpServer::Limits limits;
+    limits.max_connections = 4096;
+    server_ = tos::http::HttpServer::create(port_, std::make_shared<Cb>(actor_id(this)), limits);
   }
 
   void receive_request(
@@ -223,7 +231,10 @@ class HttpProxy : public td::actor::Actor {
   }
 
  private:
-  td::uint16 port_;
+  // Read by set_port before it is ever assigned: an indeterminate value
+  // makes the binary refuse a port it was given ("duplicate port"), or,
+  // with no port given, listen on whatever the value happened to be.
+  td::uint16 port_{0};
 
   td::actor::ActorOwn<tos::http::HttpServer> server_;
   std::map<std::string, td::actor::ActorOwn<HttpRemote>> clients_;

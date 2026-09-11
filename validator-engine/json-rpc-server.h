@@ -22,6 +22,7 @@
 #include <optional>
 
 #include "http/http-server.h"
+#include "json-rpc-rate-gate.h"
 #include "metrics/metrics-collectors.h"
 #include "td/actor/actor.h"
 #include "td/utils/JsonBuilder.h"
@@ -30,6 +31,7 @@
 #include "block/block.h"
 
 #include <list>
+#include <mutex>
 #include <set>
 #include <unordered_map>
 
@@ -41,38 +43,43 @@ class JsonRpcResponseCache {
       : max_entries_(max_entries), max_body_bytes_(max_body_bytes) {
   }
 
-  bool empty() const noexcept {
+  // All public methods lock mutex_. The cache is a plain shared object accessed
+  // from more than one actor: the JSON-RPC actor (lookup/evict on the request
+  // and cleanup paths) and the promise continuation that stores a completed
+  // response, which -- with query timeouts enabled -- runs on the
+  // QueryTimeoutGuard actor. On a multi-threaded scheduler those actors can run
+  // concurrently, so the map/list/counter must be synchronized. The shared_ptr
+  // only keeps the object alive; it does not make its operations thread-safe.
+  bool empty() const {
+    std::lock_guard<std::mutex> guard(mutex_);
     return entries_.empty();
   }
 
-  std::size_t size() const noexcept {
+  std::size_t size() const {
+    std::lock_guard<std::mutex> guard(mutex_);
     return entries_.size();
   }
 
-  std::size_t body_bytes() const noexcept {
+  std::size_t body_bytes() const {
+    std::lock_guard<std::mutex> guard(mutex_);
     return body_bytes_;
   }
 
   void clear() {
+    std::lock_guard<std::mutex> guard(mutex_);
     entries_.clear();
     lru_.clear();
     body_bytes_ = 0;
   }
 
   void evict_expired() {
-    auto it = entries_.begin();
-    while (it != entries_.end()) {
-      if (it->second.expires_at.is_in_past()) {
-        auto erase_it = it++;
-        erase(erase_it);
-      } else {
-        ++it;
-      }
-    }
+    std::lock_guard<std::mutex> guard(mutex_);
+    evict_expired_locked();
   }
 
   std::optional<std::string> lookup(const std::string& key) {
-    evict_expired();
+    std::lock_guard<std::mutex> guard(mutex_);
+    evict_expired_locked();
     auto it = entries_.find(key);
     if (it == entries_.end()) {
       return std::nullopt;
@@ -82,7 +89,8 @@ class JsonRpcResponseCache {
   }
 
   bool store(const std::string& key, std::string response_json, td::Timestamp expires_at) {
-    evict_expired();
+    std::lock_guard<std::mutex> guard(mutex_);
+    evict_expired_locked();
     if (max_body_bytes_ > 0 && response_json.size() > max_body_bytes_) {
       return false;
     }
@@ -100,6 +108,19 @@ class JsonRpcResponseCache {
   }
 
  private:
+  // Caller must hold mutex_.
+  void evict_expired_locked() {
+    auto it = entries_.begin();
+    while (it != entries_.end()) {
+      if (it->second.expires_at.is_in_past()) {
+        auto erase_it = it++;
+        erase(erase_it);
+      } else {
+        ++it;
+      }
+    }
+  }
+
   struct Entry {
     std::string response_json;
     td::Timestamp expires_at;
@@ -132,6 +153,7 @@ class JsonRpcResponseCache {
     }
   }
 
+  mutable std::mutex mutex_;
   std::size_t max_entries_{0};
   std::size_t max_body_bytes_{0};
   std::unordered_map<std::string, Entry> entries_;
@@ -139,11 +161,36 @@ class JsonRpcResponseCache {
   std::size_t body_bytes_{0};
 };
 
+// Fields gathered for buildTransactionIntent before the intent is built.
+// Declared here because completing that request is a member function: the
+// completion runs from a liteserver reply, which may arrive after the
+// server is gone, so it is reached through the actor rather than a raw
+// pointer.
+struct InitialIntentInput {
+  std::string address;
+  std::string body_b64;
+  std::string init_code_b64;
+  std::string init_data_b64;
+  std::string account_model;
+  std::string authorization_version;
+  std::string signer;
+  std::string submitter;
+  std::string fee_payer;
+  std::string delegation_ref;
+};
+
 class JsonRpcServer final : public td::actor::Actor, public virtual metrics::AsyncCollector {
  public:
   struct Options {
     bool readonly = false;           // disable sendBoc/sendBocReturnHash/sendQuery/submitSignedTransaction
-    std::string cors_origin = "*";   // Access-Control-Allow-Origin value
+    // Access-Control-Allow-Origin value; empty emits no header at all,
+    // which is the default. A wildcard lets any page the operator visits
+    // read this node's replies, and on the loopback deployment that
+    // listen() blesses for write access it lets that page drive the
+    // write methods too: a plain-text POST is a simple request, so no
+    // preflight stands in the way. Operators who want browser access
+    // name the origin they mean.
+    std::string cors_origin;
     td::int32 readyz_threshold = 60; // sync lag threshold in seconds for /readyz
     double request_timeout = 30.0;   // per-request timeout in seconds (0 = no timeout)
     std::size_t max_connections = 1024;    // simultaneously open HTTP connections (0 = unlimited)
@@ -174,12 +221,33 @@ class JsonRpcServer final : public td::actor::Actor, public virtual metrics::Asy
     // headers are ignored — a malicious direct client cannot
     // self-stamp `X-Forwarded-For` to rotate buckets.
     bool trust_proxy_headers = false;
+    // Per-source-IP request budget, consulted at dispatch. Sized well
+    // above what a single legitimate client sends so that ordinary
+    // wallet and explorer traffic never meets it, while a flood from
+    // one address still meets a ceiling: without this the only limits
+    // are global, so one source can consume the whole node's liteserver
+    // capacity and starve its ADNL peers too. A zero window or a zero
+    // budget disables the gate entirely.
+    double per_ip_rate_window = 10.0;
+    td::uint64 per_ip_rate_requests = 600;
+    // Upper bound on how many source addresses carry a live budget. The
+    // table is keyed by remote input, so it needs its own ceiling; past
+    // it the least recently seen entry is reclaimed.
+    std::size_t per_ip_rate_max_sources = 4096;
     // Optional explicit allow-list of trusted proxy IPs. Loopback
     // addresses (127.0.0.1, ::1) are always implicit. Each entry is a
     // single IPv4 / IPv6 address in textual form; CIDR ranges are not
     // accepted (operators are expected to know the exact peer address
     // of their reverse proxy).
     std::vector<std::string> trusted_proxies;
+    // OPS observability, default off: expose the read-only getNodeConsensusStatus admin
+    // method. It reports internal consensus state (applied and consensus masterchain block,
+    // last key block, validator-set membership, catchain seqno) that is otherwise only in
+    // logs. Membership and the snapshot are computed live in the validator manager, so this
+    // struct carries no node identity. Restricting exposure to loopback is an operator
+    // DEPLOYMENT responsibility (choose a loopback --json-rpc-address); this flag does not
+    // itself enforce a loopback-only listener.
+    bool expose_consensus_status = false;
   };
 
   // M-02 hardening: the listen-time decision matrix is broken out so
@@ -271,7 +339,12 @@ class JsonRpcServer final : public td::actor::Actor, public virtual metrics::Asy
   // JSON-RPC 2.0 batch dispatch: array of element requests becomes an array
   // of element responses (notifications omitted).  See process_batch.
   struct BatchState;
+  // `body` is the buffer the elements were parsed from. td::JsonValue
+  // holds slices into it rather than owning its strings, so the buffer
+  // must outlive every element: the batch driver resumes on a later
+  // actor message, long after the caller's frame is gone.
   void process_batch(std::vector<td::JsonValue> elements,
+                     td::BufferSlice body,
                      std::string source_ip,
                      td::Promise<HttpReturn> promise);
   void process_batch_step(std::shared_ptr<BatchState> state);
@@ -296,7 +369,7 @@ class JsonRpcServer final : public td::actor::Actor, public virtual metrics::Asy
                             td::Promise<HttpReturn> promise);
   // Method handlers — existing
   void handle_sendBoc(td::JsonObject &params, std::string req_id,
-                      td::Promise<HttpReturn> promise);
+                      const std::string &source_ip, td::Promise<HttpReturn> promise);
   void handle_getConfigParam(td::JsonObject &params, std::string req_id,
                              td::Promise<HttpReturn> promise);
   void handle_getAddressInformation(td::JsonObject &params, std::string req_id,
@@ -312,8 +385,18 @@ class JsonRpcServer final : public td::actor::Actor, public virtual metrics::Asy
   // Method handlers — block/chain read APIs
   void handle_getMasterchainInfo(td::JsonObject &params, std::string req_id,
                                  td::Promise<HttpReturn> promise);
+  // Completion for handle_getConsensusBlock, invoked back on this actor:
+  // the manager fulfils that promise on its own thread, so the bookkeeping
+  // and the reply belong here rather than in the continuation.
+  void finish_getConsensusBlock(td::uint32 seqno, td::uint32 last_block_utime, bool have_state,
+                                std::string req_id, td::Promise<HttpReturn> promise);
   void handle_getConsensusBlock(td::JsonObject &params, std::string req_id,
                                 td::Promise<HttpReturn> promise);
+  // Read-only admin status: this node's internal consensus view. Gated by
+  // Options::expose_consensus_status (default off). Builds its reply entirely in the
+  // manager continuation (no member mutation), so there is no finish_ hop.
+  void handle_getNodeConsensusStatus(td::JsonObject &params, std::string req_id,
+                                     td::Promise<HttpReturn> promise);
   void handle_lookupBlock(td::JsonObject &params, std::string req_id,
                           td::Promise<HttpReturn> promise);
   void handle_shards(td::JsonObject &params, std::string req_id,
@@ -343,9 +426,9 @@ class JsonRpcServer final : public td::actor::Actor, public virtual metrics::Asy
 
   // Method handlers — send family
   void handle_sendBocReturnHash(td::JsonObject &params, std::string req_id,
-                                td::Promise<HttpReturn> promise);
+                                const std::string &source_ip, td::Promise<HttpReturn> promise);
   void handle_sendQuery(td::JsonObject &params, std::string req_id,
-                        td::Promise<HttpReturn> promise);
+                        const std::string &source_ip, td::Promise<HttpReturn> promise);
   void handle_estimateFee(td::JsonObject &params, std::string req_id,
                           td::Promise<HttpReturn> promise);
 
@@ -386,12 +469,14 @@ class JsonRpcServer final : public td::actor::Actor, public virtual metrics::Asy
                                  td::Promise<HttpReturn> promise);
   void handle_getAccountAgents(td::JsonObject &params, std::string req_id,
                                td::Promise<HttpReturn> promise);
+  void finish_transaction_intent(InitialIntentInput input, std::string req_id,
+                                 td::Promise<HttpReturn> promise);
   void handle_buildTransactionIntent(td::JsonObject &params, std::string req_id,
                                      td::Promise<HttpReturn> promise);
   void handle_getSigningPayload(td::JsonObject &params, std::string req_id,
                                 td::Promise<HttpReturn> promise);
   void handle_submitSignedTransaction(td::JsonObject &params, std::string req_id,
-                                      td::Promise<HttpReturn> promise);
+                                      const std::string &source_ip, td::Promise<HttpReturn> promise);
 
   // Method handlers — account/permission lifecycle surfaces
   void handle_grantAccountDelegation(td::JsonObject &params, std::string req_id,
@@ -427,14 +512,29 @@ class JsonRpcServer final : public td::actor::Actor, public virtual metrics::Asy
   void handle_runGetMethodStd(td::JsonObject &params, std::string req_id,
                               td::Promise<HttpReturn> promise);
   void handle_sendBocReturnHashNoError(td::JsonObject &params, std::string req_id,
-                                       td::Promise<HttpReturn> promise);
+                                       const std::string &source_ip, td::Promise<HttpReturn> promise);
 
   // Readiness probe (async — queries liteserver for sync state)
+  static HttpReturn build_readyz_response(int status_code, std::string status_text, std::string body,
+                                         const std::string &cors_origin);
+  void cache_readyz_answer(int status_code, std::string status_text, std::string body);
   void handle_readyz(td::Promise<HttpReturn> promise);
+  // Completion for handle_readyz: caches the answer and drains every
+  // waiter that arrived while the query was in flight.
+  void finish_readyz(int status_code, std::string status_text, std::string body);
 
   // Send a TL-serialized liteserver query to the validator manager
   void send_liteserver_query(td::BufferSlice query,
                              td::Promise<td::BufferSlice> promise);
+  // As above, attributing the query to a source so the mempool's
+  // per-origin external-message window applies. Read paths do not need
+  // this; message submission does. Named apart from the overload above so
+  // taking a member pointer for send_closure stays unambiguous.
+  void send_attributed_liteserver_query(td::BufferSlice query, adnl::AdnlNodeIdShort source,
+                                        td::Promise<td::BufferSlice> promise);
+  // Stable per-client id derived from the caller's address, used only as
+  // the attribution above.
+  static adnl::AdnlNodeIdShort submission_source_id(const std::string &source_ip);
 
   // Utility: build JSON-RPC responses.
   //
@@ -520,20 +620,56 @@ class JsonRpcServer final : public td::actor::Actor, public virtual metrics::Asy
 
   static const std::set<std::string> &cacheable_methods();
 
+  // Sliding-window request budget per source address. Consulted once per
+  // dispatched method, including each element of a batch, so a batch
+  // cannot buy a caller extra budget.
+  //
+  // `source` comes from resolve_source_ip, which returns the real TCP
+  // peer unless an operator-configured proxy is speaking. An empty
+  // source means there is no remote caller to attribute to (in-process
+  // and test callers) and is admitted without consuming budget.
+  bool consume_per_ip_token(const std::string &source);
+
   td::actor::ActorId<validator::ValidatorManagerInterface> validator_manager_;
   td::actor::ActorOwn<http::HttpServer> http_;
   Options opts_;
-  JsonRpcResponseCache cache_;
+  // Held by shared owner for the same reason as the counters: the
+  // completion that stores a response runs from a liteserver reply, which
+  // can arrive after this actor is gone.
+  std::shared_ptr<JsonRpcResponseCache> cache_;
+  // Declared after opts_: it is constructed from the option values.
+  PerIpRateGate per_ip_gate_;
   td::uint32 consensus_block_seqno_{0};
   td::int64 consensus_block_timestamp_{0};
 
   // ── Statistics ───────────────────────────────────────────────────────
   td::Timestamp start_time_;
-  std::atomic<td::uint64> requests_total_{0};
-  std::atomic<td::uint64> requests_errors_{0};
+  // Readiness answer held briefly so any probe rate costs at most one
+  // liteserver query per interval. A probe must never be refused: both
+  // "ready" and "not ready" are wrong answers to "you asked too often",
+  // and a health checker acts on either.
+  static constexpr double kReadyzCacheSeconds = 1.0;
+  td::Timestamp readyz_cached_until_;
+  int readyz_cached_status_{0};
+  std::string readyz_cached_status_text_;
+  std::string readyz_cached_body_;
+  // Concurrent probes on a stale cache share one backend query: the flag
+  // marks a query in flight, the waiters all receive its result.
+  bool readyz_query_in_flight_{false};
+  std::vector<td::Promise<HttpReturn>> readyz_waiters_;
+
   std::atomic<td::uint64> cache_hits_{0};
   std::atomic<td::uint64> cache_misses_{0};
-  std::atomic<td::uint64> active_requests_{0};
+  // Counters the per-request completion callback touches. A promise can
+  // outlive this actor -- an abandoned one is still invoked, carrying
+  // "Lost promise" -- so that callback must not reach them through
+  // `this`. Holding them separately lets it keep them alive on its own.
+  struct RequestCounters {
+    std::atomic<td::uint64> total{0};
+    std::atomic<td::uint64> errors{0};
+    std::atomic<td::uint64> active{0};
+  };
+  std::shared_ptr<RequestCounters> counters_ = std::make_shared<RequestCounters>();
 
   // Per-method request count (method name → count)
   metrics::Labeled<std::string, metrics::AtomicCounter<td::uint64>>::Ptr

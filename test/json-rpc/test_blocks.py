@@ -11,6 +11,8 @@ Covers:
   - getBlockHeader
   - getOutMsgQueueSize
 """
+import base64
+
 import pytest
 
 SHARD_ALL = -9223372036854775808  # 0x8000000000000000 (signed)
@@ -46,13 +48,17 @@ class TestGetMasterchainInfo:
 class TestGetMasterchainBlockSignatures:
 
     METHOD = "getMasterchainBlockSignatures"
+    # Ordinary blocks answer with blocks.blockSignatures; simplex-consensus
+    # blocks answer with blocks.blockSignatures.simplex, which additionally
+    # carries the session_id / slot / candidate needed to verify the signatures.
+    SIG_TYPES = ("blocks.blockSignatures", "blocks.blockSignatures.simplex")
 
     def test_basic(self, api_method_call, last_mc_seqno):
         response = api_method_call(self.METHOD, seqno=last_mc_seqno)
         assert response.status_code == 200, response.json().get("error")
         data = response.json()
         assert data["ok"] is True
-        assert data["result"]["@type"] == "blocks.blockSignatures"
+        assert data["result"]["@type"] in self.SIG_TYPES
         if data["result"]["signatures"]:
             assert data["result"]["signatures"][0]["@type"] == "blocks.signature"
 
@@ -73,6 +79,88 @@ class TestGetMasterchainBlockSignatures:
     def test_future_seqno(self, api_method_call, last_mc_seqno):
         response = api_method_call(self.METHOD, seqno=last_mc_seqno + 1000000)
         assert response.json()["ok"] is False
+
+    def test_returns_the_requested_blocks_own_signatures(self, api_method_call, last_mc_seqno):
+        """Regression for the signature *direction*.
+
+        A finalized masterchain block is always signed by validators, so the
+        method must return that block's own, non-empty signature set. The
+        previous implementation walked the proof forward FROM the block, whose
+        forward links sign *later* blocks, and only understood the ordinary
+        signature set -- so on this simplex-consensus network it returned an
+        empty list for every block. This test therefore goes red on the old
+        behavior and green once the handler reads the N-1 -> N link's signatures.
+
+        It also pins the contract: signatures are carried under the requested id
+        with no per-signature 'signed_block' field (that field was the old
+        mislabeled output), and each entry is a well-formed Ed25519 signature
+        (32-byte node id, 64-byte signature) so an empty or malformed set fails.
+        """
+        # A block a few behind the tip, so the forward proof link N-1 -> N that
+        # carries its signatures is already available.
+        if last_mc_seqno < 3:
+            pytest.skip("chain has not advanced far enough for a settled block")
+        seqno = max(2, last_mc_seqno - 3)
+
+        response = api_method_call(self.METHOD, seqno=seqno)
+        assert response.status_code == 200, response.json().get("error")
+        data = response.json()
+        assert data["ok"] is True
+        result = data["result"]
+        assert result["@type"] in self.SIG_TYPES
+        assert result["id"]["seqno"] == seqno
+
+        signatures = result["signatures"]
+        assert signatures, "a finalized masterchain block must carry validator signatures"
+        for sig in signatures:
+            assert sig["@type"] == "blocks.signature"
+            # The old handler tagged each signature with the block it actually
+            # signed because those were NOT this block's signatures. The fixed
+            # handler returns this block's signatures, so there is no such tag.
+            assert "signed_block" not in sig
+            assert len(base64.b64decode(sig["node_id_short"])) == 32
+            assert len(base64.b64decode(sig["signature"])) == 64
+
+        # Simplex signatures are made over a message built from the session id,
+        # slot and candidate -- not the block hash -- so a client cannot verify
+        # them without those fields. The simplex response must carry them (this
+        # is the second review finding: the earlier version dropped them).
+        if result["@type"] == "blocks.blockSignatures.simplex":
+            assert len(base64.b64decode(result["session_id"])) == 32
+            assert isinstance(result["slot"], int)
+            assert "candidate" in result
+            base64.b64decode(result["candidate"])  # must be valid base64
+
+    def test_simplex_context_is_present_and_not_skippable(self, api_method_call, last_mc_seqno):
+        """Regression that the simplex verification context is returned.
+
+        TOS runs simplex consensus, so a finalized masterchain block's
+        signatures MUST come back as blocks.blockSignatures.simplex carrying the
+        session_id / slot / candidate needed to reconstruct the signed
+        finalize-vote message. Unlike the check in the direction test above, this
+        asserts the simplex type *unconditionally* rather than behind an
+        `if @type == simplex`: a regression that relabelled the response as the
+        ordinary blocks.blockSignatures type (dropping the context, the way the
+        pre-fix code did) would silently skip a guarded check but fails here.
+
+        Full cryptographic verification of the signatures against the
+        reconstructed message is a separate, larger follow-up; this test pins
+        that the context is present and typed, not that it verifies.
+        """
+        if last_mc_seqno < 3:
+            pytest.skip("chain has not advanced far enough for a settled block")
+        seqno = max(2, last_mc_seqno - 3)
+        response = api_method_call(self.METHOD, seqno=seqno)
+        assert response.status_code == 200, response.json().get("error")
+        result = response.json()["result"]
+        assert result["@type"] == "blocks.blockSignatures.simplex", (
+            "expected simplex signatures on a simplex-consensus network; a "
+            "regression to the ordinary type would drop the verification context"
+        )
+        assert len(base64.b64decode(result["session_id"])) == 32
+        assert isinstance(result["slot"], int)
+        base64.b64decode(result["candidate"])  # must be valid base64
+        assert result["signatures"], "simplex block must carry validator signatures"
 
 
 # ═══════════════════════════════════════════════════════════════════════════

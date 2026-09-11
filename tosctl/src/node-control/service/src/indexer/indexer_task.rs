@@ -159,11 +159,35 @@ pub async fn run(
     let probe_budget = ProbeBudget::new();
     let mut interval = tokio::time::interval(Duration::from_secs(app_config.tick_interval));
     let mut cancel = cancellation_ctx.subscribe();
+    let retention_blocks = app_config.indexer_retention_blocks;
+    // Only prune once the tip has advanced by this much past the last prune, so
+    // the referential transaction sweep does not run every tick.
+    let prune_step = (retention_blocks / 10).max(1000);
+    let mut last_prune_seqno: u32 = 0;
     loop {
         tokio::select! {
             _ = interval.tick() => {
-                if let Err(e) = scan_new_blocks(&chain_provider, &indexer_store, &known, &probe_budget).await {
-                    tracing::error!(target: "indexer", "scan error: {:#}", e);
+                match scan_new_blocks(&chain_provider, &indexer_store, &known, &probe_budget).await {
+                    Ok(mc_tip) => {
+                        if retention_blocks > 0 && mc_tip > retention_blocks {
+                            let keep_from = mc_tip - retention_blocks;
+                            if keep_from >= last_prune_seqno.saturating_add(prune_step) {
+                                match indexer_store.prune_history(keep_from) {
+                                    Ok(removed) => {
+                                        last_prune_seqno = keep_from;
+                                        if removed > 0 {
+                                            tracing::info!(
+                                                target: "indexer",
+                                                "pruned {removed} history rows older than mc seqno {keep_from}"
+                                            );
+                                        }
+                                    }
+                                    Err(e) => tracing::error!(target: "indexer", "prune error: {:#}", e),
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => tracing::error!(target: "indexer", "scan error: {:#}", e),
                 }
             }
             _ = cancel.changed() => {
@@ -205,7 +229,7 @@ async fn scan_new_blocks(
     store: &IndexerStore,
     known: &KnownCodeHashes,
     probe_budget: &ProbeBudget,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<u32> {
     let mc_info = chain_provider.get_masterchain_info().await?;
     let mc_target = mc_info.last.seqno;
 
@@ -217,7 +241,8 @@ async fn scan_new_blocks(
         mc_target,
         probe_budget,
     )
-    .await
+    .await?;
+    Ok(mc_target)
 }
 
 /// Advances the index from the masterchain timeline. For every masterchain

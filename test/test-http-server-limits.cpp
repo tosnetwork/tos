@@ -311,3 +311,61 @@ TEST(HttpServerLimits, deadline_disabled_keeps_silent_connection_open) {
     ASSERT_TRUE(silent.request_ok(5000));
   });
 }
+
+// The RLDP HTTP proxy does not read requests off a socket; it receives a
+// serialized tos_api::http_request and rebuilds it with
+// HttpRequest::create(const http_request&). That rebuild must run every header
+// through add_header, which is where the Content-Length gate lives -- otherwise
+// the gate that refuses an oversized socket request would never apply to a
+// proxied one. These tests pin that the gate fires on the reconstruction path
+// and, critically, that its rejection is propagated rather than dropped.
+namespace {
+tos::tl_object_ptr<tos::tos_api::http_request> make_tl_request(
+    std::string method, std::string url, std::vector<std::pair<std::string, std::string>> headers) {
+  std::vector<tos::tl_object_ptr<tos::tos_api::http_header>> tl_headers;
+  tl_headers.reserve(headers.size());
+  for (auto &h : headers) {
+    tl_headers.push_back(tos::create_tl_object<tos::tos_api::http_header>(h.first, h.second));
+  }
+  td::Bits256 id;
+  id.set_zero();
+  return tos::create_tl_object<tos::tos_api::http_request>(id, std::move(method), std::move(url), "HTTP/1.1",
+                                                           std::move(tl_headers));
+}
+}  // namespace
+
+TEST(HttpServerLimits, rldp_request_rebuild_accepts_content_length_at_max) {
+  // A body declared at exactly the cap is legal: the gate is `len > max`, so
+  // the largest admissible request still rebuilds cleanly.
+  auto f = make_tl_request(
+      "POST", "/",
+      {{"Host", "example.com"}, {"Content-Length", std::to_string(tos::http::HttpRequest::max_payload_size())}});
+  auto r = tos::http::HttpRequest::create(*f);
+  ASSERT_TRUE(r.is_ok());
+}
+
+TEST(HttpServerLimits, rldp_request_rebuild_rejects_oversized_content_length) {
+  // One byte over the cap must be refused, and the refusal must surface as an
+  // error from create() -- not be swallowed while the request is rebuilt
+  // anyway. If add_header's status were dropped on this path (the regression
+  // this guards against), create() would return ok here instead.
+  auto f = make_tl_request(
+      "POST", "/",
+      {{"Host", "example.com"},
+       {"Content-Length", std::to_string(static_cast<uint64_t>(tos::http::HttpRequest::max_payload_size()) + 1)}});
+  auto r = tos::http::HttpRequest::create(*f);
+  ASSERT_TRUE(r.is_error());
+}
+
+TEST(HttpServerLimits, default_connection_limit_is_finite) {
+  // The library default must be a finite cap, not 0 ("unlimited"). Every
+  // service that constructs an HttpServer without its own Limits inherits this
+  // default, so a 0 here would silently leave those consumers unbounded -- the
+  // dead guard this change removes. The connection_cap test above proves the
+  // guard rejects the (limit+1)-th connection when the limit is positive;
+  // this proves no consumer can end up with a non-positive (unlimited) limit
+  // by default. Reverting Limits::max_connections to 0 makes this fail.
+  tos::http::HttpServer::Limits limits;
+  ASSERT_TRUE(limits.max_connections != 0);
+  ASSERT_TRUE(limits.max_connections <= (static_cast<size_t>(1) << 20));
+}

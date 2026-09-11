@@ -26,7 +26,6 @@
 #include "adnl/adnl-node-id.hpp"
 #include "auto/tl/tos_api.h"
 #include "keys/keys.hpp"
-#include "td/utils/List.h"
 #include "td/utils/Status.h"
 #include "td/utils/buffer.h"
 #include "td/utils/common.h"
@@ -65,10 +64,47 @@ class BroadcastsTwostep {
  private:
   td::actor::ActorId<adnl::AdnlSenderInterface> sender_;
   std::map<Overlay::BroadcastHash, std::unique_ptr<BroadcastTwostep>> broadcasts_;
-  td::ListNode lru_;
+  // Index of in-flight broadcasts ordered by their (sender-supplied) date, which
+  // is what gc expires on. Insertion order is not date order -- the accepted
+  // date may lead or lag arrival -- so an insertion-ordered list cannot let gc
+  // stop at the first fresh entry. Ordering by date lets gc evict every expired
+  // entry and stop as soon as the earliest remaining date is fresh, and lets the
+  // admission path tell in O(1) whether anything can be reclaimed.
+  std::multimap<td::uint32, Overlay::BroadcastHash> by_date_;
 
   td::uint64 rebroadcast(OverlayImpl *overlay, const adnl::AdnlNodeIdShort &bcast_src_adnl_id,
                          const td::BufferSlice &data);
+
+  // In-flight admission ceiling, checked in process_broadcast at the commit
+  // point before a new broadcast is created. When the table is full it first
+  // reclaims entries past the assembly window (a gc pass) and only then, if
+  // still full, refuses the newcomer rather than evicting one being assembled.
+  // Reclaiming first matters on fixed-member overlays, whose periodic gc can be
+  // tens of seconds apart while the 25 s assembly window is shorter, so the
+  // table can be full of already-expired entries. This is a receiver-side path,
+  // so there is no is_ours exemption.
+  td::Status ensure_in_flight_capacity(OverlayImpl *overlay);
+
+  // The single insertion primitive for a new in-flight broadcast: it applies the
+  // capacity gate and, only if admitted, tracks the broadcast in both indexes.
+  // process_broadcast inserts only through here, so the gate and the insert are
+  // inseparable -- a test that drives this at capacity fails if the gate is
+  // removed, and an insertion that bypassed it would not assemble the broadcast
+  // at all (caught by the end-to-end receive path).
+  td::Status admit_and_track(OverlayImpl *overlay, td::uint32 date, Overlay::BroadcastHash broadcast_id,
+                             std::unique_ptr<BroadcastTwostep> bcast);
+
+  // Test support: inject a decoder-less in-flight entry with a chosen date and
+  // read the table size, so gc() and the admission ceiling can be exercised
+  // without standing up real FEC state and crypto. try_admit_fresh_for_test
+  // drives the real admit_and_track primitive with a synthetic entry, covering
+  // the production insertion gate. Defined where BroadcastTwostep is a complete
+  // type.
+  void inject_in_flight_for_test(Overlay::BroadcastHash broadcast_id, td::uint32 date);
+  size_t in_flight_count_for_test() const;
+  size_t capacity_for_test() const;
+  td::Status try_admit_fresh_for_test(OverlayImpl *overlay, Overlay::BroadcastHash broadcast_id);
+  friend class BroadcastsTwostepTestAccess;
 };
 }  // namespace overlay
 

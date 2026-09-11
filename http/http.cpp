@@ -280,6 +280,23 @@ tl_object_ptr<tos_api::http_request> HttpRequest::store_tl(td::Bits256 req_id) {
   return create_tl_object<tos_api::http_request>(req_id, method_, url_, proto_version_, std::move(headers));
 }
 
+td::Result<std::unique_ptr<HttpRequest>> HttpRequest::create(const tos_api::http_request &f) {
+  // Inverse of store_tl: rebuild a request from its TL wire form. The RLDP HTTP
+  // proxy receives requests this way rather than off a socket, so every header
+  // must still pass through add_header -- that is where the Content-Length gate
+  // lives. Propagating each status (rather than dropping it) is what keeps the
+  // proxied path under the same size limit as the socket path; an oversized or
+  // malformed header fails the whole reconstruction here.
+  TRY_RESULT(request, create(f.method_, f.url_, f.http_version_));
+  for (auto &x : f.headers_) {
+    HttpHeader h{x->name_, x->value_};
+    TRY_STATUS(h.basic_check());
+    TRY_STATUS(request->add_header(std::move(h)));
+  }
+  TRY_STATUS(request->complete_parse_header());
+  return std::move(request);
+}
+
 td::Status HttpPayload::parse(td::ChainBufferReader &input) {
   CHECK(!parse_completed());
   while (true) {
@@ -882,6 +899,16 @@ td::Result<std::unique_ptr<HttpResponse>> HttpResponse::parse(std::unique_ptr<Ht
     if (!read) {
       exit_loop = true;
       break;
+    }
+
+    if (response) {
+      // Mirror the request side: cap total header bytes, not just each
+      // line. A hostile server can otherwise stream headers without end
+      // into a client that keeps them all.
+      response->total_headers_size_ += line.size() + 2;
+      if (response->total_headers_size_ > HttpResponse::max_header_size()) {
+        return td::Status::Error("response headers too large");
+      }
     }
 
     if (!response) {

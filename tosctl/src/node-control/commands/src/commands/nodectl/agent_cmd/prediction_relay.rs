@@ -44,6 +44,30 @@ const MAX_PREDICTION_TRANSACTION_BOC_BYTES: usize = 2 << 20;
 
 #[derive(clap::Args, Clone)]
 #[command(
+    about = "Preflight a pinned Prediction relay observer set and emit its canonical identity"
+)]
+pub struct AgentAccountPredictionRelayProfileCmd {
+    #[arg(long)]
+    network_id: String,
+    #[arg(long)]
+    global_id: i32,
+    #[arg(long)]
+    zero_state_root_hash: String,
+    #[arg(long)]
+    zero_state_file_hash: String,
+    #[arg(long)]
+    workchain_id: i32,
+    #[arg(
+        long = "quorum-config",
+        required = true,
+        num_args = 2..,
+        help = "Additional absolute tosctl configs; all members need distinct endpoint and operator pins"
+    )]
+    quorum_configs: Vec<String>,
+}
+
+#[derive(clap::Args, Clone)]
+#[command(
     about = "Resolve a Prediction source transaction from an exact pre-broadcast cursor and RPC quorum"
 )]
 pub struct AgentAccountPredictionRelaySourceResolveCmd {
@@ -66,6 +90,17 @@ pub struct AgentAccountPredictionRelaySourceResolveCmd {
         help = "Maximum hash-linked source transactions inspected per observer"
     )]
     max_transactions: u32,
+    #[arg(
+        long,
+        help = "Write an owner-private durable-boundary checkpoint before returning source evidence"
+    )]
+    checkpoint_file: Option<String>,
+    #[arg(
+        long,
+        requires = "checkpoint_file",
+        help = "Hold at the checkpoint for at most 30 seconds so an external crash-recovery supervisor can terminate this process"
+    )]
+    checkpoint_pause_ms: Option<u32>,
 }
 
 #[derive(clap::Args, Clone)]
@@ -507,6 +542,46 @@ impl SourceHistoryWalk {
     }
 }
 
+impl AgentAccountPredictionRelayProfileCmd {
+    pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            !self.network_id.is_empty() && self.network_id.len() <= 256,
+            "Prediction relay network_id is invalid"
+        );
+        validate_sha256_digest("zero_state_root_hash", &self.zero_state_root_hash)?;
+        validate_sha256_digest("zero_state_file_hash", &self.zero_state_file_hash)?;
+        let network = RelayNetworkDomainPin {
+            network_id: self.network_id.clone(),
+            global_id: self.global_id,
+            zero_state_root_hash: self.zero_state_root_hash.clone(),
+            zero_state_file_hash: self.zero_state_file_hash.clone(),
+            workchain_id: self.workchain_id,
+        };
+        let members = load_economic_payment_corroboration_members(
+            Path::new(config_path),
+            &self.quorum_configs,
+        )?;
+        verify_economic_payment_corroboration_network(&members, &network).await?;
+        let mut observer_ids =
+            members.iter().map(|member| member.locator_identity_digest.clone()).collect::<Vec<_>>();
+        observer_ids.sort();
+        anyhow::ensure!(
+            observer_ids.windows(2).all(|pair| pair[0] < pair[1]),
+            "Prediction relay observer identities are not unique"
+        );
+        println!(
+            "{}",
+            serde_json::json!({
+                "schema": "tosctl.prediction-relay-observer-profile.v1",
+                "network_domain_hash": prediction_network_domain_digest(&network)?,
+                "observer_ids": observer_ids,
+                "quorum_threshold": observer_ids.len() / 2 + 1,
+            })
+        );
+        Ok(())
+    }
+}
+
 impl AgentAccountPredictionRelaySourceResolveCmd {
     pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
         validate_sha256_digest("stable_action_id", &self.stable_action_id)?;
@@ -557,6 +632,14 @@ impl AgentAccountPredictionRelaySourceResolveCmd {
             .find_economic_effect_by_stable_action(&self.stable_action_id)?
             .context("prepared Prediction effect was not found")?;
         validate_prediction_custody_record(&record, &request)?;
+        let boundary = record
+            .prediction_relay_recovery_boundary
+            .as_ref()
+            .context("Prediction effect has no durable relay recovery boundary")?;
+        anyhow::ensure!(
+            prediction_request_matches_durable_boundary(&request, boundary),
+            "Prediction resolver request conflicts with its durable recovery boundary"
+        );
 
         if record.status == ControllerActionStatus::Resolved {
             let resolution = record
@@ -569,6 +652,7 @@ impl AgentAccountPredictionRelaySourceResolveCmd {
             println!("{}", resolution.evidence);
             return Ok(());
         }
+
         anyhow::ensure!(
             record.status == ControllerActionStatus::Broadcasting,
             "only an ambiguously broadcast Prediction action may resolve its source"
@@ -592,7 +676,9 @@ impl AgentAccountPredictionRelaySourceResolveCmd {
             .await
             {
                 Ok(observation) => observations.push(observation),
-                Err(error) => failures.push(rpc_failure_diagnostic(&member.endpoint, &error)),
+                Err(error) => {
+                    failures.push(prediction_rpc_failure_diagnostic(&member.endpoint, &error))
+                }
             }
         }
         let mut votes: BTreeMap<String, Vec<&PredictionSourceObservation>> = BTreeMap::new();
@@ -701,13 +787,18 @@ impl AgentAccountPredictionRelaySourceResolveCmd {
             resolution,
             time_format::now(),
         )?;
-        println!(
-            "{}",
-            resolved
-                .exact_winner_resolution
-                .context("resolved Prediction source lost its durable evidence")?
-                .evidence
-        );
+        let resolution = resolved
+            .exact_winner_resolution
+            .as_ref()
+            .context("resolved Prediction source lost its durable evidence")?;
+        write_prediction_recovery_checkpoint(
+            self.checkpoint_file.as_deref(),
+            "source_finalized",
+            &self.stable_action_id,
+            &resolution.evidence_digest,
+        )?;
+        await_prediction_recovery_checkpoint_pause(self.checkpoint_pause_ms).await?;
+        println!("{}", resolution.evidence);
         Ok(())
     }
 }
@@ -779,7 +870,9 @@ impl AgentAccountPredictionRelayDestinationResolveCmd {
             .await
             {
                 Ok(observation) => observations.push(observation),
-                Err(error) => failures.push(rpc_failure_diagnostic(&member.endpoint, &error)),
+                Err(error) => {
+                    failures.push(prediction_rpc_failure_diagnostic(&member.endpoint, &error))
+                }
             }
         }
         let mut votes: BTreeMap<String, Vec<&PredictionDestinationObservation>> = BTreeMap::new();
@@ -1006,7 +1099,9 @@ impl AgentAccountPredictionRelayBounceCreditResolveCmd {
             .await
             {
                 Ok(observation) => observations.push(observation),
-                Err(error) => failures.push(rpc_failure_diagnostic(&member.endpoint, &error)),
+                Err(error) => {
+                    failures.push(prediction_rpc_failure_diagnostic(&member.endpoint, &error))
+                }
             }
         }
         let mut votes: BTreeMap<String, Vec<&PredictionBounceCreditObservation>> = BTreeMap::new();
@@ -1167,6 +1262,45 @@ fn validate_source_request(
         validate_sha256_digest("observer_id", observer)?;
     }
     Ok(())
+}
+
+fn prediction_request_matches_durable_boundary(
+    request: &PredictionRelaySourceRequest,
+    boundary: &contracts::PredictionRelayRecoveryBoundary,
+) -> bool {
+    boundary.source_cursor.account_address == request.pre_broadcast_source_cursor.account_address
+        && boundary.source_cursor.last_logical_time
+            == request.pre_broadcast_source_cursor.last_logical_time
+        && boundary.source_cursor.last_transaction_hash
+            == request.pre_broadcast_source_cursor.last_transaction_hash
+        && boundary.masterchain_checkpoint.workchain_id
+            == request.pre_broadcast_masterchain_checkpoint.workchain_id
+        && boundary.masterchain_checkpoint.shard
+            == request.pre_broadcast_masterchain_checkpoint.shard
+        && boundary.masterchain_checkpoint.sequence_number
+            == request.pre_broadcast_masterchain_checkpoint.sequence_number
+        && boundary.masterchain_checkpoint.root_hash
+            == request.pre_broadcast_masterchain_checkpoint.root_hash
+        && boundary.masterchain_checkpoint.file_hash
+            == request.pre_broadcast_masterchain_checkpoint.file_hash
+        && boundary.masterchain_checkpoint.masterchain_sequence_number
+            == request.pre_broadcast_masterchain_checkpoint.masterchain_sequence_number
+}
+
+// Resolver results normally expose only a stable failure category because an
+// RPC response is untrusted.  An owner may opt into a bounded diagnostic when
+// operating a private test chain; the normal release surface remains stable.
+fn prediction_rpc_failure_diagnostic(endpoint: &str, error: &anyhow::Error) -> String {
+    let category = rpc_failure_diagnostic(endpoint, error);
+    if std::env::var_os("TOSCTL_DEBUG_PREDICTION_RELAY").is_none() {
+        return category;
+    }
+    let detail = format!("{error:#}")
+        .chars()
+        .filter(|character| !character.is_control())
+        .take(512)
+        .collect::<String>();
+    format!("{category}; detail={detail}")
 }
 
 fn validate_destination_request(
@@ -1382,9 +1516,8 @@ fn validate_bounce_credit_request(
     );
     let root = read_single_root_boc(&transaction_bytes)?;
     anyhow::ensure!(
-        write_boc(&root)? == transaction_bytes
-            && format!("sha256:{}", hex::encode(root.hash(0))) == evidence.transaction_hash,
-        "Prediction destination transaction is not canonical or hash-bound"
+        format!("sha256:{}", hex::encode(root.hash(0))) == evidence.transaction_hash,
+        "Prediction destination transaction is not hash-bound"
     );
     let transaction = Transaction::construct_from_cell(root)?;
     let market: MsgAddressInt = request.profile.market_address.parse()?;
@@ -1422,8 +1555,8 @@ fn validate_bounce_credit_request(
         "Prediction destination failure flags contradict its transaction"
     );
     let mut outputs = Vec::new();
-    transaction.iterate_out_msgs(|message| {
-        outputs.push(message);
+    transaction.iterate_out_msgs_with_cells(|message, cell| {
+        outputs.push((message, cell));
         Ok(true)
     })?;
     anyhow::ensure!(
@@ -1433,7 +1566,7 @@ fn validate_bounce_credit_request(
     let bounce_bytes =
         base64::engine::general_purpose::STANDARD.decode(&bounce.exact_message_boc_base64)?;
     anyhow::ensure!(
-        write_boc(&outputs[0].serialize()?)? == bounce_bytes,
+        write_boc(&outputs[0].1)? == bounce_bytes,
         "Prediction destination did not create the declared exact bounce"
     );
     Ok(())
@@ -1619,14 +1752,11 @@ async fn observe_prediction_destination(
     rpc.verify_pinned_primary_network(expected_network).await?;
     verify_prediction_checkpoint(&rpc, &request.pre_broadcast_masterchain_checkpoint).await?;
     let master = rpc.get_masterchain_info().await?;
-    let first = request
-        .pre_broadcast_masterchain_checkpoint
-        .sequence_number
-        .checked_add(1)
-        .context("Prediction checkpoint cannot advance")?;
+    let first = prediction_destination_scan_first(request)?;
     anyhow::ensure!(
-        master.last.seqno >= first,
-        "observer masterchain has not advanced past the pre-broadcast checkpoint"
+        first > request.pre_broadcast_masterchain_checkpoint.sequence_number
+            && master.last.seqno >= first,
+        "Prediction destination lower bound is not after the durable checkpoint"
     );
     let span = master
         .last
@@ -1645,7 +1775,7 @@ async fn observe_prediction_destination(
     let mut seen_blocks = BTreeSet::new();
     let mut inspected_transactions = 0u32;
     let mut found: Option<PredictionDestinationCandidate> = None;
-    for masterchain_seqno in first..=master.last.seqno {
+    'scan: for masterchain_seqno in first..=master.last.seqno {
         let blocks = if market.workchain_id() == -1 {
             vec![
                 rpc.lookup_block(
@@ -1695,6 +1825,15 @@ async fn observe_prediction_destination(
                 &mut found,
             )
             .await?;
+            // `actual_outbound` is authenticated by the exact source
+            // transaction and the frozen Agent Account code emits one checked
+            // call per controller action. Once that unique message has been
+            // consumed by the market, later unrelated history cannot improve
+            // the proof; continuing would only make recovery depend on every
+            // subsequently retained RPC block index.
+            if found.is_some() {
+                break 'scan;
+            }
         }
     }
     let candidate = found.context(
@@ -1750,6 +1889,27 @@ async fn observe_prediction_destination(
     })
 }
 
+// Source resolution can occur after the market has already consumed the
+// outbound message.  Its observer finality head is therefore not a safe lower
+// bound for either a masterchain or workchain market.  The checkpoint persisted
+// immediately before the externally signed BOC is the authenticated common
+// boundary: scanning from the next masterchain block includes every possible
+// source-to-market delivery without admitting pre-broadcast history.
+fn prediction_destination_scan_first(
+    request: &PredictionRelayDestinationRequest,
+) -> anyhow::Result<u32> {
+    prediction_scan_first_after_checkpoint(&request.pre_broadcast_masterchain_checkpoint)
+}
+
+fn prediction_scan_first_after_checkpoint(
+    checkpoint: &PredictionBlockIdentity,
+) -> anyhow::Result<u32> {
+    checkpoint
+        .sequence_number
+        .checked_add(1)
+        .context("Prediction pre-broadcast checkpoint sequence number overflow")
+}
+
 async fn verify_prediction_market_identity(
     rpc: &Arc<chain_rpc_client::v2::client_json_rpc::ClientJsonRpc>,
     market: &MsgAddressInt,
@@ -1797,6 +1957,24 @@ async fn verify_prediction_market_identity(
     Ok((code_hash, market_config_hash))
 }
 
+// Destination and bounce recovery scan untrusted chain history. Keep the
+// counter update in one fail-closed primitive so the configured bound applies
+// equally across pagination and cannot silently wrap after a long outage.
+fn consume_prediction_scan_transaction(
+    inspected_transactions: &mut u32,
+    maximum_transactions: u32,
+    subject: &str,
+) -> anyhow::Result<()> {
+    *inspected_transactions = inspected_transactions
+        .checked_add(1)
+        .with_context(|| format!("{subject} transaction count overflow"))?;
+    anyhow::ensure!(
+        *inspected_transactions <= maximum_transactions,
+        "{subject} transaction capacity was exhausted"
+    );
+    Ok(())
+}
+
 async fn scan_prediction_destination_block(
     rpc: &chain_rpc_client::v2::client_json_rpc::ClientJsonRpc,
     market: &MsgAddressInt,
@@ -1819,7 +1997,13 @@ async fn scan_prediction_destination_block(
                 after_account.as_deref(),
                 DESTINATION_BLOCK_PAGE_SIZE,
             )
-            .await?;
+            .await
+            .with_context(|| {
+                format!(
+                    "read Prediction destination block {}:{}:{}",
+                    expected_block.workchain, expected_block.shard, expected_block.seqno
+                )
+            })?;
         let actual_block =
             page.id.as_ref().context("Prediction destination block page omitted block identity")?;
         anyhow::ensure!(
@@ -1835,13 +2019,11 @@ async fn scan_prediction_destination_block(
             "Prediction destination block pagination made no progress"
         );
         for raw in &page.transactions {
-            *inspected_transactions = inspected_transactions
-                .checked_add(1)
-                .context("Prediction destination transaction count overflow")?;
-            anyhow::ensure!(
-                *inspected_transactions <= maximum_transactions,
-                "Prediction destination transaction capacity was exhausted"
-            );
+            consume_prediction_scan_transaction(
+                inspected_transactions,
+                maximum_transactions,
+                "Prediction destination",
+            )?;
             let address =
                 MsgAddressInt::from_str(&format!("{}:{}", expected_block.workchain, raw.account));
             if address.as_ref().ok() != Some(market) {
@@ -1889,10 +2071,11 @@ fn parse_prediction_destination_candidate(
         "market transaction BOC exceeds the Prediction evidence bound"
     );
     let root = read_single_root_boc(&transaction_boc).context("parse market transaction BOC")?;
-    anyhow::ensure!(
-        write_boc(&root)? == transaction_boc,
-        "market transaction BOC is not canonical"
-    );
+    // RPCs can legitimately include BOC index/cache/CRC framing.  The TVM
+    // cell hash, not those transport bytes, authenticates a transaction.
+    // Store a single canonical representation after decoding so later
+    // evidence is deterministic without rejecting an equivalent RPC reply.
+    let transaction_boc = write_boc(&root)?;
     let transaction = Transaction::construct_from_cell(root.clone())?;
     let transaction_hash = *root.hash(0).as_slice();
     let wrapper_hash = base64::engine::general_purpose::STANDARD
@@ -1934,8 +2117,8 @@ fn parse_prediction_destination_candidate(
     };
     let opcode_success = ordinary && !aborted && compute_success && action_success;
     let mut outputs = Vec::new();
-    transaction.iterate_out_msgs(|message| {
-        outputs.push(message);
+    transaction.iterate_out_msgs_with_cells(|message, cell| {
+        outputs.push((message, cell));
         Ok(true)
     })?;
     anyhow::ensure!(
@@ -1951,7 +2134,7 @@ fn parse_prediction_destination_candidate(
         );
         outputs
             .first()
-            .map(|message| prediction_observed_bounce(market, request, message))
+            .map(|(message, cell)| prediction_observed_bounce(market, request, message, cell))
             .transpose()?
     };
     Ok(Some(PredictionDestinationCandidate {
@@ -1982,6 +2165,7 @@ fn prediction_observed_bounce(
     market: &MsgAddressInt,
     request: &PredictionRelayDestinationRequest,
     message: &Message,
+    message_cell: &Cell,
 ) -> anyhow::Result<PredictionObservedMessage> {
     let header = match message.header() {
         CommonMsgInfo::IntMsgInfo(value) => value,
@@ -1998,11 +2182,10 @@ fn prediction_observed_bounce(
         "Prediction failure output is not the protocol bounce for this checked call"
     );
     let body = message.body().cloned().context("Prediction bounce has no body")?.into_cell()?;
-    let message_cell = message.serialize()?;
     Ok(PredictionObservedMessage {
         message_hash: format!("tvm-cell-sha256:{}", hex::encode(message_cell.hash(0))),
         exact_message_boc_base64: base64::engine::general_purpose::STANDARD
-            .encode(write_boc(&message_cell)?),
+            .encode(write_boc(message_cell)?),
         source_address: market.to_string(),
         destination_address: header.dst.to_string(),
         value_nanotos: header
@@ -2037,7 +2220,7 @@ async fn observe_prediction_bounce_credit(
     let info = rpc.get_address_information(source).await?;
     verify_prediction_source_code(&info, &request.profile.source_agent_account_code_hash)?;
     let master = rpc.get_masterchain_info().await?;
-    let first = request.destination_evidence.block.masterchain_sequence_number;
+    let first = prediction_bounce_credit_scan_first(request)?;
     anyhow::ensure!(
         first > request.pre_broadcast_masterchain_checkpoint.sequence_number
             && master.last.seqno >= first,
@@ -2057,7 +2240,7 @@ async fn observe_prediction_bounce_credit(
     let mut seen_blocks = BTreeSet::new();
     let mut inspected_transactions = 0u32;
     let mut found: Option<PredictionBounceCreditCandidate> = None;
-    for masterchain_seqno in first..=master.last.seqno {
+    'scan: for masterchain_seqno in first..=master.last.seqno {
         let blocks = if source.workchain_id() == -1 {
             vec![
                 rpc.lookup_block(
@@ -2109,6 +2292,13 @@ async fn observe_prediction_bounce_credit(
                 &mut found,
             )
             .await?;
+            // The authenticated market failure creates exactly this rich
+            // bounce. Once that message is credited back at the frozen Agent
+            // Account code, later unrelated history cannot strengthen the
+            // proof and must not make recovery depend on retained indexes.
+            if found.is_some() {
+                break 'scan;
+            }
         }
     }
     let candidate = found.context(
@@ -2136,6 +2326,16 @@ async fn observe_prediction_bounce_credit(
     })
 }
 
+// The market failure may be observed after its rich bounce has already been
+// credited.  As on the source-to-market leg, only the durable pre-broadcast
+// checkpoint is a safe common lower bound; a later destination finality head
+// can skip the exact credit transaction.
+fn prediction_bounce_credit_scan_first(
+    request: &PredictionRelayBounceCreditRequest,
+) -> anyhow::Result<u32> {
+    prediction_scan_first_after_checkpoint(&request.pre_broadcast_masterchain_checkpoint)
+}
+
 async fn scan_prediction_bounce_credit_block(
     rpc: &chain_rpc_client::v2::client_json_rpc::ClientJsonRpc,
     source: &MsgAddressInt,
@@ -2158,7 +2358,13 @@ async fn scan_prediction_bounce_credit_block(
                 after_account.as_deref(),
                 DESTINATION_BLOCK_PAGE_SIZE,
             )
-            .await?;
+            .await
+            .with_context(|| {
+                format!(
+                    "read Prediction bounce-credit block {}:{}:{}",
+                    expected_block.workchain, expected_block.shard, expected_block.seqno
+                )
+            })?;
         let actual = page
             .id
             .as_ref()
@@ -2176,13 +2382,11 @@ async fn scan_prediction_bounce_credit_block(
             "Prediction bounce-credit pagination made no progress"
         );
         for raw in &page.transactions {
-            *inspected_transactions = inspected_transactions
-                .checked_add(1)
-                .context("Prediction bounce-credit transaction count overflow")?;
-            anyhow::ensure!(
-                *inspected_transactions <= maximum_transactions,
-                "Prediction bounce-credit transaction capacity was exhausted"
-            );
+            consume_prediction_scan_transaction(
+                inspected_transactions,
+                maximum_transactions,
+                "Prediction bounce-credit",
+            )?;
             let address =
                 MsgAddressInt::from_str(&format!("{}:{}", expected_block.workchain, raw.account));
             if address.as_ref().ok() != Some(source) {
@@ -2230,10 +2434,7 @@ fn parse_prediction_bounce_credit_candidate(
         "source bounce transaction BOC exceeds the Prediction evidence bound"
     );
     let root = read_single_root_boc(&transaction_boc)?;
-    anyhow::ensure!(
-        write_boc(&root)? == transaction_boc,
-        "source bounce transaction BOC is not canonical"
-    );
+    let transaction_boc = write_boc(&root)?;
     let transaction = Transaction::construct_from_cell(root.clone())?;
     let transaction_hash = *root.hash(0).as_slice();
     let wrapper_hash = base64::engine::general_purpose::STANDARD
@@ -2310,10 +2511,7 @@ fn parse_prediction_source_history_step(
         "source transaction BOC exceeds the Prediction evidence bound"
     );
     let root = read_single_root_boc(&transaction_boc).context("parse source transaction BOC")?;
-    anyhow::ensure!(
-        write_boc(&root)? == transaction_boc,
-        "source transaction BOC is not canonical"
-    );
+    let transaction_boc = write_boc(&root)?;
     let transaction =
         Transaction::construct_from_cell(root.clone()).context("decode source transaction")?;
     let block = raw.block_id.context("source transaction has no block identity")?;
@@ -2381,8 +2579,8 @@ fn prediction_source_candidate(
         "Prediction Agent Account source transaction did not execute successfully"
     );
     let mut outputs = Vec::new();
-    transaction.iterate_out_msgs(|message| {
-        outputs.push(message);
+    transaction.iterate_out_msgs_with_cells(|message, cell| {
+        outputs.push((message, cell));
         Ok(true)
     })?;
     anyhow::ensure!(
@@ -2391,7 +2589,7 @@ fn prediction_source_candidate(
     );
     let outbound_messages = outputs
         .iter()
-        .map(|message| prediction_observed_checked_call(account, record, message))
+        .map(|(message, cell)| prediction_observed_checked_call(account, record, message, cell))
         .collect::<anyhow::Result<Vec<_>>>()?;
     let block_identity = block_identity_from_rpc(&block, 0)?;
     Ok(PredictionSourceCandidate {
@@ -2415,6 +2613,7 @@ fn prediction_observed_checked_call(
     source: &MsgAddressInt,
     record: &ControllerActionRecord,
     message: &Message,
+    message_cell: &Cell,
 ) -> anyhow::Result<PredictionObservedMessage> {
     let header = match message.header() {
         CommonMsgInfo::IntMsgInfo(value) => value,
@@ -2426,8 +2625,6 @@ fn prediction_observed_checked_call(
     let body_hash = format!("tvm-cell-sha256:{}", hex::encode(body.hash(0)));
     let amount =
         header.value.coins.as_u64().context("Prediction source output value exceeds u64")?;
-    let extra_flags =
-        header.extra_flags.as_u64().context("Prediction source output extra_flags exceed u64")?;
     anyhow::ensure!(
         header.ihr_disabled
             && header.bounce
@@ -2436,14 +2633,12 @@ fn prediction_observed_checked_call(
             && header.dst.to_string() == record.claim.target
             && amount == record.claim.value_atomic
             && header.value.other.is_empty()
-            && extra_flags == 3
             && message.state_init().is_none()
             && record.claim.state_init_hash.is_none()
             && record.claim.body_hash.as_deref() == Some(body_hash.as_str()),
         "Prediction source output differs from the custody-authorized checked call"
     );
-    let message_cell = message.serialize()?;
-    let message_boc = write_boc(&message_cell)?;
+    let message_boc = write_boc(message_cell)?;
     Ok(PredictionObservedMessage {
         message_hash: format!("tvm-cell-sha256:{}", hex::encode(message_cell.hash(0))),
         exact_message_boc_base64: base64::engine::general_purpose::STANDARD.encode(message_boc),
@@ -2456,7 +2651,10 @@ fn prediction_observed_checked_call(
         state_init_hash: String::new(),
         bounce: header.bounce,
         bounced: header.bounced,
-        extra_flags,
+        extra_flags: header
+            .extra_flags
+            .as_u64()
+            .context("Prediction source output extra_flags exceed u64")?,
     })
 }
 
@@ -2549,6 +2747,80 @@ fn parse_sha256_digest(value: &str) -> anyhow::Result<[u8; 32]> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn durable_recovery_boundary_rejects_a_replaced_history_anchor() {
+        let boundary = contracts::PredictionRelayRecoveryBoundary {
+            source_cursor: contracts::PredictionRelaySourceCursor {
+                account_address: "0:source".into(),
+                last_logical_time: 7,
+                last_transaction_hash: format!("sha256:{}", "1".repeat(64)),
+            },
+            masterchain_checkpoint: contracts::PredictionRelayMasterchainCheckpoint {
+                workchain_id: -1,
+                shard: -1,
+                sequence_number: 9,
+                root_hash: format!("sha256:{}", "2".repeat(64)),
+                file_hash: format!("sha256:{}", "3".repeat(64)),
+                masterchain_sequence_number: 9,
+            },
+        };
+        let mut request = PredictionRelaySourceRequest {
+            schema: SOURCE_REQUEST_SCHEMA.into(),
+            action_id: format!("sha256:{}", "4".repeat(64)),
+            profile: PredictionRelayProfile {
+                network_domain_hash: format!("sha256:{}", "5".repeat(64)),
+                source_agent_account: "0:source".into(),
+                source_agent_account_code_hash: format!("tvm-cell-sha256:{}", "6".repeat(64)),
+                market_address: "0:market".into(),
+                market_id: format!("sha256:{}", "7".repeat(64)),
+                market_code_hash: format!("tvm-cell-sha256:{}", "8".repeat(64)),
+                market_config_hash: format!("tvm-cell-sha256:{}", "9".repeat(64)),
+                observer_ids: Vec::new(),
+                quorum_threshold: 0,
+                maximum_outstanding: 1,
+                maximum_signed_boc_bytes: 1,
+                minimum_no_bounce_masterchain_blocks: 1,
+            },
+            submitted_external_message_hash: format!("tvm-cell-sha256:{}", "a".repeat(64)),
+            pre_broadcast_source_cursor: PredictionAccountCursor {
+                account_address: boundary.source_cursor.account_address.clone(),
+                last_logical_time: boundary.source_cursor.last_logical_time,
+                last_transaction_hash: boundary.source_cursor.last_transaction_hash.clone(),
+            },
+            pre_broadcast_masterchain_checkpoint: PredictionBlockIdentity {
+                workchain_id: boundary.masterchain_checkpoint.workchain_id,
+                shard: boundary.masterchain_checkpoint.shard,
+                sequence_number: boundary.masterchain_checkpoint.sequence_number,
+                root_hash: boundary.masterchain_checkpoint.root_hash.clone(),
+                file_hash: boundary.masterchain_checkpoint.file_hash.clone(),
+                masterchain_sequence_number: boundary
+                    .masterchain_checkpoint
+                    .masterchain_sequence_number,
+            },
+        };
+        assert!(prediction_request_matches_durable_boundary(&request, &boundary));
+        request.pre_broadcast_source_cursor.last_logical_time += 1;
+        assert!(!prediction_request_matches_durable_boundary(&request, &boundary));
+    }
+
+    #[test]
+    fn destination_and_bounce_scans_start_after_the_durable_checkpoint() {
+        // The source/destination quorum may observe a later head after the
+        // target transaction was already delivered.  The durable checkpoint,
+        // not either later head, is the safe shared lower bound.
+        let checkpoint = PredictionBlockIdentity {
+            workchain_id: -1,
+            shard: -1,
+            sequence_number: 41,
+            root_hash: format!("sha256:{}", "1".repeat(64)),
+            file_hash: format!("sha256:{}", "2".repeat(64)),
+            masterchain_sequence_number: 41,
+        };
+        assert_eq!(prediction_scan_first_after_checkpoint(&checkpoint).unwrap(), 42);
+        let overflow = PredictionBlockIdentity { sequence_number: u32::MAX, ..checkpoint };
+        assert!(prediction_scan_first_after_checkpoint(&overflow).is_err());
+    }
+
     fn test_hash(index: u32) -> [u8; 32] {
         Sha256::digest(index.to_be_bytes()).into()
     }
@@ -2593,6 +2865,34 @@ mod tests {
         assert!(walk.reached_boundary);
         assert_eq!(walk.inspected, 10_001);
         assert!(walk.found.is_some());
+    }
+
+    #[test]
+    fn destination_and_bounce_counters_cross_ten_thousand_without_wrapping() {
+        const RECOVERY_DEPTH: u32 = 10_001;
+        for subject in ["Prediction destination", "Prediction bounce-credit"] {
+            let mut inspected = 0;
+            for _ in 0..RECOVERY_DEPTH {
+                consume_prediction_scan_transaction(&mut inspected, RECOVERY_DEPTH, subject)
+                    .unwrap();
+            }
+            assert_eq!(inspected, RECOVERY_DEPTH, "{subject} lost a scanned transaction");
+            assert!(
+                consume_prediction_scan_transaction(&mut inspected, RECOVERY_DEPTH, subject)
+                    .is_err(),
+                "{subject} accepted a transaction beyond its durable scan capacity"
+            );
+        }
+        let mut overflowing = u32::MAX;
+        assert!(
+            consume_prediction_scan_transaction(
+                &mut overflowing,
+                u32::MAX,
+                "Prediction destination"
+            )
+            .is_err(),
+            "destination scan counter wrapped"
+        );
     }
 
     #[test]

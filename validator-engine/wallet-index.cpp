@@ -21,6 +21,15 @@ constexpr uint8_t kJettonTag = 0x10;        // 0x10 + owner(32) + master(32)
 constexpr uint8_t kNftTag = 0x11;           // 0x11 + owner(32) + nft(32)
 constexpr uint8_t kEventTag = 0x12;         // 0x12 + account(32) + ~lt_be(8)
 constexpr uint8_t kNftOwnerTag = 0x13;      // 0x13 + nft(32) -> owner(32)
+constexpr uint8_t kEventAgeTag = 0x14;      // 0x14 + gen_utime_be(4) + account(32) + lt_be(8) -> sentinel(1)
+// Meta namespace, sorts before every data tag. 0x00 0x01 -> schema version
+// (u32_be); 0x00 0x02 -> event-retention watermark (u32_be, max gen_utime seen).
+constexpr uint8_t kMetaTag = 0x00;
+constexpr uint8_t kMetaSchemaSub = 0x01;
+constexpr uint8_t kMetaWatermarkSub = 0x02;
+
+// (kMaxEventsPerAccount / kMaxEventTrimPerPass are declared in the header
+// so tests can reference the exact bound.)
 // 0x1E + workchain_be(4) + shard_be(8) + seqno_be(4) + root_hash(32) + file_hash(32) -> sentinel(1)
 // The full BlockIdExt is in the key, not split key/value: if a position could
 // ever be re-applied with a different hash (e.g. some reorg/hardfork path),
@@ -38,6 +47,8 @@ constexpr size_t kLegacySeqnoOnlyKeyLen = 1 + 8;
 
 constexpr size_t kOwnerPairKeyLen = 1 + 32 + 32;
 constexpr size_t kEventKeyLen = 1 + 32 + 8;
+constexpr size_t kEventAgeKeyLen = 1 + 4 + 32 + 8;
+constexpr size_t kMetaKeyLen = 2;
 constexpr size_t kSingleHashKeyLen = 1 + 32;
 constexpr size_t kIncompleteBlockKeyLen = 1 + 4 + 8 + 4 + 32 + 32;
 constexpr size_t kIncompleteBlockValueLen = 1;
@@ -90,6 +101,18 @@ void make_event_key(const HashKey& account, uint64_t lt, char out[kEventKeyLen])
   put_u64_be(out + 1 + 32, lt);
 }
 
+void make_event_age_key(uint32_t gen_utime, const HashKey& account, uint64_t lt, char out[kEventAgeKeyLen]) {
+  out[0] = static_cast<char>(kEventAgeTag);
+  put_u32_be(out + 1, gen_utime);
+  std::memcpy(out + 1 + 4, account.data(), 32);
+  put_u64_be(out + 1 + 4 + 32, lt);
+}
+
+void make_meta_key(uint8_t sub, char out[kMetaKeyLen]) {
+  out[0] = static_cast<char>(kMetaTag);
+  out[1] = static_cast<char>(sub);
+}
+
 void make_incomplete_block_key(const tos::BlockIdExt& block_id, char out[kIncompleteBlockKeyLen]) {
   out[0] = static_cast<char>(kIncompleteBlockTag);
   put_u32_be(out + 1, static_cast<uint32_t>(block_id.id.workchain));
@@ -119,7 +142,9 @@ td::Result<std::unique_ptr<WalletIndexDb>> WalletIndexDb::open(std::string path)
                                        << db_r.error().message());
   }
   auto db = std::make_unique<td::RocksDb>(db_r.move_as_ok());
-  return std::unique_ptr<WalletIndexDb>(new WalletIndexDb(std::move(db)));
+  auto index = std::unique_ptr<WalletIndexDb>(new WalletIndexDb(std::move(db)));
+  TRY_STATUS(index->migrate_schema());
+  return index;
 }
 
 WalletIndexDb::WalletIndexDb(std::unique_ptr<td::RocksDb> db) : db_(std::move(db)) {}
@@ -137,6 +162,34 @@ td::Status WalletIndexDb::put_cell(td::Slice key, td::Ref<vm::Cell> value) {
   // Durability comes from commit_batch()'s flush — per-entry flushing would
   // fsync once per transaction on the block-apply path.
   return db_->set(key, td::Slice{serialized.as_slice()});
+}
+
+td::Status WalletIndexDb::for_each_key_with_prefix(
+    td::Slice prefix, size_t limit, std::function<td::Status(td::Slice)> cb) {
+  // As for_each_with_prefix, but hands over keys only: a row about to be
+  // deleted does not need its cell deserialized first.
+  std::string end = prefix.str();
+  size_t i = end.size();
+  while (i > 0) {
+    auto b = static_cast<uint8_t>(end[i - 1]);
+    if (b != 0xff) {
+      end[i - 1] = static_cast<char>(b + 1);
+      end.resize(i);
+      break;
+    }
+    --i;
+  }
+  if (i == 0) {
+    return td::Status::Error("wc0-index: unbounded prefix");
+  }
+  size_t seen = 0;
+  return db_->for_each_in_range(prefix, td::Slice{end}, [&](td::Slice key, td::Slice) -> td::Status {
+    if (seen >= limit) {
+      return td::Status::Error("wc0-index: limit reached");
+    }
+    ++seen;
+    return cb(key);
+  });
 }
 
 td::Status WalletIndexDb::for_each_with_prefix(
@@ -246,7 +299,231 @@ td::Status WalletIndexDb::put_event(const HashKey& account, uint64_t lt,
   // Store ~lt so ascending key order is newest-first and `limit` caps the scan
   // to the most recent events instead of the oldest.
   make_event_key(account, ~lt, key);
+  // Just write. Trimming is not done here: put_event runs once per
+  // transaction on the block-apply path, and its committed-DB scan does
+  // not see the batch's own writes, so trimming per put would re-scan the
+  // account's whole history for every transaction in a block. The caller
+  // trims each touched account once, after the block's events are in.
   return put_cell(td::Slice{key, kEventKeyLen}, std::move(value));
+}
+
+td::Status WalletIndexDb::trim_events(const HashKey& account, size_t added_this_block) {
+  // Every workchain-zero transaction adds a row holding the whole
+  // transaction, and until now nothing removed one: jetton and NFT rows have
+  // erase paths, events did not, so this index grew for the life of the node
+  // and outlived the archive retention that bounds everything else.
+  //
+  // The key orders an account's events newest-first, so a bound on how much
+  // history is kept per account is just a matter of dropping the tail. That
+  // also reaches rows written before this existed, which a separate
+  // time-index would not: those rows have no companion entry to find them by.
+  //
+  // Two things make the bound actually hold on the production path:
+  //
+  //  * This runs inside the block's write batch, before commit, so the scan
+  //    below sees only committed rows -- the `added_this_block` rows written
+  //    for this account earlier in the batch are invisible to it. Keeping
+  //    `kMaxEventsPerAccount - added_this_block` committed rows leaves room for
+  //    them, so the post-commit total is at most kMaxEventsPerAccount, provided
+  //    a single block adds fewer than kMaxEventsPerAccount events for one
+  //    account (block transaction limits make this the case in practice). If a
+  //    block ever added at least that many, `keep` clamps to 0 and those
+  //    in-batch rows cannot be scanned to delete, so that one block would
+  //    commit with `added_this_block` rows; the next block's trim then brings
+  //    it back down -- growth still cannot run away, since a pass always
+  //    deletes at least what the block added (see below).
+  //
+  //  * The delete budget is `added_this_block + kEventTrimDrainPerPass`. A pass
+  //    therefore always removes at least as many rows as the block added, so an
+  //    account gaining more rows per block than a fixed cap can no longer
+  //    outrun trimming; the drain term additionally shrinks any pre-existing
+  //    backlog block by block.
+  char prefix[1 + 32];
+  prefix[0] = static_cast<char>(kEventTag);
+  std::memcpy(prefix + 1, account.data(), 32);
+
+  size_t keep = added_this_block >= kMaxEventsPerAccount ? 0 : kMaxEventsPerAccount - added_this_block;
+  size_t budget = added_this_block + kEventTrimDrainPerPass;
+
+  std::vector<std::string> doomed;
+  size_t seen = 0;
+  auto status = for_each_key_with_prefix(td::Slice{prefix, sizeof(prefix)}, keep + budget + 1,
+                                         [&](td::Slice key) -> td::Status {
+    if (++seen > keep) {
+      doomed.emplace_back(key.str());
+      if (doomed.size() >= budget) {
+        return td::Status::Error("wc0-index: trim batch full");
+      }
+    }
+    return td::Status::OK();
+  });
+  // The iteration is stopped by returning an error once the batch is full;
+  // a genuine read failure is reported, a full batch is not.
+  if (status.is_error() && status.message() != "wc0-index: trim batch full") {
+    return status;
+  }
+  for (const auto& key : doomed) {
+    TRY_STATUS(db_->erase(td::Slice{key}));
+  }
+  return td::Status::OK();
+}
+
+td::Status WalletIndexDb::put_event_age(const HashKey& account, uint64_t lt, uint32_t gen_utime) {
+  char key[kEventAgeKeyLen];
+  make_event_age_key(gen_utime, account, lt, key);
+  // Value is a one-byte sentinel; the key carries everything the pruner needs.
+  const char sentinel = 0;
+  return db_->set(td::Slice{key, kEventAgeKeyLen}, td::Slice{&sentinel, 1});
+}
+
+td::Status WalletIndexDb::prune_events_by_age(uint32_t cutoff_gen_utime, size_t budget) {
+  // Delete event rows whose block gen_utime is strictly older than the cutoff,
+  // reached through the age index rather than the per-account event prefix, so
+  // whole dormant accounts are dropped. Scan [0x14, 0x14 | cutoff_be): the
+  // exclusive upper bound retains events exactly at the cutoff. Bounded to
+  // `budget` deletions so per-block work is bounded; a backlog drains over
+  // successive blocks because the caller's budget always covers at least the
+  // rows the block added.
+  //
+  // The range scan reads committed state only, not the current write batch, so
+  // age rows written by *this* block are invisible here. An already-expired
+  // event inserted by a late or recovery block is therefore not removed in its
+  // own block; the next block's prune reclaims it (it is < cutoff and the budget
+  // carries a drain). This is deliberately not strict same-block retention.
+  if (budget == 0) {
+    return td::Status::OK();
+  }
+  const char begin[1] = {static_cast<char>(kEventAgeTag)};
+  char end[1 + 4];
+  end[0] = static_cast<char>(kEventAgeTag);
+  put_u32_be(end + 1, cutoff_gen_utime);
+
+  std::vector<std::string> doomed_age;
+  auto status = db_->for_each_in_range(td::Slice{begin, 1}, td::Slice{end, sizeof(end)},
+                                       [&](td::Slice key, td::Slice) -> td::Status {
+    doomed_age.emplace_back(key.str());
+    if (doomed_age.size() >= budget) {
+      return td::Status::Error("wc0-index: prune batch full");
+    }
+    return td::Status::OK();
+  });
+  if (status.is_error() && status.message() != "wc0-index: prune batch full") {
+    return status;
+  }
+  for (const auto& age_key : doomed_age) {
+    if (age_key.size() != kEventAgeKeyLen) {
+      continue;  // unexpected layout: skip rather than mis-parse the account/lt
+    }
+    const char* p = age_key.data();
+    HashKey account;
+    std::memcpy(account.data(), p + 1 + 4, 32);
+    uint64_t lt = get_u64_be(p + 1 + 4 + 32);
+    // Reconstruct the event key (0x12 | account | ~lt). Erasing an already-gone
+    // event (e.g. one the per-account trim removed) is a harmless no-op.
+    char event_key[kEventKeyLen];
+    make_event_key(account, ~lt, event_key);
+    TRY_STATUS(db_->erase(td::Slice{event_key, kEventKeyLen}));
+    TRY_STATUS(db_->erase(td::Slice{age_key}));
+  }
+  return td::Status::OK();
+}
+
+td::Result<uint32_t> WalletIndexDb::get_event_watermark() {
+  char key[kMetaKeyLen];
+  make_meta_key(kMetaWatermarkSub, key);
+  std::string value;
+  auto status = db_->get(td::Slice{key, kMetaKeyLen}, value);
+  if (status.is_error()) {
+    return status.move_as_error();
+  }
+  if (status.ok() == td::KeyValue::GetStatus::NotFound) {
+    return 0u;
+  }
+  if (value.size() != 4) {
+    return td::Status::Error("wc0-index: malformed event watermark");
+  }
+  return get_u32_be(value.data());
+}
+
+td::Status WalletIndexDb::put_event_watermark(uint32_t gen_utime) {
+  char key[kMetaKeyLen];
+  make_meta_key(kMetaWatermarkSub, key);
+  char v[4];
+  put_u32_be(v, gen_utime);
+  return db_->set(td::Slice{key, kMetaKeyLen}, td::Slice{v, sizeof(v)});
+}
+
+td::Status WalletIndexDb::clear_namespace(uint8_t tag) {
+  // A single range tombstone: O(1) work and memory regardless of how many keys
+  // the namespace holds. Enumerating them here would defeat the purpose -- the
+  // 0x12 event namespace this clears is exactly the one that could have grown
+  // without bound, so loading all of it into memory to delete could OOM the very
+  // node the migration exists to fix.
+  const char begin[1] = {static_cast<char>(tag)};
+  const char end[1] = {static_cast<char>(static_cast<uint8_t>(tag + 1))};
+  return db_->erase_range(td::Slice{begin, 1}, td::Slice{end, 1});
+}
+
+td::Status WalletIndexDb::advance_retention(uint32_t gen_utime, size_t age_rows_added) {
+  // The watermark, the age rows, and the prune together define the retention
+  // invariant, so any error must propagate and let the caller abort the block
+  // rather than commit a broken retention state. A watermark read error in
+  // particular must NOT fall back to 0: that could regress the non-decreasing
+  // watermark and let a late or recovery block retain expired rows.
+  TRY_RESULT(stored_watermark, get_event_watermark());
+  uint32_t watermark = stored_watermark > gen_utime ? stored_watermark : gen_utime;
+  TRY_STATUS(put_event_watermark(watermark));
+  uint32_t cutoff = watermark > kEventRetentionSeconds ? watermark - kEventRetentionSeconds : 0;
+  return prune_events_by_age(cutoff, age_rows_added + kEventPruneDrainPerBlock);
+}
+
+td::Status WalletIndexDb::migrate_schema() {
+  char key[kMetaKeyLen];
+  make_meta_key(kMetaSchemaSub, key);
+  std::string value;
+  auto gs = db_->get(td::Slice{key, kMetaKeyLen}, value);
+  if (gs.is_error()) {
+    return gs.move_as_error();
+  }
+  uint32_t version = 0;  // no key => predates versioning (version 0)
+  if (gs.ok() != td::KeyValue::GetStatus::NotFound) {
+    if (value.size() != 4) {
+      return td::Status::Error("wc0-index: malformed schema version");
+    }
+    version = get_u32_be(value.data());
+  }
+  if (version == kWalletIndexSchemaVersion) {
+    return td::Status::OK();
+  }
+  if (version > kWalletIndexSchemaVersion) {
+    return td::Status::Error(PSTRING() << "wc0-index: on-disk schema version " << version
+                                       << " is newer than supported " << kWalletIndexSchemaVersion
+                                       << "; refusing to open");
+  }
+  // Upgrade path. The pre-version event index (0x12) had only per-account
+  // retention, so it can carry unbounded one-transaction-account history; drop
+  // it together with the (as-yet-empty) age index (0x14) and record the new
+  // version, atomically and WAL-synced, before the DB is used. The index
+  // rebuilds forward as new blocks are applied -- it does not replay archive
+  // history (a derived, non-consensus RPC index), so pre-upgrade event history,
+  // including recent history, is not available until re-indexed. Jetton/NFT/
+  // nft-owner/incomplete-block namespaces are left intact.
+  LOG(WARNING) << "wc0-index: migrating schema " << version << " -> " << kWalletIndexSchemaVersion
+               << "; clearing event history (rebuilds forward from new blocks)";
+  TRY_STATUS(db_->begin_write_batch());
+  auto migrate = [&]() -> td::Status {
+    TRY_STATUS(clear_namespace(kEventTag));
+    TRY_STATUS(clear_namespace(kEventAgeTag));
+    char v[4];
+    put_u32_be(v, kWalletIndexSchemaVersion);
+    return db_->set(td::Slice{key, kMetaKeyLen}, td::Slice{v, sizeof(v)});
+  };
+  auto status = migrate();
+  if (status.is_error()) {
+    db_->abort_write_batch();
+    return status;
+  }
+  return db_->commit_write_batch();
 }
 
 td::Status WalletIndexDb::for_each_event(

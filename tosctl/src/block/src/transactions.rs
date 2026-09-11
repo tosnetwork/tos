@@ -1423,6 +1423,24 @@ impl Transaction {
         self.out_msgs.iterate(|InRefValue(msg)| f(msg))
     }
 
+    /// Iterate output messages together with their original cells from the
+    /// transaction's `out_msgs` dictionary.
+    ///
+    /// Consumers which commit to a message hash must use this method rather
+    /// than serializing the parsed `Message` again: a valid on-chain message
+    /// need not have the same cell representation after a decode/encode round
+    /// trip.
+    pub fn iterate_out_msgs_with_cells<F>(&self, mut f: F) -> Result<bool>
+    where
+        F: FnMut(Message, Cell) -> Result<bool>,
+    {
+        self.out_msgs.iterate_slices(|mut slice| {
+            let cell = slice.checked_drain_reference()?;
+            let message = Message::construct_from_cell(cell.clone())?;
+            f(message, cell)
+        })
+    }
+
     /// add output message to Hashmap
     pub fn add_out_message(&mut self, msg: &Message) -> Result<()> {
         self.out_msgs.setref(&UInt15(self.outmsg_cnt), msg.serialize()?)?;

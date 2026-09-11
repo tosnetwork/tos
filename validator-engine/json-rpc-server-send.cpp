@@ -38,13 +38,14 @@
 #include "vm/vm.h"
 
 #include "json-rpc-server-internal.h"
+#include "json-rpc-signing-payload.h"
 
 namespace tos {
 
 static constexpr size_t kMaxBocSize = 64 * 1024;  // 64 KiB
 
 void JsonRpcServer::handle_sendBoc(td::JsonObject &params, std::string req_id,
-                                   td::Promise<HttpReturn> promise) {
+                                   const std::string &source_ip, td::Promise<HttpReturn> promise) {
   auto boc_r = params.get_required_string_field("boc");
   if (boc_r.is_error()) {
     promise.set_value(make_json_error(-32602, "Missing 'boc' parameter", req_id));
@@ -68,7 +69,7 @@ void JsonRpcServer::handle_sendBoc(td::JsonObject &params, std::string req_id,
   auto query = tos::serialize_tl_object(
       tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(inner)), true);
 
-  send_liteserver_query(std::move(query),
+  send_attributed_liteserver_query(std::move(query), submission_source_id(source_ip),
       [cors = opts_.cors_origin, req_id = std::move(req_id),
        promise = std::move(promise)](td::Result<td::BufferSlice> R) mutable {
         if (R.is_error()) {
@@ -296,19 +297,6 @@ static std::string build_estimate_fee_json(td::int64 in_fwd_fee, td::int64 stora
       << ",\"destination_fees\":[]}";
 }
 
-struct InitialIntentInput {
-  std::string address;
-  std::string body_b64;
-  std::string init_code_b64;
-  std::string init_data_b64;
-  std::string account_model;
-  std::string authorization_version;
-  std::string signer;
-  std::string submitter;
-  std::string fee_payer;
-  std::string delegation_ref;
-};
-
 static std::string extract_delegation_ref(td::JsonObject& obj) {
   for (auto key : {"delegation_ref", "delegation", "delegation_grant"}) {
     auto r = obj.get_optional_string_field(td::Slice{key});
@@ -475,6 +463,14 @@ static td::Result<InitialIntentInput> parse_initial_intent_input(td::JsonObject 
   if (out.fee_payer.empty()) out.fee_payer = out.address;
   if (out.account_model.empty()) out.account_model = "unknown";
   if (out.authorization_version.empty()) out.authorization_version = "unknown";
+  // Authorization roles are addresses; reject absurdly long values so a request
+  // cannot stuff hundreds of KiB into a role field. The limit is far above any
+  // real address encoding, so it rejects only clearly invalid input.
+  constexpr size_t kMaxRoleLen = 256;
+  if (out.signer.size() > kMaxRoleLen || out.submitter.size() > kMaxRoleLen ||
+      out.fee_payer.size() > kMaxRoleLen) {
+    return td::Status::Error("authorization role identifier too long");
+  }
   if (out.fee_payer != out.signer) {
     return td::Status::Error(
         "FEATURE_DEFERRED: distinct fee_payer semantics are not supported in the initial implementation");
@@ -485,14 +481,20 @@ static td::Result<InitialIntentInput> parse_initial_intent_input(td::JsonObject 
 static std::string build_authorization_roles_json(const std::string& signer,
                                                   const std::string& submitter,
                                                   const std::string& fee_payer) {
-  return PSTRING()
-      << "{\"@type\":\"account.authorizationRoles\""
-      << ",\"signer\":" << td::JsonString(td::Slice(signer))
-      << ",\"submitter\":" << td::JsonString(td::Slice(submitter))
-      << ",\"fee_payer\":" << td::JsonString(td::Slice(fee_payer))
-      << ",\"is_self_submitted\":" << (signer == submitter ? "true" : "false")
-      << ",\"is_self_paid\":" << (signer == fee_payer ? "true" : "false")
-      << "}";
+  // Growable builder, not PSTRING(): signer/submitter/fee_payer come from the
+  // request and (see parse) are only length-bounded to an address, but a
+  // fixed-capacity buffer would silently truncate into invalid JSON that the
+  // outer growable builder would then wrap unchanged. StringBuilder can't
+  // truncate.
+  td::StringBuilder sb;
+  sb << "{\"@type\":\"account.authorizationRoles\""
+     << ",\"signer\":" << td::JsonString(td::Slice(signer))
+     << ",\"submitter\":" << td::JsonString(td::Slice(submitter))
+     << ",\"fee_payer\":" << td::JsonString(td::Slice(fee_payer))
+     << ",\"is_self_submitted\":" << (signer == submitter ? "true" : "false")
+     << ",\"is_self_paid\":" << (signer == fee_payer ? "true" : "false")
+     << "}";
+  return sb.as_cslice().str();
 }
 
 static std::string build_transaction_intent_json(const InitialIntentInput& in) {
@@ -616,21 +618,24 @@ static std::string build_submission_result_json(bool accepted, const std::string
                                                 const std::string& signer,
                                                 const std::string& submitter,
                                                 const std::string& fee_payer) {
-  return PSTRING()
-      << "{\"@type\":\"transaction.submissionResult\""
-      << ",\"accepted\":" << (accepted ? "true" : "false")
-      << ",\"transaction_hash\":" << td::JsonString(td::Slice(hash_b64))
-      << ",\"submission_id\":" << td::JsonString(td::Slice(hash_b64))
-      << ",\"status\":" << status
-      << ",\"authorization_roles\":" << build_authorization_roles_json(signer, submitter, fee_payer)
-      << "}";
+  // Growable builder, not PSTRING(): the embedded authorization_roles JSON
+  // carries request-derived role strings and must not be truncated.
+  td::StringBuilder sb;
+  sb << "{\"@type\":\"transaction.submissionResult\""
+     << ",\"accepted\":" << (accepted ? "true" : "false")
+     << ",\"transaction_hash\":" << td::JsonString(td::Slice(hash_b64))
+     << ",\"submission_id\":" << td::JsonString(td::Slice(hash_b64))
+     << ",\"status\":" << status
+     << ",\"authorization_roles\":" << build_authorization_roles_json(signer, submitter, fee_payer)
+     << "}";
+  return sb.as_cslice().str();
 }
 
 
 // ─── sendBocReturnHash ──────────────────────────────────────────────────
 
 void JsonRpcServer::handle_sendBocReturnHash(td::JsonObject &params, std::string req_id,
-                                             td::Promise<HttpReturn> promise) {
+                                             const std::string &source_ip, td::Promise<HttpReturn> promise) {
   auto boc_r = params.get_required_string_field("boc");
   if (boc_r.is_error()) {
     promise.set_value(make_json_error(-32602, "Missing 'boc' parameter", req_id));
@@ -663,7 +668,7 @@ void JsonRpcServer::handle_sendBocReturnHash(td::JsonObject &params, std::string
   auto query = tos::serialize_tl_object(
       tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(inner)), true);
 
-  send_liteserver_query(std::move(query),
+  send_attributed_liteserver_query(std::move(query), submission_source_id(source_ip),
       [cors = opts_.cors_origin, req_id = std::move(req_id), msg_hash_b64 = std::move(msg_hash_b64),
        promise = std::move(promise)](td::Result<td::BufferSlice> R) mutable {
         if (R.is_error()) {
@@ -687,20 +692,10 @@ void JsonRpcServer::handle_sendBocReturnHash(td::JsonObject &params, std::string
       });
 }
 
-void JsonRpcServer::handle_buildTransactionIntent(td::JsonObject &params, std::string req_id,
-                                                  td::Promise<HttpReturn> promise) {
-  auto input_r = parse_initial_intent_input(params);
-  if (input_r.is_error()) {
-    promise.set_value(make_json_error(-32602,
-        PSTRING() << "TRANSACTION_INTENT_UNSUPPORTED: " << input_r.error().message(), req_id));
-    return;
-  }
-  auto input = input_r.move_as_ok();
-
-  // Continuation: build and return the transaction intent.  Extracted as a
-  // shared lambda so both the sync and async-discovery paths converge here.
-  auto do_finish = [this](InitialIntentInput input, std::string req_id,
-                          td::Promise<HttpReturn> promise) mutable {
+void JsonRpcServer::finish_transaction_intent(InitialIntentInput input, std::string req_id,
+                                              td::Promise<HttpReturn> promise) {
+    // This is a member function invoked on the actor, so it may call
+    // members directly -- no self_id hop, no cors capture.
     if (!input.delegation_ref.empty()) {
       block::StdAddress addr;
       if (!addr.parse_addr(td::Slice(input.address))) {
@@ -726,7 +721,32 @@ void JsonRpcServer::handle_buildTransactionIntent(td::JsonObject &params, std::s
           PSTRING() << "TRANSACTION_INTENT_UNSUPPORTED: " << msg_r.error().message(), req_id));
       return;
     }
+    // The success response for the ordinary (non-delegation) path. Extracting
+    // this function from a lambda dropped this line, so a legitimate intent
+    // request completed the message build and then answered nothing.
     promise.set_value(make_json_ok(build_transaction_intent_json(input), req_id));
+}
+
+void JsonRpcServer::handle_buildTransactionIntent(td::JsonObject &params, std::string req_id,
+                                                  td::Promise<HttpReturn> promise) {
+  auto input_r = parse_initial_intent_input(params);
+  if (input_r.is_error()) {
+    promise.set_value(make_json_error(-32602,
+        PSTRING() << "TRANSACTION_INTENT_UNSUPPORTED: " << input_r.error().message(), req_id));
+    return;
+  }
+  auto input = input_r.move_as_ok();
+
+  // Continuation: build and return the transaction intent.  Extracted as a
+  // shared lambda so both the sync and async-discovery paths converge here.
+  // Invoked from liteserver reply continuations as well as inline, so it
+  // must not hold a raw pointer to this server: single-threaded execution
+  // rules out a data race, not the server being gone by the time a reply
+  // arrives. Hop back onto the actor, where `this` is valid by construction.
+  auto do_finish = [self_id = actor_id(this)](InitialIntentInput input, std::string req_id,
+                                              td::Promise<HttpReturn> promise) mutable {
+    td::actor::send_closure(self_id, &JsonRpcServer::finish_transaction_intent, std::move(input),
+                            std::move(req_id), std::move(promise));
   };
 
   // When account_model is "unknown" (caller didn't supply it), perform async
@@ -833,36 +853,35 @@ void JsonRpcServer::handle_getSigningPayload(td::JsonObject &params, std::string
   // Continuation: build and return the signing payload.  Extracted as a
   // shared lambda so both the sync and async-discovery paths converge here.
   auto self_id = actor_id(this);
-  auto do_finish = [cors = opts_.cors_origin, this, self_id](InitialIntentInput input, std::string req_id,
+  // No raw `this`: this lambda is invoked from a liteserver reply, which
+  // can arrive after the server actor is gone. The two member calls below
+  // go through self_id, so a reply that arrives too late is a dropped
+  // message (the client gets an error) rather than a use-after-free.
+  auto do_finish = [cors = opts_.cors_origin, self_id](InitialIntentInput input, std::string req_id,
                                    td::Promise<HttpReturn> promise) mutable {
     if (!input.delegation_ref.empty()) {
       block::StdAddress addr;
       if (!addr.parse_addr(td::Slice(input.address))) {
-        promise.set_value(make_json_error(-32602, "DELEGATION_UNAVAILABLE: invalid address", req_id));
+        promise.set_value(make_json_error(-32602, "DELEGATION_UNAVAILABLE: invalid address", req_id, cors));
         return;
       }
       auto msg_r = build_external_message_cell(input);
       if (msg_r.is_error()) {
         promise.set_value(make_json_error(-32602,
-            PSTRING() << "SIGNING_PAYLOAD_UNAVAILABLE: " << msg_r.error().message(), req_id));
+            PSTRING() << "SIGNING_PAYLOAD_UNAVAILABLE: " << msg_r.error().message(), req_id, cors));
         return;
       }
       auto payload_b64_r = serialize_cell_b64(msg_r.ok());
       if (payload_b64_r.is_error()) {
         promise.set_value(make_json_error(-32603,
-            PSTRING() << "SIGNING_PAYLOAD_UNAVAILABLE: " << payload_b64_r.error().message(), req_id));
+            PSTRING() << "SIGNING_PAYLOAD_UNAVAILABLE: " << payload_b64_r.error().message(), req_id, cors));
         return;
       }
-      auto intent_json = PSTRING()
-          << "{\"@type\":\"transaction.signingPayload\""
-          << ",\"payload_version\":1"
-          << ",\"payload_encoding\":\"boc_base64\""
-          << ",\"payload\":" << td::JsonString(td::Slice(payload_b64_r.ok()))
-          << ",\"delegation_ref\":" << td::JsonString(td::Slice(input.delegation_ref))
-          << ",\"replay_protection\":{\"@type\":\"transaction.replayProtection\""
-          << ",\"mode\":\"contract_defined\"}"
-          << "}";
-      validate_delegation_and_return_intent(
+      // Growable builder (see json-rpc-signing-payload.h): the payload can
+      // exceed PSTRING()'s 128 KiB buffer, which would silently truncate it.
+      auto intent_json = build_delegation_signing_payload_json(
+          td::Slice(payload_b64_r.ok()), td::Slice(input.delegation_ref));
+      td::actor::send_closure(self_id, &JsonRpcServer::validate_delegation_and_return_intent,
           addr, input.address, input.delegation_ref,
           std::move(intent_json), std::move(req_id), std::move(promise));
       return;
@@ -871,13 +890,13 @@ void JsonRpcServer::handle_getSigningPayload(td::JsonObject &params, std::string
     auto msg_r = build_external_message_cell(input);
     if (msg_r.is_error()) {
       promise.set_value(make_json_error(-32602,
-          PSTRING() << "SIGNING_PAYLOAD_UNAVAILABLE: " << msg_r.error().message(), req_id));
+          PSTRING() << "SIGNING_PAYLOAD_UNAVAILABLE: " << msg_r.error().message(), req_id, cors));
       return;
     }
     auto payload_b64_r = serialize_cell_b64(msg_r.ok());
     if (payload_b64_r.is_error()) {
       promise.set_value(make_json_error(-32603,
-          PSTRING() << "SIGNING_PAYLOAD_UNAVAILABLE: " << payload_b64_r.error().message(), req_id));
+          PSTRING() << "SIGNING_PAYLOAD_UNAVAILABLE: " << payload_b64_r.error().message(), req_id, cors));
       return;
     }
 
@@ -886,7 +905,7 @@ void JsonRpcServer::handle_getSigningPayload(td::JsonObject &params, std::string
     auto mc_query = tos::serialize_tl_object(
         tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(mc_inner)), true);
 
-    send_liteserver_query(std::move(mc_query),
+    td::actor::send_closure(self_id, &JsonRpcServer::send_liteserver_query, std::move(mc_query),
         [cors, self_id, input = std::move(input), payload_b64 = payload_b64_r.move_as_ok(),
          req_id = std::move(req_id), promise = std::move(promise)](td::Result<td::BufferSlice> R) mutable {
           if (R.is_error()) {
@@ -942,15 +961,9 @@ void JsonRpcServer::handle_getSigningPayload(td::JsonObject &params, std::string
                     }
                     auto cfg = cfg_r.move_as_ok();
                     auto chain_id = cfg->get_global_blockchain_id();
-                    auto result_json = PSTRING()
-                        << "{\"@type\":\"transaction.signingPayload\""
-                        << ",\"payload_version\":1"
-                        << ",\"payload_encoding\":\"boc_base64\""
-                        << ",\"payload\":" << td::JsonString(td::Slice(payload_b64))
-                        << ",\"chain_id\":" << chain_id
-                        << ",\"replay_protection\":{\"@type\":\"transaction.replayProtection\""
-                        << ",\"mode\":\"contract_defined\"}"
-                        << "}";
+                    // Growable builder (see json-rpc-signing-payload.h): the
+                    // payload can exceed PSTRING()'s 128 KiB buffer.
+                    auto result_json = build_signing_payload_json(td::Slice(payload_b64), chain_id);
                     promise.set_value(make_json_ok(result_json, req_id, cors));
                   }));
         });
@@ -1049,7 +1062,7 @@ void JsonRpcServer::handle_getSigningPayload(td::JsonObject &params, std::string
 // (not the RPC layer) is the authoritative enforcer of signature and
 // permission checks.
 void JsonRpcServer::handle_submitSignedTransaction(td::JsonObject &params, std::string req_id,
-                                                   td::Promise<HttpReturn> promise) {
+                                                   const std::string &source_ip, td::Promise<HttpReturn> promise) {
   auto signed_b64_r = extract_signed_artifact_b64(params);
   if (signed_b64_r.is_error()) {
     promise.set_value(make_json_error(-32602,
@@ -1085,7 +1098,7 @@ void JsonRpcServer::handle_submitSignedTransaction(td::JsonObject &params, std::
   auto query = tos::serialize_tl_object(
       tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(inner)), true);
 
-  send_liteserver_query(std::move(query),
+  send_attributed_liteserver_query(std::move(query), submission_source_id(source_ip),
       [cors = opts_.cors_origin, req_id = std::move(req_id), hash_b64 = std::move(hash_b64), signer = std::move(signer),
        submitter = std::move(submitter), fee_payer = std::move(fee_payer),
        promise = std::move(promise)](td::Result<td::BufferSlice> R) mutable {
@@ -1113,7 +1126,7 @@ void JsonRpcServer::handle_submitSignedTransaction(td::JsonObject &params, std::
 // Build external message from address + body + optional init, then send
 
 void JsonRpcServer::handle_sendQuery(td::JsonObject &params, std::string req_id,
-                                     td::Promise<HttpReturn> promise) {
+                                     const std::string &source_ip, td::Promise<HttpReturn> promise) {
   // Parse destination address
   auto addr_r = parse_address_param(params);
   if (addr_r.is_error()) {
@@ -1173,6 +1186,15 @@ void JsonRpcServer::handle_sendQuery(td::JsonObject &params, std::string req_id,
     promise.set_value(make_json_error(-32603, "Failed to serialize message", req_id));
     return;
   }
+  // The parts were each checked against the ceiling on the way in, but this
+  // is the message that actually goes to the network, and assembling the
+  // parts makes it larger than any of them. Check what is being sent.
+  if (msg_boc_r.ok().size() > kMaxBocSize) {
+    promise.set_value(make_json_error(
+        -32602, PSTRING() << "Assembled message too large: " << msg_boc_r.ok().size() << " bytes, max " << kMaxBocSize,
+        req_id));
+    return;
+  }
 
   // Compute message hash
   auto msg_hash_b64 = td::base64_encode(msg_cell->get_hash(0).as_slice());
@@ -1183,7 +1205,7 @@ void JsonRpcServer::handle_sendQuery(td::JsonObject &params, std::string req_id,
   auto query = tos::serialize_tl_object(
       tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(inner)), true);
 
-  send_liteserver_query(std::move(query),
+  send_attributed_liteserver_query(std::move(query), submission_source_id(source_ip),
       [cors = opts_.cors_origin, req_id = std::move(req_id), msg_hash_b64 = std::move(msg_hash_b64),
        promise = std::move(promise)](td::Result<td::BufferSlice> R) mutable {
         if (R.is_error()) {
@@ -1465,7 +1487,7 @@ void JsonRpcServer::handle_estimateFee(td::JsonObject &params, std::string req_i
 // The hash is still computed and included even on failure.
 
 void JsonRpcServer::handle_sendBocReturnHashNoError(td::JsonObject &params, std::string req_id,
-                                                    td::Promise<HttpReturn> promise) {
+                                                    const std::string &source_ip, td::Promise<HttpReturn> promise) {
   auto boc_r = params.get_required_string_field("boc");
   if (boc_r.is_error()) {
     promise.set_value(make_json_error(-32602, "Missing 'boc' parameter", req_id));
@@ -1498,7 +1520,7 @@ void JsonRpcServer::handle_sendBocReturnHashNoError(td::JsonObject &params, std:
   auto query = tos::serialize_tl_object(
       tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(inner)), true);
 
-  send_liteserver_query(std::move(query),
+  send_attributed_liteserver_query(std::move(query), submission_source_id(source_ip),
       [cors = opts_.cors_origin, req_id = std::move(req_id), msg_hash_b64 = std::move(msg_hash_b64),
        promise = std::move(promise)](td::Result<td::BufferSlice> R) mutable {
         if (R.is_error()) {

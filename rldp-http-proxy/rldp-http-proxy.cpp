@@ -1004,7 +1004,11 @@ class RldpHttpProxy : public td::actor::Actor {
         td::actor::ActorId<RldpHttpProxy> proxy_;
       };
 
-      server_ = tos::http::HttpServer::create(port_, std::make_shared<Cb>(actor_id(this)));
+      // A proxy fans out many concurrent client connections, so it needs more
+      // headroom than the library default, but still a finite bound.
+      tos::http::HttpServer::Limits limits;
+      limits.max_connections = 4096;
+      server_ = tos::http::HttpServer::create(port_, std::make_shared<Cb>(actor_id(this)), limits);
     }
 
     class AdnlPayloadCb : public tos::adnl::Adnl::Callback {
@@ -1140,22 +1144,13 @@ class RldpHttpProxy : public td::actor::Actor {
                             td::Promise<td::BufferSlice> promise) {
     LOG(INFO) << "got HTTP request over rldp from " << src;
     TRY_RESULT_PROMISE(promise, f, tos::fetch_tl_object<tos::tos_api::http_request>(data, true));
-    std::unique_ptr<tos::http::HttpRequest> request;
-    auto S = [&]() {
-      TRY_RESULT_ASSIGN(request, tos::http::HttpRequest::create(f->method_, f->url_, f->http_version_));
-      for (auto &x : f->headers_) {
-        tos::http::HttpHeader h{x->name_, x->value_};
-        TRY_STATUS(h.basic_check());
-        request->add_header(std::move(h));
-      }
-      TRY_STATUS(request->complete_parse_header());
-      return td::Status::OK();
-    }();
-    if (S.is_error()) {
-      LOG(INFO) << "Failed to parse http request: " << S;
+    auto r_request = tos::http::HttpRequest::create(*f);
+    if (r_request.is_error()) {
+      LOG(INFO) << "Failed to parse http request: " << r_request.error();
       promise.set_result(create_error_response(f->http_version_, 400, "Bad Request"));
       return;
     }
+    auto request = r_request.move_as_ok();
     auto host = request->host();
     td::uint16 port = 80;
     if (host.empty()) {

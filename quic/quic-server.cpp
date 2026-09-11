@@ -215,6 +215,14 @@ td::Result<std::shared_ptr<QuicServer::ConnectionState>> QuicServer::install_con
 }
 
 td::Status QuicServer::ensure_flood_allowed(const std::string &flood_addr) {
+  // Global connection count ceiling. The rate limiters below bound how fast new
+  // connections arrive, not the live total, so a distributed source can still
+  // accumulate connections without bound. Refuse a new inbound connection once
+  // the table is full; this is checked unconditionally, before the optional
+  // per-IP flood control, because it guards a distinct (aggregate) resource.
+  if (connections_.size() >= options_.max_connections) {
+    return td::Status::Error("global connection count limit exceeded");
+  }
   if (!options_.flood_control.has_value()) {
     return td::Status::OK();
   }

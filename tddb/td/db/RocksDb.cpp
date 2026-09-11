@@ -444,6 +444,19 @@ Status RocksDb::erase(Slice key) {
   return from_rocksdb(db_->Delete({}, to_rocksdb(key)));
 }
 
+Status RocksDb::erase_range(Slice begin, Slice end) {
+  maybe_log_memory_stats();
+  if (write_batch_) {
+    return from_rocksdb(write_batch_->DeleteRange(to_rocksdb(begin), to_rocksdb(end)));
+  }
+  if (transaction_) {
+    // OptimisticTransactionDB has no range-delete; refuse rather than write it
+    // outside the transaction and break atomicity. No current caller needs it.
+    return td::Status::Error("RocksDb::erase_range is not supported inside a transaction");
+  }
+  return from_rocksdb(db_->DeleteRange({}, db_->DefaultColumnFamily(), to_rocksdb(begin), to_rocksdb(end)));
+}
+
 Result<size_t> RocksDb::count(Slice prefix) {
   if (options_.no_reads) {
     return td::Status::Error("trying to read from write-only database");

@@ -122,6 +122,13 @@ class TestsRunner : public TestContext {
   void set_regression_tester(unique_ptr<RegressionTester> regression_tester);
   bool any_test_failed() const;
   bool use_pretty_output() const;
+  // Number of tests actually executed by run_all() (counted in every output
+  // mode, unlike passed_tests_/failed_tests_ which are pretty-output only).
+  // Lets a filtered run detect that its filter matched nothing, which would
+  // otherwise exit successfully having run no tests.
+  size_t executed_test_count() const {
+    return executed_tests_;
+  }
 
  private:
   struct State {
@@ -137,6 +144,7 @@ class TestsRunner : public TestContext {
   vector<std::pair<string, unique_ptr<Test>>> tests_;
   vector<string> failed_tests_;
   size_t passed_tests_{0};
+  size_t executed_tests_{0};
   State state_;
   std::atomic<bool> test_failed_ = false;
   unique_ptr<RegressionTester> regression_tester_;

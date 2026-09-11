@@ -194,17 +194,23 @@ class HttpRequest {
   // whole request-header window; parse() enforces max_header_size() here.
   size_t total_headers_size_ = 0;
 
-  // Round 152 HIGH fix: bumped from 1 MiB to 4 MiB to match
-  // kJsonRpcMaxRequestBodyBytes in validator-engine/json-rpc-server.
-  // cpp.  Pre-fix a historical transfer payload (~2.3 MiB
-  // hex+JSON) exceeded the HTTP-layer
-  // payload max but the JSON-RPC layer accepted it; bodies in
-  // (1 MiB, 4 MiB] never completed because the HTTP reader paused
-  // at the prior 1 MiB watermark and the application "too large"
-  // path never fired — pinning connections.  The new
-  // Content-Length gate in HttpRequest::add_header rejects requests
-  // above this max up front, so an attacker can't pin connections
-  // with arbitrary Content-Length anymore.
+  // Request body limit: 4 MiB. An earlier revision cut this to 1 MiB, reasoning
+  // that the largest payload any method accepts is a 64 KiB bag of cells -- but
+  // that 64 KiB bound is on a single base64-decoded BOC on the send path, not
+  // on a whole request. runGetMethod takes up to 256 stack cell/slice arguments
+  // and the JSON-RPC batch entry takes up to 100 elements, so requests that are
+  // well-formed under those existing limits and fit within 4 MiB (a
+  // runGetMethod with a handful of ~80 KiB-base64 cells, or a batch of them)
+  // exceeded 1 MiB and were rejected -- a compatibility regression, not a dead
+  // config. This is also the general HTTP request limit, shared by the RLDP
+  // HTTP proxy, so the same reduction broke proxied uploads in (1 MiB, 4 MiB].
+  // The 4 MiB receive capacity is kept; giving the JSON-RPC layer a smaller
+  // memory budget would need its own limit, separate from this shared one, plus
+  // a client batching/argument-budget contract -- not a blanket narrowing here.
+  //
+  // The Content-Length gate in HttpRequest::add_header stays: it rejects an
+  // oversized request before a body is read, rather than letting the reader
+  // stall against the watermark with nothing to drain it.
   static constexpr size_t max_payload_size() {
     return 4 << 20;  // 4 MiB
   }
@@ -212,14 +218,26 @@ class HttpRequest {
   static constexpr size_t low_watermark() {
     return 1 << 16;  // 64 KiB
   }
-  // High watermark = max_payload_size (4 MiB). Prevents reader backpressure
-  // for request bodies up to the declared max.
+  // Must equal max_payload_size(). The JSON-RPC consumer drains a request
+  // body only once it has fully arrived, so the reader must be allowed to
+  // buffer the whole declared maximum before it pauses here -- otherwise a
+  // body between the watermark and the Content-Length limit stalls the
+  // reader against a consumer that is waiting for the reader, the exact
+  // connection-pinning deadlock the Content-Length gate exists to prevent.
+  // Keeping the two equal makes the gate's threshold and the stall point
+  // coincide: every body the gate admits can be read to completion.
   static constexpr size_t high_watermark() {
-    return 4 << 20;  // 4 MiB
+    return 4 << 20;  // 4 MiB, == max_payload_size()
   }
 
   static td::Result<std::unique_ptr<HttpRequest>> create(std::string method, std::string url,
                                                          std::string proto_version);
+  // Rebuild a request from its TL wire form (the inverse of store_tl). Every
+  // header is admitted through add_header, so the Content-Length gate applies
+  // to the RLDP-proxied path exactly as it does to the socket path. Used by the
+  // RLDP HTTP proxy; a malformed or oversized header fails here rather than
+  // being silently dropped.
+  static td::Result<std::unique_ptr<HttpRequest>> create(const tos_api::http_request &f);
 
   HttpRequest(std::string method, std::string url, std::string proto_version);
 
@@ -308,6 +326,13 @@ class HttpRequest {
   std::string peer_ip_;
 };
 
+// The Content-Length gate admits bodies up to max_payload_size, and the
+// reader can buffer up to high_watermark before it pauses for the
+// consumer; if the gate admitted more than the reader can hold, a body in
+// the gap would stall forever. Keeping them equal is what prevents that.
+static_assert(HttpRequest::high_watermark() == HttpRequest::max_payload_size(),
+              "request high watermark must equal max payload, or admitted bodies can stall the reader");
+
 class HttpResponse {
  public:
   static constexpr size_t max_header_size() {
@@ -386,6 +411,9 @@ class HttpResponse {
 
   bool parse_header_completed_ = false;
   bool keep_alive_ = false;
+  // Running total of header bytes, capped in parse() the same way the
+  // request side is; a server cannot stream headers without bound.
+  size_t total_headers_size_ = 0;
 
   std::vector<HttpHeader> options_;
   bool is_tunnel_ = false;

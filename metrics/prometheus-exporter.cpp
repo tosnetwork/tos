@@ -26,7 +26,11 @@ void PrometheusExporter::HttpCallback::receive_request(RequestPtr request, Paylo
 void PrometheusExporter::listen(td::IPAddress addr) {
   CHECK(http_.empty());
   auto callback = std::make_unique<HttpCallback>(actor_id(this));
-  http_ = td::actor::create_actor<http::HttpServer>(PSTRING() << "HTTP@" << addr, addr, std::move(callback));
+  // Metrics scrapers are few; a modest ceiling keeps a scrape endpoint from
+  // being turned into a file-descriptor exhaustion vector.
+  http::HttpServer::Limits limits;
+  limits.max_connections = 256;
+  http_ = td::actor::create_actor<http::HttpServer>(PSTRING() << "HTTP@" << addr, addr, std::move(callback), limits);
   td::actor::send_closure(collector_.get(), &metrics::MultiCollector::add_async_collector<http::HttpServer>,
                           http_.get());
 }

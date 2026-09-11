@@ -734,6 +734,8 @@ target_link_libraries(test-hello-world tl_api tos_crypto)
 
 add_executable(test-adnl test/test-adnl.cpp)
 target_link_libraries(test-adnl adnl adnltest dht tl_api)
+add_executable(test-adnl-peer-pair-cap test/test-adnl-peer-pair-cap.cpp)
+target_link_libraries(test-adnl-peer-pair-cap adnl adnltest dht tl_api)
 add_executable(test-dht test/test-dht.cpp)
 target_link_libraries(test-dht adnl adnltest dht tl_api)
 add_executable(test-rldp2 test/test-rldp2.cpp)
@@ -762,6 +764,8 @@ add_executable(test-overlay test/test-overlay.cpp)
 target_link_libraries(test-overlay overlay tdutils tdactor adnl adnltest tl_api dht )
 add_executable(test-overlay-peer-cleanup test/test-td-main.cpp test/test-overlay-peer-cleanup.cpp)
 target_link_libraries(test-overlay-peer-cleanup PRIVATE overlay tdutils tdactor adnl tl_api dht fec)
+add_executable(test-overlay-broadcast-capacity test/test-td-main.cpp test/test-overlay-broadcast-capacity.cpp)
+target_link_libraries(test-overlay-broadcast-capacity PRIVATE overlay tdutils tdactor adnl tl_api dht fec)
 add_executable(plumtree-graph-sim
   test/plumtree/plumtree-graph-sim.cpp
   test/plumtree/graph.cpp
@@ -920,8 +924,50 @@ target_include_directories(test-rate-limiter PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
 add_executable(test-config-transition test/test-td-main.cpp test/test-config-transition.cpp)
 target_link_libraries(test-config-transition PRIVATE tos_block tos_crypto tdutils)
 
+add_executable(test-consensus-db-path test/test-td-main.cpp test/test-consensus-db-path.cpp)
+target_include_directories(test-consensus-db-path PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                           ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
+target_link_libraries(test-consensus-db-path PRIVATE tos_crypto_core tdutils)
+
+add_executable(test-validator-cleanup test/test-td-main.cpp test/test-validator-cleanup.cpp)
+target_include_directories(test-validator-cleanup PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                           ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
+target_link_libraries(test-validator-cleanup PRIVATE tos_crypto_core tdutils)
+
+add_executable(test-validator-cleanup-statedb test/test-td-main.cpp test/test-validator-cleanup-statedb.cpp)
+target_include_directories(test-validator-cleanup-statedb PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                           ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
+target_link_libraries(test-validator-cleanup-statedb PRIVATE tos_crypto_core tddb tdutils)
+
+add_executable(test-validator-cleanup-worker test/test-validator-cleanup-worker.cpp)
+target_include_directories(test-validator-cleanup-worker PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                           ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
+target_link_libraries(test-validator-cleanup-worker PRIVATE tos_crypto_core tddb tdactor tdutils)
+
+add_executable(inject-validator-cleanup-record test/inject-validator-cleanup-record.cpp)
+target_include_directories(inject-validator-cleanup-record PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                           ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
+target_link_libraries(inject-validator-cleanup-record PRIVATE tos_crypto_core tddb tdutils)
+
+add_executable(test-node-consensus-membership test/test-node-consensus-membership.cpp)
+target_include_directories(test-node-consensus-membership PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                           ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
+target_link_libraries(test-node-consensus-membership PRIVATE tos_block keys tos_crypto tos_crypto_core tl_api tdutils tdactor)
+
+add_executable(test-validator-cleanup-integration test/test-validator-cleanup-integration.cpp)
+target_include_directories(test-validator-cleanup-integration PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                           ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
+target_link_libraries(test-validator-cleanup-integration PRIVATE tos_validator validator-common validator-db full-node
+                      tos_db tos_crypto tdutils tdactor adnl overlay tl_api dht)
+
 add_executable(test-json-rpc-parse test/test-td-main.cpp test/test-json-rpc-parse.cpp)
 target_link_libraries(test-json-rpc-parse PRIVATE json-rpc-parse tos_crypto tdutils)
+add_executable(test-json-rpc-source-ip test/test-json-rpc-source-ip.cpp)
+target_include_directories(test-json-rpc-source-ip PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(test-json-rpc-source-ip PRIVATE tdutils)
+add_executable(test-json-rpc-signing-payload test/test-json-rpc-signing-payload.cpp)
+target_include_directories(test-json-rpc-signing-payload PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(test-json-rpc-signing-payload PRIVATE tdutils)
 
 add_executable(test-http-server-limits test/test-td-main.cpp test/test-http-server-limits.cpp)
 target_link_libraries(test-http-server-limits PRIVATE toshttp tdactor tdutils)
@@ -1013,6 +1059,14 @@ target_link_libraries(test-promise-loss-contract PRIVATE tdactor tdutils)
 add_executable(test-json-rpc-handler-guard test/test-td-main.cpp test/test-json-rpc-handler-guard.cpp)
 target_include_directories(test-json-rpc-handler-guard PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(test-json-rpc-handler-guard PRIVATE tdactor tdutils tos_crypto)
+
+add_executable(test-json-rpc-rate-gate test/test-td-main.cpp test/test-json-rpc-rate-gate.cpp)
+target_include_directories(test-json-rpc-rate-gate PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(test-json-rpc-rate-gate PRIVATE tdutils)
+
+add_executable(test-json-rpc-payload-waiter test/test-json-rpc-payload-waiter.cpp)
+target_include_directories(test-json-rpc-payload-waiter PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(test-json-rpc-payload-waiter PRIVATE toshttp tdactor tdutils)
 
 add_executable(test-metrics-label-bound test/test-td-main.cpp test/test-metrics-label-bound.cpp)
 target_include_directories(test-metrics-label-bound PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
@@ -1304,12 +1358,14 @@ endif()
 #BEGIN internal
 if (NOT TOS_ONLY_TOSLIB)
 tos_test(test-adnl)
+tos_test(test-adnl-peer-pair-cap)
 tos_test(test-dht)
 tos_test(test-rldp2)
 tos_test(test-rldp2-connection-cap)
 tos_test(test-rldp2-query-eviction)
 tos_test(test-rldp-http-proxy-routing)
 tos_test(test-overlay-peer-cleanup)
+tos_test(test-overlay-broadcast-capacity)
 tos_test(test-download-state-budget)
 tos_test(test-download-next-blocks-validation)
 tos_test(test-ext-message-pool)
@@ -1317,6 +1373,24 @@ tos_test(test-msg-envelope)
 tos_test(test-rate-limiter)
 tos_test(test-config-transition)
 tos_test(test-json-rpc-parse)
+tos_test(test-json-rpc-source-ip)
+tos_test(test-json-rpc-signing-payload)
+tos_test(test-consensus-db-path)
+tos_test(test-validator-cleanup)
+tos_test(test-validator-cleanup-statedb)
+tos_test(test-validator-cleanup-worker)
+tos_test(test-validator-cleanup-integration)
+tos_test(test-node-consensus-membership)
+tos_test(test-json-rpc-rate-gate)
+tos_test(test-json-rpc-payload-waiter)
+# Source-level check: a route added to on_request bypasses the dispatcher's
+# per-source budget, and no test of the budget itself can see that.
+find_package(Python3 COMPONENTS Interpreter)
+if (Python3_Interpreter_FOUND)
+  add_test(NAME jsonrpc-route-gating
+           COMMAND ${Python3_EXECUTABLE}
+                   ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-jsonrpc-route-gating.py)
+endif()
 tos_test(test-http-server-limits)
 tos_test(test-wallet-message-processor)
 tos_test(test-vm-exception-hardening)
@@ -1379,6 +1453,26 @@ tos_test(test-tddb ${TEST_OPTIONS})
 set_tests_properties(test-tddb PROPERTIES ENVIRONMENT
   "TOS_ROCKSDB_BLOCK_CACHE_SIZE=33554432;TOS_ROCKSDB_CRITICAL_WRITE_BUFFER_SIZE=67108864;TOS_ROCKSDB_CRITICAL_WRITE_BUFFER_ALLOW_STALL=1;TOS_ROCKSDB_GLOBAL_WRITE_BUFFER_SIZE=134217728;TOS_ROCKSDB_GLOBAL_WRITE_BUFFER_ALLOW_STALL=1")
 tos_test(test-db ${TEST_OPTIONS})
+
+# Network-safety regressions. test-quic-sender is a multi-suite binary (it also
+# holds large-scale/fairness suites that must not gate every change), so the
+# individual safety cases are registered here as filtered CTest entries rather
+# than via tos_test(). test-quic-sender fails if a -f filter matches no test, so
+# a stale filter name cannot silently gate on zero coverage. The ADNL and
+# overlay safety tests are already registered above via tos_test(); they are
+# only labelled here. All are tagged "network-safety" so the instrumented
+# network-safety workflow can select exactly this set.
+add_dependencies(all-tests test-quic-sender)
+add_test(NAME quic-inbound-stream-timeout COMMAND test-quic-sender -f AbandonedInboundStreamIsReaped)
+add_test(NAME quic-outbound-query-deadline COMMAND test-quic-sender -f PartialResponseDoesNotExtendDeadline)
+add_test(NAME quic-connection-count-cap COMMAND test-quic-sender -f MaxConnectionsRejectsBeyondCap)
+set_tests_properties(
+  quic-inbound-stream-timeout
+  quic-outbound-query-deadline
+  quic-connection-count-cap
+  test-adnl-peer-pair-cap
+  test-overlay-broadcast-capacity
+  PROPERTIES LABELS "network-safety")
 
 add_subdirectory(test)
 endif()

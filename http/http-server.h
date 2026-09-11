@@ -46,8 +46,12 @@ class HttpServer : public td::actor::Actor, public virtual metrics::CollectorWra
   // descriptors and connection actors in the serving process indefinitely.
   struct Limits {
     // Maximum number of simultaneously open inbound connections; further
-    // accepted sockets are closed immediately. 0 means unlimited.
-    size_t max_connections = 0;
+    // accepted sockets are closed immediately. A finite default keeps any
+    // consumer that forgets to set an explicit limit from silently running
+    // unbounded (the historical default was 0). Services with heavier
+    // connection needs raise it; 0 still means unlimited for a caller that
+    // deliberately opts out.
+    size_t max_connections = 1024;
     // Seconds a connection may spend waiting for a complete request line
     // and headers (from accept, and again after each response) before it
     // is closed. 0 disables the deadline.
@@ -99,6 +103,13 @@ class HttpServer : public td::actor::Actor, public virtual metrics::CollectorWra
   td::IPAddress address_;
   std::shared_ptr<Callback> callback_;
   Limits limits_;
+
+  // Throttle the "connection limit reached" warning: a client hammering an
+  // at-capacity listener must not turn each refusal into its own log line, or
+  // the guard would reintroduce the remote-driven unbounded logging it is
+  // meant to prevent. Refusals between reports are counted and summarized.
+  td::Timestamp next_limit_log_;
+  size_t refused_since_last_log_ = 0;
 
   td::actor::ActorOwn<td::TcpInfiniteListener> listener_;
 

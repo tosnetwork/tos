@@ -79,7 +79,8 @@ use dual_absence::{
 };
 use prediction_relay::{
     AgentAccountPredictionRelayBounceCreditResolveCmd,
-    AgentAccountPredictionRelayDestinationResolveCmd, AgentAccountPredictionRelaySourceResolveCmd,
+    AgentAccountPredictionRelayDestinationResolveCmd, AgentAccountPredictionRelayProfileCmd,
+    AgentAccountPredictionRelaySourceResolveCmd,
 };
 
 const AGENT_WALLET_FUND_GAS: u64 = 1_000_000; // 0.001 TOS
@@ -626,6 +627,8 @@ pub enum AgentAccountAction {
     EconomicEffectBroadcast(AgentAccountEconomicEffectBroadcastCmd),
     /// Resolve a Prediction exact source transaction from a durable pre-broadcast cursor
     PredictionRelaySourceResolve(AgentAccountPredictionRelaySourceResolveCmd),
+    /// Preflight and describe a pinned Prediction relay observer quorum
+    PredictionRelayProfile(AgentAccountPredictionRelayProfileCmd),
     /// Resolve the exact PredictionMarket destination transaction from a durable chain checkpoint
     PredictionRelayDestinationResolve(AgentAccountPredictionRelayDestinationResolveCmd),
     /// Resolve the exact rich bounce credit back at the source Agent Account
@@ -678,7 +681,10 @@ pub struct AgentAccountDeployCmd {
 #[derive(clap::Args, Clone)]
 #[command(about = "Show an Agent Account by its chain address")]
 pub struct AgentAccountShowCmd {
-    #[arg(short, long, help = "Agent Account address")]
+    // A canonical masterchain raw address starts with `-1:`.  Accept it as
+    // the value of this option instead of letting clap reinterpret it as a
+    // second option.
+    #[arg(short, long, allow_hyphen_values = true, help = "Agent Account address")]
     address: String,
 
     #[arg(short, long, default_value = "table")]
@@ -927,6 +933,17 @@ pub struct AgentAccountEconomicEffectBroadcastCmd {
     config_format: Option<String>,
     #[arg(long, requires = "config_fd")]
     journal_directory: Option<String>,
+    #[arg(
+        long,
+        help = "Write an owner-private durable-boundary checkpoint before the network submission"
+    )]
+    checkpoint_file: Option<String>,
+    #[arg(
+        long,
+        requires = "checkpoint_file",
+        help = "Hold at the checkpoint for at most 30 seconds so an external crash-recovery supervisor can terminate this process"
+    )]
+    checkpoint_pause_ms: Option<u32>,
 }
 
 #[derive(clap::Args, Clone)]
@@ -1599,6 +1616,7 @@ impl AgentAccountCmd {
             }
             AgentAccountAction::EconomicEffectPrepare(cmd) => cmd.run(config_path).await,
             AgentAccountAction::EconomicEffectBroadcast(cmd) => cmd.run(config_path).await,
+            AgentAccountAction::PredictionRelayProfile(cmd) => cmd.run(config_path).await,
             AgentAccountAction::PredictionRelaySourceResolve(cmd) => cmd.run(config_path).await,
             AgentAccountAction::PredictionRelayDestinationResolve(cmd) => {
                 cmd.run(config_path).await
@@ -5728,6 +5746,13 @@ impl AgentAccountEconomicEffectBroadcastCmd {
         validate_exact_boc_before_broadcast(&boc)?;
         rpc_client.verify_pinned_primary_network(network_domain).await?;
         journal.begin_or_resume_exact_broadcast(&record.claim, time_format::now())?;
+        write_prediction_recovery_checkpoint(
+            self.checkpoint_file.as_deref(),
+            "broadcasting",
+            &self.stable_action_id,
+            &digest,
+        )?;
+        await_prediction_recovery_checkpoint_pause(self.checkpoint_pause_ms).await?;
         let submission = rpc_client.submit_exact_boc_pinned(&boc, network_domain).await?;
         if submission.status == ExactBocSubmissionStatus::Accepted {
             println!(
@@ -5778,6 +5803,59 @@ fn require_exact_submission_accepted(
             submission.endpoint
         ),
     }
+}
+
+// A supervisor may use this owner-private marker to kill a process immediately
+// after a durable recovery boundary.  It deliberately contains no BOC bytes,
+// key material, destination, or value: the action and evidence digests are
+// sufficient to correlate the checkpoint with the immutable journal record.
+pub(super) fn write_prediction_recovery_checkpoint(
+    path: Option<&str>,
+    phase: &str,
+    stable_action_id: &str,
+    evidence_digest: &str,
+) -> anyhow::Result<()> {
+    let Some(path) = path else {
+        return Ok(());
+    };
+    validate_sha256_digest("checkpoint stable_action_id", stable_action_id)?;
+    validate_sha256_digest("checkpoint evidence_digest", evidence_digest)?;
+    if !matches!(phase, "signed" | "broadcasting" | "source_finalized") {
+        anyhow::bail!("prediction recovery checkpoint phase is invalid");
+    }
+    let path = Path::new(path);
+    if !path.is_absolute() {
+        anyhow::bail!("prediction recovery checkpoint path must be absolute");
+    }
+    let checkpoint = serde_json::json!({
+        "schema": "tosctl.prediction-recovery-checkpoint.v1",
+        "phase": phase,
+        "stable_action_id": stable_action_id,
+        "evidence_digest": evidence_digest,
+    });
+    // This is deliberately create-new rather than the idempotent snapshot
+    // writer below.  A pre-existing marker might belong to a prior process;
+    // treating it as current would let a supervisor kill at the wrong point.
+    write_new_private_snapshot_file(path, &serde_json::to_vec(&checkpoint)?)
+}
+
+// A real crash-injection harness needs a deterministic observation interval:
+// merely polling a marker after the command returns could confuse a normal
+// exit with a kill at the persistence boundary.  This explicit, bounded pause
+// is inert unless a private checkpoint was requested and only delays the
+// caller's own command; it does not alter the frozen BOC or custody state.
+pub(super) async fn await_prediction_recovery_checkpoint_pause(
+    pause_ms: Option<u32>,
+) -> anyhow::Result<()> {
+    let Some(pause_ms) = pause_ms else {
+        return Ok(());
+    };
+    anyhow::ensure!(
+        (1..=30_000).contains(&pause_ms),
+        "prediction recovery checkpoint pause must be between 1 and 30000 milliseconds"
+    );
+    tokio::time::sleep(std::time::Duration::from_millis(u64::from(pause_ms))).await;
+    Ok(())
 }
 
 // This is the original ordinary Agreement-payment resolver evidence shape.
@@ -7913,6 +7991,11 @@ fn write_private_snapshot_file(path: &Path, bytes: &[u8]) -> anyhow::Result<()> 
         }
         anyhow::bail!("existing corroboration snapshot file has different bytes");
     }
+    write_new_private_snapshot_file(path, bytes)
+}
+
+fn write_new_private_snapshot_file(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
+    require_owner_private_agent_storage()?;
     let mut options = fs::OpenOptions::new();
     options.write(true).create_new(true);
     #[cfg(unix)]
@@ -10926,9 +11009,10 @@ mod tests {
         LoadedEconomicPaymentCorroborationMember, SPONSORSHIP_CORROBORATED_TERMINAL_PROFILE_URI,
         SPONSORSHIP_FINALITY_PROOF_BUNDLE_DOMAIN, SponsorshipAgreementPaymentRequestV3,
         SponsorshipFinalityProfile, TASK_SEND_FINALIZED_SCHEMA, agent_deploy_fee_reserve,
-        begin_or_resume_task_deploy_broadcast, canonical_file_digest,
-        canonical_task_deploy_primary_config, canonicalize_chain_rpc_endpoint,
-        chain_query_failure_diagnostic, corroboration_snapshot_handle, decode_exact_protocol_cbor,
+        await_prediction_recovery_checkpoint_pause, begin_or_resume_task_deploy_broadcast,
+        canonical_file_digest, canonical_task_deploy_primary_config,
+        canonicalize_chain_rpc_endpoint, chain_query_failure_diagnostic,
+        corroboration_snapshot_handle, decode_exact_protocol_cbor,
         economic_payment_corroboration_profile, encode_protocol_json_cbor,
         exact_protocol_action_request_digest, exact_transaction_utime,
         finalized_output_matches_claim, freeze_economic_payment_corroboration_snapshot,
@@ -10944,7 +11028,7 @@ mod tests {
         validate_sponsorship_finality_profile, validate_sponsorship_payment_request,
         validate_task_send_resolution_claim, validate_task_send_resolution_evidence,
         verify_current_controller_authorization, verify_parsed_controller_authorization,
-        write_private_snapshot_file,
+        write_prediction_recovery_checkpoint, write_private_snapshot_file,
     };
     use base64::Engine;
     use chain_block::{
@@ -10983,6 +11067,28 @@ mod tests {
         action: AgentTaskAction,
     }
 
+    #[test]
+    fn agent_account_show_cli_accepts_canonical_masterchain_address() {
+        use clap::Parser;
+
+        let address = masterchain_address(7).to_string();
+        let parsed = AccountActionParser::try_parse_from([
+            "agent-account",
+            "show",
+            "--address",
+            address.as_str(),
+            "--format",
+            "json",
+        ])
+        .expect("canonical masterchain address must be one --address value");
+        match parsed.action {
+            AgentAccountAction::Show(command) => {
+                assert_eq!(command.address, address);
+            }
+            _ => panic!("agent account show parsed as another command"),
+        }
+    }
+
     struct TemporaryDirectory(PathBuf);
 
     impl TemporaryDirectory {
@@ -11006,6 +11112,134 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[test]
+    fn prediction_recovery_checkpoint_is_private_bounded_and_phase_bound() {
+        let directory = TemporaryDirectory::create("prediction-recovery-checkpoint");
+        let checkpoint = directory.0.join("checkpoint.json");
+        let action = format!("sha256:{}", "a".repeat(64));
+        let evidence = format!("sha256:{}", "b".repeat(64));
+        write_prediction_recovery_checkpoint(
+            checkpoint.to_str(),
+            "broadcasting",
+            &action,
+            &evidence,
+        )
+        .unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::{MetadataExt, PermissionsExt};
+            let metadata = fs::metadata(&checkpoint).unwrap();
+            assert_eq!(metadata.nlink(), 1);
+            assert_eq!(metadata.permissions().mode() & 0o077, 0);
+        }
+        let parsed: serde_json::Value =
+            serde_json::from_slice(&fs::read(&checkpoint).unwrap()).unwrap();
+        assert_eq!(parsed["schema"], "tosctl.prediction-recovery-checkpoint.v1");
+        assert_eq!(parsed["phase"], "broadcasting");
+        assert_eq!(parsed["stable_action_id"], action);
+        assert_eq!(parsed["evidence_digest"], evidence);
+        let signed = directory.0.join("signed.json");
+        write_prediction_recovery_checkpoint(signed.to_str(), "signed", &action, &evidence)
+            .unwrap();
+        assert!(
+            write_prediction_recovery_checkpoint(
+                checkpoint.to_str(),
+                "broadcasting",
+                &action,
+                &evidence,
+            )
+            .is_err()
+        );
+        assert!(
+            write_prediction_recovery_checkpoint(
+                checkpoint.to_str(),
+                "destination_committed",
+                &action,
+                &evidence,
+            )
+            .is_err()
+        );
+        assert!(
+            write_prediction_recovery_checkpoint(
+                Some("relative/checkpoint.json"),
+                "source_finalized",
+                &action,
+                &evidence,
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn prediction_recovery_commands_parse_checkpoint_options() {
+        use clap::Parser;
+
+        let action = format!("sha256:{}", "a".repeat(64));
+        let broadcast = AccountActionParser::try_parse_from([
+            "agent-account",
+            "economic-effect-broadcast",
+            "--wallet",
+            "prediction-agent",
+            "--stable-action-id",
+            action.as_str(),
+            "--yes",
+            "--checkpoint-file",
+            "/private/checkpoint.json",
+            "--checkpoint-pause-ms",
+            "1000",
+        ])
+        .unwrap();
+        match broadcast.action {
+            AgentAccountAction::EconomicEffectBroadcast(command) => {
+                assert_eq!(command.checkpoint_file.as_deref(), Some("/private/checkpoint.json"));
+                assert_eq!(command.checkpoint_pause_ms, Some(1000));
+            }
+            _ => panic!("Prediction broadcast parsed as another action"),
+        }
+        let pause_without_checkpoint = match AccountActionParser::try_parse_from([
+            "agent-account",
+            "economic-effect-broadcast",
+            "--wallet",
+            "prediction-agent",
+            "--stable-action-id",
+            action.as_str(),
+            "--yes",
+            "--checkpoint-pause-ms",
+            "1000",
+        ]) {
+            Ok(_) => panic!("checkpoint pause parsed without a checkpoint file"),
+            Err(error) => error.to_string(),
+        };
+        assert!(pause_without_checkpoint.contains("--checkpoint-file"));
+        let source = AccountActionParser::try_parse_from([
+            "agent-account",
+            "prediction-relay-source-resolve",
+            "--wallet",
+            "prediction-agent",
+            "--stable-action-id",
+            action.as_str(),
+            "--relay-request",
+            "/private/request.json",
+            "--quorum-config",
+            "/private/observer-1.json",
+            "/private/observer-2.json",
+            "--checkpoint-file",
+            "/private/source-checkpoint.json",
+        ])
+        .unwrap();
+        match source.action {
+            AgentAccountAction::PredictionRelaySourceResolve(_) => {}
+            _ => panic!("Prediction source resolver parsed as another action"),
+        }
+    }
+
+    #[tokio::test]
+    async fn prediction_recovery_checkpoint_pause_is_bounded() {
+        assert!(await_prediction_recovery_checkpoint_pause(None).await.is_ok());
+        assert!(await_prediction_recovery_checkpoint_pause(Some(0)).await.is_err());
+        assert!(await_prediction_recovery_checkpoint_pause(Some(30_001)).await.is_err());
     }
 
     fn test_network() -> RelayNetworkDomainPin {
@@ -11093,6 +11327,7 @@ mod tests {
             cancellation_boc_base64: None,
             economic_authorization: None,
             economic_effect_authorization: None,
+            prediction_relay_recovery_boundary: None,
             exact_winner_resolution: None,
             created_at_unix: 1,
             updated_at_unix: 2,
@@ -12765,6 +13000,7 @@ mod tests {
             cancellation_boc_base64: None,
             economic_authorization: Some(authorization.clone()),
             economic_effect_authorization: None,
+            prediction_relay_recovery_boundary: None,
             exact_winner_resolution: None,
             created_at_unix: 1,
             updated_at_unix: 1,

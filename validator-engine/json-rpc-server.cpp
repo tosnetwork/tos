@@ -18,7 +18,10 @@
 */
 #include "json-rpc-server-internal.h"
 #include "json-rpc-handler-guard.h"
+#include "json-rpc-payload-waiter.h"
+#include "json-rpc-source-ip.h"
 
+#include <algorithm>
 #include <cstdlib>
 #include <cstring>
 
@@ -42,9 +45,22 @@ using tos::validator_engine::guard_handler;
 // DoS.  See test/conformance/manual-rpc/http_large_request_body.io for the
 // regression test that pins this behaviour.
 //
-// Cap: 4 MiB. This is intentionally above the largest native wallet/indexer
-// request bodies accepted today and below common reverse-proxy limits.
-static constexpr std::size_t kJsonRpcMaxRequestBodyBytes = 4u << 20;
+// The cap has to stay at or below the HTTP layer's high watermark. This
+// drains a body only once it has arrived in full, so a body larger than
+// the watermark stalls the reader against a consumer that is waiting for
+// that same reader. Accepting more here than the watermark admits is how
+// bodies in that gap used to pin a connection until it timed out.
+//
+// A floor check only -- not a proof that the largest legal request fits. A
+// single request can carry many cells (runGetMethod takes up to 256 stack
+// arguments) or batch up to 100 elements, and base64 plus the JSON envelope
+// inflate each, so the real maximum request is far larger than one 64 KiB bag
+// of cells. This just asserts the reader watermark is at least large enough for
+// one such BOC; the actual receive capacity is high_watermark() (see http.h),
+// and the body ceiling below tracks it.
+static_assert(64u * 1024 <= http::HttpRequest::high_watermark(),
+              "the reader watermark must admit at least a single max-size bag of cells");
+static constexpr std::size_t kJsonRpcMaxRequestBodyBytes = http::HttpRequest::high_watermark();
 
 // Drain the entire payload into a single contiguous buffer.  Returns an
 // error status if the body would exceed `kJsonRpcMaxRequestBodyBytes`
@@ -233,7 +249,8 @@ JsonRpcServer::JsonRpcServer(
     Options options)
     : validator_manager_(std::move(validator_manager)),
       opts_(std::move(options)),
-      cache_(opts_.cache_max_entries, opts_.cache_max_body_bytes) {
+      cache_(std::make_shared<JsonRpcResponseCache>(opts_.cache_max_entries, opts_.cache_max_body_bytes)),
+      per_ip_gate_(opts_.per_ip_rate_window, opts_.per_ip_rate_requests, opts_.per_ip_rate_max_sources) {
   // Arm periodic cache cleanup if caching is enabled
   if (opts_.cache_ttl > 0) {
     alarm_timestamp() = td::Timestamp::in(10.0);
@@ -290,24 +307,12 @@ void JsonRpcServer::listen(td::IPAddress addr) {
       PSTRING() << "JsonRPC@" << addr, addr, std::move(callback), limits);
   LOG(WARNING) << "JSON-RPC server listening on " << addr;
 
-  if (!is_loopback && opts_.cors_origin == "*" && !opts_.readonly) {
-    LOG(WARNING) << "JSON-RPC: serving non-loopback address " << addr
-                 << " with CORS Access-Control-Allow-Origin=\"*\" while write "
-                 << "methods are enabled. Set --json-rpc-cors-origin to a "
-                 << "specific origin in production.";
-  }
-  if (!is_loopback && opts_.cors_origin != "*") {
-    // Warn that the configured restrictive
-    // origin is not enforced on every response path — many handlers still
-    // emit Access-Control-Allow-Origin: * via the static helper defaults.
-    // See JsonRpcServer::make_* doc-comment in the header. Until that
-    // migration lands, treat this server's responses as world-readable from
-    // any browser origin.
-    LOG(WARNING) << "JSON-RPC: --json-rpc-cors-origin is set to \""
-                 << opts_.cors_origin << "\", but the response helpers still "
-                 << "default to \"*\" on most call sites. Browsers from any "
-                 << "origin can read responses until the threading migration "
-                 << "is complete (see header comment on JsonRpcServer::make_*).";
+  if (opts_.cors_origin == "*") {
+    LOG(WARNING) << "JSON-RPC: --json-rpc-cors-origin is \"*\", so any web page "
+                 << "the operator visits can read this node's replies"
+                 << (opts_.readonly ? "." : " and drive its write methods.")
+                 << " Name the origin you mean, or leave it unset to send no "
+                 << "CORS header at all.";
   }
 }
 
@@ -325,87 +330,16 @@ void JsonRpcServer::HttpCallback::receive_request(
 
 // ─── Request handling ─────────────────────────────────────────────────────
 
-// M-01 hardening: trim ASCII whitespace from both ends of a string.
-static std::string trim_ws(std::string s) {
-  size_t start = 0;
-  while (start < s.size() &&
-         (s[start] == ' ' || s[start] == '\t' ||
-          s[start] == '\r' || s[start] == '\n')) {
-    ++start;
-  }
-  size_t end = s.size();
-  while (end > start &&
-         (s[end - 1] == ' ' || s[end - 1] == '\t' ||
-          s[end - 1] == '\r' || s[end - 1] == '\n')) {
-    --end;
-  }
-  if (start == 0 && end == s.size()) return s;
-  return s.substr(start, end - start);
-}
-
-// M-01 hardening: returns true when `peer` is on the loopback
-// interface (127.0.0.1, ::1, or the canonical-uncompressed IPv6
-// loopback "0:0:0:0:0:0:0:1"). Loopback peers are always implicit
-// trust anchors for proxy headers — operators that keep an admin
-// surface behind SSH / nginx-on-localhost rely on this.
-static bool peer_is_loopback(const std::string& peer) {
-  if (peer == "127.0.0.1") return true;
-  if (peer == "::1") return true;
-  if (peer == "0:0:0:0:0:0:0:1") return true;
-  // 127.0.0.0/8 is the documented loopback range; cover the most
-  // common variants without pulling in a CIDR matcher.
-  if (peer.size() >= 4 && peer.compare(0, 4, "127.") == 0) return true;
-  return false;
-}
-
-// M-01 hardening: returns true when `peer` is loopback or appears in
-// the operator-supplied trusted-proxy allow-list. Allow-list entries
-// are matched verbatim (numeric textual form, no CIDR / DNS).
-static bool peer_is_loopback_or_trusted(
-    const std::string& peer,
-    const std::vector<std::string>& trusted_proxies) {
-  if (peer_is_loopback(peer)) return true;
-  for (const auto& p : trusted_proxies) {
-    if (p == peer) return true;
-  }
-  return false;
-}
-
+// Source-IP resolution (trim, loopback/trusted-proxy checks, and the
+// X-Forwarded-For chain walk) lives in json-rpc-source-ip.h so it can be unit
+// tested in isolation. This thin wrapper keeps the existing call sites.
 std::string JsonRpcServer::resolve_source_ip(
     const std::string& peer_ip,
     const std::string& forwarded_for,
     const std::string& real_ip,
     bool trust_proxy_headers,
     const std::vector<std::string>& trusted_proxies) {
-  std::string source = peer_ip;
-  if (trust_proxy_headers &&
-      peer_is_loopback_or_trusted(peer_ip, trusted_proxies)) {
-    if (!forwarded_for.empty()) {
-      // X-Forwarded-For is a comma-separated list; the leftmost entry
-      // is the original client IP per RFC 7239 / common reverse proxy
-      // convention.
-      auto comma = forwarded_for.find(',');
-      std::string first = (comma == std::string::npos)
-                              ? forwarded_for
-                              : forwarded_for.substr(0, comma);
-      first = trim_ws(std::move(first));
-      if (!first.empty()) {
-        source = std::move(first);
-      }
-    } else if (!real_ip.empty()) {
-      std::string xri = trim_ws(real_ip);
-      if (!xri.empty()) {
-        source = std::move(xri);
-      }
-    }
-  }
-  // Empty attribution must never bypass the per-IP gate. Bucket
-  // every untagged caller into a shared "unknown" slot so a flood
-  // from peer-less connections still throttles.
-  if (source.empty()) {
-    source = "unknown";
-  }
-  return source;
+  return resolve_client_source_ip(peer_ip, forwarded_for, real_ip, trust_proxy_headers, trusted_proxies);
 }
 
 // Extract the originating client IP for the in-process per-IP rate
@@ -476,7 +410,9 @@ void JsonRpcServer::on_request(RequestPtr request, PayloadPtr payload,
 
     auto response = http::HttpResponse::create("HTTP/1.1", 200, "OK", false, false).move_as_ok();
     response->add_header({"Content-Type", "application/json"});
-    response->add_header({"Access-Control-Allow-Origin", opts_.cors_origin});
+    if (!opts_.cors_origin.empty()) {
+      response->add_header({"Access-Control-Allow-Origin", opts_.cors_origin});
+    }
     response->add_header({"Transfer-Encoding", "Chunked"});
     response->complete_parse_header();
 
@@ -493,7 +429,15 @@ void JsonRpcServer::on_request(RequestPtr request, PayloadPtr payload,
     return;  // 401 already sent
   }
 
-  // GET /readyz — readiness probe (queries liteserver for sync state)
+  // GET /readyz — readiness probe. It does not route through the method
+  // dispatcher, so the per-source budget never reaches it, and it issues
+  // a liteserver query of its own. Spending budget here is the wrong
+  // tool anyway: a refused probe has to answer either "ready" or "not
+  // ready", and both are wrong when the truth is "you asked too often" --
+  // one keeps traffic on a node that may be out of sync, the other pulls
+  // a healthy node out of rotation. The query is cached for a moment
+  // instead, so any probe rate costs at most one query per interval and
+  // every caller still gets the real answer.
   if (method == "GET" && (url == "/readyz" || url == "/readyz/")) {
     handle_readyz(std::move(promise));
     return;
@@ -593,6 +537,40 @@ void JsonRpcServer::on_request(RequestPtr request, PayloadPtr payload,
     return;
   }
 
+  // CSRF hardening: require application/json on writes.
+  //
+  // A cross-site page can issue a POST without a CORS preflight only as a
+  // "simple request". The Content-Type of a simple request is limited to the
+  // three form-style types -- but a request with NO Content-Type is also
+  // simple, and a page can produce one: a body of Uint8Array / ArrayBuffer /
+  // untyped Blob sets no Content-Type. So allowing "missing Content-Type"
+  // leaves the hole open. application/json is not a safelisted type, so
+  // requiring it forces any cross-site write through a preflight this server
+  // -- sending no Access-Control-Allow-Origin by default -- rejects, and the
+  // browser never sends the write. (Not sending a CORS header only blocks the
+  // page from *reading* the reply; it does not stop the request being
+  // processed, which this check does.) All first-party clients (JS SDK, test
+  // harness, corpus driver) already send application/json, so this rejects
+  // only browser-style writes and misconfigured callers; a legacy client that
+  // cannot set the header needs an explicit authenticated path, not a blanket
+  // "no Content-Type is trusted" exception.
+  {
+    std::string content_type = request->get_header("Content-Type");
+    for (auto &c : content_type) {
+      c = td::to_lower(c);
+    }
+    // Accept application/json optionally followed by parameters (e.g.
+    // "; charset=utf-8"); reject everything else, including a missing header.
+    bool is_json = content_type.rfind("application/json", 0) == 0 &&
+                   (content_type.size() == 16 || content_type[16] == ';' || content_type[16] == ' ');
+    if (!is_json) {
+      promise.set_value(make_text_response(
+          415, "Unsupported Media Type",
+          "write requests must use Content-Type: application/json", opts_.cors_origin));
+      return;
+    }
+  }
+
   // POST REST-style endpoints: /runGetMethod, /sendBoc, etc.
   // These use the POST body as params (same as JSON-RPC but without the envelope).
   // Check if the URL path matches a known method name — if so, treat the POST body
@@ -634,29 +612,30 @@ void JsonRpcServer::on_request(RequestPtr request, PayloadPtr payload,
       // IMPORTANT: completed() must NOT call payload_->get_slice() directly,
       // because it runs inside HttpPayload::parse() which may hold mutex_.
       // Defer body read to actor scheduler via send_closure, same fix as BodyWaiter.
-      class PostRestWaiter : public http::HttpPayload::Callback {
+      // Holds only a weak reference to the payload (via the base) so the
+      // payload's body is freed when the connection goes away, even if the body
+      // never completes. See JsonRpcPayloadBodyWaiter.
+      class PostRestWaiter : public JsonRpcPayloadBodyWaiter {
        public:
         PostRestWaiter(td::actor::ActorId<JsonRpcServer> server, PayloadPtr payload,
                        std::string method, std::string source_ip,
                        td::Promise<HttpReturn> promise)
-            : server_(server), payload_(std::move(payload)),
+            : JsonRpcPayloadBodyWaiter(std::move(payload)), server_(server),
               method_(std::move(method)), source_ip_(std::move(source_ip)),
               promise_(std::move(promise)) {}
-        void run(size_t) override {}
-        void completed() override {
-          if (fired_) return;  // one-shot guard
-          fired_ = true;
+
+       protected:
+        void deliver(std::shared_ptr<http::HttpPayload> payload) override {
           td::actor::send_closure(server_, &JsonRpcServer::on_post_rest_body_ready,
-                                  std::move(payload_), std::move(method_),
+                                  std::move(payload), std::move(method_),
                                   std::move(source_ip_), std::move(promise_));
         }
+
        private:
         td::actor::ActorId<JsonRpcServer> server_;
-        PayloadPtr payload_;
         std::string method_;
         std::string source_ip_;
         td::Promise<HttpReturn> promise_;
-        bool fired_{false};
       };
       if (payload->parse_completed()) {
         auto body_r = drain_payload_body(payload);
@@ -666,11 +645,9 @@ void JsonRpcServer::on_request(RequestPtr request, PayloadPtr payload,
                                             "null", opts_.cors_origin));
           return;
         }
-        // Round 156 MEDIUM fix: thread source_ip through REST POST so
-        // POST /sendBoc and friends hit the per-IP rate gate that
-        // round-155 added on the JSON-RPC side.  Pre-fix the REST
-        // adapter passed std::string() and consume_per_ip_token
-        // bypassed the gate for any empty-source-ip caller.
+        // REST POST carries source_ip so its submissions meet the same
+        // per-IP budget as the JSON-RPC envelope path; an unattributed
+        // caller would otherwise be admitted without spending any.
         process_rest_post_body(body_r.move_as_ok(), std::move(rest_method),
                                std::move(source_ip), std::move(promise));
       } else {
@@ -700,31 +677,30 @@ void JsonRpcServer::on_request(RequestPtr request, PayloadPtr payload,
     // because it runs inside HttpPayload::parse() which holds mutex_.
     // get_slice() also takes mutex_ → deadlock on the same thread.
     // Instead, send an actor message to read the body outside the lock.
-    class BodyWaiter : public http::HttpPayload::Callback {
+    // Holds only a weak reference to the payload (via the base) so the payload's
+    // body is freed when the connection goes away, even if the body never
+    // completes. See JsonRpcPayloadBodyWaiter.
+    class BodyWaiter : public JsonRpcPayloadBodyWaiter {
      public:
       BodyWaiter(td::actor::ActorId<JsonRpcServer> server, PayloadPtr payload,
                  std::string source_ip,
                  td::Promise<HttpReturn> promise)
-          : server_(server), payload_(std::move(payload)),
+          : JsonRpcPayloadBodyWaiter(std::move(payload)), server_(server),
             source_ip_(std::move(source_ip)),
             promise_(std::move(promise)) {}
-      void run(size_t) override {}
-      void completed() override {
-        if (fired_) {
-          return;
-        }
-        fired_ = true;
+
+     protected:
+      void deliver(std::shared_ptr<http::HttpPayload> payload) override {
         // Do NOT read payload here (mutex deadlock). Defer to actor scheduler.
         td::actor::send_closure(server_, &JsonRpcServer::on_body_ready,
-                                payload_, std::move(source_ip_),
+                                std::move(payload), std::move(source_ip_),
                                 std::move(promise_));
       }
+
      private:
       td::actor::ActorId<JsonRpcServer> server_;
-      PayloadPtr payload_;
       std::string source_ip_;
       td::Promise<HttpReturn> promise_;
-      bool fired_ = false;
     };
     payload->add_callback(std::make_unique<BodyWaiter>(
         actor_id(this), payload, std::move(source_ip), std::move(promise)));
@@ -800,7 +776,7 @@ void JsonRpcServer::process_body(td::BufferSlice body, std::string req_id,
     for (auto &e : arr) {
       elements.push_back(std::move(e));
     }
-    process_batch(std::move(elements), std::move(source_ip),
+    process_batch(std::move(elements), std::move(body), std::move(source_ip),
                   std::move(promise));
     return;
   }
@@ -828,9 +804,26 @@ void JsonRpcServer::process_single_object_request(td::JsonValue req,
   {
     auto id_val = obj.extract_field("id");
     if (id_val.type() == td::JsonValue::Type::String) {
-      req_id = PSTRING() << td::JsonString(td::Slice(id_val.get_string()));
+      {
+        // Growable, not PSTRING: a string id is echoed into the reply, and
+        // the fixed buffer would truncate a large one into malformed JSON.
+        // Its size is already bounded by the request body cap.
+        td::StringBuilder id_sb;
+        id_sb << td::JsonString(td::Slice(id_val.get_string()));
+        req_id = id_sb.as_cslice().str();
+      }
     } else if (id_val.type() == td::JsonValue::Type::Number) {
-      req_id = id_val.get_number().str();  // numeric literal, no quotes
+      // The scanner accepts any run of number-ish characters, so "." and
+      // "1e+-.3" arrive here as Numbers. The value is spliced into the
+      // reply unquoted, and echoing one of those verbatim produces a body
+      // no client can parse -- an answer lost to a malformed id rather
+      // than an error reported for one.
+      req_id = id_val.get_number().str();
+      if (!is_valid_json_number(req_id)) {
+        promise.set_value(make_json_rpc_error(-32600, "Invalid Request: malformed 'id' number", "null",
+                                              opts_.cors_origin));
+        return;
+      }
     } else {
       // Null id, missing id, or non-stringy/numeric id → echo as JSON
       // null per spec.  Note: in single-request mode this still emits
@@ -900,6 +893,12 @@ void JsonRpcServer::process_single_object_request(td::JsonValue req,
 
 struct JsonRpcServer::BatchState {
   std::vector<td::JsonValue> elements;
+  // Backing storage for `elements`. td::JsonValue stores slices into the
+  // buffer it was parsed from, so the buffer has to stay alive for as
+  // long as any element is still to be read. Elements after the first
+  // are reached from a later actor message, once the caller that owned
+  // the buffer has already returned.
+  td::BufferSlice body;
   std::vector<bool> is_notification;
   std::vector<std::string> responses;  // empty = notification, dropped
   std::size_t cursor{0};
@@ -920,6 +919,7 @@ struct JsonRpcServer::BatchState {
 };
 
 void JsonRpcServer::process_batch(std::vector<td::JsonValue> elements,
+                                  td::BufferSlice body,
                                   std::string source_ip,
                                   td::Promise<HttpReturn> promise) {
   // Per-element notification flag.  A request is a notification iff its
@@ -944,6 +944,7 @@ void JsonRpcServer::process_batch(std::vector<td::JsonValue> elements,
 
   auto state = std::make_shared<BatchState>();
   state->elements = std::move(elements);
+  state->body = std::move(body);
   state->is_notification = std::move(is_notification);
   state->responses.resize(state->elements.size());
   state->final_promise = std::move(promise);
@@ -983,9 +984,19 @@ void JsonRpcServer::process_batch_step(std::shared_ptr<BatchState> state) {
           for (auto &fv : obj.field_values_) {
             if (fv.first != "id") continue;
             if (fv.second.type() == td::JsonValue::Type::String) {
-              elem_id = PSTRING() << td::JsonString(td::Slice(fv.second.get_string()));
+              {
+                td::StringBuilder id_sb;
+                id_sb << td::JsonString(td::Slice(fv.second.get_string()));
+                elem_id = id_sb.as_cslice().str();
+              }
             } else if (fv.second.type() == td::JsonValue::Type::Number) {
-              elem_id = fv.second.get_number().str();
+              // Same grammar check as the dispatch path: this literal is
+              // spliced into the reply unquoted, and an element that never
+              // ran is exactly where a malformed id survives to be echoed.
+              auto number = fv.second.get_number().str();
+              if (is_valid_json_number(number)) {
+                elem_id = std::move(number);
+              }
             }
             break;
           }
@@ -1081,12 +1092,8 @@ void JsonRpcServer::on_post_rest_body_ready(PayloadPtr payload, std::string meth
 void JsonRpcServer::process_rest_post_body(td::BufferSlice body, std::string method,
                                            std::string source_ip,
                                            td::Promise<HttpReturn> promise) {
-  // Round 156 MEDIUM fix: REST POST now carries source_ip so per-IP
-  // rate gates fire on POST /sendBoc and friends.  Pre-fix this
-  // adapter passed std::string() and consume_per_ip_token bypassed
-  // the gate for any caller with no source attribution; that
-  // bypassed the round-155 JSON-RPC-layer protection for all REST
-  // submissions.
+  // source_ip is carried through so REST submissions spend the same
+  // per-IP budget as the JSON-RPC envelope path.
   if (body.empty()) {
     // Empty body → empty params
     td::JsonObject empty_obj;
@@ -1148,12 +1155,17 @@ void JsonRpcServer::dispatch_method(std::string method, td::JsonObject &params,
   });
 }
 
+bool JsonRpcServer::consume_per_ip_token(const std::string &source) {
+  return per_ip_gate_.consume(source, td::Timestamp::now());
+}
+
 void JsonRpcServer::dispatch_method_impl(const std::string &method, td::JsonObject &params,
                                          std::string req_id, std::string source_ip,
                                          td::Promise<HttpReturn> promise) {
+
   // Track per-method request count
-  requests_total_.fetch_add(1);
-  active_requests_.fetch_add(1);
+  counters_->total.fetch_add(1);
+  counters_->active.fetch_add(1);
   // The metric label comes from the request, so it is bounded here as well as
   // in the metric itself: a name long enough to matter is not one this node
   // implements, and keeping the full string would let a handful of requests
@@ -1164,11 +1176,12 @@ void JsonRpcServer::dispatch_method_impl(const std::string &method, td::JsonObje
   // Wrap the promise to track completion and errors
   auto method_copy = std::move(method_label);
   promise = td::PromiseCreator::lambda(
-      [this, method_copy, inner = std::move(promise)](td::Result<HttpReturn> R) mutable {
-        active_requests_.fetch_sub(1);
+      [counters = counters_, method_errors = method_errors_, method_copy,
+       inner = std::move(promise)](td::Result<HttpReturn> R) mutable {
+        counters->active.fetch_sub(1);
         if (R.is_error()) {
-          requests_errors_.fetch_add(1);
-          method_errors_->label(method_copy)->add(1);
+          counters->errors.fetch_add(1);
+          method_errors->label(method_copy)->add(1);
           inner.set_error(R.move_as_error());
         } else {
           auto ret = R.move_as_ok();
@@ -1196,7 +1209,7 @@ void JsonRpcServer::dispatch_method_impl(const std::string &method, td::JsonObje
 
   // Existing methods
   if (method == "sendBoc") {
-    handle_sendBoc(params, std::move(req_id), std::move(promise));
+    handle_sendBoc(params, std::move(req_id), source_ip, std::move(promise));
   } else if (method == "getConfigParam") {
     handle_getConfigParam(params, std::move(req_id), std::move(promise));
   } else if (method == "getAddressInformation") {
@@ -1232,6 +1245,15 @@ void JsonRpcServer::dispatch_method_impl(const std::string &method, td::JsonObje
     handle_getMasterchainInfo(params, std::move(req_id), std::move(promise));
   } else if (method == "getConsensusBlock") {
     handle_getConsensusBlock(params, std::move(req_id), std::move(promise));
+  } else if (method == "getNodeConsensusStatus") {
+    // Read-only admin method, off unless the operator explicitly enabled it. When off it
+    // is indistinguishable from an unknown method, so it is not discoverable by default.
+    if (!opts_.expose_consensus_status) {
+      promise.set_value(make_json_rpc_error(-32601, "Method not found: getNodeConsensusStatus", req_id,
+                                            opts_.cors_origin));
+    } else {
+      handle_getNodeConsensusStatus(params, std::move(req_id), std::move(promise));
+    }
   } else if (method == "lookupBlock") {
     handle_lookupBlock(params, std::move(req_id), std::move(promise));
   } else if (method == "shards" || method == "getShards") {
@@ -1258,9 +1280,9 @@ void JsonRpcServer::dispatch_method_impl(const std::string &method, td::JsonObje
     handle_getShardBlockProof(params, std::move(req_id), std::move(promise));
   // Send family
   } else if (method == "sendBocReturnHash") {
-    handle_sendBocReturnHash(params, std::move(req_id), std::move(promise));
+    handle_sendBocReturnHash(params, std::move(req_id), source_ip, std::move(promise));
   } else if (method == "sendQuery") {
-    handle_sendQuery(params, std::move(req_id), std::move(promise));
+    handle_sendQuery(params, std::move(req_id), source_ip, std::move(promise));
   } else if (method == "estimateFee") {
     handle_estimateFee(params, std::move(req_id), std::move(promise));
   } else if (method == "buildTransactionIntent") {
@@ -1268,7 +1290,7 @@ void JsonRpcServer::dispatch_method_impl(const std::string &method, td::JsonObje
   } else if (method == "getSigningPayload") {
     handle_getSigningPayload(params, std::move(req_id), std::move(promise));
   } else if (method == "submitSignedTransaction") {
-    handle_submitSignedTransaction(params, std::move(req_id), std::move(promise));
+    handle_submitSignedTransaction(params, std::move(req_id), source_ip, std::move(promise));
   // Convenience / address APIs
   } else if (method == "getAddressBalance") {
     handle_getAddressBalance(params, std::move(req_id), std::move(promise));
@@ -1305,7 +1327,7 @@ void JsonRpcServer::dispatch_method_impl(const std::string &method, td::JsonObje
   } else if (method == "runGetMethodStd") {
     handle_runGetMethodStd(params, std::move(req_id), std::move(promise));
   } else if (method == "sendBocReturnHashNoError") {
-    handle_sendBocReturnHashNoError(params, std::move(req_id), std::move(promise));
+    handle_sendBocReturnHashNoError(params, std::move(req_id), source_ip, std::move(promise));
   }
   else {
     // Unknown method via JSON-RPC envelope dispatch — emit spec-compliant
@@ -1317,8 +1339,28 @@ void JsonRpcServer::dispatch_method_impl(const std::string &method, td::JsonObje
 
 // ─── Liteserver query forwarding ──────────────────────────────────────────
 
+adnl::AdnlNodeIdShort JsonRpcServer::submission_source_id(const std::string &source_ip) {
+  // The mempool throttles external messages per originating peer, and it
+  // reads that peer from the query's source id. A query forwarded with no
+  // source is admitted unthrottled, so submissions arriving over HTTP were
+  // exempt from a limit the ADNL path has always had. Give each client
+  // address a stable id of its own so it meets the same window; an
+  // unattributed caller keeps the historical zero id.
+  if (source_ip.empty()) {
+    return adnl::AdnlNodeIdShort::zero();
+  }
+  td::Bits256 digest;
+  td::sha256(td::Slice("json-rpc-submission:" + source_ip), digest.as_slice());
+  return adnl::AdnlNodeIdShort{digest};
+}
+
 void JsonRpcServer::send_liteserver_query(td::BufferSlice query,
                                           td::Promise<td::BufferSlice> promise) {
+  send_attributed_liteserver_query(std::move(query), adnl::AdnlNodeIdShort::zero(), std::move(promise));
+}
+
+void JsonRpcServer::send_attributed_liteserver_query(td::BufferSlice query, adnl::AdnlNodeIdShort source,
+                                                     td::Promise<td::BufferSlice> promise) {
   // Innermost layer: translate liteserver errors and run the handler's
   // continuation. The continuation parses data that ultimately comes from
   // the chain (account data, get-method results, proofs), and the cell and
@@ -1357,7 +1399,7 @@ void JsonRpcServer::send_liteserver_query(td::BufferSlice query,
   }
   td::actor::send_closure(validator_manager_,
                           &validator::ValidatorManagerInterface::run_ext_query,
-                          adnl::AdnlNodeIdShort::zero(), std::move(query), std::move(promise));
+                          source, std::move(query), std::move(promise));
 }
 
 // ─── JSON response construction ───────────────────────────────────────────
@@ -1366,7 +1408,9 @@ JsonRpcServer::HttpReturn JsonRpcServer::make_raw_json_response(const std::strin
                                                                 const std::string& cors_origin) {
   auto response = http::HttpResponse::create("HTTP/1.1", 200, "OK", false, false).move_as_ok();
   response->add_header({"Content-Type", "application/json"});
-  response->add_header({"Access-Control-Allow-Origin", cors_origin});
+  if (!cors_origin.empty()) {
+    response->add_header({"Access-Control-Allow-Origin", cors_origin});
+  }
   response->add_header({"Transfer-Encoding", "Chunked"});
   response->complete_parse_header();
   auto payload = response->create_empty_payload().move_as_ok();
@@ -1381,13 +1425,20 @@ JsonRpcServer::HttpReturn JsonRpcServer::make_json_ok(std::string result_json, s
   // TVM convention: `{ok, jsonrpc, id, result}`. The `ok` field is a
   // convenience wrapper the Python/JS test suite depends on; standards-
   // compliant JSON-RPC clients ignore unknown fields.
-  std::string body = PSTRING()
-      << "{\"ok\":true,\"jsonrpc\":\"2.0\",\"id\":" << id
-      << ",\"result\":" << result_json << "}";
+  // A growable builder, not PSTRING: that one writes into a fixed
+  // 128 KiB stack buffer and silently stops there, so any result past
+  // that size was delivered cut in half — a body no client can parse,
+  // reported as success.
+  td::StringBuilder sb;
+  sb << "{\"ok\":true,\"jsonrpc\":\"2.0\",\"id\":" << id
+     << ",\"result\":" << result_json << "}";
+  std::string body = sb.as_cslice().str();
 
   auto response = http::HttpResponse::create("HTTP/1.1", 200, "OK", false, false).move_as_ok();
   response->add_header({"Content-Type", "application/json"});
-  response->add_header({"Access-Control-Allow-Origin", cors_origin});
+  if (!cors_origin.empty()) {
+    response->add_header({"Access-Control-Allow-Origin", cors_origin});
+  }
   response->add_header({"Transfer-Encoding", "Chunked"});
   response->complete_parse_header();
 
@@ -1406,10 +1457,13 @@ JsonRpcServer::HttpReturn JsonRpcServer::make_json_error(int code, std::string m
   // (test/json-rpc/*.py) asserts on both `ok` and the HTTP status.
   // For JSON-RPC envelope errors use `make_json_rpc_error` instead. It
   // emits the JSON-RPC 2.0 nested error shape with HTTP 200.
-  std::string body = PSTRING()
-      << "{\"ok\":false,\"jsonrpc\":\"2.0\",\"id\":" << id
-      << ",\"error\":" << td::JsonString(td::Slice(message))
-      << ",\"code\":" << code << "}";
+  // Growable: an error message can carry echoed request content, and a
+  // fixed buffer would cut the escaped string mid-way.
+  td::StringBuilder sb;
+  sb << "{\"ok\":false,\"jsonrpc\":\"2.0\",\"id\":" << id
+     << ",\"error\":" << td::JsonString(td::Slice(message))
+     << ",\"code\":" << code << "}";
+  std::string body = sb.as_cslice().str();
 
   int http_status = 200;
   std::string http_status_text = "OK";
@@ -1431,7 +1485,9 @@ JsonRpcServer::HttpReturn JsonRpcServer::make_json_error(int code, std::string m
 
   auto response = http::HttpResponse::create("HTTP/1.1", http_status, std::move(http_status_text), false, false).move_as_ok();
   response->add_header({"Content-Type", "application/json"});
-  response->add_header({"Access-Control-Allow-Origin", cors_origin});
+  if (!cors_origin.empty()) {
+    response->add_header({"Access-Control-Allow-Origin", cors_origin});
+  }
   response->add_header({"Transfer-Encoding", "Chunked"});
   response->complete_parse_header();
 
@@ -1445,7 +1501,9 @@ JsonRpcServer::HttpReturn JsonRpcServer::make_json_error(int code, std::string m
 JsonRpcServer::HttpReturn JsonRpcServer::make_health_ok(const std::string& cors_origin) {
   auto response = http::HttpResponse::create("HTTP/1.1", 200, "OK", false, false).move_as_ok();
   response->add_header({"Content-Type", "text/plain"});
-  response->add_header({"Access-Control-Allow-Origin", cors_origin});
+  if (!cors_origin.empty()) {
+    response->add_header({"Access-Control-Allow-Origin", cors_origin});
+  }
   response->add_header({"Transfer-Encoding", "Chunked"});
   response->complete_parse_header();
 
@@ -1461,14 +1519,17 @@ JsonRpcServer::HttpReturn JsonRpcServer::make_json_rpc_error(int code, std::stri
   if (id.empty()) id = "null";
   // JSON-RPC 2.0 error: `{jsonrpc, id, error:{code, message}}`, HTTP
   // 200 always.
-  std::string body = PSTRING()
-      << "{\"jsonrpc\":\"2.0\",\"id\":" << id
-      << ",\"error\":{\"code\":" << code
-      << ",\"message\":" << td::JsonString(td::Slice(message)) << "}}";
+  td::StringBuilder sb;
+  sb << "{\"jsonrpc\":\"2.0\",\"id\":" << id
+     << ",\"error\":{\"code\":" << code
+     << ",\"message\":" << td::JsonString(td::Slice(message)) << "}}";
+  std::string body = sb.as_cslice().str();
 
   auto response = http::HttpResponse::create("HTTP/1.1", 200, "OK", false, false).move_as_ok();
   response->add_header({"Content-Type", "application/json"});
-  response->add_header({"Access-Control-Allow-Origin", cors_origin});
+  if (!cors_origin.empty()) {
+    response->add_header({"Access-Control-Allow-Origin", cors_origin});
+  }
   response->add_header({"Transfer-Encoding", "Chunked"});
   response->complete_parse_header();
 
@@ -1481,7 +1542,9 @@ JsonRpcServer::HttpReturn JsonRpcServer::make_json_rpc_error(int code, std::stri
 
 JsonRpcServer::HttpReturn JsonRpcServer::make_no_content(const std::string& cors_origin) {
   auto response = http::HttpResponse::create("HTTP/1.1", 204, "No Content", false, false).move_as_ok();
-  response->add_header({"Access-Control-Allow-Origin", cors_origin});
+  if (!cors_origin.empty()) {
+    response->add_header({"Access-Control-Allow-Origin", cors_origin});
+  }
   response->add_header({"Content-Length", "0"});
   response->complete_parse_header();
 
@@ -1495,7 +1558,9 @@ JsonRpcServer::HttpReturn JsonRpcServer::make_json_array_response(std::string bo
                                                                    const std::string& cors_origin) {
   auto response = http::HttpResponse::create("HTTP/1.1", 200, "OK", false, false).move_as_ok();
   response->add_header({"Content-Type", "application/json"});
-  response->add_header({"Access-Control-Allow-Origin", cors_origin});
+  if (!cors_origin.empty()) {
+    response->add_header({"Access-Control-Allow-Origin", cors_origin});
+  }
   response->add_header({"Transfer-Encoding", "Chunked"});
   response->complete_parse_header();
 
@@ -1520,7 +1585,9 @@ std::string JsonRpcServer::extract_response_body(HttpReturn& ret) {
 
 JsonRpcServer::HttpReturn JsonRpcServer::make_cors_preflight(const std::string& cors_origin) {
   auto response = http::HttpResponse::create("HTTP/1.1", 204, "No Content", false, false).move_as_ok();
-  response->add_header({"Access-Control-Allow-Origin", cors_origin});
+  if (!cors_origin.empty()) {
+    response->add_header({"Access-Control-Allow-Origin", cors_origin});
+  }
   response->add_header({"Access-Control-Allow-Methods", "POST, GET, OPTIONS"});
   response->add_header({"Access-Control-Allow-Headers", "Content-Type, X-API-Key"});
   response->add_header({"Access-Control-Max-Age", "86400"});
@@ -1540,7 +1607,9 @@ JsonRpcServer::HttpReturn JsonRpcServer::make_text_response(int status_code,
   auto response = http::HttpResponse::create("HTTP/1.1", status_code,
                                              std::move(status_text), false, false).move_as_ok();
   response->add_header({"Content-Type", "text/plain"});
-  response->add_header({"Access-Control-Allow-Origin", cors_origin});
+  if (!cors_origin.empty()) {
+    response->add_header({"Access-Control-Allow-Origin", cors_origin});
+  }
   response->add_header({"Transfer-Encoding", "Chunked"});
   response->complete_parse_header();
 
@@ -1559,7 +1628,9 @@ JsonRpcServer::HttpReturn JsonRpcServer::make_json_unauthorized(const std::strin
   auto response = http::HttpResponse::create("HTTP/1.1", 401, "Unauthorized",
                                              false, false).move_as_ok();
   response->add_header({"Content-Type", "application/json"});
-  response->add_header({"Access-Control-Allow-Origin", cors_origin});
+  if (!cors_origin.empty()) {
+    response->add_header({"Access-Control-Allow-Origin", cors_origin});
+  }
   response->add_header({"Transfer-Encoding", "Chunked"});
   response->complete_parse_header();
 
@@ -1672,8 +1743,8 @@ const std::set<std::string> &JsonRpcServer::cacheable_methods() {
 }
 
 void JsonRpcServer::alarm() {
-  if (opts_.cache_ttl > 0 && !cache_.empty()) {
-    cache_.evict_expired();
+  if (opts_.cache_ttl > 0 && !cache_->empty()) {
+    cache_->evict_expired();
   }
   // Re-arm alarm every 10 seconds if caching is enabled
   if (opts_.cache_ttl > 0) {
@@ -1685,6 +1756,19 @@ void JsonRpcServer::cached_dispatch_method(std::string method, td::JsonObject &p
                                            std::string req_id,
                                            std::string source_ip,
                                            td::Promise<HttpReturn> promise) {
+  // Every entry point funnels through here: the JSON-RPC envelope, both
+  // REST adapters, and each element of a batch, so a caller cannot pick
+  // a route that skips its budget, and a batch cannot buy extra.
+  //
+  // The budget is spent before the cache is consulted. A served-from-cache
+  // reply is cheap, but admitting it for free would leave any cacheable
+  // method unmetered the moment an operator turns caching on.
+  if (!consume_per_ip_token(source_ip)) {
+    promise.set_value(make_json_rpc_error(-32005, "Rate limit exceeded (per-IP)",
+                                          std::move(req_id), opts_.cors_origin));
+    return;
+  }
+
   bool is_cacheable = opts_.cache_ttl > 0 && cacheable_methods().count(method);
 
   if (!is_cacheable) {
@@ -1779,7 +1863,7 @@ void JsonRpcServer::cached_dispatch_method(std::string method, td::JsonObject &p
   }
 
   // Check cache
-  auto cached = cache_.lookup(cache_key);
+  auto cached = cache_->lookup(cache_key);
   if (cached.has_value()) {
     // Cache hit — rebuild HTTP response from the cached body string, substituting
     // the current request's id so that each caller gets the correct "id" field.
@@ -1793,7 +1877,7 @@ void JsonRpcServer::cached_dispatch_method(std::string method, td::JsonObject &p
   auto ttl = opts_.cache_ttl;
   auto cors = opts_.cors_origin;
   auto cache_promise = td::PromiseCreator::lambda(
-      [this, cache_key = std::move(cache_key), ttl, req_id,
+      [cache = cache_, cache_key = std::move(cache_key), ttl, req_id,
        cors, orig_promise = std::move(promise)](td::Result<HttpReturn> R) mutable {
         if (R.is_error()) {
           orig_promise.set_error(R.move_as_error());
@@ -1827,9 +1911,9 @@ void JsonRpcServer::cached_dispatch_method(std::string method, td::JsonObject &p
               for (auto &fv : obj.field_values_) {
                 if (fv.first == "result") {
                   auto encoded = td::json_encode<std::string>(fv.second);
-                  if (cache_.store(cache_key, encoded,
+                  if (cache->store(cache_key, encoded,
                                    td::Timestamp::in(static_cast<double>(ttl)))) {
-                    auto cached_value = cache_.lookup(cache_key);
+                    auto cached_value = cache->lookup(cache_key);
                     if (cached_value.has_value()) {
                       orig_promise.set_value(make_json_ok(*cached_value, req_id, cors));
                       return;
@@ -1870,15 +1954,15 @@ void JsonRpcServer::collect(metrics::MetricsPromise P) {
   // Scalar counters
   set.families.push_back(
       metrics::MetricFamily::make_scalar("jsonrpc_requests_total", "counter",
-          static_cast<double>(requests_total_.load()),
+          static_cast<double>(counters_->total.load()),
           "Total JSON-RPC requests received"));
   set.families.push_back(
       metrics::MetricFamily::make_scalar("jsonrpc_errors_total", "counter",
-          static_cast<double>(requests_errors_.load()),
+          static_cast<double>(counters_->errors.load()),
           "Total JSON-RPC requests that resulted in errors"));
   set.families.push_back(
       metrics::MetricFamily::make_scalar("jsonrpc_active_requests", "gauge",
-          static_cast<double>(active_requests_.load()),
+          static_cast<double>(counters_->active.load()),
           "Currently in-flight JSON-RPC requests"));
   set.families.push_back(
       metrics::MetricFamily::make_scalar("jsonrpc_cache_hits_total", "counter",
@@ -1890,7 +1974,7 @@ void JsonRpcServer::collect(metrics::MetricsPromise P) {
           "JSON-RPC response cache misses"));
   set.families.push_back(
       metrics::MetricFamily::make_scalar("jsonrpc_cache_entries", "gauge",
-          static_cast<double>(cache_.size()),
+          static_cast<double>(cache_->size()),
           "Current number of entries in the response cache"));
 
   // Per-method request and error counters

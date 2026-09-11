@@ -825,7 +825,13 @@ pub fn read_stack_item(slice: &mut SliceData) -> Result<StackItem> {
             if length == 0 {
                 return Ok(StackItem::tuple(Vec::new()));
             }
-            let mut tuple = Vec::with_capacity(length);
+            // Grow as elements are actually read rather than reserving up front:
+            // `length` is attacker-controlled (u16, ~12.6 MB of StackItems at the
+            // maximum) and each element must be backed by a real cell reference,
+            // so a large claim with no backing data now fails at the first
+            // missing reference instead of eagerly allocating for it -- and this
+            // read recurses per nesting level, which multiplied the reservation.
+            let mut tuple = Vec::new();
             for _ in 1..length {
                 let cell = slice.checked_drain_reference()?;
                 let item = {

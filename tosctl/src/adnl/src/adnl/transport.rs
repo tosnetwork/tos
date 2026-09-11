@@ -29,6 +29,17 @@ const MASK_TCP_ADDRESS: u32 = 0x40444E4C;
 const SIZE_TCP_ADDRESS: usize = 10;
 const SIZE_TCP_CONFIRM: usize = 1;
 const SIZE_TCP_LENGTH: usize = 4;
+// Upper bound on a single TCP frame, read from the peer's 32-bit length
+// prefix before any authentication. Without it a peer can declare up to
+// u32::MAX and force a 4 GiB allocation in read_len(). Matches the C++
+// ADNL ext connection, which rejects len > (1 << 24) (adnl-ext-connection.cpp).
+const MAX_TCP_PACKET_SIZE: usize = 1 << 24;
+// Ceiling on queued outgoing packets per TCP connection. The send queue was
+// created with usize::MAX capacity and the send path enqueued unconditionally,
+// so a slow or stalled peer let outgoing packets accumulate without bound. Once
+// full, further packets are dropped (best-effort, as higher layers retransmit)
+// rather than growing memory.
+const MAX_TCP_SEND_QUEUE_LEN: usize = 8192;
 const SIZE_UDP_BUFFER: usize = 1500;
 const SOCKET_BUFFER_SIZE: usize = 1 << 24;
 const SOCKET_TCP_BACKLOG: usize = 256;
@@ -254,9 +265,13 @@ impl TcpStreamContext {
         if self.len.is_none() {
             match self.read_len(SIZE_TCP_LENGTH) {
                 Ok(true) => {
-                    let len =
-                        read_u32(&self.buf).map_err(|e| error!("Cannot get TCP length: {e}"))?;
-                    self.len = Some(len as usize);
+                    let len = read_u32(&self.buf)
+                        .map_err(|e| error!("Cannot get TCP length: {e}"))?
+                        as usize;
+                    if len > MAX_TCP_PACKET_SIZE {
+                        fail!("TCP frame length {len} exceeds maximum {MAX_TCP_PACKET_SIZE}");
+                    }
+                    self.len = Some(len);
                     self.buf.clear();
                     self.offset = 0;
                 }
@@ -290,6 +305,7 @@ impl TcpStreamContext {
 }
 
 struct TcpReceiver {
+    connections: Arc<Connections<TcpConnectionState>>,
     event_queue: VecDeque<SocketAddr>,
     events: mio::Events,
     next_token: usize,
@@ -323,6 +339,20 @@ impl TcpReceiver {
             }
             self.tokens.remove(&context.token);
         }
+        // Shrink the sender-side connection entry too. Without this the
+        // Connections map only ever transitions to Disconnected and never
+        // shrinks, so an attacker presenting many self-reported addresses (see
+        // accept()) grows it without bound. But this runs from a stale
+        // Deleted(addr) event that may arrive after a reconnect already moved the
+        // entry on to Connecting/Connected/Confirmed; removing by address alone
+        // would delete that live connection and strand its send queue. Remove
+        // only a still-Disconnected entry, atomically (remove_with inspects the
+        // current value under the map's guard). A later reconnect re-creates the
+        // entry fresh; the only thing forgotten is a dead connection's
+        // best-effort send queue, which higher layers retransmit.
+        self.connections
+            .map()
+            .remove_with(addr, |(_, state)| matches!(state, TcpConnectionState::Disconnected(_)));
         err.map_or(Ok(()), |e| Err(e))
     }
 
@@ -578,7 +608,7 @@ impl TcpSender {
             match connections.map().get(&socket_addr) {
                 None => {
                     // Create send queue in single thread context
-                    let queue = TcpSendQueue::new();
+                    let queue = TcpSendQueue::with_capacity(MAX_TCP_SEND_QUEUE_LEN);
                     if !add_unbound_object_to_map(connections.map(), socket_addr, || {
                         Ok(TcpConnectionState::Disconnected(queue.clone()))
                     })? {
@@ -591,7 +621,12 @@ impl TcpSender {
                         TcpConnectionState::Confirmed(conn) => {
                             // Queue is pushed only in single thread context, so this check is ok
                             if conn.queue.check(true) {
-                                conn.queue.push(ctx);
+                                if !conn.queue.try_push(ctx) {
+                                    log::warn!(
+                                        target: TARGET,
+                                        "TCP send queue for {socket_addr} full, dropping outgoing packet"
+                                    );
+                                }
                                 while !conn.queue.check(false) {
                                     thread::yield_now();
                                 }
@@ -611,8 +646,11 @@ impl TcpSender {
                         | TcpConnectionState::Disconnected(queue) => {
                             if queue.activate(true) {
                                 break (queue.clone(), false);
-                            } else {
-                                queue.push(ctx);
+                            } else if !queue.try_push(ctx) {
+                                log::warn!(
+                                    target: TARGET,
+                                    "TCP send queue for {socket_addr} full, dropping outgoing packet"
+                                );
                             }
                         }
                     }
@@ -620,7 +658,12 @@ impl TcpSender {
             };
             return Ok(None);
         };
-        queue.push(ctx);
+        if !queue.try_push(ctx) {
+            log::warn!(
+                target: TARGET,
+                "TCP send queue for {socket_addr} full, dropping outgoing packet"
+            );
+        }
         // queue.sync.store(TcpSendQueue::SYNC_INACTIVE, Ordering::Relaxed);
         let node = node.clone();
         let name = format!("{socket_addr} ADNL TCP pending send");
@@ -651,7 +694,18 @@ impl TcpSender {
         let convert_err = |e, msg| error!("error when {msg} to {socket_addr}: {e}");
         loop {
             match connections.map().get(&socket_addr) {
-                None => fail!("Cannot create send queue to {socket_addr} in background"),
+                None => {
+                    // A concurrent Deleted(addr) cleanup may have removed this
+                    // entry while it was momentarily Disconnected between reconnect
+                    // states. Recreate it fresh and retry rather than failing the
+                    // send: the in-flight ctx is preserved and a new connect
+                    // attempt follows on the next iteration.
+                    let queue = TcpSendQueue::with_capacity(MAX_TCP_SEND_QUEUE_LEN);
+                    add_unbound_object_to_map(connections.map(), socket_addr, || {
+                        Ok(TcpConnectionState::Disconnected(queue.clone()))
+                    })?;
+                    continue;
+                }
                 Some(state) => match state.val() {
                     TcpConnectionState::Confirmed(conn) => {
                         match Self::send_step(&conn.socket, &mut ctx) {
@@ -870,7 +924,7 @@ fn tcp_sender_receiver(node: &Arc<AdnlNode>) -> Result<(Arc<TcpSender>, TcpRecei
         context.peer_addr.set_ip(IpAddr::V4(Ipv4Addr::from(peer_ip)));
         context.peer_addr.set_port(peer_port);
         let peer_addr = context.peer_addr;
-        let queue = TcpSendQueue::new();
+        let queue = TcpSendQueue::with_capacity(MAX_TCP_SEND_QUEUE_LEN);
         let confirmed =
             add_unbound_object_to_map_with_update(sender.connections.map(), peer_addr, |found| {
                 let confirm = |queue: &Arc<TcpSendQueue>| {
@@ -917,7 +971,9 @@ fn tcp_sender_receiver(node: &Arc<AdnlNode>) -> Result<(Arc<TcpSender>, TcpRecei
     listener.listen(SOCKET_TCP_BACKLOG as i32)?;
     log::info!(target: TARGET, "ADNL TCP listening on {local}...");
     let (updates_sender, updates_receiver) = channel();
+    let connections = Connections::new();
     let receiver = TcpReceiver {
+        connections: connections.clone(),
         event_queue: VecDeque::new(),
         events: mio::Events::with_capacity(SOCKET_TCP_BACKLOG),
         next_token: 1,
@@ -928,12 +984,8 @@ fn tcp_sender_receiver(node: &Arc<AdnlNode>) -> Result<(Arc<TcpSender>, TcpRecei
         udp_token: mio::Token(0),
         updates: updates_receiver,
     };
-    let sender = Arc::new(TcpSender {
-        connections: Connections::new(),
-        local_ip,
-        local_port,
-        updates: updates_sender.clone(),
-    });
+    let sender =
+        Arc::new(TcpSender { connections, local_ip, local_port, updates: updates_sender.clone() });
     let sender_context = sender.clone();
     let stop = node.stopper().clone();
     thread::Builder::new().name("ADNL TCP listener".into()).spawn(move || {

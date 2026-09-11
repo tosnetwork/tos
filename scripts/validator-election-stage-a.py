@@ -28,6 +28,7 @@ import asyncio
 import base64
 import hashlib
 import json
+import random
 import re
 import shutil
 import socket
@@ -80,6 +81,13 @@ ROCKSDB_CACHE_BYTES = 256 * 1024 * 1024
 DEFAULT_EXPERIMENT_DURATION = 3 * 60 * 60
 DEFAULT_SETTLEMENT_TAIL = 15 * 60
 DEFAULT_RPC_BASE_PORT = 8111
+# Masterchain full-shard prefix (0x8000000000000000) as the signed-int64 string the
+# JSON-RPC block-lookup methods expect.
+MASTERCHAIN_SHARD_STR = "-9223372036854775808"
+# A restarted node's own log (truncated to its post-restart run) must contain no fault.
+_FATAL_RE = re.compile(
+    r"\b(FATAL|PANIC|CHECK failed|LOG_CHECK failed|AddressSanitizer|UndefinedBehaviorSanitizer|Aborted)\b"
+)
 T = TypeVar("T")
 
 
@@ -281,10 +289,42 @@ class ValidatorElectionRehearsal:
         sample_interval: float,
         profile: RehearsalProfile,
         experiment: ExperimentProfile | None = None,
+        enable_consensus_cleanup: bool = False,
+        consensus_cleanup_state_ttl: int = 0,
+        consensus_cleanup_archive_ttl: int = 0,
+        measure_live_rejoin: bool = False,
+        live_rejoin_only: bool = False,
+        soak_mode: bool = False,
+        soak_duration: float = 600.0,
+        soak_min_interval: float = 1.0,
+        soak_max_interval: float = 5.0,
+        soak_wallet_funding_tos: int = 2000,
     ):
         self.run_dir = run_dir
         self.network_dir = run_dir / "network"
         self.artifacts_dir = run_dir / "artifacts"
+        # ACCEPTANCE-ONLY opt-in: after readiness, restart a non-zero validator while its
+        # peers keep producing and prove it rejoins live consensus (syncs the blocks it
+        # missed and tracks the advancing tip). live_rejoin_only returns right after, for
+        # a fast dedicated rejoin run instead of the full election window. Default off.
+        self.measure_live_rejoin = measure_live_rejoin
+        self.live_rejoin_only = live_rejoin_only
+        self.live_rejoin_result: dict[str, Any] | None = None
+        # transfer-soak mode: randomized A/B/C transfers under real block production, with
+        # cross-node balance (到账) consistency checks. Leak monitoring is external
+        # (scripts/soak-mem-monitor.py).
+        self.soak_mode = soak_mode
+        self.soak_duration = soak_duration
+        self.soak_min_interval = soak_min_interval
+        self.soak_max_interval = soak_max_interval
+        self.soak_wallet_funding = soak_wallet_funding_tos * NANO
+        # ACCEPTANCE-ONLY opt-in: arm the gated validator consensus-DB cleanup on every
+        # validator engine and shrink state/archive TTLs so the GC floor can advance
+        # once the election produces a post-genesis key block. Default off leaves the
+        # rehearsal's behaviour byte-for-byte unchanged.
+        self.enable_consensus_cleanup = enable_consensus_cleanup
+        self.consensus_cleanup_state_ttl = consensus_cleanup_state_ttl
+        self.consensus_cleanup_archive_ttl = consensus_cleanup_archive_ttl
         self.base_port = base_port
         self.original_build_dir = build_dir.absolute()
         self.install = Install(self.original_build_dir, REPO)
@@ -363,7 +403,16 @@ class ValidatorElectionRehearsal:
             args += [
                 "--json-rpc-address",
                 self.experiment.rpc_addresses[validator_index],
+                # Loopback JSON-RPC in this harness: expose the read-only consensus-status
+                # admin method so the acceptance probe can cross-check nodes for divergence.
+                "--json-rpc-expose-consensus-status",
             ]
+        if self.enable_consensus_cleanup:
+            args += ["--enable-validator-consensus-cleanup"]
+            if self.consensus_cleanup_state_ttl > 0:
+                args += ["--state-ttl", str(self.consensus_cleanup_state_ttl)]
+            if self.consensus_cleanup_archive_ttl > 0:
+                args += ["--archive-ttl", str(self.consensus_cleanup_archive_ttl)]
         return StartOptions(
             args=tuple(args),
             env={
@@ -880,11 +929,14 @@ class ValidatorElectionRehearsal:
             shutil.copy2(source, target)
             binaries[relative] = self.file_provenance(target)
 
-        toslib_source = (self.original_build_dir / "toslib/libtoslibjson.so").resolve(strict=True)
-        toslib_target = snapshot_build / "toslib/libtoslibjson.so"
+        # The toslib shared library is platform-specific: .dylib on macOS, .so elsewhere
+        # (install.py already loads the .dylib on darwin). Snapshot whichever exists.
+        toslib_rel = "toslib/libtoslibjson.dylib" if sys.platform == "darwin" else "toslib/libtoslibjson.so"
+        toslib_source = (self.original_build_dir / toslib_rel).resolve(strict=True)
+        toslib_target = snapshot_build / toslib_rel
         toslib_target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(toslib_source, toslib_target)
-        binaries["toslib/libtoslibjson.so"] = self.file_provenance(toslib_target)
+        binaries[toslib_rel] = self.file_provenance(toslib_target)
 
         # create-state includes generated contract code from the build tree.
         # Snapshot it with the binaries; source/crypto/smartcont intentionally
@@ -1352,6 +1404,460 @@ class ValidatorElectionRehearsal:
         await self.nodes[3].run(self.validator_start_options(3))
         self.event("three_of_four_passed", before=before, after=after)
 
+    async def _node_mc_seqno(self, index: int) -> int:
+        """Masterchain tip as seen by node <index>'s OWN JSON-RPC endpoint, not the shared
+        lite-client. A restarted node's independent catch-up is only observable through its
+        own view; the per-run log is truncated on restart, so it cannot serve this."""
+        assert self.experiment is not None
+        address = self.experiment.rpc_addresses[index]
+        response = await asyncio.to_thread(json_rpc_call, address, "getMasterchainInfo")
+        last = response["result"].get("last") or {}
+        return int(last["seqno"])
+
+    async def _node_mc_block_id(self, index: int, seqno: int) -> tuple[str, str]:
+        """The (root_hash, file_hash) of the masterchain block at <seqno> as node <index>'s
+        own JSON-RPC getBlockHeader reports it. Comparing this between the target and the
+        reference AT THE SAME HEIGHT detects a target that reports a high seqno on a
+        divergent chain -- something a seqno-only check would silently accept."""
+        assert self.experiment is not None
+        address = self.experiment.rpc_addresses[index]
+        params = {"workchain": -1, "shard": MASTERCHAIN_SHARD_STR, "seqno": int(seqno)}
+        response = await asyncio.to_thread(json_rpc_call, address, "getBlockHeader", params)
+        block_id = response["result"].get("id") or {}
+        root_hash = block_id.get("root_hash")
+        file_hash = block_id.get("file_hash")
+        if not root_hash or not file_hash:
+            raise RuntimeError(f"node {index + 1} getBlockHeader({seqno}) returned no block-id hashes: {response}")
+        return (root_hash, file_hash)
+
+    async def _node_consensus_status(self, index: int) -> dict[str, Any]:
+        """The read-only getNodeConsensusStatus admin result from node <index>."""
+        assert self.experiment is not None
+        address = self.experiment.rpc_addresses[index]
+        response = await asyncio.to_thread(json_rpc_call, address, "getNodeConsensusStatus")
+        return response["result"]
+
+    async def probe_consensus_status(self) -> dict[str, Any]:
+        """Cross-check every node via getNodeConsensusStatus, verifying the admin endpoint on
+        a live network (not just that it compiles). On this genesis-validator localnet each
+        node must report itself a validator, all must agree on the last key block, and their
+        applied masterchain blocks must share the same block id at the lowest common seqno --
+        a divergence would disagree there."""
+        assert self.experiment is not None
+        count = len(self.experiment.rpc_addresses)
+        statuses = []
+        for i in range(count):
+            statuses.append(await self.retry(
+                lambda i=i: self._node_consensus_status(i),
+                timeout=60, interval=2, description=f"node {i + 1} consensus status",
+            ))
+        failures = []
+        for i, s in enumerate(statuses):
+            vset = s.get("validator_set") or {}
+            if vset.get("is_validator") is not True:
+                failures.append(f"node {i + 1} is_validator={vset.get('is_validator')} (expected true)")
+            # P2-1 invariant: a single-turn snapshot can never show served leading applied,
+            # so the gap is always >= 0. A negative value would mean the two points were read
+            # at different instants (the defect this endpoint was rewritten to avoid).
+            gap = s.get("applied_minus_consensus")
+            if gap is not None and gap < 0:
+                failures.append(f"node {i + 1} applied_minus_consensus={gap} (< 0: inconsistent snapshot)")
+        key_blocks = {json.dumps(s.get("last_key_block"), sort_keys=True) for s in statuses}
+        if len(key_blocks) != 1:
+            failures.append(f"nodes disagree on last_key_block: {key_blocks}")
+        applied_seqnos = [int(s["applied_masterchain_block"]["seqno"]) for s in statuses]
+        common_height = min(applied_seqnos)
+        block_ids = set()
+        for i in range(count):
+            block_ids.add(await self.retry(
+                lambda i=i: self._node_mc_block_id(i, common_height),
+                timeout=60, interval=2, description=f"node {i + 1} block id at {common_height}",
+            ))
+        if len(block_ids) != 1:
+            failures.append(f"nodes disagree on masterchain block id at seqno {common_height}: {block_ids}")
+        result = {
+            "verdict": "passed" if not failures else "failed",
+            "nodes": count,
+            "common_height": common_height,
+            "all_report_is_validator": all((s.get("validator_set") or {}).get("is_validator") is True for s in statuses),
+            "agree_on_last_key_block": len(key_blocks) == 1,
+            "agree_on_block_id_at_common_height": len(block_ids) == 1,
+            "statuses": statuses,
+            "failures": failures,
+        }
+        (self.run_dir / "consensus-status-probe.json").write_text(json.dumps(result, indent=2) + "\n")
+        self.event("consensus_status_probe", verdict=result["verdict"], common_height=common_height, failures=failures)
+        if failures:
+            raise AssertionError(f"consensus-status probe failed: {failures}")
+        return result
+
+    async def _node_account_balance(self, index: int, address: Address, seqno: int | None = None) -> int:
+        """Account balance (nanotos) as node <index>'s own JSON-RPC reports it, optionally at a
+        specific masterchain seqno so all nodes can be compared at the SAME height."""
+        assert self.experiment is not None
+        params: dict[str, Any] = {"address": raw_address(address)}
+        if seqno is not None:
+            params["seqno"] = int(seqno)
+        resp = await asyncio.to_thread(json_rpc_call, self.experiment.rpc_addresses[index], "getAddressBalance", params)
+        return int(resp["result"])
+
+    async def transfer_soak(self, faucet: WalletV1) -> dict[str, Any]:
+        """Randomized A/B/C transfer load under real block production, verifying cross-node
+        到账 consistency after every transfer: fund three wallets from the faucet, then
+        repeatedly move a random amount between two distinct accounts; after each confirmed
+        transfer, require EVERY node's JSON-RPC to report identical balances for the three
+        accounts AT A COMMON masterchain height (a divergence means a node is out of sync or
+        forked), and require the destination to have actually been credited. Per-node RSS/FD
+        leak sampling runs in parallel via scripts/soak-mem-monitor.py."""
+        assert self.experiment is not None and self.client is not None
+        names = ["A", "B", "C"]
+        wallets: dict[str, WalletV1] = {}
+        for name in names:
+            before = await self.wallet_seqno(faucet)
+            wallet = await faucet.deploy(
+                WalletV1Blueprint(workchain=-1), CurrencyCollection(tomis=self.soak_wallet_funding), seqno=before
+            )
+            await self.wait_wallet_seqno(faucet, before + 1)
+            await self.retry(
+                lambda wallet=wallet: self.balance(wallet.address),
+                timeout=60, description=f"soak wallet {name} funding",
+                predicate=lambda v: v >= self.soak_wallet_funding - NANO,
+            )
+            wallets[name] = wallet
+            self.event("soak_wallet_funded", wallet=name, address=raw_address(wallet.address))
+
+        node_count = len(self.experiment.rpc_addresses)
+        transfers = 0
+        consistency_checks = 0
+        failures: list[str] = []
+        started = time.monotonic()
+        deadline = started + self.soak_duration
+        while time.monotonic() < deadline:
+            await asyncio.sleep(random.uniform(self.soak_min_interval, self.soak_max_interval))
+            src_name, dst_name = random.sample(names, 2)
+            src, dst = wallets[src_name], wallets[dst_name]
+            src_balance = await self.balance(src.address)
+            if src_balance < 2 * NANO:  # keep something for fees
+                continue
+            amount = random.randint(1, max(1, (src_balance - NANO) // 4))
+            dst_before = await self.balance(dst.address)
+            try:
+                await self.send_from_wallet(
+                    src, dest=dst.address, amount=amount, body=Cell.empty(), label=f"soak-{src_name}->{dst_name}"
+                )
+            except Exception as error:  # noqa: BLE001
+                failures.append(f"transfer {src_name}->{dst_name} amount={amount} failed: {error}")
+                continue
+            transfers += 1
+            # 到账 on the authoritative (node 0) view: the destination must be credited. The
+            # node-0 tip AFTER crediting is the confirmed height H -- the transfer is applied
+            # by H.
+            try:
+                await self.retry(
+                    lambda: self.balance(dst.address), timeout=60, interval=1,
+                    description=f"soak {dst_name} credited", predicate=lambda v: v > dst_before,
+                )
+            except Exception as error:  # noqa: BLE001
+                failures.append(f"{src_name}->{dst_name} not credited on node 1: {error}")
+                continue
+            confirmed_height = await self._node_mc_seqno(0)
+            # Require EVERY node to advance to >= H. Comparing an older common height (min tip)
+            # would let a node stuck behind H pass by agreeing on stale state it shares; making
+            # each node reach H means a node that has not seen this transfer fails here.
+            caught_up = True
+            for i in range(node_count):
+                try:
+                    await self.retry(
+                        lambda i=i: self._node_mc_seqno(i), timeout=60, interval=1,
+                        description=f"node {i + 1} reaches confirmed height {confirmed_height}",
+                        predicate=lambda s: s >= confirmed_height,
+                    )
+                except Exception as error:  # noqa: BLE001
+                    failures.append(f"node {i + 1} did not reach confirmed height {confirmed_height}: {error}")
+                    caught_up = False
+            if not caught_up:
+                continue
+            # At H every node must agree on all three balances AND show the destination credited
+            # past its pre-transfer value -- i.e. this transfer is visible in every node's chain
+            # state at H, not just at an older shared height.
+            checked_ok = True
+            for name, wallet in wallets.items():
+                seen = set()
+                for i in range(node_count):
+                    try:
+                        seen.add(await self._node_account_balance(i, wallet.address, seqno=confirmed_height))
+                    except Exception as error:  # noqa: BLE001
+                        failures.append(f"node {i + 1} balance {name}@{confirmed_height} query failed: {error}")
+                        checked_ok = False
+                if len(seen) > 1:
+                    failures.append(f"nodes disagree on {name} balance at seqno {confirmed_height}: {sorted(seen)}")
+                    checked_ok = False
+                if name == dst_name and seen and min(seen) <= dst_before:
+                    failures.append(
+                        f"{dst_name}@{confirmed_height} not credited on all nodes: {sorted(seen)} <= before {dst_before}"
+                    )
+                    checked_ok = False
+            if checked_ok:
+                consistency_checks += 1
+            if transfers % 10 == 0:
+                self.event("soak_progress", transfers=transfers, consistency_checks=consistency_checks,
+                           failures=len(failures))
+
+        result = {
+            "verdict": "passed" if not failures else "failed",
+            "transfers": transfers,
+            "cross_node_consistency_checks": consistency_checks,
+            "nodes": node_count,
+            "duration_seconds": round(time.monotonic() - started, 1),
+            "wallets": {n: raw_address(w.address) for n, w in wallets.items()},
+            "failures": failures[:20],
+        }
+        (self.run_dir / "transfer-soak-analysis.json").write_text(json.dumps(result, indent=2) + "\n")
+        self.event("transfer_soak_complete", verdict=result["verdict"], transfers=transfers,
+                   consistency_checks=consistency_checks, failures=len(failures))
+        if failures:
+            raise AssertionError(f"transfer soak failed ({len(failures)} issue(s)): {failures[:5]}")
+        return result
+
+    async def verify_post_cleanup_rejoin(self) -> dict[str, Any]:
+        """The full post-cleanup rejoin acceptance: pick a NON-ZERO node that has actually
+        completed a REAL validator cleanup (a VALCLEANUP erase_ack in its own log, i.e. a real
+        obsolete validator DB was deleted and its durable record erased), restart it on the
+        SAME db_root, and prove it recovers sync and keeps tracking the same chain. This turns
+        post_cleanup_recovery from NOT_EXERCISED into a real result. It proves sync recovery
+        after a real cleanup, NOT re-participation in consensus signing."""
+        assert self.experiment is not None
+        erase_re = re.compile(r"VALCLEANUP erase_ack ")
+        candidates = []
+        for i in range(1, len(self.nodes)):  # node 0 hosts the shared lite-client -> off limits
+            try:
+                text = self.nodes[i].log_path.read_text(errors="replace")
+            except FileNotFoundError:
+                continue
+            acks = len(erase_re.findall(text))
+            if acks > 0:
+                candidates.append((i, acks))
+        self.event(
+            "post_cleanup_rejoin_candidates",
+            candidates=[{"node": i + 1, "erase_acks": n} for i, n in candidates],
+        )
+        if not candidates:
+            # No node completed a real cleanup in this window -> the property genuinely was not
+            # exercised. Report it honestly rather than passing a hollow check.
+            result = {
+                "verdict": "NOT_EXERCISED",
+                "reason": "no non-zero node completed a real validator cleanup (VALCLEANUP erase_ack) in this run",
+            }
+            (self.run_dir / "post-cleanup-rejoin-analysis.json").write_text(json.dumps(result, indent=2) + "\n")
+            self.event("post_cleanup_rejoin_not_exercised")
+            return result
+        # Prefer the node that erased the most (most exercised).
+        node_index = max(candidates, key=lambda c: c[1])[0]
+        rejoin = await self.verify_live_rejoin(node_index=node_index)
+        probe = await self.probe_consensus_status()
+        recovered = rejoin.get("post_cleanup_recovery")
+        result = {
+            "verdict": "passed" if recovered == "passed" else "failed",
+            "target_node": node_index + 1,
+            "target_pre_restart_erase_acks": rejoin.get("pre_restart_erase_acks"),
+            "post_cleanup_recovery": recovered,
+            "does_not_prove": "re-participation in consensus block signing",
+            "rejoin": rejoin,
+            "consensus_status_probe_verdict": probe.get("verdict"),
+        }
+        (self.run_dir / "post-cleanup-rejoin-analysis.json").write_text(json.dumps(result, indent=2) + "\n")
+        self.event(
+            "post_cleanup_rejoin_result",
+            verdict=result["verdict"],
+            target_node=node_index + 1,
+            post_cleanup_recovery=recovered,
+        )
+        if result["verdict"] != "passed":
+            raise AssertionError(f"post-cleanup rejoin failed on node {node_index + 1}: post_cleanup_recovery={recovered}")
+        return result
+
+    async def verify_live_rejoin(self, node_index: int = 3) -> dict[str, Any]:
+        """Prove a NON-ZERO validator, restarted while its peers keep producing blocks,
+        RECOVERS SYNC and keeps tracking the live chain rather than merely replaying its
+        frozen DB. This proves catch-up and continued tracking; it does NOT by itself prove
+        the validator re-signed consensus (that would need per-block signature/quorum
+        evidence), so it is deliberately not called "rejoins consensus".
+
+        The falsifiable core, with every progress bar measured against BOTH pre-stop heights
+        so a node that was already ahead cannot pass by standing still:
+          - baseline = max(network tip at stop, target's own tip at stop);
+          - while the target is down its peers must advance to baseline + margin (3 of 4
+            equal validators is a BFT quorum) -- a strictly higher chain than anything seen
+            before the stop;
+          - after restart the target's OWN view must reach that during-downtime tip (blocks
+            only its peers could have produced while it was gone);
+          - then the reference must reach a STRICTLY fresher tip than the sync point, and the
+            target must reach that too -- so it is following the moving chain, not replaying
+            to a frozen point. A frozen chain, or a target that never advances past its own
+            pre-stop tip, makes one of these polls time out (a real failure).
+        node 0 is off limits: it hosts the shared lite-client this run depends on.
+
+        Post-cleanup scope: a generic sync recovery is NOT evidence that a node recovers
+        AFTER a real validator cleanup. That stronger property is asserted only when the
+        target actually completed a durable erase (a real VALCLEANUP erase_ack) before the
+        restart; otherwise it is reported NOT_EXERCISED, never passed."""
+        assert self.experiment is not None
+        if node_index == 0:
+            raise ValueError("live-rejoin target must be non-zero (node 0 hosts the lite-client)")
+
+        tip_at_stop = await self.masterchain_seqno()
+        target_before = await self._node_mc_seqno(node_index)
+        # Any genuine catch-up must exceed the highest height EITHER endpoint already had:
+        # if the target was ahead of the reference before the stop, standing still must not
+        # count as progress.
+        pre_stop_baseline = max(tip_at_stop, target_before)
+        # Did a REAL validator cleanup (durable erase) already complete on this target? The
+        # log is truncated on restart, so this can only be read now, before we stop it.
+        pre_restart_erase_acks = 0
+        try:
+            pre_text = self.nodes[node_index].log_path.read_text(errors="replace")
+            pre_restart_erase_acks = len(re.findall(r"VALCLEANUP erase_ack ", pre_text))
+        except FileNotFoundError:
+            pass
+        self.event(
+            "live_rejoin_begin",
+            node=node_index + 1,
+            network_tip=tip_at_stop,
+            target_tip=target_before,
+            pre_stop_baseline=pre_stop_baseline,
+            pre_restart_erase_acks=pre_restart_erase_acks,
+        )
+
+        await self.nodes[node_index].stop()
+
+        # Peers must advance strictly past the pre-stop baseline while the target is down;
+        # that gap is what the target has to catch up to. A stalled network here is itself a
+        # real failure (we could not then attribute any later catch-up to live progress).
+        advance_margin = 4
+        downtime_target = pre_stop_baseline + advance_margin
+        tip_during_downtime = await self.retry(
+            self.masterchain_seqno,
+            timeout=180,
+            interval=2,
+            description=f"peers advance to >= {downtime_target} while node {node_index + 1} is down",
+            predicate=lambda seqno: seqno >= downtime_target,
+        )
+
+        # Restart with cleanup armed (validator_start_options carries the flag when enabled).
+        await self.nodes[node_index].run(self.validator_start_options(node_index))
+
+        # SYNC PROOF: the target's own view must reach the tip its peers reached while it was
+        # down (>= tip_during_downtime > pre_stop_baseline), so it cannot be satisfied by the
+        # target's own frozen DB.
+        target_after_sync = await self.retry(
+            lambda: self._node_mc_seqno(node_index),
+            timeout=240,
+            interval=2,
+            description=f"node {node_index + 1} syncs past the downtime tip {tip_during_downtime}",
+            predicate=lambda seqno: seqno >= tip_during_downtime,
+        )
+
+        # LIVE-TRACKING PROOF: require the reference to reach a STRICTLY fresher tip than the
+        # sync point, then require the target to reach that too. Re-reading the same tip is
+        # not "the chain advanced": the fresh tip must exceed max(downtime tip, sync point).
+        tracking_baseline = max(tip_during_downtime, target_after_sync)
+        fresh_tip = await self.retry(
+            self.masterchain_seqno,
+            timeout=180,
+            interval=2,
+            description=f"reference advances strictly past {tracking_baseline} after node {node_index + 1} resyncs",
+            predicate=lambda seqno: seqno > tracking_baseline,
+        )
+        target_tracking = await self.retry(
+            lambda: self._node_mc_seqno(node_index),
+            timeout=180,
+            interval=2,
+            description=f"node {node_index + 1} tracks the fresher live tip {fresh_tip}",
+            predicate=lambda seqno: seqno >= fresh_tip,
+        )
+
+        # BLOCK-ID AGREEMENT: the target's masterchain block id must equal the reference's at
+        # the LATEST height the target just caught up to (fresh_tip). Agreeing at the freshest
+        # common height subsumes all ancestors -- a masterchain block commits its history --
+        # so it rejects a target that shared an old prefix but forked after it. Comparing only
+        # at the earlier during-downtime height would miss exactly that: agreement at height H
+        # does not imply agreement at a later height. The earlier height is kept as extra
+        # evidence, but the decisive gate is fresh_tip.
+        async def _agree_at(height: int) -> tuple[bool, tuple[str, str], tuple[str, str]]:
+            ref = await self.retry(
+                lambda: self._node_mc_block_id(0, height),
+                timeout=60, interval=2,
+                description=f"reference block id at masterchain seqno {height}",
+            )
+            tgt = await self.retry(
+                lambda: self._node_mc_block_id(node_index, height),
+                timeout=60, interval=2,
+                description=f"node {node_index + 1} block id at masterchain seqno {height}",
+            )
+            return (ref == tgt, ref, tgt)
+
+        agreement_height = fresh_tip
+        agree_fresh, reference_block_id, target_block_id = await _agree_at(agreement_height)
+        early_agreement_height = tip_during_downtime
+        agree_early, _, _ = await _agree_at(early_agreement_height)
+        block_ids_agree = agree_fresh and agree_early
+
+        # The recovered node's post-restart log (truncated to this run) must carry no fault;
+        # record whether the armed cleanup worker ran a pass on it as supporting evidence.
+        log_text = self.nodes[node_index].log_path.read_text(errors="replace")
+        cleanup_passes = len(re.findall(r"VALCLEANUP pass ", log_text))
+        fatals = [ln[:400] for ln in log_text.splitlines() if _FATAL_RE.search(ln)]
+
+        # Sync + tracking + block-id agreement must all hold. Sync/tracking failures time
+        # out above; a fork or a fault fails here. The separate post-cleanup-recovery
+        # property is asserted only if a real durable erase completed on this target before
+        # the restart.
+        healthy = (not fatals) and block_ids_agree
+        sync_recovery = "passed" if healthy else "failed"
+        post_cleanup_recovery = (
+            sync_recovery if pre_restart_erase_acks > 0 else "NOT_EXERCISED"
+        )
+        result = {
+            "verdict": sync_recovery,
+            "property": "target node recovered sync and keeps tracking the same chain",
+            "does_not_prove": "re-participation in consensus block signing (needs signature/quorum evidence)",
+            "post_cleanup_recovery": post_cleanup_recovery,
+            "node": node_index + 1,
+            "cleanup_armed": self.enable_consensus_cleanup,
+            "pre_restart_erase_acks": pre_restart_erase_acks,
+            "network_tip_at_stop": tip_at_stop,
+            "target_tip_at_stop": target_before,
+            "pre_stop_baseline": pre_stop_baseline,
+            "network_tip_during_downtime": tip_during_downtime,
+            "target_tip_after_sync": target_after_sync,
+            "fresh_network_tip": fresh_tip,
+            "target_tip_tracking": target_tracking,
+            "block_id_agreement_height": agreement_height,
+            "block_ids_agree": block_ids_agree,
+            "block_ids_agree_fresh_tip": agree_fresh,
+            "block_ids_agree_downtime_height": agree_early,
+            "block_id_early_agreement_height": early_agreement_height,
+            "cleanup_passes_after_rejoin": cleanup_passes,
+            "fatals": fatals[:5],
+        }
+        self.live_rejoin_result = result
+        (self.run_dir / "live-rejoin-analysis.json").write_text(json.dumps(result, indent=2) + "\n")
+        self.event(
+            "live_rejoin_passed" if healthy else "live_rejoin_failed",
+            **{k: v for k, v in result.items() if k != "fatals"},
+        )
+        if not block_ids_agree:
+            bad_height = agreement_height if not agree_fresh else early_agreement_height
+            raise AssertionError(
+                f"live rejoin block-id disagreement at masterchain seqno {bad_height} "
+                f"(fresh_tip agree={agree_fresh}, downtime-height agree={agree_early}): "
+                f"reference={reference_block_id} target={target_block_id} (node {node_index + 1} forked after the "
+                f"shared prefix)"
+            )
+        if fatals:
+            raise AssertionError(f"live rejoin saw fault diagnostics on node {node_index + 1}: {fatals[:3]}")
+        return result
+
     async def verify_two_of_four_safe_halt(self) -> None:
         self.event("two_of_four_begin", stopped_nodes=[3, 4])
         await self.nodes[2].stop()
@@ -1742,6 +2248,16 @@ class ValidatorElectionRehearsal:
     async def run_experiment(self) -> None:
         assert self.experiment is not None
         self.rpc_readiness = await self.wait_json_rpc_readiness()
+        # Fast dedicated rejoin: check rejoin against the freshly-ready network (already
+        # producing blocks) and exit, without the long election window. Here no real cleanup
+        # has happened yet, so post_cleanup_recovery is reported NOT_EXERCISED. The full
+        # post-cleanup rejoin (a node that has actually erase_acked, restarted) runs at the
+        # END of the experiment instead -- see below.
+        if self.measure_live_rejoin and self.live_rejoin_only:
+            await self.verify_live_rejoin()
+            await self.probe_consensus_status()
+            self.event("live_rejoin_only_complete")
+            return
         started_wall = time.time()
         started_monotonic = time.monotonic()
         deadline_monotonic = started_monotonic + self.experiment.duration_seconds
@@ -1864,6 +2380,11 @@ class ValidatorElectionRehearsal:
             outstanding_allocations=outstanding,
             settlement_tail_elapsed=True,
         )
+        # Full post-cleanup rejoin: by now cleanup has run across the whole election window,
+        # so a node has really erase_acked. Restart that node on its own db_root and prove it
+        # keeps tracking the same chain -- turning post_cleanup_recovery into a real result.
+        if self.measure_live_rejoin:
+            await self.verify_post_cleanup_rejoin()
         self.require_complete_experiment_settlement(outstanding)
 
     async def chain_heads(self) -> dict[str, int]:
@@ -1897,7 +2418,7 @@ class ValidatorElectionRehearsal:
                     logical_bytes += stat.st_size
                     allocated_bytes += stat.st_blocks * 512
                     file_count += 1
-            except FileNotFoundError, PermissionError:
+            except (FileNotFoundError, PermissionError):
                 continue
         return {
             "network_storage_logical_bytes": logical_bytes,
@@ -1938,7 +2459,11 @@ class ValidatorElectionRehearsal:
 
             processes: list[dict[str, Any]] = []
             network_marker = str(self.network_dir).encode()
-            for proc_dir in Path("/proc").iterdir():
+            # Per-process RSS/fd sampling reads Linux procfs; it does not exist on macOS,
+            # where this harness also runs. Skip the sample there rather than fault -- the
+            # rest of the metrics (config34, balances, storage) are portable.
+            proc_root = Path("/proc")
+            for proc_dir in (proc_root.iterdir() if proc_root.is_dir() else []):
                 if not proc_dir.name.isdigit():
                     continue
                 try:
@@ -1985,7 +2510,7 @@ class ValidatorElectionRehearsal:
                             "cpu_system_ticks": int(stat_fields[12]),
                         }
                     )
-                except FileNotFoundError, PermissionError, ProcessLookupError:
+                except (FileNotFoundError, PermissionError, ProcessLookupError):
                     continue
             sample["validator_processes"] = processes
             try:
@@ -2110,6 +2635,12 @@ class ValidatorElectionRehearsal:
             )
 
             faucet = network.zerostate.main_wallet(self.client)
+
+            if self.soak_mode:
+                self.monitor_task = asyncio.create_task(self.metrics_monitor())
+                await self.transfer_soak(faucet)
+                return
+
             await self.setup_wallets(faucet)
 
             if self.experiment is not None:
@@ -2371,13 +2902,22 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--mode",
-        choices=("launch-gate", "experiment"),
+        choices=("launch-gate", "experiment", "transfer-soak"),
         default="launch-gate",
         help=(
             "launch-gate preserves the finite Stage-A/Stage-B rehearsal; "
-            "experiment runs stable Stage A for a requested observation window"
+            "experiment runs stable Stage A for a requested observation window; "
+            "transfer-soak runs randomized A/B/C transfers with cross-node 到账 checks"
         ),
     )
+    parser.add_argument("--soak-duration", type=float, default=600.0,
+                        help="transfer-soak: seconds to run the random-transfer loop")
+    parser.add_argument("--soak-min-interval", type=float, default=1.0,
+                        help="transfer-soak: minimum seconds between transfers")
+    parser.add_argument("--soak-max-interval", type=float, default=5.0,
+                        help="transfer-soak: maximum seconds between transfers")
+    parser.add_argument("--soak-wallet-funding-tos", type=int, default=2000,
+                        help="transfer-soak: initial funding per A/B/C wallet, in TOS")
     parser.add_argument(
         "--stage",
         choices=sorted(PROFILES),
@@ -2431,16 +2971,53 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=DEFAULT_RPC_BASE_PORT,
         help="first of four consecutive experiment JSON-RPC ports",
     )
+    parser.add_argument(
+        "--enable-consensus-cleanup",
+        action="store_true",
+        help=(
+            "ACCEPTANCE ONLY: arm the gated validator consensus-DB cleanup on every "
+            "engine (--enable-validator-consensus-cleanup) so live deletion of obsolete "
+            "validator groups runs during this election experiment. Default off."
+        ),
+    )
+    parser.add_argument(
+        "--consensus-cleanup-state-ttl",
+        type=int,
+        default=30,
+        help="with --enable-consensus-cleanup: engine --state-ttl (s) so the GC floor advances",
+    )
+    parser.add_argument(
+        "--consensus-cleanup-archive-ttl",
+        type=int,
+        default=60,
+        help="with --enable-consensus-cleanup: engine --archive-ttl (s)",
+    )
+    parser.add_argument(
+        "--measure-live-rejoin",
+        action="store_true",
+        help=(
+            "ACCEPTANCE ONLY (experiment mode): after readiness, restart a non-zero "
+            "validator while its peers keep producing and prove it rejoins live consensus. "
+            "Default off."
+        ),
+    )
+    parser.add_argument(
+        "--live-rejoin-only",
+        action="store_true",
+        help="with --measure-live-rejoin: exit right after the rejoin check (fast dedicated run)",
+    )
     return parser.parse_args(argv)
 
 
 async def async_main() -> int:
     args = parse_args()
     profile = PROFILES[args.stage]
-    if args.mode == "experiment" and not profile.accelerated:
-        raise ValueError("experiment mode requires the accelerated Stage-A profile")
+    if args.mode in ("experiment", "transfer-soak") and not profile.accelerated:
+        raise ValueError(f"{args.mode} mode requires the accelerated Stage-A profile")
     experiment = None
-    if args.mode == "experiment":
+    if args.mode in ("experiment", "transfer-soak"):
+        # transfer-soak reuses the experiment network (4 loopback JSON-RPC nodes) but runs the
+        # transfer loop instead of the election observation window.
         experiment = ExperimentProfile(
             duration_seconds=args.duration_seconds,
             settlement_tail_seconds=args.settlement_tail_seconds,
@@ -2468,10 +3045,23 @@ async def async_main() -> int:
         sample_interval=sample_interval,
         profile=profile,
         experiment=experiment,
+        enable_consensus_cleanup=args.enable_consensus_cleanup,
+        consensus_cleanup_state_ttl=args.consensus_cleanup_state_ttl,
+        consensus_cleanup_archive_ttl=args.consensus_cleanup_archive_ttl,
+        measure_live_rejoin=args.measure_live_rejoin,
+        live_rejoin_only=args.live_rejoin_only,
+        soak_mode=(args.mode == "transfer-soak"),
+        soak_duration=args.soak_duration,
+        soak_min_interval=args.soak_min_interval,
+        soak_max_interval=args.soak_max_interval,
+        soak_wallet_funding_tos=args.soak_wallet_funding_tos,
     )
     try:
         await stage.execute()
     except Exception:
+        import traceback as _tb
+
+        _tb.print_exc()
         return 1
     return stage.completion_exit_code()
 

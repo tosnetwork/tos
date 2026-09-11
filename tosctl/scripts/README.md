@@ -55,6 +55,38 @@ fee estimation, and send endpoints.
 ./scripts/e2e-jsonrpc-test.sh http://10.0.0.1:2011
 ```
 
+### `local_test_vault.py`
+
+`local_test_vault.py` gives one local test command a new, ephemeral TOS
+`file://` SecretsVault capability. It is intentionally not a network service
+and not a production HSM.
+
+It creates a new owner-only directory, generates an in-memory random 256-bit
+master key, injects the resulting `VAULT_URL` only into its child command, and
+deletes the encrypted vault directory when that command exits. It never prints
+the master key or URL.
+
+For an OpenFox acceptance run, pass the same ephemeral capability under the
+explicit test variable expected by the test:
+
+```bash
+python3 tosctl/scripts/local_test_vault.py \
+  --also-export OPENFOX_TOS_VAULT_URL \
+  --also-export OPENFOX_PREDICTION_VAULT_URL -- \
+  go test ./pkg/earning -run TestTOSCTLPaymentSinkThreeNode -count=1
+```
+
+The child must still receive its normal non-secret local-chain configuration.
+For debugging only, `--keep` retains the owner-only encrypted directory. Never
+use `--keep` in CI, and never use this helper for persistent, shared, testnet,
+or mainnet credentials.
+
+Run its unit tests with:
+
+```bash
+python3 -m unittest tosctl/scripts/tests/test_local_test_vault.py -v
+```
+
 ## Exit codes
 
 Both scripts exit **0** when all checks pass and **1** when any check fails.

@@ -21,6 +21,7 @@ import asyncio
 import json
 import threading
 import time
+import os
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -38,6 +39,7 @@ from tosapi import tos_api
 from toslib import ToslibClient
 
 REPO = Path(__file__).resolve().parents[1]
+BUILD_DIR = Path(os.environ.get("TOS_BUILD_DIR", REPO / "build"))
 
 
 def rpc_call(rpc_addr: str, method: str, **params):
@@ -304,10 +306,24 @@ async def resume_saved_network(
 
 
 async def main(
-    rpc_addr, control_addr, num_validators, workdir, boot_timeout, demo, fund, reuse, base_port
+    rpc_addr,
+    control_addr,
+    num_validators,
+    workdir,
+    boot_timeout,
+    demo,
+    fund,
+    reuse,
+    base_port,
+    bootstrap_validator_set_valid_for,
 ):
-    install = Install(REPO / "build", REPO)
+    install = Install(BUILD_DIR, REPO)
     if reuse and saved_network_exists(workdir, num_validators):
+        if bootstrap_validator_set_valid_for is not None:
+            raise ValueError(
+                "--bootstrap-validator-set-valid-for only applies while creating "
+                "a fresh localnet; refuse to imply it changed an existing genesis"
+            )
         if demo or fund:
             raise ValueError("--demo/--fund are only valid while creating a fresh localnet")
         await resume_saved_network(
@@ -320,6 +336,14 @@ async def main(
     logging.basicConfig(level=logging.WARNING, format="[%(levelname)s] %(message)s")
 
     async with Network(install, workdir, base_port=base_port) as network:
+        if bootstrap_validator_set_valid_for is not None:
+            # A long-running acceptance chain without an election exercise
+            # must retain an active ConfigParam 34 for its entire run. The
+            # NetworkConfig validator checks this test-only override during
+            # fresh zerostate generation.
+            network.config.bootstrap_validator_set_valid_for = (
+                bootstrap_validator_set_valid_for
+            )
         dht = network.create_dht_node()
         nodes: list[FullNode] = []
         for _ in range(num_validators):
@@ -411,6 +435,14 @@ if __name__ == "__main__":
         default=2000,
         help="base port for the local DHT/liteserver network (use a unique range for parallel runs)",
     )
+    p.add_argument(
+        "--bootstrap-validator-set-valid-for",
+        type=int,
+        help=(
+            "test-only initial ConfigParam 34 lifetime in seconds; use for "
+            "a long-running localnet that does not exercise elections"
+        ),
+    )
     p.add_argument("--demo", action="store_true", help="self-test faucet -> new wallet balance change")
     p.add_argument("--fund", action="append", help="fund an address, form 0:hex or 0:hex:25")
     p.add_argument(
@@ -423,6 +455,7 @@ if __name__ == "__main__":
         asyncio.run(main(
             a.rpc, a.control, a.validators, Path(a.workdir), a.boot_timeout,
             a.demo, a.fund, a.reuse, a.base_port,
+            a.bootstrap_validator_set_valid_for,
         ))
     except KeyboardInterrupt:
         print("\n[localnet] stopped.")

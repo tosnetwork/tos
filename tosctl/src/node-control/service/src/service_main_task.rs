@@ -10,7 +10,10 @@ use crate::{
     http::http_server_task,
     indexer::IndexerStore,
     runtime_config::RuntimeConfigStore,
-    task::{ContractsTask, ElectionsTask, IndexerTask, VotingTask, task_manager::TaskController},
+    task::{
+        ContractsTask, ElectionsTask, IndexerTask, VotingTask,
+        task_manager::{TaskController, shutdown_tasks},
+    },
 };
 use anyhow::Context;
 use common::{
@@ -187,9 +190,34 @@ async fn run_with_profile(
             }
         }
     }
+    // Orderly shutdown, bounded by a single overall grace period (not per task).
+    let shutdown_deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(15);
+
+    // 1. Close control-operation admission first. Marking every task shutting
+    //    down makes enable()/restart() and the detached finalizer refuse to
+    //    start a new generation, so a control operation that races shutdown —
+    //    including a restart an HTTP handler already spawned as its own task —
+    //    cannot bring a task back up after it stops.
     for task in tasks.values() {
-        let _ = task.disable().await;
+        task.begin_shutdown().await;
     }
-    let _ = http_task_handle.await;
+
+    // 2. Drain the HTTP control API, within the overall budget. Distinguish the
+    //    three outcomes: a clean drain, the task failing, and the grace expiring.
+    //    On timeout the JoinHandle is dropped, which detaches the task — it is
+    //    not a guarantee the HTTP server has actually stopped, so say so rather
+    //    than imply a clean drain.
+    match tokio::time::timeout_at(shutdown_deadline, http_task_handle).await {
+        Ok(Ok(())) => tracing::info!("HTTP server drained"),
+        Ok(Err(e)) => tracing::warn!("HTTP server task failed during shutdown drain: {:#}", e),
+        Err(_) => tracing::warn!(
+            "HTTP server did not drain within the shutdown grace period; detaching it and continuing shutdown"
+        ),
+    }
+
+    // 3. Request every task to stop and wait for them to actually reach Stopped,
+    //    sharing the overall deadline, so the Tokio runtime is not torn down
+    //    while finalizers are still running their cleanup.
+    shutdown_tasks(&tasks, shutdown_deadline).await;
     Ok(())
 }

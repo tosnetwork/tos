@@ -927,6 +927,7 @@ mod tests {
             http: HttpConfig { auth: None, ..Default::default() },
             master_wallet: None,
             tick_interval: 30,
+            indexer_retention_blocks: 0,
             log: None,
             bookmarks: Default::default(),
             alerts: Default::default(),

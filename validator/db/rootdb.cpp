@@ -511,6 +511,39 @@ void RootDb::get_destroyed_validator_sessions(td::Promise<std::vector<ValidatorS
   td::actor::send_closure(state_db_, &StateDb::get_destroyed_validator_sessions, std::move(promise));
 }
 
+void RootDb::update_pending_consensus_db_cleanup(std::vector<std::string> dirs, td::Promise<td::Unit> promise) {
+  td::actor::send_closure(state_db_, &StateDb::update_pending_consensus_db_cleanup, std::move(dirs),
+                          std::move(promise));
+}
+
+void RootDb::get_pending_consensus_db_cleanup(td::Promise<std::vector<std::string>> promise) {
+  td::actor::send_closure(state_db_, &StateDb::get_pending_consensus_db_cleanup, std::move(promise));
+}
+
+void RootDb::persist_validator_retirement(std::vector<ValidatorSessionId> destroyed_sessions,
+                                          std::vector<consensus::PendingValidatorConsensusDbCleanup> records,
+                                          td::Promise<td::Unit> promise) {
+  td::actor::send_closure(state_db_, &StateDb::persist_validator_retirement, std::move(destroyed_sessions),
+                          std::move(records), std::move(promise));
+}
+
+void RootDb::update_pending_validator_consensus_db_cleanup(consensus::PendingValidatorConsensusDbCleanup record,
+                                                           td::Promise<td::Unit> promise) {
+  td::actor::send_closure(state_db_, &StateDb::update_pending_validator_consensus_db_cleanup, std::move(record),
+                          std::move(promise));
+}
+
+void RootDb::erase_pending_validator_consensus_db_cleanup(ValidatorSessionId session_id,
+                                                          td::Promise<td::Unit> promise) {
+  td::actor::send_closure(state_db_, &StateDb::erase_pending_validator_consensus_db_cleanup, session_id,
+                          std::move(promise));
+}
+
+void RootDb::get_pending_validator_consensus_db_cleanup(
+    td::Promise<std::vector<consensus::PendingValidatorConsensusDbCleanup>> promise) {
+  td::actor::send_closure(state_db_, &StateDb::get_pending_validator_consensus_db_cleanup, std::move(promise));
+}
+
 void RootDb::update_async_serializer_state(AsyncSerializerState state, td::Promise<td::Unit> promise) {
   td::actor::send_closure(state_db_, &StateDb::update_async_serializer_state, std::move(state), std::move(promise));
 }

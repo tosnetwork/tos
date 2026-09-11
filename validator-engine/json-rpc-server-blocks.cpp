@@ -159,34 +159,115 @@ void JsonRpcServer::handle_getConsensusBlock(td::JsonObject &params, std::string
   td::actor::send_closure(
       validator_manager_, &validator::ValidatorManagerInterface::get_last_liteserver_state_block,
       td::PromiseCreator::lambda(
-          [this, req_id = std::move(req_id), promise = std::move(promise)](
+          [self_id = actor_id(this), cors = opts_.cors_origin, req_id = std::move(req_id),
+           promise = std::move(promise)](
               td::Result<std::pair<td::Ref<validator::MasterchainState>, BlockIdExt>> R) mutable {
-        // This continuation runs on the manager's callback, not inside
-        // dispatch_method, so the boundary guard there does not reach it.
+        // This continuation is fulfilled inside the validator manager, on
+        // its thread and outside this actor's lock, so it must not touch
+        // this server's members or call its helpers -- hence the actor id
+        // and the copied origin rather than `this`, and the hop back below
+        // for anything that reads or writes state.
         guard_handler("getConsensusBlock continuation", [&] {
           if (R.is_error()) {
             promise.set_value(make_json_error(-32603,
-                PSTRING() << "getConsensusBlock: " << R.error(), req_id));
+                PSTRING() << "getConsensusBlock: " << R.error(), req_id, cors));
             return;
           }
           auto [state, block_id] = R.move_as_ok();
-          td::uint32 seqno = block_id.seqno();
-          if (consensus_block_seqno_ != seqno) {
-            consensus_block_seqno_ = seqno;
-            consensus_block_timestamp_ = static_cast<td::int64>(td::Clocks::system());
-          } else if (consensus_block_timestamp_ == 0) {
-            consensus_block_timestamp_ = static_cast<td::int64>(td::Clocks::system());
-          }
+          td::uint32 last_block_utime = state.not_null() ? state->get_unix_time() : 0;
+          td::actor::send_closure(self_id, &JsonRpcServer::finish_getConsensusBlock, block_id.seqno(),
+                                  last_block_utime, state.not_null(), std::move(req_id), std::move(promise));
+        });
+      }));
+}
 
+void JsonRpcServer::finish_getConsensusBlock(td::uint32 seqno, td::uint32 last_block_utime, bool have_state,
+                                             std::string req_id, td::Promise<HttpReturn> promise) {
+  if (consensus_block_seqno_ != seqno) {
+    consensus_block_seqno_ = seqno;
+    consensus_block_timestamp_ = static_cast<td::int64>(td::Clocks::system());
+  } else if (consensus_block_timestamp_ == 0) {
+    consensus_block_timestamp_ = static_cast<td::int64>(td::Clocks::system());
+  }
+
+  td::StringBuilder sb;
+  sb << "{\"@type\":\"ext.blocks.consensusBlock\""
+     << ",\"consensus_block\":" << consensus_block_seqno_
+     << ",\"timestamp\":" << consensus_block_timestamp_;
+  if (have_state) {
+    sb << ",\"last_block_utime\":" << last_block_utime;
+  }
+  sb << "}";
+  promise.set_value(make_json_ok(sb.as_cslice().str(), req_id));
+}
+
+// ─── getNodeConsensusStatus (read-only admin) ────────────────────────
+//
+// Reports this node's internal masterchain consensus view: the applied top block, the
+// consensus (liteserver-served) block and the applied-minus-consensus gap, the last key
+// block, the current masterchain validator set (catchain seqno, set hash, total weight,
+// count), and whether this node's CURRENT local keys are in that set. The whole snapshot is
+// produced by a single manager method in one actor turn, so the applied and served points
+// cannot be read at different instants (the gap is a true non-negative value), and the
+// membership reflects live keys rather than a startup copy. The reply is built in the
+// continuation via the static make_json_ok overload, touching no server members.
+namespace {
+// Emit a masterchain block id as a JSON object field. Hashes are base64, matching the
+// getMasterchainInfo / getBlockHeader shape.
+void emit_block_id(td::StringBuilder &sb, const char *field, const BlockIdExt &id) {
+  sb << "\"" << field << "\":{\"workchain\":" << id.id.workchain << ",\"shard\":" << (td::int64)id.id.shard
+     << ",\"seqno\":" << id.id.seqno << ",\"root_hash\":\"" << td::base64_encode(id.root_hash.as_slice())
+     << "\",\"file_hash\":\"" << td::base64_encode(id.file_hash.as_slice()) << "\"}";
+}
+}  // namespace
+
+void JsonRpcServer::handle_getNodeConsensusStatus(td::JsonObject &params, std::string req_id,
+                                                  td::Promise<HttpReturn> promise) {
+  auto cors = opts_.cors_origin;
+  td::actor::send_closure(
+      validator_manager_, &validator::ValidatorManagerInterface::get_node_consensus_status,
+      td::PromiseCreator::lambda(
+          [cors, req_id = std::move(req_id), promise = std::move(promise)](
+              td::Result<validator::NodeConsensusStatus> R) mutable {
+        guard_handler("getNodeConsensusStatus", [&] {
+          if (R.is_error()) {
+            promise.set_value(make_json_error(-32603, PSTRING() << "getNodeConsensusStatus: " << R.error(), req_id,
+                                              cors));
+            return;
+          }
+          auto s = R.move_as_ok();
           td::StringBuilder sb;
-          sb << "{\"@type\":\"ext.blocks.consensusBlock\""
-             << ",\"consensus_block\":" << consensus_block_seqno_
-             << ",\"timestamp\":" << consensus_block_timestamp_;
-          if (state.not_null()) {
-            sb << ",\"last_block_utime\":" << state->get_unix_time();
+          sb << "{\"@type\":\"ext.node.consensusStatus\"";
+          sb << ",\"unix_time\":" << s.unix_time;
+          sb << ",";
+          emit_block_id(sb, "applied_masterchain_block", s.applied_block_id);
+          sb << ",\"consensus_block_seqno\":";
+          if (s.have_served) {
+            sb << s.served_block_id.seqno();
+            // Same-turn snapshot, so this is always >= 0 (served never leads applied).
+            sb << ",\"applied_minus_consensus\":"
+               << ((td::int64)s.applied_block_id.seqno() - (td::int64)s.served_block_id.seqno());
+          } else {
+            sb << "null";
+          }
+          sb << ",";
+          emit_block_id(sb, "last_key_block", s.last_key_block_id);
+          sb << ",\"masterchain_cc_seqno\":" << s.masterchain_cc_seqno;
+          if (s.have_validator_set) {
+            sb << ",\"validator_set\":{\"catchain_seqno\":" << s.validator_set_catchain_seqno
+               << ",\"set_hash\":" << s.validator_set_hash << ",\"total_weight\":" << s.validator_set_total_weight
+               << ",\"count\":" << s.validator_set_count << ",\"is_validator\":";
+            if (s.has_local_validator_keys) {
+              sb << (s.is_validator ? "true" : "false");
+            } else {
+              sb << "null";  // this node holds no validator keys -> membership is unknown
+            }
+            sb << "}";
+          } else {
+            sb << ",\"validator_set\":null";
           }
           sb << "}";
-          promise.set_value(make_json_ok(sb.as_cslice().str(), req_id));
+          promise.set_value(make_json_ok(sb.as_cslice().str(), req_id, cors));
         });
       }));
 }
@@ -481,6 +562,16 @@ void JsonRpcServer::handle_getBlockHeader(td::JsonObject &params, std::string re
 
 // ─── getMasterchainBlockSignatures ──────────────────────────────────────
 
+// Helper: serialize a lookupBlock query for a masterchain block by seqno.
+static td::BufferSlice masterchain_lookup_query(td::int32 seqno) {
+  auto block_id = tos::create_tl_object<tos::lite_api::tosNode_blockId>(
+      -1, static_cast<td::int64>(-1LL << 63), seqno);
+  auto inner = tos::serialize_tl_object(
+      tos::create_tl_object<tos::lite_api::liteServer_lookupBlock>(1, std::move(block_id), 0, 0), true);
+  return tos::serialize_tl_object(
+      tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(inner)), true);
+}
+
 void JsonRpcServer::handle_getMasterchainBlockSignatures(td::JsonObject &params, std::string req_id,
                                                          td::Promise<HttpReturn> promise) {
   auto seqno_r = params.get_required_int_field("seqno");
@@ -489,94 +580,136 @@ void JsonRpcServer::handle_getMasterchainBlockSignatures(td::JsonObject &params,
     return;
   }
   td::int32 seqno = seqno_r.ok();
-
-  // Step 1: lookup the masterchain block by seqno
-  auto block_id = tos::create_tl_object<tos::lite_api::tosNode_blockId>(
-      -1, static_cast<td::int64>(-1LL << 63), seqno);
-  auto lookup_inner = tos::serialize_tl_object(
-      tos::create_tl_object<tos::lite_api::liteServer_lookupBlock>(
-          1, std::move(block_id), 0, 0),
-      true);
-  auto lookup_query = tos::serialize_tl_object(
-      tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(lookup_inner)), true);
+  if (seqno < 1) {
+    // Block #0 is the genesis block; it is not signed by a validator set.
+    promise.set_value(
+        make_json_error(-32602, "seqno must be >= 1 (block #0 has no signatures)", req_id));
+    return;
+  }
 
   auto self_id = actor_id(this);
-  send_liteserver_query(std::move(lookup_query),
-      [cors = opts_.cors_origin, req_id = std::move(req_id), self_id, promise = std::move(promise)](
+  auto cors = opts_.cors_origin;
+
+  // The signatures that finalized block N are carried by the forward proof link
+  // from N-1 to N (the link "arrives at" N). So resolve N and N-1, then ask for
+  // getBlockProof(known = N-1, target = N) and read the forward link into N.
+  // This mirrors toslib's GetMasterchainBlockSignatures. The previous version
+  // walked the proof forward FROM N (mode 0, no target), whose forward links
+  // sign *later* blocks, so it answered with the wrong block's signatures; it
+  // also only handled the ordinary signature set, missing the simplex sets this
+  // network actually produces.
+
+  // Step 1: resolve block N (full id).
+  send_liteserver_query(masterchain_lookup_query(seqno),
+      [self_id, cors, req_id = std::move(req_id), seqno, promise = std::move(promise)](
           td::Result<td::BufferSlice> R) mutable {
         if (R.is_error()) {
-          promise.set_value(make_json_error(-32603,
-              PSTRING() << "lookupBlock: " << R.error(), req_id, cors));
+          promise.set_value(make_json_error(-32603, PSTRING() << "lookupBlock: " << R.error(), req_id, cors));
           return;
         }
-        auto lb_r = tos::fetch_tl_object<tos::lite_api::liteServer_blockHeader>(
-            R.move_as_ok(), true);
+        auto lb_r = tos::fetch_tl_object<tos::lite_api::liteServer_blockHeader>(R.move_as_ok(), true);
         if (lb_r.is_error()) {
-          promise.set_value(make_json_error(-32603,
-              PSTRING() << "parse lookupBlock: " << lb_r.error(), req_id, cors));
+          promise.set_value(make_json_error(-32603, PSTRING() << "parse lookupBlock: " << lb_r.error(), req_id, cors));
           return;
         }
         auto lb = lb_r.move_as_ok();
-        auto resolved_id_json = format_block_id_json(*lb->id_);
+        auto id_json = format_block_id_json(*lb->id_);
+        auto n_id = std::move(lb->id_);  // full id of N, used as the proof target
 
-        // Step 2: getBlockProof with mode=0 (no target — proof from known block back to init).
-        // The proof chain contains forward links with validator signatures.
-        auto inner = tos::serialize_tl_object(
-            tos::create_tl_object<tos::lite_api::liteServer_getBlockProof>(
-                0, std::move(lb->id_), nullptr),
-            true);
-        auto query = tos::serialize_tl_object(
-            tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(inner)), true);
-
+        // Step 2: resolve block N-1 (the known block of the proof).
         td::actor::send_closure(self_id, &JsonRpcServer::send_liteserver_query,
-            std::move(query),
+            masterchain_lookup_query(seqno - 1),
             td::PromiseCreator::lambda(
-                [cors, req_id = std::move(req_id), id_json = std::move(resolved_id_json),
-                 promise = std::move(promise)](
+                [self_id, cors, req_id = std::move(req_id), seqno, id_json = std::move(id_json),
+                 n_id = std::move(n_id), promise = std::move(promise)](
                     td::Result<td::BufferSlice> R) mutable {
           if (R.is_error()) {
-            promise.set_value(make_json_error(-32603,
-                PSTRING() << "getBlockProof: " << R.error(), req_id, cors));
+            promise.set_value(make_json_error(-32603, PSTRING() << "lookupBlock(prev): " << R.error(), req_id, cors));
             return;
           }
-          auto proof_r = tos::fetch_tl_object<tos::lite_api::liteServer_partialBlockProof>(
-              R.move_as_ok(), true);
-          if (proof_r.is_error()) {
-            promise.set_value(make_json_error(-32603,
-                PSTRING() << "parse blockProof: " << proof_r.error(), req_id, cors));
+          auto pb_r = tos::fetch_tl_object<tos::lite_api::liteServer_blockHeader>(R.move_as_ok(), true);
+          if (pb_r.is_error()) {
+            promise.set_value(make_json_error(-32603, PSTRING() << "parse lookupBlock(prev): " << pb_r.error(), req_id, cors));
             return;
           }
-          auto proof = proof_r.move_as_ok();
+          auto pb = pb_r.move_as_ok();
 
-          // Extract signatures from forward links in the proof chain.
-          // Forward links (liteServer_blockLinkForward) contain a SignatureSet
-          // with the validator signatures for the destination block.
-          td::StringBuilder sb;
-          sb << "{\"@type\":\"blocks.blockSignatures\",\"id\":" << id_json
-             << ",\"signatures\":[";
-          bool first_sig = true;
-          for (auto& step : proof->steps_) {
-            if (step->get_id() == tos::lite_api::liteServer_blockLinkForward::ID) {
-              auto* fwd = static_cast<tos::lite_api::liteServer_blockLinkForward*>(step.get());
-              if (fwd->signatures_ &&
-                  fwd->signatures_->get_id() == tos::lite_api::liteServer_signatureSet_ordinary::ID) {
-                auto* sig_set = static_cast<tos::lite_api::liteServer_signatureSet_ordinary*>(
-                    fwd->signatures_.get());
-                for (auto& sig : sig_set->signatures_) {
-                  if (!first_sig) sb << ",";
-                  first_sig = false;
-                  sb << "{\"@type\":\"blocks.signature\""
-                     << ",\"node_id_short\":\""
-                     << td::base64_encode(sig->node_id_short_.as_slice())
-                     << "\",\"signature\":\""
-                     << td::base64_encode(sig->signature_.as_slice())
-                     << "\"}";
-                }
-              }
+          // Step 3: getBlockProof(known = N-1, target = N). Mode 0x1001 requests
+          // the proof between the two given blocks (same mode toslib uses).
+          auto inner = tos::serialize_tl_object(
+              tos::create_tl_object<tos::lite_api::liteServer_getBlockProof>(
+                  0x1001, std::move(pb->id_), std::move(n_id)),
+              true);
+          auto query = tos::serialize_tl_object(
+              tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(inner)), true);
+
+          td::actor::send_closure(self_id, &JsonRpcServer::send_liteserver_query, std::move(query),
+              td::PromiseCreator::lambda(
+                  [cors, req_id = std::move(req_id), id_json = std::move(id_json), seqno,
+                   promise = std::move(promise)](td::Result<td::BufferSlice> R) mutable {
+            if (R.is_error()) {
+              promise.set_value(make_json_error(-32603, PSTRING() << "getBlockProof: " << R.error(), req_id, cors));
+              return;
             }
-          }
-          sb << "]}";
-          promise.set_value(make_json_ok(sb.as_cslice().str(), req_id, cors));
+            auto proof_r = tos::fetch_tl_object<tos::lite_api::liteServer_partialBlockProof>(R.move_as_ok(), true);
+            if (proof_r.is_error()) {
+              promise.set_value(make_json_error(-32603, PSTRING() << "parse blockProof: " << proof_r.error(), req_id, cors));
+              return;
+            }
+            auto proof = proof_r.move_as_ok();
+
+            // Take the forward link that arrives at N; its signature set signs N.
+            tos::lite_api::liteServer_SignatureSet* sig_set = nullptr;
+            for (auto& step : proof->steps_) {
+              if (step->get_id() != tos::lite_api::liteServer_blockLinkForward::ID) {
+                continue;
+              }
+              auto* fwd = static_cast<tos::lite_api::liteServer_blockLinkForward*>(step.get());
+              if (!fwd->to_ || fwd->to_->seqno_ != seqno || !fwd->signatures_) {
+                continue;
+              }
+              sig_set = fwd->signatures_.get();
+              break;
+            }
+
+            auto emit_sig_array = [](td::StringBuilder& out, const auto& sig_vec) {
+              bool first_sig = true;
+              for (auto& sig : sig_vec) {
+                if (!first_sig) {
+                  out << ",";
+                }
+                first_sig = false;
+                out << "{\"@type\":\"blocks.signature\",\"node_id_short\":\""
+                    << td::base64_encode(sig->node_id_short_.as_slice())
+                    << "\",\"signature\":\"" << td::base64_encode(sig->signature_.as_slice()) << "\"}";
+              }
+            };
+
+            td::StringBuilder sb;
+            if (sig_set && sig_set->get_id() == tos::lite_api::liteServer_signatureSet_simplex::ID) {
+              // Simplex signatures are made over a message built from the
+              // session id, slot and candidate data (a finalize vote), not the
+              // block's root/file hash. Those fields must be returned or the
+              // signatures cannot be verified, so a distinct @type carries them
+              // (candidate_ is already the serialized consensus data). This
+              // mirrors toslib's blocks.blockSignatures.simplex.
+              auto* s = static_cast<tos::lite_api::liteServer_signatureSet_simplex*>(sig_set);
+              sb << "{\"@type\":\"blocks.blockSignatures.simplex\",\"id\":" << id_json
+                 << ",\"session_id\":\"" << td::base64_encode(s->session_id_.as_slice()) << "\""
+                 << ",\"slot\":" << s->slot_
+                 << ",\"candidate\":\"" << td::base64_encode(s->candidate_.as_slice()) << "\""
+                 << ",\"signatures\":[";
+              emit_sig_array(sb, s->signatures_);
+              sb << "]}";
+            } else {
+              sb << "{\"@type\":\"blocks.blockSignatures\",\"id\":" << id_json << ",\"signatures\":[";
+              if (sig_set && sig_set->get_id() == tos::lite_api::liteServer_signatureSet_ordinary::ID) {
+                emit_sig_array(sb, static_cast<tos::lite_api::liteServer_signatureSet_ordinary*>(sig_set)->signatures_);
+              }
+              sb << "]}";
+            }
+            promise.set_value(make_json_ok(sb.as_cslice().str(), req_id, cors));
+          }));
         }));
       });
 }

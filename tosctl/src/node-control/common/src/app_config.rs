@@ -743,6 +743,16 @@ fn default_max_factor() -> f32 {
 fn default_tick_interval() -> u64 {
     40
 }
+/// Default retention window (in masterchain seqnos) for the explorer/indexer
+/// history tables. The DNS-history and explorer block/transaction tables grow
+/// one or more rows per indexed block, so without a bound they grow without
+/// limit -- dns_domain_history in particular stores attacker-influenced content.
+/// Rows older than this many masterchain seqnos behind the tip are pruned. This
+/// default preserves a large history while bounding growth; set it to 0 to keep
+/// all history (unbounded).
+pub fn default_indexer_retention_blocks() -> u32 {
+    1_000_000
+}
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
 pub struct ElectionsConfig {
     #[serde(default)]
@@ -1009,6 +1019,10 @@ pub struct AppConfig {
     /// Default interval for all tasks in seconds
     #[serde(default = "default_tick_interval")]
     pub tick_interval: u64,
+    /// Retention window in masterchain seqnos for the explorer/indexer history
+    /// tables. 0 keeps all history (unbounded). See default_indexer_retention_blocks.
+    #[serde(default = "default_indexer_retention_blocks")]
+    pub indexer_retention_blocks: u32,
     pub log: Option<LogConfig>,
     #[serde(default)]
     pub bookmarks: HashMap<String, String>,

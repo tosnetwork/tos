@@ -103,6 +103,9 @@ td::actor::ActorOwn<AdnlPeerPair> &AdnlPeerTableImpl::get_peer_pair(AdnlNodeIdSh
              .emplace(local_id, AdnlPeerPair::create(network_manager_, actor_id(this), local_id_info.mode,
                                                      local_id_info.local_id.get(), dht_node_, local_id, peer_id))
              .first;
+    // A pair was just created for this local id; keep the per-local-id count in
+    // step so the peer-pair ceiling in receive_decrypted_packet stays accurate.
+    local_id_info.peer_pair_count++;
     if (!peer_info.peer_id.empty()) {
       td::actor::send_closure(it->second.actor, &AdnlPeerPair::update_peer_id, peer_info.peer_id);
     }
@@ -131,7 +134,8 @@ void AdnlPeerTableImpl::receive_decrypted_packet(AdnlNodeIdShort dst, AdnlPacket
   AdnlNodeIdShort src = packet.from_short();
 
   auto it = peers_.find(src);
-  if (it == peers_.end()) {
+  bool new_peer = (it == peers_.end());
+  if (new_peer) {
     if (!packet.inited_from()) {
       VLOG(ADNL_NOTICE) << this << ": dropping IN message [" << packet.from_short() << "->" << dst
                         << "]: unknown peer and no full src in packet";
@@ -142,8 +146,6 @@ void AdnlPeerTableImpl::receive_decrypted_packet(AdnlNodeIdShort dst, AdnlPacket
                         << "]: unknown peer and network manager uninitialized";
       return;
     }
-
-    it = peers_.try_emplace(src).first;
   }
 
   auto it2 = local_ids_.find(dst);
@@ -151,6 +153,26 @@ void AdnlPeerTableImpl::receive_decrypted_packet(AdnlNodeIdShort dst, AdnlPacket
     VLOG(ADNL_ERROR) << this << ": dropping IN message [" << packet.from_short() << "->" << dst
                      << "]: unknown dst (but how did we decrypt message?)";
     return;
+  }
+
+  // Peer-pair ceiling: if this packet would create a brand-new pair for the
+  // destination local id, the local id is already at its limit, and the source
+  // is not a protected peer, drop the packet. This check runs BEFORE the outer
+  // peers_ record is created: otherwise a rejected new source would still leave
+  // an empty PeerInfo (no pair, never entered into peers_gc_order, never
+  // reclaimed), so the refused traffic would grow peers_ without bound even
+  // though no AdnlPeerPair actor is created. Existing pairs and protected peers
+  // are never refused.
+  bool would_create_pair = new_peer || it->second.peers.find(dst) == it->second.peers.end();
+  if (would_create_pair && it2->second.peer_pair_count >= max_peer_pairs_ &&
+      !it2->second.protected_peers.contains(src)) {
+    VLOG(ADNL_NOTICE) << this << ": dropping IN message [" << src << "->" << dst
+                      << "]: peer pair limit reached (" << it2->second.peer_pair_count << ")";
+    return;
+  }
+
+  if (new_peer) {
+    it = peers_.try_emplace(src).first;
   }
 
   if (packet.inited_from()) {
@@ -609,7 +631,9 @@ void AdnlPeerTableImpl::gc_peer_pairs(AdnlNodeIdShort local_id, LocalIdInfo &loc
     auto it = local_id_info.peers_gc_order.begin();
     AdnlNodeIdShort gc_peer_id = it->second;
     VLOG(ADNL_NOTICE) << "Removing idle peer pair l_id=" << local_id << " p_id=" << gc_peer_id;
-    peers_[gc_peer_id].peers.erase(local_id);
+    if (peers_[gc_peer_id].peers.erase(local_id) > 0 && local_id_info.peer_pair_count > 0) {
+      local_id_info.peer_pair_count--;
+    }
     if (peers_[gc_peer_id].peers.empty()) {
       // FIXME: if PeerInfo is empty from the start, it won't be erased ever
       peers_.erase(gc_peer_id);

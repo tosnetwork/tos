@@ -27,6 +27,11 @@ namespace tos {
 
 namespace overlay {
 
+// Conservative ceiling on concurrent inbound in-flight FEC broadcasts, enforced
+// at admission (see ensure_in_flight_capacity). Well above any legitimate count,
+// so it fires only under a flood. Locally originated broadcasts are exempt.
+static constexpr size_t kMaxInFlightFecBroadcasts = 4096;
+
 static Overlay::BroadcastHash compute_broadcast_id(PublicKeyHash source, const fec::FecType &fec_type,
                                                    Overlay::BroadcastDataHash data_hash, td::uint32 size,
                                                    td::uint32 flags) {
@@ -41,7 +46,7 @@ static Overlay::BroadcastPartHash compute_broadcast_part_id(Overlay::BroadcastHa
       create_tl_object<tos_api::overlay_broadcastFec_partId>(broadcast_hash, data_hash, seqno));
 }
 
-class BroadcastFec : public td::ListNode {
+class BroadcastFec {
   friend class BroadcastFecPart;
   friend class BroadcastsFec;
 
@@ -134,10 +139,6 @@ class BroadcastFec : public td::ListNode {
 
   void add_completed(adnl::AdnlNodeIdShort id) {
     completed_neighbours_.insert(id);
-  }
-
-  static BroadcastFec *from_list_node(ListNode *node) {
-    return static_cast<BroadcastFec *>(node);
   }
 
   bool received_part(td::uint32 seqno) const {
@@ -534,18 +535,78 @@ void BroadcastsFec::checked(OverlayImpl *overlay, Overlay::BroadcastHash &&hash,
   }
 }
 
+td::Status BroadcastsFec::ensure_in_flight_capacity(OverlayImpl *overlay, bool is_ours) {
+  // Our own broadcasts are locally paced and exempt; this ceiling protects the
+  // inbound/remote table. The ceiling is a conservative value, not a measured
+  // one -- confirm it against real shard-overlay rates before relying on it.
+  if (is_ours) {
+    return td::Status::OK();
+  }
+  if (broadcasts_.size() >= kMaxInFlightFecBroadcasts) {
+    // Reclaim entries past the assembly window before refusing: on a
+    // fixed-member overlay the periodic gc can be far apart, so the table may
+    // be full only of already-expired broadcasts. Refusing without reclaiming
+    // would wrongly block new broadcasts behind stale slots.
+    gc(overlay);
+  }
+  if (broadcasts_.size() >= kMaxInFlightFecBroadcasts) {
+    return td::Status::Error(ErrorCode::notready, "too many in-flight FEC broadcasts");
+  }
+  return td::Status::OK();
+}
+
+void BroadcastsFec::inject_in_flight_for_test(Overlay::BroadcastHash hash, td::uint32 date) {
+  auto bcast = std::make_unique<BroadcastFec>(hash, Overlay::BroadcastDataHash::zero(), /*flags=*/0, date, PublicKey{},
+                                              /*certificate=*/nullptr, fec::FecType{});
+  by_date_.emplace(date, hash);
+  broadcasts_.emplace(hash, std::move(bcast));
+}
+
+size_t BroadcastsFec::in_flight_count_for_test() const {
+  return broadcasts_.size();
+}
+
+size_t BroadcastsFec::capacity_for_test() const {
+  return kMaxInFlightFecBroadcasts;
+}
+
+td::Status BroadcastsFec::try_process_fresh_for_test(OverlayImpl *overlay, Overlay::BroadcastHash hash, bool is_ours) {
+  // A minimal part carrying only a fresh broadcast hash. process() consults the
+  // admission ceiling before any signature or FEC work, so when the table is
+  // full it returns the ceiling's status without the part's other fields being
+  // read -- which lets this exercise the real production call site.
+  BroadcastFecPart part(hash, Overlay::BroadcastPartHash::zero(), PublicKey{}, /*cert=*/nullptr,
+                        Overlay::BroadcastDataHash::zero(), /*data_size=*/0, /*flags=*/0,
+                        Overlay::BroadcastDataHash::zero(), td::BufferSlice(), /*seqno=*/0, fec::FecType{},
+                        static_cast<td::uint32>(td::Clocks::system()), td::BufferSlice(), /*is_short=*/false,
+                        adnl::AdnlNodeIdShort::zero());
+  return process(overlay, part, is_ours);
+}
+
 void BroadcastsFec::gc(OverlayImpl *overlay) {
-  while (!broadcasts_.empty()) {
-    auto bcast = BroadcastFec::from_list_node(lru_.prev);
-    CHECK(bcast);
-    if (bcast->date_ > td::Clocks::system() - 60) {
+  // Time-based eviction: anything past the assembly window is dropped. by_date_
+  // is ordered by the date gc expires on, so the earliest entry is the first to
+  // expire; once it is still fresh, every later-dated entry is too, and the scan
+  // can stop. (Insertion order would not give this, since the accepted date can
+  // lead or lag arrival.)
+  while (!by_date_.empty()) {
+    auto oldest = by_date_.begin();
+    if (oldest->first > td::Clocks::system() - 60) {
       break;
     }
-    auto hash = bcast->hash_;
-    CHECK(broadcasts_.count(hash) == 1);
+    auto hash = oldest->second;
+    by_date_.erase(oldest);
     broadcasts_.erase(hash);
     overlay->register_delivered_broadcast(hash);
   }
+  // The absolute count ceiling is NOT enforced here. Evicting by count in gc
+  // would drop the earliest-dated broadcast even when it is fresh and still
+  // being assembled, and marking that victim delivered (as the time path does
+  // for genuinely expired broadcasts) would permanently suppress its remaining
+  // parts and retransmissions. The ceiling is instead an admission check at
+  // insertion time in process(), which refuses a new broadcast when the table
+  // is full rather than sacrificing one already in flight. That keeps the
+  // table bounded between gc passes, which a gc-only trim cannot do.
 }
 
 td::Status BroadcastsFec::process(OverlayImpl *overlay, BroadcastFecPart &part, bool is_ours) {
@@ -554,6 +615,7 @@ td::Status BroadcastsFec::process(OverlayImpl *overlay, BroadcastFecPart &part, 
     if (overlay->is_delivered(part.broadcast_hash_)) {
       return td::Status::Error(ErrorCode::notready, "duplicate broadcast");
     }
+    TRY_STATUS(ensure_in_flight_capacity(overlay, is_ours));
     BroadcastsLimiter &limiter = overlay->get_broadcasts_limiter(part.source_.compute_short_id(), part.cert_.get());
     if (!is_ours) {
       TRY_STATUS(limiter.precheck_new_broadcast(part.broadcast_size_));
@@ -564,7 +626,7 @@ td::Status BroadcastsFec::process(OverlayImpl *overlay, BroadcastFecPart &part, 
     limiter.register_broadcast(part.broadcast_size_);
     TRY_STATUS(bcast->run_checks());
     TRY_STATUS(bcast->init_fec_type());
-    lru_.put(bcast.get());
+    by_date_.emplace(part.date_, part.broadcast_hash_);
     it = broadcasts_.emplace(part.broadcast_hash_, std::move(bcast)).first;
   } else {
     TRY_STATUS(part.run_checks(overlay, it->second.get()));

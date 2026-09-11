@@ -4,11 +4,15 @@
  * SPDX-License-Identifier: LGPL-2.0-or-later
  */
 
+#include <cerrno>
+
 #include "td/db/RocksDb.h"
+#include "td/utils/port/Stat.h"
 #include "td/utils/port/path.h"
 #include "candidate-relay-policy.h"
 #include "tos/lite-tl.hpp"
 #include "tos/quorum.h"
+#include "validator/consensus/db-path.h"
 #include "validator/consensus/simplex/bus.h"
 #include "validator/fabric.h"
 #include "validator/full-node.h"
@@ -334,6 +338,10 @@ class BridgeImpl final : public IValidatorGroup {
     destroy_inner().start().detach();
   }
 
+  void close_for_retirement(td::uint64 generation) override {
+    close_for_retirement_inner(generation).start().detach();
+  }
+
   void start_up() override {
     manager_facade_ = td::actor::create_actor<ManagerFacadeImpl>(params_.name + ".ManagerFacade", params_.manager,
                                                                  params_.collation_manager, params_.validator_set,
@@ -505,13 +513,56 @@ class BridgeImpl final : public IValidatorGroup {
       bus_ = {};
       co_await std::move(stop_waiter_.value());
       LOG(INFO) << "Consensus bus stopped";
-      auto S = td::RocksDb::destroy(db_path() + "/db/");
+      td::RocksDb::destroy(db_path() + "/db/").ignore();
       td::rmrf(db_path()).ignore();
-      if (S.is_ok()) {
-        LOG(INFO) << "Deleting consensus DB : done";
-      } else {
-        LOG(ERROR) << "Deleting consensus DB " << db_path() << " : " << S;
+      // Confirm the directory is actually gone before telling the manager to
+      // drop it from the cleanup queue. rmrf() ignores unlink/rmdir errors, so
+      // only a stat probe returning "not found" proves removal; otherwise leave
+      // it queued so the startup sweep retries it (fail-closed for cleanup).
+      auto full = db_path();
+      auto probe = td::stat(full);
+      bool gone = false;
+      if (probe.is_error()) {
+#if TD_PORT_WINDOWS
+        auto code = probe.error().code();
+        gone = (code == ERROR_FILE_NOT_FOUND || code == ERROR_PATH_NOT_FOUND);
+#else
+        gone = (probe.error().code() == ENOENT);
+#endif
       }
+      if (gone) {
+        LOG(INFO) << "Deleting consensus DB : done";
+        auto dir_name = consensus_db_dir_name(params_.shard, params_.validator_set->get_catchain_seqno(),
+                                              params_.session_id, params_.db_suffix);
+        td::actor::send_closure(params_.manager, &ValidatorManager::consensus_db_cleanup_done, std::move(dir_name));
+      } else {
+        LOG(ERROR) << "Deleting consensus DB " << full
+                   << " could not be confirmed removed; the startup sweep will retry it";
+      }
+    }
+    stop();
+    co_return td::Unit{};
+  }
+
+  // Retirement close (validator-group cleanup, Finding 1 / PR B): mirror the
+  // stop/close sequence of destroy_inner() WITHOUT deleting the directory. The
+  // bus destructor destroys `db` before satisfying stop_waiter_, so by the time
+  // that waiter completes the actor no longer holds the database; only then is
+  // it safe to report closure. The physical deletion is the manager's job, under
+  // a checkpoint-bound eligibility check -- never here -- so a still-recreatable
+  // session can never lose its consensus state through retirement.
+  td::actor::Task<> close_for_retirement_inner(td::uint64 generation) {
+    if (bus_) {
+      LOG(INFO) << "Closing validator group for retirement (no delete)";
+      bus_.publish<StopRequested>();
+      co_await bus_->db->close();
+      bus_ = {};
+      co_await std::move(stop_waiter_.value());
+      LOG(INFO) << "Consensus bus stopped (retirement close)";
+      auto dir_name = consensus_db_dir_name(params_.shard, params_.validator_set->get_catchain_seqno(),
+                                            params_.session_id, params_.db_suffix);
+      td::actor::send_closure(params_.manager, &ValidatorManager::consensus_db_closed, params_.session_id, generation,
+                              std::move(dir_name));
     }
     stop();
     co_return td::Unit{};
@@ -560,9 +611,13 @@ class BridgeImpl final : public IValidatorGroup {
   NewConsensusConfig::NoncriticalParams current_noncritical_params_;
 
   std::string db_path() const {
-    return PSTRING() << params_.db_root << "/consensus/consensus." << params_.shard.workchain << "."
-                     << params_.shard.shard << "." << params_.validator_set->get_catchain_seqno() << "."
-                     << params_.session_id.to_hex() << params_.db_suffix << "/";
+    // Shares its naming with the startup sweep: a directory abandoned by a
+    // crash is identified by parsing the session id back out of this name,
+    // so the two must not drift apart.
+    return consensus_db_root(params_.db_root) +
+           consensus_db_dir_name(params_.shard, params_.validator_set->get_catchain_seqno(), params_.session_id,
+                                 params_.db_suffix) +
+           "/";
   }
 };
 

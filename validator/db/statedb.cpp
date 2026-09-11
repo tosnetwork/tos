@@ -24,6 +24,8 @@
 
 #include "statedb.hpp"
 
+#include "validator/consensus/validator-cleanup-store.h"
+
 namespace tos {
 
 namespace validator {
@@ -146,6 +148,99 @@ void StateDb::get_destroyed_validator_sessions(td::Promise<std::vector<Validator
   F.ensure();
   auto obj = F.move_as_ok();
   promise.set_value(std::move(obj->sessions_));
+}
+
+namespace {
+// Raw key for the consensus-DB cleanup queue. This is local StateDb metadata
+// (a list of directory names), not a wire/protocol object, so it is stored as a
+// plain key/value rather than a TL type -- avoiding a schema/codegen change for
+// a purely internal record. The value is the directory names joined by '\n';
+// consensus_db_dir_name() never emits a newline, so the join is unambiguous.
+constexpr td::Slice pending_consensus_db_cleanup_key() {
+  return td::Slice{"tos.state.pending_consensus_db_cleanup"};
+}
+
+std::string encode_pending_cleanup(const std::vector<std::string>& dirs) {
+  std::string out;
+  for (const auto& dir : dirs) {
+    if (dir.find('\n') != std::string::npos) {
+      // A newline would corrupt the join; a real consensus dir name never
+      // contains one, so skip a malformed entry rather than persist ambiguity.
+      continue;
+    }
+    if (!out.empty()) {
+      out.push_back('\n');
+    }
+    out += dir;
+  }
+  return out;
+}
+
+std::vector<std::string> decode_pending_cleanup(td::Slice value) {
+  std::vector<std::string> dirs;
+  size_t start = 0;
+  std::string s = value.str();
+  while (start <= s.size()) {
+    auto nl = s.find('\n', start);
+    auto end = nl == std::string::npos ? s.size() : nl;
+    if (end > start) {
+      dirs.push_back(s.substr(start, end - start));
+    }
+    if (nl == std::string::npos) {
+      break;
+    }
+    start = nl + 1;
+  }
+  return dirs;
+}
+}  // namespace
+
+void StateDb::update_pending_consensus_db_cleanup(std::vector<std::string> dirs, td::Promise<td::Unit> promise) {
+  auto value = encode_pending_cleanup(dirs);
+
+  kv_->begin_write_batch().ensure();
+  kv_->set(pending_consensus_db_cleanup_key(), td::Slice{value}).ensure();
+  kv_->commit_write_batch().ensure();
+
+  promise.set_value(td::Unit());
+}
+
+void StateDb::get_pending_consensus_db_cleanup(td::Promise<std::vector<std::string>> promise) {
+  std::string value;
+  auto R = kv_->get(pending_consensus_db_cleanup_key(), value);
+  R.ensure();
+
+  if (R.move_as_ok() == td::KeyValue::GetStatus::NotFound) {
+    promise.set_value(std::vector<std::string>{});
+    return;
+  }
+  promise.set_value(decode_pending_cleanup(td::Slice{value}));
+}
+
+void StateDb::persist_validator_retirement(std::vector<ValidatorSessionId> destroyed_sessions,
+                                           std::vector<consensus::PendingValidatorConsensusDbCleanup> records,
+                                           td::Promise<td::Unit> promise) {
+  auto key = create_hash_tl_object<tos_api::db_state_key_destroyedSessions>();
+  auto value = create_serialize_tl_object<tos_api::db_state_destroyedSessions>(std::move(destroyed_sessions));
+  consensus::store_validator_retirement(*kv_, key.as_slice(), value.as_slice(), records);
+  promise.set_value(td::Unit());
+}
+
+void StateDb::update_pending_validator_consensus_db_cleanup(consensus::PendingValidatorConsensusDbCleanup record,
+                                                            td::Promise<td::Unit> promise) {
+  consensus::store_validator_cleanup_record(*kv_, record);
+  promise.set_value(td::Unit());
+}
+
+void StateDb::erase_pending_validator_consensus_db_cleanup(ValidatorSessionId session_id,
+                                                           td::Promise<td::Unit> promise) {
+  consensus::erase_validator_cleanup_record(*kv_, session_id);
+  promise.set_value(td::Unit());
+}
+
+void StateDb::get_pending_validator_consensus_db_cleanup(
+    td::Promise<std::vector<consensus::PendingValidatorConsensusDbCleanup>> promise) {
+  promise.set_value(consensus::load_validator_cleanup_records(*kv_));
 }
 
 void StateDb::update_async_serializer_state(AsyncSerializerState state, td::Promise<td::Unit> promise) {
