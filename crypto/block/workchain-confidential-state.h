@@ -1,6 +1,7 @@
 #pragma once
 
 #include "block/workchain-resource-policy.h"
+#include "block/workchain-codec-failure.h"
 #include "vm/dict.h"
 #include <sodium/crypto_core_ristretto255.h>
 #include <variant>
@@ -345,9 +346,9 @@ inline td::Result<WorkchainConfidentialAccount> decode_workchain_confidential_ac
   if (canonical->get_hash() != root->get_hash()) return td::Status::Error("noncanonical confidential account");
   return value;
 } catch (const vm::VmError& error) {
-  return error.as_status("confidential account loading: ");
+  return workchain_codec_vm_error(error);
 } catch (const vm::VmVirtError& error) {
-  return error.as_status("confidential account acquisition: ");
+  return workchain_codec_virtualization_error(error);
 }
 
 }  // namespace block

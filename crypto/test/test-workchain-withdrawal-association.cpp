@@ -64,6 +64,30 @@ TEST(WithdrawalAssociation, TestFailedSelectorExactCodec) {
   ASSERT_EQ(rejected.error().message(), "malformed test Failed selector");
 }
 
+TEST(WithdrawalAssociation, CodecFailureCategoriesSurviveProtection) {
+  // Observe the real codec exception boundary, not a diagnostic string. This
+  // preserves mechanisms, NOT arena provenance or a Native DB fault test.
+  auto vm_failure = withdrawal_codec_detail::protect([]() -> td::Result<int> {
+    throw vm::VmError{vm::Excno::cell_und};
+  });
+  auto acquisition = withdrawal_codec_detail::protect([]() -> td::Result<int> {
+    throw vm::VmVirtError{1};
+  });
+  ASSERT_TRUE(vm_failure.is_error());
+  ASSERT_TRUE(acquisition.is_error());
+  ASSERT_EQ(vm_failure.error().code() != acquisition.error().code(), true);
+  ASSERT_EQ(vm_failure.error().code(), static_cast<int>(WorkchainCodecFailure::VmBase) -
+      static_cast<int>(vm::Excno::cell_und));
+  ASSERT_EQ(acquisition.error().code(), static_cast<int>(WorkchainCodecFailure::Virtualization));
+  auto nested = withdrawal_codec_detail::protect([&]() -> td::Result<int> {
+    TRY_RESULT(value, acquisition.clone());
+    return value;
+  });
+  ASSERT_TRUE(nested.is_error());
+  ASSERT_EQ(nested.error().code(), acquisition.error().code());
+  ASSERT_EQ(withdrawal_codec_detail::error("content").code(), static_cast<int>(WorkchainCodecFailure::Content));
+}
+
 TEST(WithdrawalAssociation, ActualMessageHashAndOriginalLt) {
   auto c = control(); auto m = message();
   auto result = associate(m, c); ASSERT_TRUE(result.is_ok()); ASSERT_TRUE(result.ok().has_value());

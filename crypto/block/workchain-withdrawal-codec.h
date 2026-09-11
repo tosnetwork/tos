@@ -2,6 +2,7 @@
 
 #include "block/block-parse.h"
 #include "block/workchain-confidential-input.h"
+#include "block/workchain-codec-failure.h"
 #include <limits>
 #include <set>
 
@@ -40,15 +41,21 @@ struct WorkchainWithdrawalRecord {
 };
 
 namespace withdrawal_codec_detail {
-inline td::Status error(td::Slice message) { return td::Status::Error(message); }
+inline td::Status error(td::Slice message) { return workchain_codec_content_error(message); }
 // No consensus classification here. A source-aware caller distinguishes an
 // unavailable historical closure from malformed candidate input.
 template <class F> auto protect(F&& f) -> decltype(f()) {
   try { return f(); }
-  catch (const vm::VmError& e) { return e.as_status("withdrawal codec: "); }
-  catch (const vm::VmVirtError& e) { return e.as_status("withdrawal acquisition: "); }
-  catch (const vm::CellBuilder::CellCreateError&) { return error("withdrawal cell creation failed"); }
-  catch (const vm::CellBuilder::CellWriteError&) { return error("withdrawal cell write failed"); }
+  catch (const vm::VmError& e) { return workchain_codec_vm_error(e); }
+  catch (const vm::VmVirtError& e) {
+    return workchain_codec_virtualization_error(e);
+  }
+  catch (const vm::CellBuilder::CellCreateError&) {
+    return td::Status::Error(static_cast<int>(WorkchainCodecFailure::Construction), "withdrawal cell creation failed");
+  }
+  catch (const vm::CellBuilder::CellWriteError&) {
+    return td::Status::Error(static_cast<int>(WorkchainCodecFailure::Construction), "withdrawal cell write failed");
+  }
 }
 template <class R> td::Result<R> unpack(const td::Ref<vm::Cell>& root) {
   R value;
