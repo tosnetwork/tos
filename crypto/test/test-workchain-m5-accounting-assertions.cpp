@@ -1,5 +1,5 @@
 // Assertion tests only. D61 additionally executes the existing payout helper;
-// its rejected output is evidence of the old policy, not an M5 implementation.
+// its output now follows D61; synthetic old-policy output remains a red control.
 #include "td/utils/tests.h"
 #include "block/workchain-payout-accounting.h"
 #include "workchain-m5-accounting-assertions.h"
@@ -12,16 +12,18 @@ void error_is(td::Status status, td::Slice message) {
 }
 }
 
-TEST(M5Accounting, D61CurrentPayoutChargesOperatingBudget) {
+TEST(M5Accounting, D61PayoutChargesCustodyNotOperatingBudget) {
   auto custody = td::Bits256::zero(), coordinator = custody;
   coordinator.as_slice().back() = 1;
   auto result = block::account_workchain_payout(custody, coordinator, C(1000), C(100), C(700),
       td::make_refint(30), td::make_refint(10), 100);
   ASSERT_TRUE(result.is_ok());
   auto observed = result.move_as_ok();
-  ASSERT_TRUE(observed.custody_after == C(300));
-  ASSERT_TRUE(observed.operator_after == C(70));
-  error_is(payout_forwarding(C(1000), observed.custody_after, C(100), observed.operator_after, C(700), C(30)),
+  ASSERT_TRUE(observed.custody_after == C(270));
+  ASSERT_TRUE(observed.operator_after == C(100));
+  ASSERT_TRUE(payout_forwarding(C(1000), observed.custody_after, C(100), observed.operator_after,
+      C(700), C(30)).is_ok());
+  error_is(payout_forwarding(C(1000), C(300), C(100), C(70), C(700), C(30)),
       "D61: withdrawal forwarding fee charged to operating budget");
   // Synthetic expected-policy observation; no production implementation claim.
   ASSERT_TRUE(payout_forwarding(C(1000), C(270), C(100), C(100), C(700), C(30)).is_ok());

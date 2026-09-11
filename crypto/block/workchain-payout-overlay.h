@@ -13,14 +13,13 @@ namespace block {
 struct WorkchainPayoutOverlay {
   WorkchainStorageOverlay state;
   td::Ref<vm::Cell> message;
-  WorkchainInternalTransfer fee_funding;
   WorkchainFinalImportEvidence imports;
   // Reconstructed transaction outputs; Native queue admission is separate.
   std::vector<NewOutMsg> exports;
 };
 
-// Claimed Native artifacts only. Fee-funding rows are derived by replay, never
-// accepted as claimant-supplied accounting evidence.
+// Claimed Native artifacts only. D61 funding is reconstructed from custody's
+// debit, never accepted as claimant-supplied accounting evidence.
 struct ClaimedWorkchainPayoutOverlay {
   td::Ref<vm::Cell> accounts, account_blocks, message;
   std::uint64_t end_lt;
@@ -46,10 +45,6 @@ inline td::Result<WorkchainPayoutOverlay> build_workchain_payout_overlay(
     const WorkchainDisposalEntryContext* disposal = nullptr,
     const WorkchainConstructionObserver& observer = {}) {
   if (extra_validation_cells <= 0) return td::Status::Error("invalid payout overlay currency budget");
-  // Reserve the host-derived fee edge before reading or materializing state.
-  auto flow_bound = participant_lt_detail::checked_add(max_transfers, 1);
-  if (flow_bound.is_error()) return td::Status::Error("payout transfer count overflow");
-  auto flow_limit = flow_bound.move_as_ok();
   if (workchain < 0 || writes.empty() || writes.size() > max_participants || custody == coordinator) {
     return td::Status::Error("invalid payout overlay domain or count");
   }
@@ -254,17 +249,16 @@ inline td::Result<WorkchainPayoutOverlay> build_workchain_payout_overlay(
     auto credit = imports.account_credits.find(row.account);
     if (credit != imports.account_credits.end()) row.imported = credit->second;
   }
-  // The host-derived fee edge is not an engine transfer. It is added exactly
-  // once to the independently decoded graph, with a checked count allowance.
-  allocations.transfers.push_back(pair.accounting.fee_funding);
-  TRY_STATUS(verify_workchain_value_flow(rows, allocations.transfers, max_participants, flow_limit,
+  // D61 has no coordinator funding edge or synthetic transfer allowance.
+  // Decoded custody output and local fees are funded by custody's own debit.
+  TRY_STATUS(verify_workchain_value_flow(rows, allocations.transfers, max_participants, max_transfers,
       extra_validation_cells));
   auto next_root = staged.get_wrapped_dict_root();
   WorkchainAccountDictionary next(next_root);
   TRY_RESULT(changed, original.changed_accounts(next, max_participants));
   TRY_STATUS(access.finish(changed, participants));
   return WorkchainPayoutOverlay{{next_root, blocks.get_wrapped_dict_root(), schedule.end_lt}, payout,
-                                pair.accounting.fee_funding, std::move(imports), std::move(exports)};
+                                std::move(imports), std::move(exports)};
 }
 
 // Both old state and claimed cells require prior source-aware admission. This

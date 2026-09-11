@@ -7,7 +7,6 @@ namespace block {
 struct WorkchainPayoutAccounting {
   CurrencyCollection custody_after, operator_after;
   CurrencyCollection exported;  // Payment plus forwarding value still in flight.
-  WorkchainInternalTransfer fee_funding;
   // Incremental payout-stage rows: input balances are already post-import,
   // post-allocation and (if enabled) post-disposal. These are not complete
   // transaction rows. Publishers must decode Native artifacts independently.
@@ -32,24 +31,25 @@ inline td::Result<WorkchainPayoutAccounting> account_workchain_payout(
       payment.tomis->sgn() <= 0) {
     return td::Status::Error("invalid payout accounting inputs");
   }
-  CurrencyCollection custody_after, operator_after, remaining_fee, exported;
-  // Native subtraction checks sufficient funds and each extra currency. In
-  // particular, neither spare operator funds nor custody principal may cover
-  // a deficit in the other account's independently checked obligation.
-  if (!CurrencyCollection::sub(custody_before, payment, custody_after) ||
-      !CurrencyCollection::sub(operator_before, total_fee, operator_after) ||
+  CurrencyCollection custody_after, operator_after = operator_before, remaining_fee, exported, debit;
+  // D61: payout principal and outward fees leave custody together. Coordinator
+  // funds cannot subsidize this debit. The return reserve stays in custody;
+  // authorization and reserve persistence are the enclosing host's duties.
+  // Native checked arithmetic also preserves every extra currency.
+  if (!CurrencyCollection::add(payment, total_fee, debit) ||
+      !debit.tomis->unsigned_fits_bits(256) ||
+      !CurrencyCollection::sub(custody_before, debit, custody_after) ||
       !CurrencyCollection::sub(total_fee, local_fee, remaining_fee) ||
       !CurrencyCollection::add(payment, remaining_fee, exported) ||
       !exported.tomis->unsigned_fits_bits(256)) {
     return td::Status::Error("payout principal or fee arithmetic out of bounds");
   }
-  WorkchainInternalTransfer funding{coordinator, custody, total_fee};
   std::vector<WorkchainAccountValueFlow> rows{
       {custody, custody_before, CurrencyCollection(0), custody_after, exported, local_fee},
       {coordinator, operator_before, CurrencyCollection(0), operator_after, CurrencyCollection(0), CurrencyCollection(0)}};
   std::sort(rows.begin(), rows.end(), [](const auto& a, const auto& b) { return a.account < b.account; });
-  TRY_STATUS(verify_workchain_value_flow(rows, {funding}, 2, 1, extra_validation_cells));
-  return WorkchainPayoutAccounting{custody_after, operator_after, exported, funding, std::move(rows)};
+  TRY_STATUS(verify_workchain_value_flow(rows, {}, 2, 0, extra_validation_cells));
+  return WorkchainPayoutAccounting{custody_after, operator_after, exported, std::move(rows)};
 }
 
 }  // namespace block
