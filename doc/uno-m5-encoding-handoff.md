@@ -145,3 +145,84 @@ check each exits 1 at the corresponding assertion. Reproduce with:
 These complete the two new-account checks previously listed under next step 2;
 they do not replace the already committed control ID/LT/count/closure checks or
 claim actual node invocation of the full-root decoder.
+
+## Ordered queue item 2: identical sweep attributions
+
+Already implemented in fc55a5590 and rerun after queue item 1:
+
+    /home/tomi/uno-m3-refund-assert-build/crypto/test-workchain-withdrawal-codec --filter IdenticalSweepAttributionUsesDistinctIssuedSequences
+    # Test_SystemOrigin_IdenticalSweepAttributionUsesDistinctIssuedSequences: PASS; 1 test passed
+
+The test copies the entire sweep attribution, including src, account_id,
+value and return_failed. Only issued sequence changes from 41 to 42. It compares
+all encoded attribution bytes (after the root kind and sequence), then checks
+distinct receipt IDs, distinct commitment bytes and distinct handle bytes via
+actual Rust V2 calls. Verifying the first ciphertext against the second request
+returns VERIFY=3. Zero sequence is separately rejected by the origin codec;
+its isolated check-removal control was recorded in 8683606c8.
+
+This is the exact identical-entry derivation case, not merely a codec
+roundtrip. It is still not a host sweep or atomic counter-installation test;
+those are distinct obligations in queue items 3 and 4.
+
+## Ordered queue item 3: actual sequencing producer not yet present
+
+Read-only inspection of A's committed tree `2353777c7` (not WIP) found the
+only issuance counter install in `workchain-deposit-transition.h:81`.
+`workchain-deposit-admission.h:80` calls the checked helper; the helper at
+`workchain-coordinator-state.h:131` rejects UINT64_MAX before increment.
+The new `associate_workchain_withdrawal_return` explicitly performs read-only
+association: no receipt issuance, counter advance or W/P release.
+
+Consequently three-source same-batch sequencing cannot yet be tested against
+actual host producers. This item is NOT complete. When A commits those producers,
+feed their actual before/after coordinator and pending roots into controls for:
+(1) chained staged counters, (2) two competing successors of the same old value,
+and (3) failure/no-receipt paths publishing an increment. Do not substitute a
+hand-built synthetic counter trace and call it three-source host evidence.
+Queue item 4 (real D62/D63 integration) likewise remains pending, not skipped
+or declared covered. No A implementation or prediction fixture was modified.
+
+Queue item 5 was already frozen separately in `475214710` (English-reference
+follow-up `9be4f9c67`), before these queue instructions. Both invariant equations
+hold algebraically in the deficient Failed branch; it is not an actual host
+observation. Do not duplicate or rewrite that prediction while waiting for
+items 3/4. The earlier specification SHA remains its evidence provenance.
+
+## D51 arrival trigger for the pending sequencing controls
+
+`test-workchain-system-sequence-expiry` is now in default CTest. It inventories
+counter/allocator syntax units over explicit Native/account roots plus the named
+test-scope registered Native adapter. Initial reachability is 221 files, printed
+on every run; exceeding 442 requires scope review. Current installation is the
+Deposit successor only; serialization and read references are explicitly pinned.
+
+Default CTest passed in 1.65 seconds. New reachable-file writer, same-file writer
+and changed existing writer each trigger the expiry action. Unrelated adjacent
+fields and disconnected files do not. In an isolated script variant, disabling
+the inventory comparison exits 1 at the new-writer control. No production source
+was mutated for these controls.
+
+This is a lexical/static arrival trigger, not three-source sequencing evidence.
+New reads conservatively require review too. Aliases, indirect writes/runtime
+coupling and separately linked units outside named roots are not inferred.
+When it expires, install real host controls for staged increments, competing
+successors and failure/no-receipt nonpublication before accepting another writer;
+do not merely refresh the baseline. Actual D62/D63 remains deferred as directed.
+
+The effective queue's D68 item is complete: see
+`doc/uno-m5-d68-d51-applicability.md` for the current specification hash and
+explicit algebra checking both equations. The earlier frozen prediction is
+unchanged. This is not a report of host execution or fee measurements.
+
+## Executable successor handoff
+
+See `doc/uno-m5-sequence-handoff.md` for the six exact host test contracts,
+fixture provenance, committed-state assertions and mutation failure points.
+`workchain-system-sequence-handoff.py --build BUILD_DIRECTORY` fails closed
+when successor tests are missing or disabled. Current run exits 1 listing all
+six missing tests; this is readiness evidence, not host sequencing evidence.
+The default expiry diagnostic now points to that procedure. Its scanning scope
+and predicate are unchanged. Only B's sequence premise expires on a new issuer;
+A's prepare guard remains until its separate Native prepare evidence exists.
+Specification: memo 19d0446e / SHA256 prefix 71968ef2afb0d917.
