@@ -36,7 +36,9 @@ inline td::Status assert_balance(std::uint64_t actual, std::uint64_t expected) {
 // linear scan of the test balance range. No production decryption API is added.
 inline td::Result<std::uint64_t> decrypt(const WorkchainCiphertext& ciphertext, const Point& secret,
                                          std::uint64_t bound) {
-  if (bound > 1000000000ULL)
+  // Two minimum-size M4 Deposits require a two-TOS test decryption range.
+  // This remains a bounded wallet assertion, not node-side decryption.
+  if (bound > 2000000000ULL)
     return alarm("test decryption bound too large");
   if (!confidential_state_detail::canonical_ciphertext(ciphertext))
     return alarm("noncanonical ciphertext");
@@ -58,7 +60,7 @@ inline td::Result<std::uint64_t> decrypt(const WorkchainCiphertext& ciphertext, 
     return alarm("basepoint failed");
   std::uint64_t width = 1;
   while (width * width <= bound)
-    ++width;  // width <= 31623, checked bound above.
+    ++width;  // width <= 44722, checked bound above; square fits uint64.
   std::map<Point, std::uint64_t> baby;
   Point cursor{};
   for (std::uint64_t j = 0; j < width; ++j) {
