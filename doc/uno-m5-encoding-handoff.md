@@ -145,3 +145,22 @@ check each exits 1 at the corresponding assertion. Reproduce with:
 These complete the two new-account checks previously listed under next step 2;
 they do not replace the already committed control ID/LT/count/closure checks or
 claim actual node invocation of the full-root decoder.
+
+## Ordered queue item 2: identical sweep attributions
+
+Already implemented in fc55a5590 and rerun after queue item 1:
+
+    /home/tomi/uno-m3-refund-assert-build/crypto/test-workchain-withdrawal-codec --filter IdenticalSweepAttributionUsesDistinctIssuedSequences
+    # Test_SystemOrigin_IdenticalSweepAttributionUsesDistinctIssuedSequences: PASS; 1 test passed
+
+The test copies the entire sweep attribution, including src, account_id,
+value and return_failed. Only issued sequence changes from 41 to 42. It compares
+all encoded attribution bytes (after the root kind and sequence), then checks
+distinct receipt IDs, distinct commitment bytes and distinct handle bytes via
+actual Rust V2 calls. Verifying the first ciphertext against the second request
+returns VERIFY=3. Zero sequence is separately rejected by the origin codec;
+its isolated check-removal control was recorded in 8683606c8.
+
+This is the exact identical-entry derivation case, not merely a codec
+roundtrip. It is still not a host sweep or atomic counter-installation test;
+those are distinct obligations in queue items 3 and 4.
