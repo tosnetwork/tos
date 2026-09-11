@@ -36,7 +36,8 @@ class SmartContractCode {
     RestrictedWallet,
     WalletV4,
     WalletV5,
-    SessionWallet
+    SessionWallet,
+    AgentAccount
   };
   static td::Span<int> get_revisions(Type type);
   static td::Result<int> validate_revision(Type type, int revision);

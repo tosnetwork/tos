@@ -44,7 +44,14 @@ target_link_libraries(validator-engine metrics overlay tdutils tdactor adnl tl_a
   rldp2 quic full-node validator tos_validator validator
   fift-lib memprof git ${JEMALLOC_LIBRARIES})
 
-target_link_libraries(validator-engine smc-envelope json-rpc-parse)
+add_library(json-rpc-account-model STATIC
+  json-rpc-account-model.h
+  json-rpc-account-model.cpp
+)
+target_link_libraries(json-rpc-account-model PUBLIC smc-envelope tos_crypto tdutils)
+target_include_directories(json-rpc-account-model PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+
+target_link_libraries(validator-engine smc-envelope json-rpc-parse json-rpc-account-model)
 if (JEMALLOC_FOUND)
   target_include_directories(validator-engine PRIVATE ${JEMALLOC_INCLUDE_DIR})
   target_compile_definitions(validator-engine PRIVATE -DTOS_USE_JEMALLOC=1)

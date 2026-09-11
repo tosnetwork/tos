@@ -82,7 +82,13 @@ jobs:
           TOS_ROOT: ${{ github.workspace }}
           FUNC_PATH: ${{ github.workspace }}/build/crypto/func
           FIFT_PATH: ${{ github.workspace }}/build/crypto/fift
-        run: cargo test --manifest-path tosctl/src/Cargo.toml -p contracts --locked
+        # --no-fail-fast is load-bearing, not tidiness. cargo stops after the
+        # first test target that fails, so a single red unit test in --lib
+        # means every suite under tests/ is never executed and the run reports
+        # only the failure it reached first. That is how a contract change
+        # that broke four deploy sandbox tests showed up here as three stale
+        # hash assertions and nothing else.
+        run: cargo test --manifest-path tosctl/src/Cargo.toml -p contracts --locked --no-fail-fast
 
       - name: Frozen BOCs match their sources
         run: git diff --exit-code
