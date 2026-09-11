@@ -28,6 +28,7 @@ import asyncio
 import base64
 import hashlib
 import json
+import random
 import re
 import shutil
 import socket
@@ -293,6 +294,11 @@ class ValidatorElectionRehearsal:
         consensus_cleanup_archive_ttl: int = 0,
         measure_live_rejoin: bool = False,
         live_rejoin_only: bool = False,
+        soak_mode: bool = False,
+        soak_duration: float = 600.0,
+        soak_min_interval: float = 1.0,
+        soak_max_interval: float = 5.0,
+        soak_wallet_funding_tos: int = 2000,
     ):
         self.run_dir = run_dir
         self.network_dir = run_dir / "network"
@@ -304,6 +310,14 @@ class ValidatorElectionRehearsal:
         self.measure_live_rejoin = measure_live_rejoin
         self.live_rejoin_only = live_rejoin_only
         self.live_rejoin_result: dict[str, Any] | None = None
+        # transfer-soak mode: randomized A/B/C transfers under real block production, with
+        # cross-node balance (到账) consistency checks. Leak monitoring is external
+        # (scripts/soak-mem-monitor.py).
+        self.soak_mode = soak_mode
+        self.soak_duration = soak_duration
+        self.soak_min_interval = soak_min_interval
+        self.soak_max_interval = soak_max_interval
+        self.soak_wallet_funding = soak_wallet_funding_tos * NANO
         # ACCEPTANCE-ONLY opt-in: arm the gated validator consensus-DB cleanup on every
         # validator engine and shrink state/archive TTLs so the GC floor can advance
         # once the election produces a post-genesis key block. Default off leaves the
@@ -1477,6 +1491,163 @@ class ValidatorElectionRehearsal:
             raise AssertionError(f"consensus-status probe failed: {failures}")
         return result
 
+    async def _node_account_balance(self, index: int, address: Address, seqno: int | None = None) -> int:
+        """Account balance (nanotos) as node <index>'s own JSON-RPC reports it, optionally at a
+        specific masterchain seqno so all nodes can be compared at the SAME height."""
+        assert self.experiment is not None
+        params: dict[str, Any] = {"address": raw_address(address)}
+        if seqno is not None:
+            params["seqno"] = int(seqno)
+        resp = await asyncio.to_thread(json_rpc_call, self.experiment.rpc_addresses[index], "getAddressBalance", params)
+        return int(resp["result"])
+
+    async def transfer_soak(self, faucet: WalletV1) -> dict[str, Any]:
+        """Randomized A/B/C transfer load under real block production, verifying cross-node
+        到账 consistency after every transfer: fund three wallets from the faucet, then
+        repeatedly move a random amount between two distinct accounts; after each confirmed
+        transfer, require EVERY node's JSON-RPC to report identical balances for the three
+        accounts AT A COMMON masterchain height (a divergence means a node is out of sync or
+        forked), and require the destination to have actually been credited. Per-node RSS/FD
+        leak sampling runs in parallel via scripts/soak-mem-monitor.py."""
+        assert self.experiment is not None and self.client is not None
+        names = ["A", "B", "C"]
+        wallets: dict[str, WalletV1] = {}
+        for name in names:
+            before = await self.wallet_seqno(faucet)
+            wallet = await faucet.deploy(
+                WalletV1Blueprint(workchain=-1), CurrencyCollection(tomis=self.soak_wallet_funding), seqno=before
+            )
+            await self.wait_wallet_seqno(faucet, before + 1)
+            await self.retry(
+                lambda wallet=wallet: self.balance(wallet.address),
+                timeout=60, description=f"soak wallet {name} funding",
+                predicate=lambda v: v >= self.soak_wallet_funding - NANO,
+            )
+            wallets[name] = wallet
+            self.event("soak_wallet_funded", wallet=name, address=raw_address(wallet.address))
+
+        node_count = len(self.experiment.rpc_addresses)
+        transfers = 0
+        consistency_checks = 0
+        failures: list[str] = []
+        started = time.monotonic()
+        deadline = started + self.soak_duration
+        while time.monotonic() < deadline:
+            await asyncio.sleep(random.uniform(self.soak_min_interval, self.soak_max_interval))
+            src_name, dst_name = random.sample(names, 2)
+            src, dst = wallets[src_name], wallets[dst_name]
+            src_balance = await self.balance(src.address)
+            if src_balance < 2 * NANO:  # keep something for fees
+                continue
+            amount = random.randint(1, max(1, (src_balance - NANO) // 4))
+            dst_before = await self.balance(dst.address)
+            try:
+                await self.send_from_wallet(
+                    src, dest=dst.address, amount=amount, body=Cell.empty(), label=f"soak-{src_name}->{dst_name}"
+                )
+            except Exception as error:  # noqa: BLE001
+                failures.append(f"transfer {src_name}->{dst_name} amount={amount} failed: {error}")
+                continue
+            transfers += 1
+            # 到账 on the authoritative (node 0) view: the destination must be credited.
+            try:
+                await self.retry(
+                    lambda: self.balance(dst.address), timeout=60, interval=1,
+                    description=f"soak {dst_name} credited", predicate=lambda v: v > dst_before,
+                )
+            except Exception as error:  # noqa: BLE001
+                failures.append(f"{src_name}->{dst_name} not credited on node 1: {error}")
+                continue
+            # Cross-node consistency: compare all nodes at a common confirmed height.
+            tips = [await self._node_mc_seqno(i) for i in range(node_count)]
+            common = min(tips)
+            for name, wallet in wallets.items():
+                seen = set()
+                for i in range(node_count):
+                    try:
+                        seen.add(await self._node_account_balance(i, wallet.address, seqno=common))
+                    except Exception as error:  # noqa: BLE001
+                        failures.append(f"node {i + 1} balance {name}@{common} query failed: {error}")
+                if len(seen) > 1:
+                    failures.append(f"nodes disagree on {name} balance at seqno {common}: {sorted(seen)}")
+            consistency_checks += 1
+            if transfers % 10 == 0:
+                self.event("soak_progress", transfers=transfers, consistency_checks=consistency_checks,
+                           failures=len(failures))
+
+        result = {
+            "verdict": "passed" if not failures else "failed",
+            "transfers": transfers,
+            "cross_node_consistency_checks": consistency_checks,
+            "nodes": node_count,
+            "duration_seconds": round(time.monotonic() - started, 1),
+            "wallets": {n: raw_address(w.address) for n, w in wallets.items()},
+            "failures": failures[:20],
+        }
+        (self.run_dir / "transfer-soak-analysis.json").write_text(json.dumps(result, indent=2) + "\n")
+        self.event("transfer_soak_complete", verdict=result["verdict"], transfers=transfers,
+                   consistency_checks=consistency_checks, failures=len(failures))
+        if failures:
+            raise AssertionError(f"transfer soak failed ({len(failures)} issue(s)): {failures[:5]}")
+        return result
+
+    async def verify_post_cleanup_rejoin(self) -> dict[str, Any]:
+        """The full post-cleanup rejoin acceptance: pick a NON-ZERO node that has actually
+        completed a REAL validator cleanup (a VALCLEANUP erase_ack in its own log, i.e. a real
+        obsolete validator DB was deleted and its durable record erased), restart it on the
+        SAME db_root, and prove it recovers sync and keeps tracking the same chain. This turns
+        post_cleanup_recovery from NOT_EXERCISED into a real result. It proves sync recovery
+        after a real cleanup, NOT re-participation in consensus signing."""
+        assert self.experiment is not None
+        erase_re = re.compile(r"VALCLEANUP erase_ack ")
+        candidates = []
+        for i in range(1, len(self.nodes)):  # node 0 hosts the shared lite-client -> off limits
+            try:
+                text = self.nodes[i].log_path.read_text(errors="replace")
+            except FileNotFoundError:
+                continue
+            acks = len(erase_re.findall(text))
+            if acks > 0:
+                candidates.append((i, acks))
+        self.event(
+            "post_cleanup_rejoin_candidates",
+            candidates=[{"node": i + 1, "erase_acks": n} for i, n in candidates],
+        )
+        if not candidates:
+            # No node completed a real cleanup in this window -> the property genuinely was not
+            # exercised. Report it honestly rather than passing a hollow check.
+            result = {
+                "verdict": "NOT_EXERCISED",
+                "reason": "no non-zero node completed a real validator cleanup (VALCLEANUP erase_ack) in this run",
+            }
+            (self.run_dir / "post-cleanup-rejoin-analysis.json").write_text(json.dumps(result, indent=2) + "\n")
+            self.event("post_cleanup_rejoin_not_exercised")
+            return result
+        # Prefer the node that erased the most (most exercised).
+        node_index = max(candidates, key=lambda c: c[1])[0]
+        rejoin = await self.verify_live_rejoin(node_index=node_index)
+        probe = await self.probe_consensus_status()
+        recovered = rejoin.get("post_cleanup_recovery")
+        result = {
+            "verdict": "passed" if recovered == "passed" else "failed",
+            "target_node": node_index + 1,
+            "target_pre_restart_erase_acks": rejoin.get("pre_restart_erase_acks"),
+            "post_cleanup_recovery": recovered,
+            "does_not_prove": "re-participation in consensus block signing",
+            "rejoin": rejoin,
+            "consensus_status_probe_verdict": probe.get("verdict"),
+        }
+        (self.run_dir / "post-cleanup-rejoin-analysis.json").write_text(json.dumps(result, indent=2) + "\n")
+        self.event(
+            "post_cleanup_rejoin_result",
+            verdict=result["verdict"],
+            target_node=node_index + 1,
+            post_cleanup_recovery=recovered,
+        )
+        if result["verdict"] != "passed":
+            raise AssertionError(f"post-cleanup rejoin failed on node {node_index + 1}: post_cleanup_recovery={recovered}")
+        return result
+
     async def verify_live_rejoin(self, node_index: int = 3) -> dict[str, Any]:
         """Prove a NON-ZERO validator, restarted while its peers keep producing blocks,
         RECOVERS SYNC and keeps tracking the live chain rather than merely replaying its
@@ -2049,16 +2220,16 @@ class ValidatorElectionRehearsal:
     async def run_experiment(self) -> None:
         assert self.experiment is not None
         self.rpc_readiness = await self.wait_json_rpc_readiness()
-        # Opt-in live-rejoin check runs against the freshly-ready network (already
-        # producing blocks) before the long election window. live_rejoin_only exits right
-        # after, for a fast dedicated rejoin run.
-        if self.measure_live_rejoin:
+        # Fast dedicated rejoin: check rejoin against the freshly-ready network (already
+        # producing blocks) and exit, without the long election window. Here no real cleanup
+        # has happened yet, so post_cleanup_recovery is reported NOT_EXERCISED. The full
+        # post-cleanup rejoin (a node that has actually erase_acked, restarted) runs at the
+        # END of the experiment instead -- see below.
+        if self.measure_live_rejoin and self.live_rejoin_only:
             await self.verify_live_rejoin()
-            # Verify the read-only consensus-status admin endpoint on the live network too.
             await self.probe_consensus_status()
-            if self.live_rejoin_only:
-                self.event("live_rejoin_only_complete")
-                return
+            self.event("live_rejoin_only_complete")
+            return
         started_wall = time.time()
         started_monotonic = time.monotonic()
         deadline_monotonic = started_monotonic + self.experiment.duration_seconds
@@ -2181,6 +2352,11 @@ class ValidatorElectionRehearsal:
             outstanding_allocations=outstanding,
             settlement_tail_elapsed=True,
         )
+        # Full post-cleanup rejoin: by now cleanup has run across the whole election window,
+        # so a node has really erase_acked. Restart that node on its own db_root and prove it
+        # keeps tracking the same chain -- turning post_cleanup_recovery into a real result.
+        if self.measure_live_rejoin:
+            await self.verify_post_cleanup_rejoin()
         self.require_complete_experiment_settlement(outstanding)
 
     async def chain_heads(self) -> dict[str, int]:
@@ -2431,6 +2607,12 @@ class ValidatorElectionRehearsal:
             )
 
             faucet = network.zerostate.main_wallet(self.client)
+
+            if self.soak_mode:
+                self.monitor_task = asyncio.create_task(self.metrics_monitor())
+                await self.transfer_soak(faucet)
+                return
+
             await self.setup_wallets(faucet)
 
             if self.experiment is not None:
@@ -2692,13 +2874,22 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--mode",
-        choices=("launch-gate", "experiment"),
+        choices=("launch-gate", "experiment", "transfer-soak"),
         default="launch-gate",
         help=(
             "launch-gate preserves the finite Stage-A/Stage-B rehearsal; "
-            "experiment runs stable Stage A for a requested observation window"
+            "experiment runs stable Stage A for a requested observation window; "
+            "transfer-soak runs randomized A/B/C transfers with cross-node 到账 checks"
         ),
     )
+    parser.add_argument("--soak-duration", type=float, default=600.0,
+                        help="transfer-soak: seconds to run the random-transfer loop")
+    parser.add_argument("--soak-min-interval", type=float, default=1.0,
+                        help="transfer-soak: minimum seconds between transfers")
+    parser.add_argument("--soak-max-interval", type=float, default=5.0,
+                        help="transfer-soak: maximum seconds between transfers")
+    parser.add_argument("--soak-wallet-funding-tos", type=int, default=2000,
+                        help="transfer-soak: initial funding per A/B/C wallet, in TOS")
     parser.add_argument(
         "--stage",
         choices=sorted(PROFILES),
@@ -2793,10 +2984,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 async def async_main() -> int:
     args = parse_args()
     profile = PROFILES[args.stage]
-    if args.mode == "experiment" and not profile.accelerated:
-        raise ValueError("experiment mode requires the accelerated Stage-A profile")
+    if args.mode in ("experiment", "transfer-soak") and not profile.accelerated:
+        raise ValueError(f"{args.mode} mode requires the accelerated Stage-A profile")
     experiment = None
-    if args.mode == "experiment":
+    if args.mode in ("experiment", "transfer-soak"):
+        # transfer-soak reuses the experiment network (4 loopback JSON-RPC nodes) but runs the
+        # transfer loop instead of the election observation window.
         experiment = ExperimentProfile(
             duration_seconds=args.duration_seconds,
             settlement_tail_seconds=args.settlement_tail_seconds,
@@ -2829,6 +3022,11 @@ async def async_main() -> int:
         consensus_cleanup_archive_ttl=args.consensus_cleanup_archive_ttl,
         measure_live_rejoin=args.measure_live_rejoin,
         live_rejoin_only=args.live_rejoin_only,
+        soak_mode=(args.mode == "transfer-soak"),
+        soak_duration=args.soak_duration,
+        soak_min_interval=args.soak_min_interval,
+        soak_max_interval=args.soak_max_interval,
+        soak_wallet_funding_tos=args.soak_wallet_funding_tos,
     )
     try:
         await stage.execute()
