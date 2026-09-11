@@ -31,6 +31,7 @@
 #include "block/validator-set.h"
 #include "block/workchain-execution-dispatch.h"
 #include "block/workchain-instance-identity.h"
+#include "block/workchain-account-settlement.h"
 #include "crypto/openssl/rand.hpp"
 #include "td/actor/SharedFuture.h"
 #include "td/db/utils/BlobView.h"
@@ -2284,7 +2285,7 @@ bool Collator::fetch_config_params() {
     block::LocalWorkchainRoleSet local_roles;
     local_roles.required_workchains.insert(workchain());
     auto status = block::default_workchain_execution_registry().validate_required_workchains(
-        config_->get_workchain_list(), *config_, local_roles);
+        config_->get_workchain_list(), *config_, local_roles, &stats_.account_readiness);
     if (status.is_error()) {
       return fatal_error(status.move_as_error_prefix("cannot execute configured workchain: "));
     }
@@ -2448,12 +2449,18 @@ td::actor::Task<> Collator::do_collate_inner() {
   // No generic visitor: a new execution family must choose its own live path,
   // rather than silently inheriting ordinary account execution.
   using BlockPointer = const block::ResolvedWorkchainBlockExecution*;
+  const block::ResolvedWorkchainAccountBinding* account_execution = nullptr;
   auto selected = execution.has_value() ? std::visit(td::overloaded(
       [](const block::ResolvedWorkchainExecution&) -> td::Result<BlockPointer> {
         return nullptr;
       },
       [](const block::ResolvedWorkchainBlockExecution& block) -> td::Result<BlockPointer> { return &block; },
-      [](const block::ResolvedWorkchainAccountBinding&) -> td::Result<BlockPointer> {
+      [this, &account_execution](const block::ResolvedWorkchainAccountBinding& binding) -> td::Result<BlockPointer> {
+        if (block::default_workchain_execution_registry().test_only_account_instance_execution_enabled(binding)) {
+          account_execution = &binding;
+          return nullptr;
+        }
+        stats_.account_readiness = {block::WorkchainReadinessPhase::AccountCollationRefused, workchain()};
         return td::Status::Error(static_cast<int>(block::WorkchainExecutionFailure::LocalUnavailable),
                                  "multi-account admission and replay are not connected");
       }), *execution) : td::Result<BlockPointer>(nullptr);
@@ -2467,9 +2474,22 @@ td::actor::Task<> Collator::do_collate_inner() {
     }
     params_.workchain_block_candidate = candidate.move_as_ok();
   }
-  auto candidate_status = block::validate_workchain_candidate_scope(
-      params_.workchain_block_candidate, block_execution ? block::WorkchainExecutionScope::BlockTransition
-                                                         : block::WorkchainExecutionScope::AccountCompute);
+  if (account_execution && !params_.workchain_account_candidate &&
+      params_.collator_opts->workchain_account_candidate_source) {
+    auto candidate = params_.collator_opts->workchain_account_candidate_source(params_.shard);
+    if (candidate.is_error()) co_return candidate.move_as_error();
+    params_.workchain_account_candidate.emplace(candidate.move_as_ok());
+  }
+  if (account_execution && !params_.workchain_account_candidate)
+    co_return td::Status::Error(-7201, "account batch candidate source unavailable");
+  // AccountBinding is not a BlockTransition pointer. Keep the complete carrier
+  // through the scope check; stripping declarations recreates a false positive.
+  auto candidate_status = account_execution
+      ? block::validate_workchain_candidate_scope(*params_.workchain_account_candidate,
+                                                   block::WorkchainExecutionScope::AccountBatch)
+      : block::validate_workchain_candidate_scope(
+          params_.workchain_block_candidate, block_execution ? block::WorkchainExecutionScope::BlockTransition
+                                                             : block::WorkchainExecutionScope::AccountCompute);
   if (candidate_status.is_error()) {
     co_return candidate_status;
   }
@@ -2501,7 +2521,20 @@ td::actor::Task<> Collator::do_collate_inner() {
   if (!init_value_create()) {
     co_return td::Status::Error("cannot compute the value to be created / minted / recovered");
   }
-  if (block_execution) {
+  if (account_execution) {
+    if (after_split_ || before_split_ || after_merge_ || !in_msg_dict->is_empty())
+      co_return td::Status::Error(-7201, "account batch requires unsplit state");
+    collect_batch_imports_ = true;
+    batch_executor_address_ = account_execution->ingress.executor_address;
+    allow_repeat_collation_ = false;
+    if (!process_dispatch_queue() || !process_inbound_internal_messages())
+      co_return td::Status::Error(-7201, "cannot acquire account batch Native imports");
+    auto result = create_workchain_account_batch(*account_execution);
+    if (result.is_error()) co_return result;
+    bool enqueue_only = true;
+    if (!process_new_messages(enqueue_only))
+      co_return td::Status::Error(-7201, "cannot enqueue account batch Native exports");
+  } else if (block_execution) {
     if (after_split_ || before_split_ || after_merge_ || !in_msg_dict->is_empty()) {
       co_return td::Status::Error("block batch collation requires unsplit state");
     }
@@ -2615,6 +2648,16 @@ td::actor::Task<> Collator::do_collate_inner() {
   LOG(DEBUG) << "serialize Block";
   if (!create_block()) {
     co_return td::Status::Error("cannot create new Block");
+  }
+  if (account_output_admission_) {
+    // Extend, never reset, the execution output union through the actual queue
+    // records and Merkle update in the finished block. Private settlement alone
+    // did not admit these artifacts and must not authorize their publication.
+    auto admitted = block::account_settlement_detail::contain_local_output_failure([&] {
+      return block::account_settlement_detail::charge_closure(account_output_admission_, new_block,
+          "account batch final block exceeds output allowance", "account batch final block unavailable");
+    });
+    if (admitted.is_error()) co_return admitted;
   }
   // E. create collated data
   if (!create_collated_data()) {
@@ -3189,7 +3232,11 @@ bool Collator::process_account_storage_dict(block::Account& account) {
  * @returns True if the operation is successful, false otherwise.
  */
 bool Collator::combine_account_transactions() {
-  vm::AugmentedDictionary dict{256, block::tlb::aug_ShardAccountBlocks};
+  if (account_batch_blocks_.not_null() && !accounts.empty())
+    return fatal_error("account batch cannot mix with Native account execution");
+  vm::AugmentedDictionary dict = account_batch_blocks_.not_null()
+      ? vm::AugmentedDictionary(vm::load_cell_slice_ref(account_batch_blocks_), 256, block::tlb::aug_ShardAccountBlocks)
+      : vm::AugmentedDictionary(256, block::tlb::aug_ShardAccountBlocks);
   for (auto& z : accounts) {
     block::Account& acc = *(z.second);
     CHECK(acc.addr == z.first);
@@ -3464,6 +3511,118 @@ bool Collator::create_ticktock_transaction(const tos::StdSmcAddress& smc_addr, t
   register_new_msgs(*trans, std::move(new_msg_metadata));
   ++stats_.transactions;
   return true;
+}
+
+td::Status Collator::create_workchain_account_batch(const block::ResolvedWorkchainAccountBinding& execution) {
+  auto local = [](td::Slice reason) { return td::Status::Error(-7201, reason); };
+  if (!account_binding_owner_ || !params_.workchain_account_candidate || !accounts.empty() ||
+      account_batch_blocks_.not_null() || !execution.ingress.custody_address)
+    return local("account batch actor context unavailable");
+  const auto& owned = account_binding_owner_->binding();
+  if (owned.ingress.engine_configuration->get_hash() != execution.ingress.engine_configuration->get_hash())
+    return local("account batch adapter belongs to another configuration");
+  TRY_RESULT(parameters, block::decode_workchain_engine_parameters(execution.ingress.engine_configuration));
+  const auto& limits = execution.input_policy.resources();
+  block::gen::ShardStateUnsplit::Record previous;
+  if (!tlb::unpack_cell(prev_state_root_, previous)) return local("account batch old shard unavailable");
+  std::vector<Ref<vm::Cell>> envelopes;
+  for (const auto& imported : batch_imports_) envelopes.push_back(imported.envelope);
+  block::WorkchainHostIdentity identity{global_id_, config_->get_zerostate_id().root_hash, parameters.instance_id,
+      workchain(), shard_.shard, td::Bits256(execution.input_policy.identity().configuration_hash.bits()),
+      execution.input_policy.identity().extended, execution.input_policy.identity().engine_selector,
+      execution.input_policy.identity().vm_mode, execution.input_policy.identity().descriptor_version,
+      execution.input_policy.identity().admission_version, td::Bits256(prev_state_root_->get_hash().bits()),
+      new_block_seqno, now_, start_lt, mc_state_root};
+  block::BatchInputAdmissionSession session(execution.input_policy, params_.workchain_account_candidate->candidate(),
+      params_.workchain_account_candidate->declarations(), identity, envelopes);
+  const auto& admission = session.evaluate();
+  if (const auto* error = std::get_if<block::BatchInputAdmissionFailure>(&admission))
+    return td::Status::Error(static_cast<int>(error->category), td::Slice(error->reason));
+  const auto& admitted = std::get<block::AdmittedBatchInput>(admission);
+  const auto& adapter = account_binding_owner_->adapter();
+  TRY_RESULT(proofs, block::ProofAdmittedBatchInput::admit(adapter, admitted));
+  if (!account_execution_ledger_) account_execution_ledger_.emplace(limits.input.max_roots);
+  const auto claim = account_execution_ledger_->record_attempt(proofs.root()->get_hash());
+  if (claim != block::WorkchainExecutionClaim::Recorded)
+    return td::Status::Error(claim == block::WorkchainExecutionClaim::BoundExceeded ? -7200 : -7201,
+                             "account batch execution attempt cannot be recorded");
+  auto acquired = block::NativeCellMaterializer::run(envelopes,
+      {limits.input.max_cells, limits.input.max_bits, limits.input.max_inbound});
+  const auto* native = std::get_if<block::MaterializedNativeCells>(&acquired);
+  if (!native) return local("account batch Native inbox materialization unavailable");
+  if (!limits.state.max_cells || limits.state.max_cells > INT_MAX)
+    return local("account batch currency validation bound unsupported");
+  TRY_RESULT(settled, block::execute_and_settle_workchain_accounts(adapter, previous.accounts, identity, proofs,
+      *native, *execution.ingress.custody_address, execution.ingress.executor_address, td::make_refint(0),
+      static_cast<int>(limits.state.max_cells), serialize_cfg_, action_phase_cfg_));
+  if (!settled.output_admission) return local("account batch lacks output admission continuation");
+  account_output_admission_.emplace(*settled.output_admission);
+  // Only complete private Native artifacts escape settlement. Adopt those exact
+  // serialized transactions, never execute ordinary phases to rebuild them.
+  vm::AugmentedDictionary blocks(vm::load_cell_slice_ref(settled.state.account_blocks), 256,
+                                  block::tlb::aug_ShardAccountBlocks);
+  vm::AugmentedDictionary next(vm::load_cell_slice_ref(settled.state.accounts), 256,
+                                block::tlb::aug_ShardAccounts);
+  std::uint64_t participants = 0;
+  const bool valid = blocks.check_for_each_extra([&](Ref<vm::CellSlice> value, Ref<vm::CellSlice>,
+                                                    td::ConstBitPtr key, int key_bits) {
+    if (key_bits != 256 || participants >= limits.input.max_writes) return false;
+    ++participants;  // Checked against the authenticated count before increment.
+    block::gen::AccountBlock::Record ab;
+    if (!block::gen::t_AccountBlock.unpack(value.write(), ab) || !value->empty() || ab.account_addr != key)
+      return false;
+    block::tlb::ShardAccount::Record account;
+    auto leaf = next.lookup(key, 256);
+    if (leaf.is_null() || !account.unpack(leaf)) return false;
+    vm::AugmentedDictionary txs(vm::DictNonEmpty(), ab.transactions, 64, block::tlb::aug_AccountTransactions);
+    unsigned count = 0;
+    if (!txs.check_for_each_extra([&](Ref<vm::CellSlice> tx_leaf, Ref<vm::CellSlice>,
+                                     td::ConstBitPtr lt, int bits) {
+          if (bits != 64 || count != 0) return false;
+          ++count;
+          auto root = tx_leaf->prefetch_ref();
+          block::gen::Transaction::Record tx;
+          if (!tlb::unpack_cell(root, tx) || tx.account_addr != key || tx.lt != lt.get_uint(64) ||
+              account.last_trans_hash != root->get_hash().bits() || tx.lt != account.last_trans_lt)
+            return false;
+          return block_limit_status_->add_cell(root) && block_limit_status_->add_transaction();
+        }) || count != 1) return false;
+    return block_limit_status_->add_proof(account.account) && block_limit_status_->add_account();
+  });
+  if (!valid || participants == 0) return local("account batch Native transaction inventory inconsistent");
+  vm::AugmentedDictionary imports(vm::load_cell_slice_ref(settled.imports.in_msg_descr), 256, aug_InMsgDescr);
+  for (const auto& imported : batch_imports_) {
+    block::tlb::MsgEnvelope::Record_std envelope;
+    if (!tlb::unpack_cell(imported.envelope, envelope)) return local("account batch import envelope unavailable");
+    auto leaf = imports.lookup(envelope.msg->get_hash().bits(), 256);
+    if (leaf.is_null()) return local("account batch final import missing");
+    auto in_msg = vm::CellBuilder().append_cellslice(*leaf).finalize();
+    if (imported.from_own_queue) {
+      vm::CellBuilder out;
+      if (!out.store_long_bool(4, 3) || !out.store_ref_bool(imported.envelope) || !out.store_ref_bool(in_msg) ||
+          !insert_out_msg(out.finalize()) || !delete_out_msg_queue_msg(imported.queue_key.cbits()))
+        return local("cannot dequeue account batch import");
+    }
+    if (!insert_in_msg(in_msg)) return local("cannot insert account batch final import");
+  }
+  for (auto& message : settled.exports) {
+    block::gen::Transaction::Record transaction;
+    if (!tlb::unpack_cell(message.trans, transaction)) return local("account batch export transaction unavailable");
+    if (msg_metadata_enabled_)
+      message.metadata = block::MsgMetadata{0, workchain(), transaction.account_addr, transaction.lt};
+    register_new_msg(std::move(message));
+  }
+  if (stats_.transactions > UINT32_MAX || participants > UINT32_MAX - stats_.transactions)
+    return local("account batch transaction statistics overflow");
+  stats_.transactions += static_cast<td::uint32>(participants);
+  block_limit_status_->update_lt(settled.state.end_lt);
+  // Account dictionary sizing uses the actual changed dictionary. No Native
+  // Transaction object exists here from which to infer ordinary phase costs.
+  block_limit_status_->add_proof(next.get_root_cell());
+  account_batch_blocks_ = settled.state.account_blocks;
+  account_dict = std::make_unique<vm::AugmentedDictionary>(std::move(next));
+  update_max_lt(settled.state.end_lt);
+  return td::Status::OK();
 }
 
 bool Collator::create_workchain_batch_transaction(const block::ResolvedWorkchainBlockExecution& execution,

@@ -106,7 +106,7 @@ foreach(script ${genesis_scripts})
 // Claimed identity comes from the actual genesis descriptor. create-state
 // independently reissues it against the final configuration root.
 // @generated-tag UnoV2EngineConfiguration 0
-<b x{41868cd4} s, 400 32 u, 2 configured-first-instance-identity B, probe_resources ref, <b x{50524231} s, b> ref, b> constant probe_config
+<b x{8eea16d6} s, 400 32 u, 10000000000 64 u, 2 configured-first-instance-identity B, probe_resources ref, <b x{50524231} s, b> ref, b> constant probe_config
 // @generated-tag WorkchainNativeIngressPolicy 0
 { dup <b x{4abd5ab4} s, swap 32 i, 0 1 u, 0x434e5431 64 i, 0 64 u,
   0 32 u, 0 256 u, 256 1<<1- 256 u, probe_config ref, b>]=])
@@ -268,6 +268,11 @@ if(ACCOUNT_BINDING_ONLY)
   # This fixture returns a fresh configuration with no cache or cross-thread
   # owner. The absolute baseline of one asserts that fixture isolation too.
   file(READ "${fixture}/account_binding_refused.result.stats" binding_stats)
+  file(READ "${fixture}/account_binding_refused.result.readiness" readiness)
+  if(NOT readiness STREQUAL "phase=3\nworkchain=2\ndelivery=recorded\n")
+    message(FATAL_ERROR "Registry refusal identity missing, unknown or not delivered: ${readiness}")
+  endif()
+  message(STATUS "Registry branch observation: ${readiness}")
   if(NOT binding_stats STREQUAL "delivery=recorded\nvisited=1\nadapter=1\nowners_before=1\nowners_during=2\nowners_after=1\ntransactions=0\n")
     message(FATAL_ERROR "Production adapter lifetime was not observed at the closed gate: ${binding_stats}")
   endif()
@@ -300,6 +305,10 @@ if(ACCOUNT_BINDING_ONLY)
     --account-binding-probe "${fixture}/fault-calls.txt" --account-probe-config-failure
     -w 2 -T "${previous}" --export-candidate "${fixture}/fault-candidate.bin")
   file(READ "${fixture}/account_config_failure.result" config_result)
+  file(READ "${fixture}/account_config_failure.result.readiness" fault_readiness)
+  if(NOT fault_readiness STREQUAL "phase=0\nworkchain=-1\ndelivery=recorded\n")
+    message(FATAL_ERROR "Earlier local failure misidentified as registry refusal: ${fault_readiness}")
+  endif()
   file(READ "${fixture}/fault-calls.txt" fault_calls)
   if(NOT config_result STREQUAL "collate -7201\n" OR NOT fault_calls STREQUAL "config=1\nexecute=0\n")
     message(FATAL_ERROR "Configuration failure changed provenance or crossed execution: ${config_result}${fault_calls}")

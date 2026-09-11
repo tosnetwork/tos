@@ -1,0 +1,17 @@
+"TosUtil.fif" include
+"Asm.fif" include
+"Lists.fif" include
+
+// TEST ONLY: unauthenticated sender funded with test coins. Never deploy.
+// The registration body binds the final genesis identity, so it must arrive
+// after genesis rather than being embedded in this account's initial data.
+// External body contains exactly one outbound Native message reference.
+// Mode 1 pays forwarding charges separately, preserving the deposit value.
+-23901 setglobalid
+0 setworkchain
+<{ DROP ACCEPT LDREF ENDS 1 PUSHINT SENDRAWMSG }>c
+empty_cell empty_cell 1000000000000 0 0 1 6 register_smc drop
+create_state
+dup 31 boc+>B dup "basestate0.boc" B>file
+Bhashu 256 u>B "basestate0.fhash" B>file
+hashu 256 u>B "basestate0.rhash" B>file

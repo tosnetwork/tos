@@ -121,6 +121,33 @@ inline td::Result<WorkchainProofOperations> workchain_proof_operations_v4(
 // A typed boundary, not an arbitrary Status whose name determines provenance.
 enum class WorkchainProofVerdict { Valid, InvalidProof, LocalContractFailure, BackendUnavailable };
 
+// Fixed-shape v2 possession verification, in the existing v4 operation basis.
+// Unlike SEND/COLLECT, no admitted k or range-object size changes this work.
+// key_possession.rs::verify: decompress P/R; z*P and c*H; one PedersenGens
+// construction; one Sigma equation/witness. No MSM or point compression.
+// closure_possession.rs::verify/challenge: decompress P/D/C/R1/R2; four scalar
+// multiplications; construct H twice (challenge and equation), compress H once;
+// two equations sharing one witness. Reserve the full path despite early exits.
+// context_bytes uses the SAME v4 convention as relations: canonical context
+// absorption only (426), not fixed domain/other transcript fields or hash rounds.
+inline WorkchainProofOperations workchain_registration_operations_v4() {
+  return {0, 2, 1, 2, 0, 0, 1, 1, UNO_POSSESSION_CONTEXT_BYTES};
+}
+inline WorkchainProofOperations workchain_closure_operations_v4() {
+  return {0, 4, 2, 5, 1, 0, 2, 1, UNO_POSSESSION_CONTEXT_BYTES};
+}
+
+inline td::Result<WorkchainProofOperations> workchain_proof_operations_v4(
+    const UnoCryptoKeyPossessionRequestV2& request) {
+  if (request.abi_version != 2) return td::Status::Error(-7201, "registration verification ABI mismatch");
+  return workchain_registration_operations_v4();
+}
+inline td::Result<WorkchainProofOperations> workchain_proof_operations_v4(
+    const UnoCryptoClosurePossessionRequestV2& request) {
+  if (request.abi_version != 2) return td::Status::Error(-7201, "closure verification ABI mismatch");
+  return workchain_closure_operations_v4();
+}
+
 class WorkchainProofVerifier {
  public:
   WorkchainProofVerifier(const WorkchainProofVerifier&) = delete;
@@ -129,6 +156,21 @@ class WorkchainProofVerifier {
   WorkchainProofVerifier& operator=(WorkchainProofVerifier&&) = delete;
 
   td::Status verify(const UnoCryptoVerifyRequestV2& request) {
+    return verify_request(request, "cryptographic proof rejected");
+  }
+  td::Status verify(const UnoCryptoKeyPossessionRequestV2& request) {
+    return verify_request(request, "invalid registration key possession proof");
+  }
+  td::Status verify(const UnoCryptoClosurePossessionRequestV2& request) {
+    return verify_request(request, "invalid closure zero-balance possession proof");
+  }
+  td::Status status() const { return failure_.clone(); }
+  std::uint64_t consumed() const { return consumed_; }
+ private:
+  // Every request family uses this one precharge and sticky failure path.
+  // No public raw backend entry or unmetered possession overload exists.
+  template <class Request>
+  td::Status verify_request(const Request& request, td::Slice invalid_message) {
     if (failure_.is_error()) return failure_.clone();
     auto operations = workchain_proof_operations_v4(request);
     if (operations.is_error()) return fail(operations.move_as_error());
@@ -147,7 +189,7 @@ class WorkchainProofVerifier {
       case WorkchainProofVerdict::Valid: return td::Status::OK();
       case WorkchainProofVerdict::InvalidProof:
         return fail(td::Status::Error(static_cast<int>(WorkchainExecutionFailure::CandidateInvalid),
-                                      "cryptographic proof rejected"));
+                                      invalid_message));
       case WorkchainProofVerdict::LocalContractFailure:
       case WorkchainProofVerdict::BackendUnavailable:
         return fail(td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),
@@ -156,13 +198,12 @@ class WorkchainProofVerifier {
     return fail(td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),
                                   "unknown typed verification verdict"));
   }
-  td::Status status() const { return failure_.clone(); }
-  std::uint64_t consumed() const { return consumed_; }
- private:
   friend class ProofAdmittedBatchInput;
   friend struct WorkchainProofTestAccess;
   explicit WorkchainProofVerifier(std::uint64_t declared) : declared_(declared) {}
   static WorkchainProofVerdict run_backend(const UnoCryptoVerifyRequestV2& request);
+  static WorkchainProofVerdict run_backend(const UnoCryptoKeyPossessionRequestV2& request);
+  static WorkchainProofVerdict run_backend(const UnoCryptoClosurePossessionRequestV2& request);
   td::Status fail(td::Status error) { failure_ = std::move(error); return failure_.clone(); }
   const std::uint64_t declared_;
   std::uint64_t consumed_{0};

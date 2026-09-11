@@ -17,6 +17,8 @@
 
 #define UNO_RELATION_COLLECT 2
 
+#define UNO_POSSESSION_CONTEXT_BYTES 426
+
 enum UnoCryptoStatus
 #ifdef __cplusplus
   : uint32_t
@@ -32,6 +34,56 @@ enum UnoCryptoStatus
 #ifndef __cplusplus
 typedef uint32_t UnoCryptoStatus;
 #endif // __cplusplus
+
+/**
+ * Fixed-width authenticated closure statement; no caller-supplied challenge.
+ */
+typedef struct {
+  uint32_t abi_version;
+  uint8_t context[UNO_POSSESSION_CONTEXT_BYTES];
+  uint8_t domain[80];
+  int32_t global_id;
+  uint8_t genesis_hash[32];
+  int32_t workchain_id;
+  uint8_t account[32];
+  uint8_t incarnation[32];
+  uint8_t asset[32];
+  uint8_t custody[32];
+  uint8_t policy[32];
+  uint16_t schema_version;
+  uint16_t relation_profile;
+  uint16_t proof_profile;
+  uint32_t key_epoch;
+  uint64_t auth_nonce;
+  uint64_t available_revision;
+  uint8_t public_key[32];
+  uint8_t commitment[32];
+  uint8_t handle[32];
+  uint8_t proof[96];
+} UnoCryptoClosurePossessionRequestV2;
+
+/**
+ * Public registration context, not native struct bytes in the transcript.
+ * The host independently matches these fields to the address and configuration.
+ */
+typedef struct {
+  uint32_t abi_version;
+  uint8_t context[UNO_POSSESSION_CONTEXT_BYTES];
+  int32_t global_id;
+  uint8_t genesis_hash[32];
+  int32_t workchain_id;
+  uint8_t account[32];
+  uint8_t incarnation[32];
+  uint8_t asset[32];
+  uint8_t custody[32];
+  uint8_t policy[32];
+  uint16_t schema_version;
+  uint16_t relation_profile;
+  uint16_t proof_profile;
+  uint32_t key_epoch;
+  uint8_t public_key[32];
+  uint8_t proof[64];
+} UnoCryptoKeyPossessionRequestV2;
 
 /**
  * Fixed-width encoded public inputs. Numeric policy and domain provenance
@@ -81,6 +133,27 @@ typedef struct {
 #ifdef __cplusplus
 extern "C" {
 #endif // __cplusplus
+
+/**
+ * Verify zero available and possession; not pending/obligation emptiness.
+ * # Safety
+ * Request must be initialized, aligned, readable and unchanged until return.
+ * No pointer is retained; numeric checks cannot establish allocation validity.
+ */
+uint32_t uno_crypto_verify_closure_possession_v2(const UnoCryptoClosurePossessionRequestV2 *request);
+
+/**
+ * Verify registration possession, not a new balance relation.
+ *
+ * # Safety
+ * Request must be initialized, aligned, readable and unchanged until return.
+ * No pointer is retained. Span checks cannot establish allocation validity.
+ */
+uint32_t uno_crypto_verify_key_possession_v2(const UnoCryptoKeyPossessionRequestV2 *request);
+
+uint32_t uno_crypto_verify_key_possession_v1(const void*);
+
+uint32_t uno_crypto_verify_closure_possession_v1(const void*);
 
 /**
  * Construct a public system ciphertext. Output is untouched unless successful.

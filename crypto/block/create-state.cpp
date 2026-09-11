@@ -707,12 +707,18 @@ void interpret_configured_first_instance_identity(vm::Stack& stack) {
   interpret_first_instance_identity(stack);
 }
 
-// ( accepted-rate-ms identity-bytes resources business -- engine-shell ).
+// ( accepted-rate-ms identity-bytes registration-deposit resources business -- engine-shell ).
 // Required inputs have no defaults; the encoder cannot read current cadence.
 void interpret_instance_engine_configuration(vm::Stack& stack) {
   auto business = stack.pop_cell();
   auto resources = block::decode_workchain_resource_policy(stack.pop_cell());
   if (resources.is_error()) throw fift::IntError{resources.move_as_error().to_string()};
+  auto deposit = stack.pop_int();
+  vm::CellBuilder deposit_cell;
+  if (!deposit_cell.store_int256_bool(deposit, 64, false)) {
+    throw fift::IntError{"registration deposit must fit uint64"};
+  }
+  auto amount = vm::load_cell_slice(deposit_cell.finalize()).fetch_ulong(64);
   auto bytes = stack.pop_bytes();
   if (bytes.size() != 32) throw fift::IntError{"instance identity must contain 32 bytes"};
   td::Bits256 identity;
@@ -720,7 +726,7 @@ void interpret_instance_engine_configuration(vm::Stack& stack) {
   auto accepted_rate = stack.pop_long_range(0xffffffffLL);
   if (accepted_rate == 0) throw fift::IntError{"accepted cadence must be nonzero"};
   auto result = block::encode_workchain_engine_parameters(
-      {static_cast<std::uint32_t>(accepted_rate), identity, resources.move_as_ok(), business});
+      {static_cast<std::uint32_t>(accepted_rate), identity, resources.move_as_ok(), business, amount});
   if (result.is_error()) throw fift::IntError{result.move_as_error().to_string()};
   stack.push_cell(result.move_as_ok());
 }
@@ -729,6 +735,12 @@ void interpret_uno_engine_key(vm::Stack& stack) {
   const auto key = block::uno_v2_workchain_engine_key();
   if (key.format != block::WorkchainFormat::Basic) throw fift::IntError{"unsupported genesis engine format"};
   stack.push_smallint(key.selector);
+}
+
+void interpret_uno_registration_deposit(vm::Stack& stack) {
+  // D37 / section 12.1 initial registration deposit: 10 TOS in nanotomi.
+  // Explicit genesis input, never a decoder fallback for absent configuration.
+  stack.push_smallint(10000000000LL);
 }
 
 // Deliberately restrictive development admission envelope. These are not fee
@@ -834,6 +846,7 @@ void init_words_custom(fift::Dictionary& d) {
   d.def_stack_word("first-instance-identity ", interpret_first_instance_identity);
   d.def_stack_word("configured-first-instance-identity ", interpret_configured_first_instance_identity);
   d.def_stack_word("instance-engine-configuration ", interpret_instance_engine_configuration);
+  d.def_stack_word("uno-registration-deposit ", interpret_uno_registration_deposit);
   d.def_stack_word("uno-v2-engine-key ", interpret_uno_engine_key);
   d.def_stack_word("uno-v2-provisional-resources ", interpret_uno_provisional_resources);
   d.def_stack_word("uno-genesis-ingress ", interpret_uno_genesis_ingress);

@@ -59,6 +59,14 @@
 
 int verbosity;
 
+// Only an in-process test driver may install engines here. No option, file or
+// environment variable assigns this callback; the standalone disk tool keeps
+// its existing engine selection and has no D59 enabling interface.
+std::function<void()> disk_collator_test_engine_setup;
+// Test-owned acquisition only. No CLI/environment/deployment configuration
+// supplies this callback, and it cannot grant a D59 execution permit.
+std::function<void(tos::validator::ValidatorManagerOptions&)> disk_collator_test_options_setup;
+
 // Disk-test instrumentation only; never registered by validator-engine.
 class AccountBindingProbe final : public block::RegisteredWorkchainAccountEngine {
  public:
@@ -365,7 +373,9 @@ class TestNode : public td::actor::Actor {
       auto result = probe.execute_accounts({}, view, counter_only_configuration);
       std::_Exit(result.is_error() ? 0 : 2);
     }
-    if (block_candidate_.not_null()) {
+    if (disk_collator_test_engine_setup) {
+      disk_collator_test_engine_setup();
+    } else if (block_candidate_.not_null()) {
       if (shard_ != tos::ShardIdFull{2, tos::shardIdAll} && shard_ != tos::ShardIdFull{3, tos::shardIdAll}) {
         std::cerr << "fatal: Counter collation requires the unsplit workchain 2 or 3.\n";
         std::_Exit(2);
@@ -409,6 +419,8 @@ class TestNode : public td::actor::Actor {
     }
 
     auto opts = opts_;
+
+    if (disk_collator_test_options_setup) disk_collator_test_options_setup(opts.write());
 
     opts.write().set_initial_sync_disabled(true);
     validator_manager_ = tos::validator::ValidatorManagerDiskFactory::create(tos::PublicKeyHash::zero(), opts, shard_,

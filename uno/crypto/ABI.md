@@ -1,14 +1,101 @@
-# Borrowed balance verification ABI v2 and system encryption ABI v1
+# Borrowed balance verification ABI v2 and independent possession v2 entries
+
+## Possession transcript upgrade (2026-09-10)
+
+The two independent M3 entries are now `uno_crypto_verify_key_possession_v2`
+and `uno_crypto_verify_closure_possession_v2`, with request `abi_version=2`.
+Their v1 symbols are rejection-only stubs (`UNO_CRYPTO_ARGUMENTS`), and a v2
+request bearing version 1 is rejected before verification. There is no legacy
+verification fallback. The equations and 64/96-byte proof formats are unchanged.
+
+Both challenges use their `/v2` literal domain, then absorb `context[426]`,
+then the previously listed statement fields and commitments. These are precisely
+the bytes returned by `encode_workchain_replay_context`: operation constructor
+tag, context, subject, address, protocol, rules and profiles, all fixed-width.
+The host constructs them from authenticated policy and the relevant account;
+the candidate's context is compared separately and is never passed to the ABI.
+The wallet consumes the same canonical encoding, not a parallel layout.
+
+Carrying context in a block proves that the block commits it; absorbing context
+in Fiat-Shamir proves that the prover authorized it. Neither substitutes for
+the other. Tests submit an X proof with wire context Y and authenticated Y:
+the host comparison passes and each cryptographic verifier rejects the proof.
+
+There remain **two** independent entries outside D34 relation-family review,
+but their transcript/ABI content has changed to v2. Correspondence tests still
+do not constitute a reliability argument. The account nonce/revision, Native
+key-origin limitation and independent host state checks remain unchanged.
+
+## Profile 4 possession coverage
+
+Profile 4 now covers registration and closure verification through the same
+`WorkchainProofVerifier` precharge and sticky failure path as SEND/COLLECT.
+The SEND/COLLECT counting rules are unchanged. Possession counts are fixed:
+their context is exactly 426 bytes and their equations do not scale with a
+candidate-selected collection size. They reserve the full path even if a
+malformed proof exits early; failure does not refund work.
+
+| Existing v4 component | Registration | Closure |
+| --- | ---: | ---: |
+| Scalar multiplications | 2 | 4 |
+| Generated points | 1 | 2 |
+| Decoded points | 2 | 5 |
+| Encoded points | 0 | 1 |
+| Sigma equations | 1 | 2 |
+| Sigma witnesses | 1 | 1 |
+| Context bytes | 426 | 426 |
+| MSM terms / range rounds | 0 / 0 | 0 / 0 |
+| Total | 433 | 441 |
+
+These counts follow `key_possession.rs` and `closure_possession.rs`: closure
+constructs H for the challenge and again for its first equation, and compresses
+the challenge's H once. Fixed transcript fields use the existing v4 convention;
+no new hash, fee, or time unit is introduced. These are algorithm-boundary
+counts, not measured CPU instructions or a production preflight bound.
+
+## Historical registration key possession v1 (superseded; rejected)
+
+`uno_crypto_verify_key_possession_v1` accepts a fixed-field
+`UnoCryptoKeyPossessionRequestV1`, not a new balance relation. The 64-byte
+proof is canonical Ristretto `R[32] || z[32]` (canonical little-endian scalar).
+It verifies `zP = R + cH`, with nonidentity P/R and the existing Pedersen
+blinding generator H. The challenge is SHA-512 reduced modulo the scalar
+order over `TOS/UNO/REGISTER/KEY-POSSESSION/v1` followed by global_id,
+genesis_hash, workchain_id, account, incarnation, asset, custody, policy,
+schema_version, relation_profile, proof_profile, key_epoch, public_key, R.
+All integers are fixed-width big-endian; ABI padding is never hashed.
+The host must independently check address/configuration bindings. Knowledge
+of s does not prove its origin or independence from Native signing secrets;
+independent key generation is wallet discipline, not a chain-verifiable claim.
+This entry has not undergone D34 relation-family review. Correspondence tests
+are not a reliability argument. Rotation is not authorized by this entry.
+
+## Historical closure possession v1 (superseded; rejected)
+
+`uno_crypto_verify_closure_possession_v1` is the second independent M3 entry
+outside D34 relation-family review. Its 96-byte proof is R1 || R2 || z.
+It checks zP=R1+cH and zD=R2+cC; P and D must be nonidentity. Randomized zero
+(rH,rP) is accepted, not replaced by an all-identity encoding requirement.
+The SHA-512 challenge reduces the digest over the literal
+`TOS/UNO/CLOSE/KEY-POSSESSION/v1`, domain[80], the registration context fields
+through key_epoch in their order above, auth_nonce, available_revision, P,H,D,C,
+R1,R2. Integers are fixed-width big-endian, points canonical compressed bytes;
+z is canonical little-endian. H is the fixed Pedersen blinding generator.
+This proves possession and zero plaintext under the admitted v<l bound, not
+empty pending or absence of obligations. Those remain authenticated host checks.
+The host must supply the current revision/ciphertext, not a caller's old copy.
 
 This is a native process interface, not a TL-B constructor, network proof
 profile or M0 freeze. Balance versions 0 and 1 are retired; the library exports
 `uno_crypto_verify_v2`, not the previous fee-less balance verification entries
 or the old Note-tree function. The system-encryption entries remain version 1.
 
-The existing boundary discipline is retained: every exported entry contains
+The existing boundary discipline is retained: every active verifier entry contains
 the entire call in catch_unwind, no AssertUnwindSafe, no pointer retention or
 ownership transfer, and checked bounded_span before nonempty slice creation.
 Both Cargo profiles require unwind; cfg(panic = "abort") is a compile error.
+Retired possession v1 stubs only return an error constant: no dereference,
+allocation, cryptographic operation or unwinding code runs in them.
 OOM abort, process termination and invalid caller allocations are not
 recoverable panics. No mutable verifier cache or partially initialized key is
 retained. Generator construction is currently per call.

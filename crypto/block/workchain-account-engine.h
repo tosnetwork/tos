@@ -44,6 +44,9 @@ struct WorkchainAccountUpdate {
   td::Ref<vm::Cell> data;
 };
 
+struct WorkchainRegistrationPaymentResult;
+struct WorkchainAccountClosureExecution;
+
 struct WorkchainAccountEffects {
   std::vector<WorkchainAccountUpdate> updates;
   // Canonical directed Native movements; not confidential SEND amounts.
@@ -55,6 +58,12 @@ struct WorkchainAccountEffects {
   std::optional<WorkchainFeeSettlement> fees;
   td::Ref<vm::Cell> receipts, events;
   WorkchainBlockResourceUsage usage;
+  // Local execution results, never decoded from candidate effects. These select
+  // Native materialization, not another wire format or another authorization
+  // path. Both hosts must independently execute the permanent input first.
+  // At most one may be present; ordinary transfers/payouts cannot accompany it.
+  std::shared_ptr<const WorkchainRegistrationPaymentResult> registration;
+  std::shared_ptr<const WorkchainAccountClosureExecution> closure;
 };
 
 class WorkchainAccountEngine {

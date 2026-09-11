@@ -29,6 +29,9 @@
 #include "block/validator-set.h"
 #include "block/workchain-execution-dispatch.h"
 #include "block/workchain-block-execution.h"
+#include "block/workchain-account-binding-owner.h"
+#include "block/workchain-account-settlement.h"
+#include "block/workchain-batch-scan.h"
 #include "common/errorlog.h"
 #include "td/utils/format.h"
 #include "td/utils/overloaded.h"
@@ -44,6 +47,7 @@
 #include "storage-stat-cache.hpp"
 #include "top-shard-descr.hpp"
 #include "validate-query.hpp"
+#include "workchain-account-decisions.h"
 
 #define REJECT_UNLESS_MSG(condition, msg) \
   if (!(condition)) {                     \
@@ -65,6 +69,22 @@ namespace tos {
 namespace validator {
 using td::Ref;
 using namespace std::literals::string_literals;
+
+td::Result<bool> validator_account_binding_custom(const block::ResolvedWorkchainAccountBinding& binding) {
+  // D59 permits only the explicitly selected test instance. Account batches
+  // never use ordinary per-account compute configuration.
+  if (block::default_workchain_execution_registry().test_only_account_instance_execution_enabled(binding))
+    return false;
+  return td::Status::Error(static_cast<int>(block::WorkchainExecutionFailure::LocalUnavailable),
+                           "multi-account admission and replay are not connected");
+}
+
+td::Status validator_account_binding_ready(const block::ResolvedWorkchainAccountBinding& binding) {
+  if (block::default_workchain_execution_registry().test_only_account_instance_execution_enabled(binding))
+    return td::Status::OK();
+  return td::Status::Error(static_cast<int>(block::WorkchainExecutionFailure::LocalUnavailable),
+                           "multi-account admission and replay are not connected");
+}
 
 static bool extra_flags_within_valid_mask(const block::gen::CommonMsgInfo::Record_int_msg_info& info,
                                           int global_version);
@@ -1145,9 +1165,8 @@ bool ValidateQuery::fetch_config_params() {
             return block::resolved_workchain_execution_is_custom(account);
           },
           [](const block::ResolvedWorkchainBlockExecution&) -> td::Result<bool> { return false; },
-          [](const block::ResolvedWorkchainAccountBinding&) -> td::Result<bool> {
-            return td::Status::Error(static_cast<int>(block::WorkchainExecutionFailure::LocalUnavailable),
-                                     "multi-account admission and replay are not connected");
+          [](const block::ResolvedWorkchainAccountBinding& binding) -> td::Result<bool> {
+            return validator_account_binding_custom(binding);
           }), *resolved_execution.ok());
       if (custom.is_error()) return fatal_error(custom.move_as_error());
       custom_workchain = custom.move_as_ok();
@@ -1291,9 +1310,8 @@ bool ValidateQuery::check_this_shard_mc_info() {
     auto ready = std::visit(td::overloaded(
         [](const block::ResolvedWorkchainExecution&) { return td::Status::OK(); },
         [](const block::ResolvedWorkchainBlockExecution&) { return td::Status::OK(); },
-        [](const block::ResolvedWorkchainAccountBinding&) {
-          return td::Status::Error(static_cast<int>(block::WorkchainExecutionFailure::LocalUnavailable),
-                                   "multi-account admission and replay are not connected");
+        [](const block::ResolvedWorkchainAccountBinding& binding) {
+          return validator_account_binding_ready(binding);
         }), *execution_res.ok());
     if (ready.is_error()) return fatal_error(std::move(ready));
   }
@@ -6507,6 +6525,174 @@ bool ValidateQuery::check_account_failures() {
  *
  * @returns True if all transactions pass the check, False otherwise.
  */
+bool ValidateQuery::check_account_binding_transactions(const block::ResolvedWorkchainAccountBinding& binding) {
+  // This synchronous owner spans admission, verification and Native replay.
+  // No collator object, effects cache or test proof file enters this path.
+  bool candidate_read = false;
+  auto invalid = [](td::Slice text) { return td::Status::Error(-7200, text); };
+  auto local = [](td::Slice text) { return td::Status::Error(-7201, text); };
+  auto run = [&]() -> td::Status {
+    const auto& limits = binding.input_policy.resources();
+    if (!binding.ingress.custody_address || shard_.shard != tos::shardIdAll ||
+        !limits.state.max_cells || limits.state.max_cells > INT_MAX)
+      return local("account replay authenticated context unavailable");
+    TRY_RESULT(parameters, block::decode_workchain_engine_parameters(binding.ingress.engine_configuration));
+    TRY_RESULT(owner, block::WorkchainAccountBindingOwner::bind(binding));
+    block::gen::ShardStateUnsplit::Record previous;
+    if (!tlb::unpack_cell(prev_state_root_, previous)) return local("account replay predecessor unavailable");
+    // Reconstruct every context field from the authenticated predecessor and
+    // already checked block header, never from the claimed HostIdentity.
+    block::WorkchainHostIdentity identity{global_id_, config_->get_zerostate_id().root_hash, parameters.instance_id,
+        workchain(), shard_.shard, binding.input_policy.identity().configuration_hash.bits(),
+        binding.input_policy.identity().extended, binding.input_policy.identity().engine_selector,
+        binding.input_policy.identity().vm_mode, binding.input_policy.identity().descriptor_version,
+        binding.input_policy.identity().admission_version, prev_state_root_->get_hash().bits(),
+        id_.id.seqno, now_, start_lt_, mc_state_root_};
+    candidate_read = true;
+    block::gen::Block::Record block_record;
+    block::gen::BlockExtra::Record extra;
+    if (!tlb::unpack_cell(block_root_, block_record) || !tlb::unpack_cell(block_record.extra, extra))
+      return invalid("account replay block framing invalid");
+    const auto scan = block::scan_workchain_batch_account_blocks(extra.account_blocks, binding.input_policy,
+        1, block::WorkchainBatchScanSource::ReceivedCandidate);
+    if (scan.disposition == block::WorkchainBatchScanDisposition::LocalUnavailable)
+      return local("account replay batch scan unavailable");
+    if (scan.disposition != block::WorkchainBatchScanDisposition::Accepted || !scan.scan_complete)
+      return invalid("account replay requires one complete committed batch");
+    Ref<vm::Cell> claimed_input, claimed_effects;
+    // A separate bounded extraction; the complete scan above already checked
+    // every participant and the unique entry. No early traversal completion.
+    const bool extracted = account_blocks_dict_->check_for_each_extra(
+        [&](Ref<vm::CellSlice> value, Ref<vm::CellSlice>, td::ConstBitPtr, int) {
+          block::gen::AccountBlock::Record account;
+          if (!block::gen::t_AccountBlock.unpack(value.write(), account) || !value->empty()) return false;
+          vm::AugmentedDictionary transactions(vm::DictNonEmpty(), account.transactions, 64,
+                                                block::tlb::aug_AccountTransactions);
+          return transactions.check_for_each_extra(
+              [&](Ref<vm::CellSlice> leaf, Ref<vm::CellSlice>, td::ConstBitPtr, int) {
+                block::gen::Transaction::Record transaction;
+                if (!tlb::unpack_cell(leaf->prefetch_ref(), transaction)) return false;
+                if (block::tlb::t_TransactionDescr.get_tag(vm::load_cell_slice(transaction.description)) !=
+                    block::tlb::TransactionDescr::trans_workchain_entry_v3) return true;
+                block::gen::TransactionDescr::Record_trans_workchain_entry_v3 entry;
+                if (claimed_input.not_null() || !tlb::unpack_cell(transaction.description, entry)) return false;
+                claimed_input = entry.input;
+                claimed_effects = entry.effects;
+                return true;
+              });
+        });
+    if (!extracted || claimed_input.is_null()) return invalid("account replay entry missing or malformed");
+    block::gen::UnoV2HostInput::Record host;
+    if (!tlb::unpack_cell(claimed_input, host)) return invalid("account replay input malformed");
+    // The actual, previously validated InMsgDescr supplies the inbox. Never use
+    // host.inbox as the authentication source or copy a declared message count.
+    std::vector<Ref<vm::Cell>> envelopes;
+    const bool inbox_valid = in_msg_dict_->check_for_each_extra(
+        [&](Ref<vm::CellSlice> value, Ref<vm::CellSlice>, td::ConstBitPtr, int) {
+          Ref<vm::Cell> envelope;
+          switch (block::gen::t_InMsg.check_tag(*value)) {
+            case block::gen::InMsg::msg_import_fin: {
+              block::gen::InMsg::Record_msg_import_fin record;
+              if (!tlb::csr_unpack(value, record)) return false;
+              envelope = record.in_msg;
+              break;
+            }
+            case block::gen::InMsg::msg_import_deferred_fin: {
+              block::gen::InMsg::Record_msg_import_deferred_fin record;
+              if (!tlb::csr_unpack(value, record)) return false;
+              envelope = record.in_msg;
+              break;
+            }
+            case block::gen::InMsg::msg_import_tr:
+            case block::gen::InMsg::msg_import_deferred_tr: return true;
+            default: return false;
+          }
+          if (envelopes.size() >= limits.input.max_inbound) return false;
+          envelopes.push_back(std::move(envelope));
+          return true;
+        });
+    if (!inbox_valid) return invalid("account replay inbox shape or count invalid");
+    block::BatchInputAdmissionSession admission(binding.input_policy, host.candidate, host.access, identity, envelopes);
+    const auto& admitted = admission.evaluate();
+    if (const auto* failure = std::get_if<block::BatchInputAdmissionFailure>(&admitted))
+      return td::Status::Error(static_cast<int>(failure->category), td::Slice(failure->reason));
+    const auto& input = std::get<block::AdmittedBatchInput>(admitted);
+    if (input.root()->get_hash() != claimed_input->get_hash())
+      return invalid("account replay input differs from authenticated reconstruction");
+    auto materialized = block::NativeCellMaterializer::run(envelopes,
+        {limits.input.max_cells, limits.input.max_bits, limits.input.max_inbound});
+    const auto* native = std::get_if<block::MaterializedNativeCells>(&materialized);
+    if (std::holds_alternative<block::NativeClosureLimit>(materialized))
+      return invalid("account replay Native inbox exceeds authenticated bounds");
+    if (!native) return local("account replay Native inbox materialization unavailable");
+    candidate_read = false;
+    TRY_RESULT(proofs, block::ProofAdmittedBatchInput::admit(owner->adapter(), input));
+    TRY_RESULT(rebuilt, block::execute_and_settle_workchain_accounts(owner->adapter(), previous.accounts, identity,
+        proofs, *native, *binding.ingress.custody_address, binding.ingress.executor_address,
+        td::make_refint(0), static_cast<int>(limits.state.max_cells), serialize_cfg_, action_phase_cfg_));
+    // State acquisition is a local proof-view operation; do not turn missing
+    // local cells into a candidate verdict. Comparisons below are exact claims.
+    block::gen::ShardStateUnsplit::Record next;
+    if (!tlb::unpack_cell(state_root_, next)) return local("account replay resulting state unavailable");
+    if (rebuilt.effects->get_hash() != claimed_effects->get_hash() ||
+        rebuilt.state.accounts->get_hash() != next.accounts->get_hash() ||
+        rebuilt.state.account_blocks->get_hash() != extra.account_blocks->get_hash() ||
+        rebuilt.imports.in_msg_descr->get_hash() != extra.in_msg_descr->get_hash() ||
+        rebuilt.state.end_lt != end_lt_)
+      return invalid("account replay artifacts differ from independently rebuilt settlement");
+    return td::Status::OK();
+  };
+  auto result = local("account replay interrupted");
+  try {
+    result = run();
+  } catch (const vm::VmVirtError&) {
+    result = candidate_read ? invalid("pruned account replay candidate") : local("account replay state unavailable");
+  } catch (const vm::VmError&) {
+    result = candidate_read ? invalid("malformed account replay candidate") : local("account replay local execution failed");
+  } catch (const vm::CellBuilder::CellCreateError&) {
+    result = local("account replay cell allocation failed");
+  } catch (const vm::CellBuilder::CellWriteError&) {
+    result = local("account replay cell construction failed");
+  } catch (const std::bad_alloc&) {
+    result = local("account replay allocation failed");
+  } catch (const std::length_error&) {
+    result = local("account replay allocation length failed");
+  } catch (const vm::VmNoGas&) {
+    result = local("unexpected account replay interpreter resource failure");
+  } catch (const vm::VmFatal&) {
+    result = local("unexpected account replay interpreter failure");
+  }
+  if (result.is_error()) {
+    if (result.code() == static_cast<int>(block::WorkchainExecutionFailure::CandidateInvalid))
+      return reject_query(result.to_string());
+    return fatal_error(std::move(result));
+  }
+  // Rebuilt transactions still owe the existing Native outbound-message
+  // checks and validation-context bookkeeping; replay does not bypass them.
+  bool valid = account_blocks_dict_->check_for_each_extra(
+      [&](Ref<vm::CellSlice> value, Ref<vm::CellSlice>, td::ConstBitPtr key, int bits) {
+        REJECT_UNLESS(bits == 256);
+        const StdSmcAddress address{key};
+        block::gen::AccountBlock::Record account;
+        auto copy = value;
+        REJECT_UNLESS(block::gen::t_AccountBlock.unpack(copy.write(), account));
+        CheckAccountTxs checker(*this, actor_id(this), address, value,
+                                 load_check_account_transactions_context(address));
+        vm::AugmentedDictionary transactions(vm::DictNonEmpty(), account.transactions, 64,
+                                              block::tlb::aug_AccountTransactions);
+        bool exports_valid = transactions.check_for_each_extra(
+            [&](Ref<vm::CellSlice> transaction, Ref<vm::CellSlice>, td::ConstBitPtr lt, int) {
+              td::optional<block::MsgMetadata> metadata;
+              if (msg_metadata_enabled_) metadata = block::MsgMetadata{0, workchain(), address, lt.get_uint(64)};
+              block::CurrencyCollection exported(0);
+              return checker.check_outbound_messages(transaction->prefetch_ref(), metadata, exported);
+            });
+        save_account_transactions_context(address, checker.extract_context());
+        return exports_valid;
+      });
+  return valid && check_account_failures();
+}
+
 bool ValidateQuery::check_transactions() {
   LOG(INFO) << "checking all transactions";
   auto resolved = block::default_workchain_execution_registry().resolve_scoped_workchain(
@@ -6517,16 +6703,24 @@ bool ValidateQuery::check_transactions() {
   // Exhaustiveness is a compile-time obligation for every new execution family.
   // Only the explicit account alternative (or no binding) may reach the ordinary loop.
   using BlockPointer = const block::ResolvedWorkchainBlockExecution*;
+  const block::ResolvedWorkchainAccountBinding* account_binding = nullptr;
   auto selected = resolved.ok().has_value() ? std::visit(td::overloaded(
       [](const block::ResolvedWorkchainExecution&) -> td::Result<BlockPointer> {
         return nullptr;
       },
       [](const block::ResolvedWorkchainBlockExecution& block) -> td::Result<BlockPointer> { return &block; },
-      [](const block::ResolvedWorkchainAccountBinding&) -> td::Result<BlockPointer> {
+      [&](const block::ResolvedWorkchainAccountBinding& binding) -> td::Result<BlockPointer> {
+        // D59: this refusal was reached in the paired real validator run.
+        // An enabled batch has its own replay, never the ordinary account loop.
+        if (block::default_workchain_execution_registry().test_only_account_instance_execution_enabled(binding)) {
+          account_binding = &binding;
+          return nullptr;
+        }
         return td::Status::Error(static_cast<int>(block::WorkchainExecutionFailure::LocalUnavailable),
                                  "multi-account admission and replay are not connected");
       }), *resolved.ok()) : td::Result<BlockPointer>(nullptr);
   if (selected.is_error()) return fatal_error(selected.move_as_error());
+  if (account_binding) return check_account_binding_transactions(*account_binding);
   const auto* singleton = selected.move_as_ok();
   if (singleton) {
     const auto& execution = *singleton;

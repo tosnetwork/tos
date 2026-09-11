@@ -24,7 +24,7 @@ config.workchains!
 // Explicit development profile and empty Counter business parameters, encoded
 // through the same generated shell type and identity derivation as production.
 { configured-first-instance-identity 400 swap
-  uno-v2-provisional-resources empty_cell instance-engine-configuration
+  uno-registration-deposit uno-v2-provisional-resources empty_cell instance-engine-configuration
 } : counter-instance-config
 
 16 capCreateStats capBounceMsgBody or capReportVersion or capShortDequeue or

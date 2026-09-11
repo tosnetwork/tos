@@ -390,9 +390,10 @@ target_include_directories(src_parser PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_S
 target_link_libraries(src_parser PUBLIC tos_crypto_core)
 
 add_library(tos_block STATIC ${BLOCK_SOURCE})
-target_sources(tos_block PRIVATE block/workchain-proof-backend.cpp block/workchain-instance-identity.cpp)
+target_sources(tos_block PRIVATE block/workchain-proof-backend.cpp block/workchain-instance-identity.cpp
+  block/workchain-registration-proof.cpp)
 if (TOS_UNO_CRYPTO_NODE_LINK)
-  set_source_files_properties(block/workchain-proof-backend.cpp PROPERTIES
+  set_source_files_properties(block/workchain-proof-backend.cpp block/workchain-registration-proof.cpp PROPERTIES
     COMPILE_DEFINITIONS TOS_CONFIDENTIAL_PROOF_BACKEND_LINKED)
   target_link_libraries(tos_block PUBLIC confidential-crypto-kernel)
 endif()
@@ -705,15 +706,92 @@ if(TOS_WORKCHAIN_INSTANCE_TESTS)
 endif()
 
 # A generated constructor changing must invalidate its hand-written Fift consumer.
+add_executable(test-workchain-confidential-state ../test/test-td-main.cpp test/test-workchain-confidential-state.cpp)
+target_link_libraries(test-workchain-confidential-state PRIVATE tos_block tos_crypto)
+tos_test(test-workchain-confidential-state)
+set_tests_properties(test-workchain-confidential-state PROPERTIES TIMEOUT 30 LABELS "workchain;m3")
+
+add_executable(test-workchain-registration-refund ../test/test-td-main.cpp test/test-workchain-registration-refund.cpp)
+target_link_libraries(test-workchain-registration-refund PRIVATE tos_block tos_crypto)
+tos_test(test-workchain-registration-refund)
+set_tests_properties(test-workchain-registration-refund PROPERTIES TIMEOUT 30 LABELS "workchain;m3")
+
+add_executable(test-workchain-registration-proof ../test/test-td-main.cpp test/test-workchain-registration-proof.cpp)
+target_link_libraries(test-workchain-registration-proof PRIVATE tos_block tos_crypto)
+if(TOS_UNO_CRYPTO_NODE_LINK)
+  target_compile_definitions(test-workchain-registration-proof PRIVATE TOS_CONFIDENTIAL_PROOF_BACKEND_LINKED)
+endif()
+tos_test(test-workchain-registration-proof)
+set_tests_properties(test-workchain-registration-proof PROPERTIES TIMEOUT 30 LABELS "workchain;m3")
+
+add_executable(test-workchain-confidential-transition ../test/test-td-main.cpp test/test-workchain-confidential-transition.cpp)
+target_link_libraries(test-workchain-confidential-transition PRIVATE tos_block tos_crypto)
+tos_test(test-workchain-confidential-transition)
+set_tests_properties(test-workchain-confidential-transition PROPERTIES TIMEOUT 30 LABELS "workchain;m3")
+
+if(TOS_UNO_CRYPTO_NODE_LINK)
+  add_executable(test-workchain-confidential-execution ../test/test-td-main.cpp test/test-workchain-confidential-execution.cpp)
+  target_link_libraries(test-workchain-confidential-execution PRIVATE tos_block tos_crypto)
+  target_compile_definitions(test-workchain-confidential-execution PRIVATE
+    UNO_M3_VECTORS="${PROJECT_SOURCE_DIR}/crypto/test/workchain-m3-vectors")
+  tos_test(test-workchain-confidential-execution)
+  set_tests_properties(test-workchain-confidential-execution PROPERTIES TIMEOUT 60 LABELS "workchain;m3;real-crypto")
+endif()
+
+add_executable(test-workchain-account-closure ../test/test-td-main.cpp test/test-workchain-account-closure.cpp)
+target_link_libraries(test-workchain-account-closure PRIVATE tos_block tos_crypto)
+if(TOS_UNO_CRYPTO_NODE_LINK)
+  target_compile_definitions(test-workchain-account-closure PRIVATE TOS_CONFIDENTIAL_PROOF_BACKEND_LINKED)
+endif()
+tos_test(test-workchain-account-closure)
+set_tests_properties(test-workchain-account-closure PROPERTIES TIMEOUT 30 LABELS "workchain;m3")
+# Explicit vector generation tool: wallet prover remains outside the node build.
+add_executable(uno-m3-vector-tool EXCLUDE_FROM_ALL test/workchain-m3-vector-tool.cpp)
+target_link_libraries(uno-m3-vector-tool PRIVATE tos_block tos_crypto)
+
+add_executable(test-workchain-confidential-input ../test/test-td-main.cpp test/test-workchain-confidential-input.cpp
+  test/workchain-m3-registration-wallet-test.cpp)
+target_link_libraries(test-workchain-confidential-input PRIVATE tos_block tos_crypto)
+target_compile_definitions(test-workchain-confidential-input PRIVATE
+  UNO_BALANCE_VECTOR_FILE="${PROJECT_SOURCE_DIR}/uno/crypto/fixtures/balance-kernel-v2.txt")
+tos_test(test-workchain-confidential-input)
+set_tests_properties(test-workchain-confidential-input PROPERTIES TIMEOUT 30 LABELS "workchain;m3")
+
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
+add_executable(test-workchain-test-execution-permit ../test/test-td-main.cpp test/test-workchain-test-execution-permit.cpp)
+target_link_libraries(test-workchain-test-execution-permit PRIVATE tos_block tos_crypto)
+tos_test(test-workchain-test-execution-permit)
+set_tests_properties(test-workchain-test-execution-permit PROPERTIES TIMEOUT 30 LABELS "workchain;m3;d59")
+# Default source guard, independent of optional crypto/native fixture builds.
+add_test(NAME test-workchain-test-execution-permit-guard COMMAND ${Python3_EXECUTABLE}
+  "${PROJECT_SOURCE_DIR}/crypto/test/workchain-test-execution-permit-guard.py" --repo "${PROJECT_SOURCE_DIR}" --controls)
+set_tests_properties(test-workchain-test-execution-permit-guard PROPERTIES TIMEOUT 60 LABELS "workchain;m3;d59")
+
+# Default lifecycle guard: M4/M5 must replace M3's structural closure premise.
+add_test(NAME test-workchain-m3-closure-expiry COMMAND ${Python3_EXECUTABLE}
+  "${PROJECT_SOURCE_DIR}/crypto/test/workchain-m3-closure-expiry.py" --repo "${PROJECT_SOURCE_DIR}" --controls)
+set_tests_properties(test-workchain-m3-closure-expiry PROPERTIES TIMEOUT 60 LABELS "workchain;m3;expiry")
+
+# Default lifecycle guard: a new direct crypto ABI caller needs disposition,
+# even when optional native metering fixtures are not configured.
+add_test(NAME test-workchain-crypto-abi-boundary COMMAND ${Python3_EXECUTABLE}
+  "${PROJECT_SOURCE_DIR}/crypto/test/workchain-crypto-abi-boundary.py" --repo "${PROJECT_SOURCE_DIR}")
+set_tests_properties(test-workchain-crypto-abi-boundary PROPERTIES TIMEOUT 60 LABELS "workchain;m3;boundary")
 add_test(NAME test-workchain-handwritten-tags COMMAND ${Python3_EXECUTABLE}
   "${PROJECT_SOURCE_DIR}/crypto/test/workchain-handwritten-tags.py" --repo "${PROJECT_SOURCE_DIR}")
 set_tests_properties(test-workchain-handwritten-tags PROPERTIES TIMEOUT 30 LABELS "workchain;d40")
 
-# Default source-lifecycle check: opening either validator refusal must expire
-# the prepared copy, even when the optional native fixture is not enabled.
+add_executable(test-workchain-system-state-access test/test-workchain-system-state-access.cpp)
+target_link_libraries(test-workchain-system-state-access PRIVATE tos_block tos_crypto)
+tos_test(test-workchain-system-state-access)
+set_tests_properties(test-workchain-system-state-access PROPERTIES TIMEOUT 30 LABELS "workchain;m3")
+
+# Default behavior check: D59 conditional refusals retain production OFF
+# behavior. An unconditional-text check would reject this permitted test scope.
 add_test(NAME test-workchain-validator-prepared-expiry COMMAND ${Python3_EXECUTABLE}
-  "${PROJECT_SOURCE_DIR}/crypto/test/workchain-validator-prepared-expiry.py" --repo "${PROJECT_SOURCE_DIR}")
+  "${PROJECT_SOURCE_DIR}/crypto/test/workchain-validator-prepared-expiry.py" --repo "${PROJECT_SOURCE_DIR}"
+  --probe $<TARGET_FILE:test-workchain-validator-local-visitors>
+  --fixture "${PROJECT_SOURCE_DIR}/crypto/test/workchain-bounded-zerostate.boc")
 set_tests_properties(test-workchain-validator-prepared-expiry PROPERTIES
   TIMEOUT 30 LABELS "workchain;prepared-expiry")
 
@@ -722,3 +800,16 @@ add_test(NAME test-workchain-preflight-expiry COMMAND ${Python3_EXECUTABLE}
   "${PROJECT_SOURCE_DIR}/crypto/test/workchain-preflight-expiry.py" --repo "${PROJECT_SOURCE_DIR}")
 set_tests_properties(test-workchain-preflight-expiry PROPERTIES
   TIMEOUT 30 LABELS "workchain;prepared-expiry;c3")
+
+add_executable(test-workchain-m3-assertions ../test/test-td-main.cpp test/test-workchain-m3-assertions.cpp)
+target_link_libraries(test-workchain-m3-assertions PRIVATE tos_block tos_crypto)
+target_compile_definitions(test-workchain-m3-assertions PRIVATE M3_VECTOR_DIR="${CMAKE_CURRENT_SOURCE_DIR}/test/workchain-m3-vectors")
+tos_test(test-workchain-m3-assertions)
+set_tests_properties(test-workchain-m3-assertions PROPERTIES TIMEOUT 60 LABELS "workchain;m3")
+
+# Explicit continuous scenario: real kernel required; never substitute a stub.
+if(TOS_UNO_CRYPTO_NODE_LINK)
+  add_executable(workchain-m3-scenario EXCLUDE_FROM_ALL test/workchain-m3-scenario.cpp)
+  target_link_libraries(workchain-m3-scenario PRIVATE tos_block tos_crypto)
+  target_compile_definitions(workchain-m3-scenario PRIVATE M3_VECTOR_DIR="${CMAKE_CURRENT_SOURCE_DIR}/test/workchain-m3-vectors")
+endif()

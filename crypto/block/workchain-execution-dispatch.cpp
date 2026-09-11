@@ -384,6 +384,39 @@ td::Status validate_workchain_execution_descriptor_transitions(
   return td::Status::OK();
 }
 
+td::Status WorkchainExecutionRegistry::enable_test_only_account_instance_execution(
+    tos::WorkchainId workchain, const td::Bits256& instance, bool enabled) {
+  if (workchain != 2 || instance.is_zero()) {
+    return td::Status::Error("test execution permit requires wc=2 and a nonzero instance");
+  }
+  if (enabled) {
+    test_instance_execution_[workchain].insert(instance);
+  } else {
+    auto found = test_instance_execution_.find(workchain);
+    if (found != test_instance_execution_.end()) {
+      found->second.erase(instance);
+      if (found->second.empty()) test_instance_execution_.erase(found);
+    }
+  }
+  return td::Status::OK();
+}
+
+bool WorkchainExecutionRegistry::test_only_account_instance_execution_enabled(
+    tos::WorkchainId workchain, const td::Bits256& instance) const {
+  auto found = test_instance_execution_.find(workchain);
+  return found != test_instance_execution_.end() && found->second.count(instance) != 0;
+}
+
+bool WorkchainExecutionRegistry::test_only_account_instance_execution_enabled(
+    const ResolvedWorkchainAccountBinding& binding) const {
+  // Closed production behavior incurs no extra configuration parsing, reads or
+  // exceptions. Only an explicitly permitted test workchain reaches the decoder.
+  if (test_instance_execution_.count(binding.descriptor.workchain_id) == 0) return false;
+  auto parameters = decode_workchain_engine_parameters(binding.ingress.engine_configuration);
+  return parameters.is_ok() && test_only_account_instance_execution_enabled(
+      binding.descriptor.workchain_id, parameters.ok().instance_id);
+}
+
 void WorkchainExecutionRegistry::register_engine(std::unique_ptr<WorkchainEngine> engine) {
   CHECK(engine != nullptr);
   auto key = engine->engine_key();
@@ -786,7 +819,8 @@ td::Result<std::optional<AccountExecutionPolicy>> WorkchainExecutionRegistry::re
 
 td::Status WorkchainExecutionRegistry::validate_required_workchains(
     const block::WorkchainSet& workchains, const block::Config& block_transition_config,
-    const LocalWorkchainRoleSet& local_roles) const {
+    const LocalWorkchainRoleSet& local_roles, WorkchainReadinessObservation* observation) const {
+  if (observation) *observation = {WorkchainReadinessPhase::Entered, -1};
   if (&workchains != &block_transition_config.get_workchain_list()) {
     return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),
                              "required-role descriptor map is not owned by this configuration");
@@ -809,9 +843,15 @@ td::Status WorkchainExecutionRegistry::validate_required_workchains(
                   account.executor->account_policy(account.descriptor, *account.engine_config));
             },
             [](const ResolvedWorkchainBlockExecution&) { return td::Status::OK(); },
-            [](const ResolvedWorkchainAccountBinding&) {
+            [&](const ResolvedWorkchainAccountBinding& binding) {
+              if (observation) *observation = {WorkchainReadinessPhase::AccountBindingResolved, workchain_id};
+              // D59: only a test-owned, explicitly permitted workchain instance
+              // may proceed. Deployment configuration cannot grant this permit.
+              // This does not authorize or bypass any downstream execution gate.
+              if (test_only_account_instance_execution_enabled(binding)) return td::Status::OK();
               // Engine registration and successful configuration parsing do not
               // establish that this binary can admit and replay account batches.
+              if (observation) observation->phase = WorkchainReadinessPhase::AccountBindingRefused;
               return td::Status::Error(static_cast<int>(WorkchainExecutionFailure::LocalUnavailable),
                                        "multi-account admission and replay are not connected");
             }), *resolved);
@@ -820,6 +860,7 @@ td::Status WorkchainExecutionRegistry::validate_required_workchains(
         }
       }
     }
+    if (observation) observation->phase = WorkchainReadinessPhase::Complete;
     return td::Status::OK();
   } catch (...) {
     // Required-role checks run before candidate processing, including the

@@ -126,6 +126,9 @@ class Collator final : public td::actor::Actor {
  private:
   bool create_workchain_batch_transaction(const block::ResolvedWorkchainBlockExecution& execution,
                                           Ref<vm::Cell> candidate);
+  td::Status create_workchain_account_batch(const block::ResolvedWorkchainAccountBinding& execution);
+  Ref<vm::Cell> account_batch_blocks_;
+  std::optional<block::NativeStateReadMeter> account_output_admission_;
   struct BatchImport {
     Ref<vm::Cell> envelope;
     bool from_own_queue;

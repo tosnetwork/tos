@@ -799,6 +799,9 @@ add_dependencies(all-tests plumtree-graph-sim)
 add_executable(test-tos-collator test/test-tos-collator.cpp)
 target_link_libraries(test-tos-collator overlay tdutils tdactor adnl tl_api dht
   validator-disk tos_validator validator-disk )
+add_executable(test-m3-live EXCLUDE_FROM_ALL test/test-m3-live.cpp)
+target_link_libraries(test-m3-live PRIVATE overlay tdutils tdactor adnl tl_api dht
+  validator-disk tos_validator validator-disk)
 add_test(NAME test-counter-collator-admission
   COMMAND ${CMAKE_COMMAND} -DCOLLATOR=$<TARGET_FILE:test-tos-collator>
     -P ${CMAKE_CURRENT_SOURCE_DIR}/test/test-counter-collator-admission.cmake)
@@ -851,11 +854,11 @@ if(NOT TARGET test-workchain-activation-control)
 endif()
 add_dependencies(all-tests test-workchain-activation-control)
 # Prepared local validator decisions are private in scope, but checked by the
-# default build/regression. The wrapper expires them if production is connected.
+# default build/regression. The wrapper checks actual default-OFF decisions.
 if(NOT TARGET test-workchain-validator-local-visitors)
   add_executable(test-workchain-validator-local-visitors
     crypto/test/test-workchain-validator-local-visitors.cpp)
-  target_link_libraries(test-workchain-validator-local-visitors PRIVATE tos_block tos_crypto)
+  target_link_libraries(test-workchain-validator-local-visitors PRIVATE tos_validator tos_block tos_crypto)
 endif()
 add_dependencies(all-tests test-workchain-validator-local-visitors)
 add_test(NAME test-workchain-validator-local-visitors

@@ -29,6 +29,8 @@
 #include "block/workchain-host-identity.h"
 #include "block/workchain-resource-policy.h"
 #include "block/workchain-coordinator-state.h"
+#include "block/workchain-refund-message.h"
+#include "block/workchain-closure-settlement.h"
 #include "block/workchain-host-input.h"
 #include "block/workchain-account-engine.h"
 #include "block/workchain-account-settlement.h"
@@ -60,16 +62,35 @@ struct AllowsImplicitAccountPathMode<Cell, std::void_t<decltype(block::lookup_wo
 static_assert(!AllowsImplicitAccountPathMode<td::Ref<vm::Cell>>::value,
               "Account lookup callers must explicitly choose Read or Replace");
 
+TEST(WorkchainBlock, SystemStateRegistration) {
+  auto first = block::checked_increment_workchain_registered_accounts(0);
+  ASSERT_TRUE(first.is_ok());
+  ASSERT_EQ(first.ok(), 1u);
+  auto last = block::checked_increment_workchain_registered_accounts(UINT64_MAX - 1);
+  ASSERT_TRUE(last.is_ok());
+  ASSERT_EQ(last.ok(), UINT64_MAX);
+  auto overflow = block::checked_increment_workchain_registered_accounts(last.ok());
+  ASSERT_TRUE(overflow.is_error());
+  ASSERT_EQ(overflow.error().message(), "registered_accounts overflow");
+  ASSERT_EQ(last.ok(), UINT64_MAX);
+}
+
+td::Ref<vm::Cell> coordinator_budget_fixture() {
+  td::Ref<vm::Cell> result;
+  CHECK(block::tlb::pack_cell(result, block::gen::UnoV2CoordinatorBudget::Record{0}));
+  return result;
+}
+
 TEST(WorkchainBlock, CoordinatorStateLayout) {
-  block::WorkchainCoordinatorState input{1, {1, UINT64_MAX, UINT64_MAX, UINT16_MAX}};
+  block::WorkchainCoordinatorState input{2, {1, UINT64_MAX, UINT64_MAX, UINT16_MAX}, UINT64_MAX};
   auto encoded = block::encode_workchain_coordinator_state(input);
   ASSERT_TRUE(encoded.is_ok());
   auto root = encoded.move_as_ok();
   auto cs = vm::load_cell_slice(root);
   ASSERT_EQ(cs.size(), 48u);
-  ASSERT_EQ(cs.size_refs(), 1u);
-  ASSERT_EQ(cs.fetch_ulong(32), 0x46ff26c1u);
-  ASSERT_EQ(cs.fetch_ulong(16), 1u);
+  ASSERT_EQ(cs.size_refs(), 2u);
+  ASSERT_EQ(cs.fetch_ulong(32), block::gen::UnoV2CoordinatorDeposits::cons_tag[0]);
+  ASSERT_EQ(cs.fetch_ulong(16), 2u);
   auto system = cs.fetch_ref();
   auto ss = vm::load_cell_slice(system);
   ASSERT_EQ(ss.size(), 192u);
@@ -77,7 +98,8 @@ TEST(WorkchainBlock, CoordinatorStateLayout) {
   ASSERT_EQ(ss.fetch_ulong(32), 0xbbd85560u);
   auto decoded = block::decode_workchain_coordinator_state(root);
   ASSERT_TRUE(decoded.is_ok());
-  ASSERT_EQ(decoded.ok().layout_version, 1);
+  ASSERT_EQ(decoded.ok().layout_version, 2);
+  ASSERT_EQ(decoded.ok().refundable_deposits, UINT64_MAX);
   ASSERT_EQ(decoded.ok().system.layout_version, 1);
   ASSERT_EQ(decoded.ok().system.base_compute, UINT64_MAX);
   ASSERT_EQ(decoded.ok().system.registered_accounts, UINT64_MAX);
@@ -94,11 +116,12 @@ TEST(WorkchainBlock, CoordinatorStateLayout) {
   // of the supported-layout encoder; no host default is involved.
   for (auto version : {std::uint16_t{0}, std::uint16_t{2}, std::uint16_t{65535}}) {
     auto changed = input;
-    changed.layout_version = version;
+    changed.layout_version = version == 2 ? 1 : version;
     ASSERT_TRUE(block::encode_workchain_coordinator_state(changed).is_error());
-    block::gen::UnoV2CoordinatorState::Record header;
-    header.layout_version = version;
+    block::gen::UnoV2CoordinatorDeposits::Record header;
+    header.layout_version = changed.layout_version;
     header.system = system;
+    header.budget = cs.prefetch_ref();
     td::Ref<vm::Cell> bad;
     ASSERT_TRUE(block::tlb::pack_cell(bad, header));
     ASSERT_TRUE(block::decode_workchain_coordinator_state(bad).is_error());
@@ -106,7 +129,7 @@ TEST(WorkchainBlock, CoordinatorStateLayout) {
     changed.system.layout_version = version;
     ASSERT_TRUE(block::encode_workchain_coordinator_state(changed).is_error());
     ASSERT_TRUE(block::tlb::pack_cell(header.system, changed.system));
-    header.layout_version = 1;
+    header.layout_version = 2;
     ASSERT_TRUE(block::tlb::pack_cell(bad, header));
     ASSERT_TRUE(block::decode_workchain_coordinator_state(bad).is_error());
   }
@@ -116,7 +139,7 @@ TEST(WorkchainBlock, CoordinatorStateExactFraming) {
   auto system = vm::CellBuilder().store_long(0xbbd85560, 32).store_long(1, 16)
       .store_long(7, 64).store_long(8, 64).store_long(9, 16).finalize();
   auto wrap = [](td::Ref<vm::Cell> child) {
-    return vm::CellBuilder().store_long(0x46ff26c1, 32).store_long(1, 16).store_ref(child).finalize();
+    return vm::CellBuilder().store_long(block::gen::UnoV2CoordinatorDeposits::cons_tag[0], 32).store_long(2, 16).store_ref(child).store_ref(coordinator_budget_fixture()).finalize();
   };
   auto valid = wrap(system);
   auto fields = block::decode_workchain_coordinator_state(valid);
@@ -127,7 +150,7 @@ TEST(WorkchainBlock, CoordinatorStateExactFraming) {
   ASSERT_TRUE(block::decode_workchain_coordinator_state({}).is_error());
   ASSERT_TRUE(block::decode_workchain_coordinator_state(system).is_error());
   for (unsigned tag : {0u, 0x46ff26c0u, 0xbbd85560u}) {
-    auto bad = vm::CellBuilder().store_long(tag, 32).store_long(1, 16).store_ref(system).finalize();
+    auto bad = vm::CellBuilder().store_long(tag, 32).store_long(2, 16).store_ref(system).store_ref(coordinator_budget_fixture()).finalize();
     ASSERT_TRUE(block::decode_workchain_coordinator_state(bad).is_error());
   }
   for (unsigned tag : {0u, 0xbbd85561u, 0x46ff26c1u}) {
@@ -135,7 +158,7 @@ TEST(WorkchainBlock, CoordinatorStateExactFraming) {
         .store_long(7, 64).store_long(8, 64).store_long(9, 16).finalize();
     ASSERT_TRUE(block::decode_workchain_coordinator_state(wrap(bad)).is_error());
   }
-  auto no_ref = vm::CellBuilder().store_long(0x46ff26c1, 32).store_long(1, 16).finalize();
+  auto no_ref = vm::CellBuilder().store_long(block::gen::UnoV2CoordinatorDeposits::cons_tag[0], 32).store_long(2, 16).finalize();
   ASSERT_TRUE(block::decode_workchain_coordinator_state(no_ref).is_error());
   for (bool extra_ref : {false, true}) {
     for (bool outer : {false, true}) {
@@ -346,11 +369,11 @@ TEST(WorkchainBlock, EngineConfigurationFraming) {
   auto payload = vm::CellBuilder().store_long(0x12345678, 32).finalize();
   for (std::uint32_t version : {2u, 3u, 0x10002u, 0x10003u, 0x80000002u}) {
     value.admission_version = version;
-    auto encoded = block::encode_workchain_engine_parameters({400, fixture_instance, value, payload});
+    auto encoded = block::encode_workchain_engine_parameters({400, fixture_instance, value, payload, 10000000000ULL});
     ASSERT_TRUE(encoded.is_ok());
     auto root = encoded.move_as_ok();
     auto cs = vm::load_cell_slice(root);
-    ASSERT_EQ(cs.size(), 320u);
+    ASSERT_EQ(cs.size(), 384u);
     ASSERT_EQ(cs.size_refs(), 2u);
     ASSERT_EQ(cs.fetch_ulong(32), block::gen::UnoV2EngineConfiguration::cons_tag[0]);
     ASSERT_EQ(cs.fetch_ulong(32), 400u);
@@ -362,7 +385,7 @@ TEST(WorkchainBlock, EngineConfigurationFraming) {
     auto resources = cs.fetch_ref();
     for (unsigned defect = 0; defect < 5; ++defect) {
       vm::CellBuilder b;
-      b.store_long(defect == 0 ? 0 : block::gen::UnoV2EngineConfiguration::cons_tag[0], 32).store_long(400, 32).store_bits(fixture_instance.bits(), 256);
+      b.store_long(defect == 0 ? 0 : block::gen::UnoV2EngineConfiguration::cons_tag[0], 32).store_long(400, 32).store_long(10000000000LL, 64).store_bits(fixture_instance.bits(), 256);
       if (defect != 1) b.store_ref(resources);
       if (defect != 2) b.store_ref(payload);
       if (defect == 3) b.store_long(0, 1);
@@ -371,7 +394,7 @@ TEST(WorkchainBlock, EngineConfigurationFraming) {
     }
   }
   ASSERT_TRUE(block::decode_workchain_engine_parameters({}).is_error());
-  ASSERT_TRUE(block::encode_workchain_engine_parameters({400, fixture_instance, value, {}}).is_error());
+  ASSERT_TRUE(block::encode_workchain_engine_parameters({400, fixture_instance, value, {}, 10000000000ULL}).is_error());
 }
 
 // These are fixture acceptance records, not production defaults or a claim
@@ -389,17 +412,17 @@ TEST(WorkchainBlock, EngineConfigurationAcceptedCadence) {
   for (std::uint32_t accepted : {0u, 1u, 400u, 401u, UINT32_MAX}) {
     // Recording and installation validation are separate; even zero is a
     // representable explicit value, never an omitted-field default.
-    auto encoded = block::encode_workchain_engine_parameters({accepted, fixture_instance, resources, payload});
+    auto encoded = block::encode_workchain_engine_parameters({accepted, fixture_instance, resources, payload, 10000000000ULL});
     ASSERT_EQ(encoded.is_ok() ? 0 : 401, 0);
     auto cs = vm::load_cell_slice(encoded.ok());
-    ASSERT_EQ(cs.size() == 320 && cs.size_refs() == 2 ? 0 : 402, 0);
+    ASSERT_EQ(cs.size() == 384 && cs.size_refs() == 2 ? 0 : 402, 0);
     ASSERT_EQ(cs.fetch_ulong(32) == block::gen::UnoV2EngineConfiguration::cons_tag[0] && cs.fetch_ulong(32) == accepted ? 0 : 403, 0);
     auto decoded = block::decode_workchain_engine_parameters(encoded.ok());
     ASSERT_EQ(decoded.is_ok() ? 0 : 404, 0);
     ASSERT_EQ(decoded.ok().k_accepted_target_rate_ms == accepted ? 0 : 405, 0);
   }
   auto resource = block::encode_workchain_resource_policy(resources).move_as_ok();
-  auto missing = vm::CellBuilder().store_long(block::gen::UnoV2EngineConfiguration::cons_tag[0], 32).store_bits(fixture_instance.bits(), 256).store_ref(resource).store_ref(payload).finalize();
+  auto missing = vm::CellBuilder().store_long(block::gen::UnoV2EngineConfiguration::cons_tag[0], 32).store_long(10000000000LL, 64).store_bits(fixture_instance.bits(), 256).store_ref(resource).store_ref(payload).finalize();
   ASSERT_EQ(block::decode_workchain_engine_parameters(missing).is_error() ? 0 : 406, 0);
   auto retired_cadence = vm::CellBuilder().store_long(0x6e1fa05f, 32).store_long(400, 32)
       .store_ref(resource).store_ref(payload).finalize();
@@ -571,13 +594,13 @@ TEST(WorkchainBlock, ResourcePolicyEncodedSpecialCells) {
                 .store_ref(position == 4 ? special : work)
                 .store_ref(position == 5 ? special : preflight).finalize();
       auto framing = position == 0 ? special
-          : vm::CellBuilder().store_long(block::gen::UnoV2EngineConfiguration::cons_tag[0], 32).store_long(400, 32).store_bits(fixture_instance.bits(), 256)
+          : vm::CellBuilder().store_long(block::gen::UnoV2EngineConfiguration::cons_tag[0], 32).store_long(400, 32).store_long(10000000000LL, 64).store_bits(fixture_instance.bits(), 256)
                 .store_ref(altered_resource).store_ref(plain).finalize();
       ASSERT_TRUE(block::decode_workchain_engine_parameters(framing).is_error());
       if (position != 0) ASSERT_TRUE(block::decode_workchain_resource_policy(altered_resource).is_error());
     }
     // Business contents are not the host's wire profile to interpret.
-    auto opaque = block::encode_workchain_engine_parameters({400, fixture_instance, value, special}).move_as_ok();
+    auto opaque = block::encode_workchain_engine_parameters({400, fixture_instance, value, special, 10000000000ULL}).move_as_ok();
     ASSERT_TRUE(block::decode_workchain_engine_parameters(opaque).is_ok());
   }
 }
@@ -1125,7 +1148,7 @@ TEST(WorkchainBlock, ResourcePolicyLocalLoadFailure) {
 }
 
 TEST(WorkchainBlock, CoordinatorStateLocalLoadFailure) {
-  auto encoded = block::encode_workchain_coordinator_state({1, {1, 0, 0, 0}});
+  auto encoded = block::encode_workchain_coordinator_state({2, {1, 0, 0, 0}, 0});
   ASSERT_TRUE(encoded.is_ok());
   auto root = encoded.move_as_ok();
   unsigned loads = 0;
@@ -1156,7 +1179,7 @@ TEST(WorkchainBlock, CoordinatorStateLocalLoadFailure) {
   for (unsigned fault = 0; fault != 3; ++fault) {
     loads = 0;
     td::Ref<PreflightObservedCell> child{true, system, &loads, fault == 1, fault == 2 ? 1u : 0u};
-    auto wrapper = vm::CellBuilder().store_long(0x46ff26c1, 32).store_long(1, 16).store_ref(child).finalize();
+    auto wrapper = vm::CellBuilder().store_long(block::gen::UnoV2CoordinatorDeposits::cons_tag[0], 32).store_long(2, 16).store_ref(child).store_ref(coordinator_budget_fixture()).finalize();
     bool failed = false;
     try {
       ASSERT_TRUE(block::decode_workchain_coordinator_state(wrapper).is_ok());
@@ -1454,7 +1477,7 @@ td::Ref<vm::Cell> counter_configuration_shell(td::Ref<vm::Cell> business) {
       {256,16384,128,8192,64}, {32,128,8192,256,16384,16}, {1, 32, 64}, 7};
   return block::encode_workchain_engine_parameters(
       {400, number(4002)->get_hash().bits(),
-       fixture_resources, std::move(business)}).move_as_ok();
+       fixture_resources, std::move(business), 10000000000ULL}).move_as_ok();
 }
 
 std::unique_ptr<block::Config> block_configuration(int version = block::kBlockTransitionMinGlobalVersion,
@@ -4753,6 +4776,105 @@ TEST(WorkchainBlock, NativeDisposalEntry) {
   ASSERT_TRUE(custody.balance == block::CurrencyCollection(1000));
 }
 
+TEST(WorkchainBlock, NativeCoordinatorRefundMessage) {
+  auto candidate = number(11);
+  auto hash = td::Bits256(candidate->get_hash().bits());
+  auto address = td::Bits256::zero();
+  block::InputPolicyIdentity policy_id{candidate->get_hash(), false, 17, 9, 2, 1};
+  auto policy = block::ResolvedInputPolicy::from_resolved_fields({10, 1024, 1}, policy_id);
+  block::CandidateAdmissionSession admission(candidate, std::get<block::ResolvedInputPolicy>(policy));
+  const auto& admitted = std::get<block::AdmittedInput>(admission.evaluate());
+  block::WorkchainHostIdentity identity{-1, hash, hash, 2, UINT64_MAX, hash, false,
+      17, 9, 2, 1, hash, 1, 10, 20, number(1)};
+  block::gen::ShardStateUnsplit::Record state;
+  ASSERT_TRUE(tlb::unpack_cell(shard_fixture(2, 2, true, 1, false, 0, 40, false, 1000), state));
+  vm::AugmentedDictionary accounts(vm::load_cell_slice_ref(state.accounts), 256, block::tlb::aug_ShardAccounts);
+  block::Account coordinator(2, address.bits());
+  ASSERT_TRUE(coordinator.unpack(accounts.lookup(address), 10, false));
+  // Private transaction-construction fixture, not live authenticated-state evidence.
+  coordinator.data = block::encode_workchain_coordinator_state({2, {1, 1, 2, 0}, 300}).move_as_ok();
+  auto next_data = block::encode_workchain_coordinator_state({2, {1, 1, 2, 0}, 200}).move_as_ok();
+  block::WorkchainAccountDeclarations access{{{address, td::Bits256(coordinator.total_state->get_hash().bits())}}, {address}};
+  auto input = block::encode_workchain_host_input(identity, admitted, access, {}, 1, 1, 0).move_as_ok();
+  block::WorkchainAccountEffects effects;
+  effects.updates.push_back({address, next_data});
+  auto effects_root = block::encode_workchain_account_effects(effects, 1, 0, 4096).move_as_ok();
+  auto binding = block::build_workchain_participant_records(td::Bits256(input->get_hash().bits()),
+      td::Bits256(effects_root->get_hash().bits()), {address}, 1).move_as_ok()[0];
+  block::SerializeConfig cfg; cfg.global_version = 16; cfg.disable_anycast = true;
+  block::WorkchainSet workchains;
+  td::Ref<block::WorkchainInfo> basechain{true};
+  basechain.write().workchain = 0;
+  basechain.write().basic = basechain.write().active = basechain.write().accept_msgs = true;
+  basechain.write().min_addr_len = basechain.write().max_addr_len = 256;
+  workchains.emplace(0, basechain);
+  block::ActionPhaseConfig prices;
+  prices.global_version = 16; prices.workchains = &workchains;
+  prices.fwd_std = prices.fwd_mc = block::MsgPrices(100, 0, 0, 0, 16384, 0);
+  block::WorkchainRegistrationFunding historical{100, 0, hash};
+  using Transaction = block::transaction::Transaction;
+  Transaction tx(coordinator, Transaction::tr_workchain_batch, 21, 10);
+  ASSERT_TRUE(tx.prepare_workchain_entry(binding, input, effects_root, next_data, cfg, 0, 4096).is_ok());
+  ASSERT_TRUE(tx.prepare_workchain_refund_message(historical, prices).is_ok());
+  ASSERT_TRUE(tx.balance == block::CurrencyCollection(800));
+  ASSERT_EQ(tx.out_msgs.size(), 1u);
+  auto check = [&](std::uint64_t after_bucket, const std::vector<td::Ref<vm::Cell>>& messages,
+                   const block::WorkchainRegistrationFunding& paid) {
+    return block::verify_workchain_refund_message(paid, 300, after_bucket, coordinator.balance,
+        tx.balance, tx.total_fees, 2, address, messages);
+  };
+  ASSERT_TRUE(check(200, tx.out_msgs, historical).is_ok());
+  auto missing = check(200, {}, historical);
+  ASSERT_TRUE(missing.is_error());
+  ASSERT_EQ(missing.message(), "refund requires exactly one outbound message");
+  auto no_debit = check(300, tx.out_msgs, historical);
+  ASSERT_TRUE(no_debit.is_error());
+  ASSERT_EQ(no_debit.message(), "refund bucket debit differs from historical payment");
+  auto altered = tx.out_msgs;
+  block::gen::Message::Record changed_message;
+  block::gen::CommonMsgInfo::Record_int_msg_info changed_info;
+  ASSERT_TRUE(tlb::type_unpack_cell(altered[0], block::gen::t_Message_Any, changed_message));
+  ASSERT_TRUE(block::gen::csr_unpack(changed_message.info, changed_info));
+  vm::CellBuilder reduced_value;
+  ASSERT_TRUE(block::CurrencyCollection(99).store(reduced_value));
+  changed_info.value = vm::load_cell_slice_ref(reduced_value.finalize());
+  ASSERT_TRUE(tlb::csr_pack(changed_message.info, changed_info));
+  ASSERT_TRUE(tlb::type_pack_cell(altered[0], block::gen::t_Message_Any, changed_message));
+  auto mismatch = check(200, altered, historical);
+  ASSERT_TRUE(mismatch.is_error());
+  ASSERT_EQ(mismatch.message(), "refund message value differs from historical payment");
+  auto bucket_fees = check(100, tx.out_msgs, historical);
+  ASSERT_TRUE(bucket_fees.is_error());
+  ASSERT_EQ(bucket_fees.message(), "refund bucket debit differs from historical payment");
+  auto unknown = historical; unknown.refund_workchain = 7;
+  auto invalid_address = block::validate_workchain_refund_destination(unknown, workchains);
+  ASSERT_TRUE(invalid_address.is_error()); ASSERT_EQ(invalid_address.code(), -7200);
+  unknown.refund_workchain = 256;
+  ASSERT_TRUE(block::validate_workchain_refund_destination(unknown, workchains).is_error());
+  ASSERT_TRUE(tx.serialize(cfg));
+  block::gen::Transaction::Record record;
+  ASSERT_TRUE(tlb::unpack_cell(tx.root, record));
+  ASSERT_EQ(record.outmsg_cnt, 1);
+  // A second send cannot be attached to the same already sealed transaction.
+  ASSERT_TRUE(tx.prepare_workchain_refund_message(historical, prices).is_error());
+  ASSERT_TRUE(coordinator.balance == block::CurrencyCollection(1000));
+  coordinator.balance = block::CurrencyCollection(300);
+  Transaction unfunded(coordinator, Transaction::tr_workchain_batch, 21, 10);
+  ASSERT_TRUE(unfunded.prepare_workchain_entry(binding, input, effects_root, next_data, cfg, 0, 4096).is_ok());
+  auto insufficient = unfunded.prepare_workchain_refund_message(historical, prices);
+  ASSERT_TRUE(insufficient.is_error()); ASSERT_EQ(insufficient.code(), -7200);
+  ASSERT_EQ(insufficient.message(), "refund operating budget insufficient");
+  ASSERT_TRUE(unfunded.out_msgs.empty());
+  ASSERT_TRUE(coordinator.balance == block::CurrencyCollection(300));
+  coordinator.balance = block::CurrencyCollection(299);
+  Transaction corrupt(coordinator, Transaction::tr_workchain_batch, 21, 10);
+  ASSERT_TRUE(corrupt.prepare_workchain_entry(binding, input, effects_root, next_data, cfg, 0, 4096).is_ok());
+  auto unavailable = corrupt.prepare_workchain_refund_message(historical, prices);
+  ASSERT_TRUE(unavailable.is_error()); ASSERT_EQ(unavailable.code(), -7201);
+  ASSERT_EQ(unavailable.message(), "authenticated refund bucket is not fully backed");
+  ASSERT_TRUE(corrupt.out_msgs.empty());
+}
+
 TEST(WorkchainBlock, NativeCoordinatorEntry) {
   auto candidate = number(11);
   auto hash = td::Bits256(candidate->get_hash().bits());
@@ -7286,6 +7408,66 @@ TEST(WorkchainBlock, InboundCommitmentAndMembership) {
   ASSERT_TRUE(!tx.serialize(block::SerializeConfig{}));
 }
 
+TEST(WorkchainBlock, EntryV3InboundAssociation) {
+  auto candidate = number(11);
+  block::InputPolicyIdentity policy_id{candidate->get_hash(), false, 17, 9, 2, 1};
+  auto policy = block::ResolvedInputPolicy::from_resolved_fields({10, 1024, 1}, policy_id);
+  ASSERT_TRUE(std::holds_alternative<block::ResolvedInputPolicy>(policy));
+  block::CandidateAdmissionSession session(candidate, std::get<block::ResolvedInputPolicy>(policy));
+  ASSERT_TRUE(std::holds_alternative<block::AdmittedInput>(session.evaluate()));
+  const auto& admitted = std::get<block::AdmittedInput>(session.evaluate());
+  auto zero = td::Bits256::zero();
+  block::WorkchainHostIdentity identity{0, zero, zero, 2, UINT64_MAX, candidate->get_hash().bits(),
+      false, 17, 9, 2, 1, zero, 1, 1, 1, number(1)};
+  block::WorkchainAccountDeclarations access{{{zero, std::nullopt}}, {zero}};
+  auto envelope = inbound_envelope(3);
+  block::tlb::MsgEnvelope::Record_std message, other, wrong_recipient;
+  ASSERT_TRUE(tlb::unpack_cell(envelope, message));
+  ASSERT_TRUE(tlb::unpack_cell(inbound_envelope(4), other));
+  auto wrong_envelope = inbound_envelope(5, 0, {}, candidate->get_hash().bits());
+  ASSERT_TRUE(tlb::unpack_cell(wrong_envelope, wrong_recipient));
+  auto input = [&](std::vector<td::Ref<vm::Cell>> inbox) {
+    return block::encode_workchain_host_input(identity, admitted, access, inbox, 1, 1, 2).move_as_ok();
+  };
+  auto root = input({envelope});
+  auto effects = number(22);
+  auto describe = [&](td::Ref<vm::Cell> host, td::Bits256 commitment, td::Bits256 account) {
+    auto binding = block::build_workchain_participant_records(commitment, effects->get_hash().bits(),
+        {account}, 1).move_as_ok()[0];
+    return vm::CellBuilder().store_long(block::tlb::TransactionDescr::trans_workchain_entry_v3, 4)
+        .store_ref(binding).store_ref(host).store_ref(effects).finalize();
+  };
+  auto description = describe(root, root->get_hash().bits(), zero);
+  auto transaction = inbound_transaction(description);
+  ASSERT_TRUE(block::is_transaction_in_msg(transaction, message.msg));
+  // Actual block InMsg missing from the committed transaction inbox.
+  ASSERT_TRUE(!block::is_transaction_in_msg(transaction, other.msg));
+  ASSERT_TRUE(!block::is_transaction_in_msg(transaction, {}));
+  ASSERT_TRUE(!block::is_transaction_in_msg(inbound_transaction(
+      describe(root, candidate->get_hash().bits(), zero)), message.msg));
+  // Even membership plus a matching commitment cannot authorize another recipient.
+  auto foreign = input({wrong_envelope});
+  ASSERT_TRUE(!block::is_transaction_in_msg(inbound_transaction(
+      describe(foreign, foreign->get_hash().bits(), zero)), wrong_recipient.msg));
+  ASSERT_TRUE(!block::is_transaction_in_msg(inbound_transaction(
+      describe(root, root->get_hash().bits(), candidate->get_hash().bits())), message.msg));
+  ASSERT_TRUE(!block::is_transaction_in_msg(inbound_transaction(description, message.msg), message.msg));
+  auto empty = input({});
+  ASSERT_TRUE(block::is_transaction_in_msg(inbound_transaction(describe(empty, empty->get_hash().bits(), zero)), {}));
+  // Ordinary input semantics remain unchanged (including absent input).
+  auto ordinary = vm::CellBuilder().store_zeroes(14).finalize();
+  ASSERT_TRUE(block::gen::t_TransactionDescr.validate_ref(4096, ordinary));
+  ASSERT_TRUE(block::is_transaction_in_msg(inbound_transaction(ordinary, message.msg), message.msg));
+  ASSERT_TRUE(!block::is_transaction_in_msg(inbound_transaction(ordinary, message.msg), other.msg));
+  ASSERT_TRUE(!block::is_transaction_in_msg(inbound_transaction(ordinary, message.msg), {}));
+  ASSERT_TRUE(block::is_transaction_in_msg(inbound_transaction(ordinary), {}));
+  ASSERT_TRUE(!block::is_transaction_in_msg(inbound_transaction(ordinary), message.msg));
+  // Unknown future shapes never inherit either the ordinary or v3 path.
+  auto unknown = vm::CellBuilder().store_long(15, 4).finalize();
+  ASSERT_TRUE(!block::is_transaction_in_msg(inbound_transaction(unknown, message.msg), message.msg));
+  ASSERT_TRUE(!block::is_transaction_in_msg(inbound_transaction(unknown), {}));
+}
+
 TEST(WorkchainBlock, ExecutorWitnessEncoding) {
   CounterEngine engine;
   auto in = input();
@@ -9235,7 +9417,7 @@ TEST(WorkchainBlock, DualNativeIngressCodecAndVersion) {
   block::WorkchainResourcePolicy resources{2, {64,4096,8,16,16,5},
       {256,16384,128,8192,64}, {32,128,8192,256,16384,16}, {1, 32, 64}, 7};
   auto business = vm::CellBuilder().store_long(0x12345678, 32).finalize();
-  policy.engine_configuration = block::encode_workchain_engine_parameters({400, fixture_instance, resources, business}).move_as_ok();
+  policy.engine_configuration = block::encode_workchain_engine_parameters({400, fixture_instance, resources, business, 10000000000ULL}).move_as_ok();
   auto encoded = block::encode_workchain_native_ingress_policy(policy);
   ASSERT_TRUE(encoded.is_ok());
   auto root = encoded.move_as_ok();
@@ -9358,7 +9540,7 @@ TEST(WorkchainBlock, MultiAccountAdmissionVersionInstallation) {
   for (std::uint32_t admission : {0u, 1u, 2u, 3u, 4u, 5u, 0x10002u, 0x10003u, 0x10004u, 0x80000002u}) {
     block::WorkchainResourcePolicy resources{admission, {64,4096,8,16,16,5},
         {256,16384,128,8192,64}, {32,128,8192,256,16384,16}, {1, 32, 64}, 7};
-    policy.engine_configuration = block::encode_workchain_engine_parameters({400, fixture_instance, resources, business}).move_as_ok();
+    policy.engine_configuration = block::encode_workchain_engine_parameters({400, fixture_instance, resources, business, 10000000000ULL}).move_as_ok();
     ASSERT_TRUE(configuration.set_ref(td::BitArray<32>{84},
         block::encode_workchain_native_ingress_table({policy}).move_as_ok()));
     ASSERT_EQ(block::validate_native_ingress_presence(configuration).is_ok(), admission == 2 || admission == 3 || admission == 4);
@@ -9381,7 +9563,7 @@ TEST(WorkchainBlock, MultiAccountAdmissionVersionInstallation) {
     if (field == 10) resources.work_output.max_output_cells = 0;
     if (field == 11) resources.work_output.max_output_bits = 0;
     if (field == 12) resources.preflight_allowance = 0;
-    policy.engine_configuration = block::encode_workchain_engine_parameters({400, fixture_instance, resources, business}).move_as_ok();
+    policy.engine_configuration = block::encode_workchain_engine_parameters({400, fixture_instance, resources, business, 10000000000ULL}).move_as_ok();
     ASSERT_TRUE(configuration.set_ref(td::BitArray<32>{84},
         block::encode_workchain_native_ingress_table({policy}).move_as_ok()));
     ASSERT_TRUE(!block::valid_config_data(configuration.get_root_cell(), td::Bits256::zero()));
@@ -9393,7 +9575,7 @@ TEST(WorkchainBlock, MultiAccountAdmissionVersionInstallation) {
     block::WorkchainResourcePolicy resources{4, {64,4096,8,16,16,5},
         {256,16384,128,8192,64}, {32,128,8192,256,16384,16}, {0,2,2}, allowance};
     policy.engine_configuration = block::encode_workchain_engine_parameters(
-        {400, fixture_instance, resources, business}).move_as_ok();
+        {400, fixture_instance, resources, business, 10000000000ULL}).move_as_ok();
     ASSERT_TRUE(configuration.set_ref(td::BitArray<32>{84},
         block::encode_workchain_native_ingress_table({policy}).move_as_ok()));
     auto installed = block::validate_native_ingress_presence(configuration);
@@ -9409,7 +9591,7 @@ TEST(WorkchainBlock, MultiAccountAdmissionVersionInstallation) {
   // Missing either mandatory reference is rejected by the installation gate.
   for (unsigned refs = 0; refs < 2; ++refs) {
     vm::CellBuilder malformed;
-    malformed.store_long(block::gen::UnoV2EngineConfiguration::cons_tag[0], 32).store_long(400, 32).store_bits(fixture_instance.bits(), 256);
+    malformed.store_long(block::gen::UnoV2EngineConfiguration::cons_tag[0], 32).store_long(400, 32).store_long(10000000000LL, 64).store_bits(fixture_instance.bits(), 256);
     if (refs) malformed.store_ref(business);
     policy.engine_configuration = malformed.finalize();
     ASSERT_TRUE(configuration.set_ref(td::BitArray<32>{84},
@@ -9524,7 +9706,7 @@ TEST(WorkchainBlock, AccountRegistryReplayConnectivity) {
   ingress.executor_address = a;
   ingress.custody_address = b;
   ingress.engine_configuration = block::encode_workchain_engine_parameters({400, fixture_instance, resources,
-      vm::CellBuilder().store_long(0x50524231,32).store_long(37,8).finalize()}).move_as_ok();
+      vm::CellBuilder().store_long(0x50524231,32).store_long(37,8).finalize(), 10000000000ULL}).move_as_ok();
   vm::Dictionary config_dict(32);
   vm::CellBuilder version;
   ASSERT_TRUE(block::gen::t_GlobalVersion.pack_capabilities(version, 16, tos::capBlockTransition));
@@ -9755,7 +9937,7 @@ TEST(WorkchainBlock, MultiAccountRegistryBinding) {
       {256,16384,128,8192,64}, {32,128,8192,256,16384,16}, {1, 32, 64}, 7};
   auto engine_parameters = [&](unsigned value) {
     return block::encode_workchain_engine_parameters(
-        {400, fixture_instance, resource_policy, vm::CellBuilder().store_long(value, 8).finalize()}).move_as_ok();
+        {400, fixture_instance, resource_policy, vm::CellBuilder().store_long(value, 8).finalize(), 10000000000ULL}).move_as_ok();
   };
   block::WorkchainNativeIngressPolicy policy;
   policy.workchain_id = 2;

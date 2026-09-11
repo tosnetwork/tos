@@ -10,6 +10,8 @@
 #include "block/workchain-allocation-overlay.h"
 #include "block/workchain-native-materialization.h"
 #include "block/workchain-native-inbox.h"
+#include "block/workchain-registration-settlement.h"
+#include "block/workchain-closure-settlement.h"
 #include "vm/cells/UsageCell.h"
 
 namespace block {
@@ -212,15 +214,50 @@ inline td::Result<WorkchainAccountSettlement> settle_executed(
     // This excludes already-produced engine data and is not zero overshoot of
     // the final union budget. No runtime multiplication relies on this bound.
     TRY_STATUS(charge_effect(effects_root));
+    const bool specialized = executed.effects.registration || executed.effects.closure;
+    if (specialized) {
+      if constexpr (!std::is_same_v<Admission, ProofAdmittedBatchInput>) {
+        return td::Status::Error(-7201, "registration/closure require admitted metered execution");
+      } else if (!admitted.policy().requires_proof_operation_meter()) {
+        return td::Status::Error(-7201, "registration/closure require operation-metered profile");
+      }
+      if ((executed.effects.registration && executed.effects.closure) || disposal ||
+          executed.effects.payout_request.not_null() || !executed.effects.native_transfers.empty())
+        return td::Status::Error(-7201, "conflicting locally executed Native settlement kinds");
+      WorkchainAccountEffects expected;
+      if (executed.effects.registration) {
+        const auto& result = executed.effects.registration->registration;
+        auto decoded = decode_workchain_confidential_account(result.account_data);
+        if (decoded.is_error()) return td::Status::Error(-7201, "engine registration record malformed");
+        auto created = decoded.move_as_ok();
+        expected.updates = {{created.address.account, result.account_data}, {coordinator, result.coordinator_data}};
+      } else {
+        const auto& result = *executed.effects.closure;
+        expected.updates = {{result.account, result.transition.account_data},
+                            {coordinator, result.transition.coordinator_data}};
+      }
+      std::sort(expected.updates.begin(), expected.updates.end(),
+                [](const auto& a, const auto& b) { return a.account < b.account; });
+      auto encoded_expected = encode_workchain_account_effects(expected, max_writes, max_transfers,
+                                                               extra_validation_cells);
+      if (encoded_expected.is_error()) return td::Status::Error(-7201, "engine Native settlement result malformed");
+      auto expected_root = encoded_expected.move_as_ok();
+      // Specialized materializers reconstruct precisely these effects. Reject
+      // extra fees/events/usage or divergent data rather than committing two
+      // different effects hashes to the engine result and Native entry.
+      if (expected_root->get_hash() != effects_root->get_hash())
+        return td::Status::Error(-7201, "Native settlement differs from locally executed effects");
+    }
     std::vector<WorkchainStorageWrite> writes;
     writes.reserve(executed.effects.updates.size());
     for (const auto& update : executed.effects.updates) {
       auto read = std::lower_bound(declarations.reads.begin(), declarations.reads.end(), update.account,
           [](const auto& entry, const auto& key) { return entry.account < key; });
-      if (read == declarations.reads.end() || read->account != update.account || !read->old_account_hash) {
+      if (read == declarations.reads.end() || read->account != update.account ||
+          (!read->old_account_hash && !executed.effects.registration)) {
         return td::Status::Error("account creation requires a registration participant");
       }
-      writes.push_back({update.account, *read->old_account_hash, update.data});
+      if (read->old_account_hash) writes.push_back({update.account, *read->old_account_hash, update.data});
     }
     const td::Bits256 input_hash(executed.input->get_hash().bits());
     const td::Bits256 effects_hash(effects_root->get_hash().bits());
@@ -228,7 +265,21 @@ inline td::Result<WorkchainAccountSettlement> settle_executed(
     td::Ref<vm::Cell> message;
     WorkchainFinalImportEvidence imports;
     std::vector<NewOutMsg> exports;
-    if (executed.effects.payout_request.is_null()) {
+    if (specialized) {
+      auto materialize = [&]() -> td::Result<WorkchainInboundAllocationOverlay> {
+        if (executed.effects.registration)
+          return settle_workchain_registration(old_accounts, identity, executed.input,
+              *executed.effects.registration, coordinator, custody, max_reads, max_writes, max_inbound,
+              extra_validation_cells, cfg);
+        return settle_workchain_executed_closure(old_accounts, identity, executed.input,
+            *executed.effects.closure, coordinator, custody, max_reads, max_writes,
+            extra_validation_cells, cfg, message_cfg);
+      };
+      TRY_RESULT(allocated, materialize());
+      state = std::move(allocated.state);
+      imports = std::move(allocated.imports);
+      exports = std::move(allocated.exports);
+    } else if (executed.effects.payout_request.is_null()) {
       TRY_RESULT(allocated, disposal ? build_workchain_disposal_allocation_overlay(old_accounts, identity, executed.input,
           effects_root, coordinator, max_reads, max_writes, max_transfers, extra_validation_cells, cfg, *disposal) :
           build_workchain_inbound_allocation_overlay(old_accounts, identity, executed.input,

@@ -54,6 +54,11 @@ void ValidatorManagerImpl::log_collate_query_stats(CollationStats stats) {
   td::write_file(query_result_path_ + ".binding",
                  PSLICE() << "retained_after_state=" << (stats.account_adapter_retained_after_state ? 1 : 0)
                           << "\nreleased=" << (stats.account_adapter_released ? 1 : 0) << "\n").ensure();
+  // The exact refusal branch supplies this enum; error prose and -7201 do not.
+  td::write_file(query_result_path_ + ".readiness",
+                 PSLICE() << "phase=" << static_cast<unsigned>(stats.account_readiness.phase)
+                          << "\nworkchain=" << stats.account_readiness.workchain
+                          << "\ndelivery=recorded\n").ensure();
   // This interval includes the whole query up to the completed stats write,
   // not just message delivery. It is a conservative normal-run observation,
   // not an upper bound under arbitrary scheduler or storage delays.
@@ -294,10 +299,10 @@ void ValidatorManagerImpl::sync_complete(td::Promise<td::Unit> promise) {
   }
   Ed25519_PublicKey created_by{td::Bits256::zero()};
   td::as<td::uint32>(created_by.as_bits256().data() + 32 - 4) = ((unsigned)std::time(nullptr) >> 8);
-  td::Ref<CollatorOptions> options;
+  td::Ref<CollatorOptions> options = opts_->get_collator_options();
   if (block_candidate_.not_null()) {
     // Disk-only block fixture: defer the second output to exercise queue recovery.
-    options = td::make_ref<CollatorOptions>();
+    options = options.not_null() ? td::make_ref<CollatorOptions>(*options) : td::make_ref<CollatorOptions>();
     options.write().defer_messages_after = 1;
   }
   run_collate_query(CollateParams{.shard = shard_id,
