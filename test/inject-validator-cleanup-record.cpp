@@ -171,12 +171,14 @@ int main(int argc, char** argv) {
     }
   }
 
-  // Crash-boundary-2 reconstruction: run the REAL deleter (the exact function the
-  // cleanup worker calls) so the directory is removed while the durable record still
-  // stands. This is the mid-flight on-disk state {dir gone, record present} that a
-  // crash between erase-commit and record-drop leaves behind -- reconstructed with the
-  // production code path, not simulated. The engine must reconcile it on restart.
+  // Crash-boundary-2 reconstruction: run the REAL deleter (the exact function the cleanup
+  // worker calls) so the directory is removed while the durable record still stands. This
+  // reconstructs the on-disk state left AFTER the directory is physically removed but
+  // BEFORE the durable record erase commits -- {dir gone, record present} -- with the
+  // production delete function, not a simulated rm. The engine must reconcile it on
+  // restart. (The real dispatch-path interruption is exercised by crash_boundary_recovery.py.)
   int dir_gone = 0;
+  int loadable_post = loadable ? 1 : 0;  // record readability AFTER the delete (the state that matters)
   if (predelete) {
     // Returns true only on stat-confirmed removal (see delete_validator_consensus_db).
     dir_gone = delete_validator_consensus_db(td::Slice{db_root}, sid, record.dir_name) ? 1 : 0;
@@ -185,9 +187,24 @@ int main(int argc, char** argv) {
       std::fprintf(stderr, "ERROR: predelete did not confirm removal of dir %s\n", full.c_str());
       return 1;
     }
+    // Re-read the record AFTER the delete: the reconstructed post-state is only meaningful
+    // if the durable record actually survives the directory removal. POISON_LOADABLE alone
+    // is a pre-delete read, so prove the post-delete state here.
+    loadable_post = 0;
+    for (const auto& r : load_validator_cleanup_records(kv)) {
+      if (r.session_id == sid) {
+        loadable_post = 1;
+      }
+    }
+    if (!loadable_post) {
+      std::fprintf(stderr, "ERROR: predelete removed the durable record too (expected record to survive)\n");
+      return 1;
+    }
   }
   std::printf(
-      "INJECTED seed=%d session=%s dir=%s retire_seqno=%u dir_wc=%d dir_cc=%u POISON_LOADABLE=%d PREDELETE_DIR_GONE=%d\n",
-      seed, sid.to_hex().c_str(), record.dir_name.c_str(), retire_seqno, dir_wc, dir_cc, loadable ? 1 : 0, dir_gone);
+      "INJECTED seed=%d session=%s dir=%s retire_seqno=%u dir_wc=%d dir_cc=%u POISON_LOADABLE=%d PREDELETE_DIR_GONE=%d "
+      "POISON_LOADABLE_POST=%d\n",
+      seed, sid.to_hex().c_str(), record.dir_name.c_str(), retire_seqno, dir_wc, dir_cc, loadable ? 1 : 0, dir_gone,
+      loadable_post);
   return loadable ? 0 : 1;
 }

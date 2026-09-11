@@ -76,13 +76,18 @@ def _inject(node: Path, seed: int, retire_seqno: int, root_b64: str, file_b64: s
     r = subprocess.run(cmd, capture_output=True, text=True)
     if r.returncode != 0:
         raise SystemExit(f"injection seed={seed} failed: {r.stdout}{r.stderr}")
-    m = re.search(r"session=(?P<s>\S+) dir=(?P<d>\S+).* POISON_LOADABLE=(?P<l>\d) PREDELETE_DIR_GONE=(?P<g>\d)", r.stdout)
+    m = re.search(
+        r"session=(?P<s>\S+) dir=(?P<d>\S+).* POISON_LOADABLE=(?P<l>\d) PREDELETE_DIR_GONE=(?P<g>\d) "
+        r"POISON_LOADABLE_POST=(?P<lp>\d)",
+        r.stdout,
+    )
     if not m or m.group("l") != "1":
         raise SystemExit(f"injection seed={seed} not loadable: {r.stdout}")
-    # When predelete was requested, the REAL deleter MUST have confirmed the dir gone,
-    # else we did not actually reconstruct the {dir gone, record present} boundary state.
-    if predelete and m.group("g") != "1":
-        raise SystemExit(f"injection seed={seed} predelete did not confirm dir gone: {r.stdout}")
+    # When predelete was requested, the REAL deleter MUST have confirmed the dir gone AND the
+    # durable record must survive the deletion (a post-delete re-read), else we did not
+    # actually reconstruct the {dir gone, record present} boundary state.
+    if predelete and (m.group("g") != "1" or m.group("lp") != "1"):
+        raise SystemExit(f"injection seed={seed} predelete did not reconstruct {{dir gone, record present}}: {r.stdout}")
     if not predelete and m.group("g") != "0":
         raise SystemExit(f"injection seed={seed} unexpectedly deleted dir: {r.stdout}")
     return m.group("s"), m.group("d")
