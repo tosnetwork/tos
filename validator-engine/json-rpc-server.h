@@ -240,16 +240,14 @@ class JsonRpcServer final : public td::actor::Actor, public virtual metrics::Asy
     // accepted (operators are expected to know the exact peer address
     // of their reverse proxy).
     std::vector<std::string> trusted_proxies;
-    // ACCEPTANCE / OPS observability, default off: expose the read-only
-    // getNodeConsensusStatus admin method. Operators enable it explicitly and
-    // bind the JSON-RPC listener to loopback; it reports internal consensus state
-    // (applied and consensus masterchain block, last key block, validator-set
-    // membership, catchain seqno) that is otherwise only in logs. Never on by default.
+    // OPS observability, default off: expose the read-only getNodeConsensusStatus admin
+    // method. It reports internal consensus state (applied and consensus masterchain block,
+    // last key block, validator-set membership, catchain seqno) that is otherwise only in
+    // logs. Membership and the snapshot are computed live in the validator manager, so this
+    // struct carries no node identity. Restricting exposure to loopback is an operator
+    // DEPLOYMENT responsibility (choose a loopback --json-rpc-address); this flag does not
+    // itself enforce a loopback-only listener.
     bool expose_consensus_status = false;
-    // This node's own validator key hashes (== validator public-key short ids), used
-    // to answer is_validator against the current set. Empty => is_validator is reported
-    // as null (unknown), never a false negative.
-    std::vector<td::Bits256> node_validator_ids;
   };
 
   // M-02 hardening: the listen-time decision matrix is broken out so

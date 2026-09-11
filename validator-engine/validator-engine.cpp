@@ -2519,14 +2519,6 @@ void ValidatorEngine::start_validator() {
   }
 
   if (json_rpc_addr_) {
-    // Supply this node's validator key hashes (== validator public-key short ids) so the
-    // read-only getNodeConsensusStatus can answer is_validator against the current set.
-    // Read only when the admin status method is enabled; otherwise leave it empty.
-    if (json_rpc_opts_.expose_consensus_status) {
-      for (const auto &val : config_.validators) {
-        json_rpc_opts_.node_validator_ids.push_back(val.first.bits256_value());
-      }
-    }
     json_rpc_server_ = tos::JsonRpcServer::create(validator_manager_.get(), json_rpc_opts_);
     td::actor::send_closure(json_rpc_server_, &tos::JsonRpcServer::listen, json_rpc_addr_.value());
     // Register JSON-RPC server as a Prometheus metrics collector
@@ -6528,7 +6520,8 @@ int main(int argc, char *argv[]) {
   });
   p.add_option('\0', "json-rpc-expose-consensus-status",
                "expose the read-only getNodeConsensusStatus admin method (applied/consensus block, key block, "
-               "validator-set membership). Default off; enable only on a loopback-bound JSON-RPC listener.",
+               "validator-set membership). Default off. This flag does NOT enforce a loopback-only listener: "
+               "restricting access is the operator's responsibility (bind --json-rpc-address to loopback).",
                [&]() {
     acts.push_back(
         [&x] { td::actor::send_closure(x, &ValidatorEngine::set_json_rpc_expose_consensus_status, true); });

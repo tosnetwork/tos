@@ -263,6 +263,29 @@ struct ValidatorManagerOptions : public td::CntObject {
                                                  size_t max_mempool_num = 999999, bool initial_sync_disabled = false);
 };
 
+// A self-consistent snapshot of a node's masterchain consensus view, assembled in one
+// actor turn by ValidatorManagerInterface::get_node_consensus_status so that the applied and
+// served points cannot be read at different instants (which could otherwise show a negative
+// applied-minus-served gap that never existed). Membership is computed from the node's
+// CURRENT local validator keys, not a startup copy. is_validator is meaningful only when
+// has_local_validator_keys is true; it reports configured-identity set membership and does
+// NOT prove the node is actively signing / participating in consensus.
+struct NodeConsensusStatus {
+  BlockIdExt applied_block_id;
+  UnixTime unix_time{0};
+  bool have_served{false};
+  BlockIdExt served_block_id;
+  BlockIdExt last_key_block_id;
+  CatchainSeqno masterchain_cc_seqno{0};
+  bool have_validator_set{false};
+  CatchainSeqno validator_set_catchain_seqno{0};
+  td::uint32 validator_set_hash{0};
+  td::uint64 validator_set_total_weight{0};
+  td::uint32 validator_set_count{0};
+  bool has_local_validator_keys{false};
+  bool is_validator{false};
+};
+
 class ValidatorManagerInterface : public td::actor::Actor {
  public:
   class Callback {
@@ -347,6 +370,11 @@ class ValidatorManagerInterface : public td::actor::Actor {
       td::Promise<std::pair<td::Ref<MasterchainState>, BlockIdExt>> promise) = 0;
   virtual void get_last_liteserver_state_block(
       td::Promise<std::pair<td::Ref<MasterchainState>, BlockIdExt>> promise) = 0;
+  // Single-turn consistent snapshot of this node's masterchain consensus view (read-only,
+  // for the getNodeConsensusStatus admin RPC). Assembling applied + served + key block +
+  // validator-set + live-key membership in one message handling avoids the cross-read
+  // inconsistencies of composing several separate queries.
+  virtual void get_node_consensus_status(td::Promise<NodeConsensusStatus> promise) = 0;
 
   virtual void get_block_data(BlockHandle handle, td::Promise<td::BufferSlice> promise) = 0;
   virtual void check_zero_state_exists(BlockIdExt block_id, td::Promise<bool> promise) = 0;

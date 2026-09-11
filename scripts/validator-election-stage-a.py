@@ -1442,6 +1442,12 @@ class ValidatorElectionRehearsal:
             vset = s.get("validator_set") or {}
             if vset.get("is_validator") is not True:
                 failures.append(f"node {i + 1} is_validator={vset.get('is_validator')} (expected true)")
+            # P2-1 invariant: a single-turn snapshot can never show served leading applied,
+            # so the gap is always >= 0. A negative value would mean the two points were read
+            # at different instants (the defect this endpoint was rewritten to avoid).
+            gap = s.get("applied_minus_consensus")
+            if gap is not None and gap < 0:
+                failures.append(f"node {i + 1} applied_minus_consensus={gap} (< 0: inconsistent snapshot)")
         key_blocks = {json.dumps(s.get("last_key_block"), sort_keys=True) for s in statuses}
         if len(key_blocks) != 1:
             failures.append(f"nodes disagree on last_key_block: {key_blocks}")

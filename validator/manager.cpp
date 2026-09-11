@@ -40,6 +40,7 @@
 #include "impl/applied-ext-message-cleanup.hpp"
 #include "impl/config.hpp"
 #include "interfaces/validator-full-id.h"
+#include "node-consensus-status.h"
 #include "td/actor/MultiPromise.h"
 #include "td/actor/coro_utils.h"
 #include "td/utils/JsonBuilder.h"
@@ -2018,6 +2019,43 @@ void ValidatorManagerImpl::get_last_liteserver_state_block(
   } else {
     promise.set_result(std::pair<td::Ref<MasterchainState>, BlockIdExt>{state, state->get_block_id()});
   }
+}
+
+void ValidatorManagerImpl::get_node_consensus_status(td::Promise<NodeConsensusStatus> promise) {
+  // Everything below is read in this single actor turn, so the applied and served points are
+  // one consistent snapshot (served seqno <= applied seqno always holds -> no phantom negative
+  // gap), and membership reflects the LIVE local key sets, not a startup copy.
+  if (last_masterchain_state_.is_null()) {
+    promise.set_error(td::Status::Error(tos::ErrorCode::notready, "not started"));
+    return;
+  }
+  auto mc_shard = ShardIdFull{masterchainId};
+  NodeConsensusStatus status;
+  status.applied_block_id = last_masterchain_block_id_;
+  status.unix_time = last_masterchain_state_->get_unix_time();
+  status.last_key_block_id = last_masterchain_state_->last_key_block_id();
+  status.masterchain_cc_seqno = last_masterchain_state_->get_shard_cc_seqno(mc_shard);
+
+  auto served = do_get_last_liteserver_state();
+  if (served.not_null()) {
+    status.have_served = true;
+    status.served_block_id = served->get_block_id();
+  }
+
+  auto val_set = last_masterchain_state_->get_validator_set(mc_shard);
+  if (val_set.not_null()) {
+    status.have_validator_set = true;
+    status.validator_set_catchain_seqno = val_set->get_catchain_seqno();
+    status.validator_set_hash = val_set->get_validator_set_hash();
+    status.validator_set_total_weight = val_set->get_total_weight();
+    status.validator_set_count = static_cast<td::uint32>(val_set->export_vector().size());
+    auto membership = node_validator_membership(*val_set, temp_keys_, permanent_keys_);
+    status.has_local_validator_keys = membership.first;
+    status.is_validator = membership.second;
+  } else {
+    status.has_local_validator_keys = !temp_keys_.empty() || !permanent_keys_.empty();
+  }
+  promise.set_result(std::move(status));
 }
 
 void ValidatorManagerImpl::send_get_block_request(BlockIdExt id, td::uint32 priority,
