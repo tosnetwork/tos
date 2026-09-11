@@ -14,6 +14,10 @@ struct WorkchainStaticOperationTariff {
 struct WorkchainOperationFeeAmounts {
   std::uint64_t state, compute, tip, total;
 };
+// D64: Withdrawal reuses R_SEND's billing unit, not a separately maintained
+// number. These are billing units, never proof-work operation counts.
+inline constexpr std::uint64_t kWorkchainSendBillingUnits = 1;
+inline constexpr std::uint64_t kWorkchainCollectBillingUnits = 3;
 
 // Withdrawal is a distinct operation, even though D64 reuses R_SEND. Its
 // one billing unit is frozen; its W-state price is an explicit authenticated
@@ -27,12 +31,13 @@ struct WorkchainOperationFeeAmounts {
 inline td::Result<WorkchainOperationFeeAmounts> derive_workchain_withdrawal_fee_amounts(
     std::uint64_t authenticated_base, std::uint64_t authenticated_state_fee,
     std::uint64_t claimed_fee) {
-  std::uint64_t floor, tip;
-  if (__builtin_add_overflow(authenticated_state_fee, authenticated_base, &floor))
+  std::uint64_t compute, floor, tip;
+  if (__builtin_mul_overflow(authenticated_base, kWorkchainSendBillingUnits, &compute) ||
+      __builtin_add_overflow(authenticated_state_fee, compute, &floor))
     return td::Status::Error(-7200, "Withdrawal authenticated fee floor overflow");
   if (__builtin_sub_overflow(claimed_fee, floor, &tip))
     return td::Status::Error(-7200, "Withdrawal public fee below authenticated fee floor");
-  return WorkchainOperationFeeAmounts{authenticated_state_fee, authenticated_base, tip, claimed_fee};
+  return WorkchainOperationFeeAmounts{authenticated_state_fee, compute, tip, claimed_fee};
 }
 
 // D28 / section 12.1: billing units are SEND=1, COLLECT=3. They are NOT
@@ -49,7 +54,7 @@ inline td::Result<WorkchainOperationFeeAmounts> derive_workchain_operation_fee_a
   // zero state fee. Do not charge COLLECT for freeing an existing receipt slot.
   const auto state = relation == 1 ? authenticated_slot_fee : 0;
   const auto tip = relation == 1 ? tariff.send_tip : tariff.collect_tip;
-  const std::uint64_t billing_units = relation == 1 ? 1 : 3;
+  const auto billing_units = relation == 1 ? kWorkchainSendBillingUnits : kWorkchainCollectBillingUnits;
   std::uint64_t compute, subtotal, total;
   if (__builtin_mul_overflow(tariff.base, billing_units, &compute) ||
       __builtin_add_overflow(state, compute, &subtotal) || __builtin_add_overflow(subtotal, tip, &total))
