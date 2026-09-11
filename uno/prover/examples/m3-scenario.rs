@@ -1,6 +1,6 @@
 //! TEST WALLET ONLY: known witnesses for the continuous M3 scenario. Not a deployment wallet.
 use bulletproofs::PedersenGens;
-use curve25519_dalek::{RistrettoPoint as Point, Scalar};
+use curve25519_dalek::{ristretto::CompressedRistretto, RistrettoPoint as Point, Scalar};
 use sha2::{Digest, Sha512};
 use std::{collections::BTreeMap, error::Error, fs};
 use tos_uno_crypto_prototype::ffi::KernelLimits;
@@ -63,7 +63,9 @@ fn main() -> Result<()> {
             b"TOS/UNO/REGISTER/KEY-POSSESSION/v2".as_slice()
         });
         let context = unhex(f("context")?)?;
-        if context.len() != 426 { return Err(fail("possession v2 requires 426 context bytes").into()); }
+        if context.len() != 426 {
+            return Err(fail("possession v2 requires 426 context bytes").into());
+        }
         hash.update(context);
         hash.update(unhex(f("prefix")?)?);
         hash.update(p.compress().as_bytes());
@@ -140,13 +142,24 @@ fn main() -> Result<()> {
             new,
         )
     } else if kind == 2 {
+        let authenticated_receipts =
+            matches!(args[1].as_str(), "points-receipts" | "prove-receipts");
         let list = |key: &str| -> Result<Vec<u64>> {
             f(key)?.split(',').map(|x| Ok(x.parse()?)).collect()
         };
         let vv = list("values")?;
-        let rr = list("blinds")?;
+        let rr = if authenticated_receipts { Vec::new() } else { list("blinds")? };
+        let receipts =
+            if authenticated_receipts { bytes32(f("receipt_ciphertexts")?)? } else { Vec::new() };
         let tt = list("auxiliaries")?;
-        if vv.is_empty() || vv.len() != rr.len() || vv.len() != tt.len() {
+        if vv.is_empty()
+            || vv.len() > 8
+            || vv.len() != tt.len()
+            || (!authenticated_receipts && vv.len() != rr.len())
+            || (authenticated_receipts
+                && receipts.len()
+                    != vv.len().checked_mul(2).ok_or_else(|| fail("receipt count"))?)
+        {
             return Err(fail("selected witness shape"));
         }
         let total = vv
@@ -175,9 +188,23 @@ fn main() -> Result<()> {
         let mut blinds = vec![t, -t, rho, -rho];
         for i in 0..vv.len() {
             let v = vv[i];
-            let r = Scalar::from(rr[i]);
             let ti = Scalar::from(tt[i]);
-            pp.extend([Scalar::from(v) * g + r * h, r * p, Scalar::from(v) * g + ti * h]);
+            let (c, d) = if authenticated_receipts {
+                // Existing COLLECT witnesses contain s and v, never receipt r.
+                // Consume the authenticated ciphertext for either source kind.
+                let index = i.checked_mul(2).ok_or_else(|| fail("receipt index"))?;
+                let c = CompressedRistretto(receipts[index])
+                    .decompress()
+                    .ok_or_else(|| fail("receipt C"))?;
+                let d = CompressedRistretto(receipts[index + 1])
+                    .decompress()
+                    .ok_or_else(|| fail("receipt D"))?;
+                (c, d)
+            } else {
+                let r = Scalar::from(rr[i]);
+                (Scalar::from(v) * g + r * h, r * p)
+            };
+            pp.extend([c, d, Scalar::from(v) * g + ti * h]);
             values.extend([
                 v.checked_sub(1).ok_or_else(|| fail("positive receipt"))?,
                 maxv.checked_sub(v).ok_or_else(|| fail("receipt range"))?,
@@ -188,11 +215,17 @@ fn main() -> Result<()> {
     } else {
         return Err(fail("kind"));
     };
-    if args[1] == "points" {
+    if args[1] == "points-receipts" && kind != 2 {
+        return Err(fail("COLLECT-only mode"));
+    }
+    if args[1] == "points" || args[1] == "points-receipts" {
         fs::write(&args[3], format!("points={}\nnew_value={new}\n", points(&pp)))?;
         return Ok(());
     }
-    if args[1] != "prove" {
+    if args[1] == "prove-receipts" && kind != 2 {
+        return Err(fail("COLLECT-only mode"));
+    }
+    if args[1] != "prove" && args[1] != "prove-receipts" {
         return Err(fail("mode"));
     }
     let encoded: Vec<_> = pp.iter().map(|x| x.compress().to_bytes()).collect();
