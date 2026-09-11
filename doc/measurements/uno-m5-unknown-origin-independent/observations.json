@@ -1,0 +1,38 @@
+{
+  "normal": {
+    "unknown-enabled.result": "collate -7201\n",
+    "unknown-enabled.result.message": "unclassified workchain execution failure",
+    "unknown-enabled.result.kind": "error\n",
+    "unknown-enabled.result.readiness": "phase=4\nworkchain=2\ndelivery=recorded\n",
+    "unknown-enabled.result.stats": "delivery=recorded\nvisited=1\nadapter=1\nowners_before=1\nowners_during=2\nowners_after=1\ntransactions=0\n",
+    "unknown-enabled.calls": "config=5\nexecute=1\n",
+    "unknown-enabled.calls.units.1": "7\n",
+    "unknown-enabled.calls.unknown-origin": "1\n",
+    "unknown-closed.calls.unknown-origin": "0\n",
+    "candidate_exists": false
+  },
+  "no-count": {
+    "unknown-enabled.result": "collate -7201\n",
+    "unknown-enabled.result.message": "unclassified workchain execution failure",
+    "unknown-enabled.result.kind": "error\n",
+    "unknown-enabled.result.readiness": "phase=4\nworkchain=2\ndelivery=recorded\n",
+    "unknown-enabled.result.stats": "delivery=recorded\nvisited=1\nadapter=1\nowners_before=1\nowners_during=2\nowners_after=1\ntransactions=0\n",
+    "unknown-enabled.calls": "config=5\nexecute=1\n",
+    "unknown-enabled.calls.units.1": "7\n",
+    "unknown-enabled.calls.unknown-origin": "0\n",
+    "unknown-closed.calls.unknown-origin": "0\n",
+    "candidate_exists": false
+  },
+  "restored": {
+    "unknown-enabled.result": "collate -7201\n",
+    "unknown-enabled.result.message": "unclassified workchain execution failure",
+    "unknown-enabled.result.kind": "error\n",
+    "unknown-enabled.result.readiness": "phase=4\nworkchain=2\ndelivery=recorded\n",
+    "unknown-enabled.result.stats": "delivery=recorded\nvisited=1\nadapter=1\nowners_before=1\nowners_during=2\nowners_after=1\ntransactions=0\n",
+    "unknown-enabled.calls": "config=5\nexecute=1\n",
+    "unknown-enabled.calls.units.1": "7\n",
+    "unknown-enabled.calls.unknown-origin": "1\n",
+    "unknown-closed.calls.unknown-origin": "0\n",
+    "candidate_exists": false
+  }
+}
