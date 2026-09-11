@@ -16,11 +16,14 @@ p.add_argument('--m4-rejections', action='store_true', help='run separate reject
 p.add_argument('--m5-debit', action='store_true', help='stop after authenticated Withdrawal debit checkpoint')
 p.add_argument('--m5-return-route', action='store_true', help='deliver a funded payout to wc0 and observe the actual return')
 p.add_argument('--m5-failed', action='store_true', help='publish the funded phase-0 return atomically at custody')
+p.add_argument('--m5-shortfall', action='store_true', help='explicit small-reserve prepare followed by a real Failed bounce')
 p.add_argument('--failed-routing-probe', action='store_true',
                help='run the real fee-routing producer mutation before normal Failed publication')
 p.add_argument('--failed-routing-binary', type=Path,
                help='isolated test binary for oracle-removal control only')
 a = p.parse_args()
+if a.m5_shortfall:
+    a.m5_failed = True
 if a.failed_routing_probe:
     a.m5_failed = True
 if a.m5_failed:
@@ -94,7 +97,7 @@ subprocess.run(['cmake', '-DCOUNTER_FIXTURE_CHILD=ON', f'-DCOUNTER_FIXTURE_PATH=
                 f'-DCOLLATOR={build / "test-m3-live"}', '-P', str(prepare)], check=True)
 print(f'Test-owned fixture: {fixture}', flush=True)
 shutil.copyfile(fixture / 'counter-state.boc', fixture / 'current-state.boc')
-subprocess.run([str(build / 'test-m3-live'), '--prepare-m5-return-config' if a.m5_return_route else
+subprocess.run([str(build / 'test-m3-live'), '--prepare-m5-shortfall-config' if a.m5_shortfall else '--prepare-m5-return-config' if a.m5_return_route else
                 '--prepare-m5-debit-config' if a.m5_debit else '--prepare-m4-config', str(fixture)], check=True)
 # Bind disk lookup and global.json to the actual edited TEST genesis bytes.
 # No prior DB is reused and no deployment configuration is read or written.
@@ -211,7 +214,7 @@ initial, initial_blind, send_fee, collect_fee, limits = run(
 if a.m5_debit:
     request = dict(secret=101, old_value=initial, old_blind=initial_blind, new_blind=71, aux_blind=83,
                    principal=10000000 if a.m5_return_route else 137, outward_fee=17,
-                   return_reserve=4000000 if a.m5_return_route else 23, fee=257, **limits)
+                   return_reserve=1000000 if a.m5_shortfall else 4000000 if a.m5_return_route else 23, fee=257, **limits)
     def debit_write(name, values):
         (fixture / name).write_text(''.join(f'{k}={v}\n' for k,v in values.items()))
     debit_write('operation.request.txt',request)
@@ -264,8 +267,23 @@ if a.m5_debit:
                     raise RuntimeError('FAILED_ORACLE_MISSING:FAILED_COST_ROUTING; '
                                        'expected designated routing red, not an earlier failure')
             subprocess.run([str(build / 'test-m3-live'), '--failed-incarnation-control', str(fixture)], check=True)
-            subprocess.run([str(build / 'test-m3-live'), '--failed-unknown-control', str(fixture)], check=True)
-            subprocess.run([str(build / 'test-m3-live'), str(fixture)], check=True)
+            if not a.m5_shortfall:
+                # This control requires successful private preparation first;
+                # the shortfall acceptance test must expose its own refusal.
+                subprocess.run([str(build / 'test-m3-live'), '--failed-unknown-control', str(fixture)], check=True)
+            result = subprocess.run([str(build / 'test-m3-live'), str(fixture)],
+                                    capture_output=a.m5_shortfall, text=a.m5_shortfall)
+            if a.m5_shortfall:
+                (fixture / 'shortfall-publication.log').write_text(result.stdout + result.stderr)
+                print(result.stdout, end='')
+                print(result.stderr, end='')
+            if a.m5_shortfall and result.returncode:
+                message = fixture / 'enabled.result.message'
+                reason = message.read_text() if message.exists() else 'no Native result'
+                raise RuntimeError(f'FAILED_SHORTFALL_ACCEPTED: exit={result.returncode}; {reason}')
+            result.check_returncode()
+            if a.m5_shortfall and 'FAILED_SHORTFALL_ACCEPTED credit=' not in result.stdout:
+                raise RuntimeError('FAILED_SHORTFALL_ACCEPTED: no positive shortfall observation')
     raise SystemExit(0)
 # Keep the final B->A receipt at 432: compensate only the changed SEND/COLLECT
 # tariffs in the first receipt. The remaining two receipts retain 251 and 89.

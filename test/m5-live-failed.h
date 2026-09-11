@@ -85,6 +85,24 @@ inline void assert_m5_failed(const std::filesystem::path& fixture,
               << " coordinator_expected=" << operating.tomis << " collected_actual=" << collected.tomis
               << " collected_expected=" << components.compute << std::endl;
   CHECK(correct_routing);
+  const CurrencyCollection principal(workchain_unsigned_fee(record.principal));
+  CurrencyCollection return_loss, actual_cost;
+  CHECK(CurrencyCollection::sub(principal,recovered,return_loss));
+  CHECK(CurrencyCollection::add(return_loss,fee,actual_cost));
+  const CurrencyCollection reserve(workchain_unsigned_fee(record.costs.original_reserve));
+  if (actual_cost >= reserve && actual_cost != reserve) {
+    // Observe a positive shortfall after accepted Native publication. The
+    // terminal W is gone; these are event values, not persistent debt fields.
+    CHECK(!amount.is_zero() && principal >= amount && amount != principal);
+    CurrencyCollection shortage;
+    CHECK(CurrencyCollection::sub(principal,amount,shortage));
+    CHECK(after.control.withdrawals.empty());
+    std::cout << "FAILED_SHORTFALL_ACCEPTED credit=" << amount.tomis
+              << " consumed_reserve=" << reserve.tomis << " refundable_reserve=0"
+              << " shortage_event_only=" << shortage.tomis
+              << " operator_slot_income=" << components.state
+              << " validator_compute_income=" << components.compute << std::endl;
+  }
   std::cout << "FAILED_AUTHENTICATED inbound=" << selector.inbound_message.to_hex()
             << " phase=0 recovered=" << recovered.tomis << " receipt=" << receipt.amount
             << " sequence=" << *old_coordinator.deposit_sequence << "->" << sequence

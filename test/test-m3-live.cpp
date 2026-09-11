@@ -221,14 +221,15 @@ int main(int argc, char** argv) {
     else m3_live::registration_finish(fixture);
     return 0;
   }
-  if (argc == 3 && (std::string(argv[1]) == "--prepare-config" || std::string(argv[1]) == "--prepare-m4-config" || std::string(argv[1]) == "--prepare-m5-debit-config" || std::string(argv[1]) == "--prepare-m5-return-config")) {
+  if (argc == 3 && (std::string(argv[1]) == "--prepare-config" || std::string(argv[1]) == "--prepare-m4-config" || std::string(argv[1]) == "--prepare-m5-debit-config" || std::string(argv[1]) == "--prepare-m5-return-config" || std::string(argv[1]) == "--prepare-m5-shortfall-config")) {
     vm::init_vm().ensure();
     const std::filesystem::path fixture(argv[2]);
     CHECK(std::filesystem::exists(fixture / ".counter-managed-v1"));
     auto bytes = td::read_file_str((fixture / "zerostate.boc").string()).move_as_ok();
     auto root = prepare_m3_live_configuration(vm::std_boc_deserialize(bytes).move_as_ok(),
         std::string(argv[1]) != "--prepare-config", std::string(argv[1]) == "--prepare-m5-debit-config",
-        std::string(argv[1]) == "--prepare-m5-return-config").move_as_ok();
+        std::string(argv[1]) == "--prepare-m5-return-config" || std::string(argv[1]) == "--prepare-m5-shortfall-config",
+        std::string(argv[1]) == "--prepare-m5-shortfall-config").move_as_ok();
     td::write_file((fixture / "zerostate.boc").string(), vm::std_boc_serialize(root, 31).move_as_ok()).ensure();
     td::write_file((fixture / "zerostate.rhash").string(), root->get_hash().as_slice()).ensure();
     return 0;

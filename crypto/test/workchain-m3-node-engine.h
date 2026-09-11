@@ -365,7 +365,7 @@ class M3NodeEngine final : public RegisteredWorkchainAccountEngine {
       auto prepared = prepare_workchain_failed_funded(inbox, target.data, coordinator.data, resolved,
           b.domain, network, *cfg->ingress.custody_address, cfg->ingress.executor_address, clock.height, verifier);
       // This intentionally incomplete TEST profile does not reinterpret an
-      // unsupported late/shortfall/no-slot branch as a successful settlement.
+      // unsupported late/no-issuance/no-slot branch as a successful settlement.
       if (prepared.is_error()) return local("funded Failed transition unavailable in test profile");
       auto accepted = prepared.move_as_ok();
       WorkchainAccountEffects result;

@@ -79,12 +79,21 @@ inline td::Result<WorkchainFailedFundedResult> prepare_workchain_failed_funded(
     if (__builtin_sub_overflow(record.principal, y, &loss) ||
         __builtin_mul_overflow(policy.base_compute, policy.issuance_billing_units, &compute) ||
         __builtin_add_overflow(policy.slot_fee, compute, &fee) ||
-        __builtin_add_overflow(loss, fee, &cost) || cost > record.costs.original_reserve ||
+        __builtin_add_overflow(loss, fee, &cost) ||
         record.costs.consumed_return_cost != 0 ||
         __builtin_add_overflow(y, record.costs.original_reserve, &gross) ||
         __builtin_sub_overflow(gross, fee, &amount) || !amount ||
         __builtin_add_overflow(record.principal, record.costs.original_reserve, &released_w))
-      return error("funded Failed shortfall or arithmetic branch unsupported");
+      return error("Failed no-issuance or arithmetic branch unsupported");
+    // D68: cost may exceed the fixed reserve. Issue only y+b-fee, never
+    // subtract cost from b without bounding it, and never add an operator edge.
+    // The terminal record is removed below: no shortage debt is persisted.
+    const auto consumed_reserve = std::min<std::uint64_t>(cost, record.costs.original_reserve);
+    std::uint64_t refundable_reserve;
+    if (__builtin_sub_overflow(record.costs.original_reserve, consumed_reserve, &refundable_reserve))
+      return error("Failed bounded reserve subtraction failed");
+    if (cost > record.costs.original_reserve && (refundable_reserve != 0 || amount >= record.principal))
+      return error("Failed shortfall refund bound mismatch");
     TRY_RESULT(sequence, next_workchain_deposit_sequence(*coordinator.deposit_sequence));
     WorkchainSystemOrigin origin = WorkchainSettlementOrigin{record.attempt_id, sequence};
     TRY_RESULT(id, derive_workchain_system_receipt_id(origin));

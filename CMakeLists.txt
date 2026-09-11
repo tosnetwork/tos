@@ -817,6 +817,11 @@ if (TOS_UNO_CRYPTO_NODE_LINK AND CMAKE_GENERATOR STREQUAL "Ninja")
       --build ${CMAKE_BINARY_DIR})
   set_tests_properties(test-workchain-withdrawal-failed-oracle-routing-partial
     PROPERTIES TIMEOUT 1800 RUN_SERIAL TRUE)
+  add_test(NAME test-workchain-withdrawal-failed-shortfall-positive-partial
+    COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/test/uno-m3-live.py
+      --build ${CMAKE_BINARY_DIR} --m5-shortfall)
+  set_tests_properties(test-workchain-withdrawal-failed-shortfall-positive-partial
+    PROPERTIES TIMEOUT 600 RUN_SERIAL TRUE)
 endif()
 add_test(NAME test-counter-collator-admission
   COMMAND ${CMAKE_COMMAND} -DCOLLATOR=$<TARGET_FILE:test-tos-collator>
