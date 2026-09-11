@@ -8,6 +8,7 @@
 #include "workchain-m4-deposit-input.h"
 #include "workchain-m5-failed-input.h"
 #include "workchain-m5-debit.h"
+#include "workchain-m5-payout.h"
 #include "block/workchain-failed-funded.h"
 #include "block/workchain-deposit-transition.h"
 #include "block/workchain-deposit-rejection-settlement.h"
@@ -35,6 +36,7 @@ class M3NodeEngine final : public RegisteredWorkchainAccountEngine {
     M3TestBusinessParameters business;
     WorkchainSet workchains;
     td::Bits256 configuration_hash;
+    std::optional<ActionPhaseConfig> payout_prices;
     Configuration(WorkchainExecutionDescriptor d, WorkchainNativeIngressPolicy i, WorkchainEngineParameters p,
                   M3TestBusinessParameters b, WorkchainSet w, td::Bits256 hash)
         : descriptor(std::move(d)), ingress(std::move(i)), parameters(std::move(p)),
@@ -57,6 +59,8 @@ class M3NodeEngine final : public RegisteredWorkchainAccountEngine {
   struct NativeAccount {
     td::Ref<vm::Cell> data;
     CurrencyCollection balance;
+    td::Ref<vm::Cell> root;
+    std::uint64_t end_lt;
   };
   static td::Result<NativeAccount> read(WorkchainAccountReadView& view, const td::Bits256& key,
                                        std::uint32_t now, bool confidential) {
@@ -70,7 +74,7 @@ class M3NodeEngine final : public RegisteredWorkchainAccountEngine {
       return local("authenticated M3 Native account unavailable");
     if (confidential && !is_workchain_confidential_native_wrapper(account.code, account.tick, account.tock))
       return local("authenticated confidential Native wrapper mismatch");
-    return NativeAccount{account.data, account.balance};
+    return NativeAccount{account.data, account.balance, root, account.last_trans_end_lt_};
   }
   static td::Result<std::uint64_t> transfer_units(const Configuration& cfg, const WorkchainTransferInput& transfer) {
     TRY_RESULT(shape, confidential_input_detail::shape(transfer.data));
@@ -121,11 +125,16 @@ class M3NodeEngine final : public RegisteredWorkchainAccountEngine {
     if (descriptor.workchain_id != 2 || business.rules.custody != *found->second.custody_address ||
         parameters.resources.admission_version != 4)
       return local("M3 test engine configuration incompatible with metered execution");
-    return std::shared_ptr<const WorkchainEngineConfig>(std::make_shared<Configuration>(
+    auto resolved = std::make_shared<Configuration>(
         descriptor, found->second, std::move(parameters), std::move(business), config.get_workchain_list(),
         // Same full authenticated configuration cut as resolve_account_binding;
         // the Param84 payload alone is not the host policy identity.
-        td::Bits256(config.get_root_cell()->get_hash().bits())));
+        td::Bits256(config.get_root_cell()->get_hash().bits()));
+    if (resolved->business.prepare) {
+      TRY_RESULT(prices, m5_payout_prices(config, 0));
+      resolved->payout_prices = std::move(prices);
+    }
+    return std::shared_ptr<const WorkchainEngineConfig>(std::move(resolved));
   }
   td::Result<std::uint64_t> proof_work(const td::Ref<vm::Cell>& candidate, const InputPolicyIdentity& identity,
                                       const WorkchainEngineConfig& configuration) const override {
@@ -245,8 +254,47 @@ class M3NodeEngine final : public RegisteredWorkchainAccountEngine {
           fees.total, 16, b.account_schema, b.relation_profile, b.proof_profile};
       TRY_RESULT(updated, execute_m5_test_debit(env, *b.prepare, source, debit, verifier));
       TRY_RESULT(custody, read(accounts, *cfg->ingress.custody_address, clock.gen_utime, false));
+      if (!cfg->payout_prices) return local("authenticated payout pricing absent");
+      // This first prepare profile has no accompanying Native inbox. Never
+      // silently discard a message while calculating the common transaction LT.
+      auto inbox_root = host.inbox->prefetch_ulong(1) ? host.inbox->prefetch_ref() : td::Ref<vm::Cell>{};
+      TRY_RESULT(inbox, plan_workchain_native_inbox(inbox_root, 2, {cfg->ingress.executor_address},
+          clock.host_after_lt, cfg->parameters.resources.input.max_inbound));
+      if (!inbox.envelopes.empty()) return invalid("test Withdrawal prepare requires an empty inbox");
+      std::vector<WorkchainParticipantTiming> timing{
+          {source.address.account, native.end_lt, 0},
+          {cfg->ingress.executor_address, coordinator.end_lt, 0},
+          {*cfg->ingress.custody_address, custody.end_lt, 1}};
+      std::sort(timing.begin(), timing.end(), [](const auto& a, const auto& b) { return a.account < b.account; });
+      TRY_RESULT(schedule, plan_workchain_participant_lts(clock.host_after_lt, timing, 3, 1));
+      TRY_RESULT(request, m5_payout_request(debit));
+      Account payer(2, cfg->ingress.custody_address->bits());
+      auto wrapper = vm::CellBuilder().store_ref(custody.root).store_zeroes(320).finalize();
+      if (!payer.unpack(vm::load_cell_slice_ref(wrapper), clock.gen_utime, false))
+        return local("authenticated payout payer unavailable");
+      auto prices = *cfg->payout_prices;
+      prices.workchains = &cfg->workchains;
+      TRY_RESULT(priced, transaction::Transaction::price_workchain_payout(payer, request,
+          schedule.start_lt, clock.gen_utime, workchain_unsigned_fee(debit.data.amounts.outward_fee), prices));
+      if (td::cmp(priced.total_fee, workchain_unsigned_fee(debit.data.amounts.outward_fee)) != 0)
+        return invalid("Withdrawal outward fee differs from authenticated Native pricing");
+      gen::Message::Record message;
+      gen::CommonMsgInfo::Record_int_msg_info info;
+      if (!tlb::type_unpack_cell(priced.message, gen::t_Message_Any, message) || !tlb::csr_unpack(message.info, info))
+        return local("priced payout message unavailable");
+      TRY_RESULT(next, decode_workchain_confidential_account(updated));
+      // Explicit, authenticated schema migration; old codecs never rewrite a root.
+      next.schema_version = 3;
+      WorkchainWithdrawalAccount migrated{next, {next.lifecycle, {}}, {}};
+      migrated.control.withdrawals.push_back({debit.claimed_operation_id, debit.claimed_attempt_id,
+          source.auth_nonce, debit.data.amounts.principal, source.address, debit.data.destination,
+          {debit.data.amounts.outward_fee, debit.data.amounts.return_reserve, 0, debit.data.amounts.return_reserve},
+          {0, info.created_lt, clock.height, 0, b.prepare->settlement_blocks}});
+      TRY_RESULT(with_obligation, encode_workchain_withdrawal_account(migrated, b.prepare->withdrawal_limit));
       WorkchainAccountEffects result;
-      result.updates = {{source.address.account, updated}, {cfg->ingress.executor_address, coordinator.data},
+      result.payout_request = request;
+      result.payout_forward_fee = debit.data.amounts.outward_fee;
+      result.updates = {{source.address.account, with_obligation}, {cfg->ingress.executor_address, coordinator.data},
                         {*cfg->ingress.custody_address, custody.data}};
       std::sort(result.updates.begin(), result.updates.end(), [](const auto& a, const auto& b) { return a.account < b.account; });
       if (fees.total) result.fees = materialize_workchain_operation_fees(fees,

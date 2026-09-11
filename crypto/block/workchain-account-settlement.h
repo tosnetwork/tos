@@ -14,6 +14,7 @@
 #include "block/workchain-deposit-rejection-settlement.h"
 #include "block/workchain-closure-settlement.h"
 #include "block/workchain-budget-backing.h"
+#include "block/workchain-operation-fees.h"
 #include "vm/cells/UsageCell.h"
 
 namespace block {
@@ -350,7 +351,9 @@ inline td::Result<WorkchainAccountSettlement> settle_executed(
       // the engine. Strict callers retain the original recipient policy.
       TRY_RESULT(payout, build_workchain_payout_overlay(old_accounts, identity.workchain_id, identity.gen_utime,
           identity.host_after_lt, input_hash, effects_hash, writes, custody, coordinator,
-          executed.effects.payout_request, fee_budget, max_reads, max_writes, max_transfers, extra_validation_cells, cfg, message_cfg,
+          executed.effects.payout_request,
+          executed.effects.payout_forward_fee ? workchain_unsigned_fee(*executed.effects.payout_forward_fee) : fee_budget,
+          max_reads, max_writes, max_transfers, extra_validation_cells, cfg, message_cfg,
           executed.input, effects_root, max_inbound, disposal));
       state = std::move(payout.state);
       message = std::move(payout.message);

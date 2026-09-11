@@ -56,6 +56,10 @@ struct WorkchainAccountEffects {
   // Optional single custody payout request, not a finalized Native message.
   // The settlement host must authenticate its role, amount and authorization.
   td::Ref<vm::Cell> payout_request;
+  // Local result of independently executing an authenticated operation, not a
+  // wire capability. Withdrawal binds this Native allowance as its public q.
+  // Absent preserves the enclosing host's existing allowance (including zero).
+  std::optional<std::uint64_t> payout_forward_fee;
   std::optional<WorkchainFeeSettlement> fees;
   td::Ref<vm::Cell> receipts, events;
   WorkchainBlockResourceUsage usage;

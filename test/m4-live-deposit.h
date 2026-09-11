@@ -233,7 +233,8 @@ inline td::Ref<vm::Cell> m4_recorded_candidate(const td::Ref<vm::Cell>& root, td
   return candidate;
 }
 
-inline block::CurrencyCollection m4_wallet_liabilities(const td::Ref<vm::Cell>& root) {
+inline block::CurrencyCollection m4_wallet_liabilities(const td::Ref<vm::Cell>& root,
+    std::optional<std::uint32_t> withdrawal_limit = {}) {
   using namespace block;
   gen::ShardStateUnsplit::Record state;
   CHECK(::tlb::unpack_cell(root, state));
@@ -247,7 +248,8 @@ inline block::CurrencyCollection m4_wallet_liabilities(const td::Ref<vm::Cell>& 
     if (leaf.is_null()) continue;  // authenticated nonmembership before registration
     Account native(2, key.bits());
     CHECK(native.unpack(leaf, state.gen_utime, false));
-    const auto account = decode_workchain_confidential_account(native.data).move_as_ok();
+    const auto complete = m5_live_account(native.data,withdrawal_limit);
+    const auto& account = complete.account;
     auto add = [&](const WorkchainCiphertext& ciphertext) {
       const auto value = m3_test::decrypt(ciphertext, test_secret(key), 2000000000).move_as_ok();
       CurrencyCollection next;
@@ -257,6 +259,7 @@ inline block::CurrencyCollection m4_wallet_liabilities(const td::Ref<vm::Cell>& 
     add(account.available);
     for (const auto& entry : account.pending) add(entry.ciphertext);
     for (const auto& entry : account.system_pending) add(entry.ciphertext);
+    for (const auto& entry : complete.origin_pending) add(entry.ciphertext);
   }
   return total;
 }
@@ -290,11 +293,16 @@ inline void assert_m4_block_backing(const std::filesystem::path& fixture, const 
     } else {
       auto replay = m3_test::decode_m5_accounting_replay(candidate).move_as_ok();
       if (const auto* withdrawal = std::get_if<WorkchainWithdrawalInput>(&replay)) {
-        // This debit-only checkpoint has not emitted a payout. Its claimed q
-        // is NOT an already paid Native fee. R_book therefore loses only F;
-        // the missing W/payout must remain visible to the second comparison.
+        // Prepare now emits the payout in this accepted block. Net physical
+        // payout and Native forwarding cost leave backing immediately, not Paid.
         CHECK(CurrencyCollection::sub(book, CurrencyCollection(workchain_unsigned_fee(
             withdrawal->data.amounts.operation_fee)), next));
+        book = next;
+        CHECK(CurrencyCollection::sub(book, CurrencyCollection(workchain_unsigned_fee(
+            withdrawal->data.amounts.principal)), next));
+        book = next;
+        CHECK(CurrencyCollection::sub(book, CurrencyCollection(workchain_unsigned_fee(
+            withdrawal->data.amounts.outward_fee)), next));
       } else if (const auto* transfer = std::get_if<WorkchainTransferInput>(&std::get<WorkchainReplayInput>(replay))) {
         // Each accepted operation already verified this public fee against the
         // authenticated tariff. Insufficient book backing must fail subtraction.
@@ -318,11 +326,29 @@ inline void assert_m4_block_backing(const std::filesystem::path& fixture, const 
   Account native(2, custody.bits());
   CHECK(native.unpack(accounts.lookup(custody), state.gen_utime, false));
   check_m4_backing(native.balance.tomis, book.tomis, td::make_refint(0)).ensure();
-  const auto liabilities = m4_wallet_liabilities(step.state);
+  const auto limit = m5_live_withdrawal_limit(fixture);
+  const auto liabilities = m4_wallet_liabilities(step.state,limit);
+  CurrencyCollection p(0), w(0);
+  for (unsigned owner : {0u,1u}) {
+    const auto key = wallet_account(owner);
+    auto leaf = accounts.lookup(key);
+    if (leaf.is_null()) continue;
+    Account account(2,key.bits()); CHECK(account.unpack(leaf,state.gen_utime,false));
+    for (const auto& record : m5_live_account(account.data,limit).control.withdrawals) {
+      CHECK(record.timing.phase == 0); // This oracle currently covers prepare, not settlement.
+      CurrencyCollection next;
+      CHECK(CurrencyCollection::add(p,CurrencyCollection(workchain_unsigned_fee(record.principal)),next)); p=next;
+      CHECK(CurrencyCollection::add(w,CurrencyCollection(workchain_unsigned_fee(record.principal)),next)); w=next;
+      CHECK(CurrencyCollection::add(w,CurrencyCollection(workchain_unsigned_fee(record.costs.original_reserve)),next)); w=next;
+    }
+  }
+  CurrencyCollection lhs, rhs;
+  CHECK(CurrencyCollection::add(native.balance,p,lhs));
+  CHECK(CurrencyCollection::add(liabilities,w,rhs));
   std::cout << "BACKING_REPLAY block=" << step.id.id.seqno << " R_actual=" << native.balance.tomis
             << " R_book=" << book.tomis << " N_hidden=" << liabilities.tomis
-            << "; first-layer=OK; checking second-layer (no W/P in debit checkpoint)" << std::endl;
-  check_m4_backing(native.balance.tomis, liabilities.tomis, td::make_refint(0)).ensure();
+            << " P=" << p.tomis << " W=" << w.tomis << "; first-layer=OK; checking R+P=N+W" << std::endl;
+  check_m4_backing(lhs.tomis, rhs.tomis, td::make_refint(0)).ensure();
   const auto candidate = m4_recorded_candidate(step.block);
   if (!m3_test::is_m4_test_deposit(candidate)) {
     const auto replay = m3_test::decode_m5_accounting_replay(candidate).move_as_ok();
@@ -338,14 +364,24 @@ inline void assert_m4_block_backing(const std::filesystem::path& fixture, const 
       vm::AugmentedDictionary previous_accounts(vm::load_cell_slice_ref(old.accounts), 256, block::tlb::aug_ShardAccounts);
       Account old_native(2, custody.bits());
       CHECK(old_native.unpack(previous_accounts.lookup(custody), old.gen_utime, false));
-      const auto old_liabilities = m4_wallet_liabilities(previous);
+      const auto old_liabilities = m4_wallet_liabilities(previous,limit);
       const CurrencyCollection fee(workchain_unsigned_fee(*public_fee));
-      check_m4_fee_pair(old_native.balance, native.balance, old_liabilities, liabilities, fee).ensure();
+      auto fee_reserve = native.balance, fee_liability = liabilities;
+      if (const auto* withdrawal = std::get_if<WorkchainWithdrawalInput>(&replay)) {
+        CurrencyCollection next;
+        for (auto amount : {withdrawal->data.amounts.principal,withdrawal->data.amounts.outward_fee}) {
+          CHECK(CurrencyCollection::add(fee_reserve,CurrencyCollection(workchain_unsigned_fee(amount)),next)); fee_reserve=next;
+          CHECK(CurrencyCollection::add(fee_liability,CurrencyCollection(workchain_unsigned_fee(amount)),next)); fee_liability=next;
+        }
+        CHECK(CurrencyCollection::add(fee_liability,CurrencyCollection(workchain_unsigned_fee(
+            withdrawal->data.amounts.return_reserve)),next)); fee_liability=next;
+      }
+      check_m4_fee_pair(old_native.balance, fee_reserve, old_liabilities, fee_liability, fee).ensure();
       CurrencyCollection corrupted;
-      CHECK(CurrencyCollection::add(liabilities, CurrencyCollection(1), corrupted));
-      const auto red = check_m4_fee_pair(old_native.balance, native.balance, old_liabilities, corrupted, fee);
+      CHECK(CurrencyCollection::add(fee_liability, CurrencyCollection(1), corrupted));
+      const auto red = check_m4_fee_pair(old_native.balance, fee_reserve, old_liabilities, corrupted, fee);
       CHECK(red.is_error() && red.message() == "M4 custody fee debit and confidential fee debit are not paired");
-      check_m4_fee_pair(old_native.balance, native.balance, old_liabilities, liabilities, fee).ensure();
+      check_m4_fee_pair(old_native.balance, fee_reserve, old_liabilities, fee_liability, fee).ensure();
       std::cout << "Actual paired custody/N fee debit=" << fee.tomis << "; unpaired control rejected, restored OK\n";
     }
   }
