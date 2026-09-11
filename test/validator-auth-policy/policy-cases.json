@@ -1,0 +1,479 @@
+{
+  "tip": "0002",
+  "corpus_version": 1,
+  "source": "tosnetwork/TIP assets/tip-0002/policy-cases.json",
+  "source_revision": "231570f4ae4511b5e42c6b8ce0fdb5576b2663d9",
+  "scope": "Policy model only. ed_valid/pq_valid are supplied verification outcomes, not signatures. Not a production verifier or cryptographic KAT corpus.",
+  "default_registry": {
+    "a": 1,
+    "b": 1,
+    "c": 1
+  },
+  "cases": [
+    {
+      "id": "classical_two_of_three",
+      "phase": "classical",
+      "signers": [
+        {
+          "validator": "a",
+          "ed_valid": true,
+          "pq_valid": false,
+          "registered": true
+        },
+        {
+          "validator": "b",
+          "ed_valid": true,
+          "pq_valid": false,
+          "registered": true
+        }
+      ],
+      "expected": "accept"
+    },
+    {
+      "id": "shadow_bad_pq_does_not_change_classical_validity",
+      "phase": "shadow",
+      "signers": [
+        {
+          "validator": "a",
+          "ed_valid": true,
+          "pq_valid": false,
+          "registered": true
+        },
+        {
+          "validator": "b",
+          "ed_valid": true,
+          "pq_valid": false,
+          "registered": true
+        }
+      ],
+      "expected": "accept"
+    },
+    {
+      "id": "shadow_pq_does_not_rescue_bad_ed",
+      "phase": "shadow",
+      "signers": [
+        {
+          "validator": "a",
+          "ed_valid": false,
+          "pq_valid": true,
+          "registered": true
+        },
+        {
+          "validator": "b",
+          "ed_valid": true,
+          "pq_valid": true,
+          "registered": true
+        }
+      ],
+      "expected": "reject_authentication"
+    },
+    {
+      "id": "hybrid_two_of_three_both_components",
+      "phase": "hybrid_required",
+      "signers": [
+        {
+          "validator": "a",
+          "ed_valid": true,
+          "pq_valid": true,
+          "registered": true
+        },
+        {
+          "validator": "b",
+          "ed_valid": true,
+          "pq_valid": true,
+          "registered": true
+        }
+      ],
+      "expected": "accept"
+    },
+    {
+      "id": "hybrid_classical_only_is_not_a_fallback",
+      "phase": "hybrid_required",
+      "signers": [
+        {
+          "validator": "a",
+          "ed_valid": true,
+          "pq_valid": false,
+          "registered": true
+        },
+        {
+          "validator": "b",
+          "ed_valid": true,
+          "pq_valid": false,
+          "registered": true
+        }
+      ],
+      "expected": "reject_authentication"
+    },
+    {
+      "id": "hybrid_pq_only_is_not_a_fallback",
+      "phase": "hybrid_required",
+      "signers": [
+        {
+          "validator": "a",
+          "ed_valid": false,
+          "pq_valid": true,
+          "registered": true
+        },
+        {
+          "validator": "b",
+          "ed_valid": false,
+          "pq_valid": true,
+          "registered": true
+        }
+      ],
+      "expected": "reject_authentication"
+    },
+    {
+      "id": "independent_quorums_without_intersection_quorum",
+      "phase": "hybrid_required",
+      "signers": [
+        {
+          "validator": "a",
+          "ed_valid": true,
+          "pq_valid": false,
+          "registered": true
+        },
+        {
+          "validator": "b",
+          "ed_valid": true,
+          "pq_valid": true,
+          "registered": true
+        },
+        {
+          "validator": "c",
+          "ed_valid": false,
+          "pq_valid": true,
+          "registered": true
+        }
+      ],
+      "expected": "reject_authentication"
+    },
+    {
+      "id": "hybrid_insufficient_weight",
+      "phase": "hybrid_required",
+      "signers": [
+        {
+          "validator": "a",
+          "ed_valid": true,
+          "pq_valid": true,
+          "registered": true
+        }
+      ],
+      "expected": "reject_quorum"
+    },
+    {
+      "id": "hybrid_duplicate_does_not_add_weight",
+      "phase": "hybrid_required",
+      "signers": [
+        {
+          "validator": "a",
+          "ed_valid": true,
+          "pq_valid": true,
+          "registered": true
+        },
+        {
+          "validator": "a",
+          "ed_valid": true,
+          "pq_valid": true,
+          "registered": true
+        }
+      ],
+      "expected": "reject_duplicate_signer"
+    },
+    {
+      "id": "unknown_signer_rejected",
+      "phase": "hybrid_required",
+      "signers": [
+        {
+          "validator": "a",
+          "ed_valid": true,
+          "pq_valid": true,
+          "registered": true
+        },
+        {
+          "validator": "d",
+          "ed_valid": true,
+          "pq_valid": true,
+          "registered": true
+        }
+      ],
+      "expected": "reject_unknown_signer"
+    },
+    {
+      "id": "wrong_signed_context_rejected",
+      "phase": "hybrid_required",
+      "signers": [
+        {
+          "validator": "a",
+          "ed_valid": true,
+          "pq_valid": true,
+          "registered": true,
+          "context_matches": false
+        },
+        {
+          "validator": "b",
+          "ed_valid": true,
+          "pq_valid": true,
+          "registered": true
+        }
+      ],
+      "expected": "reject_context"
+    },
+    {
+      "id": "unregistered_pq_key_rejected",
+      "phase": "hybrid_required",
+      "signers": [
+        {
+          "validator": "a",
+          "ed_valid": true,
+          "pq_valid": true,
+          "registered": false
+        },
+        {
+          "validator": "b",
+          "ed_valid": true,
+          "pq_valid": true,
+          "registered": true
+        }
+      ],
+      "expected": "reject_registration"
+    },
+    {
+      "id": "pq_required_without_ed",
+      "phase": "pq_required",
+      "signers": [
+        {
+          "validator": "a",
+          "ed_valid": false,
+          "pq_valid": true,
+          "registered": true
+        },
+        {
+          "validator": "b",
+          "ed_valid": false,
+          "pq_valid": true,
+          "registered": true
+        }
+      ],
+      "expected": "accept"
+    },
+    {
+      "id": "pq_required_classical_only_rejected",
+      "phase": "pq_required",
+      "signers": [
+        {
+          "validator": "a",
+          "ed_valid": true,
+          "pq_valid": false,
+          "registered": true
+        },
+        {
+          "validator": "b",
+          "ed_valid": true,
+          "pq_valid": false,
+          "registered": true
+        }
+      ],
+      "expected": "reject_authentication"
+    },
+    {
+      "id": "pq_required_unregistered_rejected",
+      "phase": "pq_required",
+      "signers": [
+        {
+          "validator": "a",
+          "ed_valid": true,
+          "pq_valid": true,
+          "registered": false
+        },
+        {
+          "validator": "b",
+          "ed_valid": true,
+          "pq_valid": true,
+          "registered": true
+        }
+      ],
+      "expected": "reject_registration"
+    },
+    {
+      "id": "old_policy_not_used_for_new_duty",
+      "phase": "hybrid_required",
+      "signers": [
+        {
+          "validator": "a",
+          "ed_valid": true,
+          "pq_valid": true,
+          "registered": true
+        },
+        {
+          "validator": "b",
+          "ed_valid": true,
+          "pq_valid": true,
+          "registered": true
+        }
+      ],
+      "policy_matches": false,
+      "expected": "reject_policy"
+    },
+    {
+      "id": "unknown_mandatory_suite_fails_closed",
+      "phase": "hybrid_required",
+      "signers": [
+        {
+          "validator": "a",
+          "ed_valid": true,
+          "pq_valid": true,
+          "registered": true
+        },
+        {
+          "validator": "b",
+          "ed_valid": true,
+          "pq_valid": true,
+          "registered": true
+        }
+      ],
+      "mandatory_suite_supported": false,
+      "expected": "reject_suite"
+    },
+    {
+      "id": "malformed_certificate_rejected",
+      "phase": "hybrid_required",
+      "signers": [
+        {
+          "validator": "a",
+          "ed_valid": true,
+          "pq_valid": true,
+          "registered": true
+        },
+        {
+          "validator": "b",
+          "ed_valid": true,
+          "pq_valid": true,
+          "registered": true
+        }
+      ],
+      "well_formed": false,
+      "expected": "reject_encoding"
+    },
+    {
+      "id": "two_of_four_insufficient",
+      "phase": "hybrid_required",
+      "signers": [
+        {
+          "validator": "a",
+          "ed_valid": true,
+          "pq_valid": true,
+          "registered": true
+        },
+        {
+          "validator": "b",
+          "ed_valid": true,
+          "pq_valid": true,
+          "registered": true
+        }
+      ],
+      "registry": {
+        "a": 1,
+        "b": 1,
+        "c": 1,
+        "d": 1
+      },
+      "expected": "reject_quorum"
+    },
+    {
+      "id": "weighted_quorum_counts_stake_not_nodes",
+      "phase": "hybrid_required",
+      "signers": [
+        {
+          "validator": "a",
+          "ed_valid": true,
+          "pq_valid": true,
+          "registered": true
+        }
+      ],
+      "registry": {
+        "a": 7,
+        "b": 2,
+        "c": 1
+      },
+      "expected": "accept"
+    },
+    {
+      "id": "missing_votes_do_not_shrink_denominator",
+      "phase": "hybrid_required",
+      "signers": [
+        {
+          "validator": "b",
+          "ed_valid": true,
+          "pq_valid": true,
+          "registered": true
+        },
+        {
+          "validator": "c",
+          "ed_valid": true,
+          "pq_valid": true,
+          "registered": true
+        }
+      ],
+      "registry": {
+        "a": 7,
+        "b": 2,
+        "c": 1
+      },
+      "expected": "reject_quorum"
+    },
+    {
+      "id": "empty_committee_rejected",
+      "phase": "hybrid_required",
+      "signers": [],
+      "registry": {},
+      "expected": "reject_registry"
+    },
+    {
+      "id": "zero_weight_rejected",
+      "phase": "hybrid_required",
+      "signers": [
+        {
+          "validator": "a",
+          "ed_valid": true,
+          "pq_valid": true,
+          "registered": true
+        }
+      ],
+      "registry": {
+        "a": 0
+      },
+      "expected": "reject_registry"
+    },
+    {
+      "id": "total_weight_overflow_rejected",
+      "phase": "hybrid_required",
+      "signers": [
+        {
+          "validator": "a",
+          "ed_valid": true,
+          "pq_valid": true,
+          "registered": true
+        },
+        {
+          "validator": "b",
+          "ed_valid": true,
+          "pq_valid": true,
+          "registered": true
+        }
+      ],
+      "registry": {
+        "a": 6148914691236517205,
+        "b": 1
+      },
+      "expected": "reject_registry"
+    },
+    {
+      "id": "unknown_phase_rejected",
+      "phase": "unknown",
+      "signers": [],
+      "expected": "reject_phase"
+    }
+  ]
+}
