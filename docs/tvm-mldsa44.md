@@ -85,10 +85,12 @@ provider, private key or RNG is used by this verifier. The C++17 wrapper checks
 all lengths before calling the upstream fixed-size API. Test-only calibration
 uses the existing Ed25519 implementation and a public fixed test seed.
 
-FetchContent retrieves the fixed source at configure time, not node runtime.
-Offline builds can prepopulate the exact source and pass
-`FETCHCONTENT_SOURCE_DIR_TOS_MLDSA_SOURCE`. Source provenance and local changes
-remain build/release responsibilities; do not replace the pin with a branch.
+The source is vendored at `third-party/mldsa-native`, like every other
+dependency in this repository, so configuring the project never reaches the
+network and offline builds need no extra option. Only the upstream `mldsa/`
+compilation subtree is imported, unmodified; `third-party/mldsa-native/PROVENANCE.md`
+records the revision and the import boundary. Changing that revision is a
+supply-chain decision; do not replace the pinned import with a branch.
 Upstream uses `Apache-2.0 OR ISC OR MIT`; preserve its license and notices in
 source/binary distributions. Its LICENSE is installed under
 `share/tos/licenses/mldsa-native`. VM glue and wrapper use LGPL-2.0-or-later.

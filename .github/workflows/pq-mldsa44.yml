@@ -4,6 +4,7 @@ on:
     paths:
       - 'crypto/**'
       - 'tol/**'
+      - 'third-party/mldsa-native/**'
       - 'common/global-version.h'
       - 'CMakeLists.txt'
       - 'test/pq-mldsa44/**'
