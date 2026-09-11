@@ -86,6 +86,18 @@ TEST(AccountClosure, RandomizedZeroRefundAndReplay) {
   ASSERT_TRUE(block::WorkchainProofTestAccess::with_budget(100000, [&](auto& verification_budget) { return block::execute_workchain_account_closure(closed.ok(),after.ok(),possession,domain,proof, verification_budget); }).is_error());
   auto pending=a; pending.pending.resize(1);
   ASSERT_TRUE(block::WorkchainProofTestAccess::with_budget(100000, [&](auto& verification_budget) { return block::execute_workchain_account_closure(pending,coordinator,possession,domain,proof, verification_budget); }).is_error());
+  auto system_pending = a;
+  system_pending.schema_version = 2;
+  auto message = fill(40);
+  system_pending.system_pending.push_back({block::derive_workchain_deposit_id(message, 1).move_as_ok(),
+      message, 1, 1000000000, a.address.instance, a.key_epoch, a.bindings.asset, a.available, 0});
+  ASSERT_TRUE(block::encode_workchain_confidential_account(system_pending).is_ok());
+  auto closure_budget = block::WorkchainProofTestAccess::create(441);
+  auto blocked = block::execute_workchain_account_closure(system_pending, coordinator, possession, domain, proof, closure_budget);
+  ASSERT_TRUE(blocked.is_error());
+  ASSERT_EQ(blocked.error().code(), -7200);
+  ASSERT_EQ(blocked.error().message(), "closure has unconsumed pending receipts");
+  ASSERT_EQ(closure_budget.consumed(), 0u);
   auto stale=a; ++stale.available_revision;
   auto denied=block::WorkchainProofTestAccess::with_budget(100000, [&](auto& verification_budget) { return block::execute_workchain_account_closure(stale,coordinator,possession,domain,proof, verification_budget); });
   ASSERT_TRUE(denied.is_error());

@@ -4,6 +4,7 @@
 #undef main
 #include "block/workchain-proof-work.h"
 #include "workchain-proof-test-access.h"
+#include "workchain-deposit-transition-test.h"
 
 static std::uint64_t backend_calls = 0;
 static std::uint32_t forced_status = UINT32_MAX;
@@ -23,6 +24,7 @@ int main(int argc, char** argv) {
   try {
     require(argc == 2, "expected the frozen vector corpus");
     auto fixtures = load(argv[1]);
+    test_metered_deposit_transition();
     UnoCryptoSystemEncryptionRequest system{};
     system.abi_version = UNO_CRYPTO_ABI_VERSION;
     system.amount = 123;

@@ -131,7 +131,7 @@ void prepare(const std::string& scenario,const fs::path& dir) {
   auto operation=derive_workchain_operation_id({37,named("genesis"),named("workchain instance")},source.address,kind,source.auth_nonce).move_as_ok();
   auto semantic=encode_workchain_transfer_data(data).move_as_ok(); write_boc(dir/"semantic.boc",semantic);
   WorkchainTransferOldStatement old{source.public_key,source.available,source.key_epoch,source.auth_nonce,source.available_revision,
-                                   bob.public_key,bob.key_epoch,selected};
+                                   bob.public_key,bob.key_epoch,{selected.begin(),selected.end()}};
   auto old_hash=hash_workchain_transfer_old_statement(kind,old).move_as_ok();
   WorkchainTransferContext context{{2,1,1,2,kind,37,2,named("genesis"),named("workchain instance")},
       {source.bindings.asset,source.bindings.custody,source.bindings.policy},

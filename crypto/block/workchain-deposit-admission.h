@@ -17,7 +17,7 @@ struct WorkchainDepositPolicy {
 };
 
 enum class WorkchainDepositRejection {
-  Unregistered, Identity, Lifecycle, Amount, SlotFee, Capacity, Duplicate, SequenceExhausted
+  Unregistered, Identity, Lifecycle, Amount, SlotFee, Capacity, Duplicate, SequenceExhausted, ExtraCurrencies
 };
 struct WorkchainDepositAdmission {
   td::Bits256 id;
@@ -62,6 +62,9 @@ inline td::Result<WorkchainDepositDecision> admit_workchain_deposit(
   // current tariff from the message total would silently change the intended
   // principal after a governance price change while the message is in transit.
   // Exact payment rejects both shortfall and excess; neither is reassigned.
+  // A tariff change between sending and admission therefore selects rejection/
+  // bounce. Frequent repricing can make a sender repeatedly pay Native bounce
+  // costs; this is an operating tradeoff, not a delivery or price-lock guarantee.
   // V_min/V_max constrain principal, NOT the message total. The smallest valid
   // payment is V_min + slot_fee. The fee never enters custody R or N_book.
   if (declared_principal < policy.minimum || declared_principal > policy.maximum)

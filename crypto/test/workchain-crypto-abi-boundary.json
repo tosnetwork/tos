@@ -15,8 +15,8 @@
       "__real_uno_crypto_verify_v2",
       "__wrap_uno_crypto_verify_v2"
     ],
-    "sha256": "8ce7506a072f14a17b156a4ffbb51af4ce096e58f70c015727a58f331bf610d7",
-    "disposition": "Test-only linker interception (__wrap/__real) measures the already-metered relation backend; not an engine entry."
+    "sha256": "03b037441876121d7fd1bb1b7abdbfa1f9bb847157b9ee12e193b2bfcb6bbbdf",
+    "disposition": "Test-only linker interception (__wrap/__real) measures the already-metered relation backend; also runs paired Deposit preparation through the existing metered system entry. No new raw ABI call or engine entry."
   },
   "crypto/test/workchain-proof-boundary-gates.py": {
     "symbols": [
@@ -192,6 +192,14 @@
     ],
     "sha256": "834c809fe8ca4b66fd2eca6bd5e1ef45fe3e3bdd0316b256076e1beb88bb5d64",
     "disposition": "Standalone ABI memory-safety test; deliberately calls ABI without host policy."
+  },
+  "uno/prover/src/tests/system_collect.rs": {
+    "symbols": [
+      "uno_crypto_system_encrypt_v1",
+      "uno_crypto_system_verify_v1"
+    ],
+    "sha256": "82318eedd881e09035e95950a7b2ec188bfffc31a4cf5a531e50d99216d729d1",
+    "disposition": "Private cfg(test) prover tests call D33 ABI directly to test existing COLLECT algebra and error layers, including mixed SEND/system inputs. No production caller, Native admission or persisted pending removal."
   },
   "uno/prover/examples/m3-vectors.rs": {
     "symbols": [

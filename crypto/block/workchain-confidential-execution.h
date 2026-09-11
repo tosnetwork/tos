@@ -150,8 +150,25 @@ inline td::Result<WorkchainPreparedTransferStatement> prepare_workchain_transfer
     for (const auto& selected : collect.selected) {
       auto it = std::find_if(a.pending.begin(), a.pending.end(),
                              [&](const auto& r) { return r.receipt_id == selected.receipt_id; });
-      if (it == a.pending.end())
-        return invalid("selected pending receipt does not exist");
+      if (it == a.pending.end()) {
+        auto system = std::find_if(a.system_pending.begin(), a.system_pending.end(),
+            [&](const auto& r) { return r.receipt_id == selected.receipt_id; });
+        if (system == a.system_pending.end()) return invalid("selected pending receipt does not exist");
+        if (system->status != 0 || system->target_instance != a.address.instance ||
+            system->target_key_epoch != a.key_epoch || system->asset != a.bindings.asset)
+          return invalid("system pending consumption, ownership or source domain mismatch");
+        // Admission authenticated the Native message and installed this whole
+        // receipt atomically. Read only that historical record; recompute its
+        // complete origin ID, never invent a SEND operation for a Deposit.
+        TRY_RESULT(origin, derive_workchain_deposit_id(system->inbound_message, system->sequence));
+        if (origin != system->receipt_id) return invalid("system pending source identity mismatch");
+        old.selected.push_back(*system);
+        result.receipt_ids.push_back(word(system->receipt_id));
+        add(system->ciphertext.commitment);
+        add(system->ciphertext.handle);
+        add(selected.auxiliary);
+        continue;
+      }
       if (it->status != 0 || it->target_instance != a.address.instance || it->target_key_epoch != a.key_epoch ||
           it->asset != a.bindings.asset || it->source.workchain_id != env.protocol.workchain_id) {
         return invalid("pending consumption, ownership or source domain mismatch");
@@ -234,6 +251,8 @@ inline td::Result<WorkchainConfidentialTransferResult> execute_workchain_confide
       updated.available = send->available;
       TRY_RESULT(receipt_id, derive_workchain_receipt_id(a.address.instance, statement.operation_id, 0));
       if (std::any_of(target.pending.begin(), target.pending.end(),
+                      [&](const auto& r) { return r.receipt_id == receipt_id; }) ||
+          std::any_of(target.system_pending.begin(), target.system_pending.end(),
                       [&](const auto& r) { return r.receipt_id == receipt_id; })) {
         return invalid("SEND receipt already present");
       }
@@ -267,6 +286,13 @@ inline td::Result<WorkchainConfidentialTransferResult> execute_workchain_confide
                                               [&](const auto& item) { return item.receipt_id == receipt.receipt_id; });
                          }),
           updated.pending.end());
+      updated.system_pending.erase(
+          std::remove_if(updated.system_pending.begin(), updated.system_pending.end(),
+                         [&](const auto& receipt) {
+                           return std::any_of(collect.selected.begin(), collect.selected.end(),
+                                              [&](const auto& item) { return item.receipt_id == receipt.receipt_id; });
+                         }),
+          updated.system_pending.end());
     }
     auto encoded_source = encode_workchain_confidential_account(updated);
     if (encoded_source.is_error())

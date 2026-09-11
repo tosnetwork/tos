@@ -60,7 +60,8 @@ inline td::Result<WorkchainAccountClosureTransition> execute_workchain_account_c
       return invalid("closed or migrated account cannot be refunded again");
     }
     // Pending is an authenticated-state property, not a DLEQ conclusion.
-    if (!old_account.pending.empty()) return invalid("closure has unconsumed pending receipts");
+    if (!old_account.pending.empty() || !old_account.system_pending.empty())
+      return invalid("closure has unconsumed pending receipts");
     if (old_account.auth_nonce == UINT64_MAX) return invalid("closure nonce exhausted");
     // Randomized zero is not the identity ciphertext. This one DLEQ establishes
     // both possession and exhausted available; do not add registration Schnorr.

@@ -101,6 +101,21 @@ TEST(RegistrationProof, RustPossessionVectorAndHostBinding) {
   auto registered = block::WorkchainProofTestAccess::with_budget(100000, [&](auto& verification_budget) { return block::replay_workchain_registration(policy, old, a.address.account, cell.ok(), replay_root, verification_budget); });
   ASSERT_TRUE(registered.is_ok());
   ASSERT_EQ(registered.ok().payer_balance, 90u);
+  auto nonempty_policy = policy;
+  nonempty_policy.schema_version = 2;
+  auto nonempty_registration = a;
+  nonempty_registration.schema_version = 2;
+  auto incoming_id = block::derive_workchain_deposit_id(fill(41), 1).move_as_ok();
+  nonempty_registration.system_pending.push_back({incoming_id, fill(41), 1, 1000000000,
+      a.address.instance, a.key_epoch, a.bindings.asset, {a.public_key, a.public_key}, 0});
+  auto nonempty_cell = block::encode_workchain_confidential_account(nonempty_registration).move_as_ok();
+  auto nonempty_budget = block::WorkchainProofTestAccess::create(433);
+  auto nonempty_result = block::prepare_workchain_registration_impl(nonempty_policy, old,
+      a.address.account, nonempty_cell, proof, nonempty_budget);
+  ASSERT_TRUE(nonempty_result.is_error());
+  ASSERT_EQ(nonempty_result.error().message(), "registration must initialize an active empty confidential account");
+  ASSERT_EQ(nonempty_result.error().code(), -7200);
+  ASSERT_EQ(nonempty_budget.consumed(), 0u);
   refund_workchains.clear();
   auto destination_meter = block::WorkchainProofTestAccess::create(433);
   auto bad_destination = block::replay_workchain_registration(policy, old, a.address.account,
