@@ -37,6 +37,11 @@ inline td::Result<WorkchainDepositTransitionResult> prepare_workchain_deposit_tr
     WorkchainUnexpectedLimits bucket_limits, int extra_validation_cells,
     WorkchainProofVerifier& verifier) {
   auto local = [](td::Slice reason) { return td::Status::Error(-7201, reason); };
+  // All referenced cells here belong to acquired historical state, not a
+  // candidate-supplied effects record. Bucket traversal can fail while loading
+  // a descendant even though its ordinary outer record decoded successfully.
+  // Such failures must not select rejection/bounce or blame the candidate.
+  try {
   if (coordinator.layout_version != 3 || !coordinator.deposit_sequence ||
       encode_workchain_coordinator_state(coordinator).is_error() || coordinator_address == custody_address)
     return local("authenticated Deposit coordinator unavailable");
@@ -93,5 +98,14 @@ inline td::Result<WorkchainDepositTransitionResult> prepare_workchain_deposit_tr
     return local("Deposit principal and operating allocation do not conserve value");
   return WorkchainDepositTransitionResult{WorkchainDepositTransition{
       account_data, coordinator_data, receipt, custody_balance, operating_balance, transfer}};
+  } catch (const vm::VmError&) {
+    return local("authenticated Deposit state traversal failed");
+  } catch (const vm::VmVirtError&) {
+    return local("authenticated Deposit state incomplete");
+  } catch (const vm::CellBuilder::CellCreateError&) {
+    return local("Deposit state cell construction failed");
+  } catch (const vm::CellBuilder::CellWriteError&) {
+    return local("Deposit state cell write failed");
+  }
 }
 }  // namespace block
