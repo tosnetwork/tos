@@ -170,6 +170,15 @@ inline td::Result<WorkchainProofOperations> workchain_proof_operations_v4(
       (request.origin_bytes != 41 && request.origin_bytes != 115)) {
     return td::Status::Error(-7201, "inconsistent local system origin encryption request");
   }
+  const bool short_origin = request.origin_bytes == 41 && request.origin[0] <= 1;
+  const bool sweep_origin = request.origin_bytes == 115 && request.origin[0] == 2 &&
+                            (request.origin[114] & 0x7f) == 0;
+  if (!short_origin && !sweep_origin)
+    return td::Status::Error(-7201, "inconsistent local system origin framing");
+  for (std::size_t i = request.origin_bytes; i < sizeof(request.origin); ++i) {
+    if (request.origin[i] != 0)
+      return td::Status::Error(-7201, "nonzero local system origin tail");
+  }
   // D69 changes fixed transcript members, not the curve-operation count.
   return workchain_system_operations_v4();
 }
