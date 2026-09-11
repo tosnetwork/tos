@@ -21,6 +21,7 @@ DURATION="${1:-900}"
 RPC_BASE="${2:-8131}"
 BASE_PORT="${3:-30000}"
 
+START_EPOCH="$(date +%s)"
 echo "transfer-soak: duration=${DURATION}s rpc_base=${RPC_BASE} base_port=${BASE_PORT}"
 
 # Start the randomized transfer load + cross-node consistency checks.
@@ -31,14 +32,18 @@ uv run python scripts/validator-election-stage-a.py \
 SOAK_PID=$!
 
 # Give the network a moment to come up, then start the per-node leak monitor against it.
-# (The soak driver also samples storage via its own metrics_monitor; this adds RSS/FD.)
+# Pick the run dir created AFTER this script started (by name, not mtime -- another running
+# localnet's dir may have a newer mtime), and write the monitor output there so concurrent
+# soaks never share a file. If ambiguous, fall back to a timestamped sibling file.
 sleep 60
-RUN_DIR="$(ls -dt test/integration/.validator-election-experiment/*/ 2>/dev/null | head -1)"
+RUN_DIR="$(find test/integration/.validator-election-experiment -maxdepth 1 -type d -newermt "@${START_EPOCH}" -name '2026*' 2>/dev/null | sort | tail -1)"
 if [ -n "${RUN_DIR}" ]; then
   uv run python scripts/soak-mem-monitor.py \
     --rpc "127.0.0.1:${RPC_BASE}" --interval 20 --duration "${DURATION}" \
-    --out "${RUN_DIR}mem-monitor.jsonl" &
+    --out "${RUN_DIR}/mem-monitor.jsonl" &
   MON_PID=$!
+else
+  echo "transfer-soak: could not resolve soak run dir for the leak monitor; skipping it"
 fi
 
 wait "${SOAK_PID}"

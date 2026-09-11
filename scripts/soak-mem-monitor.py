@@ -60,8 +60,29 @@ def main() -> int:
     ap.add_argument("--interval", type=float, default=20.0)
     ap.add_argument("--duration", type=float, default=3000.0)
     ap.add_argument("--leak-threshold-frac", type=float, default=0.25)
+    ap.add_argument("--min-judge-samples", type=int, default=15,
+                    help="a process needs at least this many samples to be judged (else INSUFFICIENT)")
+    ap.add_argument("--analyze-only", type=Path, default=None,
+                    help="recompute the verdict over an existing mem-monitor.jsonl and exit")
     ap.add_argument("--out", type=Path, required=True)
     args = ap.parse_args()
+
+    if args.analyze_only is not None:
+        rows = []
+        skipped = 0
+        for line in args.analyze_only.read_text().splitlines():
+            if not line.strip():
+                continue
+            try:
+                rows.append(json.loads(line))
+            except json.JSONDecodeError:
+                skipped += 1  # tolerate a truncated/interleaved line (e.g. concurrent writers)
+        if skipped:
+            print(f"note: skipped {skipped} unparseable line(s)")
+        verdict = compute_verdict(rows, args.leak_threshold_frac, str(args.analyze_only), args.min_judge_samples)
+        args.out.write_text(json.dumps(verdict, indent=2) + "\n")
+        print(json.dumps(verdict, indent=2))
+        return 0
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
     samples: list[dict] = []
@@ -78,8 +99,18 @@ def main() -> int:
             f.flush()
             time.sleep(args.interval)
 
-    # Verdict: compare early vs late window per pid (by first-seen order), require both a
-    # positive RSS trend and a late/early excess beyond the threshold to call it a leak.
+    verdict = compute_verdict(samples, args.leak_threshold_frac, str(args.out), args.min_judge_samples)
+    verdict_path = args.out.with_name(args.out.stem + "-verdict.json")
+    verdict_path.write_text(json.dumps(verdict, indent=2) + "\n")
+    print(json.dumps(verdict, indent=2))
+    return 0
+
+
+def compute_verdict(samples: list[dict], threshold: float, samples_file: str, min_judge_samples: int) -> dict:
+    """Per-pid leak judgement. A process needs >= min_judge_samples to be judged at all, so a
+    short-lived process caught only during RSS warm-up is reported INSUFFICIENT_SAMPLES rather
+    than flagged. The early baseline SKIPS an initial warm-up window (caches fill at startup),
+    so only sustained post-warm-up growth past the threshold counts as a leak."""
     by_pid: dict[int, list[dict]] = {}
     for row in samples:
         for p in row["procs"]:
@@ -87,36 +118,39 @@ def main() -> int:
                 by_pid.setdefault(p["pid"], []).append({"seqno": row["seqno"], "rss_kb": p["rss_kb"], "fds": p["fds"]})
     findings = []
     leaked = False
+    judged = 0
     for pid, series in by_pid.items():
-        if len(series) < 6:
+        if len(series) < min_judge_samples:
+            findings.append({"pid": pid, "samples": len(series), "judged": False,
+                             "note": "INSUFFICIENT_SAMPLES (likely a short-lived / warm-up-only process)"})
             continue
-        k = max(1, len(series) // 3)
-        early = series[:k]
-        late = series[-k:]
+        judged += 1
+        warmup = max(2, len(series) // 5)  # drop startup cache warm-up before baselining
+        third = max(1, (len(series) - warmup) // 3)
+        early = series[warmup:warmup + third]
+        late = series[-third:]
         early_rss = sum(s["rss_kb"] for s in early) / len(early)
         late_rss = sum(s["rss_kb"] for s in late) / len(late)
-        early_fds = max(s["fds"] for s in early if s["fds"] is not None)
-        late_fds = max(s["fds"] for s in late if s["fds"] is not None)
+        early_fds = max((s["fds"] for s in early if s["fds"] is not None), default=0)
+        late_fds = max((s["fds"] for s in late if s["fds"] is not None), default=0)
         frac = (late_rss - early_rss) / early_rss if early_rss else 0.0
-        pid_leak = frac > args.leak_threshold_frac
+        pid_leak = frac > threshold
         leaked = leaked or pid_leak
         findings.append({
-            "pid": pid, "samples": len(series),
-            "early_rss_kb": round(early_rss), "late_rss_kb": round(late_rss),
+            "pid": pid, "samples": len(series), "judged": True,
+            "warmup_skipped": warmup,
+            "post_warmup_early_rss_kb": round(early_rss), "late_rss_kb": round(late_rss),
             "rss_growth_frac": round(frac, 4), "early_max_fds": early_fds, "late_max_fds": late_fds,
             "suspected_leak": pid_leak,
         })
-    verdict = {
-        "verdict": "LEAK_SUSPECTED" if leaked else ("OK" if findings else "INSUFFICIENT_SAMPLES"),
-        "samples_file": str(args.out),
+    return {
+        "verdict": "LEAK_SUSPECTED" if leaked else ("OK" if judged else "INSUFFICIENT_SAMPLES"),
+        "samples_file": samples_file,
         "sample_count": len(samples),
-        "leak_threshold_frac": args.leak_threshold_frac,
+        "leak_threshold_frac": threshold,
+        "judged_processes": judged,
         "per_process": findings,
     }
-    verdict_path = args.out.with_name(args.out.stem + "-verdict.json")
-    verdict_path.write_text(json.dumps(verdict, indent=2) + "\n")
-    print(json.dumps(verdict, indent=2))
-    return 0
 
 
 if __name__ == "__main__":
