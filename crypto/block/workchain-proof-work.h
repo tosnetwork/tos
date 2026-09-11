@@ -179,8 +179,14 @@ inline td::Result<WorkchainProofOperations> workchain_proof_operations_v4(
     if (request.origin[i] != 0)
       return td::Status::Error(-7201, "nonzero local system origin tail");
   }
-  // D69 changes fixed transcript members, not the curve-operation count.
-  return workchain_system_operations_v4();
+  // D72: fixed transcript per authenticated event kind, not variable context.
+  // Keep each profile independent even while all three have equal curve work.
+  switch (request.origin[0]) {
+    case 0: return WorkchainProofOperations{0, 3, 1, 1, 2, 0, 0, 0, 0};  // Deposit
+    case 1: return WorkchainProofOperations{0, 3, 1, 1, 2, 0, 0, 0, 0};  // Settlement
+    case 2: return WorkchainProofOperations{0, 3, 1, 1, 2, 0, 0, 0, 0};  // Sweep
+  }
+  return td::Status::Error(-7201, "unknown local system origin kind");
 }
 
 class WorkchainProofVerifier {
