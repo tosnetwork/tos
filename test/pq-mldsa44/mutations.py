@@ -31,7 +31,7 @@ def run(build: Path, vectors: Path):
         ('context', ROOT / 'crypto/pq/mldsa44.cpp',
          'm, message.size(), c, context.size(),', 'm, message.size(), c, 0,'),
         ('canonical-chunks', ROOT / 'crypto/vm/pqops.cpp',
-         '(cs.size_refs() && size != 127)', '(false)'),
+         '(cs.size_refs() && size != max_chunk_bytes)', '(false)'),
     ]
     with tempfile.TemporaryDirectory() as tmp:
         out = Path(tmp) / 'result.tsv'

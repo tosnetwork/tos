@@ -12,6 +12,10 @@
 
 namespace vm {
 namespace {
+// A canonical chunk cannot exceed one cell's capacity. The parser enforces that
+// locally so the fixed decoding buffer never depends on a limit declared elsewhere.
+constexpr std::size_t max_chunk_bytes = 127;
+
 // Canonical byte chain: full 127-byte non-final cells, at most one reference,
 // nonempty final cell (except the sole root of an empty string), level zero.
 std::string read_pq_bytes(VmState* st, td::Ref<Cell> cell, std::size_t limit) {
@@ -27,14 +31,18 @@ std::string read_pq_bytes(VmState* st, td::Ref<Cell> cell, std::size_t limit) {
       throw VmError{Excno::cell_und, "non-canonical PQ byte chain"};
     }
     const std::size_t size = cs.size() / 8;
-    if ((cs.size_refs() && size != 127) || (size == 0 && (!result.empty() || cs.size_refs())) ||
-        size > limit - result.size()) {
+    // Structural rejection precedes metering: an oversized chunk is never charged for.
+    if (size > max_chunk_bytes) {
+      throw VmError{Excno::cell_und, "PQ byte chain chunk exceeds cell capacity"};
+    }
+    if ((cs.size_refs() && size != max_chunk_bytes) ||
+        (size == 0 && (!result.empty() || cs.size_refs())) || size > limit - result.size()) {
       throw VmError{Excno::cell_und, "invalid PQ byte chain size"};
     }
     // Checked deduction precedes copying; limit bounds both memory and work.
     st->consume_gas_chk(static_cast<long long>(size) * pq_mldsa44_byte_gas);
-    unsigned char bytes[127];
-    if (size && !cs.prefetch_bytes(bytes, size)) {
+    unsigned char bytes[max_chunk_bytes];
+    if (size && !cs.prefetch_bytes(bytes, static_cast<unsigned>(size))) {
       throw VmError{Excno::cell_und, "truncated PQ byte chain"};
     }
     result.append(reinterpret_cast<const char*>(bytes), size);
