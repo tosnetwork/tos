@@ -1,0 +1,35 @@
+name: PQ candidate fixtures (off-chain only)
+
+on:
+  pull_request:
+    paths:
+      - 'test/auth-extensions/test_ml_dsa_candidate.py'
+      - 'test/auth-extensions/cells.py'
+      - 'test/auth-extensions/ML_DSA_CANDIDATE.md'
+      - '.github/workflows/pq-candidate-fixtures.yml'
+    types: [opened, reopened, synchronize, ready_for_review]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pq-candidate-fixtures-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  ml-dsa-offchain:
+    runs-on: ubuntu-24.04
+    container: debian:trixie-slim
+    timeout-minutes: 10
+    steps:
+      - name: Install Python and OpenSSL with ML-DSA support
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends ca-certificates git python3 openssl
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Verify real ML-DSA candidate and TOS-AUTH fixtures
+        run: |
+          openssl version
+          python3 test/auth-extensions/test_ml_dsa_candidate.py
