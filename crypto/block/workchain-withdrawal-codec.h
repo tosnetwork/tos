@@ -3,10 +3,11 @@
 #include "block/block-parse.h"
 #include "block/workchain-confidential-input.h"
 #include <limits>
+#include <set>
 
 namespace block {
 // Explicit record inputs only. Encoding never authenticates identity, prices,
-// state provenance or an Attempt sequence and never installs an obligation.
+// state provenance and never installs an obligation.
 using WorkchainWithdrawalDestination = gen::UnoV2WithdrawalDestinationV1::Record;
 using WorkchainWithdrawalAmounts = gen::UnoV2WithdrawalAmountsV1::Record;
 using WorkchainWithdrawalCosts = gen::UnoV2WithdrawalCostsV1::Record;
@@ -15,7 +16,6 @@ struct WorkchainWithdrawalData {
   WorkchainTransferClaims claims;
   WorkchainWithdrawalDestination destination;
   WorkchainWithdrawalAmounts amounts;
-  std::uint64_t attempt_sequence;
   WorkchainCiphertext available;
   td::Bits256 auxiliary;
 };
@@ -32,7 +32,7 @@ struct WorkchainWithdrawalContext {
 };
 struct WorkchainWithdrawalRecord {
   td::Bits256 withdrawal_id, attempt_id;
-  std::uint64_t attempt_sequence, consumed_auth_nonce, principal;
+  std::uint64_t consumed_auth_nonce, principal;
   WorkchainConfidentialAddress source;
   WorkchainWithdrawalDestination destination;
   WorkchainWithdrawalCosts costs;
@@ -79,13 +79,12 @@ inline td::Result<td::Bits256> derive_workchain_withdrawal_id(
     return root->get_hash().bits();
   });
 }
-// Section 7.3 independent sequence. The host supplies its authenticated value;
-// this helper neither allocates it nor chooses its storage or initial value.
-// No proof, future LT, resulting revision or current block hash enters either ID.
-inline td::Result<td::Bits256> derive_workchain_attempt_id(const td::Bits256& withdrawal,
-    std::uint64_t sequence) {
+// Each Withdrawal has exactly one Attempt. A new prepare consumes a new
+// auth_nonce and therefore identifies a new Withdrawal, not another Attempt.
+// The distinct constructor supplies domain separation; no future LT enters.
+inline td::Result<td::Bits256> derive_workchain_attempt_id(const td::Bits256& withdrawal) {
   return withdrawal_codec_detail::protect([&]() -> td::Result<td::Bits256> {
-    TRY_RESULT(root, withdrawal_codec_detail::pack(gen::UnoV2WithdrawalAttemptIdentityV1::Record{withdrawal, sequence}));
+    TRY_RESULT(root, withdrawal_codec_detail::pack(gen::UnoV2WithdrawalAttemptIdentityV1::Record{withdrawal}));
     return root->get_hash().bits();
   });
 }
@@ -99,7 +98,7 @@ inline td::Result<td::Ref<vm::Cell>> encode_workchain_withdrawal_data(const Work
     TRY_RESULT(claims, confidential_input_detail::pack_claims(value.claims));
     TRY_RESULT(destination, pack(value.destination)); TRY_RESULT(amounts, pack(value.amounts));
     TRY_RESULT(available, pack(value.available));
-    return pack(gen::UnoV2WithdrawalDataV1::Record{value.attempt_sequence, value.auxiliary,
+    return pack(gen::UnoV2WithdrawalDataV1::Record{value.auxiliary,
         claims, destination, amounts, available});
   });
 }
@@ -114,7 +113,7 @@ inline td::Result<WorkchainWithdrawalData> decode_workchain_withdrawal_data(cons
     TRY_RESULT(total, workchain_withdrawal_total(amounts)); (void)total;
     if (claims.authorized_fee != amounts.operation_fee)
       return withdrawal_codec_detail::error("withdrawal operation fee claims disagree");
-    return WorkchainWithdrawalData{claims, destination, amounts, wire.attempt_sequence, available, wire.auxiliary};
+    return WorkchainWithdrawalData{claims, destination, amounts, available, wire.auxiliary};
   });
 }
 
@@ -195,7 +194,7 @@ inline td::Result<td::Ref<vm::Cell>> encode_workchain_withdrawal_record(const Wo
     TRY_RESULT(source, pack(value.source)); TRY_RESULT(destination, pack(value.destination));
     TRY_RESULT(costs, pack(value.costs)); TRY_RESULT(timing, pack(value.timing));
     return pack(gen::UnoV2WithdrawalRecordV1::Record{value.withdrawal_id, value.attempt_id,
-        value.attempt_sequence, value.consumed_auth_nonce, value.principal, source, destination, costs, timing});
+        value.consumed_auth_nonce, value.principal, source, destination, costs, timing});
   });
 }
 inline td::Result<WorkchainWithdrawalRecord> decode_workchain_withdrawal_record(const td::Ref<vm::Cell>& root) {
@@ -206,10 +205,76 @@ inline td::Result<WorkchainWithdrawalRecord> decode_workchain_withdrawal_record(
     TRY_RESULT(destination, unpack<WorkchainWithdrawalDestination>(wire.destination));
     TRY_RESULT(costs, unpack<WorkchainWithdrawalCosts>(wire.costs));
     TRY_RESULT(timing, unpack<WorkchainWithdrawalTiming>(wire.timing));
-    WorkchainWithdrawalRecord result{wire.withdrawal_id, wire.attempt_id, wire.attempt_sequence,
+    WorkchainWithdrawalRecord result{wire.withdrawal_id, wire.attempt_id,
         wire.consumed_auth_nonce, wire.principal, source, destination, costs, timing};
     TRY_STATUS(check_workchain_withdrawal_record(result));
     return result;
+  });
+}
+struct WorkchainWithdrawalControl {
+  WorkchainConfidentialLifecycle lifecycle;
+  std::vector<WorkchainWithdrawalRecord> withdrawals;
+};
+inline td::Status check_workchain_withdrawal_closure(const WorkchainWithdrawalControl& authenticated_control) {
+  if (!authenticated_control.withdrawals.empty())
+    return withdrawal_codec_detail::error("account has unclosed Withdrawal obligations");
+  return td::Status::OK();
+}
+inline td::Result<td::Ref<vm::Cell>> encode_workchain_withdrawal_control(
+    const WorkchainWithdrawalControl& value, std::uint32_t authenticated_limit) {
+  return withdrawal_codec_detail::protect([&]() -> td::Result<td::Ref<vm::Cell>> {
+    if (value.withdrawals.size() > authenticated_limit)
+      return withdrawal_codec_detail::error("Withdrawal count exceeds authenticated limit");
+    if (std::holds_alternative<WorkchainAccountClosed>(value.lifecycle))
+      TRY_STATUS(check_workchain_withdrawal_closure(value));
+    TRY_RESULT(lifecycle, encode_workchain_account_lifecycle(value.lifecycle));
+    vm::Dictionary entries(256);
+    std::set<std::uint64_t> message_lts;
+    for (const auto& record : value.withdrawals) {
+      if (!message_lts.insert(record.timing.payout_created_lt).second)
+        return withdrawal_codec_detail::error("duplicate Withdrawal payout created_lt");
+      TRY_RESULT(root, encode_workchain_withdrawal_record(record));
+      if (!entries.set_ref(record.withdrawal_id, root, vm::Dictionary::SetMode::Add))
+        return withdrawal_codec_detail::error("duplicate Withdrawal identity");
+    }
+    return withdrawal_codec_detail::pack(gen::UnoV2AccountControlWithdrawalsV1::Record{
+        static_cast<unsigned>(value.withdrawals.size()),
+        lifecycle, std::move(entries).extract_root()});
+  });
+}
+inline td::Result<WorkchainWithdrawalControl> decode_workchain_withdrawal_control(
+    const td::Ref<vm::Cell>& root, std::uint32_t authenticated_limit) {
+  return withdrawal_codec_detail::protect([&]() -> td::Result<WorkchainWithdrawalControl> {
+    TRY_RESULT(wire, withdrawal_codec_detail::unpack<gen::UnoV2AccountControlWithdrawalsV1::Record>(root));
+    if (wire.withdrawal_count > authenticated_limit)
+      return withdrawal_codec_detail::error("Withdrawal count exceeds authenticated limit");
+    TRY_RESULT(lifecycle, decode_workchain_account_lifecycle(wire.lifecycle));
+    WorkchainWithdrawalControl value{lifecycle, {}};
+    vm::Dictionary entries(wire.withdrawals, 256);
+    td::Status error = td::Status::OK();
+    std::set<std::uint64_t> message_lts;
+    if (!entries.check_for_each([&](td::Ref<vm::CellSlice> leaf, td::ConstBitPtr key, int width) {
+          if (width != 256 || leaf->size_ext() != 0x10000 || value.withdrawals.size() >= authenticated_limit)
+            return false;
+          auto decoded = decode_workchain_withdrawal_record(leaf->prefetch_ref());
+          if (decoded.is_error()) { error = decoded.move_as_error(); return false; }
+          const auto& record = decoded.ok();
+          if (record.withdrawal_id != td::Bits256(key)) return false;
+          if (!message_lts.insert(record.timing.payout_created_lt).second) return false;
+          value.withdrawals.push_back(decoded.move_as_ok());
+          return true;
+        })) {
+      if (error.is_error()) return std::move(error);
+      return withdrawal_codec_detail::error("invalid Withdrawal dictionary or duplicate payout created_lt");
+    }
+    // D39: count comes from bounded enumeration, never the recorded scalar.
+    if (value.withdrawals.size() != wire.withdrawal_count)
+      return withdrawal_codec_detail::error("Withdrawal count differs from enumerated dictionary");
+    if (std::holds_alternative<WorkchainAccountClosed>(value.lifecycle))
+      TRY_STATUS(check_workchain_withdrawal_closure(value));
+    TRY_RESULT(canonical, encode_workchain_withdrawal_control(value, authenticated_limit));
+    if (canonical->get_hash() != root->get_hash()) return withdrawal_codec_detail::error("noncanonical Withdrawal control");
+    return value;
   });
 }
 }  // namespace block

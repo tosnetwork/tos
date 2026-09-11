@@ -7,11 +7,11 @@ td::Bits256 word(unsigned n) {
 }
 WorkchainConfidentialAddress owner() { return {2, word(1), word(2)}; }
 WorkchainWithdrawalData data() {
-  return {{owner(), 7, 8, 9, 100, 11}, {0, word(3)}, {100, 4, 20, 11}, 12,
+  return {{owner(), 7, 8, 9, 100, 11}, {0, word(3)}, {100, 4, 20, 11},
           {word(4), word(5)}, word(6)};
 }
 WorkchainWithdrawalRecord record() {
-  return {word(7), word(8), 12, 7, 100, owner(), {0, word(3)},
+  return {word(7), word(8), 7, 100, owner(), {0, word(3)},
           {4, 20, 3, 17}, {0, 1000, 10, 0, 30}};
 }
 td::Ref<vm::Cell> special() {
@@ -40,8 +40,10 @@ TEST(WithdrawalCodec, IdentitiesDoNotUseFutureLt) {
   ASSERT_TRUE(id.ok() != derive_workchain_closure_operation_id(net, owner(), 7).move_as_ok());
   ASSERT_TRUE(id.ok() != derive_workchain_operation_id(net, owner(), 1, 7).move_as_ok());
   ASSERT_TRUE(id.ok() != derive_workchain_withdrawal_id(net, owner(), 8).move_as_ok());
-  auto attempt = derive_workchain_attempt_id(id.ok(), 12).move_as_ok();
-  ASSERT_TRUE(attempt != derive_workchain_attempt_id(id.ok(), 13).move_as_ok());
+  auto attempt = derive_workchain_attempt_id(id.ok()).move_as_ok();
+  ASSERT_TRUE(attempt == derive_workchain_attempt_id(id.ok()).move_as_ok());
+  auto next = derive_workchain_withdrawal_id(net, owner(), 8).move_as_ok();
+  ASSERT_TRUE(attempt != derive_workchain_attempt_id(next).move_as_ok());
 }
 TEST(WithdrawalCodec, ExactInputAndCheckedSum) {
   auto value = data();
@@ -89,4 +91,38 @@ TEST(WithdrawalCodec, CanonicalContextBindsAllComponents) {
   ASSERT_TRUE(encode_workchain_withdrawal_context(value).move_as_ok() != encoded.ok());
   value.settlement_blocks = 30; value.binding.semantic_hash = word(22);
   ASSERT_TRUE(encode_workchain_withdrawal_context(value).move_as_ok() != encoded.ok());
+}
+TEST(WithdrawalCodec, ControlCountUniquenessAndClosure) {
+  WorkchainWithdrawalControl value{WorkchainAccountActive{}, {record()}};
+  auto root = encode_workchain_withdrawal_control(value, 2); ASSERT_TRUE(root.is_ok());
+  auto decoded = decode_workchain_withdrawal_control(root.ok(), 2); ASSERT_TRUE(decoded.is_ok());
+  ASSERT_EQ(decoded.ok().withdrawals.size(), 1u);
+  ASSERT_TRUE(check_workchain_withdrawal_closure(decoded.ok()).is_error());
+  ASSERT_TRUE(encode_workchain_withdrawal_control(value, 0).is_error());
+  ASSERT_TRUE(decode_workchain_withdrawal_control(root.ok(), 0).is_error());
+  auto other = record(); other.timing.payout_created_lt++;
+  value.withdrawals.push_back(other);
+  auto duplicate = encode_workchain_withdrawal_control(value, 2);
+  ASSERT_TRUE(duplicate.is_error());
+  ASSERT_EQ(duplicate.error().message(), "duplicate Withdrawal identity");
+  value.withdrawals.back().withdrawal_id = word(25);
+  value.withdrawals.back().timing.payout_created_lt = record().timing.payout_created_lt;
+  duplicate = encode_workchain_withdrawal_control(value, 2);
+  ASSERT_TRUE(duplicate.is_error());
+  ASSERT_EQ(duplicate.error().message(), "duplicate Withdrawal payout created_lt");
+  value.withdrawals.back().timing.payout_created_lt++;
+  ASSERT_TRUE(encode_workchain_withdrawal_control(value, 2).is_ok());
+  gen::UnoV2AccountControlWithdrawalsV1::Record wire;
+  ASSERT_TRUE(resource_policy_detail::unpack_exact(root.ok(), wire));
+  wire.withdrawal_count = 0;
+  auto wrong = decode_workchain_withdrawal_control(confidential_state_detail::pack(wire).move_as_ok(), 2);
+  ASSERT_TRUE(wrong.is_error());
+  ASSERT_EQ(wrong.error().message(), "Withdrawal count differs from enumerated dictionary");
+  wire.withdrawals = vm::load_cell_slice_ref(vm::CellBuilder().store_long(1, 1).store_ref(special()).finalize());
+  ASSERT_TRUE(decode_workchain_withdrawal_control(confidential_state_detail::pack(wire).move_as_ok(), 2).is_error());
+  value.lifecycle = WorkchainAccountClosed{};
+  ASSERT_TRUE(encode_workchain_withdrawal_control(value, 2).is_error());
+  value.withdrawals.clear();
+  ASSERT_TRUE(check_workchain_withdrawal_closure(value).is_ok());
+  ASSERT_TRUE(encode_workchain_withdrawal_control(value, 2).is_ok());
 }
