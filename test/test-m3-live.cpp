@@ -16,6 +16,7 @@
 #include "m4-live-deposit.h"
 #include "m5-live-failed.h"
 #include "m5-live-unknown-control.h"
+#include "m5-live-fee-routing-control.h"
 
 int main(int argc, char** argv) {
   if (argc == 3 && std::string(argv[1]) == "--validate-archive-off") {
@@ -248,9 +249,10 @@ int main(int argc, char** argv) {
   }
   const bool incarnation_control = argc == 3 && std::string(argv[1]) == "--failed-incarnation-control";
   const bool unknown_control = argc == 3 && std::string(argv[1]) == "--failed-unknown-control";
+  const bool routing_control = argc == 3 && std::string(argv[1]) == "--failed-fee-routing-control";
   const bool negative_control = incarnation_control || unknown_control;
-  if (argc != 2 && !negative_control) return 2;
-  const std::filesystem::path fixture(argv[negative_control ? 2 : 1]);
+  if (argc != 2 && !negative_control && !routing_control) return 2;
+  const std::filesystem::path fixture(argv[negative_control || routing_control ? 2 : 1]);
   if (!std::filesystem::exists(fixture / "prepare.cmake") ||
       !std::filesystem::exists(fixture / ".counter-managed-v1")) return 2;
   vm::init_vm().ensure();
@@ -271,6 +273,7 @@ int main(int argc, char** argv) {
   const bool debit = block::m3_test::is_m5_test_debit(candidate);
   const bool failed = block::m3_test::is_m5_test_failed(candidate);
   CHECK(!unknown_control || failed);
+  CHECK(!routing_control || failed);
   if (incarnation_control) {
     CHECK(failed);
     auto selector = block::m3_test::decode_m5_test_failed(candidate).move_as_ok();
@@ -291,7 +294,7 @@ int main(int argc, char** argv) {
         (std::holds_alternative<block::WorkchainSendData>(transfer->data) ? 3 : 2) + (m4 ? 1 : 0);
   }
   for (const bool enabled : {false, true}) {
-    const std::string name = (incarnation_control ? "incarnation-" : unknown_control ? "unknown-" : "") + std::string(enabled ? "enabled" : "closed");
+    const std::string name = (incarnation_control ? "incarnation-" : unknown_control ? "unknown-" : routing_control ? "routing-" : "") + std::string(enabled ? "enabled" : "closed");
     auto db = fixture / (name + "-db");
     std::filesystem::copy(fixture / "db", db, std::filesystem::copy_options::recursive);
     const auto result = (fixture / (name + ".result")).string();
@@ -317,6 +320,8 @@ int main(int argc, char** argv) {
         const block::WorkchainEngineKey key{block::WorkchainFormat::Basic,0x434e5431};
         if (unknown_control)
           registry.register_account_engine(std::make_unique<m3_live::UnknownAfterExecution>(key,counter)).ensure();
+        else if (routing_control)
+          registry.register_account_engine(std::make_unique<m3_live::ComputeToOperator>(key,counter)).ensure();
         else
           registry.register_account_engine(std::make_unique<block::m3_test::M3NodeEngine>(key,counter)).ensure();
         auto resolved = registry.resolve_scoped_workchain(2, *config).move_as_ok();

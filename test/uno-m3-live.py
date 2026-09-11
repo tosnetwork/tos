@@ -16,7 +16,13 @@ p.add_argument('--m4-rejections', action='store_true', help='run separate reject
 p.add_argument('--m5-debit', action='store_true', help='stop after authenticated Withdrawal debit checkpoint')
 p.add_argument('--m5-return-route', action='store_true', help='deliver a funded payout to wc0 and observe the actual return')
 p.add_argument('--m5-failed', action='store_true', help='publish the funded phase-0 return atomically at custody')
+p.add_argument('--failed-routing-probe', action='store_true',
+               help='run the real fee-routing producer mutation before normal Failed publication')
+p.add_argument('--failed-routing-binary', type=Path,
+               help='isolated test binary for oracle-removal control only')
 a = p.parse_args()
+if a.failed_routing_probe:
+    a.m5_failed = True
 if a.m5_failed:
     a.m5_return_route = True
 if a.m5_return_route:
@@ -239,6 +245,24 @@ if a.m5_debit:
                             '-D', str(fixture / 'db'), '-w', '-1', '-M', str(fixture / 'payout-recipient-top1.boc'),
                             '--query-result', str(fixture / 'return-master.result')], check=True)
             subprocess.run([str(build / 'test-m3-live'), '--failed-request', str(fixture)], check=True)
+            if a.failed_routing_probe:
+                probe = fixture / 'routing-probe'
+                # The backing observer intentionally refuses to overwrite its
+                # observations. Mutant and restored runs need separate outputs.
+                shutil.copytree(fixture, probe, ignore=shutil.ignore_patterns('routing-probe'))
+                result = subprocess.run([str(a.failed_routing_binary or build / 'test-m3-live'), '--failed-fee-routing-control', str(probe)],
+                                        text=True, capture_output=True)
+                (fixture / 'routing-probe.log').write_text(result.stdout + result.stderr)
+                print(f'FAILED_ROUTING_PROBE fixture={fixture} exit={result.returncode}', flush=True)
+                for suffix, expected in [('.validation.kind', 'accept\n'),
+                                         ('.validation.result', 'validate accept\n')]:
+                    if (probe / ('routing-enabled.result' + suffix)).read_text() != expected:
+                        raise RuntimeError('routing mutation did not reach accepted Native publication')
+                if not (probe / 'routing-enabled.candidate').is_file():
+                    raise RuntimeError('routing mutation has no exported candidate')
+                if result.returncode == 0 or 'FAILED_COST_ROUTING:' not in result.stderr:
+                    raise RuntimeError('FAILED_ORACLE_MISSING:FAILED_COST_ROUTING; '
+                                       'expected designated routing red, not an earlier failure')
             subprocess.run([str(build / 'test-m3-live'), '--failed-incarnation-control', str(fixture)], check=True)
             subprocess.run([str(build / 'test-m3-live'), '--failed-unknown-control', str(fixture)], check=True)
             subprocess.run([str(build / 'test-m3-live'), str(fixture)], check=True)

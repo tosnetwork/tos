@@ -806,6 +806,18 @@ target_link_libraries(test-tos-collator overlay tdutils tdactor adnl tl_api dht
 add_executable(test-m3-live EXCLUDE_FROM_ALL test/test-m3-live.cpp)
 target_link_libraries(test-m3-live PRIVATE overlay tdutils tdactor adnl tl_api dht
   validator-disk tos_validator validator-disk)
+if (TOS_UNO_CRYPTO_NODE_LINK AND CMAKE_GENERATOR STREQUAL "Ninja")
+  # Partial meta-control, deliberately NOT the complete B-owned contract name.
+  # Requires the real linked backend; never changes the default D59 permit.
+  set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+  set_target_properties(test-m3-live PROPERTIES EXCLUDE_FROM_ALL FALSE EXPORT_COMPILE_COMMANDS TRUE)
+  add_dependencies(all-tests test-m3-live)
+  add_test(NAME test-workchain-withdrawal-failed-oracle-routing-partial
+    COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/test/uno-failed-routing-oracle.py
+      --build ${CMAKE_BINARY_DIR})
+  set_tests_properties(test-workchain-withdrawal-failed-oracle-routing-partial
+    PROPERTIES TIMEOUT 1800 RUN_SERIAL TRUE)
+endif()
 add_test(NAME test-counter-collator-admission
   COMMAND ${CMAKE_COMMAND} -DCOLLATOR=$<TARGET_FILE:test-tos-collator>
     -P ${CMAKE_CURRENT_SOURCE_DIR}/test/test-counter-collator-admission.cmake)

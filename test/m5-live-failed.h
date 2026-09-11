@@ -75,11 +75,16 @@ inline void assert_m5_failed(const std::filesystem::path& fixture,
   CurrencyCollection operating;
   CHECK(CurrencyCollection::add(balance(previous,td::Bits256::zero()),
       CurrencyCollection(workchain_unsigned_fee(components.state)),operating));
-  CHECK(balance(step.state,td::Bits256::zero()) == operating);
   gen::Transaction::Record tx;
   CHECK(::tlb::unpack_cell(accepted_transaction(step,custody),tx) && tx.outmsg_cnt == 0);
   CurrencyCollection collected; CHECK(collected.unpack(tx.total_fees));
-  CHECK(collected == CurrencyCollection(workchain_unsigned_fee(components.compute)));
+  const bool correct_routing = balance(step.state,td::Bits256::zero()) == operating &&
+      collected == CurrencyCollection(workchain_unsigned_fee(components.compute));
+  if (!correct_routing)
+    std::cerr << "FAILED_COST_ROUTING: coordinator_actual=" << balance(step.state,td::Bits256::zero()).tomis
+              << " coordinator_expected=" << operating.tomis << " collected_actual=" << collected.tomis
+              << " collected_expected=" << components.compute << std::endl;
+  CHECK(correct_routing);
   std::cout << "FAILED_AUTHENTICATED inbound=" << selector.inbound_message.to_hex()
             << " phase=0 recovered=" << recovered.tomis << " receipt=" << receipt.amount
             << " sequence=" << *old_coordinator.deposit_sequence << "->" << sequence
