@@ -11,6 +11,7 @@
 #include "block/workchain-confidential-native.h"
 #include "block/workchain-registration-payment.h"
 #include "td/utils/filesystem.h"
+#include "td/utils/ScopeGuard.h"
 
 namespace block::m3_test {
 class M3NodeEngine final : public RegisteredWorkchainAccountEngine {
@@ -167,6 +168,16 @@ class M3NodeEngine final : public RegisteredWorkchainAccountEngine {
     CHECK(executions_ != UINT_MAX);
     ++executions_;
     observe();
+    const auto before_units = verifier.consumed();
+    // Test observation only, never an input to validation or fee rebuilding.
+    // Missing/extra observations fail the paired driver instead of counting as
+    // zero work. Record failures too: precharged work must not be refunded.
+    SCOPE_EXIT {
+      std::uint64_t units;
+      CHECK(!__builtin_sub_overflow(verifier.consumed(), before_units, &units));
+      td::write_file(observation_path_ + ".units." + std::to_string(executions_),
+                     std::to_string(units) + "\n").ensure();
+    };
     const auto* cfg = dynamic_cast<const Configuration*>(&configuration);
     if (!cfg) return local("M3 test engine configuration type mismatch");
     gen::UnoV2HostInput::Record host;

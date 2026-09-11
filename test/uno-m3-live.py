@@ -11,6 +11,7 @@ import tempfile
 
 p = argparse.ArgumentParser(description=__doc__)
 p.add_argument('--build', required=True, type=Path)
+p.add_argument('--m4', action='store_true', help='use explicit M4 test parameters and real Native Deposit')
 a = p.parse_args()
 repo = Path(__file__).resolve().parents[1]
 build = a.build.resolve()
@@ -41,7 +42,7 @@ if source.count(marker) != 1:
     raise RuntimeError('genesis preparation boundary changed')
 (fixture / '.counter-managed-v1').write_text('M3 test-owned fixture, not a deployment source.\n')
 prepare = fixture / 'prepare.cmake'
-subprocess.run([str(build / 'test-m3-live'), '--coordinator-data',
+subprocess.run([str(build / 'test-m3-live'), '--m4-coordinator-data' if a.m4 else '--coordinator-data',
                 str(fixture / 'coordinator-data.boc')], check=True)
 # Keep all instance issuance in the existing create-state route. Change the
 # wc=2 state BEFORE its descriptor/instance are issued, never after hashing it.
@@ -53,6 +54,13 @@ if shard.count(old_account) != 1:
     raise RuntimeError('test coordinator construction changed')
 shard = shard.replace(old_account, '<{ 63 THROW }>c\n"coordinator-data.boc" file>B B>boc\n'
                       'empty_cell 1000000000 0 0 0 6 register_smc drop')
+if a.m4:
+    # Zero principal custody exists before descriptor issuance. This is not
+    # confidential test funding: every later principal coin must be imported.
+    # Nonempty inert data is a fixture representation choice: register_smc
+    # omits empty data, whereas engine update rows require a present data cell.
+    shard = shard.replace('create_state\n', '<{ 63 THROW }>c\n<b 0 1 u, b>\n'
+                          'empty_cell 0 0 0 256 1<<1- 6 register_smc drop\ncreate_state\n')
 (fixture / 'm3-shard-genesis.fif').write_text(shard)
 prefix = source.split(marker)[0]
 route = '  set(script_path "${SOURCE_DIR}/test/${script}.fif")'
@@ -72,7 +80,7 @@ subprocess.run(['cmake', '-DCOUNTER_FIXTURE_CHILD=ON', f'-DCOUNTER_FIXTURE_PATH=
                 f'-DCOLLATOR={build / "test-m3-live"}', '-P', str(prepare)], check=True)
 print(f'Test-owned fixture: {fixture}', flush=True)
 shutil.copyfile(fixture / 'counter-state.boc', fixture / 'current-state.boc')
-subprocess.run([str(build / 'test-m3-live'), '--prepare-config', str(fixture)], check=True)
+subprocess.run([str(build / 'test-m3-live'), '--prepare-m4-config' if a.m4 else '--prepare-config', str(fixture)], check=True)
 # Bind disk lookup and global.json to the actual edited TEST genesis bytes.
 # No prior DB is reused and no deployment configuration is read or written.
 zero_bytes = (fixture / 'zerostate.boc').read_bytes()
@@ -148,6 +156,28 @@ advance_pair(1)
 subprocess.run([str(build / 'test-tos-collator'), '-C', str(fixture / 'global.json'),
                 '-D', str(fixture / 'db'), '-w', '-1', '-M', str(fixture / '1-enabled-top1.boc'),
                 '--query-result', str(fixture / 'register-b-master.result')], check=True)
+if a.m4:
+    for number in (2, 3):
+        (fixture / 'deposit.request.txt').write_text('principal=1000000000\n')
+        subprocess.run([str(build / 'test-m3-live'), '--deposit-request', str(fixture)], check=True)
+        subprocess.run([str(build / 'test-tos-collator'), '-C', str(fixture / 'global.json'),
+                        '-D', str(fixture / 'db'), '-w', '0', '-m', str(fixture / 'deposit.message.boc'),
+                        '-s', str(fixture / f'deposit-{number}-payer-top'),
+                        '--query-result', str(fixture / f'deposit-{number}-payer.result')], check=True)
+        subprocess.run([str(build / 'test-tos-collator'), '-C', str(fixture / 'global.json'),
+                        '-D', str(fixture / 'db'), '-w', '-1',
+                        '-M', str(fixture / f'deposit-{number}-payer-top1.boc'),
+                        '--query-result', str(fixture / f'deposit-{number}-master.result')], check=True)
+        subprocess.run([str(build / 'test-m3-live'), str(fixture)], check=True)
+        shutil.copyfile(fixture / 'accepted-receipt.id', fixture / f'deposit-{number}.id')
+        advance_pair(number)
+        subprocess.run([str(build / 'test-tos-collator'), '-C', str(fixture / 'global.json'),
+                        '-D', str(fixture / 'db'), '-w', '-1', '-M', str(fixture / f'{number}-enabled-top1.boc'),
+                        '--query-result', str(fixture / f'deposit-{number}-accepted-master.result')], check=True)
+    from uno_m4_live_sequence import run
+    run(build, fixture, wallet, advance_pair)
+    raise SystemExit(0)
+
 (fixture / 'seed.request.txt').write_text(
     'secret=101\nold_value=50000\nold_blind=23\nnew_blind=1\naux_blind=1\nfee=0\n')
 subprocess.run([str(wallet), 'seed', str(fixture / 'seed.request.txt'), str(fixture / 'seed.result.txt')], check=True)

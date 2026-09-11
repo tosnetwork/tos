@@ -36,6 +36,25 @@ struct WorkchainAccountSettlement {
   vm::CellUsageTree::NodePtr state_usage_node;
 };
 
+// Candidate-only comparison after independent execution/settlement. Extracted
+// from the validator's final boundary so controls exercise its actual verdict,
+// not a test-only approximation. Rebuilt data never comes from these claims.
+inline td::Status compare_workchain_account_replay_artifacts(
+    const WorkchainAccountSettlement& rebuilt, const td::Ref<vm::Cell>& effects,
+    const td::Ref<vm::Cell>& accounts, const td::Ref<vm::Cell>& account_blocks,
+    const td::Ref<vm::Cell>& imports, std::uint64_t end_lt) {
+  if (rebuilt.effects.is_null() || rebuilt.state.accounts.is_null() ||
+      rebuilt.state.account_blocks.is_null() || rebuilt.imports.in_msg_descr.is_null())
+    return td::Status::Error(-7201, "account replay rebuilt artifacts unavailable");
+  if (effects.is_null() || accounts.is_null() || account_blocks.is_null() || imports.is_null() ||
+      rebuilt.effects->get_hash() != effects->get_hash() ||
+      rebuilt.state.accounts->get_hash() != accounts->get_hash() ||
+      rebuilt.state.account_blocks->get_hash() != account_blocks->get_hash() ||
+      rebuilt.imports.in_msg_descr->get_hash() != imports->get_hash() || rebuilt.state.end_lt != end_lt)
+    return td::Status::Error(-7200, "account replay artifacts differ from independently rebuilt settlement");
+  return td::Status::OK();
+}
+
 // One engine invocation followed by private Native materialization. No caller
 // supplies the input/effects hashes or a second set of account data updates.
 // This post-admission operation does not authenticate roles, resource policy,

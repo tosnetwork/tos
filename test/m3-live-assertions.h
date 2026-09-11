@@ -34,8 +34,12 @@ inline void assert_accepted_transfer(const std::filesystem::path& fixture,
   // Fixed scenario expectations, never computed from the observed ciphertext.
   const auto old_value = std::stoull(field(fixture / "operation.expected.txt", "before"));
   const auto new_value = std::stoull(field(fixture / "operation.expected.txt", "after"));
+  // The M4 fixture deposits two amounts of 1e9. A selected receipt can exceed
+  // the post-fee available balance, so that balance alone is not a valid
+  // decryption search bound. This is a test-wallet limit, not a consensus limit.
+  const auto bound = std::max<std::uint64_t>(2000000000, std::max(old_value, new_value));
   auto balances = block::m3_test::assert_block_transfer(step.block, coordinator, tx.lt,
-      account_data(previous, source), account_data(step.state, source), test_secret(source), 100000,
+      account_data(previous, source), account_data(step.state, source), test_secret(source), bound,
       old_value, new_value, destination_before, destination_after, recipient).move_as_ok();
   if (auto* send = std::get_if<block::WorkchainSendData>(&decoded.data)) {
     auto receipt = block::derive_workchain_receipt_id(send->claims.source.instance,
@@ -46,7 +50,7 @@ inline void assert_accepted_transfer(const std::filesystem::path& fixture,
   std::cout << "actual block transfer: available " << balances.before << " -> " << balances.after << '\n';
 }
 inline void assert_accepted_closure(const td::Ref<vm::Cell>& previous, const AcceptedStep& step,
-                                    const td::Bits256& subject_from_block) {
+                                    const td::Bits256& subject_from_block, std::uint64_t expected_other = 49490) {
   const auto coordinator = td::Bits256::zero();
   auto transaction = accepted_transaction(step, coordinator);
   block::gen::Transaction::Record tx;
@@ -65,14 +69,16 @@ inline void assert_accepted_closure(const td::Ref<vm::Cell>& previous, const Acc
   block::m3_test::assert_closure(account_data(previous, coordinator), account_data(step.state, coordinator),
       account_data(previous, subject_from_block), account_data(step.state, subject_from_block),
       test_secret(subject_from_block), 100000, observed).ensure();
-  td::Bits256 a;
-  a.as_slice().fill(0x11);
-  auto sender = block::decode_workchain_confidential_account(account_data(step.state, a)).move_as_ok();
-  const auto value = block::m3_test::decrypt(sender.available, test_secret(a), 100000).move_as_ok();
-  block::m3_test::assert_balance(value, 49490).ensure();
+  td::Bits256 other;
+  other.as_slice().fill(subject_from_block.as_slice()[0] == 0x11 ? 0x22 : 0x11);
+  auto sender = block::decode_workchain_confidential_account(account_data(step.state, other)).move_as_ok();
+  const auto value = block::m3_test::decrypt(sender.available, test_secret(other),
+      std::max<std::uint64_t>(100000, expected_other)).move_as_ok();
+  block::m3_test::assert_balance(value, expected_other).ensure();
   auto system = block::decode_workchain_coordinator_state(account_data(step.state, coordinator)).move_as_ok();
   CHECK(system.system.registered_accounts == 2);
   std::cout << "actual closure: zero available; historical deposit is an outbound message only; "
-               "delivery NOT guaranteed, no recipient credit asserted; A=49490 B=0 registered_accounts=2\n";
+               "delivery NOT guaranteed, no recipient credit asserted; other available=" << value
+            << " closed available=0 registered_accounts=2\n";
 }
 }  // namespace m3_live

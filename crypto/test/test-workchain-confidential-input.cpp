@@ -11,6 +11,7 @@
 #include "block/workchain-account-effects.h"
 #include "block/workchain-native-allocation.h"
 #include "block/workchain-allocation-overlay.h"
+#include "block/workchain-account-settlement.h"
 #include "block/workchain-confidential-native.h"
 #include <fstream>
 #include <iostream>
@@ -182,6 +183,35 @@ static void exercise_static_fee_settlement(block::WorkchainStaticOperationTariff
     if (built.is_error()) LOG(ERROR) << built.error();
     ASSERT_TRUE(built.is_ok());
     ASSERT_TRUE(built.ok().exports.empty());
+    WorkchainAccountSettlement rebuilt;
+    rebuilt.effects = output;
+    rebuilt.state = built.ok().state;
+    rebuilt.imports = built.ok().imports;
+    auto verdict = [&](const td::Ref<vm::Cell>& claim_effects, const td::Ref<vm::Cell>& claim_blocks) {
+      return compare_workchain_account_replay_artifacts(rebuilt, claim_effects,
+          rebuilt.state.accounts, claim_blocks, rebuilt.imports.in_msg_descr, rebuilt.state.end_lt);
+    };
+    ASSERT_TRUE(verdict(output, rebuilt.state.account_blocks).is_ok());
+    for (unsigned defect = 0; defect < 5; ++defect) {
+      auto changed = effects;
+      auto& claim = *changed.fees;
+      if (defect == 0) std::swap(claim.state_fee, claim.compute_fee);
+      if (defect == 1) std::swap(claim.compute_fee, claim.tip);
+      if (defect == 2) std::swap(claim.state_fee, claim.tip);
+      if (defect == 3) {
+        std::uint64_t s, c;
+        ASSERT_TRUE(!__builtin_add_overflow(amounts.state, std::uint64_t{1}, &s));
+        // C is positive in both cases; checked subtraction still enforces it.
+        ASSERT_TRUE(!__builtin_sub_overflow(amounts.compute, std::uint64_t{1}, &c));
+        claim.state_fee = workchain_unsigned_fee(s);
+        claim.compute_fee = workchain_unsigned_fee(c);
+      }
+      if (defect == 4) std::swap(claim.custody, claim.coordinator);
+      auto wire = encode_workchain_account_effects(changed, 2, 1, 4096).move_as_ok();
+      const auto rejected = verdict(wire, rebuilt.state.account_blocks);
+      ASSERT_EQ(rejected.code(), -7200);
+      ASSERT_EQ(rejected.message(), "account replay artifacts differ from independently rebuilt settlement");
+    }
     vm::AugmentedDictionary next(vm::load_cell_slice_ref(built.ok().state.accounts), 256,
                                   block::tlb::aug_ShardAccounts);
     vm::AugmentedDictionary blocks(vm::load_cell_slice_ref(built.ok().state.account_blocks), 256,
@@ -210,9 +240,57 @@ static void exercise_static_fee_settlement(block::WorkchainStaticOperationTariff
       ASSERT_TRUE(actual_fees.unpack(tx.total_fees));
       ASSERT_TRUE(actual_fees == (key == custody ? totals.collected : CurrencyCollection(0)));
       ASSERT_EQ(tx.outmsg_cnt, 0);
+      if (key == custody) {
+        // A canonical transaction claiming an actual custody-sourced message,
+        // not a malformed-cell failure. D32 reconstruction emits none. Exercise
+        // the validator's final claim comparison and its CandidateInvalid code.
+        vm::CellBuilder message;
+        message.store_long(4, 4).store_long(4, 3).store_long(2, 8).store_bits(custody.bits(), 256)
+            .store_long(4, 3).store_long(2, 8).store_bits(coordinator.bits(), 256);
+        ASSERT_TRUE(CurrencyCollection(1).store(message));
+        std::uint64_t message_lt;
+        ASSERT_TRUE(!__builtin_add_overflow(tx.lt, std::uint64_t{1}, &message_lt));
+        message.store_zeroes(8).store_long(message_lt, 64).store_long(tx.now, 32).store_zeroes(2);
+        auto outgoing_message = message.finalize();
+        ASSERT_TRUE(gen::t_Message_Any.validate_ref(outgoing_message));
+        vm::Dictionary outgoing(15);
+        td::BitArray<15> index;
+        index.bits().store_uint(0, 15);
+        ASSERT_TRUE(outgoing.set_ref(index, outgoing_message));
+        tx.outmsg_cnt = 1;
+        tx.r1.out_msgs = outgoing.get_root();
+        ASSERT_TRUE(gen::t_HashmapE_15_Ref_Message_Any.validate_upto(4096, *tx.r1.out_msgs));
+        td::Ref<vm::Cell> aux;
+        ASSERT_TRUE(gen::t_Transaction_aux.cell_pack(aux, tx.r1));
+        // Match Native Transaction::serialize's unsigned two-bit status
+        // encoding. The generated enum writer uses signed range checking and
+        // cannot repack active=2, even for the unmodified valid transaction.
+        vm::CellBuilder transaction;
+        transaction.store_long(7, 4).store_bits(tx.account_addr.bits(), 256).store_long(tx.lt, 64)
+            .store_bits(tx.prev_trans_hash.bits(), 256).store_long(tx.prev_trans_lt, 64)
+            .store_long(tx.now, 32).store_long(tx.outmsg_cnt, 15)
+            .store_long(tx.orig_status, 2).store_long(tx.end_status, 2).store_ref(aux)
+            .append_cellslice(*tx.total_fees).store_ref(tx.state_update).store_ref(tx.description);
+        auto modified_tx = transaction.finalize();
+        ASSERT_TRUE(gen::t_Transaction.validate_ref(4096, modified_tx));
+        ASSERT_TRUE(txs.set_ref(td::BitArray<64>(after.last_trans_lt_), modified_tx));
+        account_block.transactions = vm::load_cell_slice_ref(txs.get_root_cell());
+        vm::CellBuilder modified_account;
+        ASSERT_TRUE(gen::t_AccountBlock.pack(modified_account, account_block));
+        vm::AugmentedDictionary changed(vm::load_cell_slice_ref(rebuilt.state.account_blocks), 256,
+                                        block::tlb::aug_ShardAccountBlocks);
+        ASSERT_TRUE(changed.set_builder(custody, modified_account));
+        auto rejected = verdict(output, changed.get_wrapped_dict_root());
+        ASSERT_EQ(rejected.code(), -7200);
+        ASSERT_EQ(rejected.message(), "account replay artifacts differ from independently rebuilt settlement");
+        ASSERT_TRUE(verdict(output, rebuilt.state.account_blocks).is_ok());
+      }
     }
     ASSERT_TRUE(replay_workchain_inbound_allocation_overlay(old_accounts, host_identity, input, output,
         coordinator, custody, 2, 2, 1, 0, 4096, serialization, built.ok()).is_ok());
+    std::cout << "Validator final-artifact comparison: component swaps, same-F redistribution, role forgery, "
+                 "and canonical custody outbound transaction rejected (-7200); restored claim accepted; "
+                 "not actor-level candidate mutation coverage\n";
     std::cout << "Native fee settlement: S=" << amounts.state << " C=" << amounts.compute
               << " T=" << amounts.tip << " F=" << amounts.total
               << "; serialized total_fees=" << totals.collected.tomis->to_dec_string()

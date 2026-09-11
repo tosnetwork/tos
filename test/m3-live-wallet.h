@@ -5,6 +5,7 @@
 #include "block/workchain-confidential-execution.h"
 #include "crypto/test/workchain-m3-wallet-requests.h"
 #include "crypto/test/workchain-m3-closure-wallet.h"
+#include "crypto/test/workchain-m4-wallet-receipts.h"
 
 namespace m3_live {
 inline td::Bits256 wallet_account(unsigned owner) {
@@ -26,11 +27,16 @@ inline block::WorkchainTransferEnvironment wallet_environment(const std::filesys
   block::gen::ShardStateUnsplit::Record previous;
   CHECK(tlb::unpack_cell(load(fixture / "current-state.boc"), previous));
   CHECK(previous.seq_no < UINT32_MAX);
+  auto fee = kind == 1 ? b.send_fee : b.collect_fee;
+  if (b.deposit) {
+    CHECK(b.operation_tariff);
+    fee = block::derive_workchain_operation_fee_amounts(*b.operation_tariff, b.deposit->slot_fee, kind).move_as_ok().total;
+  }
   return {b.limits, b.domain,
       {2, 1, 1, 2, kind, config->get_global_blockchain_id(), 2, root->get_hash().bits(), parameters.instance_id},
       b.rules, {config->get_root_cell()->get_hash().bits(), b.generator_profile, b.range_profile},
       b.fee_profile, b.fee_effective_height, previous.seq_no + 1,
-      kind == 1 ? b.send_fee : b.collect_fee, 16, b.account_schema, b.relation_profile, b.proof_profile};
+      fee, 16, b.account_schema, b.relation_profile, b.proof_profile};
 }
 inline block::WorkchainConfidentialAccount wallet_state(const std::filesystem::path& fixture, unsigned owner) {
   return block::decode_workchain_confidential_account(
@@ -54,7 +60,7 @@ inline void save_operation(const std::filesystem::path& fixture, td::Ref<vm::Cel
   }
   save(fixture / "operation.candidate.boc", std::move(candidate));
   save(fixture / "operation.declarations.boc",
-       block::encode_workchain_account_declarations(declarations, 3, 3).move_as_ok());
+       block::encode_workchain_account_declarations(declarations, 4, 4).move_as_ok());
 }
 inline std::vector<td::Bits256> wallet_words(const std::string& hex) {
   const auto bytes = td::hex_decode(hex).move_as_ok();
@@ -82,9 +88,13 @@ inline void prepare_transfer(const std::filesystem::path& fixture, bool finish, 
         wallet_words(field(fixture / "operation.proof.txt", "commitments")),
         wallet_words(field(fixture / "operation.proof.txt", "responses")),
         td::hex_decode(field(fixture / "operation.proof.txt", "range_proof")).move_as_ok()};
+    auto participants = kind == 1 ? std::vector<td::Bits256>{wallet_account(0), wallet_account(1)}
+                                  : std::vector<td::Bits256>{wallet_account(owner)};
+    // M4's authenticated profile uses explicit D32 fee settlement; custody is
+    // an actual Native participant, never an off-chain balance adjustment.
+    if (env.proof_profile == 4) participants.push_back(env.rules.custody);
     save_operation(fixture, block::m3_test::finish_m3_test_transfer(prepared, std::move(authorization)).move_as_ok(),
-                   kind == 1 ? std::vector<td::Bits256>{wallet_account(0), wallet_account(1)}
-                             : std::vector<td::Bits256>{wallet_account(owner)});
+                   std::move(participants));
     return;
   }
   std::string text;
@@ -98,18 +108,19 @@ inline void prepare_closure(const std::filesystem::path& fixture, bool finish) {
       {p.engine_version, p.relation_version, p.wire_version, p.proof_version,
        p.global_id, p.workchain_id, p.genesis_hash, p.workchain_instance},
       env.rules, env.profiles, env.fee_profile, env.fee_effective_height};
-  const auto account = wallet_state(fixture, 1);
+  const unsigned owner = env.proof_profile == 4 ? 0 : 1;
+  const auto account = wallet_state(fixture, owner);
   const auto prepared = block::m3_test::make_m3_test_closure_wallet_input(policy, env.domain, account).move_as_ok();
   if (finish) {
     const auto bytes = td::hex_decode(field(fixture / "closure.proof.txt", "proof")).move_as_ok();
     CHECK(bytes.size() == 96);
     block::WorkchainClosureReplayInput input{prepared.operation_id, prepared.context, {}};
     std::memcpy(input.proof.data(), bytes.data(), bytes.size());
-    save_operation(fixture, block::encode_workchain_replay_input(input).move_as_ok(), {wallet_account(1)});
+    save_operation(fixture, block::encode_workchain_replay_input(input).move_as_ok(), {wallet_account(owner)});
     return;
   }
   td::write_file((fixture / "closure.request.txt").string(),
-      "secret=223\ncontext=" + td::hex_encode(prepared.context_bytes) +
+      std::string(owner == 0 ? "secret=101\ncontext=" : "secret=223\ncontext=") + td::hex_encode(prepared.context_bytes) +
       "\nprefix=" + td::hex_encode(prepared.prefix_bytes) +
       "\nhandle=" + td::hex_encode(account.available.handle.as_slice()) +
       "\ncommitment=" + td::hex_encode(account.available.commitment.as_slice()) + "\n").ensure();
