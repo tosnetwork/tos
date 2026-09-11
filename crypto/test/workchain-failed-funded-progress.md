@@ -1,5 +1,35 @@
 # Funded in-window Failed: transition checkpoint
 
+## Registered adapter WIP (after the configuration checkpoint)
+
+`M3NodeEngine` now recognizes a TEST-only Failed selector committing the owner
+and the actual custody import Message hash. It reads predecessor state through
+the admitted view, calls the existing association and funded transition, and
+returns the three sorted account updates plus Native fee effects. The existing
+inbound allocation overlay is the intended materializer: no separate balance
+edit is made using the helper's returned recovery/P/W numbers. The coordinator
+Deposit `info.bounced` rejection is unchanged.
+
+The `test-m3-live` target builds and links. Focused association CTest passes 1/1
+(including selector codec and the existing real-encryption transition fixture).
+Prepare statement expiry/effects remain 2/2. The sequence inventory now actually
+exits 1, identifying `crypto/block/workchain-failed-funded.h`; it is retained,
+not refreshed or retired. The host handoff runner still exits 1 with all six
+tests missing: **0/6**, not six execution failures and not six passes.
+
+This is NOT real Native publication evidence. `test/test-m3-live.cpp` still
+needs a Failed-specific driver/committed-state oracle instead of its generic
+replay decoder, and a real bounced-input fixture with authenticated predecessor
+W state and explicit version-4 configuration is not installed. No Failed
+ON/OFF pair has run. The four production rejection sites and D59 defaults have
+not been edited; behavioral equivalence is not claimed from that textual fact.
+
+An error-provenance review was launched via `claude -p`; its result must be read
+and resolved before treating this adapter as accepted. Neutral association and
+transition errors still take the test profile's unavailable path; unsupported
+branches are not settlement results. This classification has no behavioral
+acceptance evidence yet.
+
 ## Native connection prerequisite: explicit test configuration
 
 Against memo `d8c6b463` / specification `cf7f0f4569e2638e`, the test business

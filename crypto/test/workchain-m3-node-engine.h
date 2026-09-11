@@ -6,6 +6,8 @@
 #include "workchain-m3-business-config.h"
 #include "workchain-m3-test-funding-operation.h"
 #include "workchain-m4-deposit-input.h"
+#include "workchain-m5-failed-input.h"
+#include "block/workchain-failed-funded.h"
 #include "block/workchain-deposit-transition.h"
 #include "block/workchain-deposit-rejection-settlement.h"
 #include "block/workchain-confidential-execution.h"
@@ -129,6 +131,17 @@ class M3NodeEngine final : public RegisteredWorkchainAccountEngine {
     const auto* cfg = dynamic_cast<const Configuration*>(&configuration);
     if (!cfg || td::Bits256(identity.configuration_hash.bits()) != cfg->configuration_hash)
       return local("M3 proof inspection configuration mismatch");
+    if (is_m5_test_failed(candidate)) {
+      TRY_RESULT(selector, decode_m5_test_failed(candidate));
+      (void)selector;
+      if (!cfg->business.failed || !cfg->business.deposit || !cfg->business.operation_tariff)
+        return local("authenticated funded Failed profile absent");
+      UnoCryptoSystemEncryptionRequestV2 shape{};
+      shape.abi_version = 2; shape.amount = 1; shape.origin_bytes = 41;
+      shape.origin[0] = 1;
+      TRY_RESULT(work, workchain_proof_operations_v4(shape));
+      return work.total();
+    }
     if (is_m4_test_deposit(candidate)) {
       TRY_RESULT(deposit, decode_m4_test_deposit(candidate));
       TRY_RESULT(limits, require_m4_deposit_policy(cfg->business));
@@ -207,6 +220,69 @@ class M3NodeEngine final : public RegisteredWorkchainAccountEngine {
       result.protected_coordinator_snapshot = td::Bits256(coordinator.data->get_hash().bits());
       return result;
     };
+    if (is_m5_test_failed(host.candidate)) {
+      TRY_RESULT(selector, decode_m5_test_failed(host.candidate));
+      if (!b.failed || !b.deposit || !b.operation_tariff)
+        return local("authenticated funded Failed profile absent");
+      if (selector.owner.workchain_id != 2 || selector.owner.instance != domain.instance_id ||
+          selector.owner.account == cfg->ingress.executor_address ||
+          selector.owner.account == *cfg->ingress.custody_address)
+        return invalid("Failed selector owner differs from authenticated instance or roles");
+      auto inbox_root = host.inbox->prefetch_ulong(1) ? host.inbox->prefetch_ref() : td::Ref<vm::Cell>{};
+      TRY_RESULT(inbox, plan_workchain_native_inbox(inbox_root, 2, {*cfg->ingress.custody_address},
+          clock.host_after_lt, cfg->parameters.resources.input.max_inbound));
+      if (inbox.envelopes.size() != 1) return invalid("Failed requires one authenticated custody import");
+      tlb::MsgEnvelope::Record_std envelope;
+      if (!tlb::unpack_cell(inbox.envelopes.front(), envelope))
+        return invalid("malformed Failed custody envelope");
+      if (selector.inbound_message != envelope.msg->get_hash().bits())
+        return invalid("Failed selector differs from actual custody Message hash");
+      TRY_RESULT(target, read(accounts, selector.owner.account, clock.gen_utime, true));
+      TRY_RESULT(custody, read(accounts, *cfg->ingress.custody_address, clock.gen_utime, false));
+      auto owner_result = decode_workchain_withdrawal_account(target.data, b.failed->withdrawal_limit);
+      if (owner_result.is_error()) return local("authenticated Failed owner record unavailable");
+      auto owner = owner_result.move_as_ok();
+      if (owner.account.address.workchain_id != selector.owner.workchain_id ||
+          owner.account.address.account != selector.owner.account ||
+          owner.account.address.instance != selector.owner.instance ||
+          owner.account.bindings.custody != *cfg->ingress.custody_address)
+        return local("authenticated Failed owner binding mismatch");
+      gen::UnoV2OperationNetworkV1::Record network{domain.global_id, domain.genesis_hash, domain.instance_id};
+      // This check belongs to the acquired predecessor, not the submitted
+      // selector. Do not turn corrupt old identities into candidate rejection.
+      for (const auto& record : owner.control.withdrawals) {
+        auto id = derive_workchain_withdrawal_id(network, record.source, record.consumed_auth_nonce);
+        if (id.is_error()) return local("authenticated Withdrawal identity unavailable");
+        auto attempt = derive_workchain_attempt_id(id.ok());
+        if (attempt.is_error() || id.ok() != record.withdrawal_id || attempt.ok() != record.attempt_id)
+          return local("authenticated Withdrawal identity mismatch");
+      }
+      auto association = associate_workchain_withdrawal_return(envelope.msg, 2,
+          *cfg->ingress.custody_address, network, owner.control);
+      // Neutral errors still include acquisition faults. Until a typed dispatch
+      // verdict exists, do not relabel them as malformed candidate content.
+      if (association.is_error()) return local("custody return association unavailable");
+      if (!association.ok()) return invalid("Failed selector does not strongly match a pending payout");
+      WorkchainFailedFundedPolicy resolved{b.failed->withdrawal_limit, b.deposit->system_slots,
+          b.deposit->slot_fee, b.operation_tariff->base, b.failed->issuance_billing_units};
+      auto prepared = prepare_workchain_failed_funded(inbox, target.data, coordinator.data, resolved,
+          b.domain, network, *cfg->ingress.custody_address, cfg->ingress.executor_address, clock.height, verifier);
+      // This intentionally incomplete TEST profile does not reinterpret an
+      // unsupported late/shortfall/no-slot branch as a successful settlement.
+      if (prepared.is_error()) return local("funded Failed transition unavailable in test profile");
+      auto accepted = prepared.move_as_ok();
+      WorkchainAccountEffects result;
+      result.updates = {{selector.owner.account, accepted.owner_data},
+          {cfg->ingress.executor_address, accepted.coordinator_data}, {*cfg->ingress.custody_address, custody.data}};
+      result.fees = accepted.fees;
+      std::sort(result.updates.begin(), result.updates.end(), [](const auto& a, const auto& b) {
+        return a.account < b.account;
+      });
+      // The existing inbound allocation overlay credits the actual Message
+      // value to custody and settles these fees in the SAME unpublished root
+      // set. The helper's recovered/P/W numbers are not separate balance edits.
+      return finish(std::move(result));
+    }
     if (is_m4_test_deposit(host.candidate)) {
       TRY_RESULT(deposit, decode_m4_test_deposit(host.candidate));
       TRY_RESULT(limits, require_m4_deposit_policy(b));

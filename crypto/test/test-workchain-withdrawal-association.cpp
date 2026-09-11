@@ -1,5 +1,6 @@
 #include "td/utils/tests.h"
 #include "block/workchain-withdrawal-association.h"
+#include "workchain-m5-failed-input.h"
 #include "block/native-bounce-body.h"
 #include "block/workchain-failed-funded.h"
 #include "block/workchain-unexpected-bucket.h"
@@ -46,6 +47,21 @@ auto associate(td::Ref<vm::Cell> m, const WorkchainWithdrawalControl& c) {
 void error_is(td::Result<std::optional<WorkchainWithdrawalAssociation>> result, td::Slice reason) {
   ASSERT_TRUE(result.is_error()); ASSERT_EQ(result.error().message(), reason);
 }
+}
+
+TEST(WithdrawalAssociation, TestFailedSelectorExactCodec) {
+  m3_test::M5TestFailedInput selector{{2, word(1), word(2)}, word(3)};
+  auto root = m3_test::encode_m5_test_failed(selector);
+  auto decoded = m3_test::decode_m5_test_failed(root).move_as_ok();
+  ASSERT_EQ(decoded.owner.workchain_id, 2);
+  ASSERT_EQ(decoded.owner.account, word(1));
+  ASSERT_EQ(decoded.owner.instance, word(2));
+  ASSERT_EQ(decoded.inbound_message, word(3));
+  auto extra = vm::CellBuilder().append_cellslice(vm::load_cell_slice(root)).store_long(0, 1).finalize();
+  auto rejected = m3_test::decode_m5_test_failed(extra);
+  ASSERT_TRUE(rejected.is_error());
+  ASSERT_EQ(rejected.error().code(), -7200);
+  ASSERT_EQ(rejected.error().message(), "malformed test Failed selector");
 }
 
 TEST(WithdrawalAssociation, ActualMessageHashAndOriginalLt) {
