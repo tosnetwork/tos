@@ -13,6 +13,19 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  validator-auth-policy-model:
+    # The Python model and test/test-validator-auth-policy.cpp evaluate the
+    # same corpus independently. The C++ side runs under ctest in the build
+    # workflow; without this job the second implementation could drift
+    # unnoticed, and two implementations that never disagree are one.
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: Evaluate the TIP-0002 policy corpus
+        run: |
+          python3 test/validator-auth-policy/check_policy.py \
+            test/validator-auth-policy/policy-cases.json
+
   rust-format:
     runs-on: ubuntu-24.04
     steps:
