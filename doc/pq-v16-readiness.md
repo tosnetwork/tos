@@ -97,6 +97,31 @@ when no wallet is attached.
 `TOS_LITE_CLIENT` and `TOS_LITE_CONFIG` point at a node. The signing, funding
 and deployment-confirmation paths do not need a node and always run.
 
+`test/pq-readiness/live_relay.py` drives the whole loop on a chain that produces
+blocks: it deploys a funding wallet by external message, deploys the module and
+a PQ-only account by funded internal StateInit, relays an authorization, and
+confirms the target received it and the nonce was consumed. It first submits a
+proof with one flipped bit, which the module must refuse on chain without the
+target moving and without the nonce being consumed; the nonce is then freed
+through `retire` and reused for the real attempt. Finally the same authorization
+is replayed and must be refused. Run it against the local chain from
+`doc/macos-local-node.md`, started with `TOS_GLOBAL_VERSION=16`:
+
+```sh
+python test/pq-readiness/live_relay.py --build build \
+  --lite-client build/lite-client/lite-client \
+  --lite-config test/integration/.localnet-pq/lite-client.json \
+  --key-tool build-pq-key/tos-pq-key --out pq-results/live
+```
+
+That run is what found the receipt binding defect below. Both the module and the
+account already have a last transaction before any attempt begins — their own
+deployments — so a receipt that simply reads "the last transaction" reports the
+account's deployment as this attempt's execution and claims a nonce was consumed
+that never was. Receipts now ignore anything at or before the point the attempt
+was prepared, and an attempt the module refused is never credited with an
+account transaction at all, because the module forwards only what it accepted.
+
 ## Wallet and Agent wrappers
 
 `tostester` exports WalletV5Blueprint, WalletV5, AgentAccountBlueprint,

@@ -81,6 +81,8 @@ class FakeNode(LiteClientTransport):
         super().__init__(Path('/nonexistent'), Path('/nonexistent'),
                          poll_seconds=0.0, attempts=3)
         self.accounts, self._balance, self.sent = accounts, balance, []
+        self.transactions: dict = {}
+        self.module_key = bytes(1312)
         self.on_send = None
 
     def _run(self, command: str) -> str:
@@ -92,13 +94,26 @@ class FakeNode(LiteClientTransport):
             return ('latest masterchain block known to server is (-1,8000000000000000,3)\n'
                     'created at 1780000000\n')
         if command.startswith('getaccount'):
-            return f'account balance is {self._balance}ng\n'
+            reference = self.transactions.get(command.split()[1])
+            trailer = ''
+            if reference is not None:
+                lt, digest = reference[1].split(':')
+                trailer = f'last transaction lt = {lt} hash = {digest}\n'
+            return f'account balance is {self._balance}ng\n' + trailer
+        if command.startswith('lasttransdump'):
+            for exit_code, reference in self.transactions.values():
+                if reference.split(':')[0] == command.split()[2]:
+                    return f'exit_code:{exit_code}\n'
+            raise AssertionError('no such transaction: ' + command)
         if command.startswith('sendfile'):
             self.sent.append(Path(command.split()[1]).read_bytes())
             if self.on_send is not None:
                 self.on_send()
             return 'external message status is 1\n'
         raise AssertionError('unexpected command: ' + command)
+
+    def read_module_key(self, module: Address) -> bytes:
+        return self.module_key
 
     def account_data(self, address: Address):
         cell = self.accounts.get(address.to_str(False))
@@ -182,6 +197,43 @@ class SigningWithoutAChain(unittest.TestCase):
             blueprint.state_init.data.to_boc())
         self.assertEqual(asyncio.run(self.node.deploy(blueprint, 1_000_000_000)),
                          blueprint.address)
+
+    def test_a_receipt_never_claims_a_transaction_that_predates_the_attempt(self):
+        """Both accounts already exist and already have a last transaction."""
+        from contract.pq_auth import AuthRequest, AuthState
+        module = Address('0:' + '33' * 32)
+        account = Address('0:' + '44' * 32)
+        registered = WalletV5State(True, 0, WALLET_ID, self.key.verify_key.encode(),
+                                   auth=AuthState(2, 1, 0, module.hash_part))
+        self.accounts[account.to_str(False)] = from_boc(registered.serialize().to_boc())
+        request = AuthRequest(NETWORK, account, 1, 0, 1_780_000_600, 0, Cell.empty())
+        # Deployments that succeeded long before this attempt was prepared.
+        self.node.transactions = {account.to_str(False): (0, '100:AA'),
+                                  module.to_str(False): (0, '100:BB')}
+        self.node.module_key = bytes(1312)
+        asyncio.run(self.node.snapshot(account, module))
+        self.node._module_marks['b'] = 100
+        stale = asyncio.run(self.node.receipt('b', request, module))
+        self.assertEqual(stale.status, 'pending')
+        self.assertIsNone(stale.module_success)
+        self.assertIsNone(stale.account_nonce_consumed,
+                          'an earlier transaction was read as this attempt')
+
+        # The module refuses this attempt. The account cannot have acted on it,
+        # whatever its own last transaction happens to say.
+        self.node.transactions[module.to_str(False)] = (1808, '200:CC')
+        self.node.transactions[account.to_str(False)] = (0, '300:DD')
+        refused = asyncio.run(self.node.receipt('b', request, module))
+        self.assertEqual(refused.status, 'module_rejected')
+        self.assertIsNone(refused.account_nonce_consumed)
+        self.assertIsNone(refused.account_transaction)
+
+        # Only once the module relayed does the account's later transaction
+        # belong to this attempt.
+        self.node.transactions[module.to_str(False)] = (0, '200:CC')
+        executed = asyncio.run(self.node.receipt('b', request, module))
+        self.assertEqual(executed.status, 'executed')
+        self.assertTrue(executed.account_nonce_consumed)
 
     def test_deployment_refuses_to_be_free(self):
         blueprint = Mldsa44ModuleBlueprint(Cell.empty(), 0, NETWORK, bytes(1312))

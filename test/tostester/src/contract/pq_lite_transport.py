@@ -40,6 +40,11 @@ class LiteClientTransport:
                  timeout: int = 25, poll_seconds: float = 2.0, attempts: int = 40):
         self.binary, self.config, self.wallet = Path(binary), Path(config), wallet
         self.timeout, self.poll_seconds, self.attempts = timeout, poll_seconds, attempts
+        # Where the module and the account stood when an attempt was prepared.
+        # Without these, an account's own deployment reads as this attempt's
+        # execution, and a receipt reports a nonce consumed that never was.
+        self._module_marks: dict[str, int | None] = {}
+        self._account_marks: dict[str, int | None] = {}
 
     def attach_wallet(self, wallet: WalletSigner) -> 'LiteClientTransport':
         """A signer reads its own state through this transport, so the two are
@@ -137,6 +142,17 @@ class LiteClientTransport:
             cell = cell.refs[0]
         return bytes(raw)
 
+    def _last_lt(self, address: Address) -> int | None:
+        reference = self.last_transaction(address)[1]
+        return None if reference is None else int(reference.split(':')[0])
+
+    @staticmethod
+    def _after(mark: int | None, reference: str | None) -> bool:
+        """A transaction at or before the mark was already there; it is not ours."""
+        if reference is None:
+            return False
+        return mark is None or int(reference.split(':')[0]) > mark
+
     def last_transaction(self, address: Address) -> tuple[int | None, str | None]:
         text = self._run(f'getaccount {address.to_str(False)}')
         match = re.search(r'last transaction lt = (\d+) hash = ([A-F0-9]+)', text)
@@ -152,6 +168,7 @@ class LiteClientTransport:
     async def snapshot(self, account: Address, module: Address) -> ChainSnapshot:
         block_id, chain_time = self.head()
         auth = self.read_auth(account)
+        self._account_marks[account.to_str(False)] = self._last_lt(account)
         return ChainSnapshot(
             network=self.global_id(),
             version=self.global_version(),
@@ -203,6 +220,7 @@ class LiteClientTransport:
                 f'relayer wallet holds {available} and cannot fund {value}; '
                 'nothing was broadcast')
         seqno = self.wallet.read_seqno()
+        module_mark = self._last_lt(module)
         _, chain_time = self.head()
         external = self.wallet.sign_body(module, body, value, seqno,
                                          chain_time + 600, state_init)
@@ -210,7 +228,9 @@ class LiteClientTransport:
         for _ in range(self.attempts):
             time.sleep(self.poll_seconds)
             if self.wallet.read_seqno() != seqno:
-                return f'{self.wallet.address.to_str(False)}:{seqno}'
+                broadcast = f'{self.wallet.address.to_str(False)}:{seqno}'
+                self._module_marks[broadcast] = module_mark
+                return broadcast
         raise LiteClientError('the wallet never advanced; the broadcast is unconfirmed')
 
     async def deploy(self, blueprint, value: int) -> Address:
@@ -239,7 +259,18 @@ class LiteClientTransport:
                       module: Address) -> AttemptReceipt:
         module_exit, module_tx = self.last_transaction(module)
         account_exit, account_tx = self.last_transaction(request.account)
+        # Both accounts existed before this attempt. Only a transaction after
+        # the point where the attempt was prepared can belong to it.
+        if not self._after(self._module_marks.get(broadcast_id), module_tx):
+            module_exit, module_tx = None, None
+        if not self._after(self._account_marks.get(request.account.to_str(False)), account_tx):
+            account_exit, account_tx = None, None
         module_success = None if module_tx is None else module_exit == 0
+        # The module forwards only when it accepted the proof, so an attempt it
+        # refused cannot have reached the account at all; whatever the account
+        # last did belongs to something else and says nothing about this nonce.
+        if module_success is False:
+            account_exit, account_tx = None, None
         account_success = None if account_tx is None else account_exit == 0
         # A refusal the account committed consumed the nonce; one it rejected
         # outright did not. Only the account can answer that.
