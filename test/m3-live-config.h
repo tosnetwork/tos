@@ -38,6 +38,10 @@ inline td::Result<td::Ref<vm::Cell>> prepare_m3_live_configuration(td::Ref<vm::C
       {65536, 16777216, 4096, 1048576, 128},
       {100000, 4096, 1048576, 65536, 16777216, 2}, {0, 2, 2}, 1};
   WorkchainCoordinatorState coordinator{2, {1, 1, 0, 0}, 0};
+  // The Paid negative fixture must reach the value-movement oracle: two
+  // opposite movements plus the legitimate S edge need three transfer slots.
+  // This is an explicit authenticated test allowance, not a production default.
+  if (completion) resources.work_output.max_transfers = 3;
   if (m4) {
     // Explicit authenticated TEST inputs, not defaults or the coordinator's
     // separately scheduled independent-prediction experiment. D28 is absent.
