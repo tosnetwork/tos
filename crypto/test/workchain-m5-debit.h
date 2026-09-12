@@ -33,7 +33,7 @@ inline td::Result<M5AccountingReplay> decode_m5_accounting_replay(const td::Ref<
 }
 inline td::Result<std::string> m5_debit_context(const WorkchainTransferEnvironment& env,
     const M5TestPrepareParameters& policy, const WorkchainConfidentialAccount& old,
-    const WorkchainWithdrawalInput& input) {
+    const WorkchainWithdrawalInput& input, td::Ref<vm::Cell> authenticated_previous = {}) {
   using namespace confidential_execution_detail;
   const auto& c = input.data.claims;
   if (!matches_policy(old, env) || !same_address(old.address, c.source) || old.key_epoch != c.key_epoch ||
@@ -53,7 +53,13 @@ inline td::Result<std::string> m5_debit_context(const WorkchainTransferEnvironme
   if (input.claimed_operation_id != id || input.claimed_attempt_id != attempt)
     return invalid("Withdrawal identity mismatch");
   TRY_RESULT(data, encode_workchain_withdrawal_data(input.data));
-  TRY_RESULT(previous, encode_workchain_confidential_account(old));
+  // A v4 account's crypto projection is not its complete predecessor root.
+  // The host supplies the actual authenticated root, never a claimant hash.
+  auto previous = std::move(authenticated_previous);
+  if (previous.is_null()) {
+    TRY_RESULT(encoded, encode_workchain_confidential_account(old));
+    previous = std::move(encoded);
+  }
   const auto& p = env.protocol;
   WorkchainWithdrawalContext context{
       {{p.engine_version, p.relation_version, p.wire_version, p.proof_version,
@@ -66,8 +72,9 @@ inline td::Result<std::string> m5_debit_context(const WorkchainTransferEnvironme
 }
 inline td::Result<td::Ref<vm::Cell>> execute_m5_test_debit(const WorkchainTransferEnvironment& env,
     const M5TestPrepareParameters& policy, const WorkchainConfidentialAccount& old,
-    const WorkchainWithdrawalInput& input, WorkchainProofVerifier& verifier) {
-  TRY_RESULT(context, m5_debit_context(env, policy, old, input));
+    const WorkchainWithdrawalInput& input, WorkchainProofVerifier& verifier,
+    td::Ref<vm::Cell> authenticated_previous = {}) {
+  TRY_RESULT(context, m5_debit_context(env, policy, old, input, std::move(authenticated_previous)));
   const auto& a = input.authorization;
   UnoCryptoWithdrawalVerifyRequestV2 request{};
   request.abi_version = 2; request.limits = env.limits;

@@ -97,7 +97,9 @@ inline std::vector<td::Bits256> wallet_words(const std::string& hex) {
 }
 inline void prepare_debit(const std::filesystem::path& fixture, bool finish, bool quote = false) {
   auto env = wallet_environment(fixture, 1); env.protocol.kind = 5;
-  auto old = wallet_state(fixture, 0);
+  const auto predecessor = account_data(load(fixture / "current-state.boc"), wallet_account(0));
+  auto old = m5_live_account(predecessor, m5_live_withdrawal_limit(fixture)).account;
+  old.schema_version = env.account_schema; // Crypto projection, not the committed predecessor.
   auto zero = load(fixture / "zerostate.boc");
   tos::BlockIdExt zid{tos::BlockId{tos::masterchainId,tos::shardIdAll,0},zero->get_hash().bits(),td::Bits256::zero()};
   auto cfg = block::ConfigInfo::extract_config(zero,zid,block::Config::needWorkchainInfo | block::Config::needCapabilities).move_as_ok();
@@ -128,7 +130,7 @@ inline void prepare_debit(const std::filesystem::path& fixture, bool finish, boo
     td::write_file((fixture / "payout.quote.txt").string(),priced.total_fee->to_dec_string()+"\n").ensure();
     return;
   }
-  auto context = block::m3_test::m5_debit_context(env,*business.prepare,old,input).move_as_ok();
+  auto context = block::m3_test::m5_debit_context(env,*business.prepare,old,input,predecessor).move_as_ok();
   if (finish) {
     input.authorization = {wallet_words(field(fixture / "operation.proof.txt","commitments")),
         wallet_words(field(fixture / "operation.proof.txt","responses")),

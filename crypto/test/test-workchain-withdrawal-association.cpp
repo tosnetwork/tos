@@ -3,6 +3,7 @@
 #include "workchain-m5-failed-input.h"
 #include "block/native-bounce-body.h"
 #include "block/workchain-failed-funded.h"
+#include "block/workchain-withdrawal-expiry.h"
 #include "block/workchain-unexpected-bucket.h"
 #include "workchain-proof-test-access.h"
 
@@ -226,4 +227,37 @@ TEST(FailedFunded, RealIssuanceAndEncodedSequencePair) {
   ASSERT_EQ(issued.origin_pending.size(), 1u);
   ASSERT_EQ(issued.origin_pending[0].amount, 56u);
   ASSERT_EQ(phase_zero.consumed(), 7u);
+}
+
+TEST(PaidExpiry, StrictHeightAndOnlyObligationsChange) {
+  auto pending = control();
+  pending.withdrawals[0].timing = {1, 77, 10, 12, 30};
+  td::Bits256 point;
+  point.as_slice().copy_from(td::hex_decode(
+      "b6ec3baa39a7357ab9ca16c61373385f7cfb04ab10c4bc20c8bd3cc6db9a6100").move_as_ok());
+  WorkchainConfidentialAccount core{4, 1, 4, -99, word(1), {2, word(1), word(2)},
+      {word(4), word(99), word(6)}, {10000000000ULL, 0, word(7)}, point, 0,
+      {word(0), word(0)}, 8, 0, {}, WorkchainAccountActive{}, {}};
+  WorkchainWithdrawalAccount initial{core, pending, {}};
+  const auto root = encode_workchain_withdrawal_account(initial, 2).move_as_ok();
+  auto at_boundary = expire_workchain_withdrawals(
+      decode_workchain_withdrawal_account(root, 2).move_as_ok(), 42).move_as_ok();
+  ASSERT_TRUE(at_boundary.closed.empty()); // Height == Q+window is not expired.
+  ASSERT_TRUE(encode_workchain_withdrawal_account(at_boundary.account, 2).move_as_ok()->get_hash() == root->get_hash());
+  auto expired = expire_workchain_withdrawals(
+      decode_workchain_withdrawal_account(root, 2).move_as_ok(), 43).move_as_ok();
+  ASSERT_EQ(expired.closed.size(), 1u);
+  ASSERT_EQ(expired.closed.front().principal, 100u); // Each P/W release is x.
+  auto expected = initial;
+  expected.control.withdrawals.clear();
+  // Full encoded account cut, not just an effects list. Available, revision,
+  // lifecycle, both pending classes and their encoded counts must stay intact.
+  ASSERT_TRUE(encode_workchain_withdrawal_account(expired.account, 2).move_as_ok()->get_hash() ==
+              encode_workchain_withdrawal_account(expected, 2).move_as_ok()->get_hash());
+  auto repeat = expire_workchain_withdrawals(expired.account, 100).move_as_ok();
+  ASSERT_TRUE(repeat.closed.empty()); // No second obligation release.
+  initial.control.withdrawals.front().timing = {0, 77, 10, 0, 30};
+  auto phase_zero = expire_workchain_withdrawals(initial, UINT32_MAX).move_as_ok();
+  ASSERT_TRUE(phase_zero.closed.empty()); // Q=0 is not an authenticated observation.
+  ASSERT_EQ(phase_zero.account.control.withdrawals.size(), 1u);
 }

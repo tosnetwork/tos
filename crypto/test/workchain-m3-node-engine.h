@@ -10,6 +10,7 @@
 #include "workchain-m5-debit.h"
 #include "workchain-m5-payout.h"
 #include "block/workchain-failed-funded.h"
+#include "block/workchain-withdrawal-expiry.h"
 #include "block/workchain-deposit-transition.h"
 #include "block/workchain-deposit-rejection-settlement.h"
 #include "block/workchain-confidential-execution.h"
@@ -247,12 +248,26 @@ class M3NodeEngine final : public RegisteredWorkchainAccountEngine {
       TRY_RESULT(fees, derive_workchain_withdrawal_fee_amounts(b.operation_tariff->base,
           b.prepare->state_fee, debit.data.amounts.operation_fee));
       TRY_RESULT(native, read(accounts, debit.data.claims.source.account, clock.gen_utime, true));
-      TRY_RESULT(source, decode_workchain_confidential_account(native.data));
+      // Existing v4 control state survives subsequent owner operations. The
+      // expiry helper may remove only already-authenticated phase-1 records;
+      // phase-0 queue observation is a separate D73 host prerequisite.
+      auto read_owner = [&]() -> td::Result<WorkchainWithdrawalAccount> {
+        auto slice = vm::load_cell_slice(native.data);
+        if (slice.prefetch_ulong(32) == gen::UnoV2AccountStateWithdrawalsV2::cons_tag[0])
+          return decode_workchain_withdrawal_account(native.data, b.prepare->withdrawal_limit);
+        TRY_RESULT(core, decode_workchain_confidential_account(native.data));
+        return WorkchainWithdrawalAccount{core, {core.lifecycle, {}}, {}};
+      };
+      TRY_RESULT(owner, read_owner());
+      TRY_RESULT(expiry, expire_workchain_withdrawals(std::move(owner), clock.height));
+      auto source = expiry.account.account;
+      // Private relation projection only, never installed as an account root.
+      source.schema_version = b.account_schema;
       WorkchainTransferEnvironment env{b.limits, b.domain,
           {2, 1, 1, 2, 5, domain.global_id, 2, domain.genesis_hash, domain.instance_id},
           b.rules, profiles, b.fee_profile, b.fee_effective_height, clock.height,
           fees.total, 16, b.account_schema, b.relation_profile, b.proof_profile};
-      TRY_RESULT(updated, execute_m5_test_debit(env, *b.prepare, source, debit, verifier));
+      TRY_RESULT(updated, execute_m5_test_debit(env, *b.prepare, source, debit, verifier, native.data));
       TRY_RESULT(custody, read(accounts, *cfg->ingress.custody_address, clock.gen_utime, false));
       if (!cfg->payout_prices) return local("authenticated payout pricing absent");
       // This first prepare profile has no accompanying Native inbox. Never
@@ -285,7 +300,9 @@ class M3NodeEngine final : public RegisteredWorkchainAccountEngine {
       TRY_RESULT(next, decode_workchain_confidential_account(updated));
       // Explicit, authenticated schema migration; old codecs never rewrite a root.
       next.schema_version = 4;
-      WorkchainWithdrawalAccount migrated{next, {next.lifecycle, {}}, {}};
+      WorkchainWithdrawalAccount migrated{next, {next.lifecycle, expiry.account.control.withdrawals},
+                                         expiry.account.origin_pending};
+      const auto retained_records = migrated.control.withdrawals.size();
       migrated.control.withdrawals.push_back({debit.claimed_operation_id, debit.claimed_attempt_id,
           source.auth_nonce, debit.data.amounts.principal, source.address, debit.data.destination,
           {debit.data.amounts.outward_fee},
@@ -293,7 +310,7 @@ class M3NodeEngine final : public RegisteredWorkchainAccountEngine {
       TRY_RESULT(with_obligation, encode_workchain_withdrawal_account(migrated, b.prepare->withdrawal_limit));
       // Also anchor the encoded W record, not merely the operation proposal.
       TRY_RESULT(installed, decode_workchain_withdrawal_account(with_obligation, b.prepare->withdrawal_limit));
-      if (installed.control.withdrawals.size() != 1)
+      if (installed.control.withdrawals.size() != retained_records + 1)
         return local("constructed prepare record count mismatch");
       WorkchainAccountEffects result;
       result.payout_request = request;
