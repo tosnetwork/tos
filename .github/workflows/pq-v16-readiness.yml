@@ -11,7 +11,7 @@ on:
       - 'tools/pq/**'
       - 'common/global-version.h'
       - 'CMakeLists.txt'
-      - 'docs/pq-v16-readiness.md'
+      - 'doc/pq-v16-readiness.md'
 permissions:
   contents: read
 concurrency:
