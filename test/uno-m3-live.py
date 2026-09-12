@@ -25,6 +25,8 @@ p.add_argument('--m5-debit', action='store_true', help='stop after authenticated
 p.add_argument('--m5-return-route', action='store_true', help='deliver a funded payout to wc0 and observe the actual return')
 p.add_argument('--m5-failed', action='store_true', help='publish the funded phase-0 return atomically at custody')
 p.add_argument('--m5-bucket-small', action='store_true', help='real bounce below local issuance fees')
+p.add_argument('--phase-replay-cuts', action='store_true',
+               help='retain per-operation DB predecessors inside this run for D73 producer controls')
 p.add_argument('--m5-completion-late', action='store_true',
                help='establish Q through real owner operations before importing the return')
 p.add_argument('--completion-close-before-return', action='store_true',
@@ -106,6 +108,8 @@ def finish_live():
 
 live_capacity('START')
 atexit.register(finish_live)
+if a.phase_replay_cuts and not a.m5_completion_late:
+    p.error('phase replay cuts require the actual late-return owner sequence')
 split_return_route = a.m5_completion_late and not a.m5_completion_paid
 if a.completion_close_before_return and not split_return_route:
     p.error('close-before-return requires the real split late-return route')
@@ -1179,6 +1183,18 @@ if a.m5_debit:
         remaining = values['old_value'] - debit
         debit_write('operation.expected.txt',dict(before=values['old_value'],after=remaining))
         return remaining
+    def phase_capture_before(name):
+        shutil.copyfile(fixture / 'current-state.boc', fixture / ('phase-' + name + '-before.boc'))
+        if a.phase_replay_cuts:
+            cut = fixture / ('phase-' + name + '-replay')
+            cut.mkdir()
+            for source in fixture.iterdir():
+                if source.is_file():
+                    shutil.copy2(source, cut / source.name)
+            # Native child processes have exited. This is a private, stopped DB
+            # snapshot, owned by the enclosing fixture's normal cleanup policy.
+            shutil.copytree(fixture / 'db', cut / 'db')
+            shutil.copytree(fixture / 'm4-blocks', cut / 'm4-blocks')
     def phase_capture_after(name):
         for source, suffix in (('accepted-state.boc', '-after.boc'),
                                ('enabled.candidate', '.candidate'),
@@ -1187,7 +1203,7 @@ if a.m5_debit:
     available = withdrawal_request(request)
     print(f'DEBIT_FIXTURE={fixture}',flush=True)
     if a.m5_completion_late:
-        shutil.copyfile(fixture / 'current-state.boc', fixture / 'phase-prepare-before.boc')
+        phase_capture_before('prepare')
     subprocess.run([str(build / 'test-m3-live'),str(fixture)],check=True)
     if a.m5_completion_late:
         phase_capture_after('prepare')
@@ -1299,8 +1315,7 @@ if a.m5_debit:
                         shutil.copyfile(fixture / 'current-state.boc', fixture / 'completion-untouched-state.boc')
                         shutil.copyfile(fixture / 'accepted-block.id', fixture / 'completion-before-block.id')
                     if number in (5, 6):
-                        shutil.copyfile(fixture / 'current-state.boc',
-                                        fixture / f'phase-owner{number}-before.boc')
+                        phase_capture_before(f'owner{number}')
                     completed = subprocess.run([str(build / 'test-m3-live'),str(fixture)],
                                                text=True,capture_output=True)
                     (fixture / f'completion-owner-{number}.log').write_text(completed.stdout+completed.stderr)
