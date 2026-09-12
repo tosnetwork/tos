@@ -22,7 +22,7 @@ def checked(value):
     return value
 
 
-def check_phase_transition(data, still_present=False):
+def check_phase_transition(data, still_present=False, immutable=False):
     """D73's existing remaining-work slot; actual queue and committed W cuts.
 
     Queue membership comes from the adapter's Native queue enumeration, not
@@ -32,7 +32,8 @@ def check_phase_transition(data, still_present=False):
     i, o = data['input'], data['observed']
     require(o['published'] is True, 'PHASE_PUBLICATION')
     steps = o['steps']
-    require([step['name'] for step in steps] == ['prepare', 'owner5', 'owner6'],
+    names = ['prepare', 'owner5', 'owner6'] + (['owner7'] if immutable else [])
+    require([step['name'] for step in steps] == names,
             'PHASE_EXECUTION_PATH')
     identity = i['withdrawal_id']
     message = dict(source=i['custody'], created_lt=checked(i['created_lt']),
@@ -74,6 +75,11 @@ def check_phase_transition(data, still_present=False):
                 require(new['phase'] == int(absent_later), 'PHASE_QUEUE_BINDING')
                 require(new['Q'] == (before['height'] if absent_later else 0), 'PHASE_QUEUE_BINDING')
         previous = after
+    if immutable:
+        last = steps[-1]['before']
+        require(record(last)['phase'] == 1 and
+                steps[-1]['after']['height'] <= checked(record(last)['Q'] + record(last)['window']),
+                'PHASE_SURVIVING_COMMITTED_Q_FIXTURE')
     if still_present:
         last = steps[-1]['before']
         require(last['height'] > record(last)['opened'] and message in last['queue'],
@@ -84,8 +90,8 @@ def check_phase_transition(data, still_present=False):
 
 
 def check(case, data):
-    if case in ('phase-transition', 'phase-still-present'):
-        return check_phase_transition(data, case == 'phase-still-present')
+    if case in ('phase-transition', 'phase-still-present', 'phase-immutable'):
+        return check_phase_transition(data, case == 'phase-still-present', case == 'phase-immutable')
     i, o = data['input'], data['observed']
     require(o['published'] is True, 'DISPOSITION_MUST_PUBLISH')
     before, after = o['before'], o['after']

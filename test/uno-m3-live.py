@@ -392,6 +392,16 @@ if a.completion_contract or a.remaining_contract:
         if code:
             raise RuntimeError('restored queued execution failed')
         oracle.check('phase-still-present', restored)
+        query = ('record.timing.payout_created_lt, record.timing.opened_height));\n'
+                 '        if (!absent) continue;')
+        wrong_query = ('0, record.timing.opened_height));\n'
+                       '        if (!absent) continue;')
+        binary = shadow_binary('phase-wrong-message', query, wrong_query,
+                               'crypto/test/workchain-m3-node-engine.h')
+        code, data = phase_replay('wrong-message-run', queued, binary)
+        if code:
+            raise RuntimeError('wrong-message mutant did not reach accepted host boundary')
+        phase_red(data, 'phase-still-present', 'PHASE_QUEUE_BINDING')
         # Do not publish a ready marker for only the presently wired subset.
         raise RuntimeError('M5-REMAINING phase-transition incomplete: paired creation/orphan, read-height, wrong observation, later observation and deadline controls')
 

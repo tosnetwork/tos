@@ -323,7 +323,7 @@ inline std::string phase_snapshot(const td::Ref<vm::Cell>& root, std::uint32_t l
   out << "]}"; return out.str();
 }
 inline void write_phase_observation(const std::filesystem::path& fixture,
-                                    const std::filesystem::path& output) {
+                                    const std::filesystem::path& output, bool immutable=false) {
   using namespace block; using namespace completion;
   CHECK(!std::filesystem::exists(output));
   const auto policy=observed_policy(fixture); CHECK(policy.prepare);
@@ -342,7 +342,9 @@ inline void write_phase_observation(const std::filesystem::path& fixture,
       << ",\"payout_hash\":" << quote(td::Bits256(original->get_hash().bits()).to_hex())
       << "},\"observed\":{\"published\":true,\"steps\":[";
   bool first=true;
-  for(const std::string name:{"prepare","owner5","owner6"}) {
+  std::vector<std::string> steps{"prepare","owner5","owner6"};
+  if(immutable)steps.push_back("owner7");
+  for(const auto& name:steps) {
     const auto prefix="phase-"+name;
     CHECK(td::read_file_str((fixture/(prefix+".validation")).string()).move_as_ok()=="validate accept\n");
     auto before=load(fixture/(prefix+"-before.boc"));
@@ -523,7 +525,9 @@ inline void write_paid_completion_observation(const std::filesystem::path& fixtu
 
 inline void write_completion_observation(const std::string& which,const std::filesystem::path& fixture,
                                          const std::filesystem::path& output) {
-  if(which=="phase-transition"){write_phase_observation(fixture,output);return;}
+  if(which=="phase-transition" || which=="phase-immutable"){
+    write_phase_observation(fixture,output,which=="phase-immutable");return;
+  }
   if(which=="row4" || which=="row5-paid"){write_paid_completion_observation(fixture,output,which=="row5-paid");return;}
   if(which=="sweep-atomic"){write_sweep_completion_observation(fixture,output);return;}
   using namespace block;using namespace completion;
