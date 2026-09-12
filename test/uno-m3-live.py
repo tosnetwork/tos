@@ -17,11 +17,14 @@ p.add_argument('--m4-rejections', action='store_true', help='run separate reject
 p.add_argument('--m5-debit', action='store_true', help='stop after authenticated Withdrawal debit checkpoint')
 p.add_argument('--m5-return-route', action='store_true', help='deliver a funded payout to wc0 and observe the actual return')
 p.add_argument('--m5-failed', action='store_true', help='publish the funded phase-0 return atomically at custody')
+p.add_argument('--m5-bucket-small', action='store_true', help='real bounce below local issuance fees')
 p.add_argument('--failed-routing-probe', action='store_true',
                help='run the real fee-routing producer mutation before normal Failed publication')
 p.add_argument('--failed-routing-binary', type=Path,
                help='isolated test binary for oracle-removal control only')
 a = p.parse_args()
+if a.m5_bucket_small:
+    a.m5_failed = True
 if a.failed_routing_probe:
     a.m5_failed = True
 if a.m5_failed:
