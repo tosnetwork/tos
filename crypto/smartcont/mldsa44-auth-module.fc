@@ -41,10 +41,10 @@ const int mldsa_auth::submit = 0x4d4c4434;
   slice cs = request.begin_parse();
   throw_unless(auth::wrong_network, cs~load_int(32) == network);
   slice account = cs~load_msg_addr();
-  ;; This also excludes a self-send. The target is signed, never relayer-chosen.
-  ;; The comparison is not redundant padding: it consumes the result so the call
-  ;; cannot be dropped as unused. The helper is impure for the same reason.
-  throw_unless(auth::bad_module, auth_module_hash(account) >= 0);
+  ;; Rejects non-standard encodings, another workchain and a self-send. The target
+  ;; is signed, never relayer-chosen. Called for its checks: the helper is impure,
+  ;; so this call is not eliminated even though its result is unused.
+  auth_module_hash(account);
   cs~load_uint(64);  ;; epoch: authenticated here, enforced by the account
   cs~load_uint(64);  ;; nonce: authenticated here, enforced by the account
   int valid_until = cs~load_uint(32);

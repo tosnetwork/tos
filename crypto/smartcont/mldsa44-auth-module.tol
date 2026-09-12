@@ -46,7 +46,7 @@ fun mldsaAuthRelay(body: slice, value: int): void {
     var cs = request.beginParse();
     assert (cs.loadInt(32) == network) throw 1801;
     val account = cs.loadAddressAny();
-    assert (authModuleHash(account) >= 0) throw 1809;
+    authModuleHash(account);  // rejects non-standard, cross-workchain and self targets
     cs.loadUint(64); // epoch is enforced by the account
     cs.loadUint(64); // nonce is enforced by the account
     val validUntil = cs.loadUint(32);
