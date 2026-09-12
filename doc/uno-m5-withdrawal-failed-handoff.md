@@ -1,5 +1,9 @@
 # WITHDRAWAL-FAILED fail-closed acceptance contract
 
+> D78 applicability: the text below is preserved pre-D78 evidence/design.
+> Current amounts, retired obligations and semantic controls are specified in
+> [the D78 handoff](uno-m5-d78-handoff.md). Old markers cannot certify D78.
+
 Normative baseline: memo `7a732682`, specification SHA256
 `e83e56b5e8fb08d994cbaff475b2a08a8371d28da6d7c61057e82e89fa8c6179`.
 This pins the supplied D35/D65/D69/D70/D71/D77 decisions, not moving memo HEAD.

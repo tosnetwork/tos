@@ -1,0 +1,9 @@
+Direct-release-location probe, real host replay, exit 0.
+Isolated workchain-failed-funded.h mutation: replace the final (positive issuance) released initializer with std::uint64_t{10000000}, before the attempt initializer. Both result released_p/released_w thus report 10000000 without accessing any record.
+The real registered engine consumes roots/fees/transfers, not these informational result fields.
+METADATA_MUTATION_ACCEPTED True
+P_DELTA 0
+W_DELTA 0
+RECORDS_UNCHANGED True
+This does NOT satisfy a negative control. It excludes the informational result fields as independent authenticated P/W write locations.
+Build and replay used the existing shadow_binary/replay_paid carrier functions without modifying shared production source or the shared binary. Source fixture /tmp/uno-m3-live-cujwzdys; isolated run /tmp/uno-row5-release-metadata-dZSqn2.

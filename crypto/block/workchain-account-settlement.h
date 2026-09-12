@@ -260,14 +260,19 @@ inline td::Result<WorkchainAccountSettlement> settle_executed(
       TRY_STATUS(charge_effect(executed.effects.receipts));
       TRY_STATUS(charge_effect(executed.effects.events));
     }
+    // These are locally reconstructed effects, not a candidate's fee claim.
+    // A producer selecting an impossible payer is a local execution defect;
+    // the Native factory separately rejects external invalid claims as -7200.
+    if (executed.effects.fees && workchain_compute_fee_payer(*executed.effects.fees).is_error())
+      return td::Status::Error(-7201, "locally executed effects selected an invalid fee payer");
     TRY_RESULT(effects_root, encode_workchain_account_effects(executed.effects, max_writes, max_transfers,
         extra_validation_cells));
     // Dictionary construction above is count-bounded, not incrementally charged.
     // dict_set follows one path, decreasing key width each recursion, rebuilds
     // one node per ancestor and finalizes at most three nodes at the insertion.
-    // A conservative cumulative bound is 259*U + 36*T + 3 finalized Cells:
+    // A conservative cumulative bound is 259*U + 36*T + 4 finalized Cells:
     // 256-bit update paths; 32-bit transfer paths plus one entry each; two
-    // outer wrappers and at most one fee record. U <= max_writes and
+    // outer wrappers, one fee record and its optional payer ref. U <= max_writes and
     // T <= max_transfers were checked above.
     // This excludes already-produced engine data and is not zero overshoot of
     // the final union budget. No runtime multiplication relies on this bound.
@@ -360,6 +365,8 @@ inline td::Result<WorkchainAccountSettlement> settle_executed(
       imports = std::move(payout.imports);
       exports = std::move(payout.exports);
     }
+    if (executed.effects.bucket_sweep_credit && !executed.effects.protected_coordinator_snapshot)
+      return td::Status::Error(-7201, "locally executed sweep omitted protected predecessor snapshot");
     if (executed.effects.protected_coordinator_snapshot) {
       vm::AugmentedDictionary previous(vm::load_cell_slice_ref(old_accounts), 256, tlb::aug_ShardAccounts);
       vm::AugmentedDictionary produced(vm::load_cell_slice_ref(state.accounts), 256, tlb::aug_ShardAccounts);
@@ -393,10 +400,78 @@ inline td::Result<WorkchainAccountSettlement> settle_executed(
       } else if (rejected_material &&
                  rejected_material->plan.native.branch == NativeDisposalBranch::UnexpectedCredit) {
         bucket_credit = rejected_material->plan.native.row.imported;
+      } else if (executed.effects.bucket_return_message) {
+        gen::UnoV2HostInput::Record host;
+        if (!tlb::unpack_cell(executed.input, host))
+          return td::Status::Error(-7201, "authenticated bucket return input unavailable");
+        auto root = host.inbox->prefetch_ulong(1) ? host.inbox->prefetch_ref() : td::Ref<vm::Cell>{};
+        TRY_RESULT(inbox, plan_workchain_native_inbox(root, identity.workchain_id, {custody},
+            identity.host_after_lt, max_inbound));
+        if (inbox.envelopes.size() != 1 || executed.effects.fees)
+          return td::Status::Error(-7200, "bucket return requires one import and no issuance fees");
+        tlb::MsgEnvelope::Record_std envelope;
+        gen::CommonMsgInfo::Record_int_msg_info info;
+        if (!tlb::unpack_cell(inbox.envelopes.front(), envelope) ||
+            !tlb::unpack_cell_inexact(envelope.msg, info) || !info.bounced ||
+            td::Bits256(envelope.msg->get_hash().bits()) != *executed.effects.bucket_return_message ||
+            !bucket_credit.unpack(info.value))
+          return td::Status::Error(-7200, "bucket return differs from authenticated import");
+        if (bucket_credit.is_zero()) {
+          if (!executed.effects.native_transfers.empty())
+            return td::Status::Error(-7200, "zero bucket return cannot transfer value");
+        } else {
+          if (executed.effects.native_transfers.size() != 1)
+            return td::Status::Error(-7200, "bucket return requires one transfer");
+          const auto& transfer = executed.effects.native_transfers.front();
+          if (transfer.from != custody || transfer.to != coordinator || transfer.value != bucket_credit)
+            return td::Status::Error(-7200, "bucket return transfer differs from imported value");
+        }
       }
       if (refundable_after != expected_refundable)
         return td::Status::Error(-7200, "refundable classification differs from authenticated event");
-      TRY_STATUS(check_workchain_bucket_credit_pair(old_holdings, new_holdings, bucket_credit));
+      if (executed.effects.bucket_sweep_credit) {
+        if (executed.effects.registration || executed.effects.closure || rejected_material ||
+            executed.effects.bucket_return_message || executed.effects.payout_request.not_null() ||
+            !bucket_credit.is_zero())
+          return td::Status::Error(-7200, "sweep cannot accompany another protected event");
+        const auto& credit = *executed.effects.bucket_sweep_credit;
+        const auto gross = workchain_protected_refundable(credit.gross);
+        const auto slot = workchain_protected_refundable(credit.slot);
+        const auto compute = workchain_protected_refundable(credit.compute);
+        CurrencyCollection service, net, expected_holdings;
+        // Checked subtraction establishes sufficient value for positive credit;
+        // neither fee component may pass through custody.
+        if (!CurrencyCollection::add(slot, compute, service) ||
+            !CurrencyCollection::sub(gross, service, net) || net.is_zero() ||
+            !CurrencyCollection::sub(old_holdings, gross, expected_holdings) ||
+            expected_holdings != new_holdings)
+          return td::Status::Error(-7200, "sweep protected debit differs from executed event");
+        if (executed.effects.native_transfers.size() != 1)
+          return td::Status::Error(-7200, "sweep requires one net reserve transfer");
+        const auto& transfer = executed.effects.native_transfers.front();
+        if (transfer.from != coordinator || transfer.to != custody || transfer.value != net)
+          return td::Status::Error(-7200, "sweep reserve transfer differs from net credit");
+        if (compute.is_zero()) {
+          if (executed.effects.fees)
+            return td::Status::Error(-7200, "zero compute sweep cannot collect fees");
+        } else {
+          if (!executed.effects.fees)
+            return td::Status::Error(-7200, "sweep compute fee absent");
+          const auto& fees = *executed.effects.fees;
+          TRY_RESULT(payer, workchain_compute_fee_payer(fees));
+          TRY_RESULT(totals, checked_workchain_fee_totals(fees));
+          if (fees.custody != custody || fees.coordinator != coordinator || payer != coordinator ||
+              !totals.state.is_zero() || td::cmp(fees.tip, 0) != 0 || totals.collected != compute)
+            return td::Status::Error(-7200, "sweep fee split differs from executed event");
+        }
+        CurrencyCollection outgoing, expected_balance;
+        if (!CurrencyCollection::add(net, compute, outgoing) ||
+            !CurrencyCollection::sub(old_budget.balance, outgoing, expected_balance) ||
+            new_budget.balance != expected_balance)
+          return td::Status::Error(-7200, "sweep must retain only its slot income");
+      } else {
+        TRY_STATUS(check_workchain_bucket_credit_pair(old_holdings, new_holdings, bucket_credit));
+      }
       auto backing = check_workchain_budget_backing(new_budget.balance, refundable_after, new_holdings);
       if (backing.is_error()) return td::Status::Error(-7200, backing.message());
     }
@@ -492,7 +567,7 @@ inline td::Result<WorkchainAccountSettlement> execute(
     const td::Bits256& custody, const td::Bits256& coordinator, td::RefInt256 fee_budget,
     int extra_validation_cells,
     const SerializeConfig& cfg, const ActionPhaseConfig& message_cfg,
-    const WorkchainDisposalEntryContext* disposal) {
+    const WorkchainDisposalEntryContext* disposal, td::Ref<vm::Cell> previous_state = {}) {
   static_assert(std::is_same_v<Admission, AdmittedInput> || std::is_same_v<Admission, ProofAdmittedBatchInput>);
   if constexpr (std::is_same_v<Admission, ProofAdmittedBatchInput>) {
     if (!admitted.inspected_by(engine)) {
@@ -568,7 +643,7 @@ inline td::Result<WorkchainAccountSettlement> execute(
         return td::Status::Error("settlement inbox differs from admitted input");
       }
       return account_engine_detail::execute(engine, old_accounts, admitted, declarations,
-                                             max_reads, max_writes);
+                                             max_reads, max_writes, previous_state);
     } else {
       return execute_workchain_account_engine(engine, old_accounts, identity, admitted, declarations,
           inbox.envelopes, max_reads, max_writes, max_inbound);
@@ -627,14 +702,27 @@ inline td::Result<WorkchainAccountSettlement> execute_and_settle_workchain_accou
     const WorkchainHostIdentity& identity, const ProofAdmittedBatchInput& admitted,
     const MaterializedNativeCells& native_cells,
     const td::Bits256& custody, const td::Bits256& coordinator, td::RefInt256 fee_budget,
-    int extra_validation_cells, const SerializeConfig& cfg, const ActionPhaseConfig& message_cfg) {
+    int extra_validation_cells, const SerializeConfig& cfg, const ActionPhaseConfig& message_cfg,
+    td::Ref<vm::Cell> previous_state = {}) {
   TRY_STATUS(account_settlement_detail::validate_batch_context(admitted, old_accounts, identity,
       custody, coordinator, extra_validation_cells, cfg, message_cfg, nullptr));
+  if (previous_state.not_null()) {
+    gen::ShardStateUnsplit::Record state;
+    // Both Native callers supply their own authenticated predecessor. The
+    // engine receives neither a claimant's queue nor a selected historical Q.
+    // This is an interface consistency check, not independent authentication:
+    // authentication belongs to the Native callers' predecessor acquisition.
+    if (td::Bits256(previous_state->get_hash().bits()) != identity.previous_shard_hash ||
+        !tlb::unpack_cell(previous_state, state) ||
+        state.accounts->get_hash() != old_accounts->get_hash() ||
+        state.seq_no == UINT32_MAX || state.seq_no + 1 != identity.height)
+      return td::Status::Error(-7201, "outbound observation predecessor binding mismatch");
+  }
   const auto& limits = admitted.policy().resources();
   return account_settlement_detail::execute(engine, std::move(old_accounts), identity, admitted,
       nullptr, native_cells, limits.input.max_reads, limits.input.max_writes,
       limits.input.max_inbound, limits.work_output.max_transfers, custody, coordinator,
-      std::move(fee_budget), extra_validation_cells, cfg, message_cfg, nullptr);
+      std::move(fee_budget), extra_validation_cells, cfg, message_cfg, nullptr, std::move(previous_state));
 }
 
 inline td::Result<WorkchainAccountSettlement> execute_and_settle_workchain_accounts(

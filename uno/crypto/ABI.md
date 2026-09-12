@@ -1,29 +1,32 @@
 # Borrowed balance verification ABI v2 and independent possession v2 entries
 
-## D64 construction work in progress (2026-09-11)
+## D78 Withdrawal ABI v2 (2026-09-12)
 
-`withdrawal_statement` is a read-only Rust construction and verification API;
-it now exposes the dedicated `uno_crypto_verify_withdrawal_v1` C ABI but has no
-node-host caller yet. The request supplies six balance points and a 566-byte
-host context, never P_B or the three derived transfer points. It specializes the unchanged
-SEND matrix with P_B=P_A and locally derived C_t/D_tA/D_tB. Its explicit
-Withdrawal context binds the two IDs and the separate principal, outward fee,
-return reserve and operation fee; the enclosing authenticated host context is
-still a caller obligation. This is not a completed Native wire/context contract
-or a Withdrawal execution path. No new relation number is allocated.
+`uno_crypto_verify_withdrawal_v2` takes `UnoCryptoWithdrawalVerifyRequestV2`,
+abi_version=2, with principal x, outward fee q and separate operation fee f.
+There is no reserve member, no v1 symbol/fallback and no migration of pre-deployment
+fixtures. Checked T=x+q precedes scalar conversion; f is NOT in T. The host also
+checks actual debit T+f and authenticates fees/configuration. T<=V_max and T+f<=a
+remain existing proof constraints, not extra public-total construction gates.
 
-Before adding any host caller, provide the admitted metering entry and the
-canonical authenticated Native context interface. No unmetered ABI is to be
-connected temporarily. Profile 4 coverage is not expanded by this Rust-only
-construction step.
+The C++ host context is independently measured **unchanged at 566 bytes**:
+common source/protocol/config/profile fields plus binding/root fields. Amounts
+are bound through hashes, not serialized inline there. The Rust statement
+wrapper `/v2` measures **684 bytes**, down from the old 692: two IDs and three
+public amounts plus this host context. Do not change its 566-byte ABI or host
+metering registration to 558. Matching host integration and ABI registration
+must land with this interface; old callers intentionally cannot link to v2
+under the old name. Primitive verification is not Native publication evidence.
 
-D34 scope: M5 does not expand the relation family, but adds critical verifier
-checks. C_t reconstruction and the no-pending host branch prevent under-debit
-or double issuance. Under the existing proof system's soundness assumption,
-the public-opening algebra adds no computational assumption; one handle is
-redundant when P_B=P_A. All remain review subjects.
-This is not a claim of no new unreviewed cryptographic surface. The host
-no-pending branch is not implemented or evidenced by these kernel tests.
+SEND equations, shared witnesses, six ranges and two padding objects are unchanged.
+P_B=P_A and C_t/D_tA/D_tB remain locally derived. Under existing proof-system
+soundness assumptions the public-opening algebra adds no computational assumption;
+it is not unconditional proof-system soundness. No-pending applies to prepare,
+not backed settlement issuance. D34's unreviewed surfaces remain registered.
+
+New vectors live in `crypto/test/workchain-m5-d78-vectors/no-prelock-v2`, with
+prelock samples retained separately. Inherited live greens remain evidence for
+their original code and inputs, not evidence for these changed D78 interfaces.
 
 ## Possession transcript upgrade (2026-09-10)
 
@@ -353,7 +356,7 @@ counter consumption, pending uniqueness, eligibility for type-2 sweep, or
 atomic installation. New node callers require A's metering entry and ABI
 inventory registration before connection; none is installed by this patch.
 
-The new account codec exposes schema 3 through
+The D78 account codec exposes schema 4 through
 `decode_workchain_withdrawal_account(root, authenticated_limit)` and its paired
 encoder. The wrapper contains common account fields, the authenticated control
 envelope and new-origin receipts. Legacy and new-origin system receipt views

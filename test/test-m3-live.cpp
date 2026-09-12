@@ -10,15 +10,23 @@
 #include "m3-live-registration.h"
 #include "m3-live-state.h"
 #include "m5-live-return.h"
-#include "m5-live-reserve-control.h"
 #include "m3-live-assertions.h"
 #include "m3-live-wallet.h"
 #include "m4-live-deposit.h"
 #include "m5-live-failed.h"
 #include "m5-live-unknown-control.h"
 #include "m5-live-fee-routing-control.h"
+#include "m5-completion-observer.h"
 
 int main(int argc, char** argv) {
+  if (argc == 5 && std::string(argv[1]) == "--completion-observation") {
+    vm::init_vm().ensure();
+    m3_live::write_completion_observation(argv[2], argv[3], argv[4]);
+    return 0;
+  }
+  if (argc == 4 && std::string(argv[1]) == "--check-unknown-observation") {
+    return m3_live::check_unknown_observation(argv[2], std::string(argv[3]) + "\n") ? 0 : 2;
+  }
   if (argc == 3 && std::string(argv[1]) == "--validate-archive-off") {
     const std::filesystem::path fixture(argv[2]);
     disk_collator_test_engine_setup = [fixture] {
@@ -48,11 +56,6 @@ int main(int argc, char** argv) {
   if (argc == 3 && (std::string(argv[1]) == "--withdrawal-debit-request" || std::string(argv[1]) == "--withdrawal-debit-finish")) {
     vm::init_vm().ensure();
     m3_live::prepare_debit(argv[2], std::string(argv[1]).ends_with("finish"));
-    return 0;
-  }
-  if ((argc == 3 || argc == 4) && std::string(argv[1]) == "--check-m5-reserve-admission") {
-    vm::init_vm(true).ensure();
-    m3_live::check_m5_reserve_admission(std::filesystem::path(argv[2]), argc == 4 ? std::stoi(argv[3]) : 0);
     return 0;
   }
   if (argc == 3 && std::string(argv[1]) == "--observe-m5-payout-recipient") {
@@ -221,15 +224,26 @@ int main(int argc, char** argv) {
     else m3_live::registration_finish(fixture);
     return 0;
   }
-  if (argc == 3 && (std::string(argv[1]) == "--prepare-config" || std::string(argv[1]) == "--prepare-m4-config" || std::string(argv[1]) == "--prepare-m5-debit-config" || std::string(argv[1]) == "--prepare-m5-return-config" || std::string(argv[1]) == "--prepare-m5-shortfall-config")) {
+  if (argc == 3 && (std::string(argv[1]) == "--prepare-config" || std::string(argv[1]) == "--prepare-m4-config" || std::string(argv[1]) == "--prepare-m5-debit-config" || std::string(argv[1]) == "--prepare-m5-return-config" || std::string(argv[1]) == "--prepare-m5-completion-config")) {
     vm::init_vm().ensure();
     const std::filesystem::path fixture(argv[2]);
     CHECK(std::filesystem::exists(fixture / ".counter-managed-v1"));
     auto bytes = td::read_file_str((fixture / "zerostate.boc").string()).move_as_ok();
+    const bool full_cap = std::filesystem::exists(fixture / "completion-full-cap.txt");
+    const bool window_pair = std::filesystem::exists(fixture / "completion-window-pair.txt");
+    if (window_pair) {
+      CHECK(std::string(argv[1]) == "--prepare-m5-completion-config");
+      CHECK(td::read_file_str((fixture / "completion-window-pair.txt").string()).move_as_ok() == "2\n");
+    }
+    if (full_cap) {
+      CHECK(std::string(argv[1]) == "--prepare-m5-completion-config");
+      CHECK(td::read_file_str((fixture / "completion-full-cap.txt").string()).move_as_ok() == "3\n");
+    }
     auto root = prepare_m3_live_configuration(vm::std_boc_deserialize(bytes).move_as_ok(),
         std::string(argv[1]) != "--prepare-config", std::string(argv[1]) == "--prepare-m5-debit-config",
-        std::string(argv[1]) == "--prepare-m5-return-config" || std::string(argv[1]) == "--prepare-m5-shortfall-config",
-        std::string(argv[1]) == "--prepare-m5-shortfall-config").move_as_ok();
+        std::string(argv[1]) == "--prepare-m5-return-config" || std::string(argv[1]) == "--prepare-m5-completion-config",
+        std::string(argv[1]) == "--prepare-m5-completion-config", full_cap, window_pair,
+        std::filesystem::exists(fixture / "completion-sweep.txt")).move_as_ok();
     td::write_file((fixture / "zerostate.boc").string(), vm::std_boc_serialize(root, 31).move_as_ok()).ensure();
     td::write_file((fixture / "zerostate.rhash").string(), root->get_hash().as_slice()).ensure();
     return 0;
@@ -240,12 +254,28 @@ int main(int argc, char** argv) {
     // This mode writes only a caller-owned fixture file, never deployment state.
     block::WorkchainCoordinatorState state{2, {1, 1, 0, 0}, 0};
     if (std::string(argv[1]) == "--m4-coordinator-data") {
-      auto bucket = block::encode_workchain_unexpected_bucket({{}, {}, td::make_refint(0), {}, 0},
+      block::WorkchainUnexpectedBucket initial{{}, {}, td::make_refint(0), {}, 0};
+      if (std::filesystem::exists(std::filesystem::path(argv[2]).parent_path() / "completion-sweep.txt")) {
+        initial.account_attribution = true; initial.sweep_sequence = 0;
+      }
+      auto bucket = block::encode_workchain_unexpected_bucket(initial,
                                                               {256, 256}, 4096).move_as_ok();
       state = {3, {1, 1, 0, 0}, 0, 0, bucket};
     }
     auto data = block::encode_workchain_coordinator_state(state).move_as_ok();
     td::write_file(td::CSlice(argv[2]), vm::std_boc_serialize(data).move_as_ok()).ensure();
+    return 0;
+  }
+  if (argc == 3 && std::string(argv[1]) == "--sweep-request") {
+    vm::init_vm().ensure();
+    const std::filesystem::path fixture(argv[2]);
+    auto data = m3_live::account_data(m3_live::load(fixture / "current-state.boc"), td::Bits256::zero());
+    auto coordinator = block::decode_workchain_coordinator_state(data).move_as_ok();
+    auto bucket = block::decode_workchain_unexpected_bucket(coordinator.unexpected, {256,256},4096).move_as_ok();
+    CHECK(!bucket.entries.empty() && bucket.entries.front().account_id);
+    auto env = m3_live::wallet_environment(fixture, 1);
+    m3_live::save_operation(fixture, block::m3_test::encode_m5_test_sweep(),
+        {*bucket.entries.front().account_id, env.rules.custody});
     return 0;
   }
   const bool incarnation_control = argc == 3 && std::string(argv[1]) == "--failed-incarnation-control";
@@ -273,6 +303,7 @@ int main(int argc, char** argv) {
   const bool deposit = block::m3_test::is_m4_test_deposit(candidate);
   const bool debit = block::m3_test::is_m5_test_debit(candidate);
   const bool failed = block::m3_test::is_m5_test_failed(candidate);
+  const bool sweep = block::m3_test::is_m5_test_sweep(candidate);
   CHECK(!unknown_control || failed);
   CHECK(!routing_control || failed);
   if (incarnation_control) {
@@ -285,9 +316,10 @@ int main(int argc, char** argv) {
   }
   const auto ingress = block::load_workchain_native_ingress_table(*config).move_as_ok().at(2);
   const auto params = block::decode_workchain_engine_parameters(ingress.engine_configuration).move_as_ok();
-  const bool m4 = block::m3_test::decode_m3_test_business_parameters(params.parameters).move_as_ok().deposit.has_value();
+  const auto business = block::m3_test::decode_m3_test_business_parameters(params.parameters).move_as_ok();
+  const bool m4 = business.deposit.has_value();
   unsigned transaction_count = 2;
-  if (deposit || debit || failed) transaction_count = 3;
+  if (deposit || debit || failed || sweep) transaction_count = 3;
   else if (!test_funding) {
     const auto operation = block::decode_workchain_replay_input(candidate).move_as_ok();
     const auto* transfer = std::get_if<block::WorkchainTransferInput>(&operation);
@@ -358,8 +390,8 @@ int main(int argc, char** argv) {
                                          : "phase=3\nworkchain=2\ndelivery=recorded\n";
     const auto stats = read(".stats");
     const auto calls = td::read_file_str(counter).move_as_ok();
-    const auto unknowns = td::read_file_str(counter + ".unknown-origin").move_as_ok();
-    CHECK(unknowns == (enabled && unknown_control ? "1\n" : "0\n"));
+    const std::string unknowns = enabled && unknown_control ? "1\n" : "0\n";
+    if (!m3_live::check_unknown_observation(counter + ".unknown-origin", unknowns)) return 2;
     std::cout << name << " observed unknown-origin=" << unknowns;
     if (enabled && unknown_control) {
       CHECK(read("") == "collate -7201\n");
@@ -367,7 +399,26 @@ int main(int argc, char** argv) {
       CHECK(observation == expected && read(".kind") == "error\n");
       CHECK(stats == "delivery=recorded\nvisited=1\nadapter=1\nowners_before=1\nowners_during=2\nowners_after=1\ntransactions=0\n");
       CHECK(calls == "config=5\nexecute=1\n");
-      CHECK(td::read_file_str(counter + ".units.1").move_as_ok() == "7\n");
+      block::gen::CommonMsgInfo::Record_int_msg_info returned;
+      CHECK(tlb::unpack_cell_inexact(m3_live::load(fixture / "failed-bounce.boc"), returned));
+      block::CurrencyCollection imported;
+      CHECK(imported.unpack(returned.value));
+      // All no-issuance dispositions sign nothing, including a full system
+      // pending set even when the inbound value would cover the service fee.
+      // Read that precondition from the authenticated predecessor, not a CLI
+      // scenario label or the producer's proposed effects.
+      const bool small = td::cmp(imported.tomis, block::workchain_unsigned_fee(
+          m3_live::m5_live_return_fee(fixture))) <= 0;
+      const auto selector = block::m3_test::decode_m5_test_failed(candidate).move_as_ok();
+      const auto owner = m3_live::m5_live_account(m3_live::account_data(
+          m3_live::load(fixture / "current-state.boc"), selector.owner.account),
+          m3_live::m5_live_withdrawal_limit(fixture));
+      CHECK(business.deposit);
+      const bool full = owner.account.system_pending.size() + owner.origin_pending.size() >=
+          business.deposit->system_slots;
+      const bool closed = !std::holds_alternative<block::WorkchainAccountActive>(owner.account.lifecycle);
+      CHECK(td::read_file_str(counter + ".units.1").move_as_ok() ==
+          ((small || full || closed) ? "0\n" : "7\n"));
       CHECK(!std::filesystem::exists(counter + ".units.2") && !std::filesystem::exists(exported));
       std::cout << "UNKNOWN_ORIGIN_CONTROL: real execution, LocalUnavailable, count=1, no publication\n";
       continue;
@@ -404,11 +455,13 @@ int main(int argc, char** argv) {
       if (debit) {
         auto operation = block::m3_test::decode_m5_test_debit(candidate).move_as_ok();
         const auto key = operation.data.claims.source.account;
-        auto old = block::decode_workchain_confidential_account(m3_live::account_data(previous,key)).move_as_ok();
+        auto old = m3_live::m5_live_account(m3_live::account_data(previous,key),m3_live::m5_live_withdrawal_limit(fixture)).account;
         auto complete = m3_live::m5_live_account(m3_live::account_data(accepted.state,key),m3_live::m5_live_withdrawal_limit(fixture));
         auto next = complete.account;
-        CHECK(complete.control.withdrawals.size() == 1);
-        const auto& obligation = complete.control.withdrawals.front();
+        const auto installed = std::find_if(complete.control.withdrawals.begin(), complete.control.withdrawals.end(),
+            [&](const auto& record) { return record.withdrawal_id == operation.claimed_operation_id; });
+        CHECK(installed != complete.control.withdrawals.end());
+        const auto& obligation = *installed;
         CHECK(obligation.principal == operation.data.amounts.principal);
         const auto custody_key = block::load_workchain_native_ingress_table(*config).move_as_ok().at(2).custody_address;
         CHECK(custody_key);
@@ -443,7 +496,7 @@ int main(int argc, char** argv) {
         m3_live::save(fixture / "prepare-payout.boc",payout);
         std::cout << "WITHDRAWAL_ENQUEUED hash=" << payout->get_hash().to_hex()
                   << " created_lt=" << payout_info.created_lt << " x=" << obligation.principal
-                  << " q=" << obligation.costs.outward_fee_paid << " b=" << obligation.costs.original_reserve << std::endl;
+                  << " q=" << obligation.costs.outward_fee_paid << std::endl;
         auto expected = block::next_workchain_confidential_counters(old,old.auth_nonce,old.available_revision).move_as_ok();
         CHECK(next.auth_nonce == expected.auth_nonce && next.available_revision == expected.available_revision);
         CHECK(next.available.commitment == operation.data.available.commitment && next.available.handle == operation.data.available.handle);
@@ -472,7 +525,7 @@ int main(int argc, char** argv) {
         else m3_live::assert_accepted_deposit(fixture, previous, accepted);
       } else if (failed) {
         m3_live::assert_m5_failed(fixture, previous, accepted, *ingress_table.at(2).custody_address);
-      } else if (debit) {
+      } else if (debit || sweep) {
         // Withdrawal is independently checked above and by the backing replay.
       } else if (test_funding) {
         block::gen::TransactionDescr::Record_trans_workchain_entry_v3 entry;
@@ -501,7 +554,8 @@ int main(int argc, char** argv) {
         } else {
           const auto& closure = std::get<block::WorkchainClosureReplayInput>(replay);
           m3_live::assert_accepted_closure(previous, accepted, closure.context.subject.account,
-              m4 ? std::stoull(m3_live::field(fixture / "closure.expected.txt", "other")) : 49490);
+              m4 ? std::stoull(m3_live::field(fixture / "closure.expected.txt", "other")) : 49490,
+              m3_live::m5_live_withdrawal_limit(fixture));
         }
       }
       m3_live::save(fixture / "accepted-state.boc", accepted.state);

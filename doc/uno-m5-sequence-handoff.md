@@ -1,5 +1,9 @@
 # Sequence expiry replacement contract
 
+> D78 update: use actual Failed settlement for Withdrawal issuance; pure Paid
+> issues no receipt and advances no sequence. See [D78 handoff](uno-m5-d78-handoff.md).
+> Earlier reserve-specific fixtures below retain historical applicability only.
+
 Specification: memo 19d0446e, SHA256
 71968ef2afb0d9176e6e73dfa8aa5366efecdd0d1d9c82028e3de9ee0d2b84c6.
 This is a prospective test contract, not host execution evidence.

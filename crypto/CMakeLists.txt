@@ -836,6 +836,10 @@ add_executable(test-workchain-withdrawal-codec ../test/test-td-main.cpp test/tes
 add_executable(test-workchain-withdrawal-association ../test/test-td-main.cpp test/test-workchain-withdrawal-association.cpp)
 target_link_libraries(test-workchain-withdrawal-association PRIVATE tos_block tos_crypto)
 tos_test(test-workchain-withdrawal-association)
+add_test(NAME test-workchain-withdrawal-paid-expiry-component-partial
+  COMMAND test-workchain-withdrawal-association --filter +PaidExpiry)
+set_tests_properties(test-workchain-withdrawal-paid-expiry-component-partial
+  PROPERTIES TIMEOUT 60 LABELS "workchain;m5;partial")
 set_tests_properties(test-workchain-withdrawal-association PROPERTIES TIMEOUT 60 LABELS "workchain;m5")
 target_link_libraries(test-workchain-withdrawal-codec PRIVATE tos_block tos_crypto)
 tos_test(test-workchain-withdrawal-codec)
@@ -881,3 +885,19 @@ else()
 endif()
 set_tests_properties(test-workchain-key-epoch-behavior PROPERTIES TIMEOUT 600 LABELS "workchain;expiry;real-crypto"
   RESOURCE_LOCK uno_crypto_cargo)
+
+# A source pin must reject a real stale wallet before any live business request.
+add_test(NAME test-workchain-wallet-freshness COMMAND ${Python3_EXECUTABLE}
+  "${PROJECT_SOURCE_DIR}/test/test_uno_wallet_freshness.py"
+  --repo "${PROJECT_SOURCE_DIR}" --target "${CMAKE_CURRENT_BINARY_DIR}/wallet-freshness-target")
+set_tests_properties(test-workchain-wallet-freshness PROPERTIES
+  TIMEOUT 600 LABELS "workchain;m5;freshness" RUN_SERIAL TRUE)
+
+# Observer/readiness selftests, explicitly NOT real completion contract passes.
+add_test(NAME test-workchain-withdrawal-completion-oracle-selftest COMMAND ${Python3_EXECUTABLE}
+  "${PROJECT_SOURCE_DIR}/crypto/test/workchain-withdrawal-completion-oracle-test.py")
+add_test(NAME test-workchain-withdrawal-completion-handoff-selftest COMMAND ${Python3_EXECUTABLE}
+  "${PROJECT_SOURCE_DIR}/crypto/test/workchain-withdrawal-completion-handoff-test.py")
+set_tests_properties(test-workchain-withdrawal-completion-oracle-selftest
+  test-workchain-withdrawal-completion-handoff-selftest PROPERTIES
+  TIMEOUT 30 LABELS "workchain;m5;handoff-selftest")

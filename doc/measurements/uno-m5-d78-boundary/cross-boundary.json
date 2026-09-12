@@ -1,0 +1,24 @@
+{
+  "old_measured": {
+    "x": 10000000,
+    "y": 9996070,
+    "b": 1000000,
+    "base": 2,
+    "units": 4,
+    "g": 8,
+    "slot": 3000000,
+    "installed_receipt": 7996062
+  },
+  "new_independently_read": {
+    "x": 10000000,
+    "y": 9996070,
+    "slot": 3000000,
+    "base": 2,
+    "units": 4,
+    "g": 8,
+    "receipt": 6996062
+  },
+  "difference": 1000000,
+  "old_log_commit": "92dd939c60a85c3abdffc6923d4b0cd8279d9f79",
+  "scope": "Matched y/slot/g fixture only; not identical state BOCs or universal arithmetic proof"
+}

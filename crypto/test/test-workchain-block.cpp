@@ -1578,6 +1578,42 @@ td::Ref<vm::Cell> shard_fixture(int shard_wc = 2, int account_wc = 2, bool activ
   return root;
 }
 
+TEST(WorkchainBlock, OutboundObservationSharesStateBudget) {
+  // This is the queue-read boundary, not authentication of a Native block.
+  // The live completion carrier separately binds the predecessor in replay.
+  auto predecessor = shard_fixture();
+  const auto custody = td::Bits256::zero();
+  auto account_read = number(991);
+  block::NativeStateReadMeter enough(3, 4096);
+  ASSERT_TRUE(std::holds_alternative<td::Ref<vm::CellSlice>>(enough.load_ordinary(account_read)));
+  block::WorkchainAccountReadView positive({}, predecessor, &enough, 3);
+  auto absent = positive.payout_absent(custody, 17, 0);
+  ASSERT_TRUE(absent.is_ok() && absent.ok().has_value());
+  ASSERT_EQ(*absent.ok(), 1u);
+  ASSERT_EQ(enough.usage().cells, 3u);
+  // Equality of heights cannot establish D73's subsequent observation.
+  auto same_height = positive.payout_absent(custody, 17, 1);
+  ASSERT_TRUE(same_height.is_ok() && !same_height.ok());
+  block::NativeStateReadMeter shared(2, 4096);
+  ASSERT_TRUE(std::holds_alternative<td::Ref<vm::CellSlice>>(shared.load_ordinary(account_read)));
+  block::WorkchainAccountReadView constrained({}, predecessor, &shared, 2);
+  auto exceeded = constrained.payout_absent(custody, 17, 0);
+  // This rejection is independent of the positive usage count above: replacing
+  // the queue-closure budget refusal with a successful Q must fail here.
+  // Mutation: in workchain-account-engine.h payout_absent(), replace only the load_encoded(cell)
+  // NativeClosureLimit return with `return std::optional<std::uint32_t>{queue_height_};`.
+  // Scope: real queue-read function, not authenticated-config-to-collator/validator coverage.
+  ASSERT_TRUE(exceeded.is_error());
+  ASSERT_EQ(exceeded.error().code(), -7200);
+  ASSERT_TRUE(constrained.status().is_error());
+  block::NativeStateReadMeter bits(3, 64);
+  ASSERT_TRUE(std::holds_alternative<td::Ref<vm::CellSlice>>(bits.load_ordinary(account_read)));
+  block::WorkchainAccountReadView bit_limited({}, predecessor, &bits, 3);
+  auto bit_exceeded = bit_limited.payout_absent(custody, 17, 0);
+  ASSERT_TRUE(bit_exceeded.is_error());
+  ASSERT_EQ(bit_exceeded.error().code(), -7200);
+}
+
 TEST(WorkchainBlock, AccountDictionaryChanges) {
   auto extract = [](td::Ref<vm::Cell> root) {
     block::gen::ShardStateUnsplit::Record state;
@@ -1674,6 +1710,58 @@ td::Ref<vm::Cell> inbound_envelope(std::uint64_t lt, std::uint64_t nonce = 0,
   td::Ref<vm::Cell> envelope;
   ASSERT_TRUE(tlb::pack_cell(envelope, record));
   return envelope;
+}
+
+TEST(WorkchainBlock, OutboundObservationIncludesDeferredMessages) {
+  // Queue-read semantics only; these fixtures do not establish prepare's
+  // historical presence invariant or authenticate a live shard predecessor.
+  auto sender = td::Bits256::zero();
+  sender.as_slice().data()[31] = 1;
+  for (bool deferred : {false, true}) {
+    auto envelope = inbound_envelope(17);
+    vm::CellBuilder entry; entry.store_long(18, 64).store_ref(envelope);
+    vm::AugmentedDictionary queue(352, block::tlb::aug_OutMsgQueue);
+    vm::AugmentedDictionary dispatch(256, block::tlb::aug_DispatchQueue);
+    if (deferred) {
+      vm::Dictionary messages(64);
+      td::BitArray<64> key; key.bits().store_uint(17, 64);
+      ASSERT_TRUE(messages.set_builder(key, entry));
+      td::Ref<vm::Cell> account;
+      ASSERT_TRUE(tlb::pack_cell(account, block::gen::AccountDispatchQueue::Record{messages.get_root(), 1}));
+      ASSERT_TRUE(dispatch.set(sender, vm::load_cell_slice_ref(account)));
+    } else {
+      td::BitArray<352> key;
+      ASSERT_TRUE(block::compute_out_msg_queue_key(envelope, key));
+      ASSERT_TRUE(queue.set_builder(key, entry));
+    }
+    vm::CellBuilder info;
+    ASSERT_TRUE(queue.append_dict_to_bool(info));
+    info.store_long(0, 1).store_long(deferred, 1);
+    if (deferred) {
+      td::Ref<vm::Cell> extra;
+      ASSERT_TRUE(tlb::pack_cell(extra, block::gen::OutMsgQueueExtra::Record{
+          dispatch.get_root(), vm::load_cell_slice_ref(vm::CellBuilder().store_long(0, 1).finalize())}));
+      info.append_cellslice(vm::load_cell_slice(extra));
+    }
+    block::gen::ShardStateUnsplit::Record state;
+    ASSERT_TRUE(tlb::unpack_cell(shard_fixture(0, 0), state));
+    state.out_msg_queue_info = info.finalize();
+    td::Ref<vm::Cell> root; ASSERT_TRUE(tlb::pack_cell(root, state));
+    block::NativeStateReadMeter meter(100, 100000);
+    block::WorkchainAccountReadView view({}, root, &meter, 100);
+    auto present = view.payout_absent(sender, 17, 0);
+    ASSERT_TRUE(present.is_ok() && !present.ok());
+    auto absent = view.payout_absent(sender, 19, 0);
+    ASSERT_TRUE(absent.is_ok() && absent.ok());
+    ASSERT_EQ(*absent.ok(), 1u);
+    if (deferred) {
+      block::NativeStateReadMeter capped(100, 100000);
+      block::WorkchainAccountReadView visit_limited({}, root, &capped, 1);
+      auto refused = visit_limited.payout_absent(sender, 19, 0);
+      ASSERT_TRUE(refused.is_error());
+      ASSERT_EQ(refused.error().code(), -7200);
+    }
+  }
 }
 
 block::ResolvedBatchInputPolicy inbox_test_policy(
@@ -2993,6 +3081,94 @@ TEST(WorkchainBlock, AggregateFeeSettlement) {
         coordinator_id, custody_id, 2, 2, edges, 0, 4096, cfg).is_ok());
   }
   auto changed = effects;
+  // Same D32 C collection chain, but a resolved sweep may select coordinator
+  // instead of custody. A third-party payer is a validly encoded CLAIM, not
+  // permission. Exercise the actual Native factory, not only a codec enum.
+  for (const auto& payer : {td::Bits256::ones(), coordinator_id, custody_id}) {
+    auto payment = effects;
+    payment.fees->state_fee = td::make_refint(0);
+    payment.fees->compute_fee = td::make_refint(28);
+    payment.fees->tip = td::make_refint(0);
+    payment.fees->compute_payer = payer;
+    auto payment_root = block::encode_workchain_account_effects(payment, 2, 0, 4096).move_as_ok();
+    ASSERT_TRUE(block::gen::t_UnoV2HostEffects.validate_ref(4096, payment_root));
+    auto payment_bindings = block::build_workchain_participant_records(td::Bits256(input->get_hash().bits()),
+        td::Bits256(payment_root->get_hash().bits()), {coordinator_id, custody_id}, 2).move_as_ok();
+    block::transaction::Transaction attempt(coordinator, block::transaction::Transaction::tr_workchain_batch, 21, 10);
+    auto paid = attempt.prepare_workchain_entry(payment_bindings[0], input, payment_root, number(321), cfg, 0, 4096);
+    if (payer == td::Bits256::ones()) {
+      ASSERT_TRUE(paid.is_error());  // THIRD_PARTY_FEE_PAYER: remove role guard, this goes red.
+      ASSERT_EQ(paid.error().code(), -7200);
+      ASSERT_TRUE(attempt.balance == C(1000) && attempt.total_fees.is_zero());
+      ASSERT_TRUE(attempt.root.is_null() && attempt.new_total_state.is_null() && attempt.out_msgs.empty());
+    } else {
+      ASSERT_TRUE(paid.is_ok());
+      ASSERT_TRUE(attempt.balance == C(payer == coordinator_id ? 972 : 1000));
+      ASSERT_TRUE(attempt.total_fees == C(payer == coordinator_id ? 28 : 0));
+    }
+  }
+  changed = effects;
+  // The additional payer must not turn insufficient funding into a partial
+  // debit or publication. Exercise the same collection chain for both roles.
+  for (const auto& payer : {coordinator_id, custody_id}) {
+    auto payment = effects;
+    payment.fees->state_fee = td::make_refint(0);
+    payment.fees->compute_fee = td::make_refint(1001);
+    payment.fees->tip = td::make_refint(0);
+    payment.fees->compute_payer = payer;
+    auto payment_root = block::encode_workchain_account_effects(payment, 2, 0, 4096).move_as_ok();
+    auto payment_bindings = block::build_workchain_participant_records(td::Bits256(input->get_hash().bits()),
+        td::Bits256(payment_root->get_hash().bits()), {coordinator_id, custody_id}, 2).move_as_ok();
+    auto& payer_account = payer == coordinator_id ? coordinator : custody;
+    block::transaction::Transaction attempt(payer_account, block::transaction::Transaction::tr_workchain_batch, 21, 10);
+    auto paid = payer == coordinator_id
+        ? attempt.prepare_workchain_entry(payment_bindings[0], input, payment_root, number(321), cfg, 0, 4096)
+        : attempt.prepare_workchain_import_participant(payment_bindings[1], input, payment_root, number(322), cfg, 0, 4096);
+    ASSERT_TRUE(paid.is_error());
+    ASSERT_TRUE(attempt.balance == C(1000) && attempt.total_fees.is_zero());
+    ASSERT_TRUE(attempt.root.is_null() && attempt.new_total_state.is_null() && attempt.out_msgs.empty());
+    ASSERT_TRUE(block::build_workchain_inbound_allocation_overlay(old.accounts, identity, input, payment_root,
+        coordinator_id, custody_id, 2, 2, 0, 0, 4096, cfg).is_error());
+    ASSERT_EQ(old.accounts->get_hash(), original_hash);
+  }
+  // Exercise an actual third participant too: it may participate without
+  // paying, but declaring it the compute payer must fail at Native membership.
+  {
+    const td::Bits256 third_id(number(2)->get_hash().bits());
+    block::Account third(2, third_id.bits());
+    ASSERT_TRUE(third.unpack(accounts.lookup(third_id), 10, false));
+    auto third_access = access;
+    third_access.reads.push_back({third_id, td::Bits256(third.total_state->get_hash().bits())});
+    third_access.writes.push_back(third_id);
+    std::sort(third_access.reads.begin(), third_access.reads.end(), [](const auto& a, const auto& b) { return a.account < b.account; });
+    std::sort(third_access.writes.begin(), third_access.writes.end());
+    auto third_input = block::encode_workchain_host_input(identity, admitted, third_access, {}, 3, 3, 0).move_as_ok();
+    for (const auto& payer : {custody_id, third_id}) {
+      auto payment = effects;
+      payment.updates.push_back({third_id, number(323)});
+      std::sort(payment.updates.begin(), payment.updates.end(), [](const auto& a, const auto& b) { return a.account < b.account; });
+      payment.fees->state_fee = td::make_refint(0);
+      payment.fees->compute_fee = td::make_refint(28);
+      payment.fees->tip = td::make_refint(0);
+      payment.fees->compute_payer = payer;
+      auto payment_root = block::encode_workchain_account_effects(payment, 3, 0, 4096).move_as_ok();
+      auto bindings3 = block::build_workchain_participant_records(td::Bits256(third_input->get_hash().bits()),
+          td::Bits256(payment_root->get_hash().bits()), third_access.writes, 3).move_as_ok();
+      const auto index = std::find(third_access.writes.begin(), third_access.writes.end(), third_id) - third_access.writes.begin();
+      block::transaction::Transaction attempt(third, block::transaction::Transaction::tr_workchain_batch, 21, 10);
+      auto paid = attempt.prepare_workchain_import_participant(bindings3[index], third_input, payment_root,
+          number(323), cfg, 0, 4096);
+      if (payer == third_id) {
+        ASSERT_TRUE(paid.is_error());  // THIRD_PARTICIPANT_PAYER, not malformed declarations.
+        ASSERT_EQ(paid.error().code(), -7200);
+        ASSERT_TRUE(attempt.root.is_null() && attempt.new_total_state.is_null() && attempt.out_msgs.empty());
+      } else {
+        ASSERT_TRUE(paid.is_ok());
+      }
+      ASSERT_TRUE(attempt.balance == C(1000) && attempt.total_fees.is_zero());
+    }
+  }
+  changed = effects;
   std::swap(changed.fees->custody, changed.fees->coordinator);
   auto wrong_roles = block::encode_workchain_account_effects(changed, 2, 1, 4096).move_as_ok();
   ASSERT_TRUE(block::build_workchain_inbound_allocation_overlay(old.accounts, identity, input, wrong_roles,

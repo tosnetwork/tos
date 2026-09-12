@@ -23,7 +23,7 @@ inline std::optional<std::uint32_t> m5_live_withdrawal_limit(const std::filesyst
 inline block::WorkchainWithdrawalAccount m5_live_account(const td::Ref<vm::Cell>& root,
                                                         std::optional<std::uint32_t> limit) {
   auto slice = vm::load_cell_slice(root);
-  if (slice.prefetch_ulong(32) == block::gen::UnoV2AccountStateWithdrawals::cons_tag[0]) {
+  if (slice.prefetch_ulong(32) == block::gen::UnoV2AccountStateWithdrawalsV2::cons_tag[0]) {
     CHECK(limit);
     return block::decode_workchain_withdrawal_account(root,*limit).move_as_ok();
   }
@@ -61,8 +61,12 @@ inline block::WorkchainTransferEnvironment wallet_environment(const std::filesys
       fee, 16, b.account_schema, b.relation_profile, b.proof_profile};
 }
 inline block::WorkchainConfidentialAccount wallet_state(const std::filesystem::path& fixture, unsigned owner) {
-  return block::decode_workchain_confidential_account(
-      account_data(load(fixture / "current-state.boc"), wallet_account(owner))).move_as_ok();
+  auto account = m5_live_account(account_data(load(fixture / "current-state.boc"), wallet_account(owner)),
+                                m5_live_withdrawal_limit(fixture)).account;
+  // Proof-only projection. The host must retain the authenticated control root;
+  // this wallet never installs the projected legacy encoding.
+  if (account.schema_version == 4) account.schema_version = wallet_environment(fixture, 1).account_schema;
+  return account;
 }
 inline void save_operation(const std::filesystem::path& fixture, td::Ref<vm::Cell> candidate,
                            std::vector<td::Bits256> accounts) {
@@ -97,7 +101,9 @@ inline std::vector<td::Bits256> wallet_words(const std::string& hex) {
 }
 inline void prepare_debit(const std::filesystem::path& fixture, bool finish, bool quote = false) {
   auto env = wallet_environment(fixture, 1); env.protocol.kind = 5;
-  auto old = wallet_state(fixture, 0);
+  const auto predecessor = account_data(load(fixture / "current-state.boc"), wallet_account(0));
+  auto old = m5_live_account(predecessor, m5_live_withdrawal_limit(fixture)).account;
+  old.schema_version = env.account_schema; // Crypto projection, not the committed predecessor.
   auto zero = load(fixture / "zerostate.boc");
   tos::BlockIdExt zid{tos::BlockId{tos::masterchainId,tos::shardIdAll,0},zero->get_hash().bits(),td::Bits256::zero()};
   auto cfg = block::ConfigInfo::extract_config(zero,zid,block::Config::needWorkchainInfo | block::Config::needCapabilities).move_as_ok();
@@ -111,7 +117,7 @@ inline void prepare_debit(const std::filesystem::path& fixture, bool finish, boo
   auto aid = block::derive_workchain_attempt_id(wid).move_as_ok();
   block::WorkchainWithdrawalInput input{wid,aid,
       {{old.address, old.auth_nonce, old.available_revision, old.key_epoch, UINT32_MAX, number("fee")},
-       {0,wallet_account(1)}, {number("principal"),number("outward_fee"),number("return_reserve"),number("fee")},
+       {0,wallet_account(1)}, {number("principal"),number("outward_fee"),number("fee")},
        {points[0],points[1]},points[2]}, {}};
   if (quote) {
     block::gen::ShardStateUnsplit::Record state;
@@ -128,7 +134,7 @@ inline void prepare_debit(const std::filesystem::path& fixture, bool finish, boo
     td::write_file((fixture / "payout.quote.txt").string(),priced.total_fee->to_dec_string()+"\n").ensure();
     return;
   }
-  auto context = block::m3_test::m5_debit_context(env,*business.prepare,old,input).move_as_ok();
+  auto context = block::m3_test::m5_debit_context(env,*business.prepare,old,input,predecessor).move_as_ok();
   if (finish) {
     input.authorization = {wallet_words(field(fixture / "operation.proof.txt","commitments")),
         wallet_words(field(fixture / "operation.proof.txt","responses")),

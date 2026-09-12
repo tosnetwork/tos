@@ -7,9 +7,12 @@
 #include "workchain-m3-test-funding-operation.h"
 #include "workchain-m4-deposit-input.h"
 #include "workchain-m5-failed-input.h"
+#include "workchain-m5-sweep-input.h"
+#include "workchain-m5-sweep.h"
 #include "workchain-m5-debit.h"
 #include "workchain-m5-payout.h"
 #include "block/workchain-failed-funded.h"
+#include "block/workchain-withdrawal-expiry.h"
 #include "block/workchain-deposit-transition.h"
 #include "block/workchain-deposit-rejection-settlement.h"
 #include "block/workchain-confidential-execution.h"
@@ -44,6 +47,17 @@ class M3NodeEngine final : public RegisteredWorkchainAccountEngine {
   };
   static td::Status local(td::Slice reason) { return td::Status::Error(-7201, reason); }
   static td::Status invalid(td::Slice reason) { return td::Status::Error(-7200, reason); }
+  static td::Result<bool> withdrawal_root(const td::Ref<vm::Cell>& root) {
+    if (root.is_null()) return local("authenticated account data absent");
+    try {
+      bool special = false;
+      auto slice = vm::load_cell_slice_special(root, special);
+      if (special) return local("authenticated account root is special");
+      return slice.prefetch_ulong(32) == gen::UnoV2AccountStateWithdrawalsV2::cons_tag[0];
+    } catch (const vm::VmVirtError&) { return local("authenticated account root incomplete");
+    } catch (const vm::VmError&) { return local("authenticated account root unavailable");
+    } catch (const std::bad_alloc&) { return local("authenticated account root allocation unavailable"); }
+  }
   static td::Result<WorkchainReplayInput> decode_candidate(const td::Ref<vm::Cell>& candidate) {
     // Only the already materialized candidate component is reachable here, not
     // an authenticated account/configuration read. Allocation failures retain
@@ -122,8 +136,9 @@ class M3NodeEngine final : public RegisteredWorkchainAccountEngine {
       return local("M3 test engine lacks bound coordinator/custody configuration");
     TRY_RESULT(parameters, decode_workchain_engine_parameters(payload));
     TRY_RESULT(business, decode_m3_test_business_parameters(parameters.parameters));
-    if (business.prepare && !business.prepare->max_bounce_cost)
-      return local("ConfigInvalid: explicit max_bounce_cost absent");
+    if (business.sweep && (!business.sweep->bucket_limits || !parameters.resources.state.max_cells ||
+        !std::in_range<int>(parameters.resources.state.max_cells)))
+      return local("ConfigInvalid: explicit sweep capacity or validation budget absent");
     if (descriptor.workchain_id != 2 || business.rules.custody != *found->second.custody_address ||
         parameters.resources.admission_version != 4)
       return local("M3 test engine configuration incompatible with metered execution");
@@ -143,15 +158,23 @@ class M3NodeEngine final : public RegisteredWorkchainAccountEngine {
     const auto* cfg = dynamic_cast<const Configuration*>(&configuration);
     if (!cfg || td::Bits256(identity.configuration_hash.bits()) != cfg->configuration_hash)
       return local("M3 proof inspection configuration mismatch");
+    if (is_m5_test_sweep(candidate)) {
+      TRY_STATUS(decode_m5_test_sweep(candidate));
+      if (!cfg->business.sweep || cfg->business.sweep->count != 1)
+        return local("ConfigInvalid: supported explicit sweep round absent");
+      UnoCryptoSystemEncryptionRequestV2 shape{};
+      shape.abi_version = 2; shape.amount = 1; shape.origin_bytes = 115; shape.origin[0] = 2;
+      TRY_RESULT(work, workchain_proof_operations_v4(shape));
+      return work.total();
+    }
     if (is_m5_test_debit(candidate)) {
       TRY_RESULT(debit, decode_m5_test_debit(candidate));
       if (!cfg->business.prepare || !cfg->business.operation_tariff)
         return local("ConfigInvalid: explicit test prepare policy absent");
-      TRY_STATUS(check_m5_test_reserve(*cfg->business.prepare, debit.data.amounts.return_reserve));
       TRY_RESULT(fees, derive_workchain_withdrawal_fee_amounts(cfg->business.operation_tariff->base,
           cfg->business.prepare->state_fee, debit.data.amounts.operation_fee)); (void)fees;
-      UnoCryptoWithdrawalVerifyRequestV1 shape{};
-      shape.abi_version = 1; shape.limits = cfg->business.limits; shape.context_bytes = 566;
+      UnoCryptoWithdrawalVerifyRequestV2 shape{};
+      shape.abi_version = 2; shape.limits = cfg->business.limits; shape.context_bytes = 566;
       shape.commitment_count = 8; shape.response_count = 6; shape.proof_bytes = 864;
       TRY_RESULT(work, workchain_proof_operations_v4(shape)); return work.total();
     }
@@ -244,19 +267,87 @@ class M3NodeEngine final : public RegisteredWorkchainAccountEngine {
       result.protected_coordinator_snapshot = td::Bits256(coordinator.data->get_hash().bits());
       return result;
     };
+    if (is_m5_test_sweep(host.candidate)) {
+      TRY_STATUS(decode_m5_test_sweep(host.candidate));
+      if (!b.sweep || !b.sweep->bucket_limits || !cfg->parameters.resources.state.max_cells ||
+          !std::in_range<int>(cfg->parameters.resources.state.max_cells))
+        return local("ConfigInvalid: explicit sweep capacity or validation budget absent");
+      const auto validation_cells = static_cast<int>(cfg->parameters.resources.state.max_cells);
+      auto decoded_bucket = decode_workchain_unexpected_bucket(system.unexpected, *b.sweep->bucket_limits, validation_cells);
+      if (decoded_bucket.is_error()) return local("authenticated sweep bucket unavailable");
+      const auto& bucket = decoded_bucket.ok();
+      TRY_STATUS(verify_m5_sweep_authorization(*b.sweep, bucket, clock.height));
+      if (bucket.entries.empty() || !bucket.entries.front().account_id)
+        return local("test sweep requires an attributed first entry");
+      // The account is selected by authenticated entry order, never by the
+      // selector or governance. Access declarations cannot override this key.
+      TRY_RESULT(owner, read(accounts, *bucket.entries.front().account_id, clock.gen_utime, true));
+      TRY_RESULT(custody, read(accounts, *cfg->ingress.custody_address, clock.gen_utime, false));
+      TRY_RESULT(credit, apply_m5_sweep_credit(b, owner.data, coordinator.data, clock.height, validation_cells, verifier));
+      WorkchainAccountEffects result;
+      result.updates = {{credit.target, credit.owner}, {cfg->ingress.executor_address, credit.coordinator},
+          {*cfg->ingress.custody_address, custody.data}};
+      std::sort(result.updates.begin(), result.updates.end(), [](const auto& a, const auto& b) {
+        return a.account < b.account;
+      });
+      result.native_transfers = {{cfg->ingress.executor_address, *cfg->ingress.custody_address,
+          CurrencyCollection(workchain_unsigned_fee(credit.net))}};
+      result.bucket_sweep_credit = WorkchainAccountEffects::BucketSweepCredit{
+          credit.gross, credit.slot, credit.compute};
+      // S is retained in coordinator. Only g follows the EXISTING C collection
+      // chain; neither fee transits custody. Payer is an execution result from
+      // authenticated operation/configuration, never a selector-provided key.
+      if (credit.compute) result.fees = WorkchainFeeSettlement{*cfg->ingress.custody_address,
+          cfg->ingress.executor_address, td::make_refint(0), workchain_unsigned_fee(credit.compute),
+          td::make_refint(0), cfg->ingress.executor_address};
+      return finish(std::move(result));
+    }
     if (is_m5_test_debit(host.candidate)) {
       TRY_RESULT(debit, decode_m5_test_debit(host.candidate));
       if (!b.prepare || !b.operation_tariff) return local("ConfigInvalid: explicit test prepare policy absent");
-      TRY_STATUS(check_m5_test_reserve(*b.prepare, debit.data.amounts.return_reserve));
       TRY_RESULT(fees, derive_workchain_withdrawal_fee_amounts(b.operation_tariff->base,
           b.prepare->state_fee, debit.data.amounts.operation_fee));
       TRY_RESULT(native, read(accounts, debit.data.claims.source.account, clock.gen_utime, true));
-      TRY_RESULT(source, decode_workchain_confidential_account(native.data));
+      // Existing v4 control state survives subsequent owner operations. The
+      // expiry helper may remove only already-authenticated phase-1 records;
+      // phase-0 queue observation is a separate D73 host prerequisite.
+      auto read_owner = [&]() -> td::Result<WorkchainWithdrawalAccount> {
+        auto slice = vm::load_cell_slice(native.data);
+        if (slice.prefetch_ulong(32) == gen::UnoV2AccountStateWithdrawalsV2::cons_tag[0])
+          return decode_workchain_withdrawal_account(native.data, b.prepare->withdrawal_limit);
+        TRY_RESULT(core, decode_workchain_confidential_account(native.data));
+        return WorkchainWithdrawalAccount{core, {core.lifecycle, {}}, {}};
+      };
+      TRY_RESULT(owner, read_owner());
+      // Only this owner-authorized operation may advance observation state.
+      // The old record already carries prepare's atomic-enqueue provenance;
+      // this read supplies ONLY subsequent absence, never initial presence.
+      for (auto& record : owner.control.withdrawals) {
+        // The account decoder has validated every stored record already.
+        if (record.timing.phase != 0) continue;  // Committed Q is immutable.
+        TRY_RESULT(absent, accounts.payout_absent(*cfg->ingress.custody_address,
+            record.timing.payout_created_lt, record.timing.opened_height));
+        if (!absent) continue;
+        std::uint32_t deadline;
+        if (__builtin_add_overflow(*absent, record.timing.settlement_blocks, &deadline))
+          return local("authenticated observed Withdrawal deadline exceeds encoded height");
+        record.timing.phase = 1;
+        record.timing.queue_removed_height = *absent;
+        LOG(INFO) << "WORKCHAIN_QUEUE_ABSENT withdrawal=" << record.withdrawal_id.to_hex()
+                  << " created_lt=" << record.timing.payout_created_lt << " Q=" << *absent;
+      }
+      TRY_RESULT(expiry, expire_workchain_withdrawals(std::move(owner), clock.height));
+      for (const auto& closed : expiry.closed)
+        LOG(INFO) << "WORKCHAIN_RETURN_CALLEE paid_expiry withdrawal=" << closed.withdrawal_id.to_hex()
+                  << " principal=" << closed.principal;
+      auto source = expiry.account.account;
+      // Private relation projection only, never installed as an account root.
+      source.schema_version = b.account_schema;
       WorkchainTransferEnvironment env{b.limits, b.domain,
           {2, 1, 1, 2, 5, domain.global_id, 2, domain.genesis_hash, domain.instance_id},
           b.rules, profiles, b.fee_profile, b.fee_effective_height, clock.height,
           fees.total, 16, b.account_schema, b.relation_profile, b.proof_profile};
-      TRY_RESULT(updated, execute_m5_test_debit(env, *b.prepare, source, debit, verifier));
+      TRY_RESULT(updated, execute_m5_test_debit(env, *b.prepare, source, debit, verifier, native.data));
       TRY_RESULT(custody, read(accounts, *cfg->ingress.custody_address, clock.gen_utime, false));
       if (!cfg->payout_prices) return local("authenticated payout pricing absent");
       // This first prepare profile has no accompanying Native inbox. Never
@@ -288,18 +379,19 @@ class M3NodeEngine final : public RegisteredWorkchainAccountEngine {
         return local("priced payout message unavailable");
       TRY_RESULT(next, decode_workchain_confidential_account(updated));
       // Explicit, authenticated schema migration; old codecs never rewrite a root.
-      next.schema_version = 3;
-      WorkchainWithdrawalAccount migrated{next, {next.lifecycle, {}}, {}};
+      next.schema_version = 4;
+      WorkchainWithdrawalAccount migrated{next, {next.lifecycle, expiry.account.control.withdrawals},
+                                         expiry.account.origin_pending};
+      const auto retained_records = migrated.control.withdrawals.size();
       migrated.control.withdrawals.push_back({debit.claimed_operation_id, debit.claimed_attempt_id,
           source.auth_nonce, debit.data.amounts.principal, source.address, debit.data.destination,
-          {debit.data.amounts.outward_fee, debit.data.amounts.return_reserve, 0, debit.data.amounts.return_reserve},
+          {debit.data.amounts.outward_fee},
           {0, info.created_lt, clock.height, 0, b.prepare->settlement_blocks}});
       TRY_RESULT(with_obligation, encode_workchain_withdrawal_account(migrated, b.prepare->withdrawal_limit));
       // Also anchor the encoded W record, not merely the operation proposal.
       TRY_RESULT(installed, decode_workchain_withdrawal_account(with_obligation, b.prepare->withdrawal_limit));
-      if (installed.control.withdrawals.size() != 1)
+      if (installed.control.withdrawals.size() != retained_records + 1)
         return local("constructed prepare record count mismatch");
-      TRY_STATUS(check_m5_test_reserve(*b.prepare, installed.control.withdrawals.front().costs.original_reserve));
       WorkchainAccountEffects result;
       result.payout_request = request;
       result.payout_forward_fee = debit.data.amounts.outward_fee;
@@ -359,19 +451,29 @@ class M3NodeEngine final : public RegisteredWorkchainAccountEngine {
       // Neutral errors still include acquisition faults. Until a typed dispatch
       // verdict exists, do not relabel them as malformed candidate content.
       if (association.is_error()) return local("custody return association unavailable");
-      if (!association.ok()) return invalid("Failed selector does not strongly match a pending payout");
+      // No match is normal: the independent late-return admission uses the
+      // returned body for attribution and never invents an obligation release.
+      if (!association.ok()) {
+        auto described = describe_workchain_late_return(envelope.msg, 2, *cfg->ingress.custody_address);
+        if (described.is_error()) return local("authenticated return description unavailable");
+        auto body = vm::load_cell_slice(described.ok().original_body);
+        if (body.size_ext() == 256 && td::Bits256(body.data_bits()) != selector.owner.account)
+          return invalid("late return selector differs from authenticated attribution");
+      }
       WorkchainFailedFundedPolicy resolved{b.failed->withdrawal_limit, b.deposit->system_slots,
           b.deposit->slot_fee, b.operation_tariff->base, b.failed->issuance_billing_units};
       auto prepared = prepare_workchain_failed_funded(inbox, target.data, coordinator.data, resolved,
           b.domain, network, *cfg->ingress.custody_address, cfg->ingress.executor_address, clock.height, verifier);
-      // This intentionally incomplete TEST profile does not reinterpret an
-      // unsupported late/no-issuance/no-slot branch as a successful settlement.
+      // A failed transition is not evidence of bucket publication. Supported
+      // no-issuance paths return explicit account updates and Native transfers.
       if (prepared.is_error()) return local("funded Failed transition unavailable in test profile");
       auto accepted = prepared.move_as_ok();
       WorkchainAccountEffects result;
       result.updates = {{selector.owner.account, accepted.owner_data},
           {cfg->ingress.executor_address, accepted.coordinator_data}, {*cfg->ingress.custody_address, custody.data}};
-      result.fees = accepted.fees;
+      if (accepted.issued) result.fees = accepted.fees;
+      result.native_transfers = accepted.transfers;
+      if (!accepted.issued) result.bucket_return_message = accepted.inbound_message;
       std::sort(result.updates.begin(), result.updates.end(), [](const auto& a, const auto& b) {
         return a.account < b.account;
       });
@@ -483,17 +585,51 @@ class M3NodeEngine final : public RegisteredWorkchainAccountEngine {
       result.registration = std::make_shared<WorkchainRegistrationPaymentResult>(std::move(payment));
     } else if (const auto* closure = std::get_if<WorkchainClosureReplayInput>(&wire)) {
       const auto key = closure->context.subject.account;
+      if (system.unexpected.not_null()) {
+        auto bucket = decode_workchain_unexpected_bucket(system.unexpected, {256, 256}, 4096);
+        if (bucket.is_error()) return local("authenticated closure bucket unavailable");
+        for (const auto& entry : bucket.ok().entries)
+          if (entry.account_id && *entry.account_id == key)
+            return invalid("closure blocked by attributed unexpected value");
+      }
       TRY_RESULT(native, read(accounts, key, clock.gen_utime, true));
-      auto decoded_account = decode_workchain_confidential_account(native.data);
+      std::optional<WorkchainWithdrawalAccount> controlled;
+      auto decoded_account = [&]() -> td::Result<WorkchainConfidentialAccount> {
+        TRY_RESULT(has_control, withdrawal_root(native.data));
+        if (!has_control)
+          return decode_workchain_confidential_account(native.data);
+        if (!b.prepare) return local("ConfigInvalid: authenticated Withdrawal limit absent");
+        TRY_RESULT(owner, decode_workchain_withdrawal_account(native.data, b.prepare->withdrawal_limit));
+        // Closing an account never invents Q. Only previously observed phase-1
+        // obligations may expire; phase-0 remains an in-flight closure blocker.
+        TRY_RESULT(expiry, expire_workchain_withdrawals(std::move(owner), clock.height));
+        controlled = std::move(expiry.account);
+        auto projected = controlled->account;
+        projected.schema_version = b.account_schema;
+        return projected;
+      }();
       if (decoded_account.is_error()) return local("authenticated closure account record unavailable");
       auto account = decoded_account.move_as_ok();
+      if (controlled && (!controlled->control.withdrawals.empty() || !controlled->origin_pending.empty()))
+        return invalid("closure has authenticated obligations or system pending receipts");
       TRY_RESULT(transition, replay_workchain_account_closure(account, system, possession, b.domain,
                                                              host.candidate, verifier));
+      if (controlled) {
+        auto decoded_closed = decode_workchain_confidential_account(transition.account_data);
+        if (decoded_closed.is_error()) return local("constructed closure account unavailable");
+        auto closed = decoded_closed.move_as_ok();
+        closed.schema_version = 4;
+        controlled->account = std::move(closed);
+        controlled->control.lifecycle = controlled->account.lifecycle;
+        auto encoded_closed = encode_workchain_withdrawal_account(*controlled, b.prepare->withdrawal_limit);
+        if (encoded_closed.is_error()) return local("constructed closure control unavailable");
+        transition.account_data = encoded_closed.move_as_ok();
+      }
       result.updates = {{key, transition.account_data},
                         {cfg->ingress.executor_address, transition.coordinator_data}};
       result.closure = std::make_shared<WorkchainAccountClosureExecution>(WorkchainAccountClosureExecution{
           key, td::Bits256(native.data->get_hash().bits()), td::Bits256(coordinator.data->get_hash().bits()),
-          std::move(transition)});
+          std::move(transition), controlled ? std::optional{b.prepare->withdrawal_limit} : std::nullopt});
     } else {
       const auto& transfer = std::get<WorkchainTransferInput>(wire);
       const auto& claims = workchain_transfer_claims(transfer.data);
@@ -507,17 +643,60 @@ class M3NodeEngine final : public RegisteredWorkchainAccountEngine {
         amounts = reconstructed;
       }
       TRY_RESULT(native, read(accounts, claims.source.account, clock.gen_utime, true));
-      auto decoded_source = decode_workchain_confidential_account(native.data);
-      if (decoded_source.is_error()) return local("authenticated source record unavailable");
+      std::optional<WorkchainWithdrawalAccount> controlled_source;
+      auto decoded_source = [&]() -> td::Result<WorkchainConfidentialAccount> {
+        TRY_RESULT(has_control, withdrawal_root(native.data));
+        if (!has_control) {
+          auto legacy = decode_workchain_confidential_account(native.data);
+          if (legacy.is_error()) return local("authenticated source record unavailable");
+          return legacy;
+        }
+        if (!b.prepare) return local("ConfigInvalid: authenticated Withdrawal limit absent");
+        auto decoded_owner = decode_workchain_withdrawal_account(native.data, b.prepare->withdrawal_limit);
+        if (decoded_owner.is_error()) return local("authenticated source control unavailable");
+        auto owner = decoded_owner.move_as_ok();
+        // SEND/COLLECT are owner operations, not another Withdrawal. Observe only
+        // subsequent queue absence, using the same shared authenticated budget.
+        for (auto& record : owner.control.withdrawals) {
+          if (record.timing.phase != 0) continue;
+          TRY_RESULT(absent, accounts.payout_absent(*cfg->ingress.custody_address,
+              record.timing.payout_created_lt, record.timing.opened_height));
+          if (!absent) continue;
+          std::uint32_t deadline;
+          if (__builtin_add_overflow(*absent, record.timing.settlement_blocks, &deadline))
+            return local("authenticated observed Withdrawal deadline exceeds encoded height");
+          record.timing.phase = 1;
+          record.timing.queue_removed_height = *absent;
+          LOG(INFO) << "WORKCHAIN_QUEUE_ABSENT withdrawal=" << record.withdrawal_id.to_hex()
+                    << " created_lt=" << record.timing.payout_created_lt << " Q=" << *absent;
+        }
+        auto expired = expire_workchain_withdrawals(std::move(owner), clock.height);
+        if (expired.is_error()) return local("authenticated SEND expiry record unavailable");
+        auto expiry = expired.move_as_ok();
+        for (const auto& closed : expiry.closed)
+          LOG(INFO) << "WORKCHAIN_RETURN_CALLEE paid_expiry withdrawal=" << closed.withdrawal_id.to_hex()
+                    << " principal=" << closed.principal;
+        controlled_source = std::move(expiry.account);
+        auto projected = controlled_source->account;
+        projected.schema_version = b.account_schema;  // Private proof projection only.
+        return projected;
+      }();
+      if (decoded_source.is_error()) return decoded_source.move_as_error();
       auto source = decoded_source.move_as_ok();
       std::optional<WorkchainConfidentialAccount> destination;
       td::Bits256 target = claims.source.account;
       if (const auto* send = std::get_if<WorkchainSendData>(&transfer.data)) {
         target = send->destination.account;
-        TRY_RESULT(target_native, read(accounts, target, clock.gen_utime, true));
-        auto decoded = decode_workchain_confidential_account(target_native.data);
-        if (decoded.is_error()) return local("authenticated destination record unavailable");
-        destination = decoded.move_as_ok();
+        if (controlled_source && target == claims.source.account) {
+          // The same authenticated account must use the identical private
+          // projection; independently decoding it as legacy would abstain.
+          destination = source;
+        } else {
+          TRY_RESULT(target_native, read(accounts, target, clock.gen_utime, true));
+          auto decoded = decode_workchain_confidential_account(target_native.data);
+          if (decoded.is_error()) return local("authenticated destination record unavailable");
+          destination = decoded.move_as_ok();
+        }
       }
       WorkchainTransferEnvironment env{b.limits, b.domain,
           {2, 1, 1, 2, kind, domain.global_id, 2, domain.genesis_hash, domain.instance_id},
@@ -527,6 +706,19 @@ class M3NodeEngine final : public RegisteredWorkchainAccountEngine {
       const auto consumed_before = verifier.consumed();
       TRY_RESULT(applied, execute_workchain_confidential_transfer(env, transfer, std::optional{source},
                                                                  destination, verifier));
+      if (controlled_source) {
+        auto decoded_update = decode_workchain_confidential_account(applied.source_data);
+        if (decoded_update.is_error()) return local("constructed SEND source unavailable");
+        auto updated = decoded_update.move_as_ok();
+        updated.schema_version = 4;
+        controlled_source->account = std::move(updated);
+        controlled_source->control.lifecycle = controlled_source->account.lifecycle;
+        // Keep all existing origin receipts and the bounded W dictionary.
+        // Installing the private legacy projection would silently discard them.
+        auto encoded_update = encode_workchain_withdrawal_account(*controlled_source, b.prepare->withdrawal_limit);
+        if (encoded_update.is_error()) return local("constructed SEND control unavailable");
+        applied.source_data = encoded_update.move_as_ok();
+      }
       result.updates = {{claims.source.account, applied.source_data},
                         {cfg->ingress.executor_address, coordinator.data}};
       if (applied.destination_data.not_null()) result.updates.push_back({target, applied.destination_data});

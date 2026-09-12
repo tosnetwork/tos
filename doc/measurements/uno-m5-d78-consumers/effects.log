@@ -1,0 +1,3 @@
+BASELINE: successful and rejected statement calls; complete account files unchanged
+RED: withdrawal.account_fixture_changed; actual callee write observed
+RESTORED: unchanged; no Native publication or full authenticated-cut claim

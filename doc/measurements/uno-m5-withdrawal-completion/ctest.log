@@ -1,0 +1,15 @@
+Internal ctest changing into directory: /tmp/b-wallet-pin-cmake
+Test project /tmp/b-wallet-pin-cmake
+    Start 145: test-workchain-withdrawal-completion-oracle-selftest
+1/2 Test #145: test-workchain-withdrawal-completion-oracle-selftest ....   Passed    0.09 sec
+    Start 146: test-workchain-withdrawal-completion-handoff-selftest
+2/2 Test #146: test-workchain-withdrawal-completion-handoff-selftest ...   Passed    0.14 sec
+
+100% tests passed, 0 tests failed out of 2
+
+Label Time Summary:
+handoff-selftest    =   0.22 sec*proc (2 tests)
+m5                  =   0.22 sec*proc (2 tests)
+workchain           =   0.22 sec*proc (2 tests)
+
+Total Test time (real) =   0.23 sec

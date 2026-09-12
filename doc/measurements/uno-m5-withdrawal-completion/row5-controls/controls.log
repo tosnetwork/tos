@@ -1,0 +1,16 @@
+retarget-p live-exit -6
+RED:DELTA_P
+dispatch ['late-return-admission'] deltaP 9999863 deltaW 0 records equal True
+ORACLE_MISSING:DELTA_P
+delete-other live-exit -6
+RED:RECORD_CLOSURE
+dispatch ['late-return-admission'] deltaP -137 deltaW -137 records equal False
+ORACLE_MISSING:RECORD_CLOSURE
+RESTORED_OK
+decrement-w live-exit -6
+RED:RECORD_CLOSURE
+dispatch ['late-return-admission'] deltaP 0 deltaW -1 records equal False
+ORACLE_MISSING:RECORD_CLOSURE
+RESTORED_OK
+Same accepted decrement-w artifact; remove only RECORD_CLOSURE from the oracle -> DELTA_W.
+This does not count as a DELTA_W red with the intact oracle or close row5.

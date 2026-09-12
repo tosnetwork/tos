@@ -7,7 +7,8 @@
 
 namespace block {
 
-static_assert(gen::UnoV2FeeSettlement::cons_tag[0] == 0xb02c852dU);
+static_assert(gen::UnoV2FeeSettlement::cons_tag[gen::UnoV2FeeSettlement::uno_v2_fee_settlement] == 0xb02c852dU);
+static_assert(gen::UnoV2FeeSettlement::cons_tag[gen::UnoV2FeeSettlement::uno_v2_fee_settlement_payer] == 0x53574632U);
 static_assert(gen::UnoV2NativeEffects::cons_tag[0] == 0x0bd47725U);
 static_assert(gen::UnoV2NativeEffects::cons_tag[1] == 0x67e2d380U);
 
@@ -17,11 +18,28 @@ static_assert(gen::UnoV2NativeEffects::cons_tag[1] == 0x67e2d380U);
 struct WorkchainFeeSettlement {
   td::Bits256 custody, coordinator;
   td::RefInt256 state_fee, compute_fee, tip;
+  // Explicit payer claim, independently reconstructed by the engine. Absence
+  // keeps the legacy custody payer. Encoding alone never authorizes this field.
+  std::optional<td::Bits256> compute_payer;
 };
 
 struct WorkchainFeeTotals {
   CurrencyCollection state, collected, total;
 };
+
+// Native membership check, NOT operation authorization. The registered engine
+// must independently reconstruct this claim from the authenticated operation;
+// replay compares it with the candidate. Third-party claims stay encodable so
+// the attempted payment is rejected here, not confused with malformed framing.
+inline td::Result<td::Bits256> workchain_compute_fee_payer(const WorkchainFeeSettlement& fees) {
+  const auto payer = fees.compute_payer.value_or(fees.custody);
+  if (payer != fees.custody && payer != fees.coordinator)
+    return td::Status::Error(-7200, "aggregate fee payer outside authenticated roles");
+  if (payer == fees.coordinator &&
+      (fees.state_fee.is_null() || fees.tip.is_null() || td::cmp(fees.state_fee, 0) != 0 || td::cmp(fees.tip, 0) != 0))
+    return td::Status::Error(-7200, "coordinator compute payment cannot redirect state fee or tip");
+  return payer;
+}
 
 inline td::Result<WorkchainFeeTotals> checked_workchain_fee_totals(const WorkchainFeeSettlement& fees) {
   if (fees.custody == fees.coordinator) return td::Status::Error("fee settlement roles coincide");
@@ -44,6 +62,14 @@ inline td::Result<WorkchainFeeTotals> checked_workchain_fee_totals(const Workcha
 inline td::Result<td::Ref<vm::Cell>> encode_workchain_fee_settlement(const WorkchainFeeSettlement& fees) {
   TRY_STATUS(checked_workchain_fee_totals(fees));
   vm::CellBuilder cb;
+  if (fees.compute_payer) {
+    cb.store_long(0x53574632, 32).store_bits(fees.custody.bits(), 256).store_bits(fees.coordinator.bits(), 256);
+    for (const auto* amount : {&fees.state_fee, &fees.compute_fee, &fees.tip}) {
+      if (!tlb::t_Tomis.store_integer_value(cb, **amount)) return td::Status::Error("cannot encode fee amount");
+    }
+    cb.store_ref(vm::CellBuilder().store_bits(fees.compute_payer->bits(),256).finalize());
+    return cb.finalize();
+  }
   cb.store_long(0xb02c852d, 32).store_bits(fees.custody.bits(), 256).store_bits(fees.coordinator.bits(), 256);
   for (const auto* amount : {&fees.state_fee, &fees.compute_fee, &fees.tip}) {
     if (!tlb::t_Tomis.store_integer_value(cb, **amount)) return td::Status::Error("cannot encode fee amount");
@@ -73,15 +99,25 @@ inline td::Result<WorkchainNativeEffectsView> decode_workchain_native_effects(td
     }
     case 0x67e2d380: {
       gen::UnoV2NativeEffects::Record_uno_v2_native_effects_fees current;
-      gen::UnoV2FeeSettlement::Record record;
       if (!tlb::unpack_cell(root, current)) {
         return td::Status::Error("invalid fee-bearing native effects");
       }
-      vm::load_cell_slice_special(current.fees, special);
-      if (special || !tlb::unpack_cell(current.fees, record)) return td::Status::Error("invalid fee record");
-      WorkchainFeeSettlement fees{record.custody, record.coordinator,
-          tlb::t_Tomis.as_integer(record.state_fee), tlb::t_Tomis.as_integer(record.compute_fee),
-          tlb::t_Tomis.as_integer(record.tip)};
+      auto shape = vm::load_cell_slice_special(current.fees, special);
+      if (special || !shape.have(32)) return td::Status::Error("invalid fee record");
+      WorkchainFeeSettlement fees;
+      if (shape.prefetch_ulong(32) == 0xb02c852d) {
+        gen::UnoV2FeeSettlement::Record_uno_v2_fee_settlement record;
+        if (!tlb::unpack_cell(current.fees, record)) return td::Status::Error("invalid legacy fee record");
+        fees = {record.custody, record.coordinator, tlb::t_Tomis.as_integer(record.state_fee),
+            tlb::t_Tomis.as_integer(record.compute_fee), tlb::t_Tomis.as_integer(record.tip)};
+      } else if (shape.prefetch_ulong(32) == 0x53574632) {
+        gen::UnoV2FeeSettlement::Record_uno_v2_fee_settlement_payer record;
+        gen::UnoV2FeePayer::Record payer;
+        if (!tlb::unpack_cell(current.fees, record) || !tlb::unpack_cell(record.compute_payer, payer))
+          return td::Status::Error("invalid explicit fee payer record");
+        fees = {record.custody, record.coordinator, tlb::t_Tomis.as_integer(record.state_fee),
+            tlb::t_Tomis.as_integer(record.compute_fee), tlb::t_Tomis.as_integer(record.tip), payer.account};
+      } else return td::Status::Error("unknown fee record");
       TRY_STATUS(checked_workchain_fee_totals(fees));
       return WorkchainNativeEffectsView{current.payout, current.transfers, std::move(fees)};
     }

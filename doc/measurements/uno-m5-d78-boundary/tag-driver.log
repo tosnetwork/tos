@@ -1,0 +1,4 @@
+tag-good exit 0
+tag-mutant exit 1
+[1;31m[ 0][t 0][2026-09-12 05:23:10.868788834][test-workchain-proof-work.cpp:34]	Expectation failed: bytes.substr(0, tag.size()) is not equal to tag (uno-v2/withdrawal-statement/v2 != uno-v2/withdrawal-statement/v1)[0m
+tag-restored exit 0

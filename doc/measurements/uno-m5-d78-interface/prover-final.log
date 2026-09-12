@@ -1,0 +1,15 @@
+   Compiling tos-uno-crypto-prototype v0.1.0 (/home/tomi/tos-m2/uno/crypto)
+   Compiling tos-uno-wallet-prover v0.1.0 (/home/tomi/tos-m2/uno/prover)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.88s
+     Running unittests src/lib.rs (uno/prover/target/debug/deps/tos_uno_wallet_prover-f6d2e54e51612b4e)
+
+running 5 tests
+test tests::withdrawal::withdrawal_amount_overflow_and_public_identity_binding ... ok
+test tests::withdrawal::withdrawal_public_bound_is_not_a_constructor_gate ... ok
+D78_HOST_CONTEXT_BYTES=566 D78_STATEMENT_CONTEXT_BYTES=684
+test tests::withdrawal::withdrawal_smaller_debit_raw_send_passes_specialization_rejects ... ok
+test tests::withdrawal::withdrawal_real_proof_and_wrong_generated_points ... ok
+test tests::withdrawal::withdrawal_dedicated_abi_real_proof ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 8 filtered out; finished in 25.70s
+

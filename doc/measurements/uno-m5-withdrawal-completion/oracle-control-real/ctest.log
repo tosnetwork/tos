@@ -1,0 +1,40 @@
+Internal ctest changing into directory: /tmp/uno-merge-6ea2fbf80-tL5Uih
+UpdateCTestConfiguration  from :/tmp/uno-merge-6ea2fbf80-tL5Uih/DartConfiguration.tcl
+UpdateCTestConfiguration  from :/tmp/uno-merge-6ea2fbf80-tL5Uih/DartConfiguration.tcl
+Test project /tmp/uno-merge-6ea2fbf80-tL5Uih
+Constructing a list of tests
+Done constructing a list of tests
+Updating test list for fixtures
+Added 0 tests to meet fixture requirements
+Checking test dependency graph...
+Checking test dependency graph end
+test 24
+    Start 24: test-workchain-withdrawal-completion-oracle-control
+
+24: Test command: /home/tomi/.local/bin/python3 "/home/tomi/tos/test/uno-m3-live.py" "--build" "/tmp/uno-merge-6ea2fbf80-tL5Uih" "--completion-contract" "oracle-control"
+24: Test timeout computed to be: 60
+24: COMPLETION_RUN:/tmp/uno-completion-bucket-0meh530h
+24: COMPLETION_META_REAL_OBSERVATION:row4:ROW4_TRIGGERED
+24: ORACLE_MISSING:ROW4_TRIGGERED
+24: COMPLETION_META_REAL_OBSERVATION:row6:LATE_NOT_ROW3
+24: ORACLE_MISSING:LATE_NOT_ROW3
+24: COMPLETION_META_REAL_OBSERVATION:row5:DELTA_P
+24: ORACLE_MISSING:DELTA_P
+24: COMPLETION_META_REAL_OBSERVATION:bucket-small:BUCKET_FIXED_ATTRIBUTION
+24: ORACLE_MISSING:BUCKET_FIXED_ATTRIBUTION
+24: COMPLETION_META_REAL_OBSERVATION:bucket-full:BUCKET_FIXED_ATTRIBUTION
+24: ORACLE_MISSING:BUCKET_FIXED_ATTRIBUTION
+24: COMPLETION_META_REAL_OBSERVATION:bucket-closed:BUCKET_FIXED_ATTRIBUTION
+24: ORACLE_MISSING:BUCKET_FIXED_ATTRIBUTION
+24: COMPLETION_META_REAL_OBSERVATION:sweep-atomic:D63_3_FEE_DESTINATIONS
+24: ORACLE_MISSING:D63_3_FEE_DESTINATIONS
+24: ORACLE_CONTROL_DRIVER_MISSING
+24: WITHDRAWAL-COMPLETION_D78_OBSERVED:test-workchain-withdrawal-completion-oracle-control
+1/1 Test #24: test-workchain-withdrawal-completion-oracle-control ...   Passed    0.12 sec
+
+The following tests passed:
+	test-workchain-withdrawal-completion-oracle-control
+
+100% tests passed, 0 tests failed out of 1
+
+Total Test time (real) =   0.13 sec

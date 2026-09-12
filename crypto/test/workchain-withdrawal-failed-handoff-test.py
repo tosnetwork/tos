@@ -41,8 +41,8 @@ class Readiness(unittest.TestCase):
     def test_missing(self):
         self.assertEqual(self.run_case(lambda entries: entries.pop()), 1)
 
-    def test_shortfall_is_mandatory_even_when_original_eleven_are_ready(self):
-        name = 'test-workchain-withdrawal-failed-shortfall'
+    def test_bucket_disposition_is_mandatory(self):
+        name = 'test-workchain-withdrawal-failed-bucket-disposition'
         # Independent expected obligation: deleting it from TESTS must fail this control.
         self.assertIn(name, handoff.TESTS)
         entries = [{'name': item, 'properties': []} for item in handoff.TESTS if item != name]
@@ -52,6 +52,13 @@ class Readiness(unittest.TestCase):
             self.assertEqual(handoff.check('SIMULATED'), 1)
         self.assertIn('HANDOFF_NOT_READY', output.getvalue())
         self.assertIn(name, output.getvalue())
+
+    def test_prelock_markers_do_not_certify_d78(self):
+        self.assertEqual(self.run_case(output=lambda name: 'WITHDRAWAL-FAILED_OBSERVED:' + name), 1)
+
+    def test_superseded_prelock_obligations_are_retired(self):
+        for suffix in ('topup', 'remainder', 'shortfall'):
+            self.assertNotIn('test-workchain-withdrawal-failed-' + suffix, handoff.TESTS)
 
     def test_disabled(self):
         self.assertEqual(self.run_case(lambda entries: entries[0]['properties'].append(

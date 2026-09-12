@@ -3,6 +3,7 @@
 #include "workchain-m5-failed-input.h"
 #include "block/native-bounce-body.h"
 #include "block/workchain-failed-funded.h"
+#include "block/workchain-withdrawal-expiry.h"
 #include "block/workchain-unexpected-bucket.h"
 #include "workchain-proof-test-access.h"
 
@@ -14,7 +15,7 @@ td::Bits256 word(unsigned n) {
 gen::UnoV2OperationNetworkV1::Record network() { return {-99, word(10), word(1)}; }
 WorkchainWithdrawalControl control() {
   WorkchainWithdrawalRecord r{{}, {}, 7, 100, {2, word(1), word(2)}, {0, word(3)},
-      {4, 20, 0, 20}, {0, 77, 10, 0, 30}};
+      {4}, {0, 77, 10, 0, 30}};
   r.withdrawal_id = derive_workchain_withdrawal_id(network(), r.source, r.consumed_auth_nonce).move_as_ok();
   r.attempt_id = derive_workchain_attempt_id(r.withdrawal_id).move_as_ok();
   return {WorkchainAccountActive{}, {r}};
@@ -142,12 +143,12 @@ TEST(WithdrawalAssociation, IdentityAndOriginalEvidenceChecks) {
 
 TEST(FailedFunded, RealIssuanceAndEncodedSequencePair) {
   auto pending = control();
-  pending.withdrawals[0].costs = {4, 100, 0, 100};
+  pending.withdrawals[0].costs = {4};
   pending.withdrawals[0].timing = {1, 77, 10, 12, 30};
   td::Bits256 point;
   point.as_slice().copy_from(td::hex_decode(
       "b6ec3baa39a7357ab9ca16c61373385f7cfb04ab10c4bc20c8bd3cc6db9a6100").move_as_ok());
-  WorkchainConfidentialAccount core{3, 1, 4, -99, word(1), {2, word(1), word(2)},
+  WorkchainConfidentialAccount core{4, 1, 4, -99, word(1), {2, word(1), word(2)},
       {word(4), word(99), word(6)}, {10000000000ULL, 0, word(7)}, point, 0,
       {word(0), word(0)}, 8, 0, {}, WorkchainAccountActive{}, {}};
   auto owner = encode_workchain_withdrawal_account({core, pending, {}}, 2).move_as_ok();
@@ -197,12 +198,12 @@ TEST(FailedFunded, RealIssuanceAndEncodedSequencePair) {
   ASSERT_TRUE(next_owner.control.withdrawals.empty());
   ASSERT_EQ(*next_coordinator.deposit_sequence, 11u);
   ASSERT_EQ(workchain_system_origin_sequence(next_owner.origin_pending[0].origin), 11u);
-  ASSERT_EQ(next_owner.origin_pending[0].amount, 156u);
+  ASSERT_EQ(next_owner.origin_pending[0].amount, 56u); // D78: y=70 minus slot=2 and g=12.
   ASSERT_TRUE(std::get<WorkchainSettlementOrigin>(next_owner.origin_pending[0].origin).attempt_id ==
               pending.withdrawals[0].attempt_id);
   ASSERT_TRUE(result.ok().inbound_message == td::Bits256(m->get_hash().bits()));
   ASSERT_EQ(result.ok().recovered, 70u); ASSERT_EQ(result.ok().released_p, 100u);
-  ASSERT_EQ(result.ok().released_w, 200u);
+  ASSERT_EQ(result.ok().released_w, 100u); // D78: W=x, with no prelock.
   ASSERT_EQ(td::cmp(result.ok().fees.state_fee, 2), 0);
   ASSERT_EQ(td::cmp(result.ok().fees.compute_fee, 12), 0);
   ASSERT_EQ(*decode_workchain_coordinator_state(coordinator).move_as_ok().deposit_sequence, 10u);
@@ -211,7 +212,9 @@ TEST(FailedFunded, RealIssuanceAndEncodedSequencePair) {
   auto late = WorkchainProofTestAccess::create(7);
   auto unsupported = run(late, 43);
   ASSERT_TRUE(unsupported.is_error());
-  ASSERT_EQ(unsupported.error().message(), "funded Failed requires an open height window");
+  // This older fixture carries a noncanonical self-description (256 bits plus
+  // a ref). Expiry now reaches late admission, which rejects that body.
+  ASSERT_EQ(unsupported.error().message(), "late return attribution differs from owner");
   ASSERT_EQ(late.consumed(), 0u);
   // D77: phase 0 has not started a window. A strongly matched return at a
   // height beyond 0 + settlement_blocks must still issue, not become late.
@@ -224,6 +227,39 @@ TEST(FailedFunded, RealIssuanceAndEncodedSequencePair) {
   const auto issued = decode_workchain_withdrawal_account(early_return.ok().owner_data, 2).move_as_ok();
   ASSERT_TRUE(issued.control.withdrawals.empty());
   ASSERT_EQ(issued.origin_pending.size(), 1u);
-  ASSERT_EQ(issued.origin_pending[0].amount, 156u);
+  ASSERT_EQ(issued.origin_pending[0].amount, 56u);
   ASSERT_EQ(phase_zero.consumed(), 7u);
+}
+
+TEST(PaidExpiry, StrictHeightAndOnlyObligationsChange) {
+  auto pending = control();
+  pending.withdrawals[0].timing = {1, 77, 10, 12, 30};
+  td::Bits256 point;
+  point.as_slice().copy_from(td::hex_decode(
+      "b6ec3baa39a7357ab9ca16c61373385f7cfb04ab10c4bc20c8bd3cc6db9a6100").move_as_ok());
+  WorkchainConfidentialAccount core{4, 1, 4, -99, word(1), {2, word(1), word(2)},
+      {word(4), word(99), word(6)}, {10000000000ULL, 0, word(7)}, point, 0,
+      {word(0), word(0)}, 8, 0, {}, WorkchainAccountActive{}, {}};
+  WorkchainWithdrawalAccount initial{core, pending, {}};
+  const auto root = encode_workchain_withdrawal_account(initial, 2).move_as_ok();
+  auto at_boundary = expire_workchain_withdrawals(
+      decode_workchain_withdrawal_account(root, 2).move_as_ok(), 42).move_as_ok();
+  ASSERT_TRUE(at_boundary.closed.empty()); // Height == Q+window is not expired.
+  ASSERT_TRUE(encode_workchain_withdrawal_account(at_boundary.account, 2).move_as_ok()->get_hash() == root->get_hash());
+  auto expired = expire_workchain_withdrawals(
+      decode_workchain_withdrawal_account(root, 2).move_as_ok(), 43).move_as_ok();
+  ASSERT_EQ(expired.closed.size(), 1u);
+  ASSERT_EQ(expired.closed.front().principal, 100u); // Each P/W release is x.
+  auto expected = initial;
+  expected.control.withdrawals.clear();
+  // Full encoded account cut, not just an effects list. Available, revision,
+  // lifecycle, both pending classes and their encoded counts must stay intact.
+  ASSERT_TRUE(encode_workchain_withdrawal_account(expired.account, 2).move_as_ok()->get_hash() ==
+              encode_workchain_withdrawal_account(expected, 2).move_as_ok()->get_hash());
+  auto repeat = expire_workchain_withdrawals(expired.account, 100).move_as_ok();
+  ASSERT_TRUE(repeat.closed.empty()); // No second obligation release.
+  initial.control.withdrawals.front().timing = {0, 77, 10, 0, 30};
+  auto phase_zero = expire_workchain_withdrawals(initial, UINT32_MAX).move_as_ok();
+  ASSERT_TRUE(phase_zero.closed.empty()); // Q=0 is not an authenticated observation.
+  ASSERT_EQ(phase_zero.account.control.withdrawals.size(), 1u);
 }

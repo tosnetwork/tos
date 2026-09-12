@@ -1,0 +1,23 @@
+    Start 23: test-workchain-withdrawal-completion-sweep-atomic
+23: Test command: /home/tomi/.local/bin/python3 "/home/tomi/tos/test/uno-m3-live.py" "--build" "/tmp/uno-merge-6ea2fbf80-tL5Uih" "--completion-contract" "sweep-atomic"
+23: Test timeout computed to be: 1800
+23: COMPLETION_RUN:/tmp/uno-completion-bucket-0m8s9ikd
+23: COMPLETION_REAL_RED:D63_1_PHYSICAL_TRANSFER
+23: ORACLE_MISSING:D63_1_PHYSICAL_TRANSFER
+23: COMPLETION_REAL_RED:D63_3_FEE_DESTINATIONS
+23: ORACLE_MISSING:D63_3_FEE_DESTINATIONS
+23: COMPLETION_REAL_RED:D63_4_INSTALLED_CREDIT
+23: ORACLE_MISSING:D63_4_INSTALLED_CREDIT
+23: COMPLETION_REAL_RED:D63_2_HOLDINGS
+23: ORACLE_MISSING:D63_2_HOLDINGS
+23: D63_2_PRIMARY_CARRIER:D60_PAIRING
+23: REAL_RETRY_AFTER_UNPUBLISHED_SAME_AUTH
+23: REAL_VERIFIER_RED:SWEEP_CONSUMED_SAME_HEIGHT
+23: ORACLE_MISSING:SWEEP_CONSUMED_SAME_HEIGHT
+23: COMPLETION_REAL_RED:D63_SAME_BATCH
+23: ORACLE_MISSING:D63_SAME_BATCH
+23: ATOMICITY_SCOPE:section9.3 architecture; no premature-publication control; regression gap open
+23: WITHDRAWAL-COMPLETION_D78_OBSERVED:test-workchain-withdrawal-completion-sweep-atomic
+1/1 Test #23: test-workchain-withdrawal-completion-sweep-atomic ...   Passed  651.18 sec
+100% tests passed, 0 tests failed out of 1
+Total Test time (real) = 651.19 sec

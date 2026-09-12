@@ -1,0 +1,8 @@
+Internal ctest changing into directory: /tmp/uno-merge-6ea2fbf80-tL5Uih
+Test project /tmp/uno-merge-6ea2fbf80-tL5Uih
+    Start 18: test-workchain-withdrawal-completion-row4
+1/1 Test #18: test-workchain-withdrawal-completion-row4 ...   Passed  311.22 sec
+
+100% tests passed, 0 tests failed out of 1
+
+Total Test time (real) = 311.23 sec

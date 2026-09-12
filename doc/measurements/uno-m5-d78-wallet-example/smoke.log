@@ -1,0 +1,7 @@
+d78-points exit 0
+seed-new-balance exit 0
+d78-prove exit 0
+obsolete-field exit 1
+overflow exit 1
+insufficient exit 1
+WALLET_EXAMPLE_SMOKE_PASS; generated proof is not independently verified by this CLI smoke

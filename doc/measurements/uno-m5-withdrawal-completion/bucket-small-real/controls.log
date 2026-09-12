@@ -1,0 +1,9 @@
+Fresh oracle recheck of retained real-host observations, after default CTest passed.
+COMPLETION_REAL_RED:DISPOSITION_MUST_PUBLISH
+ORACLE_MISSING:DISPOSITION_MUST_PUBLISH
+COMPLETION_REAL_RED:BUCKET_FIXED_ATTRIBUTION
+ORACLE_MISSING:BUCKET_FIXED_ATTRIBUTION
+RESTORED_OK:bucket-small
+Mutations are defined in test/uno-m3-live.py, completion-contract bucket-small:
+refusal returns before WorkchainFailedFundedResult; attribution omits installed bucket account_id.
+This log rechecks captured observations; it does not represent another Native execution.

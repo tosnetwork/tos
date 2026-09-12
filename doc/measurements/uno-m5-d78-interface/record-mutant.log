@@ -1,0 +1,117 @@
+Running test Test_WithdrawalCodec_RecordRoundtripAndPaidOutwardFee...
+[1;31m[ 0][t 0][2026-09-12 04:49:33.809155867][test-workchain-withdrawal-codec.cpp:29]	Expectation failed: encode_workchain_withdrawal_record(value).is_error()![0m
+[pid 3904831] [time 1789188573] Signal: 6
+------- Stack Backtrace -------
+/tmp/b-d78-new/record-mutant(+0x1fd617)[0x582dc1085617]
+/tmp/b-d78-new/record-mutant(+0xa902d)[0x582dc0f3102d]
+/lib/x86_64-linux-gnu/libc.so.6(+0x42520)[0x709979842520]
+/lib/x86_64-linux-gnu/libc.so.6(pthread_kill+0x12c)[0x7099798969bc]
+/lib/x86_64-linux-gnu/libc.so.6(raise+0x16)[0x709979842476]
+/lib/x86_64-linux-gnu/libc.so.6(abort+0xd3)[0x7099798287f3]
+/tmp/b-d78-new/record-mutant(+0x201957)[0x582dc1089957]
+/tmp/b-d78-new/record-mutant(+0x201a57)[0x582dc1089a57]
+/tmp/b-d78-new/record-mutant(+0x201607)[0x582dc1089607]
+/tmp/b-d78-new/record-mutant(+0xab873)[0x582dc0f33873]
+/tmp/b-d78-new/record-mutant(+0xc4d4a)[0x582dc0f4cd4a]
+/tmp/b-d78-new/record-mutant(+0x20b72f)[0x582dc109372f]
+/tmp/b-d78-new/record-mutant(+0x20b258)[0x582dc1093258]
+/tmp/b-d78-new/record-mutant(+0xaa4ef)[0x582dc0f324ef]
+/lib/x86_64-linux-gnu/libc.so.6(+0x29d90)[0x709979829d90]
+/lib/x86_64-linux-gnu/libc.so.6(__libc_start_main+0x80)[0x709979829e40]
+/tmp/b-d78-new/record-mutant(+0xaa395)[0x582dc0f32395]
+-------------------------------
+--- Enhanced Backtrace (libbacktrace) ---
+    #0  ?? (record-mutant+0xa902c) [0x582dc0f3102c]
+    #1  ?? at libc_sigaction.c (libc.so.6+0x4251f) [0x70997984251f]
+    #2  __pthread_kill_implementation at pthread_kill.c:44 (libc.so.6+0x969bc) [0x7099798969bc]
+    #3  __pthread_kill_internal at pthread_kill.c:78 (libc.so.6+0x969bc) [0x7099798969bc]
+    #4  __GI___pthread_kill at pthread_kill.c:89 (libc.so.6+0x969bc) [0x7099798969bc]
+    #5  __GI_raise at raise.c:26 (libc.so.6+0x42475) [0x709979842475]
+    #6  __GI_abort at abort.c:79 (libc.so.6+0x287f2) [0x7099798287f2]
+    #7  ?? (record-mutant+0x201956) [0x582dc1089956]
+    #8  ?? (record-mutant+0x201a56) [0x582dc1089a56]
+    #9  ?? (record-mutant+0x201606) [0x582dc1089606]
+    #10  ?? (record-mutant+0xab872) [0x582dc0f33872]
+    #11  ?? (record-mutant+0xc4d49) [0x582dc0f4cd49]
+    #12  ?? (record-mutant+0x20b72e) [0x582dc109372e]
+    #13  ?? (record-mutant+0x20b257) [0x582dc1093257]
+    #14  ?? (record-mutant+0xaa4ee) [0x582dc0f324ee]
+    #15  __libc_start_call_main at libc_start_call_main.h:58 (libc.so.6+0x29d8f) [0x709979829d8f]
+    #16  __libc_start_main_impl at libc-start.c:392 (libc.so.6+0x29e3f) [0x709979829e3f]
+    #17  ?? (record-mutant+0xaa394) [0x582dc0f32394]
+    #18  ���� (unknown+0xffffffffffffffff) [0xffffffffffffffff]
+------------------------------------------
+[Thread debugging using libthread_db enabled]
+Using host libthread_db library "/lib/x86_64-linux-gnu/libthread_db.so.1".
+0x00007099798ea3aa in __GI___wait4 (pid=3904928, stat_loc=0x0, options=0, usage=0x0) at ../sysdeps/unix/sysv/linux/wait4.c:30
+30	../sysdeps/unix/sysv/linux/wait4.c: No such file or directory.
+[Current thread is 1 (Thread 0x709979ed5840 (LWP 3904831))]
+
+Thread 1 (Thread 0x709979ed5840 (LWP 3904831) "record-mutant"):
+#0  0x00007099798ea3aa in __GI___wait4 (pid=3904928, stat_loc=0x0, options=0, usage=0x0) at ../sysdeps/unix/sysv/linux/wait4.c:30
+        sc_ret = -512
+        sc_ret = <optimized out>
+#1  0x0000582dc1085892 in td::Stacktrace::print_to_stderr(td::Stacktrace::PrintOptions const&) ()
+No symbol table info available.
+#2  0x0000582dc0f3102d in td::default_failure_signal_handler(int) ()
+No symbol table info available.
+#3  <signal handler called>
+No locals.
+#4  __pthread_kill_implementation (no_tid=0, signo=6, threadid=123804477904960) at ./nptl/pthread_kill.c:44
+        tid = <optimized out>
+        ret = 0
+        pd = 0x709979ed5840
+        old_mask = {__val = {0 <repeats 16 times>}}
+        ret = <optimized out>
+        pd = <optimized out>
+        old_mask = <optimized out>
+        ret = <optimized out>
+        tid = <optimized out>
+        ret = <optimized out>
+        resultvar = <optimized out>
+        resultvar = <optimized out>
+        __arg3 = <optimized out>
+        __arg2 = <optimized out>
+        __arg1 = <optimized out>
+        _a3 = <optimized out>
+        _a2 = <optimized out>
+        _a1 = <optimized out>
+        __futex = <optimized out>
+        resultvar = <optimized out>
+        __arg3 = <optimized out>
+        __arg2 = <optimized out>
+        __arg1 = <optimized out>
+        _a3 = <optimized out>
+        _a2 = <optimized out>
+        _a1 = <optimized out>
+        __futex = <optimized out>
+        __private = <optimized out>
+        __oldval = <optimized out>
+        result = <optimized out>
+#5  __pthread_kill_internal (signo=6, threadid=123804477904960) at ./nptl/pthread_kill.c:78
+No locals.
+#6  __GI___pthread_kill (threadid=123804477904960, signo=signo@entry=6) at ./nptl/pthread_kill.c:89
+No locals.
+#7  0x0000709979842476 in __GI_raise (sig=sig@entry=6) at ../sysdeps/posix/raise.c:26
+        ret = <optimized out>
+#8  0x00007099798287f3 in __GI_abort () at ./stdlib/abort.c:79
+        save_stage = 1
+        act = {__sigaction_handler = {sa_handler = 0x0, sa_sigaction = 0x0}, sa_mask = {__val = {96953535326496, 123804472950504, 96953541154072, 96953541154088, 140729363953920, 1, 1, 96953541154072, 140729363953920, 7, 96953538741657, 140729363953984, 96953535338603, 0, 140729363954023, 0}}, sa_flags = 1, sa_restorer = 0x0}
+        sigs = {__val = {32, 123804477655960, 2, 1, 7, 123804477904536, 140729363953888, 96953535312623, 96953538758335, 140728898421002, 96953737783184, 96953737783200, 140729363953776, 96953535328265, 140729363953856, 96953535312013}}
+#9  0x0000582dc1089957 in td::process_fatal_error(td::CSlice) ()
+No symbol table info available.
+#10 0x0000582dc1089a57 in td::DefaultLog::append(td::CSlice, int) ()
+No symbol table info available.
+#11 0x0000582dc1089607 in td::Logger::~Logger() ()
+No symbol table info available.
+#12 0x0000582dc0f33873 in Test_WithdrawalCodec_RecordRoundtripAndPaidOutwardFee::run() ()
+No symbol table info available.
+#13 0x0000582dc0f4cd4a in td::Test::step() ()
+No symbol table info available.
+#14 0x0000582dc109372f in td::TestsRunner::run_all_step() ()
+No symbol table info available.
+#15 0x0000582dc1093258 in td::TestsRunner::run_all() ()
+No symbol table info available.
+#16 0x0000582dc0f324ef in main ()
+No symbol table info available.
+[Inferior 1 (process 3904831) detached]

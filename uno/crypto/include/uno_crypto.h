@@ -105,7 +105,6 @@ typedef struct {
   uint8_t attempt_id[32];
   uint64_t principal;
   uint64_t outward_fee;
-  uint64_t return_reserve;
   uint64_t operation_fee;
   uint8_t balance_points[6][32];
   const uint8_t *context;
@@ -116,7 +115,7 @@ typedef struct {
   size_t response_count;
   const uint8_t *proof;
   size_t proof_bytes;
-} UnoCryptoWithdrawalVerifyRequestV1;
+} UnoCryptoWithdrawalVerifyRequestV2;
 
 /**
  * Fixed-width encoded public inputs. Numeric policy and domain provenance
@@ -198,7 +197,7 @@ uint32_t uno_crypto_verify_closure_possession_v1(const void*);
  * Borrowed host-owned buffers; all pointers must remain valid until return.
  * This verifies a statement, not authenticated fee/configuration provenance.
  */
-uint32_t uno_crypto_verify_withdrawal_v1(const UnoCryptoWithdrawalVerifyRequestV1 *request);
+uint32_t uno_crypto_verify_withdrawal_v2(const UnoCryptoWithdrawalVerifyRequestV2 *request);
 
 /**
  * Construct a public system ciphertext. Output is untouched unless successful.

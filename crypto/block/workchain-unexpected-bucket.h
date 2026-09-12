@@ -4,15 +4,17 @@
 #include "vm/dict.h"
 #include <algorithm>
 #include <vector>
+#include <optional>
 
 namespace block {
 
-// D29/D30, M4 subset: only sender attribution. No confidential account_id,
-// original body, claim, retry or sweep operation is representable here.
-// Layout is an implementation choice: UNX4/version 1, counts, rebase_count,
+// D29/D62: v1 sender-only encoding is unchanged. Explicit v2 migration adds
+// account attribution and return_failed, never an original message body.
+// Layout is an implementation choice: UNX4/version 1 or 2, counts, rebase_count,
 // unkeyed uint256, HashmapE 32 entry refs, HashmapE 288 overflow uint256,
 // and Native extra-currency dictionary. Entry = kind 0 + wc:int32 + src:bits256
-// + tomis:uint256. Unknown kinds/versions and trailing bits/refs are rejected.
+// + tomis:uint256. Version 2 adds return_failed and an optional account ID
+// selected by kind. Unknown kinds/versions and trailing bits/refs are rejected.
 // Net values use unsigned 256-bit arithmetic, not cumulative traffic counters.
 struct WorkchainUnexpectedSender {
   std::int32_t workchain;
@@ -21,6 +23,8 @@ struct WorkchainUnexpectedSender {
 struct WorkchainUnexpectedEntry {
   WorkchainUnexpectedSender sender;
   td::RefInt256 tomis;
+  std::optional<td::Bits256> account_id;
+  bool return_failed{false};
 };
 struct WorkchainUnexpectedLimits {
   std::uint32_t entries, overflow_sources;
@@ -32,6 +36,10 @@ struct WorkchainUnexpectedBucket {
   td::RefInt256 unkeyed;
   td::Ref<vm::Cell> extra;
   std::uint64_t rebase_count;
+  bool account_attribution{false};
+  // Version 3: independent one-shot sweep authorization state. Absence is a
+  // legacy layout, NOT sequence zero. Rebase accounting has another meaning.
+  std::optional<std::uint64_t> sweep_sequence;
 };
 struct WorkchainUnexpectedCredit {
   WorkchainUnexpectedBucket bucket;
@@ -76,12 +84,20 @@ inline td::Result<td::Ref<vm::Cell>> encode_workchain_unexpected_bucket(
     TRY_RESULT(sum, unexpected_detail::add(total, entry.tomis));
     total = sum;
     vm::CellBuilder leaf;
-    leaf.store_long(0, 8).store_long(entry.sender.workchain, 32)
+    if (!value.account_attribution && (entry.account_id || entry.return_failed))
+      return td::Status::Error("extended attribution requires bucket version 2");
+    leaf.store_long(entry.account_id ? 1 : 0, 8).store_long(entry.sender.workchain, 32)
         .store_bits(entry.sender.account.bits(), 256).store_int256(*entry.tomis, 256, false);
+    if (value.account_attribution) {
+      leaf.store_long(entry.return_failed, 1);
+      if (entry.account_id) leaf.store_bits(entry.account_id->bits(), 256);
+    }
     if (!entries.set_ref(td::BitArray<32>(index++), leaf.finalize(), vm::Dictionary::SetMode::Add))
       return td::Status::Error("duplicate unexpected entry index");
   }
   for (const auto& entry : value.overflow) {
+    if (entry.account_id || entry.return_failed)
+      return td::Status::Error("overflow supports sender attribution only");
     if (!unexpected_detail::amount(entry.tomis) || td::sgn(entry.tomis) <= 0)
       return td::Status::Error("invalid overflow amount");
     TRY_RESULT(sum, unexpected_detail::add(total, entry.tomis));
@@ -92,9 +108,12 @@ inline td::Result<td::Ref<vm::Cell>> encode_workchain_unexpected_bucket(
       return td::Status::Error("duplicate unexpected overflow source");
   }
   vm::CellBuilder root;
-  root.store_long(0x554e5834, 32).store_long(1, 16)
+  if (value.sweep_sequence && !value.account_attribution)
+    return td::Status::Error("sweep sequence requires attributed bucket layout");
+  root.store_long(0x554e5834, 32).store_long(value.sweep_sequence ? 3 : value.account_attribution ? 2 : 1, 16)
       .store_long(value.entries.size(), 32).store_long(value.overflow.size(), 32)
       .store_long(value.rebase_count, 64).store_int256(*value.unkeyed, 256, false);
+  if (value.sweep_sequence) root.store_long(*value.sweep_sequence, 64);
   if (!entries.append_dict_to_bool(root) || !overflow.append_dict_to_bool(root) ||
       !vm::dict::store_cell_dict(root, value.extra)) return td::Status::Error("cannot encode unexpected bucket");
   return root.finalize();
@@ -105,13 +124,20 @@ inline td::Result<WorkchainUnexpectedBucket> decode_workchain_unexpected_bucket(
   if (root.is_null()) return td::Status::Error("missing unexpected bucket");
   bool special = false;
   auto cs = vm::load_cell_slice_special(root, special);
-  if (special || cs.size() < 435 || cs.fetch_ulong(32) != 0x554e5834 || cs.fetch_ulong(16) != 1)
+  if (special || cs.size() < 435 || cs.fetch_ulong(32) != 0x554e5834)
     return td::Status::Error("unknown unexpected bucket shape");
+  const auto version = cs.fetch_ulong(16);
+  if (version != 1 && version != 2 && version != 3) return td::Status::Error("unknown unexpected bucket version");
   const auto count = cs.fetch_ulong(32), overflow_count = cs.fetch_ulong(32);
   if (count > limits.entries || overflow_count > limits.overflow_sources)
     return td::Status::Error("unexpected bucket exceeds authenticated limits");
   const auto rebase = cs.fetch_ulong(64);
   auto unkeyed = cs.fetch_int256(256, false);
+  std::optional<std::uint64_t> sweep_sequence;
+  if (version == 3) {
+    if (cs.size() < 64) return td::Status::Error("missing authenticated sweep sequence");
+    sweep_sequence = cs.fetch_ulong(64);
+  }
   // Preflight each HashmapE selector/ref before constructing dictionaries.
   td::Ref<vm::Cell> roots[3];
   for (auto& item : roots) {
@@ -122,17 +148,26 @@ inline td::Result<WorkchainUnexpectedBucket> decode_workchain_unexpected_bucket(
     }
   }
   if (!cs.empty_ext()) return td::Status::Error("trailing unexpected bucket fields");
-  WorkchainUnexpectedBucket value{{}, {}, unkeyed, roots[2], rebase};
+  WorkchainUnexpectedBucket value{{}, {}, unkeyed, roots[2], rebase, version >= 2, sweep_sequence};
   vm::Dictionary entries(roots[0], 32), overflow(roots[1], 288);
   if (!entries.check_for_each([&](td::Ref<vm::CellSlice> leaf, td::ConstBitPtr key, int width) {
         if (width != 32 || value.entries.size() >= count ||
             key.get_uint(32) != value.entries.size() || leaf->size_ext() != 0x10000) return false;
         bool exotic = false;
         auto entry = vm::load_cell_slice_special(leaf->prefetch_ref(), exotic);
-        if (exotic || entry.size_ext() != 552 || entry.fetch_ulong(8) != 0) return false;
+        if (exotic || entry.size_refs() || entry.size() < 552) return false;
+        const auto kind = entry.fetch_ulong(8);
+        if (kind > 1 || (version == 1 && kind != 0)) return false;
         WorkchainUnexpectedSender sender{static_cast<std::int32_t>(entry.fetch_long(32)), {}};
         entry.fetch_bits_to(sender.account);
-        value.entries.push_back({sender, entry.fetch_int256(256, false)});
+        WorkchainUnexpectedEntry decoded{sender, entry.fetch_int256(256, false)};
+        if (version >= 2) {
+          if (entry.size() != (kind ? 257 : 1)) return false;
+          decoded.return_failed = entry.fetch_ulong(1);
+          if (kind) { td::Bits256 account; entry.fetch_bits_to(account); decoded.account_id = account; }
+        }
+        if (!entry.empty_ext()) return false;
+        value.entries.push_back(std::move(decoded));
         return true;
       }) || value.entries.size() != count ||
       !overflow.check_for_each([&](td::Ref<vm::CellSlice> leaf, td::ConstBitPtr key, int width) {
@@ -163,9 +198,9 @@ inline td::Result<CurrencyCollection> workchain_unexpected_balance(const Workcha
 // Post-classification only. This consumes neither the message nor any state;
 // caller commits its returned bucket with Native credit/queue removal atomically.
 // M4 failed Deposit belongs to src, never to the intended confidential account.
-// Consequently no confidential account obtains bucket rights. M5's account_id
-// category is deliberately unrepresentable. Before introducing it, closure
-// must additionally establish no bucket attribution to that account (D29/§10).
+// This sender-only credit primitive does not grant confidential account rights.
+// The custody return caller explicitly installs type-2 attribution; closure
+// checks that attribution before proceeding (D29/§10).
 inline td::Result<WorkchainUnexpectedCredit> credit_workchain_unexpected(
     const WorkchainUnexpectedBucket& old, WorkchainUnexpectedLimits limits,
     const WorkchainUnexpectedSender& sender, const CurrencyCollection& imported, int extra_validation_cells) {

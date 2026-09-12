@@ -1,0 +1,22 @@
+{
+  "source": "A live2, identities measured by B after execution; not execution-time binary provenance",
+  "reviewed_commit": "5f034af0f",
+  "fixture": "/tmp/uno-m3-live-wifgx0up",
+  "sha256": {
+    "zerostate.boc": "5138b54b951bba57949ad669cd0f62b89431e65ece2b29496b359544a792b27b",
+    "debit-authenticated-state.boc": "982bf17aaa0a543d804ddb2d4d63eec4c3da5880c2a5286ba6fa315319803424",
+    "accepted-state.boc": "8dc551db510846fa963599c62a116810fbfe4c01c4641376dacb5dbcb538b53e",
+    "accepted-block.boc": "aea0db21b16073fd27d8d201b1a46824eda78d9a0da4fe9b72172f8a120bf37f",
+    "failed-bounce.boc": "c387fb14786a42e0ace510597bf733698665897b77217f7bc21a7ccb657a973a",
+    "prepare-payout.boc": "3932e3112fd1aa0658f5f68bb4ae38e31b855646978b94e2154addb2f51ef59d",
+    "operation.request.txt": "50f70da7c287d05fc68f540e1c9d21e1437e9f49511c705052316cabe0c839f1",
+    "operation.points.txt": "3a17d1cb0f518c0cb555d4ea281b247d70197ca83dd0bc61d1d362edd9d7ab87",
+    "operation.proof.txt": "8dc7db07ff035685ea504a509a047a15dcacd89b7bcc754decd0a059f7b8c13e",
+    "m4-blocks/1.boc": "46c3d31e13ca4721f9bd87f75fc60c94b04b278a77b971357b46697b7a400bec",
+    "m4-blocks/2.boc": "c23a46542db8385926750c05d2158cc258de674cb94dd2e96fca81d2ad6e22df",
+    "m4-blocks/3.boc": "d6f7d5cc3bc5ae3b2c2240ca98f58e0d03c69627bb0e1b4e65b7e2e75f23967a",
+    "m4-blocks/4.boc": "d84dc9004d7cbfe513047b15b6fbe26047eadbd39b0602ac2d9a64e7f2bc482b",
+    "m4-blocks/5.boc": "c77b7f56c16a3f61d0a5d9afc88f5120312560eecb638bf9a5726db145ac203a",
+    "m4-blocks/6.boc": "aea0db21b16073fd27d8d201b1a46824eda78d9a0da4fe9b72172f8a120bf37f"
+  }
+}

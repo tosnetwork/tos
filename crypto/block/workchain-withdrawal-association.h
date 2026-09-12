@@ -12,6 +12,37 @@ struct WorkchainWithdrawalAssociation {
   td::Ref<vm::Cell> original_body;
 };
 
+// Self-description is used only for attribution, never to release an obligation.
+// The enclosing Native import authenticates the actual value and destination.
+inline td::Result<WorkchainWithdrawalAssociation> describe_workchain_late_return(
+    const td::Ref<vm::Cell>& root, std::int32_t workchain, const td::Bits256& custody) {
+  return withdrawal_codec_detail::protect([&]() -> td::Result<WorkchainWithdrawalAssociation> {
+    using withdrawal_codec_detail::error;
+    gen::Message::Record message;
+    gen::CommonMsgInfo::Record_int_msg_info info;
+    tos::WorkchainId wc; td::Bits256 destination;
+    if (root.is_null() || !tlb::type_unpack_cell(root, gen::t_Message_Any, message) ||
+        !tlb::csr_unpack(message.info, info) || !info.bounced ||
+        !tlb::t_MsgAddressInt.extract_std_address(info.dest, wc, destination) ||
+        wc != workchain || destination != custody)
+      return error("late return is not a custody bounced import");
+    auto body = *message.body;
+    if (!body.have(1)) return error("late return body selector missing");
+    td::Ref<vm::Cell> body_root;
+    if (!body.fetch_ulong(1)) body_root = vm::CellBuilder().append_cellslice(body).finalize();
+    else {
+      if (body.size_ext() != 0x10000) return error("late return body framing mismatch");
+      body_root = body.fetch_ref();
+    }
+    TRY_RESULT(rich, withdrawal_codec_detail::unpack<gen::NewBounceBody::Record>(body_root));
+    TRY_RESULT(original, withdrawal_codec_detail::unpack<gen::NewBounceOriginalInfo::Record>(rich.original_info));
+    CurrencyCollection received;
+    if (!received.unpack(info.value)) return error("invalid late return value");
+    return WorkchainWithdrawalAssociation{td::Bits256(root->get_hash().bits()),
+        td::Bits256::zero(), td::Bits256::zero(), original.created_lt, received, rich.original_body};
+  });
+}
+
 // Read-only association, not Native authentication or settlement. The enclosing
 // host must authenticate the final-import Message and acquire the account's
 // control envelope from its admitted predecessor before calling this function.

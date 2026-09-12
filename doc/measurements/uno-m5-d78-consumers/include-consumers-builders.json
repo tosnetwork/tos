@@ -1,0 +1,626 @@
+{
+  "roots": [
+    "crypto/block/workchain-proof-work.h",
+    "crypto/block/workchain-withdrawal-account.h",
+    "crypto/block/workchain-withdrawal-codec.h"
+  ],
+  "reachable_files": [
+    "crypto/block/block.cpp",
+    "crypto/block/create-state.cpp",
+    "crypto/block/transaction.cpp",
+    "crypto/block/workchain-account-binding-owner.h",
+    "crypto/block/workchain-account-closure.h",
+    "crypto/block/workchain-account-effects.h",
+    "crypto/block/workchain-account-engine.h",
+    "crypto/block/workchain-account-replay.h",
+    "crypto/block/workchain-account-settlement.h",
+    "crypto/block/workchain-closure-settlement.h",
+    "crypto/block/workchain-confidential-execution.h",
+    "crypto/block/workchain-deposit-rejection-settlement.h",
+    "crypto/block/workchain-deposit-transition.h",
+    "crypto/block/workchain-execution-dispatch.cpp",
+    "crypto/block/workchain-execution-dispatch.h",
+    "crypto/block/workchain-failed-funded.h",
+    "crypto/block/workchain-instance-identity.cpp",
+    "crypto/block/workchain-outbound-queues.h",
+    "crypto/block/workchain-possession-replay.h",
+    "crypto/block/workchain-proof-backend.cpp",
+    "crypto/block/workchain-proof-work.h",
+    "crypto/block/workchain-registration-payment.h",
+    "crypto/block/workchain-registration-proof.cpp",
+    "crypto/block/workchain-registration-proof.h",
+    "crypto/block/workchain-registration-settlement.h",
+    "crypto/block/workchain-registration.h",
+    "crypto/block/workchain-rejected-deposit.h",
+    "crypto/block/workchain-system-origin.h",
+    "crypto/block/workchain-withdrawal-account.h",
+    "crypto/block/workchain-withdrawal-association.h",
+    "crypto/block/workchain-withdrawal-codec.h",
+    "crypto/test/counter-install-config.cpp",
+    "crypto/test/prepared/workchain-validator-local-decisions.h",
+    "crypto/test/test-workchain-account-closure.cpp",
+    "crypto/test/test-workchain-activation-control.cpp",
+    "crypto/test/test-workchain-block.cpp",
+    "crypto/test/test-workchain-collator-compute-mode.cpp",
+    "crypto/test/test-workchain-confidential-execution.cpp",
+    "crypto/test/test-workchain-confidential-input.cpp",
+    "crypto/test/test-workchain-confidential-transition.cpp",
+    "crypto/test/test-workchain-construction-isolation.cpp",
+    "crypto/test/test-workchain-ingress-transition.cpp",
+    "crypto/test/test-workchain-instance-identity.cpp",
+    "crypto/test/test-workchain-origin-length.cpp",
+    "crypto/test/test-workchain-proof-backend.cpp",
+    "crypto/test/test-workchain-proof-contracts.cpp",
+    "crypto/test/test-workchain-proof-work.cpp",
+    "crypto/test/test-workchain-publication-provenance.cpp",
+    "crypto/test/test-workchain-publication-recovery.cpp",
+    "crypto/test/test-workchain-registration-proof.cpp",
+    "crypto/test/test-workchain-settlement-continuation.cpp",
+    "crypto/test/test-workchain-test-execution-permit.cpp",
+    "crypto/test/test-workchain-unexpected-bucket.cpp",
+    "crypto/test/test-workchain-validator-local-visitors.cpp",
+    "crypto/test/test-workchain-withdrawal-association.cpp",
+    "crypto/test/test-workchain-withdrawal-codec.cpp",
+    "crypto/test/workchain-account-connectivity-probe.cpp",
+    "crypto/test/workchain-counter-engine.h",
+    "crypto/test/workchain-deposit-transition-test.h",
+    "crypto/test/workchain-m3-closure-wallet.h",
+    "crypto/test/workchain-m3-genesis-cells.h",
+    "crypto/test/workchain-m3-node-engine.h",
+    "crypto/test/workchain-m3-registration-wallet-test.cpp",
+    "crypto/test/workchain-m3-registration-wallet.h",
+    "crypto/test/workchain-m3-scenario.cpp",
+    "crypto/test/workchain-m3-wallet-requests.h",
+    "crypto/test/workchain-m4-retention-test.h",
+    "crypto/test/workchain-m5-debit.h",
+    "crypto/test/workchain-m5-payout.h",
+    "crypto/test/workchain-node-link-smoke-types.cpp",
+    "crypto/test/workchain-possession-test-policy.h",
+    "crypto/test/workchain-proof-test-access.h",
+    "crypto/test/workchain-registration-deletion-probe.cpp",
+    "test/m3-live-config.h",
+    "test/m3-live-registration.h",
+    "test/m3-live-wallet.h",
+    "test/m4-live-deposit.h",
+    "test/m5-live-failed.h",
+    "test/m5-live-fee-routing-control.h",
+    "test/m5-live-reserve-control.h",
+    "test/m5-live-unknown-control.h",
+    "test/test-config-transition.cpp",
+    "test/test-m3-live.cpp",
+    "test/test-tos-collator.cpp",
+    "test/test-uno-state-snapshot.cpp",
+    "validator-engine/json-rpc-server-send.cpp",
+    "validator-engine/validator-engine.cpp",
+    "validator/full-node-master.cpp",
+    "validator/full-node-shard.cpp",
+    "validator/impl/collator-impl.h",
+    "validator/impl/collator.cpp",
+    "validator/impl/ext-message-checker.cpp",
+    "validator/impl/external-message.cpp",
+    "validator/impl/fabric.cpp",
+    "validator/impl/liteserver.cpp",
+    "validator/impl/validate-query.cpp",
+    "validator/impl/workchain-account-decisions.h",
+    "validator/impl/workchain-collator-compute-mode.h",
+    "validator/manager.cpp"
+  ],
+  "translation_units": [
+    "crypto/block/block.cpp",
+    "crypto/block/create-state.cpp",
+    "crypto/block/transaction.cpp",
+    "crypto/block/workchain-execution-dispatch.cpp",
+    "crypto/block/workchain-instance-identity.cpp",
+    "crypto/block/workchain-proof-backend.cpp",
+    "crypto/block/workchain-registration-proof.cpp",
+    "crypto/test/counter-install-config.cpp",
+    "crypto/test/test-workchain-account-closure.cpp",
+    "crypto/test/test-workchain-activation-control.cpp",
+    "crypto/test/test-workchain-block.cpp",
+    "crypto/test/test-workchain-collator-compute-mode.cpp",
+    "crypto/test/test-workchain-confidential-execution.cpp",
+    "crypto/test/test-workchain-confidential-input.cpp",
+    "crypto/test/test-workchain-confidential-transition.cpp",
+    "crypto/test/test-workchain-construction-isolation.cpp",
+    "crypto/test/test-workchain-ingress-transition.cpp",
+    "crypto/test/test-workchain-instance-identity.cpp",
+    "crypto/test/test-workchain-origin-length.cpp",
+    "crypto/test/test-workchain-proof-backend.cpp",
+    "crypto/test/test-workchain-proof-contracts.cpp",
+    "crypto/test/test-workchain-proof-work.cpp",
+    "crypto/test/test-workchain-publication-provenance.cpp",
+    "crypto/test/test-workchain-publication-recovery.cpp",
+    "crypto/test/test-workchain-registration-proof.cpp",
+    "crypto/test/test-workchain-settlement-continuation.cpp",
+    "crypto/test/test-workchain-test-execution-permit.cpp",
+    "crypto/test/test-workchain-unexpected-bucket.cpp",
+    "crypto/test/test-workchain-validator-local-visitors.cpp",
+    "crypto/test/test-workchain-withdrawal-association.cpp",
+    "crypto/test/test-workchain-withdrawal-codec.cpp",
+    "crypto/test/workchain-account-connectivity-probe.cpp",
+    "crypto/test/workchain-m3-registration-wallet-test.cpp",
+    "crypto/test/workchain-m3-scenario.cpp",
+    "crypto/test/workchain-node-link-smoke-types.cpp",
+    "crypto/test/workchain-registration-deletion-probe.cpp",
+    "test/test-config-transition.cpp",
+    "test/test-m3-live.cpp",
+    "test/test-tos-collator.cpp",
+    "test/test-uno-state-snapshot.cpp",
+    "validator-engine/json-rpc-server-send.cpp",
+    "validator-engine/validator-engine.cpp",
+    "validator/full-node-master.cpp",
+    "validator/full-node-shard.cpp",
+    "validator/impl/collator.cpp",
+    "validator/impl/ext-message-checker.cpp",
+    "validator/impl/external-message.cpp",
+    "validator/impl/fabric.cpp",
+    "validator/impl/liteserver.cpp",
+    "validator/impl/validate-query.cpp",
+    "validator/manager.cpp"
+  ],
+  "scope": "Tracked quoted includes resolved relative to source, repository, crypto/. No preprocessing, macro includes, aliases, runtime dispatch, or linker reachability proof. Configured builder snapshot from A build; not B execution evidence.",
+  "builders": [
+    {
+      "source": "crypto/block/block.cpp",
+      "configured_compile_targets": [
+        "tos_block"
+      ],
+      "configured_ctest_direct_commands": [],
+      "interpretation": "Builder records only; neither target presence nor test name proves Withdrawal execution. Empty target requires separate manual-source disposition."
+    },
+    {
+      "source": "crypto/block/create-state.cpp",
+      "configured_compile_targets": [
+        "create-state"
+      ],
+      "configured_ctest_direct_commands": [
+        "test-consensus-simplex2-genesis-config",
+        "test-counter-account-binding-readiness",
+        "test-counter-config-binding",
+        "test-counter-config-presence-missing_capability",
+        "test-counter-config-presence-old_version",
+        "test-counter-cross-delivery",
+        "test-counter-disk-integration",
+        "test-counter-engine-config",
+        "test-counter-genesis-domain",
+        "test-counter-idle-replay",
+        "test-counter-native-sender",
+        "test-counter-self-delivery",
+        "test-uno-genesis-operators",
+        "test-workchain-genesis-routing"
+      ],
+      "interpretation": "Builder records only; neither target presence nor test name proves Withdrawal execution. Empty target requires separate manual-source disposition."
+    },
+    {
+      "source": "crypto/block/transaction.cpp",
+      "configured_compile_targets": [
+        "tos_block"
+      ],
+      "configured_ctest_direct_commands": [],
+      "interpretation": "Builder records only; neither target presence nor test name proves Withdrawal execution. Empty target requires separate manual-source disposition."
+    },
+    {
+      "source": "crypto/block/workchain-execution-dispatch.cpp",
+      "configured_compile_targets": [
+        "tos_block"
+      ],
+      "configured_ctest_direct_commands": [],
+      "interpretation": "Builder records only; neither target presence nor test name proves Withdrawal execution. Empty target requires separate manual-source disposition."
+    },
+    {
+      "source": "crypto/block/workchain-instance-identity.cpp",
+      "configured_compile_targets": [
+        "tos_block"
+      ],
+      "configured_ctest_direct_commands": [],
+      "interpretation": "Builder records only; neither target presence nor test name proves Withdrawal execution. Empty target requires separate manual-source disposition."
+    },
+    {
+      "source": "crypto/block/workchain-proof-backend.cpp",
+      "configured_compile_targets": [
+        "test-workchain-proof-backend",
+        "tos_block"
+      ],
+      "configured_ctest_direct_commands": [
+        "test-workchain-proof-backend"
+      ],
+      "interpretation": "Builder records only; neither target presence nor test name proves Withdrawal execution. Empty target requires separate manual-source disposition."
+    },
+    {
+      "source": "crypto/block/workchain-registration-proof.cpp",
+      "configured_compile_targets": [
+        "tos_block"
+      ],
+      "configured_ctest_direct_commands": [],
+      "interpretation": "Builder records only; neither target presence nor test name proves Withdrawal execution. Empty target requires separate manual-source disposition."
+    },
+    {
+      "source": "crypto/test/counter-install-config.cpp",
+      "configured_compile_targets": [
+        "counter-install-config"
+      ],
+      "configured_ctest_direct_commands": [],
+      "interpretation": "Builder records only; neither target presence nor test name proves Withdrawal execution. Empty target requires separate manual-source disposition."
+    },
+    {
+      "source": "crypto/test/test-workchain-account-closure.cpp",
+      "configured_compile_targets": [
+        "test-workchain-account-closure"
+      ],
+      "configured_ctest_direct_commands": [],
+      "interpretation": "Builder records only; neither target presence nor test name proves Withdrawal execution. Empty target requires separate manual-source disposition."
+    },
+    {
+      "source": "crypto/test/test-workchain-activation-control.cpp",
+      "configured_compile_targets": [
+        "test-workchain-activation-control"
+      ],
+      "configured_ctest_direct_commands": [
+        "test-counter-activation-missing_capability",
+        "test-counter-activation-old_version"
+      ],
+      "interpretation": "Builder records only; neither target presence nor test name proves Withdrawal execution. Empty target requires separate manual-source disposition."
+    },
+    {
+      "source": "crypto/test/test-workchain-block.cpp",
+      "configured_compile_targets": [
+        "test-workchain-block"
+      ],
+      "configured_ctest_direct_commands": [
+        "test-workchain-block"
+      ],
+      "interpretation": "Builder records only; neither target presence nor test name proves Withdrawal execution. Empty target requires separate manual-source disposition."
+    },
+    {
+      "source": "crypto/test/test-workchain-collator-compute-mode.cpp",
+      "configured_compile_targets": [
+        "test-workchain-collator-compute-mode"
+      ],
+      "configured_ctest_direct_commands": [
+        "test-workchain-collator-compute-mode"
+      ],
+      "interpretation": "Builder records only; neither target presence nor test name proves Withdrawal execution. Empty target requires separate manual-source disposition."
+    },
+    {
+      "source": "crypto/test/test-workchain-confidential-execution.cpp",
+      "configured_compile_targets": [
+        "test-workchain-confidential-execution"
+      ],
+      "configured_ctest_direct_commands": [],
+      "interpretation": "Builder records only; neither target presence nor test name proves Withdrawal execution. Empty target requires separate manual-source disposition."
+    },
+    {
+      "source": "crypto/test/test-workchain-confidential-input.cpp",
+      "configured_compile_targets": [
+        "test-workchain-confidential-input"
+      ],
+      "configured_ctest_direct_commands": [],
+      "interpretation": "Builder records only; neither target presence nor test name proves Withdrawal execution. Empty target requires separate manual-source disposition."
+    },
+    {
+      "source": "crypto/test/test-workchain-confidential-transition.cpp",
+      "configured_compile_targets": [
+        "test-workchain-confidential-transition"
+      ],
+      "configured_ctest_direct_commands": [],
+      "interpretation": "Builder records only; neither target presence nor test name proves Withdrawal execution. Empty target requires separate manual-source disposition."
+    },
+    {
+      "source": "crypto/test/test-workchain-construction-isolation.cpp",
+      "configured_compile_targets": [],
+      "configured_ctest_direct_commands": [],
+      "interpretation": "Builder records only; neither target presence nor test name proves Withdrawal execution. Empty target requires separate manual-source disposition."
+    },
+    {
+      "source": "crypto/test/test-workchain-ingress-transition.cpp",
+      "configured_compile_targets": [
+        "test-workchain-ingress-transition"
+      ],
+      "configured_ctest_direct_commands": [],
+      "interpretation": "Builder records only; neither target presence nor test name proves Withdrawal execution. Empty target requires separate manual-source disposition."
+    },
+    {
+      "source": "crypto/test/test-workchain-instance-identity.cpp",
+      "configured_compile_targets": [],
+      "configured_ctest_direct_commands": [],
+      "interpretation": "Builder records only; neither target presence nor test name proves Withdrawal execution. Empty target requires separate manual-source disposition."
+    },
+    {
+      "source": "crypto/test/test-workchain-origin-length.cpp",
+      "configured_compile_targets": [
+        "test-workchain-origin-length"
+      ],
+      "configured_ctest_direct_commands": [],
+      "interpretation": "Builder records only; neither target presence nor test name proves Withdrawal execution. Empty target requires separate manual-source disposition."
+    },
+    {
+      "source": "crypto/test/test-workchain-proof-backend.cpp",
+      "configured_compile_targets": [
+        "test-workchain-proof-backend"
+      ],
+      "configured_ctest_direct_commands": [
+        "test-workchain-proof-backend"
+      ],
+      "interpretation": "Builder records only; neither target presence nor test name proves Withdrawal execution. Empty target requires separate manual-source disposition."
+    },
+    {
+      "source": "crypto/test/test-workchain-proof-contracts.cpp",
+      "configured_compile_targets": [
+        "test-workchain-proof-contracts"
+      ],
+      "configured_ctest_direct_commands": [
+        "test-workchain-proof-contracts"
+      ],
+      "interpretation": "Builder records only; neither target presence nor test name proves Withdrawal execution. Empty target requires separate manual-source disposition."
+    },
+    {
+      "source": "crypto/test/test-workchain-proof-work.cpp",
+      "configured_compile_targets": [
+        "test-workchain-proof-work"
+      ],
+      "configured_ctest_direct_commands": [
+        "test-workchain-proof-work"
+      ],
+      "interpretation": "Builder records only; neither target presence nor test name proves Withdrawal execution. Empty target requires separate manual-source disposition."
+    },
+    {
+      "source": "crypto/test/test-workchain-publication-provenance.cpp",
+      "configured_compile_targets": [],
+      "configured_ctest_direct_commands": [],
+      "interpretation": "Builder records only; neither target presence nor test name proves Withdrawal execution. Empty target requires separate manual-source disposition."
+    },
+    {
+      "source": "crypto/test/test-workchain-publication-recovery.cpp",
+      "configured_compile_targets": [],
+      "configured_ctest_direct_commands": [],
+      "interpretation": "Builder records only; neither target presence nor test name proves Withdrawal execution. Empty target requires separate manual-source disposition."
+    },
+    {
+      "source": "crypto/test/test-workchain-registration-proof.cpp",
+      "configured_compile_targets": [
+        "test-workchain-registration-proof"
+      ],
+      "configured_ctest_direct_commands": [],
+      "interpretation": "Builder records only; neither target presence nor test name proves Withdrawal execution. Empty target requires separate manual-source disposition."
+    },
+    {
+      "source": "crypto/test/test-workchain-settlement-continuation.cpp",
+      "configured_compile_targets": [
+        "test-workchain-settlement-continuation"
+      ],
+      "configured_ctest_direct_commands": [
+        "test-workchain-settlement-continuation"
+      ],
+      "interpretation": "Builder records only; neither target presence nor test name proves Withdrawal execution. Empty target requires separate manual-source disposition."
+    },
+    {
+      "source": "crypto/test/test-workchain-test-execution-permit.cpp",
+      "configured_compile_targets": [
+        "test-workchain-test-execution-permit"
+      ],
+      "configured_ctest_direct_commands": [],
+      "interpretation": "Builder records only; neither target presence nor test name proves Withdrawal execution. Empty target requires separate manual-source disposition."
+    },
+    {
+      "source": "crypto/test/test-workchain-unexpected-bucket.cpp",
+      "configured_compile_targets": [
+        "test-workchain-unexpected-bucket"
+      ],
+      "configured_ctest_direct_commands": [],
+      "interpretation": "Builder records only; neither target presence nor test name proves Withdrawal execution. Empty target requires separate manual-source disposition."
+    },
+    {
+      "source": "crypto/test/test-workchain-validator-local-visitors.cpp",
+      "configured_compile_targets": [
+        "test-workchain-validator-local-visitors"
+      ],
+      "configured_ctest_direct_commands": [
+        "test-workchain-validator-local-visitors",
+        "test-workchain-validator-prepared-expiry"
+      ],
+      "interpretation": "Builder records only; neither target presence nor test name proves Withdrawal execution. Empty target requires separate manual-source disposition."
+    },
+    {
+      "source": "crypto/test/test-workchain-withdrawal-association.cpp",
+      "configured_compile_targets": [
+        "test-workchain-withdrawal-association"
+      ],
+      "configured_ctest_direct_commands": [],
+      "interpretation": "Builder records only; neither target presence nor test name proves Withdrawal execution. Empty target requires separate manual-source disposition."
+    },
+    {
+      "source": "crypto/test/test-workchain-withdrawal-codec.cpp",
+      "configured_compile_targets": [
+        "test-workchain-withdrawal-codec"
+      ],
+      "configured_ctest_direct_commands": [],
+      "interpretation": "Builder records only; neither target presence nor test name proves Withdrawal execution. Empty target requires separate manual-source disposition."
+    },
+    {
+      "source": "crypto/test/workchain-account-connectivity-probe.cpp",
+      "configured_compile_targets": [],
+      "configured_ctest_direct_commands": [],
+      "interpretation": "Builder records only; neither target presence nor test name proves Withdrawal execution. Empty target requires separate manual-source disposition."
+    },
+    {
+      "source": "crypto/test/workchain-m3-registration-wallet-test.cpp",
+      "configured_compile_targets": [
+        "test-workchain-confidential-input"
+      ],
+      "configured_ctest_direct_commands": [],
+      "interpretation": "Builder records only; neither target presence nor test name proves Withdrawal execution. Empty target requires separate manual-source disposition."
+    },
+    {
+      "source": "crypto/test/workchain-m3-scenario.cpp",
+      "configured_compile_targets": [
+        "workchain-m3-scenario"
+      ],
+      "configured_ctest_direct_commands": [
+        "test-workchain-key-epoch-behavior"
+      ],
+      "interpretation": "Builder records only; neither target presence nor test name proves Withdrawal execution. Empty target requires separate manual-source disposition."
+    },
+    {
+      "source": "crypto/test/workchain-node-link-smoke-types.cpp",
+      "configured_compile_targets": [],
+      "configured_ctest_direct_commands": [],
+      "interpretation": "Builder records only; neither target presence nor test name proves Withdrawal execution. Empty target requires separate manual-source disposition."
+    },
+    {
+      "source": "crypto/test/workchain-registration-deletion-probe.cpp",
+      "configured_compile_targets": [],
+      "configured_ctest_direct_commands": [],
+      "interpretation": "Builder records only; neither target presence nor test name proves Withdrawal execution. Empty target requires separate manual-source disposition."
+    },
+    {
+      "source": "test/test-config-transition.cpp",
+      "configured_compile_targets": [
+        "test-config-transition"
+      ],
+      "configured_ctest_direct_commands": [
+        "test-config-transition"
+      ],
+      "interpretation": "Builder records only; neither target presence nor test name proves Withdrawal execution. Empty target requires separate manual-source disposition."
+    },
+    {
+      "source": "test/test-m3-live.cpp",
+      "configured_compile_targets": [
+        "test-m3-live"
+      ],
+      "configured_ctest_direct_commands": [],
+      "interpretation": "Builder records only; neither target presence nor test name proves Withdrawal execution. Empty target requires separate manual-source disposition."
+    },
+    {
+      "source": "test/test-tos-collator.cpp",
+      "configured_compile_targets": [
+        "test-tos-collator"
+      ],
+      "configured_ctest_direct_commands": [
+        "test-counter-account-binding-readiness",
+        "test-counter-collator-admission",
+        "test-counter-config-binding",
+        "test-counter-config-presence-missing_capability",
+        "test-counter-config-presence-old_version",
+        "test-counter-cross-delivery",
+        "test-counter-disk-integration",
+        "test-counter-engine-config",
+        "test-counter-idle-replay",
+        "test-counter-native-sender",
+        "test-counter-self-delivery",
+        "test-workchain-genesis-routing"
+      ],
+      "interpretation": "Builder records only; neither target presence nor test name proves Withdrawal execution. Empty target requires separate manual-source disposition."
+    },
+    {
+      "source": "test/test-uno-state-snapshot.cpp",
+      "configured_compile_targets": [
+        "test-uno-state-snapshot",
+        "test-uno-storage-measurement"
+      ],
+      "configured_ctest_direct_commands": [
+        "test-uno-incremental-storage-smoke",
+        "test-uno-partition-storage-smoke",
+        "test-uno-split-prefix-storage-smoke",
+        "test-uno-split-storage-smoke",
+        "test-uno-state-snapshot"
+      ],
+      "interpretation": "Builder records only; neither target presence nor test name proves Withdrawal execution. Empty target requires separate manual-source disposition."
+    },
+    {
+      "source": "validator-engine/json-rpc-server-send.cpp",
+      "configured_compile_targets": [
+        "test-counter-validator-engine",
+        "validator-engine"
+      ],
+      "configured_ctest_direct_commands": [
+        "test-uno-crypto-node-link"
+      ],
+      "interpretation": "Builder records only; neither target presence nor test name proves Withdrawal execution. Empty target requires separate manual-source disposition."
+    },
+    {
+      "source": "validator-engine/validator-engine.cpp",
+      "configured_compile_targets": [
+        "test-counter-validator-engine",
+        "validator-engine"
+      ],
+      "configured_ctest_direct_commands": [
+        "test-uno-crypto-node-link"
+      ],
+      "interpretation": "Builder records only; neither target presence nor test name proves Withdrawal execution. Empty target requires separate manual-source disposition."
+    },
+    {
+      "source": "validator/full-node-master.cpp",
+      "configured_compile_targets": [
+        "full-node",
+        "full-node-counter-network"
+      ],
+      "configured_ctest_direct_commands": [],
+      "interpretation": "Builder records only; neither target presence nor test name proves Withdrawal execution. Empty target requires separate manual-source disposition."
+    },
+    {
+      "source": "validator/full-node-shard.cpp",
+      "configured_compile_targets": [
+        "full-node",
+        "full-node-counter-network"
+      ],
+      "configured_ctest_direct_commands": [],
+      "interpretation": "Builder records only; neither target presence nor test name proves Withdrawal execution. Empty target requires separate manual-source disposition."
+    },
+    {
+      "source": "validator/impl/collator.cpp",
+      "configured_compile_targets": [
+        "tos_validator"
+      ],
+      "configured_ctest_direct_commands": [],
+      "interpretation": "Builder records only; neither target presence nor test name proves Withdrawal execution. Empty target requires separate manual-source disposition."
+    },
+    {
+      "source": "validator/impl/ext-message-checker.cpp",
+      "configured_compile_targets": [
+        "tos_validator"
+      ],
+      "configured_ctest_direct_commands": [],
+      "interpretation": "Builder records only; neither target presence nor test name proves Withdrawal execution. Empty target requires separate manual-source disposition."
+    },
+    {
+      "source": "validator/impl/external-message.cpp",
+      "configured_compile_targets": [
+        "tos_validator"
+      ],
+      "configured_ctest_direct_commands": [],
+      "interpretation": "Builder records only; neither target presence nor test name proves Withdrawal execution. Empty target requires separate manual-source disposition."
+    },
+    {
+      "source": "validator/impl/fabric.cpp",
+      "configured_compile_targets": [
+        "tos_validator"
+      ],
+      "configured_ctest_direct_commands": [],
+      "interpretation": "Builder records only; neither target presence nor test name proves Withdrawal execution. Empty target requires separate manual-source disposition."
+    },
+    {
+      "source": "validator/impl/liteserver.cpp",
+      "configured_compile_targets": [
+        "tos_validator"
+      ],
+      "configured_ctest_direct_commands": [],
+      "interpretation": "Builder records only; neither target presence nor test name proves Withdrawal execution. Empty target requires separate manual-source disposition."
+    },
+    {
+      "source": "validator/impl/validate-query.cpp",
+      "configured_compile_targets": [
+        "tos_validator"
+      ],
+      "configured_ctest_direct_commands": [],
+      "interpretation": "Builder records only; neither target presence nor test name proves Withdrawal execution. Empty target requires separate manual-source disposition."
+    },
+    {
+      "source": "validator/manager.cpp",
+      "configured_compile_targets": [
+        "validator"
+      ],
+      "configured_ctest_direct_commands": [],
+      "interpretation": "Builder records only; neither target presence nor test name proves Withdrawal execution. Empty target requires separate manual-source disposition."
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+.......F.....
+======================================================================
+FAIL: test_prelock_markers_do_not_certify_d78 (__main__.Readiness.test_prelock_markers_do_not_certify_d78)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/tmp1gn94d72/workchain-withdrawal-failed-handoff-test.py", line 57, in test_prelock_markers_do_not_certify_d78
+    self.assertEqual(self.run_case(output=lambda name: 'WITHDRAWAL-FAILED_OBSERVED:' + name), 1)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 0 != 1
+
+----------------------------------------------------------------------
+Ran 13 tests in 0.007s
+
+FAILED (failures=1)

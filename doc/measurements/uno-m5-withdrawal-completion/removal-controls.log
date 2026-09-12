@@ -1,0 +1,31 @@
+row6: actual required-set member removed; selftest exit1
+...F.......
+======================================================================
+FAIL: test_each_bucket_obligation_is_independently_required (__main__.Readiness.test_each_bucket_obligation_is_independently_required) (name='test-workchain-withdrawal-completion-row6')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/completion-remove-fdkx0kml/workchain-withdrawal-completion-handoff-test.py", line 50, in test_each_bucket_obligation_is_independently_required
+    self.assertIn(name, handoff.TESTS)
+    ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'test-workchain-withdrawal-completion-row6' not found in ('test-workchain-withdrawal-completion-row4', 'test-workchain-withdrawal-completion-row5', 'test-workchain-withdrawal-completion-bucket-small', 'test-workchain-withdrawal-completion-bucket-full', 'test-workchain-withdrawal-completion-bucket-closed', 'test-workchain-withdrawal-completion-sweep-atomic', 'test-workchain-withdrawal-completion-oracle-control')
+
+----------------------------------------------------------------------
+Ran 11 tests in 0.008s
+
+FAILED (failures=1)
+
+sweep-atomic: actual required-set member removed; selftest exit1
+...F.......
+======================================================================
+FAIL: test_each_bucket_obligation_is_independently_required (__main__.Readiness.test_each_bucket_obligation_is_independently_required) (name='test-workchain-withdrawal-completion-sweep-atomic')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/completion-remove-ykggqn4n/workchain-withdrawal-completion-handoff-test.py", line 50, in test_each_bucket_obligation_is_independently_required
+    self.assertIn(name, handoff.TESTS)
+    ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'test-workchain-withdrawal-completion-sweep-atomic' not found in ('test-workchain-withdrawal-completion-row6', 'test-workchain-withdrawal-completion-row4', 'test-workchain-withdrawal-completion-row5', 'test-workchain-withdrawal-completion-bucket-small', 'test-workchain-withdrawal-completion-bucket-full', 'test-workchain-withdrawal-completion-bucket-closed', 'test-workchain-withdrawal-completion-oracle-control')
+
+----------------------------------------------------------------------
+Ran 11 tests in 0.008s
+
+FAILED (failures=1)

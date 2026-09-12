@@ -4,6 +4,7 @@
 #include "m3-live-wallet.h"
 #include "crypto/test/workchain-m4-deposit-input.h"
 #include "crypto/test/workchain-m5-failed-input.h"
+#include "crypto/test/workchain-m5-sweep-input.h"
 #include "block/workchain-budget-backing.h"
 
 namespace m3_live {
@@ -89,7 +90,10 @@ inline void prepare_m4_deposit(const std::filesystem::path& fixture) {
   const auto parameters = decode_workchain_engine_parameters(ingress.engine_configuration).move_as_ok();
   const auto business = m3_test::decode_m3_test_business_parameters(parameters.parameters).move_as_ok();
   const auto limits = m3_test::require_m4_deposit_policy(business).move_as_ok();
-  const auto target = wallet_state(fixture, 0);
+  const auto owner = std::filesystem::exists(fixture / "deposit.owner.txt")
+      ? std::stoul(field(fixture / "deposit.owner.txt", "owner")) : 0;
+  CHECK(owner < 2);
+  const auto target = wallet_state(fixture, static_cast<unsigned>(owner));
   const auto principal = std::stoull(field(fixture / "deposit.request.txt", "principal"));
   std::uint64_t value;
   CHECK(!__builtin_add_overflow(principal, limits.slot_fee, &value));
@@ -333,9 +337,61 @@ inline void assert_m4_block_backing(const std::filesystem::path& fixture, const 
       if (m4_deposit_was_rejected(root)) next = book;
       else CHECK(CurrencyCollection::add(book, CurrencyCollection(workchain_unsigned_fee(deposit.principal)), next));
     } else if (m3_test::is_m5_test_failed(candidate)) {
-      CHECK(CurrencyCollection::add(book, m5_recorded_return(root), next));
-      book = next;
-      CHECK(CurrencyCollection::sub(book, CurrencyCollection(workchain_unsigned_fee(m5_live_return_fee(fixture))), next));
+      td::Ref<vm::Cell> effects;
+      m4_recorded_candidate(root, &effects);
+      gen::UnoV2HostEffects::Record decoded;
+      CHECK(::tlb::unpack_cell(effects, decoded));
+      auto native = decode_workchain_native_effects(decoded.native).move_as_ok();
+      const auto recovered = m5_recorded_return(root);
+      if (!native.fees) {
+        // Authenticated event replay: an unissued return moves its full import
+        // into protected coordinator holdings, not into confidential backing.
+        // Do not infer this amount from the custody balance being tested.
+        vm::Dictionary transfers(native.transfers, 32);
+        unsigned count = 0;
+        CHECK(transfers.check_for_each([&](td::Ref<vm::CellSlice> leaf, td::ConstBitPtr, int) {
+          gen::UnoV2NativeTransfer::Record transfer; CurrencyCollection value;
+          if (leaf->size_ext() != 0x10000 || !::tlb::unpack_cell(leaf->prefetch_ref(), transfer) ||
+              !value.unpack(transfer.value) || transfer.source != custody ||
+              transfer.destination != td::Bits256::zero() || value != recovered) return false;
+          ++count; return true;
+        }));
+        CHECK(count == 1);
+        next = book;
+      } else {
+        CHECK(CurrencyCollection::add(book, recovered, next));
+        book = next;
+        CHECK(CurrencyCollection::sub(book, CurrencyCollection(workchain_unsigned_fee(m5_live_return_fee(fixture))), next));
+      }
+    } else if (m3_test::is_m5_test_sweep(candidate)) {
+      // The retained predecessor is bound to THIS accepted Merkle update.
+      // Derive book credit from its bucket and authenticated tariff, never
+      // from the transfer, receipt or balance that this observer is checking.
+      const auto previous = load(fixture / "completion-sweep-before-state.boc");
+      gen::Block::Record accepted;
+      CHECK(::tlb::unpack_cell(root, accepted));
+      CHECK(vm::MerkleUpdate::apply(previous, accepted.state_update).is_ok());
+      gen::ShardStateUnsplit::Record predecessor;
+      CHECK(::tlb::unpack_cell(previous, predecessor));
+      vm::AugmentedDictionary old_accounts(vm::load_cell_slice_ref(predecessor.accounts), 256, block::tlb::aug_ShardAccounts);
+      Account coordinator(2, td::Bits256::zero().bits());
+      CHECK(coordinator.unpack(old_accounts.lookup(td::Bits256::zero()), predecessor.gen_utime, false));
+      const auto system = decode_workchain_coordinator_state(coordinator.data).move_as_ok();
+      const auto bucket = decode_workchain_unexpected_bucket(system.unexpected, {256,256},4096).move_as_ok();
+      auto config_root = load(fixture / "zerostate.boc");
+      tos::BlockIdExt zero{tos::BlockId{tos::masterchainId,tos::shardIdAll,0}, config_root->get_hash().bits(),td::Bits256::zero()};
+      auto config = ConfigInfo::extract_config(config_root,zero,Config::needWorkchainInfo | Config::needCapabilities).move_as_ok();
+      auto ingress = load_workchain_native_ingress_table(*config).move_as_ok().at(2);
+      auto policy = m3_test::decode_m3_test_business_parameters(
+          decode_workchain_engine_parameters(ingress.engine_configuration).move_as_ok().parameters).move_as_ok();
+      CHECK(policy.sweep && policy.deposit && policy.operation_tariff && policy.sweep->count == 1);
+      CHECK(!bucket.entries.empty() && bucket.entries.front().tomis->unsigned_fits_bits(63));
+      std::uint64_t compute, fee, credit;
+      CHECK(!__builtin_mul_overflow(policy.operation_tariff->base, policy.sweep->issuance_billing_units, &compute));
+      CHECK(!__builtin_add_overflow(policy.deposit->slot_fee, compute, &fee));
+      CHECK(!__builtin_sub_overflow(static_cast<std::uint64_t>(bucket.entries.front().tomis->to_long()), fee, &credit));
+      CHECK(credit != 0);
+      CHECK(CurrencyCollection::add(book, CurrencyCollection(workchain_unsigned_fee(credit)), next));
     } else {
       auto replay = m3_test::decode_m5_accounting_replay(candidate).move_as_ok();
       if (const auto* withdrawal = std::get_if<WorkchainWithdrawalInput>(&replay)) {
@@ -381,11 +437,16 @@ inline void assert_m4_block_backing(const std::filesystem::path& fixture, const 
     if (leaf.is_null()) continue;
     Account account(2,key.bits()); CHECK(account.unpack(leaf,state.gen_utime,false));
     for (const auto& record : m5_live_account(account.data,limit).control.withdrawals) {
-      CHECK(record.timing.phase == 0); // No phase-1/Paid/late profile in this live sequence.
+      // Both phases retain the same obligations until a terminal transition.
+      // The decoder validates phase/encoding; queue observation itself is
+      // independently checked by Native replay, not inferred from these sums.
+      if (record.timing.phase == 1) {
+        CHECK(record.timing.queue_removed_height > record.timing.opened_height);
+        CHECK(record.timing.queue_removed_height <= state.seq_no);
+      }
       CurrencyCollection next;
       CHECK(CurrencyCollection::add(p,CurrencyCollection(workchain_unsigned_fee(record.principal)),next)); p=next;
       CHECK(CurrencyCollection::add(w,CurrencyCollection(workchain_unsigned_fee(record.principal)),next)); w=next;
-      CHECK(CurrencyCollection::add(w,CurrencyCollection(workchain_unsigned_fee(record.costs.original_reserve)),next)); w=next;
     }
   }
   CurrencyCollection lhs, rhs;
@@ -396,7 +457,8 @@ inline void assert_m4_block_backing(const std::filesystem::path& fixture, const 
             << " P=" << p.tomis << " W=" << w.tomis << "; first-layer=OK; checking R+P=N+W" << std::endl;
   check_m4_backing(lhs.tomis, rhs.tomis, td::make_refint(0)).ensure();
   const auto candidate = m4_recorded_candidate(step.block);
-  if (!m3_test::is_m4_test_deposit(candidate) && !m3_test::is_m5_test_failed(candidate)) {
+  if (!m3_test::is_m4_test_deposit(candidate) && !m3_test::is_m5_test_failed(candidate) &&
+      !m3_test::is_m5_test_sweep(candidate)) {
     const auto replay = m3_test::decode_m5_accounting_replay(candidate).move_as_ok();
     std::optional<std::uint64_t> public_fee;
     if (const auto* withdrawal = std::get_if<WorkchainWithdrawalInput>(&replay))
@@ -419,8 +481,6 @@ inline void assert_m4_block_backing(const std::filesystem::path& fixture, const 
           CHECK(CurrencyCollection::add(fee_reserve,CurrencyCollection(workchain_unsigned_fee(amount)),next)); fee_reserve=next;
           CHECK(CurrencyCollection::add(fee_liability,CurrencyCollection(workchain_unsigned_fee(amount)),next)); fee_liability=next;
         }
-        CHECK(CurrencyCollection::add(fee_liability,CurrencyCollection(workchain_unsigned_fee(
-            withdrawal->data.amounts.return_reserve)),next)); fee_liability=next;
       }
       check_m4_fee_pair(old_native.balance, fee_reserve, old_liabilities, fee_liability, fee).ensure();
       CurrencyCollection corrupted;

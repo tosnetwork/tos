@@ -1,0 +1,4 @@
+COMPLETION_REAL_RED:LATE_NOT_ROW3
+ORACLE_MISSING:LATE_NOT_ROW3
+WITHDRAWAL-COMPLETION_D78_OBSERVED:test-workchain-withdrawal-completion-row6
+Independent retained-JSON recheck: same Withdrawal/Q/window, actual heights 8/9, late and restored pass, misroute and disabled oracle reject at named layer.

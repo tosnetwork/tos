@@ -7,6 +7,7 @@
 #include "block/workchain-confidential-input.h"
 #include "block/workchain-deposit-admission.h"
 #include "block/workchain-operation-fees.h"
+#include "block/workchain-unexpected-bucket.h"
 #include "uno/crypto/include/uno_crypto.h"
 #include <array>
 #include <utility>
@@ -15,19 +16,18 @@ namespace block::m3_test {
 struct M5TestPrepareParameters {
   std::uint64_t state_fee;
   std::uint32_t withdrawal_limit, settlement_blocks;
-  std::optional<std::uint64_t> max_bounce_cost;
 };
 struct M5TestFailedParameters {
   std::uint32_t withdrawal_limit;
   std::uint64_t issuance_billing_units;
 };
-inline td::Status check_m5_test_reserve(const M5TestPrepareParameters& policy, std::uint64_t value) {
-  if (!policy.max_bounce_cost)
-    return td::Status::Error(-7201, "ConfigInvalid: explicit max_bounce_cost absent");
-  if (value != *policy.max_bounce_cost)
-    return td::Status::Error(-7200, "Withdrawal reserve differs from authenticated max_bounce_cost");
-  return td::Status::OK();
-}
+// One standing round, not an entry set. Neither this authorization nor the
+// selector can name a destination. Sequence is independent of bucket rebase.
+struct M5TestSweepParameters {
+  std::uint32_t earliest_height, count, limit;
+  std::uint64_t sequence, issuance_billing_units;
+  std::optional<WorkchainUnexpectedLimits> bucket_limits;
+};
 struct M3TestBusinessParameters {
   UnoCryptoLimits limits;
   std::array<unsigned char, 80> domain;
@@ -49,6 +49,7 @@ struct M3TestBusinessParameters {
   // K_withdrawal nor D70 billing units may be inferred from proof-work units.
   std::optional<M5TestFailedParameters> failed;
   std::optional<M5TestPrepareParameters> prepare;
+  std::optional<M5TestSweepParameters> sweep;
 
   M3TestBusinessParameters() = delete;
   M3TestBusinessParameters(UnoCryptoLimits limits_value, std::array<unsigned char, 80> domain_value,
@@ -100,20 +101,38 @@ inline td::Result<td::Ref<vm::Cell>> encode_m3_test_business_parameters(const M3
     return td::Status::Error("Deposit maximum differs from authenticated kernel limit");
   if (value.operation_tariff && (!value.deposit || value.send_fee || value.collect_fee || value.proof_profile != 4))
     return td::Status::Error("component tariff requires Deposit policy, profile 4 and zero legacy fee fields");
-  if (value.failed && (!value.operation_tariff || !value.failed->withdrawal_limit))
+  if (value.failed && (!value.prepare || !value.operation_tariff || !value.failed->withdrawal_limit))
     return td::Status::Error("Failed profile requires explicit tariff and withdrawal limit");
   if (value.prepare && (!value.operation_tariff || !value.prepare->withdrawal_limit ||
-      (value.failed && (!value.prepare->max_bounce_cost ||
-                       value.failed->withdrawal_limit != value.prepare->withdrawal_limit))))
+      (value.failed && value.failed->withdrawal_limit != value.prepare->withdrawal_limit)))
     return td::Status::Error("prepare requires explicit tariff and bounded policy");
-  const unsigned encoded_version = value.prepare && value.prepare->max_bounce_cost
-      ? (value.failed ? 7 : 6) : value.prepare ? 5 : value.failed ? 4 : value.operation_tariff ? 3 : value.deposit ? 2 : version;
+  // D78 test layouts: 8=prepare, 9=prepare+Failed. Never reinterpret the
+  // retired prelock layouts 4..7. M3/M4 layouts 1..3 remain byte-identical.
+  if (value.sweep && (!value.failed || !value.sweep->count || value.sweep->count > value.sweep->limit ||
+      !value.sweep->bucket_limits))
+    return td::Status::Error("sweep requires explicit bounded round authorization");
+  auto profiles_root = profiles.finalize();
+  if (value.sweep) {
+    const auto& authorization = *value.sweep;
+    vm::CellBuilder envelope;
+    if (!envelope.store_long_bool(authorization.earliest_height, 32) ||
+        !envelope.store_long_bool(authorization.count, 32) ||
+        !envelope.store_long_bool(authorization.limit, 32) ||
+        !envelope.store_long_bool(authorization.sequence, 64) ||
+        !envelope.store_long_bool(authorization.issuance_billing_units, 64) ||
+        !envelope.store_long_bool(authorization.bucket_limits->entries, 32) ||
+        !envelope.store_long_bool(authorization.bucket_limits->overflow_sources, 32) ||
+        !envelope.store_ref_bool(profiles_root)) return malformed();
+    profiles_root = envelope.finalize();
+  }
+  const unsigned encoded_version = value.sweep ? 11 : value.prepare ? (value.failed ? 9 : 8)
+      : value.operation_tariff ? 3 : value.deposit ? 2 : version;
   if (!root.store_long_bool(tag, 32) || !root.store_long_bool(encoded_version, 16) ||
       !root.store_long_bool(value.send_fee, 64) || !root.store_long_bool(value.collect_fee, 64) ||
       !root.store_long_bool(value.fee_effective_height, 32) || !root.store_long_bool(value.account_schema, 16) ||
       !root.store_long_bool(value.relation_profile, 16) || !root.store_long_bool(value.proof_profile, 16) ||
       !root.store_ref_bool(limits.finalize()) || !root.store_ref_bool(domain.finalize()) ||
-      !root.store_ref_bool(rules) || !root.store_ref_bool(profiles.finalize())) return malformed();
+      !root.store_ref_bool(rules) || !root.store_ref_bool(profiles_root)) return malformed();
   if (value.deposit && (!root.store_long_bool(value.deposit->minimum, 64) ||
       !root.store_long_bool(value.deposit->slot_fee, 64) ||
       !root.store_long_bool(value.deposit->user_slots, 32) ||
@@ -126,8 +145,6 @@ inline td::Result<td::Ref<vm::Cell>> encode_m3_test_business_parameters(const M3
   if (value.prepare && (!root.store_long_bool(value.prepare->state_fee, 64) ||
       !root.store_long_bool(value.prepare->withdrawal_limit, 32) ||
       !root.store_long_bool(value.prepare->settlement_blocks, 32))) return malformed();
-  if (value.prepare && value.prepare->max_bounce_cost &&
-      !root.store_long_bool(*value.prepare->max_bounce_cost, 64)) return malformed();
   return td::Ref<vm::Cell>{root.finalize()};
 }
 
@@ -136,12 +153,12 @@ inline td::Result<M3TestBusinessParameters> decode_m3_test_business_parameters(c
   if (cell.is_null()) return malformed();
   bool special = false;
   auto root = vm::load_cell_slice_special(cell, special);
-  if (special || root.size_refs() != 4 || (root.size() != 256 && root.size() != 448 && root.size() != 640 && root.size() != 736 && root.size() != 768 && root.size() != 832 && root.size() != 928)) return malformed();
+  if (special || root.size_refs() != 4 || (root.size() != 256 && root.size() != 448 && root.size() != 640 && root.size() != 768 && root.size() != 864)) return malformed();
   if (root.fetch_ulong(32) != tag) return td::Status::Error("unknown M3 test business tag");
   auto wire_version = root.fetch_ulong(16);
-  if (wire_version < 1 || wire_version > 7)
+  if (wire_version < 1 || (wire_version > 3 && wire_version != 8 && wire_version != 9 && wire_version != 10 && wire_version != 11))
     return td::Status::Error("unsupported M3 test business version");
-  if (root.size() != (wire_version == 7 ? 880u : wire_version == 6 ? 784u : wire_version == 5 ? 720u : wire_version == 4 ? 688u : wire_version == 3 ? 592u : wire_version == 2 ? 400u : 208u)) return malformed();
+  if (root.size() != (wire_version >= 9 ? 816u : wire_version == 8 ? 720u : wire_version == 3 ? 592u : wire_version == 2 ? 400u : 208u)) return malformed();
   const auto send = root.fetch_ulong(64), collect = root.fetch_ulong(64);
   const auto height = static_cast<std::uint32_t>(root.fetch_ulong(32));
   const auto schema = static_cast<std::uint16_t>(root.fetch_ulong(16));
@@ -153,7 +170,22 @@ inline td::Result<M3TestBusinessParameters> decode_m3_test_business_parameters(c
   TRY_RESULT(rules_shape, exact(rules_root, 800, 0));
   (void)rules_shape;
   TRY_RESULT(rules, confidential_input_detail::unpack<gen::UnoV2TransferRulesV1::Record>(rules_root));
-  TRY_RESULT(profiles, exact(root.fetch_ref(), 768, 0));
+  auto profiles_root = root.fetch_ref();
+  std::optional<M5TestSweepParameters> sweep;
+  if (wire_version >= 10) {
+    TRY_RESULT(envelope, exact(profiles_root, wire_version == 11 ? 288 : 224, 1));
+    const auto earliest = static_cast<std::uint32_t>(envelope.fetch_ulong(32));
+    const auto count = static_cast<std::uint32_t>(envelope.fetch_ulong(32));
+    const auto limit = static_cast<std::uint32_t>(envelope.fetch_ulong(32));
+    const auto sequence = envelope.fetch_ulong(64), units = envelope.fetch_ulong(64);
+    if (!count || count > limit) return td::Status::Error("invalid authenticated sweep count");
+    sweep = M5TestSweepParameters{earliest, count, limit, sequence, units};
+    if (wire_version == 11)
+      sweep->bucket_limits = WorkchainUnexpectedLimits{static_cast<std::uint32_t>(envelope.fetch_ulong(32)),
+          static_cast<std::uint32_t>(envelope.fetch_ulong(32))};
+    profiles_root = envelope.fetch_ref();
+  }
+  TRY_RESULT(profiles, exact(profiles_root, 768, 0));
   const auto max_balance = limits.fetch_ulong(64), max_value = limits.fetch_ulong(64);
   const auto max_collect = limits.fetch_ulong(64), max_context = limits.fetch_ulong(64), max_proof = limits.fetch_ulong(64);
   if (!std::in_range<std::size_t>(max_collect) || !std::in_range<std::size_t>(max_context) ||
@@ -166,6 +198,7 @@ inline td::Result<M3TestBusinessParameters> decode_m3_test_business_parameters(c
   M3TestBusinessParameters result{{max_balance, max_value, static_cast<std::size_t>(max_collect),
       static_cast<std::size_t>(max_context), static_cast<std::size_t>(max_proof)}, domain_bytes, send, collect,
       rules, generator, range, fee, height, schema, relation, proof};
+  result.sweep = sweep;
   if (wire_version >= 2) {
     auto minimum = root.fetch_ulong(64), slot_fee = root.fetch_ulong(64);
     auto user_slots = static_cast<std::uint32_t>(root.fetch_ulong(32));
@@ -177,19 +210,18 @@ inline td::Result<M3TestBusinessParameters> decode_m3_test_business_parameters(c
     const auto base = root.fetch_ulong(64), send_tip = root.fetch_ulong(64), collect_tip = root.fetch_ulong(64);
     result.operation_tariff = WorkchainStaticOperationTariff{base, send_tip, collect_tip};
   }
-  if (wire_version == 4 || wire_version == 7) {
+  if (wire_version >= 9) {
     const auto limit = static_cast<std::uint32_t>(root.fetch_ulong(32));
     const auto units = root.fetch_ulong(64);
     if (!limit) return td::Status::Error("Failed profile withdrawal limit is zero");
     result.failed = M5TestFailedParameters{limit, units};
   }
-  if (wire_version >= 5) {
+  if (wire_version >= 8) {
     const auto state_fee = root.fetch_ulong(64);
     const auto limit = static_cast<std::uint32_t>(root.fetch_ulong(32));
     const auto blocks = static_cast<std::uint32_t>(root.fetch_ulong(32));
     if (!limit) return td::Status::Error("prepare withdrawal limit is zero");
-    result.prepare = M5TestPrepareParameters{state_fee, limit, blocks, {}};
-    if (wire_version >= 6) result.prepare->max_bounce_cost = root.fetch_ulong(64);
+    result.prepare = M5TestPrepareParameters{state_fee, limit, blocks};
     if (result.failed && result.failed->withdrawal_limit != limit)
       return td::Status::Error("prepare and Failed withdrawal limits differ");
   }

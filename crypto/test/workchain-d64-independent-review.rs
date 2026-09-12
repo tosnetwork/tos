@@ -1,3 +1,8 @@
+//! HISTORICAL PRE-D78 ABI FIXTURE, deliberately not compiled against current HEAD.
+//! Runnable ONLY through workchain-d64-independent-review.py, which archives
+//! 5f628635d6afebbc11e9ccec8065ec1691c4e850 and injects this source there.
+//! return_reserve is correct for that pinned ABI. Current D78 counterpart:
+//! workchain-d78-independent-review.rs/.py. Do not port this historical fixture.
 
 use crate::{withdrawal_statement::{WithdrawalAmounts, WithdrawalStatement}, relation,
     ffi::{KernelLimits, UNO_RELATION_SEND, AbiStatus}};

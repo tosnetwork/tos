@@ -3556,7 +3556,7 @@ td::Status Collator::create_workchain_account_batch(const block::ResolvedWorkcha
     return local("account batch currency validation bound unsupported");
   TRY_RESULT(settled, block::execute_and_settle_workchain_accounts(adapter, previous.accounts, identity, proofs,
       *native, *execution.ingress.custody_address, execution.ingress.executor_address, td::make_refint(0),
-      static_cast<int>(limits.state.max_cells), serialize_cfg_, action_phase_cfg_));
+      static_cast<int>(limits.state.max_cells), serialize_cfg_, action_phase_cfg_, prev_state_root_));
   if (!settled.output_admission) return local("account batch lacks output admission continuation");
   account_output_admission_.emplace(*settled.output_admission);
   // Only complete private Native artifacts escape settlement. Adopt those exact

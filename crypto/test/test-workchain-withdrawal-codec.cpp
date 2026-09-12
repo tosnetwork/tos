@@ -8,27 +8,24 @@ td::Bits256 word(unsigned n) {
 }
 WorkchainConfidentialAddress owner() { return {2, word(1), word(2)}; }
 WorkchainWithdrawalData data() {
-  return {{owner(), 7, 8, 9, 100, 11}, {0, word(3)}, {100, 4, 20, 11},
+  return {{owner(), 7, 8, 9, 100, 11}, {0, word(3)}, {100, 4, 11},
           {word(4), word(5)}, word(6)};
 }
 WorkchainWithdrawalRecord record() {
   return {word(7), word(8), 7, 100, owner(), {0, word(3)},
-          {4, 20, 3, 17}, {0, 1000, 10, 0, 30}};
+          {4}, {0, 1000, 10, 0, 30}};
 }
 td::Ref<vm::Cell> special() {
   return vm::CellBuilder().store_long(2, 8).store_bits(word(9).bits(), 256).finalize(true);
 }
 }
-TEST(WithdrawalCodec, RecordRoundtripAndSeparateCosts) {
+TEST(WithdrawalCodec, RecordRoundtripAndPaidOutwardFee) {
   auto value = record();
   auto root = encode_workchain_withdrawal_record(value); ASSERT_TRUE(root.is_ok());
   auto decoded = decode_workchain_withdrawal_record(root.ok()); ASSERT_TRUE(decoded.is_ok());
   ASSERT_EQ(decoded.ok().costs.outward_fee_paid, 4u);
-  ASSERT_EQ(decoded.ok().costs.original_reserve, 20u);
-  ASSERT_EQ(decoded.ok().costs.consumed_return_cost, 3u);
-  ASSERT_EQ(decoded.ok().costs.refundable_reserve, 17u);
   ASSERT_TRUE(encode_workchain_withdrawal_record(decoded.ok()).move_as_ok()->get_hash() == root.ok()->get_hash());
-  value.costs.refundable_reserve = 18;
+  value.costs.outward_fee_paid = UINT64_MAX;
   ASSERT_TRUE(encode_workchain_withdrawal_record(value).is_error());
   value = record(); value.timing.phase = 1; value.timing.queue_removed_height = 12;
   ASSERT_TRUE(encode_workchain_withdrawal_record(value).is_ok());
@@ -48,7 +45,7 @@ TEST(WithdrawalCodec, IdentitiesDoNotUseFutureLt) {
 }
 TEST(WithdrawalCodec, ExactInputAndCheckedSum) {
   auto value = data();
-  ASSERT_EQ(workchain_withdrawal_total(value.amounts).move_as_ok(), 124u);
+  ASSERT_EQ(workchain_withdrawal_total(value.amounts).move_as_ok(), 104u);
   value.amounts.principal = UINT64_MAX;
   ASSERT_TRUE(workchain_withdrawal_total(value.amounts).is_error());
   ASSERT_TRUE(encode_workchain_withdrawal_data(value).is_error());
@@ -73,7 +70,7 @@ TEST(WithdrawalCodec, SpecialRootsAndDescendantsReject) {
   ASSERT_TRUE(decode_workchain_withdrawal_data(special()).is_error());
   ASSERT_TRUE(decode_workchain_withdrawal_record(vm::CellBuilder().store_long(0, 8).finalize()).is_error());
   auto root = encode_workchain_withdrawal_record(record()).move_as_ok();
-  gen::UnoV2WithdrawalRecordV1::Record wire;
+  gen::UnoV2WithdrawalRecordV2::Record wire;
   ASSERT_TRUE(resource_policy_detail::unpack_exact(root, wire));
   wire.costs = special();
   auto changed = confidential_state_detail::pack(wire).move_as_ok();
@@ -87,6 +84,7 @@ TEST(WithdrawalCodec, CanonicalContextBindsAllComponents) {
        {word(15), word(16), word(17)}, word(18), 19, owner(), 7, 8, 9},
       {word(7), word(20), word(21)}, word(8), 30, 4};
   auto encoded = encode_workchain_withdrawal_context(value); ASSERT_TRUE(encoded.is_ok());
+  std::cout << "D78_HOST_CONTEXT_BYTES=" << encoded.ok().size() << "\n";
   ASSERT_EQ(encoded.ok().size(), 566u);
   value.settlement_blocks = 31;
   ASSERT_TRUE(encode_workchain_withdrawal_context(value).move_as_ok() != encoded.ok());
@@ -113,7 +111,7 @@ TEST(WithdrawalCodec, ControlCountUniquenessAndClosure) {
   ASSERT_EQ(duplicate.error().message(), "duplicate Withdrawal payout created_lt");
   value.withdrawals.back().timing.payout_created_lt++;
   ASSERT_TRUE(encode_workchain_withdrawal_control(value, 2).is_ok());
-  gen::UnoV2AccountControlWithdrawalsV1::Record wire;
+  gen::UnoV2AccountControlWithdrawalsV2::Record wire;
   ASSERT_TRUE(resource_policy_detail::unpack_exact(root.ok(), wire));
   wire.withdrawal_count = 0;
   auto wrong = decode_workchain_withdrawal_control(confidential_state_detail::pack(wire).move_as_ok(), 2);
@@ -174,7 +172,7 @@ TEST(SystemOrigin, ThreeMembersRequireSequenceAndRoundtrip) {
 TEST(WithdrawalAccount, AuthenticatedEnvelopeAndCombinedPending) {
   auto point = word(0);
   point.as_slice().copy_from(td::hex_decode("e2f2ae0a6abc4e71a884a961c500515f58e30b6aa582dd8db6a65945e08d2d76").move_as_ok());
-  WorkchainConfidentialAccount core{3, 1, 2, -23903, word(1), owner(), {word(4), word(5), word(6)},
+  WorkchainConfidentialAccount core{4, 1, 2, -23903, word(1), owner(), {word(4), word(5), word(6)},
       {10000000000ULL, 0, word(7)}, point, 0, {word(0), word(0)}, 0, 0, {}, WorkchainAccountActive{}, {}};
   WorkchainWithdrawalAccount value{core, {WorkchainAccountActive{}, {record()}}, {}};
   auto origin = WorkchainSystemOrigin{WorkchainSettlementOrigin{word(8), 1}};
@@ -214,7 +212,7 @@ TEST(WithdrawalAccount, AuthenticatedEnvelopeAndCombinedPending) {
   value.control.withdrawals[0].source.account = word(99);
   ASSERT_TRUE(encode_workchain_withdrawal_account(value, 2).is_error());
   ASSERT_TRUE(decode_workchain_withdrawal_account(special(), 2).is_error());
-  gen::UnoV2AccountStateWithdrawals::Record wire;
+  gen::UnoV2AccountStateWithdrawalsV2::Record wire;
   ASSERT_TRUE(resource_policy_detail::unpack_exact(root.ok(), wire));
   wire.control = special();
   ASSERT_TRUE(decode_workchain_withdrawal_account(confidential_state_detail::pack(wire).move_as_ok(), 2).is_error());
@@ -249,4 +247,31 @@ TEST(SystemOrigin, IdenticalSweepAttributionUsesDistinctIssuedSequences) {
   auto missing = encode_workchain_system_origin(second);
   ASSERT_TRUE(missing.is_error());
   ASSERT_EQ(missing.error().message(), "system origin requires issued sequence");
+}
+
+#include "td/utils/filesystem.h"
+#include <filesystem>
+TEST(WithdrawalCodec, D78RejectsPrelockTagsAndKeepsFeeSeparate) {
+  const auto base = std::filesystem::path(__FILE__).parent_path() / "workchain-m5-d78-vectors/old-prelock";
+  auto load = [&](const char* name) {
+    return vm::std_boc_deserialize(td::read_file_str((base/name).string()).move_as_ok()).move_as_ok();
+  };
+  ASSERT_TRUE(decode_workchain_withdrawal_account(load("account-v1.boc"),4).is_error());
+  ASSERT_TRUE(decode_workchain_withdrawal_data(load("data-v1.boc")).is_error());
+  ASSERT_TRUE(decode_workchain_withdrawal_record(load("record-v1.boc")).is_error());
+  ASSERT_TRUE(decode_workchain_withdrawal_control(load("control-v1.boc"),4).is_error());
+  auto v=data(); v.amounts.operation_fee=UINT64_MAX;
+  ASSERT_EQ(workchain_withdrawal_total(v.amounts).move_as_ok(),104u);
+  auto r=record(); r.timing.phase=0; r.timing.queue_removed_height=1;
+  ASSERT_TRUE(check_workchain_withdrawal_record(r).is_error());
+}
+
+TEST(WithdrawalCodec, D78CurrentVectorsRemainExact) {
+  const auto base=std::filesystem::path(__FILE__).parent_path()/"workchain-m5-d78-vectors/no-prelock-v2";
+  for(auto entry:{std::pair{"record-v2.boc",encode_workchain_withdrawal_record(record()).move_as_ok()},
+                 std::pair{"data-v2.boc",encode_workchain_withdrawal_data(data()).move_as_ok()},
+                 std::pair{"control-v2.boc",encode_workchain_withdrawal_control({WorkchainAccountActive{}, {record()}},4).move_as_ok()}}){
+    auto expected=vm::std_boc_deserialize(td::read_file_str((base/entry.first).string()).move_as_ok()).move_as_ok();
+    ASSERT_TRUE(expected->get_hash()==entry.second->get_hash());
+  }
 }

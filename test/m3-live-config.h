@@ -5,7 +5,10 @@
 #include "crypto/test/workchain-m3-state-fixture.h"
 
 inline td::Result<td::Ref<vm::Cell>> prepare_m3_live_configuration(td::Ref<vm::Cell> root, bool m4 = false, bool debit = false,
-                                                              bool funded_return = false, bool shortfall = false) {
+                                                              bool funded_return = false, bool completion = false,
+                                                              bool completion_full_cap = false,
+                                                              bool completion_window_pair = false,
+                                                              bool sweep = false) {
   using namespace block;
   using namespace block::m3_test;
   tos::BlockIdExt zero{tos::BlockId{tos::masterchainId, tos::shardIdAll, 0},
@@ -37,6 +40,10 @@ inline td::Result<td::Ref<vm::Cell>> prepare_m3_live_configuration(td::Ref<vm::C
       {65536, 16777216, 4096, 1048576, 128},
       {100000, 4096, 1048576, 65536, 16777216, 2}, {0, 2, 2}, 1};
   WorkchainCoordinatorState coordinator{2, {1, 1, 0, 0}, 0};
+  // The Paid negative fixture must reach the value-movement oracle: two
+  // opposite movements plus the legitimate S edge need three transfer slots.
+  // This is an explicit authenticated test allowance, not a production default.
+  if (completion) resources.work_output.max_transfers = 3;
   if (m4) {
     // Explicit authenticated TEST inputs, not defaults or the coordinator's
     // separately scheduled independent-prediction experiment. D28 is absent.
@@ -47,13 +54,17 @@ inline td::Result<td::Ref<vm::Cell>> prepare_m3_live_configuration(td::Ref<vm::C
     business.proof_profile = 4;
     business.deposit = WorkchainDepositPolicy{1000000000, maximum, 3000000, 16, 4};
     business.operation_tariff = WorkchainStaticOperationTariff{2, 5, 7};
-    if (debit) business.prepare = M5TestPrepareParameters{250, 4, 30, 23};  // Explicit test inputs, not frozen defaults.
+    if (debit) business.prepare = M5TestPrepareParameters{250, 4, 30};  // Explicit test inputs, not frozen defaults.
     if (funded_return) {
-      business.prepare = M5TestPrepareParameters{250, 4, 30, shortfall ? 1000000u : 4000000u};
-      business.failed = M5TestFailedParameters{4, 4}; // Explicit D70 test input, NOT seven proof-work units.
+      business.prepare = M5TestPrepareParameters{250, completion_full_cap ? 3u : 4u,
+                                               completion_window_pair ? 2u : completion ? 1u : 30u};
+      business.failed = M5TestFailedParameters{completion_full_cap ? 3u : 4u, 4}; // Same test account cap; explicit D70 units.
     }
     resources.input.max_reads = resources.input.max_writes = 4;
-    auto bucket = encode_workchain_unexpected_bucket({{}, {}, td::make_refint(0), {}, 0},
+    if (sweep) business.sweep = M5TestSweepParameters{1, 1, 16, 0, 4, WorkchainUnexpectedLimits{256,256}};
+    WorkchainUnexpectedBucket initial_bucket{{}, {}, td::make_refint(0), {}, 0};
+    if (sweep) { initial_bucket.account_attribution = true; initial_bucket.sweep_sequence = 0; }
+    auto bucket = encode_workchain_unexpected_bucket(initial_bucket,
                                                      {256, 256}, 4096);
     TRY_RESULT(empty_bucket, std::move(bucket));
     coordinator = WorkchainCoordinatorState{3, {1, 1, 0, 0}, 0, 0, empty_bucket};

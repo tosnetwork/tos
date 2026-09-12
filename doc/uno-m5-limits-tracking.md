@@ -1,5 +1,9 @@
 # B's M5 limitations: current obligation map
 
+> D78 applicability: the text below is preserved pre-D78 evidence/design.
+> Current amounts, retired obligations and semantic controls are specified in
+> [the D78 handoff](uno-m5-d78-handoff.md). Old markers cannot certify D78.
+
 Inventory baseline `2c78106f1`, 2026-09-11. Normative reference supplied by owner:
 memo `86e775a9`, SHA256 prefix `1f756b55faf2820c`. This is a current tracking
 addendum, not a revision of any pre-observation prediction or retrospective report.

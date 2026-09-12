@@ -1,0 +1,4 @@
+   Compiling withdrawal-structure-expiry v0.1.0 (/home/tomi/tos-m2/crypto/test/withdrawal-structure)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.43s
+     Running `/tmp/b-d78-structure-target/debug/withdrawal-structure-expiry uno/crypto/src/withdrawal_statement.rs`
+statement AST boundary unchanged; new mutable outlet and global storage controls rejected; indirect side effects not covered
