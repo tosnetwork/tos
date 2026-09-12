@@ -257,3 +257,5 @@ execution passes. Selected execution traces and independently rechecked actual
 JSON are in `measurements/uno-m5-withdrawal-completion/bucket-full-real/`.
 Completion is **5/8**; bucket-closed, sweep-atomic and oracle-control remain.
 No other runner or end-to-end queue-budget claim is changed.
+
+Excluded closure replay `/tmp/uno-closed-closure-after-engine.log` (fixture `uno-closed-closure-after-engine-Y70s2o`) was case **(b)**: the originating wallet pin passed (the replay retained that wallet observation), no `WALLET_FRESHNESS_MISMATCH` occurred, and exclusion was manual because a Native C++ header rollback overlapped compilation; the wallet pin does not bind the Native binary/dependency build.
