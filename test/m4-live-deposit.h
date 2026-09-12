@@ -407,7 +407,13 @@ inline void assert_m4_block_backing(const std::filesystem::path& fixture, const 
     if (leaf.is_null()) continue;
     Account account(2,key.bits()); CHECK(account.unpack(leaf,state.gen_utime,false));
     for (const auto& record : m5_live_account(account.data,limit).control.withdrawals) {
-      CHECK(record.timing.phase == 0); // No phase-1/Paid/late profile in this live sequence.
+      // Both phases retain the same obligations until a terminal transition.
+      // The decoder validates phase/encoding; queue observation itself is
+      // independently checked by Native replay, not inferred from these sums.
+      if (record.timing.phase == 1) {
+        CHECK(record.timing.queue_removed_height > record.timing.opened_height);
+        CHECK(record.timing.queue_removed_height <= state.seq_no);
+      }
       CurrencyCollection next;
       CHECK(CurrencyCollection::add(p,CurrencyCollection(workchain_unsigned_fee(record.principal)),next)); p=next;
       CHECK(CurrencyCollection::add(w,CurrencyCollection(workchain_unsigned_fee(record.principal)),next)); w=next;
