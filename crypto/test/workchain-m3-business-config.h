@@ -20,6 +20,12 @@ struct M5TestFailedParameters {
   std::uint32_t withdrawal_limit;
   std::uint64_t issuance_billing_units;
 };
+// One standing round, not an entry set. Neither this authorization nor the
+// selector can name a destination. Sequence is independent of bucket rebase.
+struct M5TestSweepParameters {
+  std::uint32_t earliest_height, count, limit;
+  std::uint64_t sequence, issuance_billing_units;
+};
 struct M3TestBusinessParameters {
   UnoCryptoLimits limits;
   std::array<unsigned char, 80> domain;
@@ -41,6 +47,7 @@ struct M3TestBusinessParameters {
   // K_withdrawal nor D70 billing units may be inferred from proof-work units.
   std::optional<M5TestFailedParameters> failed;
   std::optional<M5TestPrepareParameters> prepare;
+  std::optional<M5TestSweepParameters> sweep;
 
   M3TestBusinessParameters() = delete;
   M3TestBusinessParameters(UnoCryptoLimits limits_value, std::array<unsigned char, 80> domain_value,
@@ -99,14 +106,28 @@ inline td::Result<td::Ref<vm::Cell>> encode_m3_test_business_parameters(const M3
     return td::Status::Error("prepare requires explicit tariff and bounded policy");
   // D78 test layouts: 8=prepare, 9=prepare+Failed. Never reinterpret the
   // retired prelock layouts 4..7. M3/M4 layouts 1..3 remain byte-identical.
-  const unsigned encoded_version = value.prepare ? (value.failed ? 9 : 8)
+  if (value.sweep && (!value.failed || !value.sweep->count || value.sweep->count > value.sweep->limit))
+    return td::Status::Error("sweep requires explicit bounded round authorization");
+  auto profiles_root = profiles.finalize();
+  if (value.sweep) {
+    const auto& authorization = *value.sweep;
+    vm::CellBuilder envelope;
+    if (!envelope.store_long_bool(authorization.earliest_height, 32) ||
+        !envelope.store_long_bool(authorization.count, 32) ||
+        !envelope.store_long_bool(authorization.limit, 32) ||
+        !envelope.store_long_bool(authorization.sequence, 64) ||
+        !envelope.store_long_bool(authorization.issuance_billing_units, 64) ||
+        !envelope.store_ref_bool(profiles_root)) return malformed();
+    profiles_root = envelope.finalize();
+  }
+  const unsigned encoded_version = value.sweep ? 10 : value.prepare ? (value.failed ? 9 : 8)
       : value.operation_tariff ? 3 : value.deposit ? 2 : version;
   if (!root.store_long_bool(tag, 32) || !root.store_long_bool(encoded_version, 16) ||
       !root.store_long_bool(value.send_fee, 64) || !root.store_long_bool(value.collect_fee, 64) ||
       !root.store_long_bool(value.fee_effective_height, 32) || !root.store_long_bool(value.account_schema, 16) ||
       !root.store_long_bool(value.relation_profile, 16) || !root.store_long_bool(value.proof_profile, 16) ||
       !root.store_ref_bool(limits.finalize()) || !root.store_ref_bool(domain.finalize()) ||
-      !root.store_ref_bool(rules) || !root.store_ref_bool(profiles.finalize())) return malformed();
+      !root.store_ref_bool(rules) || !root.store_ref_bool(profiles_root)) return malformed();
   if (value.deposit && (!root.store_long_bool(value.deposit->minimum, 64) ||
       !root.store_long_bool(value.deposit->slot_fee, 64) ||
       !root.store_long_bool(value.deposit->user_slots, 32) ||
@@ -130,9 +151,9 @@ inline td::Result<M3TestBusinessParameters> decode_m3_test_business_parameters(c
   if (special || root.size_refs() != 4 || (root.size() != 256 && root.size() != 448 && root.size() != 640 && root.size() != 768 && root.size() != 864)) return malformed();
   if (root.fetch_ulong(32) != tag) return td::Status::Error("unknown M3 test business tag");
   auto wire_version = root.fetch_ulong(16);
-  if (wire_version < 1 || (wire_version > 3 && wire_version != 8 && wire_version != 9))
+  if (wire_version < 1 || (wire_version > 3 && wire_version != 8 && wire_version != 9 && wire_version != 10))
     return td::Status::Error("unsupported M3 test business version");
-  if (root.size() != (wire_version == 9 ? 816u : wire_version == 8 ? 720u : wire_version == 3 ? 592u : wire_version == 2 ? 400u : 208u)) return malformed();
+  if (root.size() != (wire_version >= 9 ? 816u : wire_version == 8 ? 720u : wire_version == 3 ? 592u : wire_version == 2 ? 400u : 208u)) return malformed();
   const auto send = root.fetch_ulong(64), collect = root.fetch_ulong(64);
   const auto height = static_cast<std::uint32_t>(root.fetch_ulong(32));
   const auto schema = static_cast<std::uint16_t>(root.fetch_ulong(16));
@@ -144,7 +165,19 @@ inline td::Result<M3TestBusinessParameters> decode_m3_test_business_parameters(c
   TRY_RESULT(rules_shape, exact(rules_root, 800, 0));
   (void)rules_shape;
   TRY_RESULT(rules, confidential_input_detail::unpack<gen::UnoV2TransferRulesV1::Record>(rules_root));
-  TRY_RESULT(profiles, exact(root.fetch_ref(), 768, 0));
+  auto profiles_root = root.fetch_ref();
+  std::optional<M5TestSweepParameters> sweep;
+  if (wire_version == 10) {
+    TRY_RESULT(envelope, exact(profiles_root, 224, 1));
+    const auto earliest = static_cast<std::uint32_t>(envelope.fetch_ulong(32));
+    const auto count = static_cast<std::uint32_t>(envelope.fetch_ulong(32));
+    const auto limit = static_cast<std::uint32_t>(envelope.fetch_ulong(32));
+    const auto sequence = envelope.fetch_ulong(64), units = envelope.fetch_ulong(64);
+    if (!count || count > limit) return td::Status::Error("invalid authenticated sweep count");
+    sweep = M5TestSweepParameters{earliest, count, limit, sequence, units};
+    profiles_root = envelope.fetch_ref();
+  }
+  TRY_RESULT(profiles, exact(profiles_root, 768, 0));
   const auto max_balance = limits.fetch_ulong(64), max_value = limits.fetch_ulong(64);
   const auto max_collect = limits.fetch_ulong(64), max_context = limits.fetch_ulong(64), max_proof = limits.fetch_ulong(64);
   if (!std::in_range<std::size_t>(max_collect) || !std::in_range<std::size_t>(max_context) ||
@@ -157,6 +190,7 @@ inline td::Result<M3TestBusinessParameters> decode_m3_test_business_parameters(c
   M3TestBusinessParameters result{{max_balance, max_value, static_cast<std::size_t>(max_collect),
       static_cast<std::size_t>(max_context), static_cast<std::size_t>(max_proof)}, domain_bytes, send, collect,
       rules, generator, range, fee, height, schema, relation, proof};
+  result.sweep = sweep;
   if (wire_version >= 2) {
     auto minimum = root.fetch_ulong(64), slot_fee = root.fetch_ulong(64);
     auto user_slots = static_cast<std::uint32_t>(root.fetch_ulong(32));
@@ -168,7 +202,7 @@ inline td::Result<M3TestBusinessParameters> decode_m3_test_business_parameters(c
     const auto base = root.fetch_ulong(64), send_tip = root.fetch_ulong(64), collect_tip = root.fetch_ulong(64);
     result.operation_tariff = WorkchainStaticOperationTariff{base, send_tip, collect_tip};
   }
-  if (wire_version == 9) {
+  if (wire_version >= 9) {
     const auto limit = static_cast<std::uint32_t>(root.fetch_ulong(32));
     const auto units = root.fetch_ulong(64);
     if (!limit) return td::Status::Error("Failed profile withdrawal limit is zero");

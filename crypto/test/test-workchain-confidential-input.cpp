@@ -680,6 +680,34 @@ TEST(ConfidentialInput, ClosureIdentityRecomputedFromAuthenticatedInputs) {
 }
 
 
+TEST(ConfidentialInput, TestSweepAuthorizationExactCodec) {
+  using namespace block;
+  using namespace block::m3_test;
+  std::array<unsigned char, 80> domain{};
+  M3TestBusinessParameters value{{1000000, 10000, 8, 1024, 4096}, domain, 0, 0,
+      {number(1), number(2), number(3)}, number(4), number(5), number(6), 100, 2, 1, 4};
+  value.deposit = WorkchainDepositPolicy{1, 10000, 3, 16, 4};
+  value.operation_tariff = WorkchainStaticOperationTariff{2, 5, 7};
+  value.prepare = M5TestPrepareParameters{250, 4, 30};
+  value.failed = M5TestFailedParameters{4, 4};
+  auto legacy = encode_m3_test_business_parameters(value).move_as_ok();
+  ASSERT_TRUE(!decode_m3_test_business_parameters(legacy).move_as_ok().sweep);
+  value.sweep = M5TestSweepParameters{20, 1, 16, 7, 4};
+  auto root = encode_m3_test_business_parameters(value).move_as_ok();
+  auto decoded = decode_m3_test_business_parameters(root).move_as_ok();
+  ASSERT_TRUE(decoded.sweep.has_value());
+  ASSERT_EQ(decoded.sweep->earliest_height, 20u);
+  ASSERT_EQ(decoded.sweep->sequence, 7u);
+  ASSERT_EQ(decoded.sweep->count, 1u);
+  ASSERT_EQ(decoded.sweep->limit, 16u);
+  ASSERT_EQ(decoded.sweep->issuance_billing_units, 4u);
+  ASSERT_EQ(encode_m3_test_business_parameters(decoded).move_as_ok()->get_hash(), root->get_hash());
+  decoded.sweep.reset();
+  ASSERT_EQ(encode_m3_test_business_parameters(decoded).move_as_ok()->get_hash(), legacy->get_hash());
+  value.sweep->count = 17;
+  ASSERT_TRUE(encode_m3_test_business_parameters(value).is_error());
+}
+
 TEST(ConfidentialInput, TestBusinessParametersExactCodec) {
   using namespace block;
   using namespace block::m3_test;
