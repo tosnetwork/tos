@@ -186,6 +186,44 @@ inline std::string snapshot_json(const Snapshot& s,std::uint64_t issuance_fees,
   o<<"],\"user_pending_root\":"<<quote(s.user_root)<<",\"system_pending_root\":"<<quote(s.system_root)
    <<",\"user_count\":"<<s.user_count<<",\"system_count\":"<<s.pending.size()<<'}';return o.str();
 }
+
+struct SweepNativeObservation {
+  std::uint64_t transferred=0, transaction_fees=0, block_fees=0;
+  unsigned transfer_count=0;
+};
+inline SweepNativeObservation sweep_native_observation(const td::Ref<vm::Cell>& root,
+    const td::Bits256& coordinator,const td::Bits256& custody) {
+  // Read the accepted block's transfer records and all actual transaction fees.
+  // In this isolated sweep fixture there are no unrelated messages whose fees
+  // could be silently included in the issuance cost. Do not infer the fee
+  // destination merely from coordinator balance loss.
+  SweepNativeObservation out;
+  const auto native=decode_workchain_native_effects(effects(root).native).move_as_ok();
+  vm::Dictionary transfers(native.transfers,32);
+  CHECK(transfers.check_for_each([&](auto cell,td::ConstBitPtr,int){
+    gen::UnoV2NativeTransfer::Record transfer;
+    CHECK(::tlb::unpack_cell(cell->prefetch_ref(),transfer));
+    CHECK(transfer.source==coordinator && transfer.destination==custody);
+    CurrencyCollection value;CHECK(value.unpack(transfer.value));
+    out.transferred=add(out.transferred,u64(value.tomis));
+    CHECK(out.transfer_count==0);++out.transfer_count;return true;
+  }));
+  gen::Block::Record b;gen::BlockExtra::Record e;
+  CHECK(::tlb::unpack_cell(root,b)&&::tlb::unpack_cell(b.extra,e));
+  vm::AugmentedDictionary accounts(vm::load_cell_slice_ref(e.account_blocks),256,block::tlb::aug_ShardAccountBlocks);
+  CHECK(accounts.check_for_each([&](auto leaf,td::ConstBitPtr,int){
+    gen::AccountBlock::Record account;CHECK(gen::t_AccountBlock.unpack(leaf.write(),account));
+    vm::AugmentedDictionary txs(vm::DictNonEmpty(),account.transactions,64,block::tlb::aug_AccountTransactions);
+    CHECK(txs.check_for_each([&](auto cell,td::ConstBitPtr,int){
+      gen::Transaction::Record tx;CHECK(::tlb::unpack_cell(cell->prefetch_ref(),tx));
+      CurrencyCollection fees;CHECK(fees.unpack(tx.total_fees));
+      out.transaction_fees=add(out.transaction_fees,u64(fees.tomis));return true;
+    }));return true;
+  }));
+  ValueFlow flow;CHECK(flow.unpack(vm::load_cell_slice_ref(b.value_flow)));
+  out.block_fees=u64(flow.fees_collected.tomis);
+  return out;
+}
 } // namespace m3_live::completion
 
 namespace m3_live {
