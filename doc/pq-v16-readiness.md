@@ -35,6 +35,19 @@ partition tests. The comparison also requires independent expected verdicts;
 two equally broken engines are not sufficient. Rust guard mutations must compile
 and execute before a differing transcript counts as a kill.
 
+That driver stops at the end of the compute phase, so `RAWRESERVE` and
+`SENDRAWMSG` were only ever compared as an action-list hash.
+`test/pq-readiness/tx_parity.py` closes that gap by running the same account and
+the same inbound message through the native emulator and through
+`tos_executor`, then comparing exit code, action-phase result, emitted message
+hashes, balance and contract storage. Its four transactions are chosen so that
+agreement means something: a verified request that is relayed, a tampered proof
+refused at 1808, an expired request refused at 1805, and a request that verifies
+but cannot pay for the forward, which succeeds in compute and fails in the
+action phase with 37. A transcript missing any of those three outcomes is
+rejected rather than reported, because two engines that refuse everything agree
+perfectly.
+
 ## Build and test
 
 ```sh
@@ -44,12 +57,18 @@ cmake --build build --target func fift tol emulator test-pq-v16-parity -j2
 cmake -S crypto/pq/tools -B build-pq-key -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build-pq-key -j2
 cargo build --manifest-path tosctl/src/Cargo.toml --locked --release -p tos_vm --example pq-parity
+cargo build --manifest-path tosctl/src/Cargo.toml --locked --release -p tos_executor --example pq-tx-parity
+cmake -S test/mldsa-auth -B build-auth-signer -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build-auth-signer -j2
 python -m pip install bitarray==3.7.2 PyNaCl==1.5.0 pycryptodome==3.23.0 cryptography==46.0.4
 python test/pq-mldsa44/prepare_vectors.py --out pq-results
 python test/pq-readiness/scenarios.py pq-results/vectors.tsv pq-results/scenarios.tsv
 build/crypto/pq/test-pq-v16-parity pq-results/scenarios.tsv > pq-results/cpp.tsv
 tosctl/src/target/release/examples/pq-parity pq-results/scenarios.tsv > pq-results/rust.tsv
 python test/pq-readiness/compare.py pq-results/scenarios.tsv pq-results/cpp.tsv pq-results/rust.tsv --out pq-results/parity.json
+python test/pq-readiness/tx_parity.py --build build \
+  --signer build-auth-signer/test-mldsa44-sign --out pq-results/tx-parity \
+  --driver tosctl/src/target/release/examples/pq-tx-parity
 python test/pq-readiness/test_sdk.py --build build --key-tool build-pq-key/tos-pq-key --out pq-results/sdk
 python test/pq-readiness/test_controls.py
 python test/pq-readiness/test_release_profile.py
@@ -114,8 +133,9 @@ and signed release approval. Reprice before activation if CPU/gas cost is unsafe
 
 `tools/pq/activation.py MANIFEST --out PROPOSAL` validates a v15-to-v16 proposal:
 all configured validators acknowledge the same capable release, four explicit
-owner approvals exist, and all evidence files match their hashes, network and
-release. CI-only load evidence is refused. The output preserves capability bits
+owner approvals exist, and all five evidence files — opcode parity, whole
+transaction parity, module end-to-end, production load and activation rehearsal
+— match their hashes, network and release. CI-only load evidence is refused. The output preserves capability bits
 and provides an **unsigned Config8 payload**, never a signed update. The roster
 and evidence's truth still need independent verification; a local manifest is not
 a cryptographic attestation. Follow the network's actual approved configuration

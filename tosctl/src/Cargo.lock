@@ -4874,6 +4874,7 @@ dependencies = [
  "chain_block",
  "chain_block_json",
  "criterion 0.3.6",
+ "hex",
  "libloading",
  "log",
  "log4rs",

@@ -58,7 +58,11 @@ jobs:
           cmake --build build --target func fift tol emulator test-pq-v16-parity -j2
           cmake -S crypto/pq/tools -B build-pq-key -G Ninja -DCMAKE_BUILD_TYPE=Release
           cmake --build build-pq-key -j2
+          cmake -S test/mldsa-auth -B build-auth-signer -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-auth-signer -j2
           cargo build --manifest-path tosctl/src/Cargo.toml --locked --release -p tos_vm --example pq-parity
+          cargo build --manifest-path tosctl/src/Cargo.toml --locked --release \
+            -p tos_executor --example pq-tx-parity
       - name: Round-trip the mnemonic the parity driver bypasses
         # The parity example executes raw F9 31 00, so only this exercises the
         # assembler and disassembler registrations.
@@ -78,6 +82,11 @@ jobs:
           build/crypto/pq/test-pq-v16-parity artifacts/scenarios.tsv > artifacts/cpp.tsv
           tosctl/src/target/release/examples/pq-parity artifacts/scenarios.tsv > artifacts/rust.tsv
           python test/pq-readiness/compare.py artifacts/scenarios.tsv artifacts/cpp.tsv artifacts/rust.tsv --out artifacts/parity.json
+      - name: Compare whole transactions, so the action phase is covered too
+        run: |
+          python test/pq-readiness/tx_parity.py --build build \
+            --signer build-auth-signer/test-mldsa44-sign --out artifacts/tx-parity \
+            --driver tosctl/src/target/release/examples/pq-tx-parity
       - name: Execute newly deployed SDK accounts and signing paths
         run: |
           python test/pq-readiness/test_sdk.py --build build --key-tool build-pq-key/tos-pq-key --out artifacts/sdk
@@ -115,7 +124,7 @@ jobs:
         run: |
           X=results/pq-readiness-x86_64
           A=results/pq-readiness-aarch64
-          for name in commit.txt scenarios.tsv cpp.tsv rust.tsv parity.json sdk/sdk.json sdk/contracts.json sdk/module-func.boc sdk/module-tol.boc sdk/wallet-func.boc sdk/wallet-tol.boc sdk/agent.boc; do
+          for name in commit.txt scenarios.tsv cpp.tsv rust.tsv parity.json tx-parity/emulator.tsv tx-parity/rust.tsv sdk/sdk.json sdk/contracts.json sdk/module-func.boc sdk/module-tol.boc sdk/wallet-func.boc sdk/wallet-tol.boc sdk/agent.boc; do
             cmp "$X/$name" "$A/$name"
           done
           python - <<'PY'
@@ -123,6 +132,7 @@ jobs:
           from pathlib import Path
           for path in Path('results').glob('pq-readiness-*'):
               assert json.loads((path/'parity.json').read_text())['success'] is True
+              assert json.loads((path/'tx-parity/tx-parity.json').read_text())['success'] is True
               assert json.loads((path/'sdk/sdk.json').read_text())['success'] is True
               assert json.loads((path/'load.json').read_text())['success'] is True
           report=json.loads(Path('results/pq-readiness-x86_64/mutations.json').read_text())

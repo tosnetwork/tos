@@ -29,7 +29,11 @@ def plan(document: dict, root: Path) -> dict:
         if approval.get("accepted") is not True or not approval.get("owner") or not approval.get("reference"):
             raise ValueError("missing explicit owner approval: " + name)
     evidence = document.get("evidence", {})
-    for name in ("rust_cpp_parity", "module_e2e", "production_load", "activation_rehearsal"):
+    # Opcode agreement and whole-transaction agreement are separate claims: the
+    # first stops at the compute phase, and the action phase is where a verified
+    # request either becomes an outbound transfer or does not.
+    for name in ("rust_cpp_parity", "transaction_parity", "module_e2e",
+                 "production_load", "activation_rehearsal"):
         item = evidence.get(name, {})
         path = (root / item.get("path", "")).resolve()
         if not path.is_relative_to(root.resolve()) or not path.is_file() or digest(path) != item.get("sha256"):

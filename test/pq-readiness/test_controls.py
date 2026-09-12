@@ -18,6 +18,7 @@ sys.path[:0]=[str(ROOT/'test/tostester/src'),str(ROOT/'tools/pq')]
 from activation import plan
 sys.path.insert(0,str(ROOT/'test/pq-readiness'))
 from compare import check as parity_report
+from tx_parity import report as transaction_parity_report
 from contract.pq_auth import AuthRequest,AuthState
 from contract.pq_relayer import (PqRelayer,AttemptJournal,FundingBudget,ChainSnapshot,AttemptReceipt,LOSS_ACK)
 from pytosiq_core import Address,Cell
@@ -36,7 +37,7 @@ class Controls(unittest.TestCase):
                  'release_commit':commit,'approvals':{},'validators':[{'id':'validator-1','acknowledged':True,'supports_version':16,'release_commit':commit}], 'evidence':{}}
             for name in ('security_review','nonrefundable_loss_model','release','validator_operations'):
                 doc['approvals'][name]={'accepted':True,'owner':'TEST OWNER','reference':'TEST ONLY'}
-            for name in ('rust_cpp_parity','module_e2e','production_load','activation_rehearsal'):
+            for name in ('rust_cpp_parity','transaction_parity','module_e2e','production_load','activation_rehearsal'):
                 f=root/(name+'.json');f.write_text(json.dumps({'success':True,'network':42,'source_commit':commit,'qualification':'production-validator'}))
                 doc['evidence'][name]={'path':f.name,'sha256':hashlib.sha256(f.read_bytes()).hexdigest()}
             approved=plan(doc,root);self.assertFalse(approved['network_activated'])
@@ -46,6 +47,9 @@ class Controls(unittest.TestCase):
                 with self.assertRaises(ValueError):plan(mutant,root)
             for name in doc['evidence']:
                 mutant=json.loads(json.dumps(doc));mutant['evidence'][name]['sha256']='0'*64
+                with self.assertRaises(ValueError):plan(mutant,root)
+                # Every named report is required, not merely checked when present.
+                mutant=json.loads(json.dumps(doc));del mutant['evidence'][name]
                 with self.assertRaises(ValueError):plan(mutant,root)
             for field,value in [('supports_version',15),('acknowledged',False),('release_commit','b'*40)]:
                 mutant=json.loads(json.dumps(doc));mutant['validators'][0][field]=value
@@ -153,8 +157,24 @@ class Controls(unittest.TestCase):
             self.assertEqual(report['scope'],'network-independent')
             self.assertIsNone(report['network'])
             files={}
-            for name in ('rust_cpp_parity','module_e2e','production_load','activation_rehearsal'):
-                body=dict(report) if name=='rust_cpp_parity' else {
+            # The three outcomes the module has, as the generator spells them.
+            rows=['relay\t0\t0\tab\t1\tcd','refuse\t1808\t0\t-\t2\tcd',
+                  'stale\t1805\t0\t-\t3\tcd','no-funds\t0\t37\t-\t4\tcd']
+            transaction=transaction_parity_report(rows,list(rows))
+            self.assertEqual(transaction['scope'],'network-independent')
+            self.assertIsNone(transaction['network'])
+            # Agreement on a transcript with no relay, no refusal or no action
+            # failure is not evidence, and is refused rather than reported.
+            for thin in ([r for r in rows if not r.startswith('relay')]+['p\t1808\t0\t-\t9\tcd'],
+                         [r for r in rows if r[1:].startswith('elay') or r.startswith('no-funds')]
+                         +['p\t0\t0\tef\t9\tcd','q\t0\t0\tef\t8\tcd'],
+                         [r for r in rows if not r.startswith('no-funds')]+['p\t0\t0\tef\t9\tcd']):
+                with self.assertRaises(ValueError):transaction_parity_report(thin,list(thin))
+            with self.assertRaises(ValueError):transaction_parity_report(rows[:3],rows[:3])
+            self.assertFalse(transaction_parity_report(
+                rows,['x'+r for r in rows])['success'])
+            for name in ('rust_cpp_parity','transaction_parity','module_e2e','production_load','activation_rehearsal'):
+                body=dict(report) if name=='rust_cpp_parity' else dict(transaction) if name=='transaction_parity' else {
                     'success':True,'network':42,'source_commit':commit,
                     'qualification':'production-validator' if name=='production_load' else 'n/a'}
                 f=root/(name+'.json');f.write_text(json.dumps(body));files[name]=f
