@@ -51,7 +51,7 @@ inline td::Result<td::Ref<vm::Cell>> prepare_m3_live_configuration(td::Ref<vm::C
     if (debit) business.prepare = M5TestPrepareParameters{250, 4, 30};  // Explicit test inputs, not frozen defaults.
     if (funded_return) {
       business.prepare = M5TestPrepareParameters{250, completion_full_cap ? 3u : 4u, completion ? 1u : 30u};
-      business.failed = M5TestFailedParameters{4, 4}; // Explicit D70 test input, NOT seven proof-work units.
+      business.failed = M5TestFailedParameters{completion_full_cap ? 3u : 4u, 4}; // Same test account cap; explicit D70 units.
     }
     resources.input.max_reads = resources.input.max_writes = 4;
     auto bucket = encode_workchain_unexpected_bucket({{}, {}, td::make_refint(0), {}, 0},
