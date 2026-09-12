@@ -32,16 +32,23 @@ class Controls(unittest.TestCase):
 
     def test_activation_is_proposal_only_and_missing_evidence_fails(self):
         with tempfile.TemporaryDirectory() as d:
-            root=Path(d);commit='a'*40
+            root=Path(d);commit='a'*40;binary='1'*64
             doc={'network':42,'current_version':15,'target_version':16,'capabilities':123,
-                 'release_commit':commit,'approvals':{},'validators':[{'id':'validator-1','acknowledged':True,'supports_version':16,'release_commit':commit}], 'evidence':{}}
+                 'release_commit':commit,'approvals':{},'validators':[{
+                     'id':'validator-1','acknowledged':True,'supports_version':16,
+                     'release_commit':commit,'build_profile':'pq-v16-candidate',
+                     'binary_sha256':binary}], 'evidence':{}}
             for name in ('security_review','nonrefundable_loss_model','release','validator_operations'):
                 doc['approvals'][name]={'accepted':True,'owner':'TEST OWNER','reference':'TEST ONLY'}
             for name in ('rust_cpp_parity','transaction_parity','module_e2e','production_load','activation_rehearsal'):
-                f=root/(name+'.json');f.write_text(json.dumps({'success':True,'network':42,'source_commit':commit,'qualification':'production-validator'}))
+                body={'success':True,'network':42,'source_commit':commit,
+                      'qualification':'production-validator'}
+                if name=='production_load':body['binary_sha256']=binary
+                f=root/(name+'.json');f.write_text(json.dumps(body))
                 doc['evidence'][name]={'path':f.name,'sha256':hashlib.sha256(f.read_bytes()).hexdigest()}
             approved=plan(doc,root);self.assertFalse(approved['network_activated'])
             self.assertTrue(approved['proposal_only']);self.assertEqual(approved['config8_payload_hex'],'c400000010000000000000007b')
+            self.assertEqual(approved['validators'][0]['binary_sha256'],binary)
             for name in doc['approvals']:
                 mutant=json.loads(json.dumps(doc));mutant['approvals'][name]['accepted']=False
                 with self.assertRaises(ValueError):plan(mutant,root)
@@ -51,10 +58,16 @@ class Controls(unittest.TestCase):
                 # Every named report is required, not merely checked when present.
                 mutant=json.loads(json.dumps(doc));del mutant['evidence'][name]
                 with self.assertRaises(ValueError):plan(mutant,root)
-            for field,value in [('supports_version',15),('acknowledged',False),('release_commit','b'*40)]:
+            for field,value in [('supports_version',15),('acknowledged',False),
+                                ('release_commit','b'*40),('build_profile','default-v15'),
+                                ('binary_sha256','not-a-digest')]:
                 mutant=json.loads(json.dumps(doc));mutant['validators'][0][field]=value
                 with self.assertRaises(ValueError):plan(mutant,root)
-            f=root/'production_load.json';report=json.loads(f.read_text());report['qualification']='ci';f.write_text(json.dumps(report))
+            f=root/'production_load.json';report=json.loads(f.read_text())
+            report['binary_sha256']='2'*64;f.write_text(json.dumps(report))
+            doc['evidence']['production_load']['sha256']=hashlib.sha256(f.read_bytes()).hexdigest()
+            with self.assertRaises(ValueError):plan(doc,root)
+            report['binary_sha256']=binary;report['qualification']='ci';f.write_text(json.dumps(report))
             doc['evidence']['production_load']['sha256']=hashlib.sha256(f.read_bytes()).hexdigest()
             with self.assertRaises(ValueError):plan(doc,root)
 
@@ -144,7 +157,7 @@ class Controls(unittest.TestCase):
     def test_the_precheck_accepts_what_the_generators_actually_emit(self):
         """The evidence contract is checked against real reports, not hand-built ones."""
         with tempfile.TemporaryDirectory() as d:
-            root=Path(d)
+            root=Path(d);binary='1'*64
             # Two identical execution transcripts: the parity generator's own output.
             rows=[f'case-{i}\t0\t57124\t-1\t1\tAB\tCD' for i in range(20)]
             # One row carries a compiled binding, which the comparison requires.
@@ -177,10 +190,13 @@ class Controls(unittest.TestCase):
                 body=dict(report) if name=='rust_cpp_parity' else dict(transaction) if name=='transaction_parity' else {
                     'success':True,'network':42,'source_commit':commit,
                     'qualification':'production-validator' if name=='production_load' else 'n/a'}
+                if name=='production_load':body['binary_sha256']=binary
                 f=root/(name+'.json');f.write_text(json.dumps(body));files[name]=f
             doc={'network':42,'current_version':15,'target_version':16,'capabilities':123,
                  'release_commit':commit,'approvals':{},
-                 'validators':[{'id':'validator-1','acknowledged':True,'supports_version':16,'release_commit':commit}],
+                 'validators':[{'id':'validator-1','acknowledged':True,'supports_version':16,
+                                'release_commit':commit,'build_profile':'pq-v16-candidate',
+                                'binary_sha256':binary}],
                  'evidence':{n:{'path':f.name,'sha256':hashlib.sha256(f.read_bytes()).hexdigest()} for n,f in files.items()}}
             for name in ('security_review','nonrefundable_loss_model','release','validator_operations'):
                 doc['approvals'][name]={'accepted':True,'owner':'TEST OWNER','reference':'TEST ONLY'}
