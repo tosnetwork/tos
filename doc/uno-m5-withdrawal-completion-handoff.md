@@ -145,3 +145,21 @@ existing evidence remain untouched.
 After this delivery, Native executable provenance binding and a current-schema
 successor to the historical schema3 account-mutation driver remain distinct queued
 work. Neither is closed by these controls or by the Rust wallet freshness pin.
+
+### Subsequent execution: row4 closed, 2026-09-12
+
+The initial 0/8 statement above describes delivery time. The frozen criteria are
+unchanged. `test-workchain-withdrawal-completion-row4` now runs by default and
+passed in 311.22 seconds: real Q=6, an untouched expired height, owner-triggered
+closure, and an explicitly authenticated full cap of three. Isolated real-host
+mutations reached `ROW4_TRIGGERED`, `ROW4_NO_VALUE_MOVEMENT`, and `DELTA_R_actual`;
+disabling each paired oracle produced `ORACLE_MISSING`, and restoration passed.
+
+Recorded candidates, predecessor states, configuration, block history, observed
+JSON, selected actual callee logs and checksums are in
+`measurements/uno-m5-withdrawal-completion/row4-real/`. `ctest.log` records the
+default-suite result; `controls.log` independently rechecks the retained JSON.
+This closes row4 only (1/8 here, 1/27 overall). Native executable provenance is
+still a separate open limitation; these artifacts do not retroactively pin a
+binary to its source. Other completion slots and the full readiness runner
+remain fail-closed.
