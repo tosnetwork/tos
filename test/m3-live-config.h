@@ -6,7 +6,8 @@
 
 inline td::Result<td::Ref<vm::Cell>> prepare_m3_live_configuration(td::Ref<vm::Cell> root, bool m4 = false, bool debit = false,
                                                               bool funded_return = false, bool completion = false,
-                                                              bool completion_full_cap = false) {
+                                                              bool completion_full_cap = false,
+                                                              bool completion_window_pair = false) {
   using namespace block;
   using namespace block::m3_test;
   tos::BlockIdExt zero{tos::BlockId{tos::masterchainId, tos::shardIdAll, 0},
@@ -54,7 +55,8 @@ inline td::Result<td::Ref<vm::Cell>> prepare_m3_live_configuration(td::Ref<vm::C
     business.operation_tariff = WorkchainStaticOperationTariff{2, 5, 7};
     if (debit) business.prepare = M5TestPrepareParameters{250, 4, 30};  // Explicit test inputs, not frozen defaults.
     if (funded_return) {
-      business.prepare = M5TestPrepareParameters{250, completion_full_cap ? 3u : 4u, completion ? 1u : 30u};
+      business.prepare = M5TestPrepareParameters{250, completion_full_cap ? 3u : 4u,
+                                               completion_window_pair ? 2u : completion ? 1u : 30u};
       business.failed = M5TestFailedParameters{completion_full_cap ? 3u : 4u, 4}; // Same test account cap; explicit D70 units.
     }
     resources.input.max_reads = resources.input.max_writes = 4;

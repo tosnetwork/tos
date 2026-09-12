@@ -5,6 +5,7 @@ import base64
 import hashlib
 import json
 import importlib.util
+import os
 import shlex
 import sys
 import shutil
@@ -26,6 +27,8 @@ p.add_argument('--m5-completion-late', action='store_true',
                help='establish Q through real owner operations before importing the return')
 p.add_argument('--completion-close-before-return', action='store_true',
                help='expire the original obligation through an owner operation before late delivery')
+p.add_argument('--completion-window-pair', action='store_true',
+               help='fork one authenticated predecessor into deadline and deadline+1 real returns')
 p.add_argument('--completion-no-slot', action='store_true',
                help='fill the explicit test system-pending capacity with real Deposits before prepare')
 p.add_argument('--m5-completion-paid', action='store_true',
@@ -45,6 +48,8 @@ a = p.parse_args()
 split_return_route = a.m5_completion_late and not a.m5_completion_paid
 if a.completion_close_before_return and not split_return_route:
     p.error('close-before-return requires the real split late-return route')
+if a.completion_window_pair and (not split_return_route or a.completion_close_before_return):
+    p.error('window-pair requires the split late route without close-before-return')
 if a.m5_completion_paid:
     a.m5_completion_late = True
 if a.completion_full_cap and not a.m5_completion_paid:
@@ -371,6 +376,8 @@ print(f'Test-owned fixture: {fixture}', flush=True)
 shutil.copyfile(fixture / 'counter-state.boc', fixture / 'current-state.boc')
 if a.completion_full_cap:
     (fixture / 'completion-full-cap.txt').write_text('3\n')
+if a.completion_window_pair:
+    (fixture / 'completion-window-pair.txt').write_text('2\n')
 subprocess.run([str(build / 'test-m3-live'), '--prepare-m5-completion-config' if a.m5_completion_late else
                 '--prepare-m5-return-config' if a.m5_return_route else
                 '--prepare-m5-debit-config' if a.m5_debit else '--prepare-m4-config', str(fixture)], check=True)
@@ -586,9 +593,26 @@ if a.m5_debit:
                 shutil.copyfile(fixture / 'prepare-payout.boc',fixture / 'completion-original-payout.boc')
                 old_blind = request['new_blind']
                 owner_steps = [(5,79),(6,83)]
-                if a.completion_close_before_return:
+                if a.completion_close_before_return or a.completion_window_pair:
                     owner_steps.append((7,97))
                 for number, new_blind in owner_steps:
+                    if a.completion_window_pair and number == 7:
+                        # Both branches inherit the same accepted block 7 and original W.
+                        # All Native subprocesses have exited; copy the closed DB, not a live one.
+                        within = Path(tempfile.mkdtemp(prefix='uno-completion-window-within-'))
+                        shutil.copytree(fixture, within, dirs_exist_ok=True)
+                        sys.stdout.flush(); sys.stderr.flush()
+                        child = os.fork()
+                        if child == 0:
+                            fixture = within
+                            window_branch = 'WITHIN'
+                            break  # Deliver now: Q=6, window=2, arrival=8.
+                        _, status = os.waitpid(child, 0)
+                        if os.waitstatus_to_exitcode(status) != 0:
+                            raise RuntimeError('deadline branch failed before late branch')
+                        window_branch = 'LATE'
+                        # One actual owner operation advances to 8 without closing W;
+                        # only then deliver the same payout, so return arrival is 9.
                     followup = dict(secret=101, old_value=available, old_blind=old_blind,
                                     new_blind=new_blind, aux_blind=89, principal=137,
                                     outward_fee=17, fee=257, **limits)
@@ -691,6 +715,8 @@ if a.m5_debit:
                 subprocess.run(['python3', str(repo / 'crypto/test/workchain_withdrawal_completion_oracle.py'),
                                 '--case', case, '--observation', str(observation)], check=True)
             completed.check_returncode()
+            if a.completion_window_pair:
+                print(f'COMPLETION_WINDOW_{window_branch}:{fixture}', flush=True)
     raise SystemExit(0)
 # Keep the final B->A receipt at 432: compensate only the changed SEND/COLLECT
 # tariffs in the first receipt. The remaining two receipts retain 251 and 89.

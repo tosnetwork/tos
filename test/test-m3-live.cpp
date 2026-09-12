@@ -230,6 +230,11 @@ int main(int argc, char** argv) {
     CHECK(std::filesystem::exists(fixture / ".counter-managed-v1"));
     auto bytes = td::read_file_str((fixture / "zerostate.boc").string()).move_as_ok();
     const bool full_cap = std::filesystem::exists(fixture / "completion-full-cap.txt");
+    const bool window_pair = std::filesystem::exists(fixture / "completion-window-pair.txt");
+    if (window_pair) {
+      CHECK(std::string(argv[1]) == "--prepare-m5-completion-config");
+      CHECK(td::read_file_str((fixture / "completion-window-pair.txt").string()).move_as_ok() == "2\n");
+    }
     if (full_cap) {
       CHECK(std::string(argv[1]) == "--prepare-m5-completion-config");
       CHECK(td::read_file_str((fixture / "completion-full-cap.txt").string()).move_as_ok() == "3\n");
@@ -237,7 +242,7 @@ int main(int argc, char** argv) {
     auto root = prepare_m3_live_configuration(vm::std_boc_deserialize(bytes).move_as_ok(),
         std::string(argv[1]) != "--prepare-config", std::string(argv[1]) == "--prepare-m5-debit-config",
         std::string(argv[1]) == "--prepare-m5-return-config" || std::string(argv[1]) == "--prepare-m5-completion-config",
-        std::string(argv[1]) == "--prepare-m5-completion-config", full_cap).move_as_ok();
+        std::string(argv[1]) == "--prepare-m5-completion-config", full_cap, window_pair).move_as_ok();
     td::write_file((fixture / "zerostate.boc").string(), vm::std_boc_serialize(root, 31).move_as_ok()).ensure();
     td::write_file((fixture / "zerostate.rhash").string(), root->get_hash().as_slice()).ensure();
     return 0;
