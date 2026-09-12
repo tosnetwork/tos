@@ -297,25 +297,25 @@ inline std::string phase_snapshot(const td::Ref<vm::Cell>& root, std::uint32_t l
   out << "],\"queue\":["; first=true;
   gen::OutMsgQueueInfo::Record queue; CHECK(::tlb::unpack_cell(state.out_msg_queue_info,queue));
   auto append=[&](td::Ref<vm::CellSlice> leaf) {
-    gen::EnqueuedMsg::Record enqueued; tlb::MsgEnvelope::Record_std envelope;
+    gen::EnqueuedMsg::Record enqueued; block::tlb::MsgEnvelope::Record_std envelope;
     gen::CommonMsgInfo::Record_int_msg_info info;
-    CHECK(tlb::csr_unpack(leaf,enqueued) && tlb::unpack_cell(enqueued.out_msg,envelope));
+    CHECK(::tlb::csr_unpack(leaf,enqueued) && ::tlb::unpack_cell(enqueued.out_msg,envelope));
     CHECK(::tlb::unpack_cell_inexact(envelope.msg,info));
     tos::WorkchainId wc; td::Bits256 source;
-    if(!tlb::t_MsgAddressInt.extract_std_address(info.src,wc,source) || wc!=2)return true;
+    if(!block::tlb::t_MsgAddressInt.extract_std_address(info.src,wc,source) || wc!=2)return true;
     if(!first)out << ','; first=false;
     out << "{\"source\":" << quote(source.to_hex()) << ",\"created_lt\":" << info.created_lt
         << ",\"hash\":" << quote(td::Bits256(envelope.msg->get_hash().bits()).to_hex()) << '}';
     return true;
   };
-  vm::AugmentedDictionary outgoing(queue.out_queue,352,tlb::aug_OutMsgQueue);
+  vm::AugmentedDictionary outgoing(queue.out_queue,352,block::tlb::aug_OutMsgQueue);
   CHECK(outgoing.check_for_each_extra([&](auto leaf,auto,td::ConstBitPtr,int){return append(leaf);}));
   if(queue.extra->prefetch_ulong(1)) {
     auto tail=queue.extra; tail.write().advance(1);
-    gen::OutMsgQueueExtra::Record extra; CHECK(tlb::csr_unpack(tail,extra));
-    vm::AugmentedDictionary dispatch(extra.dispatch_queue,256,tlb::aug_DispatchQueue);
+    gen::OutMsgQueueExtra::Record extra; CHECK(::tlb::csr_unpack(tail,extra));
+    vm::AugmentedDictionary dispatch(extra.dispatch_queue,256,block::tlb::aug_DispatchQueue);
     CHECK(dispatch.check_for_each_extra([&](auto leaf,auto,td::ConstBitPtr,int){
-      gen::AccountDispatchQueue::Record account; CHECK(tlb::csr_unpack(leaf,account));
+      gen::AccountDispatchQueue::Record account; CHECK(::tlb::csr_unpack(leaf,account));
       vm::Dictionary messages(account.messages,64);
       return messages.check_for_each([&](auto message,td::ConstBitPtr,int){return append(message);});
     }));
@@ -331,7 +331,7 @@ inline void write_phase_observation(const std::filesystem::path& fixture,
   const auto original=load(fixture/"phase-original-payout.boc");
   gen::CommonMsgInfo::Record_int_msg_info info; CHECK(::tlb::unpack_cell_inexact(original,info));
   tos::WorkchainId wc; td::Bits256 custody;
-  CHECK(tlb::t_MsgAddressInt.extract_std_address(info.src,wc,custody) && wc==2);
+  CHECK(block::tlb::t_MsgAddressInt.extract_std_address(info.src,wc,custody) && wc==2);
   auto prepared=m5_live_account(account_data(load(fixture/"phase-prepare-after.boc"),wallet_account(0)),limit);
   auto match=std::find_if(prepared.control.withdrawals.begin(),prepared.control.withdrawals.end(),
       [&](const auto& r){return r.timing.payout_created_lt==info.created_lt;});
