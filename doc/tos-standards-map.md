@@ -5,7 +5,7 @@ Version: v1.0
 ## Purpose
 
 This document defines the major public standards surfaces for TOS.
-The AI Actor Model in [ai-actors.md](ai-actors.md) is the current product direction for these standards.
+The AI Actor Model in [ai-actors.md](https://github.com/tosnetwork/doc/blob/main/tos-blockchain/ai-actors.md) is the current product direction for these standards.
 
 It is not a protocol spec and not a complete API reference.
 It is a map of the surfaces that must become stable enough for ecosystem participants to rely on.
@@ -345,11 +345,11 @@ The primary wallet standard in this family is the Agent Wallet: a machine-facing
 
 Companion draft documents:
 
-- [ai-actor-message-catalog.md](ai-actor-message-catalog.md)
-- [ai-actor-contract-guidelines.md](ai-actor-contract-guidelines.md)
-- [ai-actor-threat-model.md](ai-actor-threat-model.md)
-- [ai-actor-testing-matrix.md](ai-actor-testing-matrix.md)
-- [ai-actor-operations-runbook.md](ai-actor-operations-runbook.md)
+- [ai-actor-message-catalog.md](https://github.com/tosnetwork/doc/blob/main/tos-blockchain/ai-actor-message-catalog.md)
+- [ai-actor-contract-guidelines.md](https://github.com/tosnetwork/doc/blob/main/tos-blockchain/ai-actor-contract-guidelines.md)
+- [ai-actor-threat-model.md](https://github.com/tosnetwork/doc/blob/main/tos-blockchain/ai-actor-threat-model.md)
+- [ai-actor-testing-matrix.md](https://github.com/tosnetwork/doc/blob/main/tos-blockchain/ai-actor-testing-matrix.md)
+- [ai-actor-operations-runbook.md](https://github.com/tosnetwork/doc/blob/main/tos-blockchain/ai-actor-operations-runbook.md)
 
 ### Surfaces
 
@@ -393,7 +393,7 @@ started**
 
 TOS adopts Agentic Resource Discovery (ARD) as its protocol-neutral surface
 for publishing and finding callable AI resources. The normative TOS profile is
-[tos-ard-compatibility.md](tos-ard-compatibility.md).
+[tos-ard-compatibility.md](https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-ard-compatibility.md).
 
 The external ARD draft remains an experimental Level 3 dependency until a
 stable release and interoperable conformance suite exist. The TOS

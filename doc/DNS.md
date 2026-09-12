@@ -77,4 +77,4 @@ This is normal. Do not assume every name resolves in one step.
 - [LiteClient.md](LiteClient.md)
 - [TosSites.md](TosSites.md)
 - [ConfigParam.md](ConfigParam.md)
-- [ai-actors.md](ai-actors.md)
+- [ai-actors.md](https://github.com/tosnetwork/doc/blob/main/tos-blockchain/ai-actors.md)

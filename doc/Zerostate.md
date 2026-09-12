@@ -58,5 +58,5 @@ Descriptors for unsupported execution domains are not valid for this binary beca
 ## References
 
 - [ConfigParam.md](ConfigParam.md)
-- [Validator-led token economics](tos-validator-only-token-economics.md)
+- [Validator-led token economics](https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-validator-only-token-economics.md)
 - [gen-zerostate.fif](../crypto/smartcont/gen-zerostate.fif)

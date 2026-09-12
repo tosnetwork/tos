@@ -3,7 +3,7 @@
 This document describes how the four original TOS validators are committed to
 the production zerostate and how control later passes to ordinary Elector
 elections. The monetary parameters are specified in
-[`tos-validator-only-token-economics.md`](tos-validator-only-token-economics.md).
+[`tos-validator-only-token-economics.md`](https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-validator-only-token-economics.md).
 
 ## Bootstrap invariants
 
@@ -188,7 +188,7 @@ recovery. Observing only ConfigParam 34 or `funds_created` is insufficient.
 
 ## Related documents
 
-- [`tos-validator-only-token-economics.md`](tos-validator-only-token-economics.md)
+- [`tos-validator-only-token-economics.md`](https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-validator-only-token-economics.md)
 - [`Zerostate.md`](Zerostate.md)
 - [`ConfigParam.md`](ConfigParam.md)
 - [`Validator.md`](Validator.md)

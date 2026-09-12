@@ -15,7 +15,7 @@ appended; see §12 for the mechanics.
 **Scope.** This document fixes the cross-cutting wire-level and
 lifecycle decisions that the protocol, TVM, and Tol teams must
 agree on before they begin implementing
-[`doc/actor.md`](actor.md) §5.3 + §5.6 and
+[`doc/actor.md`](https://github.com/tosnetwork/doc/blob/main/tos-blockchain/actor.md) §5.3 + §5.6 and
 the Tol surface specified by [`doc/tol.tex`](tol.tex).
 
 AI actor lifecycle messages, including task request, acceptance, result,
@@ -42,7 +42,7 @@ later policy documents.
   [`doc/tos-tep-token-standards.md`](tos-tep-token-standards.md),
   [`doc/tos-standards-map.md`](tos-standards-map.md).
 - AI actor workflow direction:
-  [`doc/ai-actors.md`](ai-actors.md).
+  [`doc/ai-actors.md`](https://github.com/tosnetwork/doc/blob/main/tos-blockchain/ai-actors.md).
 
 ## 1. Why this policy exists
 

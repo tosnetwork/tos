@@ -224,7 +224,7 @@ The `--clean` flag stops any running services and removes previous `/data/` cont
 
    In the validator-economics profile, nearly all native TOS is created after
    genesis under ConfigParam 14. See [Zerostate.md](Zerostate.md) and
-   [the validator-led economics specification](tos-validator-only-token-economics.md).
+   [the validator-led economics specification](https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-validator-only-token-economics.md).
 
 6. **Key generation** (per node, inside Python):
    - 5 Ed25519 keypairs per node: fullnode, validator, liteserver, console_server, console_client

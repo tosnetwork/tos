@@ -1,80 +1,49 @@
 # TOS Documentation
 
-This directory contains protocol, operator, standards, and design documents for
-the TOS Blockchain. The repository's canonical scope is the base layer:
-consensus, sharding, native TVM execution, networking, cryptography, node
-operation, and developer tooling.
+This directory contains the base-layer specifications, the formal papers, and
+the manuals for running and testing a node. Design proposals, implementation
+plans, use-case explorations and draft RFCs live in the separate documentation
+repository at <https://github.com/tosnetwork/doc>; source comments that cite
+them link there directly.
 
-Additional research:
+## Specifications
 
-- [agi.tex](agi.tex) - AGI Futures and the On-Chain Agent Economy: a long-range,
-  explicitly speculative scenario for AGI development, paired with a literal,
-  implementation-grounded description of how autonomous agents earn money on TOS
-  today through Agent Account, Capability Registry, Task Escrow, Service Actor,
-  Proof Attestation, and Dispute
+- [ConfigParam.md](ConfigParam.md) - configuration parameters
+- [Currency.md](Currency.md) - currency units
+- [DNS.md](DNS.md) - TOS DNS
+- [GlobalVersions.md](GlobalVersions.md) - global versions and the capabilities each enables
+- [TosSites.md](TosSites.md) - TOS sites and the RLDP HTTP proxy
+- [Zerostate.md](Zerostate.md) - zerostate format
+- [workchain-execution-registry.md](workchain-execution-registry.md) - workchain execution registry
+- [tos-tep-token-standards.md](tos-tep-token-standards.md) - Jetton and NFT token extension proposals
+- [tos-message-policy.md](tos-message-policy.md) - message envelope and lifecycle policy (approved)
+- [tos-standards-map.md](tos-standards-map.md) - which standards exist and what each one covers
+- [toscan-query-api.md](toscan-query-api.md) - the implemented public explorer index and query routes
+- [openapi.yaml](openapi.yaml) - the REST surface
 
-Start with:
-
-- [ai-actors.md](ai-actors.md) - AI actor product and protocol direction
-- [openfox-autonomous-earning-agent.md](openfox-autonomous-earning-agent.md) - proposed autonomous earning agent that discovers profitable TOS work, applies owner policy, executes through approved capacity, and settles through the service protocol
-- [the-tos-service-protocol-implementation-plan.md](the-tos-service-protocol-implementation-plan.md) - repository boundaries and delivery plan for owner-operated TOS services
-- [tos-ard-compatibility.md](tos-ard-compatibility.md) - pinned ARD compatibility profile, catalog publication, federated Registry architecture, security bounds, and TOS handoff
-- [ai-edge-computing-terminal-architecture.md](ai-edge-computing-terminal-architecture.md) - primary off-chain product architecture for turning owner-controlled hardware into bounded AI services
-- [local-gpu-sharing-use-case.md](local-gpu-sharing-use-case.md) - managed AI services on owner-controlled GPU hardware; bare GPU rental is excluded
-- [physical-ai-edge-terminal-use-case.md](physical-ai-edge-terminal-use-case.md) - site-bound Jetson/industrial terminals, offline operation, safe updates, real-time priority, actuator isolation, and fleet management
-- [local-open-weight-model-sharing-use-case.md](local-open-weight-model-sharing-use-case.md) - locally hosted open-weight model service requirements
-- [ai-actor-glossary.md](ai-actor-glossary.md) - shared terminology for agent, task, service, and verifier workflows
-- [ai-actor-message-catalog.md](ai-actor-message-catalog.md) - initial task, service, and verifier message catalog
-- [ai-actor-contract-guidelines.md](ai-actor-contract-guidelines.md) - contract design guidance for agent accounts, task escrow, service actors, and verifier actors
-- [agent-wallet-mvp.md](agent-wallet-mvp.md) - first `tosctl agent wallet` implementation slice for profiles, funding, activation, policy updates, runtime binding, controller rotation, policy export and removal
-- [ai-actor-threat-model.md](ai-actor-threat-model.md) - baseline threat model
-- [service-actor-concurrent-escrow-upgrade.md](service-actor-concurrent-escrow-upgrade.md) - pre-testnet in-place upgrade for concurrent paid requests, settlement, and refunds
-- [ai-actor-testing-matrix.md](ai-actor-testing-matrix.md) - required test coverage
-- [ai-actor-operations-runbook.md](ai-actor-operations-runbook.md) - operational guidance for agent and service infrastructure
-- [actor.md](actor.md) - actor-model first principles for TOS
-- [tos-message-policy.md](tos-message-policy.md) - message envelope and lifecycle policy
-- [tos-account-permission-model.md](tos-account-permission-model.md) - account, delegation, session, and agent permissions
-- [tos-capability-policy.md](tos-capability-policy.md) - capability addressing and authorization policy
-
-AI actor protocol support:
-
-- [tos-time-policy.md](tos-time-policy.md) - scheduled messages for task deadlines and timeout windows
-- [tos-delivery-sla-policy.md](tos-delivery-sla-policy.md) - delivery failure records, dead letters, and retry guidance
-- [tos-supervision-policy.md](tos-supervision-policy.md) - monitor and supervision relationships for actor failures
-- [tos-postponement-policy.md](tos-postponement-policy.md) - bounded selective receive for out-of-phase workflow messages
-- [tos-language-syntax-policy.md](tos-language-syntax-policy.md) - Tol contract syntax direction for actor-shaped contracts
-
-Client, trust, and indexing docs:
-
-- [toscan-query-api.md](toscan-query-api.md) - implemented public explorer index, query routes, reorg behavior and production read-only gateway contract
-- [json-rpc-policy.md](json-rpc-policy.md)
-- [tos-trust-tiers.md](tos-trust-tiers.md)
-- [tos-transaction-history.md](tos-transaction-history.md)
-- [tos-wc0-wallet-index.md](tos-wc0-wallet-index.md)
-- [tos-wallet-send-track.md](tos-wallet-send-track.md)
-- [tos-tep-token-standards.md](tos-tep-token-standards.md)
-
-Operator and launch docs:
-
-- [Validator.md](Validator.md)
-- [Validator-Local.md](Validator-Local.md)
-- [validator-genesis-bootstrap.md](validator-genesis-bootstrap.md)
-- [Zerostate.md](Zerostate.md)
-- [ConfigParam.md](ConfigParam.md)
-- [FullNode.md](FullNode.md)
-- [LiteClient.md](LiteClient.md)
-- [macos-local-node.md](macos-local-node.md) - running a local chain on macOS, where the systemd setup script does not apply: build targets, the in-process launcher, the faucet, lite-client batch syntax and the traps worth knowing
-
-Post-quantum authentication:
+## Post-quantum authentication
 
 - [tvm-mldsa44.md](tvm-mldsa44.md) - the native ML-DSA-44 verification instruction: opcode, ABI, canonical operand encoding, gas, version gating and the vendored backend
 - [tvm-mldsa44-validation.md](tvm-mldsa44-validation.md) - acceptance matrix, calibration method and the limits of what the public vectors prove
-- [tvm-mldsa44-final-hardening.md](tvm-mldsa44-final-hardening.md) - the canonical byte-chain negative control and the guard mutation it required
 - [mldsa44-auth-module.md](mldsa44-auth-module.md) - the immutable authentication module, exact signed bytes, funding failure classes and deployment boundary
 
-Review and release docs:
+## Running and testing a node
+
+- [FullNode.md](FullNode.md) - running a full node
+- [LiteClient.md](LiteClient.md) - using the lite client
+- [Validator.md](Validator.md) - running a validator
+- [Validator-Local.md](Validator-Local.md) - a local four-node testnet
+- [validator-genesis-bootstrap.md](validator-genesis-bootstrap.md) - genesis validator bootstrap
+- [macos-local-node.md](macos-local-node.md) - running a local chain on macOS, where the systemd setup script does not apply
+
+## Release process
 
 - [tos-release-policy.md](tos-release-policy.md)
 - [tos-upgrade-process.md](tos-upgrade-process.md)
-- [ops/tos31-tos32-validation.md](ops/tos31-tos32-validation.md)
-- [adr/README.md](adr/README.md)
+
+## Papers
+
+`The-TOS-Protocol` states the protocol; `tblkch` and `tvm` describe the block
+chain and the virtual machine; `catchain` and `simplex` describe consensus;
+`fiftbase`, `func_v0.4.6` and `tol` describe the languages. Each is kept with
+its TeX source where one exists.

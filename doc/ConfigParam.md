@@ -115,7 +115,7 @@ The remaining masterchain parameters follow the native TOS schema in [block.tlb]
 | 40 | `MisbehaviourPunishmentConfig` | slashing / misbehaviour punishment |
 
 Production values for 15, 16, and 17 are in
-[tos-validator-only-token-economics.md §5.1](tos-validator-only-token-economics.md).
+[tos-validator-only-token-economics.md §5.1](https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-validator-only-token-economics.md).
 Note that 16's `min_validators` and 17's `max_stake_factor` constrain each
 other — the factor bounds how concentrated effective weight can become in the
 smallest set the configuration permits, so neither can be changed alone. §5.2

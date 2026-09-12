@@ -73,4 +73,4 @@ If the client cannot connect:
 - [DNS.md](DNS.md)
 - [ConfigParam.md](ConfigParam.md)
 - [FullNode.md](FullNode.md)
-- [ai-actors.md](ai-actors.md)
+- [ai-actors.md](https://github.com/tosnetwork/doc/blob/main/tos-blockchain/ai-actors.md)

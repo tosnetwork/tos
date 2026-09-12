@@ -101,4 +101,4 @@ Operators running AI agents or service actors should prefer a local full node wh
 
 - [Validator.md](Validator.md)
 - [LiteClient.md](LiteClient.md)
-- [ai-actors.md](ai-actors.md)
+- [ai-actors.md](https://github.com/tosnetwork/doc/blob/main/tos-blockchain/ai-actors.md)

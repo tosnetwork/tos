@@ -45,7 +45,7 @@ Supported contract kinds are `agent_account`, `task_escrow`, `dispute`, `service
 
 Run the source node with `--json-rpc-readonly` and normally with `--json-rpc-api-key`. TOSCAN's same-origin gateway injects that key server-side and publishes only the exact read-method REST paths it uses. It must not proxy the general `/jsonRPC` route.
 
-The REST adapter supports the wallet-index reads required by TOSCAN: `getAccountEvents`, `getAccountEvent`, `getAccountJettons` and `getAccountNfts`, in addition to the block, transaction, account, authority, token and consensus reads documented in [json-rpc-policy.md](json-rpc-policy.md).
+The REST adapter supports the wallet-index reads required by TOSCAN: `getAccountEvents`, `getAccountEvent`, `getAccountJettons` and `getAccountNfts`, in addition to the block, transaction, account, authority, token and consensus reads documented in [json-rpc-policy.md](https://github.com/tosnetwork/doc/blob/main/tos-blockchain/json-rpc-policy.md).
 
 `getBlockTransactionsExt` is the preferred index feed. It returns the same canonical identity page as `getBlockTransactions` plus fee and inbound-message hash. `getTransactions` transaction bodies expose structured `in_msg` and `out_msgs` summaries (hash, kind, source, destination, value, bounce state and creation time) while preserving the raw BOC for independent decoding.
 

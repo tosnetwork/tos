@@ -97,11 +97,11 @@ separate protocol reward mechanism, is not funded at genesis, and is never
 held by a treasury wallet. Five hundred million TOS of validator creation,
 five billion TOS of total supply, and seven years are approximate policy
 targets rather than a hard consensus cap or deadline. See
-[TOS Validator-Led Distribution and Bootstrap Economics](tos-validator-only-token-economics.md).
+[TOS Validator-Led Distribution and Bootstrap Economics](https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-validator-only-token-economics.md).
 
 ## Related Docs
 
 - [ConfigParam.md](ConfigParam.md) — Fee parameters (all in nanotomi)
 - [Zerostate.md](Zerostate.md) — Initial supply allocation
-- [ai-actors.md](ai-actors.md) — AI actor payment and settlement context
+- [ai-actors.md](https://github.com/tosnetwork/doc/blob/main/tos-blockchain/ai-actors.md) — AI actor payment and settlement context
 - [block.tlb](../crypto/block/block.tlb) — Wire format definition

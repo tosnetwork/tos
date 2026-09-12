@@ -44,7 +44,7 @@ cd build
 ## Related Docs
 
 - [ConfigParam.md](ConfigParam.md)
-- [ai-actors.md](ai-actors.md)
+- [ai-actors.md](https://github.com/tosnetwork/doc/blob/main/tos-blockchain/ai-actors.md)
 - [block.tlb](../crypto/block/block.tlb)
 * `GETGASFEE` (`gas_used is_mc - price`) - calculates gas fee.
 * `GETSTORAGEFEE` (`cells bits seconds is_mc - price`) - calculates storage fees (only current StoragePrices entry is used).

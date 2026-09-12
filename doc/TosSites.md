@@ -70,4 +70,4 @@ TOS Sites depend on working DNS resolution when using named sites. Validate DNS 
 
 - [DNS.md](DNS.md)
 - [LiteClient.md](LiteClient.md)
-- [ai-actors.md](ai-actors.md)
+- [ai-actors.md](https://github.com/tosnetwork/doc/blob/main/tos-blockchain/ai-actors.md)
