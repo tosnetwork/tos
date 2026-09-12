@@ -117,7 +117,37 @@ python test/pq-readiness/live_relay.py --build build \
   --key-tool build-pq-key/tos-pq-key --out pq-results/live
 ```
 
-That run is what found the receipt binding defect below. Both the module and the
+`test/pq-readiness/live_regression.py` covers the other axis on the same chain:
+Wallet V5 and Agent Account, classical and post-quantum, eight cases. Four are
+transfers that must arrive; four are refusals that must hold, because a run
+where everything succeeds says nothing about whether a signature is checked. The
+classical refusal is a structurally perfect message signed by a key the account
+does not know -- the signed preimage is rebuilt so the message stays well
+formed, and a refusal can only come from the signature check rather than from a
+malformed file. The post-quantum refusal is a proof with one flipped bit, which
+must be rejected on chain with the target unmoved and the nonce unspent, after
+which `retire` frees the nonce for the real attempt.
+
+Both controls were falsified against a running chain. Making the tampered
+signer return the untouched signature stops the module rejecting anything and
+the script fails where it waits for that rejection; signing the classical case
+with the account's own key turns both refusal cases red, with the funds moving
+and the sequence number advancing.
+
+```sh
+python test/pq-readiness/live_regression.py --build build \
+  --lite-client build/lite-client/lite-client \
+  --lite-config test/integration/.localnet-reg/lite-client.json \
+  --key-tool build-pq-key/tos-pq-key --out pq-results/live-regression
+```
+
+Gas measured this way is the gas a production chain would charge, but the fee is
+not: the local template in `test/tostester/src/tostester/zerostate.py` is marked
+DEV-SPECIFIC and prices basechain gas 40 times below `gen-zerostate.fif`. Read
+gas counts from a local run; convert them to fees with the target network's own
+ConfigParam 21.
+
+That first run is what found the receipt binding defect below. Both the module and the
 account already have a last transaction before any attempt begins — their own
 deployments — so a receipt that simply reads "the last transaction" reports the
 account's deployment as this attempt's execution and claims a nonce was consumed
