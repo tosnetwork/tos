@@ -1,0 +1,4 @@
+[1;31m[ 1][t 7][2026-09-12 13:04:25.760908255][workchain-m5-sweep.h:94][!collate(2,8000000000000000):12]	SWEEP_HOLDINGS_MUTATION_REACHED[0m
+[1;31m[ 1][t 7][2026-09-12 13:04:25.762440161][collator.cpp:395][!collate(2,8000000000000000):12]	cannot generate block candidate for 2:_ : [Error : -7200 : sweep protected debit differs from executed event][0m
+[1;36m[ 3][t 7][2026-09-12 13:04:25.762457570][collator.cpp:404][!collate(2,8000000000000000):12]	collation failed in 0.020426 s [Error : -7200 : sweep protected debit differs from executed event][0m
+[1;31m[ 1][t 5][2026-09-12 13:04:25.766570478][manager-disk.cpp:273][!manager]	failed to create block: [Error : -7200 : sweep protected debit differs from executed event][0m

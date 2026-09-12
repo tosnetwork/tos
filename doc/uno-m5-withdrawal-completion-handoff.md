@@ -298,3 +298,28 @@ This phase-1 fixture does not establish generic closure liveness (including an
 account with zero available balance and a still-phase-0 obligation). Nor does
 it independently certify receipt of the Native registration refund.
 Completion is **6/8**; sweep-atomic and oracle-control remain.
+
+## Sweep-atomic closure: fresh default execution, 2026-09-12
+
+Default CTest #23 passed in 651.18 seconds at test revision `818e87cf1`, with
+Native production sources/libraries frozen from `55be10321`. New evidence is in
+`measurements/uno-m5-withdrawal-completion/sweep-atomic-real/`; this run does not
+retroactively upgrade earlier isolated or A-owned runs. Retained accepted
+candidates, configuration, predecessor and JSON were independently rechecked.
+Physical transfer, fee destinations and installed credit each hit their named
+D63 oracle; holdings hit D60 first, then D63_2 on the same mutation with only the
+pairing removed. Every red has its oracle-removal red. The fee-destination
+mutation leaves both conservation equations true while retaining g as operating
+income. Mixed-batch observation reads fees from a different actual accepted
+block with identical amounts and reaches `D63_SAME_BATCH`.
+
+The real failed attempt was retried with the unchanged authorization and
+predecessor. Same-height consumed-authorization rejection uses the real verifier
+on authenticated before/after buckets at height 12: before passes, consumed
+returns -7200; removing only the sequence comparison makes the latter pass and
+hits `SWEEP_CONSUMED_SAME_HEIGHT`, with its oracle-removal control. This is a
+verifier-function observation, not a second Native publication at that height.
+Publication atomicity retains the architectural carrier and regression gap above;
+no premature-publication control is claimed. D62 re-entry remains outside this slot.
+Completion is **7/8**, project **7/49**; oracle-control remains open, and no other
+runner or authenticated collator/validator over-budget end-to-end gap is closed.
