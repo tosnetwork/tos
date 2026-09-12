@@ -1,0 +1,10 @@
+--- a/crypto/block/workchain-failed-funded.h
++++ b/crypto/block/workchain-failed-funded.h
+@@ -178,6 +178,7 @@
+         {owner.account.address.instance, owner.account.key_epoch, owner.account.bindings.asset}, encoded, origin};
+     owner.origin_pending.push_back(receipt);
+     const auto released = matched ? found->principal : std::uint64_t{0};
++    if (!matched && !owner.control.withdrawals.empty()) owner.control.withdrawals.erase(owner.control.withdrawals.begin());
+     const auto attempt = association->attempt_id;
+     if (matched) owner.control.withdrawals.erase(found);
+     coordinator.deposit_sequence = sequence;

@@ -1,0 +1,248 @@
+closed observed unknown-origin=0
+closed: phase=3
+workchain=2
+delivery=recorded
+query_to_record_seconds=0.017036
+wait_window_seconds=1.000000
+headroom_ratio=58.698143
+enabled observed unknown-origin=0
+Paired proof-work units collator=validator=7
+Actual coordinator protected backing: balance=21006001000 refundable=20000000000 unexpected=0 OK
+BACKING_REPLAY block=9 R_actual=996994223 R_book=996994223 N_hidden=996994223 P=410 W=410; first-layer=OK; checking R+P=N+W
+[0m[ 4][t 0][2026-09-12 09:43:55.920066051][mc-config.cpp:572]	workchain description dictionary created[0m
+[0m[ 4][t 0][2026-09-12 09:43:55.920295536][mc-config.cpp:2347]	unpacked info for workchain 0: basic=true, active=true, accept_msgs=true, min_split=1, max_split=1[0m
+[0m[ 4][t 0][2026-09-12 09:43:55.920308490][mc-config.cpp:2347]	unpacked info for workchain 2: basic=true, active=true, accept_msgs=true, min_split=0, max_split=0[0m
+[1;36m[ 3][t 0][2026-09-12 09:43:55.924739121][test-tos-collator.cpp:597]	setting previous block to (2,8000000000000000,8):FB779D76A8695D53B8E7A2CFF1675BA605FBB3FD3CFAE5EB4CE366B2E050A90B:11329366B0D13E3A6FC57AFDDB6451336CBB759BF62003213DC430055DB5C886[0m
+[1;36m[ 3][t 1][2026-09-12 09:43:55.929614111][test-tos-collator.cpp:339][!testnode]	no init block in config. using zero state[0m
+[1;36m[ 3][t 1][2026-09-12 09:43:55.929635240][test-tos-collator.cpp:364][!testnode]	Hardforks num in config: 0[0m
+[1;36m[ 3][t 7][2026-09-12 09:43:55.931215771][manager-init.cpp:333][!starter]	Starting validator manager[0m
+[1;36m[ 3][t 1][2026-09-12 09:43:55.939137156][manager-init.cpp:344][!starter]	init_block_id = (-1,8000000000000000,51):561D4ABA8521D8BCCB034CF682D9B0244C6B6B8ADA0E63FCCAAAA6E5CF46B70C:102E09A2458008DBD5877A02F0F133C78B1260C2295C24C3D9857B30E8C06BFF[0m
+[1;36m[ 3][t 1][2026-09-12 09:43:55.939151536][manager-init.cpp:345][!starter]	config init_block_id = (-1,8000000000000000,0):E4D8223EB25B7A2FD08CC5225879E53B4F4DC39DF5A30910D7163ECE801114AE:4682C0DE354226C8813BD526CE3431940C436DD9AEE2A94CEBB9AE5C59F1F863[0m
+[1;33m[ 2][t 3][2026-09-12 09:43:55.944496192][celldb.cpp:371][!celldbin]	Using V1 DynamicBagOfCells with options V1{}[0m
+[1;31m[ 1][t 6][2026-09-12 09:43:55.951677684][archive-manager.cpp:1045][!archive]	checking file /tmp/b-row5-controls-e70mooe1/decrement-w-run/closed-db/archive/states/zerostate_2_4136F8EDA7C9419F4398C6E08C817EF19AD6574802CC131747C0B4B7E7F995EF[0m
+[1;31m[ 1][t 6][2026-09-12 09:43:55.951736409][archive-manager.cpp:1045][!archive]	checking file /tmp/b-row5-controls-e70mooe1/decrement-w-run/closed-db/archive/states/zerostate_-1_C4A21E235E81F6829988D9EAF1FF27C45E3D5332CE7B9444557E1EEEE7356F24[0m
+[1;31m[ 1][t 6][2026-09-12 09:43:55.951745964][archive-manager.cpp:1045][!archive]	checking file /tmp/b-row5-controls-e70mooe1/decrement-w-run/closed-db/archive/states/zerostate_0_E0F11C812CAE78C8DB735A923E6B70858EB9415656E36E75D9FB81C7E1D53D64[0m
+[1;36m[ 3][t 3][2026-09-12 09:43:55.952542646][celldb.cpp:251][!celldbin]	Validating metadata[0m
+[1;36m[ 3][t 3][2026-09-12 09:43:55.953593358][celldb.cpp:307][!celldbin]	Validating metadata: OK[0m
+[1;36m[ 3][t 3][2026-09-12 09:43:55.958445101][manager-init.cpp:384][!starter]	gc_block_id = (-1,8000000000000000,0):E4D8223EB25B7A2FD08CC5225879E53B4F4DC39DF5A30910D7163ECE801114AE:4682C0DE354226C8813BD526CE3431940C436DD9AEE2A94CEBB9AE5C59F1F863[0m
+[1;36m[ 3][t 3][2026-09-12 09:43:55.958664926][manager-init.cpp:434][!starter]	Starting shard client[0m
+[1;36m[ 3][t 2][2026-09-12 09:43:55.959928088][manager-init.cpp:438][!starter]	Started shard client[0m
+[1;36m[ 3][t 2][2026-09-12 09:43:55.960001332][manager-init.cpp:448][!starter]	Last key block is (-1,8000000000000000,0):E4D8223EB25B7A2FD08CC5225879E53B4F4DC39DF5A30910D7163ECE801114AE:4682C0DE354226C8813BD526CE3431940C436DD9AEE2A94CEBB9AE5C59F1F863[0m
+[1;31m[ 1][t 1][2026-09-12 09:43:55.960783605][manager-disk.cpp:296][!manager]	running collate query[0m
+[1;33m[ 2][t 1][2026-09-12 09:43:55.960812204][collator.cpp:146][!collate(2,8000000000000000):9]	Collator for shard (2,8000000000000000) started[0m
+[1;36m[ 3][t 1][2026-09-12 09:43:55.960845120][collator.cpp:847][!collate(2,8000000000000000):9]	after_get_storage_stat_cache : [Error : 0 : not implemented][0m
+[1;33m[ 2][t 1][2026-09-12 09:43:55.968868426][collator.cpp:670][!collate(2,8000000000000000):9]	in Collator::after_get_shard_state(0)[0m
+[1;33m[ 2][t 3][2026-09-12 09:43:55.968952806][collator.cpp:632][!collate(2,8000000000000000):9]	in Collator::after_get_mc_state()[0m
+[1;33m[ 2][t 3][2026-09-12 09:43:55.969359614][collator.cpp:2086][!collate(2,8000000000000000):9]	running do_preinit()[0m
+[1;36m[ 3][t 3][2026-09-12 09:43:55.969388717][collator.cpp:1779][!collate(2,8000000000000000):9]	unpacking most recent masterchain state[0m
+[1;31m[ 1][t 3][2026-09-12 09:43:55.969539038][collator.cpp:929][!collate(2,8000000000000000):9]	block version 16 have been enabled in global configuration, but we support only 15 (upgrade validator software?)[0m
+[1;36m[ 3][t 3][2026-09-12 09:43:55.971118611][collator.cpp:2266][!collate(2,8000000000000000):9]	start_lt set to 102000000[0m
+[1;36m[ 3][t 6][2026-09-12 09:43:55.971941241][out-msg-queue-proof.cpp:437][!disk-outmsgqueueimporter]	Done importing neighbor msg queues for shard (2,8000000000000000) from (-1,8000000000000000,51) (0,4000000000000000,41) (0,c000000000000000,41) in 0.000725s sources{ local=3} cache_size=1[0m
+[1;36m[ 3][t 6][2026-09-12 09:43:55.972018606][collator.cpp:1048][!collate(2,8000000000000000):9]	neighbor output queues fetched, took 0.000809s[0m
+[1;33m[ 2][t 6][2026-09-12 09:43:55.972163457][collator.cpp:1104][!collate(2,8000000000000000):9]	obtained outbound queue for neighbor #0((-1,8000000000000000))[0m
+[1;33m[ 2][t 6][2026-09-12 09:43:55.972265533][collator.cpp:1104][!collate(2,8000000000000000):9]	obtained outbound queue for neighbor #1((0,4000000000000000))[0m
+[1;33m[ 2][t 6][2026-09-12 09:43:55.972340419][collator.cpp:1104][!collate(2,8000000000000000):9]	obtained outbound queue for neighbor #2((0,c000000000000000))[0m
+[1;33m[ 2][t 6][2026-09-12 09:43:55.972469106][collator.cpp:1104][!collate(2,8000000000000000):9]	obtained outbound queue for neighbor #3((2,8000000000000000))[0m
+[1;33m[ 2][t 3][2026-09-12 09:43:55.973095866][collator.cpp:2439][!collate(2,8000000000000000):9]	do_collate() : start[0m
+[1;31m[ 1][t 3][2026-09-12 09:43:55.974546114][collator.cpp:395][!collate(2,8000000000000000):9]	cannot generate block candidate for 2:_ : [Error : -7201 : cannot execute configured workchain: multi-account admission and replay are not connected][0m
+[1;36m[ 3][t 3][2026-09-12 09:43:55.974558248][collator.cpp:404][!collate(2,8000000000000000):9]	collation failed in 0.013754 s [Error : -7201 : cannot execute configured workchain: multi-account admission and replay are not connected][0m
+[1;36m[ 3][t 3][2026-09-12 09:43:55.974569675][collator.cpp:405][!collate(2,8000000000000000):9]	{{
+	{wait_block_data #0:157091.575700->157091.584103(0.008403)}
+	{wait_block_state #0:157091.575697->157091.583748(0.008051)}
+	{neighbor_msg_queues:157091.586082->157091.586891(0.000809)}
+	{auxiliary wait_block_state 46:157091.587323->157091.587945(0.000622)}
+	{auxiliary wait_block_state 50:157091.587195->157091.587660(0.000465)}
+	{auxiliary wait_block_state 49:157091.585975->157091.586345(0.000370)}
+	{wait_block_data #-1:157091.583863->157091.584227(0.000364)}
+	{get_top_masterchain_state_block:157091.583749->157091.583858(0.000109)}
+	{get_storage_stat_cache:157091.575703->157091.575718(0.000015)[Error : 0 : not implemented]}
+	{do_collate:157091.587967->0.000000(-157091.587967)}
+}[0m
+[1;33m[ 2][t 3][2026-09-12 09:43:55.974598243][collator.cpp:7138][!collate(2,8000000000000000):9]	Collate query work time = 0.003371s, cpu time = 0.002041s[0m
+[1;31m[ 1][t 3][2026-09-12 09:43:55.974636328][collator.cpp:395][!collate(2,8000000000000000):9]	cannot generate block candidate for 2:_ : [Error : 0 : cannot fetch required configuration parameters from masterchain state][0m
+[1;31m[ 1][t 5][2026-09-12 09:43:55.981008801][manager-disk.cpp:273][!manager]	failed to create block: [Error : -7201 : cannot execute configured workchain: multi-account admission and replay are not connected][0m
+[1;36m[ 3][t 0][2026-09-12 09:43:55.993898734][test-tos-collator.cpp:597]	setting previous block to (2,8000000000000000,8):FB779D76A8695D53B8E7A2CFF1675BA605FBB3FD3CFAE5EB4CE366B2E050A90B:11329366B0D13E3A6FC57AFDDB6451336CBB759BF62003213DC430055DB5C886[0m
+[1;36m[ 3][t 1][2026-09-12 09:43:55.997772709][test-tos-collator.cpp:339][!testnode]	no init block in config. using zero state[0m
+[1;36m[ 3][t 1][2026-09-12 09:43:55.997800874][test-tos-collator.cpp:364][!testnode]	Hardforks num in config: 0[0m
+[1;36m[ 3][t 1][2026-09-12 09:43:55.997938670][manager-init.cpp:333][!starter]	Starting validator manager[0m
+[1;36m[ 3][t 4][2026-09-12 09:43:56.012190158][manager-init.cpp:344][!starter]	init_block_id = (-1,8000000000000000,51):561D4ABA8521D8BCCB034CF682D9B0244C6B6B8ADA0E63FCCAAAA6E5CF46B70C:102E09A2458008DBD5877A02F0F133C78B1260C2295C24C3D9857B30E8C06BFF[0m
+[1;36m[ 3][t 4][2026-09-12 09:43:56.012220249][manager-init.cpp:345][!starter]	config init_block_id = (-1,8000000000000000,0):E4D8223EB25B7A2FD08CC5225879E53B4F4DC39DF5A30910D7163ECE801114AE:4682C0DE354226C8813BD526CE3431940C436DD9AEE2A94CEBB9AE5C59F1F863[0m
+[1;33m[ 2][t 2][2026-09-12 09:43:56.013285571][celldb.cpp:371][!celldbin]	Using V1 DynamicBagOfCells with options V1{}[0m
+[1;31m[ 1][t 3][2026-09-12 09:43:56.020090897][archive-manager.cpp:1045][!archive]	checking file /tmp/b-row5-controls-e70mooe1/decrement-w-run/enabled-db/archive/states/zerostate_2_4136F8EDA7C9419F4398C6E08C817EF19AD6574802CC131747C0B4B7E7F995EF[0m
+[1;31m[ 1][t 3][2026-09-12 09:43:56.020123129][archive-manager.cpp:1045][!archive]	checking file /tmp/b-row5-controls-e70mooe1/decrement-w-run/enabled-db/archive/states/zerostate_-1_C4A21E235E81F6829988D9EAF1FF27C45E3D5332CE7B9444557E1EEEE7356F24[0m
+[1;31m[ 1][t 3][2026-09-12 09:43:56.020140013][archive-manager.cpp:1045][!archive]	checking file /tmp/b-row5-controls-e70mooe1/decrement-w-run/enabled-db/archive/states/zerostate_0_E0F11C812CAE78C8DB735A923E6B70858EB9415656E36E75D9FB81C7E1D53D64[0m
+[1;36m[ 3][t 2][2026-09-12 09:43:56.020445443][celldb.cpp:251][!celldbin]	Validating metadata[0m
+[1;36m[ 3][t 2][2026-09-12 09:43:56.021496462][celldb.cpp:307][!celldbin]	Validating metadata: OK[0m
+[1;36m[ 3][t 5][2026-09-12 09:43:56.028958704][manager-init.cpp:384][!starter]	gc_block_id = (-1,8000000000000000,0):E4D8223EB25B7A2FD08CC5225879E53B4F4DC39DF5A30910D7163ECE801114AE:4682C0DE354226C8813BD526CE3431940C436DD9AEE2A94CEBB9AE5C59F1F863[0m
+[1;36m[ 3][t 3][2026-09-12 09:43:56.029329219][manager-init.cpp:434][!starter]	Starting shard client[0m
+[1;36m[ 3][t 3][2026-09-12 09:43:56.029447322][manager-init.cpp:438][!starter]	Started shard client[0m
+[1;36m[ 3][t 2][2026-09-12 09:43:56.029472582][manager-init.cpp:448][!starter]	Last key block is (-1,8000000000000000,0):E4D8223EB25B7A2FD08CC5225879E53B4F4DC39DF5A30910D7163ECE801114AE:4682C0DE354226C8813BD526CE3431940C436DD9AEE2A94CEBB9AE5C59F1F863[0m
+[1;31m[ 1][t 2][2026-09-12 09:43:56.030297616][manager-disk.cpp:296][!manager]	running collate query[0m
+[1;33m[ 2][t 2][2026-09-12 09:43:56.030332490][collator.cpp:146][!collate(2,8000000000000000):9]	Collator for shard (2,8000000000000000) started[0m
+[1;36m[ 3][t 3][2026-09-12 09:43:56.030390269][collator.cpp:847][!collate(2,8000000000000000):9]	after_get_storage_stat_cache : [Error : 0 : not implemented][0m
+[1;33m[ 2][t 5][2026-09-12 09:43:56.037355910][collator.cpp:670][!collate(2,8000000000000000):9]	in Collator::after_get_shard_state(0)[0m
+[1;33m[ 2][t 5][2026-09-12 09:43:56.037575647][collator.cpp:632][!collate(2,8000000000000000):9]	in Collator::after_get_mc_state()[0m
+[1;33m[ 2][t 5][2026-09-12 09:43:56.037724572][collator.cpp:2086][!collate(2,8000000000000000):9]	running do_preinit()[0m
+[1;36m[ 3][t 5][2026-09-12 09:43:56.037736292][collator.cpp:1779][!collate(2,8000000000000000):9]	unpacking most recent masterchain state[0m
+[1;31m[ 1][t 5][2026-09-12 09:43:56.037813348][collator.cpp:929][!collate(2,8000000000000000):9]	block version 16 have been enabled in global configuration, but we support only 15 (upgrade validator software?)[0m
+[1;36m[ 3][t 5][2026-09-12 09:43:56.038859201][collator.cpp:2266][!collate(2,8000000000000000):9]	start_lt set to 102000000[0m
+[1;36m[ 3][t 3][2026-09-12 09:43:56.041210337][out-msg-queue-proof.cpp:437][!disk-outmsgqueueimporter]	Done importing neighbor msg queues for shard (2,8000000000000000) from (-1,8000000000000000,51) (0,4000000000000000,41) (0,c000000000000000,41) in 0.002294s sources{ local=3} cache_size=1[0m
+[1;36m[ 3][t 3][2026-09-12 09:43:56.041247434][collator.cpp:1048][!collate(2,8000000000000000):9]	neighbor output queues fetched, took 0.002345s[0m
+[1;33m[ 2][t 3][2026-09-12 09:43:56.041298715][collator.cpp:1104][!collate(2,8000000000000000):9]	obtained outbound queue for neighbor #0((-1,8000000000000000))[0m
+[1;33m[ 2][t 3][2026-09-12 09:43:56.041363945][collator.cpp:1104][!collate(2,8000000000000000):9]	obtained outbound queue for neighbor #1((0,4000000000000000))[0m
+[1;33m[ 2][t 3][2026-09-12 09:43:56.041410549][collator.cpp:1104][!collate(2,8000000000000000):9]	obtained outbound queue for neighbor #2((0,c000000000000000))[0m
+[1;33m[ 2][t 3][2026-09-12 09:43:56.041492413][collator.cpp:1104][!collate(2,8000000000000000):9]	obtained outbound queue for neighbor #3((2,8000000000000000))[0m
+[1;33m[ 2][t 6][2026-09-12 09:43:56.041837654][collator.cpp:2439][!collate(2,8000000000000000):9]	do_collate() : start[0m
+[1;36m[ 3][t 6][2026-09-12 09:43:56.045609353][collator.cpp:2717][!collate(2,8000000000000000):9]	cleaning outbound queue from messages already imported by neighbors[0m
+[1;33m[ 2][t 6][2026-09-12 09:43:56.045694234][collator.cpp:2884][!collate(2,8000000000000000):9]	deleted 0 messages from out_msg_queue, remaining queue size is 3[0m
+[1;36m[ 3][t 6][2026-09-12 09:43:56.048572105][workchain-failed-funded.h:39][!collate(2,8000000000000000):9]	WORKCHAIN_RETURN_CALLEE admit_workchain_late_return inbound=8AC31079965214E776F17FB60504755A10B1A2289B19484CB3298E0F1A7F17EE[0m
+[1;36m[ 3][t 6][2026-09-12 09:43:56.050521222][collator.cpp:5939][!collate(2,8000000000000000):9]	final out_msg_queue size is 3[0m
+[1;36m[ 3][t 6][2026-09-12 09:43:56.050533069][collator.cpp:5943][!collate(2,8000000000000000):9]	block load statistics: gas=0 lt_delta=2 size_estimate=22572 collated_size_estimate=0[0m
+[1;36m[ 3][t 6][2026-09-12 09:43:56.050537502][collator.cpp:5983][!collate(2,8000000000000000):9]	block is underloaded[0m
+[1;36m[ 3][t 6][2026-09-12 09:43:56.050595486][collator.cpp:6316][!collate(2,8000000000000000):9]	creating Merkle update for the ShardState[0m
+[1;36m[ 3][t 6][2026-09-12 09:43:56.050669352][collator.cpp:6329][!collate(2,8000000000000000):9]	updating block profile statistics[0m
+[1;36m[ 3][t 6][2026-09-12 09:43:56.050674917][collator.cpp:6331][!collate(2,8000000000000000):9]	new ShardState and corresponding Merkle update created[0m
+[1;36m[ 3][t 6][2026-09-12 09:43:56.050687707][collator.cpp:6571][!collate(2,8000000000000000):9]	Value flow: (value-flow from_prev_blk:21992999161ng to_next_blk:22002995223ng imported:9998691ng exported:0ng fees_collected:2629ng fees_imported:0ng recovered:0ng created:0ng minted:0ng)[0m
+[1;36m[ 3][t 6][2026-09-12 09:43:56.050706428][collator.cpp:6669][!collate(2,8000000000000000):9]	verifying new Block[0m
+[1;36m[ 3][t 6][2026-09-12 09:43:56.050738585][collator.cpp:6674][!collate(2,8000000000000000):9]	new Block created[0m
+[1;36m[ 3][t 6][2026-09-12 09:43:56.050801736][collator.cpp:6890][!collate(2,8000000000000000):9]	serializing new Block[0m
+[1;36m[ 3][t 6][2026-09-12 09:43:56.050975943][collator.cpp:6921][!collate(2,8000000000000000):9]	serialized block size 16756 bytes (preliminary estimate was 22572)[0m
+[1;36m[ 3][t 6][2026-09-12 09:43:56.050980843][collator.cpp:6924][!collate(2,8000000000000000):9]	size regression stats: 16756 399 110719 457 9 3 3[0m
+[1;36m[ 3][t 6][2026-09-12 09:43:56.050984676][collator.cpp:6927][!collate(2,8000000000000000):9]	serialized collated data size 33 bytes (preliminary estimate was 0)[0m
+[1;36m[ 3][t 6][2026-09-12 09:43:56.051012798][collator.cpp:6987][!collate(2,8000000000000000):9]	saving new BlockCandidate[0m
+[1;33m[ 2][t 7][2026-09-12 09:43:56.063761257][collator.cpp:7026][!collate(2,8000000000000000):9]	sending new BlockCandidate to Promise[0m
+[1;33m[ 2][t 7][2026-09-12 09:43:56.063783401][collator.cpp:7027][!collate(2,8000000000000000):9]	collation took 0.033461 s[0m
+[1;33m[ 2][t 7][2026-09-12 09:43:56.063795428][collator.cpp:7028][!collate(2,8000000000000000):9]	{{
+	{set_block_candidate:157091.665891->157091.678630(0.012739)}
+	{do_collate:157091.656706->157091.665906(0.009200)}
+	{wait_block_data #0:157091.645232->157091.652393(0.007162)}
+	{wait_block_state #0:157091.645227->157091.652246(0.007019)}
+	{neighbor_msg_queues:157091.653776->157091.656121(0.002345)}
+	{auxiliary wait_block_state 49:157091.653721->157091.654499(0.000777)}
+	{post_ext_processing:157091.665394->157091.665902(0.000508)}
+	{auxiliary wait_block_state 50:157091.656272->157091.656645(0.000373)}
+	{auxiliary wait_block_state 46:157091.656352->157091.656627(0.000275)}
+	{get_top_masterchain_state_block:157091.652248->157091.652456(0.000208)}
+	{wait_block_data #-1:157091.652459->157091.652596(0.000137)}
+	{get_storage_stat_cache:157091.645237->157091.645263(0.000027)[Error : 0 : not implemented]}
+}[0m
+[1;33m[ 2][t 7][2026-09-12 09:43:56.063827958][collator.cpp:7138][!collate(2,8000000000000000):9]	Collate query work time = 0.010411s, cpu time = 0.007374s[0m
+[1;31m[ 1][t 6][2026-09-12 09:43:56.067794370][manager-disk.cpp:269][!manager]	created block [ w=2 s=9223372036854775808 seq=9 U5mucSLBzBTdkdvVj5/ZQ3LM/bltmwqjuCO63QSGYgM= +La3TM12EcNOwXW/ONna1llxfYAtuiJ7cJ4Ml1dBYlw= ][0m
+[1;33m[ 2][t 6][2026-09-12 09:43:56.068435015][validate-query.cpp:309][!fakevalidate(2,8000000000000000):9#0]	validate query for (2,8000000000000000,9):5399AE7122C1CC14DD91DBD58F9FD94372CCFDB96D9B0AA3B823BADD04866203:F8B6B74CCD7611C34EC175BF38D9DAD659717D802DBA227B709E0C975741625C started[0m
+[1;33m[ 2][t 3][2026-09-12 09:43:56.068829664][validate-query.cpp:806][!fakevalidate(2,8000000000000000):9#0]	in ValidateQuery::after_get_latest_mc_state()[0m
+[1;36m[ 3][t 3][2026-09-12 09:43:56.068887384][validate-query.cpp:904][!fakevalidate(2,8000000000000000):9#0]	after_get_storage_stat_cache : [Error : 0 : not implemented][0m
+[1;33m[ 2][t 7][2026-09-12 09:43:56.068916372][validate-query.cpp:924][!fakevalidate(2,8000000000000000):9#0]	in ValidateQuery::after_get_shard_state(0)[0m
+[1;33m[ 2][t 7][2026-09-12 09:43:56.068995737][validate-query.cpp:849][!fakevalidate(2,8000000000000000):9#0]	in ValidateQuery::after_get_mc_state() for (-1,8000000000000000,51):561D4ABA8521D8BCCB034CF682D9B0244C6B6B8ADA0E63FCCAAAA6E5CF46B70C:102E09A2458008DBD5877A02F0F133C78B1260C2295C24C3D9857B30E8C06BFF[0m
+[1;31m[ 1][t 7][2026-09-12 09:43:56.069041429][validate-query.cpp:1022][!fakevalidate(2,8000000000000000):9#0]	block version 16 have been enabled in global configuration, but we support only 15 (upgrade validator software?)[0m
+[1;33m[ 2][t 7][2026-09-12 09:43:56.070847033][validate-query.cpp:806][!fakevalidate(2,8000000000000000):9#0]	in ValidateQuery::after_get_latest_mc_state()[0m
+[1;33m[ 2][t 7][2026-09-12 09:43:56.070860250][validate-query.cpp:8008][!fakevalidate(2,8000000000000000):9#0]	try_validate stage 0[0m
+[1;33m[ 2][t 7][2026-09-12 09:43:56.071017424][validate-query.cpp:1817][!fakevalidate(2,8000000000000000):9#0]	obtained outbound queue for neighbor #3 : (2,8000000000000000)[0m
+[1;36m[ 3][t 7][2026-09-12 09:43:56.071027072][validate-query.cpp:1845][!fakevalidate(2,8000000000000000):9#0]	(
+  (hme_root
+    root:(hm_edge
+      label:(hml_long n:96 s:x800000000000000000000031)
+      node:(hmn_leaf
+        value:(processed_upto last_msg_lt:97000001 last_msg_hash:xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF)))))
+x{C_}
+ x{B04000000000000000000000188000000002E40D20FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFC_}[0m
+[1;33m[ 2][t 4][2026-09-12 09:43:56.071089660][validate-query.cpp:1817][!fakevalidate(2,8000000000000000):9#0]	obtained outbound queue for neighbor #0 : (-1,8000000000000000)[0m
+[1;36m[ 3][t 4][2026-09-12 09:43:56.071125285][validate-query.cpp:1845][!fakevalidate(2,8000000000000000):9#0]	(
+  (hme_root
+    root:(hm_edge
+      label:(hml_long n:96 s:x800000000000000000000033)
+      node:(hmn_leaf
+        value:(processed_upto last_msg_lt:99000001 last_msg_hash:xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF)))))
+x{C_}
+ x{B04000000000000000000000198000000002F34F60FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFC_}[0m
+[1;33m[ 2][t 4][2026-09-12 09:43:56.071186721][validate-query.cpp:1817][!fakevalidate(2,8000000000000000):9#0]	obtained outbound queue for neighbor #1 : (0,4000000000000000)[0m
+[1;36m[ 3][t 4][2026-09-12 09:43:56.071200026][validate-query.cpp:1845][!fakevalidate(2,8000000000000000):9#0]	(
+  (hme_root
+    root:(hm_edge
+      label:(hml_long n:96 s:x400000000000000000000032)
+      node:(hmn_leaf
+        value:(processed_upto last_msg_lt:90000002 last_msg_hash:xE066DB403104A8CFE50C9731EFBA8A1EC0BE62C2501FB30E9EEF3032C3396EFE)))))
+x{C_}
+ x{B02000000000000000000000190000000002AEA54170336DA018825467F2864B98F7DD450F605F3161280FD9874F779819619CB77F4_}[0m
+[1;33m[ 2][t 4][2026-09-12 09:43:56.071234087][validate-query.cpp:1817][!fakevalidate(2,8000000000000000):9#0]	obtained outbound queue for neighbor #2 : (0,c000000000000000)[0m
+[1;36m[ 3][t 4][2026-09-12 09:43:56.071247941][validate-query.cpp:1845][!fakevalidate(2,8000000000000000):9#0]	(
+  (hme_root
+    root:(hm_edge
+      label:(hml_long n:96 s:xC0000000000000000000002E)
+      node:(hmn_leaf
+        value:(processed_upto last_msg_lt:90000002 last_msg_hash:xE066DB403104A8CFE50C9731EFBA8A1EC0BE62C2501FB30E9EEF3032C3396EFE)))))
+x{C_}
+ x{B06000000000000000000000170000000002AEA54170336DA018825467F2864B98F7DD450F605F3161280FD9874F779819619CB77F4_}[0m
+[1;33m[ 2][t 6][2026-09-12 09:43:56.071431016][validate-query.cpp:8048][!fakevalidate(2,8000000000000000):9#0]	try_validate stage 1[0m
+[1;36m[ 3][t 6][2026-09-12 09:43:56.071439502][validate-query.cpp:8049][!fakevalidate(2,8000000000000000):9#0]	running automated validity checks for block candidate (2,8000000000000000,9):5399AE7122C1CC14DD91DBD58F9FD94372CCFDB96D9B0AA3B823BADD04866203:F8B6B74CCD7611C34EC175BF38D9DAD659717D802DBA227B709E0C975741625C[0m
+[1;36m[ 3][t 6][2026-09-12 09:43:56.071568728][validate-query.cpp:3223][!fakevalidate(2,8000000000000000):9#0]	pre-checking all Account updates between the old and the new state[0m
+[1;36m[ 3][t 6][2026-09-12 09:43:56.071600625][validate-query.cpp:3416][!fakevalidate(2,8000000000000000):9#0]	pre-checking all AccountBlocks, and all transactions of all accounts[0m
+[1;36m[ 3][t 6][2026-09-12 09:43:56.071653457][validate-query.cpp:3728][!fakevalidate(2,8000000000000000):9#0]	pre-checking the difference between the old and the new outbound message queues[0m
+[1;36m[ 3][t 6][2026-09-12 09:43:56.071658557][validate-query.cpp:3749][!fakevalidate(2,8000000000000000):9#0]	outbound message queue size: 3 -> 3[0m
+[1;36m[ 3][t 6][2026-09-12 09:43:56.071668633][validate-query.cpp:3892][!fakevalidate(2,8000000000000000):9#0]	checking the difference between the old and the new dispatch queues[0m
+[1;36m[ 3][t 6][2026-09-12 09:43:56.071674307][validate-query.cpp:4650][!fakevalidate(2,8000000000000000):9#0]	checking inbound messages listed in InMsgDescr[0m
+[1;36m[ 3][t 6][2026-09-12 09:43:56.071718250][validate-query.cpp:5323][!fakevalidate(2,8000000000000000):9#0]	checking outbound messages listed in OutMsgDescr[0m
+[1;36m[ 3][t 6][2026-09-12 09:43:56.071725162][validate-query.cpp:5347][!fakevalidate(2,8000000000000000):9#0]	checking ProcessedInfo[0m
+[1;36m[ 3][t 6][2026-09-12 09:43:56.071729312][validate-query.cpp:5384][!fakevalidate(2,8000000000000000):9#0]	ProcessedInfo claims to have processed all inbound messages up to (100000002,8AC31079965214E776F17FB60504755A10B1A2289B19484CB3298E0F1A7F17EE)[0m
+[1;36m[ 3][t 6][2026-09-12 09:43:56.071746853][validate-query.cpp:6750][!fakevalidate(2,8000000000000000):9#0]	checking all transactions[0m
+[1;36m[ 3][t 6][2026-09-12 09:43:56.074152282][workchain-failed-funded.h:39][!fakevalidate(2,8000000000000000):9#0]	WORKCHAIN_RETURN_CALLEE admit_workchain_late_return inbound=8AC31079965214E776F17FB60504755A10B1A2289B19484CB3298E0F1A7F17EE[0m
+[1;33m[ 2][t 6][2026-09-12 09:43:56.075881817][validate-query.cpp:8167][!fakevalidate(2,8000000000000000):9#0]	try_validate stage 2[0m
+[1;36m[ 3][t 6][2026-09-12 09:43:56.075932513][validate-query.cpp:7210][!fakevalidate(2,8000000000000000):9#0]	checking header of the new shardchain state[0m
+[1;33m[ 2][t 6][2026-09-12 09:43:56.076050893][validate-query.cpp:8264][!fakevalidate(2,8000000000000000):9#0]	validation took 0.007625s[0m
+[1;33m[ 2][t 6][2026-09-12 09:43:56.076056957][validate-query.cpp:8265][!fakevalidate(2,8000000000000000):9#0]	Validate query work time = 0.004676s, cpu time = 0.003051s[0m
+[1;33m[ 2][t 6][2026-09-12 09:43:56.076061780][validate-query.cpp:8267][!fakevalidate(2,8000000000000000):9#0]	{{
+	{get_top_masterchain_state_block:157091.683323->157091.683701(0.000378)}
+	{auxiliary wait_block_state 49:157091.685859->157091.686152(0.000292)}
+	{wait_block_message_queue #2:157091.685835->157091.686107(0.000272)}
+	{wait_block_message_queue #1:157091.685835->157091.686060(0.000225)}
+	{auxiliary wait_block_state 46:157091.686147->157091.686296(0.000150)}
+	{wait_block_message_queue #0:157091.685832->157091.685962(0.000130)}
+	{wait_block_state #0:157091.683662->157091.683789(0.000128)}
+	{auxiliary wait_block_state 50:157091.686101->157091.686219(0.000119)}
+	{mc wait_block_state:157091.683752->157091.683869(0.000117)}
+	{get_storage_stat_cache:157091.683669->157091.683760(0.000092)[Error : 0 : not implemented]}
+	{get_block_handle:157091.683667->157091.683751(0.000084)}
+	{set_block_candidate:157091.690818->157091.690888(0.000069)}
+	{get_top_masterchain_state_block:157091.685714->157091.685720(0.000006)}
+}[0m
+[1;33m[ 2][t 6][2026-09-12 09:43:56.076092608][validate-query.cpp:289][!fakevalidate(2,8000000000000000):9#0]	validate query done[0m
+[1;36m[ 3][t 4][2026-09-12 09:43:56.093178308][test-tos-collator.cpp:465][!manager]	Saving newly-generated ShardTopBlockDescr for (2,8000000000000000,9):5399AE7122C1CC14DD91DBD58F9FD94372CCFDB96D9B0AA3B823BADD04866203:F8B6B74CCD7611C34EC175BF38D9DAD659717D802DBA227B709E0C975741625C into file /tmp/b-row5-controls-e70mooe1/decrement-w-run/enabled-top1.boc[0m
+[1;31m[ 1][t 4][2026-09-12 09:43:56.093244769][block-db.cpp:111][!manager][&status.is_error()]	error writing new file `/tmp/b-row5-controls-e70mooe1/decrement-w-run/enabled-top1.boc` : [PosixError : File exists : 17 : File "/tmp/b-row5-controls-e70mooe1/decrement-w-run/enabled-top1.boc" can't be created for writing][0m
+[1;31m[ 1][t 4][2026-09-12 09:43:56.093263549][test-tos-collator.cpp:468][!manager]	Cannot save ShardTopBlockDescr for (2,8000000000000000,9):5399AE7122C1CC14DD91DBD58F9FD94372CCFDB96D9B0AA3B823BADD04866203:F8B6B74CCD7611C34EC175BF38D9DAD659717D802DBA227B709E0C975741625C into file /tmp/b-row5-controls-e70mooe1/decrement-w-run/enabled-top1.boc : [PosixError : File exists : 17 : File "/tmp/b-row5-controls-e70mooe1/decrement-w-run/enabled-top1.boc" can't be created for writing][0m
+[1;31m[ 1][t 4][2026-09-12 09:43:56.093289084][manager-disk.cpp:399][!manager]	success, block [ w=2 s=9223372036854775808 seq=9 U5mucSLBzBTdkdvVj5/ZQ3LM/bltmwqjuCO63QSGYgM= +La3TM12EcNOwXW/ONna1llxfYAtuiJ7cJ4Ml1dBYlw= ] = (2,8000000000000000,9):5399AE7122C1CC14DD91DBD58F9FD94372CCFDB96D9B0AA3B823BADD04866203:F8B6B74CCD7611C34EC175BF38D9DAD659717D802DBA227B709E0C975741625C saved to disk[0m
+[0m[ 4][t 0][2026-09-12 09:43:56.105670854][mc-config.cpp:572]	workchain description dictionary created[0m
+[0m[ 4][t 0][2026-09-12 09:43:56.105689730][mc-config.cpp:2347]	unpacked info for workchain 0: basic=true, active=true, accept_msgs=true, min_split=1, max_split=1[0m
+[0m[ 4][t 0][2026-09-12 09:43:56.105695173][mc-config.cpp:2347]	unpacked info for workchain 2: basic=true, active=true, accept_msgs=true, min_split=0, max_split=0[0m
+[0m[ 4][t 0][2026-09-12 09:43:56.105728322][transaction.cpp:622]	unpacking account 0000000000000000000000000000000000000000000000000000000000000000[0m
+[0m[ 4][t 0][2026-09-12 09:43:56.105745130][transaction.cpp:455]	last_paid=0; cells=6 bits=966[0m
+[0m[ 4][t 0][2026-09-12 09:43:56.105757098][transaction.cpp:685]	end of Account.unpack() for 2:0000000000000000000000000000000000000000000000000000000000000000 (balance = 21006001000ng ; last_trans_lt = 102000001..102000002)[0m
+[0m[ 4][t 0][2026-09-12 09:43:56.105788006][transaction.cpp:622]	unpacking account FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF[0m
+[0m[ 4][t 0][2026-09-12 09:43:56.105795138][transaction.cpp:455]	last_paid=0; cells=3 bits=124[0m
+[0m[ 4][t 0][2026-09-12 09:43:56.105800232][transaction.cpp:685]	end of Account.unpack() for 2:FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF (balance = 996994223ng ; last_trans_lt = 102000001..102000002)[0m
+[0m[ 4][t 0][2026-09-12 09:43:56.105886259][mc-config.cpp:572]	workchain description dictionary created[0m
+[0m[ 4][t 0][2026-09-12 09:43:56.105891873][mc-config.cpp:2347]	unpacked info for workchain 0: basic=true, active=true, accept_msgs=true, min_split=1, max_split=1[0m
+[0m[ 4][t 0][2026-09-12 09:43:56.105896897][mc-config.cpp:2347]	unpacked info for workchain 2: basic=true, active=true, accept_msgs=true, min_split=0, max_split=0[0m
+[0m[ 4][t 0][2026-09-12 09:43:56.105922616][transaction.cpp:622]	unpacking account 1111111111111111111111111111111111111111111111111111111111111111[0m
+[0m[ 4][t 0][2026-09-12 09:43:56.105937985][transaction.cpp:455]	last_paid=0; cells=29 bits=9277[0m
+[0m[ 4][t 0][2026-09-12 09:43:56.105943872][transaction.cpp:685]	end of Account.unpack() for 2:1111111111111111111111111111111111111111111111111111111111111111 (balance = 0ng ; last_trans_lt = 102000001..102000002)[0m
+[0m[ 4][t 0][2026-09-12 09:43:58.773603121][transaction.cpp:622]	unpacking account 2222222222222222222222222222222222222222222222222222222222222222[0m
+[0m[ 4][t 0][2026-09-12 09:43:58.773629648][transaction.cpp:455]	last_paid=0; cells=10 bits=3308[0m
+[0m[ 4][t 0][2026-09-12 09:43:58.773635158][transaction.cpp:685]	end of Account.unpack() for 2:2222222222222222222222222222222222222222222222222222222222222222 (balance = 0ng ; last_trans_lt = 8000001..8000002)[0m
+[0m[ 4][t 0][2026-09-12 09:43:59.766260374][transaction.cpp:622]	unpacking account 1111111111111111111111111111111111111111111111111111111111111111[0m
+[0m[ 4][t 0][2026-09-12 09:43:59.766280286][transaction.cpp:455]	last_paid=0; cells=29 bits=9277[0m
+[0m[ 4][t 0][2026-09-12 09:43:59.766285306][transaction.cpp:685]	end of Account.unpack() for 2:1111111111111111111111111111111111111111111111111111111111111111 (balance = 0ng ; last_trans_lt = 102000001..102000002)[0m
+[0m[ 4][t 0][2026-09-12 09:43:59.766432588][transaction.cpp:622]	unpacking account 2222222222222222222222222222222222222222222222222222222222222222[0m
+[0m[ 4][t 0][2026-09-12 09:43:59.766436574][transaction.cpp:455]	last_paid=0; cells=10 bits=3308[0m
+[0m[ 4][t 0][2026-09-12 09:43:59.766439109][transaction.cpp:685]	end of Account.unpack() for 2:2222222222222222222222222222222222222222222222222222222222222222 (balance = 0ng ; last_trans_lt = 8000001..8000002)[0m
+[0m[ 4][t 0][2026-09-12 09:43:59.768773024][transaction.cpp:622]	unpacking account 0000000000000000000000000000000000000000000000000000000000000000[0m
+[0m[ 4][t 0][2026-09-12 09:43:59.768790525][transaction.cpp:455]	last_paid=0; cells=6 bits=966[0m
+[0m[ 4][t 0][2026-09-12 09:43:59.768794860][transaction.cpp:685]	end of Account.unpack() for 2:0000000000000000000000000000000000000000000000000000000000000000 (balance = 21006001000ng ; last_trans_lt = 102000001..102000002)[0m
+[0m[ 4][t 0][2026-09-12 09:43:59.768877034][mc-config.cpp:572]	workchain description dictionary created[0m
+[0m[ 4][t 0][2026-09-12 09:43:59.768882743][mc-config.cpp:2347]	unpacked info for workchain 0: basic=true, active=true, accept_msgs=true, min_split=1, max_split=1[0m
+[0m[ 4][t 0][2026-09-12 09:43:59.768885869][mc-config.cpp:2347]	unpacked info for workchain 2: basic=true, active=true, accept_msgs=true, min_split=0, max_split=0[0m
+[0m[ 4][t 0][2026-09-12 09:43:59.768909594][transaction.cpp:622]	unpacking account 1111111111111111111111111111111111111111111111111111111111111111[0m
+[0m[ 4][t 0][2026-09-12 09:43:59.768915102][transaction.cpp:455]	last_paid=0; cells=24 bits=7202[0m
+[0m[ 4][t 0][2026-09-12 09:43:59.768918291][transaction.cpp:685]	end of Account.unpack() for 2:1111111111111111111111111111111111111111111111111111111111111111 (balance = 0ng ; last_trans_lt = 98000001..98000002)[0m
+[0m[ 4][t 0][2026-09-12 09:43:59.769002633][transaction.cpp:622]	unpacking account 1111111111111111111111111111111111111111111111111111111111111111[0m
+[0m[ 4][t 0][2026-09-12 09:43:59.769007560][transaction.cpp:455]	last_paid=0; cells=29 bits=9277[0m
+[0m[ 4][t 0][2026-09-12 09:43:59.769010253][transaction.cpp:685]	end of Account.unpack() for 2:1111111111111111111111111111111111111111111111111111111111111111 (balance = 0ng ; last_trans_lt = 102000001..102000002)[0m
+[1;31m[ 0][t 0][2026-09-12 09:43:59.769153001][m5-live-failed.h:36]	Check `encode_workchain_withdrawal_control(expected_control,*limit).move_as_ok()->get_hash() == encode_workchain_withdrawal_control(after.control,*limit).move_as_ok()->get_hash()` failed[0m
