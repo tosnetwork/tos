@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Test-owned node fixture. No deployment configuration or permission flag."""
 import argparse
+import atexit
 import ast
 import base64
 import hashlib
@@ -51,7 +52,60 @@ p.add_argument('--failed-routing-probe', action='store_true',
                help='run the real fee-routing producer mutation before normal Failed publication')
 p.add_argument('--failed-routing-binary', type=Path,
                help='isolated test binary for oracle-removal control only')
+p.add_argument('--retain-fixture', metavar='REASON',
+               help="deliberately retain this run's fixtures for evidence; requires a nonempty reason")
+p.add_argument('--fixture-parent', type=Path, help=argparse.SUPPRESS)
 a = p.parse_args()
+if a.retain_fixture is not None and not a.retain_fixture.strip():
+    p.error('retaining a fixture requires a reason')
+if a.fixture_parent is not None and not a.fixture_parent.is_dir():
+    p.error('fixture parent must be an existing parent-owned directory')
+
+# Read the filesystem, not our footprint: unrelated processes share this volume.
+# Children needed by an oracle live below its work directory; only the parent
+# removes that directory, after observations, mutations and restoration finish.
+live_paths = []
+live_volume = a.fixture_parent or Path(tempfile.gettempdir())
+def live_capacity(stage):
+    usage = shutil.disk_usage(live_volume)
+    print('LIVE_CAPACITY_' + stage + ':' + json.dumps(dict(
+        pid=os.getpid(), volume=str(live_volume), device=live_volume.stat().st_dev,
+        total_bytes=usage.total, free_bytes=usage.free)), flush=True)
+
+def live_fixture(prefix):
+    path = Path(tempfile.mkdtemp(prefix=prefix, dir=a.fixture_parent))
+    live_paths.append((os.getpid(), path))
+    return path
+
+def finish_live():
+    try:
+        live_capacity('END')  # Before cleanup, so reclaimed space cannot mask pressure.
+        for owner, path in reversed(live_paths):
+            if owner != os.getpid():
+                continue  # A fork must never delete its parent's observations.
+            if a.fixture_parent is not None:
+                print(f'LIVE_FIXTURE_PARENT_OWNED:{path}: retained until parent oracle finishes', flush=True)
+            elif a.retain_fixture:
+                print(f'LIVE_FIXTURE_RETAINED:{path}: {a.retain_fixture}', flush=True)
+            else:
+                # Keep child capacity observations in this run's result log before
+                # removing the temporary logs that the oracle has already read.
+                for log in sorted(path.rglob('*.log')):
+                    with log.open('rb') as stream:
+                        for line in stream:
+                            if line.startswith(b'LIVE_CAPACITY_'):
+                                print('CHILD_' + line.decode('utf-8').rstrip(), flush=True)
+                shutil.rmtree(path)
+                print(f'LIVE_FIXTURE_REMOVED:{path}', flush=True)
+    except Exception as error:
+        # atexit normally swallows callback failures. Cleanup/measurement failure
+        # must instead fail the run, even after a business observation marker.
+        print(f'LIVE_FINALIZATION_FAILED:{error!r}', file=sys.stderr, flush=True)
+        sys.stdout.flush()
+        os._exit(1)
+
+live_capacity('START')
+atexit.register(finish_live)
 split_return_route = a.m5_completion_late and not a.m5_completion_paid
 if a.completion_close_before_return and not split_return_route:
     p.error('close-before-return requires the real split late-return route')
@@ -94,7 +148,7 @@ if a.completion_expect_offset is not None and not a.m5_bucket_small:
 
 if a.completion_contract:
     # Complete the existing carrier here; do not introduce a parallel runner.
-    work = Path(tempfile.mkdtemp(prefix='uno-completion-bucket-'))
+    work = live_fixture('uno-completion-bucket-')
     print(f'COMPLETION_RUN:{work}', flush=True)
     spec = importlib.util.spec_from_file_location('completion_oracle',
         repo / 'crypto/test/workchain_withdrawal_completion_oracle.py')
@@ -255,6 +309,7 @@ if a.completion_contract:
         observer_header = 'test/m5-completion-observer.h'
         reader = shadow_binary('reader', '#pragma once', '#pragma once', observer_header)
         args = [sys.executable, str(Path(__file__).resolve()), '--build', str(build),
+                '--fixture-parent', str(work),
                 '--completion-sweep']
         with (work / 'positive.log').open('w') as log:
             subprocess.run(args, stdout=log, stderr=log, check=True)
@@ -392,7 +447,8 @@ if a.completion_contract:
 
     if a.completion_contract == 'row4':
         def paid_fixture(label, full=False):
-            args = [sys.executable, str(Path(__file__).resolve()), '--build', str(build), '--m5-completion-paid']
+            args = [sys.executable, str(Path(__file__).resolve()), '--build', str(build),
+                    '--fixture-parent', str(work), '--m5-completion-paid']
             if full:
                 args += ['--completion-full-cap']
             with (work / (label + '.log')).open('w') as log:
@@ -446,6 +502,7 @@ if a.completion_contract:
 
     def closed_late_fixture():
         args = [sys.executable, str(Path(__file__).resolve()), '--build', str(build),
+                '--fixture-parent', str(work),
                 '--m5-completion-late', '--completion-close-before-return']
         with (work / 'closed-late.log').open('w') as log:
             result = subprocess.run(args, stdout=log, stderr=log)
@@ -552,6 +609,7 @@ if a.completion_contract:
 
     if a.completion_contract == 'row6':
         args = [sys.executable, str(Path(__file__).resolve()), '--build', str(build),
+                '--fixture-parent', str(work),
                 '--m5-completion-late', '--completion-window-pair']
         with (work / 'window-pair.log').open('w') as log:
             result = subprocess.run(args, stdout=log, stderr=log)
@@ -623,6 +681,7 @@ if a.completion_contract:
         _, active = closed_late_fixture()
         oracle.require(active['LATE']['input']['account_closed'] is False, 'ACTIVE_ACCOUNT_COUNTERPART')
         args = [sys.executable, str(Path(__file__).resolve()), '--build', str(build),
+                '--fixture-parent', str(work),
                 '--m5-completion-late', '--completion-close-account-before-return']
         with (work / 'closed-account.log').open('w') as log:
             result = subprocess.run(args, stdout=log, stderr=log)
@@ -671,6 +730,7 @@ if a.completion_contract:
         def slot_fixture(free_one):
             label = 'free-one' if free_one else 'full'
             args = [sys.executable, str(Path(__file__).resolve()), '--build', str(build),
+                    '--fixture-parent', str(work),
                     '--m5-completion-late', '--completion-no-slot']
             if free_one:
                 args.append('--completion-free-one-slot')
@@ -727,6 +787,7 @@ if a.completion_contract:
 
     def run_boundary(label, principal=None, offset=None):
         args = [sys.executable, str(Path(__file__).resolve()), '--build', str(build),
+                '--fixture-parent', str(work),
                 '--m5-bucket-small', '--m5-completion-late']
         if principal is not None:
             args += ['--m5-return-principal', str(oracle.checked(principal)),
@@ -809,7 +870,7 @@ if a.completion_contract:
     print('WITHDRAWAL-COMPLETION_D78_OBSERVED:test-workchain-withdrawal-completion-bucket-small')
     raise SystemExit(0)
 
-fixture = Path(tempfile.mkdtemp(prefix='uno-m3-live-'))
+fixture = live_fixture('uno-m3-live-')
 wallet = pin(repo, build / 'm3-vector-wallet-target/release/examples/m3-scenario', fixture)
 # Establish that the same numeric predicate used after each accepted block
 # rejects unpaired principal and nonzero cross-block D, then restores to green.
@@ -1202,7 +1263,7 @@ if a.m5_debit:
                     if a.completion_window_pair and number == 7:
                         # Both branches inherit the same accepted block 7 and original W.
                         # All Native subprocesses have exited; copy the closed DB, not a live one.
-                        within = Path(tempfile.mkdtemp(prefix='uno-completion-window-within-'))
+                        within = live_fixture('uno-completion-window-within-')
                         shutil.copytree(fixture, within, dirs_exist_ok=True)
                         sys.stdout.flush(); sys.stderr.flush()
                         child = os.fork()
@@ -1233,7 +1294,7 @@ if a.m5_debit:
                     completed.check_returncode()
                     if a.completion_close_before_return and number == 7:
                         (fixture / 'completion-execution.log').write_text(completed.stdout + completed.stderr)
-                        paid_fixture = Path(tempfile.mkdtemp(prefix='uno-row5-paid-predecessor-'))
+                        paid_fixture = live_fixture('uno-row5-paid-predecessor-')
                         shutil.copytree(fixture, paid_fixture, dirs_exist_ok=True)
                         print(f'COMPLETION_ROW5_PAID:{paid_fixture}', flush=True)
                     advance_pair(number)
