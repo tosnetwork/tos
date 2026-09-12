@@ -1403,14 +1403,14 @@ if a.m5_debit:
                         shutil.copyfile(fixture / 'current-state.boc', fixture / 'completion-before-state.boc')
                         shutil.copyfile(fixture / 'current-state.boc', fixture / 'completion-untouched-state.boc')
                         shutil.copyfile(fixture / 'accepted-block.id', fixture / 'completion-before-block.id')
-                    if number in (5, 6):
+                    if number in (5, 6) or (number == 7 and a.phase_replay_cuts):
                         phase_capture_before(f'owner{number}')
                     completed = subprocess.run([str(build / 'test-m3-live'),str(fixture)],
                                                text=True,capture_output=True)
                     (fixture / f'completion-owner-{number}.log').write_text(completed.stdout+completed.stderr)
                     print(completed.stdout,end=''); print(completed.stderr,end='',file=sys.stderr)
                     completed.check_returncode()
-                    if number in (5, 6):
+                    if number in (5, 6) or (number == 7 and a.phase_replay_cuts):
                         phase_capture_after(f'owner{number}')
                     if a.completion_close_before_return and number == 7:
                         (fixture / 'completion-execution.log').write_text(completed.stdout + completed.stderr)
