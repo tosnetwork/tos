@@ -36,7 +36,30 @@ Real row-4 publication remains unfinished: live predecessors currently have
 phase 0, and the account engine read view does not yet carry authenticated queue
 observation needed to establish phase 1. Do not inject Q into a fixture and
 describe it as live evidence. Other owner operation kinds are not integrated.
-This checkpoint does not claim a new live regression run.
+The following regression does not exercise phase-1 expiry and therefore does
+not discharge the missing live row-4 evidence.
+
+## Fresh live regression after B's wallet pin merge
+
+B's `cc182bd14` was merged as `1bdda459d`. The startup conflict was resolved
+by retaining the early source pin and running the unknown-reader controls in
+that same fixture (not allocating a second fixture after pinning).
+The release wallet was rebuilt (`/tmp/uno-paid-wallet-build.log`).
+
+`python3 test/uno-m3-live.py --build /tmp/uno-merge-6ea2fbf80-tL5Uih --m5-failed`
+completed with exit 0: `/tmp/uno-paid-owner-failed-regression.log`.
+Fixture: `/tmp/uno-m3-live-4h0mmzma`, with execution-time
+`wallet-freshness.json`. This is a fresh run, not inherited D78 evidence.
+
+- Prepare: R_actual = R_book = N_hidden = 989999643; P = W = 10000000.
+- Failed: y = 9996070; receipt = 6996062; sequence 1 -> 2; no W records.
+- Final: R_actual = R_book = N_hidden = 996995705; P = W = 0.
+- Normal unknown-origin observation 0; injected post-execution unknown 1.
+- OFF/ON pairing and the incarnation negative control executed successfully.
+
+It establishes the existing phase-0 Failed loop still passes after the owner
+root-binding changes. It does not execute a second owner operation or a Paid
+closure. The wallet pin is not an attestation of Native binary provenance.
 
 For the later late-return work, the current normative table gives both rows 3
 and 6 the same credit and P/W deltas. Neither those totals nor the credit alone
