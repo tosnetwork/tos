@@ -1,15 +1,7 @@
 name: Ubuntu TOS build (x86-64)
 
 on:
-  pull_request:
-    # feature/** keeps stacked PRs covered: a PR whose base is another
-    # feature branch otherwise receives no build at all.
-    branches: [master, testnet, main, 'feature/**']
-    types: [opened, reopened, synchronize, ready_for_review]
-  push:
-    branches: [master, testnet, main]
   workflow_dispatch:
-  workflow_call:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -43,7 +35,7 @@ jobs:
     - name: Date Stamp
       id: date-stamp
       run: |
-        echo "timestamp=$(date -u "+%Y%m%d%H%M_%S")" >> "$GITHUB_OUTPUT"
+        echo "timestamp=$(date -u \"+%Y%m%d%H%M_%S\")" >> "$GITHUB_OUTPUT"
 
     - name: Restore cache TOS
       uses: actions/cache@v6
