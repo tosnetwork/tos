@@ -1,0 +1,269 @@
+#pragma once
+// Test adapter: read committed Native artifacts, not proposed result amounts.
+#include "m5-live-failed.h"
+#include <map>
+#include <sstream>
+
+namespace m3_live::completion {
+using namespace block;
+inline std::uint64_t u64(const td::RefInt256& value) {
+  CHECK(value.not_null() && value->unsigned_fits_bits(63));
+  return static_cast<std::uint64_t>(value->to_long());
+}
+inline std::uint64_t add(std::uint64_t a, std::uint64_t b) {
+  std::uint64_t result; CHECK(!__builtin_add_overflow(a,b,&result)); return result;
+}
+inline std::uint64_t sub(std::uint64_t a, std::uint64_t b) {
+  std::uint64_t result; CHECK(!__builtin_sub_overflow(a,b,&result)); return result;
+}
+inline std::string quote(const std::string& value) {
+  // All strings written here are fixed identifiers, hexadecimal hashes or
+  // canonical numeric addresses. Do not admit arbitrary diagnostic text.
+  CHECK(value.find_first_of("\"\\\n\r\t") == std::string::npos);
+  return "\"" + value + "\"";
+}
+inline Account native_account(const td::Ref<vm::Cell>& state_root, const td::Bits256& key) {
+  gen::ShardStateUnsplit::Record state; CHECK(::tlb::unpack_cell(state_root,state));
+  vm::AugmentedDictionary accounts(vm::load_cell_slice_ref(state.accounts),256,block::tlb::aug_ShardAccounts);
+  Account account(2,key.bits()); CHECK(account.unpack(accounts.lookup(key),state.gen_utime,false)); return account;
+}
+inline gen::UnoV2HostEffects::Record effects(const td::Ref<vm::Cell>& root) {
+  gen::Block::Record b; gen::BlockExtra::Record e; CHECK(::tlb::unpack_cell(root,b)&&::tlb::unpack_cell(b.extra,e));
+  vm::AugmentedDictionary accounts(vm::load_cell_slice_ref(e.account_blocks),256,block::tlb::aug_ShardAccountBlocks);
+  auto leaf=accounts.lookup(td::Bits256::zero()); gen::AccountBlock::Record ab;
+  CHECK(gen::t_AccountBlock.unpack(leaf.write(),ab));
+  vm::AugmentedDictionary txs(vm::DictNonEmpty(),ab.transactions,64,block::tlb::aug_AccountTransactions);
+  gen::UnoV2HostEffects::Record result; unsigned count=0;
+  CHECK(txs.check_for_each([&](auto value,td::ConstBitPtr,int){
+    ++count; gen::Transaction::Record tx; gen::TransactionDescr::Record_trans_workchain_entry_v3 d;
+    CHECK(::tlb::unpack_cell(value->prefetch_ref(),tx)&&::tlb::unpack_cell(tx.description,d)&&::tlb::unpack_cell(d.effects,result));
+    return true;
+  })); CHECK(count==1); return result;
+}
+inline td::Ref<vm::Cell> block_at(const std::filesystem::path& fixture,unsigned height) {
+  auto path=fixture/"m4-blocks"/(std::to_string(height)+".boc");
+  auto root=load(std::filesystem::exists(path)?path:fixture/"accepted-block.boc");
+  gen::Block::Record b; gen::BlockInfo::Record info;
+  CHECK(::tlb::unpack_cell(root,b)&&::tlb::unpack_cell(b.info,info)&&info.seq_no==height); return root;
+}
+inline std::map<std::uint64_t,std::uint64_t> payout_values(const std::filesystem::path& fixture,
+    unsigned height,const td::Bits256& custody) {
+  std::map<std::uint64_t,std::uint64_t> values;
+  for(unsigned n=1;n<=height;++n) {
+    gen::Block::Record b;gen::BlockExtra::Record e;
+    CHECK(::tlb::unpack_cell(block_at(fixture,n),b)&&::tlb::unpack_cell(b.extra,e));
+    vm::AugmentedDictionary accounts(vm::load_cell_slice_ref(e.account_blocks),256,block::tlb::aug_ShardAccountBlocks);
+    auto leaf=accounts.lookup(custody);if(leaf.is_null())continue;
+    gen::AccountBlock::Record ab;CHECK(gen::t_AccountBlock.unpack(leaf.write(),ab));
+    vm::AugmentedDictionary txs(vm::DictNonEmpty(),ab.transactions,64,block::tlb::aug_AccountTransactions);
+    CHECK(txs.check_for_each([&](auto cell,td::ConstBitPtr,int){
+      gen::Transaction::Record tx;CHECK(::tlb::unpack_cell(cell->prefetch_ref(),tx));vm::Dictionary messages(tx.r1.out_msgs,15);
+      CHECK(messages.check_for_each([&](auto message,td::ConstBitPtr,int){
+        gen::CommonMsgInfo::Record_int_msg_info info;CHECK(::tlb::unpack_cell_inexact(message->prefetch_ref(),info));
+        CurrencyCollection value;CHECK(value.unpack(info.value));
+        CHECK(values.emplace(info.created_lt,u64(value.tomis)).second);return true;
+      }));return true;
+    }));
+  }
+  return values;
+}
+inline std::uint64_t book(const std::filesystem::path& fixture, unsigned height,const td::Bits256& custody) {
+  std::uint64_t total=0;
+  for(unsigned n=1;n<=height;++n) {
+    auto root=block_at(fixture,n);
+    auto candidate=m4_recorded_candidate(root);
+    if(m3_test::is_m4_test_deposit(candidate)) {
+      if(!m4_deposit_was_rejected(root)) total=add(total,m3_test::decode_m4_test_deposit(candidate).move_as_ok().principal);
+    } else if(m3_test::is_m5_test_failed(candidate)) {
+      const auto native=decode_workchain_native_effects(effects(root).native).move_as_ok();
+      auto retained=u64(m5_recorded_return(root).tomis);
+      if(native.fees)retained=sub(retained,add(add(u64(native.fees->state_fee),u64(native.fees->compute_fee)),u64(native.fees->tip)));
+      // Bucket forwarding is an explicit custody debit. Empty transfer map is
+      // the ordinary direct return; unknown/non-custody moves are not ignored.
+      vm::Dictionary transfers(native.transfers,32);
+      CHECK(transfers.check_for_each([&](auto value,td::ConstBitPtr,int){
+        gen::UnoV2NativeTransfer::Record move; CHECK(::tlb::unpack_cell(value->prefetch_ref(),move));
+        CHECK(move.source == custody);
+        CurrencyCollection moved; CHECK(moved.unpack(move.value));
+        retained=sub(retained,u64(moved.tomis)); return true;
+      }));
+      total=add(total,retained);
+    } else {
+      auto replay=m3_test::decode_m5_accounting_replay(candidate).move_as_ok();
+      if(auto withdrawal=std::get_if<WorkchainWithdrawalInput>(&replay)) {
+        const auto& a=withdrawal->data.amounts;
+        total=sub(total,add(add(a.principal,a.outward_fee),a.operation_fee));
+      } else if(auto transfer=std::get_if<WorkchainTransferInput>(&std::get<WorkchainReplayInput>(replay))) {
+        total=sub(total,workchain_transfer_claims(transfer->data).authorized_fee);
+      }
+    }
+  }
+  return total;
+}
+struct Snapshot {
+  std::uint64_t reserve, ledger, hidden=0, p=0, w=0, coordinator, holdings, refundable, sequence;
+  std::map<std::string,std::uint64_t> records;
+  std::map<std::string,std::pair<std::string,std::uint64_t>> pending;
+  std::string user_root, system_root;
+  WorkchainUnexpectedBucket bucket;
+  std::size_t user_count=0;
+};
+inline std::string cell_list_hash(const std::vector<td::Ref<vm::Cell>>& cells) {
+  // A canonical hash chain includes every encoded field, not only amounts.
+  td::Ref<vm::Cell> chain=vm::CellBuilder().finalize();
+  for(const auto& cell:cells) chain=vm::CellBuilder().store_ref(chain).store_ref(cell).finalize();
+  return chain->get_hash().to_hex();
+}
+inline Snapshot snapshot(const std::filesystem::path& fixture,const td::Ref<vm::Cell>& state,
+                         const td::Bits256& custody,std::uint32_t limit,int cell_budget) {
+  gen::ShardStateUnsplit::Record parsed; CHECK(::tlb::unpack_cell(state,parsed));
+  auto co=native_account(state,td::Bits256::zero());
+  auto config=decode_workchain_coordinator_state(co.data).move_as_ok(); CHECK(config.deposit_sequence);
+  Snapshot out;out.reserve=u64(native_account(state,custody).balance.tomis);out.ledger=book(fixture,parsed.seq_no,custody);
+  out.coordinator=u64(co.balance.tomis);out.refundable=config.refundable_deposits;out.sequence=*config.deposit_sequence;
+  // Observer limits come from the encoded counts, not a production-capacity
+  // default; the exact decoder independently enumerates those counts.
+  bool special=false;auto bucket_bits=vm::load_cell_slice_special(config.unexpected,special);
+  CHECK(!special && bucket_bits.size()>=112);bucket_bits.advance(48);
+  WorkchainUnexpectedLimits sizes{static_cast<std::uint32_t>(bucket_bits.fetch_ulong(32)),
+                                  static_cast<std::uint32_t>(bucket_bits.fetch_ulong(32))};
+  auto bucket=decode_workchain_unexpected_bucket(config.unexpected,sizes,cell_budget).move_as_ok();
+  out.holdings=u64(workchain_unexpected_balance(bucket).move_as_ok().tomis);out.bucket=bucket;
+  const auto payments=payout_values(fixture,parsed.seq_no,custody);
+  for(unsigned owner:{0u,1u}) {
+    const auto key=wallet_account(owner);
+    auto account=m5_live_account(account_data(state,key),limit);
+    auto amount=[&](const auto& c){return m3_test::decrypt(c,test_secret(key),2000000000).move_as_ok();};
+    out.hidden=add(out.hidden,amount(account.account.available));
+    std::vector<td::Ref<vm::Cell>> users,systems;
+    for(const auto& r:account.account.pending){out.hidden=add(out.hidden,amount(r.ciphertext));users.push_back(encode_workchain_pending_receipt(r).move_as_ok());}
+    for(const auto& r:account.account.system_pending){auto v=amount(r.ciphertext);out.hidden=add(out.hidden,v);systems.push_back(encode_workchain_deposit_receipt(r).move_as_ok());if(owner==0)out.pending.emplace(r.receipt_id.to_hex(),std::make_pair(key.to_hex(),v));}
+    for(const auto& r:account.origin_pending){auto v=amount(r.ciphertext);out.hidden=add(out.hidden,v);systems.push_back(encode_workchain_system_receipt(r).move_as_ok());if(owner==0)out.pending.emplace(r.receipt_id.to_hex(),std::make_pair(key.to_hex(),v));}
+    for(const auto& r:account.control.withdrawals){out.w=add(out.w,r.principal);CHECK(payments.count(r.timing.payout_created_lt)==1);out.p=add(out.p,payments.at(r.timing.payout_created_lt));if(owner==0)out.records.emplace(r.withdrawal_id.to_hex(),r.principal);}
+    if(owner==0){out.user_count=users.size();out.user_root=cell_list_hash(users);out.system_root=cell_list_hash(systems);}
+  }
+  return out;
+}
+inline std::string bucket_entry_json(const WorkchainUnexpectedEntry& e) {
+  std::ostringstream out;out<<"{\"kind\":"<<(e.account_id?2:1)<<",\"src\":"
+    <<quote(std::to_string(e.sender.workchain)+":"+e.sender.account.to_hex());
+  if(e.account_id)out<<",\"account_id\":"<<quote(e.account_id->to_hex());
+  out<<",\"tomis\":"<<u64(e.tomis)<<",\"return_failed\":"<<(e.return_failed?"true":"false")<<'}';return out.str();
+}
+inline std::string snapshot_json(const Snapshot& s,std::uint64_t issuance_fees,
+                                 const std::vector<std::string>& order) {
+  std::ostringstream o;
+  o<<"{\"R_actual\":"<<s.reserve<<",\"R_book\":"<<s.ledger<<",\"N_book\":"<<s.hidden
+   <<",\"P\":"<<s.p<<",\"W\":"<<s.w<<",\"D\":0,\"coordinator\":"<<s.coordinator
+   <<",\"holdings\":"<<s.holdings<<",\"refundable\":"<<s.refundable<<",\"issuance_fees\":"<<issuance_fees
+   <<",\"sequence\":"<<s.sequence<<",\"records\":{";
+  bool comma=false;for(const auto& [id,value]:s.records){if(comma)o<<',';comma=true;o<<quote(id)<<':'<<value;}
+  o<<"},\"pending\":[";comma=false;
+  for(const auto& id:order){auto it=s.pending.find(id);if(it==s.pending.end())continue;if(comma)o<<',';comma=true;
+    o<<"{\"target\":"<<quote(it->second.first)<<",\"amount\":"<<it->second.second<<'}';}
+  o<<"],\"user_pending_root\":"<<quote(s.user_root)<<",\"system_pending_root\":"<<quote(s.system_root)
+   <<",\"user_count\":"<<s.user_count<<",\"system_count\":"<<s.pending.size()<<'}';return o.str();
+}
+} // namespace m3_live::completion
+
+namespace m3_live {
+inline void write_completion_observation(const std::string& which,const std::filesystem::path& fixture,
+                                         const std::filesystem::path& output) {
+  using namespace block;using namespace completion;
+  CHECK(which=="row6" || which=="row5" || which=="bucket-small" || which=="bucket-full" || which=="bucket-closed");
+  CHECK(!std::filesystem::exists(output));
+  const auto before=load(fixture/"completion-before-state.boc"),after=load(fixture/"accepted-state.boc");
+  const auto current=load(fixture/"accepted-block.boc");
+  gen::Block::Record block;CHECK(::tlb::unpack_cell(current,block));
+  auto applied=vm::MerkleUpdate::apply(before,block.state_update).move_as_ok();CHECK(applied->get_hash()==after->get_hash());
+  gen::ShardStateUnsplit::Record old_state,new_state;CHECK(::tlb::unpack_cell(before,old_state)&&::tlb::unpack_cell(after,new_state));
+  CHECK(new_state.seq_no==add(old_state.seq_no,1));
+  // Require the real validator acceptance result, in addition to Merkle linkage.
+  CHECK(td::read_file_str((fixture/"enabled.result.validation.result").string()).move_as_ok()=="validate accept\n");
+  auto zero=load(fixture/"zerostate.boc");
+  tos::BlockIdExt zero_id{tos::BlockId{tos::masterchainId,tos::shardIdAll,0},zero->get_hash().bits(),td::Bits256::zero()};
+  auto config=ConfigInfo::extract_config(zero,zero_id,Config::needWorkchainInfo|Config::needCapabilities).move_as_ok();
+  auto ingress=load_workchain_native_ingress_table(*config).move_as_ok().at(2);CHECK(ingress.custody_address);
+  auto parameters=decode_workchain_engine_parameters(ingress.engine_configuration).move_as_ok();
+  auto policy=m3_test::decode_m3_test_business_parameters(parameters.parameters).move_as_ok();
+  CHECK(policy.failed&&policy.deposit&&policy.operation_tariff);
+  const auto limit=policy.failed->withdrawal_limit;
+  auto old_owner=m5_live_account(account_data(before,wallet_account(0)),limit);
+  auto reference=old_owner;
+  if(reference.control.withdrawals.empty()) {
+    auto historical=load(fixture/"completion-record-state.boc");
+    gen::ShardStateUnsplit::Record historical_state;CHECK(::tlb::unpack_cell(historical,historical_state));
+    CHECK(historical_state.seq_no<old_state.seq_no);
+    // Reapply every recorded intervening update. A hand-written phase1 root
+    // cannot satisfy this linkage to the actual authenticated predecessor.
+    auto chained=historical;
+    for(unsigned n=historical_state.seq_no+1;n<=old_state.seq_no;++n){
+      gen::Block::Record h;CHECK(::tlb::unpack_cell(block_at(fixture,n),h));
+      chained=vm::MerkleUpdate::apply(chained,h.state_update).move_as_ok();
+    }
+    CHECK(chained->get_hash()==before->get_hash());
+    reference=m5_live_account(account_data(historical,wallet_account(0)),limit);
+  }
+  CHECK(reference.control.withdrawals.size()==1);
+  const auto& record=reference.control.withdrawals.front();
+  auto selector=m3_test::decode_m5_test_failed(m4_recorded_candidate(current)).move_as_ok();
+  CHECK(selector.owner.account==wallet_account(0));
+  auto bounce=load(fixture/"failed-bounce.boc");CHECK(td::Bits256(bounce->get_hash().bits())==selector.inbound_message);
+  gen::CommonMsgInfo::Record_int_msg_info info;CHECK(::tlb::unpack_cell_inexact(bounce,info)&&info.bounced);
+  tos::WorkchainId src_wc;td::Bits256 src;CHECK(block::tlb::t_MsgAddressInt.extract_std_address(info.src,src_wc,src));
+  const auto y=u64(m5_recorded_return(current).tomis);
+  CHECK(parameters.resources.state.max_cells<=INT_MAX);
+  const auto a=snapshot(fixture,before,*ingress.custody_address,limit,static_cast<int>(parameters.resources.state.max_cells));
+  const auto z=snapshot(fixture,after,*ingress.custody_address,limit,static_cast<int>(parameters.resources.state.max_cells));
+  std::vector<std::string> order;for(const auto& [id,unused]:a.pending)order.push_back(id);
+  for(const auto& [id,unused]:z.pending)if(!a.pending.count(id))order.push_back(id);
+  AcceptedStep step{{},current,after};gen::Transaction::Record custody_tx;
+  CHECK(::tlb::unpack_cell(accepted_transaction(step,*ingress.custody_address),custody_tx));
+  CurrencyCollection paid;CHECK(paid.unpack(custody_tx.total_fees));
+  // Only execution log from this invocation is eligible; never select a path
+  // from Q, phase, post-state, or a proposed result label.
+  std::ifstream trace(fixture/"completion-execution.log");CHECK(trace.good());std::string line,route;
+  const std::map<std::string,std::string> names{{"admit_workchain_late_return","late-return-admission"},
+    {"window_return","within-window-failed"},{"type2_bucket_disposition","type2-bucket-disposition"}};
+  unsigned matches=0;
+  while(std::getline(trace,line))for(const auto& [callee,name]:names)
+    if(line.find("WORKCHAIN_RETURN_CALLEE "+callee+" inbound="+selector.inbound_message.to_hex())!=std::string::npos){
+      CHECK(route.empty()||route==name);route=name;++matches;
+    }
+  CHECK(matches>0);
+  std::string bucket_extra;std::uint64_t bucket_cost=0;
+  if(which.starts_with("bucket-")) {
+    const auto actual=decode_workchain_native_effects(effects(current).native).move_as_ok();
+    vm::Dictionary transfers(actual.transfers,32);std::uint64_t moved=0;
+    CHECK(transfers.check_for_each([&](auto cell,td::ConstBitPtr,int){
+      gen::UnoV2NativeTransfer::Record transfer;CHECK(::tlb::unpack_cell(cell->prefetch_ref(),transfer));
+      CHECK(transfer.source==*ingress.custody_address && transfer.destination==ingress.executor_address);
+      CurrencyCollection value;CHECK(value.unpack(transfer.value));moved=add(moved,u64(value.tomis));return true;
+    }));
+    bucket_cost=sub(y,moved);
+    std::ostringstream extra;extra<<",\"bucket_native_credit\":"<<moved<<",\"bucket_entries_added\":[";
+    CHECK(z.bucket.entries.size()>=a.bucket.entries.size());bool comma=false;
+    for(std::size_t n=0;n<z.bucket.entries.size();++n){
+      auto entry=bucket_entry_json(z.bucket.entries[n]);
+      if(n<a.bucket.entries.size()){CHECK(entry==bucket_entry_json(a.bucket.entries[n]));continue;}
+      if(comma)extra<<',';comma=true;extra<<entry;
+    }
+    extra<<']';bucket_extra=extra.str();
+  }
+  std::ostringstream out;
+  out<<"{\"input\":{\"x\":"<<record.principal<<",\"y\":"<<y<<",\"slot\":"<<policy.deposit->slot_fee
+     <<",\"base\":"<<policy.operation_tariff->base<<",\"units\":"<<policy.failed->issuance_billing_units
+     <<",\"Q\":"<<record.timing.queue_removed_height<<",\"window\":"<<record.timing.settlement_blocks
+     <<",\"height\":"<<new_state.seq_no<<",\"phase\":"<<unsigned(record.timing.phase)
+     <<",\"withdrawal_id\":"<<quote(record.withdrawal_id.to_hex())<<",\"account_id\":"<<quote(wallet_account(0).to_hex())
+     <<",\"src\":"<<quote(std::to_string(src_wc)+":"+src.to_hex())<<",\"system_count\":"<<a.pending.size()
+     <<",\"system_limit\":"<<policy.deposit->system_slots<<",\"native_bucket_cost\":"<<bucket_cost<<",\"account_closed\":"
+     <<(std::holds_alternative<WorkchainAccountClosed>(old_owner.account.lifecycle)?"true":"false")
+     <<"},\"observed\":{\"published\":true,\"dispatch\":["<<quote(route)<<"],\"before\":"
+     <<snapshot_json(a,0,order)<<",\"after\":"<<snapshot_json(z,u64(paid.tomis),order)<<bucket_extra
+     <<"},\"provenance\":{\"before\":"<<quote(before->get_hash().to_hex())<<",\"after\":"<<quote(after->get_hash().to_hex())
+     <<",\"block\":"<<quote(current->get_hash().to_hex())<<",\"inbound\":"<<quote(selector.inbound_message.to_hex())
+     <<",\"D\":\"structural atomic-operation zero, not a persisted counter\"}}\n";
+  td::write_file(output.string(),out.str()).ensure();
+}
+} // namespace m3_live
