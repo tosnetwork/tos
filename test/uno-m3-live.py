@@ -223,7 +223,7 @@ initial, initial_blind, send_fee, collect_fee, limits = run(
     build, fixture, wallet, advance_pair, initial_only=True, initial_principal=principal)
 if a.m5_debit:
     request = dict(secret=101, old_value=initial, old_blind=initial_blind, new_blind=71, aux_blind=83,
-                   principal=10000000 if a.m5_return_route else 137, outward_fee=17,
+                   principal=1000000 if a.m5_bucket_small else 10000000 if a.m5_return_route else 137, outward_fee=17,
                    fee=257, **limits)
     def debit_write(name, values):
         (fixture / name).write_text(''.join(f'{k}={v}\n' for k,v in values.items()))
@@ -277,7 +277,11 @@ if a.m5_debit:
                                        'expected designated routing red, not an earlier failure')
             subprocess.run([str(build / 'test-m3-live'), '--failed-incarnation-control', str(fixture)], check=True)
             subprocess.run([str(build / 'test-m3-live'), '--failed-unknown-control', str(fixture)], check=True)
-            subprocess.run([str(build / 'test-m3-live'), str(fixture)], check=True)
+            shutil.copyfile(fixture / 'current-state.boc', fixture / 'completion-before-state.boc')
+            completed = subprocess.run([str(build / 'test-m3-live'), str(fixture)], text=True, capture_output=True)
+            (fixture / 'completion-execution.log').write_text(completed.stdout + completed.stderr)
+            print(completed.stdout, end=''); print(completed.stderr, end='', file=__import__('sys').stderr)
+            completed.check_returncode()
     raise SystemExit(0)
 # Keep the final B->A receipt at 432: compensate only the changed SEND/COLLECT
 # tariffs in the first receipt. The remaining two receipts retain 251 and 89.
