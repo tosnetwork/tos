@@ -68,7 +68,13 @@ jobs:
           mkdir -p artifacts
           git rev-parse HEAD > artifacts/commit.txt
           python test/pq-mldsa44/prepare_vectors.py --out artifacts/vectors
-          python test/pq-readiness/scenarios.py artifacts/vectors/vectors.tsv artifacts/scenarios.tsv
+          # The shipped bindings, compiled the way they ship, so the differential
+          # driver executes the assembler's output and not only raw opcodes.
+          python test/pq-mldsa44/bindings.py --build build --vectors artifacts/vectors/vectors.tsv \
+            --out artifacts/programs --programs-only
+          python test/pq-readiness/scenarios.py artifacts/vectors/vectors.tsv artifacts/scenarios.tsv \
+            --program func=artifacts/programs/func-verify.boc \
+            --program tol=artifacts/programs/tol-verify.boc
           build/crypto/pq/test-pq-v16-parity artifacts/scenarios.tsv > artifacts/cpp.tsv
           tosctl/src/target/release/examples/pq-parity artifacts/scenarios.tsv > artifacts/rust.tsv
           python test/pq-readiness/compare.py artifacts/scenarios.tsv artifacts/cpp.tsv artifacts/rust.tsv --out artifacts/parity.json

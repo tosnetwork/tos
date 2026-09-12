@@ -14,7 +14,10 @@ fn main() -> anyhow::Result<()> {
     let mut count = 0;
     for line in data.lines() {
         let f: Vec<_> = line.split('\t').collect();
-        anyhow::ensure!(f.len() == 10, "invalid scenario");
+        anyhow::ensure!(f.len() == 10 || f.len() == 11, "invalid scenario");
+        // An optional eleventh field carries a compiled contract. Without it the
+        // driver synthesizes raw opcodes, which never exercises the assembler.
+        let program = if f.len() == 11 { f[10] } else { "" };
         let version = f[1].parse::<u32>()?;
         let budget = f[2].parse::<i64>()?;
         let repeats = f[4].parse::<usize>()?;
@@ -34,15 +37,21 @@ fn main() -> anyhow::Result<()> {
                 }
             }
         }
-        let mut code = BuilderData::new();
-        for i in 0..repeats {
-            code.append_raw(&[0xf9, 0x31, 0], 24)?;
-            if i + 1 < repeats {
-                code.append_raw(&[0x30], 8)?;
+        let program_cell = if program.is_empty() {
+            let mut code = BuilderData::new();
+            for i in 0..repeats {
+                code.append_raw(&[0xf9, 0x31, 0], 24)?;
+                if i + 1 < repeats {
+                    code.append_raw(&[0x30], 8)?;
+                }
             }
-        }
+            code.into_cell()?
+        } else {
+            stack.push(StackItem::int(0)); // the compiled entry the binding declares
+            read_single_root_boc(hex::decode(program)?)?
+        };
         let mut engine = Engine::with_capabilities(0).setup_checked(
-            code.into_cell()?,
+            program_cell,
             SaveList::new(),
             stack,
             Gas::test_with_limit(budget),

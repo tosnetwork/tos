@@ -143,8 +143,10 @@ class Controls(unittest.TestCase):
             root=Path(d)
             # Two identical execution transcripts: the parity generator's own output.
             rows=[f'case-{i}\t0\t57124\t-1\t1\tAB\tCD' for i in range(20)]
+            # One row carries a compiled binding, which the comparison requires.
             (root/'scenarios.tsv').write_text('\n'.join(
-                '\t'.join([f'case-{i}','x','x','x','x','V','x','x','x','x']) for i in range(20)))
+                '\t'.join([f'case-{i}','x','x','x','x','V','x','x','x','x']+(['ff'] if i==0 else []))
+                for i in range(20)))
             (root/'cpp.tsv').write_text('\n'.join(rows));(root/'rust.tsv').write_text('\n'.join(rows))
             report=parity_report(root/'scenarios.tsv',root/'cpp.tsv',root/'rust.tsv')
             commit=report['source_commit']

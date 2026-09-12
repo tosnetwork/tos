@@ -27,7 +27,10 @@ int main(int argc,char** argv) {
     for(std::string line;std::getline(file,line);) {
       std::vector<std::string> f; std::istringstream row(line);
       for(std::string x;std::getline(row,x,'\t');)f.push_back(x);
-      if(f.size()!=10)throw std::runtime_error("invalid scenario");
+      if(f.size()!=10&&f.size()!=11)throw std::runtime_error("invalid scenario");
+      // An optional eleventh field carries a compiled contract. Without it the
+      // driver synthesizes raw opcodes, which never exercises the assembler.
+      const std::string program = f.size()==11 ? f[10] : std::string();
       int version=std::stoi(f[1]), repeats=std::stoi(f[4]); long long budget=std::stoll(f[2]);
       if(repeats<1||repeats>11||budget<0)throw std::runtime_error("invalid limits");
       td::Ref<vm::Stack> stack{true};
@@ -38,9 +41,18 @@ int main(int argc,char** argv) {
         if(c.is_error())throw std::runtime_error("invalid cell BOC");
         stack.write().push_cell(c.move_as_ok());
       }
-      vm::CellBuilder code;
-      for(int j=0;j<repeats;++j){code.store_long(0xf93100,24);if(j+1<repeats)code.store_long(0x30,8);}
-      vm::VmState st{vm::load_cell_slice_ref(code.finalize()),version,std::move(stack),vm::GasLimits{budget,budget}};
+      td::Ref<vm::Cell> program_cell;
+      if(!program.empty()){
+        auto bytes=unhex(program); auto c=vm::std_boc_deserialize(td::Slice(bytes));
+        if(c.is_error())throw std::runtime_error("invalid program BOC");
+        program_cell=c.move_as_ok();
+        stack.write().push_smallint(0);  // the compiled entry the binding declares
+      } else {
+        vm::CellBuilder code;
+        for(int j=0;j<repeats;++j){code.store_long(0xf93100,24);if(j+1<repeats)code.store_long(0x30,8);}
+        program_cell=code.finalize();
+      }
+      vm::VmState st{vm::load_cell_slice_ref(program_cell),version,std::move(stack),vm::GasLimits{budget,budget}};
       st.set_chksig_always_succeed(f[3]=="1");
       int exit=~st.run(); auto gas=st.gas_consumed(); long long value=99;
       if(exit==0){if(st.get_stack().depth()!=1)throw std::runtime_error("unexpected stack");value=st.get_stack().pop_int_finite()->to_long();}

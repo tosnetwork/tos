@@ -16,8 +16,11 @@ def source_commit() -> str:
 
 def check(scenarios: Path, cpp: Path, rust: Path) -> dict:
     source = [line.split('\t') for line in scenarios.read_text().splitlines()]
-    if any(len(row) != 10 for row in source):
+    # Eleven fields carry a compiled binding in place of synthesized opcodes.
+    if any(len(row) not in (10, 11) for row in source):
         raise ValueError('malformed scenario input')
+    if not any(len(row) == 11 for row in source):
+        raise ValueError('no compiled binding was executed')
     if len({row[0] for row in source}) != len(source):
         raise ValueError('duplicate scenario identifier')
     a, b = cpp.read_text().splitlines(), rust.read_text().splitlines()
