@@ -21,6 +21,19 @@ bucket dispatch and Native publication, then validator replay. Do not assign
 lineage IDs in a synthetic trace: derive association from authenticated message
 and bucket artifacts. Test repeated events across committed batches.
 
+Authorization covers a count, not an authorization-time entry set (choice (a)):
+apply selects entries present at execution in the protocol's deterministic order,
+up to the authorized count and authenticated K_sweep. Entries arriving after
+authorization are eligible. Neither authorization nor caller supplies a
+destination; each entry determines its own destination. The earliest height is
+a lower bound, not an expiry. There is no bound on how long an otherwise-valid
+authorization can remain unused, even if the bucket contents change completely;
+no bounded-delay or starvation-free execution is claimed. The dedicated
+authenticated sweep sequence advances only with successful atomic publication.
+Unrelated transactions and failed/unpublished attempts do not consume it;
+successful publication makes reuse, including at the same height, invalid.
+These are the chosen design requirements, not execution evidence.
+
 Observe committed coordinator and custody account BOCs/balances, complete bucket
 contents and protected holdings, account lifecycle/control, both pending maps
 and counts, sequence, actual emitted messages/fees and independently decrypted
