@@ -1179,9 +1179,19 @@ if a.m5_debit:
         remaining = values['old_value'] - debit
         debit_write('operation.expected.txt',dict(before=values['old_value'],after=remaining))
         return remaining
+    def phase_capture_after(name):
+        for source, suffix in (('accepted-state.boc', '-after.boc'),
+                               ('enabled.candidate', '.candidate'),
+                               ('enabled.result.validation.result', '.validation')):
+            shutil.copyfile(fixture / source, fixture / ('phase-' + name + suffix))
     available = withdrawal_request(request)
     print(f'DEBIT_FIXTURE={fixture}',flush=True)
+    if a.m5_completion_late:
+        shutil.copyfile(fixture / 'current-state.boc', fixture / 'phase-prepare-before.boc')
     subprocess.run([str(build / 'test-m3-live'),str(fixture)],check=True)
+    if a.m5_completion_late:
+        phase_capture_after('prepare')
+        shutil.copyfile(fixture / 'prepare-payout.boc', fixture / 'phase-original-payout.boc')
     if a.m5_return_route:
         advance_pair(4)
         subprocess.run([str(build / 'test-tos-collator'), '-C', str(fixture / 'global.json'),
@@ -1288,11 +1298,16 @@ if a.m5_debit:
                         shutil.copyfile(fixture / 'current-state.boc', fixture / 'completion-before-state.boc')
                         shutil.copyfile(fixture / 'current-state.boc', fixture / 'completion-untouched-state.boc')
                         shutil.copyfile(fixture / 'accepted-block.id', fixture / 'completion-before-block.id')
+                    if number in (5, 6):
+                        shutil.copyfile(fixture / 'current-state.boc',
+                                        fixture / f'phase-owner{number}-before.boc')
                     completed = subprocess.run([str(build / 'test-m3-live'),str(fixture)],
                                                text=True,capture_output=True)
                     (fixture / f'completion-owner-{number}.log').write_text(completed.stdout+completed.stderr)
                     print(completed.stdout,end=''); print(completed.stderr,end='',file=sys.stderr)
                     completed.check_returncode()
+                    if number in (5, 6):
+                        phase_capture_after(f'owner{number}')
                     if a.completion_close_before_return and number == 7:
                         (fixture / 'completion-execution.log').write_text(completed.stdout + completed.stderr)
                         paid_fixture = live_fixture('uno-row5-paid-predecessor-')
