@@ -31,6 +31,8 @@ p.add_argument('--completion-window-pair', action='store_true',
                help='fork one authenticated predecessor into deadline and deadline+1 real returns')
 p.add_argument('--completion-no-slot', action='store_true',
                help='fill the explicit test system-pending capacity with real Deposits before prepare')
+p.add_argument('--completion-free-one-slot', action='store_true',
+               help='after filling the real system map, COLLECT exactly one entry before prepare')
 p.add_argument('--m5-completion-paid', action='store_true',
                help='real no-bounce payout, untouched expiry, then an owner trigger')
 p.add_argument('--completion-full-cap', action='store_true',
@@ -58,6 +60,8 @@ if a.m5_bucket_small or a.m5_completion_late:
     a.m5_failed = True
 if a.completion_no_slot:
     a.m5_failed = True
+if a.completion_free_one_slot and not a.completion_no_slot:
+    p.error('free-one-slot requires the real full-system-map fixture')
 if a.failed_routing_probe:
     a.m5_failed = True
 if a.m5_failed:
@@ -606,10 +610,18 @@ if a.completion_no_slot:
                         '-D', str(fixture / 'db'), '-w', '-1', '-M', str(fixture / (label + '-payer-top1.boc')),
                         '--query-result', str(fixture / (label + '-master.result'))], check=True)
         subprocess.run([str(build / 'test-m3-live'), str(fixture)], check=True)
+        shutil.copyfile(fixture / 'accepted-receipt.id', fixture / (label + '.receipt.id'))
         advance_pair(label)
         subprocess.run([str(build / 'test-tos-collator'), '-C', str(fixture / 'global.json'),
                         '-D', str(fixture / 'db'), '-w', '-1', '-M', str(fixture / (label + '-enabled-top1.boc')),
                         '--query-result', str(fixture / (label + '-accepted.result'))], check=True)
+    if a.completion_free_one_slot:
+        shutil.copyfile(fixture / 'current-state.boc', fixture / 'completion-full-before-collect.boc')
+        selected = (fixture / 'full-slot-3.receipt.id').read_text()
+        initial, initial_blind, send_fee, collect_fee, limits = run(
+            build, fixture, wallet, advance_pair, initial_only=True,
+            initial_collection=(initial, initial_blind, 71, selected, 1000000000, 'free-one-slot'))
+        shutil.copyfile(fixture / 'current-state.boc', fixture / 'completion-full-after-collect.boc')
 if a.m5_debit:
     def route_block(label, shard, tops=()):
         args = [str(build / 'test-tos-collator'), '-C', str(fixture / 'global.json'),
