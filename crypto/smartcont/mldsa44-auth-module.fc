@@ -42,6 +42,8 @@ const int mldsa_auth::submit = 0x4d4c4434;
   throw_unless(auth::wrong_network, cs~load_int(32) == network);
   slice account = cs~load_msg_addr();
   ;; This also excludes a self-send. The target is signed, never relayer-chosen.
+  ;; The comparison is not redundant padding: it consumes the result so the call
+  ;; cannot be dropped as unused. The helper is impure for the same reason.
   throw_unless(auth::bad_module, auth_module_hash(account) >= 0);
   cs~load_uint(64);  ;; epoch: authenticated here, enforced by the account
   cs~load_uint(64);  ;; nonce: authenticated here, enforced by the account
