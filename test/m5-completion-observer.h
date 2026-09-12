@@ -189,8 +189,96 @@ inline std::string snapshot_json(const Snapshot& s,std::uint64_t issuance_fees,
 } // namespace m3_live::completion
 
 namespace m3_live {
+inline void write_paid_completion_observation(const std::filesystem::path& fixture,
+                                               const std::filesystem::path& output) {
+  using namespace block; using namespace completion;
+  CHECK(!std::filesystem::exists(output));
+  CHECK(td::read_file_str((fixture/"enabled.result.validation.result").string()).move_as_ok()=="validate accept\n");
+  const auto before=load(fixture/"completion-before-state.boc");
+  const auto accepted=read_accepted_step(fixture/"enabled.candidate",before);
+  const auto after=accepted.state,current=accepted.block;
+  auto zero=load(fixture/"zerostate.boc");
+  tos::BlockIdExt zid{tos::BlockId{tos::masterchainId,tos::shardIdAll,0},zero->get_hash().bits(),td::Bits256::zero()};
+  auto config=ConfigInfo::extract_config(zero,zid,Config::needWorkchainInfo|Config::needCapabilities).move_as_ok();
+  auto ingress=load_workchain_native_ingress_table(*config).move_as_ok().at(2); CHECK(ingress.custody_address);
+  auto params=decode_workchain_engine_parameters(ingress.engine_configuration).move_as_ok();
+  auto policy=m3_test::decode_m3_test_business_parameters(params.parameters).move_as_ok();
+  CHECK(policy.prepare && policy.operation_tariff && params.resources.state.max_cells<=INT_MAX);
+  const auto limit=policy.prepare->withdrawal_limit;
+  auto old=m5_live_account(account_data(before,wallet_account(0)),limit);
+  gen::CommonMsgInfo::Record_int_msg_info original;
+  CHECK(::tlb::unpack_cell_inexact(load(fixture/"completion-original-payout.boc"),original));
+  auto selected=std::find_if(old.control.withdrawals.begin(),old.control.withdrawals.end(),
+      [&](const auto& r){return r.timing.payout_created_lt==original.created_lt;});
+  CHECK(selected!=old.control.withdrawals.end()); const auto record=*selected;
+  const auto untouched=load(fixture/"completion-untouched-state.boc");
+  CHECK(untouched->get_hash()==before->get_hash());
+  auto established=load(fixture/"completion-record-state.boc");
+  gen::ShardStateUnsplit::Record es,bs,ns;
+  CHECK(::tlb::unpack_cell(established,es)&&::tlb::unpack_cell(before,bs)&&::tlb::unpack_cell(after,ns));
+  CHECK(es.seq_no<bs.seq_no && ns.seq_no==add(bs.seq_no,1));
+  CHECK(account_data(established,wallet_account(0))->get_hash()==account_data(untouched,wallet_account(0))->get_hash());
+  auto chained=established;
+  for(unsigned n=es.seq_no+1;n<=bs.seq_no;++n){gen::Block::Record b;CHECK(::tlb::unpack_cell(block_at(fixture,n),b));chained=vm::MerkleUpdate::apply(chained,b.state_update).move_as_ok();}
+  CHECK(chained->get_hash()==untouched->get_hash());
+  CHECK(bs.seq_no>add(record.timing.queue_removed_height,record.timing.settlement_blocks));
+  auto replay=m3_test::decode_m5_accounting_replay(m4_recorded_candidate(current)).move_as_ok();
+  const auto* trigger=std::get_if<WorkchainWithdrawalInput>(&replay); CHECK(trigger);
+  CHECK(trigger->data.claims.source.account==wallet_account(0) && trigger->claimed_operation_id!=record.withdrawal_id);
+  const auto& amounts=trigger->data.amounts;
+  auto a=snapshot(fixture,before,*ingress.custody_address,limit,static_cast<int>(params.resources.state.max_cells));
+  auto z=snapshot(fixture,after,*ingress.custody_address,limit,static_cast<int>(params.resources.state.max_cells));
+  const auto raw=z;
+  CHECK(z.records.count(trigger->claimed_operation_id.to_hex())==1 && z.records.at(trigger->claimed_operation_id.to_hex())==amounts.principal);
+  const auto debit=add(add(amounts.principal,amounts.outward_fee),amounts.operation_fee);
+  // Remove only the separately authorized trigger. Actual installed state,
+  // serialized payout and authenticated S are independent of settlement.
+  z.reserve=add(z.reserve,debit);z.ledger=add(z.ledger,debit);z.hidden=add(z.hidden,debit);
+  z.p=sub(z.p,amounts.principal);z.w=sub(z.w,amounts.principal);
+  z.coordinator=sub(z.coordinator,policy.prepare->state_fee);
+  z.records.erase(trigger->claimed_operation_id.to_hex());
+  auto installed=m5_live_account(account_data(after,wallet_account(0)),limit);
+  auto fresh=std::find_if(installed.control.withdrawals.begin(),installed.control.withdrawals.end(),
+      [&](const auto& r){return r.withdrawal_id==trigger->claimed_operation_id;}); CHECK(fresh!=installed.control.withdrawals.end());
+  gen::Transaction::Record tx;CHECK(::tlb::unpack_cell(accepted_transaction(accepted,*ingress.custody_address),tx));
+  CurrencyCollection fees;CHECK(fees.unpack(tx.total_fees));
+  vm::Dictionary messages(tx.r1.out_msgs,15);std::vector<std::string> movements;unsigned matched=0;std::uint64_t forwarded=0;
+  CHECK(messages.check_for_each([&](auto cell,td::ConstBitPtr,int){
+    auto message=cell->prefetch_ref();gen::CommonMsgInfo::Record_int_msg_info info;CHECK(::tlb::unpack_cell_inexact(message,info));
+    if(info.created_lt==fresh->timing.payout_created_lt){CurrencyCollection value;CHECK(value.unpack(info.value));CHECK(u64(value.tomis)==amounts.principal);forwarded=u64(block::tlb::t_Tomis.as_integer(info.fwd_fee));++matched;}
+    else movements.push_back(message->get_hash().to_hex());return true;
+  })); CHECK(matched==1);
+  auto native=decode_workchain_native_effects(effects(current).native).move_as_ok();
+  vm::Dictionary transfers(native.transfers,32);
+  CHECK(transfers.check_for_each([&](auto value,td::ConstBitPtr,int){movements.push_back(value->prefetch_ref()->get_hash().to_hex());return true;}));
+  const auto trigger_collected=add(sub(amounts.operation_fee,policy.prepare->state_fee),sub(amounts.outward_fee,forwarded));
+  const auto settlement_collected=sub(u64(fees.tomis),trigger_collected);
+  std::set<std::string> closures;std::ifstream log(fixture/"completion-execution.log");CHECK(log.good());std::string line;bool lazy_called=false;
+  const std::string prefix="WORKCHAIN_RETURN_CALLEE paid_expiry withdrawal=";
+  while(std::getline(log,line)){
+    if(line.find("WORKCHAIN_RETURN_CALLEE lazy_owner_settlement owner="+wallet_account(0).to_hex())!=std::string::npos)lazy_called=true;
+    auto pos=line.find(prefix);if(pos!=std::string::npos){auto id=line.substr(pos+prefix.size(),64);CHECK(id.size()==64 && id.find_first_not_of("0123456789ABCDEFabcdef")==std::string::npos);closures.insert(id);}}
+  std::vector<std::string> order;for(const auto& [id,value]:a.pending)order.push_back(id);for(const auto& [id,value]:z.pending)if(!a.pending.count(id))order.push_back(id);
+  std::ostringstream out;
+  out<<"{\"input\":{\"x\":"<<record.principal<<",\"Q\":"<<record.timing.queue_removed_height
+     <<",\"window\":"<<record.timing.settlement_blocks<<",\"phase\":"<<unsigned(record.timing.phase)
+     <<",\"height\":"<<ns.seq_no<<",\"withdrawal_id\":"<<quote(record.withdrawal_id.to_hex())
+     <<"},\"observed\":{\"published\":true,\"dispatch\":[";
+  if(lazy_called)out<<quote("lazy-owner-settlement");out<<"],\"closure_events\":[";
+  bool comma=false;for(const auto& id:closures){if(comma)out<<',';comma=true;out<<quote(id);}out<<"],\"value_movements\":[";
+  comma=false;for(const auto& value:movements){if(comma)out<<',';comma=true;out<<quote(value);}
+  out<<"],\"before\":"<<snapshot_json(a,0,order)<<",\"after\":"<<snapshot_json(z,settlement_collected,order)
+     <<"},\"provenance\":{\"raw_after\":"<<snapshot_json(raw,u64(fees.tomis),order)
+     <<",\"trigger_debit\":"<<debit<<",\"trigger_principal\":"<<amounts.principal
+     <<",\"trigger_state_fee\":"<<policy.prepare->state_fee<<",\"trigger_collected\":"<<trigger_collected
+     <<",\"untouched_height\":"<<bs.seq_no<<",\"before\":"<<quote(before->get_hash().to_hex())
+     <<",\"after\":"<<quote(after->get_hash().to_hex())<<",\"block\":"<<quote(current->get_hash().to_hex())<<"}}\n";
+  td::write_file(output.string(),out.str()).ensure();
+}
+
 inline void write_completion_observation(const std::string& which,const std::filesystem::path& fixture,
                                          const std::filesystem::path& output) {
+  if(which=="row4"){write_paid_completion_observation(fixture,output);return;}
   using namespace block;using namespace completion;
   CHECK(which=="row6" || which=="row5" || which=="bucket-small" || which=="bucket-full" || which=="bucket-closed");
   CHECK(!std::filesystem::exists(output));
