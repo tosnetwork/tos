@@ -1,0 +1,48 @@
+name: Validator signature conformance
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/validator-auth-conformance.yml'
+      - 'test/validator-auth-policy/**'
+      - 'test/test-validator-auth-policy.cpp'
+      - 'validator/consensus/**'
+      - 'crypto/block/signature-set*'
+      - 'keys/**'
+      - 'tos/quorum.h'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: validator-signature-conformance-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  source-evidence:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Capture source provenance for reproducible offline verification
+        env:
+          BASE: 758aa29ff21fbdd8d6f15fb9f4e47da60e2c449d
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          git rev-parse HEAD > evidence/head.txt
+          git fetch --depth=1 origin "$BASE"
+          git archive --format=tar.gz "$BASE" > evidence/main-source.tar.gz
+          git archive --format=tar.gz HEAD CMakeLists.txt .github/workflows/source-hygiene.yml doc/tip-0002-p0-readiness.md test/test-validator-auth-policy.cpp test/validator-auth-policy > evidence/policy-source.tar.gz
+          printf '%s\n' "$BASE" > evidence/base.txt
+          sha256sum evidence/* > evidence/SHA256SUMS
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: validator-auth-source-evidence
+          path: evidence/
+          retention-days: 3
+          if-no-files-found: error
