@@ -915,7 +915,7 @@ def prepare_integrated_working_configs(
                 custody.mkdir(parents=True, exist_ok=True, mode=0o700)
                 custody.chmod(0o700)
                 runtime["economic_custody_journal_directory"] = str(custody)
-        for key in ("agent_tasks", "aipow_commitments", "pools", "bindings"):
+        for key in ("agent_tasks", "pools", "bindings"):
             if key in document:
                 document[key] = {}
         rpc_url = f"http://{rpc_address}/jsonRPC"

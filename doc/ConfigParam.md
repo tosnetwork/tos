@@ -27,14 +27,15 @@ Capabilities are the activation switch for consensus-level features and MUST be 
 on here rather than through a local default. The current bits, low to high, are
 `capIhrEnabled(1)`, `capCreateStatsEnabled(2)`, `capBounceMsgBody(4)`,
 `capReportVersion(8)`, `capSplitMergeTransactions(16)`, `capShortDequeue(32)`,
-`capStoreOutMsgQueueSize(64)`, `capMsgMetadata(128)`, `capDeferMessages(256)`,
-`capFullCollatedData(512)`, and `capAipow(1024)`.
+`capStoreOutMsgQueueSize(64)`, `capMsgMetadata(128)`, `capDeferMessages(256)`, and
+`capFullCollatedData(512)`. `GlobalCapabilities` in
+[tos-types.h](../tos/tos-types.h) is the authority; this list is a convenience and
+must be checked against it rather than trusted.
 
-`capAipow` gates the entire AIPoW native-issuance mint path and its parameter set
-(ConfigParams 90–93). It is off in the genesis template; the mint path stays inert
-until governance sets this bit. When it is set, a block — and zero-state generation —
-is valid only if the complete, mutually consistent AIPoW parameter set is present
-(see [GlobalVersions.md](GlobalVersions.md) and the AIPoW section below).
+A binary declares which of these it implements in `Collator::supported_capabilities()`
+and the matching validator method. Declaring fewer than the configuration enables does
+not make a node refuse: see the fall-through described under `version` below, which
+applies to capabilities in the same way.
 
 ### `version` is the activation point; the compiled constant is not
 
@@ -120,25 +121,6 @@ It sets the per-block creation fee credited for producing a masterchain or basec
 block. When the parameter is absent both fees are treated as zero. These are the
 block-production fees only; they do not define the native TOS supply and are separate
 from any future service-actor pricing rules.
-
-## ConfigParams 90–93 (AIPoW native issuance)
-
-These four parameters carry the Phase C AIPoW native-issuance configuration. They are
-absent unless `capAipow` (ConfigParam 8) is activated. They are governance-set,
-immutable inputs: the running supply ledger is **not** here — it lives in the AIPoW
-settlement contract's own state. With `capAipow` set, block validation and zero-state
-generation require this set to be present, complete, and mutually consistent; a partial
-or malformed set is a hard error, never a silent default.
-
-| Param | Type | Contents |
-|---|---|---|
-| **90** | `AipowConfig` | emission schedule slope `k_num/k_den`, `schedule_cap`, `cold_start_floor`, and the challenge multiplier `challenge_mult_num/challenge_mult_den` |
-| **91** | `AipowMaturation` | reward maturation policy: `immediate_bps`, `stream_epochs`, `epoch_seconds`, `maturation_version` |
-| **92** | `AipowLimits` | `total_cap` — the AIPoW total-supply ceiling (the running total is tracked in the settlement contract, not here) |
-| **93** | `AipowRegistry` | `settlement_addr`, frozen `methodology_hash` and `rate_card_hash`, the audited `commitment_code_hash`, `reviewer_addr`, and the audited `distributor_code_hashes` dictionary |
-
-See the exact cell shapes in [block.tlb](../crypto/block/block.tlb) and the activation
-semantics in [GlobalVersions.md](GlobalVersions.md).
 
 ## Validator and Network Parameters
 
