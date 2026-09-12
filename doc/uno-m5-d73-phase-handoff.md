@@ -43,6 +43,25 @@ The prepare pairing is established at creation, not reconstructed from absence
 at phase 1. Historical availability/error classification remains the caller's
 responsibility; do not convert unavailable queue data into authenticated absence.
 
+## Construction carrier clarification (Coordinator ruling)
+
+D73(a)'s prior-presence premise is carried by prepare's same-batch generation
+of the payout message and W record, with the actual created_lt, rather than a
+separate downstream assertion. No legal separated history has been identified:
+a trusted orphan cannot be manufactured to claim an independent control.
+Controls 1–2 below retain their original prospective wording; they do not
+represent executed separated-presence controls. Later queue membership under
+D73(b), including the observed `PHASE_QUEUE_BINDING` red, is a different property.
+
+Construction regression coverage is still unestablished. The staged
+`PHASE_PAIRED_ENQUEUE` observation reads the actual post-prepare queue and record,
+but is not registered and has not rejected a real producer mutation that omits,
+delays or changes the identity of that enqueue. It is therefore not a continuous
+regression guard. Track this unguarded construction with the Coordinator's
+appendix I.4 architecture gaps; do not treat the assertion's existence, a
+synthetic observation mutation, or gap five's overlay reasoning as its discharge.
+The phase slot remains open pending the remaining controls and combined run.
+
 ## Exact controls to attach to the Native fixture
 
 1. **Paired creation:** commit a real prepare and verify its payout is in the
