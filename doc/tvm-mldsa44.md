@@ -11,18 +11,35 @@ route has a separately reviewed compatible implementation.
 
 `PQCHECKSIG_MLDSA44` is codepage-0 instruction **F93100 (24 bits)**, registered
 with `require_version(16)`. Versions 0 through 15 reject it as invalid opcode
-(6). `SUPPORTED_VERSION` is **15** by default and **16** under
-`-DTOS_PQ_V16_CANDIDATE`, so a default build advertises a v15 ceiling.
+(6). `SUPPORTED_VERSION` is **16**, with no build option to select anything
+else; `test/pq-readiness/test_release_profile.py` fails if a second profile
+reappears or if the ceiling and `pq_mldsa44_min_version` ever disagree.
 
 That constant is not an execution gate, and must not be read as one. A node
 whose configuration names a higher version logs an error and keeps collating and
 validating: see the `get_global_version() > supported_version()` checks in
 `validator/impl/collator.cpp` and `validator/impl/validate-query.cpp`, which
-warn and fall through. A local chain built from this source at
-`SUPPORTED_VERSION = 15` was set to ConfigParam 8 version 16 and produced blocks
-that executed this instruction; `doc/macos-local-node.md` records that run. What
+warn and fall through. A local chain built from this source when the constant
+was still 15 was set to ConfigParam 8 version 16 and produced blocks that
+executed this instruction; `doc/macos-local-node.md` records that run. What
 actually gates the instruction is the global version the VM is constructed at,
 which comes from ConfigParam 8.
+
+Raising the constant to 16 therefore activates nothing. What it does change is
+narrow and worth stating: a VM built with no configuration to consult now runs
+at 16, so `lite-client runmethod`, Fift and `run_get_method` can reach this
+instruction; the collator writes 16 into each block's informational
+`gen_software` field, which `validate-query` never reads; and the message above
+stops being logged on a chain already configured at 16. It is step one of the
+sequence in `doc/GlobalVersions.md`: ship a capable binary first, upgrade every
+validator, and only then consider ConfigParam 8.
+
+Note that raising the *configured* version to 16 is not limited to this
+instruction. `crypto/block/transaction.cpp` skips the `check_addr_rewrite_length`
+test when an incoming `StateInit` revives a frozen account at version 16, where
+version 15 applies it to every status. That change arrived separately with the
+pre-launch audit work; `doc/ConfigParam.md` records both differences together,
+because a ConfigParam 8 transition activates them together.
 
 ConfigParam 8, genesis and capability masks are untouched by this change.
 Activation is therefore a coordinated protocol configuration decision with

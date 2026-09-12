@@ -49,13 +49,16 @@ class LiveChain(unittest.TestCase):
         prices = self.transport.gas_prices(0)
         self.assertGreater(prices['gas_price'], prices['flat_gas_price'],
                            'the flat price was read in place of the gas price')
+        forwarding = self.transport.forward_prices(0)
+        self.assertGreater(forwarding['cell_price'], forwarding['lump_price'])
         request = AuthRequest(self.transport.global_id(), Address('0:' + '12' * 32),
                               1, 0, 1600, 0, Cell.empty())
         budget = asyncio.run(self.transport.estimate(request, Address('0:' + '22' * 32)))
         self.assertEqual(budget.total, budget.module_compute + budget.forwarding
                          + budget.account_execution + budget.margin)
-        # Priced from this chain, so it moves when the chain's price moves.
+        # Priced from this chain, so it moves when the chain's prices move.
         self.assertGreater(budget.module_compute, 0)
+        self.assertGreater(budget.forwarding, 0)
 
     def test_an_unfunded_wallet_broadcasts_nothing(self):
         self.assertEqual(self.transport.balance(self.unfunded), 0)
@@ -90,6 +93,14 @@ class FakeNode(LiteClientTransport):
             return f'global_id:{NETWORK}\n'
         if command == 'getconfig 8':
             return 'version:16 capabilities:494\n'
+        if command == 'getconfig 21':
+            # Production-shaped basechain prices. These deliberately include a
+            # flat prefix so a test that falls back to gas_price/2^16 is wrong.
+            return ('gas_price:26214400 flat_gas_limit:100 '
+                    'flat_gas_price:40000\n')
+        if command == 'getconfig 25':
+            return ('lump_price:400000 bit_price:26214400 cell_price:2621440000 '
+                    'ihr_price_factor:98304 first_frac:21845 next_frac:21845\n')
         if command == 'last':
             return ('latest masterchain block known to server is (-1,8000000000000000,3)\n'
                     'created at 1780000000\n')
@@ -143,6 +154,25 @@ class SigningWithoutAChain(unittest.TestCase):
     def advance(self):
         self.accounts[self.address.to_str(False)] = wallet_account(
             self.key, self.signer.read_seqno() + 1)
+
+    def test_fee_estimate_uses_the_chain_compute_and_message_formulas(self):
+        request = AuthRequest(NETWORK, Address('0:' + '44' * 32),
+                              1, 0, 1_780_000_600, 0, Cell.empty())
+        budget = asyncio.run(self.node.estimate(request, self.module))
+        gas = self.node.gas_prices(0)
+        self.assertEqual(budget.module_compute,
+                         self.node._gas_fee(64_400, gas))
+        self.assertEqual(budget.module_compute, 25_760_000)
+        self.assertEqual(budget.account_execution,
+                         self.node._gas_fee(20_000, gas))
+        # The forward charge is based on Config25 and the cell tree the module
+        # actually relays. It must not regress to the old 10k-gas proxy.
+        envelope = request.envelope(bytes(64))
+        cells, bits = self.node._tree_size(envelope)
+        expected = self.node._forward_fee(cells, bits,
+                                          self.node.forward_prices(0))
+        self.assertEqual(budget.forwarding, expected)
+        self.assertNotEqual(budget.forwarding, 10_000 * 400)
 
     def test_a_transport_without_a_wallet_broadcasts_nothing(self):
         bare = FakeNode(self.accounts)

@@ -34,9 +34,11 @@ def plan(document: dict, root: Path) -> dict:
     if len(release) != 40 or any(c not in _HEX for c in release):
         raise ValueError("release must be a full commit hash")
 
-    # A source commit is not a release binary: this tree can deliberately build
-    # either the default v15 profile or the explicit v16 candidate profile. Bind
-    # every operator acknowledgement to the concrete candidate binary it runs.
+    # A source commit is not a release binary. The commit no longer leaves the
+    # ceiling open -- there is one build profile and test_release_profile.py
+    # fails if a second one reappears -- but a commit still says nothing about
+    # which artifact an operator actually installed, so every acknowledgement
+    # names the binary it runs and the load evidence has to qualify one of them.
     roster = document.get("validators", [])
     if not roster or len({v.get("id") for v in roster}) != len(roster):
         raise ValueError("empty or duplicate validator roster")
@@ -46,9 +48,8 @@ def plan(document: dict, root: Path) -> dict:
         if (not validator.get("id") or validator.get("acknowledged") is not True
                 or validator.get("supports_version", 0) < 16
                 or validator.get("release_commit") != release
-                or validator.get("build_profile") != "pq-v16-candidate"
                 or not sha256_digest(binary)):
-            raise ValueError("every configured validator must acknowledge a concrete v16 candidate binary")
+            raise ValueError("every configured validator must acknowledge a concrete v16 binary")
         candidate_binaries.add(binary)
 
     approvals = document.get("approvals", {})
@@ -90,8 +91,7 @@ def plan(document: dict, root: Path) -> dict:
     return {"proposal_only": True, "network_activated": False, "network": network,
             "current_version": 15, "target_version": 16, "capabilities_preserved": caps,
             "config8_payload_hex": payload.hex(), "release_commit": release,
-            "validators": [{"id": v["id"], "build_profile": v["build_profile"],
-                            "binary_sha256": v["binary_sha256"]} for v in roster],
+            "validators": [{"id": v["id"], "binary_sha256": v["binary_sha256"]} for v in roster],
             "warning": "A validated proposal is not activation. Apply only through the network's approved configuration process."}
 
 

@@ -54,7 +54,7 @@ jobs:
           python -m pip install bitarray==3.7.2 PyNaCl==1.5.0 pycryptodome==3.23.0 cryptography==46.0.4
       - name: Build native candidate tools and Rust opcode execution
         run: |
-          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DTOS_PQ_V16_CANDIDATE=ON
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
           cmake --build build --target func fift tol emulator test-pq-v16-parity -j2
           cmake -S crypto/pq/tools -B build-pq-key -G Ninja -DCMAKE_BUILD_TYPE=Release
           cmake --build build-pq-key -j2

@@ -36,6 +36,69 @@ until governance sets this bit. When it is set, a block — and zero-state gener
 is valid only if the complete, mutually consistent AIPoW parameter set is present
 (see [GlobalVersions.md](GlobalVersions.md) and the AIPoW section below).
 
+### `version` is the activation point; the compiled constant is not
+
+`capabilities` and `version` are both set here, but they are not enforced the same
+way, and conflating them has already produced a wrong claim in this documentation
+set. A capability the configuration enables but the binary does not implement is
+reported and the block is still produced. The same is true of `version`: the
+`get_global_version() > supported_version()` checks in
+[collator.cpp](../validator/impl/collator.cpp) (line 921) and
+[validate-query.cpp](../validator/impl/validate-query.cpp) (line 998) emit
+
+```
+block version N have been enabled in global configuration,
+but we support only M (upgrade validator software?)
+```
+
+and then **fall through**. Neither refuses. A local chain built when
+`SUPPORTED_VERSION` was still 15 was configured at `version = 16` and produced
+blocks that executed version-16 instructions; `doc/macos-local-node.md` records
+that run.
+
+So `tos::SUPPORTED_VERSION` in [global-version.h](../common/global-version.h) is an
+advertisement of what a binary implements, not a gate. Setting it low does not
+protect a network from a configuration that is set high, and raising it does not
+activate anything. It has two observable effects: a VM built with no configuration
+to consult — `lite-client runmethod`, Fift, `run_get_method` — runs at that version,
+and `Collator::store_version` writes it into each block's informational
+`gen_software` field when `capReportVersion` is set. Block validation never reads
+that field.
+
+The only parameter that decides what a network executes is `version` here.
+
+### version 16
+
+Version 16 differs from 15 in exactly two places in this tree. Both are gated on
+the value configured here, not on any compiled constant.
+
+1. The TVM instruction `PQCHECKSIG_MLDSA44` (`F93100`) exists. This is the only
+   `require_version(16)` in the repository — `vm::pq_mldsa44_min_version` in
+   [pqops.h](../crypto/vm/pqops.h). See [tvm-mldsa44.md](tvm-mldsa44.md) for the
+   instruction and [pq-v16-readiness.md](pq-v16-readiness.md) for what must be
+   established before proposing the transition.
+2. Unfreezing is validated less strictly. In
+   [transaction.cpp](../crypto/block/transaction.cpp) (line 2352), an incoming
+   `StateInit` that revives a **frozen** account skips the
+   `check_addr_rewrite_length` test at version 16, where version 15 applies it to
+   every account status. An uninitialized account is unaffected. This arrived
+   with the pre-launch audit changes and is unrelated to the instruction above;
+   it is recorded here because activating version 16 activates it too.
+
+Nothing else branches on 15 versus 16: every other threshold in the transaction
+engine is `>= 15` or lower, and those are satisfied at both.
+
+Because the checks above do not refuse, a mixed fleet will not fail loudly: nodes
+that do not implement the configured version log an error and keep validating,
+and disagreement appears as diverging execution rather than a refusal to start.
+That is why the sequence in [GlobalVersions.md](GlobalVersions.md) is upgrade
+every validator first, change this parameter second, and never the reverse.
+`tools/pq/activation.py` validates a proposed 15 → 16 transition against that
+sequence — evidence bound to one release, four explicit owner approvals, and a
+roster in which every validator acknowledges the binary it actually runs — and
+emits an **unsigned** ConfigParam 8 payload. A validated proposal is not an
+activation, and the tool never broadcasts one.
+
 ## ConfigParam 12
 
 `ConfigParam 12` stores the workchain descriptor dictionary. In the current build it should contain only the native basechain descriptor for wc=0.

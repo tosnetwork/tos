@@ -19,12 +19,10 @@
 namespace tos {
 
 // See https://github.com/tosnetwork/doc/blob/main/tos-blockchain/GlobalVersions.md
-// Candidate builds advertise the implementation ceiling without changing Config8.
-// The default release remains v15 until the independent rollout gates are approved.
-#ifdef TOS_PQ_V16_CANDIDATE
+// The ceiling this binary is capable of executing, not a switch that enables
+// anything. What a network runs comes from ConfigParam 8; a configured version
+// above this one is logged and then executed anyway, so raising this does not
+// activate v16 and leaving it low would not have prevented it.
 constexpr int SUPPORTED_VERSION = 16;
-#else
-constexpr int SUPPORTED_VERSION = 15;
-#endif
 
 }  // namespace tos
