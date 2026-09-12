@@ -14,7 +14,7 @@ inline td::Result<td::Ref<vm::Cell>> encode_workchain_withdrawal_account(
   return withdrawal_codec_detail::protect([&]() -> td::Result<td::Ref<vm::Cell>> {
     using withdrawal_codec_detail::pack;
     const auto& account = value.account;
-    if (account.schema_version != 3 || account.system_pending.size() + value.origin_pending.size() > 4)
+    if (account.schema_version != 4 || account.system_pending.size() + value.origin_pending.size() > 4)
       return td::Status::Error("invalid Withdrawal account schema or system capacity");
     TRY_RESULT(lifecycle, encode_workchain_account_lifecycle(account.lifecycle));
     TRY_RESULT(control_lifecycle, encode_workchain_account_lifecycle(value.control.lifecycle));
@@ -40,7 +40,7 @@ inline td::Result<td::Ref<vm::Cell>> encode_workchain_withdrawal_account(
           record.source.instance != account.address.instance)
         return td::Status::Error("Withdrawal record account binding mismatch");
     }
-    return pack(gen::UnoV2AccountStateWithdrawals::Record{3, wire.relation_profile, wire.proof_profile,
+    return pack(gen::UnoV2AccountStateWithdrawalsV2::Record{4, wire.relation_profile, wire.proof_profile,
         wire.auth_nonce, wire.available_revision, wire.pending_count,
         static_cast<unsigned>(account.system_pending.size() + value.origin_pending.size()),
         wire.identity, wire.crypto, std::move(pending).extract_root(), control});
@@ -50,8 +50,8 @@ inline td::Result<WorkchainWithdrawalAccount> decode_workchain_withdrawal_accoun
     const td::Ref<vm::Cell>& root, std::uint32_t authenticated_limit) {
   return withdrawal_codec_detail::protect([&]() -> td::Result<WorkchainWithdrawalAccount> {
     using withdrawal_codec_detail::pack;
-    TRY_RESULT(wire, withdrawal_codec_detail::unpack<gen::UnoV2AccountStateWithdrawals::Record>(root));
-    if (wire.schema_version != 3) return td::Status::Error("unsupported Withdrawal account schema");
+    TRY_RESULT(wire, withdrawal_codec_detail::unpack<gen::UnoV2AccountStateWithdrawalsV2::Record>(root));
+    if (wire.schema_version != 4) return td::Status::Error("unsupported Withdrawal account schema");
     TRY_RESULT(control, decode_workchain_withdrawal_control(wire.control, authenticated_limit));
     vm::Dictionary pending(wire.pending, 256), legacy(256);
     std::vector<WorkchainSystemReceipt> origins;
@@ -83,7 +83,7 @@ inline td::Result<WorkchainWithdrawalAccount> decode_workchain_withdrawal_accoun
         wire.system_pending_count - static_cast<unsigned>(origins.size()), wire.identity, wire.crypto,
         std::move(legacy).extract_root(), lifecycle}));
     TRY_RESULT(account, decode_workchain_confidential_account(core));
-    account.schema_version = 3;
+    account.schema_version = 4;
     WorkchainWithdrawalAccount value{account, control, origins};
     TRY_RESULT(canonical, encode_workchain_withdrawal_account(value, authenticated_limit));
     if (canonical->get_hash() != root->get_hash()) return td::Status::Error("noncanonical Withdrawal account");

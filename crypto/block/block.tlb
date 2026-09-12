@@ -117,50 +117,49 @@ uno_v2_registration_replay_v1 claimed_operation_id:bits256
   context:^UnoV2ReplayContextV1 authorization:^Cell = UnoV2TransferInputV1;
 uno_v2_closure_replay_v1 claimed_operation_id:bits256
   context:^UnoV2ReplayContextV1 authorization:^Cell = UnoV2TransferInputV1;
-// M5 record encodings. Account placement is a separate D43/D67 decision.
+// D78 v2: no prelock. Old pre-deployment fixture tags are deliberately rejected.
 // Withdrawal=5 is a host operation kind, never a new crypto relation number.
 uno_v2_withdrawal_identity_v1 kind:(## 8) { kind = 5 } auth_nonce:uint64
   network:^UnoV2OperationNetworkV1 source:^UnoV2AccountAddress = UnoV2OperationIdentityV1;
 uno_v2_withdrawal_attempt_identity_v1 withdrawal_id:bits256
   = UnoV2WithdrawalAttemptIdentityV1;
 uno_v2_withdrawal_destination_v1 workchain:int32 account:bits256 = UnoV2WithdrawalDestinationV1;
-uno_v2_withdrawal_amounts_v1 principal:uint64 outward_fee:uint64 return_reserve:uint64
-  operation_fee:uint64 = UnoV2WithdrawalAmountsV1;
+uno_v2_withdrawal_amounts_v2 principal:uint64 outward_fee:uint64
+  operation_fee:uint64 = UnoV2WithdrawalAmountsV2;
 // Only six balance points are needed by the host: P and old C/D come from
 // authenticated state; available and auxiliary below supply the remaining three.
 // P_B and transfer C_t/D_tA/D_tB are derived, not transmitted.
-uno_v2_withdrawal_data_v1 auxiliary:bits256
+uno_v2_withdrawal_data_v2 auxiliary:bits256
   claims:^UnoV2TransferClaimsV1 destination:^UnoV2WithdrawalDestinationV1
-  amounts:^UnoV2WithdrawalAmountsV1 available:^UnoV2AccountCiphertext = UnoV2WithdrawalDataV1;
-uno_v2_withdrawal_input_v1 claimed_operation_id:bits256 claimed_attempt_id:bits256
-  data:^UnoV2WithdrawalDataV1 authorization:^Cell = UnoV2TransferInputV1;
+  amounts:^UnoV2WithdrawalAmountsV2 available:^UnoV2AccountCiphertext = UnoV2WithdrawalDataV2;
+uno_v2_withdrawal_input_v2 claimed_operation_id:bits256 claimed_attempt_id:bits256
+  data:^UnoV2WithdrawalDataV2 authorization:^Cell = UnoV2TransferInputV1;
 // Exact host context; common supplies authenticated subject/protocol/profiles,
 // binding commits semantic data and independently rebuilt old-state statement.
-uno_v2_withdrawal_context_v1 attempt_id:bits256 settlement_blocks:uint32 withdrawal_limit:uint32
-  common:^UnoV2ReplayContextV1 binding:^UnoV2TransferBindingV1 = UnoV2WithdrawalContextV1;
-uno_v2_withdrawal_costs_v1 outward_fee_paid:uint64 original_reserve:uint64
-  consumed_return_cost:uint64 refundable_reserve:uint64 = UnoV2WithdrawalCostsV1;
+uno_v2_withdrawal_context_v2 attempt_id:bits256 settlement_blocks:uint32 withdrawal_limit:uint32
+  common:^UnoV2ReplayContextV1 binding:^UnoV2TransferBindingV1 = UnoV2WithdrawalContextV2;
+uno_v2_withdrawal_costs_v2 outward_fee_paid:uint64 = UnoV2WithdrawalCostsV2;
 // phase 0: still queued, queue_removed_height is zero (not an expiry trigger).
 // phase 1: queue removed; its actual height starts the settlement wait.
 // Paid/Failed are terminal events, not permanent records in this open set.
 uno_v2_withdrawal_timing_v1 phase:(## 8) { phase <= 1 } payout_created_lt:uint64
   opened_height:uint32 queue_removed_height:uint32 settlement_blocks:uint32 = UnoV2WithdrawalTimingV1;
-uno_v2_withdrawal_record_v1 withdrawal_id:bits256 attempt_id:bits256
+uno_v2_withdrawal_record_v2 withdrawal_id:bits256 attempt_id:bits256
   consumed_auth_nonce:uint64 principal:uint64 source:^UnoV2AccountAddress
-  destination:^UnoV2WithdrawalDestinationV1 costs:^UnoV2WithdrawalCostsV1
-  timing:^UnoV2WithdrawalTimingV1 = UnoV2WithdrawalRecordV1;
+  destination:^UnoV2WithdrawalDestinationV1 costs:^UnoV2WithdrawalCostsV2
+  timing:^UnoV2WithdrawalTimingV1 = UnoV2WithdrawalRecordV2;
 // D67: a per-account control envelope replaces the root lifecycle reference.
-// The host authenticates explicit migration; old constructors stay unchanged.
+// No prelock migration or dual-read: no deployed Withdrawal state exists.
 // Keys are Withdrawal IDs; codec enumeration also checks created_lt uniqueness.
-uno_v2_account_control_withdrawals_v1 withdrawal_count:uint32
-  lifecycle:^UnoV2AccountLifecycle withdrawals:(HashmapE 256 ^UnoV2WithdrawalRecordV1)
-  = UnoV2AccountControlWithdrawalsV1;
-uno_v2_account_state_withdrawals schema_version:uint16 relation_profile:uint16 proof_profile:uint16
+uno_v2_account_control_withdrawals_v2 withdrawal_count:uint32
+  lifecycle:^UnoV2AccountLifecycle withdrawals:(HashmapE 256 ^UnoV2WithdrawalRecordV2)
+  = UnoV2AccountControlWithdrawalsV2;
+uno_v2_account_state_withdrawals_v2 schema_version:uint16 relation_profile:uint16 proof_profile:uint16
   auth_nonce:uint64 available_revision:uint64 pending_count:(## 16) { pending_count <= 16 }
   system_pending_count:(## 16) { system_pending_count <= 4 }
   identity:^UnoV2AccountIdentity crypto:^UnoV2AccountCrypto
-  pending:(HashmapE 256 ^UnoV2PendingReceipt) control:^UnoV2AccountControlWithdrawalsV1
-  = UnoV2AccountStateWithdrawals;
+  pending:(HashmapE 256 ^UnoV2PendingReceipt) control:^UnoV2AccountControlWithdrawalsV2
+  = UnoV2AccountStateWithdrawalsV2;
 uno_v2_resource_input max_cells:uint64 max_bits:uint64 max_roots:uint64
   max_reads:uint32 max_writes:uint32 max_inbound:uint32 = UnoV2ResourceInput;
 uno_v2_resource_state max_cells:uint64 max_bits:uint64 max_account_cells:uint64

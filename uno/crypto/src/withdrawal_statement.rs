@@ -1,6 +1,6 @@
 //! D64 specialization of the existing SEND relation, not a new relation.
 //!
-//! A dedicated C ABI exposes this construction; no node host caller is connected yet. Authentication of the context,
+//! The dedicated v2 ABI requires matching D78 host reconstruction. Authentication of the context,
 //! fee components, identities and state is a host obligation. Success neither
 //! authorizes a payout nor permits installing a pending receipt.
 use bulletproofs::PedersenGens;
@@ -14,7 +14,6 @@ use crate::{ffi::{AbiStatus, KernelLimits, UNO_RELATION_SEND}, relation};
 pub struct WithdrawalAmounts {
     pub principal: u64,
     pub outward_fee: u64,
-    pub return_reserve: u64,
     pub operation_fee: u64,
 }
 
@@ -22,7 +21,6 @@ impl WithdrawalAmounts {
     pub fn total(&self) -> Result<u64, AbiStatus> {
         if self.principal == 0 { return Err(AbiStatus::UNO_CRYPTO_DECODE); }
         self.principal.checked_add(self.outward_fee)
-            .and_then(|v| v.checked_add(self.return_reserve))
             .ok_or(AbiStatus::UNO_CRYPTO_DECODE)
     }
 }
@@ -81,9 +79,9 @@ impl WithdrawalStatement {
             return Err(AbiStatus::UNO_CRYPTO_DECODE);
         }
         // Bound allocation before copying caller bytes. Context includes a
-        // fixed explicit operation domain, two IDs and four public u64 amounts.
-        const TAG: &[u8] = b"uno-v2/withdrawal-statement/v1";
-        let size = TAG.len().checked_add(96)
+        // fixed explicit operation domain, two IDs and three public u64 amounts.
+        const TAG: &[u8] = b"uno-v2/withdrawal-statement/v2";
+        let size = TAG.len().checked_add(88)
             .and_then(|n| n.checked_add(authenticated_context.len()))
             .ok_or(AbiStatus::UNO_CRYPTO_DECODE)?;
         if size > limits.max_context_bytes { return Err(AbiStatus::UNO_CRYPTO_DECODE); }
@@ -98,7 +96,7 @@ impl WithdrawalStatement {
         context.extend_from_slice(TAG);
         context.extend_from_slice(&withdrawal);
         context.extend_from_slice(&attempt);
-        for value in [amounts.principal, amounts.outward_fee, amounts.return_reserve, amounts.operation_fee] {
+        for value in [amounts.principal, amounts.outward_fee, amounts.operation_fee] {
             context.extend_from_slice(&value.to_le_bytes());
         }
         context.extend_from_slice(authenticated_context);

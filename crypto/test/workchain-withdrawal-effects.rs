@@ -11,7 +11,7 @@ fn main() {
         ("success", [point; 6], true), ("decode", [[0; 32]; 6], false),
     ] {
         let result = WithdrawalStatement::new(&limits, [0; 80], [1; 32], [2; 32],
-            WithdrawalAmounts { principal: 1, outward_fee: 1, return_reserve: 1,
+            WithdrawalAmounts { principal: 1, outward_fee: 1,
                 operation_fee: 1 }, &[3], points);
         match result {
             Ok(_) if expected_success => println!("STATEMENT_SUCCESS={label}"),
