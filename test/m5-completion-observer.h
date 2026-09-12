@@ -42,7 +42,15 @@ inline gen::UnoV2HostEffects::Record effects(const td::Ref<vm::Cell>& root) {
 }
 inline td::Ref<vm::Cell> block_at(const std::filesystem::path& fixture,unsigned height) {
   auto path=fixture/"m4-blocks"/(std::to_string(height)+".boc");
-  auto root=load(std::filesystem::exists(path)?path:fixture/"accepted-block.boc");
+  td::Ref<vm::Cell> root;
+  if(std::filesystem::exists(path)) root=load(path);
+  else {
+    auto candidate=tos::fetch_tl_object<tos::tos_api::db_candidate>(
+        td::read_file((fixture/"enabled.candidate").string()).move_as_ok(),true).move_as_ok();
+    const auto id=tos::create_block_id(candidate->id_);
+    root=vm::std_boc_deserialize(candidate->data_.as_slice()).move_as_ok();
+    CHECK(td::Bits256(root->get_hash().bits())==id.root_hash && td::sha256_bits256(candidate->data_)==id.file_hash);
+  }
   gen::Block::Record b; gen::BlockInfo::Record info;
   CHECK(::tlb::unpack_cell(root,b)&&::tlb::unpack_cell(b.info,info)&&info.seq_no==height); return root;
 }
@@ -196,8 +204,12 @@ inline void write_completion_observation(const std::string& which,const std::fil
                    quote(route_at_entry)+"]}}\n").ensure();
     return;
   }
-  const auto before=load(fixture/"completion-before-state.boc"),after=load(fixture/"accepted-state.boc");
-  const auto current=load(fixture/"accepted-block.boc");
+  const auto before=load(fixture/"completion-before-state.boc");
+  // Reconstruct from the exported, validator-accepted candidate itself. The
+  // harness saves accepted-state only after its other assertions have passed;
+  // those cached files may still describe the preceding operation.
+  const auto accepted=read_accepted_step(fixture/"enabled.candidate",before);
+  const auto after=accepted.state,current=accepted.block;
   gen::Block::Record block;CHECK(::tlb::unpack_cell(current,block));
   auto applied=vm::MerkleUpdate::apply(before,block.state_update).move_as_ok();CHECK(applied->get_hash()==after->get_hash());
   gen::ShardStateUnsplit::Record old_state,new_state;CHECK(::tlb::unpack_cell(before,old_state)&&::tlb::unpack_cell(after,new_state));
