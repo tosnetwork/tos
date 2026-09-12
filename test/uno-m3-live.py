@@ -11,6 +11,7 @@ import shutil
 from pathlib import Path
 import subprocess
 import tempfile
+import time
 from uno_wallet_freshness import pin
 
 p = argparse.ArgumentParser(description=__doc__)
@@ -37,6 +38,7 @@ p.add_argument('--failed-routing-probe', action='store_true',
 p.add_argument('--failed-routing-binary', type=Path,
                help='isolated test binary for oracle-removal control only')
 a = p.parse_args()
+split_return_route = a.m5_completion_late and not a.m5_completion_paid
 if a.m5_completion_paid:
     a.m5_completion_late = True
 if a.completion_full_cap and not a.m5_completion_paid:
@@ -333,6 +335,17 @@ prefix = prefix.replace(route, route + '''
   endif()''')
 if a.m5_completion_paid:
     prefix = prefix.replace('${SOURCE_DIR}/test/m3-native-sender.fif', '${fixture}/m3-native-paid.fif')
+if split_return_route:
+    master = (repo / 'test/counter-masterchain-genesis.fif').read_text()
+    old = 'base_rhash base_fhash now 0 0 0 0 add-std-workchain'
+    if master.count(old) != 1:
+        raise RuntimeError('Native split fixture descriptor boundary changed')
+    master = master.replace(old, 'base_rhash base_fhash now 0 1 1 0 add-std-workchain')
+    (fixture / 'm3-split-master.fif').write_text(master)
+    prefix = prefix.replace('  if(script STREQUAL "counter-masterchain-genesis" AND NATIVE_SENDER)',
+        '  if(script STREQUAL "counter-masterchain-genesis")\n'
+        '    set(script_path "${fixture}/m3-split-master.fif")\n  endif()\n'
+        '  if(script STREQUAL "counter-masterchain-genesis" AND NATIVE_SENDER)')
 prepare.write_text(prefix)
 subprocess.run(['cmake', '-DCOUNTER_FIXTURE_CHILD=ON', f'-DCOUNTER_FIXTURE_PATH={fixture}',
                 '-DACCOUNT_BINDING_ONLY=ON', '-DNATIVE_SENDER=ON',
@@ -456,6 +469,35 @@ from uno_m4_live_sequence import run
 initial, initial_blind, send_fee, collect_fee, limits = run(
     build, fixture, wallet, advance_pair, initial_only=True, initial_principal=principal)
 if a.m5_debit:
+    def route_block(label, shard, tops=()):
+        args = [str(build / 'test-tos-collator'), '-C', str(fixture / 'global.json'),
+                '-D', str(fixture / 'db'), '-w', shard,
+                '--query-result', str(fixture / (label + '.result'))]
+        if shard != '-1':
+            args += ['-s', str(fixture / (label + '-top')),
+                     '--export-candidate', str(fixture / (label + '.candidate'))]
+        for top in tops:
+            args += ['-M', str(fixture / (top + '-top1.boc'))]
+        result = subprocess.run(args, text=True, capture_output=True)
+        output = result.stdout + result.stderr
+        (fixture / (label + '.log')).write_text(output)
+        result.check_returncode()
+        return output
+    if split_return_route:
+        # Split before issuing the payout. Every intermediate block is real;
+        # no inbox is dropped and no queue-removal height is fabricated.
+        for attempt in range(75):
+            label = f'completion-split-{attempt}'
+            output = route_block(label, '0')
+            route_block(label + '-master', '-1', (label,))
+            if 'BEFORE_SPLIT set for the new block' in output:
+                break
+            time.sleep(2)
+        else:
+            raise RuntimeError('Native authenticated split did not become ready')
+        route_block('completion-left', '0:4')
+        route_block('completion-right', '0:c')
+        route_block('completion-split-master', '-1', ('completion-left', 'completion-right'))
     request = dict(secret=101, old_value=initial, old_blind=initial_blind, new_blind=71, aux_blind=83,
                    principal=a.m5_return_principal if a.m5_return_principal is not None else
                              1000000 if a.m5_bucket_small else 10000000 if a.m5_return_route else 137, outward_fee=17,
@@ -487,16 +529,23 @@ if a.m5_debit:
         subprocess.run([str(build / 'test-tos-collator'), '-C', str(fixture / 'global.json'),
                         '-D', str(fixture / 'db'), '-w', '-1', '-M', str(fixture / '4-enabled-top1.boc'),
                         '--query-result', str(fixture / 'payout-master.result')], check=True)
-        subprocess.run([str(build / 'test-tos-collator'), '-C', str(fixture / 'global.json'),
+        if split_return_route:
+            # First import into the non-destination shard only. Its authenticated
+            # transit export permits source dequeue before the actual delivery.
+            route_block('completion-transit', '0:c')
+            route_block('completion-transit-master', '-1', ('completion-transit',))
+        else:
+            subprocess.run([str(build / 'test-tos-collator'), '-C', str(fixture / 'global.json'),
                         '-D', str(fixture / 'db'), '-w', '0', '-s', str(fixture / 'payout-recipient-top'),
                         '--query-result', str(fixture / 'payout-recipient.result'),
                         '--export-candidate', str(fixture / 'payout-recipient.candidate')], check=True)
-        if not a.m5_completion_paid:
+        if not a.m5_completion_paid and not split_return_route:
             subprocess.run([str(build / 'test-m3-live'), '--observe-m5-payout-recipient', str(fixture)], check=True)
-        if not a.m5_completion_paid and not (fixture / 'failed-bounce.boc').is_file():
+        if not a.m5_completion_paid and not split_return_route and not (fixture / 'failed-bounce.boc').is_file():
             raise RuntimeError('funded return route did not produce a real bounce')
         if a.m5_failed:
-            subprocess.run([str(build / 'test-tos-collator'), '-C', str(fixture / 'global.json'),
+            if not split_return_route:
+                subprocess.run([str(build / 'test-tos-collator'), '-C', str(fixture / 'global.json'),
                             '-D', str(fixture / 'db'), '-w', '-1', '-M', str(fixture / 'payout-recipient-top1.boc'),
                             '--query-result', str(fixture / 'return-master.result')], check=True)
             if a.m5_completion_late:
@@ -520,6 +569,10 @@ if a.m5_debit:
                     old_blind = new_blind
                 shutil.copyfile(fixture / 'current-state.boc',fixture / 'completion-record-state.boc')
                 shutil.copyfile(fixture / 'completion-original-payout.boc',fixture / 'prepare-payout.boc')
+            if split_return_route:
+                route_block('payout-recipient', '0:4')
+                subprocess.run([str(build / 'test-m3-live'), '--observe-m5-payout-recipient', str(fixture)], check=True)
+                route_block('return-master', '-1', ('payout-recipient',))
             if a.m5_completion_paid:
                 # A real third-party Deposit to B advances the authenticated
                 # height without executing an owner operation on A.
