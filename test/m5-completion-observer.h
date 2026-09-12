@@ -250,6 +250,9 @@ inline SweepNativeObservation sweep_native_observation(const td::Ref<vm::Cell>& 
   CHECK(::tlb::unpack_cell(root,b)&&::tlb::unpack_cell(b.extra,e));
   vm::AugmentedDictionary accounts(vm::load_cell_slice_ref(e.account_blocks),256,block::tlb::aug_ShardAccountBlocks);
   CHECK(accounts.check_for_each([&](auto leaf,td::ConstBitPtr,int){
+    // Iteration carries the augmentation; unlike lookup(), it does not strip
+    // the leading CurrencyCollection before the AccountBlock value.
+    leaf=accounts.extract_value(leaf);CHECK(leaf.not_null());
     gen::AccountBlock::Record account;CHECK(gen::t_AccountBlock.unpack(leaf.write(),account));
     vm::AugmentedDictionary txs(vm::DictNonEmpty(),account.transactions,64,block::tlb::aug_AccountTransactions);
     CHECK(txs.check_for_each([&](auto cell,td::ConstBitPtr,int){
@@ -305,6 +308,9 @@ inline void write_sweep_completion_observation(const std::filesystem::path& fixt
   CHECK(!__builtin_sub_overflow(income,difference(z.refundable,a.refundable),&next));income=next;
   auto batch=accepted.block->get_hash().to_hex();
   gen::ShardStateUnsplit::Record state;CHECK(::tlb::unpack_cell(accepted.state,state));
+  // In this isolated no-import/no-payout sweep, custody's actual balance delta
+  // is the received transfer. Keep the committed instruction separate: a
+  // correct instruction alone does not prove that Native applied the credit.
   std::ostringstream out;
   out<<"{\"input\":{\"x\":0,\"withdrawal_id\":"<<quote(td::Bits256::zero().to_hex())
      <<",\"y\":"<<u64(entry.tomis)<<",\"slot\":"<<policy.deposit->slot_fee
@@ -312,7 +318,8 @@ inline void write_sweep_completion_observation(const std::filesystem::path& fixt
      <<",\"account_id\":"<<quote(entry.account_id->to_hex())
      <<"},\"observed\":{\"published\":true,\"before\":"<<snapshot_json(a,0,order)
      <<",\"after\":"<<snapshot_json(z,native.block_fees,order)
-     <<",\"custody_transfer\":"<<native.transferred
+     <<",\"custody_transfer\":"<<difference(z.reserve,a.reserve)
+     <<",\"declared_native_transfer\":"<<native.transferred
      <<",\"operator_slot_income\":"<<income
      <<",\"native_transaction_fees\":"<<native.transaction_fees
      <<",\"committed_batch_id\":"<<quote(batch)<<",\"component_batch_ids\":["
