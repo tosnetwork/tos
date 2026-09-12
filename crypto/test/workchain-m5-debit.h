@@ -41,7 +41,13 @@ inline td::Result<std::string> m5_debit_context(const WorkchainTransferEnvironme
     return invalid("Withdrawal source identity, lifecycle or expiry mismatch");
   TRY_RESULT(next, next_workchain_confidential_counters(old, c.auth_nonce, c.available_revision));
   (void)next;
-  TRY_RESULT(total, workchain_withdrawal_total(input.data.amounts)); (void)total;
+  TRY_RESULT(total, workchain_withdrawal_total(input.data.amounts));
+  // D78: T=x+q is the commitment; debit=T+f is a distinct checked amount.
+  // Never feed the debit back into the public transfer commitment.
+  std::uint64_t debit;
+  if (__builtin_add_overflow(total, input.data.amounts.operation_fee, &debit))
+    return invalid("Withdrawal debit overflow");
+  (void)debit;
   TRY_RESULT(id, derive_workchain_withdrawal_id(network(env), old.address, old.auth_nonce));
   TRY_RESULT(attempt, derive_workchain_attempt_id(id));
   if (input.claimed_operation_id != id || input.claimed_attempt_id != attempt)
@@ -63,15 +69,15 @@ inline td::Result<td::Ref<vm::Cell>> execute_m5_test_debit(const WorkchainTransf
     const WorkchainWithdrawalInput& input, WorkchainProofVerifier& verifier) {
   TRY_RESULT(context, m5_debit_context(env, policy, old, input));
   const auto& a = input.authorization;
-  UnoCryptoWithdrawalVerifyRequestV1 request{};
-  request.abi_version = 1; request.limits = env.limits;
+  UnoCryptoWithdrawalVerifyRequestV2 request{};
+  request.abi_version = 2; request.limits = env.limits;
   std::copy(env.domain.begin(), env.domain.end(), request.domain);
   auto copy = [](unsigned char* dst, const td::Bits256& word) {
     std::memcpy(dst, word.as_slice().data(), 32);
   };
   copy(request.withdrawal_id, input.claimed_operation_id); copy(request.attempt_id, input.claimed_attempt_id);
   request.principal = input.data.amounts.principal; request.outward_fee = input.data.amounts.outward_fee;
-  request.return_reserve = input.data.amounts.return_reserve; request.operation_fee = input.data.amounts.operation_fee;
+  request.operation_fee = input.data.amounts.operation_fee;
   unsigned i = 0;
   for (const auto& point : {old.public_key, old.available.commitment, old.available.handle,
        input.data.available.commitment, input.data.available.handle, input.data.auxiliary}) copy(request.balance_points[i++], point);

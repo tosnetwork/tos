@@ -1,0 +1,22 @@
+
+running 1 test
+test tests::withdrawal::withdrawal_amount_overflow_and_public_identity_binding ... FAILED
+
+failures:
+
+failures:
+    tests::withdrawal::withdrawal_amount_overflow_and_public_identity_binding
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 12 filtered out; finished in 0.00s
+
+   Compiling tos-uno-crypto-prototype v0.1.0 (/tmp/b-d78-rust/tree/uno/crypto)
+   Compiling tos-uno-wallet-prover v0.1.0 (/tmp/b-d78-rust/tree/uno/prover)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.92s
+     Running unittests src/lib.rs (uno/prover/target/debug/deps/tos_uno_wallet_prover-6cde827cd92839a0)
+
+thread 'tests::withdrawal::withdrawal_amount_overflow_and_public_identity_binding' (3926437) panicked at src/tests/withdrawal.rs:157:5:
+assertion failed: amounts.total().is_err()
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+error: test failed, to rerun pass `--lib`
+
+exit=101

@@ -144,7 +144,7 @@ pub struct VerifyRequestV2 {
 /// Dedicated D64 input: six balance points only. The three public transfer
 /// points and P_B are constructed inside WithdrawalStatement, never supplied.
 #[repr(C)]
-pub struct WithdrawalVerifyRequestV1 {
+pub struct WithdrawalVerifyRequestV2 {
     pub abi_version: u32,
     pub limits: KernelLimits,
     pub domain: [u8; 80],
@@ -152,7 +152,6 @@ pub struct WithdrawalVerifyRequestV1 {
     pub attempt_id: [u8; 32],
     pub principal: u64,
     pub outward_fee: u64,
-    pub return_reserve: u64,
     pub operation_fee: u64,
     pub balance_points: [[u8; 32]; 6],
     pub context: *const u8,
@@ -168,11 +167,11 @@ pub struct WithdrawalVerifyRequestV1 {
 /// Borrowed host-owned buffers; all pointers must remain valid until return.
 /// This verifies a statement, not authenticated fee/configuration provenance.
 #[no_mangle]
-pub unsafe extern "C" fn uno_crypto_verify_withdrawal_v1(request: *const WithdrawalVerifyRequestV1) -> u32 {
+pub unsafe extern "C" fn uno_crypto_verify_withdrawal_v2(request: *const WithdrawalVerifyRequestV2) -> u32 {
     contain_unwind(|| {
         if !bounded_span(request, 1) { return Err(AbiStatus::UNO_CRYPTO_ARGUMENTS); }
         let r = unsafe { &*request };
-        if r.abi_version != 1 { return Err(AbiStatus::UNO_CRYPTO_ARGUMENTS); }
+        if r.abi_version != 2 { return Err(AbiStatus::UNO_CRYPTO_ARGUMENTS); }
         crate::relation::validate_limits(&r.limits)?;
         if r.context_bytes != 566 || r.commitment_count != 8 || r.response_count != 6
             || r.proof_bytes != 864 || r.proof_bytes > r.limits.max_proof_bytes {
@@ -180,9 +179,9 @@ pub unsafe extern "C" fn uno_crypto_verify_withdrawal_v1(request: *const Withdra
         }
         let amounts = crate::withdrawal_statement::WithdrawalAmounts {
             principal: r.principal, outward_fee: r.outward_fee,
-            return_reserve: r.return_reserve, operation_fee: r.operation_fee,
+            operation_fee: r.operation_fee,
         };
-        // Includes checked x+q+b before scalar conversion (D66).
+        // Includes checked x+q before scalar conversion (D66).
         let statement = crate::withdrawal_statement::WithdrawalStatement::new(
             &r.limits, r.domain, r.withdrawal_id, r.attempt_id, amounts,
             unsafe { borrowed(r.context, r.context_bytes)? }, r.balance_points)?;

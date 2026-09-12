@@ -23,7 +23,7 @@ inline std::optional<std::uint32_t> m5_live_withdrawal_limit(const std::filesyst
 inline block::WorkchainWithdrawalAccount m5_live_account(const td::Ref<vm::Cell>& root,
                                                         std::optional<std::uint32_t> limit) {
   auto slice = vm::load_cell_slice(root);
-  if (slice.prefetch_ulong(32) == block::gen::UnoV2AccountStateWithdrawals::cons_tag[0]) {
+  if (slice.prefetch_ulong(32) == block::gen::UnoV2AccountStateWithdrawalsV2::cons_tag[0]) {
     CHECK(limit);
     return block::decode_workchain_withdrawal_account(root,*limit).move_as_ok();
   }
@@ -111,7 +111,7 @@ inline void prepare_debit(const std::filesystem::path& fixture, bool finish, boo
   auto aid = block::derive_workchain_attempt_id(wid).move_as_ok();
   block::WorkchainWithdrawalInput input{wid,aid,
       {{old.address, old.auth_nonce, old.available_revision, old.key_epoch, UINT32_MAX, number("fee")},
-       {0,wallet_account(1)}, {number("principal"),number("outward_fee"),number("return_reserve"),number("fee")},
+       {0,wallet_account(1)}, {number("principal"),number("outward_fee"),number("fee")},
        {points[0],points[1]},points[2]}, {}};
   if (quote) {
     block::gen::ShardStateUnsplit::Record state;

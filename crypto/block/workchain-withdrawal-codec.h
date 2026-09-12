@@ -10,8 +10,8 @@ namespace block {
 // Explicit record inputs only. Encoding never authenticates identity, prices,
 // state provenance and never installs an obligation.
 using WorkchainWithdrawalDestination = gen::UnoV2WithdrawalDestinationV1::Record;
-using WorkchainWithdrawalAmounts = gen::UnoV2WithdrawalAmountsV1::Record;
-using WorkchainWithdrawalCosts = gen::UnoV2WithdrawalCostsV1::Record;
+using WorkchainWithdrawalAmounts = gen::UnoV2WithdrawalAmountsV2::Record;
+using WorkchainWithdrawalCosts = gen::UnoV2WithdrawalCostsV2::Record;
 using WorkchainWithdrawalTiming = gen::UnoV2WithdrawalTimingV1::Record;
 struct WorkchainWithdrawalData {
   WorkchainTransferClaims claims;
@@ -72,8 +72,7 @@ inline td::Result<std::uint64_t> sum(std::uint64_t a, std::uint64_t b) {
 // D66: only the input-link sum is checked here. V_max and secret balance
 // sufficiency remain properties of the existing proof, not extra codec gates.
 inline td::Result<std::uint64_t> workchain_withdrawal_total(const WorkchainWithdrawalAmounts& value) {
-  TRY_RESULT(part, withdrawal_codec_detail::sum(value.principal, value.outward_fee));
-  return withdrawal_codec_detail::sum(part, value.return_reserve);
+  return withdrawal_codec_detail::sum(value.principal, value.outward_fee);
 }
 inline td::Result<td::Bits256> derive_workchain_withdrawal_id(
     const gen::UnoV2OperationNetworkV1::Record& network, const WorkchainConfidentialAddress& source,
@@ -105,14 +104,14 @@ inline td::Result<td::Ref<vm::Cell>> encode_workchain_withdrawal_data(const Work
     TRY_RESULT(claims, confidential_input_detail::pack_claims(value.claims));
     TRY_RESULT(destination, pack(value.destination)); TRY_RESULT(amounts, pack(value.amounts));
     TRY_RESULT(available, pack(value.available));
-    return pack(gen::UnoV2WithdrawalDataV1::Record{value.auxiliary,
+    return pack(gen::UnoV2WithdrawalDataV2::Record{value.auxiliary,
         claims, destination, amounts, available});
   });
 }
 inline td::Result<WorkchainWithdrawalData> decode_workchain_withdrawal_data(const td::Ref<vm::Cell>& root) {
   return withdrawal_codec_detail::protect([&]() -> td::Result<WorkchainWithdrawalData> {
     using withdrawal_codec_detail::unpack;
-    TRY_RESULT(wire, unpack<gen::UnoV2WithdrawalDataV1::Record>(root));
+    TRY_RESULT(wire, unpack<gen::UnoV2WithdrawalDataV2::Record>(root));
     TRY_RESULT(claims, confidential_input_detail::unpack_claims(wire.claims));
     TRY_RESULT(destination, unpack<WorkchainWithdrawalDestination>(wire.destination));
     TRY_RESULT(amounts, unpack<WorkchainWithdrawalAmounts>(wire.amounts));
@@ -135,13 +134,13 @@ inline td::Result<td::Ref<vm::Cell>> encode_workchain_withdrawal_input(const Wor
     for (const auto& z : auth.responses) confidential_input_detail::append_word(bytes, z);
     bytes += auth.range_proof;
     TRY_RESULT(authorization, confidential_input_detail::encode_bytes(bytes, 1312));
-    return withdrawal_codec_detail::pack(gen::UnoV2TransferInputV1::Record_uno_v2_withdrawal_input_v1{
+    return withdrawal_codec_detail::pack(gen::UnoV2TransferInputV1::Record_uno_v2_withdrawal_input_v2{
         value.claimed_operation_id, value.claimed_attempt_id, data, authorization});
   });
 }
 inline td::Result<WorkchainWithdrawalInput> decode_workchain_withdrawal_input(const td::Ref<vm::Cell>& root) {
   return withdrawal_codec_detail::protect([&]() -> td::Result<WorkchainWithdrawalInput> {
-    TRY_RESULT(wire, withdrawal_codec_detail::unpack<gen::UnoV2TransferInputV1::Record_uno_v2_withdrawal_input_v1>(root));
+    TRY_RESULT(wire, withdrawal_codec_detail::unpack<gen::UnoV2TransferInputV1::Record_uno_v2_withdrawal_input_v2>(root));
     TRY_RESULT(data, decode_workchain_withdrawal_data(wire.data));
     TRY_RESULT(bytes, confidential_input_detail::decode_bytes(wire.authorization, 1312));
     td::Slice cursor(bytes);
@@ -161,7 +160,7 @@ inline td::Result<std::string> encode_workchain_withdrawal_context(const Workcha
     using withdrawal_codec_detail::pack; using withdrawal_codec_detail::unpack;
     TRY_RESULT(common, confidential_input_detail::pack_replay_context(value.common));
     TRY_RESULT(binding, pack(value.binding));
-    TRY_RESULT(root, pack(gen::UnoV2WithdrawalContextV1::Record{value.attempt_id,
+    TRY_RESULT(root, pack(gen::UnoV2WithdrawalContextV2::Record{value.attempt_id,
         value.settlement_blocks, value.withdrawal_limit, common, binding}));
     TRY_RESULT(c, unpack<gen::UnoV2ReplayContextV1::Record>(common));
     TRY_RESULT(subject, unpack<gen::UnoV2ReplaySubjectV1::Record>(c.subject));
@@ -181,10 +180,7 @@ inline td::Result<std::string> encode_workchain_withdrawal_context(const Workcha
 
 inline td::Status check_workchain_withdrawal_record(const WorkchainWithdrawalRecord& value) {
   using namespace withdrawal_codec_detail;
-  TRY_RESULT(remaining_sum, sum(value.costs.consumed_return_cost, value.costs.refundable_reserve));
-  if (remaining_sum != value.costs.original_reserve) return error("withdrawal reserve reconciliation mismatch");
-  TRY_RESULT(total, workchain_withdrawal_total({value.principal, value.costs.outward_fee_paid,
-      value.costs.original_reserve, 0})); (void)total;
+  TRY_RESULT(total, workchain_withdrawal_total({value.principal, value.costs.outward_fee_paid, 0})); (void)total;
   // Zero here denotes no protocol-income component in W, not a fee default.
   const auto& t = value.timing;
   if (t.phase > 1 || (t.phase == 0 && t.queue_removed_height != 0) ||
@@ -200,14 +196,14 @@ inline td::Result<td::Ref<vm::Cell>> encode_workchain_withdrawal_record(const Wo
     TRY_STATUS(check_workchain_withdrawal_record(value));
     TRY_RESULT(source, pack(value.source)); TRY_RESULT(destination, pack(value.destination));
     TRY_RESULT(costs, pack(value.costs)); TRY_RESULT(timing, pack(value.timing));
-    return pack(gen::UnoV2WithdrawalRecordV1::Record{value.withdrawal_id, value.attempt_id,
+    return pack(gen::UnoV2WithdrawalRecordV2::Record{value.withdrawal_id, value.attempt_id,
         value.consumed_auth_nonce, value.principal, source, destination, costs, timing});
   });
 }
 inline td::Result<WorkchainWithdrawalRecord> decode_workchain_withdrawal_record(const td::Ref<vm::Cell>& root) {
   return withdrawal_codec_detail::protect([&]() -> td::Result<WorkchainWithdrawalRecord> {
     using withdrawal_codec_detail::unpack;
-    TRY_RESULT(wire, unpack<gen::UnoV2WithdrawalRecordV1::Record>(root));
+    TRY_RESULT(wire, unpack<gen::UnoV2WithdrawalRecordV2::Record>(root));
     TRY_RESULT(source, unpack<WorkchainConfidentialAddress>(wire.source));
     TRY_RESULT(destination, unpack<WorkchainWithdrawalDestination>(wire.destination));
     TRY_RESULT(costs, unpack<WorkchainWithdrawalCosts>(wire.costs));
@@ -244,7 +240,7 @@ inline td::Result<td::Ref<vm::Cell>> encode_workchain_withdrawal_control(
       if (!entries.set_ref(record.withdrawal_id, root, vm::Dictionary::SetMode::Add))
         return withdrawal_codec_detail::error("duplicate Withdrawal identity");
     }
-    return withdrawal_codec_detail::pack(gen::UnoV2AccountControlWithdrawalsV1::Record{
+    return withdrawal_codec_detail::pack(gen::UnoV2AccountControlWithdrawalsV2::Record{
         static_cast<unsigned>(value.withdrawals.size()),
         lifecycle, std::move(entries).extract_root()});
   });
@@ -252,7 +248,7 @@ inline td::Result<td::Ref<vm::Cell>> encode_workchain_withdrawal_control(
 inline td::Result<WorkchainWithdrawalControl> decode_workchain_withdrawal_control(
     const td::Ref<vm::Cell>& root, std::uint32_t authenticated_limit) {
   return withdrawal_codec_detail::protect([&]() -> td::Result<WorkchainWithdrawalControl> {
-    TRY_RESULT(wire, withdrawal_codec_detail::unpack<gen::UnoV2AccountControlWithdrawalsV1::Record>(root));
+    TRY_RESULT(wire, withdrawal_codec_detail::unpack<gen::UnoV2AccountControlWithdrawalsV2::Record>(root));
     if (wire.withdrawal_count > authenticated_limit)
       return withdrawal_codec_detail::error("Withdrawal count exceeds authenticated limit");
     TRY_RESULT(lifecycle, decode_workchain_account_lifecycle(wire.lifecycle));

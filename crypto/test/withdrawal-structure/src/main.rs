@@ -63,7 +63,7 @@ fn check(source: &str) -> Result<(), String> {
     if api != expected_api { return Err(format!("statement interface changed: {api:?}")); }
     let expected_fields = set(&[
         "WithdrawalAmounts.principal:u64", "WithdrawalAmounts.outward_fee:u64",
-        "WithdrawalAmounts.return_reserve:u64", "WithdrawalAmounts.operation_fee:u64",
+        "WithdrawalAmounts.operation_fee:u64",
         "WithdrawalStatement.domain:[u8 ; 80]", "WithdrawalStatement.fee:u64",
         "WithdrawalStatement.context:Vec < u8 >", "WithdrawalStatement.points:[[u8 ; 32] ; 10]",
     ]);

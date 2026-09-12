@@ -12,9 +12,9 @@ fn run_case_context(mutation: Option<usize>, context: &[u8], check_abi: bool) {
     let domain = [42; 80];
     let withdrawal = [7; 32];
     let attempt = [8; 32];
-    let amounts = WithdrawalAmounts { principal: 137, outward_fee: 17, return_reserve: 23, operation_fee: 11 };
+    let amounts = WithdrawalAmounts { principal: 137, outward_fee: 17, operation_fee: 11 };
     let total = amounts.total().expect("checked total");
-    assert_eq!(total, 177);
+    assert_eq!(total, 154);
     let gens = PedersenGens::default();
     let secret = Scalar::from(101u64);
     let p = secret.invert() * gens.B_blinding;
@@ -33,6 +33,7 @@ fn run_case_context(mutation: Option<usize>, context: &[u8], check_abi: bool) {
         (rho * p).compress().to_bytes(), gens.commit(Scalar::from(old), t).compress().to_bytes()];
     let rebuilt = WithdrawalStatement::new(&limits, domain, withdrawal, attempt, amounts,
         context, balance_points).expect("statement");
+    if check_abi { println!("D78_HOST_CONTEXT_BYTES={} D78_STATEMENT_CONTEXT_BYTES={}", context.len(), rebuilt.context().len()); }
     let mut points = *rebuilt.points();
     if mutation == Some(6) { points[6] = gens.commit(Scalar::from(v), r).compress().to_bytes(); }
     let statement = Statement { kind: UNO_RELATION_SEND, limits: &limits, domain: rebuilt.domain(),
@@ -55,30 +56,57 @@ fn run_case_context(mutation: Option<usize>, context: &[u8], check_abi: bool) {
     }
     assert!(checked.is_ok());
     if check_abi {
-        use tos_uno_crypto_prototype::ffi::{WithdrawalVerifyRequestV1, uno_crypto_verify_withdrawal_v1};
-        let mut request = WithdrawalVerifyRequestV1 {
-            abi_version: 1, limits, domain, withdrawal_id: withdrawal, attempt_id: attempt,
+        // D78 vectors live beside, never overwrite, prelock evidence.
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../crypto/test/workchain-m5-d78-vectors/no-prelock-v2");
+        let auth: Vec<u8> = proof.commitments.iter().chain(proof.responses.iter())
+            .flat_map(|x| x.iter().copied()).chain(proof.range_proof.iter().copied()).collect();
+        let point_bytes: Vec<u8> = rebuilt.points().iter().flat_map(|p| p.iter().copied()).collect();
+        if std::env::var_os("UNO_D78_CREATE_VECTORS").is_some() {
+            use std::io::Write;
+            for (name, bytes) in [("statement-context.bin", rebuilt.context()),
+                    ("points.bin", point_bytes.as_slice()), ("authorization.bin", auth.as_slice())] {
+                let mut file = std::fs::OpenOptions::new().write(true).create_new(true).open(dir.join(name))
+                    .expect("new vector only; never overwrite an existing vector");
+                file.write_all(bytes).expect("write new vector");
+            }
+        }
+        let frozen = std::fs::read(dir.join("authorization.bin")).expect("committed D78 proof vector");
+        assert_eq!(frozen.len(), 1312);
+        assert_eq!(std::fs::read(dir.join("statement-context.bin")).expect("context"), rebuilt.context());
+        assert_eq!(std::fs::read(dir.join("points.bin")).expect("points"), point_bytes);
+        let commitments: Vec<[u8; 32]> = frozen[..256].chunks_exact(32).map(|x| x.try_into().expect("point")).collect();
+        let responses: Vec<[u8; 32]> = frozen[256..448].chunks_exact(32).map(|x| x.try_into().expect("scalar")).collect();
+        assert!(rebuilt.verify(&limits, &commitments, &responses, &frozen[448..]).is_ok());
+    }
+    if check_abi {
+        use tos_uno_crypto_prototype::ffi::{WithdrawalVerifyRequestV2, uno_crypto_verify_withdrawal_v2};
+        let mut request = WithdrawalVerifyRequestV2 {
+            abi_version: 2, limits, domain, withdrawal_id: withdrawal, attempt_id: attempt,
             principal: amounts.principal, outward_fee: amounts.outward_fee,
-            return_reserve: amounts.return_reserve, operation_fee: amounts.operation_fee,
+            operation_fee: amounts.operation_fee,
             balance_points, context: context.as_ptr(), context_bytes: context.len(),
             commitments: proof.commitments.as_ptr(), commitment_count: proof.commitments.len(),
             responses: proof.responses.as_ptr(), response_count: proof.responses.len(),
             proof: proof.range_proof.as_ptr(), proof_bytes: proof.range_proof.len(),
         };
-        assert_eq!(unsafe { uno_crypto_verify_withdrawal_v1(&request) }, 0, "real proof through dedicated ABI");
+        assert_eq!(unsafe { uno_crypto_verify_withdrawal_v2(&request) }, 0, "real proof through dedicated ABI");
         request.operation_fee = request.operation_fee.checked_add(1).expect("fee mutation fits");
-        assert_eq!(unsafe { uno_crypto_verify_withdrawal_v1(&request) }, 3, "changed statement must fail verification, not decoding");
+        assert_eq!(unsafe { uno_crypto_verify_withdrawal_v2(&request) }, 3, "changed statement must fail verification, not decoding");
+        request.abi_version = 1;
+        assert_eq!(unsafe { uno_crypto_verify_withdrawal_v2(&request) }, 1, "old prelock ABI version rejected before reading proof buffers");
+        request.abi_version = 2;
         request.context_bytes = 565;
-        assert_eq!(unsafe { uno_crypto_verify_withdrawal_v1(&request) }, 2, "noncanonical context length");
+        assert_eq!(unsafe { uno_crypto_verify_withdrawal_v2(&request) }, 2, "noncanonical context length");
     }
     let split = WithdrawalAmounts { outward_fee: amounts.outward_fee.checked_add(1).expect("fee increment"),
-        return_reserve: amounts.return_reserve.checked_sub(1).expect("reserve decrement"), ..amounts };
+        principal: amounts.principal.checked_sub(1).expect("principal decrement"), ..amounts };
     assert_eq!(split.total().expect("same total"), total);
     let changed = WithdrawalStatement::new(&limits, domain, withdrawal, attempt, split,
         context, balance_points).expect("new split");
     assert_eq!(changed.points(), rebuilt.points());
     assert_eq!(changed.verify(&limits, &proof.commitments, &proof.responses, &proof.range_proof),
-        Err(AbiStatus::UNO_CRYPTO_VERIFY), "same total must not erase the fee/reserve split from the challenge");
+        Err(AbiStatus::UNO_CRYPTO_VERIFY), "same total must not erase the principal/fee split from the challenge");
     // Corrupt each generated point after construction, retaining an otherwise
     // valid proof. This tests wrong-point rejection, not deletion of a check.
     for index in [6, 7, 8] {
@@ -112,7 +140,7 @@ fn withdrawal_public_bound_is_not_a_constructor_gate() {
         max_collect: 8, max_context_bytes: 1024, max_proof_bytes: 4096 };
     let p = PedersenGens::default().B_blinding.compress().to_bytes();
     let amounts = WithdrawalAmounts { principal: 1001, outward_fee: 0,
-        return_reserve: 0, operation_fee: 0 };
+        operation_fee: 0 };
     assert!(WithdrawalStatement::new(&limits, [42; 80], [7; 32], [8; 32],
         amounts, b"D66 constructor boundary", [p; 6]).is_ok(),
         "D66: the existing range proof, not construction, enforces T <= V_max");
@@ -125,10 +153,10 @@ fn withdrawal_smaller_debit_raw_send_passes_specialization_rejects() { run_case(
 
 #[test]
 fn withdrawal_amount_overflow_and_public_identity_binding() {
-    let mut amounts = WithdrawalAmounts { principal: u64::MAX, outward_fee: 1, return_reserve: 0, operation_fee: 0 };
+    let mut amounts = WithdrawalAmounts { principal: u64::MAX, outward_fee: 1, operation_fee: 0 };
     assert!(amounts.total().is_err());
     amounts.principal = 1;
-    amounts.return_reserve = u64::MAX;
+    amounts.outward_fee = u64::MAX;
     assert!(amounts.total().is_err());
     amounts.principal = 0;
     assert!(amounts.total().is_err());

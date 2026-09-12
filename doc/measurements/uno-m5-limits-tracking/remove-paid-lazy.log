@@ -1,0 +1,16 @@
+...F.......
+======================================================================
+FAIL: test_each_bucket_obligation_is_independently_required (__main__.Readiness.test_each_bucket_obligation_is_independently_required) (name='test-workchain-m5-remaining-paid-lazy')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/tmpvcoa93rd/workchain-m5-remaining-handoff-test.py", line 49, in test_each_bucket_obligation_is_independently_required
+    self.assertIn(name, handoff.TESTS)
+    ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'test-workchain-m5-remaining-paid-lazy' not found in ('test-workchain-m5-remaining-phase-transition', 'test-workchain-m5-remaining-late-return', 'test-workchain-m5-remaining-validator-unknown', 'test-workchain-m5-remaining-source-classification', 'test-workchain-m5-remaining-integrated-regression', 'test-workchain-m5-remaining-activation-freeze')
+
+----------------------------------------------------------------------
+Ran 11 tests in 0.008s
+
+FAILED (failures=1)
+
+exit=1

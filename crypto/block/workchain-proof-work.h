@@ -118,15 +118,18 @@ inline td::Result<WorkchainProofOperations> workchain_proof_operations_v4(
   return result;
 }
 
+inline constexpr char kWorkchainWithdrawalStatementDomainV2[] = "uno-v2/withdrawal-statement/v2";
+
 // A typed boundary, not an arbitrary Status whose name determines provenance.
 inline td::Result<WorkchainProofOperations> workchain_proof_operations_v4(
-    const UnoCryptoWithdrawalVerifyRequestV1& request) {
-  if (request.abi_version != 1 || request.context_bytes != 566)
+    const UnoCryptoWithdrawalVerifyRequestV2& request) {
+  if (request.abi_version != 2 || request.context_bytes != 566)
     return td::Status::Error(-7201, "inconsistent Withdrawal verification shape");
   UnoCryptoVerifyRequestV2 send{};
   send.abi_version = 2; send.relation = UNO_RELATION_SEND; send.limits = request.limits;
-  // Rust statement tag + two IDs + four u64 fields + canonical host context.
-  send.context_bytes = (sizeof("uno-v2/withdrawal-statement/v1") - 1) + 96 + 566;
+  // D78: Rust statement tag + two IDs + three u64 fields. The independent
+  // canonical host context remains 566 bytes; f stays separate from T=x+q.
+  send.context_bytes = (sizeof(kWorkchainWithdrawalStatementDomainV2) - 1) + 64 + 3 * sizeof(std::uint64_t) + 566;
   send.point_count = 10; send.commitment_count = request.commitment_count;
   send.response_count = request.response_count; send.proof_bytes = request.proof_bytes;
   TRY_RESULT(work, workchain_proof_operations_v4(send));
@@ -221,7 +224,7 @@ class WorkchainProofVerifier {
   td::Status verify(const UnoCryptoVerifyRequestV2& request) {
     return verify_request(request, "cryptographic proof rejected");
   }
-  td::Status verify(const UnoCryptoWithdrawalVerifyRequestV1& request) {
+  td::Status verify(const UnoCryptoWithdrawalVerifyRequestV2& request) {
     return verify_request(request, "Withdrawal cryptographic proof rejected");
   }
   td::Status verify(const UnoCryptoKeyPossessionRequestV2& request) {
@@ -296,7 +299,7 @@ class WorkchainProofVerifier {
   friend struct WorkchainProofTestAccess;
   explicit WorkchainProofVerifier(std::uint64_t declared) : declared_(declared) {}
   static WorkchainProofVerdict run_backend(const UnoCryptoVerifyRequestV2& request);
-  static WorkchainProofVerdict run_backend(const UnoCryptoWithdrawalVerifyRequestV1& request);
+  static WorkchainProofVerdict run_backend(const UnoCryptoWithdrawalVerifyRequestV2& request);
   static WorkchainProofVerdict run_backend(const UnoCryptoKeyPossessionRequestV2& request);
   static WorkchainProofVerdict run_backend(const UnoCryptoClosurePossessionRequestV2& request);
   static WorkchainProofVerdict run_system_backend(const UnoCryptoSystemEncryptionRequest& request,

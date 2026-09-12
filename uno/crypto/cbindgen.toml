@@ -14,7 +14,7 @@ item_types = ["constants", "enums", "structs", "functions"]
 
 [export.rename]
 VerifyRequestV2 = "UnoCryptoVerifyRequestV2"
-WithdrawalVerifyRequestV1 = "UnoCryptoWithdrawalVerifyRequestV1"
+WithdrawalVerifyRequestV2 = "UnoCryptoWithdrawalVerifyRequestV2"
 AbiStatus = "UnoCryptoStatus"
 KernelLimits = "UnoCryptoLimits"
 SystemEncryptionRequest = "UnoCryptoSystemEncryptionRequest"

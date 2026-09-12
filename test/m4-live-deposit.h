@@ -385,7 +385,6 @@ inline void assert_m4_block_backing(const std::filesystem::path& fixture, const 
       CurrencyCollection next;
       CHECK(CurrencyCollection::add(p,CurrencyCollection(workchain_unsigned_fee(record.principal)),next)); p=next;
       CHECK(CurrencyCollection::add(w,CurrencyCollection(workchain_unsigned_fee(record.principal)),next)); w=next;
-      CHECK(CurrencyCollection::add(w,CurrencyCollection(workchain_unsigned_fee(record.costs.original_reserve)),next)); w=next;
     }
   }
   CurrencyCollection lhs, rhs;
@@ -419,8 +418,6 @@ inline void assert_m4_block_backing(const std::filesystem::path& fixture, const 
           CHECK(CurrencyCollection::add(fee_reserve,CurrencyCollection(workchain_unsigned_fee(amount)),next)); fee_reserve=next;
           CHECK(CurrencyCollection::add(fee_liability,CurrencyCollection(workchain_unsigned_fee(amount)),next)); fee_liability=next;
         }
-        CHECK(CurrencyCollection::add(fee_liability,CurrencyCollection(workchain_unsigned_fee(
-            withdrawal->data.amounts.return_reserve)),next)); fee_liability=next;
       }
       check_m4_fee_pair(old_native.balance, fee_reserve, old_liabilities, fee_liability, fee).ensure();
       CurrencyCollection corrupted;

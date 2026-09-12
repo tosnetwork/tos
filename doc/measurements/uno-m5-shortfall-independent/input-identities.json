@@ -1,0 +1,13 @@
+{
+  "reviewed_commit": "82b53c675a9a2abc731637aa6665b7ec131d38a7",
+  "fixture": "/tmp/uno-m3-live-6igzl00b",
+  "artifacts": {
+    "zerostate.boc": "99fff079e913c2d221f1dcd294ce2ad0b7c9c14049e2d1b579158ac56db325a4",
+    "debit-authenticated-state.boc": "72a71c12baea8096d089ebeb8c3a416df49d5db55025d7269225537557918d99",
+    "accepted-state.boc": "1b598cccc95e0183985517a9bff44f4b2aa379f8a277f441eef5508c3e542bec",
+    "accepted-block.boc": "0e131f4bbf4d17f7e0a27d9074a9b6b21bc8fe7860b9fd70290a712ff8e3c9a4",
+    "failed-bounce.boc": "39fc5473edae6cae82ec4a710b4a546788b3d53e1ec3758877d63b151f73f5dd",
+    "prepare-payout.boc": "60c52330f7186d4b3665584a539e6f02d99715fbefce82e51cc4dec1d84f90dc",
+    "payout-recipient.candidate": "32f846ee6b3ee5d26cfc734612ea40ab9599d3c31e5064362c88a4800f0281b3"
+  }
+}

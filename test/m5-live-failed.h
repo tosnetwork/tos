@@ -56,9 +56,8 @@ inline void assert_m5_failed(const std::filesystem::path& fixture,
   const auto recovered = m5_recorded_return(step.block);
   const auto components = m5_live_return_fee_components(fixture);
   const CurrencyCollection fee(workchain_unsigned_fee(components.total));
-  CurrencyCollection gross, amount;
-  CHECK(CurrencyCollection::add(recovered,CurrencyCollection(workchain_unsigned_fee(record.costs.original_reserve)),gross));
-  CHECK(CurrencyCollection::sub(gross,fee,amount));
+  CurrencyCollection amount;
+  CHECK(CurrencyCollection::sub(recovered,fee,amount));
   CHECK(CurrencyCollection(workchain_unsigned_fee(receipt.amount)) == amount);
   m3_test::assert_balance(m3_test::decrypt(receipt.ciphertext,test_secret(selector.owner.account),2000000000).move_as_ok(),
                          receipt.amount).ensure();
@@ -89,20 +88,8 @@ inline void assert_m5_failed(const std::filesystem::path& fixture,
   CurrencyCollection return_loss, actual_cost;
   CHECK(CurrencyCollection::sub(principal,recovered,return_loss));
   CHECK(CurrencyCollection::add(return_loss,fee,actual_cost));
-  const CurrencyCollection reserve(workchain_unsigned_fee(record.costs.original_reserve));
-  if (actual_cost >= reserve && actual_cost != reserve) {
-    // Observe a positive shortfall after accepted Native publication. The
-    // terminal W is gone; these are event values, not persistent debt fields.
-    CHECK(!amount.is_zero() && principal >= amount && amount != principal);
-    CurrencyCollection shortage;
-    CHECK(CurrencyCollection::sub(principal,amount,shortage));
-    CHECK(after.control.withdrawals.empty());
-    std::cout << "FAILED_SHORTFALL_ACCEPTED credit=" << amount.tomis
-              << " consumed_reserve=" << reserve.tomis << " refundable_reserve=0"
-              << " shortage_event_only=" << shortage.tomis
-              << " operator_slot_income=" << components.state
-              << " validator_compute_income=" << components.compute << std::endl;
-  }
+  // D78: return loss is an observation, not a prelock-funded debt.
+  CHECK(!amount.is_zero());
   std::cout << "FAILED_AUTHENTICATED inbound=" << selector.inbound_message.to_hex()
             << " phase=0 recovered=" << recovered.tomis << " receipt=" << receipt.amount
             << " sequence=" << *old_coordinator.deposit_sequence << "->" << sequence

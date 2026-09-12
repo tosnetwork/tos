@@ -1,4 +1,9 @@
 {
+  "crypto/test/test-workchain-withdrawal-codec.cpp": {
+    "symbols": ["uno_crypto_system_encrypt_v2", "uno_crypto_system_verify_v2"],
+    "sha256": "225303d3eb01a5937ff9c72cdcd0b2448c224b44ac16e1d1565130e901c0e319",
+    "disposition": "Independent codec tests call the D69 ABI directly to verify actual encoded origins and changed-sequence rejection. Not a production caller and not a substitute for host metering."
+  },
   "crypto/block/workchain-proof-backend.cpp": {
     "symbols": [
       "uno_crypto_system_encrypt_v1",
@@ -7,10 +12,11 @@
       "uno_crypto_system_verify_v2",
       "uno_crypto_verify_closure_possession_v2",
       "uno_crypto_verify_key_possession_v2",
-      "uno_crypto_verify_v2"
+      "uno_crypto_verify_v2",
+      "uno_crypto_verify_withdrawal_v2"
     ],
-    "sha256": "f6139f9723b9b575d65b45e3f46f0d93e249ed8cd1421f7df41f0f5e77090e40",
-    "disposition": "Seven private WorkchainProofVerifier ABI boundaries, all reached after the same precharge. D69 v2 system generation/reconstruction is metered before Failed host issuance integration; v1 Deposit remains unchanged. This inventory is not a completed review or live acceptance claim."
+    "sha256": "92fd40dcc168f3c2e683524f21367c29a93edbdcedc4cf35ad190392726a4c01",
+    "disposition": "Private WorkchainProofVerifier ABI boundaries after precharge, including D78 Withdrawal v2 with no prelock and separately metered 684-byte statement wrapper. D69 system origins retain separate metering; v1 Deposit unchanged. This inventory is not a live acceptance claim."
   },
   "crypto/test/test-workchain-proof-backend.cpp": {
     "symbols": [
@@ -100,9 +106,9 @@
       "uno_crypto_verify_key_possession_v1",
       "uno_crypto_verify_key_possession_v2",
       "uno_crypto_verify_v2",
-      "uno_crypto_verify_withdrawal_v1"
+      "uno_crypto_verify_withdrawal_v2"
     ],
-    "sha256": "a0d2fd3351780622f6c6b33591b8ddd094d4092974dab6466cc8b3427348a9bd",
+    "sha256": "aee2d2ae510db7bd92a1a1151894bf4e9d0252b19c8002dc39fa609b21fcc48e",
     "disposition": "Public ABI declarations only, no calls. System encryption and verification may only be reached through the metered host backend."
   },
   "uno/crypto/include/uno_crypto_v0_retired.h": {
@@ -132,9 +138,9 @@
       "uno_crypto_verify_key_possession_v1",
       "uno_crypto_verify_key_possession_v2",
       "uno_crypto_verify_v2",
-      "uno_crypto_verify_withdrawal_v1"
+      "uno_crypto_verify_withdrawal_v2"
     ],
-    "sha256": "caed9a15f352fd112d406e2925bc7d08bebe13957b09c0ba6f68864a132b9f69",
+    "sha256": "314390c873d42bd630f8a6e47093980917dc4fd2d738eee0dfb8cf025885f49a",
     "disposition": "Rust ABI exports and rejection-only retired stubs, not host callers. Meter belongs to the node-side caller."
   },
   "uno/crypto/src/key_possession.rs": {
@@ -148,9 +154,11 @@
   "uno/crypto/src/system_encryption.rs": {
     "symbols": [
       "uno_crypto_system_encrypt_v1",
-      "uno_crypto_system_verify_v1"
+      "uno_crypto_system_encrypt_v2",
+      "uno_crypto_system_verify_v1",
+      "uno_crypto_system_verify_v2"
     ],
-    "sha256": "033e705b65f659acab27bfc619ad6e3e758e4200cd8c6b826bf920ff20922e93",
+    "sha256": "45caee36b9352711269f72bc50ec695c847bd31e712dc885ffe80cbbc033e3cf",
     "disposition": "Direct system encrypt/verify calls occur only in cfg(test); tests cover both construction and verification, not a live node path."
   },
   "uno/crypto/src/tests.rs": {
@@ -210,8 +218,8 @@
     "disposition": "Private cfg(test) prover tests call D33 ABI directly to test existing COLLECT algebra and error layers, including mixed SEND/system inputs. No production caller, Native admission or persisted pending removal."
   },
   "uno/prover/src/tests/withdrawal.rs": {
-    "symbols": ["uno_crypto_verify_withdrawal_v1"],
-    "sha256": "d3dd4a1f0b1bec3ebfa65b47be066445d31255948da33483ceb4ddfd8c0df739",
+    "symbols": ["uno_crypto_verify_withdrawal_v2"],
+    "sha256": "b97f2b161cc76bfd6fde67eeb9db4c85b79a417da672398b606ef7577b3d6dc5",
     "disposition": "Private prover test exercises the dedicated D64 ABI with a real proof, changed-fee VERIFY rejection and malformed-context DECODE rejection. No node caller or authenticated Native publication."
   },
   "uno/prover/examples/m3-vectors.rs": {
