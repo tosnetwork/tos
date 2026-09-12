@@ -18,8 +18,11 @@ struct WorkchainAccountSnapshot {
 
 class WorkchainAccountReadView {
  public:
-  explicit WorkchainAccountReadView(std::vector<WorkchainAccountSnapshot> snapshots)
-      : snapshots_(std::move(snapshots)) {}
+  explicit WorkchainAccountReadView(std::vector<WorkchainAccountSnapshot> snapshots,
+      td::Ref<vm::Cell> previous_state = {}, NativeStateReadMeter* meter = nullptr,
+      std::uint64_t queue_visits = 0)
+      : snapshots_(std::move(snapshots)), previous_state_(std::move(previous_state)),
+        meter_(meter), queue_visits_(queue_visits) {}
   WorkchainAccountReadView(const WorkchainAccountReadView&) = delete;
   WorkchainAccountReadView& operator=(const WorkchainAccountReadView&) = delete;
 
@@ -35,9 +38,124 @@ class WorkchainAccountReadView {
   }
   td::Status status() const { return failure_.clone(); }
 
+  // D73(b) only: absence in this authenticated predecessor, not evidence that
+  // a payout ever existed. The caller must retain prepare's atomic-enqueue
+  // invariant and must not query this to reinterpret a phase-0 bounce.
+  // No historical search and no caller-selected height or local read allowance.
+  td::Result<std::optional<std::uint32_t>> payout_absent(
+      const td::Bits256& custody, std::uint64_t created_lt, std::uint32_t opened_height) {
+    if (failure_.is_error()) return failure_.clone();
+    auto run = [&]() -> td::Result<std::optional<std::uint32_t>> {
+      if (!queue_loaded_) {
+        if (previous_state_.is_null() || !meter_ || !queue_visits_)
+          return td::Status::Error(-7201, "authenticated outbound queue context unavailable");
+        auto root = meter_->load_ordinary(previous_state_);
+        if (std::holds_alternative<NativeClosureLimit>(root))
+          return td::Status::Error(-7200, "outbound observation exceeds shared state budget");
+        auto* slice = std::get_if<td::Ref<vm::CellSlice>>(&root);
+        gen::ShardStateUnsplit::Record state;
+        if (!slice || !tlb::csr_unpack(*slice, state))
+          return td::Status::Error(-7201, "authenticated outbound predecessor unavailable");
+        gen::ShardIdent::Record shard;
+        if (!tlb::csr_unpack(state.shard_id, shard))
+          return td::Status::Error(-7201, "authenticated outbound shard identity unavailable");
+        queue_height_ = state.seq_no;
+        // Admit the queue closure before dictionary iteration, using the SAME
+        // cells/bits meter as old-account reads. Iterative hash dedup bounds
+        // memory; a separate authenticated visit bound also caps shared DAGs.
+        std::set<vm::CellHash> seen;
+        std::vector<td::Ref<vm::Cell>> pending{state.out_msg_queue_info};
+        while (!pending.empty()) {
+          auto cell = std::move(pending.back()); pending.pop_back();
+          if (cell.is_null()) return td::Status::Error(-7201, "authenticated queue cell missing");
+          if (!seen.insert(cell->get_hash()).second) continue;
+          auto loaded = meter_->load_encoded(cell);
+          if (std::holds_alternative<NativeClosureLimit>(loaded))
+            return td::Status::Error(-7200, "outbound observation exceeds shared state budget");
+          auto* node = std::get_if<td::Ref<vm::CellSlice>>(&loaded);
+          if (!node) return td::Status::Error(-7201, "authenticated queue closure unavailable");
+          for (unsigned i = (*node)->size_refs(); i > 0; --i)
+            pending.push_back((*node)->prefetch_ref(i - 1));
+        }
+        gen::OutMsgQueueInfo::Record queue;
+        if (!tlb::unpack_cell(state.out_msg_queue_info, queue))
+          return td::Status::Error(-7201, "authenticated outbound queue malformed");
+        std::uint64_t visits = 0;
+        bool over_budget = false;
+        auto visit = [&]() {
+          if (visits >= queue_visits_) { over_budget = true; return false; }
+          ++visits; return true;
+        };
+        auto message = [&](td::Ref<vm::CellSlice> leaf) {
+          if (!visit()) return false;
+          gen::EnqueuedMsg::Record enqueued;
+          tlb::MsgEnvelope::Record_std envelope;
+          gen::Message::Record msg;
+          gen::CommonMsgInfo::Record_int_msg_info info;
+          tos::WorkchainId wc; td::Bits256 source;
+          if (!tlb::csr_unpack(leaf, enqueued) || !tlb::unpack_cell(enqueued.out_msg, envelope) ||
+              !tlb::type_unpack_cell(envelope.msg, gen::t_Message_Any, msg) ||
+              !tlb::csr_unpack(msg.info, info)) return false;
+          // A valid non-256-bit foreign source cannot be our prepared custody
+          // sender; it must not make an unrelated observation unavailable.
+          if (!tlb::t_MsgAddressInt.extract_std_address(info.src, wc, source)) return true;
+          if (wc == shard.workchain_id) queued_.emplace(source, info.created_lt);
+          return true;
+        };
+        vm::AugmentedDictionary outgoing(queue.out_queue, 352, tlb::aug_OutMsgQueue);
+        bool valid = outgoing.check_for_each_extra([&](td::Ref<vm::CellSlice> leaf,
+            td::Ref<vm::CellSlice>, td::ConstBitPtr, int) { return message(std::move(leaf)); });
+        // Deferred messages are still queued. Ignoring this dictionary would
+        // turn postponement into false absence and prematurely start a window.
+        if (valid && queue.extra->prefetch_ulong(1)) {
+          gen::OutMsgQueueExtra::Record extra;
+          auto tail = queue.extra; tail.write().advance(1);
+          if (!tlb::csr_unpack(tail, extra)) valid = false;
+          else {
+            vm::AugmentedDictionary dispatch(extra.dispatch_queue, 256, tlb::aug_DispatchQueue);
+            valid = dispatch.check_for_each_extra([&](td::Ref<vm::CellSlice> leaf,
+                td::Ref<vm::CellSlice>, td::ConstBitPtr, int) {
+              if (!visit()) return false;
+              gen::AccountDispatchQueue::Record account_queue;
+              if (!tlb::csr_unpack(leaf, account_queue)) return false;
+              vm::Dictionary messages(account_queue.messages, 64);
+              return messages.check_for_each([&](td::Ref<vm::CellSlice> value,
+                  td::ConstBitPtr, int) { return message(std::move(value)); });
+            });
+          }
+        }
+        if (!valid) return td::Status::Error(over_budget ? -7200 : -7201,
+            td::Slice(over_budget ? "outbound queue visit budget exceeded" : "authenticated queue traversal unavailable"));
+        queue_loaded_ = true;
+      }
+      if (queue_height_ <= opened_height || queued_.count({custody, created_lt}))
+        return std::optional<std::uint32_t>{};
+      return std::optional<std::uint32_t>{queue_height_};
+    };
+    try {
+      auto result = run();
+      if (result.is_error()) failure_ = result.error().clone();
+      return result;
+    } catch (const vm::VmError&) { failure_ = td::Status::Error(-7201, "authenticated queue VM read unavailable"); }
+    catch (const vm::VmVirtError&) { failure_ = td::Status::Error(-7201, "authenticated queue proof unavailable"); }
+    catch (const vm::VmNoGas&) { failure_ = td::Status::Error(-7201, "authenticated queue Native execution unavailable"); }
+    catch (const vm::VmFatal&) { failure_ = td::Status::Error(-7201, "authenticated queue Native fault"); }
+    catch (const vm::CellBuilder::CellCreateError&) { failure_ = td::Status::Error(-7201, "queue observation construction unavailable"); }
+    catch (const vm::CellBuilder::CellWriteError&) { failure_ = td::Status::Error(-7201, "queue observation construction unavailable"); }
+    catch (const std::bad_alloc&) { failure_ = td::Status::Error(-7201, "queue observation allocation unavailable"); }
+    catch (const std::length_error&) { failure_ = td::Status::Error(-7201, "queue observation allocation length unavailable"); }
+    return failure_.clone();
+  }
+
  private:
   const std::vector<WorkchainAccountSnapshot> snapshots_;
   td::Status failure_;
+  td::Ref<vm::Cell> previous_state_;
+  NativeStateReadMeter* meter_;
+  const std::uint64_t queue_visits_;
+  bool queue_loaded_{false};
+  std::uint32_t queue_height_{0};
+  std::set<std::pair<td::Bits256, std::uint64_t>> queued_;
 };
 
 struct WorkchainAccountUpdate {
@@ -131,7 +249,7 @@ namespace account_engine_detail {
 template <class Input>
 td::Result<ExecutedWorkchainAccountBatch> execute(
     const WorkchainAccountEngine&, td::Ref<vm::Cell>, const Input&,
-    const WorkchainAccountDeclarations&, std::uint64_t, std::uint64_t);
+    const WorkchainAccountDeclarations&, std::uint64_t, std::uint64_t, td::Ref<vm::Cell> = {});
 }
 
 // Admission of declared proof work, not commitment, inbox authentication or
@@ -154,7 +272,7 @@ class ProofAdmittedBatchInput {
   template <class Input>
   friend td::Result<ExecutedWorkchainAccountBatch> account_engine_detail::execute(
       const WorkchainAccountEngine&, td::Ref<vm::Cell>, const Input&,
-      const WorkchainAccountDeclarations&, std::uint64_t, std::uint64_t);
+      const WorkchainAccountDeclarations&, std::uint64_t, std::uint64_t, td::Ref<vm::Cell>);
   WorkchainProofVerifier make_verifier() const { return WorkchainProofVerifier(declared_proof_work_); }
   ProofAdmittedBatchInput(const WorkchainAccountEngine& engine, AdmittedBatchInput input,
                           std::uint64_t declared_proof_work)
@@ -220,7 +338,8 @@ inline td::Result<ExecutedWorkchainAccountBatch> execute(
     const WorkchainAccountEngine& engine, td::Ref<vm::Cell> old_accounts,
     const Input& source,
     const WorkchainAccountDeclarations& declarations,
-    std::uint64_t max_reads, std::uint64_t max_writes) {
+    std::uint64_t max_reads, std::uint64_t max_writes,
+    td::Ref<vm::Cell> previous_state) {
   static_assert(std::is_same_v<Input, ProofAdmittedBatchInput> || std::is_same_v<Input, td::Ref<vm::Cell>>);
   td::Ref<vm::Cell> input = [&]() {
     if constexpr (std::is_same_v<Input, ProofAdmittedBatchInput>) return source.root();
@@ -349,7 +468,8 @@ inline td::Result<ExecutedWorkchainAccountBatch> execute(
                              td::Slice(cause));
   };
   TRY_RESULT(snapshots, acquire_with_boundary());
-  WorkchainAccountReadView view(std::move(snapshots));
+  WorkchainAccountReadView view(std::move(snapshots), std::move(previous_state),
+      state_meter ? &*state_meter : nullptr, state_policy ? state_policy->max_cells : 0);
   auto invoke = [&]() -> td::Result<WorkchainAccountEffects> {
     if constexpr (std::is_same_v<Input, ProofAdmittedBatchInput>) {
       if (source.policy().requires_proof_operation_meter()) {

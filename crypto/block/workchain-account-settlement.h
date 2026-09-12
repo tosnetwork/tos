@@ -518,7 +518,7 @@ inline td::Result<WorkchainAccountSettlement> execute(
     const td::Bits256& custody, const td::Bits256& coordinator, td::RefInt256 fee_budget,
     int extra_validation_cells,
     const SerializeConfig& cfg, const ActionPhaseConfig& message_cfg,
-    const WorkchainDisposalEntryContext* disposal) {
+    const WorkchainDisposalEntryContext* disposal, td::Ref<vm::Cell> previous_state = {}) {
   static_assert(std::is_same_v<Admission, AdmittedInput> || std::is_same_v<Admission, ProofAdmittedBatchInput>);
   if constexpr (std::is_same_v<Admission, ProofAdmittedBatchInput>) {
     if (!admitted.inspected_by(engine)) {
@@ -594,7 +594,7 @@ inline td::Result<WorkchainAccountSettlement> execute(
         return td::Status::Error("settlement inbox differs from admitted input");
       }
       return account_engine_detail::execute(engine, old_accounts, admitted, declarations,
-                                             max_reads, max_writes);
+                                             max_reads, max_writes, previous_state);
     } else {
       return execute_workchain_account_engine(engine, old_accounts, identity, admitted, declarations,
           inbox.envelopes, max_reads, max_writes, max_inbound);
@@ -653,14 +653,27 @@ inline td::Result<WorkchainAccountSettlement> execute_and_settle_workchain_accou
     const WorkchainHostIdentity& identity, const ProofAdmittedBatchInput& admitted,
     const MaterializedNativeCells& native_cells,
     const td::Bits256& custody, const td::Bits256& coordinator, td::RefInt256 fee_budget,
-    int extra_validation_cells, const SerializeConfig& cfg, const ActionPhaseConfig& message_cfg) {
+    int extra_validation_cells, const SerializeConfig& cfg, const ActionPhaseConfig& message_cfg,
+    td::Ref<vm::Cell> previous_state = {}) {
   TRY_STATUS(account_settlement_detail::validate_batch_context(admitted, old_accounts, identity,
       custody, coordinator, extra_validation_cells, cfg, message_cfg, nullptr));
+  if (previous_state.not_null()) {
+    gen::ShardStateUnsplit::Record state;
+    // Both Native callers supply their own authenticated predecessor. The
+    // engine receives neither a claimant's queue nor a selected historical Q.
+    // This is an interface consistency check, not independent authentication:
+    // authentication belongs to the Native callers' predecessor acquisition.
+    if (td::Bits256(previous_state->get_hash().bits()) != identity.previous_shard_hash ||
+        !tlb::unpack_cell(previous_state, state) ||
+        state.accounts->get_hash() != old_accounts->get_hash() ||
+        state.seq_no == UINT32_MAX || state.seq_no + 1 != identity.height)
+      return td::Status::Error(-7201, "outbound observation predecessor binding mismatch");
+  }
   const auto& limits = admitted.policy().resources();
   return account_settlement_detail::execute(engine, std::move(old_accounts), identity, admitted,
       nullptr, native_cells, limits.input.max_reads, limits.input.max_writes,
       limits.input.max_inbound, limits.work_output.max_transfers, custody, coordinator,
-      std::move(fee_budget), extra_validation_cells, cfg, message_cfg, nullptr);
+      std::move(fee_budget), extra_validation_cells, cfg, message_cfg, nullptr, std::move(previous_state));
 }
 
 inline td::Result<WorkchainAccountSettlement> execute_and_settle_workchain_accounts(

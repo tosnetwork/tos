@@ -19,6 +19,7 @@ struct WorkchainWithdrawalExpiry {
 inline td::Result<WorkchainWithdrawalExpiry> expire_workchain_withdrawals(
     WorkchainWithdrawalAccount account, std::uint32_t authenticated_height) {
   WorkchainWithdrawalExpiry result{std::move(account), {}};
+  LOG(INFO) << "WORKCHAIN_RETURN_CALLEE lazy_owner_settlement owner=" << result.account.account.address.account.to_hex();
   auto& records = result.account.control.withdrawals;
   for (auto it = records.begin(); it != records.end();) {
     TRY_STATUS(check_workchain_withdrawal_record(*it));

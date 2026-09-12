@@ -224,14 +224,15 @@ int main(int argc, char** argv) {
     else m3_live::registration_finish(fixture);
     return 0;
   }
-  if (argc == 3 && (std::string(argv[1]) == "--prepare-config" || std::string(argv[1]) == "--prepare-m4-config" || std::string(argv[1]) == "--prepare-m5-debit-config" || std::string(argv[1]) == "--prepare-m5-return-config")) {
+  if (argc == 3 && (std::string(argv[1]) == "--prepare-config" || std::string(argv[1]) == "--prepare-m4-config" || std::string(argv[1]) == "--prepare-m5-debit-config" || std::string(argv[1]) == "--prepare-m5-return-config" || std::string(argv[1]) == "--prepare-m5-completion-config")) {
     vm::init_vm().ensure();
     const std::filesystem::path fixture(argv[2]);
     CHECK(std::filesystem::exists(fixture / ".counter-managed-v1"));
     auto bytes = td::read_file_str((fixture / "zerostate.boc").string()).move_as_ok();
     auto root = prepare_m3_live_configuration(vm::std_boc_deserialize(bytes).move_as_ok(),
         std::string(argv[1]) != "--prepare-config", std::string(argv[1]) == "--prepare-m5-debit-config",
-        std::string(argv[1]) == "--prepare-m5-return-config").move_as_ok();
+        std::string(argv[1]) == "--prepare-m5-return-config" || std::string(argv[1]) == "--prepare-m5-completion-config",
+        std::string(argv[1]) == "--prepare-m5-completion-config").move_as_ok();
     td::write_file((fixture / "zerostate.boc").string(), vm::std_boc_serialize(root, 31).move_as_ok()).ensure();
     td::write_file((fixture / "zerostate.rhash").string(), root->get_hash().as_slice()).ensure();
     return 0;
@@ -414,11 +415,13 @@ int main(int argc, char** argv) {
       if (debit) {
         auto operation = block::m3_test::decode_m5_test_debit(candidate).move_as_ok();
         const auto key = operation.data.claims.source.account;
-        auto old = block::decode_workchain_confidential_account(m3_live::account_data(previous,key)).move_as_ok();
+        auto old = m3_live::m5_live_account(m3_live::account_data(previous,key),m3_live::m5_live_withdrawal_limit(fixture)).account;
         auto complete = m3_live::m5_live_account(m3_live::account_data(accepted.state,key),m3_live::m5_live_withdrawal_limit(fixture));
         auto next = complete.account;
-        CHECK(complete.control.withdrawals.size() == 1);
-        const auto& obligation = complete.control.withdrawals.front();
+        const auto installed = std::find_if(complete.control.withdrawals.begin(), complete.control.withdrawals.end(),
+            [&](const auto& record) { return record.withdrawal_id == operation.claimed_operation_id; });
+        CHECK(installed != complete.control.withdrawals.end());
+        const auto& obligation = *installed;
         CHECK(obligation.principal == operation.data.amounts.principal);
         const auto custody_key = block::load_workchain_native_ingress_table(*config).move_as_ok().at(2).custody_address;
         CHECK(custody_key);

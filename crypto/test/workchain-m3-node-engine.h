@@ -259,7 +259,27 @@ class M3NodeEngine final : public RegisteredWorkchainAccountEngine {
         return WorkchainWithdrawalAccount{core, {core.lifecycle, {}}, {}};
       };
       TRY_RESULT(owner, read_owner());
+      // Only this owner-authorized operation may advance observation state.
+      // The old record already carries prepare's atomic-enqueue provenance;
+      // this read supplies ONLY subsequent absence, never initial presence.
+      for (auto& record : owner.control.withdrawals) {
+        // The account decoder has validated every stored record already.
+        if (record.timing.phase != 0) continue;  // Committed Q is immutable.
+        TRY_RESULT(absent, accounts.payout_absent(*cfg->ingress.custody_address,
+            record.timing.payout_created_lt, record.timing.opened_height));
+        if (!absent) continue;
+        std::uint32_t deadline;
+        if (__builtin_add_overflow(*absent, record.timing.settlement_blocks, &deadline))
+          return local("authenticated observed Withdrawal deadline exceeds encoded height");
+        record.timing.phase = 1;
+        record.timing.queue_removed_height = *absent;
+        LOG(INFO) << "WORKCHAIN_QUEUE_ABSENT withdrawal=" << record.withdrawal_id.to_hex()
+                  << " created_lt=" << record.timing.payout_created_lt << " Q=" << *absent;
+      }
       TRY_RESULT(expiry, expire_workchain_withdrawals(std::move(owner), clock.height));
+      for (const auto& closed : expiry.closed)
+        LOG(INFO) << "WORKCHAIN_RETURN_CALLEE paid_expiry withdrawal=" << closed.withdrawal_id.to_hex()
+                  << " principal=" << closed.principal;
       auto source = expiry.account.account;
       // Private relation projection only, never installed as an account root.
       source.schema_version = b.account_schema;

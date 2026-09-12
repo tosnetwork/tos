@@ -89,7 +89,10 @@ inline void prepare_m4_deposit(const std::filesystem::path& fixture) {
   const auto parameters = decode_workchain_engine_parameters(ingress.engine_configuration).move_as_ok();
   const auto business = m3_test::decode_m3_test_business_parameters(parameters.parameters).move_as_ok();
   const auto limits = m3_test::require_m4_deposit_policy(business).move_as_ok();
-  const auto target = wallet_state(fixture, 0);
+  const auto owner = std::filesystem::exists(fixture / "deposit.owner.txt")
+      ? std::stoul(field(fixture / "deposit.owner.txt", "owner")) : 0;
+  CHECK(owner < 2);
+  const auto target = wallet_state(fixture, static_cast<unsigned>(owner));
   const auto principal = std::stoull(field(fixture / "deposit.request.txt", "principal"));
   std::uint64_t value;
   CHECK(!__builtin_add_overflow(principal, limits.slot_fee, &value));

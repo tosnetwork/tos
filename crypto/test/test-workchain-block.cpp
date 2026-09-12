@@ -1578,6 +1578,37 @@ td::Ref<vm::Cell> shard_fixture(int shard_wc = 2, int account_wc = 2, bool activ
   return root;
 }
 
+TEST(WorkchainBlock, OutboundObservationSharesStateBudget) {
+  // This is the queue-read boundary, not authentication of a Native block.
+  // The live completion carrier separately binds the predecessor in replay.
+  auto predecessor = shard_fixture();
+  const auto custody = td::Bits256::zero();
+  auto account_read = number(991);
+  block::NativeStateReadMeter enough(3, 4096);
+  ASSERT_TRUE(std::holds_alternative<td::Ref<vm::CellSlice>>(enough.load_ordinary(account_read)));
+  block::WorkchainAccountReadView positive({}, predecessor, &enough, 3);
+  auto absent = positive.payout_absent(custody, 17, 0);
+  ASSERT_TRUE(absent.is_ok() && absent.ok().has_value());
+  ASSERT_EQ(*absent.ok(), 1u);
+  ASSERT_EQ(enough.usage().cells, 3u);
+  // Equality of heights cannot establish D73's subsequent observation.
+  auto same_height = positive.payout_absent(custody, 17, 1);
+  ASSERT_TRUE(same_height.is_ok() && !same_height.ok());
+  block::NativeStateReadMeter shared(2, 4096);
+  ASSERT_TRUE(std::holds_alternative<td::Ref<vm::CellSlice>>(shared.load_ordinary(account_read)));
+  block::WorkchainAccountReadView constrained({}, predecessor, &shared, 2);
+  auto exceeded = constrained.payout_absent(custody, 17, 0);
+  ASSERT_TRUE(exceeded.is_error());
+  ASSERT_EQ(exceeded.error().code(), -7200);
+  ASSERT_TRUE(constrained.status().is_error());
+  block::NativeStateReadMeter bits(3, 64);
+  ASSERT_TRUE(std::holds_alternative<td::Ref<vm::CellSlice>>(bits.load_ordinary(account_read)));
+  block::WorkchainAccountReadView bit_limited({}, predecessor, &bits, 3);
+  auto bit_exceeded = bit_limited.payout_absent(custody, 17, 0);
+  ASSERT_TRUE(bit_exceeded.is_error());
+  ASSERT_EQ(bit_exceeded.error().code(), -7200);
+}
+
 TEST(WorkchainBlock, AccountDictionaryChanges) {
   auto extract = [](td::Ref<vm::Cell> root) {
     block::gen::ShardStateUnsplit::Record state;
@@ -1674,6 +1705,58 @@ td::Ref<vm::Cell> inbound_envelope(std::uint64_t lt, std::uint64_t nonce = 0,
   td::Ref<vm::Cell> envelope;
   ASSERT_TRUE(tlb::pack_cell(envelope, record));
   return envelope;
+}
+
+TEST(WorkchainBlock, OutboundObservationIncludesDeferredMessages) {
+  // Queue-read semantics only; these fixtures do not establish prepare's
+  // historical presence invariant or authenticate a live shard predecessor.
+  auto sender = td::Bits256::zero();
+  sender.as_slice().data()[31] = 1;
+  for (bool deferred : {false, true}) {
+    auto envelope = inbound_envelope(17);
+    vm::CellBuilder entry; entry.store_long(18, 64).store_ref(envelope);
+    vm::AugmentedDictionary queue(352, block::tlb::aug_OutMsgQueue);
+    vm::AugmentedDictionary dispatch(256, block::tlb::aug_DispatchQueue);
+    if (deferred) {
+      vm::Dictionary messages(64);
+      td::BitArray<64> key; key.bits().store_uint(17, 64);
+      ASSERT_TRUE(messages.set_builder(key, entry));
+      td::Ref<vm::Cell> account;
+      ASSERT_TRUE(tlb::pack_cell(account, block::gen::AccountDispatchQueue::Record{messages.get_root(), 1}));
+      ASSERT_TRUE(dispatch.set(sender, vm::load_cell_slice_ref(account)));
+    } else {
+      td::BitArray<352> key;
+      ASSERT_TRUE(block::compute_out_msg_queue_key(envelope, key));
+      ASSERT_TRUE(queue.set_builder(key, entry));
+    }
+    vm::CellBuilder info;
+    ASSERT_TRUE(queue.append_dict_to_bool(info));
+    info.store_long(0, 1).store_long(deferred, 1);
+    if (deferred) {
+      td::Ref<vm::Cell> extra;
+      ASSERT_TRUE(tlb::pack_cell(extra, block::gen::OutMsgQueueExtra::Record{
+          dispatch.get_root(), vm::load_cell_slice_ref(vm::CellBuilder().store_long(0, 1).finalize())}));
+      info.append_cellslice(vm::load_cell_slice(extra));
+    }
+    block::gen::ShardStateUnsplit::Record state;
+    ASSERT_TRUE(tlb::unpack_cell(shard_fixture(0, 0), state));
+    state.out_msg_queue_info = info.finalize();
+    td::Ref<vm::Cell> root; ASSERT_TRUE(tlb::pack_cell(root, state));
+    block::NativeStateReadMeter meter(100, 100000);
+    block::WorkchainAccountReadView view({}, root, &meter, 100);
+    auto present = view.payout_absent(sender, 17, 0);
+    ASSERT_TRUE(present.is_ok() && !present.ok());
+    auto absent = view.payout_absent(sender, 19, 0);
+    ASSERT_TRUE(absent.is_ok() && absent.ok());
+    ASSERT_EQ(*absent.ok(), 1u);
+    if (deferred) {
+      block::NativeStateReadMeter capped(100, 100000);
+      block::WorkchainAccountReadView visit_limited({}, root, &capped, 1);
+      auto refused = visit_limited.payout_absent(sender, 19, 0);
+      ASSERT_TRUE(refused.is_error());
+      ASSERT_EQ(refused.error().code(), -7200);
+    }
+  }
 }
 
 block::ResolvedBatchInputPolicy inbox_test_policy(

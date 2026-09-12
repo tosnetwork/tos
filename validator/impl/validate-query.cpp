@@ -6687,7 +6687,7 @@ bool ValidateQuery::check_account_binding_transactions(const block::ResolvedWork
     TRY_RESULT(proofs, block::ProofAdmittedBatchInput::admit(owner->adapter(), input));
     TRY_RESULT(rebuilt, block::execute_and_settle_workchain_accounts(owner->adapter(), previous.accounts, identity,
         proofs, *native, *binding.ingress.custody_address, binding.ingress.executor_address,
-        td::make_refint(0), static_cast<int>(limits.state.max_cells), serialize_cfg_, action_phase_cfg_));
+        td::make_refint(0), static_cast<int>(limits.state.max_cells), serialize_cfg_, action_phase_cfg_, prev_state_root_));
     // State acquisition is a local proof-view operation; do not turn missing
     // local cells into a candidate verdict. Comparisons below are exact claims.
     block::gen::ShardStateUnsplit::Record next;
