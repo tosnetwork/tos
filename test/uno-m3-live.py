@@ -469,6 +469,12 @@ if a.m5_debit:
                 # payout as the identity of the old obligation under review.
                 shutil.copyfile(fixture/'completion-original-payout.boc',fixture/'prepare-payout.boc')
                 completed.check_returncode()
+                observation = fixture / 'completion-observation.json'
+                subprocess.run([str(build / 'test-m3-live'), '--completion-observation',
+                                'row4', str(fixture), str(observation)], check=True)
+                subprocess.run([sys.executable,
+                                str(repo / 'crypto/test/workchain_withdrawal_completion_oracle.py'),
+                                '--case', 'row4', '--observation', str(observation)], check=True)
                 print(f'COMPLETION_PAID_FIXTURE:{fixture}',flush=True)
                 raise SystemExit(0)
             subprocess.run([str(build / 'test-m3-live'), '--failed-request', str(fixture)], check=True)
