@@ -25,10 +25,12 @@ p.add_argument('--m5-completion-late', action='store_true',
                help='establish Q through real owner operations before importing the return')
 p.add_argument('--m5-completion-paid', action='store_true',
                help='real no-bounce payout, untouched expiry, then an owner trigger')
+p.add_argument('--completion-full-cap', action='store_true',
+               help='explicit Paid test cap of three: expiry must precede admission')
 p.add_argument('--m5-return-principal', type=int, help='explicit real-payout fixture principal')
 p.add_argument('--completion-expect-offset', type=int, choices=(-1, 0, 1),
                help='assert observed y is h plus this exact boundary offset')
-p.add_argument('--completion-contract', choices=('bucket-small',),
+p.add_argument('--completion-contract', choices=('bucket-small', 'row4'),
                help='run the existing frozen real-host completion contract')
 p.add_argument('--failed-routing-probe', action='store_true',
                help='run the real fee-routing producer mutation before normal Failed publication')
@@ -37,6 +39,8 @@ p.add_argument('--failed-routing-binary', type=Path,
 a = p.parse_args()
 if a.m5_completion_paid:
     a.m5_completion_late = True
+if a.completion_full_cap and not a.m5_completion_paid:
+    p.error('full-cap fixture requires Paid completion')
 if a.m5_bucket_small or a.m5_completion_late:
     a.m5_failed = True
 if a.failed_routing_probe:
@@ -65,6 +69,114 @@ if a.completion_contract:
         repo / 'crypto/test/workchain_withdrawal_completion_oracle.py')
     oracle = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(oracle)
+
+    def shadow_binary(label, old, replacement, relative="crypto/block/workchain-failed-funded.h"):
+        root = work / label
+        header = root / relative
+        header.parent.mkdir(parents=True)
+        text = (repo / relative).read_text()
+        if text.count(old) != 1:
+            raise RuntimeError('semantic mutation target changed: ' + label)
+        header.write_text(text.replace(old, replacement))
+        source = repo / 'test/test-m3-live.cpp'
+        entries = [e for e in json.loads((build / 'compile_commands.json').read_text())
+                   if Path(e['file']).resolve() == source]
+        if len(entries) != 1:
+            raise RuntimeError('missing unique live compile command')
+        command = shlex.split(entries[0]['command'])
+        command[1:1] = ['-I' + str(root), '-I' + str(root / 'crypto'), '-I' + str(repo / 'crypto/block'), '-I' + str(repo / 'crypto/test')]
+        obj = root / 'live.o'
+        command[command.index('-o') + 1] = str(obj)
+        with (root / 'build.log').open('w') as log:
+            subprocess.run(command, cwd=build, stdout=log, stderr=log, check=True)
+            link = shlex.split(subprocess.check_output(['ninja', '-t', 'commands', 'test-m3-live'],
+                                                       cwd=build, text=True).splitlines()[-1])
+            if link[:2] != [':', '&&'] or link[-2:] != ['&&', ':']:
+                raise RuntimeError('unrecognized live link command')
+            link = link[2:-2]
+            original = 'CMakeFiles/test-m3-live.dir/test/test-m3-live.cpp.o'
+            if link.count(original) != 1:
+                raise RuntimeError('missing live object in link')
+            link[link.index(original)] = str(obj)
+            binary = root / 'test-m3-live'
+            link[link.index('-o') + 1] = str(binary)
+            subprocess.run(link, cwd=build, stdout=log, stderr=log, check=True)
+        return binary
+
+    def replay_paid(label, binary, source):
+        target = work / label
+        target.mkdir()
+        for file in source.iterdir():
+            if file.is_file() and not file.name.startswith(('enabled.', 'closed.', 'completion-observation')):
+                shutil.copy2(file, target / file.name)
+        shutil.copytree(source / 'db', target / 'db')
+        shutil.copytree(source / 'm4-blocks', target / 'm4-blocks')
+        before_id = (source / 'completion-before-block.id').read_text()
+        (target / 'accepted-block.id').write_text(before_id)
+        # Remove only post-predecessor observations, never authenticated inputs.
+        height = int(before_id.split(')')[0].rsplit(',', 1)[1])
+        for file in (target / 'm4-blocks').glob('*.boc'):
+            if int(file.stem) > height:
+                file.unlink()
+        result = subprocess.run([str(binary), str(target)], text=True, capture_output=True)
+        (target / 'completion-execution.log').write_text(result.stdout + result.stderr)
+        output = target / 'completion-observation.json'
+        subprocess.run([str(build / 'test-m3-live'), '--completion-observation',
+                        'row4', str(target), str(output)], check=True)
+        return result.returncode, json.loads(output.read_text())
+
+    if a.completion_contract == 'row4':
+        def paid_fixture(label, full=False):
+            args = [sys.executable, str(Path(__file__).resolve()), '--build', str(build), '--m5-completion-paid']
+            if full:
+                args += ['--completion-full-cap']
+            with (work / (label + '.log')).open('w') as log:
+                completed = subprocess.run(args, stdout=log, stderr=log)
+            completed.check_returncode()
+            paths = [Path(line.removeprefix('COMPLETION_PAID_FIXTURE:'))
+                     for line in (work / (label + '.log')).read_text().splitlines()
+                     if line.startswith('COMPLETION_PAID_FIXTURE:')]
+            if len(paths) != 1:
+                raise RuntimeError('Paid fixture did not reach the frozen oracle')
+            data = json.loads((paths[0] / 'completion-observation.json').read_text())
+            oracle.check('row4', data)
+            if full and len(data['observed']['before']['records']) != 3:
+                raise RuntimeError('full-cap test did not start with three obligations')
+            return paths[0]
+
+        positive = paid_fixture('positive')
+        paid_fixture('full-cap', full=True)
+        effect = '      return finish(std::move(result));\n    }\n    if (is_m5_test_failed(host.candidate))'
+        mutations = (
+            ('skip-expiry', 'crypto/block/workchain-withdrawal-expiry.h',
+             '    if (authenticated_height <= deadline) {',
+             '    if (true) { // Isolated mutation: never close an expired record.', 'ROW4_TRIGGERED'),
+            ('round-trip', 'crypto/test/workchain-m3-node-engine.h', effect,
+             '      result.native_transfers.push_back({cfg->ingress.executor_address, *cfg->ingress.custody_address, CurrencyCollection(1)});\n'
+             '      result.native_transfers.push_back({*cfg->ingress.custody_address, cfg->ingress.executor_address, CurrencyCollection(1)});\n' + effect,
+             'ROW4_NO_VALUE_MOVEMENT'),
+            ('extra-fee', 'crypto/test/workchain-m3-node-engine.h', effect,
+             '      result.fees->compute_fee = result.fees->compute_fee + td::make_refint(1);\n' + effect,
+             'DELTA_R_actual'))
+        for label, relative, old, new, assertion in mutations:
+            binary = shadow_binary(label, old, new, relative)
+            _, data = replay_paid(label + '-run', binary, positive)
+            oracle.expect_red('row4', data, assertion)
+            print('COMPLETION_REAL_RED:' + assertion, flush=True)
+            try:
+                oracle.expect_red('row4', data, assertion, observer=lambda case, observation: None)
+            except oracle.Violation as error:
+                if str(error) != 'ORACLE_MISSING:' + assertion:
+                    raise
+                print(str(error), flush=True)
+            else:
+                raise RuntimeError('disabled oracle did not fail')
+        code, restored = replay_paid('restored', build / 'test-m3-live', positive)
+        if code:
+            raise RuntimeError('restored Paid execution failed')
+        oracle.check('row4', restored)
+        print('WITHDRAWAL-COMPLETION_D78_OBSERVED:test-workchain-withdrawal-completion-row4')
+        raise SystemExit(0)
 
     def run_boundary(label, principal=None, offset=None):
         args = [sys.executable, str(Path(__file__).resolve()), '--build', str(build),
@@ -98,39 +210,6 @@ if a.completion_contract:
         i = data['input']
         if i['phase'] != 1 or i['height'] <= oracle.checked(i['Q'] + i['window']):
             raise RuntimeError('COMPLETION_NOT_READY: authenticated late-phase fixture missing')
-
-    def shadow_binary(label, old, replacement):
-        root = work / label
-        header = root / 'block/workchain-failed-funded.h'
-        header.parent.mkdir(parents=True)
-        text = (repo / 'crypto/block/workchain-failed-funded.h').read_text()
-        if text.count(old) != 1:
-            raise RuntimeError('semantic mutation target changed: ' + label)
-        header.write_text(text.replace(old, replacement))
-        source = repo / 'test/test-m3-live.cpp'
-        entries = [e for e in json.loads((build / 'compile_commands.json').read_text())
-                   if Path(e['file']).resolve() == source]
-        if len(entries) != 1:
-            raise RuntimeError('missing unique live compile command')
-        command = shlex.split(entries[0]['command'])
-        command[1:1] = ['-I' + str(root), '-I' + str(repo / 'crypto/block')]
-        obj = root / 'live.o'
-        command[command.index('-o') + 1] = str(obj)
-        with (root / 'build.log').open('w') as log:
-            subprocess.run(command, cwd=build, stdout=log, stderr=log, check=True)
-            link = shlex.split(subprocess.check_output(['ninja', '-t', 'commands', 'test-m3-live'],
-                                                       cwd=build, text=True).splitlines()[-1])
-            if link[:2] != [':', '&&'] or link[-2:] != ['&&', ':']:
-                raise RuntimeError('unrecognized live link command')
-            link = link[2:-2]
-            original = 'CMakeFiles/test-m3-live.dir/test/test-m3-live.cpp.o'
-            if link.count(original) != 1:
-                raise RuntimeError('missing live object in link')
-            link[link.index(original)] = str(obj)
-            binary = root / 'test-m3-live'
-            link[link.index('-o') + 1] = str(binary)
-            subprocess.run(link, cwd=build, stdout=log, stderr=log, check=True)
-        return binary
 
     def replay(label, binary):
         source = samples['below'][0]
@@ -262,6 +341,8 @@ subprocess.run(['cmake', '-DCOUNTER_FIXTURE_CHILD=ON', f'-DCOUNTER_FIXTURE_PATH=
                 f'-DCOLLATOR={build / "test-m3-live"}', '-P', str(prepare)], check=True)
 print(f'Test-owned fixture: {fixture}', flush=True)
 shutil.copyfile(fixture / 'counter-state.boc', fixture / 'current-state.boc')
+if a.completion_full_cap:
+    (fixture / 'completion-full-cap.txt').write_text('3\n')
 subprocess.run([str(build / 'test-m3-live'), '--prepare-m5-completion-config' if a.m5_completion_late else
                 '--prepare-m5-return-config' if a.m5_return_route else
                 '--prepare-m5-debit-config' if a.m5_debit else '--prepare-m4-config', str(fixture)], check=True)
@@ -462,6 +543,7 @@ if a.m5_debit:
                               aux_blind=101,principal=137,outward_fee=17,fee=257,**limits)
                 withdrawal_request(followup)
                 shutil.copyfile(fixture/'current-state.boc',fixture/'completion-before-state.boc')
+                shutil.copyfile(fixture/'accepted-block.id',fixture/'completion-before-block.id')
                 completed=subprocess.run([str(build/'test-m3-live'),str(fixture)],capture_output=True,text=True)
                 (fixture/'completion-execution.log').write_text(completed.stdout+completed.stderr)
                 print(completed.stdout,end='');print(completed.stderr,end='',file=sys.stderr)
