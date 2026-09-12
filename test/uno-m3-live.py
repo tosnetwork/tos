@@ -8,6 +8,7 @@ import shutil
 from pathlib import Path
 import subprocess
 import tempfile
+from uno_wallet_freshness import pin
 
 p = argparse.ArgumentParser(description=__doc__)
 p.add_argument('--build', required=True, type=Path)
@@ -37,6 +38,8 @@ if f'CMAKE_HOME_DIRECTORY:INTERNAL={repo}' not in cache:
     p.error('build belongs to another tree')
 if 'TOS_UNO_CRYPTO_NODE_LINK:BOOL=ON' not in cache:
     p.error('real node verification requires TOS_UNO_CRYPTO_NODE_LINK=ON')
+fixture = Path(tempfile.mkdtemp(prefix='uno-m3-live-'))
+wallet = pin(repo, build / 'm3-vector-wallet-target/release/examples/m3-scenario', fixture)
 # Establish that the same numeric predicate used after each accepted block
 # rejects unpaired principal and nonzero cross-block D, then restores to green.
 # A crash, unknown mode or missing binary is not an expected rejection.
@@ -49,7 +52,6 @@ for mode, expected in [('unpaired', 1), ('cross-block-d', 1), ('restored', 0)]:
     if expected and 'M4 per-block backing mismatch or nonzero cross-block D' not in control.stdout:
         raise RuntimeError('backing control failed for an unrelated reason')
     print(f'Backing control exit={control.returncode}: {control.stdout.strip()}', flush=True)
-fixture = Path(tempfile.mkdtemp(prefix='uno-m3-live-'))
 # Reuse the existing test-owned genesis construction without its collation
 # scenarios or cleanup. Never import a deployment DB/configuration. This prefix
 # contains all schema-dependent fixture code; do not maintain a second copy.
@@ -113,9 +115,6 @@ zero['file_hash'] = base64.b64encode(zero_file_hash).decode()
 subprocess.run([str(build / 'test-tos-collator'), '-C', str(fixture / 'global.json'),
                 '-D', str(fixture / 'db'), '-w', '-1',
                 '--query-result', str(fixture / 'bootstrap.result')], check=True)
-wallet = build / 'm3-vector-wallet-target/release/examples/m3-scenario'
-if not wallet.is_file():
-    raise RuntimeError('build the existing real M3 prover example before the live test')
 (fixture / 'wallet-key.request.txt').write_text('secret=101\n')
 subprocess.run([str(wallet), 'key', str(fixture / 'wallet-key.request.txt'),
                 str(fixture / 'wallet-key.txt')], check=True)

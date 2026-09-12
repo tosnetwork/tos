@@ -881,3 +881,10 @@ else()
 endif()
 set_tests_properties(test-workchain-key-epoch-behavior PROPERTIES TIMEOUT 600 LABELS "workchain;expiry;real-crypto"
   RESOURCE_LOCK uno_crypto_cargo)
+
+# A source pin must reject a real stale wallet before any live business request.
+add_test(NAME test-workchain-wallet-freshness COMMAND ${Python3_EXECUTABLE}
+  "${PROJECT_SOURCE_DIR}/test/test_uno_wallet_freshness.py"
+  --repo "${PROJECT_SOURCE_DIR}" --target "${CMAKE_CURRENT_BINARY_DIR}/wallet-freshness-target")
+set_tests_properties(test-workchain-wallet-freshness PROPERTIES
+  TIMEOUT 600 LABELS "workchain;m5;freshness" RUN_SERIAL TRUE)

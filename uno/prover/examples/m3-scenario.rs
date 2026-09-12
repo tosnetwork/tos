@@ -30,6 +30,10 @@ fn bytes32(s: &str) -> Result<Vec<[u8; 32]>> {
 }
 fn main() -> Result<()> {
     let args: Vec<_> = std::env::args().collect();
+    if args.len() == 2 && args[1] == "--source-identity" {
+        println!("{}", env!("UNO_WALLET_SOURCE_ID"));
+        return Ok(());
+    }
     if args.len() != 4 {
         return Err(fail("m3-scenario MODE request.txt output.txt"));
     }

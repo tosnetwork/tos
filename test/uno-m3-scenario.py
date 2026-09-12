@@ -8,6 +8,7 @@ import argparse
 from pathlib import Path
 import subprocess
 import tempfile
+from uno_wallet_freshness import pin
 
 p = argparse.ArgumentParser()
 p.add_argument('--build', type=Path, required=True)
@@ -34,7 +35,8 @@ subprocess.run(['cmake', '--build', str(build), '--target', 'workchain-m3-scenar
 wallet_target = build / 'm3-vector-wallet-target'
 subprocess.run(['cargo', 'build', '--locked', '--offline', '--release', '--manifest-path', str(repo / 'uno/prover/Cargo.toml'),
                 '--example', 'm3-scenario', '--target-dir', str(wallet_target)], check=True, cwd=repo)
+wallet = pin(repo, wallet_target / 'release/examples/m3-scenario', run)
 print(f'TEST-only wallet inputs and outputs: {run}', flush=True)
 mode = ['--m4-system-collect'] if a.m4_system_collect else []
 subprocess.run([str(build / 'crypto/workchain-m3-scenario'), *mode,
-                str(wallet_target / 'release/examples/m3-scenario'), str(run)], check=True)
+                str(wallet), str(run)], check=True)
