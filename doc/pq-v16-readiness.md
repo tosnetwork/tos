@@ -10,10 +10,10 @@ activate a network, accept a loss model for an owner, or certify physical
 validator hardware. Keep the integration in Draft until its final-head evidence
 and the independent review are accepted.
 
-The default C++ software support ceiling stays at 15. A release candidate can be
-built with `-DTOS_PQ_V16_CANDIDATE=ON`; this makes that binary advertise support for
-16 but does not change ConfigParam 8. The opcode still rejects global versions
-below 16. The separate Rust default configuration remains at its existing version;
+The C++ software support ceiling is 16, and there is no build option that
+selects another one: one source commit describes one binary capability. This
+does not change ConfigParam 8, and a binary advertising 16 activates nothing.
+The opcode still rejects global versions below 16. The separate Rust default configuration remains at its existing version;
 explicit version selection is used in conformance tests. Matching one opcode is
 not a claim of whole-VM or all intervening-version compatibility.
 
@@ -52,7 +52,7 @@ perfectly.
 
 ```sh
 scripts/install-rust-toolchain.sh
-cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DTOS_PQ_V16_CANDIDATE=ON
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build --target func fift tol emulator test-pq-v16-parity -j2
 cmake -S crypto/pq/tools -B build-pq-key -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build-pq-key -j2

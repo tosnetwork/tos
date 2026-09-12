@@ -130,6 +130,12 @@ and instructions gated on it execute. So this override is enough to rehearse a
 future version locally, and `SUPPORTED_VERSION` should not be read as a gate that
 prevents a node from running at a higher version.
 
+The message above was what a v15-advertising build printed at ConfigParam 8
+version 16, roughly twice per block. `SUPPORTED_VERSION` is now 16, so it no
+longer appears at that configuration; set `TOS_GLOBAL_VERSION=17` and it returns,
+naming 17 and 16. Its companion line about capabilities is a different check and
+is unaffected.
+
 ## Things that cost time
 
 - **Piping the launcher** through another command hides its output until exit.

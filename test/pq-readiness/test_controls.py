@@ -36,8 +36,7 @@ class Controls(unittest.TestCase):
             doc={'network':42,'current_version':15,'target_version':16,'capabilities':123,
                  'release_commit':commit,'approvals':{},'validators':[{
                      'id':'validator-1','acknowledged':True,'supports_version':16,
-                     'release_commit':commit,'build_profile':'pq-v16-candidate',
-                     'binary_sha256':binary}], 'evidence':{}}
+                     'release_commit':commit,'binary_sha256':binary}], 'evidence':{}}
             for name in ('security_review','nonrefundable_loss_model','release','validator_operations'):
                 doc['approvals'][name]={'accepted':True,'owner':'TEST OWNER','reference':'TEST ONLY'}
             for name in ('rust_cpp_parity','transaction_parity','module_e2e','production_load','activation_rehearsal'):
@@ -59,10 +58,25 @@ class Controls(unittest.TestCase):
                 mutant=json.loads(json.dumps(doc));del mutant['evidence'][name]
                 with self.assertRaises(ValueError):plan(mutant,root)
             for field,value in [('supports_version',15),('acknowledged',False),
-                                ('release_commit','b'*40),('build_profile','default-v15'),
-                                ('binary_sha256','not-a-digest')]:
+                                ('release_commit','b'*40),('binary_sha256','not-a-digest')]:
                 mutant=json.loads(json.dumps(doc));mutant['validators'][0][field]=value
                 with self.assertRaises(ValueError):plan(mutant,root)
+            # The case above is refused by the load binding before the digest is
+            # ever judged, so on its own it would pass with the format check
+            # gone. Make the load evidence agree with the malformed value: then
+            # only the digest check is left to reject it.
+            for bad in ('not-a-digest','1'*63,'g'*64,None,'1'*64+'0'):
+                mutant=json.loads(json.dumps(doc))
+                mutant['validators'][0]['binary_sha256']=bad
+                report={'success':True,'network':42,'source_commit':commit,
+                        'qualification':'production-validator','binary_sha256':bad}
+                f=root/'production_load.json';f.write_text(json.dumps(report))
+                mutant['evidence']['production_load']['sha256']=hashlib.sha256(f.read_bytes()).hexdigest()
+                with self.assertRaises(ValueError):plan(mutant,root)
+            f=root/'production_load.json'
+            f.write_text(json.dumps({'success':True,'network':42,'source_commit':commit,
+                                     'qualification':'production-validator','binary_sha256':binary}))
+            doc['evidence']['production_load']['sha256']=hashlib.sha256(f.read_bytes()).hexdigest()
             f=root/'production_load.json';report=json.loads(f.read_text())
             report['binary_sha256']='2'*64;f.write_text(json.dumps(report))
             doc['evidence']['production_load']['sha256']=hashlib.sha256(f.read_bytes()).hexdigest()
