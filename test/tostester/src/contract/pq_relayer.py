@@ -78,33 +78,88 @@ class RelayTransport(Protocol):
     async def receipt(self, broadcast_id: str, request: AuthRequest, module: Address) -> AttemptReceipt: ...
 
 
+# A nonce that a finished attempt did not consume may be authorized again, but
+# only after that attempt is known to be final. The history is kept rather than
+# deleted, because retiring an attempt is a judgement that needs its evidence.
+LIVE = ("reserved", "unknown", "broadcast", "pending")
+RETIRABLE = ("module_rejected", "account_rejected")
+# One-way for ordinary reconciliation. A late or partial observation may not
+# move a settled attempt backwards; a reorg is a separate question and is not
+# answered by an ordinary pending receipt.
+TRANSITIONS = {
+    "reserved": {"unknown", "broadcast"},
+    "unknown": {"unknown", "broadcast", "pending", "module_rejected", "account_rejected", "executed"},
+    "broadcast": {"broadcast", "pending", "module_rejected", "account_rejected", "executed"},
+    "pending": {"pending", "module_rejected", "account_rejected", "executed"},
+    # Repeating an identical observation is harmless; changing a settled one is not.
+    "module_rejected": {"module_rejected"},
+    "account_rejected": {"account_rejected"},
+    "executed": {"executed"},
+    "retired": set(),
+}
+
+
 class AttemptJournal:
     def __init__(self, path: Path):
         self.db = sqlite3.connect(path, timeout=10)
         self.db.execute("PRAGMA journal_mode=WAL")
-        self.db.execute("CREATE TABLE IF NOT EXISTS attempts (network INTEGER, account TEXT, epoch TEXT, nonce TEXT, digest TEXT, status TEXT, broadcast TEXT, PRIMARY KEY(network, account, epoch, nonce))")
+        self.db.execute("CREATE TABLE IF NOT EXISTS attempts (network INTEGER, account TEXT, epoch TEXT,"
+                        " nonce TEXT, attempt INTEGER, digest TEXT, status TEXT, broadcast TEXT,"
+                        " PRIMARY KEY(network, account, epoch, nonce, attempt))")
         self.db.commit()
 
     @staticmethod
     def identity(request: AuthRequest) -> tuple:
         return (request.network, request.account.to_str(False), str(request.epoch), str(request.nonce))
 
+    def _latest(self, request: AuthRequest):
+        row = self.db.execute("SELECT attempt, digest, status, broadcast FROM attempts WHERE network=?"
+                              " AND account=? AND epoch=? AND nonce=? ORDER BY attempt DESC LIMIT 1",
+                              self.identity(request)).fetchone()
+        return row
+
     def reserve(self, request: AuthRequest):
-        try:
-            with self.db:
-                self.db.execute("INSERT INTO attempts VALUES (?, ?, ?, ?, ?, 'reserved', NULL)",
-                                (*self.identity(request), request.commitment.hex()))
-        except sqlite3.IntegrityError as e:
-            raise ValueError("nonce already reserved; reconcile instead of blind retry") from e
+        row = self._latest(request)
+        if row is not None and row[2] != "retired":
+            raise ValueError("nonce already reserved; reconcile, then retire the finished attempt")
+        attempt = 1 if row is None else row[0] + 1
+        with self.db:
+            self.db.execute("INSERT INTO attempts VALUES (?, ?, ?, ?, ?, ?, 'reserved', NULL)",
+                            (*self.identity(request), attempt, request.commitment.hex()))
 
     def update(self, request: AuthRequest, status: str, broadcast: str | None = None):
-        if status not in ("unknown", "broadcast", "pending", "module_rejected", "account_rejected", "executed"):
+        if status not in TRANSITIONS or status == "retired":
             raise ValueError("invalid attempt status")
+        row = self._latest(request)
+        if row is None or row[1] != request.commitment.hex() or row[2] == "retired":
+            raise ValueError("unreserved or mismatched request")
+        attempt, _, current, recorded = row
+        if status not in TRANSITIONS[current]:
+            raise ValueError(f"illegal attempt transition {current} -> {status}")
+        # The broadcast identity is bound once: a receipt carrying a different
+        # one describes a different attempt and must not silently replace it.
+        if broadcast is not None and recorded is not None and broadcast != recorded:
+            raise ValueError("receipt belongs to a different broadcast")
         with self.db:
-            cursor = self.db.execute("UPDATE attempts SET status=?, broadcast=COALESCE(?,broadcast) WHERE network=? AND account=? AND epoch=? AND nonce=? AND digest=?",
-                (status, broadcast, *self.identity(request), request.commitment.hex()))
+            cursor = self.db.execute("UPDATE attempts SET status=?, broadcast=COALESCE(?,broadcast)"
+                                     " WHERE network=? AND account=? AND epoch=? AND nonce=? AND attempt=?",
+                                     (status, broadcast, *self.identity(request), attempt))
             if cursor.rowcount != 1:
                 raise ValueError("unreserved or mismatched request")
+
+    def retire(self, request: AuthRequest):
+        """Release a nonce whose attempt finished without consuming it."""
+        row = self._latest(request)
+        if row is None or row[1] != request.commitment.hex():
+            raise ValueError("unreserved or mismatched request")
+        attempt, _, current, _ = row
+        if current == "executed":
+            raise ValueError("an executed attempt consumed the nonce; it cannot be retired")
+        if current not in RETIRABLE:
+            raise ValueError(f"attempt is not finished: {current}")
+        with self.db:
+            self.db.execute("UPDATE attempts SET status='retired' WHERE network=? AND account=?"
+                            " AND epoch=? AND nonce=? AND attempt=?", (*self.identity(request), attempt))
 
     def close(self):
         self.db.close()
@@ -151,6 +206,16 @@ class PqRelayer:
             raise
         self.journal.update(request, "broadcast", broadcast)
         return broadcast
+
+    async def retire(self, request: AuthRequest, module: Address, broadcast_id: str) -> AttemptReceipt:
+        """Free a nonce for re-authorization, on a fresh receipt, never on a timeout."""
+        receipt = await self.reconcile(request, module, broadcast_id)
+        if receipt.status not in ("module_rejected", "account_rejected"):
+            raise ValueError("attempt is not finished; only a settled rejection frees the nonce")
+        if receipt.account_nonce_consumed:
+            raise ValueError("the account consumed this nonce; rebuild against the new state")
+        self.journal.retire(request)
+        return receipt
 
     async def reconcile(self, request: AuthRequest, module: Address, broadcast_id: str) -> AttemptReceipt:
         receipt = await self.transport.receipt(broadcast_id, request, module)

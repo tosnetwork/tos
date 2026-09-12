@@ -22,7 +22,13 @@ import nacl.signing
 from build_contracts import build_contracts
 from cells import Cell, from_boc
 from native import Emulator, NOW, GLOBAL_ID, outgoing, account_data, internal, external
-from protocol import parse_message
+from protocol import emulator_library, parse_message
+
+
+def source_commit() -> str:
+    """Bind a report to the tree that produced it, for the activation precheck."""
+    return subprocess.run(['git', 'rev-parse', 'HEAD'], cwd=ROOT, check=True,
+                          capture_output=True, text=True).stdout.strip()
 
 ARGS = None
 RESULTS = []
@@ -174,10 +180,11 @@ def main():
     ARGS=p.parse_args();ARGS.build=ARGS.build.resolve();ARGS.key_tool=ARGS.key_tool.resolve();ARGS.out=ARGS.out.resolve()
     ARGS.out.mkdir(parents=True,exist_ok=True)
     os.environ.update(FUNC_PATH=str(ARGS.build/'crypto/func'),FIFT_PATH=str(ARGS.build/'crypto/fift'),
-        TOL_PATH=str(ARGS.build/'tol/tol'),EMULATOR_PATH=str(ARGS.build/'emulator/libemulator.so'))
+        TOL_PATH=str(ARGS.build/'tol/tol'),EMULATOR_PATH=str(emulator_library(ARGS.build)))
     build_contracts(ARGS.build,ARGS.out)
     result=unittest.TextTestRunner(verbosity=2).run(unittest.defaultTestLoader.loadTestsFromTestCase(SDKNativeTests))
-    (ARGS.out/'sdk.json').write_text(json.dumps({'success':result.wasSuccessful(),'events':RESULTS},indent=2,sort_keys=True)+'\n')
+    (ARGS.out/'sdk.json').write_text(json.dumps({'success':result.wasSuccessful(),'network':GLOBAL_ID,
+        'source_commit':source_commit(),'scope':'native-emulator','events':RESULTS},indent=2,sort_keys=True)+'\n')
     return 0 if result.wasSuccessful() else 1
 
 

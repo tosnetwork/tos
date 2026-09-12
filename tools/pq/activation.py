@@ -35,7 +35,15 @@ def plan(document: dict, root: Path) -> dict:
         if not path.is_relative_to(root.resolve()) or not path.is_file() or digest(path) != item.get("sha256"):
             raise ValueError("missing or modified evidence: " + name)
         report = json.loads(path.read_text())
-        if report.get("success") is not True or report.get("network") != network:
+        if report.get("success") is not True:
+            raise ValueError("failed evidence: " + name)
+        # Agreement between two builds is a property of the binaries, not of a
+        # chain. Such evidence declares itself network-independent instead of
+        # naming a network it never ran against; everything else must match.
+        if report.get("scope") == "network-independent":
+            if report.get("network") is not None:
+                raise ValueError("network-independent evidence must not name a network: " + name)
+        elif report.get("network") != network:
             raise ValueError("failed or foreign-network evidence: " + name)
         if report.get("source_commit") != document.get("release_commit"):
             raise ValueError("evidence does not bind the proposed release")

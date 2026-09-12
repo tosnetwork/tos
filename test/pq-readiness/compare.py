@@ -4,7 +4,15 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
+import subprocess
 
+
+
+def source_commit() -> str:
+    """Bind a report to the tree that produced it, for the activation precheck."""
+    return subprocess.run(['git', 'rev-parse', 'HEAD'],
+                          cwd=Path(__file__).resolve().parents[2], check=True,
+                          capture_output=True, text=True).stdout.strip()
 
 def check(scenarios: Path, cpp: Path, rust: Path) -> dict:
     source = [line.split('\t') for line in scenarios.read_text().splitlines()]
@@ -62,7 +70,10 @@ def check(scenarios: Path, cpp: Path, rust: Path) -> dict:
             if gas != required_gas:
                 raise ValueError('wrong historical exception metering: '+name)
     if positive<3:raise ValueError('independent positive controls missing')
-    return {'success':True,'scenarios':len(a),'positive':positive,'negative':negative,'malformed':malformed,
+    # Opcode-for-opcode agreement is a property of the two builds, not of any
+    # chain, so it is declared network-independent rather than given a network.
+    return {'success':True,'network':None,'scope':'network-independent',
+            'source_commit':source_commit(),'scenarios':len(a),'positive':positive,'negative':negative,'malformed':malformed,
             'comparison':'exit, gas, verdict, commit flag, c4, c5',
             'scenario_sha256':hashlib.sha256(scenarios.read_bytes()).hexdigest()}
 
