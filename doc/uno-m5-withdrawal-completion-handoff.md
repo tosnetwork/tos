@@ -130,6 +130,12 @@ For y in the bucket, s the slot fee, g=base*units, and t=y-s-g>0:
 1. `D63_1_PHYSICAL_TRANSFER`: actual coordinator→custody transfer equals t;
    R_actual and R_book independently increase t.
 2. `D63_2_HOLDINGS`: actual protected bucket holdings decrease y.
+   This is carried upstream by D60's holdings/event pairing requirement, not
+   independently reachable. Removing only that pairing check on the same
+   mutation reaches `D63_2_HOLDINGS`; retain this assertion as a cross-check.
+   D60 now carries both its own protected-holdings floor and this D63 component:
+   narrowing, conditioning or relocating its pairing check can weaken D63_2
+   without the ordinary downstream cross-check turning red to warn of that loss.
 3. `D63_3_FEE_DESTINATIONS`: coordinator operating income s; actual block
    fees_collected contribution g. The coordinator balance decreases y-s;
    D60 slack increases s, **not s+g**. Verify destinations, not just deductions.
