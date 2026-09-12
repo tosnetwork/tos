@@ -1,0 +1,264 @@
+crypto/block/block.tlb:122:uno_v2_withdrawal_identity_v1 kind:(## 8) { kind = 5 } auth_nonce:uint64
+crypto/block/block.tlb:124:uno_v2_withdrawal_attempt_identity_v1 withdrawal_id:bits256
+crypto/block/block.tlb:125:  = UnoV2WithdrawalAttemptIdentityV1;
+crypto/block/block.tlb:126:uno_v2_withdrawal_destination_v1 workchain:int32 account:bits256 = UnoV2WithdrawalDestinationV1;
+crypto/block/block.tlb:127:uno_v2_withdrawal_amounts_v2 principal:uint64 outward_fee:uint64
+crypto/block/block.tlb:128:  operation_fee:uint64 = UnoV2WithdrawalAmountsV2;
+crypto/block/block.tlb:132:uno_v2_withdrawal_data_v2 auxiliary:bits256
+crypto/block/block.tlb:133:  claims:^UnoV2TransferClaimsV1 destination:^UnoV2WithdrawalDestinationV1
+crypto/block/block.tlb:134:  amounts:^UnoV2WithdrawalAmountsV2 available:^UnoV2AccountCiphertext = UnoV2WithdrawalDataV2;
+crypto/block/block.tlb:135:uno_v2_withdrawal_input_v2 claimed_operation_id:bits256 claimed_attempt_id:bits256
+crypto/block/block.tlb:136:  data:^UnoV2WithdrawalDataV2 authorization:^Cell = UnoV2TransferInputV1;
+crypto/block/block.tlb:139:uno_v2_withdrawal_context_v2 attempt_id:bits256 settlement_blocks:uint32 withdrawal_limit:uint32
+crypto/block/block.tlb:140:  common:^UnoV2ReplayContextV1 binding:^UnoV2TransferBindingV1 = UnoV2WithdrawalContextV2;
+crypto/block/block.tlb:141:uno_v2_withdrawal_costs_v2 outward_fee_paid:uint64 = UnoV2WithdrawalCostsV2;
+crypto/block/block.tlb:145:uno_v2_withdrawal_timing_v1 phase:(## 8) { phase <= 1 } payout_created_lt:uint64
+crypto/block/block.tlb:146:  opened_height:uint32 queue_removed_height:uint32 settlement_blocks:uint32 = UnoV2WithdrawalTimingV1;
+crypto/block/block.tlb:147:uno_v2_withdrawal_record_v2 withdrawal_id:bits256 attempt_id:bits256
+crypto/block/block.tlb:149:  destination:^UnoV2WithdrawalDestinationV1 costs:^UnoV2WithdrawalCostsV2
+crypto/block/block.tlb:150:  timing:^UnoV2WithdrawalTimingV1 = UnoV2WithdrawalRecordV2;
+crypto/block/block.tlb:155:  lifecycle:^UnoV2AccountLifecycle withdrawals:(HashmapE 256 ^UnoV2WithdrawalRecordV2)
+crypto/block/workchain-failed-funded.h:44:    TRY_RESULT(owner, decode_workchain_withdrawal_account(owner_root, policy.withdrawal_limit));
+crypto/block/workchain-failed-funded.h:124:    TRY_RESULT(owner_data, encode_workchain_withdrawal_account(owner, policy.withdrawal_limit));
+crypto/block/workchain-proof-backend.cpp:102:WorkchainProofVerdict WorkchainProofVerifier::run_backend(const UnoCryptoWithdrawalVerifyRequestV1& request) {
+crypto/block/workchain-proof-backend.cpp:104:  return classify_backend_status(uno_crypto_verify_withdrawal_v1(&request));
+crypto/block/workchain-proof-work.h:123:    const UnoCryptoWithdrawalVerifyRequestV1& request) {
+crypto/block/workchain-proof-work.h:224:  td::Status verify(const UnoCryptoWithdrawalVerifyRequestV1& request) {
+crypto/block/workchain-proof-work.h:299:  static WorkchainProofVerdict run_backend(const UnoCryptoWithdrawalVerifyRequestV1& request);
+crypto/block/workchain-withdrawal-account.h:7:struct WorkchainWithdrawalAccount {
+crypto/block/workchain-withdrawal-account.h:9:  WorkchainWithdrawalControl control;
+crypto/block/workchain-withdrawal-account.h:12:inline td::Result<td::Ref<vm::Cell>> encode_workchain_withdrawal_account(
+crypto/block/workchain-withdrawal-account.h:13:    const WorkchainWithdrawalAccount& value, std::uint32_t authenticated_limit) {
+crypto/block/workchain-withdrawal-account.h:23:    TRY_RESULT(control, encode_workchain_withdrawal_control(value.control, authenticated_limit));
+crypto/block/workchain-withdrawal-account.h:49:inline td::Result<WorkchainWithdrawalAccount> decode_workchain_withdrawal_account(
+crypto/block/workchain-withdrawal-account.h:51:  return withdrawal_codec_detail::protect([&]() -> td::Result<WorkchainWithdrawalAccount> {
+crypto/block/workchain-withdrawal-account.h:55:    TRY_RESULT(control, decode_workchain_withdrawal_control(wire.control, authenticated_limit));
+crypto/block/workchain-withdrawal-account.h:87:    WorkchainWithdrawalAccount value{account, control, origins};
+crypto/block/workchain-withdrawal-account.h:88:    TRY_RESULT(canonical, encode_workchain_withdrawal_account(value, authenticated_limit));
+crypto/block/workchain-withdrawal-association.h:8:struct WorkchainWithdrawalAssociation {
+crypto/block/workchain-withdrawal-association.h:21:inline td::Result<std::optional<WorkchainWithdrawalAssociation>> associate_workchain_withdrawal_return(
+crypto/block/workchain-withdrawal-association.h:24:    const WorkchainWithdrawalControl& authenticated_control) {
+crypto/block/workchain-withdrawal-association.h:26:      -> td::Result<std::optional<WorkchainWithdrawalAssociation>> {
+crypto/block/workchain-withdrawal-association.h:40:      return std::optional<WorkchainWithdrawalAssociation>{};
+crypto/block/workchain-withdrawal-association.h:54:      return std::optional<WorkchainWithdrawalAssociation>{};
+crypto/block/workchain-withdrawal-association.h:57:    const WorkchainWithdrawalRecord* matched = nullptr;
+crypto/block/workchain-withdrawal-association.h:63:    if (!matched) return std::optional<WorkchainWithdrawalAssociation>{};
+crypto/block/workchain-withdrawal-association.h:75:    return std::optional<WorkchainWithdrawalAssociation>{WorkchainWithdrawalAssociation{
+crypto/block/workchain-withdrawal-codec.h:12:using WorkchainWithdrawalDestination = gen::UnoV2WithdrawalDestinationV1::Record;
+crypto/block/workchain-withdrawal-codec.h:13:using WorkchainWithdrawalAmounts = gen::UnoV2WithdrawalAmountsV2::Record;
+crypto/block/workchain-withdrawal-codec.h:14:using WorkchainWithdrawalCosts = gen::UnoV2WithdrawalCostsV2::Record;
+crypto/block/workchain-withdrawal-codec.h:15:using WorkchainWithdrawalTiming = gen::UnoV2WithdrawalTimingV1::Record;
+crypto/block/workchain-withdrawal-codec.h:16:struct WorkchainWithdrawalData {
+crypto/block/workchain-withdrawal-codec.h:18:  WorkchainWithdrawalDestination destination;
+crypto/block/workchain-withdrawal-codec.h:19:  WorkchainWithdrawalAmounts amounts;
+crypto/block/workchain-withdrawal-codec.h:23:struct WorkchainWithdrawalInput {
+crypto/block/workchain-withdrawal-codec.h:25:  WorkchainWithdrawalData data;
+crypto/block/workchain-withdrawal-codec.h:28:struct WorkchainWithdrawalContext {
+crypto/block/workchain-withdrawal-codec.h:34:struct WorkchainWithdrawalRecord {
+crypto/block/workchain-withdrawal-codec.h:38:  WorkchainWithdrawalDestination destination;
+crypto/block/workchain-withdrawal-codec.h:39:  WorkchainWithdrawalCosts costs;
+crypto/block/workchain-withdrawal-codec.h:40:  WorkchainWithdrawalTiming timing;
+crypto/block/workchain-withdrawal-codec.h:74:inline td::Result<std::uint64_t> workchain_withdrawal_total(const WorkchainWithdrawalAmounts& value) {
+crypto/block/workchain-withdrawal-codec.h:83:    TRY_RESULT(root, pack(gen::UnoV2OperationIdentityV1::Record_uno_v2_withdrawal_identity_v1{
+crypto/block/workchain-withdrawal-codec.h:93:    TRY_RESULT(root, withdrawal_codec_detail::pack(gen::UnoV2WithdrawalAttemptIdentityV1::Record{withdrawal}));
+crypto/block/workchain-withdrawal-codec.h:98:inline td::Result<td::Ref<vm::Cell>> encode_workchain_withdrawal_data(const WorkchainWithdrawalData& value) {
+crypto/block/workchain-withdrawal-codec.h:101:    TRY_RESULT(total, workchain_withdrawal_total(value.amounts)); (void)total;
+crypto/block/workchain-withdrawal-codec.h:107:    return pack(gen::UnoV2WithdrawalDataV2::Record{value.auxiliary,
+crypto/block/workchain-withdrawal-codec.h:111:inline td::Result<WorkchainWithdrawalData> decode_workchain_withdrawal_data(const td::Ref<vm::Cell>& root) {
+crypto/block/workchain-withdrawal-codec.h:112:  return withdrawal_codec_detail::protect([&]() -> td::Result<WorkchainWithdrawalData> {
+crypto/block/workchain-withdrawal-codec.h:114:    TRY_RESULT(wire, unpack<gen::UnoV2WithdrawalDataV2::Record>(root));
+crypto/block/workchain-withdrawal-codec.h:116:    TRY_RESULT(destination, unpack<WorkchainWithdrawalDestination>(wire.destination));
+crypto/block/workchain-withdrawal-codec.h:117:    TRY_RESULT(amounts, unpack<WorkchainWithdrawalAmounts>(wire.amounts));
+crypto/block/workchain-withdrawal-codec.h:119:    TRY_RESULT(total, workchain_withdrawal_total(amounts)); (void)total;
+crypto/block/workchain-withdrawal-codec.h:122:    return WorkchainWithdrawalData{claims, destination, amounts, available, wire.auxiliary};
+crypto/block/workchain-withdrawal-codec.h:126:inline td::Result<td::Ref<vm::Cell>> encode_workchain_withdrawal_input(const WorkchainWithdrawalInput& value) {
+crypto/block/workchain-withdrawal-codec.h:131:    TRY_RESULT(data, encode_workchain_withdrawal_data(value.data));
+crypto/block/workchain-withdrawal-codec.h:137:    return withdrawal_codec_detail::pack(gen::UnoV2TransferInputV1::Record_uno_v2_withdrawal_input_v2{
+crypto/block/workchain-withdrawal-codec.h:141:inline td::Result<WorkchainWithdrawalInput> decode_workchain_withdrawal_input(const td::Ref<vm::Cell>& root) {
+crypto/block/workchain-withdrawal-codec.h:142:  return withdrawal_codec_detail::protect([&]() -> td::Result<WorkchainWithdrawalInput> {
+crypto/block/workchain-withdrawal-codec.h:143:    TRY_RESULT(wire, withdrawal_codec_detail::unpack<gen::UnoV2TransferInputV1::Record_uno_v2_withdrawal_input_v2>(root));
+crypto/block/workchain-withdrawal-codec.h:144:    TRY_RESULT(data, decode_workchain_withdrawal_data(wire.data));
+crypto/block/workchain-withdrawal-codec.h:151:    return WorkchainWithdrawalInput{wire.claimed_operation_id, wire.claimed_attempt_id, std::move(data), std::move(auth)};
+crypto/block/workchain-withdrawal-codec.h:158:inline td::Result<std::string> encode_workchain_withdrawal_context(const WorkchainWithdrawalContext& value) {
+crypto/block/workchain-withdrawal-codec.h:163:    TRY_RESULT(root, pack(gen::UnoV2WithdrawalContextV2::Record{value.attempt_id,
+crypto/block/workchain-withdrawal-codec.h:181:inline td::Status check_workchain_withdrawal_record(const WorkchainWithdrawalRecord& value) {
+crypto/block/workchain-withdrawal-codec.h:183:  TRY_RESULT(total, workchain_withdrawal_total({value.principal, value.costs.outward_fee_paid, 0})); (void)total;
+crypto/block/workchain-withdrawal-codec.h:193:inline td::Result<td::Ref<vm::Cell>> encode_workchain_withdrawal_record(const WorkchainWithdrawalRecord& value) {
+crypto/block/workchain-withdrawal-codec.h:196:    TRY_STATUS(check_workchain_withdrawal_record(value));
+crypto/block/workchain-withdrawal-codec.h:199:    return pack(gen::UnoV2WithdrawalRecordV2::Record{value.withdrawal_id, value.attempt_id,
+crypto/block/workchain-withdrawal-codec.h:203:inline td::Result<WorkchainWithdrawalRecord> decode_workchain_withdrawal_record(const td::Ref<vm::Cell>& root) {
+crypto/block/workchain-withdrawal-codec.h:204:  return withdrawal_codec_detail::protect([&]() -> td::Result<WorkchainWithdrawalRecord> {
+crypto/block/workchain-withdrawal-codec.h:206:    TRY_RESULT(wire, unpack<gen::UnoV2WithdrawalRecordV2::Record>(root));
+crypto/block/workchain-withdrawal-codec.h:208:    TRY_RESULT(destination, unpack<WorkchainWithdrawalDestination>(wire.destination));
+crypto/block/workchain-withdrawal-codec.h:209:    TRY_RESULT(costs, unpack<WorkchainWithdrawalCosts>(wire.costs));
+crypto/block/workchain-withdrawal-codec.h:210:    TRY_RESULT(timing, unpack<WorkchainWithdrawalTiming>(wire.timing));
+crypto/block/workchain-withdrawal-codec.h:211:    WorkchainWithdrawalRecord result{wire.withdrawal_id, wire.attempt_id,
+crypto/block/workchain-withdrawal-codec.h:213:    TRY_STATUS(check_workchain_withdrawal_record(result));
+crypto/block/workchain-withdrawal-codec.h:217:struct WorkchainWithdrawalControl {
+crypto/block/workchain-withdrawal-codec.h:219:  std::vector<WorkchainWithdrawalRecord> withdrawals;
+crypto/block/workchain-withdrawal-codec.h:221:inline td::Status check_workchain_withdrawal_closure(const WorkchainWithdrawalControl& authenticated_control) {
+crypto/block/workchain-withdrawal-codec.h:226:inline td::Result<td::Ref<vm::Cell>> encode_workchain_withdrawal_control(
+crypto/block/workchain-withdrawal-codec.h:227:    const WorkchainWithdrawalControl& value, std::uint32_t authenticated_limit) {
+crypto/block/workchain-withdrawal-codec.h:232:      TRY_STATUS(check_workchain_withdrawal_closure(value));
+crypto/block/workchain-withdrawal-codec.h:239:      TRY_RESULT(root, encode_workchain_withdrawal_record(record));
+crypto/block/workchain-withdrawal-codec.h:248:inline td::Result<WorkchainWithdrawalControl> decode_workchain_withdrawal_control(
+crypto/block/workchain-withdrawal-codec.h:250:  return withdrawal_codec_detail::protect([&]() -> td::Result<WorkchainWithdrawalControl> {
+crypto/block/workchain-withdrawal-codec.h:255:    WorkchainWithdrawalControl value{lifecycle, {}};
+crypto/block/workchain-withdrawal-codec.h:262:          auto decoded = decode_workchain_withdrawal_record(leaf->prefetch_ref());
+crypto/block/workchain-withdrawal-codec.h:277:      TRY_STATUS(check_workchain_withdrawal_closure(value));
+crypto/block/workchain-withdrawal-codec.h:278:    TRY_RESULT(canonical, encode_workchain_withdrawal_control(value, authenticated_limit));
+crypto/test/test-workchain-withdrawal-association.cpp:15:WorkchainWithdrawalControl control() {
+crypto/test/test-workchain-withdrawal-association.cpp:16:  WorkchainWithdrawalRecord r{{}, {}, 7, 100, {2, word(1), word(2)}, {0, word(3)},
+crypto/test/test-workchain-withdrawal-association.cpp:44:auto associate(td::Ref<vm::Cell> m, const WorkchainWithdrawalControl& c) {
+crypto/test/test-workchain-withdrawal-association.cpp:47:void error_is(td::Result<std::optional<WorkchainWithdrawalAssociation>> result, td::Slice reason) {
+crypto/test/test-workchain-withdrawal-association.cpp:153:  auto owner = encode_workchain_withdrawal_account({core, pending, {}}, 2).move_as_ok();
+crypto/test/test-workchain-withdrawal-association.cpp:194:  auto next_owner = decode_workchain_withdrawal_account(result.ok().owner_data, 2).move_as_ok();
+crypto/test/test-workchain-withdrawal-association.cpp:219:  owner = encode_workchain_withdrawal_account({core, pending, {}}, 2).move_as_ok();
+crypto/test/test-workchain-withdrawal-association.cpp:224:  const auto issued = decode_workchain_withdrawal_account(early_return.ok().owner_data, 2).move_as_ok();
+crypto/test/test-workchain-withdrawal-codec.cpp:10:WorkchainWithdrawalData data() {
+crypto/test/test-workchain-withdrawal-codec.cpp:14:WorkchainWithdrawalRecord record() {
+crypto/test/test-workchain-withdrawal-codec.cpp:24:  auto root = encode_workchain_withdrawal_record(value); ASSERT_TRUE(root.is_ok());
+crypto/test/test-workchain-withdrawal-codec.cpp:25:  auto decoded = decode_workchain_withdrawal_record(root.ok()); ASSERT_TRUE(decoded.is_ok());
+crypto/test/test-workchain-withdrawal-codec.cpp:27:  ASSERT_TRUE(encode_workchain_withdrawal_record(decoded.ok()).move_as_ok()->get_hash() == root.ok()->get_hash());
+crypto/test/test-workchain-withdrawal-codec.cpp:29:  ASSERT_TRUE(encode_workchain_withdrawal_record(value).is_error());
+crypto/test/test-workchain-withdrawal-codec.cpp:31:  ASSERT_TRUE(encode_workchain_withdrawal_record(value).is_ok());
+crypto/test/test-workchain-withdrawal-codec.cpp:33:  ASSERT_TRUE(encode_workchain_withdrawal_record(value).is_error());
+crypto/test/test-workchain-withdrawal-codec.cpp:48:  ASSERT_EQ(workchain_withdrawal_total(value.amounts).move_as_ok(), 104u);
+crypto/test/test-workchain-withdrawal-codec.cpp:50:  ASSERT_TRUE(workchain_withdrawal_total(value.amounts).is_error());
+crypto/test/test-workchain-withdrawal-codec.cpp:51:  ASSERT_TRUE(encode_workchain_withdrawal_data(value).is_error());
+crypto/test/test-workchain-withdrawal-codec.cpp:55:  ASSERT_TRUE(encode_workchain_withdrawal_data(value).is_ok());
+crypto/test/test-workchain-withdrawal-codec.cpp:56:  WorkchainWithdrawalInput input{word(7), word(8), data(),
+crypto/test/test-workchain-withdrawal-codec.cpp:58:  auto root = encode_workchain_withdrawal_input(input); ASSERT_TRUE(root.is_ok());
+crypto/test/test-workchain-withdrawal-codec.cpp:59:  auto decoded = decode_workchain_withdrawal_input(root.ok()); ASSERT_TRUE(decoded.is_ok());
+crypto/test/test-workchain-withdrawal-codec.cpp:60:  ASSERT_TRUE(encode_workchain_withdrawal_input(decoded.ok()).move_as_ok()->get_hash() == root.ok()->get_hash());
+crypto/test/test-workchain-withdrawal-codec.cpp:62:  ASSERT_TRUE(encode_workchain_withdrawal_input(input).move_as_ok()->get_hash() != root.ok()->get_hash());
+crypto/test/test-workchain-withdrawal-codec.cpp:64:  ASSERT_TRUE(encode_workchain_withdrawal_input(input).is_error());
+crypto/test/test-workchain-withdrawal-codec.cpp:67:  ASSERT_TRUE(decode_workchain_withdrawal_record({}).is_error());
+crypto/test/test-workchain-withdrawal-codec.cpp:68:  ASSERT_TRUE(decode_workchain_withdrawal_record(special()).is_error());
+crypto/test/test-workchain-withdrawal-codec.cpp:69:  ASSERT_TRUE(decode_workchain_withdrawal_input(special()).is_error());
+crypto/test/test-workchain-withdrawal-codec.cpp:70:  ASSERT_TRUE(decode_workchain_withdrawal_data(special()).is_error());
+crypto/test/test-workchain-withdrawal-codec.cpp:71:  ASSERT_TRUE(decode_workchain_withdrawal_record(vm::CellBuilder().store_long(0, 8).finalize()).is_error());
+crypto/test/test-workchain-withdrawal-codec.cpp:72:  auto root = encode_workchain_withdrawal_record(record()).move_as_ok();
+crypto/test/test-workchain-withdrawal-codec.cpp:73:  gen::UnoV2WithdrawalRecordV2::Record wire;
+crypto/test/test-workchain-withdrawal-codec.cpp:77:  ASSERT_TRUE(decode_workchain_withdrawal_record(changed).is_error());
+crypto/test/test-workchain-withdrawal-codec.cpp:79:  ASSERT_TRUE(decode_workchain_withdrawal_record(extra).is_error());
+crypto/test/test-workchain-withdrawal-codec.cpp:82:  WorkchainWithdrawalContext value{
+crypto/test/test-workchain-withdrawal-codec.cpp:86:  auto encoded = encode_workchain_withdrawal_context(value); ASSERT_TRUE(encoded.is_ok());
+crypto/test/test-workchain-withdrawal-codec.cpp:90:  ASSERT_TRUE(encode_workchain_withdrawal_context(value).move_as_ok() != encoded.ok());
+crypto/test/test-workchain-withdrawal-codec.cpp:92:  ASSERT_TRUE(encode_workchain_withdrawal_context(value).move_as_ok() != encoded.ok());
+crypto/test/test-workchain-withdrawal-codec.cpp:95:  WorkchainWithdrawalControl value{WorkchainAccountActive{}, {record()}};
+crypto/test/test-workchain-withdrawal-codec.cpp:96:  auto root = encode_workchain_withdrawal_control(value, 2); ASSERT_TRUE(root.is_ok());
+crypto/test/test-workchain-withdrawal-codec.cpp:97:  auto decoded = decode_workchain_withdrawal_control(root.ok(), 2); ASSERT_TRUE(decoded.is_ok());
+crypto/test/test-workchain-withdrawal-codec.cpp:99:  ASSERT_TRUE(check_workchain_withdrawal_closure(decoded.ok()).is_error());
+crypto/test/test-workchain-withdrawal-codec.cpp:100:  ASSERT_TRUE(encode_workchain_withdrawal_control(value, 0).is_error());
+crypto/test/test-workchain-withdrawal-codec.cpp:101:  ASSERT_TRUE(decode_workchain_withdrawal_control(root.ok(), 0).is_error());
+crypto/test/test-workchain-withdrawal-codec.cpp:104:  auto duplicate = encode_workchain_withdrawal_control(value, 2);
+crypto/test/test-workchain-withdrawal-codec.cpp:109:  duplicate = encode_workchain_withdrawal_control(value, 2);
+crypto/test/test-workchain-withdrawal-codec.cpp:113:  ASSERT_TRUE(encode_workchain_withdrawal_control(value, 2).is_ok());
+crypto/test/test-workchain-withdrawal-codec.cpp:117:  auto wrong = decode_workchain_withdrawal_control(confidential_state_detail::pack(wire).move_as_ok(), 2);
+crypto/test/test-workchain-withdrawal-codec.cpp:121:  ASSERT_TRUE(decode_workchain_withdrawal_control(confidential_state_detail::pack(wire).move_as_ok(), 2).is_error());
+crypto/test/test-workchain-withdrawal-codec.cpp:123:  ASSERT_TRUE(encode_workchain_withdrawal_control(value, 2).is_error());
+crypto/test/test-workchain-withdrawal-codec.cpp:125:  ASSERT_TRUE(check_workchain_withdrawal_closure(value).is_ok());
+crypto/test/test-workchain-withdrawal-codec.cpp:126:  ASSERT_TRUE(encode_workchain_withdrawal_control(value, 2).is_ok());
+crypto/test/test-workchain-withdrawal-codec.cpp:177:  WorkchainWithdrawalAccount value{core, {WorkchainAccountActive{}, {record()}}, {}};
+crypto/test/test-workchain-withdrawal-codec.cpp:188:  auto root = encode_workchain_withdrawal_account(value, 2); ASSERT_TRUE(root.is_ok());
+crypto/test/test-workchain-withdrawal-codec.cpp:190:  auto decoded = decode_workchain_withdrawal_account(root.ok(), 2); ASSERT_TRUE(decoded.is_ok());
+crypto/test/test-workchain-withdrawal-codec.cpp:199:  auto capacity = encode_workchain_withdrawal_account(too_many, 2);
+crypto/test/test-workchain-withdrawal-codec.cpp:203:  ASSERT_TRUE(check_workchain_withdrawal_closure(decoded.ok().control).is_error());
+crypto/test/test-workchain-withdrawal-codec.cpp:207:  ASSERT_TRUE(decode_workchain_withdrawal_account(old_root, 2).is_error());
+crypto/test/test-workchain-withdrawal-codec.cpp:209:  auto duplicate = encode_workchain_withdrawal_account(value, 2); ASSERT_TRUE(duplicate.is_error());
+crypto/test/test-workchain-withdrawal-codec.cpp:213:  ASSERT_TRUE(encode_workchain_withdrawal_account(value, 2).is_error());
+crypto/test/test-workchain-withdrawal-codec.cpp:214:  ASSERT_TRUE(decode_workchain_withdrawal_account(special(), 2).is_error());
+crypto/test/test-workchain-withdrawal-codec.cpp:218:  ASSERT_TRUE(decode_workchain_withdrawal_account(confidential_state_detail::pack(wire).move_as_ok(), 2).is_error());
+crypto/test/test-workchain-withdrawal-codec.cpp:259:  ASSERT_TRUE(decode_workchain_withdrawal_account(load("account-v1.boc"),4).is_error());
+crypto/test/test-workchain-withdrawal-codec.cpp:260:  ASSERT_TRUE(decode_workchain_withdrawal_data(load("data-v1.boc")).is_error());
+crypto/test/test-workchain-withdrawal-codec.cpp:261:  ASSERT_TRUE(decode_workchain_withdrawal_record(load("record-v1.boc")).is_error());
+crypto/test/test-workchain-withdrawal-codec.cpp:262:  ASSERT_TRUE(decode_workchain_withdrawal_control(load("control-v1.boc"),4).is_error());
+crypto/test/test-workchain-withdrawal-codec.cpp:264:  ASSERT_EQ(workchain_withdrawal_total(v.amounts).move_as_ok(),104u);
+crypto/test/test-workchain-withdrawal-codec.cpp:266:  ASSERT_TRUE(check_workchain_withdrawal_record(r).is_error());
+crypto/test/test-workchain-withdrawal-codec.cpp:271:  for(auto entry:{std::pair{"record-v2.boc",encode_workchain_withdrawal_record(record()).move_as_ok()},
+crypto/test/test-workchain-withdrawal-codec.cpp:272:                 std::pair{"data-v2.boc",encode_workchain_withdrawal_data(data()).move_as_ok()},
+crypto/test/test-workchain-withdrawal-codec.cpp:273:                 std::pair{"control-v2.boc",encode_workchain_withdrawal_control({WorkchainAccountActive{}, {record()}},4).move_as_ok()}}){
+crypto/test/withdrawal-structure/src/main.rs:65:        "WithdrawalAmounts.principal:u64", "WithdrawalAmounts.outward_fee:u64",
+crypto/test/withdrawal-structure/src/main.rs:66:        "WithdrawalAmounts.return_reserve:u64", "WithdrawalAmounts.operation_fee:u64",
+crypto/test/withdrawal-structure/src/main.rs:67:        "WithdrawalStatement.domain:[u8 ; 80]", "WithdrawalStatement.fee:u64",
+crypto/test/withdrawal-structure/src/main.rs:68:        "WithdrawalStatement.context:Vec < u8 >", "WithdrawalStatement.points:[[u8 ; 32] ; 10]",
+crypto/test/withdrawal-structure/src/main.rs:95:        "\nimpl WithdrawalStatement { pub fn install_pending(&mut self) {} }",
+crypto/test/workchain-d64-independent-review.rs:2:use crate::{withdrawal_statement::{WithdrawalAmounts, WithdrawalStatement}, relation,
+crypto/test/workchain-d64-independent-review.rs:10:fn amounts()->WithdrawalAmounts { WithdrawalAmounts {
+crypto/test/workchain-d64-independent-review.rs:14:    let l=limits(); let s=WithdrawalStatement::new(&l,[1;80],[2;32],[3;32],amounts(),b"review",inputs()).unwrap();
+crypto/test/workchain-d64-independent-review.rs:32:    let s=WithdrawalStatement::new(&l,[1;80],[2;32],[3;32],a,b"review",q).unwrap();
+crypto/test/workchain-d64-independent-review.rs:40:    let arbitrary=WithdrawalAmounts{operation_fee:19,..a};
+crypto/test/workchain-d64-independent-review.rs:41:    let changed=WithdrawalStatement::new(&l,[1;80],[2;32],[3;32],arbitrary,b"review",q).unwrap();
+crypto/test/workchain-d64-independent-review.rs:44:    for a in [WithdrawalAmounts{principal:u64::MAX,outward_fee:1,return_reserve:0,operation_fee:0},
+crypto/test/workchain-d64-independent-review.rs:45:        WithdrawalAmounts{principal:u64::MAX-1,outward_fee:1,return_reserve:1,operation_fee:0}] {
+crypto/test/workchain-d64-independent-review.rs:47:        assert!(WithdrawalStatement::new(&l,[1;80],[2;32],[3;32],a,b"review",q).is_err());
+crypto/test/workchain-d78-independent-review.rs:3:use crate::{withdrawal_statement::{WithdrawalAmounts, WithdrawalStatement}, relation,
+crypto/test/workchain-d78-independent-review.rs:11:fn amounts()->WithdrawalAmounts { WithdrawalAmounts {
+crypto/test/workchain-d78-independent-review.rs:15:    let l=limits(); let s=WithdrawalStatement::new(&l,[1;80],[2;32],[3;32],amounts(),b"review",inputs()).unwrap();
+crypto/test/workchain-d78-independent-review.rs:33:    let s=WithdrawalStatement::new(&l,[1;80],[2;32],[3;32],a,b"review",q).unwrap();
+crypto/test/workchain-d78-independent-review.rs:41:    let arbitrary=WithdrawalAmounts{operation_fee:19,..a};
+crypto/test/workchain-d78-independent-review.rs:42:    let changed=WithdrawalStatement::new(&l,[1;80],[2;32],[3;32],arbitrary,b"review",q).unwrap();
+crypto/test/workchain-d78-independent-review.rs:45:    for a in [WithdrawalAmounts{principal:u64::MAX,outward_fee:1,operation_fee:0},
+crypto/test/workchain-d78-independent-review.rs:46:        WithdrawalAmounts{principal:u64::MAX-1,outward_fee:2,operation_fee:0}] {
+crypto/test/workchain-d78-independent-review.rs:48:        assert!(WithdrawalStatement::new(&l,[1;80],[2;32],[3;32],a,b"review",q).is_err());
+crypto/test/workchain-m3-node-engine.h:153:      UnoCryptoWithdrawalVerifyRequestV1 shape{};
+crypto/test/workchain-m3-node-engine.h:292:      WorkchainWithdrawalAccount migrated{next, {next.lifecycle, {}}, {}};
+crypto/test/workchain-m3-node-engine.h:297:      TRY_RESULT(with_obligation, encode_workchain_withdrawal_account(migrated, b.prepare->withdrawal_limit));
+crypto/test/workchain-m3-node-engine.h:299:      TRY_RESULT(installed, decode_workchain_withdrawal_account(with_obligation, b.prepare->withdrawal_limit));
+crypto/test/workchain-m3-node-engine.h:335:      auto owner_result = decode_workchain_withdrawal_account(target.data, b.failed->withdrawal_limit);
+crypto/test/workchain-m5-debit.h:18:inline td::Result<WorkchainWithdrawalInput> decode_m5_test_debit(const td::Ref<vm::Cell>& root) {
+crypto/test/workchain-m5-debit.h:20:  return decode_workchain_withdrawal_input(vm::load_cell_slice(root).prefetch_ref());
+crypto/test/workchain-m5-debit.h:25:using M5AccountingReplay = std::variant<WorkchainReplayInput, WorkchainWithdrawalInput>;
+crypto/test/workchain-m5-debit.h:36:    const WorkchainWithdrawalInput& input) {
+crypto/test/workchain-m5-debit.h:44:  TRY_RESULT(total, workchain_withdrawal_total(input.data.amounts)); (void)total;
+crypto/test/workchain-m5-debit.h:49:  TRY_RESULT(data, encode_workchain_withdrawal_data(input.data));
+crypto/test/workchain-m5-debit.h:52:  WorkchainWithdrawalContext context{
+crypto/test/workchain-m5-debit.h:59:  return encode_workchain_withdrawal_context(context);
+crypto/test/workchain-m5-debit.h:63:    const WorkchainWithdrawalInput& input, WorkchainProofVerifier& verifier) {
+crypto/test/workchain-m5-debit.h:66:  UnoCryptoWithdrawalVerifyRequestV1 request{};
+crypto/test/workchain-m5-debit.h:78:  // Length is host-built: encode_workchain_withdrawal_context rejects unless
+crypto/test/workchain-m5-payout.h:24:inline td::Result<td::Ref<vm::Cell>> m5_payout_request(const WorkchainWithdrawalInput& input) {
+crypto/test/workchain-withdrawal-account-controls.py:31:  expected='invalid Withdrawal account schema or system capacity' if name=='CombinedCapacity' else 'encode_workchain_withdrawal_account(value, 2).is_error()'
+crypto/test/workchain-withdrawal-effects.rs:4:    withdrawal_statement::{WithdrawalAmounts, WithdrawalStatement}};
+crypto/test/workchain-withdrawal-effects.rs:13:        let result = WithdrawalStatement::new(&limits, [0; 80], [1; 32], [2; 32],
+crypto/test/workchain-withdrawal-effects.rs:14:            WithdrawalAmounts { principal: 1, outward_fee: 1,
+test/m3-live-wallet.h:23:inline block::WorkchainWithdrawalAccount m5_live_account(const td::Ref<vm::Cell>& root,
+test/m3-live-wallet.h:28:    return block::decode_workchain_withdrawal_account(root,*limit).move_as_ok();
+test/m3-live-wallet.h:112:  block::WorkchainWithdrawalInput input{wid,aid,
+test/m3-live-wallet.h:136:    save_operation(fixture,block::m3_test::wrap_m5_test_debit(block::encode_workchain_withdrawal_input(input).move_as_ok()),
+test/m4-live-deposit.h:341:      if (const auto* withdrawal = std::get_if<WorkchainWithdrawalInput>(&replay)) {
+test/m4-live-deposit.h:402:    if (const auto* withdrawal = std::get_if<WorkchainWithdrawalInput>(&replay))
+test/m4-live-deposit.h:416:      if (const auto* withdrawal = std::get_if<WorkchainWithdrawalInput>(&replay)) {
+test/m5-live-reserve-control.h:35:    auto wire = block::m3_test::wrap_m5_test_debit(block::encode_workchain_withdrawal_input(changed).move_as_ok());
+uno/crypto/cbindgen.toml:17:WithdrawalVerifyRequestV2 = "UnoCryptoWithdrawalVerifyRequestV2"
+uno/crypto/include/uno_crypto.h:98: * points and P_B are constructed inside WithdrawalStatement, never supplied.
+uno/crypto/include/uno_crypto.h:118:} UnoCryptoWithdrawalVerifyRequestV2;
+uno/crypto/include/uno_crypto.h:200:uint32_t uno_crypto_verify_withdrawal_v2(const UnoCryptoWithdrawalVerifyRequestV2 *request);
+uno/crypto/src/ffi.rs:145:/// points and P_B are constructed inside WithdrawalStatement, never supplied.
+uno/crypto/src/ffi.rs:147:pub struct WithdrawalVerifyRequestV2 {
+uno/crypto/src/ffi.rs:170:pub unsafe extern "C" fn uno_crypto_verify_withdrawal_v2(request: *const WithdrawalVerifyRequestV2) -> u32 {
+uno/crypto/src/ffi.rs:180:        let amounts = crate::withdrawal_statement::WithdrawalAmounts {
+uno/crypto/src/ffi.rs:185:        let statement = crate::withdrawal_statement::WithdrawalStatement::new(
+uno/crypto/src/withdrawal_statement.rs:14:pub struct WithdrawalAmounts {
+uno/crypto/src/withdrawal_statement.rs:20:impl WithdrawalAmounts {
+uno/crypto/src/withdrawal_statement.rs:62:pub struct WithdrawalStatement {
+uno/crypto/src/withdrawal_statement.rs:69:impl WithdrawalStatement {
+uno/crypto/src/withdrawal_statement.rs:71:        attempt: [u8; 32], amounts: WithdrawalAmounts, authenticated_context: &[u8],
+uno/prover/examples/m3-scenario.rs:109:        use tos_uno_crypto_prototype::withdrawal_statement::{WithdrawalAmounts, WithdrawalStatement, public_opening};
+uno/prover/examples/m3-scenario.rs:114:        let amounts = WithdrawalAmounts { principal: n("principal")?, outward_fee: n("outward_fee")?,
+uno/prover/examples/m3-scenario.rs:128:        let statement = WithdrawalStatement::new(&limits, domain, wid, aid, amounts,
+uno/prover/src/tests/withdrawal.rs:3:    withdrawal_statement::{WithdrawalAmounts, WithdrawalStatement, public_opening}};
+uno/prover/src/tests/withdrawal.rs:15:    let amounts = WithdrawalAmounts { principal: 137, outward_fee: 17, operation_fee: 11 };
+uno/prover/src/tests/withdrawal.rs:34:    let rebuilt = WithdrawalStatement::new(&limits, domain, withdrawal, attempt, amounts,
+uno/prover/src/tests/withdrawal.rs:83:        use tos_uno_crypto_prototype::ffi::{WithdrawalVerifyRequestV2, uno_crypto_verify_withdrawal_v2};
+uno/prover/src/tests/withdrawal.rs:84:        let mut request = WithdrawalVerifyRequestV2 {
+uno/prover/src/tests/withdrawal.rs:93:        assert_eq!(unsafe { uno_crypto_verify_withdrawal_v2(&request) }, 0, "real proof through dedicated ABI");
+uno/prover/src/tests/withdrawal.rs:95:        assert_eq!(unsafe { uno_crypto_verify_withdrawal_v2(&request) }, 3, "changed statement must fail verification, not decoding");
+uno/prover/src/tests/withdrawal.rs:97:        assert_eq!(unsafe { uno_crypto_verify_withdrawal_v2(&request) }, 1, "old prelock ABI version rejected before reading proof buffers");
+uno/prover/src/tests/withdrawal.rs:100:        assert_eq!(unsafe { uno_crypto_verify_withdrawal_v2(&request) }, 2, "noncanonical context length");
+uno/prover/src/tests/withdrawal.rs:102:    let split = WithdrawalAmounts { outward_fee: amounts.outward_fee.checked_add(1).expect("fee increment"),
+uno/prover/src/tests/withdrawal.rs:105:    let changed = WithdrawalStatement::new(&limits, domain, withdrawal, attempt, split,
+uno/prover/src/tests/withdrawal.rs:142:    let amounts = WithdrawalAmounts { principal: 1001, outward_fee: 0,
+uno/prover/src/tests/withdrawal.rs:144:    assert!(WithdrawalStatement::new(&limits, [42; 80], [7; 32], [8; 32],
+uno/prover/src/tests/withdrawal.rs:156:    let mut amounts = WithdrawalAmounts { principal: u64::MAX, outward_fee: 1, operation_fee: 0 };

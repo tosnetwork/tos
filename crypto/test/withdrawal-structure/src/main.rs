@@ -61,9 +61,12 @@ fn check(source: &str) -> Result<(), String> {
     // Keep the independently reviewed interface in a separate explicit fixture.
     let expected_api = include_str!("../api.txt").lines().map(str::to_owned).collect();
     if api != expected_api { return Err(format!("statement interface changed: {api:?}")); }
+    // D78 reviewed interface change (A 269fe2e82, independently rechecked by B):
+    // prelock storage is retired. Call targets below are deliberately unchanged;
+    // they are a set, not call counts, and checked x+q remains required.
     let expected_fields = set(&[
         "WithdrawalAmounts.principal:u64", "WithdrawalAmounts.outward_fee:u64",
-        "WithdrawalAmounts.return_reserve:u64", "WithdrawalAmounts.operation_fee:u64",
+        "WithdrawalAmounts.operation_fee:u64",
         "WithdrawalStatement.domain:[u8 ; 80]", "WithdrawalStatement.fee:u64",
         "WithdrawalStatement.context:Vec < u8 >", "WithdrawalStatement.points:[[u8 ; 32] ; 10]",
     ]);
