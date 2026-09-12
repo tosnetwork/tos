@@ -93,7 +93,7 @@ class LiteClientTransport:
         return self._run(f'runmethod {address.to_str(False)} {method}')
 
     def gas_prices(self, workchain: int) -> dict:
-        """Price from the chain being addressed, not from a constant."""
+        """Read compute-gas prices from the chain being addressed."""
         param = 20 if workchain == -1 else 21
         text = self._run(f'getconfig {param}')
         # 'flat_gas_price' also ends in 'gas_price'; anchor away from it or the
@@ -105,6 +105,51 @@ class LiteClientTransport:
             raise LiteClientError(f'the chain did not report gas prices in ConfigParam {param}')
         return {'gas_price': int(match.group(1)), 'flat_gas_limit': int(flat_limit.group(1)),
                 'flat_gas_price': int(flat_price.group(1))}
+
+    def forward_prices(self, workchain: int) -> dict:
+        """Read message-forwarding prices instead of approximating them as gas."""
+        param = 24 if workchain == -1 else 25
+        text = self._run(f'getconfig {param}')
+        values = {}
+        for name in ('lump_price', 'bit_price', 'cell_price'):
+            match = re.search(rf'(?<![A-Za-z0-9_]){name}:(\d+)', text)
+            if not match:
+                raise LiteClientError(
+                    f'the chain did not report {name} in ConfigParam {param}')
+            values[name] = int(match.group(1))
+        return values
+
+    @staticmethod
+    def _gas_fee(gas_used: int, prices: dict) -> int:
+        """Mirror GETGASFEE / the production compute-phase flat-prefix formula."""
+        if gas_used <= prices['flat_gas_limit']:
+            return prices['flat_gas_price']
+        variable = prices['gas_price'] * (gas_used - prices['flat_gas_limit'])
+        return prices['flat_gas_price'] + (variable + (1 << 16) - 1) // (1 << 16)
+
+    @staticmethod
+    def _tree_size(root: Cell) -> tuple[int, int]:
+        """Count referenced message cells/bits once, as forwarding fees do."""
+        seen = set()
+        cells = bits = 0
+
+        def walk(cell: Cell):
+            nonlocal cells, bits
+            if cell.hash in seen:
+                return
+            seen.add(cell.hash)
+            cells += 1
+            bits += len(cell.bits)
+            for ref in cell.refs:
+                walk(ref)
+
+        walk(root)
+        return cells, bits
+
+    @staticmethod
+    def _forward_fee(cells: int, bits: int, prices: dict) -> int:
+        variable = prices['bit_price'] * bits + prices['cell_price'] * cells
+        return prices['lump_price'] + (variable + (1 << 16) - 1) // (1 << 16)
 
     def account_data(self, address: Address) -> Cell:
         """The account's data cell, read from the chain rather than reconstructed."""
@@ -181,15 +226,22 @@ class LiteClientTransport:
         )
 
     async def estimate(self, request: AuthRequest, module: Address) -> FundingBudget:
-        """Price the two hops from this chain's own gas configuration."""
-        prices = self.gas_prices(module.wc)
-        # The module's flat post-quantum tariff dominates; the account's own
-        # execution and the forwarding fee are added from the same prices.
-        module_gas, account_gas, forward_gas = 64_400, 20_000, 10_000
-        unit = prices['gas_price'] / (1 << 16)
-        module_compute = max(1, int(module_gas * unit))
-        account_execution = max(1, int(account_gas * unit))
-        forwarding = max(1, int(forward_gas * unit))
+        """Price both compute phases and the actual relay body from chain config."""
+        gas = self.gas_prices(module.wc)
+        forward = self.forward_prices(module.wc)
+        # The verifier's execution is effectively fixed-size because the signed
+        # message is the 32-byte commitment. Account execution varies less, and
+        # the relayer margin remains explicit. Keep the measured conservative
+        # gas envelopes here while deriving their monetary cost from Config20/21.
+        module_gas, account_gas = 64_400, 20_000
+        module_compute = max(1, self._gas_fee(module_gas, gas))
+        account_execution = max(1, self._gas_fee(account_gas, gas))
+        # The module forwards the AUTH envelope, not the 2420-byte proof. Quote
+        # the larger hybrid envelope so a PQ-only caller is never underfunded by
+        # this transport merely because its mode was not passed into estimate().
+        envelope = request.envelope(bytes(64))
+        cells, bits = self._tree_size(envelope)
+        forwarding = max(1, self._forward_fee(cells, bits, forward))
         margin = max(1, (module_compute + account_execution + forwarding) // 10)
         total = module_compute + forwarding + account_execution + margin
         # The cap here is the transport's own quote ceiling; the relayer holds
