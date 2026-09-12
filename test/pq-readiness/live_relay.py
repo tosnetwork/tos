@@ -79,7 +79,7 @@ def deploy_by_external(transport: LiteClientTransport, blueprint: WalletV5Bluepr
     body = view.sign(None, initial, valid_until)
     message = MessageAny(info=ExternalMsgInfo(None, blueprint.address, 0),
                          init=blueprint.state_init, body=body).serialize()
-    transport._broadcast(message)
+    transport.broadcast_external(message)
 
     def deployed():
         # The deploying message is itself signed, so it consumes seqno 0 and the

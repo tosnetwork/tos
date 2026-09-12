@@ -196,7 +196,14 @@ class LiteClientTransport:
         # the owner's cap separately and checks this against it.
         return FundingBudget(module_compute, forwarding, account_execution, margin, total)
 
-    def _broadcast(self, message) -> None:
+    def broadcast_external(self, message) -> None:
+        """Submit an already-signed external message.
+
+        This bypasses the funding wallet entirely, so it can only reach an
+        account that accepts external messages. A contract that refuses them —
+        the authentication module refuses every one by design — has to be
+        deployed by a funded internal message instead; see `deploy`.
+        """
         raw = message.to_boc() if hasattr(message, 'to_boc') else message.boc()
         import tempfile
         # A predictable name in a shared directory is somebody else's file to
@@ -224,7 +231,7 @@ class LiteClientTransport:
         _, chain_time = self.head()
         external = self.wallet.sign_body(module, body, value, seqno,
                                          chain_time + 600, state_init)
-        self._broadcast(external)
+        self.broadcast_external(external)
         for _ in range(self.attempts):
             time.sleep(self.poll_seconds)
             if self.wallet.read_seqno() != seqno:
