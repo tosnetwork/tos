@@ -12,6 +12,14 @@ on:
       - 'common/global-version.h'
       - 'CMakeLists.txt'
       - 'doc/pq-v16-readiness.md'
+      # The readiness suite imports these harnesses, compiles and deploys these
+      # contracts, links this backend and loads this library. A change to any of
+      # them changes what the jobs below execute.
+      - 'test/auth-extensions/**'
+      - 'test/mldsa-auth/**'
+      - 'crypto/smartcont/**'
+      - 'third-party/mldsa-native/**'
+      - 'emulator/**'
 permissions:
   contents: read
 concurrency:
@@ -51,6 +59,10 @@ jobs:
           cmake -S crypto/pq/tools -B build-pq-key -G Ninja -DCMAKE_BUILD_TYPE=Release
           cmake --build build-pq-key -j2
           cargo build --manifest-path tosctl/src/Cargo.toml --locked --release -p tos_vm --example pq-parity
+      - name: Round-trip the mnemonic the parity driver bypasses
+        # The parity example executes raw F9 31 00, so only this exercises the
+        # assembler and disassembler registrations.
+        run: cargo test --manifest-path tosctl/src/Cargo.toml --locked -p tos_assembler pq_mldsa44
       - name: Prepare pinned NIST and independent vectors and compare actual VMs
         run: |
           mkdir -p artifacts

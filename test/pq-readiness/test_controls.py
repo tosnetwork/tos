@@ -70,7 +70,7 @@ class Controls(unittest.TestCase):
                     if self.fail:raise TimeoutError('ambiguous broadcast')
                     return 'broadcast-id'
                 async def receipt(self,*args):return AttemptReceipt(req.commitment.hex(),module,account,True,None,None,'module-tx')
-            t=Transport();journal=AttemptJournal(root/'journal.db');relay=PqRelayer(t,journal)
+            t=Transport();journal=AttemptJournal(root/'journal.db');relay=PqRelayer(t,journal,1_000_000)
             with self.assertRaises(ValueError):await relay.submit(req,module,Signer(),'')
             self.assertEqual(t.count,0)
             t.version=15
@@ -78,7 +78,7 @@ class Controls(unittest.TestCase):
             t.version=16;t.fail=True
             with self.assertRaises(TimeoutError):await relay.submit(req,module,Signer(),LOSS_ACK)
             self.assertEqual(t.count,1);journal.close()
-            journal=AttemptJournal(root/'journal.db');relay=PqRelayer(t,journal)
+            journal=AttemptJournal(root/'journal.db');relay=PqRelayer(t,journal,1_000_000)
             with self.assertRaises(ValueError):await relay.submit(req,module,Signer(),LOSS_ACK)
             self.assertEqual(t.count,1)
             receipt=await relay.reconcile(req,module,'broadcast-id');self.assertEqual(receipt.status,'pending')
@@ -102,12 +102,12 @@ class Controls(unittest.TestCase):
                 async def submit_internal(self,*args):return 'broadcast-id'
                 async def receipt(self,bid,req,mod):
                     return AttemptReceipt(req.commitment.hex(),mod,account,True,self.success,self.consumed,'module-tx','account-tx')
-            t=Transport();journal=AttemptJournal(root/'journal.db');relay=PqRelayer(t,journal)
+            t=Transport();journal=AttemptJournal(root/'journal.db');relay=PqRelayer(t,journal,1_000_000)
             self.assertEqual(await relay.submit(first,module,Signer(),LOSS_ACK),'broadcast-id')
             self.assertEqual((await relay.reconcile(first,module,'broadcast-id')).status,'account_rejected')
             journal.close()
             # The operator restarts; the chain still shows the nonce unspent.
-            journal=AttemptJournal(root/'journal.db');relay=PqRelayer(t,journal)
+            journal=AttemptJournal(root/'journal.db');relay=PqRelayer(t,journal,1_000_000)
             second=AuthRequest(42,account,1,0,3200,0,Cell.empty())
             with self.assertRaises(ValueError):await relay.submit(second,module,Signer(),LOSS_ACK)
             await relay.retire(first,module,'broadcast-id')
@@ -169,6 +169,35 @@ class Controls(unittest.TestCase):
             (root/'rust_cpp_parity.json').write_text(json.dumps(smuggled))
             doc['evidence']['rust_cpp_parity']['sha256']=hashlib.sha256((root/'rust_cpp_parity.json').read_bytes()).hexdigest()
             with self.assertRaises(ValueError):plan(doc,root)
+
+
+    def test_the_estimator_cannot_raise_its_own_ceiling(self):
+        """The owner's cap lives outside the transport that quotes the cost."""
+        async def exercise(root):
+            account=Address((0,bytes([1])*32));module=Address((0,bytes([2])*32));pk=bytes(1312)
+            req=AuthRequest(42,account,1,0,1600,0,Cell.empty())
+            class Signer:
+                def public_key(self):return pk
+                def sign(self,*args):return bytes(2420)
+            class Greedy:
+                submitted=0
+                async def snapshot(self,a,m):return ChainSnapshot(42,16,1000,a,m,AuthState(2,1,0,m.hash_part),pk,'TEST BLOCK')
+                # Quotes a large amount and declares a cap that accommodates it.
+                async def estimate(self,*args):return FundingBudget(10_000,10_000,10_000,10_000,10**9)
+                async def submit_internal(self,*args):
+                    self.submitted+=1;return 'broadcast-id'
+                async def receipt(self,*args):return AttemptReceipt(req.commitment.hex(),module,account,True,None,None,'module-tx')
+            t=Greedy();journal=AttemptJournal(root/'journal.db')
+            # The budget is internally consistent, so only an independent cap refuses it.
+            self.assertEqual(FundingBudget(10_000,10_000,10_000,10_000,10**9).total,40_000)
+            with self.assertRaises(ValueError):
+                await PqRelayer(t,journal,39_999).submit(req,module,Signer(),LOSS_ACK)
+            self.assertEqual(t.submitted,0,'nothing may be broadcast over the cap')
+            self.assertEqual(await PqRelayer(t,journal,40_000).submit(req,module,Signer(),LOSS_ACK),'broadcast-id')
+            for bad in (0,-1,'40000',None):
+                with self.assertRaises(ValueError):PqRelayer(t,journal,bad)
+            journal.close()
+        with tempfile.TemporaryDirectory() as d:asyncio.run(exercise(Path(d)))
 
 
 if __name__=='__main__':unittest.main(verbosity=2)

@@ -166,8 +166,12 @@ class AttemptJournal:
 
 
 class PqRelayer:
-    def __init__(self, transport: RelayTransport, journal: AttemptJournal):
-        self.transport, self.journal = transport, journal
+    def __init__(self, transport: RelayTransport, journal: AttemptJournal, funding_cap: int):
+        # The owner's ceiling, not the estimator's. A transport that quotes the
+        # cost must not also decide how much it is allowed to quote.
+        if type(funding_cap) is not int or not 0 < funding_cap <= MAX_COINS:
+            raise ValueError("an explicit positive funding cap is required")
+        self.transport, self.journal, self.funding_cap = transport, journal, funding_cap
 
     async def submit(self, request: AuthRequest, module: Address, signer: PqSigner,
                      loss_ack: str, classical_signature: bytes | None = None) -> str:
@@ -194,6 +198,8 @@ class PqRelayer:
             raise ValueError("hybrid AND cosignature requirement not satisfied")
         budget = await self.transport.estimate(request, module)
         value = budget.total
+        if value > self.funding_cap:
+            raise ValueError("estimate exceeds the owner-approved funding cap")
         body = request.submission(signer.sign(request.commitment), classical_signature, secrets.randbits(64))
         # Reserve before touching the transport. Do not release on an ambiguous timeout.
         self.journal.reserve(request)
