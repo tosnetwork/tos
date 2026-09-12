@@ -38,7 +38,7 @@ p.add_argument('--completion-full-cap', action='store_true',
 p.add_argument('--m5-return-principal', type=int, help='explicit real-payout fixture principal')
 p.add_argument('--completion-expect-offset', type=int, choices=(-1, 0, 1),
                help='assert observed y is h plus this exact boundary offset')
-p.add_argument('--completion-contract', choices=('bucket-small', 'row4'),
+p.add_argument('--completion-contract', choices=('bucket-small', 'row4', 'row6'),
                help='run the existing frozen real-host completion contract')
 p.add_argument('--failed-routing-probe', action='store_true',
                help='run the real fee-routing producer mutation before normal Failed publication')
@@ -118,7 +118,7 @@ if a.completion_contract:
             subprocess.run(link, cwd=build, stdout=log, stderr=log, check=True)
         return binary
 
-    def replay_paid(label, binary, source):
+    def replay_paid(label, binary, source, case="row4"):
         target = work / label
         target.mkdir()
         for file in source.iterdir():
@@ -137,7 +137,7 @@ if a.completion_contract:
         (target / 'completion-execution.log').write_text(result.stdout + result.stderr)
         output = target / 'completion-observation.json'
         subprocess.run([str(build / 'test-m3-live'), '--completion-observation',
-                        'row4', str(target), str(output)], check=True)
+                        case, str(target), str(output)], check=True)
         return result.returncode, json.loads(output.read_text())
 
     if a.completion_contract == 'row4':
@@ -192,6 +192,73 @@ if a.completion_contract:
             raise RuntimeError('restored Paid execution failed')
         oracle.check('row4', restored)
         print('WITHDRAWAL-COMPLETION_D78_OBSERVED:test-workchain-withdrawal-completion-row4')
+        raise SystemExit(0)
+
+    if a.completion_contract == 'row6':
+        args = [sys.executable, str(Path(__file__).resolve()), '--build', str(build),
+                '--m5-completion-late', '--completion-window-pair']
+        with (work / 'window-pair.log').open('w') as log:
+            result = subprocess.run(args, stdout=log, stderr=log)
+        result.check_returncode()
+        lines = (work / 'window-pair.log').read_text().splitlines()
+        fixtures, observations = {}, {}
+        for name in ('WITHIN', 'LATE'):
+            prefix = 'COMPLETION_WINDOW_' + name + ':'
+            paths = [Path(line[len(prefix):]) for line in lines if line.startswith(prefix)]
+            if len(paths) != 1:
+                raise RuntimeError('missing unique authenticated window branch: ' + name)
+            fixtures[name] = paths[0]
+            output = paths[0] / 'completion-observation.json'
+            if output.exists():
+                raise RuntimeError('window observation must be independently produced')
+            subprocess.run([str(build / 'test-m3-live'), '--completion-observation',
+                            'row6', str(paths[0]), str(output)], check=True)
+            observations[name] = json.loads(output.read_text())
+        within, late = observations['WITHIN'], observations['LATE']
+        wi, li = within['input'], late['input']
+        for field in ('withdrawal_id', 'x', 'Q', 'window', 'phase'):
+            oracle.require(wi[field] == li[field], 'SAME_AUTHENTICATED_WINDOW_RECORD')
+        end = oracle.checked(wi['Q'] + wi['window'])
+        oracle.require(wi['phase'] == 1 and wi['height'] == end and
+                       li['height'] == oracle.checked(end + 1), 'EXACT_HEIGHT_BOUNDARIES')
+        o = within['observed']
+        oracle.require(o['published'] is True and o['dispatch'] == ['within-window-failed'],
+                       'WITHIN_WINDOW_EXECUTED')
+        before, after = o['before'], o['after']
+        g = oracle.checked(wi['base'] * wi['units'])
+        amount = oracle.checked(wi['y'] - oracle.checked(wi['slot'] + g))
+        oracle.require(amount > 0, 'WITHIN_WINDOW_POSITIVE_RECEIPT')
+        deltas = dict.fromkeys(oracle.FIELDS, 0)
+        for field in ('R_actual', 'R_book', 'N_book'):
+            deltas[field] = amount
+        deltas.update(P=-wi['x'], W=-wi['x'], coordinator=wi['slot'], issuance_fees=g, sequence=1)
+        for field in oracle.FIELDS:
+            oracle.checked(before[field]); oracle.checked(after[field])
+            oracle.require(after[field] - before[field] == deltas[field], 'WITHIN_DELTA_' + field)
+        records = dict(before['records'])
+        oracle.require(records.pop(wi['withdrawal_id'], None) == wi['x'], 'WITHIN_OPEN_RECORD')
+        oracle.require(after['records'] == records, 'WITHIN_RECORD_CLOSURE')
+        oracle.require(after['pending'] == before['pending'] +
+                       [{'target': wi['account_id'], 'amount': amount}], 'WITHIN_RECEIPT')
+        oracle.check('row6', late)
+        binary = shadow_binary('row3-misroute', '      late = arrival_height > deadline;',
+                               '      late = false; // Isolated mutation: route an open expired record to row3.')
+        _, data = replay_paid('row3-misroute-run', binary, fixtures['LATE'], 'row6')
+        oracle.expect_red('row6', data, 'LATE_NOT_ROW3')
+        print('COMPLETION_REAL_RED:LATE_NOT_ROW3', flush=True)
+        try:
+            oracle.expect_red('row6', data, 'LATE_NOT_ROW3', observer=lambda *_: None)
+        except oracle.Violation as error:
+            if str(error) != 'ORACLE_MISSING:LATE_NOT_ROW3':
+                raise
+            print(str(error), flush=True)
+        else:
+            raise RuntimeError('disabled dispatch oracle did not fail')
+        code, restored = replay_paid('row6-restored', build / 'test-m3-live', fixtures['LATE'], 'row6')
+        if code:
+            raise RuntimeError('restored late execution failed')
+        oracle.check('row6', restored)
+        print('WITHDRAWAL-COMPLETION_D78_OBSERVED:test-workchain-withdrawal-completion-row6')
         raise SystemExit(0)
 
     def run_boundary(label, principal=None, offset=None):
