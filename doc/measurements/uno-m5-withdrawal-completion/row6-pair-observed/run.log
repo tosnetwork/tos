@@ -1,0 +1,13 @@
+Observed after 8385e67c4; not evidence available at that commit's creation.
+Command: python3 test/uno-m3-live.py --build /tmp/uno-merge-6ea2fbf80-tL5Uih --m5-completion-late --completion-window-pair
+Fresh run exited 0 on 2026-09-12, with accepted return blocks logged at 08:59:59 and 09:00:14 UTC.
+COMPLETION_WINDOW_WITHIN:/tmp/uno-completion-window-within-wumz50sc
+COMPLETION_WINDOW_LATE:/tmp/uno-m3-live-vygwfow4
+Same Withdrawal ID: 17DE2C9FE16BB9B7B50D954651A166F2966F08F671A46F494B24C6C06A3D1DDA
+Q=6, authenticated test window=2; accepted heights 8 (within-window-failed) and 9 (late-return-admission).
+Both records were open before return. Both published receipt 6996062; dispatch, not amount, distinguishes the branches.
+These are paired positive observations, NOT formal row6 closure or its producer-mutation evidence.
+within.json and late.json were independently decoded by B from these retained artifacts after the live run.
+Archives contain the actual predecessor, candidate, original payout, bounce, block history, validation result and execution log.
+No executable-to-source provenance claim is added by this archive.
+Archive check: extracted both tarballs to fresh directories, ran test-m3-live --completion-observation row6 for each, and cmp matched both JSON files byte-for-byte (exit 0). This re-decodes artifacts; it is not a second live execution.
