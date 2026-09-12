@@ -75,25 +75,14 @@ inline td::Result<WorkchainFailedFundedResult> prepare_workchain_failed_funded(
     // Do not narrow a value with its top bit set through a signed conversion.
     if (recovered < 0) return error("funded Failed recovery outside supported signed range");
     const auto y = static_cast<std::uint64_t>(recovered);
-    std::uint64_t loss, compute, fee, cost, gross, amount, released_w;
-    if (__builtin_sub_overflow(record.principal, y, &loss) ||
-        __builtin_mul_overflow(policy.base_compute, policy.issuance_billing_units, &compute) ||
+    std::uint64_t compute, fee, amount;
+    // D78 has one positive-issuance rule: y must strictly exceed slot+g.
+    // The checked subtraction enforces that bound without an unsigned wrap.
+    // Refusal here does not implement the required insufficient-value bucket.
+    if (__builtin_mul_overflow(policy.base_compute, policy.issuance_billing_units, &compute) ||
         __builtin_add_overflow(policy.slot_fee, compute, &fee) ||
-        __builtin_add_overflow(loss, fee, &cost) ||
-        record.costs.consumed_return_cost != 0 ||
-        __builtin_add_overflow(y, record.costs.original_reserve, &gross) ||
-        __builtin_sub_overflow(gross, fee, &amount) || !amount ||
-        __builtin_add_overflow(record.principal, record.costs.original_reserve, &released_w))
+        __builtin_sub_overflow(y, fee, &amount) || !amount)
       return error("Failed no-issuance or arithmetic branch unsupported");
-    // D68: cost may exceed the fixed reserve. Issue only y+b-fee, never
-    // subtract cost from b without bounding it, and never add an operator edge.
-    // The terminal record is removed below: no shortage debt is persisted.
-    const auto consumed_reserve = std::min<std::uint64_t>(cost, record.costs.original_reserve);
-    std::uint64_t refundable_reserve;
-    if (__builtin_sub_overflow(record.costs.original_reserve, consumed_reserve, &refundable_reserve))
-      return error("Failed bounded reserve subtraction failed");
-    if (cost > record.costs.original_reserve && (refundable_reserve != 0 || amount >= record.principal))
-      return error("Failed shortfall refund bound mismatch");
     TRY_RESULT(sequence, next_workchain_deposit_sequence(*coordinator.deposit_sequence));
     WorkchainSystemOrigin origin = WorkchainSettlementOrigin{record.attempt_id, sequence};
     TRY_RESULT(id, derive_workchain_system_receipt_id(origin));
@@ -125,7 +114,7 @@ inline td::Result<WorkchainFailedFundedResult> prepare_workchain_failed_funded(
     TRY_RESULT(coordinator_data, encode_workchain_coordinator_state(coordinator));
     auto fees = materialize_workchain_operation_fees({policy.slot_fee, compute, 0, fee}, custody, coordinator_address);
     return WorkchainFailedFundedResult{owner_data, coordinator_data, receipt, fees,
-        td::Bits256(envelope.msg->get_hash().bits()), record.attempt_id, y, record.principal, released_w};
+        td::Bits256(envelope.msg->get_hash().bits()), record.attempt_id, y, record.principal, record.principal};
   });
 }
 }  // namespace block

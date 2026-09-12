@@ -2,6 +2,8 @@
 #include "workchain-proof-test-access.h"
 #include "block/workchain-resource-policy.h"
 #include "td/utils/tests.h"
+#include <filesystem>
+#include <fstream>
 
 namespace {
 std::uint64_t backend_calls = 0;
@@ -18,6 +20,28 @@ UnoCryptoVerifyRequestV2 send_request() {
   request.proof_bytes = 864;
   return request;
 }
+}
+
+TEST(WorkchainProofWork, WithdrawalV2MatchesVersionedStatementBytes) {
+  const auto path = std::filesystem::path(__FILE__).parent_path() /
+      "workchain-m5-d78-vectors/no-prelock-v2/statement-context.bin";
+  std::ifstream input(path, std::ios::binary);
+  ASSERT_TRUE(input.is_open());
+  const std::string bytes((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
+  ASSERT_EQ(bytes.size(), 684u);
+  // Equal tag lengths are insufficient: compare actual versioned prefix bytes.
+  const std::string tag = block::kWorkchainWithdrawalStatementDomainV2;
+  ASSERT_EQ(bytes.substr(0, tag.size()), tag);
+  UnoCryptoWithdrawalVerifyRequestV2 request{};
+  request.abi_version = 2;
+  request.limits = {100, 100, 8, 1024, 4096};
+  request.context_bytes = 566;
+  request.commitment_count = 8; request.response_count = 6; request.proof_bytes = 864;
+  auto work = block::workchain_proof_operations_v4(request);
+  ASSERT_TRUE(work.is_ok());
+  ASSERT_EQ(work.ok().context_bytes, 2 * bytes.size());
+  request.abi_version = 1;
+  ASSERT_TRUE(block::workchain_proof_operations_v4(request).is_error());
 }
 
 // Dedicated boundary fixture, not a substitute for the separate real-kernel

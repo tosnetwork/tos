@@ -99,9 +99,9 @@ WorkchainProofVerdict WorkchainProofVerifier::run_backend(const UnoCryptoVerifyR
 #endif
 }
 
-WorkchainProofVerdict WorkchainProofVerifier::run_backend(const UnoCryptoWithdrawalVerifyRequestV1& request) {
+WorkchainProofVerdict WorkchainProofVerifier::run_backend(const UnoCryptoWithdrawalVerifyRequestV2& request) {
 #if defined(TOS_CONFIDENTIAL_PROOF_BACKEND_LINKED)
-  return classify_backend_status(uno_crypto_verify_withdrawal_v1(&request));
+  return classify_backend_status(uno_crypto_verify_withdrawal_v2(&request));
 #else
   return WorkchainProofVerdict::BackendUnavailable;
 #endif

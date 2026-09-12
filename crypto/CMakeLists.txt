@@ -836,6 +836,10 @@ add_executable(test-workchain-withdrawal-codec ../test/test-td-main.cpp test/tes
 add_executable(test-workchain-withdrawal-association ../test/test-td-main.cpp test/test-workchain-withdrawal-association.cpp)
 target_link_libraries(test-workchain-withdrawal-association PRIVATE tos_block tos_crypto)
 tos_test(test-workchain-withdrawal-association)
+add_test(NAME test-workchain-withdrawal-paid-expiry-component-partial
+  COMMAND test-workchain-withdrawal-association --filter +PaidExpiry)
+set_tests_properties(test-workchain-withdrawal-paid-expiry-component-partial
+  PROPERTIES TIMEOUT 60 LABELS "workchain;m5;partial")
 set_tests_properties(test-workchain-withdrawal-association PROPERTIES TIMEOUT 60 LABELS "workchain;m5")
 target_link_libraries(test-workchain-withdrawal-codec PRIVATE tos_block tos_crypto)
 tos_test(test-workchain-withdrawal-codec)

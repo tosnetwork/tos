@@ -104,3 +104,36 @@ The existing-account/schema classification surface found by the incarnation
 review remains open. No Failed/prepare contract or sequence expiry guard is
 retired by this instrumentation. The unrelated association codec exception
 test remains untouched. No complete provenance census or M5 acceptance claim.
+
+## Observation-channel follow-up (2026-09-12, before D78 migration)
+
+Specification anchor: memo 368e663c, SHA256 prefix aa0b65776506eed3.
+The reported universal `_Exit` blocker was withdrawn after checking the real
+callee termination paths. Prior greens are not invalidated by that refuted
+claim. Keep the working atexit registration: moving its save after the callee
+would miss the actual std::exit paths.
+
+The parent now distinguishes an unavailable sidecar explicitly with
+UNKNOWN_ORIGIN_OBSERVATION_UNAVAILABLE and exit 2, rather than aborting through
+move_as_ok. Missing evidence is never an observed zero. Reader controls exercise
+missing, zero, one, and one-when-zero-is-required (the last reports
+UNKNOWN_ORIGIN_OBSERVATION_MISMATCH). These controls exercise the reader only;
+they are not evidence that a real child emitted a count.
+
+The shortfall skip has been removed: injection follows successful real engine
+execution and applies to this branch too. Fresh default CTest
+test-workchain-withdrawal-failed-shortfall-positive-partial passes 1/1 (35.43s),
+including unknown-enabled count=1, LocalUnavailable, and no publication, paired
+with normal count=0. Log: /tmp/uno-counter-shortfall-pair.log; detailed output
+was inspected in the build's Testing/Temporary/LastTest.log.
+
+After rebuilding test-m3-live, three fresh serial harness invocations also
+completed with exit 0: --m5-failed, --m4, and ordinary M3. Logs respectively:
+/tmp/uno-counter-failed-pair.log, /tmp/uno-counter-m4.log,
+/tmp/uno-counter-m3.log. Ordinary Failed includes the same real count=1 injection;
+M4 ends A=0/B=1996999954, M3 A=987999514/B=0. These are observations of the
+pre-D78 implementation, not evidence for the forthcoming changed statement.
+
+Coverage remains the executed fixture/process paths, not runtime coverage of
+all eleven disk-tool exits. No direct validator unknown injection, complete
+classification proof, full contract completion, or guard retirement is claimed.
