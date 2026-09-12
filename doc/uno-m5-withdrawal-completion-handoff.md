@@ -238,3 +238,11 @@ The old fixture's missing untouched alias was copied from its actual saved
 before-state; fresh fixture generation now writes it itself. No state was
 fabricated. Formal row5 registration/closure remains pending; completion stays
 3/8. The original requested DELTA_W red is not relabelled as observed.
+
+Row5 subsequently closed with default CTest #20: 246.49 seconds, including
+fresh actual Paid/late root continuity, both semantic controls, oracle-disabled
+controls, the W upstream-removal check, and restored execution. See row5-controls
+`default-ctest.log` and `default-controls.log`; retained default-run observations
+were independently checked again. Completion is **4/8** (row4, row5, row6,
+bucket-small). No other runner or end-to-end authenticated queue-budget negative
+is certified by this result.
