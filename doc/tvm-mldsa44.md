@@ -11,13 +11,24 @@ route has a separately reviewed compatible implementation.
 
 `PQCHECKSIG_MLDSA44` is codepage-0 instruction **F93100 (24 bits)**, registered
 with `require_version(16)`. Versions 0 through 15 reject it as invalid opcode
-(6). `SUPPORTED_VERSION` deliberately stays at **15**, so no node built from
-this source can run at version 16 and the instruction is unreachable outside
-tests that construct the VM at that version directly. ConfigParam 8, genesis and
-capability masks are untouched. Activation therefore needs two separate
-decisions: raising the supported version in a later change, and a coordinated
-protocol configuration decision with validator deployment. Local feature toggles
-must never change its semantics.
+(6). `SUPPORTED_VERSION` is **15** by default and **16** under
+`-DTOS_PQ_V16_CANDIDATE`, so a default build advertises a v15 ceiling.
+
+That constant is not an execution gate, and must not be read as one. A node
+whose configuration names a higher version logs an error and keeps collating and
+validating: see the `get_global_version() > supported_version()` checks in
+`validator/impl/collator.cpp` and `validator/impl/validate-query.cpp`, which
+warn and fall through. A local chain built from this source at
+`SUPPORTED_VERSION = 15` was set to ConfigParam 8 version 16 and produced blocks
+that executed this instruction; `doc/macos-local-node.md` records that run. What
+actually gates the instruction is the global version the VM is constructed at,
+which comes from ConfigParam 8.
+
+ConfigParam 8, genesis and capability masks are untouched by this change.
+Activation is therefore a coordinated protocol configuration decision with
+validator deployment, and the supported-version constant is an advertisement of
+what a binary implements, not a refusal to run anything else. Local feature
+toggles must never change the instruction's semantics.
 
 ## Exact interface
 

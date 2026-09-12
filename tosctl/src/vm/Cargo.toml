@@ -1,9 +1,12 @@
 [package]
-build = '../common/build/build.rs'
+build = 'build.rs'
 edition = '2021'
 license = 'GPL-3.0'
 name = 'tos_vm'
 version = '2.2.26'
+
+[build-dependencies]
+cc = "1.2"
 
 [dependencies]
 anyhow = '1.0'

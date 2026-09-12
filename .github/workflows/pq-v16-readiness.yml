@@ -1,0 +1,144 @@
+name: PQ v16 readiness
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/pq-v16-readiness.yml'
+      - 'test/pq-readiness/**'
+      - 'crypto/pq/**'
+      - 'crypto/vm/pqops*'
+      - 'tosctl/**'
+      - 'test/tostester/**'
+      - 'tools/pq/**'
+      - 'common/global-version.h'
+      - 'CMakeLists.txt'
+      - 'doc/pq-v16-readiness.md'
+      # The readiness suite imports these harnesses, compiles and deploys these
+      # contracts, links this backend and loads this library. A change to any of
+      # them changes what the jobs below execute.
+      - 'test/auth-extensions/**'
+      - 'test/mldsa-auth/**'
+      - 'crypto/smartcont/**'
+      - 'third-party/mldsa-native/**'
+      - 'emulator/**'
+permissions:
+  contents: read
+concurrency:
+  group: pq-readiness-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+defaults:
+  run:
+    shell: bash
+jobs:
+  native:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            arch: x86_64
+          - runner: ubuntu-24.04-arm
+            arch: aarch64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.14'
+      - name: Install pinned toolchain and SDK dependencies
+        run: |
+          scripts/install-rust-toolchain.sh
+          python -m pip install bitarray==3.7.2 PyNaCl==1.5.0 pycryptodome==3.23.0 cryptography==46.0.4
+      - name: Build native candidate tools and Rust opcode execution
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DTOS_PQ_V16_CANDIDATE=ON
+          cmake --build build --target func fift tol emulator test-pq-v16-parity -j2
+          cmake -S crypto/pq/tools -B build-pq-key -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-pq-key -j2
+          cmake -S test/mldsa-auth -B build-auth-signer -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-auth-signer -j2
+          cargo build --manifest-path tosctl/src/Cargo.toml --locked --release -p tos_vm --example pq-parity
+          cargo build --manifest-path tosctl/src/Cargo.toml --locked --release \
+            -p tos_executor --example pq-tx-parity
+      - name: Round-trip the mnemonic the parity driver bypasses
+        # The parity example executes raw F9 31 00, so only this exercises the
+        # assembler and disassembler registrations.
+        run: cargo test --manifest-path tosctl/src/Cargo.toml --locked -p tos_assembler pq_mldsa44
+      - name: Prepare pinned NIST and independent vectors and compare actual VMs
+        run: |
+          mkdir -p artifacts
+          git rev-parse HEAD > artifacts/commit.txt
+          python test/pq-mldsa44/prepare_vectors.py --out artifacts/vectors
+          # The shipped bindings, compiled the way they ship, so the differential
+          # driver executes the assembler's output and not only raw opcodes.
+          python test/pq-mldsa44/bindings.py --build build --vectors artifacts/vectors/vectors.tsv \
+            --out artifacts/programs --programs-only
+          python test/pq-readiness/scenarios.py artifacts/vectors/vectors.tsv artifacts/scenarios.tsv \
+            --program func=artifacts/programs/func-verify.boc \
+            --program tol=artifacts/programs/tol-verify.boc
+          build/crypto/pq/test-pq-v16-parity artifacts/scenarios.tsv > artifacts/cpp.tsv
+          tosctl/src/target/release/examples/pq-parity artifacts/scenarios.tsv > artifacts/rust.tsv
+          python test/pq-readiness/compare.py artifacts/scenarios.tsv artifacts/cpp.tsv artifacts/rust.tsv --out artifacts/parity.json
+      - name: Compare whole transactions, so the action phase is covered too
+        run: |
+          python test/pq-readiness/tx_parity.py --build build \
+            --signer build-auth-signer/test-mldsa44-sign --out artifacts/tx-parity \
+            --driver tosctl/src/target/release/examples/pq-tx-parity
+      - name: Execute newly deployed SDK accounts and signing paths
+        run: |
+          python test/pq-readiness/test_sdk.py --build build --key-tool build-pq-key/tos-pq-key --out artifacts/sdk
+          python test/pq-readiness/test_controls.py
+          python test/pq-readiness/test_release_profile.py
+          # The live-chain cases skip here; the signing, funding and deployment
+          # confirmation they wrap do not need a node and must not skip.
+          python test/pq-readiness/test_lite_transport.py
+      - name: Record bounded native load, not production qualification
+        run: |
+          python tools/pq/load.py --executable build/crypto/pq/test-pq-v16-parity --scenarios artifacts/scenarios.tsv --batch-size 100 --batches 20 --workers 2 --max-batch-ms 2000 --out artifacts/load.json
+      - name: Kill compiled Rust verification, version, gas and parser mutants
+        if: matrix.arch == 'x86_64'
+        run: |
+          python test/pq-readiness/mutate_rust.py --scenarios artifacts/scenarios.tsv --cpp artifacts/cpp.tsv --out artifacts/mutations.json
+          git diff --exit-code
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: pq-readiness-${{ matrix.arch }}
+          path: artifacts/
+          retention-days: 14
+          if-no-files-found: error
+  readiness:
+    needs: native
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Require complete native evidence
+        env:
+          RESULT: ${{ needs.native.result }}
+        run: test "$RESULT" = success
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: pq-readiness-*
+          path: results
+      - name: Compare deterministic execution and deployment artifacts
+        run: |
+          X=results/pq-readiness-x86_64
+          A=results/pq-readiness-aarch64
+          for name in commit.txt scenarios.tsv cpp.tsv rust.tsv parity.json tx-parity/emulator.tsv tx-parity/rust.tsv sdk/sdk.json sdk/contracts.json sdk/module-func.boc sdk/module-tol.boc sdk/wallet-func.boc sdk/wallet-tol.boc sdk/agent.boc; do
+            cmp "$X/$name" "$A/$name"
+          done
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          for path in Path('results').glob('pq-readiness-*'):
+              assert json.loads((path/'parity.json').read_text())['success'] is True
+              assert json.loads((path/'tx-parity/tx-parity.json').read_text())['success'] is True
+              assert json.loads((path/'sdk/sdk.json').read_text())['success'] is True
+              assert json.loads((path/'load.json').read_text())['success'] is True
+          report=json.loads(Path('results/pq-readiness-x86_64/mutations.json').read_text())
+          assert {row['guard'] for row in report if row['killed']} == {'verification', 'version', 'base-gas', 'canonical-chunk', 'preactivation-gas'}
+          assert len(report)==5 and all(row['killed'] for row in report)
+          PY

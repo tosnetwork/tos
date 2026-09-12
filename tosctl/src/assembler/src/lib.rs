@@ -445,3 +445,51 @@ pub fn compile_code_debuggable(
         Err(_) => Err(CompileError::unknown(0, 0, "failure while convert BuilderData to cell")),
     }
 }
+
+#[cfg(test)]
+mod pq_mldsa44_tests {
+    use crate::compile_code;
+    use crate::disasm::disasm;
+
+    // The parity driver executes raw F9 31 00 bytes, so nothing there would
+    // notice if the mnemonic were registered at the wrong code or dropped from
+    // the disassembler. This closes that gap from both directions.
+    #[test]
+    fn pq_mldsa44_assembles_to_its_code_and_disassembles_back() {
+        let mut slice = compile_code("PQCHECKSIG_MLDSA44").expect("assembles");
+        assert_eq!(slice.remaining_bits(), 24, "the opcode is 24 bits wide");
+        assert_eq!(slice.get_bytestring(0), vec![0xF9, 0x31, 0x00]);
+        let text = disasm(&mut slice).expect("disassembles");
+        assert_eq!(text.trim(), "PQCHECKSIG_MLDSA44");
+    }
+
+    #[test]
+    fn pq_mldsa44_survives_a_round_trip_beside_other_instructions() {
+        let source = "NOP\nPQCHECKSIG_MLDSA44\nDROP\n";
+        let mut slice = compile_code(source).expect("assembles");
+        let text = disasm(&mut slice).expect("disassembles");
+        let mnemonics: Vec<&str> =
+            text.lines().map(|l| l.trim()).filter(|l| !l.is_empty()).collect();
+        // Neighbouring instructions may print in a canonical spelling of their
+        // own; what matters is that the verifier decodes in place, not that it
+        // swallows or is swallowed by the instruction on either side.
+        assert_eq!(mnemonics.len(), 3, "{mnemonics:?}");
+        assert_eq!(mnemonics[1], "PQCHECKSIG_MLDSA44", "{mnemonics:?}");
+        assert_eq!(mnemonics[0], "NOP", "{mnemonics:?}");
+    }
+
+    #[test]
+    fn a_neighbouring_code_is_not_read_as_the_pq_instruction() {
+        // F9 31 01 is not allocated; the disassembler must not report the
+        // verifier for it.
+        let mut slice = compile_code("PQCHECKSIG_MLDSA44").expect("assembles");
+        let text = disasm(&mut slice).expect("disassembles");
+        assert!(text.contains("PQCHECKSIG_MLDSA44"));
+        let mut other = chain_block::SliceData::new(vec![0xF9, 0x31, 0x01, 0x80]);
+        let reported = disasm(&mut other).unwrap_or_default();
+        assert!(
+            !reported.contains("PQCHECKSIG_MLDSA44"),
+            "F93101 decoded as the verifier: {reported}"
+        );
+    }
+}

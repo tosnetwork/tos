@@ -12,6 +12,10 @@ endif()
 
 project(TOS VERSION 0.5 LANGUAGES C CXX)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+option(TOS_PQ_V16_CANDIDATE "Build a v16-capable release candidate; does not activate ConfigParam 8" OFF)
+if(TOS_PQ_V16_CANDIDATE)
+  add_compile_definitions(TOS_PQ_V16_CANDIDATE=1)
+endif()
 
 # Define the two required variables before including the source code for watching a git repository.
 # Only set up git tracking if not already done at a higher level

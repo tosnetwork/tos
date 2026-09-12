@@ -15,10 +15,17 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def run(build: Path, vectors: Path, output: Path) -> None:
+def run(build: Path, vectors: Path, output: Path, execute: bool = True) -> None:
+    """Compile both public bindings; execute the corpus through them unless asked not to.
+
+    The differential driver needs the compiled programs alone, and compiles them
+    the same way the shipped bindings are compiled rather than a second way.
+    """
     output.mkdir(parents=True, exist_ok=True)
-    for tool in (build / 'crypto/func', build / 'crypto/fift', build / 'tol/tol',
-                 build / 'crypto/pq/test-pq-mldsa44'):
+    tools = [build / 'crypto/func', build / 'crypto/fift', build / 'tol/tol']
+    if execute:
+        tools.append(build / 'crypto/pq/test-pq-mldsa44')
+    for tool in tools:
         if not tool.is_file():
             raise FileNotFoundError(f'required binding test tool: {tool}')
     env = dict(os.environ, TOL_STDLIB=str(ROOT / 'crypto/smartcont/tol-stdlib'))
@@ -52,9 +59,10 @@ def run(build: Path, vectors: Path, output: Path) -> None:
                               f'2 boc+>B "{boc}" B>file\n', encoding='utf-8')
             subprocess.run([str(build / 'crypto/fift'), '-I', str(ROOT / 'crypto/fift/lib'),
                             '-s', str(script)], check=True)
-            subprocess.run([str(build / 'crypto/pq/test-pq-mldsa44'), str(vectors),
-                            str(output / f'{language}-transcript.tsv'), '--code', str(boc)],
-                           check=True)
+            if execute:
+                subprocess.run([str(build / 'crypto/pq/test-pq-mldsa44'), str(vectors),
+                                str(output / f'{language}-transcript.tsv'), '--code', str(boc)],
+                               check=True)
 
         script = directory / 'encoding.fif'
         script.write_text('"PQ.fif" include\n<{ PQCHECKSIG_MLDSA44 }>c <s 24 u@\n'
@@ -68,5 +76,8 @@ if __name__ == '__main__':
     parser.add_argument('--build', type=Path, required=True)
     parser.add_argument('--vectors', type=Path, required=True)
     parser.add_argument('--out', type=Path, required=True)
+    parser.add_argument('--programs-only', action='store_true',
+                        help='compile the bindings without executing the corpus')
     args = parser.parse_args()
-    run(args.build.resolve(), args.vectors.resolve(), args.out.resolve())
+    run(args.build.resolve(), args.vectors.resolve(), args.out.resolve(),
+        execute=not args.programs_only)

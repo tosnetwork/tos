@@ -1,0 +1,13 @@
+cmake_minimum_required(VERSION 3.16)
+project(tos_pq_key_tool LANGUAGES C CXX)
+find_package(OpenSSL REQUIRED COMPONENTS Crypto)
+set(BACKEND "${CMAKE_CURRENT_SOURCE_DIR}/../../../third-party/mldsa-native/mldsa")
+add_library(pq_tool_backend STATIC "${BACKEND}/mldsa_native.c")
+target_include_directories(pq_tool_backend PRIVATE "${BACKEND}" "${CMAKE_CURRENT_SOURCE_DIR}")
+target_compile_definitions(pq_tool_backend PRIVATE MLD_CONFIG_FILE="signer-config.h")
+add_executable(tos-pq-key key-tool.cpp)
+target_compile_features(tos-pq-key PRIVATE cxx_std_17)
+target_include_directories(tos-pq-key PRIVATE "${BACKEND}" "${CMAKE_CURRENT_SOURCE_DIR}")
+target_compile_definitions(tos-pq-key PRIVATE MLD_CONFIG_FILE="signer-config.h")
+target_link_libraries(tos-pq-key PRIVATE pq_tool_backend OpenSSL::Crypto)
+# Deliberately separate from all node/VM targets: only this explicit tool signs.

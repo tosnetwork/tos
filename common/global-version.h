@@ -19,6 +19,12 @@
 namespace tos {
 
 // See https://github.com/tosnetwork/doc/blob/main/tos-blockchain/GlobalVersions.md
+// Candidate builds advertise the implementation ceiling without changing Config8.
+// The default release remains v15 until the independent rollout gates are approved.
+#ifdef TOS_PQ_V16_CANDIDATE
+constexpr int SUPPORTED_VERSION = 16;
+#else
 constexpr int SUPPORTED_VERSION = 15;
+#endif
 
 }  // namespace tos
