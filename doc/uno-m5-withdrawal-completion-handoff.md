@@ -143,9 +143,18 @@ For y in the bucket, s the slot fee, g=base*units, and t=y-s-g>0:
    exactly one successful sequence consumption and one system entry.
 
 `D63_SAME_BATCH` requires all four observations from the same committed batch,
-not four independently successful steps. Inject failure before publication and
-retain the original error after an early publication: `D63_ABORT_ZERO_PUBLICATION`
-checks unchanged committed roots/holdings/messages/fees/sequence. Not every omitted
+not four independently successful steps. All-or-nothing publication is carried
+by section 9.3's overlay-and-commit architecture, not an assertion in this
+contract: an error prevents candidate generation; changing actor scratch is not
+publication. No premature-publication mutation has been established. The earlier
+`D63_ABORT_ZERO_PUBLICATION` synthetic oracle selftest is not a real-host control.
+No existing fail-closed artefact has been identified that covers arbitrary
+engine writes outside the overlay, splitting publication from commit, or partial
+external writes before returning an error. This is an acknowledged architecture
+regression gap for appendix I.4, not a tested atomicity guarantee. The registered
+Native payout-pair nonpublication test covers caller-owned Accounts/out_msgs only;
+the I13e publication contract explicitly remains unwired. Neither closes this gap.
+Not every omitted
 component necessarily breaks every conservation equation; component assertions
 are mandatory even when aggregate equalities happen to survive.
 
