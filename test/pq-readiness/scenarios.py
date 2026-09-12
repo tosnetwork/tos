@@ -43,5 +43,12 @@ def main():
         if not c.refs:break
         c=c.refs[0]
     cs=good.copy();cs[3]=Cell().raw(raw[:126]).ref(chain(raw[126:]));add('canonical-partition',cs)
+    # Error precedence and metering also belong to parity. Before v4 the VM
+    # detects exhaustion after charging exception dispatch; v4+ checks earlier.
+    for version in range(16):
+        for budget in (0,9,10,59,60):
+            expected = 'E-14' if budget < 60 else 'E6'
+            add(f'preactivation-budget-{version}-{budget}',good,
+                version=version,budget=budget,expected=expected)
     a.out.write_text('\n'.join(rows)+'\n');print(f'{len(rows)} scenarios')
 if __name__=='__main__':main()

@@ -16,7 +16,8 @@ def main():
     mutants=[('verification','0 => true,','0 | -6 => true,'),
              ('version','engine.block_version() < 16','false'),
              ('base-gas','const BASE_GAS: i64 = 50_000;','const BASE_GAS: i64 = 49_999;'),
-             ('canonical-chunk','(refs != 0 && size != CHUNK_BYTES)','(false)')]
+             ('canonical-chunk','(refs != 0 && size != CHUNK_BYTES)','(false)'),
+             ('preactivation-gas','engine.block_version() >= 4','false')]
     build=['cargo','build','--manifest-path',str(ROOT/'tosctl/src/Cargo.toml'),'--locked','--release','-p','tos_vm','--example','pq-parity']
     exe=ROOT/'tosctl/src/target/release/examples/pq-parity'
     transcript=a.out.with_suffix('.tsv');reports=[]

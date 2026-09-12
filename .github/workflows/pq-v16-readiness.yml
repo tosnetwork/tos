@@ -108,5 +108,6 @@ jobs:
               assert json.loads((path/'sdk/sdk.json').read_text())['success'] is True
               assert json.loads((path/'load.json').read_text())['success'] is True
           report=json.loads(Path('results/pq-readiness-x86_64/mutations.json').read_text())
-          assert len(report)==4 and all(row['killed'] for row in report)
+          assert {row['guard'] for row in report if row['killed']} == {'verification', 'version', 'base-gas', 'canonical-chunk', 'preactivation-gas'}
+          assert len(report)==5 and all(row['killed'] for row in report)
           PY
