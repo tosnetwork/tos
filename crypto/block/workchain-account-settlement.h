@@ -393,6 +393,25 @@ inline td::Result<WorkchainAccountSettlement> settle_executed(
       } else if (rejected_material &&
                  rejected_material->plan.native.branch == NativeDisposalBranch::UnexpectedCredit) {
         bucket_credit = rejected_material->plan.native.row.imported;
+      } else if (executed.effects.bucket_return_message) {
+        gen::UnoV2HostInput::Record host;
+        if (!tlb::unpack_cell(executed.input, host))
+          return td::Status::Error(-7201, "authenticated bucket return input unavailable");
+        auto root = host.inbox->prefetch_ulong(1) ? host.inbox->prefetch_ref() : td::Ref<vm::Cell>{};
+        TRY_RESULT(inbox, plan_workchain_native_inbox(root, identity.workchain_id, {custody},
+            identity.host_after_lt, max_inbound));
+        if (inbox.envelopes.size() != 1 || executed.effects.native_transfers.size() != 1 || executed.effects.fees)
+          return td::Status::Error(-7200, "bucket return requires one import and one unfunded transfer");
+        tlb::MsgEnvelope::Record_std envelope;
+        gen::CommonMsgInfo::Record_int_msg_info info;
+        if (!tlb::unpack_cell(inbox.envelopes.front(), envelope) ||
+            !tlb::unpack_cell_inexact(envelope.msg, info) || !info.bounced ||
+            td::Bits256(envelope.msg->get_hash().bits()) != *executed.effects.bucket_return_message ||
+            !bucket_credit.unpack(info.value))
+          return td::Status::Error(-7200, "bucket return differs from authenticated import");
+        const auto& transfer = executed.effects.native_transfers.front();
+        if (transfer.from != custody || transfer.to != coordinator || transfer.value != bucket_credit)
+          return td::Status::Error(-7200, "bucket return transfer differs from imported value");
       }
       if (refundable_after != expected_refundable)
         return td::Status::Error(-7200, "refundable classification differs from authenticated event");

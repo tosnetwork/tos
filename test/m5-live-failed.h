@@ -23,6 +23,42 @@ inline void assert_m5_failed(const std::filesystem::path& fixture,
   const auto limit = m5_live_withdrawal_limit(fixture);
   const auto before = m5_live_account(account_data(previous,selector.owner.account),limit);
   const auto after = m5_live_account(account_data(step.state,selector.owner.account),limit);
+  if (after.origin_pending.empty()) {
+    CHECK(limit.has_value());
+    auto expected_owner = before;
+    CHECK(expected_owner.control.withdrawals.size() == 1);
+    expected_owner.control.withdrawals.clear();
+    CHECK(encode_workchain_withdrawal_account(
+          {expected_owner.account, expected_owner.control, expected_owner.origin_pending}, *limit).move_as_ok()->get_hash() ==
+          account_data(step.state, selector.owner.account)->get_hash());
+    const auto old_coordinator = decode_workchain_coordinator_state(account_data(previous, td::Bits256::zero())).move_as_ok();
+    const auto coordinator = decode_workchain_coordinator_state(account_data(step.state, td::Bits256::zero())).move_as_ok();
+    CHECK(old_coordinator.deposit_sequence == coordinator.deposit_sequence);
+    const auto old_bucket = decode_workchain_unexpected_bucket(old_coordinator.unexpected, {256,256}, 4096).move_as_ok();
+    const auto bucket = decode_workchain_unexpected_bucket(coordinator.unexpected, {256,256}, 4096).move_as_ok();
+    CHECK(bucket.entries.size() == old_bucket.entries.size() + 1);
+    const auto& entry = bucket.entries.back();
+    const auto recovered = m5_recorded_return(step.block);
+    CHECK(entry.account_id && *entry.account_id == selector.owner.account && !entry.return_failed);
+    CHECK(CurrencyCollection(entry.tomis) == recovered);
+    auto balance = [&](const td::Ref<vm::Cell>& root, const td::Bits256& key) {
+      gen::ShardStateUnsplit::Record state; CHECK(::tlb::unpack_cell(root, state));
+      vm::AugmentedDictionary accounts(vm::load_cell_slice_ref(state.accounts), 256, block::tlb::aug_ShardAccounts);
+      Account account(2,key.bits()); CHECK(account.unpack(accounts.lookup(key),state.gen_utime,false));
+      return account.balance;
+    };
+    CHECK(balance(previous,custody) == balance(step.state,custody));
+    CurrencyCollection expected;
+    CHECK(CurrencyCollection::add(balance(previous,td::Bits256::zero()),recovered,expected));
+    CHECK(balance(step.state,td::Bits256::zero()) == expected);
+    gen::Transaction::Record transaction;
+    CHECK(::tlb::unpack_cell(accepted_transaction(step,custody),transaction));
+    CurrencyCollection fees; CHECK(fees.unpack(transaction.total_fees));
+    CHECK(fees.is_zero() && transaction.outmsg_cnt == 0);
+    std::cout << "BUCKET_AUTHENTICATED recovered=" << recovered.tomis
+              << " account=" << entry.account_id->to_hex() << " sequence=unchanged no-issuance\n";
+    return;
+  }
   CHECK(before.control.withdrawals.size() == 1 && before.control.withdrawals.front().timing.phase == 0);
   const auto& record = before.control.withdrawals.front();
   // Close the route observation loop: this is the exact message the real wc0

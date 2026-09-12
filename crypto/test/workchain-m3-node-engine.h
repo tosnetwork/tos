@@ -386,6 +386,7 @@ class M3NodeEngine final : public RegisteredWorkchainAccountEngine {
           {cfg->ingress.executor_address, accepted.coordinator_data}, {*cfg->ingress.custody_address, custody.data}};
       if (accepted.issued) result.fees = accepted.fees;
       result.native_transfers = accepted.transfers;
+      if (!accepted.issued) result.bucket_return_message = accepted.inbound_message;
       std::sort(result.updates.begin(), result.updates.end(), [](const auto& a, const auto& b) {
         return a.account < b.account;
       });
