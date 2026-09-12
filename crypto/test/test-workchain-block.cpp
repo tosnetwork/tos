@@ -1598,6 +1598,8 @@ TEST(WorkchainBlock, OutboundObservationSharesStateBudget) {
   ASSERT_TRUE(std::holds_alternative<td::Ref<vm::CellSlice>>(shared.load_ordinary(account_read)));
   block::WorkchainAccountReadView constrained({}, predecessor, &shared, 2);
   auto exceeded = constrained.payout_absent(custody, 17, 0);
+  // This rejection is independent of the positive usage count above: replacing
+  // the queue-closure budget refusal with a successful Q must fail here.
   ASSERT_TRUE(exceeded.is_error());
   ASSERT_EQ(exceeded.error().code(), -7200);
   ASSERT_TRUE(constrained.status().is_error());
