@@ -76,6 +76,11 @@ All names below start `test-workchain-withdrawal-completion-`.
 | `sweep-atomic` | Eligible attributed type2 entry, actual authorized sweep, account open with slot and y>h. | All four D63 components below independently observed in **one batch**. Four mutants each omit one component, plus mixed-batch and retained-error/early-publication variants. Each must hit its named oracle; zero-return-code or aggregate equality alone is not enough. |
 | `oracle-control` | Each preceding real semantic mutation retained while ONLY its paired observer is disabled, then restored. | Driver raises `ORACLE_MISSING:<assertion>` when expected red disappears; earlier errors raise `WRONG_FAILURE_LAYER`, not success. The observer-only default selftest is not this real-host CTest. If a premise says another gate passes, independently demonstrate that gate can also fail. |
 
+The `sweep-atomic` fixture covers successful type2 credit, not a returned message
+re-entering the bucket. D62 re-entry, retained `return_failed`, and subsequent
+retry prevention remain owned by the existing BUCKET-SWEEP `return-once` and
+`terminal` slots; successful removals alone do not discharge those slots.
+
 ### Row4 measurement cut: do not charge its trigger to settlement
 
 A new prepare itself spends x+q+f; closing may spend a fee from registration
