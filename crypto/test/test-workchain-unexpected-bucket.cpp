@@ -16,6 +16,25 @@ block::WorkchainUnexpectedBucket empty_bucket() {
 }
 }  // namespace
 
+TEST(WorkchainUnexpectedBucket, SweepSequenceIsExplicitAndIndependent) {
+  using namespace block;
+  auto value = empty_bucket();
+  value.rebase_count = 19;
+  auto old = encode_workchain_unexpected_bucket(value, {16, 16}, 4096).move_as_ok();
+  ASSERT_TRUE(!decode_workchain_unexpected_bucket(old, {16, 16}, 4096).move_as_ok().sweep_sequence);
+  value.account_attribution = true;
+  value.sweep_sequence = 0;  // Explicit genesis initialization, not a decoder default.
+  auto encoded = encode_workchain_unexpected_bucket(value, {16, 16}, 4096).move_as_ok();
+  auto decoded = decode_workchain_unexpected_bucket(encoded, {16, 16}, 4096).move_as_ok();
+  ASSERT_TRUE(decoded.sweep_sequence.has_value());
+  ASSERT_EQ(*decoded.sweep_sequence, 0u);
+  ASSERT_EQ(decoded.rebase_count, 19u);
+  auto credited = credit_workchain_unexpected(decoded, {16, 16}, sender(1), CurrencyCollection(9), 4096).move_as_ok();
+  ASSERT_EQ(*credited.bucket.sweep_sequence, 0u);
+  ASSERT_EQ(credited.bucket.rebase_count, 19u);
+  ASSERT_EQ(encode_workchain_unexpected_bucket(decoded, {16, 16}, 4096).move_as_ok()->get_hash(), encoded->get_hash());
+}
+
 TEST(WorkchainUnexpectedBucket, DepositAdmissionSeparatesPrincipalAndOperatingFee) {
   using namespace block;
   auto point_bytes = td::hex_decode("e2f2ae0a6abc4e71a884a961c500515f58e30b6aa582dd8db6a65945e08d2d76").move_as_ok();
