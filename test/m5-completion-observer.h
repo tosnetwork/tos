@@ -262,6 +262,7 @@ inline void write_paid_completion_observation(const std::filesystem::path& fixtu
   std::ostringstream out;
   out<<"{\"input\":{\"x\":"<<record.principal<<",\"Q\":"<<record.timing.queue_removed_height
      <<",\"window\":"<<record.timing.settlement_blocks<<",\"phase\":"<<unsigned(record.timing.phase)
+     <<",\"withdrawal_limit\":"<<limit
      <<",\"height\":"<<ns.seq_no<<",\"withdrawal_id\":"<<quote(record.withdrawal_id.to_hex())
      <<"},\"observed\":{\"published\":true,\"dispatch\":[";
   if(lazy_called)out<<quote("lazy-owner-settlement");out<<"],\"closure_events\":[";

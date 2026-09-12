@@ -142,7 +142,8 @@ if a.completion_contract:
                 raise RuntimeError('Paid fixture did not reach the frozen oracle')
             data = json.loads((paths[0] / 'completion-observation.json').read_text())
             oracle.check('row4', data)
-            if full and len(data['observed']['before']['records']) != 3:
+            if full and (data['input']['withdrawal_limit'] != 3 or
+                         len(data['observed']['before']['records']) != 3):
                 raise RuntimeError('full-cap test did not start with three obligations')
             return paths[0]
 
