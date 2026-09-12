@@ -323,3 +323,22 @@ Publication atomicity retains the architectural carrier and regression gap above
 no premature-publication control is claimed. D62 re-entry remains outside this slot.
 Completion is **7/8**, project **7/49**; oracle-control remains open, and no other
 runner or authenticated collator/validator over-budget end-to-end gap is closed.
+
+## Oracle-control closure and completion boundary, 2026-09-12
+
+Default CTest #24 passed in 0.12 seconds at `672ac2abc`; its output is retained in
+`measurements/uno-m5-withdrawal-completion/oracle-control-real/ctest.log`.
+Each of the seven branches supplies its previously retained real-host positive
+and semantic negative observation. The current oracle accepts each positive,
+rejects each negative at its named assertion, and its removal triggers
+`ORACLE_MISSING`. Removing the negative driver's final no-rejection failure via
+an AST mutation triggers `ORACLE_CONTROL_DRIVER_MISSING` in the meta driver.
+This is fresh oracle/driver execution over inherited host observations, not
+seven new host executions or a fresh eight-test readiness-runner run.
+
+Completion is **8/8**, with all eight exact CTest names registered; project
+closure count is **8/49**. The first six closures retain their original evidence
+scope, sweep has the fresh #23 execution above, and this meta slot certifies only
+its observation/driver layer. Publication-architecture regression coverage,
+authenticated end-to-end queue-budget rejection, and the other six runners are
+not closed by this result. Work stops here before selecting another runner.
