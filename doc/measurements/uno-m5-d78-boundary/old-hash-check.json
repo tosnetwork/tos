@@ -1,0 +1,9 @@
+{
+  "zerostate.boc": true,
+  "debit-authenticated-state.boc": true,
+  "accepted-state.boc": true,
+  "accepted-block.boc": true,
+  "failed-bounce.boc": true,
+  "prepare-payout.boc": true,
+  "payout-recipient.candidate": true
+}
