@@ -81,6 +81,11 @@ re-entering the bucket. D62 re-entry, retained `return_failed`, and subsequent
 retry prevention remain owned by the existing BUCKET-SWEEP `return-once` and
 `terminal` slots; successful removals alone do not discharge those slots.
 
+Sweep authorization uses the execution-time entry set and has no automatic
+expiry; the precise count/order, sequence-consumption and unbounded-wait scope
+is stated in the existing [BUCKET-SWEEP contract](uno-m5-bucket-sweep-handoff.md#common-fixture-execution-and-observation-boundary).
+The same requirements apply to this fixture; they are not yet execution evidence.
+
 ### Row4 measurement cut: do not charge its trigger to settlement
 
 A new prepare itself spends x+q+f; closing may spend a fee from registration
