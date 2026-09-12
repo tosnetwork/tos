@@ -59,3 +59,15 @@ configuration, metering/ABI registration and structural guard fields to this
 interface before integrated execution. Full Native compilation is not claimed
 at this intermediate interface commit. No post-D78 live run is claimed. B's
 D78 contract and prediction updates are a separate remaining deliverable.
+
+## Additional independent relation replay
+
+`crypto/test/workchain-d78-independent-review.py` archives c7a6f62e8 and injects
+its companion test source. The original `workchain-d64-independent-review.py`
+still archives 5f628635d and therefore correctly keeps its old b fixture; it is
+not a current-interface consumer. Both old files are preserved byte-for-byte.
+The new replay changes only the public fixture total 140 -> 117 and overflow
+inputs. Its dense 8x6 matrix, targets and six active range objects are unchanged.
+Baseline 2/2; witness-index mutation exit101 at the matrix test; range-object
+mutation exit101 at the same test; restored2/2. See matrix-replay.log. These are
+independent matrix-construction checks, not a proof-system audit or Native run.

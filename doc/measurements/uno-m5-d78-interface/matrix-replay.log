@@ -1,0 +1,5 @@
+baseline exit 0
+witness-index-control exit 101
+range-object-control exit 101
+restored exit 0
+PINNED_D78_REVIEW_PASS: static/dense-matrix checks only; no proof or host execution
