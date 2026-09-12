@@ -1,0 +1,69 @@
+name: PQ v16 readiness
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/pq-v16-readiness.yml'
+      - 'test/pq-readiness/**'
+      - 'crypto/pq/**'
+      - 'crypto/vm/pqops*'
+      - 'tosctl/**'
+      - 'tostester/**'
+      - 'test/tostester/**'
+      - 'docs/pq-v16-readiness.md'
+permissions:
+  contents: read
+concurrency:
+  group: pq-readiness-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  source:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Archive the exact reviewed source without credentials or build output
+        run: |
+          git archive --format=tar.gz --output=/tmp/pq-source.tar.gz HEAD
+          git rev-parse HEAD > /tmp/pq-source-commit.txt
+          sha256sum /tmp/pq-source.tar.gz > /tmp/pq-source-sha256.txt
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pq-readiness-source
+          path: /tmp/pq-source*
+          retention-days: 3
+          if-no-files-found: error
+  native:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Build the native execution and signing tools
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --target func fift tol emulator -j2
+          cmake -S test/mldsa-auth -B build-auth-signer -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-auth-signer -j2
+      - name: Execute the inherited module integration baseline
+        run: |
+          python3 -m pip install cryptography==46.0.4
+          python3 test/mldsa-auth/e2e.py --build build --signer build-auth-signer/test-mldsa44-sign --out artifacts/baseline
+          python3 test/mldsa-auth/test_boundaries.py --build build --signer build-auth-signer/test-mldsa44-sign --out artifacts/boundaries
+      - name: Package reproducible native review tools
+        run: |
+          mkdir -p artifacts
+          tar -czf artifacts/native-tools.tar.gz build/crypto/func build/crypto/fift build/tol/tol build/emulator/libemulator.so build-auth-signer/test-mldsa44-sign
+          git rev-parse HEAD > artifacts/commit.txt
+          sha256sum artifacts/native-tools.tar.gz > artifacts/native-tools.sha256
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: pq-readiness-native
+          path: artifacts/
+          retention-days: 3
+          if-no-files-found: error
