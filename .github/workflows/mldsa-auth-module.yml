@@ -60,7 +60,13 @@ jobs:
         if: ${{ !cancelled() && steps.e2e.outcome == 'success' }}
         run: |
           python3 test/mldsa-auth/test_interop.py --build build --out artifacts/auth-interop
-      - name: Kill both compiled module verifier-removal mutations
+      - name: Check module boundaries and the funding failure classes
+        id: boundaries
+        if: ${{ !cancelled() && steps.e2e.outcome == 'success' }}
+        run: |
+          python3 test/mldsa-auth/test_boundaries.py --build build \
+            --signer build-auth-signer/test-mldsa44-sign --out artifacts/auth-boundaries
+      - name: Kill the compiled verifier and destination guard mutations
         if: ${{ !cancelled() && matrix.arch == 'x86_64' && steps.e2e.outcome == 'success' }}
         run: |
           python3 test/mldsa-auth/mutations.py --build build \
@@ -96,6 +102,8 @@ jobs:
           done
           cmp results/mldsa-auth-x86_64/auth-interop/interop.json \
               results/mldsa-auth-aarch64/auth-interop/interop.json
+          cmp results/mldsa-auth-x86_64/auth-boundaries/boundaries.json \
+              results/mldsa-auth-aarch64/auth-boundaries/boundaries.json
           python3 - <<'PY'
           import json
           from pathlib import Path
@@ -105,5 +113,8 @@ jobs:
           assert rows and all(row['total_compute_gas'] > 0 for row in rows)
           mutations = json.loads((r / 'auth-mutations/mutations.json').read_text())
           assert {row['module'] for row in mutations if row['killed']} == {'func', 'tol'}
+          assert {row['guard'] for row in mutations if row['killed']} == {
+              'real-pq-verification', 'impure-destination-check'}
+          assert json.loads((r / 'auth-boundaries/boundaries.json').read_text())['success'] is True
           assert json.loads((r / 'auth-interop/interop.json').read_text())['success'] is True
           PY
