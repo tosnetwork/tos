@@ -370,6 +370,28 @@ inline void write_completion_observation(const std::string& which,const std::fil
     }
     extra<<']';bucket_extra=extra.str();
   }
+  std::string closed_provenance;
+  if(which=="bucket-closed") {
+    auto close_before=load(fixture/"completion-account-close-before-state.boc");
+    auto close_after=load(fixture/"completion-account-close-after-state.boc");
+    CHECK(td::read_file_str((fixture/"completion-account-close-validation.result").string()).move_as_ok()=="validate accept\n");
+    auto close=read_accepted_step(fixture/"completion-account-close-candidate",close_before);
+    CHECK(close.state->get_hash()==close_after->get_hash());
+    auto active=m5_live_account(account_data(close_before,wallet_account(0)),limit);
+    auto closed=m5_live_account(account_data(close_after,wallet_account(0)),limit);
+    CHECK(std::holds_alternative<WorkchainAccountActive>(active.account.lifecycle));
+    CHECK(std::holds_alternative<WorkchainAccountClosed>(closed.account.lifecycle));
+    CHECK(closed.control.withdrawals.empty() && closed.account.pending.empty() &&
+          closed.account.system_pending.empty() && closed.origin_pending.empty());
+    gen::ShardStateUnsplit::Record cs;CHECK(::tlb::unpack_cell(close_after,cs));
+    CHECK(cs.seq_no<=old_state.seq_no);
+    auto chain=close_after;
+    for(unsigned n=cs.seq_no+1;n<=old_state.seq_no;++n){gen::Block::Record b;CHECK(::tlb::unpack_cell(block_at(fixture,n),b));chain=vm::MerkleUpdate::apply(chain,b.state_update).move_as_ok();}
+    CHECK(chain->get_hash()==before->get_hash());
+    // The arrival must not resurrect or otherwise rewrite the closed account.
+    CHECK(account_data(before,wallet_account(0))->get_hash()==account_data(after,wallet_account(0))->get_hash());
+    closed_provenance=",\"real_account_closure\":true";
+  }
   std::string freed_slot;
   if(std::filesystem::exists(fixture/"completion-full-before-collect.boc")) {
     auto full=load(fixture/"completion-full-before-collect.boc");
@@ -415,7 +437,7 @@ inline void write_completion_observation(const std::string& which,const std::fil
      <<snapshot_json(a,0,order)<<",\"after\":"<<snapshot_json(z,u64(paid.tomis),order)<<bucket_extra
      <<"},\"provenance\":{\"before\":"<<quote(before->get_hash().to_hex())<<",\"after\":"<<quote(after->get_hash().to_hex())
      <<",\"block\":"<<quote(current->get_hash().to_hex())<<",\"inbound\":"<<quote(selector.inbound_message.to_hex())
-     <<freed_slot<<",\"D\":\"structural atomic-operation zero, not a persisted counter\"}}\n";
+     <<closed_provenance<<freed_slot<<",\"D\":\"structural atomic-operation zero, not a persisted counter\"}}\n";
   td::write_file(output.string(),out.str()).ensure();
 }
 } // namespace m3_live

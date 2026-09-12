@@ -41,7 +41,7 @@ p.add_argument('--completion-full-cap', action='store_true',
 p.add_argument('--m5-return-principal', type=int, help='explicit real-payout fixture principal')
 p.add_argument('--completion-expect-offset', type=int, choices=(-1, 0, 1),
                help='assert observed y is h plus this exact boundary offset')
-p.add_argument('--completion-contract', choices=('bucket-small', 'bucket-full', 'row4', 'row5', 'row6'),
+p.add_argument('--completion-contract', choices=('bucket-small', 'bucket-full', 'bucket-closed', 'row4', 'row5', 'row6'),
                help='run the existing frozen real-host completion contract')
 p.add_argument('--failed-routing-probe', action='store_true',
                help='run the real fee-routing producer mutation before normal Failed publication')
@@ -370,6 +370,56 @@ if a.completion_contract:
             raise RuntimeError('restored late execution failed')
         oracle.check('row6', restored)
         print('WITHDRAWAL-COMPLETION_D78_OBSERVED:test-workchain-withdrawal-completion-row6')
+        raise SystemExit(0)
+
+    if a.completion_contract == 'bucket-closed':
+        # The counterpart has a closed Withdrawal but an active account.
+        # Do not confuse it with the genuinely closed-account case below.
+        _, active = closed_late_fixture()
+        oracle.require(active['LATE']['input']['account_closed'] is False, 'ACTIVE_ACCOUNT_COUNTERPART')
+        args = [sys.executable, str(Path(__file__).resolve()), '--build', str(build),
+                '--m5-completion-late', '--completion-close-account-before-return']
+        with (work / 'closed-account.log').open('w') as log:
+            result = subprocess.run(args, stdout=log, stderr=log)
+        result.check_returncode()
+        prefix = 'COMPLETION_CLOSED_ACCOUNT:'
+        paths = [Path(line[len(prefix):]) for line in (work / 'closed-account.log').read_text().splitlines()
+                 if line.startswith(prefix)]
+        if len(paths) != 1:
+            raise RuntimeError('missing actual account-closure fixture')
+        source = paths[0]
+        output = source / 'completion-observation.json'
+        if output.exists():
+            raise RuntimeError('closed account observation must be independently produced')
+        subprocess.run([str(build / 'test-m3-live'), '--completion-observation',
+                        'bucket-closed', str(source), str(output)], check=True)
+        data = json.loads(output.read_text())
+        oracle.check('bucket-closed', data)
+        oracle.require(data['provenance'].get('real_account_closure') is True, 'REAL_ACCOUNT_CLOSURE')
+        for label, old, changed, assertion in (
+            ('closed-refusal', '      WorkchainFailedFundedResult result{owner_data, coordinator_data, {}, {},',
+             '      return error("isolated bucket disposition refusal");\n'
+             '      WorkchainFailedFundedResult result{owner_data, coordinator_data, {}, {},',
+             'DISPOSITION_MUST_PUBLISH'),
+            ('closed-attribution', '        credited.bucket.entries.back().account_id = owner.account.address.account;',
+             '        // Isolated mutation: omit beneficiary from the installed bucket.', 'BUCKET_FIXED_ATTRIBUTION')):
+            binary = shadow_binary(label, old, changed)
+            _, data = replay_paid(label + '-run', binary, source, 'bucket-closed')
+            oracle.expect_red('bucket-closed', data, assertion)
+            print('COMPLETION_REAL_RED:' + assertion, flush=True)
+            try:
+                oracle.expect_red('bucket-closed', data, assertion, observer=lambda *_: None)
+            except oracle.Violation as error:
+                if str(error) != 'ORACLE_MISSING:' + assertion:
+                    raise
+                print(str(error), flush=True)
+            else:
+                raise RuntimeError('disabled closed-account oracle did not fail')
+        code, data = replay_paid('closed-restored', build / 'test-m3-live', source, 'bucket-closed')
+        if code:
+            raise RuntimeError('restored closed-account execution failed')
+        oracle.check('bucket-closed', data)
+        print('WITHDRAWAL-COMPLETION_D78_OBSERVED:test-workchain-withdrawal-completion-bucket-closed')
         raise SystemExit(0)
 
     if a.completion_contract == 'bucket-full':
