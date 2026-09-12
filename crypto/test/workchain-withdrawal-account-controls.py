@@ -1,4 +1,8 @@
-"""Isolated removal controls for the complete Withdrawal account codec."""
+"""HISTORICAL pre-D78 schema3 account-codec removal controls.
+Run only with matching pre-D78 source/build (e.g. 2e2738c79), not current schema4.
+Not registered in default CTest. D78 current unit tests do not silently port
+these mutation anchors; see doc/uno-m5-d78-consumer-inventory.md.
+"""
 from pathlib import Path
 import argparse, shlex, subprocess, tempfile
 parser = argparse.ArgumentParser()
