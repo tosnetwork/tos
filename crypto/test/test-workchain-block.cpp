@@ -1600,6 +1600,9 @@ TEST(WorkchainBlock, OutboundObservationSharesStateBudget) {
   auto exceeded = constrained.payout_absent(custody, 17, 0);
   // This rejection is independent of the positive usage count above: replacing
   // the queue-closure budget refusal with a successful Q must fail here.
+  // Mutation: in workchain-account-engine.h payout_absent(), replace only the load_encoded(cell)
+  // NativeClosureLimit return with `return std::optional<std::uint32_t>{queue_height_};`.
+  // Scope: real queue-read function, not authenticated-config-to-collator/validator coverage.
   ASSERT_TRUE(exceeded.is_error());
   ASSERT_EQ(exceeded.error().code(), -7200);
   ASSERT_TRUE(constrained.status().is_error());
