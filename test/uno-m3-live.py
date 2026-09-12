@@ -1073,11 +1073,13 @@ if a.m5_debit:
                      '--export-candidate', str(fixture / (label + '.candidate'))]
         for top in tops:
             args += ['-M', str(fixture / (top + '-top1.boc'))]
-        result = subprocess.run(args, text=True, capture_output=True)
+        result = subprocess.run(args, capture_output=True)
+        # Native diagnostics can contain binary bytes. Preserve the observation
+        # before rendering it; text decoding must not hide the child's outcome.
         output = result.stdout + result.stderr
-        (fixture / (label + '.log')).write_text(output)
+        (fixture / (label + '.log')).write_bytes(output)
         result.check_returncode()
-        return output
+        return output.decode('utf-8', errors='backslashreplace')
     if split_return_route:
         # Split before issuing the payout. Every intermediate block is real;
         # no inbox is dropped and no queue-removal height is fabricated.
