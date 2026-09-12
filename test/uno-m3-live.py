@@ -24,6 +24,10 @@ p.add_argument('--m5-failed', action='store_true', help='publish the funded phas
 p.add_argument('--m5-bucket-small', action='store_true', help='real bounce below local issuance fees')
 p.add_argument('--m5-completion-late', action='store_true',
                help='establish Q through real owner operations before importing the return')
+p.add_argument('--completion-close-before-return', action='store_true',
+               help='expire the original obligation through an owner operation before late delivery')
+p.add_argument('--completion-no-slot', action='store_true',
+               help='fill the explicit test system-pending capacity with real Deposits before prepare')
 p.add_argument('--m5-completion-paid', action='store_true',
                help='real no-bounce payout, untouched expiry, then an owner trigger')
 p.add_argument('--completion-full-cap', action='store_true',
@@ -39,11 +43,15 @@ p.add_argument('--failed-routing-binary', type=Path,
                help='isolated test binary for oracle-removal control only')
 a = p.parse_args()
 split_return_route = a.m5_completion_late and not a.m5_completion_paid
+if a.completion_close_before_return and not split_return_route:
+    p.error('close-before-return requires the real split late-return route')
 if a.m5_completion_paid:
     a.m5_completion_late = True
 if a.completion_full_cap and not a.m5_completion_paid:
     p.error('full-cap fixture requires Paid completion')
 if a.m5_bucket_small or a.m5_completion_late:
+    a.m5_failed = True
+if a.completion_no_slot:
     a.m5_failed = True
 if a.failed_routing_probe:
     a.m5_failed = True
@@ -469,6 +477,25 @@ if True:
 from uno_m4_live_sequence import run
 initial, initial_blind, send_fee, collect_fee, limits = run(
     build, fixture, wallet, advance_pair, initial_only=True, initial_principal=principal)
+if a.completion_no_slot:
+    # The explicit test policy sets four system slots. Fill them by actual
+    # successful Deposit issuance, never by modifying an authenticated root.
+    for index in range(4):
+        label = f'full-slot-{index}'
+        (fixture / 'deposit.request.txt').write_text('principal=1000000000\n')
+        subprocess.run([str(build / 'test-m3-live'), '--deposit-request', str(fixture)], check=True)
+        subprocess.run([str(build / 'test-tos-collator'), '-C', str(fixture / 'global.json'),
+                        '-D', str(fixture / 'db'), '-w', '0', '-m', str(fixture / 'deposit.message.boc'),
+                        '-s', str(fixture / (label + '-payer-top')),
+                        '--query-result', str(fixture / (label + '-payer.result'))], check=True)
+        subprocess.run([str(build / 'test-tos-collator'), '-C', str(fixture / 'global.json'),
+                        '-D', str(fixture / 'db'), '-w', '-1', '-M', str(fixture / (label + '-payer-top1.boc')),
+                        '--query-result', str(fixture / (label + '-master.result'))], check=True)
+        subprocess.run([str(build / 'test-m3-live'), str(fixture)], check=True)
+        advance_pair(label)
+        subprocess.run([str(build / 'test-tos-collator'), '-C', str(fixture / 'global.json'),
+                        '-D', str(fixture / 'db'), '-w', '-1', '-M', str(fixture / (label + '-enabled-top1.boc')),
+                        '--query-result', str(fixture / (label + '-accepted.result'))], check=True)
 if a.m5_debit:
     def route_block(label, shard, tops=()):
         args = [str(build / 'test-tos-collator'), '-C', str(fixture / 'global.json'),
@@ -552,7 +579,10 @@ if a.m5_debit:
             if a.m5_completion_late:
                 shutil.copyfile(fixture / 'prepare-payout.boc',fixture / 'completion-original-payout.boc')
                 old_blind = request['new_blind']
-                for number, new_blind in ((5,79),(6,83)):
+                owner_steps = [(5,79),(6,83)]
+                if a.completion_close_before_return:
+                    owner_steps.append((7,97))
+                for number, new_blind in owner_steps:
                     followup = dict(secret=101, old_value=available, old_blind=old_blind,
                                     new_blind=new_blind, aux_blind=89, principal=137,
                                     outward_fee=17, fee=257, **limits)
@@ -568,7 +598,10 @@ if a.m5_debit:
                                     str(fixture / f'{number}-enabled-top1.boc'), '--query-result',
                                     str(fixture / f'completion-owner-{number}-master.result')],check=True)
                     old_blind = new_blind
-                shutil.copyfile(fixture / 'current-state.boc',fixture / 'completion-record-state.boc')
+                    if a.completion_close_before_return and number == 6:
+                        shutil.copyfile(fixture / 'current-state.boc',fixture / 'completion-record-state.boc')
+                if not a.completion_close_before_return:
+                    shutil.copyfile(fixture / 'current-state.boc',fixture / 'completion-record-state.boc')
                 shutil.copyfile(fixture / 'completion-original-payout.boc',fixture / 'prepare-payout.boc')
             if split_return_route:
                 route_block('payout-recipient', '0:4')

@@ -293,7 +293,8 @@ int main(int argc, char** argv) {
   }
   const auto ingress = block::load_workchain_native_ingress_table(*config).move_as_ok().at(2);
   const auto params = block::decode_workchain_engine_parameters(ingress.engine_configuration).move_as_ok();
-  const bool m4 = block::m3_test::decode_m3_test_business_parameters(params.parameters).move_as_ok().deposit.has_value();
+  const auto business = block::m3_test::decode_m3_test_business_parameters(params.parameters).move_as_ok();
+  const bool m4 = business.deposit.has_value();
   unsigned transaction_count = 2;
   if (deposit || debit || failed) transaction_count = 3;
   else if (!test_funding) {
@@ -379,11 +380,22 @@ int main(int argc, char** argv) {
       CHECK(tlb::unpack_cell_inexact(m3_live::load(fixture / "failed-bounce.boc"), returned));
       block::CurrencyCollection imported;
       CHECK(imported.unpack(returned.value));
-      // The small-value disposition signs nothing. This control still proves
-      // the same unknown counter emitted one after actual engine execution.
+      // All no-issuance dispositions sign nothing, including a full system
+      // pending set even when the inbound value would cover the service fee.
+      // Read that precondition from the authenticated predecessor, not a CLI
+      // scenario label or the producer's proposed effects.
       const bool small = td::cmp(imported.tomis, block::workchain_unsigned_fee(
           m3_live::m5_live_return_fee(fixture))) <= 0;
-      CHECK(td::read_file_str(counter + ".units.1").move_as_ok() == (small ? "0\n" : "7\n"));
+      const auto selector = block::m3_test::decode_m5_test_failed(candidate).move_as_ok();
+      const auto owner = m3_live::m5_live_account(m3_live::account_data(
+          m3_live::load(fixture / "current-state.boc"), selector.owner.account),
+          m3_live::m5_live_withdrawal_limit(fixture));
+      CHECK(business.deposit);
+      const bool full = owner.account.system_pending.size() + owner.origin_pending.size() >=
+          business.deposit->system_slots;
+      const bool closed = !std::holds_alternative<block::WorkchainAccountActive>(owner.account.lifecycle);
+      CHECK(td::read_file_str(counter + ".units.1").move_as_ok() ==
+          ((small || full || closed) ? "0\n" : "7\n"));
       CHECK(!std::filesystem::exists(counter + ".units.2") && !std::filesystem::exists(exported));
       std::cout << "UNKNOWN_ORIGIN_CONTROL: real execution, LocalUnavailable, count=1, no publication\n";
       continue;
