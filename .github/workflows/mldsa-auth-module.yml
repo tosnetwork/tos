@@ -55,6 +55,11 @@ jobs:
         run: |
           python3 test/mldsa-auth/e2e.py --build build \
             --signer build-auth-signer/test-mldsa44-sign --out artifacts/auth-results
+      - name: Execute an independently signed request through both modules
+        id: interop
+        if: ${{ !cancelled() && steps.e2e.outcome == 'success' }}
+        run: |
+          python3 test/mldsa-auth/test_interop.py --build build --out artifacts/auth-interop
       - name: Kill both compiled module verifier-removal mutations
         if: ${{ !cancelled() && matrix.arch == 'x86_64' && steps.e2e.outcome == 'success' }}
         run: |
@@ -89,6 +94,8 @@ jobs:
           for name in contracts.json e2e.json gas.json module-func.boc module-tol.boc wallet-func.boc wallet-tol.boc agent.boc; do
             cmp "$X/$name" "$A/$name"
           done
+          cmp results/mldsa-auth-x86_64/auth-interop/interop.json \
+              results/mldsa-auth-aarch64/auth-interop/interop.json
           python3 - <<'PY'
           import json
           from pathlib import Path
@@ -98,4 +105,5 @@ jobs:
           assert rows and all(row['total_compute_gas'] > 0 for row in rows)
           mutations = json.loads((r / 'auth-mutations/mutations.json').read_text())
           assert {row['module'] for row in mutations if row['killed']} == {'func', 'tol'}
+          assert json.loads((r / 'auth-interop/interop.json').read_text())['success'] is True
           PY

@@ -111,9 +111,26 @@ python3 -m pip install cryptography==46.0.4
 python3 test/mldsa-auth/test_protocol.py
 python3 test/mldsa-auth/e2e.py --build build \
   --signer build-auth-signer/test-mldsa44-sign --out auth-results
+python3 test/mldsa-auth/test_interop.py --build build --out auth-interop
 python3 test/mldsa-auth/mutations.py --build build \
   --signer build-auth-signer/test-mldsa44-sign --out auth-mutations
 ```
+
+## Independent cross-implementation evidence
+
+`test/mldsa-auth/openssl-interop.json` holds a signature produced by OpenSSL over
+the commitment bytes this repository computes, together with the request BOC, the
+signing key and an unrelated second key. `test_interop.py` replays it through the
+actual compiled modules in the real VM: two independently written implementations
+must agree on the commitment, the context string and the canonical encoding, or
+the module rejects the proof. Its negative cases alter each signed field, swap the
+stored key and flip signature bits, and every one must be refused.
+
+Consuming the fixture needs no ML-DSA-capable OpenSSL, so ordinary runners execute
+it. `interop.py` regenerates the fixture and requires OpenSSL 3.5 or newer; run it
+by hand when the signed layout changes, and treat a regenerated fixture as a
+deliberate change to the signing profile rather than a routine refresh. Its seeds
+are PUBLIC TEST DATA.
 
 `build_contracts.py --build build --out auth-contracts` produces deployable BOCs
 and `contracts.json` code-hash/file-digest records without account SDK embedding
