@@ -51,12 +51,14 @@ inline td::Result<WorkchainInboundAllocationOverlay> build(
   }
   TRY_RESULT(native, decode_workchain_native_effects(output.native));
   CurrencyCollection aggregate_collected(0);
+  auto compute_payer = custody;
   if (native.fees) {
     if (native.fees->custody != custody || native.fees->coordinator != coordinator) {
       return td::Status::Error("fee settlement differs from authenticated roles");
     }
     TRY_RESULT(totals, checked_workchain_fee_totals(*native.fees));
     aggregate_collected = std::move(totals.collected);
+    compute_payer = native.fees->compute_payer.value_or(custody);
   }
   TRY_RESULT(expected_identity, encode_workchain_host_identity(identity));
   if (decoded.identity->get_hash() != expected_identity->get_hash()) {
@@ -182,7 +184,7 @@ inline td::Result<WorkchainInboundAllocationOverlay> build(
         record.prev_trans_hash != account.last_trans_hash_ || record.prev_trans_lt != account.last_trans_lt_ ||
         !tlb::unpack_cell(tx.new_total_state, next_record) || !tlb::csr_unpack(next_record.storage, next_storage) ||
         !after.unpack(next_storage.balance) || !fees.unpack(record.total_fees) ||
-        (!is_prepared && fees != (keys[i] == custody ? aggregate_collected : CurrencyCollection(0))) ||
+        (!is_prepared && fees != (keys[i] == compute_payer ? aggregate_collected : CurrencyCollection(0))) ||
         next_storage.last_trans_lt != tx.end_lt || record.lt != tx.start_lt ||
         record.r1.in_msg->prefetch_ulong(1) != 0 ||
         static_cast<std::uint64_t>(record.outmsg_cnt) != schedule.participants[i].outbound_count) {

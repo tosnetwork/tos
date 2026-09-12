@@ -3081,6 +3081,94 @@ TEST(WorkchainBlock, AggregateFeeSettlement) {
         coordinator_id, custody_id, 2, 2, edges, 0, 4096, cfg).is_ok());
   }
   auto changed = effects;
+  // Same D32 C collection chain, but a resolved sweep may select coordinator
+  // instead of custody. A third-party payer is a validly encoded CLAIM, not
+  // permission. Exercise the actual Native factory, not only a codec enum.
+  for (const auto& payer : {td::Bits256::ones(), coordinator_id, custody_id}) {
+    auto payment = effects;
+    payment.fees->state_fee = td::make_refint(0);
+    payment.fees->compute_fee = td::make_refint(28);
+    payment.fees->tip = td::make_refint(0);
+    payment.fees->compute_payer = payer;
+    auto payment_root = block::encode_workchain_account_effects(payment, 2, 0, 4096).move_as_ok();
+    ASSERT_TRUE(block::gen::t_UnoV2HostEffects.validate_ref(4096, payment_root));
+    auto payment_bindings = block::build_workchain_participant_records(td::Bits256(input->get_hash().bits()),
+        td::Bits256(payment_root->get_hash().bits()), {coordinator_id, custody_id}, 2).move_as_ok();
+    block::transaction::Transaction attempt(coordinator, block::transaction::Transaction::tr_workchain_batch, 21, 10);
+    auto paid = attempt.prepare_workchain_entry(payment_bindings[0], input, payment_root, number(321), cfg, 0, 4096);
+    if (payer == td::Bits256::ones()) {
+      ASSERT_TRUE(paid.is_error());  // THIRD_PARTY_FEE_PAYER: remove role guard, this goes red.
+      ASSERT_EQ(paid.error().code(), -7200);
+      ASSERT_TRUE(attempt.balance == C(1000) && attempt.total_fees.is_zero());
+      ASSERT_TRUE(attempt.root.is_null() && attempt.new_total_state.is_null() && attempt.out_msgs.empty());
+    } else {
+      ASSERT_TRUE(paid.is_ok());
+      ASSERT_TRUE(attempt.balance == C(payer == coordinator_id ? 972 : 1000));
+      ASSERT_TRUE(attempt.total_fees == C(payer == coordinator_id ? 28 : 0));
+    }
+  }
+  changed = effects;
+  // The additional payer must not turn insufficient funding into a partial
+  // debit or publication. Exercise the same collection chain for both roles.
+  for (const auto& payer : {coordinator_id, custody_id}) {
+    auto payment = effects;
+    payment.fees->state_fee = td::make_refint(0);
+    payment.fees->compute_fee = td::make_refint(1001);
+    payment.fees->tip = td::make_refint(0);
+    payment.fees->compute_payer = payer;
+    auto payment_root = block::encode_workchain_account_effects(payment, 2, 0, 4096).move_as_ok();
+    auto payment_bindings = block::build_workchain_participant_records(td::Bits256(input->get_hash().bits()),
+        td::Bits256(payment_root->get_hash().bits()), {coordinator_id, custody_id}, 2).move_as_ok();
+    auto& payer_account = payer == coordinator_id ? coordinator : custody;
+    block::transaction::Transaction attempt(payer_account, block::transaction::Transaction::tr_workchain_batch, 21, 10);
+    auto paid = payer == coordinator_id
+        ? attempt.prepare_workchain_entry(payment_bindings[0], input, payment_root, number(321), cfg, 0, 4096)
+        : attempt.prepare_workchain_import_participant(payment_bindings[1], input, payment_root, number(322), cfg, 0, 4096);
+    ASSERT_TRUE(paid.is_error());
+    ASSERT_TRUE(attempt.balance == C(1000) && attempt.total_fees.is_zero());
+    ASSERT_TRUE(attempt.root.is_null() && attempt.new_total_state.is_null() && attempt.out_msgs.empty());
+    ASSERT_TRUE(block::build_workchain_inbound_allocation_overlay(old.accounts, identity, input, payment_root,
+        coordinator_id, custody_id, 2, 2, 0, 0, 4096, cfg).is_error());
+    ASSERT_EQ(old.accounts->get_hash(), original_hash);
+  }
+  // Exercise an actual third participant too: it may participate without
+  // paying, but declaring it the compute payer must fail at Native membership.
+  {
+    const td::Bits256 third_id(number(2)->get_hash().bits());
+    block::Account third(2, third_id.bits());
+    ASSERT_TRUE(third.unpack(accounts.lookup(third_id), 10, false));
+    auto third_access = access;
+    third_access.reads.push_back({third_id, td::Bits256(third.total_state->get_hash().bits())});
+    third_access.writes.push_back(third_id);
+    std::sort(third_access.reads.begin(), third_access.reads.end(), [](const auto& a, const auto& b) { return a.account < b.account; });
+    std::sort(third_access.writes.begin(), third_access.writes.end());
+    auto third_input = block::encode_workchain_host_input(identity, admitted, third_access, {}, 3, 3, 0).move_as_ok();
+    for (const auto& payer : {custody_id, third_id}) {
+      auto payment = effects;
+      payment.updates.push_back({third_id, number(323)});
+      std::sort(payment.updates.begin(), payment.updates.end(), [](const auto& a, const auto& b) { return a.account < b.account; });
+      payment.fees->state_fee = td::make_refint(0);
+      payment.fees->compute_fee = td::make_refint(28);
+      payment.fees->tip = td::make_refint(0);
+      payment.fees->compute_payer = payer;
+      auto payment_root = block::encode_workchain_account_effects(payment, 3, 0, 4096).move_as_ok();
+      auto bindings3 = block::build_workchain_participant_records(td::Bits256(third_input->get_hash().bits()),
+          td::Bits256(payment_root->get_hash().bits()), third_access.writes, 3).move_as_ok();
+      const auto index = std::find(third_access.writes.begin(), third_access.writes.end(), third_id) - third_access.writes.begin();
+      block::transaction::Transaction attempt(third, block::transaction::Transaction::tr_workchain_batch, 21, 10);
+      auto paid = attempt.prepare_workchain_import_participant(bindings3[index], third_input, payment_root,
+          number(323), cfg, 0, 4096);
+      if (payer == third_id) {
+        ASSERT_TRUE(paid.is_error());  // THIRD_PARTICIPANT_PAYER, not malformed declarations.
+        ASSERT_EQ(paid.error().code(), -7200);
+        ASSERT_TRUE(attempt.root.is_null() && attempt.new_total_state.is_null() && attempt.out_msgs.empty());
+      } else {
+        ASSERT_TRUE(paid.is_ok());
+      }
+      ASSERT_TRUE(attempt.balance == C(1000) && attempt.total_fees.is_zero());
+    }
+  }
+  changed = effects;
   std::swap(changed.fees->custody, changed.fees->coordinator);
   auto wrong_roles = block::encode_workchain_account_effects(changed, 2, 1, 4096).move_as_ok();
   ASSERT_TRUE(block::build_workchain_inbound_allocation_overlay(old.accounts, identity, input, wrong_roles,

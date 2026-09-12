@@ -36,6 +36,8 @@ p.add_argument('--completion-no-slot', action='store_true',
                help='fill the explicit test system-pending capacity with real Deposits before prepare')
 p.add_argument('--completion-free-one-slot', action='store_true',
                help='after filling the real system map, COLLECT exactly one entry before prepare')
+p.add_argument('--completion-sweep', action='store_true',
+               help='after actual full-slot bucket publication, COLLECT one Deposit and execute the authorized round')
 p.add_argument('--m5-completion-paid', action='store_true',
                help='real no-bounce payout, untouched expiry, then an owner trigger')
 p.add_argument('--completion-full-cap', action='store_true',
@@ -64,6 +66,10 @@ if a.completion_full_cap and not a.m5_completion_paid:
     p.error('full-cap fixture requires Paid completion')
 if a.m5_bucket_small or a.m5_completion_late:
     a.m5_failed = True
+if a.completion_sweep:
+    if a.completion_free_one_slot or a.completion_close_account_before_return:
+        p.error('sweep needs the real full-slot bucket, not a pre-return slot removal or closed owner')
+    a.completion_no_slot = True
 if a.completion_no_slot:
     a.m5_failed = True
 if a.completion_free_one_slot and not a.completion_no_slot:
@@ -606,6 +612,8 @@ if source.count(marker) != 1:
     raise RuntimeError('genesis preparation boundary changed')
 (fixture / '.counter-managed-v1').write_text('M3 test-owned fixture, not a deployment source.\n')
 prepare = fixture / 'prepare.cmake'
+if a.completion_sweep:
+    (fixture / 'completion-sweep.txt').write_text('1\n')
 subprocess.run([str(build / 'test-m3-live'), '--m4-coordinator-data',
                 str(fixture / 'coordinator-data.boc')], check=True)
 # Keep all instance issuance in the existing create-state route. Change the
@@ -1085,6 +1093,26 @@ if a.m5_debit:
                 subprocess.run(['python3', str(repo / 'crypto/test/workchain_withdrawal_completion_oracle.py'),
                                 '--case', case, '--observation', str(observation)], check=True)
             completed.check_returncode()
+            if a.completion_sweep:
+                advance_pair('sweep-bucket-arrival')
+                # Commit the return head before COLLECT's existing one-block
+                # master import assertion; otherwise it sees accumulated fees
+                # from several shard blocks, not just the COLLECT being checked.
+                subprocess.run([str(build / 'test-tos-collator'), '-C', str(fixture / 'global.json'),
+                                '-D', str(fixture / 'db'), '-w', '-1',
+                                '-M', str(fixture / 'sweep-bucket-arrival-enabled-top1.boc'),
+                                '--query-result', str(fixture / 'sweep-arrival-master.result')], check=True)
+                # The slot is freed by a genuine proof-authorized COLLECT of
+                # an existing Deposit, not by editing a state root or a cap.
+                selected = (fixture / 'full-slot-3.receipt.id').read_text()
+                run(build, fixture, wallet, advance_pair, initial_only=True,
+                    initial_collection=(available, 71, 73, selected, 1000000000, 'sweep-free-slot'))
+                shutil.copyfile(fixture / 'current-state.boc', fixture / 'completion-before-state.boc')
+                shutil.copyfile(fixture / 'current-state.boc', fixture / 'completion-sweep-before-state.boc')
+                shutil.copyfile(fixture / 'accepted-block.id', fixture / 'completion-before-block.id')
+                subprocess.run([str(build / 'test-m3-live'), '--sweep-request', str(fixture)], check=True)
+                print(f'COMPLETION_SWEEP_FIXTURE:{fixture}', flush=True)
+                subprocess.run([str(build / 'test-m3-live'), str(fixture)], check=True)
             if a.completion_window_pair:
                 print(f'COMPLETION_WINDOW_{window_branch}:{fixture}', flush=True)
             if a.completion_close_before_return:

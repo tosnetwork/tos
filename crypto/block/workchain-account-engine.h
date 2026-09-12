@@ -199,6 +199,13 @@ struct WorkchainAccountEffects {
   // Local classification from independently executed custody return admission,
   // never decoded from candidate effects. Settlement re-reads the exact import.
   std::optional<td::Bits256> bucket_return_message;
+  // Independently executed sweep classification, never a wire capability.
+  // Gross protected value removed, retained slot income, and validator compute
+  // charge remain distinct; settlement checks their actual Native destinations.
+  struct BucketSweepCredit {
+    std::uint64_t gross, slot, compute;
+  };
+  std::optional<BucketSweepCredit> bucket_sweep_credit;
 };
 
 class WorkchainAccountEngine {

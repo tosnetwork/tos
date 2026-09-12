@@ -242,7 +242,8 @@ int main(int argc, char** argv) {
     auto root = prepare_m3_live_configuration(vm::std_boc_deserialize(bytes).move_as_ok(),
         std::string(argv[1]) != "--prepare-config", std::string(argv[1]) == "--prepare-m5-debit-config",
         std::string(argv[1]) == "--prepare-m5-return-config" || std::string(argv[1]) == "--prepare-m5-completion-config",
-        std::string(argv[1]) == "--prepare-m5-completion-config", full_cap, window_pair).move_as_ok();
+        std::string(argv[1]) == "--prepare-m5-completion-config", full_cap, window_pair,
+        std::filesystem::exists(fixture / "completion-sweep.txt")).move_as_ok();
     td::write_file((fixture / "zerostate.boc").string(), vm::std_boc_serialize(root, 31).move_as_ok()).ensure();
     td::write_file((fixture / "zerostate.rhash").string(), root->get_hash().as_slice()).ensure();
     return 0;
@@ -253,12 +254,28 @@ int main(int argc, char** argv) {
     // This mode writes only a caller-owned fixture file, never deployment state.
     block::WorkchainCoordinatorState state{2, {1, 1, 0, 0}, 0};
     if (std::string(argv[1]) == "--m4-coordinator-data") {
-      auto bucket = block::encode_workchain_unexpected_bucket({{}, {}, td::make_refint(0), {}, 0},
+      block::WorkchainUnexpectedBucket initial{{}, {}, td::make_refint(0), {}, 0};
+      if (std::filesystem::exists(std::filesystem::path(argv[2]).parent_path() / "completion-sweep.txt")) {
+        initial.account_attribution = true; initial.sweep_sequence = 0;
+      }
+      auto bucket = block::encode_workchain_unexpected_bucket(initial,
                                                               {256, 256}, 4096).move_as_ok();
       state = {3, {1, 1, 0, 0}, 0, 0, bucket};
     }
     auto data = block::encode_workchain_coordinator_state(state).move_as_ok();
     td::write_file(td::CSlice(argv[2]), vm::std_boc_serialize(data).move_as_ok()).ensure();
+    return 0;
+  }
+  if (argc == 3 && std::string(argv[1]) == "--sweep-request") {
+    vm::init_vm().ensure();
+    const std::filesystem::path fixture(argv[2]);
+    auto data = m3_live::account_data(m3_live::load(fixture / "current-state.boc"), td::Bits256::zero());
+    auto coordinator = block::decode_workchain_coordinator_state(data).move_as_ok();
+    auto bucket = block::decode_workchain_unexpected_bucket(coordinator.unexpected, {256,256},4096).move_as_ok();
+    CHECK(!bucket.entries.empty() && bucket.entries.front().account_id);
+    auto env = m3_live::wallet_environment(fixture, 1);
+    m3_live::save_operation(fixture, block::m3_test::encode_m5_test_sweep(),
+        {*bucket.entries.front().account_id, env.rules.custody});
     return 0;
   }
   const bool incarnation_control = argc == 3 && std::string(argv[1]) == "--failed-incarnation-control";
@@ -286,6 +303,7 @@ int main(int argc, char** argv) {
   const bool deposit = block::m3_test::is_m4_test_deposit(candidate);
   const bool debit = block::m3_test::is_m5_test_debit(candidate);
   const bool failed = block::m3_test::is_m5_test_failed(candidate);
+  const bool sweep = block::m3_test::is_m5_test_sweep(candidate);
   CHECK(!unknown_control || failed);
   CHECK(!routing_control || failed);
   if (incarnation_control) {
@@ -301,7 +319,7 @@ int main(int argc, char** argv) {
   const auto business = block::m3_test::decode_m3_test_business_parameters(params.parameters).move_as_ok();
   const bool m4 = business.deposit.has_value();
   unsigned transaction_count = 2;
-  if (deposit || debit || failed) transaction_count = 3;
+  if (deposit || debit || failed || sweep) transaction_count = 3;
   else if (!test_funding) {
     const auto operation = block::decode_workchain_replay_input(candidate).move_as_ok();
     const auto* transfer = std::get_if<block::WorkchainTransferInput>(&operation);
@@ -507,7 +525,7 @@ int main(int argc, char** argv) {
         else m3_live::assert_accepted_deposit(fixture, previous, accepted);
       } else if (failed) {
         m3_live::assert_m5_failed(fixture, previous, accepted, *ingress_table.at(2).custody_address);
-      } else if (debit) {
+      } else if (debit || sweep) {
         // Withdrawal is independently checked above and by the backing replay.
       } else if (test_funding) {
         block::gen::TransactionDescr::Record_trans_workchain_entry_v3 entry;

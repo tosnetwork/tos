@@ -7,6 +7,8 @@
 #include "workchain-m3-test-funding-operation.h"
 #include "workchain-m4-deposit-input.h"
 #include "workchain-m5-failed-input.h"
+#include "workchain-m5-sweep-input.h"
+#include "workchain-m5-sweep.h"
 #include "workchain-m5-debit.h"
 #include "workchain-m5-payout.h"
 #include "block/workchain-failed-funded.h"
@@ -134,6 +136,9 @@ class M3NodeEngine final : public RegisteredWorkchainAccountEngine {
       return local("M3 test engine lacks bound coordinator/custody configuration");
     TRY_RESULT(parameters, decode_workchain_engine_parameters(payload));
     TRY_RESULT(business, decode_m3_test_business_parameters(parameters.parameters));
+    if (business.sweep && (!business.sweep->bucket_limits || !parameters.resources.state.max_cells ||
+        !std::in_range<int>(parameters.resources.state.max_cells)))
+      return local("ConfigInvalid: explicit sweep capacity or validation budget absent");
     if (descriptor.workchain_id != 2 || business.rules.custody != *found->second.custody_address ||
         parameters.resources.admission_version != 4)
       return local("M3 test engine configuration incompatible with metered execution");
@@ -153,6 +158,15 @@ class M3NodeEngine final : public RegisteredWorkchainAccountEngine {
     const auto* cfg = dynamic_cast<const Configuration*>(&configuration);
     if (!cfg || td::Bits256(identity.configuration_hash.bits()) != cfg->configuration_hash)
       return local("M3 proof inspection configuration mismatch");
+    if (is_m5_test_sweep(candidate)) {
+      TRY_STATUS(decode_m5_test_sweep(candidate));
+      if (!cfg->business.sweep || cfg->business.sweep->count != 1)
+        return local("ConfigInvalid: supported explicit sweep round absent");
+      UnoCryptoSystemEncryptionRequestV2 shape{};
+      shape.abi_version = 2; shape.amount = 1; shape.origin_bytes = 115; shape.origin[0] = 2;
+      TRY_RESULT(work, workchain_proof_operations_v4(shape));
+      return work.total();
+    }
     if (is_m5_test_debit(candidate)) {
       TRY_RESULT(debit, decode_m5_test_debit(candidate));
       if (!cfg->business.prepare || !cfg->business.operation_tariff)
@@ -253,6 +267,41 @@ class M3NodeEngine final : public RegisteredWorkchainAccountEngine {
       result.protected_coordinator_snapshot = td::Bits256(coordinator.data->get_hash().bits());
       return result;
     };
+    if (is_m5_test_sweep(host.candidate)) {
+      TRY_STATUS(decode_m5_test_sweep(host.candidate));
+      if (!b.sweep || !b.sweep->bucket_limits || !cfg->parameters.resources.state.max_cells ||
+          !std::in_range<int>(cfg->parameters.resources.state.max_cells))
+        return local("ConfigInvalid: explicit sweep capacity or validation budget absent");
+      const auto validation_cells = static_cast<int>(cfg->parameters.resources.state.max_cells);
+      auto decoded_bucket = decode_workchain_unexpected_bucket(system.unexpected, *b.sweep->bucket_limits, validation_cells);
+      if (decoded_bucket.is_error()) return local("authenticated sweep bucket unavailable");
+      const auto& bucket = decoded_bucket.ok();
+      TRY_STATUS(verify_m5_sweep_authorization(*b.sweep, bucket, clock.height));
+      if (bucket.entries.empty() || !bucket.entries.front().account_id)
+        return local("test sweep requires an attributed first entry");
+      // The account is selected by authenticated entry order, never by the
+      // selector or governance. Access declarations cannot override this key.
+      TRY_RESULT(owner, read(accounts, *bucket.entries.front().account_id, clock.gen_utime, true));
+      TRY_RESULT(custody, read(accounts, *cfg->ingress.custody_address, clock.gen_utime, false));
+      TRY_RESULT(credit, apply_m5_sweep_credit(b, owner.data, coordinator.data, clock.height, validation_cells, verifier));
+      WorkchainAccountEffects result;
+      result.updates = {{credit.target, credit.owner}, {cfg->ingress.executor_address, credit.coordinator},
+          {*cfg->ingress.custody_address, custody.data}};
+      std::sort(result.updates.begin(), result.updates.end(), [](const auto& a, const auto& b) {
+        return a.account < b.account;
+      });
+      result.native_transfers = {{cfg->ingress.executor_address, *cfg->ingress.custody_address,
+          CurrencyCollection(workchain_unsigned_fee(credit.net))}};
+      result.bucket_sweep_credit = WorkchainAccountEffects::BucketSweepCredit{
+          credit.gross, credit.slot, credit.compute};
+      // S is retained in coordinator. Only g follows the EXISTING C collection
+      // chain; neither fee transits custody. Payer is an execution result from
+      // authenticated operation/configuration, never a selector-provided key.
+      if (credit.compute) result.fees = WorkchainFeeSettlement{*cfg->ingress.custody_address,
+          cfg->ingress.executor_address, td::make_refint(0), workchain_unsigned_fee(credit.compute),
+          td::make_refint(0), cfg->ingress.executor_address};
+      return finish(std::move(result));
+    }
     if (is_m5_test_debit(host.candidate)) {
       TRY_RESULT(debit, decode_m5_test_debit(host.candidate));
       if (!b.prepare || !b.operation_tariff) return local("ConfigInvalid: explicit test prepare policy absent");
@@ -597,7 +646,7 @@ class M3NodeEngine final : public RegisteredWorkchainAccountEngine {
       std::optional<WorkchainWithdrawalAccount> controlled_source;
       auto decoded_source = [&]() -> td::Result<WorkchainConfidentialAccount> {
         TRY_RESULT(has_control, withdrawal_root(native.data));
-        if (kind != 1 || !has_control) {
+        if (!has_control) {
           auto legacy = decode_workchain_confidential_account(native.data);
           if (legacy.is_error()) return local("authenticated source record unavailable");
           return legacy;
@@ -606,7 +655,7 @@ class M3NodeEngine final : public RegisteredWorkchainAccountEngine {
         auto decoded_owner = decode_workchain_withdrawal_account(native.data, b.prepare->withdrawal_limit);
         if (decoded_owner.is_error()) return local("authenticated source control unavailable");
         auto owner = decoded_owner.move_as_ok();
-        // SEND is an owner operation, not another Withdrawal. Observe only
+        // SEND/COLLECT are owner operations, not another Withdrawal. Observe only
         // subsequent queue absence, using the same shared authenticated budget.
         for (auto& record : owner.control.withdrawals) {
           if (record.timing.phase != 0) continue;

@@ -4,6 +4,7 @@
 #include "m3-live-wallet.h"
 #include "crypto/test/workchain-m4-deposit-input.h"
 #include "crypto/test/workchain-m5-failed-input.h"
+#include "crypto/test/workchain-m5-sweep-input.h"
 #include "block/workchain-budget-backing.h"
 
 namespace m3_live {
@@ -362,6 +363,35 @@ inline void assert_m4_block_backing(const std::filesystem::path& fixture, const 
         book = next;
         CHECK(CurrencyCollection::sub(book, CurrencyCollection(workchain_unsigned_fee(m5_live_return_fee(fixture))), next));
       }
+    } else if (m3_test::is_m5_test_sweep(candidate)) {
+      // The retained predecessor is bound to THIS accepted Merkle update.
+      // Derive book credit from its bucket and authenticated tariff, never
+      // from the transfer, receipt or balance that this observer is checking.
+      const auto previous = load(fixture / "completion-sweep-before-state.boc");
+      gen::Block::Record accepted;
+      CHECK(::tlb::unpack_cell(root, accepted));
+      CHECK(vm::MerkleUpdate::apply(previous, accepted.state_update).is_ok());
+      gen::ShardStateUnsplit::Record predecessor;
+      CHECK(::tlb::unpack_cell(previous, predecessor));
+      vm::AugmentedDictionary old_accounts(vm::load_cell_slice_ref(predecessor.accounts), 256, block::tlb::aug_ShardAccounts);
+      Account coordinator(2, td::Bits256::zero().bits());
+      CHECK(coordinator.unpack(old_accounts.lookup(td::Bits256::zero()), predecessor.gen_utime, false));
+      const auto system = decode_workchain_coordinator_state(coordinator.data).move_as_ok();
+      const auto bucket = decode_workchain_unexpected_bucket(system.unexpected, {256,256},4096).move_as_ok();
+      auto config_root = load(fixture / "zerostate.boc");
+      tos::BlockIdExt zero{tos::BlockId{tos::masterchainId,tos::shardIdAll,0}, config_root->get_hash().bits(),td::Bits256::zero()};
+      auto config = ConfigInfo::extract_config(config_root,zero,Config::needWorkchainInfo | Config::needCapabilities).move_as_ok();
+      auto ingress = load_workchain_native_ingress_table(*config).move_as_ok().at(2);
+      auto policy = m3_test::decode_m3_test_business_parameters(
+          decode_workchain_engine_parameters(ingress.engine_configuration).move_as_ok().parameters).move_as_ok();
+      CHECK(policy.sweep && policy.deposit && policy.operation_tariff && policy.sweep->count == 1);
+      CHECK(!bucket.entries.empty() && bucket.entries.front().tomis->unsigned_fits_bits(63));
+      std::uint64_t compute, fee, credit;
+      CHECK(!__builtin_mul_overflow(policy.operation_tariff->base, policy.sweep->issuance_billing_units, &compute));
+      CHECK(!__builtin_add_overflow(policy.deposit->slot_fee, compute, &fee));
+      CHECK(!__builtin_sub_overflow(static_cast<std::uint64_t>(bucket.entries.front().tomis->to_long()), fee, &credit));
+      CHECK(credit != 0);
+      CHECK(CurrencyCollection::add(book, CurrencyCollection(workchain_unsigned_fee(credit)), next));
     } else {
       auto replay = m3_test::decode_m5_accounting_replay(candidate).move_as_ok();
       if (const auto* withdrawal = std::get_if<WorkchainWithdrawalInput>(&replay)) {
@@ -427,7 +457,8 @@ inline void assert_m4_block_backing(const std::filesystem::path& fixture, const 
             << " P=" << p.tomis << " W=" << w.tomis << "; first-layer=OK; checking R+P=N+W" << std::endl;
   check_m4_backing(lhs.tomis, rhs.tomis, td::make_refint(0)).ensure();
   const auto candidate = m4_recorded_candidate(step.block);
-  if (!m3_test::is_m4_test_deposit(candidate) && !m3_test::is_m5_test_failed(candidate)) {
+  if (!m3_test::is_m4_test_deposit(candidate) && !m3_test::is_m5_test_failed(candidate) &&
+      !m3_test::is_m5_test_sweep(candidate)) {
     const auto replay = m3_test::decode_m5_accounting_replay(candidate).move_as_ok();
     std::optional<std::uint64_t> public_fee;
     if (const auto* withdrawal = std::get_if<WorkchainWithdrawalInput>(&replay))

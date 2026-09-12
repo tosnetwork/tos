@@ -7,6 +7,7 @@
 #include "block/workchain-confidential-input.h"
 #include "block/workchain-deposit-admission.h"
 #include "block/workchain-operation-fees.h"
+#include "block/workchain-unexpected-bucket.h"
 #include "uno/crypto/include/uno_crypto.h"
 #include <array>
 #include <utility>
@@ -25,6 +26,7 @@ struct M5TestFailedParameters {
 struct M5TestSweepParameters {
   std::uint32_t earliest_height, count, limit;
   std::uint64_t sequence, issuance_billing_units;
+  std::optional<WorkchainUnexpectedLimits> bucket_limits;
 };
 struct M3TestBusinessParameters {
   UnoCryptoLimits limits;
@@ -106,7 +108,8 @@ inline td::Result<td::Ref<vm::Cell>> encode_m3_test_business_parameters(const M3
     return td::Status::Error("prepare requires explicit tariff and bounded policy");
   // D78 test layouts: 8=prepare, 9=prepare+Failed. Never reinterpret the
   // retired prelock layouts 4..7. M3/M4 layouts 1..3 remain byte-identical.
-  if (value.sweep && (!value.failed || !value.sweep->count || value.sweep->count > value.sweep->limit))
+  if (value.sweep && (!value.failed || !value.sweep->count || value.sweep->count > value.sweep->limit ||
+      !value.sweep->bucket_limits))
     return td::Status::Error("sweep requires explicit bounded round authorization");
   auto profiles_root = profiles.finalize();
   if (value.sweep) {
@@ -117,10 +120,12 @@ inline td::Result<td::Ref<vm::Cell>> encode_m3_test_business_parameters(const M3
         !envelope.store_long_bool(authorization.limit, 32) ||
         !envelope.store_long_bool(authorization.sequence, 64) ||
         !envelope.store_long_bool(authorization.issuance_billing_units, 64) ||
+        !envelope.store_long_bool(authorization.bucket_limits->entries, 32) ||
+        !envelope.store_long_bool(authorization.bucket_limits->overflow_sources, 32) ||
         !envelope.store_ref_bool(profiles_root)) return malformed();
     profiles_root = envelope.finalize();
   }
-  const unsigned encoded_version = value.sweep ? 10 : value.prepare ? (value.failed ? 9 : 8)
+  const unsigned encoded_version = value.sweep ? 11 : value.prepare ? (value.failed ? 9 : 8)
       : value.operation_tariff ? 3 : value.deposit ? 2 : version;
   if (!root.store_long_bool(tag, 32) || !root.store_long_bool(encoded_version, 16) ||
       !root.store_long_bool(value.send_fee, 64) || !root.store_long_bool(value.collect_fee, 64) ||
@@ -151,7 +156,7 @@ inline td::Result<M3TestBusinessParameters> decode_m3_test_business_parameters(c
   if (special || root.size_refs() != 4 || (root.size() != 256 && root.size() != 448 && root.size() != 640 && root.size() != 768 && root.size() != 864)) return malformed();
   if (root.fetch_ulong(32) != tag) return td::Status::Error("unknown M3 test business tag");
   auto wire_version = root.fetch_ulong(16);
-  if (wire_version < 1 || (wire_version > 3 && wire_version != 8 && wire_version != 9 && wire_version != 10))
+  if (wire_version < 1 || (wire_version > 3 && wire_version != 8 && wire_version != 9 && wire_version != 10 && wire_version != 11))
     return td::Status::Error("unsupported M3 test business version");
   if (root.size() != (wire_version >= 9 ? 816u : wire_version == 8 ? 720u : wire_version == 3 ? 592u : wire_version == 2 ? 400u : 208u)) return malformed();
   const auto send = root.fetch_ulong(64), collect = root.fetch_ulong(64);
@@ -167,14 +172,17 @@ inline td::Result<M3TestBusinessParameters> decode_m3_test_business_parameters(c
   TRY_RESULT(rules, confidential_input_detail::unpack<gen::UnoV2TransferRulesV1::Record>(rules_root));
   auto profiles_root = root.fetch_ref();
   std::optional<M5TestSweepParameters> sweep;
-  if (wire_version == 10) {
-    TRY_RESULT(envelope, exact(profiles_root, 224, 1));
+  if (wire_version >= 10) {
+    TRY_RESULT(envelope, exact(profiles_root, wire_version == 11 ? 288 : 224, 1));
     const auto earliest = static_cast<std::uint32_t>(envelope.fetch_ulong(32));
     const auto count = static_cast<std::uint32_t>(envelope.fetch_ulong(32));
     const auto limit = static_cast<std::uint32_t>(envelope.fetch_ulong(32));
     const auto sequence = envelope.fetch_ulong(64), units = envelope.fetch_ulong(64);
     if (!count || count > limit) return td::Status::Error("invalid authenticated sweep count");
     sweep = M5TestSweepParameters{earliest, count, limit, sequence, units};
+    if (wire_version == 11)
+      sweep->bucket_limits = WorkchainUnexpectedLimits{static_cast<std::uint32_t>(envelope.fetch_ulong(32)),
+          static_cast<std::uint32_t>(envelope.fetch_ulong(32))};
     profiles_root = envelope.fetch_ref();
   }
   TRY_RESULT(profiles, exact(profiles_root, 768, 0));

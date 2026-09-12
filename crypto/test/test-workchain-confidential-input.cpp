@@ -692,7 +692,7 @@ TEST(ConfidentialInput, TestSweepAuthorizationExactCodec) {
   value.failed = M5TestFailedParameters{4, 4};
   auto legacy = encode_m3_test_business_parameters(value).move_as_ok();
   ASSERT_TRUE(!decode_m3_test_business_parameters(legacy).move_as_ok().sweep);
-  value.sweep = M5TestSweepParameters{20, 1, 16, 7, 4};
+  value.sweep = M5TestSweepParameters{20, 1, 16, 7, 4, WorkchainUnexpectedLimits{256,256}};
   auto root = encode_m3_test_business_parameters(value).move_as_ok();
   auto decoded = decode_m3_test_business_parameters(root).move_as_ok();
   ASSERT_TRUE(decoded.sweep.has_value());
@@ -701,6 +701,9 @@ TEST(ConfidentialInput, TestSweepAuthorizationExactCodec) {
   ASSERT_EQ(decoded.sweep->count, 1u);
   ASSERT_EQ(decoded.sweep->limit, 16u);
   ASSERT_EQ(decoded.sweep->issuance_billing_units, 4u);
+  ASSERT_TRUE(decoded.sweep->bucket_limits.has_value());
+  ASSERT_EQ(decoded.sweep->bucket_limits->entries, 256u);
+  ASSERT_EQ(decoded.sweep->bucket_limits->overflow_sources, 256u);
   ASSERT_EQ(encode_m3_test_business_parameters(decoded).move_as_ok()->get_hash(), root->get_hash());
   decoded.sweep.reset();
   ASSERT_EQ(encode_m3_test_business_parameters(decoded).move_as_ok()->get_hash(), legacy->get_hash());

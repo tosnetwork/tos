@@ -4644,7 +4644,8 @@ td::Result<PreparedWorkchainPayoutPair> Transaction::build_workchain_payout_pair
         request.is_null() || native.payout->prefetch_ref()->get_hash() != request->get_hash()) {
       return td::Status::Error("payout entry context or request mismatch");
     }
-    if (native.fees && (native.fees->custody != custody.addr || native.fees->coordinator != coordinator.addr)) {
+    if (native.fees && (native.fees->custody != custody.addr || native.fees->coordinator != coordinator.addr ||
+        (native.fees->compute_payer && *native.fees->compute_payer != custody.addr))) {
       return td::Status::Error("payout fee roles differ from authenticated pair");
     }
     vm::Dictionary updates(effects.updates, 256);
@@ -4934,11 +4935,18 @@ td::Status Transaction::prepare_workchain_entry_impl(Ref<vm::Cell> binding, Ref<
     return td::Status::Error("rejected Deposit absent from entry inbox");
   TRY_RESULT(allocated, allocate_workchain_native_balance(account.addr, credited, output,
       max_transfers, extra_validation_cells));
-  if (native.fees && native.fees->custody == account.addr) {
+  std::optional<td::Bits256> compute_payer;
+  if (native.fees) {
+    TRY_RESULT(payer, workchain_compute_fee_payer(*native.fees));
+    compute_payer = payer;
+  }
+  if (compute_payer && *compute_payer == account.addr) {
     TRY_RESULT(totals, checked_workchain_fee_totals(*native.fees));
     CurrencyCollection remaining, combined;
     // Checked subtraction establishes funding before changing either field.
-    // S was allocated internally above; only C+T leaves through total_fees.
+    // Legacy S was allocated internally above; only C+T leaves through total_fees.
+    // D63 uses this SAME collection path with the authenticated coordinator
+    // payer and zero S/T here: its slot income is retained, never sent to custody.
     // A later payout must also be fully funded or the entire private batch
     // fails. This order does not authorize partial fee collection or payment.
     if (!CurrencyCollection::sub(allocated, totals.collected, remaining) ||

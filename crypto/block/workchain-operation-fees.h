@@ -83,7 +83,8 @@ inline WorkchainFeeSettlement materialize_workchain_operation_fees(const Workcha
 inline td::Status compare_workchain_operation_fee_claim(const WorkchainFeeSettlement& reconstructed,
                                                        const WorkchainFeeSettlement& claimed) {
   auto invalid = [] { return td::Status::Error(-7200, "candidate fee components or authenticated recipients differ"); };
-  if (reconstructed.custody != claimed.custody || reconstructed.coordinator != claimed.coordinator)
+  if (reconstructed.custody != claimed.custody || reconstructed.coordinator != claimed.coordinator ||
+      reconstructed.compute_payer != claimed.compute_payer)
     return invalid();
   for (const auto& pair : {std::pair{reconstructed.state_fee, claimed.state_fee},
                          std::pair{reconstructed.compute_fee, claimed.compute_fee},

@@ -197,6 +197,9 @@ uno_v2_native_transfer source:bits256 destination:bits256 value:CurrencyCollecti
 uno_v2_native_effects payout:(Maybe ^Cell) transfers:(HashmapE 32 ^UnoV2NativeTransfer) = UnoV2NativeEffects;
 uno_v2_fee_settlement custody:bits256 coordinator:bits256
   state_fee:Tomis compute_fee:Tomis tip:Tomis = UnoV2FeeSettlement;
+uno_v2_fee_payer$_ account:bits256 = UnoV2FeePayer;
+uno_v2_fee_settlement_payer#53574632 custody:bits256 coordinator:bits256
+  state_fee:Tomis compute_fee:Tomis tip:Tomis compute_payer:^UnoV2FeePayer = UnoV2FeeSettlement;
 uno_v2_native_effects_fees payout:(Maybe ^Cell) transfers:(HashmapE 32 ^UnoV2NativeTransfer)
   fees:^UnoV2FeeSettlement = UnoV2NativeEffects;
 uno_v2_host_effects updates:(HashmapE 256 ^Cell) native:^UnoV2NativeEffects
