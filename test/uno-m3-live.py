@@ -50,6 +50,20 @@ for mode, expected in [('unpaired', 1), ('cross-block-d', 1), ('restored', 0)]:
         raise RuntimeError('backing control failed for an unrelated reason')
     print(f'Backing control exit={control.returncode}: {control.stdout.strip()}', flush=True)
 fixture = Path(tempfile.mkdtemp(prefix='uno-m3-live-'))
+# Reader-only controls: distinguish unavailable evidence from actual zero/one.
+# Real counter emission is separately exercised by Failed fault injection below.
+probe = fixture / 'unknown-reader-probe'
+for value, expected, code, diagnostic in [
+        (None, '0', 2, 'UNKNOWN_ORIGIN_OBSERVATION_UNAVAILABLE:'),
+        ('0\n', '0', 0, ''), ('1\n', '1', 0, ''),
+        ('1\n', '0', 2, 'UNKNOWN_ORIGIN_OBSERVATION_MISMATCH:')]:
+    if value is not None:
+        probe.write_text(value)
+    result = subprocess.run([str(build / 'test-m3-live'), '--check-unknown-observation', str(probe), expected],
+                            text=True, capture_output=True)
+    if result.returncode != code or diagnostic not in result.stderr:
+        raise RuntimeError(f'unknown observation reader control failed: {result.returncode}; {result.stderr}')
+print('UNKNOWN_READER_CONTROLS: unavailable / zero / one / mismatch distinguished', flush=True)
 # Reuse the existing test-owned genesis construction without its collation
 # scenarios or cleanup. Never import a deployment DB/configuration. This prefix
 # contains all schema-dependent fixture code; do not maintain a second copy.
@@ -267,10 +281,7 @@ if a.m5_debit:
                     raise RuntimeError('FAILED_ORACLE_MISSING:FAILED_COST_ROUTING; '
                                        'expected designated routing red, not an earlier failure')
             subprocess.run([str(build / 'test-m3-live'), '--failed-incarnation-control', str(fixture)], check=True)
-            if not a.m5_shortfall:
-                # This control requires successful private preparation first;
-                # the shortfall acceptance test must expose its own refusal.
-                subprocess.run([str(build / 'test-m3-live'), '--failed-unknown-control', str(fixture)], check=True)
+            subprocess.run([str(build / 'test-m3-live'), '--failed-unknown-control', str(fixture)], check=True)
             result = subprocess.run([str(build / 'test-m3-live'), str(fixture)],
                                     capture_output=a.m5_shortfall, text=a.m5_shortfall)
             if a.m5_shortfall:

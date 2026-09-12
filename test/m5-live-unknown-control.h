@@ -1,12 +1,31 @@
 #pragma once
 #include "crypto/test/workchain-m3-node-engine.h"
 #include "block/workchain-unknown-origin.h"
+#include <iostream>
 
 namespace m3_live {
 inline std::string unknown_observation_path;
 inline void save_unknown_observation() {
   td::write_file(unknown_observation_path,
       std::to_string(block::workchain_unknown_origin_count()) + "\n").ensure();
+}
+
+// Missing/unreadable evidence is a distinct failure, never an observed zero.
+// Keep the writer on atexit: normal disk-tool paths terminate inside the callee.
+inline bool check_unknown_observation(const std::string& path, const std::string& expected) {
+  auto observed = td::read_file_str(path);
+  if (observed.is_error()) {
+    std::cerr << "UNKNOWN_ORIGIN_OBSERVATION_UNAVAILABLE: " << path
+              << ": code=" << observed.error().code()
+              << " " << observed.error().message().str() << std::endl;
+    return false;
+  }
+  if (observed.ok() != expected) {
+    std::cerr << "UNKNOWN_ORIGIN_OBSERVATION_MISMATCH: expected=" << expected
+              << " actual=" << observed.ok() << std::endl;
+    return false;
+  }
+  return true;
 }
 
 // TEST ONLY: preserve the actual registered configuration and engine execution,

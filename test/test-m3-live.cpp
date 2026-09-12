@@ -19,6 +19,9 @@
 #include "m5-live-fee-routing-control.h"
 
 int main(int argc, char** argv) {
+  if (argc == 4 && std::string(argv[1]) == "--check-unknown-observation") {
+    return m3_live::check_unknown_observation(argv[2], std::string(argv[3]) + "\n") ? 0 : 2;
+  }
   if (argc == 3 && std::string(argv[1]) == "--validate-archive-off") {
     const std::filesystem::path fixture(argv[2]);
     disk_collator_test_engine_setup = [fixture] {
@@ -358,8 +361,8 @@ int main(int argc, char** argv) {
                                          : "phase=3\nworkchain=2\ndelivery=recorded\n";
     const auto stats = read(".stats");
     const auto calls = td::read_file_str(counter).move_as_ok();
-    const auto unknowns = td::read_file_str(counter + ".unknown-origin").move_as_ok();
-    CHECK(unknowns == (enabled && unknown_control ? "1\n" : "0\n"));
+    const std::string unknowns = enabled && unknown_control ? "1\n" : "0\n";
+    if (!m3_live::check_unknown_observation(counter + ".unknown-origin", unknowns)) return 2;
     std::cout << name << " observed unknown-origin=" << unknowns;
     if (enabled && unknown_control) {
       CHECK(read("") == "collate -7201\n");
