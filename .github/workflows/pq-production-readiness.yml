@@ -1,0 +1,40 @@
+name: PQ production readiness
+on:
+  pull_request:
+    paths:
+      - 'tosctl/src/vm/**'
+      - 'tosctl/src/asm/**'
+      - 'tostester/**'
+      - 'test/pq-production/**'
+      - 'tools/pq/**'
+      - 'docs/pq-production-readiness.md'
+      - '.github/workflows/pq-production-readiness.yml'
+permissions:
+  contents: read
+concurrency:
+  group: pq-readiness-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+defaults:
+  run:
+    shell: bash
+jobs:
+  source-reproduction:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Archive the exact public source used by the readiness review
+        run: |
+          mkdir -p reproduction
+          git rev-parse HEAD > reproduction/COMMIT
+          git archive --format=tar.gz --output=reproduction/source.tar.gz HEAD
+          sha256sum reproduction/source.tar.gz > reproduction/SHA256SUMS
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pq-readiness-source
+          path: reproduction/
+          retention-days: 7
+          if-no-files-found: error
