@@ -43,6 +43,46 @@ The prepare pairing is established at creation, not reconstructed from absence
 at phase 1. Historical availability/error classification remains the caller's
 responsibility; do not convert unavailable queue data into authenticated absence.
 
+## Construction carrier clarification (Coordinator ruling)
+
+D73(a)'s prior-presence premise is carried by prepare's same-batch generation
+of the payout message and W record, with the actual created_lt, rather than a
+separate downstream assertion. No legal separated history has been identified:
+a trusted orphan cannot be manufactured to claim an independent control.
+Controls 1–2 below retain their original prospective wording; they do not
+represent executed separated-presence controls. Later queue membership under
+D73(b), including the observed `PHASE_QUEUE_BINDING` red, is a different property.
+
+Construction regression mutation evidence is still unestablished, but checks
+DO exist: `test/test-m3-live.cpp` reads the accepted custody transaction, requires
+one payout, compares its created_lt to the installed W record, and finds exactly
+one matching message hash and LT in that same accepted state's outbound queue.
+The staged `PHASE_PAIRED_ENQUEUE` adds another observation, not yet a registered
+carrier. Neither assertion existence nor a synthetic observation mutation is a
+real producer-red demonstration. Investigate those existing checks before
+classifying construction coverage as absent; this is not automatically I.4 gap
+five, where no architecture regression check was identified.
+
+## Equal-height joint carrier (Coordinator clarification)
+
+At read height equal to opened height, three dependencies jointly prevent an
+invalid transition: prepare's same-batch enqueue, the queue-presence check, and
+the strict read-height check. Legal paired history cannot separate the first
+two to give an independent end-to-end height-only red. Removing, conditioning
+or relocating one dependency can remain invisible at equality because the
+others still block transition; their overlap must not be mistaken for proof
+that the removed dependency is unnecessary on other histories.
+
+The function-layer `OutboundObservationSharesStateBudget` test in
+`crypto/test/test-workchain-block.cpp` includes `same_height` returning no value;
+its equal-height/absent input exercises the read-height predicate in isolation,
+not a legal end-to-end orphan history. Control 4 below is superseded only in its
+requirement for an independent end-to-end equality mutation. The real
+higher-height/still-queued `PHASE_QUEUE_BINDING` control remains independent
+D73(b) evidence. The real `PHASE_STRICT_HEIGHT` persisted-Q mutation tests the
+write linkage, not the read-height predicate. No slot closes by substituting
+one of these layers for another.
+
 ## Exact controls to attach to the Native fixture
 
 1. **Paired creation:** commit a real prepare and verify its payout is in the
