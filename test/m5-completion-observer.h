@@ -370,6 +370,36 @@ inline void write_completion_observation(const std::string& which,const std::fil
     }
     extra<<']';bucket_extra=extra.str();
   }
+  std::string freed_slot;
+  if(std::filesystem::exists(fixture/"completion-full-before-collect.boc")) {
+    auto full=load(fixture/"completion-full-before-collect.boc");
+    auto collected=load(fixture/"completion-full-after-collect.boc");
+    CHECK(td::read_file_str((fixture/"free-one-slot-enabled.result.validation.result").string()).move_as_ok()=="validate accept\n");
+    const auto step=read_accepted_step(fixture/"free-one-slot-enabled.candidate",full);
+    CHECK(step.state->get_hash()==collected->get_hash());
+    auto left=m5_live_account(account_data(full,wallet_account(0)),limit);
+    auto right=m5_live_account(account_data(collected,wallet_account(0)),limit);
+    // This collection precedes account migration and operates on real Deposit entries.
+    CHECK(left.origin_pending.empty() && right.origin_pending.empty());
+    CHECK(left.account.system_pending.size()==policy.deposit->system_slots &&
+          right.account.system_pending.size()+1==left.account.system_pending.size());
+    auto selected=td::read_file_str((fixture/"full-slot-3.receipt.id").string()).move_as_ok();
+    while(!selected.empty() && (selected.back()=='\n' || selected.back()=='\r')) selected.pop_back();
+    std::map<std::string,std::string> expected,actual;
+    for(const auto& r:left.account.system_pending)
+      expected.emplace(r.receipt_id.to_hex(),encode_workchain_deposit_receipt(r).move_as_ok()->get_hash().to_hex());
+    CHECK(expected.erase(selected)==1);
+    for(const auto& r:right.account.system_pending)
+      actual.emplace(r.receipt_id.to_hex(),encode_workchain_deposit_receipt(r).move_as_ok()->get_hash().to_hex());
+    CHECK(actual==expected);
+    gen::ShardStateUnsplit::Record cs;CHECK(::tlb::unpack_cell(collected,cs));
+    CHECK(cs.seq_no<=old_state.seq_no);
+    auto chain=collected;
+    for(unsigned n=cs.seq_no+1;n<=old_state.seq_no;++n){gen::Block::Record b;CHECK(::tlb::unpack_cell(block_at(fixture,n),b));chain=vm::MerkleUpdate::apply(chain,b.state_update).move_as_ok();}
+    CHECK(chain->get_hash()==before->get_hash());
+    CHECK(a.pending.size()==right.account.system_pending.size());
+    freed_slot=",\"collected_one_real_slot\":true";
+  }
   std::ostringstream out;
   out<<"{\"input\":{\"x\":"<<record.principal<<",\"y\":"<<y<<",\"slot\":"<<policy.deposit->slot_fee
      <<",\"base\":"<<policy.operation_tariff->base<<",\"units\":"<<policy.failed->issuance_billing_units
@@ -383,7 +413,7 @@ inline void write_completion_observation(const std::string& which,const std::fil
      <<snapshot_json(a,0,order)<<",\"after\":"<<snapshot_json(z,u64(paid.tomis),order)<<bucket_extra
      <<"},\"provenance\":{\"before\":"<<quote(before->get_hash().to_hex())<<",\"after\":"<<quote(after->get_hash().to_hex())
      <<",\"block\":"<<quote(current->get_hash().to_hex())<<",\"inbound\":"<<quote(selector.inbound_message.to_hex())
-     <<",\"D\":\"structural atomic-operation zero, not a persisted counter\"}}\n";
+     <<freed_slot<<",\"D\":\"structural atomic-operation zero, not a persisted counter\"}}\n";
   td::write_file(output.string(),out.str()).ensure();
 }
 } // namespace m3_live
