@@ -45,7 +45,7 @@ p.add_argument('--completion-full-cap', action='store_true',
 p.add_argument('--m5-return-principal', type=int, help='explicit real-payout fixture principal')
 p.add_argument('--completion-expect-offset', type=int, choices=(-1, 0, 1),
                help='assert observed y is h plus this exact boundary offset')
-p.add_argument('--completion-contract', choices=('bucket-small', 'bucket-full', 'bucket-closed', 'row4', 'row5', 'row6', 'sweep-atomic'),
+p.add_argument('--completion-contract', choices=('bucket-small', 'bucket-full', 'bucket-closed', 'row4', 'row5', 'row6', 'sweep-atomic', 'oracle-control'),
                help='run the existing frozen real-host completion contract')
 p.add_argument('--failed-routing-probe', action='store_true',
                help='run the real fee-routing producer mutation before normal Failed publication')
@@ -100,6 +100,65 @@ if a.completion_contract:
         repo / 'crypto/test/workchain_withdrawal_completion_oracle.py')
     oracle = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(oracle)
+
+    if a.completion_contract == 'oracle-control':
+        # Real-host observations retained by the seven closing slots. This slot
+        # tests the oracle/driver layer; it does not re-execute those host paths.
+        evidence = repo / 'doc/measurements/uno-m5-withdrawal-completion'
+        cases = (
+            ('row4', 'row4-real/positive/completion-observation.json',
+             'row4-real/skip-expiry-run/completion-observation.json', 'ROW4_TRIGGERED'),
+            ('row6', 'row6-real/late/completion-observation.json',
+             'row6-real/misroute/completion-observation.json', 'LATE_NOT_ROW3'),
+            ('row5', 'row5-controls/default-row5-restored.json',
+             'row5-controls/default-retarget-p-run.json', 'DELTA_P'),
+            ('bucket-small', 'bucket-small-real/equal.json',
+             'bucket-small-real/attribution.json', 'BUCKET_FIXED_ATTRIBUTION'),
+            ('bucket-full', 'bucket-full-real/full.json',
+             'bucket-full-real/full-attribution-run.json', 'BUCKET_FIXED_ATTRIBUTION'),
+            ('bucket-closed', 'bucket-closed-real/closed.json',
+             'bucket-closed-real/closed-attribution-run.json', 'BUCKET_FIXED_ATTRIBUTION'),
+            ('sweep-atomic', 'sweep-atomic-real/positive.json',
+             'sweep-atomic-real/fees.json', 'D63_3_FEE_DESTINATIONS'))
+        def paired_meta(module, case, data, assertion):
+            module.expect_red(case, data, assertion)
+            try:
+                module.expect_red(case, data, assertion, observer=lambda case, observation: None)
+            except module.Violation as error:
+                if str(error) != 'ORACLE_MISSING:' + assertion:
+                    raise
+            else:
+                raise module.Violation('ORACLE_CONTROL_DRIVER_MISSING')
+        for case, positive, negative, assertion in cases:
+            oracle.check(case, json.loads((evidence / positive).read_text()))
+            data = json.loads((evidence / negative).read_text())
+            paired_meta(oracle, case, data, assertion)
+            print('COMPLETION_META_REAL_OBSERVATION:' + case + ':' + assertion, flush=True)
+            print('ORACLE_MISSING:' + assertion, flush=True)
+        # Prove this meta driver can reject. Semantically remove the final
+        # no-rejection failure from expect_red, without matching an error string.
+        source = repo / 'crypto/test/workchain_withdrawal_completion_oracle.py'
+        tree = ast.parse(source.read_text())
+        targets = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == 'expect_red']
+        if len(targets) != 1 or not isinstance(targets[0].body[-1], ast.Raise):
+            raise RuntimeError('negative-driver semantic mutation shape changed')
+        targets[0].body[-1] = ast.copy_location(ast.Return(value=None), targets[0].body[-1])
+        ast.fix_missing_locations(tree)
+        namespace = {'__name__': 'isolated_completion_oracle'}
+        exec(compile(tree, str(source), 'exec'), namespace)
+        from types import SimpleNamespace
+        disabled = SimpleNamespace(**namespace)
+        case, _, negative, assertion = cases[-1]
+        try:
+            paired_meta(disabled, case, json.loads((evidence / negative).read_text()), assertion)
+        except disabled.Violation as error:
+            if str(error) != 'ORACLE_CONTROL_DRIVER_MISSING':
+                raise
+            print(str(error), flush=True)
+        else:
+            raise RuntimeError('meta driver failed to detect removed negative-driver rejection')
+        print('WITHDRAWAL-COMPLETION_D78_OBSERVED:test-workchain-withdrawal-completion-oracle-control')
+        raise SystemExit(0)
 
     def shadow_binary(label, old, replacement, relative="crypto/block/workchain-failed-funded.h",
                       native_units=(), extra_mutations=()):

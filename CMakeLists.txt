@@ -852,6 +852,11 @@ if (TOS_UNO_CRYPTO_NODE_LINK AND CMAKE_GENERATOR STREQUAL "Ninja")
       --build ${CMAKE_BINARY_DIR} --completion-contract sweep-atomic)
   set_tests_properties(test-workchain-withdrawal-completion-sweep-atomic
     PROPERTIES TIMEOUT 1800 RUN_SERIAL TRUE)
+  add_test(NAME test-workchain-withdrawal-completion-oracle-control
+    COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/test/uno-m3-live.py
+      --build ${CMAKE_BINARY_DIR} --completion-contract oracle-control)
+  set_tests_properties(test-workchain-withdrawal-completion-oracle-control
+    PROPERTIES TIMEOUT 60 RUN_SERIAL TRUE)
   # D78 retires the prelock/shortfall scenario, not its historical evidence
   # (82b53c675, paired observation f12b8731b). No full contract credit implied.
 endif()
