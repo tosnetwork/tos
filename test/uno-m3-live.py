@@ -1268,6 +1268,7 @@ if a.m5_debit:
                         sys.stdout.flush(); sys.stderr.flush()
                         child = os.fork()
                         if child == 0:
+                            live_capacity('START')  # This fork executes a separate accepted branch.
                             fixture = within
                             window_branch = 'WITHIN'
                             break  # Deliver now: Q=6, window=2, arrival=8.
