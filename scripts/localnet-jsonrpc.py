@@ -336,6 +336,12 @@ async def main(
     logging.basicConfig(level=logging.WARNING, format="[%(levelname)s] %(message)s")
 
     async with Network(install, workdir, base_port=base_port) as network:
+        # The zerostate is generated lazily, so a version override must be set
+        # before the first node starts. Used to rehearse a protocol version this
+        # build does not advertise; see doc/macos-local-node.md.
+        if os.environ.get("TOS_GLOBAL_VERSION"):
+            network.config.global_version = int(os.environ["TOS_GLOBAL_VERSION"])
+            print(f"   version  : global_version={network.config.global_version}", flush=True)
         if bootstrap_validator_set_valid_for is not None:
             # A long-running acceptance chain without an election exercise
             # must retain an active ConfigParam 34 for its entire run. The

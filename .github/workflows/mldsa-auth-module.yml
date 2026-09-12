@@ -13,7 +13,7 @@ on:
       - 'third-party/mldsa-native/**'
       - 'test/auth-extensions/**'
       - 'test/mldsa-auth/**'
-      - 'docs/mldsa44-auth-module.md'
+      - 'doc/mldsa44-auth-module.md'
       - '.github/workflows/mldsa-auth-module.yml'
 permissions:
   contents: read

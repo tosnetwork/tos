@@ -1,4 +1,4 @@
 // Requires TVM version 16 and PQ.fif in the assembler environment.
-// Operands follow the canonical byte-chain ABI in docs/tvm-mldsa44.md.
+// Operands follow the canonical byte-chain ABI in doc/tvm-mldsa44.md.
 fun pqCheckMldsa44(message: cell, context: cell, signature: cell, publicKey: cell): bool
     asm "PQCHECKSIG_MLDSA44";
