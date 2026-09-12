@@ -284,6 +284,12 @@ if a.m5_debit:
             completed = subprocess.run([str(build / 'test-m3-live'), str(fixture)], text=True, capture_output=True)
             (fixture / 'completion-execution.log').write_text(completed.stdout + completed.stderr)
             print(completed.stdout, end=''); print(completed.stderr, end='', file=__import__('sys').stderr)
+            if a.m5_bucket_small:
+                observation = fixture / 'completion-observation.json'
+                subprocess.run([str(build / 'test-m3-live'), '--completion-observation',
+                                'bucket-small', str(fixture), str(observation)], check=True)
+                subprocess.run(['python3', str(repo / 'crypto/test/workchain_withdrawal_completion_oracle.py'),
+                                '--case', 'bucket-small', '--observation', str(observation)], check=True)
             completed.check_returncode()
     raise SystemExit(0)
 # Keep the final B->A receipt at 432: compensate only the changed SEND/COLLECT

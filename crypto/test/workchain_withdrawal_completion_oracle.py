@@ -24,6 +24,7 @@ def checked(value):
 
 def check(case, data):
     i, o = data['input'], data['observed']
+    require(o['published'] is True, 'DISPOSITION_MUST_PUBLISH')
     before, after = o['before'], o['after']
     x = checked(i['x'])
     if case != 'row4':
@@ -35,7 +36,6 @@ def check(case, data):
             checked(state[field])
         require(state['system_count'] == len(state['pending']), 'ENUMERATED_SYSTEM_COUNT')
     expected = dict.fromkeys(FIELDS, 0)
-    require(o['published'] is True, 'DISPOSITION_MUST_PUBLISH')
     records = dict(before['records'])
     entry = i['withdrawal_id']
     if case in ('row6', 'row5', 'row4'):

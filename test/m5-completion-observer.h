@@ -150,6 +150,20 @@ inline std::string bucket_entry_json(const WorkchainUnexpectedEntry& e) {
   if(e.account_id)out<<",\"account_id\":"<<quote(e.account_id->to_hex());
   out<<",\"tomis\":"<<u64(e.tomis)<<",\"return_failed\":"<<(e.return_failed?"true":"false")<<'}';return out.str();
 }
+inline std::string actual_return_path(const std::filesystem::path& fixture,const td::Bits256& inbound) {
+  // Only execution log from this invocation is eligible; never select a path
+  // from Q, phase, post-state, or a proposed result label.
+  std::ifstream trace(fixture/"completion-execution.log");CHECK(trace.good());std::string line,route;
+  const std::map<std::string,std::string> names{{"admit_workchain_late_return","late-return-admission"},
+    {"window_return","within-window-failed"},{"type2_bucket_disposition","type2-bucket-disposition"}};
+  unsigned matches=0;
+  while(std::getline(trace,line))for(const auto& [callee,name]:names)
+    if(line.find("WORKCHAIN_RETURN_CALLEE "+callee+" inbound="+inbound.to_hex())!=std::string::npos){
+      CHECK(route.empty()||route==name);route=name;++matches;
+    }
+  CHECK(matches>0);
+  return route;
+}
 inline std::string snapshot_json(const Snapshot& s,std::uint64_t issuance_fees,
                                  const std::vector<std::string>& order) {
   std::ostringstream o;
@@ -172,6 +186,16 @@ inline void write_completion_observation(const std::string& which,const std::fil
   using namespace block;using namespace completion;
   CHECK(which=="row6" || which=="row5" || which=="bucket-small" || which=="bucket-full" || which=="bucket-closed");
   CHECK(!std::filesystem::exists(output));
+  const auto inbound=td::Bits256(load(fixture/"failed-bounce.boc")->get_hash().bits());
+  const auto route_at_entry=actual_return_path(fixture,inbound);
+  const auto validation=td::read_file_str((fixture/"enabled.result.validation.result").string());
+  if(validation.is_error() || validation.ok()!="validate accept\n") {
+    // A real callee ran but no validator-accepted disposition exists. This is
+    // not a claim that arbitrary in-memory side effects were impossible.
+    td::write_file(output.string(),"{\"input\":{},\"observed\":{\"published\":false,\"dispatch\":["+
+                   quote(route_at_entry)+"]}}\n").ensure();
+    return;
+  }
   const auto before=load(fixture/"completion-before-state.boc"),after=load(fixture/"accepted-state.boc");
   const auto current=load(fixture/"accepted-block.boc");
   gen::Block::Record block;CHECK(::tlb::unpack_cell(current,block));
@@ -220,17 +244,7 @@ inline void write_completion_observation(const std::string& which,const std::fil
   AcceptedStep step{{},current,after};gen::Transaction::Record custody_tx;
   CHECK(::tlb::unpack_cell(accepted_transaction(step,*ingress.custody_address),custody_tx));
   CurrencyCollection paid;CHECK(paid.unpack(custody_tx.total_fees));
-  // Only execution log from this invocation is eligible; never select a path
-  // from Q, phase, post-state, or a proposed result label.
-  std::ifstream trace(fixture/"completion-execution.log");CHECK(trace.good());std::string line,route;
-  const std::map<std::string,std::string> names{{"admit_workchain_late_return","late-return-admission"},
-    {"window_return","within-window-failed"},{"type2_bucket_disposition","type2-bucket-disposition"}};
-  unsigned matches=0;
-  while(std::getline(trace,line))for(const auto& [callee,name]:names)
-    if(line.find("WORKCHAIN_RETURN_CALLEE "+callee+" inbound="+selector.inbound_message.to_hex())!=std::string::npos){
-      CHECK(route.empty()||route==name);route=name;++matches;
-    }
-  CHECK(matches>0);
+  const auto route=actual_return_path(fixture,selector.inbound_message);
   std::string bucket_extra;std::uint64_t bucket_cost=0;
   if(which.starts_with("bucket-")) {
     const auto actual=decode_workchain_native_effects(effects(current).native).move_as_ok();
