@@ -109,7 +109,13 @@ things can go wrong at three different budgets. They are not interchangeable:
 | --- | --- |
 | Too little to finish verification | The compute phase fails. Nothing is emitted. |
 | Enough to verify, too little to forward | **The compute phase succeeds** and the action phase fails. Nothing is emitted, and the module keeps no record that anything was attempted. |
-| Enough to forward, but the account refuses | The relay is delivered and the account rejects it. The relay is sent bounceable, so the value returns to the module. |
+| Enough to forward, but the account refuses | The relay is delivered and the account rejects it. The relay is sent bounceable, so the value returns to the module and stays there. |
+
+The last row is closed by an executed round trip rather than by description: the
+suite takes the bounce the account itself produced, delivers that exact message
+back to the module, and requires the module to accept it, emit nothing, stay
+immutable, and be credited with most of the returned value. The module has no
+withdrawal path, so that is where the value remains.
 
 The middle row is the one that is easy to misread as a gas problem. The module
 sends with mode 64 and no `+16`, so `bounce=1` on the relay is a property of the

@@ -355,6 +355,44 @@ class MldsaAuthTests(unittest.TestCase):
             p.execute(body, label=self.label(p, 'v16-positive-control'))
 
 
+    def test_refused_relay_bounces_the_value_back_into_the_module(self):
+        """Close the loop: the account's own bounce, delivered back unmodified."""
+        for p in self.pairs():
+            m, a = p.module, p.account
+            body = m.signed(a)
+            p.execute(body, label=self.label(p, 'accepted'))
+            # The replay is refused by the account, which bounces the relay value.
+            _, messages = m.call(body, label=self.label(p, 'replayed-relay'))
+            result, _ = p.deliver(messages[0], 1804, label=self.label(p, 'account-refuses'),
+                                  envelope=body.refs[0])
+            bounces = [out for out in outgoing(from_boc(result['transaction']))
+                       if parse_message(out)['bounced']]
+            self.assertEqual(len(bounces), 1, 'a refused relay must bounce exactly once')
+            wire = parse_message(bounces[0])
+            self.assertEqual(wire['destination'], m.address, 'the bounce must address the module')
+            self.assertGreater(wire['value'], 0, 'an empty bounce would prove nothing')
+            data_before, balance_before = account_data(m.shard)
+            # CRITICAL: the message the account actually produced, not a rebuilt one.
+            m.e.lt = max(m.e.lt, wire['created_lt'])
+            returned = m.e.send(m.shard, bounces[0])
+            self.assertTrue(returned['success'], 'the module must accept its own bounce')
+            m.shard = from_boc(returned['shard_account'])
+            details = returned.get('details', returned)
+            self.assertEqual(details.get('exit'), 0, f'{p.label}: {details}')
+            self.assertEqual(outgoing(from_boc(returned['transaction'])), [],
+                             'a bounce must not be relayed onward')
+            data_after, balance_after = account_data(m.shard)
+            self.assertEqual(data_after.hash, data_before.hash, 'the module stays immutable')
+            self.assertEqual(data_after.hash, m.data.hash)
+            # The value returns to a contract with no withdrawal path: it stays here.
+            self.assertGreater(balance_after, balance_before,
+                               'the bounced value must be credited to the module')
+            self.assertGreater(balance_after - balance_before, wire['value'] // 2,
+                               'most of the bounced value must survive the fees')
+            record(self.label(p, 'bounce-returned'), 'module', returned, m.shard)
+            p.close()
+
+
 def main():
     global SIGNER, MODULE_FILTER
     parser = argparse.ArgumentParser(description=__doc__)
