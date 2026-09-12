@@ -17,7 +17,7 @@ hashes and addresses. Do not substitute implementations at a registered root.
 
 Storage is `global_id:int32 public_key:^Cell`. The public key is exactly 1,312
 raw bytes in the canonical ordinary, level-zero byte-chain encoding defined by
-`docs/tvm-mldsa44.md`: 127 bytes per non-final cell, one continuation, no trailing
+`doc/tvm-mldsa44.md`: 127 bytes per non-final cell, one continuation, no trailing
 empty cell. There is no administrator, classical recovery key, SETCODE, SETDATA
 or privileged external entry point. The module has no nonce database. The
 account remains authoritative for its own epoch and nonce, including committed

@@ -138,8 +138,7 @@ class Db : public td::actor::Actor {
   // carry no votes, so a premature deletion is only a harmless re-sync; but their
   // directories are not covered by destroyed_validator_sessions_, so without this
   // queue they leak on a crash mid-deletion. Validator/tentative directory
-  // cleanup stays gated on destroyed_validator_sessions_ (see
-  // doc/consensus-db-cleanup-queue.md).
+  // cleanup stays gated on destroyed_validator_sessions_.
   virtual void update_pending_consensus_db_cleanup(std::vector<std::string> dirs,
                                                    td::Promise<td::Unit> promise) = 0;
   virtual void get_pending_consensus_db_cleanup(td::Promise<std::vector<std::string>> promise) = 0;
@@ -147,7 +146,7 @@ class Db : public td::actor::Actor {
   // Validator-group consensus-DB cleanup (Finding 1): one durable, checkpoint-
   // bound record per retired validator session. Unlike the observer queue above,
   // a validator directory may be deleted only once its retirement checkpoint is
-  // proven permanent (see doc/validator-consensus-db-cleanup.md). These records
+  // proven permanent. These records
   // are persisted per session id; enabling deletion from them is a later step.
   // Atomically persist the destroyed-session fence together with the newly
   // retiring validator cleanup records in one synced batch (PR B: the durable
