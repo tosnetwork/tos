@@ -8,7 +8,7 @@ on:
       - 'common/global-version.h'
       - 'CMakeLists.txt'
       - 'test/pq-mldsa44/**'
-      - 'docs/tvm-mldsa44*'
+      - 'doc/tvm-mldsa44*'
       - '.github/workflows/pq-mldsa44.yml'
 defaults:
   run:

@@ -64,6 +64,13 @@ Operator and launch docs:
 - [FullNode.md](FullNode.md)
 - [LiteClient.md](LiteClient.md)
 
+Post-quantum authentication:
+
+- [tvm-mldsa44.md](tvm-mldsa44.md) - the native ML-DSA-44 verification instruction: opcode, ABI, canonical operand encoding, gas, version gating and the vendored backend
+- [tvm-mldsa44-validation.md](tvm-mldsa44-validation.md) - acceptance matrix, calibration method and the limits of what the public vectors prove
+- [tvm-mldsa44-final-hardening.md](tvm-mldsa44-final-hardening.md) - the canonical byte-chain negative control and the guard mutation it required
+- [mldsa44-auth-module.md](mldsa44-auth-module.md) - the immutable authentication module, exact signed bytes, funding failure classes and deployment boundary
+
 Review and release docs:
 
 - [tos-release-policy.md](tos-release-policy.md)
