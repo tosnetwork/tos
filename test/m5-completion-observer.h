@@ -250,6 +250,9 @@ inline SweepNativeObservation sweep_native_observation(const td::Ref<vm::Cell>& 
   CHECK(::tlb::unpack_cell(root,b)&&::tlb::unpack_cell(b.extra,e));
   vm::AugmentedDictionary accounts(vm::load_cell_slice_ref(e.account_blocks),256,block::tlb::aug_ShardAccountBlocks);
   CHECK(accounts.check_for_each([&](auto leaf,td::ConstBitPtr,int){
+    // Iteration carries the augmentation; unlike lookup(), it does not strip
+    // the leading CurrencyCollection before the AccountBlock value.
+    leaf=accounts.extract_value(leaf);CHECK(leaf.not_null());
     gen::AccountBlock::Record account;CHECK(gen::t_AccountBlock.unpack(leaf.write(),account));
     vm::AugmentedDictionary txs(vm::DictNonEmpty(),account.transactions,64,block::tlb::aug_AccountTransactions);
     CHECK(txs.check_for_each([&](auto cell,td::ConstBitPtr,int){
