@@ -63,6 +63,7 @@ Operator and launch docs:
 - [ConfigParam.md](ConfigParam.md)
 - [FullNode.md](FullNode.md)
 - [LiteClient.md](LiteClient.md)
+- [macos-local-node.md](macos-local-node.md) - running a local chain on macOS, where the systemd setup script does not apply: build targets, the in-process launcher, the faucet, lite-client batch syntax and the traps worth knowing
 
 Post-quantum authentication:
 
