@@ -25,6 +25,8 @@ p.add_argument('--m5-debit', action='store_true', help='stop after authenticated
 p.add_argument('--m5-return-route', action='store_true', help='deliver a funded payout to wc0 and observe the actual return')
 p.add_argument('--m5-failed', action='store_true', help='publish the funded phase-0 return atomically at custody')
 p.add_argument('--m5-bucket-small', action='store_true', help='real bounce below local issuance fees')
+p.add_argument('--phase-delay-transit', action='store_true',
+               help='keep the original payout queued through the first owner operation for D73')
 p.add_argument('--phase-replay-cuts', action='store_true',
                help='retain per-operation DB predecessors inside this run for D73 producer controls')
 p.add_argument('--m5-completion-late', action='store_true',
@@ -108,6 +110,9 @@ def finish_live():
 
 live_capacity('START')
 atexit.register(finish_live)
+if a.phase_delay_transit and (not a.m5_completion_late or a.m5_completion_paid or
+                             a.completion_close_account_before_return):
+    p.error('delayed transit requires the ordinary late-return owner sequence')
 if a.phase_replay_cuts and not a.m5_completion_late:
     p.error('phase replay cuts require the actual late-return owner sequence')
 split_return_route = a.m5_completion_late and not a.m5_completion_paid
@@ -1216,8 +1221,9 @@ if a.m5_debit:
         if split_return_route:
             # First import into the non-destination shard only. Its authenticated
             # transit export permits source dequeue before the actual delivery.
-            route_block('completion-transit', '0:c')
-            route_block('completion-transit-master', '-1', ('completion-transit',))
+            if not a.phase_delay_transit:
+                route_block('completion-transit', '0:c')
+                route_block('completion-transit-master', '-1', ('completion-transit',))
         else:
             subprocess.run([str(build / 'test-tos-collator'), '-C', str(fixture / 'global.json'),
                         '-D', str(fixture / 'db'), '-w', '0', '-s', str(fixture / 'payout-recipient-top'),
@@ -1333,6 +1339,9 @@ if a.m5_debit:
                                     '-D',str(fixture / 'db'), '-w','-1', '-M',
                                     str(fixture / f'{number}-enabled-top1.boc'), '--query-result',
                                     str(fixture / f'completion-owner-{number}-master.result')],check=True)
+                    if a.phase_delay_transit and number == 5:
+                        route_block('completion-transit', '0:c')
+                        route_block('completion-transit-master', '-1', ('completion-transit',))
                     old_blind = new_blind
                     if a.completion_close_before_return and number == 6:
                         shutil.copyfile(fixture / 'current-state.boc',fixture / 'completion-record-state.boc')
