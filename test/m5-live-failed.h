@@ -81,17 +81,22 @@ inline void assert_m5_failed(const std::filesystem::path& fixture,
         before.account.available.handle == after.account.available.handle &&
         before.account.auth_nonce == after.account.auth_nonce &&
         before.account.available_revision == after.account.available_revision);
-  // This narrow sequence enters Failed with empty pending; inspect all buckets,
-  // not just the issued effects. The codec independently enumerates counts.
-  CHECK(before.account.pending.empty() && before.account.system_pending.empty() && before.origin_pending.empty());
-  CHECK(after.account.pending.empty() && after.account.system_pending.empty() && after.origin_pending.size() == 1);
+  // Issuance may use the last free slot. Remove only the new entry and the
+  // separately checked obligation change, then compare the entire old account
+  // encoding, including both pending families and their enumerated counts.
+  CHECK(after.origin_pending.size() == before.origin_pending.size() + 1);
+  auto preserved = after;
+  preserved.origin_pending.pop_back();
+  preserved.control = before.control;
+  CHECK(encode_workchain_withdrawal_account(preserved, *limit).move_as_ok()->get_hash() ==
+        encode_workchain_withdrawal_account(before, *limit).move_as_ok()->get_hash());
   auto old_coordinator = decode_workchain_coordinator_state(account_data(previous,td::Bits256::zero())).move_as_ok();
   auto coordinator = decode_workchain_coordinator_state(account_data(step.state,td::Bits256::zero())).move_as_ok();
   CHECK(old_coordinator.deposit_sequence && coordinator.deposit_sequence);
   std::uint64_t sequence;
   CHECK(!__builtin_add_overflow(*old_coordinator.deposit_sequence,std::uint64_t{1},&sequence));
   CHECK(*coordinator.deposit_sequence == sequence);
-  const auto& receipt = after.origin_pending.front();
+  const auto& receipt = after.origin_pending.back();
   gen::ShardStateUnsplit::Record observed_state; CHECK(::tlb::unpack_cell(step.state,observed_state));
   bool late = found == before.control.withdrawals.end();
   if (!late && found->timing.phase == 1) {
