@@ -4907,6 +4907,7 @@ name = "tos_vm"
 version = "2.2.26"
 dependencies = [
  "anyhow",
+ "cc",
  "chain_block",
  "criterion 0.5.1",
  "env_logger",

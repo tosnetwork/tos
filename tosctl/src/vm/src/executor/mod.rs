@@ -27,6 +27,7 @@ pub mod gas;
 mod globals;
 mod math;
 mod null;
+mod pq;
 mod rand;
 mod serialization;
 mod slice_comparison;

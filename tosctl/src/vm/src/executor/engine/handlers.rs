@@ -26,6 +26,7 @@ use crate::{
         globals::*,
         math::*,
         null::*,
+        pq::*,
         rand::*,
         serialization::*,
         slice_comparison::*,
@@ -992,6 +993,7 @@ impl Handlers {
                 .set(0x24, execute_ristretto_255_mul::<Signaling>)
                 .set(0x25, execute_ristretto_255_mulbase::<Signaling>)
                 .set(0x26, execute_ristretto_255_pushl)
+                .add_subset(0x31, Handlers::new().set(0x00, execute_pq_mldsa44))
                 .set(0x40, execute_cdatasizeq)
                 .set(0x41, execute_cdatasize)
                 .set(0x42, execute_sdatasizeq)

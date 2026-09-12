@@ -37,6 +37,8 @@ if(TARGET tos_crypto)
   add_executable(test-pq-mldsa44 "${PQ_TEST_DIR}/test.cpp")
   target_compile_definitions(test-pq-mldsa44 PRIVATE TOS_PQ_TEST_VM=1)
   target_link_libraries(test-pq-mldsa44 PRIVATE tos_crypto tos_mldsa44)
+  add_executable(test-pq-v16-parity "${PQ_TEST_DIR}/../pq-readiness/parity.cpp")
+  target_link_libraries(test-pq-v16-parity PRIVATE tos_crypto)
 endif()
 
 install(FILES "${TOS_MLDSA_SOURCE_DIR}/LICENSE"
