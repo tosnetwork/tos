@@ -100,6 +100,19 @@ unnecessary funds and account for storage and bounce costs. Existing account
 purge/redeployment caveats still apply. Use PQ-from-genesis account state where
 required and maintain storage balances.
 
+## Funding a submission
+
+The module pays for verification out of the incoming internal message, so a
+relayer has to fund it above the point where the compute phase completes. At the
+test configuration's gas prices a submission needs roughly **66.3 million
+nanotomis (about 0.066 TOS)** to relay; below that the transaction runs out of
+gas, emits nothing and still consumes what was sent. Of the roughly 64,400
+compute gas a successful submission uses, 50,000 is the flat PQ verification
+tariff, so this floor is set by post-quantum verification rather than by message
+handling, and it will not resemble a classical-signature relay. Treat the figure
+as an order of magnitude measured under the test prices, not a network constant:
+re-measure against the prices in force before sizing a production relayer.
+
 ## Build and native validation
 
 ```sh
