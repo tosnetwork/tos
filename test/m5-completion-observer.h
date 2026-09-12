@@ -323,7 +323,7 @@ inline std::string phase_snapshot(const td::Ref<vm::Cell>& root, std::uint32_t l
   out << "]}"; return out.str();
 }
 inline void write_phase_observation(const std::filesystem::path& fixture,
-                                    const std::filesystem::path& output, bool immutable=false) {
+                                    const std::filesystem::path& output, bool immutable=false, bool prepare_only=false) {
   using namespace block; using namespace completion;
   CHECK(!std::filesystem::exists(output));
   const auto policy=observed_policy(fixture); CHECK(policy.prepare);
@@ -332,7 +332,9 @@ inline void write_phase_observation(const std::filesystem::path& fixture,
   gen::CommonMsgInfo::Record_int_msg_info info; CHECK(::tlb::unpack_cell_inexact(original,info));
   tos::WorkchainId wc; td::Bits256 custody;
   CHECK(block::tlb::t_MsgAddressInt.extract_std_address(info.src,wc,custody) && wc==2);
-  auto prepared=m5_live_account(account_data(load(fixture/"phase-prepare-after.boc"),wallet_account(0)),limit);
+  auto prepared_root=prepare_only ? read_accepted_step(fixture/"phase-prepare.candidate",
+      load(fixture/"phase-prepare-before.boc")).state : load(fixture/"phase-prepare-after.boc");
+  auto prepared=m5_live_account(account_data(prepared_root,wallet_account(0)),limit);
   auto match=std::find_if(prepared.control.withdrawals.begin(),prepared.control.withdrawals.end(),
       [&](const auto& r){return r.timing.payout_created_lt==info.created_lt;});
   CHECK(match!=prepared.control.withdrawals.end());
@@ -344,12 +346,13 @@ inline void write_phase_observation(const std::filesystem::path& fixture,
   bool first=true;
   std::vector<std::string> steps{"prepare","owner5","owner6"};
   if(immutable)steps.push_back("owner7");
+  if(prepare_only)steps.resize(1);
   for(const auto& name:steps) {
     const auto prefix="phase-"+name;
     CHECK(td::read_file_str((fixture/(prefix+".validation")).string()).move_as_ok()=="validate accept\n");
     auto before=load(fixture/(prefix+"-before.boc"));
-    auto after=load(fixture/(prefix+"-after.boc"));
     auto accepted=read_accepted_step(fixture/(prefix+".candidate"),before);
+    auto after=prepare_only ? accepted.state : load(fixture/(prefix+"-after.boc"));
     CHECK(accepted.state->get_hash()==after->get_hash());
     gen::Block::Record block; CHECK(::tlb::unpack_cell(accepted.block,block));
     vm::CellSlice update(vm::NoVm(),block.state_update);
@@ -525,8 +528,8 @@ inline void write_paid_completion_observation(const std::filesystem::path& fixtu
 
 inline void write_completion_observation(const std::string& which,const std::filesystem::path& fixture,
                                          const std::filesystem::path& output) {
-  if(which=="phase-transition" || which=="phase-immutable"){
-    write_phase_observation(fixture,output,which=="phase-immutable");return;
+  if(which=="phase-transition" || which=="phase-immutable" || which=="phase-prepare"){
+    write_phase_observation(fixture,output,which=="phase-immutable",which=="phase-prepare");return;
   }
   if(which=="row4" || which=="row5-paid"){write_paid_completion_observation(fixture,output,which=="row5-paid");return;}
   if(which=="sweep-atomic"){write_sweep_completion_observation(fixture,output);return;}

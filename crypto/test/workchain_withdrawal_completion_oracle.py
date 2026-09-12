@@ -22,7 +22,7 @@ def checked(value):
     return value
 
 
-def check_phase_transition(data, still_present=False, immutable=False):
+def check_phase_transition(data, still_present=False, immutable=False, prepare_only=False):
     """D73's existing remaining-work slot; actual queue and committed W cuts.
 
     Queue membership comes from the adapter's Native queue enumeration, not
@@ -33,6 +33,8 @@ def check_phase_transition(data, still_present=False, immutable=False):
     require(o['published'] is True, 'PHASE_PUBLICATION')
     steps = o['steps']
     names = ['prepare', 'owner5', 'owner6'] + (['owner7'] if immutable else [])
+    if prepare_only:
+        names = ['prepare']
     require([step['name'] for step in steps] == names,
             'PHASE_EXECUTION_PATH')
     identity = i['withdrawal_id']
@@ -75,6 +77,8 @@ def check_phase_transition(data, still_present=False, immutable=False):
                 require(new['phase'] == int(absent_later), 'PHASE_QUEUE_BINDING')
                 require(new['Q'] == (before['height'] if absent_later else 0), 'PHASE_QUEUE_BINDING')
         previous = after
+    if prepare_only:
+        return
     if immutable:
         last = steps[-1]['before']
         require(record(last)['phase'] == 1 and
@@ -90,8 +94,9 @@ def check_phase_transition(data, still_present=False, immutable=False):
 
 
 def check(case, data):
-    if case in ('phase-transition', 'phase-still-present', 'phase-immutable'):
-        return check_phase_transition(data, case == 'phase-still-present', case == 'phase-immutable')
+    if case in ('phase-transition', 'phase-still-present', 'phase-immutable', 'phase-prepare'):
+        return check_phase_transition(data, case == 'phase-still-present',
+                                      case == 'phase-immutable', case == 'phase-prepare')
     i, o = data['input'], data['observed']
     require(o['published'] is True, 'DISPOSITION_MUST_PUBLISH')
     before, after = o['before'], o['after']
