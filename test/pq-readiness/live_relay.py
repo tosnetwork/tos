@@ -180,7 +180,7 @@ def main() -> int:
     target = Address('0:' + '5c' * 32)
     before = transport.balance(target)
     account_view = WalletV5(None, account.address, network, None)
-    state = account_view._parse_state(
+    state = WalletV5State.parse(
         Cell.one_from_boc(transport.account_data(account.address).boc()))
     _, chain_time = transport.head()
     payload = account_view.transfer_payload(target, TARGET_VALUE)
