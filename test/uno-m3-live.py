@@ -240,7 +240,7 @@ if a.m5_completion_paid:
         raise RuntimeError('Native sender genesis boundary changed')
     recipient = int('22' * 32,16)
     sender = sender.replace('create_state\n',
-        f'<{{ 0 DROP }}>c\nempty_cell empty_cell 0 0 0 {recipient} 6 register_smc drop\ncreate_state\n')
+        f'<{{ 0 PUSHINT DROP }}>c\nempty_cell empty_cell 0 0 0 {recipient} 6 register_smc drop\ncreate_state\n')
     (fixture / 'm3-native-paid.fif').write_text(sender)
 prefix = source.split(marker)[0]
 route = '  set(script_path "${SOURCE_DIR}/test/${script}.fif")'
