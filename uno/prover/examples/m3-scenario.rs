@@ -107,8 +107,12 @@ fn main() -> Result<()> {
     }
     if args[1] == "withdrawal-points" || args[1] == "withdrawal-prove" {
         use tos_uno_crypto_prototype::withdrawal_statement::{WithdrawalAmounts, WithdrawalStatement, public_opening};
+        // D78: reject an obsolete request rather than silently ignoring its prelock.
+        if m.contains_key("return_reserve") {
+            return Err(fail("obsolete prelock request"));
+        }
         let amounts = WithdrawalAmounts { principal: n("principal")?, outward_fee: n("outward_fee")?,
-            return_reserve: n("return_reserve")?, operation_fee: fee };
+            operation_fee: fee };
         let total = amounts.total().map_err(|e| fail(&format!("total {e:?}")))?;
         let new = old.checked_sub(total).and_then(|v| v.checked_sub(fee)).ok_or_else(|| fail("Withdrawal debit"))?;
         let balance = [p, oldc, oldd, Scalar::from(new)*g + rho*h, rho*p, Scalar::from(old)*g+t*h];

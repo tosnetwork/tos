@@ -338,7 +338,7 @@ freeze process; explicit implementation-test inputs are not deployment defaults.
 |---|---|
 | `failed.issuance_billing_units` (D70) | Not frozen. The reviewed fixture explicitly encoded 4; with authenticated test base 2 it produced g=8. Neither 4 nor 8 is a frozen protocol constant. Billing units remain distinct from proof-work units. |
 | Withdrawal `f_state` | Not frozen; explicit test configuration only, no local default. |
-| `max_bounce_cost` | Not frozen; reserve must match authenticated configuration. Apply D68's pricing-change margin criteria, not a universal network-cost guarantee. |
+
 | `payout_settlement_blocks` | Not frozen; explicit policy, not a finite delivery bound or safety guarantee. |
 | `K_withdrawal` (D67) | Initial value likewise remains separately conditional on freezing; do not infer it from test fixtures or from this list's other entries. |
 
@@ -355,3 +355,16 @@ non-M5 boundaries. D62/D63 are now the eight mandatory BUCKET-SWEEP items;
 validator unknown injection, phase/Paid/late paths and remaining acceptance
 boundaries have their own fail-closed runner. No historical prediction or
 review result has been rewritten as later execution evidence.
+
+## D78 current interface and applicability
+
+Anchor: memo a131b9bb / 187dbc79290d6816. c7a6f62e8 supplies versioned
+no-prelock codecs and crypto ABI; full host integration belongs to A. Context
+remains independently measured 566, wrapper684. No host context length change.
+`max_bounce_cost` is removed from the CURRENT freeze checklist because D78
+retired it, not because it was frozen. Historical prelock evidence above remains
+scoped to its old decision. The remaining conditional window and three M5 wiring
+values (issuance billing units, Withdrawal f_state, K_withdrawal) require the
+existing explicit configuration/freeze discipline; no defaults were selected.
+Current contracts: [D78 handoff](uno-m5-d78-handoff.md). Previous predictions
+are not rewritten; the D78 symbolic prediction is a separate artifact.

@@ -3,7 +3,7 @@
 
 This runner checks registration and executes named CTest contracts. It cannot
 establish that their implementation observes authentic state: review the
-producer/validator adapters against doc/uno-m5-withdrawal-prepare-handoff.md.
+producer/validator adapters against doc/uno-m5-d78-handoff.md.
 """
 import argparse
 import json
@@ -36,7 +36,7 @@ def main():
                                 text=True, capture_output=True, check=True)
         print(result.stdout, end='')
         print(result.stderr, end='', file=sys.stderr)
-        if 'WITHDRAWAL-PREPARE_OBSERVED:' + name not in result.stdout:
+        if 'WITHDRAWAL-PREPARE_D78_OBSERVED:' + name not in result.stdout:
             print('WITHDRAWAL-PREPARE_NOT_READY: observation marker absent: ' + name)
             return 1
         if 'Skipped' in result.stdout or 'Not Run' in result.stdout:

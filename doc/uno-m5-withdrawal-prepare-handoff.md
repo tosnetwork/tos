@@ -1,5 +1,9 @@
 # WITHDRAWAL-PREPARE fail-closed acceptance contract
 
+> D78 applicability: the text below is preserved pre-D78 evidence/design.
+> Current amounts, retired obligations and semantic controls are specified in
+> [the D78 handoff](uno-m5-d78-handoff.md). Old markers cannot certify D78.
+
 Specification: memo 1de47f47, SHA256
 45b20d8f6678edeb014136a1a60689616388d0b07c970cde02e4934f7ca65054.
 Frozen before B observes A's Native prepare integration. This is a prospective
