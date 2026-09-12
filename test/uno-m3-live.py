@@ -381,8 +381,19 @@ if a.completion_contract or a.remaining_contract:
         if code:
             raise RuntimeError('restored phase execution failed')
         oracle.check('phase-transition', restored)
+        present = 'if (queue_height_ <= opened_height || queued_.count({custody, created_lt}))'
+        binary = shadow_binary('phase-presence', present, 'if (queue_height_ <= opened_height)',
+                               'crypto/block/workchain-account-engine.h')
+        code, data = phase_replay('presence-run', queued, binary)
+        if code:
+            raise RuntimeError('presence mutant did not reach the accepted host boundary')
+        phase_red(data, 'phase-still-present', 'PHASE_QUEUE_BINDING')
+        code, restored = phase_replay('presence-restored', queued, build / 'test-m3-live')
+        if code:
+            raise RuntimeError('restored queued execution failed')
+        oracle.check('phase-still-present', restored)
         # Do not publish a ready marker for only the presently wired subset.
-        raise RuntimeError('M5-REMAINING phase-transition incomplete: presence producer, paired creation/orphan, read-height, wrong observation, later observation and deadline controls')
+        raise RuntimeError('M5-REMAINING phase-transition incomplete: paired creation/orphan, read-height, wrong observation, later observation and deadline controls')
 
     if a.completion_contract == 'sweep-atomic':
         # The fixture, account observations and all mutations run the real host.
