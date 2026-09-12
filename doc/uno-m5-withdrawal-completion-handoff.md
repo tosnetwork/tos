@@ -259,3 +259,17 @@ Completion is **5/8**; bucket-closed, sweep-atomic and oracle-control remain.
 No other runner or end-to-end queue-budget claim is changed.
 
 Excluded closure replay `/tmp/uno-closed-closure-after-engine.log` (fixture `uno-closed-closure-after-engine-Y70s2o`) was case **(b)**: the originating wallet pin passed (the replay retained that wallet observation), no `WALLET_FRESHNESS_MISMATCH` occurred, and exclusion was manual because a Native C++ header rollback overlapped compilation; the wallet pin does not bind the Native binary/dependency build.
+
+Bucket-closed closed with default CTest #22: 406.95 seconds. The adapter
+rebuilds the actual accepted close, checks active-to-closed with no pending/W,
+links its successor to the late predecessor, and verifies the late publication
+leaves the complete closed account root unchanged. Arrival installs type-2
+fixed attribution; no immediate return-to-src is substituted. The active-account
+/closed-Withdrawal counterpart still admits. Both named publication/attribution
+mutants reach their intended oracles, oracle-disabled controls reject, restored
+execution passes. Actual JSON was independently rechecked after CTest; selected
+artifacts are in `measurements/uno-m5-withdrawal-completion/bucket-closed-real/`.
+This phase-1 fixture does not establish generic closure liveness (including an
+account with zero available balance and a still-phase-0 obligation). Nor does
+it independently certify receipt of the Native registration refund.
+Completion is **6/8**; sweep-atomic and oracle-control remain.
