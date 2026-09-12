@@ -1,0 +1,17 @@
+{
+  "file_sha256": "93f27a768aefe72290fded5b081914ae630867e43d5a22fd7f73fec0f223f3ef",
+  "prefix": "uno-v2/withdrawal-statement/v2",
+  "prefix_size": 30,
+  "withdrawal_id": "0707070707070707070707070707070707070707070707070707070707070707",
+  "attempt_id": "0808080808080808080808080808080808080808080808080808080808080808",
+  "u64_le": [
+    137,
+    17,
+    11
+  ],
+  "host_offset": 118,
+  "host_length": 566,
+  "host_fixture_unique_bytes": [
+    42
+  ]
+}

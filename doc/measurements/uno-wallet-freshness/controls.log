@@ -1,0 +1,38 @@
+Start testing: Sep 12 05:42 UTC
+----------------------------------------------------------
+144/174 Testing: test-workchain-wallet-freshness
+144/174 Test: test-workchain-wallet-freshness
+Command: "/home/tomi/.local/bin/python3" "/home/tomi/tos-m2/test/test_uno_wallet_freshness.py" "--repo" "/home/tomi/tos-m2" "--target" "/tmp/b-wallet-pin-cmake/crypto/wallet-freshness-target"
+Directory: /tmp/b-wallet-pin-cmake/crypto
+"test-workchain-wallet-freshness" start time: Sep 12 05:42 UTC
+Output:
+----------------------------------------------------------
+   Compiling tos-uno-crypto-prototype v0.1.0 (/tmp/wallet-pin-control-cequpox9/uno/crypto)
+   Compiling bulletproofs v5.3.0 (/tmp/wallet-pin-control-cequpox9/uno/crypto/vendor/bulletproofs)
+   Compiling tos-uno-wallet-prover v0.1.0 (/tmp/wallet-pin-control-cequpox9/uno/prover)
+    Finished `release` profile [optimized] target(s) in 5.82s
+EXPECTED_RED at source pin: WALLET_FRESHNESS_MISMATCH: expected source 0aa78fefb5e3789ca80fa3993de81c7cbfe84abb49d6616e736313e1fc9a0493, wallet reported '714a9d3532625ce07fa2a1eecee3fa8e0d0111cc44ab010f8b7ad2e6e0cf1008', exit=0
+EXPECTED_RED real live entry point at WALLET_FRESHNESS_MISMATCH
+EXPECTED_RED live pin removed: LIVE_PIN_NOT_ENFORCED (other failures are not pin evidence)
+EXPECTED_RED oracle disabled: STALE_WALLET_ACCEPTED: freshness oracle failed to reject
+   Compiling tos-uno-crypto-prototype v0.1.0 (/tmp/wallet-pin-control-cequpox9/uno/crypto)
+   Compiling tos-uno-wallet-prover v0.1.0 (/tmp/wallet-pin-control-cequpox9/uno/prover)
+    Finished `release` profile [optimized] target(s) in 2.75s
+EXPECTED_RED at source pin: WALLET_FRESHNESS_MISMATCH: expected source 714a9d3532625ce07fa2a1eecee3fa8e0d0111cc44ab010f8b7ad2e6e0cf1008, wallet reported '0aa78fefb5e3789ca80fa3993de81c7cbfe84abb49d6616e736313e1fc9a0493', exit=0
+PASS real build / stale red / disabled-oracle red / rebuilt green / restored green
+<end of output>
+Test time =   8.95 sec
+----------------------------------------------------------
+Test Passed.
+"test-workchain-wallet-freshness" end time: Sep 12 05:42 UTC
+"test-workchain-wallet-freshness" time elapsed: 00:00:08
+----------------------------------------------------------
+
+End testing: Sep 12 05:42 UTC
+
+freshness =   8.95 sec*proc
+
+m5 =   8.95 sec*proc
+
+workchain =   8.95 sec*proc
+

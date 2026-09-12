@@ -1,0 +1,117 @@
+Running test Test_WorkchainProofWork_WithdrawalV2MatchesVersionedStatementBytes...
+[1;31m[ 0][t 0][2026-09-12 05:23:10.868788834][test-workchain-proof-work.cpp:34]	Expectation failed: bytes.substr(0, tag.size()) is not equal to tag (uno-v2/withdrawal-statement/v2 != uno-v2/withdrawal-statement/v1)[0m
+[pid 594503] [time 1789190590] Signal: 6
+------- Stack Backtrace -------
+/tmp/b-d78-boundary/tag-mutant(+0xa3257)[0x5ff6876aa257]
+/tmp/b-d78-boundary/tag-mutant(+0x93f6d)[0x5ff68769af6d]
+/lib/x86_64-linux-gnu/libc.so.6(+0x42520)[0x7f18d2842520]
+/lib/x86_64-linux-gnu/libc.so.6(pthread_kill+0x12c)[0x7f18d28969bc]
+/lib/x86_64-linux-gnu/libc.so.6(raise+0x16)[0x7f18d2842476]
+/lib/x86_64-linux-gnu/libc.so.6(abort+0xd3)[0x7f18d28287f3]
+/tmp/b-d78-boundary/tag-mutant(+0xa6247)[0x5ff6876ad247]
+/tmp/b-d78-boundary/tag-mutant(+0xa67b7)[0x5ff6876ad7b7]
+/tmp/b-d78-boundary/tag-mutant(+0xa5b77)[0x5ff6876acb77]
+/tmp/b-d78-boundary/tag-mutant(+0x95772)[0x5ff68769c772]
+/tmp/b-d78-boundary/tag-mutant(+0x9f9da)[0x5ff6876a69da]
+/tmp/b-d78-boundary/tag-mutant(+0xaf03f)[0x5ff6876b603f]
+/tmp/b-d78-boundary/tag-mutant(+0xaeb68)[0x5ff6876b5b68]
+/tmp/b-d78-boundary/tag-mutant(+0x9482f)[0x5ff68769b82f]
+/lib/x86_64-linux-gnu/libc.so.6(+0x29d90)[0x7f18d2829d90]
+/lib/x86_64-linux-gnu/libc.so.6(__libc_start_main+0x80)[0x7f18d2829e40]
+/tmp/b-d78-boundary/tag-mutant(+0x946d5)[0x5ff68769b6d5]
+-------------------------------
+--- Enhanced Backtrace (libbacktrace) ---
+    #0  ?? (tag-mutant+0x93f6c) [0x5ff68769af6c]
+    #1  ?? at libc_sigaction.c (libc.so.6+0x4251f) [0x7f18d284251f]
+    #2  __pthread_kill_implementation at pthread_kill.c:44 (libc.so.6+0x969bc) [0x7f18d28969bc]
+    #3  __pthread_kill_internal at pthread_kill.c:78 (libc.so.6+0x969bc) [0x7f18d28969bc]
+    #4  __GI___pthread_kill at pthread_kill.c:89 (libc.so.6+0x969bc) [0x7f18d28969bc]
+    #5  __GI_raise at raise.c:26 (libc.so.6+0x42475) [0x7f18d2842475]
+    #6  __GI_abort at abort.c:79 (libc.so.6+0x287f2) [0x7f18d28287f2]
+    #7  ?? (tag-mutant+0xa6246) [0x5ff6876ad246]
+    #8  ?? (tag-mutant+0xa67b6) [0x5ff6876ad7b6]
+    #9  ?? (tag-mutant+0xa5b76) [0x5ff6876acb76]
+    #10  ?? (tag-mutant+0x95771) [0x5ff68769c771]
+    #11  ?? (tag-mutant+0x9f9d9) [0x5ff6876a69d9]
+    #12  ?? (tag-mutant+0xaf03e) [0x5ff6876b603e]
+    #13  ?? (tag-mutant+0xaeb67) [0x5ff6876b5b67]
+    #14  ?? (tag-mutant+0x9482e) [0x5ff68769b82e]
+    #15  __libc_start_call_main at libc_start_call_main.h:58 (libc.so.6+0x29d8f) [0x7f18d2829d8f]
+    #16  __libc_start_main_impl at libc-start.c:392 (libc.so.6+0x29e3f) [0x7f18d2829e3f]
+    #17  ?? (tag-mutant+0x946d4) [0x5ff68769b6d4]
+    #18  �*�� (unknown+0xffffffffffffffff) [0xffffffffffffffff]
+------------------------------------------
+[Thread debugging using libthread_db enabled]
+Using host libthread_db library "/lib/x86_64-linux-gnu/libthread_db.so.1".
+0x00007f18d28ea3aa in __GI___wait4 (pid=594600, stat_loc=0x0, options=0, usage=0x0) at ../sysdeps/unix/sysv/linux/wait4.c:30
+30	../sysdeps/unix/sysv/linux/wait4.c: No such file or directory.
+[Current thread is 1 (Thread 0x7f18d2f88780 (LWP 594503))]
+
+Thread 1 (Thread 0x7f18d2f88780 (LWP 594503) "tag-mutant"):
+#0  0x00007f18d28ea3aa in __GI___wait4 (pid=594600, stat_loc=0x0, options=0, usage=0x0) at ../sysdeps/unix/sysv/linux/wait4.c:30
+        sc_ret = -512
+        sc_ret = <optimized out>
+#1  0x00005ff6876aa4d2 in td::Stacktrace::print_to_stderr(td::Stacktrace::PrintOptions const&) ()
+No symbol table info available.
+#2  0x00005ff68769af6d in td::default_failure_signal_handler(int) ()
+No symbol table info available.
+#3  <signal handler called>
+No locals.
+#4  __pthread_kill_implementation (no_tid=0, signo=6, threadid=139744595445632) at ./nptl/pthread_kill.c:44
+        tid = <optimized out>
+        ret = 0
+        pd = 0x7f18d2f88780
+        old_mask = {__val = {0 <repeats 16 times>}}
+        ret = <optimized out>
+        pd = <optimized out>
+        old_mask = <optimized out>
+        ret = <optimized out>
+        tid = <optimized out>
+        ret = <optimized out>
+        resultvar = <optimized out>
+        resultvar = <optimized out>
+        __arg3 = <optimized out>
+        __arg2 = <optimized out>
+        __arg1 = <optimized out>
+        _a3 = <optimized out>
+        _a2 = <optimized out>
+        _a1 = <optimized out>
+        __futex = <optimized out>
+        resultvar = <optimized out>
+        __arg3 = <optimized out>
+        __arg2 = <optimized out>
+        __arg1 = <optimized out>
+        _a3 = <optimized out>
+        _a2 = <optimized out>
+        _a1 = <optimized out>
+        __futex = <optimized out>
+        __private = <optimized out>
+        __oldval = <optimized out>
+        result = <optimized out>
+#5  __pthread_kill_internal (signo=6, threadid=139744595445632) at ./nptl/pthread_kill.c:78
+No locals.
+#6  __GI___pthread_kill (threadid=139744595445632, signo=signo@entry=6) at ./nptl/pthread_kill.c:89
+No locals.
+#7  0x00007f18d2842476 in __GI_raise (sig=sig@entry=6) at ../sysdeps/posix/raise.c:26
+        ret = <optimized out>
+#8  0x00007f18d28287f3 in __GI_abort () at ./stdlib/abort.c:79
+        save_stage = 1
+        act = {__sigaction_handler = {sa_handler = 0x0, sa_sigaction = 0x0}, sa_mask = {__val = {0 <repeats 14 times>, 140737270718711, 0}}, sa_flags = 1, sa_restorer = 0x0}
+        sigs = {__val = {32, 0 <repeats 15 times>}}
+#9  0x00005ff6876ad247 in td::process_fatal_error(td::CSlice) ()
+No symbol table info available.
+#10 0x00005ff6876ad7b7 in td::DefaultLog::append(td::CSlice, int) ()
+No symbol table info available.
+#11 0x00005ff6876acb77 in td::Logger::~Logger() ()
+No symbol table info available.
+#12 0x00005ff68769c772 in Test_WorkchainProofWork_WithdrawalV2MatchesVersionedStatementBytes::run() ()
+No symbol table info available.
+#13 0x00005ff6876a69da in td::Test::step() ()
+No symbol table info available.
+#14 0x00005ff6876b603f in td::TestsRunner::run_all_step() ()
+No symbol table info available.
+#15 0x00005ff6876b5b68 in td::TestsRunner::run_all() ()
+No symbol table info available.
+#16 0x00005ff68769b82f in main ()
+No symbol table info available.
+[Inferior 1 (process 594503) detached]

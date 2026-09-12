@@ -1,0 +1,35 @@
+Running test Test_BD78_ActualArtifacts...
+[0m[ 4][t 0][2026-09-12 05:29:19.269429169][mc-config.cpp:572]	workchain description dictionary created[0m
+[0m[ 4][t 0][2026-09-12 05:29:19.269618147][mc-config.cpp:2347]	unpacked info for workchain 0: basic=true, active=true, accept_msgs=true, min_split=0, max_split=0[0m
+[0m[ 4][t 0][2026-09-12 05:29:19.269627711][mc-config.cpp:2347]	unpacked info for workchain 2: basic=true, active=true, accept_msgs=true, min_split=0, max_split=0[0m
+[0m[ 4][t 0][2026-09-12 05:29:19.269752895][transaction.cpp:621]	unpacking account FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF[0m
+[0m[ 4][t 0][2026-09-12 05:29:19.269769134][transaction.cpp:454]	last_paid=0; cells=3 bits=124[0m
+[0m[ 4][t 0][2026-09-12 05:29:19.269776392][transaction.cpp:684]	end of Account.unpack() for 2:FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF (balance = 989999643ng ; last_trans_lt = 16000001..16000003)[0m
+[0m[ 4][t 0][2026-09-12 05:29:19.269794328][transaction.cpp:621]	unpacking account 0000000000000000000000000000000000000000000000000000000000000000[0m
+[0m[ 4][t 0][2026-09-12 05:29:19.269802303][transaction.cpp:454]	last_paid=0; cells=6 bits=966[0m
+[0m[ 4][t 0][2026-09-12 05:29:19.269807520][transaction.cpp:684]	end of Account.unpack() for 2:0000000000000000000000000000000000000000000000000000000000000000 (balance = 21003000250ng ; last_trans_lt = 16000001..16000002)[0m
+[0m[ 4][t 0][2026-09-12 05:29:19.269814697][transaction.cpp:621]	unpacking account 1111111111111111111111111111111111111111111111111111111111111111[0m
+[0m[ 4][t 0][2026-09-12 05:29:19.269821249][transaction.cpp:454]	last_paid=0; cells=16 bits=4928[0m
+[0m[ 4][t 0][2026-09-12 05:29:19.269833498][transaction.cpp:684]	end of Account.unpack() for 2:1111111111111111111111111111111111111111111111111111111111111111 (balance = 0ng ; last_trans_lt = 16000001..16000002)[0m
+[0m[ 4][t 0][2026-09-12 05:29:20.935060545][transaction.cpp:621]	unpacking account 2222222222222222222222222222222222222222222222222222222222222222[0m
+[0m[ 4][t 0][2026-09-12 05:29:20.935076925][transaction.cpp:454]	last_paid=0; cells=10 bits=3308[0m
+[0m[ 4][t 0][2026-09-12 05:29:20.935081877][transaction.cpp:684]	end of Account.unpack() for 2:2222222222222222222222222222222222222222222222222222222222222222 (balance = 0ng ; last_trans_lt = 8000001..8000002)[0m
+[0m[ 4][t 0][2026-09-12 05:29:21.950473043][transaction.cpp:621]	unpacking account FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF[0m
+[0m[ 4][t 0][2026-09-12 05:29:21.950484447][transaction.cpp:454]	last_paid=0; cells=3 bits=124[0m
+[0m[ 4][t 0][2026-09-12 05:29:21.950488044][transaction.cpp:684]	end of Account.unpack() for 2:FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF (balance = 996995705ng ; last_trans_lt = 20000001..20000002)[0m
+[0m[ 4][t 0][2026-09-12 05:29:21.950492393][transaction.cpp:621]	unpacking account 0000000000000000000000000000000000000000000000000000000000000000[0m
+[0m[ 4][t 0][2026-09-12 05:29:21.950495502][transaction.cpp:454]	last_paid=0; cells=6 bits=966[0m
+[0m[ 4][t 0][2026-09-12 05:29:21.950497884][transaction.cpp:684]	end of Account.unpack() for 2:0000000000000000000000000000000000000000000000000000000000000000 (balance = 21006000250ng ; last_trans_lt = 20000001..20000002)[0m
+[0m[ 4][t 0][2026-09-12 05:29:21.950500900][transaction.cpp:621]	unpacking account 1111111111111111111111111111111111111111111111111111111111111111[0m
+[0m[ 4][t 0][2026-09-12 05:29:21.950503791][transaction.cpp:454]	last_paid=0; cells=16 bits=5448[0m
+[0m[ 4][t 0][2026-09-12 05:29:21.950506220][transaction.cpp:684]	end of Account.unpack() for 2:1111111111111111111111111111111111111111111111111111111111111111 (balance = 0ng ; last_trans_lt = 20000001..20000002)[0m
+[0m[ 4][t 0][2026-09-12 05:29:24.415511991][transaction.cpp:621]	unpacking account 2222222222222222222222222222222222222222222222222222222222222222[0m
+[0m[ 4][t 0][2026-09-12 05:29:24.415525905][transaction.cpp:454]	last_paid=0; cells=10 bits=3308[0m
+[0m[ 4][t 0][2026-09-12 05:29:24.415530596][transaction.cpp:684]	end of Account.unpack() for 2:2222222222222222222222222222222222222222222222222222222222222222 (balance = 0ng ; last_trans_lt = 8000001..8000002)[0m
+FAILED_EXPLICIT_TRANSFERS=0 S=3000000 C=8
+COMPONENTS stage=0 R_actual=989999643 R_book=989999643 N_decrypted=989999643 P=10000000 W=10000000 D=0(structural)
+COMPONENTS stage=1 R_actual=996995705 R_book=996995705 N_decrypted=996995705 P=0 W=0 D=0(structural)
+ACTUAL_CUSTODY_FEE=8 BLOCK_FEES=2629
+RETURN x=10000000 y=9996070 slot=3000000 base=2 units=4 g=8 receipt=6996062
+PASS in 6130.1ms
+1 test(s) passed
