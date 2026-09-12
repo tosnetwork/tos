@@ -46,6 +46,9 @@ cd build
 - [ConfigParam.md](ConfigParam.md)
 - [ai-actors.md](https://github.com/tosnetwork/doc/blob/main/tos-blockchain/ai-actors.md)
 - [block.tlb](../crypto/block/block.tlb)
+## Version 6
+
+### New TVM instructions
 * `GETGASFEE` (`gas_used is_mc - price`) - calculates gas fee.
 * `GETSTORAGEFEE` (`cells bits seconds is_mc - price`) - calculates storage fees (only current StoragePrices entry is used).
 * `GETFORWARDFEE` (`cells bits is_mc - price`) - calculates forward fee.
@@ -340,315 +343,74 @@ Not yet activated on any TOS network, same as version 14 above.
   `max_total_msg_cells`, configured in `ConfigParam 43`). Older v1/v2 `ConfigParam 43` records
   fall back to these same defaults.
 
-## Capability: capAipow (bit `1024`)
+## Version 16
 
-AIPoW native issuance is gated by a capability flag rather than a protocol
-version bump, because it toggles a discrete feature (a per-epoch aggregate mint
-to the registered AIPoW settlement contract) rather than changing existing
-version-gated transaction/VM semantics. `SUPPORTED_VERSION` is therefore
-unchanged.
+Not yet activated on any TOS network.
 
-- Defined as `capAipow = 1024` in `tos/tos-types.h`, the next free bit after
-  `capFullCollatedData = 512`.
-- Node readiness is declared by including it in `Collator::supported_capabilities()`
-  and `ValidateQuery::supported_capabilities()`. A binary that declares it will
-  accept a configuration that enables the bit; a binary that does not will reject
-  such blocks (`collator-node.cpp`) -- so, exactly as for a version bump, every
-  validator must run a capable binary before the bit is set in `ConfigParam 8`.
-- `block::Config::aipow_enabled()` reads the bit. It is **inert** until a
-  governance config vote sets `capAipow` in `ConfigParam 8`; until then the
-  entire Phase C mint path is a no-op. Shipping the readiness declaration ahead
-  of activation is the "dark scaffolding" step (Phase C, W1).
-- Activation follows the same all-validators-first sequence as the versions
-  below.
+### New TVM instructions
+- `PQCHECKSIG_MLDSA44` (`message context signature public_key - valid`) - FIPS 204
+  Pure ML-DSA-44 verification over canonical ordinary byte-chain cells. 1312-byte key,
+  2420-byte signature, message up to 8192 bytes, context up to 255 bytes. Gas: 50,000
+  plus 1 per decoded byte. Versions 0-15 reject the opcode as invalid (exit 6). See
+  [tvm-mldsa44.md](tvm-mldsa44.md).
 
-### Mainnet activation gates (do NOT set `capAipow` until all are met)
+### Transaction changes
+- Unfreezing is validated less strictly. An incoming `StateInit` that revives a
+  **frozen** account no longer has to satisfy `check_addr_rewrite_length`; version 15
+  applies that test to every account status. Uninitialized accounts are unaffected.
+  See `crypto/block/transaction.cpp`, the `global_version < 16` branch.
 
-`capAipow` is inert while unset, so the AIPoW stack ships **dark** with no live
-exploit surface. But once the bit is set on a network with value at stake, the
-native mint path becomes a token-issuance authority, and several open items make
-issuance **forgeable or haltable**. These are hard gates: on mainnet, activation
-must be provably blocked until every item below is closed, audited, and
-governance-ratified. (They are safe to exercise on a throwaway localnet/testnet
-for development.) The blockers were surfaced by the Phase C consensus reviews and
-are also tracked in the Phase C plan's launch-gate section.
+These two are the whole of the difference between 15 and 16. That was established by
+searching for the version compared against 16 in any form, not only `>= 16`: the first
+attempt looked for `>= 16` and `> 15`, found nothing outside the opcode table, and
+missed the transaction change because it is spelled `< 16`. Every other threshold in
+the transaction engine is `>= 15` or lower and is satisfied at both versions.
 
-1. **Commitment finalization provenance — RESOLVED (window floor + C1 address binding).** The
-   native path pins a
-   registered commitment's **code** hash but cannot, from state alone, prove its
-   finalization was legitimate; `window_deadline` is a commitment *deploy
-   parameter*, so an attacker could once deploy the audited code with a **past**
-   window and a fabricated `(score_root, total_score, organic)` tuple, call
-   `finalize` instantly, and mint a forged pool. Fixed by anchoring the challenge
-   window to the settlement's own clock, which the committer cannot backdate: the
-   commitment now registers at **commit (`announce`)**, not finalize, so the
-   settlement records `registered_at` early while the challenge op is open; and
-   the native path authorizes a candidate only when its `window_deadline >=
-   registered_at + challenge_window` (the window was demonstrably open) **and**
-   `gen_utime >= registered_at + challenge_window` (it has elapsed). A fabricated
-   commitment must therefore sit through a real, observable dispute window and can
-   no longer be finalized instantly. See `derive_masterchain_epoch_mint` in
-   `crypto/block/aipow.cpp` and the commitment FunC `announce` handler. The
-   challenge window is now a **governed settlement deploy parameter**
-   (`SettlementCursor::challenge_window`, read by the native path; the SDK
-   `build_data` enforces `0 < challenge_window < register_grace` so a valid
-   candidate always mints before its epoch becomes skippable);
-   `kAipowChallengeWindow` is only the recommended SDK default. **But a codex review
-   found a deeper hole (C1):** on an account model with `SETCODE`, checking only the
-   *current* code hash + data does not prove the account followed the bonded state
-   machine. A bootstrap contract can `register`, then `SETCODE` to the audited
-   commitment code and overwrite its data with a forged `final` state (matching
-   tuple/reviewer/methodology/window) — no bond was ever locked and no challengeable
-   `committed` state existed; the reviewer/methodology checks do not help (the forged
-   data simply names the approved values). **Fixed:** the native derivation now binds
-   the commitment account's address to a canonical `StateInit` — it verifies
-   `account_id == hash(StateInit(audited_code, reconstructed initial data))`, where the
-   audited code is the account's own current code (already proven equal to the registry
-   hash) and the initial data is the current data with the four mutable fields reset to
-   their deploy defaults. An account deployed with different (SETCODE-capable) initial
-   code has a different, deploy-fixed address and is rejected; the audited commitment
-   code has no `SETCODE`, so a canonically-addressed account can only follow the real
-   bonded state machine. No registry/config change was needed (the code cell comes from
-   the account itself). See `commitment_canonical_address` +
-   `derive_masterchain_epoch_mint` in `crypto/block/aipow.cpp`, a dedicated C1 cell-test
-   regression, and the full-node e2e (which proves the reconstruction matches the
-   commitment SDK's deploy `build_data` byte for byte). The H1 Sybil admission DoS (a
-   related follow-up: require registration's sender to be a canonically-addressed
-   commitment) remains open but is not a supply-safety hole. Details + the full
-   codex-findings ledger (C1/C2/H1-H4/M1-M3/L1-L2) are in the Phase C design doc.
-2. **First-wins registration griefing — RESOLVED.** `register` was once
-   first-wins per epoch, letting an attacker's bogus nomination block the genuine
-   commitment and freeze the cursor. Now the settlement keeps a **bounded
-   candidate set** per epoch (retaining the smallest addresses), `skip` advances
-   past the grace deadline regardless of candidates, and the native path selects
-   the **min-address valid** finalized commitment — so a bogus nomination can
-   neither exclude the genuine commitment nor freeze the cursor. The
-   address-grindable min-address tie-break is safe only because gate 1 now forces
-   every candidate through a real, elapsed challenge window before selection.
-3. **Threshold reviewer policy — code RESOLVED; governance deployment remains.**
-   Once `status == final` authorizes native issuance, whoever can force `final`
-   controls minting, and a committer could name a reviewer it controls to dismiss
-   any challenge. The native path now **anchors** the reviewer: `AipowRegistry`
-   (ConfigParam 93) carries a governance-approved `reviewer_addr`, and
-   `derive_masterchain_epoch_mint` authorizes a commitment only if its own reviewer
-   equals that masterchain account id (`check_aipow_config` requires it set, so
-   `capAipow` cannot activate without it). The commitment's `rule` op already
-   requires `sender == reviewer`, so registering a real **M-of-N multisig** as
-   `reviewer_addr` makes M-of-N agreement necessary to rule — the multisig enforces
-   the threshold, the native enforces provenance. **Remaining before activation:**
-   governance must deploy the actual threshold multisig and register its address
-   (this is part of gate 5's registry ratification); a single-key reviewer stays
-   devnet/testnet only.
-4. **Audits.** A dedicated audit + red-team of the **settlement contract**
-   (custody, replay, double-pay, beneficiary-auth bypass) and the **consensus
-   mint math** (per-epoch once-only, cap bypass, collator/validator divergence,
-   unregistered-address mint), plus the mint-math determinism audit.
-5. **Registry published and ratified.** `AipowRegistry` (ConfigParam 93) —
-   settlement address, the audited **commitment code hash**, audited distributor
-   code hashes, methodology and rate-card hashes — must be published and
-   governance-ratified, and the configured settlement account's stored
-   `total_cap` verified to equal ConfigParam 92 (`AipowLimits.total_cap`) at
-   activation. The AIPoW ConfigParams (90–93) ship **absent** at genesis; a
-   partial or inconsistent set is a hard config error once `capAipow` is set.
-6. **Supply-cap dry-run.** A dry-run over a simulated ~7-year schedule shows
-   cumulative emission ≤ the 4.5B cap under adversarial demand.
+## Capability flags versus version bumps
 
-**End-to-end verified (not a gate, a milestone).** The native mint produce/check
-paths and the settle round-trip are exercised on a full-node localnet with
-`capAipow` active and ConfigParams 90–93 injected at genesis
-(`scripts/aipow-native-mint-e2e.py`): a commitment is announced → finalized past
-its (seconds-long, test-tuned) challenge window → the masterchain collator
-originates the epoch mint → validate-query independently re-derives and accepts it
-→ the settlement's settle advances the cursor, records the mint, and funds a
-distributor; a later block mints 0 and the cap holds. This run caught and fixed a
-real produce/check divergence (validate-query must split `value_flow_.minted` by
-currency type exactly as the collator does) — evidence that gate 4's
-collator/validator-divergence review is grounded, not a formality. The formal
-audits in gate 4 still stand.
+Both are set in `ConfigParam 8`, and neither is enforced by refusing to run. A node
+whose configuration names a version or a capability it does not implement logs an
+error and keeps collating and validating -- see the `get_global_version() >
+supported_version()` and `get_capabilities() & ~supported_capabilities()` checks in
+`validator/impl/collator.cpp` and `validator/impl/validate-query.cpp`, which warn and
+fall through. A configuration ahead of its binaries therefore fails as diverging
+execution, not as a refusal to start, which is why the rollout order below is not
+optional.
 
-Gate 2 is resolved in code; gate 3's native anchor is done (its residue is
-operational — governance deploys/registers the real threshold multisig, folded into
-gate 5). Gate 1 is only PARTIALLY resolved: a codex review reopened it (**C1**,
-above) and surfaced a second Critical (**C2**: base grams were counted in
-`value_flow_.minted` before the settle transaction, and validation never required the
-settle to succeed — so a settle that throws/out-of-gas/bounces, or is preempted by an
-in-block `skip`, creates supply the settlement ledger never records, permitting
-re-mint of one epoch and issuance past the cap).
+Which mechanism a change belongs to follows from what it does, not from how large it
+is. A capability bit suits a **discrete feature** that can be present or absent without
+altering how existing transactions and instructions behave. A version bump suits a
+change to **existing version-gated transaction or VM semantics** -- including adding an
+instruction, because the opcode table gates every instruction it has by version and by
+nothing else.
 
-**C2's safety half is now resolved in code + e2e.** validate-query ties base-gram
-issuance to the settlement's own ledger: it requires the settlement account's
-`minted_total` to advance, between the previous and new state, by exactly the
-re-derived mint amount, and rejects (fail closed) otherwise — so a settle that fails
-to record the mint halts issuance instead of leaking uncounted, cap-bypassing,
-re-mintable supply. The full-node native-mint e2e passes with the guard active (mint
-fires, `minted_total == pool`, cursor advances). What remains for C2 is the
-*liveness* half — the collator should not emit the mint unless the settle will record
-it (derive from post-dispatch state + fund the settle), so the fail-closed guard does
-not merely stall a bad-config/attacked epoch; that is a follow-up, not a safety hole.
-
-**C1 is now resolved in code + e2e** (canonical-address binding in
-`derive_masterchain_epoch_mint`; the account's own current code — proven equal to the
-registry hash — supplies the audited code cell, so no registry/ConfigParam-93 change
-was needed; a dedicated cell regression plus the full-node e2e confirm genuine
-commitments mint and non-canonical ones do not). The native-only robustness batch
-M1/M2/L1 is fixed in code, as is the settlement-contract robustness batch H4/H3/L2
-(bounded registration horizon + pruning of settled/skipped epoch buckets; exact-pool
-forward to the distributor; uint32 cursor-wrap guard — all sandbox-tested and
-e2e-verified). C2's *liveness* half is also resolved: the collator drops a mint that
-a same-block skip preempted (re-reading only the live cursor, so winner selection
-stays consistent) and validate-query accepts that as a legitimate no-mint (cursor
-advanced, minted_total unchanged) while still rejecting a causeless withhold, so the
-skip-race no longer stalls the chain; the only remaining fail-closed stall is the
-operational underfunded-settlement case (a gate-5 funding concern).
-
-**H1 (Sybil admission) is mitigated in code + e2e.** Registration is now
-authenticated: the settlement stores the audited commitment code and admits a
-candidate only if `sender == hash(StateInit(commitment_code, presented_data))`, so
-plain wallets can no longer occupy candidate slots and evict a genuine commitment;
-the native derivation cross-checks the settlement's stored code against the registry
-hash. This is not a full economic close — an attacker can still deploy the audited
-commitment code with throwaway data to grind small canonical addresses, so a minimum
-registration bond is the economic deterrent — **now added (H1 economic close):** the
-settlement requires every register to lock `MIN_REGISTRATION_BOND` (0.5 TOS,
-non-refundable, funding its own gas + forward reserve), so grinding the 8 smallest
-addresses costs at least 8× the bond per epoch. **H2 (late-candidate skip race) is
-also fixed:** the provenance window is anchored to announce time while the skip
-deadline is anchored to the epoch boundary + grace, so a late nomination could be
-skipped while still inside its window; registration now rejects a nomination whose
-challenge window cannot elapse before the epoch is skippable
-(`now()+challenge_window ≤ (epoch+1)·epoch_seconds+register_grace`), so skip never
-preempts an in-window candidate. **M3 was assessed and is not a bug:** the settle is a
-mandatory special transaction whose bounded gas is intentionally not counted toward the
-block limit (like recover/mint) — special transactions run after the main tx loop, so
-counting their gas would risk a full block being unable to fit a mandatory settle; the
-compute phase is still normally gas-limited (the settlement is not a config-special
-account) so its gas is bounded, and the collator and validate-query use identical logic
-(no divergence). With the whole codex-findings ledger closed or assessed, what remains
-before mainnet activation is only **gates 3-6** — governance/operational actions (deploy
-the real threshold multisig, cap-consistency check, supply-cap dry-run), not code. Until
-those are closed, native AIPoW minting is **testnet/devnet only** and must remain
-unactivatable on mainnet.
-
-### Mainnet activation runbook (governance)
-
-The gates above say *what* must be true; this is the ordered *how*. Every step is
-backed by a native fail-closed guard (noted inline), so a misconfiguration halts
-issuance rather than mis-mints — but governance must still perform and verify each
-step, in this order, before `capAipow` is set. All of this is safe to rehearse on a
-throwaway testnet first (that is what `scripts/aipow-native-mint-e2e.py` automates in
-miniature).
-
-1. **Finish gate 4 (audits).** Complete the external audit + red-team of the
-   settlement/commitment/distributor contracts and the consensus mint math
-   (per-epoch once-only, cap, collator/validator divergence, custody/replay). Do not
-   proceed until sign-off. Code freeze the audited artifacts.
-
-2. **Deploy the reviewer multisig (gate 3).** Deploy the real **M-of-N threshold
-   multisig** that will govern challenge resolution. Record its masterchain account
-   id; it becomes `AipowRegistry.reviewer_addr`. A single-key reviewer is
-   testnet-only.
-
-3. **Deploy the settlement account.** Deploy the audited settlement code with
-   `build_data`: `challenge_window < register_grace` (SDK-enforced, and native M1
-   re-checks), `total_cap` = the intended supply cap, `distributor_code` = the audited
-   distributor code, `commitment_code` = the audited commitment code (H1 auth; the
-   native cross-checks its hash against the registry). Record the resulting settlement
-   address; it becomes `AipowRegistry.settlement_addr`.
-
-4. **Publish + ratify ConfigParams 90–93 (gate 5).** They ship **absent** at genesis;
-   a partial or inconsistent set is a hard config error the activation guard
-   (`check_aipow_config`) rejects once `capAipow` is set. Set, and governance-ratify:
-   - **ConfigParam 90 — `AipowConfig`:** the pool formula (`k_num/k_den`,
-     `schedule_cap`, `cold_start_floor`, challenge multiplier).
-   - **ConfigParam 91 — `AipowMaturation`:** the distributor maturation snapshot
-     (`immediate_bps`, `stream_epochs`, `mat_epoch_seconds`) — must equal what the
-     settlement was deployed with.
-   - **ConfigParam 92 — `AipowLimits`:** `total_cap` (the ~4.5B cap).
-   - **ConfigParam 93 — `AipowRegistry`:** `settlement_addr` (step 3),
-     `commitment_code_hash` (the audited commitment code every real commitment runs),
-     `reviewer_addr` (step 2's multisig), `methodology_hash`, `rate_card_hash`, and the
-     audited `distributor_code_hashes`.
-
-5. **Pre-flight consistency checks (do before flipping the bit).** Each is also a
-   native fail-closed guard, so an error blocks issuance — verify them up front anyway:
-   - settlement's stored `total_cap` **==** ConfigParam 92 `total_cap` (gate 5).
-   - settlement's stored `commitment_code` hash **==** ConfigParam 93
-     `commitment_code_hash` (native cross-check; else derive fails closed).
-   - settlement's `challenge_window` **<** `register_grace` (native M1).
-   - ConfigParam 93 `reviewer_addr` **==** the deployed multisig, and every genuine
-     commitment's own `reviewer` equals it (native gate-3 anchor; the commitment `rule`
-     op requires `sender == reviewer`).
-   - ConfigParam 93 `settlement_addr` **==** the deployed settlement, and
-     `commitment_code_hash` **==** the code the deployed commitments actually run
-     (else C1 address binding rejects them).
-
-   The following are **not** consensus-enforced (a second review flagged them as
-   governance-trust boundaries; they are left as hard invariants here rather than
-   coded checks). Governance MUST uphold them or issuance can be forged or the cap
-   bypassed:
-   - **`settlement_addr` is immutable after activation** (round-2 C1). The supply cap
-     is tracked only in the settlement's `minted_total`; there is no chain-global
-     counter. Rotating the settlement to a fresh account resets the cap to zero.
-     Never change `settlement_addr` without an explicit ledger migration that carries
-     the old cumulative `minted_total`.
-   - **The account at `settlement_addr` runs the audited settlement code** (round-2
-     C2a). The registry pins the commitment code but not the settlement code; the
-     native trusts the configured address. Verify the deployed settlement's code hash
-     is the audited one (it is, by address binding, iff `settlement_addr` was computed
-     from the audited settlement `StateInit`) — a non-audited settlement could mint the
-     same epoch repeatedly or reset its ledger.
-   - **ConfigParam 91 maturation == the settlement's stored maturation, and the
-     settlement's `distributor_code` is an audited one** matching ConfigParam 93's
-     `distributor_code_hashes` (round-2 M6; the native does not cross-check these). A
-     mismatch lets a distributor over-pay early claimants and drain the pool, or (with
-     a zero maturation field) strand it.
-   - **Keep the epoch mint current; a prolonged mint outage exposes a catch-up skip
-     race** (round-9). The design assumes the collator mints each epoch's valid
-     candidate promptly, before that epoch passes its permissionless-`skip` deadline,
-     so a `skip` only ever crosses an epoch with no valid candidate. If minting stalls
-     for more than roughly an epoch plus the register grace, an epoch with a genuine
-     finalized commitment can become skippable while still unminted, and a queued
-     `skip` can then advance the cursor past it (censoring that reward). validate-query
-     is hardened fail-closed: it rejects a mint block whose same-block `skip`s cross any
-     epoch that had registered candidates in the previous state (so the censorship is
-     never *accepted*), but the reward for a genuinely stalled-past-deadline epoch can
-     still be lost, and in that rare state honest collators must avoid producing such a
-     block (defer the `skip` to a no-mint block). The complete fix — making the cursor
-     advance for candidate-less/bogus epochs native-driven rather than a permissionless
-     `skip` op — is future work. Operationally: monitor mint liveness and never let the
-     settlement cursor fall more than one epoch behind wall-clock.
-
-6. **Supply-cap dry-run (gate 6).** Simulate the ~7-year emission schedule under
-   adversarial demand and confirm cumulative emission ≤ the cap (the native clamps
-   each pool to the remaining cap and terminates at exhaustion; the dry-run confirms
-   the schedule as a whole).
-
-7. **Activate, all-validators-first.** Only now set `capAipow` (bit `1024`) in
-   ConfigParam 8, following the same sequence as the version Rollout plan below: every
-   validator must run a binary that supports the AIPoW path before the bit is set, or
-   validators would diverge. If any ConfigParam 90–93 is missing or inconsistent when
-   the bit is set, `check_aipow_config` makes the block invalid — activation is blocked
-   at the config-install level, not silently mis-minted.
-
-8. **Post-activation.** Monitor the first epochs: the settlement `minted_total`
-   advances by exactly each derived pool, the cursor advances once per settled epoch,
-   and cumulative issuance stays under the cap. Keep the reviewer multisig keys and the
-   settlement's gas/forward reserve funded (an underfunded settle fails closed and
-   halts issuance until refunded).
+That distinction has a hard consequence in this codebase: the VM cannot see the
+capability mask at all. `OpcodeInstr` offers `require_version(int)` and no capability
+equivalent, and `crypto/vm/` contains no reference to capabilities. Gating an
+instruction on a bit would mean plumbing the mask into the VM in both implementations
+and inventing a second gate that roughly ninety existing version-gated instructions do
+not use. The Rust VM has a `check_capability` helper with no callers, which is not the
+same as having the mechanism.
 
 ## Rollout plan
 
-Enabling version 14/15 on a live TOS network is a consensus-level change and must not be done by
-simply bumping `SUPPORTED_VERSION` on a subset of nodes -- that would let different validators
-compute different results for the same transaction and fork the chain. The safe sequence:
+Raising the active version on a live TOS network is a consensus-level change and must not be
+done by bumping `SUPPORTED_VERSION` on a subset of nodes -- that would let different validators
+compute different results for the same transaction and fork the chain. Note that the constant
+cannot prevent this in either direction: a node whose configuration is ahead of it runs anyway,
+and raising it activates nothing. The safe sequence:
 
-1. Ship a node binary that supports version 15 (this is what `SUPPORTED_VERSION = 15` means --
-   the ceiling this binary is capable of executing), while `ConfigParam 8` on every live network
-   stays at its current active version.
-2. Get every validator upgraded to a binary that supports the new version before touching
-   `ConfigParam 8`.
-3. Activate version 14 first via `ConfigParam 8` once all validators are upgraded; observe
-   stability.
-4. Activate version 15 only after 14 has been stable for a period, following the same
-   all-validators-first rule.
-5. Mainnet activation happens last, after both versions have proven stable on a public testnet.
+1. Ship a node binary whose `SUPPORTED_VERSION` covers the target -- the ceiling this binary is
+   capable of executing, currently 16 -- while `ConfigParam 8` on every live network stays at
+   its current active version.
+2. Get every validator upgraded to such a binary before touching `ConfigParam 8`. This is the
+   step that actually protects the network, because nothing downstream will refuse on its own.
+3. Raise `ConfigParam 8` one version at a time, observing stability at each, and never past a
+   version some validator does not implement.
+4. Mainnet activation happens last, after the target version has proven stable on a public
+   testnet.
+
+For the 15 -> 16 transition specifically, `tools/pq/activation.py` validates a proposal against
+this sequence -- evidence bound to one release, explicit owner approvals, and a roster in which
+every validator acknowledges the binary it runs -- and emits an unsigned `ConfigParam 8` payload.
+A validated proposal is not an activation. See [pq-v16-readiness.md](pq-v16-readiness.md).
