@@ -1,0 +1,88 @@
+// Copyright 2026 TOS Blockchain Teams. SPDX-License-Identifier: LGPL-2.0-or-later
+// Wire-compatible immutable ML-DSA-44 root. See mldsa44-auth-module.fc and docs.
+import "@stdlib/common"
+import "auth-extension"
+import "pq"
+
+const MLDSA_AUTH_SUBMIT: uint32 = 0x4d4c4434
+
+struct Mldsa44AuthStorage {
+    globalId: int32;
+    publicKey: cell;
+}
+
+struct (MLDSA_AUTH_SUBMIT) Mldsa44AuthSubmission {
+    queryId: uint64;
+    envelope: cell;
+    signature: cell;
+}
+
+fun mldsaAuthIsBounced(): bool asm "INMSG_BOUNCED";
+fun mldsaAuthBalance(): int asm "BALANCE" "FIRST";
+fun mldsaAuthReserve(amount: int, mode: int): void asm "RAWRESERVE";
+fun mldsaAuthSend(message: cell, mode: int): void asm "SENDRAWMSG";
+
+fun mldsaAuthRelay(body: slice, value: int): void {
+    assert (body.loadUint(32) == MLDSA_AUTH_SUBMIT) throw 1811;
+    body.loadUint(64); // unsigned relayer query_id; no authorization semantics
+    val envelope = body.loadRef();
+    val signature = body.loadRef();
+    body.assertEnd();
+    var ds = contract.getData().beginParse();
+    val network = ds.loadInt(32);
+    val publicKey = ds.loadRef();
+    ds.assertEnd();
+    assert (network == authGlobalId()) throw 1801;
+
+    var auth = envelope.beginParse();
+    assert (auth.loadUint(32) == AUTH_OPCODE) throw 1811;
+    val request = auth.loadRef();
+    val cosignature = auth.loadMaybeRef();
+    auth.assertEnd();
+    if (cosignature != null) {
+        val co = cosignature!.beginParse();
+        assert (co.remainingBitsCount() == 512 && co.remainingRefsCount() == 0) throw 1808;
+    }
+    var cs = request.beginParse();
+    assert (cs.loadInt(32) == network) throw 1801;
+    val account = cs.loadAddressAny();
+    authModuleHash(account);  // rejects non-standard, cross-workchain and self targets
+    cs.loadUint(64); // epoch is enforced by the account
+    cs.loadUint(64); // nonce is enforced by the account
+    val validUntil = cs.loadUint(32);
+    assert (validUntil > blockchain.now() && validUntil <= blockchain.now() + 3600) throw 1805;
+    assert (cs.loadUint(8) <= 2) throw 1811;
+    cs.loadRef();
+    cs.assertEnd();
+
+    val message = beginCell().storeUint(authRequestHash(request), 256).endCell();
+    val context = beginCell().storeUint(0x544f532d415554482d4d4c2d4453412d34342d7631, 168).endCell();
+    assert (pqCheckMldsa44(message, context, signature, publicKey)) throw 1808;
+
+    val oldBalance = mldsaAuthBalance() - value;
+    mldsaAuthReserve(oldBalance > 0 ? oldBalance : 0, 2);
+    val relay = beginCell().storeUint(0x18, 6).storeSlice(authAddressSlice(account))
+        .storeCoins(0).storeUint(0, 1 + 4 + 4 + 64 + 32 + 1)
+        .storeUint(1, 1).storeRef(envelope).endCell();
+    mldsaAuthSend(relay, 64);
+}
+
+@on_bounced_policy("manual")
+contract Mldsa44AuthModule {
+    storage: Mldsa44AuthStorage
+    @unknown_silent_drop;
+
+    @disclaim_query_id
+    receive(msg: Mldsa44AuthSubmission) {
+        if (mldsaAuthIsBounced()) { return; }
+        mldsaAuthRelay(in.body, in.valueCoins);
+    }
+
+    receive_external(msg: UnknownOpcode) {
+        throw 1900;
+    }
+
+    get fun get_mldsa44_config(): (int, cell) {
+        return (storage.globalId, storage.publicKey);
+    }
+}
