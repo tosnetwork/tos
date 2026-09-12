@@ -373,12 +373,19 @@ class M3NodeEngine final : public RegisteredWorkchainAccountEngine {
       if (association.is_error()) return local("custody return association unavailable");
       // No match is normal: the independent late-return admission uses the
       // returned body for attribution and never invents an obligation release.
+      if (!association.ok()) {
+        auto described = describe_workchain_late_return(envelope.msg, 2, *cfg->ingress.custody_address);
+        if (described.is_error()) return local("authenticated return description unavailable");
+        auto body = vm::load_cell_slice(described.ok().original_body);
+        if (body.size_ext() == 256 && td::Bits256(body.data_bits()) != selector.owner.account)
+          return invalid("late return selector differs from authenticated attribution");
+      }
       WorkchainFailedFundedPolicy resolved{b.failed->withdrawal_limit, b.deposit->system_slots,
           b.deposit->slot_fee, b.operation_tariff->base, b.failed->issuance_billing_units};
       auto prepared = prepare_workchain_failed_funded(inbox, target.data, coordinator.data, resolved,
           b.domain, network, *cfg->ingress.custody_address, cfg->ingress.executor_address, clock.height, verifier);
-      // This intentionally incomplete TEST profile does not reinterpret an
-      // unsupported late/no-issuance/no-slot branch as a successful settlement.
+      // A failed transition is not evidence of bucket publication. Supported
+      // no-issuance paths return explicit account updates and Native transfers.
       if (prepared.is_error()) return local("funded Failed transition unavailable in test profile");
       auto accepted = prepared.move_as_ok();
       WorkchainAccountEffects result;
@@ -498,14 +505,12 @@ class M3NodeEngine final : public RegisteredWorkchainAccountEngine {
       result.registration = std::make_shared<WorkchainRegistrationPaymentResult>(std::move(payment));
     } else if (const auto* closure = std::get_if<WorkchainClosureReplayInput>(&wire)) {
       const auto key = closure->context.subject.account;
-      if (coordinator.data.not_null()) {
-        TRY_RESULT(state, decode_workchain_coordinator_state(coordinator.data));
-        if (state.unexpected.not_null()) {
-          TRY_RESULT(bucket, decode_workchain_unexpected_bucket(state.unexpected, {256, 256}, 4096));
-          for (const auto& entry : bucket.entries)
-            if (entry.account_id && *entry.account_id == key)
-              return invalid("closure blocked by attributed unexpected value");
-        }
+      if (system.unexpected.not_null()) {
+        auto bucket = decode_workchain_unexpected_bucket(system.unexpected, {256, 256}, 4096);
+        if (bucket.is_error()) return local("authenticated closure bucket unavailable");
+        for (const auto& entry : bucket.ok().entries)
+          if (entry.account_id && *entry.account_id == key)
+            return invalid("closure blocked by attributed unexpected value");
       }
       TRY_RESULT(native, read(accounts, key, clock.gen_utime, true));
       auto decoded_account = decode_workchain_confidential_account(native.data);
