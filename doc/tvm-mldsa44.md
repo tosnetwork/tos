@@ -30,11 +30,16 @@ narrow and worth stating: a VM built with no configuration to consult now runs
 at 16, so `lite-client runmethod`, Fift and `run_get_method` can reach this
 instruction; the collator writes 16 into each block's informational
 `gen_software` field, which `validate-query` never reads; and the message above
-stops being logged on a chain already configured at 16. Between global versions
-15 and 16 this tree has exactly one semantic difference -- whether this
-instruction exists -- so nothing else moves with it. It is step one of the
+stops being logged on a chain already configured at 16. It is step one of the
 sequence in `doc/GlobalVersions.md`: ship a capable binary first, upgrade every
 validator, and only then consider ConfigParam 8.
+
+Note that raising the *configured* version to 16 is not limited to this
+instruction. `crypto/block/transaction.cpp` skips the `check_addr_rewrite_length`
+test when an incoming `StateInit` revives a frozen account at version 16, where
+version 15 applies it to every status. That change arrived separately with the
+pre-launch audit work; `doc/ConfigParam.md` records both differences together,
+because a ConfigParam 8 transition activates them together.
 
 ConfigParam 8, genesis and capability masks are untouched by this change.
 Activation is therefore a coordinated protocol configuration decision with
