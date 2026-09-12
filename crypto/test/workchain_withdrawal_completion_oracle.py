@@ -22,7 +22,64 @@ def checked(value):
     return value
 
 
+def check_phase_transition(data):
+    """D73's existing remaining-work slot; actual queue and committed W cuts.
+
+    Queue membership comes from the adapter's Native queue enumeration, not
+    payout_absent(), its logs, or a proposed effects record. This does not turn
+    an orphan fixture into an authenticated predecessor.
+    """
+    i, o = data['input'], data['observed']
+    require(o['published'] is True, 'PHASE_PUBLICATION')
+    steps = o['steps']
+    require([step['name'] for step in steps] == ['prepare', 'owner5', 'owner6'],
+            'PHASE_EXECUTION_PATH')
+    identity = i['withdrawal_id']
+    message = dict(source=i['custody'], created_lt=checked(i['created_lt']),
+                   hash=i['payout_hash'])
+    def record(state):
+        matches = [r for r in state['withdrawals'] if r['id'] == identity]
+        require(len(matches) <= 1, 'PHASE_IDENTITY_UNIQUE')
+        return matches[0] if matches else None
+    previous = None
+    for step in steps:
+        before, after = step['before'], step['after']
+        require(step['validation'] == 'accept', 'PHASE_VALIDATOR_EXECUTION')
+        require(checked(after['height']) == checked(before['height'] + 1), 'PHASE_BLOCK_HEIGHT')
+        require(step['old_root'] == before['root'] and step['new_root'] == after['root'],
+                'PHASE_QUEUE_BINDING')
+        if previous is not None:
+            require(before['root'] == previous['root'], 'PHASE_ROOT_CONTINUITY')
+        old, new = record(before), record(after)
+        require(new is not None, 'PHASE_RECORD_PRESENT')
+        for field in ('principal', 'opened', 'window', 'created_lt', 'phase', 'Q'):
+            checked(new[field])
+        require(new['created_lt'] == message['created_lt'], 'PHASE_QUEUE_BINDING')
+        if step['name'] == 'prepare':
+            require(old is None and new['phase'] == 0 and new['Q'] == 0 and
+                    new['opened'] == after['height'], 'PHASE_PREPARE_RECORD')
+            require(after['queue'].count(message) == 1, 'PHASE_PAIRED_ENQUEUE')
+        else:
+            require(old is not None, 'PHASE_AUTHENTICATED_PREDECESSOR')
+            require(all(new[k] == old[k] for k in ('principal', 'opened', 'window', 'created_lt')),
+                    'PHASE_RECORD_BINDING')
+            require(new['phase'] in (0, 1), 'PHASE_ENCODING')
+            if new['phase'] == 1:
+                require(new['Q'] > new['opened'], 'PHASE_STRICT_HEIGHT')
+                require(checked(new['Q'] + new['window']) <= (1 << 32) - 1, 'PHASE_DEADLINE')
+            if old['phase'] == 1:
+                require(new['phase'] == 1 and new['Q'] == old['Q'], 'PHASE_Q_IMMUTABLE')
+            else:
+                absent_later = before['height'] > old['opened'] and message not in before['queue']
+                require(new['phase'] == int(absent_later), 'PHASE_QUEUE_BINDING')
+                require(new['Q'] == (before['height'] if absent_later else 0), 'PHASE_QUEUE_BINDING')
+        previous = after
+    require(record(previous)['phase'] == 1, 'PHASE_TRUE_LATER_OBSERVED')
+
+
 def check(case, data):
+    if case == 'phase-transition':
+        return check_phase_transition(data)
     i, o = data['input'], data['observed']
     require(o['published'] is True, 'DISPOSITION_MUST_PUBLISH')
     before, after = o['before'], o['after']

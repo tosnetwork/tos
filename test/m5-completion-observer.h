@@ -277,6 +277,89 @@ inline SweepNativeObservation sweep_native_observation(const td::Ref<vm::Cell>& 
 } // namespace m3_live::completion
 
 namespace m3_live {
+// D73 adapter: enumerate actual Native queue messages. Do not call the
+// engine's absence predicate to manufacture this predicate's expected result.
+inline std::string phase_snapshot(const td::Ref<vm::Cell>& root, std::uint32_t limit) {
+  using namespace block; using namespace completion;
+  gen::ShardStateUnsplit::Record state; CHECK(::tlb::unpack_cell(root,state));
+  auto owner=m5_live_account(account_data(root,wallet_account(0)),limit);
+  std::ostringstream out;
+  out << "{\"root\":" << quote(td::Bits256(root->get_hash().bits()).to_hex())
+      << ",\"height\":" << state.seq_no << ",\"withdrawals\":[";
+  bool first=true;
+  for(const auto& r:owner.control.withdrawals) {
+    if(!first)out << ','; first=false;
+    out << "{\"id\":" << quote(r.withdrawal_id.to_hex())
+        << ",\"principal\":" << r.principal << ",\"opened\":" << r.timing.opened_height
+        << ",\"window\":" << r.timing.settlement_blocks << ",\"created_lt\":" << r.timing.payout_created_lt
+        << ",\"phase\":" << unsigned(r.timing.phase) << ",\"Q\":" << r.timing.queue_removed_height << '}';
+  }
+  out << "],\"queue\":["; first=true;
+  gen::OutMsgQueueInfo::Record queue; CHECK(::tlb::unpack_cell(state.out_msg_queue_info,queue));
+  auto append=[&](td::Ref<vm::CellSlice> leaf) {
+    gen::EnqueuedMsg::Record enqueued; tlb::MsgEnvelope::Record_std envelope;
+    gen::CommonMsgInfo::Record_int_msg_info info;
+    CHECK(tlb::csr_unpack(leaf,enqueued) && tlb::unpack_cell(enqueued.out_msg,envelope));
+    CHECK(::tlb::unpack_cell_inexact(envelope.msg,info));
+    tos::WorkchainId wc; td::Bits256 source;
+    if(!tlb::t_MsgAddressInt.extract_std_address(info.src,wc,source) || wc!=2)return true;
+    if(!first)out << ','; first=false;
+    out << "{\"source\":" << quote(source.to_hex()) << ",\"created_lt\":" << info.created_lt
+        << ",\"hash\":" << quote(td::Bits256(envelope.msg->get_hash().bits()).to_hex()) << '}';
+    return true;
+  };
+  vm::AugmentedDictionary outgoing(queue.out_queue,352,tlb::aug_OutMsgQueue);
+  CHECK(outgoing.check_for_each_extra([&](auto leaf,auto,td::ConstBitPtr,int){return append(leaf);}));
+  if(queue.extra->prefetch_ulong(1)) {
+    auto tail=queue.extra; tail.write().advance(1);
+    gen::OutMsgQueueExtra::Record extra; CHECK(tlb::csr_unpack(tail,extra));
+    vm::AugmentedDictionary dispatch(extra.dispatch_queue,256,tlb::aug_DispatchQueue);
+    CHECK(dispatch.check_for_each_extra([&](auto leaf,auto,td::ConstBitPtr,int){
+      gen::AccountDispatchQueue::Record account; CHECK(tlb::csr_unpack(leaf,account));
+      vm::Dictionary messages(account.messages,64);
+      return messages.check_for_each([&](auto message,td::ConstBitPtr,int){return append(message);});
+    }));
+  }
+  out << "]}"; return out.str();
+}
+inline void write_phase_observation(const std::filesystem::path& fixture,
+                                    const std::filesystem::path& output) {
+  using namespace block; using namespace completion;
+  CHECK(!std::filesystem::exists(output));
+  const auto policy=observed_policy(fixture); CHECK(policy.prepare);
+  const auto limit=policy.prepare->withdrawal_limit;
+  const auto original=load(fixture/"phase-original-payout.boc");
+  gen::CommonMsgInfo::Record_int_msg_info info; CHECK(::tlb::unpack_cell_inexact(original,info));
+  tos::WorkchainId wc; td::Bits256 custody;
+  CHECK(tlb::t_MsgAddressInt.extract_std_address(info.src,wc,custody) && wc==2);
+  auto prepared=m5_live_account(account_data(load(fixture/"phase-prepare-after.boc"),wallet_account(0)),limit);
+  auto match=std::find_if(prepared.control.withdrawals.begin(),prepared.control.withdrawals.end(),
+      [&](const auto& r){return r.timing.payout_created_lt==info.created_lt;});
+  CHECK(match!=prepared.control.withdrawals.end());
+  std::ostringstream out;
+  out << "{\"input\":{\"withdrawal_id\":" << quote(match->withdrawal_id.to_hex())
+      << ",\"custody\":" << quote(custody.to_hex()) << ",\"created_lt\":" << info.created_lt
+      << ",\"payout_hash\":" << quote(td::Bits256(original->get_hash().bits()).to_hex())
+      << "},\"observed\":{\"published\":true,\"steps\":[";
+  bool first=true;
+  for(const std::string name:{"prepare","owner5","owner6"}) {
+    const auto prefix="phase-"+name;
+    CHECK(td::read_file_str((fixture/(prefix+".validation")).string()).move_as_ok()=="validate accept\n");
+    auto before=load(fixture/(prefix+"-before.boc"));
+    auto after=load(fixture/(prefix+"-after.boc"));
+    auto accepted=read_accepted_step(fixture/(prefix+".candidate"),before);
+    CHECK(accepted.state->get_hash()==after->get_hash());
+    gen::Block::Record block; CHECK(::tlb::unpack_cell(accepted.block,block));
+    vm::CellSlice update(vm::NoVm(),block.state_update);
+    if(!first)out << ','; first=false;
+    out << "{\"name\":" << quote(name) << ",\"validation\":\"accept\",\"old_root\":"
+        << quote(td::Bits256(update.prefetch_ref(0)->get_hash(0).bits()).to_hex())
+        << ",\"new_root\":" << quote(td::Bits256(update.prefetch_ref(1)->get_hash(0).bits()).to_hex())
+        << ",\"before\":" << phase_snapshot(before,limit) << ",\"after\":" << phase_snapshot(after,limit) << '}';
+  }
+  out << "]}}";
+  td::write_file(output.string(),out.str()).ensure();
+}
 inline void write_sweep_completion_observation(const std::filesystem::path& fixture,
                                                 const std::filesystem::path& output) {
   using namespace block;using namespace completion;
@@ -440,6 +523,7 @@ inline void write_paid_completion_observation(const std::filesystem::path& fixtu
 
 inline void write_completion_observation(const std::string& which,const std::filesystem::path& fixture,
                                          const std::filesystem::path& output) {
+  if(which=="phase-transition"){write_phase_observation(fixture,output);return;}
   if(which=="row4" || which=="row5-paid"){write_paid_completion_observation(fixture,output,which=="row5-paid");return;}
   if(which=="sweep-atomic"){write_sweep_completion_observation(fixture,output);return;}
   using namespace block;using namespace completion;
