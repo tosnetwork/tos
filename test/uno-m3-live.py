@@ -25,6 +25,8 @@ p.add_argument('--m5-completion-late', action='store_true',
                help='establish Q through real owner operations before importing the return')
 p.add_argument('--m5-completion-paid', action='store_true',
                help='real no-bounce payout, untouched expiry, then an owner trigger')
+p.add_argument('--completion-full-cap', action='store_true',
+               help='explicit Paid test cap of three: expiry must precede admission')
 p.add_argument('--m5-return-principal', type=int, help='explicit real-payout fixture principal')
 p.add_argument('--completion-expect-offset', type=int, choices=(-1, 0, 1),
                help='assert observed y is h plus this exact boundary offset')
@@ -37,6 +39,8 @@ p.add_argument('--failed-routing-binary', type=Path,
 a = p.parse_args()
 if a.m5_completion_paid:
     a.m5_completion_late = True
+if a.completion_full_cap and not a.m5_completion_paid:
+    p.error('full-cap fixture requires Paid completion')
 if a.m5_bucket_small or a.m5_completion_late:
     a.m5_failed = True
 if a.failed_routing_probe:
@@ -262,6 +266,8 @@ subprocess.run(['cmake', '-DCOUNTER_FIXTURE_CHILD=ON', f'-DCOUNTER_FIXTURE_PATH=
                 f'-DCOLLATOR={build / "test-m3-live"}', '-P', str(prepare)], check=True)
 print(f'Test-owned fixture: {fixture}', flush=True)
 shutil.copyfile(fixture / 'counter-state.boc', fixture / 'current-state.boc')
+if a.completion_full_cap:
+    (fixture / 'completion-full-cap.txt').write_text('3\n')
 subprocess.run([str(build / 'test-m3-live'), '--prepare-m5-completion-config' if a.m5_completion_late else
                 '--prepare-m5-return-config' if a.m5_return_route else
                 '--prepare-m5-debit-config' if a.m5_debit else '--prepare-m4-config', str(fixture)], check=True)
@@ -462,6 +468,7 @@ if a.m5_debit:
                               aux_blind=101,principal=137,outward_fee=17,fee=257,**limits)
                 withdrawal_request(followup)
                 shutil.copyfile(fixture/'current-state.boc',fixture/'completion-before-state.boc')
+                shutil.copyfile(fixture/'accepted-block.id',fixture/'completion-before-block.id')
                 completed=subprocess.run([str(build/'test-m3-live'),str(fixture)],capture_output=True,text=True)
                 (fixture/'completion-execution.log').write_text(completed.stdout+completed.stderr)
                 print(completed.stdout,end='');print(completed.stderr,end='',file=sys.stderr)
