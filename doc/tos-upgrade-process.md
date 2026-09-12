@@ -15,7 +15,7 @@ This document is the operational counterpart to [tos-release-policy.md](tos-rele
 This document complements:
 
 - [tos-release-policy.md](tos-release-policy.md) -- stability levels, compatibility windows, deprecation policy
-- [tos-standards-map.md](tos-standards-map.md) -- which surfaces are standards and who owns them
+- [tos-standards-map.md](https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-standards-map.md) -- which surfaces are standards and who owns them
 - [ai-actors.md](https://github.com/tosnetwork/doc/blob/main/tos-blockchain/ai-actors.md) -- AI actor workflow direction
 
 ## 2. Change Categories
@@ -160,7 +160,7 @@ Every change proposal must pass the relevant reviews before staging:
 - **Security review.** Required for all protocol changes and any change that affects signing, key management, or permission semantics.
 - **API contract review.** Required for any change to JSON-RPC method names, request/response shapes, error codes, or behavior. Must verify that the change is consistent with the OpenAPI spec (`doc/openapi.yaml`).
 - **Operator workflow review.** Required for any change to `tosctl` commands, config schema, or service management behavior.
-- **Owner approval.** The owner of the affected standards family (as defined in [tos-standards-map.md](tos-standards-map.md)) must approve the change.
+- **Owner approval.** The owner of the affected standards family (as defined in [tos-standards-map.md](https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-standards-map.md)) must approve the change.
 
 ### 4.3 Staging
 

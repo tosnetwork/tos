@@ -14,12 +14,7 @@ them link there directly.
 - [GlobalVersions.md](GlobalVersions.md) - global versions and the capabilities each enables
 - [TosSites.md](TosSites.md) - TOS sites and the RLDP HTTP proxy
 - [Zerostate.md](Zerostate.md) - zerostate format
-- [workchain-execution-registry.md](workchain-execution-registry.md) - workchain execution registry
-- [tos-tep-token-standards.md](tos-tep-token-standards.md) - Jetton and NFT token extension proposals
-- [tos-message-policy.md](tos-message-policy.md) - message envelope and lifecycle policy (approved)
-- [tos-standards-map.md](tos-standards-map.md) - which standards exist and what each one covers
-- [toscan-query-api.md](toscan-query-api.md) - the implemented public explorer index and query routes
-- [openapi.yaml](openapi.yaml) - the REST surface
+- [openapi.yaml](openapi.yaml) - the REST surface; a running node advertises this path from `/api-info`
 
 ## Post-quantum authentication
 

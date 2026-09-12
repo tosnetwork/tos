@@ -13,7 +13,7 @@ The goal is to answer:
 
 > What compatibility promises does TOS make, how long do they last, and how are changes communicated?
 
-This document complements [tos-standards-map.md](tos-standards-map.md).
+This document complements [tos-standards-map.md](https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-standards-map.md).
 For AI actor work, it governs how agent account, task actor, service actor, verifier actor, and workflow-indexing surfaces move from experimental examples to supported or stable standards.
 
 ## Policy Rule
