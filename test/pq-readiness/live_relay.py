@@ -29,15 +29,15 @@ import urllib.request
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(ROOT/'test/tostester/src'), str(ROOT/'test/mldsa-auth'),
-                str(ROOT/'test/auth-extensions')]
+                str(ROOT/'test/auth-extensions'), str(ROOT/'test/pq-readiness')]
 
 import nacl.signing
 from pytosiq_core import Address, Cell, ExternalMsgInfo, MessageAny
 from contract import (AuthState, Mldsa44ModuleBlueprint, NativeMldsa44Signer,
                       WalletV5, WalletV5Blueprint, WalletV5State)
-from contract.pq_lite_transport import (LiteClientError, LiteClientTransport,
-                                        WalletSigner, WalletV5Signer)
+from contract.pq_lite_transport import LiteClientTransport
 from contract.pq_relayer import AttemptJournal, LOSS_ACK, PqRelayer
+from live_chain import funded_payer, wait_for
 
 TARGET_VALUE = 1_000_000_000
 FUNDING_CAP = 2_000_000_000
@@ -47,51 +47,6 @@ def source_commit() -> str:
     """Bind a report to the tree that produced it, for the activation precheck."""
     return subprocess.run(['git', 'rev-parse', 'HEAD'], cwd=ROOT, check=True,
                           capture_output=True, text=True).stdout.strip()
-
-
-def faucet(control: str, address: Address, amount: int) -> None:
-    """The zerostate wallet, which is the only pre-funded account on a new chain."""
-    body = json.dumps({'address': address.to_str(False), 'amount': amount}).encode()
-    request = urllib.request.Request(f'http://{control}/transfer', data=body,
-                                     headers={'content-type': 'application/json'})
-    with urllib.request.urlopen(request, timeout=120) as response:
-        answer = json.loads(response.read())
-    if not answer.get('ok', True):
-        raise RuntimeError(f'faucet refused to fund {address.to_str(False)}: {answer}')
-
-
-def wait_for(condition, what: str, attempts: int = 40, seconds: float = 2.0):
-    """A chain answers when it has a block, not when it is asked."""
-    for _ in range(attempts):
-        try:
-            value = condition()
-            if value:
-                return value
-        except LiteClientError:
-            pass
-        time.sleep(seconds)
-    raise RuntimeError(f'the chain never reached: {what}')
-
-
-def deploy_by_external(transport: LiteClientTransport, blueprint: WalletV5Blueprint,
-                       view: WalletV5, initial, valid_until: int) -> Address:
-    """A wallet accepts external messages, so it can deploy itself once funded."""
-    body = view.sign(None, initial, valid_until)
-    message = MessageAny(info=ExternalMsgInfo(None, blueprint.address, 0),
-                         init=blueprint.state_init, body=body).serialize()
-    transport.broadcast_external(message)
-
-    def deployed():
-        # The deploying message is itself signed, so it consumes seqno 0 and the
-        # data cell no longer hashes to the one the address came from. Identity
-        # has to be checked on what does not change: the key and the wallet id.
-        live = WalletV5State.parse(
-            Cell.one_from_boc(transport.account_data(blueprint.address).boc()))
-        return (live.public_key == initial.public_key
-                and live.wallet_id == initial.wallet_id and live.seqno == 1)
-
-    wait_for(deployed, f'{blueprint.address.to_str(False)} is deployed')
-    return blueprint.address
 
 
 class TamperedSigner:
@@ -137,19 +92,9 @@ def main() -> int:
     events = []
 
     # ---- the funding wallet, which pays for everything that follows ---------
-    payer_key = nacl.signing.SigningKey(os.urandom(32))
-    payer = WalletV5Blueprint(codes['wallet-func'], 0, network,
-                              payer_key.verify_key.encode(), key=payer_key)
-    faucet(args.control, payer.address, 30)
-    wait_for(lambda: transport.balance(payer.address) > 0, 'the funding wallet is funded')
-    payer_view = WalletV5(None, payer.address, network, payer_key)
-    deploy_by_external(transport, payer, payer_view,
-                       WalletV5State(True, 0, 0, payer_key.verify_key.encode()),
-                       chain_time + 600)
-    signer = WalletV5Signer(transport, payer.address, payer_key)
-    transport.attach_wallet(WalletSigner(payer.address, signer.sign_body, signer.read_seqno))
+    payer, _ = funded_payer(transport, args.control, codes['wallet-func'], network, tos=30)
     events.append({'step': 'funding-wallet-deployed', 'address': payer.address.to_str(False),
-                   'balance': transport.balance(payer.address), 'seqno': signer.read_seqno()})
+                   'balance': transport.balance(payer.address)})
 
     # ---- the module, which refuses external messages and must be funded in --
     pq_key = out/'PUBLIC-TEST-KEY'
