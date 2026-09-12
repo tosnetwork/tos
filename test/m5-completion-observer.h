@@ -227,7 +227,7 @@ inline std::string snapshot_json(const Snapshot& s,std::uint64_t issuance_fees,
 
 struct SweepNativeObservation {
   std::uint64_t transferred=0, transaction_fees=0, block_fees=0;
-  unsigned transfer_count=0;
+  unsigned transfer_count=0, other_transfer_count=0;
 };
 inline SweepNativeObservation sweep_native_observation(const td::Ref<vm::Cell>& root,
     const td::Bits256& coordinator,const td::Bits256& custody) {
@@ -241,10 +241,16 @@ inline SweepNativeObservation sweep_native_observation(const td::Ref<vm::Cell>& 
   CHECK(transfers.check_for_each([&](auto cell,td::ConstBitPtr,int){
     gen::UnoV2NativeTransfer::Record transfer;
     CHECK(::tlb::unpack_cell(cell->prefetch_ref(),transfer));
-    CHECK(transfer.source==coordinator && transfer.destination==custody);
     CurrencyCollection value;CHECK(value.unpack(transfer.value));
-    out.transferred=add(out.transferred,u64(value.tomis));
-    CHECK(out.transfer_count==0);++out.transfer_count;return true;
+    if(transfer.source==coordinator && transfer.destination==custody){
+      out.transferred=add(out.transferred,u64(value.tomis));
+      CHECK(out.transfer_count==0);++out.transfer_count;
+    }else{
+      // Keep a misrouted but validly encoded transfer observable. The physical
+      // credit oracle, not an earlier parser CHECK, must judge that mutation.
+      CHECK(out.other_transfer_count<UINT_MAX);++out.other_transfer_count;
+    }
+    return true;
   }));
   gen::Block::Record b;gen::BlockExtra::Record e;
   CHECK(::tlb::unpack_cell(root,b)&&::tlb::unpack_cell(b.extra,e));
@@ -320,6 +326,7 @@ inline void write_sweep_completion_observation(const std::filesystem::path& fixt
      <<",\"after\":"<<snapshot_json(z,native.block_fees,order)
      <<",\"custody_transfer\":"<<difference(z.reserve,a.reserve)
      <<",\"declared_native_transfer\":"<<native.transferred
+     <<",\"other_native_transfers\":"<<native.other_transfer_count
      <<",\"operator_slot_income\":"<<income
      <<",\"native_transaction_fees\":"<<native.transaction_fees
      <<",\"committed_batch_id\":"<<quote(batch)<<",\"component_batch_ids\":["
