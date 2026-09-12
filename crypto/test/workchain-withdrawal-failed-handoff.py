@@ -10,10 +10,11 @@ import subprocess
 import sys
 
 TESTS = tuple('test-workchain-withdrawal-failed-' + suffix for suffix in (
-    'credit-y', 'release', 'identity', 'topup', 'return-cost', 'remainder',
-    'phase0', 'conservation', 'vq-refusals', 'onoff', 'oracle-control', 'shortfall',
+    'credit-y', 'release', 'identity', 'return-cost', 'bucket-disposition',
+    'phase0', 'conservation', 'vq-refusals', 'onoff', 'oracle-control',
 ))
-MARKER = 'WITHDRAWAL-FAILED_OBSERVED:'
+# D78: prior prelock observations cannot satisfy the changed contract.
+MARKER = 'WITHDRAWAL-FAILED_D78_OBSERVED:'
 
 
 def check(build):

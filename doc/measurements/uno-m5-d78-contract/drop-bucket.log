@@ -1,0 +1,14 @@
+.F...........
+======================================================================
+FAIL: test_bucket_disposition_is_mandatory (__main__.Readiness.test_bucket_disposition_is_mandatory)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/tmp9d5xb7v9/workchain-withdrawal-failed-handoff-test.py", line 47, in test_bucket_disposition_is_mandatory
+    self.assertIn(name, handoff.TESTS)
+    ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'test-workchain-withdrawal-failed-bucket-disposition' not found in ('test-workchain-withdrawal-failed-credit-y', 'test-workchain-withdrawal-failed-release', 'test-workchain-withdrawal-failed-identity', 'test-workchain-withdrawal-failed-return-cost', 'test-workchain-withdrawal-failed-phase0', 'test-workchain-withdrawal-failed-conservation', 'test-workchain-withdrawal-failed-vq-refusals', 'test-workchain-withdrawal-failed-onoff', 'test-workchain-withdrawal-failed-oracle-control')
+
+----------------------------------------------------------------------
+Ran 13 tests in 0.007s
+
+FAILED (failures=1)
