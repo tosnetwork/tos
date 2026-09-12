@@ -385,6 +385,8 @@ inline void write_completion_observation(const std::string& which,const std::fil
           right.account.system_pending.size()+1==left.account.system_pending.size());
     auto selected=td::read_file_str((fixture/"full-slot-3.receipt.id").string()).move_as_ok();
     while(!selected.empty() && (selected.back()=='\n' || selected.back()=='\r')) selected.pop_back();
+    auto selected_bytes=td::hex_decode(selected).move_as_ok(); CHECK(selected_bytes.size()==32);
+    td::Bits256 selected_id; selected_id.as_slice().copy_from(selected_bytes); selected=selected_id.to_hex();
     std::map<std::string,std::string> expected,actual;
     for(const auto& r:left.account.system_pending)
       expected.emplace(r.receipt_id.to_hex(),encode_workchain_deposit_receipt(r).move_as_ok()->get_hash().to_hex());
