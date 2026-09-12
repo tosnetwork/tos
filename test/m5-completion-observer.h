@@ -1,6 +1,7 @@
 #pragma once
 // Test adapter: read committed Native artifacts, not proposed result amounts.
 #include "m5-live-failed.h"
+#include "test/workchain-m5-sweep-input.h"
 #include <map>
 #include <sstream>
 
@@ -15,6 +16,26 @@ inline std::uint64_t add(std::uint64_t a, std::uint64_t b) {
 }
 inline std::uint64_t sub(std::uint64_t a, std::uint64_t b) {
   std::uint64_t result; CHECK(!__builtin_sub_overflow(a,b,&result)); return result;
+}
+inline std::uint64_t mul(std::uint64_t a, std::uint64_t b) {
+  std::uint64_t result; CHECK(!__builtin_mul_overflow(a,b,&result)); return result;
+}
+inline WorkchainUnexpectedBucket observed_bucket(const td::Ref<vm::Cell>& root,int budget) {
+  bool special=false;auto bits=vm::load_cell_slice_special(root,special);
+  CHECK(!special && bits.size()>=112);bits.advance(48);
+  WorkchainUnexpectedLimits counts{static_cast<std::uint32_t>(bits.fetch_ulong(32)),
+                                  static_cast<std::uint32_t>(bits.fetch_ulong(32))};
+  return decode_workchain_unexpected_bucket(root,counts,budget).move_as_ok();
+}
+inline block::m3_test::M3TestBusinessParameters observed_policy(const std::filesystem::path& fixture,int* budget=nullptr) {
+  auto zero=load(fixture/"zerostate.boc");
+  tos::BlockIdExt id{tos::BlockId{tos::masterchainId,tos::shardIdAll,0},zero->get_hash().bits(),td::Bits256::zero()};
+  auto config=ConfigInfo::extract_config(zero,id,Config::needWorkchainInfo|Config::needCapabilities).move_as_ok();
+  auto ingress=load_workchain_native_ingress_table(*config).move_as_ok().at(2);
+  auto parameters=decode_workchain_engine_parameters(ingress.engine_configuration).move_as_ok();
+  CHECK(parameters.resources.state.max_cells<=INT_MAX);
+  if(budget)*budget=static_cast<int>(parameters.resources.state.max_cells);
+  return m3_test::decode_m3_test_business_parameters(parameters.parameters).move_as_ok();
 }
 inline std::string quote(const std::string& value) {
   // All strings written here are fixed identifiers, hexadecimal hashes or
@@ -96,6 +117,23 @@ inline std::uint64_t book(const std::filesystem::path& fixture, unsigned height,
         retained=sub(retained,u64(moved.tomis)); return true;
       }));
       total=add(total,retained);
+    } else if(m3_test::is_m5_test_sweep(candidate)) {
+      m3_test::decode_m5_test_sweep(candidate).ensure();
+      // One selected-entry sweep is the scope of this fixture. Bind the saved
+      // predecessor through the real Merkle update, not a proposed effects list.
+      auto before=load(fixture/"completion-sweep-before-state.boc");
+      gen::ShardStateUnsplit::Record state;CHECK(::tlb::unpack_cell(before,state)&&add(state.seq_no,1)==n);
+      gen::Block::Record b;CHECK(::tlb::unpack_cell(root,b));
+      auto linked=vm::MerkleUpdate::apply(before,b.state_update).move_as_ok();CHECK(linked.not_null());
+      int budget;auto policy=observed_policy(fixture,&budget);CHECK(policy.sweep&&policy.deposit&&policy.operation_tariff);
+      CHECK(policy.sweep->count==1);
+      auto coordinator=decode_workchain_coordinator_state(native_account(before,td::Bits256::zero()).data).move_as_ok();
+      auto bucket=observed_bucket(coordinator.unexpected,budget);
+      CHECK(!bucket.entries.empty()&&bucket.entries.front().account_id&&!bucket.entries.front().return_failed);
+      const auto fee=add(policy.deposit->slot_fee,mul(policy.operation_tariff->base,policy.sweep->issuance_billing_units));
+      // R_book comes from the old entry and authenticated prices. It must not
+      // copy the actual transfer: omitting that transfer must remain visible.
+      total=add(total,sub(u64(bucket.entries.front().tomis),fee));
     } else {
       auto replay=m3_test::decode_m5_accounting_replay(candidate).move_as_ok();
       if(auto withdrawal=std::get_if<WorkchainWithdrawalInput>(&replay)) {
@@ -227,6 +265,68 @@ inline SweepNativeObservation sweep_native_observation(const td::Ref<vm::Cell>& 
 } // namespace m3_live::completion
 
 namespace m3_live {
+inline void write_sweep_completion_observation(const std::filesystem::path& fixture,
+                                                const std::filesystem::path& output) {
+  using namespace block;using namespace completion;
+  CHECK(!std::filesystem::exists(output));
+  const auto validation=td::read_file_str((fixture/"enabled.result.validation.result").string());
+  if(validation.is_error()||validation.ok()!="validate accept\n") {
+    td::write_file(output.string(),"{\"input\":{},\"observed\":{\"published\":false}}\n").ensure();return;
+  }
+  auto before=load(fixture/"completion-sweep-before-state.boc");
+  CHECK(before->get_hash()==load(fixture/"completion-before-state.boc")->get_hash());
+  auto accepted=read_accepted_step(fixture/"enabled.candidate",before);
+  m3_test::decode_m5_test_sweep(m4_recorded_candidate(accepted.block)).ensure();
+  auto zero=load(fixture/"zerostate.boc");
+  tos::BlockIdExt id{tos::BlockId{tos::masterchainId,tos::shardIdAll,0},zero->get_hash().bits(),td::Bits256::zero()};
+  auto config=ConfigInfo::extract_config(zero,id,Config::needWorkchainInfo|Config::needCapabilities).move_as_ok();
+  auto ingress=load_workchain_native_ingress_table(*config).move_as_ok().at(2);CHECK(ingress.custody_address);
+  int budget;auto policy=observed_policy(fixture,&budget);
+  CHECK(policy.sweep&&policy.failed&&policy.deposit&&policy.operation_tariff&&policy.sweep->count==1);
+  auto a=snapshot(fixture,before,*ingress.custody_address,policy.failed->withdrawal_limit,budget);
+  auto z=snapshot(fixture,accepted.state,*ingress.custody_address,policy.failed->withdrawal_limit,budget);
+  CHECK(!a.bucket.entries.empty());const auto& entry=a.bucket.entries.front();
+  CHECK(entry.account_id&&*entry.account_id==wallet_account(0)&&!entry.return_failed);
+  CHECK(a.bucket.sweep_sequence&&z.bucket.sweep_sequence);
+  std::vector<std::string> order;for(const auto& [key,value]:a.pending)order.push_back(key);
+  for(const auto& [key,value]:z.pending)if(!a.pending.count(key))order.push_back(key);
+  auto native=sweep_native_observation(accepted.block,ingress.executor_address,*ingress.custody_address);
+  // D60 spendable surplus distinguishes retained slot income from the g that
+  // passes through coordinator. Both protected components are independently read.
+  auto difference=[](std::uint64_t after,std::uint64_t before){
+    CHECK(after<=INT64_MAX&&before<=INT64_MAX);std::int64_t result;
+    CHECK(!__builtin_sub_overflow(static_cast<std::int64_t>(after),static_cast<std::int64_t>(before),&result));
+    return result;
+  };
+  // Preserve a negative observed surplus delta for the named oracle. Rejecting
+  // it here would hide a missing-holdings mutation behind adapter arithmetic.
+  auto income=difference(z.coordinator,a.coordinator);std::int64_t next;
+  CHECK(!__builtin_sub_overflow(income,difference(z.holdings,a.holdings),&next));income=next;
+  CHECK(!__builtin_sub_overflow(income,difference(z.refundable,a.refundable),&next));income=next;
+  auto batch=accepted.block->get_hash().to_hex();
+  gen::ShardStateUnsplit::Record state;CHECK(::tlb::unpack_cell(accepted.state,state));
+  std::ostringstream out;
+  out<<"{\"input\":{\"x\":0,\"withdrawal_id\":"<<quote(td::Bits256::zero().to_hex())
+     <<",\"y\":"<<u64(entry.tomis)<<",\"slot\":"<<policy.deposit->slot_fee
+     <<",\"base\":"<<policy.operation_tariff->base<<",\"units\":"<<policy.sweep->issuance_billing_units
+     <<",\"account_id\":"<<quote(entry.account_id->to_hex())
+     <<"},\"observed\":{\"published\":true,\"before\":"<<snapshot_json(a,0,order)
+     <<",\"after\":"<<snapshot_json(z,native.block_fees,order)
+     <<",\"custody_transfer\":"<<native.transferred
+     <<",\"operator_slot_income\":"<<income
+     <<",\"native_transaction_fees\":"<<native.transaction_fees
+     <<",\"committed_batch_id\":"<<quote(batch)<<",\"component_batch_ids\":["
+     <<quote(native.transfer_count?batch:"")<<','<<quote(batch)<<','<<quote(batch)<<','<<quote(batch)
+     <<"],\"sweep_sequence_before\":"<<*a.bucket.sweep_sequence
+     <<",\"sweep_sequence_after\":"<<*z.bucket.sweep_sequence
+     <<",\"authorized_sequence\":"<<policy.sweep->sequence
+     <<",\"height\":"<<state.seq_no<<",\"earliest_height\":"<<policy.sweep->earliest_height
+     <<"},\"provenance\":{\"before\":"<<quote(before->get_hash().to_hex())
+     <<",\"after\":"<<quote(accepted.state->get_hash().to_hex())<<",\"block\":"<<quote(batch)
+     <<",\"old_entry\":"<<bucket_entry_json(entry)
+     <<",\"D\":\"structural atomic-operation zero, not a persisted counter\"}}\n";
+  td::write_file(output.string(),out.str()).ensure();
+}
 inline void write_paid_completion_observation(const std::filesystem::path& fixture,
                                                const std::filesystem::path& output, bool row5_predecessor=false) {
   using namespace block; using namespace completion;
@@ -320,6 +420,7 @@ inline void write_paid_completion_observation(const std::filesystem::path& fixtu
 inline void write_completion_observation(const std::string& which,const std::filesystem::path& fixture,
                                          const std::filesystem::path& output) {
   if(which=="row4" || which=="row5-paid"){write_paid_completion_observation(fixture,output,which=="row5-paid");return;}
+  if(which=="sweep-atomic"){write_sweep_completion_observation(fixture,output);return;}
   using namespace block;using namespace completion;
   CHECK(which=="row6" || which=="row5" || which=="bucket-small" || which=="bucket-full" || which=="bucket-closed");
   CHECK(!std::filesystem::exists(output));
