@@ -196,3 +196,45 @@ Completion is now **3/8** (row4, bucket-small, row6). The coordinator corrected
 the project inventory to 49 across seven runners (9/10/8/8/7/6/1); the other six
 runners were not reaudited here and no closure is inferred for them. Earlier
 27-slot totals describe only prepare, failed and completion, not the project.
+
+## Row5 failure-layer investigation (not slot closure)
+
+The owner's try-1/otherwise-2 ruling yields different answers for P and W.
+`measurements/uno-m5-withdrawal-completion/row5-controls/` preserves actual
+accepted observations, validation results and exact isolated header patches.
+Replay uses the existing carrier's `shadow_binary` and `replay_paid` against
+the late fixture after an independently observed Paid closure. No production
+header or frozen oracle was edited.
+
+* **P: try 1 succeeds.** In unmatched late admission, redirect one surviving
+  record's payout LT to the returned original payout LT. The latter record is
+  already closed. IDs/principals are unchanged; actual historical payment
+  enumeration changes P by +9,999,863 and W by zero. The intact oracle rejects
+  at `DELTA_P`, with `ORACLE_MISSING:DELTA_P` when disabled.
+* **W: outcome 2 for the declared account's obligation set.** W is the sum of
+  installed record principals, not a separately writable balance. Helper
+  `released_p/released_w` metadata has no publication consumer. Decrement a
+  surviving record's principal by one with checked subtraction in unmatched
+  late admission: actual P stays unchanged, actual W decreases one, and
+  `RECORD_CLOSURE` rejects the changed ID-to-principal map. This is specifically
+  an obligation change caused by late admission, not a generic refusal. The
+  same receipt and late dispatch remain intact. Removing ONLY that upstream
+  oracle on the same accepted artifact reaches `DELTA_W`; with the intact
+  oracle, DELTA_W remains a cross-check, not the primary carrier for this change.
+* A second actual mutation deletes another live record: P/W each fall 137,
+  the original closed ID remains absent, and `RECORD_CLOSURE` rejects the
+  unrelated obligation release. Both record mutants also produce the paired
+  `ORACLE_MISSING:RECORD_CLOSURE` red; restoring the header passes.
+
+The mutated live driver exits after candidate publication on its own backing
+assertion. The independent adapter requires validator acceptance and rebuilds
+the candidate state; its named oracle red is therefore not an earlier Native
+send/association rejection. Scope is this account's record projection and the
+executed late-return path, not an exhaustive proof about all account updates.
+
+Positive artifacts establish Paid block 8 (P/W -10,000,000) followed directly
+by late block 9 (P/W zero), with identical Paid-after and late-before roots.
+The old fixture's missing untouched alias was copied from its actual saved
+before-state; fresh fixture generation now writes it itself. No state was
+fabricated. Formal row5 registration/closure remains pending; completion stays
+3/8. The original requested DELTA_W red is not relabelled as observed.
