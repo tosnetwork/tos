@@ -21,6 +21,8 @@ p.add_argument('--m5-debit', action='store_true', help='stop after authenticated
 p.add_argument('--m5-return-route', action='store_true', help='deliver a funded payout to wc0 and observe the actual return')
 p.add_argument('--m5-failed', action='store_true', help='publish the funded phase-0 return atomically at custody')
 p.add_argument('--m5-bucket-small', action='store_true', help='real bounce below local issuance fees')
+p.add_argument('--m5-completion-late', action='store_true',
+               help='establish Q through real owner operations before importing the return')
 p.add_argument('--m5-return-principal', type=int, help='explicit real-payout fixture principal')
 p.add_argument('--completion-expect-offset', type=int, choices=(-1, 0, 1),
                help='assert observed y is h plus this exact boundary offset')
@@ -31,7 +33,7 @@ p.add_argument('--failed-routing-probe', action='store_true',
 p.add_argument('--failed-routing-binary', type=Path,
                help='isolated test binary for oracle-removal control only')
 a = p.parse_args()
-if a.m5_bucket_small:
+if a.m5_bucket_small or a.m5_completion_late:
     a.m5_failed = True
 if a.failed_routing_probe:
     a.m5_failed = True
@@ -61,7 +63,8 @@ if a.completion_contract:
     spec.loader.exec_module(oracle)
 
     def run_boundary(label, principal=None, offset=None):
-        args = [sys.executable, str(Path(__file__).resolve()), '--build', str(build), '--m5-bucket-small']
+        args = [sys.executable, str(Path(__file__).resolve()), '--build', str(build),
+                '--m5-bucket-small', '--m5-completion-late']
         if principal is not None:
             args += ['--m5-return-principal', str(oracle.checked(principal)),
                      '--completion-expect-offset', str(offset)]
@@ -106,7 +109,7 @@ if a.completion_contract:
         if len(entries) != 1:
             raise RuntimeError('missing unique live compile command')
         command = shlex.split(entries[0]['command'])
-        command.insert(1, '-I' + str(root))
+        command[1:1] = ['-I' + str(root), '-I' + str(repo / 'crypto/block')]
         obj = root / 'live.o'
         command[command.index('-o') + 1] = str(obj)
         with (root / 'build.log').open('w') as log:
@@ -245,7 +248,8 @@ subprocess.run(['cmake', '-DCOUNTER_FIXTURE_CHILD=ON', f'-DCOUNTER_FIXTURE_PATH=
                 f'-DCOLLATOR={build / "test-m3-live"}', '-P', str(prepare)], check=True)
 print(f'Test-owned fixture: {fixture}', flush=True)
 shutil.copyfile(fixture / 'counter-state.boc', fixture / 'current-state.boc')
-subprocess.run([str(build / 'test-m3-live'), '--prepare-m5-return-config' if a.m5_return_route else
+subprocess.run([str(build / 'test-m3-live'), '--prepare-m5-completion-config' if a.m5_completion_late else
+                '--prepare-m5-return-config' if a.m5_return_route else
                 '--prepare-m5-debit-config' if a.m5_debit else '--prepare-m4-config', str(fixture)], check=True)
 # Bind disk lookup and global.json to the actual edited TEST genesis bytes.
 # No prior DB is reused and no deployment configuration is read or written.
@@ -363,17 +367,24 @@ if a.m5_debit:
                    fee=257, **limits)
     def debit_write(name, values):
         (fixture / name).write_text(''.join(f'{k}={v}\n' for k,v in values.items()))
-    debit_write('operation.request.txt',request)
-    subprocess.run([str(build / 'test-m3-live'),'--withdrawal-payout-quote',str(fixture)],check=True)
-    request['outward_fee'] = int((fixture / 'payout.quote.txt').read_text())
-    debit_write('operation.request.txt',request)
-    subprocess.run([str(wallet),'withdrawal-points',str(fixture / 'operation.request.txt'),str(fixture / 'operation.points.txt')],check=True)
-    subprocess.run([str(build / 'test-m3-live'),'--withdrawal-debit-request',str(fixture)],check=True)
-    statement = dict(line.split('=',1) for line in (fixture / 'operation.statement.txt').read_text().splitlines())
-    debit_write('operation.request.txt',dict(request,**statement))
-    subprocess.run([str(wallet),'withdrawal-prove',str(fixture / 'operation.request.txt'),str(fixture / 'operation.proof.txt')],check=True)
-    subprocess.run([str(build / 'test-m3-live'),'--withdrawal-debit-finish',str(fixture)],check=True)
-    debit_write('operation.expected.txt',dict(before=initial,after=initial-request['principal']-request['outward_fee']-request['fee']))
+    def withdrawal_request(values):
+        debit_write('operation.request.txt',values)
+        subprocess.run([str(build / 'test-m3-live'),'--withdrawal-payout-quote',str(fixture)],check=True)
+        values['outward_fee'] = int((fixture / 'payout.quote.txt').read_text())
+        debit = values['principal'] + values['outward_fee'] + values['fee']
+        if not 0 <= debit < 2**64 or values['old_value'] < debit:
+            raise RuntimeError('fixture Withdrawal debit overflow or insufficient available')
+        debit_write('operation.request.txt',values)
+        subprocess.run([str(wallet),'withdrawal-points',str(fixture / 'operation.request.txt'),str(fixture / 'operation.points.txt')],check=True)
+        subprocess.run([str(build / 'test-m3-live'),'--withdrawal-debit-request',str(fixture)],check=True)
+        statement = dict(line.split('=',1) for line in (fixture / 'operation.statement.txt').read_text().splitlines())
+        debit_write('operation.request.txt',dict(values,**statement))
+        subprocess.run([str(wallet),'withdrawal-prove',str(fixture / 'operation.request.txt'),str(fixture / 'operation.proof.txt')],check=True)
+        subprocess.run([str(build / 'test-m3-live'),'--withdrawal-debit-finish',str(fixture)],check=True)
+        remaining = values['old_value'] - debit
+        debit_write('operation.expected.txt',dict(before=values['old_value'],after=remaining))
+        return remaining
+    available = withdrawal_request(request)
     print(f'DEBIT_FIXTURE={fixture}',flush=True)
     subprocess.run([str(build / 'test-m3-live'),str(fixture)],check=True)
     if a.m5_return_route:
@@ -392,6 +403,27 @@ if a.m5_debit:
             subprocess.run([str(build / 'test-tos-collator'), '-C', str(fixture / 'global.json'),
                             '-D', str(fixture / 'db'), '-w', '-1', '-M', str(fixture / 'payout-recipient-top1.boc'),
                             '--query-result', str(fixture / 'return-master.result')], check=True)
+            if a.m5_completion_late:
+                shutil.copyfile(fixture / 'prepare-payout.boc',fixture / 'completion-original-payout.boc')
+                old_blind = request['new_blind']
+                for number, new_blind in ((5,79),(6,83)):
+                    followup = dict(secret=101, old_value=available, old_blind=old_blind,
+                                    new_blind=new_blind, aux_blind=89, principal=137,
+                                    outward_fee=17, fee=257, **limits)
+                    available = withdrawal_request(followup)
+                    completed = subprocess.run([str(build / 'test-m3-live'),str(fixture)],
+                                               text=True,capture_output=True)
+                    (fixture / f'completion-owner-{number}.log').write_text(completed.stdout+completed.stderr)
+                    print(completed.stdout,end=''); print(completed.stderr,end='',file=sys.stderr)
+                    completed.check_returncode()
+                    advance_pair(number)
+                    subprocess.run([str(build / 'test-tos-collator'), '-C',str(fixture / 'global.json'),
+                                    '-D',str(fixture / 'db'), '-w','-1', '-M',
+                                    str(fixture / f'{number}-enabled-top1.boc'), '--query-result',
+                                    str(fixture / f'completion-owner-{number}-master.result')],check=True)
+                    old_blind = new_blind
+                shutil.copyfile(fixture / 'current-state.boc',fixture / 'completion-record-state.boc')
+                shutil.copyfile(fixture / 'completion-original-payout.boc',fixture / 'prepare-payout.boc')
             subprocess.run([str(build / 'test-m3-live'), '--failed-request', str(fixture)], check=True)
             if a.failed_routing_probe:
                 probe = fixture / 'routing-probe'

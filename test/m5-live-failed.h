@@ -9,7 +9,6 @@ inline void prepare_m5_failed_request(const std::filesystem::path& fixture) {
   const auto key = wallet_account(0);
   const auto owner = m5_live_account(account_data(load(fixture / "current-state.boc"),key),
                                    m5_live_withdrawal_limit(fixture));
-  CHECK(owner.control.withdrawals.size() == 1 && owner.control.withdrawals.front().timing.phase == 0);
   const auto bounce = load(fixture / "failed-bounce.boc");
   save_operation(fixture, block::m3_test::encode_m5_test_failed(
       {owner.account.address,td::Bits256(bounce->get_hash().bits())}),
@@ -23,11 +22,22 @@ inline void assert_m5_failed(const std::filesystem::path& fixture,
   const auto limit = m5_live_withdrawal_limit(fixture);
   const auto before = m5_live_account(account_data(previous,selector.owner.account),limit);
   const auto after = m5_live_account(account_data(step.state,selector.owner.account),limit);
-  if (after.origin_pending.empty()) {
+  const auto real_bounce = load(fixture / "failed-bounce.boc");
+  CHECK(selector.inbound_message == td::Bits256(real_bounce->get_hash().bits()));
+  const auto described = describe_workchain_late_return(real_bounce,2,custody).move_as_ok();
+  const auto found = std::find_if(before.control.withdrawals.begin(),before.control.withdrawals.end(),
+      [&](const auto& record){return record.timing.payout_created_lt == described.payout_created_lt;});
+  auto expected_control = before.control;
+  if (found != before.control.withdrawals.end())
+    expected_control.withdrawals.erase(expected_control.withdrawals.begin() +
+        std::distance(before.control.withdrawals.begin(),found));
+  CHECK(limit);
+  CHECK(encode_workchain_withdrawal_control(expected_control,*limit).move_as_ok()->get_hash() ==
+        encode_workchain_withdrawal_control(after.control,*limit).move_as_ok()->get_hash());
+  if (after.origin_pending.size() == before.origin_pending.size()) {
     CHECK(limit.has_value());
     auto expected_owner = before;
-    CHECK(expected_owner.control.withdrawals.size() == 1);
-    expected_owner.control.withdrawals.clear();
+    expected_owner.control = expected_control;
     CHECK(encode_workchain_withdrawal_account(
           {expected_owner.account, expected_owner.control, expected_owner.origin_pending}, *limit).move_as_ok()->get_hash() ==
           account_data(step.state, selector.owner.account)->get_hash());
@@ -59,19 +69,14 @@ inline void assert_m5_failed(const std::filesystem::path& fixture,
               << " account=" << entry.account_id->to_hex() << " sequence=unchanged no-issuance\n";
     return;
   }
-  CHECK(before.control.withdrawals.size() == 1 && before.control.withdrawals.front().timing.phase == 0);
-  const auto& record = before.control.withdrawals.front();
   // Close the route observation loop: this is the exact message the real wc0
   // recipient transaction exported, not merely some accepted custody import.
-  const auto real_bounce = load(fixture / "failed-bounce.boc");
-  CHECK(selector.inbound_message == td::Bits256(real_bounce->get_hash().bits()));
   gen::CommonMsgInfo::Record_int_msg_info sent, returned;
   CHECK(::tlb::unpack_cell_inexact(load(fixture / "prepare-payout.boc"),sent));
   CHECK(::tlb::unpack_cell_inexact(real_bounce,returned));
   tos::WorkchainId destination_wc; td::Bits256 destination;
   CHECK(block::tlb::t_MsgAddressInt.extract_std_address(returned.dest,destination_wc,destination));
-  CHECK(destination_wc == 2 && destination == custody && sent.created_lt == record.timing.payout_created_lt);
-  CHECK(after.control.withdrawals.empty());
+  CHECK(destination_wc == 2 && destination == custody && sent.created_lt == described.payout_created_lt);
   CHECK(before.account.available.commitment == after.account.available.commitment &&
         before.account.available.handle == after.account.available.handle &&
         before.account.auth_nonce == after.account.auth_nonce &&
@@ -87,8 +92,21 @@ inline void assert_m5_failed(const std::filesystem::path& fixture,
   CHECK(!__builtin_add_overflow(*old_coordinator.deposit_sequence,std::uint64_t{1},&sequence));
   CHECK(*coordinator.deposit_sequence == sequence);
   const auto& receipt = after.origin_pending.front();
-  const auto* origin = std::get_if<WorkchainSettlementOrigin>(&receipt.origin);
-  CHECK(origin && origin->attempt_id == record.attempt_id && workchain_system_origin_sequence(receipt.origin) == sequence);
+  gen::ShardStateUnsplit::Record observed_state; CHECK(::tlb::unpack_cell(step.state,observed_state));
+  bool late = found == before.control.withdrawals.end();
+  if (!late && found->timing.phase == 1) {
+    std::uint64_t end;
+    CHECK(!__builtin_add_overflow(found->timing.queue_removed_height,found->timing.settlement_blocks,&end));
+    late = observed_state.seq_no > end;
+  }
+  CHECK(workchain_system_origin_sequence(receipt.origin) == sequence);
+  if (late) {
+    const auto* origin = std::get_if<WorkchainDepositOrigin>(&receipt.origin);
+    CHECK(origin && origin->inbound_message == selector.inbound_message);
+  } else {
+    const auto* origin = std::get_if<WorkchainSettlementOrigin>(&receipt.origin);
+    CHECK(origin && origin->attempt_id == found->attempt_id);
+  }
   const auto recovered = m5_recorded_return(step.block);
   const auto components = m5_live_return_fee_components(fixture);
   const CurrencyCollection fee(workchain_unsigned_fee(components.total));
@@ -120,15 +138,16 @@ inline void assert_m5_failed(const std::filesystem::path& fixture,
               << " coordinator_expected=" << operating.tomis << " collected_actual=" << collected.tomis
               << " collected_expected=" << components.compute << std::endl;
   CHECK(correct_routing);
-  const CurrencyCollection principal(workchain_unsigned_fee(record.principal));
+  CurrencyCollection principal; CHECK(principal.unpack(sent.value));
   CurrencyCollection return_loss, actual_cost;
   CHECK(CurrencyCollection::sub(principal,recovered,return_loss));
   CHECK(CurrencyCollection::add(return_loss,fee,actual_cost));
   // D78: return loss is an observation, not a prelock-funded debt.
   CHECK(!amount.is_zero());
   std::cout << "FAILED_AUTHENTICATED inbound=" << selector.inbound_message.to_hex()
-            << " phase=0 recovered=" << recovered.tomis << " receipt=" << receipt.amount
+            << " late=" << late << " recovered=" << recovered.tomis << " receipt=" << receipt.amount
             << " sequence=" << *old_coordinator.deposit_sequence << "->" << sequence
-            << " W_records=0 custody=" << expected.tomis << " fees=" << fee.tomis << std::endl;
+            << " W_records=" << after.control.withdrawals.size()
+            << " custody=" << expected.tomis << " fees=" << fee.tomis << std::endl;
 }
 } // namespace m3_live

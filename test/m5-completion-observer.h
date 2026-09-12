@@ -226,7 +226,10 @@ inline void write_completion_observation(const std::string& which,const std::fil
   const auto limit=policy.failed->withdrawal_limit;
   auto old_owner=m5_live_account(account_data(before,wallet_account(0)),limit);
   auto reference=old_owner;
-  if(reference.control.withdrawals.empty()) {
+  const auto described=describe_workchain_late_return(load(fixture/"failed-bounce.boc"),2,
+                                                      *ingress.custody_address).move_as_ok();
+  auto matches=[&](const auto& candidate){return candidate.timing.payout_created_lt==described.payout_created_lt;};
+  if(std::none_of(reference.control.withdrawals.begin(),reference.control.withdrawals.end(),matches)) {
     auto historical=load(fixture/"completion-record-state.boc");
     gen::ShardStateUnsplit::Record historical_state;CHECK(::tlb::unpack_cell(historical,historical_state));
     CHECK(historical_state.seq_no<old_state.seq_no);
@@ -240,8 +243,8 @@ inline void write_completion_observation(const std::string& which,const std::fil
     CHECK(chained->get_hash()==before->get_hash());
     reference=m5_live_account(account_data(historical,wallet_account(0)),limit);
   }
-  CHECK(reference.control.withdrawals.size()==1);
-  const auto& record=reference.control.withdrawals.front();
+  CHECK(std::count_if(reference.control.withdrawals.begin(),reference.control.withdrawals.end(),matches)==1);
+  const auto& record=*std::find_if(reference.control.withdrawals.begin(),reference.control.withdrawals.end(),matches);
   auto selector=m3_test::decode_m5_test_failed(m4_recorded_candidate(current)).move_as_ok();
   CHECK(selector.owner.account==wallet_account(0));
   auto bounce=load(fixture/"failed-bounce.boc");CHECK(td::Bits256(bounce->get_hash().bits())==selector.inbound_message);
