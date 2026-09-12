@@ -7,7 +7,7 @@ permissions:
   contents: read
 jobs:
   apply:
-    if: github.repository == 'tosnetwork/tos' && github.event.pull_request.number == 103 && github.event.pull_request.head.ref == 'feat/pq-v16-readiness' && github.event.pull_request.head.repo.full_name == github.repository
+    if: github.repository == 'tosnetwork/tos' && github.event.pull_request.head.ref == 'feat/pq-v16-readiness' && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
@@ -23,8 +23,6 @@ jobs:
           import base64, gzip, hashlib
           from pathlib import Path
           parts = [Path(f'.github/pq-delivery-{i}.b64').read_text().strip() for i in range(3)]
-          # Correct two transcription bytes in the transport only. The complete
-          # decoded source must still match the independently recorded digest.
           parts[2] = parts[2].replace('YNNsOtttXf3gu2amyBra', 'YNNsOtttXf3gu6amyBra').replace('bHyYSF1mjSbj', 'bHyYSF4mjSbj')
           encoded = ''.join(parts)
           if len(encoded) != 38360:
