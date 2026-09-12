@@ -174,3 +174,25 @@ reconstructed the equality-boundary observation from the accepted Native
 artifacts and ran the frozen oracle again. Evidence is in
 `measurements/uno-m5-withdrawal-completion/bucket-small-real/`.
 This makes 2/8 here and 2/27 overall; other slots are not implied complete.
+
+## Row6 closure: fresh default execution, 2026-09-12
+
+Default CTest #19 passed in 213.23 seconds. Evidence is in
+`measurements/uno-m5-withdrawal-completion/row6-real/`. The fresh pair used the
+same Withdrawal identity, Q=6 and window=2: actual height 8 dispatched through
+within-window-failed and actual height 9 through late-return-admission. These
+are executed observations, not expected fork outcomes.
+
+The isolated shadow changes only `late = arrival_height > deadline;` to
+`late = false;` in `crypto/block/workchain-failed-funded.h`. Its accepted Native
+candidate reaches `LATE_NOT_ROW3`; disabling the oracle while retaining that
+observation reaches `ORACLE_MISSING:LATE_NOT_ROW3`. Restoring the production
+header passes. Retained observations were independently rechecked after CTest.
+The durable carrier is the default registered test; archived logs and JSON
+identify this execution. Native artifact source provenance remains a separate
+limitation; these selected artifacts are not a full standalone replay package.
+
+Completion is now **3/8** (row4, bucket-small, row6). The coordinator corrected
+the project inventory to 49 across seven runners (9/10/8/8/7/6/1); the other six
+runners were not reaudited here and no closure is inferred for them. Earlier
+27-slot totals describe only prepare, failed and completion, not the project.

@@ -1,0 +1,6 @@
+{
+  "source_identity": "714a9d3532625ce07fa2a1eecee3fa8e0d0111cc44ab010f8b7ad2e6e0cf1008",
+  "binary_sha256": "fe40c236370d29e902d6c468b6ea663fa9705a98123ecd6f39b9f0b924cbaa82",
+  "executable": "/tmp/uno-m3-live-4munvpxg/m3-scenario.pinned",
+  "scope": "uno/crypto + uno/prover source trees"
+}
