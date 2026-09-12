@@ -684,11 +684,22 @@ if a.m5_debit:
                                     new_blind=new_blind, aux_blind=89, principal=137,
                                     outward_fee=17, fee=257, **limits)
                     available = withdrawal_request(followup)
+                    if a.completion_close_before_return and number == 7:
+                        # Retain the real owner-triggered closure before the later
+                        # bounce overwrites the final-operation artifacts.
+                        shutil.copyfile(fixture / 'current-state.boc', fixture / 'completion-before-state.boc')
+                        shutil.copyfile(fixture / 'current-state.boc', fixture / 'completion-untouched-state.boc')
+                        shutil.copyfile(fixture / 'accepted-block.id', fixture / 'completion-before-block.id')
                     completed = subprocess.run([str(build / 'test-m3-live'),str(fixture)],
                                                text=True,capture_output=True)
                     (fixture / f'completion-owner-{number}.log').write_text(completed.stdout+completed.stderr)
                     print(completed.stdout,end=''); print(completed.stderr,end='',file=sys.stderr)
                     completed.check_returncode()
+                    if a.completion_close_before_return and number == 7:
+                        (fixture / 'completion-execution.log').write_text(completed.stdout + completed.stderr)
+                        paid_fixture = Path(tempfile.mkdtemp(prefix='uno-row5-paid-predecessor-'))
+                        shutil.copytree(fixture, paid_fixture, dirs_exist_ok=True)
+                        print(f'COMPLETION_ROW5_PAID:{paid_fixture}', flush=True)
                     advance_pair(number)
                     subprocess.run([str(build / 'test-tos-collator'), '-C',str(fixture / 'global.json'),
                                     '-D',str(fixture / 'db'), '-w','-1', '-M',
@@ -784,6 +795,8 @@ if a.m5_debit:
             completed.check_returncode()
             if a.completion_window_pair:
                 print(f'COMPLETION_WINDOW_{window_branch}:{fixture}', flush=True)
+            if a.completion_close_before_return:
+                print(f'COMPLETION_ROW5_LATE:{fixture}', flush=True)
     raise SystemExit(0)
 # Keep the final B->A receipt at 432: compensate only the changed SEND/COLLECT
 # tariffs in the first receipt. The remaining two receipts retain 251 and 89.
