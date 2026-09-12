@@ -333,9 +333,32 @@ inline void assert_m4_block_backing(const std::filesystem::path& fixture, const 
       if (m4_deposit_was_rejected(root)) next = book;
       else CHECK(CurrencyCollection::add(book, CurrencyCollection(workchain_unsigned_fee(deposit.principal)), next));
     } else if (m3_test::is_m5_test_failed(candidate)) {
-      CHECK(CurrencyCollection::add(book, m5_recorded_return(root), next));
-      book = next;
-      CHECK(CurrencyCollection::sub(book, CurrencyCollection(workchain_unsigned_fee(m5_live_return_fee(fixture))), next));
+      td::Ref<vm::Cell> effects;
+      m4_recorded_candidate(root, &effects);
+      gen::UnoV2HostEffects::Record decoded;
+      CHECK(::tlb::unpack_cell(effects, decoded));
+      auto native = decode_workchain_native_effects(decoded.native).move_as_ok();
+      const auto recovered = m5_recorded_return(root);
+      if (!native.fees) {
+        // Authenticated event replay: an unissued return moves its full import
+        // into protected coordinator holdings, not into confidential backing.
+        // Do not infer this amount from the custody balance being tested.
+        vm::Dictionary transfers(native.transfers, 32);
+        unsigned count = 0;
+        CHECK(transfers.check_for_each([&](td::Ref<vm::CellSlice> leaf, td::ConstBitPtr, int) {
+          gen::UnoV2NativeTransfer::Record transfer; CurrencyCollection value;
+          if (leaf->size_ext() != 0x10000 || !::tlb::unpack_cell(leaf->prefetch_ref(), transfer) ||
+              !value.unpack(transfer.value) || transfer.source != custody ||
+              transfer.destination != td::Bits256::zero() || value != recovered) return false;
+          ++count; return true;
+        }));
+        CHECK(count == 1);
+        next = book;
+      } else {
+        CHECK(CurrencyCollection::add(book, recovered, next));
+        book = next;
+        CHECK(CurrencyCollection::sub(book, CurrencyCollection(workchain_unsigned_fee(m5_live_return_fee(fixture))), next));
+      }
     } else {
       auto replay = m3_test::decode_m5_accounting_replay(candidate).move_as_ok();
       if (const auto* withdrawal = std::get_if<WorkchainWithdrawalInput>(&replay)) {

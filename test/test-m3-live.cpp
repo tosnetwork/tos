@@ -16,8 +16,14 @@
 #include "m5-live-failed.h"
 #include "m5-live-unknown-control.h"
 #include "m5-live-fee-routing-control.h"
+#include "m5-completion-observer.h"
 
 int main(int argc, char** argv) {
+  if (argc == 5 && std::string(argv[1]) == "--completion-observation") {
+    vm::init_vm().ensure();
+    m3_live::write_completion_observation(argv[2], argv[3], argv[4]);
+    return 0;
+  }
   if (argc == 4 && std::string(argv[1]) == "--check-unknown-observation") {
     return m3_live::check_unknown_observation(argv[2], std::string(argv[3]) + "\n") ? 0 : 2;
   }
@@ -363,7 +369,15 @@ int main(int argc, char** argv) {
       CHECK(observation == expected && read(".kind") == "error\n");
       CHECK(stats == "delivery=recorded\nvisited=1\nadapter=1\nowners_before=1\nowners_during=2\nowners_after=1\ntransactions=0\n");
       CHECK(calls == "config=5\nexecute=1\n");
-      CHECK(td::read_file_str(counter + ".units.1").move_as_ok() == "7\n");
+      block::gen::CommonMsgInfo::Record_int_msg_info returned;
+      CHECK(tlb::unpack_cell_inexact(m3_live::load(fixture / "failed-bounce.boc"), returned));
+      block::CurrencyCollection imported;
+      CHECK(imported.unpack(returned.value));
+      // The small-value disposition signs nothing. This control still proves
+      // the same unknown counter emitted one after actual engine execution.
+      const bool small = td::cmp(imported.tomis, block::workchain_unsigned_fee(
+          m3_live::m5_live_return_fee(fixture))) <= 0;
+      CHECK(td::read_file_str(counter + ".units.1").move_as_ok() == (small ? "0\n" : "7\n"));
       CHECK(!std::filesystem::exists(counter + ".units.2") && !std::filesystem::exists(exported));
       std::cout << "UNKNOWN_ORIGIN_CONTROL: real execution, LocalUnavailable, count=1, no publication\n";
       continue;

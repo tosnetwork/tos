@@ -78,6 +78,9 @@ struct WorkchainAccountEffects {
   // Local result from the verified operation's x, never decoded from effects
   // supplied by a claimant. Settlement compares it to the actual Native value.
   std::optional<std::uint64_t> payout_principal;
+  // Local classification from independently executed custody return admission,
+  // never decoded from candidate effects. Settlement re-reads the exact import.
+  std::optional<td::Bits256> bucket_return_message;
 };
 
 class WorkchainAccountEngine {
