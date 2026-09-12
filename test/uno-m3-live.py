@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Test-owned node fixture. No deployment configuration or permission flag."""
 import argparse
+import ast
 import base64
 import hashlib
 import json
@@ -40,7 +41,7 @@ p.add_argument('--completion-full-cap', action='store_true',
 p.add_argument('--m5-return-principal', type=int, help='explicit real-payout fixture principal')
 p.add_argument('--completion-expect-offset', type=int, choices=(-1, 0, 1),
                help='assert observed y is h plus this exact boundary offset')
-p.add_argument('--completion-contract', choices=('bucket-small', 'row4', 'row6'),
+p.add_argument('--completion-contract', choices=('bucket-small', 'row4', 'row5', 'row6'),
                help='run the existing frozen real-host completion contract')
 p.add_argument('--failed-routing-probe', action='store_true',
                help='run the real fee-routing producer mutation before normal Failed publication')
@@ -231,6 +232,78 @@ if a.completion_contract:
         oracle.require(paid['input']['withdrawal_id'] not in
                        late['observed']['before']['records'], 'ROW5_ALREADY_CLOSED')
         return fixtures, observations
+
+    if a.completion_contract == 'row5':
+        fixtures, _ = closed_late_fixture()
+        old = '    const auto attempt = association->attempt_id;\n    if (matched) owner.control.withdrawals.erase(found);'
+        mutations = (
+            ('retarget-p',
+             '    if (!matched && !owner.control.withdrawals.empty()) owner.control.withdrawals.front().timing.payout_created_lt = association->payout_created_lt;\n' + old,
+             'DELTA_P'),
+            ('decrement-w',
+             '    if (!matched && !owner.control.withdrawals.empty()) {\n'
+             '      auto& principal = owner.control.withdrawals.front().principal;\n'
+             '      if (__builtin_sub_overflow(principal, std::uint64_t{1}, &principal)) return error("isolated checked decrement failed");\n'
+             '    }\n' + old, 'RECORD_CLOSURE'))
+        for label, changed, assertion in mutations:
+            binary = shadow_binary(label, old, changed)
+            _, data = replay_paid(label + '-run', binary, fixtures['LATE'], 'row5')
+            before, after = data['observed']['before'], data['observed']['after']
+            oracle.require(data['observed']['published'] is True and
+                           data['observed']['dispatch'] == ['late-return-admission'], 'MUTANT_REACHED_LATE_PUBLICATION')
+            if label == 'retarget-p':
+                oracle.require(before['records'] == after['records'] and before['W'] == after['W'] and
+                               before['P'] != after['P'], 'P_MUTATION_ISOLATED')
+            else:
+                oracle.require(before['P'] == after['P'] and before['W'] - after['W'] == 1,
+                               'W_MUTATION_ISOLATED')
+                changed_ids = [key for key in before['records']
+                               if after['records'].get(key) != before['records'][key]]
+                oracle.require(len(changed_ids) == 1 and set(before['records']) == set(after['records']) and
+                               before['records'][changed_ids[0]] - after['records'][changed_ids[0]] == 1 and
+                               data['input']['withdrawal_id'] not in before['records'],
+                               'W_RECORD_CHANGE_CAUSES_RELEASE')
+            oracle.expect_red('row5', data, assertion)
+            print('COMPLETION_REAL_RED:' + assertion, flush=True)
+            try:
+                oracle.expect_red('row5', data, assertion, observer=lambda *_: None)
+            except oracle.Violation as error:
+                if str(error) != 'ORACLE_MISSING:' + assertion:
+                    raise
+                print(str(error), flush=True)
+            else:
+                raise RuntimeError('disabled row5 oracle did not fail')
+            if label == 'decrement-w':
+                # Remove precisely the comparison of the installed record map,
+                # not a diagnostic string or any other oracle. Same real artifact.
+                tree = ast.parse((repo / 'crypto/test/workchain_withdrawal_completion_oracle.py').read_text())
+                target = ast.dump(ast.parse("after['records'] == records", mode='eval').body)
+                removed = []
+                class WithoutRecordComparison(ast.NodeTransformer):
+                    def visit_Expr(self, node):
+                        call = node.value
+                        if (isinstance(call, ast.Call) and isinstance(call.func, ast.Name) and
+                                call.func.id == 'require' and call.args and ast.dump(call.args[0]) == target):
+                            removed.append(node)
+                            return ast.copy_location(ast.Pass(), node)
+                        return self.generic_visit(node)
+                tree = WithoutRecordComparison().visit(tree)
+                oracle.require(len(removed) == 1, 'UNIQUE_RECORD_ORACLE_MUTATION')
+                scope = {'__name__': 'isolated_record_oracle'}
+                exec(compile(ast.fix_missing_locations(tree), '<isolated-record-oracle>', 'exec'), scope)
+                try:
+                    scope['check']('row5', data)
+                except scope['Violation'] as error:
+                    oracle.require(str(error) == 'DELTA_W', 'W_CROSSCHECK_WRONG_FAILURE_LAYER')
+                    print('UPSTREAM_REMOVED_SAME_ARTIFACT:DELTA_W', flush=True)
+                else:
+                    raise RuntimeError('W cross-check missing after removing its upstream carrier')
+        code, restored = replay_paid('row5-restored', build / 'test-m3-live', fixtures['LATE'], 'row5')
+        if code:
+            raise RuntimeError('restored row5 execution failed')
+        oracle.check('row5', restored)
+        print('WITHDRAWAL-COMPLETION_D78_OBSERVED:test-workchain-withdrawal-completion-row5')
+        raise SystemExit(0)
 
     if a.completion_contract == 'row6':
         args = [sys.executable, str(Path(__file__).resolve()), '--build', str(build),
