@@ -163,3 +163,14 @@ This closes row4 only (1/8 here, 1/27 overall). Native executable provenance is
 still a separate open limitation; these artifacts do not retroactively pin a
 binary to its source. Other completion slots and the full readiness runner
 remain fail-closed.
+
+### Subsequent execution: bucket-small closed, 2026-09-12
+
+The default bucket-small CTest passed in 638.76 seconds. Independently checked
+observations give h=3,000,008: h-1 and h retain attributed bucket value, while
+h+1 executes late issuance. Refusal and missing attribution hit their designated
+oracles, both oracle-removal controls fail, and restoration passes. B also
+reconstructed the equality-boundary observation from the accepted Native
+artifacts and ran the frozen oracle again. Evidence is in
+`measurements/uno-m5-withdrawal-completion/bucket-small-real/`.
+This makes 2/8 here and 2/27 overall; other slots are not implied complete.
