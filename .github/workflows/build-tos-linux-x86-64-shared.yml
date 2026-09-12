@@ -35,7 +35,7 @@ jobs:
     - name: Date Stamp
       id: date-stamp
       run: |
-        echo "timestamp=$(date -u \"+%Y%m%d%H%M_%S\")" >> "$GITHUB_OUTPUT"
+        echo "timestamp=$(date -u "+%Y%m%d%H%M_%S")" >> "$GITHUB_OUTPUT"
 
     - name: Restore cache TOS
       uses: actions/cache@v6
