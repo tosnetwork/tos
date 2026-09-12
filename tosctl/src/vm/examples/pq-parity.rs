@@ -1,5 +1,5 @@
 // Copyright 2026 TOS Blockchain Teams. SPDX-License-Identifier: GPL-3.0-only
-use chain_block::{read_single_root_boc, BuilderData, ExceptionCode, IBitstring};
+use chain_block::{read_single_root_boc, BuilderData, ExceptionCode};
 use std::{env, fs};
 use tos_vm::{
     error::tvm_exception_code,

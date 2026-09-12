@@ -13,9 +13,11 @@ fn main() {
     let backend = root.join("../../../third-party/mldsa-native/mldsa");
     println!("cargo:rerun-if-changed={}", backend.display());
     println!("cargo:rerun-if-changed=pq-config.h");
+    println!("cargo:rerun-if-changed=pq-shim.c");
     println!("cargo:rerun-if-changed=../../../crypto/pq/mldsa44-config.h");
     cc::Build::new()
         .file(backend.join("mldsa_native.c"))
+        .file(root.join("pq-shim.c"))
         .include(&backend)
         .include(&root)
         .define("MLD_CONFIG_FILE", Some("\"pq-config.h\""))

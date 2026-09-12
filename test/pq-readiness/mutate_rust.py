@@ -13,7 +13,7 @@ def main():
     p=argparse.ArgumentParser(description=__doc__);p.add_argument('--scenarios',type=Path,required=True)
     p.add_argument('--cpp',type=Path,required=True);p.add_argument('--out',type=Path,required=True);a=p.parse_args()
     source=ROOT/'tosctl/src/vm/src/executor/pq.rs';original=source.read_text()
-    mutants=[('verification','0 => true,','0 | -6 => true,'),
+    mutants=[('verification','status == invalid_signature {\n        false','status == invalid_signature {\n        true'),
              ('version','engine.block_version() < 16','false'),
              ('base-gas','const BASE_GAS: i64 = 50_000;','const BASE_GAS: i64 = 49_999;'),
              ('canonical-chunk','(refs != 0 && size != CHUNK_BYTES)','(false)'),

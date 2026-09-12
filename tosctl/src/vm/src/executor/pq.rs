@@ -23,6 +23,9 @@ extern "C" {
         context_len: usize,
         public_key: *const u8,
     ) -> i32;
+    /// The backend's own MLD_ERR_INVALID_SIGNATURE, exported by the C shim so
+    /// the value is never restated here and cannot drift from the header.
+    static tos_rust_mldsa44_invalid_signature: i32;
 }
 
 fn read_bytes(engine: &mut Engine, mut cell: Cell, limit: usize) -> Result<Vec<u8>> {
@@ -99,12 +102,14 @@ pub(super) fn execute_pq_mldsa44(engine: &mut Engine) -> Status {
             key.as_ptr(),
         )
     };
-    let valid = match status {
-        0 => true,
-        -6 => false, // The pinned backend's MLD_ERR_INVALID_SIGNATURE.
-        _ => {
-            fail!(ExceptionCode::FatalError, "ML-DSA verifier backend failure");
-        }
+    // SAFETY: reading a const int the shim defines at compile time.
+    let invalid_signature = unsafe { tos_rust_mldsa44_invalid_signature };
+    let valid = if status == 0 {
+        true
+    } else if status == invalid_signature {
+        false
+    } else {
+        fail!(ExceptionCode::FatalError, "ML-DSA verifier backend failure");
     };
     // Deliberately do not consult chksig_always_succeed or the classic free-call allowance.
     engine.cc.stack.push(StackItem::boolean(valid));
