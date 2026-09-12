@@ -102,16 +102,42 @@ required and maintain storage balances.
 
 ## Funding a submission
 
-The module pays for verification out of the incoming internal message, so a
-relayer has to fund it above the point where the compute phase completes. At the
-test configuration's gas prices a submission needs roughly **66.3 million
-nanotomis (about 0.066 TOS)** to relay; below that the transaction runs out of
-gas, emits nothing and still consumes what was sent. Of the roughly 64,400
-compute gas a successful submission uses, 50,000 is the flat PQ verification
-tariff, so this floor is set by post-quantum verification rather than by message
-handling, and it will not resemble a classical-signature relay. Treat the figure
-as an order of magnitude measured under the test prices, not a network constant:
-re-measure against the prices in force before sizing a production relayer.
+Verification is paid out of the incoming internal message, and three different
+things can go wrong at three different budgets. They are not interchangeable:
+
+| Budget | What happens |
+| --- | --- |
+| Too little to finish verification | The compute phase fails. Nothing is emitted. |
+| Enough to verify, too little to forward | **The compute phase succeeds** and the action phase fails. Nothing is emitted, and the module keeps no record that anything was attempted. |
+| Enough to forward, but the account refuses | The relay is delivered and the account rejects it. The relay is sent bounceable, so the value returns to the module. |
+
+The middle row is the one that is easy to misread as a gas problem. The module
+sends with mode 64 and no `+16`, so `bounce=1` on the relay is a property of the
+forwarded message, not a promise that the module refunds its own failed action.
+
+`test_boundaries.py` measures the smallest inbound value that still relays, by
+bisection against the compiled modules, and asserts the classification rather
+than a constant: at that value the relay is emitted, and one nanotomi below it
+the proof still verifies while the action phase fails and nothing is emitted. It
+records what it measured in `boundaries.json`, so the numbers below can be
+re-derived instead of trusted.
+
+Under the test configuration's gas prices, for a minimal `kind` 0 request with a
+32-bit payload:
+
+| Module | Workchain 0 | Workchain -1 |
+| --- | ---: | ---: |
+| FunC | 66,227,000 | 662,270,000 |
+| Tol | 66,090,000 | 660,900,000 |
+
+The masterchain figure is an order of magnitude higher because its gas price is,
+so a single number without a workchain is meaningless. Roughly 64,400 of the
+compute gas a successful submission uses is the module itself, of which 50,000 is
+the flat post-quantum tariff: this floor is set by verification, not by message
+handling, and will not resemble a classical-signature relay. None of these values
+include what the destination account then spends. They are observations under one
+configuration, not network constants; re-measure against the prices in force
+before sizing a production relayer.
 
 ## Build and native validation
 
@@ -125,6 +151,8 @@ python3 test/mldsa-auth/test_protocol.py
 python3 test/mldsa-auth/e2e.py --build build \
   --signer build-auth-signer/test-mldsa44-sign --out auth-results
 python3 test/mldsa-auth/test_interop.py --build build --out auth-interop
+python3 test/mldsa-auth/test_boundaries.py --build build \
+  --signer build-auth-signer/test-mldsa44-sign --out auth-boundaries
 python3 test/mldsa-auth/mutations.py --build build \
   --signer build-auth-signer/test-mldsa44-sign --out auth-mutations
 ```
