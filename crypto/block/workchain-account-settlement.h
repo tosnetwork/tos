@@ -400,8 +400,8 @@ inline td::Result<WorkchainAccountSettlement> settle_executed(
         auto root = host.inbox->prefetch_ulong(1) ? host.inbox->prefetch_ref() : td::Ref<vm::Cell>{};
         TRY_RESULT(inbox, plan_workchain_native_inbox(root, identity.workchain_id, {custody},
             identity.host_after_lt, max_inbound));
-        if (inbox.envelopes.size() != 1 || executed.effects.native_transfers.size() != 1 || executed.effects.fees)
-          return td::Status::Error(-7200, "bucket return requires one import and one unfunded transfer");
+        if (inbox.envelopes.size() != 1 || executed.effects.fees)
+          return td::Status::Error(-7200, "bucket return requires one import and no issuance fees");
         tlb::MsgEnvelope::Record_std envelope;
         gen::CommonMsgInfo::Record_int_msg_info info;
         if (!tlb::unpack_cell(inbox.envelopes.front(), envelope) ||
@@ -409,9 +409,16 @@ inline td::Result<WorkchainAccountSettlement> settle_executed(
             td::Bits256(envelope.msg->get_hash().bits()) != *executed.effects.bucket_return_message ||
             !bucket_credit.unpack(info.value))
           return td::Status::Error(-7200, "bucket return differs from authenticated import");
-        const auto& transfer = executed.effects.native_transfers.front();
-        if (transfer.from != custody || transfer.to != coordinator || transfer.value != bucket_credit)
-          return td::Status::Error(-7200, "bucket return transfer differs from imported value");
+        if (bucket_credit.is_zero()) {
+          if (!executed.effects.native_transfers.empty())
+            return td::Status::Error(-7200, "zero bucket return cannot transfer value");
+        } else {
+          if (executed.effects.native_transfers.size() != 1)
+            return td::Status::Error(-7200, "bucket return requires one transfer");
+          const auto& transfer = executed.effects.native_transfers.front();
+          if (transfer.from != custody || transfer.to != coordinator || transfer.value != bucket_credit)
+            return td::Status::Error(-7200, "bucket return transfer differs from imported value");
+        }
       }
       if (refundable_after != expected_refundable)
         return td::Status::Error(-7200, "refundable classification differs from authenticated event");

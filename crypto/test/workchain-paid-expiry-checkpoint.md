@@ -64,3 +64,5 @@ closure. The wallet pin is not an attestation of Native binary provenance.
 For the later late-return work, the current normative table gives both rows 3
 and 6 the same credit and P/W deltas. Neither those totals nor the credit alone
 distinguishes the branches: the negative control must observe window dispatch.
+
+Bucket edge cross-check: accepted fixture `/tmp/uno-m3-live-i7dqr9qh` records arrived y = 996070, coordinator 21003000250 -> 21003996320 and holdings 0 -> 996070, custody unchanged at 998999643; B independently decoded both participant transaction fees/out_msgs as zero. The current D32 allocation edge moves the identical value on both sides (`workchain-native-allocation.h`), without message pricing; `transaction.cpp` adds only explicit effects fees or the separate disposal path, neither present here. Thus this edge itself has no routing fee (not a claim about arbitrary same-shard messages); B's separately observed block fee 2621 belongs to Native inbound forwarding, not this move. No criterion changed.
