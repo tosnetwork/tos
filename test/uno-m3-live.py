@@ -50,6 +50,8 @@ p.add_argument('--completion-full-cap', action='store_true',
 p.add_argument('--m5-return-principal', type=int, help='explicit real-payout fixture principal')
 p.add_argument('--completion-expect-offset', type=int, choices=(-1, 0, 1),
                help='assert observed y is h plus this exact boundary offset')
+p.add_argument('--remaining-contract', choices=('phase-transition',),
+               help='execute the existing remaining-work contract; incomplete controls fail closed')
 p.add_argument('--completion-contract', choices=('bucket-small', 'bucket-full', 'bucket-closed', 'row4', 'row5', 'row6', 'sweep-atomic', 'oracle-control'),
                help='run the existing frozen real-host completion contract')
 p.add_argument('--failed-routing-probe', action='store_true',
@@ -155,7 +157,9 @@ if a.m5_return_principal is not None and not (a.m5_return_route and 0 < a.m5_ret
 if a.completion_expect_offset is not None and not a.m5_bucket_small:
     p.error('boundary observation requires the bucket fixture')
 
-if a.completion_contract:
+if a.completion_contract and a.remaining_contract:
+    p.error('select exactly one contract')
+if a.completion_contract or a.remaining_contract:
     # Complete the existing carrier here; do not introduce a parallel runner.
     work = live_fixture('uno-completion-bucket-')
     print(f'COMPLETION_RUN:{work}', flush=True)
@@ -311,6 +315,74 @@ if a.completion_contract:
         subprocess.run([str(reader or build / 'test-m3-live'), '--completion-observation',
                         case, str(target), str(output)], check=True)
         return result.returncode, json.loads(output.read_text())
+
+    if a.remaining_contract == 'phase-transition':
+        def phase_fixture(label, delayed):
+            args = [sys.executable, str(Path(__file__).resolve()), '--build', str(build),
+                    '--fixture-parent', str(work), '--m5-completion-late', '--phase-replay-cuts']
+            if delayed:
+                args.append('--phase-delay-transit')
+            with (work / (label + '.log')).open('w') as log:
+                subprocess.run(args, stdout=log, stderr=log, check=True)
+            paths = [Path(line.removeprefix('Test-owned fixture: '))
+                     for line in (work / (label + '.log')).read_text().splitlines()
+                     if line.startswith('Test-owned fixture: ')]
+            if len(paths) != 1:
+                raise RuntimeError('phase fixture did not publish one actual predecessor')
+            return paths[0]
+        def phase_observe(source, output, case):
+            subprocess.run([str(build / 'test-m3-live'), '--completion-observation',
+                            'phase-transition', str(source), str(output)], check=True)
+            data = json.loads(output.read_text())
+            return data
+        def phase_replay(label, fixture, binary):
+            destination = work / label
+            shutil.copytree(fixture / 'phase-owner6-replay', destination)
+            for path in fixture.glob('phase-*'):
+                if path.is_file():
+                    shutil.copy2(path, destination / path.name)
+            for pattern in ('enabled.*', 'closed.*', 'debit-authenticated-*'):
+                for path in destination.glob(pattern):
+                    if path.is_file():
+                        path.unlink()
+            with (destination / 'producer.log').open('w') as log:
+                result = subprocess.run([str(binary), str(destination)], stdout=log, stderr=log)
+            # A pre-existing backing test may abort after real validation and
+            # after saving this root. Require the actual accepted artifact;
+            # never turn an arbitrary child error into the expected red.
+            for origin, suffix in (('enabled.candidate', '.candidate'),
+                                   ('enabled.result.validation.result', '.validation'),
+                                   ('debit-authenticated-state.boc', '-after.boc')):
+                shutil.copyfile(destination / origin, destination / ('phase-owner6' + suffix))
+            data = phase_observe(destination, destination / 'phase-observed.json', '')
+            return result.returncode, data
+        def phase_red(data, case, assertion):
+            oracle.expect_red(case, data, assertion)
+            print('REMAINING_REAL_RED:' + assertion, flush=True)
+            try:
+                oracle.expect_red(case, data, assertion, observer=lambda *_: None)
+            except oracle.Violation as error:
+                if str(error) != 'ORACLE_MISSING:' + assertion:
+                    raise
+                print(str(error), flush=True)
+            else:
+                raise RuntimeError('phase oracle removal did not fail')
+        ordinary = phase_fixture('ordinary', False)
+        queued = phase_fixture('queued', True)
+        for label, fixture, case in (('ordinary', ordinary, 'phase-transition'),
+                                     ('queued', queued, 'phase-still-present')):
+            oracle.check(case, phase_observe(fixture, work / (label + '.json'), case))
+        needle = 'const auto retained_records = migrated.control.withdrawals.size();'
+        mutated = needle + '\n      for (auto& r : migrated.control.withdrawals) if (r.timing.phase == 1) r.timing.queue_removed_height = r.timing.opened_height;'
+        binary = shadow_binary('phase-q-link', needle, mutated, 'crypto/test/workchain-m3-node-engine.h')
+        _, data = phase_replay('q-link-run', ordinary, binary)
+        phase_red(data, 'phase-transition', 'PHASE_STRICT_HEIGHT')
+        code, restored = phase_replay('q-link-restored', ordinary, build / 'test-m3-live')
+        if code:
+            raise RuntimeError('restored phase execution failed')
+        oracle.check('phase-transition', restored)
+        # Do not publish a ready marker for only the presently wired subset.
+        raise RuntimeError('M5-REMAINING phase-transition incomplete: presence producer, paired creation/orphan, read-height, wrong observation, later observation and deadline controls')
 
     if a.completion_contract == 'sweep-atomic':
         # The fixture, account observations and all mutations run the real host.

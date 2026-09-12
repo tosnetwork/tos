@@ -22,7 +22,7 @@ def checked(value):
     return value
 
 
-def check_phase_transition(data):
+def check_phase_transition(data, still_present=False):
     """D73's existing remaining-work slot; actual queue and committed W cuts.
 
     Queue membership comes from the adapter's Native queue enumeration, not
@@ -74,12 +74,18 @@ def check_phase_transition(data):
                 require(new['phase'] == int(absent_later), 'PHASE_QUEUE_BINDING')
                 require(new['Q'] == (before['height'] if absent_later else 0), 'PHASE_QUEUE_BINDING')
         previous = after
-    require(record(previous)['phase'] == 1, 'PHASE_TRUE_LATER_OBSERVED')
+    if still_present:
+        last = steps[-1]['before']
+        require(last['height'] > record(last)['opened'] and message in last['queue'],
+                'PHASE_HIGHER_PRESENT_FIXTURE')
+        require(record(previous)['phase'] == 0, 'PHASE_QUEUE_BINDING')
+    else:
+        require(record(previous)['phase'] == 1, 'PHASE_TRUE_LATER_OBSERVED')
 
 
 def check(case, data):
-    if case == 'phase-transition':
-        return check_phase_transition(data)
+    if case in ('phase-transition', 'phase-still-present'):
+        return check_phase_transition(data, case == 'phase-still-present')
     i, o = data['input'], data['observed']
     require(o['published'] is True, 'DISPOSITION_MUST_PUBLISH')
     before, after = o['before'], o['after']
