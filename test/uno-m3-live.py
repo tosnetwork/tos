@@ -23,6 +23,8 @@ p.add_argument('--m5-failed', action='store_true', help='publish the funded phas
 p.add_argument('--m5-bucket-small', action='store_true', help='real bounce below local issuance fees')
 p.add_argument('--m5-completion-late', action='store_true',
                help='establish Q through real owner operations before importing the return')
+p.add_argument('--m5-completion-paid', action='store_true',
+               help='real no-bounce payout, untouched expiry, then an owner trigger')
 p.add_argument('--m5-return-principal', type=int, help='explicit real-payout fixture principal')
 p.add_argument('--completion-expect-offset', type=int, choices=(-1, 0, 1),
                help='assert observed y is h plus this exact boundary offset')
@@ -33,6 +35,8 @@ p.add_argument('--failed-routing-probe', action='store_true',
 p.add_argument('--failed-routing-binary', type=Path,
                help='isolated test binary for oracle-removal control only')
 a = p.parse_args()
+if a.m5_completion_paid:
+    a.m5_completion_late = True
 if a.m5_bucket_small or a.m5_completion_late:
     a.m5_failed = True
 if a.failed_routing_probe:
@@ -230,6 +234,14 @@ if True:
     shard = shard.replace('create_state\n', '<{ 63 THROW }>c\n<b 0 1 u, b>\n'
                           'empty_cell 0 0 0 256 1<<1- 6 register_smc drop\ncreate_state\n')
 (fixture / 'm3-shard-genesis.fif').write_text(shard)
+if a.m5_completion_paid:
+    sender = (repo / 'test/m3-native-sender.fif').read_text()
+    if sender.count('create_state\n') != 1:
+        raise RuntimeError('Native sender genesis boundary changed')
+    recipient = int('22' * 32,16)
+    sender = sender.replace('create_state\n',
+        f'<{{ 0 DROP }}>c\nempty_cell empty_cell 0 0 0 {recipient} 6 register_smc drop\ncreate_state\n')
+    (fixture / 'm3-native-paid.fif').write_text(sender)
 prefix = source.split(marker)[0]
 route = '  set(script_path "${SOURCE_DIR}/test/${script}.fif")'
 if prefix.count(route) != 1:
@@ -240,6 +252,8 @@ prefix = prefix.replace(route, route + '''
   elseif(script STREQUAL "counter-native-sender")
     set(script_path "${SOURCE_DIR}/test/m3-native-sender.fif")
   endif()''')
+if a.m5_completion_paid:
+    prefix = prefix.replace('${SOURCE_DIR}/test/m3-native-sender.fif', '${fixture}/m3-native-paid.fif')
 prepare.write_text(prefix)
 subprocess.run(['cmake', '-DCOUNTER_FIXTURE_CHILD=ON', f'-DCOUNTER_FIXTURE_PATH={fixture}',
                 '-DACCOUNT_BINDING_ONLY=ON', '-DNATIVE_SENDER=ON',
@@ -396,8 +410,9 @@ if a.m5_debit:
                         '-D', str(fixture / 'db'), '-w', '0', '-s', str(fixture / 'payout-recipient-top'),
                         '--query-result', str(fixture / 'payout-recipient.result'),
                         '--export-candidate', str(fixture / 'payout-recipient.candidate')], check=True)
-        subprocess.run([str(build / 'test-m3-live'), '--observe-m5-payout-recipient', str(fixture)], check=True)
-        if not (fixture / 'failed-bounce.boc').is_file():
+        if not a.m5_completion_paid:
+            subprocess.run([str(build / 'test-m3-live'), '--observe-m5-payout-recipient', str(fixture)], check=True)
+        if not a.m5_completion_paid and not (fixture / 'failed-bounce.boc').is_file():
             raise RuntimeError('funded return route did not produce a real bounce')
         if a.m5_failed:
             subprocess.run([str(build / 'test-tos-collator'), '-C', str(fixture / 'global.json'),
@@ -424,6 +439,38 @@ if a.m5_debit:
                     old_blind = new_blind
                 shutil.copyfile(fixture / 'current-state.boc',fixture / 'completion-record-state.boc')
                 shutil.copyfile(fixture / 'completion-original-payout.boc',fixture / 'prepare-payout.boc')
+            if a.m5_completion_paid:
+                # A real third-party Deposit to B advances the authenticated
+                # height without executing an owner operation on A.
+                debit_write('deposit.owner.txt',dict(owner=1))
+                debit_write('deposit.request.txt',dict(principal=1000000000))
+                subprocess.run([str(build / 'test-m3-live'),'--deposit-request',str(fixture)],check=True)
+                subprocess.run([str(build / 'test-tos-collator'),'-C',str(fixture/'global.json'),
+                    '-D',str(fixture/'db'),'-w','0','-m',str(fixture/'deposit.message.boc'),
+                    '-s',str(fixture/'completion-filler-payer-top'),'--query-result',
+                    str(fixture/'completion-filler-payer.result')],check=True)
+                subprocess.run([str(build / 'test-tos-collator'),'-C',str(fixture/'global.json'),
+                    '-D',str(fixture/'db'),'-w','-1','-M',str(fixture/'completion-filler-payer-top1.boc'),
+                    '--query-result',str(fixture/'completion-filler-master.result')],check=True)
+                subprocess.run([str(build/'test-m3-live'),str(fixture)],check=True)
+                advance_pair(7)
+                shutil.copyfile(fixture/'current-state.boc',fixture/'completion-untouched-state.boc')
+                subprocess.run([str(build/'test-tos-collator'),'-C',str(fixture/'global.json'),
+                    '-D',str(fixture/'db'),'-w','-1','-M',str(fixture/'7-enabled-top1.boc'),
+                    '--query-result',str(fixture/'completion-filler-accepted.result')],check=True)
+                followup=dict(secret=101,old_value=available,old_blind=old_blind,new_blind=97,
+                              aux_blind=101,principal=137,outward_fee=17,fee=257,**limits)
+                withdrawal_request(followup)
+                shutil.copyfile(fixture/'current-state.boc',fixture/'completion-before-state.boc')
+                completed=subprocess.run([str(build/'test-m3-live'),str(fixture)],capture_output=True,text=True)
+                (fixture/'completion-execution.log').write_text(completed.stdout+completed.stderr)
+                print(completed.stdout,end='');print(completed.stderr,end='',file=sys.stderr)
+                # The trigger overwrites prepare-payout; retain the original
+                # payout as the identity of the old obligation under review.
+                shutil.copyfile(fixture/'completion-original-payout.boc',fixture/'prepare-payout.boc')
+                completed.check_returncode()
+                print(f'COMPLETION_PAID_FIXTURE:{fixture}',flush=True)
+                raise SystemExit(0)
             subprocess.run([str(build / 'test-m3-live'), '--failed-request', str(fixture)], check=True)
             if a.failed_routing_probe:
                 probe = fixture / 'routing-probe'
