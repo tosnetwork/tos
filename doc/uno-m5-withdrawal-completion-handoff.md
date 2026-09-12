@@ -246,3 +246,14 @@ controls, the W upstream-removal check, and restored execution. See row5-control
 were independently checked again. Completion is **4/8** (row4, row5, row6,
 bucket-small). No other runner or end-to-end authenticated queue-budget negative
 is certified by this result.
+
+Bucket-full closed with default CTest #21: 508.50 seconds. Full 4/4 slots
+produce a type-2 attributed bucket entry; a real COLLECT removes exactly one
+selected receipt (other encoded entries preserved), with authenticated updates
+linked to the late predecessor; 3/4 then issues normally to 4/4. Refusal without
+disposition reaches `DISPOSITION_MUST_PUBLISH`; omitted account attribution
+reaches `BUCKET_FIXED_ATTRIBUTION`; each has an oracle-disabled red and restored
+execution passes. Selected execution traces and independently rechecked actual
+JSON are in `measurements/uno-m5-withdrawal-completion/bucket-full-real/`.
+Completion is **5/8**; bucket-closed, sweep-atomic and oracle-control remain.
+No other runner or end-to-end queue-budget claim is changed.
