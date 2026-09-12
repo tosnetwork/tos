@@ -231,6 +231,12 @@ if a.completion_contract:
                 shutil.copy2(file, target / file.name)
         shutil.copytree(source / 'db', target / 'db')
         shutil.copytree(source / 'm4-blocks', target / 'm4-blocks')
+        before_id = (source / 'completion-before-block.id').read_text()
+        (target / 'accepted-block.id').write_text(before_id)
+        height = int(before_id.split(')')[0].rsplit(',', 1)[1])
+        for file in (target / 'm4-blocks').glob('*.boc'):
+            if int(file.stem) > height:
+                file.unlink()
         result = subprocess.run([str(binary), str(target)], text=True, capture_output=True)
         (target / 'completion-execution.log').write_text(result.stdout + result.stderr)
         output = target / 'completion-observation.json'
@@ -668,6 +674,7 @@ if a.m5_debit:
             subprocess.run([str(build / 'test-m3-live'), '--failed-incarnation-control', str(fixture)], check=True)
             subprocess.run([str(build / 'test-m3-live'), '--failed-unknown-control', str(fixture)], check=True)
             shutil.copyfile(fixture / 'current-state.boc', fixture / 'completion-before-state.boc')
+            shutil.copyfile(fixture / 'accepted-block.id', fixture / 'completion-before-block.id')
             completed = subprocess.run([str(build / 'test-m3-live'), str(fixture)], text=True, capture_output=True)
             (fixture / 'completion-execution.log').write_text(completed.stdout + completed.stderr)
             print(completed.stdout, end=''); print(completed.stderr, end='', file=__import__('sys').stderr)
