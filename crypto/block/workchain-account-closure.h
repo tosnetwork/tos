@@ -18,6 +18,9 @@ struct WorkchainAccountClosureExecution {
   td::Bits256 old_account_data_hash;
   td::Bits256 old_coordinator_data_hash;
   WorkchainAccountClosureTransition transition;
+  // Authenticated engine configuration, not a candidate-provided decode limit.
+  // Absent preserves the legacy account decoder in Native settlement.
+  std::optional<std::uint32_t> withdrawal_limit;
 };
 
 // No M3 operation can create a settlement obligation: registration settles its

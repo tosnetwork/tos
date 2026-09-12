@@ -61,8 +61,12 @@ inline block::WorkchainTransferEnvironment wallet_environment(const std::filesys
       fee, 16, b.account_schema, b.relation_profile, b.proof_profile};
 }
 inline block::WorkchainConfidentialAccount wallet_state(const std::filesystem::path& fixture, unsigned owner) {
-  return block::decode_workchain_confidential_account(
-      account_data(load(fixture / "current-state.boc"), wallet_account(owner))).move_as_ok();
+  auto account = m5_live_account(account_data(load(fixture / "current-state.boc"), wallet_account(owner)),
+                                m5_live_withdrawal_limit(fixture)).account;
+  // Proof-only projection. The host must retain the authenticated control root;
+  // this wallet never installs the projected legacy encoding.
+  if (account.schema_version == 4) account.schema_version = wallet_environment(fixture, 1).account_schema;
+  return account;
 }
 inline void save_operation(const std::filesystem::path& fixture, td::Ref<vm::Cell> candidate,
                            std::vector<td::Bits256> accounts) {

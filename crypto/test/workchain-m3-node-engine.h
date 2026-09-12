@@ -45,6 +45,17 @@ class M3NodeEngine final : public RegisteredWorkchainAccountEngine {
   };
   static td::Status local(td::Slice reason) { return td::Status::Error(-7201, reason); }
   static td::Status invalid(td::Slice reason) { return td::Status::Error(-7200, reason); }
+  static td::Result<bool> withdrawal_root(const td::Ref<vm::Cell>& root) {
+    if (root.is_null()) return local("authenticated account data absent");
+    try {
+      bool special = false;
+      auto slice = vm::load_cell_slice_special(root, special);
+      if (special) return local("authenticated account root is special");
+      return slice.prefetch_ulong(32) == gen::UnoV2AccountStateWithdrawalsV2::cons_tag[0];
+    } catch (const vm::VmVirtError&) { return local("authenticated account root incomplete");
+    } catch (const vm::VmError&) { return local("authenticated account root unavailable");
+    } catch (const std::bad_alloc&) { return local("authenticated account root allocation unavailable"); }
+  }
   static td::Result<WorkchainReplayInput> decode_candidate(const td::Ref<vm::Cell>& candidate) {
     // Only the already materialized candidate component is reachable here, not
     // an authenticated account/configuration read. Allocation failures retain
@@ -533,16 +544,43 @@ class M3NodeEngine final : public RegisteredWorkchainAccountEngine {
             return invalid("closure blocked by attributed unexpected value");
       }
       TRY_RESULT(native, read(accounts, key, clock.gen_utime, true));
-      auto decoded_account = decode_workchain_confidential_account(native.data);
+      std::optional<WorkchainWithdrawalAccount> controlled;
+      auto decoded_account = [&]() -> td::Result<WorkchainConfidentialAccount> {
+        TRY_RESULT(has_control, withdrawal_root(native.data));
+        if (!has_control)
+          return decode_workchain_confidential_account(native.data);
+        if (!b.prepare) return local("ConfigInvalid: authenticated Withdrawal limit absent");
+        TRY_RESULT(owner, decode_workchain_withdrawal_account(native.data, b.prepare->withdrawal_limit));
+        // Closing an account never invents Q. Only previously observed phase-1
+        // obligations may expire; phase-0 remains an in-flight closure blocker.
+        TRY_RESULT(expiry, expire_workchain_withdrawals(std::move(owner), clock.height));
+        controlled = std::move(expiry.account);
+        auto projected = controlled->account;
+        projected.schema_version = b.account_schema;
+        return projected;
+      }();
       if (decoded_account.is_error()) return local("authenticated closure account record unavailable");
       auto account = decoded_account.move_as_ok();
+      if (controlled && (!controlled->control.withdrawals.empty() || !controlled->origin_pending.empty()))
+        return invalid("closure has authenticated obligations or system pending receipts");
       TRY_RESULT(transition, replay_workchain_account_closure(account, system, possession, b.domain,
                                                              host.candidate, verifier));
+      if (controlled) {
+        auto decoded_closed = decode_workchain_confidential_account(transition.account_data);
+        if (decoded_closed.is_error()) return local("constructed closure account unavailable");
+        auto closed = decoded_closed.move_as_ok();
+        closed.schema_version = 4;
+        controlled->account = std::move(closed);
+        controlled->control.lifecycle = controlled->account.lifecycle;
+        auto encoded_closed = encode_workchain_withdrawal_account(*controlled, b.prepare->withdrawal_limit);
+        if (encoded_closed.is_error()) return local("constructed closure control unavailable");
+        transition.account_data = encoded_closed.move_as_ok();
+      }
       result.updates = {{key, transition.account_data},
                         {cfg->ingress.executor_address, transition.coordinator_data}};
       result.closure = std::make_shared<WorkchainAccountClosureExecution>(WorkchainAccountClosureExecution{
           key, td::Bits256(native.data->get_hash().bits()), td::Bits256(coordinator.data->get_hash().bits()),
-          std::move(transition)});
+          std::move(transition), controlled ? std::optional{b.prepare->withdrawal_limit} : std::nullopt});
     } else {
       const auto& transfer = std::get<WorkchainTransferInput>(wire);
       const auto& claims = workchain_transfer_claims(transfer.data);
@@ -556,17 +594,60 @@ class M3NodeEngine final : public RegisteredWorkchainAccountEngine {
         amounts = reconstructed;
       }
       TRY_RESULT(native, read(accounts, claims.source.account, clock.gen_utime, true));
-      auto decoded_source = decode_workchain_confidential_account(native.data);
-      if (decoded_source.is_error()) return local("authenticated source record unavailable");
+      std::optional<WorkchainWithdrawalAccount> controlled_source;
+      auto decoded_source = [&]() -> td::Result<WorkchainConfidentialAccount> {
+        TRY_RESULT(has_control, withdrawal_root(native.data));
+        if (kind != 1 || !has_control) {
+          auto legacy = decode_workchain_confidential_account(native.data);
+          if (legacy.is_error()) return local("authenticated source record unavailable");
+          return legacy;
+        }
+        if (!b.prepare) return local("ConfigInvalid: authenticated Withdrawal limit absent");
+        auto decoded_owner = decode_workchain_withdrawal_account(native.data, b.prepare->withdrawal_limit);
+        if (decoded_owner.is_error()) return local("authenticated source control unavailable");
+        auto owner = decoded_owner.move_as_ok();
+        // SEND is an owner operation, not another Withdrawal. Observe only
+        // subsequent queue absence, using the same shared authenticated budget.
+        for (auto& record : owner.control.withdrawals) {
+          if (record.timing.phase != 0) continue;
+          TRY_RESULT(absent, accounts.payout_absent(*cfg->ingress.custody_address,
+              record.timing.payout_created_lt, record.timing.opened_height));
+          if (!absent) continue;
+          std::uint32_t deadline;
+          if (__builtin_add_overflow(*absent, record.timing.settlement_blocks, &deadline))
+            return local("authenticated observed Withdrawal deadline exceeds encoded height");
+          record.timing.phase = 1;
+          record.timing.queue_removed_height = *absent;
+          LOG(INFO) << "WORKCHAIN_QUEUE_ABSENT withdrawal=" << record.withdrawal_id.to_hex()
+                    << " created_lt=" << record.timing.payout_created_lt << " Q=" << *absent;
+        }
+        auto expired = expire_workchain_withdrawals(std::move(owner), clock.height);
+        if (expired.is_error()) return local("authenticated SEND expiry record unavailable");
+        auto expiry = expired.move_as_ok();
+        for (const auto& closed : expiry.closed)
+          LOG(INFO) << "WORKCHAIN_RETURN_CALLEE paid_expiry withdrawal=" << closed.withdrawal_id.to_hex()
+                    << " principal=" << closed.principal;
+        controlled_source = std::move(expiry.account);
+        auto projected = controlled_source->account;
+        projected.schema_version = b.account_schema;  // Private proof projection only.
+        return projected;
+      }();
+      if (decoded_source.is_error()) return decoded_source.move_as_error();
       auto source = decoded_source.move_as_ok();
       std::optional<WorkchainConfidentialAccount> destination;
       td::Bits256 target = claims.source.account;
       if (const auto* send = std::get_if<WorkchainSendData>(&transfer.data)) {
         target = send->destination.account;
-        TRY_RESULT(target_native, read(accounts, target, clock.gen_utime, true));
-        auto decoded = decode_workchain_confidential_account(target_native.data);
-        if (decoded.is_error()) return local("authenticated destination record unavailable");
-        destination = decoded.move_as_ok();
+        if (controlled_source && target == claims.source.account) {
+          // The same authenticated account must use the identical private
+          // projection; independently decoding it as legacy would abstain.
+          destination = source;
+        } else {
+          TRY_RESULT(target_native, read(accounts, target, clock.gen_utime, true));
+          auto decoded = decode_workchain_confidential_account(target_native.data);
+          if (decoded.is_error()) return local("authenticated destination record unavailable");
+          destination = decoded.move_as_ok();
+        }
       }
       WorkchainTransferEnvironment env{b.limits, b.domain,
           {2, 1, 1, 2, kind, domain.global_id, 2, domain.genesis_hash, domain.instance_id},
@@ -576,6 +657,19 @@ class M3NodeEngine final : public RegisteredWorkchainAccountEngine {
       const auto consumed_before = verifier.consumed();
       TRY_RESULT(applied, execute_workchain_confidential_transfer(env, transfer, std::optional{source},
                                                                  destination, verifier));
+      if (controlled_source) {
+        auto decoded_update = decode_workchain_confidential_account(applied.source_data);
+        if (decoded_update.is_error()) return local("constructed SEND source unavailable");
+        auto updated = decoded_update.move_as_ok();
+        updated.schema_version = 4;
+        controlled_source->account = std::move(updated);
+        controlled_source->control.lifecycle = controlled_source->account.lifecycle;
+        // Keep all existing origin receipts and the bounded W dictionary.
+        // Installing the private legacy projection would silently discard them.
+        auto encoded_update = encode_workchain_withdrawal_account(*controlled_source, b.prepare->withdrawal_limit);
+        if (encoded_update.is_error()) return local("constructed SEND control unavailable");
+        applied.source_data = encoded_update.move_as_ok();
+      }
       result.updates = {{claims.source.account, applied.source_data},
                         {cfg->ingress.executor_address, coordinator.data}};
       if (applied.destination_data.not_null()) result.updates.push_back({target, applied.destination_data});

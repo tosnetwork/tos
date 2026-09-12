@@ -3,6 +3,7 @@
 #include "block/workchain-allocation-overlay.h"
 #include "block/workchain-account-effects.h"
 #include "block/workchain-possession-replay.h"
+#include "block/workchain-withdrawal-account.h"
 
 namespace block {
 
@@ -19,7 +20,7 @@ inline td::Result<WorkchainInboundAllocationOverlay> build(
     const td::Bits256& closing_account, const td::Bits256& coordinator, const td::Bits256& custody,
     std::uint64_t max_reads, std::uint64_t max_writes,
     int extra_validation_cells, const SerializeConfig& cfg, const ActionPhaseConfig& messages,
-    const Authorize& authorize) {
+    const Authorize& authorize, std::optional<std::uint32_t> withdrawal_limit = std::nullopt) {
   auto local = [](td::Slice message) { return td::Status::Error(-7201, message); };
   try {
     if (old_accounts.is_null() || input.is_null() || identity.workchain_id != 2 ||
@@ -39,7 +40,11 @@ inline td::Result<WorkchainInboundAllocationOverlay> build(
     if (!account.unpack(account_leaf, identity.gen_utime, false) ||
         !budget.unpack(old.lookup(coordinator), identity.gen_utime, false))
       return local("closure authenticated Native account unavailable");
-    auto confidential = decode_workchain_confidential_account(account.data);
+    auto confidential = [&]() -> td::Result<WorkchainConfidentialAccount> {
+      if (!withdrawal_limit) return decode_workchain_confidential_account(account.data);
+      TRY_RESULT(owner, decode_workchain_withdrawal_account(account.data, *withdrawal_limit));
+      return owner.account;
+    }();
     auto system = decode_workchain_coordinator_state(budget.data);
     if (confidential.is_error() || system.is_error()) return local("closure authenticated records unavailable");
     if (confidential.ok().address.account != closing_account || confidential.ok().address.workchain_id != 2)
@@ -95,6 +100,6 @@ inline td::Result<WorkchainInboundAllocationOverlay> settle_workchain_executed_c
             executed.old_coordinator_data_hash != system->get_hash().bits())
           return td::Status::Error(-7201, "closure execution belongs to another state snapshot");
         return executed.transition;
-      });
+      }, executed.withdrawal_limit);
 }
 }  // namespace block
