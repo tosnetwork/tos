@@ -190,7 +190,7 @@ inline std::string snapshot_json(const Snapshot& s,std::uint64_t issuance_fees,
 
 namespace m3_live {
 inline void write_paid_completion_observation(const std::filesystem::path& fixture,
-                                               const std::filesystem::path& output) {
+                                               const std::filesystem::path& output, bool row5_predecessor=false) {
   using namespace block; using namespace completion;
   CHECK(!std::filesystem::exists(output));
   CHECK(td::read_file_str((fixture/"enabled.result.validation.result").string()).move_as_ok()=="validate accept\n");
@@ -216,12 +216,14 @@ inline void write_paid_completion_observation(const std::filesystem::path& fixtu
   auto established=load(fixture/"completion-record-state.boc");
   gen::ShardStateUnsplit::Record es,bs,ns;
   CHECK(::tlb::unpack_cell(established,es)&&::tlb::unpack_cell(before,bs)&&::tlb::unpack_cell(after,ns));
-  CHECK(es.seq_no<bs.seq_no && ns.seq_no==add(bs.seq_no,1));
+  CHECK((row5_predecessor ? es.seq_no<=bs.seq_no : es.seq_no<bs.seq_no) && ns.seq_no==add(bs.seq_no,1));
   CHECK(account_data(established,wallet_account(0))->get_hash()==account_data(untouched,wallet_account(0))->get_hash());
   auto chained=established;
   for(unsigned n=es.seq_no+1;n<=bs.seq_no;++n){gen::Block::Record b;CHECK(::tlb::unpack_cell(block_at(fixture,n),b));chained=vm::MerkleUpdate::apply(chained,b.state_update).move_as_ok();}
   CHECK(chained->get_hash()==untouched->get_hash());
-  CHECK(bs.seq_no>add(record.timing.queue_removed_height,record.timing.settlement_blocks));
+  // Row5 needs a proved prior closure, not the separate row4 untouched-expiry scenario.
+  // Keep that stricter scenario unchanged for the formal row4 carrier.
+  CHECK((row5_predecessor ? ns.seq_no : bs.seq_no)>add(record.timing.queue_removed_height,record.timing.settlement_blocks));
   auto replay=m3_test::decode_m5_accounting_replay(m4_recorded_candidate(current)).move_as_ok();
   const auto* trigger=std::get_if<WorkchainWithdrawalInput>(&replay); CHECK(trigger);
   CHECK(trigger->data.claims.source.account==wallet_account(0) && trigger->claimed_operation_id!=record.withdrawal_id);
@@ -279,7 +281,7 @@ inline void write_paid_completion_observation(const std::filesystem::path& fixtu
 
 inline void write_completion_observation(const std::string& which,const std::filesystem::path& fixture,
                                          const std::filesystem::path& output) {
-  if(which=="row4"){write_paid_completion_observation(fixture,output);return;}
+  if(which=="row4" || which=="row5-paid"){write_paid_completion_observation(fixture,output,which=="row5-paid");return;}
   using namespace block;using namespace completion;
   CHECK(which=="row6" || which=="row5" || which=="bucket-small" || which=="bucket-full" || which=="bucket-closed");
   CHECK(!std::filesystem::exists(output));

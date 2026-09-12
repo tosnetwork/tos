@@ -194,6 +194,40 @@ if a.completion_contract:
         print('WITHDRAWAL-COMPLETION_D78_OBSERVED:test-workchain-withdrawal-completion-row4')
         raise SystemExit(0)
 
+    def closed_late_fixture():
+        args = [sys.executable, str(Path(__file__).resolve()), '--build', str(build),
+                '--m5-completion-late', '--completion-close-before-return']
+        with (work / 'closed-late.log').open('w') as log:
+            result = subprocess.run(args, stdout=log, stderr=log)
+        result.check_returncode()
+        lines = (work / 'closed-late.log').read_text().splitlines()
+        fixtures, observations = {}, {}
+        for name, case in (('PAID', 'row5-paid'), ('LATE', 'row5')):
+            prefix = 'COMPLETION_ROW5_' + name + ':'
+            paths = [Path(line[len(prefix):]) for line in lines if line.startswith(prefix)]
+            if len(paths) != 1:
+                raise RuntimeError('missing unique executed row5 predecessor/return: ' + name)
+            output = paths[0] / 'completion-observation.json'
+            if output.exists():
+                raise RuntimeError('row5 observation must be independently produced')
+            subprocess.run([str(build / 'test-m3-live'), '--completion-observation',
+                            case, str(paths[0]), str(output)], check=True)
+            fixtures[name] = paths[0]
+            observations[name] = json.loads(output.read_text())
+        paid, late = observations['PAID'], observations['LATE']
+        oracle.check('row4', paid)
+        oracle.check('row5', late)
+        for field in ('withdrawal_id', 'x', 'Q', 'window', 'phase'):
+            oracle.require(paid['input'][field] == late['input'][field], 'SAME_CLOSED_WITHDRAWAL')
+        oracle.require(paid['input']['height'] < late['input']['height'], 'CLOSURE_PRECEDES_RETURN')
+        # The late import consumes exactly the installed Paid predecessor;
+        # matching only an ID or a missing record would not prove this ordering.
+        oracle.require(paid['provenance']['after'] == late['provenance']['before'],
+                       'PAID_ROOT_IS_LATE_PREDECESSOR')
+        oracle.require(paid['input']['withdrawal_id'] not in
+                       late['observed']['before']['records'], 'ROW5_ALREADY_CLOSED')
+        return fixtures, observations
+
     if a.completion_contract == 'row6':
         args = [sys.executable, str(Path(__file__).resolve()), '--build', str(build),
                 '--m5-completion-late', '--completion-window-pair']
