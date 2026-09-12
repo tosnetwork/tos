@@ -41,8 +41,9 @@ class WalletV5(ContractView[WalletV5State]):
     def _parse_state(self, state: Cell) -> WalletV5State:
         return WalletV5State.parse(state)
 
-    def transfer_payload(self, destination: Address, value: int, body: Cell | None = None) -> Cell:
-        msg = transfer_message(self.address, destination, value, body)
+    def transfer_payload(self, destination: Address, value: int, body: Cell | None = None,
+                         state_init=None) -> Cell:
+        msg = transfer_message(self.address, destination, value, body, init=state_init)
         return (Builder().store_uint(0x0ec3c86d, 32).store_uint(3, 8)
                 .store_ref(Cell.empty()).store_ref(msg.serialize()).end_cell())
 

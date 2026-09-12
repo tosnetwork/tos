@@ -92,6 +92,9 @@ jobs:
           python test/pq-readiness/test_sdk.py --build build --key-tool build-pq-key/tos-pq-key --out artifacts/sdk
           python test/pq-readiness/test_controls.py
           python test/pq-readiness/test_release_profile.py
+          # The live-chain cases skip here; the signing, funding and deployment
+          # confirmation they wrap do not need a node and must not skip.
+          python test/pq-readiness/test_lite_transport.py
       - name: Record bounded native load, not production qualification
         run: |
           python tools/pq/load.py --executable build/crypto/pq/test-pq-v16-parity --scenarios artifacts/scenarios.tsv --batch-size 100 --batches 20 --workers 2 --max-batch-ms 2000 --out artifacts/load.json

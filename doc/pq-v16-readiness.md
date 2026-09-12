@@ -74,6 +74,29 @@ python test/pq-readiness/test_controls.py
 python test/pq-readiness/test_release_profile.py
 ```
 
+## Relaying through a running chain
+
+`contract.pq_lite_transport` reads its environment from a chain rather than a
+constant: global id, global version, head, gas prices from ConfigParam 20/21,
+account data, the module's stored key, and the last transaction of both
+accounts. `WalletV5Signer` is the funding side of that loop. It reads the
+wallet's seqno, wallet id and stored key from the account on every call and
+remembers nothing, because signing for a seqno the wallet has already passed
+produces a message the chain drops without a trace — which looks exactly like a
+lost broadcast. If the seqno moved between the read and the signature, nothing
+is signed.
+
+`deploy` funds a contract into existence and returns only once the account
+carries the very data cell its address was derived from. Broadcasting is not
+deployment, and an account that comes up with different data is a different
+contract. `submit_internal` refuses when the funding wallet cannot pay, so the
+relayer sees a refusal rather than a silent non-delivery, and refuses outright
+when no wallet is attached.
+
+`test/pq-readiness/test_lite_transport.py` covers the live-chain reads only when
+`TOS_LITE_CLIENT` and `TOS_LITE_CONFIG` point at a node. The signing, funding
+and deployment-confirmation paths do not need a node and always run.
+
 ## Wallet and Agent wrappers
 
 `tostester` exports WalletV5Blueprint, WalletV5, AgentAccountBlueprint,

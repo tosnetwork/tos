@@ -29,15 +29,23 @@ class LiteClientError(RuntimeError):
 class WalletSigner:
     """The funded account that pays for a submission, and how to authorize it."""
     address: Address
-    sign_body: object      # callable(body_cell, seqno, valid_until) -> Cell
+    # callable(destination, body, value, seqno, valid_until, state_init) -> Cell,
+    # returning a complete external message ready to be broadcast.
+    sign_body: object
     read_seqno: object     # callable() -> int
 
 
 class LiteClientTransport:
-    def __init__(self, binary: Path, config: Path, wallet: WalletSigner,
+    def __init__(self, binary: Path, config: Path, wallet: WalletSigner | None = None,
                  timeout: int = 25, poll_seconds: float = 2.0, attempts: int = 40):
         self.binary, self.config, self.wallet = Path(binary), Path(config), wallet
         self.timeout, self.poll_seconds, self.attempts = timeout, poll_seconds, attempts
+
+    def attach_wallet(self, wallet: WalletSigner) -> 'LiteClientTransport':
+        """A signer reads its own state through this transport, so the two are
+        wired after construction rather than in a single constructor call."""
+        self.wallet = wallet
+        return self
 
     def _run(self, command: str) -> str:
         result = subprocess.run(
@@ -171,8 +179,24 @@ class LiteClientTransport:
         # the owner's cap separately and checks this against it.
         return FundingBudget(module_compute, forwarding, account_execution, margin, total)
 
-    async def submit_internal(self, module: Address, body: Cell, value: int) -> str:
+    def _broadcast(self, message) -> None:
+        raw = message.to_boc() if hasattr(message, 'to_boc') else message.boc()
+        import tempfile
+        # A predictable name in a shared directory is somebody else's file to
+        # replace; the broadcast has to carry what this call actually signed.
+        with tempfile.NamedTemporaryFile(suffix='.boc', delete=False) as handle:
+            handle.write(raw)
+            path = Path(handle.name)
+        try:
+            self._run(f'sendfile {path}')
+        finally:
+            path.unlink(missing_ok=True)
+
+    async def submit_internal(self, module: Address, body: Cell, value: int,
+                              state_init=None) -> str:
         """Send a funded internal message from the relayer wallet, or fail loudly."""
+        if self.wallet is None:
+            raise LiteClientError('no funding wallet is attached; nothing was broadcast')
         available = self.balance(self.wallet.address)
         if available <= value:
             raise LiteClientError(
@@ -180,18 +204,36 @@ class LiteClientTransport:
                 'nothing was broadcast')
         seqno = self.wallet.read_seqno()
         _, chain_time = self.head()
-        external = self.wallet.sign_body(module, body, value, seqno, chain_time + 600)
-        boc = Path(f'/tmp/tos-pq-submit-{seqno}.boc')
-        boc.write_bytes(external.to_boc() if hasattr(external, 'to_boc') else external.boc())
-        try:
-            self._run(f'sendfile {boc}')
-        finally:
-            boc.unlink(missing_ok=True)
+        external = self.wallet.sign_body(module, body, value, seqno,
+                                         chain_time + 600, state_init)
+        self._broadcast(external)
         for _ in range(self.attempts):
             time.sleep(self.poll_seconds)
             if self.wallet.read_seqno() != seqno:
                 return f'{self.wallet.address.to_str(False)}:{seqno}'
         raise LiteClientError('the wallet never advanced; the broadcast is unconfirmed')
+
+    async def deploy(self, blueprint, value: int) -> Address:
+        """Fund a contract into existence and confirm what the chain now holds.
+
+        Broadcasting is not deployment. This returns only once the account
+        carries the very data cell the blueprint computed its address from; an
+        account that exists with different data is a different contract.
+        """
+        if value <= 0:
+            raise LiteClientError('deployment needs positive funding')
+        expected = blueprint.state_init.data.hash
+        await self.submit_internal(blueprint.address, Cell.empty(), value,
+                                   state_init=blueprint.state_init)
+        for _ in range(self.attempts):
+            try:
+                if self.account_data(blueprint.address).hash == expected:
+                    return blueprint.address
+            except LiteClientError:
+                pass
+            time.sleep(self.poll_seconds)
+        raise LiteClientError(
+            f'{blueprint.address.to_str(False)} never came up with the expected state')
 
     async def receipt(self, broadcast_id: str, request: AuthRequest,
                       module: Address) -> AttemptReceipt:
@@ -207,3 +249,42 @@ class LiteClientTransport:
         return AttemptReceipt(request.commitment.hex(), module, request.account,
                               module_success, account_success, consumed,
                               module_tx, account_tx)
+
+
+class WalletV5Signer:
+    """A real Wallet V5 paying for submissions on a live chain.
+
+    Its seqno, wallet id and stored key all come from the account itself. A
+    locally cached seqno is the classic way to sign a message the chain will
+    silently drop, or to overwrite a transfer somebody else just made from the
+    same wallet, so nothing here is remembered between calls.
+    """
+
+    def __init__(self, transport: LiteClientTransport, address: Address, key):
+        from .wallet_v5 import WalletV5
+        self.transport, self.address, self.key = transport, address, key
+        self._view = WalletV5(None, address, transport.global_id(), key)
+
+    def state(self):
+        from pytosiq_core import Cell as SDKCell
+        from .wallet_v5 import WalletV5State
+        data = self.transport.account_data(self.address)
+        return WalletV5State.parse(SDKCell.one_from_boc(data.boc()))
+
+    def read_seqno(self) -> int:
+        return self.state().seqno
+
+    def sign_body(self, destination: Address, body: Cell, value: int, seqno: int,
+                  valid_until: int, state_init=None):
+        from pytosiq_core import ExternalMsgInfo, MessageAny
+        state = self.state()
+        # The caller read the seqno, then the chain had time to move. Signing
+        # for a seqno the wallet has left behind produces a message that is
+        # dropped without a trace, which reads exactly like a lost broadcast.
+        if state.seqno != seqno:
+            raise LiteClientError(
+                f'wallet seqno moved from {seqno} to {state.seqno}; nothing was signed')
+        payload = self._view.transfer_payload(destination, value, body, state_init)
+        signed = self._view.sign(payload, state, valid_until)
+        info = ExternalMsgInfo(None, self.address, 0)
+        return MessageAny(info=info, init=None, body=signed).serialize()
