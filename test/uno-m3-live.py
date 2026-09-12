@@ -4,6 +4,9 @@ import argparse
 import base64
 import hashlib
 import json
+import importlib.util
+import shlex
+import sys
 import shutil
 from pathlib import Path
 import subprocess
@@ -18,6 +21,11 @@ p.add_argument('--m5-debit', action='store_true', help='stop after authenticated
 p.add_argument('--m5-return-route', action='store_true', help='deliver a funded payout to wc0 and observe the actual return')
 p.add_argument('--m5-failed', action='store_true', help='publish the funded phase-0 return atomically at custody')
 p.add_argument('--m5-bucket-small', action='store_true', help='real bounce below local issuance fees')
+p.add_argument('--m5-return-principal', type=int, help='explicit real-payout fixture principal')
+p.add_argument('--completion-expect-offset', type=int, choices=(-1, 0, 1),
+               help='assert observed y is h plus this exact boundary offset')
+p.add_argument('--completion-contract', choices=('bucket-small',),
+               help='run the existing frozen real-host completion contract')
 p.add_argument('--failed-routing-probe', action='store_true',
                help='run the real fee-routing producer mutation before normal Failed publication')
 p.add_argument('--failed-routing-binary', type=Path,
@@ -38,6 +46,130 @@ if f'CMAKE_HOME_DIRECTORY:INTERNAL={repo}' not in cache:
     p.error('build belongs to another tree')
 if 'TOS_UNO_CRYPTO_NODE_LINK:BOOL=ON' not in cache:
     p.error('real node verification requires TOS_UNO_CRYPTO_NODE_LINK=ON')
+if a.m5_return_principal is not None and not (a.m5_return_route and 0 < a.m5_return_principal < 2**64):
+    p.error('explicit principal requires a real return and must fit uint64')
+if a.completion_expect_offset is not None and not a.m5_bucket_small:
+    p.error('boundary observation requires the bucket fixture')
+
+if a.completion_contract:
+    # Complete the existing carrier here; do not introduce a parallel runner.
+    work = Path(tempfile.mkdtemp(prefix='uno-completion-bucket-'))
+    print(f'COMPLETION_RUN:{work}', flush=True)
+    spec = importlib.util.spec_from_file_location('completion_oracle',
+        repo / 'crypto/test/workchain_withdrawal_completion_oracle.py')
+    oracle = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(oracle)
+
+    def run_boundary(label, principal=None, offset=None):
+        args = [sys.executable, str(Path(__file__).resolve()), '--build', str(build), '--m5-bucket-small']
+        if principal is not None:
+            args += ['--m5-return-principal', str(oracle.checked(principal)),
+                     '--completion-expect-offset', str(offset)]
+        with (work / (label + '.log')).open('w') as log:
+            result = subprocess.run(args, stdout=log, stderr=log)
+        lines = (work / (label + '.log')).read_text().splitlines()
+        fixtures = [Path(line.removeprefix('Test-owned fixture: ')) for line in lines
+                    if line.startswith('Test-owned fixture: ')]
+        if len(fixtures) != 1:
+            raise RuntimeError(f'{label}: missing unique live fixture; see {work}')
+        if result.returncode:
+            raise RuntimeError(f'{label}: real boundary run failed ({result.returncode}); see {work}')
+        data = json.loads((fixtures[0] / 'completion-observation.json').read_text())
+        return fixtures[0], data
+
+    _, calibration = run_boundary('calibration')
+    ci = calibration['input']
+    h = oracle.checked(oracle.checked(ci['slot']) + oracle.checked(ci['base'] * ci['units']))
+    loss = oracle.checked(ci['x'] - ci['y'])
+    samples = {}
+    for offset, label in ((-1, 'below'), (0, 'equal'), (1, 'above')):
+        # Native loss is measured, not a tariff default. Each new run checks its
+        # actual y against the requested boundary, so size-dependent repricing
+        # cannot silently turn these into tests of different input values.
+        samples[label] = run_boundary(label, oracle.checked(oracle.checked(h + loss) + offset), offset)
+    for fixture_path, data in samples.values():
+        i = data['input']
+        if i['phase'] != 1 or i['height'] <= oracle.checked(i['Q'] + i['window']):
+            raise RuntimeError('COMPLETION_NOT_READY: authenticated late-phase fixture missing')
+
+    def shadow_binary(label, old, replacement):
+        root = work / label
+        header = root / 'block/workchain-failed-funded.h'
+        header.parent.mkdir(parents=True)
+        text = (repo / 'crypto/block/workchain-failed-funded.h').read_text()
+        if text.count(old) != 1:
+            raise RuntimeError('semantic mutation target changed: ' + label)
+        header.write_text(text.replace(old, replacement))
+        source = repo / 'test/test-m3-live.cpp'
+        entries = [e for e in json.loads((build / 'compile_commands.json').read_text())
+                   if Path(e['file']).resolve() == source]
+        if len(entries) != 1:
+            raise RuntimeError('missing unique live compile command')
+        command = shlex.split(entries[0]['command'])
+        command.insert(1, '-I' + str(root))
+        obj = root / 'live.o'
+        command[command.index('-o') + 1] = str(obj)
+        with (root / 'build.log').open('w') as log:
+            subprocess.run(command, cwd=build, stdout=log, stderr=log, check=True)
+            link = shlex.split(subprocess.check_output(['ninja', '-t', 'commands', 'test-m3-live'],
+                                                       cwd=build, text=True).splitlines()[-1])
+            if link[:2] != [':', '&&'] or link[-2:] != ['&&', ':']:
+                raise RuntimeError('unrecognized live link command')
+            link = link[2:-2]
+            original = 'CMakeFiles/test-m3-live.dir/test/test-m3-live.cpp.o'
+            if link.count(original) != 1:
+                raise RuntimeError('missing live object in link')
+            link[link.index(original)] = str(obj)
+            binary = root / 'test-m3-live'
+            link[link.index('-o') + 1] = str(binary)
+            subprocess.run(link, cwd=build, stdout=log, stderr=log, check=True)
+        return binary
+
+    def replay(label, binary):
+        source = samples['below'][0]
+        target = work / label
+        target.mkdir()
+        for file in source.iterdir():
+            if file.is_file() and not file.name.startswith(('enabled.', 'closed.', 'completion-observation')):
+                shutil.copy2(file, target / file.name)
+        shutil.copytree(source / 'db', target / 'db')
+        shutil.copytree(source / 'm4-blocks', target / 'm4-blocks')
+        result = subprocess.run([str(binary), str(target)], text=True, capture_output=True)
+        (target / 'completion-execution.log').write_text(result.stdout + result.stderr)
+        output = target / 'completion-observation.json'
+        # The unmodified adapter checks actual callee execution even when the
+        # mutant refuses before publication; an earlier failure is not a red.
+        subprocess.run([str(build / 'test-m3-live'), '--completion-observation',
+                        'bucket-small', str(target), str(output)], check=True)
+        return result.returncode, json.loads(output.read_text())
+
+    for label, target, replacement, assertion in (
+        ('refusal', '      WorkchainFailedFundedResult result{owner_data, coordinator_data, {}, {},',
+         '      return error("isolated bucket disposition refusal");\n'
+         '      WorkchainFailedFundedResult result{owner_data, coordinator_data, {}, {},',
+         'DISPOSITION_MUST_PUBLISH'),
+        ('attribution', '        credited.bucket.entries.back().account_id = owner.account.address.account;',
+         '        // Isolated mutation: omit the beneficiary from the installed bucket entry.',
+         'BUCKET_FIXED_ATTRIBUTION')):
+        binary = shadow_binary(label, target, replacement)
+        _, data = replay(label + '-run', binary)
+        oracle.expect_red('bucket-small', data, assertion)
+        print('COMPLETION_REAL_RED:' + assertion, flush=True)
+        try:
+            oracle.expect_red('bucket-small', data, assertion, observer=lambda case, observation: None)
+        except oracle.Violation as error:
+            if str(error) != 'ORACLE_MISSING:' + assertion:
+                raise
+            print(str(error), flush=True)
+        else:
+            raise RuntimeError('disabled oracle driver did not fail')
+    code, restored = replay('restored', build / 'test-m3-live')
+    if code != 0:
+        raise RuntimeError('restored real execution failed')
+    oracle.check('bucket-small', restored)
+    print('WITHDRAWAL-COMPLETION_D78_OBSERVED:test-workchain-withdrawal-completion-bucket-small')
+    raise SystemExit(0)
+
 fixture = Path(tempfile.mkdtemp(prefix='uno-m3-live-'))
 wallet = pin(repo, build / 'm3-vector-wallet-target/release/examples/m3-scenario', fixture)
 # Establish that the same numeric predicate used after each accepted block
@@ -226,7 +358,8 @@ initial, initial_blind, send_fee, collect_fee, limits = run(
     build, fixture, wallet, advance_pair, initial_only=True, initial_principal=principal)
 if a.m5_debit:
     request = dict(secret=101, old_value=initial, old_blind=initial_blind, new_blind=71, aux_blind=83,
-                   principal=1000000 if a.m5_bucket_small else 10000000 if a.m5_return_route else 137, outward_fee=17,
+                   principal=a.m5_return_principal if a.m5_return_principal is not None else
+                             1000000 if a.m5_bucket_small else 10000000 if a.m5_return_route else 137, outward_fee=17,
                    fee=257, **limits)
     def debit_write(name, values):
         (fixture / name).write_text(''.join(f'{k}={v}\n' for k,v in values.items()))
@@ -286,10 +419,16 @@ if a.m5_debit:
             print(completed.stdout, end=''); print(completed.stderr, end='', file=__import__('sys').stderr)
             if a.m5_bucket_small:
                 observation = fixture / 'completion-observation.json'
+                case = 'row6' if a.completion_expect_offset == 1 else 'bucket-small'
                 subprocess.run([str(build / 'test-m3-live'), '--completion-observation',
-                                'bucket-small', str(fixture), str(observation)], check=True)
+                                case, str(fixture), str(observation)], check=True)
+                if a.completion_expect_offset is not None:
+                    values = json.loads(observation.read_text())['input']
+                    h = values['slot'] + values['base'] * values['units']
+                    if not 0 <= h < 2**64 or values['y'] != h + a.completion_expect_offset:
+                        raise RuntimeError('COMPLETION_BOUNDARY_INPUT_MISMATCH: actual y is not h+offset')
                 subprocess.run(['python3', str(repo / 'crypto/test/workchain_withdrawal_completion_oracle.py'),
-                                '--case', 'bucket-small', '--observation', str(observation)], check=True)
+                                '--case', case, '--observation', str(observation)], check=True)
             completed.check_returncode()
     raise SystemExit(0)
 # Keep the final B->A receipt at 432: compensate only the changed SEND/COLLECT
