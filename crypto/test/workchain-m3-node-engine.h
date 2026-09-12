@@ -371,7 +371,8 @@ class M3NodeEngine final : public RegisteredWorkchainAccountEngine {
       // Neutral errors still include acquisition faults. Until a typed dispatch
       // verdict exists, do not relabel them as malformed candidate content.
       if (association.is_error()) return local("custody return association unavailable");
-      if (!association.ok()) return invalid("Failed selector does not strongly match a pending payout");
+      // No match is normal: the independent late-return admission uses the
+      // returned body for attribution and never invents an obligation release.
       WorkchainFailedFundedPolicy resolved{b.failed->withdrawal_limit, b.deposit->system_slots,
           b.deposit->slot_fee, b.operation_tariff->base, b.failed->issuance_billing_units};
       auto prepared = prepare_workchain_failed_funded(inbox, target.data, coordinator.data, resolved,
@@ -383,7 +384,8 @@ class M3NodeEngine final : public RegisteredWorkchainAccountEngine {
       WorkchainAccountEffects result;
       result.updates = {{selector.owner.account, accepted.owner_data},
           {cfg->ingress.executor_address, accepted.coordinator_data}, {*cfg->ingress.custody_address, custody.data}};
-      result.fees = accepted.fees;
+      if (accepted.issued) result.fees = accepted.fees;
+      result.native_transfers = accepted.transfers;
       std::sort(result.updates.begin(), result.updates.end(), [](const auto& a, const auto& b) {
         return a.account < b.account;
       });
@@ -495,6 +497,15 @@ class M3NodeEngine final : public RegisteredWorkchainAccountEngine {
       result.registration = std::make_shared<WorkchainRegistrationPaymentResult>(std::move(payment));
     } else if (const auto* closure = std::get_if<WorkchainClosureReplayInput>(&wire)) {
       const auto key = closure->context.subject.account;
+      if (coordinator.data.not_null()) {
+        TRY_RESULT(state, decode_workchain_coordinator_state(coordinator.data));
+        if (state.unexpected.not_null()) {
+          TRY_RESULT(bucket, decode_workchain_unexpected_bucket(state.unexpected, {256, 256}, 4096));
+          for (const auto& entry : bucket.entries)
+            if (entry.account_id && *entry.account_id == key)
+              return invalid("closure blocked by attributed unexpected value");
+        }
+      }
       TRY_RESULT(native, read(accounts, key, clock.gen_utime, true));
       auto decoded_account = decode_workchain_confidential_account(native.data);
       if (decoded_account.is_error()) return local("authenticated closure account record unavailable");

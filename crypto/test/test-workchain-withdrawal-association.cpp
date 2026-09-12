@@ -212,7 +212,9 @@ TEST(FailedFunded, RealIssuanceAndEncodedSequencePair) {
   auto late = WorkchainProofTestAccess::create(7);
   auto unsupported = run(late, 43);
   ASSERT_TRUE(unsupported.is_error());
-  ASSERT_EQ(unsupported.error().message(), "funded Failed requires an open height window");
+  // This older fixture carries a noncanonical self-description (256 bits plus
+  // a ref). Expiry now reaches late admission, which rejects that body.
+  ASSERT_EQ(unsupported.error().message(), "late return attribution differs from owner");
   ASSERT_EQ(late.consumed(), 0u);
   // D77: phase 0 has not started a window. A strongly matched return at a
   // height beyond 0 + settlement_blocks must still issue, not become late.
