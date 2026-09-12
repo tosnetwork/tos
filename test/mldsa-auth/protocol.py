@@ -13,6 +13,16 @@ SUBMIT = 0x4d4c4434
 AUTH = 0x41555448
 
 
+def emulator_library(build):
+    """Shared library suffix differs per platform; fail loudly rather than late."""
+    for name in ('libemulator.so', 'libemulator.dylib', 'emulator.dll'):
+        candidate = Path(build) / 'emulator' / name
+        if candidate.exists():
+            return candidate
+    raise SystemExit(f'no emulator library in {Path(build) / "emulator"}; '
+                     'build the emulator target first')
+
+
 def chain(data):
     parts = [data[i:i + 127] for i in range(0, len(data), 127)] or [b'']
     tail = None

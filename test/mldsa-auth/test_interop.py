@@ -16,8 +16,8 @@ import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'test/auth-extensions'))
 from build_contracts import build_contracts
-from protocol import (AUTH, Cell, CONTEXT, chain, commitment, from_boc, module_data,
-                      parse_message, submission)
+from protocol import (AUTH, Cell, CONTEXT, chain, commitment, emulator_library, from_boc,
+                      module_data, parse_message, submission)
 from native import (GLOBAL_ID, Emulator, account_data, active_account, internal,
                     outgoing, state_init)
 
@@ -118,8 +118,7 @@ def main():
     import os
     os.environ.update(FUNC_PATH=str(build / 'crypto/func'), FIFT_PATH=str(build / 'crypto/fift'),
                       TOL_PATH=str(build / 'tol/tol'),
-                      EMULATOR_PATH=os.environ.get('EMULATOR_PATH',
-                                                   str(build / 'emulator/libemulator.so')))
+                      EMULATOR_PATH=str(emulator_library(build)))
     build_contracts(build, out)
     for language in ('func', 'tol'):
         CODES[language] = from_boc((out / f'module-{language}.boc').read_bytes())

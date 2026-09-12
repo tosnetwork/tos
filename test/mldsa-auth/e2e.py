@@ -15,8 +15,8 @@ import sys
 import unittest
 
 from build_contracts import build_contracts
-from protocol import (ROOT, Cell, from_boc, chain, clone, commitment, module_data,
-                      submission, parse_message, Signer, CONTEXT, SUBMIT)
+from protocol import (ROOT, Cell, emulator_library, from_boc, chain, clone, commitment,
+                      module_data, submission, parse_message, Signer, CONTEXT, SUBMIT)
 from native import (NOW, GLOBAL_ID, Emulator, active_account, account_data, state_init,
                     internal, external, outgoing)
 import test_auth as framework
@@ -367,7 +367,7 @@ def main():
     build, out = args.build.resolve(), args.out.resolve()
     MODULE_FILTER = args.module
     os.environ.update(FUNC_PATH=str(build / 'crypto/func'), FIFT_PATH=str(build / 'crypto/fift'),
-                      TOL_PATH=str(build / 'tol/tol'), EMULATOR_PATH=str(build / 'emulator/libemulator.so'))
+                      TOL_PATH=str(build / 'tol/tol'), EMULATOR_PATH=str(emulator_library(build)))
     build_contracts(build, out)
     SIGNER = Signer(args.signer)
     for impl in ('wallet-func', 'wallet-tol', 'agent'):
