@@ -90,6 +90,50 @@ old replay/measurement sources are untouched. The Failed funding-edge trigger
 is retained: banning all coordinator->custody capability would contradict D63.
 No guard is retired by this checkpoint.
 
+## Cross-boundary consistency: pre-change observed receipt as control
+
+This retrospective comparison uses a control recorded before D78, not another
+post-change formula check. It gives no additional formal contract credit.
+
+Control: B's pre-D78 measurement committed in 92dd939c6, reviewing 82b53c675,
+fixture /tmp/uno-m3-live-6igzl00b. Its
+[normal.log](../../doc/measurements/uno-m5-shortfall-independent/normal.log)
+reports `COMPONENTS ... installed_receipt=7996062`. The provenance matters:
+[probe.cpp](../../doc/measurements/uno-m5-shortfall-independent/probe.cpp)
+decodes accepted-state.boc, selects the actual owner's origin_pending.front(),
+and prints that stored receipt.amount. The independently computed formula is
+only compared to that value; it is not substituted for it. The nearby
+PARAMETER_CONTROL variant=0 helper output is NOT the control used here.
+The same probe reads y from failed-bounce.boc and s/base/units from zerostate,
+and observes the actual custody transaction fee g=8.
+
+At this follow-up, the retained accepted-state, bounce and zerostate file SHA256s
+still match B's pre-change
+[input-identities.json](../../doc/measurements/uno-m5-shortfall-independent/input-identities.json):
+`1b598ccc…`, `39fc5473…`, `99fff079…`, respectively. The archived measurement
+and fixture have not been regenerated using D78 code.
+
+Comparison: A's post-D78 /tmp/uno-m3-live-wifgx0up, recorded in
+/tmp/uno-d78-live2.log. assert_m5_failed reads receipt.amount from the accepted
+owner root, checks its ciphertext by decryption, and separately checks the
+configuration-derived fees against Native balances/transaction fees.
+
+| Observed/input term | Pre-D78 control | Post-D78 observation |
+|---|---:|---:|
+| Actual bounce y | 9,996,070 | 9,996,070 |
+| Slot fee s | 3,000,000 | 3,000,000 |
+| Compute g (base 2, units 4) | 8 | 8 |
+| Prelock b | 1,000,000 | absent |
+| Installed receipt | 7,996,062 | 6,996,062 |
+
+Observed difference: **7,996,062 - 6,996,062 = 1,000,000 = old b**.
+Thus this matched-parameter observation supports exactly the expected removal
+of the prelock contribution, using a historical measured control independent
+of the new expression. These are not byte-identical fixtures (the state schema
+and message identities changed), and one matched observation is not a proof
+that arbitrary other inputs or compensating changes are impossible. It does
+not close bucket disposition, Paid/late, or any formal contract slot.
+
 ## Explicit incompleteness
 
 The y<=slot+g helper refusal is NOT bucket disposition. Closed/no-slot return
@@ -102,6 +146,11 @@ with all formal names missing (/tmp/uno-d78-failed-readiness.log and
 /tmp/uno-d78-prepare-readiness.log). No D78 observed-marker was fabricated.
 Full sequence successors and classification completion remain outstanding.
 Zero unknowns covers only the executed observations, not all classifications.
+
+The live driver did not capture an execution-time wallet binary digest/source
+stamp. The release rebuild log and successful no-prelock CLI execution are
+evidence, but not that stronger provenance pin. No retrospective hash is
+presented as an execution-time capture.
 
 Read-only Claude boundary review was requested for the changed host arithmetic,
 versioning and provenance. At this evidence checkpoint its report is pending;
