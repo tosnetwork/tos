@@ -2,8 +2,10 @@
 """Actual v16 transactions: paid relayer -> ML-DSA module -> existing account.
 
 No fabricated module sender, no replacement VM, no signature-ignore switch.
-Only the upstream emulator's test config version is changed; gas limits/prices
-are left intact. Public deterministic keys are TEST ONLY.
+Normal cases change only the test config version; gas limits/prices
+are left intact. One explicitly labeled destination-limit failure injection
+exercises account commit semantics, not production calibration.
+Public deterministic keys are TEST ONLY.
 """
 import argparse
 import json
@@ -34,12 +36,15 @@ def require_result(result, expected, before, shard, label, commits=False):
     actual = details.get('exit', result.get('vm_exit_code'))
     log = result.get('vm_log', '')[-5000:]
     if expected == 'failure':
+        assert result['success'], f'{label}: expected a real rejected transaction, not an emulator error'
         assert actual != 0 and not details.get('compute_success', False), f'{label}: {details}'
     else:
         assert actual == expected, f'{label}: expected {expected}, got {details}\n{log}'
     after = account_data(shard)[0].hash
     if expected != 0 and not commits:
         assert before == after, f'{label}: rejected transaction changed persistent data'
+    if expected != 0 and commits:
+        assert before != after, f'{label}: committed refusal must consume account counters'
     if expected == 0:
         assert result['success'] and not details['aborted'], f'{label}: {details}'
         assert details['action'] is None or details['action']['success'], f'{label}: {details}'
@@ -59,13 +64,19 @@ class Module:
     def __init__(self, language, workchain=-1, key=0, version=16):
         self.language, self.workchain, self.key = language, workchain, key
         self.code = MODULE_CODES[language]
-        self.data = module_data(SIGNER.public_key(key))
+        self.data = module_data(SIGNER.public_key(key), GLOBAL_ID)
         self.address = (workchain, int.from_bytes(state_init(self.code, self.data).hash, 'big'))
         self.shard = active_account(self.address, self.code, self.data, BALANCE)
         self.e = Emulator(version)
 
     def close(self):
         self.e.close()
+
+    def set_version(self, version):
+        last_lt = self.e.lt
+        self.e.close()
+        self.e = Emulator(version)
+        self.e.lt = last_lt
 
     def signed(self, account, request=None, co=None, key=None, context=CONTEXT):
         request = request if request is not None else account.request()
@@ -100,12 +111,13 @@ class Pair:
         a.address = (workchain, int.from_bytes(state_init(CODES[impl], data).hash, 'big'))
         a.shard = active_account(a.address, CODES[impl], data, BALANCE)
         self.label = f'{language}/{impl}/wc{workchain}'
+        self.limit_injection = False
 
     def close(self):
         self.module.close()
         self.account.close()
 
-    def deliver(self, message, expected=0, label='', envelope=None):
+    def deliver(self, message, expected=0, label='', envelope=None, commits=False):
         a = self.account
         wire = parse_message(message)
         assert wire['destination'] == a.address
@@ -115,27 +127,29 @@ class Pair:
         if envelope is not None:
             assert wire['body'].hash == envelope.hash, 'relay must preserve the exact AUTH body'
         before = a.data.hash
+        # Each instance must execute after the actual emitted message's LT.
+        a.e.lt = max(a.e.lt, wire['created_lt'])
         # CRITICAL: deliver the exact message returned by the module action phase.
         result = a.e.send(a.shard, message)
         if result['success']:
             a.shard = from_boc(result['shard_account'])
-        details = require_result(result, expected, before, a.shard, label)
+        details = require_result(result, expected, before, a.shard, label, commits=commits)
         record(label, 'account', result, a.shard)
         if expected:
             for out in outgoing(from_boc(result['transaction'])):
                 assert parse_message(out)['bounced'], 'rejection may bounce, but must not transfer assets'
         return result, details
 
-    def execute(self, body, account_exit=0, label=''):
+    def execute(self, body, account_exit=0, label='', commits=False):
         module_before = account_data(self.module.shard)[1]
         mr, messages = self.module.call(body, label=label)
         assert len(messages) == 1, 'successful module must emit exactly one message'
         assert account_data(self.module.shard)[1] >= module_before, 'relay spent pre-existing reserve'
-        ar, ad = self.deliver(messages[0], account_exit, label, body.refs[0])
+        ar, ad = self.deliver(messages[0], account_exit, label, body.refs[0], commits=commits)
         TOTALS.append({'case': label, 'module_gas': mr['details']['gas'], 'account_gas': ad['gas'],
                        'total_compute_gas': mr['details']['gas'] + ad['gas'],
                        'relay_value': parse_message(messages[0])['value'], 'funding': FUNDING,
-                       'account_exit': account_exit})
+                       'account_exit': account_exit, 'limit_injection': self.limit_injection})
         return mr, ar, messages[0]
 
 
@@ -172,7 +186,6 @@ class MldsaAuthTests(unittest.TestCase):
             self.assertEqual(a.counters()[1], 1)
             if a.agent:
                 self.assertEqual(a.counters()[2], 1_000_000_000)
-            # Relaying is stateless and caller-funded. The account rejects replay.
             p.execute(body, 1804, self.label(p, 'replay'))
             self.assertEqual(a.auth()[2], 1)
             self.assertEqual(a.counters()[1], 1)
@@ -225,9 +238,10 @@ class MldsaAuthTests(unittest.TestCase):
             for field, value, error in [('epoch', 0, 1803), ('nonce', 1, 1804)]:
                 p.execute(m.signed(a, a.request(**{field: value})), error, self.label(p, field))
                 self.assertEqual(a.auth()[2], 0)
+            for target in (m.address, (0 if m.workchain == -1 else -1, 99)):
+                m.call(m.signed(a, a.request(account=target)), 1809, label=self.label(p, 'invalid-target-' + str(target[0])))
             for until in (NOW, NOW + 3601):
                 m.call(m.signed(a, a.request(valid_until=until)), 1805, label=self.label(p, str(until)))
-            # The request can expire between the two separate transactions.
             body = m.signed(a)
             _, messages = m.call(body, label=self.label(p, 'before-expiry'))
             self.assertEqual(len(messages), 1)
@@ -287,6 +301,44 @@ class MldsaAuthTests(unittest.TestCase):
             _, result, _ = p.execute(m.signed(a), label=self.label(p, 'strict-execution'))
             self.assert_transfer(p, result)
 
+    def test_signed_requests_cannot_bypass_account_policy(self):
+        for p in self.pairs():
+            a, m = p.account, p.module
+            if a.agent:
+                bad = a.request(payload=a.execute_payload(5_000_000_001))
+                error = 1707
+            else:
+                bad = a.request(payload=a.execute_payload(mode=35))
+                error = 1811
+            p.execute(m.signed(a, bad), error, self.label(p, 'policy-refused'))
+            self.assertEqual(a.auth()[2], 0)
+            self.assertEqual(a.counters()[1], 0)
+            self.assertEqual(a.counters()[2], 0)
+            _, result, _ = p.execute(m.signed(a), label=self.label(p, 'allowed-transfer'))
+            self.assert_transfer(p, result)
+
+    def test_agent_post_accept_refusal_consumes_nonce_without_transfer(self):
+        for language in MODULE_CODES:
+            if MODULE_FILTER and MODULE_FILTER != language:
+                continue
+            for wc in (-1, 0):
+                p = Pair(language, 'agent', wc)
+                self.addCleanup(p.close)
+                a, m = p.account, p.module
+                # Destination-only failure injection, not calibration or network configuration.
+                a.e.close()
+                a.e = Emulator(16, max_msg_cells=0)
+                p.limit_injection = True
+                req = a.request(payload=a.execute_payload(operation=0x41475003))
+                body = m.signed(a, req)
+                _, result, _ = p.execute(body, 1713, self.label(p, 'committed-refusal'), commits=True)
+                self.assertFalse(result['details']['aborted'])
+                self.assertEqual(len(outgoing(from_boc(result['transaction']))), 0)
+                self.assertEqual(a.counters()[2], 0)
+                self.assertEqual(a.auth()[2], 1)
+                self.assertEqual(a.counters()[1], 1)
+                p.execute(body, 1804, self.label(p, 'consumed-replay'))
+
     def test_funding_bounce_and_version_gates(self):
         for p in self.pairs():
             m, a = p.module, p.account
@@ -297,9 +349,9 @@ class MldsaAuthTests(unittest.TestCase):
             _, out = m.call(Cell(), label=self.label(p, 'top-up'))
             self.assertFalse(out)
             m.call(body, 1900, ext=True, label=self.label(p, 'external-rejected'))
-            m.e.close(); m.e = Emulator(15)
+            m.set_version(15)
             m.call(body, 6, label=self.label(p, 'v15-rejected'))
-            m.e.close(); m.e = Emulator(16)
+            m.set_version(16)
             p.execute(body, label=self.label(p, 'v16-positive-control'))
 
 
@@ -330,7 +382,6 @@ def main():
     (out / 'gas.json').write_text(json.dumps({'units': 'gas; values are raw nanotomis',
                                            'network_activation': False, 'transactions': TOTALS},
                                           indent=2, sort_keys=True) + '\n')
-    # An explicit marker prevents compilation errors/crashes from counting as a killed mutation.
     print('E2E_ASSERTION_FAILURE' if result.failures else 'E2E_NO_ASSERTION_FAILURE')
     return 0 if result.wasSuccessful() else 1
 

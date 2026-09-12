@@ -7,7 +7,6 @@ import sys
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'test/auth-extensions'))
 from cells import Cell, from_boc
-from native import GLOBAL_ID
 
 CONTEXT = b'TOS-AUTH-ML-DSA-44-v1'
 SUBMIT = 0x4d4c4434
@@ -34,7 +33,7 @@ def commitment(request):
     return Cell().uint(0x544f532d41555448, 64).ref(request).hash
 
 
-def module_data(public_key, network=GLOBAL_ID):
+def module_data(public_key, network):
     if len(public_key) != 1312:
         raise ValueError('ML-DSA-44 public key must contain exactly 1312 bytes')
     return Cell().sint(network, 32).ref(chain(public_key))
@@ -52,11 +51,12 @@ def parse_message(message):
     s.uint(1); bounce = s.uint(1); bounced = s.uint(1)
     sender, destination, value = s.addr(), s.addr(), s.coins()
     assert s.maybe() is None, 'no extra currencies in this profile'
-    s.coins(); forward_fee = s.coins(); s.uint(64); s.uint(32)
+    s.coins(); forward_fee = s.coins(); created_lt = s.uint(64); created_at = s.uint(32)
     assert s.uint(1) == 0, 'unexpected StateInit in relay/transfer'
     body = s.ref() if s.uint(1) else Cell(s.bits, s.refs)
     return {'sender': sender, 'destination': destination, 'value': value,
-            'bounce': bounce, 'bounced': bounced, 'forward_fee': forward_fee, 'body': body}
+            'bounce': bounce, 'bounced': bounced, 'forward_fee': forward_fee,
+            'created_lt': created_lt, 'created_at': created_at, 'body': body}
 
 
 class Signer:

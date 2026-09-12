@@ -47,7 +47,7 @@ const int mldsa_auth::submit = 0x4d4c4434;
   cs~load_uint(64);  ;; nonce: authenticated here, enforced by the account
   int valid_until = cs~load_uint(32);
   throw_unless(auth::expired, (valid_until > now()) & (valid_until <= now() + 3600));
-  throw_unless(auth::bad_operation, cs~load_uint(8) <= auth::manage);
+  throw_unless(auth::bad_operation, cs~load_uint(8) <= 2);
   cs~load_ref();
   cs.end_parse();
 
