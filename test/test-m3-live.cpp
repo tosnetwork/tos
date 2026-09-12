@@ -536,7 +536,8 @@ int main(int argc, char** argv) {
         } else {
           const auto& closure = std::get<block::WorkchainClosureReplayInput>(replay);
           m3_live::assert_accepted_closure(previous, accepted, closure.context.subject.account,
-              m4 ? std::stoull(m3_live::field(fixture / "closure.expected.txt", "other")) : 49490);
+              m4 ? std::stoull(m3_live::field(fixture / "closure.expected.txt", "other")) : 49490,
+              m3_live::m5_live_withdrawal_limit(fixture));
         }
       }
       m3_live::save(fixture / "accepted-state.boc", accepted.state);

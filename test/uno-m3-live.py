@@ -28,6 +28,8 @@ p.add_argument('--m5-completion-late', action='store_true',
                help='establish Q through real owner operations before importing the return')
 p.add_argument('--completion-close-before-return', action='store_true',
                help='expire the original obligation through an owner operation before late delivery')
+p.add_argument('--completion-close-account-before-return', action='store_true',
+               help='use real SENDs and closure before delivering the original late return')
 p.add_argument('--completion-window-pair', action='store_true',
                help='fork one authenticated predecessor into deadline and deadline+1 real returns')
 p.add_argument('--completion-no-slot', action='store_true',
@@ -51,6 +53,9 @@ a = p.parse_args()
 split_return_route = a.m5_completion_late and not a.m5_completion_paid
 if a.completion_close_before_return and not split_return_route:
     p.error('close-before-return requires the real split late-return route')
+if a.completion_close_account_before_return and (not split_return_route or a.completion_close_before_return or
+                                                a.completion_window_pair or a.completion_no_slot):
+    p.error('account closure requires the unfilled split late route without other closure/window variants')
 if a.completion_window_pair and (not split_return_route or a.completion_close_before_return):
     p.error('window-pair requires the split late route without close-before-return')
 if a.m5_completion_paid:
@@ -629,6 +634,17 @@ if a.m5_completion_paid:
     sender = sender.replace('create_state\n',
         f'<{{ 0 PUSHINT DROP }}>c\nempty_cell empty_cell 0 0 0 {recipient} 6 register_smc drop\ncreate_state\n')
     (fixture / 'm3-native-paid.fif').write_text(sender)
+if a.completion_close_account_before_return:
+    sender = (repo / 'test/m3-native-sender.fif').read_text()
+    entry = '<{ DROP ACCEPT LDREF ENDS 1 PUSHINT SENDRAWMSG }>c'
+    if sender.count(entry) != 1:
+        raise RuntimeError('Native test payer entry changed')
+    # The real closure refund must be accepted by its Native beneficiary.
+    # Otherwise this external-only fixture wallet bounces it back as a second
+    # input alongside the payout return. Do not discard that input or relax
+    # the one-input host profile. External (-1) execution is unchanged.
+    sender = sender.replace(entry, '<{ DUP IFNOTRET DROP ACCEPT LDREF ENDS 1 PUSHINT SENDRAWMSG }>c')
+    (fixture / 'm3-native-closed.fif').write_text(sender)
 prefix = source.split(marker)[0]
 route = '  set(script_path "${SOURCE_DIR}/test/${script}.fif")'
 if prefix.count(route) != 1:
@@ -641,6 +657,8 @@ prefix = prefix.replace(route, route + '''
   endif()''')
 if a.m5_completion_paid:
     prefix = prefix.replace('${SOURCE_DIR}/test/m3-native-sender.fif', '${fixture}/m3-native-paid.fif')
+if a.completion_close_account_before_return:
+    prefix = prefix.replace('${SOURCE_DIR}/test/m3-native-sender.fif', '${fixture}/m3-native-closed.fif')
 if split_return_route:
     master = (repo / 'test/counter-masterchain-genesis.fif').read_text()
     old = 'base_rhash base_fhash now 0 0 0 0 add-std-workchain'
@@ -887,6 +905,53 @@ if a.m5_debit:
                 shutil.copyfile(fixture / 'prepare-payout.boc',fixture / 'completion-original-payout.boc')
                 old_blind = request['new_blind']
                 owner_steps = [(5,79),(6,83)]
+                if a.completion_close_account_before_return:
+                    # Two real SENDs advance authenticated Q without opening new
+                    # W records. The second drains available; closure is then an
+                    # actual authorized operation, never an edited state root.
+                    for number, new_blind in owner_steps:
+                        amount = 1000 if number == 5 else available - send_fee
+                        if not 0 < amount <= int(limits['max_value']) or amount + send_fee > available:
+                            raise RuntimeError('closed-account fixture cannot fund its real SEND')
+                        debit_write('operation.wallet.txt', dict(owner=0))
+                        witness = dict(secret=101, receiver_secret=223, old_value=available,
+                                       old_blind=old_blind, value=amount, new_blind=new_blind,
+                                       transfer_blind=79, aux_blind=43)
+                        debit_write('operation.request.txt', dict(witness, kind=1, fee=send_fee, **limits))
+                        subprocess.run([str(wallet), 'points', str(fixture / 'operation.request.txt'),
+                                        str(fixture / 'operation.points.txt')], check=True)
+                        subprocess.run([str(build / 'test-m3-live'), '--send-request', str(fixture)], check=True)
+                        statement = dict(line.split('=',1) for line in
+                                         (fixture / 'operation.statement.txt').read_text().splitlines())
+                        if set(statement) & set(witness):
+                            raise RuntimeError('SEND witness overwrites authenticated statement')
+                        debit_write('operation.request.txt', dict(witness, **statement))
+                        subprocess.run([str(wallet), 'prove', str(fixture / 'operation.request.txt'),
+                                        str(fixture / 'operation.proof.txt')], check=True)
+                        subprocess.run([str(build / 'test-m3-live'), '--send-finish', str(fixture)], check=True)
+                        after = available - amount - send_fee  # bounds checked above
+                        debit_write('operation.expected.txt', dict(before=available, after=after))
+                        subprocess.run([str(build / 'test-m3-live'), str(fixture)], check=True)
+                        advance_pair(number)
+                        route_block(f'completion-send-{number}-master', '-1', (f'{number}-enabled',))
+                        available, old_blind = after, new_blind
+                    shutil.copyfile(fixture / 'current-state.boc', fixture / 'completion-record-state.boc')
+                    shutil.copyfile(fixture / 'current-state.boc', fixture / 'completion-account-close-before-state.boc')
+                    debit_write('closure.owner.txt', dict(owner=0))
+                    debit_write('closure.expected.txt', dict(other=0))
+                    subprocess.run([str(build / 'test-m3-live'), '--closure-request', str(fixture)], check=True)
+                    subprocess.run([str(wallet), 'close', str(fixture / 'closure.request.txt'),
+                                    str(fixture / 'closure.proof.txt')], check=True)
+                    subprocess.run([str(build / 'test-m3-live'), '--closure-finish', str(fixture)], check=True)
+                    subprocess.run([str(build / 'test-m3-live'), str(fixture)], check=True)
+                    for src, dst in [('accepted-state.boc', 'completion-account-close-after-state.boc'),
+                                     ('enabled.candidate', 'completion-account-close-candidate'),
+                                     ('enabled.result.validation.result', 'completion-account-close-validation.result')]:
+                        shutil.copyfile(fixture / src, fixture / dst)
+                    advance_pair(7)
+                    route_block('completion-account-close-master', '-1', ('7-enabled',))
+                    print(f'COMPLETION_CLOSED_ACCOUNT:{fixture}', flush=True)
+                    owner_steps = []
                 if a.completion_close_before_return or a.completion_window_pair:
                     owner_steps.append((7,97))
                 for number, new_blind in owner_steps:
@@ -935,7 +1000,7 @@ if a.m5_debit:
                     old_blind = new_blind
                     if a.completion_close_before_return and number == 6:
                         shutil.copyfile(fixture / 'current-state.boc',fixture / 'completion-record-state.boc')
-                if not a.completion_close_before_return:
+                if not a.completion_close_before_return and not a.completion_close_account_before_return:
                     shutil.copyfile(fixture / 'current-state.boc',fixture / 'completion-record-state.boc')
                 shutil.copyfile(fixture / 'completion-original-payout.boc',fixture / 'prepare-payout.boc')
             if split_return_route:
