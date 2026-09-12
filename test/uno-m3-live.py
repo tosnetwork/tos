@@ -45,7 +45,7 @@ p.add_argument('--completion-full-cap', action='store_true',
 p.add_argument('--m5-return-principal', type=int, help='explicit real-payout fixture principal')
 p.add_argument('--completion-expect-offset', type=int, choices=(-1, 0, 1),
                help='assert observed y is h plus this exact boundary offset')
-p.add_argument('--completion-contract', choices=('bucket-small', 'bucket-full', 'bucket-closed', 'row4', 'row5', 'row6'),
+p.add_argument('--completion-contract', choices=('bucket-small', 'bucket-full', 'bucket-closed', 'row4', 'row5', 'row6', 'sweep-atomic'),
                help='run the existing frozen real-host completion contract')
 p.add_argument('--failed-routing-probe', action='store_true',
                help='run the real fee-routing producer mutation before normal Failed publication')
@@ -101,7 +101,8 @@ if a.completion_contract:
     oracle = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(oracle)
 
-    def shadow_binary(label, old, replacement, relative="crypto/block/workchain-failed-funded.h"):
+    def shadow_binary(label, old, replacement, relative="crypto/block/workchain-failed-funded.h",
+                      native_units=(), extra_mutations=()):
         root = work / label
         header = root / relative
         header.parent.mkdir(parents=True)
@@ -109,22 +110,55 @@ if a.completion_contract:
         if text.count(old) != 1:
             raise RuntimeError('semantic mutation target changed: ' + label)
         header.write_text(text.replace(old, replacement))
+        if relative == 'crypto/test/workchain-m5-sweep.h':
+            # A quoted include searches the caller's directory first. Shadow
+            # that caller too, so the mutated callee is actually compiled.
+            parent = root / 'crypto/test/workchain-m3-node-engine.h'
+            parent.write_text((repo / 'crypto/test/workchain-m3-node-engine.h').read_text())
+        for extra_relative, extra_old, extra_new in extra_mutations:
+            extra = root / extra_relative
+            extra.parent.mkdir(parents=True, exist_ok=True)
+            extra_text = (repo / extra_relative).read_text()
+            if extra_text.count(extra_old) != 1:
+                raise RuntimeError('semantic secondary mutation target changed: ' + label)
+            extra.write_text(extra_text.replace(extra_old, extra_new))
         source = repo / 'test/test-m3-live.cpp'
         entries = [e for e in json.loads((build / 'compile_commands.json').read_text())
-                   if Path(e['file']).resolve() == source]
+                   if Path(e['file']).as_posix().endswith('/test/test-m3-live.cpp')]
         if len(entries) != 1:
             raise RuntimeError('missing unique live compile command')
         command = shlex.split(entries[0]['command'])
-        command[1:1] = ['-I' + str(root), '-I' + str(root / 'crypto'), '-I' + str(repo / 'crypto/block'), '-I' + str(repo / 'crypto/test')]
+        # Copy the caller: its quoted observer include must resolve the isolated
+        # mutation, not the original caller directory. Other headers stay at the
+        # configured Native source, avoiding a second copy of core types.
+        compiled_source = root / 'test-m3-live.cpp'
+        compiled_source.write_text(source.read_text())
+        command[command.index(entries[0]['file'])] = str(compiled_source)
+        command[1:1] = ['-I' + str(root), '-I' + str(root / 'test'), '-I' + str(root / 'crypto'), '-I' + str(repo / 'test'), '-I' + str(Path(entries[0]['file']).parent.parent / 'crypto/test')]
         obj = root / 'live.o'
         command[command.index('-o') + 1] = str(obj)
         with (root / 'build.log').open('w') as log:
             subprocess.run(command, cwd=build, stdout=log, stderr=log, check=True)
+            native_objects = []
+            for unit in native_units:
+                # Some inline settlement code runs in the Native callers, not
+                # the registered engine TU. Rebuild those exact consumers.
+                matches = [e for e in json.loads((build / 'compile_commands.json').read_text())
+                           if Path(e['file']).as_posix().endswith('/' + unit)]
+                if len(matches) != 1:
+                    raise RuntimeError('missing unique Native compile command: ' + unit)
+                native_command = shlex.split(matches[0]['command'])
+                native_command[1:1] = ['-I' + str(root), '-I' + str(root / 'crypto')]
+                native_object = root / (Path(unit).stem + '.o')
+                native_command[native_command.index('-o') + 1] = str(native_object)
+                subprocess.run(native_command, cwd=build, stdout=log, stderr=log, check=True)
+                native_objects.append(str(native_object))
             link = shlex.split(subprocess.check_output(['ninja', '-t', 'commands', 'test-m3-live'],
                                                        cwd=build, text=True).splitlines()[-1])
             if link[:2] != [':', '&&'] or link[-2:] != ['&&', ':']:
                 raise RuntimeError('unrecognized live link command')
             link = link[2:-2]
+            link[1:1] = native_objects
             original = 'CMakeFiles/test-m3-live.dir/test/test-m3-live.cpp.o'
             if link.count(original) != 1:
                 raise RuntimeError('missing live object in link')
@@ -134,7 +168,7 @@ if a.completion_contract:
             subprocess.run(link, cwd=build, stdout=log, stderr=log, check=True)
         return binary
 
-    def replay_paid(label, binary, source, case="row4"):
+    def replay_paid(label, binary, source, case="row4", reader=None):
         target = work / label
         target.mkdir()
         for file in source.iterdir():
@@ -152,9 +186,150 @@ if a.completion_contract:
         result = subprocess.run([str(binary), str(target)], text=True, capture_output=True)
         (target / 'completion-execution.log').write_text(result.stdout + result.stderr)
         output = target / 'completion-observation.json'
-        subprocess.run([str(build / 'test-m3-live'), '--completion-observation',
+        subprocess.run([str(reader or build / 'test-m3-live'), '--completion-observation',
                         case, str(target), str(output)], check=True)
         return result.returncode, json.loads(output.read_text())
+
+    if a.completion_contract == 'sweep-atomic':
+        # The fixture, account observations and all mutations run the real host.
+        # Architecture-level publication isolation is explicitly NOT certified.
+        observer_header = 'test/m5-completion-observer.h'
+        reader = shadow_binary('reader', '#pragma once', '#pragma once', observer_header)
+        args = [sys.executable, str(Path(__file__).resolve()), '--build', str(build),
+                '--completion-sweep']
+        with (work / 'positive.log').open('w') as log:
+            subprocess.run(args, stdout=log, stderr=log, check=True)
+        paths = [Path(line.removeprefix('COMPLETION_SWEEP_FIXTURE:'))
+                 for line in (work / 'positive.log').read_text().splitlines()
+                 if line.startswith('COMPLETION_SWEEP_FIXTURE:')]
+        if len(paths) != 1:
+            raise RuntimeError('sweep fixture did not publish exactly one round')
+        positive = paths[0]
+        def observe(label, fixture, binary=reader):
+            output = work / (label + '.json')
+            subprocess.run([str(binary), '--completion-observation', 'sweep-atomic',
+                            str(fixture), str(output)], check=True)
+            return json.loads(output.read_text())
+        data = observe('positive', positive)
+        oracle.check('sweep-atomic', data)
+        def red(data, assertion):
+            oracle.expect_red('sweep-atomic', data, assertion)
+            print('COMPLETION_REAL_RED:' + assertion, flush=True)
+            try:
+                oracle.expect_red('sweep-atomic', data, assertion,
+                                  observer=lambda case, observation: None)
+            except oracle.Violation as error:
+                if str(error) != 'ORACLE_MISSING:' + assertion:
+                    raise
+                print(str(error), flush=True)
+            else:
+                raise RuntimeError('disabled oracle did not fail')
+        native = ('validator/impl/collator.cpp', 'validator/impl/validate-query.cpp')
+        transfer_old = '    entry.store_long(0x6b953015, 32).store_bits(it->from.bits(), 256).store_bits(it->to.bits(), 256);'
+        transfer_new = '''    auto destination = it->to;
+    if (effects.bucket_sweep_credit) {
+      std::fill(destination.as_slice().begin(), destination.as_slice().end(), 0x11);
+      LOG(ERROR) << "SWEEP_TRANSFER_ENCODING_MUTATION_REACHED";
+    }
+    entry.store_long(0x6b953015, 32).store_bits(it->from.bits(), 256).store_bits(destination.bits(), 256);'''
+        fee_old = '      result.bucket_sweep_credit = WorkchainAccountEffects::BucketSweepCredit{'
+        fee_new = '''      LOG(ERROR) << "SWEEP_FEE_MUTATION_REACHED";
+      CHECK(!__builtin_add_overflow(credit.slot, credit.compute, &credit.slot));
+      credit.compute = 0;
+''' + fee_old
+        credit_old = '''    owner.origin_pending.push_back({id, amount,
+        {owner.account.address.instance, owner.account.key_epoch, owner.account.bindings.asset}, encoded, origin});'''
+        cases = (
+            ('physical', 'crypto/block/workchain-account-effects.h', transfer_old, transfer_new,
+             'SWEEP_TRANSFER_ENCODING_MUTATION_REACHED', 'D63_1_PHYSICAL_TRANSFER', native),
+            ('fees', 'crypto/test/workchain-m3-node-engine.h', fee_old, fee_new,
+             'SWEEP_FEE_MUTATION_REACHED', 'D63_3_FEE_DESTINATIONS', ()),
+            ('credit', 'crypto/test/workchain-m5-sweep.h', credit_old,
+             '    LOG(ERROR) << "SWEEP_CREDIT_MUTATION_REACHED";',
+             'SWEEP_CREDIT_MUTATION_REACHED', 'D63_4_INSTALLED_CREDIT', ()))
+        for label, relative, old, new, marker, assertion, units in cases:
+            binary = shadow_binary(label, old, new, relative, native_units=units)
+            _, changed = replay_paid(label + '-run', binary, positive, 'sweep-atomic', reader)
+            if marker not in (work / (label + '-run/completion-execution.log')).read_text():
+                raise RuntimeError('mutated production path not executed: ' + label)
+            red(changed, assertion)
+            if label == 'fees':
+                # A symmetric wrong fee destination still satisfies both sums.
+                for state in (changed['observed']['before'], changed['observed']['after']):
+                    assert state['R_actual'] == state['R_book']
+                    assert state['R_actual'] + state['P'] == state['D'] + state['N_book'] + state['W']
+        hold_old = '    bucket.entries.erase(bucket.entries.begin());'
+        hold_new = '    LOG(ERROR) << "SWEEP_HOLDINGS_MUTATION_REACHED";'
+        helper = 'crypto/test/workchain-m5-sweep.h'
+        blocked = shadow_binary('holdings', hold_old, hold_new, helper)
+        code, failed = replay_paid('holdings-run', blocked, positive, 'sweep-atomic', reader)
+        failed_fixture = work / 'holdings-run'
+        if not code or failed['observed']['published'] or (failed_fixture / 'enabled.candidate').exists():
+            raise RuntimeError('D60 failed to block the real holdings omission')
+        if 'SWEEP_HOLDINGS_MUTATION_REACHED' not in (failed_fixture / 'completion-execution.log').read_text():
+            raise RuntimeError('holdings mutation not executed')
+        carrier = shadow_binary('holdings-carrier', hold_old, hold_new, helper, native_units=native,
+            extra_mutations=(('crypto/block/workchain-account-settlement.h',
+                              'expected_holdings != new_holdings', 'false /* remove only D60 pairing */'),))
+        _, changed = replay_paid('holdings-carrier-run', carrier, positive, 'sweep-atomic', reader)
+        red(changed, 'D63_2_HOLDINGS')
+        print('D63_2_PRIMARY_CARRIER:D60_PAIRING', flush=True)
+        # Retry the actual failed input, not a newly issued authorization.
+        pinned = {name: (failed_fixture / name).read_bytes()
+                  for name in ('zerostate.boc', 'completion-before-state.boc', 'accepted-block.id')}
+        for name in ('enabled-db', 'closed-db'):
+            shutil.rmtree(failed_fixture / name, ignore_errors=True)
+        for file in failed_fixture.glob('enabled.*'):
+            file.unlink()
+        with (work / 'retry.log').open('w') as log:
+            subprocess.run([str(reader), str(failed_fixture)], stdout=log, stderr=log, check=True)
+        for name in ('zerostate.boc', 'completion-before-state.boc'):
+            if (failed_fixture / name).read_bytes() != pinned[name]:
+                raise RuntimeError('retry changed authenticated authorization/predecessor')
+        restored = observe('retry', failed_fixture)
+        oracle.check('sweep-atomic', restored)
+        if restored['observed']['authorized_sequence'] != data['observed']['authorized_sequence']:
+            raise RuntimeError('retry used a different authorization')
+        print('REAL_RETRY_AFTER_UNPUBLISHED_SAME_AUTH', flush=True)
+        # Same-height replay: real verifier, authenticated old/consumed buckets,
+        # identical height. This is not a second Native publication attempt.
+        def reuse_check(value):
+            o = value['observed']
+            oracle.require(o['authorization_before_ok'] is True, 'SWEEP_AUTH_BEFORE')
+            oracle.require(o['authorization_after_same_height_code'] == -7200, 'SWEEP_CONSUMED_SAME_HEIGHT')
+        reuse_check(data)
+        reuse = shadow_binary('reuse', 'authorization.sequence != *bucket.sweep_sequence',
+                              'false /* remove consumed-round comparison */', helper)
+        changed = observe('reuse', positive, reuse)
+        def reuse_red(value, check=reuse_check):
+            try:
+                check(value)
+            except oracle.Violation as error:
+                oracle.require(str(error) == 'SWEEP_CONSUMED_SAME_HEIGHT', 'WRONG_FAILURE_LAYER:' + str(error))
+                return
+            raise oracle.Violation('ORACLE_MISSING:SWEEP_CONSUMED_SAME_HEIGHT')
+        reuse_red(changed)
+        print('REAL_VERIFIER_RED:SWEEP_CONSUMED_SAME_HEIGHT', flush=True)
+        try:
+            reuse_red(changed, check=lambda value: None)
+        except oracle.Violation as error:
+            if str(error) != 'ORACLE_MISSING:SWEEP_CONSUMED_SAME_HEIGHT':
+                raise
+            print(str(error), flush=True)
+        else:
+            raise RuntimeError('reuse oracle disabled without detection')
+        old = 'auto native=sweep_native_observation(accepted.block,ingress.executor_address,*ingress.custody_address);'
+        height = data['observed']['height']
+        new = ('auto native=sweep_native_observation(block_at(' + json.dumps(str(failed_fixture)) + ',' +
+               str(height) + '),ingress.executor_address,*ingress.custody_address);')
+        mixed = shadow_binary('mixed', old, new, observer_header)
+        changed = observe('mixed', positive, mixed)
+        if changed['observed']['before'] != data['observed']['before'] or changed['observed']['after'] != data['observed']['after']:
+            raise RuntimeError('mixed-block control changed amounts instead of provenance')
+        red(changed, 'D63_SAME_BATCH')
+        print('ATOMICITY_SCOPE:section9.3 architecture; no premature-publication control; regression gap open')
+        print('WITHDRAWAL-COMPLETION_D78_OBSERVED:test-workchain-withdrawal-completion-sweep-atomic')
+        raise SystemExit(0)
 
     if a.completion_contract == 'row4':
         def paid_fixture(label, full=False):

@@ -2,6 +2,7 @@
 // Test adapter: read committed Native artifacts, not proposed result amounts.
 #include "m5-live-failed.h"
 #include "test/workchain-m5-sweep-input.h"
+#include "test/workchain-m5-sweep.h"
 #include <map>
 #include <sstream>
 
@@ -228,6 +229,7 @@ inline std::string snapshot_json(const Snapshot& s,std::uint64_t issuance_fees,
 struct SweepNativeObservation {
   std::uint64_t transferred=0, transaction_fees=0, block_fees=0;
   unsigned transfer_count=0, other_transfer_count=0;
+  std::string batch_id;
 };
 inline SweepNativeObservation sweep_native_observation(const td::Ref<vm::Cell>& root,
     const td::Bits256& coordinator,const td::Bits256& custody) {
@@ -236,6 +238,7 @@ inline SweepNativeObservation sweep_native_observation(const td::Ref<vm::Cell>& 
   // could be silently included in the issuance cost. Do not infer the fee
   // destination merely from coordinator balance loss.
   SweepNativeObservation out;
+  out.batch_id=root->get_hash().to_hex();
   const auto native=decode_workchain_native_effects(effects(root).native).move_as_ok();
   vm::Dictionary transfers(native.transfers,32);
   CHECK(transfers.check_for_each([&](auto cell,td::ConstBitPtr,int){
@@ -314,6 +317,8 @@ inline void write_sweep_completion_observation(const std::filesystem::path& fixt
   CHECK(!__builtin_sub_overflow(income,difference(z.refundable,a.refundable),&next));income=next;
   auto batch=accepted.block->get_hash().to_hex();
   gen::ShardStateUnsplit::Record state;CHECK(::tlb::unpack_cell(accepted.state,state));
+  const auto old_authorization=m3_test::verify_m5_sweep_authorization(*policy.sweep,a.bucket,state.seq_no);
+  const auto new_authorization=m3_test::verify_m5_sweep_authorization(*policy.sweep,z.bucket,state.seq_no);
   // In this isolated no-import/no-payout sweep, custody's actual balance delta
   // is the received transfer. Keep the committed instruction separate: a
   // correct instruction alone does not prove that Native applied the credit.
@@ -330,11 +335,13 @@ inline void write_sweep_completion_observation(const std::filesystem::path& fixt
      <<",\"operator_slot_income\":"<<income
      <<",\"native_transaction_fees\":"<<native.transaction_fees
      <<",\"committed_batch_id\":"<<quote(batch)<<",\"component_batch_ids\":["
-     <<quote(native.transfer_count?batch:"")<<','<<quote(batch)<<','<<quote(batch)<<','<<quote(batch)
+     <<quote(native.transfer_count?batch:"")<<','<<quote(batch)<<','<<quote(native.batch_id)<<','<<quote(batch)
      <<"],\"sweep_sequence_before\":"<<*a.bucket.sweep_sequence
      <<",\"sweep_sequence_after\":"<<*z.bucket.sweep_sequence
      <<",\"authorized_sequence\":"<<policy.sweep->sequence
      <<",\"height\":"<<state.seq_no<<",\"earliest_height\":"<<policy.sweep->earliest_height
+     <<",\"authorization_before_ok\":"<<(old_authorization.is_ok()?"true":"false")
+     <<",\"authorization_after_same_height_code\":"<<(new_authorization.is_error()?new_authorization.code():0)
      <<"},\"provenance\":{\"before\":"<<quote(before->get_hash().to_hex())
      <<",\"after\":"<<quote(accepted.state->get_hash().to_hex())<<",\"block\":"<<quote(batch)
      <<",\"old_entry\":"<<bucket_entry_json(entry)
