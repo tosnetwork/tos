@@ -4,6 +4,7 @@
 #include "vm/dict.h"
 
 #include "native-committee.h"
+#include "registry-view.h"
 namespace tos::auth {
 namespace {
 Hash hash(td::Slice raw) {
@@ -67,7 +68,7 @@ Result<NativeCommittee> NativeCommittee::derive(td::Ref<vm::Cell> root, const An
     auto selector = cfg.get_config_param(28);
     if (selector.is_null() || !block::gen::t_CatchainConfig.validate_ref(selector))
       return Error{"committee-selector"};
-    auto registry = RegistryState::decode_cell(cfg.get_config_param(46), anchor.seqno_, budget);
+    auto registry = RegistryView::open(cfg.get_config_param(46), anchor.seqno_, budget);
     if (!registry.ok())
       return registry.error();
     if (registry.value().chain_domain() != chain.chain_domain)
@@ -81,8 +82,8 @@ Result<NativeCommittee> NativeCommittee::derive(td::Ref<vm::Cell> root, const An
       if (!identities.insert(identity).second || !stakes.insert(stake).second ||
           !network_keys.insert(hash(member.pubkey.as_bits256().as_slice())).second)
         return Error{"election-duplicate"};
-      auto found = registry.value().identities().find(identity);
-      if (found == registry.value().identities().end() || found->second.stake_id_ != stake)
+      auto found = registry.value().identity(identity);
+      if (!found.ok() || found.value().stake_id_ != stake)
         return Error{"election-registry-binding"};
     }
     auto selected = cfg.compute_validator_set(shard, elected, header.gen_utime, catchain);
@@ -102,10 +103,10 @@ Result<NativeCommittee> NativeCommittee::derive(td::Ref<vm::Cell> root, const An
       if (!member.auth_binding)
         return Error{"selected-binding-required"};
       auto identity = hash(member.auth_binding->identity.as_slice());
-      auto found = registry.value().identities().find(identity);
-      if (found == registry.value().identities().end())
+      auto found = registry.value().identity(identity);
+      if (!found.ok())
         return Error{"selected-identity"};
-      auto keys = select_identity_keys(found->second, registry.value(), anchor.seqno_, required);
+      auto keys = select_identity_keys(found.value(), registry.value(), anchor.seqno_, required);
       if (!keys.ok())
         return keys.error();
       for (const auto& key : keys.value())
@@ -113,14 +114,11 @@ Result<NativeCommittee> NativeCommittee::derive(td::Ref<vm::Cell> root, const An
                 hash({reinterpret_cast<const char*>(key.public_key_.data()), key.public_key_.size()})))
           return Error{"network-key-reuse"};
       committee.members_.push_back(
-          {identity, found->second.stake_id_, member.weight, hash(member.addr.as_slice()), keys.value()});
+          {identity, found.value().stake_id_, member.weight, hash(member.addr.as_slice()), keys.value()});
     }
     std::sort(committee.members_.begin(), committee.members_.end(),
               [](const auto& a, const auto& b) { return a.identity_ < b.identity_; });
-    auto policy = registry.value().policy_at(anchor.seqno_);
-    if (!policy.ok())
-      return policy.error();
-    auto snapshot = RegistrySnapshot::compile(committee, policy.value());
+    auto snapshot = RegistrySnapshot::compile(committee, registry.value().policy());
     if (!snapshot.ok())
       return snapshot.error();
     return NativeCommittee(std::move(snapshot.value()), std::move(selected), anchor);

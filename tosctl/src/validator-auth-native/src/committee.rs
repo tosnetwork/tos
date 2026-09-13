@@ -1,7 +1,4 @@
-use crate::{
-    native,
-    registry::{RegistryState, StateReadBudget},
-};
+use crate::{native, registry::StateReadBudget, registry_view::RegistryView};
 use chain_block::{
     CatchainConfig, Cell, CellType, Deserializable, HashmapE, McStateExtra, Serializable,
     ShardStateUnsplit, SliceData, ValidatorDescr, ValidatorSet,
@@ -77,12 +74,16 @@ impl NativeCommittee {
             return Err(Error("chain-context"));
         }
         let header = native(ShardStateUnsplit::construct_from_full_cell(root))?;
-        if header.global_id() != chain.network
+        if header.global_id() == 0
+            || header.global_id() != chain.network
             || header.seq_no() != anchor.seqno
             || !header.shard().is_masterchain_ext()
         {
             return Err(Error("state-context"));
         }
+        // Match native header admission without traversing queue/account histories.
+        native(header.read_out_msg_queue_info())?;
+        native(header.read_accounts())?;
         let extra = native(McStateExtra::construct_from_full_cell(
             header.custom_cell().ok_or(Error("native-config"))?,
         ))?;
@@ -144,7 +145,7 @@ impl NativeCommittee {
         {
             return Err(Error("committee-selector"));
         }
-        let registry = RegistryState::decode_cell(parameter(config, 46)?, anchor.seqno, budget)?;
+        let registry = RegistryView::open(parameter(config, 46)?, anchor.seqno, budget)?;
         if registry.chain_domain != chain.chain_domain {
             return Err(Error("chain-domain"));
         }
@@ -161,8 +162,7 @@ impl NativeCommittee {
             {
                 return Err(Error("election-duplicate"));
             }
-            let identity =
-                registry.identities.get(&id).ok_or(Error("election-registry-binding"))?;
+            let identity = registry.identity(&id)?;
             if identity.stake_id != stake {
                 return Err(Error("election-registry-binding"));
             }
@@ -184,9 +184,9 @@ impl NativeCommittee {
         for member in &selected {
             let binding = member.auth_binding.as_ref().ok_or(Error("selected-binding-required"))?;
             let id = hash(binding.identity.as_slice())?;
-            let identity = registry.identities.get(&id).ok_or(Error("selected-identity"))?;
+            let identity = registry.identity(&id)?;
             let keys = select_identity_keys(
-                identity,
+                &identity,
                 &registry,
                 anchor.seqno,
                 &[(1, 1, 1), (2, 1, 1), (3, 1, 1), (4, 1, 1), (5, 1, 1)],
@@ -206,7 +206,7 @@ impl NativeCommittee {
             });
         }
         committee.members.sort_by_key(|m| m.identity);
-        let snapshot = RegistrySnapshot::compile(&committee, registry.policy_at(anchor.seqno)?)?;
+        let snapshot = RegistrySnapshot::compile(&committee, registry.policy())?;
         Ok(Self { snapshot, transport_order: selected, anchor: anchor.clone() })
     }
 }

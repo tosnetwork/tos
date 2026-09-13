@@ -18,8 +18,8 @@ impl Default for StateReadBudget {
     }
 }
 pub struct RegistryState {
-    pub(crate) chain_domain: Hash,
-    pub(crate) current_policy: Hash,
+    chain_domain: Hash,
+    current_policy: Hash,
     pub(crate) identities: BTreeMap<Hash, Identity>,
     keys: BTreeMap<Hash, Key>,
     policies: BTreeMap<Hash, Policy>,
@@ -89,6 +89,12 @@ fn map256<T: Wire>(cell: Cell, budget: &mut StateReadBudget) -> Result<BTreeMap<
         .collect()
 }
 impl RegistryState {
+    pub fn chain_domain(&self) -> &Hash {
+        &self.chain_domain
+    }
+    pub fn current_policy(&self) -> &Hash {
+        &self.current_policy
+    }
     pub fn decode_cell(
         root: Cell,
         coordinate: u32,

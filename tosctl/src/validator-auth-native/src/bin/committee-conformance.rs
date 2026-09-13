@@ -6,7 +6,7 @@ use tos_validator_auth::{
 };
 use tos_validator_auth_native::{
     committee::{ChainContext, NativeCommittee},
-    registry::StateReadBudget,
+    registry::{RegistryState, StateReadBudget},
 };
 fn check(ok: bool, name: &str) -> Result<(), String> {
     if ok {
@@ -25,6 +25,41 @@ fn main_run() -> Result<(), String> {
         .parse()
         .map_err(|_| "count")?;
     check(count >= 25, "complete-corpus")?;
+    let registry_root = |name: &str| -> Result<chain_block::Cell, String> {
+        chain_block::read_single_root_boc(
+            fs::read(path.join(format!("{name}.boc"))).map_err(|e| e.to_string())?,
+        )
+        .map_err(|e| e.to_string())
+    };
+    let valid =
+        RegistryState::decode_cell(registry_root("registry-valid")?, 0, StateReadBudget::default())
+            .map_err(|e| e.0.to_owned())?;
+    check(
+        *valid.chain_domain() != [0; 32] && *valid.current_policy() != [0; 32],
+        "registry-context",
+    )?;
+    check(
+        RegistryState::decode_cell(
+            registry_root("registry-duplicate")?,
+            0,
+            StateReadBudget::default(),
+        )
+        .is_err(),
+        "duplicate-key-epoch",
+    )?;
+    for (entries, bytes, name) in
+        [(1, 268435456, "registry-entry-budget"), (1000000, 375, "registry-byte-budget")]
+    {
+        check(
+            RegistryState::decode_cell(
+                registry_root("registry-valid")?,
+                0,
+                StateReadBudget { entries, bytes },
+            )
+            .is_err(),
+            name,
+        )?;
+    }
     for i in 0..count {
         let read =
             |suffix: &str| fs::read(path.join(format!("{i}.{suffix}"))).map_err(|e| e.to_string());
@@ -72,10 +107,9 @@ fn main_run() -> Result<(), String> {
         )?;
         if let Ok(native) = result {
             if i == 0 {
-                for (entries, bytes, name) in [
-                    (1, 268435456, "registry-entry-budget"),
-                    (1000000, 375, "registry-byte-budget"),
-                ] {
+                for (entries, bytes, name) in
+                    [(1, 268435456, "view-entry-budget"), (1000000, 375, "view-byte-budget")]
+                {
                     let root = chain_block::read_single_root_boc(read("boc")?)
                         .map_err(|e| e.to_string())?;
                     check(

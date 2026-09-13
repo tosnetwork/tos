@@ -66,13 +66,50 @@ snapshot. It never compensates by reducing committee weight. Future pending
 transitions do not rewrite active keys. An already constructed snapshot owns its
 policy, public keys, roster and complete denominator after later retirement.
 
-Both native readers bound the full registry load by one shared entry and byte
-budget (defaults: one million entries and 256 MiB of decoded values). The archive
-is not limited to 400 identities or keys. The Rust reader independently checks
-policy history, immutable key IDs and epochs, identity references, pending
-coordinates and control records. Exhaustion produces an error, never a partial
-roster. Full dictionary loading remains an implementation cost to replace with
-persistent incremental state access before performance acceptance.
+Snapshot derivation uses an authenticated entry view. It reads the current policy,
+the identity/stake binding of every elected member, and the active/pending key
+references needed to validate selected identities. It does not enumerate archived
+keys. Repeated reads use an owned cache and spend no additional entry or byte
+budget. Every lookup checks the exact dictionary wrapper/leaf shape, bounded
+AuthBytes before allocation, the requested identity/key/policy binding, and C0 key
+admission. Per-value limits are 4096 bytes for policy/identity and 32768 for keys;
+the shared operational budget defaults to one million entries and 256 MiB. These
+limits refuse a read without returning a partial roster.
+
+The entry view cannot grant mutation authority: maximum-epoch and first-registration
+queries return `read-only-view`. Global policy history, epoch uniqueness, identity
+references and control records still require full state validation or authenticated
+incremental apply. Both full registry readers remain available for that boundary.
+In particular, an unused duplicate archive epoch fails full state validation even
+though snapshot selection need not read it. A trusted anchor means an independently
+validated state, not a root hash supplied by the proof sender.
+
+The view corpus compares exact values and remaining budgets across C++ and Rust,
+including 10000 extra archived keys, repeated reads, minimal pruned histories,
+missing required nodes, dictionary tails, substituted IDs and invalid key material.
+Native state apply still needs persistent incremental updates before integrated
+performance acceptance.
+
+## Committee proofs
+
+A kind-5 VAF1 committee reference carries an actual masterchain Merkle proof.
+The verifier pins the full anchor, network/genesis/domain, workchain/shard and
+catchain independently, derives the elected set and VAM1, and checks its object ID.
+It validates the complete elected binding set while fetching keys only for the
+selected snapshot. The retained policy in the result is read from the same state.
+
+Both verifiers reject changed anchors, roots, proof/object IDs, selection context,
+unrelated revealed values and detached physical cells. They re-create the usage
+proof and require the same native Merkle root. Native header admission reads the
+queue/account roots but not their descendants; both languages perform these same
+reads. The existing native configuration path rejects global_id=0 in both adapters.
+
+Proofs above the inline bound use the existing authenticated object carrier. The
+producer must publish every chunk successfully before returning the reference;
+missing storage or publication failure returns an error. The C++ producer and
+independent Rust verifier compare full 400-member proofs as well as shard, shuffled
+and temporary-election proofs. Certificate RPC and consensus duty/session authority
+remain separate integrations.
 
 Tests consume actual native state BOCs, compare C++ and Rust canonical VAM1 bytes,
 check native transport order and round-trip the election descriptors. The corpus

@@ -4,6 +4,7 @@ from pathlib import Path
 from mutation_support import replace_once
 ROOT=Path(__file__).resolve().parents[2]
 MUTATIONS=[
+ ('native-zero-network','committee.rs','header.global_id() == 0 ||',''),
  ('unselected-duplicate-binding','committee.rs','!identities.insert(id) || !stakes.insert(stake) || !network_keys.insert(hash(member.public_key.as_slice())?)','{identities.insert(id); stakes.insert(stake); network_keys.insert(hash(member.public_key.as_slice())?); false}'),
  ('state-root','committee.rs','root.repr_hash().as_slice() != &anchor.state','false'),
  ('network','committee.rs','header.global_id() != chain.network','false'),

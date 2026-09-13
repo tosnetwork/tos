@@ -19,9 +19,9 @@ or PQ suite allocation is authorized by this work.
 | Object transfer | C++ and Rust canonical inline/manifest readers; principal/anchor-scoped C++ store and atomic proof publication | Chunk and whole-object hash substitution, quota, duplicate upload, expiry and aggregate read budget; eight scoped-store guard removals | Authenticated public RPC wiring and Rust storage adapter |
 | Thin transport and API association | C++ and Rust framing and semantic association for all 15 methods, including result receipts, proof attachments and cursors | 182 framing cases and 133 semantic cases per language; direct signer-list, receipt-hash and context guard removals | Native node context, committee/certificate RPC and remote mTLS deployment |
 | Native VM and transaction execution | C++/Rust P0CHKSIGN, native capability metadata, Fift/FunC and Rust assembly bindings | 168 exact outcome/gas comparisons; getter config and nested VM; eight whole transactions including action rollback | Elector/owner statement construction and native admission |
-| Native committee derivation | Explicit native identity/stake descriptor, authenticated Config35/34 and Config46, original native selection, owned transport order and VAM1 | 39 C++/Rust state cases including a full 400-member snapshot, shuffle, shard weights, temporary election and budget exhaustion | Elector emission, session admission and committee proofs |
+| Native committee derivation | Explicit native identity/stake descriptor, authenticated Config35/34 and Config46, original native selection, owned transport order and VAM1 | 40 C++/Rust state cases including a full 400-member snapshot, shuffle, shard weights, temporary election and budget exhaustion | Elector emission, session admission and certificate RPC |
 | Native registry state | Config46 dictionaries and authenticated due-transition replay, immutable key archive and owned successor state | 501 identities / 2506 keys, exact cell/hash restart, pending effects, duplicate epoch and rejected-block atomicity | Native block apply, elector/config operations, persistent dictionary performance and Rust global apply |
-| Native state proofs | C++ and Rust actual masterchain Config8/9/10/16/46 and Merkle proofs for profile, policy, key and registry ranges | State-root substitution, omitted entries, false terminal page, unrelated revealed values, detached physical cells, capability and atomic-publication guard removals | RPC node wiring, committee/certificate/owner proofs and Rust global registry apply |
+| Native state proofs | C++ and Rust actual masterchain Config8/9/10/16/46 and Merkle proofs for profile, policy, key and registry ranges | State-root substitution, omitted entries, false terminal page, unrelated revealed values, detached physical cells, capability and atomic-publication guard removals | RPC node wiring, certificate/owner proofs and Rust global registry apply |
 | Authority primitives | Real C0 PoP and current identity-role-5 verification; independent permit/receipt trust in C++ and Rust | Wrong network/update/signature/current admin key, stale permits, historical receipts and inclusive 128-block boundary; 25 shared service-trust/polling cases per language | Native owner execution and governance adapters and native mutation admission |
 | Signer persistence | Native append-only safety ledger, actual C0 secret provider, witness consumption and sign/get-result service | Both-order conflict rules, exact retransmission, journal/provider backup rollback, stale fence, terminal retention, real fsync failure, unknown outcome refusal | Native consensus permissions and remote serving |
 | Signer administration | Durable prepare/stage/retire/cancel intent execution, provider preparation IDs and PoP reservation IDs | Real PoP and current admin signatures, owner refusal before reservation, exact receipts, cancellation target, provider rollback and six process-kill boundaries | Native owner execution and node context wiring |
@@ -54,7 +54,7 @@ state/authority/proof, journal, signer/provider and local channel harnesses kill
 25, 11, 7 and 6 compiled guard removals respectively. Scoped object storage,
 service issuers and C++ API semantics add eight, nine and eight removals. The
 administration harness adds eleven. The combined implementation harness contains
-317 compiled guard removals, including 17 API admission/cache checks, 25
+364 compiled guard removals, including 17 API admission/cache checks, 25
 native HTTP checks, 17 Rust native cell/proof checks, 25 native Keyring checks,
 18 C++ VM checks, 18 Rust VM checks and five native execution adapter checks.
 
@@ -385,17 +385,17 @@ constructors and the independent 0x93 sequence-number extension. C++ and Rust
 preserve explicit identity/stake bindings through total-set export, main-chain
 shuffle and shard selection; no public-key search allocates an identity.
 
-The native corpus compares 39 independently derived VAM1 objects/admissions and
+The native corpus compares 40 independently derived VAM1 objects/admissions and
 transport orders, including a full 400-member committee. It covers native Config35
 precedence, complete elected-set binding, Config16 limits, exact activation gates,
-selector bounds and the shard weight of one. Shared full-registry budgets refuse
-partial reads. Retiring a required key makes a new snapshot fail while old owned
+selector bounds and the shard weight of one. Shared entry-view budgets refuse
+partial reads without enumerating unrelated archive history. Retiring a required key makes a new snapshot fail while old owned
 snapshots retain their original keys and denominator.
 
 The new Rust registry reader independently checks native dictionaries, retained
 policies, immutable key hashes/epochs, identity references and pending/control
 records. This completes native snapshot reading, not Rust global mutation apply.
-Elector/config execution, native session/consensus routing, proof/RPC integration
+Elector/config execution, native session/consensus routing, certificate/owner proof and RPC integration
 and local multi-node acceptance remain open. Legacy JSON config tooling is not yet
 an authenticated P0 update interface and still requires native binding integration.
 
@@ -405,7 +405,18 @@ instrumentation and leak detection. This exposed temporary-hash slices in the
 shared anchor helper and proof-substitution fixture; both now retain the owning
 hash through the copy. Two compiled ownership removals fail a named lifetime
 assertion before a poisoned-memory read, and release/sanitized exports must match.
-The committee boundary has 23 C++ and 24 Rust compiled guard removals, including
+The committee boundary has 23 C++ and 25 Rust compiled guard removals, including
 unselected duplicate members, descriptor propagation and equality, native selector
-bounds and whole-registry resource budgets. Those 47 guards and the two lifetime
-checks are included in the total above.
+bounds, native zero-network admission and whole-registry resource budgets. Those
+48 guards and the two lifetime checks are included in the total above.
+
+
+The authenticated entry view adds 21 C++/Rust cases and 30 compiled guard removals.
+They distinguish whole-registry validation from snapshot lookup, compare exact
+remaining budgets, test 10000 archived keys and reject missing required proof nodes.
+The kind-5 native committee proof producer/verifiers add 25 cross-language cases
+and 16 compiled guard removals for anchor/object binding, minimal revealed nodes,
+detached physical cells, header reads and publication before returning a manifest.
+These paths run under full native ASan/UBSan/leak instrumentation with byte-identical
+release and sanitized fixture exports. They provide committee proof authority;
+production session/consensus call sites and certificate RPC remain open.

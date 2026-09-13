@@ -2,6 +2,7 @@
 #include <fstream>
 #include <iostream>
 
+#include "block/block-auto.h"
 #include "block/mc-config.h"
 #include "tos/quorum.h"
 #include "validator/auth/native-committee.h"
@@ -153,7 +154,12 @@ int main(int argc, char** argv) {
         std::ofstream meta(prefix.string() + ".case");
         meta << shard.workchain << ' ' << shard.shard << ' ' << cc << ' ' << accepted << ' ' << name << '\n';
         {
-          auto cfg = block::Config::extract_from_state(root);
+          block::gen::ShardStateUnsplit::Record export_header;
+          block::gen::McStateExtra::Record export_extra;
+          check(tlb::unpack_cell(root, export_header) &&
+                    tlb::unpack_cell(export_header.custom->prefetch_ref(), export_extra),
+                "export-header");
+          auto cfg = block::Config::unpack_config(export_extra.config);
           check(cfg.is_ok(), "export-config");
           auto eboc = vm::std_boc_serialize(cfg.ok()->get_config_param(35, 34), 31);
           check(eboc.is_ok(), "export-election");
@@ -207,6 +213,16 @@ int main(int argc, char** argv) {
     auto wrong = anchor(root);
     wrong.state_[0] ^= 1;
     run(root, mc, 7, "state-root", false, wrong);
+    vm::CellSlice zero_network_source(vm::NoVm{}, root);
+    vm::CellBuilder zero_network;
+    zero_network.store_bits(zero_network_source.fetch_bits(32));
+    zero_network_source.advance(32);
+    zero_network.store_long(0, 32).store_bits(zero_network_source.fetch_bits(zero_network_source.size()));
+    while (zero_network_source.size_refs())
+      zero_network.store_ref(zero_network_source.fetch_ref());
+    auto zero_context = chain;
+    zero_context.network = 0;
+    run(zero_network.finalize(), mc, 7, "native-zero-network", false, {}, zero_context);
     auto alien = chain;
     alien.network += 1;
     run(root, mc, 7, "network", false, {}, alien);
@@ -283,7 +299,19 @@ int main(int argc, char** argv) {
       auto ref = epoch_root.fetch_ref();
       new_registry.store_ref(i == 1 ? kw.finalize() : ref);
     }
-    run(replace_config(root, 46, new_registry.finalize()), mc, 7, "duplicate-key-epoch", false);
+    auto invalid_archive = new_registry.finalize();
+    check(!RegistryState::decode_cell(invalid_archive, 0).ok(), "duplicate-key-epoch");
+    run(replace_config(root, 46, invalid_archive), mc, 7, "unused-archive-not-read", true);
+    if (!output.empty()) {
+      for (const auto& [name, cell] : std::vector<std::pair<std::string, td::Ref<vm::Cell>>>{
+               {"registry-valid", duplicate_epoch}, {"registry-duplicate", invalid_archive}}) {
+        auto boc = vm::std_boc_serialize(cell, 31);
+        check(boc.is_ok(), "registry-fixture");
+        std::ofstream f(output / (name + ".boc"), std::ios::binary);
+        f.write(boc.ok().data(), boc.ok().size());
+        check(f.good(), "registry-write");
+      }
+    }
     auto descriptors = block::Config::unpack_validator_set(election(registry));
     check(descriptors.is_ok(), "native-descriptor-parse");
     check(block::Config::unpack_validator_set(election(registry, 3)).is_error(), "descriptor-zero-identity");
