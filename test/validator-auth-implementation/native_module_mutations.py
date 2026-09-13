@@ -3,6 +3,12 @@ import argparse,json,subprocess
 from pathlib import Path
 from mutation_support import replace_once
 MUTATIONS=[
+ ('permit-registry-shape','service-auth','body.registry_root_ == Hash{} ||',''),
+ ('poll-terminal-regression','service-auth','if ((previous->state_ == 2 || previous->state_ == 3) && *previous != next) return Error{"terminal-state-regression"};',''),
+ ('poll-reserved-regression','service-auth','if (previous->state_ == 1)','if (false)'),
+ ('poll-reserved-binding','service-auth','if (next.statement_id_ != previous->statement_id_ || next.fence_ != previous->fence_) return Error{"reserved-state-binding"};',''),
+ ('proof-no-detached-cells','native-proof','reachable.cells != static_cast<unsigned>(info.cell_count)','false'),
+ ('publication-before-manifest','native-proof','if (!published.value()) return Error{"proof-publication"};',''),
  ('duplicate-key-epoch','state','if (!unique_epochs.emplace(k.identity_, KeySlot{k.role_, k.suite_, k.parameters_}, k.epoch_).second) return Error{"duplicate-key-epoch"};',''),
  ('stale-permit-policy','service-auth','if (current == current_.end() || current->second != permit.body_.service_policy_) return Error{"stale-permit-policy"};',''),
  ('key-hash-binding','state','hash.value() != id ||',''),

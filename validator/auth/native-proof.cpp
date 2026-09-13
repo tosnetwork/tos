@@ -276,11 +276,18 @@ Result<td::Ref<vm::Cell>> read_proof(std::span<const std::uint8_t> raw) {
   auto consumed = boc.deserialize(slice(raw), 1);
   if (consumed.is_error() || consumed.ok() != static_cast<long long>(raw.size()) || boc.get_root_count() != 1)
     return Error{"proof-boc"};
+  vm::CellStorageStat reachable(info.cell_count);
+  auto walked = reachable.compute_used_storage(boc.get_root_cell());
+  if (walked.is_error() || reachable.cells != static_cast<unsigned>(info.cell_count))
+    return Error{"proof-unreachable-cells"};
   return boc.get_root_cell();
 }
 }  // namespace
 Result<Bytes> make_native_response(td::Ref<vm::Cell> root, const Anchor& anchor, std::int32_t network,
-                                   std::uint8_t method, std::span<const std::uint8_t> request) {
+                                   std::uint8_t method, std::span<const std::uint8_t> request,
+                                   ObjectPublisher publisher) {
+  if (request.size() > 2000000)
+    return Error{"api-binary-bound"};
   try {
     vm::MerkleProofBuilder builder(root);
     auto result = query(builder.root(), anchor, network, method, request);
@@ -297,10 +304,15 @@ Result<Bytes> make_native_response(td::Ref<vm::Cell> root, const Anchor& anchor,
     auto object = object_value(5, span);
     if (!object.ok())
       return object.error();
-    // A large proof needs the caller's bounded object store; returning a manifest
-    // without retaining its chunks would produce an unusable response.
-    if (!object.value().reference_.empty())
-      return Error{"proof-needs-object-store"};
+    if (!object.value().reference_.empty()) {
+      if (!publisher)
+        return Error{"proof-needs-object-store"};
+      auto published = publisher(object.value().reference_[0], span);
+      if (!published.ok())
+        return published.error();
+      if (!published.value())
+        return Error{"proof-publication"};
+    }
     Proofref ref{anchor, result.value().kind, result.value().object_id, id.value(), object.value()};
     return finish(result.value(), ref);
   } catch (const vm::VmError&) {
@@ -312,6 +324,8 @@ Result<Bytes> make_native_response(td::Ref<vm::Cell> root, const Anchor& anchor,
 Result<VerifiedNativeResponse> verify_native_response(std::uint8_t method, std::span<const std::uint8_t> request,
                                                       std::span<const std::uint8_t> response, const Anchor& anchor,
                                                       std::int32_t network, ObjectReader& reader) {
+  if (request.size() > 2000000 || response.size() > 2000000)
+    return Error{"api-binary-bound"};
   try {
     auto proof = response_proof(method, response);
     if (!proof.ok())

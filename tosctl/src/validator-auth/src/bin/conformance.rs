@@ -9,6 +9,40 @@ fn roundtrip<T: Wire>(input: &[u8], out: &str) -> Result<(), Error> {
 }
 fn run() -> Result<(), Error> {
     let a: Vec<String> = env::args().collect();
+    if a.len() == 4 && a[1] == "service" {
+        return service_probe(&a[2], &a[3]);
+    }
+
+    if a.len() == 6 && a[1].parse::<u8>().is_ok() {
+        let method = a[1].parse::<u8>().map_err(|_| Error("method"))?;
+        let request = fs::read(&a[3]).map_err(|_| Error("fixture-file"))?;
+        let response = fs::read(&a[4]).map_err(|_| Error("fixture-file"))?;
+        let mut reader =
+            tos_validator_auth::transfer::ObjectReader::new(|reference: &ObjectRef, index: u8| {
+                let id: String = reference.object_id.iter().map(|b| format!("{b:02x}")).collect();
+                use std::io::{Read, Seek, SeekFrom};
+                let mut file = fs::File::open(std::path::Path::new(&a[5]).join(id))
+                    .map_err(|_| Error("fixture-file"))?;
+                let length = file.metadata().map_err(|_| Error("fixture-file"))?.len();
+                let offset = u64::from(index) * tos_validator_auth::transfer::CHUNK_BYTES as u64;
+                let remaining = length.checked_sub(offset).ok_or(Error("fixture-chunk"))?;
+                let size = remaining.min(tos_validator_auth::transfer::CHUNK_BYTES as u64) as usize;
+                let mut bytes = vec![0; size];
+                file.seek(SeekFrom::Start(offset)).map_err(|_| Error("fixture-file"))?;
+                file.read_exact(&mut bytes).map_err(|_| Error("fixture-file"))?;
+                Ok(bytes)
+            });
+        return if a[2] == "request" {
+            tos_validator_auth::api_semantics::validate_api_request(method, &request, &mut reader)
+        } else {
+            tos_validator_auth::api_semantics::validate_api_response(
+                method,
+                &request,
+                &response,
+                &mut reader,
+            )
+        };
+    }
     if a.len() == 5 && a[1].parse::<u8>().is_ok() {
         let method = a[1].parse::<u8>().map_err(|_| Error("method"))?;
         let frame = tos_validator_auth::transport::decode_transport_frame(
@@ -58,3 +92,5 @@ fn main() {
         std::process::exit(1);
     }
 }
+
+include!("service_probe.inc");

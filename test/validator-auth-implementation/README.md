@@ -31,3 +31,24 @@ crash, missing dependency or reference-only mutation as production guard proof.
 The CI workflow records the actual checked HEAD and uploads evidence. Local
 results do not establish Ubuntu or testnet acceptance. The full build remains a
 separately authorized manual workflow.
+
+Additional production boundaries:
+
+- `check_api_semantics.py`: all 15 request/result types, full receipt association,
+  signer-list equality, proof/cursor binding and bounded referenced attachments;
+  runs against C++ `test-p0-api-semantics` and Rust `conformance`.
+- `check_service_auth.py`: real C0 service signatures, independent policy history,
+  witnessed receipts and retained request-state observations in both languages.
+- `test-p0-object-store`: full principal/anchor isolation and aggregate quotas.
+- `test-p0-issuer`: persistent purpose-separated service keys and real signer
+  receipts through restart/rotation.
+- `test-p0-process`: separate signer/provider process kills, now using the
+  production persistent receipt issuer.
+- `object_store_mutations.py`, `issuer_mutations.py`, `api_semantic_mutations.py`:
+  compiled production removals requiring the exact intended assertion failure.
+  The Rust mutation harness also executes API, transfer and service-trust guards.
+
+Native test binaries require `TOS_BUILD_P0_IMPLEMENTATION_TESTS=ON`. Journal,
+issuer, signer and process binaries each take a new temporary directory; keep the
+Unix socket path short enough for the host OS. Temporary files contain rehearsal
+keys and are never release artifacts.

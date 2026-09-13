@@ -10,7 +10,22 @@ MUTATIONS=[
  ('all-signatures','verify.rs','if !key.verify(&statement, signature) {','if false {','core'),
  ('duplicate-json-key','transport.rs','if fields.contains_key(&key) {','if false {','transport'),
  ('error-retry','transport.rs','if e.retryable != u8::from(read && (10..=12).contains(&e.code)) {','if false {','transport'),
+ ('api-verified-signers','api_semantics.rs','r.signers != signers || ','','api'),
+ ('api-receipt-hash','api_semantics.rs','|| b.result_hash != digest("api-result", &bytes)?','','api'),
+ ('api-response-anchor','api_semantics.rs','method >= 8 && anchor_prefix(request)? != anchor_prefix(response)?','false','api'),
+ ('api-proof-object','api_semantics.rs','|| p.object_id != *id','','api'),
+ ('api-stage-owner','api_semantics.rs','q.authorizations.owner.len() != 1','false','api'),
+ ('api-preparation-mode','api_semantics.rs','|| (q.provider_handle == [0; 32]) != (q.mode == 0)','','api'),
+ ('api-sign-network','api_semantics.rs','p.network != d.network','false','api'),
+ ('service-signature','service_auth.rs','if !found.admitted.verify(raw, &c.signature) {','if false {','service'),
+ ('service-current-policy','service_auth.rs','if self.current.get(&value.body.issuer) != Some(&value.body.service_policy) {','if false {','service'),
+ ('service-witness','service_auth.rs','if !witness.contains(body.journal_sequence, &object_id("receipt_body", body)?)? {','if false {','service'),
+ ('terminal-state','service_auth.rs','if (old.state == 2 || old.state == 3) && old != next {','if false {','service'),
+ ('object-chunk-hash','transfer.rs','if chunk_hash(&manifest.object_id, index, bytes)? != manifest.chunk_hashes[i] {','if false {','api'),
+ ('object-whole-hash','transfer.rs','if transferred_id(kind, &out)? != reference.object_id {','if false {','api'),
+ ('object-aggregate','transfer.rs','self.remaining = self.remaining.checked_sub(size).ok_or(Error("attachment-budget"))?;','','api'),
 ]
+EXPECTED={'api-verified-signers': ('verified-signers-omitted', 'verified-signers'), 'api-receipt-hash': ('receipt-3-result_hash', 'result-receipt-binding'), 'api-response-anchor': ('anchor-8', 'response-anchor'), 'api-proof-object': ('proof-binding', 'proof-binding'), 'api-stage-owner': ('stage-authorizations', 'stage-authorizations'), 'api-preparation-mode': ('preparation-mode', 'preparation-mode'), 'api-sign-network': ('sign-permit-association', 'sign-permit-association'), 'service-signature': ('permit-signature', 'service-signature'), 'service-current-policy': ('stale-policy', 'stale-permit-policy'), 'service-witness': ('receipt-frontier', 'receipt-frontier'), 'terminal-state': ('terminal-regression', 'terminal-state-regression'), 'object-chunk-hash': ('chunk-hash', 'chunk-hash'), 'object-whole-hash': ('referenced-whole-hash', 'object-hash'), 'object-aggregate': ('aggregate-attachment-budget', 'attachment-budget')}
 def main(args):
  report=[]
  with tempfile.TemporaryDirectory(prefix='p0-rust-mutations-') as d:
@@ -21,11 +36,14 @@ def main(args):
    subprocess.run(['cargo','build','--offline','--manifest-path',str(manifest),'--bin','conformance'],capture_output=True,text=True,check=True)
    return d/'crate/target/debug/conformance'
   def test(suite,binary):
-   if suite=='transport':command=[sys.executable,str(ROOT/'test/validator-auth-implementation/check_transport.py'),'--driver',str(binary)]
+   if suite in ('api','service'):
+    script='check_api_semantics.py' if suite=='api' else 'check_service_auth.py'
+    command=[sys.executable,str(ROOT/'test/validator-auth-implementation'/script),'--driver',str(binary)]
+   elif suite=='transport':command=[sys.executable,str(ROOT/'test/validator-auth-implementation/check_transport.py'),'--driver',str(binary)]
    else:command=[sys.executable,str(ROOT/'test/validator-auth-implementation/check.py'),'--cpp',str(args.cpp.resolve()),'--rust',str(binary),'--core-only','--out',str(d/'core.json')]
    return subprocess.run(command,capture_output=True,text=True)
   binary=build()
-  for suite in ('core','transport'):
+  for suite in ('core','transport','api','service'):
    p=test(suite,binary);assert p.returncode==0,p.stderr
   print('BASELINE: Rust core and transport',flush=True)
   for name,file,before,after,suite in MUTATIONS:
@@ -34,10 +52,13 @@ def main(args):
    try:
     p=test(suite,build())
     if p.returncode!=1 or 'AssertionError' not in p.stderr or 'RuntimeError' in p.stderr:raise AssertionError((name,'survived or invalid kill',p.stderr))
+    if name in EXPECTED:
+     label,error=EXPECTED[name]
+     assert p.stderr.strip().endswith('AssertionError: '+repr((label,error,0,''))),(name,p.stderr)
     report.append({'guard':name,'compiled':True,'assertion_failed':True});print('KILLED:',name,flush=True)
    finally:path.write_text(original)
   binary=build()
-  for suite in ('core','transport'):
+  for suite in ('core','transport','api','service'):
    p=test(suite,binary);assert p.returncode==0,p.stderr
  args.out.write_text(json.dumps({'production_rust_mutations':report,'restored_baselines':True},indent=2)+'\n')
 if __name__=='__main__':

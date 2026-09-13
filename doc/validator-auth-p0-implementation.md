@@ -16,12 +16,13 @@ or PQ suite allocation is authorized by this work.
 | Committee and certificate verification | Owned immutable admitted snapshots, expected-duty binding, complete roster and all signatures | 40 cases across five roles; exact quorum, below quorum, corrupt surplus signature, duplicate identities and context mismatch | Authenticated native state adapter, session derivation and consensus call sites |
 | Native cells | Canonical AuthBytes and native BOC adapter | 20 round-trip/malformed-BOC cases through 32 MiB of incompressible data; direct hash and canonical-partition guard removals | Rust native-cell adapter and native chain apply |
 | Identity lifecycle | C++ per-identity register/rotate/retire/cancel and consecutive-block due-transition application | 76 differential cases with controlled, separately typed authority callbacks; predecessor and block-gap guard removals | Native owner/admin adapters, Rust implementation, transactional chain storage and global governance operations |
-| Object transfer | C++ canonical inline/manifest handling, bounded reader and per-principal chunk store | Chunk and whole-object hash substitution, quota, duplicate upload, expiry, aggregate read budget; four guard removals | RPC authentication, anchor-scoped access and Rust adapter |
-| Thin transport | C++ and Rust framing for all 15 methods, strict duplicate detection after JSON escape decoding, binary shape and request/error correlation | 182 cases per implementation; duplicate-name, request-correlation and error-retry guard removals | Endpoint semantic validators, proof/receipt/permit authentication and services |
+| Object transfer | C++ and Rust canonical inline/manifest readers; principal/anchor-scoped C++ store and atomic proof publication | Chunk and whole-object hash substitution, quota, duplicate upload, expiry and aggregate read budget; eight scoped-store guard removals | Authenticated public RPC wiring and Rust storage adapter |
+| Thin transport and API association | C++ and Rust framing and semantic association for all 15 methods, including result receipts, proof attachments and cursors | 182 framing cases and 133 semantic cases per language; direct signer-list, receipt-hash and context guard removals | Public endpoint execution, native proofs and service admission wiring |
 | Native registry state | Config46 dictionaries and authenticated due-transition replay, immutable key archive and owned successor state | 501 identities / 2506 keys, exact cell/hash restart, pending effects, duplicate epoch and rejected-block atomicity | Native block apply, elector/config operations, persistent dictionary performance and Rust parity |
-| Native state proofs | Actual masterchain Config8/9/10/16/46 and Merkle proofs for profile, policy, key and registry ranges | State-root substitution, omitted entries, false terminal page, unrelated revealed values and capability guard removals | RPC node wiring, committee/certificate/owner proofs, large-proof publication and Rust native adapter |
-| Authority primitives | Real C0 PoP, current identity-role-5 verification, independent permit and receipt trust | Wrong network/update/signature/current admin key, stale permits, historical receipts, inclusive 128-block boundary | Native owner execution and governance adapters and all mutation endpoints |
-| Signer persistence | Native append-only safety ledger, actual C0 secret provider, witness consumption and sign/get-result service | Both-order conflict rules, exact retransmission, journal/provider backup rollback, stale fence, terminal retention, real fsync failure, unknown outcome refusal | Prepare/stage/retire endpoints, durable receipt issuer and native consensus permissions |
+| Native state proofs | Actual masterchain Config8/9/10/16/46 and Merkle proofs for profile, policy, key and registry ranges | State-root substitution, omitted entries, false terminal page, unrelated revealed values, detached physical cells, capability and atomic-publication guard removals | RPC node wiring, committee/certificate/owner proofs and Rust native adapter |
+| Authority primitives | Real C0 PoP and current identity-role-5 verification; independent permit/receipt trust in C++ and Rust | Wrong network/update/signature/current admin key, stale permits, historical receipts and inclusive 128-block boundary; 25 shared service-trust/polling cases per language | Native owner execution and governance adapters and all mutation endpoints |
+| Signer persistence | Native append-only safety ledger, actual C0 secret provider, witness consumption and sign/get-result service | Both-order conflict rules, exact retransmission, journal/provider backup rollback, stale fence, terminal retention, real fsync failure, unknown outcome refusal | Prepare/stage/retire endpoints and native consensus permissions |
+| Service issuer | Purpose-separated persistent C0 service keys, typed permit/receipt signing, local rotation and public policy history | Actual signer receipts, restart, key/policy binding and nine compiled guard removals | Independent operational trust distribution and node permit adapter |
 | Operational release | No activation change | No testnet/release acceptance claim | Required testnet, genesis, operator recovery, approvals and C0 performance evidence |
 
 Generated bindings never rewrite the frozen schema or vectors. Parsed transport
@@ -43,10 +44,12 @@ harnesses compile isolated production mutations and require assertion failures;
 compiler errors, imports and abnormal driver exits are not accepted as kills.
 AddressSanitizer and UndefinedBehaviorSanitizer checks also pass for native
 transfer and transport. Leak detection is unavailable on the local macOS runtime
-and is not claimed. There are 15 C++ core/lifecycle/transport/transfer mutations, seven Rust mutations
+and is not claimed. There are 15 C++ core/lifecycle/transport/transfer mutations, 21 Rust mutations
 and three native-cell mutations, with restored baseline runs. The added native
 state/authority/proof, journal, signer/provider and local channel harnesses kill
-13, 11, 7 and 6 compiled guard removals respectively.
+19, 11, 7 and 6 compiled guard removals respectively. Scoped object storage,
+service issuers and C++ API semantics add eight, nine and eight removals. The
+combined implementation harness contains 107 compiled guard removals.
 
 The frozen artifact record passes; all 38 historical production files in its
 boundary remain unchanged. The generated binding check, Rust formatting, Clippy with warnings denied and
@@ -55,8 +58,8 @@ HEAD or a GitHub CI result.
 
 `.github/workflows/validator-auth-p0-implementation.yml` builds the focused native
 libraries and Rust crate on Ubuntu x86_64 and ARM, records the checked HEAD, runs
-these checks and uploads evidence. The first foundation commit passed both focused CI architectures; the additions
-above require their own new-HEAD CI evidence.
+these checks and uploads evidence. The previous implementation milestone passed both focused CI architectures; each
+new addition requires CI evidence attached to its own HEAD.
 It neither triggers the full Ubuntu build nor starts a network.
 
 ## Registry capacity and scheduling decision
@@ -98,8 +101,9 @@ All three components currently require serialized ownership; automatic failover
 and a remote/HSM witness require their own deployment evidence.
 
 Local tests use real generated provider keys and Ed25519 signatures. Consensus
-permissions and receipt issuance use controlled, independently typed test adapters;
-this is not a running native consensus adapter or a production receipt-key store.
+permissions remain controlled, independently typed test adapters. The issuer
+rehearsal and separate-process crash drill use the production persistent receipt
+key store; they still do not establish a running native consensus adapter.
 Separate signer and provider/witness processes now exercise the production local
 channel. The host serializes writer-generation changes and actual C0 primitive
 execution in one dispatch loop. Both ends check OS peer credentials; private
@@ -118,3 +122,35 @@ Permits for a still-live old session can be renewed at a newer independently
 trusted masterchain anchor. The VAS1 birth coordinate, keys, committee and policy
 remain fixed; permit anchors before session birth are refused. This separates the
 permit's bounded freshness window from native session lifetime.
+
+## Service and attachment completion boundaries
+
+`ServiceIssuer` owns a mode-0600 durable store for one independently configured
+issuer, audience and purpose. Permit and receipt stores cannot sign each other's
+body type. Rotation persists a fresh key and consecutive policy revision before
+returning public configuration; it does not install that configuration into any
+verifier. Old receipts remain verifiable against retained trust and the independent
+witness. Current permit trust rejects older policies after rotation. Only typed
+validated local expectations reach permit issuance. No private export/raw-sign
+operation is exposed. Operational trust distribution remains separate work.
+
+Native proof publication now stores larger proof BOCs before returning their
+manifest. Publication failure produces an error. A real 128-identity registry
+with pending operations exercises a proof exceeding 64 KiB. Verification also
+counts reachable cells: the generic historical BOC parser can accept a BOC that
+contains an unreferenced physical cell, but the P0 proof entry point refuses it.
+The historical parser itself is unchanged.
+
+The scoped store reserves complete advertised lengths against principal and
+global budgets. Objects cannot be fetched under another principal or full anchor.
+Its initial local admission policy limits each principal to four retained objects
+in total, including completed objects, and 64 MiB; the global limit is at most
+256 MiB. Expiry releases storage only. API parsing and association do not establish
+object authority. The shared C++/Rust semantic tests deliberately use proof
+fixtures only for attachment integrity; actual Merkle evidence comes from the
+separate native proof tests.
+
+Clients can preserve verified request-state observations. The C++ and Rust polling
+helpers reject terminal-state regression or byte replacement and prevent a
+reserved request from changing statement/fence. Callers must authenticate each
+receipt against its original request context before retaining that observation.

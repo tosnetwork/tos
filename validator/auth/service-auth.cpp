@@ -65,7 +65,17 @@ Result<bool> verify_permit(const Permit& permit, const PermitBody& expected, con
                            std::uint32_t current, std::uint64_t fence, bool live) {
   if (permit.body_ != expected)
     return Error{"permit-context"};
-  const auto& body = permit.body_;
+  auto valid = validate_permit_context(permit.body_, current, fence, live);
+  if (!valid.ok())
+    return valid.error();
+  return trust.verify(permit);
+}
+Result<bool> validate_permit_context(const PermitBody& body, std::uint32_t current, std::uint64_t fence, bool live) {
+  if (body.issuer_ == Hash{} || body.service_policy_ == Hash{} || body.audience_ == Hash{} ||
+      body.genesis_root_ == Hash{} || body.genesis_file_ == Hash{} || body.registry_root_ == Hash{} ||
+      body.policy_ == Hash{} || body.committee_ == Hash{} || body.session_ == Hash{} || body.identity_ == Hash{} ||
+      body.subject_ == Hash{} || (body.method_ != 4 && body.method_ != 5 && body.method_ != 7))
+    return Error{"permit-shape"};
   if (body.anchor_.seqno_ == std::numeric_limits<std::uint32_t>::max() || body.anchor_.root_ == Hash{} ||
       body.anchor_.file_ == Hash{} || body.anchor_.state_ == Hash{} ||
       body.expires_mc_ == std::numeric_limits<std::uint32_t>::max() || body.expires_mc_ < body.anchor_.seqno_ ||
@@ -77,7 +87,7 @@ Result<bool> verify_permit(const Permit& permit, const PermitBody& expected, con
     return Error{"fenced"};
   if (!live)
     return Error{"duty-not-permitted"};
-  return trust.verify(permit);
+  return true;
 }
 Result<bool> verify_receipt(const Receipt& receipt, const ReceiptBody& expected, const ServiceTrust& trust,
                             const ReceiptWitness& witness) {
@@ -127,6 +137,25 @@ Result<bool> validate_request_state(const RequestState& state, const Hash& id) {
     if (body.state_ != state.state_ || body.request_id_ != id || body.method_ != 5 ||
         body.subject_ != state.statement_id_ || body.fence_ != state.fence_ || body.result_hash_ != Hash{})
       return Error{"state-receipt-binding"};
+  }
+  return true;
+}
+Result<bool> observe_request_state(const RequestState* previous, const RequestState& next, const Hash& id) {
+  auto valid = validate_request_state(next, id);
+  if (!valid.ok())
+    return valid.error();
+  if (!previous)
+    return true;
+  valid = validate_request_state(*previous, id);
+  if (!valid.ok())
+    return valid.error();
+  if ((previous->state_ == 2 || previous->state_ == 3) && *previous != next)
+    return Error{"terminal-state-regression"};
+  if (previous->state_ == 1) {
+    if (next.state_ == 0)
+      return Error{"reserved-state-regression"};
+    if (next.statement_id_ != previous->statement_id_ || next.fence_ != previous->fence_)
+      return Error{"reserved-state-binding"};
   }
   return true;
 }

@@ -3,6 +3,7 @@
 #include <sys/wait.h>
 
 #include "validator/auth/provider-channel.h"
+#include "validator/auth/service-issuer.h"
 
 #include "service-fixture.h"
 namespace {
@@ -140,8 +141,10 @@ Result<SignResult> signer_child(const std::filesystem::path& dir, SignRequest re
       authorize(request, context);
       GatedContext checked(std::move(context), phase, fds[1]);
       GatedProvider provider(remote, phase, fds[1]);
-      Issuer issuer;
-      SignerService service(*ledger, provider, trust, checked, issuer);
+      auto issuer =
+          value(ServiceIssuer::open((dir / "receipt-issuer").string(), false, ServicePurpose::receipt, h(800), h(801)),
+                "receipt-issuer");
+      SignerService service(*ledger, provider, trust, checked, *issuer);
       auto result = service.sign(request);
       if (phase == 4 && result.ok())
         gate(fds[1]);
@@ -193,6 +196,14 @@ int main(int argc, char** argv) {
     std::filesystem::path dir = argv[1];
     check(std::filesystem::create_directory(dir), "fresh-directory-required");
     ::chmod(dir.c_str(), 0700);
+    ServiceTrust receipt_trust;
+    {
+      auto issuer =
+          value(ServiceIssuer::open((dir / "receipt-issuer").string(), true, ServicePurpose::receipt, h(800), h(801)),
+                "provision-receipt-issuer");
+      for (const auto& identity : issuer->public_history())
+        value(receipt_trust.install_trusted(identity.policy, identity.key), "local-receipt-trust");
+    }
     Child backend(provider_child(dir, true));
     RemoteWitness witness((dir / "provider.sock").string(), ::geteuid());
     RemoteProvider provider((dir / "provider.sock").string(), ::geteuid());
@@ -206,16 +217,7 @@ int main(int argc, char** argv) {
     fence = value(witness.acquire(), "replacement-writer");
     first = make(1, fence);
     auto completed = value(signer_child(dir, first, fence, false, 0), "absent-safe-retry");
-    value(verify_receipt(
-              completed.receipt_, completed.receipt_.body_,
-              [&] {
-                ServiceTrust t;
-                auto f = state();
-                value(t.install_trusted({h(800), 1, {}, {{1, 1}}}, {h(802), f.keys().begin()->second.public_key_}),
-                      "receipt-trust");
-                return t;
-              }(),
-              witness),
+    value(verify_receipt(completed.receipt_, completed.receipt_.body_, receipt_trust, witness),
           "remote-witness-receipt");
     for (int phase : {2, 3}) {
       fence = value(witness.acquire(), "writer");

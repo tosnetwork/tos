@@ -1,4 +1,4 @@
-add_library(tos_validator_auth STATIC crypto.cpp verify.cpp cells.cpp lifecycle.cpp transfer.cpp transport.cpp state.cpp context.cpp service-auth.cpp)
+add_library(tos_validator_auth STATIC crypto.cpp verify.cpp cells.cpp lifecycle.cpp transfer.cpp object-store.cpp transport.cpp api-semantics.cpp state.cpp context.cpp service-auth.cpp)
 target_include_directories(tos_validator_auth PUBLIC "${PROJECT_SOURCE_DIR}" "${SODIUM_INCLUDE_DIR}")
 target_link_libraries(tos_validator_auth PUBLIC ${SODIUM_LIBRARY_RELEASE} tos_crypto)
 set_target_properties(tos_validator_auth PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
@@ -11,7 +11,7 @@ target_link_libraries(tos_validator_auth_native PUBLIC tos_validator_auth tos_bl
 set_target_properties(tos_validator_auth_native PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 
 if(UNIX)
-  add_library(tos_validator_auth_signer STATIC durable-log.cpp witness.cpp safety-ledger.cpp c0-provider.cpp signer-service.cpp local-channel.cpp provider-channel.cpp)
+  add_library(tos_validator_auth_signer STATIC durable-log.cpp witness.cpp safety-ledger.cpp c0-provider.cpp signer-service.cpp service-issuer.cpp local-channel.cpp provider-channel.cpp)
   target_link_libraries(tos_validator_auth_signer PUBLIC tos_validator_auth)
   set_target_properties(tos_validator_auth_signer PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 endif()

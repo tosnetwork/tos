@@ -26,8 +26,10 @@ class VerifiedNativeResponse {
 };
 // The anchor is obtained from independently established finality/checkpoint
 // trust. A hash asserted by the peer supplying this proof is not such an anchor.
+using ObjectPublisher = std::function<Result<bool>(const ObjectRef&, std::span<const std::uint8_t>)>;
 Result<Bytes> make_native_response(td::Ref<vm::Cell> masterchain_state, const Anchor&, std::int32_t network,
-                                   std::uint8_t method, std::span<const std::uint8_t> request);
+                                   std::uint8_t method, std::span<const std::uint8_t> request,
+                                   ObjectPublisher publisher = {});
 Result<VerifiedNativeResponse> verify_native_response(std::uint8_t method, std::span<const std::uint8_t> request,
                                                       std::span<const std::uint8_t> response,
                                                       const Anchor& independently_trusted_anchor, std::int32_t network,

@@ -113,6 +113,10 @@ int main() {
                     1};
     Permit permit{body, {{1, 1, service_key.id, sign(value(encode(body), "permit-body"))}}};
     value(verify_permit(permit, body, permit_trust, 0, 1, true), "valid-permit");
+    auto unbound = permit;
+    unbound.body_.registry_root_ = {};
+    unbound.components_[0].signature_ = sign(value(encode(unbound.body_), "unbound-body"));
+    check(!verify_permit(unbound, unbound.body_, permit_trust, 0, 1, true).ok(), "permit-registry-shape");
     value(verify_permit(permit, body, permit_trust, 128, 1, true), "permit-boundary");
     check(!verify_permit(permit, body, permit_trust, 129, 1, true).ok(), "permit-expired");
     check(!verify_permit(permit, body, permit_trust, 0, 2, true).ok(), "permit-fence");
@@ -147,6 +151,21 @@ int main() {
     value(verify_receipt(receipt, receipt_body, receipt_trust, witness), "historical-receipt-policy");
     witness.entries.clear();
     check(!verify_receipt(receipt, receipt_body, receipt_trust, witness).ok(), "receipt-frontier");
+    SignResult result{h(301), h(302), row, 1, receipt};
+    RequestState complete{h(301), 2, h(302), 1, {result}, {}};
+    RequestState absent{h(301), 0, {}, 0, {}, {}};
+    auto pending_receipt = receipt;
+    pending_receipt.body_.state_ = 1;
+    pending_receipt.body_.result_hash_ = {};
+    RequestState reserved{h(301), 1, h(302), 1, {}, {pending_receipt}};
+    value(observe_request_state(&reserved, complete, h(301)), "poll-completion");
+    value(observe_request_state(&complete, complete, h(301)), "poll-exact-terminal");
+    check(!observe_request_state(&complete, absent, h(301)).ok(), "poll-terminal-regression");
+    check(!observe_request_state(&reserved, absent, h(301)).ok(), "poll-reserved-regression");
+    auto changed_state = complete;
+    changed_state.fence_ = 2;
+    changed_state.result_[0].fence_ = 2;
+    check(!observe_request_state(&reserved, changed_state, h(301)).ok(), "poll-reserved-binding");
     std::cout << "PASS: real PoP, current identity authority, permits and witnessed receipts\n";
     return 0;
   } catch (const std::runtime_error& e) {

@@ -32,7 +32,11 @@ class ReceiptWitness {
 };
 Result<bool> verify_permit(const Permit&, const PermitBody& independently_expected, const ServiceTrust&,
                            std::uint32_t current_coordinate, std::uint64_t current_fence, bool live_permission);
+Result<bool> validate_permit_context(const PermitBody&, std::uint32_t current_coordinate, std::uint64_t current_fence,
+                                     bool live_permission);
 Result<bool> verify_receipt(const Receipt&, const ReceiptBody& independently_expected, const ServiceTrust&,
                             const ReceiptWitness&);
 Result<bool> validate_request_state(const RequestState&, const Hash& expected_id);
+Result<bool> observe_request_state(const RequestState* previously_verified, const RequestState& next,
+                                   const Hash& expected_id);
 }  // namespace tos::auth
