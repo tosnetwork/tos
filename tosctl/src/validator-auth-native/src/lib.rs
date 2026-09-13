@@ -16,4 +16,7 @@ pub mod native_apply;
 
 pub mod native_history;
 
+pub mod native_config_context;
 pub mod native_registry;
+
+pub mod native_evidence;

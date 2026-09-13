@@ -2,8 +2,8 @@
 
 This additive native implementation witness does not change VAA1, VAF1, the
 owner execution proof's two references, or the frozen profile fingerprint.
-Its intended transport is the native configuration request's evidence container;
-that ingress and native execution metering are separate integration work.
+Its transport is the [native evidence container](validator-auth-p0-native-evidence.md);
+concrete transaction host metering remains separate integration work.
 
 ## Trust and deterministic execution
 

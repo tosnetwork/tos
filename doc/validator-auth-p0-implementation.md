@@ -27,8 +27,10 @@ or PQ suite allocation is authorized by this work.
 | Native registry transaction prefixes | Independent C++/Rust per-transaction immutable candidates, due-before-request order and private block-start revision | 80 real-owner cases match whole-block replay; rejected/discarded candidates, cumulative budget, overflow and nine compiled mutations | Contract data installation and native action-phase commit wiring |
 | Native configuration gates | Actual C++ admission/transition and Rust config admission, frozen Config46 registration, capability/version, required parameters and revision continuity | 43 shared cases, 11 legacy transition tests, 47 compiled guards and full-dependency sanitizer parity | Native contract authorization, atomic root installation and approved activation |
 | Persistent native registry | Independent C++/Rust immutable cell dictionaries, validated derived indexes and per-operation native authority | 34 replay cases, eight checkpoint attacks, 80 real-owner authority cases and 36 compiled guards; bounded work over 501 historical identities | Contract-owned persistence, global/elector operations and node installation |
-| Native header witnesses | Independent C++/Rust fixed-surface Merkle proofs authenticated by native history; no archive/cache access | 25 shared cases, independent proof generation, 27 compiled guards and full-dependency sanitizer parity | Native evidence ingress and transaction host metering |
-| Privileged native VM host | C++/Rust P0STATE/P0APPLY, immutable host injection, no nested VM inheritance and explicit charge callback | 25 exact outcome/gas/host-call comparisons, 12 compiled guards and full-dependency sanitizer parity | Concrete config-account authority, deterministic native gas and real action/commit wiring |
+| Native header witnesses | Independent C++/Rust fixed-surface Merkle proofs authenticated by native history; no archive/cache access | 25 shared cases, independent proof generation, 27 compiled guards and full-dependency sanitizer parity | Concrete transaction host metering |
+| Privileged native VM host | C++/Rust P0STATE/P0APPLY, immutable host injection, no nested VM inheritance and explicit charge callback | 25 exact outcome/gas/host-call comparisons, 12 compiled guards and full-dependency sanitizer parity | Config-account transaction factory, deterministic native gas and real action/commit wiring |
+| Native configuration account context | Independent C++/Rust binding of actual ShardAccounts code/data/library, Config0, owned config dictionary, complete checkpoint and parent committee | 22 shared cases, 24 compiled guards and full-dependency sanitizer parity | Concrete transaction factory, actual c4 installation and native commit |
+| Native transaction evidence | Independent C++/Rust bounded transaction-contained VAA1, typed chunk dictionary, byte-work charging and authenticated owner header | 37 shared cases, 28 compiled guards, identical charge traces and full-dependency sanitizer parity | Concrete native VM pricing and transaction host invocation |
 | Native finalized history | Independent C++/Rust resolution of full anchors from authenticated OldMcBlocksInfo and original native block bytes | 37 shared cases, 34 compiled guards, exact file/root/context/new-state binding, bounded reads and full-dependency sanitizer parity | Native manager archive reader and independently established finalized head |
 | Authenticated ordered identity apply | C++ and independent Rust compose native owner proofs, PoP and current administration with per-operation resulting state | 80 shared cases from real wallet approvals, same-block administration rotation, due/policy boundaries, exact native bytes and 22 compiled guards | Native elector/config transaction admission and installed chain root |
 | Authority primitives | Independent C++/Rust session/duty derivation, C0 PoP, current identity-role-5 and current governance quorum verification; separate permit/receipt trust | 76 shared context/identity cases, 28 current-governance cases and 25 service-trust/polling cases; expired or rotated governance keys refused | Normal configuration voting and native transaction admission |
@@ -63,7 +65,7 @@ state/authority/proof, journal, signer/provider and local channel harnesses kill
 25, 11, 7 and 6 compiled guard removals respectively. Scoped object storage,
 service issuers and C++ API semantics add eight, nine and eight removals. The
 administration harness adds eleven. The combined implementation harness contains
-778 compiled production mutations, including 12 native VM host isolation/metering and 27 fixed-surface header controls, nine transaction-prefix and 47 native configuration, 36 persistent registry, 34 native finalized-history and 22 authenticated ordered-apply checks,
+830 compiled production mutations, including 24 authenticated configuration-account/cache and 28 native evidence controls, 12 native VM host isolation/metering and 27 fixed-surface header controls, nine transaction-prefix and 47 native configuration, 36 persistent registry, 34 native finalized-history and 22 authenticated ordered-apply checks,
 52 native owner-proof/resource checks,
 46 context/identity-authority checks,
 33 current-governance checks, 28 independent certificate proof checks,
@@ -99,6 +101,12 @@ new addition requires CI evidence attached to its own HEAD.
 It neither triggers the full Ubuntu build nor starts a network.
 
 ## Native execution context
+
+[Authenticated configuration accounts](validator-auth-p0-native-config-context.md)
+now bind the actual parent account and complete private checkpoint.
+[Transaction-contained evidence](validator-auth-p0-native-evidence.md)
+resolves typed objects without archive/network IO and authenticates full owner anchors.
+These inputs still need concrete gas pricing and native transaction commit wiring.
 
 [The privileged VM host boundary](validator-auth-p0-native-vm-host.md) supplies
 P0STATE/P0APPLY only to a node-injected host under VM16/capability1024. C7 and
