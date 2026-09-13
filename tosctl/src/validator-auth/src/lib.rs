@@ -11,3 +11,5 @@ pub mod service_auth;
 pub mod transfer;
 
 pub mod api_semantics;
+
+pub mod lifecycle;

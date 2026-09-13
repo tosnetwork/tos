@@ -3,6 +3,13 @@ import argparse,json,shutil,subprocess,sys,tempfile
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[2]
 MUTATIONS=[
+ ('lifecycle-predecessor','lifecycle.rs','if update.previous != predecessor {','if false {','lifecycle'),
+ ('lifecycle-block-gap','lifecycle.rs','if parent_coordinate >= u32::MAX - 1 || parent_coordinate.checked_add(1) != Some(coordinate) {','if false {','lifecycle'),
+ ('lifecycle-epoch','lifecycle.rs','if key.epoch <= epoch || key.epoch == u64::MAX {','if false {','lifecycle'),
+ ('lifecycle-bootstrap','lifecycle.rs','if initial && (op != 1 || target.0 != 5) {','if false {','lifecycle'),
+ ('lifecycle-authority','lifecycle.rs','if needed && !callback(&rows[0])? {','if false {','lifecycle'),
+ ('lifecycle-snapshot-due','lifecycle.rs','if state.pending.iter().any(|p| p.effective_from <= anchor) {','if false {','lifecycle'),
+ ('lifecycle-snapshot-validity','lifecycle.rs','if key.valid_from > anchor || key.valid_until <= anchor {','if false {','lifecycle'),
  ('public-subgroup','crypto.rs','p == EdwardsPoint::identity() || !p.is_torsion_free()','false','core'),
  ('signature-equation','crypto.rs','s * ED25519_BASEPOINT_POINT == rpoint + h * self.point','true','core'),
  ('expected-duty','verify.rs','if duty != expected {','if false {','core'),
@@ -36,14 +43,16 @@ def main(args):
    subprocess.run(['cargo','build','--offline','--manifest-path',str(manifest),'--bin','conformance'],capture_output=True,text=True,check=True)
    return d/'crate/target/debug/conformance'
   def test(suite,binary):
-   if suite in ('api','service'):
+   if suite=='lifecycle':
+    command=[sys.executable,str(ROOT/'test/validator-auth-implementation/check_lifecycle.py'),'--driver',str(binary),'--out',str(d/'lifecycle.json')]
+   elif suite in ('api','service'):
     script='check_api_semantics.py' if suite=='api' else 'check_service_auth.py'
     command=[sys.executable,str(ROOT/'test/validator-auth-implementation'/script),'--driver',str(binary)]
    elif suite=='transport':command=[sys.executable,str(ROOT/'test/validator-auth-implementation/check_transport.py'),'--driver',str(binary)]
    else:command=[sys.executable,str(ROOT/'test/validator-auth-implementation/check.py'),'--cpp',str(args.cpp.resolve()),'--rust',str(binary),'--core-only','--out',str(d/'core.json')]
    return subprocess.run(command,capture_output=True,text=True)
   binary=build()
-  for suite in ('core','transport','api','service'):
+  for suite in ('core','transport','api','service','lifecycle'):
    p=test(suite,binary);assert p.returncode==0,p.stderr
   print('BASELINE: Rust core and transport',flush=True)
   for name,file,before,after,suite in MUTATIONS:
@@ -58,7 +67,7 @@ def main(args):
     report.append({'guard':name,'compiled':True,'assertion_failed':True});print('KILLED:',name,flush=True)
    finally:path.write_text(original)
   binary=build()
-  for suite in ('core','transport','api','service'):
+  for suite in ('core','transport','api','service','lifecycle'):
    p=test(suite,binary);assert p.returncode==0,p.stderr
  args.out.write_text(json.dumps({'production_rust_mutations':report,'restored_baselines':True},indent=2)+'\n')
 if __name__=='__main__':

@@ -9,6 +9,10 @@ fn roundtrip<T: Wire>(input: &[u8], out: &str) -> Result<(), Error> {
 }
 fn run() -> Result<(), Error> {
     let a: Vec<String> = env::args().collect();
+    if a.len() >= 7 && (a[1] == "apply" || a[1] == "due" || a[1] == "select") {
+        return lifecycle_probe(&a);
+    }
+
     if a.len() == 4 && a[1] == "service" {
         return service_probe(&a[2], &a[3]);
     }
@@ -94,3 +98,5 @@ fn main() {
 }
 
 include!("service_probe.inc");
+
+include!("lifecycle_probe.inc");

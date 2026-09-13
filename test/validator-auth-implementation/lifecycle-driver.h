@@ -68,6 +68,25 @@ int lifecycle_main(int argc, char** argv) {
   auto state = decode<Identity>(load(argv[2]));
   if (!state.ok())
     return 2;
+  if (argc == 7 && std::string(argv[1]) == "select") {
+    auto at = coordinate(argv[4]), role = coordinate(argv[5]);
+    if (!at.ok() || !role.ok() || role.value() > 255)
+      return 2;
+    auto keys =
+        select_identity_keys(state.value(), archive, at.value(), {{static_cast<std::uint8_t>(role.value()), 1, 1}});
+    if (!keys.ok()) {
+      std::cerr << keys.error().code << '\n';
+      return 1;
+    }
+    if (keys.value().size() != 1)
+      return 2;
+    auto bytes = encode(keys.value()[0]);
+    if (!bytes.ok())
+      return 2;
+    std::ofstream out(argv[6], std::ios::binary);
+    out.write(reinterpret_cast<const char*>(bytes.value().data()), bytes.value().size());
+    return out.good() ? 0 : 2;
+  }
   Result<Identity> next = Error{"arguments"};
   if (argc == 7 && std::string(argv[1]) == "due") {
     auto parent = coordinate(argv[4]), at = coordinate(argv[5]);

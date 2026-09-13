@@ -45,10 +45,10 @@ Result<Bytes> ProviderHost::dispatch(std::span<const std::uint8_t> raw) {
       return w.data;
     }
     auto keys = provider_.public_keys();
-    if (keys.size() > 10)
+    if (keys.size() > 4096)
       return Error{"provider-channel-bound"};
     Writer w;
-    w.length(keys.size(), 1);
+    w.length(keys.size(), 2);
     for (const auto& key : keys) {
       write(w, key.descriptor);
       w.bytes(key.handle);
@@ -69,6 +69,30 @@ Result<Bytes> ProviderHost::dispatch(std::span<const std::uint8_t> raw) {
     if (!request.ok())
       return request.error();
     auto result = provider_.sign(request.value());
+    if (!result.ok())
+      return result.error();
+    return encode(result.value());
+  }
+  if (operation == 11) {
+    auto request = decode<PrepareRequest>(raw.subspan(1));
+    if (!request.ok())
+      return request.error();
+    auto result = provider_.prepare(request.value());
+    if (!result.ok())
+      return result.error();
+    return encode(result.value());
+  }
+  if (operation == 12) {
+    ChainContext chain;
+    StageRequest request;
+    r.integer(chain.network);
+    r.hash(chain.genesis_root);
+    r.hash(chain.genesis_file);
+    r.hash(chain.chain_domain);
+    read(r, request);
+    if (!r.ok() || r.remaining())
+      return Error{"provider-channel-request"};
+    auto result = provider_.prove_possession(chain, request);
     if (!result.ok())
       return result.error();
     return encode(result.value());
@@ -166,8 +190,8 @@ Result<std::vector<OpaqueKey>> RemoteProvider::public_keys() const {
   if (!raw.ok())
     return raw.error();
   Reader r(raw.value());
-  auto count = r.length(1);
-  if (!r.ok() || count == 0 || count > 10)
+  auto count = r.length(2);
+  if (!r.ok() || count == 0 || count > 4096)
     return Error{"provider-channel-bound"};
   std::vector<OpaqueKey> keys;
   for (unsigned i = 0; i < count; ++i) {
@@ -199,5 +223,30 @@ Result<Record> RemoteProvider::sign(const SignRequest& request) {
   if (!result.ok())
     return result.error();
   return decode<Record>(result.value());
+}
+Result<KeyHandle> RemoteProvider::prepare(const PrepareRequest& request) {
+  auto raw = encode(request);
+  if (!raw.ok())
+    return raw.error();
+  raw.value().insert(raw.value().begin(), 11);
+  auto result = local_call(path_, uid_, raw.value());
+  if (!result.ok())
+    return result.error();
+  return decode<KeyHandle>(result.value());
+}
+Result<PossessionAuth> RemoteProvider::prove_possession(const ChainContext& chain, const StageRequest& request) {
+  Writer w;
+  w.integer<std::uint8_t>(12);
+  w.integer(chain.network);
+  w.bytes(chain.genesis_root);
+  w.bytes(chain.genesis_file);
+  w.bytes(chain.chain_domain);
+  write(w, request);
+  if (!w.ok())
+    return Error{w.error};
+  auto result = local_call(path_, uid_, w.data);
+  if (!result.ok())
+    return result.error();
+  return decode<PossessionAuth>(result.value());
 }
 }  // namespace tos::auth

@@ -24,7 +24,8 @@ bool roundtrip(const Bytes& input, const char* output) {
 }
 #include "lifecycle-driver.h"
 int main(int argc, char** argv) {
-  if (argc >= 7 && (std::string(argv[1]) == "apply" || std::string(argv[1]) == "due"))
+  if (argc >= 7 &&
+      (std::string(argv[1]) == "apply" || std::string(argv[1]) == "due" || std::string(argv[1]) == "select"))
     return lifecycle_main(argc, argv);
 
 #ifndef TOS_AUTH_CORE_ONLY

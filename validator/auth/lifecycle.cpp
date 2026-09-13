@@ -154,9 +154,9 @@ Result<Identity> apply_due_transitions(const Identity& parent, const KeyHistory&
   }
   return result;
 }
-Result<IdentityChange> apply_identity_update(const Identity& state, const KeyHistory& archive, const Update& update,
-                                             const Authorizations& evidence, std::uint32_t at,
-                                             const LifecycleAuthority& authority) {
+static Result<IdentityChange> identity_update(const Identity& state, const KeyHistory& archive, const Update& update,
+                                              const Authorizations& evidence, std::uint32_t at,
+                                              const LifecycleAuthority& authority, bool staging) {
   auto checked = validate_identity(state, archive);
   if (!checked.ok())
     return checked.error();
@@ -285,16 +285,19 @@ Result<IdentityChange> apply_identity_update(const Identity& state, const KeyHis
   });
   if (!owner.ok())
     return owner.error();
-  auto pop = verified(op == 1 || op == 2, evidence.possession_, [&](const PossessionAuth& proof) -> Result<bool> {
-    if (!result.archived_key)
-      return Error{"pop-key"};
-    auto ref = key_reference(*result.archived_key);
-    if (!ref.ok())
-      return ref.error();
-    if (proof.update_id_ != uid.value() || proof.key_ != ref.value())
-      return Error{"pop-binding"};
-    return authority.possession(proof, update, *result.archived_key);
-  });
+  if (staging && op != 1 && op != 2)
+    return Error{"stage-operation"};
+  auto pop = verified(!staging && (op == 1 || op == 2), evidence.possession_,
+                      [&](const PossessionAuth& proof) -> Result<bool> {
+                        if (!result.archived_key)
+                          return Error{"pop-key"};
+                        auto ref = key_reference(*result.archived_key);
+                        if (!ref.ok())
+                          return ref.error();
+                        if (proof.update_id_ != uid.value() || proof.key_ != ref.value())
+                          return Error{"pop-binding"};
+                        return authority.possession(proof, update, *result.archived_key);
+                      });
   if (!pop.ok())
     return pop.error();
   auto admin = verified(!initial, evidence.administration_, [&](const IdentityAuth& proof) -> Result<bool> {
@@ -311,6 +314,19 @@ Result<IdentityChange> apply_identity_update(const Identity& state, const KeyHis
   if (!final.ok())
     return final.error();
   return result;
+}
+Result<IdentityChange> apply_identity_update(const Identity& state, const KeyHistory& archive, const Update& update,
+                                             const Authorizations& evidence, std::uint32_t at,
+                                             const LifecycleAuthority& authority) {
+  return identity_update(state, archive, update, evidence, at, authority, false);
+}
+Result<bool> validate_stage_update(const Identity& state, const KeyHistory& archive, const Update& update,
+                                   const Authorizations& evidence, std::uint32_t at,
+                                   const LifecycleAuthority& authority) {
+  auto checked = identity_update(state, archive, update, evidence, at, authority, true);
+  if (!checked.ok())
+    return checked.error();
+  return true;
 }
 Result<std::vector<Key>> select_identity_keys(const Identity& state, const KeyHistory& archive, std::uint32_t anchor,
                                               const std::vector<KeySlot>& required) {

@@ -1,5 +1,6 @@
 #include <sodium.h>
 
+#include "api-semantics.h"
 #include "c0-provider.h"
 namespace tos::auth {
 namespace {
@@ -27,9 +28,9 @@ Result<Bytes> sign_bytes(const Hash& seed, std::span<const std::uint8_t> raw) {
   return signature;
 }
 Result<Bytes> invocation(std::uint8_t state, const Hash& id, std::uint64_t fence, const Hash& handle,
-                         const Bytes& statement, const Bytes& signature) {
+                         const Bytes& statement, const Bytes& signature, bool possession = false) {
   Writer w;
-  w.header("PRI1");
+  w.header(possession ? "PRP1" : "PRI1");
   w.integer(state);
   w.bytes(id);
   w.integer(fence);
@@ -45,6 +46,8 @@ C0Provider::Secret::~Secret() {
   sodium_memzero(seed.data(), seed.size());
 }
 Result<bool> C0Provider::replay(std::span<const std::uint8_t> raw) {
+  if (raw.size() >= 4 && std::equal(raw.begin(), raw.begin() + 4, "PRA1"))
+    return replay_preparation(raw);
   if (raw.size() >= 4 && std::equal(raw.begin(), raw.begin() + 4, "PRK1")) {
     Reader r(raw);
     Secret key;
@@ -71,7 +74,8 @@ Result<bool> C0Provider::replay(std::span<const std::uint8_t> raw) {
   Hash id{}, handle{};
   std::uint64_t fence = 0;
   Bytes statement, signature;
-  r.header("PRI1");
+  bool possession = raw.size() >= 4 && std::equal(raw.begin(), raw.begin() + 4, "PRP1");
+  r.header(possession ? "PRP1" : "PRI1");
   r.integer(state);
   r.hash(id);
   r.integer(fence);
@@ -80,7 +84,7 @@ Result<bool> C0Provider::replay(std::span<const std::uint8_t> raw) {
   r.blob(signature, 64);
   if (!r.ok() || r.remaining() || fence == 0 || !keys_.contains(handle) || state < 1 || state > 2)
     return Error{"provider-invocation-record"};
-  auto hash = digest("sign-request", statement);
+  auto hash = digest(possession ? "possession-request" : "sign-request", statement);
   if (!hash.ok())
     return hash.error();
   if (hash.value() != id)
@@ -252,5 +256,221 @@ Result<Record> C0Provider::sign(const SignRequest& request) {
   Record result = e.record_;
   result.components_[0].signature_ = std::move(signature.value());
   return result;
+}
+
+namespace {
+bool preparation_matches(const PrepareRequest& q, const Key& k) {
+  return q.identity_ == k.identity_ && q.role_ == k.role_ && q.suite_ == k.suite_ && q.parameters_ == k.parameters_ &&
+         q.epoch_ == k.epoch_ && q.valid_from_ == k.valid_from_ && q.valid_until_ == k.valid_until_;
+}
+PrepareRequest preparation_parameters(PrepareRequest q) {
+  q.fence_ = 0;
+  return q;
+}
+}  // namespace
+Result<bool> C0Provider::replay_preparation(std::span<const std::uint8_t> raw) {
+  Reader r(raw);
+  PrepareRequest request;
+  Secret secret;
+  r.header("PRA1");
+  read(r, request);
+  read(r, secret.key);
+  r.hash(secret.handle);
+  r.hash(secret.seed);
+  if (!r.ok() || r.remaining() || secret.handle == Hash{} || preparations_.contains(request.preparation_id_))
+    return Error{"provider-preparation-record"};
+  auto encoded = encode(request);
+  if (!encoded.ok())
+    return encoded.error();
+  ObjectReader reader({});
+  auto valid = validate_api_request(3, encoded.value(), reader);
+  if (!valid.ok())
+    return valid.error();
+  if (!valid.value() || !preparation_matches(request, secret.key) || request.suite_ != 1 || request.parameters_ != 1 ||
+      secret.key.capacity_domain_ != Hash{} || secret.key.capacity_limit_ != 0)
+    return Error{"provider-preparation-binding"};
+  if (request.mode_ == 0) {
+    if (keys_.size() >= 4096 || keys_.contains(secret.handle))
+      return Error{"provider-key-capacity"};
+    auto pk = public_key(secret.seed);
+    if (!pk.ok())
+      return pk.error();
+    if (secret.key.public_key_ != Bytes(pk.value().begin(), pk.value().end()))
+      return Error{"provider-preparation-secret"};
+    keys_.emplace(secret.handle, secret);
+  } else {
+    auto old = keys_.find(request.provider_handle_);
+    if (old == keys_.end() || old->first != secret.handle || old->second.key != secret.key || secret.seed != Hash{})
+      return Error{"provider-preparation-handle"};
+  }
+  preparations_.emplace(request.preparation_id_, std::make_pair(preparation_parameters(request), secret.handle));
+  return true;
+}
+Result<KeyHandle> C0Provider::prepare(const PrepareRequest& request) {
+  if (stopped_)
+    return Error{"provider-unavailable"};
+  auto raw = encode(request);
+  if (!raw.ok())
+    return raw.error();
+  ObjectReader reader({});
+  auto valid = validate_api_request(3, raw.value(), reader);
+  if (!valid.ok())
+    return valid.error();
+  if (!valid.value() || request.suite_ != 1 || request.parameters_ != 1)
+    return Error{"disabled-suite"};
+  auto old = preparations_.find(request.preparation_id_);
+  if (old != preparations_.end()) {
+    if (old->second.first != preparation_parameters(request))
+      return Error{"preparation-conflict"};
+    return KeyHandle{keys_.at(old->second.second).key, old->second.second};
+  }
+  auto id = api_request_id(3, raw.value());
+  if (!id.ok())
+    return id.error();
+  auto allowed = witness_.primitive_allowed(request.fence_, id.value());
+  if (!allowed.ok())
+    return allowed.error();
+  if (!allowed.value())
+    return Error{"primitive-not-reserved"};
+  Secret secret;
+  if (request.mode_ == 1) {
+    auto key = keys_.find(request.provider_handle_);
+    if (key == keys_.end())
+      return Error{"unknown-key"};
+    if (!preparation_matches(request, key->second.key))
+      return Error{"preparation-key-context"};
+    secret.key = key->second.key;
+    secret.handle = key->first;
+  } else if (keys_.size() >= 4096)
+    return Error{"provider-key-capacity"};
+  stopped_ = true;
+  auto claim = witness_.claim_primitive(request.fence_, id.value());
+  if (!claim.ok())
+    return claim.error();
+  if (!claim.value())
+    return Error{"primitive-not-reserved"};
+  if (request.mode_ == 0) {
+    randombytes_buf(secret.seed.data(), secret.seed.size());
+    do {
+      randombytes_buf(secret.handle.data(), secret.handle.size());
+    } while (secret.handle == Hash{} || keys_.contains(secret.handle));
+    auto pk = public_key(secret.seed);
+    if (!pk.ok())
+      return pk.error();
+    secret.key = {request.identity_,
+                  request.role_,
+                  1,
+                  1,
+                  request.epoch_,
+                  request.valid_from_,
+                  request.valid_until_,
+                  Bytes(pk.value().begin(), pk.value().end()),
+                  {},
+                  0};
+  }
+  Writer w;
+  w.header("PRA1");
+  write(w, request);
+  write(w, secret.key);
+  w.bytes(secret.handle);
+  w.bytes(secret.seed);
+  if (!w.ok()) {
+    sodium_memzero(w.data.data(), w.data.size());
+    return Error{w.error};
+  }
+  auto appended = log_->append(w.data);
+  if (!appended.ok()) {
+    sodium_memzero(w.data.data(), w.data.size());
+    return appended.error();
+  }
+  auto applied = replay_preparation(w.data);
+  sodium_memzero(w.data.data(), w.data.size());
+  if (!applied.ok())
+    return applied.error();
+  auto current = witness_.check_fence(request.fence_);
+  if (!current.ok())
+    return current.error();
+  if (!current.value())
+    return Error{"fenced"};
+  stopped_ = false;
+  return KeyHandle{secret.key, secret.handle};
+}
+Result<PossessionAuth> C0Provider::prove_possession(const ChainContext& chain, const StageRequest& request) {
+  if (stopped_)
+    return Error{"provider-unavailable"};
+  auto current = witness_.check_fence(request.fence_);
+  if (!current.ok())
+    return current.error();
+  if (!current.value())
+    return Error{"fenced"};
+  auto raw = encode(request);
+  if (!raw.ok())
+    return raw.error();
+  auto plan = plan_operation(4, raw.value(), chain);
+  if (!plan.ok())
+    return plan.error();
+  auto key = keys_.find(request.handle_);
+  if (key == keys_.end())
+    return Error{"unknown-key"};
+  if (key->second.key != request.key_)
+    return Error{"provider-possession-key"};
+  auto statement = possession_preimage(chain, request.update_, request.key_);
+  if (!statement.ok())
+    return statement.error();
+  auto uid = object_id("update", request.update_);
+  if (!uid.ok())
+    return uid.error();
+  auto ref = key_reference(request.key_);
+  if (!ref.ok())
+    return ref.error();
+  const auto& id = plan.value().reservation;
+  auto previous = invocations_.find(id);
+  if (previous != invocations_.end()) {
+    if (previous->second.handle != request.handle_ || previous->second.statement != statement.value() ||
+        previous->second.fence != request.fence_)
+      return Error{"provider-possession-conflict"};
+    if (previous->second.signature.empty())
+      return Error{"result-uncertain"};
+    return PossessionAuth{uid.value(), ref.value(), previous->second.signature};
+  }
+  auto allowed = witness_.primitive_allowed(request.fence_, id);
+  if (!allowed.ok())
+    return allowed.error();
+  if (!allowed.value())
+    return Error{"primitive-not-reserved"};
+  auto reserved = invocation(1, id, request.fence_, request.handle_, statement.value(), {}, true);
+  if (!reserved.ok())
+    return reserved.error();
+  stopped_ = true;
+  auto stored = log_->append(reserved.value());
+  if (!stored.ok())
+    return stored.error();
+  auto applied = replay(reserved.value());
+  if (!applied.ok())
+    return applied.error();
+  auto claimed = witness_.claim_primitive(request.fence_, id);
+  if (!claimed.ok())
+    return claimed.error();
+  if (!claimed.value())
+    return Error{"primitive-not-reserved"};
+  auto signature = sign_bytes(key->second.seed, statement.value());
+  if (!signature.ok())
+    return signature.error();
+  current = witness_.check_fence(request.fence_);
+  if (!current.ok())
+    return current.error();
+  if (!current.value())
+    return Error{"fenced"};
+  auto complete = invocation(2, id, request.fence_, request.handle_, statement.value(), signature.value(), true);
+  if (!complete.ok())
+    return complete.error();
+  stored = log_->append(complete.value());
+  if (!stored.ok())
+    return stored.error();
+  applied = replay(complete.value());
+  if (!applied.ok())
+    return applied.error();
+  stopped_ = false;
+  return PossessionAuth{uid.value(), ref.value(), signature.value()};
 }
 }  // namespace tos::auth

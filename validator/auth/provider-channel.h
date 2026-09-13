@@ -38,5 +38,7 @@ class RemoteProvider final : public C0SigningProvider {
   Result<std::vector<OpaqueKey>> public_keys() const;
   Result<Key> descriptor(const Hash&) const override;
   Result<Record> sign(const SignRequest&) override;
+  Result<KeyHandle> prepare(const PrepareRequest&) override;
+  Result<PossessionAuth> prove_possession(const ChainContext&, const StageRequest&) override;
 };
 }  // namespace tos::auth

@@ -22,7 +22,12 @@ def main(build,out):
     return subprocess.run([str(folder/target),str(Path(temp)/'data')],capture_output=True,text=True)
   try:
    base=run(original);assert base.returncode==0,(name,base.stderr)
-   result=run(replace_once(original,before,after))
+   if module=='c0-provider':
+    start=original.index('Result<Record> C0Provider::sign(')
+    end=original.index('namespace {',start)
+    mutant=original[:start]+replace_once(original[start:end],before,after)+original[end:]
+   else: mutant=replace_once(original,before,after)
+   result=run(mutant)
    assert result.returncode==1 and result.stderr.strip()=='ASSERTION: '+name,(name,result.returncode,result.stderr)
    report.append({'guard':name,'compiled':True,'assertion_failed':True});print('KILLED:',name,flush=True)
   finally:

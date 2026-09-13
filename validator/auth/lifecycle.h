@@ -29,6 +29,10 @@ Result<Identity> apply_due_transitions(const Identity&, const KeyHistory&, std::
                                        std::uint32_t coordinate);
 Result<IdentityChange> apply_identity_update(const Identity&, const KeyHistory&, const Update&, const Authorizations&,
                                              std::uint32_t inclusion, const LifecycleAuthority&);
+// Read-only staging admission: all lifecycle and owner/admin checks, with PoP
+// absent. No successor state escapes before the final apply verifies actual PoP.
+Result<bool> validate_stage_update(const Identity&, const KeyHistory&, const Update&, const Authorizations&,
+                                   std::uint32_t inclusion, const LifecycleAuthority&);
 Result<std::vector<Key>> select_identity_keys(const Identity&, const KeyHistory&, std::uint32_t anchor,
                                               const std::vector<KeySlot>& required);
 }  // namespace tos::auth

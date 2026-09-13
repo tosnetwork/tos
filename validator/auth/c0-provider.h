@@ -16,6 +16,12 @@ class C0SigningProvider {
   virtual ~C0SigningProvider() = default;
   virtual Result<Key> descriptor(const Hash& handle) const = 0;
   virtual Result<Record> sign(const SignRequest&) = 0;
+  virtual Result<KeyHandle> prepare(const PrepareRequest&) {
+    return Error{"unsupported-provider-operation"};
+  }
+  virtual Result<PossessionAuth> prove_possession(const ChainContext&, const StageRequest&) {
+    return Error{"unsupported-provider-operation"};
+  }
 };
 // This provider owns secrets and an exclusive durable file. Its public signing
 // entry point accepts only a complete canonical sign request backed by a witness
@@ -35,10 +41,12 @@ class C0Provider final : public C0SigningProvider {
   MonotonicWitness& witness_;
   std::map<Hash, Secret> keys_;
   std::map<Hash, Invocation> invocations_;
+  std::map<Hash, std::pair<PrepareRequest, Hash>> preparations_;
   bool stopped_ = false;
   explicit C0Provider(MonotonicWitness& witness) : witness_(witness) {
   }
   Result<bool> replay(std::span<const std::uint8_t>);
+  Result<bool> replay_preparation(std::span<const std::uint8_t>);
 
  public:
   // Explicit local provisioning only, never an RPC or peer request. New private
@@ -49,5 +57,7 @@ class C0Provider final : public C0SigningProvider {
   std::vector<OpaqueKey> public_keys() const;
   Result<Key> descriptor(const Hash& handle) const override;
   Result<Record> sign(const SignRequest&) override;
+  Result<KeyHandle> prepare(const PrepareRequest&) override;
+  Result<PossessionAuth> prove_possession(const ChainContext&, const StageRequest&) override;
 };
 }  // namespace tos::auth

@@ -11,7 +11,7 @@ Build with `TOS_BUILD_P0_IMPLEMENTATION_TESTS=ON`, then build the targets
 
 - `check.py`: exact binary bytes, malformed inputs, cryptographic admission and
   signatures, complete certificate verification, native AuthBytes/BOC bounds.
-- `check_lifecycle.py`: per-identity state effects against the frozen reference.
+- `check_lifecycle.py`: 104 C++ and Rust per-identity state/selection cases against the frozen reference.
   Authority callbacks are controlled test inputs, not a proof implementation.
 - `check_transport.py`: use `--driver` with either the native transport driver or
   the Rust conformance binary. Checks framing, binary shape and correlation.
@@ -39,6 +39,13 @@ Additional production boundaries:
   runs against C++ `test-p0-api-semantics` and Rust `conformance`.
 - `check_service_auth.py`: real C0 service signatures, independent policy history,
   witnessed receipts and retained request-state observations in both languages.
+- `test-p0-admin`: durable preparation, staging, retire/cancel intents, real admin
+  signatures and PoP, exact receipts, bootstrap and provider rollback. Owner
+  execution admission remains a controlled fixture.
+- `test-p0-admin-process`: six actual SIGKILL boundaries with separate signer and
+  provider/witness processes, preparation reconciliation and uncertain PoP refusal.
+- `admin_mutations.py`: eleven compiled administration guard removals with exact
+  expected assertion labels.
 - `test-p0-object-store`: full principal/anchor isolation and aggregate quotas.
 - `test-p0-issuer`: persistent purpose-separated service keys and real signer
   receipts through restart/rotation.

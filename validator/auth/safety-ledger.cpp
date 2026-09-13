@@ -142,6 +142,8 @@ Result<bool> SafetyLedger::conflict(const SignPlan& plan) const {
   return true;
 }
 Result<bool> SafetyLedger::replay(const LogFrontier& frontier, std::span<const std::uint8_t> raw) {
+  if (raw.size() >= 4 && std::equal(raw.begin(), raw.begin() + 4, "OPR1"))
+    return replay_operation(frontier, raw);
   Reader r(raw);
   std::uint8_t state = 0;
   Bytes request_raw, response;
@@ -197,7 +199,7 @@ Result<bool> SafetyLedger::replay(const LogFrontier& frontier, std::span<const s
   found->second.state = state;
   return true;
 }
-Result<bool> SafetyLedger::commit(const Bytes& raw, const Hash& request, std::uint8_t state, const Receipt& receipt) {
+Result<bool> SafetyLedger::commit(const Bytes& raw, const Hash& request, std::uint8_t state, const Receipt* receipt) {
   if (stopped_)
     return Error{"storage-unavailable"};
   auto checked = witness_.check(fence_, log_->frontier());
@@ -206,7 +208,7 @@ Result<bool> SafetyLedger::commit(const Bytes& raw, const Hash& request, std::ui
   if (!checked.value())
     return Error{"journal-witness-mismatch"};
   const auto before = log_->frontier();
-  auto receipt_id = object_id("receipt_body", receipt.body_);
+  auto receipt_id = receipt ? object_id("receipt_body", receipt->body_) : Result<Hash>(Hash{});
   if (!receipt_id.ok())
     return receipt_id.error();
   stopped_ = true;
@@ -254,7 +256,7 @@ Result<bool> SafetyLedger::reserve(const SignRequest& request, const Receipt& re
   auto raw = event(1, request, encoded.value());
   if (!raw.ok())
     return raw.error();
-  return commit(raw.value(), plan.value().request_id, 1, receipt);
+  return commit(raw.value(), plan.value().request_id, 1, &receipt);
 }
 Result<bool> SafetyLedger::complete(const Hash& id, const SignResult& result) {
   auto found = requests_.find(id);
@@ -272,7 +274,7 @@ Result<bool> SafetyLedger::complete(const Hash& id, const SignResult& result) {
   auto raw = event(2, found->second.request, encoded.value());
   if (!raw.ok())
     return raw.error();
-  return commit(raw.value(), id, 2, result.receipt_);
+  return commit(raw.value(), id, 2, &result.receipt_);
 }
 Result<bool> SafetyLedger::burn(const Hash& id, const Receipt& receipt) {
   auto found = requests_.find(id);
@@ -290,7 +292,7 @@ Result<bool> SafetyLedger::burn(const Hash& id, const Receipt& receipt) {
   auto raw = event(3, found->second.request, encoded.value());
   if (!raw.ok())
     return raw.error();
-  return commit(raw.value(), id, 3, receipt);
+  return commit(raw.value(), id, 3, &receipt);
 }
 Result<RequestState> SafetyLedger::get(const Hash& id) const {
   if (stopped_)

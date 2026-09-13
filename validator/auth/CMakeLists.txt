@@ -11,7 +11,7 @@ target_link_libraries(tos_validator_auth_native PUBLIC tos_validator_auth tos_bl
 set_target_properties(tos_validator_auth_native PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 
 if(UNIX)
-  add_library(tos_validator_auth_signer STATIC durable-log.cpp witness.cpp safety-ledger.cpp c0-provider.cpp signer-service.cpp service-issuer.cpp local-channel.cpp provider-channel.cpp)
+  add_library(tos_validator_auth_signer STATIC durable-log.cpp witness.cpp safety-ledger.cpp operation-ledger.cpp c0-provider.cpp signer-service.cpp admin-service.cpp service-issuer.cpp local-channel.cpp provider-channel.cpp)
   target_link_libraries(tos_validator_auth_signer PUBLIC tos_validator_auth)
   set_target_properties(tos_validator_auth_signer PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 endif()
