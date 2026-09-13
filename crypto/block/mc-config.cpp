@@ -689,6 +689,21 @@ td::Result<std::shared_ptr<TotalValidatorSet>> Config::unpack_validator_set(Ref<
     seen_keys[i] = true;
 
     gen::ValidatorDescr::Record_validator_addr descr;
+    std::optional<tos::ValidatorAuthBinding> auth_binding;
+    if (descr_cs->prefetch_ulong(8) == 0xb3) {
+      gen::ValidatorDescr::Record_validator_auth authenticated;
+      gen::ValidatorAuthBinding::Record binding;
+      if (!tlb::csr_unpack(descr_cs, authenticated) ||
+          !tlb::unpack_cell(authenticated.binding, binding) ||
+          binding.identity.is_zero() || binding.stake_id.is_zero()) {
+        error = td::Status::Error("invalid validator identity/stake binding");
+        return false;
+      }
+      descr.public_key = authenticated.public_key;
+      descr.weight = authenticated.weight;
+      descr.adnl_addr = authenticated.adnl_addr;
+      auth_binding = tos::ValidatorAuthBinding{binding.identity, binding.stake_id};
+    } else
     if (!tlb::csr_unpack(descr_cs, descr)) {
       descr.adnl_addr.set_zero();
       if (!(gen::t_ValidatorDescr.unpack_validator(descr_cs.write(), descr.public_key, descr.weight) &&
@@ -716,6 +731,7 @@ td::Result<std::shared_ptr<TotalValidatorSet>> Config::unpack_validator_set(Ref<
       return false;
     }
     ptr->list.emplace_back(sig_pubkey.pubkey, descr.weight, weight_offset, descr.adnl_addr);
+    ptr->list.back().auth_binding = auth_binding;
     return true;
   };
 
@@ -2016,6 +2032,7 @@ std::vector<tos::ValidatorDescr> TotalValidatorSet::export_validator_set() const
   l.reserve(list.size());
   for (const auto& node : list) {
     l.emplace_back(node.pubkey, node.weight, node.adnl_addr);
+    l.back().auth_binding = node.auth_binding;
   }
   return l;
 }
@@ -2072,12 +2089,14 @@ std::vector<tos::ValidatorDescr> Config::do_compute_validator_set(const Catchain
       for (unsigned i = 0; i < count; i++) {
         const auto& v = vset.list[idx[i]];
         nodes.emplace_back(v.pubkey, v.weight, v.adnl_addr);
+        nodes.back().auth_binding = v.auth_binding;
       }
     } else {
       // simply take needed number of validators from the head of the list
       for (unsigned i = 0; i < count; i++) {
         const auto& v = vset.list[i];
         nodes.emplace_back(v.pubkey, v.weight, v.adnl_addr);
+        nodes.back().auth_binding = v.auth_binding;
       }
     }
     return nodes;
@@ -2099,6 +2118,7 @@ std::vector<tos::ValidatorDescr> Config::do_compute_validator_set(const Catchain
     auto& entry = vset.at_weight(p);
     // LOG(DEBUG) << "vset entry #" << i << ": rem_wt=" << total_wt << ", total_wt=" << vset.total_weight << ", op=" << op << ", p=" << p << "; entry.cum_wt=" << entry.cum_weight << ", entry.wt=" << entry.weight << " " << entry.cum_weight / entry.weight;
     nodes.emplace_back(entry.pubkey, 1, entry.adnl_addr);  // NB: shardchain validator lists have all weights = 1
+    nodes.back().auth_binding = entry.auth_binding;
     CHECK(total_wt >= entry.weight);
     total_wt -= entry.weight;
     std::pair<td::uint64, td::uint64> new_hole{entry.cum_weight, entry.weight};

@@ -27,6 +27,25 @@ def check_capability_inventory(types):
         raise ValueError('validator-auth capability collision')
     return bool(declared)
 
+def check_validator_inventory(block, rust):
+    declarations = re.findall(r'(?m)^(\w+)#([0-9a-f]+)[^;]*?=\s*ValidatorDescr;', block)
+    owners = [name for name, tag in declarations if tag == 'b3']
+    if owners != ['validator_auth']:
+        raise ValueError('native validator descriptor allocation drift')
+    expected = ('validator_auth#b3 public_key:SigPubKey weight:uint64 adnl_addr:bits256 '
+                'binding:^ValidatorAuthBinding = ValidatorDescr;')
+    if expected not in ' '.join(block.split()):
+        raise ValueError('native validator descriptor shape drift')
+    if 'validator_auth_binding$_ identity:bits256 stake_id:bits256 = ValidatorAuthBinding;' not in ' '.join(block.split()):
+        raise ValueError('native identity binding shape drift')
+    tags = [tag for _, tag in declarations]
+    if len(set(tags)) != len(tags) or any(len(tag) != 2 for tag in tags):
+        raise ValueError('native descriptor tag collision')
+    if not re.search(r'const VALIDATOR_DESC_AUTH_TAG: u8 = 0xb3;', rust):
+        raise ValueError('Rust native descriptor allocation drift')
+    if not re.search(r'const VALIDATOR_DESC_ADDR_SEQNO_TAG: u8 = 0x93;', rust):
+        raise ValueError('historical Rust descriptor allocation drift')
+
 def main():
     p=argparse.ArgumentParser(description=__doc__)
     p.add_argument('--tl-parser',type=Path,required=True)
@@ -60,6 +79,19 @@ def main():
         else:
             raise ValueError('capability allocation negative control survived')
     checks=['native-capability-registered' if installed else 'native-capability-unoccupied', 'capability-collision-controls']
+    if 'validator_auth#' in block:
+        rust=(ROOT/'tosctl/src/block/src/validators.rs').read_text()
+        check_validator_inventory(block, rust)
+        for bad in (block.replace('validator_auth#b3','validator_other#b3'),
+                    block.replace('validator_auth#b3','validator_auth#93'),
+                    block+'\nvalidator_other#b3 weight:uint64 = ValidatorDescr;'):
+            try:
+                check_validator_inventory(bad,rust)
+            except ValueError:
+                pass
+            else:
+                raise ValueError('native descriptor collision control survived')
+        checks.extend(['native-descriptor-registered','native-descriptor-collision-controls'])
     with tempfile.TemporaryDirectory() as directory:
         d=Path(directory)
         for base in ('tos_api','lite_api'):

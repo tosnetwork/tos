@@ -130,6 +130,12 @@ validator#93
 = ValidatorDescr;
 */
 
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+pub struct ValidatorAuthBinding {
+    pub identity: UInt256,
+    pub stake_id: UInt256,
+}
+
 ///
 /// ValidatorDescr
 /// Has two keys: public_key and adnl_addr
@@ -142,6 +148,7 @@ pub struct ValidatorDescr {
     /// before first election this filed is None
     pub adnl_addr: Option<UInt256>,
     pub mc_seq_no_since: u32,
+    pub auth_binding: Option<ValidatorAuthBinding>,
 
     // Total weight of the previous validators in the list.
     // The field is not serialized.
@@ -152,6 +159,9 @@ pub struct ValidatorDescr {
 impl std::hash::Hash for ValidatorDescr {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.public_key.as_slice().hash(state);
+        if let Some(binding) = &self.auth_binding {
+            binding.hash(state);
+        }
         if let Some(aa) = &self.adnl_addr {
             aa.hash(state)
         }
@@ -168,7 +178,14 @@ impl ValidatorDescr {
         weight: u64,
         adnl_addr: Option<UInt256>,
     ) -> Self {
-        ValidatorDescr { public_key, weight, adnl_addr, prev_weight_sum: 0, mc_seq_no_since: 0 }
+        ValidatorDescr {
+            public_key,
+            weight,
+            adnl_addr,
+            prev_weight_sum: 0,
+            mc_seq_no_since: 0,
+            auth_binding: None,
+        }
     }
 
     pub fn compute_node_id_short(&self) -> UInt256 {
@@ -191,9 +208,26 @@ impl ValidatorDescr {
 const VALIDATOR_DESC_TAG: u8 = 0x53;
 const VALIDATOR_DESC_ADDR_TAG: u8 = 0x73;
 const VALIDATOR_DESC_ADDR_SEQNO_TAG: u8 = 0x93;
+const VALIDATOR_DESC_AUTH_TAG: u8 = 0xb3;
 
 impl Serializable for ValidatorDescr {
     fn write_to(&self, cell: &mut BuilderData) -> Result<()> {
+        if let Some(binding) = &self.auth_binding {
+            if self.mc_seq_no_since != 0 || binding.identity.is_zero() || binding.stake_id.is_zero()
+            {
+                fail!("invalid validator identity/stake binding");
+            }
+            let adnl = self.adnl_addr.as_ref().ok_or_else(|| Self::invalid_tag(0xb3))?;
+            cell.append_u8(VALIDATOR_DESC_AUTH_TAG)?;
+            self.public_key.write_to(cell)?;
+            self.weight.write_to(cell)?;
+            adnl.write_to(cell)?;
+            let mut data = BuilderData::new();
+            binding.identity.write_to(&mut data)?;
+            binding.stake_id.write_to(&mut data)?;
+            cell.checked_append_reference(data.into_cell()?)?;
+            return Ok(());
+        }
         let tag = if self.mc_seq_no_since != 0 {
             if self.adnl_addr.is_none() {
                 fail!("if mc_seq_no_since is not zero ADNL address must be specified too")
@@ -221,7 +255,28 @@ impl Deserializable for ValidatorDescr {
     fn construct_from(slice: &mut SliceData) -> Result<Self> {
         let tag = slice.get_next_byte()?;
         let (public_key, weight, adnl_addr, mc_seq_no_since);
+        let mut auth_binding = None;
         match tag {
+            VALIDATOR_DESC_AUTH_TAG => {
+                public_key = Deserializable::construct_from(slice)?;
+                weight = Deserializable::construct_from(slice)?;
+                adnl_addr = Some(Deserializable::construct_from(slice)?);
+                mc_seq_no_since = 0;
+                let mut binding = SliceData::load_cell(slice.checked_drain_reference()?)?;
+                if binding.cell_type() != crate::CellType::Ordinary
+                    || binding.level() != 0
+                    || binding.remaining_bits() != 512
+                    || binding.remaining_references() != 0
+                {
+                    fail!("invalid validator identity/stake binding");
+                }
+                let identity = UInt256::construct_from(&mut binding)?;
+                let stake_id = UInt256::construct_from(&mut binding)?;
+                if identity.is_zero() || stake_id.is_zero() {
+                    fail!("invalid validator identity/stake binding");
+                }
+                auth_binding = Some(ValidatorAuthBinding { identity, stake_id });
+            }
             VALIDATOR_DESC_TAG => {
                 public_key = Deserializable::construct_from(slice)?;
                 weight = Deserializable::construct_from(slice)?;
@@ -242,7 +297,14 @@ impl Deserializable for ValidatorDescr {
             }
             tag => fail!(Self::invalid_tag(tag as u32)),
         }
-        Ok(Self { public_key, weight, adnl_addr, mc_seq_no_since, prev_weight_sum: 0 })
+        Ok(Self {
+            public_key,
+            weight,
+            adnl_addr,
+            mc_seq_no_since,
+            prev_weight_sum: 0,
+            auth_binding,
+        })
     }
 }
 
@@ -478,6 +540,9 @@ impl ValidatorSet {
                     1, // NB: shardchain validator lists have all weights = 1
                     next_validator.adnl_addr.clone(),
                 ));
+                if let Some(last) = subset.last_mut() {
+                    last.auth_binding = next_validator.auth_binding.clone();
+                }
                 debug_assert!(weight_remainder >= next_validator.weight);
                 weight_remainder -= next_validator.weight;
 

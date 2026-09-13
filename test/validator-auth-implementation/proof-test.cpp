@@ -167,7 +167,9 @@ int main(int argc, char** argv) {
       auto boc = vm::std_boc_serialize(merkle);
       check(boc.is_ok(), "changed-parameter-boc");
       auto changed = pinned;
-      auto hash = inner->get_hash(0).as_slice();
+      auto owned_hash = inner->get_hash(0);
+      auto hash = owned_hash.as_slice();
+      check_hash_lifetime(hash);
       std::copy(hash.ubegin(), hash.uend(), changed.state_.begin());
       auto response = value(decode<ProfileResult>(profile), "changed-profile");
       response.anchor_ = changed;

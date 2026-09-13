@@ -1,6 +1,6 @@
 {
   "format": 1,
-  "purpose": "Exact additive native Keyring integration and validator-auth capability registration. Original production baseline hashes remain authoritative; no historical verifier or encoding changes.",
+  "purpose": "Exact additive native Keyring, capability and validator identity binding integration. Original production baseline hashes remain authoritative; historical verifier and constructor bytes are retained.",
   "insertions": {
     "keyring/keyring.h": [
       {
@@ -44,8 +44,56 @@
     ],
     "tos/tos-types.h": [
       {
+        "offset": 903,
+        "text": "#include <optional>\n"
+      },
+      {
         "offset": 2408,
         "text": "  capValidatorAuth = 1024,\n"
+      },
+      {
+        "offset": 15684,
+        "text": "struct ValidatorAuthBinding {\n  Bits256 identity{}, stake_id{};\n  bool operator==(const ValidatorAuthBinding& other) const {\n    return identity == other.identity && stake_id == other.stake_id;\n  }\n  bool operator!=(const ValidatorAuthBinding& other) const {\n    return !(*this == other);\n  }\n};\n\n"
+      },
+      {
+        "offset": 15841,
+        "text": "  std::optional<ValidatorAuthBinding> auth_binding;\n"
+      },
+      {
+        "offset": 16174,
+        "text": "    if (auth_binding != other.auth_binding)\n      return false;\n"
+      }
+    ],
+    "crypto/block/mc-config.cpp": [
+      {
+        "offset": 25385,
+        "text": "    std::optional<tos::ValidatorAuthBinding> auth_binding;\n    if (descr_cs->prefetch_ulong(8) == 0xb3) {\n      gen::ValidatorDescr::Record_validator_auth authenticated;\n      gen::ValidatorAuthBinding::Record binding;\n      if (!tlb::csr_unpack(descr_cs, authenticated) ||\n          !tlb::unpack_cell(authenticated.binding, binding) ||\n          binding.identity.is_zero() || binding.stake_id.is_zero()) {\n        error = td::Status::Error(\"invalid validator identity/stake binding\");\n        return false;\n      }\n      descr.public_key = authenticated.public_key;\n      descr.weight = authenticated.weight;\n      descr.adnl_addr = authenticated.adnl_addr;\n      auth_binding = tos::ValidatorAuthBinding{binding.identity, binding.stake_id};\n    } else\n"
+      },
+      {
+        "offset": 26725,
+        "text": "    ptr->list.back().auth_binding = auth_binding;\n"
+      },
+      {
+        "offset": 79073,
+        "text": "    l.back().auth_binding = node.auth_binding;\n"
+      },
+      {
+        "offset": 81146,
+        "text": "        nodes.back().auth_binding = v.auth_binding;\n"
+      },
+      {
+        "offset": 81386,
+        "text": "        nodes.back().auth_binding = v.auth_binding;\n"
+      },
+      {
+        "offset": 82321,
+        "text": "    nodes.back().auth_binding = entry.auth_binding;\n"
+      }
+    ],
+    "crypto/block/block.tlb": [
+      {
+        "offset": 22250,
+        "text": "validator_auth_binding$_ identity:bits256 stake_id:bits256 = ValidatorAuthBinding;\nvalidator_auth#b3 public_key:SigPubKey weight:uint64 adnl_addr:bits256\n  binding:^ValidatorAuthBinding = ValidatorDescr;\n"
       }
     ]
   }

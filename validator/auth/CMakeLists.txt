@@ -6,7 +6,7 @@ if(TARGET sodium)
   add_dependencies(tos_validator_auth sodium)
 endif()
 
-add_library(tos_validator_auth_native STATIC native-proof.cpp)
+add_library(tos_validator_auth_native STATIC native-proof.cpp native-committee.cpp)
 target_link_libraries(tos_validator_auth_native PUBLIC tos_validator_auth tos_block)
 set_target_properties(tos_validator_auth_native PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 

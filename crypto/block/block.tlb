@@ -624,6 +624,9 @@ masterchain_block_extra#cca5
 //  CONFIGURATION PARAMETERS
 //
 
+validator_auth_binding$_ identity:bits256 stake_id:bits256 = ValidatorAuthBinding;
+validator_auth#b3 public_key:SigPubKey weight:uint64 adnl_addr:bits256
+  binding:^ValidatorAuthBinding = ValidatorDescr;
 validator#53 public_key:SigPubKey weight:uint64 = ValidatorDescr;
 validator_addr#73 public_key:SigPubKey weight:uint64 adnl_addr:bits256 = ValidatorDescr;
 validators#11 utime_since:uint32 utime_until:uint32

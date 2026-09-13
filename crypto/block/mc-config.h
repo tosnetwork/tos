@@ -41,6 +41,7 @@ struct ValidatorDescr {
   td::Bits256 adnl_addr;
   td::uint64 weight;
   td::uint64 cum_weight;
+  std::optional<tos::ValidatorAuthBinding> auth_binding;
   ValidatorDescr(const td::Bits256& _pubkey, td::uint64 _weight, td::uint64 _cum_weight)
       : pubkey(_pubkey), weight(_weight), cum_weight(_cum_weight) {
     adnl_addr.set_zero();

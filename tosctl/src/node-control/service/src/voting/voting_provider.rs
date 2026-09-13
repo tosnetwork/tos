@@ -164,6 +164,7 @@ impl VotingProvider for VotingProviderImpl {
                 weight,
                 adnl_addr,
                 mc_seq_no_since: 0,
+                auth_binding: None,
                 prev_weight_sum: 0,
             };
             list.push(descr);

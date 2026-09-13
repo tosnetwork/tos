@@ -29,12 +29,12 @@
     "doc/validator-auth-p0/transport.schema.json": "ddd45d7d3eb672559efde020af95a0e215146775ec82f8c6847b0f3ab8127584",
     "doc/validator-auth-p0/wire.tl": "a5e10c8e25887cb30440a26a0d8cbcef1473878aeb87438cca1a0f0bc6875c15",
     "doc/validator-auth-p0/wire.tlb": "923650bd74bbbf677a070d1d13d7c12d46944e8bffbfc3a72641093d20d3ce9d",
-    "doc/validator-auth-p0-native-insertions.json": "9188ef478612c86614acfd674fc6538fd7174e425bbf45660362bb086fd3ce8d",
+    "doc/validator-auth-p0-native-insertions.json": "5440440ab7cd084d4678ac2d9a0ca99c199895f0dcbfc13ddf8995f8721eb9cc",
     "test/validator-auth-p0/README.md": "a0b0950c4ac702f8be0f34919a50f8e7b13d5d14dda3bd2cc05b4c8ffee31321",
     "test/validator-auth-p0/api.py": "9ec50bf9e19345ef54a8894a3525eba1eed8fb10412b8a3fdc1ed1c5728fb815",
     "test/validator-auth-p0/archive_evidence.py": "22bb392a561068e0fb3905ce7e8df95bab463468cdfe3be884eff19b12481409",
     "test/validator-auth-p0/check_production.py": "6015e3e344751f2036162516afb5755fcffe46965ba43e4f3500fcfca92ef3a3",
-    "test/validator-auth-p0/check_schema.py": "5ac2ba337069b2852fe5c22bebbe75cdb895b02c64f2a24f5f2f3a96a18a82a6",
+    "test/validator-auth-p0/check_schema.py": "aca09554e278d7e3df5cc6970708d91b5237fed5b1329c6d11874949f84e4779",
     "test/validator-auth-p0/codec.cpp": "d87bec46215699b09f861d5e0f86f8ac465c97314befdbf46ca3fbf592b556e2",
     "test/validator-auth-p0/codec.rs": "9ae980fa3dcf4636d94970a30984e9deeb5055563231aa03ded585de1a34aa17",
     "test/validator-auth-p0/contract_artifacts.py": "39a05b92a6f3265a8eb8fc5b00db4a78ae2e3d9a97c9b56982b4645e67a89eb1",
@@ -66,9 +66,9 @@
   ],
   "implementation_evidence_update": {
     "authorization": "Owner requested complete P0 implementation, testing and local rehearsal, with implementation decisions delegated in the current task.",
-    "scope": "Evidence-only evolution for exact additive native Keyring guards and capValidatorAuth=1024 registration; normative wire/API artifacts and fingerprint are unchanged.",
+    "scope": "Evidence-only evolution for exact native Keyring guards, capability registration and additive elected identity/stake binding; normative wire/API artifacts and fingerprint are unchanged.",
     "inventory": "doc/validator-auth-p0-native-insertions.json",
     "historical_baseline": "Original production-baseline.json hashes are retained; reconstruct original bytes by removing only the inventoried insertions.",
-    "checks": "Original and inserted bytes have negative controls. Capability allocation rejects owner substitution, renumbering and duplicate ownership. Native implementation CI compiles and exercises Keyring isolation, VM execution and transaction adapters."
+    "checks": "Original and inserted bytes have negative controls. Allocation checks reject capability or native descriptor collisions. Native CI compiles and exercises Keyring isolation, VM and transaction execution, and independent native committee derivation."
   }
 }

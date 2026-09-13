@@ -6,11 +6,19 @@
 #include "validator/auth/transfer.h"
 #include "vm/cells/CellBuilder.h"
 #include "vm/dict.h"
+#if TD_USE_ASAN
+#include <sanitizer/asan_interface.h>
+#endif
 namespace p0_fixture {
 using namespace tos::auth;
 inline void check(bool ok, const char* label) {
   if (!ok)
     throw std::runtime_error(label);
+}
+inline void check_hash_lifetime(td::Slice raw) {
+#if TD_USE_ASAN
+  check(__asan_region_is_poisoned(const_cast<char*>(raw.data()), raw.size()) == nullptr, "fixture-hash-lifetime");
+#endif
 }
 inline Hash h(unsigned n) {
   Hash hash{};
@@ -122,7 +130,9 @@ inline td::Ref<vm::Cell> masterchain(const RegistryState& state, std::uint32_t c
 }
 inline Anchor anchor(const td::Ref<vm::Cell>& root, std::uint32_t coordinate = 0) {
   Hash hash{};
-  auto raw = root->get_hash().as_slice();
+  auto owned_hash = root->get_hash();
+  auto raw = owned_hash.as_slice();
+  check_hash_lifetime(raw);
   std::copy(raw.ubegin(), raw.uend(), hash.begin());
   return {coordinate, h(6000), h(6001), hash};
 }
