@@ -488,3 +488,15 @@ target_compile_definitions(test-p0-native-governance-mutant PRIVATE P0_NATIVE_GO
 target_include_directories(test-p0-native-governance-mutant PRIVATE "${PROJECT_SOURCE_DIR}/validator/auth")
 target_link_libraries(test-p0-native-governance-mutant PRIVATE tos_validator_auth_native)
 set_target_properties(test-p0-native-governance-mutant PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+
+add_executable(p0-genesis-tool genesis-tool.cpp)
+target_link_libraries(p0-genesis-tool PRIVATE tos_validator_auth)
+set_target_properties(p0-genesis-tool PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+
+add_executable(p0-genesis-probe genesis-probe.cpp)
+target_link_libraries(p0-genesis-probe PRIVATE tos_validator_auth_native tos_block)
+set_target_properties(p0-genesis-probe PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+
+add_executable(p0-vset-probe vset-probe.cpp)
+target_link_libraries(p0-vset-probe PRIVATE tos_validator_auth_native tos_block)
+set_target_properties(p0-vset-probe PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)

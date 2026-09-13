@@ -8,7 +8,7 @@
 #include "validator/auth/native-committee.h"
 #include "vm/boc.h"
 
-#include "native-fixture.h"
+#include "committee-fixture.h"
 using namespace p0_fixture;
 namespace {
 td::Bits256 bits(const Hash& h) {
@@ -71,49 +71,11 @@ td::Ref<vm::Cell> election(const RegistryState& registry, unsigned variant = 0, 
   check(list.append_dict_to_bool(root), "election-list");
   return root.finalize();
 }
-td::Ref<vm::Cell> replace_config(td::Ref<vm::Cell> root, int index, td::Ref<vm::Cell> replacement) {
-  auto cfg = block::Config::extract_from_state(root);
-  check(cfg.is_ok(), "fixture-config");
-  unsigned count = 0;
-  std::function<td::Ref<vm::Cell>(td::Ref<vm::Cell>)> visit = [&](td::Ref<vm::Cell> cell) {
-    vm::CellSlice slice(vm::NoVm{}, cell);
-    // The McStateExtra config root is its first reference.
-    if (slice.size() >= 16 && slice.prefetch_ulong(16) == 0xcc26) {
-      vm::Dictionary dictionary(slice.prefetch_ref(), 32);
-      td::BitArray<32> key(index);
-      check(dictionary.set_ref(key.bits(), 32, replacement), "fixture-param");
-      vm::CellBuilder b;
-      b.store_bits(slice.fetch_bits(slice.size()));
-      slice.fetch_ref();
-      b.store_ref(dictionary.get_root_cell());
-      while (slice.size_refs())
-        b.store_ref(slice.fetch_ref());
-      ++count;
-      return td::Ref<vm::Cell>(b.finalize());
-    }
-    vm::CellBuilder b;
-    b.store_bits(slice.fetch_bits(slice.size()));
-    while (slice.size_refs())
-      b.store_ref(visit(slice.fetch_ref()));
-    return td::Ref<vm::Cell>(b.finalize());
-  };
-  auto output = visit(root);
-  check(count == 1, "fixture-config-replaced");
-  return output;
-}
 td::Ref<vm::Cell> chain_state(const RegistryState& registry, unsigned variant = 0, bool shuffle = false,
                               unsigned count = 4) {
   auto root = masterchain(registry, registry.coordinate());
   root = replace_config(root, 34, election(registry, variant, count));
-  vm::CellBuilder selector;
-  selector.store_long(0xc2, 8)
-      .store_long(0, 7)
-      .store_long(shuffle, 1)
-      .store_long(100, 32)
-      .store_long(100, 32)
-      .store_long(1000, 32)
-      .store_long(2, 32);
-  return replace_config(root, 28, selector.finalize());
+  return replace_config(root, 28, catchain_selector(shuffle));
 }
 }  // namespace
 int main(int argc, char** argv) {

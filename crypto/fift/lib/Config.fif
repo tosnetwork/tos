@@ -61,6 +61,24 @@ validators-weight 0!
   rot dup Blen 32 <> abort"validator public key must be 32 bytes long"
   <b x{738e81278a} s, swap B, swap 64 u, swap 256 u, b>
 } : serialize-adnl-validator
+// validator_auth#b3 carries the elected identity and stake id the authenticated
+// registry is keyed by. A descriptor without them cannot be matched to a
+// registry entry, so native derivation refuses the whole committee.
+// ( val-pubkey adnl identity stake weight -- c )
+{ dup check-val-weight
+  4 pick Blen 32 <> abort"validator public key must be 32 bytes long"
+  3 pick 256 ufits not abort"adnl address must fit into 256 bits"
+  2 pick dup 256 ufits not abort"identity must fit into 256 bits"
+  0= abort"identity must not be zero"
+  over dup 256 ufits not abort"stake id must fit into 256 bits"
+  0= abort"stake id must not be zero"
+  <b x{b38e81278a} s,
+  5 roll B,          // public key
+  swap 64 u,         // weight
+  3 roll 256 u,      // adnl address
+  <b 3 roll 256 u, 2 roll 256 u, b> ref,
+  b>
+} : serialize-auth-validator
 // ( weight val-cell -- )
 { swap validators-weight +!
   <s validator-dict 2@ dup 1+ 3 -roll swap
@@ -72,6 +90,9 @@ validators-weight 0!
 // val-pubkey adnl-addr weight --
 { -rot 2 pick serialize-adnl-validator register-validator
 } : add-adnl-validator
+// val-pubkey adnl-addr identity stake weight --
+{ 4 -roll 4 pick serialize-auth-validator register-validator
+} : add-auth-validator
 // since-ut until-ut main-val-cnt-or-0 --
 { ?dup 0= { validator# } if
   validator# 0= abort"no initial validators defined"
