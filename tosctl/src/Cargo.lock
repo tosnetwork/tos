@@ -4845,6 +4845,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "tos-validator-auth-native"
+version = "0.1.0"
+dependencies = [
+ "chain_block",
+ "sha2",
+ "tos-validator-auth",
+]
+
+[[package]]
 name = "tos_assembler"
 version = "1.9.3"
 dependencies = [

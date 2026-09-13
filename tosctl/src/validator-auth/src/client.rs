@@ -30,9 +30,38 @@ pub struct UntrustedResult {
     pub request_id: Hash,
     pub bytes: Vec<u8>,
 }
-pub enum Outcome {
-    Result(UntrustedResult),
+pub enum CheckedOutcome<R> {
+    Result(R),
     Error(ApiError),
+}
+pub type Outcome = CheckedOutcome<UntrustedResult>;
+/// Admission owns the result type. Native verifiers can return a private
+/// verified type while sharing this call's framing and attachment budget.
+pub trait ResponseVerifier {
+    type Output;
+    fn verify<F: FnMut(&ObjectRef, u8) -> Result<Vec<u8>, Error>>(
+        &self,
+        method: u8,
+        id: Hash,
+        request: &[u8],
+        response: &[u8],
+        reader: &mut ObjectReader<F>,
+    ) -> Result<Self::Output, Error>;
+}
+struct SemanticVerifier;
+impl ResponseVerifier for SemanticVerifier {
+    type Output = UntrustedResult;
+    fn verify<F: FnMut(&ObjectRef, u8) -> Result<Vec<u8>, Error>>(
+        &self,
+        method: u8,
+        id: Hash,
+        request: &[u8],
+        response: &[u8],
+        reader: &mut ObjectReader<F>,
+    ) -> Result<UntrustedResult, Error> {
+        validate_api_response(method, request, response, reader)?;
+        Ok(UntrustedResult { method, request_id: id, bytes: response.to_vec() })
+    }
 }
 pub struct Client<T> {
     transport: T,
@@ -49,6 +78,14 @@ impl<T: Transport> Client<T> {
         }
     }
     pub fn call(&self, method: u8, request: &[u8]) -> Result<Outcome, Error> {
+        self.call_verified(method, request, &SemanticVerifier)
+    }
+    pub fn call_verified<V: ResponseVerifier>(
+        &self,
+        method: u8,
+        request: &[u8],
+        verifier: &V,
+    ) -> Result<CheckedOutcome<V::Output>, Error> {
         let route =
             API_ROUTES.iter().find(|route| route.method == method).ok_or(Error("method"))?;
         let anchor = request_anchor(method, request)?;
@@ -76,15 +113,20 @@ impl<T: Transport> Client<T> {
         }
         let result = decode_transport_frame(response.body.as_bytes(), method, true, Some(&id))?;
         if result.error {
-            return Ok(Outcome::Error(decode::<ApiError>(&result.payload)?));
+            return Ok(CheckedOutcome::Error(decode::<ApiError>(&result.payload)?));
         }
         if response.status != 200 {
             return Err(Error("http-success-status"));
         }
         // Response validation shares the operation's attachment budget. It may
         // refuse an oversized combined request/response, never truncate proof.
-        validate_api_response(method, request, &result.payload, &mut reader)?;
-        Ok(Outcome::Result(UntrustedResult { method, request_id: id, bytes: result.payload }))
+        Ok(CheckedOutcome::Result(verifier.verify(
+            method,
+            id,
+            request,
+            &result.payload,
+            &mut reader,
+        )?))
     }
     pub fn typed<Q: Wire>(&self, method: u8, request: &Q) -> Result<Outcome, Error> {
         self.call(method, &encode(request)?)

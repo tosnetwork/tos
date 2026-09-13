@@ -1,3 +1,4 @@
+#include <atomic>
 #include <sys/wait.h>
 #include <thread>
 
@@ -21,7 +22,7 @@ class NativeHistory : public NativeStateSource {
 };
 int main(int argc, char** argv) {
   try {
-    check(argc == 2 || argc == 3, "directory-required");
+    check(argc >= 2 && argc <= 4, "directory-required");
     std::filesystem::path dir = argv[1];
     check(std::filesystem::create_directory(dir), "fresh-directory");
     check(::chmod(dir.c_str(), 0700) == 0, "private-directory");
@@ -214,7 +215,7 @@ int main(int argc, char** argv) {
              {"api-request-media", {"POST", "/v1/keys/prepare", "application/json", json}},
              {"api-capabilities-body", {"GET", "/v1/capabilities", "", "{}"}}}) {
       auto response = value(api.dispatch(principal, request, 1000), "invalid-http-shape");
-      auto method = request.path == "/v1/capabilities" ? 1 : 3;
+      std::uint8_t method = request.path == "/v1/capabilities" ? 1 : 3;
       auto frame = value(decode_transport_frame(response.body, method, true), "invalid-http-frame");
       check(frame.error && value(decode<ApiError>(frame.payload), "invalid-http-error").code_ == 1, label.c_str());
     }
@@ -238,31 +239,61 @@ int main(int argc, char** argv) {
     check(http.status == 200 && http.content_type == api_media_type, "http-canonical-media");
     check(value(decode_transport_frame(http.body, 1, true), "http-frame").payload == capabilities.payload,
           "http-canonical-result");
-    if (argc == 3) {
+    if (argc >= 3) {
       auto binary = std::filesystem::absolute(argv[2]).string();
       auto socket = (dir / "api.sock").string();
       auto input = (dir / "http-request").string(), output = (dir / "http-result").string();
-      auto rust_call = [&](std::uint8_t method, const Bytes& raw) {
+      auto rust_call = [&](std::uint8_t method, const Bytes& raw, bool native = false, unsigned expected_calls = 1) {
         {
           std::ofstream file(input, std::ios::binary);
           file.write(reinterpret_cast<const char*>(raw.data()), raw.size());
           check(file.good(), "rust-request-write");
         }
         auto uid = std::to_string(::geteuid()), number = std::to_string(method);
+        auto native_binary = argc == 4 ? std::filesystem::absolute(argv[3]).string() : std::string{};
+        auto anchor_file = (dir / "trusted-anchor").string(), network = std::to_string(chain.network);
+        {
+          auto bytes = value(encode(history.trusted), "trusted-anchor");
+          std::ofstream file(anchor_file, std::ios::binary);
+          file.write(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+          check(file.good(), "trusted-anchor-write");
+        }
         auto child = ::fork();
         check(child >= 0, "rust-fork");
         if (child == 0) {
+          if (native) {
+            ::execl(native_binary.c_str(), native_binary.c_str(), "http", socket.c_str(), uid.c_str(), number.c_str(),
+                    input.c_str(), anchor_file.c_str(), network.c_str(), output.c_str(), static_cast<char*>(nullptr));
+            ::_exit(2);
+          }
           ::execl(binary.c_str(), binary.c_str(), "http", socket.c_str(), uid.c_str(), number.c_str(), input.c_str(),
                   output.c_str(), static_cast<char*>(nullptr));
           ::_exit(2);
         }
-        Result<bool> serving(Error{"not-served"});
+        Result<bool> serving(true);
+        std::atomic<bool> stopped{false};
+        unsigned calls = 0;
         std::jthread server([&] {
-          serving =
-              listener->serve_http_one([&](const HttpRequest& q) { return api.dispatch(principal, q, 1000); }, 5000);
+          while (!stopped.load()) {
+            auto result = listener->serve_http_one(
+                [&](const HttpRequest& q) {
+                  ++calls;
+                  return api.dispatch(principal, q, 1000);
+                },
+                100);
+            if (!result.ok()) {
+              serving = result.error();
+              break;
+            }
+            if (calls > 65) {
+              serving = Error{"fixture-call-bound"};
+              break;
+            }
+          }
         });
         int status = 0;
         auto waited = ::waitpid(child, &status, 0);
+        stopped.store(true);
         server.join();
         if (waited != child || !WIFEXITED(status) || WEXITSTATUS(status) != 0) {
           std::cerr << "RUST HTTP method=" << unsigned(method)
@@ -271,6 +302,7 @@ int main(int argc, char** argv) {
         }
         check(waited == child && WIFEXITED(status) && WEXITSTATUS(status) == 0, "rust-http-client");
         check(serving.ok() && serving.value(), "rust-http-server");
+        check(calls == expected_calls, "rust-http-exact-calls");
         check(std::filesystem::file_size(output) <= 2000000, "rust-result-bound");
         std::ifstream result(output, std::ios::binary);
         return Bytes(std::istreambuf_iterator<char>(result), {});
@@ -291,6 +323,10 @@ int main(int argc, char** argv) {
         value(verify_native_response(method, raw, result, history.trusted, chain.network, reader),
               "rust-http-native-proof");
       }
+      if (argc == 4) {
+        for (const auto& [method, raw] : queries)
+          check(rust_call(method, raw, true) == call(method, raw).payload, "rust-http-verified-native");
+      }
       check(rust_call(15, value(encode(PutChunkRequest{history.trusted, manifest, 0, large}), "upload")) ==
                 uploaded.payload,
             "rust-http-upload");
@@ -302,6 +338,16 @@ int main(int argc, char** argv) {
       check(fresh_result.prepared_.handle_ != prepared.prepared_.handle_, "rust-real-preparation");
       value(verify_receipt(fresh_result.receipt_, fresh_result.receipt_.body_, receipt_trust, *witness),
             "rust-fresh-receipt");
+      if (argc == 4) {
+        auto large = pending_state(128);
+        history.root = masterchain(large, 1);
+        history.trusted = anchor(history.root, 1);
+        auto raw = value(encode(GetRegistryRequest{history.trusted, 128, {}}), "large-native-request");
+        auto response = rust_call(10, raw, true, 2);
+        auto page = value(decode<RegistryResult>(response), "large-native-page");
+        check(page.identities_.size() == 128 && page.proof_.proof_.reference_.size() == 1,
+              "rust-http-large-native-proof");
+      }
     }
     std::cout << "PASS: authenticated signer API, native profile/policy/registry/key proofs, scoped chunks and "
                  "canonical local HTTP\n";

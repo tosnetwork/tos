@@ -4,7 +4,7 @@ from pathlib import Path
 ROOT=Path(__file__).resolve().parents[2]
 MUTATIONS=[
  ('client-request-admission','client.rs','validate_api_request(method, request, &mut reader)?;','','client'),
- ('client-response-association','client.rs','validate_api_response(method, request, &result.payload, &mut reader)?;','','client'),
+ ('client-response-association','client.rs','validate_api_response(method, request, response, reader)?;','','client'),
  ('client-media','client.rs','response.content_type != MEDIA_TYPE','false','client'),
  ('client-status','client.rs','!matches!(response.status, 200 | 400 | 403)','false','client'),
  ('client-success-status','client.rs','if response.status != 200 {','if false {','client'),

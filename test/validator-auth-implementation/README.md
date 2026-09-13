@@ -77,3 +77,19 @@ Local API boundaries:
 These are local Unix HTTP/1.1 checks. Remote HTTP/2/mTLS and native node/committee
 integration are separate boundaries; the public certificate RPC is not enabled
 by the fixture client's ability to parse its response type.
+
+Native Rust checks:
+
+- Build `tos-validator-auth-native` / `native-conformance`. The focused Clippy
+  command uses `--no-deps` and explicitly selects both authentication crates;
+  the unchanged native block dependency is compiled and exercised by tests.
+- Pass a fresh export directory to `test-p0-cells` and `test-p0-proof`, then run
+  `check_native.py --rust ... --cpp ... --cells ... --proofs ... --out ...`.
+  Exports include completion markers and native positive/negative evidence.
+- `rust_native_mutations.py` takes the cell/proof export directories and compiles
+  17 guard removals in an isolated crate. The C++ native module harness has 25
+  guard removals after adding configuration and proof-metadata binding checks.
+- Pass `--native <native-conformance> --proofs <export-directory>` to
+  `check_client.py` for 58 HTTP client cases including native proof refusal.
+  Add the native Rust binary as the third argument to `test-p0-api-service` for
+  actual C++ serving plus Rust verification of inline and referenced proofs.

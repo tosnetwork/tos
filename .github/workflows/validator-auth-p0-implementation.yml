@@ -5,6 +5,7 @@ on:
     paths:
       - 'validator/auth/**'
       - 'tosctl/src/validator-auth/**'
+      - 'tosctl/src/validator-auth-native/**'
       - 'tosctl/src/Cargo.toml'
       - 'tosctl/src/Cargo.lock'
       - 'test/validator-auth-implementation/**'
@@ -50,9 +51,9 @@ jobs:
           mkdir -p artifacts
           git rev-parse HEAD > artifacts/commit.txt
           python3 tools/validator-auth/generate.py
-          cargo fmt --manifest-path tosctl/src/Cargo.toml -p tos-validator-auth -- --check
-          cargo clippy --locked --manifest-path tosctl/src/Cargo.toml -p tos-validator-auth --all-targets -- -D warnings
-          cargo build --locked --manifest-path tosctl/src/Cargo.toml -p tos-validator-auth --bin conformance
+          cargo fmt --manifest-path tosctl/src/Cargo.toml -p tos-validator-auth -p tos-validator-auth-native -- --check
+          cargo clippy --locked --manifest-path tosctl/src/Cargo.toml -p tos-validator-auth -p tos-validator-auth-native --all-targets --no-deps -- -D warnings
+          cargo build --locked --manifest-path tosctl/src/Cargo.toml -p tos-validator-auth -p tos-validator-auth-native --bins
           cmake -S . -B build-p0 -G Ninja -DCMAKE_BUILD_TYPE=Release -DTOS_ARCH= \
             -DTOS_BUILD_P0_IMPLEMENTATION_TESTS=ON -DUSE_QUIC=OFF \
             -DTOS_USE_ROCKSDB=OFF -DTOS_USE_ABSEIL=OFF -DTOS_USE_LLD=ON \
@@ -73,7 +74,7 @@ jobs:
             --cpp build-p0/test/validator-auth-implementation/test-p0-implementation --out artifacts/lifecycle.json
           python3 test/validator-auth-implementation/check_lifecycle.py \
             --driver tosctl/src/target/debug/conformance --out artifacts/lifecycle-rust.json
-          build-p0/test/validator-auth-implementation/test-p0-cells | tee artifacts/cells.txt
+          build-p0/test/validator-auth-implementation/test-p0-cells artifacts/native-cell-fixtures | tee artifacts/cells.txt
           build-p0/test/validator-auth-implementation/test-p0-transfer | tee artifacts/transfer.txt
           build-p0/test/validator-auth-implementation/test-p0-object-store | tee artifacts/object-store.txt
           python3 test/validator-auth-implementation/check_api_semantics.py --driver build-p0/test/validator-auth-implementation/test-p0-api-semantics --out artifacts/api-semantics-cpp.json
@@ -81,12 +82,13 @@ jobs:
           python3 test/validator-auth-implementation/check_service_auth.py --driver build-p0/test/validator-auth-implementation/test-p0-api-semantics --out artifacts/service-auth-cpp.json
           python3 test/validator-auth-implementation/check_service_auth.py --driver tosctl/src/target/debug/conformance --out artifacts/service-auth-rust.json
           build-p0/test/validator-auth-implementation/test-p0-state | tee artifacts/state.txt
-          build-p0/test/validator-auth-implementation/test-p0-proof | tee artifacts/proofs.txt
+          build-p0/test/validator-auth-implementation/test-p0-proof artifacts/native-proof-fixtures | tee artifacts/proofs.txt
+          python3 test/validator-auth-implementation/check_native.py --rust tosctl/src/target/debug/native-conformance --cpp build-p0/test/validator-auth-implementation/test-p0-implementation --cells artifacts/native-cell-fixtures --proofs artifacts/native-proof-fixtures --out artifacts/rust-native.json
           build-p0/test/validator-auth-implementation/test-p0-authority | tee artifacts/authorities.txt
           P0_EVIDENCE_TMP="$(mktemp -d)"
-          build-p0/test/validator-auth-implementation/test-p0-api-service "$P0_EVIDENCE_TMP/api" tosctl/src/target/debug/conformance | tee artifacts/api-service.txt
+          build-p0/test/validator-auth-implementation/test-p0-api-service "$P0_EVIDENCE_TMP/api" tosctl/src/target/debug/conformance tosctl/src/target/debug/native-conformance | tee artifacts/api-service.txt
           python3 test/validator-auth-implementation/check_http.py --cpp build-p0/test/validator-auth-implementation/test-p0-http --rust tosctl/src/target/debug/conformance --out artifacts/http.json
-          python3 test/validator-auth-implementation/check_client.py --driver tosctl/src/target/debug/conformance --out artifacts/client.json
+          python3 test/validator-auth-implementation/check_client.py --driver tosctl/src/target/debug/conformance --native tosctl/src/target/debug/native-conformance --proofs artifacts/native-proof-fixtures --out artifacts/client.json
           build-p0/test/validator-auth-implementation/test-p0-admin "$P0_EVIDENCE_TMP/admin" | tee artifacts/admin.txt
           build-p0/test/validator-auth-implementation/test-p0-admin-process "$P0_EVIDENCE_TMP/admin-process" | tee artifacts/admin-process.txt
           build-p0/test/validator-auth-implementation/test-p0-issuer "$P0_EVIDENCE_TMP/issuer" | tee artifacts/issuer.txt
@@ -119,6 +121,7 @@ jobs:
           python3 test/validator-auth-implementation/api_service_mutations.py --build build-p0 --out artifacts/api-service-mutations.json
           python3 test/validator-auth-implementation/http_mutations.py --language cpp --build build-p0 --out artifacts/http-cpp-mutations.json
           python3 test/validator-auth-implementation/http_mutations.py --language rust --out artifacts/http-rust-mutations.json
+          python3 test/validator-auth-implementation/rust_native_mutations.py --cells artifacts/native-cell-fixtures --proofs artifacts/native-proof-fixtures --out artifacts/rust-native-mutations.json
           git diff --exit-code
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()

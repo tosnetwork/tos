@@ -3,6 +3,7 @@
 #include <stdexcept>
 
 #include "validator/auth/state.h"
+#include "validator/auth/transfer.h"
 #include "vm/cells/CellBuilder.h"
 #include "vm/dict.h"
 namespace p0_fixture {
@@ -124,5 +125,35 @@ inline Anchor anchor(const td::Ref<vm::Cell>& root, std::uint32_t coordinate = 0
   auto raw = root->get_hash().as_slice();
   std::copy(raw.ubegin(), raw.uend(), hash.begin());
   return {coordinate, h(6000), h(6001), hash};
+}
+// This fixture supplies already accepted lifecycle requests. This proof test
+// authenticates their resulting native state, not the admission authority.
+class AcceptedFixtureRequests : public LifecycleAuthority {
+ public:
+  Result<bool> owner(const OwnerAuth&, const Update&, const Identity&) const override {
+    return true;
+  }
+  Result<bool> possession(const PossessionAuth&, const Update&, const Key&) const override {
+    return true;
+  }
+  Result<bool> administration(const IdentityAuth&, const Update&, const Identity&, std::uint32_t) const override {
+    return true;
+  }
+};
+
+inline RegistryState pending_state(unsigned count) {
+  auto registry = state(count);
+  std::vector<std::pair<Update, Authorizations>> updates;
+  for (const auto& [id, identity] : registry.identities()) {
+    Update retire{
+        3,  id, 0, value(object_id("identity", identity), "retire-predecessor"), 2, identity.active_[0].key_.key_id_,
+        {}, {}, {}};
+    Authorizations evidence;
+    evidence.administration_.push_back(
+        {value(object_id("update", retire), "retire-id"), id,
+         value(object_value(4, value(encode(Certificate{}), "fixture-certificate")), "fixture-carrier")});
+    updates.emplace_back(retire, evidence);
+  }
+  return value(registry.apply_block(1, updates, AcceptedFixtureRequests{}), "pending-state");
 }
 }  // namespace p0_fixture

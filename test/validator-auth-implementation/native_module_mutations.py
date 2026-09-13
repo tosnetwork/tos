@@ -3,6 +3,12 @@ import argparse,json,subprocess
 from pathlib import Path
 from mutation_support import replace_once
 MUTATIONS=[
+ ('proof-validator-ceiling','native-proof','maximum > 400','false'),
+ ('proof-config-version','native-proof','p0.fetch_ulong(16) != 1','p0.fetch_ulong(16) == 65535'),
+ ('proof-chain-domain','native-proof','chain_domain == Hash{}','false'),
+ ('proof-kind-binding','native-proof','proof.value().kind_ != expected.value().kind','false'),
+ ('proof-object-binding','native-proof','proof.value().object_id_ != expected.value().object_id','false'),
+ ('proof-anchor-binding','native-proof','proof.value().anchor_ != anchor','false'),
  ('permit-registry-shape','service-auth','body.registry_root_ == Hash{} ||',''),
  ('poll-terminal-regression','service-auth','if ((previous->state_ == 2 || previous->state_ == 3) && *previous != next) return Error{"terminal-state-regression"};',''),
  ('poll-reserved-regression','service-auth','if (previous->state_ == 1)','if (false)'),

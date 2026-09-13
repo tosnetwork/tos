@@ -7,11 +7,11 @@ import argparse,copy,json,os,socket,subprocess,tempfile,threading
 from pathlib import Path
 from check_api_semantics import fixtures,api,r,tr,h
 MEDIA='application/vnd.tos.validator-auth.v1+json'
-def main(driver,out):
+def main(driver,out,native=None,proofs=None):
  report=[];cases=fixtures()
  with tempfile.TemporaryDirectory(prefix='p0-client-',dir='/tmp') as tmp:
   tmp=Path(tmp)
-  def run(label,method,q,result,*,error=None,body=None,status=200,media=MEDIA,count=1,objects=None,wire_error=False):
+  def run(label,method,q,result,*,error=None,body=None,status=200,media=MEDIA,count=1,objects=None,wire_error=False,context=None):
    q=copy.deepcopy(q);request=r.encode(api.METHODS[str(method)]['request'],q);rid=api.request_id(method,q)
    tmp.joinpath('request').write_bytes(request);tmp.joinpath('result').unlink(missing_ok=True)
    if body is None:body=api.encode_transport(method,result,True,rid,wire_error)
@@ -56,12 +56,16 @@ def main(driver,out):
     except Exception as e:failures.append(repr(e))
    thread=threading.Thread(target=serve);thread.start()
    try:
-    process=subprocess.run([str(driver),'http',str(path),str(os.geteuid()),str(method),str(tmp/'request'),str(tmp/'result')],capture_output=True,text=True,timeout=15)
+    command=[str(driver),'http',str(path),str(os.geteuid()),str(method),str(tmp/'request'),str(tmp/'result')]
+    if context:
+     trusted,network=context;(tmp/'anchor').write_bytes(r.encode('anchor',trusted))
+     command=[str(native),'http',str(path),str(os.geteuid()),str(method),str(tmp/'request'),str(tmp/'anchor'),str(network),str(tmp/'result')]
+    process=subprocess.run(command,capture_output=True,text=True,timeout=15)
    finally:
     stop.set();thread.join(6);listener.close();path.unlink()
-   if thread.is_alive() or failures or process.returncode not in (0,1):raise RuntimeError((label,failures,process.returncode,process.stderr))
+   if thread.is_alive() or failures or process.returncode not in (0,1) or process.stderr.startswith('fixture-'):raise RuntimeError((label,failures,process.returncode,process.stderr))
    assert len(calls)==count,(label,'call-count',calls)
-   assert process.returncode==(1 if error else 0) and (not error or process.stderr.strip()==error),(label,error,process.returncode,process.stderr)
+   assert process.returncode==(1 if error else 0) and (not error or error=='*' or process.stderr.strip()==error),(label,error,process.returncode,process.stderr)
    if not error or wire_error:
     expected=r.encode('error' if wire_error else api.METHODS[str(method)]['result'],result)
     assert tmp.joinpath('result').read_bytes()==expected,(label,'result-bytes')
@@ -86,6 +90,19 @@ def main(driver,out):
   q,result=(copy.deepcopy(v) for v in cases[8]);large=b'x'*70000;manifest=tr.manifest(large,5)
   result['proof']['proof_hash']=r.digest('proof',large);result['proof']['proof']=tr.value(large,5)
   run('client-referenced-proof',8,q,result,objects={manifest['object_id']:large},count=2)
+  if native and proofs:
+   manifests=sorted(proofs.glob('*.case'),key=lambda p:int(p.stem))
+   assert len(manifests)==int((proofs/'complete').read_text())>0,'native-http-fixture-completeness'
+   for meta in manifests:
+    method,network,accepted=meta.read_text().split();method=int(method)
+    q=r.decode(api.METHODS[str(method)]['request'],meta.with_suffix('.request').read_bytes())
+    result=r.decode(api.METHODS[str(method)]['result'],meta.with_suffix('.response').read_bytes())
+    trusted=r.decode('anchor',meta.with_suffix('.anchor').read_bytes())
+    objects={}
+    for ref in result['proof']['proof']['reference']:
+     objects[ref['object_id']]=(proofs/ref['object_id'].hex()).read_bytes()
+    chunks=sum(len(ref['chunk_hashes']) for ref in result['proof']['proof']['reference'])
+    run('native-http-'+meta.stem,method,q,result,error=None if accepted=='1' else '*',objects=objects,count=1+chunks,context=(trusted,int(network)))
  out.write_text(json.dumps(dict(client_cases=len(report),cases=report,success=True),indent=2)+'\n');print('PASS:',len(report),'client cases')
 if __name__=='__main__':
- p=argparse.ArgumentParser();p.add_argument('--driver',type=Path,required=True);p.add_argument('--out',type=Path,required=True);a=p.parse_args();main(a.driver.resolve(),a.out)
+ p=argparse.ArgumentParser();p.add_argument('--driver',type=Path,required=True);p.add_argument('--out',type=Path,required=True);p.add_argument('--native',type=Path);p.add_argument('--proofs',type=Path);a=p.parse_args();main(a.driver.resolve(),a.out,a.native.resolve() if a.native else None,a.proofs.resolve() if a.proofs else None)
