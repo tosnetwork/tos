@@ -150,3 +150,18 @@ Native certificate proofs and client admission:
 - `certificate_client_mutations.py` adds seven prepared-value/result checks,
   including a compiled change that incorrectly repeats full proof verification.
   Re-fetching a proof must fail the exact single-fetch assertion.
+
+Context and current governance authority:
+
+- `context_fixtures.py --out <fresh-directory>` exports 76 public cases. Run
+  `test-p0-context` and the core Rust `context-conformance` against that directory.
+  `context_mutations.py --language cpp|rust` compiles 12 C++ or 34 Rust removals;
+  malformed descriptors are re-signed so unrelated PoP failures cannot mask guards.
+- `test-p0-governance <fresh-export>` and native Rust `governance-conformance`
+  independently verify 28 cases, comparing exact certificate IDs, signers, weight
+  and refusal codes. A historical roster cannot retain management authority after
+  an inclusion-time rotation or expiry. `governance_mutations.py --language cpp|rust`
+  compiles 16 C++ or 17 Rust guard removals with exact assertion labels.
+- Both native drivers run in the fully instrumented Ubuntu sanitizer build.
+  Normal native configuration voting and global registry apply are still separate
+  from the read-only governance verifier.

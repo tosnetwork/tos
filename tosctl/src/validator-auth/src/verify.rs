@@ -173,6 +173,12 @@ impl RegistrySnapshot {
         }
         Ok(out)
     }
+    pub fn committee_id(&self) -> &Hash {
+        &self.committee_id
+    }
+    pub fn policy_id(&self) -> &Hash {
+        &self.policy_id
+    }
     pub fn committee(&self) -> &Committee {
         &self.committee
     }

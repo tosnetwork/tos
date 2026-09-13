@@ -4,6 +4,7 @@ use chain_block::{
     ShardStateUnsplit, SliceData, ValidatorDescr, ValidatorSet,
 };
 use std::collections::BTreeSet;
+pub use tos_validator_auth::context::ChainContext;
 use tos_validator_auth::{
     codec::{Error, Hash},
     crypto::digest,
@@ -11,13 +12,6 @@ use tos_validator_auth::{
     types::{Anchor, Committee, Member},
     verify::RegistrySnapshot,
 };
-#[derive(Clone, PartialEq, Eq)]
-pub struct ChainContext {
-    pub network: i32,
-    pub genesis_root: Hash,
-    pub genesis_file: Hash,
-    pub chain_domain: Hash,
-}
 pub struct NativeCommittee {
     snapshot: RegistrySnapshot,
     transport_order: Vec<ValidatorDescr>,

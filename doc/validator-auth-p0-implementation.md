@@ -23,7 +23,7 @@ or PQ suite allocation is authorized by this work.
 | Native registry state | C++ and independent Rust Config46 genesis, encoding and identity-update replay; immutable key archive and owned successor state | 501 identities / 2506 keys; 34 cross-language replay cases with checkpoint/continuous equivalence, control retention and rejected-block atomicity | Native block apply, elector/config operations, persistent dictionary performance and global apply |
 | Native state proofs | C++ and Rust actual masterchain Config8/9/10/16/46 and Merkle proofs for profile, policy, key and registry ranges | State-root substitution, omitted entries, false terminal page, unrelated revealed values, detached physical cells, capability and atomic-publication guard removals | RPC node wiring, owner execution proofs and Rust global registry apply |
 | Native certificate proofs and RPC | Independent C++/Rust certificate verification from native committee and policy proofs; C++ methods 12/13 and private Rust verified output | 55 shared cases; real local HTTP over 16 snapshots; exact signers/weight, trusted context, error provenance and single-fetch prepared request checks | Native manager session/history/archive source and remote serving |
-| Authority primitives | Real C0 PoP and current identity-role-5 verification; independent permit/receipt trust in C++ and Rust | Wrong network/update/signature/current admin key, stale permits, historical receipts and inclusive 128-block boundary; 25 shared service-trust/polling cases per language | Native owner execution and governance adapters and native mutation admission |
+| Authority primitives | Independent C++/Rust session/duty derivation, C0 PoP, current identity-role-5 and current governance quorum verification; separate permit/receipt trust | 76 shared context/identity cases, 28 current-governance cases and 25 service-trust/polling cases; expired or rotated governance keys refused | Native owner execution, normal configuration voting and native mutation admission |
 | Signer persistence | Native append-only safety ledger, actual C0 secret provider, witness consumption and sign/get-result service | Both-order conflict rules, exact retransmission, journal/provider backup rollback, stale fence, terminal retention, real fsync failure, unknown outcome refusal | Native consensus permissions and remote serving |
 | Signer administration | Durable prepare/stage/retire/cancel intent execution, provider preparation IDs and PoP reservation IDs | Real PoP and current admin signatures, owner refusal before reservation, exact receipts, cancellation target, provider rollback and six process-kill boundaries | Native owner execution and node context wiring |
 | Native Keyring isolation | Factory-installed durable public-key deny set, private-operation guards, shared/exclusive directory locks and an asynchronous drain barrier | Actual signing/decryption/export before designation; every private API refused afterwards; restart, damaged records, competing processes and compiled guard removals | Provider inventory reconciliation before native session admission |
@@ -55,7 +55,8 @@ state/authority/proof, journal, signer/provider and local channel harnesses kill
 25, 11, 7 and 6 compiled guard removals respectively. Scoped object storage,
 service issuers and C++ API semantics add eight, nine and eight removals. The
 administration harness adds eleven. The combined implementation harness contains
-460 compiled production mutations, including 28 independent certificate proof checks,
+539 compiled production mutations, including 46 context/identity-authority checks,
+33 current-governance checks, 28 independent certificate proof checks,
 16 certificate RPC/error checks, seven prepared-client checks, 18 native Rust registry replay checks, three
 native certificate benchmark controls, 17 API admission/cache checks, 25
 native HTTP checks, 17 Rust native cell/proof checks, 25 native Keyring checks,
@@ -83,6 +84,31 @@ libraries and Rust crate on Ubuntu x86_64 and ARM, records the checked HEAD, run
 these checks and uploads evidence. The previous implementation milestone passed both focused CI architectures; each
 new addition requires CI evidence attached to its own HEAD.
 It neither triggers the full Ubuntu build nor starts a network.
+
+## Inclusion-time administration and governance
+
+Both languages independently derive native session and duty domains and verify
+new-key possession and current identity administration. The shared context corpus
+has 76 cases, including exact bytes, native options and genesis binding, five
+roles, oversized payloads, new-key descriptor binding and inclusive 128-block
+freshness. Twelve C++ and 34 Rust compiled mutations reach their named assertions.
+
+`verify_current_governance` is read-only. Its caller must independently establish
+the current native governing snapshot and inclusion-time registry state. Only
+zero-identity policy/configuration operations and exactly one governance evidence
+list are admitted. Verification binds the current policy, masterchain committee,
+exact update and full-roster quorum, then checks every counted signer's current
+role-5 key at inclusion. Retained historical consensus authority does not allow a
+retired or expired management key to approve a new operation. Native configuration
+voting, global nonce/CAS checks and atomic native application remain separate.
+
+The C++ exporter and independent Rust verifier agree on 28 governance cases,
+including a 400-member quorum, corrupt surplus signatures, extra authority lists,
+foreign chain context and actual registry key rotation. Sixteen C++ and 17 Rust
+compiled mutations fail their intended assertions. Full Ubuntu/ARM ASan, UBSan
+and leak checks pass both new native drivers, with identical governance exports.
+These results do not establish native elector/configuration execution or node
+session integration.
 
 ## Native certificate proofs and verified client calls
 

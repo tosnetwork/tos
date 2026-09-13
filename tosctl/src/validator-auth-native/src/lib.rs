@@ -2,6 +2,7 @@ pub mod cells;
 pub mod certificate_proof;
 pub mod committee;
 pub mod committee_proof;
+pub mod governance;
 pub mod proof;
 pub mod registry;
 pub mod registry_view;

@@ -42,6 +42,8 @@ Result<Hash> admin_session_id(const ChainContext& c, const Hash& target) {
 }
 Result<Duty> make_duty(const ChainContext& c, const RegistrySnapshot& snapshot, const Hash& session, std::uint8_t role,
                        std::uint64_t position, std::span<const std::uint8_t> payload) {
+  if (payload.size() > 4096)
+    return Error{"payload-bound"};
   auto valid = chain(c);
   if (!valid.ok())
     return valid.error();
