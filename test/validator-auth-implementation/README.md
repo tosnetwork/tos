@@ -59,3 +59,21 @@ Native test binaries require `TOS_BUILD_P0_IMPLEMENTATION_TESTS=ON`. Journal,
 issuer, signer and process binaries each take a new temporary directory; keep the
 Unix socket path short enough for the host OS. Temporary files contain rehearsal
 keys and are never release artifacts.
+
+Local API boundaries:
+
+- `test-p0-api-service`: all signer methods, identity/method/chain admission,
+  private cached queries, scoped chunks and actual native state proofs. Pass the
+  Rust conformance binary as a second argument for cross-language socket calls.
+- `check_http.py`: 44 real Unix HTTP cases across C++ and Rust, including bounded
+  allocation, peer credentials and immediate peer close with buffered data.
+- `check_client.py`: 37 Rust client cases covering all 15 fixture methods, errors,
+  response correlation, semantic admission, exact call counts and proof chunks.
+- `api_service_mutations.py`: 17 compiled admission/cache guard removals.
+- `http_mutations.py`: 14 C++ and 11 Rust compiled framing/credential removals.
+  It accepts `--language cpp --build ...` or `--language rust`. The Rust client
+  also adds seven guard removals to `rust_mutations.py`.
+
+These are local Unix HTTP/1.1 checks. Remote HTTP/2/mTLS and native node/committee
+integration are separate boundaries; the public certificate RPC is not enabled
+by the fixture client's ability to parse its response type.

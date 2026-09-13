@@ -4840,6 +4840,7 @@ name = "tos-validator-auth"
 version = "0.1.0"
 dependencies = [
  "curve25519-dalek",
+ "libc",
  "sha2",
 ]
 

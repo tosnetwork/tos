@@ -7,3 +7,6 @@ license = "GPL-3.0"
 [dependencies]
 curve25519-dalek = "4.0"
 sha2 = "0.10"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

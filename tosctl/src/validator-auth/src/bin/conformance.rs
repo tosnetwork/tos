@@ -9,6 +9,40 @@ fn roundtrip<T: Wire>(input: &[u8], out: &str) -> Result<(), Error> {
 }
 fn run() -> Result<(), Error> {
     let a: Vec<String> = env::args().collect();
+    #[cfg(unix)]
+    if a.len() == 5 && a[1] == "http-raw" {
+        use tos_validator_auth::client::Transport;
+        let transport = tos_validator_auth::unix_http::UnixHttp::new(
+            std::path::PathBuf::from(&a[2]),
+            a[3].parse().map_err(|_| Error("uid"))?,
+        );
+        let response = transport.exchange(&tos_validator_auth::client::HttpRequest {
+            verb: "GET",
+            path: "/v1/capabilities",
+            content_type: "",
+            body: String::new(),
+        })?;
+        return fs::write(&a[4], response.body).map_err(|_| Error("write"));
+    }
+    #[cfg(unix)]
+    if a.len() == 7 && a[1] == "http" {
+        let client =
+            tos_validator_auth::client::Client::new(tos_validator_auth::unix_http::UnixHttp::new(
+                std::path::PathBuf::from(&a[2]),
+                a[3].parse().map_err(|_| Error("uid"))?,
+            ));
+        let method = a[4].parse().map_err(|_| Error("method"))?;
+        let request = fs::read(&a[5]).map_err(|_| Error("read"))?;
+        match client.call(method, &request)? {
+            tos_validator_auth::client::Outcome::Result(result) => {
+                return fs::write(&a[6], result.bytes).map_err(|_| Error("write"))
+            }
+            tos_validator_auth::client::Outcome::Error(error) => {
+                fs::write(&a[6], encode(&error)?).map_err(|_| Error("write"))?;
+                return Err(Error("api-error"));
+            }
+        }
+    }
     if a.len() >= 7 && (a[1] == "apply" || a[1] == "due" || a[1] == "select") {
         return lifecycle_probe(&a);
     }

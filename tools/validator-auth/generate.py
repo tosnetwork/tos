@@ -71,6 +71,16 @@ for number,method in schema['methods'].items():
  rust_api += [f'{number}=>{{if response{{decode::<{name(method["result"])}>(raw)?;}}else{{decode::<{name(method["request"])}>(raw)?;}}}},']
 rust_api+=['_=>return Err(Error("method")),','}','Ok(())','}']
 outputs[ROOT/'tosctl/src/validator-auth/src/api_types.rs']='\n'.join(rust_api)+'\n'
+routes=['// Generated from the frozen method table.','#pragma once','#include <array>','#include <string_view>','#include "codec.h"','namespace tos::auth {','struct ApiRoute { std::uint8_t method; std::string_view verb, path; };','inline constexpr std::array<ApiRoute,15> api_routes{{']
+for number,method in schema['methods'].items():
+ routes += [f'  {{{number},"{method["http"]}","{method["path"]}"}},']
+routes += ['}};','}']
+outputs[ROOT/'validator/auth/api-routes.h']='\n'.join(routes)+'\n'
+routes=['// Generated from the frozen method table.','pub struct ApiRoute { pub method: u8, pub verb: &\'static str, pub path: &\'static str }','pub const API_ROUTES: [ApiRoute;15] = [']
+for number,method in schema['methods'].items():
+ routes += [f'ApiRoute {{ method:{number}, verb:"{method["http"]}", path:"{method["path"]}" }},']
+routes += ['];']
+outputs[ROOT/'tosctl/src/validator-auth/src/api_routes.rs']='\n'.join(routes)+'\n'
 p=argparse.ArgumentParser();p.add_argument('--write',action='store_true');args=p.parse_args()
 for path,text in outputs.items():
  if path.suffix=='.rs':
