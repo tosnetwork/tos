@@ -92,7 +92,7 @@ jobs:
             -DOPENSSL_INCLUDE_DIR="$(pkg-config --variable=includedir openssl)"
           export FUNC_BIN="$PWD/build-p0/crypto/func" FIFT_BIN="$PWD/build-p0/crypto/fift"
           cmake --build build-p0 --target func fift -j2
-          cmake --build build-p0 --target emulator test-p0-vm test-p0-vm-adapter test-p0-committee test-p0-registry-view test-p0-committee-proof test-p0-certificate-proof test-p0-certificate-rpc test-p0-implementation test-p0-transfer test-p0-transport test-p0-cells test-p0-state test-p0-state-replay benchmark-p0-c0 test-p0-proof test-p0-authority test-p0-context test-p0-governance test-p0-owner-proof test-p0-native-apply test-p0-native-history test-p0-native-header test-p0-native-evidence test-p0-native-config-context test-p0-native-host-vm test-p0-native-registry test-p0-persistent-apply test-p0-native-transactions test-p0-config-gates test-config-transition test-p0-journal test-p0-signer test-p0-sync test-p0-channel test-p0-process test-p0-object-store test-p0-issuer test-p0-api-semantics test-p0-admin test-p0-admin-process test-p0-api-service test-p0-http test-p0-keyring test-keyring-temp-key -j2
+          cmake --build build-p0 --target emulator test-p0-vm test-p0-vm-adapter test-p0-committee test-p0-registry-view test-p0-committee-proof test-p0-certificate-proof test-p0-certificate-rpc test-p0-implementation test-p0-transfer test-p0-transport test-p0-cells test-p0-state test-p0-state-replay benchmark-p0-c0 test-p0-proof test-p0-authority test-p0-context test-p0-governance test-p0-owner-proof test-p0-native-apply test-p0-native-history test-p0-native-header test-p0-native-evidence test-p0-native-config-context test-p0-native-host-vm test-p0-native-registry test-p0-persistent-apply test-p0-native-transactions test-p0-config-gates test-config-transition test-p0-native-governance test-p0-journal test-p0-signer test-p0-sync test-p0-channel test-p0-process test-p0-object-store test-p0-issuer test-p0-api-semantics test-p0-admin test-p0-admin-process test-p0-api-service test-p0-http test-p0-keyring test-keyring-temp-key -j2
           cmake --build build-p0 --target validator/impl/CMakeFiles/tos_validator.dir/validate-query.cpp.o -j2
           cmake -S . -B build-p0-sanitized -G Ninja -DCMAKE_BUILD_TYPE=Release -DTOS_ARCH= \
             -DTOS_BUILD_P0_IMPLEMENTATION_TESTS=ON -DUSE_QUIC=OFF \
@@ -102,7 +102,7 @@ jobs:
             -DOPENSSL_CRYPTO_LIBRARY="$(pkg-config --variable=libdir openssl)/libcrypto.so" \
             -DOPENSSL_SSL_LIBRARY="$(pkg-config --variable=libdir openssl)/libssl.so" \
             -DOPENSSL_INCLUDE_DIR="$(pkg-config --variable=includedir openssl)"
-          cmake --build build-p0-sanitized --target test-p0-keyring-sanitized test-p0-vm test-p0-committee test-p0-proof test-p0-registry-view test-p0-committee-proof test-p0-state-replay test-p0-certificate-proof test-p0-certificate-rpc test-p0-context test-p0-governance test-p0-owner-proof test-p0-native-apply test-p0-native-history test-p0-native-header test-p0-native-evidence test-p0-native-config-context test-p0-native-host-vm test-p0-native-registry test-p0-persistent-apply test-p0-native-transactions test-p0-config-gates test-config-transition -j2
+          cmake --build build-p0-sanitized --target test-p0-keyring-sanitized test-p0-vm test-p0-committee test-p0-proof test-p0-registry-view test-p0-committee-proof test-p0-state-replay test-p0-certificate-proof test-p0-certificate-rpc test-p0-context test-p0-governance test-p0-owner-proof test-p0-native-apply test-p0-native-history test-p0-native-header test-p0-native-evidence test-p0-native-config-context test-p0-native-host-vm test-p0-native-registry test-p0-persistent-apply test-p0-native-transactions test-p0-config-gates test-config-transition test-p0-native-governance -j2
           cargo build --locked --manifest-path tosctl/src/Cargo.toml -p tos_vm --example p0-parity --example native-host-parity
           cargo build --locked --manifest-path tosctl/src/Cargo.toml -p tos_executor --example pq-tx-parity
       - name: Enforce native configuration admission and transition gates
@@ -223,6 +223,10 @@ jobs:
           tosctl/src/target/debug/governance-conformance artifacts/governance-fixtures | tee artifacts/governance-rust.txt
           ASAN_OPTIONS=detect_leaks=1:detect_stack_use_after_return=1 UBSAN_OPTIONS=halt_on_error=1 build-p0-sanitized/test/validator-auth-implementation/test-p0-governance artifacts/governance-fixtures-sanitized | tee artifacts/governance-sanitized.txt
           diff -r artifacts/governance-fixtures artifacts/governance-fixtures-sanitized
+          build-p0/test/validator-auth-implementation/test-p0-native-governance artifacts/native-governance-fixtures | tee artifacts/native-governance-cpp.txt
+          tosctl/src/target/debug/governance-conformance --native artifacts/native-governance-fixtures | tee artifacts/native-governance-rust.txt
+          ASAN_OPTIONS=detect_leaks=1:detect_stack_use_after_return=1 UBSAN_OPTIONS=halt_on_error=1 build-p0-sanitized/test/validator-auth-implementation/test-p0-native-governance artifacts/native-governance-fixtures-sanitized | tee artifacts/native-governance-sanitized.txt
+          diff -r artifacts/native-governance-fixtures artifacts/native-governance-fixtures-sanitized
           python3 test/validator-auth-implementation/context_fixtures.py --out artifacts/context-fixtures
           build-p0/test/validator-auth-implementation/test-p0-context artifacts/context-fixtures | tee artifacts/context-cpp.txt
           tosctl/src/target/debug/context-conformance artifacts/context-fixtures | tee artifacts/context-rust.txt
@@ -335,6 +339,8 @@ jobs:
           python3 test/validator-auth-implementation/context_mutations.py --language rust --fixtures artifacts/context-fixtures --out artifacts/context-rust-mutations.json
           python3 test/validator-auth-implementation/governance_mutations.py --language cpp --build build-p0 --out artifacts/governance-cpp-mutations.json
           python3 test/validator-auth-implementation/governance_mutations.py --language rust --fixtures artifacts/governance-fixtures --out artifacts/governance-rust-mutations.json
+          python3 test/validator-auth-implementation/native_governance_mutations.py --language cpp --build build-p0 --out artifacts/native-governance-cpp-mutations.json
+          python3 test/validator-auth-implementation/native_governance_mutations.py --language rust --fixtures artifacts/native-governance-fixtures --out artifacts/native-governance-rust-mutations.json
           python3 test/validator-auth-implementation/native_header_mutations.py --language cpp --build build-p0 --inputs artifacts/owner-transactions-mc --out artifacts/native-header-cpp-mutations.json
           python3 test/validator-auth-implementation/native_header_mutations.py --language rust --fixtures artifacts/native-header --out artifacts/native-header-rust-mutations.json
           git diff --exit-code
