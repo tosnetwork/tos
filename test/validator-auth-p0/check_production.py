@@ -23,6 +23,23 @@ def preserved(raw, insertions):
     return bytes(original)
 
 
+def grammar(text):
+    """Constructor lines only: the two sources carry different explanatory comments."""
+    return '\n'.join(line for line in text.strip().splitlines()
+                     if line.strip() and not line.strip().startswith('//'))
+
+
+def bound(design, inserted):
+    """The frozen design artifact states exactly the grammar production carries.
+
+    Both copies are pinned -- the design one by the freeze record, the production
+    one by this inventory -- but neither lock can see the other, so each would keep
+    passing while they described different wire formats. Requiring exactly one
+    match also refuses a second copy appearing under another insertion.
+    """
+    return [grammar(text) for text in inserted].count(grammar(design)) == 1
+
+
 def check(root, expected, insertions=None):
     insertions = insertions or {}
     if not set(insertions) <= set(expected):
@@ -44,6 +61,10 @@ def main():
     manifest = ROOT/'doc/validator-auth-p0-native-insertions.json'
     insertions = json.loads(manifest.read_text())['insertions']
     actual = check(ROOT, baseline['source_sha256'], insertions)
+    wire = (ROOT/'doc/validator-auth-p0/wire.tlb').read_text()
+    profile = [entry['text'] for entry in insertions.get('crypto/block/block.tlb', [])]
+    if not bound(wire, profile):
+        raise ValueError('frozen profile grammar is not the production insertion')
     # A silent inventory is not evidence: prove it detects a changed byte.
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory); (root/'probe').write_bytes(b'original')
@@ -68,13 +89,25 @@ def main():
                 pass
             else:
                 raise RuntimeError('native insertion negative control survived')
+    # The binding must notice drift from either side, a removed insertion and a
+    # duplicated one; a comment-only difference is not drift.
+    if not bound('a#1 x:uint8 = A;', ['// production\na#1 x:uint8 = A;']):
+        raise RuntimeError('profile binding rejects a comment-only difference')
+    for design, inserted in (('a#1 x:uint16 = A;', ['a#1 x:uint8 = A;']),
+                             ('a#1 x:uint8 = A;', ['a#1 x:uint16 = A;']),
+                             ('a#1 x:uint8 = A;', []),
+                             ('a#1 x:uint8 = A;', ['a#1 x:uint8 = A;', 'a#1 x:uint8 = A;'])):
+        if bound(design, inserted):
+            raise RuntimeError('profile binding negative control survived')
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(dict(success=True, base=baseline['base'], source_sha256=actual,
                                        preserved_sha256=baseline['source_sha256'],
                                        insertions_sha256=hashlib.sha256(manifest.read_bytes()).hexdigest(),
+                                       profile_grammar_bound='wire.tlb equals the block.tlb insertion',
                                        negative_control='changed original and inserted bytes rejected'), indent=2)+'\n')
     print('PASS:', len(actual)-len(insertions), 'whole files unchanged;', len(insertions),
-          'files preserve all historical bytes with exact native insertions; negative controls rejected')
+          'files preserve all historical bytes with exact native insertions;',
+          'frozen profile grammar bound to production; negative controls rejected')
 
 
 if __name__ == '__main__':
