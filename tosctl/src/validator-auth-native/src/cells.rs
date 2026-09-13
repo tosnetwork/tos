@@ -128,7 +128,7 @@ pub fn read_boc(bytes: &[u8], all_reachable: bool) -> Result<Cell, Error> {
         return Err(Error("boc-bound"));
     }
     let mut cursor = Cursor::new(bytes);
-    let mut reader = BocReader::new();
+    let mut reader = BocReader::new().set_max_cell_depth(1024);
     let (header, _) = native(reader.read_header(&mut cursor))?;
     if header.roots_count != 1 || header.cells_count == 0 || header.cells_count > MAX_CELLS {
         return Err(Error("boc-header-bound"));

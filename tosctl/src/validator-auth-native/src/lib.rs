@@ -3,6 +3,7 @@ pub mod certificate_proof;
 pub mod committee;
 pub mod committee_proof;
 pub mod governance;
+pub mod owner_proof;
 pub mod proof;
 pub mod registry;
 pub mod registry_view;

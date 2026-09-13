@@ -21,8 +21,9 @@ or PQ suite allocation is authorized by this work.
 | Native VM and transaction execution | C++/Rust P0CHKSIGN, native capability metadata, Fift/FunC and Rust assembly bindings | 168 exact outcome/gas comparisons; getter config and nested VM; eight whole transactions including action rollback | Elector/owner statement construction and native admission |
 | Native committee derivation | Explicit native identity/stake descriptor, authenticated Config35/34 and Config46, original native selection, owned transport order and VAM1 | 40 C++/Rust state cases including a full 400-member snapshot, shuffle, shard weights, temporary election and budget exhaustion | Elector emission and session admission |
 | Native registry state | C++ and independent Rust Config46 genesis, encoding and identity-update replay; immutable key archive and owned successor state | 501 identities / 2506 keys; 34 cross-language replay cases with checkpoint/continuous equivalence, control retention and rejected-block atomicity | Native block apply, elector/config operations, persistent dictionary performance and global apply |
-| Native state proofs | C++ and Rust actual masterchain Config8/9/10/16/46 and Merkle proofs for profile, policy, key and registry ranges | State-root substitution, omitted entries, false terminal page, unrelated revealed values, detached physical cells, capability and atomic-publication guard removals | RPC node wiring, owner execution proofs and Rust global registry apply |
+| Native state proofs | C++ and Rust actual masterchain Config8/9/10/16/46 and Merkle proofs for profile, policy, key and registry ranges | State-root substitution, omitted entries, false terminal page, unrelated revealed values, detached physical cells, capability and atomic-publication guard removals | RPC node wiring, owner proof dispatch and Rust global registry apply |
 | Native certificate proofs and RPC | Independent C++/Rust certificate verification from native committee and policy proofs; C++ methods 12/13 and private Rust verified output | 55 shared cases; real local HTTP over 16 snapshots; exact signers/weight, trusted context, error provenance and single-fetch prepared request checks | Native manager session/history/archive source and remote serving |
+| Native owner execution | C++ and independent Rust VAF1 kind-1 proofs over native account transactions, full trusted anchor and current owner/stake allocation | 68 shared proof cases from real masterchain/workchain-0 wallet transactions; action rollback, forged wallet signatures, block substitution and 52 compiled guards | Native elector receipt processing, normal stake rules and atomic update admission |
 | Authority primitives | Independent C++/Rust session/duty derivation, C0 PoP, current identity-role-5 and current governance quorum verification; separate permit/receipt trust | 76 shared context/identity cases, 28 current-governance cases and 25 service-trust/polling cases; expired or rotated governance keys refused | Native owner execution, normal configuration voting and native mutation admission |
 | Signer persistence | Native append-only safety ledger, actual C0 secret provider, witness consumption and sign/get-result service | Both-order conflict rules, exact retransmission, journal/provider backup rollback, stale fence, terminal retention, real fsync failure, unknown outcome refusal | Native consensus permissions and remote serving |
 | Signer administration | Durable prepare/stage/retire/cancel intent execution, provider preparation IDs and PoP reservation IDs | Real PoP and current admin signatures, owner refusal before reservation, exact receipts, cancellation target, provider rollback and six process-kill boundaries | Native owner execution and node context wiring |
@@ -55,7 +56,8 @@ state/authority/proof, journal, signer/provider and local channel harnesses kill
 25, 11, 7 and 6 compiled guard removals respectively. Scoped object storage,
 service issuers and C++ API semantics add eight, nine and eight removals. The
 administration harness adds eleven. The combined implementation harness contains
-539 compiled production mutations, including 46 context/identity-authority checks,
+591 compiled production mutations, including 52 native owner-proof/resource checks,
+46 context/identity-authority checks,
 33 current-governance checks, 28 independent certificate proof checks,
 16 certificate RPC/error checks, seven prepared-client checks, 18 native Rust registry replay checks, three
 native certificate benchmark controls, 17 API admission/cache checks, 25
@@ -84,6 +86,40 @@ libraries and Rust crate on Ubuntu x86_64 and ARM, records the checked HEAD, run
 these checks and uploads evidence. The previous implementation milestone passed both focused CI architectures; each
 new addition requires CI evidence attached to its own HEAD.
 It neither triggers the full Ubuntu build nor starts a network.
+
+## Native owner execution authority
+
+The additive contract in `validator-auth-p0-native-owner.json` defines the BOC
+inside VAF1 kind 1 and the bounded owner approval body. It binds the exact update,
+chain domain, stake, current owner allocation and authenticated elector recipient.
+The owner must execute a successful ordinary native transaction. Mainchain owners
+bind the anchor block and state update; shard owners bind the exact shard block
+through authenticated masterchain ShardHashes. A message, operator identity or
+wallet signature alone cannot construct `VerifiedOwnerExecution`.
+
+Both implementations independently verify 34 masterchain and 34 shard cases.
+Inputs come from twelve real wallet executions with signature checks enabled,
+including insufficient-funds action rollback, plus forged-signature refusal in
+each workchain. Targeted transaction-field alterations isolate individual compute
+and action guards. Controlled block/state containers provide finality fixtures;
+they do not establish actual node inclusion, elector execution or public finality.
+
+Twenty-five C++ and 27 Rust compiled mutations fail their named assertions and
+restore passing baselines. The corpus includes a canonical proof for a different
+shard block under the original masterchain state. Full-dependency Ubuntu/ARM
+ASan/UBSan/LSan runs reproduce all 68 exports exactly. The Rust adapter applies
+absolute effective Merkle levels and preserves intrinsic lower-level pruned data
+under nested state updates. This fixes new P0 proof reconstruction without changing
+historical native cell/proof code. The P0 Rust BOC reader explicitly enforces the
+native 1024-depth ceiling; a compiled removal must accept the otherwise valid
+1025-depth negative input, while the 1024 boundary remains accepted. Unused ordinary leaves are pruned consistently
+in both implementations, and memoization includes Merkle depth.
+
+Owner approval still supplies only one of four required authorization types.
+Current identity administration, PoP, normal elector value/ownership/timelock and
+selection rules, update nonce/predecessor checks and atomic native application
+remain separately required. The local signer and native block apply must still
+be wired to these independently verified authorities.
 
 ## Inclusion-time administration and governance
 

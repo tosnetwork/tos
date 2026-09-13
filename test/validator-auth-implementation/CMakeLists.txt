@@ -356,3 +356,12 @@ add_executable(test-p0-governance-mutant EXCLUDE_FROM_ALL governance-test.cpp "$
 target_include_directories(test-p0-governance-mutant PRIVATE "${PROJECT_SOURCE_DIR}/validator/auth")
 target_link_libraries(test-p0-governance-mutant PRIVATE tos_validator_auth)
 set_target_properties(test-p0-governance-mutant PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+
+add_executable(test-p0-owner-proof owner-proof-test.cpp)
+target_link_libraries(test-p0-owner-proof PRIVATE tos_validator_auth_native)
+set_target_properties(test-p0-owner-proof PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+configure_file("${PROJECT_SOURCE_DIR}/validator/auth/owner-proof.cpp" "${CMAKE_CURRENT_BINARY_DIR}/owner-proof-mutated.cpp" COPYONLY)
+add_executable(test-p0-owner-proof-mutant EXCLUDE_FROM_ALL owner-proof-test.cpp "${CMAKE_CURRENT_BINARY_DIR}/owner-proof-mutated.cpp")
+target_include_directories(test-p0-owner-proof-mutant PRIVATE "${PROJECT_SOURCE_DIR}/validator/auth")
+target_link_libraries(test-p0-owner-proof-mutant PRIVATE tos_validator_auth_native)
+set_target_properties(test-p0-owner-proof-mutant PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)

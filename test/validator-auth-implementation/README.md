@@ -165,3 +165,23 @@ Context and current governance authority:
 - Both native drivers run in the fully instrumented Ubuntu sanitizer build.
   Normal native configuration voting and global registry apply are still separate
   from the read-only governance verifier.
+
+Native owner execution:
+
+- `owner_fixtures.py --build ... --driver <test-p0-owner-proof> --out <fresh-dir>`
+  compiles and executes the existing wallet with real signature checks. Run once
+  with `--workchain -1` and once with `--workchain 0`. The approval bytes must match
+  the machine-readable native owner contract. Each exports six actual transactions
+  and checks action rollback and forged-signature refusal.
+- `test-p0-owner-proof verify <transactions> <fresh-proof-export>` checks 34 cases
+  per workchain. Run native Rust `owner-conformance <proof-export>` to compare exact
+  transaction hashes and refusal codes. The surrounding blocks and finality anchors
+  are controlled fixtures; these are not node or elector acceptance tests.
+- `owner_mutations.py --language cpp --build ... --inputs <mc-transactions>
+  --shard-inputs <shard-transactions> --out ...` compiles 25 production mutations.
+  The Rust form uses `--language rust --fixtures <mc-proof-export>
+  --shard-fixtures <shard-proof-export>` and compiles 27, including the 1024/1025 BOC depth boundary. Both require precise
+  assertion labels and restored baselines; setup errors and crashes do not count.
+- Full Ubuntu sanitizer builds run both native exports and compare every file.
+  The nested-Merkle mutation exercises the dedicated P0 effective-level adapter,
+  without modifying historical Rust cell or proof implementation.

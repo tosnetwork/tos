@@ -1,0 +1,24 @@
+{
+  "name": "TOS P0 native owner execution proof",
+  "version": 1,
+  "outer_contract": "VAF1 kind 1; existing frozen ordered binary schema",
+  "proof_object_id": "H(update, canonical VAU1)",
+  "proof_hash": "H(proof, complete bounded native BOC bytes)",
+  "approval_body": {
+    "cell_type": "ordinary",
+    "bits": 816,
+    "refs": [],
+    "ordered_fields": [["tag", "u32", "0x76616f31"], ["version", "u16", 1], ["chain_domain", "bits256"], ["stake_id", "bits256"], ["update_id", "bits256"]]
+  },
+  "proof_root": {
+    "cell_type": "ordinary",
+    "bits": 127,
+    "ordered_fields": [["tag", "u32", "0x76616f70"], ["version", "u16", 1], ["transaction_lt", "u64"], ["message_index", "u15"]],
+    "refs": ["masterchain state Merkle proof", "owner block Merkle proof"]
+  },
+  "limits": {"boc_bytes": 67108864, "physical_cells": 400001, "roots": 1, "absent_cells": 0, "maximum_cell_depth": 1024, "maximum_merkle_depth": 3},
+  "operations": [1, 2, 5],
+  "approval_recipient": "masterchain account in authenticated ConfigParam 1",
+  "message": {"type": "internal", "ihr_disabled": true, "bounced": false, "anycast": false, "address_bits": 256, "state_init": false, "body_in_reference": true},
+  "authority_scope": "Executed exact owner approval only; native election value, ownership, timelock, current update nonce/predecessor, identity administration, PoP and global governance remain independently required."
+}
