@@ -12,7 +12,7 @@ or PQ suite allocation is authorized by this work.
 | Boundary | Implementation | Verification | Remaining integration |
 | --- | --- | --- | --- |
 | Ordered binary types | Production C++ library and Rust crate, generated typed bindings to all 70 schema types | Exact frozen bytes and 145 malformed binary inputs through both libraries | Production endpoint/caller wiring |
-| C0 provider | Admitted public-key object; canonical, noncofactored verification using existing cryptographic libraries | 86 real signature/encoding cases, including valid R=identity; subgroup and equation guard removals | Keyring access restrictions and native provider routing |
+| C0 provider | Admitted public-key object; canonical, noncofactored verification using existing cryptographic libraries | 86 real signature/encoding cases, including valid R=identity; subgroup and equation guard removals | Native provider inventory reconciliation and routing |
 | Committee and certificate verification | Owned immutable admitted snapshots, expected-duty binding, complete roster and all signatures | 40 cases across five roles; exact quorum, below quorum, corrupt surplus signature, duplicate identities and context mismatch | Authenticated native state adapter, session derivation and consensus call sites |
 | Native cells | Canonical AuthBytes and native BOC adapter | 20 round-trip/malformed-BOC cases through 32 MiB of incompressible data; direct hash and canonical-partition guard removals | Native chain apply |
 | Identity lifecycle | C++ and Rust per-identity register/rotate/retire/cancel and consecutive-block due-transition application | 104 differential cases per language with controlled, separately typed authority callbacks; predecessor and block-gap guard removals | Native owner/admin adapters, transactional chain storage and global governance operations |
@@ -23,6 +23,7 @@ or PQ suite allocation is authorized by this work.
 | Authority primitives | Real C0 PoP and current identity-role-5 verification; independent permit/receipt trust in C++ and Rust | Wrong network/update/signature/current admin key, stale permits, historical receipts and inclusive 128-block boundary; 25 shared service-trust/polling cases per language | Native owner execution and governance adapters and native mutation admission |
 | Signer persistence | Native append-only safety ledger, actual C0 secret provider, witness consumption and sign/get-result service | Both-order conflict rules, exact retransmission, journal/provider backup rollback, stale fence, terminal retention, real fsync failure, unknown outcome refusal | Native consensus permissions and remote serving |
 | Signer administration | Durable prepare/stage/retire/cancel intent execution, provider preparation IDs and PoP reservation IDs | Real PoP and current admin signatures, owner refusal before reservation, exact receipts, cancellation target, provider rollback and six process-kill boundaries | Native owner execution and node context wiring |
+| Native Keyring isolation | Factory-installed durable public-key deny set, private-operation guards, shared/exclusive directory locks and an asynchronous drain barrier | Actual signing/decryption/export before designation; every private API refused afterwards; restart, damaged records, competing processes and compiled guard removals | Provider inventory reconciliation before native session admission |
 | Service issuer | Purpose-separated persistent C0 service keys, typed permit/receipt signing, local rotation and public policy history | Actual signer receipts, restart, key/policy binding and nine compiled guard removals | Independent operational trust distribution and node permit adapter |
 | Operational release | No activation change | No testnet/release acceptance claim | Required testnet, genesis, operator recovery, approvals and C0 performance evidence |
 
@@ -51,11 +52,14 @@ state/authority/proof, journal, signer/provider and local channel harnesses kill
 25, 11, 7 and 6 compiled guard removals respectively. Scoped object storage,
 service issuers and C++ API semantics add eight, nine and eight removals. The
 administration harness adds eleven. The combined implementation harness contains
-202 compiled guard removals, including 17 API admission/cache checks, 25
-native HTTP checks and 17 Rust native cell/proof checks.
+227 compiled guard removals, including 17 API admission/cache checks, 25
+native HTTP checks, 17 Rust native cell/proof checks and 25 native Keyring checks.
 
-The frozen artifact record passes; all 38 historical production files in its
-boundary remain unchanged. The generated binding check, Rust formatting, Clippy with warnings denied and
+The frozen wire/API design and fingerprint remain unchanged. The updated evidence
+record inventories exact additive Keyring insertions: 36 historical files remain
+byte-for-byte unchanged, and removing only the registered insertions from the two
+Keyring files recovers their original baseline hashes. The checker rejects changes
+to either historical or inserted bytes; the baseline hashes were not replaced. The generated binding check, Rust formatting, Clippy with warnings denied and
 whitespace checks pass. These results describe the working tree, not a committed
 HEAD or a GitHub CI result.
 
@@ -288,3 +292,49 @@ Rust linting covers both modified authentication crates with warnings denied;
 That dependency is still compiled and executed by the native tests. Rust global
 registry replay, native committee/certificate/owner proofs and production node
 and CLI wiring remain separate implementation work.
+
+
+## Native Keyring designation and concurrency
+
+`Keyring::create` installs the isolation layer used by the existing node callers.
+The trusted local `protect_validator_auth_key` method blocks new private operations,
+drains already-issued raw operations, durably records the public-key hash and then
+acknowledges protection. All raw signing forms, decryption, single/bulk secret
+export, permanent/temporary import and deletion check that layer. Public metadata
+remains available. Retire, cancel, branch rollback and reimport have no removal API.
+A bulk export fails explicitly instead of silently returning an incomplete backup.
+
+Legacy instances hold shared directory locks. Designation requires an exclusive
+upgrade after local raw operations drain; a competing legacy instance prevents
+acknowledgment. A failed upgrade stops that already-drained instance because OS
+lock conversion can release its shared lock. A pending designation also blocks
+new exports and admissions, including unrelated keys, until the finite drain ends.
+Unrelated network keys remain usable by the owning instance afterwards.
+
+The `validator-auth-guard` directory is a durable initialization marker. Its ledger
+uses the existing durable-log framing, checksums, exclusive writer lock and sync
+rules. Designation requires a same-owner Keyring directory that is not writable
+by group or others. Missing/corrupt records, wrong ownership/permissions, links, detached or
+replaced open ledger paths and uncertain writes fail closed. The deny archive has
+an operational bound of 1,048,576 public-key hashes and a 128 MiB log; exhaustion
+stops new designations without dropping history. Empty-directory temporary keyrings
+cannot acknowledge persistent protection. This is local storage, not a new wire type.
+
+`test-p0-keyring` uses real native keys and the actual factory, including a separate
+process that holds a legacy keyring open. Its actor probe places raw signing and
+protection in the same turn, proving that the protection callback follows the raw
+result and that private exports are blocked during the wait. The historical
+`test-keyring-temp-key` still passes. `keyring_mutations.py` requires exact assertion
+failures after compiling the removed guards; unrelated errors and crashes do not
+count. AddressSanitizer and UndefinedBehaviorSanitizer also cover the new Keyring,
+isolation and durable-log sources through the same complete process test. Local
+macOS testing disables leak detection; Ubuntu CI enables it.
+Provider inventory reconciliation before native session admission remains
+required: a local deny file alone cannot detect restoration of an entire host to
+an earlier state without any designation. No hardware rollback claim is made.
+
+The design-era whole-file boundary was evolved deliberately for native integration.
+`doc/validator-auth-p0-native-insertions.json` lists the exact added bytes and their
+original offsets; `check_production.py` reconstructs and hashes the original files.
+The freeze record also covers this insertion inventory and updated evidence scripts.
+Historical verifier bodies and historical encodings are unchanged.

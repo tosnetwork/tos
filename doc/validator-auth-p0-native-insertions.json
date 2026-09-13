@@ -1,0 +1,46 @@
+{
+  "format": 1,
+  "purpose": "Exact additive native Keyring integration. Original production baseline hashes remain authoritative; no historical verifier or encoding changes.",
+  "insertions": {
+    "keyring/keyring.h": [
+      {
+        "offset": 2276,
+        "text": "  // Trusted local provider/session setup only. This monotonic designation has\n  // no removal API and grants no signing authority. Success is a durable barrier\n  // after all earlier raw operations for this key have completed.\n  virtual void protect_validator_auth_key(PublicKeyHash key_hash, td::Promise<td::Unit> promise) = 0;\n\n"
+      }
+    ],
+    "keyring/keyring.cpp": [
+      {
+        "offset": 3279,
+        "text": "  auto isolation = admit_generic(key.compute_short_id());\n  if (isolation.is_error()) {\n    return promise.set_error(std::move(isolation));\n  }\n"
+      },
+      {
+        "offset": 6903,
+        "text": "  auto isolation = admit_generic(key_hash);\n  if (isolation.is_error()) {\n    return promise.set_error(std::move(isolation));\n  }\n"
+      },
+      {
+        "offset": 8069,
+        "text": "  auto isolation = admit_generic(key_hash);\n  if (isolation.is_error()) {\n    return promise.set_error(std::move(isolation));\n  }\n"
+      },
+      {
+        "offset": 8610,
+        "text": "  auto isolation = admit_generic(key_hash);\n  if (isolation.is_error()) {\n    return promise.set_error(std::move(isolation));\n  }\n  promise = track_raw(key_hash, std::move(promise));\n"
+      },
+      {
+        "offset": 9037,
+        "text": "  auto isolation = admit_generic(key_hash);\n  if (isolation.is_error()) {\n    return promise.set_error(std::move(isolation));\n  }\n  promise = track_raw(key_hash, std::move(promise));\n"
+      },
+      {
+        "offset": 9805,
+        "text": "  auto isolation = admit_generic(key_hash);\n  if (isolation.is_error()) {\n    return promise.set_error(std::move(isolation));\n  }\n  promise = track_raw(key_hash, std::move(promise));\n"
+      },
+      {
+        "offset": 10194,
+        "text": "  auto isolation = admit_generic(key_hash);\n  if (isolation.is_error()) {\n    return promise.set_error(std::move(isolation));\n  }\n  promise = track_raw(key_hash, std::move(promise));\n"
+      },
+      {
+        "offset": 10553,
+        "text": "  auto isolation = admit_bulk_export();\n  if (isolation.is_error()) {\n    return promise.set_error(std::move(isolation));\n  }\n"
+      }
+    ]
+  }
+}

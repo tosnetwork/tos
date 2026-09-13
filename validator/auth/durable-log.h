@@ -30,6 +30,7 @@ class DurableLog {
   static Result<std::unique_ptr<DurableLog>> open(const std::string& path, bool create, const Replay&,
                                                   std::uint64_t limit = 1073741824);
   Result<LogFrontier> append(std::span<const std::uint8_t>);
+  bool linked_at(const std::string& path) const;
   const LogFrontier& frontier() const {
     return frontier_;
   }

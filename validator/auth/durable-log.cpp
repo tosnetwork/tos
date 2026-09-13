@@ -45,6 +45,13 @@ DurableLog::~DurableLog() {
   if (fd_ >= 0)
     ::close(fd_);
 }
+bool DurableLog::linked_at(const std::string& path) const {
+  struct stat held{}, named{};
+  return !stopped_ && ::fstat(fd_, &held) == 0 && ::lstat(path.c_str(), &named) == 0 && S_ISREG(named.st_mode) &&
+         named.st_uid == ::geteuid() && (named.st_mode & 0777) == 0600 && named.st_nlink == 1 &&
+         held.st_dev == named.st_dev && held.st_ino == named.st_ino && held.st_size >= 0 &&
+         static_cast<std::uint64_t>(held.st_size) == size_;
+}
 Result<LogFrontier> DurableLog::next(const LogFrontier& previous, std::span<const std::uint8_t> raw) {
   if (raw.empty() || raw.size() > max_record)
     return Error{"journal-record-bound"};

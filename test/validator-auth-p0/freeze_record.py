@@ -8,6 +8,7 @@ RECORD=ROOT/'doc/validator-auth-p0-freeze.json'
 def hashes():
     paths=list((ROOT/'doc/validator-auth-p0').glob('*'))+list((ROOT/'test/validator-auth-p0').glob('*'))
     paths.append(ROOT/'.github/workflows/validator-auth-p0-profile.yml')
+    paths.append(ROOT/'doc/validator-auth-p0-native-insertions.json')
     return {str(p.relative_to(ROOT)):hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(paths) if p.is_file()}
 def main(write):
     values=hashes()

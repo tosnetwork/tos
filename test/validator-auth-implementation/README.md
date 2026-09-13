@@ -93,3 +93,21 @@ Native Rust checks:
   `check_client.py` for 58 HTTP client cases including native proof refusal.
   Add the native Rust binary as the third argument to `test-p0-api-service` for
   actual C++ serving plus Rust verification of inline and referenced proofs.
+
+
+Native Keyring checks:
+
+- `test-p0-keyring <fresh-directory>` exercises the actual Keyring factory and real
+  signing, decryption and secret export before protection, then every protected
+  private API. It includes restart, malformed durable records, lost/replaced files,
+  permission/link attacks, deterministic asynchronous drain and actual competing
+  processes. Test-only keys stay under the fresh directory.
+- `keyring_mutations.py --build ... --out ...` compiles 25 removed guards and requires
+  the exact assertion failure. No compiler failure, process crash or fixture error
+  is accepted as a kill. The unchanged `test-keyring-temp-key` is also run in CI.
+- The frozen original production hashes remain authoritative. The insertion
+  inventory records additive Keyring guards; the historical checker verifies both
+  inserted and original bytes rather than exempting the modified files.
+
+`test-p0-keyring-sanitized` instruments the Keyring, isolation and durable-log
+sources with address/undefined-behavior checks and runs the same process scenarios.

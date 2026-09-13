@@ -14,6 +14,7 @@ def main():
     baseline = json.loads((ROOT/'test/validator-auth-p0/production-baseline.json').read_text())
     paths = set(baseline['source_sha256']) | {
         'doc/validator-auth-p0', 'doc/validator-auth-p0-freeze.json', 'test/validator-auth-p0', 'third-party/tl-parser',
+        'doc/validator-auth-p0-native-insertions.json',
         'tl/generate/scheme', 'validator/consensus', 'AGENTS.md',
         '.github/workflows/validator-auth-p0-profile.yml'}
     args.out.parent.mkdir(parents=True, exist_ok=True)

@@ -14,7 +14,7 @@
     "performance and recovery rehearsal"
   ],
   "artifact_sha256": {
-    ".github/workflows/validator-auth-p0-profile.yml": "70cc91fef88a74cb66a6feafa00a96e8e162df87ea13fa14fae42752c75f679e",
+    ".github/workflows/validator-auth-p0-profile.yml": "1d068fb0564fde36018ca337dee900cf659e036ddefda58b9c7a861069d7c019",
     "doc/validator-auth-p0/ACTIVATION.md": "a74450d93f3883a48783410614baa57a0a1e9de4f48bc680df5779a3af00179c",
     "doc/validator-auth-p0/API-CONTRACT.md": "08728fb9358e83086d48da51a1525be6c468d7932197d6e013f6e80c4e4e15a1",
     "doc/validator-auth-p0/CLIENTS.md": "4d9f3486f215b1a2217096f0be118f9f00d1ff5c89c4aae221b04c85f09357cb",
@@ -29,17 +29,18 @@
     "doc/validator-auth-p0/transport.schema.json": "ddd45d7d3eb672559efde020af95a0e215146775ec82f8c6847b0f3ab8127584",
     "doc/validator-auth-p0/wire.tl": "a5e10c8e25887cb30440a26a0d8cbcef1473878aeb87438cca1a0f0bc6875c15",
     "doc/validator-auth-p0/wire.tlb": "923650bd74bbbf677a070d1d13d7c12d46944e8bffbfc3a72641093d20d3ce9d",
+    "doc/validator-auth-p0-native-insertions.json": "26fe4460349ebd2fa4d3aec2c6aa63f0c2c575ab7b3a72dc52e527a0e683b707",
     "test/validator-auth-p0/README.md": "a0b0950c4ac702f8be0f34919a50f8e7b13d5d14dda3bd2cc05b4c8ffee31321",
     "test/validator-auth-p0/api.py": "9ec50bf9e19345ef54a8894a3525eba1eed8fb10412b8a3fdc1ed1c5728fb815",
-    "test/validator-auth-p0/archive_evidence.py": "ca1a818b1fffdab3acbab0bc33ddd75f56558a72f01e7e185a4523fd7f3f5a0b",
-    "test/validator-auth-p0/check_production.py": "1182fb05930f3f5708f9b22cdf58a45b76104c7ea8b1cc44a00cb247a91789e4",
+    "test/validator-auth-p0/archive_evidence.py": "22bb392a561068e0fb3905ce7e8df95bab463468cdfe3be884eff19b12481409",
+    "test/validator-auth-p0/check_production.py": "6015e3e344751f2036162516afb5755fcffe46965ba43e4f3500fcfca92ef3a3",
     "test/validator-auth-p0/check_schema.py": "5448e1dabdd7b407ed5d3fbbf78bea4c6c9fc5658b557bebd28133100ed7171c",
     "test/validator-auth-p0/codec.cpp": "d87bec46215699b09f861d5e0f86f8ac465c97314befdbf46ca3fbf592b556e2",
     "test/validator-auth-p0/codec.rs": "9ae980fa3dcf4636d94970a30984e9deeb5055563231aa03ded585de1a34aa17",
     "test/validator-auth-p0/contract_artifacts.py": "39a05b92a6f3265a8eb8fc5b00db4a78ae2e3d9a97c9b56982b4645e67a89eb1",
     "test/validator-auth-p0/differential.py": "364f71d86fb002669802102e43d9099734abff6e152abb9ebb57cd068383e39d",
     "test/validator-auth-p0/ed25519_oracle.py": "50a601b2c32b1b0589dcb08361050538c4a2501a67e84797085271d8c3ca9624",
-    "test/validator-auth-p0/freeze_record.py": "33e3686113450bd5c7ca770f62d4c0489767979ab141dafecda91174f348e3e1",
+    "test/validator-auth-p0/freeze_record.py": "35fff38782f31260f78889ff86804760e671e7d1ded9a7d7dd587e2f2846c402",
     "test/validator-auth-p0/golden.json.gz": "4e0b5e63e69a258734d02cdfe0c9a850642cf2c109ead04aaf2bcbd67c6aa860",
     "test/validator-auth-p0/lifecycle-api-golden.json": "83823c819d61b1c116d6712fcd487daf9ce500f0482db46ee2e45e8464a3ba79",
     "test/validator-auth-p0/lifecycle.py": "167c7e9ebb16e272b1e30acc0b36a03f7179d408622589ef7080ba9bfdb97ecd",
@@ -62,5 +63,12 @@
       "base_head": "a9c6efc0e0f218c18648aa45596f62e7574fb8ae",
       "scope": "Test coverage only: exact response signer binding; no API behavior, schema, normative document, profile fingerprint or golden-vector change."
     }
-  ]
+  ],
+  "implementation_evidence_update": {
+    "authorization": "Owner requested complete P0 implementation, testing and local rehearsal, with implementation decisions delegated in the current task.",
+    "scope": "Evidence-only evolution for exact additive native Keyring guards; normative wire/API artifacts and fingerprint are unchanged.",
+    "inventory": "doc/validator-auth-p0-native-insertions.json",
+    "historical_baseline": "Original production-baseline.json hashes are retained; reconstruct original bytes by removing only the inventoried insertions.",
+    "checks": "Both original and inserted bytes have negative controls. Native implementation CI compiles and exercises the Keyring guards."
+  }
 }
