@@ -32,6 +32,7 @@ int main() {
     auto accepted = unpack_bytes(root(small, leaf(small)));
     check(accepted.ok() && accepted.value() == small, "ordinary-leaf");
     check(!unpack_bytes(root(small, leaf(small), true)).ok(), "hash-binding");
+    check(!unpack_bytes(root(small, leaf(small)), 119).ok(), "budget-before-allocation");
     Bytes large(121, 7);
     auto raw = std::span<const std::uint8_t>(large);
     vm::CellBuilder canonical;

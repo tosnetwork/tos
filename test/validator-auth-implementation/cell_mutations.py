@@ -11,11 +11,11 @@ def main(build,out):
   return subprocess.run([str(folder/'test-p0-cells-mutant')],capture_output=True,text=True)
  try:
   baseline=run(original);assert baseline.returncode==0,baseline.stderr
-  for name,before in [('hash-binding','if(actual!=expected)return Error{"auth-bytes-hash"};'),('canonical-partition','n!=expected||')]:
+  for name,before in [('budget-before-allocation','if(length > remaining_bytes)return Error{"state-resource"};'),('hash-binding','if(actual!=expected)return Error{"auth-bytes-hash"};'),('canonical-partition','n!=expected||')]:
    p=run(replace_once(original,before,''));assert p.returncode==1 and p.stderr.strip()=='ASSERTION: '+name,(name,p.stderr)
    results.append({'guard':name,'compiled':True,'assertion_failed':True})
  finally:
   restored=run(original);assert restored.returncode==0,restored.stderr
- out.write_text(json.dumps({'native_cell_mutations':results,'restored_baseline':True},indent=2)+'\n');print('PASS: 2 native cell mutations')
+ out.write_text(json.dumps({'native_cell_mutations':results,'restored_baseline':True},indent=2)+'\n');print('PASS: 3 native cell mutations')
 if __name__=='__main__':
  p=argparse.ArgumentParser();p.add_argument('--build',type=Path,required=True);p.add_argument('--out',type=Path,required=True);a=p.parse_args();main(a.build,a.out)

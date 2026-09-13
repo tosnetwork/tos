@@ -73,7 +73,7 @@ Result<td::Ref<vm::Cell>> pack_bytes(std::span<const std::uint8_t> bytes) {
       .store_ref(pack_node(bytes));
   return td::Ref<vm::Cell>(b.finalize());
 }
-Result<Bytes> unpack_bytes(td::Ref<vm::Cell> cell) {
+Result<Bytes> unpack_bytes(td::Ref<vm::Cell> cell, std::size_t remaining_bytes) {
   if (cell.is_null() || cell->get_level() != 0)
     return Error{"cell-level"};
   vm::CellSlice s{vm::NoVm{}, cell};
@@ -84,6 +84,8 @@ Result<Bytes> unpack_bytes(td::Ref<vm::Cell> cell) {
   auto length = s.fetch_ulong(32);
   if (length == 0 || length > max_object_bytes)
     return Error{"object-bound"};
+  if (length > remaining_bytes)
+    return Error{"state-resource"};
   Hash expected;
   if (!s.fetch_bytes(td::MutableSlice(reinterpret_cast<char*>(expected.data()), 32)))
     return Error{"auth-bytes-hash"};
