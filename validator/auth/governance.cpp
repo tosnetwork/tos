@@ -1,7 +1,7 @@
 #include "governance.h"
 namespace tos::auth {
 Result<VerifiedCertificate> verify_current_governance(const ChainContext& chain, const RegistrySnapshot& governing,
-                                                      const RegistryState& current, const Update& update,
+                                                      const CurrentRegistry& current, const Update& update,
                                                       const Authorizations& evidence, std::uint32_t inclusion,
                                                       ObjectReader& reader) {
   if ((update.operation_ != 4 && update.operation_ != 6) || update.identity_ != Hash{})
@@ -45,10 +45,12 @@ Result<VerifiedCertificate> verify_current_governance(const ChainContext& chain,
   // Old sessions retain consensus authority, but their old role-5 references
   // cannot authorize new governance after an inclusion-time key change.
   for (const auto& record : cert.value().records_) {
-    auto identity = current.identities().find(record.identity_);
-    if (identity == current.identities().end())
+    auto identity = current.lookup_identity(record.identity_);
+    if (!identity.ok())
+      return identity.error();
+    if (!identity.value())
       return Error{"governance-current-identity"};
-    auto keys = select_identity_keys(identity->second, current, inclusion, {{5, 1, 1}});
+    auto keys = select_identity_keys(*identity.value(), current, inclusion, {{5, 1, 1}});
     if (!keys.ok())
       return keys.error();
     auto ref = key_reference(keys.value()[0]);

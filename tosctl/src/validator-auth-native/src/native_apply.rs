@@ -21,11 +21,15 @@ pub struct NativeIdentityContext<'a, H> {
     pub history: &'a H,
 }
 pub trait CurrentRegistry: KeyHistory {
+    fn lookup_identity(&self, id: &Hash) -> Result<Option<Identity>, Error>;
     fn chain_domain(&self) -> &Hash;
     fn current_policy(&self) -> &Hash;
     fn coordinate(&self) -> u32;
 }
 impl CurrentRegistry for RegistryState {
+    fn lookup_identity(&self, id: &Hash) -> Result<Option<Identity>, Error> {
+        Ok(self.identities.get(id).cloned())
+    }
     fn chain_domain(&self) -> &Hash {
         RegistryState::chain_domain(self)
     }

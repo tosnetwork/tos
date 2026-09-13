@@ -478,3 +478,13 @@ add_executable(test-p0-native-evidence-mutant EXCLUDE_FROM_ALL native-evidence-t
 target_include_directories(test-p0-native-evidence-mutant PRIVATE "${PROJECT_SOURCE_DIR}/validator/auth")
 target_link_libraries(test-p0-native-evidence-mutant PRIVATE tos_validator_auth_native)
 set_target_properties(test-p0-native-evidence-mutant PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+
+add_executable(test-p0-native-governance governance-test.cpp)
+target_compile_definitions(test-p0-native-governance PRIVATE P0_NATIVE_GOVERNANCE=1)
+target_link_libraries(test-p0-native-governance PRIVATE tos_validator_auth_native)
+set_target_properties(test-p0-native-governance PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+add_executable(test-p0-native-governance-mutant EXCLUDE_FROM_ALL governance-test.cpp "${CMAKE_CURRENT_BINARY_DIR}/native-registry-mutated.cpp")
+target_compile_definitions(test-p0-native-governance-mutant PRIVATE P0_NATIVE_GOVERNANCE=1)
+target_include_directories(test-p0-native-governance-mutant PRIVATE "${PROJECT_SOURCE_DIR}/validator/auth")
+target_link_libraries(test-p0-native-governance-mutant PRIVATE tos_validator_auth_native)
+set_target_properties(test-p0-native-governance-mutant PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)

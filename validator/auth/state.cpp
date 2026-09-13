@@ -77,6 +77,10 @@ Result<bool> load_dictionary(td::Ref<vm::Cell> root, std::map<Hash, T>& values, 
   return true;
 }
 }  // namespace
+Result<std::optional<Identity>> RegistryState::lookup_identity(const Hash& id) const {
+  auto it = identities_.find(id);
+  return it == identities_.end() ? std::optional<Identity>{} : std::optional<Identity>{it->second};
+}
 Result<Key> RegistryState::find(const Hash& id) const {
   auto i = keys_.find(id);
   if (i == keys_.end())

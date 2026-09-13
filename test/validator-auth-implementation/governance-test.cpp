@@ -3,6 +3,9 @@
 #include <iostream>
 
 #include "validator/auth/governance.h"
+#ifdef P0_NATIVE_GOVERNANCE
+#include "validator/auth/native-transaction.h"
+#endif
 #include "vm/boc.h"
 
 #include "admin-fixture.h"
@@ -154,7 +157,17 @@ int main(int argc, char** argv) {
       auto snapshot = value(RegistrySnapshot::compile(f.committee, f.policy), "snapshot");
       auto before = value(f.current.encode_cell(), "state-before");
       ObjectReader reader({});
+#ifdef P0_NATIVE_GOVERNANCE
+      auto native = value(NativeRegistry::bootstrap(before, f.current.coordinate()), "fixture-native-governance");
+      if (std::string(label) == "governance-native-resource")
+        native = value(NativeRegistryBlock::begin(native, 1, {2, 32}), "fixture-native-budget").state();
+      auto checkpoint = value(native.checkpoint(), "fixture-native-checkpoint");
+      auto result = verify_current_governance(f.chain, snapshot, native, f.update, f.evidence, f.inclusion, reader);
+      check(checkpoint->get_hash() == value(native.checkpoint(), "fixture-after-checkpoint")->get_hash(),
+            "native-verification-read-only");
+#else
       auto result = verify_current_governance(f.chain, snapshot, f.current, f.update, f.evidence, f.inclusion, reader);
+#endif
       if (std::string(error) == "-")
         check(result.ok(), label);
       else if (result.ok() || result.error().code != error) {
@@ -287,6 +300,11 @@ int main(int argc, char** argv) {
     f.inclusion = 1;
     run(f, "governance-retired-admin", "governance-current-key");
     run(fixture(400), "governance-full-400");
+#ifdef P0_NATIVE_GOVERNANCE
+    f = base;
+    f.inclusion = 1;
+    run(f, "governance-native-resource", "state-resource");
+#endif
     if (!out.empty())
       std::ofstream(out / "complete") << count << '\n';
     std::cout << "PASS: current governance authority " << count << " cases\n";

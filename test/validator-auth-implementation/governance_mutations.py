@@ -16,9 +16,9 @@ CPP=[
  ('gov-update','governance-update-binding','auth.update_id_ != id.value() ||',''),
  ('gov-roster','governance-roster-binding','|| auth.committee_ != governing.committee_id()',''),
  ('gov-claim-as-context','governance-network','governing.verify(cert.value(), expected.value())','governing.verify(cert.value(), cert.value().duty_)'),
- ('gov-drop-missing','governance-missing-current-identity','if (identity == current.identities().end()) return Error{"governance-current-identity"};','if (identity == current.identities().end()) continue;'),
+ ('gov-drop-missing','governance-missing-current-identity','if (!identity.value()) return Error{"governance-current-identity"};','if (!identity.value()) continue;'),
  ('gov-old-key','governance-retired-admin','if (ref.value() != Keyref{component.suite_, component.parameters_, component.epoch_, component.key_id_}) return Error{"governance-current-key"};',''),
- ('gov-old-time','governance-expired-admin','select_identity_keys(identity->second, current, inclusion, {{5, 1, 1}})','select_identity_keys(identity->second, current, committee.anchor_mc_, {{5, 1, 1}})'),
+ ('gov-old-time','governance-expired-admin','select_identity_keys(*identity.value(), current, inclusion, {{5, 1, 1}})','select_identity_keys(*identity.value(), current, committee.anchor_mc_, {{5, 1, 1}})'),
 ]
 RUST=[
  ('gov-target','governance-target-identity','|| update.identity != [0; 32]',''),
@@ -35,9 +35,9 @@ RUST=[
  ('gov-update','governance-update-binding','auth.update_id != object_id("update", update)? ||',''),
  ('gov-roster','governance-roster-binding','|| auth.committee != *governing.committee_id()',''),
  ('gov-claim-as-context','governance-network','governing.verify_certificate(&certificate, &expected)?','governing.verify_certificate(&certificate, &certificate.duty)?'),
- ('gov-drop-missing','governance-missing-current-identity','let identity = current.identities.get(&record.identity).ok_or(Error("governance-current-identity"))?;','let Some(identity) = current.identities.get(&record.identity) else { continue; };'),
+ ('gov-drop-missing','governance-missing-current-identity','let identity = current.lookup_identity(&record.identity)?.ok_or(Error("governance-current-identity"))?;','let Some(identity) = current.lookup_identity(&record.identity)? else { continue; };'),
  ('gov-old-key','governance-retired-admin','if reference != (Keyref { suite: component.suite, parameters: component.parameters, epoch: component.epoch, key_id: component.key_id, }) { return Err(Error("governance-current-key")); }',''),
- ('gov-old-time','governance-expired-admin','select_identity_keys(identity, current, inclusion, &[(5, 1, 1)])?','select_identity_keys(identity, current, committee.anchor_mc, &[(5, 1, 1)])?'),
+ ('gov-old-time','governance-expired-admin','select_identity_keys(&identity, current, inclusion, &[(5, 1, 1)])?','select_identity_keys(&identity, current, committee.anchor_mc, &[(5, 1, 1)])?'),
 ]
 def main(args):
  if args.language=='cpp':

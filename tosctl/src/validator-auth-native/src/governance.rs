@@ -1,4 +1,4 @@
-use crate::registry::RegistryState;
+use crate::native_apply::CurrentRegistry;
 use tos_validator_auth::{
     codec::{decode, encode, Error},
     context::{admin_session_id, make_duty, ChainContext},
@@ -10,10 +10,13 @@ use tos_validator_auth::{
 };
 /// The current governing committee and inclusion-time registry are independently
 /// trusted native inputs. This does not replace voting rules or apply an update.
-pub fn verify_current_governance<F: FnMut(&ObjectRef, u8) -> Result<Vec<u8>, Error>>(
+pub fn verify_current_governance<
+    F: FnMut(&ObjectRef, u8) -> Result<Vec<u8>, Error>,
+    S: CurrentRegistry,
+>(
     chain: &ChainContext,
     governing: &RegistrySnapshot,
-    current: &RegistryState,
+    current: &S,
     update: &Update,
     evidence: &Authorizations,
     inclusion: u32,
@@ -59,9 +62,10 @@ pub fn verify_current_governance<F: FnMut(&ObjectRef, u8) -> Result<Vec<u8>, Err
     let certificate = decode::<Certificate>(&reader.resolve(&auth.certificate, 4)?)?;
     let verified = governing.verify_certificate(&certificate, &expected)?;
     for record in &certificate.records {
-        let identity =
-            current.identities.get(&record.identity).ok_or(Error("governance-current-identity"))?;
-        let keys = select_identity_keys(identity, current, inclusion, &[(5, 1, 1)])?;
+        let identity = current
+            .lookup_identity(&record.identity)?
+            .ok_or(Error("governance-current-identity"))?;
+        let keys = select_identity_keys(&identity, current, inclusion, &[(5, 1, 1)])?;
         let reference = key_reference(&keys[0])?;
         let component = &record.components[0];
         if reference

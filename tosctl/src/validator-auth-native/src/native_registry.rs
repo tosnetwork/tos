@@ -345,6 +345,13 @@ impl NativeRegistry {
     }
 }
 impl CurrentRegistry for NativeRegistry {
+    fn lookup_identity(&self, id: &Hash) -> Result<Option<Identity>, Error> {
+        match self.identity(id) {
+            Ok(value) => Ok(Some(value)),
+            Err(Error("unknown-entry")) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
     fn chain_domain(&self) -> &Hash {
         &self.domain
     }

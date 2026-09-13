@@ -26,6 +26,7 @@ class NativeRegistry final : public CurrentRegistry {
   Result<td::Ref<vm::Cell>> encode_cell() const;
   Result<td::Ref<vm::Cell>> checkpoint() const;
   Result<Identity> identity(const Hash&) const;
+  Result<std::optional<Identity>> lookup_identity(const Hash&) const override;
   Result<Key> find(const Hash&) const override;
   Result<std::uint64_t> latest_epoch(const Hash&, KeySlot) const override;
   Result<bool> ever_registered(const Hash&) const override;

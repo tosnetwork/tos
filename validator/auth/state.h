@@ -14,6 +14,7 @@ struct StateReadBudget {
 };
 class CurrentRegistry : public KeyHistory {
  public:
+  virtual Result<std::optional<Identity>> lookup_identity(const Hash&) const = 0;
   virtual const Hash& chain_domain() const = 0;
   virtual const Hash& current_policy() const = 0;
   virtual std::uint32_t coordinate() const = 0;
@@ -43,6 +44,7 @@ class RegistryState final : public CurrentRegistry {
   static Result<RegistryState> genesis(Hash chain_domain, const Policy&, std::vector<Identity>, std::vector<Key>);
   static Result<RegistryState> decode_cell(td::Ref<vm::Cell>, std::uint32_t coordinate, StateReadBudget = {});
   Result<td::Ref<vm::Cell>> encode_cell() const;
+  Result<std::optional<Identity>> lookup_identity(const Hash&) const override;
   Result<Key> find(const Hash&) const override;
   Result<std::uint64_t> latest_epoch(const Hash&, KeySlot) const override;
   Result<bool> ever_registered(const Hash&) const override;

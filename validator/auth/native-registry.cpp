@@ -199,6 +199,15 @@ Result<NativeRegistry> NativeRegistry::restore(td::Ref<vm::Cell> checkpoint, con
 Result<Identity> NativeRegistry::identity(const Hash& id) const {
   return capture([&] { return read<Identity>(identities_, id, budget_); });
 }
+Result<std::optional<Identity>> NativeRegistry::lookup_identity(const Hash& id) const {
+  auto found = identity(id);
+  if (!found.ok()) {
+    if (found.error().code == "unknown-entry")
+      return std::optional<Identity>{};
+    return found.error();
+  }
+  return std::optional<Identity>{std::move(found.value())};
+}
 Result<Key> NativeRegistry::find(const Hash& id) const {
   return capture([&] { return read<Key>(keys_, id, budget_); });
 }

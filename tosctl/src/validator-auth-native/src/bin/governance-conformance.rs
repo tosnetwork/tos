@@ -9,14 +9,16 @@ use tos_validator_auth::{
 use tos_validator_auth_native::{
     cells,
     governance::verify_current_governance,
+    native_registry::{NativeRegistry, NativeRegistryBlock},
     registry::{RegistryState, StateReadBudget},
 };
 fn run() -> Result<(), String> {
     let args: Vec<_> = env::args().collect();
-    if args.len() != 2 {
+    let persistent = args.len() == 3 && args[1] == "--native";
+    if args.len() != 2 && !persistent {
         return Err("arguments".to_owned());
     }
-    let root = Path::new(&args[1]);
+    let root = Path::new(&args[if persistent { 2 } else { 1 }]);
     let count: usize = fs::read_to_string(root.join("complete"))
         .map_err(|e| e.to_string())?
         .trim()
@@ -38,7 +40,8 @@ fn run() -> Result<(), String> {
             let inclusion = f[1].parse().map_err(|_| Error("inclusion"))?;
             let cell = cells::read_boc(&read("registry")?, true)?;
             let before = cell.repr_hash();
-            let current = RegistryState::decode_cell(cell, coordinate, StateReadBudget::default())?;
+            let current =
+                RegistryState::decode_cell(cell.clone(), coordinate, StateReadBudget::default())?;
             let committee = decode::<Committee>(&read("committee")?)?;
             let policy = decode::<Policy>(&read("policy")?)?;
             let snapshot = RegistrySnapshot::compile(&committee, &policy)?;
@@ -54,15 +57,48 @@ fn run() -> Result<(), String> {
             };
             let mut reader =
                 ObjectReader::new(|_: &ObjectRef, _: u8| Err(Error("object-unavailable")));
-            let result = verify_current_governance(
-                &chain,
-                &snapshot,
-                &current,
-                &decode::<Update>(&read("update")?)?,
-                &decode::<Authorizations>(&read("evidence")?)?,
-                inclusion,
-                &mut reader,
-            );
+            let native_result = if persistent {
+                let mut native =
+                    NativeRegistry::bootstrap(cell, coordinate, StateReadBudget::default())?;
+                if f[2] == "governance-native-resource" {
+                    native = NativeRegistryBlock::begin(
+                        &native,
+                        1,
+                        StateReadBudget { entries: 2, bytes: 32 },
+                    )?
+                    .state()
+                    .clone();
+                }
+                let checkpoint = native.checkpoint()?.repr_hash();
+                let result = verify_current_governance(
+                    &chain,
+                    &snapshot,
+                    &native,
+                    &decode::<Update>(&read("update")?)?,
+                    &decode::<Authorizations>(&read("evidence")?)?,
+                    inclusion,
+                    &mut reader,
+                );
+                if native.checkpoint()?.repr_hash() != checkpoint {
+                    return Err(Error("native-verification-read-only"));
+                }
+                Some(result)
+            } else {
+                None
+            };
+            let result = if let Some(result) = native_result {
+                result
+            } else {
+                verify_current_governance(
+                    &chain,
+                    &snapshot,
+                    &current,
+                    &decode::<Update>(&read("update")?)?,
+                    &decode::<Authorizations>(&read("evidence")?)?,
+                    inclusion,
+                    &mut reader,
+                )
+            };
             if current.encode_cell()?.repr_hash() != before {
                 return Err(Error("verification-read-only"));
             }
