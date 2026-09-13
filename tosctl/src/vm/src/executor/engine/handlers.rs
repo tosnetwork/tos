@@ -988,6 +988,8 @@ impl Handlers {
                 .set(0x15, execute_p256_chksigns)
                 .set(0x16, execute_hashbu)
                 .set(0x17, execute_p0_chksign)
+                .set(0x18, execute_p0_state)
+                .set(0x19, execute_p0_apply)
                 .set(0x20, execute_ristretto_255_from_hash)
                 .set(0x21, execute_ristretto_255_validate::<Signaling>)
                 .set(0x22, execute_ristretto_255_add::<Signaling>)

@@ -185,3 +185,18 @@ Native owner execution:
 - Full Ubuntu sanitizer builds run both native exports and compare every file.
   The nested-Merkle mutation exercises the dedicated P0 effective-level adapter,
   without modifying historical Rust cell or proof implementation.
+
+Privileged native VM host and deterministic history witnesses:
+
+- `test-p0-native-host-vm out` exports 25 routing/isolation/gas cases;
+  Rust `native-host-parity out` independently matches them. The host fixture is
+  deliberately only a VM boundary instrument, not configuration-account authority.
+- `test-p0-native-header owner-transactions-mc out` exports 25 authenticated native
+  header cases. Rust `native-header-conformance out` also independently regenerates
+  every accepted witness and checks its cell hash. No archive IO is allowed.
+- `native_host_mutations.py` compiles six C++ and six Rust guard removals;
+  `native_header_mutations.py` compiles fourteen C++ and thirteen Rust removals.
+  Baselines must pass before and after, and only the intended assertion counts.
+- CI repeats both exports with all native dependencies under ASan/UBSan/LSan and
+  compares complete fixture directories. Real transaction commit and native
+  network integration remain separate acceptance boundaries.

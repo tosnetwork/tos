@@ -28,6 +28,7 @@
 #include "vm/log.h"
 #include "vm/stack.hpp"
 #include "vm/vmstate.h"
+#include "vm/validator-auth-host.h"
 
 namespace vm {
 
@@ -107,6 +108,7 @@ class VmState final : public VmStateInterface {
   td::uint16 max_data_depth = 512;  // Default value
   int global_version{0};
   td::uint64 global_capabilities{0};
+  std::shared_ptr<ValidatorAuthHost> validator_auth_host_;
   size_t chksgn_counter = 0;
   size_t get_extra_balance_counter = 0;
   long long free_gas_consumed = 0;
@@ -359,6 +361,13 @@ class VmState final : public VmStateInterface {
   }
   int get_global_version() const override {
     return global_version;
+  }
+  // This native transaction authority is deliberately absent from child VMs.
+  void set_validator_auth_host(std::shared_ptr<ValidatorAuthHost> host) {
+    validator_auth_host_ = std::move(host);
+  }
+  const std::shared_ptr<ValidatorAuthHost>& get_validator_auth_host() const {
+    return validator_auth_host_;
   }
   // Chain execution input. SETC7 and RUNVM arguments cannot grant capabilities.
   td::uint64 get_global_capabilities() const {

@@ -13,6 +13,9 @@ use tos_validator_auth::{
     context::ChainContext,
     types::Anchor,
 };
+#[path = "native_header.rs"]
+mod header;
+pub use header::native_header_proof;
 #[derive(Clone, Copy)]
 pub struct HistoryReadBudget {
     pub blocks: usize,

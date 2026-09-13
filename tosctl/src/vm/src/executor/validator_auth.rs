@@ -124,3 +124,54 @@ pub(super) fn execute_p0_chksign(engine: &mut Engine) -> Status {
     engine.cc.stack.push(StackItem::boolean(valid));
     Ok(())
 }
+
+fn native_gate(engine: &mut Engine) -> Status {
+    if engine.block_version() < 16 || !engine.check_capabilities(CAPABILITY) {
+        if engine.block_version() >= 4 {
+            engine.try_use_gas(Gas::basic_gas_price(0, 0))?;
+        } else {
+            engine.use_gas(Gas::basic_gas_price(0, 0));
+        }
+        fail!(ExceptionCode::InvalidOpcode);
+    }
+    Ok(())
+}
+fn charge_native(engine: &mut Engine, gas: i64) -> Status {
+    if gas < 0 {
+        fail!(ExceptionCode::RangeCheckError);
+    }
+    engine.try_use_gas(gas)
+}
+pub(super) fn execute_p0_state(engine: &mut Engine) -> Status {
+    native_gate(engine)?;
+    engine.load_instruction(Instruction::new("P0STATE"))?;
+    let Some(host) = engine.validator_auth_host() else {
+        fail!(ExceptionCode::InvalidOpcode);
+    };
+    let result = host
+        .lock()
+        .map_err(|_| chain_block::error!("P0 host poisoned"))?
+        .checkpoint(&mut |gas| charge_native(engine, gas))?;
+    engine.cc.stack.push(StackItem::Cell(result));
+    Ok(())
+}
+pub(super) fn execute_p0_apply(engine: &mut Engine) -> Status {
+    native_gate(engine)?;
+    engine.load_instruction(Instruction::new("P0APPLY"))?;
+    let Some(host) = engine.validator_auth_host() else {
+        fail!(ExceptionCode::InvalidOpcode);
+    };
+    if engine.cc.stack.depth() < 2 {
+        fail!(ExceptionCode::StackUnderflow);
+    }
+    fetch_stack(engine, 2)?;
+    let evidence = engine.cmd.var(0).as_cell()?.clone();
+    let update = engine.cmd.var(1).as_cell()?.clone();
+    let result = host.lock().map_err(|_| chain_block::error!("P0 host poisoned"))?.apply(
+        update,
+        evidence,
+        &mut |gas| charge_native(engine, gas),
+    )?;
+    engine.cc.stack.push(StackItem::Cell(result));
+    Ok(())
+}

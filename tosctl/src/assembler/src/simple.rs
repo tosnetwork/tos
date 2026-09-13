@@ -313,6 +313,8 @@ impl Engine {
         GTINT z = parse_const_i8             => 0xC2, z
         HASHBU                               => 0xF9, 0x16
         P0CHKSIGN                            => 0xF9, 0x17
+        P0STATE                              => 0xF9, 0x18
+        P0APPLY                              => 0xF9, 0x19
         HASHCU                               => 0xF9, 0x00
         HASHSU                               => 0xF9, 0x01
         HASHEXT z = parse_const_u8_0_4       => 0xF9, 0x04, z

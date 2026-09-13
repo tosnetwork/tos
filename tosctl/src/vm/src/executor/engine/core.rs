@@ -117,6 +117,7 @@ pub struct Engine {
     // nested RUNVM (each costing little gas) can overflow the host's native
     // stack and crash the process rather than merely failing the transaction.
     vm_nesting_depth: u16,
+    validator_auth_host: Option<Arc<Mutex<dyn crate::validator_auth_host::ValidatorAuthHost>>>,
     capabilities: u64,
     block_version: u32,
 }
@@ -233,8 +234,22 @@ impl Engine {
             max_data_depth: 512,
             vm_nesting_depth: 0,
             capabilities,
+            validator_auth_host: None,
             block_version: 0,
         }
+    }
+
+    pub fn set_validator_auth_host(
+        &mut self,
+        host: Arc<Mutex<dyn crate::validator_auth_host::ValidatorAuthHost>>,
+    ) {
+        self.validator_auth_host = Some(host);
+    }
+
+    pub fn validator_auth_host(
+        &self,
+    ) -> Option<Arc<Mutex<dyn crate::validator_auth_host::ValidatorAuthHost>>> {
+        self.validator_auth_host.clone()
     }
 
     pub fn set_block_version(&mut self, block_version: u32) {
@@ -1096,6 +1111,7 @@ impl Engine {
             max_data_depth: self.max_data_depth,
             vm_nesting_depth: self.vm_nesting_depth + 1,
             capabilities: self.capabilities,
+            validator_auth_host: None,
             block_version: self.block_version,
         };
         // A child VM executes on the host call stack (execute -> ... ->

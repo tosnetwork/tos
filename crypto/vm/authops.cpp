@@ -110,6 +110,33 @@ int exec_p0_chksign(VmState* st) {
   stack.push_bool(std::get<bool>(result));
   return 0;
 }
+void charge_native(VmState* st, long long gas) {
+  if (gas < 0)
+    throw VmError{Excno::range_chk, "negative native charge"};
+  st->consume_gas_chk(gas);
+}
+int exec_p0_state(VmState* st) {
+  VM_LOG(st) << "execute P0STATE";
+  auto host = st->get_validator_auth_host();
+  if (!host)
+    throw VmError{Excno::inv_opcode, "P0 native transaction context required"};
+  auto result = host->checkpoint([&](long long gas) { charge_native(st, gas); });
+  st->get_stack().push_cell(std::move(result));
+  return 0;
+}
+int exec_p0_apply(VmState* st) {
+  VM_LOG(st) << "execute P0APPLY";
+  auto host = st->get_validator_auth_host();
+  if (!host)
+    throw VmError{Excno::inv_opcode, "P0 native transaction context required"};
+  auto& stack = st->get_stack();
+  stack.check_underflow(2);
+  auto evidence = stack.pop_cell();
+  auto update = stack.pop_cell();
+  auto result = host->apply(std::move(update), std::move(evidence), [&](long long gas) { charge_native(st, gas); });
+  stack.push_cell(std::move(result));
+  return 0;
+}
 class CapabilityGated final : public OpcodeInstr {
   std::unique_ptr<OpcodeInstr> inner_;
 
@@ -134,5 +161,7 @@ class CapabilityGated final : public OpcodeInstr {
 }  // namespace
 void register_validator_auth_ops(OpcodeTable& table) {
   table.insert(new CapabilityGated(OpcodeInstr::mksimple(p0_chksign_opcode, 16, "P0CHKSIGN", exec_p0_chksign)));
+  table.insert(new CapabilityGated(OpcodeInstr::mksimple(p0_state_opcode, 16, "P0STATE", exec_p0_state)));
+  table.insert(new CapabilityGated(OpcodeInstr::mksimple(p0_apply_opcode, 16, "P0APPLY", exec_p0_apply)));
 }
 }  // namespace vm

@@ -32,5 +32,9 @@ class NativeFinalizedHistory final : public FinalizedAnchorSource {
   static Result<NativeFinalizedHistory> open(td::Ref<vm::Cell> masterchain_state, const Anchor& head,
                                              const ChainContext&, NativeBlockReader, HistoryReadBudget = {});
   Result<Anchor> finalized_anchor(std::uint32_t coordinate) const override;
+  // Fixed-surface witness, authenticated by this state's native history index.
+  // Never consults the archive reader, cache, or mutable read budget.
+  Result<Anchor> authenticate_header(std::uint32_t coordinate, td::Ref<vm::Cell> proof) const;
 };
+Result<td::Ref<vm::Cell>> native_header_proof(td::Ref<vm::Cell> block);
 }  // namespace tos::auth
