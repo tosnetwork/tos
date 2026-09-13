@@ -223,6 +223,22 @@ Result<bool> NativeRegistry::ever_registered(const Hash& id) const {
     return value.not_null() && std::equal(id.begin(), id.end(), key.begin());
   });
 }
+void NativeRegistry::apply_updates(NativeRegistry& next, const std::vector<std::pair<Update, Authorizations>>& updates,
+                                   const Apply& apply) {
+  for (const auto& [update, evidence] : updates) {
+    need(update.identity_ != Hash{}, "unknown-identity");
+    auto before = take(next.identity(update.identity_));
+    auto effect = take(apply(next, before, update, evidence));
+    if (effect.archived_key) {
+      const auto& key = *effect.archived_key;
+      put(next.keys_, take(object_id("key", key)), key, vm::Dictionary::SetMode::Add, next.budget_);
+      epoch_put(next.epochs_, key);
+    }
+    schedules(next.due_, before, false);
+    schedules(next.due_, effect.identity, true);
+    put(next.identities_, update.identity_, effect.identity, vm::Dictionary::SetMode::Replace, next.budget_);
+  }
+}
 Result<NativeRegistry> NativeRegistry::apply(std::uint32_t at,
                                              const std::vector<std::pair<Update, Authorizations>>& updates,
                                              const Apply& apply, StateReadBudget budget) const {
@@ -258,20 +274,8 @@ Result<NativeRegistry> NativeRegistry::apply(std::uint32_t at,
     auto selected = schedule.lookup_nearest_key(td::BitPtr(at_key.data()), 32, false, true);
     need(selected.not_null() && selected->size() == 256 && selected->size_refs() == 0, "policy-index");
     need(selected.write().fetch_bytes(td::MutableSlice(next.policy_.data(), next.policy_.size())), "policy-index");
-    for (const auto& [update, evidence] : updates) {
-      need(update.identity_ != Hash{}, "unknown-identity");
-      auto before = take(next.identity(update.identity_));
-      auto effect = take(apply(next, before, update, evidence));
-      if (effect.archived_key) {
-        const auto& key = *effect.archived_key;
-        put(next.keys_, take(object_id("key", key)), key, vm::Dictionary::SetMode::Add, next.budget_);
-        epoch_put(next.epochs_, key);
-      }
-      schedules(next.due_, before, false);
-      schedules(next.due_, effect.identity, true);
-      put(next.identities_, update.identity_, effect.identity, vm::Dictionary::SetMode::Replace, next.budget_);
-      changed = true;
-    }
+    apply_updates(next, updates, apply);
+    changed = changed || !updates.empty();
     if (changed) {
       need(revision_ != UINT64_MAX, "registry-revision");
       next.revision_ = revision_ + 1;

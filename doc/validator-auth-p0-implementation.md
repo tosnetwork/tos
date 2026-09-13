@@ -20,14 +20,15 @@ or PQ suite allocation is authorized by this work.
 | Thin transport and API association | C++ and Rust framing and semantic association for all 15 methods, including result receipts, proof attachments and cursors | 182 framing cases and 133 semantic cases per language; direct signer-list, receipt-hash and context guard removals | Native node context/history adapters and remote mTLS deployment |
 | Native VM and transaction execution | C++/Rust P0CHKSIGN, native capability metadata, Fift/FunC and Rust assembly bindings | 168 exact outcome/gas comparisons; getter config and nested VM; eight whole transactions including action rollback | Elector/owner statement construction and native admission |
 | Native committee derivation | Explicit native identity/stake descriptor, authenticated Config35/34 and Config46, original native selection, owned transport order and VAM1 | 40 C++/Rust state cases including a full 400-member snapshot, shuffle, shard weights, temporary election and budget exhaustion | Elector emission and session admission |
-| Native registry state | C++ and independent Rust Config46 genesis, encoding and identity-update replay; immutable key archive and owned successor state | 501 identities / 2506 keys; 34 cross-language replay cases with checkpoint/continuous equivalence, control retention and rejected-block atomicity | Native block apply, elector/config operations, persistent dictionary performance and global apply |
+| Native registry state | C++ and independent Rust Config46 genesis, encoding and identity-update replay; immutable key archive and owned successor state | 501 identities / 2506 keys; 34 cross-language replay cases with checkpoint/continuous equivalence, control retention and rejected-block atomicity | Native contract installation, elector/config operations and global apply |
 | Native state proofs | C++ and Rust actual masterchain Config8/9/10/16/46 and Merkle proofs for profile, policy, key and registry ranges | State-root substitution, omitted entries, false terminal page, unrelated revealed values, detached physical cells, capability and atomic-publication guard removals | RPC node wiring, owner proof dispatch and Rust global registry apply |
 | Native certificate proofs and RPC | Independent C++/Rust certificate verification from native committee and policy proofs; C++ methods 12/13 and private Rust verified output | 55 shared cases; real local HTTP over 16 snapshots; exact signers/weight, trusted context, error provenance and single-fetch prepared request checks | Native manager session/history/archive source and remote serving |
 | Native owner execution | C++ and independent Rust VAF1 kind-1 proofs over native account transactions, full trusted anchor and current owner/stake allocation | 68 shared proof cases from real masterchain/workchain-0 wallet transactions; action rollback, forged wallet signatures, block substitution and 52 compiled guards | Native elector receipt processing, normal stake rules and atomic update admission |
+| Native registry transaction prefixes | Independent C++/Rust per-transaction immutable candidates, due-before-request order and private block-start revision | 80 real-owner cases match whole-block replay; rejected/discarded candidates, cumulative budget, overflow and nine compiled mutations | Contract data installation and native action-phase commit wiring |
 | Native configuration gates | Actual C++ admission/transition and Rust config admission, frozen Config46 registration, capability/version, required parameters and revision continuity | 43 shared cases, 11 legacy transition tests, 47 compiled guards and full-dependency sanitizer parity | Native contract authorization, atomic root installation and approved activation |
-| Persistent native registry | Independent C++/Rust immutable cell dictionaries, validated derived indexes and per-operation native authority | 34 replay cases, eight checkpoint attacks, 74 real-owner authority cases and 36 compiled guards; bounded work over 501 historical identities | Contract-owned persistence, global/elector operations and node installation |
+| Persistent native registry | Independent C++/Rust immutable cell dictionaries, validated derived indexes and per-operation native authority | 34 replay cases, eight checkpoint attacks, 80 real-owner authority cases and 36 compiled guards; bounded work over 501 historical identities | Contract-owned persistence, global/elector operations and node installation |
 | Native finalized history | Independent C++/Rust resolution of full anchors from authenticated OldMcBlocksInfo and original native block bytes | 37 shared cases, 34 compiled guards, exact file/root/context/new-state binding, bounded reads and full-dependency sanitizer parity | Native manager archive reader and independently established finalized head |
-| Authenticated ordered identity apply | C++ and independent Rust compose native owner proofs, PoP and current administration with per-operation resulting state | 74 shared cases from real wallet approvals, same-block administration rotation, due/policy boundaries, exact native bytes and 22 compiled guards | Native elector/config transaction admission and installed chain root |
+| Authenticated ordered identity apply | C++ and independent Rust compose native owner proofs, PoP and current administration with per-operation resulting state | 80 shared cases from real wallet approvals, same-block administration rotation, due/policy boundaries, exact native bytes and 22 compiled guards | Native elector/config transaction admission and installed chain root |
 | Authority primitives | Independent C++/Rust session/duty derivation, C0 PoP, current identity-role-5 and current governance quorum verification; separate permit/receipt trust | 76 shared context/identity cases, 28 current-governance cases and 25 service-trust/polling cases; expired or rotated governance keys refused | Normal configuration voting and native transaction admission |
 | Signer persistence | Native append-only safety ledger, actual C0 secret provider, witness consumption and sign/get-result service | Both-order conflict rules, exact retransmission, journal/provider backup rollback, stale fence, terminal retention, real fsync failure, unknown outcome refusal | Native consensus permissions and remote serving |
 | Signer administration | Durable prepare/stage/retire/cancel intent execution, provider preparation IDs and PoP reservation IDs | Real PoP and current admin signatures, owner refusal before reservation, exact receipts, cancellation target, provider rollback and six process-kill boundaries | Native node context and finalized-history wiring |
@@ -60,7 +61,7 @@ state/authority/proof, journal, signer/provider and local channel harnesses kill
 25, 11, 7 and 6 compiled guard removals respectively. Scoped object storage,
 service issuers and C++ API semantics add eight, nine and eight removals. The
 administration harness adds eleven. The combined implementation harness contains
-730 compiled production mutations, including 47 native configuration, 36 persistent registry, 34 native finalized-history and 22 authenticated ordered-apply checks,
+739 compiled production mutations, including nine transaction-prefix and 47 native configuration, 36 persistent registry, 34 native finalized-history and 22 authenticated ordered-apply checks,
 52 native owner-proof/resource checks,
 46 context/identity-authority checks,
 33 current-governance checks, 28 independent certificate proof checks,
@@ -88,7 +89,10 @@ HEAD or a GitHub CI result.
 
 `.github/workflows/validator-auth-p0-implementation.yml` builds the focused native
 libraries and Rust crate on Ubuntu x86_64 and ARM, records the checked HEAD, runs
-these checks and uploads evidence. The previous implementation milestone passed both focused CI architectures; each
+these checks and uploads evidence. Four independent x86 guard groups cover core,
+service, state/proof and native execution mutations without a serial monolithic
+guard step; each starts from its own complete passing build/baseline. ARM retains
+the full functional and sanitizer baseline. The previous implementation milestone passed both focused CI architectures; each
 new addition requires CI evidence attached to its own HEAD.
 It neither triggers the full Ubuntu build nor starts a network.
 
@@ -103,11 +107,17 @@ authority are separate validated execution boundaries.
 
 ## Authenticated ordered identity application
 
+[Native registry transaction prefixes](validator-auth-p0-native-transactions.md)
+allow the native execution caller to retain only successfully committed requests.
+They preserve one revision increment per changed block, cumulative work admission
+and current authority across transactions. Eighty shared cases match whole-block
+replay; contract data and action-phase commit wiring remain separate.
+
 [Persistent native registry application](validator-auth-p0-native-registry.md)
 shares unchanged cell paths and maintains authenticated checkpoint indexes. The
 whole archive is validated at bootstrap/external restore; block application reads
 only affected identities/keys, due entries and policy selection. Both independent
-implementations match the existing 34 replay cases and 74 real-owner authority
+implementations match the existing 34 replay cases and 80 real-owner authority
 cases, and reject eight checkpoint substitutions. Thirty-six compiled controls
 cover the new paths. A 501-identity archive passes a 256-entry/64-KiB single-update
 budget; empty blocks in both three- and 501-identity registries use two index reads

@@ -1,5 +1,5 @@
-#ifdef P0_PERSISTENT_REGISTRY
-#include "validator/auth/native-registry.h"
+#if defined(P0_PERSISTENT_REGISTRY) || defined(P0_NATIVE_TRANSACTIONS)
+#include "validator/auth/native-transaction.h"
 #endif
 #include "validator/auth/native-apply.h"
 
@@ -73,17 +73,68 @@ Result<RegistryState> apply(const Case& c) {
   auto s = snapshot(c);
   NativeIdentityContext context{c.chain, s, c.history};
   ObjectReader reader({});
-#ifdef P0_PERSISTENT_REGISTRY
+#if defined(P0_PERSISTENT_REGISTRY) || defined(P0_NATIVE_TRANSACTIONS)
   auto parent =
       value(NativeRegistry::bootstrap(value(c.parent.encode_cell(), "persistent-parent"), c.parent.coordinate()),
             "persistent-bootstrap");
+#ifdef P0_NATIVE_TRANSACTIONS
+  auto begun = NativeRegistryBlock::begin(parent, c.inclusion);
+  if (!begun.ok())
+    return begun.error();
+  auto prefix = std::move(begun.value());
+  for (const auto& [update, auth] : c.updates) {
+    auto before = value(prefix.state().checkpoint(), "transaction-before")->get_hash();
+    auto candidate = prefix.apply_transaction(update, auth, context, reader);
+    check(value(prefix.state().checkpoint(), "transaction-after")->get_hash() == before,
+          "transaction-immutable-prefix");
+    if (!candidate.ok())
+      return candidate.error();
+    // Discarding a candidate models an uncommitted execution. Retrying from the
+    // accepted prefix must produce exactly the same successor, including indexes.
+    auto retry = value(prefix.apply_transaction(update, auth, context, reader), "transaction-retry");
+    check(value(retry.state().checkpoint(), "retry-state")->get_hash() ==
+              value(candidate.value().state().checkpoint(), "candidate-state")->get_hash(),
+          "transaction-discard-retry");
+    prefix = std::move(candidate.value());
+    auto bad = update;
+    bad.nonce_ = UINT64_MAX;
+    auto stable = value(prefix.state().checkpoint(), "transaction-stable")->get_hash();
+    auto rejected = prefix.apply_transaction(bad, auth, context, reader);
+    check(!rejected.ok() && rejected.error().code == "nonce", "transaction-rejected-nonce");
+    check(value(prefix.state().checkpoint(), "transaction-rejected")->get_hash() == stable,
+          "transaction-rejected-prefix");
+  }
+  if (c.updates.size() == 2) {
+    auto remaining = prefix.state().remaining();
+    auto initial = StateReadBudget{};
+    check(initial.bytes > remaining.bytes, "transaction-budget-fixture");
+    StateReadBudget budget{initial.entries - remaining.entries, initial.bytes - remaining.bytes - 1};
+    auto limited = value(NativeRegistryBlock::begin(parent, c.inclusion, budget), "transaction-limited-begin");
+    limited = value(limited.apply_transaction(c.updates[0].first, c.updates[0].second, context, reader),
+                    "transaction-limited-first");
+    auto stable = value(limited.state().checkpoint(), "limited-before")->get_hash();
+    auto exhausted = limited.apply_transaction(c.updates[1].first, c.updates[1].second, context, reader);
+    check(!exhausted.ok() && exhausted.error().code == "state-resource", "transaction-cumulative-budget");
+    check(value(limited.state().checkpoint(), "limited-after")->get_hash() == stable, "transaction-resource-rollback");
+  }
+  Result<NativeRegistry> next = prefix.state();
+#else
   auto next = parent.apply_native_block(c.inclusion, c.updates, context, reader);
+#endif
   if (!next.ok())
     return next.error();
   return RegistryState::decode_cell(value(next.value().encode_cell(), "persistent-result"), c.inclusion);
 #else
   return apply_native_identity_block(c.parent, c.inclusion, c.updates, context, reader);
 #endif
+}
+RegistryState revision(const RegistryState& state, std::uint64_t revision) {
+  vm::CellSlice s(vm::NoVm{}, value(state.encode_cell(), "revision-source"));
+  vm::CellBuilder b;
+  b.store_bits(s.fetch_bits(560)).store_long(revision, 64);
+  check(s.advance(64), "revision-skip");
+  b.append_cellslice(s);
+  return value(RegistryState::decode_cell(b.finalize(), state.coordinate()), "revision-fixture");
 }
 RegistryState coordinate(const RegistryState& state, std::uint32_t at) {
   return value(RegistryState::decode_cell(value(state.encode_cell(), "state-cell"), at), "coordinate-fixture");
@@ -341,6 +392,16 @@ int main(int argc, char** argv) {
     run(due, "native-due-before-new-admin");
     due.updates[0].second = evidence(due, due.updates[0].first, old_admin);
     run(due, "native-due-removes-old-admin", "identity-key-binding");
+    auto maximum = base;
+    maximum.parent = revision(base.parent, UINT64_MAX);
+    run(maximum, "native-revision-overflow", "registry-revision");
+    maximum.updates.clear();
+    auto max_empty = run(maximum, "native-maximum-empty");
+    check(max_empty.revision() == UINT64_MAX, "native-maximum-empty-revision");
+    maximum = two;
+    maximum.parent = revision(two.parent, UINT64_MAX - 1);
+    auto max_final = run(maximum, "native-maximum-two-transactions");
+    check(max_final.revision() == UINT64_MAX, "native-maximum-one-increment");
     std::ofstream(out / "complete") << count << '\n';
     std::cout << "PASS: native authenticated ordered apply " << count << " cases\n";
     return 0;

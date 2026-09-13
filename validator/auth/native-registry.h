@@ -10,8 +10,10 @@ class NativeRegistry final : public CurrentRegistry {
   std::uint32_t coordinate_ = 0;
   mutable StateReadBudget budget_;
   NativeRegistry() = default;
+  friend class NativeRegistryBlock;
   using Apply = std::function<Result<IdentityChange>(const NativeRegistry&, const Identity&, const Update&,
                                                      const Authorizations&)>;
+  static void apply_updates(NativeRegistry&, const std::vector<std::pair<Update, Authorizations>>&, const Apply&);
   Result<NativeRegistry> apply(std::uint32_t, const std::vector<std::pair<Update, Authorizations>>&, const Apply&,
                                StateReadBudget) const;
 

@@ -232,12 +232,7 @@ impl NativeRegistry {
         &self,
         at: u32,
         updates: &[(Update, Authorizations)],
-        mut apply: impl FnMut(
-            &Self,
-            &Identity,
-            &Update,
-            &Authorizations,
-        ) -> Result<IdentityChange, Error>,
+        apply: impl FnMut(&Self, &Identity, &Update, &Authorizations) -> Result<IdentityChange, Error>,
         budget: StateReadBudget,
     ) -> Result<Self, Error> {
         need(
@@ -278,10 +273,27 @@ impl NativeRegistry {
             "policy-index",
         )?;
         next.policy = read_hash(&mut selected)?;
+        Self::apply_updates(&mut next, updates, apply)?;
+        changed |= !updates.is_empty();
+        if changed {
+            next.revision = self.revision.checked_add(1).ok_or(Error("registry-revision"))?;
+        }
+        Ok(next)
+    }
+    fn apply_updates(
+        next: &mut Self,
+        updates: &[(Update, Authorizations)],
+        mut apply: impl FnMut(
+            &Self,
+            &Identity,
+            &Update,
+            &Authorizations,
+        ) -> Result<IdentityChange, Error>,
+    ) -> Result<(), Error> {
         for (update, evidence) in updates {
             need(update.identity != [0; 32], "unknown-identity")?;
             let before = next.identity(&update.identity)?;
-            let effect = apply(&next, &before, update, evidence)?;
+            let effect = apply(next, &before, update, evidence)?;
             if let Some(key) = effect.archived_key {
                 next.keys = next.put(next.keys.clone(), &object_id("key", &key)?, &key, true)?;
                 epoch_put(&mut next.epochs, &key)?;
@@ -290,12 +302,8 @@ impl NativeRegistry {
             schedules(&mut next.due, &effect.identity, true)?;
             next.identities =
                 next.put(next.identities.clone(), &update.identity, &effect.identity, false)?;
-            changed = true;
         }
-        if changed {
-            next.revision = self.revision.checked_add(1).ok_or(Error("registry-revision"))?;
-        }
-        Ok(next)
+        Ok(())
     }
     pub fn apply_block(
         &self,
@@ -372,5 +380,47 @@ impl KeyHistory for NativeRegistry {
             None => Ok(false),
             Some((key, _)) => Ok(read_hash(&mut native(SliceData::load_builder(key))?)? == *id),
         }
+    }
+}
+
+/// Immutable accepted transaction prefix of one native block. Only begin() creates
+/// a prefix; failed requests never replace it. Restart replays the whole block
+/// from its authenticated parent rather than trusting a caller-supplied revision.
+#[derive(Clone)]
+pub struct NativeRegistryBlock {
+    accepted: NativeRegistry,
+    parent_revision: u64,
+}
+impl NativeRegistryBlock {
+    pub fn begin(parent: &NativeRegistry, at: u32, budget: StateReadBudget) -> Result<Self, Error> {
+        let accepted = parent.apply(at, &[], |_, _, _, _| Err(Error("empty-replay")), budget)?;
+        Ok(Self { accepted, parent_revision: parent.revision })
+    }
+    pub fn state(&self) -> &NativeRegistry {
+        &self.accepted
+    }
+    pub fn apply_transaction<
+        F: FnMut(&ObjectRef, u8) -> Result<Vec<u8>, Error>,
+        H: FinalizedAnchorSource,
+    >(
+        &self,
+        update: &Update,
+        evidence: &Authorizations,
+        context: &NativeIdentityContext<'_, H>,
+        reader: &mut ObjectReader<F>,
+    ) -> Result<Self, Error> {
+        let mut accepted = self.accepted.clone();
+        NativeRegistry::apply_updates(
+            &mut accepted,
+            &[(update.clone(), evidence.clone())],
+            |view, identity, update, evidence| {
+                let authority = NativeLifecycleAuthority::new(view, context, reader);
+                authority.validate_context()?;
+                apply_identity_update(identity, view, update, evidence, view.coordinate, &authority)
+            },
+        )?;
+        accepted.revision =
+            self.parent_revision.checked_add(1).ok_or(Error("registry-revision"))?;
+        Ok(Self { accepted, parent_revision: self.parent_revision })
     }
 }

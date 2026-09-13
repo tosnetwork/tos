@@ -9,7 +9,7 @@ use tos_validator_auth::{
 use tos_validator_auth_native::{
     cells,
     native_apply::{apply_native_identity_block, FinalizedAnchorSource, NativeIdentityContext},
-    native_registry::NativeRegistry,
+    native_registry::{NativeRegistry, NativeRegistryBlock},
     registry::{RegistryState, StateReadBudget},
 };
 struct History {
@@ -26,7 +26,8 @@ impl FinalizedAnchorSource for History {
 }
 fn run() -> Result<(), String> {
     let args: Vec<_> = env::args().collect();
-    let persistent = args.get(1).is_some_and(|x| x == "--persistent");
+    let transactions = args.get(1).is_some_and(|x| x == "--transactions");
+    let persistent = transactions || args.get(1).is_some_and(|x| x == "--persistent");
     if args.len() != (if persistent { 3 } else { 2 }) {
         return Err("arguments".into());
     }
@@ -81,21 +82,102 @@ fn run() -> Result<(), String> {
             }
             let mut reader = ObjectReader::new(|_, _| Err(Error("unexpected-fetch")));
             let next = if persistent {
-                NativeRegistry::bootstrap(parent.encode_cell()?, n(0)?, StateReadBudget::default())?
-                    .apply_native_block(
+                let registry = NativeRegistry::bootstrap(
+                    parent.encode_cell()?,
+                    n(0)?,
+                    StateReadBudget::default(),
+                )?;
+                let applied = if transactions {
+                    (|| {
+                        let mut prefix = NativeRegistryBlock::begin(
+                            &registry,
+                            n(1)?,
+                            StateReadBudget::default(),
+                        )?;
+                        for (update, auth) in &updates {
+                            let before = prefix.state().checkpoint()?.repr_hash();
+                            let candidate =
+                                prefix.apply_transaction(update, auth, &context, &mut reader);
+                            if prefix.state().checkpoint()?.repr_hash() != before {
+                                return Err(Error("transaction-immutable-prefix"));
+                            }
+                            let candidate = candidate?;
+                            let retry =
+                                prefix.apply_transaction(update, auth, &context, &mut reader)?;
+                            if retry.state().checkpoint()?.repr_hash()
+                                != candidate.state().checkpoint()?.repr_hash()
+                            {
+                                return Err(Error("transaction-discard-retry"));
+                            }
+                            prefix = candidate;
+                            let mut bad = update.clone();
+                            bad.nonce = u64::MAX;
+                            let stable = prefix.state().checkpoint()?.repr_hash();
+                            if !matches!(
+                                prefix.apply_transaction(&bad, auth, &context, &mut reader),
+                                Err(Error("nonce"))
+                            ) {
+                                return Err(Error("transaction-rejected-nonce"));
+                            }
+                            if prefix.state().checkpoint()?.repr_hash() != stable {
+                                return Err(Error("transaction-rejected-prefix"));
+                            }
+                        }
+                        if updates.len() == 2 {
+                            let remaining = prefix.state().remaining()?;
+                            let initial = StateReadBudget::default();
+                            let budget = StateReadBudget {
+                                entries: initial
+                                    .entries
+                                    .checked_sub(remaining.entries)
+                                    .ok_or(Error("transaction-budget-fixture"))?,
+                                bytes: initial
+                                    .bytes
+                                    .checked_sub(remaining.bytes)
+                                    .and_then(|x| x.checked_sub(1))
+                                    .ok_or(Error("transaction-budget-fixture"))?,
+                            };
+                            let limited = NativeRegistryBlock::begin(&registry, n(1)?, budget)?;
+                            let limited = limited.apply_transaction(
+                                &updates[0].0,
+                                &updates[0].1,
+                                &context,
+                                &mut reader,
+                            )?;
+                            let stable = limited.state().checkpoint()?.repr_hash();
+                            if !matches!(
+                                limited.apply_transaction(
+                                    &updates[1].0,
+                                    &updates[1].1,
+                                    &context,
+                                    &mut reader
+                                ),
+                                Err(Error("state-resource"))
+                            ) {
+                                return Err(Error("transaction-cumulative-budget"));
+                            }
+                            if limited.state().checkpoint()?.repr_hash() != stable {
+                                return Err(Error("transaction-resource-rollback"));
+                            }
+                        }
+                        Ok(prefix.state().clone())
+                    })()
+                } else {
+                    registry.apply_native_block(
                         n(1)?,
                         &updates,
                         &context,
                         &mut reader,
                         StateReadBudget::default(),
                     )
-                    .and_then(|next| {
-                        RegistryState::decode_cell(
-                            next.encode_cell()?,
-                            n(1)?,
-                            StateReadBudget::default(),
-                        )
-                    })
+                };
+                applied.and_then(|next| {
+                    RegistryState::decode_cell(
+                        next.encode_cell()?,
+                        n(1)?,
+                        StateReadBudget::default(),
+                    )
+                })
             } else {
                 apply_native_identity_block(&parent, n(1)?, &updates, &context, &mut reader)
             };
@@ -128,7 +210,7 @@ fn run() -> Result<(), String> {
             }
         }
     }
-    println!("PASS: independent native authenticated ordered apply persistent={persistent} {count} cases");
+    println!("PASS: independent native authenticated ordered apply persistent={persistent} transactions={transactions} {count} cases");
     Ok(())
 }
 fn main() {
