@@ -6,13 +6,17 @@ if(UNIX)
   add_executable(test-p0-keyring keyring-test.cpp)
   target_link_libraries(test-p0-keyring PRIVATE keyring)
   set_target_properties(test-p0-keyring PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
-  if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+  # Instrument every linked native dependency with the same sanitizer macros.
+  # A target-local runtime cannot safely override hidden allocator interceptors.
+  if(TOS_USE_ASAN AND TOS_USE_UBSAN)
     add_executable(test-p0-keyring-sanitized EXCLUDE_FROM_ALL keyring-test.cpp
       "${PROJECT_SOURCE_DIR}/keyring/keyring.cpp"
       "${PROJECT_SOURCE_DIR}/keyring/keyring-isolation.cpp"
       "${PROJECT_SOURCE_DIR}/validator/auth/key-isolation.cpp"
       "${PROJECT_SOURCE_DIR}/validator/auth/durable-log.cpp")
     target_link_libraries(test-p0-keyring-sanitized PRIVATE keyring)
+    target_compile_definitions(test-p0-keyring-sanitized PRIVATE P0_SANITIZER_RUNTIME_CHECK=1)
+    target_link_libraries(test-p0-keyring-sanitized PRIVATE ${CMAKE_DL_LIBS})
     target_compile_options(test-p0-keyring-sanitized PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
     target_link_options(test-p0-keyring-sanitized PRIVATE -fsanitize=address,undefined)
     set_target_properties(test-p0-keyring-sanitized PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)

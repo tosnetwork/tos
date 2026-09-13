@@ -6,6 +6,9 @@
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#if defined(P0_SANITIZER_RUNTIME_CHECK) && !defined(__APPLE__)
+#include <dlfcn.h>
+#endif
 
 #include "keyring/keyring.hpp"
 #include "td/utils/Time.h"
@@ -217,6 +220,14 @@ void competing_process(const fs::path& base, const char* executable) {
   check(WEXITSTATUS(status) == 0, "keyring-other-process-refused");
 }
 int main(int argc, char** argv) {
+#if defined(P0_SANITIZER_RUNTIME_CHECK) && !defined(__APPLE__)
+  // Fail before any fixture or actor work if the linker hid the runtime from
+  // shared libraries. Otherwise their allocations can cross incompatible heaps.
+  if (!::dlsym(RTLD_DEFAULT, "__asan_init")) {
+    std::cerr << "ASSERTION: sanitizer-runtime-visibility\n";
+    return 1;
+  }
+#endif
   try {
     SET_VERBOSITY_LEVEL(verbosity_ERROR);
     if (argc == 5 && std::string(argv[1]) == "--hold") {

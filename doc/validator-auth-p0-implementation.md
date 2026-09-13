@@ -55,6 +55,15 @@ administration harness adds eleven. The combined implementation harness contains
 227 compiled guard removals, including 17 API admission/cache checks, 25
 native HTTP checks, 17 Rust native cell/proof checks and 25 native Keyring checks.
 
+The native Keyring sanitizer gate uses a separate CMake build with ASan and UBSan
+enabled for every linked dependency. Target-only instrumentation conflicted with
+the ordinary executable's hidden static-library symbols on ELF and with the
+dependency sanitizer macros. A standalone standard-library directory-copy probe
+reproduced the hidden-allocator failure. The corrected local Ubuntu/ARM run passes
+with leak detection enabled. A separate link regression relinks the actual native
+executable with hidden runtime symbols and requires a named assertion before any
+fixture or actor runs; this negative control cannot pass through a crash.
+
 The frozen wire/API design and fingerprint remain unchanged. The updated evidence
 record inventories exact additive Keyring insertions: 36 historical files remain
 byte-for-byte unchanged, and removing only the registered insertions from the two
