@@ -1,3 +1,6 @@
+#ifdef P0_PERSISTENT_REGISTRY
+#include "validator/auth/native-registry.h"
+#endif
 #include "validator/auth/native-apply.h"
 
 #include "owner-fixture.h"
@@ -70,7 +73,17 @@ Result<RegistryState> apply(const Case& c) {
   auto s = snapshot(c);
   NativeIdentityContext context{c.chain, s, c.history};
   ObjectReader reader({});
+#ifdef P0_PERSISTENT_REGISTRY
+  auto parent =
+      value(NativeRegistry::bootstrap(value(c.parent.encode_cell(), "persistent-parent"), c.parent.coordinate()),
+            "persistent-bootstrap");
+  auto next = parent.apply_native_block(c.inclusion, c.updates, context, reader);
+  if (!next.ok())
+    return next.error();
+  return RegistryState::decode_cell(value(next.value().encode_cell(), "persistent-result"), c.inclusion);
+#else
   return apply_native_identity_block(c.parent, c.inclusion, c.updates, context, reader);
+#endif
 }
 RegistryState coordinate(const RegistryState& state, std::uint32_t at) {
   return value(RegistryState::decode_cell(value(state.encode_cell(), "state-cell"), at), "coordinate-fixture");

@@ -17,12 +17,12 @@ struct NativeIdentityContext {
 // This authority is bound to one current per-operation view, including keys
 // archived earlier in the same block. Reusing a parent view across updates is invalid.
 class NativeLifecycleAuthority final : public LifecycleAuthority {
-  const RegistryState& current_;
+  const CurrentRegistry& current_;
   const NativeIdentityContext& context_;
   ObjectReader& reader_;
 
  public:
-  NativeLifecycleAuthority(const RegistryState& current, const NativeIdentityContext& context, ObjectReader& reader)
+  NativeLifecycleAuthority(const CurrentRegistry& current, const NativeIdentityContext& context, ObjectReader& reader)
       : current_(current), context_(context), reader_(reader) {
   }
   Result<bool> validate_context() const;

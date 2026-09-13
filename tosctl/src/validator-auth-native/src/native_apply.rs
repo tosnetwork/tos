@@ -1,11 +1,11 @@
 use crate::{owner_proof::verify_owner_execution, registry::RegistryState};
 use std::cell::RefCell;
 use tos_validator_auth::{
-    codec::{decode, encode, Error},
+    codec::{decode, encode, Error, Hash},
     context::{
         admin_session_id, make_duty, verify_identity_certificate, verify_possession, ChainContext,
     },
-    lifecycle::{apply_identity_update, select_identity_keys, LifecycleAuthority},
+    lifecycle::{apply_identity_update, select_identity_keys, KeyHistory, LifecycleAuthority},
     transfer::ObjectReader,
     types::*,
     verify::RegistrySnapshot,
@@ -20,14 +20,32 @@ pub struct NativeIdentityContext<'a, H> {
     pub governing: &'a RegistrySnapshot,
     pub history: &'a H,
 }
-pub struct NativeLifecycleAuthority<'a, 'b, F, H> {
-    current: &'a RegistryState,
+pub trait CurrentRegistry: KeyHistory {
+    fn chain_domain(&self) -> &Hash;
+    fn current_policy(&self) -> &Hash;
+    fn coordinate(&self) -> u32;
+}
+impl CurrentRegistry for RegistryState {
+    fn chain_domain(&self) -> &Hash {
+        RegistryState::chain_domain(self)
+    }
+    fn current_policy(&self) -> &Hash {
+        RegistryState::current_policy(self)
+    }
+    fn coordinate(&self) -> u32 {
+        RegistryState::coordinate(self)
+    }
+}
+pub struct NativeLifecycleAuthority<'a, 'b, F, H, S = RegistryState> {
+    current: &'a S,
     context: &'a NativeIdentityContext<'a, H>,
     reader: RefCell<&'b mut ObjectReader<F>>,
 }
-impl<'a, 'b, F, H: FinalizedAnchorSource> NativeLifecycleAuthority<'a, 'b, F, H> {
+impl<'a, 'b, F, H: FinalizedAnchorSource, S: CurrentRegistry>
+    NativeLifecycleAuthority<'a, 'b, F, H, S>
+{
     pub fn new(
-        current: &'a RegistryState,
+        current: &'a S,
         context: &'a NativeIdentityContext<'a, H>,
         reader: &'b mut ObjectReader<F>,
     ) -> Self {
@@ -58,8 +76,11 @@ impl<'a, 'b, F, H: FinalizedAnchorSource> NativeLifecycleAuthority<'a, 'b, F, H>
         Ok(())
     }
 }
-impl<F: FnMut(&ObjectRef, u8) -> Result<Vec<u8>, Error>, H: FinalizedAnchorSource>
-    LifecycleAuthority for NativeLifecycleAuthority<'_, '_, F, H>
+impl<
+        F: FnMut(&ObjectRef, u8) -> Result<Vec<u8>, Error>,
+        H: FinalizedAnchorSource,
+        S: CurrentRegistry,
+    > LifecycleAuthority for NativeLifecycleAuthority<'_, '_, F, H, S>
 {
     fn owner(
         &self,

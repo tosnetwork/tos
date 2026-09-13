@@ -12,7 +12,13 @@ class ObjectReader;
 struct StateReadBudget {
   std::size_t entries = 1000000, bytes = 268435456;
 };
-class RegistryState final : public KeyHistory {
+class CurrentRegistry : public KeyHistory {
+ public:
+  virtual const Hash& chain_domain() const = 0;
+  virtual const Hash& current_policy() const = 0;
+  virtual std::uint32_t coordinate() const = 0;
+};
+class RegistryState final : public CurrentRegistry {
   Hash chain_domain_{}, current_policy_{};
   std::uint64_t revision_ = 0;
   std::uint32_t coordinate_ = 0;
@@ -54,16 +60,16 @@ class RegistryState final : public KeyHistory {
   const std::map<Hash, Policy>& policies() const {
     return policies_;
   }
-  const Hash& chain_domain() const {
+  const Hash& chain_domain() const override {
     return chain_domain_;
   }
-  const Hash& current_policy() const {
+  const Hash& current_policy() const override {
     return current_policy_;
   }
   std::uint64_t revision() const {
     return revision_;
   }
-  std::uint32_t coordinate() const {
+  std::uint32_t coordinate() const override {
     return coordinate_;
   }
 };

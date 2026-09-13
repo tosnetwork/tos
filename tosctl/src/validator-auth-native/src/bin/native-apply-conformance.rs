@@ -9,6 +9,7 @@ use tos_validator_auth::{
 use tos_validator_auth_native::{
     cells,
     native_apply::{apply_native_identity_block, FinalizedAnchorSource, NativeIdentityContext},
+    native_registry::NativeRegistry,
     registry::{RegistryState, StateReadBudget},
 };
 struct History {
@@ -25,10 +26,11 @@ impl FinalizedAnchorSource for History {
 }
 fn run() -> Result<(), String> {
     let args: Vec<_> = env::args().collect();
-    if args.len() != 2 {
+    let persistent = args.get(1).is_some_and(|x| x == "--persistent");
+    if args.len() != (if persistent { 3 } else { 2 }) {
         return Err("arguments".into());
     }
-    let root = Path::new(&args[1]);
+    let root = Path::new(&args[if persistent { 2 } else { 1 }]);
     let count: usize = fs::read_to_string(root.join("complete"))
         .map_err(|e| e.to_string())?
         .trim()
@@ -78,7 +80,25 @@ fn run() -> Result<(), String> {
                 ));
             }
             let mut reader = ObjectReader::new(|_, _| Err(Error("unexpected-fetch")));
-            let next = apply_native_identity_block(&parent, n(1)?, &updates, &context, &mut reader);
+            let next = if persistent {
+                NativeRegistry::bootstrap(parent.encode_cell()?, n(0)?, StateReadBudget::default())?
+                    .apply_native_block(
+                        n(1)?,
+                        &updates,
+                        &context,
+                        &mut reader,
+                        StateReadBudget::default(),
+                    )
+                    .and_then(|next| {
+                        RegistryState::decode_cell(
+                            next.encode_cell()?,
+                            n(1)?,
+                            StateReadBudget::default(),
+                        )
+                    })
+            } else {
+                apply_native_identity_block(&parent, n(1)?, &updates, &context, &mut reader)
+            };
             if parent.encode_cell()?.repr_hash() != before {
                 return Err(Error("native-apply-atomic-parent"));
             }
@@ -108,7 +128,7 @@ fn run() -> Result<(), String> {
             }
         }
     }
-    println!("PASS: independent native authenticated ordered apply {count} cases");
+    println!("PASS: independent native authenticated ordered apply persistent={persistent} {count} cases");
     Ok(())
 }
 fn main() {
