@@ -21,6 +21,7 @@
 #include "block/block-parse.h"
 #include "block/block.h"
 #include "block/mc-config.h"
+#include "block/validator-auth-config.h"
 #include "block/workchain-execution-dispatch.h"
 #include "common/bigexp.h"
 #include "common/util.h"
@@ -1879,6 +1880,11 @@ bool check_one_config_param(Ref<vm::CellSlice> cs_ref, td::ConstBitPtr key, td::
     return true;
   }
   unsigned cfg_idx = static_cast<unsigned>(idx);
+  // Config46 is a persistent public archive. Its global typed validation happens
+  // at checkpoint admission and authenticated replay, not an unbounded walk here.
+  if (cfg_idx == 46) {
+    return validate_validator_auth_root_shape(std::move(cell)).is_ok();
+  }
   bool ok = block::gen::ConfigParam{cfg_idx}.validate_ref(1024, std::move(cell));
   if (!ok) {
     LOG(ERROR) << "configuration parameter #" << idx << " is invalid";
@@ -1911,6 +1917,9 @@ bool valid_config_data(Ref<vm::Cell> cell, const td::BitArray<256>& addr, bool c
       return false;
     }
   }
+  if (validate_validator_auth_config(dict).is_error()) {
+    return false;
+  }
   return config_params_present(dict, dict.lookup_ref(td::BitArray<32>{9})) &&
          config_params_present(dict, std::move(old_mparams));
 }
@@ -1922,6 +1931,7 @@ td::Status valid_config_transition(Ref<vm::Cell> old_cfg_root, Ref<vm::Cell> new
   try {
     vm::Dictionary old_dict{std::move(old_cfg_root), 32};
     vm::Dictionary new_dict{std::move(new_cfg_root), 32};
+    TRY_STATUS(validate_validator_auth_transition(old_dict, new_dict));
     TRY_RESULT_PREFIX(old_workchains, Config::unpack_workchain_list(old_dict.lookup_ref(td::BitArray<32>{12})),
                       "cannot unpack old workchain list (ConfigParam 12): ");
     TRY_RESULT_PREFIX(new_workchains, Config::unpack_workchain_list(new_dict.lookup_ref(td::BitArray<32>{12})),

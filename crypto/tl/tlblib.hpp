@@ -833,6 +833,10 @@ struct TupleT final : TLB_Complex {
   const TLB& X;
   TupleT(int _n, const TLB& _X) : n(_n), X(_X) {
   }
+  // Generated bounded natural fields use unsigned integers. Reject lengths
+  // outside the signed iterator range instead of narrowing them into zero.
+  TupleT(unsigned _n, const TLB& _X) : n(_n <= 0x7fffffffU ? static_cast<int>(_n) : -1), X(_X) {
+  }
   bool skip(vm::CellSlice& cs) const override;
   bool validate_skip(int* ops, vm::CellSlice& cs, bool weak = false) const override;
   int get_tag(const vm::CellSlice& cs) const override {

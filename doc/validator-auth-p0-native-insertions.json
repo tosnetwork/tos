@@ -1,6 +1,6 @@
 {
   "format": 1,
-  "purpose": "Exact additive native Keyring, capability and validator identity binding integration. Original production baseline hashes remain authoritative; historical verifier and constructor bytes are retained.",
+  "purpose": "Exact additive native Keyring, capability, validator identity binding and frozen Config46 schema integration. Original production baseline hashes remain authoritative; historical verifier and constructor bytes are retained.",
   "insertions": {
     "keyring/keyring.h": [
       {
@@ -94,6 +94,10 @@
       {
         "offset": 22250,
         "text": "validator_auth_binding$_ identity:bits256 stake_id:bits256 = ValidatorAuthBinding;\nvalidator_auth#b3 public_key:SigPubKey weight:uint64 adnl_addr:bits256\n  binding:^ValidatorAuthBinding = ValidatorDescr;\n"
+      },
+      {
+        "offset": 43512,
+        "text": "\n// Frozen validator authentication profile v1.\nauth_bytes_v1#76616231 version:uint16 byte_length:uint32 payload_hash:bits256\n  root:^AuthByteNode = AuthBytes;\nauth_byte_leaf$0 n:(## 7) { n >= 1 } { n <= 120 }\n  data:(bits (n * 8)) = AuthByteNode;\nauth_byte_branch$1 n:(## 3) { n >= 2 } { n <= 4 }\n  byte_length:uint32 children:(n * ^AuthByteNode) = AuthByteNode;\nauth_config_v1#76617131 version:uint16 chain_domain:bits256 interface_digest:bits256\n  registry_revision:uint64 current_policy:bits256\n  identities:^(HashmapE 256 ^AuthBytes) keys:^(HashmapE 256 ^AuthBytes)\n  policies:^(HashmapE 256 ^AuthBytes) control:^AuthControl = ValidatorAuthConfig;\nauth_control_v1#76616331 activations:^(HashmapE 32 ^AuthBytes)\n  observations:^(HashmapE 256 ^AuthBytes) = AuthControl;\n_ ValidatorAuthConfig = ConfigParam 46;\n"
       }
     ]
   }

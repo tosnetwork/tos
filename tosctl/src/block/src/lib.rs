@@ -85,6 +85,8 @@ pub mod signature;
 pub use signature::*;
 
 pub mod config_params;
+pub mod validator_auth_config;
+mod validator_auth_profile;
 pub use config_params::*;
 
 pub mod storage_stat;

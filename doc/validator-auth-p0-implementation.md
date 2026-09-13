@@ -24,6 +24,7 @@ or PQ suite allocation is authorized by this work.
 | Native state proofs | C++ and Rust actual masterchain Config8/9/10/16/46 and Merkle proofs for profile, policy, key and registry ranges | State-root substitution, omitted entries, false terminal page, unrelated revealed values, detached physical cells, capability and atomic-publication guard removals | RPC node wiring, owner proof dispatch and Rust global registry apply |
 | Native certificate proofs and RPC | Independent C++/Rust certificate verification from native committee and policy proofs; C++ methods 12/13 and private Rust verified output | 55 shared cases; real local HTTP over 16 snapshots; exact signers/weight, trusted context, error provenance and single-fetch prepared request checks | Native manager session/history/archive source and remote serving |
 | Native owner execution | C++ and independent Rust VAF1 kind-1 proofs over native account transactions, full trusted anchor and current owner/stake allocation | 68 shared proof cases from real masterchain/workchain-0 wallet transactions; action rollback, forged wallet signatures, block substitution and 52 compiled guards | Native elector receipt processing, normal stake rules and atomic update admission |
+| Native configuration gates | Actual C++ admission/transition and Rust config admission, frozen Config46 registration, capability/version, required parameters and revision continuity | 43 shared cases, 11 legacy transition tests, 47 compiled guards and full-dependency sanitizer parity | Native contract authorization, atomic root installation and approved activation |
 | Persistent native registry | Independent C++/Rust immutable cell dictionaries, validated derived indexes and per-operation native authority | 34 replay cases, eight checkpoint attacks, 74 real-owner authority cases and 36 compiled guards; bounded work over 501 historical identities | Contract-owned persistence, global/elector operations and node installation |
 | Native finalized history | Independent C++/Rust resolution of full anchors from authenticated OldMcBlocksInfo and original native block bytes | 37 shared cases, 34 compiled guards, exact file/root/context/new-state binding, bounded reads and full-dependency sanitizer parity | Native manager archive reader and independently established finalized head |
 | Authenticated ordered identity apply | C++ and independent Rust compose native owner proofs, PoP and current administration with per-operation resulting state | 74 shared cases from real wallet approvals, same-block administration rotation, due/policy boundaries, exact native bytes and 22 compiled guards | Native elector/config transaction admission and installed chain root |
@@ -59,7 +60,7 @@ state/authority/proof, journal, signer/provider and local channel harnesses kill
 25, 11, 7 and 6 compiled guard removals respectively. Scoped object storage,
 service issuers and C++ API semantics add eight, nine and eight removals. The
 administration harness adds eleven. The combined implementation harness contains
-683 compiled production mutations, including 36 persistent registry, 34 native finalized-history and 22 authenticated ordered-apply checks,
+730 compiled production mutations, including 47 native configuration, 36 persistent registry, 34 native finalized-history and 22 authenticated ordered-apply checks,
 52 native owner-proof/resource checks,
 46 context/identity-authority checks,
 33 current-governance checks, 28 independent certificate proof checks,
@@ -78,7 +79,7 @@ executable with hidden runtime symbols and requires a named assertion before any
 fixture or actor runs; this negative control cannot pass through a crash.
 
 The frozen wire/API design and fingerprint remain unchanged. The updated evidence
-record inventories exact additive Keyring, capability and elected binding insertions: 33 historical
+record inventories exact additive Keyring, capability, elected binding and frozen Config46 insertions: 33 historical
 files remain byte-for-byte unchanged, and removing only the registered insertions
 from the two Keyring files, capability header, native TL-B schema and config parser recovers their original baseline hashes. The checker rejects changes
 to either historical or inserted bytes; the baseline hashes were not replaced. The generated binding check, Rust formatting, Clippy with warnings denied and
@@ -90,6 +91,15 @@ libraries and Rust crate on Ubuntu x86_64 and ARM, records the checked HEAD, run
 these checks and uploads evidence. The previous implementation milestone passed both focused CI architectures; each
 new addition requires CI evidence attached to its own HEAD.
 It neither triggers the full Ubuntu build nor starts a network.
+
+## Native configuration admission
+
+[Native configuration gates](validator-auth-p0-native-config.md) bind the already
+frozen Config46 schema to the real configuration entry points. Active P0 requires
+VM version 16, mandatory and critical Config46, the fixed 400-validator ceiling
+and exact registry revision continuity. Unapproved activation and downgrade are
+rejected. Root checks remain bounded; full archive semantics and operation
+authority are separate validated execution boundaries.
 
 ## Authenticated ordered identity application
 

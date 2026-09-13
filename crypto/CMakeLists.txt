@@ -196,6 +196,7 @@ set(BLOCK_SOURCE
   block/Binlog.h
   block/Binlog.cpp
   block/block.cpp
+  block/validator-auth-config.cpp
   block/block-db.cpp
   block/block-parse.cpp
   block/check-proof.cpp

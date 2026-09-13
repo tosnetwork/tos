@@ -46,6 +46,25 @@ def check_validator_inventory(block, rust):
     if not re.search(r'const VALIDATOR_DESC_ADDR_SEQNO_TAG: u8 = 0x93;', rust):
         raise ValueError('historical Rust descriptor allocation drift')
 
+def check_config_inventory(block, frozen):
+    clean=lambda s: ' '.join(re.sub(r'//[^\n]*', '', s).split())
+    source=clean(block)
+    slots=re.findall(r'[^;]*?=\s*ConfigParam\s+46\s*;', source)
+    if len(slots)!=1 or not slots[0].strip().endswith('_ ValidatorAuthConfig = ConfigParam 46;'):
+        raise ValueError('native Config46 allocation drift')
+    declarations=[part.strip()+';' for part in clean(frozen).split(';') if part.strip()]
+    for declaration in declarations:
+        if source.count(declaration)!=1:
+            raise ValueError('native Config46 shape drift')
+    constructors=r'(\w+)(#[a-f0-9]+|\$[01_]*)([^;]*?)=\s*(AuthBytes|AuthByteNode|AuthControl|ValidatorAuthConfig);'
+    native=re.findall(constructors,source)
+    expected=re.findall(constructors,clean(frozen))
+    if sorted(native)!=sorted(expected):
+        raise ValueError('native authentication constructor collision')
+    for name,_,_,_ in expected:
+        if len(re.findall(r'\b'+re.escape(name)+r'[#\$]',source))!=1:
+            raise ValueError('native authentication constructor name collision')
+
 def main():
     p=argparse.ArgumentParser(description=__doc__)
     p.add_argument('--tl-parser',type=Path,required=True)
@@ -63,7 +82,8 @@ def main():
         seen.add(tag)
     if seen!=set(profile['tl_constructors'].values()):raise ValueError('manifest/schema drift')
     block=(ROOT/'crypto/block/block.tlb').read_text()
-    if re.search(r'ConfigParam\s+46\b',block):raise ValueError('proposed Config46 now occupied; review allocation')
+    frozen=(DOC/'wire.tlb').read_text()
+    check_config_inventory(block,frozen)
     types=(ROOT/'tos/tos-types.h').read_text()
     installed=check_capability_inventory(types)
     # Permit only the inventoried native allocation, never an unrelated owner.
@@ -79,6 +99,17 @@ def main():
         else:
             raise ValueError('capability allocation negative control survived')
     checks=['native-capability-registered' if installed else 'native-capability-unoccupied', 'capability-collision-controls']
+    for bad in (block.replace('_ ValidatorAuthConfig = ConfigParam 46;', '_ OtherConfig = ConfigParam 46;'),
+                block.replace('auth_config_v1#76617131', 'auth_config_v1#76617132'),
+                block+'\n_ uint32 = ConfigParam 46;',
+                block+'\nother_auth_bytes#76616231 x:uint32 = AuthBytes;'):
+        try:
+            check_config_inventory(bad,frozen)
+        except ValueError:
+            pass
+        else:
+            raise ValueError('native Config46 collision control survived')
+    checks.extend(['native-config46-registered','native-config46-collision-controls'])
     if 'validator_auth#' in block:
         rust=(ROOT/'tosctl/src/block/src/validators.rs').read_text()
         check_validator_inventory(block, rust)
