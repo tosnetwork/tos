@@ -4836,6 +4836,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "tos-validator-auth"
+version = "0.1.0"
+dependencies = [
+ "curve25519-dalek",
+ "sha2",
+]
+
+[[package]]
 name = "tos_assembler"
 version = "1.9.3"
 dependencies = [

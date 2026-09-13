@@ -3,6 +3,7 @@ members = [
     'adnl',
     'assembler',
     'block',
+    'validator-auth',
     'block-json',
     'emulator',
     'executor',

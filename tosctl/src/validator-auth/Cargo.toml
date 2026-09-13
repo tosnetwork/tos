@@ -1,0 +1,9 @@
+[package]
+name = "tos-validator-auth"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0"
+
+[dependencies]
+curve25519-dalek = "4.0"
+sha2 = "0.10"
