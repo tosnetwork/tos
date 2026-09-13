@@ -592,11 +592,18 @@ impl StateParser {
                 let weight = p.get_num64("weight")?;
                 let adnl_addr = p.get_uint256("adnl_addr").ok();
 
-                let descr = ValidatorDescr::with_params(
+                let mut descr = ValidatorDescr::with_params(
                     SigPubKey::from_bytes(&public_key)?,
                     weight,
                     adnl_addr,
                 );
+                if p.map.contains_key("mc_seq_no_since") {
+                    descr.mc_seq_no_since = p.get_num32("mc_seq_no_since")?;
+                }
+                if let Some(value) = p.map.get("auth_binding") {
+                    let binding = serde_json::from_value::<ValidatorAuthBinding>(value.clone())?;
+                    descr.auth_binding = Some(binding);
+                }
                 list.push(descr);
 
                 Ok(())
@@ -604,6 +611,13 @@ impl StateParser {
             Ok(())
         })?;
 
+        if config.map.contains_key("total") && usize::from(config.get_num16("total")?) != list.len()
+        {
+            fail!("validator count does not match list");
+        }
+        if list.len() > 400 && list.iter().any(|member| member.auth_binding.is_some()) {
+            fail!("validator auth committee exceeds 400 members");
+        }
         let validator_set = ValidatorSet::new(utime_since, utime_until, main, list)?;
         Ok(validator_set)
     }
@@ -849,27 +863,10 @@ impl StateParser {
             }))
         })?;
 
-        self.parse_parameter(config, 34, |p34| {
-            let mut list = vec![];
-            p34.get_vec("list").and_then(|p| {
-                p.iter().try_for_each::<_, Result<()>>(|p| {
-                    let p = PathMap::cont(config, "p34", p)?;
-
-                    list.push(ValidatorDescr::with_params(
-                        p.get_str("public_key")?.parse()?,
-                        p.get_num64("weight")?,
-                        None,
-                    ));
-                    Ok(())
-                })
-            })?;
-            let cur_validators = ValidatorSet::new(
-                p34.get_num32("utime_since")?,
-                p34.get_num32("utime_until")?,
-                p34.get_num16("main")?,
-                list,
-            )?;
-            Ok(ConfigParamEnum::ConfigParam34(ConfigParam34 { cur_validators }))
+        self.parse_parameter(config, 34, |p| {
+            Ok(ConfigParamEnum::ConfigParam34(ConfigParam34 {
+                cur_validators: Self::parse_validator_set(p)?,
+            }))
         })?;
 
         self.parse_parameter(config, 35, |p| {

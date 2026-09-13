@@ -54,7 +54,7 @@ state/authority/proof, journal, signer/provider and local channel harnesses kill
 25, 11, 7 and 6 compiled guard removals respectively. Scoped object storage,
 service issuers and C++ API semantics add eight, nine and eight removals. The
 administration harness adds eleven. The combined implementation harness contains
-364 compiled guard removals, including 17 API admission/cache checks, 25
+388 compiled guard removals, including 17 API admission/cache checks, 25
 native HTTP checks, 17 Rust native cell/proof checks, 25 native Keyring checks,
 18 C++ VM checks, 18 Rust VM checks and five native execution adapter checks.
 
@@ -396,8 +396,8 @@ The new Rust registry reader independently checks native dictionaries, retained
 policies, immutable key hashes/epochs, identity references and pending/control
 records. This completes native snapshot reading, not Rust global mutation apply.
 Elector/config execution, native session/consensus routing, certificate/owner proof and RPC integration
-and local multi-node acceptance remain open. Legacy JSON config tooling is not yet
-an authenticated P0 update interface and still requires native binding integration.
+and local multi-node acceptance remain open. Legacy JSON tooling preserves native
+bindings but remains a metadata interface, not authenticated P0 update authority.
 
 
 Native proof and committee fixtures also run with full address/undefined-behavior
@@ -420,3 +420,22 @@ detached physical cells, header reads and publication before returning a manifes
 These paths run under full native ASan/UBSan/leak instrumentation with byte-identical
 release and sanitized fixture exports. They provide committee proof authority;
 production session/consensus call sites and certificate RPC remain open.
+
+
+## Native config tools and voting input
+
+Configuration JSON preserves the native identity/stake binding through Config32
+through Config37, the control client and the actual voting-provider method. A
+shared typed binding representation rejects incomplete, noncanonical and zero IDs.
+P0 binding/ADNL/sequence-extension conflicts, declared-count mismatches, integers
+outside native widths and P0 lists above 400 return errors. The raw control-client
+parser also rejects recursive and escaped duplicate keys, oversized/value-heavy
+JSON and trailing documents; it is reused by the voting provider.
+
+The 47-test native JSON suite includes 24 exact cell round trips across six
+parameters and four descriptor formats, plus malformed binding and count bounds.
+Four focused control-client tests and one real voting-provider test cover metadata
+preservation, native numeric widths, strict raw JSON and shared dispatch. The 24
+compiled guard removals are included in the total above. A separate focused CI job
+builds these real packages on Ubuntu x86_64 and ARM. This metadata does not grant
+owner, identity, possession or governance authority.

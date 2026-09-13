@@ -57,6 +57,27 @@ identity, while a separately owned transport list preserves native selection ord
 Only VAM1 and the frozen session construction establish P0 signing context; the
 legacy short validator-list hash remains a transport index.
 
+## Existing configuration JSON tools
+
+Native config JSON carries the optional `auth_binding` object with exactly
+`identity` and `stake_id`, both nonzero lowercase 64-character hex strings.
+The existing serializers and parsers preserve it for Config32 through Config37,
+including Config34. They also retain the separate `mc_seq_no_since` extension.
+A P0 binding requires ADNL and cannot coexist with that sequence extension;
+null, malformed or partially specified bindings fail instead of becoming legacy
+descriptors. Declared counts must match the list, and a P0 list cannot exceed 400.
+
+The control client checks integer widths before constructing the native set.
+Its raw config parser rejects duplicate decoded JSON keys at every depth,
+including escaped duplicates, more than 4194304 bytes, more than 200000 values,
+and trailing documents. The voting provider uses this same parser. JSON export
+and re-import recover exact native descriptor cells for all four native tags.
+
+This is metadata for existing configuration tools. It does not allocate an
+identity or replace the canonical binary and thin JSON contract of the new
+validator-auth v1 endpoints. Native admission and cryptographic authority remain
+mandatory after parsing.
+
 ## Keys, history and resources
 
 Snapshot construction reads the resulting registry at the exact anchor and selects

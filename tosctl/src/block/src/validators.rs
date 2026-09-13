@@ -130,10 +130,41 @@ validator#93
 = ValidatorDescr;
 */
 
-#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+#[derive(Clone, Debug, Eq, PartialEq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(try_from = "ValidatorAuthBindingText", into = "ValidatorAuthBindingText")]
 pub struct ValidatorAuthBinding {
     pub identity: UInt256,
     pub stake_id: UInt256,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ValidatorAuthBindingText {
+    identity: String,
+    stake_id: String,
+}
+impl TryFrom<ValidatorAuthBindingText> for ValidatorAuthBinding {
+    type Error = String;
+    fn try_from(value: ValidatorAuthBindingText) -> std::result::Result<Self, Self::Error> {
+        let parse = |text: &str| -> std::result::Result<UInt256, String> {
+            if text.len() != 64
+                || !text.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+            {
+                return Err("validator binding requires canonical 256-bit hex".to_owned());
+            }
+            let id = text.parse::<UInt256>().map_err(|e| e.to_string())?;
+            if id.is_zero() {
+                return Err("validator binding must be nonzero".to_owned());
+            }
+            Ok(id)
+        };
+        Ok(Self { identity: parse(&value.identity)?, stake_id: parse(&value.stake_id)? })
+    }
+}
+impl From<ValidatorAuthBinding> for ValidatorAuthBindingText {
+    fn from(value: ValidatorAuthBinding) -> Self {
+        Self { identity: value.identity.as_hex_string(), stake_id: value.stake_id.as_hex_string() }
+    }
 }
 
 ///

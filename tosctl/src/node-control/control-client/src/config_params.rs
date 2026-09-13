@@ -7,7 +7,9 @@
  * This software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND.
  */
 use anyhow::Context;
-use chain_block::{ConfigParam15, SigPubKey, UInt256, ValidatorDescr, ValidatorSet};
+use chain_block::{
+    ConfigParam15, SigPubKey, UInt256, ValidatorAuthBinding, ValidatorDescr, ValidatorSet,
+};
 use std::str::FromStr;
 
 // TOS compatibility: Config param 15 controls election timing. TOS inherits the same
@@ -51,7 +53,7 @@ pub fn parse_config_param_36(bytes: &[u8]) -> anyhow::Result<ValidatorSet> {
 }
 
 fn parse_validator_set(bytes: &[u8], key: &str) -> anyhow::Result<ValidatorSet> {
-    let param: serde_json::Value = serde_json::from_slice(bytes)?;
+    let param = crate::config_json::parse(bytes)?;
     let map = param
         .as_object()
         .ok_or_else(|| anyhow::anyhow!("invalid config param"))?
@@ -61,27 +63,30 @@ fn parse_validator_set(bytes: &[u8], key: &str) -> anyhow::Result<ValidatorSet> 
     let utime_since = map
         .get("utime_since")
         .and_then(|value| value.as_u64())
-        .map(|v| v as u32)
+        .and_then(|v| u32::try_from(v).ok())
         .ok_or_else(|| anyhow::anyhow!("utime_since"))?;
     let utime_until = map
         .get("utime_until")
         .and_then(|value| value.as_u64())
-        .map(|v| v as u32)
+        .and_then(|v| u32::try_from(v).ok())
         .ok_or_else(|| anyhow::anyhow!("utime_until"))?;
-    let _ = map
+    let total = map
         .get("total")
         .and_then(|value| value.as_u64())
-        .map(|v| v as u16)
+        .and_then(|v| u16::try_from(v).ok())
         .ok_or_else(|| anyhow::anyhow!("total"))?;
     let main = map
         .get("main")
         .and_then(|value| value.as_u64())
-        .map(|v| v as u16)
+        .and_then(|v| u16::try_from(v).ok())
         .ok_or_else(|| anyhow::anyhow!("main"))?;
     let json_list = map
         .get("list")
         .and_then(|value| value.as_array())
         .ok_or_else(|| anyhow::anyhow!("list"))?;
+    if usize::from(total) != json_list.len() {
+        anyhow::bail!("validator count does not match list");
+    }
     let mut list = vec![];
     for entry in json_list {
         let map = entry.as_object().ok_or_else(|| anyhow::anyhow!("invalid list entry"))?;
@@ -98,16 +103,34 @@ fn parse_validator_set(bytes: &[u8], key: &str) -> anyhow::Result<ValidatorSet> 
             .ok_or(anyhow::anyhow!("weight"))?;
         let adnl_addr =
             map.get("adnl_addr").and_then(|v| v.as_str()).map(UInt256::from_str).transpose()?;
+        let mc_seq_no_since = match map.get("mc_seq_no_since") {
+            None => 0,
+            Some(value) => {
+                u32::try_from(value.as_u64().ok_or_else(|| anyhow::anyhow!("mc_seq_no_since"))?)?
+            }
+        };
+        let auth_binding = map
+            .get("auth_binding")
+            .map(|value| serde_json::from_value::<ValidatorAuthBinding>(value.clone()))
+            .transpose()?;
+        if auth_binding.is_some() && (adnl_addr.is_none() || mc_seq_no_since != 0) {
+            anyhow::bail!(
+                "validator auth binding requires ADNL and excludes the sequence extension"
+            );
+        }
         let descr = ValidatorDescr {
             public_key: SigPubKey::from_bytes(&pubkey)
                 .map_err(|_| anyhow::anyhow!("public key is invalid"))?,
             weight,
             adnl_addr,
-            mc_seq_no_since: 0,
-            auth_binding: None,
+            mc_seq_no_since,
+            auth_binding,
             prev_weight_sum: 0,
         };
         list.push(descr);
+    }
+    if list.len() > 400 && list.iter().any(|member| member.auth_binding.is_some()) {
+        anyhow::bail!("validator auth committee exceeds 400 members");
     }
     ValidatorSet::new(utime_since, utime_until, main, list)
 }
