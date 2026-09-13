@@ -12,6 +12,21 @@ import contract_artifacts
 ROOT=Path(__file__).resolve().parents[2]
 DOC=ROOT/'doc/validator-auth-p0'
 
+def check_capability_inventory(types):
+    enum = re.search(r'enum GlobalCapabilities\s*\{(.*?)\}', types, re.DOTALL)
+    if not enum:
+        raise ValueError('cannot inspect capability inventory')
+    entries = re.findall(r'(\w+)\s*=\s*(\d+)\s*[,\n]', enum.group(1) + '\n')
+    if len(entries) != enum.group(1).count('='):
+        raise ValueError('unsupported capability declaration requires review')
+    owners = [name for name, value in entries if int(value) == 1024]
+    declared = [(name, int(value)) for name, value in entries if name == 'capValidatorAuth']
+    if declared and declared != [('capValidatorAuth', 1024)]:
+        raise ValueError('native validator-auth allocation drift')
+    if owners and owners != ['capValidatorAuth']:
+        raise ValueError('validator-auth capability collision')
+    return bool(declared)
+
 def main():
     p=argparse.ArgumentParser(description=__doc__)
     p.add_argument('--tl-parser',type=Path,required=True)
@@ -31,11 +46,20 @@ def main():
     block=(ROOT/'crypto/block/block.tlb').read_text()
     if re.search(r'ConfigParam\s+46\b',block):raise ValueError('proposed Config46 now occupied; review allocation')
     types=(ROOT/'tos/tos-types.h').read_text()
-    enum=re.search(r'enum GlobalCapabilities\s*\{(.*?)\}',types,re.DOTALL)
-    if not enum:raise ValueError('cannot inspect capability inventory')
-    values=[int(v) for v in re.findall(r'=\s*(\d+)\s*[,\n]',enum.group(1)+'\n')]
-    if 1024 in values:raise ValueError('proposed capability now occupied; review allocation')
-    checks=[]
+    installed=check_capability_inventory(types)
+    # Permit only the inventoried native allocation, never an unrelated owner.
+    fixture='enum GlobalCapabilities { capValidatorAuth = 1024, };'
+    assert check_capability_inventory(fixture)
+    for bad in (fixture.replace('capValidatorAuth', 'capOther'),
+                fixture.replace('1024', '2048'),
+                fixture.replace('};', 'capOther = 1024, };')):
+        try:
+            check_capability_inventory(bad)
+        except ValueError:
+            pass
+        else:
+            raise ValueError('capability allocation negative control survived')
+    checks=['native-capability-registered' if installed else 'native-capability-unoccupied', 'capability-collision-controls']
     with tempfile.TemporaryDirectory() as directory:
         d=Path(directory)
         for base in ('tos_api','lite_api'):

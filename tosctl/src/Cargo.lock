@@ -4839,8 +4839,16 @@ dependencies = [
 name = "tos-validator-auth"
 version = "0.1.0"
 dependencies = [
- "curve25519-dalek",
  "libc",
+ "sha2",
+ "tos-validator-auth-crypto",
+]
+
+[[package]]
+name = "tos-validator-auth-crypto"
+version = "0.1.0"
+dependencies = [
+ "curve25519-dalek",
  "sha2",
 ]
 
@@ -4943,6 +4951,7 @@ dependencies = [
  "stacker",
  "thiserror 1.0.69",
  "tl_api",
+ "tos-validator-auth-crypto",
  "tos_assembler",
 ]
 

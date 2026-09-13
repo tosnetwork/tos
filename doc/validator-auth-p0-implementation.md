@@ -18,6 +18,7 @@ or PQ suite allocation is authorized by this work.
 | Identity lifecycle | C++ and Rust per-identity register/rotate/retire/cancel and consecutive-block due-transition application | 104 differential cases per language with controlled, separately typed authority callbacks; predecessor and block-gap guard removals | Native owner/admin adapters, transactional chain storage and global governance operations |
 | Object transfer | C++ and Rust canonical inline/manifest readers; principal/anchor-scoped C++ store and atomic proof publication | Chunk and whole-object hash substitution, quota, duplicate upload, expiry and aggregate read budget; eight scoped-store guard removals | Authenticated public RPC wiring and Rust storage adapter |
 | Thin transport and API association | C++ and Rust framing and semantic association for all 15 methods, including result receipts, proof attachments and cursors | 182 framing cases and 133 semantic cases per language; direct signer-list, receipt-hash and context guard removals | Native node context, committee/certificate RPC and remote mTLS deployment |
+| Native VM and transaction execution | C++/Rust P0CHKSIGN, native capability metadata, Fift/FunC and Rust assembly bindings | 168 exact outcome/gas comparisons; getter config and nested VM; eight whole transactions including action rollback | Elector/owner statement construction and native admission |
 | Native registry state | Config46 dictionaries and authenticated due-transition replay, immutable key archive and owned successor state | 501 identities / 2506 keys, exact cell/hash restart, pending effects, duplicate epoch and rejected-block atomicity | Native block apply, elector/config operations, persistent dictionary performance and Rust parity |
 | Native state proofs | C++ and Rust actual masterchain Config8/9/10/16/46 and Merkle proofs for profile, policy, key and registry ranges | State-root substitution, omitted entries, false terminal page, unrelated revealed values, detached physical cells, capability and atomic-publication guard removals | RPC node wiring, committee/certificate/owner proofs and Rust global registry apply |
 | Authority primitives | Real C0 PoP and current identity-role-5 verification; independent permit/receipt trust in C++ and Rust | Wrong network/update/signature/current admin key, stale permits, historical receipts and inclusive 128-block boundary; 25 shared service-trust/polling cases per language | Native owner execution and governance adapters and native mutation admission |
@@ -52,8 +53,9 @@ state/authority/proof, journal, signer/provider and local channel harnesses kill
 25, 11, 7 and 6 compiled guard removals respectively. Scoped object storage,
 service issuers and C++ API semantics add eight, nine and eight removals. The
 administration harness adds eleven. The combined implementation harness contains
-227 compiled guard removals, including 17 API admission/cache checks, 25
-native HTTP checks, 17 Rust native cell/proof checks and 25 native Keyring checks.
+268 compiled guard removals, including 17 API admission/cache checks, 25
+native HTTP checks, 17 Rust native cell/proof checks, 25 native Keyring checks,
+18 C++ VM checks, 18 Rust VM checks and five native execution adapter checks.
 
 The native Keyring sanitizer gate uses a separate CMake build with ASan and UBSan
 enabled for every linked dependency. Target-only instrumentation conflicted with
@@ -65,9 +67,9 @@ executable with hidden runtime symbols and requires a named assertion before any
 fixture or actor runs; this negative control cannot pass through a crash.
 
 The frozen wire/API design and fingerprint remain unchanged. The updated evidence
-record inventories exact additive Keyring insertions: 36 historical files remain
-byte-for-byte unchanged, and removing only the registered insertions from the two
-Keyring files recovers their original baseline hashes. The checker rejects changes
+record inventories exact additive Keyring and capability insertions: 35 historical
+files remain byte-for-byte unchanged, and removing only the registered insertions
+from the two Keyring files and capability header recovers their original baseline hashes. The checker rejects changes
 to either historical or inserted bytes; the baseline hashes were not replaced. The generated binding check, Rust formatting, Clippy with warnings denied and
 whitespace checks pass. These results describe the working tree, not a committed
 HEAD or a GitHub CI result.
@@ -132,7 +134,7 @@ through signer and provider/witness process restarts. Losing the witness stops
 calls. These are process-kill tests, not a claim of physical power-loss testing.
 The actual fsync error-injection test separately verifies failure handling.
 Multi-node native execution remains open. The frozen
-profile and all historical production paths remain unchanged.
+profile, historical signature algorithms and historical encoding bytes remain unchanged.
 
 Permits for a still-live old session can be renewed at a newer independently
 trusted masterchain anchor. The VAS1 birth coordinate, keys, committee and policy
@@ -347,3 +349,28 @@ The design-era whole-file boundary was evolved deliberately for native integrati
 original offsets; `check_production.py` reconstructs and hashes the original files.
 The freeze record also covers this insertion inventory and updated evidence scripts.
 Historical verifier bodies and historical encodings are unchanged.
+
+
+## Native VM entry and whole-transaction rehearsal
+
+[The native execution contract](validator-auth-p0-native-vm.md) defines P0CHKSIGN
+at `0xf917`. It preserves raw frozen C0 statement bytes and the existing CHKSIGNU /
+CHKSIGNS behavior. Both runtimes require VM version 16 and capability 1024, read
+only canonical AuthBytes, meter every invocation and inherit immutable capability
+metadata in child execution. The capability is registered in the native inventories;
+no configuration enables it on a network.
+
+C++ and Rust compare 168 executions, including 98 real/falsified frozen-signature
+inputs, valid identity R, canonical carriers, malformed operands, version gates,
+exact gas exhaustion and historical disabled-instruction charging. Five compiled
+adapter removals separately falsify constructor, RUNVM, getter, config-load and
+transaction-compute capability propagation. The independent C0 primitive is shared
+within each language without making the VM depend on signer or protocol state.
+
+The public FunC binding is compiled into a local test probe and executed in the
+actual native emulator and Rust transaction executor. Eight transactions agree on
+compute exit, action result, out-message hashes, balance and stored data. Positive
+transactions relay; bad signatures are refused; insufficient send funds roll back
+the probe's attempted data change; disabled capability refuses execution. These are
+real transaction/action-phase tests with controlled local configuration, not an
+owner authorization proof or a native multinode rehearsal.

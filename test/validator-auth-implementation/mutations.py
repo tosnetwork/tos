@@ -17,8 +17,8 @@ MUTATIONS=[
  ('request-correlation','transport','transport.cpp','if(id.value()!=frame.request_id)return Error{"request-correlation"};',''),
  ('error-retry','transport','transport.cpp','if(error.retryable_!=static_cast<unsigned>(read&&error.code_>=10&&error.code_<=12))return Error{"error-retry"};',''),
  ('flags','core','codec.h','if (b[6] != 0 || b[7] != 0) fail("flags");',''),
- ('public-key-subgroup','core','crypto.cpp',' || crypto_core_ed25519_is_valid_point(bytes.data())!=1',''),
- ('signature-equation','core','crypto.cpp','return sodium_memcmp(left.data(),right.data(),32)==0;','return true;'),
+ ('public-key-subgroup','core','crypto/validator-auth/ed25519.cpp',' || crypto_core_ed25519_is_valid_point(bytes)!=1',''),
+ ('signature-equation','core','crypto/validator-auth/ed25519.cpp','return sodium_memcmp(left.data(),right.data(),32)==0;','return true;'),
  ('expected-duty','core','verify.cpp','if(duty!=expected)return Error{"expected-context"};',''),
  ('quorum','core','verify.cpp','if(quorum&&signed_weight.value()<required_weight.value())return Error{"quorum"};',''),
  ('all-signatures','core','verify.cpp','if(!valid.value())return Error{"signature"};',''),
@@ -34,7 +34,7 @@ def main(args):
    driver={'transfer':'transfer-test.cpp','transport':'transport-driver.cpp','core':'driver.cpp','lifecycle':'driver.cpp'}[suite]
    sources=['crypto.cpp']+(['transfer.cpp'] if suite=='transfer' else ['transport.cpp'] if suite=='transport' else ['verify.cpp','lifecycle.cpp'])
    binary=folder/'driver'
-   command=[os.environ.get('CXX','c++'),'-std=c++20','-O1','-DTOS_AUTH_CORE_ONLY','-I'+str(folder),str(ROOT/'test/validator-auth-implementation'/driver),*[str(shadow/s) for s in sources],*flags,'-o',str(binary)]
+   command=[os.environ.get('CXX','c++'),'-std=c++20','-O1','-DTOS_AUTH_CORE_ONLY','-I'+str(folder),str(ROOT/'test/validator-auth-implementation'/driver),*[str(shadow/s) for s in sources],str(folder/'crypto/validator-auth/ed25519.cpp'),*flags,'-o',str(binary)]
    p=subprocess.run(command,capture_output=True,text=True)
    if p.returncode:raise RuntimeError('mutation did not compile: '+p.stderr)
    return binary
@@ -46,11 +46,14 @@ def main(args):
    return subprocess.run(command,capture_output=True,text=True)
   for path in (ROOT/'validator/auth').glob('*'):
    if path.is_file():shutil.copy2(path,shadow/path.name)
+  primitive=folder/'crypto/validator-auth';primitive.mkdir(parents=True)
+  for path in (ROOT/'crypto/validator-auth').glob('*'):
+   if path.is_file():shutil.copy2(path,primitive/path.name)
   for suite in ('transfer','transport','core','lifecycle'):
    p=test(suite,build(suite));assert p.returncode==0,(suite,p.stderr)
    print('BASELINE:',suite,flush=True)
   for name,suite,file,before,after in MUTATIONS:
-   path=shadow/file;original=path.read_text()
+   path=(folder/file if file.startswith('crypto/') else shadow/file);original=path.read_text()
    path.write_text(replace_once(original,before,after))
    try:
     binary=build(suite);p=test(suite,binary)

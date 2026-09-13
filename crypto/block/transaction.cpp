@@ -2457,7 +2457,8 @@ bool Transaction::prepare_compute_phase(const ComputePhaseConfig& cfg) {
       }
     }
   }
-  vm::VmState vm{new_code, cfg.global_version, std::move(stack), gas, 1, new_data, vm_log, compute_vm_libraries(cfg)};
+  vm::VmState vm{new_code, cfg.global_version, std::move(stack), gas, 1, new_data, vm_log, compute_vm_libraries(cfg),
+                {}, cfg.global_capabilities};
   vm.set_max_data_depth(cfg.max_vm_data_depth);
   vm.set_c7(prepare_vm_c7(cfg));  // tuple with SmartContractInfo
   vm.set_chksig_always_succeed(cfg.ignore_chksig);
@@ -4941,6 +4942,7 @@ td::Status FetchConfigParams::fetch_config_params(
     compute_phase_cfg->max_vm_data_depth = size_limits.max_vm_data_depth;
     compute_phase_cfg->global_config = config.get_root_cell();
     compute_phase_cfg->global_version = config.get_global_version();
+    compute_phase_cfg->global_capabilities = config.get_capabilities();
     if (compute_phase_cfg->global_version >= 4) {
       compute_phase_cfg->prev_blocks_info = std::move(prev_blocks_info);
     }

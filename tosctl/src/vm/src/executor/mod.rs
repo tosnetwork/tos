@@ -34,6 +34,7 @@ mod slice_comparison;
 mod stack;
 mod tuple;
 mod types;
+mod validator_auth;
 
 use chain_block::{BuilderData, Cell, IBitstring, Result};
 pub use engine::*;

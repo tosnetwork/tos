@@ -109,6 +109,7 @@ struct StoragePhase {
 };
 
 struct ComputePhaseConfig {
+  td::uint64 global_capabilities = 0;
   td::uint64 gas_price;
   td::uint64 gas_limit;
   td::uint64 special_gas_limit;

@@ -5,7 +5,7 @@ edition = "2021"
 license = "GPL-3.0"
 
 [dependencies]
-curve25519-dalek = "4.0"
+tos-validator-auth-crypto = { path = "../validator-auth-crypto" }
 sha2 = "0.10"
 
 [target.'cfg(unix)'.dependencies]

@@ -404,7 +404,8 @@ SmartContract::Answer run_smartcont(SmartContract::State state, td::Ref<vm::Stac
     LOG(DEBUG) << "VM stack:\n" << os.str();
   }
   int global_version = config ? config->get_global_version() : SUPPORTED_VERSION;
-  vm::VmState vm{state.code, global_version, std::move(stack), gas, 1, state.data, log};
+  vm::VmState vm{state.code, global_version, std::move(stack), gas, 1, state.data, log, {}, {},
+                config ? static_cast<td::uint64>(config->get_capabilities()) : 0};
   vm.set_c7(std::move(c7));
   vm.set_chksig_always_succeed(ignore_chksig);
   if (!libraries.is_null()) {

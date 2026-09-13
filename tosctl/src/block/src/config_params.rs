@@ -434,6 +434,7 @@ pub enum GlobalCapabilities {
     CapMsgMetadata            = 0x0000_0000_0080,
     CapDeferMessages          = 0x0000_0000_0100,
     CapFullCollatedData       = 0x0000_0000_0200,
+    CapValidatorAuth          = 0x0000_0000_0400,
     CapResolveMerkleCell      = 0x0000_0200_0000,
 }
 

@@ -1,0 +1,18 @@
+;; Local VM/action-phase probe, not an authorization contract for deployment.
+() recv_internal(int balance, int value, cell full_message, slice body) impure {
+  cell message = body~load_ref();
+  slice signature = body~load_ref().begin_parse();
+  int public_key = body~load_uint(256);
+  int amount = body~load_coins();
+  slice target = body~load_msg_addr();
+  body.end_parse();
+  throw_unless(401, p0_check_signature(message, signature, public_key));
+  set_data(begin_cell().store_uint(1, 32).end_cell());
+  cell outgoing = begin_cell()
+    .store_uint(0x18, 6)
+    .store_slice(target)
+    .store_coins(amount)
+    .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)
+    .end_cell();
+  send_raw_message(outgoing, 1);
+}

@@ -1,6 +1,6 @@
 {
   "format": 1,
-  "purpose": "Exact additive native Keyring integration. Original production baseline hashes remain authoritative; no historical verifier or encoding changes.",
+  "purpose": "Exact additive native Keyring integration and validator-auth capability registration. Original production baseline hashes remain authoritative; no historical verifier or encoding changes.",
   "insertions": {
     "keyring/keyring.h": [
       {
@@ -40,6 +40,12 @@
       {
         "offset": 10553,
         "text": "  auto isolation = admit_bulk_export();\n  if (isolation.is_error()) {\n    return promise.set_error(std::move(isolation));\n  }\n"
+      }
+    ],
+    "tos/tos-types.h": [
+      {
+        "offset": 2408,
+        "text": "  capValidatorAuth = 1024,\n"
       }
     ]
   }

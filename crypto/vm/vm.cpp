@@ -36,7 +36,8 @@ VmState::VmState() : cp(-1), dispatch(&dummy_dispatch_table), quit0(true, 0), qu
 }
 
 VmState::VmState(Ref<CellSlice> _code, int global_version, Ref<Stack> _stack, const GasLimits& gas, int flags,
-                 Ref<Cell> _data, VmLog log, std::vector<Ref<Cell>> _libraries, Ref<Tuple> init_c7)
+                 Ref<Cell> _data, VmLog log, std::vector<Ref<Cell>> _libraries, Ref<Tuple> init_c7,
+                 td::uint64 global_capabilities)
     : code(std::move(_code))
     , stack(std::move(_stack))
     , cp(-1)
@@ -47,7 +48,8 @@ VmState::VmState(Ref<CellSlice> _code, int global_version, Ref<Stack> _stack, co
     , gas(gas)
     , libraries(std::move(_libraries))
     , stack_trace((flags >> 2) & 1)
-    , global_version(global_version) {
+    , global_version(global_version)
+    , global_capabilities(global_capabilities) {
   ensure_throw(init_cp(0));
   set_c4(std::move(_data));
   if (init_c7.not_null()) {
@@ -730,6 +732,7 @@ Ref<vm::Cell> lookup_library_in(td::ConstBitPtr key, Ref<vm::Cell> lib_root) {
 
 void VmState::run_child_vm(VmState&& new_state, bool return_data, bool return_actions, bool return_gas,
                            bool isolate_gas, int ret_vals) {
+  new_state.global_capabilities = global_capabilities;
   if (global_version < 10) {
     new_state.log = std::move(log);
     new_state.libraries = std::move(libraries);

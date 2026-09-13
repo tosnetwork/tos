@@ -106,6 +106,7 @@ class VmState final : public VmStateInterface {
   td::optional<td::Bits256> missing_library;
   td::uint16 max_data_depth = 512;  // Default value
   int global_version{0};
+  td::uint64 global_capabilities{0};
   size_t chksgn_counter = 0;
   size_t get_extra_balance_counter = 0;
   long long free_gas_consumed = 0;
@@ -174,11 +175,13 @@ class VmState final : public VmStateInterface {
   };
   VmState();
   VmState(Ref<CellSlice> _code, int global_version, Ref<Stack> _stack, const GasLimits& _gas, int flags = 0,
-          Ref<Cell> _data = {}, VmLog log = {}, std::vector<Ref<Cell>> _libraries = {}, Ref<Tuple> init_c7 = {});
+          Ref<Cell> _data = {}, VmLog log = {}, std::vector<Ref<Cell>> _libraries = {}, Ref<Tuple> init_c7 = {},
+          td::uint64 global_capabilities = 0);
   VmState(Ref<Cell> _code, int global_version, Ref<Stack> _stack, const GasLimits& _gas, int flags = 0,
-          Ref<Cell> _data = {}, VmLog log = {}, std::vector<Ref<Cell>> _libraries = {}, Ref<Tuple> init_c7 = {})
+          Ref<Cell> _data = {}, VmLog log = {}, std::vector<Ref<Cell>> _libraries = {}, Ref<Tuple> init_c7 = {},
+          td::uint64 global_capabilities = 0)
       : VmState(convert_code_cell(std::move(_code), global_version, _libraries), global_version, std::move(_stack),
-                _gas, flags, std::move(_data), std::move(log), _libraries, std::move(init_c7)) {
+                _gas, flags, std::move(_data), std::move(log), _libraries, std::move(init_c7), global_capabilities) {
   }
   VmState(const VmState&) = delete;
   VmState(VmState&&) = default;
@@ -356,6 +359,10 @@ class VmState final : public VmStateInterface {
   }
   int get_global_version() const override {
     return global_version;
+  }
+  // Chain execution input. SETC7 and RUNVM arguments cannot grant capabilities.
+  td::uint64 get_global_capabilities() const {
+    return global_capabilities;
   }
   bool is_actual_tvm() const override {
     return true;

@@ -1,6 +1,6 @@
 add_library(tos_validator_auth STATIC crypto.cpp verify.cpp cells.cpp lifecycle.cpp transfer.cpp object-store.cpp transport.cpp api-semantics.cpp state.cpp context.cpp service-auth.cpp)
 target_include_directories(tos_validator_auth PUBLIC "${PROJECT_SOURCE_DIR}" "${SODIUM_INCLUDE_DIR}")
-target_link_libraries(tos_validator_auth PUBLIC ${SODIUM_LIBRARY_RELEASE} tos_crypto)
+target_link_libraries(tos_validator_auth PUBLIC ${SODIUM_LIBRARY_RELEASE} tos_crypto tos_validator_auth_crypto)
 set_target_properties(tos_validator_auth PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 if(TARGET sodium)
   add_dependencies(tos_validator_auth sodium)

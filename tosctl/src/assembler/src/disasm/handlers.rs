@@ -855,6 +855,7 @@ impl Handlers {
                 .set(0x10, Loader::chksignu)
                 .set(0x11, Loader::chksigns)
                 .set(0x16, Loader::hashbu)
+                .set(0x17, Loader::p0_chksign)
                 .set(0x40, Loader::cdatasizeq)
                 .set(0x41, Loader::cdatasize)
                 .set(0x42, Loader::sdatasizeq)

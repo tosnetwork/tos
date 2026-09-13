@@ -1,6 +1,8 @@
 #pragma once
 #include <string_view>
 
+#include "crypto/validator-auth/ed25519.h"
+
 #include "types.h"
 namespace tos::auth {
 Result<Hash> digest(std::string_view domain, std::span<const std::uint8_t> bytes);
@@ -12,15 +14,15 @@ Result<Hash> object_id(std::string_view domain, const T& value) {
   return digest(domain, raw.value());
 }
 class AdmittedKey {
-  Hash bytes_;
-  explicit AdmittedKey(Hash bytes) : bytes_(bytes) {
+  c0::AdmittedKey key_;
+  explicit AdmittedKey(c0::AdmittedKey key) : key_(std::move(key)) {
   }
 
  public:
   static Result<AdmittedKey> admit(std::span<const std::uint8_t> bytes);
   Result<bool> verify(std::span<const std::uint8_t> message, std::span<const std::uint8_t> signature) const;
   const Hash& bytes() const {
-    return bytes_;
+    return key_.bytes();
   }
 };
 }  // namespace tos::auth

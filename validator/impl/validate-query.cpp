@@ -1104,6 +1104,7 @@ bool ValidateQuery::fetch_config_params() {
     compute_phase_cfg_.max_vm_data_depth = size_limits.max_vm_data_depth;
     compute_phase_cfg_.global_config = config_->get_root_cell();
     compute_phase_cfg_.global_version = config_->get_global_version();
+    compute_phase_cfg_.global_capabilities = config_->get_capabilities();
     if (compute_phase_cfg_.global_version >= 4) {
       auto prev_blocks_info = config_->get_prev_blocks_info();
       if (prev_blocks_info.is_error()) {

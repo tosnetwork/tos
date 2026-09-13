@@ -66,6 +66,7 @@ enum GlobalCapabilities {
   capStoreOutMsgQueueSize = 64,
   capMsgMetadata = 128,
   capDeferMessages = 256,
+  capValidatorAuth = 1024,
   capFullCollatedData = 512
 };
 

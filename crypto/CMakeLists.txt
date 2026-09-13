@@ -362,6 +362,16 @@ endif()
 target_include_directories(tos_crypto_core PUBLIC $<BUILD_INTERFACE:${SODIUM_INCLUDE_DIR}>)
 target_link_libraries(tos_crypto PUBLIC ${SODIUM_LIBRARY_RELEASE})
 
+add_library(tos_validator_auth_crypto STATIC validator-auth/ed25519.cpp)
+target_sources(tos_crypto PRIVATE vm/authops.cpp)
+target_link_libraries(tos_crypto PUBLIC tos_validator_auth_crypto)
+target_include_directories(tos_validator_auth_crypto PUBLIC "${PROJECT_SOURCE_DIR}" "${SODIUM_INCLUDE_DIR}")
+target_link_libraries(tos_validator_auth_crypto PUBLIC ${SODIUM_LIBRARY_RELEASE})
+set_target_properties(tos_validator_auth_crypto PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
+if(TARGET sodium)
+  add_dependencies(tos_validator_auth_crypto sodium)
+endif()
+
 add_library(tos_db STATIC ${TOS_DB_SOURCE})
 target_include_directories(tos_db PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
 	$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/..>)

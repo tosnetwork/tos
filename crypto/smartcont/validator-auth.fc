@@ -1,0 +1,4 @@
+;; Pure C0 verification over the raw bytes of a canonical AuthBytes cell.
+;; Requires node-provided VM version >= 16 and capValidatorAuth. Callers must
+;; separately establish the expected statement, authority and replay rules.
+int p0_check_signature(cell message, slice signature, int public_key) asm "P0CHKSIGN";

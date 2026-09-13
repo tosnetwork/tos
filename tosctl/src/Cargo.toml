@@ -4,6 +4,7 @@ members = [
     'assembler',
     'block',
     'validator-auth',
+    'validator-auth-crypto',
     'validator-auth-native',
     'block-json',
     'emulator',
