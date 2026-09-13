@@ -379,3 +379,12 @@ add_executable(test-p0-native-state-mutant EXCLUDE_FROM_ALL native-apply-test.cp
 target_include_directories(test-p0-native-state-mutant PRIVATE "${PROJECT_SOURCE_DIR}/validator/auth")
 target_link_libraries(test-p0-native-state-mutant PRIVATE tos_validator_auth_native)
 set_target_properties(test-p0-native-state-mutant PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+
+add_executable(test-p0-native-history native-history-test.cpp)
+target_link_libraries(test-p0-native-history PRIVATE tos_validator_auth_native)
+set_target_properties(test-p0-native-history PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+configure_file("${PROJECT_SOURCE_DIR}/validator/auth/native-history.cpp" "${CMAKE_CURRENT_BINARY_DIR}/native-history-mutated.cpp" COPYONLY)
+add_executable(test-p0-native-history-mutant EXCLUDE_FROM_ALL native-history-test.cpp "${CMAKE_CURRENT_BINARY_DIR}/native-history-mutated.cpp")
+target_include_directories(test-p0-native-history-mutant PRIVATE "${PROJECT_SOURCE_DIR}/validator/auth")
+target_link_libraries(test-p0-native-history-mutant PRIVATE tos_validator_auth_native)
+set_target_properties(test-p0-native-history-mutant PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)

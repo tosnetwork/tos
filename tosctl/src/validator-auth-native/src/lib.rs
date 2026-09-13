@@ -13,3 +13,5 @@ pub(crate) fn native<T>(value: chain_block::Result<T>) -> Result<T, Error> {
 }
 
 pub mod native_apply;
+
+pub mod native_history;

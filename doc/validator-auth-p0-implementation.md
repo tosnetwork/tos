@@ -24,6 +24,7 @@ or PQ suite allocation is authorized by this work.
 | Native state proofs | C++ and Rust actual masterchain Config8/9/10/16/46 and Merkle proofs for profile, policy, key and registry ranges | State-root substitution, omitted entries, false terminal page, unrelated revealed values, detached physical cells, capability and atomic-publication guard removals | RPC node wiring, owner proof dispatch and Rust global registry apply |
 | Native certificate proofs and RPC | Independent C++/Rust certificate verification from native committee and policy proofs; C++ methods 12/13 and private Rust verified output | 55 shared cases; real local HTTP over 16 snapshots; exact signers/weight, trusted context, error provenance and single-fetch prepared request checks | Native manager session/history/archive source and remote serving |
 | Native owner execution | C++ and independent Rust VAF1 kind-1 proofs over native account transactions, full trusted anchor and current owner/stake allocation | 68 shared proof cases from real masterchain/workchain-0 wallet transactions; action rollback, forged wallet signatures, block substitution and 52 compiled guards | Native elector receipt processing, normal stake rules and atomic update admission |
+| Native finalized history | Independent C++/Rust resolution of full anchors from authenticated OldMcBlocksInfo and original native block bytes | 37 shared cases, 34 compiled guards, exact file/root/context/new-state binding, bounded reads and full-dependency sanitizer parity | Native manager archive reader and independently established finalized head |
 | Authenticated ordered identity apply | C++ and independent Rust compose native owner proofs, PoP and current administration with per-operation resulting state | 74 shared cases from real wallet approvals, same-block administration rotation, due/policy boundaries, exact native bytes and 22 compiled guards | Native elector/config transaction admission and installed chain root |
 | Authority primitives | Independent C++/Rust session/duty derivation, C0 PoP, current identity-role-5 and current governance quorum verification; separate permit/receipt trust | 76 shared context/identity cases, 28 current-governance cases and 25 service-trust/polling cases; expired or rotated governance keys refused | Normal configuration voting and native transaction admission |
 | Signer persistence | Native append-only safety ledger, actual C0 secret provider, witness consumption and sign/get-result service | Both-order conflict rules, exact retransmission, journal/provider backup rollback, stale fence, terminal retention, real fsync failure, unknown outcome refusal | Native consensus permissions and remote serving |
@@ -57,7 +58,7 @@ state/authority/proof, journal, signer/provider and local channel harnesses kill
 25, 11, 7 and 6 compiled guard removals respectively. Scoped object storage,
 service issuers and C++ API semantics add eight, nine and eight removals. The
 administration harness adds eleven. The combined implementation harness contains
-613 compiled production mutations, including 22 authenticated ordered-apply checks,
+647 compiled production mutations, including 34 native finalized-history and 22 authenticated ordered-apply checks,
 52 native owner-proof/resource checks,
 46 context/identity-authority checks,
 33 current-governance checks, 28 independent certificate proof checks,
@@ -90,6 +91,13 @@ new addition requires CI evidence attached to its own HEAD.
 It neither triggers the full Ubuntu build nor starts a network.
 
 ## Authenticated ordered identity application
+
+[The native finalized-history adapter](validator-auth-p0-native-history.md) resolves
+owner-proof coordinates from a trusted masterchain state's native history. It
+checks original block file bytes, root, chain/coordinate and Merkle update output.
+Its 37 cases and 34 compiled guards include different old/new state hashes;
+substituting the old state must fail. It requires a native archive reader and
+independently established finality from the eventual node integration.
 
 [The native apply boundary](validator-auth-p0-native-apply.md) now verifies actual
 owner execution, PoP and current administration during atomic identity replay.
