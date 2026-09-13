@@ -1,6 +1,7 @@
 #pragma once
 #include <functional>
 #include <map>
+#include <optional>
 
 #include "crypto.h"
 namespace tos::auth {
@@ -14,11 +15,17 @@ using FetchChunk = std::function<Result<Bytes>(const ObjectRef&, std::uint8_t)>;
 class ObjectReader {
   FetchChunk fetch_;
   std::size_t remaining_ = 67108864;
+  std::optional<Error> source_error_;
 
  public:
   explicit ObjectReader(FetchChunk fetch) : fetch_(std::move(fetch)) {
   }
   Result<Bytes> resolve(const ObjectValue&, std::uint8_t expected_kind);
+  // Preserve trusted storage failure provenance separately from malformed
+  // objects. Public RPC error classification must not turn outages into input errors.
+  const std::optional<Error>& source_error() const {
+    return source_error_;
+  }
 };
 // One already-authenticated principal's object storage. The caller serializes access.
 class ChunkStore {

@@ -1,4 +1,5 @@
 pub mod cells;
+pub mod certificate_proof;
 pub mod committee;
 pub mod committee_proof;
 pub mod proof;

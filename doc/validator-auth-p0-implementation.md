@@ -17,11 +17,12 @@ or PQ suite allocation is authorized by this work.
 | Native cells | Canonical AuthBytes and native BOC adapter | 20 round-trip/malformed-BOC cases through 32 MiB of incompressible data; direct hash and canonical-partition guard removals | Native chain apply |
 | Identity lifecycle | C++ and Rust per-identity register/rotate/retire/cancel and consecutive-block due-transition application | 104 differential cases per language with controlled, separately typed authority callbacks; predecessor and block-gap guard removals | Native owner/admin adapters, transactional chain storage and global governance operations |
 | Object transfer | C++ and Rust canonical inline/manifest readers; principal/anchor-scoped C++ store and atomic proof publication | Chunk and whole-object hash substitution, quota, duplicate upload, expiry and aggregate read budget; eight scoped-store guard removals | Authenticated public RPC wiring and Rust storage adapter |
-| Thin transport and API association | C++ and Rust framing and semantic association for all 15 methods, including result receipts, proof attachments and cursors | 182 framing cases and 133 semantic cases per language; direct signer-list, receipt-hash and context guard removals | Native node context, committee/certificate RPC and remote mTLS deployment |
+| Thin transport and API association | C++ and Rust framing and semantic association for all 15 methods, including result receipts, proof attachments and cursors | 182 framing cases and 133 semantic cases per language; direct signer-list, receipt-hash and context guard removals | Native node context/history adapters and remote mTLS deployment |
 | Native VM and transaction execution | C++/Rust P0CHKSIGN, native capability metadata, Fift/FunC and Rust assembly bindings | 168 exact outcome/gas comparisons; getter config and nested VM; eight whole transactions including action rollback | Elector/owner statement construction and native admission |
-| Native committee derivation | Explicit native identity/stake descriptor, authenticated Config35/34 and Config46, original native selection, owned transport order and VAM1 | 40 C++/Rust state cases including a full 400-member snapshot, shuffle, shard weights, temporary election and budget exhaustion | Elector emission, session admission and certificate RPC |
+| Native committee derivation | Explicit native identity/stake descriptor, authenticated Config35/34 and Config46, original native selection, owned transport order and VAM1 | 40 C++/Rust state cases including a full 400-member snapshot, shuffle, shard weights, temporary election and budget exhaustion | Elector emission and session admission |
 | Native registry state | C++ and independent Rust Config46 genesis, encoding and identity-update replay; immutable key archive and owned successor state | 501 identities / 2506 keys; 34 cross-language replay cases with checkpoint/continuous equivalence, control retention and rejected-block atomicity | Native block apply, elector/config operations, persistent dictionary performance and global apply |
-| Native state proofs | C++ and Rust actual masterchain Config8/9/10/16/46 and Merkle proofs for profile, policy, key and registry ranges | State-root substitution, omitted entries, false terminal page, unrelated revealed values, detached physical cells, capability and atomic-publication guard removals | RPC node wiring, certificate/owner proofs and Rust global registry apply |
+| Native state proofs | C++ and Rust actual masterchain Config8/9/10/16/46 and Merkle proofs for profile, policy, key and registry ranges | State-root substitution, omitted entries, false terminal page, unrelated revealed values, detached physical cells, capability and atomic-publication guard removals | RPC node wiring, owner execution proofs and Rust global registry apply |
+| Native certificate proofs and RPC | Independent C++/Rust certificate verification from native committee and policy proofs; C++ methods 12/13 and private Rust verified output | 55 shared cases; real local HTTP over 16 snapshots; exact signers/weight, trusted context, error provenance and single-fetch prepared request checks | Native manager session/history/archive source and remote serving |
 | Authority primitives | Real C0 PoP and current identity-role-5 verification; independent permit/receipt trust in C++ and Rust | Wrong network/update/signature/current admin key, stale permits, historical receipts and inclusive 128-block boundary; 25 shared service-trust/polling cases per language | Native owner execution and governance adapters and native mutation admission |
 | Signer persistence | Native append-only safety ledger, actual C0 secret provider, witness consumption and sign/get-result service | Both-order conflict rules, exact retransmission, journal/provider backup rollback, stale fence, terminal retention, real fsync failure, unknown outcome refusal | Native consensus permissions and remote serving |
 | Signer administration | Durable prepare/stage/retire/cancel intent execution, provider preparation IDs and PoP reservation IDs | Real PoP and current admin signatures, owner refusal before reservation, exact receipts, cancellation target, provider rollback and six process-kill boundaries | Native owner execution and node context wiring |
@@ -54,7 +55,8 @@ state/authority/proof, journal, signer/provider and local channel harnesses kill
 25, 11, 7 and 6 compiled guard removals respectively. Scoped object storage,
 service issuers and C++ API semantics add eight, nine and eight removals. The
 administration harness adds eleven. The combined implementation harness contains
-409 compiled guard removals, including 18 native Rust registry replay checks, three
+460 compiled production mutations, including 28 independent certificate proof checks,
+16 certificate RPC/error checks, seven prepared-client checks, 18 native Rust registry replay checks, three
 native certificate benchmark controls, 17 API admission/cache checks, 25
 native HTTP checks, 17 Rust native cell/proof checks, 25 native Keyring checks,
 18 C++ VM checks, 18 Rust VM checks and five native execution adapter checks.
@@ -81,6 +83,46 @@ libraries and Rust crate on Ubuntu x86_64 and ARM, records the checked HEAD, run
 these checks and uploads evidence. The previous implementation milestone passed both focused CI architectures; each
 new addition requires CI evidence attached to its own HEAD.
 It neither triggers the full Ubuntu build nor starts a network.
+
+## Native certificate proofs and verified client calls
+
+The independent verifiers authenticate the native committee and selected policy
+against the same complete masterchain anchor, then verify every supplied signature
+and derive signer identities and weight from the full roster. `VerifiedNativeCertificate`
+has a private constructor. An API result claiming a different weight, signer list,
+certificate ID, duty, policy or committee fails whole-result equality.
+
+Certificate claims are lookup locators only. The C++ RPC source must resolve the
+expected native session and duty independently; the Rust client receives its own
+trusted anchor, chain and expected duty. Method 12 rechecks archived certificate
+bytes before publishing proofs. Method 13 validates request proofs and signatures.
+Neither archive retrieval nor a remote result substitutes for local verification.
+The currently tested history source is a controlled native-state fixture; a live
+manager/history/archive adapter remains required.
+
+The Rust client prepares each operation before sending its main request. For
+method 13, preparation owns the already verified certificate and exact request ID,
+anchor, chain and expected duty. Response verification consumes that value, checks
+all bindings and compares the complete result without fetching proofs twice.
+There is no ambient verdict cache. Method 12 verifies the proofs in the response.
+Both methods enforce the two-million-byte binary bound before decoding.
+
+The C++ public API distinguishes malformed proofs/signatures (`BAD_REQUEST`) from
+an independently resolved duty mismatch (`CONTEXT_MISMATCH`). Source-history and
+storage failures preserve their original error and retry semantics. The attachment
+reader records trusted fetch failures separately from malformed content and clears
+that provenance on each resolution. A backend outage cannot become a peer-input
+error merely because verification encountered it.
+
+The 55 shared positive/negative cases include full 400-member committees, shard
+selection, unrelated anchors, resigned cross-genesis certificates, invalid policy
+proofs, wrong sessions, surplus signatures, below-quorum certificates and forged
+remote weights. The native RPC corpus uses 16 real snapshot encodings and checks
+API error codes, retry flags and unknown/absent request-state semantics. C++ serves
+both certificate methods over actual private Unix HTTP to the independent Rust
+client, checking exact result bytes and exactly one fetch per proof chunk. Release
+and fully instrumented Ubuntu builds agree; these are local RPC checks, not a
+P0-enabled network rehearsal or remote HTTP/2/mTLS acceptance.
 
 ## Native replay and certificate cost
 
@@ -277,9 +319,10 @@ unproved ABSENT. Malformed framing returns BAD_REQUEST with zero correlation ID
 without starting a reservation.
 
 `NativeClientRpc` serves profile, policy, registry and key proofs from an exact
-anchor-bound native-state source. Committee/certificate methods remain explicitly
-unsupported until native committee/history integration exists. The library does
-not infer finality from a supplied root or install peer-supplied trust.
+anchor-bound native-state source. Certificate methods 12/13 additionally require
+independent native chain, session/duty and certificate-history adapters. Their default
+methods refuse unavailable history. The library does not infer finality from a
+supplied root or install peer-supplied trust.
 
 The local listener uses HTTP/1.1 over a private Unix socket. This is a local
 transport only; remote HTTP/2 with TLS 1.3 mutual authentication remains a separate
@@ -345,8 +388,8 @@ sets carry completion markers so a missing/partial export cannot silently pass.
 Rust linting covers both modified authentication crates with warnings denied;
 `--no-deps` excludes unrelated pre-existing lints in the native block dependency.
 That dependency is still compiled and executed by the native tests. Rust global
-registry replay, native committee/certificate/owner proofs and production node
-and CLI wiring remain separate implementation work.
+registry governance apply, owner execution proofs and production node and CLI
+wiring remain separate implementation work.
 
 
 ## Native Keyring designation and concurrency
@@ -438,8 +481,8 @@ snapshots retain their original keys and denominator.
 The new Rust registry reader independently checks native dictionaries, retained
 policies, immutable key hashes/epochs, identity references and pending/control
 records. This completes native snapshot reading, not Rust global mutation apply.
-Elector/config execution, native session/consensus routing, certificate/owner proof and RPC integration
-and local multi-node acceptance remain open. Legacy JSON tooling preserves native
+Elector/config execution, native session/consensus routing, owner execution proof,
+node RPC adapters and P0-enabled local multi-node acceptance remain open. Legacy JSON tooling preserves native
 bindings but remains a metadata interface, not authenticated P0 update authority.
 
 
@@ -462,7 +505,7 @@ and 16 compiled guard removals for anchor/object binding, minimal revealed nodes
 detached physical cells, header reads and publication before returning a manifest.
 These paths run under full native ASan/UBSan/leak instrumentation with byte-identical
 release and sanitized fixture exports. They provide committee proof authority;
-production session/consensus call sites and certificate RPC remain open.
+production session/consensus call sites and node RPC adapters remain open.
 
 
 ## Native config tools and voting input

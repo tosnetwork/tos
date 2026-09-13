@@ -63,7 +63,9 @@ fn run() -> Result<(), Error> {
             anchor,
             network: args[3].parse().map_err(|_| Error("network"))?,
         };
+        verifier.prepare(method, &request, &mut reader)?;
         let verified = verifier.verify(
+            (),
             method,
             tos_validator_auth::api_semantics::api_request_id(method, &request)?,
             &request,

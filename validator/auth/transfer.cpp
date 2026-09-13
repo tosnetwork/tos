@@ -82,6 +82,7 @@ Result<bool> validate_chunk(const ObjectRef& ref, std::uint8_t index, std::span<
   return true;
 }
 Result<Bytes> ObjectReader::resolve(const ObjectValue& value, std::uint8_t kind) {
+  source_error_.reset();
   auto valid = validate_object(value, kind);
   if (!valid.ok())
     return valid.error();
@@ -91,15 +92,19 @@ Result<Bytes> ObjectReader::resolve(const ObjectValue& value, std::uint8_t kind)
   remaining_ -= size;
   if (!value.inline_.empty())
     return value.inline_;
-  if (!fetch_)
-    return Error{"object-unavailable"};
+  if (!fetch_) {
+    source_error_ = Error{"object-unavailable"};
+    return *source_error_;
+  }
   const auto& ref = value.reference_[0];
   Bytes out;
   out.reserve(size);
   for (std::size_t i = 0; i < ref.chunk_hashes_.size(); ++i) {
     auto chunk = fetch_(ref, static_cast<std::uint8_t>(i));
-    if (!chunk.ok())
+    if (!chunk.ok()) {
+      source_error_ = chunk.error();
       return chunk.error();
+    }
     auto checked = validate_chunk(ref, static_cast<std::uint8_t>(i), chunk.value());
     if (!checked.ok())
       return checked.error();

@@ -39,8 +39,16 @@ pub type Outcome = CheckedOutcome<UntrustedResult>;
 /// verified type while sharing this call's framing and attachment budget.
 pub trait ResponseVerifier {
     type Output;
+    type Prepared;
+    fn prepare<F: FnMut(&ObjectRef, u8) -> Result<Vec<u8>, Error>>(
+        &self,
+        method: u8,
+        request: &[u8],
+        reader: &mut ObjectReader<F>,
+    ) -> Result<Self::Prepared, Error>;
     fn verify<F: FnMut(&ObjectRef, u8) -> Result<Vec<u8>, Error>>(
         &self,
+        prepared: Self::Prepared,
         method: u8,
         id: Hash,
         request: &[u8],
@@ -51,8 +59,19 @@ pub trait ResponseVerifier {
 struct SemanticVerifier;
 impl ResponseVerifier for SemanticVerifier {
     type Output = UntrustedResult;
+    type Prepared = ();
+    fn prepare<F: FnMut(&ObjectRef, u8) -> Result<Vec<u8>, Error>>(
+        &self,
+        method: u8,
+        request: &[u8],
+        reader: &mut ObjectReader<F>,
+    ) -> Result<(), Error> {
+        validate_api_request(method, request, reader)?;
+        Ok(())
+    }
     fn verify<F: FnMut(&ObjectRef, u8) -> Result<Vec<u8>, Error>>(
         &self,
+        _prepared: (),
         method: u8,
         id: Hash,
         request: &[u8],
@@ -92,7 +111,7 @@ impl<T: Transport> Client<T> {
         let mut reader = ObjectReader::new(|manifest: &ObjectRef, index| {
             self.chunk(anchor.as_ref().ok_or(Error("attachment-anchor"))?, manifest, index)
         });
-        validate_api_request(method, request, &mut reader)?;
+        let prepared = verifier.prepare(method, request, &mut reader)?;
         let id = api_request_id(method, request)?;
         let frame = TransportFrame {
             method,
@@ -121,6 +140,7 @@ impl<T: Transport> Client<T> {
         // Response validation shares the operation's attachment budget. It may
         // refuse an oversized combined request/response, never truncate proof.
         Ok(CheckedOutcome::Result(verifier.verify(
+            prepared,
             method,
             id,
             request,

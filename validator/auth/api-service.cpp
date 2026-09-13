@@ -16,7 +16,7 @@ std::uint16_t code(const Error& error) {
     return 4;
   if (e == "predecessor" || e == "nonce" || e == "admin-context" || e == "sign-permit-association" ||
       e == "operation-chain" || e == "permit-context" || e == "permit-expiry" || e == "permit-current-coordinate" ||
-      e == "stale-permit-policy" || e == "stage-provider-key")
+      e == "stale-permit-policy" || e == "stage-provider-key" || e == "api-context-mismatch")
     return 5;
   if (e == "sign-key-context" || e == "snapshot-validity" || e == "new-key-validity")
     return 6;

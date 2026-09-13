@@ -336,8 +336,18 @@ pub struct NativeStateVerifier {
 }
 impl tos_validator_auth::client::ResponseVerifier for NativeStateVerifier {
     type Output = VerifiedNativeResponse;
+    type Prepared = ();
+    fn prepare<F: FnMut(&ObjectRef, u8) -> Result<Vec<u8>, Error>>(
+        &self,
+        method: u8,
+        request: &[u8],
+        reader: &mut ObjectReader<F>,
+    ) -> Result<(), Error> {
+        tos_validator_auth::api_semantics::validate_api_request(method, request, reader)
+    }
     fn verify<F: FnMut(&ObjectRef, u8) -> Result<Vec<u8>, Error>>(
         &self,
+        _prepared: (),
         method: u8,
         _id: Hash,
         request: &[u8],

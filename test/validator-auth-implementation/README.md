@@ -132,3 +132,21 @@ Registry replay and native C0 cost:
 - `measure_c0.py --build ... --out ... --enforce` records build identity alongside
   the timing. It reports unavailable governor and allocation/propagation evidence
   explicitly rather than representing certificate timing as full P0 acceptance.
+
+Native certificate proofs and client admission:
+
+- `test-p0-certificate-proof <committee-export> <fresh-export>` produces 55 native
+  cases. Run `certificate-proof-conformance` and `certificate-client-conformance`
+  from the native Rust crate against the export. Both independently verify full
+  native committee/policy proofs, expected duties, signatures and computed results.
+- `test-p0-certificate-rpc <committee-export> <certificate-export> [rust-client]`
+  checks methods 12/13 over 16 native snapshots and public API error semantics.
+  Passing `certificate-client-conformance` also exercises actual Unix HTTP, exact
+  result bytes and proof-chunk call counts. Its native-history source is a fixture;
+  it does not establish live manager/session/archive integration.
+- `certificate_proof_mutations.py --language cpp|rust ...` requires 14 compiled
+  proof/cryptographic removals per language. `certificate_rpc_mutations.py` adds
+  16 source-authority, context, error and resource mutations.
+- `certificate_client_mutations.py` adds seven prepared-value/result checks,
+  including a compiled change that incorrectly repeats full proof verification.
+  Re-fetching a proof must fail the exact single-fetch assertion.

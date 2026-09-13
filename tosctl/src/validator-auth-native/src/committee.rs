@@ -11,7 +11,7 @@ use tos_validator_auth::{
     types::{Anchor, Committee, Member},
     verify::RegistrySnapshot,
 };
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct ChainContext {
     pub network: i32,
     pub genesis_root: Hash,
