@@ -1,6 +1,7 @@
 """Compile and execute Rust production guard mutations in an isolated crate."""
 import argparse,json,shutil,subprocess,sys,tempfile
 from pathlib import Path
+from mutation_support import replace_once
 ROOT=Path(__file__).resolve().parents[2]
 MUTATIONS=[
  ('client-request-admission','client.rs','validate_api_request(method, request, &mut reader)?;','','client'),
@@ -18,7 +19,7 @@ MUTATIONS=[
  ('lifecycle-snapshot-due','lifecycle.rs','if state.pending.iter().any(|p| p.effective_from <= anchor) {','if false {','lifecycle'),
  ('lifecycle-snapshot-validity','lifecycle.rs','if key.valid_from > anchor || key.valid_until <= anchor {','if false {','lifecycle'),
  ('public-subgroup','../../validator-auth-crypto/src/lib.rs','p == EdwardsPoint::identity() || !p.is_torsion_free()','false','core'),
- ('signature-equation','../../validator-auth-crypto/src/lib.rs','s * ED25519_BASEPOINT_POINT == rpoint + h * self.point','true','core'),
+ ('signature-equation','../../validator-auth-crypto/src/lib.rs','EdwardsPoint::vartime_double_scalar_mul_basepoint(&h, &(-self.point), &s).compress().to_bytes() == r','true','core'),
  ('expected-duty','verify.rs','if duty != expected {','if false {','core'),
  ('quorum','verify.rs','if quorum && signed_weight < required_weight {','if false {','core'),
  ('all-signatures','verify.rs','if !key.verify(&statement, signature) {','if false {','core'),
@@ -66,8 +67,8 @@ def main(args):
    p=test(suite,binary);assert p.returncode==0,p.stderr
   print('BASELINE: Rust core and transport',flush=True)
   for name,file,before,after,suite in MUTATIONS:
-   path=d/'crate/src'/file;original=path.read_text();assert original.count(before)==1,name
-   path.write_text(original.replace(before,after))
+   path=d/'crate/src'/file;original=path.read_text()
+   path.write_text(replace_once(original,before,after))
    try:
     p=test(suite,build())
     if p.returncode!=1 or 'AssertionError' not in p.stderr or 'RuntimeError' in p.stderr:raise AssertionError((name,'survived or invalid kill',p.stderr))

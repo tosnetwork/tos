@@ -1,9 +1,11 @@
 #pragma once
 #include <array>
 #include <cstdint>
+#include <memory>
 #include <string_view>
 #include <variant>
 
+struct evp_pkey_st;
 namespace tos::auth::c0 {
 using Bytes32 = std::array<std::uint8_t, 32>;
 enum class Error { public_key, backend };
@@ -12,7 +14,8 @@ enum class Error { public_key, backend };
 // authorize the message before invoking it.
 class AdmittedKey {
   Bytes32 bytes_;
-  explicit AdmittedKey(Bytes32 bytes) : bytes_(bytes) {
+  std::shared_ptr<evp_pkey_st> key_;
+  explicit AdmittedKey(Bytes32 bytes, std::shared_ptr<evp_pkey_st> key) : bytes_(bytes), key_(std::move(key)) {
   }
 
  public:

@@ -1,6 +1,5 @@
 // Pure Ed25519 C0 primitive. Callers enforce message bounds and authority.
 use curve25519_dalek::{
-    constants::ED25519_BASEPOINT_POINT,
     edwards::{CompressedEdwardsY, EdwardsPoint},
     scalar::Scalar,
     traits::Identity,
@@ -35,7 +34,6 @@ impl AdmittedKey {
         }
         let mut r = [0; 32];
         r.copy_from_slice(&signature[..32]);
-        let Some(rpoint) = point(r) else { return false };
         let mut raw_s = [0; 32];
         raw_s.copy_from_slice(&signature[32..]);
         let Some(s) = Option::<Scalar>::from(Scalar::from_canonical_bytes(raw_s)) else {
@@ -47,7 +45,12 @@ impl AdmittedKey {
         state.update(message);
         let wide: [u8; 64] = state.finalize().into();
         let h = Scalar::from_bytes_mod_order_wide(&wide);
-        s * ED25519_BASEPOINT_POINT == rpoint + h * self.point
+        // All inputs are public. Equality to a canonically encoded computed
+        // point enforces R encoding and the noncofactored equation together.
+        EdwardsPoint::vartime_double_scalar_mul_basepoint(&h, &(-self.point), &s)
+            .compress()
+            .to_bytes()
+            == r
     }
     pub fn bytes(&self) -> &[u8; 32] {
         &self.bytes

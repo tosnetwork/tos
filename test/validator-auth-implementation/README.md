@@ -17,7 +17,7 @@ Build with `TOS_BUILD_P0_IMPLEMENTATION_TESTS=ON`, then build the targets
   the Rust conformance binary. Checks framing, binary shape and correlation.
   Endpoint semantics and authenticated response claims are separate work.
 - `mutations.py`: isolated C++ source copies, successful compilation, assertion
-  failures and restored baseline. Requires `pkg-config libsodium` and `--rust`.
+  failures and restored baseline. Requires `pkg-config libsodium openssl` and `--rust`.
 - `rust_mutations.py`: isolated Rust crate, successful compilation, assertion
   failures and restored baseline. Requires a built native `--cpp` driver and
   dependencies already present in the Cargo cache.
@@ -111,3 +111,24 @@ Native Keyring checks:
 
 `test-p0-keyring-sanitized` instruments the Keyring, isolation and durable-log
 sources with address/undefined-behavior checks and runs the same process scenarios.
+
+Registry replay and native C0 cost:
+
+- `test-p0-state-replay <fresh-directory>` exports 34 native cases. Run Rust
+  `state-replay-conformance` from `tos-validator-auth-native` on that directory.
+  Each block executes both from a retained state and a decoded checkpoint. C++
+  and Rust compare complete native cell content and ordered references, including
+  a 501-identity registry, due-slot collisions, cancellation, archived epochs,
+  policy boundaries and rejected-block atomicity.
+- `registry_replay_mutations.py --fixtures ... --out ...` compiles 18 Rust guard
+  removals and requires the intended named replay assertion, then restores and
+  reruns the baseline.
+- `benchmark-p0-c0 --check` proves full 400-member certificates succeed and corrupt
+  P0/native signatures and a native block-ID mismatch fail. Without `--check`, it
+  measures 30 paired samples; `--enforce` also enforces the proposed certificate
+  median/p95 budget. Run timing only on an idle host.
+- `benchmark_mutations.py --build ... --out ...` compiles three removals from the
+  actual P0/native verifier paths and requires their exact control assertions.
+- `measure_c0.py --build ... --out ... --enforce` records build identity alongside
+  the timing. It reports unavailable governor and allocation/propagation evidence
+  explicitly rather than representing certificate timing as full P0 acceptance.

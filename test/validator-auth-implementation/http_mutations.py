@@ -38,6 +38,7 @@ def main(args):
   tmp=Path(tmp)
   if args.language=='rust':
    shutil.copytree(ROOT/'tosctl/src/validator-auth',tmp/'crate')
+   shutil.copytree(ROOT/'tosctl/src/validator-auth-crypto',tmp/'validator-auth-crypto')
    manifest=tmp/'crate/Cargo.toml';manifest.write_text(manifest.read_text()+'\n[workspace]\n')
    shutil.copy2(ROOT/'tosctl/src/Cargo.lock',tmp/'crate/Cargo.lock')
    source=tmp/'crate/src/unix_http.rs';binary=tmp/'crate/target/debug/conformance'
@@ -48,7 +49,9 @@ def main(args):
    command=['cmake','--build',str(args.build),'--target','test-p0-http-mutant','-j2'];mutations=CPP
   original=source.read_text()
   def build(text):
-   source.write_text(text);subprocess.run(command,check=True,capture_output=True,text=True)
+   source.write_text(text)
+   result=subprocess.run(command,capture_output=True,text=True)
+   if result.returncode:raise RuntimeError('mutation build failed: '+result.stdout+result.stderr)
   def test(case=None):
    command=[sys.executable,str(ROOT/'test/validator-auth-implementation/check_http.py'),'--'+args.language,str(binary),'--out',str(tmp/'http.json')]
    if case:command+=['--case',case]

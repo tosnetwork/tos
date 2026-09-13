@@ -18,7 +18,7 @@ MUTATIONS=[
  ('error-retry','transport','transport.cpp','if(error.retryable_!=static_cast<unsigned>(read&&error.code_>=10&&error.code_<=12))return Error{"error-retry"};',''),
  ('flags','core','codec.h','if (b[6] != 0 || b[7] != 0) fail("flags");',''),
  ('public-key-subgroup','core','crypto/validator-auth/ed25519.cpp',' || crypto_core_ed25519_is_valid_point(bytes)!=1',''),
- ('signature-equation','core','crypto/validator-auth/ed25519.cpp','return sodium_memcmp(left.data(),right.data(),32)==0;','return true;'),
+ ('signature-equation','core','crypto/validator-auth/ed25519.cpp','return result == 1;','return true;'),
  ('expected-duty','core','verify.cpp','if(duty!=expected)return Error{"expected-context"};',''),
  ('quorum','core','verify.cpp','if(quorum&&signed_weight.value()<required_weight.value())return Error{"quorum"};',''),
  ('all-signatures','core','verify.cpp','if(!valid.value())return Error{"signature"};',''),
@@ -26,7 +26,7 @@ MUTATIONS=[
  ('consecutive-blocks','lifecycle','lifecycle.cpp','if(parent_coordinate>=max_coordinate-1||coordinate!=parent_coordinate+1)return Error{"block-gap"};',''),
 ]
 def main(args):
- flags=shlex.split(subprocess.run(['pkg-config','--cflags','--libs','libsodium'],capture_output=True,text=True,check=True).stdout)
+ flags=shlex.split(subprocess.run(['pkg-config','--cflags','--libs','libsodium','openssl'],capture_output=True,text=True,check=True).stdout)
  results=[]
  with tempfile.TemporaryDirectory(prefix='p0-production-mutations-') as folder:
   folder=Path(folder);shadow=folder/'validator/auth';shadow.mkdir(parents=True)

@@ -20,7 +20,7 @@ or PQ suite allocation is authorized by this work.
 | Thin transport and API association | C++ and Rust framing and semantic association for all 15 methods, including result receipts, proof attachments and cursors | 182 framing cases and 133 semantic cases per language; direct signer-list, receipt-hash and context guard removals | Native node context, committee/certificate RPC and remote mTLS deployment |
 | Native VM and transaction execution | C++/Rust P0CHKSIGN, native capability metadata, Fift/FunC and Rust assembly bindings | 168 exact outcome/gas comparisons; getter config and nested VM; eight whole transactions including action rollback | Elector/owner statement construction and native admission |
 | Native committee derivation | Explicit native identity/stake descriptor, authenticated Config35/34 and Config46, original native selection, owned transport order and VAM1 | 40 C++/Rust state cases including a full 400-member snapshot, shuffle, shard weights, temporary election and budget exhaustion | Elector emission, session admission and certificate RPC |
-| Native registry state | Config46 dictionaries and authenticated due-transition replay, immutable key archive and owned successor state | 501 identities / 2506 keys, exact cell/hash restart, pending effects, duplicate epoch and rejected-block atomicity | Native block apply, elector/config operations, persistent dictionary performance and Rust global apply |
+| Native registry state | C++ and independent Rust Config46 genesis, encoding and identity-update replay; immutable key archive and owned successor state | 501 identities / 2506 keys; 34 cross-language replay cases with checkpoint/continuous equivalence, control retention and rejected-block atomicity | Native block apply, elector/config operations, persistent dictionary performance and global apply |
 | Native state proofs | C++ and Rust actual masterchain Config8/9/10/16/46 and Merkle proofs for profile, policy, key and registry ranges | State-root substitution, omitted entries, false terminal page, unrelated revealed values, detached physical cells, capability and atomic-publication guard removals | RPC node wiring, certificate/owner proofs and Rust global registry apply |
 | Authority primitives | Real C0 PoP and current identity-role-5 verification; independent permit/receipt trust in C++ and Rust | Wrong network/update/signature/current admin key, stale permits, historical receipts and inclusive 128-block boundary; 25 shared service-trust/polling cases per language | Native owner execution and governance adapters and native mutation admission |
 | Signer persistence | Native append-only safety ledger, actual C0 secret provider, witness consumption and sign/get-result service | Both-order conflict rules, exact retransmission, journal/provider backup rollback, stale fence, terminal retention, real fsync failure, unknown outcome refusal | Native consensus permissions and remote serving |
@@ -54,7 +54,8 @@ state/authority/proof, journal, signer/provider and local channel harnesses kill
 25, 11, 7 and 6 compiled guard removals respectively. Scoped object storage,
 service issuers and C++ API semantics add eight, nine and eight removals. The
 administration harness adds eleven. The combined implementation harness contains
-388 compiled guard removals, including 17 API admission/cache checks, 25
+409 compiled guard removals, including 18 native Rust registry replay checks, three
+native certificate benchmark controls, 17 API admission/cache checks, 25
 native HTTP checks, 17 Rust native cell/proof checks, 25 native Keyring checks,
 18 C++ VM checks, 18 Rust VM checks and five native execution adapter checks.
 
@@ -80,6 +81,48 @@ libraries and Rust crate on Ubuntu x86_64 and ARM, records the checked HEAD, run
 these checks and uploads evidence. The previous implementation milestone passed both focused CI architectures; each
 new addition requires CI evidence attached to its own HEAD.
 It neither triggers the full Ubuntu build nor starts a network.
+
+## Native replay and certificate cost
+
+The independent Rust registry now constructs an offline genesis, preserves every
+native control dictionary and applies consecutive identity updates. Its derived
+deadline index removes only the canceled identity, retains other identities at the
+same coordinate, and drops empty buckets. Canceled descriptors remain in the epoch
+archive. The 34 native replay cases compare both continuously executed state and
+freshly decoded checkpoints against C++ cell contents and hashes, including an
+update beyond the first 400 identities. Controlled authority callbacks exercise
+refusal; they do not establish elector or governance authorization. Both current
+implementations still clone owned maps and are not persistent-dictionary apply
+performance acceptance.
+
+`benchmark-p0-c0` compares a 400-member VAC1 against the actual native Simplex
+`BlockSignatureSet::check_signatures` over the same finalize candidate and role-3
+keys. It admits all 2000 role keys before timing, checks full weight, corrupt
+signatures on both paths and native block-ID substitution, then records 30 paired
+post-warmup samples in alternating order. Three compiled removals prove those
+controls reach the actual authentication and native context checks. CI executes
+the controls; shared-runner timing is not a release performance gate.
+
+The initial local macOS/ARM run measured 492.5 ms P0 versus 31.3 ms historical
+median certificate verification. C++ now retains an admitted immutable OpenSSL
+public key and uses Pure Ed25519's noncofactored double-scalar equation with a
+fresh per-call context. Explicit strong public-key admission and canonical scalar
+checks remain. Canonical computed-R equality enforces R encoding without rejecting
+valid R=identity. Rust independently uses a public-input double-scalar operation
+and the same canonical computed-R equality. Historical verifier code is unchanged.
+The same local certificate case then measured 32.0 ms P0 versus 31.3 ms historical
+(median +2.3%, p95 +1.9%). Frozen crypto vectors and native VM parity cover the
+equation change; this measurement is not integrated native-session or propagation
+acceptance. Use `measure_c0.py --build ... --out ... --enforce` on an idle machine
+to record source, binary, compiler and available governor metadata. Allocation
+counts and end-to-end propagation remain separate required measurements.
+
+A separate isolated four-node historical-path rehearsal used the branch's actual
+validator engine and independently queried all nodes' complete finalized block
+IDs. It progressed with one validator stopped, rejoined that validator, and
+started catchain sessions 0, 1 and 2 before stopping all owned processes. P0 was
+disabled in this private genesis. This establishes a native compatibility baseline;
+it does not satisfy the required P0-enabled multinode rehearsal.
 
 ## Registry capacity and scheduling decision
 
