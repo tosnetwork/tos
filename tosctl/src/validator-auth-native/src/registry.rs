@@ -5,8 +5,8 @@ use tos_validator_auth::{
     codec::{decode, encode, Error, Hash, Wire},
     crypto::{object_id, AdmittedKey},
     lifecycle::{
-        apply_due_transitions, apply_identity_update, validate_identity, KeyHistory, KeySlot,
-        LifecycleAuthority,
+        apply_due_transitions, apply_identity_update, validate_identity, IdentityChange,
+        KeyHistory, KeySlot, LifecycleAuthority,
     },
     types::*,
 };
@@ -342,6 +342,18 @@ impl RegistryState {
         updates: &[(Update, Authorizations)],
         authority: &impl LifecycleAuthority,
     ) -> Result<Self, Error> {
+        self.apply_identity_block(at, updates, |current, update, evidence| {
+            let identity =
+                current.identities.get(&update.identity).ok_or(Error("unknown-identity"))?;
+            apply_identity_update(identity, current, update, evidence, at, authority)
+        })
+    }
+    pub(crate) fn apply_identity_block(
+        &self,
+        at: u32,
+        updates: &[(Update, Authorizations)],
+        mut apply: impl FnMut(&Self, &Update, &Authorizations) -> Result<IdentityChange, Error>,
+    ) -> Result<Self, Error> {
         if self.coordinate >= u32::MAX - 1 || self.coordinate.checked_add(1) != Some(at) {
             return Err(Error("block-gap"));
         }
@@ -357,12 +369,13 @@ impl RegistryState {
         }
         next.due.remove(&at);
         next.coordinate = at;
+        next.current_policy = object_id("policy", next.policy_at(at)?)?;
         for (update, evidence) in updates {
             let current = next.identities.get(&update.identity).ok_or(Error("unknown-identity"))?;
             if update.identity == [0; 32] {
                 return Err(Error("unknown-identity"));
             }
-            let effect = apply_identity_update(current, &next, update, evidence, at, authority)?;
+            let effect = apply(&next, update, evidence)?;
             // Remove canceled schedules only for this identity, preserving other
             // identities due at the same coordinate.
             let old_due: BTreeSet<_> = current.pending.iter().map(|p| p.effective_from).collect();
@@ -391,7 +404,6 @@ impl RegistryState {
         if changed {
             next.revision = self.revision.checked_add(1).ok_or(Error("registry-revision"))?;
         }
-        next.current_policy = object_id("policy", next.policy_at(at)?)?;
         Ok(next)
     }
     pub fn policy_at(&self, at: u32) -> Result<&Policy, Error> {

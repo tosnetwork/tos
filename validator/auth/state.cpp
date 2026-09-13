@@ -363,6 +363,19 @@ Result<RegistryState> RegistryState::decode_cell(td::Ref<vm::Cell> root, std::ui
 Result<RegistryState> RegistryState::apply_block(std::uint32_t at,
                                                  const std::vector<std::pair<Update, Authorizations>>& updates,
                                                  const LifecycleAuthority& authority) const {
+  return apply_identity_block(at, updates,
+                              [&](const RegistryState& current, const Update& update,
+                                  const Authorizations& evidence) -> Result<IdentityChange> {
+                                auto identity = current.identities_.find(update.identity_);
+                                if (identity == current.identities_.end())
+                                  return Error{"unknown-identity"};
+                                return apply_identity_update(identity->second, current, update, evidence, at,
+                                                             authority);
+                              });
+}
+Result<RegistryState> RegistryState::apply_identity_block(std::uint32_t at,
+                                                          const std::vector<std::pair<Update, Authorizations>>& updates,
+                                                          const IdentityApply& apply) const {
   if (coordinate_ >= std::numeric_limits<std::uint32_t>::max() - 1 || at != coordinate_ + 1)
     return Error{"block-gap"};
   RegistryState next = *this;
@@ -380,11 +393,18 @@ Result<RegistryState> RegistryState::apply_block(std::uint32_t at,
       changed = true;
     }
   next.coordinate_ = at;
+  auto selected = next.policy_at(at);
+  if (!selected.ok())
+    return selected.error();
+  auto id = object_id("policy", selected.value());
+  if (!id.ok())
+    return id.error();
+  next.current_policy_ = id.value();
   for (const auto& [update, evidence] : updates) {
     auto current = next.identities_.find(update.identity_);
     if (current == next.identities_.end() || update.identity_ == Hash{})
       return Error{"unknown-identity"};
-    auto effect = apply_identity_update(current->second, next, update, evidence, at, authority);
+    auto effect = apply(next, update, evidence);
     if (!effect.ok())
       return effect.error();
     if (effect.value().archived_key) {
@@ -404,13 +424,6 @@ Result<RegistryState> RegistryState::apply_block(std::uint32_t at,
       return Error{"registry-revision"};
     next.revision_ = revision_ + 1;
   }
-  auto selected = next.policy_at(at);
-  if (!selected.ok())
-    return selected.error();
-  auto id = object_id("policy", selected.value());
-  if (!id.ok())
-    return id.error();
-  next.current_policy_ = id.value();
   auto indexes = next.rebuild_indexes();
   if (!indexes.ok())
     return indexes.error();

@@ -1,9 +1,12 @@
 #pragma once
+#include <functional>
 #include <set>
 
 #include "cells.h"
 #include "lifecycle.h"
 namespace tos::auth {
+struct NativeIdentityContext;
+class ObjectReader;
 // Resource admission is a local operational limit, not a committee or archive
 // truncation rule. Exhaustion returns an error and never a partial state.
 struct StateReadBudget {
@@ -22,6 +25,13 @@ class RegistryState final : public KeyHistory {
   std::map<std::uint32_t, std::set<Hash>> due_;
   Result<bool> rebuild_indexes();
   Result<bool> validate();
+  using IdentityApply =
+      std::function<Result<IdentityChange>(const RegistryState&, const Update&, const Authorizations&)>;
+  Result<RegistryState> apply_identity_block(std::uint32_t, const std::vector<std::pair<Update, Authorizations>>&,
+                                             const IdentityApply&) const;
+  friend Result<RegistryState> apply_native_identity_block(const RegistryState&, std::uint32_t,
+                                                           const std::vector<std::pair<Update, Authorizations>>&,
+                                                           const NativeIdentityContext&, ObjectReader&);
 
  public:
   static Result<RegistryState> genesis(Hash chain_domain, const Policy&, std::vector<Identity>, std::vector<Key>);
