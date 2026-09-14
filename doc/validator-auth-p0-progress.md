@@ -93,7 +93,7 @@ Everything else remains open. The named remaining work, grouped:
 | Session and consensus | Consensus call sites; the manager's archive reader and an independently established finalized head. Session birth and committee derivation now exist as a library boundary and are owned by the authenticated birth, but the derived committee still has no consumer in `validator/manager.cpp`: the insertion there confirms the session identity and does not yet run consensus against the derived committee |
 | Contracts | Elector emission and session admission; configuration authorization and atomic root installation. `elector-code.fc` and `config-code.fc` contain no P0 entry point |
 | Chain apply | Native block apply, contract data installation, action-phase commit wiring, installed chain root |
-| Serving | Authenticated public RPC wiring, node context and history adapters, remote HTTP/2 with mutual TLS. Only a local Unix socket exists |
+| Serving | Remote HTTP/2 with mutual TLS, and installation of the served composition into the node. The node history adapter and the authenticated public composition now exist as library boundaries: the client methods are served behind a transport that supplies an authenticated principal, and that transport is a narrow interface so a mutual-TLS implementation substitutes for the local Unix one without touching the composition. Only the local Unix implementation exists today |
 | Provisioning | Provider inventory reconciliation, independent operational trust distribution, the node permit adapter |
 
 Cross-language parity is closed. The Rust scoped object store now exists and a
