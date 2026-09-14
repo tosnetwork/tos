@@ -93,9 +93,15 @@ Everything else remains open. The named remaining work, grouped:
 | Session and consensus | Consensus call sites; the manager's archive reader and an independently established finalized head. Session birth and committee derivation now exist as a library boundary and are owned by the authenticated birth, but the derived committee still has no consumer in `validator/manager.cpp`: the insertion there confirms the session identity and does not yet run consensus against the derived committee |
 | Contracts | Elector emission and session admission; configuration authorization and atomic root installation. `elector-code.fc` and `config-code.fc` contain no P0 entry point |
 | Chain apply | Native block apply, contract data installation, action-phase commit wiring, installed chain root |
-| Remaining language parity | Rust global registry apply and the Rust storage adapter |
 | Serving | Authenticated public RPC wiring, node context and history adapters, remote HTTP/2 with mutual TLS. Only a local Unix socket exists |
 | Provisioning | Provider inventory reconciliation, independent operational trust distribution, the node permit adapter |
+
+Cross-language parity is closed. The Rust scoped object store now exists and a
+differential runs both implementations over one corpus, and the record's
+separate claim that a Rust global registry apply was missing turned out to be
+stale: Rust already composes native authority over its own registry state, and
+adding a second apply would have created another source for one state
+transition. This is the first of the six groups to reach zero.
 
 These are not independent. The order below is a dependency chain, not a
 priority list:
