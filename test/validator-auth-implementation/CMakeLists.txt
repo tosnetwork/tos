@@ -547,6 +547,15 @@ target_include_directories(test-p0-native-registry-mutant PRIVATE "${PROJECT_SOU
 target_link_libraries(test-p0-native-registry-mutant PRIVATE tos_validator_auth_native)
 set_target_properties(test-p0-native-registry-mutant PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 
+add_executable(test-p0-prefetch prefetch-test.cpp)
+target_link_libraries(test-p0-prefetch PRIVATE tos_validator_auth_native)
+set_target_properties(test-p0-prefetch PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+configure_file("${PROJECT_SOURCE_DIR}/validator/auth/native-prefetch.cpp" "${CMAKE_CURRENT_BINARY_DIR}/prefetch-mutated.cpp" COPYONLY)
+add_executable(test-p0-prefetch-mutant EXCLUDE_FROM_ALL prefetch-test.cpp "${CMAKE_CURRENT_BINARY_DIR}/prefetch-mutated.cpp")
+target_include_directories(test-p0-prefetch-mutant PRIVATE "${PROJECT_SOURCE_DIR}/validator/auth")
+target_link_libraries(test-p0-prefetch-mutant PRIVATE tos_validator_auth_native)
+set_target_properties(test-p0-prefetch-mutant PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+
 add_executable(test-p0-config-transaction config-transaction-test.cpp)
 target_link_libraries(test-p0-config-transaction PRIVATE tos_validator_auth_native)
 set_target_properties(test-p0-config-transaction PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
