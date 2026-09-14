@@ -288,10 +288,14 @@ jobs:
           cmake -S test/validator-auth-session-birth -B build-p0-birth -G Ninja
           cmake --build build-p0-birth
           test -x build-p0-birth/test-p0-session-birth
+          test -x build-p0-birth/test-p0-session-admission
           build-p0-birth/test-p0-session-birth | tee artifacts/session-birth.txt
+          build-p0-birth/test-p0-session-admission | tee artifacts/session-admission.txt
           ctest --test-dir build-p0-birth --output-on-failure
           python3 test/validator-auth-session-birth/mutations.py --out artifacts/session-birth-mutations
           cp artifacts/session-birth-mutations/mutations.json artifacts/session-birth-mutations.json
+          python3 test/validator-auth-session-birth/admission_mutations.py --out artifacts/session-admission-mutations
+          cp artifacts/session-admission-mutations/mutations.json artifacts/session-admission-mutations.json
       - name: Derive a committee from a genesis written by the real genesis path
         run: |
           set -euo pipefail
