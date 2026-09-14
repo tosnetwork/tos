@@ -7,7 +7,7 @@ if(TARGET sodium)
 endif()
 
 add_library(tos_validator_auth_native STATIC native-evidence.cpp native-config-context.cpp native-header.cpp native-transaction.cpp native-registry.cpp native-history.cpp native-apply.cpp owner-proof.cpp native-proof.cpp native-committee.cpp native-session-id.cpp registry-view.cpp committee-proof.cpp certificate-proof.cpp)
-target_link_libraries(tos_validator_auth_native PUBLIC tos_validator_auth tos_block)
+target_link_libraries(tos_validator_auth_native PUBLIC tos_validator_auth tos_block tl-utils keys)
 set_target_properties(tos_validator_auth_native PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 
 if(UNIX)
@@ -35,6 +35,6 @@ if(TOS_BUILD_P0_IMPLEMENTATION_TESTS)
     "${PROJECT_SOURCE_DIR}/test/validator-auth-implementation/native-session-id-test.cpp"
     "${CMAKE_CURRENT_BINARY_DIR}/mutated-native-session-id.cpp")
   target_include_directories(test-p0-native-session-id-mutant PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
-  target_link_libraries(test-p0-native-session-id-mutant PRIVATE tos_validator_auth tos_block)
+  target_link_libraries(test-p0-native-session-id-mutant PRIVATE tos_validator_auth tos_block tl-utils keys)
   set_target_properties(test-p0-native-session-id-mutant PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 endif()

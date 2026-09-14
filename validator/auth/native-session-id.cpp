@@ -2,6 +2,7 @@
 
 #include "auto/tl/tos_api.h"
 #include "keys/keys.hpp"
+#include "tl-utils/tl-utils.hpp"
 #include "tos/tos-tl.hpp"
 
 #include "native-session-id.h"
