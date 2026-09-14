@@ -37,4 +37,21 @@ if(TOS_BUILD_P0_IMPLEMENTATION_TESTS)
   target_include_directories(test-p0-native-session-id-mutant PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
   target_link_libraries(test-p0-native-session-id-mutant PRIVATE tos_validator_auth tos_block tl-utils keys)
   set_target_properties(test-p0-native-session-id-mutant PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+
+  add_executable(test-p0-native-session-history EXCLUDE_FROM_ALL
+    "${PROJECT_SOURCE_DIR}/test/validator-auth-implementation/native-session-history-test.cpp")
+  target_link_libraries(test-p0-native-session-history PRIVATE tos_validator_auth_native)
+  set_target_properties(test-p0-native-session-history PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+
+  set(P0_SESSION_HISTORY_MUTANT_ROOT
+      "${CMAKE_CURRENT_BINARY_DIR}/session-history-mutant")
+  file(MAKE_DIRECTORY "${P0_SESSION_HISTORY_MUTANT_ROOT}/validator/auth")
+  configure_file("${CMAKE_CURRENT_SOURCE_DIR}/native-session-history.h"
+                 "${P0_SESSION_HISTORY_MUTANT_ROOT}/validator/auth/native-session-history.h" COPYONLY)
+  add_executable(test-p0-native-session-history-mutant EXCLUDE_FROM_ALL
+    "${PROJECT_SOURCE_DIR}/test/validator-auth-implementation/native-session-history-test.cpp")
+  target_include_directories(test-p0-native-session-history-mutant BEFORE PRIVATE
+    "${P0_SESSION_HISTORY_MUTANT_ROOT}")
+  target_link_libraries(test-p0-native-session-history-mutant PRIVATE tos_validator_auth_native)
+  set_target_properties(test-p0-native-session-history-mutant PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 endif()
