@@ -1,0 +1,63 @@
+name: P0 pinned source snapshot
+
+on:
+  push:
+    branches: ['feat/validator-auth-p0']
+    paths: ['.github/workflows/p0-source-snapshot.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: 6787c6a4c421ab16a3d19cf288a5fd59cf01f8d4
+          persist-credentials: false
+      - name: Verify the pinned source and export it without credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected=6787c6a4c421ab16a3d19cf288a5fd59cf01f8d4
+          require_commit() { test "$(git rev-parse HEAD)" = "$1"; }
+          require_commit "$expected"
+          if require_commit 0000000000000000000000000000000000000000; then
+            echo 'FAIL: wrong source commit accepted'; exit 1
+          fi
+          echo 'PASS: wrong source commit refused'
+          python3 test/validator-auth-p0/check_production.py --out /tmp/p0-production-base.json
+          mkdir -p /tmp/p0-source-snapshot
+          git archive --format=tar --output=/tmp/p0-source-snapshot/base.tar HEAD
+          git cat-file commit HEAD > /tmp/p0-source-snapshot/base.commit
+          git ls-tree -r --full-tree HEAD > /tmp/p0-source-snapshot/base.tree
+          printf '%s\n' "$expected" > /tmp/p0-source-snapshot/base.sha
+          cp /tmp/p0-production-base.json /tmp/p0-source-snapshot/
+          python3 - <<'PY'
+          import hashlib, pathlib, tarfile
+          root = pathlib.Path('/tmp/p0-source-snapshot')
+          expected = '1759d35769d3d149ca40a2aef8977b1f2eaf26602fac0a1178bc5ae75242030e'
+          def check(raw):
+              if hashlib.sha256(raw).hexdigest() != expected:
+                  raise ValueError('manager source does not match the pinned boundary')
+          with tarfile.open(root / 'base.tar') as archive:
+              raw = archive.extractfile('validator/manager.cpp').read()
+          check(raw)
+          try:
+              check(raw + b'changed')
+          except ValueError:
+              print('PASS: changed exported source refused')
+          else:
+              raise RuntimeError('changed source control survived')
+          (root / 'SHA256SUMS').write_text(''.join(
+              hashlib.sha256(p.read_bytes()).hexdigest() + '  ' + p.name + '\n'
+              for p in sorted(root.iterdir()) if p.is_file()))
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: p0-pinned-source-6787c6a4c
+          path: /tmp/p0-source-snapshot/
+          if-no-files-found: error
+          retention-days: 1
