@@ -50,7 +50,8 @@ inline bool valid_epoch(const SessionBirthEpoch& epoch) {
 // the certificate sender. History is ordered from tip towards genesis.
 //
 // A boundary requires the authenticated predecessor to have a different
-// current epoch (or explicitly no session). Exhausting retained history is not
+// native session ID (or explicitly no session). Conflicting epoch metadata
+// under an unchanged native ID is an error, not a new birth. Exhausting history is not
 // a boundary. Extra older observations after the boundary are not consumed.
 // The result selects a state; it grants no signing or verification authority.
 inline Result<SessionBirthResult> resolve_session_birth(
@@ -81,6 +82,10 @@ inline Result<SessionBirthResult> resolve_session_birth(
     if (!current || *current != expected_epoch) {
       if (!candidate)
         return Error{"session-birth-not-current"};
+      // Changed metadata cannot create another birth for the same native
+      // lifetime. The adapter must establish a real native rotation instead.
+      if (current && current->native_session_id == expected_epoch.native_session_id)
+        return Error{"session-birth-epoch-conflict"};
       return SessionBirthResult{*candidate, expected_epoch, used};
     }
     candidate = observation.block;

@@ -95,6 +95,9 @@ def mutations() -> list[tuple[str, str, str, str, str]]:
          "      return SessionBirthResult{*candidate, expected_epoch, used};\n    }\n    candidate = observation.block;",
          "      const_cast<SessionBirthObservation&>(history.front()).block = {};\n"
          "      return SessionBirthResult{*candidate, expected_epoch, used};\n    }\n    candidate = observation.block;"),
+        ("native-epoch-alias", "boundary_conflict_election", "guard-disable",
+         "if (current && current->native_session_id == expected_epoch.native_session_id)",
+         "if (false && current && current->native_session_id == expected_epoch.native_session_id)"),
     ]
 
 

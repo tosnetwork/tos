@@ -91,7 +91,7 @@ std::vector<Test> tests() {
   });
   add("merge_new_shard", [] {
     auto rows = history();
-    auto parent_epoch = epoch();
+    auto parent_epoch = epoch(31);
     parent_epoch.shard ^= std::uint64_t{1} << 62;
     rows.back().current = std::optional{parent_epoch};
     expect_birth(resolve_session_birth(block(8), epoch(), rows), 5, "merge_new_shard", 5);
@@ -226,6 +226,40 @@ std::vector<Test> tests() {
       expect_error(resolve_session_birth(block(0), epoch(), rows), "session-birth-not-current", name);
     });
   }
+  // Metadata alone cannot rotate the native actor. A twin with a different
+  // native ID proves that the changed metadata is a valid boundary fixture.
+  for (const auto& [part, change] : changes) {
+    const auto name = "boundary_conflict_" + part.substr(6);
+    add(name, [name, change] {
+      auto different_session = epoch(31);
+      change(different_session);
+      auto control = history();
+      control.back().current = std::optional{different_session};
+      expect_birth(resolve_session_birth(block(8), epoch(), control), 5, name + "_control", 5);
+      auto same_session = different_session;
+      same_session.native_session_id = epoch().native_session_id;
+      auto rows = control;
+      rows.back().current = std::optional{same_session};
+      expect_error(resolve_session_birth(block(8), epoch(), rows), "session-birth-epoch-conflict", name);
+    });
+  }
+  add("conflict_inside_current_suffix", [] {
+    auto rows = history();
+    auto conflicting = epoch();
+    conflicting.election_cell_hash = h(45);
+    rows.at(1).current = std::optional{conflicting};
+    expect_error(resolve_session_birth(block(8), epoch(), rows), "session-birth-epoch-conflict",
+                 "conflict_inside_current_suffix");
+  });
+  add("conflict_before_incomplete_history", [] {
+    auto rows = history();
+    rows.resize(2);
+    auto conflicting = epoch();
+    conflicting.election_cell_hash = h(45);
+    rows.back().current = std::optional{conflicting};
+    expect_error(resolve_session_birth(block(8), epoch(), rows), "session-birth-epoch-conflict",
+                 "conflict_before_incomplete_history");
+  });
   add("read_only_and_owned_result", [] {
     auto rows = history();
     const auto previous = rows.front().block;
