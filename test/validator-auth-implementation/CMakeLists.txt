@@ -547,6 +547,15 @@ target_include_directories(test-p0-native-registry-mutant PRIVATE "${PROJECT_SOU
 target_link_libraries(test-p0-native-registry-mutant PRIVATE tos_validator_auth_native)
 set_target_properties(test-p0-native-registry-mutant PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 
+add_executable(test-p0-config-transaction config-transaction-test.cpp)
+target_link_libraries(test-p0-config-transaction PRIVATE tos_validator_auth_native)
+set_target_properties(test-p0-config-transaction PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+configure_file("${PROJECT_SOURCE_DIR}/validator/auth/native-config-transaction.cpp" "${CMAKE_CURRENT_BINARY_DIR}/config-transaction-mutated.cpp" COPYONLY)
+add_executable(test-p0-config-transaction-mutant EXCLUDE_FROM_ALL config-transaction-test.cpp "${CMAKE_CURRENT_BINARY_DIR}/config-transaction-mutated.cpp")
+target_include_directories(test-p0-config-transaction-mutant PRIVATE "${PROJECT_SOURCE_DIR}/validator/auth")
+target_link_libraries(test-p0-config-transaction-mutant PRIVATE tos_validator_auth_native)
+set_target_properties(test-p0-config-transaction-mutant PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+
 add_executable(test-p0-chain-context chain-context-test.cpp)
 target_link_libraries(test-p0-chain-context PRIVATE tos_validator_auth_native)
 set_target_properties(test-p0-chain-context PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
