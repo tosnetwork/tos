@@ -60,9 +60,10 @@ against source, not against memory.
 
 ## Ask what must be true, not what makes this pass
 
-When something blocks you, the cheap move is the one that removes the symptom.
-Before taking it, say what has to remain true, then check whether the cheap move
-preserves it or only hides its violation.
+Reason from first principles when something blocks you. Concretely: the cheap
+move is the one that removes the symptom, so before taking it, say what has to
+remain true, then check whether the cheap move preserves it or only hides its
+violation.
 
 One shape recurs here: **two sources for one fact.** A grammar described in two
 languages, a guard written twice, a value recomputed beside the one it has to
