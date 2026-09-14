@@ -282,6 +282,16 @@ jobs:
             --driver build-p0/test/validator-auth-implementation/test-p0-transport | tee artifacts/transport-cpp.json
           python3 test/validator-auth-implementation/check_transport.py \
             --driver tosctl/src/target/debug/conformance | tee artifacts/transport-rust.json
+      - name: Select session birth from a contiguous authenticated epoch
+        run: |
+          set -euo pipefail
+          cmake -S test/validator-auth-session-birth -B build-p0-birth -G Ninja
+          cmake --build build-p0-birth
+          test -x build-p0-birth/test-p0-session-birth
+          build-p0-birth/test-p0-session-birth | tee artifacts/session-birth.txt
+          ctest --test-dir build-p0-birth --output-on-failure
+          python3 test/validator-auth-session-birth/mutations.py --out artifacts/session-birth-mutations
+          cp artifacts/session-birth-mutations/mutations.json artifacts/session-birth-mutations.json
       - name: Derive a committee from a genesis written by the real genesis path
         run: |
           set -euo pipefail
