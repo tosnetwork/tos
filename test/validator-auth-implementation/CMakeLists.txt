@@ -508,3 +508,7 @@ set_target_properties(p0-vset-probe PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQU
 add_executable(test-p0-manager-binding manager-binding-test.cpp)
 target_link_libraries(test-p0-manager-binding PRIVATE tos_validator_auth_native tos_block tl_api tl-utils keys)
 set_target_properties(test-p0-manager-binding PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+
+add_executable(test-p0-archive-growth archive-growth-test.cpp)
+target_link_libraries(test-p0-archive-growth PRIVATE tos_validator_auth_native)
+set_target_properties(test-p0-archive-growth PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)

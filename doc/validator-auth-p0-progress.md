@@ -128,7 +128,7 @@ Four retained quantities have no measured growth curve:
 | Quantity | Why it grows | What is stated today |
 | --- | --- | --- |
 | Registry key history | Retired and cancelled key versions must stay independently retainable, so the archive only grows | "Historical keys and retired identities must remain independently retainable" (implementation record) |
-| Per-block work against archive size | The native adapter copies and rebuilds derived indexes | "this adapter does not claim constant work independent of archive size" (implementation record) |
+| Per-block work against archive size | The native adapter copies and rebuilds derived indexes | One authenticated identity read now measures at 1 entry and 375 bytes across archives of 0, 100, 1000 and 5000 retired key versions, and a scan of the archive fails that measurement. The record's wider claim, that a whole block's work is bounded, is still unmeasured |
 | Signer journal and witness | Append-only by design; capacity exhaustion is an explicit error, not a reclaim | No retention policy is specified |
 | Retained session snapshots | Each session holds its committee until its native termination boundary | That boundary is not implemented yet |
 
