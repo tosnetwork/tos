@@ -129,7 +129,7 @@ Four retained quantities have no measured growth curve:
 | --- | --- | --- |
 | Registry key history | Retired and cancelled key versions must stay independently retainable, so the archive only grows | "Historical keys and retired identities must remain independently retainable" (implementation record) |
 | Per-block work against archive size | The native adapter copies and rebuilds derived indexes | One authenticated identity read now measures at 1 entry and 375 bytes across archives of 0, 100, 1000 and 5000 retired key versions, and a scan of the archive fails that measurement. The record's wider claim, that a whole block's work is bounded, is still unmeasured |
-| Signer journal and witness | Append-only by design; capacity exhaustion is an explicit error, not a reclaim | No retention policy is specified, but the cost is now measured: 36 bytes of framing per record, 2883 bytes per completed signature, so the default 1 GiB limit is reached after roughly 372,000 signatures and then refuses admission without touching stored history. Restart replays every record exactly once at about 9.4 us per record on the build host, so a full journal costs a restart of a few seconds and not an outage |
+| Signer journal and witness | Append-only by design; capacity exhaustion is an explicit error, not a reclaim | Measured. On disk: 36 bytes of framing per record, 2883 bytes per completed signature, so the default 1 GiB limit is reached after roughly 372,000 signatures and then refuses admission without touching stored history. Restart replays every record exactly once at about 9.4 us per record, so a full journal costs a restart of a few seconds and not an outage. In memory: 3436 bytes retained per signature, exactly linear, which is 1220 MiB at that same signature count -- see below |
 | Retained session snapshots | Each session holds its committee until its native termination boundary | That boundary is not implemented yet |
 
 The object store is the one bounded case: four objects and 64 MiB per principal,
@@ -157,13 +157,30 @@ growth from a memory-mapped database is not the same finding as heap growth;
 `scripts/simplex2-soak.py`, `scripts/soak-mem-monitor.py` and
 `scripts/transfer-soak.sh` already drive sustained load.
 
+**The signer's binding limit is memory, not storage.** The safety ledger keeps a
+stored request, plan, receipt and result in memory for every signature it has
+ever admitted, because that is what lets it answer questions about signatures
+from arbitrarily far back. Measured with an exact allocation counter, that is
+3436 bytes per signature against 2883 bytes on disk, both exactly linear. At the
+372,000 signatures the 1 GiB journal limit permits, the ledger holds 1220 MiB of
+heap.
+
+The asymmetry is the finding, not the ratio. The journal refuses admission when
+it reaches its bound, which is an outage an operator can see coming and plan
+for. The heap has no bound, refuses nothing, and ends in the process being
+killed. A node sized against the documented 1 GiB storage limit is under-sized
+for its own ledger, and nothing in the configuration says so.
+
+This is not a defect in the retention policy -- the history is what makes
+anti-equivocation work -- but it means either a memory bound or a session-scoped
+index is required before a validator runs unattended for long periods. It is
+recorded here rather than fixed, because choosing between those is a design
+decision and not a test.
+
 A soak closes this gate when it reports, over at least 24 hours of sustained
-load: the `RssAnon` curve against registry archive size and per-block processing
-time as the archive grows. Journal size against signature count is now a
-computed quantity rather than an open question, but the ledger's in-memory
-indexes are not: they retain a stored request per signature with no accessor
-that reports their size, so heap growth per signature is still unmeasured and
-remains a soak question. The last of
+load: the `RssAnon` curve against registry archive size, per-block processing
+time as the archive grows, and whether the measured per-signature retention
+holds under real signer traffic rather than a fixture. The last of
 these is the one that would not be caught by any shorter run, and the one whose
 failure mode is a testnet that is fine for three days and a mainnet that is not
 fine for three months.
