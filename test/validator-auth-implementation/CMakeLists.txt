@@ -547,6 +547,14 @@ target_include_directories(test-p0-native-registry-mutant PRIVATE "${PROJECT_SOU
 target_link_libraries(test-p0-native-registry-mutant PRIVATE tos_validator_auth_native)
 set_target_properties(test-p0-native-registry-mutant PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 
+add_executable(test-p0-host-injection host-injection-test.cpp)
+target_link_libraries(test-p0-host-injection PRIVATE tos_block tos_crypto)
+set_target_properties(test-p0-host-injection PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+configure_file("${PROJECT_SOURCE_DIR}/crypto/block/transaction.cpp" "${CMAKE_CURRENT_BINARY_DIR}/host-injection-mutated.cpp" COPYONLY)
+add_executable(test-p0-host-injection-mutant EXCLUDE_FROM_ALL host-injection-test.cpp "${CMAKE_CURRENT_BINARY_DIR}/host-injection-mutated.cpp")
+target_link_libraries(test-p0-host-injection-mutant PRIVATE tos_block tos_crypto)
+set_target_properties(test-p0-host-injection-mutant PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+
 add_executable(test-p0-native-config-host native-apply-test.cpp)
 target_compile_definitions(test-p0-native-config-host PRIVATE P0_NATIVE_CONFIG_HOST=1)
 target_link_libraries(test-p0-native-config-host PRIVATE tos_validator_auth_native)
