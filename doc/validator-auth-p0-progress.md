@@ -129,7 +129,7 @@ Four retained quantities have no measured growth curve:
 | --- | --- | --- |
 | Registry key history | Retired and cancelled key versions must stay independently retainable, so the archive only grows | "Historical keys and retired identities must remain independently retainable" (implementation record) |
 | Per-block work against archive size | The native adapter copies and rebuilds derived indexes | One authenticated identity read now measures at 1 entry and 375 bytes across archives of 0, 100, 1000 and 5000 retired key versions, and a scan of the archive fails that measurement. The record's wider claim, that a whole block's work is bounded, is still unmeasured |
-| Signer journal and witness | Append-only by design; capacity exhaustion is an explicit error, not a reclaim | No retention policy is specified |
+| Signer journal and witness | Append-only by design; capacity exhaustion is an explicit error, not a reclaim | No retention policy is specified, but the cost is now measured: 36 bytes of framing per record, 2883 bytes per completed signature, so the default 1 GiB limit is reached after roughly 372,000 signatures and then refuses admission without touching stored history. Restart replays every record exactly once at about 9.4 us per record on the build host, so a full journal costs a restart of a few seconds and not an outage |
 | Retained session snapshots | Each session holds its committee until its native termination boundary | That boundary is not implemented yet |
 
 The object store is the one bounded case: four objects and 64 MiB per principal,
@@ -158,9 +158,12 @@ growth from a memory-mapped database is not the same finding as heap growth;
 `scripts/transfer-soak.sh` already drive sustained load.
 
 A soak closes this gate when it reports, over at least 24 hours of sustained
-load: the `RssAnon` curve against registry archive size, signer journal and
-witness size against signature count, and per-block processing time as the
-archive grows. The last of
+load: the `RssAnon` curve against registry archive size and per-block processing
+time as the archive grows. Journal size against signature count is now a
+computed quantity rather than an open question, but the ledger's in-memory
+indexes are not: they retain a stored request per signature with no accessor
+that reports their size, so heap growth per signature is still unmeasured and
+remains a soak question. The last of
 these is the one that would not be caught by any shorter run, and the one whose
 failure mode is a testnet that is fine for three days and a mainnet that is not
 fine for three months.

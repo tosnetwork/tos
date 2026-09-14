@@ -123,6 +123,12 @@ if(UNIX)
 endif()
 
 if(UNIX)
+  add_executable(test-p0-journal-growth journal-growth-test.cpp)
+  target_link_libraries(test-p0-journal-growth PRIVATE tos_validator_auth_signer)
+  set_target_properties(test-p0-journal-growth PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+endif()
+
+if(UNIX)
   foreach(module durable-log witness safety-ledger)
     configure_file("${PROJECT_SOURCE_DIR}/validator/auth/${module}.cpp" "${CMAKE_CURRENT_BINARY_DIR}/mutated-${module}.cpp" COPYONLY)
     add_executable(test-p0-${module}-mutant EXCLUDE_FROM_ALL journal-test.cpp "${CMAKE_CURRENT_BINARY_DIR}/mutated-${module}.cpp")
