@@ -9,8 +9,8 @@ are still required before these instructions can accept chain operations.
 
 | Encoding | Instruction | Stack effect |
 | --- | --- | --- |
-| `f918` | `P0STATE` | `-- checkpoint:Cell` |
-| `f919` | `P0APPLY` | `update:Cell evidence:Cell -- checkpoint:Cell` |
+| `f918` | `VAUTH_STATE` | `-- checkpoint:Cell` |
+| `f919` | `VAUTH_APPLY` | `update:Cell evidence:Cell -- checkpoint:Cell` |
 
 Both require native VM version at least 16, immutable capability 1024 and a host
 injected by the native execution embedding. The evidence operand is opaque at this

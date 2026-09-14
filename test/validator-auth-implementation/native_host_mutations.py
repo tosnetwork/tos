@@ -3,8 +3,8 @@ import argparse,json,shutil,subprocess,tempfile
 from pathlib import Path
 from context_mutations import ROOT,checked,mutate
 CPP=[
- ('host-state-gate','host-version','new CapabilityGated(OpcodeInstr::mksimple(validator_auth_state_opcode, 16, "P0STATE", exec_validator_auth_state))','OpcodeInstr::mksimple(validator_auth_state_opcode, 16, "P0STATE", exec_validator_auth_state)'),
- ('host-apply-gate','host-version','new CapabilityGated(OpcodeInstr::mksimple(validator_auth_apply_opcode, 16, "P0APPLY", exec_validator_auth_apply))','OpcodeInstr::mksimple(validator_auth_apply_opcode, 16, "P0APPLY", exec_validator_auth_apply)'),
+ ('host-state-gate','host-version','new CapabilityGated(OpcodeInstr::mksimple(validator_auth_state_opcode, 16, "VAUTH_STATE", exec_validator_auth_state))','OpcodeInstr::mksimple(validator_auth_state_opcode, 16, "VAUTH_STATE", exec_validator_auth_state)'),
+ ('host-apply-gate','host-version','new CapabilityGated(OpcodeInstr::mksimple(validator_auth_apply_opcode, 16, "VAUTH_APPLY", exec_validator_auth_apply))','OpcodeInstr::mksimple(validator_auth_apply_opcode, 16, "VAUTH_APPLY", exec_validator_auth_apply)'),
  ('host-meter','host-negative-gas','if (gas < 0) throw VmError{Excno::range_chk, "negative native charge"};',''),
  ('host-operands','host-apply-success','host->apply(std::move(update), std::move(evidence),','host->apply(std::move(evidence), std::move(update),'),
 ]

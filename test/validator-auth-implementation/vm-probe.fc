@@ -6,7 +6,7 @@
   int amount = body~load_coins();
   slice target = body~load_msg_addr();
   body.end_parse();
-  throw_unless(401, p0_check_signature(message, signature, public_key));
+  throw_unless(401, vauth_check_signature(message, signature, public_key));
   set_data(begin_cell().store_uint(1, 32).end_cell());
   cell outgoing = begin_cell()
     .store_uint(0x18, 6)

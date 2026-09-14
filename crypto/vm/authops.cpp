@@ -79,7 +79,7 @@ std::string read_message(VmState* st, td::Ref<Cell> cell) {
   return result;
 }
 int exec_validator_auth_chksign(VmState* st) {
-  VM_LOG(st) << "execute P0CHKSIGN";
+  VM_LOG(st) << "execute VAUTH_CHKSIGN";
   auto& stack = st->get_stack();
   stack.check_underflow(3);
   // Every invocation pays, including invalid signatures. No free-call allowance
@@ -116,7 +116,7 @@ void charge_native(VmState* st, long long gas) {
   st->consume_gas_chk(gas);
 }
 int exec_validator_auth_state(VmState* st) {
-  VM_LOG(st) << "execute P0STATE";
+  VM_LOG(st) << "execute VAUTH_STATE";
   auto host = st->get_validator_auth_host();
   if (!host)
     throw VmError{Excno::inv_opcode, "P0 native transaction context required"};
@@ -125,7 +125,7 @@ int exec_validator_auth_state(VmState* st) {
   return 0;
 }
 int exec_validator_auth_apply(VmState* st) {
-  VM_LOG(st) << "execute P0APPLY";
+  VM_LOG(st) << "execute VAUTH_APPLY";
   auto host = st->get_validator_auth_host();
   if (!host)
     throw VmError{Excno::inv_opcode, "P0 native transaction context required"};
@@ -160,8 +160,8 @@ class CapabilityGated final : public OpcodeInstr {
 };
 }  // namespace
 void register_validator_auth_ops(OpcodeTable& table) {
-  table.insert(new CapabilityGated(OpcodeInstr::mksimple(validator_auth_chksign_opcode, 16, "P0CHKSIGN", exec_validator_auth_chksign)));
-  table.insert(new CapabilityGated(OpcodeInstr::mksimple(validator_auth_state_opcode, 16, "P0STATE", exec_validator_auth_state)));
-  table.insert(new CapabilityGated(OpcodeInstr::mksimple(validator_auth_apply_opcode, 16, "P0APPLY", exec_validator_auth_apply)));
+  table.insert(new CapabilityGated(OpcodeInstr::mksimple(validator_auth_chksign_opcode, 16, "VAUTH_CHKSIGN", exec_validator_auth_chksign)));
+  table.insert(new CapabilityGated(OpcodeInstr::mksimple(validator_auth_state_opcode, 16, "VAUTH_STATE", exec_validator_auth_state)));
+  table.insert(new CapabilityGated(OpcodeInstr::mksimple(validator_auth_apply_opcode, 16, "VAUTH_APPLY", exec_validator_auth_apply)));
 }
 }  // namespace vm

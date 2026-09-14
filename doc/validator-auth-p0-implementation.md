@@ -18,7 +18,7 @@ or PQ suite allocation is authorized by this work.
 | Identity lifecycle | C++ and Rust per-identity register/rotate/retire/cancel and consecutive-block due-transition application | 104 differential cases per language with controlled, separately typed authority callbacks; predecessor and block-gap guard removals | Native transaction storage and global governance operations |
 | Object transfer | C++ and Rust canonical inline/manifest readers; principal/anchor-scoped C++ store and atomic proof publication | Chunk and whole-object hash substitution, quota, duplicate upload, expiry and aggregate read budget; eight scoped-store guard removals | Authenticated public RPC wiring and Rust storage adapter |
 | Thin transport and API association | C++ and Rust framing and semantic association for all 15 methods, including result receipts, proof attachments and cursors | 182 framing cases and 133 semantic cases per language; direct signer-list, receipt-hash and context guard removals | Native node context/history adapters and remote mTLS deployment |
-| Native VM and transaction execution | C++/Rust P0CHKSIGN, native capability metadata, Fift/FunC and Rust assembly bindings | 168 exact outcome/gas comparisons; getter config and nested VM; eight whole transactions including action rollback | Elector/owner statement construction and native admission |
+| Native VM and transaction execution | C++/Rust VAUTH_CHKSIGN, native capability metadata, Fift/FunC and Rust assembly bindings | 168 exact outcome/gas comparisons; getter config and nested VM; eight whole transactions including action rollback | Elector/owner statement construction and native admission |
 | Native committee derivation | Explicit native identity/stake descriptor, authenticated Config35/34 and Config46, original native selection, owned transport order and VAM1 | 40 C++/Rust state cases including a full 400-member snapshot, shuffle, shard weights, temporary election and budget exhaustion | Elector emission and session admission |
 | Native registry state | C++ and independent Rust Config46 genesis, encoding and identity-update replay; immutable key archive and owned successor state | 501 identities / 2506 keys; 34 cross-language replay cases with checkpoint/continuous equivalence, control retention and rejected-block atomicity | Native contract installation, elector/config operations and global apply |
 | Native state proofs | C++ and Rust actual masterchain Config8/9/10/16/46 and Merkle proofs for profile, policy, key and registry ranges | State-root substitution, omitted entries, false terminal page, unrelated revealed values, detached physical cells, capability and atomic-publication guard removals | RPC node wiring, owner proof dispatch and Rust global registry apply |
@@ -28,7 +28,7 @@ or PQ suite allocation is authorized by this work.
 | Native configuration gates | Actual C++ admission/transition and Rust config admission, frozen Config46 registration, capability/version, required parameters and revision continuity | 43 shared cases, 11 legacy transition tests, 47 compiled guards and full-dependency sanitizer parity | Native contract authorization, atomic root installation and approved activation |
 | Persistent native registry | Independent C++/Rust immutable cell dictionaries, validated derived indexes and per-operation native authority | 34 replay cases, eight checkpoint attacks, 80 real-owner authority cases and 36 compiled guards; bounded work over 501 historical identities | Contract-owned persistence, global/elector operations and node installation |
 | Native header witnesses | Independent C++/Rust fixed-surface Merkle proofs authenticated by native history; no archive/cache access | 25 shared cases, independent proof generation, 27 compiled guards and full-dependency sanitizer parity | Concrete transaction host metering |
-| Privileged native VM host | C++/Rust P0STATE/P0APPLY, immutable host injection, no nested VM inheritance and explicit charge callback | 25 exact outcome/gas/host-call comparisons, 12 compiled guards and full-dependency sanitizer parity | Config-account transaction factory, deterministic native gas and real action/commit wiring |
+| Privileged native VM host | C++/Rust VAUTH_STATE/VAUTH_APPLY, immutable host injection, no nested VM inheritance and explicit charge callback | 25 exact outcome/gas/host-call comparisons, 12 compiled guards and full-dependency sanitizer parity | Config-account transaction factory, deterministic native gas and real action/commit wiring |
 | Native configuration account context | Independent C++/Rust binding of actual ShardAccounts code/data/library, Config0, owned config dictionary, complete checkpoint and parent committee | 22 shared cases, 24 compiled guards and full-dependency sanitizer parity | Concrete transaction factory, actual c4 installation and native commit |
 | Native transaction evidence | Independent C++/Rust bounded transaction-contained VAA1, typed chunk dictionary, byte-work charging and authenticated owner header | 37 shared cases, 28 compiled guards, identical charge traces and full-dependency sanitizer parity | Concrete native VM pricing and transaction host invocation |
 | Native finalized history | Independent C++/Rust resolution of full anchors from authenticated OldMcBlocksInfo and original native block bytes | 37 shared cases, 34 compiled guards, exact file/root/context/new-state binding, bounded reads and full-dependency sanitizer parity | Native manager archive reader and independently established finalized head |
@@ -109,7 +109,7 @@ resolves typed objects without archive/network IO and authenticates full owner a
 These inputs still need concrete gas pricing and native transaction commit wiring.
 
 [The privileged VM host boundary](validator-auth-p0-native-vm-host.md) supplies
-P0STATE/P0APPLY only to a node-injected host under VM16/capability1024. C7 and
+VAUTH_STATE/VAUTH_APPLY only to a node-injected host under VM16/capability1024. C7 and
 nested RUNVM cannot introduce or inherit this host. The current test host measures
 routing, isolation, operand order and charging; it does not authorize registry
 operations or bind an actual configuration account.
@@ -580,7 +580,7 @@ Historical verifier bodies and historical encodings are unchanged.
 
 ## Native VM entry and whole-transaction rehearsal
 
-[The native execution contract](validator-auth-p0-native-vm.md) defines P0CHKSIGN
+[The native execution contract](validator-auth-p0-native-vm.md) defines VAUTH_CHKSIGN
 at `0xf917`. It preserves raw frozen C0 statement bytes and the existing CHKSIGNU /
 CHKSIGNS behavior. Both runtimes require VM version 16 and capability 1024, read
 only canonical AuthBytes, meter every invocation and inherit immutable capability

@@ -11,7 +11,7 @@ Existing `CHKSIGNS` accepts the bits of one cell, which cannot contain every suc
 statement. `CHKSIGNU` verifies a digest and therefore signs different bytes.
 Changing either historical instruction would change existing contract behavior.
 
-`P0CHKSIGN` uses opcode `0xf917` and stack `(message:Cell signature:Slice
+`VAUTH_CHKSIGN` uses opcode `0xf917` and stack `(message:Cell signature:Slice
 public_key:Integer -- valid:Integer)`. The returned integer is -1 or 0. The public
 FunC binding is `crypto/smartcont/validator-auth.fc`; native Fift and Rust
 assembler/disassembler mappings use the same two bytes.

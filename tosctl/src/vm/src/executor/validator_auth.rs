@@ -99,7 +99,7 @@ pub(super) fn execute_p0_chksign(engine: &mut Engine) -> Status {
         }
         fail!(ExceptionCode::InvalidOpcode);
     }
-    engine.load_instruction(Instruction::new("P0CHKSIGN"))?;
+    engine.load_instruction(Instruction::new("VAUTH_CHKSIGN"))?;
     if engine.cc.stack.depth() < 3 {
         fail!(ExceptionCode::StackUnderflow);
     }
@@ -144,7 +144,7 @@ fn charge_native(engine: &mut Engine, gas: i64) -> Status {
 }
 pub(super) fn execute_p0_state(engine: &mut Engine) -> Status {
     native_gate(engine)?;
-    engine.load_instruction(Instruction::new("P0STATE"))?;
+    engine.load_instruction(Instruction::new("VAUTH_STATE"))?;
     let Some(host) = engine.validator_auth_host() else {
         fail!(ExceptionCode::InvalidOpcode);
     };
@@ -157,7 +157,7 @@ pub(super) fn execute_p0_state(engine: &mut Engine) -> Status {
 }
 pub(super) fn execute_p0_apply(engine: &mut Engine) -> Status {
     native_gate(engine)?;
-    engine.load_instruction(Instruction::new("P0APPLY"))?;
+    engine.load_instruction(Instruction::new("VAUTH_APPLY"))?;
     let Some(host) = engine.validator_auth_host() else {
         fail!(ExceptionCode::InvalidOpcode);
     };
