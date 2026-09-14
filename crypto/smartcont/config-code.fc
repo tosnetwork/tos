@@ -2,6 +2,8 @@
 ;; Currently deployed config-contract in mainnet can be found
 ;; on https://verifier.tos.org/Ef9VVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVbxn
 
+cell vauth_apply_update(cell update, cell evidence) impure asm "VAUTH_APPLY";
+
 () set_conf_param(int index, cell value) impure {
   var cs = get_data().begin_parse();
   var cfg_dict = cs~load_ref();
@@ -551,6 +553,29 @@ int register_voting_proposal(slice cs, int msg_value) impure inline_ref {
     store_data(cfg_dict, stored_seqno, public_key, vote_dict);
     commit();
     proceed_register_vote(phash, idx, weight);
+    return ();
+  }
+  if (action == 0x56417531) {
+    ;; apply an authenticated validator registry update
+    ;;
+    ;; Authority for this action lives in the update itself: the privileged
+    ;; instruction validates its authorizations against the registry's own
+    ;; governance and refuses otherwise. Requiring the configuration key here in
+    ;; addition would let that one key block updates the registry authorized,
+    ;; which is the single point of authority this design removes.
+    ;;
+    ;; The message is therefore unsigned, and is accepted only after the update
+    ;; has been applied. A refused update never reaches accept_message, so it is
+    ;; dropped inside the gas credit instead of being paid for.
+    var update = cs~load_ref();
+    var evidence = cs~load_ref();
+    cs.end_parse();
+    var registry = vauth_apply_update(update, evidence);
+    accept_message();
+    stored_seqno = (stored_seqno + 1) % (1 << 32);
+    store_data(cfg_dict, stored_seqno, public_key, vote_dict);
+    commit();
+    set_conf_param(46, registry);
     return ();
   }
   throw_unless(34, check_signature(slice_hash(in_msg), signature, public_key));
