@@ -286,6 +286,21 @@ if(UNIX)
     "${PROJECT_SOURCE_DIR}/validator/auth")
   target_link_libraries(test-p0-public-rpc-mutant PRIVATE tos_validator_auth_rpc)
   set_target_properties(test-p0-public-rpc-mutant PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+
+  add_executable(test-p0-node-provisioning node-provisioning-test.cpp)
+  target_link_libraries(test-p0-node-provisioning PRIVATE tos_validator_auth_provisioning)
+  set_target_properties(test-p0-node-provisioning PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+
+  configure_file("${PROJECT_SOURCE_DIR}/validator/auth/node-provisioning.cpp"
+                 "${CMAKE_CURRENT_BINARY_DIR}/mutated-node-provisioning.cpp" COPYONLY)
+  add_executable(test-p0-node-provisioning-mutant EXCLUDE_FROM_ALL
+    node-provisioning-test.cpp
+    "${CMAKE_CURRENT_BINARY_DIR}/mutated-node-provisioning.cpp")
+  target_include_directories(test-p0-node-provisioning-mutant PRIVATE
+    "${PROJECT_SOURCE_DIR}/validator/auth")
+  target_link_libraries(test-p0-node-provisioning-mutant PRIVATE
+    tos_validator_auth_signer)
+  set_target_properties(test-p0-node-provisioning-mutant PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 endif()
 
 if(UNIX)

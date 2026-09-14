@@ -14,6 +14,11 @@ struct OpaqueKey {
 class C0SigningProvider {
  public:
   virtual ~C0SigningProvider() = default;
+  // Exact provider-owned public inventory. Implementations that cannot
+  // enumerate their own handles cannot participate in session admission.
+  virtual Result<std::vector<OpaqueKey>> inventory() const {
+    return Error{"unsupported-provider-operation"};
+  }
   virtual Result<Key> descriptor(const Hash& handle) const = 0;
   virtual Result<Record> sign(const SignRequest&) = 0;
   virtual Result<KeyHandle> prepare(const PrepareRequest&) {
@@ -55,6 +60,9 @@ class C0Provider final : public C0SigningProvider {
                                                        const std::vector<LocalKeyTemplate>&);
   static Result<std::unique_ptr<C0Provider>> open(const std::string&, MonotonicWitness&);
   std::vector<OpaqueKey> public_keys() const;
+  Result<std::vector<OpaqueKey>> inventory() const override {
+    return public_keys();
+  }
   Result<Key> descriptor(const Hash& handle) const override;
   Result<Record> sign(const SignRequest&) override;
   Result<KeyHandle> prepare(const PrepareRequest&) override;

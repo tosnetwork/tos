@@ -36,6 +36,9 @@ class RemoteProvider final : public C0SigningProvider {
   RemoteProvider(std::string path, uid_t uid) : path_(std::move(path)), uid_(uid) {
   }
   Result<std::vector<OpaqueKey>> public_keys() const;
+  Result<std::vector<OpaqueKey>> inventory() const override {
+    return public_keys();
+  }
   Result<Key> descriptor(const Hash&) const override;
   Result<Record> sign(const SignRequest&) override;
   Result<KeyHandle> prepare(const PrepareRequest&) override;
