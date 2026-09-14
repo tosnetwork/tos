@@ -37,6 +37,63 @@ Result<td::Ref<vm::Cell>> block_boc(std::span<const std::uint8_t> raw) {
   return boc.get_root_cell();
 }
 }  // namespace
+
+Result<Anchor> native_masterchain_block_anchor(
+    std::span<const std::uint8_t> raw, std::int32_t expected_network) {
+  try {
+    if (raw.empty() || raw.size() > 67108864)
+      return Error{"history-block-bound"};
+
+    Hash file{};
+    if (crypto_hash_sha256(
+            file.data(), raw.data(), raw.size()) != 0)
+      return Error{"hash-backend"};
+
+    auto root = block_boc(raw);
+    if (!root.ok())
+      return Error{"history-boc"};
+    if (root.value()->get_level() != 0)
+      return Error{"history-block-root"};
+
+    block::gen::Block::Record block;
+    block::gen::BlockInfo::Record info;
+    if (!tlb::unpack_cell(root.value(), block) ||
+        !tlb::unpack_cell(block.info, info))
+      return Error{"history-block"};
+
+    block::ShardId shard(info.shard);
+    if (block.global_id != expected_network ||
+        info.seq_no == UINT32_MAX ||
+        shard.workchain_id != -1 ||
+        shard.shard_pfx_len != 0)
+      return Error{"history-block-context"};
+
+    auto update =
+        vm::load_cell_slice_special(block.state_update);
+    if (!update.is_special() || update.size() != 552 ||
+        update.size_refs() != 2 ||
+        update.fetch_ulong(8) != 4 ||
+        !update.advance(256))
+      return Error{"history-state-update"};
+
+    Hash state{};
+    if (!update.fetch_bytes(
+            td::MutableSlice(state.data(), state.size())) ||
+        state == Hash{})
+      return Error{"history-state-update"};
+
+    return Anchor{
+        info.seq_no,
+        hash(root.value()->get_hash().as_slice()),
+        file,
+        state};
+  } catch (const vm::VmError&) {
+    return Error{"history-block"};
+  } catch (const vm::VmVirtError&) {
+    return Error{"history-pruned"};
+  }
+}
+
 NativeFinalizedHistory::NativeFinalizedHistory() = default;
 NativeFinalizedHistory::~NativeFinalizedHistory() = default;
 NativeFinalizedHistory::NativeFinalizedHistory(NativeFinalizedHistory&&) noexcept = default;
@@ -109,33 +166,18 @@ Result<Anchor> NativeFinalizedHistory::finalized_anchor(std::uint32_t at) const 
     if (raw.empty() || raw.size() > maximum)
       return Error{"history-block-bound"};
     budget_.bytes -= raw.size();
-    Hash file{};
-    if (crypto_hash_sha256(file.data(), raw.data(), raw.size()) != 0)
-      return Error{"hash-backend"};
-    if (file != hash(id.file_hash.as_slice()))
+    auto authenticated =
+        native_masterchain_block_anchor(raw, chain_.network);
+    if (!authenticated.ok())
+      return authenticated.error();
+    if (authenticated.value().file_ != hash(id.file_hash.as_slice()))
       return Error{"history-file-hash"};
-    auto root = block_boc(raw);
-    if (!root.ok())
-      return Error{"history-boc"};
-    if (root.value()->get_level() != 0 || root.value()->get_hash().as_slice() != id.root_hash.as_slice())
+    if (authenticated.value().root_ != hash(id.root_hash.as_slice()))
       return Error{"history-block-root"};
-    block::gen::Block::Record block;
-    block::gen::BlockInfo::Record info;
-    if (!tlb::unpack_cell(root.value(), block) || !tlb::unpack_cell(block.info, info))
-      return Error{"history-block"};
-    block::ShardId shard(info.shard);
-    if (block.global_id != chain_.network || info.seq_no != at || shard.workchain_id != -1 || shard.shard_pfx_len != 0)
+    if (authenticated.value().seqno_ != at)
       return Error{"history-block-context"};
-    auto update = vm::load_cell_slice_special(block.state_update);
-    if (!update.is_special() || update.size() != 552 || update.size_refs() != 2 || update.fetch_ulong(8) != 4 ||
-        !update.advance(256))
-      return Error{"history-state-update"};
-    Hash state{};
-    if (!update.fetch_bytes(td::MutableSlice(state.data(), state.size())) || state == Hash{})
-      return Error{"history-state-update"};
-    Anchor result{at, hash(id.root_hash.as_slice()), hash(id.file_hash.as_slice()), state};
-    cache_.emplace(at, result);
-    return result;
+    cache_.emplace(at, authenticated.value());
+    return authenticated.value();
   } catch (const vm::VmError&) {
     return Error{"history-block"};
   } catch (const vm::VmVirtError&) {

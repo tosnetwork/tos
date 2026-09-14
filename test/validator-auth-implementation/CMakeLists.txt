@@ -301,6 +301,22 @@ if(UNIX)
   target_link_libraries(test-p0-node-provisioning-mutant PRIVATE
     tos_validator_auth_signer)
   set_target_properties(test-p0-node-provisioning-mutant PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+
+  add_executable(test-p0-native-finality native-finality-test.cpp)
+  target_link_libraries(test-p0-native-finality PRIVATE
+    tos_validator_auth_finality tos_validator_auth_rpc)
+  set_target_properties(test-p0-native-finality PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+
+  configure_file("${PROJECT_SOURCE_DIR}/validator/auth/native-finality.cpp"
+                 "${CMAKE_CURRENT_BINARY_DIR}/mutated-native-finality.cpp" COPYONLY)
+  add_executable(test-p0-native-finality-mutant EXCLUDE_FROM_ALL
+    native-finality-test.cpp
+    "${CMAKE_CURRENT_BINARY_DIR}/mutated-native-finality.cpp")
+  target_include_directories(test-p0-native-finality-mutant PRIVATE
+    "${PROJECT_SOURCE_DIR}/validator/auth")
+  target_link_libraries(test-p0-native-finality-mutant PRIVATE
+    tos_validator_auth_native tos_validator_auth_rpc)
+  set_target_properties(test-p0-native-finality-mutant PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 endif()
 
 if(UNIX)

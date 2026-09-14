@@ -491,6 +491,31 @@ jobs:
               artifacts/node-provisioning-mutations.json
           fi
           git diff --exit-code
+      - name: Establish the independently finalized native head
+        if: matrix.guards == 'native' || matrix.guards == 'none'
+        run: |
+          set -euo pipefail
+          cmake --build build-p0 --target test-p0-native-finality -j2
+          cmake --build build-p0-sanitized --target test-p0-native-finality -j2
+          test -x build-p0/test/validator-auth-implementation/test-p0-native-finality
+          test -x build-p0-sanitized/test/validator-auth-implementation/test-p0-native-finality
+          build-p0/test/validator-auth-implementation/test-p0-native-finality \
+            artifacts/owner-transactions-mc artifacts/committee-fixtures \
+            | tee artifacts/native-finality.txt
+          ASAN_OPTIONS=detect_leaks=1:detect_stack_use_after_return=1 \
+            UBSAN_OPTIONS=halt_on_error=1 \
+            build-p0-sanitized/test/validator-auth-implementation/test-p0-native-finality \
+            artifacts/owner-transactions-mc artifacts/committee-fixtures-sanitized \
+            | tee artifacts/native-finality-sanitized.txt
+          if [ "${{ matrix.guards }}" = "native" ]; then
+            python3 test/validator-auth-implementation/native_finality_mutations.py \
+              --build build-p0 --owner artifacts/owner-transactions-mc \
+              --committee artifacts/committee-fixtures \
+              --out artifacts/native-finality-mutations
+            cp artifacts/native-finality-mutations/mutations.json \
+              artifacts/native-finality-mutations.json
+          fi
+          git diff --exit-code
       - name: Derive a committee from a genesis written by the real genesis path
         run: |
           set -euo pipefail

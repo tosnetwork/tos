@@ -14,6 +14,10 @@ add_library(tos_validator_auth_session STATIC native-session-continuity.cpp)
 target_link_libraries(tos_validator_auth_session PUBLIC tos_validator_auth_native tdutils)
 set_target_properties(tos_validator_auth_session PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 
+add_library(tos_validator_auth_finality STATIC native-finality.cpp)
+target_link_libraries(tos_validator_auth_finality PUBLIC tos_validator_auth_native)
+set_target_properties(tos_validator_auth_finality PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+
 if(UNIX)
   add_library(tos_validator_auth_signer STATIC durable-log.cpp witness.cpp safety-ledger.cpp operation-ledger.cpp c0-provider.cpp signer-service.cpp admin-service.cpp api-service.cpp service-issuer.cpp local-channel.cpp provider-channel.cpp)
   target_link_libraries(tos_validator_auth_signer PUBLIC tos_validator_auth)

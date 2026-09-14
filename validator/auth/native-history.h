@@ -1,5 +1,7 @@
 #pragma once
+#include <cstdint>
 #include <memory>
+#include <span>
 
 #include "tos/tos-types.h"
 
@@ -14,6 +16,10 @@ using NativeBlockReader = std::function<Result<Bytes>(const tos::BlockIdExt&, st
 struct HistoryReadBudget {
   std::size_t blocks = 129, bytes = 268435456;
 };
+// Parse one original masterchain block BOC into the exact anchor it commits.
+// This authenticates structure/binding only; it does not establish finality.
+Result<Anchor> native_masterchain_block_anchor(
+    std::span<const std::uint8_t> raw, std::int32_t expected_network);
 class NativeFinalizedHistory final : public FinalizedAnchorSource {
   std::unique_ptr<block::ConfigInfo> config_;
   Anchor head_;
