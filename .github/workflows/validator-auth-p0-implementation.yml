@@ -93,7 +93,7 @@ jobs:
             -DOPENSSL_INCLUDE_DIR="$(pkg-config --variable=includedir openssl)"
           export FUNC_BIN="$PWD/build-p0/crypto/func" FIFT_BIN="$PWD/build-p0/crypto/fift"
           cmake --build build-p0 --target func fift -j2
-          cmake --build build-p0 --target emulator test-p0-vm test-p0-vm-adapter test-p0-committee test-p0-registry-view test-p0-committee-proof test-p0-certificate-proof test-p0-certificate-rpc test-p0-implementation test-p0-transfer test-p0-transport test-p0-cells test-p0-state test-p0-state-replay benchmark-p0-c0 test-p0-proof test-p0-authority test-p0-context test-p0-governance test-p0-owner-proof test-p0-native-apply test-p0-native-history test-p0-native-header test-p0-native-evidence test-p0-native-config-context test-p0-native-host-vm test-p0-native-registry test-p0-persistent-apply test-p0-native-transactions test-p0-config-gates test-config-transition test-p0-native-governance test-p0-native-session-id create-state p0-genesis-tool p0-genesis-probe p0-vset-probe test-p0-journal test-p0-signer test-p0-sync test-p0-channel test-p0-process test-p0-object-store test-p0-issuer test-p0-api-semantics test-p0-admin test-p0-admin-process test-p0-api-service test-p0-http test-p0-keyring test-keyring-temp-key -j2
+          cmake --build build-p0 --target emulator test-p0-vm test-p0-vm-adapter test-p0-committee test-p0-registry-view test-p0-committee-proof test-p0-certificate-proof test-p0-certificate-rpc test-p0-implementation test-p0-transfer test-p0-transport test-p0-cells test-p0-state test-p0-state-replay benchmark-p0-c0 test-p0-proof test-p0-authority test-p0-context test-p0-governance test-p0-owner-proof test-p0-native-apply test-p0-native-history test-p0-native-header test-p0-native-evidence test-p0-native-config-context test-p0-native-host-vm test-p0-native-registry test-p0-persistent-apply test-p0-native-transactions test-p0-config-gates test-config-transition test-p0-native-governance test-p0-native-session-id test-p0-native-session-history create-state p0-genesis-tool p0-genesis-probe p0-vset-probe test-p0-journal test-p0-signer test-p0-sync test-p0-channel test-p0-process test-p0-object-store test-p0-issuer test-p0-api-semantics test-p0-admin test-p0-admin-process test-p0-api-service test-p0-http test-p0-keyring test-keyring-temp-key -j2
           cmake --build build-p0 --target validator/impl/CMakeFiles/tos_validator.dir/validate-query.cpp.o -j2
           cmake -S . -B build-p0-sanitized -G Ninja -DCMAKE_BUILD_TYPE=Release -DTOS_ARCH= \
             -DTOS_BUILD_P0_IMPLEMENTATION_TESTS=ON -DUSE_QUIC=OFF \
@@ -103,7 +103,7 @@ jobs:
             -DOPENSSL_CRYPTO_LIBRARY="$(pkg-config --variable=libdir openssl)/libcrypto.so" \
             -DOPENSSL_SSL_LIBRARY="$(pkg-config --variable=libdir openssl)/libssl.so" \
             -DOPENSSL_INCLUDE_DIR="$(pkg-config --variable=includedir openssl)"
-          cmake --build build-p0-sanitized --target test-p0-keyring-sanitized test-p0-vm test-p0-committee test-p0-proof test-p0-registry-view test-p0-committee-proof test-p0-state-replay test-p0-certificate-proof test-p0-certificate-rpc test-p0-context test-p0-governance test-p0-owner-proof test-p0-native-apply test-p0-native-history test-p0-native-header test-p0-native-evidence test-p0-native-config-context test-p0-native-host-vm test-p0-native-registry test-p0-persistent-apply test-p0-native-transactions test-p0-config-gates test-config-transition test-p0-native-governance test-p0-native-session-id -j2
+          cmake --build build-p0-sanitized --target test-p0-keyring-sanitized test-p0-vm test-p0-committee test-p0-proof test-p0-registry-view test-p0-committee-proof test-p0-state-replay test-p0-certificate-proof test-p0-certificate-rpc test-p0-context test-p0-governance test-p0-owner-proof test-p0-native-apply test-p0-native-history test-p0-native-header test-p0-native-evidence test-p0-native-config-context test-p0-native-host-vm test-p0-native-registry test-p0-persistent-apply test-p0-native-transactions test-p0-config-gates test-config-transition test-p0-native-governance test-p0-native-session-id test-p0-native-session-history -j2
           cargo build --locked --manifest-path tosctl/src/Cargo.toml -p tos_vm --example p0-parity --example native-host-parity
           cargo build --locked --manifest-path tosctl/src/Cargo.toml -p tos_executor --example pq-tx-parity
       - name: Enforce native configuration admission and transition gates
@@ -193,8 +193,12 @@ jobs:
           build-p0/validator/auth/test-p0-native-session-id | tee artifacts/native-session-id.txt
           ASAN_OPTIONS=detect_leaks=1:detect_stack_use_after_return=1 UBSAN_OPTIONS=halt_on_error=1 build-p0-sanitized/validator/auth/test-p0-native-session-id | tee artifacts/native-session-id-sanitized.txt
           build-p0/test/validator-auth-implementation/test-p0-committee artifacts/committee-fixtures | tee artifacts/committee.txt
+          test -x build-p0/validator/auth/test-p0-native-session-history
+          build-p0/validator/auth/test-p0-native-session-history artifacts/owner-transactions-mc artifacts/committee-fixtures | tee artifacts/native-session-history.txt
           tosctl/src/target/debug/committee-conformance artifacts/committee-fixtures | tee artifacts/committee-rust.txt
           ASAN_OPTIONS=detect_leaks=1:detect_stack_use_after_return=1 UBSAN_OPTIONS=halt_on_error=1 build-p0-sanitized/test/validator-auth-implementation/test-p0-committee artifacts/committee-fixtures-sanitized | tee artifacts/committee-sanitized.txt
+          test -x build-p0-sanitized/validator/auth/test-p0-native-session-history
+          ASAN_OPTIONS=detect_leaks=1:detect_stack_use_after_return=1 UBSAN_OPTIONS=halt_on_error=1 build-p0-sanitized/validator/auth/test-p0-native-session-history artifacts/owner-transactions-mc artifacts/committee-fixtures-sanitized | tee artifacts/native-session-history-sanitized.txt
           diff -r artifacts/committee-fixtures artifacts/committee-fixtures-sanitized
           build-p0/test/validator-auth-implementation/test-p0-registry-view artifacts/registry-view-fixtures | tee artifacts/registry-view.txt
           tosctl/src/target/debug/registry-view-conformance artifacts/registry-view-fixtures | tee artifacts/registry-view-rust.txt
@@ -394,6 +398,8 @@ jobs:
           python3 test/validator-auth-implementation/native_evidence_mutations.py --language cpp --build build-p0 --inputs artifacts/native-header --out artifacts/native-evidence-cpp-mutations.json
           python3 test/validator-auth-implementation/native_evidence_mutations.py --language rust --fixtures artifacts/native-evidence --out artifacts/native-evidence-rust-mutations.json
           python3 test/validator-auth-implementation/native_session_id_mutations.py --build build-p0 --out artifacts/native-session-id-native-mutations.json
+          python3 test/validator-auth-implementation/native_session_history_mutations.py --build build-p0 --owner artifacts/owner-transactions-mc --committee artifacts/committee-fixtures --out artifacts/native-session-history-mutations
+          cp artifacts/native-session-history-mutations/mutations.json artifacts/native-session-history-mutations.json
           git diff --exit-code
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
