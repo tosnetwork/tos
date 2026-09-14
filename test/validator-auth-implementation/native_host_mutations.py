@@ -3,13 +3,13 @@ import argparse,json,shutil,subprocess,tempfile
 from pathlib import Path
 from context_mutations import ROOT,checked,mutate
 CPP=[
- ('host-state-gate','host-version','new CapabilityGated(OpcodeInstr::mksimple(p0_state_opcode, 16, "P0STATE", exec_p0_state))','OpcodeInstr::mksimple(p0_state_opcode, 16, "P0STATE", exec_p0_state)'),
- ('host-apply-gate','host-version','new CapabilityGated(OpcodeInstr::mksimple(p0_apply_opcode, 16, "P0APPLY", exec_p0_apply))','OpcodeInstr::mksimple(p0_apply_opcode, 16, "P0APPLY", exec_p0_apply)'),
+ ('host-state-gate','host-version','new CapabilityGated(OpcodeInstr::mksimple(validator_auth_state_opcode, 16, "P0STATE", exec_validator_auth_state))','OpcodeInstr::mksimple(validator_auth_state_opcode, 16, "P0STATE", exec_validator_auth_state)'),
+ ('host-apply-gate','host-version','new CapabilityGated(OpcodeInstr::mksimple(validator_auth_apply_opcode, 16, "P0APPLY", exec_validator_auth_apply))','OpcodeInstr::mksimple(validator_auth_apply_opcode, 16, "P0APPLY", exec_validator_auth_apply)'),
  ('host-meter','host-negative-gas','if (gas < 0) throw VmError{Excno::range_chk, "negative native charge"};',''),
  ('host-operands','host-apply-success','host->apply(std::move(update), std::move(evidence),','host->apply(std::move(evidence), std::move(update),'),
 ]
 # Scope the null-host check because both operations have one.
-_source=(ROOT/'crypto/vm/authops.cpp').read_text();_start=_source.index('int exec_p0_state(');_end=_source.index('int exec_p0_apply(',_start);_state=_source[_start:_end]
+_source=(ROOT/'crypto/vm/authops.cpp').read_text();_start=_source.index('int exec_validator_auth_state(');_end=_source.index('int exec_validator_auth_apply(',_start);_state=_source[_start:_end]
 from mutation_support import replace_once
 CPP.append(('host-required','host-required',_state,replace_once(_state,'if (!host) throw VmError{Excno::inv_opcode, "P0 native transaction context required"};','if (!host) return 0;')))
 CPP_VM=[('host-child-isolation','host-child-isolation','new_state.global_capabilities = global_capabilities;','new_state.global_capabilities = global_capabilities; new_state.set_validator_auth_host(validator_auth_host_);')]

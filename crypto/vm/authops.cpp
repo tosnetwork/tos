@@ -64,7 +64,7 @@ std::string read_message(VmState* st, td::Ref<Cell> cell) {
   if (cs.size() != 336 || cs.size_refs() != 1 || cs.fetch_ulong(32) != 0x76616231 || cs.fetch_ulong(16) != 1)
     throw VmError{Excno::cell_und, "invalid P0 AuthBytes root"};
   auto length = cs.fetch_ulong(32);
-  if (length == 0 || length > p0_chksign_max_message)
+  if (length == 0 || length > validator_auth_max_message)
     throw VmError{Excno::cell_und, "P0 message bound"};
   std::array<unsigned char, 32> expected{}, actual{};
   if (!cs.fetch_bytes(td::MutableSlice(expected.data(), expected.size())))
@@ -78,13 +78,13 @@ std::string read_message(VmState* st, td::Ref<Cell> cell) {
     throw VmError{Excno::cell_und, "P0 message hash mismatch"};
   return result;
 }
-int exec_p0_chksign(VmState* st) {
+int exec_validator_auth_chksign(VmState* st) {
   VM_LOG(st) << "execute P0CHKSIGN";
   auto& stack = st->get_stack();
   stack.check_underflow(3);
   // Every invocation pays, including invalid signatures. No free-call allowance
   // or ignore-signatures test switch supplies validator authorization.
-  st->consume_gas_chk(p0_chksign_base_gas);
+  st->consume_gas_chk(validator_auth_base_gas);
   auto key = stack.pop_int();
   auto signature = stack.pop_cellslice();
   auto message = stack.pop_cell();
@@ -115,7 +115,7 @@ void charge_native(VmState* st, long long gas) {
     throw VmError{Excno::range_chk, "negative native charge"};
   st->consume_gas_chk(gas);
 }
-int exec_p0_state(VmState* st) {
+int exec_validator_auth_state(VmState* st) {
   VM_LOG(st) << "execute P0STATE";
   auto host = st->get_validator_auth_host();
   if (!host)
@@ -124,7 +124,7 @@ int exec_p0_state(VmState* st) {
   st->get_stack().push_cell(std::move(result));
   return 0;
 }
-int exec_p0_apply(VmState* st) {
+int exec_validator_auth_apply(VmState* st) {
   VM_LOG(st) << "execute P0APPLY";
   auto host = st->get_validator_auth_host();
   if (!host)
@@ -145,7 +145,7 @@ class CapabilityGated final : public OpcodeInstr {
       : OpcodeInstr(inner->get_opcode_min(), inner->get_opcode_max()), inner_(inner) {
   }
   int dispatch(VmState* st, CellSlice& cs, unsigned opcode, unsigned bits) const override {
-    if (st->get_global_version() < p0_chksign_min_version || !(st->get_global_capabilities() & p0_capability)) {
+    if (st->get_global_version() < validator_auth_min_version || !(st->get_global_capabilities() & validator_auth_capability)) {
       st->consume_gas(gas_per_instr);
       throw VmError{Excno::inv_opcode, "invalid opcode", opcode};
     }
@@ -160,8 +160,8 @@ class CapabilityGated final : public OpcodeInstr {
 };
 }  // namespace
 void register_validator_auth_ops(OpcodeTable& table) {
-  table.insert(new CapabilityGated(OpcodeInstr::mksimple(p0_chksign_opcode, 16, "P0CHKSIGN", exec_p0_chksign)));
-  table.insert(new CapabilityGated(OpcodeInstr::mksimple(p0_state_opcode, 16, "P0STATE", exec_p0_state)));
-  table.insert(new CapabilityGated(OpcodeInstr::mksimple(p0_apply_opcode, 16, "P0APPLY", exec_p0_apply)));
+  table.insert(new CapabilityGated(OpcodeInstr::mksimple(validator_auth_chksign_opcode, 16, "P0CHKSIGN", exec_validator_auth_chksign)));
+  table.insert(new CapabilityGated(OpcodeInstr::mksimple(validator_auth_state_opcode, 16, "P0STATE", exec_validator_auth_state)));
+  table.insert(new CapabilityGated(OpcodeInstr::mksimple(validator_auth_apply_opcode, 16, "P0APPLY", exec_validator_auth_apply)));
 }
 }  // namespace vm

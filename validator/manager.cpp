@@ -3036,18 +3036,18 @@ void ValidatorManagerImpl::update_shards() {
         //
         // Nothing here runs until the chain activates validator authentication.
         if (tos::auth::native_session_binding_active(last_masterchain_state_->root_cell())) {
-          tos::auth::ManagerSessionInputs p0_inputs;
-          auto p0_options = opts_hash.as_slice();
-          std::copy(p0_options.ubegin(), p0_options.uend(), p0_inputs.options_hash.begin());
-          p0_inputs.vertical_seqno = opts_->get_maximal_vertical_seqno();
-          p0_inputs.key_block_seqno = key_seqno;
-          p0_inputs.new_catchain_ids = opts.new_catchain_ids;
-          tos::auth::Hash p0_identity{};
-          auto p0_raw = val_group_id.as_slice();
-          std::copy(p0_raw.ubegin(), p0_raw.uend(), p0_identity.begin());
-          auto p0_confirmed =
-              tos::auth::native_session_identity_confirms(val_set, shard, p0_inputs, p0_identity);
-          if (!p0_confirmed.ok() || !p0_confirmed.value()) {
+          tos::auth::ManagerSessionInputs auth_inputs;
+          auto options_bytes = opts_hash.as_slice();
+          std::copy(options_bytes.ubegin(), options_bytes.uend(), auth_inputs.options_hash.begin());
+          auth_inputs.vertical_seqno = opts_->get_maximal_vertical_seqno();
+          auth_inputs.key_block_seqno = key_seqno;
+          auth_inputs.new_catchain_ids = opts.new_catchain_ids;
+          tos::auth::Hash manager_identity{};
+          auto identity_bytes = val_group_id.as_slice();
+          std::copy(identity_bytes.ubegin(), identity_bytes.uend(), manager_identity.begin());
+          auto confirmed =
+              tos::auth::native_session_identity_confirms(val_set, shard, auth_inputs, manager_identity);
+          if (!confirmed.ok() || !confirmed.value()) {
             LOG(ERROR) << "refusing to create validator group for " << shard.to_str()
                        << ": the authenticated session identity does not confirm this validator set; "
                           "validation for this shard is disabled until they agree";

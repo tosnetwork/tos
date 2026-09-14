@@ -7,11 +7,11 @@ from mutation_support import replace_once
 
 MUTATIONS = [
     ('disabled-instruction-gas', 'st->consume_gas(gas_per_instr);', ''),
-    ('version-gate', 'st->get_global_version() < p0_chksign_min_version ||', ''),
-    ('capability-gate', '!(st->get_global_capabilities() & p0_capability)', 'false'),
-    ('base-and-byte-gas', 'st->consume_gas_chk(p0_chksign_base_gas);', ''),
+    ('version-gate', 'st->get_global_version() < validator_auth_min_version ||', ''),
+    ('capability-gate', '!(st->get_global_capabilities() & validator_auth_capability)', 'false'),
+    ('base-and-byte-gas', 'st->consume_gas_chk(validator_auth_base_gas);', ''),
     ('byte-gas', 'st->consume_gas_chk(static_cast<long long>(length));', ''),
-    ('message-upper-bound', 'length > p0_chksign_max_message', 'false'),
+    ('message-upper-bound', 'length > validator_auth_max_message', 'false'),
     ('root-tag', 'cs.fetch_ulong(32) != 0x76616231', '(cs.fetch_ulong(32), false)'),
     ('root-version', 'cs.fetch_ulong(16) != 1', '(cs.fetch_ulong(16), false)'),
     ('root-hash', 'actual != expected', 'false'),
