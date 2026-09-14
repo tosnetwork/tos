@@ -295,6 +295,7 @@ jobs:
       - name: Derive a committee from a genesis written by the real genesis path
         run: |
           set -euo pipefail
+          P0_EVIDENCE_TMP="$(mktemp -d)"
           python3 test/validator-auth-implementation/genesis_rehearsal.py \
             --build "$PWD/build-p0" --work "$P0_EVIDENCE_TMP/genesis" \
             --out artifacts/genesis-rehearsal.json | tee artifacts/genesis-rehearsal.txt

@@ -279,7 +279,11 @@ target_link_libraries(test-p0-descriptor-equality-mutant PRIVATE tos_validator_a
 set_target_properties(test-p0-descriptor-equality-mutant PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 
 if(TOS_USE_ASAN AND TOS_USE_UBSAN)
+  # Every header the copied probes include must be copied too. Resolving one of
+  # them from the source directory would pull the unmutated native-fixture.h
+  # back in through it, and the mutation would silently stop taking effect.
   configure_file("${CMAKE_CURRENT_SOURCE_DIR}/native-fixture.h" "${CMAKE_CURRENT_BINARY_DIR}/lifetime/native-fixture.h" COPYONLY)
+  configure_file("${CMAKE_CURRENT_SOURCE_DIR}/committee-fixture.h" "${CMAKE_CURRENT_BINARY_DIR}/lifetime/committee-fixture.h" COPYONLY)
   foreach(probe committee proof)
     configure_file("${CMAKE_CURRENT_SOURCE_DIR}/${probe}-test.cpp" "${CMAKE_CURRENT_BINARY_DIR}/lifetime/${probe}-test.cpp" COPYONLY)
     add_executable(test-p0-${probe}-lifetime-mutant EXCLUDE_FROM_ALL "${CMAKE_CURRENT_BINARY_DIR}/lifetime/${probe}-test.cpp")

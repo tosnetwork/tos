@@ -17,6 +17,9 @@ _source=(ROOT/'tosctl/src/vm/src/executor/validator_auth.rs').read_text();_start
 RUST=[
  ('host-version','host-version',_gate,_gate.replace('engine.block_version() < 16 || ','')),
  ('host-capability','host-capability',_gate,_gate.replace(' || !engine.check_capabilities(CAPABILITY)','')),
+ # A refused opcode still charges; dropping the charge diverges from the
+ # native implementation on exactly the versions that refuse it.
+ ('host-refused-gas','host-version',_gate,_gate.replace('engine.try_use_gas(Gas::basic_gas_price(0, 0))?;','')),
  ('host-meter','host-negative-gas','if gas < 0 { fail!(ExceptionCode::RangeCheckError); }',''),
  ('host-operands','host-apply-success','.apply(update, evidence,','.apply(evidence, update,'),
 ]

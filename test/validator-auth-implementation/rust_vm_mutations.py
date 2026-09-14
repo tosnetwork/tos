@@ -8,6 +8,8 @@ import subprocess
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[2]
+OPCODE_START = 'pub(super) fn execute_p0_chksign('
+OPCODE_END = 'fn native_gate('
 MUTATIONS = [
     ('disabled-gas', 'engine.try_use_gas(Gas::basic_gas_price(0, 0))?;', ''),
     ('version', 'engine.block_version() < 16 ||', ''),
@@ -68,10 +70,19 @@ def main(fixtures, out):
             for name, before, after in MUTATIONS:
                 # Formatting can wrap a boolean clause without changing it.
                 pattern = r'\s*'.join(re.escape(token) for token in before.split())
-                matches = list(re.finditer(pattern, original))
+                # Guards that also appear on the native-host path are matched
+                # inside this opcode only. The host copy is exercised by
+                # different fixtures and is mutated by native_host_mutations.py;
+                # disabling it from here would report a survivor for a path this
+                # transcript never runs.
+                region = original[original.index(OPCODE_START):original.index(OPCODE_END)]
+                scope = region if len(list(re.finditer(pattern, original))) > 1 else original
+                offset = original.index(scope) if scope is region else 0
+                matches = list(re.finditer(pattern, scope))
                 assert len(matches) == 1, name
                 match = matches[0]
-                modified = original[:match.start()] + after + original[match.end():]
+                start, end = match.start() + offset, match.end() + offset
+                modified = original[:start] + after + original[end:]
                 result = run(modified)
                 assert result.returncode == 1 and re.search(r'Error: .*/\d+: \[.*\] != \[.*\]', result.stderr), (name, result.stderr)
                 report.append({'guard': name, 'compiled': True, 'assertion_failed': True})
