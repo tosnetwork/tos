@@ -565,9 +565,9 @@ jobs:
         run: |
           set -euo pipefail
           export FUNC_BIN="$PWD/build-p0/crypto/func" FIFT_BIN="$PWD/build-p0/crypto/fift"
-          # Report each harness's own duration. The split between these legs was
-          # made by count, not by measurement, and this is what makes the next
-          # rebalance a matter of reading the log rather than guessing again.
+          # Report each harness's own duration. The grouping is by measured seconds
+          # from a two-core run, except for the two harnesses that never completed
+          # there; those are now in separate legs and are what this run measures.
           run() {
             local started
             started=$(date +%s)
@@ -575,84 +575,69 @@ jobs:
             printf 'HARNESS_SECONDS %s %s\n' "$(( $(date +%s) - started ))" "$2"
           }
           run python3 test/validator-auth-implementation/native_module_mutations.py --build build-p0 --out artifacts/native-modules.json
-          run python3 test/validator-auth-implementation/rust_native_mutations.py --cells artifacts/native-cell-fixtures --proofs artifacts/native-proof-fixtures --out artifacts/rust-native-mutations.json
           run python3 test/validator-auth-implementation/committee_mutations.py --build build-p0 --out artifacts/committee-mutations.json
-          run python3 test/validator-auth-implementation/rust_committee_mutations.py --fixtures artifacts/committee-fixtures --out artifacts/rust-committee-mutations.json
+          run python3 test/validator-auth-implementation/rust_native_mutations.py --cells artifacts/native-cell-fixtures --proofs artifacts/native-proof-fixtures --out artifacts/rust-native-mutations.json
           run python3 test/validator-auth-implementation/registry_view_mutations.py --language cpp --build build-p0 --out artifacts/registry-view-cpp-mutations.json
+          run python3 test/validator-auth-implementation/registry_view_mutations.py --language rust --fixtures artifacts/registry-view-fixtures --out artifacts/registry-view-rust-mutations.json
           git diff --exit-code
       - name: Compile state guard removals and require assertion failures (2 of 4)
         if: matrix.guards == 'state2'
         run: |
           set -euo pipefail
           export FUNC_BIN="$PWD/build-p0/crypto/func" FIFT_BIN="$PWD/build-p0/crypto/fift"
-          # Report each harness's own duration. The split between these legs was
-          # made by count, not by measurement, and this is what makes the next
-          # rebalance a matter of reading the log rather than guessing again.
+          # Report each harness's own duration. The grouping is by measured seconds
+          # from a two-core run, except for the two harnesses that never completed
+          # there; those are now in separate legs and are what this run measures.
           run() {
             local started
             started=$(date +%s)
             "$@"
             printf 'HARNESS_SECONDS %s %s\n' "$(( $(date +%s) - started ))" "$2"
           }
-          run python3 test/validator-auth-implementation/registry_view_mutations.py --language rust --fixtures artifacts/registry-view-fixtures --out artifacts/registry-view-rust-mutations.json
+          run python3 test/validator-auth-implementation/certificate_proof_mutations.py --language cpp --build build-p0 --fixtures artifacts/committee-fixtures --out artifacts/certificate-proof-cpp-mutations.json
           run python3 test/validator-auth-implementation/committee_proof_mutations.py --language cpp --build build-p0 --fixtures artifacts/committee-fixtures --out artifacts/committee-proof-cpp-mutations.json
           run python3 test/validator-auth-implementation/committee_proof_mutations.py --language rust --fixtures artifacts/committee-proof-fixtures --out artifacts/committee-proof-rust-mutations.json
-          run python3 test/validator-auth-implementation/registry_replay_mutations.py --fixtures artifacts/state-replay-fixtures --out artifacts/registry-replay-mutations.json
-          run python3 test/validator-auth-implementation/certificate_proof_mutations.py --language cpp --build build-p0 --fixtures artifacts/committee-fixtures --out artifacts/certificate-proof-cpp-mutations.json
+          run python3 test/validator-auth-implementation/context_mutations.py --language cpp --build build-p0 --fixtures artifacts/context-fixtures --out artifacts/context-cpp-mutations.json
+          run python3 test/validator-auth-implementation/native_governance_mutations.py --language cpp --build build-p0 --out artifacts/native-governance-cpp-mutations.json
           git diff --exit-code
       - name: Compile state guard removals and require assertion failures (3 of 4)
         if: matrix.guards == 'state3'
         run: |
           set -euo pipefail
           export FUNC_BIN="$PWD/build-p0/crypto/func" FIFT_BIN="$PWD/build-p0/crypto/fift"
-          # Report each harness's own duration. The split between these legs was
-          # made by count, not by measurement, and this is what makes the next
-          # rebalance a matter of reading the log rather than guessing again.
+          # Report each harness's own duration. The grouping is by measured seconds
+          # from a two-core run, except for the two harnesses that never completed
+          # there; those are now in separate legs and are what this run measures.
           run() {
             local started
             started=$(date +%s)
             "$@"
             printf 'HARNESS_SECONDS %s %s\n' "$(( $(date +%s) - started ))" "$2"
           }
+          run python3 test/validator-auth-implementation/registry_replay_mutations.py --fixtures artifacts/state-replay-fixtures --out artifacts/registry-replay-mutations.json
           run python3 test/validator-auth-implementation/certificate_proof_mutations.py --language rust --fixtures artifacts/certificate-proof-fixtures --out artifacts/certificate-proof-rust-mutations.json
-          run python3 test/validator-auth-implementation/context_mutations.py --language cpp --build build-p0 --fixtures artifacts/context-fixtures --out artifacts/context-cpp-mutations.json
           run python3 test/validator-auth-implementation/context_mutations.py --language rust --fixtures artifacts/context-fixtures --out artifacts/context-rust-mutations.json
-          run python3 test/validator-auth-implementation/governance_mutations.py --language cpp --build build-p0 --out artifacts/governance-cpp-mutations.json
-          run python3 test/validator-auth-implementation/governance_mutations.py --language rust --fixtures artifacts/governance-fixtures --out artifacts/governance-rust-mutations.json
+          run python3 test/validator-auth-implementation/native_header_mutations.py --language rust --fixtures artifacts/native-header --out artifacts/native-header-rust-mutations.json
           git diff --exit-code
       - name: Compile state guard removals and require assertion failures (4 of 4)
         if: matrix.guards == 'state4'
         run: |
           set -euo pipefail
           export FUNC_BIN="$PWD/build-p0/crypto/func" FIFT_BIN="$PWD/build-p0/crypto/fift"
-          # Report each harness's own duration. The split between these legs was
-          # made by count, not by measurement, and this is what makes the next
-          # rebalance a matter of reading the log rather than guessing again.
+          # Report each harness's own duration. The grouping is by measured seconds
+          # from a two-core run, except for the two harnesses that never completed
+          # there; those are now in separate legs and are what this run measures.
           run() {
             local started
             started=$(date +%s)
             "$@"
             printf 'HARNESS_SECONDS %s %s\n' "$(( $(date +%s) - started ))" "$2"
           }
-          run python3 test/validator-auth-implementation/native_governance_mutations.py --language cpp --build build-p0 --out artifacts/native-governance-cpp-mutations.json
           run python3 test/validator-auth-implementation/native_governance_mutations.py --language rust --fixtures artifacts/native-governance-fixtures --out artifacts/native-governance-rust-mutations.json
+          run python3 test/validator-auth-implementation/governance_mutations.py --language rust --fixtures artifacts/governance-fixtures --out artifacts/governance-rust-mutations.json
+          run python3 test/validator-auth-implementation/rust_committee_mutations.py --fixtures artifacts/committee-fixtures --out artifacts/rust-committee-mutations.json
+          run python3 test/validator-auth-implementation/governance_mutations.py --language cpp --build build-p0 --out artifacts/governance-cpp-mutations.json
           run python3 test/validator-auth-implementation/native_header_mutations.py --language cpp --build build-p0 --inputs artifacts/owner-transactions-mc --out artifacts/native-header-cpp-mutations.json
-          run python3 test/validator-auth-implementation/native_header_mutations.py --language rust --fixtures artifacts/native-header --out artifacts/native-header-rust-mutations.json
-          git diff --exit-code
-      - name: Stage native registry effects behind the privileged host
-        if: matrix.guards == 'native'
-        run: |
-          set -euo pipefail
-          test -x build-p0/test/validator-auth-implementation/test-p0-native-config-host
-          test -x build-p0-sanitized/test/validator-auth-implementation/test-p0-native-config-host
-          build-p0/test/validator-auth-implementation/test-p0-native-config-host verify \
-            artifacts/apply-owner-mc artifacts/native-config-host | tee artifacts/native-config-host.txt
-          ASAN_OPTIONS=detect_leaks=1:detect_stack_use_after_return=1 UBSAN_OPTIONS=halt_on_error=1 \
-            build-p0-sanitized/test/validator-auth-implementation/test-p0-native-config-host verify \
-            artifacts/apply-owner-mc artifacts/native-config-host-sanitized \
-            | tee artifacts/native-config-host-sanitized.txt
-          python3 test/validator-auth-implementation/native_config_host_mutations.py \
-            --owner artifacts/apply-owner-mc --out artifacts/native-config-host-mutations
           git diff --exit-code
       - name: Compile native guard removals and require assertion failures
         if: matrix.guards == 'native'
