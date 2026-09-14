@@ -512,3 +512,12 @@ set_target_properties(test-p0-manager-binding PROPERTIES CXX_STANDARD 20 CXX_STA
 add_executable(test-p0-archive-growth archive-growth-test.cpp)
 target_link_libraries(test-p0-archive-growth PRIVATE tos_validator_auth_native)
 set_target_properties(test-p0-archive-growth PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+
+add_executable(test-p0-store-reclaim store-reclaim-test.cpp)
+target_link_libraries(test-p0-store-reclaim PRIVATE tos_validator_auth)
+set_target_properties(test-p0-store-reclaim PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+configure_file("${PROJECT_SOURCE_DIR}/validator/auth/object-store.cpp" "${CMAKE_CURRENT_BINARY_DIR}/reclaim-object-store.cpp" COPYONLY)
+add_executable(test-p0-store-reclaim-mutant EXCLUDE_FROM_ALL store-reclaim-test.cpp "${CMAKE_CURRENT_BINARY_DIR}/reclaim-object-store.cpp")
+target_include_directories(test-p0-store-reclaim-mutant PRIVATE "${PROJECT_SOURCE_DIR}/validator/auth")
+target_link_libraries(test-p0-store-reclaim-mutant PRIVATE tos_validator_auth)
+set_target_properties(test-p0-store-reclaim-mutant PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)

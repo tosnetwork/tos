@@ -135,7 +135,16 @@ Four retained quantities have no measured growth curve:
 The object store is the one bounded case: four objects and 64 MiB per principal,
 256 MiB globally, and the local provider admits at most 4096 retained keys. Both
 fail closed on exhaustion rather than evicting history, which is correct and also
-means exhaustion is an outage, not a degradation.
+means exhaustion is an outage, not a degradation. Because they fail closed, what
+matters is whether expiry returns the capacity, and the bytes were only half of
+that question: the store also bounds admission by a per-principal object count
+and by the size of its principal table, neither of which `reserved()` reports.
+Both are now measured to be reclaimed repeatedly -- 64 consecutive rounds each
+fill and expire a principal's four object slots at a constant 262148 bytes held,
+and a fresh population of 1024 principals is admitted after 1024 have expired.
+Releasing the bytes while retaining either the slot or the table entry leaves a
+store that reports nothing held and refuses every publish; both mutations are
+caught by that measurement and by nothing else in the suite.
 
 This is not a defect list. Each of these is a deliberate choice, and retaining
 history is what makes old sessions verifiable. The gap is that no run has yet
@@ -150,8 +159,8 @@ growth from a memory-mapped database is not the same finding as heap growth;
 
 A soak closes this gate when it reports, over at least 24 hours of sustained
 load: the `RssAnon` curve against registry archive size, signer journal and
-witness size against signature count, whether object-store expiry actually
-returns storage, and per-block processing time as the archive grows. The last of
+witness size against signature count, and per-block processing time as the
+archive grows. The last of
 these is the one that would not be caught by any shorter run, and the one whose
 failure mode is a testnet that is fine for three days and a mainnet that is not
 fine for three months.
