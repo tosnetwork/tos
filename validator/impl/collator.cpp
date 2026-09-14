@@ -19,9 +19,11 @@
 */
 #include <algorithm>
 #include <cassert>
+#include <cstring>
 #include <ctime>
 
 #include "adnl/utils.hpp"
+#include "auth/native-config-context.h"
 #include "block/block-auto.h"
 #include "block/block-parse.h"
 #include "block/block.h"
@@ -3384,6 +3386,90 @@ bool Collator::create_ticktock_transaction(const tos::StdSmcAddress& smc_addr, t
 }
 
 /**
+ * Offers the registry authority to the transaction about to be created.
+ *
+ * Only an external message carrying a registry update, addressed to the
+ * configuration account of the masterchain, and declaring history this node has
+ * already resolved, is offered the host. Everything else executes with no host,
+ * which is what keeps the instruction unreachable on a chain that has no
+ * registry update in flight.
+ *
+ * @param msg_root The root of the inbound message.
+ * @param external True if the message is an external one.
+ * @param addr The destination account of the message.
+ *
+ * @returns True if the authority was installed on the compute phase config.
+ */
+bool Collator::offer_validator_auth(Ref<vm::Cell> msg_root, bool external, const tos::StdSmcAddress& addr) {
+  withdraw_validator_auth();
+  if (!external || !is_masterchain() || !params_.validator_auth || !params_.validator_auth.value().anchors ||
+      config_ == nullptr || mc_state_root.is_null() || params_.validator_set.is_null()) {
+    return false;
+  }
+
+  // Which account is the configuration account is read the same way the
+  // authority inputs read it, bound to this state; a second reading here would
+  // be a second source that nothing compares.
+  auto configuration = tos::auth::declared_configuration_account(*config_, mc_state_root);
+  if (!configuration.ok()) {
+    return false;
+  }
+
+  tos::auth::Anchor parent{};
+  parent.seqno_ = mc_block_id_.seqno();
+  std::memcpy(parent.root_.data(), mc_block_id_.root_hash.data(), parent.root_.size());
+  std::memcpy(parent.file_.data(), mc_block_id_.file_hash.data(), parent.file_.size());
+  // get_hash() returns by value; copy out of the named hash, not out of a
+  // temporary that the full expression has already destroyed.
+  const auto state_hash = mc_state_root->get_hash();
+  std::memcpy(parent.state_.data(), state_hash.as_slice().ubegin(), parent.state_.size());
+
+  tos::auth::RegistryAdmissionInputs inputs;
+  inputs.message = msg_root;
+  inputs.configuration_account = configuration.value();
+  inputs.transaction.masterchain_state = mc_state_root;
+  inputs.transaction.parent = parent;
+  inputs.transaction.chain = params_.validator_auth.value().chain;
+  inputs.transaction.shard = shard_;
+  inputs.transaction.catchain = params_.validator_set->get_catchain_seqno();
+  inputs.transaction.inclusion = new_block_seqno;
+
+  auto admitted = tos::auth::admit_registry_message(inputs, *params_.validator_auth.value().anchors);
+  if (!admitted.ok()) {
+    // A refusal is not an error to report: almost every message reaching here
+    // is simply not a registry update. Only a deferral tells us something, and
+    // what it tells us is what to resolve before a later block tries again.
+    if (admitted.error().code == "registry-admission-deferred") {
+      auto required = tos::auth::registry_message_requirements(msg_root, new_block_seqno);
+      if (required.ok()) {
+        auto missing = params_.validator_auth.value().anchors->missing(required.value());
+        validator_auth_unresolved_.insert(validator_auth_unresolved_.end(), missing.begin(), missing.end());
+        LOG(INFO) << "deferring a registry update: " << missing.size() << " finalized block(s) not yet resolved";
+      }
+    }
+    return false;
+  }
+
+  validator_auth_authority_ = std::shared_ptr<tos::auth::NativeConfigTransaction>(std::move(admitted.value()));
+  // Aliasing keeps the authority alive for exactly as long as the compute phase
+  // can reach the host that borrows from it.
+  compute_phase_cfg_.validator_auth_host =
+      std::shared_ptr<vm::ValidatorAuthHost>(validator_auth_authority_, &validator_auth_authority_->host());
+  compute_phase_cfg_.validator_auth_account = addr;
+  return true;
+}
+
+/**
+ * Withdraws the registry authority, so that no later transaction in this block
+ * inherits a host that was assembled for a different message.
+ */
+void Collator::withdraw_validator_auth() {
+  compute_phase_cfg_.validator_auth_host.reset();
+  compute_phase_cfg_.validator_auth_account.reset();
+  validator_auth_authority_.reset();
+}
+
+/**
  * Creates an ordinary transaction using a given message.
  *
  * @param msg_root The root of the message to be processed serialized using Message TLB-scheme.
@@ -3447,8 +3533,10 @@ Ref<vm::Cell> Collator::create_ordinary_transaction(Ref<vm::Cell> msg_root,
     after_lt = std::max(after_lt, it->second);
   }
   set_current_tx_storage_dict(*acc);
+  offer_validator_auth(msg_root, external, addr);
   auto res = impl_create_ordinary_transaction(msg_root, acc, now_, start_lt, &storage_phase_cfg_, &compute_phase_cfg_,
                                               &action_phase_cfg_, &serialize_cfg_, external, after_lt, &stats_);
+  withdraw_validator_auth();
   if (res.is_error()) {
     auto error = res.move_as_error();
     if (error.code() == -701) {

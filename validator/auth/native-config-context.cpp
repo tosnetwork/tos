@@ -32,6 +32,26 @@ NativeConfigContext::NativeConfigContext(ChainContext chain, Anchor head, Hash a
     , committee_(std::move(committee))
     , history_(std::move(history)) {
 }
+Result<Hash> declared_configuration_account(const block::Config& config, td::Ref<vm::Cell> masterchain_state) {
+  auto parameter = config.get_config_param(0);
+  if (parameter.is_null())
+    return Error{"config-address"};
+  vm::CellSlice address_cell{vm::NoVm{}, std::move(parameter)};
+  Hash address{};
+  if (!address_cell.is_valid() || address_cell.is_special() || address_cell.size() != 256 ||
+      address_cell.size_refs() != 0 || !address_cell.fetch_bytes(td::MutableSlice(address.data(), address.size())) ||
+      address == Hash{})
+    return Error{"config-address"};
+  block::gen::ShardStateUnsplit::Record state;
+  block::gen::McStateExtra::Record extra;
+  block::gen::ConfigParams::Record params;
+  if (masterchain_state.is_null() || !tlb::unpack_cell(masterchain_state, state) || state.custom.is_null() ||
+      !tlb::unpack_cell(state.custom->prefetch_ref(), extra) || !tlb::csr_unpack(extra.config, params) ||
+      params.config_addr != td::Bits256(td::ConstBitPtr(address.data())))
+    return Error{"config-address-binding"};
+  return address;
+}
+
 Result<NativeConfigContext> NativeConfigContext::open(td::Ref<vm::Cell> root, const Anchor& head,
                                                       const ChainContext& chain, const NativeRegistry* cached,
                                                       StateReadBudget budget) {
@@ -49,18 +69,10 @@ Result<NativeConfigContext> NativeConfigContext::open(td::Ref<vm::Cell> root, co
     if (loaded.is_error())
       return Error{"config-native-state"};
     auto& cfg = *loaded.ok();
-    vm::CellSlice address_cell{vm::NoVm{}, cfg.get_config_param(0)};
-    Hash address{};
-    if (!address_cell.is_valid() || address_cell.is_special() || address_cell.size() != 256 ||
-        address_cell.size_refs() != 0 || !address_cell.fetch_bytes(td::MutableSlice(address.data(), address.size())) ||
-        address == Hash{})
-      return Error{"config-address"};
-    block::gen::ShardStateUnsplit::Record state;
-    block::gen::McStateExtra::Record extra;
-    block::gen::ConfigParams::Record params;
-    if (!tlb::unpack_cell(root, state) || !tlb::unpack_cell(state.custom->prefetch_ref(), extra) ||
-        !tlb::csr_unpack(extra.config, params) || params.config_addr != td::Bits256(td::ConstBitPtr(address.data())))
-      return Error{"config-address-binding"};
+    auto declared = declared_configuration_account(cfg, root);
+    if (!declared.ok())
+      return declared.error();
+    const auto address = declared.value();
     block::Account account(-1, td::ConstBitPtr(address.data()));
     auto accounts = cfg.get_accounts_dict();
     if (!account.unpack(accounts.lookup(account.addr), cfg.utime, true) ||

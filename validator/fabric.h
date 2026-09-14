@@ -23,11 +23,22 @@
 #include "interfaces/validator-manager.h"
 #include "td/actor/coro_utils.h"
 
+#include "auth/native-registry-admission.h"
 #include "validator.h"
 
 namespace tos {
 
 namespace validator {
+
+// The two values the registry authority needs that outlive a single block: the
+// chain this node established from the zero state, and the history it has
+// already resolved. A node that was never given them collates exactly as
+// before -- no transaction is offered the host, and the instruction stays
+// unreachable.
+struct ValidatorAuthCollation {
+  tos::auth::ChainContext chain;
+  std::shared_ptr<tos::auth::NativeAnchorCache> anchors;
+};
 
 struct CollateParams {
   ShardIdFull shard;
@@ -49,6 +60,9 @@ struct CollateParams {
   // If not empty, should be the same size as prev
   std::vector<Ref<BlockData>> prev_block_data = {};
   std::vector<Ref<vm::Cell>> prev_block_state_roots = {};
+
+  // Absent until a node installs it; absent means the feature is off.
+  td::optional<ValidatorAuthCollation> validator_auth = {};
 };
 
 struct ValidateParams {

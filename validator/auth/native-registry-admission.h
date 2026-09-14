@@ -5,14 +5,20 @@ namespace tos::auth {
 // Deciding whether a block may admit a registry update, separated from the
 // collation that asks.
 //
-// The decision has five inputs and one of them being wrong produces no symptom:
-// the answer is simply always "no", and a node that never admits an update
-// looks exactly like a node on a chain that has none. Keeping the decision here
-// leaves the collator with gathering inputs, and leaves this with everything
-// that can be checked by failing.
+// Every input being wrong produces the same non-symptom: the answer is simply
+// always "no", and a node that never admits an update looks exactly like a node
+// on a chain that has none. So the decision lives here, where an input can be
+// constructed and the answer made to fail, and the collator is left with
+// gathering values it already holds.
+//
+// The configuration account is an input, but not a free one: a caller reads it
+// with declared_configuration_account(), which binds it to the state the
+// transaction executes against. Admission cannot derive it itself, because it
+// must answer for messages sent to every other account too, and deriving it
+// would mean opening a state for each of them.
 struct RegistryAdmissionInputs {
   td::Ref<vm::Cell> message;     // the external message, as received
-  Hash configuration_account{};  // the account this configuration was read from
+  Hash configuration_account{};  // as declared by the parent state
   NativeConfigTransactionInputs transaction;
 };
 
@@ -24,9 +30,8 @@ struct RegistryAdmissionInputs {
 Result<std::unique_ptr<NativeConfigTransaction>> admit_registry_message(const RegistryAdmissionInputs&,
                                                                         const NativeAnchorCache&);
 
-// What the update declares it will read, so a caller that refused for missing
-// history knows what to resolve before trying again.
-Result<std::vector<std::uint32_t>> registry_message_requirements(td::Ref<vm::Cell> message,
-                                                                 const Hash& configuration_account,
-                                                                 std::uint32_t inclusion);
+// What the update declares it will read, so a caller that deferred for missing
+// history knows what to resolve before trying again. This reads nothing from
+// the chain: the declaration is carried by the message.
+Result<std::vector<std::uint32_t>> registry_message_requirements(td::Ref<vm::Cell> message, std::uint32_t inclusion);
 }  // namespace tos::auth

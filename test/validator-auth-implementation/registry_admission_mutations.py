@@ -16,7 +16,12 @@ BINARY = Path("build-p0/test/validator-auth-implementation/test-p0-registry-admi
 
 MUTATIONS = [
     ("destination-account", "other-account-not-admitted",
-     '  if (account != configuration_account)\n    return Error{"registry-admission-not-configuration"};',
+     '  if (recognized.value().destination != inputs.configuration_account)\n'
+     '    return Error{"registry-admission-not-configuration"};',
+     ''),
+    ("account-supplied", "missing-account-is-an-input-error",
+     '  if (inputs.configuration_account == Hash{})\n'
+     '    return Error{"registry-admission-input"};',
      ''),
     ("masterchain-only", "non-masterchain-not-admitted",
      '  if (destination.fetch_long(8) != tos::masterchainId)\n'
@@ -30,7 +35,8 @@ MUTATIONS = [
      '  if (!history.ok())\n'
      '    return Error{"registry-admission-not-registry"};'),
     ("authority-returned", "complete-input-produces-an-authority",
-     '  return NativeConfigTransaction::open(inputs.transaction, opened.value().message.evidence, history.value(), uncharged);',
+     '  return NativeConfigTransaction::open(inputs.transaction, recognized.value().message.evidence, history.value(),\n'
+     '                                       uncharged);',
      '  return Error{"registry-admission-not-registry"};'),
 ]
 

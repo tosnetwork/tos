@@ -131,6 +131,10 @@ int main(int argc, char** argv) {
     check(parsed.is_ok(), "state-boc");
     auto state = parsed.move_as_ok();
 
+    // Which account is the configuration account is a fact about the parent
+    // state, and a caller reads it with declared_configuration_account(). These
+    // fixtures carry no configuration parameter, so the case supplies one
+    // directly; what is under test here is admission, not that extraction.
     const auto configuration = account(1);
     NativeAnchorCache cache;
 
@@ -199,8 +203,7 @@ int main(int argc, char** argv) {
       auto deferred = inputs;
       deferred.message =
           external(configuration, registry_body(vm::CellBuilder().store_long(1, 8).finalize(), b.finalize()));
-      auto required_now =
-          registry_message_requirements(deferred.message, configuration, deferred.transaction.inclusion);
+      auto required_now = registry_message_requirements(deferred.message, deferred.transaction.inclusion);
       expect(required_now.ok() && required_now.value().size() == 1, "unresolved-history-defers");
       refuses(admit_registry_message(deferred, cache), "registry-admission-deferred", "unresolved-history-defers");
 
@@ -209,14 +212,24 @@ int main(int argc, char** argv) {
       NativeAnchorCache resolved;
       expect(resolved.admit(owner_at, Anchor{owner_at, h(11), h(12), h(13)}).ok(), "resolved-history-admits");
       auto again = admit_registry_message(deferred, resolved);
-      expect(!again.ok() ? std::string(again.error().code) != "registry-admission-deferred" : true,
-             "resolved-history-admits");
+      if (!again.ok()) {
+        std::cerr << "DETAIL resolved-history-admits actual=" << again.error().code << '\n';
+        throw std::runtime_error("resolved-history-admits");
+      }
+      expect(again.value() != nullptr, "resolved-history-admits");
       ok("resolved-history-admits");
     }
 
+    // A caller that never filled in the account would otherwise be told its
+    // message is for someone else, which is the same answer for a different
+    // reason and reads as a chain with no update in flight.
+    auto unfilled = inputs;
+    unfilled.configuration_account = Hash{};
+    refuses(admit_registry_message(unfilled, cache), "registry-admission-input", "missing-account-is-an-input-error");
+
     // Requirements are reportable without admitting anything, which is what a
     // caller needs after a deferral.
-    auto required = registry_message_requirements(inputs.message, configuration, inputs.transaction.inclusion);
+    auto required = registry_message_requirements(inputs.message, inputs.transaction.inclusion);
     expect(required.ok() && required.value().empty(), "requirements-are-reportable");
     ok("requirements-are-reportable");
 

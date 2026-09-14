@@ -191,6 +191,13 @@ class Collator final : public td::actor::Actor {
   std::vector<block::StoragePrices> storage_prices_;
   block::StoragePhaseConfig storage_phase_cfg_{&storage_prices_};
   block::ComputePhaseConfig compute_phase_cfg_;
+  // The authority the transaction being created executes under, kept alive for
+  // exactly as long as the compute phase can reach the host it holds.
+  std::shared_ptr<tos::auth::NativeConfigTransaction> validator_auth_authority_;
+  // Coordinates a registry update declared and this node has not resolved. A
+  // deferred update is not a failure: it is the block in which the node learns
+  // what to fetch before a later block can admit it.
+  std::vector<std::uint32_t> validator_auth_unresolved_;
   block::ActionPhaseConfig action_phase_cfg_;
   block::SerializeConfig serialize_cfg_;
   td::RefInt256 masterchain_create_fee_, basechain_create_fee_;
@@ -339,6 +346,12 @@ class Collator final : public td::actor::Actor {
   bool request_neighbor_msg_queues();
   bool request_out_msg_queue_size();
   void update_max_lt(tos::LogicalTime lt);
+  // Decides whether this message may execute under the registry authority and,
+  // if so, installs it on the compute config. Every other message -- including
+  // a message to the same account that is not a registry update -- executes
+  // with no host, which is what leaves the instruction unreachable.
+  bool offer_validator_auth(Ref<vm::Cell> msg_root, bool external, const tos::StdSmcAddress& addr);
+  void withdraw_validator_auth();
   bool is_masterchain() const {
     return shard_.is_masterchain();
   }

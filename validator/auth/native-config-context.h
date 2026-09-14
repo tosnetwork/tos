@@ -1,8 +1,17 @@
 #pragma once
+#include "block/mc-config.h"
+
 #include "native-committee.h"
 #include "native-history.h"
 #include "native-transaction.h"
 namespace tos::auth {
+// The configuration account a masterchain state declares, bound to that state:
+// the address in configuration parameter zero must equal the one the state's
+// own configuration header carries. Two callers need this fact -- the authority
+// inputs below, and deciding whether a message is addressed to that account --
+// and a second reading of it would be a second source that nothing compares.
+Result<Hash> declared_configuration_account(const block::Config& config, td::Ref<vm::Cell> masterchain_state);
+
 // Immutable authority inputs for one masterchain successor. Construction binds
 // the real config account's code/data/checkpoint to the authenticated parent.
 class NativeConfigContext {
