@@ -76,6 +76,7 @@
 #include "state-serializer.hpp"
 #include "validate-broadcast.hpp"
 #include "validator-group.hpp"
+#include "validator/auth/manager-session-binding.h"
 
 namespace tos {
 
@@ -3027,6 +3028,33 @@ void ValidatorManagerImpl::update_shards() {
       if (!validator_id.is_zero()) {
         ++(shard.is_masterchain() ? active_validator_groups_master_ : active_validator_groups_shard_);
         auto val_group_id = get_validator_set_id(shard, val_set, opts_hash, key_seqno, opts);
+        // The identity this manager just built is one derivation of a fact the
+        // chain state derives too. Running a session under a name the producer
+        // does not confirm is how one session acquires two identities, each
+        // passing its own tests. Refuse the shard instead, exactly as an
+        // unreadable consensus config does: stay a full node.
+        //
+        // Nothing here runs until the chain activates validator authentication.
+        if (tos::auth::native_session_binding_active(last_masterchain_state_->root_cell())) {
+          tos::auth::ManagerSessionInputs p0_inputs;
+          auto p0_options = opts_hash.as_slice();
+          std::copy(p0_options.ubegin(), p0_options.uend(), p0_inputs.options_hash.begin());
+          p0_inputs.vertical_seqno = opts_->get_maximal_vertical_seqno();
+          p0_inputs.key_block_seqno = key_seqno;
+          p0_inputs.new_catchain_ids = opts.new_catchain_ids;
+          tos::auth::Hash p0_identity{};
+          auto p0_raw = val_group_id.as_slice();
+          std::copy(p0_raw.ubegin(), p0_raw.uend(), p0_identity.begin());
+          auto p0_confirmed =
+              tos::auth::native_session_identity_confirms(val_set, shard, p0_inputs, p0_identity);
+          if (!p0_confirmed.ok() || !p0_confirmed.value()) {
+            LOG(ERROR) << "refusing to create validator group for " << shard.to_str()
+                       << ": the authenticated session identity does not confirm this validator set; "
+                          "validation for this shard is disabled until they agree";
+            --(shard.is_masterchain() ? active_validator_groups_master_ : active_validator_groups_shard_);
+            continue;
+          }
+        }
         if (destroyed_validator_sessions_.contains(val_group_id)) {
           continue;
         }

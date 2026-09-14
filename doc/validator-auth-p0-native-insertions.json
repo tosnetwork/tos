@@ -99,6 +99,16 @@
         "offset": 43512,
         "text": "\n// Frozen validator authentication profile v1.\nauth_bytes_v1#76616231 version:uint16 byte_length:uint32 payload_hash:bits256\n  root:^AuthByteNode = AuthBytes;\nauth_byte_leaf$0 n:(## 7) { n >= 1 } { n <= 120 }\n  data:(bits (n * 8)) = AuthByteNode;\nauth_byte_branch$1 n:(## 3) { n >= 2 } { n <= 4 }\n  byte_length:uint32 children:(n * ^AuthByteNode) = AuthByteNode;\nauth_config_v1#76617131 version:uint16 chain_domain:bits256 interface_digest:bits256\n  registry_revision:uint64 current_policy:bits256\n  identities:^(HashmapE 256 ^AuthBytes) keys:^(HashmapE 256 ^AuthBytes)\n  policies:^(HashmapE 256 ^AuthBytes) control:^AuthControl = ValidatorAuthConfig;\nauth_control_v1#76616331 activations:^(HashmapE 32 ^AuthBytes)\n  observations:^(HashmapE 256 ^AuthBytes) = AuthControl;\n_ ValidatorAuthConfig = ConfigParam 46;\n"
       }
+    ],
+    "validator/manager.cpp": [
+      {
+        "offset": 2611,
+        "text": "#include \"validator/auth/manager-session-binding.h\"\n"
+      },
+      {
+        "offset": 139545,
+        "text": "        // The identity this manager just built is one derivation of a fact the\n        // chain state derives too. Running a session under a name the producer\n        // does not confirm is how one session acquires two identities, each\n        // passing its own tests. Refuse the shard instead, exactly as an\n        // unreadable consensus config does: stay a full node.\n        //\n        // Nothing here runs until the chain activates validator authentication.\n        if (tos::auth::native_session_binding_active(last_masterchain_state_->root_cell())) {\n          tos::auth::ManagerSessionInputs p0_inputs;\n          auto p0_options = opts_hash.as_slice();\n          std::copy(p0_options.ubegin(), p0_options.uend(), p0_inputs.options_hash.begin());\n          p0_inputs.vertical_seqno = opts_->get_maximal_vertical_seqno();\n          p0_inputs.key_block_seqno = key_seqno;\n          p0_inputs.new_catchain_ids = opts.new_catchain_ids;\n          tos::auth::Hash p0_identity{};\n          auto p0_raw = val_group_id.as_slice();\n          std::copy(p0_raw.ubegin(), p0_raw.uend(), p0_identity.begin());\n          auto p0_confirmed =\n              tos::auth::native_session_identity_confirms(val_set, shard, p0_inputs, p0_identity);\n          if (!p0_confirmed.ok() || !p0_confirmed.value()) {\n            LOG(ERROR) << \"refusing to create validator group for \" << shard.to_str()\n                       << \": the authenticated session identity does not confirm this validator set; \"\n                          \"validation for this shard is disabled until they agree\";\n            --(shard.is_masterchain() ? active_validator_groups_master_ : active_validator_groups_shard_);\n            continue;\n          }\n        }\n"
+      }
     ]
   }
 }
