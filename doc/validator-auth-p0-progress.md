@@ -29,7 +29,7 @@ assertions after compiling. A compilation failure is not a killed mutation.
 | Stage | Completion | Basis |
 | --- | --- | --- |
 | Library | 27 of 28 boundaries | Only `Operational release` has no implementation |
-| Node integration | Partial, five call paths | Every boundary still lists remaining integration |
+| Node integration | Partial, six call paths | Every one of the 28 boundaries still lists remaining integration |
 | Operational acceptance | None | No rehearsal has enabled P0 on a chain |
 | **P0 overall** | **roughly 55-60%** | Weighted estimate, not a measured figure |
 
@@ -64,7 +64,7 @@ design: it has no code, only gates.
 
 ## Node integration stage
 
-Five production call paths now reach P0 behaviour:
+Six production call paths now reach P0 behaviour:
 
 | Path | Where | What it establishes |
 | --- | --- | --- |
@@ -73,12 +73,24 @@ Five production call paths now reach P0 behaviour:
 | Election binding | `crypto/block/mc-config.cpp` | Identity and stake id survive committee selection into the node's validator set |
 | Genesis writing | `crypto/fift/lib/Config.fif`, the genesis tool | A genesis can carry an authenticated registry and authenticated descriptors |
 | Committee derivation | the genesis rehearsal | The native path derives a committee from a genesis the real writers produced |
+| Session identity confirmation | `validator/manager.cpp`, as a declared insertion | The manager may not create a validator group under a session identity the authenticated producer does not confirm |
+
+The last of these is a binding, not a replacement. The manager builds a session
+identity and the producer builds the same identity from the validator set: two
+derivations of one fact, which is the shape this repository keeps producing.
+Replacing the manager's construction was not available, because a frozen file
+admits insertions only and an inserted early return would have left the original
+construction present as unreachable code -- still two implementations, with one
+of them hidden. The two are bound instead by a check that refuses on
+disagreement. It runs only on a chain that has activated P0, behind the same
+gate native committee derivation uses, and an unreadable state reports inactive
+so that enforcement cannot stop an otherwise healthy node.
 
 Everything else remains open. The named remaining work, grouped:
 
 | Group | Remaining |
 | --- | --- |
-| Session and consensus | Native session derivation and consensus call sites; the derived committee has no consumer in `validator/manager.cpp` |
+| Session and consensus | Consensus call sites; the manager's archive reader and an independently established finalized head. Session birth and committee derivation now exist as a library boundary and are owned by the authenticated birth, but the derived committee still has no consumer in `validator/manager.cpp`: the insertion there confirms the session identity and does not yet run consensus against the derived committee |
 | Contracts | Elector emission and session admission; configuration authorization and atomic root installation. `elector-code.fc` and `config-code.fc` contain no P0 entry point |
 | Chain apply | Native block apply, contract data installation, action-phase commit wiring, installed chain root |
 | Remaining language parity | Rust global registry apply and the Rust storage adapter |
