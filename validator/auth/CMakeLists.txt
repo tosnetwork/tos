@@ -52,6 +52,11 @@ if(TOS_BUILD_P0_IMPLEMENTATION_TESTS)
     "${PROJECT_SOURCE_DIR}/test/validator-auth-implementation/native-session-history-test.cpp")
   target_include_directories(test-p0-native-session-history-mutant BEFORE PRIVATE
     "${P0_SESSION_HISTORY_MUTANT_ROOT}")
+  # The copied header includes its siblings by bare name and they are not beside
+  # the copy. The mutant root stays first, so validator/auth/... still resolves
+  # to the mutated header; this only lets those siblings be found.
+  target_include_directories(test-p0-native-session-history-mutant PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}")
   target_link_libraries(test-p0-native-session-history-mutant PRIVATE tos_validator_auth_native)
   set_target_properties(test-p0-native-session-history-mutant PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 endif()
