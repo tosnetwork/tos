@@ -10,6 +10,10 @@ add_library(tos_validator_auth_native STATIC manager-session-binding.cpp native-
 target_link_libraries(tos_validator_auth_native PUBLIC tos_validator_auth tos_block tl-utils keys)
 set_target_properties(tos_validator_auth_native PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 
+add_library(tos_validator_auth_session STATIC native-session-continuity.cpp)
+target_link_libraries(tos_validator_auth_session PUBLIC tos_validator_auth_native tdutils)
+set_target_properties(tos_validator_auth_session PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+
 if(UNIX)
   add_library(tos_validator_auth_signer STATIC durable-log.cpp witness.cpp safety-ledger.cpp operation-ledger.cpp c0-provider.cpp signer-service.cpp admin-service.cpp api-service.cpp service-issuer.cpp local-channel.cpp provider-channel.cpp)
   target_link_libraries(tos_validator_auth_signer PUBLIC tos_validator_auth)
@@ -74,4 +78,20 @@ if(TOS_BUILD_P0_IMPLEMENTATION_TESTS)
     "${CMAKE_CURRENT_SOURCE_DIR}")
   target_link_libraries(test-p0-native-session-committee-mutant PRIVATE tos_validator_auth_native)
   set_target_properties(test-p0-native-session-committee-mutant PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+
+  add_executable(test-p0-native-session-continuity EXCLUDE_FROM_ALL
+    "${PROJECT_SOURCE_DIR}/test/validator-auth-implementation/session-continuity-test.cpp")
+  target_link_libraries(test-p0-native-session-continuity PRIVATE tos_validator_auth_session)
+  set_target_properties(test-p0-native-session-continuity PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+
+  configure_file("${CMAKE_CURRENT_SOURCE_DIR}/native-session-continuity.cpp"
+                 "${CMAKE_CURRENT_BINARY_DIR}/mutated-native-session-continuity.cpp" COPYONLY)
+  add_executable(test-p0-native-session-continuity-mutant EXCLUDE_FROM_ALL
+    "${PROJECT_SOURCE_DIR}/test/validator-auth-implementation/session-continuity-test.cpp"
+    "${CMAKE_CURRENT_BINARY_DIR}/mutated-native-session-continuity.cpp")
+  target_include_directories(test-p0-native-session-continuity-mutant PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}")
+  target_link_libraries(test-p0-native-session-continuity-mutant PRIVATE
+    tos_validator_auth_native tdutils)
+  set_target_properties(test-p0-native-session-continuity-mutant PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 endif()

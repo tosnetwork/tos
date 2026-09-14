@@ -357,6 +357,33 @@ jobs:
           cp artifacts/native-session-committee-mutations/mutations.json \
             artifacts/native-session-committee-mutations.json
           git diff --exit-code
+      - name: Enforce session restart continuity, membership and release
+        if: matrix.guards == 'native'
+        run: |
+          set -euo pipefail
+          cmake --build build-p0 --target test-p0-native-session-continuity -j2
+          cmake --build build-p0-sanitized --target test-p0-native-session-continuity -j2
+          SESSION_CONTINUITY_TMP="$(mktemp -d)"
+          test -x build-p0/validator/auth/test-p0-native-session-continuity
+          test -x build-p0-sanitized/validator/auth/test-p0-native-session-continuity
+          build-p0/validator/auth/test-p0-native-session-continuity \
+            artifacts/owner-transactions-mc artifacts/committee-fixtures \
+            "$SESSION_CONTINUITY_TMP/normal" \
+            | tee artifacts/native-session-continuity.txt
+          ASAN_OPTIONS=detect_leaks=1:detect_stack_use_after_return=1 \
+            UBSAN_OPTIONS=halt_on_error=1 \
+            build-p0-sanitized/validator/auth/test-p0-native-session-continuity \
+            artifacts/owner-transactions-mc artifacts/committee-fixtures-sanitized \
+            "$SESSION_CONTINUITY_TMP/sanitized" \
+            | tee artifacts/native-session-continuity-sanitized.txt
+          python3 test/validator-auth-implementation/native_session_continuity_mutations.py \
+            --build build-p0 --owner artifacts/owner-transactions-mc \
+            --committee artifacts/committee-fixtures \
+            --work "$SESSION_CONTINUITY_TMP/mutations-work" \
+            --out artifacts/native-session-continuity-mutations
+          cp artifacts/native-session-continuity-mutations/mutations.json \
+            artifacts/native-session-continuity-mutations.json
+          git diff --exit-code
       - name: Derive a committee from a genesis written by the real genesis path
         run: |
           set -euo pipefail

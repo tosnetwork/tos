@@ -4,6 +4,10 @@ namespace tos::auth {
 struct ChainContext {
   std::int32_t network{};
   Hash genesis_root{}, genesis_file{}, chain_domain{};
+  // Defaulted so a field added later is compared without anyone remembering to
+  // extend a hand-written comparison elsewhere. Its sibling birth types are
+  // declared the same way for the same reason.
+  bool operator==(const ChainContext&) const = default;
 };
 struct SessionOrigin {
   Hash native_options_hash{};
