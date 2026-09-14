@@ -111,7 +111,50 @@ Nothing in this stage is complete.
 | Genesis approval | Not started |
 | Operator recovery rehearsal | Not started |
 | Production hardware C0 cost | Not started. The 32.0 ms figure is a local measurement |
+| Growth and sustained-load soak | Not started. See below |
 | The five `approvals_pending` items in the freeze record | Outstanding |
+
+### Growth and sustained-load soak
+
+Every check in the library stage asks whether a result is correct. None asks how
+a quantity grows. P0 deliberately introduces state that is retained rather than
+reclaimed, so correctness tests cannot answer the operational question, and
+neither can the sanitizers: LeakSanitizer reports memory that has become
+unreachable at process exit, while these quantities stay reachable, bounded by
+policy, and live in a process that does not exit.
+
+Four retained quantities have no measured growth curve:
+
+| Quantity | Why it grows | What is stated today |
+| --- | --- | --- |
+| Registry key history | Retired and cancelled key versions must stay independently retainable, so the archive only grows | "Historical keys and retired identities must remain independently retainable" (implementation record) |
+| Per-block work against archive size | The native adapter copies and rebuilds derived indexes | "this adapter does not claim constant work independent of archive size" (implementation record) |
+| Signer journal and witness | Append-only by design; capacity exhaustion is an explicit error, not a reclaim | No retention policy is specified |
+| Retained session snapshots | Each session holds its committee until its native termination boundary | That boundary is not implemented yet |
+
+The object store is the one bounded case: four objects and 64 MiB per principal,
+256 MiB globally, and the local provider admits at most 4096 retained keys. Both
+fail closed on exhaustion rather than evicting history, which is correct and also
+means exhaustion is an outage, not a degradation.
+
+This is not a defect list. Each of these is a deliberate choice, and retaining
+history is what makes old sessions verifiable. The gap is that no run has yet
+measured what they cost over time.
+
+The repository already has the right instruments for this and they are not wired
+to P0: `scripts/node3_memory_monitor.sh` samples `/proc/<pid>/status` and records
+`RssAnon`, `RssFile` and `VmSwap` separately, which matters because file-backed
+growth from a memory-mapped database is not the same finding as heap growth;
+`scripts/simplex2-soak.py`, `scripts/soak-mem-monitor.py` and
+`scripts/transfer-soak.sh` already drive sustained load.
+
+A soak closes this gate when it reports, over at least 24 hours of sustained
+load: the `RssAnon` curve against registry archive size, signer journal and
+witness size against signature count, whether object-store expiry actually
+returns storage, and per-block processing time as the archive grows. The last of
+these is the one that would not be caught by any shorter run, and the one whose
+failure mode is a testnet that is fine for three days and a mainnet that is not
+fine for three months.
 
 The four version-16 activation gates are tracked separately and remain
 independent thresholds: production hardware qualification, a configuration
