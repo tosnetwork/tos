@@ -291,6 +291,33 @@ jobs:
             --driver build-p0/test/validator-auth-implementation/test-p0-transport | tee artifacts/transport-cpp.json
           python3 test/validator-auth-implementation/check_transport.py \
             --driver tosctl/src/target/debug/conformance | tee artifacts/transport-rust.json
+      - name: Cross-check scoped object storage in C++ and Rust
+        if: matrix.guards == 'core' || matrix.guards == 'none'
+        run: |
+          set -euo pipefail
+          cargo fmt --manifest-path tosctl/src/Cargo.toml -p tos-validator-auth -- --check
+          cargo clippy --locked --manifest-path tosctl/src/Cargo.toml \
+            -p tos-validator-auth --all-targets --no-deps -- -D warnings
+          cargo build --locked --manifest-path tosctl/src/Cargo.toml \
+            -p tos-validator-auth --bin conformance
+          cmake --build build-p0 --target test-p0-object-store-differential -j2
+          python3 test/validator-auth-implementation/check_object_store.py \
+            --cpp build-p0/test/validator-auth-implementation/test-p0-object-store-differential \
+            --rust tosctl/src/target/debug/conformance \
+            | tee artifacts/object-store-cross-language.txt
+      - name: Compile Rust object-store quota mutations
+        if: matrix.guards == 'core'
+        run: |
+          set -euo pipefail
+          cargo build --locked --manifest-path tosctl/src/Cargo.toml \
+            -p tos-validator-auth --bin conformance
+          cmake --build build-p0 --target test-p0-object-store-differential -j2
+          python3 test/validator-auth-implementation/rust_object_store_mutations.py \
+            --cpp build-p0/test/validator-auth-implementation/test-p0-object-store-differential \
+            --out artifacts/rust-object-store-mutations
+          cp artifacts/rust-object-store-mutations/mutations.json \
+            artifacts/rust-object-store-mutations.json
+          git diff --exit-code
       - name: Select session birth from a contiguous authenticated epoch
         run: |
           set -euo pipefail

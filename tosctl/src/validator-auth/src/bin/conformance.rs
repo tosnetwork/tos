@@ -43,6 +43,9 @@ fn run() -> Result<(), Error> {
             }
         }
     }
+    if a.len() == 4 && a[1] == "object-store" {
+        return object_store_probe(&a[2], &a[3]);
+    }
     if a.len() >= 7 && (a[1] == "apply" || a[1] == "due" || a[1] == "select") {
         return lifecycle_probe(&a);
     }
@@ -134,3 +137,5 @@ fn main() {
 include!("service_probe.inc");
 
 include!("lifecycle_probe.inc");
+
+include!("object_store_probe.inc");
