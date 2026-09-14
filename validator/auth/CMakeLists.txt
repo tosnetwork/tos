@@ -34,6 +34,10 @@ if(UNIX)
   add_library(tos_validator_auth_rpc STATIC native-rpc.cpp native-node-history.cpp public-rpc.cpp)
   target_link_libraries(tos_validator_auth_rpc PUBLIC tos_validator_auth_native tos_validator_auth_signer)
   set_target_properties(tos_validator_auth_rpc PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+
+  add_library(tos_validator_auth_remote STATIC remote-transport.cpp)
+  target_link_libraries(tos_validator_auth_remote PUBLIC tos_validator_auth_rpc)
+  set_target_properties(tos_validator_auth_remote PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 endif()
 
 if(TOS_BUILD_P0_IMPLEMENTATION_TESTS)

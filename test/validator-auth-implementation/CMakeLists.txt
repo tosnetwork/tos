@@ -323,10 +323,47 @@ if(UNIX)
   add_executable(test-p0-http http-driver.cpp)
   target_link_libraries(test-p0-http PRIVATE tos_validator_auth_signer)
   set_target_properties(test-p0-http PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
-  add_executable(test-p0-http-mutant EXCLUDE_FROM_ALL http-driver.cpp "${CMAKE_CURRENT_BINARY_DIR}/mutated-local-channel.cpp")
-  target_include_directories(test-p0-http-mutant PRIVATE "${PROJECT_SOURCE_DIR}/validator/auth")
+
+  set(P0_HTTP_MUTANT_ROOT
+      "${CMAKE_CURRENT_BINARY_DIR}/http-mutant-root")
+  file(MAKE_DIRECTORY "${P0_HTTP_MUTANT_ROOT}/validator/auth")
+  configure_file("${PROJECT_SOURCE_DIR}/validator/auth/http-transport-policy.h"
+                 "${P0_HTTP_MUTANT_ROOT}/validator/auth/http-transport-policy.h" COPYONLY)
+  add_executable(test-p0-http-mutant EXCLUDE_FROM_ALL
+    http-driver.cpp "${CMAKE_CURRENT_BINARY_DIR}/mutated-local-channel.cpp")
+  target_include_directories(test-p0-http-mutant BEFORE PRIVATE
+    "${P0_HTTP_MUTANT_ROOT}/validator/auth")
+  target_include_directories(test-p0-http-mutant PRIVATE
+    "${PROJECT_SOURCE_DIR}/validator/auth")
   target_link_libraries(test-p0-http-mutant PRIVATE tos_validator_auth_signer)
   set_target_properties(test-p0-http-mutant PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+
+  add_executable(test-p0-remote-transport remote-transport-test.cpp)
+  target_link_libraries(test-p0-remote-transport PRIVATE
+    tos_validator_auth_remote)
+  set_target_properties(test-p0-remote-transport PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+
+  set(P0_REMOTE_TRANSPORT_MUTANT_ROOT
+      "${CMAKE_CURRENT_BINARY_DIR}/remote-transport-mutant-root")
+  file(MAKE_DIRECTORY
+    "${P0_REMOTE_TRANSPORT_MUTANT_ROOT}/validator/auth")
+  configure_file("${PROJECT_SOURCE_DIR}/validator/auth/remote-transport.h"
+                 "${P0_REMOTE_TRANSPORT_MUTANT_ROOT}/validator/auth/remote-transport.h" COPYONLY)
+  configure_file("${PROJECT_SOURCE_DIR}/validator/auth/http-transport-policy.h"
+                 "${P0_REMOTE_TRANSPORT_MUTANT_ROOT}/validator/auth/http-transport-policy.h" COPYONLY)
+  configure_file("${PROJECT_SOURCE_DIR}/validator/auth/remote-transport.cpp"
+                 "${CMAKE_CURRENT_BINARY_DIR}/mutated-remote-transport.cpp" COPYONLY)
+  add_executable(test-p0-remote-transport-mutant EXCLUDE_FROM_ALL
+    remote-transport-test.cpp
+    "${CMAKE_CURRENT_BINARY_DIR}/mutated-remote-transport.cpp")
+  target_include_directories(test-p0-remote-transport-mutant BEFORE PRIVATE
+    "${P0_REMOTE_TRANSPORT_MUTANT_ROOT}"
+    "${P0_REMOTE_TRANSPORT_MUTANT_ROOT}/validator/auth")
+  target_include_directories(test-p0-remote-transport-mutant PRIVATE
+    "${PROJECT_SOURCE_DIR}/validator/auth")
+  target_link_libraries(test-p0-remote-transport-mutant PRIVATE
+    tos_validator_auth_rpc)
+  set_target_properties(test-p0-remote-transport-mutant PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 endif()
 
 if(UNIX)

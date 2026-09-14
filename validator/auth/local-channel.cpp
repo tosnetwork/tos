@@ -10,6 +10,7 @@
 #include <unistd.h>
 #include <utility>
 
+#include "http-transport-policy.h"
 #include "local-channel.h"
 namespace tos::auth {
 namespace {
@@ -128,22 +129,15 @@ Result<sockaddr_un> address(const std::string& path) {
   std::copy(path.begin(), path.end(), a.sun_path);
   return a;
 }
-constexpr std::size_t max_http_body = 4194304, max_http_head = 8192;
 struct HttpHead {
   std::string line;
   std::map<std::string, std::string> fields;
   std::size_t length = 0;
 };
-bool http_text(std::string_view text, bool spaces) {
-  for (unsigned char c : text)
-    if (c < (spaces ? 32 : 33) || c > 126)
-      return false;
-  return true;
-}
 Result<HttpHead> receive_head(int fd, Clock::time_point deadline) {
   std::string head;
   while (!head.ends_with("\r\n\r\n")) {
-    if (head.size() >= max_http_head)
+    if (head.size() >= http_transport_max_header_bytes)
       return Error{"http-header-bound"};
     std::uint8_t c = 0;
     if (!receive(fd, std::span<std::uint8_t>(&c, 1), deadline))
@@ -155,7 +149,7 @@ Result<HttpHead> receive_head(int fd, Clock::time_point deadline) {
   if (first == std::string::npos || first == 0)
     return Error{"http-start-line"};
   parsed.line = head.substr(0, first);
-  if (!http_text(parsed.line, true))
+  if (!http_transport_text(parsed.line, true))
     return Error{"http-start-line"};
   std::size_t pos = first + 2;
   while (pos + 2 < head.size()) {
@@ -166,7 +160,7 @@ Result<HttpHead> receive_head(int fd, Clock::time_point deadline) {
     pos = end + 2;
     if (line.empty())
       break;
-    if (!http_text(line, true) || parsed.fields.size() >= 16)
+    if (!http_transport_text(line, true))
       return Error{"http-header"};
     auto colon = line.find(':');
     if (colon == std::string::npos || colon == 0)
@@ -178,29 +172,22 @@ Result<HttpHead> receive_head(int fd, Clock::time_point deadline) {
       if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-'))
         return Error{"http-header"};
     }
-    if (parsed.fields.contains(name))
-      return Error{"http-duplicate-header"};
     auto value = line.substr(colon + 1);
     while (!value.empty() && value.front() == ' ')
       value.erase(value.begin());
     while (!value.empty() && value.back() == ' ')
       value.pop_back();
-    if (name == "transfer-encoding" || name == "content-encoding" || name == "upgrade" || name == "expect")
-      return Error{"http-unsupported-framing"};
-    parsed.fields.emplace(std::move(name), std::move(value));
+    auto admitted =
+        admit_http_transport_header(parsed.fields, std::move(name), std::move(value));
+    if (!admitted.ok())
+      return admitted.error();
   }
   auto length = parsed.fields.find("content-length");
   if (length != parsed.fields.end()) {
-    if (length->second.empty() || length->second.size() > 8 ||
-        (length->second.size() > 1 && length->second.front() == '0'))
-      return Error{"http-content-length"};
-    for (char c : length->second) {
-      if (c < '0' || c > '9')
-        return Error{"http-content-length"};
-      parsed.length = parsed.length * 10 + static_cast<unsigned>(c - '0');
-    }
-    if (parsed.length > max_http_body)
-      return Error{"http-body-bound"};
+    auto parsed_length = parse_http_transport_content_length(length->second);
+    if (!parsed_length.ok())
+      return parsed_length.error();
+    parsed.length = parsed_length.value();
   }
   return parsed;
 }
@@ -222,8 +209,9 @@ Result<HttpRequest> receive_http_request(int fd, Clock::time_point deadline) {
   if (first == std::string::npos || second == std::string::npos || head.line.substr(second + 1) != "HTTP/1.1")
     return Error{"http-request-line"};
   HttpRequest request{head.line.substr(0, first), head.line.substr(first + 1, second - first - 1), {}, {}};
-  if ((request.verb != "GET" && request.verb != "POST") || request.path.empty() || request.path.size() > 256 ||
-      !http_text(request.path, false) || !head.fields.contains("host") || head.fields.at("host").empty())
+  if ((request.verb != "GET" && request.verb != "POST") || request.path.empty() ||
+      request.path.size() > http_transport_max_path_bytes ||
+      !http_transport_text(request.path, false) || !head.fields.contains("host") || head.fields.at("host").empty())
     return Error{"http-request-line"};
   if (request.verb == "POST" && !head.fields.contains("content-length"))
     return Error{"http-content-length"};
@@ -239,8 +227,9 @@ Result<HttpRequest> receive_http_request(int fd, Clock::time_point deadline) {
   return request;
 }
 Result<bool> send_http_response(int fd, const HttpResponse& response, Clock::time_point deadline) {
-  if (response.body.size() > max_http_body || response.status < 100 || response.status > 599 ||
-      response.content_type.size() > 256 || !http_text(response.content_type, true))
+  if (response.body.size() > http_transport_max_body_bytes || response.status < 100 || response.status > 599 ||
+      response.content_type.size() > http_transport_max_content_type_bytes ||
+      !http_transport_text(response.content_type, true))
     return Error{"http-response-bound"};
   std::string head = "HTTP/1.1 " + std::to_string(response.status) +
                      " Response\r\nConnection: close\r\nContent-Length: " + std::to_string(response.body.size()) +
@@ -315,7 +304,7 @@ Result<std::unique_ptr<LocalListener>> LocalListener::create(const std::string& 
   return server;
 }
 Result<bool> LocalListener::serve_stream(const std::function<Result<bool>(int)>& handler, unsigned timeout) {
-  auto accepted_at = Clock::now() + std::chrono::milliseconds(std::clamp(timeout, 1u, 5000u));
+  auto accepted_at = Clock::now() + std::chrono::milliseconds(bounded_http_accept_timeout(timeout));
   if (!ready(fd_, POLLIN, accepted_at))
     return false;
   Socket client{::accept(fd_, nullptr, nullptr)};
@@ -331,7 +320,7 @@ Result<bool> LocalListener::serve_stream(const std::function<Result<bool>(int)>&
 Result<bool> LocalListener::serve_one(const Handler& handler, unsigned timeout) {
   return serve_stream(
       [&](int fd) -> Result<bool> {
-        auto deadline = Clock::now() + std::chrono::seconds(5);
+        auto deadline = http_transport_deadline(Clock::now());
         auto request = receive_frame(fd, deadline);
         if (!request.ok())
           return request.error();
@@ -355,7 +344,7 @@ Result<bool> LocalListener::serve_one(const Handler& handler, unsigned timeout) 
 Result<Bytes> local_call(const std::string& path, uid_t expected, std::span<const std::uint8_t> request) {
   if (request.empty() || request.size() > max_frame)
     return Error{"local-frame-bound"};
-  auto deadline = Clock::now() + std::chrono::seconds(5);
+  auto deadline = http_transport_deadline(Clock::now());
   auto connected = connect_peer(path, expected, deadline);
   if (!connected.ok())
     return connected.error();
@@ -377,7 +366,7 @@ Result<Bytes> local_call(const std::string& path, uid_t expected, std::span<cons
 Result<bool> LocalListener::serve_http_one(const HttpHandler& handler, unsigned timeout) {
   return serve_stream(
       [&](int fd) -> Result<bool> {
-        auto deadline = Clock::now() + std::chrono::seconds(5);
+        auto deadline = http_transport_deadline(Clock::now());
         auto request = receive_http_request(fd, deadline);
         if (!request.ok())
           return send_http_response(fd, {400, "", ""}, deadline);
@@ -389,11 +378,10 @@ Result<bool> LocalListener::serve_http_one(const HttpHandler& handler, unsigned 
       timeout);
 }
 Result<HttpResponse> local_http_call(const std::string& path, uid_t expected, const HttpRequest& request) {
-  if ((request.verb != "GET" && request.verb != "POST") || request.path.empty() || request.path.size() > 256 ||
-      !http_text(request.path, false) || !http_text(request.content_type, true) || request.content_type.size() > 256 ||
-      request.body.size() > max_http_body || (request.verb == "GET" && !request.body.empty()))
-    return Error{"http-request-bound"};
-  auto deadline = Clock::now() + std::chrono::seconds(5);
+  auto request_shape = validate_http_transport_request_shape(request);
+  if (!request_shape.ok())
+    return request_shape.error();
+  auto deadline = http_transport_deadline(Clock::now());
   auto connected = connect_peer(path, expected, deadline);
   if (!connected.ok())
     return connected.error();
@@ -426,7 +414,8 @@ Result<HttpResponse> local_http_call(const std::string& path, uid_t expected, co
       return Error{"http-response-line"};
     status = status * 10 + static_cast<unsigned>(c - '0');
   }
-  if (status < 200 || status > 599 || (status >= 300 && status < 400) || (h.line.size() > 12 && h.line[12] != ' '))
+  if (!http_transport_response_status_allowed(status) ||
+      (h.line.size() > 12 && h.line[12] != ' '))
     return Error{"http-response-status"};
   auto body = receive_http_body(socket.fd, h.length, deadline);
   if (!body.ok())
