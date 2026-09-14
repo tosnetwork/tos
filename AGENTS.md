@@ -53,6 +53,13 @@ only a sandbox with a real action phase will show.
 claim about a build that may no longer exist. Re-measure before relying on it;
 if you rely on it, say which commit measured it.
 
+**A mutation that never reached the file reports a survivor.** Editing source
+through nested shell quoting — `ssh host 'python3 -c "..."'` — can drop the
+inner quotes, leaving the file untouched while the probe still runs and passes.
+The result reads exactly like "the test cannot catch this", which is the
+opposite of the truth. Have the edit print whether it matched, or put it in a
+script file and copy that over. This was believed twice in one day.
+
 **A doc line can be stale and backwards at the same time.** `800e6d1a2` corrected
 a README that framed a shipped component as future work and understated proof
 sizes by 10×. It had been wrong for weeks and nothing failed. Verify docs
