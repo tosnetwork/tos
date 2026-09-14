@@ -22,6 +22,7 @@
 // global allocator would displace the sanitizer's own, which is a worse trade
 // than leaving one measurement unsanitized.
 #include <cstddef>
+#include <cstdint>
 #include <cstdlib>
 #include <new>
 
@@ -31,7 +32,10 @@ namespace {
 // from one thread.
 std::size_t live_bytes = 0;
 
-constexpr std::size_t header = alignof(std::max_align_t);
+// Wide enough to carry both the size and, for over-aligned blocks, the offset
+// back to the start of the malloc block.
+constexpr std::size_t header =
+    alignof(std::max_align_t) > 2 * sizeof(std::size_t) ? alignof(std::max_align_t) : 2 * sizeof(std::size_t);
 
 void* tracked_allocate(std::size_t size) {
   auto raw = std::malloc(size + header);
@@ -90,6 +94,58 @@ void operator delete[](void* pointer, const std::nothrow_t&) noexcept {
   tracked_release(pointer);
 }
 
+// Over-aligned allocations route to separate operators. Left unreplaced they are
+// invisible to the counter, which would understate retention without any sign
+// that it had -- a measurement that reads low for a reason the reader cannot
+// see. Replace them too and account for them the same way. The extra alignment
+// is honoured by asking for the header plus the alignment and returning the
+// first suitably aligned address after the header.
+namespace {
+void* tracked_allocate_aligned(std::size_t size, std::size_t alignment) {
+  auto slack = header + alignment;
+  auto raw = static_cast<char*>(std::malloc(size + slack));
+  if (!raw)
+    throw std::bad_alloc();
+  auto address = reinterpret_cast<std::uintptr_t>(raw) + header;
+  auto aligned = reinterpret_cast<char*>((address + alignment - 1) & ~(static_cast<std::uintptr_t>(alignment) - 1));
+  // Record the size, and the distance back to the malloc block, immediately
+  // before the address handed out.
+  *reinterpret_cast<std::size_t*>(aligned - header) = size;
+  *reinterpret_cast<std::size_t*>(aligned - header + sizeof(std::size_t)) =
+      static_cast<std::size_t>(aligned - raw);
+  live_bytes += size;
+  return aligned;
+}
+
+void tracked_release_aligned(void* pointer) noexcept {
+  if (!pointer)
+    return;
+  auto aligned = static_cast<char*>(pointer);
+  live_bytes -= *reinterpret_cast<std::size_t*>(aligned - header);
+  auto offset = *reinterpret_cast<std::size_t*>(aligned - header + sizeof(std::size_t));
+  std::free(aligned - offset);
+}
+}  // namespace
+
+void* operator new(std::size_t size, std::align_val_t alignment) {
+  return tracked_allocate_aligned(size, static_cast<std::size_t>(alignment));
+}
+void* operator new[](std::size_t size, std::align_val_t alignment) {
+  return tracked_allocate_aligned(size, static_cast<std::size_t>(alignment));
+}
+void operator delete(void* pointer, std::align_val_t) noexcept {
+  tracked_release_aligned(pointer);
+}
+void operator delete[](void* pointer, std::align_val_t) noexcept {
+  tracked_release_aligned(pointer);
+}
+void operator delete(void* pointer, std::size_t, std::align_val_t) noexcept {
+  tracked_release_aligned(pointer);
+}
+void operator delete[](void* pointer, std::size_t, std::align_val_t) noexcept {
+  tracked_release_aligned(pointer);
+}
+
 #include "signer-fixture.h"
 
 namespace {
@@ -134,6 +190,26 @@ int main(int argc, char** argv) {
       check(live_bytes >= probe_start + 4096, "allocator-counts-allocations");
     }
     check(live_bytes == probe_start, "allocator-counts-releases");
+
+    // The over-aligned path is separate code and would otherwise be carried
+    // untested. Exercise it, and check the address it returns is actually
+    // aligned -- a counter that balances while handing back a misaligned
+    // pointer is a worse failure than an uncounted allocation.
+    {
+      struct alignas(64) Wide {
+        std::uint8_t bytes[256];
+      };
+      // The pointer escapes through a volatile sink: a paired new/delete with no
+      // other use is something the compiler is allowed to remove outright, and a
+      // removed allocation would make this case pass by measuring nothing.
+      static Wide* volatile sink = nullptr;
+      sink = new Wide;
+      auto wide = sink;
+      check(live_bytes >= probe_start + sizeof(Wide), "allocator-counts-over-aligned");
+      check(reinterpret_cast<std::uintptr_t>(wide) % 64 == 0, "over-aligned-address-is-aligned");
+      delete wide;
+      check(live_bytes == probe_start, "allocator-releases-over-aligned");
+    }
     std::cout << "CASE_PASS allocator-is-the-instrument\n";
 
     // Two slopes over three counts. A cost that is linear in signatures gives

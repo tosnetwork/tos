@@ -1,4 +1,6 @@
 #pragma once
+#include <tuple>
+
 #include "crypto/block/validator-set.h"
 #include "tos/tos-types.h"
 #include "vm/cells/Cell.h"
@@ -19,6 +21,14 @@ namespace tos::auth {
 // Nothing here runs unless the chain has activated P0. The gate is deliberately
 // the same one native committee derivation uses, so a chain cannot be subject to
 // this refusal while native derivation would have admitted it.
+
+// The manager copies a session id and an options hash into these fixed-size
+// fields byte for byte. That copy is exactly sized only because both sources are
+// 256-bit, which is declared somewhere else entirely and would fail silently by
+// overrunning the destination if it ever changed. Bind the two widths here so
+// the build refuses instead.
+static_assert(sizeof(td::Bits256) == std::tuple_size_v<Hash>,
+              "a session identity no longer fits the fixed-size hash the manager copies it into");
 
 // True when this masterchain state has activated validator authentication.
 // A state that cannot be read reports false: an unreadable state must not turn
