@@ -259,6 +259,33 @@ if(UNIX)
   target_link_libraries(test-p0-node-history-adapter-mutant PRIVATE
     tos_validator_auth_native tos_validator_auth_signer)
   set_target_properties(test-p0-node-history-adapter-mutant PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+
+  add_executable(test-p0-public-rpc public-rpc-test.cpp)
+  target_link_libraries(test-p0-public-rpc PRIVATE tos_validator_auth_rpc)
+  set_target_properties(test-p0-public-rpc PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+
+  set(P0_PUBLIC_RPC_MUTANT_ROOT
+      "${CMAKE_CURRENT_BINARY_DIR}/public-rpc-mutant-root")
+  file(MAKE_DIRECTORY "${P0_PUBLIC_RPC_MUTANT_ROOT}/validator/auth")
+  configure_file("${PROJECT_SOURCE_DIR}/validator/auth/client-api-common.h"
+                 "${P0_PUBLIC_RPC_MUTANT_ROOT}/validator/auth/client-api-common.h" COPYONLY)
+  configure_file("${PROJECT_SOURCE_DIR}/validator/auth/public-rpc.cpp"
+                 "${CMAKE_CURRENT_BINARY_DIR}/mutated-public-rpc.cpp" COPYONLY)
+  configure_file("${PROJECT_SOURCE_DIR}/validator/auth/transfer.cpp"
+                 "${CMAKE_CURRENT_BINARY_DIR}/mutated-public-rpc-transfer.cpp" COPYONLY)
+  configure_file("${PROJECT_SOURCE_DIR}/validator/auth/object-store.cpp"
+                 "${CMAKE_CURRENT_BINARY_DIR}/mutated-public-rpc-object-store.cpp" COPYONLY)
+  add_executable(test-p0-public-rpc-mutant EXCLUDE_FROM_ALL
+    public-rpc-test.cpp
+    "${CMAKE_CURRENT_BINARY_DIR}/mutated-public-rpc.cpp"
+    "${CMAKE_CURRENT_BINARY_DIR}/mutated-public-rpc-transfer.cpp"
+    "${CMAKE_CURRENT_BINARY_DIR}/mutated-public-rpc-object-store.cpp")
+  target_include_directories(test-p0-public-rpc-mutant BEFORE PRIVATE
+    "${P0_PUBLIC_RPC_MUTANT_ROOT}")
+  target_include_directories(test-p0-public-rpc-mutant PRIVATE
+    "${PROJECT_SOURCE_DIR}/validator/auth")
+  target_link_libraries(test-p0-public-rpc-mutant PRIVATE tos_validator_auth_rpc)
+  set_target_properties(test-p0-public-rpc-mutant PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 endif()
 
 if(UNIX)
