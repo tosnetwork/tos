@@ -22,7 +22,7 @@ endif()
 
 if(UNIX)
   target_sources(tos_validator_auth_signer PRIVATE key-isolation.cpp)
-  add_library(tos_validator_auth_rpc STATIC native-rpc.cpp)
+  add_library(tos_validator_auth_rpc STATIC native-rpc.cpp native-node-history.cpp)
   target_link_libraries(tos_validator_auth_rpc PUBLIC tos_validator_auth_native tos_validator_auth_signer)
   set_target_properties(tos_validator_auth_rpc PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 endif()

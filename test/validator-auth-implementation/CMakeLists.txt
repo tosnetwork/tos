@@ -244,6 +244,21 @@ if(UNIX)
   add_executable(test-p0-api-service api-service-test.cpp)
   target_link_libraries(test-p0-api-service PRIVATE tos_validator_auth_rpc)
   set_target_properties(test-p0-api-service PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+
+  add_executable(test-p0-node-history-adapter node-history-adapter-test.cpp)
+  target_link_libraries(test-p0-node-history-adapter PRIVATE tos_validator_auth_rpc)
+  set_target_properties(test-p0-node-history-adapter PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+
+  configure_file("${PROJECT_SOURCE_DIR}/validator/auth/native-node-history.cpp"
+                 "${CMAKE_CURRENT_BINARY_DIR}/mutated-native-node-history.cpp" COPYONLY)
+  add_executable(test-p0-node-history-adapter-mutant EXCLUDE_FROM_ALL
+    node-history-adapter-test.cpp
+    "${CMAKE_CURRENT_BINARY_DIR}/mutated-native-node-history.cpp")
+  target_include_directories(test-p0-node-history-adapter-mutant PRIVATE
+    "${PROJECT_SOURCE_DIR}/validator/auth")
+  target_link_libraries(test-p0-node-history-adapter-mutant PRIVATE
+    tos_validator_auth_native tos_validator_auth_signer)
+  set_target_properties(test-p0-node-history-adapter-mutant PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 endif()
 
 if(UNIX)
