@@ -1,5 +1,9 @@
-#if defined(P0_PERSISTENT_REGISTRY) || defined(P0_NATIVE_TRANSACTIONS)
+#if defined(P0_PERSISTENT_REGISTRY) || defined(P0_NATIVE_TRANSACTIONS) || defined(P0_NATIVE_CONFIG_HOST)
 #include "validator/auth/native-transaction.h"
+#endif
+#ifdef P0_NATIVE_CONFIG_HOST
+#include "validator/auth/cells.h"
+#include "validator/auth/native-config-host.h"
 #endif
 #include "validator/auth/native-apply.h"
 
@@ -402,6 +406,72 @@ int main(int argc, char** argv) {
     maximum.parent = revision(two.parent, UINT64_MAX - 1);
     auto max_final = run(maximum, "native-maximum-two-transactions");
     check(max_final.revision() == UINT64_MAX, "native-maximum-one-increment");
+#ifdef P0_NATIVE_CONFIG_HOST
+    {
+      // The host is the only authority behind the two privileged instructions.
+      // What matters is not that a good update applies, but that a refused one
+      // leaves the accepted prefix exactly where it was: a reverted transaction
+      // that moved the registry would be invisible to every other check.
+      auto governing = snapshot(base);
+      NativeIdentityContext host_context{base.chain, governing, base.history};
+      ObjectReader host_reader({});
+      auto persistent = value(
+          NativeRegistry::bootstrap(value(base.parent.encode_cell(), "host-parent"), base.parent.coordinate()),
+          "host-bootstrap");
+      auto prefix = value(NativeRegistryBlock::begin(persistent, base.inclusion), "host-begin");
+      NativeConfigHost host(std::move(prefix), host_context, host_reader);
+
+      long long charged = 0;
+      auto charge = [&](long long amount) { charged += amount; };
+
+      auto first = host.checkpoint(charge);
+      check(first.not_null() && host.checkpoints() == 1, "host-checkpoint");
+      check(charged >= 0, "host-checkpoint-charge");
+
+      auto staged_before = value(host.staged().state().checkpoint(), "host-staged-before")->get_hash();
+
+      // A canonical update and its evidence, carried as AuthBytes exactly as the
+      // instruction receives them.
+      auto update_cell = value(pack_bytes(value(encode(base.updates[0].first), "host-update")), "host-update-cell");
+      auto evidence_cell =
+          value(pack_bytes(value(encode(base.updates[0].second), "host-evidence")), "host-evidence-cell");
+
+      auto applied = host.apply(update_cell, evidence_cell, charge);
+      check(applied.not_null() && host.updates() == 1, "host-apply");
+      auto staged_after = value(host.staged().state().checkpoint(), "host-staged-after")->get_hash();
+      check(staged_after != staged_before, "host-apply-advances-prefix");
+      check(applied->get_hash() == staged_after, "host-apply-returns-staged");
+
+      // A refused update must throw and must not move the prefix.
+      auto rejected = base.updates[0].first;
+      rejected.nonce_ = UINT64_MAX;
+      auto rejected_cell = value(pack_bytes(value(encode(rejected), "host-rejected")), "host-rejected-cell");
+      bool threw = false;
+      try {
+        host.apply(rejected_cell, evidence_cell, charge);
+      } catch (const vm::VmError&) {
+        threw = true;
+      }
+      check(threw, "host-refusal-throws");
+      check(value(host.staged().state().checkpoint(), "host-staged-rejected")->get_hash() == staged_after,
+            "host-refusal-does-not-move-prefix");
+      check(host.updates() == 1, "host-refusal-not-counted");
+
+      // An operand that is not a canonical AuthBytes cell is refused before any
+      // registry work, not decoded into whatever it happens to resemble.
+      threw = false;
+      try {
+        host.apply(vm::CellBuilder().store_long(0, 8).finalize(), evidence_cell, charge);
+      } catch (const vm::VmError&) {
+        threw = true;
+      }
+      check(threw, "host-operand-encoding-refused");
+      check(value(host.staged().state().checkpoint(), "host-staged-operand")->get_hash() == staged_after,
+            "host-operand-does-not-move-prefix");
+      ++count;
+      std::cout << "CASE_PASS native-config-host\n";
+    }
+#endif
     std::ofstream(out / "complete") << count << '\n';
     std::cout << "PASS: native authenticated ordered apply " << count << " cases\n";
     return 0;
