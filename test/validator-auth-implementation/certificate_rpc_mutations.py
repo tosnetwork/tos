@@ -7,7 +7,7 @@ CASES=[
  ('api-certificate-missing-object','native-rpc','if (reader.source_error()) return *reader.source_error();',''),
  ('api-certificate-bad-proof','native-rpc','return Error{"api-bad-request"};','return Error{"backend-error"};'),
  ('api-certificate-context','native-rpc','if (error == "certificate-anchor" || error == "expected-context" || error == "certificate-chain-context") return Error{"api-context-mismatch"};',''),
- ('api-certificate-context','api-service','|| e == "api-context-mismatch"',''),
+ ('api-certificate-context','client-api-common','|| e == "api-context-mismatch"',''),
  ('api-certificate-missing-object','transfer','source_error_ = chunk.error();',''),
  ('object-source-reset','transfer','source_error_.reset();',''),
  ('rpc-object-no-source','transfer','source_error_ = Error{"object-unavailable"}; return *source_error_;','return Error{"object-unavailable"};'),
@@ -22,8 +22,12 @@ CASES=[
 ]
 def main(args):
  folder=args.build.resolve()/'test/validator-auth-implementation';report=[]
- for module in ('native-rpc','certificate-proof','api-service','transfer'):
-  source=folder/f'rpc-mutated-{module}.cpp';original=source.read_text()
+ for module in ('native-rpc','certificate-proof','api-service','transfer','client-api-common'):
+  # The client classification lives in a header now, so its mutant copies the
+  # header into a root that precedes the real one on the include path.
+  source=(folder/'client-common-mutant/client-api-common.h'
+          if module=='client-api-common' else folder/f'rpc-mutated-{module}.cpp')
+  original=source.read_text()
   def run(text):
    source.write_text(text)
    built=subprocess.run(['cmake','--build',str(args.build.resolve()),'--target',f'test-p0-rpc-{module}-mutant','-j2'],capture_output=True,text=True)

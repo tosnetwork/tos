@@ -407,6 +407,25 @@ foreach(module native-rpc certificate-proof api-service transfer)
   target_link_libraries(test-p0-rpc-${module}-mutant PRIVATE tos_validator_auth_rpc)
   set_target_properties(test-p0-rpc-${module}-mutant PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 endforeach()
+# The client error classification and failure response moved into a header when
+# the public service was composed, so the mutation that removes a classification
+# has to reach a header rather than a translation unit. The mutant root stays
+# first on the include path so validator/auth/client-api-common.h resolves to the
+# copy, and the real directory follows so its siblings still resolve.
+set(P0_CLIENT_COMMON_MUTANT_ROOT "${CMAKE_CURRENT_BINARY_DIR}/client-common-mutant")
+file(MAKE_DIRECTORY "${P0_CLIENT_COMMON_MUTANT_ROOT}")
+configure_file("${PROJECT_SOURCE_DIR}/validator/auth/client-api-common.h"
+               "${P0_CLIENT_COMMON_MUTANT_ROOT}/client-api-common.h" COPYONLY)
+# The header only takes effect on a translation unit that is recompiled here.
+# Linking the library alone would use its prebuilt object and the mutation would
+# be invisible, which reads as a surviving mutant and means the opposite.
+add_executable(test-p0-rpc-client-api-common-mutant EXCLUDE_FROM_ALL certificate-rpc-test.cpp
+  "${CMAKE_CURRENT_BINARY_DIR}/rpc-mutated-api-service.cpp")
+target_include_directories(test-p0-rpc-client-api-common-mutant BEFORE PRIVATE "${P0_CLIENT_COMMON_MUTANT_ROOT}")
+target_include_directories(test-p0-rpc-client-api-common-mutant PRIVATE "${PROJECT_SOURCE_DIR}/validator/auth")
+target_link_libraries(test-p0-rpc-client-api-common-mutant PRIVATE tos_validator_auth_rpc)
+set_target_properties(test-p0-rpc-client-api-common-mutant PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+
 foreach(module certificate-proof verify)
   configure_file("${PROJECT_SOURCE_DIR}/validator/auth/${module}.cpp" "${CMAKE_CURRENT_BINARY_DIR}/certificate-mutated-${module}.cpp" COPYONLY)
   add_executable(test-p0-certificate-${module}-mutant EXCLUDE_FROM_ALL certificate-proof-test.cpp "${CMAKE_CURRENT_BINARY_DIR}/certificate-mutated-${module}.cpp")
