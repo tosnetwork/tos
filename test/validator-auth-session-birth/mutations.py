@@ -59,6 +59,7 @@ def mutations() -> list[tuple[str, str, str, str, str]]:
         ("block-state", "zero_state", "guard-disable", "block.state != Hash{}", "true"),
         ("epoch-native-id", "zero_native_id", "guard-disable", "epoch.native_session_id != Hash{}", "true"),
         ("epoch-election", "zero_election_hash", "guard-disable", "epoch.election_cell_hash != Hash{}", "true"),
+        ("epoch-options", "zero_options_hash", "guard-disable", "epoch.native_options_hash != Hash{}", "true"),
         ("history-budget", "budget_exceeded", "guard-disable",
          "if (history.size() > observation_limit || history.size() > max_observations)",
          "if (false && (history.size() > observation_limit || history.size() > max_observations))"),
@@ -98,6 +99,15 @@ def mutations() -> list[tuple[str, str, str, str, str]]:
         ("native-epoch-alias", "boundary_conflict_election", "guard-disable",
          "if (current && current->native_session_id == expected_epoch.native_session_id)",
          "if (false && current && current->native_session_id == expected_epoch.native_session_id)"),
+        ("first-observation-conflict-order", "epoch_election", "semantic-fault",
+         "      if (current && current->native_session_id == expected_epoch.native_session_id)\n"
+         "        return Error{\"session-birth-epoch-conflict\"};\n"
+         "      if (!candidate)\n"
+         "        return Error{\"session-birth-not-current\"};",
+         "      if (!candidate)\n"
+         "        return Error{\"session-birth-not-current\"};\n"
+         "      if (current && current->native_session_id == expected_epoch.native_session_id)\n"
+         "        return Error{\"session-birth-epoch-conflict\"};"),
     ]
 
 

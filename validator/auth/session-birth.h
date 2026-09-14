@@ -41,7 +41,8 @@ inline bool valid_block(const SessionBirthBlock& block) {
          block.root != Hash{} && block.file != Hash{} && block.state != Hash{};
 }
 inline bool valid_epoch(const SessionBirthEpoch& epoch) {
-  return epoch.native_session_id != Hash{} && epoch.election_cell_hash != Hash{};
+  return epoch.native_session_id != Hash{} && epoch.election_cell_hash != Hash{} &&
+         epoch.native_options_hash != Hash{};
 }
 }  // namespace session_birth_detail
 
@@ -80,12 +81,13 @@ inline Result<SessionBirthResult> resolve_session_birth(
     if (current && !session_birth_detail::valid_epoch(*current))
       return Error{"session-birth-epoch"};
     if (!current || *current != expected_epoch) {
-      if (!candidate)
-        return Error{"session-birth-not-current"};
-      // Changed metadata cannot create another birth for the same native
-      // lifetime. The adapter must establish a real native rotation instead.
+      // Contradictory metadata is not a non-current session, including at the
+      // first observation. The native ID says the lifetime is the same, so a
+      // difference cannot establish either a tip or predecessor boundary.
       if (current && current->native_session_id == expected_epoch.native_session_id)
         return Error{"session-birth-epoch-conflict"};
+      if (!candidate)
+        return Error{"session-birth-not-current"};
       return SessionBirthResult{*candidate, expected_epoch, used};
     }
     candidate = observation.block;

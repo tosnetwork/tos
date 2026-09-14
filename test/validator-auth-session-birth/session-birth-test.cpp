@@ -191,8 +191,12 @@ std::vector<Test> tests() {
       expect_error(resolve_session_birth(block(8), epoch(), rows), "session-birth-link", pin_name);
     });
   }
-  for (auto member : {&SessionBirthEpoch::native_session_id, &SessionBirthEpoch::election_cell_hash}) {
-    const std::string name = member == &SessionBirthEpoch::native_session_id ? "zero_native_id" : "zero_election_hash";
+  for (auto member : {&SessionBirthEpoch::native_session_id, &SessionBirthEpoch::election_cell_hash,
+                      &SessionBirthEpoch::native_options_hash}) {
+    const std::string name = member == &SessionBirthEpoch::native_session_id
+                                 ? "zero_native_id"
+                             : member == &SessionBirthEpoch::election_cell_hash ? "zero_election_hash"
+                                                                                : "zero_options_hash";
     add(name, [member, name] {
       auto wanted = epoch();
       wanted.*member = {};
@@ -223,7 +227,7 @@ std::vector<Test> tests() {
       change(current);
       auto rows = history(0, 0);
       rows.front().current = std::optional{current};
-      expect_error(resolve_session_birth(block(0), epoch(), rows), "session-birth-not-current", name);
+      expect_error(resolve_session_birth(block(0), epoch(), rows), "session-birth-epoch-conflict", name);
     });
   }
   // Metadata alone cannot rotate the native actor. A twin with a different
