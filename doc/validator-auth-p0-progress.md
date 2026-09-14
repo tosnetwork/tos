@@ -123,7 +123,7 @@ neither can the sanitizers: LeakSanitizer reports memory that has become
 unreachable at process exit, while these quantities stay reachable, bounded by
 policy, and live in a process that does not exit.
 
-Four retained quantities have no measured growth curve:
+Five retained quantities have no measured growth curve:
 
 | Quantity | Why it grows | What is stated today |
 | --- | --- | --- |
@@ -131,6 +131,7 @@ Four retained quantities have no measured growth curve:
 | Per-block work against archive size | The native adapter copies and rebuilds derived indexes | One authenticated identity read now measures at 1 entry and 375 bytes across archives of 0, 100, 1000 and 5000 retired key versions, and a scan of the archive fails that measurement. The record's wider claim, that a whole block's work is bounded, is still unmeasured |
 | Signer journal and witness | Append-only by design; capacity exhaustion is an explicit error, not a reclaim | Measured. On disk: 36 bytes of framing per record, 2883 bytes per completed signature, so the default 1 GiB limit is reached after roughly 372,000 signatures and then refuses admission without touching stored history. Restart replays every record exactly once at about 9.4 us per record, so a full journal costs a restart of a few seconds and not an outage. In memory: 3436 bytes retained per signature, exactly linear, which is 1220 MiB at that same signature count -- see below |
 | Retained session snapshots | Each session holds its committee until its native termination boundary | That boundary is not implemented yet |
+| Resumable committee handoff | Each resume replays the whole birth resolution over every retained input rather than holding a continuation, so total work is quadratic in the number of asynchronous rounds | Structural, established by reading the code rather than measured. The declared history budget permits 4096 observations, so the worst case is 4096 rounds each replaying all prior reads; the test fixture carries a two-block history and cannot produce the curve. Deep-history measurement belongs with the birth resolver, not the handoff |
 
 The object store is the one bounded case: four objects and 64 MiB per principal,
 256 MiB globally, and the local provider admits at most 4096 retained keys. Both
