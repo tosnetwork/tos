@@ -92,7 +92,7 @@ jobs:
             -DOPENSSL_INCLUDE_DIR="$(pkg-config --variable=includedir openssl)"
           export FUNC_BIN="$PWD/build-p0/crypto/func" FIFT_BIN="$PWD/build-p0/crypto/fift"
           cmake --build build-p0 --target func fift -j2
-          cmake --build build-p0 --target emulator test-p0-vm test-p0-vm-adapter test-p0-committee test-p0-registry-view test-p0-committee-proof test-p0-certificate-proof test-p0-certificate-rpc test-p0-implementation test-p0-transfer test-p0-transport test-p0-cells test-p0-state test-p0-state-replay benchmark-p0-c0 test-p0-proof test-p0-authority test-p0-context test-p0-governance test-p0-owner-proof test-p0-native-apply test-p0-native-history test-p0-native-header test-p0-native-evidence test-p0-native-config-context test-p0-native-host-vm test-p0-native-registry test-p0-persistent-apply test-p0-native-transactions test-p0-config-gates test-config-transition test-p0-native-governance create-state p0-genesis-tool p0-genesis-probe p0-vset-probe test-p0-journal test-p0-signer test-p0-sync test-p0-channel test-p0-process test-p0-object-store test-p0-issuer test-p0-api-semantics test-p0-admin test-p0-admin-process test-p0-api-service test-p0-http test-p0-keyring test-keyring-temp-key -j2
+          cmake --build build-p0 --target emulator test-p0-vm test-p0-vm-adapter test-p0-committee test-p0-registry-view test-p0-committee-proof test-p0-certificate-proof test-p0-certificate-rpc test-p0-implementation test-p0-transfer test-p0-transport test-p0-cells test-p0-state test-p0-state-replay benchmark-p0-c0 test-p0-proof test-p0-authority test-p0-context test-p0-governance test-p0-owner-proof test-p0-native-apply test-p0-native-history test-p0-native-header test-p0-native-evidence test-p0-native-config-context test-p0-native-host-vm test-p0-native-registry test-p0-persistent-apply test-p0-native-transactions test-p0-config-gates test-config-transition test-p0-native-governance test-p0-session-epoch create-state p0-genesis-tool p0-genesis-probe p0-vset-probe test-p0-journal test-p0-signer test-p0-sync test-p0-channel test-p0-process test-p0-object-store test-p0-issuer test-p0-api-semantics test-p0-admin test-p0-admin-process test-p0-api-service test-p0-http test-p0-keyring test-keyring-temp-key -j2
           cmake --build build-p0 --target validator/impl/CMakeFiles/tos_validator.dir/validate-query.cpp.o -j2
           cmake -S . -B build-p0-sanitized -G Ninja -DCMAKE_BUILD_TYPE=Release -DTOS_ARCH= \
             -DTOS_BUILD_P0_IMPLEMENTATION_TESTS=ON -DUSE_QUIC=OFF \
@@ -282,6 +282,11 @@ jobs:
             --driver build-p0/test/validator-auth-implementation/test-p0-transport | tee artifacts/transport-cpp.json
           python3 test/validator-auth-implementation/check_transport.py \
             --driver tosctl/src/target/debug/conformance | tee artifacts/transport-rust.json
+      - name: Name a session the way the manager names it
+        run: |
+          set -euo pipefail
+          build-p0/test/validator-auth-implementation/test-p0-session-epoch artifacts/session-epoch \
+            | tee artifacts/session-epoch.txt
       - name: Select session birth from a contiguous authenticated epoch
         run: |
           set -euo pipefail
