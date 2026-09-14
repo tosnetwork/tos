@@ -58,6 +58,33 @@ a README that framed a shipped component as future work and understated proof
 sizes by 10×. It had been wrong for weeks and nothing failed. Verify docs
 against source, not against memory.
 
+## Ask what must be true, not what makes this pass
+
+When something blocks you, the cheap move is the one that removes the symptom.
+Before taking it, say what has to remain true, then check whether the cheap move
+preserves it or only hides its violation.
+
+One shape recurs here: **two sources for one fact.** A grammar described in two
+languages, a guard written twice, a value recomputed beside the one it has to
+equal. Each copy gets its own lock, neither lock can see the other, and both keep
+passing while the copies drift.
+
+Ask which source is authoritative and make the other point at it instead of
+restating it. Where that is impossible, bind them with a check that fails when
+they disagree, and prove that check fails.
+
+A refusing build is often the only instrument that noticed the duplication.
+`native-boc` began refusing when the profile grammar moved into the production
+schema and was still being appended from the design artifact: dropping the
+append would have removed the error and left two pinned copies of one grammar,
+each passing its own lock. Three anchors in `rust_vm_mutations.py` stopped being
+unique when a second gate duplicated an existing one; widening the anchor would
+have left the duplicate untested, and checking it separately found its
+refused-opcode charge was covered by nothing at all.
+
+Removing the concatenation, widening the anchor, relaxing the assertion: each
+trades a loud failure for a silent one.
+
 ## Conventions
 
 - Financial arithmetic uses `checked_*`, never raw `+ - * /`. A bound that
