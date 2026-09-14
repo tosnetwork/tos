@@ -547,6 +547,15 @@ target_include_directories(test-p0-native-registry-mutant PRIVATE "${PROJECT_SOU
 target_link_libraries(test-p0-native-registry-mutant PRIVATE tos_validator_auth_native)
 set_target_properties(test-p0-native-registry-mutant PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 
+add_executable(test-p0-config-message config-message-test.cpp)
+target_link_libraries(test-p0-config-message PRIVATE tos_validator_auth_native)
+set_target_properties(test-p0-config-message PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+configure_file("${PROJECT_SOURCE_DIR}/validator/auth/native-config-message.cpp" "${CMAKE_CURRENT_BINARY_DIR}/config-message-mutated.cpp" COPYONLY)
+add_executable(test-p0-config-message-mutant EXCLUDE_FROM_ALL config-message-test.cpp "${CMAKE_CURRENT_BINARY_DIR}/config-message-mutated.cpp")
+target_include_directories(test-p0-config-message-mutant PRIVATE "${PROJECT_SOURCE_DIR}/validator/auth")
+target_link_libraries(test-p0-config-message-mutant PRIVATE tos_validator_auth_native)
+set_target_properties(test-p0-config-message-mutant PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+
 add_executable(test-p0-config-contract config-contract-test.cpp)
 target_link_libraries(test-p0-config-contract PRIVATE tos_validator_auth tos_crypto)
 set_target_properties(test-p0-config-contract PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
