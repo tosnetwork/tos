@@ -59,8 +59,17 @@ jobs:
             guards: services
             check_name: P0 service guards
           - runner: ubuntu-24.04
-            guards: state
-            check_name: P0 state and proof guards
+            guards: state1
+            check_name: P0 state and proof guards 1
+          - runner: ubuntu-24.04
+            guards: state2
+            check_name: P0 state and proof guards 2
+          - runner: ubuntu-24.04
+            guards: state3
+            check_name: P0 state and proof guards 3
+          - runner: ubuntu-24.04
+            guards: state4
+            check_name: P0 state and proof guards 4
           - runner: ubuntu-24.04
             guards: native
             check_name: P0 native execution guards
@@ -480,30 +489,84 @@ jobs:
           python3 test/validator-auth-implementation/certificate_rpc_mutations.py --build build-p0 --states artifacts/committee-fixtures --fixtures artifacts/certificate-proof-fixtures --out artifacts/certificate-rpc-mutations.json
           python3 test/validator-auth-implementation/certificate_client_mutations.py --fixtures artifacts/certificate-proof-fixtures --out artifacts/certificate-client-mutations.json
           git diff --exit-code
-      - name: Compile state guard removals and require assertion failures
-        if: matrix.guards == 'state'
+      - name: Compile state guard removals and require assertion failures (1 of 4)
+        if: matrix.guards == 'state1'
         run: |
           set -euo pipefail
           export FUNC_BIN="$PWD/build-p0/crypto/func" FIFT_BIN="$PWD/build-p0/crypto/fift"
-          python3 test/validator-auth-implementation/native_module_mutations.py --build build-p0 --out artifacts/native-modules.json
-          python3 test/validator-auth-implementation/rust_native_mutations.py --cells artifacts/native-cell-fixtures --proofs artifacts/native-proof-fixtures --out artifacts/rust-native-mutations.json
-          python3 test/validator-auth-implementation/committee_mutations.py --build build-p0 --out artifacts/committee-mutations.json
-          python3 test/validator-auth-implementation/rust_committee_mutations.py --fixtures artifacts/committee-fixtures --out artifacts/rust-committee-mutations.json
-          python3 test/validator-auth-implementation/registry_view_mutations.py --language cpp --build build-p0 --out artifacts/registry-view-cpp-mutations.json
-          python3 test/validator-auth-implementation/registry_view_mutations.py --language rust --fixtures artifacts/registry-view-fixtures --out artifacts/registry-view-rust-mutations.json
-          python3 test/validator-auth-implementation/committee_proof_mutations.py --language cpp --build build-p0 --fixtures artifacts/committee-fixtures --out artifacts/committee-proof-cpp-mutations.json
-          python3 test/validator-auth-implementation/committee_proof_mutations.py --language rust --fixtures artifacts/committee-proof-fixtures --out artifacts/committee-proof-rust-mutations.json
-          python3 test/validator-auth-implementation/registry_replay_mutations.py --fixtures artifacts/state-replay-fixtures --out artifacts/registry-replay-mutations.json
-          python3 test/validator-auth-implementation/certificate_proof_mutations.py --language cpp --build build-p0 --fixtures artifacts/committee-fixtures --out artifacts/certificate-proof-cpp-mutations.json
-          python3 test/validator-auth-implementation/certificate_proof_mutations.py --language rust --fixtures artifacts/certificate-proof-fixtures --out artifacts/certificate-proof-rust-mutations.json
-          python3 test/validator-auth-implementation/context_mutations.py --language cpp --build build-p0 --fixtures artifacts/context-fixtures --out artifacts/context-cpp-mutations.json
-          python3 test/validator-auth-implementation/context_mutations.py --language rust --fixtures artifacts/context-fixtures --out artifacts/context-rust-mutations.json
-          python3 test/validator-auth-implementation/governance_mutations.py --language cpp --build build-p0 --out artifacts/governance-cpp-mutations.json
-          python3 test/validator-auth-implementation/governance_mutations.py --language rust --fixtures artifacts/governance-fixtures --out artifacts/governance-rust-mutations.json
-          python3 test/validator-auth-implementation/native_governance_mutations.py --language cpp --build build-p0 --out artifacts/native-governance-cpp-mutations.json
-          python3 test/validator-auth-implementation/native_governance_mutations.py --language rust --fixtures artifacts/native-governance-fixtures --out artifacts/native-governance-rust-mutations.json
-          python3 test/validator-auth-implementation/native_header_mutations.py --language cpp --build build-p0 --inputs artifacts/owner-transactions-mc --out artifacts/native-header-cpp-mutations.json
-          python3 test/validator-auth-implementation/native_header_mutations.py --language rust --fixtures artifacts/native-header --out artifacts/native-header-rust-mutations.json
+          # Report each harness's own duration. The split between these legs was
+          # made by count, not by measurement, and this is what makes the next
+          # rebalance a matter of reading the log rather than guessing again.
+          run() {
+            local started
+            started=$(date +%s)
+            "$@"
+            printf 'HARNESS_SECONDS %s %s\n' "$(( $(date +%s) - started ))" "$2"
+          }
+          run python3 test/validator-auth-implementation/native_module_mutations.py --build build-p0 --out artifacts/native-modules.json
+          run python3 test/validator-auth-implementation/rust_native_mutations.py --cells artifacts/native-cell-fixtures --proofs artifacts/native-proof-fixtures --out artifacts/rust-native-mutations.json
+          run python3 test/validator-auth-implementation/committee_mutations.py --build build-p0 --out artifacts/committee-mutations.json
+          run python3 test/validator-auth-implementation/rust_committee_mutations.py --fixtures artifacts/committee-fixtures --out artifacts/rust-committee-mutations.json
+          run python3 test/validator-auth-implementation/registry_view_mutations.py --language cpp --build build-p0 --out artifacts/registry-view-cpp-mutations.json
+          git diff --exit-code
+      - name: Compile state guard removals and require assertion failures (2 of 4)
+        if: matrix.guards == 'state2'
+        run: |
+          set -euo pipefail
+          export FUNC_BIN="$PWD/build-p0/crypto/func" FIFT_BIN="$PWD/build-p0/crypto/fift"
+          # Report each harness's own duration. The split between these legs was
+          # made by count, not by measurement, and this is what makes the next
+          # rebalance a matter of reading the log rather than guessing again.
+          run() {
+            local started
+            started=$(date +%s)
+            "$@"
+            printf 'HARNESS_SECONDS %s %s\n' "$(( $(date +%s) - started ))" "$2"
+          }
+          run python3 test/validator-auth-implementation/registry_view_mutations.py --language rust --fixtures artifacts/registry-view-fixtures --out artifacts/registry-view-rust-mutations.json
+          run python3 test/validator-auth-implementation/committee_proof_mutations.py --language cpp --build build-p0 --fixtures artifacts/committee-fixtures --out artifacts/committee-proof-cpp-mutations.json
+          run python3 test/validator-auth-implementation/committee_proof_mutations.py --language rust --fixtures artifacts/committee-proof-fixtures --out artifacts/committee-proof-rust-mutations.json
+          run python3 test/validator-auth-implementation/registry_replay_mutations.py --fixtures artifacts/state-replay-fixtures --out artifacts/registry-replay-mutations.json
+          run python3 test/validator-auth-implementation/certificate_proof_mutations.py --language cpp --build build-p0 --fixtures artifacts/committee-fixtures --out artifacts/certificate-proof-cpp-mutations.json
+          git diff --exit-code
+      - name: Compile state guard removals and require assertion failures (3 of 4)
+        if: matrix.guards == 'state3'
+        run: |
+          set -euo pipefail
+          export FUNC_BIN="$PWD/build-p0/crypto/func" FIFT_BIN="$PWD/build-p0/crypto/fift"
+          # Report each harness's own duration. The split between these legs was
+          # made by count, not by measurement, and this is what makes the next
+          # rebalance a matter of reading the log rather than guessing again.
+          run() {
+            local started
+            started=$(date +%s)
+            "$@"
+            printf 'HARNESS_SECONDS %s %s\n' "$(( $(date +%s) - started ))" "$2"
+          }
+          run python3 test/validator-auth-implementation/certificate_proof_mutations.py --language rust --fixtures artifacts/certificate-proof-fixtures --out artifacts/certificate-proof-rust-mutations.json
+          run python3 test/validator-auth-implementation/context_mutations.py --language cpp --build build-p0 --fixtures artifacts/context-fixtures --out artifacts/context-cpp-mutations.json
+          run python3 test/validator-auth-implementation/context_mutations.py --language rust --fixtures artifacts/context-fixtures --out artifacts/context-rust-mutations.json
+          run python3 test/validator-auth-implementation/governance_mutations.py --language cpp --build build-p0 --out artifacts/governance-cpp-mutations.json
+          run python3 test/validator-auth-implementation/governance_mutations.py --language rust --fixtures artifacts/governance-fixtures --out artifacts/governance-rust-mutations.json
+          git diff --exit-code
+      - name: Compile state guard removals and require assertion failures (4 of 4)
+        if: matrix.guards == 'state4'
+        run: |
+          set -euo pipefail
+          export FUNC_BIN="$PWD/build-p0/crypto/func" FIFT_BIN="$PWD/build-p0/crypto/fift"
+          # Report each harness's own duration. The split between these legs was
+          # made by count, not by measurement, and this is what makes the next
+          # rebalance a matter of reading the log rather than guessing again.
+          run() {
+            local started
+            started=$(date +%s)
+            "$@"
+            printf 'HARNESS_SECONDS %s %s\n' "$(( $(date +%s) - started ))" "$2"
+          }
+          run python3 test/validator-auth-implementation/native_governance_mutations.py --language cpp --build build-p0 --out artifacts/native-governance-cpp-mutations.json
+          run python3 test/validator-auth-implementation/native_governance_mutations.py --language rust --fixtures artifacts/native-governance-fixtures --out artifacts/native-governance-rust-mutations.json
+          run python3 test/validator-auth-implementation/native_header_mutations.py --language cpp --build build-p0 --inputs artifacts/owner-transactions-mc --out artifacts/native-header-cpp-mutations.json
+          run python3 test/validator-auth-implementation/native_header_mutations.py --language rust --fixtures artifacts/native-header --out artifacts/native-header-rust-mutations.json
           git diff --exit-code
       - name: Compile native guard removals and require assertion failures
         if: matrix.guards == 'native'
