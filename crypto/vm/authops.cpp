@@ -137,6 +137,20 @@ int exec_validator_auth_apply(VmState* st) {
   stack.push_cell(std::move(result));
   return 0;
 }
+
+int exec_validator_auth_bind(VmState* st) {
+  VM_LOG(st) << "execute VAUTH_BIND";
+  auto host = st->get_validator_auth_host();
+  if (!host)
+    throw VmError{Excno::inv_opcode, "P0 native transaction context required"};
+  auto& stack = st->get_stack();
+  stack.check_underflow(2);
+  auto bindings = stack.pop_cell();
+  auto elected = stack.pop_cell();
+  auto result = host->bind(std::move(elected), std::move(bindings), [&](long long gas) { charge_native(st, gas); });
+  stack.push_cell(std::move(result));
+  return 0;
+}
 class CapabilityGated final : public OpcodeInstr {
   std::unique_ptr<OpcodeInstr> inner_;
 
@@ -163,5 +177,6 @@ void register_validator_auth_ops(OpcodeTable& table) {
   table.insert(new CapabilityGated(OpcodeInstr::mksimple(validator_auth_chksign_opcode, 16, "VAUTH_CHKSIGN", exec_validator_auth_chksign)));
   table.insert(new CapabilityGated(OpcodeInstr::mksimple(validator_auth_state_opcode, 16, "VAUTH_STATE", exec_validator_auth_state)));
   table.insert(new CapabilityGated(OpcodeInstr::mksimple(validator_auth_apply_opcode, 16, "VAUTH_APPLY", exec_validator_auth_apply)));
+  table.insert(new CapabilityGated(OpcodeInstr::mksimple(validator_auth_bind_opcode, 16, "VAUTH_BIND", exec_validator_auth_bind)));
 }
 }  // namespace vm

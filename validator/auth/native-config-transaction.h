@@ -35,7 +35,7 @@ class NativeConfigTransaction {
   ObjectReader reader_;
   NativeConfigHost host_;
   NativeConfigTransaction(NativeCommittee, NativeEvidence, const FinalizedAnchorSource&, NativeRegistryBlock,
-                          ChainContext);
+                          ChainContext, std::uint32_t inclusion);
 
  public:
   static Result<std::unique_ptr<NativeConfigTransaction>> open(const NativeConfigTransactionInputs&,

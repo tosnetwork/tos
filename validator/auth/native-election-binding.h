@@ -23,6 +23,8 @@ namespace tos::auth {
 struct ElectedBinding {
   Hash staking_account{};   // the masterchain account that sent the stake
   Hash claimed_identity{};  // the registry identity that account names
+
+  bool operator==(const ElectedBinding&) const = default;
 };
 
 // Rewrites every descriptor of an elected set as an authenticated one, or
@@ -32,4 +34,10 @@ struct ElectedBinding {
 Result<td::Ref<vm::Cell>> bind_elected_validators(td::Ref<vm::Cell> elected,
                                                   const std::map<unsigned, ElectedBinding>& bindings,
                                                   const RegistryView&);
+
+// The bindings as a contract hands them over: a dictionary from the member's
+// index in the elected set to the staking account and the identity it names.
+// Decoded here, beside the only thing that consumes it, so the shape has one
+// definition rather than one per caller.
+Result<std::map<unsigned, ElectedBinding>> decode_elected_bindings(td::Ref<vm::Cell> bindings, unsigned total);
 }  // namespace tos::auth

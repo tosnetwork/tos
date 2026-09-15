@@ -127,4 +127,50 @@ Result<td::Ref<vm::Cell>> bind_elected_validators(td::Ref<vm::Cell> elected,
     return Error{"election-binding-pruned"};
   }
 }
+
+Result<std::map<unsigned, ElectedBinding>> decode_elected_bindings(td::Ref<vm::Cell> bindings, unsigned total) {
+  try {
+    if (bindings.is_null() || total == 0 || total > 400)
+      return Error{"election-binding-input"};
+    vm::CellSlice wrapper{vm::NoVm{}, std::move(bindings)};
+    if (!wrapper.is_valid() || wrapper.is_special() || wrapper.size() != 1 ||
+        wrapper.size_refs() != wrapper.prefetch_ulong(1))
+      return Error{"election-binding-shape"};
+    vm::Dictionary dict(wrapper, 16);
+    std::map<unsigned, ElectedBinding> decoded;
+    for (unsigned index = 0; index < total; ++index) {
+      td::BitArray<16> key;
+      key.store_ulong(index);
+      auto entry = dict.lookup(key.cbits(), 16);
+      // A missing entry is left out rather than filled in. Binding refuses an
+      // incomplete set, and a blank entry invented here would make it refuse
+      // for a reason that is not the truth.
+      if (entry.is_null())
+        continue;
+      ElectedBinding value;
+      auto field = entry.write();
+      if (field.size() != 512 || field.size_refs() != 0 ||
+          !field.fetch_bytes(
+              td::MutableSlice(reinterpret_cast<char*>(value.staking_account.data()), value.staking_account.size())) ||
+          !field.fetch_bytes(
+              td::MutableSlice(reinterpret_cast<char*>(value.claimed_identity.data()), value.claimed_identity.size())))
+        return Error{"election-binding-shape"};
+      decoded.emplace(index, value);
+    }
+    // Anything filed beyond the set's own size is a caller describing a
+    // different set, which binding refuses; counting is how that becomes visible.
+    std::size_t present = 0;
+    dict.check_for_each([&present](td::Ref<vm::CellSlice>, td::ConstBitPtr, int) {
+      ++present;
+      return true;
+    });
+    if (present != decoded.size())
+      return Error{"election-binding-shape"};
+    return decoded;
+  } catch (const vm::VmError&) {
+    return Error{"election-binding-cell"};
+  } catch (const vm::VmVirtError&) {
+    return Error{"election-binding-pruned"};
+  }
+}
 }  // namespace tos::auth

@@ -6,13 +6,13 @@ namespace tos::auth {
 
 NativeConfigTransaction::NativeConfigTransaction(NativeCommittee committee, NativeEvidence evidence,
                                                  const FinalizedAnchorSource& history, NativeRegistryBlock accepted,
-                                                 ChainContext chain)
+                                                 ChainContext chain, std::uint32_t inclusion)
     : committee_(std::move(committee))
     , evidence_(std::move(evidence))
     , history_(history)
     , context_{std::move(chain), committee_.snapshot(), history_}
     , reader_(evidence_.reader())
-    , host_(std::move(accepted), context_, reader_) {
+    , host_(std::move(accepted), context_, reader_, inclusion) {
 }
 
 Result<std::unique_ptr<NativeConfigTransaction>> NativeConfigTransaction::open(
@@ -52,6 +52,7 @@ Result<std::unique_ptr<NativeConfigTransaction>> NativeConfigTransaction::open(
     return evidence.error();
 
   return std::unique_ptr<NativeConfigTransaction>(new NativeConfigTransaction(
-      std::move(committee.value()), std::move(evidence.value()), history, std::move(accepted.value()), inputs.chain));
+      std::move(committee.value()), std::move(evidence.value()), history, std::move(accepted.value()), inputs.chain,
+      inputs.inclusion));
 }
 }  // namespace tos::auth

@@ -36,6 +36,12 @@ MUTATIONS = [
     ("weight-survives", "declared-weight-must-survive",
      '    if (weight != set.total_weight)\n      return Error{"election-binding-weight"};',
      ''),
+    ("entry-width", "an-entry-with-trailing-data-is-refused",
+     '      if (field.size() != 512 || field.size_refs() != 0 ||',
+     '      if (field.size() < 512 || field.size_refs() != 0 ||'),
+    ("nothing-past-the-end", "an-entry-past-the-end-is-refused",
+     '    if (present != decoded.size())\n      return Error{"election-binding-shape"};',
+     ''),
     ("binding-attached", "bound-set-carries-the-registry-binding",
      '      td::Ref<vm::Cell> binding;\n'
      '      if (!block::gen::t_ValidatorAuthBinding.cell_pack_validator_auth_binding(\n'

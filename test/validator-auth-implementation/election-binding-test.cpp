@@ -173,6 +173,70 @@ int main() {
     refuses(bind_elected_validators(elected_set(list, 2, weights[0] + weights[1] + 1), bindings, view),
             "election-binding-weight", "declared-weight-must-survive");
 
+    // The shape a contract hands over. It is decoded next to the operation that
+    // consumes it so there is one definition of it, and these cases are what
+    // stop that definition from accepting something the operation cannot use.
+    {
+      auto entries = [](const std::vector<std::pair<unsigned, ElectedBinding>>& items, int width = 0) {
+        vm::Dictionary dict(16);
+        for (const auto& [index, value] : items) {
+          vm::CellBuilder cb;
+          cb.store_bytes(
+              td::Slice(reinterpret_cast<const char*>(value.staking_account.data()), value.staking_account.size()));
+          if (width >= 0)
+            cb.store_bytes(
+                td::Slice(reinterpret_cast<const char*>(value.claimed_identity.data()), value.claimed_identity.size()));
+          if (width > 0)
+            cb.store_zeroes(width);
+          td::BitArray<16> at;
+          at.store_ulong(index);
+          check(dict.set_builder(at.cbits(), 16, cb), "fixture-binding-entry");
+        }
+        vm::CellBuilder wrapper;
+        check(wrapper.store_maybe_ref(dict.get_root_cell()), "fixture-binding-dict");
+        return wrapper.finalize();
+      };
+
+      std::vector<std::pair<unsigned, ElectedBinding>> both{{0, {members[0].owner_address_, members[0].identity_}},
+                                                            {1, {members[1].owner_address_, members[1].identity_}}};
+      auto decoded = decode_elected_bindings(entries(both), 2);
+      expect(decoded.ok() && decoded.value() == bindings, "handed-over-bindings-decode-to-what-was-meant");
+      // And the decoded form really does bind the set, so the wire shape and
+      // the operation agree rather than each being checked alone.
+      auto again = bind_elected_validators(set, decoded.value(), view);
+      expect(again.ok(), "handed-over-bindings-decode-to-what-was-meant");
+      ok("handed-over-bindings-decode-to-what-was-meant");
+
+      // An entry that is not two hashes is not a binding. This shares the width
+      // check with the case below rather than having one of its own: reading
+      // the second hash out of a short entry fails either way.
+      auto truncated = decode_elected_bindings(entries(both, -1), 2);
+      expect(!truncated.ok() && truncated.error().code == "election-binding-shape", "a-short-entry-is-refused");
+      ok("a-short-entry-is-refused");
+
+      // An entry with anything after the two hashes is a caller saying more
+      // than this shape can carry. Reading the first 512 bits and dropping the
+      // rest would accept a message neither side agreed on.
+      auto trailing = decode_elected_bindings(entries(both, 8), 2);
+      expect(!trailing.ok() && trailing.error().code == "election-binding-shape",
+             "an-entry-with-trailing-data-is-refused");
+      ok("an-entry-with-trailing-data-is-refused");
+
+      // An entry filed past the end of the set describes a different set. It
+      // would otherwise be dropped silently by the index walk.
+      auto beyond = both;
+      beyond.push_back({7, {members[2].owner_address_, members[2].identity_}});
+      auto outside = decode_elected_bindings(entries(beyond), 2);
+      expect(!outside.ok() && outside.error().code == "election-binding-shape", "an-entry-past-the-end-is-refused");
+      ok("an-entry-past-the-end-is-refused");
+
+      // A gap is carried through as a gap, because refusing an incomplete set
+      // is binding's answer to give, with the reason it actually has.
+      auto gap = decode_elected_bindings(entries({both[0]}), 2);
+      expect(gap.ok() && gap.value().size() == 1, "a-gap-stays-a-gap");
+      refuses(bind_elected_validators(set, gap.value(), view), "election-binding-incomplete", "a-gap-stays-a-gap");
+    }
+
     std::cout << "SUMMARY cases=" << passed << " passed=" << passed << '\n';
     return 0;
   } catch (const std::exception& error) {

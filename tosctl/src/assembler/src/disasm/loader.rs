@@ -1872,6 +1872,7 @@ impl Loader {
     create_handler_2!(vauth_chksign, 0xf917, "VAUTH_CHKSIGN");
     create_handler_2!(vauth_state, 0xf918, "VAUTH_STATE");
     create_handler_2!(vauth_apply, 0xf919, "VAUTH_APPLY");
+    create_handler_2!(vauth_bind, 0xf91a, "VAUTH_BIND");
     create_handler_2!(hashcu, 0xf900, "HASHCU");
     create_handler_2!(hashsu, 0xf901, "HASHSU");
     create_handler_2!(sha256u, 0xf902, "SHA256U");

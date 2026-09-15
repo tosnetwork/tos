@@ -21,24 +21,29 @@ class NativeConfigHost final : public vm::ValidatorAuthHost {
   NativeRegistryBlock accepted_;
   const NativeIdentityContext& context_;
   ObjectReader& reader_;
+  // The block being built. A registry policy that is not yet effective at this
+  // coordinate must not bind a set this block installs.
+  std::uint32_t coordinate_;
   std::uint64_t gas_per_entry_, gas_per_byte_;
-  unsigned checkpoints_ = 0, updates_ = 0;
+  unsigned checkpoints_ = 0, updates_ = 0, bindings_ = 0;
 
  public:
   // Charging is derived from the work the registry itself reports, so the price
   // of a transaction is a function of what it actually read rather than of a
   // constant that would drift from it.
   NativeConfigHost(NativeRegistryBlock accepted, const NativeIdentityContext& context, ObjectReader& reader,
-                   std::uint64_t gas_per_entry = 64, std::uint64_t gas_per_byte = 1)
+                   std::uint32_t coordinate, std::uint64_t gas_per_entry = 64, std::uint64_t gas_per_byte = 1)
       : accepted_(std::move(accepted))
       , context_(context)
       , reader_(reader)
+      , coordinate_(coordinate)
       , gas_per_entry_(gas_per_entry)
       , gas_per_byte_(gas_per_byte) {
   }
 
   td::Ref<vm::Cell> checkpoint(const Charge&) override;
   td::Ref<vm::Cell> apply(td::Ref<vm::Cell> update, td::Ref<vm::Cell> evidence, const Charge&) override;
+  td::Ref<vm::Cell> bind(td::Ref<vm::Cell> elected, td::Ref<vm::Cell> bindings, const Charge&) override;
 
   // The staged prefix after execution. Native commit installs this and nothing
   // else; there is no path that installs a registry the host did not accept.
@@ -50,6 +55,9 @@ class NativeConfigHost final : public vm::ValidatorAuthHost {
   }
   unsigned updates() const {
     return updates_;
+  }
+  unsigned bindings() const {
+    return bindings_;
   }
 };
 }  // namespace tos::auth

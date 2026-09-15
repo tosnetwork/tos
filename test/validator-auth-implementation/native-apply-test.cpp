@@ -419,7 +419,7 @@ int main(int argc, char** argv) {
           NativeRegistry::bootstrap(value(base.parent.encode_cell(), "host-parent"), base.parent.coordinate()),
           "host-bootstrap");
       auto prefix = value(NativeRegistryBlock::begin(persistent, base.inclusion), "host-begin");
-      NativeConfigHost host(std::move(prefix), host_context, host_reader);
+      NativeConfigHost host(std::move(prefix), host_context, host_reader, base.inclusion);
 
       long long charged = 0;
       auto charge = [&](long long amount) { charged += amount; };

@@ -16,9 +16,10 @@ Cell cell(unsigned value) {
   return vm::CellBuilder().store_long(value, 8).finalize();
 }
 struct Host final : vm::ValidatorAuthHost {
-  Cell input = cell(0x11), evidence = cell(0x22), state_result = cell(0x31), apply_result = cell(0x32);
+  Cell input = cell(0x11), evidence = cell(0x22), state_result = cell(0x31), apply_result = cell(0x32),
+       bind_result = cell(0x33);
   long long cost;
-  unsigned states = 0, updates = 0;
+  unsigned states = 0, updates = 0, binds = 0;
   explicit Host(long long amount) : cost(amount) {
   }
   Cell checkpoint(const Charge& charge) override {
@@ -32,6 +33,13 @@ struct Host final : vm::ValidatorAuthHost {
     if (update->get_hash() != input->get_hash() || auth->get_hash() != evidence->get_hash())
       throw vm::VmError{vm::Excno::range_chk, "native host operand order"};
     return apply_result;
+  }
+  Cell bind(Cell elected, Cell bindings, const Charge& charge) override {
+    charge(cost);
+    ++binds;
+    if (elected->get_hash() != input->get_hash() || bindings->get_hash() != evidence->get_hash())
+      throw vm::VmError{vm::Excno::range_chk, "native host operand order"};
+    return bind_result;
   }
 };
 struct Result {
@@ -97,8 +105,9 @@ int main(int argc, char** argv) {
               top = number->to_long();
           } else if (state.get_stack().depth() == 1) {
             auto result = state.get_stack().tos().as_cell();
+            const auto& expected = op == 0 ? host->state_result : (op == 1 ? host->apply_result : host->bind_result);
             if (result.not_null())
-              top = result->get_hash() == (op ? host->apply_result : host->state_result)->get_hash() ? 1 : 0;
+              top = result->get_hash() == expected->get_hash() ? 1 : 0;
           }
         }
       }
@@ -112,12 +121,12 @@ int main(int argc, char** argv) {
       std::ofstream meta(folder / "case");
       meta << op << ' ' << version << ' ' << caps << ' ' << present << ' ' << child << ' ' << c7 << ' ' << cost << ' '
            << budget << ' ' << fault << ' ' << exit << ' ' << state.gas_consumed() << ' ' << top << ' '
-           << host->states + host->updates << ' ' << label << '\n';
+           << host->states + host->updates + host->binds << ' ' << label << '\n';
       check(meta.good(), "case-write");
-      return Result{exit, state.gas_consumed(), top, host->states + host->updates};
+      return Result{exit, state.gas_consumed(), top, host->states + host->updates + host->binds};
     };
-    for (unsigned op : {0U, 1U}) {
-      const char* success = op ? "host-apply-success" : "host-state-success";
+    for (unsigned op : {0U, 1U, 2U}) {
+      const char* success = op == 0 ? "host-state-success" : (op == 1 ? "host-apply-success" : "host-bind-success");
       auto ok = run(op, 16, 1024, true, false, false, 1000, 100000, 0, success);
       check(ok.exit == 0 && ok.top == 1 && ok.calls == 1, success);
       auto version = run(op, 15, 1024, true, false, false, 1000, 100000, 0, "host-version");

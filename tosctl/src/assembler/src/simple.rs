@@ -315,6 +315,7 @@ impl Engine {
         VAUTH_CHKSIGN                            => 0xF9, 0x17
         VAUTH_STATE                              => 0xF9, 0x18
         VAUTH_APPLY                              => 0xF9, 0x19
+        VAUTH_BIND                               => 0xF9, 0x1A
         HASHCU                               => 0xF9, 0x00
         HASHSU                               => 0xF9, 0x01
         HASHEXT z = parse_const_u8_0_4       => 0xF9, 0x04, z
@@ -991,7 +992,9 @@ mod signature_mnemonic_tests {
 
     #[test]
     fn signature_check_mnemonics_round_trip() {
-        for name in ["CHKSIGNU", "CHKSIGNS", "VAUTH_CHKSIGN", "VAUTH_STATE", "VAUTH_APPLY"] {
+        for name in
+            ["CHKSIGNU", "CHKSIGNS", "VAUTH_CHKSIGN", "VAUTH_STATE", "VAUTH_APPLY", "VAUTH_BIND"]
+        {
             let mut code = crate::compile_code(name)
                 .unwrap_or_else(|error| panic!("{name} did not assemble: {error}"));
             let text = disasm(&mut code)
