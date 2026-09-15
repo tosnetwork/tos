@@ -1,0 +1,166 @@
+name: Apply queued history resolution wiring
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/task3-history-resolution-queue-edit.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  edit-and-verify:
+    if: github.head_ref == 'feat/validator-auth-p0'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 1
+      - name: Install focused native dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang lld cmake ninja-build pkg-config libssl-dev libsodium-dev liblz4-dev zlib1g-dev gperf
+      - name: Apply exact frozen-manager queue wiring
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          manager_h = Path('validator/manager.hpp')
+          manager_cpp = Path('validator/manager.cpp')
+          manifest = Path('doc/validator-auth-p0-native-insertions.json')
+
+          old_member = '  bool validator_auth_resolving_ = false;'
+          new_member = '  tos::auth::NativeHistoryResolutionQueue validator_auth_resolution_queue_;'
+
+          old_resolve = '''void ValidatorManagerImpl::resolve_validator_auth_history(std::vector<td::uint32> coordinates) {
+  // One resolution in flight at a time. A request that arrives while another is
+  // running is dropped rather than queued: the update that prompted it is still
+  // in the message queue and the next block defers on it again, so the request
+  // returns on its own.
+  if (!validator_auth_chain_ || coordinates.empty() || validator_auth_resolving_ ||
+      last_masterchain_state_.is_null() || !last_masterchain_block_id_.is_valid()) {
+    return;
+  }
+  auto wanted = tos::auth::required_finalized_blocks(coordinates, last_masterchain_state_->root_cell(),
+                                                     validator_auth_head(), validator_auth_chain_.value(),
+                                                     validator_auth_anchors_);
+  if (!wanted.ok()) {
+    LOG(INFO) << "cannot resolve the history a registry update declared: " << wanted.error().code;
+    return;
+  }
+  validator_auth_resolving_ = true;
+  auto fetched = std::make_shared<std::map<BlockSeqno, tos::auth::Bytes>>();
+  fetch_validator_auth_block(std::move(coordinates), std::move(wanted.value()), 0, std::move(fetched));
+}'''
+
+          new_resolve = '''void ValidatorManagerImpl::resolve_validator_auth_history(std::vector<td::uint32> coordinates) {
+  if (!validator_auth_chain_ || coordinates.empty() || last_masterchain_state_.is_null() ||
+      !last_masterchain_block_id_.is_valid()) {
+    return;
+  }
+  auto batch = validator_auth_resolution_queue_.submit(coordinates);
+  if (!batch.has_value()) {
+    return;
+  }
+  auto wanted = tos::auth::required_finalized_blocks(batch.value(), last_masterchain_state_->root_cell(),
+                                                     validator_auth_head(), validator_auth_chain_.value(),
+                                                     validator_auth_anchors_);
+  if (!wanted.ok()) {
+    LOG(INFO) << "cannot resolve the history a registry update declared: " << wanted.error().code;
+    auto pending = validator_auth_resolution_queue_.complete();
+    if (pending.has_value()) {
+      resolve_validator_auth_history(std::move(pending.value()));
+    }
+    return;
+  }
+  auto fetched = std::make_shared<std::map<BlockSeqno, tos::auth::Bytes>>();
+  fetch_validator_auth_block(std::move(batch.value()), std::move(wanted.value()), 0, std::move(fetched));
+}'''
+
+          old_finish = '''void ValidatorManagerImpl::finish_validator_auth_resolution(
+    std::vector<td::uint32> coordinates, std::shared_ptr<std::map<BlockSeqno, tos::auth::Bytes>> fetched) {
+  validator_auth_resolving_ = false;
+  if (!validator_auth_chain_ || last_masterchain_state_.is_null()) {
+    return;
+  }'''
+
+          new_finish = '''void ValidatorManagerImpl::finish_validator_auth_resolution(
+    std::vector<td::uint32> coordinates, std::shared_ptr<std::map<BlockSeqno, tos::auth::Bytes>> fetched) {
+  auto pending = validator_auth_resolution_queue_.complete();
+  SCOPE_EXIT {
+    if (pending.has_value()) {
+      resolve_validator_auth_history(std::move(pending.value()));
+    }
+  };
+  if (!validator_auth_chain_ || last_masterchain_state_.is_null()) {
+    return;
+  }'''
+
+          def replace_once(path: Path, old: str, new: str) -> None:
+              text = path.read_text()
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{path}: anchor count {count}, expected 1')
+              path.write_text(text.replace(old, new, 1))
+
+          replace_once(manager_h, old_member, new_member)
+          replace_once(manager_cpp, old_resolve, new_resolve)
+          replace_once(manager_cpp, old_finish, new_finish)
+
+          raw = manifest.read_text()
+          for old, new in ((old_resolve, new_resolve), (old_finish, new_finish)):
+              escaped_old = json.dumps(old)[1:-1]
+              escaped_new = json.dumps(new)[1:-1]
+              count = raw.count(escaped_old)
+              if count != 1:
+                  raise SystemExit(f'manifest escaped anchor count {count}, expected 1')
+              raw = raw.replace(escaped_old, escaped_new, 1)
+          manifest.write_text(raw)
+          PY
+          git diff --check
+          python3 test/validator-auth-implementation/check_history_resolution_queue_wiring.py
+      - name: Build and run queue cases and mutations
+        run: |
+          set -euo pipefail
+          cmake -S . -B build-p0 -G Ninja -DCMAKE_BUILD_TYPE=Release -DTOS_ARCH= \
+            -DTOS_BUILD_P0_IMPLEMENTATION_TESTS=ON -DUSE_QUIC=OFF \
+            -DTOS_USE_ROCKSDB=OFF -DTOS_USE_ABSEIL=OFF -DTOS_USE_LLD=ON \
+            -DCMAKE_SKIP_INSTALL_RULES=ON \
+            -DOPENSSL_CRYPTO_LIBRARY="$(pkg-config --variable=libdir openssl)/libcrypto.so" \
+            -DOPENSSL_SSL_LIBRARY="$(pkg-config --variable=libdir openssl)/libssl.so" \
+            -DOPENSSL_INCLUDE_DIR="$(pkg-config --variable=includedir openssl)"
+          cmake --build build-p0 --target test-p0-history-resolution-queue -j2
+          build-p0/validator/auth/test-p0-history-resolution-queue | tee task3-queue.txt
+          cmake -S . -B build-p0-sanitized -G Ninja -DCMAKE_BUILD_TYPE=Release -DTOS_ARCH= \
+            -DTOS_BUILD_P0_IMPLEMENTATION_TESTS=ON -DUSE_QUIC=OFF \
+            -DTOS_USE_ASAN=ON -DTOS_USE_UBSAN=ON \
+            -DTOS_USE_ROCKSDB=OFF -DTOS_USE_ABSEIL=OFF -DTOS_USE_LLD=ON \
+            -DCMAKE_SKIP_INSTALL_RULES=ON \
+            -DOPENSSL_CRYPTO_LIBRARY="$(pkg-config --variable=libdir openssl)/libcrypto.so" \
+            -DOPENSSL_SSL_LIBRARY="$(pkg-config --variable=libdir openssl)/libssl.so" \
+            -DOPENSSL_INCLUDE_DIR="$(pkg-config --variable=includedir openssl)"
+          cmake --build build-p0-sanitized --target test-p0-history-resolution-queue -j2
+          ASAN_OPTIONS=detect_leaks=1:detect_stack_use_after_return=1 UBSAN_OPTIONS=halt_on_error=1 \
+            build-p0-sanitized/validator/auth/test-p0-history-resolution-queue | tee task3-queue-sanitized.txt
+          python3 test/validator-auth-implementation/history_resolution_queue_mutations.py task3-mutations | tee task3-mutations.txt
+      - name: Verify frozen production boundary
+        run: |
+          set -euo pipefail
+          python3 test/validator-auth-p0/check_production.py --out task3-production.json
+          python3 test/validator-auth-p0/freeze_record.py
+          python3 test/validator-auth-implementation/check_history_resolution_queue_wiring.py
+      - name: Commit verified queue wiring
+        run: |
+          set -euo pipefail
+          expected=$'.github/workflows/task3-history-resolution-queue-edit.yml\ndoc/validator-auth-p0-native-insertions.json\nvalidator/manager.cpp\nvalidator/manager.hpp'
+          test "$(git diff --name-only | sort)" = "$expected"
+          git rm .github/workflows/task3-history-resolution-queue-edit.yml
+          git config user.name gtosnetwork-dotcom
+          git config user.email gtosnetwork@gmail.com
+          git add validator/manager.cpp validator/manager.hpp doc/validator-auth-p0-native-insertions.json
+          git commit -m 'Queue validator auth history requests during resolution'
+          git push origin HEAD:feat/validator-auth-p0
