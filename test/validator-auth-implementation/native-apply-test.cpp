@@ -158,12 +158,40 @@ RegistryState policy_boundary(const RegistryState& state, std::uint32_t at, Poli
         "add-policy");
   vm::CellBuilder wrapper;
   check(policies.append_dict_to_bool(wrapper), "policy-wrapper");
+
+  // A policy that takes effect is a policy something attested to, so the parent
+  // this fixture builds has to carry the attestation as a real one would; a
+  // state without it is one no chain could produce.
+  Activation attestation;
+  attestation.revision_ = 1;
+  attestation.next_policy_ = id;
+  attestation.effective_from_ = at;
+  attestation.checkpoint_seqno_ = at - 1;
+  attestation.checkpoint_root_ = h(41);
+  attestation.checkpoint_file_ = h(42);
+  attestation.checkpoint_state_ = h(43);
+  vm::CellSlice control(vm::NoVm{}, s.prefetch_ref(3));
+  check(control.fetch_ulong(32) == 0x76616331, "policy-control");
+  vm::Dictionary activations(32);
+  std::array<std::uint8_t, 4> key{};
+  for (unsigned i = 0; i < 4; ++i)
+    key[i] = static_cast<std::uint8_t>(at >> (24 - i * 8));
+  check(activations.set_ref(td::ConstBitPtr(key.data()), 32,
+                            value(pack_bytes(value(encode(attestation), "activation")), "activation-bytes")),
+        "add-activation");
+  vm::CellBuilder activation_wrapper;
+  check(activation_wrapper.store_maybe_ref(activations.get_root_cell()), "activation-wrapper");
+  vm::CellBuilder rebuilt_control;
+  rebuilt_control.store_long(0x76616331, 32)
+      .store_ref(activation_wrapper.finalize())
+      .store_ref(control.prefetch_ref(1));
+
   vm::CellBuilder b;
   b.store_bits(s.prefetch_bits(s.size()))
       .store_ref(s.prefetch_ref(0))
       .store_ref(s.prefetch_ref(1))
       .store_ref(wrapper.finalize())
-      .store_ref(s.prefetch_ref(3));
+      .store_ref(rebuilt_control.finalize());
   return value(RegistryState::decode_cell(b.finalize(), state.coordinate()), "future-policy");
 }
 }  // namespace
@@ -415,9 +443,9 @@ int main(int argc, char** argv) {
       auto governing = snapshot(base);
       NativeIdentityContext host_context{base.chain, governing, base.history};
       ObjectReader host_reader({});
-      auto persistent = value(
-          NativeRegistry::bootstrap(value(base.parent.encode_cell(), "host-parent"), base.parent.coordinate()),
-          "host-bootstrap");
+      auto persistent =
+          value(NativeRegistry::bootstrap(value(base.parent.encode_cell(), "host-parent"), base.parent.coordinate()),
+                "host-bootstrap");
       auto prefix = value(NativeRegistryBlock::begin(persistent, base.inclusion), "host-begin");
       NativeConfigHost host(std::move(prefix), host_context, host_reader, base.inclusion);
 

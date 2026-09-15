@@ -202,6 +202,23 @@ Result<bool> RegistryState::validate() {
     previous_activation = id.value();
     activation_revision = a.revision_;
   }
+  // The converse, which nothing checked: a policy that takes effect is a policy
+  // something attested to. The activation carries the finalized checkpoint that
+  // witnessed the change, and policy_at() selects purely by coordinate, so a
+  // policy with no activation would govern every committee and session from its
+  // boundary onward with no record that the change ever happened.
+  //
+  // Which policy the attestation is about needs no check here: the loop above
+  // requires every activation to name a policy effective at its own coordinate,
+  // and policy_at() refuses two policies sharing one. Checking it again would
+  // be a guard no input can reach.
+  for (const auto& [at, p] : policies_) {
+    (void)at;
+    if (p.effective_from_ == 0)
+      continue;
+    if (!activations_.contains(p.effective_from_))
+      return Error{"policy-activation"};
+  }
   for (const auto& [id, o] : observations_) {
     auto hash = object_id("observation", o);
     if (!hash.ok())

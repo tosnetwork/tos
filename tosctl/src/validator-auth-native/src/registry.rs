@@ -251,6 +251,24 @@ impl RegistryState {
             }
             previous = object_id("activation", a)?;
         }
+        // The converse, which nothing checked: a policy that takes effect is a
+        // policy something attested to. The activation carries the finalized
+        // checkpoint that witnessed the change, and policy_at selects purely by
+        // coordinate, so a policy with no activation would govern every
+        // committee and session from its boundary onward with no record that
+        // the change ever happened.
+        //
+        // Which policy the attestation is about needs no check here: the loop
+        // above requires every activation to name a policy effective at its own
+        // coordinate, and policy_at refuses two policies sharing one.
+        for p in state.policies.values() {
+            if p.effective_from == 0 {
+                continue;
+            }
+            if !state.activations.contains_key(p.effective_from.to_be_bytes().as_slice()) {
+                return Err(Error("policy-activation"));
+            }
+        }
         for (id, o) in &state.observations {
             if object_id("observation", o)? != *id
                 || o.suite == 0
