@@ -84,7 +84,7 @@ Result<SignResult> SignerService::sign(const SignRequest& request) {
     return actual.error();
   if (actual.value() != plan.value().statement || record.value().components_.size() != 1)
     return Error{"provider-result-binding"};
-  auto admitted = AdmittedKey::admit(key.value().public_key_);
+  auto admitted = AdmittedKey::admit(key.value().suite_, key.value().parameters_, key.value().public_key_);
   if (!admitted.ok())
     return admitted.error();
   auto signature = admitted.value().verify(plan.value().statement, record.value().components_[0].signature_);
