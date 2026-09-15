@@ -264,11 +264,23 @@ mod config_persistence_action_phase {
         left.is_some_and(|cell| cell.hash(0) == right.hash(0))
     }
 
+    // The exported message carries the window it is valid in, and the contract
+    // refuses any external message whose deadline has passed. Reading that
+    // deadline out of the message being sent keeps one source for one fact: a
+    // fixture that moves the window moves this clock with it, where a constant
+    // chosen on either side would drift until one refused the other's message.
+    fn message_valid_until(body: &Cell) -> u32 {
+        let mut slice = SliceData::load_cell(body.clone()).expect("message body");
+        slice.move_by(512 + 32 + 32).expect("signature, action and sequence number");
+        slice.get_next_u32().expect("validity deadline")
+    }
+
     fn setup(initial_data: Cell, fixture: &Cells) -> (Blockchain, MsgAddressInt, Arc<AtomicUsize>) {
         let capabilities = 0x1ee | GlobalCapabilities::CapValidatorAuth as u64;
         let mut bc = Blockchain::with_global_version_and_capabilities(16, capabilities)
             .expect("version-pinned blockchain");
-        let address = MsgAddressInt::standard(-1, [0x77; 32].into());
+        bc.set_now(message_valid_until(&fixture.body));
+        let address = MsgAddressInt::standard(-1, [0x77u8; 32]);
         let state_init = StateInit::with_code_and_data(fixture.contract.clone(), initial_data);
         let account = Account::active(
             address.clone(),
@@ -567,7 +579,10 @@ MUTATIONS = [
         "            vm.set_validator_auth_host(host);\n"
         "        }\n",
         "",
-        [CASES[1]],
+        # The binding case opens with a positive control that requires the host
+        # to be installed, so removing the injection breaks it too. Measured by
+        # running every other case under this mutation.
+        [CASES[1], CASES[2]],
     ),
     (
         "action-refusal-rolls-back-data",
