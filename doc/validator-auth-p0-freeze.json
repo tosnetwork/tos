@@ -29,7 +29,7 @@
     "doc/validator-auth-p0/transport.schema.json": "ddd45d7d3eb672559efde020af95a0e215146775ec82f8c6847b0f3ab8127584",
     "doc/validator-auth-p0/wire.tl": "a5e10c8e25887cb30440a26a0d8cbcef1473878aeb87438cca1a0f0bc6875c15",
     "doc/validator-auth-p0/wire.tlb": "923650bd74bbbf677a070d1d13d7c12d46944e8bffbfc3a72641093d20d3ce9d",
-    "doc/validator-auth-p0-native-insertions.json": "60fe7579e5410cc687a3e98dc879a19ec7be968bee33e97915f75d87c862c2ca",
+    "doc/validator-auth-p0-native-insertions.json": "7378b6be39e6df34c5596dbbd60ec5dbc38182de8e55c27f526c159b861b1092",
     "test/validator-auth-p0/README.md": "a0b0950c4ac702f8be0f34919a50f8e7b13d5d14dda3bd2cc05b4c8ffee31321",
     "test/validator-auth-p0/api.py": "9ec50bf9e19345ef54a8894a3525eba1eed8fb10412b8a3fdc1ed1c5728fb815",
     "test/validator-auth-p0/archive_evidence.py": "22bb392a561068e0fb3905ce7e8df95bab463468cdfe3be884eff19b12481409",
@@ -97,6 +97,13 @@
       "sha256": "60fe7579e5410cc687a3e98dc879a19ec7be968bee33e97915f75d87c862c2ca",
       "change": "Declared queued native history resolution and its immutable pre-I/O snapshot as exact manager insertions in original-file coordinates.",
       "scope": "Additive only: validator/manager.cpp and validator/manager.hpp keep every historical byte. No wire or API artifact, activation gate, approval threshold, configuration root or later implementation boundary changes."
+    },
+    {
+      "artifact": "doc/validator-auth-p0-native-insertions.json",
+      "previous_sha256": "60fe7579e5410cc687a3e98dc879a19ec7be968bee33e97915f75d87c862c2ca",
+      "sha256": "7378b6be39e6df34c5596dbbd60ec5dbc38182de8e55c27f526c159b861b1092",
+      "change": "Installed the registry configuration parameter before the compute checkpoint, declared as amended bytes of the existing configuration-contract insertions in original-file coordinates.",
+      "scope": "Additive only: crypto/smartcont/config-code.fc keeps every historical byte and declares no additional insertion. No wire or API artifact, activation gate, approval threshold, configuration root or later implementation boundary changes."
     }
   ],
   "implementation_evidence_update": {

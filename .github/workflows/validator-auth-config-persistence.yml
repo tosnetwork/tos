@@ -6,6 +6,13 @@ on:
     paths:
       - 'test/validator-auth-implementation/config-contract-test.cpp'
       - 'test/validator-auth-implementation/config_contract_persistence.py'
+      - 'test/validator-auth-implementation/config_contract_persistence_mutations.py'
+      - 'test/validator-auth-implementation/config_action_phase_mutations.py'
+      - 'tosctl/src/executor/src/blockchain_config.rs'
+      - 'tosctl/src/executor/src/transaction_executor.rs'
+      - 'tosctl/src/sandbox/src/blockchain.rs'
+      - 'tosctl/src/node-control/contracts/tests/native_registry_sandbox.rs'
+      - 'doc/validator-auth-p0-native-insertions.json'
       - 'crypto/smartcont/config-code.fc'
       - '.github/workflows/validator-auth-config-persistence.yml'
   workflow_dispatch:
@@ -40,7 +47,7 @@ jobs:
           assert set(value['jobs']) == {'config-persistence'}
           steps = value['jobs']['config-persistence']['steps']
           ids = [step['id'] for step in steps if 'id' in step]
-          assert ids == ['dependencies', 'structure', 'build', 'measure', 'evidence']
+          assert ids == ['dependencies', 'structure', 'build', 'measure', 'cpp_mutations', 'rust_action', 'rust_mutations', 'frozen', 'evidence']
           assert steps[-1]['if'] == 'always()'
           assert value['permissions']['contents'] == 'read'
           print('WORKFLOW_STRUCTURE_OK')
@@ -75,6 +82,48 @@ jobs:
           printf '%s\n' "$rc" > artifacts/config-persistence/measurement.exit
           echo "MEASUREMENT_EXIT=$rc"
           exit "$rc"
+      - name: Run compiled configuration-contract mutations
+        id: cpp_mutations
+        run: |
+          set +e
+          python3 test/validator-auth-implementation/config_contract_persistence_mutations.py --out artifacts/config-persistence/cpp-mutations
+          rc=$?
+          printf '%s\n' "$rc" > artifacts/config-persistence/cpp-mutations.exit
+          echo "CPP_MUTATIONS_EXIT=$rc"
+          exit "$rc"
+      - name: Run real action-phase persistence and rollback evidence
+        id: rust_action
+        run: |
+          set +e
+          export P0_CONFIG_PERSISTENCE_CELLS="$PWD/artifacts/config-persistence/cells"
+          cargo test --manifest-path tosctl/src/node-control/contracts/Cargo.toml --test native_registry_sandbox config_persistence_action_phase -- --nocapture
+          rc=$?
+          printf '%s\n' "$rc" > artifacts/config-persistence/rust-action.exit
+          echo "RUST_ACTION_EXIT=$rc"
+          exit "$rc"
+      - name: Run compiled action-phase mutations
+        id: rust_mutations
+        run: |
+          set +e
+          python3 test/validator-auth-implementation/config_action_phase_mutations.py --cells artifacts/config-persistence/cells --out artifacts/config-persistence/rust-mutations
+          rc=$?
+          printf '%s\n' "$rc" > artifacts/config-persistence/rust-mutations.exit
+          echo "RUST_MUTATIONS_EXIT=$rc"
+          exit "$rc"
+      - name: Verify frozen production reconstruction
+        id: frozen
+        run: |
+          set +e
+          mkdir -p artifacts/config-persistence/production
+          python3 test/validator-auth-p0/check_production.py --out artifacts/config-persistence/production
+          production_rc=$?
+          python3 test/validator-auth-p0/freeze_record.py
+          freeze_rc=$?
+          printf '%s\n' "$production_rc" > artifacts/config-persistence/check-production.exit
+          printf '%s\n' "$freeze_rc" > artifacts/config-persistence/freeze-record.exit
+          echo "CHECK_PRODUCTION_EXIT=$production_rc"
+          echo "FREEZE_RECORD_EXIT=$freeze_rc"
+          test "$production_rc" -eq 0 -a "$freeze_rc" -eq 0
       - name: Retain exact measurements and built contract cells
         id: evidence
         if: always()

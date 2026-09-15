@@ -31,7 +31,7 @@ use chain_block::{
 use std::{
     collections::HashMap,
     convert::TryInto,
-    sync::{Arc, LazyLock},
+    sync::{Arc, LazyLock, Mutex},
 };
 use tos_vm::{
     error::tvm_exception_full,
@@ -103,6 +103,21 @@ pub enum IncorrectCheckRewrite {
 #[path = "tests/test_transaction_executor_with_real_data.rs"]
 mod tests_with_real_data;
 
+#[derive(Clone)]
+pub struct ValidatorAuthHostBinding {
+    account: MsgAddressInt,
+    host: Arc<Mutex<dyn tos_vm::validator_auth_host::ValidatorAuthHost>>,
+}
+
+impl ValidatorAuthHostBinding {
+    pub fn new(
+        account: MsgAddressInt,
+        host: Arc<Mutex<dyn tos_vm::validator_auth_host::ValidatorAuthHost>>,
+    ) -> Self {
+        Self { account, host }
+    }
+}
+
 #[derive(Clone, Default)]
 pub struct ExecuteParams {
     pub state_libs: HashmapE,
@@ -112,6 +127,10 @@ pub struct ExecuteParams {
     pub seed_block: UInt256,
     pub debug: bool,
     pub trace_callback: Option<Arc<tos_vm::executor::TraceCallback>>,
+    /// Native transaction authority supplied by the host process and bound
+    /// to exactly one destination account. Contract registers and c7 cannot
+    /// construct, replace, or retarget this value.
+    pub validator_auth_host: Option<ValidatorAuthHostBinding>,
     pub behavior_modifiers: Option<BehaviorModifiers>,
     pub prev_blocks_info: PrevBlocksInfo,
 }
@@ -429,6 +448,11 @@ pub trait TransactionExecutor {
             vm.set_arc_trace_callback(trace_callback);
         }
         vm.set_block_version(self.config().block_version());
+        if let Some(binding) = params.validator_auth_host.clone() {
+            if acc.get_addr().is_some_and(|address| address == &binding.account) {
+                vm.set_validator_auth_host(binding.host);
+            }
+        }
         if let Some(modifiers) = params.behavior_modifiers.clone() {
             vm.modify_behavior(modifiers);
         }

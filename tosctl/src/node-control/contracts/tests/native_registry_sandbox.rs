@@ -1484,3 +1484,236 @@ fn capability_rejects_duplicate_version_and_failed_transfer_is_state_atomic() {
     assert_eq!(f.state_at(&capability.address).hash(0), before_duplicate.hash(0));
     assert_eq!(capability_owner(&f.state_at(&capability.address)), old_owner_id);
 }
+
+
+mod config_persistence_action_phase {
+    use super::*;
+    use chain_block::{
+        Account, CurrencyCollection, GlobalCapabilities, HashmapE, HashmapType, SizeLimitsConfig,
+        TrComputePhase, DICT_HASH_MIN_CELLS,
+    };
+    use std::{
+        fs,
+        io::Write,
+        path::{Path, PathBuf},
+        sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc, Mutex,
+        },
+    };
+    use tos_vm::validator_auth_host::ValidatorAuthHost;
+
+    const CONFIG_BALANCE: u64 = 10_000_000_000_000;
+    const ACTION_LIMIT_FAILURE: i32 = 50;
+
+    struct Cells {
+        contract: Cell,
+        before: Cell,
+        after: Cell,
+        update: Cell,
+        evidence: Cell,
+        body: Cell,
+        empty_data: Cell,
+        old_data: Cell,
+    }
+
+    fn read_cell(root: &Path, name: &str) -> Cell {
+        read_single_root_boc(fs::read(root.join(name)).expect("fixture cell bytes"))
+            .expect("fixture cell boc")
+    }
+
+    fn cells() -> Cells {
+        let root = PathBuf::from(
+            std::env::var("P0_CONFIG_PERSISTENCE_CELLS")
+                .expect("P0_CONFIG_PERSISTENCE_CELLS must name exported built-contract cells"),
+        );
+        Cells {
+            contract: read_cell(&root, "contract.boc"),
+            before: read_cell(&root, "before.boc"),
+            after: read_cell(&root, "after.boc"),
+            update: read_cell(&root, "update.boc"),
+            evidence: read_cell(&root, "evidence.boc"),
+            body: read_cell(&root, "body.boc"),
+            empty_data: read_cell(&root, "data-empty.boc"),
+            old_data: read_cell(&root, "data-old.boc"),
+        }
+    }
+
+    struct Host {
+        expected_update: Cell,
+        expected_evidence: Cell,
+        returned_registry: Cell,
+        applies: Arc<AtomicUsize>,
+    }
+
+    impl ValidatorAuthHost for Host {
+        fn checkpoint(
+            &mut self,
+            charge: &mut dyn FnMut(i64) -> chain_block::Status,
+        ) -> chain_block::Result<Cell> {
+            charge(10)?;
+            BuilderData::new().into_cell()
+        }
+
+        fn apply(
+            &mut self,
+            update: Cell,
+            evidence: Cell,
+            charge: &mut dyn FnMut(i64) -> chain_block::Status,
+        ) -> chain_block::Result<Cell> {
+            charge(10)?;
+            assert_eq!(update.hash(0), self.expected_update.hash(0), "update operand changed");
+            assert_eq!(evidence.hash(0), self.expected_evidence.hash(0), "evidence operand changed");
+            self.applies.fetch_add(1, Ordering::SeqCst);
+            Ok(self.returned_registry.clone())
+        }
+    }
+
+    fn parameter(data: &Cell, index: u32) -> Option<Cell> {
+        let slice = SliceData::load_cell(data.clone()).expect("contract data");
+        let root = slice.reference(0).expect("config dictionary root");
+        let dict = HashmapE::with_hashmap(32, Some(root));
+        let entry = dict.get(index.write_to_bitstring().expect("config key")).expect("config lookup")?;
+        entry.reference_opt(0)
+    }
+
+    fn same_cell(left: Option<Cell>, right: &Cell) -> bool {
+        left.is_some_and(|cell| cell.hash(0) == right.hash(0))
+    }
+
+    // The exported message carries the window it is valid in, and the contract
+    // refuses any external message whose deadline has passed. Reading that
+    // deadline out of the message being sent keeps one source for one fact: a
+    // fixture that moves the window moves this clock with it, where a constant
+    // chosen on either side would drift until one refused the other's message.
+    fn message_valid_until(body: &Cell) -> u32 {
+        let mut slice = SliceData::load_cell(body.clone()).expect("message body");
+        slice.move_by(512 + 32 + 32).expect("signature, action and sequence number");
+        slice.get_next_u32().expect("validity deadline")
+    }
+
+    fn setup(initial_data: Cell, fixture: &Cells) -> (Blockchain, MsgAddressInt, Arc<AtomicUsize>) {
+        let capabilities = 0x1ee | GlobalCapabilities::CapValidatorAuth as u64;
+        let mut bc = Blockchain::with_global_version_and_capabilities(16, capabilities)
+            .expect("version-pinned blockchain");
+        bc.set_now(message_valid_until(&fixture.body));
+        let address = MsgAddressInt::standard(-1, [0x77u8; 32]);
+        let state_init = StateInit::with_code_and_data(fixture.contract.clone(), initial_data);
+        let account = Account::active(
+            address.clone(),
+            CurrencyCollection::with_coins(CONFIG_BALANCE),
+            0,
+            bc.now(),
+            state_init,
+            DICT_HASH_MIN_CELLS,
+        )
+        .expect("configuration account");
+        bc.set_account(address.clone(), account);
+
+        let applies = Arc::new(AtomicUsize::new(0));
+        let host: Arc<Mutex<dyn ValidatorAuthHost>> = Arc::new(Mutex::new(Host {
+            expected_update: fixture.update.clone(),
+            expected_evidence: fixture.evidence.clone(),
+            returned_registry: fixture.after.clone(),
+            applies: applies.clone(),
+        }));
+        bc.set_validator_auth_host(address.clone(), host);
+        (bc, address, applies)
+    }
+
+    fn send(bc: &mut Blockchain, address: &MsgAddressInt, body: Cell) -> SendResult {
+        bc.send_message(MessageBuilder::external(address).body(body).build())
+            .expect("configuration transaction")
+    }
+
+    fn persisted_data(bc: &Blockchain, address: &MsgAddressInt) -> Cell {
+        bc.get_account(address)
+            .expect("configuration account remains present")
+            .get_data()
+            .expect("configuration account data")
+    }
+
+    #[test]
+    fn accepted_registry_persists_after_action_phase() {
+        const NAME: &str = "accepted_registry_persists_after_action_phase";
+        println!("SETUP_OK {NAME}");
+        std::io::stdout().flush().unwrap();
+        let fixture = cells();
+        assert!(parameter(&fixture.empty_data, 46).is_none(), "fixture starts without parameter 46");
+        let (mut bc, address, applies) = setup(fixture.empty_data.clone(), &fixture);
+        let result = send(&mut bc, &address, fixture.body.clone());
+        result.expect_success().expect_exit_code(0);
+        assert_eq!(applies.load(Ordering::SeqCst), 1, "native apply must execute exactly once");
+        let data = persisted_data(&bc, &address);
+        assert!(same_cell(parameter(&data, 46), &fixture.after), "action phase did not persist the new registry");
+        println!("CASE_PASS {NAME}");
+    }
+
+    #[test]
+    fn refused_action_phase_rolls_registry_back() {
+        const NAME: &str = "refused_action_phase_rolls_registry_back";
+        println!("SETUP_OK {NAME}");
+        std::io::stdout().flush().unwrap();
+        let fixture = cells();
+        assert!(same_cell(parameter(&fixture.old_data, 46), &fixture.before), "fixture must contain the old registry");
+        let (mut bc, address, applies) = setup(fixture.old_data.clone(), &fixture);
+        let mut limits = SizeLimitsConfig::default();
+        limits.max_mc_acc_state_cells = 1;
+        bc.set_size_limits_config(limits).expect("tight account limit");
+
+        let result = send(&mut bc, &address, fixture.body.clone());
+        result.expect_aborted().expect_exit_code(0);
+        let descr = result.read_primary_description();
+        let TrComputePhase::Vm(compute) = descr.compute_ph else {
+            panic!("registry update did not execute in compute phase");
+        };
+        assert!(compute.success, "registry compute phase did not commit");
+        let action = descr.action.expect("action phase must run");
+        assert!(!action.success, "tight account limit must refuse the action phase");
+        assert_eq!(action.result_code, ACTION_LIMIT_FAILURE, "unexpected action refusal");
+        assert_eq!(applies.load(Ordering::SeqCst), 1, "native apply must execute before rollback");
+
+        let data = persisted_data(&bc, &address);
+        assert_eq!(data.hash(0), fixture.old_data.hash(0), "aborted action phase persisted compute data");
+        assert!(same_cell(parameter(&data, 46), &fixture.before), "aborted action phase half-applied the registry");
+        println!("CASE_PASS {NAME}");
+    }
+
+    #[test]
+    fn validator_auth_host_is_bound_to_configuration_account() {
+        const NAME: &str = "validator_auth_host_is_bound_to_configuration_account";
+        println!("SETUP_OK {NAME}");
+        std::io::stdout().flush().unwrap();
+        let fixture = cells();
+        let (mut bc, authority_account, applies) = setup(fixture.empty_data.clone(), &fixture);
+
+        // A refusal only measures the binding if the same message, the same host
+        // and the same contract are accepted when the destination is the bound
+        // account. Without this control every setup failure satisfies the refusal
+        // below, and the case reports a binding it never exercised.
+        send(&mut bc, &authority_account, fixture.body.clone()).expect_success();
+        assert_eq!(applies.load(Ordering::SeqCst), 1, "bound account did not reach the native host");
+
+        let other = MsgAddressInt::standard(-1, [0x78u8; 32]);
+        assert_ne!(other, authority_account, "fixture accounts must differ");
+        let state_init = StateInit::with_code_and_data(fixture.contract.clone(), fixture.empty_data.clone());
+        let account = Account::active(
+            other.clone(),
+            CurrencyCollection::with_coins(CONFIG_BALANCE),
+            0,
+            bc.now(),
+            state_init,
+            DICT_HASH_MIN_CELLS,
+        )
+        .expect("other configuration-shaped account");
+        bc.set_account(other.clone(), account);
+
+        let before = persisted_data(&bc, &other);
+        let result = bc.send_message(MessageBuilder::external(&other).body(fixture.body.clone()).build());
+        assert!(result.is_err(), "authority leaked to an account other than the bound destination");
+        assert_eq!(applies.load(Ordering::SeqCst), 1, "native host was reached by the wrong account");
+        let after = persisted_data(&bc, &other);
+        assert_eq!(after.hash(0), before.hash(0), "rejected wrong-account execution changed data");
+        println!("CASE_PASS {NAME}");
+    }
+}

@@ -284,6 +284,24 @@ impl BlockchainConfig {
         self.global_version
     }
 
+    /// Override the VM version and capability mask of a local executor
+    /// configuration while keeping its cached fields and ConfigParam 8
+    /// consistent. This changes only the in-process fixture/configuration
+    /// object; it does not activate a network configuration.
+    pub fn set_global_version_and_capabilities(
+        &mut self,
+        global_version: u32,
+        capabilities: u64,
+    ) -> Result<()> {
+        self.raw_config.set_config(ConfigParamEnum::ConfigParam8(ConfigParam8 {
+            global_version: GlobalVersion { version: global_version, capabilities },
+        }))?;
+        self.global_version = global_version;
+        self.capabilities = capabilities;
+        self.deferring_enabled = capabilities.bit(GlobalCapabilities::CapDeferMessages as u64);
+        Ok(())
+    }
+
     /// Get `MsgForwardPrices` for message forward fee calculation
     pub fn get_fwd_prices(&self, is_masterchain: bool) -> &MsgForwardPrices {
         if is_masterchain {

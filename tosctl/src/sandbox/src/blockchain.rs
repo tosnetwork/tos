@@ -11,6 +11,7 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::mem;
+use std::sync::{Arc, Mutex};
 
 use chain_block::{
     tos_method_id, Account, ConfigParams, CurrencyCollection, Deserializable, McStateExtra,
@@ -19,6 +20,7 @@ use chain_block::{
 };
 use tos_executor::{
     BlockchainConfig, ExecuteParams, OrdinaryTransactionExecutor, TransactionExecutor,
+    ValidatorAuthHostBinding,
 };
 use tos_vm::{
     executor::{gas::gas_state::Gas, Engine},
@@ -67,6 +69,7 @@ pub struct Blockchain {
     max_message_depth: usize,
     workchain: i8,
     transaction_log: Vec<(MsgAddressInt, Transaction)>,
+    validator_auth_host: Option<ValidatorAuthHostBinding>,
 }
 
 impl Blockchain {
@@ -90,6 +93,7 @@ impl Blockchain {
             max_message_depth: DEFAULT_MAX_MESSAGE_DEPTH,
             workchain: 0,
             transaction_log: Vec::new(),
+            validator_auth_host: None,
         })
     }
 
@@ -109,6 +113,32 @@ impl Blockchain {
             max_message_depth: DEFAULT_MAX_MESSAGE_DEPTH,
             workchain: 0,
             transaction_log: Vec::new(),
+            validator_auth_host: None,
+        })
+    }
+
+    /// Create a version-pinned sandbox with an explicit capability mask.
+    /// This is a local executor fixture; it does not activate a network.
+    pub fn with_global_version_and_capabilities(
+        global_version: u32,
+        capabilities: u64,
+    ) -> SandboxResult<Self> {
+        let mut config = BlockchainConfig::default_with_global_version(global_version)
+            .map_err(|e| SandboxError::ConfigError(e.to_string()))?;
+        config
+            .set_global_version_and_capabilities(global_version, capabilities)
+            .map_err(|e| SandboxError::ConfigError(e.to_string()))?;
+        let mc_state_cell = Self::build_mc_state_cell(config.raw_config())?;
+        Ok(Self {
+            accounts: HashMap::new(),
+            config,
+            mc_state_cell,
+            next_lt: DEFAULT_BLOCK_LT,
+            block_unixtime: DEFAULT_BLOCK_UNIXTIME,
+            max_message_depth: DEFAULT_MAX_MESSAGE_DEPTH,
+            workchain: 0,
+            transaction_log: Vec::new(),
+            validator_auth_host: None,
         })
     }
 
@@ -129,6 +159,7 @@ impl Blockchain {
             max_message_depth: DEFAULT_MAX_MESSAGE_DEPTH,
             workchain: 0,
             transaction_log: Vec::new(),
+            validator_auth_host: None,
         })
     }
 
@@ -147,6 +178,7 @@ impl Blockchain {
             max_message_depth: DEFAULT_MAX_MESSAGE_DEPTH,
             workchain: 0,
             transaction_log: Vec::new(),
+            validator_auth_host: None,
         })
     }
 
@@ -218,6 +250,16 @@ impl Blockchain {
     /// Insert or replace an account at the given address.
     pub fn set_account(&mut self, address: MsgAddressInt, account: Account) {
         self.accounts.insert(address.to_string(), account);
+    }
+
+    /// Install a host-only validator-auth authority for subsequent local
+    /// transactions. Snapshots deliberately do not persist this authority.
+    pub fn set_validator_auth_host(
+        &mut self,
+        account: MsgAddressInt,
+        host: Arc<Mutex<dyn tos_vm::validator_auth_host::ValidatorAuthHost>>,
+    ) {
+        self.validator_auth_host = Some(ValidatorAuthHostBinding::new(account, host));
     }
 
     /// Look up an account by address.
@@ -464,6 +506,7 @@ impl Blockchain {
             block_unixtime: self.block_unixtime,
             block_lt: self.next_lt - self.next_lt % 1_000_000,
             last_tr_lt: self.next_lt,
+            validator_auth_host: self.validator_auth_host.clone(),
             ..ExecuteParams::default()
         }
     }

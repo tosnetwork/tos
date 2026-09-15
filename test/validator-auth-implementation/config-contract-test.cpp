@@ -276,15 +276,17 @@ Outcome registry_run(const td::Ref<vm::Cell>& contract, const RegistryCells& cel
                       vm::validator_auth_min_version, true, previous ? cells.before : td::Ref<vm::Cell>{}, gas);
 }
 
-// Find an actual gas interruption after a checkpoint, not a simulated action
-// phase. The checkpoint's c4, not the live register, is what compute can offer
-// to transaction processing on this exit. The checkpoint must already contain
-// both the new registry and its consumed external-message sequence number.
-Outcome interrupted_registry_run(const td::Ref<vm::Cell>& contract, const RegistryCells& cells, bool previous) {
+// Find the smallest real gas limit that produces a committed checkpoint. After
+// the safe ordering there need not be a gas-consuming instruction after commit,
+// so a successful full run may be the first committed execution. The invariant
+// is about checkpoint contents, not about manufacturing a later exception: once
+// VAUTH_APPLY has succeeded, every committed c4 must already contain both the
+// returned registry and the consumed external-message sequence number.
+Outcome first_committed_registry_run(const td::Ref<vm::Cell>& contract, const RegistryCells& cells, bool previous) {
   auto full_host = registry_host(cells);
   auto full = registry_run(contract, cells, full_host, previous);
-  expect(full.exit == 0 && full.committed && full_host.applies == 1, "interrupt-control-runs-contract");
-  expect(full.gas > 1 && full.gas < 1000000, "interrupt-search-bound");
+  expect(full.exit == 0 && full.committed && full_host.applies == 1, "checkpoint-control-runs-contract");
+  expect(full.gas > 1 && full.gas < 1000000, "checkpoint-search-bound");
   long long low = 1, high = full.gas;
   while (low < high) {
     const auto middle = low + (high - low) / 2;
@@ -296,14 +298,14 @@ Outcome interrupted_registry_run(const td::Ref<vm::Cell>& contract, const Regist
       low = middle + 1;
   }
   auto host = registry_host(cells);
-  auto interrupted = registry_run(contract, cells, host, previous, low);
-  std::cout << "MEASURE gas_limit=" << low << " full_gas=" << full.gas << " exit=" << interrupted.exit
-            << " committed=" << interrupted.committed << " applies=" << host.applies
+  auto first = registry_run(contract, cells, host, previous, low);
+  std::cout << "MEASURE first_committed_gas=" << low << " full_gas=" << full.gas << " exit=" << first.exit
+            << " committed=" << first.committed << " applies=" << host.applies
             << " checkpoint_has_new_registry="
-            << same_cell(installed_parameter(interrupted.committed_data, 46), cells.after) << '\n' << std::flush;
-  expect(interrupted.exit == -14 && interrupted.committed && host.applies == 1,
-         "interrupt-reaches-postcommit-out-of-gas");
-  return interrupted;
+            << same_cell(installed_parameter(first.committed_data, 46), cells.after) << '\n' << std::flush;
+  expect(first.committed && host.applies == 1 && (first.exit == 0 || first.exit == -14),
+         "first-committed-checkpoint-reached");
+  return first;
 }
 
 int run_apply(bool with_host, Host& host, td::uint64 capabilities, int version) {
@@ -405,17 +407,17 @@ std::vector<Case> cases(const td::Ref<vm::Cell>& contract) {
                     same_cell(installed_parameter(run.committed_data, 46), cells.after) && stored_sequence(run.data) == 1,
                 "registry-c4-replaces-old-parameter-46");
        }},
-      {"registry-checkpoint-installs-before-interruption", [=] {
+      {"registry-first-checkpoint-installs-new-parameter", [=] {
          auto cells = registry_cells();
-         const auto run = interrupted_registry_run(contract, cells, false);
+         const auto run = first_committed_registry_run(contract, cells, false);
          expect(same_cell(installed_parameter(run.committed_data, 46), cells.after) &&
-                    stored_sequence(run.committed_data) == 1, "registry-checkpoint-installs-before-interruption");
+                    stored_sequence(run.committed_data) == 1, "registry-first-checkpoint-installs-new-parameter");
        }},
-      {"registry-checkpoint-replaces-before-interruption", [=] {
+      {"registry-first-checkpoint-replaces-old-parameter", [=] {
          auto cells = registry_cells();
-         const auto run = interrupted_registry_run(contract, cells, true);
+         const auto run = first_committed_registry_run(contract, cells, true);
          expect(same_cell(installed_parameter(run.committed_data, 46), cells.after) &&
-                    stored_sequence(run.committed_data) == 1, "registry-checkpoint-replaces-before-interruption");
+                    stored_sequence(run.committed_data) == 1, "registry-first-checkpoint-replaces-old-parameter");
        }},
   };
 }
