@@ -1,19 +1,12 @@
 // Filling the resolved-history cache from the archive.
-//
-// An update that names history this node has not fetched is deferred, and
-// nothing ever admits it unless something resolves what it named. This is that
-// step, and the question it has to answer is not whether it can fill the cache
-// but whether it can be made to fill it with the wrong thing: the cache is
-// consulted instead of the archive afterwards, so a block accepted here would
-// never be looked at again.
-//
-// Which block belongs at a coordinate is decided by the parent state's own
-// record of previous blocks, through the one implementation that reads it. What
-// these cases have to show is that resolution really does go through it, and
-// that it refuses rather than waits when a block is served and does not match.
 #include <filesystem>
+#include <functional>
 #include <iostream>
 #include <stdexcept>
+#include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
 
 #include "validator/auth/native-anchor-cache.h"
 
@@ -23,37 +16,34 @@
 using namespace p0_owner_fixture;
 
 namespace {
-unsigned passed = 0;
+struct AssertionFailure : std::runtime_error {
+  using std::runtime_error::runtime_error;
+};
 
-void ok(const char* name) {
-  ++passed;
-  std::cout << "CASE_PASS " << name << '\n';
-}
-
-void expect(bool condition, const char* name) {
+void require(bool condition, const std::string& assertion) {
   if (!condition)
-    throw std::runtime_error(name);
+    throw AssertionFailure(assertion);
 }
 
 void refuses(const Result<Resolution>& result, const char* code, const char* name) {
   if (result.ok() || result.error().code != code) {
     std::cerr << "DETAIL " << name << " expected=" << code
               << " actual=" << (result.ok() ? "resolved" : result.error().code) << '\n';
-    throw std::runtime_error(name);
+    throw AssertionFailure(name);
   }
-  ok(name);
 }
+
+using Test = std::pair<std::string, std::function<void()>>;
 }  // namespace
 
 int main(int argc, char** argv) {
   try {
-    check(argc == 2, "arguments");
+    if (argc < 2 || argc > 3) {
+      std::cerr << "USAGE: test-p0-history-resolve INPUTS [case-name|--list|--exclude=case]\n";
+      return 2;
+    }
     std::filesystem::path input(argv[1]);
 
-    // A real masterchain block at coordinate 99, and a head state at 100 whose
-    // record of previous blocks names it. This is the arrangement the header
-    // fixture builds, and it is the only thing that makes a coordinate mean
-    // anything.
     auto f = fixture(input);
     auto zero = history_state(mcstate(f), 0, {});
     f.chain.genesis_root = hash(zero);
@@ -67,13 +57,14 @@ int main(int argc, char** argv) {
     const Anchor committed{99, hash(block), file_hash(raw), hash(state)};
 
     auto recorded = history_state(mcstate(f), 100, {z, {99, 99, committed.root_, committed.file_}});
+    const auto head_root = h(800);
+    const auto head_file = h(801);
     const tos::BlockIdExt head_id{{tos::masterchainId, tos::shardIdAll, 100},
-                                  td::Bits256(td::ConstBitPtr(h(800).data())),
-                                  td::Bits256(td::ConstBitPtr(h(801).data()))};
+                                  td::Bits256(td::ConstBitPtr(head_root.data())),
+                                  td::Bits256(td::ConstBitPtr(head_file.data()))};
     const Anchor head = anchor_of(head_id, recorded);
-    check(head == (Anchor{100, h(800), h(801), hash(recorded)}), "fixture-head-anchor");
+    check(head == (Anchor{100, head_root, head_file, hash(recorded)}), "fixture-head-anchor");
 
-    // Another real block, which is not the one the record names.
     auto elsewhere = block_for(cell(read(input / "accept.boc")), previous, f);
     elsewhere = replace_ref(elsewhere, 2, vm::CellBuilder::create_merkle_update(state, previous));
     const auto other_raw = boc(elsewhere);
@@ -87,52 +78,40 @@ int main(int argc, char** argv) {
       return raw;
     };
 
-    {
+    std::vector<Test> tests;
+    auto add = [&](std::string name, std::function<void()> fn) {
+      tests.emplace_back(std::move(name), std::move(fn));
+    };
+
+    add("declared-history-becomes-a-source", [&] {
       NativeAnchorCache cache;
       std::vector<std::uint32_t> want{99};
       auto resolved = resolve_declared_history(want, recorded, head, f.chain, archive, cache);
-      expect(resolved.ok(), "declared-history-becomes-a-source");
-      expect(resolved.value().admitted == 1, "declared-history-becomes-a-source");
-      expect(resolved.value().unavailable.empty(), "declared-history-becomes-a-source");
-      expect(cache.missing(want).empty(), "declared-history-becomes-a-source");
-      // The point of resolving: what was deferred can now be served, and what
-      // is served is the anchor that block commits.
+      require(resolved.ok() && resolved.value().admitted == 1 && resolved.value().unavailable.empty(),
+              "declared-history-becomes-a-source");
+      require(cache.missing(want).empty(), "declared-history-becomes-a-source");
       auto source = cache.source(want);
-      expect(source.ok(), "declared-history-becomes-a-source");
+      require(source.ok(), "declared-history-becomes-a-source");
       auto served = source.value().finalized_anchor(99);
-      expect(served.ok() && served.value() == committed, "declared-history-becomes-a-source");
-      ok("declared-history-becomes-a-source");
-    }
-
-    {
-      // A real block that is not the one the record names. Serving it is not a
-      // reason to wait; it is a reason to refuse.
+      require(served.ok() && served.value() == committed, "declared-history-becomes-a-source");
+    });
+    add("substituted-block-is-refused", [&] {
       NativeAnchorCache cache;
       auto substitution = [&](const tos::BlockIdExt&, std::size_t) -> Result<Bytes> { return other_raw; };
       std::vector<std::uint32_t> want{99};
       auto refused = resolve_declared_history(want, recorded, head, f.chain, substitution, cache);
-      expect(!refused.ok(), "substituted-block-is-refused");
-      expect(cache.size() == 0, "substituted-block-is-refused");
-      ok("substituted-block-is-refused");
-    }
-
-    {
-      // The ordinary case for a freshly deferred update: this node does not
-      // have the block yet. That is not a refusal, it is a reason to try again.
+      require(!refused.ok() && cache.size() == 0, "substituted-block-is-refused");
+    });
+    add("unfetched-block-is-reported-not-refused", [&] {
       NativeAnchorCache cache;
       auto empty_archive = [&](const tos::BlockIdExt&, std::size_t) -> Result<Bytes> { return Error{"archive-miss"}; };
       std::vector<std::uint32_t> want{99};
       auto resolved = resolve_declared_history(want, recorded, head, f.chain, empty_archive, cache);
-      expect(resolved.ok(), "unfetched-block-is-reported-not-refused");
-      expect(resolved.value().admitted == 0, "unfetched-block-is-reported-not-refused");
-      expect(resolved.value().unavailable == std::vector<std::uint32_t>{99}, "unfetched-block-is-reported-not-refused");
-      expect(!cache.source(want).ok(), "unfetched-block-is-reported-not-refused");
-      ok("unfetched-block-is-reported-not-refused");
-    }
-
-    {
-      // A coordinate the record does not name is not history this chain has,
-      // and no archive read can make it so.
+      require(resolved.ok() && resolved.value().admitted == 0 &&
+                  resolved.value().unavailable == std::vector<std::uint32_t>{99} && !cache.source(want).ok(),
+              "unfetched-block-is-reported-not-refused");
+    });
+    add("coordinate-outside-the-record-is-refused", [&] {
       NativeAnchorCache cache;
       unsigned reads = 0;
       auto counted = [&](const tos::BlockIdExt& id, std::size_t limit) -> Result<Bytes> {
@@ -141,15 +120,9 @@ int main(int argc, char** argv) {
       };
       std::vector<std::uint32_t> want{50};
       auto refused = resolve_declared_history(want, recorded, head, f.chain, counted, cache);
-      expect(!refused.ok(), "coordinate-outside-the-record-is-refused");
-      expect(reads == 0, "coordinate-outside-the-record-is-refused");
-      expect(cache.size() == 0, "coordinate-outside-the-record-is-refused");
-      ok("coordinate-outside-the-record-is-refused");
-    }
-
-    {
-      // The head needs no read at all, and what is kept for it is the head
-      // this resolution was opened against.
+      require(!refused.ok() && reads == 0 && cache.size() == 0, "coordinate-outside-the-record-is-refused");
+    });
+    add("head-is-served-without-a-read", [&] {
       NativeAnchorCache cache;
       unsigned reads = 0;
       auto counted = [&](const tos::BlockIdExt& id, std::size_t limit) -> Result<Bytes> {
@@ -158,61 +131,44 @@ int main(int argc, char** argv) {
       };
       std::vector<std::uint32_t> want{100};
       auto resolved = resolve_declared_history(want, recorded, head, f.chain, counted, cache);
-      expect(resolved.ok() && resolved.value().admitted == 1, "head-is-served-without-a-read");
-      expect(reads == 0, "head-is-served-without-a-read");
+      require(resolved.ok() && resolved.value().admitted == 1 && reads == 0, "head-is-served-without-a-read");
       auto source = cache.source(want);
-      expect(source.ok(), "head-is-served-without-a-read");
+      require(source.ok(), "head-is-served-without-a-read");
       auto served = source.value().finalized_anchor(100);
-      expect(served.ok() && served.value() == head, "head-is-served-without-a-read");
-      ok("head-is-served-without-a-read");
-    }
-
-    {
-      // What a node has to fetch before it can resolve. It is the block the
-      // record names, not merely a block at that coordinate.
+      require(served.ok() && served.value() == head, "head-is-served-without-a-read");
+    });
+    add("reads-are-enumerable-before-fetching", [&] {
       NativeAnchorCache empty;
-      auto wanted = required_finalized_blocks({std::vector<std::uint32_t>{99, 100}}, recorded, head, f.chain, empty);
-      expect(wanted.ok(), "reads-are-enumerable-before-fetching");
-      expect(wanted.value().size() == 1, "reads-are-enumerable-before-fetching");
-      expect(wanted.value()[0].seqno() == 99, "reads-are-enumerable-before-fetching");
-      expect(wanted.value()[0].root_hash == td::Bits256(td::ConstBitPtr(committed.root_.data())),
-             "reads-are-enumerable-before-fetching");
-      expect(wanted.value()[0].file_hash == td::Bits256(td::ConstBitPtr(committed.file_.data())),
-             "reads-are-enumerable-before-fetching");
-      // Nothing the node already holds is named again.
+      const std::vector<std::uint32_t> both{99, 100};
+      auto wanted = required_finalized_blocks(both, recorded, head, f.chain, empty);
+      require(wanted.ok() && wanted.value().size() == 1 && wanted.value()[0].seqno() == 99,
+              "reads-are-enumerable-before-fetching");
+      require(wanted.value()[0].root_hash == td::Bits256(td::ConstBitPtr(committed.root_.data())) &&
+                  wanted.value()[0].file_hash == td::Bits256(td::ConstBitPtr(committed.file_.data())),
+              "reads-are-enumerable-before-fetching");
       NativeAnchorCache holding;
-      expect(holding.admit(99, committed).ok(), "reads-are-enumerable-before-fetching");
-      auto none = required_finalized_blocks({std::vector<std::uint32_t>{99}}, recorded, head, f.chain, holding);
-      expect(none.ok() && none.value().empty(), "reads-are-enumerable-before-fetching");
-      ok("reads-are-enumerable-before-fetching");
-    }
-
-    {
-      // A resolution that disagrees with what is already held is a
-      // disagreement about finalized history, not a refresh.
+      require(holding.admit(99, committed).ok(), "reads-are-enumerable-before-fetching");
+      const std::vector<std::uint32_t> one{99};
+      auto none = required_finalized_blocks(one, recorded, head, f.chain, holding);
+      require(none.ok() && none.value().empty(), "reads-are-enumerable-before-fetching");
+    });
+    add("disagreement-with-what-is-held-is-refused", [&] {
       NativeAnchorCache cache;
-      expect(cache.admit(99, Anchor{99, h(11), h(12), h(13)}).ok(), "disagreement-with-what-is-held-is-refused");
+      require(cache.admit(99, Anchor{99, h(11), h(12), h(13)}).ok(),
+              "disagreement-with-what-is-held-is-refused");
       std::vector<std::uint32_t> want{99};
       auto refused = resolve_declared_history(want, recorded, head, f.chain, archive, cache);
-      expect(!refused.ok() && refused.error().code == "anchor-cache-conflict",
-             "disagreement-with-what-is-held-is-refused");
-      ok("disagreement-with-what-is-held-is-refused");
-    }
-
-    {
-      // One coordinate this node cannot serve must not turn the next one into
-      // a wait: a coordinate the record does not name is still a refusal.
+      require(!refused.ok() && refused.error().code == "anchor-cache-conflict",
+              "disagreement-with-what-is-held-is-refused");
+    });
+    add("a-wait-does-not-excuse-a-later-refusal", [&] {
       NativeAnchorCache cache;
       auto empty_archive = [&](const tos::BlockIdExt&, std::size_t) -> Result<Bytes> { return Error{"archive-miss"}; };
       std::vector<std::uint32_t> want{99, 50};
       auto mixed = resolve_declared_history(want, recorded, head, f.chain, empty_archive, cache);
-      expect(!mixed.ok(), "a-wait-does-not-excuse-a-later-refusal");
-      ok("a-wait-does-not-excuse-a-later-refusal");
-    }
-
-    {
-      // More coordinates than a declaration may carry is refused before a
-      // single read, so an oversized demand costs no archive work.
+      require(!mixed.ok(), "a-wait-does-not-excuse-a-later-refusal");
+    });
+    add("oversized-declaration-is-refused", [&] {
       NativeAnchorCache cache;
       unsigned reads = 0;
       auto counted = [&](const tos::BlockIdExt& id, std::size_t limit) -> Result<Bytes> {
@@ -222,20 +178,55 @@ int main(int argc, char** argv) {
       std::vector<std::uint32_t> want(65, 99);
       refuses(resolve_declared_history(want, recorded, head, f.chain, counted, cache), "anchor-resolve-budget",
               "oversized-declaration-is-refused");
-      expect(reads == 0, "oversized-declaration-is-refused");
-    }
-
-    {
+      require(reads == 0, "oversized-declaration-is-refused");
+    });
+    add("absent-reader-is-refused", [&] {
       NativeAnchorCache cache;
       std::vector<std::uint32_t> want{99};
       refuses(resolve_declared_history(want, recorded, head, f.chain, {}, cache), "anchor-resolve-reader",
               "absent-reader-is-refused");
+    });
+
+    if (argc == 3 && std::string_view(argv[2]) == "--list") {
+      for (const auto& [name, _] : tests)
+        std::cout << name << '\n';
+      return 0;
+    }
+    std::string selected;
+    std::string excluded;
+    if (argc == 3) {
+      std::string argument(argv[2]);
+      constexpr std::string_view prefix = "--exclude=";
+      if (argument.starts_with(prefix))
+        excluded = argument.substr(prefix.size());
+      else
+        selected = std::move(argument);
     }
 
-    std::cout << "SUMMARY cases=" << passed << " passed=" << passed << '\n';
+    std::size_t ran = 0;
+    for (const auto& [name, fn] : tests) {
+      if (!selected.empty() && name != selected)
+        continue;
+      if (!excluded.empty() && name == excluded)
+        continue;
+      std::cout << "SETUP_OK " << name << '\n';
+      try {
+        fn();
+      } catch (const AssertionFailure&) {
+        std::cerr << "ASSERTION_FAILED " << name << '\n';
+        return 1;
+      }
+      std::cout << "CASE_PASS " << name << '\n';
+      ++ran;
+    }
+    if (ran == 0) {
+      std::cerr << "UNKNOWN_CASE\n";
+      return 2;
+    }
+    std::cout << "SUMMARY cases=" << ran << " passed=" << ran << '\n';
     return 0;
   } catch (const std::exception& error) {
-    std::cerr << "ASSERTION: " << error.what() << '\n';
-    return 1;
+    std::cerr << "UNEXPECTED_EXCEPTION " << error.what() << '\n';
+    return 2;
   }
 }

@@ -1,14 +1,11 @@
-"""Remove one guard of history resolution at a time.
+"""Compile history-resolution mutants and require isolated named failures.
 
-The cache is consulted instead of the archive after this runs, so anything
-admitted wrongly here is never looked at again. Each case below has to be the
-only one that fails when its own guard is gone.
-
-One guard is deliberately absent from this list. Removing the check for an
-absent reader does not make the named case fail; it makes the call abort inside
-std::function. The guard is necessary and is not independently observable, so it
-is recorded here rather than counted as covered.
+The absent-reader guard remains deliberately outside the mutation inventory:
+removing it aborts inside std::function instead of producing a named assertion,
+so a compiler/crash is not counted as a kill.
 """
+from __future__ import annotations
+
 import argparse
 import json
 import subprocess
@@ -20,38 +17,55 @@ BINARY = Path("build-p0/test/validator-auth-implementation/test-p0-history-resol
 
 MUTATIONS = [
     ("declaration-bound", "oversized-declaration-is-refused",
-     '  if (coordinates.size() > budget.coordinates)\n    return Error{"anchor-resolve-budget"};',
-     ''),
+     '  if (coordinates.size() > budget.coordinates)\n    return Error{"anchor-resolve-budget"};', ''),
     ("refusal-not-deferral", "substituted-block-is-refused",
-     '      return anchor.error();',
-     '      resolution.unavailable.push_back(at);\n      continue;'),
+     '      return anchor.error();', '      resolution.unavailable.push_back(at);\n      continue;'),
     ("wait-not-refusal", "unfetched-block-is-reported-not-refused",
-     '      if (!served) {\n        resolution.unavailable.push_back(at);\n        continue;\n      }',
-     ''),
+     '      if (!served) {\n        resolution.unavailable.push_back(at);\n        continue;\n      }', ''),
     ("served-reset", "a-wait-does-not-excuse-a-later-refusal",
      '    served = true;\n    auto anchor = history.value().finalized_anchor(at);',
      '    auto anchor = history.value().finalized_anchor(at);'),
     ("admission-checked", "disagreement-with-what-is-held-is-refused",
      '    auto admitted = cache.admit(at, anchor.value());\n'
      '    if (!admitted.ok())\n'
-     '      return admitted.error();',
-     '    cache.admit(at, anchor.value());'),
-    ("admitted-counted", "declared-history-becomes-a-source",
-     '    ++resolution.admitted;',
-     ''),
+     '      return admitted.error();', '    cache.admit(at, anchor.value());'),
+    ("admitted-counted", "declared-history-becomes-a-source", '    ++resolution.admitted;', ''),
     ("enumeration-narrowed", "reads-are-enumerable-before-fetching",
      '  const auto absent = held.missing(coordinates);',
      '  const std::vector<std::uint32_t> absent(coordinates.begin(), coordinates.end());'),
 ]
 
 
+def invoke(command: list[str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(command, capture_output=True, text=True, check=False)
+
+
 def build() -> bool:
-    return subprocess.run(["cmake", "--build", "build-p0", "--target", "test-p0-history-resolve", "-j48"],
-                          capture_output=True, text=True, check=False).returncode == 0
+    return invoke(["cmake", "--build", "build-p0", "--target", "test-p0-history-resolve", "-j48"]).returncode == 0
 
 
-def run(inputs: Path) -> subprocess.CompletedProcess:
-    return subprocess.run([str(BINARY), str(inputs)], capture_output=True, text=True, check=False)
+def run(inputs: Path, selector: str | None = None) -> subprocess.CompletedProcess[str]:
+    command = [str(BINARY), str(inputs)]
+    if selector:
+        command.append(selector)
+    return invoke(command)
+
+
+def passing(result: subprocess.CompletedProcess[str], expected: int) -> bool:
+    lines = result.stdout.splitlines()
+    return (result.returncode == 0 and result.stderr == "" and
+            lines[-1:] == [f"SUMMARY cases={expected} passed={expected}"] and
+            sum(line.startswith("CASE_PASS ") for line in lines) == expected)
+
+
+def named_failure(result: subprocess.CompletedProcess[str], case: str) -> bool:
+    if result.returncode != 1 or result.stdout.splitlines() != [f"SETUP_OK {case}"]:
+        return False
+    errors = result.stderr.splitlines()
+    if errors == [f"ASSERTION_FAILED {case}"]:
+        return True
+    return (len(errors) == 2 and errors[0].startswith(f"DETAIL {case} expected=") and
+            errors[1] == f"ASSERTION_FAILED {case}")
 
 
 def main() -> int:
@@ -62,42 +76,49 @@ def main() -> int:
     args.out.mkdir(parents=True, exist_ok=True)
 
     original = SOURCE.read_text()
-    baseline = run(args.inputs)
-    if baseline.returncode != 0:
-        print("BASELINE-NOT-PASSING")
+    if not build():
+        print("BASELINE-BUILD-FAILED", file=sys.stderr)
         return 1
-    cases = [line.split()[1] for line in baseline.stdout.splitlines() if line.startswith("CASE_PASS")]
+    listed = run(args.inputs, "--list")
+    cases = listed.stdout.splitlines()
+    if listed.returncode != 0 or listed.stderr != "" or not cases:
+        print("CASE-INVENTORY-FAILED", file=sys.stderr)
+        return 1
+    if not passing(run(args.inputs), len(cases)):
+        print("BASELINE-NOT-PASSING", file=sys.stderr)
+        return 1
 
-    records, failures = [], 0
-    for guard, case, before, after in MUTATIONS:
-        if original.count(before) != 1:
-            print(f"ANCHOR-NOT-UNIQUE {guard} ({original.count(before)})")
-            failures += 1
-            continue
-        SOURCE.write_text(original.replace(before, after, 1))
-        reached = before not in SOURCE.read_text()
-        compiled = build()
-        named, others = False, False
-        if compiled:
-            result = run(args.inputs)
-            output = result.stdout + result.stderr
-            named = result.returncode != 0 and case in output
-            # The test stops at its first failure, so what can be checked is
-            # that no case ahead of this one failed first. A mutation that kills
-            # an earlier case is killing something other than what it names.
-            expected = cases[:cases.index(case)]
-            others = all(f"CASE_PASS {name}" in output for name in expected)
+    records = []
+    failures = 0
+    try:
+        for guard, case, before, after in MUTATIONS:
+            if original.count(before) != 1:
+                print(f"ANCHOR-NOT-UNIQUE {guard} ({original.count(before)})", file=sys.stderr)
+                failures += 1
+                continue
+            changed = original.replace(before, after, 1)
+            SOURCE.write_text(changed)
+            reached = SOURCE.read_text() == changed
+            compiled = build()
+            named = False
+            isolated = False
+            if compiled:
+                named = named_failure(run(args.inputs, case), case)
+                isolated = passing(run(args.inputs, f"--exclude={case}"), len(cases) - 1)
+            SOURCE.write_text(original)
+            restored = build() and passing(run(args.inputs), len(cases))
+            record = {"guard": guard, "case": case, "edit_reached_source": reached, "compiled": compiled,
+                      "named_assertion_failed": named, "other_cases_passed": isolated,
+                      "restored_baseline": restored, "source_unchanged": SOURCE.read_text() == original}
+            records.append(record)
+            print(json.dumps(record), flush=True)
+            if not all(record[key] for key in ("edit_reached_source", "compiled", "named_assertion_failed",
+                                                "other_cases_passed", "restored_baseline", "source_unchanged")):
+                failures += 1
+    finally:
         SOURCE.write_text(original)
-        restored = build() and run(args.inputs).returncode == 0
-        record = {"guard": guard, "case": case, "edit_reached_source": reached, "compiled": compiled,
-                  "named_assertion_failed": named, "no_earlier_case_failed": others,
-                  "restored_baseline": restored, "source_unchanged": SOURCE.read_text() == original}
-        records.append(record)
-        print(json.dumps(record))
-        if not all(record[k] for k in record if k != "guard" and k != "case"):
-            failures += 1
 
-    (args.out / "mutations.json").write_text(json.dumps(records, indent=1))
+    (args.out / "mutations.json").write_text(json.dumps(records, indent=1) + "\n")
     return 1 if failures else 0
 
 

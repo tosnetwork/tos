@@ -1,12 +1,13 @@
 // What authority does a native configuration transaction execute under?
-//
-// Assembling it wrongly is not a crash; it is a block governed by a committee it
-// is itself introducing, or an update authorised by state the block has not
-// finished producing. Both would pass every existing check, so they are what
-// these cases construct.
+#include <filesystem>
+#include <functional>
 #include <iostream>
 #include <memory>
 #include <stdexcept>
+#include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
 
 #include "validator/auth/cells.h"
 #include "validator/auth/native-config-transaction.h"
@@ -16,20 +17,19 @@
 using namespace p0_owner_fixture;
 
 namespace {
-unsigned passed = 0;
+struct AssertionFailure : std::runtime_error {
+  using std::runtime_error::runtime_error;
+};
 
-void ok(const char* name) {
-  ++passed;
-  std::cout << "CASE_PASS " << name << '\n';
+void require(bool condition, const std::string& assertion) {
+  if (!condition)
+    throw AssertionFailure(assertion);
 }
 
-void refuses(const Result<std::unique_ptr<NativeConfigTransaction>>& result, const char* code, const char* name) {
-  if (result.ok() || result.error().code != code) {
-    std::cerr << "DETAIL " << name << " expected=" << code
-              << " actual=" << (result.ok() ? "accepted" : result.error().code) << '\n';
-    throw std::runtime_error(name);
-  }
-  ok(name);
+template <class T>
+void refuses(const Result<T>& result, const char* code, const char* name) {
+  if (result.ok() || result.error().code != code)
+    throw AssertionFailure(name);
 }
 
 struct History final : FinalizedAnchorSource {
@@ -58,15 +58,20 @@ td::Ref<vm::Cell> evidence_cell() {
   b.store_ref(vm::CellBuilder().finalize());
   return b.finalize();
 }
+
+using Test = std::pair<std::string, std::function<void()>>;
 }  // namespace
 
 int main(int argc, char** argv) {
   try {
-    check(argc == 3, "arguments");
+    if (argc < 3 || argc > 4) {
+      std::cerr << "USAGE: test-p0-config-transaction verify OWNER_INPUTS [case-name|--list|--exclude=case]\n";
+      return 2;
+    }
+
     std::filesystem::path input(argv[2]);
     auto f = fixture(input, 5);
     auto state = mcstate(f);
-
     auto history = std::make_shared<History>();
     history->anchor = Anchor{99, hash(state), h(6001), hash(state)};
 
@@ -77,63 +82,112 @@ int main(int argc, char** argv) {
     inputs.shard = {tos::masterchainId, tos::shardIdAll};
     inputs.catchain = 3;
     inputs.inclusion = 100;
-
     auto charge = [](std::size_t) -> Result<bool> { return true; };
 
-    auto same = inputs;
-    same.inclusion = inputs.parent.seqno_;
-    refuses(NativeConfigTransaction::open(same, evidence_cell(), history, charge),
-            "native-config-transaction-coordinate", "coordinate-must-advance");
+    std::vector<Test> tests;
+    auto add = [&](std::string name, std::function<void()> fn) {
+      tests.emplace_back(std::move(name), std::move(fn));
+    };
 
-    auto earlier = inputs;
-    earlier.inclusion = inputs.parent.seqno_ - 1;
-    refuses(NativeConfigTransaction::open(earlier, evidence_cell(), history, charge),
-            "native-config-transaction-coordinate", "coordinate-cannot-regress");
+    add("coordinate-must-advance", [=] {
+      auto same = inputs;
+      same.inclusion = inputs.parent.seqno_;
+      refuses(NativeConfigTransaction::open(same, evidence_cell(), history, charge),
+              "native-config-transaction-coordinate", "coordinate-must-advance");
+    });
+    add("coordinate-cannot-regress", [=] {
+      auto earlier = inputs;
+      earlier.inclusion = inputs.parent.seqno_ - 1;
+      refuses(NativeConfigTransaction::open(earlier, evidence_cell(), history, charge),
+              "native-config-transaction-coordinate", "coordinate-cannot-regress");
+    });
+    add("coordinate-must-be-immediate-successor", [=] {
+      auto skipped = inputs;
+      skipped.inclusion = inputs.parent.seqno_ + 2;
+      refuses(NativeConfigTransaction::open(skipped, evidence_cell(), history, charge),
+              "native-config-transaction-coordinate", "coordinate-must-be-immediate-successor");
+    });
+    add("unestablished-chain-refused", [=] {
+      auto unnamed = inputs;
+      unnamed.chain.chain_domain = Hash{};
+      refuses(NativeConfigTransaction::open(unnamed, evidence_cell(), history, charge),
+              "native-config-transaction-chain", "unestablished-chain-refused");
+    });
+    add("absent-network-refused", [=] {
+      auto no_network = inputs;
+      no_network.chain.network = 0;
+      refuses(NativeConfigTransaction::open(no_network, evidence_cell(), history, charge),
+              "native-config-transaction-chain", "absent-network-refused");
+    });
+    add("absent-evidence-refused", [=] {
+      refuses(NativeConfigTransaction::open(inputs, {}, history, charge), "native-config-transaction-input",
+              "absent-evidence-refused");
+    });
+    add("absent-state-refused", [=] {
+      auto absent_state = inputs;
+      absent_state.masterchain_state = {};
+      refuses(NativeConfigTransaction::open(absent_state, evidence_cell(), history, charge),
+              "native-config-transaction-input", "absent-state-refused");
+    });
+    add("absent-history-refused", [=] {
+      refuses(NativeConfigTransaction::open(inputs, evidence_cell(), {}, charge), "native-config-transaction-input",
+              "absent-history-refused");
+    });
+    add("history-owned-for-authority-lifetime", [=] {
+      bool destroyed = false;
+      auto owned = std::make_shared<History>();
+      owned->anchor = history->anchor;
+      owned->destroyed = &destroyed;
+      std::weak_ptr<const FinalizedAnchorSource> weak = owned;
+      auto authority = NativeConfigTransaction::open(inputs, evidence_cell(), owned, charge);
+      require(authority.ok(), "history-owned-for-authority-lifetime");
+      owned.reset();
+      require(!destroyed && !weak.expired(), "history-owned-for-authority-lifetime");
+      authority.value().reset();
+      require(destroyed && weak.expired(), "history-owned-for-authority-lifetime");
+    });
 
-    // Greater is not enough: the collator is building exactly the parent's
-    // successor. A +2 coordinate would apply due transitions and freshness at
-    // a height different from the block whose state is being constructed.
-    auto skipped = inputs;
-    skipped.inclusion = inputs.parent.seqno_ + 2;
-    refuses(NativeConfigTransaction::open(skipped, evidence_cell(), history, charge),
-            "native-config-transaction-coordinate", "coordinate-must-be-immediate-successor");
+    if (argc == 4 && std::string_view(argv[3]) == "--list") {
+      for (const auto& [name, _] : tests)
+        std::cout << name << '\n';
+      return 0;
+    }
 
-    auto unnamed = inputs;
-    unnamed.chain.chain_domain = Hash{};
-    refuses(NativeConfigTransaction::open(unnamed, evidence_cell(), history, charge),
-            "native-config-transaction-chain", "unestablished-chain-refused");
+    std::string selected;
+    std::string excluded;
+    if (argc == 4) {
+      std::string argument(argv[3]);
+      constexpr std::string_view prefix = "--exclude=";
+      if (argument.starts_with(prefix))
+        excluded = argument.substr(prefix.size());
+      else
+        selected = std::move(argument);
+    }
 
-    auto no_network = inputs;
-    no_network.chain.network = 0;
-    refuses(NativeConfigTransaction::open(no_network, evidence_cell(), history, charge),
-            "native-config-transaction-chain", "absent-network-refused");
-
-    refuses(NativeConfigTransaction::open(inputs, {}, history, charge), "native-config-transaction-input",
-            "absent-evidence-refused");
-
-    auto absent_state = inputs;
-    absent_state.masterchain_state = {};
-    refuses(NativeConfigTransaction::open(absent_state, evidence_cell(), history, charge),
-            "native-config-transaction-input", "absent-state-refused");
-
-    refuses(NativeConfigTransaction::open(inputs, evidence_cell(), {}, charge), "native-config-transaction-input",
-            "absent-history-refused");
-
-    bool destroyed = false;
-    history->destroyed = &destroyed;
-    std::weak_ptr<const FinalizedAnchorSource> weak = history;
-    auto authority = NativeConfigTransaction::open(inputs, evidence_cell(), history, charge);
-    check(authority.ok(), "history-owned-for-authority-lifetime");
-    history.reset();
-    check(!destroyed && !weak.expired(), "history-owned-for-authority-lifetime");
-    authority.value().reset();
-    check(destroyed && weak.expired(), "history-owned-for-authority-lifetime");
-    ok("history-owned-for-authority-lifetime");
-
-    std::cout << "SUMMARY cases=" << passed << " passed=" << passed << '\n';
+    std::size_t ran = 0;
+    for (const auto& [name, fn] : tests) {
+      if (!selected.empty() && name != selected)
+        continue;
+      if (!excluded.empty() && name == excluded)
+        continue;
+      std::cout << "SETUP_OK " << name << '\n';
+      try {
+        fn();
+      } catch (const AssertionFailure&) {
+        std::cerr << "ASSERTION_FAILED " << name << '\n';
+        return 1;
+      }
+      std::cout << "CASE_PASS " << name << '\n';
+      ++ran;
+    }
+    if (ran == 0) {
+      std::cerr << "UNKNOWN_CASE\n";
+      return 2;
+    }
+    std::cout << "SUMMARY cases=" << ran << " passed=" << ran << '\n';
     return 0;
   } catch (const std::exception& error) {
-    std::cerr << "ASSERTION: " << error.what() << '\n';
-    return 1;
+    std::cerr << "UNEXPECTED_EXCEPTION " << error.what() << '\n';
+    return 2;
   }
 }
