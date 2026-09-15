@@ -68,14 +68,11 @@ class BirthRegistry final : public CurrentRegistry {
 };
 
 Result<std::array<Keyref, 5>> member_keys(
-    const CommittedNativeSession& session, const Hash& identity) {
-  if (!session.context_)
-    return Error{"session-context-released"};
+    const NativeSessionCommitteeContext& context, const Hash& identity) {
   if (identity == Hash{})
     return Error{"session-member-nonmember"};
 
-  const auto& members =
-      session.context_->committee().snapshot().committee().members_;
+  const auto& members = context.committee().snapshot().committee().members_;
   auto found = std::find_if(
       members.begin(), members.end(),
       [&identity](const Member& member) { return member.identity_ == identity; });
@@ -113,7 +110,7 @@ Result<NativeSessionC0Authority> NativeSessionC0Authority::install(
   if (!session || !session->context_)
     return Error{"session-context-missing"};
 
-  auto role_keys = member_keys(*session, identity);
+  auto role_keys = member_keys(*session->context_, identity);
   if (!role_keys.ok())
     return role_keys.error();
 
@@ -168,7 +165,7 @@ Result<NativeSessionC0Route> NativeSessionC0Authority::route(
       session->birth_.seqno != coordinate_)
     return Error{"session-c0-context"};
 
-  auto current = member_keys(*session, identity_);
+  auto current = member_keys(*session->context_, identity_);
   if (!current.ok())
     return current.error();
   const auto& expected = current.value()[role - 1];
