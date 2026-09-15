@@ -22,7 +22,8 @@ MUTATIONS = [
      '  std::set<std::uint32_t> pending_;',
      '  std::multiset<std::uint32_t> active_coordinates_;\n'
      '  std::multiset<std::uint32_t> pending_;',
-     ["idle-request-starts-resolution", "drained-batch-starts-next-resolution"]),
+     ["idle-request-starts-resolution", "drained-batch-starts-next-resolution",
+      "pending-over-bound-drains-without-loss"]),
     ("busy-request-retained", "busy-request-is-retained",
      '    if (active_ || pending_.empty()) {\n'
      '      return std::nullopt;\n'
