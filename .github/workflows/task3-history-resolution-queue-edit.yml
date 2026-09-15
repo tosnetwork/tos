@@ -1,22 +1,22 @@
 name: Apply queued history resolution wiring
 
 on:
-  pull_request:
-    paths:
-      - '.github/workflows/task3-history-resolution-queue-edit.yml'
+  push:
+    branches:
+      - 'feat/validator-auth-p0'
 
 permissions:
   contents: write
 
 jobs:
   edit-and-verify:
-    if: github.head_ref == 'feat/validator-auth-p0'
+    if: github.ref == 'refs/heads/feat/validator-auth-p0'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.sha }}
           fetch-depth: 1
       - name: Install focused native dependencies
         run: |
