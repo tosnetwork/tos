@@ -101,11 +101,16 @@ int main(int argc, char** argv) {
     check(parsed.is_ok(), "state-boc");
     auto context = context_fixture::make(parsed.move_as_ok());
     const auto configuration = context.address;
+    const tos::BlockIdExt parent_block{{tos::masterchainId, tos::shardIdAll, context.head.seqno_},
+                                       td::Bits256(td::ConstBitPtr(context.head.root_.data())),
+                                       td::Bits256(td::ConstBitPtr(context.head.file_.data()))};
 
     RegistryAdmissionInputs inputs;
     inputs.configuration_account = configuration;
     inputs.message =
         external(configuration, registry_body(vm::CellBuilder().store_long(1, 8).finalize(), evidence_without_owner()));
+    inputs.parent_block = parent_block;
+    inputs.catchain_source = case_cc;
     inputs.transaction.masterchain_state = context.root;
     inputs.transaction.parent = context.head;
     inputs.transaction.chain = context.chain;
@@ -140,6 +145,39 @@ int main(int argc, char** argv) {
       auto assembled = admit_registry_message(inputs, cache);
       require(assembled.ok() && assembled.value() != nullptr, "complete-input-produces-an-authority");
       assembled.value()->host().checkpoints();
+    });
+    add("collator-gathering-produces-an-authority", [&] {
+      NativeAnchorCache cache;
+      auto gathered = gather_registry_admission_inputs(
+          inputs.message, configuration, context.root, parent_block, context.chain,
+          {static_cast<tos::WorkchainId>(case_wc), case_shard}, case_cc, context.head.seqno_ + 1);
+      require(gathered.ok(), "collator-gathering-produces-an-authority");
+      auto assembled = admit_registry_message(gathered.value(), cache);
+      require(assembled.ok() && assembled.value() != nullptr, "collator-gathering-produces-an-authority");
+      assembled.value()->host().checkpoints();
+    });
+    add("gathered-catchain-must-match-source", [&] {
+      NativeAnchorCache cache;
+      auto wrong = inputs;
+      wrong.catchain_source ^= 1u;
+      refuses(admit_registry_message(wrong, cache), "registry-admission-catchain-input",
+              "gathered-catchain-must-match-source");
+    });
+    add("gathered-parent-root-must-match-source", [&] {
+      NativeAnchorCache cache;
+      auto wrong = inputs;
+      const auto other_root = h(771);
+      wrong.parent_block.root_hash = td::Bits256(td::ConstBitPtr(other_root.data()));
+      refuses(admit_registry_message(wrong, cache), "registry-admission-parent-input",
+              "gathered-parent-root-must-match-source");
+    });
+    add("gathered-parent-file-must-match-source", [&] {
+      NativeAnchorCache cache;
+      auto wrong = inputs;
+      const auto other_file = h(772);
+      wrong.parent_block.file_hash = td::Bits256(td::ConstBitPtr(other_file.data()));
+      refuses(admit_registry_message(wrong, cache), "registry-admission-parent-input",
+              "gathered-parent-file-must-match-source");
     });
     add("history-outlives-the-call-that-assembled-it", [&] {
       // The history is built inside admission and the caller never holds a
