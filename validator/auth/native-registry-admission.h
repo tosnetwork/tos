@@ -1,6 +1,7 @@
 #pragma once
 #include "native-anchor-cache.h"
 #include "native-config-transaction.h"
+#include "native-history.h"
 namespace tos::auth {
 // Deciding whether a block may admit a registry update, separated from the
 // collation that asks.
@@ -21,6 +22,18 @@ struct RegistryAdmissionInputs {
   Hash configuration_account{};  // as declared by the parent state
   NativeConfigTransactionInputs transaction;
 };
+
+// Gather the values the collator already holds into the one admission object.
+//
+// Parent block identity and catchain are deliberately supplied separately from
+// the object being assembled. Neither can be rediscovered from the parent state
+// without creating a second authority. The copy is instead bound back to those
+// explicit sources before it is returned, so changing the assembly is a
+// refusal rather than a silent change of the authority the VM will execute.
+Result<RegistryAdmissionInputs> gather_registry_admission_inputs(
+    td::Ref<vm::Cell> message, const Hash& configuration_account, td::Ref<vm::Cell> masterchain_state,
+    const tos::BlockIdExt& parent_block, const ChainContext& chain, tos::ShardIdFull shard,
+    std::uint32_t catchain, std::uint32_t inclusion);
 
 // Assembles the authority for one registry update, or refuses.
 //
