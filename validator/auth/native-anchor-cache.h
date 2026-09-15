@@ -45,29 +45,46 @@ class NativeAnchorCache {
   }
 };
 
-// Reads the original BOC of the finalized masterchain block at one coordinate,
-// honouring the byte bound before allocating. A coordinate the archive does not
-// hold yet is an error, not a refusal: it means try again later.
-using NativeCoordinateReader = std::function<Result<Bytes>(std::uint32_t coordinate, std::size_t limit)>;
-
 struct ResolutionBudget {
   std::size_t coordinates = 64;  // the bound a declaration is already held to
-  std::size_t bytes = 33554432;  // per block
+  HistoryReadBudget reads{};
 };
 
 struct Resolution {
   std::size_t admitted = 0;                // newly held, or already held and agreeing
-  std::vector<std::uint32_t> unavailable;  // the archive could not serve these yet
+  std::vector<std::uint32_t> unavailable;  // this node cannot serve these yet
 };
 
 // Fills the cache with the anchors a deferred update declared.
 //
-// A block the archive cannot serve leaves its coordinate unresolved and the
-// caller retries later; that is the ordinary case, because the update was
-// deferred precisely for naming history this node had not fetched. A block that
-// is served but does not commit the coordinate it was asked for is refused
-// outright -- the cache is consulted instead of the archive, so a substitution
-// admitted here would never be checked again.
-Result<Resolution> resolve_declared_history(std::span<const std::uint32_t> coordinates, std::int32_t expected_network,
-                                            const NativeCoordinateReader&, NativeAnchorCache&, ResolutionBudget = {});
+// What anchor sits at a coordinate is decided by NativeFinalizedHistory and
+// nothing else: it binds the coordinate through the parent state's own record
+// of previous blocks, and requires the block served to be the one that record
+// names. This adds no second opinion. It only carries an already authenticated
+// answer across blocks, because collation cannot wait for an archive read.
+//
+// A coordinate this node cannot serve yet is reported, not refused -- the
+// update was deferred precisely for naming history that had not been fetched.
+// A block that is served but does not authenticate is refused outright: the
+// cache is consulted instead of the archive afterwards, so a substitution
+// admitted here would never be looked at again.
+Result<Resolution> resolve_declared_history(std::span<const std::uint32_t> coordinates,
+                                            td::Ref<vm::Cell> masterchain_state, const Anchor& head,
+                                            const ChainContext&, NativeBlockReader, NativeAnchorCache&,
+                                            ResolutionBudget = {});
+
+// Which finalized blocks a resolution would have to read.
+//
+// A node has to fetch these before it can resolve anything, because fetching is
+// asynchronous and resolution is not. The set is derived by asking the same
+// authority that will later be asked for the anchors, so it cannot drift from
+// what resolution actually wants; a separately written derivation would be a
+// second reading of the parent state's record with nothing comparing the two.
+//
+// Coordinates that need no read at all -- the head, and anything already held
+// -- are absent from the set rather than named in it.
+Result<std::vector<tos::BlockIdExt>> required_finalized_blocks(std::span<const std::uint32_t> coordinates,
+                                                               td::Ref<vm::Cell> masterchain_state, const Anchor& head,
+                                                               const ChainContext&, const NativeAnchorCache& held,
+                                                               ResolutionBudget = {});
 }  // namespace tos::auth

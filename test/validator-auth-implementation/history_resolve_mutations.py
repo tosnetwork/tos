@@ -22,24 +22,26 @@ MUTATIONS = [
     ("declaration-bound", "oversized-declaration-is-refused",
      '  if (coordinates.size() > budget.coordinates)\n    return Error{"anchor-resolve-budget"};',
      ''),
-    ("admission-checked", "block-under-another-coordinate-is-refused",
+    ("refusal-not-deferral", "substituted-block-is-refused",
+     '      return anchor.error();',
+     '      resolution.unavailable.push_back(at);\n      continue;'),
+    ("wait-not-refusal", "unfetched-block-is-reported-not-refused",
+     '      if (!served) {\n        resolution.unavailable.push_back(at);\n        continue;\n      }',
+     ''),
+    ("served-reset", "a-wait-does-not-excuse-a-later-refusal",
+     '    served = true;\n    auto anchor = history.value().finalized_anchor(at);',
+     '    auto anchor = history.value().finalized_anchor(at);'),
+    ("admission-checked", "disagreement-with-what-is-held-is-refused",
      '    auto admitted = cache.admit(at, anchor.value());\n'
      '    if (!admitted.ok())\n'
      '      return admitted.error();',
      '    cache.admit(at, anchor.value());'),
-    ("parse-checked", "unparsable-bytes-are-refused",
-     '    auto anchor = native_masterchain_block_anchor(raw.value(), expected_network);\n'
-     '    if (!anchor.ok())\n'
-     '      return anchor.error();',
-     '    auto anchor = native_masterchain_block_anchor(raw.value(), expected_network);\n'
-     '    if (!anchor.ok())\n'
-     '      continue;'),
-    ("miss-is-not-a-refusal", "missing-block-is-reported-not-refused",
-     '      resolution.unavailable.push_back(at);\n      continue;',
-     '      return raw.error();'),
     ("admitted-counted", "declared-history-becomes-a-source",
      '    ++resolution.admitted;',
      ''),
+    ("enumeration-narrowed", "reads-are-enumerable-before-fetching",
+     '  const auto absent = held.missing(coordinates);',
+     '  const std::vector<std::uint32_t> absent(coordinates.begin(), coordinates.end());'),
 ]
 
 

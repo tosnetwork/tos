@@ -36,34 +36,73 @@ Result<PrefetchedAnchorSource> NativeAnchorCache::source(std::span<const std::ui
   return PrefetchedAnchorSource{std::move(selected)};
 }
 
-Result<Resolution> resolve_declared_history(std::span<const std::uint32_t> coordinates, std::int32_t expected_network,
-                                            const NativeCoordinateReader& read, NativeAnchorCache& cache,
+Result<Resolution> resolve_declared_history(std::span<const std::uint32_t> coordinates,
+                                            td::Ref<vm::Cell> masterchain_state, const Anchor& head,
+                                            const ChainContext& chain, NativeBlockReader read, NativeAnchorCache& cache,
                                             ResolutionBudget budget) {
   if (!read)
     return Error{"anchor-resolve-reader"};
   // The declaration is already bounded where it is parsed; bounding it again
-  // here is what makes that bound this function's own precondition rather than
-  // a dependency on a constant somewhere else.
+  // here makes that bound this function's own precondition rather than a
+  // dependency on a constant somewhere else.
   if (coordinates.size() > budget.coordinates)
     return Error{"anchor-resolve-budget"};
 
+  // Telling "this node has not fetched it" apart from "what it fetched does not
+  // authenticate" is the whole difference between waiting and refusing, and
+  // only the reader knows which of the two happened.
+  bool served = true;
+  auto observed = [&](const tos::BlockIdExt& id, std::size_t limit) -> Result<Bytes> {
+    auto bytes = read(id, limit);
+    if (!bytes.ok())
+      served = false;
+    return bytes;
+  };
+
+  auto history = NativeFinalizedHistory::open(std::move(masterchain_state), head, chain, observed, budget.reads);
+  if (!history.ok())
+    return history.error();
+
   Resolution resolution;
   for (auto at : coordinates) {
-    auto raw = read(at, budget.bytes);
-    if (!raw.ok()) {
-      resolution.unavailable.push_back(at);
-      continue;
-    }
-    if (raw.value().size() > budget.bytes)
-      return Error{"anchor-resolve-size"};
-    auto anchor = native_masterchain_block_anchor(raw.value(), expected_network);
-    if (!anchor.ok())
+    served = true;
+    auto anchor = history.value().finalized_anchor(at);
+    if (!anchor.ok()) {
+      if (!served) {
+        resolution.unavailable.push_back(at);
+        continue;
+      }
       return anchor.error();
+    }
     auto admitted = cache.admit(at, anchor.value());
     if (!admitted.ok())
       return admitted.error();
     ++resolution.admitted;
   }
   return resolution;
+}
+
+Result<std::vector<tos::BlockIdExt>> required_finalized_blocks(std::span<const std::uint32_t> coordinates,
+                                                               td::Ref<vm::Cell> masterchain_state, const Anchor& head,
+                                                               const ChainContext& chain, const NativeAnchorCache& held,
+                                                               ResolutionBudget budget) {
+  // What is already held needs no read, and the history has no knowledge of
+  // this cache, so narrowing has to happen here rather than inside it.
+  const auto absent = held.missing(coordinates);
+
+  std::vector<tos::BlockIdExt> wanted;
+  // Refusing every read records what would have been read without resolving
+  // anything: a coordinate that needs a block is reported unavailable, and one
+  // that needs none is answered outright and admitted to a throwaway cache.
+  auto enumerate = [&](const tos::BlockIdExt& id, std::size_t) -> Result<Bytes> {
+    wanted.push_back(id);
+    return Error{"anchor-resolve-enumerating"};
+  };
+  NativeAnchorCache scratch;
+  auto resolved =
+      resolve_declared_history(absent, std::move(masterchain_state), head, chain, enumerate, scratch, budget);
+  if (!resolved.ok())
+    return resolved.error();
+  return wanted;
 }
 }  // namespace tos::auth

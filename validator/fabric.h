@@ -37,7 +37,11 @@ namespace validator {
 // unreachable.
 struct ValidatorAuthCollation {
   tos::auth::ChainContext chain;
-  std::shared_ptr<tos::auth::NativeAnchorCache> anchors;
+  // A snapshot, not the node's own cache. Collation runs in its own actor while
+  // resolution runs in the node's, and a block that sees slightly stale history
+  // defers an update it could have admitted -- which is already the designed
+  // answer, and is what makes sharing a mutable cache unnecessary.
+  std::shared_ptr<const tos::auth::NativeAnchorCache> anchors;
   // Called with the coordinates an update declared and this node does not hold.
   // Collation cannot wait for them, so it reports them and moves on; resolving
   // them is what lets a later block admit the update.
