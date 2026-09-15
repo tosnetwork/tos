@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <sodium.h>
 
 #include "block/block-auto.h"
 #include "block/mc-config.h"
@@ -14,9 +15,7 @@
 namespace p0_config_context_fixture {
 using namespace tos::auth;
 using p0_owner_fixture::boc;
-using p0_owner_fixture::cell;
 using p0_owner_fixture::check;
-using p0_owner_fixture::file_hash;
 using p0_owner_fixture::hash;
 using p0_owner_fixture::h;
 using p0_owner_fixture::value;
@@ -131,7 +130,8 @@ ContextFixture make(td::Ref<vm::Cell> base, unsigned mode = 0) {
   td::Ref<vm::Cell> root;
   check(tlb::pack_cell(root, state), "fixture-state-pack");
   const auto bytes = boc(root);
-  const auto file = file_hash(bytes);
+  Hash file{};
+  check(crypto_hash_sha256(file.data(), bytes.data(), bytes.size()) == 0, "fixture-file-hash");
   Anchor head{state.seq_no, hash(root), file, hash(root)};
   ChainContext chain{state.global_id, head.root_, head.file_, registry.chain_domain()};
   return {root, code, data, checkpoint, head, chain, address};
