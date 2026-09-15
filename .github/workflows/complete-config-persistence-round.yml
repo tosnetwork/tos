@@ -1,0 +1,129 @@
+name: Complete registry persistence round
+
+on:
+  push:
+    branches: [feat/validator-auth-p0]
+    paths:
+      - '.github/workflows/complete-config-persistence-round.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: complete-config-persistence-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  complete:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+      - name: Install focused dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y clang lld cmake ninja-build pkg-config libssl-dev libsodium-dev liblz4-dev zlib1g-dev gperf python3-yaml
+          cargo --version
+      - name: Apply exact round patch
+        run: |
+          set -euo pipefail
+          python3 tools/validator-auth/apply-config-persistence-round.py
+          git diff --check
+          git diff -- crypto/smartcont/config-code.fc doc/validator-auth-p0-native-insertions.json \
+            tosctl/src/executor/src/transaction_executor.rs tosctl/src/sandbox/src/blockchain.rs \
+            tosctl/src/node-control/contracts/tests/native_registry_sandbox.rs \
+            test/validator-auth-implementation/config_contract_persistence_mutations.py \
+            test/validator-auth-implementation/config_action_phase_mutations.py \
+            .github/workflows/validator-auth-config-persistence.yml
+      - name: Build normal and sanitized configuration contract evidence
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/config-persistence
+          for tree in build-p0 build-p0-sanitized; do
+            extra=()
+            if [ "$tree" = build-p0-sanitized ]; then
+              extra=(-DTOS_USE_ASAN=ON -DTOS_USE_UBSAN=ON)
+            fi
+            cmake -S . -B "$tree" -G Ninja -DCMAKE_BUILD_TYPE=Release -DTOS_ARCH= \
+              -DTOS_BUILD_P0_IMPLEMENTATION_TESTS=ON -DUSE_QUIC=OFF \
+              -DTOS_USE_ROCKSDB=OFF -DTOS_USE_ABSEIL=OFF -DTOS_USE_LLD=ON \
+              -DCMAKE_SKIP_INSTALL_RULES=ON \
+              -DOPENSSL_CRYPTO_LIBRARY="$(pkg-config --variable=libdir openssl)/libcrypto.so" \
+              -DOPENSSL_SSL_LIBRARY="$(pkg-config --variable=libdir openssl)/libssl.so" \
+              -DOPENSSL_INCLUDE_DIR="$(pkg-config --variable=includedir openssl)" "${extra[@]}"
+            targets=(test-p0-config-contract)
+            if [ "$tree" = build-p0 ]; then targets+=(func fift); fi
+            cmake --build "$tree" --target "${targets[@]}" -j2
+          done
+      - name: Run configuration contract normal and sanitized cases
+        run: |
+          set +e
+          python3 test/validator-auth-implementation/config_contract_persistence.py --out artifacts/config-persistence/compute
+          rc=$?
+          printf '%s\n' "$rc" > artifacts/config-persistence/compute.exit
+          echo "CONFIG_CONTRACT_EXIT=$rc"
+          exit "$rc"
+      - name: Run compiled configuration contract mutations
+        run: |
+          set +e
+          python3 test/validator-auth-implementation/config_contract_persistence_mutations.py --out artifacts/config-persistence/cpp-mutations
+          rc=$?
+          printf '%s\n' "$rc" > artifacts/config-persistence/cpp-mutations.exit
+          echo "CPP_MUTATIONS_EXIT=$rc"
+          exit "$rc"
+      - name: Run real action phase persistence and rollback evidence
+        run: |
+          set +e
+          export P0_CONFIG_PERSISTENCE_CELLS="$PWD/artifacts/config-persistence/compute/cells"
+          cargo test --manifest-path tosctl/src/node-control/contracts/Cargo.toml --test native_registry_sandbox config_persistence_action_phase -- --nocapture
+          rc=$?
+          printf '%s\n' "$rc" > artifacts/config-persistence/rust-action.exit
+          echo "RUST_ACTION_EXIT=$rc"
+          exit "$rc"
+      - name: Run compiled action phase mutations
+        run: |
+          set +e
+          python3 test/validator-auth-implementation/config_action_phase_mutations.py \
+            --cells artifacts/config-persistence/compute/cells \
+            --out artifacts/config-persistence/rust-mutations
+          rc=$?
+          printf '%s\n' "$rc" > artifacts/config-persistence/rust-mutations.exit
+          echo "RUST_MUTATIONS_EXIT=$rc"
+          exit "$rc"
+      - name: Verify frozen production reconstruction
+        run: |
+          set +e
+          mkdir -p artifacts/config-persistence/production
+          python3 test/validator-auth-p0/check_production.py --out artifacts/config-persistence/production
+          production_rc=$?
+          python3 test/validator-auth-p0/freeze_record.py
+          freeze_rc=$?
+          printf '%s\n' "$production_rc" > artifacts/config-persistence/check-production.exit
+          printf '%s\n' "$freeze_rc" > artifacts/config-persistence/freeze-record.exit
+          echo "CHECK_PRODUCTION_EXIT=$production_rc"
+          echo "FREEZE_RECORD_EXIT=$freeze_rc"
+          test "$production_rc" -eq 0 -a "$freeze_rc" -eq 0
+      - name: Commit the verified round and remove one-shot tooling
+        run: |
+          set -euo pipefail
+          git fetch origin feat/validator-auth-p0
+          test "$(git rev-parse origin/feat/validator-auth-p0)" = "$GITHUB_SHA"
+          rm .github/workflows/complete-config-persistence-round.yml
+          rm tools/validator-auth/apply-config-persistence-round.py
+          git add -A
+          git diff --cached --check
+          git config user.name tosman
+          git config user.email gtosnetwork@gmail.com
+          git commit -m 'Persist registry data before the compute checkpoint'
+          git push origin HEAD:feat/validator-auth-p0
+      - name: Retain exact evidence on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: config-persistence-completion-${{ github.sha }}
+          path: artifacts/config-persistence
+          if-no-files-found: warn
