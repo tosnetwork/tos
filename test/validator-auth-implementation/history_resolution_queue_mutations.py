@@ -28,18 +28,19 @@ MUTATIONS = [
      '    }',
      '    if (pending_.empty()) {\n'
      '      return std::nullopt;\n'
-     '    }', ["pending-duplicates-coalesce", "completion-drains-pending"]),
+     '    }', ["pending-duplicates-coalesce", "completion-drains-pending",
+              "drained-batch-starts-next-resolution"]),
     ("completion-drains", "completion-drains-pending",
      '    return next;\n'
      '  }\n\n'
      '  bool active() const {',
      '    return std::nullopt;\n'
      '  }\n\n'
-     '  bool active() const {', ["pending-duplicates-coalesce"]),
+     '  bool active() const {', ["pending-duplicates-coalesce", "drained-batch-starts-next-resolution"]),
     ("completion-clears-active", "completion-clears-inflight",
      '    active_ = false;\n'
      '    active_coordinates_.clear();',
-     '', ["empty-completion-does-not-loop"]),
+     '', ["drained-batch-starts-next-resolution", "empty-completion-does-not-loop"]),
     ("empty-completion-stops", "empty-completion-does-not-loop",
      '    if (pending_.empty()) {\n'
      '      return std::nullopt;\n'
