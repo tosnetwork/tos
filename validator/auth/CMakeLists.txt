@@ -50,6 +50,11 @@ if(UNIX)
 endif()
 
 if(TOS_BUILD_P0_IMPLEMENTATION_TESTS)
+  add_executable(test-p0-history-resolution-queue EXCLUDE_FROM_ALL
+    "${PROJECT_SOURCE_DIR}/test/validator-auth-implementation/history-resolution-queue-test.cpp")
+  target_link_libraries(test-p0-history-resolution-queue PRIVATE tos_validator_auth_native)
+  set_target_properties(test-p0-history-resolution-queue PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+
   add_executable(test-p0-native-session-id EXCLUDE_FROM_ALL
     "${PROJECT_SOURCE_DIR}/test/validator-auth-implementation/native-session-id-test.cpp")
   target_link_libraries(test-p0-native-session-id PRIVATE tos_validator_auth_native)
