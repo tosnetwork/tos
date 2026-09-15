@@ -14,8 +14,11 @@ namespace tos::auth {
 //
 // Parent block identity and catchain have two representations after gathering:
 // independently established sources and the copies used by the transaction.
-// Admission binds those copies back to the established sources so a later
-// mutation of the admission object cannot create a second authority.
+// The production caller obtains the established parent from the loaded
+// masterchain state and the established catchain from that state's validator
+// configuration; the values it intends to use remain separate claims.
+// Admission binds the transaction copies back to the established sources so a
+// later mutation of the admission object cannot create a second authority.
 struct RegistryAdmissionInputs {
   td::Ref<vm::Cell> message;     // the external message, as received
   Hash configuration_account{};  // as declared by the parent state
