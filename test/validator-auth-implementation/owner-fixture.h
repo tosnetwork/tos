@@ -96,9 +96,15 @@ td::Ref<vm::Cell> mcstate(const Fixture& f, td::Ref<vm::Cell> shard_block = {}) 
   block::gen::ConfigParams::Record cp;
   check(tlb::csr_unpack(extra.config, cp), "config-unpack");
   vm::Dictionary config(cp.config, 32);
+  const auto configuration = h(900);
   vm::CellBuilder elector;
-  elector.store_bytes(td::Slice(reinterpret_cast<const char*>(h(900).data()), 32));
+  elector.store_bytes(td::Slice(reinterpret_cast<const char*>(configuration.data()), configuration.size()));
   check(config.set_ref(td::BitArray<32>{1}, elector.finalize()), "elector-entry");
+  vm::CellBuilder configuration_parameter;
+  configuration_parameter.store_bytes(
+      td::Slice(reinterpret_cast<const char*>(configuration.data()), configuration.size()));
+  check(config.set_ref(td::BitArray<32>{0LL}, configuration_parameter.finalize()), "configuration-entry");
+  cp.config_addr = td::Bits256(td::ConstBitPtr(configuration.data()));
   cp.config = config.get_root_cell();
   vm::CellBuilder cb;
   check(tlb::pack(cb, cp), "config-pack");
