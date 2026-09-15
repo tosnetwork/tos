@@ -12,24 +12,22 @@ namespace tos::auth {
 // constructed and the answer made to fail, and the collator is left with
 // gathering values it already holds.
 //
-// The configuration account is an input, but not a free one: a caller reads it
-// with declared_configuration_account(), which binds it to the state the
-// transaction executes against. Admission cannot derive it itself, because it
-// must answer for messages sent to every other account too, and deriving it
-// would mean opening a state for each of them.
+// Parent block identity and catchain have two representations at this boundary:
+// the values the collator actually holds, and the copies placed in the native
+// transaction inputs. Keeping both would be two authorities unless admission
+// binds them. They are therefore carried together and compared before an
+// authority can be assembled.
 struct RegistryAdmissionInputs {
   td::Ref<vm::Cell> message;     // the external message, as received
   Hash configuration_account{};  // as declared by the parent state
+  tos::BlockIdExt parent_block;  // exact parent block identity held by the collator
+  std::uint32_t catchain_source{};  // catchain held by the collator's validator set
   NativeConfigTransactionInputs transaction;
 };
 
 // Gather the values the collator already holds into the one admission object.
-//
-// Parent block identity and catchain are deliberately supplied separately from
-// the object being assembled. Neither can be rediscovered from the parent state
-// without creating a second authority. The copy is instead bound back to those
-// explicit sources before it is returned, so changing the assembly is a
-// refusal rather than a silent change of the authority the VM will execute.
+// The authoritative parent BlockIdExt and catchain remain beside the copies
+// assembled for NativeConfigTransaction, so admission can detect any drift.
 Result<RegistryAdmissionInputs> gather_registry_admission_inputs(
     td::Ref<vm::Cell> message, const Hash& configuration_account, td::Ref<vm::Cell> masterchain_state,
     const tos::BlockIdExt& parent_block, const ChainContext& chain, tos::ShardIdFull shard,
