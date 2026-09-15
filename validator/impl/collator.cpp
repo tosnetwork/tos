@@ -5325,7 +5325,11 @@ bool Collator::create_mc_state_extra() {
                << " contains a configuration that cannot be installed: " << transition_status;
     return fatal_error(transition_status.move_as_error_prefix("attempting to install invalid new configuration: "));
   }
-  if (block::important_config_parameters_changed(cfg_smc_config, state_extra.config->prefetch_ref()) ||
+  // Old first, then new, as the predicate names them. It decides by comparing
+  // hashes today, so the order does not change the answer; its own comment says
+  // parameters will eventually be distinguished, and a call written backwards
+  // would then silently ask the opposite question.
+  if (block::important_config_parameters_changed(state_extra.config->prefetch_ref(), cfg_smc_config) ||
       changed_cfg) {
     LOG(WARNING) << "global configuration changed, updating";
     vm::CellBuilder cb;
