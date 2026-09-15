@@ -36,6 +36,7 @@ jobs:
           python3 tools/validator-auth/fix-config-persistence-evidence.py
           python3 tools/validator-auth/fix-config-persistence-host-binding.py
           python3 tools/validator-auth/fix-config-persistence-checkpoint-evidence.py
+          python3 tools/validator-auth/update-config-persistence-freeze-record.py
           git diff --check
           git diff -- crypto/smartcont/config-code.fc doc/validator-auth-p0-native-insertions.json \
             tosctl/src/executor/src/blockchain_config.rs \
@@ -124,6 +125,7 @@ jobs:
           rm tools/validator-auth/fix-config-persistence-evidence.py
           rm tools/validator-auth/fix-config-persistence-host-binding.py
           rm tools/validator-auth/fix-config-persistence-checkpoint-evidence.py
+          rm tools/validator-auth/update-config-persistence-freeze-record.py
           git add -A
           git diff --cached --check
           git config user.name tosman
