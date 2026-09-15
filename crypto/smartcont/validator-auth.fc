@@ -1,0 +1,8 @@
+;; Pure C0 verification over the raw bytes of a canonical AuthBytes cell.
+;; Requires node-provided VM version >= 16 and capValidatorAuth. Callers must
+;; separately establish the expected statement, authority and replay rules.
+int vauth_check_signature(cell message, slice signature, int public_key) asm "VAUTH_CHKSIGN";
+
+;; Only native configuration transaction execution supplies these operations.
+cell vauth_registry_checkpoint() impure asm "VAUTH_STATE";
+cell vauth_apply_update(cell update, cell evidence) impure asm "VAUTH_APPLY";

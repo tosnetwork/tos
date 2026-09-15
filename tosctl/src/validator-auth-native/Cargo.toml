@@ -1,0 +1,10 @@
+[package]
+name = "tos-validator-auth-native"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0"
+
+[dependencies]
+chain_block = { path = "../block" }
+tos-validator-auth = { path = "../validator-auth" }
+sha2 = "0.10"

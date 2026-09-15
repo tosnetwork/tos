@@ -5,6 +5,8 @@ on:
     paths:
       - 'doc/validator-auth-p0/**'
       - 'doc/validator-auth-p0-freeze.json'
+      - 'doc/validator-auth-p0-native-insertions.json'
+      - 'keyring/**'
       - 'test/validator-auth-p0/**'
       - '.github/workflows/validator-auth-p0-profile.yml'
       - 'third-party/tl-parser/**'

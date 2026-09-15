@@ -14,7 +14,7 @@
     "performance and recovery rehearsal"
   ],
   "artifact_sha256": {
-    ".github/workflows/validator-auth-p0-profile.yml": "70cc91fef88a74cb66a6feafa00a96e8e162df87ea13fa14fae42752c75f679e",
+    ".github/workflows/validator-auth-p0-profile.yml": "1d068fb0564fde36018ca337dee900cf659e036ddefda58b9c7a861069d7c019",
     "doc/validator-auth-p0/ACTIVATION.md": "a74450d93f3883a48783410614baa57a0a1e9de4f48bc680df5779a3af00179c",
     "doc/validator-auth-p0/API-CONTRACT.md": "08728fb9358e83086d48da51a1525be6c468d7932197d6e013f6e80c4e4e15a1",
     "doc/validator-auth-p0/CLIENTS.md": "4d9f3486f215b1a2217096f0be118f9f00d1ff5c89c4aae221b04c85f09357cb",
@@ -29,23 +29,24 @@
     "doc/validator-auth-p0/transport.schema.json": "ddd45d7d3eb672559efde020af95a0e215146775ec82f8c6847b0f3ab8127584",
     "doc/validator-auth-p0/wire.tl": "a5e10c8e25887cb30440a26a0d8cbcef1473878aeb87438cca1a0f0bc6875c15",
     "doc/validator-auth-p0/wire.tlb": "923650bd74bbbf677a070d1d13d7c12d46944e8bffbfc3a72641093d20d3ce9d",
+    "doc/validator-auth-p0-native-insertions.json": "60fe7579e5410cc687a3e98dc879a19ec7be968bee33e97915f75d87c862c2ca",
     "test/validator-auth-p0/README.md": "a0b0950c4ac702f8be0f34919a50f8e7b13d5d14dda3bd2cc05b4c8ffee31321",
     "test/validator-auth-p0/api.py": "9ec50bf9e19345ef54a8894a3525eba1eed8fb10412b8a3fdc1ed1c5728fb815",
-    "test/validator-auth-p0/archive_evidence.py": "ca1a818b1fffdab3acbab0bc33ddd75f56558a72f01e7e185a4523fd7f3f5a0b",
-    "test/validator-auth-p0/check_production.py": "1182fb05930f3f5708f9b22cdf58a45b76104c7ea8b1cc44a00cb247a91789e4",
-    "test/validator-auth-p0/check_schema.py": "5448e1dabdd7b407ed5d3fbbf78bea4c6c9fc5658b557bebd28133100ed7171c",
+    "test/validator-auth-p0/archive_evidence.py": "22bb392a561068e0fb3905ce7e8df95bab463468cdfe3be884eff19b12481409",
+    "test/validator-auth-p0/check_production.py": "942d271350557aa83e53f34537a5f199eeebea45fc196cc01f6255befb9f627c",
+    "test/validator-auth-p0/check_schema.py": "eb75c2ccc682df021d54a5dae79f9cd8a0ac3b246c5515c6c95db8617c606dde",
     "test/validator-auth-p0/codec.cpp": "d87bec46215699b09f861d5e0f86f8ac465c97314befdbf46ca3fbf592b556e2",
     "test/validator-auth-p0/codec.rs": "9ae980fa3dcf4636d94970a30984e9deeb5055563231aa03ded585de1a34aa17",
     "test/validator-auth-p0/contract_artifacts.py": "39a05b92a6f3265a8eb8fc5b00db4a78ae2e3d9a97c9b56982b4645e67a89eb1",
     "test/validator-auth-p0/differential.py": "364f71d86fb002669802102e43d9099734abff6e152abb9ebb57cd068383e39d",
     "test/validator-auth-p0/ed25519_oracle.py": "50a601b2c32b1b0589dcb08361050538c4a2501a67e84797085271d8c3ca9624",
-    "test/validator-auth-p0/freeze_record.py": "33e3686113450bd5c7ca770f62d4c0489767979ab141dafecda91174f348e3e1",
+    "test/validator-auth-p0/freeze_record.py": "35fff38782f31260f78889ff86804760e671e7d1ded9a7d7dd587e2f2846c402",
     "test/validator-auth-p0/golden.json.gz": "4e0b5e63e69a258734d02cdfe0c9a850642cf2c109ead04aaf2bcbd67c6aa860",
     "test/validator-auth-p0/lifecycle-api-golden.json": "83823c819d61b1c116d6712fcd487daf9ce500f0482db46ee2e45e8464a3ba79",
     "test/validator-auth-p0/lifecycle.py": "167c7e9ebb16e272b1e30acc0b36a03f7179d408622589ef7080ba9bfdb97ecd",
     "test/validator-auth-p0/mutations.py": "269d075b4ebd2d3916ca4eb32221e24bab12c4aea948a2a9682d4f7ace9593f4",
     "test/validator-auth-p0/native-boc.cpp": "fb7e9c350d2b88347ccfdf4b0eeb828b43e80383e81b82f15c533a46a1625f4e",
-    "test/validator-auth-p0/native-profile.cmake": "6cc986e733be7e7f036139879c0929b561c7ee27fd6e2ae5c75f17b100a6bcb5",
+    "test/validator-auth-p0/native-profile.cmake": "efce5ea42651ac673db2c6c1a3c6a716527cc09d3e01101eb51191e2519a7542",
     "test/validator-auth-p0/native_guard.py": "72530987f41d1d6d55fa9204db6da67a2fe75a27b05a7524038d6fb556d02278",
     "test/validator-auth-p0/production-baseline.json": "4a641fbc02bd90559315e5c9d3b5b370a209c3949f491dc54d2c6d740681c92d",
     "test/validator-auth-p0/reference.py": "dbdd804d2c733db2cd1ac0c9b87a9185b43786bfad956862853673b1f22f5501",
@@ -61,6 +62,48 @@
     {
       "base_head": "a9c6efc0e0f218c18648aa45596f62e7574fb8ae",
       "scope": "Test coverage only: exact response signer binding; no API behavior, schema, normative document, profile fingerprint or golden-vector change."
+    },
+    {
+      "artifact": "doc/validator-auth-p0-native-insertions.json",
+      "previous_sha256": "ebe04f3b597a01c4db2e63c0206c1c39be95330929a025ad8d10ceff0f6ab8cc",
+      "sha256": "76eecc9e422e17a6452711e84e925057591d4b47967dd5258f50c2be60d2dcfe",
+      "change": "Declared the configuration contract registry action as two exact insertions in original-file coordinates.",
+      "scope": "Additive only: crypto/smartcont/config-code.fc keeps every historical byte. No wire or API artifact, activation gate or approval changes."
+    },
+    {
+      "artifact": "doc/validator-auth-p0-native-insertions.json",
+      "previous_sha256": "76eecc9e422e17a6452711e84e925057591d4b47967dd5258f50c2be60d2dcfe",
+      "sha256": "44d3782f1b0895a944ea8a7023ef9934432ea1f07cd083dbe24251741ccb5569",
+      "change": "Declared the node-side installation of the registry authority as three exact insertions into validator/manager.cpp, in original-file coordinates.",
+      "scope": "Additive only: validator/manager.cpp keeps every historical byte. No wire or API artifact, activation gate or approval changes; the installed feature stays inert until a chain context is established."
+    },
+    {
+      "artifact": "doc/validator-auth-p0-native-insertions.json",
+      "previous_sha256": "44d3782f1b0895a944ea8a7023ef9934432ea1f07cd083dbe24251741ccb5569",
+      "sha256": "7ac328d4c785bada951dd136fa72ba02d1c3c34a41c58dff43aedd833ed4e621",
+      "change": "Declared the configuration contract asking for the elected set to be bound as three exact insertions in original-file coordinates.",
+      "scope": "Additive only: crypto/smartcont/config-code.fc keeps every historical byte, and a set that arrives without bindings is installed exactly as before. No wire or API artifact, activation gate or approval changes."
+    },
+    {
+      "artifact": "doc/validator-auth-p0-native-insertions.json",
+      "previous_sha256": "7ac328d4c785bada951dd136fa72ba02d1c3c34a41c58dff43aedd833ed4e621",
+      "sha256": "bbb87e3c551862ffe90c05aedc2b61a0a01f9097fec660158d5f30e7e9eaab6c",
+      "change": "Declared the elector carrying each member's named registry identity through to the set it sends, as eight exact insertions in original-file coordinates.",
+      "scope": "Additive only: crypto/smartcont/elector-code.fc keeps every historical byte, and a stake that names nothing is stored, elected and sent exactly as before. No wire or API artifact, activation gate or approval changes."
+    },
+    {
+      "artifact": "doc/validator-auth-p0-native-insertions.json",
+      "previous_sha256": "bbb87e3c551862ffe90c05aedc2b61a0a01f9097fec660158d5f30e7e9eaab6c",
+      "sha256": "60fe7579e5410cc687a3e98dc879a19ec7be968bee33e97915f75d87c862c2ca",
+      "change": "Declared queued native history resolution and its immutable pre-I/O snapshot as exact manager insertions in original-file coordinates.",
+      "scope": "Additive only: validator/manager.cpp and validator/manager.hpp keep every historical byte. No wire or API artifact, activation gate, approval threshold, configuration root or later implementation boundary changes."
     }
-  ]
+  ],
+  "implementation_evidence_update": {
+    "authorization": "Owner requested complete P0 implementation, testing and local rehearsal, with implementation decisions delegated in the current task.",
+    "scope": "Evidence-only evolution for exact native Keyring guards, capability registration, additive elected identity/stake binding and registration of the already frozen Config46 schema; normative wire/API artifacts and fingerprint are unchanged. The focused native target compiles the production schema alone, because the profile grammar now lives there; the design artifact is bound to the exact inventoried insertion instead of being appended as a second definition. The manager now confirms the session identity it built against the authenticated producer before creating a validator group, as a declared insertion into validator/manager.cpp; the refusal is gated on the same activation the native committee path uses, so an unactivated chain is unaffected.",
+    "inventory": "doc/validator-auth-p0-native-insertions.json",
+    "historical_baseline": "Original production-baseline.json hashes are retained; reconstruct original bytes by removing only the inventoried insertions.",
+    "checks": "Original and inserted bytes have negative controls. Allocation checks reject capability or native descriptor collisions. Native CI compiles and exercises Keyring isolation, VM and transaction execution, independent native committee derivation, bounded authenticated registry views and minimal committee Merkle proofs. Native identity replay independently composes authenticated owner execution, PoP and current administration in C++ and Rust, including per-operation archive and due/policy boundary checks; native contract/node installation remains separate. Native finalized history adds independent C++/Rust original-block anchor resolution, 37 shared cases and 34 compiled guards; native archive access and finality establishment remain separate. Persistent native dictionaries preserve exact Config46 bytes with independently verified checkpoint indexes, bounded per-block work, 34 replay cases, eight checkpoint attacks, 74 authority cases and 36 compiled guards. Contract-owned persistence and global/native node application remain separate. Native configuration gates cover actual config admission and transition, frozen Config46 dispatch, version/capability requirements, the 400-validator ceiling and revision continuity. Complete registry and operation authorization remain independent. Immutable per-transaction registry prefixes match whole-block results across 80 real-owner cases, with cumulative budgets, checked one-per-block revisions and nine compiled controls. Native contract data/action commit wiring remains separate. Native VM host isolation adds 25 cross-language outcome/gas cases and 12 compiled controls; the host is not yet attached to actual configuration transactions. Fixed-surface native header witnesses add 25 cross-language cases, independent generators and 27 compiled controls, resolving authenticated state roots without archive/cache IO. Full native Ubuntu sanitizer outputs match. These are implementation boundaries, not native network acceptance. Native configuration account context adds 22 shared cases and 24 compiled controls over actual account ownership, complete checkpoints, validated caches and invocation binding. Transaction-contained native evidence adds 37 shared cases and 28 compiled controls, exact cross-language work-charge traces, canonical typed attachments and full owner-anchor authentication with no IO. Both have equal full-dependency Ubuntu sanitizer exports. Concrete host pricing and actual transaction commit remain separate. The frozen profile grammar is required to equal the declared block.tlb insertion, with controls for drift from either side, a removed insertion and a duplicated one. Both boundary controls were demonstrated on the new insertion: a changed original byte and a changed inserted byte are each refused."
+  }
 }

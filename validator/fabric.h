@@ -23,11 +23,30 @@
 #include "interfaces/validator-manager.h"
 #include "td/actor/coro_utils.h"
 
+#include "auth/native-registry-admission.h"
 #include "validator.h"
 
 namespace tos {
 
 namespace validator {
+
+// The two values the registry authority needs that outlive a single block: the
+// chain this node established from the zero state, and the history it has
+// already resolved. A node that was never given them collates exactly as
+// before -- no transaction is offered the host, and the instruction stays
+// unreachable.
+struct ValidatorAuthCollation {
+  tos::auth::ChainContext chain;
+  // A snapshot, not the node's own cache. Collation runs in its own actor while
+  // resolution runs in the node's, and a block that sees slightly stale history
+  // defers an update it could have admitted -- which is already the designed
+  // answer, and is what makes sharing a mutable cache unnecessary.
+  std::shared_ptr<const tos::auth::NativeAnchorCache> anchors;
+  // Called with the coordinates an update declared and this node does not hold.
+  // Collation cannot wait for them, so it reports them and moves on; resolving
+  // them is what lets a later block admit the update.
+  std::function<void(std::vector<std::uint32_t>)> report_unresolved;
+};
 
 struct CollateParams {
   ShardIdFull shard;
@@ -49,6 +68,9 @@ struct CollateParams {
   // If not empty, should be the same size as prev
   std::vector<Ref<BlockData>> prev_block_data = {};
   std::vector<Ref<vm::Cell>> prev_block_state_roots = {};
+
+  // Absent until a node installs it; absent means the feature is off.
+  td::optional<ValidatorAuthCollation> validator_auth = {};
 };
 
 struct ValidateParams {

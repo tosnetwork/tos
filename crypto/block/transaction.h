@@ -18,6 +18,8 @@
     Copyright 2025-2026 TOS Blockchain Teams
 */
 #pragma once
+#include <memory>
+#include <optional>
 #include <ostream>
 
 #include "block/block-auto.h"
@@ -27,6 +29,7 @@
 #include "common/refint.h"
 #include "precompiled-smc/PrecompiledSmartContract.h"
 #include "td/utils/bits.h"
+#include "vm/validator-auth-host.h"
 #include "tl/tlblib.hpp"
 #include "tos/tos-types.h"
 #include "vm/boc.h"
@@ -109,6 +112,7 @@ struct StoragePhase {
 };
 
 struct ComputePhaseConfig {
+  td::uint64 global_capabilities = 0;
   td::uint64 gas_price;
   td::uint64 gas_limit;
   td::uint64 special_gas_limit;
@@ -131,6 +135,18 @@ struct ComputePhaseConfig {
   Ref<vm::Tuple> unpacked_config_tuple;
   std::unique_ptr<vm::Dictionary> suspended_addresses;
   SizeLimitsConfig size_limits;
+  // The authority behind the privileged registry instructions, supplied by
+  // whoever composes this configuration rather than constructed here: the
+  // registry library depends on this layer, so this layer cannot depend on it.
+  // It is offered to exactly one account, named beside it, so a caller that
+  // wires it wrongly cannot hand the registry to an ordinary contract.
+  std::shared_ptr<vm::ValidatorAuthHost> validator_auth_host;
+  std::optional<td::Bits256> validator_auth_account;
+  // Whether this account, on this chain, is offered that authority. Named so
+  // the decision has one definition that a test can reach, rather than being
+  // spelled out at the one call site where it would be checkable only by
+  // running a whole transaction.
+  bool offers_validator_auth_host(bool is_masterchain, const td::Bits256& addr) const;
   int vm_log_verbosity = 0;
   bool stop_on_accept_message = false;
   PrecompiledContractsConfig precompiled_contracts;

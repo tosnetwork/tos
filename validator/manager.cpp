@@ -76,6 +76,7 @@
 #include "state-serializer.hpp"
 #include "validate-broadcast.hpp"
 #include "validator-group.hpp"
+#include "validator/auth/manager-session-binding.h"
 
 namespace tos {
 
@@ -2341,6 +2342,158 @@ void ValidatorManagerImpl::init_last_masterchain_state(td::Ref<MasterchainState>
   update_shard_overlays();
 }
 
+void ValidatorManagerImpl::establish_validator_auth_chain() {
+  if (validator_auth_chain_ || last_masterchain_state_.is_null()) {
+    return;
+  }
+  auto P = td::PromiseCreator::lambda([SelfId = actor_id(this)](td::Result<td::BufferSlice> R) {
+    td::actor::send_closure(SelfId, &ValidatorManagerImpl::established_validator_auth_zero_state, std::move(R));
+  });
+  td::actor::send_closure(db_, &Db::get_zero_state_file, opts_->zero_block_id(), std::move(P));
+}
+
+void ValidatorManagerImpl::established_validator_auth_zero_state(td::Result<td::BufferSlice> R) {
+  if (R.is_error()) {
+    LOG(INFO) << "no registry authority: zero state unreadable: " << R.move_as_error();
+    return;
+  }
+  if (last_masterchain_state_.is_null()) {
+    return;
+  }
+  auto raw = R.move_as_ok();
+  auto root = vm::std_boc_deserialize(raw.as_slice());
+  if (root.is_error()) {
+    LOG(INFO) << "no registry authority: zero state undeserializable: " << root.move_as_error();
+    return;
+  }
+  auto chain = tos::auth::establish_chain_context(root.move_as_ok(), opts_->zero_block_id(),
+                                                 last_masterchain_state_->get_global_id());
+  if (!chain.ok()) {
+    LOG(INFO) << "no registry authority: " << chain.error().code;
+    return;
+  }
+  validator_auth_chain_ = chain.value();
+  publish_validator_auth();
+}
+
+void ValidatorManagerImpl::publish_validator_auth() {
+  if (!validator_auth_chain_) {
+    return;
+  }
+  // A snapshot, taken here and never written again, is what leaves the actor.
+  validator_auth_history_ = std::make_shared<const tos::auth::NativeAnchorCache>(validator_auth_anchors_);
+  auto value = validator_auth_collation();
+  for (auto &collation : collation_managers_) {
+    td::actor::send_closure(collation.second.get(), &CollationManager::update_validator_auth, value);
+  }
+}
+
+td::optional<ValidatorAuthCollation> ValidatorManagerImpl::validator_auth_collation() {
+  if (!validator_auth_chain_ || !validator_auth_history_) {
+    return {};
+  }
+  return ValidatorAuthCollation{
+      validator_auth_chain_.value(), validator_auth_history_,
+      [SelfId = actor_id(this)](std::vector<td::uint32> coordinates) {
+        td::actor::send_closure(SelfId, &ValidatorManagerImpl::resolve_validator_auth_history, std::move(coordinates));
+      }};
+}
+
+void ValidatorManagerImpl::resolve_validator_auth_history(std::vector<td::uint32> coordinates) {
+  if (!validator_auth_chain_ || coordinates.empty() || last_masterchain_state_.is_null() ||
+      !last_masterchain_block_id_.is_valid()) {
+    return;
+  }
+  auto batch = validator_auth_resolution_queue_.submit(coordinates);
+  if (!batch.has_value()) {
+    return;
+  }
+
+  // Enumeration and authentication must describe the same finalized-history
+  // view. Capture the parent state cell and the head built from the matching
+  // block id in this actor turn, before the first archive read can yield.
+  const auto state = last_masterchain_state_->root_cell();
+  const auto head = tos::auth::anchor_of(last_masterchain_block_id_, state);
+  auto snapshot = std::make_shared<const ValidatorAuthResolutionSnapshot>(
+      ValidatorAuthResolutionSnapshot{state, head, validator_auth_chain_.value()});
+  auto wanted = tos::auth::required_finalized_blocks(batch.value(), snapshot->masterchain_state, snapshot->head,
+                                                     snapshot->chain, validator_auth_anchors_);
+  if (!wanted.ok()) {
+    LOG(INFO) << "cannot resolve the history a registry update declared: " << wanted.error().code;
+    auto pending = validator_auth_resolution_queue_.complete();
+    if (pending.has_value()) {
+      resolve_validator_auth_history(std::move(pending.value()));
+    }
+    return;
+  }
+  auto fetched = std::make_shared<std::map<BlockSeqno, tos::auth::Bytes>>();
+  fetch_validator_auth_block(std::move(batch.value()), std::move(snapshot), std::move(wanted.value()), 0,
+                             std::move(fetched));
+}
+
+void ValidatorManagerImpl::fetch_validator_auth_block(
+    std::vector<td::uint32> coordinates, std::shared_ptr<const ValidatorAuthResolutionSnapshot> snapshot,
+    std::vector<BlockIdExt> wanted, size_t index,
+    std::shared_ptr<std::map<BlockSeqno, tos::auth::Bytes>> fetched) {
+  if (index >= wanted.size()) {
+    finish_validator_auth_resolution(std::move(coordinates), std::move(snapshot), std::move(fetched));
+    return;
+  }
+  const auto id = wanted[index];
+  auto P = td::PromiseCreator::lambda([SelfId = actor_id(this), coordinates = std::move(coordinates),
+                                       snapshot = std::move(snapshot), wanted = std::move(wanted), index, fetched,
+                                       id](td::Result<td::Ref<BlockData>> R) mutable {
+    // A block this node cannot serve is not an error here: the archive still
+    // catching up is the ordinary reason an update was deferred at all. Its
+    // coordinate simply stays unresolved, which resolution reports.
+    if (R.is_ok() && R.ok().not_null()) {
+      auto slice = R.ok()->data().as_slice();
+      fetched->emplace(id.seqno(), tos::auth::Bytes(slice.ubegin(), slice.uend()));
+    } else {
+      LOG(DEBUG) << "registry history: block " << id.to_str() << " not available yet";
+    }
+    td::actor::send_closure(SelfId, &ValidatorManagerImpl::fetch_validator_auth_block, std::move(coordinates),
+                            std::move(snapshot), std::move(wanted), index + 1, std::move(fetched));
+  });
+  get_block_data_for_litequery(id, std::move(P));
+}
+
+void ValidatorManagerImpl::finish_validator_auth_resolution(
+    std::vector<td::uint32> coordinates, std::shared_ptr<const ValidatorAuthResolutionSnapshot> snapshot,
+    std::shared_ptr<std::map<BlockSeqno, tos::auth::Bytes>> fetched) {
+  auto pending = validator_auth_resolution_queue_.complete();
+  SCOPE_EXIT {
+    if (pending.has_value()) {
+      resolve_validator_auth_history(std::move(pending.value()));
+    }
+  };
+  if (!snapshot || snapshot->masterchain_state.is_null()) {
+    return;
+  }
+  // Serving by coordinate is safe because resolution authenticates every block
+  // against the record's own identity for that coordinate; a misfiled entry
+  // here is refused there rather than admitted.
+  auto reader = [fetched](const BlockIdExt &id, size_t limit) -> tos::auth::Result<tos::auth::Bytes> {
+    auto found = fetched->find(id.seqno());
+    if (found == fetched->end()) {
+      return tos::auth::Error{"history-block-unavailable"};
+    }
+    if (found->second.size() > limit) {
+      return tos::auth::Error{"history-block-bound"};
+    }
+    return found->second;
+  };
+  auto resolved = tos::auth::resolve_declared_history(coordinates, snapshot->masterchain_state, snapshot->head,
+                                                      snapshot->chain, reader, validator_auth_anchors_);
+  if (!resolved.ok()) {
+    LOG(WARNING) << "registry history refused: " << resolved.error().code;
+    return;
+  }
+  LOG(INFO) << "registry history resolved " << resolved.value().admitted << " block(s), "
+            << resolved.value().unavailable.size() << " still unavailable";
+  publish_validator_auth();
+}
+
 void ValidatorManagerImpl::started(ValidatorManagerInitResult R) {
   CHECK(R.handle);
   CHECK(R.state.not_null());
@@ -2361,6 +2514,8 @@ void ValidatorManagerImpl::started(ValidatorManagerInitResult R) {
   gc_masterchain_state_ = std::move(R.gc_state);
 
   shard_client_ = std::move(R.clients);
+
+  establish_validator_auth_chain();
 
   auto Q = td::PromiseCreator::lambda(
       [SelfId = actor_id(this)](td::Result<std::vector<td::Ref<PersistentStateDescription>>> R) {
@@ -3027,6 +3182,33 @@ void ValidatorManagerImpl::update_shards() {
       if (!validator_id.is_zero()) {
         ++(shard.is_masterchain() ? active_validator_groups_master_ : active_validator_groups_shard_);
         auto val_group_id = get_validator_set_id(shard, val_set, opts_hash, key_seqno, opts);
+        // The identity this manager just built is one derivation of a fact the
+        // chain state derives too. Running a session under a name the producer
+        // does not confirm is how one session acquires two identities, each
+        // passing its own tests. Refuse the shard instead, exactly as an
+        // unreadable consensus config does: stay a full node.
+        //
+        // Nothing here runs until the chain activates validator authentication.
+        if (tos::auth::native_session_binding_active(last_masterchain_state_->root_cell())) {
+          tos::auth::ManagerSessionInputs auth_inputs;
+          auto options_bytes = opts_hash.as_slice();
+          std::copy(options_bytes.ubegin(), options_bytes.uend(), auth_inputs.options_hash.begin());
+          auth_inputs.vertical_seqno = opts_->get_maximal_vertical_seqno();
+          auth_inputs.key_block_seqno = key_seqno;
+          auth_inputs.new_catchain_ids = opts.new_catchain_ids;
+          tos::auth::Hash manager_identity{};
+          auto identity_bytes = val_group_id.as_slice();
+          std::copy(identity_bytes.ubegin(), identity_bytes.uend(), manager_identity.begin());
+          auto confirmed =
+              tos::auth::native_session_identity_confirms(val_set, shard, auth_inputs, manager_identity);
+          if (!confirmed.ok() || !confirmed.value()) {
+            LOG(ERROR) << "refusing to create validator group for " << shard.to_str()
+                       << ": the authenticated session identity does not confirm this validator set; "
+                          "validation for this shard is disabled until they agree";
+            --(shard.is_masterchain() ? active_validator_groups_master_ : active_validator_groups_shard_);
+            continue;
+          }
+        }
         if (destroyed_validator_sessions_.contains(val_group_id)) {
           continue;
         }
@@ -3459,6 +3641,9 @@ td::actor::ActorId<CollationManager> ValidatorManagerImpl::get_collation_manager
   auto &actor = collation_managers_[adnl_id];
   if (actor.empty()) {
     actor = td::actor::create_actor<CollationManager>("collation", adnl_id, opts_, actor_id(this), adnl_, rldp2_);
+    // One created after the context was established would otherwise never be
+    // told about it, since publishing only happens when something changes.
+    td::actor::send_closure(actor.get(), &CollationManager::update_validator_auth, validator_auth_collation());
   }
   return actor.get();
 }

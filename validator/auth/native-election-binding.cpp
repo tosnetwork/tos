@@ -1,0 +1,209 @@
+#include <algorithm>
+#include <set>
+
+#include "block/block-auto.h"
+#include "block/block-parse.h"
+#include "tos/quorum.h"
+#include "vm/dict.h"
+
+#include "native-election-binding.h"
+namespace tos::auth {
+namespace {
+// A member the elector emitted, in the only two shapes it emits.
+struct Emitted {
+  td::Ref<vm::CellSlice> public_key;
+  std::uint64_t weight{};
+  td::Bits256 adnl_addr{};
+  bool has_address{};
+};
+
+Result<Emitted> emitted_member(const td::Ref<vm::CellSlice>& descriptor) {
+  Emitted member;
+  block::gen::ValidatorDescr::Record_validator_addr addressed;
+  if (tlb::csr_unpack(descriptor, addressed)) {
+    member.public_key = addressed.public_key;
+    member.weight = addressed.weight;
+    member.adnl_addr = addressed.adnl_addr;
+    member.has_address = true;
+    return member;
+  }
+  block::gen::ValidatorDescr::Record_validator plain;
+  if (tlb::csr_unpack(descriptor, plain)) {
+    member.public_key = plain.public_key;
+    member.weight = plain.weight;
+    return member;
+  }
+  return Error{"election-binding-descriptor"};
+}
+}  // namespace
+
+Result<td::Ref<vm::Cell>> bind_elected_validators(td::Ref<vm::Cell> elected,
+                                                  const std::map<unsigned, ElectedBinding>& bindings,
+                                                  const RegistryView& registry, std::uint32_t anchor) {
+  try {
+    if (elected.is_null())
+      return Error{"election-binding-input"};
+
+    block::gen::ValidatorSet::Record_validators_ext set;
+    if (!tlb::unpack_cell(elected, set))
+      return Error{"election-binding-set"};
+    if (set.total == 0 || set.main == 0 || set.main > set.total || set.utime_since >= set.utime_until ||
+        set.total_weight == 0)
+      return Error{"election-binding-set"};
+    if (bindings.size() != set.total)
+      return Error{"election-binding-incomplete"};
+
+    vm::Dictionary emitted(set.list->prefetch_ref(), 16);
+    // Every consensus key in the set, because the rule is about the set and not
+    // about one member: an identity may not authenticate with a key anyone in
+    // this set votes with.
+    std::set<Hash> consensus;
+    for (unsigned index = 0; index < set.total; ++index) {
+      td::BitArray<16> at;
+      at.store_ulong(index);
+      auto descriptor = emitted.lookup(at.cbits(), 16);
+      if (descriptor.is_null())
+        return Error{"election-binding-incomplete"};
+      auto member = emitted_member(descriptor);
+      if (!member.ok())
+        return member.error();
+      block::gen::SigPubKey::Record pubkey;
+      if (!tlb::csr_unpack(member.value().public_key, pubkey))
+        return Error{"election-binding-descriptor"};
+      Hash consensus_key{};
+      auto raw = pubkey.pubkey.as_slice();
+      // Checked rather than copied blind: a short key silently copied into a
+      // fixed-size value would leave every short key equal to every other.
+      if (raw.size() != consensus_key.size())
+        return Error{"election-binding-descriptor"};
+      std::copy(raw.ubegin(), raw.uend(), consensus_key.begin());
+      consensus.insert(consensus_key);
+    }
+
+    vm::Dictionary bound(16);
+    std::set<Hash> identities, stakes;
+    std::uint64_t weight = 0;
+
+    for (unsigned index = 0; index < set.total; ++index) {
+      td::BitArray<16> key;
+      key.store_ulong(index);
+      auto descriptor = emitted.lookup(key.cbits(), 16);
+      if (descriptor.is_null())
+        return Error{"election-binding-incomplete"};
+
+      auto member = emitted_member(descriptor);
+      if (!member.ok())
+        return member.error();
+      // An authenticated descriptor carries an address, so a member elected
+      // without one cannot be bound at all. Refusing the set here is the point:
+      // the alternative is a set that only fails at derivation.
+      if (!member.value().has_address || member.value().weight == 0)
+        return Error{"election-binding-descriptor"};
+
+      auto named = bindings.find(index);
+      if (named == bindings.end() || named->second.staking_account == Hash{} ||
+          named->second.claimed_identity == Hash{})
+        return Error{"election-binding-incomplete"};
+
+      auto found = registry.identity(named->second.claimed_identity);
+      if (!found.ok())
+        return Error{"election-binding-unregistered"};
+      // The registry, not the member, decides whose identity this is.
+      if (found.value().owner_workchain_ != tos::masterchainId ||
+          found.value().owner_address_ != named->second.staking_account)
+        return Error{"election-binding-owner"};
+      // One identity elected twice would seat one registry member under two
+      // network keys, which derivation refuses; refusing it here names it.
+      if (!identities.insert(found.value().identity_).second || !stakes.insert(found.value().stake_id_).second)
+        return Error{"election-binding-duplicate"};
+
+      // The same question derivation will ask, asked here where the answer can
+      // still refuse a set instead of leaving one nothing can derive.
+      auto keys = committee_identity_keys(found.value(), registry, anchor, consensus);
+      if (!keys.ok())
+        return keys.error();
+
+      td::Ref<vm::Cell> binding;
+      if (!block::gen::t_ValidatorAuthBinding.cell_pack_validator_auth_binding(
+              binding, td::Bits256(td::ConstBitPtr(found.value().identity_.data())),
+              td::Bits256(td::ConstBitPtr(found.value().stake_id_.data()))))
+        return Error{"election-binding-pack"};
+
+      vm::CellBuilder cb;
+      if (!block::gen::t_ValidatorDescr.pack(
+              cb, block::gen::ValidatorDescr::Record_validator_auth{member.value().public_key, member.value().weight,
+                                                                    member.value().adnl_addr, binding}))
+        return Error{"election-binding-pack"};
+      if (!bound.set_builder(key.cbits(), 16, cb))
+        return Error{"election-binding-pack"};
+
+      if (!tos::checked_add_validator_weight(weight, member.value().weight))
+        return Error{"election-binding-weight"};
+    }
+
+    // The set's own declared weight has to survive untouched, so a rewrite that
+    // silently changed one member's weight cannot pass as a binding.
+    if (weight != set.total_weight)
+      return Error{"election-binding-weight"};
+
+    td::Ref<vm::Cell> result;
+    vm::CellBuilder wrapper;
+    if (!wrapper.store_maybe_ref(bound.get_root_cell()))
+      return Error{"election-binding-pack"};
+    set.list = vm::load_cell_slice_ref(wrapper.finalize());
+    if (!tlb::pack_cell(result, set))
+      return Error{"election-binding-pack"};
+    return result;
+  } catch (const vm::VmError&) {
+    return Error{"election-binding-cell"};
+  } catch (const vm::VmVirtError&) {
+    return Error{"election-binding-pruned"};
+  }
+}
+
+Result<std::map<unsigned, ElectedBinding>> decode_elected_bindings(td::Ref<vm::Cell> bindings, unsigned total) {
+  try {
+    if (bindings.is_null() || total == 0 || total > 400)
+      return Error{"election-binding-input"};
+    vm::CellSlice wrapper{vm::NoVm{}, std::move(bindings)};
+    if (!wrapper.is_valid() || wrapper.is_special() || wrapper.size() != 1 ||
+        wrapper.size_refs() != wrapper.prefetch_ulong(1))
+      return Error{"election-binding-shape"};
+    vm::Dictionary dict(wrapper, 16);
+    std::map<unsigned, ElectedBinding> decoded;
+    for (unsigned index = 0; index < total; ++index) {
+      td::BitArray<16> key;
+      key.store_ulong(index);
+      auto entry = dict.lookup(key.cbits(), 16);
+      // A missing entry is left out rather than filled in. Binding refuses an
+      // incomplete set, and a blank entry invented here would make it refuse
+      // for a reason that is not the truth.
+      if (entry.is_null())
+        continue;
+      ElectedBinding value;
+      auto field = entry.write();
+      if (field.size() != 512 || field.size_refs() != 0 ||
+          !field.fetch_bytes(
+              td::MutableSlice(reinterpret_cast<char*>(value.staking_account.data()), value.staking_account.size())) ||
+          !field.fetch_bytes(
+              td::MutableSlice(reinterpret_cast<char*>(value.claimed_identity.data()), value.claimed_identity.size())))
+        return Error{"election-binding-shape"};
+      decoded.emplace(index, value);
+    }
+    // Anything filed beyond the set's own size is a caller describing a
+    // different set, which binding refuses; counting is how that becomes visible.
+    std::size_t present = 0;
+    dict.check_for_each([&present](td::Ref<vm::CellSlice>, td::ConstBitPtr, int) {
+      ++present;
+      return true;
+    });
+    if (present != decoded.size())
+      return Error{"election-binding-shape"};
+    return decoded;
+  } catch (const vm::VmError&) {
+    return Error{"election-binding-cell"};
+  } catch (const vm::VmVirtError&) {
+    return Error{"election-binding-pruned"};
+  }
+}
+}  // namespace tos::auth

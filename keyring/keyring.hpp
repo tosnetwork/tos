@@ -24,6 +24,7 @@
 #include "keys/encryptor.h"
 
 #include "keyring.h"
+#include "validator/auth/key-isolation.h"
 
 namespace tos {
 
@@ -61,6 +62,7 @@ class KeyringImpl : public Keyring {
   void decrypt_message(PublicKeyHash key_hash, td::BufferSlice data, td::Promise<td::BufferSlice> promise) override;
 
   void export_all_private_keys(td::Promise<std::vector<PrivateKey>> promise) override;
+  void protect_validator_auth_key(PublicKeyHash key_hash, td::Promise<td::Unit> promise) override;
 
   KeyringImpl(std::string db_root) : db_root_(db_root) {
   }
@@ -72,6 +74,32 @@ class KeyringImpl : public Keyring {
   bool loaded_all_keys_ = false;
 
   std::string db_root_;
+  auth::KeyIsolation isolation_{db_root_};
+  std::map<PublicKeyHash, std::size_t> raw_inflight_;
+  std::vector<std::pair<PublicKeyHash, td::Promise<td::Unit>>> protection_waiters_;
+  td::Status admit_generic(PublicKeyHash key_hash);
+  td::Status admit_bulk_export();
+  void finish_protections();
+
+  template <class T>
+  void complete_raw(PublicKeyHash key_hash, td::Promise<T> promise, td::Result<T> result) {
+    auto it = raw_inflight_.find(key_hash);
+    CHECK(it != raw_inflight_.end() && it->second != 0);
+    bool drained = --it->second == 0;
+    if (drained) raw_inflight_.erase(it);
+    promise.set_result(std::move(result));
+    if (raw_inflight_.empty()) finish_protections();
+  }
+
+  template <class T>
+  td::Promise<T> track_raw(PublicKeyHash key_hash, td::Promise<T> promise) {
+    ++raw_inflight_[key_hash];
+    return td::PromiseCreator::lambda(
+        [self = actor_id(this), key_hash, promise = std::move(promise)](td::Result<T> result) mutable {
+          td::actor::send_closure_later(self, &KeyringImpl::complete_raw<T>, key_hash,
+                                       std::move(promise), std::move(result));
+        });
+  }
 
   void load_all_keys();
 };

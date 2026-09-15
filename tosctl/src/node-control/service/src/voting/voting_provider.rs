@@ -7,12 +7,12 @@
  * This software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND.
  */
 use adnl::client::AdnlClientConfig;
-use chain_block::{SigPubKey, UInt256, ValidatorDescr, ValidatorSet};
+use chain_block::ValidatorSet;
 use control_client::{
     client_adnl::ControlClientAdnl,
     client_api::{ControlClient, SignRq},
 };
-use std::{collections::HashMap, str::FromStr};
+use std::collections::HashMap;
 
 #[derive(Clone)]
 pub struct ValidatorEntry {
@@ -111,67 +111,14 @@ impl VotingProvider for VotingProviderImpl {
 
     async fn get_current_vset(&mut self) -> anyhow::Result<ValidatorSet> {
         let bytes = self.client.get_config_param(34).await?;
-        let param: serde_json::Value = serde_json::from_str(&String::from_utf8(bytes)?)?;
-        let map = param
-            .as_object()
-            .ok_or_else(|| anyhow::anyhow!("invalid config param"))?
-            .get("p34")
-            .and_then(|v| v.as_object())
-            .ok_or_else(|| anyhow::anyhow!("p34 entry not found"))?;
-        let utime_since = map
-            .get("utime_since")
-            .and_then(|value| value.as_u64())
-            .map(|v| v as u32)
-            .ok_or_else(|| anyhow::anyhow!("utime_since"))?;
-        let utime_until = map
-            .get("utime_until")
-            .and_then(|value| value.as_u64())
-            .map(|v| v as u32)
-            .ok_or_else(|| anyhow::anyhow!("utime_until"))?;
-        let _ = map
-            .get("total")
-            .and_then(|value| value.as_u64())
-            .map(|v| v as u16)
-            .ok_or_else(|| anyhow::anyhow!("total"))?;
-        let main = map
-            .get("main")
-            .and_then(|value| value.as_u64())
-            .map(|v| v as u16)
-            .ok_or_else(|| anyhow::anyhow!("main"))?;
-        let json_list = map
-            .get("list")
-            .and_then(|value| value.as_array())
-            .ok_or_else(|| anyhow::anyhow!("list"))?;
-        let mut list = vec![];
-        for entry in json_list {
-            let map = entry.as_object().ok_or_else(|| anyhow::anyhow!("invalid list entry"))?;
-            let pubkey = map
-                .get("public_key")
-                .and_then(|v| v.as_str())
-                .map(hex::decode)
-                .transpose()?
-                .ok_or(anyhow::anyhow!("public_key"))?;
-            let weight = map
-                .get("weight_dec")
-                .and_then(|v| v.as_str())
-                .and_then(|v| v.parse::<u64>().ok())
-                .ok_or(anyhow::anyhow!("weight"))?;
-            let adnl_addr =
-                map.get("adnl_addr").and_then(|v| v.as_str()).map(UInt256::from_str).transpose()?;
-            let descr = ValidatorDescr {
-                public_key: SigPubKey::from_bytes(&pubkey)
-                    .map_err(|_| anyhow::anyhow!("public key is invalid"))?,
-                weight,
-                adnl_addr,
-                mc_seq_no_since: 0,
-                prev_weight_sum: 0,
-            };
-            list.push(descr);
-        }
-        ValidatorSet::new(utime_since, utime_until, main, list)
+        control_client::config_params::parse_config_param_34(&bytes)
     }
 
     async fn export_public_key(&mut self, key_id: &[u8]) -> anyhow::Result<Vec<u8>> {
         self.client.export_key_pub(key_id).await
     }
 }
+
+#[cfg(test)]
+#[path = "p0_provider_tests.rs"]
+mod p0_provider_tests;

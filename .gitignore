@@ -61,3 +61,6 @@ test/integration/.toscan-*/
 # here by default and pins the expected hash itself, so the artifact is checked
 # rather than stored.
 crypto/smartcont/artifacts/
+
+# Evidence directory the focused P0 workflow writes; never part of a commit.
+/artifacts/

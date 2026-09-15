@@ -434,6 +434,7 @@ pub enum GlobalCapabilities {
     CapMsgMetadata            = 0x0000_0000_0080,
     CapDeferMessages          = 0x0000_0000_0100,
     CapFullCollatedData       = 0x0000_0000_0200,
+    CapValidatorAuth          = 0x0000_0000_0400,
     CapResolveMerkleCell      = 0x0000_0200_0000,
 }
 
@@ -538,7 +539,9 @@ impl ConfigParams {
                 false
             }
         };
-        Ok(result && self.config_params_present(mparams)?)
+        Ok(result
+            && self.config_params_present(mparams)?
+            && crate::validator_auth_config::validate_validator_auth_config(self).is_ok())
     }
     fn config_params_present(&self, params: Option<MandatoryParams>) -> Result<bool> {
         match params {
@@ -698,6 +701,10 @@ impl ConfigParamEnum {
             43 => read_config!(ConfigParam43, SizeLimitsConfig,             cell),
             44 => read_config!(ConfigParam44, SuspendedAddressList,         cell),
             45 => read_config!(ConfigParam45, PrecompiledContractsList,     cell),
+            46 => {
+                crate::validator_auth_config::validate_validator_auth_root_shape(&cell)?;
+                Ok(ConfigParamEnum::ConfigParamAny(46, cell))
+            },
             63 => read_config!(ConfigParam63, AcceleratedConsensusConfig,   cell),
             71 => read_config!(ConfigParam71, OracleBridgeParams,           cell),
             72 => read_config!(ConfigParam72, OracleBridgeParams,           cell),

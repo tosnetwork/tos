@@ -30,6 +30,7 @@
 #include "tol/extra-flags-constants.h"
 #include <cstring>
 #include "vm/vm.h"
+#include "vm/authops.h"
 
 #define FAIL_UNLESS_MSG(condition, msg) \
   if (!(condition)) {                   \
@@ -244,6 +245,17 @@ class StringLoggerTail : public td::LogInterface {
 }  // namespace
 
 namespace block {
+
+bool ComputePhaseConfig::offers_validator_auth_host(bool is_masterchain, const td::Bits256& addr) const {
+  // Every condition is necessary. Without the host there is nothing to offer;
+  // without the named account the offer has no target; a non-masterchain or
+  // differently addressed account is not that target; and a chain that has not
+  // activated validator authentication must behave as though the instructions
+  // do not exist, which is what the instructions themselves already enforce.
+  return validator_auth_host && validator_auth_account && is_masterchain && addr == validator_auth_account.value() &&
+         global_version >= vm::validator_auth_min_version &&
+         (global_capabilities & vm::validator_auth_capability) != 0;
+}
 using td::Ref;
 
 /**
@@ -2457,9 +2469,19 @@ bool Transaction::prepare_compute_phase(const ComputePhaseConfig& cfg) {
       }
     }
   }
-  vm::VmState vm{new_code, cfg.global_version, std::move(stack), gas, 1, new_data, vm_log, compute_vm_libraries(cfg)};
+  vm::VmState vm{new_code, cfg.global_version, std::move(stack), gas, 1, new_data, vm_log, compute_vm_libraries(cfg),
+                {}, cfg.global_capabilities};
   vm.set_max_data_depth(cfg.max_vm_data_depth);
   vm.set_c7(prepare_vm_c7(cfg));  // tuple with SmartContractInfo
+  // The privileged registry instructions refuse unless this authority is
+  // present, so injecting it is what makes them reachable at all. It is
+  // injected only for the one masterchain account the composer named, and only
+  // on a chain that has activated validator authentication -- the same version
+  // and capability the instructions themselves check, read from where they
+  // define it rather than restated here. A nested VM does not inherit it.
+  if (cfg.offers_validator_auth_host(account.is_masterchain(), account.addr)) {
+    vm.set_validator_auth_host(cfg.validator_auth_host);
+  }
   vm.set_chksig_always_succeed(cfg.ignore_chksig);
   vm.set_stop_on_accept_message(cfg.stop_on_accept_message);
   if (cfg.size_limits.max_transaction_library_loads) {
@@ -4941,6 +4963,7 @@ td::Status FetchConfigParams::fetch_config_params(
     compute_phase_cfg->max_vm_data_depth = size_limits.max_vm_data_depth;
     compute_phase_cfg->global_config = config.get_root_cell();
     compute_phase_cfg->global_version = config.get_global_version();
+    compute_phase_cfg->global_capabilities = config.get_capabilities();
     if (compute_phase_cfg->global_version >= 4) {
       compute_phase_cfg->prev_blocks_info = std::move(prev_blocks_info);
     }

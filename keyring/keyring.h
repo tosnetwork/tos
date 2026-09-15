@@ -47,6 +47,11 @@ class Keyring : public td::actor::Actor {
 
   virtual void export_all_private_keys(td::Promise<std::vector<PrivateKey>> promise) = 0;
 
+  // Trusted local provider/session setup only. This monotonic designation has
+  // no removal API and grants no signing authority. Success is a durable barrier
+  // after all earlier raw operations for this key have completed.
+  virtual void protect_validator_auth_key(PublicKeyHash key_hash, td::Promise<td::Unit> promise) = 0;
+
   static td::actor::ActorOwn<Keyring> create(std::string db_root);
 };
 

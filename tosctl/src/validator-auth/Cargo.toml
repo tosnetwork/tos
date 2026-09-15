@@ -1,0 +1,12 @@
+[package]
+name = "tos-validator-auth"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0"
+
+[dependencies]
+tos-validator-auth-crypto = { path = "../validator-auth-crypto" }
+sha2 = "0.10"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

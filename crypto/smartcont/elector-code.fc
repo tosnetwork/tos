@@ -165,6 +165,13 @@ builder pack_complaint(int validator_pubkey, cell description, int created_at, i
   send_raw_message(msg.end_cell(), mode);
 }
 
+;; The registry identity each elected member named, carried beside the set to
+;; the configuration contract. It is filled where both the staking account and
+;; the named identity are known, and it is never judged here: whether an
+;; identity really belongs to that account is the registry's answer, not this
+;; contract's.
+global cell elector_bindings;
+
 () return_stake(addr, query_id, reason) impure inline_ref {
   return send_message_back(addr, 0xee6f454c, query_id, reason, 0, 64);
 }
@@ -182,6 +189,11 @@ builder pack_complaint(int validator_pubkey, cell description, int created_at, i
     .store_uint(0x4e565354, 32)
     .store_uint(query_id, 64)
     .store_ref(vset);
+  ifnot (cell_null?(elector_bindings)) {
+    ;; wrapped the way every other dictionary crossing this boundary is, so the
+    ;; reader has one shape to know rather than one per sender
+    msg = msg.store_ref(begin_cell().store_dict(elector_bindings).end_cell());
+  }
   send_raw_message(msg.end_cell(), 1);
 }
 
@@ -210,6 +222,12 @@ _ ~credit_to(credits, addr, amount) inline_ref {
   var max_factor = cs~load_uint(32);
   var adnl_addr = cs~load_uint(256);
   var signature = cs~load_ref().begin_parse().preload_bits(512);
+  ;; a stake may name the registry identity it is for; one that does not is a
+  ;; stake on a chain that has not activated validator authentication
+  int named_identity = 0;
+  if (cs.slice_bits()) {
+    named_identity = cs~load_uint(256);
+  }
   cs.end_parse();
   ifnot (check_data_signature(begin_cell()
       .store_uint(0x654c5074, 32)
@@ -266,6 +284,17 @@ _ ~credit_to(credits, addr, amount) inline_ref {
     .store_uint(max_factor, 32)
     .store_uint(src_addr, 256)
     .store_uint(adnl_addr, 256));
+  if (named_identity) {
+    members~udict_set_builder(256, validator_pubkey, begin_cell()
+      .store_tomis(msg_value)
+      .store_uint(now(), 32)
+      .store_uint(max_factor, 32)
+      .store_uint(src_addr, 256)
+      .store_uint(adnl_addr, 256)
+      ;; in a reference, because the record plus another 256 bits no longer
+      ;; fits a dictionary leaf beside its key
+      .store_ref(begin_cell().store_uint(named_identity, 256).end_cell()));
+  }
   ;; gather and save election data
   elect = pack_elect(elect_at, elect_close, min_stake, total_stake, members, false, false);
   set_data(begin_cell().store_dict(elect).store_slice(ds).end_cell());
@@ -700,6 +729,11 @@ _ compute_total_stake(l, n, m_stake) inline_ref {
     (pubkey, var cs, var f) = members.udict_get_next?(256, pubkey);
     if (f) {
       var (stake, time, max_factor, addr, adnl_addr) = (cs~load_tomis(), cs~load_uint(32), cs~load_uint(32), cs~load_uint(256), cs~load_uint(256));
+      ;; a record that names an identity carries it in a reference; this walk
+      ;; only has to reach the end of the record, not to use what it finds
+      if (cs.slice_refs()) {
+        cs~load_ref();
+      }
       cs.end_parse();
       var key = begin_cell()
         .store_uint(stake, 128)
@@ -758,6 +792,7 @@ _ compute_total_stake(l, n, m_stake) inline_ref {
   var tot_stake = 0;
   var tot_weight = 0;
   var vset = new_dict();
+  elector_bindings = new_dict();
   var frozen = new_dict();
   do {
     var [stake, max_f, pubkey, adnl_addr] = l~list_next();
@@ -783,6 +818,15 @@ _ compute_total_stake(l, n, m_stake) inline_ref {
         vinfo~store_uint(adnl_addr, 256);  ;; adnl_addr:bits256
       }
       vset~udict_set_builder(16, i, vinfo);
+      ;; src_addr was read without consuming it; step over it and the adnl
+      ;; address to reach the identity this member named, if it named one
+      val~load_uint(256);
+      val~load_uint(256);
+      if (val.slice_refs()) {
+        elector_bindings~udict_set_builder(16, i, begin_cell()
+          .store_uint(src_addr, 256)
+          .store_uint(val~load_ref().begin_parse().preload_uint(256), 256));
+      }
       frozen~udict_set_builder(256, pubkey, begin_cell()
         .store_uint(src_addr, 256)
         .store_uint(weight, 64)
@@ -1080,6 +1124,11 @@ _ participant_list_extended() method_id {
     (id, var cs, var f) = members.udict_get_prev?(256, id);
     if (f) {
       var (stake, time, max_factor, addr, adnl_addr) = (cs~load_tomis(), cs~load_uint(32), cs~load_uint(32), cs~load_uint(256), cs~load_uint(256));
+      ;; a record that names an identity carries it in a reference; this walk
+      ;; only has to reach the end of the record, not to use what it finds
+      if (cs.slice_refs()) {
+        cs~load_ref();
+      }
       cs.end_parse();
       l = cons([id, [stake, max_factor, addr, adnl_addr]], l);
     }

@@ -25,6 +25,7 @@
 #include "dictops.h"
 #include "opctable.h"
 #include "pqops.h"
+#include "authops.h"
 #include "stackops.h"
 #include "tosops.h"
 #include "tupleops.h"
@@ -43,6 +44,7 @@ const OpcodeTable* init_op_cp0(bool enable_debug) {
     register_dictionary_ops(*op_cp0);    // dictops.cpp
     register_tos_ops(*op_cp0);           // tosops.cpp
     register_pq_ops(*op_cp0);            // pqops.cpp
+    register_validator_auth_ops(*op_cp0);
     register_debug_ops(*op_cp0);         // debugops.cpp
     register_codepage_ops(*op_cp0);      // contops.cpp
     op_cp0->finalize()->register_table(Codepage::test_cp);

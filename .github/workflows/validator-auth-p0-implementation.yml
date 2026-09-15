@@ -1,0 +1,919 @@
+name: Validator P0 implementation
+
+on:
+  pull_request:
+    paths:
+      - 'validator/auth/**'
+      - 'keyring/**'
+      - 'crypto/**'
+      - 'emulator/**'
+      - 'tos/tos-types.h'
+      - 'validator/impl/**'
+      - 'tosctl/src/vm/**'
+      - 'tosctl/src/block/**'
+      - 'tosctl/src/block-json/**'
+      - 'tosctl/src/node-control/control-client/**'
+      - 'tosctl/src/node-control/service/src/voting/**'
+      - 'tosctl/src/assembler/**'
+      - 'tosctl/src/validator-auth-crypto/**'
+      - 'tosctl/src/validator-auth/**'
+      - 'tosctl/src/validator-auth-native/**'
+      - 'tosctl/src/Cargo.toml'
+      - 'tosctl/src/Cargo.lock'
+      - 'test/validator-auth-implementation/**'
+      - 'test/validator-auth-session-birth/**'
+      - 'tools/validator-auth/**'
+      - 'doc/validator-auth-p0/**'
+      - 'doc/validator-auth-p0-freeze.json'
+      - 'doc/validator-auth-p0-native-insertions.json'
+      - 'test/validator-auth-p0/**'
+      - 'CMakeLists.txt'
+      - 'test/CMakeLists.txt'
+      - '.github/workflows/validator-auth-p0-implementation.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+concurrency:
+  group: validator-p0-implementation-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  implementation:
+    name: ${{ matrix.check_name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            guards: core
+            check_name: implementation (ubuntu-24.04)
+          - runner: ubuntu-24.04-arm
+            guards: none
+            check_name: implementation (ubuntu-24.04-arm)
+          - runner: ubuntu-24.04
+            guards: services
+            check_name: P0 service guards
+          - runner: ubuntu-24.04
+            guards: state1
+            check_name: P0 state and proof guards 1
+          - runner: ubuntu-24.04
+            guards: state2
+            check_name: P0 state and proof guards 2
+          - runner: ubuntu-24.04
+            guards: state3
+            check_name: P0 state and proof guards 3
+          - runner: ubuntu-24.04
+            guards: state4
+            check_name: P0 state and proof guards 4
+          - runner: ubuntu-24.04
+            guards: native
+            check_name: P0 native execution guards
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Install native library dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang lld cmake ninja-build pkg-config libssl-dev libsodium-dev liblz4-dev zlib1g-dev gperf
+      - name: Build production libraries and focused drivers
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          git rev-parse HEAD > artifacts/commit.txt
+          python3 tools/validator-auth/generate.py
+          cargo fmt --manifest-path tosctl/src/Cargo.toml -p tos-validator-auth -p tos-validator-auth-native -p tos-validator-auth-crypto -- --check
+          cargo clippy --locked --manifest-path tosctl/src/Cargo.toml -p tos-validator-auth -p tos-validator-auth-native -p tos-validator-auth-crypto --all-targets --no-deps -- -D warnings
+          cargo build --locked --manifest-path tosctl/src/Cargo.toml -p tos-validator-auth -p tos-validator-auth-native -p tos-validator-auth-crypto --bins
+          cmake -S . -B build-p0 -G Ninja -DCMAKE_BUILD_TYPE=Release -DTOS_ARCH= \
+            -DTOS_BUILD_P0_IMPLEMENTATION_TESTS=ON -DUSE_QUIC=OFF \
+            -DTOS_USE_ROCKSDB=OFF -DTOS_USE_ABSEIL=OFF -DTOS_USE_LLD=ON \
+            -DCMAKE_SKIP_INSTALL_RULES=ON \
+            -DOPENSSL_CRYPTO_LIBRARY="$(pkg-config --variable=libdir openssl)/libcrypto.so" \
+            -DOPENSSL_SSL_LIBRARY="$(pkg-config --variable=libdir openssl)/libssl.so" \
+            -DOPENSSL_INCLUDE_DIR="$(pkg-config --variable=includedir openssl)"
+          export FUNC_BIN="$PWD/build-p0/crypto/func" FIFT_BIN="$PWD/build-p0/crypto/fift"
+          cmake --build build-p0 --target func fift -j2
+          cmake --build build-p0 --target emulator test-p0-vm test-p0-vm-adapter test-p0-committee test-p0-registry-view test-p0-committee-proof test-p0-certificate-proof test-p0-certificate-rpc test-p0-implementation test-p0-transfer test-p0-transport test-p0-cells test-p0-state test-p0-state-replay test-p0-activation test-p0-pq-feasibility test-p0-pq-verify-benchmark test-p0-suite-dispatch benchmark-p0-c0 test-p0-proof test-p0-authority test-p0-context test-p0-governance test-p0-owner-proof test-p0-native-apply test-p0-native-config-host test-p0-host-injection test-p0-chain-context test-p0-config-transaction test-p0-prefetch test-p0-config-message test-p0-anchor-cache test-p0-registry-admission test-p0-history-resolve test-p0-election-binding test-p0-config-contract test-p0-elector-contract test-p0-native-history test-p0-native-header test-p0-native-evidence test-p0-native-config-context test-p0-native-host-vm test-p0-native-registry test-p0-persistent-apply test-p0-native-transactions test-p0-config-gates test-config-transition test-p0-native-governance test-p0-native-session-id test-p0-native-session-history test-p0-native-session-committee test-p0-chain-context test-p0-config-transaction test-p0-prefetch test-p0-config-contract test-p0-archive-growth test-p0-store-reclaim test-p0-manager-binding create-state p0-genesis-tool p0-genesis-probe p0-vset-probe test-p0-journal test-p0-journal-growth test-p0-ledger-memory test-p0-signer test-p0-sync test-p0-channel test-p0-process test-p0-object-store test-p0-issuer test-p0-api-semantics test-p0-admin test-p0-admin-process test-p0-api-service test-p0-http test-p0-keyring test-keyring-temp-key -j2
+          cmake --build build-p0 --target validator/impl/CMakeFiles/tos_validator.dir/validate-query.cpp.o -j2
+          cmake --build build-p0 --target validator/impl/CMakeFiles/tos_validator.dir/collator.cpp.o -j2
+          cmake --build build-p0 --target validator/CMakeFiles/validator.dir/collation-manager.cpp.o -j2
+          cmake -S . -B build-p0-sanitized -G Ninja -DCMAKE_BUILD_TYPE=Release -DTOS_ARCH= \
+            -DTOS_BUILD_P0_IMPLEMENTATION_TESTS=ON -DUSE_QUIC=OFF \
+            -DTOS_USE_ASAN=ON -DTOS_USE_UBSAN=ON \
+            -DTOS_USE_ROCKSDB=OFF -DTOS_USE_ABSEIL=OFF -DTOS_USE_LLD=ON \
+            -DCMAKE_SKIP_INSTALL_RULES=ON \
+            -DOPENSSL_CRYPTO_LIBRARY="$(pkg-config --variable=libdir openssl)/libcrypto.so" \
+            -DOPENSSL_SSL_LIBRARY="$(pkg-config --variable=libdir openssl)/libssl.so" \
+            -DOPENSSL_INCLUDE_DIR="$(pkg-config --variable=includedir openssl)"
+          cmake --build build-p0-sanitized --target test-p0-keyring-sanitized test-p0-vm test-p0-committee test-p0-proof test-p0-registry-view test-p0-committee-proof test-p0-state-replay test-p0-activation test-p0-pq-feasibility test-p0-pq-verify-benchmark test-p0-suite-dispatch test-p0-certificate-proof test-p0-certificate-rpc test-p0-context test-p0-governance test-p0-owner-proof test-p0-native-apply test-p0-native-config-host test-p0-native-history test-p0-native-header test-p0-native-evidence test-p0-native-config-context test-p0-native-host-vm test-p0-native-registry test-p0-persistent-apply test-p0-native-transactions test-p0-config-gates test-config-transition test-p0-native-governance test-p0-native-session-id test-p0-native-session-history test-p0-native-session-committee test-p0-chain-context test-p0-config-transaction test-p0-prefetch test-p0-config-message test-p0-anchor-cache test-p0-registry-admission test-p0-history-resolve test-p0-election-binding test-p0-config-contract test-p0-elector-contract test-p0-archive-growth test-p0-store-reclaim test-p0-manager-binding -j2
+          cargo build --locked --manifest-path tosctl/src/Cargo.toml -p tos_vm --example p0-parity --example native-host-parity
+          cargo build --locked --manifest-path tosctl/src/Cargo.toml -p tos_executor --example pq-tx-parity
+      - name: Enforce native configuration admission and transition gates
+        run: |
+          set -euo pipefail
+          build-p0/test/validator-auth-implementation/test-p0-config-gates tosctl/src/block/src/tests/data/config.boc artifacts/config-gates | tee artifacts/config-gates.txt
+          tosctl/src/target/debug/config-gates-conformance artifacts/config-gates | tee artifacts/config-gates-rust.txt
+          build-p0/test-config-transition | tee artifacts/legacy-config-transition.txt
+          ASAN_OPTIONS=detect_leaks=1:detect_stack_use_after_return=1 UBSAN_OPTIONS=halt_on_error=1 build-p0-sanitized/test/validator-auth-implementation/test-p0-config-gates tosctl/src/block/src/tests/data/config.boc artifacts/config-gates-sanitized | tee artifacts/config-gates-sanitized.txt
+          ASAN_OPTIONS=detect_leaks=1:detect_stack_use_after_return=1 UBSAN_OPTIONS=halt_on_error=1 build-p0-sanitized/test-config-transition | tee artifacts/legacy-config-transition-sanitized.txt
+          diff -r artifacts/config-gates artifacts/config-gates-sanitized
+      - name: Exercise native VM and contract execution
+        run: |
+          set -euo pipefail
+          python3 test/validator-auth-implementation/vm_crypto_fixtures.py --out artifacts/vm-crypto
+          build-p0/test/validator-auth-implementation/test-p0-vm artifacts/vm-fixtures artifacts/vm-crypto | tee artifacts/vm.txt
+          tosctl/src/target/debug/examples/p0-parity artifacts/vm-fixtures | tee artifacts/vm-rust.txt
+          ASAN_OPTIONS=detect_leaks=1:detect_stack_use_after_return=1 UBSAN_OPTIONS=halt_on_error=1 build-p0-sanitized/test/validator-auth-implementation/test-p0-vm artifacts/vm-fixtures-sanitized artifacts/vm-crypto | tee artifacts/vm-sanitized.txt
+          diff -r artifacts/vm-fixtures artifacts/vm-fixtures-sanitized
+          build-p0/test/validator-auth-implementation/test-p0-vm-adapter artifacts/vm-fixtures | tee artifacts/vm-getter.txt
+          python3 test/validator-auth-implementation/check_vm_transactions.py --build build-p0 --vectors artifacts/vm-fixtures --driver tosctl/src/target/debug/examples/pq-tx-parity --out artifacts/vm-transactions
+      - name: Exercise privileged native VM host isolation
+        run: |
+          set -euo pipefail
+          build-p0/test/validator-auth-implementation/test-p0-native-host-vm artifacts/native-host | tee artifacts/native-host.txt
+          tosctl/src/target/debug/examples/native-host-parity artifacts/native-host | tee artifacts/native-host-rust.txt
+          ASAN_OPTIONS=detect_leaks=1:detect_stack_use_after_return=1 UBSAN_OPTIONS=halt_on_error=1 build-p0-sanitized/test/validator-auth-implementation/test-p0-native-host-vm artifacts/native-host-sanitized | tee artifacts/native-host-sanitized.txt
+          diff -r artifacts/native-host artifacts/native-host-sanitized
+      - name: Verify native owner execution and rollback proofs
+        run: |
+          set -euo pipefail
+          for chain in mc shard; do
+            workchain=-1
+            if [ "$chain" = shard ]; then workchain=0; fi
+            python3 test/validator-auth-implementation/owner_fixtures.py --build build-p0 --driver build-p0/test/validator-auth-implementation/test-p0-owner-proof --out "artifacts/owner-transactions-$chain" --workchain "$workchain"
+            build-p0/test/validator-auth-implementation/test-p0-owner-proof verify "artifacts/owner-transactions-$chain" "artifacts/owner-proof-$chain" | tee "artifacts/owner-$chain.txt"
+            tosctl/src/target/debug/owner-conformance "artifacts/owner-proof-$chain" | tee "artifacts/owner-rust-$chain.txt"
+            ASAN_OPTIONS=detect_leaks=1:detect_stack_use_after_return=1 UBSAN_OPTIONS=halt_on_error=1 build-p0-sanitized/test/validator-auth-implementation/test-p0-owner-proof verify "artifacts/owner-transactions-$chain" "artifacts/owner-proof-$chain-sanitized" | tee "artifacts/owner-sanitized-$chain.txt"
+            diff -r "artifacts/owner-proof-$chain" "artifacts/owner-proof-$chain-sanitized"
+          done
+      - name: Authenticate bounded native header witnesses without archive IO
+        run: |
+          set -euo pipefail
+          build-p0/test/validator-auth-implementation/test-p0-native-header artifacts/owner-transactions-mc artifacts/native-header | tee artifacts/native-header.txt
+          tosctl/src/target/debug/native-header-conformance artifacts/native-header | tee artifacts/native-header-rust.txt
+          ASAN_OPTIONS=detect_leaks=1:detect_stack_use_after_return=1 UBSAN_OPTIONS=halt_on_error=1 build-p0-sanitized/test/validator-auth-implementation/test-p0-native-header artifacts/owner-transactions-mc artifacts/native-header-sanitized | tee artifacts/native-header-sanitized.txt
+          diff -r artifacts/native-header artifacts/native-header-sanitized
+      - name: Admit transaction-contained typed native evidence
+        run: |
+          set -euo pipefail
+          build-p0/test/validator-auth-implementation/test-p0-native-evidence artifacts/native-header artifacts/native-evidence | tee artifacts/native-evidence.txt
+          tosctl/src/target/debug/native-evidence-conformance artifacts/native-evidence | tee artifacts/native-evidence-rust.txt
+          ASAN_OPTIONS=detect_leaks=1:detect_stack_use_after_return=1 UBSAN_OPTIONS=halt_on_error=1 build-p0-sanitized/test/validator-auth-implementation/test-p0-native-evidence artifacts/native-header artifacts/native-evidence-sanitized | tee artifacts/native-evidence-sanitized.txt
+          diff -r artifacts/native-evidence artifacts/native-evidence-sanitized
+      - name: Resolve finalized native history from original block bytes
+        run: |
+          set -euo pipefail
+          build-p0/test/validator-auth-implementation/test-p0-native-history artifacts/owner-transactions-mc artifacts/native-history | tee artifacts/native-history.txt
+          tosctl/src/target/debug/native-history-conformance artifacts/native-history | tee artifacts/native-history-rust.txt
+          ASAN_OPTIONS=detect_leaks=1:detect_stack_use_after_return=1 UBSAN_OPTIONS=halt_on_error=1 build-p0-sanitized/test/validator-auth-implementation/test-p0-native-history artifacts/owner-transactions-mc artifacts/native-history-sanitized | tee artifacts/native-history-sanitized.txt
+          diff -r artifacts/native-history artifacts/native-history-sanitized
+      - name: Apply native owner, possession and current identity authority in block order
+        run: |
+          set -euo pipefail
+          for chain in mc shard; do
+            workchain=-1
+            if [ "$chain" = shard ]; then workchain=0; fi
+            python3 test/validator-auth-implementation/owner_fixtures.py --build build-p0 --driver build-p0/test/validator-auth-implementation/test-p0-native-apply --out "artifacts/apply-owner-$chain" --workchain "$workchain"
+            build-p0/test/validator-auth-implementation/test-p0-native-apply verify "artifacts/apply-owner-$chain" "artifacts/native-apply-$chain" | tee "artifacts/native-apply-$chain.txt"
+            tosctl/src/target/debug/native-apply-conformance "artifacts/native-apply-$chain" | tee "artifacts/native-apply-rust-$chain.txt"
+            ASAN_OPTIONS=detect_leaks=1:detect_stack_use_after_return=1 UBSAN_OPTIONS=halt_on_error=1 build-p0-sanitized/test/validator-auth-implementation/test-p0-native-apply verify "artifacts/apply-owner-$chain" "artifacts/native-apply-$chain-sanitized" | tee "artifacts/native-apply-sanitized-$chain.txt"
+            diff -r "artifacts/native-apply-$chain" "artifacts/native-apply-$chain-sanitized"
+            build-p0/test/validator-auth-implementation/test-p0-persistent-apply verify "artifacts/apply-owner-$chain" "artifacts/persistent-apply-$chain" | tee "artifacts/persistent-apply-$chain.txt"
+            tosctl/src/target/debug/native-apply-conformance --persistent "artifacts/persistent-apply-$chain" | tee "artifacts/persistent-apply-rust-$chain.txt"
+            ASAN_OPTIONS=detect_leaks=1:detect_stack_use_after_return=1 UBSAN_OPTIONS=halt_on_error=1 build-p0-sanitized/test/validator-auth-implementation/test-p0-persistent-apply verify "artifacts/apply-owner-$chain" "artifacts/persistent-apply-$chain-sanitized" | tee "artifacts/persistent-apply-sanitized-$chain.txt"
+            diff -r "artifacts/native-apply-$chain" "artifacts/persistent-apply-$chain"
+            build-p0/test/validator-auth-implementation/test-p0-native-transactions verify "artifacts/apply-owner-$chain" "artifacts/native-transactions-$chain" | tee "artifacts/native-transactions-$chain.txt"
+            tosctl/src/target/debug/native-apply-conformance --transactions "artifacts/native-transactions-$chain" | tee "artifacts/native-transactions-rust-$chain.txt"
+            ASAN_OPTIONS=detect_leaks=1:detect_stack_use_after_return=1 UBSAN_OPTIONS=halt_on_error=1 build-p0-sanitized/test/validator-auth-implementation/test-p0-native-transactions verify "artifacts/apply-owner-$chain" "artifacts/native-transactions-$chain-sanitized" | tee "artifacts/native-transactions-sanitized-$chain.txt"
+            diff -r "artifacts/native-apply-$chain" "artifacts/native-transactions-$chain"
+            diff -r "artifacts/native-transactions-$chain" "artifacts/native-transactions-$chain-sanitized"
+            diff -r "artifacts/persistent-apply-$chain" "artifacts/persistent-apply-$chain-sanitized"
+          done
+      - name: Derive complete committees from native election and registry state
+        run: |
+          set -euo pipefail
+          build-p0/validator/auth/test-p0-native-session-id | tee artifacts/native-session-id.txt
+          ASAN_OPTIONS=detect_leaks=1:detect_stack_use_after_return=1 UBSAN_OPTIONS=halt_on_error=1 build-p0-sanitized/validator/auth/test-p0-native-session-id | tee artifacts/native-session-id-sanitized.txt
+          build-p0/test/validator-auth-implementation/test-p0-committee artifacts/committee-fixtures | tee artifacts/committee.txt
+          test -x build-p0/validator/auth/test-p0-native-session-history
+          build-p0/validator/auth/test-p0-native-session-history artifacts/owner-transactions-mc artifacts/committee-fixtures | tee artifacts/native-session-history.txt
+          tosctl/src/target/debug/committee-conformance artifacts/committee-fixtures | tee artifacts/committee-rust.txt
+          ASAN_OPTIONS=detect_leaks=1:detect_stack_use_after_return=1 UBSAN_OPTIONS=halt_on_error=1 build-p0-sanitized/test/validator-auth-implementation/test-p0-committee artifacts/committee-fixtures-sanitized | tee artifacts/committee-sanitized.txt
+          test -x build-p0-sanitized/validator/auth/test-p0-native-session-history
+          ASAN_OPTIONS=detect_leaks=1:detect_stack_use_after_return=1 UBSAN_OPTIONS=halt_on_error=1 build-p0-sanitized/validator/auth/test-p0-native-session-history artifacts/owner-transactions-mc artifacts/committee-fixtures-sanitized | tee artifacts/native-session-history-sanitized.txt
+          diff -r artifacts/committee-fixtures artifacts/committee-fixtures-sanitized
+          build-p0/test/validator-auth-implementation/test-p0-registry-view artifacts/registry-view-fixtures | tee artifacts/registry-view.txt
+          tosctl/src/target/debug/registry-view-conformance artifacts/registry-view-fixtures | tee artifacts/registry-view-rust.txt
+          build-p0/test/validator-auth-implementation/test-p0-committee-proof artifacts/committee-fixtures artifacts/committee-proof-fixtures | tee artifacts/committee-proof.txt
+          tosctl/src/target/debug/committee-proof-conformance artifacts/committee-proof-fixtures | tee artifacts/committee-proof-rust.txt
+          ASAN_OPTIONS=detect_leaks=1:detect_stack_use_after_return=1 UBSAN_OPTIONS=halt_on_error=1 build-p0-sanitized/test/validator-auth-implementation/test-p0-registry-view artifacts/registry-view-fixtures-sanitized | tee artifacts/registry-view-sanitized.txt
+          ASAN_OPTIONS=detect_leaks=1:detect_stack_use_after_return=1 UBSAN_OPTIONS=halt_on_error=1 build-p0-sanitized/test/validator-auth-implementation/test-p0-committee-proof artifacts/committee-fixtures-sanitized artifacts/committee-proof-fixtures-sanitized | tee artifacts/committee-proof-sanitized.txt
+          diff -r artifacts/registry-view-fixtures artifacts/registry-view-fixtures-sanitized
+          diff -r artifacts/committee-proof-fixtures artifacts/committee-proof-fixtures-sanitized
+          build-p0/test/validator-auth-implementation/test-p0-certificate-proof artifacts/committee-fixtures artifacts/certificate-proof-fixtures | tee artifacts/certificate-proof.txt
+          tosctl/src/target/debug/certificate-proof-conformance artifacts/certificate-proof-fixtures | tee artifacts/certificate-proof-rust.txt
+          tosctl/src/target/debug/certificate-client-conformance artifacts/certificate-proof-fixtures | tee artifacts/certificate-client-rust.txt
+          build-p0/test/validator-auth-implementation/test-p0-certificate-rpc artifacts/committee-fixtures artifacts/certificate-proof-fixtures tosctl/src/target/debug/certificate-client-conformance | tee artifacts/certificate-rpc.txt
+          ASAN_OPTIONS=detect_leaks=1:detect_stack_use_after_return=1 UBSAN_OPTIONS=halt_on_error=1 build-p0-sanitized/test/validator-auth-implementation/test-p0-certificate-proof artifacts/committee-fixtures-sanitized artifacts/certificate-proof-fixtures-sanitized | tee artifacts/certificate-proof-sanitized.txt
+          ASAN_OPTIONS=detect_leaks=1:detect_stack_use_after_return=1 UBSAN_OPTIONS=halt_on_error=1 build-p0-sanitized/test/validator-auth-implementation/test-p0-certificate-rpc artifacts/committee-fixtures-sanitized artifacts/certificate-proof-fixtures-sanitized | tee artifacts/certificate-rpc-sanitized.txt
+          diff -r artifacts/certificate-proof-fixtures artifacts/certificate-proof-fixtures-sanitized
+      - name: Bind native configuration accounts and complete checkpoints
+        run: |
+          set -euo pipefail
+          build-p0/test/validator-auth-implementation/test-p0-native-config-context artifacts/committee-fixtures artifacts/native-config-context | tee artifacts/native-config-context.txt
+          tosctl/src/target/debug/native-config-context-conformance artifacts/native-config-context | tee artifacts/native-config-context-rust.txt
+          ASAN_OPTIONS=detect_leaks=1:detect_stack_use_after_return=1 UBSAN_OPTIONS=halt_on_error=1 build-p0-sanitized/test/validator-auth-implementation/test-p0-native-config-context artifacts/committee-fixtures artifacts/native-config-context-sanitized | tee artifacts/native-config-context-sanitized.txt
+          diff -r artifacts/native-config-context artifacts/native-config-context-sanitized
+      - name: Exercise frozen contracts through production libraries
+        run: |
+          set -euo pipefail
+          python3 test/validator-auth-p0/freeze_record.py
+          build-p0/test/validator-auth-implementation/test-p0-governance artifacts/governance-fixtures | tee artifacts/governance-cpp.txt
+          tosctl/src/target/debug/governance-conformance artifacts/governance-fixtures | tee artifacts/governance-rust.txt
+          ASAN_OPTIONS=detect_leaks=1:detect_stack_use_after_return=1 UBSAN_OPTIONS=halt_on_error=1 build-p0-sanitized/test/validator-auth-implementation/test-p0-governance artifacts/governance-fixtures-sanitized | tee artifacts/governance-sanitized.txt
+          diff -r artifacts/governance-fixtures artifacts/governance-fixtures-sanitized
+          build-p0/test/validator-auth-implementation/test-p0-native-governance artifacts/native-governance-fixtures | tee artifacts/native-governance-cpp.txt
+          tosctl/src/target/debug/governance-conformance --native artifacts/native-governance-fixtures | tee artifacts/native-governance-rust.txt
+          ASAN_OPTIONS=detect_leaks=1:detect_stack_use_after_return=1 UBSAN_OPTIONS=halt_on_error=1 build-p0-sanitized/test/validator-auth-implementation/test-p0-native-governance artifacts/native-governance-fixtures-sanitized | tee artifacts/native-governance-sanitized.txt
+          diff -r artifacts/native-governance-fixtures artifacts/native-governance-fixtures-sanitized
+          python3 test/validator-auth-implementation/context_fixtures.py --out artifacts/context-fixtures
+          build-p0/test/validator-auth-implementation/test-p0-context artifacts/context-fixtures | tee artifacts/context-cpp.txt
+          tosctl/src/target/debug/context-conformance artifacts/context-fixtures | tee artifacts/context-rust.txt
+          ASAN_OPTIONS=detect_leaks=1:detect_stack_use_after_return=1 UBSAN_OPTIONS=halt_on_error=1 build-p0-sanitized/test/validator-auth-implementation/test-p0-context artifacts/context-fixtures | tee artifacts/context-sanitized.txt
+          python3 test/validator-auth-p0/check_production.py --out artifacts/historical-boundary.json
+          build-p0/test/validator-auth-implementation/test-p0-keyring "$RUNNER_TEMP/p0-keyring" | tee artifacts/keyring.txt
+          ASAN_OPTIONS=detect_leaks=1:detect_stack_use_after_return=1 UBSAN_OPTIONS=halt_on_error=1 build-p0-sanitized/test/validator-auth-implementation/test-p0-keyring-sanitized "$RUNNER_TEMP/p0-keyring-sanitized" | tee artifacts/keyring-sanitized.txt
+          python3 test/validator-auth-implementation/check_sanitizer_link.py --build build-p0-sanitized --out artifacts/sanitizer-link.json
+          (cd "$RUNNER_TEMP" && "$GITHUB_WORKSPACE/build-p0/test-keyring-temp-key") | tee artifacts/legacy-keyring.txt
+          python3 test/validator-auth-implementation/check.py \
+            --cpp build-p0/test/validator-auth-implementation/test-p0-implementation \
+            --rust tosctl/src/target/debug/conformance --out artifacts/implementation.json
+          python3 test/validator-auth-implementation/check_lifecycle.py \
+            --cpp build-p0/test/validator-auth-implementation/test-p0-implementation --out artifacts/lifecycle.json
+          python3 test/validator-auth-implementation/check_lifecycle.py \
+            --driver tosctl/src/target/debug/conformance --out artifacts/lifecycle-rust.json
+          build-p0/test/validator-auth-implementation/test-p0-cells artifacts/native-cell-fixtures | tee artifacts/cells.txt
+          build-p0/test/validator-auth-implementation/test-p0-transfer | tee artifacts/transfer.txt
+          build-p0/test/validator-auth-implementation/test-p0-object-store | tee artifacts/object-store.txt
+          python3 test/validator-auth-implementation/check_api_semantics.py --driver build-p0/test/validator-auth-implementation/test-p0-api-semantics --out artifacts/api-semantics-cpp.json
+          python3 test/validator-auth-implementation/check_api_semantics.py --driver tosctl/src/target/debug/conformance --out artifacts/api-semantics-rust.json
+          python3 test/validator-auth-implementation/check_service_auth.py --driver build-p0/test/validator-auth-implementation/test-p0-api-semantics --out artifacts/service-auth-cpp.json
+          python3 test/validator-auth-implementation/check_service_auth.py --driver tosctl/src/target/debug/conformance --out artifacts/service-auth-rust.json
+          build-p0/test/validator-auth-implementation/test-p0-state | tee artifacts/state.txt
+          build-p0/test/validator-auth-implementation/benchmark-p0-c0 --check | tee artifacts/certificate-benchmark-controls.txt
+          python3 test/validator-auth-implementation/measure_c0.py --build build-p0 --out artifacts/certificate-benchmark.json
+          build-p0/test/validator-auth-implementation/test-p0-state-replay artifacts/state-replay-fixtures | tee artifacts/state-replay.txt
+          tosctl/src/target/debug/state-replay-conformance artifacts/state-replay-fixtures | tee artifacts/state-replay-rust.txt
+          ASAN_OPTIONS=detect_leaks=1:detect_stack_use_after_return=1 UBSAN_OPTIONS=halt_on_error=1 build-p0-sanitized/test/validator-auth-implementation/test-p0-state-replay artifacts/state-replay-fixtures-sanitized | tee artifacts/state-replay-sanitized.txt
+          diff -r artifacts/state-replay-fixtures artifacts/state-replay-fixtures-sanitized
+          build-p0/test/validator-auth-implementation/test-p0-native-registry artifacts/state-replay-fixtures artifacts/native-registry | tee artifacts/native-registry.txt
+          tosctl/src/target/debug/native-registry-conformance artifacts/state-replay-fixtures artifacts/native-registry | tee artifacts/native-registry-rust.txt
+          ASAN_OPTIONS=detect_leaks=1:detect_stack_use_after_return=1 UBSAN_OPTIONS=halt_on_error=1 build-p0-sanitized/test/validator-auth-implementation/test-p0-native-registry artifacts/state-replay-fixtures artifacts/native-registry-sanitized | tee artifacts/native-registry-sanitized.txt
+          diff -r artifacts/native-registry artifacts/native-registry-sanitized
+          build-p0/test/validator-auth-implementation/test-p0-proof artifacts/native-proof-fixtures | tee artifacts/proofs.txt
+          ASAN_OPTIONS=detect_leaks=1:detect_stack_use_after_return=1 UBSAN_OPTIONS=halt_on_error=1 build-p0-sanitized/test/validator-auth-implementation/test-p0-proof artifacts/native-proof-fixtures-sanitized | tee artifacts/proofs-sanitized.txt
+          diff -r artifacts/native-proof-fixtures artifacts/native-proof-fixtures-sanitized
+          python3 test/validator-auth-implementation/check_native.py --rust tosctl/src/target/debug/native-conformance --cpp build-p0/test/validator-auth-implementation/test-p0-implementation --cells artifacts/native-cell-fixtures --proofs artifacts/native-proof-fixtures --out artifacts/rust-native.json
+          build-p0/test/validator-auth-implementation/test-p0-authority | tee artifacts/authorities.txt
+          P0_EVIDENCE_TMP="$(mktemp -d)"
+          build-p0/test/validator-auth-implementation/test-p0-api-service "$P0_EVIDENCE_TMP/api" tosctl/src/target/debug/conformance tosctl/src/target/debug/native-conformance | tee artifacts/api-service.txt
+          python3 test/validator-auth-implementation/check_http.py --cpp build-p0/test/validator-auth-implementation/test-p0-http --rust tosctl/src/target/debug/conformance --out artifacts/http.json
+          python3 test/validator-auth-implementation/check_client.py --driver tosctl/src/target/debug/conformance --native tosctl/src/target/debug/native-conformance --proofs artifacts/native-proof-fixtures --out artifacts/client.json
+          build-p0/test/validator-auth-implementation/test-p0-admin "$P0_EVIDENCE_TMP/admin" | tee artifacts/admin.txt
+          build-p0/test/validator-auth-implementation/test-p0-admin-process "$P0_EVIDENCE_TMP/admin-process" | tee artifacts/admin-process.txt
+          build-p0/test/validator-auth-implementation/test-p0-issuer "$P0_EVIDENCE_TMP/issuer" | tee artifacts/issuer.txt
+          build-p0/test/validator-auth-implementation/test-p0-journal "$P0_EVIDENCE_TMP/journal" | tee artifacts/journal.txt
+          build-p0/test/validator-auth-implementation/test-p0-journal-growth "$P0_EVIDENCE_TMP/journal-growth" | tee artifacts/journal-growth.txt
+          build-p0/test/validator-auth-implementation/test-p0-ledger-memory "$P0_EVIDENCE_TMP/ledger-memory" | tee artifacts/ledger-memory.txt
+          build-p0/test/validator-auth-implementation/test-p0-signer "$P0_EVIDENCE_TMP/signer" | tee artifacts/signer.txt
+          build-p0/test/validator-auth-implementation/test-p0-sync "$P0_EVIDENCE_TMP/sync" | tee artifacts/sync.txt
+          build-p0/test/validator-auth-implementation/test-p0-channel "$P0_EVIDENCE_TMP/channel" | tee artifacts/channel.txt
+          build-p0/test/validator-auth-implementation/test-p0-process "$P0_EVIDENCE_TMP/process" | tee artifacts/process-rehearsal.txt
+          python3 test/validator-auth-implementation/check_transport.py \
+            --driver build-p0/test/validator-auth-implementation/test-p0-transport | tee artifacts/transport-cpp.json
+          python3 test/validator-auth-implementation/check_transport.py \
+            --driver tosctl/src/target/debug/conformance | tee artifacts/transport-rust.json
+      - name: Cross-check scoped object storage in C++ and Rust
+        if: matrix.guards == 'core' || matrix.guards == 'none'
+        run: |
+          set -euo pipefail
+          cargo fmt --manifest-path tosctl/src/Cargo.toml -p tos-validator-auth -- --check
+          cargo clippy --locked --manifest-path tosctl/src/Cargo.toml \
+            -p tos-validator-auth --all-targets --no-deps -- -D warnings
+          cargo build --locked --manifest-path tosctl/src/Cargo.toml \
+            -p tos-validator-auth --bin conformance
+          cmake --build build-p0 --target test-p0-object-store-differential -j2
+          python3 test/validator-auth-implementation/check_object_store.py \
+            --cpp build-p0/test/validator-auth-implementation/test-p0-object-store-differential \
+            --rust tosctl/src/target/debug/conformance \
+            | tee artifacts/object-store-cross-language.txt
+      - name: Compile Rust object-store quota mutations
+        if: matrix.guards == 'core'
+        run: |
+          set -euo pipefail
+          cargo build --locked --manifest-path tosctl/src/Cargo.toml \
+            -p tos-validator-auth --bin conformance
+          cmake --build build-p0 --target test-p0-object-store-differential -j2
+          python3 test/validator-auth-implementation/rust_object_store_mutations.py \
+            --cpp build-p0/test/validator-auth-implementation/test-p0-object-store-differential \
+            --out artifacts/rust-object-store-mutations
+          cp artifacts/rust-object-store-mutations/mutations.json \
+            artifacts/rust-object-store-mutations.json
+          git diff --exit-code
+      - name: Select session birth from a contiguous authenticated epoch
+        run: |
+          set -euo pipefail
+          cmake -S test/validator-auth-session-birth -B build-p0-birth -G Ninja
+          cmake --build build-p0-birth
+          test -x build-p0-birth/test-p0-session-birth
+          test -x build-p0-birth/test-p0-session-admission
+          test -x build-p0-birth/test-p0-native-session-id
+          build-p0-birth/test-p0-session-birth | tee artifacts/session-birth.txt
+          build-p0-birth/test-p0-session-admission | tee artifacts/session-admission.txt
+          build-p0-birth/test-p0-native-session-id | tee artifacts/native-session-id-core.txt
+          ctest --test-dir build-p0-birth --output-on-failure
+          python3 test/validator-auth-session-birth/mutations.py --out artifacts/session-birth-mutations
+          cp artifacts/session-birth-mutations/mutations.json artifacts/session-birth-mutations.json
+          python3 test/validator-auth-session-birth/admission_mutations.py --out artifacts/session-admission-mutations
+          cp artifacts/session-admission-mutations/mutations.json artifacts/session-admission-mutations.json
+          python3 test/validator-auth-session-birth/native_session_id_mutations.py --out artifacts/native-session-id-mutations
+          cp artifacts/native-session-id-mutations/mutations.json artifacts/native-session-id-mutations.json
+      - name: Measure one read against a growing archive
+        run: |
+          set -euo pipefail
+          test -x build-p0/test/validator-auth-implementation/test-p0-archive-growth
+          build-p0/test/validator-auth-implementation/test-p0-archive-growth \
+            artifacts/archive-growth | tee artifacts/archive-growth.txt
+      - name: Measure that expiry returns the object store's quota slots
+        run: |
+          set -euo pipefail
+          test -x build-p0/test/validator-auth-implementation/test-p0-store-reclaim
+          build-p0/test/validator-auth-implementation/test-p0-store-reclaim \
+            artifacts/store-reclaim | tee artifacts/store-reclaim.txt
+      - name: Run the growth measurements under the sanitizers
+        run: |
+          set -euo pipefail
+          for probe in test-p0-archive-growth test-p0-store-reclaim test-p0-manager-binding; do
+            test -x "build-p0-sanitized/test/validator-auth-implementation/$probe"
+            ASAN_OPTIONS=detect_leaks=1:detect_stack_use_after_return=1 UBSAN_OPTIONS=halt_on_error=1 \
+              "build-p0-sanitized/test/validator-auth-implementation/$probe" \
+              "artifacts/$probe-sanitized" | tee "artifacts/$probe-sanitized.txt"
+          done
+      - name: Confirm the manager session identity against the producer
+        run: |
+          set -euo pipefail
+          test -x build-p0/test/validator-auth-implementation/test-p0-manager-binding
+          build-p0/test/validator-auth-implementation/test-p0-manager-binding \
+            artifacts/manager-binding | tee artifacts/manager-binding.txt
+      - name: Bind session committee ownership to the authenticated birth
+        if: matrix.guards == 'native'
+        run: |
+          set -euo pipefail
+          test -x build-p0/validator/auth/test-p0-native-session-committee
+          test -x build-p0-sanitized/validator/auth/test-p0-native-session-committee
+          build-p0/validator/auth/test-p0-native-session-committee \
+            artifacts/owner-transactions-mc artifacts/committee-fixtures \
+            | tee artifacts/native-session-committee.txt
+          ASAN_OPTIONS=detect_leaks=1:detect_stack_use_after_return=1 \
+            UBSAN_OPTIONS=halt_on_error=1 \
+            build-p0-sanitized/validator/auth/test-p0-native-session-committee \
+            artifacts/owner-transactions-mc artifacts/committee-fixtures-sanitized \
+            | tee artifacts/native-session-committee-sanitized.txt
+          python3 test/validator-auth-implementation/native_session_committee_mutations.py \
+            --build build-p0 --owner artifacts/owner-transactions-mc \
+            --committee artifacts/committee-fixtures \
+            --out artifacts/native-session-committee-mutations
+          cp artifacts/native-session-committee-mutations/mutations.json \
+            artifacts/native-session-committee-mutations.json
+          git diff --exit-code
+      - name: Enforce session restart continuity, membership and release
+        if: matrix.guards == 'native'
+        run: |
+          set -euo pipefail
+          cmake --build build-p0 --target test-p0-native-session-continuity -j2
+          cmake --build build-p0-sanitized --target test-p0-native-session-continuity -j2
+          SESSION_CONTINUITY_TMP="$(mktemp -d)"
+          test -x build-p0/validator/auth/test-p0-native-session-continuity
+          test -x build-p0-sanitized/validator/auth/test-p0-native-session-continuity
+          build-p0/validator/auth/test-p0-native-session-continuity \
+            artifacts/owner-transactions-mc artifacts/committee-fixtures \
+            "$SESSION_CONTINUITY_TMP/normal" \
+            | tee artifacts/native-session-continuity.txt
+          ASAN_OPTIONS=detect_leaks=1:detect_stack_use_after_return=1 \
+            UBSAN_OPTIONS=halt_on_error=1 \
+            build-p0-sanitized/validator/auth/test-p0-native-session-continuity \
+            artifacts/owner-transactions-mc artifacts/committee-fixtures-sanitized \
+            "$SESSION_CONTINUITY_TMP/sanitized" \
+            | tee artifacts/native-session-continuity-sanitized.txt
+          python3 test/validator-auth-implementation/native_session_continuity_mutations.py \
+            --build build-p0 --owner artifacts/owner-transactions-mc \
+            --committee artifacts/committee-fixtures \
+            --work "$SESSION_CONTINUITY_TMP/mutations-work" \
+            --out artifacts/native-session-continuity-mutations
+          cp artifacts/native-session-continuity-mutations/mutations.json \
+            artifacts/native-session-continuity-mutations.json
+          git diff --exit-code
+      - name: Resolve node context and retained native history
+        if: matrix.guards == 'native' || matrix.guards == 'none'
+        run: |
+          set -euo pipefail
+          cmake --build build-p0 --target test-p0-node-history-adapter -j2
+          cmake --build build-p0-sanitized --target test-p0-node-history-adapter -j2
+          test -x build-p0/test/validator-auth-implementation/test-p0-node-history-adapter
+          test -x build-p0-sanitized/test/validator-auth-implementation/test-p0-node-history-adapter
+          build-p0/test/validator-auth-implementation/test-p0-node-history-adapter \
+            artifacts/owner-transactions-mc artifacts/committee-fixtures \
+            | tee artifacts/node-history-adapter.txt
+          ASAN_OPTIONS=detect_leaks=1:detect_stack_use_after_return=1 \
+            UBSAN_OPTIONS=halt_on_error=1 \
+            build-p0-sanitized/test/validator-auth-implementation/test-p0-node-history-adapter \
+            artifacts/owner-transactions-mc artifacts/committee-fixtures-sanitized \
+            | tee artifacts/node-history-adapter-sanitized.txt
+          if [ "${{ matrix.guards }}" = "native" ]; then
+            python3 test/validator-auth-implementation/node_history_adapter_mutations.py \
+              --build build-p0 --owner artifacts/owner-transactions-mc \
+              --committee artifacts/committee-fixtures \
+              --out artifacts/node-history-adapter-mutations
+            cp artifacts/node-history-adapter-mutations/mutations.json \
+              artifacts/node-history-adapter-mutations.json
+          fi
+          git diff --exit-code
+      - name: Serve authenticated public client RPC
+        if: matrix.guards == 'native' || matrix.guards == 'none'
+        run: |
+          set -euo pipefail
+          cmake --build build-p0 --target test-p0-public-rpc -j2
+          cmake --build build-p0-sanitized --target test-p0-public-rpc -j2
+          test -x build-p0/test/validator-auth-implementation/test-p0-public-rpc
+          test -x build-p0-sanitized/test/validator-auth-implementation/test-p0-public-rpc
+          build-p0/test/validator-auth-implementation/test-p0-public-rpc \
+            artifacts/owner-transactions-mc artifacts/committee-fixtures \
+            | tee artifacts/public-rpc.txt
+          ASAN_OPTIONS=detect_leaks=1:detect_stack_use_after_return=1 \
+            UBSAN_OPTIONS=halt_on_error=1 \
+            build-p0-sanitized/test/validator-auth-implementation/test-p0-public-rpc \
+            artifacts/owner-transactions-mc artifacts/committee-fixtures-sanitized \
+            | tee artifacts/public-rpc-sanitized.txt
+          if [ "${{ matrix.guards }}" = "native" ]; then
+            python3 test/validator-auth-implementation/public_rpc_mutations.py \
+              --build build-p0 --owner artifacts/owner-transactions-mc \
+              --committee artifacts/committee-fixtures \
+              --out artifacts/public-rpc-mutations
+            cp artifacts/public-rpc-mutations/mutations.json \
+              artifacts/public-rpc-mutations.json
+          fi
+          git diff --exit-code
+      - name: Reconcile signer inventory and local service trust
+        if: matrix.guards == 'services' || matrix.guards == 'none'
+        run: |
+          set -euo pipefail
+          cmake --build build-p0 --target test-p0-node-provisioning -j2
+          cmake --build build-p0-sanitized --target test-p0-node-provisioning -j2
+          test -x build-p0/test/validator-auth-implementation/test-p0-node-provisioning
+          test -x build-p0-sanitized/test/validator-auth-implementation/test-p0-node-provisioning
+          build-p0/test/validator-auth-implementation/test-p0-node-provisioning \
+            | tee artifacts/node-provisioning.txt
+          ASAN_OPTIONS=detect_leaks=1:detect_stack_use_after_return=1 \
+            UBSAN_OPTIONS=halt_on_error=1 \
+            build-p0-sanitized/test/validator-auth-implementation/test-p0-node-provisioning \
+            | tee artifacts/node-provisioning-sanitized.txt
+          if [ "${{ matrix.guards }}" = "services" ]; then
+            python3 test/validator-auth-implementation/node_provisioning_mutations.py \
+              --build build-p0 --out artifacts/node-provisioning-mutations
+            cp artifacts/node-provisioning-mutations/mutations.json \
+              artifacts/node-provisioning-mutations.json
+          fi
+          git diff --exit-code
+      - name: Establish the independently finalized native head
+        if: matrix.guards == 'native' || matrix.guards == 'none'
+        run: |
+          set -euo pipefail
+          cmake --build build-p0 --target test-p0-native-finality -j2
+          cmake --build build-p0-sanitized --target test-p0-native-finality -j2
+          test -x build-p0/test/validator-auth-implementation/test-p0-native-finality
+          test -x build-p0-sanitized/test/validator-auth-implementation/test-p0-native-finality
+          build-p0/test/validator-auth-implementation/test-p0-native-finality \
+            artifacts/owner-transactions-mc artifacts/committee-fixtures \
+            | tee artifacts/native-finality.txt
+          ASAN_OPTIONS=detect_leaks=1:detect_stack_use_after_return=1 \
+            UBSAN_OPTIONS=halt_on_error=1 \
+            build-p0-sanitized/test/validator-auth-implementation/test-p0-native-finality \
+            artifacts/owner-transactions-mc artifacts/committee-fixtures-sanitized \
+            | tee artifacts/native-finality-sanitized.txt
+          if [ "${{ matrix.guards }}" = "native" ]; then
+            python3 test/validator-auth-implementation/native_finality_mutations.py \
+              --build build-p0 --owner artifacts/owner-transactions-mc \
+              --committee artifacts/committee-fixtures \
+              --out artifacts/native-finality-mutations
+            cp artifacts/native-finality-mutations/mutations.json \
+              artifacts/native-finality-mutations.json
+          fi
+          git diff --exit-code
+      - name: Authenticate remote peers before the framing boundary
+        if: matrix.guards == 'services' || matrix.guards == 'none'
+        run: |
+          set -euo pipefail
+          cmake --build build-p0 --target test-p0-remote-transport -j2
+          cmake --build build-p0-sanitized --target test-p0-remote-transport -j2
+          test -x build-p0/test/validator-auth-implementation/test-p0-remote-transport
+          test -x build-p0-sanitized/test/validator-auth-implementation/test-p0-remote-transport
+          build-p0/test/validator-auth-implementation/test-p0-remote-transport \
+            | tee artifacts/remote-transport.txt
+          ASAN_OPTIONS=detect_leaks=1:detect_stack_use_after_return=1 \
+            UBSAN_OPTIONS=halt_on_error=1 \
+            build-p0-sanitized/test/validator-auth-implementation/test-p0-remote-transport \
+            | tee artifacts/remote-transport-sanitized.txt
+          if [ "${{ matrix.guards }}" = "services" ]; then
+            python3 test/validator-auth-implementation/remote_transport_mutations.py \
+              --build build-p0 --out artifacts/remote-transport-mutations
+            cp artifacts/remote-transport-mutations/mutations.json \
+              artifacts/remote-transport-mutations.json
+          fi
+          git diff --exit-code
+      - name: Derive a committee from a genesis written by the real genesis path
+        run: |
+          set -euo pipefail
+          P0_EVIDENCE_TMP="$(mktemp -d)"
+          python3 test/validator-auth-implementation/genesis_rehearsal.py \
+            --build "$PWD/build-p0" --work "$P0_EVIDENCE_TMP/genesis" \
+            --out artifacts/genesis-rehearsal.json | tee artifacts/genesis-rehearsal.txt
+      - name: Compile core guard removals and require assertion failures
+        if: matrix.guards == 'core'
+        run: |
+          set -euo pipefail
+          export FUNC_BIN="$PWD/build-p0/crypto/func" FIFT_BIN="$PWD/build-p0/crypto/fift"
+          python3 test/validator-auth-implementation/mutations.py \
+            --rust tosctl/src/target/debug/conformance --out artifacts/cpp-mutations.json
+          python3 test/validator-auth-implementation/rust_mutations.py \
+            --cpp build-p0/test/validator-auth-implementation/test-p0-implementation --out artifacts/rust-mutations.json
+          python3 test/validator-auth-implementation/cell_mutations.py --build build-p0 --out artifacts/cell-mutations.json
+          python3 test/validator-auth-implementation/vm_mutations.py --build build-p0 --out artifacts/vm-mutations.json
+          python3 test/validator-auth-implementation/vm_adapter_mutations.py --build build-p0 --fixtures artifacts/vm-fixtures --driver tosctl/src/target/debug/examples/pq-tx-parity --out artifacts/vm-adapter-mutations.json
+          python3 test/validator-auth-implementation/rust_vm_mutations.py --fixtures artifacts/vm-fixtures --out artifacts/rust-vm-mutations.json
+          python3 test/validator-auth-implementation/fixture_lifetime_mutations.py --build build-p0-sanitized --out artifacts/fixture-lifetime-mutations.json
+          python3 test/validator-auth-implementation/benchmark_mutations.py --build build-p0 --out artifacts/benchmark-mutations.json
+          python3 test/validator-auth-implementation/native_host_mutations.py --language cpp --build build-p0 --out artifacts/native-host-cpp-mutations.json
+          python3 test/validator-auth-implementation/native_host_mutations.py --language rust --fixtures artifacts/native-host --out artifacts/native-host-rust-mutations.json
+          git diff --exit-code
+      - name: Compile services guard removals and require assertion failures
+        if: matrix.guards == 'services'
+        run: |
+          set -euo pipefail
+          export FUNC_BIN="$PWD/build-p0/crypto/func" FIFT_BIN="$PWD/build-p0/crypto/fift"
+          python3 test/validator-auth-implementation/journal_mutations.py --build build-p0 --out artifacts/journal-mutations.json
+          python3 test/validator-auth-implementation/admin_mutations.py --build build-p0 --out artifacts/admin-mutations.json
+          python3 test/validator-auth-implementation/signer_mutations.py --build build-p0 --out artifacts/signer-mutations.json
+          python3 test/validator-auth-implementation/channel_mutations.py --build build-p0 --out artifacts/channel-mutations.json
+          python3 test/validator-auth-implementation/object_store_mutations.py --build build-p0 --out artifacts/object-store-mutations.json
+          python3 test/validator-auth-implementation/issuer_mutations.py --build build-p0 --out artifacts/issuer-mutations.json
+          python3 test/validator-auth-implementation/api_semantic_mutations.py --build build-p0 --out artifacts/api-semantic-mutations.json
+          python3 test/validator-auth-implementation/api_service_mutations.py --build build-p0 --out artifacts/api-service-mutations.json
+          python3 test/validator-auth-implementation/http_mutations.py --language cpp --build build-p0 --out artifacts/http-cpp-mutations.json
+          python3 test/validator-auth-implementation/keyring_mutations.py --build build-p0 --out artifacts/keyring-mutations.json
+          python3 test/validator-auth-implementation/http_mutations.py --language rust --out artifacts/http-rust-mutations.json
+          python3 test/validator-auth-implementation/certificate_rpc_mutations.py --build build-p0 --states artifacts/committee-fixtures --fixtures artifacts/certificate-proof-fixtures --out artifacts/certificate-rpc-mutations.json
+          python3 test/validator-auth-implementation/certificate_client_mutations.py --fixtures artifacts/certificate-proof-fixtures --out artifacts/certificate-client-mutations.json
+          git diff --exit-code
+      - name: Compile state guard removals and require assertion failures (1 of 4)
+        if: matrix.guards == 'state1'
+        run: |
+          set -euo pipefail
+          export FUNC_BIN="$PWD/build-p0/crypto/func" FIFT_BIN="$PWD/build-p0/crypto/fift"
+          # Report each harness's own duration. The grouping is by measured seconds
+          # from a two-core run, except for the two harnesses that never completed
+          # there; those are now in separate legs and are what this run measures.
+          run() {
+            local started
+            started=$(date +%s)
+            "$@"
+            printf 'HARNESS_SECONDS %s %s\n' "$(( $(date +%s) - started ))" "$2"
+          }
+          run python3 test/validator-auth-implementation/native_module_mutations.py --build build-p0 --out artifacts/native-modules.json
+          run python3 test/validator-auth-implementation/committee_mutations.py --build build-p0 --out artifacts/committee-mutations.json
+          run python3 test/validator-auth-implementation/rust_native_mutations.py --cells artifacts/native-cell-fixtures --proofs artifacts/native-proof-fixtures --out artifacts/rust-native-mutations.json
+          run python3 test/validator-auth-implementation/registry_view_mutations.py --language cpp --build build-p0 --out artifacts/registry-view-cpp-mutations.json
+          run python3 test/validator-auth-implementation/registry_view_mutations.py --language rust --fixtures artifacts/registry-view-fixtures --out artifacts/registry-view-rust-mutations.json
+          git diff --exit-code
+      - name: Compile state guard removals and require assertion failures (2 of 4)
+        if: matrix.guards == 'state2'
+        run: |
+          set -euo pipefail
+          export FUNC_BIN="$PWD/build-p0/crypto/func" FIFT_BIN="$PWD/build-p0/crypto/fift"
+          # Report each harness's own duration. The grouping is by measured seconds
+          # from a two-core run, except for the two harnesses that never completed
+          # there; those are now in separate legs and are what this run measures.
+          run() {
+            local started
+            started=$(date +%s)
+            "$@"
+            printf 'HARNESS_SECONDS %s %s\n' "$(( $(date +%s) - started ))" "$2"
+          }
+          run python3 test/validator-auth-implementation/certificate_proof_mutations.py --language cpp --build build-p0 --fixtures artifacts/committee-fixtures --out artifacts/certificate-proof-cpp-mutations.json
+          run python3 test/validator-auth-implementation/committee_proof_mutations.py --language cpp --build build-p0 --fixtures artifacts/committee-fixtures --out artifacts/committee-proof-cpp-mutations.json
+          run python3 test/validator-auth-implementation/committee_proof_mutations.py --language rust --fixtures artifacts/committee-proof-fixtures --out artifacts/committee-proof-rust-mutations.json
+          run python3 test/validator-auth-implementation/context_mutations.py --language cpp --build build-p0 --fixtures artifacts/context-fixtures --out artifacts/context-cpp-mutations.json
+          run python3 test/validator-auth-implementation/native_governance_mutations.py --language cpp --build build-p0 --out artifacts/native-governance-cpp-mutations.json
+          git diff --exit-code
+      - name: Compile state guard removals and require assertion failures (3 of 4)
+        if: matrix.guards == 'state3'
+        run: |
+          set -euo pipefail
+          export FUNC_BIN="$PWD/build-p0/crypto/func" FIFT_BIN="$PWD/build-p0/crypto/fift"
+          # Report each harness's own duration. The grouping is by measured seconds
+          # from a two-core run, except for the two harnesses that never completed
+          # there; those are now in separate legs and are what this run measures.
+          run() {
+            local started
+            started=$(date +%s)
+            "$@"
+            printf 'HARNESS_SECONDS %s %s\n' "$(( $(date +%s) - started ))" "$2"
+          }
+          run python3 test/validator-auth-implementation/registry_replay_mutations.py --fixtures artifacts/state-replay-fixtures --out artifacts/registry-replay-mutations.json
+          run python3 test/validator-auth-implementation/certificate_proof_mutations.py --language rust --fixtures artifacts/certificate-proof-fixtures --out artifacts/certificate-proof-rust-mutations.json
+          run python3 test/validator-auth-implementation/context_mutations.py --language rust --fixtures artifacts/context-fixtures --out artifacts/context-rust-mutations.json
+          run python3 test/validator-auth-implementation/native_header_mutations.py --language rust --fixtures artifacts/native-header --out artifacts/native-header-rust-mutations.json
+          git diff --exit-code
+      - name: Compile state guard removals and require assertion failures (4 of 4)
+        if: matrix.guards == 'state4'
+        run: |
+          set -euo pipefail
+          export FUNC_BIN="$PWD/build-p0/crypto/func" FIFT_BIN="$PWD/build-p0/crypto/fift"
+          # Report each harness's own duration. The grouping is by measured seconds
+          # from a two-core run, except for the two harnesses that never completed
+          # there; those are now in separate legs and are what this run measures.
+          run() {
+            local started
+            started=$(date +%s)
+            "$@"
+            printf 'HARNESS_SECONDS %s %s\n' "$(( $(date +%s) - started ))" "$2"
+          }
+          run python3 test/validator-auth-implementation/native_governance_mutations.py --language rust --fixtures artifacts/native-governance-fixtures --out artifacts/native-governance-rust-mutations.json
+          run python3 test/validator-auth-implementation/governance_mutations.py --language rust --fixtures artifacts/governance-fixtures --out artifacts/governance-rust-mutations.json
+          run python3 test/validator-auth-implementation/rust_committee_mutations.py --fixtures artifacts/committee-fixtures --out artifacts/rust-committee-mutations.json
+          run python3 test/validator-auth-implementation/governance_mutations.py --language cpp --build build-p0 --out artifacts/governance-cpp-mutations.json
+          run python3 test/validator-auth-implementation/native_header_mutations.py --language cpp --build build-p0 --inputs artifacts/owner-transactions-mc --out artifacts/native-header-cpp-mutations.json
+          git diff --exit-code
+      - name: Stage native registry effects behind the privileged host
+        if: matrix.guards == 'native'
+        run: |
+          set -euo pipefail
+          test -x build-p0/test/validator-auth-implementation/test-p0-native-config-host
+          test -x build-p0-sanitized/test/validator-auth-implementation/test-p0-native-config-host
+          build-p0/test/validator-auth-implementation/test-p0-native-config-host verify \
+            artifacts/apply-owner-mc artifacts/native-config-host | tee artifacts/native-config-host.txt
+          ASAN_OPTIONS=detect_leaks=1:detect_stack_use_after_return=1 UBSAN_OPTIONS=halt_on_error=1 \
+            build-p0-sanitized/test/validator-auth-implementation/test-p0-native-config-host verify \
+            artifacts/apply-owner-mc artifacts/native-config-host-sanitized \
+            | tee artifacts/native-config-host-sanitized.txt
+          python3 test/validator-auth-implementation/native_config_host_mutations.py \
+            --owner artifacts/apply-owner-mc --out artifacts/native-config-host-mutations
+          git diff --exit-code
+      - name: Keep resolved history bounded across blocks
+        if: matrix.guards == 'native'
+        run: |
+          set -euo pipefail
+          build-p0/test/validator-auth-implementation/test-p0-anchor-cache | tee artifacts/anchor-cache.txt
+          ASAN_OPTIONS=detect_leaks=1:detect_stack_use_after_return=1 UBSAN_OPTIONS=halt_on_error=1 \
+            build-p0-sanitized/test/validator-auth-implementation/test-p0-anchor-cache \
+            | tee artifacts/anchor-cache-sanitized.txt
+          python3 test/validator-auth-implementation/anchor_cache_mutations.py --out artifacts/anchor-cache-mutations
+          git diff --exit-code
+      - name: Resolve the history a deferred update declared
+        run: |
+          set -euo pipefail
+          build-p0/test/validator-auth-implementation/test-p0-history-resolve \
+            artifacts/owner-transactions-mc | tee artifacts/history-resolve.txt
+          ASAN_OPTIONS=detect_leaks=1:detect_stack_use_after_return=1 UBSAN_OPTIONS=halt_on_error=1 \
+            build-p0-sanitized/test/validator-auth-implementation/test-p0-history-resolve \
+            artifacts/owner-transactions-mc | tee artifacts/history-resolve-sanitized.txt
+          python3 test/validator-auth-implementation/history_resolve_mutations.py \
+            --inputs artifacts/owner-transactions-mc --out artifacts/history-resolve-mutations
+          git diff --exit-code
+
+      - name: Bind an elected validator set to the registry
+        run: |
+          set -euo pipefail
+          build-p0/test/validator-auth-implementation/test-p0-election-binding | tee artifacts/election-binding.txt
+          ASAN_OPTIONS=detect_leaks=1:detect_stack_use_after_return=1 UBSAN_OPTIONS=halt_on_error=1 \
+            build-p0-sanitized/test/validator-auth-implementation/test-p0-election-binding \
+            | tee artifacts/election-binding-sanitized.txt
+          python3 test/validator-auth-implementation/election_binding_mutations.py \
+            --out artifacts/election-binding-mutations
+          git diff --exit-code
+
+      - name: Require an attestation for every policy that takes effect
+        run: |
+          set -euo pipefail
+          build-p0/test/validator-auth-implementation/test-p0-activation \
+            artifacts/activation | tee artifacts/activation.txt
+          ASAN_OPTIONS=detect_leaks=1:detect_stack_use_after_return=1 UBSAN_OPTIONS=halt_on_error=1 \
+            build-p0-sanitized/test/validator-auth-implementation/test-p0-activation \
+            artifacts/activation-sanitized | tee artifacts/activation-sanitized.txt
+          diff -r artifacts/activation artifacts/activation-sanitized
+          tosctl/src/target/debug/activation-conformance artifacts/activation | tee artifacts/activation-rust.txt
+          python3 test/validator-auth-implementation/activation_mutations.py --out artifacts/activation-mutations
+          git diff --exit-code
+
+      - name: Measure what post-quantum key material would cost
+        run: |
+          set -euo pipefail
+          build-p0/test/validator-auth-implementation/test-p0-pq-feasibility | tee artifacts/pq-feasibility.txt
+          ASAN_OPTIONS=detect_leaks=1:detect_stack_use_after_return=1 UBSAN_OPTIONS=halt_on_error=1 \
+            build-p0-sanitized/test/validator-auth-implementation/test-p0-pq-feasibility \
+            | tee artifacts/pq-feasibility-sanitized.txt
+          git diff --exit-code
+
+      - name: Measure what a post-quantum verification costs
+        run: |
+          set -euo pipefail
+          PQ_TOOL="$(mktemp -d)"
+          cmake -S crypto/pq/tools -B "$PQ_TOOL/build" -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build "$PQ_TOOL/build" -j2
+          "$PQ_TOOL/build/tos-pq-key" keygen "$PQ_TOOL/key.bin"
+          "$PQ_TOOL/build/tos-pq-key" public "$PQ_TOOL/key.bin" | tr -d '\n' | xxd -r -p > "$PQ_TOOL/pub.bin"
+          printf 'validator-auth benchmark message' > "$PQ_TOOL/msg.bin"
+          "$PQ_TOOL/build/tos-pq-key" sign "$PQ_TOOL/key.bin" "$(xxd -p -c 999 "$PQ_TOOL/msg.bin")" '' \
+            | tr -d '\n' | xxd -r -p > "$PQ_TOOL/sig.bin"
+          build-p0/test/validator-auth-implementation/test-p0-pq-verify-benchmark \
+            "$PQ_TOOL/msg.bin" "$PQ_TOOL/sig.bin" "$PQ_TOOL/pub.bin" | tee artifacts/pq-verify-benchmark.txt
+          build-p0/test/validator-auth-implementation/test-p0-suite-dispatch \
+            "$PQ_TOOL/msg.bin" "$PQ_TOOL/sig.bin" "$PQ_TOOL/pub.bin" | tee artifacts/suite-dispatch.txt
+          ASAN_OPTIONS=detect_leaks=1:detect_stack_use_after_return=1 UBSAN_OPTIONS=halt_on_error=1 \
+            build-p0-sanitized/test/validator-auth-implementation/test-p0-suite-dispatch \
+            "$PQ_TOOL/msg.bin" "$PQ_TOOL/sig.bin" "$PQ_TOOL/pub.bin" | tee artifacts/suite-dispatch-sanitized.txt
+          python3 test/validator-auth-implementation/suite_dispatch_mutations.py \
+            --message "$PQ_TOOL/msg.bin" --signature "$PQ_TOOL/sig.bin" --public-key "$PQ_TOOL/pub.bin" \
+            --out artifacts/suite-dispatch-mutations
+          git diff --exit-code
+
+      - name: Recognise a registry update without admitting it
+        if: matrix.guards == 'native'
+        run: |
+          set -euo pipefail
+          build-p0/test/validator-auth-implementation/test-p0-config-message | tee artifacts/config-message.txt
+          ASAN_OPTIONS=detect_leaks=1:detect_stack_use_after_return=1 UBSAN_OPTIONS=halt_on_error=1 \
+            build-p0-sanitized/test/validator-auth-implementation/test-p0-config-message \
+            | tee artifacts/config-message-sanitized.txt
+          python3 test/validator-auth-implementation/config_message_mutations.py \
+            --out artifacts/config-message-mutations
+          git diff --exit-code
+      - name: Execute the configuration contract's registry action
+        if: matrix.guards == 'native'
+        run: |
+          set -euo pipefail
+          CONTRACT_TMP="$(mktemp -d)"
+          build-p0/crypto/func -PS -o "$CONTRACT_TMP/config-code.fif" \
+            crypto/smartcont/stdlib.fc crypto/smartcont/config-code.fc
+          printf '"Asm.fif" include\n"%s" include\n2 boc+>B "%s" B>file\n' \
+            "$CONTRACT_TMP/config-code.fif" "$CONTRACT_TMP/config-code.boc" > "$CONTRACT_TMP/assemble.fif"
+          build-p0/crypto/fift -I crypto/fift/lib -s "$CONTRACT_TMP/assemble.fif"
+          build-p0/test/validator-auth-implementation/test-p0-config-contract \
+            "$CONTRACT_TMP/config-code.boc" | tee artifacts/config-contract.txt
+          git diff --exit-code
+      - name: Carry the named identities through the elector
+        run: |
+          set -euo pipefail
+          ELECTOR_TMP="$(mktemp -d)"
+          build-p0/crypto/func -PS -o "$ELECTOR_TMP/elector-code.fif" \
+            crypto/smartcont/stdlib.fc crypto/smartcont/elector-code.fc
+          printf '"Asm.fif" include\n"%s" include\n2 boc+>B "%s" B>file\n' \
+            "$ELECTOR_TMP/elector-code.fif" "$ELECTOR_TMP/elector-code.boc" > "$ELECTOR_TMP/assemble.fif"
+          build-p0/crypto/fift -I crypto/fift/lib -s "$ELECTOR_TMP/assemble.fif"
+          build-p0/test/validator-auth-implementation/test-p0-elector-contract \
+            "$ELECTOR_TMP/elector-code.boc" | tee artifacts/elector-contract.txt
+          git diff --exit-code
+
+      - name: Declare every finalized read before executing
+        if: matrix.guards == 'native'
+        run: |
+          set -euo pipefail
+          build-p0/test/validator-auth-implementation/test-p0-prefetch | tee artifacts/prefetch.txt
+          ASAN_OPTIONS=detect_leaks=1:detect_stack_use_after_return=1 UBSAN_OPTIONS=halt_on_error=1 \
+            build-p0-sanitized/test/validator-auth-implementation/test-p0-prefetch \
+            | tee artifacts/prefetch-sanitized.txt
+          python3 test/validator-auth-implementation/prefetch_mutations.py --out artifacts/prefetch-mutations
+          git diff --exit-code
+      - name: Assemble the native configuration transaction authority
+        if: matrix.guards == 'native'
+        run: |
+          set -euo pipefail
+          build-p0/test/validator-auth-implementation/test-p0-config-transaction verify \
+            artifacts/apply-owner-mc | tee artifacts/config-transaction.txt
+          ASAN_OPTIONS=detect_leaks=1:detect_stack_use_after_return=1 UBSAN_OPTIONS=halt_on_error=1 \
+            build-p0-sanitized/test/validator-auth-implementation/test-p0-config-transaction verify \
+            artifacts/apply-owner-mc | tee artifacts/config-transaction-sanitized.txt
+          python3 test/validator-auth-implementation/config_transaction_mutations.py \
+            --owner artifacts/apply-owner-mc --out artifacts/config-transaction-mutations
+          git diff --exit-code
+      - name: Establish the chain context from the zero state
+        if: matrix.guards == 'native'
+        run: |
+          set -euo pipefail
+          test -x build-p0/test/validator-auth-implementation/test-p0-chain-context
+          build-p0/test/validator-auth-implementation/test-p0-chain-context | tee artifacts/chain-context.txt
+          ASAN_OPTIONS=detect_leaks=1:detect_stack_use_after_return=1 UBSAN_OPTIONS=halt_on_error=1 \
+            build-p0-sanitized/test/validator-auth-implementation/test-p0-chain-context \
+            | tee artifacts/chain-context-sanitized.txt
+          python3 test/validator-auth-implementation/chain_context_mutations.py \
+            --out artifacts/chain-context-mutations
+          git diff --exit-code
+      - name: Offer the registry authority to one account only
+        if: matrix.guards == 'native'
+        run: |
+          set -euo pipefail
+          test -x build-p0/test/validator-auth-implementation/test-p0-host-injection
+          build-p0/test/validator-auth-implementation/test-p0-host-injection | tee artifacts/host-injection.txt
+          python3 test/validator-auth-implementation/host_injection_mutations.py \
+            --out artifacts/host-injection-mutations
+          git diff --exit-code
+      - name: Admit a registry message only with its history resolved
+        run: |
+          set -euo pipefail
+          test -x build-p0/test/validator-auth-implementation/test-p0-registry-admission
+          build-p0/test/validator-auth-implementation/test-p0-registry-admission \
+            artifacts/committee-fixtures | tee artifacts/registry-admission.txt
+          ASAN_OPTIONS=detect_leaks=1:detect_stack_use_after_return=1 UBSAN_OPTIONS=halt_on_error=1 \
+            build-p0-sanitized/test/validator-auth-implementation/test-p0-registry-admission \
+            artifacts/committee-fixtures | tee artifacts/registry-admission-sanitized.txt
+          python3 test/validator-auth-implementation/registry_admission_mutations.py \
+            --fixtures artifacts/committee-fixtures --out artifacts/registry-admission-mutations
+          git diff --exit-code
+
+      - name: Compile native guard removals and require assertion failures
+        if: matrix.guards == 'native'
+        run: |
+          set -euo pipefail
+          export FUNC_BIN="$PWD/build-p0/crypto/func" FIFT_BIN="$PWD/build-p0/crypto/fift"
+          python3 test/validator-auth-implementation/owner_mutations.py --language cpp --build build-p0 --inputs artifacts/owner-transactions-mc --shard-inputs artifacts/owner-transactions-shard --out artifacts/owner-cpp-mutations.json
+          python3 test/validator-auth-implementation/owner_mutations.py --language rust --fixtures artifacts/owner-proof-mc --shard-fixtures artifacts/owner-proof-shard --out artifacts/owner-rust-mutations.json
+          python3 test/validator-auth-implementation/native_apply_mutations.py --language cpp --build build-p0 --inputs artifacts/apply-owner-mc --shard-inputs artifacts/apply-owner-shard --out artifacts/native-apply-cpp-mutations.json
+          python3 test/validator-auth-implementation/native_apply_mutations.py --language rust --fixtures artifacts/native-apply-mc --shard-fixtures artifacts/native-apply-shard --out artifacts/native-apply-rust-mutations.json
+          python3 test/validator-auth-implementation/native_history_mutations.py --language cpp --build build-p0 --inputs artifacts/owner-transactions-mc --out artifacts/native-history-cpp-mutations.json
+          python3 test/validator-auth-implementation/native_history_mutations.py --language rust --fixtures artifacts/native-history --out artifacts/native-history-rust-mutations.json
+          python3 test/validator-auth-implementation/native_registry_mutations.py --language cpp --build build-p0 --replay artifacts/state-replay-fixtures --inputs artifacts/apply-owner-mc --out artifacts/native-registry-cpp-mutations.json
+          python3 test/validator-auth-implementation/native_registry_mutations.py --language rust --replay artifacts/state-replay-fixtures --fixtures artifacts/native-registry --native-fixtures artifacts/native-apply-mc --out artifacts/native-registry-rust-mutations.json
+          python3 test/validator-auth-implementation/config_gates_mutations.py --language cpp --build build-p0 --out artifacts/config-gates-cpp-mutations.json
+          python3 test/validator-auth-implementation/config_gates_mutations.py --language rust --fixtures artifacts/config-gates --out artifacts/config-gates-rust-mutations.json
+          python3 test/validator-auth-implementation/native_transaction_mutations.py --language cpp --build build-p0 --inputs artifacts/apply-owner-mc --out artifacts/native-transactions-cpp-mutations.json
+          python3 test/validator-auth-implementation/native_transaction_mutations.py --language rust --fixtures artifacts/native-transactions-mc --out artifacts/native-transactions-rust-mutations.json
+          python3 test/validator-auth-implementation/native_config_context_mutations.py --language cpp --build build-p0 --inputs artifacts/committee-fixtures --out artifacts/native-config-context-cpp-mutations.json
+          python3 test/validator-auth-implementation/native_config_context_mutations.py --language rust --fixtures artifacts/native-config-context --out artifacts/native-config-context-rust-mutations.json
+          python3 test/validator-auth-implementation/native_evidence_mutations.py --language cpp --build build-p0 --inputs artifacts/native-header --out artifacts/native-evidence-cpp-mutations.json
+          python3 test/validator-auth-implementation/native_evidence_mutations.py --language rust --fixtures artifacts/native-evidence --out artifacts/native-evidence-rust-mutations.json
+          python3 test/validator-auth-implementation/native_session_id_mutations.py --build build-p0 --out artifacts/native-session-id-native-mutations.json
+          python3 test/validator-auth-implementation/native_session_history_mutations.py --build build-p0 --owner artifacts/owner-transactions-mc --committee artifacts/committee-fixtures --out artifacts/native-session-history-mutations
+          cp artifacts/native-session-history-mutations/mutations.json artifacts/native-session-history-mutations.json
+          git diff --exit-code
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: validator-p0-implementation-${{ matrix.runner }}-${{ matrix.guards }}
+          path: artifacts/
+          if-no-files-found: error
+          retention-days: 14
+
+
+  config-json:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Install native dependency headers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake pkg-config libssl-dev
+      - name: Preserve P0 bindings through native config and voting clients
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          git rev-parse HEAD > artifacts/commit.txt
+          cargo fmt --manifest-path tosctl/src/Cargo.toml -p chain_block -p chain_block_json -p control-client -p service -- --check
+          cargo test --locked --manifest-path tosctl/src/Cargo.toml -p chain_block_json --lib 2>&1 | tee artifacts/config-json.txt
+          cargo test --locked --manifest-path tosctl/src/Cargo.toml -p control-client -p service p0_ -- --nocapture 2>&1 | tee artifacts/config-clients.txt
+      - name: Compile binding, numeric and JSON guard removals
+        if: matrix.runner == 'ubuntu-24.04'
+        run: |
+          python3 test/validator-auth-implementation/config_json_mutations.py --out artifacts/config-json-mutations.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: validator-p0-config-json-${{ matrix.runner }}
+          path: artifacts/
+          retention-days: 14
+          if-no-files-found: error

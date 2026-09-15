@@ -95,6 +95,10 @@ td::Result<KeyringImpl::PrivateKeyDescr*> KeyringImpl::load_key(PublicKeyHash ke
 }
 
 void KeyringImpl::add_key(PrivateKey key, bool is_temp, td::Promise<td::Unit> promise) {
+  auto isolation = admit_generic(key.compute_short_id());
+  if (isolation.is_error()) {
+    return promise.set_error(std::move(isolation));
+  }
   auto pub = key.compute_public_key();
   auto short_id = pub.compute_short_id();
 
@@ -195,6 +199,10 @@ void KeyringImpl::add_key_short(PublicKeyHash key_hash, td::Promise<PublicKey> p
 }
 
 void KeyringImpl::del_key(PublicKeyHash key_hash, td::Promise<td::Unit> promise) {
+  auto isolation = admit_generic(key_hash);
+  if (isolation.is_error()) {
+    return promise.set_error(std::move(isolation));
+  }
   map_.erase(key_hash);
   if (db_root_.size() == 0) {
     return promise.set_value(td::Unit());
@@ -220,6 +228,10 @@ void KeyringImpl::del_key(PublicKeyHash key_hash, td::Promise<td::Unit> promise)
 }
 
 void KeyringImpl::export_private_key(PublicKeyHash key_hash, td::Promise<PrivateKey> promise) {
+  auto isolation = admit_generic(key_hash);
+  if (isolation.is_error()) {
+    return promise.set_error(std::move(isolation));
+  }
   auto S = load_key(key_hash);
 
   if (S.is_error()) {
@@ -240,6 +252,11 @@ void KeyringImpl::get_public_key(PublicKeyHash key_hash, td::Promise<PublicKey> 
 }
 
 void KeyringImpl::sign_message(PublicKeyHash key_hash, td::BufferSlice data, td::Promise<td::BufferSlice> promise) {
+  auto isolation = admit_generic(key_hash);
+  if (isolation.is_error()) {
+    return promise.set_error(std::move(isolation));
+  }
+  promise = track_raw(key_hash, std::move(promise));
   auto S = load_key(key_hash);
 
   if (S.is_error()) {
@@ -251,6 +268,11 @@ void KeyringImpl::sign_message(PublicKeyHash key_hash, td::BufferSlice data, td:
 
 void KeyringImpl::sign_add_get_public_key(PublicKeyHash key_hash, td::BufferSlice data,
                                           td::Promise<std::pair<td::BufferSlice, PublicKey>> promise) {
+  auto isolation = admit_generic(key_hash);
+  if (isolation.is_error()) {
+    return promise.set_error(std::move(isolation));
+  }
+  promise = track_raw(key_hash, std::move(promise));
   auto S = load_key(key_hash);
 
   if (S.is_error()) {
@@ -272,6 +294,11 @@ void KeyringImpl::sign_add_get_public_key(PublicKeyHash key_hash, td::BufferSlic
 
 void KeyringImpl::sign_messages(PublicKeyHash key_hash, std::vector<td::BufferSlice> data,
                                 td::Promise<std::vector<td::Result<td::BufferSlice>>> promise) {
+  auto isolation = admit_generic(key_hash);
+  if (isolation.is_error()) {
+    return promise.set_error(std::move(isolation));
+  }
+  promise = track_raw(key_hash, std::move(promise));
   auto S = load_key(key_hash);
 
   if (S.is_error()) {
@@ -283,6 +310,11 @@ void KeyringImpl::sign_messages(PublicKeyHash key_hash, std::vector<td::BufferSl
 }
 
 void KeyringImpl::decrypt_message(PublicKeyHash key_hash, td::BufferSlice data, td::Promise<td::BufferSlice> promise) {
+  auto isolation = admit_generic(key_hash);
+  if (isolation.is_error()) {
+    return promise.set_error(std::move(isolation));
+  }
+  promise = track_raw(key_hash, std::move(promise));
   auto S = load_key(key_hash);
 
   if (S.is_error()) {
@@ -294,6 +326,10 @@ void KeyringImpl::decrypt_message(PublicKeyHash key_hash, td::BufferSlice data, 
 }
 
 void KeyringImpl::export_all_private_keys(td::Promise<std::vector<PrivateKey>> promise) {
+  auto isolation = admit_bulk_export();
+  if (isolation.is_error()) {
+    return promise.set_error(std::move(isolation));
+  }
   load_all_keys();
   std::vector<PrivateKey> keys;
   for (auto& [_, descr] : map_) {

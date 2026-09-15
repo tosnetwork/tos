@@ -16,6 +16,7 @@ num = '0.4'
 num-traits = '0.2'
 thiserror = '1.0'
 chain_block = { path = '../block' }
+tos-validator-auth-crypto = { path = '../validator-auth-crypto' }
 tl_api = { path = '../tl/api' }
 stacker = "0.1.25"
 

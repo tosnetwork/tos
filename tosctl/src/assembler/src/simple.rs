@@ -312,6 +312,10 @@ impl Engine {
         GREATER                              => 0xBC
         GTINT z = parse_const_i8             => 0xC2, z
         HASHBU                               => 0xF9, 0x16
+        VAUTH_CHKSIGN                            => 0xF9, 0x17
+        VAUTH_STATE                              => 0xF9, 0x18
+        VAUTH_APPLY                              => 0xF9, 0x19
+        VAUTH_BIND                               => 0xF9, 0x1A
         HASHCU                               => 0xF9, 0x00
         HASHSU                               => 0xF9, 0x01
         HASHEXT z = parse_const_u8_0_4       => 0xF9, 0x04, z
@@ -973,5 +977,32 @@ impl Engine {
         self.add_commands(Self::enumerate_simple_commands());
 
         self.add_commands(Self::enumerate_tos_commands());
+    }
+}
+
+// The mnemonic tables are two independent lists: this file maps a name to
+// bytes, the disassembler's loader maps bytes back to a name. Nothing required
+// them to agree, so renaming an instruction on one side and not the other left
+// an assembler and a disassembler that disagreed about identical bytecode while
+// every existing check stayed green. These cases assemble each name and require
+// the disassembler to return it.
+#[cfg(test)]
+mod signature_mnemonic_tests {
+    use crate::disasm::disasm;
+
+    #[test]
+    fn signature_check_mnemonics_round_trip() {
+        for name in
+            ["CHKSIGNU", "CHKSIGNS", "VAUTH_CHKSIGN", "VAUTH_STATE", "VAUTH_APPLY", "VAUTH_BIND"]
+        {
+            let mut code = crate::compile_code(name)
+                .unwrap_or_else(|error| panic!("{name} did not assemble: {error}"));
+            let text = disasm(&mut code)
+                .unwrap_or_else(|error| panic!("{name} did not disassemble: {error}"));
+            assert!(
+                text.split_whitespace().any(|token| token == name),
+                "{name} assembled but disassembled as {text:?}"
+            );
+        }
     }
 }

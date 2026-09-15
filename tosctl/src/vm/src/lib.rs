@@ -18,6 +18,7 @@ pub mod executor;
 pub mod error;
 pub mod smart_contract_info;
 pub mod utils;
+pub mod validator_auth_host;
 
 pub use self::smart_contract_info::{run_smc_method, SmartContractInfo, SmcMethodResult};
 

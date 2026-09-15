@@ -21,6 +21,7 @@
 
 #include <chrono>
 #include <cinttypes>
+#include <optional>
 
 #include "crypto/common/bitstring.h"
 #include "td/utils/Slice.h"
@@ -66,6 +67,7 @@ enum GlobalCapabilities {
   capStoreOutMsgQueueSize = 64,
   capMsgMetadata = 128,
   capDeferMessages = 256,
+  capValidatorAuth = 1024,
   capFullCollatedData = 512
 };
 
@@ -484,10 +486,21 @@ struct BlockCandidatePriority {
   td::int32 priority{};
 };
 
+struct ValidatorAuthBinding {
+  Bits256 identity{}, stake_id{};
+  bool operator==(const ValidatorAuthBinding& other) const {
+    return identity == other.identity && stake_id == other.stake_id;
+  }
+  bool operator!=(const ValidatorAuthBinding& other) const {
+    return !(*this == other);
+  }
+};
+
 struct ValidatorDescr {
   /* tos::validator::ValidatorFullId */ Ed25519_PublicKey key;
   ValidatorWeight weight;
   /* adnl::AdnlNodeIdShort */ Bits256 addr;
+  std::optional<ValidatorAuthBinding> auth_binding;
   ValidatorDescr(const Ed25519_PublicKey& key_, ValidatorWeight weight_) : key(key_), weight(weight_) {
     addr.set_zero();
   }
@@ -495,6 +508,8 @@ struct ValidatorDescr {
       : key(key_), weight(weight_), addr(addr_) {
   }
   bool operator==(const ValidatorDescr& other) const {
+    if (auth_binding != other.auth_binding)
+      return false;
     return key == other.key && weight == other.weight && addr == other.addr;
   }
   bool operator!=(const ValidatorDescr& other) const {

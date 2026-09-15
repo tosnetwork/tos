@@ -952,6 +952,12 @@ fn serialize_validators_set(
         serialize_field(&mut map, "public_key", hex::encode(v.public_key.as_slice()));
         serialize_u64(&mut map, "weight", &v.weight, mode);
         serialize_id(&mut map, "adnl_addr", v.adnl_addr.as_ref());
+        if v.mc_seq_no_since != 0 {
+            serialize_field(&mut map, "mc_seq_no_since", v.mc_seq_no_since);
+        }
+        if let Some(binding) = &v.auth_binding {
+            serialize_field(&mut map, "auth_binding", serde_json::to_value(binding)?);
+        }
         vector.push(map.into());
     }
     serialize_field(map, "list", Value::from(vector));

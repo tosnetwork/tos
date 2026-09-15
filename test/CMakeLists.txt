@@ -19,3 +19,8 @@ option(TOS_BUILD_VALIDATOR_AUTH_TESTS "Build isolated validator signature confor
 if(TOS_BUILD_VALIDATOR_AUTH_TESTS)
   add_subdirectory(validator-auth)
 endif()
+
+option(TOS_BUILD_P0_IMPLEMENTATION_TESTS "Build production P0 integration checks" OFF)
+if(TOS_BUILD_P0_IMPLEMENTATION_TESTS)
+  add_subdirectory(validator-auth-implementation)
+endif()
