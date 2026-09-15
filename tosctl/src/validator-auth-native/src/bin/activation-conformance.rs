@@ -5,7 +5,9 @@
 // written twice with nothing comparing the two is the shape this repository
 // keeps producing. These are the exact bytes the other one answered about.
 use std::{env, fs, path::Path};
-use tos_validator_auth_native::{cells, registry::RegistryState, registry::StateReadBudget};
+use tos_validator_auth_native::{
+    cells, registry::RegistryState, registry::StateReadBudget, registry_view::RegistryView,
+};
 
 fn check(ok: bool, label: &str) -> Result<(), String> {
     if ok {
@@ -38,7 +40,7 @@ fn run() -> Result<(), String> {
         )
         .map_err(|e| e.0.to_owned())?;
         let decoded = RegistryState::decode_cell(
-            root,
+            root.clone(),
             coordinate,
             StateReadBudget { entries: 64, bytes: 1 << 20 },
         );
@@ -46,13 +48,19 @@ fn run() -> Result<(), String> {
             decoded.is_ok() == accepted,
             &format!("{}: {:?}", fields[2], decoded.as_ref().err()),
         )?;
+        // The other reader of the same bytes. Committees are derived through
+        // this one, so a state the full decoder refuses and this one accepts
+        // would govern the chain under a policy the decoder calls illegitimate.
+        let view =
+            RegistryView::open(root, coordinate, StateReadBudget { entries: 64, bytes: 1 << 20 });
+        check(view.is_ok() == accepted, &format!("view {}: {:?}", fields[2], view.as_ref().err()))?;
         if !accepted {
             refusals += 1;
         }
     }
     // A corpus this agreed with by accepting everything would agree with nothing.
     check(refusals >= 3, "corpus-refusals")?;
-    println!("PASS: independent policy attestation {count} cases");
+    println!("PASS: independent policy attestation {count} cases, both readers");
     Ok(())
 }
 

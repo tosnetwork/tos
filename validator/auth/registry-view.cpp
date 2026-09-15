@@ -1,3 +1,5 @@
+#include <array>
+
 #include "vm/cells/CellSlice.h"
 #include "vm/dict.h"
 
@@ -58,6 +60,7 @@ Result<RegistryView> RegistryView::open(td::Ref<vm::Cell> root, std::uint32_t co
     result.identities_root_ = s.fetch_ref();
     result.keys_root_ = s.fetch_ref();
     result.policies_root_ = s.fetch_ref();
+    auto control_root = s.fetch_ref();
     auto raw = result.read(result.policies_root_, result.current_policy_, 4096);
     if (!raw.ok())
       return raw.error();
@@ -74,6 +77,46 @@ Result<RegistryView> RegistryView::open(td::Ref<vm::Cell> root, std::uint32_t co
         p.phase_ != 0 || p.suites_ != std::vector<Suite>{{1, 1}} || p.max_envelope_ != 4096 ||
         p.max_certificate_ != 524288)
       return Error{"unsupported-profile"};
+    // The policy this view hands out is the one that governs every committee
+    // derived from this state, and it is the only value here whose legitimacy
+    // this view can be asked about. A policy that took effect after genesis
+    // took effect because something attested that it did; the full decoder
+    // refuses one that did not, and a view that accepted it would derive
+    // committees under a policy that decoder considers illegitimate.
+    if (p.effective_from_ != 0) {
+      vm::CellSlice control{vm::NoVm{}, std::move(control_root)};
+      if (!control.is_valid() || control.is_special() || control.size() != 32 || control.size_refs() != 2 ||
+          control.fetch_ulong(32) != 0x76616331)
+        return Error{"config-shape"};
+      vm::CellSlice wrapper{vm::NoVm{}, control.fetch_ref()};
+      if (!wrapper.is_valid() || wrapper.is_special() || wrapper.size() != 1 ||
+          wrapper.size_refs() != wrapper.prefetch_ulong(1))
+        return Error{"dictionary-shape"};
+      if (wrapper.fetch_ulong(1) != 1)
+        return Error{"policy-activation"};
+      vm::Dictionary activations(wrapper.fetch_ref(), 32);
+      std::array<std::uint8_t, 4> key{};
+      for (unsigned i = 0; i < 4; ++i)
+        key[i] = static_cast<std::uint8_t>(p.effective_from_ >> (24 - i * 8));
+      auto leaf = activations.lookup(td::ConstBitPtr(key.data()), 32);
+      if (leaf.is_null() || leaf->size() != 0 || leaf->size_refs() != 1)
+        return Error{"policy-activation"};
+      if (result.budget_.entries == 0)
+        return Error{"state-resource"};
+      --result.budget_.entries;
+      auto raw = unpack_bytes(leaf->prefetch_ref(), std::min<std::size_t>(result.budget_.bytes, 4096));
+      if (!raw.ok())
+        return raw.error();
+      result.budget_.bytes -= raw.value().size();
+      auto attestation = decode<Activation>(raw.value());
+      // Which policy the attestation is about has to be checked here: unlike
+      // the full decoder, this view validates no activation chain, so nothing
+      // else would notice an attestation filed at this coordinate for another
+      // policy.
+      if (!attestation.ok() || attestation.value().effective_from_ != p.effective_from_ ||
+          attestation.value().next_policy_ != result.current_policy_)
+        return Error{"policy-activation"};
+    }
     result.policy_ = p;
     return result;
   } catch (const vm::VmError&) {

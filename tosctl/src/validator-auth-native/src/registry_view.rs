@@ -84,6 +84,7 @@ impl RegistryView {
         let identities = native(s.checked_drain_reference())?;
         let keys = native(s.checked_drain_reference())?;
         let policies = native(s.checked_drain_reference())?;
+        let control = native(s.checked_drain_reference())?;
         let p: Policy = read(policies, &current_policy, 4096, &mut budget)?;
         if object_id("policy", &p)? != current_policy {
             return Err(Error("policy-hash"));
@@ -97,6 +98,53 @@ impl RegistryView {
             || p.max_certificate != 524288
         {
             return Err(Error("unsupported-profile"));
+        }
+        // The policy this view hands out governs every committee derived from
+        // this state, and it is the only value here whose legitimacy the view
+        // can be asked about. A policy that took effect after genesis took
+        // effect because something attested that it did; the full decoder
+        // refuses one that did not, and a view accepting it would derive
+        // committees under a policy that decoder considers illegitimate.
+        if p.effective_from != 0 {
+            let mut c = ordinary(control)?;
+            if c.remaining_bits() != 32
+                || c.remaining_references() != 2
+                || native(c.get_next_u32())? != 0x7661_6331
+            {
+                return Err(Error("config-shape"));
+            }
+            let mut wrapper = ordinary(native(c.checked_drain_reference())?)?;
+            if wrapper.remaining_bits() != 1 {
+                return Err(Error("dictionary-shape"));
+            }
+            let present = native(wrapper.get_next_bit())?;
+            if wrapper.remaining_references() != usize::from(present) {
+                return Err(Error("dictionary-shape"));
+            }
+            if !present {
+                return Err(Error("policy-activation"));
+            }
+            let dict = HashmapE::with_hashmap(32, Some(native(wrapper.checked_drain_reference())?));
+            let key = native(SliceData::load_bitstring(native(
+                chain_block::BuilderData::with_raw(p.effective_from.to_be_bytes().to_vec(), 32),
+            )?))?;
+            let leaf = native(dict.get(key))?.ok_or(Error("policy-activation"))?;
+            if leaf.remaining_bits() != 0 || leaf.remaining_references() != 1 {
+                return Err(Error("policy-activation"));
+            }
+            budget.entries = budget.entries.checked_sub(1).ok_or(Error("state-resource"))?;
+            let raw = cells::unpack_bytes(native(leaf.reference(0))?, budget.bytes.min(4096))?;
+            budget.bytes = budget.bytes.checked_sub(raw.len()).ok_or(Error("state-resource"))?;
+            let attestation: Activation = decode(&raw)?;
+            // Which policy the attestation is about has to be checked here:
+            // unlike the full decoder, this view validates no activation chain,
+            // so nothing else would notice an attestation filed at this
+            // coordinate for another policy.
+            if attestation.effective_from != p.effective_from
+                || attestation.next_policy != current_policy
+            {
+                return Err(Error("policy-activation"));
+            }
         }
         Ok(Self {
             chain_domain,

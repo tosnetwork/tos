@@ -16,6 +16,7 @@
 #include <stdexcept>
 
 #include "validator/auth/cells.h"
+#include "validator/auth/registry-view.h"
 #include "validator/auth/state.h"
 #include "vm/boc.h"
 #include "vm/dict.h"
@@ -207,6 +208,25 @@ int main(int argc, char** argv) {
       expect(!decoded.ok(), "an-attestation-at-another-coordinate-is-refused");
       record(misfiled.root, boundary + 10, false, "an-attestation-at-another-coordinate-is-refused");
       ok("an-attestation-at-another-coordinate-is-refused");
+    }
+
+    // The other reader of the same bytes. Committees are derived through this
+    // one, and it validates no activation chain, so before this it accepted a
+    // policy the full decoder refuses -- the chain would have been governed by
+    // a policy its own apply path considers illegitimate.
+    {
+      auto refused = RegistryView::open(rebuild(original, next, next_id, nullptr).root, boundary + 10, budget);
+      expect(!refused.ok() && refused.error().code == "policy-activation", "the-view-refuses-what-the-decoder-refuses");
+      auto accepted = RegistryView::open(rebuild(original, next, next_id, &attestation).root, boundary + 10, budget);
+      expect(accepted.ok() && accepted.value().policy() == next, "the-view-refuses-what-the-decoder-refuses");
+      // An attestation at this coordinate for a different policy is refused
+      // here even though no activation chain is validated.
+      Activation elsewhere = attestation;
+      elsewhere.next_policy_ = value(object_id("policy", genesis), "fixture-genesis-id");
+      auto mismatched = RegistryView::open(rebuild(original, next, next_id, &elsewhere).root, boundary + 10, budget);
+      expect(!mismatched.ok() && mismatched.error().code == "policy-activation",
+             "the-view-refuses-what-the-decoder-refuses");
+      ok("the-view-refuses-what-the-decoder-refuses");
     }
 
     if (!output.empty())
