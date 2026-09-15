@@ -32,8 +32,10 @@ jobs:
         run: |
           set -euo pipefail
           python3 tools/validator-auth/apply-config-persistence-round.py
+          python3 tools/validator-auth/fix-config-persistence-round.py
           git diff --check
           git diff -- crypto/smartcont/config-code.fc doc/validator-auth-p0-native-insertions.json \
+            tosctl/src/executor/src/blockchain_config.rs \
             tosctl/src/executor/src/transaction_executor.rs tosctl/src/sandbox/src/blockchain.rs \
             tosctl/src/node-control/contracts/tests/native_registry_sandbox.rs \
             test/validator-auth-implementation/config_contract_persistence_mutations.py \
@@ -114,6 +116,7 @@ jobs:
           test "$(git rev-parse origin/feat/validator-auth-p0)" = "$GITHUB_SHA"
           rm .github/workflows/complete-config-persistence-round.yml
           rm tools/validator-auth/apply-config-persistence-round.py
+          rm tools/validator-auth/fix-config-persistence-round.py
           git add -A
           git diff --cached --check
           git config user.name tosman
