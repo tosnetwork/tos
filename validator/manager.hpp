@@ -627,17 +627,31 @@ class ValidatorManagerImpl : public ValidatorManager {
   void established_validator_auth_zero_state(td::Result<td::BufferSlice> zero_state);
   void publish_validator_auth();
   td::optional<ValidatorAuthCollation> validator_auth_collation();
-  tos::auth::Anchor validator_auth_head() const;
+  struct ValidatorAuthResolutionSnapshot {
+    // The state cell and head describe one masterchain tip. The state supplies
+    // the previous-block record that selects archive blocks, while the head
+    // binds that same block id to that same state cell. They travel together
+    // through asynchronous reads so enumeration and authentication cannot see
+    // different tips. The chain context is immutable but travels with them so
+    // finish never rereads an authority member after IO.
+    td::Ref<vm::Cell> masterchain_state;
+    tos::auth::Anchor head;
+    tos::auth::ChainContext chain;
+  };
+
   void resolve_validator_auth_history(std::vector<td::uint32> coordinates);
-  void fetch_validator_auth_block(std::vector<td::uint32> coordinates, std::vector<BlockIdExt> wanted, size_t index,
+  void fetch_validator_auth_block(std::vector<td::uint32> coordinates,
+                                  std::shared_ptr<const ValidatorAuthResolutionSnapshot> snapshot,
+                                  std::vector<BlockIdExt> wanted, size_t index,
                                   std::shared_ptr<std::map<BlockSeqno, tos::auth::Bytes>> fetched);
   void finish_validator_auth_resolution(std::vector<td::uint32> coordinates,
+                                        std::shared_ptr<const ValidatorAuthResolutionSnapshot> snapshot,
                                         std::shared_ptr<std::map<BlockSeqno, tos::auth::Bytes>> fetched);
 
   td::optional<tos::auth::ChainContext> validator_auth_chain_;
   tos::auth::NativeAnchorCache validator_auth_anchors_;
   std::shared_ptr<const tos::auth::NativeAnchorCache> validator_auth_history_;
-  bool validator_auth_resolving_ = false;
+  tos::auth::NativeHistoryResolutionQueue validator_auth_resolution_queue_;
   void got_destroyed_validator_sessions(std::vector<ValidatorSessionId> sessions);
   void got_pending_consensus_db_cleanup(std::vector<std::string> dirs);
   void got_pending_validator_consensus_db_cleanup(std::vector<consensus::PendingValidatorConsensusDbCleanup> records);
