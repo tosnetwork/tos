@@ -165,7 +165,7 @@ def main() -> int:
                         continue
                     if not passing(run(other), 1):
                         observed_companions.append(other)
-            isolated = compiled and observed_companions == sorted(companions)
+            isolated = compiled and sorted(observed_companions) == sorted(companions)
 
             SOURCE.write_text(original)
             restored = build() and passing(run(), len(cases))
