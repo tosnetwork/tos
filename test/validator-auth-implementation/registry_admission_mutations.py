@@ -36,6 +36,33 @@ MUTATIONS = [
      '    , history_(std::shared_ptr<const FinalizedAnchorSource>(history.get(), [](const FinalizedAnchorSource*) {}))',
      True, [], ASSEMBLER),
 
+    # The collator supplies these facts. Mutating the copy step simulates the
+    # integration bug this seam exists to expose: admission must refuse rather
+    # than execute under a value different from the one the collator held.
+    ("collator-catchain-copy", "collator-gathering-produces-an-authority",
+     '  inputs.transaction.catchain = catchain;',
+     '  inputs.transaction.catchain = catchain ^ 1u;'),
+    ("collator-parent-root-copy", "collator-gathering-produces-an-authority",
+     '  inputs.transaction.parent = anchor_of(parent_block, masterchain_state);',
+     '  inputs.transaction.parent = anchor_of(parent_block, masterchain_state);\n'
+     '  inputs.transaction.parent.root_[0] ^= 1;'),
+    ("collator-parent-file-copy", "collator-gathering-produces-an-authority",
+     '  inputs.transaction.parent = anchor_of(parent_block, masterchain_state);',
+     '  inputs.transaction.parent = anchor_of(parent_block, masterchain_state);\n'
+     '  inputs.transaction.parent.file_[0] ^= 1;'),
+
+    # The bindings are independently observable by changing only the preserved
+    # source while leaving the transaction copy valid. Removing either guard
+    # must therefore make the refusal case unexpectedly assemble an authority.
+    ("catchain-source-bound", "gathered-catchain-must-match-source",
+     '  if (inputs.transaction.catchain != inputs.catchain_source)\n'
+     '    return Error{"registry-admission-catchain-input"};', ''),
+    ("parent-source-bound", "gathered-parent-root-must-match-source",
+     '  const auto parent = anchor_of(inputs.parent_block, inputs.transaction.masterchain_state);\n'
+     '  if (inputs.transaction.parent != parent)\n'
+     '    return Error{"registry-admission-parent-input"};', '',
+     False, ["gathered-parent-file-must-match-source"]),
+
     ("destination-account", "other-account-not-admitted",
      '  if (recognized.value().destination != declared.value())\n'
      '    return Error{"registry-admission-not-configuration"};', ''),
@@ -59,13 +86,14 @@ MUTATIONS = [
      '  if (!history.ok())\n'
      '    return Error{"registry-admission-not-registry"};'),
     # Removing the returned authority breaks every case that needs one. The
-    # companion is declared rather than the rule relaxed: a mutation that breaks
-    # something it did not name is a mutation nobody understood.
+    # companions are declared rather than the rule relaxed: a mutation that
+    # breaks something it did not name is a mutation nobody understood.
     ("authority-returned", "complete-input-produces-an-authority",
      '  return NativeConfigTransaction::open(inputs.transaction, recognized.value().message.evidence,\n'
      '                                       std::move(owned_history), uncharged);',
      '  return Error{"registry-admission-not-registry"};',
-     False, ["history-outlives-the-call-that-assembled-it", "resolved-history-admits"]),
+     False, ["collator-gathering-produces-an-authority",
+             "history-outlives-the-call-that-assembled-it", "resolved-history-admits"]),
 ]
 
 
