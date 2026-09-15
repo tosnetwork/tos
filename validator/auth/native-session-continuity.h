@@ -16,6 +16,8 @@
 
 namespace tos::auth {
 
+class NativeSessionC0Authority;
+
 // A local continuity commitment. It is never a source of chain authority and it
 // deliberately cannot reconstruct a committee: restart must authenticate and
 // derive the committee again, then compare these commitments exactly.
@@ -203,6 +205,7 @@ class CommittedNativeSession
   std::optional<Anchor> released_at_;
 
   friend class NativeSessionMemberAuthority;
+  friend class NativeSessionC0Authority;
 };
 
 }  // namespace tos::auth
