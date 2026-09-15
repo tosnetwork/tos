@@ -1,0 +1,70 @@
+name: Apply Task 1 independent-source edits
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/task1-independent-source-edit.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  edit:
+    if: github.head_ref == 'feat/validator-auth-p0'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 1
+      - name: Apply exact Task 1 edits
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path, before, after, label):
+              text = path.read_text()
+              count = text.count(before)
+              if count != 1:
+                  raise SystemExit(f'{path}: {label} anchor count is {count}, expected 1')
+              path.write_text(text.replace(before, after, 1))
+
+          test = Path('test/validator-auth-implementation/registry-admission-test.cpp')
+          success_before = '''    add("collator-gathering-produces-an-authority", [&] {\n      NativeAnchorCache cache;\n      auto gathered = gather_registry_admission_inputs(\n          inputs.message, configuration, context.root, parent_block, context.chain,\n          {static_cast<tos::WorkchainId>(case_wc), case_shard}, case_cc, context.head.seqno_ + 1);\n      require(gathered.ok(), "collator-gathering-produces-an-authority");\n      auto assembled = admit_registry_message(gathered.value(), cache);\n      require(assembled.ok() && assembled.value() != nullptr, "collator-gathering-produces-an-authority");\n      assembled.value()->host().checkpoints();\n    });\n'''
+          success_after = '''    add("collator-gathering-produces-an-authority", [&] {\n      NativeAnchorCache cache;\n      auto gathered = gather_registry_admission_inputs(\n          inputs.message, configuration, context.root, parent_block, parent_block, context.chain,\n          {static_cast<tos::WorkchainId>(case_wc), case_shard}, case_cc, case_cc, context.head.seqno_ + 1);\n      require(gathered.ok(), "collator-gathering-produces-an-authority");\n      auto assembled = admit_registry_message(gathered.value(), cache);\n      require(assembled.ok() && assembled.value() != nullptr, "collator-gathering-produces-an-authority");\n      assembled.value()->host().checkpoints();\n    });\n    add("wrong-catchain-source-is-refused", [&] {\n      auto gathered = gather_registry_admission_inputs(\n          inputs.message, configuration, context.root, parent_block, parent_block, context.chain,\n          {static_cast<tos::WorkchainId>(case_wc), case_shard}, case_cc, case_cc ^ 1u, context.head.seqno_ + 1);\n      refuses(gathered, "registry-admission-catchain-source", "wrong-catchain-source-is-refused");\n    });\n    add("wrong-parent-root-source-is-refused", [&] {\n      auto wrong_parent = parent_block;\n      const auto other_root = h(773);\n      wrong_parent.root_hash = td::Bits256(td::ConstBitPtr(other_root.data()));\n      auto gathered = gather_registry_admission_inputs(\n          inputs.message, configuration, context.root, parent_block, wrong_parent, context.chain,\n          {static_cast<tos::WorkchainId>(case_wc), case_shard}, case_cc, case_cc, context.head.seqno_ + 1);\n      refuses(gathered, "registry-admission-parent-source", "wrong-parent-root-source-is-refused");\n    });\n    add("wrong-parent-file-source-is-refused", [&] {\n      auto wrong_parent = parent_block;\n      const auto other_file = h(774);\n      wrong_parent.file_hash = td::Bits256(td::ConstBitPtr(other_file.data()));\n      auto gathered = gather_registry_admission_inputs(\n          inputs.message, configuration, context.root, parent_block, wrong_parent, context.chain,\n          {static_cast<tos::WorkchainId>(case_wc), case_shard}, case_cc, case_cc, context.head.seqno_ + 1);\n      refuses(gathered, "registry-admission-parent-source", "wrong-parent-file-source-is-refused");\n    });\n'''
+          replace_once(test, success_before, success_after, 'gathering success block')
+
+          mutations = Path('test/validator-auth-implementation/registry_admission_mutations.py')
+          copy_before = '''    ("collator-catchain-copy", "collator-gathering-produces-an-authority",\n     '  inputs.transaction.catchain = catchain;',\n     '  inputs.transaction.catchain = catchain ^ 1u;'),\n    ("collator-parent-root-copy", "collator-gathering-produces-an-authority",\n     '  inputs.transaction.parent = anchor_of(parent_block, masterchain_state);',\n     '  inputs.transaction.parent = anchor_of(parent_block, masterchain_state);\\n'\n     '  inputs.transaction.parent.root_[0] ^= 1;'),\n    ("collator-parent-file-copy", "collator-gathering-produces-an-authority",\n     '  inputs.transaction.parent = anchor_of(parent_block, masterchain_state);',\n     '  inputs.transaction.parent = anchor_of(parent_block, masterchain_state);\\n'\n     '  inputs.transaction.parent.file_[0] ^= 1;'),\n'''
+          copy_after = '''    ("collator-catchain-source-check", "wrong-catchain-source-is-refused",\n     '  if (catchain != established_catchain)\\n'\n     '    return Error{"registry-admission-catchain-source"};', ''),\n    ("collator-parent-source-check", "wrong-parent-root-source-is-refused",\n     '  if (parent_block != established_parent_block)\\n'\n     '    return Error{"registry-admission-parent-source"};', '',\n     False, ["wrong-parent-file-source-is-refused"]),\n    ("collator-catchain-copy", "collator-gathering-produces-an-authority",\n     '  inputs.transaction.catchain = established_catchain;',\n     '  inputs.transaction.catchain = established_catchain ^ 1u;'),\n    ("collator-parent-root-copy", "collator-gathering-produces-an-authority",\n     '  inputs.transaction.parent = anchor_of(established_parent_block, masterchain_state);',\n     '  inputs.transaction.parent = anchor_of(established_parent_block, masterchain_state);\\n'\n     '  inputs.transaction.parent.root_[0] ^= 1;'),\n    ("collator-parent-file-copy", "collator-gathering-produces-an-authority",\n     '  inputs.transaction.parent = anchor_of(established_parent_block, masterchain_state);',\n     '  inputs.transaction.parent = anchor_of(established_parent_block, masterchain_state);\\n'\n     '  inputs.transaction.parent.file_[0] ^= 1;'),\n'''
+          replace_once(mutations, copy_before, copy_after, 'gathering mutation block')
+
+          task1_before = '''TASK1_GUARDS = {\n    "collator-catchain-copy",\n    "collator-parent-root-copy",\n    "collator-parent-file-copy",\n    "catchain-source-bound",\n    "parent-source-bound",\n}\n'''
+          task1_after = '''TASK1_GUARDS = {\n    "collator-catchain-source-check",\n    "collator-parent-source-check",\n    "collator-catchain-copy",\n    "collator-parent-root-copy",\n    "collator-parent-file-copy",\n    "catchain-source-bound",\n    "parent-source-bound",\n}\n'''
+          replace_once(mutations, task1_before, task1_after, 'Task 1 evidence guard set')
+
+          collator = Path('validator/impl/collator.cpp')
+          guard_before = '''  if (!external || !is_masterchain() || !params_.validator_auth || !params_.validator_auth.value().anchors ||\n      config_ == nullptr || mc_state_root.is_null() || params_.validator_set.is_null()) {\n'''
+          guard_after = '''  if (!external || !is_masterchain() || !params_.validator_auth || !params_.validator_auth.value().anchors ||\n      config_ == nullptr || mc_state_.is_null() || mc_state_root.is_null() || params_.validator_set.is_null()) {\n'''
+          replace_once(collator, guard_before, guard_after, 'collator source guard')
+
+          call_before = '''  auto inputs = tos::auth::gather_registry_admission_inputs(\n      msg_root, configuration.value(), mc_state_root, mc_block_id_, params_.validator_auth.value().chain, shard_,\n      params_.validator_set->get_catchain_seqno(), new_block_seqno);\n'''
+          call_after = '''  CatchainSeqno established_catchain = 0;\n  auto established_validators = config_->compute_validator_set_cc(shard_, now_, &established_catchain);\n  if (established_validators.empty()) {\n    return false;\n  }\n\n  auto inputs = tos::auth::gather_registry_admission_inputs(\n      msg_root, configuration.value(), mc_state_root, mc_state_->get_block_id(), mc_block_id_,\n      params_.validator_auth.value().chain, shard_, established_catchain,\n      params_.validator_set->get_catchain_seqno(), new_block_seqno);\n'''
+          replace_once(collator, call_before, call_after, 'collator gathering call')
+          PY
+
+          python3 -m py_compile test/validator-auth-implementation/registry_admission_mutations.py
+          git diff --check
+          grep -Fq 'mc_state_->get_block_id(), mc_block_id_' validator/impl/collator.cpp
+          grep -Fq 'established_catchain,' validator/impl/collator.cpp
+          grep -Fq 'wrong-catchain-source-is-refused' test/validator-auth-implementation/registry-admission-test.cpp
+          grep -Fq 'wrong-parent-root-source-is-refused' test/validator-auth-implementation/registry-admission-test.cpp
+          grep -Fq 'wrong-parent-file-source-is-refused' test/validator-auth-implementation/registry-admission-test.cpp
+
+          git rm .github/workflows/task1-independent-source-edit.yml
+          git config user.name tosman
+          git config user.email gtosnetwork@gmail.com
+          git add validator/impl/collator.cpp test/validator-auth-implementation/registry-admission-test.cpp test/validator-auth-implementation/registry_admission_mutations.py
+          git commit -m 'Cover independent collator registry sources'
+          git push origin HEAD:feat/validator-auth-p0
