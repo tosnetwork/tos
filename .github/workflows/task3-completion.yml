@@ -1,0 +1,131 @@
+name: Complete queued history resolution
+
+on:
+  push:
+    branches:
+      - feat/validator-auth-p0
+
+permissions:
+  contents: write
+
+jobs:
+  task3:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+      - name: Install native dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang lld cmake ninja-build pkg-config libssl-dev libsodium-dev liblz4-dev zlib1g-dev gperf
+      - name: Apply exact manager wiring
+        run: |
+          set -euo pipefail
+          python3 tools/validator-auth/apply-task3-completion.py
+          git diff --check
+          set +e
+          python3 test/validator-auth-implementation/check_history_resolution_queue_wiring.py
+          rc=$?
+          set -e
+          echo "WIRING_EXIT=$rc"
+          test "$rc" -eq 0
+      - name: Configure focused builds
+        run: |
+          set -euo pipefail
+          cmake -S . -B build-p0 -G Ninja -DCMAKE_BUILD_TYPE=Release -DTOS_ARCH= \
+            -DTOS_BUILD_P0_IMPLEMENTATION_TESTS=ON -DUSE_QUIC=OFF \
+            -DTOS_USE_ROCKSDB=OFF -DTOS_USE_ABSEIL=OFF -DTOS_USE_LLD=ON \
+            -DCMAKE_SKIP_INSTALL_RULES=ON \
+            -DOPENSSL_CRYPTO_LIBRARY="$(pkg-config --variable=libdir openssl)/libcrypto.so" \
+            -DOPENSSL_SSL_LIBRARY="$(pkg-config --variable=libdir openssl)/libssl.so" \
+            -DOPENSSL_INCLUDE_DIR="$(pkg-config --variable=includedir openssl)"
+          cmake -S . -B build-p0-sanitized -G Ninja -DCMAKE_BUILD_TYPE=Release -DTOS_ARCH= \
+            -DTOS_BUILD_P0_IMPLEMENTATION_TESTS=ON -DUSE_QUIC=OFF \
+            -DTOS_USE_ASAN=ON -DTOS_USE_UBSAN=ON \
+            -DTOS_USE_ROCKSDB=OFF -DTOS_USE_ABSEIL=OFF -DTOS_USE_LLD=ON \
+            -DCMAKE_SKIP_INSTALL_RULES=ON \
+            -DOPENSSL_CRYPTO_LIBRARY="$(pkg-config --variable=libdir openssl)/libcrypto.so" \
+            -DOPENSSL_SSL_LIBRARY="$(pkg-config --variable=libdir openssl)/libssl.so" \
+            -DOPENSSL_INCLUDE_DIR="$(pkg-config --variable=includedir openssl)"
+          cmake --build build-p0 --target test-p0-history-resolution-queue -j2
+          cmake --build build-p0-sanitized --target test-p0-history-resolution-queue -j2
+      - name: Run queue inventory and baselines
+        run: |
+          set -euo pipefail
+          set +e
+          build-p0/validator/auth/test-p0-history-resolution-queue --list > task3-list.txt 2> task3-list.err
+          list_rc=$?
+          build-p0/validator/auth/test-p0-history-resolution-queue > task3-normal.txt 2> task3-normal.err
+          normal_rc=$?
+          ASAN_OPTIONS=detect_leaks=1:detect_stack_use_after_return=1 UBSAN_OPTIONS=halt_on_error=1 \
+            build-p0-sanitized/validator/auth/test-p0-history-resolution-queue > task3-sanitized.txt 2> task3-sanitized.err
+          sanitized_rc=$?
+          set -e
+          cat task3-list.txt
+          cat task3-list.err >&2
+          cat task3-normal.txt
+          cat task3-normal.err >&2
+          cat task3-sanitized.txt
+          cat task3-sanitized.err >&2
+          echo "LIST_EXIT=$list_rc"
+          echo "NORMAL_EXIT=$normal_rc"
+          echo "SANITIZED_EXIT=$sanitized_rc"
+          test "$list_rc" -eq 0
+          test "$normal_rc" -eq 0
+          test "$sanitized_rc" -eq 0
+      - name: Compile and isolate queue mutations
+        run: |
+          set -euo pipefail
+          set +e
+          python3 test/validator-auth-implementation/history_resolution_queue_mutations.py task3-mutations \
+            > task3-mutations.log 2> task3-mutations.err
+          rc=$?
+          set -e
+          cat task3-mutations.log
+          cat task3-mutations.err >&2
+          cat task3-mutations/mutations.json
+          echo "MUTATIONS_EXIT=$rc"
+          test "$rc" -eq 0
+      - name: Verify frozen production boundary
+        run: |
+          set -euo pipefail
+          mkdir -p task3-evidence
+          set +e
+          python3 test/validator-auth-p0/check_production.py --out task3-evidence/production.json \
+            > task3-production.log 2> task3-production.err
+          production_rc=$?
+          python3 test/validator-auth-p0/freeze_record.py \
+            > task3-freeze.log 2> task3-freeze.err
+          freeze_rc=$?
+          python3 test/validator-auth-implementation/check_history_resolution_queue_wiring.py \
+            > task3-wiring.log 2> task3-wiring.err
+          wiring_rc=$?
+          set -e
+          cat task3-production.log
+          cat task3-production.err >&2
+          cat task3-freeze.log
+          cat task3-freeze.err >&2
+          cat task3-wiring.log
+          cat task3-wiring.err >&2
+          echo "PRODUCTION_EXIT=$production_rc"
+          echo "FREEZE_EXIT=$freeze_rc"
+          echo "WIRING_EXIT=$wiring_rc"
+          test "$production_rc" -eq 0
+          test "$freeze_rc" -eq 0
+          test "$wiring_rc" -eq 0
+      - name: Commit verified Task 3 wiring
+        run: |
+          set -euo pipefail
+          expected=$'doc/validator-auth-p0-native-insertions.json\nvalidator/manager.cpp\nvalidator/manager.hpp'
+          test "$(git diff --name-only | sort)" = "$expected"
+          git fetch origin feat/validator-auth-p0
+          test "$(git rev-parse origin/feat/validator-auth-p0)" = "${{ github.sha }}"
+          git rm .github/workflows/task3-completion.yml tools/validator-auth/apply-task3-completion.py
+          git config user.name gtosnetwork-dotcom
+          git config user.email gtosnetwork@gmail.com
+          git add validator/manager.cpp validator/manager.hpp doc/validator-auth-p0-native-insertions.json
+          git commit -m 'Queue history resolution against one captured tip'
+          git push origin HEAD:feat/validator-auth-p0
