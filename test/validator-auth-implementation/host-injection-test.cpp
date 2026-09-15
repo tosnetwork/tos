@@ -31,6 +31,9 @@ struct Host final : vm::ValidatorAuthHost {
   td::Ref<vm::Cell> apply(td::Ref<vm::Cell>, td::Ref<vm::Cell>, const Charge&) override {
     return {};
   }
+  td::Ref<vm::Cell> bind(td::Ref<vm::Cell>, td::Ref<vm::Cell>, const Charge&) override {
+    return {};
+  }
 };
 
 td::Bits256 address(unsigned value) {
