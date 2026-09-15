@@ -26,6 +26,14 @@ SANITIZER_ENVIRONMENT = {
     "UBSAN_OPTIONS": "halt_on_error=1",
 }
 
+TASK1_GUARDS = {
+    "collator-catchain-copy",
+    "collator-parent-root-copy",
+    "collator-parent-file-copy",
+    "catchain-source-bound",
+    "parent-source-bound",
+}
+
 MUTATIONS = [
     ("history-promoted", "history-outlives-the-call-that-assembled-it",
      '  auto owned_history = std::make_shared<PrefetchedAnchorSource>(std::move(history.value()));',
@@ -183,8 +191,10 @@ def main() -> int:
             compiled = build(sanitized)
             named = False
             isolated = False
+            named_run: subprocess.CompletedProcess[str] | None = None
             if compiled:
-                named = named_failure(run(args.fixtures, case, sanitized), case, sanitized)
+                named_run = run(args.fixtures, case, sanitized)
+                named = named_failure(named_run, case, sanitized)
                 # Every other case run on its own. Running them together stops at
                 # the first failure, which hides whether the ones after it still
                 # hold -- and that is the question isolation is asking.
@@ -197,6 +207,10 @@ def main() -> int:
                       "declared_companions": companions,
                       "source": str(source), "restored_baseline": restored,
                       "source_unchanged": source.read_text() == original}
+            if guard in TASK1_GUARDS and named_run is not None:
+                record.update({"named_returncode": named_run.returncode,
+                               "named_stdout": named_run.stdout,
+                               "named_stderr": named_run.stderr})
             records.append(record)
             print(json.dumps(record), flush=True)
             if not all(record[key] for key in ("edit_reached_source", "compiled", "named_assertion_failed",
