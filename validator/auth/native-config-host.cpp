@@ -109,7 +109,7 @@ td::Ref<vm::Cell> NativeConfigHost::bind(td::Ref<vm::Cell> elected, td::Ref<vm::
   if (!declared.ok())
     refuse("native binding encoding");
 
-  auto bound = bind_elected_validators(std::move(elected), declared.value(), registry.value());
+  auto bound = bind_elected_validators(std::move(elected), declared.value(), registry.value(), coordinate_);
   if (!bound.ok())
     refuse("native binding refused");
 

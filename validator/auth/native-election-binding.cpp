@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <set>
 
 #include "block/block-auto.h"
@@ -38,7 +39,7 @@ Result<Emitted> emitted_member(const td::Ref<vm::CellSlice>& descriptor) {
 
 Result<td::Ref<vm::Cell>> bind_elected_validators(td::Ref<vm::Cell> elected,
                                                   const std::map<unsigned, ElectedBinding>& bindings,
-                                                  const RegistryView& registry) {
+                                                  const RegistryView& registry, std::uint32_t anchor) {
   try {
     if (elected.is_null())
       return Error{"election-binding-input"};
@@ -53,6 +54,32 @@ Result<td::Ref<vm::Cell>> bind_elected_validators(td::Ref<vm::Cell> elected,
       return Error{"election-binding-incomplete"};
 
     vm::Dictionary emitted(set.list->prefetch_ref(), 16);
+    // Every consensus key in the set, because the rule is about the set and not
+    // about one member: an identity may not authenticate with a key anyone in
+    // this set votes with.
+    std::set<Hash> consensus;
+    for (unsigned index = 0; index < set.total; ++index) {
+      td::BitArray<16> at;
+      at.store_ulong(index);
+      auto descriptor = emitted.lookup(at.cbits(), 16);
+      if (descriptor.is_null())
+        return Error{"election-binding-incomplete"};
+      auto member = emitted_member(descriptor);
+      if (!member.ok())
+        return member.error();
+      block::gen::SigPubKey::Record pubkey;
+      if (!tlb::csr_unpack(member.value().public_key, pubkey))
+        return Error{"election-binding-descriptor"};
+      Hash consensus_key{};
+      auto raw = pubkey.pubkey.as_slice();
+      // Checked rather than copied blind: a short key silently copied into a
+      // fixed-size value would leave every short key equal to every other.
+      if (raw.size() != consensus_key.size())
+        return Error{"election-binding-descriptor"};
+      std::copy(raw.ubegin(), raw.uend(), consensus_key.begin());
+      consensus.insert(consensus_key);
+    }
+
     vm::Dictionary bound(16);
     std::set<Hash> identities, stakes;
     std::uint64_t weight = 0;
@@ -89,6 +116,12 @@ Result<td::Ref<vm::Cell>> bind_elected_validators(td::Ref<vm::Cell> elected,
       // network keys, which derivation refuses; refusing it here names it.
       if (!identities.insert(found.value().identity_).second || !stakes.insert(found.value().stake_id_).second)
         return Error{"election-binding-duplicate"};
+
+      // The same question derivation will ask, asked here where the answer can
+      // still refuse a set instead of leaving one nothing can derive.
+      auto keys = committee_identity_keys(found.value(), registry, anchor, consensus);
+      if (!keys.ok())
+        return keys.error();
 
       td::Ref<vm::Cell> binding;
       if (!block::gen::t_ValidatorAuthBinding.cell_pack_validator_auth_binding(

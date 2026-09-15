@@ -17,6 +17,7 @@
 #include "block/block-auto.h"
 #include "block/block-parse.h"
 #include "block/mc-config.h"
+#include "validator/auth/lifecycle.h"
 #include "validator/auth/native-election-binding.h"
 #include "vm/dict.h"
 
@@ -104,7 +105,7 @@ int main() {
 
     // The whole point: a bound set parses as an authenticated one, and every
     // member carries the binding the registry says belongs to it.
-    auto bound = bind_elected_validators(set, bindings, view);
+    auto bound = bind_elected_validators(set, bindings, view, 0);
     expect(bound.ok(), "bound-set-carries-the-registry-binding");
     auto parsed = block::Config::unpack_validator_set(bound.value());
     expect(parsed.is_ok(), "bound-set-carries-the-registry-binding");
@@ -128,26 +129,27 @@ int main() {
     // that is internally consistent. Only the registry knows it is wrong.
     auto impostor = bindings;
     impostor[1].claimed_identity = members[2].identity_;
-    refuses(bind_elected_validators(set, impostor, view), "election-binding-owner",
+    refuses(bind_elected_validators(set, impostor, view, 0), "election-binding-owner",
             "another-members-identity-is-refused");
 
     auto unknown = bindings;
     unknown[0].claimed_identity = h(4242);
-    refuses(bind_elected_validators(set, unknown, view), "election-binding-unregistered",
+    refuses(bind_elected_validators(set, unknown, view, 0), "election-binding-unregistered",
             "unregistered-identity-is-refused");
 
     // One identity seated twice would put one registry member behind two
     // network keys.
     auto twice = bindings;
     twice[1] = twice[0];
-    refuses(bind_elected_validators(set, twice, view), "election-binding-duplicate", "one-identity-twice-is-refused");
+    refuses(bind_elected_validators(set, twice, view, 0), "election-binding-duplicate",
+            "one-identity-twice-is-refused");
 
     // The other shape of the same guard: fewer bindings than members. It shares
     // the count check with the case below rather than having one of its own,
     // which is why no mutation names this case.
     auto short_of_one = bindings;
     short_of_one.erase(1);
-    refuses(bind_elected_validators(set, short_of_one, view), "election-binding-incomplete",
+    refuses(bind_elected_validators(set, short_of_one, view, 0), "election-binding-incomplete",
             "a-set-is-bound-entirely-or-not-at-all");
 
     // A caller holding a binding for a member this set does not have is a
@@ -155,7 +157,7 @@ int main() {
     // set neither side agrees about.
     auto surplus = bindings;
     surplus[2] = {members[2].owner_address_, members[2].identity_};
-    refuses(bind_elected_validators(set, surplus, view), "election-binding-incomplete",
+    refuses(bind_elected_validators(set, surplus, view, 0), "election-binding-incomplete",
             "bindings-for-members-that-do-not-exist-are-refused");
 
     // A member elected without an address cannot be authenticated at all, and
@@ -164,13 +166,13 @@ int main() {
       vm::Dictionary addressless(16);
       emit(addressless, 0, h(9001), weights[0], h(9101));
       emit(addressless, 1, h(9002), weights[1], {}, false);
-      refuses(bind_elected_validators(elected_set(addressless, 2, weights[0] + weights[1]), bindings, view),
+      refuses(bind_elected_validators(elected_set(addressless, 2, weights[0] + weights[1]), bindings, view, 0),
               "election-binding-descriptor", "member-without-an-address-is-refused");
     }
 
     // The set's own declared weight has to survive, or a rewrite could change
     // the election while calling itself a binding.
-    refuses(bind_elected_validators(elected_set(list, 2, weights[0] + weights[1] + 1), bindings, view),
+    refuses(bind_elected_validators(elected_set(list, 2, weights[0] + weights[1] + 1), bindings, view, 0),
             "election-binding-weight", "declared-weight-must-survive");
 
     // The shape a contract hands over. It is decoded next to the operation that
@@ -203,7 +205,7 @@ int main() {
       expect(decoded.ok() && decoded.value() == bindings, "handed-over-bindings-decode-to-what-was-meant");
       // And the decoded form really does bind the set, so the wire shape and
       // the operation agree rather than each being checked alone.
-      auto again = bind_elected_validators(set, decoded.value(), view);
+      auto again = bind_elected_validators(set, decoded.value(), view, 0);
       expect(again.ok(), "handed-over-bindings-decode-to-what-was-meant");
       ok("handed-over-bindings-decode-to-what-was-meant");
 
@@ -234,7 +236,23 @@ int main() {
       // is binding's answer to give, with the reason it actually has.
       auto gap = decode_elected_bindings(entries({both[0]}), 2);
       expect(gap.ok() && gap.value().size() == 1, "a-gap-stays-a-gap");
-      refuses(bind_elected_validators(set, gap.value(), view), "election-binding-incomplete", "a-gap-stays-a-gap");
+      refuses(bind_elected_validators(set, gap.value(), view, 0), "election-binding-incomplete", "a-gap-stays-a-gap");
+    }
+
+    {
+      // A member whose consensus key is also one of its registry keys. The set
+      // is well formed and every binding in it is genuine, so nothing refuses
+      // it until derivation does -- by which time it is installed and no
+      // committee can be derived at all. One member, every committee after it.
+      auto keys = value(select_identity_keys(members[0], view, 0, {{1, 1, 1}}), "fixture-keys");
+      check(!keys.empty() && keys[0].public_key_.size() == 32, "fixture-key-shape");
+      Hash network{};
+      std::copy(keys[0].public_key_.begin(), keys[0].public_key_.end(), network.begin());
+      vm::Dictionary reused(16);
+      emit(reused, 0, network, weights[0], h(9101));
+      emit(reused, 1, h(9002), weights[1], h(9102));
+      refuses(bind_elected_validators(elected_set(reused, 2, weights[0] + weights[1]), bindings, view, 0),
+              "network-key-reuse", "a-consensus-key-that-is-also-a-registry-key-is-refused");
     }
 
     std::cout << "SUMMARY cases=" << passed << " passed=" << passed << '\n';

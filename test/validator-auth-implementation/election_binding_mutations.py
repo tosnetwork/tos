@@ -42,6 +42,11 @@ MUTATIONS = [
     ("nothing-past-the-end", "an-entry-past-the-end-is-refused",
      '    if (present != decoded.size())\n      return Error{"election-binding-shape"};',
      ''),
+    ("derivation-asked", "a-consensus-key-that-is-also-a-registry-key-is-refused",
+     '      auto keys = committee_identity_keys(found.value(), registry, anchor, consensus);\n'
+     '      if (!keys.ok())\n'
+     '        return keys.error();',
+     ''),
     ("binding-attached", "bound-set-carries-the-registry-binding",
      '      td::Ref<vm::Cell> binding;\n'
      '      if (!block::gen::t_ValidatorAuthBinding.cell_pack_validator_auth_binding(\n'

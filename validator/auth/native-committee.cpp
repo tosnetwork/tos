@@ -14,6 +14,18 @@ Hash hash(td::Slice raw) {
   return value;
 }
 }  // namespace
+Result<std::vector<Key>> committee_identity_keys(const Identity& identity, const KeyHistory& archive,
+                                                 std::uint32_t anchor, const std::set<Hash>& consensus_keys) {
+  const std::vector<KeySlot> required{{1, 1, 1}, {2, 1, 1}, {3, 1, 1}, {4, 1, 1}, {5, 1, 1}};
+  auto keys = select_identity_keys(identity, archive, anchor, required);
+  if (!keys.ok())
+    return keys.error();
+  for (const auto& key : keys.value())
+    if (consensus_keys.contains(hash({reinterpret_cast<const char*>(key.public_key_.data()), key.public_key_.size()})))
+      return Error{"network-key-reuse"};
+  return keys;
+}
+
 Result<NativeCommittee> NativeCommittee::derive(td::Ref<vm::Cell> root, const Anchor& anchor, const ChainContext& chain,
                                                 tos::ShardIdFull shard, std::uint32_t catchain,
                                                 StateReadBudget budget) {
@@ -98,7 +110,6 @@ Result<NativeCommittee> NativeCommittee::derive(td::Ref<vm::Cell> root, const An
                         catchain,
                         anchor.seqno_,
                         {}};
-    const std::vector<KeySlot> required{{1, 1, 1}, {2, 1, 1}, {3, 1, 1}, {4, 1, 1}, {5, 1, 1}};
     for (const auto& member : selected) {
       if (!member.auth_binding)
         return Error{"selected-binding-required"};
@@ -106,13 +117,9 @@ Result<NativeCommittee> NativeCommittee::derive(td::Ref<vm::Cell> root, const An
       auto found = registry.value().identity(identity);
       if (!found.ok())
         return Error{"selected-identity"};
-      auto keys = select_identity_keys(found.value(), registry.value(), anchor.seqno_, required);
+      auto keys = committee_identity_keys(found.value(), registry.value(), anchor.seqno_, network_keys);
       if (!keys.ok())
         return keys.error();
-      for (const auto& key : keys.value())
-        if (network_keys.contains(
-                hash({reinterpret_cast<const char*>(key.public_key_.data()), key.public_key_.size()})))
-          return Error{"network-key-reuse"};
       committee.members_.push_back(
           {identity, found.value().stake_id_, member.weight, hash(member.addr.as_slice()), keys.value()});
     }

@@ -1,6 +1,7 @@
 #pragma once
 #include <map>
 
+#include "native-committee.h"
 #include "registry-view.h"
 namespace tos::auth {
 // Attaching the registry binding to an elected validator set.
@@ -31,9 +32,14 @@ struct ElectedBinding {
 // refuses the set. Everything else the set carries -- validity window, counts,
 // total weight, and each member's key, weight and address -- is preserved
 // exactly; this adds a binding and changes nothing else.
+//
+// The anchor is the coordinate the set is being installed at. Which registry
+// keys an identity authenticates with is a fact about a moment, and the rule
+// that none of them may be a consensus key has to be applied against the same
+// moment derivation will apply it against.
 Result<td::Ref<vm::Cell>> bind_elected_validators(td::Ref<vm::Cell> elected,
                                                   const std::map<unsigned, ElectedBinding>& bindings,
-                                                  const RegistryView&);
+                                                  const RegistryView&, std::uint32_t anchor);
 
 // The bindings as a contract hands them over: a dictionary from the member's
 // index in the elected set to the staking account and the identity it names.
