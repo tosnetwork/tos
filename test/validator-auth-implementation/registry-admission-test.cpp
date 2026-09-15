@@ -149,12 +149,36 @@ int main(int argc, char** argv) {
     add("collator-gathering-produces-an-authority", [&] {
       NativeAnchorCache cache;
       auto gathered = gather_registry_admission_inputs(
-          inputs.message, configuration, context.root, parent_block, context.chain,
-          {static_cast<tos::WorkchainId>(case_wc), case_shard}, case_cc, context.head.seqno_ + 1);
+          inputs.message, configuration, context.root, parent_block, parent_block, context.chain,
+          {static_cast<tos::WorkchainId>(case_wc), case_shard}, case_cc, case_cc, context.head.seqno_ + 1);
       require(gathered.ok(), "collator-gathering-produces-an-authority");
       auto assembled = admit_registry_message(gathered.value(), cache);
       require(assembled.ok() && assembled.value() != nullptr, "collator-gathering-produces-an-authority");
       assembled.value()->host().checkpoints();
+    });
+    add("wrong-catchain-source-is-refused", [&] {
+      auto gathered = gather_registry_admission_inputs(
+          inputs.message, configuration, context.root, parent_block, parent_block, context.chain,
+          {static_cast<tos::WorkchainId>(case_wc), case_shard}, case_cc, case_cc ^ 1u, context.head.seqno_ + 1);
+      refuses(gathered, "registry-admission-catchain-source", "wrong-catchain-source-is-refused");
+    });
+    add("wrong-parent-root-source-is-refused", [&] {
+      auto wrong_parent = parent_block;
+      const auto other_root = h(773);
+      wrong_parent.root_hash = td::Bits256(td::ConstBitPtr(other_root.data()));
+      auto gathered = gather_registry_admission_inputs(
+          inputs.message, configuration, context.root, parent_block, wrong_parent, context.chain,
+          {static_cast<tos::WorkchainId>(case_wc), case_shard}, case_cc, case_cc, context.head.seqno_ + 1);
+      refuses(gathered, "registry-admission-parent-source", "wrong-parent-root-source-is-refused");
+    });
+    add("wrong-parent-file-source-is-refused", [&] {
+      auto wrong_parent = parent_block;
+      const auto other_file = h(774);
+      wrong_parent.file_hash = td::Bits256(td::ConstBitPtr(other_file.data()));
+      auto gathered = gather_registry_admission_inputs(
+          inputs.message, configuration, context.root, parent_block, wrong_parent, context.chain,
+          {static_cast<tos::WorkchainId>(case_wc), case_shard}, case_cc, case_cc, context.head.seqno_ + 1);
+      refuses(gathered, "registry-admission-parent-source", "wrong-parent-file-source-is-refused");
     });
     add("gathered-catchain-must-match-source", [&] {
       NativeAnchorCache cache;

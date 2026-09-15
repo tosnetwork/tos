@@ -3405,7 +3405,7 @@ bool Collator::create_ticktock_transaction(const tos::StdSmcAddress& smc_addr, t
 bool Collator::offer_validator_auth(Ref<vm::Cell> msg_root, bool external, const tos::StdSmcAddress& addr) {
   withdraw_validator_auth();
   if (!external || !is_masterchain() || !params_.validator_auth || !params_.validator_auth.value().anchors ||
-      config_ == nullptr || mc_state_root.is_null() || params_.validator_set.is_null()) {
+      config_ == nullptr || mc_state_.is_null() || mc_state_root.is_null() || params_.validator_set.is_null()) {
     return false;
   }
 
@@ -3417,8 +3417,15 @@ bool Collator::offer_validator_auth(Ref<vm::Cell> msg_root, bool external, const
     return false;
   }
 
+  CatchainSeqno established_catchain = 0;
+  auto established_validators = config_->compute_validator_set_cc(shard_, now_, &established_catchain);
+  if (established_validators.empty()) {
+    return false;
+  }
+
   auto inputs = tos::auth::gather_registry_admission_inputs(
-      msg_root, configuration.value(), mc_state_root, mc_block_id_, params_.validator_auth.value().chain, shard_,
+      msg_root, configuration.value(), mc_state_root, mc_state_->get_block_id(), mc_block_id_,
+      params_.validator_auth.value().chain, shard_, established_catchain,
       params_.validator_set->get_catchain_seqno(), new_block_seqno);
   if (!inputs.ok()) {
     return false;

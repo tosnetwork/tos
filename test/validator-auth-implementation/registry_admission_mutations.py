@@ -27,6 +27,8 @@ SANITIZER_ENVIRONMENT = {
 }
 
 TASK1_GUARDS = {
+    "collator-catchain-source-check",
+    "collator-parent-source-check",
     "collator-catchain-copy",
     "collator-parent-root-copy",
     "collator-parent-file-copy",
@@ -47,16 +49,23 @@ MUTATIONS = [
     # The collator supplies these facts. Mutating the copy step simulates the
     # integration bug this seam exists to expose: admission must refuse rather
     # than execute under a value different from the one the collator held.
+    ("collator-catchain-source-check", "wrong-catchain-source-is-refused",
+     '  if (catchain != established_catchain)\n'
+     '    return Error{"registry-admission-catchain-source"};', ''),
+    ("collator-parent-source-check", "wrong-parent-root-source-is-refused",
+     '  if (parent_block != established_parent_block)\n'
+     '    return Error{"registry-admission-parent-source"};', '',
+     False, ["wrong-parent-file-source-is-refused"]),
     ("collator-catchain-copy", "collator-gathering-produces-an-authority",
-     '  inputs.transaction.catchain = catchain;',
-     '  inputs.transaction.catchain = catchain ^ 1u;'),
+     '  inputs.transaction.catchain = established_catchain;',
+     '  inputs.transaction.catchain = established_catchain ^ 1u;'),
     ("collator-parent-root-copy", "collator-gathering-produces-an-authority",
-     '  inputs.transaction.parent = anchor_of(parent_block, masterchain_state);',
-     '  inputs.transaction.parent = anchor_of(parent_block, masterchain_state);\n'
+     '  inputs.transaction.parent = anchor_of(established_parent_block, masterchain_state);',
+     '  inputs.transaction.parent = anchor_of(established_parent_block, masterchain_state);\n'
      '  inputs.transaction.parent.root_[0] ^= 1;'),
     ("collator-parent-file-copy", "collator-gathering-produces-an-authority",
-     '  inputs.transaction.parent = anchor_of(parent_block, masterchain_state);',
-     '  inputs.transaction.parent = anchor_of(parent_block, masterchain_state);\n'
+     '  inputs.transaction.parent = anchor_of(established_parent_block, masterchain_state);',
+     '  inputs.transaction.parent = anchor_of(established_parent_block, masterchain_state);\n'
      '  inputs.transaction.parent.file_[0] ^= 1;'),
 
     # The bindings are independently observable by changing only the preserved
