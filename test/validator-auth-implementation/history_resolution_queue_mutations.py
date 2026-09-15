@@ -21,7 +21,8 @@ MUTATIONS = [
      '  std::set<std::uint32_t> active_coordinates_;\n'
      '  std::set<std::uint32_t> pending_;',
      '  std::multiset<std::uint32_t> active_coordinates_;\n'
-     '  std::multiset<std::uint32_t> pending_;', ["idle-request-starts-resolution"]),
+     '  std::multiset<std::uint32_t> pending_;',
+     ["idle-request-starts-resolution", "drained-batch-starts-next-resolution"]),
     ("busy-request-retained", "busy-request-is-retained",
      '    if (active_ || pending_.empty()) {\n'
      '      return std::nullopt;\n'
@@ -30,8 +31,12 @@ MUTATIONS = [
      '      return std::nullopt;\n'
      '    }', ["pending-duplicates-coalesce", "completion-drains-pending",
               "drained-batch-starts-next-resolution"]),
+    # The anchor names the statement that hands the batch out, which is the
+    # line bounding the batch moved. An anchor that no longer matches reports
+    # nothing about the property it was written for, so it is spelled as the
+    # current return rather than as the surrounding shape.
     ("completion-drains", "completion-drains-pending",
-     '    return next;\n'
+     '    return pending_batch();\n'
      '  }\n\n'
      '  bool active() const {',
      '    return std::nullopt;\n'
