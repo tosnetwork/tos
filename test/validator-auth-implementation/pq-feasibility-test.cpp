@@ -16,6 +16,7 @@
 #include <sodium.h>
 #include <stdexcept>
 
+#include "tos/quorum.h"
 #include "validator/auth/cells.h"
 #include "validator/auth/crypto.h"
 #include "validator/auth/registry-view.h"
@@ -280,6 +281,103 @@ int main() {
       expect(value(encode(reference), "encode-reference").size() <= max_envelope,
              "the-pinned-bounds-hold-for-the-algorithm-they-were-chosen-for");
       ok("the-pinned-bounds-hold-for-the-algorithm-they-were-chosen-for");
+    }
+
+    // The committee size this design is being taken at, and what choosing it
+    // decides. Pinned here because one of the consequences is a choice nobody
+    // writes down: a bound that has nothing to do with committee size quietly
+    // rules out one of the schemes.
+    //
+    // max_validators is a ceiling in native-committee.cpp, not a required
+    // value, and the committee itself comes from configuration parameter 16.
+    // Taking 100 is therefore a configuration decision and changes no constant.
+    {
+      constexpr std::uint64_t committee = 100;
+      constexpr std::size_t max_envelope = 4096;
+      constexpr std::size_t max_certificate = 524288;
+      const auto quorum = tos::quorum_threshold(committee);
+      std::cout << "  committee " << committee << ", quorum " << quorum << " of equal weight:\n";
+
+      auto signed_bytes = [&](std::size_t signature_bytes, unsigned records) {
+        Duty duty;
+        duty.network_ = 1;
+        duty.genesis_root_ = h(1);
+        duty.genesis_file_ = h(2);
+        duty.policy_ = h(3);
+        duty.committee_ = h(4);
+        duty.session_ = h(5);
+        duty.workchain_ = -1;
+        duty.shard_ = 0;
+        Certificate certificate;
+        certificate.duty_ = duty;
+        certificate.payload_ = Bytes(64, 0x5a);
+        for (unsigned n = 0; n < records; ++n) {
+          Component c;
+          c.suite_ = 1;
+          c.parameters_ = 1;
+          c.epoch_ = 1;
+          c.key_id_ = h(7000 + n);
+          c.signature_.resize(signature_bytes);
+          std::uint64_t state = 0x243f6a8885a308d3ULL ^ n;
+          for (auto& byte : c.signature_) {
+            state = state * 6364136223846793005ULL + 1442695040888963407ULL;
+            byte = static_cast<std::uint8_t>(state >> 56);
+          }
+          Record record;
+          record.identity_ = h(3000 + n);
+          record.components_.push_back(std::move(c));
+          certificate.records_.push_back(std::move(record));
+        }
+        return value(encode(certificate), "encode-quorum").size();
+      };
+
+      for (const auto& scheme : schemes) {
+        auto at_quorum = signed_bytes(scheme.signature, static_cast<unsigned>(quorum));
+        auto at_full = signed_bytes(scheme.signature, static_cast<unsigned>(committee));
+        std::cout << "    " << std::setw(10) << scheme.name << "  quorum certificate " << std::setw(7) << at_quorum
+                  << "  whole committee " << std::setw(7) << at_full << "  of " << max_certificate << '\n';
+        // Every scheme fits at this committee size, and the whole committee
+        // signing fits too, so the margin is not resting on the quorum being
+        // the only case that occurs.
+        expect(at_quorum <= max_certificate, "a-committee-of-one-hundred-fits-the-certificate-bound");
+        expect(at_full <= max_certificate, "a-committee-of-one-hundred-fits-the-certificate-bound");
+      }
+      ok("a-committee-of-one-hundred-fits-the-certificate-bound");
+
+      // And the consequence that committee size cannot reach. The envelope
+      // bounds one signature, so this holds for a committee of any size, one
+      // included: taking these bounds as they stand selects the schemes.
+      std::cout << "  what the envelope bound selects:\n";
+      for (const auto& scheme : schemes) {
+        Duty duty;
+        duty.network_ = 1;
+        duty.genesis_root_ = h(1);
+        duty.genesis_file_ = h(2);
+        duty.policy_ = h(3);
+        duty.committee_ = h(4);
+        duty.session_ = h(5);
+        duty.workchain_ = -1;
+        duty.shard_ = 0;
+        Envelope envelope;
+        envelope.duty_ = duty;
+        envelope.payload_ = Bytes(64, 0x5a);
+        envelope.record_.identity_ = h(11);
+        Component c;
+        c.suite_ = 1;
+        c.parameters_ = 1;
+        c.epoch_ = 1;
+        c.key_id_ = h(12);
+        c.signature_.assign(scheme.signature, 0x11);
+        envelope.record_.components_.push_back(std::move(c));
+        auto size = value(encode(envelope), "encode-single").size();
+        const bool admitted = size <= max_envelope;
+        std::cout << "    " << std::setw(10) << scheme.name << "  envelope " << std::setw(5) << size << "  "
+                  << (admitted ? "usable" : "RULED OUT by max_envelope") << '\n';
+        // ML-DSA-87 is ruled out by a bound no committee size can move. The
+        // case asserts that rather than leaving it as a number to notice.
+        expect(admitted == (scheme.signature <= 3309), "the-envelope-bound-selects-the-scheme");
+      }
+      ok("the-envelope-bound-selects-the-scheme");
     }
 
     std::cout << "SUMMARY cases=" << passed << " passed=" << passed << '\n';
