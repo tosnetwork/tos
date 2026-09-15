@@ -4,6 +4,8 @@ This cache is consulted instead of the archive, so a guard that can be removed
 without a named case failing is a guard nothing depends on. Each mutation must
 compile, reach the file, and fail its own named case. The history-resolution
 queue shares this boundary and runs its own isolated mutation harness afterwards.
+The frozen-manager source binding is checked here too so the tested queue cannot
+be left unused after the temporary focused workflow is gone.
 """
 import argparse
 import json
@@ -91,6 +93,14 @@ def main() -> int:
     (args.out / "history-resolution-queue.log").write_text(
         f"exit_code={queue.returncode}\n--- stdout ---\n{queue.stdout}--- stderr ---\n{queue.stderr}")
     if queue.returncode != 0:
+        failures += 1
+
+    wiring = subprocess.run(
+        [sys.executable, "test/validator-auth-implementation/check_history_resolution_queue_wiring.py"],
+        capture_output=True, text=True, check=False)
+    (args.out / "history-resolution-queue-wiring.log").write_text(
+        f"exit_code={wiring.returncode}\n--- stdout ---\n{wiring.stdout}--- stderr ---\n{wiring.stderr}")
+    if wiring.returncode != 0:
         failures += 1
 
     (args.out / "mutations.json").write_text(json.dumps(records, indent=1))
