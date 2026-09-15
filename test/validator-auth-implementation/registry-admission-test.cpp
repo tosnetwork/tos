@@ -156,6 +156,30 @@ int main(int argc, char** argv) {
       require(assembled.ok() && assembled.value() != nullptr, "collator-gathering-produces-an-authority");
       assembled.value()->host().checkpoints();
     });
+    // What comparing two sources does not cover, recorded so the pair of checks
+    // above is not read as more than it is.
+    //
+    // The parent identity and the catchain each arrive twice, from places that
+    // do not depend on each other, and a mistake in one of them is refused. A
+    // mistake they share is not: both copies are then wrong and agree, and
+    // nothing here can tell that from the truth. That is the boundary of
+    // cross-source verification, not a defect in it -- catching it would take a
+    // third source that does not depend on the first two, and there is none at
+    // this boundary.
+    //
+    // No mutation names this case. Nothing in this file can be removed to make
+    // it fail, which is exactly what it is here to say. If a third source is
+    // ever introduced, this case starts failing, and that is the signal to
+    // replace it with a guard.
+    add("sources-that-are-wrong-together-are-not-caught", [&] {
+      NativeAnchorCache cache;
+      auto gathered = gather_registry_admission_inputs(
+          inputs.message, configuration, context.root, parent_block, parent_block, context.chain,
+          {static_cast<tos::WorkchainId>(case_wc), case_shard}, case_cc ^ 1u, case_cc ^ 1u, context.head.seqno_ + 1);
+      require(gathered.ok(), "sources-that-are-wrong-together-are-not-caught");
+      auto assembled = admit_registry_message(gathered.value(), cache);
+      require(assembled.ok() && assembled.value() != nullptr, "sources-that-are-wrong-together-are-not-caught");
+    });
     add("wrong-catchain-source-is-refused", [&] {
       auto gathered = gather_registry_admission_inputs(
           inputs.message, configuration, context.root, parent_block, parent_block, context.chain,

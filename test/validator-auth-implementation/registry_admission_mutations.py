@@ -58,15 +58,18 @@ MUTATIONS = [
      False, ["wrong-parent-file-source-is-refused"]),
     ("collator-catchain-copy", "collator-gathering-produces-an-authority",
      '  inputs.transaction.catchain = established_catchain;',
-     '  inputs.transaction.catchain = established_catchain ^ 1u;'),
+     '  inputs.transaction.catchain = established_catchain ^ 1u;',
+     False, ["sources-that-are-wrong-together-are-not-caught"]),
     ("collator-parent-root-copy", "collator-gathering-produces-an-authority",
      '  inputs.transaction.parent = anchor_of(established_parent_block, masterchain_state);',
      '  inputs.transaction.parent = anchor_of(established_parent_block, masterchain_state);\n'
-     '  inputs.transaction.parent.root_[0] ^= 1;'),
+     '  inputs.transaction.parent.root_[0] ^= 1;',
+     False, ["sources-that-are-wrong-together-are-not-caught"]),
     ("collator-parent-file-copy", "collator-gathering-produces-an-authority",
      '  inputs.transaction.parent = anchor_of(established_parent_block, masterchain_state);',
      '  inputs.transaction.parent = anchor_of(established_parent_block, masterchain_state);\n'
-     '  inputs.transaction.parent.file_[0] ^= 1;'),
+     '  inputs.transaction.parent.file_[0] ^= 1;',
+     False, ["sources-that-are-wrong-together-are-not-caught"]),
 
     # The bindings are independently observable by changing only the preserved
     # source while leaving the transaction copy valid. Removing either guard
@@ -110,7 +113,7 @@ MUTATIONS = [
      '                                       std::move(owned_history), uncharged);',
      '  return Error{"registry-admission-not-registry"};',
      False, ["collator-gathering-produces-an-authority",
-             "history-outlives-the-call-that-assembled-it", "resolved-history-admits"]),
+             "history-outlives-the-call-that-assembled-it", "resolved-history-admits", "sources-that-are-wrong-together-are-not-caught"]),
 ]
 
 
