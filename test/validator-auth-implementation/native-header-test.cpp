@@ -1,13 +1,5 @@
 #include "native-history-fixture.h"
 namespace {
-td::Ref<vm::Cell> replace_ref(td::Ref<vm::Cell> root, unsigned index, td::Ref<vm::Cell> next) {
-  vm::CellSlice s{vm::NoVm{}, root};
-  vm::CellBuilder b;
-  b.store_bits(s.prefetch_bits(s.size()));
-  for (unsigned i = 0; i < s.size_refs(); ++i)
-    b.store_ref(i == index ? next : s.prefetch_ref(i));
-  return b.finalize(s.is_special());
-}
 td::Ref<vm::Cell> proof_replace(td::Ref<vm::Cell> proof, unsigned index, td::Ref<vm::Cell> next) {
   auto root = vm::load_cell_slice_special(proof).prefetch_ref();
   return vm::CellBuilder::create_merkle_proof(replace_ref(root, index, next));

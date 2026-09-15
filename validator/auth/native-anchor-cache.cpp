@@ -35,4 +35,35 @@ Result<PrefetchedAnchorSource> NativeAnchorCache::source(std::span<const std::ui
   }
   return PrefetchedAnchorSource{std::move(selected)};
 }
+
+Result<Resolution> resolve_declared_history(std::span<const std::uint32_t> coordinates, std::int32_t expected_network,
+                                            const NativeCoordinateReader& read, NativeAnchorCache& cache,
+                                            ResolutionBudget budget) {
+  if (!read)
+    return Error{"anchor-resolve-reader"};
+  // The declaration is already bounded where it is parsed; bounding it again
+  // here is what makes that bound this function's own precondition rather than
+  // a dependency on a constant somewhere else.
+  if (coordinates.size() > budget.coordinates)
+    return Error{"anchor-resolve-budget"};
+
+  Resolution resolution;
+  for (auto at : coordinates) {
+    auto raw = read(at, budget.bytes);
+    if (!raw.ok()) {
+      resolution.unavailable.push_back(at);
+      continue;
+    }
+    if (raw.value().size() > budget.bytes)
+      return Error{"anchor-resolve-size"};
+    auto anchor = native_masterchain_block_anchor(raw.value(), expected_network);
+    if (!anchor.ok())
+      return anchor.error();
+    auto admitted = cache.admit(at, anchor.value());
+    if (!admitted.ok())
+      return admitted.error();
+    ++resolution.admitted;
+  }
+  return resolution;
+}
 }  // namespace tos::auth

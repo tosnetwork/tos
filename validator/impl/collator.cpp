@@ -3441,10 +3441,11 @@ bool Collator::offer_validator_auth(Ref<vm::Cell> msg_root, bool external, const
     // what it tells us is what to resolve before a later block tries again.
     if (admitted.error().code == "registry-admission-deferred") {
       auto required = tos::auth::registry_message_requirements(msg_root, new_block_seqno);
-      if (required.ok()) {
-        auto missing = params_.validator_auth.value().anchors->missing(required.value());
-        validator_auth_unresolved_.insert(validator_auth_unresolved_.end(), missing.begin(), missing.end());
+      const auto& installed = params_.validator_auth.value();
+      if (required.ok() && installed.report_unresolved) {
+        auto missing = installed.anchors->missing(required.value());
         LOG(INFO) << "deferring a registry update: " << missing.size() << " finalized block(s) not yet resolved";
+        installed.report_unresolved(std::move(missing));
       }
     }
     return false;

@@ -38,6 +38,10 @@ namespace validator {
 struct ValidatorAuthCollation {
   tos::auth::ChainContext chain;
   std::shared_ptr<tos::auth::NativeAnchorCache> anchors;
+  // Called with the coordinates an update declared and this node does not hold.
+  // Collation cannot wait for them, so it reports them and moves on; resolving
+  // them is what lets a later block admit the update.
+  std::function<void(std::vector<std::uint32_t>)> report_unresolved;
 };
 
 struct CollateParams {

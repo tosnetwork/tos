@@ -4,6 +4,14 @@
 #include "owner-fixture.h"
 using namespace p0_owner_fixture;
 namespace {
+td::Ref<vm::Cell> replace_ref(td::Ref<vm::Cell> root, unsigned index, td::Ref<vm::Cell> next) {
+  vm::CellSlice s{vm::NoVm{}, root};
+  vm::CellBuilder b;
+  b.store_bits(s.prefetch_bits(s.size()));
+  for (unsigned i = 0; i < s.size_refs(); ++i)
+    b.store_ref(i == index ? next : s.prefetch_ref(i));
+  return b.finalize(s.is_special());
+}
 Hash file_hash(const Bytes& bytes) {
   Hash out{};
   check(crypto_hash_sha256(out.data(), bytes.data(), bytes.size()) == 0, "fixture-file-hash");

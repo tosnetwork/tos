@@ -194,10 +194,6 @@ class Collator final : public td::actor::Actor {
   // The authority the transaction being created executes under, kept alive for
   // exactly as long as the compute phase can reach the host it holds.
   std::shared_ptr<tos::auth::NativeConfigTransaction> validator_auth_authority_;
-  // Coordinates a registry update declared and this node has not resolved. A
-  // deferred update is not a failure: it is the block in which the node learns
-  // what to fetch before a later block can admit it.
-  std::vector<std::uint32_t> validator_auth_unresolved_;
   block::ActionPhaseConfig action_phase_cfg_;
   block::SerializeConfig serialize_cfg_;
   td::RefInt256 masterchain_create_fee_, basechain_create_fee_;

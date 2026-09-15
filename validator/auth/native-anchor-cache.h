@@ -4,6 +4,7 @@
 #include <span>
 #include <vector>
 
+#include "native-history.h"
 #include "native-prefetch.h"
 namespace tos::auth {
 // Anchors a node resolved once and keeps across block collations.
@@ -43,4 +44,30 @@ class NativeAnchorCache {
     return anchors_.size();
   }
 };
+
+// Reads the original BOC of the finalized masterchain block at one coordinate,
+// honouring the byte bound before allocating. A coordinate the archive does not
+// hold yet is an error, not a refusal: it means try again later.
+using NativeCoordinateReader = std::function<Result<Bytes>(std::uint32_t coordinate, std::size_t limit)>;
+
+struct ResolutionBudget {
+  std::size_t coordinates = 64;  // the bound a declaration is already held to
+  std::size_t bytes = 33554432;  // per block
+};
+
+struct Resolution {
+  std::size_t admitted = 0;                // newly held, or already held and agreeing
+  std::vector<std::uint32_t> unavailable;  // the archive could not serve these yet
+};
+
+// Fills the cache with the anchors a deferred update declared.
+//
+// A block the archive cannot serve leaves its coordinate unresolved and the
+// caller retries later; that is the ordinary case, because the update was
+// deferred precisely for naming history this node had not fetched. A block that
+// is served but does not commit the coordinate it was asked for is refused
+// outright -- the cache is consulted instead of the archive, so a substitution
+// admitted here would never be checked again.
+Result<Resolution> resolve_declared_history(std::span<const std::uint32_t> coordinates, std::int32_t expected_network,
+                                            const NativeCoordinateReader&, NativeAnchorCache&, ResolutionBudget = {});
 }  // namespace tos::auth
