@@ -11,20 +11,12 @@ def replace_once(path: Path, before: str, after: str, label: str) -> None:
     path.write_text(text.replace(before, after, 1))
 
 
-# Moving the install after commit leaves live c4 updated on a full run but its
-# committed_data stale. The two full-run c4 cases deliberately inspect both, so
-# they are measured companions of the checkpoint-ordering mutation as well.
-mutations = ROOT / "test/validator-auth-implementation/config_contract_persistence_mutations.py"
-replace_once(
-    mutations,
-    '        ["registry-checkpoint-replaces-before-interruption"],\n',
-    '        [\n'
-    '            "registry-c4-installs-parameter-46",\n'
-    '            "registry-c4-replaces-old-parameter-46",\n'
-    '            "registry-checkpoint-replaces-before-interruption",\n'
-    '        ],\n',
-    "checkpoint-order companion inventory",
-)
+# The checkpoint-ordering mutation keeps the installation and only moves it
+# after the checkpoint, so the parameter still reaches the live register on a
+# full run. Only the cases that read the committed data break. Running every
+# other case under the mutation reports one companion; the two full-run c4 cases
+# pass. A companion list is a measurement, and predicting one here declared two
+# cases that were never observed to break.
 
 # The permanent focused workflow must run when any part of the evidence seam
 # changes, not just when the FunC source or C++ fixture changes.
