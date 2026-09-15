@@ -67,6 +67,18 @@ std::vector<Case> cases() {
          expect(next.has_value());
          expect(next.value() == std::vector<std::uint32_t>({20, 30}));
        }},
+      {"drained-batch-starts-next-resolution", [] {
+         NativeHistoryResolutionQueue queue;
+         expect(submit(queue, {10}).has_value());
+         expect(!submit(queue, {20}).has_value());
+         auto next = queue.complete();
+         expect(next.has_value());
+         auto started = queue.submit(next.value());
+         expect(started.has_value());
+         expect(started.value() == std::vector<std::uint32_t>({20}));
+         expect(queue.active());
+         expect(queue.pending_size() == 0);
+       }},
       {"completion-clears-inflight", [] {
          NativeHistoryResolutionQueue queue;
          expect(submit(queue, {10}).has_value());
