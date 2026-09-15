@@ -96,8 +96,10 @@ jobs:
         run: |
           set +e
           export P0_CONFIG_PERSISTENCE_CELLS="$PWD/artifacts/config-persistence/cells"
-          cargo test --manifest-path tosctl/src/node-control/contracts/Cargo.toml --test native_registry_sandbox config_persistence_action_phase -- --nocapture
-          rc=$?
+          cargo test --manifest-path tosctl/src/node-control/contracts/Cargo.toml --test native_registry_sandbox config_persistence_action_phase -- --include-ignored --nocapture | tee artifacts/config-persistence/rust-action.log
+          rc=${PIPESTATUS[0]}
+          # A name filter that matches nothing exits zero having run nothing.
+          grep -q "3 passed" artifacts/config-persistence/rust-action.log || rc=1
           printf '%s\n' "$rc" > artifacts/config-persistence/rust-action.exit
           echo "RUST_ACTION_EXIT=$rc"
           exit "$rc"

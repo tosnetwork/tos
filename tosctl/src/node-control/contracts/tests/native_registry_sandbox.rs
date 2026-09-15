@@ -1489,7 +1489,7 @@ fn capability_rejects_duplicate_version_and_failed_transfer_is_state_atomic() {
 mod config_persistence_action_phase {
     use super::*;
     use chain_block::{
-        Account, CurrencyCollection, GlobalCapabilities, HashmapE, HashmapType, SizeLimitsConfig,
+        Account, CurrencyCollection, GlobalCapabilities, HashmapE, SizeLimitsConfig,
         TrComputePhase, DICT_HASH_MIN_CELLS,
     };
     use std::{
@@ -1634,6 +1634,12 @@ mod config_persistence_action_phase {
     }
 
     #[test]
+    // The cells this exercises are produced by building the configuration
+    // contract, which a Rust-only job cannot do. Ignoring keeps that
+    // precondition visible as "ignored" there instead of failing for a reason
+    // that says nothing about the code, while the configuration-persistence
+    // workflow runs these explicitly.
+    #[ignore = "needs P0_CONFIG_PERSISTENCE_CELLS from the configuration-contract build"]
     fn accepted_registry_persists_after_action_phase() {
         const NAME: &str = "accepted_registry_persists_after_action_phase";
         println!("SETUP_OK {NAME}");
@@ -1650,6 +1656,12 @@ mod config_persistence_action_phase {
     }
 
     #[test]
+    // The cells this exercises are produced by building the configuration
+    // contract, which a Rust-only job cannot do. Ignoring keeps that
+    // precondition visible as "ignored" there instead of failing for a reason
+    // that says nothing about the code, while the configuration-persistence
+    // workflow runs these explicitly.
+    #[ignore = "needs P0_CONFIG_PERSISTENCE_CELLS from the configuration-contract build"]
     fn refused_action_phase_rolls_registry_back() {
         const NAME: &str = "refused_action_phase_rolls_registry_back";
         println!("SETUP_OK {NAME}");
@@ -1680,6 +1692,12 @@ mod config_persistence_action_phase {
     }
 
     #[test]
+    // The cells this exercises are produced by building the configuration
+    // contract, which a Rust-only job cannot do. Ignoring keeps that
+    // precondition visible as "ignored" there instead of failing for a reason
+    // that says nothing about the code, while the configuration-persistence
+    // workflow runs these explicitly.
+    #[ignore = "needs P0_CONFIG_PERSISTENCE_CELLS from the configuration-contract build"]
     fn validator_auth_host_is_bound_to_configuration_account() {
         const NAME: &str = "validator_auth_host_is_bound_to_configuration_account";
         println!("SETUP_OK {NAME}");

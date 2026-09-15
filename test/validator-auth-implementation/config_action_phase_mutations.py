@@ -80,6 +80,7 @@ def run_case(case: str, env: dict[str, str]) -> subprocess.CompletedProcess[str]
             case,
             "--",
             "--exact",
+            "--include-ignored",
             "--nocapture",
         ],
         env,
