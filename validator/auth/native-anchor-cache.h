@@ -46,6 +46,8 @@ class NativeAnchorCache {
   }
 };
 
+inline constexpr std::size_t kResolutionCoordinateLimit = 64;
+
 // Serializes asynchronous history resolutions without losing the coordinates
 // reported while one is already in flight. Active coordinates are remembered
 // separately from pending ones so a repeated deferral for the same history does
@@ -54,16 +56,37 @@ class NativeAnchorCache {
 class NativeHistoryResolutionQueue {
   std::set<std::uint32_t> active_coordinates_;
   std::set<std::uint32_t> pending_;
+  std::size_t batch_limit_;
   bool active_ = false;
+
+  std::vector<std::uint32_t> pending_batch() const {
+    std::vector<std::uint32_t> batch;
+    for (auto coordinate : pending_) {
+      if (batch.size() >= batch_limit_) {
+        break;
+      }
+      batch.push_back(coordinate);
+    }
+    return batch;
+  }
 
   std::vector<std::uint32_t> start_pending() {
     active_coordinates_.clear();
-    active_coordinates_.swap(pending_);
-    active_ = true;
+    auto it = pending_.begin();
+    while (it != pending_.end() && active_coordinates_.size() < batch_limit_) {
+      const auto coordinate = *it;
+      it = pending_.erase(it);
+      active_coordinates_.insert(coordinate);
+    }
+    active_ = !active_coordinates_.empty();
     return {active_coordinates_.begin(), active_coordinates_.end()};
   }
 
  public:
+  explicit NativeHistoryResolutionQueue(std::size_t batch_limit = kResolutionCoordinateLimit)
+      : batch_limit_(batch_limit < 1 ? 1 : batch_limit) {
+  }
+
   // Adds a request. When idle, returns the de-duplicated batch that the caller
   // must start now. When busy, retains only coordinates not already in the
   // active batch and returns no work until complete() is called.
@@ -79,10 +102,11 @@ class NativeHistoryResolutionQueue {
     return start_pending();
   }
 
-  // Ends the current attempt and hands the caller the next de-duplicated batch,
-  // if one accumulated while it was in flight. The returned batch is not marked
-  // active until the caller submits it again; this keeps admission prerequisites
-  // in the manager as the single authority for whether another attempt can start.
+  // Ends the current attempt and previews the next bounded batch, if one
+  // accumulated while it was in flight. That batch remains pending until the
+  // caller submits it again. If the caller temporarily cannot start another
+  // archive read, no coordinate disappears merely because the previous attempt
+  // completed.
   std::optional<std::vector<std::uint32_t>> complete() {
     if (!active_) {
       return std::nullopt;
@@ -92,9 +116,7 @@ class NativeHistoryResolutionQueue {
     if (pending_.empty()) {
       return std::nullopt;
     }
-    std::vector<std::uint32_t> next{pending_.begin(), pending_.end()};
-    pending_.clear();
-    return next;
+    return pending_batch();
   }
 
   bool active() const {
@@ -107,7 +129,7 @@ class NativeHistoryResolutionQueue {
 };
 
 struct ResolutionBudget {
-  std::size_t coordinates = 64;  // the bound a declaration is already held to
+  std::size_t coordinates = kResolutionCoordinateLimit;  // one authority for queue and resolver bounds
   HistoryReadBudget reads{};
 };
 
