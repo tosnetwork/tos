@@ -2,7 +2,8 @@
 
 This cache is consulted instead of the archive, so a guard that can be removed
 without a named case failing is a guard nothing depends on. Each mutation must
-compile, reach the file, and fail its own named case.
+compile, reach the file, and fail its own named case. The history-resolution
+queue shares this boundary and runs its own isolated mutation harness afterwards.
 """
 import argparse
 import json
@@ -82,6 +83,15 @@ def main() -> int:
         if not all(record[k] for k in ("edit_reached_source", "compiled", "named_assertion_failed",
                                        "restored_baseline", "source_unchanged")):
             failures += 1
+
+    queue_out = args.out / "history-resolution-queue"
+    queue = subprocess.run(
+        [sys.executable, "test/validator-auth-implementation/history_resolution_queue_mutations.py", str(queue_out)],
+        capture_output=True, text=True, check=False)
+    (args.out / "history-resolution-queue.log").write_text(
+        f"exit_code={queue.returncode}\n--- stdout ---\n{queue.stdout}--- stderr ---\n{queue.stderr}")
+    if queue.returncode != 0:
+        failures += 1
 
     (args.out / "mutations.json").write_text(json.dumps(records, indent=1))
     return 1 if failures else 0
