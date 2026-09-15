@@ -170,7 +170,7 @@ Result<bool> RegistryState::validate() {
         k.epoch_ == std::numeric_limits<std::uint64_t>::max() || k.valid_from_ >= k.valid_until_ ||
         k.capacity_domain_ != Hash{} || k.capacity_limit_ != 0)
       return Error{"key-descriptor"};
-    auto admitted = AdmittedKey::admit(k.public_key_);
+    auto admitted = AdmittedKey::admit(k.suite_, k.parameters_, k.public_key_);
     if (!admitted.ok())
       return admitted.error();
   }

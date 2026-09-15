@@ -224,7 +224,7 @@ static Result<IdentityChange> identity_update(const Identity& state, const KeyHi
         return Error{"epoch"};
       if (key.capacity_domain_ != Hash{} || key.capacity_limit_ != 0)
         return Error{"c0-capacity"};
-      auto admitted = AdmittedKey::admit(key.public_key_);
+      auto admitted = AdmittedKey::admit(key.suite_, key.parameters_, key.public_key_);
       if (!admitted.ok())
         return admitted.error();
       auto id = object_id("key", key);

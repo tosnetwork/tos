@@ -98,7 +98,8 @@ Result<bool> C0Provider::replay(std::span<const std::uint8_t> raw) {
     if (found == invocations_.end() || !found->second.signature.empty() || found->second.fence != fence ||
         found->second.handle != handle || found->second.statement != statement || signature.size() != 64)
       return Error{"provider-terminal-transition"};
-    auto key = AdmittedKey::admit(keys_.at(handle).key.public_key_);
+    auto key = AdmittedKey::admit(keys_.at(handle).key.suite_, keys_.at(handle).key.parameters_,
+                                  keys_.at(handle).key.public_key_);
     if (!key.ok())
       return key.error();
     auto valid = key.value().verify(statement, signature);

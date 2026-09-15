@@ -547,6 +547,10 @@ target_include_directories(test-p0-native-registry-mutant PRIVATE "${PROJECT_SOU
 target_link_libraries(test-p0-native-registry-mutant PRIVATE tos_validator_auth_native)
 set_target_properties(test-p0-native-registry-mutant PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 
+add_executable(test-p0-suite-dispatch suite-dispatch-test.cpp)
+target_link_libraries(test-p0-suite-dispatch PRIVATE tos_validator_auth)
+set_target_properties(test-p0-suite-dispatch PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+
 add_executable(test-p0-pq-verify-benchmark pq-verify-benchmark.cpp)
 # tos_validator_auth already carries the sodium dependency the way this tree
 # expects; sodium itself is a utility target here and cannot be linked directly.

@@ -22,7 +22,10 @@ Result<bool> ServiceTrust::install_trusted(const ServicePolicy& policy, const Se
         policy.revision_ != old->second.policy.revision_ + 1 || policy.previous_ != previous->second)
       return Error{"service-policy-history"};
   }
-  auto admitted = AdmittedKey::admit(key.public_key);
+  // A service key carries no suite of its own: this trust layer declares one
+  // algorithm for itself, separately from what the registry admits, and says
+  // so here rather than leaving the backend to be inferred.
+  auto admitted = AdmittedKey::admit(suite_ed25519, parameters_default, key.public_key);
   if (!admitted.ok())
     return admitted.error();
   history_.emplace(hash.value(), Installed{policy, hash.value(), key, admitted.value()});

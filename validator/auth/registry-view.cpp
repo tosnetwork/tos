@@ -162,7 +162,7 @@ Result<Key> RegistryView::find(const Hash& id) const {
       key.epoch_ == 0 || key.epoch_ == std::numeric_limits<std::uint64_t>::max() ||
       key.valid_from_ >= key.valid_until_ || key.capacity_domain_ != Hash{} || key.capacity_limit_ != 0)
     return Error{"key-descriptor"};
-  auto admitted = AdmittedKey::admit(key.public_key_);
+  auto admitted = AdmittedKey::admit(key.suite_, key.parameters_, key.public_key_);
   if (!admitted.ok())
     return admitted.error();
   keys_.emplace(id, key);

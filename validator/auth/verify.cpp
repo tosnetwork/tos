@@ -113,7 +113,7 @@ Result<RegistrySnapshot> RegistrySnapshot::compile(const Committee& committee, c
         return Error{"key-validity"};
       if (k.capacity_domain_ != Hash{} || k.capacity_limit_ != 0)
         return Error{"c0-capacity"};
-      auto admitted = AdmittedKey::admit(k.public_key_);
+      auto admitted = AdmittedKey::admit(k.suite_, k.parameters_, k.public_key_);
       if (!admitted.ok())
         return admitted.error();
       auto ref = key_reference(k);

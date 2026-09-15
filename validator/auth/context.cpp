@@ -114,7 +114,7 @@ Result<bool> verify_possession(const ChainContext& c, const Update& update, cons
     return ref.error();
   if (pop.update_id_ != uid.value() || pop.key_ != ref.value())
     return Error{"possession-binding"};
-  auto admitted = AdmittedKey::admit(key.public_key_);
+  auto admitted = AdmittedKey::admit(key.suite_, key.parameters_, key.public_key_);
   if (!admitted.ok())
     return admitted.error();
   auto preimage = possession_preimage(c, update, key);
@@ -164,7 +164,7 @@ Result<bool> verify_identity_certificate(const Certificate& cert, const Duty& ex
       active = true;
   if (!active || ref.value() != Keyref{component.suite_, component.parameters_, component.epoch_, component.key_id_})
     return Error{"identity-key-binding"};
-  auto admitted = AdmittedKey::admit(key.public_key_);
+  auto admitted = AdmittedKey::admit(key.suite_, key.parameters_, key.public_key_);
   if (!admitted.ok())
     return admitted.error();
   auto statement = signing_statement(expected, cert.records_[0]);
