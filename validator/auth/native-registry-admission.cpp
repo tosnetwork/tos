@@ -62,6 +62,32 @@ Result<std::vector<std::uint32_t>> registry_message_requirements(td::Ref<vm::Cel
   return required_finalized_coordinates(recognized.value().evidence.authorizations(), inclusion);
 }
 
+Result<RegistryAdmissionInputs> gather_registry_admission_inputs(
+    td::Ref<vm::Cell> message, const Hash& configuration_account, td::Ref<vm::Cell> masterchain_state,
+    const tos::BlockIdExt& parent_block, const ChainContext& chain, tos::ShardIdFull shard,
+    std::uint32_t catchain, std::uint32_t inclusion) {
+  const auto parent = anchor_of(parent_block, masterchain_state);
+
+  RegistryAdmissionInputs inputs;
+  inputs.message = std::move(message);
+  inputs.configuration_account = configuration_account;
+  inputs.transaction.masterchain_state = std::move(masterchain_state);
+  inputs.transaction.parent = parent;
+  inputs.transaction.chain = chain;
+  inputs.transaction.shard = shard;
+  inputs.transaction.catchain = catchain;
+  inputs.transaction.inclusion = inclusion;
+
+  // These two facts cannot be reconstructed from the state without inventing a
+  // second source. Preserve the values the collator supplied exactly and make
+  // assembly drift observable before admission can create an authority.
+  if (inputs.transaction.parent != parent)
+    return Error{"registry-gathering-parent"};
+  if (inputs.transaction.catchain != catchain)
+    return Error{"registry-gathering-catchain"};
+  return inputs;
+}
+
 Result<std::unique_ptr<NativeConfigTransaction>> admit_registry_message(const RegistryAdmissionInputs& inputs,
                                                                         const NativeAnchorCache& cache) {
   auto recognized = recognize(inputs.message);
