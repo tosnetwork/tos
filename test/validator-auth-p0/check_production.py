@@ -57,6 +57,12 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--out', type=Path, required=True)
     args = parser.parse_args()
+    # --out names the report file, and this is checked before any work so that a
+    # caller naming a directory is told what it did. Discovering it at the write
+    # instead raised IsADirectoryError after a successful reconstruction, which
+    # reads exactly like the boundary having failed.
+    if args.out.is_dir():
+        raise SystemExit(f'--out must name the report file, not the directory {args.out}')
     baseline = json.loads((ROOT/'test/validator-auth-p0/production-baseline.json').read_text())
     manifest = ROOT/'doc/validator-auth-p0-native-insertions.json'
     insertions = json.loads(manifest.read_text())['insertions']
