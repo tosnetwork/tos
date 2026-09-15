@@ -1,6 +1,7 @@
 #pragma once
 #include <map>
 #include <optional>
+#include <set>
 #include <span>
 #include <vector>
 
@@ -42,6 +43,66 @@ class NativeAnchorCache {
 
   std::size_t size() const {
     return anchors_.size();
+  }
+};
+
+// Serializes asynchronous history resolutions without losing the coordinates
+// reported while one is already in flight. Active coordinates are remembered
+// separately from pending ones so a repeated deferral for the same history does
+// not schedule the same archive read again. The manager owns one instance on
+// its actor thread; this type provides no cross-thread synchronization.
+class NativeHistoryResolutionQueue {
+  std::set<std::uint32_t> active_coordinates_;
+  std::set<std::uint32_t> pending_;
+  bool active_ = false;
+
+  std::vector<std::uint32_t> start_pending() {
+    active_coordinates_.clear();
+    active_coordinates_.swap(pending_);
+    active_ = true;
+    return {active_coordinates_.begin(), active_coordinates_.end()};
+  }
+
+ public:
+  // Adds a request. When idle, returns the de-duplicated batch that the caller
+  // must start now. When busy, retains only coordinates not already in the
+  // active batch and returns no work until complete() is called.
+  std::optional<std::vector<std::uint32_t>> submit(std::span<const std::uint32_t> coordinates) {
+    for (auto coordinate : coordinates) {
+      if (!active_coordinates_.contains(coordinate)) {
+        pending_.insert(coordinate);
+      }
+    }
+    if (active_ || pending_.empty()) {
+      return std::nullopt;
+    }
+    return start_pending();
+  }
+
+  // Ends the current attempt and hands the caller the next de-duplicated batch,
+  // if one accumulated while it was in flight. The returned batch is not marked
+  // active until the caller submits it again; this keeps admission prerequisites
+  // in the manager as the single authority for whether another attempt can start.
+  std::optional<std::vector<std::uint32_t>> complete() {
+    if (!active_) {
+      return std::nullopt;
+    }
+    active_ = false;
+    active_coordinates_.clear();
+    if (pending_.empty()) {
+      return std::nullopt;
+    }
+    std::vector<std::uint32_t> next{pending_.begin(), pending_.end()};
+    pending_.clear();
+    return next;
+  }
+
+  bool active() const {
+    return active_;
+  }
+
+  std::size_t pending_size() const {
+    return pending_.size();
   }
 };
 
