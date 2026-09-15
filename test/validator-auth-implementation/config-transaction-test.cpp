@@ -47,9 +47,6 @@ struct History final : FinalizedAnchorSource {
 };
 
 td::Ref<vm::Cell> evidence_cell() {
-  // A transaction that carries no attachments still carries a complete,
-  // canonical evidence cell. A tag-only stand-in would make a positive case
-  // fail at the decoder before it exercised transaction assembly.
   Authorizations none;
   auto encoded = value(encode(none), "evidence-authorizations");
   auto packed = value(pack_bytes(encoded), "evidence-packed");
@@ -83,9 +80,6 @@ int main(int argc, char** argv) {
 
     auto charge = [](std::size_t) -> Result<bool> { return true; };
 
-    // The registry may only be advanced past the state it was read from. A
-    // block that claims a coordinate at or below its parent would apply an
-    // update to a state that already contains it.
     auto same = inputs;
     same.inclusion = inputs.parent.seqno_;
     refuses(NativeConfigTransaction::open(same, evidence_cell(), history, charge),
@@ -96,7 +90,14 @@ int main(int argc, char** argv) {
     refuses(NativeConfigTransaction::open(earlier, evidence_cell(), history, charge),
             "native-config-transaction-coordinate", "coordinate-cannot-regress");
 
-    // A context the node never established is not a context.
+    // Greater is not enough: the collator is building exactly the parent's
+    // successor. A +2 coordinate would apply due transitions and freshness at
+    // a height different from the block whose state is being constructed.
+    auto skipped = inputs;
+    skipped.inclusion = inputs.parent.seqno_ + 2;
+    refuses(NativeConfigTransaction::open(skipped, evidence_cell(), history, charge),
+            "native-config-transaction-coordinate", "coordinate-must-be-immediate-successor");
+
     auto unnamed = inputs;
     unnamed.chain.chain_domain = Hash{};
     refuses(NativeConfigTransaction::open(unnamed, evidence_cell(), history, charge),
@@ -118,9 +119,6 @@ int main(int argc, char** argv) {
     refuses(NativeConfigTransaction::open(inputs, evidence_cell(), {}, charge), "native-config-transaction-input",
             "absent-history-refused");
 
-    // The finalized-history source is used by owner verification after
-    // admission has returned. The transaction therefore has to own it rather
-    // than retain a reference to a caller-local prefetched source.
     bool destroyed = false;
     history->destroyed = &destroyed;
     std::weak_ptr<const FinalizedAnchorSource> weak = history;

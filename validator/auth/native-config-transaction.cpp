@@ -1,3 +1,5 @@
+#include <limits>
+
 #include "block/mc-config.h"
 
 #include "native-config-transaction.h"
@@ -24,13 +26,13 @@ Result<std::unique_ptr<NativeConfigTransaction>> NativeConfigTransaction::open(
   if (inputs.chain.genesis_root == Hash{} || inputs.chain.genesis_file == Hash{} ||
       inputs.chain.chain_domain == Hash{} || inputs.chain.network == 0)
     return Error{"native-config-transaction-chain"};
-  // The registry may only be advanced past the state it is being read from.
-  if (inputs.inclusion <= inputs.parent.seqno_)
+  // A masterchain successor has exactly one coordinate. Requiring only
+  // inclusion > parent would allow a gathered +2/+N coordinate to select due
+  // transitions and freshness rules for a block that is not being built.
+  if (inputs.parent.seqno_ == std::numeric_limits<std::uint32_t>::max() ||
+      inputs.inclusion != inputs.parent.seqno_ + 1)
     return Error{"native-config-transaction-coordinate"};
 
-  // The committee that governs this update is derived from the parent state at
-  // the parent's own anchor, not from the block being built: a block cannot be
-  // governed by a committee it is itself introducing.
   auto committee = NativeCommittee::derive(inputs.masterchain_state, inputs.parent, inputs.chain, inputs.shard,
                                            inputs.catchain, budget);
   if (!committee.ok())
@@ -46,8 +48,6 @@ Result<std::unique_ptr<NativeConfigTransaction>> NativeConfigTransaction::open(
   if (!accepted.ok())
     return accepted.error();
 
-  // Evidence is whatever the transaction carried, validated before use and
-  // never fetched from anywhere else.
   auto evidence = NativeEvidence::open(std::move(transaction_evidence), charge);
   if (!evidence.ok())
     return evidence.error();

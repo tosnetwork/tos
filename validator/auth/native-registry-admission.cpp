@@ -2,33 +2,25 @@
 
 #include "block/block-auto.h"
 #include "block/block-parse.h"
+#include "block/mc-config.h"
 
+#include "native-config-context.h"
 #include "native-config-message.h"
 #include "native-evidence.h"
 #include "native-prefetch.h"
 #include "native-registry-admission.h"
 namespace tos::auth {
 namespace {
-// The evidence parser charges its caller; admission does no chain work of its
-// own, so it accounts for nothing and leaves charging to execution.
 Result<bool> uncharged(std::size_t) {
   return true;
 }
 
-// What a recognised registry message carries: where it was sent, the update
-// itself, and the evidence read out of it. All of it comes from one parse, so
-// no later step can restate the parse and disagree with it.
 struct RecognizedUpdate {
   Hash destination{};
   NativeRegistryMessage message;
   NativeEvidence evidence;
 };
 
-// Recognise the message without reading any chain state, or say why not.
-//
-// This runs for every external message the block considers, so it must stay
-// cheap: a message that is not a registry update is refused here, before
-// anything opens a state.
 Result<RecognizedUpdate> recognize(td::Ref<vm::Cell> message) {
   if (message.is_null())
     return Error{"registry-admission-input"};
@@ -42,8 +34,6 @@ Result<RecognizedUpdate> recognize(td::Ref<vm::Cell> message) {
     return Error{"registry-admission-not-external"};
   }
 
-  // Addressed to a standard masterchain account. A message elsewhere is not
-  // refused because it is malformed; it is simply not this.
   auto destination = info.dest.write();
   if (destination.fetch_ulong(2) != 2 || destination.fetch_ulong(1) != 0)
     return Error{"registry-admission-not-configuration"};
@@ -78,9 +68,23 @@ Result<std::unique_ptr<NativeConfigTransaction>> admit_registry_message(const Re
   if (!recognized.ok())
     return recognized.error();
 
-  if (inputs.configuration_account == Hash{})
+  if (inputs.configuration_account == Hash{} || inputs.transaction.masterchain_state.is_null())
     return Error{"registry-admission-input"};
-  if (recognized.value().destination != inputs.configuration_account)
+
+  // The account gathered by the collator is checked against the parent state
+  // here instead of becoming a second authority. Config0 and the state's own
+  // configuration header must agree, and the gathered value must be that same
+  // account. A wrong gathered value therefore fails before it can look like an
+  // ordinary message to another account.
+  auto config = block::Config::extract_from_state(inputs.transaction.masterchain_state, 0);
+  if (config.is_error())
+    return Error{"registry-admission-input"};
+  auto declared = declared_configuration_account(*config.ok(), inputs.transaction.masterchain_state);
+  if (!declared.ok())
+    return declared.error();
+  if (declared.value() != inputs.configuration_account)
+    return Error{"registry-admission-configuration-input"};
+  if (recognized.value().destination != declared.value())
     return Error{"registry-admission-not-configuration"};
 
   auto required =
@@ -88,10 +92,6 @@ Result<std::unique_ptr<NativeConfigTransaction>> admit_registry_message(const Re
   if (!required.ok())
     return required.error();
 
-  // Missing history is a deferral, not a defect: this is the block in which the
-  // node learns what it has to resolve. Once complete, the source is owned by
-  // the returned authority because owner verification can run after this call
-  // has returned.
   auto history = cache.source(required.value());
   if (!history.ok())
     return Error{"registry-admission-deferred"};

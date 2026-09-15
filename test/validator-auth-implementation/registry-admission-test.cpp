@@ -19,9 +19,11 @@
 #include "validator/auth/native-registry-admission.h"
 #include "vm/boc.h"
 
+#include "native-config-context-fixture.h"
 #include "owner-fixture.h"
 
 using namespace p0_owner_fixture;
+namespace context_fixture = p0_config_context_fixture;
 
 namespace {
 unsigned passed = 0;
@@ -100,8 +102,10 @@ int main(int argc, char** argv) {
     check(argc == 2, "arguments");
     std::filesystem::path fixtures(argv[1]);
 
-    // One accepted committee case supplies a state that really derives, with
-    // the anchor and chain context it was derived against.
+    // One accepted committee case supplies a state that really derives. The
+    // dedicated configuration-context fixture adds Config0 and the matching
+    // state-header address without changing the shared committee fixture used
+    // by the rest of the suite.
     std::uint32_t case_wc = 0, case_cc = 0;
     std::uint64_t case_shard = 0;
     std::string label;
@@ -117,47 +121,39 @@ int main(int argc, char** argv) {
     }
     check(!selected.empty(), "no-accepted-committee-case");
 
-    auto anchor = value(decode<Anchor>(read(selected.string() + ".anchor")), "anchor");
-    auto chain_raw = read(selected.string() + ".chain");
-    Reader reader(chain_raw);
-    ChainContext chain;
-    reader.integer(chain.network);
-    reader.hash(chain.genesis_root);
-    reader.hash(chain.genesis_file);
-    reader.hash(chain.chain_domain);
-    check(reader.ok(), "chain");
     auto raw_state = read(selected.string() + ".boc");
     auto parsed = vm::std_boc_deserialize(td::Slice(reinterpret_cast<const char*>(raw_state.data()), raw_state.size()));
     check(parsed.is_ok(), "state-boc");
-    auto state = parsed.move_as_ok();
+    auto context = context_fixture::make(parsed.move_as_ok());
 
-    // Which account is the configuration account is a fact about the parent
-    // state, and a caller reads it with declared_configuration_account(). These
-    // fixtures carry no configuration parameter, so the case supplies one
-    // directly; what is under test here is admission, not that extraction.
-    const auto configuration = account(1);
+    const auto configuration = context.address;
     NativeAnchorCache cache;
 
     RegistryAdmissionInputs inputs;
     inputs.configuration_account = configuration;
     inputs.message =
         external(configuration, registry_body(vm::CellBuilder().store_long(1, 8).finalize(), evidence_without_owner()));
-    inputs.transaction.masterchain_state = state;
-    inputs.transaction.parent = anchor;
-    inputs.transaction.chain = chain;
+    inputs.transaction.masterchain_state = context.root;
+    inputs.transaction.parent = context.head;
+    inputs.transaction.chain = context.chain;
     inputs.transaction.shard = {static_cast<tos::WorkchainId>(case_wc), case_shard};
     inputs.transaction.catchain = case_cc;
-    inputs.transaction.inclusion = anchor.seqno_ + 1;
+    inputs.transaction.inclusion = context.head.seqno_ + 1;
 
     // The case the dead first attempt would have failed: a complete input has
     // to produce an authority, not merely fail to refuse.
     auto assembled = admit_registry_message(inputs, cache);
     expect(assembled.ok(), "complete-input-produces-an-authority");
     expect(assembled.value() != nullptr, "complete-input-produces-an-authority");
-    // And the authority has to be usable, which is what the gate downstream
-    // actually requires.
     assembled.value()->host().checkpoints();
     ok("complete-input-produces-an-authority");
+
+    // The account gathered by the collator is not trusted as a free fact. The
+    // parent state's Config0 and own config header establish it again here.
+    auto wrong_account = inputs;
+    wrong_account.configuration_account = account(77);
+    refuses(admit_registry_message(wrong_account, cache), "registry-admission-configuration-input",
+            "gathered-account-must-match-parent-state");
 
     // A message to another account is not this, and is not an error either.
     auto elsewhere = inputs;
@@ -183,12 +179,9 @@ int main(int argc, char** argv) {
     {
       Authorizations owned;
       OwnerAuth owner;
-      const std::uint32_t owner_at = anchor.seqno_;  // strictly below inclusion, and never wraps
+      const std::uint32_t owner_at = context.head.seqno_;
       owner.proof_.anchor_ = Anchor{owner_at, h(11), h(12), h(13)};
       owner.proof_.kind_ = 1;
-      // The proof carries a real object, because the evidence parser validates
-      // it before anything else is looked at; an empty one is refused for its
-      // kind and the case would be about that instead of about deferral.
       owner.proof_.proof_ = value(object_value(5, Bytes{1, 2, 3, 4}), "deferred-proof-object");
       owned.owner_.push_back(owner);
       auto encoded = value(encode(owned), "deferred-authorizations");
@@ -207,8 +200,6 @@ int main(int argc, char** argv) {
       expect(required_now.ok() && required_now.value().size() == 1, "unresolved-history-defers");
       refuses(admit_registry_message(deferred, cache), "registry-admission-deferred", "unresolved-history-defers");
 
-      // Once resolved, the same message is admitted; the deferral was about the
-      // node's knowledge, not about the update.
       NativeAnchorCache resolved;
       expect(resolved.admit(owner_at, Anchor{owner_at, h(11), h(12), h(13)}).ok(), "resolved-history-admits");
       auto again = admit_registry_message(deferred, resolved);
@@ -220,15 +211,10 @@ int main(int argc, char** argv) {
       ok("resolved-history-admits");
     }
 
-    // A caller that never filled in the account would otherwise be told its
-    // message is for someone else, which is the same answer for a different
-    // reason and reads as a chain with no update in flight.
     auto unfilled = inputs;
     unfilled.configuration_account = Hash{};
     refuses(admit_registry_message(unfilled, cache), "registry-admission-input", "missing-account-is-an-input-error");
 
-    // Requirements are reportable without admitting anything, which is what a
-    // caller needs after a deferral.
     auto required = registry_message_requirements(inputs.message, inputs.transaction.inclusion);
     expect(required.ok() && required.value().empty(), "requirements-are-reportable");
     ok("requirements-are-reportable");

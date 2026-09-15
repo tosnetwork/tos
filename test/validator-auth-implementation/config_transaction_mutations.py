@@ -9,8 +9,12 @@ from pathlib import Path
 SOURCE=Path("validator/auth/native-config-transaction.cpp")
 BINARY=Path("build-p0/test/validator-auth-implementation/test-p0-config-transaction")
 MUTATIONS=[
- ("coordinate-advance","coordinate-must-advance",
-  '  if (inputs.inclusion <= inputs.parent.seqno_)\n    return Error{"native-config-transaction-coordinate"};',''),
+ ("exact-successor","coordinate-must-be-immediate-successor",
+  '  if (inputs.parent.seqno_ == std::numeric_limits<std::uint32_t>::max() ||\n'
+  '      inputs.inclusion != inputs.parent.seqno_ + 1)\n'
+  '    return Error{"native-config-transaction-coordinate"};',
+  '  if (inputs.inclusion <= inputs.parent.seqno_)\n'
+  '    return Error{"native-config-transaction-coordinate"};'),
  ("chain-established","unestablished-chain-refused",
   '  if (inputs.chain.genesis_root == Hash{} || inputs.chain.genesis_file == Hash{} ||\n'
   '      inputs.chain.chain_domain == Hash{} || inputs.chain.network == 0)\n'
