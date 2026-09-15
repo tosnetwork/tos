@@ -21,14 +21,14 @@ MUTATIONS = [
      '  std::set<std::uint32_t> active_coordinates_;\n'
      '  std::set<std::uint32_t> pending_;',
      '  std::multiset<std::uint32_t> active_coordinates_;\n'
-     '  std::multiset<std::uint32_t> pending_;', []),
+     '  std::multiset<std::uint32_t> pending_;', ["idle-request-starts-resolution"]),
     ("busy-request-retained", "busy-request-is-retained",
      '    if (active_ || pending_.empty()) {\n'
      '      return std::nullopt;\n'
      '    }',
      '    if (pending_.empty()) {\n'
      '      return std::nullopt;\n'
-     '    }', []),
+     '    }', ["pending-duplicates-coalesce", "completion-drains-pending"]),
     ("completion-drains", "completion-drains-pending",
      '    return next;\n'
      '  }\n\n'
