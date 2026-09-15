@@ -25,6 +25,7 @@
 #include "adnl/utils.hpp"
 #include "auth/native-config-context.h"
 #include "auth/native-history.h"
+#include "auth/native-registry-admission.h"
 #include "block/block-auto.h"
 #include "block/block-parse.h"
 #include "block/block.h"
@@ -3416,19 +3417,14 @@ bool Collator::offer_validator_auth(Ref<vm::Cell> msg_root, bool external, const
     return false;
   }
 
-  const auto parent = tos::auth::anchor_of(mc_block_id_, mc_state_root);
+  auto inputs = tos::auth::gather_registry_admission_inputs(
+      msg_root, configuration.value(), mc_state_root, mc_block_id_, params_.validator_auth.value().chain, shard_,
+      params_.validator_set->get_catchain_seqno(), new_block_seqno);
+  if (!inputs.ok()) {
+    return false;
+  }
 
-  tos::auth::RegistryAdmissionInputs inputs;
-  inputs.message = msg_root;
-  inputs.configuration_account = configuration.value();
-  inputs.transaction.masterchain_state = mc_state_root;
-  inputs.transaction.parent = parent;
-  inputs.transaction.chain = params_.validator_auth.value().chain;
-  inputs.transaction.shard = shard_;
-  inputs.transaction.catchain = params_.validator_set->get_catchain_seqno();
-  inputs.transaction.inclusion = new_block_seqno;
-
-  auto admitted = tos::auth::admit_registry_message(inputs, *params_.validator_auth.value().anchors);
+  auto admitted = tos::auth::admit_registry_message(inputs.value(), *params_.validator_auth.value().anchors);
   if (!admitted.ok()) {
     // A refusal is not an error to report: almost every message reaching here
     // is simply not a registry update. Only a deferral tells us something, and
