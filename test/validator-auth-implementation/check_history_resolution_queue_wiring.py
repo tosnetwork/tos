@@ -27,6 +27,9 @@ SNAPSHOT_BUILD = '''const auto state = last_masterchain_state_->root_cell();
 SNAPSHOT_ENUMERATION = '''required_finalized_blocks(batch.value(), snapshot->masterchain_state, snapshot->head,
                                                      snapshot->chain, validator_auth_anchors_)'''
 
+SNAPSHOT_RECURSE = '''td::actor::send_closure(SelfId, &ValidatorManagerImpl::fetch_validator_auth_block, std::move(coordinates),
+                            std::move(snapshot), std::move(wanted), index + 1, std::move(fetched));'''
+
 SNAPSHOT_RESOLUTION = '''resolve_declared_history(coordinates, snapshot->masterchain_state, snapshot->head,
                                                       snapshot->chain, reader, validator_auth_anchors_)'''
 
@@ -56,7 +59,7 @@ def verify(manager_h: str, manager_cpp: str, insertion: str) -> None:
         SNAPSHOT_ENUMERATION,
         "fetch_validator_auth_block(std::move(batch.value()), std::move(snapshot),",
         "snapshot = std::move(snapshot),",
-        "&ValidatorManagerImpl::fetch_validator_auth_block, std::move(coordinates), std::move(snapshot),",
+        SNAPSHOT_RECURSE,
         "finish_validator_auth_resolution(std::move(coordinates), std::move(snapshot), std::move(fetched));",
         SNAPSHOT_RESOLUTION,
         IMMEDIATE_DRAIN,
@@ -125,6 +128,7 @@ def main() -> None:
         (manager_h, manager_cpp.replace(FINISH_DRAIN, "", 1), insertion),
         (manager_h, manager_cpp, insertion.replace(FINISH_DRAIN, "", 1)),
         (manager_h, manager_cpp.replace(SNAPSHOT_BUILD, "", 1), insertion),
+        (manager_h, manager_cpp.replace(SNAPSHOT_RECURSE, "", 1), insertion),
         (manager_h, manager_cpp.replace(SNAPSHOT_RESOLUTION, "", 1), insertion),
         (manager_h, manager_cpp, insertion.replace(SNAPSHOT_ENUMERATION, "", 1)),
     )
