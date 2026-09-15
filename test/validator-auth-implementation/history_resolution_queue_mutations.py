@@ -16,7 +16,7 @@ MUTATIONS = [
      '      if (!active_coordinates_.contains(coordinate)) {\n'
      '        pending_.insert(coordinate);\n'
      '      }',
-     '      pending_.insert(coordinate);', []),
+     '      pending_.insert(coordinate);', ["active-batch-respects-bound"]),
     ("pending-coordinate-dedup", "pending-duplicates-coalesce",
      '  std::set<std::uint32_t> active_coordinates_;\n'
      '  std::set<std::uint32_t> pending_;',
@@ -30,29 +30,55 @@ MUTATIONS = [
      '    if (pending_.empty()) {\n'
      '      return std::nullopt;\n'
      '    }', ["pending-duplicates-coalesce", "completion-drains-pending",
-              "drained-batch-starts-next-resolution"]),
-    # The anchor names the statement that hands the batch out, which is the
-    # line bounding the batch moved. An anchor that no longer matches reports
-    # nothing about the property it was written for, so it is spelled as the
-    # current return rather than as the surrounding shape.
+              "drained-batch-starts-next-resolution", "pending-over-bound-drains-without-loss",
+              "active-batch-respects-bound", "completion-preview-remains-pending"]),
+    # The anchor names the statement that hands the batch out. An anchor that no
+    # longer matches reports nothing about the property it was written for.
     ("completion-drains", "completion-drains-pending",
      '    return pending_batch();\n'
      '  }\n\n'
      '  bool active() const {',
      '    return std::nullopt;\n'
      '  }\n\n'
-     '  bool active() const {', ["pending-duplicates-coalesce", "drained-batch-starts-next-resolution"]),
+     '  bool active() const {', ["pending-duplicates-coalesce", "drained-batch-starts-next-resolution",
+                                 "pending-over-bound-drains-without-loss", "active-batch-respects-bound",
+                                 "completion-preview-remains-pending"]),
     ("completion-clears-active", "completion-clears-inflight",
      '    active_ = false;\n'
      '    active_coordinates_.clear();',
-     '', ["drained-batch-starts-next-resolution", "empty-completion-does-not-loop"]),
+     '', ["drained-batch-starts-next-resolution", "empty-completion-does-not-loop",
+          "pending-over-bound-drains-without-loss", "completion-preview-remains-pending"]),
     ("empty-completion-stops", "empty-completion-does-not-loop",
      '    if (pending_.empty()) {\n'
      '      return std::nullopt;\n'
      '    }',
      '    if (pending_.empty()) {\n'
      '      return std::vector<std::uint32_t>{};\n'
-     '    }', ["completion-clears-inflight"]),
+     '    }', ["completion-clears-inflight", "pending-over-bound-drains-without-loss"]),
+    ("pending-batch-bound", "pending-over-bound-drains-without-loss",
+     '      if (batch.size() >= batch_limit_) {\n'
+     '        break;\n'
+     '      }',
+     '      if (false && batch.size() >= batch_limit_) {\n'
+     '        break;\n'
+     '      }', []),
+    ("active-batch-bound", "active-batch-respects-bound",
+     '    while (it != pending_.end() && active_coordinates_.size() < batch_limit_) {',
+     '    while (it != pending_.end()) {',
+     ["pending-over-bound-drains-without-loss", "default-bound-matches-resolver-budget"]),
+    ("completion-preview-retained", "completion-preview-remains-pending",
+     '    return pending_batch();',
+     '    auto preview = pending_batch();\n'
+     '    for (auto coordinate : preview) {\n'
+     '      pending_.erase(coordinate);\n'
+     '    }\n'
+     '    return preview;', []),
+    ("queue-default-bound", "default-bound-matches-resolver-budget",
+     '  explicit NativeHistoryResolutionQueue(std::size_t batch_limit = kResolutionCoordinateLimit)',
+     '  explicit NativeHistoryResolutionQueue(std::size_t batch_limit = kResolutionCoordinateLimit + 1)', []),
+    ("resolver-default-bound", "default-bound-matches-resolver-budget",
+     '  std::size_t coordinates = kResolutionCoordinateLimit;  // one authority for queue and resolver bounds',
+     '  std::size_t coordinates = kResolutionCoordinateLimit + 1;  // mutation: split the shared bound', []),
 ]
 
 SANITIZER_ENV = {
@@ -131,15 +157,23 @@ def main() -> int:
             compiled = build()
             named_run = run(case) if compiled else None
             named = named_run is not None and named_failure(named_run, case)
-            spared = [name for name in cases if name != case and name not in companions]
-            isolated = compiled and all(passing(run(name), 1) for name in spared)
+
+            observed_companions: list[str] = []
+            if compiled:
+                for other in cases:
+                    if other == case:
+                        continue
+                    if not passing(run(other), 1):
+                        observed_companions.append(other)
+            isolated = compiled and observed_companions == sorted(companions)
 
             SOURCE.write_text(original)
             restored = build() and passing(run(), len(cases))
             record: dict[str, object] = {
                 "guard": guard,
                 "case": case,
-                "declared_companions": companions,
+                "declared_companions": sorted(companions),
+                "observed_companions": observed_companions,
                 "edit_reached_source": reached,
                 "compiled": compiled,
                 "named_assertion_failed": named,
