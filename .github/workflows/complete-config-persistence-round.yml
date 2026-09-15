@@ -1,6 +1,9 @@
 name: Complete registry persistence round
 
 on:
+  # Re-running this round otherwise requires editing this file, which makes an
+  # empty commit the only way to retry a round whose inputs did not change.
+  workflow_dispatch:
   push:
     branches: [feat/validator-auth-p0]
     paths:
