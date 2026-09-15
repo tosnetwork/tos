@@ -64,18 +64,24 @@ Result<std::vector<std::uint32_t>> registry_message_requirements(td::Ref<vm::Cel
 
 Result<RegistryAdmissionInputs> gather_registry_admission_inputs(
     td::Ref<vm::Cell> message, const Hash& configuration_account, td::Ref<vm::Cell> masterchain_state,
-    const tos::BlockIdExt& parent_block, const ChainContext& chain, tos::ShardIdFull shard,
+    const tos::BlockIdExt& established_parent_block, const tos::BlockIdExt& parent_block,
+    const ChainContext& chain, tos::ShardIdFull shard, std::uint32_t established_catchain,
     std::uint32_t catchain, std::uint32_t inclusion) {
+  if (parent_block != established_parent_block)
+    return Error{"registry-admission-parent-source"};
+  if (catchain != established_catchain)
+    return Error{"registry-admission-catchain-source"};
+
   RegistryAdmissionInputs inputs;
   inputs.message = std::move(message);
   inputs.configuration_account = configuration_account;
-  inputs.parent_block = parent_block;
-  inputs.catchain_source = catchain;
+  inputs.parent_block = established_parent_block;
+  inputs.catchain_source = established_catchain;
   inputs.transaction.masterchain_state = masterchain_state;
-  inputs.transaction.parent = anchor_of(parent_block, masterchain_state);
+  inputs.transaction.parent = anchor_of(established_parent_block, masterchain_state);
   inputs.transaction.chain = chain;
   inputs.transaction.shard = shard;
-  inputs.transaction.catchain = catchain;
+  inputs.transaction.catchain = established_catchain;
   inputs.transaction.inclusion = inclusion;
   return inputs;
 }
