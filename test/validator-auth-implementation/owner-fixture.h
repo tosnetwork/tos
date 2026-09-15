@@ -103,6 +103,12 @@ td::Ref<vm::Cell> mcstate(const Fixture& f, td::Ref<vm::Cell> shard_block = {}) 
   vm::CellBuilder configuration_parameter;
   configuration_parameter.store_bytes(
       td::Slice(reinterpret_cast<const char*>(configuration.data()), configuration.size()));
+  // The LL suffix is load-bearing. BitArray has a non-explicit constructor from
+  // ConstBitPtr, and a bare 0 is a null pointer constant, so td::BitArray<32>{0}
+  // selects that constructor and builds a key out of a null pointer instead of
+  // the key zero. Nonzero literals are unaffected, which is why every other key
+  // here is written plainly, and the failure it causes is reported against an
+  // unrelated check further up.
   check(config.set_ref(td::BitArray<32>{0LL}, configuration_parameter.finalize()), "configuration-entry");
   cp.config_addr = td::Bits256(td::ConstBitPtr(configuration.data()));
   cp.config = config.get_root_cell();

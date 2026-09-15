@@ -68,6 +68,12 @@ ContextFixture make(td::Ref<vm::Cell> base, unsigned mode = 0) {
   Hash address = h(900);
   const Hash parameter_address = mode == 1 ? Hash{} : address;
   auto encoded_address = vm::CellBuilder().store_bytes(td::Slice(parameter_address.data(), 32)).finalize();
+  // The LL suffix is load-bearing. BitArray has a non-explicit constructor from
+  // ConstBitPtr, and a bare 0 is a null pointer constant, so td::BitArray<32>{0}
+  // selects that constructor and builds a key out of a null pointer instead of
+  // the key zero. Nonzero literals are unaffected, which is why every other key
+  // here is written plainly, and the failure it causes is reported against an
+  // unrelated check further up.
   check(config.set_ref(td::BitArray<32>{0LL}, encoded_address), "fixture-address");
   params.config = config.get_root_cell();
   if (mode == 2) {
