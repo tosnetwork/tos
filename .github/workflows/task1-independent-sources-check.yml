@@ -1,0 +1,107 @@
+name: Task 1 independent collator sources
+
+on:
+  pull_request:
+    paths:
+      - 'validator/auth/native-registry-admission.*'
+      - 'validator/impl/collator.cpp'
+      - 'test/validator-auth-implementation/registry-admission-test.cpp'
+      - 'test/validator-auth-implementation/registry_admission_mutations.py'
+      - '.github/workflows/task1-independent-sources-check.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  focused:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Install native dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang lld cmake ninja-build pkg-config libssl-dev libsodium-dev liblz4-dev zlib1g-dev gperf
+      - name: Configure focused trees
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          git rev-parse HEAD | tee artifacts/commit.txt
+          python3 tools/validator-auth/generate.py
+          cmake -S . -B build-p0 -G Ninja -DCMAKE_BUILD_TYPE=Release -DTOS_ARCH= \
+            -DTOS_BUILD_P0_IMPLEMENTATION_TESTS=ON -DUSE_QUIC=OFF \
+            -DTOS_USE_ROCKSDB=OFF -DTOS_USE_ABSEIL=OFF -DTOS_USE_LLD=ON \
+            -DCMAKE_SKIP_INSTALL_RULES=ON \
+            -DOPENSSL_CRYPTO_LIBRARY="$(pkg-config --variable=libdir openssl)/libcrypto.so" \
+            -DOPENSSL_SSL_LIBRARY="$(pkg-config --variable=libdir openssl)/libssl.so" \
+            -DOPENSSL_INCLUDE_DIR="$(pkg-config --variable=includedir openssl)"
+          cmake -S . -B build-p0-sanitized -G Ninja -DCMAKE_BUILD_TYPE=Release -DTOS_ARCH= \
+            -DTOS_BUILD_P0_IMPLEMENTATION_TESTS=ON -DUSE_QUIC=OFF \
+            -DTOS_USE_ASAN=ON -DTOS_USE_UBSAN=ON \
+            -DTOS_USE_ROCKSDB=OFF -DTOS_USE_ABSEIL=OFF -DTOS_USE_LLD=ON \
+            -DCMAKE_SKIP_INSTALL_RULES=ON \
+            -DOPENSSL_CRYPTO_LIBRARY="$(pkg-config --variable=libdir openssl)/libcrypto.so" \
+            -DOPENSSL_SSL_LIBRARY="$(pkg-config --variable=libdir openssl)/libssl.so" \
+            -DOPENSSL_INCLUDE_DIR="$(pkg-config --variable=includedir openssl)"
+      - name: Build production seam and focused drivers
+        run: |
+          set -euo pipefail
+          cmake --build build-p0 --target \
+            test-p0-committee test-p0-registry-admission \
+            validator/impl/CMakeFiles/tos_validator.dir/collator.cpp.o -j2
+          cmake --build build-p0-sanitized --target \
+            test-p0-committee test-p0-registry-admission -j2
+      - name: Prove independent sources and sanitizers
+        run: |
+          set -euo pipefail
+          build-p0/test/validator-auth-implementation/test-p0-committee artifacts/committee-fixtures \
+            | tee artifacts/committee.txt
+          build-p0-sanitized/test/validator-auth-implementation/test-p0-committee artifacts/committee-fixtures-sanitized \
+            | tee artifacts/committee-sanitized.txt
+          build-p0/test/validator-auth-implementation/test-p0-registry-admission artifacts/committee-fixtures \
+            | tee artifacts/registry-admission.txt
+          ASAN_OPTIONS=detect_leaks=1:detect_stack_use_after_return=1 UBSAN_OPTIONS=halt_on_error=1 \
+            build-p0-sanitized/test/validator-auth-implementation/test-p0-registry-admission artifacts/committee-fixtures-sanitized \
+            | tee artifacts/registry-admission-sanitized.txt
+          for case in wrong-catchain-source-is-refused wrong-parent-root-source-is-refused wrong-parent-file-source-is-refused; do
+            build-p0/test/validator-auth-implementation/test-p0-registry-admission artifacts/committee-fixtures "$case" \
+              | tee "artifacts/$case.txt"
+          done
+      - name: Compile and isolate Task 1 mutations
+        run: |
+          set -euo pipefail
+          python3 test/validator-auth-implementation/registry_admission_mutations.py \
+            --fixtures artifacts/committee-fixtures --out artifacts/registry-admission-mutations \
+            | tee artifacts/registry-admission-mutations.txt
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          records = json.loads(Path('artifacts/registry-admission-mutations/mutations.json').read_text())
+          task1 = {
+              'collator-catchain-source-check', 'collator-parent-source-check',
+              'collator-catchain-copy', 'collator-parent-root-copy', 'collator-parent-file-copy',
+              'catchain-source-bound', 'parent-source-bound',
+          }
+          selected = [record for record in records if record['guard'] in task1]
+          if {record['guard'] for record in selected} != task1:
+              raise SystemExit('TASK1_MUTATION_INVENTORY_MISMATCH')
+          for record in selected:
+              print(json.dumps(record, sort_keys=True))
+              required = ('edit_reached_source', 'compiled', 'named_assertion_failed',
+                          'only_declared_cases_broke', 'restored_baseline', 'source_unchanged')
+              if not all(record.get(key) for key in required):
+                  raise SystemExit(f"TASK1_MUTATION_FAILED {record['guard']}")
+              if 'named_stdout' not in record or 'named_stderr' not in record:
+                  raise SystemExit(f"TASK1_RED_EVIDENCE_MISSING {record['guard']}")
+          PY
+          git diff --exit-code
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: task1-independent-sources
+          path: artifacts/
+          if-no-files-found: error
+          retention-days: 14
