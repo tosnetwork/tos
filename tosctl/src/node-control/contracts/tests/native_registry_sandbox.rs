@@ -1485,20 +1485,19 @@ fn capability_rejects_duplicate_version_and_failed_transfer_is_state_atomic() {
     assert_eq!(capability_owner(&f.state_at(&capability.address)), old_owner_id);
 }
 
-
 mod config_persistence_action_phase {
     use super::*;
     use chain_block::{
-        Account, CurrencyCollection, GlobalCapabilities, HashmapE, SizeLimitsConfig,
-        TrComputePhase, DICT_HASH_MIN_CELLS,
+        Account, CurrencyCollection, DICT_HASH_MIN_CELLS, GlobalCapabilities, HashmapE,
+        SizeLimitsConfig, TrComputePhase,
     };
     use std::{
         fs,
         io::Write,
         path::{Path, PathBuf},
         sync::{
-            atomic::{AtomicUsize, Ordering},
             Arc, Mutex,
+            atomic::{AtomicUsize, Ordering},
         },
     };
     use tos_vm::validator_auth_host::ValidatorAuthHost;
@@ -1563,7 +1562,11 @@ mod config_persistence_action_phase {
         ) -> chain_block::Result<Cell> {
             charge(10)?;
             assert_eq!(update.hash(0), self.expected_update.hash(0), "update operand changed");
-            assert_eq!(evidence.hash(0), self.expected_evidence.hash(0), "evidence operand changed");
+            assert_eq!(
+                evidence.hash(0),
+                self.expected_evidence.hash(0),
+                "evidence operand changed"
+            );
             self.applies.fetch_add(1, Ordering::SeqCst);
             Ok(self.returned_registry.clone())
         }
@@ -1573,7 +1576,8 @@ mod config_persistence_action_phase {
         let slice = SliceData::load_cell(data.clone()).expect("contract data");
         let root = slice.reference(0).expect("config dictionary root");
         let dict = HashmapE::with_hashmap(32, Some(root));
-        let entry = dict.get(index.write_to_bitstring().expect("config key")).expect("config lookup")?;
+        let entry =
+            dict.get(index.write_to_bitstring().expect("config key")).expect("config lookup")?;
         entry.reference_opt(0)
     }
 
@@ -1645,13 +1649,19 @@ mod config_persistence_action_phase {
         println!("SETUP_OK {NAME}");
         std::io::stdout().flush().unwrap();
         let fixture = cells();
-        assert!(parameter(&fixture.empty_data, 46).is_none(), "fixture starts without parameter 46");
+        assert!(
+            parameter(&fixture.empty_data, 46).is_none(),
+            "fixture starts without parameter 46"
+        );
         let (mut bc, address, applies) = setup(fixture.empty_data.clone(), &fixture);
         let result = send(&mut bc, &address, fixture.body.clone());
         result.expect_success().expect_exit_code(0);
         assert_eq!(applies.load(Ordering::SeqCst), 1, "native apply must execute exactly once");
         let data = persisted_data(&bc, &address);
-        assert!(same_cell(parameter(&data, 46), &fixture.after), "action phase did not persist the new registry");
+        assert!(
+            same_cell(parameter(&data, 46), &fixture.after),
+            "action phase did not persist the new registry"
+        );
         println!("CASE_PASS {NAME}");
     }
 
@@ -1667,7 +1677,10 @@ mod config_persistence_action_phase {
         println!("SETUP_OK {NAME}");
         std::io::stdout().flush().unwrap();
         let fixture = cells();
-        assert!(same_cell(parameter(&fixture.old_data, 46), &fixture.before), "fixture must contain the old registry");
+        assert!(
+            same_cell(parameter(&fixture.old_data, 46), &fixture.before),
+            "fixture must contain the old registry"
+        );
         let (mut bc, address, applies) = setup(fixture.old_data.clone(), &fixture);
         let mut limits = SizeLimitsConfig::default();
         limits.max_mc_acc_state_cells = 1;
@@ -1686,8 +1699,15 @@ mod config_persistence_action_phase {
         assert_eq!(applies.load(Ordering::SeqCst), 1, "native apply must execute before rollback");
 
         let data = persisted_data(&bc, &address);
-        assert_eq!(data.hash(0), fixture.old_data.hash(0), "aborted action phase persisted compute data");
-        assert!(same_cell(parameter(&data, 46), &fixture.before), "aborted action phase half-applied the registry");
+        assert_eq!(
+            data.hash(0),
+            fixture.old_data.hash(0),
+            "aborted action phase persisted compute data"
+        );
+        assert!(
+            same_cell(parameter(&data, 46), &fixture.before),
+            "aborted action phase half-applied the registry"
+        );
         println!("CASE_PASS {NAME}");
     }
 
@@ -1710,11 +1730,16 @@ mod config_persistence_action_phase {
         // account. Without this control every setup failure satisfies the refusal
         // below, and the case reports a binding it never exercised.
         send(&mut bc, &authority_account, fixture.body.clone()).expect_success();
-        assert_eq!(applies.load(Ordering::SeqCst), 1, "bound account did not reach the native host");
+        assert_eq!(
+            applies.load(Ordering::SeqCst),
+            1,
+            "bound account did not reach the native host"
+        );
 
         let other = MsgAddressInt::standard(-1, [0x78u8; 32]);
         assert_ne!(other, authority_account, "fixture accounts must differ");
-        let state_init = StateInit::with_code_and_data(fixture.contract.clone(), fixture.empty_data.clone());
+        let state_init =
+            StateInit::with_code_and_data(fixture.contract.clone(), fixture.empty_data.clone());
         let account = Account::active(
             other.clone(),
             CurrencyCollection::with_coins(CONFIG_BALANCE),
@@ -1727,9 +1752,14 @@ mod config_persistence_action_phase {
         bc.set_account(other.clone(), account);
 
         let before = persisted_data(&bc, &other);
-        let result = bc.send_message(MessageBuilder::external(&other).body(fixture.body.clone()).build());
+        let result =
+            bc.send_message(MessageBuilder::external(&other).body(fixture.body.clone()).build());
         assert!(result.is_err(), "authority leaked to an account other than the bound destination");
-        assert_eq!(applies.load(Ordering::SeqCst), 1, "native host was reached by the wrong account");
+        assert_eq!(
+            applies.load(Ordering::SeqCst),
+            1,
+            "native host was reached by the wrong account"
+        );
         let after = persisted_data(&bc, &other);
         assert_eq!(after.hash(0), before.hash(0), "rejected wrong-account execution changed data");
         println!("CASE_PASS {NAME}");
