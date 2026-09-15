@@ -567,6 +567,10 @@ add_executable(test-p0-config-message config-message-test.cpp)
 target_link_libraries(test-p0-config-message PRIVATE tos_validator_auth_native)
 set_target_properties(test-p0-config-message PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 
+add_executable(test-p0-elector-contract elector-contract-test.cpp)
+target_link_libraries(test-p0-elector-contract PRIVATE tos_validator_auth tos_crypto)
+set_target_properties(test-p0-elector-contract PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+
 add_executable(test-p0-config-contract config-contract-test.cpp)
 target_link_libraries(test-p0-config-contract PRIVATE tos_validator_auth tos_crypto)
 set_target_properties(test-p0-config-contract PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)

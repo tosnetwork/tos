@@ -143,6 +143,40 @@
     "offset": 20671,
     "text": "if (action == 0x56417531) {\n    ;; apply an authenticated validator registry update\n    ;;\n    ;; Authority for this action lives in the update itself: the privileged\n    ;; instruction validates its authorizations against the registry's own\n    ;; governance and refuses otherwise. Requiring the configuration key here in\n    ;; addition would let that one key block updates the registry authorized,\n    ;; which is the single point of authority this design removes.\n    ;;\n    ;; The message is therefore unsigned, and is accepted only after the update\n    ;; has been applied. A refused update never reaches accept_message, so it is\n    ;; dropped inside the gas credit instead of being paid for.\n    var update = cs~load_ref();\n    var evidence = cs~load_ref();\n    cs.end_parse();\n    var registry = vauth_apply_update(update, evidence);\n    accept_message();\n    stored_seqno = (stored_seqno + 1) % (1 << 32);\n    store_data(cfg_dict, stored_seqno, public_key, vote_dict);\n    commit();\n    set_conf_param(46, registry);\n    return ();\n  }\n  "
    }
+  ],
+  "crypto/smartcont/elector-code.fc": [
+   {
+    "offset": 6166,
+    "text": ";; The registry identity each elected member named, carried beside the set to\n;; the configuration contract. It is filled where both the staking account and\n;; the named identity are known, and it is never judged here: whether an\n;; identity really belongs to that account is the registry's answer, not this\n;; contract's.\nglobal cell elector_bindings;\n\n"
+   },
+   {
+    "offset": 6849,
+    "text": "  ifnot (cell_null?(elector_bindings)) {\n    ;; wrapped the way every other dictionary crossing this boundary is, so the\n    ;; reader has one shape to know rather than one per sender\n    msg = msg.store_ref(begin_cell().store_dict(elector_bindings).end_cell());\n  }\n"
+   },
+   {
+    "offset": 7827,
+    "text": "  ;; a stake may name the registry identity it is for; one that does not is a\n  ;; stake on a chain that has not activated validator authentication\n  int named_identity = 0;\n  if (cs.slice_bits()) {\n    named_identity = cs~load_uint(256);\n  }\n"
+   },
+   {
+    "offset": 9833,
+    "text": "\n  if (named_identity) {\n    members~udict_set_builder(256, validator_pubkey, begin_cell()\n      .store_tomis(msg_value)\n      .store_uint(now(), 32)\n      .store_uint(max_factor, 32)\n      .store_uint(src_addr, 256)\n      .store_uint(adnl_addr, 256)\n      ;; in a reference, because the record plus another 256 bits no longer\n      ;; fits a dictionary leaf beside its key\n      .store_ref(begin_cell().store_uint(named_identity, 256).end_cell()));\n  }"
+   },
+   {
+    "offset": 26239,
+    "text": "      ;; a record that names an identity carries it in a reference; this walk\n      ;; only has to reach the end of the record, not to use what it finds\n      if (cs.slice_refs()) {\n        cs~load_ref();\n      }\n"
+   },
+   {
+    "offset": 28012,
+    "text": "  elector_bindings = new_dict();\n"
+   },
+   {
+    "offset": 29191,
+    "text": "\n      ;; src_addr was read without consuming it; step over it and the adnl\n      ;; address to reach the identity this member named, if it named one\n      val~load_uint(256);\n      val~load_uint(256);\n      if (val.slice_refs()) {\n        elector_bindings~udict_set_builder(16, i, begin_cell()\n          .store_uint(src_addr, 256)\n          .store_uint(val~load_ref().begin_parse().preload_uint(256), 256));\n      }"
+   },
+   {
+    "offset": 40076,
+    "text": "      ;; a record that names an identity carries it in a reference; this walk\n      ;; only has to reach the end of the record, not to use what it finds\n      if (cs.slice_refs()) {\n        cs~load_ref();\n      }\n"
+   }
   ]
  }
 }
