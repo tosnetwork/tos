@@ -31,6 +31,11 @@ if(UNIX)
   target_link_libraries(tos_validator_auth_provisioning PUBLIC tos_validator_auth_signer)
   set_target_properties(tos_validator_auth_provisioning PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 
+  add_library(tos_validator_auth_session_provider STATIC native-session-provider.cpp)
+  target_link_libraries(tos_validator_auth_session_provider PUBLIC
+    tos_validator_auth_session tos_validator_auth_provisioning)
+  set_target_properties(tos_validator_auth_session_provider PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+
   add_library(tos_validator_auth_rpc STATIC native-rpc.cpp native-node-history.cpp public-rpc.cpp)
   target_link_libraries(tos_validator_auth_rpc PUBLIC tos_validator_auth_native tos_validator_auth_signer)
   set_target_properties(tos_validator_auth_rpc PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
@@ -107,4 +112,23 @@ if(TOS_BUILD_P0_IMPLEMENTATION_TESTS)
   target_link_libraries(test-p0-native-session-continuity-mutant PRIVATE
     tos_validator_auth_native tdutils)
   set_target_properties(test-p0-native-session-continuity-mutant PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+
+  if(UNIX)
+    add_executable(test-p0-native-session-provider EXCLUDE_FROM_ALL
+      "${PROJECT_SOURCE_DIR}/test/validator-auth-implementation/session-provider-test.cpp")
+    target_link_libraries(test-p0-native-session-provider PRIVATE
+      tos_validator_auth_session_provider)
+    set_target_properties(test-p0-native-session-provider PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+
+    configure_file("${CMAKE_CURRENT_SOURCE_DIR}/native-session-provider.cpp"
+                   "${CMAKE_CURRENT_BINARY_DIR}/mutated-native-session-provider.cpp" COPYONLY)
+    add_executable(test-p0-native-session-provider-mutant EXCLUDE_FROM_ALL
+      "${PROJECT_SOURCE_DIR}/test/validator-auth-implementation/session-provider-test.cpp"
+      "${CMAKE_CURRENT_BINARY_DIR}/mutated-native-session-provider.cpp")
+    target_include_directories(test-p0-native-session-provider-mutant PRIVATE
+      "${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(test-p0-native-session-provider-mutant PRIVATE
+      tos_validator_auth_session tos_validator_auth_provisioning)
+    set_target_properties(test-p0-native-session-provider-mutant PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+  endif()
 endif()
