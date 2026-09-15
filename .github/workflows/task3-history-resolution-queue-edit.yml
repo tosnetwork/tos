@@ -60,7 +60,7 @@ jobs:
       - name: Commit verified queue wiring
         run: |
           set -euo pipefail
-          expected=$'.github/workflows/task3-history-resolution-queue-edit.yml\ndoc/validator-auth-p0-native-insertions.json\ntools/validator-auth/apply-task3-queue.py\nvalidator/manager.cpp\nvalidator/manager.hpp'
+          expected=$'doc/validator-auth-p0-native-insertions.json\nvalidator/manager.cpp\nvalidator/manager.hpp'
           test "$(git diff --name-only | sort)" = "$expected"
           git rm .github/workflows/task3-history-resolution-queue-edit.yml tools/validator-auth/apply-task3-queue.py
           git config user.name gtosnetwork-dotcom
