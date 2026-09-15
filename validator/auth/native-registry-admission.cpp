@@ -1,3 +1,5 @@
+#include <memory>
+
 #include "block/block-auto.h"
 #include "block/block-parse.h"
 
@@ -87,12 +89,15 @@ Result<std::unique_ptr<NativeConfigTransaction>> admit_registry_message(const Re
     return required.error();
 
   // Missing history is a deferral, not a defect: this is the block in which the
-  // node learns what it has to resolve.
+  // node learns what it has to resolve. Once complete, the source is owned by
+  // the returned authority because owner verification can run after this call
+  // has returned.
   auto history = cache.source(required.value());
   if (!history.ok())
     return Error{"registry-admission-deferred"};
+  auto owned_history = std::make_shared<PrefetchedAnchorSource>(std::move(history.value()));
 
-  return NativeConfigTransaction::open(inputs.transaction, recognized.value().message.evidence, history.value(),
-                                       uncharged);
+  return NativeConfigTransaction::open(inputs.transaction, recognized.value().message.evidence,
+                                       std::move(owned_history), uncharged);
 }
 }  // namespace tos::auth

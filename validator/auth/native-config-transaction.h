@@ -1,4 +1,6 @@
 #pragma once
+#include <memory>
+
 #include "native-committee.h"
 #include "native-config-host.h"
 #include "native-evidence.h"
@@ -30,18 +32,17 @@ struct NativeConfigTransactionInputs {
 class NativeConfigTransaction {
   NativeCommittee committee_;
   NativeEvidence evidence_;
-  const FinalizedAnchorSource& history_;
+  std::shared_ptr<const FinalizedAnchorSource> history_;
   NativeIdentityContext context_;
   ObjectReader reader_;
   NativeConfigHost host_;
-  NativeConfigTransaction(NativeCommittee, NativeEvidence, const FinalizedAnchorSource&, NativeRegistryBlock,
-                          ChainContext, std::uint32_t inclusion);
+  NativeConfigTransaction(NativeCommittee, NativeEvidence, std::shared_ptr<const FinalizedAnchorSource>,
+                          NativeRegistryBlock, ChainContext, std::uint32_t inclusion);
 
  public:
-  static Result<std::unique_ptr<NativeConfigTransaction>> open(const NativeConfigTransactionInputs&,
-                                                               td::Ref<vm::Cell> transaction_evidence,
-                                                               const FinalizedAnchorSource&, const EvidenceCharge&,
-                                                               StateReadBudget = {});
+  static Result<std::unique_ptr<NativeConfigTransaction>> open(
+      const NativeConfigTransactionInputs&, td::Ref<vm::Cell> transaction_evidence,
+      std::shared_ptr<const FinalizedAnchorSource>, const EvidenceCharge&, StateReadBudget = {});
   NativeConfigHost& host() {
     return host_;
   }

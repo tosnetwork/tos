@@ -5,20 +5,21 @@
 namespace tos::auth {
 
 NativeConfigTransaction::NativeConfigTransaction(NativeCommittee committee, NativeEvidence evidence,
-                                                 const FinalizedAnchorSource& history, NativeRegistryBlock accepted,
-                                                 ChainContext chain, std::uint32_t inclusion)
+                                                 std::shared_ptr<const FinalizedAnchorSource> history,
+                                                 NativeRegistryBlock accepted, ChainContext chain,
+                                                 std::uint32_t inclusion)
     : committee_(std::move(committee))
     , evidence_(std::move(evidence))
-    , history_(history)
-    , context_{std::move(chain), committee_.snapshot(), history_}
+    , history_(std::move(history))
+    , context_{std::move(chain), committee_.snapshot(), *history_}
     , reader_(evidence_.reader())
     , host_(std::move(accepted), context_, reader_, inclusion) {
 }
 
 Result<std::unique_ptr<NativeConfigTransaction>> NativeConfigTransaction::open(
     const NativeConfigTransactionInputs& inputs, td::Ref<vm::Cell> transaction_evidence,
-    const FinalizedAnchorSource& history, const EvidenceCharge& charge, StateReadBudget budget) {
-  if (inputs.masterchain_state.is_null() || transaction_evidence.is_null())
+    std::shared_ptr<const FinalizedAnchorSource> history, const EvidenceCharge& charge, StateReadBudget budget) {
+  if (inputs.masterchain_state.is_null() || transaction_evidence.is_null() || !history)
     return Error{"native-config-transaction-input"};
   if (inputs.chain.genesis_root == Hash{} || inputs.chain.genesis_file == Hash{} ||
       inputs.chain.chain_domain == Hash{} || inputs.chain.network == 0)
@@ -52,7 +53,7 @@ Result<std::unique_ptr<NativeConfigTransaction>> NativeConfigTransaction::open(
     return evidence.error();
 
   return std::unique_ptr<NativeConfigTransaction>(new NativeConfigTransaction(
-      std::move(committee.value()), std::move(evidence.value()), history, std::move(accepted.value()), inputs.chain,
-      inputs.inclusion));
+      std::move(committee.value()), std::move(evidence.value()), std::move(history), std::move(accepted.value()),
+      inputs.chain, inputs.inclusion));
 }
 }  // namespace tos::auth
