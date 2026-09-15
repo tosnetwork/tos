@@ -14,11 +14,12 @@
 
 namespace p0_config_context_fixture {
 using namespace tos::auth;
+// check(), h() and value() live in p0_fixture; boc() and hash() in the owner
+// fixture that builds on it. Naming the wrong namespace for the first three is
+// what this header did, and it does not compile.
+using namespace p0_fixture;
 using p0_owner_fixture::boc;
-using p0_owner_fixture::check;
 using p0_owner_fixture::hash;
-using p0_owner_fixture::h;
-using p0_owner_fixture::value;
 
 td::Ref<vm::Cell> account_cell(Hash address, td::Ref<vm::Cell> code, td::Ref<vm::Cell> data, bool tick) {
   vm::CellBuilder a;

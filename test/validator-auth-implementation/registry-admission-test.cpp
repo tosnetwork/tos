@@ -127,21 +127,40 @@ int main(int argc, char** argv) {
       b.store_long(native_evidence_tag, 32).store_long(1, 16).store_long(0, 1);
       b.store_ref(std::move(packed)).store_ref(vm::CellBuilder().finalize());
       auto result = inputs;
-      result.message = external(configuration,
-                                registry_body(vm::CellBuilder().store_long(1, 8).finalize(), b.finalize()));
+      result.message =
+          external(configuration, registry_body(vm::CellBuilder().store_long(1, 8).finalize(), b.finalize()));
       return result;
     };
 
     std::vector<Test> tests;
-    auto add = [&](std::string name, std::function<void()> fn) {
-      tests.emplace_back(std::move(name), std::move(fn));
-    };
+    auto add = [&](std::string name, std::function<void()> fn) { tests.emplace_back(std::move(name), std::move(fn)); };
 
     add("complete-input-produces-an-authority", [&] {
       NativeAnchorCache cache;
       auto assembled = admit_registry_message(inputs, cache);
       require(assembled.ok() && assembled.value() != nullptr, "complete-input-produces-an-authority");
       assembled.value()->host().checkpoints();
+    });
+    add("history-outlives-the-call-that-assembled-it", [&] {
+      // The history is built inside admission and the caller never holds a
+      // reference to it. Owner verification reads it during VM execution, after
+      // this call has returned, so the only question that matters is whether it
+      // is still there -- and the only way to ask is to read it here, where a
+      // reference to a destroyed local is a read of freed memory rather than a
+      // wrong answer.
+      auto deferred = deferred_input();
+      NativeAnchorCache resolved;
+      const auto owner_at = context.head.seqno_;
+      const Anchor expected{owner_at, h(11), h(12), h(13)};
+      require(resolved.admit(owner_at, expected).ok(), "history-outlives-the-call-that-assembled-it");
+      std::unique_ptr<NativeConfigTransaction> authority;
+      {
+        auto admitted = admit_registry_message(deferred, resolved);
+        require(admitted.ok() && admitted.value() != nullptr, "history-outlives-the-call-that-assembled-it");
+        authority = std::move(admitted.value());
+      }
+      auto served = authority->history().finalized_anchor(owner_at);
+      require(served.ok() && served.value() == expected, "history-outlives-the-call-that-assembled-it");
     });
     add("gathered-account-must-match-parent-state", [&] {
       NativeAnchorCache cache;
@@ -193,8 +212,7 @@ int main(int argc, char** argv) {
       NativeAnchorCache cache;
       auto unfilled = inputs;
       unfilled.configuration_account = Hash{};
-      refuses(admit_registry_message(unfilled, cache), "registry-admission-input",
-              "missing-account-is-an-input-error");
+      refuses(admit_registry_message(unfilled, cache), "registry-admission-input", "missing-account-is-an-input-error");
     });
     add("requirements-are-reportable", [&] {
       auto required = registry_message_requirements(inputs.message, inputs.transaction.inclusion);
@@ -223,7 +241,9 @@ int main(int argc, char** argv) {
         continue;
       if (!excluded.empty() && name == excluded)
         continue;
-      std::cout << "SETUP_OK " << name << '\n';
+      // Flushed, because a case that aborts under the sanitizer never returns
+      // to flush it, and a marker only this side can see is no marker at all.
+      std::cout << "SETUP_OK " << name << std::endl;
       try {
         fn();
       } catch (const AssertionFailure&) {

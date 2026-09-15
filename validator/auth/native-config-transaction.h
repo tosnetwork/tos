@@ -40,11 +40,19 @@ class NativeConfigTransaction {
                           NativeRegistryBlock, ChainContext, std::uint32_t inclusion);
 
  public:
-  static Result<std::unique_ptr<NativeConfigTransaction>> open(
-      const NativeConfigTransactionInputs&, td::Ref<vm::Cell> transaction_evidence,
-      std::shared_ptr<const FinalizedAnchorSource>, const EvidenceCharge&, StateReadBudget = {});
+  static Result<std::unique_ptr<NativeConfigTransaction>> open(const NativeConfigTransactionInputs&,
+                                                               td::Ref<vm::Cell> transaction_evidence,
+                                                               std::shared_ptr<const FinalizedAnchorSource>,
+                                                               const EvidenceCharge&, StateReadBudget = {});
   NativeConfigHost& host() {
     return host_;
+  }
+  // The history the authority executes against. Owner verification reads it
+  // during VM execution, long after the call that assembled this returned, so
+  // it is exposed here for one reason: a test can read it after that return and
+  // find out whether it is still there.
+  const FinalizedAnchorSource& history() const {
+    return *history_;
   }
   const Authorizations& authorizations() const {
     return evidence_.authorizations();

@@ -18,10 +18,16 @@ BINARY = Path("build-p0/test/validator-auth-implementation/test-p0-history-resol
 MUTATIONS = [
     ("declaration-bound", "oversized-declaration-is-refused",
      '  if (coordinates.size() > budget.coordinates)\n    return Error{"anchor-resolve-budget"};', ''),
+    # Turning a refusal into a wait makes every case that expects a refusal
+    # wait instead. Declared rather than the rule relaxed.
     ("refusal-not-deferral", "substituted-block-is-refused",
-     '      return anchor.error();', '      resolution.unavailable.push_back(at);\n      continue;'),
+     '      return anchor.error();', '      resolution.unavailable.push_back(at);\n      continue;',
+     ["coordinate-outside-the-record-is-refused", "a-wait-does-not-excuse-a-later-refusal"]),
+    # Enumeration reports what it would read by refusing every read, so it
+    # depends on a refused read being a wait.
     ("wait-not-refusal", "unfetched-block-is-reported-not-refused",
-     '      if (!served) {\n        resolution.unavailable.push_back(at);\n        continue;\n      }', ''),
+     '      if (!served) {\n        resolution.unavailable.push_back(at);\n        continue;\n      }', '',
+     ["reads-are-enumerable-before-fetching"]),
     ("served-reset", "a-wait-does-not-excuse-a-later-refusal",
      '    served = true;\n    auto anchor = history.value().finalized_anchor(at);',
      '    auto anchor = history.value().finalized_anchor(at);'),
@@ -29,7 +35,8 @@ MUTATIONS = [
      '    auto admitted = cache.admit(at, anchor.value());\n'
      '    if (!admitted.ok())\n'
      '      return admitted.error();', '    cache.admit(at, anchor.value());'),
-    ("admitted-counted", "declared-history-becomes-a-source", '    ++resolution.admitted;', ''),
+    ("admitted-counted", "declared-history-becomes-a-source", '    ++resolution.admitted;', '',
+     ["head-is-served-without-a-read"]),
     ("enumeration-narrowed", "reads-are-enumerable-before-fetching",
      '  const auto absent = held.missing(coordinates);',
      '  const std::vector<std::uint32_t> absent(coordinates.begin(), coordinates.end());'),
@@ -91,7 +98,8 @@ def main() -> int:
     records = []
     failures = 0
     try:
-        for guard, case, before, after in MUTATIONS:
+        for guard, case, before, after, *rest in MUTATIONS:
+            companions = list(rest[0]) if rest else []
             if original.count(before) != 1:
                 print(f"ANCHOR-NOT-UNIQUE {guard} ({original.count(before)})", file=sys.stderr)
                 failures += 1
@@ -104,16 +112,21 @@ def main() -> int:
             isolated = False
             if compiled:
                 named = named_failure(run(args.inputs, case), case)
-                isolated = passing(run(args.inputs, f"--exclude={case}"), len(cases) - 1)
+                # Every other case run on its own. Running them together stops at
+                # the first failure, which hides whether the ones after it still
+                # hold -- and that is the question isolation is asking.
+                spared = [name for name in cases if name != case and name not in companions]
+                isolated = all(passing(run(args.inputs, name), 1) for name in spared)
             SOURCE.write_text(original)
             restored = build() and passing(run(args.inputs), len(cases))
             record = {"guard": guard, "case": case, "edit_reached_source": reached, "compiled": compiled,
-                      "named_assertion_failed": named, "other_cases_passed": isolated,
+                      "named_assertion_failed": named, "only_declared_cases_broke": isolated,
+                      "declared_companions": companions,
                       "restored_baseline": restored, "source_unchanged": SOURCE.read_text() == original}
             records.append(record)
             print(json.dumps(record), flush=True)
             if not all(record[key] for key in ("edit_reached_source", "compiled", "named_assertion_failed",
-                                                "other_cases_passed", "restored_baseline", "source_unchanged")):
+                                                "only_declared_cases_broke", "restored_baseline", "source_unchanged")):
                 failures += 1
     finally:
         SOURCE.write_text(original)

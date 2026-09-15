@@ -17,13 +17,13 @@ MUTATIONS = [
      '    return Error{"native-config-transaction-coordinate"};',
      '  if (inputs.inclusion <= inputs.parent.seqno_)\n'
      '    return Error{"native-config-transaction-coordinate"};'),
+    # The absent-network case rides this same condition rather than having a
+    # guard of its own, so it is declared instead of the rule being relaxed.
     ("chain-established", "unestablished-chain-refused",
      '  if (inputs.chain.genesis_root == Hash{} || inputs.chain.genesis_file == Hash{} ||\n'
      '      inputs.chain.chain_domain == Hash{} || inputs.chain.network == 0)\n'
-     '    return Error{"native-config-transaction-chain"};', ''),
-    ("history-owned", "history-owned-for-authority-lifetime",
-     '    , history_(std::move(history))',
-     '    , history_(std::shared_ptr<const FinalizedAnchorSource>(history.get(), [](const FinalizedAnchorSource*) {}))'),
+     '    return Error{"native-config-transaction-chain"};', '',
+     ["absent-network-refused"]),
 ]
 
 
@@ -77,7 +77,8 @@ def main() -> int:
     records = []
     failures = 0
     try:
-        for guard, case, before, after in MUTATIONS:
+        for guard, case, before, after, *rest in MUTATIONS:
+            companions = list(rest[0]) if rest else []
             if original.count(before) != 1:
                 print(f"ANCHOR-NOT-UNIQUE {guard} ({original.count(before)})", file=sys.stderr)
                 failures += 1
@@ -90,16 +91,21 @@ def main() -> int:
             isolated = False
             if compiled:
                 named = named_failure(run(args.owner, case), case)
-                isolated = passing(run(args.owner, f"--exclude={case}"), len(cases) - 1)
+                # Every other case run on its own. Running them together stops at
+                # the first failure, which hides whether the ones after it still
+                # hold -- and that is the question isolation is asking.
+                spared = [name for name in cases if name != case and name not in companions]
+                isolated = all(passing(run(args.owner, name), 1) for name in spared)
             SOURCE.write_text(original)
             restored = build() and passing(run(args.owner), len(cases))
             record = {"guard": guard, "case": case, "edit_reached_source": reached, "compiled": compiled,
-                      "named_assertion_failed": named, "other_cases_passed": isolated,
+                      "named_assertion_failed": named, "only_declared_cases_broke": isolated,
+                      "declared_companions": companions,
                       "restored_baseline": restored, "source_unchanged": SOURCE.read_text() == original}
             records.append(record)
             print(json.dumps(record), flush=True)
             if not all(record[key] for key in ("edit_reached_source", "compiled", "named_assertion_failed",
-                                                "other_cases_passed", "restored_baseline", "source_unchanged")):
+                                                "only_declared_cases_broke", "restored_baseline", "source_unchanged")):
                 failures += 1
     finally:
         SOURCE.write_text(original)

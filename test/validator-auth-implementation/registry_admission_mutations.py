@@ -3,14 +3,39 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
 
 SOURCE = Path("validator/auth/native-registry-admission.cpp")
+# One property spans two files. Whether the caller promotes the prefetched
+# source into ownership lives here; whether the authority then keeps it lives in
+# the assembler. Both are removed from this one case, each in its own file,
+# because either one alone leaves the history dangling.
+ASSEMBLER = Path("validator/auth/native-config-transaction.cpp")
 BINARY = Path("build-p0/test/validator-auth-implementation/test-p0-registry-admission")
+SANITIZED = Path("build-p0-sanitized/test/validator-auth-implementation/test-p0-registry-admission")
+
+# One property is not observable as a wrong answer. A history the authority does
+# not own is read after the call that built it returned, and reading freed memory
+# usually still returns the bytes that were there. The detector for that is the
+# sanitizer, so the mutation that removes ownership is built and run under it.
+SANITIZER_ENVIRONMENT = {
+    "ASAN_OPTIONS": "detect_leaks=1:detect_stack_use_after_return=1",
+    "UBSAN_OPTIONS": "halt_on_error=1",
+}
 
 MUTATIONS = [
+    ("history-promoted", "history-outlives-the-call-that-assembled-it",
+     '  auto owned_history = std::make_shared<PrefetchedAnchorSource>(std::move(history.value()));',
+     '  std::shared_ptr<PrefetchedAnchorSource> owned_history(&history.value(), [](PrefetchedAnchorSource*) {});',
+     True, [], SOURCE),
+    ("history-retained", "history-outlives-the-call-that-assembled-it",
+     '    , history_(std::move(history))',
+     '    , history_(std::shared_ptr<const FinalizedAnchorSource>(history.get(), [](const FinalizedAnchorSource*) {}))',
+     True, [], ASSEMBLER),
+
     ("destination-account", "other-account-not-admitted",
      '  if (recognized.value().destination != declared.value())\n'
      '    return Error{"registry-admission-not-configuration"};', ''),
@@ -33,26 +58,36 @@ MUTATIONS = [
      '  auto history = cache.source(required.value());\n'
      '  if (!history.ok())\n'
      '    return Error{"registry-admission-not-registry"};'),
+    # Removing the returned authority breaks every case that needs one. The
+    # companion is declared rather than the rule relaxed: a mutation that breaks
+    # something it did not name is a mutation nobody understood.
     ("authority-returned", "complete-input-produces-an-authority",
      '  return NativeConfigTransaction::open(inputs.transaction, recognized.value().message.evidence,\n'
      '                                       std::move(owned_history), uncharged);',
-     '  return Error{"registry-admission-not-registry"};'),
+     '  return Error{"registry-admission-not-registry"};',
+     False, ["history-outlives-the-call-that-assembled-it", "resolved-history-admits"]),
 ]
 
 
-def invoke(command: list[str]) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(command, capture_output=True, text=True, check=False)
+def invoke(command: list[str], environment: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+    merged = None
+    if environment:
+        merged = dict(os.environ)
+        merged.update(environment)
+    return subprocess.run(command, capture_output=True, text=True, check=False, env=merged)
 
 
-def build() -> bool:
-    return invoke(["cmake", "--build", "build-p0", "--target", "test-p0-registry-admission", "-j48"]).returncode == 0
+def build(sanitized: bool = False) -> bool:
+    tree = "build-p0-sanitized" if sanitized else "build-p0"
+    return invoke(["cmake", "--build", tree, "--target", "test-p0-registry-admission", "-j48"]).returncode == 0
 
 
-def run(fixtures: Path, selector: str | None = None) -> subprocess.CompletedProcess[str]:
-    command = [str(BINARY), str(fixtures)]
+def run(fixtures: Path, selector: str | None = None,
+        sanitized: bool = False) -> subprocess.CompletedProcess[str]:
+    command = [str(SANITIZED if sanitized else BINARY), str(fixtures)]
     if selector:
         command.append(selector)
-    return invoke(command)
+    return invoke(command, SANITIZER_ENVIRONMENT if sanitized else None)
 
 
 def passing(result: subprocess.CompletedProcess[str], expected: int) -> bool:
@@ -62,8 +97,15 @@ def passing(result: subprocess.CompletedProcess[str], expected: int) -> bool:
             sum(line.startswith("CASE_PASS ") for line in lines) == expected)
 
 
-def named_failure(result: subprocess.CompletedProcess[str], case: str) -> bool:
-    if result.returncode != 1 or result.stdout.splitlines() != [f"SETUP_OK {case}"]:
+def named_failure(result: subprocess.CompletedProcess[str], case: str, sanitized: bool = False) -> bool:
+    if result.stdout.splitlines() != [f"SETUP_OK {case}"]:
+        return False
+    # Under the sanitizer the case does not fail an assertion; the process is
+    # aborted at the read. Requiring only a clean exit code here would accept a
+    # mutant that answered wrongly instead of one that read freed memory.
+    if sanitized:
+        return result.returncode != 0 and "AddressSanitizer" in result.stderr
+    if result.returncode != 1:
         return False
     errors = result.stderr.splitlines()
     if errors == [f"ASSERTION_FAILED {case}"]:
@@ -79,7 +121,6 @@ def main() -> int:
     args = parser.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
 
-    original = SOURCE.read_text()
     if not build():
         print("BASELINE-BUILD-FAILED", file=sys.stderr)
         return 1
@@ -94,33 +135,48 @@ def main() -> int:
 
     records = []
     failures = 0
+    # Every file this run may edit, captured before anything is touched, so an
+    # interruption restores all of them rather than the one that happened to be
+    # last.
+    pristine = {path: path.read_text() for path in {SOURCE, ASSEMBLER}}
     try:
-        for guard, case, before, after in MUTATIONS:
+        for guard, case, before, after, *rest in MUTATIONS:
+            sanitized = bool(rest and rest[0])
+            companions = list(rest[1]) if len(rest) > 1 else []
+            source = rest[2] if len(rest) > 2 else SOURCE
+            original = source.read_text()
             if original.count(before) != 1:
                 print(f"ANCHOR-NOT-UNIQUE {guard} ({original.count(before)})", file=sys.stderr)
                 failures += 1
                 continue
             changed = original.replace(before, after, 1)
-            SOURCE.write_text(changed)
-            reached = SOURCE.read_text() == changed
-            compiled = build()
+            source.write_text(changed)
+            reached = source.read_text() == changed
+            compiled = build(sanitized)
             named = False
             isolated = False
             if compiled:
-                named = named_failure(run(args.fixtures, case), case)
-                isolated = passing(run(args.fixtures, f"--exclude={case}"), len(cases) - 1)
-            SOURCE.write_text(original)
-            restored = build() and passing(run(args.fixtures), len(cases))
+                named = named_failure(run(args.fixtures, case, sanitized), case, sanitized)
+                # Every other case run on its own. Running them together stops at
+                # the first failure, which hides whether the ones after it still
+                # hold -- and that is the question isolation is asking.
+                spared = [name for name in cases if name != case and name not in companions]
+                isolated = all(passing(run(args.fixtures, name, sanitized), 1) for name in spared)
+            source.write_text(original)
+            restored = build(sanitized) and passing(run(args.fixtures, sanitized=sanitized), len(cases))
             record = {"guard": guard, "case": case, "edit_reached_source": reached, "compiled": compiled,
-                      "named_assertion_failed": named, "other_cases_passed": isolated,
-                      "restored_baseline": restored, "source_unchanged": SOURCE.read_text() == original}
+                      "named_assertion_failed": named, "only_declared_cases_broke": isolated,
+                      "declared_companions": companions,
+                      "source": str(source), "restored_baseline": restored,
+                      "source_unchanged": source.read_text() == original}
             records.append(record)
             print(json.dumps(record), flush=True)
             if not all(record[key] for key in ("edit_reached_source", "compiled", "named_assertion_failed",
-                                                "other_cases_passed", "restored_baseline", "source_unchanged")):
+                                                "only_declared_cases_broke", "restored_baseline", "source_unchanged")):
                 failures += 1
     finally:
-        SOURCE.write_text(original)
+        for path, text in pristine.items():
+            path.write_text(text)
 
     (args.out / "mutations.json").write_text(json.dumps(records, indent=1) + "\n")
     return 1 if failures else 0

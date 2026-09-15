@@ -21,11 +21,6 @@ struct AssertionFailure : std::runtime_error {
   using std::runtime_error::runtime_error;
 };
 
-void require(bool condition, const std::string& assertion) {
-  if (!condition)
-    throw AssertionFailure(assertion);
-}
-
 template <class T>
 void refuses(const Result<T>& result, const char* code, const char* name) {
   if (result.ok() || result.error().code != code)
@@ -34,11 +29,6 @@ void refuses(const Result<T>& result, const char* code, const char* name) {
 
 struct History final : FinalizedAnchorSource {
   Anchor anchor;
-  bool* destroyed = nullptr;
-  ~History() override {
-    if (destroyed)
-      *destroyed = true;
-  }
   Result<Anchor> finalized_anchor(std::uint32_t at) const override {
     if (at != anchor.seqno_)
       return Error{"finalized-anchor-unavailable"};
@@ -85,9 +75,7 @@ int main(int argc, char** argv) {
     auto charge = [](std::size_t) -> Result<bool> { return true; };
 
     std::vector<Test> tests;
-    auto add = [&](std::string name, std::function<void()> fn) {
-      tests.emplace_back(std::move(name), std::move(fn));
-    };
+    auto add = [&](std::string name, std::function<void()> fn) { tests.emplace_back(std::move(name), std::move(fn)); };
 
     add("coordinate-must-advance", [=] {
       auto same = inputs;
@@ -132,19 +120,6 @@ int main(int argc, char** argv) {
     add("absent-history-refused", [=] {
       refuses(NativeConfigTransaction::open(inputs, evidence_cell(), {}, charge), "native-config-transaction-input",
               "absent-history-refused");
-    });
-    add("history-owned-for-authority-lifetime", [=] {
-      bool destroyed = false;
-      auto owned = std::make_shared<History>();
-      owned->anchor = history->anchor;
-      owned->destroyed = &destroyed;
-      std::weak_ptr<const FinalizedAnchorSource> weak = owned;
-      auto authority = NativeConfigTransaction::open(inputs, evidence_cell(), owned, charge);
-      require(authority.ok(), "history-owned-for-authority-lifetime");
-      owned.reset();
-      require(!destroyed && !weak.expired(), "history-owned-for-authority-lifetime");
-      authority.value().reset();
-      require(destroyed && weak.expired(), "history-owned-for-authority-lifetime");
     });
 
     if (argc == 4 && std::string_view(argv[3]) == "--list") {
