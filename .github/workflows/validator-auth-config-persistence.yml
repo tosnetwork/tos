@@ -116,8 +116,8 @@ jobs:
         id: frozen
         run: |
           set +e
-          mkdir -p artifacts/config-persistence/production
-          python3 test/validator-auth-p0/check_production.py --out artifacts/config-persistence/production
+          mkdir -p artifacts/config-persistence
+          python3 test/validator-auth-p0/check_production.py --out artifacts/config-persistence/production.json
           production_rc=$?
           python3 test/validator-auth-p0/freeze_record.py
           freeze_rc=$?
