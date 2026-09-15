@@ -44,7 +44,8 @@ int main(int argc, char** argv) {
       check(!service.sign(mismatched).ok(), "mismatched-known-handle");
       check(value(service.get_result(r.request_id_), "unreserved-mismatch").state_ == 0, "signer-key-before-reserve");
       complete = value(service.sign(r), "actual-signer");
-      auto admitted = value(AdmittedKey::admit(keys[0].descriptor.public_key_), "admitted-key");
+      auto admitted = value(AdmittedKey::admit(keys[0].descriptor.suite_, keys[0].descriptor.parameters_,
+                                            keys[0].descriptor.public_key_), "admitted-key");
       auto plan = value(plan_sign(r), "plan");
       check(value(admitted.verify(plan.statement, complete.record_.components_[0].signature_), "verify"),
             "actual-signature");

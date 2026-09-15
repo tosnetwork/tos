@@ -57,14 +57,16 @@ int main(int argc, char** argv) {
     return f.good() ? 0 : 2;
   }
   if (argc == 6 && std::string(argv[1]) == "verify") {
-    auto key = AdmittedKey::admit(load(argv[2]));
+    // The command line carries key bytes and no suite. This driver speaks
+    // the one the legacy corpus was produced with, stated rather than implied.
+    auto key = AdmittedKey::admit(suite_ed25519, parameters_default, load(argv[2]));
     if (!key.ok())
       return 1;
     auto valid = key.value().verify(load(argv[3]), load(argv[4]));
     return valid.ok() && valid.value() ? 0 : 1;
   }
   if (argc == 3 && std::string(argv[1]) == "admit")
-    return AdmittedKey::admit(load(argv[2])).ok() ? 0 : 1;
+    return AdmittedKey::admit(suite_ed25519, parameters_default, load(argv[2])).ok() ? 0 : 1;
   if (argc != 5 || std::string(argv[1]) != "codec")
     return 2;
   auto bytes = load(argv[3]);

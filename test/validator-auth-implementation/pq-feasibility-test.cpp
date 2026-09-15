@@ -108,28 +108,31 @@ int main() {
   try {
     check(sodium_init() >= 0, "sodium");
 
-    // The registry admits one algorithm. This is not a size bound that a larger
-    // key would merely strain; it is a point check on a curve, and every
-    // post-quantum key fails it by construction.
+    // The Ed25519 suite admits one shape. This is not a size bound that a
+    // larger key would merely strain; it is a point check on a curve, and every
+    // post-quantum key fails it by construction. Admission now dispatches on
+    // the suite a key declares, so this measures that suite rather than the
+    // registry as a whole.
     {
       // A real key of the algorithm the registry was built for, so the contrast
       // is between algorithms rather than between valid and malformed bytes.
       std::array<unsigned char, 32> real{};
       std::array<unsigned char, 64> secret{};
       check(crypto_sign_keypair(real.data(), secret.data()) == 0, "keypair");
-      auto genuine = AdmittedKey::admit(std::span<const std::uint8_t>(real.data(), real.size()));
-      expect(genuine.ok(), "registry-admits-one-algorithm");
+      auto genuine = AdmittedKey::admit(suite_ed25519, parameters_default,
+                                        std::span<const std::uint8_t>(real.data(), real.size()));
+      expect(genuine.ok(), "ed25519-suite-admits-one-shape");
       std::cout << "  admit    ed25519 (32 bytes): accepted\n";
       for (const auto& scheme : schemes) {
         if (scheme.public_key == 32)
           continue;
         std::vector<std::uint8_t> material(scheme.public_key, 0xa5);
-        auto admitted = AdmittedKey::admit(material);
-        expect(!admitted.ok() && admitted.error().code == "public-key", "registry-admits-one-algorithm");
+        auto admitted = AdmittedKey::admit(suite_ed25519, parameters_default, material);
+        expect(!admitted.ok() && admitted.error().code == "public-key", "ed25519-suite-admits-one-shape");
         std::cout << "  admit " << std::setw(10) << scheme.name << " (" << scheme.public_key
                   << " bytes): " << admitted.error().code << '\n';
       }
-      ok("registry-admits-one-algorithm");
+      ok("ed25519-suite-admits-one-shape");
     }
 
     // What one role key costs, encoded and as cells.
