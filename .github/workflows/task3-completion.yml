@@ -25,6 +25,41 @@ jobs:
         run: |
           set -euo pipefail
           python3 tools/validator-auth/apply-task3-completion.py
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib
+          import json
+          import os
+          import subprocess
+
+          manifest_name = "doc/validator-auth-p0-native-insertions.json"
+          record_path = Path("doc/validator-auth-p0-freeze.json")
+          manifest_path = Path(manifest_name)
+          record = json.loads(record_path.read_text())
+          previous = record["artifact_sha256"][manifest_name]
+          base_bytes = subprocess.check_output(
+              ["git", "show", f"{os.environ['GITHUB_SHA']}:{manifest_name}"]
+          )
+          base_hash = hashlib.sha256(base_bytes).hexdigest()
+          if previous != base_hash:
+              raise SystemExit("freeze record did not bind the pre-Task-3 insertion manifest")
+          current = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+          if current == previous:
+              raise SystemExit("Task 3 did not change the insertion manifest hash")
+          record["artifact_sha256"][manifest_name] = current
+          update = {
+              "artifact": manifest_name,
+              "previous_sha256": previous,
+              "sha256": current,
+              "change": "Declared queued native history resolution and its immutable pre-I/O snapshot as exact manager insertions in original-file coordinates.",
+              "scope": "Additive only: validator/manager.cpp and validator/manager.hpp keep every historical byte. No wire or API artifact, activation gate, approval threshold, configuration root or later implementation boundary changes.",
+          }
+          updates = record.setdefault("evidence_updates", [])
+          if update not in updates:
+              updates.append(update)
+          record_path.write_text(json.dumps(record, indent=2) + "\n")
+          print(f"FREEZE_MANIFEST_UPDATE {previous} {current}")
+          PY
           git diff --check
           set +e
           python3 test/validator-auth-implementation/check_history_resolution_queue_wiring.py
@@ -119,13 +154,13 @@ jobs:
       - name: Commit verified Task 3 wiring
         run: |
           set -euo pipefail
-          expected=$'doc/validator-auth-p0-native-insertions.json\nvalidator/manager.cpp\nvalidator/manager.hpp'
+          expected=$'doc/validator-auth-p0-freeze.json\ndoc/validator-auth-p0-native-insertions.json\nvalidator/manager.cpp\nvalidator/manager.hpp'
           test "$(git diff --name-only | sort)" = "$expected"
           git fetch origin feat/validator-auth-p0
           test "$(git rev-parse origin/feat/validator-auth-p0)" = "${{ github.sha }}"
           git rm .github/workflows/task3-completion.yml tools/validator-auth/apply-task3-completion.py
           git config user.name gtosnetwork-dotcom
           git config user.email gtosnetwork@gmail.com
-          git add validator/manager.cpp validator/manager.hpp doc/validator-auth-p0-native-insertions.json
+          git add validator/manager.cpp validator/manager.hpp doc/validator-auth-p0-native-insertions.json doc/validator-auth-p0-freeze.json
           git commit -m 'Queue history resolution against one captured tip'
           git push origin HEAD:feat/validator-auth-p0
