@@ -43,6 +43,10 @@ if(UNIX)
   add_library(tos_validator_auth_remote STATIC remote-transport.cpp)
   target_link_libraries(tos_validator_auth_remote PUBLIC tos_validator_auth_rpc)
   set_target_properties(tos_validator_auth_remote PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+
+  add_library(tos_validator_auth_http2 STATIC remote-http2.cpp)
+  target_link_libraries(tos_validator_auth_http2 PUBLIC tos_validator_auth_remote)
+  set_target_properties(tos_validator_auth_http2 PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 endif()
 
 if(TOS_BUILD_P0_IMPLEMENTATION_TESTS)
@@ -130,5 +134,20 @@ if(TOS_BUILD_P0_IMPLEMENTATION_TESTS)
     target_link_libraries(test-p0-native-session-provider-mutant PRIVATE
       tos_validator_auth_session tos_validator_auth_provisioning)
     set_target_properties(test-p0-native-session-provider-mutant PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+
+    add_executable(test-p0-remote-http2 EXCLUDE_FROM_ALL
+      "${PROJECT_SOURCE_DIR}/test/validator-auth-implementation/remote-http2-test.cpp")
+    target_link_libraries(test-p0-remote-http2 PRIVATE tos_validator_auth_http2)
+    set_target_properties(test-p0-remote-http2 PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+
+    configure_file("${CMAKE_CURRENT_SOURCE_DIR}/remote-http2.cpp"
+                   "${CMAKE_CURRENT_BINARY_DIR}/mutated-remote-http2.cpp" COPYONLY)
+    add_executable(test-p0-remote-http2-mutant EXCLUDE_FROM_ALL
+      "${PROJECT_SOURCE_DIR}/test/validator-auth-implementation/remote-http2-test.cpp"
+      "${CMAKE_CURRENT_BINARY_DIR}/mutated-remote-http2.cpp")
+    target_include_directories(test-p0-remote-http2-mutant PRIVATE
+      "${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(test-p0-remote-http2-mutant PRIVATE tos_validator_auth_remote)
+    set_target_properties(test-p0-remote-http2-mutant PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
   endif()
 endif()
