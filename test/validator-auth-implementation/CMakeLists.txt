@@ -547,6 +547,10 @@ target_include_directories(test-p0-native-registry-mutant PRIVATE "${PROJECT_SOU
 target_link_libraries(test-p0-native-registry-mutant PRIVATE tos_validator_auth_native)
 set_target_properties(test-p0-native-registry-mutant PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 
+add_executable(test-p0-election-binding election-binding-test.cpp)
+target_link_libraries(test-p0-election-binding PRIVATE tos_validator_auth_native)
+set_target_properties(test-p0-election-binding PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+
 add_executable(test-p0-history-resolve history-resolve-test.cpp)
 target_link_libraries(test-p0-history-resolve PRIVATE tos_validator_auth_native)
 set_target_properties(test-p0-history-resolve PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
