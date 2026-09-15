@@ -128,6 +128,18 @@
     "text": "\n\ncell vauth_apply_update(cell update, cell evidence) impure asm \"VAUTH_APPLY\";"
    },
    {
+    "offset": 181,
+    "text": "cell vauth_bind_validators(cell elected, cell bindings) impure asm \"VAUTH_BIND\";\n"
+   },
+   {
+    "offset": 17821,
+    "text": "    ;; a set may arrive with the registry bindings its members named; a chain\n    ;; that has not activated validator authentication sends none\n    cell bindings = null();\n    if (in_msg.slice_refs()) {\n      bindings = in_msg~load_ref();\n    }\n"
+   },
+   {
+    "offset": 18273,
+    "text": "      ;; the registry decides the binding, not this contract and not the\n      ;; sender; a set that cannot be bound is not installed at all\n      ifnot (cell_null?(bindings)) {\n        vset = vauth_bind_validators(vset, bindings);\n      }\n"
+   },
+   {
     "offset": 20671,
     "text": "if (action == 0x56417531) {\n    ;; apply an authenticated validator registry update\n    ;;\n    ;; Authority for this action lives in the update itself: the privileged\n    ;; instruction validates its authorizations against the registry's own\n    ;; governance and refuses otherwise. Requiring the configuration key here in\n    ;; addition would let that one key block updates the registry authorized,\n    ;; which is the single point of authority this design removes.\n    ;;\n    ;; The message is therefore unsigned, and is accepted only after the update\n    ;; has been applied. A refused update never reaches accept_message, so it is\n    ;; dropped inside the gas credit instead of being paid for.\n    var update = cs~load_ref();\n    var evidence = cs~load_ref();\n    cs.end_parse();\n    var registry = vauth_apply_update(update, evidence);\n    accept_message();\n    stored_seqno = (stored_seqno + 1) % (1 << 32);\n    store_data(cfg_dict, stored_seqno, public_key, vote_dict);\n    commit();\n    set_conf_param(46, registry);\n    return ();\n  }\n  "
    }

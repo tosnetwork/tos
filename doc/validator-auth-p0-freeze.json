@@ -29,7 +29,7 @@
     "doc/validator-auth-p0/transport.schema.json": "ddd45d7d3eb672559efde020af95a0e215146775ec82f8c6847b0f3ab8127584",
     "doc/validator-auth-p0/wire.tl": "a5e10c8e25887cb30440a26a0d8cbcef1473878aeb87438cca1a0f0bc6875c15",
     "doc/validator-auth-p0/wire.tlb": "923650bd74bbbf677a070d1d13d7c12d46944e8bffbfc3a72641093d20d3ce9d",
-    "doc/validator-auth-p0-native-insertions.json": "44d3782f1b0895a944ea8a7023ef9934432ea1f07cd083dbe24251741ccb5569",
+    "doc/validator-auth-p0-native-insertions.json": "7ac328d4c785bada951dd136fa72ba02d1c3c34a41c58dff43aedd833ed4e621",
     "test/validator-auth-p0/README.md": "a0b0950c4ac702f8be0f34919a50f8e7b13d5d14dda3bd2cc05b4c8ffee31321",
     "test/validator-auth-p0/api.py": "9ec50bf9e19345ef54a8894a3525eba1eed8fb10412b8a3fdc1ed1c5728fb815",
     "test/validator-auth-p0/archive_evidence.py": "22bb392a561068e0fb3905ce7e8df95bab463468cdfe3be884eff19b12481409",
@@ -76,6 +76,13 @@
       "sha256": "44d3782f1b0895a944ea8a7023ef9934432ea1f07cd083dbe24251741ccb5569",
       "change": "Declared the node-side installation of the registry authority as three exact insertions into validator/manager.cpp, in original-file coordinates.",
       "scope": "Additive only: validator/manager.cpp keeps every historical byte. No wire or API artifact, activation gate or approval changes; the installed feature stays inert until a chain context is established."
+    },
+    {
+      "artifact": "doc/validator-auth-p0-native-insertions.json",
+      "previous_sha256": "44d3782f1b0895a944ea8a7023ef9934432ea1f07cd083dbe24251741ccb5569",
+      "sha256": "7ac328d4c785bada951dd136fa72ba02d1c3c34a41c58dff43aedd833ed4e621",
+      "change": "Declared the configuration contract asking for the elected set to be bound as three exact insertions in original-file coordinates.",
+      "scope": "Additive only: crypto/smartcont/config-code.fc keeps every historical byte, and a set that arrives without bindings is installed exactly as before. No wire or API artifact, activation gate or approval changes."
     }
   ],
   "implementation_evidence_update": {
