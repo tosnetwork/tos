@@ -33,18 +33,25 @@ void CollationManager::start_up() {
   update_collators_list(*opts_->get_collators_list());
 }
 
+void CollationManager::update_validator_auth(td::optional<ValidatorAuthCollation> validator_auth) {
+  validator_auth_ = std::move(validator_auth);
+}
+
 void CollationManager::collate_block(ShardIdFull shard, BlockIdExt min_masterchain_block_id,
                                      std::vector<BlockIdExt> prev, Ed25519_PublicKey creator,
                                      BlockCandidatePriority priority, td::Ref<block::ValidatorSet> validator_set,
                                      td::uint64 max_answer_size, td::CancellationToken cancellation_token,
                                      td::Promise<GeneratedCandidate> promise) {
   if (shard.is_masterchain()) {
+    // Only a masterchain block can carry a registry update, so only this path
+    // is given the authority inputs.
     run_collate_query(CollateParams{.shard = shard,
                                     .min_masterchain_block_id = min_masterchain_block_id,
                                     .prev = std::move(prev),
                                     .creator = creator,
                                     .validator_set = std::move(validator_set),
-                                    .collator_opts = opts_->get_collator_options()},
+                                    .collator_opts = opts_->get_collator_options(),
+                                    .validator_auth = validator_auth_},
                       manager_, std::move(cancellation_token), promise.wrap([](BlockCandidate&& candidate) {
                         return GeneratedCandidate{
                             .candidate = std::move(candidate), .is_cached = false, .self_collated = true};

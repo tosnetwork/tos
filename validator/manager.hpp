@@ -50,6 +50,8 @@
 #include "queue-size-counter.hpp"
 #include "shard-block-retainer.hpp"
 #include "shard-block-verifier.hpp"
+#include "auth/native-anchor-cache.h"
+#include "auth/native-chain-context.h"
 #include "shard-client.hpp"
 #include "state-serializer.hpp"
 #include "storage-stat-cache.hpp"
@@ -609,6 +611,33 @@ class ValidatorManagerImpl : public ValidatorManager {
   void start_up() override;
   void init_last_masterchain_state(td::Ref<MasterchainState> state) override;
   void started(ValidatorManagerInitResult result);
+
+  // REGISTRY AUTHORITY
+  //
+  // The two values collation needs that outlive a block. The chain context is
+  // established once, from the zero state the operator configured, so it is
+  // never assembled out of the registry it is used to check. The cache is this
+  // actor's; what collation is handed is the snapshot beside it, because
+  // collation runs in another actor and must never read a cache being written.
+  //
+  // None of this is installed until the zero state has been read and has
+  // established a context. Until then collation is handed nothing, which is
+  // exactly the behaviour of a node that does not have the feature.
+  void establish_validator_auth_chain();
+  void established_validator_auth_zero_state(td::Result<td::BufferSlice> zero_state);
+  void publish_validator_auth();
+  td::optional<ValidatorAuthCollation> validator_auth_collation();
+  tos::auth::Anchor validator_auth_head() const;
+  void resolve_validator_auth_history(std::vector<td::uint32> coordinates);
+  void fetch_validator_auth_block(std::vector<td::uint32> coordinates, std::vector<BlockIdExt> wanted, size_t index,
+                                  std::shared_ptr<std::map<BlockSeqno, tos::auth::Bytes>> fetched);
+  void finish_validator_auth_resolution(std::vector<td::uint32> coordinates,
+                                        std::shared_ptr<std::map<BlockSeqno, tos::auth::Bytes>> fetched);
+
+  td::optional<tos::auth::ChainContext> validator_auth_chain_;
+  tos::auth::NativeAnchorCache validator_auth_anchors_;
+  std::shared_ptr<const tos::auth::NativeAnchorCache> validator_auth_history_;
+  bool validator_auth_resolving_ = false;
   void got_destroyed_validator_sessions(std::vector<ValidatorSessionId> sessions);
   void got_pending_consensus_db_cleanup(std::vector<std::string> dirs);
   void got_pending_validator_consensus_db_cleanup(std::vector<consensus::PendingValidatorConsensusDbCleanup> records);

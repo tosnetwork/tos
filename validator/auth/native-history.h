@@ -16,6 +16,14 @@ using NativeBlockReader = std::function<Result<Bytes>(const tos::BlockIdExt&, st
 struct HistoryReadBudget {
   std::size_t blocks = 129, bytes = 268435456;
 };
+// The anchor a block id and the state that block produced already denote.
+//
+// This authenticates nothing and decides nothing; it assembles values the
+// caller is holding. It exists in one place because every caller otherwise
+// writes the same copy out of a hash that is returned by value, and a slice of
+// that hash outlives the expression that produced it.
+Anchor anchor_of(const tos::BlockIdExt& id, const td::Ref<vm::Cell>& state);
+
 // Parse one original masterchain block BOC into the exact anchor it commits.
 // This authenticates structure/binding only; it does not establish finality.
 Result<Anchor> native_masterchain_block_anchor(

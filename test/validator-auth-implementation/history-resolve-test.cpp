@@ -67,7 +67,11 @@ int main(int argc, char** argv) {
     const Anchor committed{99, hash(block), file_hash(raw), hash(state)};
 
     auto recorded = history_state(mcstate(f), 100, {z, {99, 99, committed.root_, committed.file_}});
-    const Anchor head{100, h(800), h(801), hash(recorded)};
+    const tos::BlockIdExt head_id{{tos::masterchainId, tos::shardIdAll, 100},
+                                  td::Bits256(td::ConstBitPtr(h(800).data())),
+                                  td::Bits256(td::ConstBitPtr(h(801).data()))};
+    const Anchor head = anchor_of(head_id, recorded);
+    check(head == (Anchor{100, h(800), h(801), hash(recorded)}), "fixture-head-anchor");
 
     // Another real block, which is not the one the record names.
     auto elsewhere = block_for(cell(read(input / "accept.boc")), previous, f);

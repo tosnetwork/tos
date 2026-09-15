@@ -1,3 +1,4 @@
+#include <cstring>
 #include <sodium.h>
 
 #include "block/block-auto.h"
@@ -37,6 +38,20 @@ Result<td::Ref<vm::Cell>> block_boc(std::span<const std::uint8_t> raw) {
   return boc.get_root_cell();
 }
 }  // namespace
+
+Anchor anchor_of(const tos::BlockIdExt& id, const td::Ref<vm::Cell>& state) {
+  Anchor anchor{};
+  anchor.seqno_ = id.seqno();
+  std::memcpy(anchor.root_.data(), id.root_hash.data(), anchor.root_.size());
+  std::memcpy(anchor.file_.data(), id.file_hash.data(), anchor.file_.size());
+  if (state.is_null())
+    return anchor;
+  // get_hash() returns by value, so the hash is held by name; a slice taken
+  // from the call itself would already be dangling.
+  const auto hash = state->get_hash();
+  std::memcpy(anchor.state_.data(), hash.as_slice().ubegin(), anchor.state_.size());
+  return anchor;
+}
 
 Result<Anchor> native_masterchain_block_anchor(
     std::span<const std::uint8_t> raw, std::int32_t expected_network) {

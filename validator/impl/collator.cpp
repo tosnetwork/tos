@@ -24,6 +24,7 @@
 
 #include "adnl/utils.hpp"
 #include "auth/native-config-context.h"
+#include "auth/native-history.h"
 #include "block/block-auto.h"
 #include "block/block-parse.h"
 #include "block/block.h"
@@ -3415,14 +3416,7 @@ bool Collator::offer_validator_auth(Ref<vm::Cell> msg_root, bool external, const
     return false;
   }
 
-  tos::auth::Anchor parent{};
-  parent.seqno_ = mc_block_id_.seqno();
-  std::memcpy(parent.root_.data(), mc_block_id_.root_hash.data(), parent.root_.size());
-  std::memcpy(parent.file_.data(), mc_block_id_.file_hash.data(), parent.file_.size());
-  // get_hash() returns by value; copy out of the named hash, not out of a
-  // temporary that the full expression has already destroyed.
-  const auto state_hash = mc_state_root->get_hash();
-  std::memcpy(parent.state_.data(), state_hash.as_slice().ubegin(), parent.state_.size());
+  const auto parent = tos::auth::anchor_of(mc_block_id_, mc_state_root);
 
   tos::auth::RegistryAdmissionInputs inputs;
   inputs.message = msg_root;

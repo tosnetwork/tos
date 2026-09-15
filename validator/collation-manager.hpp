@@ -18,6 +18,7 @@
 
 #include <map>
 
+#include "fabric.h"
 #include "interfaces/validator-manager.h"
 #include "rldp2/rldp.h"
 
@@ -43,6 +44,11 @@ class CollationManager : public td::actor::Actor {
 
   void update_options(td::Ref<ValidatorManagerOptions> opts);
 
+  // The node hands this over rather than being asked for it, because collation
+  // starts synchronously and must not wait on a round trip. It changes only
+  // when the node resolves more history, which is rare.
+  void update_validator_auth(td::optional<ValidatorAuthCollation> validator_auth);
+
   void validator_group_started(ShardIdFull shard);
   void validator_group_finished(ShardIdFull shard);
 
@@ -56,6 +62,7 @@ class CollationManager : public td::actor::Actor {
   td::actor::ActorId<ValidatorManager> manager_;
   td::actor::ActorId<adnl::Adnl> adnl_;
   td::actor::ActorId<rldp2::Rldp> rldp_;
+  td::optional<ValidatorAuthCollation> validator_auth_;
 
   void collate_shard_block(ShardIdFull shard, BlockIdExt min_masterchain_block_id, std::vector<BlockIdExt> prev,
                            Ed25519_PublicKey creator, BlockCandidatePriority priority,
