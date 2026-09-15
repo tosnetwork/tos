@@ -23,6 +23,11 @@ struct NativeSessionC0Route {
 // opaque handle admitted by ProviderSessionAdmission.
 class NativeSessionC0Authority {
  public:
+  NativeSessionC0Authority(const NativeSessionC0Authority&) = delete;
+  NativeSessionC0Authority& operator=(const NativeSessionC0Authority&) = delete;
+  NativeSessionC0Authority(NativeSessionC0Authority&&) = default;
+  NativeSessionC0Authority& operator=(NativeSessionC0Authority&&) = default;
+
   static Result<NativeSessionC0Authority> install(
       const std::shared_ptr<CommittedNativeSession>& session,
       td::Ref<vm::Cell> authenticated_birth_state,
