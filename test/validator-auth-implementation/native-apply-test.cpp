@@ -513,6 +513,7 @@ int main(int argc, char** argv) {
       auto rejected = base.updates[0].first;
       rejected.nonce_ = UINT64_MAX;
       auto rejected_cell = value(pack_bytes(value(encode(rejected), "host-rejected")), "host-rejected-cell");
+      const auto allowance_before_refusal = host.staged().state().remaining();
       bool threw = false;
       try {
         host.apply(rejected_cell, evidence_cell, charge);
@@ -520,6 +521,15 @@ int main(int argc, char** argv) {
         threw = true;
       }
       check(threw, "host-refusal-throws");
+      // The reads the refused attempt made are gone from the allowance. The
+      // copy that made them is destroyed, so if its remainder were not settled
+      // onto the prefix the next attempt would start from the same allowance
+      // and the registry could be read without limit by arranging to fail.
+      // State rolls back here; work does not.
+      const auto allowance_after_refusal = host.staged().state().remaining();
+      check(allowance_after_refusal.entries < allowance_before_refusal.entries ||
+                allowance_after_refusal.bytes < allowance_before_refusal.bytes,
+            "host-refusal-spends-the-allowance");
       check(value(host.staged().state().checkpoint(), "host-staged-rejected")->get_hash() == staged_after,
             "host-refusal-does-not-move-prefix");
       check(host.updates() == 1, "host-refusal-not-counted");

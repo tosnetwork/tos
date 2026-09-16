@@ -204,15 +204,20 @@ int main(int argc, char** argv) {
   }
   bindings += "]\n";
 
-  // The configuration account's first checkpoint.
+  // The configuration account's first checkpoint, for a genesis that wants the
+  // account complete from block zero.
   //
-  // An account is restored from its checkpoint and the registry parameter
-  // together, bound by hash, and the contract can only replace a checkpoint it
-  // already carries -- the state instruction hands it one for the state it just
-  // staged, which presupposes there was a state. So the first one cannot come
-  // from a registry update: it has to be installed with the genesis account,
-  // and it is derived here from the very registry written beside it rather
-  // than from a second description of the same bytes.
+  // It is not the only way one can arrive. The update authority is built from
+  // the registry parameter alone, and the contract tolerates an account that
+  // carries no checkpoint yet, so an existing chain can equally let its first
+  // authenticated update produce one -- the state instruction hands back a
+  // checkpoint for the state that update staged, and it is committed beside
+  // the parameter. Which of the two a deployment uses is an activation policy,
+  // not a property of this tool.
+  //
+  // What this does settle is that a genesis which seeds it does not describe
+  // the shape a second time: the checkpoint is derived from the very registry
+  // written beside it, and neither is emitted unless the two bind.
   auto bootstrapped = tos::auth::NativeRegistry::bootstrap(cell.value(), 0);
   if (!bootstrapped.ok()) {
     std::cerr << "FAIL: genesis registry does not bootstrap: " << bootstrapped.error().code << '\n';

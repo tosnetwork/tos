@@ -43,9 +43,15 @@ td::Ref<vm::Cell> NativeConfigHost::apply(td::Ref<vm::Cell> update, td::Ref<vm::
   // transaction left behind.
   auto performed = before;
   auto next = accepted_.apply_transaction(decoded_update.value(), admitted_, context_, reader_, &performed);
-  // Charged for what the attempt read, before knowing whether it was accepted.
-  // A refusal rolls the registry back; it does not roll back the work, or a
-  // caller could read the registry for free by arranging to fail at the end.
+  // Settled onto the prefix that outlives the attempt, before the outcome is
+  // known. Charging alone was not enough: the copy that did the reading is
+  // destroyed with its remainder inside it, so without this the next attempt
+  // would begin from the same allowance and a caller could read the registry
+  // without limit by arranging to fail. A refusal rolls the registry back; it
+  // does not roll back the work.
+  auto settled = accepted_.settle_work(performed);
+  if (!settled.ok())
+    refuse_host("native work meter");
   charge(as_gas(consumed(before, performed, gas_per_entry_, gas_per_byte_)));
   if (!next.ok())
     refuse_host("native update refused");

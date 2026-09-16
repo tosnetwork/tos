@@ -14,6 +14,14 @@ Result<NativeRegistryBlock> NativeRegistryBlock::begin(const NativeRegistry& par
     return next.error();
   return NativeRegistryBlock(std::move(next.value()), parent.revision());
 }
+Result<bool> NativeRegistryBlock::settle_work(StateReadBudget remaining) {
+  const auto before = accepted_.remaining();
+  if (remaining.entries > before.entries || remaining.bytes > before.bytes)
+    return Error{"state-resource"};
+  accepted_.budget_ = remaining;
+  return true;
+}
+
 Result<NativeRegistryBlock> NativeRegistryBlock::apply_transaction(const Update& update, const Authorizations& evidence,
                                                                    const NativeIdentityContext& context,
                                                                    ObjectReader& reader,

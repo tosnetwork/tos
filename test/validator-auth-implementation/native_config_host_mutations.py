@@ -18,6 +18,19 @@ SOURCE = Path("validator/auth/native-config-host.cpp")
 # source as the formatter leaves it.
 MUTATIONS = [
     (
+        # Settling only after the outcome is known. The copy that did the
+        # reading is destroyed with its remainder inside it, so the prefix that
+        # outlives the attempt would keep the old allowance and the next attempt
+        # would read the registry from the same starting point again.
+        "refused-work-not-settled",
+        "host-refusal-spends-the-allowance",
+        "guard-disable",
+        "  auto settled = accepted_.settle_work(performed);\n"
+        "  if (!settled.ok())\n"
+        "    refuse_host(\"native work meter\");\n",
+        "",
+    ),
+    (
         # The prefix cannot move on refusal by construction: apply_transaction is
         # const and returns a new block, so there is no in-place path to mutate.
         # What a guard does hold is that the refusal is a refusal at all, so that
@@ -27,12 +40,10 @@ MUTATIONS = [
         "refusal-not-refused",
         "host-refusal-throws",
         "guard-disable",
-        "  auto next = accepted_.apply_transaction(decoded_update.value(), admitted_, context_, reader_);\n"
         "  if (!next.ok())\n"
-        "    refuse(\"native update refused\");",
-        "  auto next = accepted_.apply_transaction(decoded_update.value(), admitted_, context_, reader_);\n"
+        "    refuse_host(\"native update refused\");",
         "  if (!next.ok())\n"
-        "    return accepted_.state().checkpoint().value();",
+        "    return accepted_.state().encode_cell().value();",
     ),
     (
         # The instruction is handed the evidence the contract received. Without
@@ -43,9 +54,9 @@ MUTATIONS = [
         "host-refuses-evidence-it-did-not-admit",
         "guard-disable",
         "  if (admitted_evidence_.is_null() || evidence->get_hash() != admitted_evidence_->get_hash())\n"
-        "    refuse(\"native evidence operand\");",
+        "    refuse_host(\"native evidence operand\");",
         "  if (admitted_evidence_.is_null())\n"
-        "    refuse(\"native evidence operand\");",
+        "    refuse_host(\"native evidence operand\");",
     ),
     (
         "operand-encoding-unchecked",
@@ -53,23 +64,21 @@ MUTATIONS = [
         "guard-disable",
         "  auto raw_update = unpack_bytes(std::move(update));\n"
         "  if (!raw_update.ok())\n"
-        "    refuse(\"native update encoding\");",
+        "    refuse_host(\"native update encoding\");",
         "  auto raw_update = unpack_bytes(std::move(update));\n"
         "  if (!raw_update.ok())\n"
-        "    return accepted_.state().checkpoint().value();",
+        "    return accepted_.state().encode_cell().value();",
     ),
     (
         "apply-returns-unstaged",
         "host-apply-returns-staged",
         "semantic-fault",
-        "  auto encoded = next.value().state().checkpoint();\n"
+        "  auto encoded = next.value().state().encode_cell();\n"
         "  if (!encoded.ok())\n"
-        "    refuse(\"native registry checkpoint\");\n\n"
-        "  auto after = next.value().state().remaining();",
-        "  auto encoded = accepted_.state().checkpoint();\n"
+        "    refuse_host(\"native registry state\");",
+        "  auto encoded = accepted_.state().encode_cell();\n"
         "  if (!encoded.ok())\n"
-        "    refuse(\"native registry checkpoint\");\n\n"
-        "  auto after = next.value().state().remaining();",
+        "    refuse_host(\"native registry state\");",
     ),
 ]
 

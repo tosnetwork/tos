@@ -19,6 +19,18 @@ class NativeRegistryBlock {
   // registry for nothing. State rolls back on refusal; work does not.
   Result<NativeRegistryBlock> apply_transaction(const Update&, const Authorizations&, const NativeIdentityContext&,
                                                 ObjectReader&, StateReadBudget* work_remaining = nullptr) const;
+  // Reduce the allowance without touching what the registry contains.
+  //
+  // A refused transaction leaves the prefix exactly where it was, but the reads
+  // it made still happened. The copy that made them knows the remainder and is
+  // then destroyed, so the number has to be handed back to the object that
+  // outlives it or the next attempt begins from the same allowance again --
+  // which is the whole of "state rolls back, work does not".
+  //
+  // It only ever reduces. A remainder larger than the current one is not a
+  // settlement, it is a refill, and there is no legitimate source for one.
+  Result<bool> settle_work(StateReadBudget remaining);
+
   const NativeRegistry& state() const {
     return accepted_;
   }
