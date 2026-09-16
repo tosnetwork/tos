@@ -1,9 +1,16 @@
-"""Require that nothing a validator ships can assemble an owner approval.
+"""Require that a validator exposes no owner-approval producer and calls none.
 
 An owner approval states a fact that already happened outside this boundary: the
 owner's own account executed a finalized transaction carrying it. A validator
-verifies that fact. Code able to manufacture one belongs only to the drivers that
-extract fixtures from real executions.
+verifies that fact, and extracting a proof of one belongs to the drivers that
+build fixtures from real executions.
+
+What is checked is narrower than "a validator cannot build one", and deliberately
+so. The library exports the steps a producer uses -- checking an execution and
+canonicalising a proof -- because the verifier needs them too, and a proof cannot
+be forged in any case: building one re-runs the same execution check, so it only
+ever extracts a proof for a transaction that really executed. What must not exist
+is a producer in the shipped surface, or a caller of one.
 
 Two independent checks, because each misses what the other catches. The source
 scan sees a caller that has been written but not yet built. The symbol check asks
@@ -93,6 +100,15 @@ def main() -> int:
     if sorted(PRODUCER_SOURCES) != defining:
         print(f"PRODUCER-NOT-WHERE-IT-BELONGS {' '.join(defining)}", file=sys.stderr)
         return 1
+    # And only there. The rest of the test tree may call the producer; a second
+    # definition of it would be a second way to assemble an approval, free to
+    # drift from the one the fixtures are built with.
+    definition = re.compile(r"Result<OwnerAuth>\s+" + PRODUCER + r"\s*\(")
+    second = sorted(path for path, text in contents.items()
+                    if path not in PRODUCER_SOURCES and definition.search(text))
+    if second:
+        print(f"PRODUCER-DEFINED-TWICE {' '.join(second)}", file=sys.stderr)
+        return 1
 
     # The verifier must still be here. A boundary that removed both would pass
     # every check above while deleting the thing being protected.
@@ -119,7 +135,7 @@ def main() -> int:
         print("VERIFIER-NOT-DEFINED-IN-THE-LIBRARY", file=sys.stderr)
         return 1
 
-    print("PASS: a validator build verifies owner approvals and contains nothing that can assemble one")
+    print("PASS: a validator build defines no owner-approval producer and calls none")
     return 0
 
 

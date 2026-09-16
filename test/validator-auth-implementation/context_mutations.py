@@ -60,7 +60,10 @@ def validate(result,label=None):
 def checked(command):
  p=subprocess.run(command,capture_output=True,text=True)
  if p.returncode:raise RuntimeError('build failed: '+p.stdout+p.stderr)
-def mutate(path,cases,run):
+# selective: the runner is given the case name, so a mutation is judged by the
+# case it named rather than by whichever case happens to trip first on a guard
+# several of them share.
+def mutate(path,cases,run,selective=False):
  original=path.read_text();report=[];validate(run())
  try:
   for guard,label,before,after in cases:
@@ -70,7 +73,7 @@ def mutate(path,cases,run):
     end=original.index('pub fn verify_identity_certificate(') if start else len(original)
     text=original[:start]+replace_once(original[start:end],before,after)+original[end:]
    else:text=replace_once(original,before,after)
-   path.write_text(text);validate(run(),label);report.append(dict(guard=guard,assertion=label,compiled=True,assertion_failed=True));print('KILLED:',guard,flush=True)
+   path.write_text(text);validate(run(label) if selective else run(),label);report.append(dict(guard=guard,assertion=label,compiled=True,assertion_failed=True));print('KILLED:',guard,flush=True)
  finally:path.write_text(original);validate(run())
  return report
 def main(args):

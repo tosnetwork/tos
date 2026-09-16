@@ -21,6 +21,10 @@ CPP=[
  # says so as a missing chunk. Calling that a malformed proof instead would
  # report storage the sender never supplied as input the sender got wrong.
  ('evidence-missing-chunk-provenance','evidence-missing-chunk','need(cells.size() == expected.size(), "evidence-missing-chunk");','need(cells.size() == expected.size(), "proof-boc");'),
+ # Named separately from the certificate case above. They share the guard, so
+ # judging this one by whichever case trips first would leave the owner pair
+ # able to disappear without any mutation noticing.
+ ('evidence-owner-chunk-provenance','evidence-owner-proof-missing-chunk','need(cells.size() == expected.size(), "evidence-missing-chunk");','need(cells.size() == expected.size(), "proof-boc");'),
 ]
 RUST=[
  ('evidence-tag','evidence-tag','native(s.get_next_u32())? == NATIVE_EVIDENCE_TAG','{ native(s.get_next_u32())?; true }'),
@@ -41,11 +45,13 @@ RUST=[
 def main(a):
  if a.language=='cpp':
   folder=a.build.resolve()/'test/validator-auth-implementation'
-  def run():
+  def run(label=None):
    checked(['cmake','--build',str(a.build.resolve()),'--target','test-p0-native-evidence-mutant','-j2'])
    with tempfile.TemporaryDirectory(prefix='p0-config-context-cases-') as tmp:
-    return subprocess.run([str(folder/'test-p0-native-evidence-mutant'),str(a.inputs.resolve()),str(Path(tmp)/'cases')],capture_output=True,text=True)
-  report=mutate(folder/'native-evidence-mutated.cpp',CPP,run)
+    command=[str(folder/'test-p0-native-evidence-mutant'),str(a.inputs.resolve()),str(Path(tmp)/'cases')]
+    if label:command.append(label)
+    return subprocess.run(command,capture_output=True,text=True)
+  report=mutate(folder/'native-evidence-mutated.cpp',CPP,run,selective=True)
  else:
   with tempfile.TemporaryDirectory(prefix='p0-native-evidence-mutations-') as tmp:
    root=Path(tmp)

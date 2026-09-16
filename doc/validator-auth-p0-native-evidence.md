@@ -66,7 +66,7 @@ resulting state must all equal the VAF1 anchor. That authenticates the anchor on
 the native owner-execution verifier must still check the actual successful wallet
 transaction, owner/stake/update binding and finality-before-inclusion rule.
 
-The shared 37-case corpus covers all four authorization lists at their inline
+The shared 39-case corpus covers all four authorization lists at their inline
 bounds, multiple chunks, shared manifests, shape/version/type substitution, unused
 and missing attachments, nonminimal dictionary labels, chunk/object digests,
 aggregate limits, refusal before decoding and full owner-anchor substitution.

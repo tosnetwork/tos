@@ -11,10 +11,14 @@ CPP=[
  ('history-domain','history-chain-domain','if (registry.value().chain_domain() != chain.chain_domain) return Error{"history-domain"};',''),
  ('history-version','history-version-gate','cfg.get_global_version() < 16','cfg.get_global_version() < 1'),
  ('history-capability','history-capability-gate','|| !(cfg.get_capabilities() & tos::capValidatorAuth)',''),
- ('history-file','history-original-file-binding','if (file != hash(id.file_hash.as_slice())) return Error{"history-file-hash"};',''),
- ('history-root','history-independent-root-binding','|| root.value()->get_hash().as_slice() != id.root_hash.as_slice()',''),
- ('history-block-network','history-block-network','block.global_id != chain_.network ||',''),
- ('history-block-sequence','history-block-sequence','info.seq_no != at ||',''),
+ # Re-anchored: the compared value became the authenticated one, and the old
+ # anchor stopped matching. Anchors are whitespace-insensitive, so it was the
+ # name that changed, and an anchor that matches nothing leaves the property it
+ # names untested rather than failing.
+ ('history-file','history-original-file-binding','if (authenticated.value().file_ != hash(id.file_hash.as_slice())) return Error{"history-file-hash"};',''),
+ ('history-root','history-independent-root-binding','if (authenticated.value().root_ != hash(id.root_hash.as_slice())) return Error{"history-block-root"};',''),
+ ('history-block-network','history-block-network','block.global_id != expected_network ||',''),
+ ('history-block-sequence','history-block-sequence','if (authenticated.value().seqno_ != at) return Error{"history-block-context"};',''),
  ('history-output-state','history-native-old-block','|| !update.advance(256)',''),
  ('history-cache','history-cache-and-exact-budget','if (auto found = cache_.find(at); found != cache_.end()) return found->second;',''),
  ('history-update-kind','history-ordinary-update-is-not-merkle','!update.is_special() ||',''),

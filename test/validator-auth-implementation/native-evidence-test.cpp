@@ -57,8 +57,13 @@ Hash chunk_digest(const Hash& id, unsigned index, const Bytes& raw) {
 int main(int argc, char** argv) {
   try {
     SET_VERBOSITY_LEVEL(0);
-    check(argc == 3, "arguments");
+    check(argc == 3 || argc == 4, "arguments");
     std::filesystem::path input(argv[1]), out(argv[2]);
+    // An optional case name. A mutation aimed at one case proves nothing while
+    // an earlier case trips first on the same guard, so a harness has to be able
+    // to ask for the case it named and no other.
+    const std::string only = argc == 4 ? argv[3] : "";
+    unsigned selected = 0;
     check(std::filesystem::create_directory(out), "fresh-output");
     auto chainraw = read(input / "0/chain");
     Reader cr(chainraw);
@@ -85,6 +90,9 @@ int main(int argc, char** argv) {
     unsigned count = 0;
     auto run = [&](td::Ref<vm::Cell> root, const char* label, const char* error, unsigned reject_charge = 0,
                    bool owner = false) {
+      if (!only.empty() && only != label)
+        return;
+      ++selected;
       auto folder = out / std::to_string(count++);
       check(std::filesystem::create_directory(folder), "case-dir");
       write(folder / "evidence", boc(root));
@@ -262,6 +270,9 @@ int main(int argc, char** argv) {
       write(out / name, read(input / "0" / name));
     write(out / "anchor", value(encode(anchor), "fixture-anchor-output"));
     std::ofstream(out / "complete") << count << '\n';
+    // A name that matches nothing runs nothing and would otherwise report
+    // success for a case that no longer exists.
+    check(only.empty() || selected == 1, "selected-case");
     std::cout << "PASS: native evidence " << count << " cases\n";
     return 0;
   } catch (const std::exception& e) {
