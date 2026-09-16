@@ -112,7 +112,13 @@
       "change": "Refused an --out that names a directory before doing any work, so a caller's mistake is reported as a caller's mistake instead of as a reconstruction failure.",
       "scope": "Guard tooling only: no production file, wire or API artifact, activation gate, approval threshold, configuration root or insertion record changes."
     },
-    "Removed the previously declared node-local history resolution portion of the manager insertion after registry admission became fully witnessed by the message. Original manager bytes remain unchanged; the retained insertion establishes and publishes only the zero-state-derived ChainContext."
+    {
+      "artifact": "doc/validator-auth-p0-native-insertions.json",
+      "previous_sha256": "7378b6be39e6df34c5596dbbd60ec5dbc38182de8e55c27f526c159b861b1092",
+      "sha256": "d427d8eb3780b3914ea8737b353cdbd1fad9b207121825cbc3306305e27aaa76",
+      "change": "Removed the previously declared node-local history resolution portion of the manager insertion after registry admission became fully witnessed by the message.",
+      "scope": "Original manager bytes remain unchanged; the retained insertion establishes and publishes only the zero-state-derived ChainContext."
+    }
   ],
   "implementation_evidence_update": {
     "authorization": "Owner requested complete P0 implementation, testing and local rehearsal, with implementation decisions delegated in the current task.",
