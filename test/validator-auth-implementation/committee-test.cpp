@@ -14,69 +14,6 @@ namespace {
 td::Bits256 bits(const Hash& h) {
   return td::Bits256(h);
 }
-td::Ref<vm::Cell> descriptor(unsigned i, const RegistryState& registry, unsigned variant = 0) {
-  vm::CellBuilder pub;
-  auto pk = h(variant == 13 ? 10001 : 10000 + i);
-  if (variant == 7) {
-    auto bytes = registry.keys().begin()->second.public_key_;
-    std::copy(bytes.begin(), bytes.end(), pk.begin());
-  }
-  pub.store_long(0x8e81278a, 32).store_bytes(td::Slice(reinterpret_cast<const char*>(pk.data()), 32));
-  vm::CellBuilder cell;
-  cell.store_long(variant == 1 ? 0x73 : 0xb3, 8)
-      .append_cellslice(vm::CellSlice(vm::NoVm{}, pub.finalize()))
-      .store_long(i * 3, 64)
-      .store_bytes(td::Slice(reinterpret_cast<const char*>(h(20000 + i).data()), 32));
-  if (variant != 1) {
-    vm::CellBuilder binding;
-    binding
-        .store_bytes(td::Slice(reinterpret_cast<const char*>(h((variant == 2 || variant == 12) ? 1
-                                                               : variant == 3                  ? 0
-                                                                                               : i)
-                                                                 .data()),
-                               32))
-        .store_bytes(td::Slice(reinterpret_cast<const char*>(h((variant == 4 || variant == 12) ? 1001
-                                                               : variant == 5                  ? 0
-                                                               : variant == 10                 ? 9999
-                                                                                               : 1000 + i)
-                                                                 .data()),
-                               32));
-    if (variant == 6)
-      binding.store_long(0, 1);
-    if (variant == 9)
-      binding.store_ref(vm::CellBuilder().finalize());
-    cell.store_ref(binding.finalize());
-  }
-  return cell.finalize();
-}
-td::Ref<vm::Cell> election(const RegistryState& registry, unsigned variant = 0, unsigned count = 4) {
-  vm::Dictionary list(16);
-  std::uint64_t weight = 0;
-  for (unsigned i = 1; i <= count; ++i) {
-    td::BitArray<16> key(i - 1);
-    check(list.set(key.bits(), 16,
-                   td::make_ref<vm::CellSlice>(
-                       vm::NoVm{},
-                       descriptor(i, registry, i == ((variant == 12 || variant == 13) ? 4u : 2u) ? variant : 0))),
-          "list-add");
-    check(tos::checked_add_validator_weight(weight, i * 3), "fixture-weight");
-  }
-  vm::CellBuilder root;
-  root.store_long(0x12, 8)
-      .store_long(0, 32)
-      .store_long(variant == 8 ? 0 : 10000, 32)
-      .store_long(count, 16)
-      .store_long(variant == 11 ? count : std::min(count, 3u), 16)
-      .store_long(weight, 64);
-  check(list.append_dict_to_bool(root), "election-list");
-  return root.finalize();
-}
-td::Ref<vm::Cell> chain_state(const RegistryState& registry, unsigned variant = 0, bool shuffle = false,
-                              unsigned count = 4) {
-  auto root = masterchain(registry, registry.coordinate());
-  root = replace_config(root, 34, election(registry, variant, count));
-  return replace_config(root, 28, catchain_selector(shuffle));
-}
 }  // namespace
 int main(int argc, char** argv) {
   try {

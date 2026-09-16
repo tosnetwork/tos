@@ -17,6 +17,37 @@ bool same(td::Ref<vm::Cell> a, td::Ref<vm::Cell> b) {
   return a.is_null() == b.is_null() && (a.is_null() || a->get_hash() == b->get_hash());
 }
 }  // namespace
+Result<ConfigurationAccountData> read_configuration_account(td::Ref<vm::Cell> data) {
+  try {
+    if (data.is_null())
+      return Error{"config-data"};
+    vm::CellSlice cs{vm::NoVm{}, std::move(data)};
+    // The layout the configuration contract stores: the parameter dictionary,
+    // the sequence number and public key, an optional vote dictionary, and the
+    // registry checkpoint last. The width is checked before anything is taken
+    // from it, so a cell of another shape is refused rather than reinterpreted.
+    if (cs.is_special() || cs.size() != 289 || cs.size_refs() < 2)
+      return Error{"config-data"};
+    ConfigurationAccountData parsed;
+    parsed.configuration = cs.fetch_ref();
+    if (!cs.advance(288))
+      return Error{"config-data"};
+    if (cs.fetch_ulong(1) == 1) {
+      if (cs.size_refs() != 2)
+        return Error{"config-data"};
+      cs.fetch_ref();
+    }
+    if (cs.size_refs() != 1)
+      return Error{"config-data"};
+    parsed.checkpoint = cs.fetch_ref();
+    return parsed;
+  } catch (const vm::VmError&) {
+    return Error{"config-data"};
+  } catch (const vm::VmVirtError&) {
+    return Error{"config-data-pruned"};
+  }
+}
+
 NativeConfigContext::NativeConfigContext(ChainContext chain, Anchor head, Hash address, td::Ref<vm::Cell> code,
                                          td::Ref<vm::Cell> data, td::Ref<vm::Cell> library, td::Ref<vm::Cell> config,
                                          NativeRegistry parent, NativeCommittee committee,
@@ -80,22 +111,12 @@ Result<NativeConfigContext> NativeConfigContext::open(td::Ref<vm::Cell> root, co
         account.code.is_null() || account.data.is_null() || account.code->get_level() != 0 ||
         account.data->get_level() != 0)
       return Error{"config-account"};
-    vm::CellSlice data{vm::NoVm{}, account.data};
-    if (data.is_special() || data.size() != 289 || data.size_refs() < 2)
-      return Error{"config-data"};
-    auto owned_config = data.fetch_ref();
-    if (!same(owned_config, cfg.get_root_cell()))
+    auto parsed = read_configuration_account(account.data);
+    if (!parsed.ok())
+      return parsed.error();
+    if (!same(parsed.value().configuration, cfg.get_root_cell()))
       return Error{"config-dictionary-binding"};
-    if (!data.advance(288))
-      return Error{"config-data"};
-    if (data.fetch_ulong(1) == 1) {
-      if (data.size_refs() != 2)
-        return Error{"config-data"};
-      data.fetch_ref();
-    }
-    if (data.size_refs() != 1)
-      return Error{"config-data"};
-    auto checkpoint = data.fetch_ref();
+    auto checkpoint = parsed.value().checkpoint;
     auto registry = cfg.get_config_param(46);
     auto parent = [&]() -> Result<NativeRegistry> {
       if (cached) {

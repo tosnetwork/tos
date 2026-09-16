@@ -582,6 +582,12 @@ class Config {
   static constexpr int needCapabilities = 512;
   int mode{0};
   tos::BlockIdExt block_id;
+  // The account this configuration was read from. Held already; exposed so a
+  // caller can tell whether a message is addressed to it without recomputing
+  // the address from the state and risking a second answer.
+  const td::BitArray<256>& configuration_address() const {
+    return config_addr;
+  }
 
  private:
   td::BitArray<256> config_addr;

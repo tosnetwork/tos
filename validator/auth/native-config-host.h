@@ -61,8 +61,14 @@ class NativeConfigHost final : public vm::ValidatorAuthHost {
   td::Ref<vm::Cell> apply(td::Ref<vm::Cell> update, td::Ref<vm::Cell> evidence, const Charge&) override;
   td::Ref<vm::Cell> bind(td::Ref<vm::Cell> elected, td::Ref<vm::Cell> bindings, const Charge&) override;
 
-  // The staged prefix after execution. Native commit installs this and nothing
-  // else; there is no path that installs a registry the host did not accept.
+  // The candidate native prefix this transaction produced.
+  //
+  // It never installs account or global state. The configuration contract alone
+  // produces persistent c4; the enclosing sequence may promote this candidate
+  // only after that account actually commits and the committed c4 binds exactly
+  // to it. Reading this as "what will be installed" is what would make the host
+  // a second installation path beside the contract, and the two would then be
+  // two descriptions of one fact with nothing comparing them.
   const NativeRegistryBlock& staged() const {
     return accepted_;
   }

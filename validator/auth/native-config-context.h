@@ -12,6 +12,19 @@ namespace tos::auth {
 // and a second reading of it would be a second source that nothing compares.
 Result<Hash> declared_configuration_account(const block::Config& config, td::Ref<vm::Cell> masterchain_state);
 
+// What a configuration account's persistent data holds, read once.
+//
+// Two callers need these: opening the parent context, and deciding whether a
+// committed transaction installed the prefix its host authorized. A second
+// reading of the same cell is the shape this design has already paid for --
+// two descriptions of one fact, each correct in its own suite, disagreeing only
+// where they meet.
+struct ConfigurationAccountData {
+  td::Ref<vm::Cell> configuration;  // the parameter dictionary, the leading ref
+  td::Ref<vm::Cell> checkpoint;     // the registry checkpoint, the trailing ref
+};
+Result<ConfigurationAccountData> read_configuration_account(td::Ref<vm::Cell> data);
+
 // Immutable authority inputs for one masterchain successor. Construction binds
 // the real config account's code/data/checkpoint to the authenticated parent.
 class NativeConfigContext {
