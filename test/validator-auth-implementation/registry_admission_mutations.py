@@ -41,9 +41,9 @@ TASK1_GUARDS = {
 
 MUTATIONS = [
     ("history-promoted", "history-outlives-the-call-that-assembled-it",
-     '  auto owned_history = std::make_shared<PrefetchedAnchorSource>(std::move(witnessed));',
-     '  PrefetchedAnchorSource borrowed(std::move(witnessed));\n'
-     '  std::shared_ptr<PrefetchedAnchorSource> owned_history(&borrowed, [](PrefetchedAnchorSource*) {});',
+     '  auto owned_history = std::make_shared<WitnessedAnchorSource>(std::move(witnessed));',
+     '  WitnessedAnchorSource borrowed(std::move(witnessed));\n'
+     '  std::shared_ptr<WitnessedAnchorSource> owned_history(&borrowed, [](WitnessedAnchorSource*) {});',
      True, ["an-authenticated-witness-needs-no-archive", "only-the-witnessed-coordinate-is-served"], SOURCE),
     ("history-retained", "history-outlives-the-call-that-assembled-it",
      '    , history_(std::move(history))',

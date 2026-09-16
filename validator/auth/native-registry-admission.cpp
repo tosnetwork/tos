@@ -8,7 +8,7 @@
 #include "native-config-message.h"
 #include "native-evidence.h"
 #include "native-history.h"
-#include "native-prefetch.h"
+#include "native-witnessed-history.h"
 #include "native-registry-admission.h"
 namespace tos::auth {
 namespace {
@@ -55,13 +55,6 @@ Result<RecognizedUpdate> recognize(td::Ref<vm::Cell> message) {
   return RecognizedUpdate{account, std::move(recognized.value()), std::move(evidence.value())};
 }
 }  // namespace
-
-Result<std::vector<std::uint32_t>> registry_message_requirements(td::Ref<vm::Cell> message, std::uint32_t inclusion) {
-  auto recognized = recognize(std::move(message));
-  if (!recognized.ok())
-    return recognized.error();
-  return required_finalized_coordinates(recognized.value().evidence.authorizations(), inclusion);
-}
 
 Result<RegistryAdmissionInputs> gather_registry_admission_inputs(
     td::Ref<vm::Cell> message, const Hash& configuration_account, td::Ref<vm::Cell> masterchain_state,
@@ -160,7 +153,7 @@ Result<std::unique_ptr<NativeConfigTransaction>> admit_registry_message(
     // and the source is built here from this one value.
     witnessed.emplace(authenticated.value().seqno_, authenticated.value());
   }
-  auto owned_history = std::make_shared<PrefetchedAnchorSource>(std::move(witnessed));
+  auto owned_history = std::make_shared<WitnessedAnchorSource>(std::move(witnessed));
 
   return NativeConfigTransaction::open(inputs.transaction, recognized.value().message.evidence,
                                        std::move(owned_history), uncharged);

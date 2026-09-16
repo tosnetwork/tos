@@ -1,14 +1,15 @@
-// Everything a transaction will read, known before it runs.
+// Everything a transaction will read, established before it runs.
 //
-// The library resolves anchors synchronously and a node's archive is not
-// synchronous. The resolution is to declare the requirement up front rather
-// than to block or to go asynchronous, which only works if a miss during
-// execution is a refusal. If a miss could still reach storage, the declaration
-// would be advisory and an execution could read more than it declared.
+// The library resolves anchors synchronously, so what execution may reach has
+// to be fixed before it starts. Consensus admission fixes it by authenticating
+// the witness the message carries, which only means anything if a miss during
+// execution is a refusal. If a miss could still reach storage, the established
+// set would be advisory and an execution could read history the message never
+// witnessed.
 #include <iostream>
 #include <stdexcept>
 
-#include "validator/auth/native-prefetch.h"
+#include "validator/auth/native-witnessed-history.h"
 
 #include "native-fixture.h"
 
@@ -68,19 +69,19 @@ int main() {
     expect(!wide.ok() && wide.error().code == "owner-finality-breadth", "unbounded-history-refused");
     ok("unbounded-history-refused");
 
-    PrefetchedAnchorSource source({{80, anchor_at(80)}, {90, anchor_at(90)}});
+    WitnessedAnchorSource source({{80, anchor_at(80)}, {90, anchor_at(90)}});
     auto found = source.finalized_anchor(90);
-    expect(found.ok() && found.value() == anchor_at(90), "prefetched-anchor-answers");
-    ok("prefetched-anchor-answers");
+    expect(found.ok() && found.value() == anchor_at(90), "witnessed-anchor-answers");
+    ok("witnessed-anchor-answers");
 
     // The property the whole arrangement rests on.
     auto missed = source.finalized_anchor(85);
-    expect(!missed.ok() && missed.error().code == "finalized-anchor-unavailable", "unfetched-coordinate-refused");
-    ok("unfetched-coordinate-refused");
+    expect(!missed.ok() && missed.error().code == "finalized-anchor-unavailable", "unwitnessed-coordinate-refused");
+    ok("unwitnessed-coordinate-refused");
 
-    // A prefetched map is still a place a substitution could hide, so an entry
+    // A witnessed map is still a place a substitution could hide, so an entry
     // filed under the wrong coordinate is refused rather than returned.
-    PrefetchedAnchorSource misfiled({{80, anchor_at(81)}});
+    WitnessedAnchorSource misfiled({{80, anchor_at(81)}});
     auto wrong = misfiled.finalized_anchor(80);
     expect(!wrong.ok() && wrong.error().code == "finalized-anchor-binding", "misfiled-anchor-refused");
     ok("misfiled-anchor-refused");

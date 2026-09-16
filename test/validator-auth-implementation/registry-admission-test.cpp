@@ -363,14 +363,6 @@ int main(int argc, char** argv) {
       unfilled.configuration_account = Hash{};
       refuses(admit_registry_message(unfilled), "registry-admission-input", "missing-account-is-an-input-error");
     });
-    add("requirements-are-reportable", [&] {
-      auto required = registry_message_requirements(inputs.message, inputs.transaction.inclusion);
-      require(required.ok() && required.value().empty(), "requirements-are-reportable");
-      auto approved = approved_by_owner(history.owner.anchor, history.owner.witness);
-      auto named = registry_message_requirements(approved.message, approved.transaction.inclusion);
-      require(named.ok() && named.value() == std::vector<std::uint32_t>{history.owner.at},
-              "requirements-are-reportable");
-    });
 
     if (argc == 4 && std::string_view(argv[3]) == "--list") {
       for (const auto& [name, _] : tests)

@@ -29,7 +29,7 @@
     "doc/validator-auth-p0/transport.schema.json": "ddd45d7d3eb672559efde020af95a0e215146775ec82f8c6847b0f3ab8127584",
     "doc/validator-auth-p0/wire.tl": "a5e10c8e25887cb30440a26a0d8cbcef1473878aeb87438cca1a0f0bc6875c15",
     "doc/validator-auth-p0/wire.tlb": "923650bd74bbbf677a070d1d13d7c12d46944e8bffbfc3a72641093d20d3ce9d",
-    "doc/validator-auth-p0-native-insertions.json": "7378b6be39e6df34c5596dbbd60ec5dbc38182de8e55c27f526c159b861b1092",
+    "doc/validator-auth-p0-native-insertions.json": "d427d8eb3780b3914ea8737b353cdbd1fad9b207121825cbc3306305e27aaa76",
     "test/validator-auth-p0/README.md": "a0b0950c4ac702f8be0f34919a50f8e7b13d5d14dda3bd2cc05b4c8ffee31321",
     "test/validator-auth-p0/api.py": "9ec50bf9e19345ef54a8894a3525eba1eed8fb10412b8a3fdc1ed1c5728fb815",
     "test/validator-auth-p0/archive_evidence.py": "22bb392a561068e0fb3905ce7e8df95bab463468cdfe3be884eff19b12481409",
@@ -111,7 +111,8 @@
       "sha256": "ad13bd676f588771dc9b27749d0842dcd34de0f28726c34c1e1a379342275f5a",
       "change": "Refused an --out that names a directory before doing any work, so a caller's mistake is reported as a caller's mistake instead of as a reconstruction failure.",
       "scope": "Guard tooling only: no production file, wire or API artifact, activation gate, approval threshold, configuration root or insertion record changes."
-    }
+    },
+    "Removed the previously declared node-local history resolution portion of the manager insertion after registry admission became fully witnessed by the message. Original manager bytes remain unchanged; the retained insertion establishes and publishes only the zero-state-derived ChainContext."
   ],
   "implementation_evidence_update": {
     "authorization": "Owner requested complete P0 implementation, testing and local rehearsal, with implementation decisions delegated in the current task.",

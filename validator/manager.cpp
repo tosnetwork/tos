@@ -2380,8 +2380,6 @@ void ValidatorManagerImpl::publish_validator_auth() {
   if (!validator_auth_chain_) {
     return;
   }
-  // A snapshot, taken here and never written again, is what leaves the actor.
-  validator_auth_history_ = std::make_shared<const tos::auth::NativeAnchorCache>(validator_auth_anchors_);
   auto value = validator_auth_collation();
   for (auto &collation : collation_managers_) {
     td::actor::send_closure(collation.second.get(), &CollationManager::update_validator_auth, value);
@@ -2389,111 +2387,11 @@ void ValidatorManagerImpl::publish_validator_auth() {
 }
 
 td::optional<ValidatorAuthCollation> ValidatorManagerImpl::validator_auth_collation() {
-  if (!validator_auth_chain_ || !validator_auth_history_) {
+  if (!validator_auth_chain_) {
     return {};
   }
-  return ValidatorAuthCollation{
-      validator_auth_chain_.value(), validator_auth_history_,
-      [SelfId = actor_id(this)](std::vector<td::uint32> coordinates) {
-        td::actor::send_closure(SelfId, &ValidatorManagerImpl::resolve_validator_auth_history, std::move(coordinates));
-      }};
+  return ValidatorAuthCollation{validator_auth_chain_.value()};
 }
-
-void ValidatorManagerImpl::resolve_validator_auth_history(std::vector<td::uint32> coordinates) {
-  if (!validator_auth_chain_ || coordinates.empty() || last_masterchain_state_.is_null() ||
-      !last_masterchain_block_id_.is_valid()) {
-    return;
-  }
-  auto batch = validator_auth_resolution_queue_.submit(coordinates);
-  if (!batch.has_value()) {
-    return;
-  }
-
-  // Enumeration and authentication must describe the same finalized-history
-  // view. Capture the parent state cell and the head built from the matching
-  // block id in this actor turn, before the first archive read can yield.
-  const auto state = last_masterchain_state_->root_cell();
-  const auto head = tos::auth::anchor_of(last_masterchain_block_id_, state);
-  auto snapshot = std::make_shared<const ValidatorAuthResolutionSnapshot>(
-      ValidatorAuthResolutionSnapshot{state, head, validator_auth_chain_.value()});
-  auto wanted = tos::auth::required_finalized_blocks(batch.value(), snapshot->masterchain_state, snapshot->head,
-                                                     snapshot->chain, validator_auth_anchors_);
-  if (!wanted.ok()) {
-    LOG(INFO) << "cannot resolve the history a registry update declared: " << wanted.error().code;
-    auto pending = validator_auth_resolution_queue_.complete();
-    if (pending.has_value()) {
-      resolve_validator_auth_history(std::move(pending.value()));
-    }
-    return;
-  }
-  auto fetched = std::make_shared<std::map<BlockSeqno, tos::auth::Bytes>>();
-  fetch_validator_auth_block(std::move(batch.value()), std::move(snapshot), std::move(wanted.value()), 0,
-                             std::move(fetched));
-}
-
-void ValidatorManagerImpl::fetch_validator_auth_block(
-    std::vector<td::uint32> coordinates, std::shared_ptr<const ValidatorAuthResolutionSnapshot> snapshot,
-    std::vector<BlockIdExt> wanted, size_t index,
-    std::shared_ptr<std::map<BlockSeqno, tos::auth::Bytes>> fetched) {
-  if (index >= wanted.size()) {
-    finish_validator_auth_resolution(std::move(coordinates), std::move(snapshot), std::move(fetched));
-    return;
-  }
-  const auto id = wanted[index];
-  auto P = td::PromiseCreator::lambda([SelfId = actor_id(this), coordinates = std::move(coordinates),
-                                       snapshot = std::move(snapshot), wanted = std::move(wanted), index, fetched,
-                                       id](td::Result<td::Ref<BlockData>> R) mutable {
-    // A block this node cannot serve is not an error here: the archive still
-    // catching up is the ordinary reason an update was deferred at all. Its
-    // coordinate simply stays unresolved, which resolution reports.
-    if (R.is_ok() && R.ok().not_null()) {
-      auto slice = R.ok()->data().as_slice();
-      fetched->emplace(id.seqno(), tos::auth::Bytes(slice.ubegin(), slice.uend()));
-    } else {
-      LOG(DEBUG) << "registry history: block " << id.to_str() << " not available yet";
-    }
-    td::actor::send_closure(SelfId, &ValidatorManagerImpl::fetch_validator_auth_block, std::move(coordinates),
-                            std::move(snapshot), std::move(wanted), index + 1, std::move(fetched));
-  });
-  get_block_data_for_litequery(id, std::move(P));
-}
-
-void ValidatorManagerImpl::finish_validator_auth_resolution(
-    std::vector<td::uint32> coordinates, std::shared_ptr<const ValidatorAuthResolutionSnapshot> snapshot,
-    std::shared_ptr<std::map<BlockSeqno, tos::auth::Bytes>> fetched) {
-  auto pending = validator_auth_resolution_queue_.complete();
-  SCOPE_EXIT {
-    if (pending.has_value()) {
-      resolve_validator_auth_history(std::move(pending.value()));
-    }
-  };
-  if (!snapshot || snapshot->masterchain_state.is_null()) {
-    return;
-  }
-  // Serving by coordinate is safe because resolution authenticates every block
-  // against the record's own identity for that coordinate; a misfiled entry
-  // here is refused there rather than admitted.
-  auto reader = [fetched](const BlockIdExt &id, size_t limit) -> tos::auth::Result<tos::auth::Bytes> {
-    auto found = fetched->find(id.seqno());
-    if (found == fetched->end()) {
-      return tos::auth::Error{"history-block-unavailable"};
-    }
-    if (found->second.size() > limit) {
-      return tos::auth::Error{"history-block-bound"};
-    }
-    return found->second;
-  };
-  auto resolved = tos::auth::resolve_declared_history(coordinates, snapshot->masterchain_state, snapshot->head,
-                                                      snapshot->chain, reader, validator_auth_anchors_);
-  if (!resolved.ok()) {
-    LOG(WARNING) << "registry history refused: " << resolved.error().code;
-    return;
-  }
-  LOG(INFO) << "registry history resolved " << resolved.value().admitted << " block(s), "
-            << resolved.value().unavailable.size() << " still unavailable";
-  publish_validator_auth();
-}
-
 void ValidatorManagerImpl::started(ValidatorManagerInitResult R) {
   CHECK(R.handle);
   CHECK(R.state.not_null());

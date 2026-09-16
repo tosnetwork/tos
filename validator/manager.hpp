@@ -50,7 +50,6 @@
 #include "queue-size-counter.hpp"
 #include "shard-block-retainer.hpp"
 #include "shard-block-verifier.hpp"
-#include "auth/native-anchor-cache.h"
 #include "auth/native-chain-context.h"
 #include "shard-client.hpp"
 #include "state-serializer.hpp"
@@ -614,11 +613,14 @@ class ValidatorManagerImpl : public ValidatorManager {
 
   // REGISTRY AUTHORITY
   //
-  // The two values collation needs that outlive a block. The chain context is
+  // The one value collation and validation need that outlives a block. It is
   // established once, from the zero state the operator configured, so it is
-  // never assembled out of the registry it is used to check. The cache is this
-  // actor's; what collation is handed is the snapshot beside it, because
-  // collation runs in another actor and must never read a cache being written.
+  // never assembled out of the registry it is used to check.
+  //
+  // Nothing else is kept here. A registry update carries the finality its
+  // approval relies on, so this node holds no resolved history for anyone, and
+  // there is no window in which two nodes with the same block would answer
+  // differently because one had read more of its archive than the other.
   //
   // None of this is installed until the zero state has been read and has
   // established a context. Until then collation is handed nothing, which is
@@ -637,31 +639,8 @@ class ValidatorManagerImpl : public ValidatorManager {
                           : nullptr);
   }
   td::optional<ValidatorAuthCollation> validator_auth_collation();
-  struct ValidatorAuthResolutionSnapshot {
-    // The state cell and head describe one masterchain tip. The state supplies
-    // the previous-block record that selects archive blocks, while the head
-    // binds that same block id to that same state cell. They travel together
-    // through asynchronous reads so enumeration and authentication cannot see
-    // different tips. The chain context is immutable but travels with them so
-    // finish never rereads an authority member after IO.
-    td::Ref<vm::Cell> masterchain_state;
-    tos::auth::Anchor head;
-    tos::auth::ChainContext chain;
-  };
-
-  void resolve_validator_auth_history(std::vector<td::uint32> coordinates);
-  void fetch_validator_auth_block(std::vector<td::uint32> coordinates,
-                                  std::shared_ptr<const ValidatorAuthResolutionSnapshot> snapshot,
-                                  std::vector<BlockIdExt> wanted, size_t index,
-                                  std::shared_ptr<std::map<BlockSeqno, tos::auth::Bytes>> fetched);
-  void finish_validator_auth_resolution(std::vector<td::uint32> coordinates,
-                                        std::shared_ptr<const ValidatorAuthResolutionSnapshot> snapshot,
-                                        std::shared_ptr<std::map<BlockSeqno, tos::auth::Bytes>> fetched);
 
   td::optional<tos::auth::ChainContext> validator_auth_chain_;
-  tos::auth::NativeAnchorCache validator_auth_anchors_;
-  std::shared_ptr<const tos::auth::NativeAnchorCache> validator_auth_history_;
-  tos::auth::NativeHistoryResolutionQueue validator_auth_resolution_queue_;
   void got_destroyed_validator_sessions(std::vector<ValidatorSessionId> sessions);
   void got_pending_consensus_db_cleanup(std::vector<std::string> dirs);
   void got_pending_validator_consensus_db_cleanup(std::vector<consensus::PendingValidatorConsensusDbCleanup> records);

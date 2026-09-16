@@ -53,10 +53,4 @@ Result<RegistryAdmissionInputs> gather_registry_admission_inputs(
 // and anything node-local here would make that depend on what one of them
 // happened to have resolved.
 Result<std::unique_ptr<NativeConfigTransaction>> admit_registry_message(const RegistryAdmissionInputs&);
-
-// The finalized coordinates the update's approvals name. Admission does not
-// decide from these -- the witness the message carries is what it authenticates
-// -- but the same call enforces the one bound they do carry: no approval may
-// name the block being built. This reads nothing from the chain.
-Result<std::vector<std::uint32_t>> registry_message_requirements(td::Ref<vm::Cell> message, std::uint32_t inclusion);
 }  // namespace tos::auth

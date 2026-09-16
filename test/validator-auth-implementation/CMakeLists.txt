@@ -574,17 +574,9 @@ add_executable(test-p0-election-binding election-binding-test.cpp)
 target_link_libraries(test-p0-election-binding PRIVATE tos_validator_auth_native)
 set_target_properties(test-p0-election-binding PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 
-add_executable(test-p0-history-resolve history-resolve-test.cpp)
-target_link_libraries(test-p0-history-resolve PRIVATE tos_validator_auth_native)
-set_target_properties(test-p0-history-resolve PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
-
 add_executable(test-p0-registry-admission registry-admission-test.cpp)
 target_link_libraries(test-p0-registry-admission PRIVATE tos_validator_auth_native)
 set_target_properties(test-p0-registry-admission PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
-
-add_executable(test-p0-anchor-cache anchor-cache-test.cpp)
-target_link_libraries(test-p0-anchor-cache PRIVATE tos_validator_auth_native)
-set_target_properties(test-p0-anchor-cache PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 
 add_executable(test-p0-config-message config-message-test.cpp)
 target_link_libraries(test-p0-config-message PRIVATE tos_validator_auth_native)
@@ -598,9 +590,9 @@ add_executable(test-p0-config-contract config-contract-test.cpp)
 target_link_libraries(test-p0-config-contract PRIVATE tos_validator_auth tos_crypto)
 set_target_properties(test-p0-config-contract PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 
-add_executable(test-p0-prefetch prefetch-test.cpp)
-target_link_libraries(test-p0-prefetch PRIVATE tos_validator_auth_native)
-set_target_properties(test-p0-prefetch PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+add_executable(test-p0-witnessed-history witnessed-history-test.cpp)
+target_link_libraries(test-p0-witnessed-history PRIVATE tos_validator_auth_native)
+set_target_properties(test-p0-witnessed-history PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 
 add_executable(test-p0-config-transaction config-transaction-test.cpp)
 target_link_libraries(test-p0-config-transaction PRIVATE tos_validator_auth_native)

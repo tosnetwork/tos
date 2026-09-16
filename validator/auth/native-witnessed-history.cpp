@@ -1,6 +1,6 @@
 #include <algorithm>
 
-#include "native-prefetch.h"
+#include "native-witnessed-history.h"
 namespace tos::auth {
 
 Result<std::vector<std::uint32_t>> required_finalized_coordinates(const Authorizations& authorizations,
@@ -23,12 +23,12 @@ Result<std::vector<std::uint32_t>> required_finalized_coordinates(const Authoriz
   return coordinates;
 }
 
-Result<Anchor> PrefetchedAnchorSource::finalized_anchor(std::uint32_t at) const {
+Result<Anchor> WitnessedAnchorSource::finalized_anchor(std::uint32_t at) const {
   auto found = anchors_.find(at);
   if (found == anchors_.end())
     return Error{"finalized-anchor-unavailable"};
-  // A prefetched entry still has to be the coordinate it is filed under, or the
-  // map itself becomes a place where a substitution can hide.
+  // An entry still has to be the coordinate it is filed under, or the map itself
+  // becomes a place where a substitution can hide.
   if (found->second.seqno_ != at)
     return Error{"finalized-anchor-binding"};
   return found->second;

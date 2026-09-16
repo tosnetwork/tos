@@ -1,4 +1,4 @@
-"""Remove one guard of the prefetch boundary at a time.
+"""Remove one guard of the witnessed-history boundary at a time.
 
 Each mutation must compile, reach the file, and fail its own named case for the
 reason it was written for. A failure for a different reason is not a kill.
@@ -9,8 +9,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-SOURCE = Path("validator/auth/native-prefetch.cpp")
-BINARY = Path("build-p0/test/validator-auth-implementation/test-p0-prefetch")
+SOURCE = Path("validator/auth/native-witnessed-history.cpp")
+BINARY = Path("build-p0/test/validator-auth-implementation/test-p0-witnessed-history")
 
 MUTATIONS = [
     ("future-anchor", "same-block-anchor-refused",
@@ -19,7 +19,7 @@ MUTATIONS = [
     ("breadth-bound", "unbounded-history-refused",
      '  if (coordinates.size() > 64)\n    return Error{"owner-finality-breadth"};',
      ''),
-    ("prefetch-miss", "unfetched-coordinate-refused",
+    ("witness-miss", "unwitnessed-coordinate-refused",
      '  auto found = anchors_.find(at);\n'
      '  if (found == anchors_.end())\n'
      '    return Error{"finalized-anchor-unavailable"};',
@@ -36,7 +36,7 @@ MUTATIONS = [
 
 
 def build() -> bool:
-    return subprocess.run(["cmake", "--build", "build-p0", "--target", "test-p0-prefetch", "-j48"],
+    return subprocess.run(["cmake", "--build", "build-p0", "--target", "test-p0-witnessed-history", "-j48"],
                           capture_output=True, text=True, check=False).returncode == 0
 
 

@@ -16,15 +16,16 @@ namespace tos::auth {
 // was not established before it.
 Result<std::vector<std::uint32_t>> required_finalized_coordinates(const Authorizations&, std::uint32_t inclusion);
 
-// Answers only from what was prefetched. A coordinate that was not fetched is a
-// refusal, never a read: the point of prefetching is lost if a miss can still
-// reach storage, and an execution that silently read more than it declared
-// would be unreproducible from its own inputs.
-class PrefetchedAnchorSource final : public FinalizedAnchorSource {
+// Answers only from what the message witnessed. A coordinate that was not
+// witnessed is a refusal, never a read: if a miss could still reach storage,
+// the answer would depend on what one node happened to hold, and an execution
+// that silently read more than its own inputs established would not be
+// reproducible by anyone re-executing the block.
+class WitnessedAnchorSource final : public FinalizedAnchorSource {
   std::map<std::uint32_t, Anchor> anchors_;
 
  public:
-  explicit PrefetchedAnchorSource(std::map<std::uint32_t, Anchor> anchors) : anchors_(std::move(anchors)) {
+  explicit WitnessedAnchorSource(std::map<std::uint32_t, Anchor> anchors) : anchors_(std::move(anchors)) {
   }
   Result<Anchor> finalized_anchor(std::uint32_t at) const override;
 };
