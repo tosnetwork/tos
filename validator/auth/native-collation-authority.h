@@ -3,6 +3,7 @@
 #include "block/mc-config.h"
 
 #include "native-config-transaction.h"
+#include "native-election-binding-transaction.h"
 
 namespace tos::auth {
 
@@ -39,5 +40,20 @@ struct CollationAuthorityInputs {
 // Refusals name the layer that refused -- the witness surface, the history
 // index, the declared anchor -- so a diagnosis does not have to guess.
 Result<std::unique_ptr<NativeConfigTransaction>> assemble_registry_authority(const CollationAuthorityInputs&);
+
+
+// Assembles the authority for one elected validator set, or refuses.
+//
+// The same inputs the registry assembler takes, because the caller holds one
+// set of facts and should not have to know which message it is looking at
+// before it asks. Which authority comes back is decided by the message's own
+// shape: an external message carrying an update is not this, and an internal
+// message from the elector is not the other.
+//
+// A refusal is the ordinary answer. Almost every message reaching here is
+// neither, and on a chain that has not activated validator authentication this
+// refuses every message, because there is no binding authority to give.
+Result<std::unique_ptr<NativeElectionBindingTransaction>> assemble_election_binding_authority(
+    const CollationAuthorityInputs&);
 
 }  // namespace tos::auth

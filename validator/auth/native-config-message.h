@@ -8,6 +8,10 @@ namespace tos::auth {
 // composes such a message, so the tag is not written down twice.
 inline constexpr std::uint32_t native_registry_action = 0x56417531;
 
+// The action the configuration contract answers for an elected validator set,
+// written once for the same reason.
+inline constexpr std::uint32_t native_validator_set_action = 0x4e565354;
+
 struct NativeRegistryMessage {
   td::Ref<vm::Cell> update;
   td::Ref<vm::Cell> evidence;
@@ -25,4 +29,17 @@ struct NativeRegistryMessage {
 // and refused otherwise, so a message that merely resembles one cannot cause
 // work to be done on its behalf.
 Result<NativeRegistryMessage> recognize_registry_message(td::Ref<vm::Cell> body);
+
+struct NativeElectionSetMessage {
+  td::Ref<vm::Cell> elected;
+  td::Ref<vm::Cell> bindings;
+};
+
+// Recognise an elected validator set in an inbound internal message body.
+//
+// The same seam as above, for the other message the configuration contract
+// answers. The bindings reference is optional in the contract, so it is
+// optional here; whether a set may arrive without one is activation's question
+// and is answered where the authority is assembled, not by the parser.
+Result<NativeElectionSetMessage> recognize_validator_set_message(td::Ref<vm::Cell> body);
 }  // namespace tos::auth

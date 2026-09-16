@@ -346,7 +346,7 @@ class Collator final : public td::actor::Actor {
   // if so, installs it on the compute config. Every other message -- including
   // a message to the same account that is not a registry update -- executes
   // with no host, which is what leaves the instruction unreachable.
-  bool offer_validator_auth(Ref<vm::Cell> msg_root, bool external, std::shared_ptr<vm::ValidatorAuthHost>& host);
+  bool offer_validator_auth(Ref<vm::Cell> msg_root, std::shared_ptr<vm::ValidatorAuthHost>& host);
   bool is_masterchain() const {
     return shard_.is_masterchain();
   }

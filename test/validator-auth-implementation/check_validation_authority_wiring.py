@@ -33,6 +33,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 
 ASSEMBLER = "assemble_registry_authority("
+BINDER = "assemble_election_binding_authority("
 # The calls the assembler is made of. Reaching them directly is how a second
 # assembly appears.
 UNDERNEATH = ("admit_registry_message(", "gather_registry_admission_inputs(")
@@ -70,6 +71,18 @@ def verify(files: dict[str, str]) -> None:
         for token in NODE_LOCAL:
             if token in files[path]:
                 raise ValueError(f"{path} reaches {token}")
+
+    # An elected set is the other message the configuration contract answers, and
+    # it is decided the same way on both sides. A producer that bound a set its
+    # validator did not would rebuild a different block for a reason neither
+    # could see -- the same divergence, through the other message.
+    for path in (PRODUCER, VALIDATOR):
+        if files[path].count(BINDER) != 1:
+            raise ValueError(f"{path} does not assemble the binding authority exactly once")
+    # Admission to the message pool is not one of them. The pool carries
+    # external messages, and an elected set never arrives that way.
+    if BINDER in files[INGRESS]:
+        raise ValueError("the message pool assembles a binding authority for a message it cannot carry")
 
     # The pool runs the destination contract before admitting a message, and the
     # configuration contract applies a registry update before accepting one. A
@@ -116,6 +129,11 @@ def main() -> int:
         {**files, VALIDATOR: files[VALIDATOR] + "\nauto x = admit_registry_message(y);\n"},
         {**files, VALIDATOR: files[VALIDATOR] + "\nconst tos::auth::NativeAnchorCache* c = nullptr;\n"},
         {**files, INGRESS: files[INGRESS].replace(ASSEMBLER, "some_other_call(", 1)},
+        # The divergence through the other message: one side binds, the other
+        # does not.
+        {**files, VALIDATOR: files[VALIDATOR].replace(BINDER, "some_other_call(", 1)},
+        {**files, PRODUCER: files[PRODUCER].replace(BINDER, "some_other_call(", 1)},
+        {**files, INGRESS: files[INGRESS] + f"\nauto b = tos::auth::{BINDER}x);\n"},
         # The shape the defect had: the ingress runs the contract with nothing.
         {**files, CARRIER: files[CARRIER].replace("std::move(validator_auth_host)", "{}", 1)},
         # The retry replaying against an authority the first attempt already

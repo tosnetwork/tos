@@ -38,4 +38,33 @@ Result<NativeRegistryMessage> recognize_registry_message(td::Ref<vm::Cell> body)
     return Error{"registry-message-shape"};
   }
 }
+
+Result<NativeElectionSetMessage> recognize_validator_set_message(td::Ref<vm::Cell> body) {
+  if (body.is_null())
+    return Error{"validator-set-message-absent"};
+  try {
+    vm::CellSlice cs{vm::NoVm{}, body};
+    // The contract reads the action and a query id, then the set, then an
+    // optional bindings reference, and ends the parse. Anything else is not
+    // this message.
+    if (!cs.have(32 + 64))
+      return Error{"validator-set-message-shape"};
+    if (cs.fetch_ulong(32) != native_validator_set_action)
+      return Error{"validator-set-message-action"};
+    cs.advance(64);
+    auto elected = cs.fetch_ref();
+    if (elected.is_null())
+      return Error{"validator-set-message-shape"};
+    td::Ref<vm::Cell> bindings;
+    if (cs.size_refs() != 0)
+      bindings = cs.fetch_ref();
+    if (cs.size() != 0 || cs.size_refs() != 0)
+      return Error{"validator-set-message-shape"};
+    return NativeElectionSetMessage{std::move(elected), std::move(bindings)};
+  } catch (const vm::VmError&) {
+    return Error{"validator-set-message-cell"};
+  } catch (const vm::VmVirtError&) {
+    return Error{"validator-set-message-pruned"};
+  }
+}
 }  // namespace tos::auth

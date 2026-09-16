@@ -5784,29 +5784,40 @@ static bool extra_flags_within_valid_mask(const block::gen::CommonMsgInfo::Recor
  * what allows account checkers to run concurrently.
  *
  * @param msg_root The root of the inbound message.
- * @param external True if the message is an external one.
  * @param host Receives the assembled authority, or nothing.
  *
  * @returns True if an authority was assembled.
  */
-bool ValidateQuery::offer_validator_auth(Ref<vm::Cell> msg_root, bool external,
-                                         std::shared_ptr<vm::ValidatorAuthHost>& host) const {
+bool ValidateQuery::offer_validator_auth(Ref<vm::Cell> msg_root, std::shared_ptr<vm::ValidatorAuthHost>& host) const {
   host.reset();
-  if (!external || !is_masterchain() || !validator_auth_chain_ || config_ == nullptr || mc_state_.is_null() ||
+  if (!is_masterchain() || !validator_auth_chain_ || config_ == nullptr || mc_state_.is_null() ||
       mc_state_root_.is_null() || validator_set_.is_null()) {
     return false;
   }
 
-  auto admitted = tos::auth::assemble_registry_authority(
-      {msg_root, config_.get(), mc_state_root_, mc_state_->get_block_id(), mc_blkid_, *validator_auth_chain_, shard_,
-       validator_set_->get_catchain_seqno(), now_, id_.seqno()});
-  if (!admitted.ok()) {
-    return false;
+  // Which authority a message gets is decided by the message, exactly as it is
+  // during collation. A caller that classified messages itself would be a
+  // second reading of what the assemblers already read, free to disagree with
+  // the producer about which transaction this is.
+  const tos::auth::CollationAuthorityInputs facts{
+      msg_root, config_.get(), mc_state_root_, mc_state_->get_block_id(), mc_blkid_, *validator_auth_chain_, shard_,
+      validator_set_->get_catchain_seqno(), now_, id_.seqno()};
+
+  auto admitted = tos::auth::assemble_registry_authority(facts);
+  if (admitted.ok()) {
+    auto authority = std::shared_ptr<tos::auth::NativeConfigTransaction>(std::move(admitted.value()));
+    host = std::shared_ptr<vm::ValidatorAuthHost>(authority, &authority->host());
+    return true;
   }
 
-  auto authority = std::shared_ptr<tos::auth::NativeConfigTransaction>(std::move(admitted.value()));
-  host = std::shared_ptr<vm::ValidatorAuthHost>(authority, &authority->host());
-  return true;
+  auto bound = tos::auth::assemble_election_binding_authority(facts);
+  if (bound.ok()) {
+    auto authority = std::shared_ptr<tos::auth::NativeElectionBindingTransaction>(std::move(bound.value()));
+    host = std::shared_ptr<vm::ValidatorAuthHost>(authority, &authority->host());
+    return true;
+  }
+
+  return false;
 }
 
 bool ValidateQuery::CheckAccountTxs::check_one_transaction(block::Account& account, tos::LogicalTime lt,
@@ -6220,7 +6231,7 @@ bool ValidateQuery::CheckAccountTxs::check_one_transaction(block::Account& accou
   // Assembled for this message and owned by this transaction. The shared
   // compute configuration is read-only from here on, which is what makes
   // checking accounts in parallel actors safe.
-  vq_.offer_validator_auth(in_msg_root, external, trs->validator_auth_host);
+  vq_.offer_validator_auth(in_msg_root, trs->validator_auth_host);
   td::RealCpuTimer timer;
   SCOPE_EXIT {
     ctx_.work_time.trx_tvm += trs->time_tvm;

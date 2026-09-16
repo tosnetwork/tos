@@ -3398,15 +3398,13 @@ bool Collator::create_ticktock_transaction(const tos::StdSmcAddress& smc_addr, t
  * chain that has no registry update in flight.
  *
  * @param msg_root The root of the inbound message.
- * @param external True if the message is an external one.
  * @param host Receives the assembled authority, or nothing.
  *
  * @returns True if an authority was assembled.
  */
-bool Collator::offer_validator_auth(Ref<vm::Cell> msg_root, bool external,
-                                    std::shared_ptr<vm::ValidatorAuthHost>& host) {
+bool Collator::offer_validator_auth(Ref<vm::Cell> msg_root, std::shared_ptr<vm::ValidatorAuthHost>& host) {
   host.reset();
-  if (!external || !is_masterchain() || !params_.validator_auth || config_ == nullptr || mc_state_.is_null() ||
+  if (!is_masterchain() || !params_.validator_auth || config_ == nullptr || mc_state_.is_null() ||
       mc_state_root.is_null() || params_.validator_set.is_null()) {
     return false;
   }
@@ -3416,21 +3414,36 @@ bool Collator::offer_validator_auth(Ref<vm::Cell> msg_root, bool external,
   // same facts. A refusal is the ordinary answer: almost every message reaching
   // here is not a registry update, and one that is either carries the finality
   // its approval relies on or is not executable for anyone.
-  auto admitted = tos::auth::assemble_registry_authority(
-      {msg_root, config_.get(), mc_state_root, mc_state_->get_block_id(), mc_block_id_,
+  // Which authority a message gets is decided by the message. An update
+  // arrives as an external message carrying evidence; an elected set arrives as
+  // an internal message from the elector. Asking each assembler in turn lets
+  // the shape answer, rather than a flag the caller passes alongside it -- a
+  // caller that classified messages itself would be a second reading of what
+  // the assemblers already read, free to disagree with them.
+  const tos::auth::CollationAuthorityInputs facts{msg_root, config_.get(), mc_state_root, mc_state_->get_block_id(), mc_block_id_,
        params_.validator_auth.value().chain, shard_, params_.validator_set->get_catchain_seqno(), now_,
-       new_block_seqno});
-  if (!admitted.ok()) {
-    return false;
+       new_block_seqno};
+
+  auto admitted = tos::auth::assemble_registry_authority(facts);
+  if (admitted.ok()) {
+    // The returned pointer aliases an owning one, so the control block keeps
+    // the whole authority alive for exactly as long as something can reach the
+    // host that borrows from it. Nothing else has to hold it, and nothing has
+    // to remember to let it go: the transaction it is handed to is its
+    // lifetime.
+    auto authority = std::shared_ptr<tos::auth::NativeConfigTransaction>(std::move(admitted.value()));
+    host = std::shared_ptr<vm::ValidatorAuthHost>(authority, &authority->host());
+    return true;
   }
 
-  // The returned pointer aliases an owning one, so the control block keeps the
-  // whole authority alive for exactly as long as something can reach the host
-  // that borrows from it. Nothing else has to hold it, and nothing has to
-  // remember to let it go: the transaction it is handed to is its lifetime.
-  auto authority = std::shared_ptr<tos::auth::NativeConfigTransaction>(std::move(admitted.value()));
-  host = std::shared_ptr<vm::ValidatorAuthHost>(authority, &authority->host());
-  return true;
+  auto bound = tos::auth::assemble_election_binding_authority(facts);
+  if (bound.ok()) {
+    auto authority = std::shared_ptr<tos::auth::NativeElectionBindingTransaction>(std::move(bound.value()));
+    host = std::shared_ptr<vm::ValidatorAuthHost>(authority, &authority->host());
+    return true;
+  }
+
+  return false;
 }
 
 /**
@@ -3498,7 +3511,7 @@ Ref<vm::Cell> Collator::create_ordinary_transaction(Ref<vm::Cell> msg_root,
   }
   set_current_tx_storage_dict(*acc);
   std::shared_ptr<vm::ValidatorAuthHost> validator_auth_host;
-  offer_validator_auth(msg_root, external, validator_auth_host);
+  offer_validator_auth(msg_root, validator_auth_host);
   auto res = impl_create_ordinary_transaction(msg_root, acc, now_, start_lt, &storage_phase_cfg_, &compute_phase_cfg_,
                                               &action_phase_cfg_, &serialize_cfg_, external, after_lt, &stats_,
                                               std::move(validator_auth_host));

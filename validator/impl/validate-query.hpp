@@ -340,8 +340,7 @@ class ValidateQuery : public td::actor::Actor {
   // it writes nothing here: the authority leaves through the argument and is
   // owned by the transaction that receives it, which is what lets account
   // checkers run concurrently against one shared compute configuration.
-  bool offer_validator_auth(Ref<vm::Cell> msg_root, bool external,
-                            std::shared_ptr<vm::ValidatorAuthHost>& host) const;
+  bool offer_validator_auth(Ref<vm::Cell> msg_root, std::shared_ptr<vm::ValidatorAuthHost>& host) const;
   void after_get_storage_stat_cache(td::Result<std::function<td::Ref<vm::Cell>(const td::Bits256&)>> res,
                                     td::PerfLogAction token);
   void after_get_shard_state(int idx, td::Result<Ref<ShardState>> res, td::PerfLogAction token);
