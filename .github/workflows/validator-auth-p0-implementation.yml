@@ -827,8 +827,17 @@ jobs:
             "$ELECTOR_TMP/elector-code.boc" | tee artifacts/elector-contract.txt
           python3 test/validator-auth-implementation/elector_contract_mutations.py \
             --build build-p0 --out artifacts/elector-contract-mutations
+          ELECTION_TMP="$(mktemp -d)"
+          build-p0/crypto/func -PS -o "$ELECTION_TMP/config-code.fif" \
+            crypto/smartcont/stdlib.fc crypto/smartcont/config-code.fc
+          printf '"Asm.fif" include\n"%s" include\n2 boc+>B "%s" B>file\n' \
+            "$ELECTION_TMP/config-code.fif" "$ELECTION_TMP/config-code.boc" > "$ELECTION_TMP/assemble.fif"
+          build-p0/crypto/fift -I crypto/fift/lib -s "$ELECTION_TMP/assemble.fif"
           build-p0/test/validator-auth-implementation/test-p0-election-e2e \
-            "$ELECTOR_TMP/elector-code.boc" artifacts/owner-transactions-mc | tee artifacts/election-e2e.txt
+            "$ELECTOR_TMP/elector-code.boc" artifacts/owner-transactions-mc \
+            "$ELECTION_TMP/config-code.boc" | tee artifacts/election-e2e.txt
+          python3 test/validator-auth-implementation/election_e2e_mutations.py \
+            --build build-p0 --owner artifacts/owner-transactions-mc --out artifacts/election-e2e-mutations
           git diff --exit-code
 
       - name: Declare every finalized read before executing

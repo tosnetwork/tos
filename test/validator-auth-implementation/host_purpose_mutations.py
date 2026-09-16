@@ -20,6 +20,10 @@ from pathlib import Path
 SOURCE = Path("validator/auth/native-election-binding-host.cpp")
 BINARY = Path("build-p0/test/validator-auth-implementation/test-p0-host-purpose")
 REFUSAL = '  refuse_instruction("P0 native transaction context required");'
+SETTLE = ("  work_remaining_ = registry.value().remaining();\n"
+          "  charge(as_gas(consumed(before, work_remaining_, gas_per_entry_, gas_per_byte_)));\n")
+REFUSE = '  if (!bound.ok())\n    refuse_host("native binding refused");\n'
+
 
 
 def scoped(text: str, signature: str) -> str:
@@ -36,9 +40,17 @@ def main() -> int:
     original = SOURCE.read_text()
     mutations = [
         ("state-refused", "election-binding-host-refuses-state",
-         scoped(original, "td::Ref<vm::Cell> NativeElectionBindingHost::checkpoint(")),
+         scoped(original, "td::Ref<vm::Cell> NativeElectionBindingHost::checkpoint("), REFUSAL, "  return {};", []),
         ("apply-refused", "election-binding-host-refuses-apply",
-         scoped(original, "td::Ref<vm::Cell> NativeElectionBindingHost::apply(")),
+         scoped(original, "td::Ref<vm::Cell> NativeElectionBindingHost::apply("), REFUSAL, "  return {};", []),
+        # Settling the meter only after the outcome is known: the shape the
+        # binding path had, where every refusal read the registry for free and
+        # the next attempt began from the same allowance.
+        ("work-survives-refusal", "a-refused-binding-still-charges",
+         scoped(original, "td::Ref<vm::Cell> NativeElectionBindingHost::bind("),
+         SETTLE + "\n" + REFUSE,
+         REFUSE + "\n" + SETTLE,
+         ["repeated-refusals-exhaust-the-allowance"]),
     ]
 
     def build() -> bool:
@@ -60,10 +72,10 @@ def main() -> int:
 
     records, failures = [], 0
     try:
-        for guard, case, body in mutations:
+        for guard, case, body, before, after, companions in mutations:
             assert original.count(body) == 1, guard
-            assert body.count(REFUSAL) == 1, guard
-            changed = original.replace(body, body.replace(REFUSAL, "  return {};"), 1)
+            assert body.count(before) == 1, (guard, "anchor")
+            changed = original.replace(body, body.replace(before, after), 1)
             SOURCE.write_text(changed)
             reached = SOURCE.read_text() == changed
             compiled = build()
@@ -76,12 +88,13 @@ def main() -> int:
             restored = build() and all(outcomes().values())
             record = {"guard": guard, "case": case, "edit_reached_source": reached, "compiled": compiled,
                       "every_case_reported": complete, "cases_broken": broke,
-                      "only_the_named_case_broke": broke == [case], "restored_baseline": restored,
+                      "declared_companions": companions,
+                      "only_declared_cases_broke": case in broke and set(broke) <= {case, *companions}, "restored_baseline": restored,
                       "source_unchanged": SOURCE.read_text() == original}
             records.append(record)
             print(json.dumps(record), flush=True)
             if not all(record[key] for key in ("edit_reached_source", "compiled", "every_case_reported",
-                                               "only_the_named_case_broke", "restored_baseline", "source_unchanged")):
+                                               "only_declared_cases_broke", "restored_baseline", "source_unchanged")):
                 failures += 1
     finally:
         SOURCE.write_text(original)

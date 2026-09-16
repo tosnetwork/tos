@@ -12,8 +12,13 @@ class NativeRegistryBlock {
 
  public:
   static Result<NativeRegistryBlock> begin(const NativeRegistry&, std::uint32_t coordinate, StateReadBudget = {});
+  // `work_remaining`, when given, receives what this transaction's reads left
+  // of the allowance -- on refusal as well as on acceptance. The reads happen
+  // either way, and a caller that could only learn about them on success would
+  // let a refusal be free: arranging for the last step to fail would read the
+  // registry for nothing. State rolls back on refusal; work does not.
   Result<NativeRegistryBlock> apply_transaction(const Update&, const Authorizations&, const NativeIdentityContext&,
-                                                ObjectReader&) const;
+                                                ObjectReader&, StateReadBudget* work_remaining = nullptr) const;
   const NativeRegistry& state() const {
     return accepted_;
   }

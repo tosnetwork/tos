@@ -41,7 +41,12 @@ td::Ref<vm::Cell> NativeConfigHost::apply(td::Ref<vm::Cell> update, td::Ref<vm::
   auto before = accepted_.state().remaining();
   // Applied against the accepted prefix, never against a prefix a failed
   // transaction left behind.
-  auto next = accepted_.apply_transaction(decoded_update.value(), admitted_, context_, reader_);
+  auto performed = before;
+  auto next = accepted_.apply_transaction(decoded_update.value(), admitted_, context_, reader_, &performed);
+  // Charged for what the attempt read, before knowing whether it was accepted.
+  // A refusal rolls the registry back; it does not roll back the work, or a
+  // caller could read the registry for free by arranging to fail at the end.
+  charge(as_gas(consumed(before, performed, gas_per_entry_, gas_per_byte_)));
   if (!next.ok())
     refuse_host("native update refused");
 
@@ -58,8 +63,6 @@ td::Ref<vm::Cell> NativeConfigHost::apply(td::Ref<vm::Cell> update, td::Ref<vm::
   if (!encoded.ok())
     refuse_host("native registry state");
 
-  auto after = next.value().state().remaining();
-  charge(as_gas(consumed(before, after, gas_per_entry_, gas_per_byte_)));
   // Staged only after every step succeeded, so a refusal above cannot have
   // advanced the prefix.
   accepted_ = std::move(next.value());

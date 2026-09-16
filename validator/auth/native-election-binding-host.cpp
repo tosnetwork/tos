@@ -22,6 +22,8 @@ td::Ref<vm::Cell> NativeElectionBindingHost::bind(td::Ref<vm::Cell> elected, td:
                                                   const Charge& charge) {
   if (elected.is_null() || bindings.is_null())
     refuse_host("native binding operand");
+  // Kept for the join's mutation to hand back in place of the bound set.
+  auto elected_was = elected;
 
   auto before = work_remaining_;
   // The registry state cell, which is what a view decodes. The checkpoint
@@ -46,14 +48,20 @@ td::Ref<vm::Cell> NativeElectionBindingHost::bind(td::Ref<vm::Cell> elected, td:
     refuse_host("native binding encoding");
 
   auto bound = bind_elected_validators(std::move(elected), declared.value(), registry.value(), coordinate_);
-  if (!bound.ok())
-    refuse_host("native binding refused");
 
-  // Taken back from the view, which is where the reads actually happened. The
-  // state's own budget is untouched by them, so reading it here reported no
-  // work regardless of how much was done.
+  // Settled before the outcome is known. The reads happened either way -- the
+  // binder walks members until one fails, and a set whose last member is wrong
+  // has already cost almost as much as one that succeeds. Taking the meter back
+  // only on success would make every refusal free and let the next attempt
+  // start from the same allowance again.
+  //
+  // Taken from the view, which is where the reads actually happened: the
+  // state's own budget is untouched by them and would report no work at all.
   work_remaining_ = registry.value().remaining();
   charge(as_gas(consumed(before, work_remaining_, gas_per_entry_, gas_per_byte_)));
+
+  if (!bound.ok())
+    refuse_host("native binding refused");
   ++bindings_;
   return bound.value();
 }
