@@ -3576,7 +3576,10 @@ bool Collator::offer_validator_auth(Ref<vm::Cell> msg_root, std::shared_ptr<vm::
     auto authority = std::shared_ptr<tos::auth::NativeElectionBindingTransaction>(std::move(bound.value()));
     host = std::shared_ptr<vm::ValidatorAuthHost>(authority, &authority->host());
     validator_auth_claim_ = [authority] {
-      return tos::auth::NativeCommitClaim::staged(authority->host_state().staged());
+      // A binding transaction changes parameter 36, not the registry, so the
+      // claim carries the set the instruction returned as well as the prefix.
+      return tos::auth::NativeCommitClaim::bound(authority->host_state().staged(),
+                                                 authority->host_state().bound());
     };
     return true;
   }

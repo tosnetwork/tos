@@ -12,17 +12,30 @@ Hash hash(td::Ref<vm::Cell> cell) {
   return result;
 }
 
-// Parameter 46 as the account currently holds it, by the same lookup every
-// consumer of the parameter performs. A missing parameter is not an error here:
-// a chain whose registry has never been installed has none, and the sequence
-// reports that as the zero hash rather than refusing to read the account.
-Hash committed_registry(td::Ref<vm::Cell> configuration) {
+// One configuration parameter as the account currently holds it, by the same
+// lookup every consumer of that parameter performs. A missing parameter is not
+// an error here: a chain whose registry has never been installed has none, and
+// a chain between elections has no pending set, so both are reported as the
+// zero hash rather than refusing to read the account.
+Hash committed_parameter(td::Ref<vm::Cell> configuration, long long index) {
   if (configuration.is_null())
     return Hash{};
   vm::Dictionary parameters{std::move(configuration), 32};
-  return hash(parameters.lookup_ref(td::BitArray<32>{(long long)46}));
+  return hash(parameters.lookup_ref(td::BitArray<32>{index}));
 }
 }  // namespace
+
+Result<NativeCommitClaim> NativeCommitClaim::bound(const NativeRegistryBlock& candidate,
+                                                   td::Ref<vm::Cell> validators) {
+  auto claim = staged(candidate);
+  if (!claim.ok())
+    return claim.error();
+  if (validators.is_null())
+    return Error{"commit-claim-validators"};
+  claim.value().binds_ = true;
+  claim.value().validators_ = hash(std::move(validators));
+  return claim;
+}
 
 Result<NativeCommitClaim> NativeCommitClaim::staged(const NativeRegistryBlock& candidate) {
   auto registry = candidate.state().encode_cell();
@@ -60,11 +73,17 @@ Result<bool> NativeConfigSequence::promote(const NativeCommitClaim& claim, td::R
   auto committed = read_configuration_account(committed_data);
   if (!committed.ok())
     return committed.error();
+  // A bound set is checked before anything about the registry, because a
+  // binding transaction does not move the registry at all: the whole of what it
+  // changed is parameter 36, so a check placed after the "nothing to install"
+  // return would never run for the transaction it is about.
+  if (claim.binds() && claim.validators() != committed_parameter(committed.value().configuration, 36))
+    return Error{"config-sequence-validators"};
   auto accepted_registry = accepted_.state().encode_cell();
   if (!accepted_registry.ok())
     return accepted_registry.error();
 
-  const auto installed = committed_registry(committed.value().configuration);
+  const auto installed = committed_parameter(committed.value().configuration, 46);
   const auto standing = hash(accepted_registry.value());
   if (installed == standing) {
     // Nothing to install. A host that accepted a different prefix and a

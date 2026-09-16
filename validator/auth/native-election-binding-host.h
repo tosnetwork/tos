@@ -31,6 +31,10 @@ class NativeElectionBindingHost final : public vm::ValidatorAuthHost {
   // starts where the first stopped rather than from a full allowance.
   StateReadBudget work_remaining_;
   std::uint64_t gas_per_entry_, gas_per_byte_;
+  // The set the instruction handed back, kept so the commit can be compared
+  // against it. What a contract was given and what it then installed are two
+  // facts, and nothing joined them.
+  td::Ref<vm::Cell> bound_;
   unsigned bindings_ = 0;
 
  public:
@@ -53,6 +57,9 @@ class NativeElectionBindingHost final : public vm::ValidatorAuthHost {
   // "it re-derived the parent's registry" look identical from outside.
   const NativeRegistryBlock& staged() const {
     return accepted_;
+  }
+  td::Ref<vm::Cell> bound() const {
+    return bound_;
   }
   unsigned bindings() const {
     return bindings_;

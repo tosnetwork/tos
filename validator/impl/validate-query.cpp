@@ -5830,7 +5830,10 @@ bool ValidateQuery::offer_validator_auth(Ref<vm::Cell> msg_root, const tos::auth
   if (bound.ok()) {
     auto authority = std::shared_ptr<tos::auth::NativeElectionBindingTransaction>(std::move(bound.value()));
     host = std::shared_ptr<vm::ValidatorAuthHost>(authority, &authority->host());
-    claim = [authority] { return tos::auth::NativeCommitClaim::staged(authority->host_state().staged()); };
+    claim = [authority] {
+      // A binding transaction changes parameter 36, not the registry.
+      return tos::auth::NativeCommitClaim::bound(authority->host_state().staged(), authority->host_state().bound());
+    };
     return true;
   }
 

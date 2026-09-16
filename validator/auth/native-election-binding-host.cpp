@@ -63,6 +63,7 @@ td::Ref<vm::Cell> NativeElectionBindingHost::bind(td::Ref<vm::Cell> elected, td:
   if (!bound.ok())
     refuse_host("native binding refused");
   ++bindings_;
-  return bound.value();
+  bound_ = bound.value();
+  return bound_;
 }
 }  // namespace tos::auth

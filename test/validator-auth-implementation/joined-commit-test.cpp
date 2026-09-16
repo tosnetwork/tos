@@ -58,12 +58,16 @@ td::Ref<vm::Cell> account_data(const td::Ref<vm::Cell>& configuration, const td:
   return d.finalize();
 }
 
-// The same dictionary with parameter 46 replaced, which is the only way the
-// account's registry ever moves.
-td::Ref<vm::Cell> with_registry(const td::Ref<vm::Cell>& configuration, const td::Ref<vm::Cell>& registry) {
+// The same dictionary with one parameter replaced, which is the only way the
+// account's registry or its pending set ever moves.
+td::Ref<vm::Cell> with_parameter(const td::Ref<vm::Cell>& configuration, long long index,
+                                 const td::Ref<vm::Cell>& value) {
   vm::Dictionary parameters{configuration, 32};
-  check(parameters.set_ref(td::BitArray<32>{46}, registry), "fixture-parameter-46");
+  check(parameters.set_ref(td::BitArray<32>{index}, value), "fixture-parameter");
   return parameters.get_root_cell();
+}
+td::Ref<vm::Cell> with_registry(const td::Ref<vm::Cell>& configuration, const td::Ref<vm::Cell>& registry) {
+  return with_parameter(configuration, 46, registry);
 }
 
 // A refusal, and the reason for it.
@@ -104,6 +108,8 @@ int main() {
         "joined-later-transaction-opens-on-the-committed-prefix",
         "joined-due-only-block-persists-prefix",
         "joined-state-authority-is-only-for-the-configuration-account",
+        "joined-installed-set-is-the-one-the-instruction-returned",
+        "joined-bound-set-the-contract-replaced-refused",
     };
     for (const auto* name : manifest)
       std::cout << "MANIFEST " << name << '\n';
@@ -327,6 +333,33 @@ int main() {
       auto other = NativeConfigStateTransaction::open(sequence, h(901));
       report(mine.ok() && !other.ok() && other.error().code == "native-state-transaction-account",
              "joined-state-authority-is-only-for-the-configuration-account");
+    }
+
+    // An elected set is the other thing the configuration contract installs,
+    // and it is the same join: the instruction hands back a bound set and the
+    // contract writes parameter 36. A binding transaction moves no registry at
+    // all, so every check about parameter 46 passes for it whatever it wrote --
+    // which is why the set has to be bound on its own.
+    {
+      auto sequence = value(context_fixture::begin_sequence(fixture, inclusion), "fixture-sequence");
+      auto validators = vm::CellBuilder().store_long(0x12, 8).store_long(4242, 32).finalize();
+      auto claim = value(NativeCommitClaim::bound(sequence.accepted(), validators), "fixture-bound-claim");
+      auto installed = account_data(with_parameter(configuration, 36, validators), fixture.checkpoint);
+      auto promoted = sequence.promote(claim, installed);
+      report(promoted.ok() && !promoted.value(), "joined-installed-set-is-the-one-the-instruction-returned");
+    }
+
+    // The contract was handed one set and installed another. Nothing about the
+    // registry is wrong, and both halves are well formed on their own.
+    {
+      auto sequence = value(context_fixture::begin_sequence(fixture, inclusion), "fixture-sequence");
+      auto handed = vm::CellBuilder().store_long(0x12, 8).store_long(4242, 32).finalize();
+      auto written = vm::CellBuilder().store_long(0x12, 8).store_long(9999, 32).finalize();
+      auto claim = value(NativeCommitClaim::bound(sequence.accepted(), handed), "fixture-bound-claim");
+      auto installed = account_data(with_parameter(configuration, 36, written), fixture.checkpoint);
+      auto promoted = sequence.promote(claim, installed);
+      report(refused(promoted, "config-sequence-validators") && sequence.promoted() == 0,
+             "joined-bound-set-the-contract-replaced-refused");
     }
 
     std::cout << "SUMMARY cases=" << passed + failed << " passed=" << passed << '\n';

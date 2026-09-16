@@ -17,6 +17,9 @@ class NativeCommitClaim {
   std::optional<NativeRegistryBlock> candidate_;
   Hash registry_{};    // the candidate's parameter-46 encoding
   Hash checkpoint_{};  // the candidate's account checkpoint
+  // The elected set the instruction returned, when this transaction bound one.
+  bool binds_ = false;
+  Hash validators_{};
   NativeCommitClaim(NativeRegistryBlock candidate, Hash registry, Hash checkpoint)
       : authorized_(true)
       , candidate_(std::move(candidate))
@@ -33,6 +36,11 @@ class NativeCommitClaim {
   // The two hashes are the ones the commit is compared against, so computing
   // them anywhere else would be the second description again.
   static Result<NativeCommitClaim> staged(const NativeRegistryBlock&);
+  // The same, for a transaction that also bound an elected set. The registry
+  // does not move -- binding reads it and changes nothing -- but the set the
+  // instruction returned is what the contract must install, and a contract
+  // that was handed one set and wrote another is the join this catches.
+  static Result<NativeCommitClaim> bound(const NativeRegistryBlock&, td::Ref<vm::Cell> validators);
 
   bool authorized() const {
     return authorized_;
@@ -42,6 +50,12 @@ class NativeCommitClaim {
   }
   const Hash& checkpoint() const {
     return checkpoint_;
+  }
+  bool binds() const {
+    return binds_;
+  }
+  const Hash& validators() const {
+    return validators_;
   }
   // Only meaningful when authorized(); the sequence checks that first.
   const NativeRegistryBlock& candidate() const {
@@ -135,6 +149,8 @@ class NativeConfigSequence {
   //                              parameter must be exactly the candidate's,
   //                              and the committed checkpoint must be the
   //                              candidate's checkpoint.
+  //   a set was bound          -> the committed parameter 36 must be exactly
+  //                              the set the instruction returned.
   //
   // Refusal leaves the sequence exactly where it was, so a transaction that
   // could not be bound does not move the prefix for the ones after it.

@@ -34,6 +34,8 @@ UNAUTHORIZED = ('  if (!claim.authorized())\n'
                 '    return Error{"config-sequence-unauthorized"};\n')
 REGISTRY = ('  if (claim.registry() != installed)\n'
             '    return Error{"config-sequence-registry"};\n')
+VALIDATORS = ('  if (claim.binds() && claim.validators() != committed_parameter(committed.value().configuration, 36))\n'
+              '    return Error{"config-sequence-validators"};\n')
 CHECKPOINT = ('  if (claim.checkpoint() != hash(committed.value().checkpoint))\n'
               '    return Error{"config-sequence-checkpoint"};\n')
 # Opening from the parent state instead of the sequence: exactly what every
@@ -71,6 +73,11 @@ def main() -> int:
         # The parameter agrees and its second home does not. This is the pair
         # that made the registry unreadable one block after the first update.
         (SEQUENCE, "wrong-checkpoint-accepted", "joined-checkpoint-mismatch-refused", CHECKPOINT, "", []),
+        # The contract handed one elected set and installing another. A binding
+        # transaction moves no registry, so every parameter-46 check passes for
+        # it whatever it wrote -- this is the only thing standing there.
+        (SEQUENCE, "wrong-validator-set-accepted", "joined-bound-set-the-contract-replaced-refused",
+         VALIDATORS, "", []),
         # A transaction that re-derives its prefix from the parent state. It
         # opens, it binds, and it is holding a registry this block already
         # replaced -- which is why the case reads the opened transaction's own
