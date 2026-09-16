@@ -34,6 +34,8 @@ UNAUTHORIZED = ('  if (!claim.authorized())\n'
                 '    return Error{"config-sequence-unauthorized"};\n')
 REGISTRY = ('  if (claim.registry() != installed)\n'
             '    return Error{"config-sequence-registry"};\n')
+PSEUDO = ('  if (index < 0)\n'
+          '    return Error{"proposal-parameter-index"};\n')
 PARAMETER = ('    if (!cs.fetch_int_to(32, declared) || declared != index)\n'
              '      return Error{"proposal-parameter"};\n')
 COMPARE = ('    if (cs.fetch_ulong(1) != 1)\n'
@@ -106,6 +108,7 @@ def main() -> int:
         # Each thing the operation and its proposal have to agree about. The
         # commit comparison is only as good as this binding: it checks that the
         # installed value matches the delta, and the delta comes from here.
+        (SEQUENCE, "pseudo-action-admitted", "joined-privileged-pseudo-action-refused", PSEUDO, "", []),
         (SEQUENCE, "proposal-parameter-unchecked", "joined-proposal-for-another-parameter-refused",
          PARAMETER, '    if (!cs.fetch_int_to(32, declared))\n      return Error{"proposal-parameter"};\n', []),
         (SEQUENCE, "proposal-compare-optional", "joined-proposal-without-a-compare-and-swap-refused",

@@ -29,7 +29,7 @@
     "doc/validator-auth-p0/transport.schema.json": "ddd45d7d3eb672559efde020af95a0e215146775ec82f8c6847b0f3ab8127584",
     "doc/validator-auth-p0/wire.tl": "a5e10c8e25887cb30440a26a0d8cbcef1473878aeb87438cca1a0f0bc6875c15",
     "doc/validator-auth-p0/wire.tlb": "923650bd74bbbf677a070d1d13d7c12d46944e8bffbfc3a72641093d20d3ce9d",
-    "doc/validator-auth-p0-native-insertions.json": "2b2a32c25ace1dfa5708c1bc54756398af914f671cb1fbcde224ba8f859423f0",
+    "doc/validator-auth-p0-native-insertions.json": "0ebc61a6cfd12cbff924546d71e86aee543161f24dff261877e41b7b1a4dc8d3",
     "test/validator-auth-p0/README.md": "a0b0950c4ac702f8be0f34919a50f8e7b13d5d14dda3bd2cc05b4c8ffee31321",
     "test/validator-auth-p0/api.py": "9ec50bf9e19345ef54a8894a3525eba1eed8fb10412b8a3fdc1ed1c5728fb815",
     "test/validator-auth-p0/archive_evidence.py": "22bb392a561068e0fb3905ce7e8df95bab463468cdfe3be884eff19b12481409",
@@ -202,6 +202,15 @@
       "change": "Renamed the contract helper that reports whether a proposal is awaiting governance, dropping a phase label from its name.",
       "scope": "One identifier inside already-declared insertions. No executable behaviour changes, no original contract byte is affected, and every insertion remains declared at its original offset.",
       "reason": "A phase name in an identifier says when the code was written rather than what it does, and stops being true when the phase does.",
+      "activation": "Unchanged. No suite is allocated, no network is configured, and the version-16 activation gates and listed approvals remain independent thresholds that this does not satisfy."
+    },
+    {
+      "artifact": "doc/validator-auth-p0-native-insertions.json",
+      "previous_sha256": "2b2a32c25ace1dfa5708c1bc54756398af914f671cb1fbcde224ba8f859423f0",
+      "sha256": "0ebc61a6cfd12cbff924546d71e86aee543161f24dff261877e41b7b1a4dc8d3",
+      "change": "Moved the existing acceptance rules of a governance finalization ahead of accept_message, so a finalization the conditions refuse is decided inside the credit an external message already has.",
+      "scope": "Statement order inside one already-declared insertion. No original contract byte is affected, every insertion remains declared at its original offset, and a chain that has not activated reaches the original paths unaltered.",
+      "reason": "The request is unsigned and replayable, and these conditions can refuse a finalization whose governance is valid -- the parameter moved since the vote, or it is mandatory, or it is critical and the vote was not. Accepting first made the configuration account pay again for every replay of a request that could never have succeeded. The successful path still reaches acceptance inside the masterchain credit; that is measured rather than assumed.",
       "activation": "Unchanged. No suite is allocated, no network is configured, and the version-16 activation gates and listed approvals remain independent thresholds that this does not satisfy."
     }
   ],

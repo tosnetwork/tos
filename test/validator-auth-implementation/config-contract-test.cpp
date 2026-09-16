@@ -370,11 +370,25 @@ td::Ref<vm::Cell> registry_body(const RegistryCells& cells, td::Ref<vm::Cell> pr
   return canonical_cell(b.finalize());
 }
 
+// The execution an external message gets before it is accepted. Production
+// derives it from configuration parameters 20 and 21; what matters to a case
+// about ordering is that it is a real bound and far smaller than the account's,
+// so a run that only fits by being accepted first cannot pass.
+// The credit an external message runs on before it accepts, as the zerostate
+// installs it for the masterchain: gas_price, gas_limit, special_gas_limit,
+// then this.
+constexpr long long external_gas_credit = 10000;
+
 struct Outcome {
   int exit = -1000;
   td::Ref<vm::Cell> data, committed_data;
   bool committed = false;
   long long gas = 0;
+  // Whether the run reached accept_message. An external message runs on a
+  // credit until it accepts; accepting raises the ceiling and zeroes the
+  // credit, so a credit still standing at the end is a run that never accepted
+  // and therefore never committed the account to paying.
+  bool accepted = false;
   // The action list. A vote's result reaches the outside only as the tag of the
   // confirmation the contract sends, so a case about what a voter is told has
   // nothing else to read.
@@ -446,7 +460,8 @@ Outcome run_contract(const td::Ref<vm::Cell>& contract, const td::Ref<vm::Cell>&
                      std::uint32_t now, Host* host, td::uint64 capabilities, int version,
                      bool external = false, td::Ref<vm::Cell> registry = {}, long long gas_limit = 1000000,
                      bool config8_active = false, td::Ref<vm::Cell> checkpoint = {},
-                     const unsigned char* voting_key = nullptr, td::Ref<vm::Cell> votes = {}) {
+                     const unsigned char* voting_key = nullptr, td::Ref<vm::Cell> votes = {},
+                     long long credit = 0) {
   expect(contract.not_null(), "contract-loaded");
   auto config = configuration(std::move(registry), config8_active, voting_key);
   auto message = external ? external_message(body) : internal_message(from, body);
@@ -467,13 +482,20 @@ Outcome run_contract(const td::Ref<vm::Cell>& contract, const td::Ref<vm::Cell>&
   try {
     // Flag 1 initializes c3 from the built contract. An external entry needs
     // selector -1, not the internal selector 0 used by the election cases.
-    vm::VmState state{contract, version, std::move(stack), vm::GasLimits{gas_limit, gas_limit}, 1, data, {},
-                      {}, registers, capabilities};
+    // With a credit the run starts with no limit of its own, exactly as an
+    // unaccepted external message does: everything before accept_message has to
+    // With a credit the run starts with no limit of its own, exactly as an
+    // unaccepted external message does: everything before accept_message has to
+    // fit in the credit, and accepting is what raises the ceiling to the limit.
+    // A credit still standing at the end is therefore a run that never accepted.
+    auto gas = credit ? vm::GasLimits{0, gas_limit, credit} : vm::GasLimits{gas_limit, gas_limit};
+    vm::VmState state{contract, version, std::move(stack), gas, 1, data, {}, {}, registers, capabilities};
     if (host)
       state.set_validator_auth_host(std::shared_ptr<vm::ValidatorAuthHost>(host, [](vm::ValidatorAuthHost*) {}));
     const int exit = ~state.run();
-    return {exit,          state.get_c4(), state.get_committed_state().c4,
-            state.committed(), state.gas_consumed(), state.get_committed_state().c5};
+    const bool accepted = credit != 0 && state.get_gas_limits().gas_credit == 0;
+    return {exit,          state.get_c4(),      state.get_committed_state().c4,
+            state.committed(), state.gas_consumed(), accepted, state.get_committed_state().c5};
   } catch (const vm::VmFatal&) {
     return {};
   }
@@ -581,8 +603,9 @@ Outcome run_ticktock(const td::Ref<vm::Cell>& contract, Host* host, td::uint64 c
     if (host)
       state.set_validator_auth_host(std::shared_ptr<vm::ValidatorAuthHost>(host, [](vm::ValidatorAuthHost*) {}));
     const int exit = ~state.run();
-    return {exit,          state.get_c4(), state.get_committed_state().c4,
-            state.committed(), state.gas_consumed(), state.get_committed_state().c5};
+    // A tick-tock is never an external message, so there is no credit to model.
+    return {exit,          state.get_c4(),      state.get_committed_state().c4,
+            state.committed(), state.gas_consumed(), true, state.get_committed_state().c5};
   } catch (const vm::VmFatal&) {
     return {};
   }
@@ -835,6 +858,101 @@ std::vector<Case> cases(const td::Ref<vm::Cell>& contract) {
          // status marked awaiting governance and a later attempt can use it.
          expect(run.exit == 53 && !run.committed, "a-refused-finalization-leaves-the-proposal");
          expect(run.committed_data.is_null(), "a-refused-finalization-leaves-the-proposal");
+       }},
+      // And it never accepts the message. The conditions that refused it can
+      // refuse a finalization whose governance is perfectly valid -- the
+      // parameter moved since the vote, or it is mandatory, or it is critical
+      // and this was not a critical vote -- and the request is unsigned, so
+      // anyone can replay it. Accepting first would make the configuration
+      // account pay each time for a request that could never have succeeded.
+      //
+      // The gas limit here is the credit an unaccepted external message runs
+      // on, not the account's. A run that reached accept_message would exceed
+      // it and fail differently, which is what distinguishes "refused inside
+      // the credit" from "refused after the account was committed to paying".
+      {"a-refused-finalization-never-accepts", [=] {
+         auto cells = registry_cells();
+         auto host = registry_host(cells);
+         auto value = vm::CellBuilder().store_long(0x5151, 16).finalize();
+         auto wrong = cell_hash_of(vm::CellBuilder().store_long(0x9999, 16).finalize());
+         auto proposal = config_proposal(17, value, &wrong);
+         auto votes = vote_dictionary(proposal, voter_public(), 255, false);
+         auto run = run_contract(contract, registry_body(cells, proposal), 0, 1000, &host,
+                                 vm::validator_auth_capability, vm::validator_auth_min_version, true, {}, 1000000,
+                                 true, {}, voter_public(), votes, external_gas_credit);
+         expect(run.exit == 53, "a-refused-finalization-never-accepts");
+         expect(!run.accepted, "a-refused-finalization-never-accepts");
+         expect(!run.committed && run.committed_data.is_null(), "a-refused-finalization-never-accepts");
+       }},
+      // The other half of moving the conditions before the acceptance: a
+      // finalization that should succeed has to still reach accept_message
+      // inside the credit an external message runs on before it is accepted.
+      // Refusing early is only an improvement if the valid path still fits.
+      //
+      // Measured rather than asserted from a constant: the case reports what
+      // the successful run consumed up to and including the instruction that
+      // stages the checkpoint, and requires real headroom under the credit. If
+      // this ever fails the answer is the gas this operation is allocated, not
+      // moving the conditions back after the account is committed to paying.
+      // The other half of moving the conditions before the acceptance: a
+      // finalization that should succeed must still reach accept_message inside
+      // the credit an external message runs on before it is accepted. Refusing
+      // early is only an improvement if the valid path still fits.
+      //
+      // What it needs is found rather than asserted from a constant, which
+      // would be a claim about a build that may no longer exist: the credit is
+      // raised until the run accepts, and the answer is compared with the
+      // network's. The ordinary registry update is measured beside it so a
+      // regression in one is not read as the cost of the other.
+      //
+      // If this ever fails, the answer is the gas this operation is allocated.
+      // Moving the conditions back after the account is committed to paying
+      // would hide a pre-accept budget problem behind account-paid execution.
+      {"a-valid-finalization-reaches-accept-with-real-gas-credit", [=] {
+         const auto needed = [&](bool finalizing) {
+           auto value = vm::CellBuilder().store_long(0x5151, 16).finalize();
+           auto proposal = config_proposal(17, value);
+           for (long long credit = 500; credit <= external_gas_credit * 8; credit += 250) {
+             auto cells = registry_cells();
+             auto host = registry_host(cells);
+             auto votes = finalizing ? vote_dictionary(proposal, voter_public(), 255, false) : td::Ref<vm::Cell>{};
+             auto run = run_contract(contract, registry_body(cells, finalizing ? proposal : td::Ref<vm::Cell>{}), 0,
+                                     1000, &host, vm::validator_auth_capability, vm::validator_auth_min_version,
+                                     true, {}, 1000000, true, {}, finalizing ? voter_public() : nullptr, votes,
+                                     credit);
+             if (run.accepted)
+               return credit;
+           }
+           return -1LL;
+         };
+         const auto finalization = needed(true), update = needed(false);
+         std::cerr << "MEASURE registry_update_credit=" << update << " finalization_credit=" << finalization
+                   << " network_credit=" << external_gas_credit << '\n';
+         expect(update > 0 && finalization > 0, "a-valid-finalization-reaches-accept-with-real-gas-credit");
+         // It fits, and the margin is reported rather than asserted against a
+         // number chosen here. How much margin is enough is a statement about
+         // the worst registry this operation can be asked to walk, which the
+         // host's read budget bounds and this fixture does not exercise; a
+         // threshold invented to match one measurement would go green at any
+         // later cost that still squeaked under it.
+         expect(finalization < external_gas_credit,
+                "a-valid-finalization-reaches-accept-with-real-gas-credit");
+
+         // And the run that fits actually installs both halves.
+         auto cells = registry_cells();
+         auto host = registry_host(cells);
+         auto value = vm::CellBuilder().store_long(0x5151, 16).finalize();
+         auto proposal = config_proposal(17, value);
+         auto votes = vote_dictionary(proposal, voter_public(), 255, false);
+         auto run = run_contract(contract, registry_body(cells, proposal), 0, 1000, &host,
+                                 vm::validator_auth_capability, vm::validator_auth_min_version, true, {}, 1000000,
+                                 true, {}, voter_public(), votes, external_gas_credit);
+         expect(run.exit == 0 && run.committed && run.accepted,
+                "a-valid-finalization-reaches-accept-with-real-gas-credit");
+         expect(same_cell(installed_parameter(run.committed_data, 17), value),
+                "a-valid-finalization-reaches-accept-with-real-gas-credit");
+         expect(same_cell(installed_parameter(run.committed_data, 46), cells.after),
+                "a-valid-finalization-reaches-accept-with-real-gas-credit");
        }},
       // A proposal that has not completed normal voting is not finalizable: the
       // governing quorum is the second gate, not a way around the first.

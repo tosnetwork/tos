@@ -711,17 +711,24 @@ int register_voting_proposal(slice cs, int msg_value) impure inline_ref {
       throw_unless(51, expires > now());
       throw_unless(52, awaiting_governance?(rest));
       var finalized = vauth_apply_update(update, evidence);
+      ;; The conditions the vote was taken under, decided before the message is
+      ;; accepted. They can refuse a finalization whose governance is perfectly
+      ;; valid -- the parameter moved since the vote, or it is mandatory, or it
+      ;; is critical and this was not a critical vote -- and such a request is
+      ;; unsigned and replayable by anyone. Accepting first would make the
+      ;; configuration account pay, over and over, for a request that could
+      ;; never have succeeded. Refusing here leaves it inside the credit the
+      ;; external sender already had.
+      (cfg_dict, var param_id, var param_val) = accept_proposal(cfg_dict, proposal, critical?);
+      throw_unless(53, param_id);
       registry_checkpoint = vauth_registry_state();
       accept_message();
       stored_seqno = (stored_seqno + 1) % (1 << 32);
-      ;; Consumed here so that a finalization which succeeds cannot be run
-      ;; twice. One that the acceptance rules below refuse throws instead, and a
-      ;; throw commits nothing at all: the parameter, the registry and the
-      ;; proposal are all left exactly as they were, and the proposal is still
-      ;; awaiting governance for a later attempt.
+      ;; Consumed so a finalization that succeeds cannot be run twice. One the
+      ;; conditions refused threw above and committed nothing at all, so the
+      ;; parameter, the registry and the proposal are all left as they were and
+      ;; the proposal is still awaiting governance for a later attempt.
       vote_dict~udict_delete?(256, phash);
-      (cfg_dict, var param_id, var param_val) = accept_proposal(cfg_dict, proposal, critical?);
-      throw_unless(53, param_id);
       ;; Both parameters are set in this dictionary rather than through
       ;; set_conf_param, which rewrites the account from get_data(): the store
       ;; below would put this dictionary back over it, and the registry would be

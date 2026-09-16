@@ -36,6 +36,12 @@ struct ConfigurationDelta {
 //
 // An operation that takes no proposal must not carry one: a message whose extra
 // cell nobody examined is a message whose shape nobody checked.
+//
+// The index must be a configuration parameter. The contract reads negative
+// identifiers as privileged actions of their own -- installing code, replacing
+// the elector, changing the configuration key -- whose effects this operation
+// names nothing about, and which the delta below cannot bind because there is
+// no dictionary entry to compare.
 Result<ConfigurationDelta> bind_configuration_proposal(const Update&, const td::Ref<vm::Cell>& proposal);
 
 // What one transaction's privileged host authorized, carried out of the

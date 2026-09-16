@@ -128,6 +128,7 @@ int main() {
         "joined-proposal-on-an-operation-that-takes-none-refused",
         "joined-governance-operation-without-a-proposal-refused",
         "joined-absent-parameter-is-a-stated-zero-condition",
+        "joined-privileged-pseudo-action-refused",
     };
     for (const auto* name : manifest)
       std::cout << "MANIFEST " << name << '\n';
@@ -553,6 +554,16 @@ int main() {
       report(created.ok() && created.value().previous == absent && deleted.ok() &&
                  deleted.value().proposed == absent,
              "joined-absent-parameter-is-a-stated-zero-condition");
+
+      // The contract reads a negative identifier as a privileged action of its
+      // own -- installing code, replacing the elector, changing the
+      // configuration key. Those have effects this operation names nothing
+      // about, and the delta cannot bind them because there is no dictionary
+      // entry to compare on either side of the transaction.
+      report(!bind_configuration_proposal(operation(-1000, condition, cell_hash(value_cell)),
+                                          proposal(-1000, value_cell, &condition))
+                  .ok(),
+             "joined-privileged-pseudo-action-refused");
     }
 
     std::cout << "SUMMARY cases=" << passed + failed << " passed=" << passed << '\n';

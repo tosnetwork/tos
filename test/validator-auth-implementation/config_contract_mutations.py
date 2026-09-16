@@ -65,6 +65,20 @@ REGISTRY_KEPT = """      cfg_dict~idict_set_ref(32, 46, finalized);
 """
 PROPOSAL_CONSUMED = """      vote_dict~udict_delete?(256, phash);
 """
+# Accepting before the conditions are decided. The request is unsigned and
+# replayable, and these conditions can refuse a finalization whose governance is
+# perfectly valid, so accepting first makes the configuration account pay again
+# for every replay of a request that could never have succeeded.
+ACCEPT_AFTER_RULES = """      (cfg_dict, var param_id, var param_val) = accept_proposal(cfg_dict, proposal, critical?);
+      throw_unless(53, param_id);
+      registry_checkpoint = vauth_registry_state();
+      accept_message();
+"""
+ACCEPT_BEFORE_RULES = """      registry_checkpoint = vauth_registry_state();
+      accept_message();
+      (cfg_dict, var param_id, var param_val) = accept_proposal(cfg_dict, proposal, critical?);
+      throw_unless(53, param_id);
+"""
 RV_EARLY = """  if (validator_auth_active()) {
     if (awaiting_governance?(rest)) {
       return (vote_dict, null(), 3);
@@ -120,7 +134,8 @@ MUTATIONS = [
       "a-completed-vote-installs-nothing-under-governance", "a-terminal-proposal-takes-no-further-votes",
       "a-terminal-proposal-survives-a-tick-tock-scan", "an-inactive-chain-installs-on-the-threshold",
       "a-governance-operation-finalizes-a-completed-proposal", "a-proposal-still-in-voting-is-not-finalizable",
-      "an-unknown-proposal-is-not-finalizable", "a-refused-finalization-leaves-the-proposal"]),
+      "an-unknown-proposal-is-not-finalizable", "a-refused-finalization-leaves-the-proposal",
+      "a-refused-finalization-never-accepts", "a-valid-finalization-reaches-accept-with-real-gas-credit"]),
     ("checkpoint-restaged", "a-registry-update-stores-the-staged-checkpoint", STAGED,
      "    accept_message();\n", [], "() recv_external(slice in_msg) impure {"),
     ("checkpoint-restaged-on-finalization", "a-governance-operation-finalizes-a-completed-proposal",
@@ -157,8 +172,11 @@ MUTATIONS = [
      FOUND_REQUIRED, "", [], "() recv_external(slice in_msg) impure {"),
     # And the two halves of the one commit. The registry set in this dictionary
     # rather than through set_conf_param is what survives the store below.
+    ("accept-before-final-configuration-rules", "a-refused-finalization-never-accepts",
+     ACCEPT_AFTER_RULES, ACCEPT_BEFORE_RULES, [], "() recv_external(slice in_msg) impure {"),
     ("registry-lost-to-the-store", "a-governance-operation-finalizes-a-completed-proposal",
-     REGISTRY_KEPT, "", [], "() recv_external(slice in_msg) impure {"),
+     REGISTRY_KEPT, "", ["a-valid-finalization-reaches-accept-with-real-gas-credit"],
+     "() recv_external(slice in_msg) impure {"),
     ("finalized-proposal-not-consumed", "a-governance-operation-finalizes-a-completed-proposal",
      PROPOSAL_CONSUMED, "", [], "() recv_external(slice in_msg) impure {"),
     ("sentinel-is-the-threshold", "a-completed-vote-installs-nothing-under-governance", SENTINEL,

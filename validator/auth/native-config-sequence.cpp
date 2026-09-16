@@ -44,6 +44,15 @@ Result<ConfigurationDelta> bind_configuration_proposal(const Update& update, con
   r.hash(proposed);
   if (!r.ok())
     return Error{"proposal-operand"};
+  // A configuration parameter, not one of the negative identifiers the
+  // contract treats as privileged actions of their own -- installing code,
+  // replacing the elector, changing the configuration key. Those have effects
+  // this operation names nothing about: the delta below binds one dictionary
+  // entry's hash before and after, and for a pseudo-action there is no such
+  // entry to bind. Inheriting them here would authorize an effect the commit
+  // cannot check.
+  if (index < 0)
+    return Error{"proposal-parameter-index"};
 
   try {
     // cfg_proposal#f3 param_id:int32 param_value:(Maybe ^Cell)
