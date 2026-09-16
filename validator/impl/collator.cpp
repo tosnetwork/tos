@@ -23,6 +23,7 @@
 #include <ctime>
 
 #include "adnl/utils.hpp"
+#include "auth/native-collation-authority.h"
 #include "auth/native-config-context.h"
 #include "auth/native-history.h"
 #include "auth/native-registry-admission.h"
@@ -3409,29 +3410,13 @@ bool Collator::offer_validator_auth(Ref<vm::Cell> msg_root, bool external, const
     return false;
   }
 
-  // Which account is the configuration account is read the same way the
-  // authority inputs read it, bound to this state; a second reading here would
-  // be a second source that nothing compares.
-  auto configuration = tos::auth::declared_configuration_account(*config_, mc_state_root);
-  if (!configuration.ok()) {
-    return false;
-  }
-
-  CatchainSeqno established_catchain = 0;
-  auto established_validators = config_->compute_validator_set_cc(shard_, now_, &established_catchain);
-  if (established_validators.empty()) {
-    return false;
-  }
-
-  auto inputs = tos::auth::gather_registry_admission_inputs(
-      msg_root, configuration.value(), mc_state_root, mc_state_->get_block_id(), mc_block_id_,
-      params_.validator_auth.value().chain, shard_, established_catchain,
-      params_.validator_set->get_catchain_seqno(), new_block_seqno);
-  if (!inputs.ok()) {
-    return false;
-  }
-
-  auto admitted = tos::auth::admit_registry_message(inputs.value(), *params_.validator_auth.value().anchors);
+  // One assembler, called here and by validation, so a validator rebuilds the
+  // authority this block was produced with rather than a second reading of the
+  // same facts.
+  auto admitted = tos::auth::assemble_registry_authority(
+      {msg_root, config_.get(), mc_state_root, mc_state_->get_block_id(), mc_block_id_,
+       params_.validator_auth.value().chain, params_.validator_auth.value().anchors.get(), shard_,
+       params_.validator_set->get_catchain_seqno(), now_, new_block_seqno});
   if (!admitted.ok()) {
     // A refusal is not an error to report: almost every message reaching here
     // is simply not a registry update. Only a deferral tells us something, and
