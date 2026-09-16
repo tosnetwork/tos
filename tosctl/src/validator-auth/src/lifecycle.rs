@@ -23,6 +23,123 @@ pub trait LifecycleAuthority {
         identity: &Identity,
         inclusion: u32,
     ) -> Result<bool, Error>;
+    /// A global operation names no identity, so no identity's keys authorize
+    /// it. The governing committee's current-policy quorum does.
+    ///
+    /// The anchor the governing snapshot was derived from is returned rather
+    /// than read again by the caller. The activation a policy operation writes
+    /// binds that same anchor, so the record and the authority that admitted it
+    /// are one fact: a caller cannot stamp an activation with an anchor that
+    /// did not authorize it, because it never holds a second one.
+    fn governance(
+        &self,
+        update: &Update,
+        evidence: &Authorizations,
+        current_policy: &Hash,
+        inclusion: u32,
+    ) -> Result<Anchor, Error>;
+}
+/// What one update in a block produced. A block may interleave per-identity
+/// and global operations and their order is replayed, so one callback decides
+/// which it was rather than two that would each have to be asked.
+pub enum BlockChange {
+    Identity(IdentityChange),
+    Global(GlobalChange),
+}
+/// What a global operation produces. The registry has no identity to replace,
+/// so the effect is named rather than folded into one.
+pub struct GlobalChange {
+    pub policy: Policy,
+    pub activation: Activation,
+    pub global: Identity,
+}
+/// What a global operation reads from the state it is applied to, gathered by
+/// the caller that holds it rather than passed piecemeal.
+pub struct GlobalContext<'a> {
+    pub current_policy: &'a Hash,
+    pub in_force: &'a Policy,
+    pub global: &'a Identity,
+    pub latest: Option<&'a Activation>,
+}
+/// Apply one zero-identity operation.
+///
+/// Operation 4 only. Operation 6 names a configuration parameter and a proposed
+/// cell by hash, and the frozen rules require the governing quorum *and* the
+/// normal configuration vote; nothing carries an authorization across the rounds
+/// of that vote to the block that installs the result, so admitting one here
+/// would decide a rule rather than apply one.
+pub fn apply_global_update(
+    update: &Update,
+    evidence: &Authorizations,
+    state: &GlobalContext<'_>,
+    inclusion: u32,
+    authority: &impl LifecycleAuthority,
+) -> Result<GlobalChange, Error> {
+    let GlobalContext { current_policy, in_force, global, latest } = *state;
+    if update.operation == 6 {
+        return Err(Error("global-configuration-unimplemented"));
+    }
+    if update.operation != 4 || update.identity != [0; 32] {
+        return Err(Error("global-target"));
+    }
+    if update.old_key != [0; 32]
+        || !update.new_key.is_empty()
+        || !update.operation_data.is_empty()
+        || update.new_policy.is_empty()
+    {
+        return Err(Error("global-shape"));
+    }
+    if &update.previous != current_policy {
+        return Err(Error("global-predecessor"));
+    }
+    if update.nonce < global.next_nonce || update.nonce == u64::MAX {
+        return Err(Error("nonce"));
+    }
+    let policy: Policy = decode(&update.new_policy)?;
+    if policy.effective_from != update.effective_from {
+        return Err(Error("global-effective-coordinate"));
+    }
+    if policy.effective_from <= inclusion
+        || policy.effective_from == u32::MAX
+        || policy.effective_from.checked_sub(inclusion).is_none_or(|delay| delay > MAX_DELAY)
+    {
+        return Err(Error("global-effective-coordinate"));
+    }
+    if policy.effective_from <= in_force.effective_from {
+        return Err(Error("global-policy-order"));
+    }
+    if policy.previous != object_id("policy", in_force)? {
+        return Err(Error("global-policy-predecessor"));
+    }
+    if in_force.revision.checked_add(1) != Some(policy.revision) {
+        return Err(Error("global-policy-revision"));
+    }
+    let anchor = authority.governance(update, evidence, current_policy, inclusion)?;
+    if anchor.seqno >= policy.effective_from {
+        return Err(Error("global-activation-checkpoint"));
+    }
+    let previous = match latest {
+        Some(a) => object_id("activation", a)?,
+        None => [0; 32],
+    };
+    let revision = match latest {
+        Some(a) => a.revision.checked_add(1).ok_or(Error("global-activation-revision"))?,
+        None => 1,
+    };
+    let activation = Activation {
+        revision,
+        previous,
+        next_policy: object_id("policy", &policy)?,
+        effective_from: policy.effective_from,
+        checkpoint_seqno: anchor.seqno,
+        checkpoint_root: anchor.root,
+        checkpoint_file: anchor.file,
+        checkpoint_state: anchor.state,
+    };
+    let mut record = global.clone();
+    record.identity = [0; 32];
+    record.next_nonce = update.nonce.checked_add(1).ok_or(Error("nonce"))?;
+    Ok(GlobalChange { policy, activation, global: record })
 }
 pub struct IdentityChange {
     pub identity: Identity,

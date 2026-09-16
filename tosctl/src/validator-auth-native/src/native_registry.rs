@@ -11,8 +11,8 @@ use tos_validator_auth::{
     codec::{decode, encode, Error, Hash, Wire},
     crypto::object_id,
     lifecycle::{
-        apply_due_transitions, apply_identity_update, IdentityChange, KeyHistory, KeySlot,
-        LifecycleAuthority,
+        apply_due_transitions, apply_global_update, apply_identity_update, BlockChange,
+        GlobalChange, GlobalContext, KeyHistory, KeySlot, LifecycleAuthority,
     },
     transfer::ObjectReader,
     types::*,
@@ -118,6 +118,112 @@ impl NativeRegistry {
         need(b.entries != 0 && bytes <= b.bytes, "state-resource")?;
         b.entries = b.entries.checked_sub(1).ok_or(Error("state-resource"))?;
         b.bytes = b.bytes.checked_sub(bytes).ok_or(Error("state-resource"))?;
+        Ok(())
+    }
+    /// The same read for the height-keyed indexes. The activation index is
+    /// keyed by its effective coordinate rather than by a hash, and reading it
+    /// through the 256-bit helper would address the wrong dictionary.
+    fn read_at<T: Wire>(&self, root: Cell, key: &[u8; 4]) -> Result<T, Error> {
+        self.charge(0)?;
+        let leaf = native(dict(root, 32)?.get(bits(key)?))?.ok_or(Error("unknown-entry"))?;
+        need(leaf.remaining_bits() == 0 && leaf.remaining_references() == 1, "dictionary-shape")?;
+        let mut b = self.budget.try_borrow_mut().map_err(|_| Error("registry-reentry"))?;
+        let bytes = cells::unpack_bytes(native(leaf.reference(0))?, b.bytes.min(32768))?;
+        b.bytes = b.bytes.checked_sub(bytes.len()).ok_or(Error("state-resource"))?;
+        decode(&bytes)
+    }
+    /// The pieces a global operation needs, gathered from this registry.
+    fn global_context_parts(&self) -> Result<(Policy, Identity, Option<Activation>), Error> {
+        let in_force: Policy = self.read(self.policies.clone(), &self.policy)?;
+        let global = self.identity(&[0; 32]).unwrap_or_default();
+        let mut parts = ordinary(self.control.clone())?;
+        need(native(parts.get_next_u32())? == 0x7661_6331, "control-shape")?;
+        let activations = native(parts.checked_drain_reference())?;
+        // The newest activation is the one at the greatest effective height.
+        // Walking the index is what keeps this bounded by the entries actually
+        // present rather than by the whole control cell.
+        let mut highest: Option<[u8; 4]> = None;
+        let mut failure = Error("activation-dictionary");
+        let complete = native(dict(activations.clone(), 32)?.iterate_slices(|mut key, _| {
+            let step = (|| -> Result<(), Error> {
+                if key.remaining_bits() != 32 {
+                    return Err(Error("activation-dictionary"));
+                }
+                let raw = native(key.get_next_bits(32))?;
+                let mut bytes = [0u8; 4];
+                bytes.copy_from_slice(&raw[..4]);
+                if highest.is_none_or(|best| best < bytes) {
+                    highest = Some(bytes);
+                }
+                Ok(())
+            })();
+            match step {
+                Ok(()) => Ok(true),
+                Err(e) => {
+                    failure = e;
+                    Ok(false)
+                }
+            }
+        }))?;
+        need(complete, failure.0)?;
+        let latest = match highest {
+            Some(key) => Some(self.read_at::<Activation>(activations, &key)?),
+            None => None,
+        };
+        Ok((in_force, global, latest))
+    }
+    pub(crate) fn apply_global(
+        &self,
+        update: &Update,
+        evidence: &Authorizations,
+        at: u32,
+        authority: &impl LifecycleAuthority,
+    ) -> Result<GlobalChange, Error> {
+        let (in_force, global, latest) = self.global_context_parts()?;
+        apply_global_update(
+            update,
+            evidence,
+            &GlobalContext {
+                current_policy: &self.policy,
+                in_force: &in_force,
+                global: &global,
+                latest: latest.as_ref(),
+            },
+            at,
+            authority,
+        )
+    }
+    /// Write what a global operation produced: the policy, the activation keyed
+    /// on its effective height, the height index the next block selects from,
+    /// and the zero-identity record holding the global nonce.
+    fn install_global(&mut self, change: &GlobalChange) -> Result<(), Error> {
+        let policy_id = object_id("policy", &change.policy)?;
+        self.policies = self.put(self.policies.clone(), &policy_id, &change.policy, true)?;
+        let key = change.policy.effective_from.to_be_bytes();
+        let mut schedule = dict(self.schedule.clone(), 32)?;
+        let mut value = BuilderData::new();
+        native(value.append_raw(&policy_id, 256))?;
+        need(native(schedule.set_builder(bits(&key)?, &value))?.is_none(), "policy-index")?;
+        self.schedule = wrap(&schedule)?;
+        let mut parts = ordinary(self.control.clone())?;
+        need(native(parts.get_next_u32())? == 0x7661_6331, "control-shape")?;
+        let activations = native(parts.checked_drain_reference())?;
+        let observations = native(parts.checked_drain_reference())?;
+        let raw = encode(&change.activation)?;
+        self.charge(raw.len())?;
+        let mut acts = dict(activations, 32)?;
+        let at_key = change.activation.effective_from.to_be_bytes();
+        need(
+            native(acts.setref(bits(&at_key)?, cells::pack_bytes(&raw)?))?.is_none(),
+            "activation-key",
+        )?;
+        let mut control = BuilderData::new();
+        native(control.append_u32(0x7661_6331))?;
+        native(control.checked_append_reference(wrap(&acts)?))?;
+        native(control.checked_append_reference(observations))?;
+        self.control = native(control.into_cell())?;
+        let existing = self.identity(&[0; 32]).is_ok();
+        self.identities = self.put(self.identities.clone(), &[0; 32], &change.global, !existing)?;
         Ok(())
     }
     fn read<T: Wire>(&self, root: Cell, id: &Hash) -> Result<T, Error> {
@@ -232,7 +338,12 @@ impl NativeRegistry {
         &self,
         at: u32,
         updates: &[(Update, Authorizations)],
-        apply: impl FnMut(&Self, &Identity, &Update, &Authorizations) -> Result<IdentityChange, Error>,
+        apply: impl FnMut(
+            &Self,
+            Option<&Identity>,
+            &Update,
+            &Authorizations,
+        ) -> Result<BlockChange, Error>,
         budget: StateReadBudget,
     ) -> Result<Self, Error> {
         need(
@@ -283,17 +394,29 @@ impl NativeRegistry {
     fn apply_updates(
         next: &mut Self,
         updates: &[(Update, Authorizations)],
+        // One closure rather than two: a second would need the same &mut
+        // reader, which Rust will not allow, and deciding which kind of
+        // operation this is is what the block is doing anyway.
         mut apply: impl FnMut(
             &Self,
-            &Identity,
+            Option<&Identity>,
             &Update,
             &Authorizations,
-        ) -> Result<IdentityChange, Error>,
+        ) -> Result<BlockChange, Error>,
     ) -> Result<(), Error> {
         for (update, evidence) in updates {
-            need(update.identity != [0; 32], "unknown-identity")?;
+            if update.identity == [0; 32] {
+                match apply(next, None, update, evidence)? {
+                    BlockChange::Global(effect) => next.install_global(&effect)?,
+                    BlockChange::Identity(_) => return Err(Error("global-target")),
+                }
+                continue;
+            }
             let before = next.identity(&update.identity)?;
-            let effect = apply(next, &before, update, evidence)?;
+            let effect = match apply(next, Some(&before), update, evidence)? {
+                BlockChange::Identity(effect) => effect,
+                BlockChange::Global(_) => return Err(Error("operation-target")),
+            };
             if let Some(key) = effect.archived_key {
                 next.keys = next.put(next.keys.clone(), &object_id("key", &key)?, &key, true)?;
                 epoch_put(&mut next.epochs, &key)?;
@@ -316,7 +439,15 @@ impl NativeRegistry {
             at,
             updates,
             |current, identity, update, evidence| {
-                apply_identity_update(identity, current, update, evidence, at, authority)
+                if update.identity == [0; 32] {
+                    return Ok(BlockChange::Global(
+                        current.apply_global(update, evidence, at, authority)?,
+                    ));
+                }
+                let identity = identity.ok_or(Error("unknown-identity"))?;
+                Ok(BlockChange::Identity(apply_identity_update(
+                    identity, current, update, evidence, at, authority,
+                )?))
             },
             budget,
         )
@@ -338,7 +469,15 @@ impl NativeRegistry {
             |current, identity, update, evidence| {
                 let authority = NativeLifecycleAuthority::new(current, context, reader);
                 authority.validate_context()?;
-                apply_identity_update(identity, current, update, evidence, at, &authority)
+                if update.identity == [0; 32] {
+                    return Ok(BlockChange::Global(
+                        current.apply_global(update, evidence, at, &authority)?,
+                    ));
+                }
+                let identity = identity.ok_or(Error("unknown-identity"))?;
+                Ok(BlockChange::Identity(apply_identity_update(
+                    identity, current, update, evidence, at, &authority,
+                )?))
             },
             budget,
         )
@@ -423,7 +562,23 @@ impl NativeRegistryBlock {
             |view, identity, update, evidence| {
                 let authority = NativeLifecycleAuthority::new(view, context, reader);
                 authority.validate_context()?;
-                apply_identity_update(identity, view, update, evidence, view.coordinate, &authority)
+                if update.identity == [0; 32] {
+                    return Ok(BlockChange::Global(view.apply_global(
+                        update,
+                        evidence,
+                        view.coordinate,
+                        &authority,
+                    )?));
+                }
+                let identity = identity.ok_or(Error("unknown-identity"))?;
+                Ok(BlockChange::Identity(apply_identity_update(
+                    identity,
+                    view,
+                    update,
+                    evidence,
+                    view.coordinate,
+                    &authority,
+                )?))
             },
         )?;
         accepted.revision =

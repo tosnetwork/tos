@@ -359,9 +359,12 @@ Result<std::vector<Key>> select_identity_keys(const Identity& state, const KeyHi
 }
 
 Result<GlobalChange> apply_global_update(const Update& update, const Authorizations& evidence,
-                                         const CurrentRegistry& current, const Policy& current_policy,
-                                         const Identity& global, const Activation* latest, std::uint32_t inclusion,
+                                         const GlobalContext& state, std::uint32_t inclusion,
                                          const LifecycleAuthority& authority) {
+  const auto& current = state.current;
+  const auto& current_policy = state.in_force;
+  const auto& global = state.global;
+  const auto* latest = state.latest;
   // Operation 6 is refused here rather than further in. Its authority is the
   // same quorum, but installing a configuration parameter additionally requires
   // the normal configuration vote, and nothing carries this authorization to

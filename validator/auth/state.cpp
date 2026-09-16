@@ -416,7 +416,7 @@ Result<GlobalChange> RegistryState::apply_global(const Update& update, const Aut
   if (existing != identities_.end())
     global = existing->second;
   const Activation* latest = activations_.empty() ? nullptr : &activations_.rbegin()->second;
-  return apply_global_update(update, evidence, *this, in_force->second, global, latest, at, authority);
+  return apply_global_update(update, evidence, {*this, in_force->second, global, latest}, at, authority);
 }
 
 Result<RegistryState> RegistryState::apply_identity_block(std::uint32_t at,

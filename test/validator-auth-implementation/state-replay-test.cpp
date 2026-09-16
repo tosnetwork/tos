@@ -22,9 +22,18 @@ class Authority final : public LifecycleAuthority {
   Result<bool> administration(const IdentityAuth&, const Update&, const Identity&, std::uint32_t) const override {
     return deny != 3;
   }
+  // The anchor a governing snapshot was derived from. It is exported with the
+  // case rather than recomputed on each side: the independent implementation
+  // has to stamp the activation with the same one, and two derivations of it
+  // would be the second source this corpus exists to rule out.
+  static Anchor anchor() {
+    return Anchor{4, h(7001), h(7101), h(7201)};
+  }
   Result<Anchor> governance(const Update&, const Authorizations&, const CurrentRegistry&,
                             std::uint32_t) const override {
-    return Error{"fixture-governance"};
+    if (deny == 4)
+      return Error{"fixture-governance"};
+    return anchor();
   }
 };
 std::pair<Update, Authorizations> request(const RegistryState& registry, unsigned identity, unsigned role,
@@ -125,6 +134,10 @@ int main(int argc, char** argv) {
         for (unsigned i = 0; i < updates.size(); ++i) {
           write(prefix + ".update" + std::to_string(i), value(encode(updates[i].first), "update"));
           write(prefix + ".auth" + std::to_string(i), value(encode(updates[i].second), "evidence"));
+          // Written only for the cases that need it, so a replay that reads one
+          // is a replay that had a global operation to authorize.
+          if (updates[i].first.identity_ == Hash{})
+            write(prefix + ".governance", value(encode(Authority::anchor()), "governance-anchor"));
         }
       }
       ++count;
@@ -200,6 +213,23 @@ int main(int argc, char** argv) {
     auto after_due = value(before.apply_block(4, {}, Authority{}), "due-preview");
     auto after_update = request(after_due, 2, 1, 4, 3);
     run(before, 4, {after_update}, true, "due-before-request");
+    // A zero-identity policy operation, so the independent implementation
+    // replays one too. Its activation is stamped with the exported anchor,
+    // which is the only value both sides can read rather than derive.
+    {
+      auto policy = value(initial.policy_at(0), "global-current-policy");
+      policy.revision_ += 1;
+      policy.previous_ = initial.current_policy();
+      policy.effective_from_ = Authority::anchor().seqno_ + 2;
+      Update global;
+      global.operation_ = 4;
+      global.nonce_ = 0;
+      global.previous_ = initial.current_policy();
+      global.effective_from_ = policy.effective_from_;
+      global.new_policy_ = value(encode(policy), "global-policy-bytes");
+      run(initial, 1, {{global, {}}}, true, "global-policy-operation");
+      run(initial, 1, {{global, {}}}, false, "global-policy-refused-authority", 4);
+    }
     // Externally authenticated checkpoints retain control records and policy history.
     auto p = initial.policies().begin()->second;
     p.revision_ = 2;

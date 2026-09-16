@@ -72,7 +72,12 @@ fn run() -> Result<(), String> {
             )?;
             let history =
                 History { anchor: decode::<Anchor>(&read("anchor")?)?, available: n(2)? == 1 };
-            let context = NativeIdentityContext { chain, governing: &governing, history: &history };
+            let context = NativeIdentityContext {
+                chain,
+                governing: &governing,
+                history: &history,
+                governing_anchor: Anchor::default(),
+            };
             let mut updates = Vec::new();
             for j in 0..n(3)? {
                 updates.push((

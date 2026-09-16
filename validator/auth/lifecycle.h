@@ -52,6 +52,14 @@ struct GlobalChange {
   Activation activation;
   Identity global;  // the zero-identity record, with its nonce advanced
 };
+// What a global operation reads from the state it is applied to, gathered by
+// the caller that holds it rather than passed piecemeal.
+struct GlobalContext {
+  const CurrentRegistry& current;
+  const Policy& in_force;
+  const Identity& global;
+  const Activation* latest;
+};
 // Apply one zero-identity operation.
 //
 // Operation 4 only. Operation 6 names a configuration parameter and a proposed
@@ -59,10 +67,8 @@ struct GlobalChange {
 // configuration voting for it; nothing yet carries an authorization across the
 // rounds of that vote to the block that installs the result, so admitting one
 // here would decide a rule rather than apply one.
-Result<GlobalChange> apply_global_update(const Update&, const Authorizations&, const CurrentRegistry&,
-                                         const Policy& current_policy, const Identity& global,
-                                         const Activation* latest, std::uint32_t inclusion,
-                                         const LifecycleAuthority&);
+Result<GlobalChange> apply_global_update(const Update&, const Authorizations&, const GlobalContext&,
+                                         std::uint32_t inclusion, const LifecycleAuthority&);
 // Read-only staging admission: all lifecycle and owner/admin checks, with PoP
 // absent. No successor state escapes before the final apply verifies actual PoP.
 Result<bool> validate_stage_update(const Identity&, const KeyHistory&, const Update&, const Authorizations&,

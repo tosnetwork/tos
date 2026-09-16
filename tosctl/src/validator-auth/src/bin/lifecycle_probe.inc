@@ -13,6 +13,10 @@ fn lifecycle_probe(args:&[String])->Result<(),Error> {
         fn owner(&self,_:&OwnerAuth,_:&Update,_:&Identity)->Result<bool,Error>{Ok(self.0!="owner")}
         fn possession(&self,_:&PossessionAuth,_:&Update,_:&Key)->Result<bool,Error>{Ok(self.0!="possession")}
         fn administration(&self,_:&IdentityAuth,_:&Update,_:&Identity,_:u32)->Result<bool,Error>{Ok(self.0!="administration")}
+        // Global operations are outside what this probe authorizes. Refusing
+        // explicitly keeps a fixture from silently admitting an operation it
+        // was never built to reason about.
+        fn governance(&self,_:&Update,_:&Authorizations,_:&Hash,_:u32)->Result<Anchor,Error>{Err(Error("fixture-governance"))}
     }
     let mut archive=History(BTreeMap::new());
     for entry in fs::read_dir(&args[3]).map_err(|_|Error("fixture-archive"))? {

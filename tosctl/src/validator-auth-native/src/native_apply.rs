@@ -1,3 +1,4 @@
+use crate::governance::verify_current_governance;
 use crate::{owner_proof::verify_owner_execution, registry::RegistryState};
 use std::cell::RefCell;
 use tos_validator_auth::{
@@ -5,7 +6,9 @@ use tos_validator_auth::{
     context::{
         admin_session_id, make_duty, verify_identity_certificate, verify_possession, ChainContext,
     },
-    lifecycle::{apply_identity_update, select_identity_keys, KeyHistory, LifecycleAuthority},
+    lifecycle::{
+        apply_identity_update, select_identity_keys, BlockChange, KeyHistory, LifecycleAuthority,
+    },
     transfer::ObjectReader,
     types::*,
     verify::RegistrySnapshot,
@@ -19,6 +22,10 @@ pub struct NativeIdentityContext<'a, H> {
     pub chain: ChainContext,
     pub governing: &'a RegistrySnapshot,
     pub history: &'a H,
+    /// The authenticated masterchain anchor the governing snapshot was derived
+    /// from. A policy operation stamps its activation with this, so the record
+    /// and the authority that admitted it name one fact rather than two.
+    pub governing_anchor: Anchor,
 }
 pub trait CurrentRegistry: KeyHistory {
     fn lookup_identity(&self, id: &Hash) -> Result<Option<Identity>, Error>;
@@ -86,6 +93,29 @@ impl<
         S: CurrentRegistry,
     > LifecycleAuthority for NativeLifecycleAuthority<'_, '_, F, H, S>
 {
+    fn governance(
+        &self,
+        update: &Update,
+        evidence: &Authorizations,
+        _current_policy: &Hash,
+        inclusion: u32,
+    ) -> Result<Anchor, Error> {
+        self.validate_context()?;
+        verify_current_governance(
+            &self.context.chain,
+            self.context.governing,
+            self.current,
+            update,
+            evidence,
+            inclusion,
+            *self.reader.borrow_mut(),
+        )?;
+        let anchor = &self.context.governing_anchor;
+        if anchor.root == [0; 32] || anchor.file == [0; 32] || anchor.state == [0; 32] {
+            return Err(Error("governance-anchor"));
+        }
+        Ok(anchor.clone())
+    }
     fn owner(
         &self,
         proof: &OwnerAuth,
@@ -153,8 +183,15 @@ pub fn apply_native_identity_block<
     parent.apply_identity_block(inclusion, updates, |current, update, evidence| {
         let authority = NativeLifecycleAuthority::new(current, context, reader);
         authority.validate_context()?;
+        if update.identity == [0; 32] {
+            return Ok(BlockChange::Global(
+                current.apply_global(update, evidence, inclusion, &authority)?,
+            ));
+        }
         let identity =
             current.identities().get(&update.identity).ok_or(Error("unknown-identity"))?;
-        apply_identity_update(identity, current, update, evidence, inclusion, &authority)
+        Ok(BlockChange::Identity(apply_identity_update(
+            identity, current, update, evidence, inclusion, &authority,
+        )?))
     })
 }

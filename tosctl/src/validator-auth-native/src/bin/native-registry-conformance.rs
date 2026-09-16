@@ -1,5 +1,6 @@
 use std::{collections::BTreeMap, env, fs, path::Path};
 use tos_validator_auth::{
+    codec,
     codec::{decode, Error},
     lifecycle::{KeyHistory, LifecycleAuthority},
     types::*,
@@ -8,7 +9,12 @@ use tos_validator_auth_native::{
     cells, native_apply::CurrentRegistry, native_registry::NativeRegistry,
     registry::StateReadBudget,
 };
-struct Authority(u32);
+/// The deny variant, and the governing anchor the case was exported with.
+///
+/// The anchor is read from the corpus rather than derived here: the activation
+/// must be stamped with the value the reference implementation stamped, and a
+/// second derivation of it is what this corpus exists to rule out.
+struct Authority(u32, Option<Anchor>);
 impl LifecycleAuthority for Authority {
     fn owner(&self, _: &OwnerAuth, _: &Update, _: &Identity) -> Result<bool, Error> {
         Ok(self.0 != 1)
@@ -24,6 +30,18 @@ impl LifecycleAuthority for Authority {
         _: u32,
     ) -> Result<bool, Error> {
         Ok(self.0 != 3)
+    }
+    fn governance(
+        &self,
+        _: &Update,
+        _: &Authorizations,
+        _: &codec::Hash,
+        _: u32,
+    ) -> Result<Anchor, Error> {
+        if self.0 == 4 {
+            return Err(Error("fixture-governance"));
+        }
+        self.1.clone().ok_or(Error("fixture-governance-anchor"))
     }
 }
 fn check(ok: bool, label: &str) -> Result<(), String> {
@@ -72,6 +90,11 @@ fn run() -> Result<(), String> {
             |index: usize| fields[index].parse::<u32>().map_err(|_| "metadata-number".to_string());
         let label = fields[6];
         let cell = root(&path("boc"))?;
+        // Present only for the cases that have a global operation to authorize.
+        let governing = match fs::read(path("governance")) {
+            Ok(raw) => Some(value(decode::<Anchor>(&raw), "fixture-governance")?),
+            Err(_) => None,
+        };
         let loaded = NativeRegistry::bootstrap(cell.clone(), n(1)?, StateReadBudget::default());
         let result = if n(0)? == 0 {
             let loaded = value(loaded, "parent-setup")?;
@@ -94,8 +117,12 @@ fn run() -> Result<(), String> {
                     )?,
                 ));
             }
-            let result =
-                parent.apply_block(n(2)?, &updates, &Authority(n(3)?), StateReadBudget::default());
+            let result = parent.apply_block(
+                n(2)?,
+                &updates,
+                &Authority(n(3)?, governing.clone()),
+                StateReadBudget::default(),
+            );
             let restored = value(
                 NativeRegistry::restore(
                     checkpoint.clone(),
@@ -108,7 +135,7 @@ fn run() -> Result<(), String> {
             let replay = restored.apply_block(
                 n(2)?,
                 &updates,
-                &Authority(n(3)?),
+                &Authority(n(3)?, governing.clone()),
                 StateReadBudget::default(),
             );
             let same = match (&result, &replay) {
@@ -130,7 +157,7 @@ fn run() -> Result<(), String> {
                         .apply_block(
                             n(2)?,
                             &updates,
-                            &Authority(n(3)?),
+                            &Authority(n(3)?, governing.clone()),
                             StateReadBudget { entries: 256, bytes: 65536 },
                         )
                         .is_ok(),
@@ -140,7 +167,7 @@ fn run() -> Result<(), String> {
                     parent.apply_block(
                         n(2)?,
                         &[],
-                        &Authority(0),
+                        &Authority(0, governing.clone()),
                         StateReadBudget { entries: 2, bytes: 32 },
                     ),
                     "persistent-constant-empty",
@@ -150,7 +177,7 @@ fn run() -> Result<(), String> {
                 let no_entries = parent.apply_block(
                     n(2)?,
                     &[],
-                    &Authority(0),
+                    &Authority(0, governing.clone()),
                     StateReadBudget { entries: 0, bytes: 65536 },
                 );
                 check(
@@ -160,7 +187,7 @@ fn run() -> Result<(), String> {
                 let no_bytes = parent.apply_block(
                     n(2)?,
                     &[],
-                    &Authority(0),
+                    &Authority(0, governing.clone()),
                     StateReadBudget { entries: 256, bytes: 0 },
                 );
                 check(
@@ -203,7 +230,7 @@ fn run() -> Result<(), String> {
             let no_entries = next.apply_block(
                 next.coordinate() + 1,
                 &[],
-                &Authority(0),
+                &Authority(0, governing.clone()),
                 StateReadBudget { entries: 0, bytes: 65536 },
             );
             check(
@@ -213,7 +240,7 @@ fn run() -> Result<(), String> {
             let no_bytes = next.apply_block(
                 next.coordinate() + 1,
                 &[],
-                &Authority(0),
+                &Authority(0, governing.clone()),
                 StateReadBudget { entries: 256, bytes: 0 },
             );
             check(

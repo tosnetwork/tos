@@ -1,5 +1,6 @@
 use std::{env, fs, path::Path};
 use tos_validator_auth::{
+    codec,
     codec::{decode, Error},
     lifecycle::{KeyHistory, LifecycleAuthority},
     types::*,
@@ -8,7 +9,13 @@ use tos_validator_auth_native::{
     cells,
     registry::{RegistryState, StateReadBudget},
 };
-struct Authority(u32);
+/// The deny variant, and the governing anchor the case was exported with.
+///
+/// The anchor is read rather than derived. Deriving it here would be a second
+/// source for the one value the activation must be stamped with, and the whole
+/// point of replaying this corpus is that both implementations reach the same
+/// bytes from the same inputs.
+struct Authority(u32, Option<Anchor>);
 impl LifecycleAuthority for Authority {
     fn owner(&self, _: &OwnerAuth, _: &Update, _: &Identity) -> Result<bool, Error> {
         Ok(self.0 != 1)
@@ -24,6 +31,18 @@ impl LifecycleAuthority for Authority {
         _: u32,
     ) -> Result<bool, Error> {
         Ok(self.0 != 3)
+    }
+    fn governance(
+        &self,
+        _: &Update,
+        _: &Authorizations,
+        _: &codec::Hash,
+        _: u32,
+    ) -> Result<Anchor, Error> {
+        if self.0 == 4 {
+            return Err(Error("fixture-governance"));
+        }
+        self.1.clone().ok_or(Error("fixture-governance-anchor"))
     }
 }
 fn check(ok: bool, label: &str) -> Result<(), String> {
@@ -76,8 +95,13 @@ fn run() -> Result<(), String> {
                     value(decode::<Authorizations>(&read(&format!("auth{j}"))?), "fixture-auth")?,
                 ));
             }
-            let result = parent.apply_block(n(2)?, &updates, &Authority(n(3)?));
-            let from_checkpoint = restored.apply_block(n(2)?, &updates, &Authority(n(3)?));
+            let governing = match fs::read(path.join(format!("{i}.governance"))) {
+                Ok(raw) => Some(value(decode::<Anchor>(&raw), "fixture-governance")?),
+                Err(_) => None,
+            };
+            let result = parent.apply_block(n(2)?, &updates, &Authority(n(3)?, governing.clone()));
+            let from_checkpoint =
+                restored.apply_block(n(2)?, &updates, &Authority(n(3)?, governing));
             let same = match (&result, &from_checkpoint) {
                 (Ok(a), Ok(b)) => bytes(a)? == bytes(b)?,
                 (Err(a), Err(b)) => a.0 == b.0,

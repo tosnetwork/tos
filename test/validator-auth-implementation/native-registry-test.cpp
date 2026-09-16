@@ -5,9 +5,15 @@ using namespace p0_owner_fixture;
 namespace {
 class Authority final : public LifecycleAuthority {
   unsigned deny_;
+  // The governing anchor the case was exported with, when it has one. It is
+  // read from the corpus rather than derived here: the activation must be
+  // stamped with the same value the reference implementation stamped, and a
+  // second derivation of it is exactly what this corpus rules out.
+  std::optional<Anchor> governing_;
 
  public:
-  explicit Authority(unsigned deny = 0) : deny_(deny) {
+  explicit Authority(unsigned deny = 0, std::optional<Anchor> governing = {})
+      : deny_(deny), governing_(std::move(governing)) {
   }
   Result<bool> owner(const OwnerAuth&, const Update&, const Identity&) const override {
     return deny_ != 1;
@@ -20,7 +26,9 @@ class Authority final : public LifecycleAuthority {
   }
   Result<Anchor> governance(const Update&, const Authorizations&, const CurrentRegistry&,
                             std::uint32_t) const override {
-    return Error{"fixture-governance"};
+    if (deny_ == 4 || !governing_)
+      return Error{"fixture-governance"};
+    return *governing_;
   }
 };
 td::Ref<vm::Cell> root(const std::filesystem::path& path) {
@@ -83,9 +91,12 @@ int main(int argc, char** argv) {
         for (unsigned j = 0; j < n; ++j)
           updates.emplace_back(value(decode<Update>(read(prefix + ".update" + std::to_string(j))), "update"),
                                value(decode<Authorizations>(read(prefix + ".auth" + std::to_string(j))), "auth"));
-        result = parent.apply_block(at, updates, Authority(deny));
+        std::optional<Anchor> governing;
+        if (std::filesystem::exists(prefix + ".governance"))
+          governing = value(decode<Anchor>(read(prefix + ".governance")), "fixture-governance");
+        result = parent.apply_block(at, updates, Authority(deny, governing));
         auto restored = value(NativeRegistry::restore(checkpoint, hash(cell), coordinate), "checkpoint-load");
-        auto replay = restored.apply_block(at, updates, Authority(deny));
+        auto replay = restored.apply_block(at, updates, Authority(deny, governing));
         check(result.ok() == replay.ok(), "persistent-restart-acceptance");
         if (result.ok())
           check(hash(value(result.value().checkpoint(), "continuous")) ==
@@ -95,7 +106,7 @@ int main(int argc, char** argv) {
           check(result.error().code == replay.error().code, "persistent-restart-error");
         check(hash(value(parent.checkpoint(), "parent-after")) == hash(checkpoint), "persistent-atomic-parent");
         if (label == "large-registry-apply") {
-          auto bounded = parent.apply_block(at, updates, Authority(deny), {256, 65536});
+          auto bounded = parent.apply_block(at, updates, Authority(deny, governing), {256, 65536});
           check(bounded.ok(), "persistent-bounded-archive");
           auto empty = value(parent.apply_block(at, {}, Authority{}, {2, 32}), "persistent-constant-empty");
           check(empty.remaining().entries == 0 && empty.remaining().bytes == 0, "persistent-empty-cost");

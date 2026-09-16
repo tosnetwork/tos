@@ -5,8 +5,8 @@ use tos_validator_auth::{
     codec::{decode, encode, Error, Hash, Wire},
     crypto::{object_id, AdmittedKey},
     lifecycle::{
-        apply_due_transitions, apply_identity_update, validate_identity, IdentityChange,
-        KeyHistory, KeySlot, LifecycleAuthority,
+        apply_due_transitions, apply_global_update, apply_identity_update, validate_identity,
+        BlockChange, GlobalChange, GlobalContext, KeyHistory, KeySlot, LifecycleAuthority,
     },
     types::*,
 };
@@ -361,16 +361,53 @@ impl RegistryState {
         authority: &impl LifecycleAuthority,
     ) -> Result<Self, Error> {
         self.apply_identity_block(at, updates, |current, update, evidence| {
+            if update.identity == [0; 32] {
+                return Ok(BlockChange::Global(
+                    current.apply_global(update, evidence, at, authority)?,
+                ));
+            }
             let identity =
                 current.identities.get(&update.identity).ok_or(Error("unknown-identity"))?;
-            apply_identity_update(identity, current, update, evidence, at, authority)
+            Ok(BlockChange::Identity(apply_identity_update(
+                identity, current, update, evidence, at, authority,
+            )?))
         })
+    }
+    /// The pieces a global operation needs, gathered from this state rather
+    /// than from the caller: the policy in force, the record holding the global
+    /// nonce and the newest activation.
+    pub(crate) fn apply_global(
+        &self,
+        update: &Update,
+        evidence: &Authorizations,
+        at: u32,
+        authority: &impl LifecycleAuthority,
+    ) -> Result<GlobalChange, Error> {
+        let in_force =
+            self.policies.get(&self.current_policy).ok_or(Error("global-current-policy"))?;
+        // Absent until a global operation first writes one. Its only content is
+        // the nonce, and the encoding already admits a zero-identity record
+        // with no keys and no pending transitions.
+        let global = self.identities.get(&[0; 32]).cloned().unwrap_or_default();
+        let latest = self.activations.values().next_back();
+        apply_global_update(
+            update,
+            evidence,
+            &GlobalContext {
+                current_policy: &self.current_policy,
+                in_force,
+                global: &global,
+                latest,
+            },
+            at,
+            authority,
+        )
     }
     pub(crate) fn apply_identity_block(
         &self,
         at: u32,
         updates: &[(Update, Authorizations)],
-        mut apply: impl FnMut(&Self, &Update, &Authorizations) -> Result<IdentityChange, Error>,
+        mut apply: impl FnMut(&Self, &Update, &Authorizations) -> Result<BlockChange, Error>,
     ) -> Result<Self, Error> {
         if self.coordinate >= u32::MAX - 1 || self.coordinate.checked_add(1) != Some(at) {
             return Err(Error("block-gap"));
@@ -389,11 +426,34 @@ impl RegistryState {
         next.coordinate = at;
         next.current_policy = object_id("policy", next.policy_at(at)?)?;
         for (update, evidence) in updates {
-            let current = next.identities.get(&update.identity).ok_or(Error("unknown-identity"))?;
             if update.identity == [0; 32] {
-                return Err(Error("unknown-identity"));
+                let effect = match apply(&next, update, evidence)? {
+                    BlockChange::Global(effect) => effect,
+                    BlockChange::Identity(_) => return Err(Error("global-target")),
+                };
+                let policy_id = object_id("policy", &effect.policy)?;
+                if next.policies.insert(policy_id, effect.policy).is_some() {
+                    return Err(Error("duplicate-policy"));
+                }
+                if next
+                    .activations
+                    .insert(
+                        effect.activation.effective_from.to_be_bytes().to_vec(),
+                        effect.activation,
+                    )
+                    .is_some()
+                {
+                    return Err(Error("duplicate-activation"));
+                }
+                next.identities.insert([0; 32], effect.global);
+                changed = true;
+                continue;
             }
-            let effect = apply(&next, update, evidence)?;
+            let current = next.identities.get(&update.identity).ok_or(Error("unknown-identity"))?;
+            let effect = match apply(&next, update, evidence)? {
+                BlockChange::Identity(effect) => effect,
+                BlockChange::Global(_) => return Err(Error("operation-target")),
+            };
             // Remove canceled schedules only for this identity, preserving other
             // identities due at the same coordinate.
             let old_due: BTreeSet<_> = current.pending.iter().map(|p| p.effective_from).collect();

@@ -383,8 +383,8 @@ Result<GlobalChange> NativeRegistry::apply_global(const Update& update, const Au
       if (found.not_null())
         latest = read_at<Activation>(parts.activations, key, budget_);
     }
-    return take(apply_global_update(update, evidence, *this, in_force, global, latest ? &*latest : nullptr, at,
-                                    authority));
+    return take(
+        apply_global_update(update, evidence, {*this, in_force, global, latest ? &*latest : nullptr}, at, authority));
   });
 }
 

@@ -15,18 +15,18 @@ or PQ suite allocation is authorized by this work.
 | C0 provider | Admitted public-key object; canonical, noncofactored verification using existing cryptographic libraries; exact provider-owned active inventory admission and reconciled handle routing | 86 real signature/encoding cases, including valid R=identity; subgroup and equation guard removals | Native session admission installation of the reconciled inventory token |
 | Committee and certificate verification | Owned immutable admitted snapshots, expected-duty binding, complete roster and all signatures | 40 cases across five roles; exact quorum, below quorum, corrupt surplus signature, duplicate identities and context mismatch | Native session derivation and consensus call sites |
 | Native cells | Canonical AuthBytes and native BOC adapter | 20 round-trip/malformed-BOC cases through 32 MiB of incompressible data; direct hash and canonical-partition guard removals | Nothing in this subsystem. The remaining work is joined evidence that a native cell reaches the installed chain root unchanged, which is tracked with the transaction prefixes |
-| Identity lifecycle | C++ and Rust per-identity register/rotate/retire/cancel and consecutive-block due-transition application | 104 differential cases per language with controlled, separately typed authority callbacks; predecessor and block-gap guard removals | Global governance operations. Native transaction storage is in place |
+| Identity lifecycle | C++ and Rust per-identity register/rotate/retire/cancel and consecutive-block due-transition application | 104 differential cases per language with controlled, separately typed authority callbacks; predecessor and block-gap guard removals | Global configuration operations. Policy operations and native transaction storage are in place |
 | Object transfer | C++ and Rust canonical inline/manifest readers plus principal/anchor-scoped stores and atomic proof publication | Chunk and whole-object hash substitution, quota, duplicate upload, expiry and aggregate read budget; cross-language scoped-store differential and compiled storage guards | Remote mutual-authentication transport and actor installation |
 | Thin transport and API association | C++ and Rust framing and semantic association for all 15 methods, including result receipts, proof attachments and cursors; remote TLS 1.3 mutual-authentication outcome binding, operator-local certificate-to-principal trust and shared transport bounds | Existing framing/semantic guards plus focused remote identity/boundary cases; HTTP/2 framing remains fail-closed and unimplemented | HTTP/2 framing, concrete TLS socket adapter and actor installation |
 | Native VM and transaction execution | C++/Rust VAUTH_CHKSIGN, native capability metadata, Fift/FunC and Rust assembly bindings | 168 exact outcome/gas comparisons; getter config and nested VM; eight whole transactions including action rollback | Elector statement construction and native admission |
 | Native committee derivation | Explicit native identity/stake descriptor, authenticated Config35/34 and Config46, original native selection, owned transport order and VAM1 | 40 C++/Rust state cases including a full 400-member snapshot, shuffle, shard weights, temporary election and budget exhaustion | Elector emission and session admission |
-| Native registry state | C++ and independent Rust Config46 genesis, encoding and identity-update replay; immutable key archive and owned successor state | 501 identities / 2506 keys; 34 cross-language replay cases with checkpoint/continuous equivalence, control retention and rejected-block atomicity | Global zero-identity apply. Contract installation and the elector/configuration paths now consume one block-scoped prefix; both languages still refuse an update whose target identity is zero |
+| Native registry state | C++ and independent Rust Config46 genesis, encoding and identity-update replay; immutable key archive and owned successor state | 501 identities / 2506 keys; 34 cross-language replay cases with checkpoint/continuous equivalence, control retention and rejected-block atomicity | Global configuration apply. Contract installation and the elector/configuration paths consume one block-scoped prefix, and a zero-identity policy operation replays to identical bytes in both languages |
 | Native state proofs | C++ and Rust actual masterchain Config8/9/10/16/46 and Merkle proofs for profile, policy, key and registry ranges | State-root substitution, omitted entries, false terminal page, unrelated revealed values, detached physical cells, capability and atomic-publication guard removals | Actor installation |
 | Native certificate proofs and RPC | Independent C++/Rust certificate verification from native committee and policy proofs; C++ methods 12/13 and private Rust verified output | 55 shared cases; real local HTTP over 16 snapshots; exact signers/weight, trusted context, error provenance and single-fetch prepared request checks | Native manager installation of the node history adapter and remote serving |
 | Native owner execution | C++ and independent Rust VAF1 kind-1 proofs over native account transactions, full trusted anchor and current owner/stake allocation | 68 shared proof cases from real masterchain/workchain-0 wallet transactions; action rollback, forged wallet signatures, block substitution and 52 compiled guards | Native elector receipt processing, normal stake rules and atomic update admission |
 | Native registry transaction prefixes | Independent C++/Rust per-transaction immutable candidates, due-before-request order and private block-start revision | 80 real-owner cases match whole-block replay; rejected/discarded candidates, cumulative budget, overflow and nine compiled mutations; 14 joined cases and seven compiled mutations bind a candidate to what the account committed | Global registry operations. A block-scoped sequence now holds the prefix, every transaction of the account opens on it, and a candidate is promoted only after the account itself commits and the committed parameter 46, checkpoint and elected set match exactly what the host handed the contract |
 | Native configuration gates | Actual C++ admission/transition and Rust config admission, frozen Config46 registration, capability/version, required parameters and revision continuity | 43 shared cases, 11 legacy transition tests, 47 compiled guards and full-dependency sanitizer parity | Native contract authorization, atomic root installation and approved activation |
-| Persistent native registry | Independent C++/Rust immutable cell dictionaries, validated derived indexes and per-operation native authority | 34 replay cases, eight checkpoint attacks, 80 real-owner authority cases and 36 compiled guards; bounded work over 501 historical identities | Global zero-identity operations and node installation. Contract-owned persistence is in place: the account's own tick-tock writes the prefix a block with no registry message produced, which is what keeps parameter 46 from naming transitions as due at a coordinate that has passed |
+| Persistent native registry | Independent C++/Rust immutable cell dictionaries, validated derived indexes and per-operation native authority | 34 replay cases, eight checkpoint attacks, 80 real-owner authority cases and 36 compiled guards; bounded work over 501 historical identities | Global configuration operations and node installation. Zero-identity policy operations and contract-owned persistence are in place: the account's own tick-tock writes the prefix a block with no registry message produced, which is what keeps parameter 46 from naming transitions as due at a coordinate that has passed |
 | Native header witnesses | Independent C++/Rust fixed-surface Merkle proofs authenticated by native history; no archive/cache access; carried by the registry message and authenticated at consensus admission | 25 shared cases, independent proof generation, 27 compiled guards and full-dependency sanitizer parity | Concrete transaction host metering: admission authenticates a carried witness uncharged |
 | Privileged native VM host | C++/Rust VAUTH_STATE/VAUTH_APPLY/VAUTH_BIND, one purpose-specific host per transaction shape, including a state-only host for the account's own tick-tock, transaction-scoped ownership, no nested VM inheritance and explicit charge callback | 39 exact outcome/gas/host-call comparisons, host-purpose and allowance cases, compiled guards and full-dependency sanitizer parity | Deterministic native gas. The authority is assembled per transaction by collation, validation and message-pool admission through one assembler, an update host refuses to bind and a binding host refuses to apply, and a refused operation spends the allowance it read rather than restoring it |
 | Native configuration account context | Independent C++/Rust binding of actual ShardAccounts code/data/library, Config0, owned config dictionary, complete checkpoint and parent committee | 22 shared cases, 24 compiled guards and full-dependency sanitizer parity | Native commit of the account the contract produced. The contract now carries its checkpoint through every store and replaces it from the state instruction on a registry update, so parameter 46 and the account's checkpoint commit together; which of genesis seeding or first-update migration installs the first one is an activation policy still to be chosen |
@@ -220,15 +220,33 @@ has 76 cases, including exact bytes, native options and genesis binding, five
 roles, oversized payloads, new-key descriptor binding and inclusive 128-block
 freshness. Twelve C++ and 34 Rust compiled mutations reach their named assertions.
 
-Global zero-identity operations are authorized but not applied. Both languages
-refuse an update whose target identity is zero, so operations 4 and 6 have a
-verified authority and no effect. Two things are missing rather than one: an
-operation 4 would have to construct the activation record that binds the next
-policy, whose four checkpoint fields match an authenticated anchor exactly but
-which anchor is not written down; and an operation 6 names a configuration
-parameter and a proposed cell by hash, for which no output path to the
-configuration contract exists and no attachment is routed. Applying either
-without deciding those first would make this implementation the specification.
+Operation 4 applies in both languages and both state representations. It writes
+the policy, the activation binding it and the zero-identity record that holds
+the global admin nonce, and the activation's checkpoint is the anchor the
+governing snapshot was derived from -- returned by the authority that verified
+the quorum rather than read again, so the record and its authorization are one
+fact. The replay corpus carries a global case, and the C++ reference, C++
+persistent, Rust reference and Rust persistent implementations produce identical
+bytes for it; stamping a different but perfectly legal anchor fails on both
+sides.
+
+Operation 6 is refused with its own reason. The frozen rules require the
+governing quorum *and* the normal configuration vote for a configuration
+parameter, and nothing carries an authorization across the rounds of that vote
+to the block that installs the result. The proposed cell itself is not what is
+missing -- a ConfigProposal already carries one. What is missing is the durable
+link proving that the exact parameter, previous hash and proposed hash reaching
+acceptance were the ones a governance operation approved. Admitting it on the
+quorum alone would be a second configuration governance path rather than an
+implementation of the declared one.
+
+One line of the frozen lifecycle rules reads on both: policy and configuration
+changes are said to require the quorum plus normal configuration voting. Taken
+literally that would block operation 4 as well, but it cannot be satisfied for a
+policy: a VAP1 is not a configuration parameter and a ConfigProposal cannot
+carry one, while the activation rules describe policy replacement as an admin
+operation with no vote. The narrower reading is implemented and the wording
+wants an amendment.
 
 `verify_current_governance` is read-only. Its caller must independently establish
 the current native governing snapshot and inclusion-time registry state. Only
