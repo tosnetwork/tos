@@ -31,6 +31,14 @@ void require(bool condition, const std::string& assertion) {
 }
 
 template <class T>
+void admits(const Result<T>& result, const char* name) {
+  if (!result.ok()) {
+    std::cerr << "DETAIL " << name << " expected=assembled actual=" << result.error().code << '\n';
+    throw AssertionFailure(name);
+  }
+}
+
+template <class T>
 void refuses(const Result<T>& result, const char* code, const char* name) {
   if (result.ok() || result.error().code != code) {
     std::cerr << "DETAIL " << name << " expected=" << code
@@ -121,13 +129,15 @@ int main(int argc, char** argv) {
     // witness offered for it. Neither is invented here: both are produced from
     // a block the parent state's index actually holds, so a case that changes
     // one of them changes exactly one thing.
-    auto approved_by_owner = [&](const Anchor& declared, td::Ref<vm::Cell> witness) {
+    auto approved_by_owners = [&](const std::vector<Anchor>& declared, td::Ref<vm::Cell> witness) {
       Authorizations owned;
-      OwnerAuth owner;
-      owner.proof_.anchor_ = declared;
-      owner.proof_.kind_ = 1;
-      owner.proof_.proof_ = value(object_value(5, Bytes{1, 2, 3, 4}), "owner-proof-object");
-      owned.owner_.push_back(owner);
+      for (const auto& anchor : declared) {
+        OwnerAuth owner;
+        owner.proof_.anchor_ = anchor;
+        owner.proof_.kind_ = 1;
+        owner.proof_.proof_ = value(object_value(5, Bytes{1, 2, 3, 4}), "owner-proof-object");
+        owned.owner_.push_back(owner);
+      }
       auto encoded = value(encode(owned), "owner-authorizations");
       auto packed = value(pack_bytes(encoded), "owner-packed");
       vm::CellBuilder b;
@@ -137,6 +147,9 @@ int main(int argc, char** argv) {
       result.message =
           external(configuration, registry_body(vm::CellBuilder().store_long(1, 8).finalize(), b.finalize()));
       return result;
+    };
+    auto approved_by_owner = [&](const Anchor& declared, td::Ref<vm::Cell> witness) {
+      return approved_by_owners({declared}, std::move(witness));
     };
 
     std::vector<Test> tests;
@@ -233,7 +246,8 @@ int main(int argc, char** argv) {
     add("an-authenticated-witness-needs-no-archive", [&] {
       auto approved = approved_by_owner(history.owner.anchor, history.owner.witness);
       auto admitted = admit_registry_message(approved);
-      require(admitted.ok() && admitted.value() != nullptr, "an-authenticated-witness-needs-no-archive");
+      admits(admitted, "an-authenticated-witness-needs-no-archive");
+      require(admitted.value() != nullptr, "an-authenticated-witness-needs-no-archive");
       auto served = admitted.value()->history().finalized_anchor(history.owner.at);
       require(served.ok() && served.value() == history.owner.anchor, "an-authenticated-witness-needs-no-archive");
     });
@@ -275,10 +289,32 @@ int main(int argc, char** argv) {
     add("only-the-witnessed-coordinate-is-served", [&] {
       auto approved = approved_by_owner(history.owner.anchor, history.owner.witness);
       auto admitted = admit_registry_message(approved);
-      require(admitted.ok() && admitted.value() != nullptr, "only-the-witnessed-coordinate-is-served");
+      admits(admitted, "only-the-witnessed-coordinate-is-served");
+      require(admitted.value() != nullptr, "only-the-witnessed-coordinate-is-served");
       for (std::uint32_t at : {history.other.at, history.head.seqno_})
         refuses(admitted.value()->history().finalized_anchor(at), "finalized-anchor-unavailable",
                 "only-the-witnessed-coordinate-is-served");
+    });
+    // One witness, one approval. The evidence container carries a single
+    // mc_header, so a second approval could only be authenticated by reading
+    // that one witness twice and calling it proof of two different
+    // coordinates. Admission is built on that cardinality, but does not
+    // enforce it: the wire format does, in one bit of list length, and a second
+    // approval cannot even be written. Pinned from here so that widening it is
+    // not a one-line change -- whoever does has to answer how the format
+    // carries a second witness, whether authenticate_owner becomes plural, and
+    // how admission comes to own both authenticated anchors. Behind this, and
+    // unreachable while it holds, authenticate_owner refuses any count but one.
+    add("a-second-owner-approval-cannot-be-encoded", [&] {
+      Authorizations two;
+      for (const auto& anchor : {history.owner.anchor, history.other.anchor}) {
+        OwnerAuth owner;
+        owner.proof_.anchor_ = anchor;
+        owner.proof_.kind_ = 1;
+        owner.proof_.proof_ = value(object_value(5, Bytes{1, 2, 3, 4}), "owner-proof-object");
+        two.owner_.push_back(owner);
+      }
+      refuses(encode(two), "list-bound", "a-second-owner-approval-cannot-be-encoded");
     });
     add("history-outlives-the-call-that-assembled-it", [&] {
       // The witnessed history is built inside admission and the caller never

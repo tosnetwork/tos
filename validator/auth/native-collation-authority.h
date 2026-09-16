@@ -2,7 +2,6 @@
 
 #include "block/mc-config.h"
 
-#include "native-anchor-cache.h"
 #include "native-config-transaction.h"
 
 namespace tos::auth {
@@ -33,10 +32,12 @@ struct CollationAuthorityInputs {
 // Assembles the authority for a registry update, or refuses. A refusal is the
 // ordinary answer: almost every message reaching here is not a registry update.
 //
-// "registry-admission-deferred" is the one refusal that says something, and it
-// says which finalized history is missing. A producer reports those coordinates
-// so a later block can admit the update; a validator has nothing to report,
-// because a producer that deferred did not execute the update either.
+// There is nothing for a caller to do about a refusal and nothing to report.
+// An update either carries the finality its approval relies on, in which case
+// every node holding the block reaches the same authority, or it does not, in
+// which case it is not executable for anyone and a later block changes nothing.
+// Refusals name the layer that refused -- the witness surface, the history
+// index, the declared anchor -- so a diagnosis does not have to guess.
 Result<std::unique_ptr<NativeConfigTransaction>> assemble_registry_authority(const CollationAuthorityInputs&);
 
 }  // namespace tos::auth

@@ -23,6 +23,7 @@
 #include "interfaces/validator-manager.h"
 #include "td/actor/coro_utils.h"
 
+#include "auth/native-anchor-cache.h"
 #include "auth/native-registry-admission.h"
 #include "validator.h"
 

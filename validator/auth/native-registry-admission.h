@@ -1,5 +1,4 @@
 #pragma once
-#include "native-anchor-cache.h"
 #include "native-config-transaction.h"
 #include "native-history.h"
 namespace tos::auth {
@@ -55,8 +54,9 @@ Result<RegistryAdmissionInputs> gather_registry_admission_inputs(
 // happened to have resolved.
 Result<std::unique_ptr<NativeConfigTransaction>> admit_registry_message(const RegistryAdmissionInputs&);
 
-// What the update declares it will read, so a caller that deferred for missing
-// history knows what to resolve before trying again. This reads nothing from
-// the chain: the declaration is carried by the message.
+// The finalized coordinates the update's approvals name. Admission does not
+// decide from these -- the witness the message carries is what it authenticates
+// -- but the same call enforces the one bound they do carry: no approval may
+// name the block being built. This reads nothing from the chain.
 Result<std::vector<std::uint32_t>> registry_message_requirements(td::Ref<vm::Cell> message, std::uint32_t inclusion);
 }  // namespace tos::auth
