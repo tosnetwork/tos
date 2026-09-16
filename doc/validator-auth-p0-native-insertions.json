@@ -129,7 +129,7 @@
    },
    {
     "offset": 181,
-    "text": "cell vauth_bind_validators(cell elected, cell bindings) impure asm \"VAUTH_BIND\";\n"
+    "text": "cell vauth_bind_validators(cell elected, cell bindings) impure asm \"VAUTH_BIND\";\n\n;; Whether this chain has activated validator authentication.\n;;\n;; Read from Config8, which is where activation is decided for everyone: the\n;; virtual machine gates the privileged instructions on the same version and\n;; capability, and the node reads the same parameter. Deciding from the shape of\n;; the message instead would answer a different question -- whether the sender\n;; chose to attach bindings -- and a sender does not decide activation.\nint validator_auth_active() inline {\n  var param = config_param(8);\n  if (cell_null?(param)) {\n    return false;\n  }\n  var cs = param.begin_parse();\n  if ((cs.slice_bits() != 104) | cs.slice_refs()) {\n    return false;\n  }\n  if (cs~load_uint(8) != 0xc4) {\n    return false;\n  }\n  var version = cs~load_uint(32);\n  var capabilities = cs~load_uint(64);\n  cs.end_parse();\n  return (version >= 16) & ((capabilities & 1024) != 0);\n}\n"
    },
    {
     "offset": 17821,
@@ -137,7 +137,7 @@
    },
    {
     "offset": 18273,
-    "text": "      ;; the registry decides the binding, not this contract and not the\n      ;; sender; a set that cannot be bound is not installed at all\n      ifnot (cell_null?(bindings)) {\n        vset = vauth_bind_validators(vset, bindings);\n      }\n"
+    "text": "      ;; the registry decides the binding, not this contract and not the\n      ;; sender; a set that cannot be bound is not installed at all\n      ;;\n      ;; Activation is read from Config8, never from whether bindings arrived.\n      ;; On an active chain a set without them is refused outright rather than\n      ;; installed unbound: an unbound set is exactly what an attacker would\n      ;; send, and \"the sender omitted the bindings\" must not be the reason a\n      ;; set skips the registry.\n      if (validator_auth_active()) {\n        throw_if(45, cell_null?(bindings));\n        vset = vauth_bind_validators(vset, bindings);\n      }\n"
    },
    {
     "offset": 20671,

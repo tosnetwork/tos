@@ -29,7 +29,7 @@
     "doc/validator-auth-p0/transport.schema.json": "ddd45d7d3eb672559efde020af95a0e215146775ec82f8c6847b0f3ab8127584",
     "doc/validator-auth-p0/wire.tl": "a5e10c8e25887cb30440a26a0d8cbcef1473878aeb87438cca1a0f0bc6875c15",
     "doc/validator-auth-p0/wire.tlb": "923650bd74bbbf677a070d1d13d7c12d46944e8bffbfc3a72641093d20d3ce9d",
-    "doc/validator-auth-p0-native-insertions.json": "d427d8eb3780b3914ea8737b353cdbd1fad9b207121825cbc3306305e27aaa76",
+    "doc/validator-auth-p0-native-insertions.json": "0bc9fb45eb2fdec4de01062670eb9ad7d6edf7467003f736ca3eeac54a61618a",
     "test/validator-auth-p0/README.md": "a0b0950c4ac702f8be0f34919a50f8e7b13d5d14dda3bd2cc05b4c8ffee31321",
     "test/validator-auth-p0/api.py": "9ec50bf9e19345ef54a8894a3525eba1eed8fb10412b8a3fdc1ed1c5728fb815",
     "test/validator-auth-p0/archive_evidence.py": "22bb392a561068e0fb3905ce7e8df95bab463468cdfe3be884eff19b12481409",
@@ -118,6 +118,13 @@
       "sha256": "d427d8eb3780b3914ea8737b353cdbd1fad9b207121825cbc3306305e27aaa76",
       "change": "Removed the previously declared node-local history resolution portion of the manager insertion after registry admission became fully witnessed by the message.",
       "scope": "Original manager bytes remain unchanged; the retained insertion establishes and publishes only the zero-state-derived ChainContext."
+    },
+    {
+      "artifact": "doc/validator-auth-p0-native-insertions.json",
+      "previous_sha256": "d427d8eb3780b3914ea8737b353cdbd1fad9b207121825cbc3306305e27aaa76",
+      "sha256": "0bc9fb45eb2fdec4de01062670eb9ad7d6edf7467003f736ca3eeac54a61618a",
+      "change": "Made the configuration contract's validator-set binding conditional on Config8 activation rather than on whether the sender attached bindings. An active chain refuses a set that names no bindings; an inactive chain installs the historical set and ignores any.",
+      "scope": "Only declared additive contract insertions changed. Original contract bytes, frozen wire/API artifacts, activation approvals, validator thresholds and PQ allocation remain unchanged."
     }
   ],
   "implementation_evidence_update": {

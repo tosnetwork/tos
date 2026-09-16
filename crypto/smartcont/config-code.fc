@@ -5,6 +5,31 @@
 cell vauth_apply_update(cell update, cell evidence) impure asm "VAUTH_APPLY";
 cell vauth_bind_validators(cell elected, cell bindings) impure asm "VAUTH_BIND";
 
+;; Whether this chain has activated validator authentication.
+;;
+;; Read from Config8, which is where activation is decided for everyone: the
+;; virtual machine gates the privileged instructions on the same version and
+;; capability, and the node reads the same parameter. Deciding from the shape of
+;; the message instead would answer a different question -- whether the sender
+;; chose to attach bindings -- and a sender does not decide activation.
+int validator_auth_active() inline {
+  var param = config_param(8);
+  if (cell_null?(param)) {
+    return false;
+  }
+  var cs = param.begin_parse();
+  if ((cs.slice_bits() != 104) | cs.slice_refs()) {
+    return false;
+  }
+  if (cs~load_uint(8) != 0xc4) {
+    return false;
+  }
+  var version = cs~load_uint(32);
+  var capabilities = cs~load_uint(64);
+  cs.end_parse();
+  return (version >= 16) & ((capabilities & 1024) != 0);
+}
+
 () set_conf_param(int index, cell value) impure {
   var cs = get_data().begin_parse();
   var cfg_dict = cs~load_ref();
@@ -501,7 +526,14 @@ int register_voting_proposal(slice cs, int msg_value) impure inline_ref {
     if (ok) {
       ;; the registry decides the binding, not this contract and not the
       ;; sender; a set that cannot be bound is not installed at all
-      ifnot (cell_null?(bindings)) {
+      ;;
+      ;; Activation is read from Config8, never from whether bindings arrived.
+      ;; On an active chain a set without them is refused outright rather than
+      ;; installed unbound: an unbound set is exactly what an attacker would
+      ;; send, and "the sender omitted the bindings" must not be the reason a
+      ;; set skips the registry.
+      if (validator_auth_active()) {
+        throw_if(45, cell_null?(bindings));
         vset = vauth_bind_validators(vset, bindings);
       }
       set_conf_param(36, vset);

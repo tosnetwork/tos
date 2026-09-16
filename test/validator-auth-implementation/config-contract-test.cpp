@@ -166,7 +166,12 @@ td::Ref<vm::Cell> contract_data(const td::Ref<vm::Cell>& config) {
                             .store_long(0, 1).finalize());
 }
 
-td::Ref<vm::Cell> configuration(td::Ref<vm::Cell> registry = {}) {
+// `activated` writes Config8, which is where the contract reads activation
+// from. It is separate from the capability the virtual machine is given on
+// purpose: a case that turned both off at once could not tell a contract that
+// consulted Config8 from one that never ran the instruction because the opcode
+// was gated.
+td::Ref<vm::Cell> configuration(td::Ref<vm::Cell> registry = {}, bool activated = false) {
   vm::Dictionary dict(32);
   td::BitArray<32> key;
   key.store_long(1);
@@ -174,6 +179,16 @@ td::Ref<vm::Cell> configuration(td::Ref<vm::Cell> registry = {}) {
   if (registry.not_null()) {
     key.store_long(46);
     expect(dict.set_ref(key.cbits(), 32, registry), "fixture-config46");
+  }
+  if (activated) {
+    key.store_long(8);
+    expect(dict.set_ref(key.cbits(), 32,
+                        vm::CellBuilder()
+                            .store_long(0xc4, 8)
+                            .store_long(vm::validator_auth_min_version, 32)
+                            .store_long(vm::validator_auth_capability, 64)
+                            .finalize()),
+           "fixture-config8");
   }
   auto root = dict.get_root_cell();
   expect(root.not_null(), "fixture-config");
@@ -238,9 +253,10 @@ long long stored_sequence(const td::Ref<vm::Cell>& data) {
 
 Outcome run_contract(const td::Ref<vm::Cell>& contract, const td::Ref<vm::Cell>& body, std::uint64_t from,
                      std::uint32_t now, Host* host, td::uint64 capabilities, int version,
-                     bool external = false, td::Ref<vm::Cell> registry = {}, long long gas_limit = 1000000) {
+                     bool external = false, td::Ref<vm::Cell> registry = {}, long long gas_limit = 1000000,
+                     bool config8_active = false) {
   expect(contract.not_null(), "contract-loaded");
-  auto config = configuration(std::move(registry));
+  auto config = configuration(std::move(registry), config8_active);
   auto message = external ? external_message(body) : internal_message(from, body);
   auto data = contract_data(config);
   td::Ref<vm::Stack> stack{true};
@@ -350,34 +366,68 @@ std::vector<Case> cases(const td::Ref<vm::Cell>& contract) {
          expect(run_apply(true, host, vm::validator_auth_capability, vm::validator_auth_min_version - 1) != 0 &&
                     host.applies == 0, "earlier-version-refuses");
        }},
-      {"an-unbound-set-is-installed-unchanged", [=] {
+      // What decides whether a set is bound is Config8, not whether the sender
+      // attached bindings. The four cases below hold the virtual machine
+      // active throughout and move only Config8, so a contract that ignored
+      // Config8 and branched on the message would pass two of them and fail
+      // two.
+      {"inactive-unbound-set-installs-legacy-unchanged", [=] {
          auto set = elected_set(5000, 6000);
          auto body = vm::CellBuilder().store_long(0x4e565354, 32).store_long(7, 64).store_ref(set).finalize();
          Host host;
          auto run = run_contract(contract, body, elector_account, 1000, &host, vm::validator_auth_capability,
-                                 vm::validator_auth_min_version);
+                                 vm::validator_auth_min_version, false, {}, 1000000, false);
          expect(run.exit == 0 && same_cell(installed_parameter(run.data, 36), set) && host.binds == 0,
-                "an-unbound-set-is-installed-unchanged");
+                "inactive-unbound-set-installs-legacy-unchanged");
        }},
-      {"a-set-with-bindings-is-installed-bound", [=] {
+      // Bindings offered to a chain that has not activated are ignored, not
+      // honoured: a sender cannot opt the chain into the registry early.
+      {"inactive-set-with-bindings-installs-legacy-unchanged", [=] {
+         auto set = elected_set(5000, 6000);
+         auto body = vm::CellBuilder().store_long(0x4e565354, 32).store_long(7, 64)
+                         .store_ref(set).store_ref(bindings_cell()).finalize();
+         Host host;
+         auto run = run_contract(contract, body, elector_account, 1000, &host, vm::validator_auth_capability,
+                                 vm::validator_auth_min_version, false, {}, 1000000, false);
+         expect(run.exit == 0 && same_cell(installed_parameter(run.data, 36), set) && host.binds == 0,
+                "inactive-set-with-bindings-installs-legacy-unchanged");
+       }},
+      // The bypass this reordering exists to close. An unbound set is exactly
+      // what an attacker would send once the chain is active, so it is refused
+      // rather than installed without the registry ever being consulted.
+      {"active-unbound-set-is-refused", [=] {
+         auto body = vm::CellBuilder().store_long(0x4e565354, 32).store_long(7, 64)
+                         .store_ref(elected_set(5000, 6000)).finalize();
+         Host host;
+         auto run = run_contract(contract, body, elector_account, 1000, &host, vm::validator_auth_capability,
+                                 vm::validator_auth_min_version, false, {}, 1000000, true);
+         expect(run.exit == 45 && host.binds == 0 && installed_parameter(run.data, 36).is_null(),
+                "active-unbound-set-is-refused");
+       }},
+      {"active-set-with-bindings-is-installed-bound", [=] {
          auto set = elected_set(5000, 6000);
          auto named = bindings_cell();
          auto body = vm::CellBuilder().store_long(0x4e565354, 32).store_long(7, 64)
                          .store_ref(set).store_ref(named).finalize();
          Host host;
          auto run = run_contract(contract, body, elector_account, 1000, &host, vm::validator_auth_capability,
-                                 vm::validator_auth_min_version);
+                                 vm::validator_auth_min_version, false, {}, 1000000, true);
          expect(run.exit == 0 && host.binds == 1 && same_cell(host.last_elected, set) &&
                     same_cell(host.last_bindings, named) && same_cell(installed_parameter(run.data, 36), host.bound),
-                "a-set-with-bindings-is-installed-bound");
+                "active-set-with-bindings-is-installed-bound");
        }},
-      {"an-unactivated-chain-installs-nothing", [=] {
+      // Config8 says active and the virtual machine refuses the instruction --
+      // a node that disagrees with its own chain. Nothing is installed. This is
+      // the case the capability gate is for, and it only exists because the two
+      // switches are separate.
+      {"a-chain-whose-vm-refuses-the-instruction-installs-nothing", [=] {
          auto body = vm::CellBuilder().store_long(0x4e565354, 32).store_long(7, 64)
                          .store_ref(elected_set(5000, 6000)).store_ref(bindings_cell()).finalize();
          Host host;
-         auto run = run_contract(contract, body, elector_account, 1000, &host, 0, vm::validator_auth_min_version);
+         auto run = run_contract(contract, body, elector_account, 1000, &host, 0, vm::validator_auth_min_version,
+                                 false, {}, 1000000, true);
          expect(run.exit != 0 && host.binds == 0 && installed_parameter(run.data, 36).is_null(),
-                "an-unactivated-chain-installs-nothing");
+                "a-chain-whose-vm-refuses-the-instruction-installs-nothing");
        }},
       {"a-set-from-anyone-else-is-not-installed", [=] {
          auto body = vm::CellBuilder().store_long(0x4e565354, 32).store_long(7, 64)
