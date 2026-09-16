@@ -7,6 +7,79 @@ The normative design remains v1 revision 3, fingerprint
 This is an implementation in progress, not P0 acceptance. No network activation
 or PQ suite allocation is authorized by this work.
 
+## What decides the order of this work
+
+Three things decide different questions, and confusing them is how a sequence
+starts being written by whoever spoke last.
+
+The frozen design under `doc/validator-auth-p0/` decides what is correct. It is
+the only authority on semantics, and it has settled real disputes here rather
+than being quoted decoratively: the exact field shapes of the global operations,
+the list of authority-sensitive parameters that made a hand-written index
+whitelist unnecessary, and the four-hundred-signer bound the governance cost is
+derived from. It has twice been found to contradict itself, and the amendment
+procedure -- one artifact hash, one structured evidence entry, activation
+thresholds untouched -- exists so that correcting it leaves a record instead of
+a quiet edit.
+
+This table decides what remains. It has been the weakest of the three: six of
+its rows were wrong until they were corrected against the code, and one claimed
+a subsystem still needed building when nothing was left to build in it. A row
+here is a claim about the tree and is worth exactly as much as its last check.
+
+Cases and mutations decide whether the work was actually done. Neither of the
+other two has predicted a defect. Every one found so far came from an assertion
+going red: a store that discarded the registry it had just installed, a comment
+that described the opposite of its branch, a guard whose removal no case
+noticed, a measurement taken on the wrong axis, a fixture whose host never ran
+the thing the number was said to cover.
+
+## Sequencing
+
+The order below is a plan, not a record. It is written down so that it can be
+disagreed with by someone reading the repository rather than reconstructed from
+a conversation.
+
+**Phase one: session derivation and consensus call sites.** This is the only
+remaining place where both ends are built and nothing references either from the
+other: no file under `validator/consensus/` names anything in `validator/auth/`,
+and no consensus signer is wired. Its failure mode is also the worst that
+remains -- a producer and a validator deriving different session snapshots, each
+correct by its own lights -- which is the shape this design has paid for
+repeatedly and which costs least to find while the surrounding work is fresh.
+
+Its entry condition is the activation policy: whether the first checkpoint is
+seeded at genesis or installed by the first update. Nothing downstream opens a
+configuration context without one, so this is not an independent item that can
+be scheduled later; it gates the phase.
+
+**Phase two: elector emission and node actor installation.** Receipts,
+admission, and hanging the history, proof, signer and provider services on the
+manager's lifecycle. These fail loudly -- a thing is wired or it is not -- which
+is why they come after the phase whose failures are silent.
+
+**Phase three: a four-validator rehearsal with the design enabled, and whatever
+it exposes.** The existing rehearsal runs with it disabled, so nothing yet
+proves four nodes agree while it is on.
+
+### Deferred, with the reason
+
+Replacing a pending activation is deferred because the frozen rules say it is
+allowed but do not say which fields identify the activation being replaced; it
+is not a prerequisite for a first network.
+
+Remote HTTP/2 and its socket adapter, the operator rollout, the public RPC
+surface, performance acceptance, PQ suite allocation and any migration are all
+deferred. None of them is on the path from a genesis to a finalized block.
+
+### Named blockers
+
+Native governance gas is a blocker and not a note. The measured cost of the
+largest legal governance operation is sixty-six times the credit an external
+message has before it is accepted, and the signature work inside it is charged
+nothing at all, so no choice of credit closes it. What to do about that is a
+protocol decision and is not made here.
+
 ## Execution boundaries and falsifiable checks
 
 | Boundary | Implementation | Verification | Remaining integration |
