@@ -80,6 +80,8 @@ td::Ref<vm::Cell> NativeConfigHost::apply(td::Ref<vm::Cell> update, td::Ref<vm::
 
   auto after = next.value().state().remaining();
   charge(as_gas(consumed(before, after, gas_per_entry_, gas_per_byte_)));
+  // Applying advances the state's budget, so the binding meter follows it.
+  work_remaining_ = after;
   // Staged only after every step succeeded, so a refusal above cannot have
   // advanced the prefix.
   accepted_ = std::move(next.value());
@@ -94,11 +96,13 @@ td::Ref<vm::Cell> NativeConfigHost::bind(td::Ref<vm::Cell> elected, td::Ref<vm::
   // The registry the binding is read from is the one this transaction has
   // accepted so far, not the one the block started with: an update applied
   // earlier in this same transaction is part of what the set is bound against.
-  auto before = accepted_.state().remaining();
+  auto before = work_remaining_;
   auto checkpoint = accepted_.state().checkpoint();
   if (!checkpoint.ok())
     refuse("native registry checkpoint");
-  auto registry = RegistryView::open(checkpoint.value(), coordinate_, accepted_.state().remaining());
+  // Opened with what this transaction has left, not with a fresh allowance, so
+  // a second binding starts where the first stopped.
+  auto registry = RegistryView::open(checkpoint.value(), coordinate_, work_remaining_);
   if (!registry.ok())
     refuse("native registry unreadable");
 
@@ -113,8 +117,11 @@ td::Ref<vm::Cell> NativeConfigHost::bind(td::Ref<vm::Cell> elected, td::Ref<vm::
   if (!bound.ok())
     refuse("native binding refused");
 
-  auto after = accepted_.state().remaining();
-  charge(as_gas(consumed(before, after, gas_per_entry_, gas_per_byte_)));
+  // Taken back from the view, which is where the reads actually happened. The
+  // state's own budget is untouched by them, so reading it here reported no
+  // work regardless of how much was done.
+  work_remaining_ = registry.value().remaining();
+  charge(as_gas(consumed(before, work_remaining_, gas_per_entry_, gas_per_byte_)));
   ++bindings_;
   return bound.value();
 }

@@ -27,6 +27,9 @@ class RegistryView final : public KeyHistory {
   const Policy& policy() const {
     return policy_;
   }
+  // What this view has left after the reads it performed. A caller that opened
+  // it with a meter has to take the remainder back, or the reads are charged to
+  // a copy nobody looks at again -- which is what happened.
   StateReadBudget remaining() const {
     return budget_;
   }

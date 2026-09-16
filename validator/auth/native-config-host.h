@@ -31,6 +31,15 @@ class NativeConfigHost final : public vm::ValidatorAuthHost {
   // The block being built. A registry policy that is not yet effective at this
   // coordinate must not bind a set this block installs.
   std::uint32_t coordinate_;
+  // One meter for the binding reads of this transaction. Opening a view with a
+  // copy of the state's budget and never taking the remainder back charged
+  // nothing at all, and started every binding from a full allowance again.
+  //
+  // It is not yet the whole invariant: applying an update still draws on the
+  // budget carried inside the registry state, so binding reads do not limit a
+  // later apply. Closing that needs the budget threaded through
+  // apply_transaction, which this does not do.
+  StateReadBudget work_remaining_;
   std::uint64_t gas_per_entry_, gas_per_byte_;
   unsigned checkpoints_ = 0, updates_ = 0, bindings_ = 0;
 
@@ -47,6 +56,7 @@ class NativeConfigHost final : public vm::ValidatorAuthHost {
       , admitted_evidence_(std::move(admitted_evidence))
       , admitted_(std::move(admitted))
       , coordinate_(coordinate)
+      , work_remaining_(accepted_.state().remaining())
       , gas_per_entry_(gas_per_entry)
       , gas_per_byte_(gas_per_byte) {
   }
