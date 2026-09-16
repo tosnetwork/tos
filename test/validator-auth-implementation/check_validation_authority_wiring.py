@@ -11,6 +11,15 @@ So both sides must assemble, and from one assembler rather than two readings of
 the same facts. Neither may reach past it to the admission calls underneath: a
 second assembly is a second answer waiting to differ from the first.
 
+Where a candidate prefix stops being a candidate is the same property seen one
+step later. The host stages one and the configuration contract writes the
+persistent registry; the two are joined only when the account actually commits,
+so the prefix may advance only after that commit and only from what it left in
+the account. A virtual machine commit is not that moment -- the action phase can
+still fail and roll the account back -- and a producer that advanced on the
+earlier signal while a validator did not would disagree about every later
+transaction in the block.
+
 Where the assembled authority is then kept is part of the same property. It
 belongs to the transaction that received it. A block-scoped field has to be
 installed before a transaction and cleared after it, which holds only while one
@@ -51,6 +60,38 @@ EXECUTION = "crypto/block/transaction.h"
 
 AUTHORITY = "std::shared_ptr<vm::ValidatorAuthHost>"
 EXECUTE = "ExtMessageQ::run_message_on_account("
+# Where a candidate prefix stops being a candidate. A virtual machine commit is
+# not a transaction commit: the action phase can still fail afterwards and roll
+# the account back, so the prefix may only advance after the account itself has
+# committed, and from what that commit left in the account.
+SETTLE = "settle_validator_auth("
+COMMIT = "commit("
+CLEAR = "validator_auth_claim_ = nullptr;"
+
+
+def settles_after_commit(text: str) -> bool:
+    """Every binding of a committed prefix follows a commit in its own function.
+
+    Reading order rather than data flow, which is weaker than executing it and
+    is what can be checked here. A binding placed before the commit would bind a
+    candidate against an account that has not been written yet, and a virtual
+    machine commit that the action phase later undoes looks identical to a real
+    one from inside the compute phase.
+
+    The rule is function scope, not a line budget: how much failure handling
+    sits between the two is a matter of style, and a checker whose threshold
+    has to be raised whenever that changes is measuring the style."""
+    code = re.sub(r"//[^\n]*", "", text)
+    for settle in [m.start() for m in re.finditer(re.escape(SETTLE), code)]:
+        line = code.rfind("\n", 0, settle)
+        # The definition itself is not a call site.
+        if "bool " in code[line:settle]:
+            continue
+        # The enclosing function begins after the previous one ends.
+        opened = code.rfind("\n}\n", 0, settle)
+        if code.find(COMMIT, opened + 1, settle) < 0:
+            return False
+    return True
 
 
 def structure(text: str, name: str) -> str:
@@ -62,6 +103,16 @@ def structure(text: str, name: str) -> str:
 
 
 def verify(files: dict[str, str]) -> None:
+    # Both sides must bind what the account committed, and bind it after the
+    # commit. A producer that advances its prefix and a validator that does not
+    # disagree about every later transaction in the block.
+    for path in (PRODUCER, VALIDATOR):
+        if files[path].count(SETTLE) < 2:
+            raise ValueError(f"{path} does not bind a committed prefix")
+        if not settles_after_commit(files[path]):
+            raise ValueError(f"{path} binds a prefix before the account commits")
+        if CLEAR not in files[path]:
+            raise ValueError(f"{path} does not clear a candidate a transaction failed to commit")
     for path in (PRODUCER, VALIDATOR, INGRESS):
         if files[path].count(ASSEMBLER) != 1:
             raise ValueError(f"{path} does not assemble the authority exactly once")
@@ -149,6 +200,14 @@ def main() -> int:
             f"  SizeLimitsConfig size_limits;\n  {AUTHORITY} validator_auth_host;", 1)},
         {**files, EXECUTION: files[EXECUTION].replace(
             f"  {AUTHORITY} validator_auth_host;\n", "", 1)},
+        # The prefix advancing on a signal the action phase can still undo, and
+        # on one side only.
+        {**files, PRODUCER: files[PRODUCER].replace(SETTLE, "skipped(")},
+        {**files, VALIDATOR: files[VALIDATOR].replace(SETTLE, "skipped(")},
+        # And a candidate surviving a transaction that never committed, which
+        # would authorize the next transaction with the last one's prefix.
+        {**files, PRODUCER: files[PRODUCER].replace(CLEAR, "")},
+        {**files, VALIDATOR: files[VALIDATOR].replace(CLEAR, "")},
     )
     for probe in probes:
         try:
@@ -164,7 +223,8 @@ def main() -> int:
         print(f"VALIDATION-AUTHORITY-NOT-WIRED {reason}", file=sys.stderr)
         return 1
     print("PASS: production and validation rebuild one authority from the same facts, "
-          "and each transaction owns the one assembled for its message")
+          "each transaction owns the one assembled for its message, and a prefix advances only on a "
+          "committed account")
     return 0
 
 

@@ -341,11 +341,14 @@ class ValidateQuery : public td::actor::Actor {
   // it writes nothing here: the authority leaves through the argument and is
   // owned by the transaction that receives it, which is what lets account
   // checkers run concurrently against one shared compute configuration.
+  // What a transaction's authority staged, readable only after that
+  // transaction commits.
+  using ValidatorAuthClaim = std::function<tos::auth::Result<tos::auth::NativeCommitClaim>()>;
   // The sequence is supplied by the caller that owns it, rather than read from
   // a member here, so a shared prefix cannot be reached from two account actors
   // at once by construction.
   bool offer_validator_auth(Ref<vm::Cell> msg_root, const tos::auth::NativeConfigSequence& sequence,
-                            std::shared_ptr<vm::ValidatorAuthHost>& host) const;
+                            std::shared_ptr<vm::ValidatorAuthHost>& host, ValidatorAuthClaim& claim) const;
   // The facts a sequence is opened from, read once here so the producer and
   // this validator open it from the same values.
   tos::auth::Result<tos::auth::NativeConfigSequence> open_configuration_sequence_for_block() const;
@@ -477,7 +480,11 @@ class ValidateQuery : public td::actor::Actor {
     // race that moving the authority off the compute configuration removed.
     std::optional<tos::auth::NativeConfigSequence> validator_auth_sequence_;
     bool validator_auth_sequence_failed_ = false;
+    // Cleared when each transaction begins, so a transaction that never
+    // committed cannot leave its candidate behind for the next one.
+    ValidatorAuthClaim validator_auth_claim_;
     bool open_validator_auth_sequence();
+    bool settle_validator_auth(const block::Account& account);
   };
   friend CheckAccountTxs;
 

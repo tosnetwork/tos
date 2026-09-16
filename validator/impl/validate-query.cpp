@@ -5802,7 +5802,8 @@ tos::auth::Result<tos::auth::NativeConfigSequence> ValidateQuery::open_configura
 }
 
 bool ValidateQuery::offer_validator_auth(Ref<vm::Cell> msg_root, const tos::auth::NativeConfigSequence& sequence,
-                                         std::shared_ptr<vm::ValidatorAuthHost>& host) const {
+                                         std::shared_ptr<vm::ValidatorAuthHost>& host,
+                                         ValidatorAuthClaim& claim) const {
   host.reset();
   if (!is_masterchain() || !validator_auth_chain_ || config_ == nullptr || mc_state_.is_null() ||
       mc_state_root_.is_null() || validator_set_.is_null()) {
@@ -5821,6 +5822,7 @@ bool ValidateQuery::offer_validator_auth(Ref<vm::Cell> msg_root, const tos::auth
   if (admitted.ok()) {
     auto authority = std::shared_ptr<tos::auth::NativeConfigTransaction>(std::move(admitted.value()));
     host = std::shared_ptr<vm::ValidatorAuthHost>(authority, &authority->host());
+    claim = [authority] { return tos::auth::NativeCommitClaim::staged(authority->host().staged()); };
     return true;
   }
 
@@ -5828,10 +5830,35 @@ bool ValidateQuery::offer_validator_auth(Ref<vm::Cell> msg_root, const tos::auth
   if (bound.ok()) {
     auto authority = std::shared_ptr<tos::auth::NativeElectionBindingTransaction>(std::move(bound.value()));
     host = std::shared_ptr<vm::ValidatorAuthHost>(authority, &authority->host());
+    claim = [authority] { return tos::auth::NativeCommitClaim::staged(authority->host_state().staged()); };
     return true;
   }
 
   return false;
+}
+
+bool ValidateQuery::CheckAccountTxs::settle_validator_auth(const block::Account& account) {
+  auto claim = std::move(validator_auth_claim_);
+  validator_auth_claim_ = nullptr;
+  if (!validator_auth_sequence_) {
+    return true;
+  }
+  tos::auth::Hash owner{};
+  std::copy_n(account.addr.as_slice().ubegin(), owner.size(), owner.begin());
+  if (owner != validator_auth_sequence_->address()) {
+    return true;
+  }
+  auto authorized = claim ? claim() : tos::auth::Result<tos::auth::NativeCommitClaim>{tos::auth::NativeCommitClaim{}};
+  if (!authorized.ok()) {
+    return reject_query(PSTRING() << "cannot read what the configuration account's authority staged: "
+                                  << authorized.error().code);
+  }
+  auto bound = validator_auth_sequence_->promote(authorized.value(), account.data);
+  if (!bound.ok()) {
+    return reject_query(PSTRING() << "configuration account committed a registry its authority did not produce: "
+                                  << bound.error().code);
+  }
+  return true;
 }
 
 bool ValidateQuery::CheckAccountTxs::open_validator_auth_sequence() {
@@ -6267,6 +6294,7 @@ bool ValidateQuery::CheckAccountTxs::check_one_transaction(block::Account& accou
   // as the producer's tick-tock path does. Re-executing with a different host
   // than the producer used is how a correct block gets rejected for a
   // difference neither side can see.
+  validator_auth_claim_ = nullptr;
   if (open_validator_auth_sequence()) {
     if (in_msg_root.is_null()) {
       tos::auth::Hash owner{};
@@ -6276,9 +6304,13 @@ bool ValidateQuery::CheckAccountTxs::check_one_transaction(block::Account& accou
         auto owned =
             std::shared_ptr<tos::auth::NativeConfigStateTransaction>(std::move(state_authority.value()));
         trs->validator_auth_host = std::shared_ptr<vm::ValidatorAuthHost>(owned, &owned->host());
+        validator_auth_claim_ = [owned] {
+          return tos::auth::NativeCommitClaim::staged(owned->host_state().staged());
+        };
       }
     } else {
-      vq_.offer_validator_auth(in_msg_root, *validator_auth_sequence_, trs->validator_auth_host);
+      vq_.offer_validator_auth(in_msg_root, *validator_auth_sequence_, trs->validator_auth_host,
+                               validator_auth_claim_);
     }
   }
   td::RealCpuTimer timer;
@@ -6367,6 +6399,14 @@ bool ValidateQuery::CheckAccountTxs::check_one_transaction(block::Account& accou
   if (trans_root2.is_null()) {
     return reject_query(PSTRING() << "the re-created transaction " << lt << " for smart contract " << addr.to_hex()
                                   << " could not be committed");
+  }
+  // Bound after the account has actually committed, exactly as the producer
+  // bound it. A virtual machine commit is not a transaction commit, and a
+  // prefix advanced on the earlier signal would carry a registry no block
+  // installed -- on one side only, which is the divergence that rejects a
+  // correct candidate for a reason neither side can see.
+  if (!settle_validator_auth(account)) {
+    return false;
   }
   // now compare the re-created transaction with the one we have
   if (trans_root2->get_hash() != trans_root->get_hash()) {

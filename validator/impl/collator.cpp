@@ -3329,6 +3329,48 @@ bool Collator::create_special_transactions() {
  *
  * @returns The owning authority, or nothing.
  */
+/**
+ * Binds what the configuration account just committed to what its host
+ * authorized, and advances the block's prefix only if they agree.
+ *
+ * Called after the account has actually committed, never before. A virtual
+ * machine commit is not a transaction commit: the action phase can still fail
+ * afterwards and roll the account back, and a prefix advanced on the earlier
+ * signal would carry a registry no block ever installed.
+ *
+ * Every transaction of this account is bound, including ones that were offered
+ * no host at all. That is the point: a parameter 46 that moved with nothing
+ * behind it -- a legacy proposal, or a contract branch writing a well-formed
+ * registry nothing authorized -- is exactly what this refuses.
+ *
+ * @param acc The account as it stands after the commit.
+ *
+ * @returns True if the commit was bound, or did not concern the registry.
+ */
+bool Collator::settle_validator_auth(const block::Account& acc) {
+  auto claim = std::move(validator_auth_claim_);
+  validator_auth_claim_ = nullptr;
+  if (!validator_auth_sequence_) {
+    return true;
+  }
+  tos::auth::Hash account{};
+  std::copy_n(acc.addr.as_slice().ubegin(), account.size(), account.begin());
+  if (account != validator_auth_sequence_->address()) {
+    return true;
+  }
+  auto authorized = claim ? claim() : tos::auth::Result<tos::auth::NativeCommitClaim>{tos::auth::NativeCommitClaim{}};
+  if (!authorized.ok()) {
+    return fatal_error(PSTRING() << "cannot read what the configuration account's authority staged: "
+                                 << authorized.error().code);
+  }
+  auto bound = validator_auth_sequence_->promote(authorized.value(), acc.data);
+  if (!bound.ok()) {
+    return fatal_error(PSTRING() << "configuration account committed a registry its authority did not produce: "
+                                 << bound.error().code);
+  }
+  return true;
+}
+
 std::shared_ptr<tos::auth::NativeConfigStateTransaction> Collator::offer_validator_auth_ticktock(
     const tos::StdSmcAddress& smc_addr) {
   if (!is_masterchain() || !params_.validator_auth || config_ == nullptr || mc_state_.is_null() ||
@@ -3376,10 +3418,16 @@ bool Collator::create_ticktock_transaction(const tos::StdSmcAddress& smc_addr, t
   // tick-tock has no message: the compute-phase predicate delegates the account
   // question to the message assembler, and the special accounts a tick-tock
   // runs for include the elector.
+  validator_auth_claim_ = nullptr;
   auto state_authority = offer_validator_auth_ticktock(smc_addr);
   if (state_authority) {
     trans->validator_auth_host =
         std::shared_ptr<vm::ValidatorAuthHost>(state_authority, &state_authority->host());
+    // The owning authority is captured, so what it staged is still readable
+    // after the transaction that borrowed its host has committed.
+    validator_auth_claim_ = [state_authority] {
+      return tos::auth::NativeCommitClaim::staged(state_authority->host_state().staged());
+    };
   }
   td::RealCpuTimer timer;
   SCOPE_EXIT {
@@ -3414,6 +3462,9 @@ bool Collator::create_ticktock_transaction(const tos::StdSmcAddress& smc_addr, t
   if (trans->commit(*acc).is_null()) {
     return fatal_error(
         td::Status::Error(-666, std::string{"cannot commit new transaction for smart contract "} + smc_addr.to_hex()));
+  }
+  if (!settle_validator_auth(*acc)) {
+    return false;
   }
   if (!update_account_dict_estimation(*trans)) {
     return fatal_error(-666, "cannot update account dict size estimation");
@@ -3502,6 +3553,7 @@ bool Collator::offer_validator_auth(Ref<vm::Cell> msg_root, std::shared_ptr<vm::
        params_.validator_auth.value().chain, shard_, params_.validator_set->get_catchain_seqno(), now_,
        new_block_seqno};
 
+  validator_auth_claim_ = nullptr;
   auto admitted = tos::auth::assemble_registry_authority(facts, *validator_auth_sequence_);
   if (admitted.ok()) {
     // The returned pointer aliases an owning one, so the control block keeps
@@ -3511,6 +3563,11 @@ bool Collator::offer_validator_auth(Ref<vm::Cell> msg_root, std::shared_ptr<vm::
     // lifetime.
     auto authority = std::shared_ptr<tos::auth::NativeConfigTransaction>(std::move(admitted.value()));
     host = std::shared_ptr<vm::ValidatorAuthHost>(authority, &authority->host());
+    // Captured so what this authority staged is still readable after the
+    // transaction that borrowed its host has actually committed.
+    validator_auth_claim_ = [authority] {
+      return tos::auth::NativeCommitClaim::staged(authority->host().staged());
+    };
     return true;
   }
 
@@ -3518,6 +3575,9 @@ bool Collator::offer_validator_auth(Ref<vm::Cell> msg_root, std::shared_ptr<vm::
   if (bound.ok()) {
     auto authority = std::shared_ptr<tos::auth::NativeElectionBindingTransaction>(std::move(bound.value()));
     host = std::shared_ptr<vm::ValidatorAuthHost>(authority, &authority->host());
+    validator_auth_claim_ = [authority] {
+      return tos::auth::NativeCommitClaim::staged(authority->host_state().staged());
+    };
     return true;
   }
 
@@ -3611,6 +3671,9 @@ Ref<vm::Cell> Collator::create_ordinary_transaction(Ref<vm::Cell> msg_root,
     return {};
   }
   auto trans_root = trans->commit(*acc);
+  if (trans_root.not_null() && !settle_validator_auth(*acc)) {
+    return {};
+  }
   if (trans_root.is_null()) {
     fatal_error("cannot commit new transaction for smart contract "s + addr.to_hex());
     return {};

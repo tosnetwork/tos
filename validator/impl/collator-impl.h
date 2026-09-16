@@ -358,6 +358,12 @@ class Collator final : public td::actor::Actor {
   bool open_validator_auth_sequence();
   std::shared_ptr<tos::auth::NativeConfigStateTransaction> offer_validator_auth_ticktock(
       const tos::StdSmcAddress& smc_addr);
+  bool settle_validator_auth(const block::Account& acc);
+  // What the authority of the transaction being built staged, readable only
+  // after that transaction commits. Cleared when each transaction begins, so a
+  // transaction that never committed cannot leave its candidate behind for the
+  // next one to be bound against.
+  std::function<tos::auth::Result<tos::auth::NativeCommitClaim>()> validator_auth_claim_;
   std::optional<tos::auth::NativeConfigSequence> validator_auth_sequence_;
   bool validator_auth_sequence_failed_ = false;
   bool is_masterchain() const {
