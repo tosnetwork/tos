@@ -10,6 +10,7 @@
 // would hide that refusal behind a fixture.
 #include <sodium.h>
 
+#include <algorithm>
 #include <cstring>
 #include <fstream>
 #include <iostream>
@@ -18,6 +19,7 @@
 
 #include "td/utils/filesystem.h"
 #include "td/utils/port/path.h"
+#include "validator/auth/native-registry.h"
 #include "validator/auth/state.h"
 #include "vm/boc.h"
 
@@ -202,11 +204,48 @@ int main(int argc, char** argv) {
   }
   bindings += "]\n";
 
+  // The configuration account's first checkpoint.
+  //
+  // An account is restored from its checkpoint and the registry parameter
+  // together, bound by hash, and the contract can only replace a checkpoint it
+  // already carries -- the state instruction hands it one for the state it just
+  // staged, which presupposes there was a state. So the first one cannot come
+  // from a registry update: it has to be installed with the genesis account,
+  // and it is derived here from the very registry written beside it rather
+  // than from a second description of the same bytes.
+  auto bootstrapped = tos::auth::NativeRegistry::bootstrap(cell.value(), 0);
+  if (!bootstrapped.ok()) {
+    std::cerr << "FAIL: genesis registry does not bootstrap: " << bootstrapped.error().code << '\n';
+    return 1;
+  }
+  auto checkpoint = bootstrapped.value().checkpoint();
+  if (!checkpoint.ok()) {
+    std::cerr << "FAIL: genesis checkpoint: " << checkpoint.error().code << '\n';
+    return 1;
+  }
+  tos::auth::Hash registry_hash{};
+  {
+    const auto owned = cell.value()->get_hash();
+    auto raw = owned.as_slice();
+    std::copy(raw.ubegin(), raw.uend(), registry_hash.begin());
+  }
+  auto restored = tos::auth::NativeRegistry::restore(checkpoint.value(), registry_hash, 0);
+  if (!restored.ok()) {
+    std::cerr << "FAIL: genesis checkpoint does not restore against its registry: " << restored.error().code << '\n';
+    return 1;
+  }
+  auto checkpoint_boc = vm::std_boc_serialize(checkpoint.value(), 31);
+  if (checkpoint_boc.is_error()) {
+    std::cerr << "FAIL: genesis checkpoint serialization\n";
+    return 1;
+  }
+
   td::mkpath(out_dir + "/").ensure();
   td::write_file(out_dir + "/config46.boc", boc.move_as_ok()).ensure();
+  td::write_file(out_dir + "/registry-checkpoint.boc", checkpoint_boc.move_as_ok()).ensure();
   td::write_file(out_dir + "/bindings.json", bindings).ensure();
   td::write_file(out_dir + "/c0-keys.json", secrets).ensure();
   std::cout << "PASS: genesis registry for " << members.size() << " members, " << keys.size()
-            << " role keys, reparsed from its own bytes\n";
+            << " role keys, reparsed from its own bytes, with a checkpoint that restores against it\n";
   return 0;
 }

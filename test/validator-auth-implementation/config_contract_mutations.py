@@ -35,14 +35,19 @@ STORE = "    .store_checkpoint()\n"
 STAGED = "    registry_checkpoint = vauth_registry_state();\n"
 
 MUTATIONS = [
-    ("checkpoint-stored", "a-registry-update-stores-the-staged-checkpoint", STORE, "", []),
+    # The store lives in store_data rather than in the registry branch exactly
+    # so a path with nothing to do with the registry carries it too. The vote
+    # case is what proves that, and it is named here rather than the registry
+    # one because it is the case the placement exists for.
+    ("checkpoint-stored", "a-vote-keeps-the-checkpoint", STORE, "",
+     ["a-registry-update-stores-the-staged-checkpoint"]),
     # Reading it back is what makes it survive an operation that does not touch
     # the registry; without it the account opens with nothing to carry forward,
     # and every case that restores one fails.
-    ("checkpoint-loaded", "registry-c4-installs-parameter-46", LOAD,
+    ("checkpoint-loaded", "a-vote-keeps-the-checkpoint", LOAD,
      "  registry_checkpoint = null();\n  cs~load_ref();\n",
-     ["registry-c4-replaces-old-parameter-46", "registry-first-checkpoint-installs-new-parameter",
-      "registry-first-checkpoint-replaces-old-parameter"]),
+     ["registry-c4-installs-parameter-46", "registry-c4-replaces-old-parameter-46",
+      "registry-first-checkpoint-installs-new-parameter", "registry-first-checkpoint-replaces-old-parameter"]),
     ("checkpoint-restaged", "a-registry-update-stores-the-staged-checkpoint", STAGED, "", []),
 ]
 

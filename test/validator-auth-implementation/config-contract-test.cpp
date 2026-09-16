@@ -1,5 +1,7 @@
 // Executes the built configuration contract. Persistent data and the committed
 // checkpoint are separate observations: a successful host call proves neither.
+#include <sodium.h>
+
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
@@ -191,7 +193,8 @@ td::Ref<vm::Cell> stored_checkpoint(const td::Ref<vm::Cell>& data) {
 // purpose: a case that turned both off at once could not tell a contract that
 // consulted Config8 from one that never ran the instruction because the opcode
 // was gated.
-td::Ref<vm::Cell> configuration(td::Ref<vm::Cell> registry = {}, bool activated = false) {
+td::Ref<vm::Cell> configuration(td::Ref<vm::Cell> registry = {}, bool activated = false,
+                                const unsigned char* voting_key = nullptr) {
   vm::Dictionary dict(32);
   td::BitArray<32> key;
   key.store_long(1);
@@ -199,6 +202,22 @@ td::Ref<vm::Cell> configuration(td::Ref<vm::Cell> registry = {}, bool activated 
   if (registry.not_null()) {
     key.store_long(46);
     expect(dict.set_ref(key.cbits(), 32, registry), "fixture-config46");
+  }
+  if (voting_key) {
+    vm::CellBuilder descriptor;
+    descriptor.store_long(0x53, 8).store_long(0x8e81278a, 32);
+    descriptor.store_bytes(td::Slice(reinterpret_cast<const char*>(voting_key), 32));
+    descriptor.store_long(5, 64);
+    vm::Dictionary list(16);
+    td::BitArray<16> at;
+    at.store_ulong(0);
+    expect(list.set_builder(at.cbits(), 16, descriptor), "fixture-config34-member");
+    vm::CellBuilder set;
+    set.store_long(0x12, 8).store_long(0, 32).store_long(0xffffffff, 32).store_long(1, 16).store_long(1, 16)
+        .store_long(5, 64);
+    expect(set.store_maybe_ref(list.get_root_cell()), "fixture-config34");
+    key.store_long(34);
+    expect(dict.set_ref(key.cbits(), 32, set.finalize()), "fixture-config34");
   }
   if (activated) {
     key.store_long(8);
@@ -274,9 +293,10 @@ long long stored_sequence(const td::Ref<vm::Cell>& data) {
 Outcome run_contract(const td::Ref<vm::Cell>& contract, const td::Ref<vm::Cell>& body, std::uint64_t from,
                      std::uint32_t now, Host* host, td::uint64 capabilities, int version,
                      bool external = false, td::Ref<vm::Cell> registry = {}, long long gas_limit = 1000000,
-                     bool config8_active = false, td::Ref<vm::Cell> checkpoint = {}) {
+                     bool config8_active = false, td::Ref<vm::Cell> checkpoint = {},
+                     const unsigned char* voting_key = nullptr) {
   expect(contract.not_null(), "contract-loaded");
-  auto config = configuration(std::move(registry), config8_active);
+  auto config = configuration(std::move(registry), config8_active, voting_key);
   auto message = external ? external_message(body) : internal_message(from, body);
   auto data = contract_data(config, std::move(checkpoint));
   td::Ref<vm::Stack> stack{true};
@@ -469,6 +489,38 @@ std::vector<Case> cases(const td::Ref<vm::Cell>& contract) {
       // parameter 34 and a signature from one of its members, which no fixture
       // in this file builds. The mechanism it would exercise is the same one,
       // in the same function.
+      // The path the fix exists for. A vote has nothing to do with the
+      // registry, and it stores; if the store dropped the checkpoint, the next
+      // block would open an account it cannot restore -- and no registry case
+      // would see it, because they all begin from an account that has one.
+      {"a-vote-keeps-the-checkpoint", [=] {
+         unsigned char voter[32] = {}, voter_secret[64] = {};
+         expect(crypto_sign_keypair(voter, voter_secret) == 0, "fixture-voter");
+         auto carried = vm::CellBuilder().store_long(0x7b, 8).finalize();
+
+         // Everything the contract signs over, after the signature it strips.
+         vm::CellBuilder signed_part;
+         signed_part.store_long(0x566f7465, 32).store_long(0, 32).store_long(0xfffffffe, 32);
+         signed_part.store_long(0, 16).store_zeroes(256);
+         auto payload = signed_part.finalize();
+         auto slice = vm::load_cell_slice(payload);
+         unsigned char bits[64] = {};
+         expect(slice.size() % 8 == 0 && slice.size() / 8 <= sizeof(bits), "fixture-vote-payload");
+         const auto length = slice.size() / 8;
+         expect(slice.fetch_bytes(td::MutableSlice(reinterpret_cast<char*>(bits), length)), "fixture-vote-payload");
+         unsigned char signature[64] = {};
+         expect(crypto_sign_detached(signature, nullptr, bits, length, voter_secret) == 0, "fixture-vote-signature");
+
+         vm::CellBuilder body;
+         body.store_bytes(td::Slice(reinterpret_cast<const char*>(signature), 64));
+         body.append_cellslice(vm::load_cell_slice_ref(payload));
+         Host host;
+         auto run = run_contract(contract, body.finalize(), 0, 1000, &host, vm::validator_auth_capability,
+                                 vm::validator_auth_min_version, true, {}, 1000000, false, carried, voter);
+         expect(run.committed, "a-vote-keeps-the-checkpoint");
+         expect(same_cell(stored_checkpoint(run.committed_data), carried), "a-vote-keeps-the-checkpoint");
+         expect(host.applies == 0 && host.binds == 0, "a-vote-keeps-the-checkpoint");
+       }},
       // A registry update replaces it with the one for the state it just
       // staged, taken from the state instruction rather than invented.
       {"a-registry-update-stores-the-staged-checkpoint", [=] {
