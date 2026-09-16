@@ -240,6 +240,7 @@ Result<td::Ref<vm::Cell>> owner_approval_body(const ChainContext& chain, const U
       .store_bytes(slice(id.value()));
   return td::Ref<vm::Cell>(body.finalize());
 }
+#ifdef TOS_VALIDATOR_AUTH_TEST_PRODUCER
 Result<OwnerAuth> make_owner_execution_proof(td::Ref<vm::Cell> state, td::Ref<vm::Cell> block, const Anchor& anchor,
                                              const ChainContext& chain, const Update& update, const Identity& current,
                                              std::uint64_t lt, std::uint16_t index, ObjectPublisher publisher) {
@@ -291,6 +292,7 @@ Result<OwnerAuth> make_owner_execution_proof(td::Ref<vm::Cell> state, td::Ref<vm
     return Error{"incomplete-proof"};
   }
 }
+#endif
 Result<VerifiedOwnerExecution> verify_owner_execution(const OwnerAuth& auth, const Update& update,
                                                       const Identity& current, const Anchor& anchor,
                                                       const ChainContext& chain, ObjectReader& reader) {

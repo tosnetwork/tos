@@ -21,7 +21,7 @@ or PQ suite allocation is authorized by this work.
 | Native VM and transaction execution | C++/Rust VAUTH_CHKSIGN, native capability metadata, Fift/FunC and Rust assembly bindings | 168 exact outcome/gas comparisons; getter config and nested VM; eight whole transactions including action rollback | Elector/owner statement construction and native admission |
 | Native committee derivation | Explicit native identity/stake descriptor, authenticated Config35/34 and Config46, original native selection, owned transport order and VAM1 | 40 C++/Rust state cases including a full 400-member snapshot, shuffle, shard weights, temporary election and budget exhaustion | Elector emission and session admission |
 | Native registry state | C++ and independent Rust Config46 genesis, encoding and identity-update replay; immutable key archive and owned successor state | 501 identities / 2506 keys; 34 cross-language replay cases with checkpoint/continuous equivalence, control retention and rejected-block atomicity | Native contract installation, elector/config operations and global apply |
-| Native state proofs | C++ and Rust actual masterchain Config8/9/10/16/46 and Merkle proofs for profile, policy, key and registry ranges | State-root substitution, omitted entries, false terminal page, unrelated revealed values, detached physical cells, capability and atomic-publication guard removals | Actor installation and owner proof dispatch |
+| Native state proofs | C++ and Rust actual masterchain Config8/9/10/16/46 and Merkle proofs for profile, policy, key and registry ranges | State-root substitution, omitted entries, false terminal page, unrelated revealed values, detached physical cells, capability and atomic-publication guard removals | Actor installation |
 | Native certificate proofs and RPC | Independent C++/Rust certificate verification from native committee and policy proofs; C++ methods 12/13 and private Rust verified output | 55 shared cases; real local HTTP over 16 snapshots; exact signers/weight, trusted context, error provenance and single-fetch prepared request checks | Native manager installation of the node history adapter and remote serving |
 | Native owner execution | C++ and independent Rust VAF1 kind-1 proofs over native account transactions, full trusted anchor and current owner/stake allocation | 68 shared proof cases from real masterchain/workchain-0 wallet transactions; action rollback, forged wallet signatures, block substitution and 52 compiled guards | Native elector receipt processing, normal stake rules and atomic update admission |
 | Native registry transaction prefixes | Independent C++/Rust per-transaction immutable candidates, due-before-request order and private block-start revision | 80 real-owner cases match whole-block replay; rejected/discarded candidates, cumulative budget, overflow and nine compiled mutations | Contract data installation and native action-phase commit wiring |
@@ -39,6 +39,14 @@ or PQ suite allocation is authorized by this work.
 | Native Keyring isolation | Factory-installed durable public-key deny set, private-operation guards, shared/exclusive directory locks and an asynchronous drain barrier | Actual signing/decryption/export before designation; every private API refused afterwards; restart, damaged records, competing processes and compiled guard removals | Native session admission installation of the reconciled provider token |
 | Service issuer | Purpose-separated persistent C0 service keys, typed permit/receipt signing, local rotation and public policy history; authenticated-local trust installation and verified node permit acquisition | Actual signer receipts, restart, key/policy binding and nine compiled guard removals | Actor installation and operator configuration rollout |
 | Operational release | No activation change | No testnet/release acceptance claim | Required testnet, genesis, operator recovery, approvals and C0 performance evidence |
+
+Owner approval production is deliberately outside the validator boundary. An
+approval states that the owner's own account already executed a finalized
+transaction carrying it; the node verifies that fact against finalized native
+history and never manufactures one. Repository test drivers extract approval
+fixtures from real executions, and a boundary check requires that no production
+library links a symbol able to assemble one.
+
 
 Generated bindings never rewrite the frozen schema or vectors. Parsed transport
 frames do not establish chain authority. Snapshot admission validates an owned
