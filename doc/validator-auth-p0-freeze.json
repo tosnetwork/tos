@@ -18,7 +18,7 @@
     "doc/validator-auth-p0/ACTIVATION.md": "a74450d93f3883a48783410614baa57a0a1e9de4f48bc680df5779a3af00179c",
     "doc/validator-auth-p0/API-CONTRACT.md": "08728fb9358e83086d48da51a1525be6c468d7932197d6e013f6e80c4e4e15a1",
     "doc/validator-auth-p0/CLIENTS.md": "4d9f3486f215b1a2217096f0be118f9f00d1ff5c89c4aae221b04c85f09357cb",
-    "doc/validator-auth-p0/LIFECYCLE.md": "8523cdf8c9cd5d25c959c69ddc8d52757c82947356e203b439f6fc9207390b13",
+    "doc/validator-auth-p0/LIFECYCLE.md": "94e4ae0afd9b71b861706f17fdb7d2d2ce4d12eb79626bbe4e95f097c949eaa5",
     "doc/validator-auth-p0/OPEN-DECISIONS.md": "d004066e54f096f008400b3306d8def3a360b9bc3006de2f86d7c2086cec7a2b",
     "doc/validator-auth-p0/README.md": "9b1781e0f02f938270d5214cdb7ad5c0903ad603e0bd7f10fefd1f15dae1f839",
     "doc/validator-auth-p0/SIGNER.md": "3d904e29ab690364dde1759f80b4f0dff4cca115a0f2e3ec7397db5cffe6ea5f",
@@ -29,7 +29,7 @@
     "doc/validator-auth-p0/transport.schema.json": "ddd45d7d3eb672559efde020af95a0e215146775ec82f8c6847b0f3ab8127584",
     "doc/validator-auth-p0/wire.tl": "a5e10c8e25887cb30440a26a0d8cbcef1473878aeb87438cca1a0f0bc6875c15",
     "doc/validator-auth-p0/wire.tlb": "923650bd74bbbf677a070d1d13d7c12d46944e8bffbfc3a72641093d20d3ce9d",
-    "doc/validator-auth-p0-native-insertions.json": "d00ede39b94f352964d35f7ee84c83a3ba98d2b28a61156c69fa82a546ed05d0",
+    "doc/validator-auth-p0-native-insertions.json": "075a49d5ef10845ea2780222d4534977435ace423f6a0a720a13adb45ce8c82d",
     "test/validator-auth-p0/README.md": "a0b0950c4ac702f8be0f34919a50f8e7b13d5d14dda3bd2cc05b4c8ffee31321",
     "test/validator-auth-p0/api.py": "9ec50bf9e19345ef54a8894a3525eba1eed8fb10412b8a3fdc1ed1c5728fb815",
     "test/validator-auth-p0/archive_evidence.py": "22bb392a561068e0fb3905ce7e8df95bab463468cdfe3be884eff19b12481409",
@@ -166,6 +166,24 @@
       "scope": "Only declared additive contract insertions changed, from eight to twelve for the configuration contract. Original contract bytes are unchanged and every insertion remains declared at its original offset; a chain that has not activated reaches the original threshold path unaltered. No frozen wire, API or profile artifact is touched.",
       "reason": "A configuration-parameter change requires the governing committee's current-policy quorum as well as the normal vote. Installing on the vote alone would leave the second gate with nothing to gate, and the reset paths would otherwise return a completed proposal to an earlier round.",
       "pending": "The normative description of the two-stage rule belongs to a single lifecycle amendment covering the whole operation, which is written once the governance half is implemented rather than in parts.",
+      "activation": "Unchanged. No suite is allocated, no network is configured, and the version-16 activation gates and listed approvals remain independent thresholds that this does not satisfy."
+    },
+    {
+      "artifact": "doc/validator-auth-p0/LIFECYCLE.md",
+      "previous_sha256": "8523cdf8c9cd5d25c959c69ddc8d52757c82947356e203b439f6fc9207390b13",
+      "sha256": "94e4ae0afd9b71b861706f17fdb7d2d2ce4d12eb79626bbe4e95f097c949eaa5",
+      "change": "Wrote the two-stage rule for a configuration-parameter change: normal voting completes and installs nothing, and a governance operation finalizes the exact proposal it names.",
+      "scope": "Normative wording only. No operation, field, encoding or limit is added, removed or renumbered; the status value and the persisted marker it names are existing encodings given a stated meaning.",
+      "reason": "A configuration-parameter change needs the governing quorum as well as the normal vote, and nothing carried an authorization from the vote to the block that installs the result.",
+      "activation": "Unchanged. No suite is allocated, no network is configured, and the version-16 activation gates and listed approvals remain independent thresholds that this does not satisfy."
+    },
+    {
+      "artifact": "doc/validator-auth-p0-native-insertions.json",
+      "previous_sha256": "d00ede39b94f352964d35f7ee84c83a3ba98d2b28a61156c69fa82a546ed05d0",
+      "sha256": "075a49d5ef10845ea2780222d4534977435ace423f6a0a720a13adb45ce8c82d",
+      "change": "Added the governance finalization branch: a third message reference carries the exact proposal, and the parameter and the registry the operation produced are committed together.",
+      "scope": "Only declared additive contract insertions changed. Original contract bytes are unchanged and every insertion remains declared at its original offset; a chain that has not activated reaches the original paths unaltered. No frozen wire, API or profile artifact is touched.",
+      "reason": "A configuration-parameter change needs the governing quorum as well as the normal vote, and nothing carried an authorization from the vote to the block that installs the result.",
       "activation": "Unchanged. No suite is allocated, no network is configured, and the version-16 activation gates and listed approvals remain independent thresholds that this does not satisfy."
     }
   ],

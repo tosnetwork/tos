@@ -688,7 +688,49 @@ int register_voting_proposal(slice cs, int msg_value) impure inline_ref {
     ;; dropped inside the gas credit instead of being paid for.
     var update = cs~load_ref();
     var evidence = cs~load_ref();
+    ;; A third reference is the exact configuration proposal a governance
+    ;; operation finalizes. Which operations take one is decided by the
+    ;; instruction, which holds the decoded update: it refuses an operation that
+    ;; needs a proposal and has none, and a proposal attached to one that takes
+    ;; none. Deciding it here as well would be a second reading of the update.
+    cell proposal = null();
+    if (cs.slice_refs()) {
+      proposal = cs~load_ref();
+    }
     cs.end_parse();
+    ifnot (cell_null?(proposal)) {
+      ;; The second of two gates. Normal configuration voting has already
+      ;; completed for this exact proposal and installed nothing; what remains
+      ;; is the governing committee's quorum, which the instruction checks, and
+      ;; the conditions the vote itself was taken under, which accept_proposal
+      ;; checks below exactly as it always has.
+      int phash = proposal.cell_hash();
+      var (pstatus, found?) = vote_dict.udict_get?(256, phash);
+      throw_unless(50, found?);
+      var (expires, voted_proposal, critical?, voters, weight_remaining, vset_id, rest) = unpack_proposal_status(pstatus);
+      throw_unless(51, expires > now());
+      throw_unless(52, p0_awaiting_governance?(rest));
+      var finalized = vauth_apply_update(update, evidence);
+      registry_checkpoint = vauth_registry_state();
+      accept_message();
+      stored_seqno = (stored_seqno + 1) % (1 << 32);
+      ;; The proposal is consumed whether or not the parameter changes, so a
+      ;; finalization that the conditions refuse cannot be replayed against a
+      ;; later state under the same quorum.
+      vote_dict~udict_delete?(256, phash);
+      (cfg_dict, var param_id, var param_val) = accept_proposal(cfg_dict, proposal, critical?);
+      throw_unless(53, param_id);
+      ;; Both parameters are set in this dictionary rather than through
+      ;; set_conf_param, which rewrites the account from get_data(): the store
+      ;; below would put this dictionary back over it, and the registry would be
+      ;; the one thing the finalization did not keep.
+      cfg_dict~idict_set_ref(32, 46, finalized);
+      store_data(cfg_dict, stored_seqno, public_key, vote_dict);
+      commit();
+      (cfg_dict, public_key) = perform_proposed_action(cfg_dict, public_key, param_id, param_val);
+      store_data(cfg_dict, stored_seqno, public_key, vote_dict);
+      return ();
+    }
     var registry = vauth_apply_update(update, evidence);
     ;; The checkpoint for exactly the state just staged, so the account and
     ;; parameter 46 describe the same registry. Taken from the instruction

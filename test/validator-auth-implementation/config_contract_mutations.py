@@ -45,11 +45,26 @@ LOAD = """  registry_checkpoint = null();
   }
 """
 STORE = "    .store_checkpoint()\n"
-STAGED = "    registry_checkpoint = vauth_registry_state();\n"
+# Two lines, not one. The finalization branch restages the checkpoint the same
+# way with deeper indentation, and the shorter form is a substring of it; a
+# single anchor would leave whichever copy it did not match untested, so each
+# copy has its own anchor and its own mutation.
+STAGED = ('    registry_checkpoint = vauth_registry_state();\n'
+          '    accept_message();\n')
+STAGED_FINALIZE = ('      registry_checkpoint = vauth_registry_state();\n'
+                   '      accept_message();\n')
 # The tick-tock persistence, as one block. Removing it returns the account to
 # the shape that let a block with no registry message keep the parent's
 # parameter 46 -- whose schedule still names transitions as due at a coordinate
 # that has passed, so the next block's registry refuses to open at all.
+TERMINAL_REQUIRED = """      throw_unless(52, p0_awaiting_governance?(rest));
+"""
+FOUND_REQUIRED = """      throw_unless(50, found?);
+"""
+REGISTRY_KEPT = """      cfg_dict~idict_set_ref(32, 46, finalized);
+"""
+PROPOSAL_CONSUMED = """      vote_dict~udict_delete?(256, phash);
+"""
 RV_EARLY = """  if (validator_auth_active()) {
     if (p0_awaiting_governance?(rest)) {
       return (vote_dict, null(), 3);
@@ -92,7 +107,8 @@ MUTATIONS = [
     # case is what proves that, and it is named here rather than the registry
     # one because it is the case the placement exists for.
     ("checkpoint-stored", "a-vote-keeps-the-checkpoint", STORE, "",
-     ["a-registry-update-stores-the-staged-checkpoint", "a-due-only-tick-tock-persists-the-prefix"]),
+     ["a-registry-update-stores-the-staged-checkpoint", "a-due-only-tick-tock-persists-the-prefix",
+      "a-governance-operation-finalizes-a-completed-proposal"]),
     # Reading it back is what makes it survive an operation that does not touch
     # the registry; without it the account opens with nothing to carry forward,
     # and every case that restores one fails.
@@ -102,9 +118,13 @@ MUTATIONS = [
       "registry-first-checkpoint-installs-new-parameter", "registry-first-checkpoint-replaces-old-parameter",
       "a-due-only-tick-tock-persists-the-prefix", "an-inactive-chain-tick-tock-asks-for-nothing",
       "a-completed-vote-installs-nothing-under-governance", "a-terminal-proposal-takes-no-further-votes",
-      "a-terminal-proposal-survives-a-tick-tock-scan", "an-inactive-chain-installs-on-the-threshold"]),
-    ("checkpoint-restaged", "a-registry-update-stores-the-staged-checkpoint", STAGED, "", [],
-     "() recv_external(slice in_msg) impure {"),
+      "a-terminal-proposal-survives-a-tick-tock-scan", "an-inactive-chain-installs-on-the-threshold",
+      "a-governance-operation-finalizes-a-completed-proposal", "a-proposal-still-in-voting-is-not-finalizable",
+      "an-unknown-proposal-is-not-finalizable"]),
+    ("checkpoint-restaged", "a-registry-update-stores-the-staged-checkpoint", STAGED,
+     "    accept_message();\n", [], "() recv_external(slice in_msg) impure {"),
+    ("checkpoint-restaged-on-finalization", "a-governance-operation-finalizes-a-completed-proposal",
+     STAGED_FINALIZE, "      accept_message();\n", [], "() recv_external(slice in_msg) impure {"),
     # A block with nothing to process still has state to persist. Without this
     # the tick-tock runs, stores its data and commits -- which is why the case
     # asserts what parameter 46 holds afterwards rather than that the tick-tock
@@ -125,6 +145,22 @@ MUTATIONS = [
     # The marker itself. Writing the threshold back instead of the sentinel
     # leaves a proposal that looks ordinary again, so the next vote resumes
     # counting and eventually installs.
+    # The second gate itself. Without the terminal requirement a governing
+    # quorum could install a proposal the validators never finished voting on,
+    # which is the whole thing the two-stage rule prevents.
+    ("finalizes-without-normal-voting", "a-proposal-still-in-voting-is-not-finalizable",
+     TERMINAL_REQUIRED, "", [], "() recv_external(slice in_msg) impure {"),
+    # The unpack below throws on a missing status anyway, so what this proves is
+    # that the refusal names the missing proposal rather than arriving as
+    # whatever the decoder happened to raise. The case asserts the exact code.
+    ("finalizes-an-unknown-proposal", "an-unknown-proposal-is-not-finalizable",
+     FOUND_REQUIRED, "", [], "() recv_external(slice in_msg) impure {"),
+    # And the two halves of the one commit. The registry set in this dictionary
+    # rather than through set_conf_param is what survives the store below.
+    ("registry-lost-to-the-store", "a-governance-operation-finalizes-a-completed-proposal",
+     REGISTRY_KEPT, "", [], "() recv_external(slice in_msg) impure {"),
+    ("finalized-proposal-not-consumed", "a-governance-operation-finalizes-a-completed-proposal",
+     PROPOSAL_CONSUMED, "", [], "() recv_external(slice in_msg) impure {"),
     ("sentinel-is-the-threshold", "a-completed-vote-installs-nothing-under-governance", SENTINEL,
      "        .store_uint(wins, 8)\n", [],
      "(cell, cell, int) register_vote(vote_dict, phash, idx, weight) inline_ref {"),

@@ -162,7 +162,45 @@ This proposal does not make all validator funds or wallets PQ-safe.
 
 Policy changes require the trusted governance committee's current-policy quorum.
 Configuration-parameter changes require that quorum plus the normal
-configuration-voting rules. Election, complaint/config votes
+configuration-voting rules, in that order and in two stages.
+
+Normal voting runs unchanged until it reaches its threshold. At that point the
+proposal is not installed. Its persisted `wins` becomes 0xff, which marks it as
+awaiting governance; the marker is a value ordinary voting cannot reach, because
+a proposal is stored again only while `wins < min_wins` and `min_wins` is a
+uint8. It is not a comparison against the current threshold, which is itself a
+configuration parameter a later proposal can change. A completed proposal
+registers no further vote and is not reset by a validator-set rotation, whether
+that rotation is reached by a vote or by the tick-tock scan; both answer with
+status 3, meaning normal voting is complete and the proposal awaits governance.
+Its expiry and the existing paid extension of an exact proposal are unchanged,
+so a proposal that expires before finalization is removed and must be voted on
+again.
+
+Operation 6 finalizes one such proposal. The exact ConfigProposal travels with
+the registry message as a third reference rather than inside VAU1, which is
+unchanged, and it is bound to the transaction where the message is admitted;
+VAUTH_APPLY keeps its two operands. An operation of any other kind must not
+carry one, and operation 6 without one is refused. The operation's
+`operation_data` must agree with that proposal exactly: `parameter_index` equals
+the proposal's `param_id`; the proposal's `if_hash_equal` must be present and
+equal to `previous_cell_hash`; and the hash of the proposal's `param_value`
+equals `proposed_cell_hash`. A `previous_cell_hash` of zero means the parameter
+is currently absent and must still be stated as a present zero condition rather
+than omitted, or a proposal asking for no compare-and-swap and one requiring the
+parameter to be absent would share an encoding. A `proposed_cell_hash` of zero
+means the proposal deletes the parameter.
+
+Finalization is one transaction. It requires the proposal to be present, not
+expired and marked awaiting governance; it applies the update under the
+governing quorum; it consumes the proposal; and it then applies the existing
+acceptance rules -- mandatory, critical and current-hash -- before installing.
+The parameter and the registry the operation produced are committed together. If
+any step fails nothing moves: the parameter is unchanged, the proposal remains
+awaiting governance, the global nonce does not advance and no candidate prefix
+is promoted. The commit binds the parameter on both sides, because the proposal
+is not an instruction operand and that binding is the only thing tying what was
+installed to what was authorized. Election, complaint/config votes
 and privileged config paths must be covered before PQ enforcement; key onboarding
 alone does not migrate them.
 

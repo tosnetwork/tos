@@ -347,10 +347,15 @@ td::Ref<vm::Cell> external_message(const td::Ref<vm::Cell>& body) {
   return canonical_cell(cb.finalize());
 }
 
-td::Ref<vm::Cell> registry_body(const RegistryCells& cells) {
-  return canonical_cell(vm::CellBuilder().store_zeroes(512).store_long(0x56417531, 32)
-                            .store_long(0, 32).store_long(2000, 32)
-                            .store_ref(cells.update).store_ref(cells.evidence).finalize());
+td::Ref<vm::Cell> registry_body(const RegistryCells& cells, td::Ref<vm::Cell> proposal = {}) {
+  vm::CellBuilder b;
+  b.store_zeroes(512).store_long(0x56417531, 32).store_long(0, 32).store_long(2000, 32);
+  b.store_ref(cells.update).store_ref(cells.evidence);
+  // A third reference is the proposal a governance operation finalizes. Which
+  // operations take one is decided where the update is decoded, not here.
+  if (proposal.not_null())
+    b.store_ref(std::move(proposal));
+  return canonical_cell(b.finalize());
 }
 
 struct Outcome {
@@ -766,6 +771,68 @@ std::vector<Case> cases(const td::Ref<vm::Cell>& contract) {
          expect(run.exit == 0, "an-inactive-chain-installs-on-the-threshold");
          expect(same_cell(installed_parameter(run.committed_data, 17), value),
                 "an-inactive-chain-installs-on-the-threshold");
+       }},
+      // The second of the two gates. A proposal that completed normal voting is
+      // finalized by a governance operation and only then installed, in the one
+      // transaction that also commits the registry the operation produced.
+      {"a-governance-operation-finalizes-a-completed-proposal", [=] {
+         auto cells = registry_cells();
+         auto host = registry_host(cells);
+         auto value = vm::CellBuilder().store_long(0x5151, 16).finalize();
+         auto proposal = config_proposal(17, value);
+         auto votes = vote_dictionary(proposal, voter_public(), 255, false);
+         auto stale = vm::CellBuilder().store_long(0x7b, 8).finalize();
+         auto run = run_contract(contract, registry_body(cells, proposal), 0, 1000, &host,
+                                 vm::validator_auth_capability, vm::validator_auth_min_version, true, {},
+                                 1000000, true, stale, voter_public(), votes);
+         expect(run.exit == 0 && host.applies == 1 && host.checkpoints == 1,
+                "a-governance-operation-finalizes-a-completed-proposal");
+         // The checkpoint is restaged here as it is for any registry update:
+         // the account and parameter 46 have to describe the same registry, and
+         // a finalization that kept the old one would leave them describing two.
+         auto written = stored_checkpoint(run.committed_data);
+         expect(written.not_null() && !same_cell(written, stale),
+                "a-governance-operation-finalizes-a-completed-proposal");
+         // Both halves in one commit: the parameter the proposal names and the
+         // registry the operation produced.
+         expect(same_cell(installed_parameter(run.committed_data, 17), value),
+                "a-governance-operation-finalizes-a-completed-proposal");
+         expect(same_cell(installed_parameter(run.committed_data, 46), cells.after),
+                "a-governance-operation-finalizes-a-completed-proposal");
+         // And the proposal is consumed, so the same quorum cannot finalize it
+         // again against a later state.
+         expect(stored_wins(run.committed_data, proposal) == -1,
+                "a-governance-operation-finalizes-a-completed-proposal");
+       }},
+      // A proposal that has not completed normal voting is not finalizable: the
+      // governing quorum is the second gate, not a way around the first.
+      {"a-proposal-still-in-voting-is-not-finalizable", [=] {
+         auto cells = registry_cells();
+         auto host = registry_host(cells);
+         auto proposal = config_proposal(17, vm::CellBuilder().store_long(0x5151, 16).finalize());
+         auto votes = vote_dictionary(proposal, voter_public(), 0, false);
+         auto run = run_contract(contract, registry_body(cells, proposal), 0, 1000, &host,
+                                 vm::validator_auth_capability, vm::validator_auth_min_version, true, {},
+                                 1000000, true, {}, voter_public(), votes);
+         // The exact refusal, not merely a refusal: the unpack below throws on
+         // its own for some shapes, so a case asking only "did it fail" would
+         // stay green with this gate removed and be measuring the decoder.
+         expect(run.exit == 52, "a-proposal-still-in-voting-is-not-finalizable");
+         expect(installed_parameter(run.committed_data, 17).is_null(),
+                "a-proposal-still-in-voting-is-not-finalizable");
+       }},
+      // And one that was never voted on at all.
+      {"an-unknown-proposal-is-not-finalizable", [=] {
+         auto cells = registry_cells();
+         auto host = registry_host(cells);
+         auto proposal = config_proposal(17, vm::CellBuilder().store_long(0x5151, 16).finalize());
+         auto other = config_proposal(18, vm::CellBuilder().store_long(0x6262, 16).finalize());
+         auto votes = vote_dictionary(other, voter_public(), 255, false);
+         auto run = run_contract(contract, registry_body(cells, proposal), 0, 1000, &host,
+                                 vm::validator_auth_capability, vm::validator_auth_min_version, true, {},
+                                 1000000, true, {}, voter_public(), votes);
+         expect(run.exit == 50, "an-unknown-proposal-is-not-finalizable");
+         expect(installed_parameter(run.committed_data, 17).is_null(), "an-unknown-proposal-is-not-finalizable");
        }},
       {"contract-assembles-and-loads", [=] { expect(contract.not_null(), "contract-assembles-and-loads"); }},
       {"registry-action-reaches-the-host", [] {
