@@ -21,6 +21,7 @@
 #include <stdexcept>
 #include <string>
 
+#include "validator/auth/native-config-state-host.h"
 #include "validator/auth/native-election-binding-host.h"
 #include "vm/cells/CellBuilder.h"
 #include "vm/dict.h"
@@ -79,6 +80,20 @@ int main() {
       // an operand failure is not the absent-host answer, or the two cases
       // above would pass for a host that refused everything.
       report(!refuses_as_absent([&] { host.bind({}, {}, charge); }), "election-binding-host-reaches-bind");
+    }
+
+    // And the state host is reached by a tick-tock, which carries no message at
+    // all: no evidence to apply, no elected set to bind. It exists so a block
+    // with nothing to process can still persist the state that fell due in it,
+    // and that is the only thing it can do.
+    {
+      NativeConfigStateHost host(registry_block());
+      report(refuses_as_absent([&] { host.apply(cell, cell, charge); }), "config-state-host-refuses-apply");
+      report(refuses_as_absent([&] { host.bind(cell, cell, charge); }), "config-state-host-refuses-bind");
+      // The operation it does implement is reached and succeeds, or the two
+      // cases above would pass for a host that refused everything.
+      report(!refuses_as_absent([&] { host.checkpoint(charge); }) && host.checkpoints() == 1,
+             "config-state-host-reaches-state");
     }
 
     // What a host charges must count the reads that happened, not the reads

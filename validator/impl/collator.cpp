@@ -3317,6 +3317,33 @@ bool Collator::create_special_transactions() {
  *
  * @returns True if the transaction was created successfully, false otherwise.
  */
+/**
+ * Offers the state authority to one tick-tock transaction, or nothing.
+ *
+ * Only the configuration account gets one, and only on a chain that has
+ * activated validator authentication. Every other special account, the elector
+ * included, runs its tick-tock with no host at all -- which is what a contract
+ * that asks for a privileged instruction there already sees.
+ *
+ * @param smc_addr The account whose tick-tock is being created.
+ *
+ * @returns The owning authority, or nothing.
+ */
+std::shared_ptr<tos::auth::NativeConfigStateTransaction> Collator::offer_validator_auth_ticktock(
+    const tos::StdSmcAddress& smc_addr) {
+  if (!is_masterchain() || !params_.validator_auth || config_ == nullptr || mc_state_.is_null() ||
+      mc_state_root.is_null() || params_.validator_set.is_null() || !open_validator_auth_sequence()) {
+    return nullptr;
+  }
+  tos::auth::Hash account{};
+  std::copy_n(smc_addr.as_slice().ubegin(), account.size(), account.begin());
+  auto opened = tos::auth::NativeConfigStateTransaction::open(*validator_auth_sequence_, account);
+  if (!opened.ok()) {
+    return nullptr;
+  }
+  return std::shared_ptr<tos::auth::NativeConfigStateTransaction>(std::move(opened.value()));
+}
+
 bool Collator::create_ticktock_transaction(const tos::StdSmcAddress& smc_addr, tos::LogicalTime req_start_lt,
                                            int mask) {
   auto acc_res = make_account(smc_addr.cbits(), false);
@@ -3343,6 +3370,17 @@ bool Collator::create_ticktock_transaction(const tos::StdSmcAddress& smc_addr, t
   std::unique_ptr<block::transaction::Transaction> trans = std::make_unique<block::transaction::Transaction>(
       *acc, mask == 2 ? block::transaction::Transaction::tr_tick : block::transaction::Transaction::tr_tock,
       req_start_lt, now_);
+  // The block's native prefix, offered to the configuration account's own
+  // tick-tock so a block with no registry message still persists the state that
+  // fell due in it. Which account this is gets decided here, because a
+  // tick-tock has no message: the compute-phase predicate delegates the account
+  // question to the message assembler, and the special accounts a tick-tock
+  // runs for include the elector.
+  auto state_authority = offer_validator_auth_ticktock(smc_addr);
+  if (state_authority) {
+    trans->validator_auth_host =
+        std::shared_ptr<vm::ValidatorAuthHost>(state_authority, &state_authority->host());
+  }
   td::RealCpuTimer timer;
   SCOPE_EXIT {
     stats_.work_time.trx_tvm += trans->time_tvm;

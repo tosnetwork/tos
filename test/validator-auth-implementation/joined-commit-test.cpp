@@ -24,6 +24,7 @@
 #include <string>
 
 #include "validator/auth/native-config-sequence.h"
+#include "validator/auth/native-config-state-host.h"
 #include "validator/auth/native-election-binding-transaction.h"
 #include "vm/cells/CellBuilder.h"
 #include "vm/dict.h"
@@ -101,6 +102,8 @@ int main() {
         "joined-refusal-does-not-move-the-prefix",
         "joined-unchanged-parameter-does-not-promote",
         "joined-later-transaction-opens-on-the-committed-prefix",
+        "joined-due-only-block-persists-prefix",
+        "joined-state-authority-is-only-for-the-configuration-account",
     };
     for (const auto* name : manifest)
       std::cout << "MANIFEST " << name << '\n';
@@ -265,6 +268,65 @@ int main() {
               candidate_root &&
           candidate_root != parent_root;
       report(carried, "joined-later-transaction-opens-on-the-committed-prefix");
+    }
+
+    // A block with no registry message at all.
+    //
+    // The prefix it begins from already carries the transitions that fall due
+    // at its coordinate. If nothing writes that back, the account keeps the
+    // parent's parameter 46 -- whose schedule still names those transitions as
+    // due at a coordinate that has now passed -- and the next block cannot open
+    // a registry at all. Not "misses an update": the replay refuses, and the
+    // chain stops producing masterchain blocks.
+    //
+    // Both halves look correct in isolation. The registry replayed exactly as
+    // it should; the contract did nothing because nothing asked it to. The
+    // defect is only visible one block later, which is why it is stated here
+    // rather than in either suite.
+    {
+      auto pending = p0_fixture::pending_state(3);
+      ChainContext domain{};
+      domain.chain_domain = pending.chain_domain();
+      auto parameter = value(pending.encode_cell(), "pending-root");
+
+      // The coordinate the scheduled transitions actually fall due at, found
+      // rather than assumed: a hard-coded one would silently stop testing this
+      // the day the fixture's schedule moves.
+      std::uint32_t due_at = 0;
+      td::Ref<vm::Cell> materialized;
+      for (std::uint32_t at = pending.coordinate() + 1; at <= pending.coordinate() + 64 && due_at == 0; ++at) {
+        auto step = NativeConfigSequence::begin(parameter, Hash{}, Anchor{at - 1, {}, {}, {}}, domain, at);
+        if (!step.ok())
+          break;
+        auto root = value(step.value().accepted().state().encode_cell(), "step-root");
+        if (root->get_hash() != parameter->get_hash()) {
+          due_at = at;
+          materialized = root;
+        }
+      }
+
+      // Keeping the parent's parameter: the next block refuses.
+      auto stale = NativeConfigSequence::begin(parameter, Hash{}, Anchor{due_at, {}, {}, {}}, domain, due_at + 1);
+      // Persisting what the block materialized: the next block opens.
+      auto persisted =
+          NativeConfigSequence::begin(materialized, Hash{}, Anchor{due_at, {}, {}, {}}, domain, due_at + 1);
+      report(due_at != 0 && !stale.ok() && stale.error().code == "state-overdue" && persisted.ok(),
+             "joined-due-only-block-persists-prefix");
+    }
+
+    // A tick-tock has no message, so nothing upstream has decided which account
+    // it is for. The compute-phase predicate does not decide it either: it
+    // delegates that to the message assembler, which refuses anything not
+    // addressed to the configuration account -- and with no message there is no
+    // assembler. The special accounts a tick-tock runs for include the elector,
+    // so without this check the elector's own tick-tock would be handed a
+    // privileged host.
+    {
+      auto sequence = value(context_fixture::begin_sequence(fixture, inclusion), "fixture-sequence");
+      auto mine = NativeConfigStateTransaction::open(sequence, fixture.address);
+      auto other = NativeConfigStateTransaction::open(sequence, h(901));
+      report(mine.ok() && !other.ok() && other.error().code == "native-state-transaction-account",
+             "joined-state-authority-is-only-for-the-configuration-account");
     }
 
     std::cout << "SUMMARY cases=" << passed + failed << " passed=" << passed << '\n';

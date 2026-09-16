@@ -31,6 +31,7 @@
 #include "common/refcnt.hpp"
 #include "interfaces/validator-manager.h"
 #include "validator/auth/native-collation-authority.h"
+#include "validator/auth/native-config-state-host.h"
 #include "vm/cells.h"
 #include "vm/cells/MerkleProof.h"
 #include "vm/cells/MerkleUpdate.h"
@@ -355,6 +356,8 @@ class Collator final : public td::actor::Actor {
   // validation keeps its copy inside the actor that checks this account, for
   // the same reason the authority itself is not on the compute configuration.
   bool open_validator_auth_sequence();
+  std::shared_ptr<tos::auth::NativeConfigStateTransaction> offer_validator_auth_ticktock(
+      const tos::StdSmcAddress& smc_addr);
   std::optional<tos::auth::NativeConfigSequence> validator_auth_sequence_;
   bool validator_auth_sequence_failed_ = false;
   bool is_masterchain() const {

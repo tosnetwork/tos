@@ -285,6 +285,7 @@ jobs:
           set -euo pipefail
           build-p0/test/validator-auth-implementation/test-p0-joined-commit | tee artifacts/joined-commit.txt
           python3 test/validator-auth-implementation/joined_commit_mutations.py --out artifacts/joined-commit-mutations --jobs 2 | tee artifacts/joined-commit-mutations.txt
+          git diff --exit-code
       - name: Bind native configuration accounts and complete checkpoints
         run: |
           set -euo pipefail

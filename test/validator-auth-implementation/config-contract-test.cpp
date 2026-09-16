@@ -95,10 +95,16 @@ RegistryCells registry_cells() {
 struct Host final : vm::ValidatorAuthHost {
   unsigned applies = 0, binds = 0, checkpoints = 0;
   td::Ref<vm::Cell> installed, bound, last_elected, last_bindings;
-  td::Ref<vm::Cell> expected_update, expected_evidence, returned_registry;
+  td::Ref<vm::Cell> expected_update, expected_evidence, returned_registry, returned_checkpoint;
   td::Ref<vm::Cell> checkpoint(const Charge& charge) override {
     charge(10);
     ++checkpoints;
+    // A real checkpoint when the case needs one parsed. The tick-tock path
+    // reads the registry out of the checkpoint's first reference, so a case
+    // about that path cannot use the opaque marker the others are content with.
+    if (returned_checkpoint.not_null()) {
+      return returned_checkpoint;
+    }
     return vm::CellBuilder().store_long(0x5a, 8).finalize();
   }
   td::Ref<vm::Cell> apply(td::Ref<vm::Cell> update, td::Ref<vm::Cell> evidence, const Charge& charge) override {
@@ -383,8 +389,88 @@ int run_apply(bool with_host, Host& host, td::uint64 capabilities, int version) 
 }
 
 using Case = std::pair<std::string, std::function<void()>>;
+
+// A checkpoint shaped the way the registry encodes one: eighty bits of header
+// and coordinate, then the registry state parameter 46 must hold, then the
+// three index references. Only the first reference is read by the contract;
+// the rest are present because a checkpoint with fewer is not one.
+td::Ref<vm::Cell> shaped_checkpoint(const td::Ref<vm::Cell>& registry, std::uint32_t coordinate) {
+  auto filler = vm::CellBuilder().finalize();
+  return vm::CellBuilder()
+      .store_long(0x76616e31, 32)
+      .store_long(1, 16)
+      .store_long(coordinate, 32)
+      .store_ref(registry)
+      .store_ref(filler)
+      .store_ref(filler)
+      .store_ref(filler)
+      .finalize();
+}
+
+// One tick-tock of the configuration account. No message, which is the whole
+// point: this is the transaction a block with nothing to process still runs.
+Outcome run_ticktock(const td::Ref<vm::Cell>& contract, Host* host, td::uint64 capabilities, int version,
+                     bool config8_active, td::Ref<vm::Cell> registry = {}, td::Ref<vm::Cell> checkpoint = {},
+                     long long gas_limit = 1000000) {
+  expect(contract.not_null(), "contract-loaded");
+  auto config = configuration(std::move(registry), config8_active);
+  auto data = contract_data(config, std::move(checkpoint));
+  td::Ref<vm::Stack> stack{true};
+  stack.write().push_int(td::make_refint(1000000000000LL));
+  stack.write().push_int(td::make_refint(static_cast<long long>(config_account)));
+  stack.write().push_int(td::zero_refint());
+  stack.write().push_int(td::make_refint(-2));
+  std::vector<vm::StackEntry> info = {
+      td::make_refint(0x076ef1ea), td::zero_refint(), td::zero_refint(), td::make_refint(1000),
+      td::zero_refint(), td::zero_refint(), td::zero_refint(),
+      vm::StackEntry(td::make_refint(1000000000000LL)), vm::StackEntry(masterchain_address(config_account)),
+      vm::StackEntry::maybe(config), vm::StackEntry::maybe(contract),
+      td::zero_refint(), td::zero_refint(), vm::StackEntry()};
+  auto registers = vm::make_tuple_ref(td::make_ref<vm::Tuple>(std::move(info)));
+  try {
+    vm::VmState state{contract, version, std::move(stack), vm::GasLimits{gas_limit, gas_limit}, 1, data, {},
+                      {}, registers, capabilities};
+    if (host)
+      state.set_validator_auth_host(std::shared_ptr<vm::ValidatorAuthHost>(host, [](vm::ValidatorAuthHost*) {}));
+    const int exit = ~state.run();
+    return {exit, state.get_c4(), state.get_committed_state().c4, state.committed(), state.gas_consumed()};
+  } catch (const vm::VmFatal&) {
+    return {};
+  }
+}
+
 std::vector<Case> cases(const td::Ref<vm::Cell>& contract) {
   return {
+      // A block with no registry message. The account's own tick-tock is what
+      // persists the state that fell due in it, through the ordinary
+      // compute/commit path every other transaction uses -- not through a
+      // native write that would be a second installer beside the contract.
+      //
+      // Both homes are asserted, and both come out of the one cell the host
+      // returned: the parameter is the checkpoint's first reference, so the
+      // account and parameter 46 cannot end up describing different registries.
+      {"a-due-only-tick-tock-persists-the-prefix", [=] {
+         Host host;
+         auto registry = vm::CellBuilder().store_long(0x76617131, 32).store_long(7777, 32).finalize();
+         host.returned_checkpoint = shaped_checkpoint(registry, 11);
+         auto outcome = run_ticktock(contract, &host, vm::validator_auth_capability,
+                                     vm::validator_auth_min_version, true);
+         expect(outcome.exit == 0, "a-due-only-tick-tock-persists-the-prefix");
+         expect(host.checkpoints == 1, "a-due-only-tick-tock-persists-the-prefix");
+         expect(same_cell(installed_parameter(outcome.data, 46), registry),
+                "a-due-only-tick-tock-persists-the-prefix");
+         expect(same_cell(stored_checkpoint(outcome.data), host.returned_checkpoint),
+                "a-due-only-tick-tock-persists-the-prefix");
+       }},
+      // And an inactive chain reaches no instruction at all, so a tick-tock
+      // there is exactly the tick-tock it has always been.
+      {"an-inactive-chain-tick-tock-asks-for-nothing", [=] {
+         Host host;
+         auto outcome = run_ticktock(contract, &host, 0, vm::validator_auth_min_version, false);
+         expect(outcome.exit == 0, "an-inactive-chain-tick-tock-asks-for-nothing");
+         expect(host.checkpoints == 0, "an-inactive-chain-tick-tock-asks-for-nothing");
+         expect(installed_parameter(outcome.data, 46).is_null(), "an-inactive-chain-tick-tock-asks-for-nothing");
+       }},
       {"contract-assembles-and-loads", [=] { expect(contract.not_null(), "contract-assembles-and-loads"); }},
       {"registry-action-reaches-the-host", [] {
          Host host;

@@ -25,6 +25,7 @@ from pathlib import Path
 
 SEQUENCE = Path("validator/auth/native-config-sequence.cpp")
 BINDING = Path("validator/auth/native-election-binding-transaction.cpp")
+STATE = Path("validator/auth/native-config-state-host.cpp")
 BINARY = Path("build-p0/test/validator-auth-implementation/test-p0-joined-commit")
 
 UNINSTALLED = ('    if (claim.authorized() && claim.registry() != standing)\n'
@@ -54,7 +55,7 @@ def main() -> int:
     args = parser.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
 
-    originals = {SEQUENCE: SEQUENCE.read_text(), BINDING: BINDING.read_text()}
+    originals = {SEQUENCE: SEQUENCE.read_text(), BINDING: BINDING.read_text(), STATE: STATE.read_text()}
     mutations = [
         # A host that accepted an update the contract then did not write. The
         # account is unchanged, so nothing about the parameter is wrong; the
@@ -76,6 +77,12 @@ def main() -> int:
         # prefix rather than asking whether it opened.
         (BINDING, "prefix-rederived-from-parent", "joined-later-transaction-opens-on-the-committed-prefix",
          FROM_SEQUENCE, FROM_PARENT, []),
+        # The account gate on the tick-tock authority. Without it the elector's
+        # own tick-tock is handed a privileged host, because a tick-tock has no
+        # message and so nothing upstream decided which account it is for.
+        (STATE, "state-authority-account-ungated",
+         "joined-state-authority-is-only-for-the-configuration-account",
+         '  if (account != sequence.address())\n    return Error{"native-state-transaction-account"};\n', "", []),
         # The gathered-coordinate refusal is not listed here on purpose. The
         # sequence does not carry its own copy of that rule: the registry
         # replay refuses a successor that is not the parent's next one, and its

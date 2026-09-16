@@ -2050,9 +2050,17 @@ bool Transaction::offers_validator_auth_compute_phase(const ComputePhaseConfig& 
   // nothing to offer; a non-masterchain account is never the target; and a
   // chain that has not activated validator authentication must behave as
   // though the instructions do not exist, which is what the instructions
-  // themselves already enforce. The account is not re-checked here: this
-  // authority was assembled for the message this transaction is processing,
-  // and the assembler refuses any message not addressed to the configuration.
+  // themselves already enforce.
+  //
+  // The account is not re-checked here, and what establishes it differs by
+  // path. A message-driven transaction gets an authority the assembler built,
+  // and the assembler refuses any message not addressed to the configuration
+  // account. A tick-tock has no message and so no assembler: its caller decides
+  // the account before offering a host, because the special accounts a
+  // tick-tock runs for include the elector. Either way the authority reaching
+  // this point was already bound to the configuration account -- but by the
+  // caller, not by this predicate, and a third caller would have to do the
+  // same.
   return validator_auth_host && account.is_masterchain() &&
          cfg.global_version >= vm::validator_auth_min_version &&
          (cfg.global_capabilities & vm::validator_auth_capability) != 0;

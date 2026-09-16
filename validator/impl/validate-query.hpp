@@ -34,6 +34,7 @@
 #include "vm/dict.h"
 
 #include "auth/native-collation-authority.h"
+#include "auth/native-config-state-host.h"
 
 #include "block-parse.h"
 #include "fabric.h"

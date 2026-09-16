@@ -6258,11 +6258,28 @@ bool ValidateQuery::CheckAccountTxs::check_one_transaction(block::Account& accou
   // ....
   std::unique_ptr<block::transaction::Transaction> trs =
       std::make_unique<block::transaction::Transaction>(account, trans_type, lt, vq_.now_, in_msg_root);
-  // Assembled for this message and owned by this transaction. The shared
-  // compute configuration is read-only from here on, which is what makes
-  // checking accounts in parallel actors safe.
+  // Assembled for this transaction and owned by it. The shared compute
+  // configuration is read-only from here on, which is what makes checking
+  // accounts in parallel actors safe.
+  //
+  // A tick-tock has no message, so there is no assembler to decide which
+  // account this is; the state authority decides it from the sequence, exactly
+  // as the producer's tick-tock path does. Re-executing with a different host
+  // than the producer used is how a correct block gets rejected for a
+  // difference neither side can see.
   if (open_validator_auth_sequence()) {
-    vq_.offer_validator_auth(in_msg_root, *validator_auth_sequence_, trs->validator_auth_host);
+    if (in_msg_root.is_null()) {
+      tos::auth::Hash owner{};
+      std::copy_n(addr.as_slice().ubegin(), owner.size(), owner.begin());
+      auto state_authority = tos::auth::NativeConfigStateTransaction::open(*validator_auth_sequence_, owner);
+      if (state_authority.ok()) {
+        auto owned =
+            std::shared_ptr<tos::auth::NativeConfigStateTransaction>(std::move(state_authority.value()));
+        trs->validator_auth_host = std::shared_ptr<vm::ValidatorAuthHost>(owned, &owned->host());
+      }
+    } else {
+      vq_.offer_validator_auth(in_msg_root, *validator_auth_sequence_, trs->validator_auth_host);
+    }
   }
   td::RealCpuTimer timer;
   SCOPE_EXIT {

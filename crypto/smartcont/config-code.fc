@@ -682,6 +682,25 @@ int register_voting_proposal(slice cs, int msg_value) impure inline_ref {
     ;; if nothing has been done so far, scan a random voting proposal instead
     vote_dict = scan_random_proposal(vote_dict);
   }
+  ;; A block with no registry message still has native state to persist. The
+  ;; prefix this block begins from already carries the transitions that fall
+  ;; due at this coordinate; if nothing writes it back, parameter 46 keeps
+  ;; naming them as due at a coordinate that has passed, and the next block
+  ;; cannot open a registry at all.
+  ;;
+  ;; Both homes come out of one cell. The checkpoint's first reference is the
+  ;; registry state that parameter 46 holds, so the account and the parameter
+  ;; cannot end up describing different registries here: there is one value.
+  ;;
+  ;; The dictionary is edited in place rather than through set_conf_param,
+  ;; which rewrites the account from get_data() and would be undone by the
+  ;; store_data below.
+  if (validator_auth_active()) {
+    registry_checkpoint = vauth_registry_state();
+    var rcs = registry_checkpoint.begin_parse();
+    rcs~skip_bits(80);
+    cfg_dict~idict_set_ref(kl, 46, rcs~load_ref());
+  }
   ;; save data and return
   return store_data(cfg_dict, stored_seqno, public_key, vote_dict);
 }
