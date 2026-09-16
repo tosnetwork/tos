@@ -929,12 +929,14 @@ std::vector<Case> cases(const td::Ref<vm::Cell>& contract) {
          std::cerr << "MEASURE registry_update_credit=" << update << " finalization_credit=" << finalization
                    << " network_credit=" << external_gas_credit << '\n';
          expect(update > 0 && finalization > 0, "a-valid-finalization-reaches-accept-with-real-gas-credit");
-         // It fits, and the margin is reported rather than asserted against a
-         // number chosen here. How much margin is enough is a statement about
-         // the worst registry this operation can be asked to walk, which the
-         // host's read budget bounds and this fixture does not exercise; a
-         // threshold invented to match one measurement would go green at any
-         // later cost that still squeaked under it.
+         // What this case claims, and nothing more: this fixture's finalization
+         // reaches acceptance inside the credit. It is a liveness regression
+         // for one small registry and one small governance certificate.
+         //
+         // It is not a statement that the credit is sufficient. A governance
+         // certificate may carry up to four hundred signer records, each of
+         // which the verification reads an identity for, and the margin here
+         // says nothing about that. The worst case is derived separately.
          expect(finalization < external_gas_credit,
                 "a-valid-finalization-reaches-accept-with-real-gas-credit");
 

@@ -28,7 +28,7 @@ or PQ suite allocation is authorized by this work.
 | Native configuration gates | Actual C++ admission/transition and Rust config admission, frozen Config46 registration, capability/version, required parameters and revision continuity | 43 shared cases, 11 legacy transition tests, 47 compiled guards and full-dependency sanitizer parity | Native contract authorization, atomic root installation and approved activation |
 | Persistent native registry | Independent C++/Rust immutable cell dictionaries, validated derived indexes and per-operation native authority | 34 replay cases, eight checkpoint attacks, 80 real-owner authority cases and 36 compiled guards; bounded work over 501 historical identities | Global configuration operations and node installation. Zero-identity policy operations and contract-owned persistence are in place: the account's own tick-tock writes the prefix a block with no registry message produced, which is what keeps parameter 46 from naming transitions as due at a coordinate that has passed |
 | Native header witnesses | Independent C++/Rust fixed-surface Merkle proofs authenticated by native history; no archive/cache access; carried by the registry message and authenticated at consensus admission | 25 shared cases, independent proof generation, 27 compiled guards and full-dependency sanitizer parity | Concrete transaction host metering: admission authenticates a carried witness uncharged |
-| Privileged native VM host | C++/Rust VAUTH_STATE/VAUTH_APPLY/VAUTH_BIND, one purpose-specific host per transaction shape, including a state-only host for the account's own tick-tock, transaction-scoped ownership, no nested VM inheritance and explicit charge callback | 39 exact outcome/gas/host-call comparisons, host-purpose and allowance cases, compiled guards and full-dependency sanitizer parity | Deterministic native gas. The authority is assembled per transaction by collation, validation and message-pool admission through one assembler, an update host refuses to bind and a binding host refuses to apply, and a refused operation spends the allowance it read rather than restoring it |
+| Privileged native VM host | C++/Rust VAUTH_STATE/VAUTH_APPLY/VAUTH_BIND, one purpose-specific host per transaction shape, including a state-only host for the account's own tick-tock, transaction-scoped ownership, no nested VM inheritance and explicit charge callback | 39 exact outcome/gas/host-call comparisons, host-purpose and allowance cases, compiled guards and full-dependency sanitizer parity | Deterministic native gas, which is now a named blocker rather than a note: signature verification is charged nothing and the worst legal certificate exceeds the masterchain credit by itself. The authority is assembled per transaction by collation, validation and message-pool admission through one assembler, an update host refuses to bind and a binding host refuses to apply, and a refused operation spends the allowance it read rather than restoring it |
 | Native configuration account context | Independent C++/Rust binding of actual ShardAccounts code/data/library, Config0, owned config dictionary, complete checkpoint and parent committee | 22 shared cases, 24 compiled guards and full-dependency sanitizer parity | Native commit of the account the contract produced. The contract now carries its checkpoint through every store and replaces it from the state instruction on a registry update, so parameter 46 and the account's checkpoint commit together; which of genesis seeding or first-update migration installs the first one is an activation policy still to be chosen |
 | Native transaction evidence | Independent C++/Rust bounded transaction-contained VAA1, typed chunk dictionary, byte-work charging and authenticated owner header | 39 shared cases, 30 compiled guards, identical charge traces and full-dependency sanitizer parity | Concrete native VM pricing and transaction host invocation |
 | Native finalized history | Independent C++/Rust resolution of full anchors from authenticated OldMcBlocksInfo and original native block bytes; node-local finalized-head establishment binds final signature-set verification to exact block/state coordinates | 37 shared history cases plus focused finalized-head cases; exact file/root/context/new-state binding, final-vs-approval refusal and monotonic head advancement | Signature-set actor adapter and installation of the established head. No archive adapter remains outstanding: consensus admission authenticates the witness a message carries against the parent state's own history index and reads no archive, so the cache, resolution queue and reporting that fed one are deleted rather than pending |
@@ -261,6 +261,30 @@ every other field an identity carries -- stake, owner, predecessor, keys,
 transitions -- must be empty, because each is an authority or a link this record
 is not entitled to. Its nonce must also be above zero, so that "no global
 operation has happened" has one encoding rather than two.
+
+Native governance gas is not closed, and the source already says the current
+credit cannot cover the worst legal case. A governance certificate may carry up
+to four hundred signer records, and verification reads an identity for each one
+and then selects its administration key, which validates the identity and reads
+every active key it holds. Each of those reads spends one entry of the host's
+work allowance, and the host charges sixty-four gas per entry, so four hundred
+records cost at least twenty-five thousand six hundred gas in identity reads
+alone -- against a masterchain credit of ten thousand -- before any bytes, any
+key reads, the contract's own instructions, or the acceptance rules.
+
+The signatures themselves are charged nothing. The host's charge is derived
+entirely from the work allowance the registry reports, and certificate
+verification never touches that allowance: its only bound is a byte size. So the
+cost that dominates a large certificate does not appear in the meter at all,
+which makes the gap a pricing question and not only a budget one.
+
+Multiplying the work allowance by the price is not the bound either. That
+allowance is an operational ceiling -- a million entries and two hundred and
+sixty-eight megabytes -- and priced at sixty-four gas an entry it exceeds any
+transaction envelope by orders of magnitude. The bound has to come from what one
+operation can legally be asked to do: the largest admissible certificate, the
+largest admissible identity shape, the exact reads and writes each implies, and
+the fixed cost of the instructions around them.
 
 Replacing a pending activation is not implemented. The activation rules say a
 pending one may be replaced by a new currently authorized admin operation before
