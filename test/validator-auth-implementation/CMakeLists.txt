@@ -589,6 +589,10 @@ add_executable(test-p0-host-purpose host-purpose-test.cpp)
 target_link_libraries(test-p0-host-purpose PRIVATE tos_validator_auth_native)
 set_target_properties(test-p0-host-purpose PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 
+add_executable(test-p0-governance-gas governance-gas-test.cpp)
+target_link_libraries(test-p0-governance-gas PRIVATE tos_validator_auth_native)
+set_target_properties(test-p0-governance-gas PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+
 add_executable(test-p0-global-policy global-policy-test.cpp)
 target_link_libraries(test-p0-global-policy PRIVATE tos_validator_auth_native)
 set_target_properties(test-p0-global-policy PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)

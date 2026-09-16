@@ -929,14 +929,17 @@ std::vector<Case> cases(const td::Ref<vm::Cell>& contract) {
          std::cerr << "MEASURE registry_update_credit=" << update << " finalization_credit=" << finalization
                    << " network_credit=" << external_gas_credit << '\n';
          expect(update > 0 && finalization > 0, "a-valid-finalization-reaches-accept-with-real-gas-credit");
-         // What this case claims, and nothing more: this fixture's finalization
-         // reaches acceptance inside the credit. It is a liveness regression
-         // for one small registry and one small governance certificate.
+         // What this case claims, and nothing more: the contract's own work
+         // reaches acceptance inside the credit. The host here is a stub that
+         // checks its operands and hands back a prepared registry -- it never
+         // verifies a governance certificate -- so this number is the cost of
+         // the instructions around the authority and not of the authority.
          //
-         // It is not a statement that the credit is sufficient. A governance
-         // certificate may carry up to four hundred signer records, each of
-         // which the verification reads an identity for, and the margin here
-         // says nothing about that. The worst case is derived separately.
+         // It is therefore not a statement that the credit is sufficient. What
+         // the real verification costs is measured where it can be: a
+         // certificate carrying the largest legal number of signer records
+         // exceeds this credit many times over, and the governance gas suite
+         // reports by how much.
          expect(finalization < external_gas_credit,
                 "a-valid-finalization-reaches-accept-with-real-gas-credit");
 

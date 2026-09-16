@@ -262,17 +262,22 @@ transitions -- must be empty, because each is an authority or a link this record
 is not entitled to. Its nonce must also be above zero, so that "no global
 operation has happened" has one encoding rather than two.
 
-Native governance gas is not closed, and the source already says the current
-credit cannot cover the worst legal case. A governance certificate may carry up
-to four hundred signer records, and verification reads an identity for each one
-and then selects its administration key, which validates the identity and reads
-every active key it holds. Each of those reads spends one entry of the host's
-work allowance, and the host charges sixty-four gas per entry, so four hundred
-records cost at least twenty-five thousand six hundred gas in identity reads
-alone -- against a masterchain credit of ten thousand -- before any bytes, any
-key reads, the contract's own instructions, or the acceptance rules.
+Native governance gas is not closed, and it is now measured rather than argued.
+Verifying a governance certificate costs seven entries per signer record --
+the identity, and the keys validating it reads -- and the cost is linear in the
+number of records, so the largest legal certificate is the worst case:
 
-The signatures themselves are charged nothing. The host's charge is derived
+| signer records | entries | bytes | charged gas |
+| --- | ---: | ---: | ---: |
+| 8 | 56 | 9,576 | 13,160 |
+| 64 | 448 | 76,608 | 105,280 |
+| 400 | 2,800 | 478,800 | 658,000 |
+
+The credit an external message has before it is accepted is ten thousand. The
+largest legal governance operation costs sixty-six times that, and even eight
+signer records already exceed it.
+
+None of that includes the signatures, which are charged nothing. The host's charge is derived
 entirely from the work allowance the registry reports, and certificate
 verification never touches that allowance: its only bound is a byte size. So the
 cost that dominates a large certificate does not appear in the meter at all,
