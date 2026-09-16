@@ -14,6 +14,7 @@
 #include "validator/auth/native-evidence.h"
 #include "validator/auth/native-registry-admission.h"
 #include "vm/boc.h"
+#include "vm/excno.hpp"
 
 #include "owner-history-fixture.h"
 
@@ -315,6 +316,23 @@ int main(int argc, char** argv) {
         two.owner_.push_back(owner);
       }
       refuses(encode(two), "list-bound", "a-second-owner-approval-cannot-be-encoded");
+    });
+    // The privileged surface is one interface, but this transaction is a
+    // registry update: the set an elector produces is bound by the host built
+    // for that message, which implements nothing else. A contract reached
+    // through this path asking to bind gets the answer it would get with no
+    // authority at all.
+    add("registry-update-host-refuses-bind", [&] {
+      auto assembled = admit_registry_message(inputs);
+      require(assembled.ok() && assembled.value() != nullptr, "registry-update-host-refuses-bind");
+      auto empty = vm::CellBuilder().finalize();
+      bool refused = false;
+      try {
+        assembled.value()->host().bind(empty, empty, [](long long) {});
+      } catch (const vm::VmError& error) {
+        refused = error.get_errno() == static_cast<int>(vm::Excno::inv_opcode);
+      }
+      require(refused, "registry-update-host-refuses-bind");
     });
     add("history-outlives-the-call-that-assembled-it", [&] {
       // The witnessed history is built inside admission and the caller never

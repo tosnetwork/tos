@@ -123,6 +123,13 @@ MUTATIONS = [
      '    witnessed.emplace(authenticated.value().seqno_, authenticated.value());',
      '    witnessed.emplace(authenticated.value().seqno_, authenticated.value());\n'
      '    witnessed.emplace(inputs.transaction.parent.seqno_, inputs.transaction.parent);'),
+    # The privileged surface this host does not implement. Restoring a working
+    # binding here is the shape purpose separation exists to prevent: one host
+    # built from a registry message that can also bind an elected set.
+    ("update-host-refuses-bind", "registry-update-host-refuses-bind",
+     '  refuse_instruction("P0 native transaction context required");\n}',
+     '  return {};\n}',
+     False, [], Path("validator/auth/native-config-host.cpp")),
     # Removing the returned authority breaks every case that needs one. The
     # companions are declared rather than the rule relaxed: a mutation that
     # breaks something it did not name is a mutation nobody understood.
@@ -132,7 +139,7 @@ MUTATIONS = [
      '  return Error{"registry-admission-not-registry"};',
      False, ["collator-gathering-produces-an-authority", "history-outlives-the-call-that-assembled-it",
              "an-authenticated-witness-needs-no-archive", "only-the-witnessed-coordinate-is-served",
-             "sources-that-are-wrong-together-are-not-caught"]),
+             "registry-update-host-refuses-bind", "sources-that-are-wrong-together-are-not-caught"]),
 ]
 
 

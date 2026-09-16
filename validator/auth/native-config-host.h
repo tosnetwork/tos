@@ -4,8 +4,14 @@
 #include "native-transaction.h"
 namespace tos::auth {
 // The authority behind VAUTH_STATE and VAUTH_APPLY for one native configuration
-// transaction. Native transaction execution constructs it; nothing else can,
-// which is what keeps the registry unreachable from an ordinary contract.
+// transaction, and behind neither anything else nor VAUTH_BIND. Native
+// transaction execution constructs it; nothing else can, which is what keeps
+// the registry unreachable from an ordinary contract.
+//
+// Binding an elected set is a different transaction with different inputs and
+// has its own host. Sharing one would mean a single object constructed from two
+// unrelated message shapes, and the operation a contract could reach would
+// depend on which of them happened to build it.
 //
 // Effects are staged, not applied. The accepted prefix advances only when a
 // transaction's update verifies, and the caller reads the staged result after
@@ -31,17 +37,8 @@ class NativeConfigHost final : public vm::ValidatorAuthHost {
   // The block being built. A registry policy that is not yet effective at this
   // coordinate must not bind a set this block installs.
   std::uint32_t coordinate_;
-  // One meter for the binding reads of this transaction. Opening a view with a
-  // copy of the state's budget and never taking the remainder back charged
-  // nothing at all, and started every binding from a full allowance again.
-  //
-  // It is not yet the whole invariant: applying an update still draws on the
-  // budget carried inside the registry state, so binding reads do not limit a
-  // later apply. Closing that needs the budget threaded through
-  // apply_transaction, which this does not do.
-  StateReadBudget work_remaining_;
   std::uint64_t gas_per_entry_, gas_per_byte_;
-  unsigned checkpoints_ = 0, updates_ = 0, bindings_ = 0;
+  unsigned checkpoints_ = 0, updates_ = 0;
 
  public:
   // Charging is derived from the work the registry itself reports, so the price
@@ -56,7 +53,6 @@ class NativeConfigHost final : public vm::ValidatorAuthHost {
       , admitted_evidence_(std::move(admitted_evidence))
       , admitted_(std::move(admitted))
       , coordinate_(coordinate)
-      , work_remaining_(accepted_.state().remaining())
       , gas_per_entry_(gas_per_entry)
       , gas_per_byte_(gas_per_byte) {
   }
@@ -75,9 +71,6 @@ class NativeConfigHost final : public vm::ValidatorAuthHost {
   }
   unsigned updates() const {
     return updates_;
-  }
-  unsigned bindings() const {
-    return bindings_;
   }
 };
 }  // namespace tos::auth
