@@ -172,6 +172,31 @@ builder pack_complaint(int validator_pubkey, cell description, int created_at, i
 ;; contract's.
 global cell elector_bindings;
 
+
+;; Whether this chain has activated validator authentication.
+;;
+;; Read from Config8, the same version and capability the virtual machine gates
+;; the privileged instructions on and the node reads. What a stake or an
+;; election carries is never allowed to answer this: a sender would then be
+;; deciding when the chain starts requiring identities.
+int validator_auth_active() inline {
+  var param = config_param(8);
+  if (cell_null?(param)) {
+    return false;
+  }
+  var cs = param.begin_parse();
+  if ((cs.slice_bits() != 104) | cs.slice_refs()) {
+    return false;
+  }
+  if (cs~load_uint(8) != 0xc4) {
+    return false;
+  }
+  var version = cs~load_uint(32);
+  var capabilities = cs~load_uint(64);
+  cs.end_parse();
+  return (version >= 16) & ((capabilities & 1024) != 0);
+}
+
 () return_stake(addr, query_id, reason) impure inline_ref {
   return send_message_back(addr, 0xee6f454c, query_id, reason, 0, 64);
 }
@@ -227,6 +252,12 @@ _ ~credit_to(credits, addr, amount) inline_ref {
   int named_identity = 0;
   if (cs.slice_bits()) {
     named_identity = cs~load_uint(256);
+  }
+  if (validator_auth_active() & (named_identity == 0)) {
+    ;; an active chain has no use for a stake naming no identity: it could
+    ;; never be selected, and leaving it in members would strand the stake
+    cs.end_parse();
+    return return_stake(s_addr, query_id, 7);
   }
   cs.end_parse();
   ifnot (check_data_signature(begin_cell()
@@ -723,18 +754,21 @@ _ compute_total_stake(l, n, m_stake) inline_ref {
   cs.end_parse();
   min_validators = max(min_validators, 1);
   int n = 0;
+  int auth_active = validator_auth_active();
   var sdict = new_dict();
   var pubkey = -1;
   do {
     (pubkey, var cs, var f) = members.udict_get_next?(256, pubkey);
     if (f) {
       var (stake, time, max_factor, addr, adnl_addr) = (cs~load_tomis(), cs~load_uint(32), cs~load_uint(32), cs~load_uint(256), cs~load_uint(256));
-      ;; a record that names an identity carries it in a reference; this walk
-      ;; only has to reach the end of the record, not to use what it finds
+      ;; a record that names an identity carries it in a reference; an active
+      ;; chain reads it, because a member without one cannot be selected
+      int named_identity = 0;
       if (cs.slice_refs()) {
-        cs~load_ref();
+        named_identity = cs~load_ref().begin_parse().preload_uint(256);
       }
       cs.end_parse();
+      ifnot (auth_active & (named_identity == 0)) {
       var key = begin_cell()
         .store_uint(stake, 128)
         .store_int(- time, 32)
@@ -745,6 +779,7 @@ _ compute_total_stake(l, n, m_stake) inline_ref {
           .store_uint(addr, 256)
           .store_uint(adnl_addr, 256));
       n += 1;
+      }
     }
   } until (~ f);
   n = min(n, max_validators);
@@ -822,7 +857,7 @@ _ compute_total_stake(l, n, m_stake) inline_ref {
       ;; address to reach the identity this member named, if it named one
       val~load_uint(256);
       val~load_uint(256);
-      if (val.slice_refs()) {
+      if (auth_active & val.slice_refs()) {
         elector_bindings~udict_set_builder(16, i, begin_cell()
           .store_uint(src_addr, 256)
           .store_uint(val~load_ref().begin_parse().preload_uint(256), 256));
@@ -839,6 +874,27 @@ _ compute_total_stake(l, n, m_stake) inline_ref {
     }
     i += 1;
   } until (l.null?());
+  ;; A stake that named no identity was excluded from selection above. Its
+  ;; record is still in members and nothing else will ever pay it back, so it
+  ;; is refunded here -- after a successful election, and only here. Refunding
+  ;; during the scan would pay twice: a failed election leaves members intact
+  ;; and the next arriving stake makes the election retryable.
+  if (auth_active) {
+    var refund_key = -1;
+    do {
+      (refund_key, var rec, var found) = members.udict_get_next?(256, refund_key);
+      if (found) {
+        var refund_stake = rec~load_tomis();
+        rec~load_uint(32);
+        rec~load_uint(32);
+        var refund_addr = rec~load_uint(256);
+        rec~load_uint(256);
+        ifnot (rec.slice_refs()) {
+          credits~credit_to(refund_addr, refund_stake);
+        }
+      }
+    } until (~ found);
+  }
   throw_unless(49, tot_stake == best_stake);
   return (credits, vset, tot_weight, frozen, tot_stake, m);
 }

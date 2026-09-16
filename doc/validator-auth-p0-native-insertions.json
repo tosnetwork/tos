@@ -147,7 +147,7 @@
   "crypto/smartcont/elector-code.fc": [
    {
     "offset": 6166,
-    "text": ";; The registry identity each elected member named, carried beside the set to\n;; the configuration contract. It is filled where both the staking account and\n;; the named identity are known, and it is never judged here: whether an\n;; identity really belongs to that account is the registry's answer, not this\n;; contract's.\nglobal cell elector_bindings;\n\n"
+    "text": ";; The registry identity each elected member named, carried beside the set to\n;; the configuration contract. It is filled where both the staking account and\n;; the named identity are known, and it is never judged here: whether an\n;; identity really belongs to that account is the registry's answer, not this\n;; contract's.\nglobal cell elector_bindings;\n\n\n;; Whether this chain has activated validator authentication.\n;;\n;; Read from Config8, the same version and capability the virtual machine gates\n;; the privileged instructions on and the node reads. What a stake or an\n;; election carries is never allowed to answer this: a sender would then be\n;; deciding when the chain starts requiring identities.\nint validator_auth_active() inline {\n  var param = config_param(8);\n  if (cell_null?(param)) {\n    return false;\n  }\n  var cs = param.begin_parse();\n  if ((cs.slice_bits() != 104) | cs.slice_refs()) {\n    return false;\n  }\n  if (cs~load_uint(8) != 0xc4) {\n    return false;\n  }\n  var version = cs~load_uint(32);\n  var capabilities = cs~load_uint(64);\n  cs.end_parse();\n  return (version >= 16) & ((capabilities & 1024) != 0);\n}\n\n"
    },
    {
     "offset": 6849,
@@ -155,15 +155,27 @@
    },
    {
     "offset": 7827,
-    "text": "  ;; a stake may name the registry identity it is for; one that does not is a\n  ;; stake on a chain that has not activated validator authentication\n  int named_identity = 0;\n  if (cs.slice_bits()) {\n    named_identity = cs~load_uint(256);\n  }\n"
+    "text": "  ;; a stake may name the registry identity it is for; one that does not is a\n  ;; stake on a chain that has not activated validator authentication\n  int named_identity = 0;\n  if (cs.slice_bits()) {\n    named_identity = cs~load_uint(256);\n  }\n  if (validator_auth_active() & (named_identity == 0)) {\n    ;; an active chain has no use for a stake naming no identity: it could\n    ;; never be selected, and leaving it in members would strand the stake\n    cs.end_parse();\n    return return_stake(s_addr, query_id, 7);\n  }\n"
    },
    {
     "offset": 9833,
     "text": "\n  if (named_identity) {\n    members~udict_set_builder(256, validator_pubkey, begin_cell()\n      .store_tomis(msg_value)\n      .store_uint(now(), 32)\n      .store_uint(max_factor, 32)\n      .store_uint(src_addr, 256)\n      .store_uint(adnl_addr, 256)\n      ;; in a reference, because the record plus another 256 bits no longer\n      ;; fits a dictionary leaf beside its key\n      .store_ref(begin_cell().store_uint(named_identity, 256).end_cell()));\n  }"
    },
    {
+    "offset": 25958,
+    "text": "  int auth_active = validator_auth_active();\n"
+   },
+   {
     "offset": 26239,
-    "text": "      ;; a record that names an identity carries it in a reference; this walk\n      ;; only has to reach the end of the record, not to use what it finds\n      if (cs.slice_refs()) {\n        cs~load_ref();\n      }\n"
+    "text": "      ;; a record that names an identity carries it in a reference; an active\n      ;; chain reads it, because a member without one cannot be selected\n      int named_identity = 0;\n      if (cs.slice_refs()) {\n        named_identity = cs~load_ref().begin_parse().preload_uint(256);\n      }\n"
+   },
+   {
+    "offset": 26261,
+    "text": "      ifnot (auth_active & (named_identity == 0)) {\n"
+   },
+   {
+    "offset": 26630,
+    "text": "      }\n"
    },
    {
     "offset": 28012,
@@ -171,7 +183,11 @@
    },
    {
     "offset": 29191,
-    "text": "\n      ;; src_addr was read without consuming it; step over it and the adnl\n      ;; address to reach the identity this member named, if it named one\n      val~load_uint(256);\n      val~load_uint(256);\n      if (val.slice_refs()) {\n        elector_bindings~udict_set_builder(16, i, begin_cell()\n          .store_uint(src_addr, 256)\n          .store_uint(val~load_ref().begin_parse().preload_uint(256), 256));\n      }"
+    "text": "\n      ;; src_addr was read without consuming it; step over it and the adnl\n      ;; address to reach the identity this member named, if it named one\n      val~load_uint(256);\n      val~load_uint(256);\n      if (auth_active & val.slice_refs()) {\n        elector_bindings~udict_set_builder(16, i, begin_cell()\n          .store_uint(src_addr, 256)\n          .store_uint(val~load_ref().begin_parse().preload_uint(256), 256));\n      }"
+   },
+   {
+    "offset": 29559,
+    "text": "  ;; A stake that named no identity was excluded from selection above. Its\n  ;; record is still in members and nothing else will ever pay it back, so it\n  ;; is refunded here -- after a successful election, and only here. Refunding\n  ;; during the scan would pay twice: a failed election leaves members intact\n  ;; and the next arriving stake makes the election retryable.\n  if (auth_active) {\n    var refund_key = -1;\n    do {\n      (refund_key, var rec, var found) = members.udict_get_next?(256, refund_key);\n      if (found) {\n        var refund_stake = rec~load_tomis();\n        rec~load_uint(32);\n        rec~load_uint(32);\n        var refund_addr = rec~load_uint(256);\n        rec~load_uint(256);\n        ifnot (rec.slice_refs()) {\n          credits~credit_to(refund_addr, refund_stake);\n        }\n      }\n    } until (~ found);\n  }\n"
    },
    {
     "offset": 40076,

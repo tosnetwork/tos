@@ -10,10 +10,12 @@
 // exactly as before, and an election over it sends exactly what it sent before.
 #include <cstdlib>
 #include <fstream>
+#include <functional>
 #include <iostream>
 #include <sodium.h>
 #include <stdexcept>
 
+#include "vm/authops.h"
 #include "vm/boc.h"
 #include "vm/cellslice.h"
 #include "vm/dict.h"
@@ -21,11 +23,23 @@
 #include "vm/vm.h"
 
 namespace {
-unsigned passed = 0;
+unsigned passed = 0, failed = 0;
 
 void ok(const char* name) {
   ++passed;
   std::cout << "CASE_PASS " << name << '\n';
+}
+
+// Every case runs, including the ones after a failure. Stopping at the first
+// makes a case that was never reached indistinguishable from one that passed,
+// which is exactly what a mutation asks about.
+void guard(const char* name, const std::function<void()>& body) {
+  try {
+    body();
+  } catch (const std::exception& error) {
+    ++failed;
+    std::cout << "CASE_FAIL " << name << " (" << error.what() << ")\n";
+  }
 }
 
 void expect(bool condition, const char* name) {
@@ -90,7 +104,7 @@ td::Ref<vm::Cell> elector_data(const td::Ref<vm::Cell>& elect) {
 }
 
 // Only the parameters the election path reads.
-td::Ref<vm::Cell> configuration() {
+td::Ref<vm::Cell> configuration(bool activated) {
   vm::Dictionary dict(32);
   auto put = [&](int index, td::Ref<vm::Cell> value) {
     td::BitArray<32> key;
@@ -112,6 +126,13 @@ td::Ref<vm::Cell> configuration() {
   store_grams(stakes, 1000000000);         // min total stake
   stakes.store_long(0x30000, 32);          // max stake factor
   put(17, stakes.finalize());
+  if (activated) {
+    put(8, vm::CellBuilder()
+               .store_long(0xc4, 8)
+               .store_long(vm::validator_auth_min_version, 32)
+               .store_long(vm::validator_auth_capability, 64)
+               .finalize());
+  }
   auto root = dict.get_root_cell();
   expect(root.not_null(), "fixture-config");
   return root;
@@ -128,8 +149,9 @@ struct Outcome {
   td::Ref<vm::Cell> actions;
 };
 
-Outcome run(const td::Ref<vm::Cell>& code, const td::Ref<vm::Cell>& data, td::Ref<vm::Stack> stack, std::uint32_t now) {
-  auto config = configuration();
+Outcome run(const td::Ref<vm::Cell>& code, const td::Ref<vm::Cell>& data, td::Ref<vm::Stack> stack, std::uint32_t now,
+            bool activated) {
+  auto config = configuration(activated);
   std::vector<vm::StackEntry> info = {
       td::make_refint(0x076ef1ea),
       td::zero_refint(),
@@ -222,9 +244,38 @@ td::Ref<vm::CellSlice> stored_member(const td::Ref<vm::Cell>& data, const unsign
     expect(bytes != vm::CellSlice::fetch_long_eof, "stored-election");
     elect.skip_first(static_cast<unsigned>(bytes) * 8);
   }
-  expect(elect.fetch_ulong(1) == 1, "stored-members");
-  vm::Dictionary members(elect.fetch_ref(), 256);
-  return members.lookup(td::ConstBitPtr(public_key), 256);
+  // A refused stake leaves no members at all, which is an answer rather than a
+  // malformed record: the lookup simply finds nothing.
+  td::Ref<vm::Cell> root;
+  if (elect.fetch_ulong(1) == 1) {
+    root = elect.fetch_ref();
+  }
+  return vm::Dictionary(std::move(root), 256).lookup(td::ConstBitPtr(public_key), 256);
+}
+// The amount the contract credited back to one masterchain address, or nothing.
+td::Ref<vm::CellSlice> credited(const td::Ref<vm::Cell>& data, std::uint64_t address) {
+  expect(data.not_null(), "credited-data");
+  vm::CellSlice cs{vm::NoVm{}, data};
+  if (cs.fetch_ulong(1) == 1) {
+    cs.fetch_ref();  // the election
+  }
+  td::Ref<vm::Cell> root;
+  if (cs.fetch_ulong(1) == 1) {
+    root = cs.fetch_ref();
+  }
+  unsigned char key[32] = {};
+  for (unsigned n = 0; n < 8; ++n) {
+    key[31 - n] = static_cast<unsigned char>(address >> (8 * n));
+  }
+  return vm::Dictionary(std::move(root), 256).lookup(td::ConstBitPtr(key), 256);
+}
+
+std::uint64_t grams_value(td::Ref<vm::CellSlice> value) {
+  expect(value.not_null(), "credited-value");
+  auto slice = value.write();
+  auto bytes = slice.fetch_ulong(4);
+  expect(bytes != vm::CellSlice::fetch_long_eof && bytes <= 8, "credited-grams");
+  return bytes ? slice.fetch_ulong(static_cast<unsigned>(bytes) * 8) : 0;
 }
 }  // namespace
 
@@ -249,7 +300,7 @@ int main(int argc, char** argv) {
     for (unsigned n = 0; n < 32; ++n)
       identity[n] = static_cast<unsigned char>(n + 1);
 
-    auto stake = [&](const unsigned char* named) {
+    auto stake = [&](const unsigned char* named, bool activated) {
       vm::Dictionary empty(256);
       auto data = elector_data(election(empty, 0));
       auto body = stake_body(public_key, secret, 0x4444, named);
@@ -259,39 +310,67 @@ int main(int argc, char** argv) {
       stack.write().push_cell(internal_message(staker_account, body));
       stack.write().push_cellslice(vm::load_cell_slice_ref(body));
       stack.write().push_bool(false);
-      return run(code, data, std::move(stack), elect_at - 50);
+      return run(code, data, std::move(stack), elect_at - 50, activated);
     };
 
-    // The control: a stake that names nothing is stored exactly as before.
-    {
-      auto plain = stake(nullptr);
-      expect(plain.exit == 0, "a-stake-naming-nothing-is-stored-as-before");
+    // The control: before activation a stake that names nothing is stored
+    // exactly as it always was.
+    guard("inactive-stake-without-identity-is-stored-as-before", [&] {
+      auto plain = stake(nullptr, false);
+      expect(plain.exit == 0, "inactive-stake-without-identity-is-stored-as-before");
       auto record = stored_member(plain.data, public_key);
-      expect(record.not_null(), "a-stake-naming-nothing-is-stored-as-before");
+      expect(record.not_null(), "inactive-stake-without-identity-is-stored-as-before");
       // grams + 32 + 32 + 256 + 256, and not one bit more.
-      expect(record->size_refs() == 0, "a-stake-naming-nothing-is-stored-as-before");
-      expect(record->size() == 4 + 5 * 8 + 32 + 32 + 256 + 256, "a-stake-naming-nothing-is-stored-as-before");
-      ok("a-stake-naming-nothing-is-stored-as-before");
-    }
+      expect(record->size_refs() == 0, "inactive-stake-without-identity-is-stored-as-before");
+      expect(record->size() == 4 + 5 * 8 + 32 + 32 + 256 + 256,
+             "inactive-stake-without-identity-is-stored-as-before");
+      ok("inactive-stake-without-identity-is-stored-as-before");
+    });
 
-    // The election itself. This is what the other four insertions exist for:
-    // the walk that reads every member record to its end, and the set that goes
-    // to the configuration contract with the named identities beside it.
-    auto elect_over = [&](const unsigned char* named) {
-      vm::Dictionary members(256);
-      // The value lives in the leaf, as udict_set_builder writes it; a
-      // reference here would be a record the contract cannot read.
-      expect(
-          members.set(td::ConstBitPtr(public_key), 256,
-                      vm::load_cell_slice_ref(member_record(19000000000ULL, 0x20000, staker_account, 0x4444, named))),
-          "fixture-election");
-      auto data = elector_data(election(members, 19000000000ULL));
+    // After activation it is refused at the door and the stake goes back. A
+    // record that could never be selected must not be stored, or its stake
+    // would sit in members with nothing left to release it.
+    guard("active-stake-without-identity-is-refused", [&] {
+      auto refused = stake(nullptr, true);
+      expect(refused.exit == 0, "active-stake-without-identity-is-refused");
+      expect(stored_member(refused.data, public_key).is_null(), "active-stake-without-identity-is-refused");
+      ok("active-stake-without-identity-is-refused");
+    });
+
+    // An identity-bearing stake keeps it, where the election can reach it.
+    guard("a-stake-naming-an-identity-keeps-it", [&] {
+      auto named = stake(identity, false);
+      expect(named.exit == 0, "a-stake-naming-an-identity-keeps-it");
+      auto record = stored_member(named.data, public_key);
+      expect(record.not_null(), "a-stake-naming-an-identity-keeps-it");
+      expect(record->size() == 4 + 5 * 8 + 32 + 32 + 256 + 256, "a-stake-naming-an-identity-keeps-it");
+      expect(record->size_refs() == 1, "a-stake-naming-an-identity-keeps-it");
+      vm::CellSlice tail{vm::NoVm{}, record->prefetch_ref()};
+      unsigned char stored[32] = {};
+      expect(tail.size() == 256 && tail.fetch_bytes(td::MutableSlice(reinterpret_cast<char*>(stored), 32)),
+             "a-stake-naming-an-identity-keeps-it");
+      expect(std::equal(std::begin(identity), std::end(identity), std::begin(stored)),
+             "a-stake-naming-an-identity-keeps-it");
+      ok("a-stake-naming-an-identity-keeps-it");
+    });
+
+    auto elect_over = [&](const vm::Dictionary& members, std::uint64_t total, bool activated) {
+      auto data = elector_data(election(members, total));
       td::Ref<vm::Stack> stack{true};
       stack.write().push_int(td::make_refint(1000000000000LL));
       stack.write().push_int(td::make_refint(elector_account));
       stack.write().push_bool(false);
       stack.write().push_smallint(-2);
-      return run(code, data, std::move(stack), elect_close + 10);
+      return run(code, data, std::move(stack), elect_close + 10, activated);
+    };
+
+    auto one_member = [&](const unsigned char* key, std::uint64_t account, std::uint64_t amount,
+                          const unsigned char* named) {
+      vm::Dictionary members(256);
+      expect(members.set(td::ConstBitPtr(key), 256,
+                         vm::load_cell_slice_ref(member_record(amount, 0x20000, account, 0x4444, named))),
+             "fixture-election");
+      return members;
     };
 
     // The message the election sends to the configuration contract, found by
@@ -322,66 +401,96 @@ int main(int argc, char** argv) {
       throw std::runtime_error("sent-set-query");
     };
 
-    {
-      // The control again, at the other end: an election over a member that
-      // named nothing sends exactly one reference, the set.
-      auto plain = elect_over(nullptr);
-      expect(plain.exit == 0, "an-election-over-unnamed-members-sends-only-the-set");
+    // The bindings dictionary beside the set, checked to carry exactly the
+    // accounts and identities given.
+    auto bindings_of = [](vm::CellSlice query) {
+      query.skip_first(32 + 64);
+      expect(query.size_refs() == 2, "sent-bindings");
+      vm::CellSlice wrapper{vm::NoVm{}, query.prefetch_ref(1)};
+      expect(wrapper.size() == 1 && wrapper.fetch_ulong(1) == 1 && wrapper.size_refs() == 1, "sent-bindings");
+      return vm::Dictionary(wrapper.prefetch_ref(), 16);
+    };
+
+    // An identity-bearing election on a chain that has not activated sends the
+    // set alone. The records carry identities; activation, not their presence,
+    // is what decides whether they travel.
+    guard("inactive-identity-bearing-election-sends-no-bindings", [&] {
+      auto plain = elect_over(one_member(public_key, staker_account, 19000000000ULL, identity), 19000000000ULL, false);
+      expect(plain.exit == 0, "inactive-identity-bearing-election-sends-no-bindings");
       auto query = set_query(plain.actions);
       query.skip_first(32 + 64);
-      expect(query.size_refs() == 1, "an-election-over-unnamed-members-sends-only-the-set");
-      ok("an-election-over-unnamed-members-sends-only-the-set");
-    }
+      expect(query.size_refs() == 1, "inactive-identity-bearing-election-sends-no-bindings");
+      ok("inactive-identity-bearing-election-sends-no-bindings");
+    });
 
-    // And one that names an identity keeps it, where the election can reach it.
-    {
-      auto named = stake(identity);
-      expect(named.exit == 0, "a-stake-naming-an-identity-keeps-it");
-      auto record = stored_member(named.data, public_key);
-      expect(record.not_null(), "a-stake-naming-an-identity-keeps-it");
-      // The same bits as before, and the identity in a reference beside them.
-      expect(record->size() == 4 + 5 * 8 + 32 + 32 + 256 + 256, "a-stake-naming-an-identity-keeps-it");
-      expect(record->size_refs() == 1, "a-stake-naming-an-identity-keeps-it");
-      vm::CellSlice tail{vm::NoVm{}, record->prefetch_ref()};
-      unsigned char stored[32] = {};
-      expect(tail.size() == 256 && tail.fetch_bytes(td::MutableSlice(reinterpret_cast<char*>(stored), 32)),
-             "a-stake-naming-an-identity-keeps-it");
-      expect(std::equal(std::begin(identity), std::end(identity), std::begin(stored)),
-             "a-stake-naming-an-identity-keeps-it");
-      ok("a-stake-naming-an-identity-keeps-it");
-    }
-
-    {
-      auto bound = elect_over(identity);
-      expect(bound.exit == 0, "an-election-sends-the-named-identities-beside-the-set");
-      auto query = set_query(bound.actions);
-      query.skip_first(32 + 64);
-      expect(query.size_refs() == 2, "an-election-sends-the-named-identities-beside-the-set");
-      // The second reference is the bindings, indexed the same as the set, and
-      // carrying the account that staked with the identity it named.
-      vm::CellSlice wrapper{vm::NoVm{}, query.prefetch_ref(1)};
-      expect(wrapper.size() == 1 && wrapper.fetch_ulong(1) == 1 && wrapper.size_refs() == 1,
-             "an-election-sends-the-named-identities-beside-the-set");
-      vm::Dictionary named_dict(wrapper.prefetch_ref(), 16);
+    guard("active-election-sends-one-binding-per-selected-member", [&] {
+      auto bound = elect_over(one_member(public_key, staker_account, 19000000000ULL, identity), 19000000000ULL, true);
+      expect(bound.exit == 0, "active-election-sends-one-binding-per-selected-member");
+      auto named_dict = bindings_of(set_query(bound.actions));
       td::BitArray<16> at;
       at.store_ulong(0);
       auto entry = named_dict.lookup(at.cbits(), 16);
       expect(entry.not_null() && entry->size() == 512 && entry->size_refs() == 0,
-             "an-election-sends-the-named-identities-beside-the-set");
+             "active-election-sends-one-binding-per-selected-member");
+      at.store_ulong(1);
+      expect(named_dict.lookup(at.cbits(), 16).is_null(), "active-election-sends-one-binding-per-selected-member");
       auto fields = entry.write();
       unsigned char account[32] = {}, stored[32] = {};
       expect(fields.fetch_bytes(td::MutableSlice(reinterpret_cast<char*>(account), 32)) &&
                  fields.fetch_bytes(td::MutableSlice(reinterpret_cast<char*>(stored), 32)),
-             "an-election-sends-the-named-identities-beside-the-set");
+             "active-election-sends-one-binding-per-selected-member");
       expect(td::bitstring::bits_load_ulong(td::ConstBitPtr(account) + 192, 64) == staker_account,
-             "an-election-sends-the-named-identities-beside-the-set");
+             "active-election-sends-one-binding-per-selected-member");
       expect(std::equal(std::begin(identity), std::end(identity), std::begin(stored)),
-             "an-election-sends-the-named-identities-beside-the-set");
-      ok("an-election-sends-the-named-identities-beside-the-set");
-    }
+             "active-election-sends-one-binding-per-selected-member");
+      ok("active-election-sends-one-binding-per-selected-member");
+    });
 
-    std::cout << "SUMMARY cases=" << passed << " passed=" << passed << '\n';
-    return 0;
+    // The half-fix this case exists to refuse. Stakes placed before activation
+    // name no identity and are already in members when the chain activates;
+    // refusing new ones does nothing about them. They cannot be selected -- a
+    // set containing one could not be bound -- so they must be excluded and
+    // paid back, and paid back exactly once.
+    guard("legacy-unbound-stake-is-excluded-and-refunded-after-activation", [&] {
+      unsigned char legacy_key[32] = {}, legacy_secret[64] = {};
+      expect(crypto_sign_keypair(legacy_key, legacy_secret) == 0, "fixture-legacy-keys");
+      constexpr std::uint64_t legacy_account = staker_account + 1;
+      constexpr std::uint64_t legacy_stake = 5000000000ULL;
+      constexpr std::uint64_t named_stake = 19000000000ULL;
+
+      auto members = one_member(public_key, staker_account, named_stake, identity);
+      expect(members.set(td::ConstBitPtr(legacy_key), 256,
+                         vm::load_cell_slice_ref(
+                             member_record(legacy_stake, 0x20000, legacy_account, 0x5555, nullptr))),
+             "fixture-legacy-member");
+
+      auto run_out = elect_over(members, named_stake + legacy_stake, true);
+      expect(run_out.exit == 0, "legacy-unbound-stake-is-excluded-and-refunded-after-activation");
+
+      // One selected member, so one binding and no second entry.
+      auto named_dict = bindings_of(set_query(run_out.actions));
+      td::BitArray<16> at;
+      at.store_ulong(0);
+      auto first = named_dict.lookup(at.cbits(), 16);
+      expect(first.not_null(), "legacy-unbound-stake-is-excluded-and-refunded-after-activation");
+      at.store_ulong(1);
+      expect(named_dict.lookup(at.cbits(), 16).is_null(),
+             "legacy-unbound-stake-is-excluded-and-refunded-after-activation");
+      unsigned char account[32] = {};
+      auto fields = first.write();
+      expect(fields.fetch_bytes(td::MutableSlice(reinterpret_cast<char*>(account), 32)),
+             "legacy-unbound-stake-is-excluded-and-refunded-after-activation");
+      expect(td::bitstring::bits_load_ulong(td::ConstBitPtr(account) + 192, 64) == staker_account,
+             "legacy-unbound-stake-is-excluded-and-refunded-after-activation");
+
+      // And the excluded stake came back whole, to the account that placed it.
+      expect(grams_value(credited(run_out.data, legacy_account)) == legacy_stake,
+             "legacy-unbound-stake-is-excluded-and-refunded-after-activation");
+      ok("legacy-unbound-stake-is-excluded-and-refunded-after-activation");
+    });
+
+    std::cout << "SUMMARY cases=" << passed + failed << " passed=" << passed << '\n';
+    return failed ? 1 : 0;
   } catch (const std::exception& error) {
     std::cerr << "ASSERTION: " << error.what() << '\n';
     return 1;
