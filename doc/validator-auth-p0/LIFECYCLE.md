@@ -160,8 +160,9 @@ owner wallet, old keyring handle or operator connection cannot bypass that rule.
 Lost-key recovery needs a separately reviewed network-authorized procedure.
 This proposal does not make all validator funds or wallets PQ-safe.
 
-Policy/config changes require the trusted governance committee's current-policy
-quorum plus normal configuration-voting rules. Election, complaint/config votes
+Policy changes require the trusted governance committee's current-policy quorum.
+Configuration-parameter changes require that quorum plus the normal
+configuration-voting rules. Election, complaint/config votes
 and privileged config paths must be covered before PQ enforcement; key onboarding
 alone does not migrate them.
 

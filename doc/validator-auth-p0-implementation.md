@@ -240,13 +240,20 @@ acceptance were the ones a governance operation approved. Admitting it on the
 quorum alone would be a second configuration governance path rather than an
 implementation of the declared one.
 
-One line of the frozen lifecycle rules reads on both: policy and configuration
-changes are said to require the quorum plus normal configuration voting. Taken
-literally that would block operation 4 as well, but it cannot be satisfied for a
-policy: a VAP1 is not a configuration parameter and a ConfigProposal cannot
-carry one, while the activation rules describe policy replacement as an admin
-operation with no vote. The narrower reading is implemented and the wording
-wants an amendment.
+The zero-identity record holds the global admin nonce and nothing else. It is
+created by the first operation that needs one rather than seeded at genesis, and
+every other field an identity carries -- stake, owner, predecessor, keys,
+transitions -- must be empty, because each is an authority or a link this record
+is not entitled to. Its nonce must also be above zero, so that "no global
+operation has happened" has one encoding rather than two.
+
+Replacing a pending activation is not implemented. The activation rules say a
+pending one may be replaced by a new currently authorized admin operation before
+its boundary; a policy operation here requires its predecessor to be the policy
+in force and adds the activation rather than superseding one, so an already
+scheduled activation cannot be withdrawn or overwritten. The frozen rules do not
+say which fields of an operation identify the activation being replaced, so the
+rule is named as open rather than inferred from what the code happens to do.
 
 `verify_current_governance` is read-only. Its caller must independently establish
 the current native governing snapshot and inclusion-time registry state. Only

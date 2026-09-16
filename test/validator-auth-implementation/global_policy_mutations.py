@@ -22,6 +22,7 @@ from pathlib import Path
 
 REFERENCE = Path("validator/auth/lifecycle.cpp")
 PERSISTENT = Path("validator/auth/native-registry.cpp")
+STATE = Path("validator/auth/state.cpp")
 BINARY = Path("build-p0/test/validator-auth-implementation/test-p0-global-policy")
 
 STAMP = """  change.activation.checkpoint_seqno_ = anchor.value().seqno_;
@@ -60,6 +61,13 @@ POLICY_WRITE = """  put(next.policies_, policy_id, change.policy, vm::Dictionary
 GLOBAL_WRITE = """  put(next.identities_, Hash{}, change.global,
       next.identity(Hash{}).ok() ? vm::Dictionary::SetMode::Replace : vm::Dictionary::SetMode::Set, next.budget_);
 """
+CANONICAL = """      if (!state.active_.empty() || !state.pending_.empty() || state.stake_id_ != Hash{} ||
+          state.owner_workchain_ != 0 || state.owner_address_ != Hash{} || state.previous_ != Hash{})
+        return Error{"global-identity"};
+"""
+NONZERO = """      if (state.next_nonce_ == 0)
+        return Error{"global-identity-nonce"};
+"""
 SCHEDULE_WRITE = """    need(schedule.set_builder(bits(key), 32, b, vm::Dictionary::SetMode::Add), "policy-index");
 """
 
@@ -82,7 +90,11 @@ def main() -> int:
     args = parser.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
 
-    originals = {REFERENCE: REFERENCE.read_text(), PERSISTENT: PERSISTENT.read_text()}
+    originals = {
+        REFERENCE: REFERENCE.read_text(),
+        PERSISTENT: PERSISTENT.read_text(),
+        STATE: STATE.read_text(),
+    }
     mutations = [
         # The one this suite exists for.
         (REFERENCE, "checkpoint-is-any-legal-anchor", "global-policy-checkpoint-is-governing-anchor", STAMP, FOREIGN, []),
@@ -92,8 +104,12 @@ def main() -> int:
         (REFERENCE, "configuration-admitted", "global-policy-configuration-operation-refused", CONFIGURATION, "", []),
         # The nonce standing still, which would let one authorization be spent
         # twice for two different policies.
+        # The companion is measured, not assumed: with the nonce standing still
+        # the installed record holds zero, so the record this taints cannot be
+        # built and that case reports the nonce refusal instead of its own.
         (REFERENCE, "nonce-does-not-advance", "global-policy-zero-nonce-advances", NONCE,
-         "  change.global.next_nonce_ = global.next_nonce_;\n", []),
+         "  change.global.next_nonce_ = global.next_nonce_;\n",
+         ["global-record-noncanonical-fields-refused"]),
         # The persistent side writing the same transition somewhere else. None
         # of these make either implementation incoherent on its own; they make
         # the two stop being one, which only the root comparison can see.
@@ -106,6 +122,13 @@ def main() -> int:
         # that wrote the policy and never indexed it produces exactly the same
         # root and a different current policy at the boundary. The root
         # comparison cannot see it; the replay to the effective height can.
+        # The record that holds the global nonce carrying anything else, and
+        # the two encodings of "no global operation has happened".
+        (STATE, "noncanonical-record-admitted", "global-record-noncanonical-fields-refused",
+         CANONICAL,
+         '      if (!state.active_.empty() || !state.pending_.empty())\n'
+         '        return Error{"global-identity"};\n', []),
+        (STATE, "zero-nonce-record-admitted", "global-record-zero-nonce-refused", NONZERO, "", []),
         (PERSISTENT, "schedule-not-indexed", "global-policy-selects-the-new-policy-at-its-height",
          SCHEDULE_WRITE, "", [], "void NativeRegistry::install_global("),
     ]

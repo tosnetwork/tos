@@ -18,7 +18,7 @@
     "doc/validator-auth-p0/ACTIVATION.md": "a74450d93f3883a48783410614baa57a0a1e9de4f48bc680df5779a3af00179c",
     "doc/validator-auth-p0/API-CONTRACT.md": "08728fb9358e83086d48da51a1525be6c468d7932197d6e013f6e80c4e4e15a1",
     "doc/validator-auth-p0/CLIENTS.md": "4d9f3486f215b1a2217096f0be118f9f00d1ff5c89c4aae221b04c85f09357cb",
-    "doc/validator-auth-p0/LIFECYCLE.md": "997f4670e64f426a66c3c128b8a1daf4cd70061d2dac10ec584757c771d2fc58",
+    "doc/validator-auth-p0/LIFECYCLE.md": "8523cdf8c9cd5d25c959c69ddc8d52757c82947356e203b439f6fc9207390b13",
     "doc/validator-auth-p0/OPEN-DECISIONS.md": "d004066e54f096f008400b3306d8def3a360b9bc3006de2f86d7c2086cec7a2b",
     "doc/validator-auth-p0/README.md": "9b1781e0f02f938270d5214cdb7ad5c0903ad603e0bd7f10fefd1f15dae1f839",
     "doc/validator-auth-p0/SIGNER.md": "3d904e29ab690364dde1759f80b4f0dff4cca115a0f2e3ec7397db5cffe6ea5f",
@@ -147,6 +147,15 @@
       "change": "Made the configuration account's own tick-tock persist the native prefix, so a block with no registry message still writes back the transitions that fell due in it.",
       "scope": "Only declared additive contract insertions changed, from seven to eight for the configuration contract. Original contract bytes are unchanged and every insertion remains declared at its original offset; no frozen wire, API or profile artifact is touched.",
       "reason": "Without it the account keeps the parent's parameter 46, whose schedule still names those transitions as due at a coordinate that has passed, and the next block's registry replay refuses to open at all.",
+      "activation": "Unchanged. No suite is allocated, no network is configured, and the version-16 activation gates and listed approvals remain independent thresholds that this does not satisfy."
+    },
+    {
+      "artifact": "doc/validator-auth-p0/LIFECYCLE.md",
+      "previous_sha256": "997f4670e64f426a66c3c128b8a1daf4cd70061d2dac10ec584757c771d2fc58",
+      "sha256": "8523cdf8c9cd5d25c959c69ddc8d52757c82947356e203b439f6fc9207390b13",
+      "change": "Split one sentence that named policy and configuration-parameter changes together into the two rules they actually are: a policy change requires the governing committee's current-policy quorum, and a configuration-parameter change requires that quorum plus the normal configuration-voting rules.",
+      "scope": "Normative wording only. No operation, field, encoding, limit or authority is added, removed or renumbered, and no other artifact is touched.",
+      "reason": "Read literally the combined sentence also governed the policy operation, which cannot satisfy it: a policy object is not a configuration parameter and a configuration proposal cannot carry one, while the activation rules describe policy replacement as an admin operation with no vote. One sentence therefore stated a rule for policy that no mechanism could implement and that contradicted the activation rules.",
       "activation": "Unchanged. No suite is allocated, no network is configured, and the version-16 activation gates and listed approvals remain independent thresholds that this does not satisfy."
     }
   ],

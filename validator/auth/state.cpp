@@ -178,8 +178,20 @@ Result<bool> RegistryState::validate() {
     if (id != state.identity_)
       return Error{"identity-key"};
     if (id == Hash{}) {
-      if (!state.active_.empty() || !state.pending_.empty())
+      // The record exists to hold the global admin nonce and holds nothing
+      // else. Every other field of an identity is an authority or a link that
+      // this record is not entitled to: a stake it could be counted for, an
+      // owner that could act for it, a predecessor view it never had. A record
+      // carrying any of them would be accepted by consensus and mean something
+      // nobody declared.
+      if (!state.active_.empty() || !state.pending_.empty() || state.stake_id_ != Hash{} ||
+          state.owner_workchain_ != 0 || state.owner_address_ != Hash{} || state.previous_ != Hash{})
         return Error{"global-identity"};
+      // Absent and present-with-zero would be two encodings of one fact: no
+      // global operation has happened. The first successful one always writes
+      // a nonce above zero, so requiring it here costs nothing and leaves one.
+      if (state.next_nonce_ == 0)
+        return Error{"global-identity-nonce"};
       continue;
     }
     auto checked = validate_identity(state, *this);

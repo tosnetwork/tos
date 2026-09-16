@@ -12,6 +12,7 @@
 // that they are the anchor of the governing snapshot that admitted this
 // operation. So the authority hands the anchor back, and the mutation that
 // stamps a different but perfectly legal anchor has to be caught.
+#include <functional>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -106,6 +107,8 @@ int main() {
         "global-policy-configuration-operation-refused",
         "global-policy-persistent-root-equals-reference",
         "global-policy-selects-the-new-policy-at-its-height",
+        "global-record-noncanonical-fields-refused",
+        "global-record-zero-nonce-refused",
     };
     for (const auto* name : manifest)
       std::cout << "MANIFEST " << name << '\n';
@@ -255,6 +258,55 @@ int main() {
                 reference.value().current_policy() == advanced.value().current_policy();
       }
       report(agree, "global-policy-selects-the-new-policy-at-its-height");
+    }
+
+    // The zero-identity record holds the global admin nonce and nothing else.
+    // Every other field of an identity is an authority or a link it is not
+    // entitled to -- a stake it could be counted for, an owner that could act
+    // for it, a predecessor view it never had. A record carrying one would be
+    // structurally valid and would mean something nobody declared.
+    //
+    // Checked by re-decoding the encoded state, because that is where a record
+    // reaches consensus from: a successor built in memory is not what another
+    // node reads.
+    //
+    // Nothing here throws on a fixture that could not be built. A case that
+    // dies takes the ones after it with it, and a vanished case reads exactly
+    // like one that held -- which the completion guard caught the first time
+    // this was written the other way.
+    {
+      auto tainted = [&](const std::function<void(Identity&)>& spoil) -> Result<RegistryState> {
+        auto installed = accepted(policy_update(before, next_policy));
+        if (!installed.ok())
+          return installed.error();
+        auto root = installed.value().encode_cell();
+        if (!root.ok())
+          return root.error();
+        auto rebuilt = RegistryState::decode_cell(root.value(), inclusion);
+        if (!rebuilt.ok())
+          return rebuilt.error();
+        auto record = rebuilt.value().identities().find(Hash{});
+        if (record == rebuilt.value().identities().end())
+          return Error{"fixture-global-record"};
+        auto spoiled = record->second;
+        spoil(spoiled);
+        // Replaced the way a peer would hand the state over: re-encoded with
+        // the record in it, then read back through the decoder consensus uses.
+        auto& records = const_cast<std::map<Hash, Identity>&>(rebuilt.value().identities());
+        records[Hash{}] = spoiled;
+        auto reissued = rebuilt.value().encode_cell();
+        if (!reissued.ok())
+          return reissued.error();
+        return RegistryState::decode_cell(reissued.value(), inclusion);
+      };
+
+      auto carrying = tainted([](Identity& record) { record.stake_id_ = h(4242); });
+      report(!carrying.ok() && carrying.error().code == "global-identity",
+             "global-record-noncanonical-fields-refused");
+
+      auto standing = tainted([](Identity& record) { record.next_nonce_ = 0; });
+      report(!standing.ok() && standing.error().code == "global-identity-nonce",
+             "global-record-zero-nonce-refused");
     }
 
     std::cout << "SUMMARY cases=" << passed + failed << " passed=" << passed << '\n';

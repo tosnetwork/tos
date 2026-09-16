@@ -218,8 +218,24 @@ impl RegistryState {
                 return Err(Error("identity-key"));
             }
             if *id == [0; 32] {
-                if !identity.active.is_empty() || !identity.pending.is_empty() {
+                // The record holds the global admin nonce and nothing else.
+                // Every other field is an authority or a link it is not
+                // entitled to, and a record carrying one would be accepted by
+                // consensus and mean something nobody declared.
+                if !identity.active.is_empty()
+                    || !identity.pending.is_empty()
+                    || identity.stake_id != [0; 32]
+                    || identity.owner_workchain != 0
+                    || identity.owner_address != [0; 32]
+                    || identity.previous != [0; 32]
+                {
                     return Err(Error("global-identity"));
+                }
+                // Absent and present-with-zero would be two encodings of one
+                // fact. The first successful global operation always writes a
+                // nonce above zero, so this leaves one.
+                if identity.next_nonce == 0 {
+                    return Err(Error("global-identity-nonce"));
                 }
             } else {
                 validate_identity(identity, state)?;
