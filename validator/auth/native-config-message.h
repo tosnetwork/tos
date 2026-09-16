@@ -17,9 +17,9 @@ struct NativeRegistryMessage {
 //
 // This is the seam between the contract's message shape and the node: the node
 // has to know, before executing anything, whether a message is one of these, so
-// that it can resolve what the execution will read. Recognising it is not
-// admitting it -- the instruction still validates the update's authorizations,
-// and this refuses to decide anything about them.
+// that it can assemble the authority the execution will run under. Recognising
+// it is not admitting it -- the instruction still validates the update's
+// authorizations, and this refuses to decide anything about them.
 //
 // The body is untrusted. It is parsed to the exact shape the contract parses
 // and refused otherwise, so a message that merely resembles one cannot cause

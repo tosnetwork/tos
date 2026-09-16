@@ -49,6 +49,7 @@ CARRIER = "validator/impl/external-message.cpp"
 EXECUTION = "crypto/block/transaction.h"
 
 AUTHORITY = "std::shared_ptr<vm::ValidatorAuthHost>"
+EXECUTE = "ExtMessageQ::run_message_on_account("
 
 
 def structure(text: str, name: str) -> str:
@@ -79,6 +80,18 @@ def verify(files: dict[str, str]) -> None:
     if files[CARRIER].count("std::move(validator_auth_host)") != 2:
         raise ValueError("the ingress execution path does not carry the authority to the transaction")
 
+    # And that the checker hands one to each execution. It runs the message
+    # twice when the first attempt fails, to produce a log, and applying an
+    # update stages state inside the authority -- so a second run against the
+    # first run's authority would be replaying against a host that has already
+    # moved. Counted rather than described, because the difference between one
+    # call and two is invisible in a review and fatal in a retry.
+    attempts = files[INGRESS].count(EXECUTE)
+    if attempts != 2:
+        raise ValueError(f"the checker executes {attempts} times, not twice")
+    if files[INGRESS].count("authority()") != attempts:
+        raise ValueError("the checker does not assemble a fresh authority for each execution")
+
     # Where the authority is kept decides whether concurrent validation is safe.
     configuration = structure(files[EXECUTION], "ComputePhaseConfig")
     if not configuration:
@@ -105,6 +118,12 @@ def main() -> int:
         {**files, INGRESS: files[INGRESS].replace(ASSEMBLER, "some_other_call(", 1)},
         # The shape the defect had: the ingress runs the contract with nothing.
         {**files, CARRIER: files[CARRIER].replace("std::move(validator_auth_host)", "{}", 1)},
+        # The retry replaying against an authority the first attempt already
+        # spent, and the retry running with none at all.
+        {**files, INGRESS: files[INGRESS].replace("*exec_config.log, authority()", "*exec_config.log, host", 1)},
+        {**files, INGRESS: files[INGRESS].replace("*exec_config.nolog, authority()", "*exec_config.nolog, {}", 1)},
+        # And the retry disappearing, so "twice" is counted rather than assumed.
+        {**files, INGRESS: files[INGRESS].replace(EXECUTE, "skipped(", 1)},
         # The move that would undo this: park the authority back on the shared
         # configuration, where one account's write is every account's read.
         {**files, EXECUTION: files[EXECUTION].replace(

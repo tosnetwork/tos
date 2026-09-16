@@ -23,7 +23,7 @@
 #include "interfaces/validator-manager.h"
 #include "td/actor/coro_utils.h"
 
-#include "auth/native-registry-admission.h"
+#include "auth/context.h"
 #include "validator.h"
 
 namespace tos {

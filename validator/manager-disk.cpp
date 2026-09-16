@@ -183,6 +183,14 @@ void ValidatorManagerImpl::validate_fake(BlockCandidate candidate, std::vector<B
     }
   });
   auto shard = candidate.id.shard_full();
+  // This manager never establishes a chain context, so it inherits the default
+  // that reports none. On a chain where validator authentication is active, a
+  // masterchain block here is therefore declined rather than judged -- correct
+  // for an offline tool, which cannot re-execute a registry update it has no
+  // context for. Supporting that would mean establishing the context from this
+  // node's own zero state, the way the live manager does; it must never be
+  // derived from the configuration being validated, because the chain domain
+  // lives in the registry under test.
   run_validate_query(std::move(candidate),
                      ValidateParams{.shard = shard,
                                     .min_masterchain_block_id = last,

@@ -3392,16 +3392,16 @@ bool Collator::create_ticktock_transaction(const tos::StdSmcAddress& smc_addr, t
  * Offers the registry authority to the transaction about to be created.
  *
  * Only an external message carrying a registry update, addressed to the
- * configuration account of the masterchain, and declaring history this node has
- * already resolved, is offered the host. Everything else executes with no host,
- * which is what keeps the instruction unreachable on a chain that has no
- * registry update in flight.
+ * configuration account of the masterchain, and carrying a witness for the
+ * finality its approval relies on, is offered the host. Everything else
+ * executes with no host, which is what keeps the instruction unreachable on a
+ * chain that has no registry update in flight.
  *
  * @param msg_root The root of the inbound message.
  * @param external True if the message is an external one.
- * @param addr The destination account of the message.
+ * @param host Receives the assembled authority, or nothing.
  *
- * @returns True if the authority was installed on the compute phase config.
+ * @returns True if an authority was assembled.
  */
 bool Collator::offer_validator_auth(Ref<vm::Cell> msg_root, bool external,
                                     std::shared_ptr<vm::ValidatorAuthHost>& host) {

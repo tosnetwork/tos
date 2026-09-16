@@ -2478,10 +2478,12 @@ bool Transaction::prepare_compute_phase(const ComputePhaseConfig& cfg) {
   vm.set_c7(prepare_vm_c7(cfg));  // tuple with SmartContractInfo
   // The privileged registry instructions refuse unless this authority is
   // present, so injecting it is what makes them reachable at all. It is
-  // injected only for the one masterchain account the composer named, and only
-  // on a chain that has activated validator authentication -- the same version
-  // and capability the instructions themselves check, read from where they
-  // define it rather than restated here. A nested VM does not inherit it.
+  // injected only for a transaction that was assembled one -- which is to say,
+  // one processing a message addressed to the configuration account, because
+  // the assembler refuses every other message -- and only on a chain that has
+  // activated validator authentication, the same version and capability the
+  // instructions themselves check, read from where they define it rather than
+  // restated here. A nested VM does not inherit it.
   if (offers_validator_auth_compute_phase(cfg)) {
     vm.set_validator_auth_host(validator_auth_host);
   }

@@ -23,6 +23,7 @@
 #include "block/transaction.h"
 #include "block/workchain-execution-dispatch.h"
 #include "td/utils/Timer.h"
+#include "vm/authops.h"
 #include "vm/dict.h"
 
 #include "ext-message-checker.hpp"
@@ -114,6 +115,20 @@ td::actor::Task<ExtMessageChecker::CheckedExtMsg> ExtMessageChecker::check(td::B
   // before the zero state was read.
   if (!validator_auth_chain_ && wc == masterchainId) {
     validator_auth_chain_ = co_await td::actor::ask(manager_, &ValidatorManager::get_validator_auth_chain_context);
+  }
+  // On a chain where the privileged instructions are active, running a
+  // masterchain message without a context can only end one way for a registry
+  // update: the instruction refuses and the message looks invalid. It is not
+  // invalid -- this node simply cannot judge it yet, and saying so is a
+  // statement about this node. Reporting it as a bad message would make one
+  // node's missing configuration look like a property of the update, and every
+  // other node would still accept it.
+  if (!validator_auth_chain_ && wc == masterchainId &&
+      config_snapshot.config->get_global_version() >= vm::validator_auth_min_version &&
+      (config_snapshot.config->get_capabilities() & vm::validator_auth_capability) != 0) {
+    co_return td::Status::Error(ErrorCode::notready,
+                                "cannot check a masterchain external message on a chain with validator "
+                                "authentication active: this node has not established its chain context");
   }
 
   // Nothing from taking this reference through run_message suspends. Other tasks on this actor

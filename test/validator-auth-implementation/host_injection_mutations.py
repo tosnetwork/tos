@@ -57,6 +57,10 @@ def failing(result: subprocess.CompletedProcess) -> set[str]:
     return {line.removeprefix("CASE_FAIL ") for line in result.stdout.splitlines() if line.startswith("CASE_FAIL ")}
 
 
+def reported(result: subprocess.CompletedProcess) -> set[str]:
+    return {line.split(" ", 1)[1] for line in result.stdout.splitlines() if line.startswith("CASE_")}
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", type=Path, required=True)
@@ -71,7 +75,8 @@ def main() -> int:
     if baseline.returncode != 0 or failing(baseline):
         print("BASELINE-NOT-PASSING")
         return 1
-    cases = sum(line.startswith("CASE_") for line in baseline.stdout.splitlines())
+    inventory = reported(baseline)
+    cases = len(inventory)
 
     records, failures = [], 0
     try:
@@ -81,19 +86,27 @@ def main() -> int:
             reached = without(term) in SOURCE.read_text()
             compiled = build()
             broke: set[str] = set()
+            complete = False
             if compiled:
-                broke = failing(run())
+                result = run()
+                broke = failing(result)
+                # Every case must report. A mutated run that stopped early would
+                # make a case that never executed indistinguishable from one
+                # that held, which is the question isolation is asking.
+                complete = reported(result) == inventory
             SOURCE.write_text(original)
             restored = build() and run().returncode == 0
             record = {"guard": guard, "case": case, "edit_reached_source": reached, "compiled": compiled,
                       "named_case_failed": case in broke,
+                      "every_case_reported": complete,
                       "only_declared_cases_broke": broke <= {case, *companions},
                       "declared_companions": companions, "cases_broken": sorted(broke), "cases_run": cases,
                       "restored_baseline": restored, "source_unchanged": SOURCE.read_text() == original}
             records.append(record)
             print(json.dumps(record), flush=True)
             if not all(record[key] for key in ("edit_reached_source", "compiled", "named_case_failed",
-                                               "only_declared_cases_broke", "restored_baseline", "source_unchanged")):
+                                               "every_case_reported", "only_declared_cases_broke",
+                                               "restored_baseline", "source_unchanged")):
                 failures += 1
     finally:
         SOURCE.write_text(original)

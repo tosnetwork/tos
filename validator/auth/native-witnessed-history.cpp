@@ -8,8 +8,9 @@ Result<std::vector<std::uint32_t>> required_finalized_coordinates(const Authoriz
   std::vector<std::uint32_t> coordinates;
   for (const auto& owner : authorizations.owner_) {
     const auto at = owner.proof_.anchor_.seqno_;
-    // The same rule execution will apply, applied here so a caller cannot be
-    // asked to fetch a block that could never be accepted.
+    // The same rule execution will apply, applied before anything is
+    // authenticated so a block that could never be accepted is refused for
+    // naming itself rather than for failing a later check.
     if (at >= inclusion)
       return Error{"owner-finality-coordinate"};
     coordinates.push_back(at);
