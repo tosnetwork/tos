@@ -811,6 +811,8 @@ jobs:
           build-p0/crypto/fift -I crypto/fift/lib -s "$CONTRACT_TMP/assemble.fif"
           build-p0/test/validator-auth-implementation/test-p0-config-contract \
             "$CONTRACT_TMP/config-code.boc" | tee artifacts/config-contract.txt
+          python3 test/validator-auth-implementation/config_contract_mutations.py \
+            --build build-p0 --out artifacts/config-contract-mutations
           git diff --exit-code
       - name: Carry the named identities through the elector
         run: |

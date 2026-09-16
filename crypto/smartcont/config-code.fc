@@ -29,6 +29,24 @@ int validator_auth_active() inline {
   cs.end_parse();
   return (version >= 16) & ((capabilities & 1024) != 0);
 }
+cell vauth_registry_state() impure asm "VAUTH_STATE";
+
+;; The registry checkpoint this account carries.
+;;
+;; Configuration parameter 46 holds the registry state; this holds the
+;; checkpoint beside it, and the two are bound by hash when an account is
+;; restored. It is read back on every load and written on every store, because
+;; an ordinary vote that dropped it would leave the next block with an account
+;; nothing can restore -- and a vote has nothing to do with the registry.
+global cell registry_checkpoint;
+
+builder store_checkpoint(builder b) inline {
+  ifnot (cell_null?(registry_checkpoint)) {
+    return b.store_ref(registry_checkpoint);
+  }
+  return b;
+}
+
 
 () set_conf_param(int index, cell value) impure {
   var cs = get_data().begin_parse();
@@ -40,6 +58,10 @@ int validator_auth_active() inline {
 (cell, int, int, cell) load_data() inline {
   var cs = get_data().begin_parse();
   var res = (cs~load_ref(), cs~load_uint(32), cs~load_uint(256), cs~load_dict());
+  registry_checkpoint = null();
+  if (cs.slice_refs()) {
+    registry_checkpoint = cs~load_ref();
+  }
   cs.end_parse();
   return res;
 }
@@ -50,6 +72,7 @@ int validator_auth_active() inline {
     .store_uint(stored_seqno, 32)
     .store_uint(public_key, 256)
     .store_dict(vote_dict)
+    .store_checkpoint()
   .end_cell());
 }
 
@@ -615,6 +638,10 @@ int register_voting_proposal(slice cs, int msg_value) impure inline_ref {
     var evidence = cs~load_ref();
     cs.end_parse();
     var registry = vauth_apply_update(update, evidence);
+    ;; The checkpoint for exactly the state just staged, so the account and
+    ;; parameter 46 describe the same registry. Taken from the instruction
+    ;; rather than rebuilt here: the contract has no way to derive one.
+    registry_checkpoint = vauth_registry_state();
     accept_message();
     stored_seqno = (stored_seqno + 1) % (1 << 32);
     store_data(cfg_dict, stored_seqno, public_key, vote_dict);

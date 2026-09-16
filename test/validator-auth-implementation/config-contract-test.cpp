@@ -91,11 +91,12 @@ RegistryCells registry_cells() {
 // The host's result is fixed by the fixture before execution. It counts and
 // binds the actual operands; it does not claim to verify update authorizations.
 struct Host final : vm::ValidatorAuthHost {
-  unsigned applies = 0, binds = 0;
+  unsigned applies = 0, binds = 0, checkpoints = 0;
   td::Ref<vm::Cell> installed, bound, last_elected, last_bindings;
   td::Ref<vm::Cell> expected_update, expected_evidence, returned_registry;
   td::Ref<vm::Cell> checkpoint(const Charge& charge) override {
     charge(10);
+    ++checkpoints;
     return vm::CellBuilder().store_long(0x5a, 8).finalize();
   }
   td::Ref<vm::Cell> apply(td::Ref<vm::Cell> update, td::Ref<vm::Cell> evidence, const Charge& charge) override {
@@ -161,9 +162,28 @@ td::Ref<vm::Cell> bindings_cell() {
   return wrapper.finalize();
 }
 
-td::Ref<vm::Cell> contract_data(const td::Ref<vm::Cell>& config) {
-  return canonical_cell(vm::CellBuilder().store_ref(config).store_long(0, 32).store_zeroes(256)
-                            .store_long(0, 1).finalize());
+td::Ref<vm::Cell> contract_data(const td::Ref<vm::Cell>& config, td::Ref<vm::Cell> checkpoint = {}) {
+  vm::CellBuilder data;
+  data.store_ref(config).store_long(0, 32).store_zeroes(256).store_long(0, 1);
+  if (checkpoint.not_null()) {
+    data.store_ref(std::move(checkpoint));
+  }
+  return canonical_cell(data.finalize());
+}
+
+// The trailing reference the configuration account carries, or nothing. This is
+// what an account is restored from, so a store that dropped it would leave the
+// next block with an account nothing can open.
+td::Ref<vm::Cell> stored_checkpoint(const td::Ref<vm::Cell>& data) {
+  expect(data.not_null(), "stored-data");
+  vm::CellSlice cs{vm::NoVm{}, data};
+  expect(cs.size() == 289, "stored-data-shape");
+  cs.fetch_ref();
+  cs.advance(288);
+  if (cs.fetch_ulong(1) == 1) {
+    cs.fetch_ref();
+  }
+  return cs.size_refs() == 1 ? cs.fetch_ref() : td::Ref<vm::Cell>{};
 }
 
 // `activated` writes Config8, which is where the contract reads activation
@@ -254,11 +274,11 @@ long long stored_sequence(const td::Ref<vm::Cell>& data) {
 Outcome run_contract(const td::Ref<vm::Cell>& contract, const td::Ref<vm::Cell>& body, std::uint64_t from,
                      std::uint32_t now, Host* host, td::uint64 capabilities, int version,
                      bool external = false, td::Ref<vm::Cell> registry = {}, long long gas_limit = 1000000,
-                     bool config8_active = false) {
+                     bool config8_active = false, td::Ref<vm::Cell> checkpoint = {}) {
   expect(contract.not_null(), "contract-loaded");
   auto config = configuration(std::move(registry), config8_active);
   auto message = external ? external_message(body) : internal_message(from, body);
-  auto data = contract_data(config);
+  auto data = contract_data(config, std::move(checkpoint));
   td::Ref<vm::Stack> stack{true};
   stack.write().push_int(td::make_refint(1000000000000LL));
   stack.write().push_int(td::make_refint(external ? 0LL : 2000000000LL));
@@ -437,6 +457,33 @@ std::vector<Case> cases(const td::Ref<vm::Cell>& contract) {
                                  vm::validator_auth_min_version);
          expect(host.binds == 0 && installed_parameter(run.data, 36).is_null(),
                 "a-set-from-anyone-else-is-not-installed");
+       }},
+      // The account carries the checkpoint its registry is restored from, beside
+      // the parameter that holds the registry itself. Every store has to carry
+      // it forward, which is why the store lives in store_data rather than in
+      // the registry branch: an ordinary operation has nothing to do with the
+      // registry and must not drop it.
+      //
+      // What is pinned below is the registry path. The vote path also stores,
+      // and is not exercised here: reaching it needs an elected set in
+      // parameter 34 and a signature from one of its members, which no fixture
+      // in this file builds. The mechanism it would exercise is the same one,
+      // in the same function.
+      // A registry update replaces it with the one for the state it just
+      // staged, taken from the state instruction rather than invented.
+      {"a-registry-update-stores-the-staged-checkpoint", [=] {
+         auto cells = registry_cells();
+         auto stale = vm::CellBuilder().store_long(0x7b, 8).finalize();
+         auto host = registry_host(cells);
+         auto run = run_contract(contract, registry_body(cells), 0, 1000, &host, vm::validator_auth_capability,
+                                 vm::validator_auth_min_version, true, {}, 1000000, false, stale);
+         expect(run.exit == 0 && host.applies == 1 && host.checkpoints == 1,
+                "a-registry-update-stores-the-staged-checkpoint");
+         auto written = stored_checkpoint(run.committed_data);
+         expect(written.not_null() && !same_cell(written, stale),
+                "a-registry-update-stores-the-staged-checkpoint");
+         expect(same_cell(installed_parameter(run.committed_data, 46), cells.after),
+                "a-registry-update-stores-the-staged-checkpoint");
        }},
       {"registry-c4-installs-parameter-46", [=] {
          auto cells = registry_cells();
