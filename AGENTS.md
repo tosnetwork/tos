@@ -60,6 +60,17 @@ The result reads exactly like "the test cannot catch this", which is the
 opposite of the truth. Have the edit print whether it matched, or put it in a
 script file and copy that over. This was believed twice in one day.
 
+**A rename fails loudly in code and silently everywhere else.** The compiler
+checks a renamed identifier exactly where it looks, and it does not look at the
+file name a `mod` declaration resolves to, or inside the string a test selector
+matches. Renaming the `p0_` test functions left `cargo test … p0_` selecting
+nothing, and a filter that matches nothing exits zero — a green run of no tests,
+which only stayed visible because a module name and its file had come apart in
+the same sweep and broke the build first. Before believing a rename changed
+nothing, grep the old name in file names, `#[path]` attributes, build target
+names, CI arguments and selector strings, and re-run anything that selects a set
+by prefix so it prints how many it found.
+
 **A doc line can be stale and backwards at the same time.** `800e6d1a2` corrected
 a README that framed a shipped component as future work and understated proof
 sizes by 10×. It had been wrong for weeks and nothing failed. Verify docs
@@ -102,6 +113,14 @@ trades a loud failure for a silent one.
   paths.
 - Verification and execution stay separate: `verify` is read-only and predicts
   nothing; all state change happens in `apply`.
+- Identifiers name what the thing does, never the phase or milestone that
+  introduced it. `p0_`, `phase1_` and the like record when something was
+  written; they stop being true while the code keeps running, and the next
+  phase makes every one of them a lie. The instruction a handler implements,
+  the question a predicate answers, the fixture a fixture is — those stay true.
+  Directory, artifact and workflow names are a separate decision: the frozen
+  record indexes its artifacts by path, so renaming those rewrites an index
+  rather than renaming a thing, and needs its own review.
 - Do not reference external project names or issue trackers in comments or
   commit messages. Comments explain intent, not history.
 
