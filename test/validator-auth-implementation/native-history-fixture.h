@@ -2,7 +2,7 @@
 #include "validator/auth/native-history.h"
 
 #include "owner-fixture.h"
-using namespace p0_owner_fixture;
+using namespace owner_fixture;
 namespace {
 td::Ref<vm::Cell> replace_ref(td::Ref<vm::Cell> root, unsigned index, td::Ref<vm::Cell> next) {
   vm::CellSlice s{vm::NoVm{}, root};

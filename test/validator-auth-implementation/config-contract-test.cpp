@@ -68,7 +68,7 @@ struct RegistryCells {
 };
 
 RegistryCells registry_cells() {
-  auto registry = p0_fixture::state(1);
+  auto registry = auth_fixture::state(1);
   expect(registry.identities().size() == 1, "fixture-identity");
   const auto& identity = registry.identities().begin()->second;
   expect(!identity.active_.empty(), "fixture-active-key");
@@ -81,7 +81,7 @@ RegistryCells registry_cells() {
        value(auth::object_value(4, canonical_bytes(auth::Certificate{})), "fixture-carrier")});
   // This fixture tests persistence, not admission. The registry transition is
   // real; its authorization is supplied by the shared accepted-request fixture.
-  auto next = value(registry.apply_block(1, {{update, evidence}}, p0_fixture::AcceptedFixtureRequests{}),
+  auto next = value(registry.apply_block(1, {{update, evidence}}, auth_fixture::AcceptedFixtureRequests{}),
                     "fixture-apply");
   RegistryCells result{canonical_cell(value(registry.encode_cell(), "fixture-old-registry")),
                        canonical_cell(value(next.encode_cell(), "fixture-new-registry")),
@@ -1081,7 +1081,7 @@ int main(int argc, char** argv) {
     expect(argc >= 2 && argc <= 4, "arguments");
     auto initialized = vm::init_vm();
     expect(initialized.is_ok(), "vm-initialized");
-    SET_VERBOSITY_LEVEL(std::getenv("P0_CONTRACT_TRACE") ? VERBOSITY_NAME(DEBUG) : VERBOSITY_NAME(FATAL));
+    SET_VERBOSITY_LEVEL(std::getenv("VALIDATOR_AUTH_CONTRACT_TRACE") ? VERBOSITY_NAME(DEBUG) : VERBOSITY_NAME(FATAL));
     auto contract = read_boc(argv[1]);
     if (argc == 4 && std::string(argv[2]) == "--export") {
       export_cells(argv[3], contract);

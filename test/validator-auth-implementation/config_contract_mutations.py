@@ -57,7 +57,7 @@ STAGED_FINALIZE = ('      registry_checkpoint = vauth_registry_state();\n'
 # the shape that let a block with no registry message keep the parent's
 # parameter 46 -- whose schedule still names transitions as due at a coordinate
 # that has passed, so the next block's registry refuses to open at all.
-TERMINAL_REQUIRED = """      throw_unless(52, p0_awaiting_governance?(rest));
+TERMINAL_REQUIRED = """      throw_unless(52, awaiting_governance?(rest));
 """
 FOUND_REQUIRED = """      throw_unless(50, found?);
 """
@@ -66,7 +66,7 @@ REGISTRY_KEPT = """      cfg_dict~idict_set_ref(32, 46, finalized);
 PROPOSAL_CONSUMED = """      vote_dict~udict_delete?(256, phash);
 """
 RV_EARLY = """  if (validator_auth_active()) {
-    if (p0_awaiting_governance?(rest)) {
+    if (awaiting_governance?(rest)) {
       return (vote_dict, null(), 3);
     }
   }
@@ -86,7 +86,7 @@ RV_THRESHOLD = """  if (validator_auth_active()) {
   }
 """
 SCAN_GATE = """  if (validator_auth_active()) {
-    if (p0_awaiting_governance?(rest)) {
+    if (awaiting_governance?(rest)) {
       return (pstatus, false);
     }
   }

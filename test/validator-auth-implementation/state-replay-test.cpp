@@ -5,7 +5,7 @@
 #include "vm/boc.h"
 
 #include "native-fixture.h"
-using namespace p0_fixture;
+using namespace auth_fixture;
 namespace {
 using Updates = std::vector<std::pair<Update, Authorizations>>;
 class Authority final : public LifecycleAuthority {

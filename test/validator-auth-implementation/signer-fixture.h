@@ -8,7 +8,7 @@
 #include "validator/auth/safety-ledger.h"
 
 #include "native-fixture.h"
-using namespace p0_fixture;
+using namespace auth_fixture;
 Bytes signature(std::span<const std::uint8_t> raw) {
   Hash pk{};
   std::array<unsigned char, 64> secret{};

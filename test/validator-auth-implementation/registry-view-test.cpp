@@ -7,7 +7,7 @@
 #include "vm/cells/MerkleProof.h"
 
 #include "native-fixture.h"
-using namespace p0_fixture;
+using namespace auth_fixture;
 namespace {
 td::Ref<vm::Cell> replace_ref(td::Ref<vm::Cell> root, unsigned index, td::Ref<vm::Cell> replacement) {
   vm::CellSlice s(vm::NoVm{}, root);

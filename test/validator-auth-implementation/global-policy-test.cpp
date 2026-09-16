@@ -23,7 +23,7 @@
 #include "native-fixture.h"
 
 using namespace tos::auth;
-using namespace p0_fixture;
+using namespace auth_fixture;
 
 namespace {
 unsigned passed = 0, failed = 0;
@@ -113,7 +113,7 @@ int main() {
     for (const auto* name : manifest)
       std::cout << "MANIFEST " << name << '\n';
 
-    const auto before = p0_fixture::state(3);
+    const auto before = auth_fixture::state(3);
     const std::uint32_t inclusion = 1, effective = 64;
     const auto next_policy = successor(before, effective);
     const auto policy_id = value(object_id("policy", next_policy), "fixture-policy-id");

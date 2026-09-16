@@ -11,7 +11,7 @@
 
 namespace {
 using namespace tos::auth;
-using namespace p0_node_history_fixture;
+using namespace node_history_fixture;
 
 struct AssertionFailure : std::runtime_error {
   using std::runtime_error::runtime_error;
@@ -31,7 +31,7 @@ void expect_error(const Result<T>& result, std::string_view code,
 // Two fixture headers reach this translation unit and each declares a Fixture
 // in its own namespace, so the unqualified name is ambiguous here.
 std::unique_ptr<NativeNodeHistoryAdapter> open_adapter(
-    p0_node_history_fixture::Fixture& fixture, NativeNodeHistoryBudget budget,
+    node_history_fixture::Fixture& fixture, NativeNodeHistoryBudget budget,
     const std::string& assertion) {
   auto opened = NativeNodeHistoryAdapter::open(
       fixture.head_state, fixture.head, fixture.chain,
@@ -41,7 +41,7 @@ std::unique_ptr<NativeNodeHistoryAdapter> open_adapter(
 }
 
 std::unique_ptr<NativeNodeHistoryAdapter> open_adapter(
-    p0_node_history_fixture::Fixture& fixture, const std::string& assertion) {
+    node_history_fixture::Fixture& fixture, const std::string& assertion) {
   return open_adapter(
       fixture, NativeNodeHistoryBudget{}, assertion);
 }

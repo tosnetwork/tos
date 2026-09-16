@@ -9,9 +9,9 @@
 
 #include "native-history-fixture.h"
 
-namespace p0_node_history_fixture {
+namespace node_history_fixture {
 using namespace tos::auth;
-using namespace p0_owner_fixture;
+using namespace owner_fixture;
 
 inline Bytes read_bytes(const std::filesystem::path& path) {
   std::ifstream file(path, std::ios::binary);
@@ -289,4 +289,4 @@ inline bool same_identity_input(const NativeSessionIdInput& left,
          left.form == right.form;
 }
 
-}  // namespace p0_node_history_fixture
+}  // namespace node_history_fixture

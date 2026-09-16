@@ -12,7 +12,7 @@
 
 namespace {
 using namespace tos::auth;
-using namespace p0_owner_fixture;
+using namespace owner_fixture;
 
 struct AssertionFailure : std::runtime_error {
   using std::runtime_error::runtime_error;

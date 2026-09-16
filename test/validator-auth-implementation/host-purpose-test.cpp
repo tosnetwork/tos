@@ -30,7 +30,7 @@
 #include "native-fixture.h"
 
 using namespace tos::auth;
-using namespace p0_fixture;
+using namespace auth_fixture;
 
 namespace {
 unsigned passed = 0, failed = 0;
@@ -59,7 +59,7 @@ bool refuses_as_absent(const std::function<void()>& call) {
 }
 
 NativeRegistryBlock registry_block() {
-  auto encoded = value(p0_fixture::state(1).encode_cell(), "fixture-registry-cell");
+  auto encoded = value(auth_fixture::state(1).encode_cell(), "fixture-registry-cell");
   auto registry = value(NativeRegistry::bootstrap(encoded, 0), "fixture-registry");
   return value(NativeRegistryBlock::begin(registry, 1), "fixture-block");
 }
@@ -146,7 +146,7 @@ int main() {
     // about binding and become refusals about the allowance -- which only
     // happens if what each attempt consumed survived it.
     {
-      auto encoded = value(p0_fixture::state(1).encode_cell(), "fixture-registry-cell");
+      auto encoded = value(auth_fixture::state(1).encode_cell(), "fixture-registry-cell");
       auto registry = value(NativeRegistry::bootstrap(encoded, 0), "fixture-registry");
       // An allowance a few reads wide, so exhaustion is reachable in a bounded
       // loop rather than after a million attempts.

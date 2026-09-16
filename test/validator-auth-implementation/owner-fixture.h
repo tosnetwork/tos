@@ -13,8 +13,8 @@
 #include "vm/cells/MerkleUpdate.h"
 
 #include "native-fixture.h"
-using namespace p0_fixture;
-namespace p0_owner_fixture {
+using namespace auth_fixture;
+namespace owner_fixture {
 Bytes read(const std::filesystem::path& p) {
   std::ifstream f(p, std::ios::binary);
   check(f.good(), "input-file");
@@ -231,4 +231,4 @@ OwnerAuth claim(const Fixture& f, td::Ref<vm::Cell> state, td::Ref<vm::Cell> blo
       {a, 1, id, value(digest("proof", bytes), "claim-proof-hash"), value(object_value(5, bytes), "claim-carrier")}};
 }
 
-}  // namespace p0_owner_fixture
+}  // namespace owner_fixture

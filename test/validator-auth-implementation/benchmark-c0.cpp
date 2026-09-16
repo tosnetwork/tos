@@ -11,7 +11,7 @@
 #include "validator/auth/context.h"
 
 #include "native-fixture.h"
-using namespace p0_fixture;
+using namespace auth_fixture;
 namespace {
 td::Bits256 bits(const Hash& h) {
   td::Bits256 out;
@@ -100,7 +100,7 @@ int main(int argc, char** argv) {
         throw std::runtime_error("legacy-valid: " + result.error().message().str());
       check(result.ok() == count, "legacy-weight");
     };
-    auto verify_p0 = [&] {
+    auto verify_ed25519 = [&] {
       auto result = snapshot.verify(cert, duty);
       check(result.ok() && result.value().weight() == count, "p0-valid");
     };
@@ -120,7 +120,7 @@ int main(int argc, char** argv) {
     other_block.root_hash = bits(h(60000));
     check(legacy->check_signatures(vset, other_block).is_error(), "legacy-negative-control");
     verify_legacy();
-    verify_p0();
+    verify_ed25519();
     if (argc == 2 && std::string(argv[1]) == "--check") {
       std::cout << "PASS: 400-member native certificate benchmark controls\n";
       return 0;
@@ -135,11 +135,11 @@ int main(int argc, char** argv) {
     for (unsigned i = 0; i < samples + 4; ++i) {
       double old_time, new_time;
       if (i % 2) {
-        new_time = elapsed(verify_p0);
+        new_time = elapsed(verify_ed25519);
         old_time = elapsed(verify_legacy);
       } else {
         old_time = elapsed(verify_legacy);
-        new_time = elapsed(verify_p0);
+        new_time = elapsed(verify_ed25519);
       }
       if (i >= 4) {
         old_times.push_back(old_time);
@@ -153,7 +153,7 @@ int main(int argc, char** argv) {
     std::cout << std::setprecision(10) << "{\"scope\":\"native-certificate-verification\",\"members\":" << count
               << ",\"samples\":" << samples << ",\"repeats\":" << repeats
               << ",\"legacy_us\":{\"p50\":" << percentile(old_times, .5) << ",\"p95\":" << percentile(old_times, .95)
-              << ",\"p99\":" << percentile(old_times, .99) << "},\"p0_us\":{\"p50\":" << percentile(new_times, .5)
+              << ",\"p99\":" << percentile(old_times, .99) << "},\"ed25519_us\":{\"p50\":" << percentile(new_times, .5)
               << ",\"p95\":" << percentile(new_times, .95) << ",\"p99\":" << percentile(new_times, .99)
               << "},\"median_ratio\":" << median << ",\"p95_ratio\":" << p95
               << ",\"paired_median_ratio\":" << percentile(paired, .5)

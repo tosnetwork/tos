@@ -90,7 +90,7 @@ fn read_message(engine: &mut Engine, cell: Cell) -> Result<Vec<u8>> {
     Ok(output)
 }
 
-pub(super) fn execute_p0_chksign(engine: &mut Engine) -> Status {
+pub(super) fn execute_vauth_chksign(engine: &mut Engine) -> Status {
     if engine.block_version() < 16 || !engine.check_capabilities(CAPABILITY) {
         if engine.block_version() >= 4 {
             engine.try_use_gas(Gas::basic_gas_price(0, 0))?;
@@ -142,7 +142,7 @@ fn charge_native(engine: &mut Engine, gas: i64) -> Status {
     }
     engine.try_use_gas(gas)
 }
-pub(super) fn execute_p0_state(engine: &mut Engine) -> Status {
+pub(super) fn execute_vauth_state(engine: &mut Engine) -> Status {
     native_gate(engine)?;
     engine.load_instruction(Instruction::new("VAUTH_STATE"))?;
     let Some(host) = engine.validator_auth_host() else {
@@ -155,7 +155,7 @@ pub(super) fn execute_p0_state(engine: &mut Engine) -> Status {
     engine.cc.stack.push(StackItem::Cell(result));
     Ok(())
 }
-pub(super) fn execute_p0_bind(engine: &mut Engine) -> Status {
+pub(super) fn execute_vauth_bind(engine: &mut Engine) -> Status {
     native_gate(engine)?;
     engine.load_instruction(Instruction::new("VAUTH_BIND"))?;
     let Some(host) = engine.validator_auth_host() else {
@@ -175,7 +175,7 @@ pub(super) fn execute_p0_bind(engine: &mut Engine) -> Status {
     engine.cc.stack.push(StackItem::Cell(result));
     Ok(())
 }
-pub(super) fn execute_p0_apply(engine: &mut Engine) -> Status {
+pub(super) fn execute_vauth_apply(engine: &mut Engine) -> Status {
     native_gate(engine)?;
     engine.load_instruction(Instruction::new("VAUTH_APPLY"))?;
     let Some(host) = engine.validator_auth_host() else {

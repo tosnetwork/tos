@@ -6,7 +6,7 @@
 #include "vm/boc.h"
 
 #include "native-fixture.h"
-using namespace p0_fixture;
+using namespace auth_fixture;
 
 int main(int argc, char** argv) {
   try {

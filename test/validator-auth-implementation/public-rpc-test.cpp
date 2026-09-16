@@ -27,7 +27,7 @@
 
 namespace {
 namespace auth = tos::auth;
-namespace history_fixture = p0_node_history_fixture;
+namespace history_fixture = node_history_fixture;
 
 struct AssertionFailure : std::runtime_error {
   using std::runtime_error::runtime_error;

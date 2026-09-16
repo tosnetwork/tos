@@ -9,7 +9,7 @@
 #include "vm/boc.h"
 
 #include "committee-fixture.h"
-using namespace p0_fixture;
+using namespace auth_fixture;
 namespace {
 td::Bits256 bits(const Hash& h) {
   return td::Bits256(h);

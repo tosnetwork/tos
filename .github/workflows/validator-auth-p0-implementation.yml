@@ -350,20 +350,20 @@ jobs:
           diff -r artifacts/native-proof-fixtures artifacts/native-proof-fixtures-sanitized
           python3 test/validator-auth-implementation/check_native.py --rust tosctl/src/target/debug/native-conformance --cpp build-p0/test/validator-auth-implementation/test-p0-implementation --cells artifacts/native-cell-fixtures --proofs artifacts/native-proof-fixtures --out artifacts/rust-native.json
           build-p0/test/validator-auth-implementation/test-p0-authority | tee artifacts/authorities.txt
-          P0_EVIDENCE_TMP="$(mktemp -d)"
-          build-p0/test/validator-auth-implementation/test-p0-api-service "$P0_EVIDENCE_TMP/api" tosctl/src/target/debug/conformance tosctl/src/target/debug/native-conformance | tee artifacts/api-service.txt
+          VALIDATOR_AUTH_EVIDENCE_TMP="$(mktemp -d)"
+          build-p0/test/validator-auth-implementation/test-p0-api-service "$VALIDATOR_AUTH_EVIDENCE_TMP/api" tosctl/src/target/debug/conformance tosctl/src/target/debug/native-conformance | tee artifacts/api-service.txt
           python3 test/validator-auth-implementation/check_http.py --cpp build-p0/test/validator-auth-implementation/test-p0-http --rust tosctl/src/target/debug/conformance --out artifacts/http.json
           python3 test/validator-auth-implementation/check_client.py --driver tosctl/src/target/debug/conformance --native tosctl/src/target/debug/native-conformance --proofs artifacts/native-proof-fixtures --out artifacts/client.json
-          build-p0/test/validator-auth-implementation/test-p0-admin "$P0_EVIDENCE_TMP/admin" | tee artifacts/admin.txt
-          build-p0/test/validator-auth-implementation/test-p0-admin-process "$P0_EVIDENCE_TMP/admin-process" | tee artifacts/admin-process.txt
-          build-p0/test/validator-auth-implementation/test-p0-issuer "$P0_EVIDENCE_TMP/issuer" | tee artifacts/issuer.txt
-          build-p0/test/validator-auth-implementation/test-p0-journal "$P0_EVIDENCE_TMP/journal" | tee artifacts/journal.txt
-          build-p0/test/validator-auth-implementation/test-p0-journal-growth "$P0_EVIDENCE_TMP/journal-growth" | tee artifacts/journal-growth.txt
-          build-p0/test/validator-auth-implementation/test-p0-ledger-memory "$P0_EVIDENCE_TMP/ledger-memory" | tee artifacts/ledger-memory.txt
-          build-p0/test/validator-auth-implementation/test-p0-signer "$P0_EVIDENCE_TMP/signer" | tee artifacts/signer.txt
-          build-p0/test/validator-auth-implementation/test-p0-sync "$P0_EVIDENCE_TMP/sync" | tee artifacts/sync.txt
-          build-p0/test/validator-auth-implementation/test-p0-channel "$P0_EVIDENCE_TMP/channel" | tee artifacts/channel.txt
-          build-p0/test/validator-auth-implementation/test-p0-process "$P0_EVIDENCE_TMP/process" | tee artifacts/process-rehearsal.txt
+          build-p0/test/validator-auth-implementation/test-p0-admin "$VALIDATOR_AUTH_EVIDENCE_TMP/admin" | tee artifacts/admin.txt
+          build-p0/test/validator-auth-implementation/test-p0-admin-process "$VALIDATOR_AUTH_EVIDENCE_TMP/admin-process" | tee artifacts/admin-process.txt
+          build-p0/test/validator-auth-implementation/test-p0-issuer "$VALIDATOR_AUTH_EVIDENCE_TMP/issuer" | tee artifacts/issuer.txt
+          build-p0/test/validator-auth-implementation/test-p0-journal "$VALIDATOR_AUTH_EVIDENCE_TMP/journal" | tee artifacts/journal.txt
+          build-p0/test/validator-auth-implementation/test-p0-journal-growth "$VALIDATOR_AUTH_EVIDENCE_TMP/journal-growth" | tee artifacts/journal-growth.txt
+          build-p0/test/validator-auth-implementation/test-p0-ledger-memory "$VALIDATOR_AUTH_EVIDENCE_TMP/ledger-memory" | tee artifacts/ledger-memory.txt
+          build-p0/test/validator-auth-implementation/test-p0-signer "$VALIDATOR_AUTH_EVIDENCE_TMP/signer" | tee artifacts/signer.txt
+          build-p0/test/validator-auth-implementation/test-p0-sync "$VALIDATOR_AUTH_EVIDENCE_TMP/sync" | tee artifacts/sync.txt
+          build-p0/test/validator-auth-implementation/test-p0-channel "$VALIDATOR_AUTH_EVIDENCE_TMP/channel" | tee artifacts/channel.txt
+          build-p0/test/validator-auth-implementation/test-p0-process "$VALIDATOR_AUTH_EVIDENCE_TMP/process" | tee artifacts/process-rehearsal.txt
           python3 test/validator-auth-implementation/check_transport.py \
             --driver build-p0/test/validator-auth-implementation/test-p0-transport | tee artifacts/transport-cpp.json
           python3 test/validator-auth-implementation/check_transport.py \
@@ -608,9 +608,9 @@ jobs:
       - name: Derive a committee from a genesis written by the real genesis path
         run: |
           set -euo pipefail
-          P0_EVIDENCE_TMP="$(mktemp -d)"
+          VALIDATOR_AUTH_EVIDENCE_TMP="$(mktemp -d)"
           python3 test/validator-auth-implementation/genesis_rehearsal.py \
-            --build "$PWD/build-p0" --work "$P0_EVIDENCE_TMP/genesis" \
+            --build "$PWD/build-p0" --work "$VALIDATOR_AUTH_EVIDENCE_TMP/genesis" \
             --out artifacts/genesis-rehearsal.json | tee artifacts/genesis-rehearsal.txt
       - name: Compile core guard removals and require assertion failures
         if: matrix.guards == 'core'

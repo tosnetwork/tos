@@ -14,7 +14,7 @@
 #include "native-fixture.h"
 
 using namespace tos::auth;
-using namespace p0_fixture;
+using namespace auth_fixture;
 
 namespace {
 unsigned passed = 0;

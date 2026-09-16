@@ -36,7 +36,7 @@ fn json(config: &ConfigParams, index: u32) -> Map<String, Value> {
         .expect("fixture-json")
 }
 #[test]
-fn p0_json_native_roundtrip() {
+fn json_native_roundtrip() {
     for index in 32..=37 {
         for kind in 0..4 {
             let config = fixture(index, kind);
@@ -75,7 +75,7 @@ fn p0_json_native_roundtrip() {
     }
 }
 #[test]
-fn p0_json_binding_refuses_lossy_inputs() {
+fn json_binding_refuses_lossy_inputs() {
     let source = json(&fixture(34, 3), 34);
     for (label, field, value) in [
         ("json-missing-adnl", "adnl_addr", Value::Null),
@@ -115,7 +115,7 @@ fn p0_json_binding_refuses_lossy_inputs() {
 }
 
 #[test]
-fn p0_json_binding_count_boundaries() {
+fn json_binding_count_boundaries() {
     let source = json(&fixture(34, 3), 34);
     for (count, claimed, accepted, label) in [
         (400, 400, true, "json-count-boundary"),

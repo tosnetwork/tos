@@ -1523,8 +1523,8 @@ mod config_persistence_action_phase {
 
     fn cells() -> Cells {
         let root = PathBuf::from(
-            std::env::var("P0_CONFIG_PERSISTENCE_CELLS")
-                .expect("P0_CONFIG_PERSISTENCE_CELLS must name exported built-contract cells"),
+            std::env::var("VALIDATOR_AUTH_CONFIG_PERSISTENCE_CELLS")
+                .expect("VALIDATOR_AUTH_CONFIG_PERSISTENCE_CELLS must name exported built-contract cells"),
         );
         Cells {
             contract: read_cell(&root, "contract.boc"),
@@ -1655,7 +1655,7 @@ mod config_persistence_action_phase {
     // precondition visible as "ignored" there instead of failing for a reason
     // that says nothing about the code, while the configuration-persistence
     // workflow runs these explicitly.
-    #[ignore = "needs P0_CONFIG_PERSISTENCE_CELLS from the configuration-contract build"]
+    #[ignore = "needs VALIDATOR_AUTH_CONFIG_PERSISTENCE_CELLS from the configuration-contract build"]
     fn accepted_registry_persists_after_action_phase() {
         const NAME: &str = "accepted_registry_persists_after_action_phase";
         println!("SETUP_OK {NAME}");
@@ -1683,7 +1683,7 @@ mod config_persistence_action_phase {
     // precondition visible as "ignored" there instead of failing for a reason
     // that says nothing about the code, while the configuration-persistence
     // workflow runs these explicitly.
-    #[ignore = "needs P0_CONFIG_PERSISTENCE_CELLS from the configuration-contract build"]
+    #[ignore = "needs VALIDATOR_AUTH_CONFIG_PERSISTENCE_CELLS from the configuration-contract build"]
     fn refused_action_phase_rolls_registry_back() {
         const NAME: &str = "refused_action_phase_rolls_registry_back";
         println!("SETUP_OK {NAME}");
@@ -1729,7 +1729,7 @@ mod config_persistence_action_phase {
     // precondition visible as "ignored" there instead of failing for a reason
     // that says nothing about the code, while the configuration-persistence
     // workflow runs these explicitly.
-    #[ignore = "needs P0_CONFIG_PERSISTENCE_CELLS from the configuration-contract build"]
+    #[ignore = "needs VALIDATOR_AUTH_CONFIG_PERSISTENCE_CELLS from the configuration-contract build"]
     fn validator_auth_host_is_bound_to_configuration_account() {
         const NAME: &str = "validator_auth_host_is_bound_to_configuration_account";
         println!("SETUP_OK {NAME}");

@@ -9,7 +9,7 @@
 #if TD_USE_ASAN
 #include <sanitizer/asan_interface.h>
 #endif
-namespace p0_fixture {
+namespace auth_fixture {
 using namespace tos::auth;
 inline void check(bool ok, const char* label) {
   if (!ok)
@@ -173,4 +173,4 @@ inline RegistryState pending_state(unsigned count) {
   }
   return value(registry.apply_block(1, updates, AcceptedFixtureRequests{}), "pending-state");
 }
-}  // namespace p0_fixture
+}  // namespace auth_fixture

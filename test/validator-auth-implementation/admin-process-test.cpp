@@ -1,6 +1,6 @@
 #include "admin-fixture.h"
 #include "process-fixture.h"
-using namespace p0_process;
+using namespace process_fixture;
 namespace {
 class GatedAdminProvider : public C0SigningProvider {
   RemoteProvider& provider_;

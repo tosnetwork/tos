@@ -33,8 +33,8 @@
 #include "native-config-context-fixture.h"
 
 using namespace tos::auth;
-using namespace p0_fixture;
-namespace context_fixture = p0_config_context_fixture;
+using namespace auth_fixture;
+namespace context_fixture = config_context_fixture;
 
 namespace {
 unsigned passed = 0, failed = 0;
@@ -91,7 +91,7 @@ Hash cell_hash(const td::Ref<vm::Cell>& cell) {
 // A prefix built from a registry the sequence did not start from, so a claim
 // naming it is a claim about something the account never held.
 NativeRegistryBlock foreign_prefix() {
-  auto encoded = value(p0_fixture::state(6).encode_cell(), "fixture-foreign-root");
+  auto encoded = value(auth_fixture::state(6).encode_cell(), "fixture-foreign-root");
   auto registry = value(NativeRegistry::bootstrap(encoded, 0), "fixture-foreign-registry");
   return value(NativeRegistryBlock::begin(registry, 1), "fixture-foreign-block");
 }
@@ -135,7 +135,7 @@ int main() {
     // A state with a real elected set and catchain selector, because opening
     // the context derives a committee from it and a bare registry state has
     // neither.
-    auto base = p0_fixture::chain_state(p0_fixture::state(4));
+    auto base = auth_fixture::chain_state(auth_fixture::state(4));
     auto fixture = context_fixture::make(base);
     auto context = value(NativeConfigContext::open(fixture.root, fixture.head, fixture.chain), "fixture-context");
     const std::uint32_t inclusion = fixture.head.seqno_ + 1;
@@ -198,7 +198,7 @@ int main() {
       auto accepted = foreign_prefix();
       auto claim = value(NativeCommitClaim::staged(accepted), "fixture-claim");
       auto written = value(NativeRegistryBlock::begin(
-                               value(NativeRegistry::bootstrap(value(p0_fixture::state(7).encode_cell(), "written-root"),
+                               value(NativeRegistry::bootstrap(value(auth_fixture::state(7).encode_cell(), "written-root"),
                                                                0),
                                      "written-registry"),
                                1),
@@ -308,7 +308,7 @@ int main() {
     // defect is only visible one block later, which is why it is stated here
     // rather than in either suite.
     {
-      auto pending = p0_fixture::pending_state(3);
+      auto pending = auth_fixture::pending_state(3);
       ChainContext domain{};
       domain.chain_domain = pending.chain_domain();
       auto parameter = value(pending.encode_cell(), "pending-root");

@@ -46,7 +46,7 @@ if(UNIX)
       "${PROJECT_SOURCE_DIR}/validator/auth/key-isolation.cpp"
       "${PROJECT_SOURCE_DIR}/validator/auth/durable-log.cpp")
     target_link_libraries(test-p0-keyring-sanitized PRIVATE keyring)
-    target_compile_definitions(test-p0-keyring-sanitized PRIVATE P0_SANITIZER_RUNTIME_CHECK=1)
+    target_compile_definitions(test-p0-keyring-sanitized PRIVATE VALIDATOR_AUTH_SANITIZER_RUNTIME_CHECK=1)
     target_link_libraries(test-p0-keyring-sanitized PRIVATE ${CMAKE_DL_LIBS})
     target_compile_options(test-p0-keyring-sanitized PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
     target_link_options(test-p0-keyring-sanitized PRIVATE -fsanitize=address,undefined)
@@ -264,11 +264,11 @@ if(UNIX)
   target_link_libraries(test-p0-public-rpc PRIVATE tos_validator_auth_rpc)
   set_target_properties(test-p0-public-rpc PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 
-  set(P0_PUBLIC_RPC_MUTANT_ROOT
+  set(VALIDATOR_AUTH_PUBLIC_RPC_MUTANT_ROOT
       "${CMAKE_CURRENT_BINARY_DIR}/public-rpc-mutant-root")
-  file(MAKE_DIRECTORY "${P0_PUBLIC_RPC_MUTANT_ROOT}/validator/auth")
+  file(MAKE_DIRECTORY "${VALIDATOR_AUTH_PUBLIC_RPC_MUTANT_ROOT}/validator/auth")
   configure_file("${PROJECT_SOURCE_DIR}/validator/auth/client-api-common.h"
-                 "${P0_PUBLIC_RPC_MUTANT_ROOT}/validator/auth/client-api-common.h" COPYONLY)
+                 "${VALIDATOR_AUTH_PUBLIC_RPC_MUTANT_ROOT}/validator/auth/client-api-common.h" COPYONLY)
   configure_file("${PROJECT_SOURCE_DIR}/validator/auth/public-rpc.cpp"
                  "${CMAKE_CURRENT_BINARY_DIR}/mutated-public-rpc.cpp" COPYONLY)
   configure_file("${PROJECT_SOURCE_DIR}/validator/auth/transfer.cpp"
@@ -281,7 +281,7 @@ if(UNIX)
     "${CMAKE_CURRENT_BINARY_DIR}/mutated-public-rpc-transfer.cpp"
     "${CMAKE_CURRENT_BINARY_DIR}/mutated-public-rpc-object-store.cpp")
   target_include_directories(test-p0-public-rpc-mutant BEFORE PRIVATE
-    "${P0_PUBLIC_RPC_MUTANT_ROOT}")
+    "${VALIDATOR_AUTH_PUBLIC_RPC_MUTANT_ROOT}")
   target_include_directories(test-p0-public-rpc-mutant PRIVATE
     "${PROJECT_SOURCE_DIR}/validator/auth")
   target_link_libraries(test-p0-public-rpc-mutant PRIVATE tos_validator_auth_rpc)
@@ -324,15 +324,15 @@ if(UNIX)
   target_link_libraries(test-p0-http PRIVATE tos_validator_auth_signer)
   set_target_properties(test-p0-http PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 
-  set(P0_HTTP_MUTANT_ROOT
+  set(VALIDATOR_AUTH_HTTP_MUTANT_ROOT
       "${CMAKE_CURRENT_BINARY_DIR}/http-mutant-root")
-  file(MAKE_DIRECTORY "${P0_HTTP_MUTANT_ROOT}/validator/auth")
+  file(MAKE_DIRECTORY "${VALIDATOR_AUTH_HTTP_MUTANT_ROOT}/validator/auth")
   configure_file("${PROJECT_SOURCE_DIR}/validator/auth/http-transport-policy.h"
-                 "${P0_HTTP_MUTANT_ROOT}/validator/auth/http-transport-policy.h" COPYONLY)
+                 "${VALIDATOR_AUTH_HTTP_MUTANT_ROOT}/validator/auth/http-transport-policy.h" COPYONLY)
   add_executable(test-p0-http-mutant EXCLUDE_FROM_ALL
     http-driver.cpp "${CMAKE_CURRENT_BINARY_DIR}/mutated-local-channel.cpp")
   target_include_directories(test-p0-http-mutant BEFORE PRIVATE
-    "${P0_HTTP_MUTANT_ROOT}/validator/auth")
+    "${VALIDATOR_AUTH_HTTP_MUTANT_ROOT}/validator/auth")
   target_include_directories(test-p0-http-mutant PRIVATE
     "${PROJECT_SOURCE_DIR}/validator/auth")
   target_link_libraries(test-p0-http-mutant PRIVATE tos_validator_auth_signer)
@@ -343,22 +343,22 @@ if(UNIX)
     tos_validator_auth_remote)
   set_target_properties(test-p0-remote-transport PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 
-  set(P0_REMOTE_TRANSPORT_MUTANT_ROOT
+  set(VALIDATOR_AUTH_REMOTE_TRANSPORT_MUTANT_ROOT
       "${CMAKE_CURRENT_BINARY_DIR}/remote-transport-mutant-root")
   file(MAKE_DIRECTORY
-    "${P0_REMOTE_TRANSPORT_MUTANT_ROOT}/validator/auth")
+    "${VALIDATOR_AUTH_REMOTE_TRANSPORT_MUTANT_ROOT}/validator/auth")
   configure_file("${PROJECT_SOURCE_DIR}/validator/auth/remote-transport.h"
-                 "${P0_REMOTE_TRANSPORT_MUTANT_ROOT}/validator/auth/remote-transport.h" COPYONLY)
+                 "${VALIDATOR_AUTH_REMOTE_TRANSPORT_MUTANT_ROOT}/validator/auth/remote-transport.h" COPYONLY)
   configure_file("${PROJECT_SOURCE_DIR}/validator/auth/http-transport-policy.h"
-                 "${P0_REMOTE_TRANSPORT_MUTANT_ROOT}/validator/auth/http-transport-policy.h" COPYONLY)
+                 "${VALIDATOR_AUTH_REMOTE_TRANSPORT_MUTANT_ROOT}/validator/auth/http-transport-policy.h" COPYONLY)
   configure_file("${PROJECT_SOURCE_DIR}/validator/auth/remote-transport.cpp"
                  "${CMAKE_CURRENT_BINARY_DIR}/mutated-remote-transport.cpp" COPYONLY)
   add_executable(test-p0-remote-transport-mutant EXCLUDE_FROM_ALL
     remote-transport-test.cpp
     "${CMAKE_CURRENT_BINARY_DIR}/mutated-remote-transport.cpp")
   target_include_directories(test-p0-remote-transport-mutant BEFORE PRIVATE
-    "${P0_REMOTE_TRANSPORT_MUTANT_ROOT}"
-    "${P0_REMOTE_TRANSPORT_MUTANT_ROOT}/validator/auth")
+    "${VALIDATOR_AUTH_REMOTE_TRANSPORT_MUTANT_ROOT}"
+    "${VALIDATOR_AUTH_REMOTE_TRANSPORT_MUTANT_ROOT}/validator/auth")
   target_include_directories(test-p0-remote-transport-mutant PRIVATE
     "${PROJECT_SOURCE_DIR}/validator/auth")
   target_link_libraries(test-p0-remote-transport-mutant PRIVATE
@@ -449,16 +449,16 @@ endforeach()
 # has to reach a header rather than a translation unit. The mutant root stays
 # first on the include path so validator/auth/client-api-common.h resolves to the
 # copy, and the real directory follows so its siblings still resolve.
-set(P0_CLIENT_COMMON_MUTANT_ROOT "${CMAKE_CURRENT_BINARY_DIR}/client-common-mutant")
-file(MAKE_DIRECTORY "${P0_CLIENT_COMMON_MUTANT_ROOT}")
+set(VALIDATOR_AUTH_CLIENT_COMMON_MUTANT_ROOT "${CMAKE_CURRENT_BINARY_DIR}/client-common-mutant")
+file(MAKE_DIRECTORY "${VALIDATOR_AUTH_CLIENT_COMMON_MUTANT_ROOT}")
 configure_file("${PROJECT_SOURCE_DIR}/validator/auth/client-api-common.h"
-               "${P0_CLIENT_COMMON_MUTANT_ROOT}/client-api-common.h" COPYONLY)
+               "${VALIDATOR_AUTH_CLIENT_COMMON_MUTANT_ROOT}/client-api-common.h" COPYONLY)
 # The header only takes effect on a translation unit that is recompiled here.
 # Linking the library alone would use its prebuilt object and the mutation would
 # be invisible, which reads as a surviving mutant and means the opposite.
 add_executable(test-p0-rpc-client-api-common-mutant EXCLUDE_FROM_ALL certificate-rpc-test.cpp
   "${CMAKE_CURRENT_BINARY_DIR}/rpc-mutated-api-service.cpp")
-target_include_directories(test-p0-rpc-client-api-common-mutant BEFORE PRIVATE "${P0_CLIENT_COMMON_MUTANT_ROOT}")
+target_include_directories(test-p0-rpc-client-api-common-mutant BEFORE PRIVATE "${VALIDATOR_AUTH_CLIENT_COMMON_MUTANT_ROOT}")
 target_include_directories(test-p0-rpc-client-api-common-mutant PRIVATE "${PROJECT_SOURCE_DIR}/validator/auth")
 target_link_libraries(test-p0-rpc-client-api-common-mutant PRIVATE tos_validator_auth_rpc)
 set_target_properties(test-p0-rpc-client-api-common-mutant PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
@@ -644,23 +644,23 @@ target_link_libraries(test-p0-host-injection-mutant PRIVATE tos_block tos_crypto
 set_target_properties(test-p0-host-injection-mutant PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 
 add_executable(test-p0-native-config-host native-apply-test.cpp owner-proof-producer.cpp)
-target_compile_definitions(test-p0-native-config-host PRIVATE P0_NATIVE_CONFIG_HOST=1)
+target_compile_definitions(test-p0-native-config-host PRIVATE VALIDATOR_AUTH_NATIVE_CONFIG_HOST=1)
 target_link_libraries(test-p0-native-config-host PRIVATE tos_validator_auth_native)
 set_target_properties(test-p0-native-config-host PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 configure_file("${PROJECT_SOURCE_DIR}/validator/auth/native-config-host.cpp" "${CMAKE_CURRENT_BINARY_DIR}/native-config-host-mutated.cpp" COPYONLY)
 add_executable(test-p0-native-config-host-mutant EXCLUDE_FROM_ALL native-apply-test.cpp "${CMAKE_CURRENT_BINARY_DIR}/native-config-host-mutated.cpp" owner-proof-producer.cpp)
 target_include_directories(test-p0-native-config-host-mutant PRIVATE "${PROJECT_SOURCE_DIR}/validator/auth")
-target_compile_definitions(test-p0-native-config-host-mutant PRIVATE P0_NATIVE_CONFIG_HOST=1)
+target_compile_definitions(test-p0-native-config-host-mutant PRIVATE VALIDATOR_AUTH_NATIVE_CONFIG_HOST=1)
 target_link_libraries(test-p0-native-config-host-mutant PRIVATE tos_validator_auth_native)
 set_target_properties(test-p0-native-config-host-mutant PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 
 add_executable(test-p0-persistent-apply native-apply-test.cpp owner-proof-producer.cpp)
-target_compile_definitions(test-p0-persistent-apply PRIVATE P0_PERSISTENT_REGISTRY=1)
+target_compile_definitions(test-p0-persistent-apply PRIVATE VALIDATOR_AUTH_PERSISTENT_REGISTRY=1)
 target_link_libraries(test-p0-persistent-apply PRIVATE tos_validator_auth_native)
 set_target_properties(test-p0-persistent-apply PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 add_executable(test-p0-persistent-apply-mutant EXCLUDE_FROM_ALL native-apply-test.cpp "${CMAKE_CURRENT_BINARY_DIR}/native-registry-mutated.cpp" owner-proof-producer.cpp)
 target_include_directories(test-p0-persistent-apply-mutant PRIVATE "${PROJECT_SOURCE_DIR}/validator/auth")
-target_compile_definitions(test-p0-persistent-apply-mutant PRIVATE P0_PERSISTENT_REGISTRY=1)
+target_compile_definitions(test-p0-persistent-apply-mutant PRIVATE VALIDATOR_AUTH_PERSISTENT_REGISTRY=1)
 target_link_libraries(test-p0-persistent-apply-mutant PRIVATE tos_validator_auth_native)
 set_target_properties(test-p0-persistent-apply-mutant PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 
@@ -698,13 +698,13 @@ target_link_libraries(test-p0-config-gates-schema-mutant PRIVATE tos_validator_a
 set_target_properties(test-p0-config-gates-schema-mutant PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 
 add_executable(test-p0-native-transactions native-apply-test.cpp owner-proof-producer.cpp)
-target_compile_definitions(test-p0-native-transactions PRIVATE P0_NATIVE_TRANSACTIONS=1)
+target_compile_definitions(test-p0-native-transactions PRIVATE VALIDATOR_AUTH_NATIVE_TRANSACTIONS=1)
 target_link_libraries(test-p0-native-transactions PRIVATE tos_validator_auth_native)
 set_target_properties(test-p0-native-transactions PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 configure_file("${PROJECT_SOURCE_DIR}/validator/auth/native-transaction.cpp" "${CMAKE_CURRENT_BINARY_DIR}/native-transaction-mutated.cpp" COPYONLY)
 add_executable(test-p0-native-transactions-mutant EXCLUDE_FROM_ALL native-apply-test.cpp "${CMAKE_CURRENT_BINARY_DIR}/native-transaction-mutated.cpp" owner-proof-producer.cpp)
 target_include_directories(test-p0-native-transactions-mutant PRIVATE "${PROJECT_SOURCE_DIR}/validator/auth")
-target_compile_definitions(test-p0-native-transactions-mutant PRIVATE P0_NATIVE_TRANSACTIONS=1)
+target_compile_definitions(test-p0-native-transactions-mutant PRIVATE VALIDATOR_AUTH_NATIVE_TRANSACTIONS=1)
 target_link_libraries(test-p0-native-transactions-mutant PRIVATE tos_validator_auth_native)
 set_target_properties(test-p0-native-transactions-mutant PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 
@@ -747,11 +747,11 @@ target_link_libraries(test-p0-native-evidence-mutant PRIVATE tos_validator_auth_
 set_target_properties(test-p0-native-evidence-mutant PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 
 add_executable(test-p0-native-governance governance-test.cpp)
-target_compile_definitions(test-p0-native-governance PRIVATE P0_NATIVE_GOVERNANCE=1)
+target_compile_definitions(test-p0-native-governance PRIVATE VALIDATOR_AUTH_NATIVE_GOVERNANCE=1)
 target_link_libraries(test-p0-native-governance PRIVATE tos_validator_auth_native)
 set_target_properties(test-p0-native-governance PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 add_executable(test-p0-native-governance-mutant EXCLUDE_FROM_ALL governance-test.cpp "${CMAKE_CURRENT_BINARY_DIR}/native-registry-mutated.cpp")
-target_compile_definitions(test-p0-native-governance-mutant PRIVATE P0_NATIVE_GOVERNANCE=1)
+target_compile_definitions(test-p0-native-governance-mutant PRIVATE VALIDATOR_AUTH_NATIVE_GOVERNANCE=1)
 target_include_directories(test-p0-native-governance-mutant PRIVATE "${PROJECT_SOURCE_DIR}/validator/auth")
 target_link_libraries(test-p0-native-governance-mutant PRIVATE tos_validator_auth_native)
 set_target_properties(test-p0-native-governance-mutant PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)

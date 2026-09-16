@@ -12,7 +12,7 @@
 #include "validator/auth/native-registry.h"
 #include "validator/auth/registry-view.h"
 
-using namespace p0_config_gates_fixture;
+using namespace config_gates_fixture;
 using tos::auth::NativeRegistry;
 using tos::auth::RegistryView;
 

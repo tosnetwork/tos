@@ -18,7 +18,7 @@ int main(int argc, char** argv) {
     expect(argc == 2, "arguments");
     expect(sodium_init() >= 0, "sodium");
     vm::init_vm().ensure();
-    SET_VERBOSITY_LEVEL(std::getenv("P0_CONTRACT_TRACE") ? VERBOSITY_NAME(DEBUG) : VERBOSITY_NAME(FATAL));
+    SET_VERBOSITY_LEVEL(std::getenv("VALIDATOR_AUTH_CONTRACT_TRACE") ? VERBOSITY_NAME(DEBUG) : VERBOSITY_NAME(FATAL));
 
     std::ifstream input(argv[1], std::ios::binary);
     std::string raw((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());

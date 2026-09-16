@@ -7,7 +7,7 @@
 #include "vm/cells/MerkleProof.h"
 
 #include "native-fixture.h"
-using namespace p0_fixture;
+using namespace auth_fixture;
 namespace {
 Bytes read(const std::filesystem::path& path) {
   std::ifstream f(path, std::ios::binary);

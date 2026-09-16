@@ -79,7 +79,7 @@ inline Result<HttpResponse> api_failure_response(
 
 inline Result<Anchor> client_request_anchor(
     std::uint8_t method, const Bytes& raw) {
-#define P0_CLIENT_ANCHOR_CASE(N, T) \
+#define VALIDATOR_AUTH_CLIENT_ANCHOR_CASE(N, T) \
   case N: {                         \
     auto q = decode<T>(raw);        \
     if (!q.ok())                    \
@@ -87,16 +87,16 @@ inline Result<Anchor> client_request_anchor(
     return q.value().anchor_;       \
   }
   switch (method) {
-    P0_CLIENT_ANCHOR_CASE(8, GetProfileRequest)
-    P0_CLIENT_ANCHOR_CASE(9, GetPolicyRequest)
-    P0_CLIENT_ANCHOR_CASE(10, GetRegistryRequest)
-    P0_CLIENT_ANCHOR_CASE(11, GetKeyRequest)
-    P0_CLIENT_ANCHOR_CASE(12, GetCertificateRequest)
-    P0_CLIENT_ANCHOR_CASE(13, VerifyCertificateRequest)
+    VALIDATOR_AUTH_CLIENT_ANCHOR_CASE(8, GetProfileRequest)
+    VALIDATOR_AUTH_CLIENT_ANCHOR_CASE(9, GetPolicyRequest)
+    VALIDATOR_AUTH_CLIENT_ANCHOR_CASE(10, GetRegistryRequest)
+    VALIDATOR_AUTH_CLIENT_ANCHOR_CASE(11, GetKeyRequest)
+    VALIDATOR_AUTH_CLIENT_ANCHOR_CASE(12, GetCertificateRequest)
+    VALIDATOR_AUTH_CLIENT_ANCHOR_CASE(13, VerifyCertificateRequest)
     default:
       return Error{"unsupported-profile"};
   }
-#undef P0_CLIENT_ANCHOR_CASE
+#undef VALIDATOR_AUTH_CLIENT_ANCHOR_CASE
 }
 
 }  // namespace tos::auth

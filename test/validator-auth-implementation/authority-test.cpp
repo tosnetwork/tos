@@ -3,7 +3,7 @@
 #include "validator/auth/service-auth.h"
 
 #include "native-fixture.h"
-using namespace p0_fixture;
+using namespace auth_fixture;
 Bytes sign(std::span<const std::uint8_t> message) {
   auto seed = h(7);
   Hash public_key{};

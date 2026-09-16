@@ -15,7 +15,7 @@
 #include "native-config-context-fixture.h"
 #include "owner-fixture.h"
 
-using namespace p0_owner_fixture;
+using namespace owner_fixture;
 
 namespace {
 struct AssertionFailure : std::runtime_error {
@@ -77,7 +77,7 @@ int main(int argc, char** argv) {
     // The block's prefix, opened once. Every case opens a transaction onto it
     // rather than having the transaction derive its own from the parent state.
     const auto sequence =
-        p0_config_context_fixture::sequence_for(state, inputs.parent, f.chain, inputs.inclusion);
+        config_context_fixture::sequence_for(state, inputs.parent, f.chain, inputs.inclusion);
 
     std::vector<Test> tests;
     auto add = [&](std::string name, std::function<void()> fn) { tests.emplace_back(std::move(name), std::move(fn)); };

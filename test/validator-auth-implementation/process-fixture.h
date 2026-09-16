@@ -6,7 +6,7 @@
 #include "validator/auth/provider-channel.h"
 
 #include "service-fixture.h"
-namespace p0_process {
+namespace process_fixture {
 inline void send_exact(int fd, std::span<const std::uint8_t> raw) {
   while (!raw.empty()) {
     auto n = ::write(fd, raw.data(), raw.size());
@@ -89,4 +89,4 @@ inline pid_t provider_child(const std::filesystem::path& dir, bool create) {
   check(ready == Bytes{1}, "provider-ready");
   return pid;
 }
-}  // namespace p0_process
+}  // namespace process_fixture

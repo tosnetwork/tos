@@ -11,6 +11,6 @@ pub mod client_api;
 pub mod config_params;
 
 #[cfg(test)]
-mod p0_config_tests;
+mod validator_auth_config_tests;
 
 mod config_json;

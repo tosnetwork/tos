@@ -105,7 +105,7 @@ impl Shutdown for FixtureClient {
     }
 }
 #[tokio::test]
-async fn p0_voting_provider_preserves_binding() {
+async fn voting_provider_preserves_binding() {
     let mut raw = serde_json::json!({"p34":{"utime_since":100,"utime_until":200,"total":1,"main":1,"list":[{
         "public_key":"0b".repeat(32),"weight_dec":"7","adnl_addr":"0c".repeat(32),
         "auth_binding":{"identity":"01".repeat(32),"stake_id":"02".repeat(32)}

@@ -105,7 +105,7 @@ def main() -> int:
     out = args.out.resolve()
     out.mkdir(parents=True, exist_ok=True)
     env = dict(os.environ)
-    env["P0_CONFIG_PERSISTENCE_CELLS"] = str(args.cells.resolve())
+    env["VALIDATOR_AUTH_CONFIG_PERSISTENCE_CELLS"] = str(args.cells.resolve())
 
     original = SOURCE.read_text()
     baseline_compile = compile_tests(env)

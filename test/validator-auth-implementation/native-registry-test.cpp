@@ -1,7 +1,7 @@
 #include "validator/auth/native-registry.h"
 
 #include "owner-fixture.h"
-using namespace p0_owner_fixture;
+using namespace owner_fixture;
 namespace {
 class Authority final : public LifecycleAuthority {
   unsigned deny_;

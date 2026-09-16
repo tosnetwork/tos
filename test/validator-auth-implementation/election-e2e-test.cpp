@@ -122,7 +122,7 @@ int main(int argc, char** argv) {
     expect(argc == 4, "arguments");
     expect(sodium_init() >= 0, "sodium");
     vm::init_vm().ensure();
-    SET_VERBOSITY_LEVEL(std::getenv("P0_CONTRACT_TRACE") ? VERBOSITY_NAME(DEBUG) : VERBOSITY_NAME(FATAL));
+    SET_VERBOSITY_LEVEL(std::getenv("VALIDATOR_AUTH_CONTRACT_TRACE") ? VERBOSITY_NAME(DEBUG) : VERBOSITY_NAME(FATAL));
 
     auto load = [](const char* path) {
       std::ifstream input(path, std::ios::binary);
@@ -136,13 +136,13 @@ int main(int argc, char** argv) {
 
     // The state the authority is assembled from: the fixture's configuration
     // account and registry, with the elector this chain names beside them.
-    auto registry_state = p0_fixture::state(1);
+    auto registry_state = auth_fixture::state(1);
     const auto& owner = registry_state.identities().begin()->second;
     const Hash elector_address = h(1111);
     // The elector is named before the history is composed, so the state the
     // authority opens is the one whose hash its own anchor commits to.
-    auto base = with_elector(p0_fixture::masterchain(registry_state, 0), elector_address);
-    auto context = p0_owner_history_fixture::make_with_owner_history(base, argv[2]);
+    auto base = with_elector(auth_fixture::masterchain(registry_state, 0), elector_address);
+    auto context = owner_history_fixture::make_with_owner_history(base, argv[2]);
     auto parent_state = context.root;
 
     // A real election over a real identity-bearing record.
@@ -202,7 +202,7 @@ int main(int argc, char** argv) {
     // The block's prefix, opened once and shared by every assembly below, the
     // way the collator opens it once for the block it is building. A set is
     // bound against what this block's earlier transactions committed.
-    const auto sequence = p0_config_context_fixture::sequence_for(parent_state, context.head, context.chain,
+    const auto sequence = config_context_fixture::sequence_for(parent_state, context.head, context.chain,
                                                                   context.head.seqno_ + 1);
     auto authority = assemble_election_binding_authority(
         CollationAuthorityInputs{message, config.ok().get(), parent_state, parent_block, parent_block, context.chain,
@@ -251,7 +251,7 @@ int main(int argc, char** argv) {
         // Every member carries the identity the registry says that account
         // owns. A set that bound the wrong identity, or bound none, is not
         // this.
-        auto view = value(RegistryView::open(value(p0_fixture::state(1).encode_cell(), "e2e-registry-cell"), context.head.seqno_ + 1, {}),
+        auto view = value(RegistryView::open(value(auth_fixture::state(1).encode_cell(), "e2e-registry-cell"), context.head.seqno_ + 1, {}),
                           "e2e-view");
         block::gen::ValidatorSet::Record_validators_ext record;
         bool shaped = tlb::unpack_cell(bound, record) && record.total == 1;

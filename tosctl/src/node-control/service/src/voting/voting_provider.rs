@@ -120,5 +120,5 @@ impl VotingProvider for VotingProviderImpl {
 }
 
 #[cfg(test)]
-#[path = "p0_provider_tests.rs"]
-mod p0_provider_tests;
+#[path = "validator_auth_provider_tests.rs"]
+mod validator_auth_provider_tests;

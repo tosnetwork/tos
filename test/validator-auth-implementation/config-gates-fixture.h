@@ -7,8 +7,8 @@
 
 #include "owner-fixture.h"
 
-namespace p0_config_gates_fixture {
-using namespace p0_owner_fixture;
+namespace config_gates_fixture {
+using namespace owner_fixture;
 
 inline td::Ref<vm::Cell> put(td::Ref<vm::Cell> root, int key, td::Ref<vm::Cell> val) {
   vm::Dictionary d(root, 32);
@@ -72,4 +72,4 @@ inline Bytes integer(std::uint64_t n, unsigned width) {
   return raw;
 }
 
-}  // namespace p0_config_gates_fixture
+}  // namespace config_gates_fixture

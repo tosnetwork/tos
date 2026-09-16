@@ -8,7 +8,7 @@ pub fn fixture() -> Value {
     }]}})
 }
 #[test]
-fn p0_control_config_preserves_native_binding() {
+fn control_config_preserves_native_binding() {
     let source = fixture();
     for key in ["p34", "p36"] {
         let raw = serde_json::to_vec(&json!({key:source["p34"]})).expect("fixture-json");
@@ -26,7 +26,7 @@ fn p0_control_config_preserves_native_binding() {
     }
 }
 #[test]
-fn p0_control_config_refuses_binding_downgrade() {
+fn control_config_refuses_binding_downgrade() {
     for (label, field, value) in [
         ("control-missing-adnl", "adnl_addr", Value::Null),
         ("control-sequence-conflict", "mc_seq_no_since", Value::from(1)),
@@ -67,7 +67,7 @@ fn p0_control_config_refuses_binding_downgrade() {
 }
 
 #[test]
-fn p0_control_config_numeric_bounds() {
+fn control_config_numeric_bounds() {
     for (field, value) in [
         ("utime_since", (1u64 << 32) + 100),
         ("utime_until", (1u64 << 32) + 200),
@@ -93,7 +93,7 @@ fn p0_control_config_numeric_bounds() {
 }
 
 #[test]
-fn p0_control_config_unique_json() {
+fn control_config_unique_json() {
     let source = serde_json::to_string(&fixture()).expect("fixture-json");
     for key in ["identity", "auth_binding", "p34"] {
         let marker = format!("\"{key}\":");

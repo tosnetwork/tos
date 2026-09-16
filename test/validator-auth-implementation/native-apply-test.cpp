@@ -1,8 +1,8 @@
 #include "owner-proof-producer.h"
-#if defined(P0_PERSISTENT_REGISTRY) || defined(P0_NATIVE_TRANSACTIONS) || defined(P0_NATIVE_CONFIG_HOST)
+#if defined(VALIDATOR_AUTH_PERSISTENT_REGISTRY) || defined(VALIDATOR_AUTH_NATIVE_TRANSACTIONS) || defined(VALIDATOR_AUTH_NATIVE_CONFIG_HOST)
 #include "validator/auth/native-transaction.h"
 #endif
-#ifdef P0_NATIVE_CONFIG_HOST
+#ifdef VALIDATOR_AUTH_NATIVE_CONFIG_HOST
 #include "validator/auth/cells.h"
 #include "validator/auth/native-config-host.h"
 #include "validator/auth/native-evidence.h"
@@ -10,7 +10,7 @@
 #include "validator/auth/native-apply.h"
 
 #include "owner-fixture.h"
-using namespace p0_owner_fixture;
+using namespace owner_fixture;
 namespace {
 struct History : FinalizedAnchorSource {
   Anchor anchor;
@@ -79,11 +79,11 @@ Result<RegistryState> apply(const Case& c) {
   auto s = snapshot(c);
   NativeIdentityContext context{c.chain, s, c.history};
   ObjectReader reader({});
-#if defined(P0_PERSISTENT_REGISTRY) || defined(P0_NATIVE_TRANSACTIONS)
+#if defined(VALIDATOR_AUTH_PERSISTENT_REGISTRY) || defined(VALIDATOR_AUTH_NATIVE_TRANSACTIONS)
   auto parent =
       value(NativeRegistry::bootstrap(value(c.parent.encode_cell(), "persistent-parent"), c.parent.coordinate()),
             "persistent-bootstrap");
-#ifdef P0_NATIVE_TRANSACTIONS
+#ifdef VALIDATOR_AUTH_NATIVE_TRANSACTIONS
   auto begun = NativeRegistryBlock::begin(parent, c.inclusion);
   if (!begun.ok())
     return begun.error();
@@ -436,7 +436,7 @@ int main(int argc, char** argv) {
     maximum.parent = revision(two.parent, UINT64_MAX - 1);
     auto max_final = run(maximum, "native-maximum-two-transactions");
     check(max_final.revision() == UINT64_MAX, "native-maximum-one-increment");
-#ifdef P0_NATIVE_CONFIG_HOST
+#ifdef VALIDATOR_AUTH_NATIVE_CONFIG_HOST
     {
       // The host is the only authority behind the two privileged instructions.
       // What matters is not that a good update applies, but that a refused one
@@ -506,7 +506,7 @@ int main(int argc, char** argv) {
       // that cell -- restoring an account binds the two by hash, so a host that
       // returned one of them and staged the other would be refused there.
       auto restored = NativeRegistry::restore(value(host.staged().state().checkpoint(), "host-staged-checkpoint"),
-                                              p0_owner_fixture::hash(encoded), host.staged().state().coordinate());
+                                              owner_fixture::hash(encoded), host.staged().state().coordinate());
       check(restored.ok(), "host-apply-returns-staged");
 
       // A refused update must throw and must not move the prefix.

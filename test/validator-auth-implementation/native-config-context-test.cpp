@@ -3,8 +3,8 @@
 #include "native-config-context-fixture.h"
 #include "owner-fixture.h"
 
-using namespace p0_owner_fixture;
-namespace context_fixture = p0_config_context_fixture;
+using namespace owner_fixture;
+namespace context_fixture = config_context_fixture;
 
 int main(int argc, char** argv) {
   try {

@@ -314,7 +314,7 @@ slice update_proposal_status(slice rest, int weight_remaining, int critical?) in
 ;; reached by ordinary voting -- a proposal is only stored again while
 ;; wins < min_wins, and min_wins is a uint8, so a stored non-terminal wins is
 ;; at most 254.
-int p0_awaiting_governance?(slice rest) inline {
+int awaiting_governance?(slice rest) inline {
   if (rest.null?()) {
     return false;
   }
@@ -355,7 +355,7 @@ builder begin_pack_proposal_status(int expires, cell proposal, int critical?, ce
   ;; Nested rather than one condition: this must not evaluate at all on a chain
   ;; that has not activated, and the bitwise operator is not a control flow.
   if (validator_auth_active()) {
-    if (p0_awaiting_governance?(rest)) {
+    if (awaiting_governance?(rest)) {
       return (vote_dict, null(), 3);
     }
   }
@@ -446,7 +446,7 @@ int proceed_register_vote(phash, idx, weight) impure inline_ref {
   ;; proposal has to be recognised here too: otherwise a rotation reached by a
   ;; random scan would reset a proposal that voting can no longer change.
   if (validator_auth_active()) {
-    if (p0_awaiting_governance?(rest)) {
+    if (awaiting_governance?(rest)) {
       return (pstatus, false);
     }
   }
@@ -709,7 +709,7 @@ int register_voting_proposal(slice cs, int msg_value) impure inline_ref {
       throw_unless(50, found?);
       var (expires, voted_proposal, critical?, voters, weight_remaining, vset_id, rest) = unpack_proposal_status(pstatus);
       throw_unless(51, expires > now());
-      throw_unless(52, p0_awaiting_governance?(rest));
+      throw_unless(52, awaiting_governance?(rest));
       var finalized = vauth_apply_update(update, evidence);
       registry_checkpoint = vauth_registry_state();
       accept_message();

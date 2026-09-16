@@ -69,15 +69,15 @@ if(TOS_BUILD_P0_IMPLEMENTATION_TESTS)
   target_link_libraries(test-p0-native-session-history PRIVATE tos_validator_auth_native)
   set_target_properties(test-p0-native-session-history PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 
-  set(P0_SESSION_HISTORY_MUTANT_ROOT
+  set(VALIDATOR_AUTH_SESSION_HISTORY_MUTANT_ROOT
       "${CMAKE_CURRENT_BINARY_DIR}/session-history-mutant")
-  file(MAKE_DIRECTORY "${P0_SESSION_HISTORY_MUTANT_ROOT}/validator/auth")
+  file(MAKE_DIRECTORY "${VALIDATOR_AUTH_SESSION_HISTORY_MUTANT_ROOT}/validator/auth")
   configure_file("${CMAKE_CURRENT_SOURCE_DIR}/native-session-history.h"
-                 "${P0_SESSION_HISTORY_MUTANT_ROOT}/validator/auth/native-session-history.h" COPYONLY)
+                 "${VALIDATOR_AUTH_SESSION_HISTORY_MUTANT_ROOT}/validator/auth/native-session-history.h" COPYONLY)
   add_executable(test-p0-native-session-history-mutant EXCLUDE_FROM_ALL
     "${PROJECT_SOURCE_DIR}/test/validator-auth-implementation/native-session-history-test.cpp")
   target_include_directories(test-p0-native-session-history-mutant BEFORE PRIVATE
-    "${P0_SESSION_HISTORY_MUTANT_ROOT}")
+    "${VALIDATOR_AUTH_SESSION_HISTORY_MUTANT_ROOT}")
   # The copied header includes its siblings by bare name and they are not beside
   # the copy. The mutant root stays first, so validator/auth/... still resolves
   # to the mutated header; this only lets those siblings be found.

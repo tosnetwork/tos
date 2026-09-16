@@ -8,7 +8,7 @@ import subprocess
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[2]
-OPCODE_START = 'pub(super) fn execute_p0_chksign('
+OPCODE_START = 'pub(super) fn execute_vauth_chksign('
 OPCODE_END = 'fn native_gate('
 MUTATIONS = [
     ('disabled-gas', 'engine.try_use_gas(Gas::basic_gas_price(0, 0))?;', ''),

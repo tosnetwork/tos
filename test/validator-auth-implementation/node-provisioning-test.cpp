@@ -22,7 +22,7 @@
 
 namespace {
 namespace auth = tos::auth;
-namespace fixture = p0_fixture;
+namespace fixture = auth_fixture;
 
 struct AssertionFailure : std::runtime_error {
   using std::runtime_error::runtime_error;

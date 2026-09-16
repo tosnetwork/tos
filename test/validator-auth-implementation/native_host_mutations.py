@@ -23,7 +23,7 @@ RUST=[
  ('host-meter','host-negative-gas','if gas < 0 { fail!(ExceptionCode::RangeCheckError); }',''),
  ('host-operands','host-apply-success','.apply(update, evidence,','.apply(evidence, update,'),
 ]
-_start=_source.index('pub(super) fn execute_p0_state(');_end=_source.index('pub(super) fn execute_p0_apply(',_start);_state=_source[_start:_end]
+_start=_source.index('pub(super) fn execute_vauth_state(');_end=_source.index('pub(super) fn execute_vauth_apply(',_start);_state=_source[_start:_end]
 RUST.append(('host-required','host-required',_state,replace_once(_state,'let Some(host) = engine.validator_auth_host() else { fail!(ExceptionCode::InvalidOpcode); };','let Some(host) = engine.validator_auth_host() else { return Ok(()); };')))
 RUST_VM=[('host-child-isolation','host-child-isolation','capabilities: self.capabilities, validator_auth_host: None, block_version: self.block_version,','capabilities: self.capabilities, validator_auth_host: self.validator_auth_host.clone(), block_version: self.block_version,')]
 def main(a):

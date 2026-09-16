@@ -27,4 +27,4 @@ include!("./tests/test_common.rs");
 
 #[cfg(test)]
 #[path = "tests/test_p0_validator_config.rs"]
-mod p0_validator_config_tests;
+mod validator_auth_config_tests;

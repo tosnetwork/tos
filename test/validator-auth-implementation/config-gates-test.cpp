@@ -2,7 +2,7 @@
 #include "validator/auth/native-registry.h"
 
 #include "config-gates-fixture.h"
-using namespace p0_config_gates_fixture;
+using namespace config_gates_fixture;
 int main(int argc, char** argv) {
   try {
     check(argc == 3, "arguments");

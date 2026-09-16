@@ -9,7 +9,7 @@
 #include "vm/cells/MerkleProof.h"
 
 #include "native-fixture.h"
-using namespace p0_fixture;
+using namespace auth_fixture;
 int main(int argc, char** argv) {
   try {
     std::filesystem::path output;

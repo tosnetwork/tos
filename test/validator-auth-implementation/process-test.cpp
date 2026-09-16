@@ -6,7 +6,7 @@
 #include "validator/auth/service-issuer.h"
 
 #include "process-fixture.h"
-using namespace p0_process;
+using namespace process_fixture;
 namespace {
 class GatedProvider : public C0SigningProvider {
   RemoteProvider& source_;

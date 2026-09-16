@@ -7,9 +7,9 @@
 
 #include "native-history-fixture.h"
 
-namespace p0_session_continuity_fixture {
+namespace session_continuity_fixture {
 using namespace tos::auth;
-using namespace p0_owner_fixture;
+using namespace owner_fixture;
 
 inline ChainContext read_chain(const std::filesystem::path& folder) {
   auto bytes = read(folder / "0.chain");
@@ -164,4 +164,4 @@ make_context(const HistoryFixture& fixture,
       {}, birth.value(), fixture.chain);
 }
 
-}  // namespace p0_session_continuity_fixture
+}  // namespace session_continuity_fixture

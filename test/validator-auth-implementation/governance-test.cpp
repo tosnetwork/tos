@@ -3,7 +3,7 @@
 #include <iostream>
 
 #include "validator/auth/governance.h"
-#ifdef P0_NATIVE_GOVERNANCE
+#ifdef VALIDATOR_AUTH_NATIVE_GOVERNANCE
 #include "validator/auth/native-transaction.h"
 #endif
 #include "vm/boc.h"
@@ -161,7 +161,7 @@ int main(int argc, char** argv) {
       auto snapshot = value(RegistrySnapshot::compile(f.committee, f.policy), "snapshot");
       auto before = value(f.current.encode_cell(), "state-before");
       ObjectReader reader({});
-#ifdef P0_NATIVE_GOVERNANCE
+#ifdef VALIDATOR_AUTH_NATIVE_GOVERNANCE
       auto native = value(NativeRegistry::bootstrap(before, f.current.coordinate()), "fixture-native-governance");
       if (std::string(label) == "governance-native-resource")
         native = value(NativeRegistryBlock::begin(native, 1, {2, 32}), "fixture-native-budget").state();
@@ -304,7 +304,7 @@ int main(int argc, char** argv) {
     f.inclusion = 1;
     run(f, "governance-retired-admin", "governance-current-key");
     run(fixture(400), "governance-full-400");
-#ifdef P0_NATIVE_GOVERNANCE
+#ifdef VALIDATOR_AUTH_NATIVE_GOVERNANCE
     f = base;
     f.inclusion = 1;
     run(f, "governance-native-resource", "state-resource");

@@ -18,15 +18,15 @@
 #include "native-config-context-fixture.h"
 #include "native-history-fixture.h"
 
-namespace p0_owner_history_fixture {
+namespace owner_history_fixture {
 using namespace tos::auth;
-using namespace p0_fixture;
-using p0_owner_fixture::block_for;
-using p0_owner_fixture::boc;
-using p0_owner_fixture::cell;
-using p0_owner_fixture::fixture;
-using p0_owner_fixture::hash;
-using p0_owner_fixture::read;
+using namespace auth_fixture;
+using owner_fixture::block_for;
+using owner_fixture::boc;
+using owner_fixture::cell;
+using owner_fixture::fixture;
+using owner_fixture::hash;
+using owner_fixture::read;
 
 // A finalized masterchain block, the anchor it commits, and the fixed-surface
 // witness that proves that anchor against an index holding it.
@@ -65,7 +65,7 @@ inline OwnerHistoryFixture make_with_owner_history(td::Ref<vm::Cell> base,
                                                    const std::filesystem::path& owner_inputs,
                                                    std::uint32_t owner_at = 7) {
   check(owner_at >= 1, "owner-history-coordinate");
-  auto context = p0_config_context_fixture::make(std::move(base));
+  auto context = config_context_fixture::make(std::move(base));
 
   // Opening a history refuses unless the chain context names the entry the
   // index itself holds at coordinate zero, so the genesis state is built first
@@ -108,4 +108,4 @@ inline OwnerHistoryFixture make_with_owner_history(td::Ref<vm::Cell> base,
   result.chain.genesis_file = genesis.file;
   return result;
 }
-}  // namespace p0_owner_history_fixture
+}  // namespace owner_history_fixture

@@ -1,7 +1,7 @@
 #include "validator/auth/native-evidence.h"
 
 #include "owner-fixture.h"
-using namespace p0_owner_fixture;
+using namespace owner_fixture;
 namespace {
 using ChunkKey = std::array<std::uint8_t, 33>;
 ChunkKey key(Hash id, std::size_t index) {

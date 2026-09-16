@@ -13,14 +13,14 @@
 #include "native-fixture.h"
 #include "owner-fixture.h"
 
-namespace p0_config_context_fixture {
+namespace config_context_fixture {
 using namespace tos::auth;
-// check(), h() and value() live in p0_fixture; boc() and hash() in the owner
+// check(), h() and value() live in auth_fixture; boc() and hash() in the owner
 // fixture that builds on it. Naming the wrong namespace for the first three is
 // what this header did, and it does not compile.
-using namespace p0_fixture;
-using p0_owner_fixture::boc;
-using p0_owner_fixture::hash;
+using namespace auth_fixture;
+using owner_fixture::boc;
+using owner_fixture::hash;
 
 td::Ref<vm::Cell> account_cell(Hash address, td::Ref<vm::Cell> code, td::Ref<vm::Cell> data, bool tick) {
   vm::CellBuilder a;
@@ -106,7 +106,7 @@ ContextFixture make(td::Ref<vm::Cell> base, unsigned mode = 0) {
     checkpoint = value(later.checkpoint(), "fixture-later-checkpoint");
   }
   if (mode == 11) {
-    auto other = value(NativeRegistry::bootstrap(value(p0_fixture::state(3).encode_cell(), "fixture-other-root"), 0),
+    auto other = value(NativeRegistry::bootstrap(value(auth_fixture::state(3).encode_cell(), "fixture-other-root"), 0),
                        "fixture-other-state");
     checkpoint = value(other.checkpoint(), "fixture-other-checkpoint");
   }
@@ -165,4 +165,4 @@ inline NativeConfigSequence sequence_for(td::Ref<vm::Cell> root, const Anchor& p
                "fixture-sequence");
 }
 
-}  // namespace p0_config_context_fixture
+}  // namespace config_context_fixture

@@ -123,7 +123,7 @@ constexpr std::uint32_t state_coordinate = 1;
 td::Ref<vm::Cell> activated_state() {
   // The coordinate the block id below names. A configuration refuses a block id
   // whose sequence number is not the one the state itself carries.
-  auto root = p0_fixture::masterchain(p0_fixture::state(1), state_coordinate);
+  auto root = auth_fixture::masterchain(auth_fixture::state(1), state_coordinate);
   block::gen::ShardStateUnsplit::Record state;
   block::gen::McStateExtra::Record extra;
   block::gen::ConfigParams::Record params;

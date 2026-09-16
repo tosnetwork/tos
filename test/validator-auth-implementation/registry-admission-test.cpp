@@ -19,8 +19,8 @@
 #include "native-config-context-fixture.h"
 #include "owner-history-fixture.h"
 
-using namespace p0_owner_fixture;
-using namespace p0_owner_history_fixture;
+using namespace owner_fixture;
+using namespace owner_history_fixture;
 
 namespace {
 struct AssertionFailure : std::runtime_error {
@@ -127,7 +127,7 @@ int main(int argc, char** argv) {
     // The block's prefix, opened once from the same parent every case admits
     // against. Admission does not derive one: what a message is admitted onto
     // is what the transactions before it in this block committed.
-    const auto sequence = p0_config_context_fixture::sequence_for(history.root, history.head, history.chain,
+    const auto sequence = config_context_fixture::sequence_for(history.root, history.head, history.chain,
                                                                   history.head.seqno_ + 1);
     inputs.transaction.catchain = case_cc;
     inputs.transaction.inclusion = history.head.seqno_ + 1;

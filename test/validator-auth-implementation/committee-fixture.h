@@ -11,7 +11,7 @@
 #include "vm/dict.h"
 
 #include "native-fixture.h"
-namespace p0_fixture {
+namespace auth_fixture {
 inline td::Ref<vm::Cell> replace_config(td::Ref<vm::Cell> root, int index, td::Ref<vm::Cell> replacement) {
   auto cfg = block::Config::extract_from_state(root);
   check(cfg.is_ok(), "fixture-config");
@@ -125,4 +125,4 @@ inline td::Ref<vm::Cell> chain_state(const RegistryState& registry, unsigned var
   return replace_config(root, 28, catchain_selector(shuffle));
 }
 
-}  // namespace p0_fixture
+}  // namespace auth_fixture
