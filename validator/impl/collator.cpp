@@ -3403,8 +3403,9 @@ bool Collator::create_ticktock_transaction(const tos::StdSmcAddress& smc_addr, t
  *
  * @returns True if the authority was installed on the compute phase config.
  */
-bool Collator::offer_validator_auth(Ref<vm::Cell> msg_root, bool external, const tos::StdSmcAddress& addr) {
-  withdraw_validator_auth();
+bool Collator::offer_validator_auth(Ref<vm::Cell> msg_root, bool external,
+                                    std::shared_ptr<vm::ValidatorAuthHost>& host) {
+  host.reset();
   if (!external || !is_masterchain() || !params_.validator_auth || config_ == nullptr || mc_state_.is_null() ||
       mc_state_root.is_null() || params_.validator_set.is_null()) {
     return false;
@@ -3423,23 +3424,13 @@ bool Collator::offer_validator_auth(Ref<vm::Cell> msg_root, bool external, const
     return false;
   }
 
-  validator_auth_authority_ = std::shared_ptr<tos::auth::NativeConfigTransaction>(std::move(admitted.value()));
-  // Aliasing keeps the authority alive for exactly as long as the compute phase
-  // can reach the host that borrows from it.
-  compute_phase_cfg_.validator_auth_host =
-      std::shared_ptr<vm::ValidatorAuthHost>(validator_auth_authority_, &validator_auth_authority_->host());
-  compute_phase_cfg_.validator_auth_account = addr;
+  // The returned pointer aliases an owning one, so the control block keeps the
+  // whole authority alive for exactly as long as something can reach the host
+  // that borrows from it. Nothing else has to hold it, and nothing has to
+  // remember to let it go: the transaction it is handed to is its lifetime.
+  auto authority = std::shared_ptr<tos::auth::NativeConfigTransaction>(std::move(admitted.value()));
+  host = std::shared_ptr<vm::ValidatorAuthHost>(authority, &authority->host());
   return true;
-}
-
-/**
- * Withdraws the registry authority, so that no later transaction in this block
- * inherits a host that was assembled for a different message.
- */
-void Collator::withdraw_validator_auth() {
-  compute_phase_cfg_.validator_auth_host.reset();
-  compute_phase_cfg_.validator_auth_account.reset();
-  validator_auth_authority_.reset();
 }
 
 /**
@@ -3506,10 +3497,11 @@ Ref<vm::Cell> Collator::create_ordinary_transaction(Ref<vm::Cell> msg_root,
     after_lt = std::max(after_lt, it->second);
   }
   set_current_tx_storage_dict(*acc);
-  offer_validator_auth(msg_root, external, addr);
+  std::shared_ptr<vm::ValidatorAuthHost> validator_auth_host;
+  offer_validator_auth(msg_root, external, validator_auth_host);
   auto res = impl_create_ordinary_transaction(msg_root, acc, now_, start_lt, &storage_phase_cfg_, &compute_phase_cfg_,
-                                              &action_phase_cfg_, &serialize_cfg_, external, after_lt, &stats_);
-  withdraw_validator_auth();
+                                              &action_phase_cfg_, &serialize_cfg_, external, after_lt, &stats_,
+                                              std::move(validator_auth_host));
   if (res.is_error()) {
     auto error = res.move_as_error();
     if (error.code() == -701) {
@@ -3575,7 +3567,7 @@ td::Result<std::unique_ptr<block::transaction::Transaction>> Collator::impl_crea
     Ref<vm::Cell> msg_root, block::Account* acc, UnixTime utime, LogicalTime lt,
     block::StoragePhaseConfig* storage_phase_cfg, block::ComputePhaseConfig* compute_phase_cfg,
     block::ActionPhaseConfig* action_phase_cfg, block::SerializeConfig* serialize_cfg, bool external,
-    LogicalTime after_lt, CollationStats* stats) {
+    LogicalTime after_lt, CollationStats* stats, std::shared_ptr<vm::ValidatorAuthHost> validator_auth_host) {
   if (acc->last_trans_end_lt_ >= lt && acc->transactions.empty()) {
     return td::Status::Error(-669, PSTRING() << "last transaction time in the state of account " << acc->workchain
                                              << ":" << acc->addr.to_hex() << " is too large");
@@ -3587,6 +3579,8 @@ td::Result<std::unique_ptr<block::transaction::Transaction>> Collator::impl_crea
 
   std::unique_ptr<block::transaction::Transaction> trans = std::make_unique<block::transaction::Transaction>(
       *acc, block::transaction::Transaction::tr_ord, trans_min_lt + 1, utime, msg_root);
+  // Assembled for this message, and owned by the transaction that processes it.
+  trans->validator_auth_host = std::move(validator_auth_host);
   {
     td::RealCpuTimer timer;
     SCOPE_EXIT {

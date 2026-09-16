@@ -117,7 +117,8 @@ class Collator final : public td::actor::Actor {
       Ref<vm::Cell> msg_root, block::Account* acc, UnixTime utime, LogicalTime lt,
       block::StoragePhaseConfig* storage_phase_cfg, block::ComputePhaseConfig* compute_phase_cfg,
       block::ActionPhaseConfig* action_phase_cfg, block::SerializeConfig* serialize_cfg, bool external,
-      LogicalTime after_lt, CollationStats* stats = nullptr);
+      LogicalTime after_lt, CollationStats* stats = nullptr,
+      std::shared_ptr<vm::ValidatorAuthHost> validator_auth_host = {});
 
  private:
   void start_up() override;
@@ -193,7 +194,6 @@ class Collator final : public td::actor::Actor {
   block::ComputePhaseConfig compute_phase_cfg_;
   // The authority the transaction being created executes under, kept alive for
   // exactly as long as the compute phase can reach the host it holds.
-  std::shared_ptr<tos::auth::NativeConfigTransaction> validator_auth_authority_;
   block::ActionPhaseConfig action_phase_cfg_;
   block::SerializeConfig serialize_cfg_;
   td::RefInt256 masterchain_create_fee_, basechain_create_fee_;
@@ -346,8 +346,7 @@ class Collator final : public td::actor::Actor {
   // if so, installs it on the compute config. Every other message -- including
   // a message to the same account that is not a registry update -- executes
   // with no host, which is what leaves the instruction unreachable.
-  bool offer_validator_auth(Ref<vm::Cell> msg_root, bool external, const tos::StdSmcAddress& addr);
-  void withdraw_validator_auth();
+  bool offer_validator_auth(Ref<vm::Cell> msg_root, bool external, std::shared_ptr<vm::ValidatorAuthHost>& host);
   bool is_masterchain() const {
     return shard_.is_masterchain();
   }

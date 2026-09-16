@@ -626,6 +626,16 @@ class ValidatorManagerImpl : public ValidatorManager {
   void establish_validator_auth_chain();
   void established_validator_auth_zero_state(td::Result<td::BufferSlice> zero_state);
   void publish_validator_auth();
+  // Handed to validation, which needs the context collation was given and must
+  // not derive one from the state it is checking. A copy leaves this actor, so
+  // nothing outside it can observe the member changing, and the member is
+  // written once when the zero state establishes it.
+  void get_validator_auth_chain_context(
+      td::Promise<std::shared_ptr<const tos::auth::ChainContext>> promise) override {
+    promise.set_value(validator_auth_chain_
+                          ? std::make_shared<const tos::auth::ChainContext>(validator_auth_chain_.value())
+                          : nullptr);
+  }
   td::optional<ValidatorAuthCollation> validator_auth_collation();
   struct ValidatorAuthResolutionSnapshot {
     // The state cell and head describe one masterchain tip. The state supplies

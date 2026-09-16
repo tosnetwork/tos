@@ -32,6 +32,7 @@
 #include "tos/tos-io.hpp"
 #include "tos/tos-tl.hpp"
 #include "tol/extra-flags-constants.h"
+#include "vm/authops.h"
 #include "vm/boc.h"
 #include "vm/cells/MerkleProof.h"
 #include "vm/cells/MerkleUpdate.h"
@@ -412,7 +413,18 @@ void ValidateQuery::start_up() {
       return;
     }
   }
-  // 5. get storage stat cache
+  // 5. get the chain context this node established from its own zero state
+  ++pending;
+  LOG(DEBUG) << "sending get_validator_auth_chain_context() query to Manager";
+  td::actor::send_closure_later(
+      manager, &ValidatorManager::get_validator_auth_chain_context,
+      [self = get_self(), token = perf_log_.start_action("get_validator_auth_chain_context")](
+          td::Result<std::shared_ptr<const tos::auth::ChainContext>> res) mutable {
+        LOG(DEBUG) << "got answer to get_validator_auth_chain_context() query";
+        td::actor::send_closure_later(std::move(self), &ValidateQuery::after_get_validator_auth_chain_context,
+                                      std::move(res), std::move(token));
+      });
+  // 6. get storage stat cache
   ++pending;
   LOG(DEBUG) << "sending get_storage_stat_cache() query to Manager";
   td::actor::send_closure_later(manager, &ValidatorManager::get_storage_stat_cache,
@@ -873,6 +885,34 @@ void ValidateQuery::got_mc_handle(td::Result<BlockHandle> res, td::PerfLogAction
  *
  * @param res The retrieved storage stat cache.
  */
+/**
+ * Receives the chain context the node established from its own zero state.
+ *
+ * Absence is not an error here. A node that never established one validates
+ * exactly as it did before the feature existed; whether that is good enough for
+ * this block is decided later, where the chain says whether the feature is
+ * active.
+ *
+ * @param res The established context, or nothing.
+ * @param token The perf log action token.
+ */
+void ValidateQuery::after_get_validator_auth_chain_context(
+    td::Result<std::shared_ptr<const tos::auth::ChainContext>> res, td::PerfLogAction token) {
+  token.finish(res);
+  --pending;
+  if (res.is_error()) {
+    LOG(INFO) << "after_get_validator_auth_chain_context : " << res.error();
+  } else {
+    validator_auth_chain_ = res.move_as_ok();
+    LOG(DEBUG) << "after_get_validator_auth_chain_context : " << (validator_auth_chain_ ? "established" : "absent");
+  }
+  if (!pending) {
+    if (!try_validate()) {
+      fatal_error("cannot validate new block");
+    }
+  }
+}
+
 void ValidateQuery::after_get_storage_stat_cache(td::Result<std::function<td::Ref<vm::Cell>(const td::Bits256&)>> res,
                                                  td::PerfLogAction token) {
   token.finish(res);
@@ -5730,6 +5770,45 @@ static bool extra_flags_within_valid_mask(const block::gen::CommonMsgInfo::Recor
  *
  * @returns True if the transaction is valid, false otherwise.
  */
+/**
+ * Assembles the registry authority for one inbound message, through the same
+ * assembler collation used.
+ *
+ * A validator that rebuilt this authority from a second reading of the same
+ * facts would reject candidates over differences neither side could see. So the
+ * inputs are the ones the producer had, named here so a divergence is a
+ * compile-time question rather than a consensus failure.
+ *
+ * The authority leaves through `host` and is owned by the transaction it is
+ * given to. Nothing is installed on the shared compute configuration, which is
+ * what allows account checkers to run concurrently.
+ *
+ * @param msg_root The root of the inbound message.
+ * @param external True if the message is an external one.
+ * @param host Receives the assembled authority, or nothing.
+ *
+ * @returns True if an authority was assembled.
+ */
+bool ValidateQuery::offer_validator_auth(Ref<vm::Cell> msg_root, bool external,
+                                         std::shared_ptr<vm::ValidatorAuthHost>& host) const {
+  host.reset();
+  if (!external || !is_masterchain() || !validator_auth_chain_ || config_ == nullptr || mc_state_.is_null() ||
+      mc_state_root_.is_null() || validator_set_.is_null()) {
+    return false;
+  }
+
+  auto admitted = tos::auth::assemble_registry_authority(
+      {msg_root, config_.get(), mc_state_root_, mc_state_->get_block_id(), mc_blkid_, *validator_auth_chain_, shard_,
+       validator_set_->get_catchain_seqno(), now_, id_.seqno()});
+  if (!admitted.ok()) {
+    return false;
+  }
+
+  auto authority = std::shared_ptr<tos::auth::NativeConfigTransaction>(std::move(admitted.value()));
+  host = std::shared_ptr<vm::ValidatorAuthHost>(authority, &authority->host());
+  return true;
+}
+
 bool ValidateQuery::CheckAccountTxs::check_one_transaction(block::Account& account, tos::LogicalTime lt,
                                                            Ref<vm::Cell> trans_root, bool is_first, bool is_last) {
   if (vq_.timeout && vq_.timeout.is_in_past()) {
@@ -6138,6 +6217,10 @@ bool ValidateQuery::CheckAccountTxs::check_one_transaction(block::Account& accou
   // ....
   std::unique_ptr<block::transaction::Transaction> trs =
       std::make_unique<block::transaction::Transaction>(account, trans_type, lt, vq_.now_, in_msg_root);
+  // Assembled for this message and owned by this transaction. The shared
+  // compute configuration is read-only from here on, which is what makes
+  // checking accounts in parallel actors safe.
+  vq_.offer_validator_auth(in_msg_root, external, trs->validator_auth_host);
   td::RealCpuTimer timer;
   SCOPE_EXIT {
     ctx_.work_time.trx_tvm += trs->time_tvm;
@@ -6475,6 +6558,19 @@ bool ValidateQuery::check_account_failures() {
  */
 bool ValidateQuery::check_transactions() {
   LOG(INFO) << "checking all transactions";
+  // On a chain where the registry instructions are active, a masterchain block
+  // may carry a transaction that needs the authority, and assembling it needs
+  // the context this node establishes from its own zero state. Without that
+  // context this node cannot re-execute such a transaction -- which is a
+  // statement about this node, not about the candidate. Rejecting here would
+  // turn one node's missing configuration into a consensus vote against a
+  // block every other node accepts.
+  if (is_masterchain() && !validator_auth_chain_ &&
+      compute_phase_cfg_.global_version >= vm::validator_auth_min_version &&
+      (compute_phase_cfg_.global_capabilities & vm::validator_auth_capability) != 0) {
+    return fatal_error("cannot validate a masterchain block on a chain with validator authentication active: "
+                       "this node has not established its chain context");
+  }
   size_t accounts_count = 0;
   bool result = account_blocks_dict_->check_for_each_extra(
       [this, &accounts_count](Ref<vm::CellSlice> value, Ref<vm::CellSlice> extra, td::ConstBitPtr key, int key_len) {

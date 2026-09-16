@@ -33,6 +33,8 @@
 #include "vm/cells.h"
 #include "vm/dict.h"
 
+#include "auth/native-collation-authority.h"
+
 #include "block-parse.h"
 #include "fabric.h"
 #include "shard.hpp"
@@ -138,6 +140,10 @@ class ValidateQuery : public td::actor::Actor {
   BlockCandidate block_candidate;
   td::Ref<block::ValidatorSet> validator_set_;
   PublicKeyHash local_validator_id_ = PublicKeyHash::zero();
+  // Established by the node from its own zero state, fetched once before
+  // validation begins and never written again. Read by every account checker
+  // concurrently, which is safe for exactly that reason.
+  std::shared_ptr<const tos::auth::ChainContext> validator_auth_chain_;
   td::actor::ActorId<ValidatorManager> manager;
   td::Timestamp timeout;
   td::Promise<ValidateCandidateResult> main_promise;
@@ -328,6 +334,14 @@ class ValidateQuery : public td::actor::Actor {
   void after_get_latest_mc_state(td::Result<std::pair<Ref<MasterchainState>, BlockIdExt>> res, td::PerfLogAction token);
   void after_get_mc_state(td::Result<Ref<ShardState>> res, td::PerfLogAction token);
   void got_mc_handle(td::Result<BlockHandle> res, td::PerfLogAction token);
+  void after_get_validator_auth_chain_context(td::Result<std::shared_ptr<const tos::auth::ChainContext>> res,
+                                             td::PerfLogAction token);
+  // Assembles the authority for one inbound message, or refuses. Const because
+  // it writes nothing here: the authority leaves through the argument and is
+  // owned by the transaction that receives it, which is what lets account
+  // checkers run concurrently against one shared compute configuration.
+  bool offer_validator_auth(Ref<vm::Cell> msg_root, bool external,
+                            std::shared_ptr<vm::ValidatorAuthHost>& host) const;
   void after_get_storage_stat_cache(td::Result<std::function<td::Ref<vm::Cell>(const td::Bits256&)>> res,
                                     td::PerfLogAction token);
   void after_get_shard_state(int idx, td::Result<Ref<ShardState>> res, td::PerfLogAction token);

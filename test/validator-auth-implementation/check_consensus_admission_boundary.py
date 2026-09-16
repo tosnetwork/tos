@@ -49,8 +49,11 @@ INPUTS = ("validator/auth/native-collation-authority.h", "CollationAuthorityInpu
 
 # The seams that call the assembler. Each must reach it with one decision made:
 # the declared precondition, which reads only what the caller already holds.
-# Validation joins this list when it assembles the authority the same way.
-SEAMS = {"validator/impl/collator.cpp": "Collator::offer_validator_auth"}
+# Production and validation are both here because the bypass is the same on
+# either side, and a gate in front of only one of them is exactly the divergence
+# the whole path exists to prevent.
+SEAMS = {"validator/impl/collator.cpp": "Collator::offer_validator_auth",
+         "validator/impl/validate-query.cpp": "ValidateQuery::offer_validator_auth"}
 ASSEMBLER = "assemble_registry_authority("
 
 
@@ -163,7 +166,7 @@ def main() -> int:
                 return 1
 
     print(f"PASS: admission decides from the parent state and the message, names nothing a node holds, "
-          f"and {len(SEAMS)} calling seam reaches it undecided")
+          f"and {len(SEAMS)} calling seams reach it undecided")
     return 0
 
 

@@ -1,0 +1,119 @@
+"""Require a validator to rebuild the authority a block was produced with.
+
+A block is produced once and re-executed by every validator. The producer
+assembles a registry authority and the privileged instructions run against it;
+a validator that rebuilds no authority re-executes those instructions with
+nothing behind them, refuses a transaction the producer accepted, reconstructs
+a different block, and rejects a candidate that was correct. Nothing in the
+producer can detect that, because the producer's own run succeeded.
+
+So both sides must assemble, and from one assembler rather than two readings of
+the same facts. Neither may reach past it to the admission calls underneath: a
+second assembly is a second answer waiting to differ from the first.
+
+Where the assembled authority is then kept is part of the same property. It
+belongs to the transaction that received it. A block-scoped field has to be
+installed before a transaction and cleared after it, which holds only while one
+transaction runs at a time -- and validation re-executes different accounts in
+concurrent actors against one shared compute configuration. An authority written
+there by one account would be visible to all of them, and whether a candidate
+validated would depend on which actor ran when. So the compute configuration may
+not carry one, and the transaction must.
+
+These files cannot be instantiated by any test here, so this reads them. That is
+weaker than executing them and is not a substitute for the end-to-end case; it
+is what can be checked before one exists.
+"""
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+
+ASSEMBLER = "assemble_registry_authority("
+# The calls the assembler is made of. Reaching them directly is how a second
+# assembly appears.
+UNDERNEATH = ("admit_registry_message(", "gather_registry_admission_inputs(")
+# And what neither side may consult on the way: an answer that depends on what
+# one node happened to hold is not an answer both sides can reach.
+NODE_LOCAL = ("NativeAnchorCache", "NativeHistoryResolutionQueue", "NativeBlockReader", "resolve_declared_history")
+
+PRODUCER = "validator/impl/collator.cpp"
+VALIDATOR = "validator/impl/validate-query.cpp"
+EXECUTION = "crypto/block/transaction.h"
+
+AUTHORITY = "std::shared_ptr<vm::ValidatorAuthHost>"
+
+
+def structure(text: str, name: str) -> str:
+    # The definition, not the forward declaration that precedes it: matching
+    # "struct Transaction" alone lands on "struct Transaction;" and then reads
+    # to the end of whatever type happens to be declared next.
+    match = re.search(r"^(?:struct|class) " + re.escape(name) + r"\s*\{", text, re.MULTILINE)
+    return text[match.start():text.index("\n};", match.start())] if match else ""
+
+
+def verify(files: dict[str, str]) -> None:
+    for path in (PRODUCER, VALIDATOR):
+        if files[path].count(ASSEMBLER) != 1:
+            raise ValueError(f"{path} does not assemble the authority exactly once")
+        for call in UNDERNEATH:
+            if call in files[path]:
+                raise ValueError(f"{path} assembles a second time through {call}")
+        for token in NODE_LOCAL:
+            if token in files[path]:
+                raise ValueError(f"{path} reaches {token}")
+
+    # Where the authority is kept decides whether concurrent validation is safe.
+    configuration = structure(files[EXECUTION], "ComputePhaseConfig")
+    if not configuration:
+        raise ValueError("ComputePhaseConfig is not declared")
+    if AUTHORITY in configuration or "validator_auth" in configuration:
+        raise ValueError("ComputePhaseConfig carries an authority that concurrent checkers would share")
+    transaction = structure(files[EXECUTION], "Transaction")
+    if not transaction:
+        raise ValueError("Transaction is not declared")
+    if not re.search(re.escape(AUTHORITY) + r"\s+validator_auth_host;", transaction):
+        raise ValueError("Transaction does not own the authority assembled for its message")
+
+
+def main() -> int:
+    files = {path: (ROOT / path).read_text() for path in (PRODUCER, VALIDATOR, EXECUTION)}
+
+    # Silence is not evidence: each requirement is removed in memory and the
+    # check has to reject what is left.
+    probes = (
+        {**files, PRODUCER: files[PRODUCER].replace(ASSEMBLER, "some_other_call(", 1)},
+        {**files, VALIDATOR: files[VALIDATOR].replace(ASSEMBLER, "some_other_call(", 1)},
+        {**files, VALIDATOR: files[VALIDATOR] + "\nauto x = admit_registry_message(y);\n"},
+        {**files, VALIDATOR: files[VALIDATOR] + "\nconst tos::auth::NativeAnchorCache* c = nullptr;\n"},
+        # The move that would undo this: park the authority back on the shared
+        # configuration, where one account's write is every account's read.
+        {**files, EXECUTION: files[EXECUTION].replace(
+            "  SizeLimitsConfig size_limits;",
+            f"  SizeLimitsConfig size_limits;\n  {AUTHORITY} validator_auth_host;", 1)},
+        {**files, EXECUTION: files[EXECUTION].replace(
+            f"  {AUTHORITY} validator_auth_host;\n", "", 1)},
+    )
+    for probe in probes:
+        try:
+            verify(probe)
+        except ValueError:
+            pass
+        else:
+            raise RuntimeError("validation authority negative control survived")
+
+    try:
+        verify(files)
+    except ValueError as reason:
+        print(f"VALIDATION-AUTHORITY-NOT-WIRED {reason}", file=sys.stderr)
+        return 1
+    print("PASS: production and validation rebuild one authority from the same facts, "
+          "and each transaction owns the one assembled for its message")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

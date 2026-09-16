@@ -855,6 +855,7 @@ jobs:
             --fixtures artifacts/committee-fixtures --owner artifacts/owner-transactions-mc \
             --out artifacts/registry-admission-mutations
           python3 test/validator-auth-implementation/check_consensus_admission_boundary.py
+          python3 test/validator-auth-implementation/check_validation_authority_wiring.py
           git diff --exit-code
 
       - name: Compile native guard removals and require assertion failures

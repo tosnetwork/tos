@@ -21,6 +21,10 @@
 
 #include <memory>
 
+namespace tos::auth {
+struct ChainContext;
+}
+
 #include <tos/tos-tl.hpp>
 
 #include "auto/tl/lite_api.h"
@@ -498,6 +502,23 @@ class ValidatorManager : public ValidatorManagerInterface {
   virtual void get_block_proof_link_from_import(BlockIdExt block_id, BlockIdExt masterchain_block_id,
                                                 td::Promise<td::BufferSlice> promise) {
     promise.set_error(td::Status::Error("not supported"));
+  }
+
+  // The chain this node established from its own zero state, or nothing.
+  //
+  // Validation needs the same context collation was given, and must not build
+  // one from the state it is checking: the chain domain lives in the registry
+  // being validated, so a locally derived context would have that registry
+  // confirm its own name. This hands out an immutable snapshot of what the node
+  // established once, from the zero block id its operator configured.
+  //
+  // Nothing node-local travels with it. There is no cache, no resolver and no
+  // archive handle here, because what a registry update relies on is carried by
+  // the update itself. A node that never established a context returns nothing,
+  // and a validator that cannot establish one cannot validate -- it does not
+  // get to call the candidate invalid.
+  virtual void get_validator_auth_chain_context(td::Promise<std::shared_ptr<const tos::auth::ChainContext>> promise) {
+    promise.set_value(nullptr);
   }
 
   virtual void update_shard_client_state(BlockIdExt masterchain_block_id, td::Promise<td::Unit> promise) = 0;

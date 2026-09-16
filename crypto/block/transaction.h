@@ -135,18 +135,6 @@ struct ComputePhaseConfig {
   Ref<vm::Tuple> unpacked_config_tuple;
   std::unique_ptr<vm::Dictionary> suspended_addresses;
   SizeLimitsConfig size_limits;
-  // The authority behind the privileged registry instructions, supplied by
-  // whoever composes this configuration rather than constructed here: the
-  // registry library depends on this layer, so this layer cannot depend on it.
-  // It is offered to exactly one account, named beside it, so a caller that
-  // wires it wrongly cannot hand the registry to an ordinary contract.
-  std::shared_ptr<vm::ValidatorAuthHost> validator_auth_host;
-  std::optional<td::Bits256> validator_auth_account;
-  // Whether this account, on this chain, is offered that authority. Named so
-  // the decision has one definition that a test can reach, rather than being
-  // spelled out at the one call site where it would be checkable only by
-  // running a whole transaction.
-  bool offers_validator_auth_host(bool is_masterchain, const td::Bits256& addr) const;
   int vm_log_verbosity = 0;
   bool stop_on_accept_message = false;
   PrecompiledContractsConfig precompiled_contracts;
@@ -461,6 +449,21 @@ struct Transaction {
   bool admits_engine_create_account_actions{false};
   std::vector<Ref<vm::Cell>> storage_stat_updates;
   td::RealCpuTimer::Time time_tvm, time_storage_stat;
+  // The authority behind the privileged registry instructions, assembled for
+  // the exact inbound message this transaction processes and owned by it.
+  //
+  // It lives here rather than in the configuration because that is where its
+  // lifetime already ends. A block-scoped field has to be installed before a
+  // transaction and withdrawn after it, which is correct only while one
+  // transaction runs at a time: validation re-executes different accounts
+  // concurrently against one shared configuration, and an authority written
+  // there by one account would be read by all of them.
+  //
+  // No account is stored beside it. This authority reached this transaction
+  // because the assembler recognised the message this transaction is
+  // processing; naming the account again would be a second answer to a
+  // question the transaction already is.
+  std::shared_ptr<vm::ValidatorAuthHost> validator_auth_host;
   Transaction(const Account& _account, int ttype, tos::LogicalTime req_start_lt, tos::UnixTime _now,
               Ref<vm::Cell> _inmsg = {});
   bool unpack_input_msg(bool ihr_delivered, const ActionPhaseConfig* cfg);
@@ -473,6 +476,10 @@ struct Transaction {
   std::vector<Ref<vm::Cell>> compute_vm_libraries(const ComputePhaseConfig& cfg);
   bool run_precompiled_contract(const ComputePhaseConfig& cfg, precompiled::PrecompiledSmartContract& precompiled);
   bool prepare_compute_phase(const ComputePhaseConfig& cfg);
+  // Whether this transaction is offered that authority. Named so the decision
+  // has one definition a test can reach, rather than being spelled out at the
+  // one call site where it would be checkable only by running a transaction.
+  bool offers_validator_auth_compute_phase(const ComputePhaseConfig& cfg) const;
   bool prepare_action_phase(const ActionPhaseConfig& cfg);
   td::Status check_state_limits(const SizeLimitsConfig& size_limits, int global_version, bool is_account_stat = true);
   bool prepare_bounce_phase(const ActionPhaseConfig& cfg);

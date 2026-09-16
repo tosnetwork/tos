@@ -1,8 +1,13 @@
 """Remove one condition of the host-offer predicate at a time.
 
 A condition that can be deleted without a named case failing is a condition
-nothing depends on. Each mutation must compile, reach the file, and fail only
-its own case.
+nothing depends on. Each mutation must compile, reach the file, and break only
+the cases it declares.
+
+Isolation is read from the whole case list, not from where the run stopped. The
+test reports every case, so a mutation that quietly broke a later one cannot
+hide behind an earlier failure -- a case that was never reached would otherwise
+be indistinguishable from one that passed.
 """
 import argparse
 import json
@@ -13,27 +18,29 @@ from pathlib import Path
 SOURCE = Path("crypto/block/transaction.cpp")
 BINARY = Path("build-p0/test/validator-auth-implementation/test-p0-host-injection")
 
-WHOLE = """  return validator_auth_host && validator_auth_account && is_masterchain && addr == validator_auth_account.value() &&
-         global_version >= vm::validator_auth_min_version &&
-         (global_capabilities & vm::validator_auth_capability) != 0;"""
+WHOLE = """  return validator_auth_host && account.is_masterchain() &&
+         cfg.global_version >= vm::validator_auth_min_version &&
+         (cfg.global_capabilities & vm::validator_auth_capability) != 0;"""
+
 
 def without(term: str) -> str:
     # Keep the operator the term carried, or the expression stops parsing and a
     # compile failure would be mistaken for the mutation doing nothing.
     return WHOLE.replace(term, "true &&" if term.rstrip().endswith("&&") else "true")
 
+
+# The account is deliberately absent from this list. It is no longer a condition
+# here: an authority reaches a transaction only because the assembler recognised
+# the message that transaction is processing, and refusing a message addressed
+# anywhere but the configuration account is that assembler's job. Restating it
+# here would be a second answer to the same question.
 MUTATIONS = [
-    ("host-present", "absent-host-offers-nothing", "validator_auth_host &&"),
-    # The account guard is deliberately absent from this list. Removing it does
-    # not produce a different answer: the next term calls value() on a
-    # disengaged optional, which throws, so the case fails for a reason that is
-    # not the property under test. A failure for the wrong reason is not a kill,
-    # so the condition is recorded as necessary-but-not-independently-observable
-    # rather than counted as covered.
-    ("masterchain", "non-masterchain-refused", "is_masterchain &&"),
-    ("address-match", "other-address-refused", "addr == validator_auth_account.value() &&"),
-    ("version-gate", "unactivated-version-refused", "global_version >= vm::validator_auth_min_version &&"),
-    ("capability-gate", "absent-capability-refused", "(global_capabilities & vm::validator_auth_capability) != 0"),
+    ("host-present", "transaction-without-authority-offers-nothing", "validator_auth_host &&",
+     ["two-transactions-sharing-one-compute-config-do-not-share-authority"]),
+    ("masterchain", "non-masterchain-transaction-offers-nothing", "account.is_masterchain() &&", []),
+    ("version-gate", "unactivated-version-refused", "cfg.global_version >= vm::validator_auth_min_version &&", []),
+    ("capability-gate", "absent-capability-refused", "(cfg.global_capabilities & vm::validator_auth_capability) != 0",
+     ["later-version-still-needs-capability"]),
 ]
 
 
@@ -46,6 +53,10 @@ def run() -> subprocess.CompletedProcess:
     return subprocess.run([str(BINARY)], capture_output=True, text=True, check=False)
 
 
+def failing(result: subprocess.CompletedProcess) -> set[str]:
+    return {line.removeprefix("CASE_FAIL ") for line in result.stdout.splitlines() if line.startswith("CASE_FAIL ")}
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", type=Path, required=True)
@@ -56,35 +67,38 @@ def main() -> int:
     if original.count(WHOLE) != 1:
         print(f"ANCHOR-NOT-UNIQUE ({original.count(WHOLE)})")
         return 1
-    if run().returncode != 0:
+    baseline = run()
+    if baseline.returncode != 0 or failing(baseline):
         print("BASELINE-NOT-PASSING")
         return 1
+    cases = sum(line.startswith("CASE_") for line in baseline.stdout.splitlines())
 
     records, failures = [], 0
-    for guard, case, term in MUTATIONS:
-        assert WHOLE.count(term) == 1, (guard, term)
-        SOURCE.write_text(original.replace(WHOLE, without(term), 1))
-        mutated = SOURCE.read_text()
-        reached = without(term) in mutated
-        compiled = build()
-        named, others = False, False
-        if compiled:
-            result = run()
-            named = result.returncode != 0 and case in result.stderr
-            # Every other case must still pass: the output stops at the first
-            # failure, so isolation is read from which case it stopped on.
-            others = case in result.stderr
+    try:
+        for guard, case, term, companions in MUTATIONS:
+            assert WHOLE.count(term) == 1, (guard, term)
+            SOURCE.write_text(original.replace(WHOLE, without(term), 1))
+            reached = without(term) in SOURCE.read_text()
+            compiled = build()
+            broke: set[str] = set()
+            if compiled:
+                broke = failing(run())
+            SOURCE.write_text(original)
+            restored = build() and run().returncode == 0
+            record = {"guard": guard, "case": case, "edit_reached_source": reached, "compiled": compiled,
+                      "named_case_failed": case in broke,
+                      "only_declared_cases_broke": broke <= {case, *companions},
+                      "declared_companions": companions, "cases_broken": sorted(broke), "cases_run": cases,
+                      "restored_baseline": restored, "source_unchanged": SOURCE.read_text() == original}
+            records.append(record)
+            print(json.dumps(record), flush=True)
+            if not all(record[key] for key in ("edit_reached_source", "compiled", "named_case_failed",
+                                               "only_declared_cases_broke", "restored_baseline", "source_unchanged")):
+                failures += 1
+    finally:
         SOURCE.write_text(original)
-        restored = build() and run().returncode == 0
-        record = {"guard": guard, "case": case, "edit_reached_source": reached, "compiled": compiled,
-                  "named_assertion_failed": named, "only_named_case_failed": others,
-                  "restored_baseline": restored, "source_unchanged": SOURCE.read_text() == original}
-        records.append(record)
-        print(json.dumps(record))
-        if not all((reached, compiled, named, restored, record["source_unchanged"])):
-            failures += 1
 
-    (args.out / "mutations.json").write_text(json.dumps(records, indent=1))
+    (args.out / "mutations.json").write_text(json.dumps(records, indent=1) + "\n")
     return 1 if failures else 0
 
 
