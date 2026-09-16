@@ -35,7 +35,10 @@ Result<std::unique_ptr<NativeElectionBindingTransaction>> NativeElectionBindingT
   if (!history.ok())
     return history.error();
 
-  auto config = block::Config::extract_from_state(inputs.masterchain_state, 0);
+  // Extracted asking for the capability block, because the activation test
+  // below reads it: a configuration taken without it reports version zero and
+  // no capabilities, and every chain would look inactive.
+  auto config = block::Config::extract_from_state(inputs.masterchain_state, block::Config::needCapabilities);
   if (config.is_error())
     return Error{"native-binding-transaction-config"};
   // The same parameter the contract reads and the machine gates on. A chain

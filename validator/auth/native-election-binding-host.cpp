@@ -31,7 +31,10 @@ td::Ref<vm::Cell> NativeElectionBindingHost::bind(td::Ref<vm::Cell> elected, td:
   // a second binding starts where the first stopped.
   auto registry = RegistryView::open(checkpoint.value(), coordinate_, work_remaining_);
   if (!registry.ok())
-    refuse_host("native registry unreadable");
+    // Carrying the cause rather than replacing it: "unreadable" alone cannot
+    // distinguish a malformed checkpoint from a coordinate the registry has no
+    // policy for, and the two are diagnosed differently.
+    throw vm::VmError{vm::Excno::cell_und, "native registry unreadable: " + registry.error().code};
 
   block::gen::ValidatorSet::Record_validators_ext set;
   if (!tlb::unpack_cell(elected, set))
