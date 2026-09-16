@@ -53,6 +53,13 @@ class TestAuthority final : public LifecycleAuthority {
   Result<bool> administration(const IdentityAuth&, const Update&, const Identity&, std::uint32_t) const override {
     return deny_ != "administration";
   }
+  // Global operations are outside what this fixture authorizes. Refusing
+  // explicitly rather than inheriting a default keeps a fixture from silently
+  // admitting an operation it was never built to reason about.
+  Result<Anchor> governance(const Update&, const Authorizations&, const CurrentRegistry&,
+                            std::uint32_t) const override {
+    return Error{"fixture-governance"};
+  }
 };
 Result<std::uint32_t> coordinate(std::string_view text) {
   std::uint32_t value = 0;

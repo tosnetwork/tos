@@ -18,6 +18,10 @@ class Authority final : public LifecycleAuthority {
   Result<bool> administration(const IdentityAuth&, const Update&, const Identity&, std::uint32_t) const override {
     return deny_ != 3;
   }
+  Result<Anchor> governance(const Update&, const Authorizations&, const CurrentRegistry&,
+                            std::uint32_t) const override {
+    return Error{"fixture-governance"};
+  }
 };
 td::Ref<vm::Cell> root(const std::filesystem::path& path) {
   auto bytes = read(path);

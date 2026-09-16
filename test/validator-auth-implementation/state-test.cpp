@@ -34,6 +34,10 @@ class Authority final : public LifecycleAuthority {
   Result<bool> administration(const IdentityAuth&, const Update&, const Identity&, std::uint32_t) const override {
     return true;
   }
+  Result<Anchor> governance(const Update&, const Authorizations&, const CurrentRegistry&,
+                            std::uint32_t) const override {
+    return Error{"fixture-governance"};
+  }
 };
 Authorizations evidence(const Identity& state, const Update& update, const Key& key) {
   auto uid = value(object_id("update", update), "update-id");

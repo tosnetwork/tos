@@ -1,5 +1,22 @@
+#include "governance.h"
 #include "native-apply.h"
 namespace tos::auth {
+Result<Anchor> NativeLifecycleAuthority::governance(const Update& update, const Authorizations& evidence,
+                                                   const CurrentRegistry& current, std::uint32_t inclusion) const {
+  // The quorum check is the one that already exists; nothing about it is
+  // restated here. What this adds is that the anchor the caller stamps an
+  // activation with is the one that came back from the verification, not one
+  // the caller chose after the fact.
+  auto verified = verify_current_governance(context_.chain, context_.governing, current, update, evidence, inclusion,
+                                            reader_);
+  if (!verified.ok())
+    return verified.error();
+  if (context_.governing_anchor.root_ == Hash{} || context_.governing_anchor.file_ == Hash{} ||
+      context_.governing_anchor.state_ == Hash{})
+    return Error{"governance-anchor"};
+  return context_.governing_anchor;
+}
+
 Result<bool> NativeLifecycleAuthority::validate_context() const {
   if (current_.chain_domain() != context_.chain.chain_domain || current_.coordinate() == UINT32_MAX)
     return Error{"authority-current-state"};
@@ -77,6 +94,14 @@ Result<RegistryState> apply_native_identity_block(const RegistryState& parent, s
                                          return Error{"unknown-identity"};
                                        return apply_identity_update(identity->second, current, update, evidence,
                                                                     inclusion, authority);
+                                     },
+                                     [&](const RegistryState& current, const Update& update,
+                                         const Authorizations& evidence) -> Result<GlobalChange> {
+                                       NativeLifecycleAuthority authority(current, context, reader);
+                                       auto valid = authority.validate_context();
+                                       if (!valid.ok())
+                                         return valid.error();
+                                       return current.apply_global(update, evidence, inclusion, authority);
                                      });
 }
 }  // namespace tos::auth

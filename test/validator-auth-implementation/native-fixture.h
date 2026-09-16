@@ -149,6 +149,13 @@ class AcceptedFixtureRequests : public LifecycleAuthority {
   Result<bool> administration(const IdentityAuth&, const Update&, const Identity&, std::uint32_t) const override {
     return true;
   }
+  // Global operations are outside what this fixture authorizes. Refusing
+  // explicitly rather than inheriting a default keeps a fixture from silently
+  // admitting an operation it was never built to reason about.
+  Result<Anchor> governance(const Update&, const Authorizations&, const CurrentRegistry&,
+                            std::uint32_t) const override {
+    return Error{"fixture-governance"};
+  }
 };
 
 inline RegistryState pending_state(unsigned count) {

@@ -22,6 +22,10 @@ class Authority final : public LifecycleAuthority {
   Result<bool> administration(const IdentityAuth&, const Update&, const Identity&, std::uint32_t) const override {
     return deny != 3;
   }
+  Result<Anchor> governance(const Update&, const Authorizations&, const CurrentRegistry&,
+                            std::uint32_t) const override {
+    return Error{"fixture-governance"};
+  }
 };
 std::pair<Update, Authorizations> request(const RegistryState& registry, unsigned identity, unsigned role,
                                           unsigned effective, unsigned epoch = 2) {

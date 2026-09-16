@@ -392,11 +392,37 @@ Result<RegistryState> RegistryState::apply_block(std::uint32_t at,
                                   return Error{"unknown-identity"};
                                 return apply_identity_update(identity->second, current, update, evidence, at,
                                                              authority);
+                              },
+                              [&](const RegistryState& current, const Update& update,
+                                  const Authorizations& evidence) -> Result<GlobalChange> {
+                                return current.apply_global(update, evidence, at, authority);
                               });
 }
+// The pieces a global operation needs, gathered from this state rather than
+// from the caller: the policy in force, the record holding the global nonce and
+// the newest activation. A caller assembling them itself would be a second
+// reading of what the state already holds.
+Result<GlobalChange> RegistryState::apply_global(const Update& update, const Authorizations& evidence,
+                                                 std::uint32_t at, const LifecycleAuthority& authority) const {
+  auto in_force = policies_.find(current_policy_);
+  if (in_force == policies_.end())
+    return Error{"global-current-policy"};
+  // Absent until a global operation first writes one. Its only content is the
+  // nonce, and the encoding already admits a zero-identity record with no keys
+  // and no pending transitions, so the first operation creates it rather than
+  // requiring every chain to have been seeded with an empty one.
+  Identity global;
+  auto existing = identities_.find(Hash{});
+  if (existing != identities_.end())
+    global = existing->second;
+  const Activation* latest = activations_.empty() ? nullptr : &activations_.rbegin()->second;
+  return apply_global_update(update, evidence, *this, in_force->second, global, latest, at, authority);
+}
+
 Result<RegistryState> RegistryState::apply_identity_block(std::uint32_t at,
                                                           const std::vector<std::pair<Update, Authorizations>>& updates,
-                                                          const IdentityApply& apply) const {
+                                                          const IdentityApply& apply,
+                                                          const GlobalApply& global) const {
   if (coordinate_ >= std::numeric_limits<std::uint32_t>::max() - 1 || at != coordinate_ + 1)
     return Error{"block-gap"};
   RegistryState next = *this;
@@ -422,8 +448,23 @@ Result<RegistryState> RegistryState::apply_identity_block(std::uint32_t at,
     return id.error();
   next.current_policy_ = id.value();
   for (const auto& [update, evidence] : updates) {
+    if (update.identity_ == Hash{}) {
+      auto effect = global(next, update, evidence);
+      if (!effect.ok())
+        return effect.error();
+      auto policy_id = object_id("policy", effect.value().policy);
+      if (!policy_id.ok())
+        return policy_id.error();
+      if (!next.policies_.emplace(policy_id.value(), effect.value().policy).second)
+        return Error{"duplicate-policy"};
+      if (!next.activations_.emplace(effect.value().activation.effective_from_, effect.value().activation).second)
+        return Error{"duplicate-activation"};
+      next.identities_[Hash{}] = effect.value().global;
+      changed = true;
+      continue;
+    }
     auto current = next.identities_.find(update.identity_);
-    if (current == next.identities_.end() || update.identity_ == Hash{})
+    if (current == next.identities_.end())
       return Error{"unknown-identity"};
     auto effect = apply(next, update, evidence);
     if (!effect.ok())

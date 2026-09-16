@@ -62,6 +62,13 @@ class AdminAuthority : public LifecycleAuthority {
     result.administration_.push_back({uid, identity.identity_, {4, cert, {}}});
     return result;
   }
+  // Global operations are outside what this fixture authorizes. Refusing
+  // explicitly rather than inheriting a default keeps a fixture from silently
+  // admitting an operation it was never built to reason about.
+  Result<Anchor> governance(const Update&, const Authorizations&, const CurrentRegistry&,
+                            std::uint32_t) const override {
+    return Error{"fixture-governance"};
+  }
 };
 class CorruptProvider : public C0SigningProvider {
   C0SigningProvider& provider_;

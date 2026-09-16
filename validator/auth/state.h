@@ -30,12 +30,19 @@ class RegistryState final : public CurrentRegistry {
   std::map<Hash, Observation> observations_;
   std::map<std::pair<Hash, KeySlot>, std::uint64_t> epochs_;
   std::map<std::uint32_t, std::set<Hash>> due_;
+  Result<GlobalChange> apply_global(const Update&, const Authorizations&, std::uint32_t,
+                                    const LifecycleAuthority&) const;
   Result<bool> rebuild_indexes();
   Result<bool> validate();
   using IdentityApply =
       std::function<Result<IdentityChange>(const RegistryState&, const Update&, const Authorizations&)>;
+  // A zero-identity operation replaces no identity, so it cannot be expressed
+  // as one. Both callers supply this, because a block may interleave global and
+  // per-identity operations and their order is part of what is replayed.
+  using GlobalApply =
+      std::function<Result<GlobalChange>(const RegistryState&, const Update&, const Authorizations&)>;
   Result<RegistryState> apply_identity_block(std::uint32_t, const std::vector<std::pair<Update, Authorizations>>&,
-                                             const IdentityApply&) const;
+                                             const IdentityApply&, const GlobalApply& global) const;
   friend Result<RegistryState> apply_native_identity_block(const RegistryState&, std::uint32_t,
                                                            const std::vector<std::pair<Update, Authorizations>>&,
                                                            const NativeIdentityContext&, ObjectReader&);
@@ -61,6 +68,9 @@ class RegistryState final : public CurrentRegistry {
   }
   const std::map<Hash, Policy>& policies() const {
     return policies_;
+  }
+  const std::map<std::uint32_t, Activation>& activations() const {
+    return activations_;
   }
   const Hash& chain_domain() const override {
     return chain_domain_;

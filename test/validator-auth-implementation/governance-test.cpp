@@ -102,6 +102,10 @@ RegistryState rotated(const RegistryState& before) {
     Result<bool> administration(const IdentityAuth&, const Update&, const Identity&, std::uint32_t) const override {
       return true;
     }
+    Result<Anchor> governance(const Update&, const Authorizations&, const CurrentRegistry&,
+                              std::uint32_t) const override {
+      return Error{"fixture-governance"};
+    }
   } authority;
   auto uid = value(object_id("update", u), "uid");
   Authorizations auth;

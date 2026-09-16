@@ -13,6 +13,10 @@ struct NativeIdentityContext {
   ChainContext chain;
   const RegistrySnapshot& governing;
   const FinalizedAnchorSource& history;
+  // The authenticated masterchain anchor the governing snapshot was derived
+  // from. A policy operation stamps its activation with this, so the record and
+  // the authority that admitted it name one fact rather than two.
+  Anchor governing_anchor{};
 };
 // This authority is bound to one current per-operation view, including keys
 // archived earlier in the same block. Reusing a parent view across updates is invalid.
@@ -26,6 +30,8 @@ class NativeLifecycleAuthority final : public LifecycleAuthority {
       : current_(current), context_(context), reader_(reader) {
   }
   Result<bool> validate_context() const;
+  Result<Anchor> governance(const Update&, const Authorizations&, const CurrentRegistry&,
+                            std::uint32_t inclusion) const override;
   Result<bool> owner(const OwnerAuth&, const Update&, const Identity&) const override;
   Result<bool> possession(const PossessionAuth&, const Update&, const Key&) const override;
   Result<bool> administration(const IdentityAuth&, const Update&, const Identity&, std::uint32_t) const override;

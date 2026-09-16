@@ -1,5 +1,7 @@
 #include <set>
 
+#include "state.h"
+
 #include "lifecycle.h"
 namespace tos::auth {
 namespace {
@@ -354,5 +356,91 @@ Result<std::vector<Key>> select_identity_keys(const Identity& state, const KeyHi
       return Error{"snapshot-missing"};
   }
   return result;
+}
+
+Result<GlobalChange> apply_global_update(const Update& update, const Authorizations& evidence,
+                                         const CurrentRegistry& current, const Policy& current_policy,
+                                         const Identity& global, const Activation* latest, std::uint32_t inclusion,
+                                         const LifecycleAuthority& authority) {
+  // Operation 6 is refused here rather than further in. Its authority is the
+  // same quorum, but installing a configuration parameter additionally requires
+  // the normal configuration vote, and nothing carries this authorization to
+  // the block where that vote completes. Accepting it on the quorum alone would
+  // be a second configuration governance path, not an implementation of the
+  // declared one.
+  if (update.operation_ == 6)
+    return Error{"global-configuration-unimplemented"};
+  if (update.operation_ != 4 || update.identity_ != Hash{})
+    return Error{"global-target"};
+  // Fields not named for this operation are empty, as every other operation
+  // requires of its own.
+  if (update.old_key_ != Hash{} || !update.new_key_.empty() || !update.operation_data_.empty() ||
+      update.new_policy_.empty())
+    return Error{"global-shape"};
+  // The compare-and-swap for a global operation is the current policy, not a
+  // predecessor identity view: there is no identity to have a predecessor.
+  if (update.previous_ != current.current_policy())
+    return Error{"global-predecessor"};
+  if (update.nonce_ < global.next_nonce_ || update.nonce_ == std::numeric_limits<std::uint64_t>::max())
+    return Error{"nonce"};
+
+  auto decoded = decode<Policy>(update.new_policy_);
+  if (!decoded.ok())
+    return decoded.error();
+  const auto& policy = decoded.value();
+  // A policy schedule is strictly increasing with linked predecessors and
+  // consecutive revisions, and the operation's own effective height is the
+  // policy's: two heights for one activation would be two sources again.
+  if (policy.effective_from_ != update.effective_from_)
+    return Error{"global-effective-coordinate"};
+  if (policy.effective_from_ <= inclusion || policy.effective_from_ >= max_coordinate ||
+      policy.effective_from_ - inclusion > max_delay)
+    return Error{"global-effective-coordinate"};
+  if (policy.effective_from_ <= current_policy.effective_from_)
+    return Error{"global-policy-order"};
+  auto current_id = object_id("policy", current_policy);
+  if (!current_id.ok())
+    return current_id.error();
+  if (policy.previous_ != current_id.value())
+    return Error{"global-policy-predecessor"};
+  if (current_policy.revision_ == std::numeric_limits<std::uint64_t>::max() ||
+      policy.revision_ != current_policy.revision_ + 1)
+    return Error{"global-policy-revision"};
+
+  // The quorum, and the anchor it was established against. The activation is
+  // stamped with what came back rather than with a value chosen here.
+  auto anchor = authority.governance(update, evidence, current, inclusion);
+  if (!anchor.ok())
+    return anchor.error();
+  if (anchor.value().seqno_ >= policy.effective_from_)
+    return Error{"global-activation-checkpoint"};
+
+  auto next_id = object_id("policy", policy);
+  if (!next_id.ok())
+    return next_id.error();
+  GlobalChange change;
+  change.policy = policy;
+  change.activation.revision_ = latest ? latest->revision_ + 1 : 1;
+  if (latest && latest->revision_ == std::numeric_limits<std::uint64_t>::max())
+    return Error{"global-activation-revision"};
+  if (latest) {
+    auto previous = object_id("activation", *latest);
+    if (!previous.ok())
+      return previous.error();
+    change.activation.previous_ = previous.value();
+  }
+  change.activation.next_policy_ = next_id.value();
+  change.activation.effective_from_ = policy.effective_from_;
+  change.activation.checkpoint_seqno_ = anchor.value().seqno_;
+  change.activation.checkpoint_root_ = anchor.value().root_;
+  change.activation.checkpoint_file_ = anchor.value().file_;
+  change.activation.checkpoint_state_ = anchor.value().state_;
+
+  change.global = global;
+  change.global.identity_ = Hash{};
+  change.global.next_nonce_ = update.nonce_ + 1;
+  if (update.nonce_ == std::numeric_limits<std::uint64_t>::max())
+    return Error{"nonce"};
+  return change;
 }
 }  // namespace tos::auth
