@@ -1,3 +1,4 @@
+#include "owner-proof-producer.h"
 #include "owner-fixture.h"
 using namespace p0_owner_fixture;
 int main(int argc, char** argv) {

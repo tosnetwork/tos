@@ -20,14 +20,14 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 PRODUCER = "make_owner_execution_proof"
-MACRO = "TOS_VALIDATOR_AUTH_TEST_PRODUCER"
 
-# The module that defines it, and the drivers that extract fixtures.
-ALLOWED_SOURCES = {"validator/auth/owner-proof.h", "validator/auth/owner-proof.cpp"}
+# The producer lives with the tests, in one translation unit and its header. No
+# production file may name it at all, and the rest of the test tree may only
+# call it -- the definition stays in one place so a second, drifting way to
+# assemble an approval cannot appear beside it.
+PRODUCER_SOURCES = {"test/validator-auth-implementation/owner-proof-producer.h",
+                    "test/validator-auth-implementation/owner-proof-producer.cpp"}
 ALLOWED_PREFIXES = ("test/",)
-# Where the macro may be named at all: the module it guards and the build file
-# that turns it on for those drivers.
-ALLOWED_MACRO = ALLOWED_SOURCES | {"test/validator-auth-implementation/CMakeLists.txt"}
 
 
 def tracked_files() -> list[str]:
@@ -57,8 +57,12 @@ def read_all(paths: list[str]) -> dict[str, str]:
     return contents
 
 
-def symbols(binary: Path) -> str:
-    listing = subprocess.run(["nm", "-C", str(binary)], capture_output=True, text=True, check=False)
+def symbols(binary: Path, defined_only: bool = False) -> str:
+    # An archive lists both what it defines and what it merely calls. Asking for
+    # any mention of the verifier accepts the undefined reference another object
+    # makes to it, so the definition could vanish while this still passed.
+    command = ["nm", "-C"] + (["--defined-only"] if defined_only else []) + [str(binary)]
+    listing = subprocess.run(command, capture_output=True, text=True, check=False)
     return listing.stdout
 
 
@@ -77,17 +81,17 @@ def main() -> int:
     # must be rejected is added to the same inputs the real check reads.
     planted = dict(contents)
     planted["validator/impl/invented-caller.cpp"] = f"auto proof = {PRODUCER}(state, block);\n"
-    if not offenders(planted, PRODUCER, ALLOWED_SOURCES):
+    if not offenders(planted, PRODUCER, PRODUCER_SOURCES):
         print("BOUNDARY-SCAN-CANNOT-SEE-A-CALLER", file=sys.stderr)
         return 1
 
-    found = offenders(contents, PRODUCER, ALLOWED_SOURCES)
+    found = offenders(contents, PRODUCER, PRODUCER_SOURCES)
     if found:
         print(f"PRODUCER-REACHABLE-FROM {' '.join(found)}", file=sys.stderr)
         return 1
-    macro = offenders(contents, MACRO, ALLOWED_MACRO)
-    if macro:
-        print(f"PRODUCER-MACRO-NAMED-IN {' '.join(macro)}", file=sys.stderr)
+    defining = sorted(path for path in PRODUCER_SOURCES if path in contents and PRODUCER in contents[path])
+    if sorted(PRODUCER_SOURCES) != defining:
+        print(f"PRODUCER-NOT-WHERE-IT-BELONGS {' '.join(defining)}", file=sys.stderr)
         return 1
 
     # The verifier must still be here. A boundary that removed both would pass
@@ -102,15 +106,17 @@ def main() -> int:
     if library is None or not driver.is_file():
         print("BOUNDARY-BINARIES-MISSING", file=sys.stderr)
         return 1
-    shipped, extracting = symbols(library), symbols(driver)
-    if not re.search(PRODUCER, extracting):
+    # Mentions for the producer, because a production object that merely called
+    # it would be just as wrong as one that defined it. Definitions for the
+    # verifier, because that is the thing that must actually be there.
+    if not re.search(PRODUCER, symbols(driver, defined_only=True)):
         print("FIXTURE-DRIVER-CANNOT-PRODUCE", file=sys.stderr)
         return 1
-    if re.search(PRODUCER, shipped):
+    if re.search(PRODUCER, symbols(library)):
         print("PRODUCER-LINKED-INTO-THE-LIBRARY", file=sys.stderr)
         return 1
-    if not re.search("verify_owner_execution", shipped):
-        print("VERIFIER-NOT-LINKED", file=sys.stderr)
+    if not re.search("verify_owner_execution", symbols(library, defined_only=True)):
+        print("VERIFIER-NOT-DEFINED-IN-THE-LIBRARY", file=sys.stderr)
         return 1
 
     print("PASS: a validator build verifies owner approvals and contains nothing that can assemble one")

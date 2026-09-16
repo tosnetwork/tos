@@ -1,3 +1,4 @@
+#include "owner-proof-producer.h"
 #if defined(P0_PERSISTENT_REGISTRY) || defined(P0_NATIVE_TRANSACTIONS) || defined(P0_NATIVE_CONFIG_HOST)
 #include "validator/auth/native-transaction.h"
 #endif
