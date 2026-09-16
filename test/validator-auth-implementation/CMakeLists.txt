@@ -574,6 +574,13 @@ add_executable(test-p0-election-binding election-binding-test.cpp)
 target_link_libraries(test-p0-election-binding PRIVATE tos_validator_auth_native)
 set_target_properties(test-p0-election-binding PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 
+# Links the validator library. The P0 job configures without the storage
+# backend and compiles the ingress translation units on their own; this case is
+# built and run where that library links.
+add_executable(test-p0-ext-message-ingress EXCLUDE_FROM_ALL ext-message-ingress-test.cpp)
+target_link_libraries(test-p0-ext-message-ingress PRIVATE tos_validator tos_validator_auth_native tos_crypto)
+set_target_properties(test-p0-ext-message-ingress PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+
 add_executable(test-p0-registry-admission registry-admission-test.cpp)
 target_link_libraries(test-p0-registry-admission PRIVATE tos_validator_auth_native)
 set_target_properties(test-p0-registry-admission PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
