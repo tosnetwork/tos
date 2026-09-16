@@ -5,6 +5,7 @@
 #ifdef P0_NATIVE_CONFIG_HOST
 #include "validator/auth/cells.h"
 #include "validator/auth/native-config-host.h"
+#include "validator/auth/native-evidence.h"
 #endif
 #include "validator/auth/native-apply.h"
 
@@ -448,7 +449,18 @@ int main(int argc, char** argv) {
           value(NativeRegistry::bootstrap(value(base.parent.encode_cell(), "host-parent"), base.parent.coordinate()),
                 "host-bootstrap");
       auto prefix = value(NativeRegistryBlock::begin(persistent, base.inclusion), "host-begin");
-      NativeConfigHost host(std::move(prefix), host_context, host_reader, base.inclusion);
+      // The evidence a registry message carries: the container admission opens,
+      // which the contract then hands to the instruction unchanged. The host is
+      // built from what was admitted, so it can recognise that reference rather
+      // than read the cell a second time under a different assumption.
+      auto carried_authorizations = value(encode(base.updates[0].second), "carried-authorizations");
+      vm::CellBuilder carried;
+      carried.store_long(native_evidence_tag, 32).store_long(1, 16).store_long(0, 1);
+      carried.store_ref(value(pack_bytes(carried_authorizations), "carried-packed"))
+          .store_ref(vm::CellBuilder().finalize());
+      auto evidence_cell = carried.finalize();
+      NativeConfigHost host(std::move(prefix), host_context, host_reader, base.inclusion, evidence_cell,
+                            base.updates[0].second);
 
       long long charged = 0;
       auto charge = [&](long long amount) { charged += amount; };
@@ -462,8 +474,22 @@ int main(int argc, char** argv) {
       // A canonical update and its evidence, carried as AuthBytes exactly as the
       // instruction receives them.
       auto update_cell = value(pack_bytes(value(encode(base.updates[0].first), "host-update")), "host-update-cell");
-      auto evidence_cell =
-          value(pack_bytes(value(encode(base.updates[0].second), "host-evidence")), "host-evidence-cell");
+
+      // Any other cell, including the authorizations the container carries, is
+      // not what this transaction was admitted with and must be refused before
+      // any registry work.
+      const std::vector<td::Ref<vm::Cell>> not_admitted = {
+          value(pack_bytes(carried_authorizations), "other-packed"),
+          td::Ref<vm::Cell>(vm::CellBuilder().store_long(0, 8).finalize())};
+      for (const auto& other : not_admitted) {
+        bool refused = false;
+        try {
+          host.apply(update_cell, other, charge);
+        } catch (const vm::VmError&) {
+          refused = true;
+        }
+        check(refused, "host-refuses-evidence-it-did-not-admit");
+      }
 
       auto applied = host.apply(update_cell, evidence_cell, charge);
       check(applied.not_null() && host.updates() == 1, "host-apply");

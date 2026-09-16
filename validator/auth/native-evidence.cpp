@@ -117,7 +117,7 @@ Result<NativeEvidence> NativeEvidence::open(td::Ref<vm::Cell> root, const Eviden
     std::map<ChunkKey, Bytes> chunks;
     for (const auto& [k, cell] : cells)
       chunks.emplace(k, take(unpack_bytes(cell, expected.at(k))));
-    NativeEvidence result(a, header, std::move(chunks));
+    NativeEvidence result(a, header, root, std::move(chunks));
     auto reader = result.reader();
     for (const auto& [v, kind] : objects)
       take(reader.resolve(*v, kind));

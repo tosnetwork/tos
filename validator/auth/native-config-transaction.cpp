@@ -15,7 +15,7 @@ NativeConfigTransaction::NativeConfigTransaction(NativeCommittee committee, Nati
     , history_(std::move(history))
     , context_{std::move(chain), committee_.snapshot(), *history_}
     , reader_(evidence_.reader())
-    , host_(std::move(accepted), context_, reader_, inclusion) {
+    , host_(std::move(accepted), context_, reader_, inclusion, evidence_.root(), evidence_.authorizations()) {
 }
 
 Result<std::unique_ptr<NativeConfigTransaction>> NativeConfigTransaction::open(

@@ -56,21 +56,21 @@ td::Ref<vm::Cell> NativeConfigHost::apply(td::Ref<vm::Cell> update, td::Ref<vm::
   auto raw_update = unpack_bytes(std::move(update));
   if (!raw_update.ok())
     refuse("native update encoding");
-  auto raw_evidence = unpack_bytes(std::move(evidence));
-  if (!raw_evidence.ok())
-    refuse("native evidence encoding");
+  // The operand must be the evidence this transaction was admitted with. It is
+  // the same reference the contract received, so recognising it is the whole
+  // check; decoding it again would make the instruction a second authority on
+  // what the transaction carried, reading a container as though it were the
+  // authorizations inside it.
+  if (admitted_evidence_.is_null() || evidence->get_hash() != admitted_evidence_->get_hash())
+    refuse("native evidence operand");
 
   auto decoded_update = decode<Update>(raw_update.value());
   if (!decoded_update.ok())
     refuse("native update");
-  auto decoded_evidence = decode<Authorizations>(raw_evidence.value());
-  if (!decoded_evidence.ok())
-    refuse("native evidence");
-
   auto before = accepted_.state().remaining();
   // Applied against the accepted prefix, never against a prefix a failed
   // transaction left behind.
-  auto next = accepted_.apply_transaction(decoded_update.value(), decoded_evidence.value(), context_, reader_);
+  auto next = accepted_.apply_transaction(decoded_update.value(), admitted_, context_, reader_);
   if (!next.ok())
     refuse("native update refused");
 

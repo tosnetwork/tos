@@ -21,6 +21,13 @@ class NativeConfigHost final : public vm::ValidatorAuthHost {
   NativeRegistryBlock accepted_;
   const NativeIdentityContext& context_;
   ObjectReader& reader_;
+  // The evidence this transaction was admitted with, and what it said. The
+  // instruction receives the same reference the contract was given, so the host
+  // recognises it instead of reading it again: one admitted source for what the
+  // transaction carried, rather than two readings of one cell that can disagree
+  // about its shape.
+  td::Ref<vm::Cell> admitted_evidence_;
+  Authorizations admitted_;
   // The block being built. A registry policy that is not yet effective at this
   // coordinate must not bind a set this block installs.
   std::uint32_t coordinate_;
@@ -32,10 +39,13 @@ class NativeConfigHost final : public vm::ValidatorAuthHost {
   // of a transaction is a function of what it actually read rather than of a
   // constant that would drift from it.
   NativeConfigHost(NativeRegistryBlock accepted, const NativeIdentityContext& context, ObjectReader& reader,
-                   std::uint32_t coordinate, std::uint64_t gas_per_entry = 64, std::uint64_t gas_per_byte = 1)
+                   std::uint32_t coordinate, td::Ref<vm::Cell> admitted_evidence, Authorizations admitted,
+                   std::uint64_t gas_per_entry = 64, std::uint64_t gas_per_byte = 1)
       : accepted_(std::move(accepted))
       , context_(context)
       , reader_(reader)
+      , admitted_evidence_(std::move(admitted_evidence))
+      , admitted_(std::move(admitted))
       , coordinate_(coordinate)
       , gas_per_entry_(gas_per_entry)
       , gas_per_byte_(gas_per_byte) {

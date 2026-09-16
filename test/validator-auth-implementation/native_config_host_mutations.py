@@ -27,12 +27,25 @@ MUTATIONS = [
         "refusal-not-refused",
         "host-refusal-throws",
         "guard-disable",
-        "  auto next = accepted_.apply_transaction(decoded_update.value(), decoded_evidence.value(), context_, reader_);\n"
+        "  auto next = accepted_.apply_transaction(decoded_update.value(), admitted_, context_, reader_);\n"
         "  if (!next.ok())\n"
         "    refuse(\"native update refused\");",
-        "  auto next = accepted_.apply_transaction(decoded_update.value(), decoded_evidence.value(), context_, reader_);\n"
+        "  auto next = accepted_.apply_transaction(decoded_update.value(), admitted_, context_, reader_);\n"
         "  if (!next.ok())\n"
         "    return accepted_.state().checkpoint().value();",
+    ),
+    (
+        # The instruction is handed the evidence the contract received. Without
+        # this the host reads that cell itself, under an assumption admission
+        # does not share, and becomes a second authority on what the transaction
+        # carried.
+        "evidence-operand-unbound",
+        "host-refuses-evidence-it-did-not-admit",
+        "guard-disable",
+        "  if (admitted_evidence_.is_null() || evidence->get_hash() != admitted_evidence_->get_hash())\n"
+        "    refuse(\"native evidence operand\");",
+        "  if (admitted_evidence_.is_null())\n"
+        "    refuse(\"native evidence operand\");",
     ),
     (
         "operand-encoding-unchecked",
