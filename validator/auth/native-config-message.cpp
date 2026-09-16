@@ -29,11 +29,19 @@ Result<NativeRegistryMessage> recognize_registry_message(td::Ref<vm::Cell> body)
     auto evidence = cs.fetch_ref();
     if (update.is_null() || evidence.is_null())
       return Error{"registry-message-shape"};
+    // A third reference is the configuration proposal a governance operation
+    // finalizes. Whether one belongs here is not decided at this layer: the
+    // host holds the decoded operation and refuses a proposal that does not
+    // belong with it, or an operation that needs one and has none. Deciding it
+    // twice would be two readings of the same update.
+    td::Ref<vm::Cell> proposal;
+    if (cs.size_refs() == 1)
+      proposal = cs.fetch_ref();
     // The contract ends the parse here, so a body carrying more is not the
     // message it would accept.
     if (cs.size() != 0 || cs.size_refs() != 0)
       return Error{"registry-message-shape"};
-    return NativeRegistryMessage{std::move(update), std::move(evidence)};
+    return NativeRegistryMessage{std::move(update), std::move(evidence), std::move(proposal)};
   } catch (const vm::VmError&) {
     return Error{"registry-message-shape"};
   }

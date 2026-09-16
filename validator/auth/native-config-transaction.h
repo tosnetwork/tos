@@ -38,16 +38,21 @@ class NativeConfigTransaction {
   ObjectReader reader_;
   NativeConfigHost host_;
   NativeConfigTransaction(NativeCommittee, NativeEvidence, std::shared_ptr<const FinalizedAnchorSource>,
-                          NativeRegistryBlock, ChainContext, std::uint32_t inclusion);
+                          NativeRegistryBlock, ChainContext, std::uint32_t inclusion, td::Ref<vm::Cell> proposal);
 
  public:
   // The prefix comes from the sequence, never from the parent state. A second
   // registry update in one block must start from what the first one committed;
   // re-deriving the registry here would hand it the prefix that update already
   // replaced, and both transactions would look correct on their own.
+  // `admitted_proposal` is the configuration proposal the message carried, or
+  // nothing. It reaches the host from the message that was recognised, never
+  // from a caller that supplies one afterwards: the point of binding it here is
+  // that the authority and the attachment come from one reading.
   static Result<std::unique_ptr<NativeConfigTransaction>> open(const NativeConfigTransactionInputs&,
                                                                const NativeConfigSequence&,
                                                                td::Ref<vm::Cell> transaction_evidence,
+                                                               td::Ref<vm::Cell> admitted_proposal,
                                                                std::shared_ptr<const FinalizedAnchorSource>,
                                                                const EvidenceCharge&, StateReadBudget = {});
   NativeConfigHost& host() {

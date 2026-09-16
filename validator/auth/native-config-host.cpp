@@ -38,6 +38,16 @@ td::Ref<vm::Cell> NativeConfigHost::apply(td::Ref<vm::Cell> update, td::Ref<vm::
   auto decoded_update = decode<Update>(raw_update.value());
   if (!decoded_update.ok())
     refuse_host("native update");
+  // A governance operation on a configuration parameter names one by index and
+  // names two cell hashes; the proposal the message carried is the object those
+  // hashes describe, and it is the one that already completed the normal vote.
+  // The correspondence runs both ways: an operation that needs a proposal and
+  // has none is refused, and so is a proposal attached to an operation that
+  // does not take one, because a message carrying an unexamined cell is a
+  // message whose shape nobody checked.
+  auto bound = bind_configuration_proposal(decoded_update.value(), admitted_proposal_);
+  if (!bound.ok())
+    refuse_host("native proposal binding");
   auto before = accepted_.state().remaining();
   // Applied against the accepted prefix, never against a prefix a failed
   // transaction left behind.
@@ -65,6 +75,10 @@ td::Ref<vm::Cell> NativeConfigHost::apply(td::Ref<vm::Cell> update, td::Ref<vm::
   //
   // The checkpoint has its own home: the configuration account's data, which
   // the state instruction returns and native commit installs.
+  // Recorded only now, because a refused update changed nothing and must leave
+  // nothing behind for a commit to be bound against.
+  delta_ = bound.value();
+
   auto encoded = next.value().state().encode_cell();
   if (!encoded.ok())
     refuse_host("native registry state");

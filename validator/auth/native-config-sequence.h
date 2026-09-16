@@ -3,6 +3,41 @@
 
 #include "native-config-context.h"
 namespace tos::auth {
+// What a governance operation changed about the configuration itself: the
+// parameter it names, the hash that parameter had to hold before, and the hash
+// it must hold after.
+//
+// The proposal is not a virtual machine operand, so nothing in the instruction
+// stream ties the value the contract installed to the one the host authorized.
+// This is what ties them, at the commit: the contract could otherwise be
+// authorized for one proposal and install another.
+struct ConfigurationDelta {
+  bool present = false;
+  long long index = 0;
+  Hash previous{};  // zero means the parameter was absent
+  Hash proposed{};  // zero means the proposal deletes it
+};
+
+// Tie a governance operation to the exact proposal the message carried.
+//
+// The operation names a parameter index, the hash the parameter must currently
+// hold and the hash it must hold afterwards. The proposal is the object those
+// hashes describe: it carries the same index, the compare-and-swap the vote was
+// taken under, and the value to install. Every one of the three has to agree,
+// or the operation was authorized for something other than what would be
+// installed.
+//
+// Two zero hashes have meanings rather than being absences. A previous hash of
+// zero says the parameter is currently absent, which is how the contract itself
+// encodes a missing value; the proposal must still state that condition rather
+// than omit it, or "no compare-and-swap was asked for" and "the parameter must
+// be absent" would be one encoding for two different demands. A proposed hash
+// of zero says the proposal deletes the parameter.
+//
+// An operation that takes no proposal must not carry one: a message whose extra
+// cell nobody examined is a message whose shape nobody checked.
+Result<ConfigurationDelta> bind_configuration_proposal(const Update&, const td::Ref<vm::Cell>& proposal);
+
 // What one transaction's privileged host authorized, carried out of the
 // transaction so the sequence can compare it against what the configuration
 // account actually committed.
@@ -20,6 +55,7 @@ class NativeCommitClaim {
   // The elected set the instruction returned, when this transaction bound one.
   bool binds_ = false;
   Hash validators_{};
+  ConfigurationDelta delta_;
   NativeCommitClaim(NativeRegistryBlock candidate, Hash registry, Hash checkpoint)
       : authorized_(true)
       , candidate_(std::move(candidate))
@@ -35,7 +71,7 @@ class NativeCommitClaim {
   // Derived from the prefix a host staged, not from a value the caller chose.
   // The two hashes are the ones the commit is compared against, so computing
   // them anywhere else would be the second description again.
-  static Result<NativeCommitClaim> staged(const NativeRegistryBlock&);
+  static Result<NativeCommitClaim> staged(const NativeRegistryBlock&, ConfigurationDelta = {});
   // The same, for a transaction that also bound an elected set. The registry
   // does not move -- binding reads it and changes nothing -- but the set the
   // instruction returned is what the contract must install, and a contract
@@ -53,6 +89,9 @@ class NativeCommitClaim {
   }
   bool binds() const {
     return binds_;
+  }
+  const ConfigurationDelta& delta() const {
+    return delta_;
   }
   const Hash& validators() const {
     return validators_;
@@ -151,9 +190,20 @@ class NativeConfigSequence {
   //                              candidate's checkpoint.
   //   a set was bound          -> the committed parameter 36 must be exactly
   //                              the set the instruction returned.
+  //   a parameter was changed  -> it held exactly the hash the operation named
+  //                              before this transaction and holds exactly the
+  //                              proposed one after. The proposal is not a
+  //                              virtual machine operand, so this is the only
+  //                              place a contract authorized for one proposal
+  //                              and installing another is caught.
+  //
+  // `before` is the account as it stood before this transaction. It is supplied
+  // rather than remembered: the first transaction of a block follows the
+  // parent's account, which the sequence never held, and inventing a second
+  // notion of "before" is the shape this whole arrangement removes.
   //
   // Refusal leaves the sequence exactly where it was, so a transaction that
   // could not be bound does not move the prefix for the ones after it.
-  Result<bool> promote(const NativeCommitClaim&, td::Ref<vm::Cell> committed_data);
+  Result<bool> promote(const NativeCommitClaim&, td::Ref<vm::Cell> before, td::Ref<vm::Cell> committed_data);
 };
 }  // namespace tos::auth

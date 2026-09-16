@@ -81,6 +81,13 @@ bool refused(const Result<bool>& result, const char* reason) {
   return !result.ok() && result.error().code == reason;
 }
 
+Hash cell_hash(const td::Ref<vm::Cell>& cell) {
+  Hash result{};
+  if (cell.not_null())
+    std::copy_n(cell->get_hash().as_slice().ubegin(), result.size(), result.begin());
+  return result;
+}
+
 // A prefix built from a registry the sequence did not start from, so a claim
 // naming it is a claim about something the account never held.
 NativeRegistryBlock foreign_prefix() {
@@ -110,6 +117,17 @@ int main() {
         "joined-state-authority-is-only-for-the-configuration-account",
         "joined-installed-set-is-the-one-the-instruction-returned",
         "joined-bound-set-the-contract-replaced-refused",
+        "joined-configuration-parameter-follows-the-proposal",
+        "joined-configuration-parameter-the-contract-changed-refused",
+        "joined-configuration-parameter-unchanged-refused",
+        "joined-proposal-binds-the-operation-it-was-attached-to",
+        "joined-proposal-for-another-parameter-refused",
+        "joined-proposal-without-a-compare-and-swap-refused",
+        "joined-proposal-stating-another-condition-refused",
+        "joined-proposal-carrying-another-value-refused",
+        "joined-proposal-on-an-operation-that-takes-none-refused",
+        "joined-governance-operation-without-a-proposal-refused",
+        "joined-absent-parameter-is-a-stated-zero-condition",
     };
     for (const auto* name : manifest)
       std::cout << "MANIFEST " << name << '\n';
@@ -150,7 +168,7 @@ int main() {
       auto installed = account_data(
           with_registry(configuration, value(candidate.state().encode_cell(), "candidate-root")),
           value(candidate.state().checkpoint(), "candidate-checkpoint"));
-      auto promoted = sequence.promote(claim, installed);
+      auto promoted = sequence.promote(claim, context.data(), installed);
       const bool advanced =
           promoted.ok() && promoted.value() && sequence.promoted() == 1 &&
           value(sequence.accepted().state().encode_cell(), "promoted-root")->get_hash() ==
@@ -168,7 +186,7 @@ int main() {
       auto installed = account_data(
           with_registry(configuration, value(candidate.state().encode_cell(), "candidate-root")),
           value(candidate.state().checkpoint(), "candidate-checkpoint"));
-      auto promoted = sequence.promote(NativeCommitClaim{}, installed);
+      auto promoted = sequence.promote(NativeCommitClaim{}, context.data(), installed);
       report(refused(promoted, "config-sequence-unauthorized") && sequence.promoted() == 0,
              "joined-param46-change-without-host-refused");
     }
@@ -188,7 +206,7 @@ int main() {
       auto installed =
           account_data(with_registry(configuration, value(written.state().encode_cell(), "written-parameter")),
                        value(written.state().checkpoint(), "written-checkpoint"));
-      auto promoted = sequence.promote(claim, installed);
+      auto promoted = sequence.promote(claim, context.data(), installed);
       report(refused(promoted, "config-sequence-registry") && sequence.promoted() == 0,
              "joined-host-root-mismatch-refused");
     }
@@ -203,7 +221,7 @@ int main() {
       auto installed =
           account_data(with_registry(configuration, value(candidate.state().encode_cell(), "candidate-root")),
                        fixture.checkpoint);
-      auto promoted = sequence.promote(claim, installed);
+      auto promoted = sequence.promote(claim, context.data(), installed);
       report(refused(promoted, "config-sequence-checkpoint") && sequence.promoted() == 0,
              "joined-checkpoint-mismatch-refused");
     }
@@ -214,7 +232,7 @@ int main() {
     {
       auto sequence = value(context_fixture::begin_sequence(fixture, inclusion), "fixture-sequence");
       auto claim = value(NativeCommitClaim::staged(foreign_prefix()), "fixture-claim");
-      auto promoted = sequence.promote(claim, context.data());
+      auto promoted = sequence.promote(claim, context.data(), context.data());
       report(refused(promoted, "config-sequence-uninstalled") && sequence.promoted() == 0,
              "joined-accepted-host-the-contract-ignored-refused");
     }
@@ -228,7 +246,7 @@ int main() {
       auto installed =
           account_data(with_registry(configuration, value(candidate.state().encode_cell(), "candidate-root")),
                        value(candidate.state().checkpoint(), "candidate-checkpoint"));
-      auto refused = sequence.promote(NativeCommitClaim{}, installed);
+      auto refused = sequence.promote(NativeCommitClaim{}, context.data(), installed);
       const auto after = value(sequence.accepted().state().encode_cell(), "after-root")->get_hash();
       report(!refused.ok() && before == after && sequence.promoted() == 0,
              "joined-refusal-does-not-move-the-prefix");
@@ -240,7 +258,7 @@ int main() {
     // and "nothing committed" would be the same observation.
     {
       auto sequence = value(context_fixture::begin_sequence(fixture, inclusion), "fixture-sequence");
-      auto promoted = sequence.promote(NativeCommitClaim{}, context.data());
+      auto promoted = sequence.promote(NativeCommitClaim{}, context.data(), context.data());
       report(promoted.ok() && !promoted.value() && sequence.promoted() == 0 &&
                  sequence.accepted_data().not_null(),
              "joined-unchanged-parameter-does-not-promote");
@@ -263,7 +281,7 @@ int main() {
       auto installed =
           account_data(with_registry(configuration, value(candidate.state().encode_cell(), "candidate-root")),
                        value(candidate.state().checkpoint(), "candidate-checkpoint"));
-      const bool promoted = sequence.promote(claim, installed).ok();
+      const bool promoted = sequence.promote(claim, context.data(), installed).ok();
 
       auto opened = NativeElectionBindingTransaction::open(
           {fixture.root, fixture.head, fixture.chain, inclusion}, sequence);
@@ -345,7 +363,7 @@ int main() {
       auto validators = vm::CellBuilder().store_long(0x12, 8).store_long(4242, 32).finalize();
       auto claim = value(NativeCommitClaim::bound(sequence.accepted(), validators), "fixture-bound-claim");
       auto installed = account_data(with_parameter(configuration, 36, validators), fixture.checkpoint);
-      auto promoted = sequence.promote(claim, installed);
+      auto promoted = sequence.promote(claim, context.data(), installed);
       report(promoted.ok() && !promoted.value(), "joined-installed-set-is-the-one-the-instruction-returned");
     }
 
@@ -357,9 +375,184 @@ int main() {
       auto written = vm::CellBuilder().store_long(0x12, 8).store_long(9999, 32).finalize();
       auto claim = value(NativeCommitClaim::bound(sequence.accepted(), handed), "fixture-bound-claim");
       auto installed = account_data(with_parameter(configuration, 36, written), fixture.checkpoint);
-      auto promoted = sequence.promote(claim, installed);
+      auto promoted = sequence.promote(claim, context.data(), installed);
       report(refused(promoted, "config-sequence-validators") && sequence.promoted() == 0,
              "joined-bound-set-the-contract-replaced-refused");
+    }
+
+    // A governance operation changes a configuration parameter, and the
+    // proposal it was authorized for is not a virtual machine operand: nothing
+    // in the instruction stream ties the value the contract installed to the
+    // one the host approved. The commit is where they are tied.
+    //
+    // A governance operation moves the registry like any other, so every check
+    // about parameter 46 passes for one that installed a different proposal.
+    // That is why the parameter has its own comparison, on both sides of the
+    // transaction.
+    {
+      const long long index = 17;
+      auto proposed = vm::CellBuilder().store_long(0x5151, 16).finalize();
+      auto earlier = vm::CellBuilder().store_long(0x4040, 16).finalize();
+      auto start = account_data(with_parameter(configuration, index, earlier), fixture.checkpoint);
+
+      ConfigurationDelta delta;
+      delta.present = true;
+      delta.index = index;
+      delta.previous = cell_hash(earlier);
+      delta.proposed = cell_hash(proposed);
+
+      auto sequence = value(context_fixture::begin_sequence(fixture, inclusion), "fixture-sequence");
+      auto candidate = foreign_prefix();
+      auto claim = value(NativeCommitClaim::staged(candidate, delta), "fixture-delta-claim");
+      auto installed = account_data(
+          with_parameter(with_parameter(configuration, index, proposed), 46,
+                         value(candidate.state().encode_cell(), "candidate-root")),
+          value(candidate.state().checkpoint(), "candidate-checkpoint"));
+      auto promoted = sequence.promote(claim, start, installed);
+      report(promoted.ok() && promoted.value(), "joined-configuration-parameter-follows-the-proposal");
+    }
+
+    // The contract installed something else. The registry it committed is
+    // exactly the one the host staged, so nothing about parameter 46 is wrong.
+    {
+      const long long index = 17;
+      auto proposed = vm::CellBuilder().store_long(0x5151, 16).finalize();
+      auto written = vm::CellBuilder().store_long(0x6262, 16).finalize();
+      auto earlier = vm::CellBuilder().store_long(0x4040, 16).finalize();
+      auto start = account_data(with_parameter(configuration, index, earlier), fixture.checkpoint);
+
+      ConfigurationDelta delta;
+      delta.present = true;
+      delta.index = index;
+      delta.previous = cell_hash(earlier);
+      delta.proposed = cell_hash(proposed);
+
+      auto sequence = value(context_fixture::begin_sequence(fixture, inclusion), "fixture-sequence");
+      auto candidate = foreign_prefix();
+      auto claim = value(NativeCommitClaim::staged(candidate, delta), "fixture-delta-claim");
+      auto installed = account_data(
+          with_parameter(with_parameter(configuration, index, written), 46,
+                         value(candidate.state().encode_cell(), "candidate-root")),
+          value(candidate.state().checkpoint(), "candidate-checkpoint"));
+      auto promoted = sequence.promote(claim, start, installed);
+      report(refused(promoted, "config-sequence-parameter-after") && sequence.promoted() == 0,
+             "joined-configuration-parameter-the-contract-changed-refused");
+    }
+
+    // And the parameter did not hold what the operation was authorized against
+    // when the transaction began. The vote and the quorum were both taken under
+    // a condition that had already stopped being true.
+    {
+      const long long index = 17;
+      auto proposed = vm::CellBuilder().store_long(0x5151, 16).finalize();
+      auto elsewhere = vm::CellBuilder().store_long(0x7373, 16).finalize();
+      auto start = account_data(with_parameter(configuration, index, elsewhere), fixture.checkpoint);
+
+      ConfigurationDelta delta;
+      delta.present = true;
+      delta.index = index;
+      delta.previous = cell_hash(vm::CellBuilder().store_long(0x4040, 16).finalize());
+      delta.proposed = cell_hash(proposed);
+
+      auto sequence = value(context_fixture::begin_sequence(fixture, inclusion), "fixture-sequence");
+      auto candidate = foreign_prefix();
+      auto claim = value(NativeCommitClaim::staged(candidate, delta), "fixture-delta-claim");
+      auto installed = account_data(
+          with_parameter(with_parameter(configuration, index, proposed), 46,
+                         value(candidate.state().encode_cell(), "candidate-root")),
+          value(candidate.state().checkpoint(), "candidate-checkpoint"));
+      auto promoted = sequence.promote(claim, start, installed);
+      report(refused(promoted, "config-sequence-parameter-before") && sequence.promoted() == 0,
+             "joined-configuration-parameter-unchanged-refused");
+    }
+
+    // The operation names a parameter and two cell hashes; the proposal the
+    // message carried is the object those hashes describe. Every one has to
+    // agree, because the proposal never reaches the instruction: a contract
+    // authorized for one and installing another is caught at the commit, and
+    // this is what makes the commit's comparison mean the right thing.
+    {
+      const long long index = 17;
+      auto value_cell = vm::CellBuilder().store_long(0x5151, 16).finalize();
+      auto condition = cell_hash(vm::CellBuilder().store_long(0x4040, 16).finalize());
+
+      const auto operation = [&](long long names, const Hash& before, const Hash& after) {
+        Update u;
+        u.operation_ = 6;
+        Writer w;
+        w.integer(static_cast<std::int32_t>(names));
+        w.bytes(before);
+        w.bytes(after);
+        check(w.ok(), "fixture-operation-data");
+        u.operation_data_ = w.data;
+        return u;
+      };
+      // cfg_proposal#f3 param_id value:(Maybe ^Cell) if_hash_equal:(Maybe uint256)
+      const auto proposal = [&](long long names, td::Ref<vm::Cell> value, const Hash* compare) {
+        vm::CellBuilder b;
+        b.store_long(0xf3, 8).store_long(names, 32);
+        check(b.store_maybe_ref(std::move(value)), "fixture-proposal-value");
+        if (compare) {
+          b.store_long(1, 1).store_bytes(td::Slice(reinterpret_cast<const char*>(compare->data()), 32));
+        } else {
+          b.store_long(0, 1);
+        }
+        return b.finalize();
+      };
+
+      auto matched = bind_configuration_proposal(operation(index, condition, cell_hash(value_cell)),
+                                                 proposal(index, value_cell, &condition));
+      report(matched.ok() && matched.value().present && matched.value().index == index &&
+                 matched.value().previous == condition && matched.value().proposed == cell_hash(value_cell),
+             "joined-proposal-binds-the-operation-it-was-attached-to");
+
+      report(!bind_configuration_proposal(operation(index, condition, cell_hash(value_cell)),
+                                          proposal(index + 1, value_cell, &condition))
+                  .ok(),
+             "joined-proposal-for-another-parameter-refused");
+
+      // A proposal that asked for no condition was voted on under a different
+      // one than this operation authorizes, and "none was asked for" must not
+      // collapse into "the parameter must be absent".
+      report(!bind_configuration_proposal(operation(index, Hash{}, cell_hash(value_cell)),
+                                          proposal(index, value_cell, nullptr))
+                  .ok(),
+             "joined-proposal-without-a-compare-and-swap-refused");
+
+      // A proposal that states a condition, and states a different one. The
+      // vote was taken under its condition and the quorum approved the
+      // operation's, so the two have to be the same condition.
+      auto other_condition = cell_hash(vm::CellBuilder().store_long(0x7373, 16).finalize());
+      report(!bind_configuration_proposal(operation(index, condition, cell_hash(value_cell)),
+                                          proposal(index, value_cell, &other_condition))
+                  .ok(),
+             "joined-proposal-stating-another-condition-refused");
+
+      report(!bind_configuration_proposal(
+                  operation(index, condition, cell_hash(value_cell)),
+                  proposal(index, vm::CellBuilder().store_long(0x6262, 16).finalize(), &condition))
+                  .ok(),
+             "joined-proposal-carrying-another-value-refused");
+
+      // An operation that takes no proposal must not carry one: an extra cell
+      // nobody examined is a message whose shape nobody checked.
+      Update ordinary;
+      ordinary.operation_ = 4;
+      report(!bind_configuration_proposal(ordinary, proposal(index, value_cell, &condition)).ok(),
+             "joined-proposal-on-an-operation-that-takes-none-refused");
+      report(!bind_configuration_proposal(operation(index, condition, cell_hash(value_cell)), {}).ok(),
+             "joined-governance-operation-without-a-proposal-refused");
+
+      // Creating a parameter that is absent, and deleting one: the zero hashes
+      // are conditions rather than absences, and the proposal states them.
+      const Hash absent{};
+      auto created = bind_configuration_proposal(operation(index, absent, cell_hash(value_cell)),
+                                                 proposal(index, value_cell, &absent));
+      auto deleted = bind_configuration_proposal(operation(index, condition, absent),
+                                                 proposal(index, {}, &condition));
+      report(created.ok() && created.value().previous == absent && deleted.ok() &&
+                 deleted.value().proposed == absent,
+             "joined-absent-parameter-is-a-stated-zero-condition");
     }
 
     std::cout << "SUMMARY cases=" << passed + failed << " passed=" << passed << '\n';

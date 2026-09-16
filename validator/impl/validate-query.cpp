@@ -5822,7 +5822,10 @@ bool ValidateQuery::offer_validator_auth(Ref<vm::Cell> msg_root, const tos::auth
   if (admitted.ok()) {
     auto authority = std::shared_ptr<tos::auth::NativeConfigTransaction>(std::move(admitted.value()));
     host = std::shared_ptr<vm::ValidatorAuthHost>(authority, &authority->host());
-    claim = [authority] { return tos::auth::NativeCommitClaim::staged(authority->host().staged()); };
+    claim = [authority] {
+      return tos::auth::NativeCommitClaim::staged(authority->host().staged(),
+                                                  authority->host().configuration_delta());
+    };
     return true;
   }
 
@@ -5840,7 +5843,8 @@ bool ValidateQuery::offer_validator_auth(Ref<vm::Cell> msg_root, const tos::auth
   return false;
 }
 
-bool ValidateQuery::CheckAccountTxs::settle_validator_auth(const block::Account& account) {
+bool ValidateQuery::CheckAccountTxs::settle_validator_auth(const block::Account& account,
+                                                          const Ref<vm::Cell>& before) {
   auto claim = std::move(validator_auth_claim_);
   validator_auth_claim_ = nullptr;
   if (!validator_auth_sequence_) {
@@ -5856,7 +5860,7 @@ bool ValidateQuery::CheckAccountTxs::settle_validator_auth(const block::Account&
     return reject_query(PSTRING() << "cannot read what the configuration account's authority staged: "
                                   << authorized.error().code);
   }
-  auto bound = validator_auth_sequence_->promote(authorized.value(), account.data);
+  auto bound = validator_auth_sequence_->promote(authorized.value(), before, account.data);
   if (!bound.ok()) {
     return reject_query(PSTRING() << "configuration account committed a registry its authority did not produce: "
                                   << bound.error().code);
@@ -6398,6 +6402,7 @@ bool ValidateQuery::CheckAccountTxs::check_one_transaction(block::Account& accou
                   << ", special_gas_limit=" << vq_.compute_phase_cfg_.special_gas_limit << ")");
   }
 
+  auto before_commit = account.data;
   auto trans_root2 = trs->commit(account);
   if (trans_root2.is_null()) {
     return reject_query(PSTRING() << "the re-created transaction " << lt << " for smart contract " << addr.to_hex()
@@ -6408,7 +6413,7 @@ bool ValidateQuery::CheckAccountTxs::check_one_transaction(block::Account& accou
   // prefix advanced on the earlier signal would carry a registry no block
   // installed -- on one side only, which is the divergence that rejects a
   // correct candidate for a reason neither side can see.
-  if (!settle_validator_auth(account)) {
+  if (!settle_validator_auth(account, before_commit)) {
     return false;
   }
   // now compare the re-created transaction with the one we have

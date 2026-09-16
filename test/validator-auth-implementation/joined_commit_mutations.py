@@ -34,6 +34,22 @@ UNAUTHORIZED = ('  if (!claim.authorized())\n'
                 '    return Error{"config-sequence-unauthorized"};\n')
 REGISTRY = ('  if (claim.registry() != installed)\n'
             '    return Error{"config-sequence-registry"};\n')
+PARAMETER = ('    if (!cs.fetch_int_to(32, declared) || declared != index)\n'
+             '      return Error{"proposal-parameter"};\n')
+COMPARE = ('    if (cs.fetch_ulong(1) != 1)\n'
+           '      return Error{"proposal-compare"};\n')
+PRECONDITION = ('    if (condition != previous)\n'
+                '      return Error{"proposal-precondition"};\n')
+VALUE = ('    if (hash(value) != proposed)\n'
+         '      return Error{"proposal-value"};\n')
+UNEXPECTED = ('    if (proposal.not_null())\n'
+              '      return Error{"proposal-unexpected"};\n')
+ABSENT = ('  if (proposal.is_null())\n'
+          '    return Error{"proposal-absent"};\n')
+BEFORE = ('    if (committed_parameter(earlier.value().configuration, claim.delta().index) != claim.delta().previous)\n'
+          '      return Error{"config-sequence-parameter-before"};\n')
+AFTER = ('    if (committed_parameter(committed.value().configuration, claim.delta().index) != claim.delta().proposed)\n'
+         '      return Error{"config-sequence-parameter-after"};\n')
 VALIDATORS = ('  if (claim.binds() && claim.validators() != committed_parameter(committed.value().configuration, 36))\n'
               '    return Error{"config-sequence-validators"};\n')
 CHECKPOINT = ('  if (claim.checkpoint() != hash(committed.value().checkpoint))\n'
@@ -78,6 +94,33 @@ def main() -> int:
         # it whatever it wrote -- this is the only thing standing there.
         (SEQUENCE, "wrong-validator-set-accepted", "joined-bound-set-the-contract-replaced-refused",
          VALIDATORS, "", []),
+        # The configuration proposal is not a virtual machine operand, so these
+        # two comparisons are the only thing tying what the contract installed
+        # to what the host was authorized for. A governance operation moves the
+        # registry like any other, so every parameter-46 check passes for one
+        # that installed a different proposal.
+        (SEQUENCE, "installed-parameter-unchecked",
+         "joined-configuration-parameter-the-contract-changed-refused", AFTER, "", []),
+        (SEQUENCE, "prior-parameter-unchecked", "joined-configuration-parameter-unchanged-refused",
+         BEFORE, "", []),
+        # Each thing the operation and its proposal have to agree about. The
+        # commit comparison is only as good as this binding: it checks that the
+        # installed value matches the delta, and the delta comes from here.
+        (SEQUENCE, "proposal-parameter-unchecked", "joined-proposal-for-another-parameter-refused",
+         PARAMETER, '    if (!cs.fetch_int_to(32, declared))\n      return Error{"proposal-parameter"};\n', []),
+        (SEQUENCE, "proposal-compare-optional", "joined-proposal-without-a-compare-and-swap-refused",
+         COMPARE, "    if (cs.fetch_ulong(1) != 1) { return ConfigurationDelta{}; }\n", []),
+        (SEQUENCE, "proposal-precondition-unchecked", "joined-proposal-stating-another-condition-refused",
+         PRECONDITION, "", []),
+        (SEQUENCE, "proposal-value-unchecked", "joined-proposal-carrying-another-value-refused", VALUE, "", []),
+        (SEQUENCE, "stray-proposal-admitted", "joined-proposal-on-an-operation-that-takes-none-refused",
+         UNEXPECTED, "", []),
+        # The guard stops refusing rather than being deleted. Deleting it lets a
+        # null reference reach the decoder and the process dies, which catches
+        # nothing: a run that crashed reports no cases at all, and a case that
+        # was never reported is indistinguishable from one that held.
+        (SEQUENCE, "missing-proposal-admitted", "joined-governance-operation-without-a-proposal-refused",
+         ABSENT, '  if (proposal.is_null())\n    return ConfigurationDelta{};\n', []),
         # A transaction that re-derives its prefix from the parent state. It
         # opens, it binds, and it is holding a registry this block already
         # replaced -- which is why the case reads the opened transaction's own

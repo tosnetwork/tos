@@ -1,7 +1,7 @@
 #pragma once
 #include "vm/validator-auth-host.h"
 
-#include "native-transaction.h"
+#include "native-config-sequence.h"
 namespace tos::auth {
 // The authority behind VAUTH_STATE and VAUTH_APPLY for one native configuration
 // transaction, and behind neither anything else nor VAUTH_BIND. Native
@@ -37,8 +37,16 @@ class NativeConfigHost final : public vm::ValidatorAuthHost {
   // The block being built. A registry policy that is not yet effective at this
   // coordinate must not bind a set this block installs.
   std::uint32_t coordinate_;
+  // The configuration proposal this message carried, or nothing. A governance
+  // operation names a parameter and two cell hashes; the proposal is the object
+  // those hashes have to match, and it is the one that already passed the
+  // normal vote. It arrives with the message rather than through the
+  // instruction, so the contract cannot hand the host a different one than the
+  // one it was admitted with.
+  td::Ref<vm::Cell> admitted_proposal_;
   std::uint64_t gas_per_entry_, gas_per_byte_;
   unsigned checkpoints_ = 0, updates_ = 0;
+  ConfigurationDelta delta_;
 
  public:
   // Charging is derived from the work the registry itself reports, so the price
@@ -46,13 +54,15 @@ class NativeConfigHost final : public vm::ValidatorAuthHost {
   // constant that would drift from it.
   NativeConfigHost(NativeRegistryBlock accepted, const NativeIdentityContext& context, ObjectReader& reader,
                    std::uint32_t coordinate, td::Ref<vm::Cell> admitted_evidence, Authorizations admitted,
-                   std::uint64_t gas_per_entry = 64, std::uint64_t gas_per_byte = 1)
+                   td::Ref<vm::Cell> admitted_proposal = {}, std::uint64_t gas_per_entry = 64,
+                   std::uint64_t gas_per_byte = 1)
       : accepted_(std::move(accepted))
       , context_(context)
       , reader_(reader)
       , admitted_evidence_(std::move(admitted_evidence))
       , admitted_(std::move(admitted))
       , coordinate_(coordinate)
+      , admitted_proposal_(std::move(admitted_proposal))
       , gas_per_entry_(gas_per_entry)
       , gas_per_byte_(gas_per_byte) {
   }
@@ -71,6 +81,11 @@ class NativeConfigHost final : public vm::ValidatorAuthHost {
   // two descriptions of one fact with nothing comparing them.
   const NativeRegistryBlock& staged() const {
     return accepted_;
+  }
+  // What a governance operation changed, once one has been applied: the
+  // parameter it names and the two cell hashes the commit is bound to.
+  const ConfigurationDelta& configuration_delta() const {
+    return delta_;
   }
   unsigned checkpoints() const {
     return checkpoints_;

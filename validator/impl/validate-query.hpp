@@ -484,7 +484,7 @@ class ValidateQuery : public td::actor::Actor {
     // committed cannot leave its candidate behind for the next one.
     ValidatorAuthClaim validator_auth_claim_;
     bool open_validator_auth_sequence();
-    bool settle_validator_auth(const block::Account& account);
+    bool settle_validator_auth(const block::Account& account, const Ref<vm::Cell>& before);
   };
   friend CheckAccountTxs;
 

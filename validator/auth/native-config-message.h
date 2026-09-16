@@ -15,6 +15,11 @@ inline constexpr std::uint32_t native_validator_set_action = 0x4e565354;
 struct NativeRegistryMessage {
   td::Ref<vm::Cell> update;
   td::Ref<vm::Cell> evidence;
+  // The exact configuration proposal a governance operation finalizes, when the
+  // message carries one. It is a separate attachment rather than a field of the
+  // update: the update names it by hash, and the proposal that has already
+  // passed the normal vote is the object those hashes have to match.
+  td::Ref<vm::Cell> proposal;
 };
 
 // Recognise a registry update in an inbound external message body.

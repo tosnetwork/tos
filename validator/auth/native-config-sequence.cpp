@@ -25,6 +25,68 @@ Hash committed_parameter(td::Ref<vm::Cell> configuration, long long index) {
 }
 }  // namespace
 
+Result<ConfigurationDelta> bind_configuration_proposal(const Update& update, const td::Ref<vm::Cell>& proposal) {
+  if (update.operation_ != 6) {
+    if (proposal.not_null())
+      return Error{"proposal-unexpected"};
+    return ConfigurationDelta{};
+  }
+  if (proposal.is_null())
+    return Error{"proposal-absent"};
+  // The operation's own statement of what it changes.
+  if (update.operation_data_.size() != 4 + 32 + 32)
+    return Error{"proposal-operand"};
+  Reader r{update.operation_data_};
+  std::int32_t index = 0;
+  Hash previous{}, proposed{};
+  r.integer(index);
+  r.hash(previous);
+  r.hash(proposed);
+  if (!r.ok())
+    return Error{"proposal-operand"};
+
+  try {
+    // cfg_proposal#f3 param_id:int32 param_value:(Maybe ^Cell)
+    //                 if_hash_equal:(Maybe uint256)
+    vm::CellSlice cs{vm::NoVm{}, proposal};
+    if (cs.is_special() || cs.fetch_ulong(8) != 0xf3)
+      return Error{"proposal-shape"};
+    std::int32_t declared = 0;
+    if (!cs.fetch_int_to(32, declared) || declared != index)
+      return Error{"proposal-parameter"};
+    td::Ref<vm::Cell> value;
+    if (cs.fetch_ulong(1) == 1) {
+      if (cs.size_refs() == 0)
+        return Error{"proposal-shape"};
+      value = cs.fetch_ref();
+    }
+    // The compare-and-swap the vote was taken under has to be stated. A
+    // proposal that asked for none was voted on under a different condition
+    // than the one this operation authorizes.
+    if (cs.fetch_ulong(1) != 1)
+      return Error{"proposal-compare"};
+    Hash condition{};
+    if (!cs.fetch_bytes(td::MutableSlice(reinterpret_cast<char*>(condition.data()), condition.size())))
+      return Error{"proposal-shape"};
+    if (cs.size() != 0 || cs.size_refs() != 0)
+      return Error{"proposal-shape"};
+    if (condition != previous)
+      return Error{"proposal-precondition"};
+    if (hash(value) != proposed)
+      return Error{"proposal-value"};
+    ConfigurationDelta delta;
+    delta.present = true;
+    delta.index = index;
+    delta.previous = previous;
+    delta.proposed = proposed;
+    return delta;
+  } catch (const vm::VmError&) {
+    return Error{"proposal-shape"};
+  } catch (const vm::VmVirtError&) {
+    return Error{"proposal-pruned"};
+  }
+}
+
 Result<NativeCommitClaim> NativeCommitClaim::bound(const NativeRegistryBlock& candidate,
                                                    td::Ref<vm::Cell> validators) {
   auto claim = staged(candidate);
@@ -37,14 +99,17 @@ Result<NativeCommitClaim> NativeCommitClaim::bound(const NativeRegistryBlock& ca
   return claim;
 }
 
-Result<NativeCommitClaim> NativeCommitClaim::staged(const NativeRegistryBlock& candidate) {
+Result<NativeCommitClaim> NativeCommitClaim::staged(const NativeRegistryBlock& candidate,
+                                                   ConfigurationDelta delta) {
   auto registry = candidate.state().encode_cell();
   if (!registry.ok())
     return registry.error();
   auto checkpoint = candidate.state().checkpoint();
   if (!checkpoint.ok())
     return checkpoint.error();
-  return NativeCommitClaim(candidate, hash(registry.value()), hash(checkpoint.value()));
+  auto claim = NativeCommitClaim(candidate, hash(registry.value()), hash(checkpoint.value()));
+  claim.delta_ = delta;
+  return claim;
 }
 
 Result<NativeConfigSequence> NativeConfigSequence::begin(td::Ref<vm::Cell> registry_parameter, const Hash& address,
@@ -69,10 +134,23 @@ Result<NativeConfigSequence> NativeConfigSequence::begin(td::Ref<vm::Cell> regis
   return NativeConfigSequence(chain, parent, address, inclusion, std::move(accepted.value()));
 }
 
-Result<bool> NativeConfigSequence::promote(const NativeCommitClaim& claim, td::Ref<vm::Cell> committed_data) {
+Result<bool> NativeConfigSequence::promote(const NativeCommitClaim& claim, td::Ref<vm::Cell> before,
+                                           td::Ref<vm::Cell> committed_data) {
   auto committed = read_configuration_account(committed_data);
   if (!committed.ok())
     return committed.error();
+  // A configuration parameter the operation named. Checked first and on its own
+  // account: a governance operation moves the registry like any other, so every
+  // check below would pass for one that installed a different proposal.
+  if (claim.delta().present) {
+    auto earlier = read_configuration_account(std::move(before));
+    if (!earlier.ok())
+      return earlier.error();
+    if (committed_parameter(earlier.value().configuration, claim.delta().index) != claim.delta().previous)
+      return Error{"config-sequence-parameter-before"};
+    if (committed_parameter(committed.value().configuration, claim.delta().index) != claim.delta().proposed)
+      return Error{"config-sequence-parameter-after"};
+  }
   // A bound set is checked before anything about the registry, because a
   // binding transaction does not move the registry at all: the whole of what it
   // changed is parameter 36, so a check placed after the "nothing to install"

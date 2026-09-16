@@ -3347,7 +3347,7 @@ bool Collator::create_special_transactions() {
  *
  * @returns True if the commit was bound, or did not concern the registry.
  */
-bool Collator::settle_validator_auth(const block::Account& acc) {
+bool Collator::settle_validator_auth(const block::Account& acc, const Ref<vm::Cell>& before) {
   auto claim = std::move(validator_auth_claim_);
   validator_auth_claim_ = nullptr;
   if (!validator_auth_sequence_) {
@@ -3363,7 +3363,7 @@ bool Collator::settle_validator_auth(const block::Account& acc) {
     return fatal_error(PSTRING() << "cannot read what the configuration account's authority staged: "
                                  << authorized.error().code);
   }
-  auto bound = validator_auth_sequence_->promote(authorized.value(), acc.data);
+  auto bound = validator_auth_sequence_->promote(authorized.value(), before, acc.data);
   if (!bound.ok()) {
     return fatal_error(PSTRING() << "configuration account committed a registry its authority did not produce: "
                                  << bound.error().code);
@@ -3459,11 +3459,14 @@ bool Collator::create_ticktock_transaction(const tos::StdSmcAddress& smc_addr, t
   if (!trans->update_limits(*block_limit_status_, /* with_gas = */ false)) {
     return fatal_error(-666, "cannot update block limit status to include the new transaction");
   }
+  // Captured before the commit replaces it: what the account held going in is
+  // half of what a governance operation is bound against.
+  auto before_commit = acc->data;
   if (trans->commit(*acc).is_null()) {
     return fatal_error(
         td::Status::Error(-666, std::string{"cannot commit new transaction for smart contract "} + smc_addr.to_hex()));
   }
-  if (!settle_validator_auth(*acc)) {
+  if (!settle_validator_auth(*acc, before_commit)) {
     return false;
   }
   if (!update_account_dict_estimation(*trans)) {
@@ -3566,7 +3569,10 @@ bool Collator::offer_validator_auth(Ref<vm::Cell> msg_root, std::shared_ptr<vm::
     // Captured so what this authority staged is still readable after the
     // transaction that borrowed its host has actually committed.
     validator_auth_claim_ = [authority] {
-      return tos::auth::NativeCommitClaim::staged(authority->host().staged());
+      // The delta is carried too: what the contract installs has to be the
+      // proposal the host authorized, and the proposal is not an operand.
+      return tos::auth::NativeCommitClaim::staged(authority->host().staged(),
+                                                  authority->host().configuration_delta());
     };
     return true;
   }
@@ -3673,8 +3679,9 @@ Ref<vm::Cell> Collator::create_ordinary_transaction(Ref<vm::Cell> msg_root,
     fatal_error("cannot update block limit status to include the new transaction");
     return {};
   }
+  auto before_commit = acc->data;
   auto trans_root = trans->commit(*acc);
-  if (trans_root.not_null() && !settle_validator_auth(*acc)) {
+  if (trans_root.not_null() && !settle_validator_auth(*acc, before_commit)) {
     return {};
   }
   if (trans_root.is_null()) {

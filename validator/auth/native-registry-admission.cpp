@@ -156,6 +156,6 @@ Result<std::unique_ptr<NativeConfigTransaction>> admit_registry_message(const Re
   auto owned_history = std::make_shared<WitnessedAnchorSource>(std::move(witnessed));
 
   return NativeConfigTransaction::open(inputs.transaction, sequence, recognized.value().message.evidence,
-                                       std::move(owned_history), uncharged);
+                                       recognized.value().message.proposal, std::move(owned_history), uncharged);
 }
 }  // namespace tos::auth

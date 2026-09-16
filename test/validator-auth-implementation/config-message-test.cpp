@@ -58,6 +58,11 @@ td::Ref<vm::Cell> message(std::uint32_t action, unsigned refs = 2, unsigned trai
     b.store_ref(marker(0x2222));
   if (refs >= 3)
     b.store_ref(marker(0x3333));
+  // Four is the most a cell holds, so it is the whole of "more than this
+  // message has". Without it the extra-reference case asked for four, got
+  // three, and tested the proposal attachment instead.
+  if (refs >= 4)
+    b.store_ref(marker(0x4444));
   return b.finalize();
 }
 }  // namespace
@@ -78,9 +83,20 @@ int main() {
     refuses(recognize_registry_message(message(native_registry_action, 1)), "registry-message-shape",
             "missing-reference-refused");
 
-    // One reference more: the contract ends its parse, so a body carrying extra
-    // is not the body it would accept.
-    refuses(recognize_registry_message(message(native_registry_action, 3)), "registry-message-shape",
+    // A third reference is the configuration proposal a governance operation
+    // finalizes, so it is recognised rather than refused. Whether one belongs
+    // with this operation is decided where the operation is decoded: refusing
+    // it here as well would be a second reading of the same update, and the two
+    // would be free to disagree about which operations take an attachment.
+    {
+      auto carried = recognize_registry_message(message(native_registry_action, 3));
+      expect(carried.ok() && carried.value().proposal.not_null(), "proposal-reference-recognised");
+      ok("proposal-reference-recognised");
+    }
+
+    // A fourth is not anything. The contract ends its parse, so a body carrying
+    // more is not the body it would accept.
+    refuses(recognize_registry_message(message(native_registry_action, 4)), "registry-message-shape",
             "extra-reference-refused");
 
     refuses(recognize_registry_message(message(native_registry_action, 2, 8)), "registry-message-shape",

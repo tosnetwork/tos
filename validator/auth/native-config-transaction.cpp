@@ -9,19 +9,20 @@ namespace tos::auth {
 NativeConfigTransaction::NativeConfigTransaction(NativeCommittee committee, NativeEvidence evidence,
                                                  std::shared_ptr<const FinalizedAnchorSource> history,
                                                  NativeRegistryBlock accepted, ChainContext chain,
-                                                 std::uint32_t inclusion)
+                                                 std::uint32_t inclusion, td::Ref<vm::Cell> proposal)
     : committee_(std::move(committee))
     , evidence_(std::move(evidence))
     , history_(std::move(history))
     , context_{std::move(chain), committee_.snapshot(), *history_}
     , reader_(evidence_.reader())
-    , host_(std::move(accepted), context_, reader_, inclusion, evidence_.root(), evidence_.authorizations()) {
+    , host_(std::move(accepted), context_, reader_, inclusion, evidence_.root(), evidence_.authorizations(),
+              std::move(proposal)) {
 }
 
 Result<std::unique_ptr<NativeConfigTransaction>> NativeConfigTransaction::open(
     const NativeConfigTransactionInputs& inputs, const NativeConfigSequence& sequence,
-    td::Ref<vm::Cell> transaction_evidence, std::shared_ptr<const FinalizedAnchorSource> history,
-    const EvidenceCharge& charge, StateReadBudget budget) {
+    td::Ref<vm::Cell> transaction_evidence, td::Ref<vm::Cell> admitted_proposal,
+    std::shared_ptr<const FinalizedAnchorSource> history, const EvidenceCharge& charge, StateReadBudget budget) {
   if (inputs.masterchain_state.is_null() || transaction_evidence.is_null() || !history)
     return Error{"native-config-transaction-input"};
   if (inputs.chain.genesis_root == Hash{} || inputs.chain.genesis_file == Hash{} ||
@@ -54,6 +55,6 @@ Result<std::unique_ptr<NativeConfigTransaction>> NativeConfigTransaction::open(
 
   return std::unique_ptr<NativeConfigTransaction>(new NativeConfigTransaction(
       std::move(committee.value()), std::move(evidence.value()), std::move(history), std::move(accepted),
-      inputs.chain, inputs.inclusion));
+      inputs.chain, inputs.inclusion, std::move(admitted_proposal)));
 }
 }  // namespace tos::auth
