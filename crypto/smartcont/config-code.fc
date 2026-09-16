@@ -714,9 +714,11 @@ int register_voting_proposal(slice cs, int msg_value) impure inline_ref {
       registry_checkpoint = vauth_registry_state();
       accept_message();
       stored_seqno = (stored_seqno + 1) % (1 << 32);
-      ;; The proposal is consumed whether or not the parameter changes, so a
-      ;; finalization that the conditions refuse cannot be replayed against a
-      ;; later state under the same quorum.
+      ;; Consumed here so that a finalization which succeeds cannot be run
+      ;; twice. One that the acceptance rules below refuse throws instead, and a
+      ;; throw commits nothing at all: the parameter, the registry and the
+      ;; proposal are all left exactly as they were, and the proposal is still
+      ;; awaiting governance for a later attempt.
       vote_dict~udict_delete?(256, phash);
       (cfg_dict, var param_id, var param_val) = accept_proposal(cfg_dict, proposal, critical?);
       throw_unless(53, param_id);

@@ -244,11 +244,23 @@ td::Ref<vm::Cell> proposal_setup() {
 }
 
 // cfg_proposal#f3 param_id:int32 param_value:(Maybe ^Cell) if_hash_equal:(Maybe uint256)
-td::Ref<vm::Cell> config_proposal(long long index, td::Ref<vm::Cell> value) {
+std::array<unsigned char, 32> cell_hash_of(const td::Ref<vm::Cell>& cell) {
+  std::array<unsigned char, 32> out{};
+  if (cell.not_null())
+    std::copy_n(cell->get_hash().as_slice().ubegin(), out.size(), out.begin());
+  return out;
+}
+
+td::Ref<vm::Cell> config_proposal(long long index, td::Ref<vm::Cell> value,
+                                  const std::array<unsigned char, 32>* condition = nullptr) {
   vm::CellBuilder b;
   b.store_long(0xf3, 8).store_long(index, 32);
   expect(b.store_maybe_ref(std::move(value)), "fixture-proposal-value");
-  b.store_long(0, 1);
+  if (condition) {
+    b.store_long(1, 1).store_bytes(td::Slice(reinterpret_cast<const char*>(condition->data()), 32));
+  } else {
+    b.store_long(0, 1);
+  }
   return b.finalize();
 }
 
@@ -803,6 +815,26 @@ std::vector<Case> cases(const td::Ref<vm::Cell>& contract) {
          // again against a later state.
          expect(stored_wins(run.committed_data, proposal) == -1,
                 "a-governance-operation-finalizes-a-completed-proposal");
+       }},
+      // A finalization the acceptance rules refuse changes nothing at all: not
+      // the parameter, not the registry, and not the proposal, which stays
+      // awaiting governance rather than being spent. The proposal here states a
+      // condition the parameter does not currently meet.
+      {"a-refused-finalization-leaves-the-proposal", [=] {
+         auto cells = registry_cells();
+         auto host = registry_host(cells);
+         auto value = vm::CellBuilder().store_long(0x5151, 16).finalize();
+         auto wrong = cell_hash_of(vm::CellBuilder().store_long(0x9999, 16).finalize());
+         auto proposal = config_proposal(17, value, &wrong);
+         auto votes = vote_dictionary(proposal, voter_public(), 255, false);
+         auto run = run_contract(contract, registry_body(cells, proposal), 0, 1000, &host,
+                                 vm::validator_auth_capability, vm::validator_auth_min_version, true, {},
+                                 1000000, true, {}, voter_public(), votes);
+         // Nothing is committed at all, which is what leaves the proposal
+         // where it was: the account is never written, so it still holds the
+         // status marked awaiting governance and a later attempt can use it.
+         expect(run.exit == 53 && !run.committed, "a-refused-finalization-leaves-the-proposal");
+         expect(run.committed_data.is_null(), "a-refused-finalization-leaves-the-proposal");
        }},
       // A proposal that has not completed normal voting is not finalizable: the
       // governing quorum is the second gate, not a way around the first.

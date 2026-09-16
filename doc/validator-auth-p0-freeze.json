@@ -29,7 +29,7 @@
     "doc/validator-auth-p0/transport.schema.json": "ddd45d7d3eb672559efde020af95a0e215146775ec82f8c6847b0f3ab8127584",
     "doc/validator-auth-p0/wire.tl": "a5e10c8e25887cb30440a26a0d8cbcef1473878aeb87438cca1a0f0bc6875c15",
     "doc/validator-auth-p0/wire.tlb": "923650bd74bbbf677a070d1d13d7c12d46944e8bffbfc3a72641093d20d3ce9d",
-    "doc/validator-auth-p0-native-insertions.json": "075a49d5ef10845ea2780222d4534977435ace423f6a0a720a13adb45ce8c82d",
+    "doc/validator-auth-p0-native-insertions.json": "d62c380ea04b3a332114b012686d995afbe39137639c250979f889b418ae6c3d",
     "test/validator-auth-p0/README.md": "a0b0950c4ac702f8be0f34919a50f8e7b13d5d14dda3bd2cc05b4c8ffee31321",
     "test/validator-auth-p0/api.py": "9ec50bf9e19345ef54a8894a3525eba1eed8fb10412b8a3fdc1ed1c5728fb815",
     "test/validator-auth-p0/archive_evidence.py": "22bb392a561068e0fb3905ce7e8df95bab463468cdfe3be884eff19b12481409",
@@ -184,6 +184,15 @@
       "change": "Added the governance finalization branch: a third message reference carries the exact proposal, and the parameter and the registry the operation produced are committed together.",
       "scope": "Only declared additive contract insertions changed. Original contract bytes are unchanged and every insertion remains declared at its original offset; a chain that has not activated reaches the original paths unaltered. No frozen wire, API or profile artifact is touched.",
       "reason": "A configuration-parameter change needs the governing quorum as well as the normal vote, and nothing carried an authorization from the vote to the block that installs the result.",
+      "activation": "Unchanged. No suite is allocated, no network is configured, and the version-16 activation gates and listed approvals remain independent thresholds that this does not satisfy."
+    },
+    {
+      "artifact": "doc/validator-auth-p0-native-insertions.json",
+      "previous_sha256": "075a49d5ef10845ea2780222d4534977435ace423f6a0a720a13adb45ce8c82d",
+      "sha256": "d62c380ea04b3a332114b012686d995afbe39137639c250979f889b418ae6c3d",
+      "change": "Corrected a comment on the finalization branch that described the opposite of what the branch does.",
+      "scope": "Comment text inside one already-declared insertion. No executable line changes, no original contract byte is affected, and every insertion remains declared at its original offset.",
+      "reason": "It claimed the proposal is consumed whether or not the acceptance rules admit the change. A refused finalization throws and commits nothing, so the proposal is left exactly where it was; the comment stated a behaviour the code does not have, which a reader would have relied on.",
       "activation": "Unchanged. No suite is allocated, no network is configured, and the version-16 activation gates and listed approvals remain independent thresholds that this does not satisfy."
     }
   ],

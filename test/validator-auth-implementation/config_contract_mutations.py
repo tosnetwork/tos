@@ -120,7 +120,7 @@ MUTATIONS = [
       "a-completed-vote-installs-nothing-under-governance", "a-terminal-proposal-takes-no-further-votes",
       "a-terminal-proposal-survives-a-tick-tock-scan", "an-inactive-chain-installs-on-the-threshold",
       "a-governance-operation-finalizes-a-completed-proposal", "a-proposal-still-in-voting-is-not-finalizable",
-      "an-unknown-proposal-is-not-finalizable"]),
+      "an-unknown-proposal-is-not-finalizable", "a-refused-finalization-leaves-the-proposal"]),
     ("checkpoint-restaged", "a-registry-update-stores-the-staged-checkpoint", STAGED,
      "    accept_message();\n", [], "() recv_external(slice in_msg) impure {"),
     ("checkpoint-restaged-on-finalization", "a-governance-operation-finalizes-a-completed-proposal",
