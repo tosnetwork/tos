@@ -26,5 +26,5 @@ include!("../../block/src/tests/test_utils.rs");
 include!("./tests/test_common.rs");
 
 #[cfg(test)]
-#[path = "tests/test_p0_validator_config.rs"]
+#[path = "tests/test_validator_auth_config.rs"]
 mod validator_auth_config_tests;

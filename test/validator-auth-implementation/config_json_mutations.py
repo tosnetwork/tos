@@ -65,7 +65,7 @@ def main(args):
      binaries[message['target']['name']]=message['executable']
    assert {'chain_block_json','control_client','service'}<=binaries.keys()
    return binaries
-  def execute(binary):return subprocess.run([binary,'p0_','--nocapture'],capture_output=True,text=True)
+  def execute(binary):return subprocess.run([binary,'validator_auth_','--nocapture'],capture_output=True,text=True)
   def baseline():
    for binary in compile_tests().values():
     result=execute(binary);assert result.returncode==0,result.stdout+result.stderr

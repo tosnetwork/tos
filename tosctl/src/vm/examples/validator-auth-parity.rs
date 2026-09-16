@@ -84,7 +84,7 @@ fn execute(dir: &Path) -> anyhow::Result<()> {
 
 fn main() -> anyhow::Result<()> {
     let args = env::args().collect::<Vec<_>>();
-    anyhow::ensure!(args.len() == 2, "usage: p0-parity fixtures");
+    anyhow::ensure!(args.len() == 2, "usage: validator-auth-parity fixtures");
     let dir = Path::new(&args[1]);
     let count = fs::read_to_string(dir.join("complete"))?.trim().parse::<usize>()?;
     anyhow::ensure!((35..=10000).contains(&count), "incomplete fixture set");

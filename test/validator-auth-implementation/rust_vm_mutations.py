@@ -57,11 +57,11 @@ def main(fixtures, out):
 
         def run(text):
             source.write_text(text)
-            built = subprocess.run(['cargo', 'build', '--offline', '--manifest-path', str(manifest), '--example', 'p0-parity'],
+            built = subprocess.run(['cargo', 'build', '--offline', '--manifest-path', str(manifest), '--example', 'validator-auth-parity'],
                                    capture_output=True, text=True)
             if built.returncode:
                 raise RuntimeError('native Rust mutation build failed: ' + built.stderr)
-            return subprocess.run([str(crate / 'target/debug/examples/p0-parity'), str(fixtures.resolve())],
+            return subprocess.run([str(crate / 'target/debug/examples/validator-auth-parity'), str(fixtures.resolve())],
                                   capture_output=True, text=True)
 
         try:
