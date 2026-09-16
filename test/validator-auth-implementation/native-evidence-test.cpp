@@ -245,6 +245,19 @@ int main(int argc, char** argv) {
     obj = value(object_value(4, raw), "fixture-multichunk");
     a.administration_.push_back({h(1), h(2), obj});
     run(wrap(a, attachments(obj, raw)), "evidence-multiple-chunks", "-");
+
+    // An owner proof big enough to be carried as chunks. Every owner proof above
+    // is inline, so the chunk reader is never asked for one, and the path that
+    // matters here is untested: with the chunks present the reader resolves the
+    // proof, and with them removed the failure must name the missing chunk
+    // rather than the proof. Losing storage and being handed a malformed proof
+    // are different accusations, and the reader keeps them apart on purpose.
+    a = {};
+    Bytes owner_raw(inline_bytes + 1, 0x5a);
+    auto owner_object = value(object_value(5, owner_raw), "fixture-owner-proof");
+    a.owner_.push_back({h(1), h(2), -1, h(3), {anchor, 1, h(4), h(5), owner_object}});
+    run(wrap(a, attachments(owner_object, owner_raw)), "evidence-chunked-owner-proof", "-", 0, true);
+    run(wrap(a, none), "evidence-owner-proof-missing-chunk", "evidence-missing-chunk", 0, true);
     for (const char* name : {"state", "head", "chain"})
       write(out / name, read(input / "0" / name));
     write(out / "anchor", value(encode(anchor), "fixture-anchor-output"));

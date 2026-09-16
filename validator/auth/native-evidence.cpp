@@ -35,6 +35,12 @@ std::size_t declared(td::Ref<vm::Cell> root, std::size_t limit) {
 ObjectReader NativeEvidence::reader() const {
   return ObjectReader([chunks = chunks_](const ObjectRef& ref, std::uint8_t index) -> Result<Bytes> {
     auto it = chunks->find(key(ref.object_id_, index));
+    // Admission already required every declared chunk to be present, so a
+    // resolve that misses one would mean a reference the manifest never
+    // declared. No case in the evidence suite reaches this: relabelling it
+    // leaves all of them passing. It stays because removing a refusal whose
+    // condition is merely believed unreachable is how the belief stops being
+    // checked, but it is not a guard anything currently proves.
     if (it == chunks->end())
       return Error{"evidence-missing-chunk"};
     return it->second;

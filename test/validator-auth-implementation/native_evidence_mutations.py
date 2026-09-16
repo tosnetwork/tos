@@ -17,6 +17,10 @@ CPP=[
  ('evidence-dictionary','evidence-nonminimal-dictionary','need(supplied_root.is_null() == canonical_root.is_null() && (supplied_root.is_null() || supplied_root->get_hash() == canonical_root->get_hash()), "evidence-dictionary");',''),
  ('evidence-content','evidence-chunk-digest','take(reader.resolve(*v, kind));','(void)v;'),
  ('evidence-owner-anchor','evidence-anchor-file','if (actual.value() != expected) return Error{"evidence-owner-anchor"};',''),
+ # Admission requires every declared chunk before anything reads one, and it
+ # says so as a missing chunk. Calling that a malformed proof instead would
+ # report storage the sender never supplied as input the sender got wrong.
+ ('evidence-missing-chunk-provenance','evidence-missing-chunk','need(cells.size() == expected.size(), "evidence-missing-chunk");','need(cells.size() == expected.size(), "proof-boc");'),
 ]
 RUST=[
  ('evidence-tag','evidence-tag','native(s.get_next_u32())? == NATIVE_EVIDENCE_TAG','{ native(s.get_next_u32())?; true }'),
