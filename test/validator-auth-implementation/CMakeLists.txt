@@ -581,6 +581,10 @@ add_executable(test-p0-ext-message-ingress EXCLUDE_FROM_ALL ext-message-ingress-
 target_link_libraries(test-p0-ext-message-ingress PRIVATE tos_validator tos_validator_auth_native tos_crypto)
 set_target_properties(test-p0-ext-message-ingress PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 
+add_executable(test-p0-election-e2e election-e2e-test.cpp)
+target_link_libraries(test-p0-election-e2e PRIVATE tos_validator_auth_native tos_crypto)
+set_target_properties(test-p0-election-e2e PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+
 add_executable(test-p0-host-purpose host-purpose-test.cpp)
 target_link_libraries(test-p0-host-purpose PRIVATE tos_validator_auth_native)
 set_target_properties(test-p0-host-purpose PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)

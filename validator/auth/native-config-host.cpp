@@ -45,9 +45,18 @@ td::Ref<vm::Cell> NativeConfigHost::apply(td::Ref<vm::Cell> update, td::Ref<vm::
   if (!next.ok())
     refuse_host("native update refused");
 
-  auto encoded = next.value().state().checkpoint();
+  // The registry state, not the checkpoint beside it. The contract installs
+  // exactly what this returns as configuration parameter 46, and every reader
+  // of that parameter -- the next block's registry, finalized history,
+  // committee derivation, owner proofs, the chain context -- decodes the state
+  // cell. A checkpoint there would be refused by all of them at once, and the
+  // registry would become unreadable one block after the first update.
+  //
+  // The checkpoint has its own home: the configuration account's data, which
+  // the state instruction returns and native commit installs.
+  auto encoded = next.value().state().encode_cell();
   if (!encoded.ok())
-    refuse_host("native registry checkpoint");
+    refuse_host("native registry state");
 
   auto after = next.value().state().remaining();
   charge(as_gas(consumed(before, after, gas_per_entry_, gas_per_byte_)));

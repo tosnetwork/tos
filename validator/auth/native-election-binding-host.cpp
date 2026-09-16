@@ -24,12 +24,14 @@ td::Ref<vm::Cell> NativeElectionBindingHost::bind(td::Ref<vm::Cell> elected, td:
     refuse_host("native binding operand");
 
   auto before = work_remaining_;
-  auto checkpoint = accepted_.state().checkpoint();
-  if (!checkpoint.ok())
-    refuse_host("native registry checkpoint");
+  // The registry state cell, which is what a view decodes. The checkpoint
+  // beside it is the account's own persistence shape and is refused here.
+  auto encoded = accepted_.state().encode_cell();
+  if (!encoded.ok())
+    refuse_host("native registry state");
   // Opened with what this transaction has left, not with a fresh allowance, so
   // a second binding starts where the first stopped.
-  auto registry = RegistryView::open(checkpoint.value(), coordinate_, work_remaining_);
+  auto registry = RegistryView::open(encoded.value(), coordinate_, work_remaining_);
   if (!registry.ok())
     // Carrying the cause rather than replacing it: "unreadable" alone cannot
     // distinguish a malformed checkpoint from a coordinate the registry has no

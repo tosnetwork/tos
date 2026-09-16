@@ -495,7 +495,19 @@ int main(int argc, char** argv) {
       check(applied.not_null() && host.updates() == 1, "host-apply");
       auto staged_after = value(host.staged().state().checkpoint(), "host-staged-after")->get_hash();
       check(staged_after != staged_before, "host-apply-advances-prefix");
-      check(applied->get_hash() == staged_after, "host-apply-returns-staged");
+      // The registry state, which is what the contract installs as
+      // configuration parameter 46 and what every reader of that parameter
+      // decodes. This once compared against the checkpoint instead, and nothing
+      // noticed: the case that pins what parameter 46 holds runs against a
+      // stand-in host, so the two descriptions never met.
+      auto encoded = value(host.staged().state().encode_cell(), "host-staged-state");
+      check(applied->get_hash() == encoded->get_hash(), "host-apply-returns-staged");
+      // And the checkpoint the state instruction hands back commits to exactly
+      // that cell -- restoring an account binds the two by hash, so a host that
+      // returned one of them and staged the other would be refused there.
+      auto restored = NativeRegistry::restore(value(host.staged().state().checkpoint(), "host-staged-checkpoint"),
+                                              p0_owner_fixture::hash(encoded), host.staged().state().coordinate());
+      check(restored.ok(), "host-apply-returns-staged");
 
       // A refused update must throw and must not move the prefix.
       auto rejected = base.updates[0].first;
