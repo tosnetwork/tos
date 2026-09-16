@@ -45,8 +45,15 @@ Result<RegistryAdmissionInputs> gather_registry_admission_inputs(
 // A refusal is never an error to report upward: it means this block does not
 // admit this message, and a later one may. The distinction the caller needs is
 // only whether an authority came back.
-Result<std::unique_ptr<NativeConfigTransaction>> admit_registry_message(const RegistryAdmissionInputs&,
-                                                                        const NativeAnchorCache&);
+// Admits a registry update, or refuses. Everything it decides from is the
+// parent state and the message: the finality an approval relies on is carried
+// by that message and authenticated against this state's own history index.
+//
+// There is deliberately no archive, cache or resolver in this signature. A
+// producer and a validator holding the same block must reach the same answer,
+// and anything node-local here would make that depend on what one of them
+// happened to have resolved.
+Result<std::unique_ptr<NativeConfigTransaction>> admit_registry_message(const RegistryAdmissionInputs&);
 
 // What the update declares it will read, so a caller that deferred for missing
 // history knows what to resolve before trying again. This reads nothing from

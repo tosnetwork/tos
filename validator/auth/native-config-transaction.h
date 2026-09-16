@@ -7,17 +7,17 @@
 namespace tos::auth {
 // Assemble the authority a native configuration transaction executes under.
 //
-// Everything this needs is available where a block is collated except one
-// thing: authenticating an owner approval requires the original bytes of a past
-// masterchain block, and that is an archive read. It is therefore the only
-// injected seam here. Every other input -- the registry to advance, the
-// committee that governs it, the chain this node believes it is on, and the
+// The finalized history is injected rather than read here, because what may be
+// served differs by caller: consensus admission supplies only the anchors the
+// message itself witnessed, so that a producer and a validator holding the same
+// block reach the same answer. Every other input -- the registry to advance,
+// the committee that governs it, the chain this node believes it is on, and the
 // evidence the transaction carries -- is derived synchronously from values the
 // collator already holds.
 //
-// The owner path is also the only consumer of that seam, and it refuses any
-// anchor at or after the block being built, so a transaction cannot authorise
-// itself with state it is in the middle of producing.
+// The owner path is the only consumer of that source, and it refuses any anchor
+// at or after the block being built, so a transaction cannot authorise itself
+// with state it is in the middle of producing.
 struct NativeConfigTransactionInputs {
   td::Ref<vm::Cell> masterchain_state;  // the parent state this block extends
   Anchor parent;                        // its anchor, bound to that state

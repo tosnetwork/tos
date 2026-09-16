@@ -842,17 +842,19 @@ jobs:
           python3 test/validator-auth-implementation/host_injection_mutations.py \
             --out artifacts/host-injection-mutations
           git diff --exit-code
-      - name: Admit a registry message only with its history resolved
+      - name: Admit a registry message only against the witness it carries
         run: |
           set -euo pipefail
           test -x build-p0/test/validator-auth-implementation/test-p0-registry-admission
           build-p0/test/validator-auth-implementation/test-p0-registry-admission \
-            artifacts/committee-fixtures | tee artifacts/registry-admission.txt
+            artifacts/committee-fixtures artifacts/owner-transactions-mc | tee artifacts/registry-admission.txt
           ASAN_OPTIONS=detect_leaks=1:detect_stack_use_after_return=1 UBSAN_OPTIONS=halt_on_error=1 \
             build-p0-sanitized/test/validator-auth-implementation/test-p0-registry-admission \
-            artifacts/committee-fixtures | tee artifacts/registry-admission-sanitized.txt
+            artifacts/committee-fixtures artifacts/owner-transactions-mc | tee artifacts/registry-admission-sanitized.txt
           python3 test/validator-auth-implementation/registry_admission_mutations.py \
-            --fixtures artifacts/committee-fixtures --out artifacts/registry-admission-mutations
+            --fixtures artifacts/committee-fixtures --owner artifacts/owner-transactions-mc \
+            --out artifacts/registry-admission-mutations
+          python3 test/validator-auth-implementation/check_consensus_admission_boundary.py
           git diff --exit-code
 
       - name: Compile native guard removals and require assertion failures

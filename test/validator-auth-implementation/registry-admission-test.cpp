@@ -15,11 +15,10 @@
 #include "validator/auth/native-registry-admission.h"
 #include "vm/boc.h"
 
-#include "native-config-context-fixture.h"
-#include "owner-fixture.h"
+#include "owner-history-fixture.h"
 
 using namespace p0_owner_fixture;
-namespace context_fixture = p0_config_context_fixture;
+using namespace p0_owner_history_fixture;
 
 namespace {
 struct AssertionFailure : std::runtime_error {
@@ -75,11 +74,11 @@ using Test = std::pair<std::string, std::function<void()>>;
 
 int main(int argc, char** argv) {
   try {
-    if (argc < 2 || argc > 3) {
-      std::cerr << "USAGE: test-p0-registry-admission FIXTURES [case-name|--list|--exclude=case]\n";
+    if (argc < 3 || argc > 4) {
+      std::cerr << "USAGE: test-p0-registry-admission FIXTURES OWNER-INPUTS [case-name|--list|--exclude=case]\n";
       return 2;
     }
-    std::filesystem::path fixtures(argv[1]);
+    std::filesystem::path fixtures(argv[1]), owner_inputs(argv[2]);
 
     std::uint32_t case_wc = 0, case_cc = 0;
     std::uint64_t case_shard = 0;
@@ -99,11 +98,11 @@ int main(int argc, char** argv) {
     auto raw_state = read(selected_fixture.string() + ".boc");
     auto parsed = vm::std_boc_deserialize(td::Slice(reinterpret_cast<const char*>(raw_state.data()), raw_state.size()));
     check(parsed.is_ok(), "state-boc");
-    auto context = context_fixture::make(parsed.move_as_ok());
-    const auto configuration = context.address;
-    const tos::BlockIdExt parent_block{{tos::masterchainId, tos::shardIdAll, context.head.seqno_},
-                                       td::Bits256(td::ConstBitPtr(context.head.root_.data())),
-                                       td::Bits256(td::ConstBitPtr(context.head.file_.data()))};
+    auto history = make_with_owner_history(parsed.move_as_ok(), owner_inputs);
+    const auto configuration = history.address;
+    const tos::BlockIdExt parent_block{{tos::masterchainId, tos::shardIdAll, history.head.seqno_},
+                                       td::Bits256(td::ConstBitPtr(history.head.root_.data())),
+                                       td::Bits256(td::ConstBitPtr(history.head.file_.data()))};
 
     RegistryAdmissionInputs inputs;
     inputs.configuration_account = configuration;
@@ -111,26 +110,29 @@ int main(int argc, char** argv) {
         external(configuration, registry_body(vm::CellBuilder().store_long(1, 8).finalize(), evidence_without_owner()));
     inputs.parent_block = parent_block;
     inputs.catchain_source = case_cc;
-    inputs.transaction.masterchain_state = context.root;
-    inputs.transaction.parent = context.head;
-    inputs.transaction.chain = context.chain;
+    inputs.transaction.masterchain_state = history.root;
+    inputs.transaction.parent = history.head;
+    inputs.transaction.chain = history.chain;
     inputs.transaction.shard = {static_cast<tos::WorkchainId>(case_wc), case_shard};
     inputs.transaction.catchain = case_cc;
-    inputs.transaction.inclusion = context.head.seqno_ + 1;
+    inputs.transaction.inclusion = history.head.seqno_ + 1;
 
-    auto deferred_input = [&]() {
+    // An update approved by an owner, carrying the anchor it declares and the
+    // witness offered for it. Neither is invented here: both are produced from
+    // a block the parent state's index actually holds, so a case that changes
+    // one of them changes exactly one thing.
+    auto approved_by_owner = [&](const Anchor& declared, td::Ref<vm::Cell> witness) {
       Authorizations owned;
       OwnerAuth owner;
-      const std::uint32_t owner_at = context.head.seqno_;
-      owner.proof_.anchor_ = Anchor{owner_at, h(11), h(12), h(13)};
+      owner.proof_.anchor_ = declared;
       owner.proof_.kind_ = 1;
-      owner.proof_.proof_ = value(object_value(5, Bytes{1, 2, 3, 4}), "deferred-proof-object");
+      owner.proof_.proof_ = value(object_value(5, Bytes{1, 2, 3, 4}), "owner-proof-object");
       owned.owner_.push_back(owner);
-      auto encoded = value(encode(owned), "deferred-authorizations");
-      auto packed = value(pack_bytes(encoded), "deferred-packed");
+      auto encoded = value(encode(owned), "owner-authorizations");
+      auto packed = value(pack_bytes(encoded), "owner-packed");
       vm::CellBuilder b;
       b.store_long(native_evidence_tag, 32).store_long(1, 16).store_long(0, 1);
-      b.store_ref(std::move(packed)).store_ref(vm::CellBuilder().finalize());
+      b.store_ref(std::move(packed)).store_ref(std::move(witness));
       auto result = inputs;
       result.message =
           external(configuration, registry_body(vm::CellBuilder().store_long(1, 8).finalize(), b.finalize()));
@@ -141,18 +143,16 @@ int main(int argc, char** argv) {
     auto add = [&](std::string name, std::function<void()> fn) { tests.emplace_back(std::move(name), std::move(fn)); };
 
     add("complete-input-produces-an-authority", [&] {
-      NativeAnchorCache cache;
-      auto assembled = admit_registry_message(inputs, cache);
+      auto assembled = admit_registry_message(inputs);
       require(assembled.ok() && assembled.value() != nullptr, "complete-input-produces-an-authority");
       assembled.value()->host().checkpoints();
     });
     add("collator-gathering-produces-an-authority", [&] {
-      NativeAnchorCache cache;
       auto gathered = gather_registry_admission_inputs(
-          inputs.message, configuration, context.root, parent_block, parent_block, context.chain,
-          {static_cast<tos::WorkchainId>(case_wc), case_shard}, case_cc, case_cc, context.head.seqno_ + 1);
+          inputs.message, configuration, history.root, parent_block, parent_block, history.chain,
+          {static_cast<tos::WorkchainId>(case_wc), case_shard}, case_cc, case_cc, history.head.seqno_ + 1);
       require(gathered.ok(), "collator-gathering-produces-an-authority");
-      auto assembled = admit_registry_message(gathered.value(), cache);
+      auto assembled = admit_registry_message(gathered.value());
       require(assembled.ok() && assembled.value() != nullptr, "collator-gathering-produces-an-authority");
       assembled.value()->host().checkpoints();
     });
@@ -172,18 +172,17 @@ int main(int argc, char** argv) {
     // ever introduced, this case starts failing, and that is the signal to
     // replace it with a guard.
     add("sources-that-are-wrong-together-are-not-caught", [&] {
-      NativeAnchorCache cache;
       auto gathered = gather_registry_admission_inputs(
-          inputs.message, configuration, context.root, parent_block, parent_block, context.chain,
-          {static_cast<tos::WorkchainId>(case_wc), case_shard}, case_cc ^ 1u, case_cc ^ 1u, context.head.seqno_ + 1);
+          inputs.message, configuration, history.root, parent_block, parent_block, history.chain,
+          {static_cast<tos::WorkchainId>(case_wc), case_shard}, case_cc ^ 1u, case_cc ^ 1u, history.head.seqno_ + 1);
       require(gathered.ok(), "sources-that-are-wrong-together-are-not-caught");
-      auto assembled = admit_registry_message(gathered.value(), cache);
+      auto assembled = admit_registry_message(gathered.value());
       require(assembled.ok() && assembled.value() != nullptr, "sources-that-are-wrong-together-are-not-caught");
     });
     add("wrong-catchain-source-is-refused", [&] {
       auto gathered = gather_registry_admission_inputs(
-          inputs.message, configuration, context.root, parent_block, parent_block, context.chain,
-          {static_cast<tos::WorkchainId>(case_wc), case_shard}, case_cc, case_cc ^ 1u, context.head.seqno_ + 1);
+          inputs.message, configuration, history.root, parent_block, parent_block, history.chain,
+          {static_cast<tos::WorkchainId>(case_wc), case_shard}, case_cc, case_cc ^ 1u, history.head.seqno_ + 1);
       refuses(gathered, "registry-admission-catchain-source", "wrong-catchain-source-is-refused");
     });
     add("wrong-parent-root-source-is-refused", [&] {
@@ -191,8 +190,8 @@ int main(int argc, char** argv) {
       const auto other_root = h(773);
       wrong_parent.root_hash = td::Bits256(td::ConstBitPtr(other_root.data()));
       auto gathered = gather_registry_admission_inputs(
-          inputs.message, configuration, context.root, parent_block, wrong_parent, context.chain,
-          {static_cast<tos::WorkchainId>(case_wc), case_shard}, case_cc, case_cc, context.head.seqno_ + 1);
+          inputs.message, configuration, history.root, parent_block, wrong_parent, history.chain,
+          {static_cast<tos::WorkchainId>(case_wc), case_shard}, case_cc, case_cc, history.head.seqno_ + 1);
       refuses(gathered, "registry-admission-parent-source", "wrong-parent-root-source-is-refused");
     });
     add("wrong-parent-file-source-is-refused", [&] {
@@ -200,120 +199,152 @@ int main(int argc, char** argv) {
       const auto other_file = h(774);
       wrong_parent.file_hash = td::Bits256(td::ConstBitPtr(other_file.data()));
       auto gathered = gather_registry_admission_inputs(
-          inputs.message, configuration, context.root, parent_block, wrong_parent, context.chain,
-          {static_cast<tos::WorkchainId>(case_wc), case_shard}, case_cc, case_cc, context.head.seqno_ + 1);
+          inputs.message, configuration, history.root, parent_block, wrong_parent, history.chain,
+          {static_cast<tos::WorkchainId>(case_wc), case_shard}, case_cc, case_cc, history.head.seqno_ + 1);
       refuses(gathered, "registry-admission-parent-source", "wrong-parent-file-source-is-refused");
     });
     add("gathered-catchain-must-match-source", [&] {
-      NativeAnchorCache cache;
       auto wrong = inputs;
       wrong.catchain_source ^= 1u;
-      refuses(admit_registry_message(wrong, cache), "registry-admission-catchain-input",
+      refuses(admit_registry_message(wrong), "registry-admission-catchain-input",
               "gathered-catchain-must-match-source");
     });
     add("gathered-parent-root-must-match-source", [&] {
-      NativeAnchorCache cache;
       auto wrong = inputs;
       const auto other_root = h(771);
       wrong.parent_block.root_hash = td::Bits256(td::ConstBitPtr(other_root.data()));
-      refuses(admit_registry_message(wrong, cache), "registry-admission-parent-input",
+      refuses(admit_registry_message(wrong), "registry-admission-parent-input",
               "gathered-parent-root-must-match-source");
     });
     add("gathered-parent-file-must-match-source", [&] {
-      NativeAnchorCache cache;
       auto wrong = inputs;
       const auto other_file = h(772);
       wrong.parent_block.file_hash = td::Bits256(td::ConstBitPtr(other_file.data()));
-      refuses(admit_registry_message(wrong, cache), "registry-admission-parent-input",
+      refuses(admit_registry_message(wrong), "registry-admission-parent-input",
               "gathered-parent-file-must-match-source");
     });
+    // A producer and a validator must reach the same answer from the same
+    // block. This one admits with an owner approval while the only archive
+    // reader admission can construct is one that refuses every read: if any
+    // part of the path consulted an archive rather than the witness, this case
+    // would come back "registry-admission-archive-read" instead of an
+    // authority. That refusal is the read counter -- there is deliberately no
+    // reader in the signature for a test to count calls on.
+    add("an-authenticated-witness-needs-no-archive", [&] {
+      auto approved = approved_by_owner(history.owner.anchor, history.owner.witness);
+      auto admitted = admit_registry_message(approved);
+      require(admitted.ok() && admitted.value() != nullptr, "an-authenticated-witness-needs-no-archive");
+      auto served = admitted.value()->history().finalized_anchor(history.owner.at);
+      require(served.ok() && served.value() == history.owner.anchor, "an-authenticated-witness-needs-no-archive");
+    });
+    // A witness is evidence for one coordinate, not for finality in general.
+    // This offers a structurally perfect witness for a real, indexed block
+    // while declaring the anchor of the block beside it.
+    add("a-witness-for-another-block-is-refused", [&] {
+      auto approved = approved_by_owner(history.other.anchor, history.owner.witness);
+      refuses(admit_registry_message(approved), "header-root", "a-witness-for-another-block-is-refused");
+    });
+    add("a-malformed-witness-is-refused", [&] {
+      auto approved = approved_by_owner(history.owner.anchor, history.owner.block);
+      refuses(admit_registry_message(approved), "header-surface", "a-malformed-witness-is-refused");
+    });
+    // The declared anchor is compared whole. Its resulting state is the field
+    // nothing else in the path would notice: the index binds root and file
+    // hashes, and a wrong state hash would otherwise travel into execution as
+    // the anchor an approval is measured against.
+    add("an-anchor-differing-only-in-state-is-refused", [&] {
+      auto declared = history.owner.anchor;
+      declared.state_ = h(999);
+      auto approved = approved_by_owner(declared, history.owner.witness);
+      refuses(admit_registry_message(approved), "evidence-owner-anchor",
+              "an-anchor-differing-only-in-state-is-refused");
+    });
+    // No block may authorise itself with state it is in the middle of
+    // producing, so an approval naming the block being built is refused before
+    // any witness is examined.
+    add("an-approval-cannot-name-the-block-being-built", [&] {
+      auto declared = history.owner.anchor;
+      declared.seqno_ = inputs.transaction.inclusion;
+      auto approved = approved_by_owner(declared, history.owner.witness);
+      refuses(admit_registry_message(approved), "owner-finality-coordinate",
+              "an-approval-cannot-name-the-block-being-built");
+    });
+    // Execution may reach exactly the history this message witnessed. The
+    // parent is the tempting extra: admission holds its anchor already and
+    // serving it would cost nothing, which is why the absence has to be a case.
+    add("only-the-witnessed-coordinate-is-served", [&] {
+      auto approved = approved_by_owner(history.owner.anchor, history.owner.witness);
+      auto admitted = admit_registry_message(approved);
+      require(admitted.ok() && admitted.value() != nullptr, "only-the-witnessed-coordinate-is-served");
+      for (std::uint32_t at : {history.other.at, history.head.seqno_})
+        refuses(admitted.value()->history().finalized_anchor(at), "finalized-anchor-unavailable",
+                "only-the-witnessed-coordinate-is-served");
+    });
     add("history-outlives-the-call-that-assembled-it", [&] {
-      // The history is built inside admission and the caller never holds a
-      // reference to it. Owner verification reads it during VM execution, after
-      // this call has returned, so the only question that matters is whether it
-      // is still there -- and the only way to ask is to read it here, where a
-      // reference to a destroyed local is a read of freed memory rather than a
-      // wrong answer.
-      auto deferred = deferred_input();
-      NativeAnchorCache resolved;
-      const auto owner_at = context.head.seqno_;
-      const Anchor expected{owner_at, h(11), h(12), h(13)};
-      require(resolved.admit(owner_at, expected).ok(), "history-outlives-the-call-that-assembled-it");
+      // The witnessed history is built inside admission and the caller never
+      // holds a reference to it. Owner verification reads it during VM
+      // execution, after this call has returned, so the only question that
+      // matters is whether it is still there -- and the only way to ask is to
+      // read it here, where a reference to a destroyed local is a read of freed
+      // memory rather than a wrong answer.
+      auto approved = approved_by_owner(history.owner.anchor, history.owner.witness);
       std::unique_ptr<NativeConfigTransaction> authority;
       {
-        auto admitted = admit_registry_message(deferred, resolved);
+        auto admitted = admit_registry_message(approved);
         require(admitted.ok() && admitted.value() != nullptr, "history-outlives-the-call-that-assembled-it");
         authority = std::move(admitted.value());
       }
-      auto served = authority->history().finalized_anchor(owner_at);
-      require(served.ok() && served.value() == expected, "history-outlives-the-call-that-assembled-it");
+      auto served = authority->history().finalized_anchor(history.owner.at);
+      require(served.ok() && served.value() == history.owner.anchor, "history-outlives-the-call-that-assembled-it");
     });
     add("gathered-account-must-match-parent-state", [&] {
-      NativeAnchorCache cache;
       auto wrong = inputs;
       wrong.configuration_account = account(77);
-      refuses(admit_registry_message(wrong, cache), "registry-admission-configuration-input",
+      refuses(admit_registry_message(wrong), "registry-admission-configuration-input",
               "gathered-account-must-match-parent-state");
     });
     add("other-account-not-admitted", [&] {
-      NativeAnchorCache cache;
       auto elsewhere = inputs;
       elsewhere.message =
           external(account(2), registry_body(vm::CellBuilder().store_long(1, 8).finalize(), evidence_without_owner()));
-      refuses(admit_registry_message(elsewhere, cache), "registry-admission-not-configuration",
-              "other-account-not-admitted");
+      refuses(admit_registry_message(elsewhere), "registry-admission-not-configuration", "other-account-not-admitted");
     });
     add("non-masterchain-not-admitted", [&] {
-      NativeAnchorCache cache;
       auto shard_chain = inputs;
       shard_chain.message = external(
           configuration, registry_body(vm::CellBuilder().store_long(1, 8).finalize(), evidence_without_owner()), 0);
-      refuses(admit_registry_message(shard_chain, cache), "registry-admission-not-configuration",
+      refuses(admit_registry_message(shard_chain), "registry-admission-not-configuration",
               "non-masterchain-not-admitted");
     });
     add("other-action-not-admitted", [&] {
-      NativeAnchorCache cache;
       auto other_action = inputs;
       other_action.message = external(configuration, registry_body(vm::CellBuilder().store_long(1, 8).finalize(),
                                                                    evidence_without_owner(), 0x43665021));
-      refuses(admit_registry_message(other_action, cache), "registry-admission-not-registry",
-              "other-action-not-admitted");
-    });
-    add("unresolved-history-defers", [&] {
-      NativeAnchorCache cache;
-      auto deferred = deferred_input();
-      auto required = registry_message_requirements(deferred.message, deferred.transaction.inclusion);
-      require(required.ok() && required.value().size() == 1, "unresolved-history-defers");
-      refuses(admit_registry_message(deferred, cache), "registry-admission-deferred", "unresolved-history-defers");
-    });
-    add("resolved-history-admits", [&] {
-      auto deferred = deferred_input();
-      NativeAnchorCache resolved;
-      const auto owner_at = context.head.seqno_;
-      require(resolved.admit(owner_at, Anchor{owner_at, h(11), h(12), h(13)}).ok(), "resolved-history-admits");
-      auto admitted = admit_registry_message(deferred, resolved);
-      require(admitted.ok() && admitted.value() != nullptr, "resolved-history-admits");
+      refuses(admit_registry_message(other_action), "registry-admission-not-registry", "other-action-not-admitted");
     });
     add("missing-account-is-an-input-error", [&] {
-      NativeAnchorCache cache;
       auto unfilled = inputs;
       unfilled.configuration_account = Hash{};
-      refuses(admit_registry_message(unfilled, cache), "registry-admission-input", "missing-account-is-an-input-error");
+      refuses(admit_registry_message(unfilled), "registry-admission-input", "missing-account-is-an-input-error");
     });
     add("requirements-are-reportable", [&] {
       auto required = registry_message_requirements(inputs.message, inputs.transaction.inclusion);
       require(required.ok() && required.value().empty(), "requirements-are-reportable");
+      auto approved = approved_by_owner(history.owner.anchor, history.owner.witness);
+      auto named = registry_message_requirements(approved.message, approved.transaction.inclusion);
+      require(named.ok() && named.value() == std::vector<std::uint32_t>{history.owner.at},
+              "requirements-are-reportable");
     });
 
-    if (argc == 3 && std::string_view(argv[2]) == "--list") {
+    if (argc == 4 && std::string_view(argv[3]) == "--list") {
       for (const auto& [name, _] : tests)
         std::cout << name << '\n';
       return 0;
     }
     std::string selected;
     std::string excluded;
-    if (argc == 3) {
-      std::string argument(argv[2]);
+    if (argc == 4) {
+      std::string argument(argv[3]);
       constexpr std::string_view prefix = "--exclude=";
       if (argument.starts_with(prefix))
         excluded = argument.substr(prefix.size());

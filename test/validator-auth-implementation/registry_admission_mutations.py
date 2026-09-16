@@ -21,6 +21,9 @@ SANITIZED = Path("build-p0-sanitized/test/validator-auth-implementation/test-p0-
 # not own is read after the call that built it returned, and reading freed memory
 # usually still returns the bytes that were there. The detector for that is the
 # sanitizer, so the mutation that removes ownership is built and run under it.
+# Every case that reads the served history after admission returned is a
+# companion of those two, which is why they name more than the case they are
+# filed under.
 SANITIZER_ENVIRONMENT = {
     "ASAN_OPTIONS": "detect_leaks=1:detect_stack_use_after_return=1",
     "UBSAN_OPTIONS": "halt_on_error=1",
@@ -38,13 +41,14 @@ TASK1_GUARDS = {
 
 MUTATIONS = [
     ("history-promoted", "history-outlives-the-call-that-assembled-it",
-     '  auto owned_history = std::make_shared<PrefetchedAnchorSource>(std::move(history.value()));',
-     '  std::shared_ptr<PrefetchedAnchorSource> owned_history(&history.value(), [](PrefetchedAnchorSource*) {});',
-     True, [], SOURCE),
+     '  auto owned_history = std::make_shared<PrefetchedAnchorSource>(std::move(witnessed));',
+     '  PrefetchedAnchorSource borrowed(std::move(witnessed));\n'
+     '  std::shared_ptr<PrefetchedAnchorSource> owned_history(&borrowed, [](PrefetchedAnchorSource*) {});',
+     True, ["an-authenticated-witness-needs-no-archive", "only-the-witnessed-coordinate-is-served"], SOURCE),
     ("history-retained", "history-outlives-the-call-that-assembled-it",
      '    , history_(std::move(history))',
      '    , history_(std::shared_ptr<const FinalizedAnchorSource>(history.get(), [](const FinalizedAnchorSource*) {}))',
-     True, [], ASSEMBLER),
+     True, ["an-authenticated-witness-needs-no-archive", "only-the-witnessed-coordinate-is-served"], ASSEMBLER),
 
     # The collator supplies these facts. Mutating the copy step simulates the
     # integration bug this seam exists to expose: admission must refuse rather
@@ -98,13 +102,27 @@ MUTATIONS = [
      '  if (destination.fetch_long(8) != tos::masterchainId)\n'
      '    return Error{"registry-admission-not-configuration"};',
      '  destination.fetch_long(8);'),
-    ("deferral", "unresolved-history-defers",
-     '  auto history = cache.source(required.value());\n'
-     '  if (!history.ok())\n'
-     '    return Error{"registry-admission-deferred"};',
-     '  auto history = cache.source(required.value());\n'
-     '  if (!history.ok())\n'
-     '    return Error{"registry-admission-not-registry"};'),
+    # The one property that cannot be observed as a wrong answer from outside:
+    # whether this path reads an archive. There is no reader in the signature to
+    # count calls on, by design. So the mutation reaches for the archive the only
+    # way the code still can -- resolving the coordinate instead of
+    # authenticating the witness -- and the refusing reader admission constructs
+    # turns that into a named refusal. Every case that admits with an owner
+    # approval joins here, which is why so many are declared.
+    ("witness-authenticated", "an-authenticated-witness-needs-no-archive",
+     '    auto authenticated = recognized.value().evidence.authenticate_owner(index.value());',
+     '    auto authenticated = index.value().finalized_anchor(\n'
+     '        recognized.value().evidence.authorizations().owner_[0].proof_.anchor_.seqno_);',
+     False, ["a-witness-for-another-block-is-refused", "a-malformed-witness-is-refused",
+             "an-anchor-differing-only-in-state-is-refused", "only-the-witnessed-coordinate-is-served",
+             "history-outlives-the-call-that-assembled-it"]),
+    # Serving one anchor more than the message witnessed costs nothing and
+    # breaks nothing visible -- the parent's anchor is already in hand. That is
+    # exactly why it needs a case that dies when it is added.
+    ("witness-source-narrow", "only-the-witnessed-coordinate-is-served",
+     '    witnessed.emplace(authenticated.value().seqno_, authenticated.value());',
+     '    witnessed.emplace(authenticated.value().seqno_, authenticated.value());\n'
+     '    witnessed.emplace(inputs.transaction.parent.seqno_, inputs.transaction.parent);'),
     # Removing the returned authority breaks every case that needs one. The
     # companions are declared rather than the rule relaxed: a mutation that
     # breaks something it did not name is a mutation nobody understood.
@@ -112,8 +130,9 @@ MUTATIONS = [
      '  return NativeConfigTransaction::open(inputs.transaction, recognized.value().message.evidence,\n'
      '                                       std::move(owned_history), uncharged);',
      '  return Error{"registry-admission-not-registry"};',
-     False, ["collator-gathering-produces-an-authority",
-             "history-outlives-the-call-that-assembled-it", "resolved-history-admits", "sources-that-are-wrong-together-are-not-caught"]),
+     False, ["collator-gathering-produces-an-authority", "history-outlives-the-call-that-assembled-it",
+             "an-authenticated-witness-needs-no-archive", "only-the-witnessed-coordinate-is-served",
+             "sources-that-are-wrong-together-are-not-caught"]),
 ]
 
 
@@ -130,9 +149,9 @@ def build(sanitized: bool = False) -> bool:
     return invoke(["cmake", "--build", tree, "--target", "test-p0-registry-admission", "-j48"]).returncode == 0
 
 
-def run(fixtures: Path, selector: str | None = None,
+def run(fixtures: Path, owner: Path, selector: str | None = None,
         sanitized: bool = False) -> subprocess.CompletedProcess[str]:
-    command = [str(SANITIZED if sanitized else BINARY), str(fixtures)]
+    command = [str(SANITIZED if sanitized else BINARY), str(fixtures), str(owner)]
     if selector:
         command.append(selector)
     return invoke(command, SANITIZER_ENVIRONMENT if sanitized else None)
@@ -165,6 +184,7 @@ def named_failure(result: subprocess.CompletedProcess[str], case: str, sanitized
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--fixtures", type=Path, required=True)
+    parser.add_argument("--owner", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
@@ -172,12 +192,12 @@ def main() -> int:
     if not build():
         print("BASELINE-BUILD-FAILED", file=sys.stderr)
         return 1
-    listed = run(args.fixtures, "--list")
+    listed = run(args.fixtures, args.owner, "--list")
     cases = listed.stdout.splitlines()
     if listed.returncode != 0 or listed.stderr != "" or not cases:
         print("CASE-INVENTORY-FAILED", file=sys.stderr)
         return 1
-    if not passing(run(args.fixtures), len(cases)):
+    if not passing(run(args.fixtures, args.owner), len(cases)):
         print("BASELINE-NOT-PASSING", file=sys.stderr)
         return 1
 
@@ -205,15 +225,15 @@ def main() -> int:
             isolated = False
             named_run: subprocess.CompletedProcess[str] | None = None
             if compiled:
-                named_run = run(args.fixtures, case, sanitized)
+                named_run = run(args.fixtures, args.owner, case, sanitized)
                 named = named_failure(named_run, case, sanitized)
                 # Every other case run on its own. Running them together stops at
                 # the first failure, which hides whether the ones after it still
                 # hold -- and that is the question isolation is asking.
                 spared = [name for name in cases if name != case and name not in companions]
-                isolated = all(passing(run(args.fixtures, name, sanitized), 1) for name in spared)
+                isolated = all(passing(run(args.fixtures, args.owner, name, sanitized), 1) for name in spared)
             source.write_text(original)
-            restored = build(sanitized) and passing(run(args.fixtures, sanitized=sanitized), len(cases))
+            restored = build(sanitized) and passing(run(args.fixtures, args.owner, sanitized=sanitized), len(cases))
             record = {"guard": guard, "case": case, "edit_reached_source": reached, "compiled": compiled,
                       "named_assertion_failed": named, "only_declared_cases_broke": isolated,
                       "declared_companions": companions,

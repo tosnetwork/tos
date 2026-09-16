@@ -3405,31 +3405,21 @@ bool Collator::create_ticktock_transaction(const tos::StdSmcAddress& smc_addr, t
  */
 bool Collator::offer_validator_auth(Ref<vm::Cell> msg_root, bool external, const tos::StdSmcAddress& addr) {
   withdraw_validator_auth();
-  if (!external || !is_masterchain() || !params_.validator_auth || !params_.validator_auth.value().anchors ||
-      config_ == nullptr || mc_state_.is_null() || mc_state_root.is_null() || params_.validator_set.is_null()) {
+  if (!external || !is_masterchain() || !params_.validator_auth || config_ == nullptr || mc_state_.is_null() ||
+      mc_state_root.is_null() || params_.validator_set.is_null()) {
     return false;
   }
 
   // One assembler, called here and by validation, so a validator rebuilds the
   // authority this block was produced with rather than a second reading of the
-  // same facts.
+  // same facts. A refusal is the ordinary answer: almost every message reaching
+  // here is not a registry update, and one that is either carries the finality
+  // its approval relies on or is not executable for anyone.
   auto admitted = tos::auth::assemble_registry_authority(
       {msg_root, config_.get(), mc_state_root, mc_state_->get_block_id(), mc_block_id_,
-       params_.validator_auth.value().chain, params_.validator_auth.value().anchors.get(), shard_,
-       params_.validator_set->get_catchain_seqno(), now_, new_block_seqno});
+       params_.validator_auth.value().chain, shard_, params_.validator_set->get_catchain_seqno(), now_,
+       new_block_seqno});
   if (!admitted.ok()) {
-    // A refusal is not an error to report: almost every message reaching here
-    // is simply not a registry update. Only a deferral tells us something, and
-    // what it tells us is what to resolve before a later block tries again.
-    if (admitted.error().code == "registry-admission-deferred") {
-      auto required = tos::auth::registry_message_requirements(msg_root, new_block_seqno);
-      const auto& installed = params_.validator_auth.value();
-      if (required.ok() && installed.report_unresolved) {
-        auto missing = installed.anchors->missing(required.value());
-        LOG(INFO) << "deferring a registry update: " << missing.size() << " finalized block(s) not yet resolved";
-        installed.report_unresolved(std::move(missing));
-      }
-    }
     return false;
   }
 

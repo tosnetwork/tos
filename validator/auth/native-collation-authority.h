@@ -24,7 +24,6 @@ struct CollationAuthorityInputs {
   tos::BlockIdExt masterchain_state_block;
   tos::BlockIdExt parent_block;
   ChainContext chain;
-  const NativeAnchorCache* anchors = nullptr;
   tos::ShardIdFull shard;
   tos::CatchainSeqno set_catchain = 0;
   std::uint32_t now = 0;

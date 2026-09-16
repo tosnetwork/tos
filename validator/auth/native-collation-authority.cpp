@@ -7,8 +7,7 @@ namespace tos::auth {
 
 Result<std::unique_ptr<NativeConfigTransaction>> assemble_registry_authority(
     const CollationAuthorityInputs& inputs) {
-  if (inputs.config == nullptr || inputs.anchors == nullptr || inputs.message.is_null() ||
-      inputs.masterchain_state.is_null()) {
+  if (inputs.config == nullptr || inputs.message.is_null() || inputs.masterchain_state.is_null()) {
     return Error{"collation-authority-input"};
   }
 
@@ -34,7 +33,7 @@ Result<std::unique_ptr<NativeConfigTransaction>> assemble_registry_authority(
   if (!gathered.ok()) {
     return gathered.error();
   }
-  return admit_registry_message(gathered.value(), *inputs.anchors);
+  return admit_registry_message(gathered.value());
 }
 
 }  // namespace tos::auth

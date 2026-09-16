@@ -62,7 +62,7 @@ struct Query {
   const char* error = "-";
   Anchor result;
 };
-td::Ref<vm::Cell> alter_block(td::Ref<vm::Cell> root, unsigned mode) {
+[[maybe_unused]] td::Ref<vm::Cell> alter_block(td::Ref<vm::Cell> root, unsigned mode) {
   block::gen::Block::Record block;
   check(tlb::unpack_cell(root, block), "changed-block");
   if (mode == 1)
