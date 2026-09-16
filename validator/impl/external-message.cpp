@@ -189,16 +189,20 @@ td::Result<std::unique_ptr<ExtMessageQ::ExecutionConfig>> ExtMessageQ::Execution
 }
 
 td::Status ExtMessageQ::run_message_on_account(tos::WorkchainId wc, block::Account* acc, UnixTime utime, LogicalTime lt,
-                                               td::Ref<vm::Cell> msg_root, const block::ConfigInfo& config) {
+                                               td::Ref<vm::Cell> msg_root, const block::ConfigInfo& config,
+                                               std::shared_ptr<vm::ValidatorAuthHost> validator_auth_host) {
   TRY_RESULT(exec_config, ExecutionConfig::create(config, wc, utime, /* with_vm_log = */ true));
-  return run_message_on_account(wc, acc, utime, lt, std::move(msg_root), *exec_config);
+  return run_message_on_account(wc, acc, utime, lt, std::move(msg_root), *exec_config,
+                                std::move(validator_auth_host));
 }
 
 td::Status ExtMessageQ::run_message_on_account(tos::WorkchainId wc, block::Account* acc, UnixTime utime, LogicalTime lt,
-                                               td::Ref<vm::Cell> msg_root, ExecutionConfig& exec_config) {
+                                               td::Ref<vm::Cell> msg_root, ExecutionConfig& exec_config,
+                                               std::shared_ptr<vm::ValidatorAuthHost> validator_auth_host) {
   auto res = Collator::impl_create_ordinary_transaction(msg_root, acc, utime, lt, &exec_config.storage_phase_cfg,
                                                         &exec_config.compute_phase_cfg, &exec_config.action_phase_cfg,
-                                                        &exec_config.serialize_config, true, lt);
+                                                        &exec_config.serialize_config, true, lt, nullptr,
+                                                        std::move(validator_auth_host));
   if (res.is_error()) {
     auto error = res.move_as_error();
     LOG(DEBUG) << "Cannot run message on account: " << error.message();

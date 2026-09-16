@@ -108,6 +108,14 @@ td::actor::Task<ExtMessageChecker::CheckedExtMsg> ExtMessageChecker::check(td::B
   };
   auto account = CO_TRY(unpack_account());
 
+  // Asked for once, and before the execution-config reference below exists: the
+  // context is immutable after the node establishes it, so a checker that holds
+  // one never asks again, and a checker that does not may simply be running
+  // before the zero state was read.
+  if (!validator_auth_chain_ && wc == masterchainId) {
+    validator_auth_chain_ = co_await td::actor::ask(manager_, &ValidatorManager::get_validator_auth_chain_context);
+  }
+
   // Nothing from taking this reference through run_message suspends. Other tasks on this actor
   // therefore cannot mutate exec_configs_ while the reference is live.
   ExecConfigKey key{config_snapshot.mc_block_id, wc, state.utime};
@@ -124,7 +132,11 @@ td::actor::Task<ExtMessageChecker::CheckedExtMsg> ExtMessageChecker::check(td::B
   }
 
   CO_TRY(run_message(wc, std::move(account), unpack_account, state.utime, state.lt + 1, message->root_cell(),
-                     exec_config));
+                     exec_config, [&] {
+                       std::shared_ptr<vm::ValidatorAuthHost> host;
+                       offer_validator_auth(message->root_cell(), config_snapshot, mc_state, state.utime, host);
+                       return host;
+                     }));
   result.timings.vm = timer.elapsed();
   co_return result;
 }
@@ -176,11 +188,39 @@ td::Result<bool> ExtMessageChecker::check_workchain_execution(const td::Ref<ExtM
   return false;
 }
 
+bool ExtMessageChecker::offer_validator_auth(const td::Ref<vm::Cell>& msg_root, const ConfigSnapshot& snapshot,
+                                            const td::Ref<MasterchainState>& mc_state, UnixTime now,
+                                            std::shared_ptr<vm::ValidatorAuthHost>& host) const {
+  host.reset();
+  if (!validator_auth_chain_ || snapshot.config == nullptr || mc_state.is_null() || msg_root.is_null()) {
+    return false;
+  }
+
+  // The catchain the established set answers for is recomputed by the assembler
+  // from this same config, so passing it here is a comparison of one value with
+  // itself. At ingress there is no second source and none is claimed: this
+  // decides admission to a pool, not the contents of a block, and the two
+  // places that do decide a block each hold their own independent copy.
+  tos::CatchainSeqno catchain = 0;
+  snapshot.config->compute_validator_set_cc(ShardIdFull{masterchainId}, now, &catchain);
+  auto admitted = tos::auth::assemble_registry_authority(
+      {msg_root, snapshot.config.get(), mc_state->root_cell(), mc_state->get_block_id(), snapshot.mc_block_id,
+       *validator_auth_chain_, ShardIdFull{masterchainId}, catchain, now, snapshot.mc_block_id.seqno() + 1});
+  if (!admitted.ok()) {
+    return false;
+  }
+
+  auto authority = std::shared_ptr<tos::auth::NativeConfigTransaction>(std::move(admitted.value()));
+  host = std::shared_ptr<vm::ValidatorAuthHost>(authority, &authority->host());
+  return true;
+}
+
 td::Status ExtMessageChecker::run_message(WorkchainId wc, block::Account account,
                                           const std::function<td::Result<block::Account>()>& rebuild_account,
                                           UnixTime utime, LogicalTime lt, const td::Ref<vm::Cell>& msg_root,
-                                          ExecConfigPair& exec_config) {
-  auto status = ExtMessageQ::run_message_on_account(wc, &account, utime, lt, msg_root, *exec_config.nolog);
+                                          ExecConfigPair& exec_config,
+                                          const std::function<std::shared_ptr<vm::ValidatorAuthHost>()>& authority) {
+  auto status = ExtMessageQ::run_message_on_account(wc, &account, utime, lt, msg_root, *exec_config.nolog, authority());
   if (status.is_ok()) {
     return status;
   }
@@ -189,7 +229,8 @@ td::Status ExtMessageChecker::run_message(WorkchainId wc, block::Account account
     return status;
   }
   auto retry_account = rebuilt.move_as_ok();
-  auto status_with_log = ExtMessageQ::run_message_on_account(wc, &retry_account, utime, lt, msg_root, *exec_config.log);
+  auto status_with_log =
+      ExtMessageQ::run_message_on_account(wc, &retry_account, utime, lt, msg_root, *exec_config.log, authority());
   if (status_with_log.is_error()) {
     return status_with_log;
   }

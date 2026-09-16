@@ -42,6 +42,10 @@ NODE_LOCAL = ("NativeAnchorCache", "NativeHistoryResolutionQueue", "NativeBlockR
 
 PRODUCER = "validator/impl/collator.cpp"
 VALIDATOR = "validator/impl/validate-query.cpp"
+# Admission to the message pool executes the destination contract, so it is a
+# third place that must be able to build this authority -- see below.
+INGRESS = "validator/impl/ext-message-checker.cpp"
+CARRIER = "validator/impl/external-message.cpp"
 EXECUTION = "crypto/block/transaction.h"
 
 AUTHORITY = "std::shared_ptr<vm::ValidatorAuthHost>"
@@ -56,7 +60,7 @@ def structure(text: str, name: str) -> str:
 
 
 def verify(files: dict[str, str]) -> None:
-    for path in (PRODUCER, VALIDATOR):
+    for path in (PRODUCER, VALIDATOR, INGRESS):
         if files[path].count(ASSEMBLER) != 1:
             raise ValueError(f"{path} does not assemble the authority exactly once")
         for call in UNDERNEATH:
@@ -65,6 +69,15 @@ def verify(files: dict[str, str]) -> None:
         for token in NODE_LOCAL:
             if token in files[path]:
                 raise ValueError(f"{path} reaches {token}")
+
+    # The pool runs the destination contract before admitting a message, and the
+    # configuration contract applies a registry update before accepting one. A
+    # message offered no authority there is refused at the door, so every valid
+    # update would be dropped before any collator saw one -- and a chain where
+    # that happens is indistinguishable from a chain nobody submits updates to.
+    # That is why ingress assembles, and why it assembles the same way.
+    if files[CARRIER].count("std::move(validator_auth_host)") != 2:
+        raise ValueError("the ingress execution path does not carry the authority to the transaction")
 
     # Where the authority is kept decides whether concurrent validation is safe.
     configuration = structure(files[EXECUTION], "ComputePhaseConfig")
@@ -80,7 +93,7 @@ def verify(files: dict[str, str]) -> None:
 
 
 def main() -> int:
-    files = {path: (ROOT / path).read_text() for path in (PRODUCER, VALIDATOR, EXECUTION)}
+    files = {path: (ROOT / path).read_text() for path in (PRODUCER, VALIDATOR, INGRESS, CARRIER, EXECUTION)}
 
     # Silence is not evidence: each requirement is removed in memory and the
     # check has to reject what is left.
@@ -89,6 +102,9 @@ def main() -> int:
         {**files, VALIDATOR: files[VALIDATOR].replace(ASSEMBLER, "some_other_call(", 1)},
         {**files, VALIDATOR: files[VALIDATOR] + "\nauto x = admit_registry_message(y);\n"},
         {**files, VALIDATOR: files[VALIDATOR] + "\nconst tos::auth::NativeAnchorCache* c = nullptr;\n"},
+        {**files, INGRESS: files[INGRESS].replace(ASSEMBLER, "some_other_call(", 1)},
+        # The shape the defect had: the ingress runs the contract with nothing.
+        {**files, CARRIER: files[CARRIER].replace("std::move(validator_auth_host)", "{}", 1)},
         # The move that would undo this: park the authority back on the shared
         # configuration, where one account's write is every account's read.
         {**files, EXECUTION: files[EXECUTION].replace(

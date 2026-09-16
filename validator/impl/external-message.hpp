@@ -84,10 +84,20 @@ class ExtMessageQ : public ExtMessage {
     static td::Result<std::unique_ptr<ExecutionConfig>> create(const block::ConfigInfo& config, tos::WorkchainId wc,
                                                                UnixTime utime, bool with_vm_log);
   };
+  // `validator_auth_host` is the authority a registry update needs to execute at
+  // all. Without one the privileged instruction refuses, and the configuration
+  // contract runs it before accepting the message -- so an update offered no
+  // authority here is rejected before it can ever reach a block. Ordinary
+  // messages pass nothing and are unaffected.
+  //
+  // An authority is spent by the run that uses it: applying stages state inside
+  // it. A caller that executes twice must assemble twice.
   static td::Status run_message_on_account(tos::WorkchainId wc, block::Account* acc, UnixTime utime, LogicalTime lt,
-                                           td::Ref<vm::Cell> msg_root, ExecutionConfig& exec_config);
+                                           td::Ref<vm::Cell> msg_root, ExecutionConfig& exec_config,
+                                           std::shared_ptr<vm::ValidatorAuthHost> validator_auth_host = {});
   static td::Status run_message_on_account(tos::WorkchainId wc, block::Account* acc, UnixTime utime, LogicalTime lt,
-                                           td::Ref<vm::Cell> msg_root, const block::ConfigInfo& config);
+                                           td::Ref<vm::Cell> msg_root, const block::ConfigInfo& config,
+                                           std::shared_ptr<vm::ValidatorAuthHost> validator_auth_host = {});
 };
 
 td::Result<td::Bits256> get_ext_in_msg_hash_norm(td::Ref<vm::Cell> ext_in_msg_cell);

@@ -23,6 +23,8 @@
 #include "interfaces/validator-manager.h"
 #include "td/actor/coro_utils.h"
 
+#include "auth/native-collation-authority.h"
+
 #include "external-message.hpp"
 
 namespace tos::validator {
@@ -63,6 +65,11 @@ class ExtMessageChecker : public td::actor::Actor {
   };
   BlockIdExt cached_config_mc_block_id_;
   std::shared_ptr<block::ConfigInfo> cached_config_;
+  // Established by the node from its own zero state. Fetched once it exists and
+  // never rebuilt here: the chain domain lives in the registry this would be
+  // used to check, so a context derived locally would have that registry
+  // confirm its own name.
+  std::shared_ptr<const tos::auth::ChainContext> validator_auth_chain_;
   td::Result<ConfigSnapshot> resolve_config(const td::Ref<MasterchainState>& mc_state);
 
   struct ExecConfigKey {
@@ -86,9 +93,31 @@ class ExtMessageChecker : public td::actor::Actor {
   };
   std::map<ExecConfigKey, ExecConfigPair> exec_configs_;
 
+  // `authority` is called immediately before each execution attempt rather than
+  // once: applying a registry update stages state inside the authority, so the
+  // retry that produces a VM log has to run against a fresh one or it would be
+  // replaying against a host that has already moved.
   td::Status run_message(WorkchainId wc, block::Account acc,
                          const std::function<td::Result<block::Account>()>& rebuild_account, UnixTime utime,
-                         LogicalTime lt, const td::Ref<vm::Cell>& msg_root, ExecConfigPair& exec_config);
+                         LogicalTime lt, const td::Ref<vm::Cell>& msg_root, ExecConfigPair& exec_config,
+                         const std::function<std::shared_ptr<vm::ValidatorAuthHost>()>& authority);
+
+  // Assembles the registry authority for one external message at the current
+  // masterchain tip, or refuses.
+  //
+  // This is not a consensus authority and decides nothing about any block. It
+  // answers whether this message can execute at all, which is what admission to
+  // the pool means: the configuration contract runs the privileged instruction
+  // before it accepts the message, so an update offered nothing here is
+  // rejected at the door and never reaches a collator. Inclusion is decided
+  // later, by a collator assembling from the facts of the block it is building
+  // and a validator assembling again from the same facts.
+  //
+  // It goes through the same assembler for the same reason both of those do: a
+  // second way to build this authority is a second answer waiting to differ.
+  bool offer_validator_auth(const td::Ref<vm::Cell>& msg_root, const ConfigSnapshot& snapshot,
+                            const td::Ref<MasterchainState>& mc_state, UnixTime now,
+                            std::shared_ptr<vm::ValidatorAuthHost>& host) const;
 
   struct CachedState {
     BlockIdExt block_id;

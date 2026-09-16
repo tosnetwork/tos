@@ -106,6 +106,8 @@ jobs:
           cmake --build build-p0 --target validator/impl/CMakeFiles/tos_validator.dir/validate-query.cpp.o -j2
           cmake --build build-p0 --target validator/impl/CMakeFiles/tos_validator.dir/collator.cpp.o -j2
           cmake --build build-p0 --target validator/CMakeFiles/validator.dir/collation-manager.cpp.o -j2
+          cmake --build build-p0 --target validator/impl/CMakeFiles/tos_validator.dir/external-message.cpp.o -j2
+          cmake --build build-p0 --target validator/impl/CMakeFiles/tos_validator.dir/ext-message-checker.cpp.o -j2
           cmake -S . -B build-p0-sanitized -G Ninja -DCMAKE_BUILD_TYPE=Release -DTOS_ARCH= \
             -DTOS_BUILD_P0_IMPLEMENTATION_TESTS=ON -DUSE_QUIC=OFF \
             -DTOS_USE_ASAN=ON -DTOS_USE_UBSAN=ON \
