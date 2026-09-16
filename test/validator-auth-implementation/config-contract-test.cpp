@@ -8,6 +8,7 @@
 #include <fstream>
 #include <functional>
 #include <iostream>
+#include <optional>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -170,9 +171,15 @@ td::Ref<vm::Cell> bindings_cell() {
   return wrapper.finalize();
 }
 
-td::Ref<vm::Cell> contract_data(const td::Ref<vm::Cell>& config, td::Ref<vm::Cell> checkpoint = {}) {
+td::Ref<vm::Cell> contract_data(const td::Ref<vm::Cell>& config, td::Ref<vm::Cell> checkpoint = {},
+                                td::Ref<vm::Cell> votes = {}) {
   vm::CellBuilder data;
-  data.store_ref(config).store_long(0, 32).store_zeroes(256).store_long(0, 1);
+  data.store_ref(config).store_long(0, 32).store_zeroes(256);
+  if (votes.not_null()) {
+    data.store_long(1, 1).store_ref(std::move(votes));
+  } else {
+    data.store_long(0, 1);
+  }
   if (checkpoint.not_null()) {
     data.store_ref(std::move(checkpoint));
   }
@@ -199,6 +206,73 @@ td::Ref<vm::Cell> stored_checkpoint(const td::Ref<vm::Cell>& data) {
 // purpose: a case that turned both off at once could not tell a contract that
 // consulted Config8 from one that never ran the instruction because the opcode
 // was gated.
+// The elected set the voting cases run against, built once. The proposal status
+// a fixture stores names the set by hash, and the configuration installs the
+// same cell: two constructions of it would be two answers to "which set is
+// current", and the contract compares them.
+td::Ref<vm::Cell> validator_set_cell(const unsigned char* voting_key) {
+  vm::CellBuilder descriptor;
+  descriptor.store_long(0x53, 8).store_long(0x8e81278a, 32);
+  descriptor.store_bytes(td::Slice(reinterpret_cast<const char*>(voting_key), 32));
+  descriptor.store_long(5, 64);
+  vm::Dictionary list(16);
+  td::BitArray<16> at;
+  at.store_ulong(0);
+  expect(list.set_builder(at.cbits(), 16, descriptor), "fixture-config34-member");
+  vm::CellBuilder set;
+  set.store_long(0x12, 8).store_long(0, 32).store_long(0xffffffff, 32).store_long(1, 16).store_long(1, 16)
+      .store_long(5, 64);
+  expect(set.store_maybe_ref(list.get_root_cell()), "fixture-config34");
+  return set.finalize();
+}
+
+// One proposal setup, for both the ordinary and the critical branch. min_wins
+// is one so a single vote reaches the threshold and the case is about what
+// happens there rather than about counting rounds.
+td::Ref<vm::Cell> proposal_setup() {
+  return vm::CellBuilder()
+      .store_long(0x36, 8)
+      .store_long(1, 8)   // min_tot_rounds
+      .store_long(4, 8)   // max_tot_rounds
+      .store_long(1, 8)   // min_wins
+      .store_long(3, 8)   // max_losses
+      .store_long(1, 32)
+      .store_long(1000000, 32)
+      .store_long(1, 32)
+      .store_long(1, 32)
+      .finalize();
+}
+
+// cfg_proposal#f3 param_id:int32 param_value:(Maybe ^Cell) if_hash_equal:(Maybe uint256)
+td::Ref<vm::Cell> config_proposal(long long index, td::Ref<vm::Cell> value) {
+  vm::CellBuilder b;
+  b.store_long(0xf3, 8).store_long(index, 32);
+  expect(b.store_maybe_ref(std::move(value)), "fixture-proposal-value");
+  b.store_long(0, 1);
+  return b.finalize();
+}
+
+// cfg_proposal_status#ce, one vote short of the threshold unless `wins` says
+// otherwise. `weight_remaining` is below the voter's weight so the next vote
+// crosses it.
+td::Ref<vm::Cell> proposal_status(const td::Ref<vm::Cell>& proposal, const td::Ref<vm::Cell>& set,
+                                  unsigned wins, bool current_set) {
+  vm::CellBuilder b;
+  b.store_long(0xce, 8).store_long(0xfffffff0, 32).store_ref(proposal).store_long(0, 1).store_long(0, 1);
+  b.store_long(1, 64);
+  // A stale identifier is the interesting half: it is what makes the original
+  // code reset the proposal for a new round, so a terminal gate that did not
+  // stand in front of that reset would be invisible.
+  std::array<unsigned char, 32> id{};
+  if (current_set) {
+    const auto current = set->get_hash();
+    std::copy_n(current.as_slice().ubegin(), id.size(), id.begin());
+  }
+  b.store_bytes(td::Slice(reinterpret_cast<const char*>(id.data()), 32));
+  b.store_long(3, 8).store_long(wins, 8).store_long(0, 8);
+  return b.finalize();
+}
+
 td::Ref<vm::Cell> configuration(td::Ref<vm::Cell> registry = {}, bool activated = false,
                                 const unsigned char* voting_key = nullptr) {
   vm::Dictionary dict(32);
@@ -210,20 +284,18 @@ td::Ref<vm::Cell> configuration(td::Ref<vm::Cell> registry = {}, bool activated 
     expect(dict.set_ref(key.cbits(), 32, registry), "fixture-config46");
   }
   if (voting_key) {
-    vm::CellBuilder descriptor;
-    descriptor.store_long(0x53, 8).store_long(0x8e81278a, 32);
-    descriptor.store_bytes(td::Slice(reinterpret_cast<const char*>(voting_key), 32));
-    descriptor.store_long(5, 64);
-    vm::Dictionary list(16);
-    td::BitArray<16> at;
-    at.store_ulong(0);
-    expect(list.set_builder(at.cbits(), 16, descriptor), "fixture-config34-member");
-    vm::CellBuilder set;
-    set.store_long(0x12, 8).store_long(0, 32).store_long(0xffffffff, 32).store_long(1, 16).store_long(1, 16)
-        .store_long(5, 64);
-    expect(set.store_maybe_ref(list.get_root_cell()), "fixture-config34");
     key.store_long(34);
-    expect(dict.set_ref(key.cbits(), 32, set.finalize()), "fixture-config34");
+    expect(dict.set_ref(key.cbits(), 32, validator_set_cell(voting_key)), "fixture-config34");
+    // The voting rules the contract reads its threshold from.
+    key.store_long(11);
+    auto setup = proposal_setup();
+    vm::CellBuilder eleven;
+    eleven.store_long(0x91, 8).store_ref(setup).store_ref(setup);
+    expect(dict.set_ref(key.cbits(), 32, eleven.finalize()), "fixture-config11");
+    // The mandatory and critical indexes are left absent, which reads the same
+    // as empty: the contract looks a parameter up in them and an absent
+    // dictionary answers "not found". Installing an empty one is not possible
+    // anyway -- an empty dictionary has no root cell to store.
   }
   if (activated) {
     key.store_long(8);
@@ -251,8 +323,19 @@ td::Ref<vm::Cell> internal_message(std::uint64_t from, const td::Ref<vm::Cell>& 
   cb.append_cellslice(masterchain_address(from));
   cb.append_cellslice(masterchain_address(config_account));
   cb.store_long(0, 4).store_zeroes(1).store_long(0, 4).store_long(0, 4)
-      .store_long(0, 64).store_long(0, 32).store_long(0, 1).store_long(0, 1);
-  cb.append_cellslice(vm::load_cell_slice_ref(body));
+      .store_long(0, 64).store_long(0, 32).store_long(0, 1);
+  // The body goes inline when it fits and in a reference when it does not,
+  // which is what a real message does. The contract reads only the flags and
+  // the source from this cell -- the body reaches it as its own stack entry --
+  // but a cell that cannot be built is still a cell that cannot be built.
+  auto contents = vm::load_cell_slice_ref(body);
+  if (cb.remaining_bits() >= contents->size() + 1 && cb.remaining_refs() >= contents->size_refs()) {
+    cb.store_long(0, 1);
+    cb.append_cellslice(contents);
+  } else {
+    cb.store_long(1, 1);
+    cb.store_ref(body);
+  }
   return canonical_cell(cb.finalize());
 }
 
@@ -275,7 +358,53 @@ struct Outcome {
   td::Ref<vm::Cell> data, committed_data;
   bool committed = false;
   long long gas = 0;
+  // The action list. A vote's result reaches the outside only as the tag of the
+  // confirmation the contract sends, so a case about what a voter is told has
+  // nothing else to read.
+  td::Ref<vm::Cell> actions;
 };
+
+// The tag of the confirmation the contract sent, or nothing.
+//
+// A vote's result reaches the outside only here: register_vote returns a status
+// and the contract answers with it added to a fixed base. A case about what a
+// voter is told therefore has to read the action list; the persisted state says
+// what happened, not what was reported.
+//
+// The message shape is the one send_answer builds: six header bits, the
+// destination address, a fixed run of zero fields, then the tag.
+std::optional<std::uint32_t> answer_tag(const td::Ref<vm::Cell>& actions) {
+  if (actions.is_null())
+    return {};
+  try {
+    // out_list_node$_ prev:^Cell action:OutAction -- the action's own fields are
+    // in this cell's bits, and the message is its second reference. Reading the
+    // action out of a reference instead finds a well-formed cell that is not an
+    // action, which is why the first version of this reported no tag at all.
+    vm::CellSlice list{vm::NoVm{}, actions};
+    if (list.size_refs() < 2)
+      return {};
+    list.fetch_ref();
+    // action_send_msg#0ec3c86d mode:(## 8) out_msg:^MessageRelaxed
+    if (list.fetch_ulong(32) != 0x0ec3c86d || !list.advance(8) || list.size_refs() == 0)
+      return {};
+    vm::CellSlice message{vm::NoVm{}, list.prefetch_ref(0)};
+    if (message.fetch_ulong(6) != 0x18)
+      return {};
+    // The destination is a standard internal address: two tag bits, no anycast,
+    // the workchain and the account.
+    if (message.fetch_ulong(2) != 2 || message.fetch_ulong(1) != 0 || !message.advance(8 + 256))
+      return {};
+    if (!message.advance(5 + 4 + 4 + 64 + 32 + 1 + 1))
+      return {};
+    auto tag = message.fetch_ulong(32);
+    if (tag == vm::CellSlice::fetch_long_eof)
+      return {};
+    return static_cast<std::uint32_t>(tag);
+  } catch (const vm::VmError&) {
+    return {};
+  }
+}
 
 td::Ref<vm::Cell> installed_parameter(const td::Ref<vm::Cell>& data, long long index) {
   if (data.is_null())
@@ -300,11 +429,11 @@ Outcome run_contract(const td::Ref<vm::Cell>& contract, const td::Ref<vm::Cell>&
                      std::uint32_t now, Host* host, td::uint64 capabilities, int version,
                      bool external = false, td::Ref<vm::Cell> registry = {}, long long gas_limit = 1000000,
                      bool config8_active = false, td::Ref<vm::Cell> checkpoint = {},
-                     const unsigned char* voting_key = nullptr) {
+                     const unsigned char* voting_key = nullptr, td::Ref<vm::Cell> votes = {}) {
   expect(contract.not_null(), "contract-loaded");
   auto config = configuration(std::move(registry), config8_active, voting_key);
   auto message = external ? external_message(body) : internal_message(from, body);
-  auto data = contract_data(config, std::move(checkpoint));
+  auto data = contract_data(config, std::move(checkpoint), std::move(votes));
   td::Ref<vm::Stack> stack{true};
   stack.write().push_int(td::make_refint(1000000000000LL));
   stack.write().push_int(td::make_refint(external ? 0LL : 2000000000LL));
@@ -326,7 +455,8 @@ Outcome run_contract(const td::Ref<vm::Cell>& contract, const td::Ref<vm::Cell>&
     if (host)
       state.set_validator_auth_host(std::shared_ptr<vm::ValidatorAuthHost>(host, [](vm::ValidatorAuthHost*) {}));
     const int exit = ~state.run();
-    return {exit, state.get_c4(), state.get_committed_state().c4, state.committed(), state.gas_consumed()};
+    return {exit,          state.get_c4(), state.get_committed_state().c4,
+            state.committed(), state.gas_consumed(), state.get_committed_state().c5};
   } catch (const vm::VmFatal&) {
     return {};
   }
@@ -411,10 +541,11 @@ td::Ref<vm::Cell> shaped_checkpoint(const td::Ref<vm::Cell>& registry, std::uint
 // point: this is the transaction a block with nothing to process still runs.
 Outcome run_ticktock(const td::Ref<vm::Cell>& contract, Host* host, td::uint64 capabilities, int version,
                      bool config8_active, td::Ref<vm::Cell> registry = {}, td::Ref<vm::Cell> checkpoint = {},
-                     long long gas_limit = 1000000) {
+                     long long gas_limit = 1000000, const unsigned char* voting_key = nullptr,
+                     td::Ref<vm::Cell> votes = {}) {
   expect(contract.not_null(), "contract-loaded");
-  auto config = configuration(std::move(registry), config8_active);
-  auto data = contract_data(config, std::move(checkpoint));
+  auto config = configuration(std::move(registry), config8_active, voting_key);
+  auto data = contract_data(config, std::move(checkpoint), std::move(votes));
   td::Ref<vm::Stack> stack{true};
   stack.write().push_int(td::make_refint(1000000000000LL));
   stack.write().push_int(td::make_refint(static_cast<long long>(config_account)));
@@ -433,10 +564,111 @@ Outcome run_ticktock(const td::Ref<vm::Cell>& contract, Host* host, td::uint64 c
     if (host)
       state.set_validator_auth_host(std::shared_ptr<vm::ValidatorAuthHost>(host, [](vm::ValidatorAuthHost*) {}));
     const int exit = ~state.run();
-    return {exit, state.get_c4(), state.get_committed_state().c4, state.committed(), state.gas_consumed()};
+    return {exit,          state.get_c4(), state.get_committed_state().c4,
+            state.committed(), state.gas_consumed(), state.get_committed_state().c5};
   } catch (const vm::VmFatal&) {
     return {};
   }
+}
+
+// One voter, generated once so the configuration, the stored status and the
+// signature all name the same key. Two keypairs here would be two answers to
+// "who is voting", and the contract compares them.
+struct Voter {
+  unsigned char key[32] = {}, secret[64] = {};
+};
+const Voter& voter() {
+  static const Voter identity = [] {
+    Voter made;
+    expect(crypto_sign_keypair(made.key, made.secret) == 0, "fixture-voter");
+    return made;
+  }();
+  return identity;
+}
+const unsigned char* voter_public() {
+  return voter().key;
+}
+
+// One vote, arriving the way a validator sends one: an internal message whose
+// body the voter signed. The external vote branch answers nothing, so a case
+// about what a voter is told has to use this one.
+Outcome cast_vote(const td::Ref<vm::Cell>& contract, const td::Ref<vm::Cell>& proposal,
+                  const td::Ref<vm::Cell>& votes, Host* host, bool active) {
+  auto id = proposal->get_hash().as_array();
+  vm::CellBuilder signed_part;
+  signed_part.store_long(0x566f7445, 32).store_long(0, 16);
+  signed_part.store_bytes(td::Slice(reinterpret_cast<const char*>(id.data()), 32));
+  auto payload = signed_part.finalize();
+  auto slice = vm::load_cell_slice(payload);
+  unsigned char bits[64] = {};
+  expect(slice.size() % 8 == 0 && slice.size() / 8 <= sizeof(bits), "fixture-vote-payload");
+  const auto length = slice.size() / 8;
+  expect(slice.fetch_bytes(td::MutableSlice(reinterpret_cast<char*>(bits), length)), "fixture-vote-payload");
+  unsigned char signature[64] = {};
+  expect(crypto_sign_detached(signature, nullptr, bits, length, voter().secret) == 0, "fixture-vote-signature");
+
+  vm::CellBuilder body;
+  body.store_long(0x566f7465, 32).store_long(0, 64);
+  body.store_bytes(td::Slice(reinterpret_cast<const char*>(signature), 64));
+  body.append_cellslice(vm::load_cell_slice_ref(payload));
+  return run_contract(contract, body.finalize(), 1, 1000, host,
+                      active ? vm::validator_auth_capability : 0, vm::validator_auth_min_version, false, {},
+                      1000000, active, {}, voter_public(), votes);
+}
+
+
+// The vote dictionary the contract loads, holding one proposal at its own hash.
+td::Ref<vm::Cell> vote_dictionary(const td::Ref<vm::Cell>& proposal, const unsigned char* voting_key, unsigned wins,
+                                  bool current_set) {
+  auto status = proposal_status(proposal, validator_set_cell(voting_key), wins, current_set);
+  vm::Dictionary votes(256);
+  auto id = proposal->get_hash().as_array();
+  expect(votes.set(td::ConstBitPtr(id.data()), 256, vm::load_cell_slice_ref(status)), "fixture-vote-entry");
+  return votes.get_root_cell();
+}
+
+// The vote dictionary as the account holds it after a run.
+td::Ref<vm::Cell> stored_votes(const td::Ref<vm::Cell>& data) {
+  if (data.is_null())
+    return {};
+  vm::CellSlice cs{vm::NoVm{}, data};
+  if (cs.size() < 289 || cs.size_refs() < 1)
+    return {};
+  cs.fetch_ref();
+  if (!cs.advance(288))
+    return {};
+  if (cs.fetch_ulong(1) != 1 || cs.size_refs() == 0)
+    return {};
+  return cs.prefetch_ref();
+}
+
+// The wins field of one proposal's stored status, or -1 when it is gone.
+int stored_wins(const td::Ref<vm::Cell>& data, const td::Ref<vm::Cell>& proposal) {
+  auto root = stored_votes(data);
+  if (root.is_null())
+    return -1;
+  vm::Dictionary votes(root, 256);
+  auto id = proposal->get_hash().as_array();
+  auto entry = votes.lookup(td::ConstBitPtr(id.data()), 256);
+  if (entry.is_null())
+    return -1;
+  auto status = *entry;
+  // cfg_proposal_status#ce expires proposal is_critical voters weight vset_id
+  // rounds_remaining wins losses
+  if (status.fetch_ulong(8) != 0xce || !status.advance(32) || status.size_refs() == 0)
+    return -1;
+  status.fetch_ref();
+  if (!status.advance(1))
+    return -1;
+  if (status.fetch_ulong(1) == 1) {
+    if (status.size_refs() == 0)
+      return -1;
+    status.fetch_ref();
+  }
+  if (!status.advance(64 + 256 + 8))
+    return -1;
+  auto wins = status.fetch_ulong(8);
+  return wins == vm::CellSlice::fetch_long_eof ? -1 : static_cast<int>(wins);
 }
 
 std::vector<Case> cases(const td::Ref<vm::Cell>& contract) {
@@ -470,6 +702,70 @@ std::vector<Case> cases(const td::Ref<vm::Cell>& contract) {
          expect(outcome.exit == 0, "an-inactive-chain-tick-tock-asks-for-nothing");
          expect(host.checkpoints == 0, "an-inactive-chain-tick-tock-asks-for-nothing");
          expect(installed_parameter(outcome.data, 46).is_null(), "an-inactive-chain-tick-tock-asks-for-nothing");
+       }},
+      // Normal configuration voting reaching its threshold no longer installs
+      // anything on an active chain. The proposal stays where it is, marked
+      // terminal, and a governance operation is what finalizes it: a
+      // configuration parameter needs that quorum as well as the vote.
+      //
+      // Three separate paths could undo that, and each has its own case: the
+      // vote that reaches the threshold, a later vote arriving at a terminal
+      // proposal, and the tick-tock scan, which reaches the rotation reset
+      // without any vote at all.
+      {"a-completed-vote-installs-nothing-under-governance", [=] {
+         Host host;
+         auto value = vm::CellBuilder().store_long(0x5151, 16).finalize();
+         auto proposal = config_proposal(17, value);
+         auto votes = vote_dictionary(proposal, voter_public(), 0, true);
+         auto run = cast_vote(contract, proposal, votes, &host, true);
+         expect(run.exit == 0, "a-completed-vote-installs-nothing-under-governance");
+         expect(installed_parameter(run.committed_data, 17).is_null(),
+                "a-completed-vote-installs-nothing-under-governance");
+         expect(stored_wins(run.committed_data, proposal) == 255,
+                "a-completed-vote-installs-nothing-under-governance");
+         expect(answer_tag(run.actions) == std::optional<std::uint32_t>{0xd6745240 + 3},
+                "a-completed-vote-installs-nothing-under-governance");
+       }},
+      // A later vote changes nothing. Without the gate it would be registered,
+      // and on a stale set it would first be reset for a new round.
+      {"a-terminal-proposal-takes-no-further-votes", [=] {
+         Host host;
+         auto proposal = config_proposal(17, vm::CellBuilder().store_long(0x5151, 16).finalize());
+         auto votes = vote_dictionary(proposal, voter_public(), 255, false);
+         auto run = cast_vote(contract, proposal, votes, &host, true);
+         expect(run.exit == 0, "a-terminal-proposal-takes-no-further-votes");
+         expect(stored_wins(run.committed_data, proposal) == 255,
+                "a-terminal-proposal-takes-no-further-votes");
+         expect(same_cell(stored_votes(run.committed_data), votes),
+                "a-terminal-proposal-takes-no-further-votes");
+         expect(answer_tag(run.actions) == std::optional<std::uint32_t>{0xd6745240 + 3},
+                "a-terminal-proposal-takes-no-further-votes");
+       }},
+      // The tick-tock scan reaches the rotation reset without any vote, so a
+      // terminal proposal recognised only in the vote path would still be reset
+      // by a random scan.
+      {"a-terminal-proposal-survives-a-tick-tock-scan", [=] {
+         Host host;
+         auto proposal = config_proposal(17, vm::CellBuilder().store_long(0x5151, 16).finalize());
+         auto votes = vote_dictionary(proposal, voter_public(), 255, false);
+         host.returned_checkpoint = shaped_checkpoint(
+             vm::CellBuilder().store_long(0x76617131, 32).store_long(7777, 32).finalize(), 11);
+         auto run = run_ticktock(contract, &host, vm::validator_auth_capability,
+                                 vm::validator_auth_min_version, true, {}, {}, 1000000, voter_public(), votes);
+         expect(run.exit == 0, "a-terminal-proposal-survives-a-tick-tock-scan");
+         expect(same_cell(stored_votes(run.data), votes), "a-terminal-proposal-survives-a-tick-tock-scan");
+       }},
+      // And a chain that has not activated installs on the threshold exactly as
+      // it always did.
+      {"an-inactive-chain-installs-on-the-threshold", [=] {
+         Host host;
+         auto value = vm::CellBuilder().store_long(0x5151, 16).finalize();
+         auto proposal = config_proposal(17, value);
+         auto votes = vote_dictionary(proposal, voter_public(), 0, true);
+         auto run = cast_vote(contract, proposal, votes, &host, false);
+         expect(run.exit == 0, "an-inactive-chain-installs-on-the-threshold");
+         expect(same_cell(installed_parameter(run.committed_data, 17), value),
+                "an-inactive-chain-installs-on-the-threshold");
        }},
       {"contract-assembles-and-loads", [=] { expect(contract.not_null(), "contract-assembles-and-loads"); }},
       {"registry-action-reaches-the-host", [] {
@@ -708,6 +1004,12 @@ int main(int argc, char** argv) {
         test();
       } catch (const std::exception& error) {
         std::cerr << "DETAIL " << error.what() << '\n';
+        std::cerr << "ASSERTION_FAILED " << name << '\n';
+        return 1;
+      } catch (const vm::VmError& error) {
+        // Not a std::exception, so without this the process aborts and says
+        // nothing at all about which case or which cell was wrong.
+        std::cerr << "DETAIL vm-error " << error.get_msg() << '\n';
         std::cerr << "ASSERTION_FAILED " << name << '\n';
         return 1;
       }

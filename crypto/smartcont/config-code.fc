@@ -303,6 +303,26 @@ slice update_proposal_status(slice rest, int weight_remaining, int critical?) in
   .end_cell().begin_parse();
 }
 
+;; Normal configuration voting has completed for this exact proposal, which now
+;; waits for a current-governance operation to finalize it.
+;;
+;; The marker is the persisted wins field rather than a comparison against the
+;; current vote configuration. min_wins comes from configuration parameter 11
+;; and a later proposal can change it: compared against a moving threshold, a
+;; proposal would stop being terminal when it rose and one that never reached
+;; the old threshold would become terminal when it fell. The sentinel cannot be
+;; reached by ordinary voting -- a proposal is only stored again while
+;; wins < min_wins, and min_wins is a uint8, so a stored non-terminal wins is
+;; at most 254.
+int p0_awaiting_governance?(slice rest) inline {
+  if (rest.null?()) {
+    return false;
+  }
+  var probe = rest;
+  probe~load_uint(8);
+  return probe~load_uint(8) == 255;
+}
+
 builder begin_pack_proposal_status(int expires, cell proposal, int critical?, cell voters, int weight_remaining, int vset_id) inline {
   return begin_cell()
     .store_int(0xce - 0x100, 8)
@@ -327,6 +347,17 @@ builder begin_pack_proposal_status(int expires, cell proposal, int critical?, ce
     ;; config proposal expired, delete and report not found
     vote_dict~udict_delete?(256, phash);
     return (vote_dict, null(), -1);
+  }
+  ;; A proposal that has already completed normal voting takes no further
+  ;; votes and is not reset by a validator-set rotation. Both would change a
+  ;; voting state that is finished; the expiry check above still removes it.
+  ;;
+  ;; Nested rather than one condition: this must not evaluate at all on a chain
+  ;; that has not activated, and the bitwise operator is not a control flow.
+  if (validator_auth_active()) {
+    if (p0_awaiting_governance?(rest)) {
+      return (vote_dict, null(), 3);
+    }
   }
   if (vset_id != cur_vset_id) {
     ;; config proposal belongs to a previous validator set
@@ -359,6 +390,19 @@ builder begin_pack_proposal_status(int expires, cell proposal, int critical?, ce
   var (min_tot_rounds, max_tot_rounds, min_wins, max_losses, _, _, _, _) = get_vote_config(critical?);
   var (rounds_remaining, wins, losses) = (rest~load_uint(8), rest~load_uint(8), rest~load_uint(8));
   wins += 1;
+  if (validator_auth_active()) {
+    if (wins >= min_wins) {
+      ;; Normal voting is complete and nothing is installed. The exact proposal
+      ;; stays where it is, marked terminal, until a governance operation
+      ;; finalizes it; a configuration parameter needs that quorum as well.
+      vote_dict~udict_set_builder(256, phash,
+        begin_pack_proposal_status(expires, proposal, critical?, voters, weight_remaining, vset_id)
+        .store_uint(rounds_remaining, 8)
+        .store_uint(255, 8)
+        .store_uint(losses, 8));
+      return (vote_dict, null(), 3);
+    }
+  }
   if (wins >= min_wins) {
     ;; proposal is accepted, remove and process
     vote_dict~udict_delete?(256, phash);
@@ -397,6 +441,14 @@ int proceed_register_vote(phash, idx, weight) impure inline_ref {
   if (expires <= now()) {
     ;; config proposal expired, delete
     return (null(), true);
+  }
+  ;; The tick-tock scan reaches this independently of any vote, so a terminal
+  ;; proposal has to be recognised here too: otherwise a rotation reached by a
+  ;; random scan would reset a proposal that voting can no longer change.
+  if (validator_auth_active()) {
+    if (p0_awaiting_governance?(rest)) {
+      return (pstatus, false);
+    }
   }
   if (vset_id == cur_vset_id) {
     ;; config proposal already processed or voted for in this round, change nothing

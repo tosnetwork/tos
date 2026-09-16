@@ -50,6 +50,34 @@ STAGED = "    registry_checkpoint = vauth_registry_state();\n"
 # the shape that let a block with no registry message keep the parent's
 # parameter 46 -- whose schedule still names transitions as due at a coordinate
 # that has passed, so the next block's registry refuses to open at all.
+RV_EARLY = """  if (validator_auth_active()) {
+    if (p0_awaiting_governance?(rest)) {
+      return (vote_dict, null(), 3);
+    }
+  }
+"""
+RV_THRESHOLD = """  if (validator_auth_active()) {
+    if (wins >= min_wins) {
+      ;; Normal voting is complete and nothing is installed. The exact proposal
+      ;; stays where it is, marked terminal, until a governance operation
+      ;; finalizes it; a configuration parameter needs that quorum as well.
+      vote_dict~udict_set_builder(256, phash,
+        begin_pack_proposal_status(expires, proposal, critical?, voters, weight_remaining, vset_id)
+        .store_uint(rounds_remaining, 8)
+        .store_uint(255, 8)
+        .store_uint(losses, 8));
+      return (vote_dict, null(), 3);
+    }
+  }
+"""
+SCAN_GATE = """  if (validator_auth_active()) {
+    if (p0_awaiting_governance?(rest)) {
+      return (pstatus, false);
+    }
+  }
+"""
+SENTINEL = """        .store_uint(255, 8)
+"""
 TICKTOCK = """  if (validator_auth_active()) {
     registry_checkpoint = vauth_registry_state();
     var rcs = registry_checkpoint.begin_parse();
@@ -72,7 +100,9 @@ MUTATIONS = [
      "  registry_checkpoint = null();\n  cs~load_ref();\n",
      ["registry-c4-installs-parameter-46", "registry-c4-replaces-old-parameter-46",
       "registry-first-checkpoint-installs-new-parameter", "registry-first-checkpoint-replaces-old-parameter",
-      "a-due-only-tick-tock-persists-the-prefix", "an-inactive-chain-tick-tock-asks-for-nothing"]),
+      "a-due-only-tick-tock-persists-the-prefix", "an-inactive-chain-tick-tock-asks-for-nothing",
+      "a-completed-vote-installs-nothing-under-governance", "a-terminal-proposal-takes-no-further-votes",
+      "a-terminal-proposal-survives-a-tick-tock-scan", "an-inactive-chain-installs-on-the-threshold"]),
     ("checkpoint-restaged", "a-registry-update-stores-the-staged-checkpoint", STAGED, "", [],
      "() recv_external(slice in_msg) impure {"),
     # A block with nothing to process still has state to persist. Without this
@@ -81,6 +111,23 @@ MUTATIONS = [
     # ran. Everything about the transaction looks the same either way.
     ("ticktock-persists-the-prefix", "a-due-only-tick-tock-persists-the-prefix", TICKTOCK, "", [],
      "() run_ticktock(int is_tock) impure {"),
+    # Normal voting reaching its threshold must stop installing. Three separate
+    # paths can undo that, and none of them is reachable from the others: the
+    # vote that crosses the threshold, a later vote arriving at a proposal that
+    # already did, and the tick-tock scan, which reaches the rotation reset with
+    # no vote at all.
+    ("threshold-still-installs", "a-completed-vote-installs-nothing-under-governance", RV_THRESHOLD, "", [],
+     "(cell, cell, int) register_vote(vote_dict, phash, idx, weight) inline_ref {"),
+    ("terminal-takes-more-votes", "a-terminal-proposal-takes-no-further-votes", RV_EARLY, "", [],
+     "(cell, cell, int) register_vote(vote_dict, phash, idx, weight) inline_ref {"),
+    ("terminal-reset-by-scan", "a-terminal-proposal-survives-a-tick-tock-scan", SCAN_GATE, "", [],
+     "(slice, int) scan_proposal(int phash, slice pstatus) inline_ref {"),
+    # The marker itself. Writing the threshold back instead of the sentinel
+    # leaves a proposal that looks ordinary again, so the next vote resumes
+    # counting and eventually installs.
+    ("sentinel-is-the-threshold", "a-completed-vote-installs-nothing-under-governance", SENTINEL,
+     "        .store_uint(wins, 8)\n", [],
+     "(cell, cell, int) register_vote(vote_dict, phash, idx, weight) inline_ref {"),
 ]
 
 

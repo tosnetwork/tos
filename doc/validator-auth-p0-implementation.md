@@ -230,6 +230,21 @@ persistent, Rust reference and Rust persistent implementations produce identical
 bytes for it; stamping a different but perfectly legal anchor fails on both
 sides.
 
+Normal configuration voting no longer installs on its own. On an active chain a
+proposal that reaches its threshold is marked terminal and stays where it is:
+nothing is installed, no further vote is registered, and a validator-set
+rotation does not return it to an earlier round. The marker is a persisted
+sentinel rather than a comparison against the current threshold, because that
+threshold is itself a configuration parameter a later proposal can change --
+compared against a moving value, a completed proposal would stop being complete
+when it rose, and one that never completed would become complete when it fell.
+Three separate paths could undo this and each is gated and each is tested: the
+vote that crosses the threshold, a later vote arriving at a completed proposal,
+and the tick-tock scan, which reaches the rotation reset with no vote at all.
+The governance half that finalizes such a proposal is not implemented yet, so
+the normative description of the two-stage rule is written once rather than in
+parts.
+
 Operation 6 is refused with its own reason. The frozen rules require the
 governing quorum *and* the normal configuration vote for a configuration
 parameter, and nothing carries an authorization across the rounds of that vote
