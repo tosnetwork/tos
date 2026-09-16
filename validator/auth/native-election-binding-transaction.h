@@ -1,6 +1,7 @@
 #pragma once
 #include <memory>
 
+#include "native-config-sequence.h"
 #include "native-election-binding-host.h"
 namespace tos::auth {
 // Everything the authority for one elected-set transaction is derived from.
@@ -29,14 +30,20 @@ class NativeElectionBindingTransaction {
   // Refuses unless the chain has activated validator authentication. A chain
   // that has not must not be able to reach the instruction at all, and the
   // contract on such a chain never asks: both sides read the same parameter.
+  // The prefix comes from the sequence, so a set elected in the same block as a
+  // registry update is bound against the registry that update committed rather
+  // than the one it replaced.
   static Result<std::unique_ptr<NativeElectionBindingTransaction>> open(
-      const NativeElectionBindingTransactionInputs&, StateReadBudget = {});
+      const NativeElectionBindingTransactionInputs&, const NativeConfigSequence&);
 
   vm::ValidatorAuthHost& host() {
     return host_;
   }
   unsigned bindings() const {
     return host_.bindings();
+  }
+  const NativeElectionBindingHost& host_state() const {
+    return host_;
   }
 };
 }  // namespace tos::auth

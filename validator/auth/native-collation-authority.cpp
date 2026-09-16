@@ -10,8 +10,22 @@
 
 namespace tos::auth {
 
+Result<NativeConfigSequence> open_configuration_sequence(const CollationAuthorityInputs& inputs,
+                                                         StateReadBudget budget) {
+  if (inputs.config == nullptr || inputs.masterchain_state.is_null())
+    return Error{"collation-sequence-input"};
+  // Which account is the configuration account is read the same way the
+  // authority inputs read it, bound to this state.
+  auto configuration = declared_configuration_account(*inputs.config, inputs.masterchain_state);
+  if (!configuration.ok())
+    return configuration.error();
+  return NativeConfigSequence::begin(inputs.config->get_config_param(46), configuration.value(),
+                                     anchor_of(inputs.parent_block, inputs.masterchain_state), inputs.chain,
+                                     inputs.inclusion, budget);
+}
+
 Result<std::unique_ptr<NativeConfigTransaction>> assemble_registry_authority(
-    const CollationAuthorityInputs& inputs) {
+    const CollationAuthorityInputs& inputs, const NativeConfigSequence& sequence) {
   if (inputs.config == nullptr || inputs.message.is_null() || inputs.masterchain_state.is_null()) {
     return Error{"collation-authority-input"};
   }
@@ -38,12 +52,12 @@ Result<std::unique_ptr<NativeConfigTransaction>> assemble_registry_authority(
   if (!gathered.ok()) {
     return gathered.error();
   }
-  return admit_registry_message(gathered.value());
+  return admit_registry_message(gathered.value(), sequence);
 }
 
 
 Result<std::unique_ptr<NativeElectionBindingTransaction>> assemble_election_binding_authority(
-    const CollationAuthorityInputs& inputs) {
+    const CollationAuthorityInputs& inputs, const NativeConfigSequence& sequence) {
   if (inputs.config == nullptr || inputs.message.is_null() || inputs.masterchain_state.is_null()) {
     return Error{"election-binding-input"};
   }
@@ -118,7 +132,8 @@ Result<std::unique_ptr<NativeElectionBindingTransaction>> assemble_election_bind
 
   return NativeElectionBindingTransaction::open(
       {inputs.masterchain_state, anchor_of(inputs.parent_block, inputs.masterchain_state), inputs.chain,
-       inputs.inclusion});
+       inputs.inclusion},
+      sequence);
 }
 
 }  // namespace tos::auth

@@ -34,19 +34,26 @@ Result<NativeCommitClaim> NativeCommitClaim::staged(const NativeRegistryBlock& c
   return NativeCommitClaim(candidate, hash(registry.value()), hash(checkpoint.value()));
 }
 
-Result<NativeConfigSequence> NativeConfigSequence::begin(const NativeConfigContext& context, std::uint32_t inclusion,
-                                                         StateReadBudget budget) {
+Result<NativeConfigSequence> NativeConfigSequence::begin(td::Ref<vm::Cell> registry_parameter, const Hash& address,
+                                                         const Anchor& parent, const ChainContext& chain,
+                                                         std::uint32_t inclusion, StateReadBudget budget) {
+  auto registry = NativeRegistry::bootstrap(std::move(registry_parameter), parent.seqno_, budget);
+  if (!registry.ok())
+    return registry.error();
+  // The chain domain the registry names must be the one this node established
+  // from its own zero state, or the registry would be confirming its own name.
+  if (registry.value().chain_domain() != chain.chain_domain)
+    return Error{"config-sequence-domain"};
   // No coordinate check here. A gathered coordinate is refused, but by the
   // registry itself: begin() replays the parent onto `inclusion`, and a
   // successor that is not the parent's next one has no transitions to select.
   // Restating it here would be a second guard for one rule, and a mutation
   // proved this copy could be deleted without any case noticing -- which is
   // what a guard that protects nothing looks like.
-  auto accepted = NativeRegistryBlock::begin(context.parent(), inclusion, budget);
+  auto accepted = NativeRegistryBlock::begin(registry.value(), inclusion, budget);
   if (!accepted.ok())
     return accepted.error();
-  return NativeConfigSequence(context.chain(), context.head(), context.address(), inclusion,
-                              std::move(accepted.value()));
+  return NativeConfigSequence(chain, parent, address, inclusion, std::move(accepted.value()));
 }
 
 Result<bool> NativeConfigSequence::promote(const NativeCommitClaim& claim, td::Ref<vm::Cell> committed_data) {

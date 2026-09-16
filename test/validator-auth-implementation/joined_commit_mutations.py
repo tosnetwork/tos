@@ -23,7 +23,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-SOURCE = Path("validator/auth/native-config-sequence.cpp")
+SEQUENCE = Path("validator/auth/native-config-sequence.cpp")
+BINDING = Path("validator/auth/native-election-binding-transaction.cpp")
 BINARY = Path("build-p0/test/validator-auth-implementation/test-p0-joined-commit")
 
 UNINSTALLED = ('    if (claim.authorized() && claim.registry() != standing)\n'
@@ -34,6 +35,16 @@ REGISTRY = ('  if (claim.registry() != installed)\n'
             '    return Error{"config-sequence-registry"};\n')
 CHECKPOINT = ('  if (claim.checkpoint() != hash(committed.value().checkpoint))\n'
               '    return Error{"config-sequence-checkpoint"};\n')
+# Opening from the parent state instead of the sequence: exactly what every
+# transaction did before, and exactly as correct-looking on its own.
+FROM_SEQUENCE = '      new NativeElectionBindingTransaction(sequence.accepted(), inputs.inclusion));'
+FROM_PARENT = ('      new NativeElectionBindingTransaction(\n'
+               '          NativeRegistryBlock::begin(\n'
+               '              NativeRegistry::bootstrap(config.ok()->get_config_param(46), inputs.parent.seqno_)\n'
+               '                  .value(),\n'
+               '              inputs.inclusion)\n'
+               '              .value(),\n'
+               '          inputs.inclusion));')
 
 
 def main() -> int:
@@ -43,22 +54,28 @@ def main() -> int:
     args = parser.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
 
-    original = SOURCE.read_text()
+    originals = {SEQUENCE: SEQUENCE.read_text(), BINDING: BINDING.read_text()}
     mutations = [
         # A host that accepted an update the contract then did not write. The
         # account is unchanged, so nothing about the parameter is wrong; the
         # only evidence is that the two do not agree about what happened.
-        ("uninstalled-claim-accepted", "joined-accepted-host-the-contract-ignored-refused",
+        (SEQUENCE, "uninstalled-claim-accepted", "joined-accepted-host-the-contract-ignored-refused",
          UNINSTALLED, "", []),
         # Parameter 46 moving with no host behind it -- a legacy proposal, or a
         # contract branch that wrote a well-formed registry nothing authorized.
-        ("unauthorized-change-accepted", "joined-param46-change-without-host-refused",
+        (SEQUENCE, "unauthorized-change-accepted", "joined-param46-change-without-host-refused",
          UNAUTHORIZED, "", ["joined-refusal-does-not-move-the-prefix"]),
         # The host accepted A and the contract committed B.
-        ("wrong-registry-accepted", "joined-host-root-mismatch-refused", REGISTRY, "", []),
+        (SEQUENCE, "wrong-registry-accepted", "joined-host-root-mismatch-refused", REGISTRY, "", []),
         # The parameter agrees and its second home does not. This is the pair
         # that made the registry unreadable one block after the first update.
-        ("wrong-checkpoint-accepted", "joined-checkpoint-mismatch-refused", CHECKPOINT, "", []),
+        (SEQUENCE, "wrong-checkpoint-accepted", "joined-checkpoint-mismatch-refused", CHECKPOINT, "", []),
+        # A transaction that re-derives its prefix from the parent state. It
+        # opens, it binds, and it is holding a registry this block already
+        # replaced -- which is why the case reads the opened transaction's own
+        # prefix rather than asking whether it opened.
+        (BINDING, "prefix-rederived-from-parent", "joined-later-transaction-opens-on-the-committed-prefix",
+         FROM_SEQUENCE, FROM_PARENT, []),
         # The gathered-coordinate refusal is not listed here on purpose. The
         # sequence does not carry its own copy of that rule: the registry
         # replay refuses a successor that is not the parent's next one, and its
@@ -96,25 +113,27 @@ def main() -> int:
 
     records, failures = [], 0
     try:
-        for guard, case, before, after, companions in mutations:
+        for source, guard, case, before, after, companions in mutations:
+            original = originals[source]
             assert original.count(before) == 1, (guard, "anchor")
             changed = original.replace(before, after, 1)
-            SOURCE.write_text(changed)
-            reached = SOURCE.read_text() == changed
+            source.write_text(changed)
+            reached = source.read_text() == changed
             compiled = build()
             broke, complete = [], False
             if compiled:
                 result = outcomes()
                 complete = set(result) == set(inventory) == declared()
                 broke = sorted(name for name, held in result.items() if not held)
-            SOURCE.write_text(original)
+            source.write_text(original)
             restored = build() and all(outcomes().values())
             record = {"guard": guard, "case": case, "edit_reached_source": reached, "compiled": compiled,
                       "every_case_reported": complete, "cases_broken": broke,
                       "declared_companions": companions,
                       "only_declared_cases_broke": case in broke and set(broke) <= {case, *companions},
                       "restored_baseline": restored,
-                      "source_unchanged": SOURCE.read_text() == original}
+                      "source": str(source),
+                      "source_unchanged": source.read_text() == original}
             records.append(record)
             print(json.dumps(record), flush=True)
             if not all(record[key] for key in ("edit_reached_source", "compiled", "every_case_reported",
@@ -122,7 +141,8 @@ def main() -> int:
                                                "source_unchanged")):
                 failures += 1
     finally:
-        SOURCE.write_text(original)
+        for source, text in originals.items():
+            source.write_text(text)
 
     (args.out / "mutations.json").write_text(json.dumps(records, indent=1) + "\n")
     return 1 if failures else 0

@@ -24,6 +24,7 @@
 #include <string>
 
 #include "validator/auth/native-config-sequence.h"
+#include "validator/auth/native-election-binding-transaction.h"
 #include "vm/cells/CellBuilder.h"
 #include "vm/dict.h"
 
@@ -99,6 +100,7 @@ int main() {
         "joined-accepted-host-the-contract-ignored-refused",
         "joined-refusal-does-not-move-the-prefix",
         "joined-unchanged-parameter-does-not-promote",
+        "joined-later-transaction-opens-on-the-committed-prefix",
     };
     for (const auto* name : manifest)
       std::cout << "MANIFEST " << name << '\n';
@@ -115,7 +117,7 @@ int main() {
     // registry advanced to the coordinate being built, so a transition that
     // falls due here is already part of what the first transaction reads.
     {
-      auto sequence = NativeConfigSequence::begin(context, inclusion);
+      auto sequence = context_fixture::begin_sequence(fixture, inclusion);
       auto expected = value(NativeRegistryBlock::begin(context.parent(), inclusion), "fixture-expected-prefix");
       report(sequence.ok() && value(sequence.value().accepted().state().encode_cell(), "accepted-root")->get_hash() ==
                                   value(expected.state().encode_cell(), "expected-root")->get_hash(),
@@ -124,7 +126,7 @@ int main() {
 
     // A gathered coordinate would materialize transitions due for a block that
     // is not being built, which every transaction already refuses on its own.
-    report(!NativeConfigSequence::begin(context, inclusion + 1).ok(),
+    report(!context_fixture::begin_sequence(fixture, inclusion + 1).ok(),
            "joined-sequence-refuses-a-gathered-coordinate");
 
     auto configuration = value(read_configuration_account(context.data()), "fixture-account-data").configuration;
@@ -133,7 +135,7 @@ int main() {
     // host accepted. The parameter the sequence compares against is read out of
     // this cell, not out of the host, which is the whole point.
     {
-      auto sequence = value(NativeConfigSequence::begin(context, inclusion), "fixture-sequence");
+      auto sequence = value(context_fixture::begin_sequence(fixture, inclusion), "fixture-sequence");
       auto candidate = foreign_prefix();
       auto claim = value(NativeCommitClaim::staged(candidate), "fixture-claim");
       auto installed = account_data(
@@ -152,7 +154,7 @@ int main() {
     // gate has no complaint -- it never sees a host, which is precisely why it
     // is not the guard this is.
     {
-      auto sequence = value(NativeConfigSequence::begin(context, inclusion), "fixture-sequence");
+      auto sequence = value(context_fixture::begin_sequence(fixture, inclusion), "fixture-sequence");
       auto candidate = foreign_prefix();
       auto installed = account_data(
           with_registry(configuration, value(candidate.state().encode_cell(), "candidate-root")),
@@ -165,7 +167,7 @@ int main() {
     // The host accepted one prefix and the contract wrote another. Both halves
     // are individually well formed, which is why neither suite alone sees it.
     {
-      auto sequence = value(NativeConfigSequence::begin(context, inclusion), "fixture-sequence");
+      auto sequence = value(context_fixture::begin_sequence(fixture, inclusion), "fixture-sequence");
       auto accepted = foreign_prefix();
       auto claim = value(NativeCommitClaim::staged(accepted), "fixture-claim");
       auto written = value(NativeRegistryBlock::begin(
@@ -186,7 +188,7 @@ int main() {
     // of one fact, and a commit that moved only one of them is the shape that
     // made the registry unreadable one block after the first update.
     {
-      auto sequence = value(NativeConfigSequence::begin(context, inclusion), "fixture-sequence");
+      auto sequence = value(context_fixture::begin_sequence(fixture, inclusion), "fixture-sequence");
       auto candidate = foreign_prefix();
       auto claim = value(NativeCommitClaim::staged(candidate), "fixture-claim");
       auto installed =
@@ -201,7 +203,7 @@ int main() {
     // account is unchanged, so there is no bad parameter to find; the only
     // evidence is that a host said yes and the account does not show it.
     {
-      auto sequence = value(NativeConfigSequence::begin(context, inclusion), "fixture-sequence");
+      auto sequence = value(context_fixture::begin_sequence(fixture, inclusion), "fixture-sequence");
       auto claim = value(NativeCommitClaim::staged(foreign_prefix()), "fixture-claim");
       auto promoted = sequence.promote(claim, context.data());
       report(refused(promoted, "config-sequence-uninstalled") && sequence.promoted() == 0,
@@ -211,7 +213,7 @@ int main() {
     // After a refusal the next transaction must still open from where the last
     // committed one left off, not from whatever the refused one proposed.
     {
-      auto sequence = value(NativeConfigSequence::begin(context, inclusion), "fixture-sequence");
+      auto sequence = value(context_fixture::begin_sequence(fixture, inclusion), "fixture-sequence");
       const auto before = value(sequence.accepted().state().encode_cell(), "before-root")->get_hash();
       auto candidate = foreign_prefix();
       auto installed =
@@ -228,11 +230,41 @@ int main() {
     // without calling it a promotion -- otherwise "the prefix did not move"
     // and "nothing committed" would be the same observation.
     {
-      auto sequence = value(NativeConfigSequence::begin(context, inclusion), "fixture-sequence");
+      auto sequence = value(context_fixture::begin_sequence(fixture, inclusion), "fixture-sequence");
       auto promoted = sequence.promote(NativeCommitClaim{}, context.data());
       report(promoted.ok() && !promoted.value() && sequence.promoted() == 0 &&
                  sequence.accepted_data().not_null(),
              "joined-unchanged-parameter-does-not-promote");
+    }
+
+    // The property the sequence exists for, stated where it can fail: a
+    // transaction opened after a commit must see what that commit installed.
+    //
+    // Both halves are individually fine either way -- the sequence really did
+    // promote, and the transaction really did open -- so this is only visible
+    // by asking the opened transaction which prefix it is holding. Re-deriving
+    // the registry from the parent state, which is what every transaction did
+    // before, produces a host that works perfectly and binds against a registry
+    // the block has already replaced.
+    {
+      auto sequence = value(context_fixture::begin_sequence(fixture, inclusion), "fixture-sequence");
+      const auto parent_root = value(sequence.accepted().state().encode_cell(), "parent-root")->get_hash();
+      auto candidate = foreign_prefix();
+      auto claim = value(NativeCommitClaim::staged(candidate), "fixture-claim");
+      auto installed =
+          account_data(with_registry(configuration, value(candidate.state().encode_cell(), "candidate-root")),
+                       value(candidate.state().checkpoint(), "candidate-checkpoint"));
+      const bool promoted = sequence.promote(claim, installed).ok();
+
+      auto opened = NativeElectionBindingTransaction::open(
+          {fixture.root, fixture.head, fixture.chain, inclusion}, sequence);
+      const auto candidate_root = value(candidate.state().encode_cell(), "candidate-root")->get_hash();
+      const bool carried =
+          promoted && opened.ok() &&
+          value(opened.value()->host_state().staged().state().encode_cell(), "opened-root")->get_hash() ==
+              candidate_root &&
+          candidate_root != parent_root;
+      report(carried, "joined-later-transaction-opens-on-the-committed-prefix");
     }
 
     std::cout << "SUMMARY cases=" << passed + failed << " passed=" << passed << '\n';

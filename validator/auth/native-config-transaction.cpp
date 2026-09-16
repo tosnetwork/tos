@@ -19,8 +19,9 @@ NativeConfigTransaction::NativeConfigTransaction(NativeCommittee committee, Nati
 }
 
 Result<std::unique_ptr<NativeConfigTransaction>> NativeConfigTransaction::open(
-    const NativeConfigTransactionInputs& inputs, td::Ref<vm::Cell> transaction_evidence,
-    std::shared_ptr<const FinalizedAnchorSource> history, const EvidenceCharge& charge, StateReadBudget budget) {
+    const NativeConfigTransactionInputs& inputs, const NativeConfigSequence& sequence,
+    td::Ref<vm::Cell> transaction_evidence, std::shared_ptr<const FinalizedAnchorSource> history,
+    const EvidenceCharge& charge, StateReadBudget budget) {
   if (inputs.masterchain_state.is_null() || transaction_evidence.is_null() || !history)
     return Error{"native-config-transaction-input"};
   if (inputs.chain.genesis_root == Hash{} || inputs.chain.genesis_file == Hash{} ||
@@ -38,22 +39,21 @@ Result<std::unique_ptr<NativeConfigTransaction>> NativeConfigTransaction::open(
   if (!committee.ok())
     return committee.error();
 
-  auto config = block::Config::extract_from_state(inputs.masterchain_state, 0);
-  if (config.is_error())
-    return Error{"native-config-transaction-config"};
-  auto registry = NativeRegistry::bootstrap(config.ok()->get_config_param(46), inputs.parent.seqno_, budget);
-  if (!registry.ok())
-    return registry.error();
-  auto accepted = NativeRegistryBlock::begin(registry.value(), inputs.inclusion, budget);
-  if (!accepted.ok())
-    return accepted.error();
+  // The sequence must be the one for this block. A sequence opened against
+  // another parent or another coordinate holds a prefix that was never on the
+  // path this transaction extends, and taking it would be the same mistake as
+  // deriving one from the parent -- only harder to see.
+  if (sequence.inclusion() != inputs.inclusion || sequence.parent().seqno_ != inputs.parent.seqno_ ||
+      sequence.chain().chain_domain != inputs.chain.chain_domain)
+    return Error{"native-config-transaction-sequence"};
+  auto accepted = sequence.accepted();
 
   auto evidence = NativeEvidence::open(std::move(transaction_evidence), charge);
   if (!evidence.ok())
     return evidence.error();
 
   return std::unique_ptr<NativeConfigTransaction>(new NativeConfigTransaction(
-      std::move(committee.value()), std::move(evidence.value()), std::move(history), std::move(accepted.value()),
+      std::move(committee.value()), std::move(evidence.value()), std::move(history), std::move(accepted),
       inputs.chain, inputs.inclusion));
 }
 }  // namespace tos::auth

@@ -80,8 +80,8 @@ Result<RegistryAdmissionInputs> gather_registry_admission_inputs(
   return inputs;
 }
 
-Result<std::unique_ptr<NativeConfigTransaction>> admit_registry_message(
-    const RegistryAdmissionInputs& inputs) {
+Result<std::unique_ptr<NativeConfigTransaction>> admit_registry_message(const RegistryAdmissionInputs& inputs,
+                                                                       const NativeConfigSequence& sequence) {
   auto recognized = recognize(inputs.message);
   if (!recognized.ok())
     return recognized.error();
@@ -155,7 +155,7 @@ Result<std::unique_ptr<NativeConfigTransaction>> admit_registry_message(
   }
   auto owned_history = std::make_shared<WitnessedAnchorSource>(std::move(witnessed));
 
-  return NativeConfigTransaction::open(inputs.transaction, recognized.value().message.evidence,
+  return NativeConfigTransaction::open(inputs.transaction, sequence, recognized.value().message.evidence,
                                        std::move(owned_history), uncharged);
 }
 }  // namespace tos::auth

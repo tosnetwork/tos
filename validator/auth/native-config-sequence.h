@@ -81,10 +81,20 @@ class NativeConfigSequence {
   }
 
  public:
-  // Begun at the coordinate being built, not at the parent's: a transition
-  // effective at this block is part of what every transaction in it reads.
-  static Result<NativeConfigSequence> begin(const NativeConfigContext&, std::uint32_t inclusion,
-                                            StateReadBudget = {});
+  // Begun from the parent's installed registry parameter, at the coordinate
+  // being built: a transition effective at this block is part of what every
+  // transaction in it reads.
+  //
+  // The parameter, not the account's checkpoint. The two are the registry's two
+  // homes and the account is where it persists, but requiring a coordinate-
+  // current checkpoint to *begin* would be a stronger precondition than the
+  // chain meets: a block whose configuration account has not yet re-stored its
+  // checkpoint would have no sequence at all, and so no way to store one. The
+  // account is bound to the candidate where that binding belongs -- at commit,
+  // in promote().
+  static Result<NativeConfigSequence> begin(td::Ref<vm::Cell> registry_parameter, const Hash& address,
+                                            const Anchor& parent, const ChainContext& chain,
+                                            std::uint32_t inclusion, StateReadBudget = {});
 
   const NativeRegistryBlock& accepted() const {
     return accepted_;

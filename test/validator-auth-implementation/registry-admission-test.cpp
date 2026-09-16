@@ -16,6 +16,7 @@
 #include "vm/boc.h"
 #include "vm/excno.hpp"
 
+#include "native-config-context-fixture.h"
 #include "owner-history-fixture.h"
 
 using namespace p0_owner_fixture;
@@ -123,6 +124,11 @@ int main(int argc, char** argv) {
     inputs.transaction.parent = history.head;
     inputs.transaction.chain = history.chain;
     inputs.transaction.shard = {static_cast<tos::WorkchainId>(case_wc), case_shard};
+    // The block's prefix, opened once from the same parent every case admits
+    // against. Admission does not derive one: what a message is admitted onto
+    // is what the transactions before it in this block committed.
+    const auto sequence = p0_config_context_fixture::sequence_for(history.root, history.head, history.chain,
+                                                                  history.head.seqno_ + 1);
     inputs.transaction.catchain = case_cc;
     inputs.transaction.inclusion = history.head.seqno_ + 1;
 
@@ -157,7 +163,7 @@ int main(int argc, char** argv) {
     auto add = [&](std::string name, std::function<void()> fn) { tests.emplace_back(std::move(name), std::move(fn)); };
 
     add("complete-input-produces-an-authority", [&] {
-      auto assembled = admit_registry_message(inputs);
+      auto assembled = admit_registry_message(inputs, sequence);
       require(assembled.ok() && assembled.value() != nullptr, "complete-input-produces-an-authority");
       assembled.value()->host().checkpoints();
     });
@@ -166,7 +172,7 @@ int main(int argc, char** argv) {
           inputs.message, configuration, history.root, parent_block, parent_block, history.chain,
           {static_cast<tos::WorkchainId>(case_wc), case_shard}, case_cc, case_cc, history.head.seqno_ + 1);
       require(gathered.ok(), "collator-gathering-produces-an-authority");
-      auto assembled = admit_registry_message(gathered.value());
+      auto assembled = admit_registry_message(gathered.value(), sequence);
       require(assembled.ok() && assembled.value() != nullptr, "collator-gathering-produces-an-authority");
       assembled.value()->host().checkpoints();
     });
@@ -190,7 +196,7 @@ int main(int argc, char** argv) {
           inputs.message, configuration, history.root, parent_block, parent_block, history.chain,
           {static_cast<tos::WorkchainId>(case_wc), case_shard}, case_cc ^ 1u, case_cc ^ 1u, history.head.seqno_ + 1);
       require(gathered.ok(), "sources-that-are-wrong-together-are-not-caught");
-      auto assembled = admit_registry_message(gathered.value());
+      auto assembled = admit_registry_message(gathered.value(), sequence);
       require(assembled.ok() && assembled.value() != nullptr, "sources-that-are-wrong-together-are-not-caught");
     });
     add("wrong-catchain-source-is-refused", [&] {
@@ -220,21 +226,21 @@ int main(int argc, char** argv) {
     add("gathered-catchain-must-match-source", [&] {
       auto wrong = inputs;
       wrong.catchain_source ^= 1u;
-      refuses(admit_registry_message(wrong), "registry-admission-catchain-input",
+      refuses(admit_registry_message(wrong, sequence), "registry-admission-catchain-input",
               "gathered-catchain-must-match-source");
     });
     add("gathered-parent-root-must-match-source", [&] {
       auto wrong = inputs;
       const auto other_root = h(771);
       wrong.parent_block.root_hash = td::Bits256(td::ConstBitPtr(other_root.data()));
-      refuses(admit_registry_message(wrong), "registry-admission-parent-input",
+      refuses(admit_registry_message(wrong, sequence), "registry-admission-parent-input",
               "gathered-parent-root-must-match-source");
     });
     add("gathered-parent-file-must-match-source", [&] {
       auto wrong = inputs;
       const auto other_file = h(772);
       wrong.parent_block.file_hash = td::Bits256(td::ConstBitPtr(other_file.data()));
-      refuses(admit_registry_message(wrong), "registry-admission-parent-input",
+      refuses(admit_registry_message(wrong, sequence), "registry-admission-parent-input",
               "gathered-parent-file-must-match-source");
     });
     // A producer and a validator must reach the same answer from the same
@@ -246,7 +252,7 @@ int main(int argc, char** argv) {
     // reader in the signature for a test to count calls on.
     add("an-authenticated-witness-needs-no-archive", [&] {
       auto approved = approved_by_owner(history.owner.anchor, history.owner.witness);
-      auto admitted = admit_registry_message(approved);
+      auto admitted = admit_registry_message(approved, sequence);
       admits(admitted, "an-authenticated-witness-needs-no-archive");
       require(admitted.value() != nullptr, "an-authenticated-witness-needs-no-archive");
       auto served = admitted.value()->history().finalized_anchor(history.owner.at);
@@ -257,11 +263,11 @@ int main(int argc, char** argv) {
     // while declaring the anchor of the block beside it.
     add("a-witness-for-another-block-is-refused", [&] {
       auto approved = approved_by_owner(history.other.anchor, history.owner.witness);
-      refuses(admit_registry_message(approved), "header-root", "a-witness-for-another-block-is-refused");
+      refuses(admit_registry_message(approved, sequence), "header-root", "a-witness-for-another-block-is-refused");
     });
     add("a-malformed-witness-is-refused", [&] {
       auto approved = approved_by_owner(history.owner.anchor, history.owner.block);
-      refuses(admit_registry_message(approved), "header-surface", "a-malformed-witness-is-refused");
+      refuses(admit_registry_message(approved, sequence), "header-surface", "a-malformed-witness-is-refused");
     });
     // The declared anchor is compared whole. Its resulting state is the field
     // nothing else in the path would notice: the index binds root and file
@@ -271,7 +277,7 @@ int main(int argc, char** argv) {
       auto declared = history.owner.anchor;
       declared.state_ = h(999);
       auto approved = approved_by_owner(declared, history.owner.witness);
-      refuses(admit_registry_message(approved), "evidence-owner-anchor",
+      refuses(admit_registry_message(approved, sequence), "evidence-owner-anchor",
               "an-anchor-differing-only-in-state-is-refused");
     });
     // No block may authorise itself with state it is in the middle of
@@ -281,7 +287,7 @@ int main(int argc, char** argv) {
       auto declared = history.owner.anchor;
       declared.seqno_ = inputs.transaction.inclusion;
       auto approved = approved_by_owner(declared, history.owner.witness);
-      refuses(admit_registry_message(approved), "owner-finality-coordinate",
+      refuses(admit_registry_message(approved, sequence), "owner-finality-coordinate",
               "an-approval-cannot-name-the-block-being-built");
     });
     // Execution may reach exactly the history this message witnessed. The
@@ -289,7 +295,7 @@ int main(int argc, char** argv) {
     // serving it would cost nothing, which is why the absence has to be a case.
     add("only-the-witnessed-coordinate-is-served", [&] {
       auto approved = approved_by_owner(history.owner.anchor, history.owner.witness);
-      auto admitted = admit_registry_message(approved);
+      auto admitted = admit_registry_message(approved, sequence);
       admits(admitted, "only-the-witnessed-coordinate-is-served");
       require(admitted.value() != nullptr, "only-the-witnessed-coordinate-is-served");
       for (std::uint32_t at : {history.other.at, history.head.seqno_})
@@ -323,7 +329,7 @@ int main(int argc, char** argv) {
     // through this path asking to bind gets the answer it would get with no
     // authority at all.
     add("registry-update-host-refuses-bind", [&] {
-      auto assembled = admit_registry_message(inputs);
+      auto assembled = admit_registry_message(inputs, sequence);
       require(assembled.ok() && assembled.value() != nullptr, "registry-update-host-refuses-bind");
       auto empty = vm::CellBuilder().finalize();
       bool refused = false;
@@ -344,7 +350,7 @@ int main(int argc, char** argv) {
       auto approved = approved_by_owner(history.owner.anchor, history.owner.witness);
       std::unique_ptr<NativeConfigTransaction> authority;
       {
-        auto admitted = admit_registry_message(approved);
+        auto admitted = admit_registry_message(approved, sequence);
         require(admitted.ok() && admitted.value() != nullptr, "history-outlives-the-call-that-assembled-it");
         authority = std::move(admitted.value());
       }
@@ -354,32 +360,32 @@ int main(int argc, char** argv) {
     add("gathered-account-must-match-parent-state", [&] {
       auto wrong = inputs;
       wrong.configuration_account = account(77);
-      refuses(admit_registry_message(wrong), "registry-admission-configuration-input",
+      refuses(admit_registry_message(wrong, sequence), "registry-admission-configuration-input",
               "gathered-account-must-match-parent-state");
     });
     add("other-account-not-admitted", [&] {
       auto elsewhere = inputs;
       elsewhere.message =
           external(account(2), registry_body(vm::CellBuilder().store_long(1, 8).finalize(), evidence_without_owner()));
-      refuses(admit_registry_message(elsewhere), "registry-admission-not-configuration", "other-account-not-admitted");
+      refuses(admit_registry_message(elsewhere, sequence), "registry-admission-not-configuration", "other-account-not-admitted");
     });
     add("non-masterchain-not-admitted", [&] {
       auto shard_chain = inputs;
       shard_chain.message = external(
           configuration, registry_body(vm::CellBuilder().store_long(1, 8).finalize(), evidence_without_owner()), 0);
-      refuses(admit_registry_message(shard_chain), "registry-admission-not-configuration",
+      refuses(admit_registry_message(shard_chain, sequence), "registry-admission-not-configuration",
               "non-masterchain-not-admitted");
     });
     add("other-action-not-admitted", [&] {
       auto other_action = inputs;
       other_action.message = external(configuration, registry_body(vm::CellBuilder().store_long(1, 8).finalize(),
                                                                    evidence_without_owner(), 0x43665021));
-      refuses(admit_registry_message(other_action), "registry-admission-not-registry", "other-action-not-admitted");
+      refuses(admit_registry_message(other_action, sequence), "registry-admission-not-registry", "other-action-not-admitted");
     });
     add("missing-account-is-an-input-error", [&] {
       auto unfilled = inputs;
       unfilled.configuration_account = Hash{};
-      refuses(admit_registry_message(unfilled), "registry-admission-input", "missing-account-is-an-input-error");
+      refuses(admit_registry_message(unfilled, sequence), "registry-admission-input", "missing-account-is-an-input-error");
     });
 
     if (argc == 4 && std::string_view(argv[3]) == "--list") {

@@ -12,6 +12,7 @@
 #include "validator/auth/cells.h"
 #include "validator/auth/native-config-transaction.h"
 
+#include "native-config-context-fixture.h"
 #include "owner-fixture.h"
 
 using namespace p0_owner_fixture;
@@ -73,6 +74,10 @@ int main(int argc, char** argv) {
     inputs.catchain = 3;
     inputs.inclusion = 100;
     auto charge = [](std::size_t) -> Result<bool> { return true; };
+    // The block's prefix, opened once. Every case opens a transaction onto it
+    // rather than having the transaction derive its own from the parent state.
+    const auto sequence =
+        p0_config_context_fixture::sequence_for(state, inputs.parent, f.chain, inputs.inclusion);
 
     std::vector<Test> tests;
     auto add = [&](std::string name, std::function<void()> fn) { tests.emplace_back(std::move(name), std::move(fn)); };
@@ -80,45 +85,45 @@ int main(int argc, char** argv) {
     add("coordinate-must-advance", [=] {
       auto same = inputs;
       same.inclusion = inputs.parent.seqno_;
-      refuses(NativeConfigTransaction::open(same, evidence_cell(), history, charge),
+      refuses(NativeConfigTransaction::open(same, sequence, evidence_cell(), history, charge),
               "native-config-transaction-coordinate", "coordinate-must-advance");
     });
     add("coordinate-cannot-regress", [=] {
       auto earlier = inputs;
       earlier.inclusion = inputs.parent.seqno_ - 1;
-      refuses(NativeConfigTransaction::open(earlier, evidence_cell(), history, charge),
+      refuses(NativeConfigTransaction::open(earlier, sequence, evidence_cell(), history, charge),
               "native-config-transaction-coordinate", "coordinate-cannot-regress");
     });
     add("coordinate-must-be-immediate-successor", [=] {
       auto skipped = inputs;
       skipped.inclusion = inputs.parent.seqno_ + 2;
-      refuses(NativeConfigTransaction::open(skipped, evidence_cell(), history, charge),
+      refuses(NativeConfigTransaction::open(skipped, sequence, evidence_cell(), history, charge),
               "native-config-transaction-coordinate", "coordinate-must-be-immediate-successor");
     });
     add("unestablished-chain-refused", [=] {
       auto unnamed = inputs;
       unnamed.chain.chain_domain = Hash{};
-      refuses(NativeConfigTransaction::open(unnamed, evidence_cell(), history, charge),
+      refuses(NativeConfigTransaction::open(unnamed, sequence, evidence_cell(), history, charge),
               "native-config-transaction-chain", "unestablished-chain-refused");
     });
     add("absent-network-refused", [=] {
       auto no_network = inputs;
       no_network.chain.network = 0;
-      refuses(NativeConfigTransaction::open(no_network, evidence_cell(), history, charge),
+      refuses(NativeConfigTransaction::open(no_network, sequence, evidence_cell(), history, charge),
               "native-config-transaction-chain", "absent-network-refused");
     });
     add("absent-evidence-refused", [=] {
-      refuses(NativeConfigTransaction::open(inputs, {}, history, charge), "native-config-transaction-input",
+      refuses(NativeConfigTransaction::open(inputs, sequence, {}, history, charge), "native-config-transaction-input",
               "absent-evidence-refused");
     });
     add("absent-state-refused", [=] {
       auto absent_state = inputs;
       absent_state.masterchain_state = {};
-      refuses(NativeConfigTransaction::open(absent_state, evidence_cell(), history, charge),
+      refuses(NativeConfigTransaction::open(absent_state, sequence, evidence_cell(), history, charge),
               "native-config-transaction-input", "absent-state-refused");
     });
     add("absent-history-refused", [=] {
-      refuses(NativeConfigTransaction::open(inputs, evidence_cell(), {}, charge), "native-config-transaction-input",
+      refuses(NativeConfigTransaction::open(inputs, sequence, evidence_cell(), {}, charge), "native-config-transaction-input",
               "absent-history-refused");
     });
 

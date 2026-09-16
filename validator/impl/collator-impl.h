@@ -19,6 +19,7 @@
 */
 #pragma once
 #include <map>
+#include <optional>
 #include <queue>
 
 #include "block/block-db.h"
@@ -29,6 +30,7 @@
 #include "common/global-version.h"
 #include "common/refcnt.hpp"
 #include "interfaces/validator-manager.h"
+#include "validator/auth/native-collation-authority.h"
 #include "vm/cells.h"
 #include "vm/cells/MerkleProof.h"
 #include "vm/cells/MerkleUpdate.h"
@@ -347,6 +349,14 @@ class Collator final : public td::actor::Actor {
   // a message to the same account that is not a registry update -- executes
   // with no host, which is what leaves the instruction unreachable.
   bool offer_validator_auth(Ref<vm::Cell> msg_root, std::shared_ptr<vm::ValidatorAuthHost>& host);
+  // The configuration account's native prefix across the block being built,
+  // opened once. Collation executes the account's transactions in order on one
+  // thread, so a member is the account's own sequence and not shared state;
+  // validation keeps its copy inside the actor that checks this account, for
+  // the same reason the authority itself is not on the compute configuration.
+  bool open_validator_auth_sequence();
+  std::optional<tos::auth::NativeConfigSequence> validator_auth_sequence_;
+  bool validator_auth_sequence_failed_ = false;
   bool is_masterchain() const {
     return shard_.is_masterchain();
   }

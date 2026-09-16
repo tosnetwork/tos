@@ -52,5 +52,7 @@ Result<RegistryAdmissionInputs> gather_registry_admission_inputs(
 // producer and a validator holding the same block must reach the same answer,
 // and anything node-local here would make that depend on what one of them
 // happened to have resolved.
-Result<std::unique_ptr<NativeConfigTransaction>> admit_registry_message(const RegistryAdmissionInputs&);
+// The sequence is the block's current prefix; admission does not derive one.
+Result<std::unique_ptr<NativeConfigTransaction>> admit_registry_message(const RegistryAdmissionInputs&,
+                                                                        const NativeConfigSequence&);
 }  // namespace tos::auth

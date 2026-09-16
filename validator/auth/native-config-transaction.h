@@ -3,6 +3,7 @@
 
 #include "native-committee.h"
 #include "native-config-host.h"
+#include "native-config-sequence.h"
 #include "native-evidence.h"
 namespace tos::auth {
 // Assemble the authority a native configuration transaction executes under.
@@ -40,7 +41,12 @@ class NativeConfigTransaction {
                           NativeRegistryBlock, ChainContext, std::uint32_t inclusion);
 
  public:
+  // The prefix comes from the sequence, never from the parent state. A second
+  // registry update in one block must start from what the first one committed;
+  // re-deriving the registry here would hand it the prefix that update already
+  // replaced, and both transactions would look correct on their own.
   static Result<std::unique_ptr<NativeConfigTransaction>> open(const NativeConfigTransactionInputs&,
+                                                               const NativeConfigSequence&,
                                                                td::Ref<vm::Cell> transaction_evidence,
                                                                std::shared_ptr<const FinalizedAnchorSource>,
                                                                const EvidenceCharge&, StateReadBudget = {});

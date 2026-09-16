@@ -6,6 +6,7 @@
 #include "block/block-auto.h"
 #include "block/mc-config.h"
 #include "validator/auth/native-config-context.h"
+#include "validator/auth/native-config-sequence.h"
 #include "validator/auth/native-registry.h"
 #include "vm/dict.h"
 
@@ -142,6 +143,26 @@ ContextFixture make(td::Ref<vm::Cell> base, unsigned mode = 0) {
   Anchor head{state.seq_no, hash(root), file, hash(root)};
   ChainContext chain{state.global_id, head.root_, head.file_, registry.chain_domain()};
   return {root, code, data, checkpoint, head, chain, address};
+}
+
+// The same thing for a fixture that already holds its own parent facts.
+inline Result<NativeConfigSequence> begin_sequence(const ContextFixture& f, std::uint32_t inclusion) {
+  auto config = block::Config::extract_from_state(f.root, block::Config::needCapabilities);
+  check(config.is_ok(), "fixture-sequence-config");
+  return NativeConfigSequence::begin(config.ok()->get_config_param(46), f.address, f.head, f.chain, inclusion);
+}
+
+// The block's native prefix, opened from a fixture state exactly as production
+// opens it. Several suites assemble a transaction and now need one; each
+// building its own would be several readings of a fact the production path
+// reads once, which is the shape these suites exist to catch.
+inline NativeConfigSequence sequence_for(td::Ref<vm::Cell> root, const Anchor& parent, const ChainContext& chain,
+                                         std::uint32_t inclusion) {
+  auto config = block::Config::extract_from_state(root, block::Config::needCapabilities);
+  check(config.is_ok(), "fixture-sequence-config");
+  auto address = value(declared_configuration_account(*config.ok(), root), "fixture-sequence-account");
+  return value(NativeConfigSequence::begin(config.ok()->get_config_param(46), address, parent, chain, inclusion),
+               "fixture-sequence");
 }
 
 }  // namespace p0_config_context_fixture

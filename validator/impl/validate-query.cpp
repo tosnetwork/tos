@@ -5788,7 +5788,21 @@ static bool extra_flags_within_valid_mask(const block::gen::CommonMsgInfo::Recor
  *
  * @returns True if an authority was assembled.
  */
-bool ValidateQuery::offer_validator_auth(Ref<vm::Cell> msg_root, std::shared_ptr<vm::ValidatorAuthHost>& host) const {
+tos::auth::Result<tos::auth::NativeConfigSequence> ValidateQuery::open_configuration_sequence_for_block() const {
+  if (!is_masterchain() || !validator_auth_chain_ || config_ == nullptr || mc_state_.is_null() ||
+      mc_state_root_.is_null() || validator_set_.is_null()) {
+    return tos::auth::Error{"validate-sequence-inactive"};
+  }
+  // No message: a sequence belongs to the block, not to whatever message
+  // happens to be first. The producer opened it from these same values.
+  const tos::auth::CollationAuthorityInputs facts{
+      {}, config_.get(), mc_state_root_, mc_state_->get_block_id(), mc_blkid_, *validator_auth_chain_, shard_,
+      validator_set_->get_catchain_seqno(), now_, id_.seqno()};
+  return tos::auth::open_configuration_sequence(facts);
+}
+
+bool ValidateQuery::offer_validator_auth(Ref<vm::Cell> msg_root, const tos::auth::NativeConfigSequence& sequence,
+                                         std::shared_ptr<vm::ValidatorAuthHost>& host) const {
   host.reset();
   if (!is_masterchain() || !validator_auth_chain_ || config_ == nullptr || mc_state_.is_null() ||
       mc_state_root_.is_null() || validator_set_.is_null()) {
@@ -5803,14 +5817,14 @@ bool ValidateQuery::offer_validator_auth(Ref<vm::Cell> msg_root, std::shared_ptr
       msg_root, config_.get(), mc_state_root_, mc_state_->get_block_id(), mc_blkid_, *validator_auth_chain_, shard_,
       validator_set_->get_catchain_seqno(), now_, id_.seqno()};
 
-  auto admitted = tos::auth::assemble_registry_authority(facts);
+  auto admitted = tos::auth::assemble_registry_authority(facts, sequence);
   if (admitted.ok()) {
     auto authority = std::shared_ptr<tos::auth::NativeConfigTransaction>(std::move(admitted.value()));
     host = std::shared_ptr<vm::ValidatorAuthHost>(authority, &authority->host());
     return true;
   }
 
-  auto bound = tos::auth::assemble_election_binding_authority(facts);
+  auto bound = tos::auth::assemble_election_binding_authority(facts, sequence);
   if (bound.ok()) {
     auto authority = std::shared_ptr<tos::auth::NativeElectionBindingTransaction>(std::move(bound.value()));
     host = std::shared_ptr<vm::ValidatorAuthHost>(authority, &authority->host());
@@ -5818,6 +5832,22 @@ bool ValidateQuery::offer_validator_auth(Ref<vm::Cell> msg_root, std::shared_ptr
   }
 
   return false;
+}
+
+bool ValidateQuery::CheckAccountTxs::open_validator_auth_sequence() {
+  if (validator_auth_sequence_) {
+    return true;
+  }
+  if (validator_auth_sequence_failed_) {
+    return false;
+  }
+  auto opened = vq_.open_configuration_sequence_for_block();
+  if (!opened.ok()) {
+    validator_auth_sequence_failed_ = true;
+    return false;
+  }
+  validator_auth_sequence_.emplace(std::move(opened.value()));
+  return true;
 }
 
 bool ValidateQuery::CheckAccountTxs::check_one_transaction(block::Account& account, tos::LogicalTime lt,
@@ -6231,7 +6261,9 @@ bool ValidateQuery::CheckAccountTxs::check_one_transaction(block::Account& accou
   // Assembled for this message and owned by this transaction. The shared
   // compute configuration is read-only from here on, which is what makes
   // checking accounts in parallel actors safe.
-  vq_.offer_validator_auth(in_msg_root, trs->validator_auth_host);
+  if (open_validator_auth_sequence()) {
+    vq_.offer_validator_auth(in_msg_root, *validator_auth_sequence_, trs->validator_auth_host);
+  }
   td::RealCpuTimer timer;
   SCOPE_EXIT {
     ctx_.work_time.trx_tvm += trs->time_tvm;

@@ -3402,10 +3402,50 @@ bool Collator::create_ticktock_transaction(const tos::StdSmcAddress& smc_addr, t
  *
  * @returns True if an authority was assembled.
  */
+/**
+ * Opens the configuration account's native prefix for the block being built.
+ *
+ * Opened once and reused by every transaction of that account, because the
+ * prefix is what the account's earlier transactions committed. Re-deriving it
+ * per message would hand the second registry update in a block the registry the
+ * first one already replaced, and an elected set the registry it was bound
+ * against would no longer be.
+ *
+ * A failure is remembered, so a chain without an installed registry is not
+ * re-examined for every message in the block.
+ *
+ * @returns True if a sequence is available.
+ */
+bool Collator::open_validator_auth_sequence() {
+  if (validator_auth_sequence_) {
+    return true;
+  }
+  if (validator_auth_sequence_failed_) {
+    return false;
+  }
+  const tos::auth::CollationAuthorityInputs facts{
+      {}, config_.get(), mc_state_root, mc_state_->get_block_id(), mc_block_id_,
+      params_.validator_auth.value().chain, shard_, params_.validator_set->get_catchain_seqno(), now_,
+      new_block_seqno};
+  auto opened = tos::auth::open_configuration_sequence(facts);
+  if (!opened.ok()) {
+    validator_auth_sequence_failed_ = true;
+    return false;
+  }
+  validator_auth_sequence_.emplace(std::move(opened.value()));
+  return true;
+}
+
 bool Collator::offer_validator_auth(Ref<vm::Cell> msg_root, std::shared_ptr<vm::ValidatorAuthHost>& host) {
   host.reset();
+  // One precondition, and opening the block's prefix is part of it: it reads
+  // only the parent state this caller already holds, so it decides nothing a
+  // node happens to have. Kept in the same condition rather than beside it,
+  // because a second decision standing between this seam and the assembler is
+  // how a caller goes back to gating the assembler on something node-local
+  // while the assembler's own signature still looks clean.
   if (!is_masterchain() || !params_.validator_auth || config_ == nullptr || mc_state_.is_null() ||
-      mc_state_root.is_null() || params_.validator_set.is_null()) {
+      mc_state_root.is_null() || params_.validator_set.is_null() || !open_validator_auth_sequence()) {
     return false;
   }
 
@@ -3424,7 +3464,7 @@ bool Collator::offer_validator_auth(Ref<vm::Cell> msg_root, std::shared_ptr<vm::
        params_.validator_auth.value().chain, shard_, params_.validator_set->get_catchain_seqno(), now_,
        new_block_seqno};
 
-  auto admitted = tos::auth::assemble_registry_authority(facts);
+  auto admitted = tos::auth::assemble_registry_authority(facts, *validator_auth_sequence_);
   if (admitted.ok()) {
     // The returned pointer aliases an owning one, so the control block keeps
     // the whole authority alive for exactly as long as something can reach the
@@ -3436,7 +3476,7 @@ bool Collator::offer_validator_auth(Ref<vm::Cell> msg_root, std::shared_ptr<vm::
     return true;
   }
 
-  auto bound = tos::auth::assemble_election_binding_authority(facts);
+  auto bound = tos::auth::assemble_election_binding_authority(facts, *validator_auth_sequence_);
   if (bound.ok()) {
     auto authority = std::shared_ptr<tos::auth::NativeElectionBindingTransaction>(std::move(bound.value()));
     host = std::shared_ptr<vm::ValidatorAuthHost>(authority, &authority->host());

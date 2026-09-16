@@ -199,9 +199,14 @@ int main(int argc, char** argv) {
                                                     block::ConfigInfo::needCapabilities);
     expect(config.is_ok(), "e2e-config");
     auto message = internal_from(elector_address, context.address, body);
+    // The block's prefix, opened once and shared by every assembly below, the
+    // way the collator opens it once for the block it is building. A set is
+    // bound against what this block's earlier transactions committed.
+    const auto sequence = p0_config_context_fixture::sequence_for(parent_state, context.head, context.chain,
+                                                                  context.head.seqno_ + 1);
     auto authority = assemble_election_binding_authority(
         CollationAuthorityInputs{message, config.ok().get(), parent_state, parent_block, parent_block, context.chain,
-                                 tos::ShardIdFull{tos::masterchainId}, 0, 1000, context.head.seqno_ + 1});
+                                 tos::ShardIdFull{tos::masterchainId}, 0, 1000, context.head.seqno_ + 1}, sequence);
     if (!authority.ok()) {
       std::cerr << "DETAIL authority=" << authority.error().code << '\n';
     }
@@ -260,7 +265,7 @@ int main(int argc, char** argv) {
       // producer and the validator would disagree about the set.
       auto replay = assemble_election_binding_authority(
           CollationAuthorityInputs{message, config.ok().get(), parent_state, parent_block, parent_block,
-                                   context.chain, tos::ShardIdFull{tos::masterchainId}, 0, 1000, context.head.seqno_ + 1});
+                                   context.chain, tos::ShardIdFull{tos::masterchainId}, 0, 1000, context.head.seqno_ + 1}, sequence);
       bool same = false;
       if (replay.ok()) {
         try {
@@ -287,7 +292,7 @@ int main(int argc, char** argv) {
       auto fresh = assemble_election_binding_authority(
           CollationAuthorityInputs{message, config.ok().get(), parent_state, parent_block, parent_block,
                                    context.chain, tos::ShardIdFull{tos::masterchainId}, 0, 1000,
-                                   context.head.seqno_ + 1});
+                                   context.head.seqno_ + 1}, sequence);
       expect(fresh.ok(), "e2e-contract-authority");
       std::shared_ptr<vm::ValidatorAuthHost> host(&fresh.value()->host(), [](vm::ValidatorAuthHost*) {});
 

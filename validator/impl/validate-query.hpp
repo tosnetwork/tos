@@ -340,7 +340,14 @@ class ValidateQuery : public td::actor::Actor {
   // it writes nothing here: the authority leaves through the argument and is
   // owned by the transaction that receives it, which is what lets account
   // checkers run concurrently against one shared compute configuration.
-  bool offer_validator_auth(Ref<vm::Cell> msg_root, std::shared_ptr<vm::ValidatorAuthHost>& host) const;
+  // The sequence is supplied by the caller that owns it, rather than read from
+  // a member here, so a shared prefix cannot be reached from two account actors
+  // at once by construction.
+  bool offer_validator_auth(Ref<vm::Cell> msg_root, const tos::auth::NativeConfigSequence& sequence,
+                            std::shared_ptr<vm::ValidatorAuthHost>& host) const;
+  // The facts a sequence is opened from, read once here so the producer and
+  // this validator open it from the same values.
+  tos::auth::Result<tos::auth::NativeConfigSequence> open_configuration_sequence_for_block() const;
   void after_get_storage_stat_cache(td::Result<std::function<td::Ref<vm::Cell>(const td::Bits256&)>> res,
                                     td::PerfLogAction token);
   void after_get_shard_state(int idx, td::Result<Ref<ShardState>> res, td::PerfLogAction token);
@@ -462,6 +469,14 @@ class ValidateQuery : public td::actor::Actor {
     StdSmcAddress address_;
     Ref<vm::CellSlice> acc_tr_;
     Context ctx_;
+    // The configuration account's native prefix across this block. It lives in
+    // the actor that checks this one account, not on ValidateQuery: accounts
+    // are checked in parallel actors and the prefix advances as transactions
+    // are promoted, so a copy reachable from several actors would be the data
+    // race that moving the authority off the compute configuration removed.
+    std::optional<tos::auth::NativeConfigSequence> validator_auth_sequence_;
+    bool validator_auth_sequence_failed_ = false;
+    bool open_validator_auth_sequence();
   };
   friend CheckAccountTxs;
 

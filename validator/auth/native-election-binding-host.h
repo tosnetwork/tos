@@ -47,6 +47,13 @@ class NativeElectionBindingHost final : public vm::ValidatorAuthHost {
   td::Ref<vm::Cell> apply(td::Ref<vm::Cell> update, td::Ref<vm::Cell> evidence, const Charge&) override;
   td::Ref<vm::Cell> bind(td::Ref<vm::Cell> elected, td::Ref<vm::Cell> bindings, const Charge&) override;
 
+  // The candidate prefix this host binds against, for the same reason the
+  // configuration host exposes one: what a transaction was opened onto is a
+  // fact a test has to be able to read, or "it opened from the sequence" and
+  // "it re-derived the parent's registry" look identical from outside.
+  const NativeRegistryBlock& staged() const {
+    return accepted_;
+  }
   unsigned bindings() const {
     return bindings_;
   }

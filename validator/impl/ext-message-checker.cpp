@@ -218,9 +218,19 @@ bool ExtMessageChecker::offer_validator_auth(const td::Ref<vm::Cell>& msg_root, 
   // places that do decide a block each hold their own independent copy.
   tos::CatchainSeqno catchain = 0;
   snapshot.config->compute_validator_set_cc(ShardIdFull{masterchainId}, now, &catchain);
-  auto admitted = tos::auth::assemble_registry_authority(
-      {msg_root, snapshot.config.get(), mc_state->root_cell(), mc_state->get_block_id(), snapshot.mc_block_id,
-       *validator_auth_chain_, ShardIdFull{masterchainId}, catchain, now, snapshot.mc_block_id.seqno() + 1});
+  const tos::auth::CollationAuthorityInputs facts{
+      msg_root, snapshot.config.get(), mc_state->root_cell(), mc_state->get_block_id(), snapshot.mc_block_id,
+      *validator_auth_chain_, ShardIdFull{masterchainId}, catchain, now, snapshot.mc_block_id.seqno() + 1};
+  // A fresh sequence for this one message, and it is thrown away with it.
+  // Ingress is not producing a block: there is no earlier transaction whose
+  // commit this message follows, so the prefix it should see is the one the
+  // next block would begin from. Carrying a sequence across messages here would
+  // let a message admitted into the pool advance a prefix no block committed.
+  auto sequence = tos::auth::open_configuration_sequence(facts);
+  if (!sequence.ok()) {
+    return false;
+  }
+  auto admitted = tos::auth::assemble_registry_authority(facts, sequence.value());
   if (!admitted.ok()) {
     return false;
   }

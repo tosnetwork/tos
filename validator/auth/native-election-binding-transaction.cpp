@@ -9,7 +9,7 @@
 namespace tos::auth {
 
 Result<std::unique_ptr<NativeElectionBindingTransaction>> NativeElectionBindingTransaction::open(
-    const NativeElectionBindingTransactionInputs& inputs, StateReadBudget budget) {
+    const NativeElectionBindingTransactionInputs& inputs, const NativeConfigSequence& sequence) {
   if (inputs.masterchain_state.is_null())
     return Error{"native-binding-transaction-input"};
   if (inputs.chain.genesis_root == Hash{} || inputs.chain.genesis_file == Hash{} ||
@@ -48,23 +48,18 @@ Result<std::unique_ptr<NativeElectionBindingTransaction>> NativeElectionBindingT
       (config.ok()->get_capabilities() & vm::validator_auth_capability) == 0)
     return Error{"native-binding-transaction-inactive"};
 
-  auto registry = NativeRegistry::bootstrap(config.ok()->get_config_param(46), inputs.parent.seqno_, budget);
-  if (!registry.ok())
-    return registry.error();
+  // The sequence must be the one for this block, for the same reason the
+  // registry update requires it: a prefix from another parent or coordinate was
+  // never on the path this transaction extends.
+  if (sequence.inclusion() != inputs.inclusion || sequence.parent().seqno_ != inputs.parent.seqno_)
+    return Error{"native-binding-transaction-sequence"};
   // The chain domain the registry names must be the one this node established
   // from its own zero state. Without this the registry would be confirming its
   // own name, which is the whole reason the context is established elsewhere.
-  if (registry.value().chain_domain() != inputs.chain.chain_domain)
+  if (sequence.accepted().state().chain_domain() != inputs.chain.chain_domain)
     return Error{"native-binding-transaction-domain"};
 
-  // Begun at the coordinate being built, not merely read at the parent's: due
-  // transitions effective at this block are part of what the set is bound
-  // against.
-  auto accepted = NativeRegistryBlock::begin(registry.value(), inputs.inclusion, budget);
-  if (!accepted.ok())
-    return accepted.error();
-
   return std::unique_ptr<NativeElectionBindingTransaction>(
-      new NativeElectionBindingTransaction(std::move(accepted.value()), inputs.inclusion));
+      new NativeElectionBindingTransaction(sequence.accepted(), inputs.inclusion));
 }
 }  // namespace tos::auth
