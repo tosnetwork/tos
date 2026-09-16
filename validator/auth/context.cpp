@@ -96,7 +96,8 @@ Result<Bytes> possession_preimage(const ChainContext& c, const Update& update, c
     return Error{w.error};
   return w.data;
 }
-Result<bool> verify_possession(const ChainContext& c, const Update& update, const Key& key, const PossessionAuth& pop) {
+Result<bool> verify_possession(const ChainContext& c, const Update& update, const Key& key, const PossessionAuth& pop,
+                               const SignatureMeter* meter) {
   if ((update.operation_ != 1 && update.operation_ != 2) || update.identity_ != key.identity_ || key.suite_ != 1 ||
       key.parameters_ != 1 || key.role_ < 1 || key.role_ > 5 || key.capacity_domain_ != Hash{} ||
       key.capacity_limit_ != 0)
@@ -120,6 +121,8 @@ Result<bool> verify_possession(const ChainContext& c, const Update& update, cons
   auto preimage = possession_preimage(c, update, key);
   if (!preimage.ok())
     return preimage.error();
+  if (meter)
+    (*meter)(admitted.value().suite());
   auto signature = admitted.value().verify(preimage.value(), pop.signature_);
   if (!signature.ok())
     return signature.error();
@@ -128,7 +131,8 @@ Result<bool> verify_possession(const ChainContext& c, const Update& update, cons
   return true;
 }
 Result<bool> verify_identity_certificate(const Certificate& cert, const Duty& expected, const Identity& identity,
-                                         const std::vector<Key>& keys, std::uint32_t inclusion) {
+                                         const std::vector<Key>& keys, std::uint32_t inclusion,
+                                         const SignatureMeter* meter) {
   auto raw = encode(cert);
   if (!raw.ok())
     return raw.error();
@@ -170,6 +174,8 @@ Result<bool> verify_identity_certificate(const Certificate& cert, const Duty& ex
   auto statement = signing_statement(expected, cert.records_[0]);
   if (!statement.ok())
     return statement.error();
+  if (meter)
+    (*meter)(admitted.value().suite());
   auto signature = admitted.value().verify(statement.value(), component.signature_);
   if (!signature.ok())
     return signature.error();

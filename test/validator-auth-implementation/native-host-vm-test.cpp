@@ -23,19 +23,19 @@ struct Host final : vm::ValidatorAuthHost {
   explicit Host(long long amount) : cost(amount) {
   }
   Cell checkpoint(const Charge& charge) override {
-    charge(cost);
+    charge.gas(cost);
     ++states;
     return state_result;
   }
   Cell apply(Cell update, Cell auth, const Charge& charge) override {
-    charge(cost);
+    charge.gas(cost);
     ++updates;
     if (update->get_hash() != input->get_hash() || auth->get_hash() != evidence->get_hash())
       throw vm::VmError{vm::Excno::range_chk, "native host operand order"};
     return apply_result;
   }
   Cell bind(Cell elected, Cell bindings, const Charge& charge) override {
-    charge(cost);
+    charge.gas(cost);
     ++binds;
     if (elected->get_hash() != input->get_hash() || bindings->get_hash() != evidence->get_hash())
       throw vm::VmError{vm::Excno::range_chk, "native host operand order"};

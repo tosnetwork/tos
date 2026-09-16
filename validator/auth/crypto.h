@@ -1,4 +1,5 @@
 #pragma once
+#include <functional>
 #include <optional>
 #include <string_view>
 #include <vector>
@@ -49,4 +50,14 @@ class AdmittedKey {
     return suite_;
   }
 };
+// Reports one signature verification immediately before it is performed, and
+// names the suite it will be performed under, because that is what decides its
+// price.
+//
+// Reporting first is the point. The caller may refuse to pay by throwing, and a
+// refusal then stops the verifications that would have followed; a count taken
+// afterwards would arrive when the work was already done. Verification paths
+// that nobody charges -- an operator's own service, a node answering a query --
+// pass nothing and are unaffected.
+using SignatureMeter = std::function<void(std::uint16_t suite)>;
 }  // namespace tos::auth

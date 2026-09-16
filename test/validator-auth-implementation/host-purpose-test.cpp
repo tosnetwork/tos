@@ -65,9 +65,21 @@ NativeRegistryBlock registry_block() {
 }
 }  // namespace
 
+// A binding host reads the registry and verifies no signature, so being asked
+// to pay for one would mean something other than what this file describes is
+// happening.
+const std::function<void(std::uint16_t)> refuse_signature_charge = [](std::uint16_t) {
+  throw std::runtime_error("unexpected signature charge");
+};
+vm::ValidatorAuthHost::Charge silent_charge() {
+  return {[](long long) {}, refuse_signature_charge};
+}
+
 int main() {
   try {
-    const auto charge = [](long long) {};
+    // Neither host verifies anything, so the signature side of the charge is
+    // supplied and expected never to be called.
+    const auto charge = silent_charge();
     auto cell = vm::CellBuilder().finalize();
 
     // And the binding host is reached by an internal elector message, which
@@ -128,7 +140,7 @@ int main() {
     {
       NativeElectionBindingHost host(registry_block(), 1);
       long long charged = 0;
-      const auto meter = [&](long long gas) { charged += gas; };
+      const vm::ValidatorAuthHost::Charge meter{[&](long long gas) { charged += gas; }, refuse_signature_charge};
       bool refused = false;
       try {
         host.bind(elected, bindings, meter);
@@ -155,7 +167,7 @@ int main() {
       bool exhausted = false;
       for (unsigned attempt = 0; attempt < 64 && !exhausted; ++attempt) {
         try {
-          host.bind(elected, bindings, [](long long) {});
+          host.bind(elected, bindings, silent_charge());
         } catch (const vm::VmError& error) {
           exhausted = std::string(error.get_msg()).find("unreadable") != std::string::npos;
         }

@@ -17,8 +17,14 @@ class NativeRegistryBlock {
   // either way, and a caller that could only learn about them on success would
   // let a refusal be free: arranging for the last step to fail would read the
   // registry for nothing. State rolls back on refusal; work does not.
+  //
+  // `meter`, when given, is told about each signature verification before it
+  // happens. The reads this transaction makes are reported afterwards because
+  // they are already bounded by the allowance; a verification is not bounded by
+  // anything, so it is announced while the caller can still refuse.
   Result<NativeRegistryBlock> apply_transaction(const Update&, const Authorizations&, const NativeIdentityContext&,
-                                                ObjectReader&, StateReadBudget* work_remaining = nullptr) const;
+                                                ObjectReader&, StateReadBudget* work_remaining = nullptr,
+                                                const SignatureMeter* meter = nullptr) const;
   // Reduce the allowance without touching what the registry contains.
   //
   // A refused transaction leaves the prefix exactly where it was, but the reads

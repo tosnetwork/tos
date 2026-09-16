@@ -11,12 +11,13 @@
 // linear in the number of signer records, and reports what the largest legal
 // certificate costs against the credit the network installs.
 //
-// It also measures what is not charged. The host's price comes entirely from
-// the registry's own allowance, and certificate verification never touches that
-// allowance -- its only bound is a byte size. Every signature check is therefore
-// free to the meter, which makes the gap a pricing question and not only a
-// budget one. A bound derived only from reads would be a bound on the part that
-// is already visible.
+// Reads are not the whole bill. Certificate verification never touches the
+// registry's allowance -- its only bound is a byte size -- so the signature work
+// is priced separately, by the machine, from the count the verification reports.
+// What this file has to show about that count is that it is the number of
+// verifications actually performed: equal to the records when they are all
+// checked, and zero when the certificate is refused before any of them is. What
+// one costs is measured where it is charged, against a running machine.
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -32,16 +33,16 @@ using namespace tos::auth;
 using namespace auth_fixture;
 
 namespace {
-unsigned passed = 0, failed = 0;
+unsigned passed = 0;
 
+// A failed measurement stops the run and names itself, so a guard removed from
+// the production source is answered by the case that was supposed to catch it
+// rather than by whichever case happens to trip first afterwards.
 void report(bool condition, const std::string& name) {
-  if (condition) {
-    ++passed;
-    std::cout << "CASE_PASS " << name << '\n';
-  } else {
-    ++failed;
-    std::cout << "CASE_FAIL " << name << '\n';
-  }
+  if (!condition)
+    throw std::runtime_error(name);
+  ++passed;
+  std::cout << "CASE_PASS " << name << '\n';
 }
 
 // The price the host is built with. Read from the host rather than repeated
@@ -56,8 +57,11 @@ constexpr std::uint64_t network_credit = 10000;
 struct Cost {
   std::uint64_t gas = 0;
   std::uint64_t entries = 0, bytes = 0;
-  unsigned signatures = 0;
+  // Verifications the registry announced it was about to perform, which is what
+  // a paying caller is charged for.
+  std::uint64_t reported = 0;
   bool verified = false;
+  std::string refusal;
 };
 
 // What verifying one governance certificate spends of the registry's allowance,
@@ -69,16 +73,20 @@ Cost measure(unsigned records) {
   auto snapshot = value(RegistrySnapshot::compile(f.committee, f.policy), "gas-snapshot");
   auto reader = governance_fixture::reader(f);
 
+  Cost cost;
+  SignatureMeter meter = [&](std::uint16_t) { ++cost.reported; };
+
   const auto before = registry.remaining();
-  auto verified = verify_current_governance(f.chain, snapshot, registry, f.update, f.evidence, f.inclusion, reader);
+  auto verified =
+      verify_current_governance(f.chain, snapshot, registry, f.update, f.evidence, f.inclusion, reader, &meter);
   const auto after = registry.remaining();
 
-  Cost cost;
   cost.verified = verified.ok();
+  if (!verified.ok())
+    cost.refusal = verified.error().code;
   cost.entries = before.entries - after.entries;
   cost.bytes = before.bytes - after.bytes;
   cost.gas = consumed(before, after, per_entry, per_byte);
-  cost.signatures = records;
   return cost;
 }
 }  // namespace
@@ -88,7 +96,8 @@ int main() {
     static const char* const manifest[] = {
         "governance-cost-is-linear-in-signer-records",
         "governance-worst-case-exceeds-the-external-credit",
-        "governance-signature-work-is-charged-nothing",
+        "governance-reports-one-verification-for-each-signature-it-checks",
+        "a-certificate-refused-before-verification-reports-none",
     };
     for (const auto* name : manifest)
       std::cout << "MANIFEST " << name << '\n';
@@ -116,20 +125,48 @@ int main() {
     report(largest.verified && largest.gas > network_credit,
            "governance-worst-case-exceeds-the-external-credit");
 
-    // And the part that grows fastest is invisible. Four hundred signature
-    // checks happen and the meter sees none of them: the charge is derived from
-    // the registry allowance, and verification never spends it on a signature.
-    // Raising the credit would not change this.
+    // What the caller is charged for the part that grows fastest is the number
+    // of verifications, and the number of verifications is the number of
+    // records. A count taken from the certificate's length instead would say
+    // the same thing here and a different thing for every certificate that is
+    // refused before a signature is looked at.
+    report(small.reported == 8 && medium.reported == 64 && largest.reported == 400,
+           "governance-reports-one-verification-for-each-signature-it-checks");
+
+    // Which is the case below. One component names an epoch the governing
+    // committee's roster does not have, so the certificate is refused while
+    // structure is still being read -- before the first verification. Nothing
+    // was verified, so nothing is reported, and a sender cannot present a
+    // certificate that never reaches a signature check and be billed for four
+    // hundred of them.
     {
-      const auto reads_only = largest.entries * per_entry + largest.bytes * per_byte;
-      report(largest.signatures == 400 && largest.gas == reads_only,
-             "governance-signature-work-is-charged-nothing");
+      auto f = governance_fixture::fixture(8);
+      auto cert = value(decode<Certificate>(f.evidence.governance_[0].certificate_.inline_), "refused-cert");
+      // Not the first record. A certificate refused at its first record would
+      // report nothing even from an implementation that verified as it read,
+      // and this case exists to tell those two apart.
+      cert.records_.at(4).components_[0].epoch_ += 1;
+      f.evidence.governance_[0].certificate_ =
+          value(object_value(4, value(encode(cert), "refused-encoded")), "refused-carrier");
+
+      auto registry = value(NativeRegistry::bootstrap(value(f.current.encode_cell(), "refused-root"), f.inclusion),
+                            "refused-registry");
+      auto snapshot = value(RegistrySnapshot::compile(f.committee, f.policy), "refused-snapshot");
+      auto reader = governance_fixture::reader(f);
+      std::uint64_t reported = 0;
+      SignatureMeter meter = [&](std::uint16_t) { ++reported; };
+      auto refused =
+          verify_current_governance(f.chain, snapshot, registry, f.update, f.evidence, f.inclusion, reader, &meter);
+      std::cerr << "MEASURE refused=" << (refused.ok() ? "accepted" : refused.error().code) << " reported=" << reported
+                << '\n';
+      report(!refused.ok() && refused.error().code == std::string("key-binding") && reported == 0,
+             "a-certificate-refused-before-verification-reports-none");
     }
 
-    std::cout << "SUMMARY cases=" << passed + failed << " passed=" << passed << '\n';
-    return failed ? 1 : 0;
+    std::cout << "SUMMARY cases=" << passed << " passed=" << passed << '\n';
+    return 0;
   } catch (const std::exception& error) {
-    std::cerr << "HARNESS_FAILURE " << error.what() << '\n';
-    return 2;
+    std::cerr << "ASSERTION: " << error.what() << '\n';
+    return 1;
   }
 }

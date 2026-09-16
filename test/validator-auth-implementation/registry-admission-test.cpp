@@ -334,7 +334,14 @@ int main(int argc, char** argv) {
       auto empty = vm::CellBuilder().finalize();
       bool refused = false;
       try {
-        assembled.value()->host().bind(empty, empty, [](long long) {});
+        // The update host refuses the instruction outright, so neither side of
+        // the charge is reached.
+        assembled.value()->host().bind(
+            empty, empty,
+            vm::ValidatorAuthHost::Charge{[](long long) { throw std::runtime_error("unexpected gas charge"); },
+                                          [](std::uint16_t) {
+                                            throw std::runtime_error("unexpected signature charge");
+                                          }});
       } catch (const vm::VmError& error) {
         refused = error.get_errno() == static_cast<int>(vm::Excno::inv_opcode);
       }

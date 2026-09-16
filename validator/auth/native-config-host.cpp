@@ -15,7 +15,7 @@ td::Ref<vm::Cell> NativeConfigHost::checkpoint(const Charge& charge) {
   if (!encoded.ok())
     refuse_host("native registry checkpoint");
   auto after = accepted_.state().remaining();
-  charge(as_gas(consumed(before, after, gas_per_entry_, gas_per_byte_)));
+  charge.gas(as_gas(consumed(before, after, gas_per_entry_, gas_per_byte_)));
   ++checkpoints_;
   return encoded.value();
 }
@@ -52,7 +52,17 @@ td::Ref<vm::Cell> NativeConfigHost::apply(td::Ref<vm::Cell> update, td::Ref<vm::
   // Applied against the accepted prefix, never against a prefix a failed
   // transaction left behind.
   auto performed = before;
-  auto next = accepted_.apply_transaction(decoded_update.value(), admitted_, context_, reader_, &performed);
+  // Signature work is charged as it is caused, not reported at the end with
+  // the reads. The verification loop announces each check before performing
+  // it, so an allowance that runs out stops the next one instead of paying for
+  // four hundred already done. That charge leaves through the machine's own
+  // tariff for the primitive, which is why nothing here names a price.
+  SignatureMeter meter = [this, &charge](std::uint16_t suite) {
+    ++signature_checks_;
+    charge.signature_check(suite);
+  };
+  auto next =
+      accepted_.apply_transaction(decoded_update.value(), admitted_, context_, reader_, &performed, &meter);
   // Settled onto the prefix that outlives the attempt, before the outcome is
   // known. Charging alone was not enough: the copy that did the reading is
   // destroyed with its remainder inside it, so without this the next attempt
@@ -62,7 +72,7 @@ td::Ref<vm::Cell> NativeConfigHost::apply(td::Ref<vm::Cell> update, td::Ref<vm::
   auto settled = accepted_.settle_work(performed);
   if (!settled.ok())
     refuse_host("native work meter");
-  charge(as_gas(consumed(before, performed, gas_per_entry_, gas_per_byte_)));
+  charge.gas(as_gas(consumed(before, performed, gas_per_entry_, gas_per_byte_)));
   if (!next.ok())
     refuse_host("native update refused");
 

@@ -117,6 +117,12 @@ td::Ref<vm::Cell> internal_from(const Hash& source, const Hash& destination, con
 }
 }  // namespace
 
+// The binding host verifies no signature, so the signature side of the charge
+// is supplied and expected never to be reached.
+vm::ValidatorAuthHost::Charge silent_charge() {
+  return {[](long long) {}, [](std::uint16_t) { throw std::runtime_error("unexpected signature charge"); }};
+}
+
 int main(int argc, char** argv) {
   try {
     expect(argc == 4, "arguments");
@@ -236,7 +242,7 @@ int main(int argc, char** argv) {
       bool bound_ok = false;
       td::Ref<vm::Cell> bound;
       try {
-        bound = authority.value()->host().bind(set, bindings, [](long long) {});
+        bound = authority.value()->host().bind(set, bindings, silent_charge());
         bound_ok = bound.not_null();
       } catch (const vm::VmError& error) {
         std::cerr << "DETAIL bind=" << error.get_msg() << '\n';
@@ -269,8 +275,8 @@ int main(int argc, char** argv) {
       bool same = false;
       if (replay.ok()) {
         try {
-          auto again = replay.value()->host().bind(set, bindings, [](long long) {});
-          auto first = authority.value()->host().bind(set, bindings, [](long long) {});
+          auto again = replay.value()->host().bind(set, bindings, silent_charge());
+          auto first = authority.value()->host().bind(set, bindings, silent_charge());
           same = again.not_null() && first.not_null() && again->get_hash() == first->get_hash();
         } catch (const vm::VmError&) {
           same = false;

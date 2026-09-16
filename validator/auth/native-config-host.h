@@ -46,6 +46,11 @@ class NativeConfigHost final : public vm::ValidatorAuthHost {
   td::Ref<vm::Cell> admitted_proposal_;
   std::uint64_t gas_per_entry_, gas_per_byte_;
   unsigned checkpoints_ = 0, updates_ = 0;
+  // Verifications this host has caused to be charged for. It is not what the
+  // charge is computed from -- the machine prices each one as it is announced
+  // -- but what the host can be asked afterwards, so a test can say how many
+  // happened without inferring it from a gas figure that also contains reads.
+  std::uint64_t signature_checks_ = 0;
   ConfigurationDelta delta_;
 
  public:
@@ -89,6 +94,9 @@ class NativeConfigHost final : public vm::ValidatorAuthHost {
   }
   unsigned checkpoints() const {
     return checkpoints_;
+  }
+  std::uint64_t signature_checks() const {
+    return signature_checks_;
   }
   unsigned updates() const {
     return updates_;

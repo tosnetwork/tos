@@ -24,10 +24,15 @@ class NativeLifecycleAuthority final : public LifecycleAuthority {
   const CurrentRegistry& current_;
   const NativeIdentityContext& context_;
   ObjectReader& reader_;
+  // Who pays for the signature verifications this authority causes, when
+  // anyone does. A replay that is not executing a transaction has nobody to
+  // charge and passes nothing; what is admitted is the same either way.
+  const SignatureMeter* meter_;
 
  public:
-  NativeLifecycleAuthority(const CurrentRegistry& current, const NativeIdentityContext& context, ObjectReader& reader)
-      : current_(current), context_(context), reader_(reader) {
+  NativeLifecycleAuthority(const CurrentRegistry& current, const NativeIdentityContext& context, ObjectReader& reader,
+                           const SignatureMeter* meter = nullptr)
+      : current_(current), context_(context), reader_(reader), meter_(meter) {
   }
   Result<bool> validate_context() const;
   Result<Anchor> governance(const Update&, const Authorizations&, const CurrentRegistry&,

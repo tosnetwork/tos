@@ -8,7 +8,7 @@ td::Ref<vm::Cell> NativeConfigStateHost::checkpoint(const Charge& charge) {
   if (!encoded.ok())
     refuse_host("native registry checkpoint");
   auto after = accepted_.state().remaining();
-  charge(as_gas(consumed(before, after, gas_per_entry_, gas_per_byte_)));
+  charge.gas(as_gas(consumed(before, after, gas_per_entry_, gas_per_byte_)));
   ++checkpoints_;
   return encoded.value();
 }

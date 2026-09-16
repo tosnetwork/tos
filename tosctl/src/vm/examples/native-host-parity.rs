@@ -1,5 +1,5 @@
 use chain_block::{
-    read_single_root_boc, BuilderData, Cell, ExceptionCode, Result, SliceData, Status,
+    read_single_root_boc, BuilderData, Cell, ExceptionCode, Result, SliceData,
 };
 use std::{
     env, fs,
@@ -10,7 +10,7 @@ use tos_vm::{
     error::tvm_exception_code,
     executor::{gas::gas_state::Gas, Engine},
     stack::{savelist::SaveList, Stack, StackItem},
-    validator_auth_host::ValidatorAuthHost,
+    validator_auth_host::{HostCharge as ValidatorAuthHostCharge, ValidatorAuthHost},
 };
 fn cell(value: u8) -> Result<Cell> {
     BuilderData::with_raw(vec![value], 8)?.into_cell()
@@ -27,8 +27,8 @@ struct Host {
     bound: Cell,
 }
 impl ValidatorAuthHost for Host {
-    fn checkpoint(&mut self, charge: &mut dyn FnMut(i64) -> Status) -> Result<Cell> {
-        charge(self.cost)?;
+    fn checkpoint(&mut self, charge: &mut dyn ValidatorAuthHostCharge) -> Result<Cell> {
+        charge.gas(self.cost)?;
         self.states += 1;
         Ok(self.state.clone())
     }
@@ -36,9 +36,9 @@ impl ValidatorAuthHost for Host {
         &mut self,
         update: Cell,
         evidence: Cell,
-        charge: &mut dyn FnMut(i64) -> Status,
+        charge: &mut dyn ValidatorAuthHostCharge,
     ) -> Result<Cell> {
-        charge(self.cost)?;
+        charge.gas(self.cost)?;
         self.updates += 1;
         if update.repr_hash() != self.first.repr_hash()
             || evidence.repr_hash() != self.second.repr_hash()
@@ -51,9 +51,9 @@ impl ValidatorAuthHost for Host {
         &mut self,
         elected: Cell,
         bindings: Cell,
-        charge: &mut dyn FnMut(i64) -> Status,
+        charge: &mut dyn ValidatorAuthHostCharge,
     ) -> Result<Cell> {
-        charge(self.cost)?;
+        charge.gas(self.cost)?;
         self.binds += 1;
         if elected.repr_hash() != self.first.repr_hash()
             || bindings.repr_hash() != self.second.repr_hash()

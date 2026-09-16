@@ -128,7 +128,7 @@ Result<RegistrySnapshot> RegistrySnapshot::compile(const Committee& committee, c
 }
 Result<std::uint64_t> RegistrySnapshot::verify_records(const Duty& duty, const Bytes& payload,
                                                        const std::vector<Record>& records, const Duty& expected,
-                                                       bool quorum) const {
+                                                       bool quorum, const SignatureMeter* meter) const {
   if (duty != expected)
     return Error{"expected-context"};
   if (duty.committee_ != committee_id_ || duty.policy_ != policy_id_ || duty.workchain_ != committee_.workchain_ ||
@@ -180,7 +180,18 @@ Result<std::uint64_t> RegistrySnapshot::verify_records(const Duty& duty, const B
     return required_weight.error();
   if (quorum && signed_weight.value() < required_weight.value())
     return Error{"quorum"};
+  // Everything above refuses without verifying anything: an unknown signer, a
+  // component that is not the key this role is active with, a signature of the
+  // wrong size, a set that does not reach quorum. None of that costs a
+  // verification, so none of it is reported as one -- a price that tracked the
+  // certificate's length instead of its work would charge for all of them.
+  //
+  // From here each pass does exactly one verification, and says so before doing
+  // it. A caller that cannot pay stops the loop here rather than after four
+  // hundred of them.
   for (const auto& p : pending) {
+    if (meter)
+      (*meter)(p.key->suite());
     auto valid = p.key->verify(p.statement, *p.signature);
     if (!valid.ok())
       return valid.error();
@@ -189,13 +200,14 @@ Result<std::uint64_t> RegistrySnapshot::verify_records(const Duty& duty, const B
   }
   return weight;
 }
-Result<VerifiedCertificate> RegistrySnapshot::verify(const Certificate& cert, const Duty& expected) const {
+Result<VerifiedCertificate> RegistrySnapshot::verify(const Certificate& cert, const Duty& expected,
+                                                     const SignatureMeter* meter) const {
   auto raw = encode(cert);
   if (!raw.ok())
     return raw.error();
   if (raw.value().size() > policy_.max_certificate_)
     return Error{"certificate-budget"};
-  auto weight = verify_records(cert.duty_, cert.payload_, cert.records_, expected, true);
+  auto weight = verify_records(cert.duty_, cert.payload_, cert.records_, expected, true, meter);
   if (!weight.ok())
     return weight.error();
   auto id = digest("certificate", raw.value());
@@ -206,12 +218,13 @@ Result<VerifiedCertificate> RegistrySnapshot::verify(const Certificate& cert, co
     signers.push_back(r.identity_);
   return VerifiedCertificate{id.value(), policy_id_, committee_id_, cert.duty_, std::move(signers), weight.value()};
 }
-Result<std::uint64_t> RegistrySnapshot::verify(const Envelope& env, const Duty& expected) const {
+Result<std::uint64_t> RegistrySnapshot::verify(const Envelope& env, const Duty& expected,
+                                               const SignatureMeter* meter) const {
   auto raw = encode(env);
   if (!raw.ok())
     return raw.error();
   if (raw.value().size() > policy_.max_envelope_)
     return Error{"envelope-budget"};
-  return verify_records(env.duty_, env.payload_, {env.record_}, expected, false);
+  return verify_records(env.duty_, env.payload_, {env.record_}, expected, false, meter);
 }
 }  // namespace tos::auth

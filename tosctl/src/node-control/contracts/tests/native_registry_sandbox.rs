@@ -1500,7 +1500,7 @@ mod config_persistence_action_phase {
             atomic::{AtomicUsize, Ordering},
         },
     };
-    use tos_vm::validator_auth_host::ValidatorAuthHost;
+    use tos_vm::validator_auth_host::{HostCharge as ValidatorAuthHostCharge, ValidatorAuthHost};
 
     const CONFIG_BALANCE: u64 = 10_000_000_000_000;
     const ACTION_LIMIT_FAILURE: i32 = 50;
@@ -1548,9 +1548,9 @@ mod config_persistence_action_phase {
     impl ValidatorAuthHost for Host {
         fn checkpoint(
             &mut self,
-            charge: &mut dyn FnMut(i64) -> chain_block::Status,
+            charge: &mut dyn ValidatorAuthHostCharge,
         ) -> chain_block::Result<Cell> {
-            charge(10)?;
+            charge.gas(10)?;
             BuilderData::new().into_cell()
         }
 
@@ -1561,7 +1561,7 @@ mod config_persistence_action_phase {
             &mut self,
             _elected: Cell,
             _bindings: Cell,
-            _charge: &mut dyn FnMut(i64) -> chain_block::Status,
+            _charge: &mut dyn ValidatorAuthHostCharge,
         ) -> chain_block::Result<Cell> {
             chain_block::fail!(chain_block::ExceptionCode::InvalidOpcode)
         }
@@ -1570,9 +1570,9 @@ mod config_persistence_action_phase {
             &mut self,
             update: Cell,
             evidence: Cell,
-            charge: &mut dyn FnMut(i64) -> chain_block::Status,
+            charge: &mut dyn ValidatorAuthHostCharge,
         ) -> chain_block::Result<Cell> {
-            charge(10)?;
+            charge.gas(10)?;
             assert_eq!(update.hash(0), self.expected_update.hash(0), "update operand changed");
             assert_eq!(
                 evidence.hash(0),

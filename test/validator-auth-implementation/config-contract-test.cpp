@@ -98,7 +98,7 @@ struct Host final : vm::ValidatorAuthHost {
   td::Ref<vm::Cell> installed, bound, last_elected, last_bindings;
   td::Ref<vm::Cell> expected_update, expected_evidence, returned_registry, returned_checkpoint;
   td::Ref<vm::Cell> checkpoint(const Charge& charge) override {
-    charge(10);
+    charge.gas(10);
     ++checkpoints;
     // A real checkpoint when the case needs one parsed. The tick-tock path
     // reads the registry out of the checkpoint's first reference, so a case
@@ -109,7 +109,7 @@ struct Host final : vm::ValidatorAuthHost {
     return vm::CellBuilder().store_long(0x5a, 8).finalize();
   }
   td::Ref<vm::Cell> apply(td::Ref<vm::Cell> update, td::Ref<vm::Cell> evidence, const Charge& charge) override {
-    charge(10);
+    charge.gas(10);
     ++applies;
     expect(update.not_null() && evidence.not_null(), "host-operands-present");
     if (expected_update.not_null()) {
@@ -119,7 +119,7 @@ struct Host final : vm::ValidatorAuthHost {
     return installed;
   }
   td::Ref<vm::Cell> bind(td::Ref<vm::Cell> elected, td::Ref<vm::Cell> bindings, const Charge& charge) override {
-    charge(10);
+    charge.gas(10);
     ++binds;
     expect(elected.not_null() && bindings.not_null(), "host-operands-present");
     last_elected = elected;
@@ -926,7 +926,11 @@ std::vector<Case> cases(const td::Ref<vm::Cell>& contract) {
            return -1LL;
          };
          const auto finalization = needed(true), update = needed(false);
-         std::cerr << "MEASURE registry_update_credit=" << update << " finalization_credit=" << finalization
+         // On the case protocol's own stream, like every other measurement this
+         // file prints. The persistence harness runs one case at a time and
+         // treats anything on the error stream as the case having failed, so a
+         // measurement written there reports a passing case as broken.
+         std::cout << "MEASURE registry_update_credit=" << update << " finalization_credit=" << finalization
                    << " network_credit=" << external_gas_credit << '\n';
          expect(update > 0 && finalization > 0, "a-valid-finalization-reaches-accept-with-real-gas-credit");
          // What this case claims, and nothing more: the contract's own work

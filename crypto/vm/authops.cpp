@@ -8,6 +8,7 @@
 #include "vm/excno.hpp"
 #include "vm/log.h"
 #include "vm/opctable.h"
+#include "vm/pqops.h"
 #include "vm/stack.hpp"
 #include "vm/vm.h"
 
@@ -115,12 +116,34 @@ void charge_native(VmState* st, long long gas) {
     throw VmError{Excno::range_chk, "negative native charge"};
   st->consume_gas_chk(gas);
 }
+// One signature verification a host is about to perform, priced where this
+// machine already prices that primitive.
+//
+// The classical suite goes through the schedule and the counter CHKSIGNU uses,
+// so a contract's own signature checks and the host's draw on one allowance
+// rather than each receiving a separate one. The post-quantum suite pays the
+// tariff its instruction pays. Neither price is restated here.
+void charge_signature(VmState* st, std::uint16_t suite) {
+  if (suite == validator_auth_suite_ed25519) {
+    st->register_chksgn_call();
+    return;
+  }
+  if (suite == validator_auth_suite_mldsa44) {
+    st->consume_gas_chk(pq_mldsa44_base_gas);
+    return;
+  }
+  throw VmError{Excno::cell_und, "unpriced signature suite"};
+}
+ValidatorAuthHost::Charge native_charge(VmState* st) {
+  return {[st](long long gas) { charge_native(st, gas); },
+          [st](std::uint16_t suite) { charge_signature(st, suite); }};
+}
 int exec_validator_auth_state(VmState* st) {
   VM_LOG(st) << "execute VAUTH_STATE";
   auto host = st->get_validator_auth_host();
   if (!host)
     throw VmError{Excno::inv_opcode, "P0 native transaction context required"};
-  auto result = host->checkpoint([&](long long gas) { charge_native(st, gas); });
+  auto result = host->checkpoint(native_charge(st));
   st->get_stack().push_cell(std::move(result));
   return 0;
 }
@@ -133,7 +156,7 @@ int exec_validator_auth_apply(VmState* st) {
   stack.check_underflow(2);
   auto evidence = stack.pop_cell();
   auto update = stack.pop_cell();
-  auto result = host->apply(std::move(update), std::move(evidence), [&](long long gas) { charge_native(st, gas); });
+  auto result = host->apply(std::move(update), std::move(evidence), native_charge(st));
   stack.push_cell(std::move(result));
   return 0;
 }
@@ -147,7 +170,7 @@ int exec_validator_auth_bind(VmState* st) {
   stack.check_underflow(2);
   auto bindings = stack.pop_cell();
   auto elected = stack.pop_cell();
-  auto result = host->bind(std::move(elected), std::move(bindings), [&](long long gas) { charge_native(st, gas); });
+  auto result = host->bind(std::move(elected), std::move(bindings), native_charge(st));
   stack.push_cell(std::move(result));
   return 0;
 }

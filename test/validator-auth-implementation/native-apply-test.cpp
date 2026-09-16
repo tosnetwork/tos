@@ -463,7 +463,12 @@ int main(int argc, char** argv) {
                             base.updates[0].second);
 
       long long charged = 0;
-      auto charge = [&](long long amount) { charged += amount; };
+      // The signature side is counted rather than priced: what the host owes
+      // for a verification is decided by the machine, and what this case has
+      // to see is that the host reported one at all.
+      std::uint64_t signature_charges = 0;
+      vm::ValidatorAuthHost::Charge charge{[&](long long amount) { charged += amount; },
+                                           [&](std::uint16_t) { ++signature_charges; }};
 
       auto first = host.checkpoint(charge);
       check(first.not_null() && host.checkpoints() == 1, "host-checkpoint");
@@ -493,6 +498,12 @@ int main(int argc, char** argv) {
 
       auto applied = host.apply(update_cell, evidence_cell, charge);
       check(applied.not_null() && host.updates() == 1, "host-apply");
+      // The update this fixture applies is authorized by a certificate, so
+      // verifying it costs signature checks, and the host asked to be charged
+      // for each one. A host that verified without reporting would pass every
+      // other case in this file.
+      check(signature_charges > 0 && host.signature_checks() == signature_charges,
+            "host-charges-for-the-verifications-it-performs");
       auto staged_after = value(host.staged().state().checkpoint(), "host-staged-after")->get_hash();
       check(staged_after != staged_before, "host-apply-advances-prefix");
       // The registry state, which is what the contract installs as

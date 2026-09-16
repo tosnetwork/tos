@@ -8,7 +8,7 @@ Result<Anchor> NativeLifecycleAuthority::governance(const Update& update, const 
   // activation with is the one that came back from the verification, not one
   // the caller chose after the fact.
   auto verified = verify_current_governance(context_.chain, context_.governing, current, update, evidence, inclusion,
-                                            reader_);
+                                            reader_, meter_);
   if (!verified.ok())
     return verified.error();
   if (context_.governing_anchor.root_ == Hash{} || context_.governing_anchor.file_ == Hash{} ||
@@ -50,7 +50,7 @@ Result<bool> NativeLifecycleAuthority::owner(const OwnerAuth& proof, const Updat
 }
 Result<bool> NativeLifecycleAuthority::possession(const PossessionAuth& proof, const Update& update,
                                                   const Key& key) const {
-  return verify_possession(context_.chain, update, key, proof);
+  return verify_possession(context_.chain, update, key, proof, meter_);
 }
 Result<bool> NativeLifecycleAuthority::administration(const IdentityAuth& proof, const Update& update,
                                                       const Identity& identity, std::uint32_t inclusion) const {
@@ -77,7 +77,7 @@ Result<bool> NativeLifecycleAuthority::administration(const IdentityAuth& proof,
   auto certificate = decode<Certificate>(raw.value());
   if (!certificate.ok())
     return certificate.error();
-  return verify_identity_certificate(certificate.value(), expected.value(), identity, keys.value(), inclusion);
+  return verify_identity_certificate(certificate.value(), expected.value(), identity, keys.value(), inclusion, meter_);
 }
 Result<RegistryState> apply_native_identity_block(const RegistryState& parent, std::uint32_t inclusion,
                                                   const std::vector<std::pair<Update, Authorizations>>& updates,

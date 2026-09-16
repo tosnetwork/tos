@@ -58,7 +58,7 @@ td::Ref<vm::Cell> NativeElectionBindingHost::bind(td::Ref<vm::Cell> elected, td:
   // Taken from the view, which is where the reads actually happened: the
   // state's own budget is untouched by them and would report no work at all.
   work_remaining_ = registry.value().remaining();
-  charge(as_gas(consumed(before, work_remaining_, gas_per_entry_, gas_per_byte_)));
+  charge.gas(as_gas(consumed(before, work_remaining_, gas_per_entry_, gas_per_byte_)));
 
   if (!bound.ok())
     refuse_host("native binding refused");

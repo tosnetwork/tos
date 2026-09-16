@@ -15,7 +15,7 @@ CPP=[
  ('gov-age','governance-stale','if (committee.anchor_mc_ > inclusion || inclusion - committee.anchor_mc_ > 128) return Error{"admin-freshness"};',''),
  ('gov-update','governance-update-binding','auth.update_id_ != id.value() ||',''),
  ('gov-roster','governance-roster-binding','|| auth.committee_ != governing.committee_id()',''),
- ('gov-claim-as-context','governance-network','governing.verify(cert.value(), expected.value())','governing.verify(cert.value(), cert.value().duty_)'),
+ ('gov-claim-as-context','governance-network','governing.verify(cert.value(), expected.value(), meter)','governing.verify(cert.value(), cert.value().duty_, meter)'),
  ('gov-drop-missing','governance-missing-current-identity','if (!identity.value()) return Error{"governance-current-identity"};','if (!identity.value()) continue;'),
  ('gov-old-key','governance-retired-admin','if (*active != Keyref{component.suite_, component.parameters_, component.epoch_, component.key_id_})\n      return Error{"governance-current-key"};',''),
   # The key is read for the one thing its active reference does not carry.

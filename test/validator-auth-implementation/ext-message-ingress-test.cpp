@@ -49,7 +49,7 @@ struct Host final : vm::ValidatorAuthHost {
   unsigned checkpoints = 0;
   td::Ref<vm::Cell> checkpoint(const Charge& charge) override {
     ++checkpoints;
-    charge(1);
+    charge.gas(1);
     return vm::CellBuilder().finalize();
   }
   td::Ref<vm::Cell> apply(td::Ref<vm::Cell>, td::Ref<vm::Cell>, const Charge&) override {

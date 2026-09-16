@@ -3,7 +3,7 @@ namespace tos::auth {
 Result<VerifiedCertificate> verify_current_governance(const ChainContext& chain, const RegistrySnapshot& governing,
                                                       const CurrentRegistry& current, const Update& update,
                                                       const Authorizations& evidence, std::uint32_t inclusion,
-                                                      ObjectReader& reader) {
+                                                      ObjectReader& reader, const SignatureMeter* meter) {
   if ((update.operation_ != 4 && update.operation_ != 6) || update.identity_ != Hash{})
     return Error{"governance-target"};
   if (!evidence.owner_.empty() || !evidence.possession_.empty() || !evidence.administration_.empty() ||
@@ -39,7 +39,7 @@ Result<VerifiedCertificate> verify_current_governance(const ChainContext& chain,
   auto cert = decode<Certificate>(raw.value());
   if (!cert.ok())
     return cert.error();
-  auto verified = governing.verify(cert.value(), expected.value());
+  auto verified = governing.verify(cert.value(), expected.value(), meter);
   if (!verified.ok())
     return verified.error();
   // Old sessions retain consensus authority, but their old role-5 references

@@ -54,8 +54,14 @@ class RegistrySnapshot {
  public:
   // Admission validates the complete roster; native state proofs establish its authority.
   static Result<RegistrySnapshot> compile(const Committee&, const Policy&);
-  Result<VerifiedCertificate> verify(const Certificate&, const Duty& independently_derived_duty) const;
-  Result<std::uint64_t> verify(const Envelope&, const Duty& independently_derived_duty) const;
+  // `meter`, when given, is told about each signature verification just before
+  // it happens, so a caller that has to pay for one can decline. Nothing else
+  // about verification changes: what is admitted and what is refused does not
+  // depend on whether anybody is counting.
+  Result<VerifiedCertificate> verify(const Certificate&, const Duty& independently_derived_duty,
+                                     const SignatureMeter* meter = nullptr) const;
+  Result<std::uint64_t> verify(const Envelope&, const Duty& independently_derived_duty,
+                               const SignatureMeter* meter = nullptr) const;
   const Committee& committee() const {
     return committee_;
   }
@@ -73,7 +79,7 @@ class RegistrySnapshot {
   }
 
  private:
-  Result<std::uint64_t> verify_records(const Duty&, const Bytes&, const std::vector<Record>&, const Duty&,
-                                       bool quorum) const;
+  Result<std::uint64_t> verify_records(const Duty&, const Bytes&, const std::vector<Record>&, const Duty&, bool quorum,
+                                       const SignatureMeter* meter) const;
 };
 }  // namespace tos::auth

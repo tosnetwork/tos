@@ -3,7 +3,7 @@ use super::{
     gas::gas_state::Gas,
     types::Instruction,
 };
-use crate::stack::StackItem;
+use crate::{stack::StackItem, validator_auth_host::HostCharge};
 use chain_block::{
     fail, sha256_digest, Cell, CellType, ExceptionCode, GlobalCapabilities, Result, SliceData,
     Status,
@@ -13,6 +13,11 @@ use tos_validator_auth_crypto::AdmittedKey;
 const CAPABILITY: u64 = GlobalCapabilities::CapValidatorAuth as u64;
 const MAX_MESSAGE: usize = 65536;
 const BASE_GAS: i64 = 50000;
+// The signature suites this machine publishes a tariff for. A suite with none
+// is refused rather than charged at another suite's price.
+const SUITE_ED25519: u16 = 1;
+const SUITE_MLDSA44: u16 = 2;
+const PQ_MLDSA44_BASE_GAS: i64 = 50_000;
 
 fn ordinary(engine: &mut Engine, cell: Cell) -> Result<SliceData> {
     if cell.level() != 0 {
@@ -142,6 +147,35 @@ fn charge_native(engine: &mut Engine, gas: i64) -> Status {
     }
     engine.try_use_gas(gas)
 }
+// One signature verification a host is about to perform, priced where this
+// machine already prices that primitive.
+//
+// The classical suite goes through the schedule and the counter CHKSIGNU uses,
+// so a contract's own signature checks and the host's draw on one allowance
+// rather than each receiving a separate one. The post-quantum suite pays the
+// tariff its instruction pays. Neither price is restated here.
+fn charge_signature(engine: &mut Engine, suite: u16) -> Status {
+    match suite {
+        SUITE_ED25519 => {
+            engine.checked_signatures_count = engine.checked_signatures_count.saturating_add(1);
+            engine.try_use_gas(Gas::check_signature_price(engine.checked_signatures_count))
+        }
+        SUITE_MLDSA44 => engine.try_use_gas(PQ_MLDSA44_BASE_GAS),
+        // No tariff, no charge, and a verification nobody charges for is free.
+        _ => fail!(ExceptionCode::CellUnderflow, "unpriced signature suite"),
+    }
+}
+struct EngineCharge<'a> {
+    engine: &'a mut Engine,
+}
+impl HostCharge for EngineCharge<'_> {
+    fn gas(&mut self, gas: i64) -> Status {
+        charge_native(self.engine, gas)
+    }
+    fn signature_check(&mut self, suite: u16) -> Status {
+        charge_signature(self.engine, suite)
+    }
+}
 pub(super) fn execute_vauth_state(engine: &mut Engine) -> Status {
     native_gate(engine)?;
     engine.load_instruction(Instruction::new("VAUTH_STATE"))?;
@@ -151,7 +185,7 @@ pub(super) fn execute_vauth_state(engine: &mut Engine) -> Status {
     let result = host
         .lock()
         .map_err(|_| chain_block::error!("P0 host poisoned"))?
-        .checkpoint(&mut |gas| charge_native(engine, gas))?;
+        .checkpoint(&mut EngineCharge { engine })?;
     engine.cc.stack.push(StackItem::Cell(result));
     Ok(())
 }
@@ -170,7 +204,7 @@ pub(super) fn execute_vauth_bind(engine: &mut Engine) -> Status {
     let result = host.lock().map_err(|_| chain_block::error!("P0 host poisoned"))?.bind(
         elected,
         bindings,
-        &mut |gas| charge_native(engine, gas),
+        &mut EngineCharge { engine },
     )?;
     engine.cc.stack.push(StackItem::Cell(result));
     Ok(())
@@ -190,7 +224,7 @@ pub(super) fn execute_vauth_apply(engine: &mut Engine) -> Status {
     let result = host.lock().map_err(|_| chain_block::error!("P0 host poisoned"))?.apply(
         update,
         evidence,
-        &mut |gas| charge_native(engine, gas),
+        &mut EngineCharge { engine },
     )?;
     engine.cc.stack.push(StackItem::Cell(result));
     Ok(())

@@ -25,7 +25,8 @@ Result<bool> NativeRegistryBlock::settle_work(StateReadBudget remaining) {
 Result<NativeRegistryBlock> NativeRegistryBlock::apply_transaction(const Update& update, const Authorizations& evidence,
                                                                    const NativeIdentityContext& context,
                                                                    ObjectReader& reader,
-                                                                   StateReadBudget* work_remaining) const {
+                                                                   StateReadBudget* work_remaining,
+                                                                   const SignatureMeter* meter) const {
   // The copy the updates are applied to. It is declared outside the attempt so
   // what it read can be reported however the attempt ends.
   auto accepted = accepted_;
@@ -38,7 +39,7 @@ Result<NativeRegistryBlock> NativeRegistryBlock::apply_transaction(const Update&
         accepted, {{update, evidence}},
         [&](const NativeRegistry& view, const Identity& identity, const Update& operation,
             const Authorizations& authorizations) -> Result<IdentityChange> {
-          NativeLifecycleAuthority authority(view, context, reader);
+          NativeLifecycleAuthority authority(view, context, reader, meter);
           auto valid = authority.validate_context();
           if (!valid.ok())
             return valid.error();
@@ -46,7 +47,7 @@ Result<NativeRegistryBlock> NativeRegistryBlock::apply_transaction(const Update&
         },
         [&](const NativeRegistry& view, const Update& operation,
             const Authorizations& authorizations) -> Result<GlobalChange> {
-          NativeLifecycleAuthority authority(view, context, reader);
+          NativeLifecycleAuthority authority(view, context, reader, meter);
           auto valid = authority.validate_context();
           if (!valid.ok())
             return valid.error();
