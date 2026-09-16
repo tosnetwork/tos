@@ -7,7 +7,7 @@ MUTATIONS=[
  ('archived-epoch','lifecycle','lifecycle.cpp','if (key.epoch_ <= epoch.value() || key.epoch_ == std::numeric_limits<std::uint64_t>::max()) return Error{"epoch"};',''),
  ('bootstrap-admin-role','lifecycle','lifecycle.cpp','if (initial && (op != 1 || std::get<0>(target) != 5)) return Error{"initial-register"};',''),
  ('lifecycle-authority-refusal','lifecycle','lifecycle.cpp','if (!result.value()) return Error{"authority-refused"};',''),
- ('snapshot-due-state','lifecycle','lifecycle.cpp','if (p.effective_from_ <= anchor) return Error{"snapshot-state-not-current"};','if (false) return Error{"snapshot-state-not-current"};'),
+ ('snapshot-due-state','lifecycle','lifecycle.cpp','    if (p.effective_from_ <= anchor)\n      return Error{"snapshot-state-not-current"};','    if (false)\n      return Error{"snapshot-state-not-current"};'),
  ('snapshot-key-validity','lifecycle','lifecycle.cpp','if (k.value().valid_from_ > anchor || k.value().valid_until_ <= anchor) return Error{"snapshot-validity"};',''),
  ('chunk-hash','transfer','transfer.cpp','if(h.value()!=ref.chunk_hashes_[index])return Error{"chunk-hash"};',''),
  ('object-hash','transfer','transfer.cpp','if(id.value()!=ref.object_id_)return Error{"object-hash"};',''),

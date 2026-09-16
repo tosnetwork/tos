@@ -330,14 +330,20 @@ Result<bool> validate_stage_update(const Identity& state, const KeyHistory& arch
     return checked.error();
   return true;
 }
+Result<bool> identity_is_current(const Identity& state, std::uint32_t anchor) {
+  for (const auto& p : state.pending_)
+    if (p.effective_from_ <= anchor)
+      return Error{"snapshot-state-not-current"};
+  return true;
+}
 Result<std::vector<Key>> select_identity_keys(const Identity& state, const KeyHistory& archive, std::uint32_t anchor,
                                               const std::vector<KeySlot>& required) {
   auto checked = validate_identity(state, archive);
   if (!checked.ok())
     return checked.error();
-  for (const auto& p : state.pending_)
-    if (p.effective_from_ <= anchor)
-      return Error{"snapshot-state-not-current"};
+  auto current = identity_is_current(state, anchor);
+  if (!current.ok())
+    return current.error();
   std::vector<Key> result;
   for (const auto& wanted : required) {
     bool found = false;

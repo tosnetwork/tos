@@ -336,19 +336,26 @@ is not entitled to. Its nonce must also be above zero, so that "no global
 operation has happened" has one encoding rather than two.
 
 Native governance gas is not closed, and it is now measured rather than argued.
-Verifying a governance certificate costs seven entries per signer record --
-the identity, and the keys validating it reads -- and the cost is linear in the
-number of records, so the largest legal certificate is the worst case:
+Verifying a governance certificate costs two entries per signer record -- the
+identity, and the administration key it names, read for the validity interval
+its active reference does not carry -- and the cost is linear in the records, so
+the largest legal certificate is the worst case:
 
 | signer records | entries | bytes | charged gas |
 | --- | ---: | ---: | ---: |
-| 8 | 56 | 9,576 | 13,160 |
-| 64 | 448 | 76,608 | 105,280 |
-| 400 | 2,800 | 478,800 | 658,000 |
+| 8 | 16 | 4,096 | 5,120 |
+| 64 | 128 | 32,768 | 40,960 |
+| 400 | 800 | 204,800 | 256,000 |
 
 The credit an external message has before it is accepted is ten thousand. The
-largest legal governance operation costs sixty-six times that, and even eight
+largest legal governance operation costs twenty-five times that, and eight
 signer records already exceed it.
+
+It cost seven entries a record until the identity stopped being revalidated for
+every signer. The state is validated in full when it is opened, every key
+descriptor loaded and checked once, so repeating that per record answered a
+question already answered. What the reference cannot answer is whether the key
+has expired, which is why two reads remain and not one.
 
 None of that includes the signatures, which are charged nothing. The host's charge is derived
 entirely from the work allowance the registry reports, and certificate

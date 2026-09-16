@@ -73,6 +73,14 @@ Result<GlobalChange> apply_global_update(const Update&, const Authorizations&, c
 // absent. No successor state escapes before the final apply verifies actual PoP.
 Result<bool> validate_stage_update(const Identity&, const KeyHistory&, const Update&, const Authorizations&,
                                    std::uint32_t inclusion, const LifecycleAuthority&);
+// Whether an identity record is the one that stands at this coordinate.
+//
+// A transition already due at or before it means the record offered belongs to
+// an earlier coordinate, which no check on the keys themselves would catch.
+// Two callers ask this -- selecting a session's keys, and checking that a
+// governance signer's administration key is still current -- and asking it in
+// two places would be the same rule written twice.
+Result<bool> identity_is_current(const Identity&, std::uint32_t anchor);
 Result<std::vector<Key>> select_identity_keys(const Identity&, const KeyHistory&, std::uint32_t anchor,
                                               const std::vector<KeySlot>& required);
 }  // namespace tos::auth

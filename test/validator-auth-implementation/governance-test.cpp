@@ -1,5 +1,6 @@
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iostream>
 
 #include "validator/auth/governance.h"

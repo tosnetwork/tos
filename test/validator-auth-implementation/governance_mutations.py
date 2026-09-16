@@ -17,8 +17,10 @@ CPP=[
  ('gov-roster','governance-roster-binding','|| auth.committee_ != governing.committee_id()',''),
  ('gov-claim-as-context','governance-network','governing.verify(cert.value(), expected.value())','governing.verify(cert.value(), cert.value().duty_)'),
  ('gov-drop-missing','governance-missing-current-identity','if (!identity.value()) return Error{"governance-current-identity"};','if (!identity.value()) continue;'),
- ('gov-old-key','governance-retired-admin','if (ref.value() != Keyref{component.suite_, component.parameters_, component.epoch_, component.key_id_}) return Error{"governance-current-key"};',''),
- ('gov-old-time','governance-expired-admin','select_identity_keys(*identity.value(), current, inclusion, {{5, 1, 1}})','select_identity_keys(*identity.value(), current, committee.anchor_mc_, {{5, 1, 1}})'),
+ ('gov-old-key','governance-retired-admin','if (*active != Keyref{component.suite_, component.parameters_, component.epoch_, component.key_id_})\n      return Error{"governance-current-key"};',''),
+  # The key is read for the one thing its active reference does not carry.
+ ('gov-old-time','governance-expired-admin','if (key.value().valid_from_ > inclusion || key.value().valid_until_ <= inclusion)','if (key.value().valid_from_ > committee.anchor_mc_ || key.value().valid_until_ <= committee.anchor_mc_)'),
+
 ]
 RUST=[
  ('gov-target','governance-target-identity','|| update.identity != [0; 32]',''),
