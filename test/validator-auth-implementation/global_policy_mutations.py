@@ -20,7 +20,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-SOURCE = Path("validator/auth/lifecycle.cpp")
+REFERENCE = Path("validator/auth/lifecycle.cpp")
+PERSISTENT = Path("validator/auth/native-registry.cpp")
 BINARY = Path("build-p0/test/validator-auth-implementation/test-p0-global-policy")
 
 STAMP = """  change.activation.checkpoint_seqno_ = anchor.value().seqno_;
@@ -50,6 +51,28 @@ CONFIGURATION = """  if (update.operation_ == 6)
 """
 NONCE = """  change.global.next_nonce_ = update.nonce_ + 1;
 """
+# The persistent registry's three writes. Each is a place the two
+# implementations of one transition can quietly stop being one.
+ACTIVATION_KEY = """    auto key = height(change.activation.effective_from_);
+"""
+POLICY_WRITE = """  put(next.policies_, policy_id, change.policy, vm::Dictionary::SetMode::Add, next.budget_);
+"""
+GLOBAL_WRITE = """  put(next.identities_, Hash{}, change.global,
+      next.identity(Hash{}).ok() ? vm::Dictionary::SetMode::Replace : vm::Dictionary::SetMode::Set, next.budget_);
+"""
+SCHEDULE_WRITE = """    need(schedule.set_builder(bits(key), 32, b, vm::Dictionary::SetMode::Add), "policy-index");
+"""
+
+
+def scoped(text: str, signature: str) -> str:
+    """The body of one function.
+
+    The schedule insertion is written identically in bootstrap and in the
+    global install, and the shorter indentation is a substring of the longer
+    one. Widening the anchor to tell them apart would leave whichever copy it
+    did not match untested, so the scope is narrowed instead."""
+    start = text.index(signature)
+    return text[start:text.index("\n}\n", start)]
 
 
 def main() -> int:
@@ -59,18 +82,32 @@ def main() -> int:
     args = parser.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
 
-    original = SOURCE.read_text()
+    originals = {REFERENCE: REFERENCE.read_text(), PERSISTENT: PERSISTENT.read_text()}
     mutations = [
         # The one this suite exists for.
-        ("checkpoint-is-any-legal-anchor", "global-policy-checkpoint-is-governing-anchor", STAMP, FOREIGN, []),
-        ("predecessor-unchecked", "global-policy-old-policy-cas-refused", PREDECESSOR, "", []),
-        ("height-unchecked", "global-policy-wrong-effective-height-refused", HEIGHT, "", []),
-        ("policy-revision-unchecked", "global-policy-activation-chain-revision-refused", REVISION, "", []),
-        ("configuration-admitted", "global-policy-configuration-operation-refused", CONFIGURATION, "", []),
+        (REFERENCE, "checkpoint-is-any-legal-anchor", "global-policy-checkpoint-is-governing-anchor", STAMP, FOREIGN, []),
+        (REFERENCE, "predecessor-unchecked", "global-policy-old-policy-cas-refused", PREDECESSOR, "", []),
+        (REFERENCE, "height-unchecked", "global-policy-wrong-effective-height-refused", HEIGHT, "", []),
+        (REFERENCE, "policy-revision-unchecked", "global-policy-activation-chain-revision-refused", REVISION, "", []),
+        (REFERENCE, "configuration-admitted", "global-policy-configuration-operation-refused", CONFIGURATION, "", []),
         # The nonce standing still, which would let one authorization be spent
         # twice for two different policies.
-        ("nonce-does-not-advance", "global-policy-zero-nonce-advances", NONCE,
+        (REFERENCE, "nonce-does-not-advance", "global-policy-zero-nonce-advances", NONCE,
          "  change.global.next_nonce_ = global.next_nonce_;\n", []),
+        # The persistent side writing the same transition somewhere else. None
+        # of these make either implementation incoherent on its own; they make
+        # the two stop being one, which only the root comparison can see.
+        (PERSISTENT, "activation-keyed-on-another-height", "global-policy-persistent-root-equals-reference",
+         ACTIVATION_KEY, "    auto key = height(change.activation.effective_from_ + 1);\n", []),
+        (PERSISTENT, "policy-not-written", "global-policy-persistent-root-equals-reference", POLICY_WRITE, "", []),
+        (PERSISTENT, "global-record-not-written", "global-policy-persistent-root-equals-reference",
+         GLOBAL_WRITE, "", []),
+        # The height index is derived state and is not encoded, so an operation
+        # that wrote the policy and never indexed it produces exactly the same
+        # root and a different current policy at the boundary. The root
+        # comparison cannot see it; the replay to the effective height can.
+        (PERSISTENT, "schedule-not-indexed", "global-policy-selects-the-new-policy-at-its-height",
+         SCHEDULE_WRITE, "", [], "void NativeRegistry::install_global("),
     ]
 
     def build() -> bool:
@@ -96,25 +133,30 @@ def main() -> int:
 
     records, failures = [], 0
     try:
-        for guard, case, before, after, companions in mutations:
-            assert original.count(before) == 1, (guard, "anchor")
-            changed = original.replace(before, after, 1)
-            SOURCE.write_text(changed)
-            reached = SOURCE.read_text() == changed
+        for source, guard, case, before, after, companions, *scope in mutations:
+            original = originals[source]
+            region = scoped(original, scope[0]) if scope else original
+            if scope:
+                assert original.count(scope[0]) == 1, (guard, "scope")
+            assert region.count(before) == 1, (guard, "anchor")
+            changed = original.replace(region, region.replace(before, after, 1), 1)
+            source.write_text(changed)
+            reached = source.read_text() == changed
             compiled = build()
             broke, complete = [], False
             if compiled:
                 result = outcomes()
                 complete = set(result) == set(inventory) == declared()
                 broke = sorted(name for name, held in result.items() if not held)
-            SOURCE.write_text(original)
+            source.write_text(original)
             restored = build() and all(outcomes().values())
             record = {"guard": guard, "case": case, "edit_reached_source": reached, "compiled": compiled,
                       "every_case_reported": complete, "cases_broken": broke,
                       "declared_companions": companions,
                       "only_declared_cases_broke": case in broke and set(broke) <= {case, *companions},
                       "restored_baseline": restored,
-                      "source_unchanged": SOURCE.read_text() == original}
+                      "source": str(source),
+                      "source_unchanged": source.read_text() == original}
             records.append(record)
             print(json.dumps(record), flush=True)
             if not all(record[key] for key in ("edit_reached_source", "compiled", "every_case_reported",
@@ -122,7 +164,8 @@ def main() -> int:
                                                "source_unchanged")):
                 failures += 1
     finally:
-        SOURCE.write_text(original)
+        for source, text in originals.items():
+            source.write_text(text)
 
     (args.out / "mutations.json").write_text(json.dumps(records, indent=1) + "\n")
     return 1 if failures else 0

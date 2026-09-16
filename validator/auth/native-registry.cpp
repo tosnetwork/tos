@@ -88,6 +88,21 @@ T read(td::Ref<vm::Cell> root, const Hash& key, StateReadBudget& budget) {
   budget.bytes -= bytes.size();
   return take(decode<T>(bytes));
 }
+// The same read for the height-keyed indexes. The activation index is keyed by
+// its effective coordinate rather than by a hash, and reading it through the
+// 256-bit helper would silently address the wrong dictionary.
+template <class T>
+T read_at(td::Ref<vm::Cell> root, const std::array<std::uint8_t, 4>& key, StateReadBudget& budget) {
+  charge(budget, 0);
+  auto d = dict(root, 32);
+  auto leaf = d.lookup(bits(key), 32);
+  need(leaf.not_null(), "unknown-entry");
+  need(leaf->size() == 0 && leaf->size_refs() == 1, "dictionary-shape");
+  auto bytes = take(unpack_bytes(leaf->prefetch_ref(), std::min<std::size_t>(32768, budget.bytes)));
+  need(bytes.size() <= budget.bytes, "state-resource");
+  budget.bytes -= bytes.size();
+  return take(decode<T>(bytes));
+}
 template <class T>
 void put(td::Ref<vm::Cell>& root, const Hash& key, const T& value, vm::Dictionary::SetMode mode,
          StateReadBudget& budget) {
@@ -232,10 +247,66 @@ Result<bool> NativeRegistry::ever_registered(const Hash& id) const {
     return value.not_null() && std::equal(id.begin(), id.end(), key.begin());
   });
 }
+// The activation index and the observation index the control cell holds. It is
+// kept as one opaque reference until something has to write into it, which is
+// only ever a global operation.
+struct Control {
+  td::Ref<vm::Cell> activations, observations;
+};
+Control open_control(const td::Ref<vm::Cell>& control) {
+  vm::CellSlice s{vm::NoVm{}, control};
+  need(s.is_valid() && !s.is_special() && s.size() == 32 && s.size_refs() == 2 && s.fetch_ulong(32) == 0x76616331,
+       "control-shape");
+  Control parts;
+  parts.activations = s.fetch_ref();
+  parts.observations = s.fetch_ref();
+  return parts;
+}
+td::Ref<vm::Cell> seal_control(const Control& parts) {
+  return vm::CellBuilder()
+      .store_long(0x76616331, 32)
+      .store_ref(parts.activations)
+      .store_ref(parts.observations)
+      .finalize();
+}
+
+void NativeRegistry::install_global(NativeRegistry& next, const GlobalChange& change) {
+  auto policy_id = take(object_id("policy", change.policy));
+  put(next.policies_, policy_id, change.policy, vm::Dictionary::SetMode::Add, next.budget_);
+  // The height index the parent bootstrap builds, kept current so a later block
+  // selects this policy without rebuilding the index from the whole map.
+  {
+    auto schedule = dict(next.schedule_, 32);
+    auto key = height(change.policy.effective_from_);
+    vm::CellBuilder b;
+    b.store_bytes(slice(policy_id));
+    need(schedule.set_builder(bits(key), 32, b, vm::Dictionary::SetMode::Add), "policy-index");
+    next.schedule_ = wrap(schedule);
+  }
+  {
+    auto parts = open_control(next.control_);
+    auto activations = dict(parts.activations, 32);
+    auto bytes = take(encode(change.activation));
+    charge(next.budget_, bytes.size());
+    auto key = height(change.activation.effective_from_);
+    need(activations.set_ref(bits(key), 32, take(pack_bytes(bytes)), vm::Dictionary::SetMode::Add),
+         "activation-key");
+    parts.activations = wrap(activations);
+    next.control_ = seal_control(parts);
+  }
+  // The zero-identity record is written whether or not one was there: its only
+  // content is the nonce, and the first global operation is what creates it.
+  put(next.identities_, Hash{}, change.global,
+      next.identity(Hash{}).ok() ? vm::Dictionary::SetMode::Replace : vm::Dictionary::SetMode::Set, next.budget_);
+}
+
 void NativeRegistry::apply_updates(NativeRegistry& next, const std::vector<std::pair<Update, Authorizations>>& updates,
-                                   const Apply& apply) {
+                                   const Apply& apply, const GlobalApply& global) {
   for (const auto& [update, evidence] : updates) {
-    need(update.identity_ != Hash{}, "unknown-identity");
+    if (update.identity_ == Hash{}) {
+      install_global(next, take(global(next, update, evidence)));
+      continue;
+    }
     auto before = take(next.identity(update.identity_));
     auto effect = take(apply(next, before, update, evidence));
     if (effect.archived_key) {
@@ -250,7 +321,8 @@ void NativeRegistry::apply_updates(NativeRegistry& next, const std::vector<std::
 }
 Result<NativeRegistry> NativeRegistry::apply(std::uint32_t at,
                                              const std::vector<std::pair<Update, Authorizations>>& updates,
-                                             const Apply& apply, StateReadBudget budget) const {
+                                             const Apply& apply, const GlobalApply& global,
+                                             StateReadBudget budget) const {
   return capture([&] {
     need(coordinate_ < UINT32_MAX - 1 && at == coordinate_ + 1, "block-gap");
     NativeRegistry next = *this;
@@ -283,7 +355,7 @@ Result<NativeRegistry> NativeRegistry::apply(std::uint32_t at,
     auto selected = schedule.lookup_nearest_key(td::BitPtr(at_key.data()), 32, false, true);
     need(selected.not_null() && selected->size() == 256 && selected->size_refs() == 0, "policy-index");
     need(selected.write().fetch_bytes(td::MutableSlice(next.policy_.data(), next.policy_.size())), "policy-index");
-    apply_updates(next, updates, apply);
+    apply_updates(next, updates, apply, global);
     changed = changed || !updates.empty();
     if (changed) {
       need(revision_ != UINT64_MAX, "registry-revision");
@@ -292,6 +364,30 @@ Result<NativeRegistry> NativeRegistry::apply(std::uint32_t at,
     return next;
   });
 }
+Result<GlobalChange> NativeRegistry::apply_global(const Update& update, const Authorizations& evidence,
+                                                 std::uint32_t at, const LifecycleAuthority& authority) const {
+  return capture([&] {
+    auto in_force = read<Policy>(policies_, policy_, budget_);
+    // Absent until the first global operation writes one.
+    Identity global;
+    auto existing = identity(Hash{});
+    if (existing.ok())
+      global = existing.value();
+    // The newest activation, by the height its own index is keyed on.
+    std::optional<Activation> latest;
+    {
+      auto parts = open_control(control_);
+      auto activations = dict(parts.activations, 32);
+      std::array<std::uint8_t, 4> key{};
+      auto found = activations.get_minmax_key(td::BitPtr(key.data()), 32, true);
+      if (found.not_null())
+        latest = read_at<Activation>(parts.activations, key, budget_);
+    }
+    return take(apply_global_update(update, evidence, *this, in_force, global, latest ? &*latest : nullptr, at,
+                                    authority));
+  });
+}
+
 Result<NativeRegistry> NativeRegistry::apply_block(std::uint32_t at,
                                                    const std::vector<std::pair<Update, Authorizations>>& updates,
                                                    const LifecycleAuthority& authority, StateReadBudget budget) const {
@@ -300,6 +396,10 @@ Result<NativeRegistry> NativeRegistry::apply_block(std::uint32_t at,
       [&](const NativeRegistry& current, const Identity& identity, const Update& update,
           const Authorizations& evidence) {
         return apply_identity_update(identity, current, update, evidence, at, authority);
+      },
+      [&](const NativeRegistry& current, const Update& update,
+          const Authorizations& evidence) -> Result<GlobalChange> {
+        return current.apply_global(update, evidence, at, authority);
       },
       budget);
 }
@@ -316,6 +416,14 @@ Result<NativeRegistry> NativeRegistry::apply_native_block(std::uint32_t at,
         if (!valid.ok())
           return valid.error();
         return apply_identity_update(identity, current, update, evidence, at, authority);
+      },
+      [&](const NativeRegistry& current, const Update& update,
+          const Authorizations& evidence) -> Result<GlobalChange> {
+        NativeLifecycleAuthority authority(current, context, reader);
+        auto valid = authority.validate_context();
+        if (!valid.ok())
+          return valid.error();
+        return current.apply_global(update, evidence, at, authority);
       },
       budget);
 }

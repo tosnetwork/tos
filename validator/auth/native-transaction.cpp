@@ -9,7 +9,7 @@ Result<NativeRegistryBlock> NativeRegistryBlock::begin(const NativeRegistry& par
       [](const auto&, const auto&, const auto&, const auto&) -> Result<IdentityChange> {
         return Error{"empty-replay"};
       },
-      budget);
+      [](const auto&, const auto&, const auto&) -> Result<GlobalChange> { return Error{"empty-replay"}; }, budget);
   if (!next.ok())
     return next.error();
   return NativeRegistryBlock(std::move(next.value()), parent.revision());
@@ -34,16 +34,24 @@ Result<NativeRegistryBlock> NativeRegistryBlock::apply_transaction(const Update&
       *work_remaining = accepted.remaining();
   };
   try {
-    NativeRegistry::apply_updates(accepted, {{update, evidence}},
-                                  [&](const NativeRegistry& view, const Identity& identity, const Update& operation,
-                                      const Authorizations& authorizations) -> Result<IdentityChange> {
-                                    NativeLifecycleAuthority authority(view, context, reader);
-                                    auto valid = authority.validate_context();
-                                    if (!valid.ok())
-                                      return valid.error();
-                                    return apply_identity_update(identity, view, operation, authorizations,
-                                                                 view.coordinate(), authority);
-                                  });
+    NativeRegistry::apply_updates(
+        accepted, {{update, evidence}},
+        [&](const NativeRegistry& view, const Identity& identity, const Update& operation,
+            const Authorizations& authorizations) -> Result<IdentityChange> {
+          NativeLifecycleAuthority authority(view, context, reader);
+          auto valid = authority.validate_context();
+          if (!valid.ok())
+            return valid.error();
+          return apply_identity_update(identity, view, operation, authorizations, view.coordinate(), authority);
+        },
+        [&](const NativeRegistry& view, const Update& operation,
+            const Authorizations& authorizations) -> Result<GlobalChange> {
+          NativeLifecycleAuthority authority(view, context, reader);
+          auto valid = authority.validate_context();
+          if (!valid.ok())
+            return valid.error();
+          return view.apply_global(operation, authorizations, view.coordinate(), authority);
+        });
     if (parent_revision_ == UINT64_MAX) {
       settle();
       return Error{"registry-revision"};

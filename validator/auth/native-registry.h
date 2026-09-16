@@ -13,11 +13,23 @@ class NativeRegistry final : public CurrentRegistry {
   friend class NativeRegistryBlock;
   using Apply = std::function<Result<IdentityChange>(const NativeRegistry&, const Identity&, const Update&,
                                                      const Authorizations&)>;
-  static void apply_updates(NativeRegistry&, const std::vector<std::pair<Update, Authorizations>>&, const Apply&);
+  // A zero-identity operation replaces no identity record, so it cannot be
+  // expressed as one. Both apply paths take it because a block may interleave
+  // global and per-identity operations and their order is replayed.
+  using GlobalApply =
+      std::function<Result<GlobalChange>(const NativeRegistry&, const Update&, const Authorizations&)>;
+  static void install_global(NativeRegistry&, const GlobalChange&);
+  static void apply_updates(NativeRegistry&, const std::vector<std::pair<Update, Authorizations>>&, const Apply&,
+                            const GlobalApply&);
   Result<NativeRegistry> apply(std::uint32_t, const std::vector<std::pair<Update, Authorizations>>&, const Apply&,
-                               StateReadBudget) const;
+                               const GlobalApply&, StateReadBudget) const;
 
  public:
+  // The pieces a global operation needs, gathered from this registry rather
+  // than from the caller: the policy in force, the record holding the global
+  // nonce and the newest activation.
+  Result<GlobalChange> apply_global(const Update&, const Authorizations&, std::uint32_t,
+                                    const LifecycleAuthority&) const;
   static Result<NativeRegistry> bootstrap(td::Ref<vm::Cell> registry, std::uint32_t, StateReadBudget = {});
   // Expected registry hash/coordinate come from the caller's authenticated native
   // context. Every redundant index is rebuilt and compared on external restore.

@@ -16,6 +16,7 @@
 #include <stdexcept>
 #include <string>
 
+#include "validator/auth/native-registry.h"
 #include "validator/auth/state.h"
 
 #include "native-fixture.h"
@@ -103,6 +104,8 @@ int main() {
         "global-policy-activation-chain-revision-refused",
         "global-policy-refusal-changes-no-registry-byte",
         "global-policy-configuration-operation-refused",
+        "global-policy-persistent-root-equals-reference",
+        "global-policy-selects-the-new-policy-at-its-height",
     };
     for (const auto* name : manifest)
       std::cout << "MANIFEST " << name << '\n';
@@ -199,6 +202,59 @@ int main() {
       auto refused = accepted(u);
       report(!refused.ok() && refused.error().code == "global-configuration-unimplemented",
              "global-policy-configuration-operation-refused");
+    }
+
+    // The persistent registry and the reference model are two implementations
+    // of one transition. They are only one implementation if they produce the
+    // same bytes: a policy written into a different dictionary, an activation
+    // keyed on a different height, or a zero-identity record encoded another
+    // way would each leave both sides internally consistent and the chain
+    // unable to agree with itself.
+    {
+      const auto parent = value(before.encode_cell(), "fixture-parent-root");
+      auto persistent = value(NativeRegistry::bootstrap(parent, before.coordinate()), "fixture-persistent");
+      GlobalAuthority authority;
+      auto after = persistent.apply_block(inclusion, {{policy_update(before, next_policy), {}}}, authority, {});
+      const bool same = installed.ok() && after.ok() &&
+                        value(after.value().encode_cell(), "persistent-root")->get_hash() ==
+                            value(installed.value().encode_cell(), "reference-root")->get_hash();
+      report(same, "global-policy-persistent-root-equals-reference");
+    }
+
+    // The block the policy becomes current in, which is not the block that
+    // installed it. Until then both implementations must still select the old
+    // policy, and at the boundary both must select the new one.
+    //
+    // The install-block root comparison cannot see this. The height index the
+    // persistent registry selects from is derived state and is not encoded, so
+    // an operation that wrote the policy but never indexed it produces exactly
+    // the same root and a different answer sixty blocks later.
+    {
+      // Far enough past the governing anchor that the checkpoint rule is
+      // satisfied, and near enough to replay every block to it.
+      const std::uint32_t soon = governing_seqno + 2;
+      const auto soon_policy = successor(before, soon);
+      const auto soon_id = value(object_id("policy", soon_policy), "fixture-soon-id");
+      GlobalAuthority authority;
+      auto reference = before.apply_block(inclusion, {{policy_update(before, soon_policy), {}}}, authority);
+      auto persistent = value(NativeRegistry::bootstrap(value(before.encode_cell(), "fixture-parent"),
+                                                        before.coordinate()),
+                              "fixture-persistent");
+      auto advanced = persistent.apply_block(inclusion, {{policy_update(before, soon_policy), {}}}, authority, {});
+      bool agree = reference.ok() && advanced.ok();
+      for (std::uint32_t at = inclusion + 1; agree && at <= soon; ++at) {
+        auto next_reference = reference.value().apply_block(at, {}, authority);
+        auto next_persistent = advanced.value().apply_block(at, {}, authority, {});
+        agree = next_reference.ok() && next_persistent.ok();
+        if (!agree)
+          break;
+        reference = std::move(next_reference);
+        advanced = std::move(next_persistent);
+        const bool boundary = at == soon;
+        agree = (reference.value().current_policy() == soon_id) == boundary &&
+                reference.value().current_policy() == advanced.value().current_policy();
+      }
+      report(agree, "global-policy-selects-the-new-policy-at-its-height");
     }
 
     std::cout << "SUMMARY cases=" << passed + failed << " passed=" << passed << '\n';
