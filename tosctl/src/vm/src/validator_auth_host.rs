@@ -9,4 +9,10 @@ pub trait ValidatorAuthHost: Send {
         evidence: Cell,
         charge: &mut dyn FnMut(i64) -> Status,
     ) -> Result<Cell>;
+    fn bind(
+        &mut self,
+        elected: Cell,
+        bindings: Cell,
+        charge: &mut dyn FnMut(i64) -> Status,
+    ) -> Result<Cell>;
 }

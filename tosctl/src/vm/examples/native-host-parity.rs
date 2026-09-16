@@ -19,10 +19,12 @@ struct Host {
     cost: i64,
     states: usize,
     updates: usize,
+    binds: usize,
     first: Cell,
     second: Cell,
     state: Cell,
     applied: Cell,
+    bound: Cell,
 }
 impl ValidatorAuthHost for Host {
     fn checkpoint(&mut self, charge: &mut dyn FnMut(i64) -> Status) -> Result<Cell> {
@@ -45,6 +47,21 @@ impl ValidatorAuthHost for Host {
         }
         Ok(self.applied.clone())
     }
+    fn bind(
+        &mut self,
+        elected: Cell,
+        bindings: Cell,
+        charge: &mut dyn FnMut(i64) -> Status,
+    ) -> Result<Cell> {
+        charge(self.cost)?;
+        self.binds += 1;
+        if elected.repr_hash() != self.first.repr_hash()
+            || bindings.repr_hash() != self.second.repr_hash()
+        {
+            chain_block::fail!(ExceptionCode::RangeCheckError);
+        }
+        Ok(self.bound.clone())
+    }
 }
 fn execute(dir: &Path) -> anyhow::Result<()> {
     let raw = fs::read_to_string(dir.join("case"))?;
@@ -58,10 +75,12 @@ fn execute(dir: &Path) -> anyhow::Result<()> {
         cost: n(6)?,
         states: 0,
         updates: 0,
+        binds: 0,
         first: cell(0x11)?,
         second: cell(0x22)?,
         state: cell(0x31)?,
         applied: cell(0x32)?,
+        bound: cell(0x33)?,
     }));
     let mut stack = Stack::new();
     let mut args = 0;
@@ -112,7 +131,11 @@ fn execute(dir: &Path) -> anyhow::Result<()> {
                 .and_then(|x| x.as_integer_value(0i64..=100).ok())
                 .unwrap_or(-2)
         } else {
-            let expected = cell(if op == 0 { 0x31 } else { 0x32 })?;
+            let expected = cell(match op {
+                0 => 0x31,
+                1 => 0x32,
+                _ => 0x33,
+            })?;
             if engine.stack().depth() != 1 {
                 -2
             } else {
@@ -128,7 +151,12 @@ fn execute(dir: &Path) -> anyhow::Result<()> {
         -1
     };
     let locked = host.lock().map_err(|_| anyhow::anyhow!("host-poison"))?;
-    let got = [i64::from(exit), engine.gas_used(), top, (locked.states + locked.updates) as i64];
+    let got = [
+        i64::from(exit),
+        engine.gas_used(),
+        top,
+        (locked.states + locked.updates + locked.binds) as i64,
+    ];
     let expected = [n(9)?, n(10)?, n(11)?, n(12)?];
     if got != expected {
         eprintln!("DETAIL {}: {:?} != {:?}", f[13], got, expected);

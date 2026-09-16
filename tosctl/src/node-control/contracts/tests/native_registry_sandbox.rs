@@ -1554,6 +1554,18 @@ mod config_persistence_action_phase {
             BuilderData::new().into_cell()
         }
 
+        // This fixture drives registry updates only. Refusing rather than
+        // returning something keeps a case that reached it from passing on a
+        // value nothing chose.
+        fn bind(
+            &mut self,
+            _elected: Cell,
+            _bindings: Cell,
+            _charge: &mut dyn FnMut(i64) -> chain_block::Status,
+        ) -> chain_block::Result<Cell> {
+            chain_block::fail!(chain_block::ExceptionCode::InvalidOpcode)
+        }
+
         fn apply(
             &mut self,
             update: Cell,

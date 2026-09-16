@@ -155,6 +155,26 @@ pub(super) fn execute_p0_state(engine: &mut Engine) -> Status {
     engine.cc.stack.push(StackItem::Cell(result));
     Ok(())
 }
+pub(super) fn execute_p0_bind(engine: &mut Engine) -> Status {
+    native_gate(engine)?;
+    engine.load_instruction(Instruction::new("VAUTH_BIND"))?;
+    let Some(host) = engine.validator_auth_host() else {
+        fail!(ExceptionCode::InvalidOpcode);
+    };
+    if engine.cc.stack.depth() < 2 {
+        fail!(ExceptionCode::StackUnderflow);
+    }
+    fetch_stack(engine, 2)?;
+    let bindings = engine.cmd.var(0).as_cell()?.clone();
+    let elected = engine.cmd.var(1).as_cell()?.clone();
+    let result = host.lock().map_err(|_| chain_block::error!("P0 host poisoned"))?.bind(
+        elected,
+        bindings,
+        &mut |gas| charge_native(engine, gas),
+    )?;
+    engine.cc.stack.push(StackItem::Cell(result));
+    Ok(())
+}
 pub(super) fn execute_p0_apply(engine: &mut Engine) -> Status {
     native_gate(engine)?;
     engine.load_instruction(Instruction::new("VAUTH_APPLY"))?;
