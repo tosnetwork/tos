@@ -25,6 +25,7 @@ MUTATIONS=[
  ('lifecycle-predecessor','lifecycle','lifecycle.cpp','if(update.previous_!=predecessor.value())return Error{"predecessor"};',''),
  ('consecutive-blocks','lifecycle','lifecycle.cpp','if(parent_coordinate>=max_coordinate-1||coordinate!=parent_coordinate+1)return Error{"block-gap"};',''),
 ]
+VENDORED=ROOT/'third-party/mldsa-native/mldsa'
 def main(args):
  flags=shlex.split(subprocess.run(['pkg-config','--cflags','--libs','libsodium','openssl'],capture_output=True,text=True,check=True).stdout)
  results=[]
@@ -34,7 +35,14 @@ def main(args):
    driver={'transfer':'transfer-test.cpp','transport':'transport-driver.cpp','core':'driver.cpp','lifecycle':'driver.cpp'}[suite]
    sources=['crypto.cpp']+(['transfer.cpp'] if suite=='transfer' else ['transport.cpp'] if suite=='transport' else ['verify.cpp','lifecycle.cpp'])
    binary=folder/'driver'
-   command=[os.environ.get('CXX','c++'),'-std=c++20','-O1','-DTOS_AUTH_CORE_ONLY','-I'+str(folder),str(ROOT/'test/validator-auth-implementation'/driver),*[str(shadow/s) for s in sources],str(folder/'crypto/validator-auth/ed25519.cpp'),*flags,'-o',str(binary)]
+   # The vendored backend is C and its entry points are declared extern "C".
+   # Handing the .c file to the C++ driver would compile it as C++ and mangle
+   # the names the declarations expect, so it is built on its own first.
+   native=folder/'mldsa_native.o'
+   if not native.exists():
+    c=subprocess.run([os.environ.get('CC','cc'),'-std=c90','-O1','-c','-I'+str(folder/'crypto/pq'),'-I'+str(VENDORED),'-DMLD_CONFIG_FILE="mldsa44-config.h"',str(VENDORED/'mldsa_native.c'),'-o',str(native)],capture_output=True,text=True)
+    if c.returncode:raise RuntimeError('vendored backend did not compile: '+c.stderr)
+   command=[os.environ.get('CXX','c++'),'-std=c++20','-O1','-DTOS_AUTH_CORE_ONLY','-I'+str(folder),'-I'+str(folder/'crypto'),'-I'+str(folder/'crypto/pq'),'-I'+str(VENDORED),'-DMLD_CONFIG_FILE="mldsa44-config.h"',str(ROOT/'test/validator-auth-implementation'/driver),*[str(shadow/s) for s in sources],str(folder/'crypto/validator-auth/ed25519.cpp'),str(folder/'crypto/pq/mldsa44.cpp'),str(native),*flags,'-o',str(binary)]
    p=subprocess.run(command,capture_output=True,text=True)
    if p.returncode:raise RuntimeError('mutation did not compile: '+p.stderr)
    return binary
@@ -49,6 +57,14 @@ def main(args):
   primitive=folder/'crypto/validator-auth';primitive.mkdir(parents=True)
   for path in (ROOT/'crypto/validator-auth').glob('*'):
    if path.is_file():shutil.copy2(path,primitive/path.name)
+  # Admission dispatches on the suite a key declares, so this build needs the
+  # second backend as well as the curve one, and the vendored implementation it
+  # rests on. The flags below restate a little of what the build file says; a
+  # restatement that drifts fails here loudly, which is the trade taken over
+  # letting the module under test change shape when a macro is defined.
+  post_quantum=folder/'crypto/pq';post_quantum.mkdir(parents=True)
+  for path in (ROOT/'crypto/pq').glob('*'):
+   if path.is_file():shutil.copy2(path,post_quantum/path.name)
   for suite in ('transfer','transport','core','lifecycle'):
    p=test(suite,build(suite));assert p.returncode==0,(suite,p.stderr)
    print('BASELINE:',suite,flush=True)
