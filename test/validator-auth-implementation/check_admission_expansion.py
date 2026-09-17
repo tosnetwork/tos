@@ -46,7 +46,7 @@ def admission_errors(source: str) -> list[str]:
     return errors
 
 
-def ingress_errors(source: str) -> list[str]:
+def ingress_errors(source: str, transaction: str | None = None) -> list[str]:
     errors: list[str] = []
     check = between(
         source,
@@ -84,8 +84,10 @@ def ingress_errors(source: str) -> list[str]:
     if offer.count("assemble_registry_authority(") != 1:
         errors.append("offer_validator_auth no longer has exactly one production authority assembly")
 
+    if transaction is None:
+        transaction = TRANSACTION.read_text() if TRANSACTION.exists() else ""
     clone = between(
-        (TRANSACTION.read_text() if TRANSACTION.exists() else ""),
+        transaction,
         "std::unique_ptr<NativeConfigTransaction> NativeConfigTransaction::clone_for_execution() const",
         "const FinalizedAnchorSource& NativeConfigTransaction::history() const",
     )
@@ -99,8 +101,8 @@ def ingress_errors(source: str) -> list[str]:
     return errors
 
 
-def require_mutation_rejected(name: str, mutated: str) -> list[str]:
-    errors = ingress_errors(mutated)
+def require_mutation_rejected(name: str, mutated: str, transaction: str | None = None) -> list[str]:
+    errors = ingress_errors(mutated, transaction)
     if errors:
         print(f"MUTATION_KILLED {name}: {errors[0]}")
         return []
@@ -144,6 +146,25 @@ def main() -> int:
     else:
         reused = ingress.replace(clone_line, "          execution = authority;\n", 1)
         errors += require_mutation_rejected("logging-run-reuses-stateful-host", reused)
+
+    # Regression three: parse the arriving container again for every execution.
+    # This is the one the runtime case cannot reach. Admission's charger is not
+    # reachable from a clone, so a clone that re-expanded attacker-chosen bytes
+    # would move no counter and the config-transaction suite would still pass.
+    # The clause below is therefore the only thing holding it, and a clause no
+    # mutation exercises is a clause nobody has heard speak.
+    transaction = TRANSACTION.read_text()
+    clone_return = "  return std::unique_ptr<NativeConfigTransaction>(new NativeConfigTransaction(material_));\n"
+    if transaction.count(clone_return) != 1:
+        errors.append("mutation anchor for a second evidence opening is not unique")
+    else:
+        reopened = transaction.replace(
+            clone_return,
+            "  auto again = NativeEvidence::open(material_->evidence.root(), EvidenceCharge{});\n"
+            "  (void)again;\n" + clone_return,
+            1,
+        )
+        errors += require_mutation_rejected("clone-reopens-the-evidence-container", ingress, reopened)
 
     if errors:
         for error in errors:

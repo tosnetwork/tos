@@ -181,6 +181,17 @@ int main(int argc, char** argv) {
       auto retry = primary.value()->clone_for_execution();
       require(retry != nullptr && expansion_charges == charges_after_admission,
               "execution-clone-reuses-admitted-material-with-a-fresh-host");
+      // What "reuses admitted material" means, said as something that can fail.
+      // The charge counter above cannot say it: admission's charger is reachable
+      // only from the call that opened the container, so nothing a clone does
+      // could move that number, and a clone that parsed the arriving bytes again
+      // would still leave it where it is. What is observable here is that both
+      // executions answer from one parse, so a clone carrying its own reading is
+      // caught. That no second parse happens at all is a source property, held
+      // by check_admission_expansion.py rather than here.
+      require(&retry->authorizations() == &primary.value()->authorizations() &&
+                  &retry->history() == &primary.value()->history(),
+              "execution-clone-reuses-admitted-material-with-a-fresh-host");
       require(&retry->host() != &primary.value()->host() && retry->host().checkpoints() == 0,
               "execution-clone-reuses-admitted-material-with-a-fresh-host");
 
