@@ -373,13 +373,19 @@ would need a hundred post-quantum signatures to execute the operation that
 lowers it -- twice a whole masterchain block -- and could no longer change its
 own configuration at all.
 
-The credit an external message has before it is accepted is ten thousand.
-Neither ceiling fits it: the installed committee costs more than that in reads
-alone, the profile's twenty-five times, and eight signer records already exceed
-it. The registry action is unsigned and reaches `accept_message` only after the
-update has applied, so the whole verification happens on that credit -- run
-against the real contract, a hundred-signer operation stops after twelve
-verifications, having never accepted and never committed.
+The credit an external message has before it is accepted is ten thousand, and
+the installed committee costs more than that in reads alone. That would settle
+the ingress for an ordinary account. This one is not ordinary: the masterchain
+configuration makes the configuration account special by address, and a special
+account's compute phase begins with its limit already raised to the special
+limit rather than with a limit acceptance would raise. Run against the real
+contract, a governance operation at the installed committee is accepted and
+committed.
+
+So the credit is not what bounds this path, and the question it was thought to
+answer -- whether a legitimate operation can be admitted at all -- is answered
+yes. What the same fact opens instead is that the work before acceptance is not
+bounded by ten thousand gas either, for anyone.
 
 It cost seven entries a record until the identity stopped being revalidated for
 every signer. The state is validated in full when it is opened, every key

@@ -228,7 +228,7 @@ int main(int argc, char** argv) {
         "the-post-quantum-suite-fits-neither",
         "a-post-quantum-committee-of-the-installed-size-fits-the-masterchain-block",
         "a-post-quantum-committee-past-the-measured-boundary-does-not-fit",
-        "no-committee-size-fits-the-unaccepted-external-credit",
+        "a-governance-operation-is-admitted-through-the-external-ingress",
     };
     for (const auto* name : manifest)
       std::cout << "MANIFEST " << name << '\n';
@@ -284,17 +284,23 @@ int main(int argc, char** argv) {
     report(installed.ticktock_gas > 0 && installed.ticktock_gas == ceiling.ticktock_gas,
            "the-account-tick-tock-is-work-the-block-gas-budget-does-not-see");
 
-    // And the separate question, which fitting the block does not answer. The
-    // registry action is unsigned and accepts only after the update has
-    // applied, so the entire verification happens on the credit an external
-    // message has before acceptance. Neither committee size fits it, so neither
-    // can be admitted through this ingress at all.
+    // And the ingress, which is a separate question from the block. The
+    // registry action is unsigned and reaches acceptance only after the update
+    // has applied, so everything the verification costs is spent before the
+    // message is accepted. For an ordinary account that would have to fit the
+    // ten thousand gas of credit and could not. This account is not ordinary:
+    // the masterchain configuration makes it special by address, and a special
+    // account's compute phase begins with its limit already raised to the
+    // special limit rather than with a limit acceptance would raise. So the
+    // operation is admitted, and the credit is not what bounds it.
     {
-      const auto starved = measure(contract, installed_main_validators, uncapped, external_gas_credit);
+      const auto admitted = measure(contract, installed_main_validators, uncapped, external_gas_credit);
       std::cerr << "MEASURE credit=" << external_gas_credit << " signers=" << installed_main_validators
-                << " gas=" << starved.transaction_gas << " accepted=" << starved.accepted
-                << " committed=" << starved.committed << " verifications=" << starved.verifications << '\n';
-      report(!starved.accepted && !starved.committed, "no-committee-size-fits-the-unaccepted-external-credit");
+                << " gas=" << admitted.transaction_gas << " accepted=" << admitted.accepted
+                << " committed=" << admitted.committed << " verifications=" << admitted.verifications << '\n';
+      report(admitted.accepted && admitted.committed &&
+                 admitted.verifications == installed_main_validators,
+             "a-governance-operation-is-admitted-through-the-external-ingress");
     }
 
     // Everything the largest measured transaction spent that was not signature

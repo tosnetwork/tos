@@ -496,7 +496,18 @@ Outcome run_contract(const td::Ref<vm::Cell>& contract, const td::Ref<vm::Cell>&
     // unaccepted external message does: everything before accept_message has to
     // fit in the credit, and accepting is what raises the ceiling to the limit.
     // A credit still standing at the end is therefore a run that never accepted.
-    auto gas = credit ? vm::GasLimits{0, gas_limit, credit} : vm::GasLimits{gas_limit, gas_limit};
+    // The configuration account is special -- the masterchain configuration
+    // makes it so unconditionally, by address -- and a special account's
+    // compute phase is entered with `gas_limit` already raised to `gas_max`
+    // rather than with a limit it must accept to obtain. The credit is still
+    // granted for an external message and is still zeroed by accepting, so
+    // whether a run accepted is still observable; what it no longer is, for
+    // this account, is the thing that bounds the run.
+    //
+    // Modelling it as a limit of zero before acceptance describes an ordinary
+    // account. It is not one, and a bound measured that way is a bound on an
+    // account the network does not have here.
+    auto gas = credit ? vm::GasLimits{gas_limit, gas_limit, credit} : vm::GasLimits{gas_limit, gas_limit};
     vm::VmState state{contract, version, std::move(stack), gas, 1, data, {}, {}, registers, capabilities};
     if (host)
       state.set_validator_auth_host(std::shared_ptr<vm::ValidatorAuthHost>(host, [](vm::ValidatorAuthHost*) {}));
