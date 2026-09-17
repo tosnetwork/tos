@@ -398,13 +398,25 @@ class ValidatorManagerInterface : public td::actor::Actor {
   virtual void get_next_block(BlockIdExt block_id, td::Promise<BlockHandle> promise) = 0;
   virtual void write_handle(BlockHandle handle, td::Promise<td::Unit> promise) = 0;
 
-  // `source_peer` (when set) is the ADNL pubkey hash of the upstream
-  // peer that broadcast this message. Locally-originated submissions
-  // pass an empty optional.
+  // Where this message came from. When set it is the ADNL pubkey hash of the
+  // upstream peer; an empty optional means the caller had no remote identity to
+  // give, which today is a locally-originated submission.
+  //
+  // The argument has no default, so a caller cannot arrive here without having
+  // said something about provenance. It can still say "nothing", and that is
+  // the part this type cannot express: absence currently reaches the per-source
+  // limiter as the unlimited case, which is a historical meaning rather than a
+  // decision anyone made. Replacing the optional with a remote-or-local sum
+  // type is what removes it, and that belongs with the change that reopens the
+  // manager, not here.
+  //
+  // Local is provenance, not trust. Whether a local origin is exempt from the
+  // limiter is a transport policy question and is deliberately not answered by
+  // the shape of this parameter.
   virtual td::actor::Task<> new_external_message_broadcast(td::BufferSlice data, int priority,
-                                                           td::optional<PublicKeyHash> source_peer = {}) = 0;
+                                                           td::optional<PublicKeyHash> source_peer) = 0;
   virtual td::actor::Task<> new_external_message_query(td::BufferSlice data,
-                                                       td::optional<PublicKeyHash> source_peer = {}) {
+                                                       td::optional<PublicKeyHash> source_peer) {
     co_return td::Status::Error("not implemented");
   }
   virtual void new_ihr_message(td::BufferSlice data) = 0;

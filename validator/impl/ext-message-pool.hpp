@@ -39,7 +39,7 @@ class ExtMessagePool : public td::actor::Actor {
     td::actor::StartedTask<> wait_allow_broadcast;
   };
   td::actor::Task<CheckResult> check_add_external_message(td::BufferSlice data, int priority, bool add_to_mempool,
-                                                          td::optional<PublicKeyHash> source_peer = {});
+                                                          td::optional<PublicKeyHash> source_peer);
   void install_collator_queue(ShardIdFull shard, std::unique_ptr<ExtMsgCallback> callback);
   void cleanup_external_messages(ShardIdFull shard);
   // Workchain-agnostic expiry sweep.
