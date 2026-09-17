@@ -464,6 +464,35 @@ long long stored_sequence(const td::Ref<vm::Cell>& data) {
   return cs.fetch_long(32);
 }
 
+// three index references. Only the first reference is read by the contract;
+// the rest are present because a checkpoint with fewer is not one.
+td::Ref<vm::Cell> shaped_checkpoint(const td::Ref<vm::Cell>& registry, std::uint32_t coordinate) {
+  auto filler = vm::CellBuilder().finalize();
+  return vm::CellBuilder()
+      .store_long(0x76616e31, 32)
+      .store_long(1, 16)
+      .store_long(coordinate, 32)
+      .store_ref(registry)
+      .store_ref(filler)
+      .store_ref(filler)
+      .store_ref(filler)
+      .finalize();
+}
+
+// An active chain always has a checkpoint. Genesis seeds the registry
+// parameter and the checkpoint together or seeds neither, and the contract
+// refuses an active account that carries none rather than seeding one. A case
+// that starts an active chain without a checkpoint is therefore describing a
+// chain that cannot exist, so one is supplied here rather than in eighteen
+// call sites.
+td::Ref<vm::Cell> seeded_checkpoint(const td::Ref<vm::Cell>& registry, bool config8_active,
+                                    td::Ref<vm::Cell> checkpoint) {
+  if (!config8_active || checkpoint.not_null()) {
+    return checkpoint;
+  }
+  return shaped_checkpoint(registry.not_null() ? registry : vm::CellBuilder().finalize(), 0);
+}
+
 Outcome run_contract(const td::Ref<vm::Cell>& contract, const td::Ref<vm::Cell>& body, std::uint64_t from,
                      std::uint32_t now, vm::ValidatorAuthHost* host, td::uint64 capabilities, int version,
                      bool external = false, td::Ref<vm::Cell> registry = {}, long long gas_limit = 1000000,
@@ -471,6 +500,7 @@ Outcome run_contract(const td::Ref<vm::Cell>& contract, const td::Ref<vm::Cell>&
                      const unsigned char* voting_key = nullptr, td::Ref<vm::Cell> votes = {},
                      long long credit = 0) {
   expect(contract.not_null(), "contract-loaded");
+  checkpoint = seeded_checkpoint(registry, config8_active, std::move(checkpoint));
   auto config = configuration(std::move(registry), config8_active, voting_key);
   auto message = external ? external_message(body) : internal_message(from, body);
   auto data = contract_data(config, std::move(checkpoint), std::move(votes));
@@ -580,20 +610,6 @@ using Case = std::pair<std::string, std::function<void()>>;
 
 // A checkpoint shaped the way the registry encodes one: eighty bits of header
 // and coordinate, then the registry state parameter 46 must hold, then the
-// three index references. Only the first reference is read by the contract;
-// the rest are present because a checkpoint with fewer is not one.
-td::Ref<vm::Cell> shaped_checkpoint(const td::Ref<vm::Cell>& registry, std::uint32_t coordinate) {
-  auto filler = vm::CellBuilder().finalize();
-  return vm::CellBuilder()
-      .store_long(0x76616e31, 32)
-      .store_long(1, 16)
-      .store_long(coordinate, 32)
-      .store_ref(registry)
-      .store_ref(filler)
-      .store_ref(filler)
-      .store_ref(filler)
-      .finalize();
-}
 
 // One tick-tock of the configuration account. No message, which is the whole
 // point: this is the transaction a block with nothing to process still runs.
@@ -603,6 +619,7 @@ Outcome run_ticktock(const td::Ref<vm::Cell>& contract, vm::ValidatorAuthHost* h
                      long long gas_limit = 1000000, const unsigned char* voting_key = nullptr,
                      td::Ref<vm::Cell> votes = {}) {
   expect(contract.not_null(), "contract-loaded");
+  checkpoint = seeded_checkpoint(registry, config8_active, std::move(checkpoint));
   auto config = configuration(std::move(registry), config8_active, voting_key);
   auto data = contract_data(config, std::move(checkpoint), std::move(votes));
   td::Ref<vm::Stack> stack{true};

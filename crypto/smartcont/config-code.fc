@@ -61,6 +61,15 @@ builder store_checkpoint(builder b) inline {
   registry_checkpoint = null();
   if (cs.slice_refs()) {
     registry_checkpoint = cs~load_ref();
+  } else {
+    ;; Genesis seeds the registry parameter and this checkpoint together or it
+    ;; seeds neither. So on a chain that has activated the design, an account
+    ;; carrying no checkpoint is not one that has yet to migrate; it is one
+    ;; whose configuration context can never open. Reading it as the former is
+    ;; the only place a second installation route could begin, and it would be
+    ;; reachable without the declared one. Refused here rather than seeded
+    ;; anywhere.
+    throw_if(47, validator_auth_active());
   }
   cs.end_parse();
   return res;

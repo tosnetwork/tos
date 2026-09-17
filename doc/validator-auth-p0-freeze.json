@@ -29,7 +29,7 @@
     "doc/validator-auth-p0/transport.schema.json": "ddd45d7d3eb672559efde020af95a0e215146775ec82f8c6847b0f3ab8127584",
     "doc/validator-auth-p0/wire.tl": "a5e10c8e25887cb30440a26a0d8cbcef1473878aeb87438cca1a0f0bc6875c15",
     "doc/validator-auth-p0/wire.tlb": "923650bd74bbbf677a070d1d13d7c12d46944e8bffbfc3a72641093d20d3ce9d",
-    "doc/validator-auth-p0-native-insertions.json": "973bedd0fb7cffec5faf23a8f555865c787cf2fe96386c74892b7b83b34aa5be",
+    "doc/validator-auth-p0-native-insertions.json": "f9f5dd2afe1f9635d10a14ff5dc012e392eb17c761f40e34198c00c68ee31448",
     "test/validator-auth-p0/README.md": "a0b0950c4ac702f8be0f34919a50f8e7b13d5d14dda3bd2cc05b4c8ffee31321",
     "test/validator-auth-p0/api.py": "9ec50bf9e19345ef54a8894a3525eba1eed8fb10412b8a3fdc1ed1c5728fb815",
     "test/validator-auth-p0/archive_evidence.py": "22bb392a561068e0fb3905ce7e8df95bab463468cdfe3be884eff19b12481409",
@@ -303,6 +303,16 @@
       "change": "Moved four of the five declared insertions into validator/manager.cpp to the coordinates they now occupy. The insertion texts are unchanged; the conversion above sits earlier in the file and displaces everything after it by the same amount.",
       "scope": "Offsets only. No insertion is added, removed or reworded, and the first insertion, which precedes the conversion, keeps its coordinate.",
       "reason": "Offsets are stated in original-file coordinates. Recomputing them by locating each insertion in the edited file and subtracting what precedes it reproduces the previous offsets exactly when run against the unedited file, which is how the new ones were checked rather than trusted.",
+      "activation": "Unchanged. No suite is allocated, no network is configured, and the version-16 activation gates and listed approvals remain independent thresholds that this does not satisfy."
+    },
+    {
+      "artifact": "doc/validator-auth-p0-native-insertions.json",
+      "previous_sha256": "973bedd0fb7cffec5faf23a8f555865c787cf2fe96386c74892b7b83b34aa5be",
+      "sha256": "f9f5dd2afe1f9635d10a14ff5dc012e392eb17c761f40e34198c00c68ee31448",
+      "authorization": "The owner chose genesis seeding as the activation policy for Phase one, which closes the path this tolerance existed for.",
+      "change": "Tightened one declared insertion in the configuration contract. Reading the account's stored state used to treat a missing registry checkpoint as simply absent; on a chain that has activated the design it now throws instead. The activation policy is genesis seeding, so an active account without a checkpoint is not a chain that has yet to migrate.",
+      "scope": "The text of one insertion, and nothing else. No insertion is added or removed, every offset is unchanged because offsets are stated in original-file coordinates and this edit lies inside inserted text, and the reconstructed original of crypto/smartcont/config-code.fc is byte-identical -- so the production baseline does not move and no file loses its historical-bytes claim.",
+      "reason": "The contract tolerated a checkpoint-less account while the node's own reader refused one, and that asymmetry was the first-update migration path: the contract would carry the absence forward until some authenticated update produced a checkpoint. With genesis seeding chosen, that is the second installation route the policy forbids, reachable without the declared one.",
       "activation": "Unchanged. No suite is allocated, no network is configured, and the version-16 activation gates and listed approvals remain independent thresholds that this does not satisfy."
     }
   ],
