@@ -34,9 +34,18 @@ on:
 
 permissions:
   contents: read
+# Runs queue here rather than replacing each other. The frozen record binds its
+# evidence to a commit, and this job carries the guards and mutation harnesses
+# that evidence is made of, so a run that is cancelled leaves that commit with
+# nothing that can be cited for it. This job also takes long enough that a push
+# during it almost always lands first: four commits in one session reached a
+# final state of "cancelled" and can never be spoken for.
+#
+# The group is kept, so the cost is that a verdict for the head waits behind the
+# commits before it rather than that several full runs execute at once.
 concurrency:
   group: validator-p0-implementation-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 defaults:
   run:
