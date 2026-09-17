@@ -1522,10 +1522,9 @@ mod config_persistence_action_phase {
     }
 
     fn cells() -> Cells {
-        let root = PathBuf::from(
-            std::env::var("VALIDATOR_AUTH_CONFIG_PERSISTENCE_CELLS")
-                .expect("VALIDATOR_AUTH_CONFIG_PERSISTENCE_CELLS must name exported built-contract cells"),
-        );
+        let root = PathBuf::from(std::env::var("VALIDATOR_AUTH_CONFIG_PERSISTENCE_CELLS").expect(
+            "VALIDATOR_AUTH_CONFIG_PERSISTENCE_CELLS must name exported built-contract cells",
+        ));
         Cells {
             contract: read_cell(&root, "contract.boc"),
             before: read_cell(&root, "before.boc"),

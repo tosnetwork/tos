@@ -1,6 +1,4 @@
-use chain_block::{
-    read_single_root_boc, BuilderData, Cell, ExceptionCode, Result, SliceData,
-};
+use chain_block::{read_single_root_boc, BuilderData, Cell, ExceptionCode, Result, SliceData};
 use std::{
     env, fs,
     path::Path,

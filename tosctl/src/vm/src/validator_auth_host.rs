@@ -19,6 +19,5 @@ pub trait HostCharge {
 pub trait ValidatorAuthHost: Send {
     fn checkpoint(&mut self, charge: &mut dyn HostCharge) -> Result<Cell>;
     fn apply(&mut self, update: Cell, evidence: Cell, charge: &mut dyn HostCharge) -> Result<Cell>;
-    fn bind(&mut self, elected: Cell, bindings: Cell, charge: &mut dyn HostCharge)
-        -> Result<Cell>;
+    fn bind(&mut self, elected: Cell, bindings: Cell, charge: &mut dyn HostCharge) -> Result<Cell>;
 }
