@@ -23,6 +23,15 @@ MUTATIONS = [
             "registry-c4-replaces-old-parameter-46",
             "registry-first-checkpoint-installs-new-parameter",
             "registry-first-checkpoint-replaces-old-parameter",
+            # The checkpoint case reads the installed parameter too, and has to.
+            # Its claim is that the checkpoint stored is the one for the state
+            # just staged rather than merely different from the stale one, and
+            # comparing both against the same staged cell is what says so. A
+            # mutation that stops installing the parameter therefore reaches it,
+            # and that is a dependency to declare rather than an overreach to
+            # narrow. The case grew that assertion after this list was last
+            # written, and the job that would have said so was failing earlier.
+            "a-registry-update-stores-the-staged-checkpoint",
         ],
     ),
     (
