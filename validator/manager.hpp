@@ -50,6 +50,7 @@
 #include "queue-size-counter.hpp"
 #include "shard-block-retainer.hpp"
 #include "shard-block-verifier.hpp"
+#include "auth/manager-group-admission.h"
 #include "auth/native-chain-context.h"
 #include "shard-client.hpp"
 #include "state-serializer.hpp"
@@ -641,6 +642,17 @@ class ValidatorManagerImpl : public ValidatorManager {
   td::optional<ValidatorAuthCollation> validator_auth_collation();
 
   td::optional<tos::auth::ChainContext> validator_auth_chain_;
+  // When a group may be created on a chain that activated the design, and what
+  // to do about one refused because it could not be yet. The conditions arrive
+  // from two unrelated asynchronous reads in either order, and if the context is
+  // the late one, every group is refused and nothing drives a second attempt --
+  // see the type for why that is a liveness question and not a detail. The
+  // context itself stays in the optional above; this holds no copy of it.
+  tos::auth::GroupAdmissionGate validator_auth_admission_;
+  // Whether a zero-state read is in flight, and how long the next retry waits.
+  bool validator_auth_chain_reading_ = false;
+  double validator_auth_chain_retry_ = 0.0;
+  void retry_validator_auth_chain(std::string reason);
   void got_destroyed_validator_sessions(std::vector<ValidatorSessionId> sessions);
   void got_pending_consensus_db_cleanup(std::vector<std::string> dirs);
   void got_pending_validator_consensus_db_cleanup(std::vector<consensus::PendingValidatorConsensusDbCleanup> records);

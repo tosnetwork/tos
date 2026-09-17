@@ -85,6 +85,28 @@ applies when the chain has activated the design and this node has not
 established its context yet, which is the window right after startup and closes
 when the zero state is read.
 
+Both conditions the gate needs arrive asynchronously, from unrelated reads, in
+either order, and group creation is otherwise driven by a new masterchain block.
+That makes their ordering a liveness question rather than a detail. If the
+context is the late one, the startup pass refuses every group; on a chain whose
+validators are all in that state, the block that would drive the next attempt is
+the one none of them is producing, and nothing asks again. The chain does not
+start.
+
+So a refusal for a missing context is remembered, and whichever condition
+arrives last creates what was refused -- never before the cleanup records are
+loaded, because a group created before them can have its own consensus directory
+deleted under it, and never when nothing was refused, because a pass nothing
+asked for retires the live groups it does not recreate and fences their session
+ids. That decision is one object with six cases and six compiled mutations,
+rather than three flags read in three places.
+
+A zero-state read that fails is asked again, with an interval that doubles and
+then stops growing. It is bounded in rate rather than in attempts: a bounded
+number of attempts is the same permanent stall arriving later, and one transient
+archive error would otherwise leave a node unable to validate until somebody
+restarted it.
+
 What this does not yet do is run the session under the derived committee. The
 committee is derived, its roster is required to be the one seated, and then it
 is discarded; the asynchronous admission that resolves a session's birth block

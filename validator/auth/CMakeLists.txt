@@ -6,7 +6,7 @@ if(TARGET sodium)
   add_dependencies(tos_validator_auth sodium)
 endif()
 
-add_library(tos_validator_auth_native STATIC native-collation-authority.cpp native-election-binding.cpp native-election-binding-host.cpp native-election-binding-transaction.cpp native-registry-admission.cpp native-config-message.cpp native-witnessed-history.cpp native-config-transaction.cpp native-config-sequence.cpp native-config-state-host.cpp native-chain-context.cpp native-config-host.cpp manager-session-binding.cpp native-session-committee.cpp native-evidence.cpp native-config-context.cpp native-header.cpp native-transaction.cpp native-registry.cpp native-history.cpp native-apply.cpp owner-proof.cpp native-proof.cpp native-committee.cpp native-session-id.cpp registry-view.cpp committee-proof.cpp certificate-proof.cpp)
+add_library(tos_validator_auth_native STATIC manager-group-admission.cpp native-collation-authority.cpp native-election-binding.cpp native-election-binding-host.cpp native-election-binding-transaction.cpp native-registry-admission.cpp native-config-message.cpp native-witnessed-history.cpp native-config-transaction.cpp native-config-sequence.cpp native-config-state-host.cpp native-chain-context.cpp native-config-host.cpp manager-session-binding.cpp native-session-committee.cpp native-evidence.cpp native-config-context.cpp native-header.cpp native-transaction.cpp native-registry.cpp native-history.cpp native-apply.cpp owner-proof.cpp native-proof.cpp native-committee.cpp native-session-id.cpp registry-view.cpp committee-proof.cpp certificate-proof.cpp)
 target_link_libraries(tos_validator_auth_native PUBLIC tos_validator_auth tos_block tl-utils keys)
 set_target_properties(tos_validator_auth_native PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 

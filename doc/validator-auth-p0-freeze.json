@@ -29,7 +29,7 @@
     "doc/validator-auth-p0/transport.schema.json": "ddd45d7d3eb672559efde020af95a0e215146775ec82f8c6847b0f3ab8127584",
     "doc/validator-auth-p0/wire.tl": "a5e10c8e25887cb30440a26a0d8cbcef1473878aeb87438cca1a0f0bc6875c15",
     "doc/validator-auth-p0/wire.tlb": "923650bd74bbbf677a070d1d13d7c12d46944e8bffbfc3a72641093d20d3ce9d",
-    "doc/validator-auth-p0-native-insertions.json": "f51ea767866debeed7ee473657531792637d2e1dd6c3eb667ee686fa1d2808c2",
+    "doc/validator-auth-p0-native-insertions.json": "228d92343c851bb77d4eb383da608231ccc02e0deb240b84032e35f3963145fa",
     "test/validator-auth-p0/README.md": "a0b0950c4ac702f8be0f34919a50f8e7b13d5d14dda3bd2cc05b4c8ffee31321",
     "test/validator-auth-p0/api.py": "9ec50bf9e19345ef54a8894a3525eba1eed8fb10412b8a3fdc1ed1c5728fb815",
     "test/validator-auth-p0/archive_evidence.py": "22bb392a561068e0fb3905ce7e8df95bab463468cdfe3be884eff19b12481409",
@@ -389,6 +389,13 @@
       "sha256": "f51ea767866debeed7ee473657531792637d2e1dd6c3eb667ee686fa1d2808c2",
       "authorization": "The owner authorized reopening the validator manager for phase-one admission integration only, and asked that the manager stop applying a subset of the committee rules and consume the derived committee once an independently established anchor was available to it.",
       "change": "Re-derived the manager's declared insertion. Its session gate now derives the committee a validator group would run under, using the node's own applied masterchain block as the anchor and the chain context the node established from its own zero state, and requires the roster it would seat to be the one derivation selects. The subset it applied before admitted a roster carrying a binding no registry ever issued, which derivation refuses -- not an unauthenticated chain but a stalled one, with two admissions giving opposite answers about one set. A missing chain context refuses the shard rather than checking less. The gate cannot be instantiated by any test here, so its shape is read by a new check with its own negative controls, and the rules it applies are exercised through the confirmation's own suite and mutations."
+    },
+    {
+      "artifact": "doc/validator-auth-p0-native-insertions.json",
+      "previous_sha256": "f51ea767866debeed7ee473657531792637d2e1dd6c3eb667ee686fa1d2808c2",
+      "sha256": "228d92343c851bb77d4eb383da608231ccc02e0deb240b84032e35f3963145fa",
+      "authorization": "Reviewed as a P0 operational blocker: the chain context the session gate requires is established by an asynchronous read, group creation was not waiting on it, and nothing drove a second attempt once it arrived. The owner asked for group creation to depend on both startup conditions and for a failed read to be retried rather than terminal.",
+      "change": "Re-derived the manager's declared insertion. A session refused because the chain context had not arrived is remembered, and whichever of the two startup conditions arrives last creates it -- never before the cleanup records are loaded, and never when nothing was refused. Group creation is otherwise driven by a new masterchain block, so on a chain whose validators are all refusing, the block that would drive the next attempt is the one none of them is producing: the previous shape could not start such a chain at all. A failed zero-state read now retries with an interval that doubles to a ceiling, bounded in rate rather than in attempts, because one transient archive error otherwise left a node unable to validate until it was restarted. The decision is one object with its own cases and mutations rather than flags read in three places."
     }
   ],
   "implementation_evidence_update": {

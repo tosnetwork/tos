@@ -815,6 +815,23 @@ add_executable(p0-vset-probe vset-probe.cpp)
 target_link_libraries(p0-vset-probe PRIVATE tos_validator_auth_native tos_block)
 set_target_properties(p0-vset-probe PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 
+add_executable(test-p0-group-admission group-admission-test.cpp)
+target_link_libraries(test-p0-group-admission PRIVATE tos_validator_auth_native)
+set_target_properties(test-p0-group-admission PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+
+configure_file("${PROJECT_SOURCE_DIR}/validator/auth/manager-group-admission.cpp"
+               "${CMAKE_CURRENT_BINARY_DIR}/mutated-manager-group-admission.cpp" COPYONLY)
+configure_file("${PROJECT_SOURCE_DIR}/validator/auth/manager-group-admission.h"
+               "${CMAKE_CURRENT_BINARY_DIR}/group-admission-mutant/validator/auth/manager-group-admission.h"
+               COPYONLY)
+add_executable(test-p0-group-admission-mutant EXCLUDE_FROM_ALL group-admission-test.cpp
+               "${CMAKE_CURRENT_BINARY_DIR}/mutated-manager-group-admission.cpp")
+target_include_directories(test-p0-group-admission-mutant BEFORE PRIVATE
+                           "${CMAKE_CURRENT_BINARY_DIR}/group-admission-mutant"
+                           "${CMAKE_CURRENT_BINARY_DIR}/group-admission-mutant/validator/auth")
+target_link_libraries(test-p0-group-admission-mutant PRIVATE tos_validator_auth_native)
+set_target_properties(test-p0-group-admission-mutant PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+
 add_executable(test-p0-manager-binding manager-binding-test.cpp)
 target_link_libraries(test-p0-manager-binding PRIVATE tos_validator_auth_native tos_block tl_api tl-utils keys)
 set_target_properties(test-p0-manager-binding PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)

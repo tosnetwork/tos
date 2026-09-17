@@ -2348,15 +2348,42 @@ void ValidatorManagerImpl::establish_validator_auth_chain() {
   if (validator_auth_chain_ || last_masterchain_state_.is_null()) {
     return;
   }
+  // One read at a time. This is called from startup, from every session the
+  // gate refuses for a missing context, and from the retry a failed read
+  // schedules, so without this the requests would multiply.
+  if (validator_auth_chain_reading_) {
+    return;
+  }
+  validator_auth_chain_reading_ = true;
   auto P = td::PromiseCreator::lambda([SelfId = actor_id(this)](td::Result<td::BufferSlice> R) {
     td::actor::send_closure(SelfId, &ValidatorManagerImpl::established_validator_auth_zero_state, std::move(R));
   });
   td::actor::send_closure(db_, &Db::get_zero_state_file, opts_->zero_block_id(), std::move(P));
 }
 
+void ValidatorManagerImpl::retry_validator_auth_chain(std::string reason) {
+  // A read that failed once must not leave this node unable to validate until
+  // somebody restarts it. The zero state is fetched through the archive, which
+  // can answer with a transient error, and the only consumer of the answer is a
+  // gate that refuses every session without it.
+  //
+  // The interval doubles and then stops growing: bounded in rate rather than in
+  // attempts, because a bounded number of attempts is the same permanent stall
+  // arriving later, and the condition being waited on is one that outside
+  // repair is expected to clear.
+  validator_auth_chain_retry_ = tos::auth::next_chain_context_retry(validator_auth_chain_retry_);
+  LOG(WARNING) << "no registry authority: " << reason << "; retrying in " << validator_auth_chain_retry_ << "s";
+  delay_action(
+      [SelfId = actor_id(this)]() {
+        td::actor::send_closure(SelfId, &ValidatorManagerImpl::establish_validator_auth_chain);
+      },
+      td::Timestamp::in(validator_auth_chain_retry_));
+}
+
 void ValidatorManagerImpl::established_validator_auth_zero_state(td::Result<td::BufferSlice> R) {
+  validator_auth_chain_reading_ = false;
   if (R.is_error()) {
-    LOG(INFO) << "no registry authority: zero state unreadable: " << R.move_as_error();
+    retry_validator_auth_chain(PSTRING() << "zero state unreadable: " << R.move_as_error());
     return;
   }
   if (last_masterchain_state_.is_null()) {
@@ -2365,17 +2392,31 @@ void ValidatorManagerImpl::established_validator_auth_zero_state(td::Result<td::
   auto raw = R.move_as_ok();
   auto root = vm::std_boc_deserialize(raw.as_slice());
   if (root.is_error()) {
-    LOG(INFO) << "no registry authority: zero state undeserializable: " << root.move_as_error();
+    retry_validator_auth_chain(PSTRING() << "zero state undeserializable: " << root.move_as_error());
     return;
   }
   auto chain = tos::auth::establish_chain_context(root.move_as_ok(), opts_->zero_block_id(),
                                                  last_masterchain_state_->get_global_id());
   if (!chain.ok()) {
-    LOG(INFO) << "no registry authority: " << chain.error().code;
+    retry_validator_auth_chain(chain.error().code);
     return;
   }
   validator_auth_chain_ = chain.value();
+  validator_auth_chain_retry_ = 0.0;
   publish_validator_auth();
+  // A session refused only because this had not arrived yet is retried by
+  // nothing else. Group creation is driven by a new masterchain block, and on a
+  // chain whose validators are all in this state the block that would drive it
+  // is the one none of them is producing -- every node refuses every group,
+  // no block is produced, and no second attempt is ever made.
+  //
+  // So drive it once from here, and only after the barrier that must precede
+  // any group: a group created before the cleanup records are loaded could have
+  // its consensus directory deleted under it.
+  if (validator_auth_admission_.create_deferred_groups(bool(validator_auth_chain_))) {
+    LOG(INFO) << "registry authority established; creating the validator groups that were refused without it";
+    update_shards();
+  }
 }
 
 void ValidatorManagerImpl::publish_validator_auth() {
@@ -2482,6 +2523,19 @@ void ValidatorManagerImpl::got_pending_validator_consensus_db_cleanup(
   // startup (which triggers group creation via update_shards).
   for (auto &record : records) {
     validator_cleanup_manager_.on_loaded_at_startup(std::move(record));
+  }
+  // Every group that may be created from here on is created after these records
+  // are loaded. A session the authenticated gate refuses for a missing chain
+  // context is created later, out of the callback that establishes it, so that
+  // path needs to know this has happened.
+  validator_auth_admission_.cleanup_records_loaded();
+  // If the context won the race, the groups it refused are created here rather
+  // than waiting for a masterchain block that a refusing chain never produces.
+  // The startup pass below would create them too; this is what makes the
+  // ordering decided in one place instead of by which path happened to run.
+  if (validator_auth_admission_.create_deferred_groups(bool(validator_auth_chain_))) {
+    LOG(INFO) << "cleanup records loaded; creating the validator groups that were refused before them";
+    update_shards();
   }
   try_validator_consensus_db_cleanup();
   finish_start_up().start().detach_ensure();
@@ -3109,6 +3163,11 @@ void ValidatorManagerImpl::update_shards() {
             LOG(ERROR) << "refusing to create validator group for " << shard.to_str()
                        << ": the chain has activated validator authentication and this node has not established "
                           "its own chain context yet; validation for this shard is disabled until it has";
+            // Remembered, and asked for again. Nothing else drives this pass a
+            // second time: it runs on a new masterchain block, and a chain
+            // whose validators are all refusing produces none.
+            validator_auth_admission_.defer_groups();
+            establish_validator_auth_chain();
             --(shard.is_masterchain() ? active_validator_groups_master_ : active_validator_groups_shard_);
             continue;
           }

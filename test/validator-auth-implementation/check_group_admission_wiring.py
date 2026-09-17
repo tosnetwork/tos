@@ -55,6 +55,16 @@ ANCHOR_SOURCES = (
 # The subset this gate used to apply. Reaching it here again is the regression,
 # and it is a regression whether or not the derivation stays beside it.
 SUBSET = "admit_masterchain_state("
+# The refusal has to be remembered and the read asked for again. Group creation
+# is otherwise driven by a new masterchain block, and a chain whose validators
+# are all refusing produces none -- so a refusal that records nothing is a chain
+# that never starts.
+DEFER = "validator_auth_admission_.defer_groups();"
+ASK_AGAIN = "establish_validator_auth_chain();"
+# And the two arrivals that can release it, each creating what was refused.
+RELEASE = "validator_auth_admission_.create_deferred_groups(bool(validator_auth_chain_))"
+BARRIER = "validator_auth_admission_.cleanup_records_loaded();"
+DRIVE = "update_shards();"
 REFUSAL = "continue;"
 STAND_DOWN = "--(shard.is_masterchain() ? active_validator_groups_master_ : active_validator_groups_shard_);"
 
@@ -90,6 +100,21 @@ def verify(files: dict[str, str]) -> None:
     # Each has to stand the shard down and leave, not log and carry on.
     if region.count(REFUSAL) < 2 or region.count(STAND_DOWN) < 2:
         raise ValueError("a refused session does not leave the shard unvalidated")
+    # A refusal for a missing context has to be remembered and has to ask again.
+    if DEFER not in region:
+        raise ValueError("a session refused for a missing context is not remembered")
+    if ASK_AGAIN not in region:
+        raise ValueError("a session refused for a missing context does not ask for one again")
+    # And both arrivals have to create what was refused, each from the one place
+    # that decides it rather than from a rule written twice.
+    if text.count(RELEASE) != 2:
+        raise ValueError("the deferred groups are not created on both arrivals")
+    if BARRIER not in text:
+        raise ValueError("the startup barrier is not recorded")
+    for arrival in (BARRIER, "validator_auth_chain_ = chain.value();"):
+        after = text.find(arrival)
+        if after < 0 or text.find(RELEASE, after) < 0 or text.find(DRIVE, text.find(RELEASE, after)) < 0:
+            raise ValueError(f"nothing creates the deferred groups after {arrival}")
 
 
 def main() -> int:
@@ -129,6 +154,16 @@ def main() -> int:
         # And the refusals turning into log lines.
         without(STAND_DOWN, "", 2),
         without(REFUSAL, "", 2),
+        # The refusal that records nothing, and the one that never asks again:
+        # either way the groups are refused once and no second attempt is made.
+        without(DEFER),
+        without(ASK_AGAIN),
+    )
+    # The arrivals are outside the gate region, so those probes edit the file.
+    probes += (
+        {MANAGER: files[MANAGER].replace(RELEASE, "false", 1)},
+        {MANAGER: files[MANAGER].replace(RELEASE, "false")},
+        {MANAGER: files[MANAGER].replace(BARRIER, "", 1)},
     )
     for probe in probes:
         if probe[MANAGER] == files[MANAGER]:
