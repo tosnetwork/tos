@@ -362,7 +362,11 @@ survive, not what it will usually be asked to do.
 
 Twenty-one is not a decentralization preference; it is what the post-quantum
 measurement below leaves room for, decided while the signatures are still
-classical because it cannot be decided afterwards. Raising or lowering
+classical because it cannot be decided afterwards. It is held that way rather
+than written down: the capacity bound measures the size the genesis installs
+and a check refuses the two to differ, so raising the committee either fails
+that check or fails the bound's own post-quantum case at the size it was raised
+to. Both were removed and seen to go red. Raising or lowering
 `max_main_validators` is itself a governance operation, carried by a certificate
 of the size in force. A chain that activated a post-quantum suite at a hundred
 would need a hundred post-quantum signatures to execute the operation that

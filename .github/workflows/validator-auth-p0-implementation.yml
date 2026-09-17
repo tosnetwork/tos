@@ -833,6 +833,10 @@ jobs:
             --build build-p0 --out artifacts/config-contract-mutations
           # What one governance transaction costs through this contract, with the
           # real registry and the real host, at both committee ceilings.
+          # The size it measures has to be the size the network installs, or the
+          # bound holds for a committee nobody has.
+          python3 test/validator-auth-implementation/check_committee_bound.py \
+            | tee artifacts/committee-bound.txt
           build-p0/test/validator-auth-implementation/test-p0-governance-capacity \
             "$CONTRACT_TMP/config-code.boc" | tee artifacts/governance-capacity.txt
           python3 test/validator-auth-implementation/signature_mutations.py \
