@@ -487,6 +487,12 @@ jobs:
           # there.
           python3 test/validator-auth-implementation/manager_binding_mutations.py \
             --build build-p0 --out artifacts/manager-binding-mutations.json
+          # The call site itself cannot be instantiated here -- it is inside an
+          # actor that needs a database, a network and a chain -- so the shape
+          # of the gate is read instead: asked once, inside the activation gate,
+          # with this node's own anchor and context, refusing rather than
+          # logging, and never answering the question itself.
+          python3 test/validator-auth-implementation/check_session_admission_wiring.py
           git diff --exit-code
       - name: Bind session committee ownership to the authenticated birth
         if: matrix.guards == 'native'

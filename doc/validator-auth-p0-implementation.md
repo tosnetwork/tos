@@ -126,9 +126,15 @@ root's own shape. None of that says the validator set it carries is one the
 registry decided, so a redirect installed every parameter at once with no
 per-parameter rule applied to any of them. A governing quorum, or the
 configuration key where one still exists, could therefore install a set with
-bindings no registry issued -- at which point committee derivation refuses at
-the registry check while the manager's state-only admission admits the roster,
-which is the divergence closing 32 through 37 removed, reached another way.
+bindings no registry issued. When that was found, committee derivation refused
+it at the registry check while the manager's admission -- which applied what the
+state says and not what the registry says -- admitted the roster, so the chain
+would not have run unauthenticated but would have stalled, with two admissions
+giving opposite answers about one set. That was the divergence closing 32
+through 37 removed, reached another way. The manager now derives the committee
+rather than describing it, so both sides refuse together; `valid_config_data`
+still says nothing about the bindings a redirected dictionary carries, and that
+is recorded below rather than closed here.
 
 Parameter 0 is now frozen while the design is active, and the two writers are
 closed differently because only one of them could reach it. The configuration

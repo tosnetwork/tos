@@ -57,6 +57,40 @@ identity, while a separately owned transport list preserves native selection ord
 Only VAM1 and the frozen session construction establish P0 signing context; the
 legacy short validator-list hash remains a transport index.
 
+## The manager's session admission
+
+The manager builds a validator group for a shard, and before it does, the
+committee that group would run under has to derive. It calls the same
+derivation, with the anchor it established itself -- its own applied masterchain
+block, naming the very state its validator set was computed from -- and the
+chain context it read from its own zero state. Neither is a value a peer
+offered, and the context matters for the same reason the zero state does: a
+context assembled from the registry under inspection would make the domain
+check confirm its own name.
+
+For a period this call applied only what a masterchain state settles on its own,
+because the anchor was not available to it and reaching for an unestablished one
+would have been worse than not checking. That subset admitted a roster carrying
+a binding no registry ever issued: the identity a manager and a producer compare
+is a hash of keys, addresses and weights, so it agrees whether or not the
+registry issued anything. Derivation refused the same set, and the result would
+not have been an unauthenticated chain but a stalled one, with the manager
+seating a group and derivation refusing it.
+
+The roster is compared against the one derivation selects, in that order, which
+is the whole of what binds a state to a set here: every other rule is about the
+state and reaches the roster only through it. Refusal is per shard and is not
+fatal -- the node stays a full node for that shard and logs why. The same
+applies when the chain has activated the design and this node has not
+established its context yet, which is the window right after startup and closes
+when the zero state is read.
+
+What this does not yet do is run the session under the derived committee. The
+committee is derived, its roster is required to be the one seated, and then it
+is discarded; the asynchronous admission that resolves a session's birth block
+and holds the committee for the session's lifetime exists and is not yet driven
+by the manager.
+
 ## Existing configuration JSON tools
 
 Native config JSON carries the optional `auth_binding` object with exactly

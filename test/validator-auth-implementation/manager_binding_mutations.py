@@ -16,21 +16,33 @@ from pathlib import Path
 from mutation_support import replace_once
 
 MUTATIONS = [
-    # Without the state admission the confirmation is back to agreeing about an
-    # identity while saying nothing about whether the chain admits the election
-    # that identity names.
-    ("an-unbound-election-is-refused",
-     """  auto admitted = admit_masterchain_state(std::move(masterchain_state));
-  if (!admitted.ok())
-    return admitted.error();""",
-     "  admit_masterchain_state(std::move(masterchain_state));"),
+    # The regression this file exists to prevent, written as the code that had
+    # it: derive the committee, and if it refuses, fall back to what the state
+    # says on its own. Every rule the state settles still holds, so the cases
+    # about counts, bindings and duplicates stay refused; the registry's rules
+    # are what stop being applied, and a set carrying a binding the registry
+    # never issued is confirmed again.
+    ("a-binding-the-registry-never-issued-is-refused",
+     """  if (!committee.ok())
+    return committee.error();""",
+     """  if (!committee.ok()) {
+    auto admitted = admit_masterchain_state(masterchain_state);
+    if (!admitted.ok())
+      return admitted.error();
+    return true;
+  }"""),
     # Without the roster rule an admissible state carries any roster offered
     # beside it, because every other rule here is about the state.
     ("a-roster-from-another-state-is-refused",
-     """  for (const auto& member : validator_set->export_vector())
-    if (!member.auth_binding)
-      return Error{"selected-binding-required"};""",
+     """  if (committee.value().transport_order() != validator_set->export_vector())
+    return Error{"manager-session-roster"};""",
      ""),
+    # The committee has to be derived for the session this set would run. A
+    # committee derived for another catchain sequence selects other members, so
+    # what the manager seats is not what was admitted.
+    ("manager-identity-is-confirmed",
+     "validator_set->get_catchain_seqno(), budget);",
+     "0, budget);"),
 ]
 
 

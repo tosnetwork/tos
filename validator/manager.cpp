@@ -3099,14 +3099,42 @@ void ValidatorManagerImpl::update_shards() {
           tos::auth::Hash manager_identity{};
           auto identity_bytes = val_group_id.as_slice();
           std::copy(identity_bytes.ubegin(), identity_bytes.uend(), manager_identity.begin());
-          // The same state the set above was computed from, so what the
-          // confirmation admits is what this session would actually run under.
+          // The confirmation derives the committee, so it needs the chain
+          // context this node established from its own zero state. Until that
+          // is available there is nothing to check the registry's domain
+          // against, and the answer is to stay a full node rather than to
+          // check less: this is the window right after startup, and it closes
+          // when the zero state is read.
+          if (!validator_auth_chain_) {
+            LOG(ERROR) << "refusing to create validator group for " << shard.to_str()
+                       << ": the chain has activated validator authentication and this node has not established "
+                          "its own chain context yet; validation for this shard is disabled until it has";
+            --(shard.is_masterchain() ? active_validator_groups_master_ : active_validator_groups_shard_);
+            continue;
+          }
+          // The anchor this node established itself: its own applied
+          // masterchain block, naming the very state the set above was
+          // computed from. It is not a value any peer offered, and the state
+          // it names is the one this session would actually run under --
+          // derivation refuses the pair if the two ever disagree.
+          tos::auth::Anchor auth_anchor{};
+          auth_anchor.seqno_ = last_masterchain_block_id_.id.seqno;
+          auto anchor_root = last_masterchain_block_id_.root_hash.as_slice();
+          std::copy(anchor_root.ubegin(), anchor_root.uend(), auth_anchor.root_.begin());
+          auto anchor_file = last_masterchain_block_id_.file_hash.as_slice();
+          std::copy(anchor_file.ubegin(), anchor_file.uend(), auth_anchor.file_.begin());
+          auto state_root = last_masterchain_state_->root_cell();
+          auto anchor_state = state_root->get_hash().as_slice();
+          std::copy(anchor_state.ubegin(), anchor_state.uend(), auth_anchor.state_.begin());
           auto confirmed = tos::auth::native_session_identity_confirms(
-              last_masterchain_state_->root_cell(), val_set, shard, auth_inputs, manager_identity);
+              std::move(state_root), auth_anchor, validator_auth_chain_.value(), val_set, shard, auth_inputs,
+              manager_identity);
           if (!confirmed.ok() || !confirmed.value()) {
             LOG(ERROR) << "refusing to create validator group for " << shard.to_str()
-                       << ": the authenticated session identity does not confirm this validator set; "
-                          "validation for this shard is disabled until they agree";
+                       << ": the authenticated committee this validator set would run under does not derive, or "
+                          "does not confirm the session identity"
+                       << (confirmed.ok() ? "" : ": ") << (confirmed.ok() ? "" : confirmed.error().code)
+                       << "; validation for this shard is disabled until they agree";
             --(shard.is_masterchain() ? active_validator_groups_master_ : active_validator_groups_shard_);
             continue;
           }
