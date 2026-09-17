@@ -12,6 +12,7 @@
 #include "validator/auth/cells.h"
 #include "validator/auth/native-config-transaction.h"
 
+#include "committee-fixture.h"
 #include "native-config-context-fixture.h"
 #include "owner-fixture.h"
 
@@ -67,22 +68,30 @@ int main(int argc, char** argv) {
 
     std::filesystem::path input(argv[2]);
     auto f = fixture(input, 5);
-    auto state = mcstate(f);
+    // This suite used to build its state with owner_fixture::mcstate(), which is
+    // sufficient for refusal cases but deliberately has no elected validator
+    // set. The execution-clone case is a positive transaction open, so it must
+    // start from the same shared committee state shape used by committee and
+    // joined-commit tests. One elected member matches this owner fixture's one
+    // identity/stake pair; make() then adds the real configuration account while
+    // preserving Config34 and the catchain selector.
+    auto context = config_context_fixture::make(auth_fixture::chain_state(f.registry, 0, false, 1));
+    auto state = context.root;
     auto history = std::make_shared<History>();
-    history->anchor = Anchor{99, hash(state), h(6001), hash(state)};
+    history->anchor = context.head;
 
     NativeConfigTransactionInputs inputs;
     inputs.masterchain_state = state;
-    inputs.parent = Anchor{99, hash(state), h(6001), hash(state)};
-    inputs.chain = f.chain;
+    inputs.parent = context.head;
+    inputs.chain = context.chain;
     inputs.shard = {tos::masterchainId, tos::shardIdAll};
     inputs.catchain = 3;
-    inputs.inclusion = 100;
+    inputs.inclusion = context.head.seqno_ + 1;
     auto charge = [](std::size_t) -> Result<bool> { return true; };
     // The block's prefix, opened once. Every case opens a transaction onto it
     // rather than having the transaction derive its own from the parent state.
     const auto sequence =
-        config_context_fixture::sequence_for(state, inputs.parent, f.chain, inputs.inclusion);
+        config_context_fixture::sequence_for(state, inputs.parent, inputs.chain, inputs.inclusion);
 
     std::vector<Test> tests;
     auto add = [&](std::string name, std::function<void()> fn) { tests.emplace_back(std::move(name), std::move(fn)); };
