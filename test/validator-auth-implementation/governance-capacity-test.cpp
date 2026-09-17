@@ -36,6 +36,8 @@
 #include "validator/auth/native-evidence.h"
 #include "validator/auth/native-registry.h"
 
+#include "pq/mldsa44.h"
+
 #include "config-contract-fixture.h"
 #include "governance-fixture.h"
 
@@ -78,6 +80,23 @@ constexpr long long external_gas_credit = 10000;
 
 // The committee this network installs, and the one the profile admits.
 constexpr unsigned installed_main_validators = 100, profile_ceiling = 400;
+
+// Two smaller committees, measured because a post-quantum suite makes each
+// signature cost more than a hundred of them do today, and the question of what
+// size it could be run at is decided by measurement rather than by argument.
+constexpr unsigned smaller_committees[] = {20, 40};
+
+// What one verification costs under each suite, from the machine's own
+// schedule: the classical one after its ten-check allowance, and the
+// post-quantum one, which has no allowance.
+constexpr long long classical_signature_gas = 4000, classical_free_checks = 10;
+constexpr long long post_quantum_signature_gas = 50000;
+
+// What one signer record weighs under each suite. A classical component carries
+// a sixty-four byte signature beside its identity, key reference and epoch; a
+// post-quantum one carries two thousand four hundred and twenty.
+constexpr long long classical_record_bytes = 32 + 12 + 64;
+constexpr long long post_quantum_record_bytes = 32 + 12 + tos::pq::mldsa44_signature_bytes;
 
 // An allowance large enough that the transaction always runs to the end, so
 // that what is reported is what the work costs rather than where the meter ran
@@ -200,6 +219,8 @@ int main(int argc, char** argv) {
         "the-profile-ceiling-fits-the-masterchain-block",
         "only-the-installed-committee-leaves-the-block-open",
         "the-account-tick-tock-is-work-the-block-gas-budget-does-not-see",
+        "a-post-quantum-committee-of-twenty-fits-the-masterchain-block",
+        "a-post-quantum-committee-of-forty-does-not-fit-with-its-certificate",
         "no-committee-size-fits-the-unaccepted-external-credit",
     };
     for (const auto* name : manifest)
@@ -207,6 +228,15 @@ int main(int argc, char** argv) {
 
     const auto installed = measure(contract, installed_main_validators, uncapped, 0);
     const auto ceiling = measure(contract, profile_ceiling, uncapped, 0);
+
+    // The same transaction at committee sizes small enough to be worth asking
+    // about under a post-quantum suite. What is reported for that suite is a
+    // floor, not a cost: the classical verification is removed and the
+    // post-quantum tariff put in its place, while everything else -- the reads,
+    // the contract, the instruction -- is left at what it measured here. A
+    // post-quantum certificate is roughly eighteen times the size of this one,
+    // so the part left unchanged can only grow. Nothing below claims to have
+    // run one; the registry admits no such key.
 
     for (const auto* line : {"installed", "ceiling"}) {
       const auto& m = line[0] == 'i' ? installed : ceiling;
@@ -259,6 +289,47 @@ int main(int argc, char** argv) {
                 << " committed=" << starved.committed << " verifications=" << starved.verifications << '\n';
       report(!starved.accepted && !starved.committed, "no-committee-size-fits-the-unaccepted-external-credit");
     }
+
+    // Everything the largest measured transaction spent that was not signature
+    // verification: the reads, the contract, the instruction, and the cost of
+    // carrying a certificate of four hundred records. It stands in below for
+    // the same costs under a post-quantum suite, and it is a conservative
+    // stand-in rather than an estimate: a forty-record ML-DSA certificate
+    // carries about a hundred thousand bytes against that one's fifty-six
+    // thousand, so whatever those costs are, they are not smaller.
+    const auto largest_non_crypto =
+        ceiling.transaction_gas - (profile_ceiling - classical_free_checks) * classical_signature_gas;
+
+    long long post_quantum_floor[2] = {0, 0};
+    for (unsigned index = 0; index < 2; ++index) {
+      const auto records = smaller_committees[index];
+      const auto small = measure(contract, records, uncapped, 0);
+      const auto classical = (records > classical_free_checks ? records - classical_free_checks : 0) *
+                             classical_signature_gas;
+      // The classical verification taken out and the post-quantum tariff put in
+      // its place. Nothing here has run an ML-DSA certificate; the registry
+      // admits no such key. What is asserted is arithmetic on measured gas.
+      post_quantum_floor[index] = small.transaction_gas - classical + records * post_quantum_signature_gas;
+      std::cerr << "MEASURE signers=" << records << " block_gas=" << small.transaction_gas
+                << " classical_crypto=" << classical << " post_quantum_floor=" << post_quantum_floor[index]
+                << " certificate_bytes_post_quantum=" << records * post_quantum_record_bytes
+                << " soft=" << block_gas_soft_limit << " hard=" << block_gas_hard_limit
+                << " verifications=" << small.verifications << '\n';
+    }
+    std::cerr << "MEASURE largest_non_crypto=" << largest_non_crypto
+              << " certificate_bytes_classical=" << profile_ceiling * classical_record_bytes << '\n';
+
+    // Twenty fits with room left over even after the largest non-verification
+    // cost this suite has ever measured is added on top of it.
+    report(post_quantum_floor[0] + largest_non_crypto < block_gas_hard_limit,
+           "a-post-quantum-committee-of-twenty-fits-the-masterchain-block");
+
+    // Forty does not. Its verification alone is four fifths of the block, and
+    // what is left is less than the non-verification cost of a certificate
+    // carrying fewer bytes than its own.
+    report(post_quantum_floor[1] < block_gas_hard_limit &&
+               post_quantum_floor[1] + largest_non_crypto > block_gas_hard_limit,
+           "a-post-quantum-committee-of-forty-does-not-fit-with-its-certificate");
 
     std::cout << "SUMMARY cases=" << passed << " passed=" << passed << '\n';
     return 0;

@@ -429,6 +429,27 @@ components come to four hundred and twenty-four thousand and the transaction
 costs five hundred and thirty-eight thousand; the difference is the contract, the
 instruction, and reading a certificate that is itself tens of kilobytes.
 
+What a post-quantum committee could be. The registry admits no such key, so
+nothing here has run one; what follows is arithmetic on measured gas, with the
+classical verification taken out of a real transaction and the post-quantum
+tariff put in its place. Everything that is not verification -- the reads, the
+contract, the instruction, and carrying the certificate -- is left at the
+largest figure this suite has ever measured, six hundred and eighty thousand,
+which is conservative twice over: a twenty-record ML-DSA certificate already
+carries more bytes than the four-hundred-record classical one that figure came
+from.
+
+| masterchain signers | verification | with everything else | hard limit |
+| ---: | ---: | ---: | ---: |
+| 20 | 1,000,000 | 1,732,236 | 2,500,000 |
+| 40 | 2,000,000 | 2,763,086 | 2,500,000 |
+
+Twenty fits. Forty does not: its verification alone is four fifths of the block,
+and what remains is less than the non-verification cost of a certificate
+carrying fewer bytes than its own. The boundary is in the thirties, and putting
+it exactly requires measuring what a post-quantum certificate costs to carry
+rather than substituting a classical one for it.
+
 The elector's own mandatory tick-tock is measured beside its contract, and
 closing an election is larger than this whole limit at either committee size --
 three million three hundred and fifty-five thousand at a hundred members before
