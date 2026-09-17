@@ -588,8 +588,16 @@ void export_cells(const std::filesystem::path& dir, const td::Ref<vm::Cell>& con
   write_cell(dir / "update.boc", cells.update);
   write_cell(dir / "evidence.boc", cells.evidence);
   write_cell(dir / "body.boc", registry_body(cells));
-  write_cell(dir / "data-empty.boc", contract_data(configuration()));
-  write_cell(dir / "data-old.boc", contract_data(configuration(cells.before)));
+  // The account an active chain actually has. The sandbox that consumes these
+  // runs with the capability set, and on such a chain an account carrying no
+  // registry checkpoint is one whose configuration context can never open --
+  // the contract refuses it rather than treating it as yet to migrate. An
+  // exported account without one is a state the policy says cannot exist, and
+  // every case built on it fails for that reason instead of its own.
+  write_cell(dir / "data-empty.boc",
+             contract_data(configuration({}, true), seeded_checkpoint({}, true, {})));
+  write_cell(dir / "data-old.boc",
+             contract_data(configuration(cells.before, true), seeded_checkpoint(cells.before, true, {})));
   std::cout << "EXPORTED_CONFIG_PERSISTENCE_CELLS\n";
 }
 }  // namespace
