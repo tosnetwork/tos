@@ -1,6 +1,7 @@
 """Check/generate the schema view and noncircular profile artifact fingerprint."""
 import argparse
 import hashlib
+import importlib.util
 import json
 from pathlib import Path
 import re
@@ -9,6 +10,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[2]
 DOC = ROOT/'doc/validator-auth-p0'
 FREEZE = ROOT/'doc/validator-auth-p0-freeze.json'
+GENERATOR = ROOT/'tools/validator-auth/generate.py'
 START = '<!-- canonical-schema:begin -->'
 END = '<!-- canonical-schema:end -->'
 
@@ -109,6 +111,47 @@ def require_ledger_mutation_refused(name, artifacts, recorded, declared):
     return ['ledger mutation survived: '+name]
 
 
+def generator():
+    """The tool that owns what the generated production files must contain.
+
+    It is imported rather than run as a command so that this gate and the
+    generator's own job perform one comparison rather than two descriptions of
+    it. The generator stays the canonical checker; this only makes the earlier
+    gate able to see it.
+    """
+    spec = importlib.util.spec_from_file_location('validator_auth_generate', GENERATOR)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def generated_errors():
+    """Close the loop from the profile to the production files derived from it.
+
+    The profile digest is embedded in generated C++ and Rust. Those files are
+    deliberately not in the frozen artifact set: they are deterministic
+    derivations, and generation freshness is a different constraint from
+    historical byte preservation. What they need is to be inside the same gate
+    as the ledgers, because a profile revision that updates the record and the
+    vectors while leaving these stale used to pass every earlier check and fail
+    only in a later job.
+    """
+    generate = generator()
+    expected = generate.expected_outputs()
+    errors = ['a generated file is not what the current schema and profile render: '+str(path.relative_to(ROOT))
+              for path in generate.check_generated(expected=expected)]
+    # Prove this gate reaches the generator rather than merely importing it.
+    # One byte moved in any generated output has to be refused here.
+    for target in sorted(expected, key=str):
+        def moved(path, target=target):
+            return expected[path]+'\n' if path == target else expected[path]
+        if generate.check_generated(read=moved, expected=expected) == [target]:
+            print('MUTATION_KILLED generated-output-moved: '+str(target.relative_to(ROOT)))
+        else:
+            errors.append('generated mutation survived: '+str(target.relative_to(ROOT)))
+    return errors
+
+
 def main(write=False):
     schema = inspect_schema()
     wire_path = DOC/'WIRE.md'; wire = wire_path.read_text()
@@ -151,11 +194,13 @@ def main(write=False):
                                                   {**declared, 'doc/validator-auth-p0/'+victim: elsewhere})
         errors += require_ledger_mutation_refused('artifact-moved-without-either-ledger',
                                                   {**artifacts, victim: elsewhere}, recorded, declared)
+        errors += generated_errors()
         if errors:
             for error in errors:
                 print('FAIL: '+error, file=sys.stderr)
-            raise ValueError('profile and frozen record disagree about the current normative artifacts')
-    print('PASS: canonical schema, generated view, profile fingerprint and both ledgers agreeing')
+            raise ValueError('the profile, the frozen record and what is derived from them disagree')
+    print('PASS: canonical schema, generated view, profile fingerprint, both ledgers agreeing '
+          'and the generated production files current')
 
 
 if __name__ == '__main__':
