@@ -476,7 +476,8 @@ overlap means changing what the shared callback charges, which is what the
 virtual machine charges a transaction, so it is a consensus change and belongs
 to a tariff review rather than to a hardening patch.
 
-What this does not do is bound repetition. A sender can still spend five hundred
+What this does not do is bound repetition. [The ingress
+audit](validator-auth-p0-ingress-audit.md) traces what does. A sender can still spend five hundred
 bytes for two microseconds of refusal, as many times as they like. Three orders
 of magnitude better than the same five hundred bytes buying two thousand
 microseconds, and still a ratio. What an attacker can buy per attempt is now
