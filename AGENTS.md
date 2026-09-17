@@ -60,6 +60,15 @@ The result reads exactly like "the test cannot catch this", which is the
 opposite of the truth. Have the edit print whether it matched, or put it in a
 script file and copy that over. This was believed twice in one day.
 
+**A mutation harness owns the source while it runs.** These harnesses edit the
+production file in place and restore it at the end, so anything else that
+compiles from the tree during the run compiles somebody else's mutant. A
+contract built that way sent a join suite to three failures with a refusal the
+change under review could not produce, and the same artifact had already been
+believed once before as a baseline that "would not pass". Before compiling a
+contract or trusting a suite, check that no harness is running, or build from
+`git show <ref>:<path>` instead of the working tree.
+
 **A rename fails loudly in code and silently everywhere else.** The compiler
 checks a renamed identifier exactly where it looks, and it does not look at the
 file name a `mod` declaration resolves to, or inside the string a test selector

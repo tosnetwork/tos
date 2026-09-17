@@ -15,6 +15,7 @@
 #include <utility>
 #include <vector>
 
+#include "block/block.h"
 #include "validator/auth/cells.h"
 #include "validator/auth/codec.h"
 #include "vm/authops.h"
@@ -140,92 +141,106 @@ std::vector<Case> cases(const td::Ref<vm::Cell>& contract) {
          expect(run.exit == 47 && host.binds == 0,
                 "a-checkpointless-active-chain-installs-no-elected-set");
        }},
-      // And the two decisions it may take. Deactivation first: a chain that
-      // stops being authenticated has no registry context to be missing.
-      {"a-checkpointless-active-chain-may-stop-being-authenticated", [=] {
-         Host host;
-         auto inactive = vm::CellBuilder().store_long(0xc4, 8)
-                             .store_long(vm::validator_auth_min_version, 32).store_long(0, 64).finalize();
-         auto run = run_owner_action(contract, 8, inactive, &host, true, true);
-         expect(run.exit == 0, "a-checkpointless-active-chain-may-stop-being-authenticated");
-         expect(same_cell(installed_parameter(run.data, 8), inactive),
-                "a-checkpointless-active-chain-may-stop-being-authenticated");
-         // And it did not acquire a checkpoint on the way out.
-         expect(stored_checkpoint(run.data).is_null(),
-                "a-checkpointless-active-chain-may-stop-being-authenticated");
+      // There is no route out. The absence of a checkpoint is a fault, not a
+      // credential: it must not hand an authority to anyone who did not
+      // already have it, so every state-changing action is refused and none of
+      // them becomes permitted by the state being broken.
+      //
+      // The sweep is over Config8 values rather than one of them, because the
+      // rule is about the state and not about the value: an exact removal of
+      // this capability, one that also moves the global version, one that
+      // trades it for another capability, and one that leaves it on are all
+      // refused identically, through both writers.
+      {"a-checkpointless-active-chain-writes-no-config8-at-all", [=] {
+         const auto shapes = {
+             // exactly this capability cleared, nothing else touched
+             vm::CellBuilder().store_long(0xc4, 8).store_long(vm::validator_auth_min_version, 32)
+                 .store_long(0, 64).finalize(),
+             // cleared, and the global version moved with it
+             vm::CellBuilder().store_long(0xc4, 8).store_long(vm::validator_auth_min_version + 1, 32)
+                 .store_long(0, 64).finalize(),
+             // traded for a different capability
+             vm::CellBuilder().store_long(0xc4, 8).store_long(vm::validator_auth_min_version, 32)
+                 .store_long(vm::validator_auth_capability << 1, 64).finalize(),
+             // left authenticated, and distinguishable from the value the
+             // account already holds -- an identical cell would make the
+             // "did not install" assertion true for the wrong reason.
+             vm::CellBuilder().store_long(0xc4, 8).store_long(vm::validator_auth_min_version + 1, 32)
+                 .store_long(vm::validator_auth_capability, 64).finalize(),
+         };
+         for (const auto& shape : shapes) {
+           Host owner_host;
+           auto owned = run_owner_action(contract, 8, shape, &owner_host, true, true);
+           expect(owned.exit == 47, "a-checkpointless-active-chain-writes-no-config8-at-all");
+           Host voting;
+           auto proposal = config_proposal(8, shape);
+           auto votes = vote_dictionary(proposal, voter_public(), 0, true);
+           auto voted = cast_vote(contract, proposal, votes, &voting, true, true);
+           // The vote is recorded -- such an account stays diagnosable -- but
+           // the governing quorum it now needs is exactly what this chain
+           // cannot consult, so nothing installs.
+           // Parameter 8 is always present -- the account is an active chain --
+           // so what must hold is that it is not the value proposed, rather
+           // than that nothing is there.
+           expect(voted.exit == 0 && !same_cell(installed_parameter(voted.committed_data, 8), shape),
+                  "a-checkpointless-active-chain-writes-no-config8-at-all");
+           expect(stored_checkpoint(voted.committed_data).is_null(),
+                  "a-checkpointless-active-chain-writes-no-config8-at-all");
+         }
        }},
-      // Parameter 8 is not a recovery by virtue of its number. A Config8 that
-      // leaves the chain authenticated is an ordinary change to an active
-      // chain, and an active chain with no checkpoint may not make one --
-      // reading only the index let such a value past both the checkpoint
-      // requirement and the governing quorum, which is every protection this
-      // state has.
-      {"a-checkpointless-active-chain-refuses-a-config8-that-stays-authenticated", [=] {
+      // Replacing this contract's code is refused too, and that is the half
+      // that matters most: a replacement can seed a checkpoint and drop every
+      // rule above it, so leaving it open would have kept the strongest
+      // in-protocol recovery of all, with the authority resting on one key.
+      {"a-checkpointless-active-chain-replaces-no-contract-code", [=] {
          Host host;
-         auto still_active = vm::CellBuilder().store_long(0xc4, 8)
-                                 .store_long(vm::validator_auth_min_version + 1, 32)
-                                 .store_long(vm::validator_auth_capability, 64).finalize();
-         auto run = run_owner_action(contract, 8, still_active, &host, true, true);
-         expect(run.exit == 47, "a-checkpointless-active-chain-refuses-a-config8-that-stays-authenticated");
-         expect(installed_parameter(run.data, 8).is_null() ||
-                    !same_cell(installed_parameter(run.data, 8), still_active),
-                "a-checkpointless-active-chain-refuses-a-config8-that-stays-authenticated");
-       }},
-      // The same distinction through the other writer. A deactivating value
-      // installs on the normal vote alone; one that stays authenticated needs
-      // the governing quorum, which such a chain cannot consult, so it stops
-      // at the threshold marked terminal and installs nothing.
-      {"a-checkpointless-active-chain-votes-in-a-config8-that-deactivates", [=] {
-         Host host;
-         auto inactive = vm::CellBuilder().store_long(0xc4, 8)
-                             .store_long(vm::validator_auth_min_version, 32).store_long(0, 64).finalize();
-         auto proposal = config_proposal(8, inactive);
-         auto votes = vote_dictionary(proposal, voter_public(), 0, true);
-         auto run = cast_vote(contract, proposal, votes, &host, true, true);
-         expect(run.exit == 0, "a-checkpointless-active-chain-votes-in-a-config8-that-deactivates");
-         expect(stored_wins(run.committed_data, proposal) == -1,
-                "a-checkpointless-active-chain-votes-in-a-config8-that-deactivates");
-         expect(same_cell(installed_parameter(run.committed_data, 8), inactive),
-                "a-checkpointless-active-chain-votes-in-a-config8-that-deactivates");
-         expect(stored_checkpoint(run.committed_data).is_null(),
-                "a-checkpointless-active-chain-votes-in-a-config8-that-deactivates");
-       }},
-      {"a-checkpointless-active-chain-votes-in-no-config8-that-stays-authenticated", [=] {
-         Host host;
-         auto still_active = vm::CellBuilder().store_long(0xc4, 8)
-                                 .store_long(vm::validator_auth_min_version + 1, 32)
-                                 .store_long(vm::validator_auth_capability, 64).finalize();
-         auto proposal = config_proposal(8, still_active);
-         auto votes = vote_dictionary(proposal, voter_public(), 0, true);
-         auto run = cast_vote(contract, proposal, votes, &host, true, true);
-         expect(run.exit == 0, "a-checkpointless-active-chain-votes-in-no-config8-that-stays-authenticated");
-         // Marked terminal and awaiting a quorum it cannot reach, rather than
-         // installed.
-         expect(stored_wins(run.committed_data, proposal) == 255,
-                "a-checkpointless-active-chain-votes-in-no-config8-that-stays-authenticated");
-         expect(installed_parameter(run.committed_data, 8).is_null() ||
-                    !same_cell(installed_parameter(run.committed_data, 8), still_active),
-                "a-checkpointless-active-chain-votes-in-no-config8-that-stays-authenticated");
-       }},
-      // Replacing this contract's code is the other. It installs on the normal
-      // vote alone, because the governing quorum such a chain would otherwise
-      // need is exactly what it has no way to consult.
-      {"a-checkpointless-active-chain-may-replace-its-code", [=] {
-         Host host;
+         vm::CellBuilder rest;
+         rest.store_ref(vm::CellBuilder().store_long(0, 8).finalize());
+         auto owned = run_owner_message(contract, 0x4e436f64, rest, &host, true, true);
+         expect(owned.exit == 47, "a-checkpointless-active-chain-replaces-no-contract-code");
+         Host voting;
          auto upgrade = vm::CellBuilder().store_ref(vm::CellBuilder().store_long(0, 8).finalize()).finalize();
          auto proposal = config_proposal(-1000, upgrade);
          auto votes = vote_dictionary(proposal, voter_public(), 0, true);
-         auto run = cast_vote(contract, proposal, votes, &host, true, true);
-         expect(run.exit == 0, "a-checkpointless-active-chain-may-replace-its-code");
-         // The exit code says nothing here: a proposal marked terminal and a
-         // code upgrade both end at zero. What distinguishes them is whether
-         // the proposal was spent. Asserting the exit alone left this case
-         // passing with the carve-out removed, which the mutation for it
-         // reported as a survivor.
-         expect(stored_wins(run.committed_data, proposal) == -1,
-                "a-checkpointless-active-chain-may-replace-its-code");
-         expect(stored_checkpoint(run.committed_data).is_null(),
-                "a-checkpointless-active-chain-may-replace-its-code");
+         auto voted = cast_vote(contract, proposal, votes, &voting, true, true);
+         // Marked terminal and awaiting a quorum it cannot reach, not spent.
+         expect(voted.exit == 0 && stored_wins(voted.committed_data, proposal) == 255,
+                "a-checkpointless-active-chain-replaces-no-contract-code");
+       }},
+      // The two actions the exactly-two-decisions claim had been overstating.
+      // Neither is a recovery from a chain that cannot open its own
+      // configuration context: one changes who holds the authority to write
+      // every parameter while the state persists, and the other replaces the
+      // contract that produces the next validator set.
+      {"a-checkpointless-active-chain-changes-no-configuration-key", [=] {
+         Host host;
+         vm::CellBuilder rest;
+         rest.store_bytes(td::Slice(reinterpret_cast<const char*>(voter_public()), 32));
+         auto run = run_owner_message(contract, 0x50624b21, rest, &host, true, true);
+         expect(run.exit == 47, "a-checkpointless-active-chain-changes-no-configuration-key");
+       }},
+      {"a-checkpointless-active-chain-replaces-no-elector-code", [=] {
+         Host host;
+         vm::CellBuilder rest;
+         rest.store_ref(vm::CellBuilder().store_long(0, 8).finalize());
+         auto run = run_owner_message(contract, 0x4e43ef05, rest, &host, true, true);
+         expect(run.exit == 47, "a-checkpointless-active-chain-replaces-no-elector-code");
+       }},
+      // And both work on a healthy active chain, so the refusals above are the
+      // checkpoint's and not a new prohibition on the actions themselves.
+      {"a-healthy-active-chain-still-changes-its-configuration-key", [=] {
+         Host host;
+         vm::CellBuilder rest;
+         rest.store_bytes(td::Slice(reinterpret_cast<const char*>(voter_public()), 32));
+         auto run = run_owner_message(contract, 0x50624b21, rest, &host, true);
+         expect(run.exit == 0, "a-healthy-active-chain-still-changes-its-configuration-key");
+       }},
+      {"a-healthy-active-chain-still-replaces-its-elector-code", [=] {
+         Host host;
+         vm::CellBuilder rest;
+         rest.store_ref(vm::CellBuilder().store_long(0, 8).finalize());
+         auto run = run_owner_message(contract, 0x4e43ef05, rest, &host, true);
+         expect(run.exit == 0, "a-healthy-active-chain-still-replaces-its-elector-code");
        }},
       {"an-inactive-chain-tick-tock-asks-for-nothing", [=] {
          Host host;
@@ -405,6 +420,87 @@ std::vector<Case> cases(const td::Ref<vm::Cell>& contract) {
       // validator set, which is why no rule about 32 to 37 reaches it:
       // collation follows it to another account and takes that account's whole
       // dictionary, with no per-parameter rule applied to any of it.
+      // No generic writer may turn validator authentication on. The node
+      // refuses an inactive-to-active transition outright, so a writer that
+      // produced one would produce a configuration no block can install; and
+      // it is how "active with no checkpoint" becomes reachable, because the
+      // checkpoint requirement asks whether the chain is active before the
+      // change and an inactive chain passes it.
+      {"no-generic-writer-turns-authentication-on", [=] {
+         auto activating = vm::CellBuilder().store_long(0xc4, 8)
+                               .store_long(vm::validator_auth_min_version, 32)
+                               .store_long(vm::validator_auth_capability, 64).finalize();
+         Host host;
+         auto owned = run_owner_action(contract, 8, activating, &host, false);
+         expect(owned.exit == 49, "no-generic-writer-turns-authentication-on");
+         expect(installed_parameter(owned.data, 8).is_null() ||
+                    !same_cell(installed_parameter(owned.data, 8), activating),
+                "no-generic-writer-turns-authentication-on");
+         // And through the vote, which on an inactive chain installs directly.
+         Host voting;
+         auto proposal = config_proposal(8, activating);
+         auto votes = vote_dictionary(proposal, voter_public(), 0, true);
+         auto voted = cast_vote(contract, proposal, votes, &voting, false);
+         expect(installed_parameter(voted.data, 8).is_null() ||
+                    !same_cell(installed_parameter(voted.data, 8), activating),
+                "no-generic-writer-turns-authentication-on");
+       }},
+      // Both refusals above are stated against the node: an activation "no
+      // block can install", a downgrade the transition rules reject. Neither
+      // claim was asserted anywhere that runs the contract, and the transition
+      // suite never runs the contract, so each suite could stay green while the
+      // pair came apart -- which is exactly how a contract ends up permitting
+      // what the node always refuses, or the reverse. One case carries both
+      // halves of one refusal, in both directions, so removing either layer's
+      // guard turns this red.
+      {"neither-layer-turns-authentication-off-or-on", [=] {
+         const auto cells = registry_cells();
+         auto active = node_configuration(cells.before, true);
+         auto inactive = node_configuration(cells.before, false);
+         // The controls come first. A refused transition proves nothing about
+         // the rule under test unless the same dictionaries are accepted when
+         // the capability does not move: an incomplete configuration is
+         // refused for reasons of its own, and reads identically.
+         expect(block::valid_config_transition(active, active).is_ok(),
+                "neither-layer-turns-authentication-off-or-on");
+         expect(block::valid_config_transition(inactive, inactive).is_ok(),
+                "neither-layer-turns-authentication-off-or-on");
+         auto refuses = [](const td::Ref<vm::Cell>& from, const td::Ref<vm::Cell>& to, const char* reason) {
+           auto status = block::valid_config_transition(from, to);
+           if (status.is_ok() || status.message().str() != reason) {
+             std::cerr << "DETAIL expected=" << reason << " actual="
+                       << (status.is_ok() ? std::string("accepted") : status.message().str()) << '\n';
+             return false;
+           }
+           return true;
+         };
+         expect(refuses(active, inactive, "validator-auth-downgrade"),
+                "neither-layer-turns-authentication-off-or-on");
+         expect(refuses(inactive, active, "validator-auth-transition-unapproved"),
+                "neither-layer-turns-authentication-off-or-on");
+         // And the contract's own halves of the same two refusals. The
+         // checkpointless chain is the state that makes the downgrade look
+         // like a repair, and it is the state where the contract must refuse
+         // anyway, because the node would not install the result.
+         Host clearing;
+         auto cleared = capability_parameter(false);
+         expect(run_owner_action(contract, 8, cleared, &clearing, true, true).exit == 47,
+                "neither-layer-turns-authentication-off-or-on");
+         Host activating;
+         auto turned_on = capability_parameter(true);
+         expect(run_owner_action(contract, 8, turned_on, &activating, false).exit == 49,
+                "neither-layer-turns-authentication-off-or-on");
+       }},
+      // An inactive chain may still write an inactive Config8, so the rule is
+      // about turning the design on rather than about parameter 8.
+      {"an-inactive-chain-still-writes-an-inactive-config8", [=] {
+         Host host;
+         auto inactive = vm::CellBuilder().store_long(0xc4, 8)
+                             .store_long(vm::validator_auth_min_version, 32).store_long(0, 64).finalize();
+         auto run = run_owner_action(contract, 8, inactive, &host, false);
+         expect(run.exit == 0 && same_cell(installed_parameter(run.data, 8), inactive),
+                "an-inactive-chain-still-writes-an-inactive-config8");
+       }},
       {"the-configuration-key-cannot-redirect-the-configuration-contract", [=] {
          Host host;
          auto address = vm::CellBuilder().store_zeroes(256).finalize();

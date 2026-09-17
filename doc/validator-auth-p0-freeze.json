@@ -29,7 +29,7 @@
     "doc/validator-auth-p0/transport.schema.json": "ddd45d7d3eb672559efde020af95a0e215146775ec82f8c6847b0f3ab8127584",
     "doc/validator-auth-p0/wire.tl": "a5e10c8e25887cb30440a26a0d8cbcef1473878aeb87438cca1a0f0bc6875c15",
     "doc/validator-auth-p0/wire.tlb": "923650bd74bbbf677a070d1d13d7c12d46944e8bffbfc3a72641093d20d3ce9d",
-    "doc/validator-auth-p0-native-insertions.json": "45a9b39031d17277f56f8f0d4e7ccc7c42de234edd972cc343853a57341dca20",
+    "doc/validator-auth-p0-native-insertions.json": "773b927940112879d6576d120627e11b8880df96f226f1279a6e4f0308c42858",
     "test/validator-auth-p0/README.md": "a0b0950c4ac702f8be0f34919a50f8e7b13d5d14dda3bd2cc05b4c8ffee31321",
     "test/validator-auth-p0/api.py": "9ec50bf9e19345ef54a8894a3525eba1eed8fb10412b8a3fdc1ed1c5728fb815",
     "test/validator-auth-p0/archive_evidence.py": "22bb392a561068e0fb3905ce7e8df95bab463468cdfe3be884eff19b12481409",
@@ -375,6 +375,13 @@
       "governance": "Freezing parameter 0 while active removes the ability to redirect the configuration contract on a live authenticated chain. Replacing this contract's logic does not need it: a code upgrade keeps the dictionary and so keeps the set the registry decided, while a redirect replaces every parameter at once with no per-parameter rule applied to any of them. The two were never the same authority.",
       "unclosed": "Requiring registry binding in the collation-time validator of a replacement dictionary remains the rule in the right place and is not written: that validator has no registry to ask there. Parameter 0 stays frozen rather than guarded by a check that cannot see what it would have to check.",
       "activation": "Unchanged. No suite is allocated, no network is configured, and the version-16 activation gates and listed approvals remain independent thresholds that this change does not move."
+    },
+    {
+      "artifact": "doc/validator-auth-p0-native-insertions.json",
+      "previous_sha256": "45a9b39031d17277f56f8f0d4e7ccc7c42de234edd972cc343853a57341dca20",
+      "sha256": "773b927940112879d6576d120627e11b8880df96f226f1279a6e4f0308c42858",
+      "authorization": "The owner ruled that a checkpointless active chain keeps no in-chain recovery at all: the absence of the checkpoint is a fault state, not a credential, and must not become authorization for anything. Both remaining bypasses were named -- the exact Config8 deactivation and the contract code replacement -- and the native downgrade rule was to be left as it stands.",
+      "change": "Re-derived the configuration contract's declared insertions. Every state-changing entry point now asks for the committed checkpoint unconditionally, the code replacement included, which previously had no such requirement at all; the predicate that exempted a deactivating value and the one that waived the governing quorum for it are gone, and turning authentication on is refused to every generic writer. One case now asserts the contract refusal and the node's transition refusal together, in both directions and against accepted controls, because each suite is green while that pair comes apart. The same normative wording belongs in the frozen profile's lifecycle document; placing it there moves the profile digest that every registry cell carries, so it is recorded outside the profile and awaits a ruling on the revision."
     }
   ],
   "implementation_evidence_update": {

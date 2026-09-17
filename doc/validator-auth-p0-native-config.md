@@ -44,6 +44,38 @@ normal contract voting/value rules and current P0 owner, possession,
 administration or governance authorization must still execute before installation.
 Contract execution and node installation remain unfinished integration work.
 
+## The account checkpoint
+
+An active chain's configuration account carries a committed registry checkpoint.
+Genesis seeds the registry parameter and that checkpoint together, or seeds
+neither.
+
+Absence of the checkpoint MUST NOT constitute authorization. An active account
+carrying none is a fault state, not a credential. Every state-changing entry
+point the contract offers MUST refuse while the chain is active and the
+checkpoint is missing, and no entry point may seed one. This includes the two
+changes that would otherwise read as repairs: clearing the capability from
+Config8, and replacing the configuration contract's own code. A change is judged
+by whether it leaves the chain unauthenticated, not by the parameter number it
+names; and a code replacement could seed a checkpoint and drop every rule above
+it, which would leave the strongest recovery of all resting on a single key.
+
+Such a state MUST remain observable. The refusal is on state change only.
+Parameter reads and the vote register stay available, so an account in this
+state can be diagnosed from outside while it cannot be repaired from within.
+Recovery is out of band; unrecoverable is not the same as unobservable.
+
+The node's rules agree in both directions, and the agreement is asserted jointly
+rather than once per layer: an active-to-inactive transition is refused as a
+downgrade, an inactive-to-active one as unapproved. A contract permitting either
+would produce a configuration no block installs, and each suite can be green
+while that pair comes apart.
+
+This wording belongs in the frozen profile's lifecycle document as well. Placing
+it there changes that document's digest, and the profile digest is the
+fingerprint every registry cell carries, so it is a profile revision rather than
+an editorial change and awaits a ruling on the revision.
+
 ## Falsifiable evidence
 
 The C++ and independent Rust drivers exercise 43 shared configurations and
@@ -53,6 +85,13 @@ revision continuity and overflow, identity and key changes, all dictionary
 wrappers, control tags and an archive with 501 identities. The C++ driver invokes
 the actual public configuration admission/transition functions, checks exact
 transition failures and confirms that inputs remain unchanged.
+
+One case asserts the checkpoint rule across both layers at once: the contract
+refusing to clear the capability on a checkpointless active chain, and the
+transition rules refusing the same removal as a downgrade and its reverse as
+unapproved, each against a control transition that must be accepted. Removing
+either layer's guard turns that one case red, which neither suite could do on
+its own.
 
 Twenty-five C++ and 22 Rust compiled production mutations cover the guards and
 actual call sites. Two C++ controls additionally exercise the generated native

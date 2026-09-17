@@ -18,21 +18,30 @@ cell vauth_bind_validators(cell elected, cell bindings) impure asm "VAUTH_BIND";
 ;; proposes to install. Those are the same question and this is the only place
 ;; that answers it: a second reader would be a second opinion about what
 ;; "active" means, and the two would agree until one of them moved.
-int config8_activates?(cell param) inline {
+;; The two fields a Config8 value carries, and whether it is one at all.
+;;
+;; Read in one place because two readers of the same encoding are two opinions
+;; about what a global version is. The predicates below are the only callers.
+(int, int, int) config8_fields(cell param) inline {
   if (cell_null?(param)) {
-    return false;
+    return (false, 0, 0);
   }
   var cs = param.begin_parse();
   if ((cs.slice_bits() != 104) | cs.slice_refs()) {
-    return false;
+    return (false, 0, 0);
   }
   if (cs~load_uint(8) != 0xc4) {
-    return false;
+    return (false, 0, 0);
   }
   var version = cs~load_uint(32);
   var capabilities = cs~load_uint(64);
   cs.end_parse();
-  return (version >= 16) & ((capabilities & 1024) != 0);
+  return (true, version, capabilities);
+}
+
+int config8_activates?(cell param) inline {
+  var (readable, version, capabilities) = config8_fields(param);
+  return readable & (version >= 16) & ((capabilities & 1024) != 0);
 }
 
 int validator_auth_active() inline {
@@ -117,27 +126,29 @@ global cell registry_checkpoint;
   throw_if(47, validator_auth_active() & cell_null?(registry_checkpoint));
 }
 
-;; Whether this is a change such a chain is still allowed to make about itself:
-;; stop being an authenticated chain, or replace this contract's code.
+;; Whether this Config8 value would turn validator authentication on for a
+;; chain that does not have it.
 ;;
-;; The question is about the value and not about the index. Parameter 8 is not
-;; a recovery by virtue of its number -- a Config8 that leaves the chain
-;; authenticated is an ordinary change to an active chain, and an active chain
-;; with no checkpoint may not make one. Reading only the index let such a value
-;; through both the checkpoint requirement and the governing quorum, which is
-;; every protection this state has.
+;; No generic writer may. The node already refuses the transition -- an
+;; inactive-to-active change is "validator-auth-transition-unapproved" there --
+;; so a writer that produced one would produce a configuration no block can
+;; install, and this contract would be the only party that thought it had
+;; worked. It is also how the state this design says cannot exist becomes
+;; reachable: the checkpoint requirement asks whether the chain is active
+;; *before* the change, so on an inactive chain it passes, and the parameter
+;; then lands leaving the account active with no checkpoint.
 ;;
-;; Neither recovery writes a checkpoint, which is the point. One that seeded
-;; one would be the second initialization route this design exists to remove,
-;; arrived at by the back door.
-int recovery_change?(int param_id, cell param_val) inline {
-  if (param_id == -1000) {
-    return true;
+;; A checkpoint that happened to be there would not help. While the design is
+;; off, parameter 46 and the validator sets may move under the older rules, so
+;; a surviving checkpoint proves nothing about the registry or the set the
+;; chain would wake up with. Turning the design on is an atomic claim about
+;; Config8, parameter 46, the checkpoint, the sets, the domain and the
+;; revision together, and there is no procedure here that makes it.
+int generic_activation?(cell param_val) inline {
+  if (validator_auth_active()) {
+    return false;
   }
-  if (param_id == 8) {
-    return ~ config8_activates?(param_val);
-  }
-  return false;
+  return config8_activates?(param_val);
 }
 
 builder store_checkpoint(builder b) inline {
@@ -271,13 +282,20 @@ _ perform_action(cfg_dict, public_key, action, cs) inline_ref {
     ;; success for a change that did not happen.
     throw_if(48, validator_auth_active() &
                  (validator_set_param(param_index) | configuration_contract_param(param_index)));
-    ifnot (recovery_change?(param_index, param_value)) {
-      require_registry_checkpoint();
-    }
+    require_registry_checkpoint();
+    throw_if(49, (param_index == 8) & generic_activation?(param_value));
     cfg_dict~idict_set_ref(32, param_index, param_value);
     return (cfg_dict, public_key);
   } elseif (action == 0x4e436f64) {
     ;; change configuration smart contract code
+    ;;
+    ;; Asked here too, and that is the whole of the fail-closed rule rather
+    ;; than an extra. A replacement contract is the strongest in-protocol
+    ;; recovery there could be -- it can seed a checkpoint and drop every rule
+    ;; above -- so leaving this one open would keep the recovery path that the
+    ;; rest of this file no longer has, with the authority resting on a single
+    ;; key. The absence of a checkpoint grants nothing, this action included.
+    require_registry_checkpoint();
     var new_code = cs~load_ref();
     set_code(new_code);
     var old_code = get_c3();
@@ -287,11 +305,22 @@ _ perform_action(cfg_dict, public_key, action, cs) inline_ref {
     return (cfg_dict, public_key);
   } elseif (action == 0x50624b21) {
     ;; change configuration master public key
+    ;;
+    ;; Not one of the two decisions a chain with no registry context may take
+    ;; about itself. Replacing the key that can write every parameter is not a
+    ;; recovery from that state, it is a change of who holds the authority
+    ;; while the state persists.
+    require_registry_checkpoint();
     public_key = cs~load_uint(256);
     cs.end_parse();
     return (cfg_dict, public_key);
   } elseif (action == 0x4e43ef05) {
     ;; change election smart contract code
+    ;;
+    ;; Least of all this one. The elector produces the next validator set, and
+    ;; a chain that cannot open its own configuration context has no way to
+    ;; judge what a replacement would produce.
+    require_registry_checkpoint();
     change_elector_code(cs);
     return (cfg_dict, public_key);
   } else {
@@ -382,8 +411,10 @@ _ perform_action(cfg_dict, public_key, action, cs) inline_ref {
     ;; trying to set a critical parameter after a non-critical voting
     return (cfg_dict, 0, null());
   }
-  ifnot (recovery_change?(param_id, param_val)) {
-    require_registry_checkpoint();
+  require_registry_checkpoint();
+  if ((param_id == 8) & generic_activation?(param_val)) {
+    ;; Declined the way every other refusal here declines.
+    return (cfg_dict, 0, null());
   }
   ;; Parameter 0 is deliberately not named here. On an active chain this
   ;; function is reached only from a governance finalization, and that caller
@@ -491,22 +522,6 @@ builder begin_pack_proposal_status(int expires, cell proposal, int critical?, ce
     .store_uint(vset_id, 256);
 }
 
-;; Whether the governing committee's quorum is also required for this proposal.
-;;
-;; It is, for everything, while the chain's registry context can open. When it
-;; cannot, that quorum is precisely what the chain has no way to consult, so
-;; requiring it for the two operations that end that state would leave no way
-;; out of it: the account could be read and diagnosed and never repaired. Those
-;; two install on the normal vote alone, and only while the checkpoint is
-;; missing; neither of them writes one.
-int needs_governance?(cell proposal) inline_ref {
-  ifnot (cell_null?(registry_checkpoint)) {
-    return true;
-  }
-  var (param_id, param_val, _) = parse_config_proposal(proposal);
-  return ~ recovery_change?(param_id, param_val);
-}
-
 (cell, cell, int) register_vote(vote_dict, phash, idx, weight) inline_ref {
   var (pstatus, found?) = vote_dict.udict_get?(256, phash);
   ifnot (found?) {
@@ -563,7 +578,7 @@ int needs_governance?(cell proposal) inline_ref {
   var (min_tot_rounds, max_tot_rounds, min_wins, max_losses, _, _, _, _) = get_vote_config(critical?);
   var (rounds_remaining, wins, losses) = (rest~load_uint(8), rest~load_uint(8), rest~load_uint(8));
   wins += 1;
-  if (validator_auth_active() & needs_governance?(proposal)) {
+  if (validator_auth_active()) {
     if (wins >= min_wins) {
       ;; Normal voting is complete and nothing is installed. The exact proposal
       ;; stays where it is, marked terminal, until a governance operation

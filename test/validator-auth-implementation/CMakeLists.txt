@@ -653,7 +653,7 @@ target_link_libraries(test-p0-elector-contract PRIVATE tos_validator_auth tos_cr
 set_target_properties(test-p0-elector-contract PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 
 add_executable(test-p0-config-contract config-contract-test.cpp)
-target_link_libraries(test-p0-config-contract PRIVATE tos_validator_auth tos_crypto)
+target_link_libraries(test-p0-config-contract PRIVATE tos_validator_auth tos_crypto tos_block)
 set_target_properties(test-p0-config-contract PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 
 add_executable(test-p0-witnessed-history witnessed-history-test.cpp)

@@ -52,28 +52,7 @@ LOAD = """  registry_checkpoint = null();
 REQUIREMENT = """  throw_if(47, validator_auth_active() & cell_null?(registry_checkpoint));
 """
 
-# The two decisions such a chain may still take about itself. Widening this
-# widens the recovery surface; narrowing it to nothing leaves the account
-# readable and permanently unrepairable, which is the state this whole
-# arrangement exists to avoid.
-RECOVERY = """  if (param_id == -1000) {
-    return true;
-  }
-  if (param_id == 8) {
-    return ~ config8_activates?(param_val);
-  }
-  return false;
-"""
 
-# Whether the governing quorum is also required. Requiring it unconditionally
-# is the deadlock: the quorum is exactly what a chain with no registry context
-# cannot consult.
-GOVERNANCE = """  ifnot (cell_null?(registry_checkpoint)) {
-    return true;
-  }
-  var (param_id, param_val, _) = parse_config_proposal(proposal);
-  return ~ recovery_change?(param_id, param_val);
-"""
 
 STORE = "    .store_checkpoint()\n"
 # Two lines, not one. The finalization branch restages the checkpoint the same
@@ -116,7 +95,7 @@ RV_EARLY = """  if (validator_auth_active()) {
     }
   }
 """
-RV_THRESHOLD = """  if (validator_auth_active() & needs_governance?(proposal)) {
+RV_THRESHOLD = """  if (validator_auth_active()) {
     if (wins >= min_wins) {
       ;; Normal voting is complete and nothing is installed. The exact proposal
       ;; stays where it is, marked terminal, until a governance operation
@@ -189,18 +168,32 @@ MUTATIONS = [
     ("configuration-contract-address-unprotected-by-owner",
      "the-configuration-key-cannot-redirect-the-configuration-contract",
      " | configuration_contract_param(param_index)", "", []),
-    # Parameter 8 as a recovery by its number rather than by its value. This is
-    # the defect the value check replaced: a Config8 that leaves the chain
-    # authenticated passing as a recovery, and taking the checkpoint
-    # requirement and the governing quorum with it.
-    ("recovery-ignores-the-value", "a-checkpointless-active-chain-refuses-a-config8-that-stays-authenticated",
-     "    return ~ config8_activates?(param_val);\n", "    return true;\n",
-     ["a-checkpointless-active-chain-votes-in-no-config8-that-stays-authenticated"]),
     ("validator-set-not-installable-by-owner", "an-owner-action-cannot-install-a-validator-set",
      """    throw_if(48, validator_auth_active() &
                  (validator_set_param(param_index) | configuration_contract_param(param_index)));\n""", "",
      ["no-generic-writer-installs-any-validator-set-index",
       "the-configuration-key-cannot-redirect-the-configuration-contract"]),
+    # No generic writer may turn authentication on. Each writer refuses in its
+    # own way, so each removal is its own mutation: the node refuses the
+    # transition outright, and this is also how "active with no checkpoint"
+    # becomes reachable, since the checkpoint requirement asks about the state
+    # before the change.
+    ("activation-by-proposal", "no-generic-writer-turns-authentication-on",
+     """  if ((param_id == 8) & generic_activation?(param_val)) {
+    ;; Declined the way every other refusal here declines.
+    return (cfg_dict, 0, null());
+  }
+""", "", []),
+    ("activation-by-owner", "no-generic-writer-turns-authentication-on",
+     "    throw_if(49, (param_index == 8) & generic_activation?(param_value));\n", "",
+     ["neither-layer-turns-authentication-off-or-on"]),
+    # The two actions that never asked for a checkpoint at all, each anchored
+    # with the line it guards because the requirement reads identically in both.
+    ("configuration-key-change-ungated", "a-checkpointless-active-chain-changes-no-configuration-key",
+     "    require_registry_checkpoint();\n    public_key = cs~load_uint(256);", "    public_key = cs~load_uint(256);",
+     []),
+    ("elector-code-upgrade-ungated", "a-checkpointless-active-chain-replaces-no-elector-code",
+     "    require_registry_checkpoint();\n    change_elector_code(cs);", "    change_elector_code(cs);", []),
     # The refusal that an active chain must not run without a checkpoint. It
     # had no mutation at all: the branch was added and the fixture that would
     # have reached it seeds one, so nothing exercised it. This removes the
@@ -211,32 +204,13 @@ MUTATIONS = [
     ("active-chain-needs-a-checkpoint", "an-active-chain-without-a-checkpoint-is-refused",
      REQUIREMENT, "", [
       "a-checkpointless-active-chain-applies-no-registry-update",
+      "a-checkpointless-active-chain-changes-no-configuration-key",
       "a-checkpointless-active-chain-changes-no-ordinary-parameter",
       "a-checkpointless-active-chain-installs-no-elected-set",
-      "a-checkpointless-active-chain-refuses-a-config8-that-stays-authenticated"
-     ]),
-    # The recovery surface has to be exactly two parameters. Closing it leaves
-    # a readable account nothing can repair.
-    ("recovery-surface-closed", "a-checkpointless-active-chain-may-stop-being-authenticated",
-     RECOVERY, "  return false;\n", [
-      "a-checkpointless-active-chain-may-replace-its-code",
-      "a-checkpointless-active-chain-votes-in-a-config8-that-deactivates"
-     ]),
-    # And opening it to every parameter would make the requirement above mean
-    # nothing at all, so the case that refuses an ordinary parameter is what
-    # notices.
-    ("recovery-surface-opened", "a-checkpointless-active-chain-changes-no-ordinary-parameter",
-     RECOVERY, "  return true;\n", [
-      "a-checkpointless-active-chain-refuses-a-config8-that-stays-authenticated",
-      "a-checkpointless-active-chain-votes-in-no-config8-that-stays-authenticated",
-      "an-active-chain-without-a-checkpoint-is-refused"
-     ]),
-    # Requiring the governing quorum unconditionally is the deadlock this
-    # carve-out exists to avoid: the code upgrade can then never be voted
-    # through on a chain whose registry context cannot open.
-    ("governance-required-even-for-recovery", "a-checkpointless-active-chain-may-replace-its-code",
-     GOVERNANCE, "  return true;\n", [
-      "a-checkpointless-active-chain-votes-in-a-config8-that-deactivates"
+      "a-checkpointless-active-chain-replaces-no-contract-code",
+      "a-checkpointless-active-chain-replaces-no-elector-code",
+      "a-checkpointless-active-chain-writes-no-config8-at-all",
+      "neither-layer-turns-authentication-off-or-on"
      ]),
     # An active chain installs its elected set through VAUTH_BIND, which writes
     # validator_auth#b3. Without this branch the voting path refuses that
@@ -247,10 +221,9 @@ MUTATIONS = [
     ("authenticated-descriptor-votes", "a-completed-vote-installs-nothing-under-governance",
      AUTHENTICATED_DESCRIPTOR, "",
      [
-      "a-checkpointless-active-chain-may-replace-its-code",
+      "a-checkpointless-active-chain-replaces-no-contract-code",
       "a-checkpointless-active-chain-still-registers-votes",
-      "a-checkpointless-active-chain-votes-in-a-config8-that-deactivates",
-      "a-checkpointless-active-chain-votes-in-no-config8-that-stays-authenticated",
+      "a-checkpointless-active-chain-writes-no-config8-at-all",
       "a-terminal-proposal-takes-no-further-votes"
      ]),
     # The store lives in store_data rather than in the registry branch exactly
@@ -267,17 +240,18 @@ MUTATIONS = [
      "  registry_checkpoint = null();\n  cs~load_ref();\n",
      [
       "a-checkpointless-active-chain-applies-no-registry-update",
+      "a-checkpointless-active-chain-changes-no-configuration-key",
       "a-checkpointless-active-chain-changes-no-ordinary-parameter",
       "a-checkpointless-active-chain-installs-no-elected-set",
-      "a-checkpointless-active-chain-may-replace-its-code",
-      "a-checkpointless-active-chain-may-stop-being-authenticated",
-      "a-checkpointless-active-chain-refuses-a-config8-that-stays-authenticated",
+      "a-checkpointless-active-chain-replaces-no-contract-code",
+      "a-checkpointless-active-chain-replaces-no-elector-code",
       "a-checkpointless-active-chain-still-registers-votes",
-      "a-checkpointless-active-chain-votes-in-a-config8-that-deactivates",
-      "a-checkpointless-active-chain-votes-in-no-config8-that-stays-authenticated",
+      "a-checkpointless-active-chain-writes-no-config8-at-all",
       "a-due-only-tick-tock-persists-the-prefix",
       "a-finalization-cannot-install-a-validator-set",
       "a-governance-operation-finalizes-a-completed-proposal",
+      "a-healthy-active-chain-still-changes-its-configuration-key",
+      "a-healthy-active-chain-still-replaces-its-elector-code",
       "a-proposal-still-in-voting-is-not-finalizable",
       "a-refused-finalization-leaves-the-proposal",
       "a-refused-finalization-never-accepts",
@@ -291,18 +265,19 @@ MUTATIONS = [
       "an-inactive-chain-keeps-every-validator-set-index-writable",
       "an-inactive-chain-keeps-the-configuration-contract-address-writable",
       "an-inactive-chain-lets-the-owner-install-a-validator-set",
+      "an-inactive-chain-still-writes-an-inactive-config8",
       "an-inactive-chain-tick-tock-asks-for-nothing",
       "an-inactive-chain-without-a-checkpoint-is-accepted",
       "an-owner-action-installs-an-ordinary-parameter",
       "an-unknown-proposal-is-not-finalizable",
       "governance-cannot-redirect-the-configuration-contract-while-active",
       "no-generic-writer-installs-any-validator-set-index",
-      "no-generic-writer-installs-the-configuration-contract-address",
+      "no-generic-writer-turns-authentication-on",
       "registry-c4-installs-parameter-46",
       "registry-c4-replaces-old-parameter-46",
       "registry-first-checkpoint-installs-new-parameter",
       "registry-first-checkpoint-replaces-old-parameter",
-      "the-configuration-key-cannot-redirect-the-configuration-contract"
+      "neither-layer-turns-authentication-off-or-on"
      ]),
     ("checkpoint-restaged", "a-registry-update-stores-the-staged-checkpoint", STAGED,
      "    accept_message();\n", [], "() recv_external(slice in_msg) impure {"),
@@ -322,8 +297,9 @@ MUTATIONS = [
     # no vote at all.
     ("threshold-still-installs", "a-completed-vote-installs-nothing-under-governance", RV_THRESHOLD, "",
      [
+      "a-checkpointless-active-chain-replaces-no-contract-code",
       "a-checkpointless-active-chain-still-registers-votes",
-      "a-checkpointless-active-chain-votes-in-no-config8-that-stays-authenticated"
+      "a-checkpointless-active-chain-writes-no-config8-at-all"
      ],
      "(cell, cell, int) register_vote(vote_dict, phash, idx, weight) inline_ref {"),
     ("terminal-takes-more-votes", "a-terminal-proposal-takes-no-further-votes", RV_EARLY, "", [],
@@ -353,9 +329,7 @@ MUTATIONS = [
     ("finalized-proposal-not-consumed", "a-governance-operation-finalizes-a-completed-proposal",
      PROPOSAL_CONSUMED, "", [], "() recv_external(slice in_msg) impure {"),
     ("sentinel-is-the-threshold", "a-completed-vote-installs-nothing-under-governance", SENTINEL,
-     "        .store_uint(wins, 8)\n", [
-      "a-checkpointless-active-chain-votes-in-no-config8-that-stays-authenticated"
-     ],
+     "        .store_uint(wins, 8)\n", ["a-checkpointless-active-chain-replaces-no-contract-code"],
      "(cell, cell, int) register_vote(vote_dict, phash, idx, weight) inline_ref {"),
 ]
 

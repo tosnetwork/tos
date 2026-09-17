@@ -352,6 +352,49 @@ td::Ref<vm::Cell> configuration(td::Ref<vm::Cell> registry = {}, bool activated 
   return root;
 }
 
+// The dictionary above is the one the contract runs against, and the node's
+// transition rules would refuse it for its own reasons: they require the
+// parameters that declare 46 mandatory and critical, and the validator counts,
+// none of which the contract reads. A case that asserts a native refusal needs
+// a dictionary whose only defect is the one under test, so it builds one here
+// and proves the point with a control transition that must be accepted.
+td::Ref<vm::Cell> capability_parameter(bool activated) {
+  return vm::CellBuilder()
+      .store_long(0xc4, 8)
+      .store_long(vm::validator_auth_min_version, 32)
+      .store_long(activated ? vm::validator_auth_capability : 0, 64)
+      .finalize();
+}
+
+td::Ref<vm::Cell> node_configuration(const td::Ref<vm::Cell>& registry, bool activated) {
+  expect(registry.not_null(), "fixture-node-registry");
+  vm::Dictionary required(32);
+  td::BitArray<32> entry;
+  entry.store_long(46);
+  expect(required.set_builder(entry.cbits(), 32, vm::CellBuilder()), "fixture-node-required");
+  auto declarations = required.get_root_cell();
+  expect(declarations.not_null(), "fixture-node-required");
+
+  vm::Dictionary dict(32);
+  td::BitArray<32> key;
+  for (int index : {9, 10}) {
+    key.store_long(index);
+    expect(dict.set_ref(key.cbits(), 32, declarations), "fixture-node-declarations");
+  }
+  // Maximum, main and minimum, in the order the reader fetches them.
+  key.store_long(16);
+  expect(dict.set_ref(key.cbits(), 32,
+                      vm::CellBuilder().store_long(100, 16).store_long(10, 16).store_long(1, 16).finalize()),
+         "fixture-node-counts");
+  key.store_long(46);
+  expect(dict.set_ref(key.cbits(), 32, registry), "fixture-node-registry");
+  key.store_long(8);
+  expect(dict.set_ref(key.cbits(), 32, capability_parameter(activated)), "fixture-node-config8");
+  auto built = dict.get_root_cell();
+  expect(built.not_null(), "fixture-node-configuration");
+  return built;
+}
+
 td::Ref<vm::CellSlice> masterchain_address(std::uint64_t account) {
   return vm::load_cell_slice_ref(
       vm::CellBuilder().store_long(4, 3).store_long(-1, 8).store_zeroes(192).store_long(account, 64).finalize());
@@ -728,13 +771,15 @@ const unsigned char* voter_public() {
 // sends one: an external message the owner signed. This is the second writer
 // that takes an index and a cell and carries no bindings, so it is the second
 // place a validator set could be installed without reaching the registry.
-Outcome run_owner_action(const td::Ref<vm::Cell>& contract, long long index, td::Ref<vm::Cell> value,
-                         Host* host, bool active, bool unseeded = false) {
-  // recv_external reads the signature, then the action, sequence number and
-  // expiry, and checks the signature over everything after the signature.
+// Any action the configuration master key can send. recv_external reads the
+// signature, then the action, sequence number and expiry, and checks the
+// signature over everything after the signature; `rest` is whatever that
+// action reads next.
+Outcome run_owner_message(const td::Ref<vm::Cell>& contract, long long action, const vm::CellBuilder& rest,
+                          Host* host, bool active, bool unseeded = false) {
   vm::CellBuilder payload;
-  payload.store_long(0x43665021, 32).store_long(0, 32).store_long(0xfffffff0, 32).store_long(index, 32);
-  payload.store_ref(std::move(value));
+  payload.store_long(action, 32).store_long(0, 32).store_long(0xfffffff0, 32);
+  payload.append_builder(rest);
   auto signed_part = payload.finalize();
   auto digest = signed_part->get_hash().as_slice();
   unsigned char signature[64] = {};
@@ -747,6 +792,14 @@ Outcome run_owner_action(const td::Ref<vm::Cell>& contract, long long index, td:
   return run_contract(contract, body.finalize(), 0, 1000, host,
                       active ? vm::validator_auth_capability : 0, vm::validator_auth_min_version, true, {},
                       1000000, active, {}, nullptr, {}, 0, owner().key, unseeded);
+}
+
+// The generic parameter write, which is the action most cases want.
+Outcome run_owner_action(const td::Ref<vm::Cell>& contract, long long index, td::Ref<vm::Cell> value,
+                         Host* host, bool active, bool unseeded = false) {
+  vm::CellBuilder rest;
+  rest.store_long(index, 32).store_ref(std::move(value));
+  return run_owner_message(contract, 0x43665021, rest, host, active, unseeded);
 }
 
 // One vote, arriving the way a validator sends one: an internal message whose
