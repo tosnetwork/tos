@@ -105,6 +105,49 @@ deferred. None of them is on the path from a genesis to a finalized block.
 
 ### Named blockers
 
+A configuration dictionary can reach the masterchain state without passing any
+of the contract's rules, and that route is open. It is named here rather than
+closed because closing it is a decision about governance authority rather than
+about this design.
+
+Every generic writer of a validator set inside the configuration contract is
+now shut: an accepted proposal and a message signed by the configuration key
+both refuse parameters 32 through 37 while the design is active, each index
+named and each covered by a mutation. The dictionary the chain runs on is
+copied out of the configuration account's data by collation, and that data has
+exactly two writers, this contract's code and genesis. So within the contract
+the set is complete.
+
+Parameter 0 is the exception, and it is not a writer of a validator set; it
+names which account *is* the configuration contract. When it changes, collation
+fetches the new account's dictionary and takes it whole. What that dictionary
+must satisfy is `valid_config_data`: every parameter well formed, every
+mandatory parameter present, and the validator-authentication configuration
+gates -- version, capability, parameters 9 and 10 naming 46, the count bounds,
+and the registry root's own shape. None of that says the validator set in the
+new dictionary is one the registry decided.
+
+So a governing quorum, or the configuration key on a chain that still has one,
+can install a configuration account whose parameter 34 or 35 carries a set with
+bindings no registry ever issued. The result is not an unauthenticated chain
+that runs: committee derivation refuses such a set at the registry check, so no
+authenticated committee exists, while the manager's state-only admission would
+admit the roster. That is the same divergence between the two admissions that
+closing 32 through 37 removed, reached by a different route.
+
+Three things could close it, and they are not equivalent. The contract could
+refuse parameter 0 while the design is active, which is narrow and consistent
+with the rest but removes the ability to replace the configuration contract on
+a live authenticated chain. `valid_config_data` could require registry binding,
+which is the rule in the right place but needs registry access at collation
+time, where it has none today. Or it could be left as is on the ground that
+replacing the configuration contract is already total authority -- the same
+principals can replace this contract's code -- in which case it should be
+written down as an accepted power rather than rediscovered as a hole. That last
+reading is weaker than it sounds: a code upgrade keeps the existing dictionary
+and therefore the existing validator set, while a parameter 0 redirect replaces
+every parameter at once with no per-parameter rule applied to the new set.
+
 Native governance gas was carried here as a blocker. At the committee this
 network installs it is not one, and the figures that made it look like one were
 not the figures for that committee.
