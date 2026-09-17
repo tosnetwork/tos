@@ -41,10 +41,19 @@ int validator_auth_active() inline {
 ;; attacker who has obtained governance would use, because it is the one with no
 ;; binding to forge.
 ;;
+;; The whole group is closed, not the three indices this contract moves between.
+;; Parameter 35 is the one that makes that necessary rather than tidy: both the
+;; node and committee derivation read the current set as "35 if present, else
+;; 34", so a set written to 35 is the set the chain runs under while 34 still
+;; holds whatever the registry decided. Closing 34 alone would have left the
+;; same fact reachable under its second spelling. The remaining indices have no
+;; reader here today, and are closed for the same reason rather than after the
+;; first one acquires one.
+;;
 ;; The tick-tock rotation is not a writer in this sense: it moves cells that are
-;; already installed between these three indices and introduces no new set.
+;; already installed between these indices and introduces no new set.
 int validator_set_param(int param_id) inline {
-  return (param_id == 32) | (param_id == 34) | (param_id == 36);
+  return (param_id >= 32) & (param_id <= 37);
 }
 cell vauth_registry_state() impure asm "VAUTH_STATE";
 
@@ -56,6 +65,29 @@ cell vauth_registry_state() impure asm "VAUTH_STATE";
 ;; an ordinary vote that dropped it would leave the next block with an account
 ;; nothing can restore -- and a vote has nothing to do with the registry.
 global cell registry_checkpoint;
+
+;; The checkpoint every path that can still form authenticated state requires.
+;;
+;; Genesis seeds the registry parameter and this checkpoint together or it seeds
+;; neither, so on an active chain an account carrying no checkpoint is not one
+;; yet to migrate: it is one whose configuration context can never open. Such an
+;; account may be read and may be diagnosed. What it may not do is write
+;; anything the chain would afterwards treat as authenticated -- including a
+;; checkpoint, which is why the registry paths ask this before they reach the
+;; instruction that would produce one rather than after.
+() require_registry_checkpoint() impure inline {
+  throw_if(47, validator_auth_active() & cell_null?(registry_checkpoint));
+}
+
+;; The two decisions such a chain is still allowed to take about itself:
+;; stop being an authenticated chain, or replace this contract's code.
+;;
+;; Neither writes a checkpoint, which is the whole point. A recovery that
+;; seeded one would be the second initialization route the design exists to
+;; remove, arrived at by the back door.
+int recovery_parameter(int param_id) inline {
+  return (param_id == 8) | (param_id == -1000);
+}
 
 builder store_checkpoint(builder b) inline {
   ifnot (cell_null?(registry_checkpoint)) {
@@ -72,21 +104,22 @@ builder store_checkpoint(builder b) inline {
   set_data(begin_cell().store_ref(cfg_dict).store_slice(cs).end_cell());
 }
 
-(cell, int, int, cell) load_data() inline {
+
+;; Impure because it is: the checkpoint it reads back is published through a
+;; global, and a caller that wants only that -- an entry point which does not
+;; otherwise read the account -- would otherwise have its call elided for
+;; having discarded every returned value.
+(cell, int, int, cell) load_data() impure inline {
   var cs = get_data().begin_parse();
   var res = (cs~load_ref(), cs~load_uint(32), cs~load_uint(256), cs~load_dict());
+  ;; Parsed, not judged. A loader that refused here would take the account's
+  ;; get-methods and its own diagnosis down with the fault, and turn one bad
+  ;; state into a permanently unreadable one. What must not happen is that such
+  ;; an account goes on producing state the chain treats as authenticated, and
+  ;; that is decided at the paths which produce it.
   registry_checkpoint = null();
   if (cs.slice_refs()) {
     registry_checkpoint = cs~load_ref();
-  } else {
-    ;; Genesis seeds the registry parameter and this checkpoint together or it
-    ;; seeds neither. So on a chain that has activated the design, an account
-    ;; carrying no checkpoint is not one that has yet to migrate; it is one
-    ;; whose configuration context can never open. Reading it as the former is
-    ;; the only place a second installation route could begin, and it would be
-    ;; reachable without the declared one. Refused here rather than seeded
-    ;; anywhere.
-    throw_if(47, validator_auth_active());
   }
   cs.end_parse();
   return res;
@@ -186,6 +219,9 @@ _ perform_action(cfg_dict, public_key, action, cs) inline_ref {
     ;; what it is doing, and silently discarding its instruction would report
     ;; success for a change that did not happen.
     throw_if(48, validator_auth_active() & validator_set_param(param_index));
+    ifnot (recovery_parameter(param_index)) {
+      require_registry_checkpoint();
+    }
     cfg_dict~idict_set_ref(32, param_index, param_value);
     return (cfg_dict, public_key);
   } elseif (action == 0x4e436f64) {
@@ -294,6 +330,9 @@ _ perform_action(cfg_dict, public_key, action, cs) inline_ref {
     ;; trying to set a critical parameter after a non-critical voting
     return (cfg_dict, 0, null());
   }
+  ifnot (recovery_parameter(param_id)) {
+    require_registry_checkpoint();
+  }
   if (validator_auth_active() & validator_set_param(param_id)) {
     ;; A proposal cannot install a validator set on an active chain: it carries
     ;; no bindings and reaches no registry. Declined rather than thrown, like
@@ -393,6 +432,22 @@ builder begin_pack_proposal_status(int expires, cell proposal, int critical?, ce
     .store_uint(vset_id, 256);
 }
 
+;; Whether the governing committee's quorum is also required for this proposal.
+;;
+;; It is, for everything, while the chain's registry context can open. When it
+;; cannot, that quorum is precisely what the chain has no way to consult, so
+;; requiring it for the two operations that end that state would leave no way
+;; out of it: the account could be read and diagnosed and never repaired. Those
+;; two install on the normal vote alone, and only while the checkpoint is
+;; missing; neither of them writes one.
+int needs_governance?(cell proposal) inline_ref {
+  ifnot (cell_null?(registry_checkpoint)) {
+    return true;
+  }
+  var (param_id, _, _) = parse_config_proposal(proposal);
+  return ~ recovery_parameter(param_id);
+}
+
 (cell, cell, int) register_vote(vote_dict, phash, idx, weight) inline_ref {
   var (pstatus, found?) = vote_dict.udict_get?(256, phash);
   ifnot (found?) {
@@ -449,7 +504,7 @@ builder begin_pack_proposal_status(int expires, cell proposal, int critical?, ce
   var (min_tot_rounds, max_tot_rounds, min_wins, max_losses, _, _, _, _) = get_vote_config(critical?);
   var (rounds_remaining, wins, losses) = (rest~load_uint(8), rest~load_uint(8), rest~load_uint(8));
   wins += 1;
-  if (validator_auth_active()) {
+  if (validator_auth_active() & needs_governance?(proposal)) {
     if (wins >= min_wins) {
       ;; Normal voting is complete and nothing is installed. The exact proposal
       ;; stays where it is, marked terminal, until a governance operation
@@ -667,6 +722,11 @@ int register_voting_proposal(slice cs, int msg_value) impure inline_ref {
       ;; send, and "the sender omitted the bindings" must not be the reason a
       ;; set skips the registry.
       if (validator_auth_active()) {
+        ;; This entry point does not otherwise read the account, so what it
+        ;; holds is read here rather than assumed from a global that only the
+        ;; paths which load the account populate.
+        var (_, _, _, _) = load_data();
+        require_registry_checkpoint();
         throw_if(45, cell_null?(bindings));
         vset = vauth_bind_validators(vset, bindings);
       }
@@ -745,6 +805,10 @@ int register_voting_proposal(slice cs, int msg_value) impure inline_ref {
     ;; The message is therefore unsigned, and is accepted only after the update
     ;; has been applied. A refused update never reaches accept_message, so it is
     ;; dropped inside the gas credit instead of being paid for.
+    ;; Asked before the update is even read. An account with no checkpoint
+    ;; reaching the instruction would be handed one by it, and that is exactly
+    ;; the second way to initialize a registry that this design does not have.
+    require_registry_checkpoint();
     var update = cs~load_ref();
     var evidence = cs~load_ref();
     ;; A third reference is the exact configuration proposal a governance
@@ -858,6 +922,7 @@ int register_voting_proposal(slice cs, int msg_value) impure inline_ref {
   ;; which rewrites the account from get_data() and would be undone by the
   ;; store_data below.
   if (validator_auth_active()) {
+    require_registry_checkpoint();
     registry_checkpoint = vauth_registry_state();
     var rcs = registry_checkpoint.begin_parse();
     rcs~skip_bits(80);

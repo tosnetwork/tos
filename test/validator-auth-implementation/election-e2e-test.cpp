@@ -88,8 +88,35 @@ td::Ref<vm::Cell> installed_parameter(const td::Ref<vm::Cell>& data, long long i
 }
 
 // The configuration contract's own account data, in the shape it reads.
+//
+// The checkpoint is part of that shape on an active chain and not an extra:
+// genesis seeds it beside parameter 46 or seeds neither, and an account with
+// the design active and no checkpoint is one the contract refuses outright.
+// Building one without it would be building a state the policy says cannot
+// exist, and every case here would fail on that refusal rather than on what it
+// set out to measure.
 td::Ref<vm::Cell> configuration_data(const td::Ref<vm::Cell>& config) {
-  return vm::CellBuilder().store_ref(config).store_long(0, 32).store_zeroes(256).store_long(0, 1).finalize();
+  td::BitArray<32> key;
+  key.store_long(46);
+  vm::Dictionary dict(config, 32);
+  auto registry = dict.lookup_ref(key.cbits(), 32);
+  auto filler = vm::CellBuilder().finalize();
+  auto checkpoint = vm::CellBuilder()
+                        .store_long(0x76616e31, 32)
+                        .store_long(1, 16)
+                        .store_long(0, 32)
+                        .store_ref(registry.not_null() ? registry : filler)
+                        .store_ref(filler)
+                        .store_ref(filler)
+                        .store_ref(filler)
+                        .finalize();
+  return vm::CellBuilder()
+      .store_ref(config)
+      .store_long(0, 32)
+      .store_zeroes(256)
+      .store_long(0, 1)
+      .store_ref(checkpoint)
+      .finalize();
 }
 
 td::Ref<vm::CellSlice> account_address(std::uint64_t account) {

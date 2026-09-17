@@ -518,9 +518,15 @@ Outcome run_contract(const td::Ref<vm::Cell>& contract, const td::Ref<vm::Cell>&
                      bool external = false, td::Ref<vm::Cell> registry = {}, long long gas_limit = 1000000,
                      bool config8_active = false, td::Ref<vm::Cell> checkpoint = {},
                      const unsigned char* voting_key = nullptr, td::Ref<vm::Cell> votes = {},
-                     long long credit = 0, const unsigned char* owner_public = nullptr) {
+                     long long credit = 0, const unsigned char* owner_public = nullptr, bool unseeded = false) {
   expect(contract.not_null(), "contract-loaded");
-  checkpoint = seeded_checkpoint(registry, config8_active, std::move(checkpoint));
+  // `unseeded` is the one way to build an account the policy says cannot
+  // exist: active, with no checkpoint. It exists so the refusals that guard
+  // that state, and the narrow recovery that ends it, both have something to
+  // act on.
+  if (!unseeded) {
+    checkpoint = seeded_checkpoint(registry, config8_active, std::move(checkpoint));
+  }
   auto config = configuration(std::move(registry), config8_active, voting_key);
   auto message = external ? external_message(body) : internal_message(from, body);
   auto data = contract_data(config, std::move(checkpoint), std::move(votes), owner_public);
@@ -723,7 +729,7 @@ const unsigned char* voter_public() {
 // that takes an index and a cell and carries no bindings, so it is the second
 // place a validator set could be installed without reaching the registry.
 Outcome run_owner_action(const td::Ref<vm::Cell>& contract, long long index, td::Ref<vm::Cell> value,
-                         Host* host, bool active) {
+                         Host* host, bool active, bool unseeded = false) {
   // recv_external reads the signature, then the action, sequence number and
   // expiry, and checks the signature over everything after the signature.
   vm::CellBuilder payload;
@@ -740,14 +746,14 @@ Outcome run_owner_action(const td::Ref<vm::Cell>& contract, long long index, td:
   body.append_cellslice(vm::load_cell_slice_ref(signed_part));
   return run_contract(contract, body.finalize(), 0, 1000, host,
                       active ? vm::validator_auth_capability : 0, vm::validator_auth_min_version, true, {},
-                      1000000, active, {}, nullptr, {}, 0, owner().key);
+                      1000000, active, {}, nullptr, {}, 0, owner().key, unseeded);
 }
 
 // One vote, arriving the way a validator sends one: an internal message whose
 // body the voter signed. The external vote branch answers nothing, so a case
 // about what a voter is told has to use this one.
 Outcome cast_vote(const td::Ref<vm::Cell>& contract, const td::Ref<vm::Cell>& proposal,
-                  const td::Ref<vm::Cell>& votes, Host* host, bool active) {
+                  const td::Ref<vm::Cell>& votes, Host* host, bool active, bool unseeded = false) {
   auto id = proposal->get_hash().as_array();
   vm::CellBuilder signed_part;
   signed_part.store_long(0x566f7445, 32).store_long(0, 16);
@@ -767,7 +773,7 @@ Outcome cast_vote(const td::Ref<vm::Cell>& contract, const td::Ref<vm::Cell>& pr
   body.append_cellslice(vm::load_cell_slice_ref(payload));
   return run_contract(contract, body.finalize(), 1, 1000, host,
                       active ? vm::validator_auth_capability : 0, vm::validator_auth_min_version, false, {},
-                      1000000, active, {}, voter_public(), votes);
+                      1000000, active, {}, voter_public(), votes, 0, nullptr, unseeded);
 }
 
 

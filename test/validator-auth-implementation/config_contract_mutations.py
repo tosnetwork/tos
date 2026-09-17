@@ -42,17 +42,33 @@ BINARY = Path("build-p0/test/validator-auth-implementation/test-p0-config-contra
 LOAD = """  registry_checkpoint = null();
   if (cs.slice_refs()) {
     registry_checkpoint = cs~load_ref();
-  } else {
-    ;; Genesis seeds the registry parameter and this checkpoint together or it
-    ;; seeds neither. So on a chain that has activated the design, an account
-    ;; carrying no checkpoint is not one that has yet to migrate; it is one
-    ;; whose configuration context can never open. Reading it as the former is
-    ;; the only place a second installation route could begin, and it would be
-    ;; reachable without the declared one. Refused here rather than seeded
-    ;; anywhere.
-    throw_if(47, validator_auth_active());
   }
 """
+
+# The requirement the loader no longer makes. It is asked by every path that
+# could still produce state the chain treats as authenticated, so removing it
+# is removing all of them at once -- which is why this mutation names the first
+# case to notice and declares the rest as companions.
+REQUIREMENT = """  throw_if(47, validator_auth_active() & cell_null?(registry_checkpoint));
+"""
+
+# The two decisions such a chain may still take about itself. Widening this
+# widens the recovery surface; narrowing it to nothing leaves the account
+# readable and permanently unrepairable, which is the state this whole
+# arrangement exists to avoid.
+RECOVERY = """  return (param_id == 8) | (param_id == -1000);
+"""
+
+# Whether the governing quorum is also required. Requiring it unconditionally
+# is the deadlock: the quorum is exactly what a chain with no registry context
+# cannot consult.
+GOVERNANCE = """  ifnot (cell_null?(registry_checkpoint)) {
+    return true;
+  }
+  var (param_id, _, _) = parse_config_proposal(proposal);
+  return ~ recovery_parameter(param_id);
+"""
+
 STORE = "    .store_checkpoint()\n"
 # Two lines, not one. The finalization branch restages the checkpoint the same
 # way with deeper indentation, and the shorter form is a substring of it; a
@@ -94,7 +110,7 @@ RV_EARLY = """  if (validator_auth_active()) {
     }
   }
 """
-RV_THRESHOLD = """  if (validator_auth_active()) {
+RV_THRESHOLD = """  if (validator_auth_active() & needs_governance?(proposal)) {
     if (wins >= min_wins) {
       ;; Normal voting is complete and nothing is installed. The exact proposal
       ;; stays where it is, marked terminal, until a governance operation
@@ -117,6 +133,7 @@ SCAN_GATE = """  if (validator_auth_active()) {
 SENTINEL = """        .store_uint(255, 8)
 """
 TICKTOCK = """  if (validator_auth_active()) {
+    require_registry_checkpoint();
     registry_checkpoint = vauth_registry_state();
     var rcs = registry_checkpoint.begin_parse();
     rcs~skip_bits(80);
@@ -148,8 +165,27 @@ MUTATIONS = [
     # had no mutation at all: the branch was added and the fixture that would
     # have reached it seeds one, so nothing exercised it. This removes the
     # throw and requires the case built for it to notice.
+    # Every path that could still produce authenticated state asks one
+    # question, so removing it removes all of them. The tick-tock is the first
+    # case to say so; the rest are companions rather than a relaxed rule.
     ("active-chain-needs-a-checkpoint", "an-active-chain-without-a-checkpoint-is-refused",
-     "    throw_if(47, validator_auth_active());\n", "", []),
+     REQUIREMENT, "", ["a-checkpointless-active-chain-changes-no-ordinary-parameter",
+                       "a-checkpointless-active-chain-applies-no-registry-update",
+                       "a-checkpointless-active-chain-installs-no-elected-set"]),
+    # The recovery surface has to be exactly two parameters. Closing it leaves
+    # a readable account nothing can repair.
+    ("recovery-surface-closed", "a-checkpointless-active-chain-may-stop-being-authenticated",
+     RECOVERY, "  return false;\n", ["a-checkpointless-active-chain-may-replace-its-code"]),
+    # And opening it to every parameter would make the requirement above mean
+    # nothing at all, so the case that refuses an ordinary parameter is what
+    # notices.
+    ("recovery-surface-opened", "a-checkpointless-active-chain-changes-no-ordinary-parameter",
+     RECOVERY, "  return true;\n", ["an-active-chain-without-a-checkpoint-is-refused"]),
+    # Requiring the governing quorum unconditionally is the deadlock this
+    # carve-out exists to avoid: the code upgrade can then never be voted
+    # through on a chain whose registry context cannot open.
+    ("governance-required-even-for-recovery", "a-checkpointless-active-chain-may-replace-its-code",
+     GOVERNANCE, "  return true;\n", []),
     # An active chain installs its elected set through VAUTH_BIND, which writes
     # validator_auth#b3. Without this branch the voting path refuses that
     # descriptor for its shape, so the normal vote a configuration parameter
@@ -157,7 +193,10 @@ MUTATIONS = [
     # never reached. The fixture used to build the legacy shape whether the
     # chain was active or not, which is what let that look correct.
     ("authenticated-descriptor-votes", "a-completed-vote-installs-nothing-under-governance",
-     AUTHENTICATED_DESCRIPTOR, "", ["a-terminal-proposal-takes-no-further-votes"]),
+     AUTHENTICATED_DESCRIPTOR, "",
+     ["a-terminal-proposal-takes-no-further-votes",
+      "a-checkpointless-active-chain-still-registers-votes",
+      "a-checkpointless-active-chain-may-replace-its-code"]),
     # The store lives in store_data rather than in the registry branch exactly
     # so a path with nothing to do with the registry carries it too. The vote
     # case is what proves that, and it is named here rather than the registry
@@ -170,17 +209,35 @@ MUTATIONS = [
     # and every case that restores one fails.
     ("checkpoint-loaded", "a-vote-keeps-the-checkpoint", LOAD,
      "  registry_checkpoint = null();\n  cs~load_ref();\n",
-     ["an-active-chain-without-a-checkpoint-is-refused",
-      "an-inactive-chain-without-a-checkpoint-is-accepted",
+     [
+      "a-checkpointless-active-chain-applies-no-registry-update",
+      "a-checkpointless-active-chain-changes-no-ordinary-parameter",
+      "a-checkpointless-active-chain-installs-no-elected-set",
+      "a-checkpointless-active-chain-may-replace-its-code",
+      "a-checkpointless-active-chain-may-stop-being-authenticated",
+      "a-checkpointless-active-chain-still-registers-votes",
+      "a-due-only-tick-tock-persists-the-prefix",
+      "a-finalization-cannot-install-a-validator-set",
+      "a-governance-operation-finalizes-a-completed-proposal",
+      "a-proposal-still-in-voting-is-not-finalizable",
+      "a-refused-finalization-leaves-the-proposal",
+      "a-refused-finalization-never-accepts",
+      "a-terminal-proposal-survives-a-tick-tock-scan",
+      "a-valid-finalization-reaches-accept-with-real-gas-credit",
+      "active-set-with-bindings-is-installed-bound",
+      "active-unbound-set-is-refused",
+      "an-active-chain-without-a-checkpoint-is-refused",
+      "an-inactive-chain-installs-on-the-threshold",
       "an-inactive-chain-lets-the-owner-install-a-validator-set",
-      "registry-c4-installs-parameter-46", "registry-c4-replaces-old-parameter-46",
-      "registry-first-checkpoint-installs-new-parameter", "registry-first-checkpoint-replaces-old-parameter",
-      "a-due-only-tick-tock-persists-the-prefix", "an-inactive-chain-tick-tock-asks-for-nothing",
-      "a-completed-vote-installs-nothing-under-governance", "a-terminal-proposal-takes-no-further-votes",
-      "a-terminal-proposal-survives-a-tick-tock-scan", "an-inactive-chain-installs-on-the-threshold",
-      "a-governance-operation-finalizes-a-completed-proposal", "a-proposal-still-in-voting-is-not-finalizable",
-      "an-unknown-proposal-is-not-finalizable", "a-refused-finalization-leaves-the-proposal",
-      "a-refused-finalization-never-accepts", "a-valid-finalization-reaches-accept-with-real-gas-credit"]),
+      "an-inactive-chain-tick-tock-asks-for-nothing",
+      "an-inactive-chain-without-a-checkpoint-is-accepted",
+      "an-owner-action-installs-an-ordinary-parameter",
+      "an-unknown-proposal-is-not-finalizable",
+      "registry-c4-installs-parameter-46",
+      "registry-c4-replaces-old-parameter-46",
+      "registry-first-checkpoint-installs-new-parameter",
+      "registry-first-checkpoint-replaces-old-parameter"
+     ]),
     ("checkpoint-restaged", "a-registry-update-stores-the-staged-checkpoint", STAGED,
      "    accept_message();\n", [], "() recv_external(slice in_msg) impure {"),
     ("checkpoint-restaged-on-finalization", "a-governance-operation-finalizes-a-completed-proposal",
@@ -189,14 +246,16 @@ MUTATIONS = [
     # the tick-tock runs, stores its data and commits -- which is why the case
     # asserts what parameter 46 holds afterwards rather than that the tick-tock
     # ran. Everything about the transaction looks the same either way.
-    ("ticktock-persists-the-prefix", "a-due-only-tick-tock-persists-the-prefix", TICKTOCK, "", [],
+    ("ticktock-persists-the-prefix", "a-due-only-tick-tock-persists-the-prefix", TICKTOCK, "",
+     ["an-active-chain-without-a-checkpoint-is-refused"],
      "() run_ticktock(int is_tock) impure {"),
     # Normal voting reaching its threshold must stop installing. Three separate
     # paths can undo that, and none of them is reachable from the others: the
     # vote that crosses the threshold, a later vote arriving at a proposal that
     # already did, and the tick-tock scan, which reaches the rotation reset with
     # no vote at all.
-    ("threshold-still-installs", "a-completed-vote-installs-nothing-under-governance", RV_THRESHOLD, "", [],
+    ("threshold-still-installs", "a-completed-vote-installs-nothing-under-governance", RV_THRESHOLD, "",
+     ["a-checkpointless-active-chain-still-registers-votes"],
      "(cell, cell, int) register_vote(vote_dict, phash, idx, weight) inline_ref {"),
     ("terminal-takes-more-votes", "a-terminal-proposal-takes-no-further-votes", RV_EARLY, "", [],
      "(cell, cell, int) register_vote(vote_dict, phash, idx, weight) inline_ref {"),

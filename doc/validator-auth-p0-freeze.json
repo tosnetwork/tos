@@ -29,7 +29,7 @@
     "doc/validator-auth-p0/transport.schema.json": "ddd45d7d3eb672559efde020af95a0e215146775ec82f8c6847b0f3ab8127584",
     "doc/validator-auth-p0/wire.tl": "a5e10c8e25887cb30440a26a0d8cbcef1473878aeb87438cca1a0f0bc6875c15",
     "doc/validator-auth-p0/wire.tlb": "923650bd74bbbf677a070d1d13d7c12d46944e8bffbfc3a72641093d20d3ce9d",
-    "doc/validator-auth-p0-native-insertions.json": "0c6ba314830c7524547af99781df9156f70c3473e97fbbc286c787ea40c8975d",
+    "doc/validator-auth-p0-native-insertions.json": "bf95901edf5a7078b3649eac2f513d19a694dc0f39cb3359356af28e76f6e23d",
     "test/validator-auth-p0/README.md": "a0b0950c4ac702f8be0f34919a50f8e7b13d5d14dda3bd2cc05b4c8ffee31321",
     "test/validator-auth-p0/api.py": "9ec50bf9e19345ef54a8894a3525eba1eed8fb10412b8a3fdc1ed1c5728fb815",
     "test/validator-auth-p0/archive_evidence.py": "22bb392a561068e0fb3905ce7e8df95bab463468cdfe3be884eff19b12481409",
@@ -341,6 +341,17 @@
       "change": "Amended the text of one already-declared manager insertion so that the session confirmation receives the masterchain state the validator set was computed from.",
       "scope": "The text of one insertion, and nothing else. No insertion is added or removed, every offset is unchanged because offsets are stated in original-file coordinates, and the contract of the original manager bytes is untouched. No wire, API, schema, operation, role, limit or profile value changes.",
       "reason": "The confirmation kept its own smaller copy of committee derivation's admission rules -- two of them, applied to the roster -- because it had no state to apply the rest to. Two statements of one admission rule become two rules the moment one of them moves, and the manager would then build a group whose roster derivation refuses while both sides kept passing their own tests. Derivation's state-only rules now live in one place that both callers ask, and the manager passes the state so it can ask.",
+      "activation": "Unchanged. No suite is allocated, no network is configured, and the version-16 activation gates and listed approvals remain independent thresholds that this change does not move."
+    },
+    {
+      "artifact": "doc/validator-auth-p0-native-insertions.json",
+      "previous_sha256": "0c6ba314830c7524547af99781df9156f70c3473e97fbbc286c787ea40c8975d",
+      "sha256": "bf95901edf5a7078b3649eac2f513d19a694dc0f39cb3359356af28e76f6e23d",
+      "authorization": "The owner ruled that a missing registry checkpoint must not be refused in the loader, that every path which could still produce authenticated state must refuse instead, and that a narrow recovery surface must remain; and that the whole group of validator-set parameters, not only the indices this contract moves between, must be closed to generic writers.",
+      "change": "Re-derived every declared insertion for the configuration contract, from fifteen to seventeen. The loader no longer refuses; it parses and publishes what it found. A named requirement refuses instead, and is asked by the elected-set installation, the registry update, the account's own tick-tock, an accepted proposal and a message signed by the configuration key. Two parameters are exempt, and only while the checkpoint is missing: deactivation and this contract's code, which install on the normal vote alone. The closed set of validator-set parameters widened from three indices to the whole group of six.",
+      "scope": "Declared additive insertions only. The contract still preserves every historical byte: the one original line this touches, which marks the loader impure, is declared as a seven-byte insertion rather than an amendment, so the production baseline is unchanged. No wire, API, schema, operation, role, limit or profile value changes, and the profile revision is unchanged.",
+      "reason": "Refusing in the loader mixed two different requirements. That an account with no checkpoint must not go on producing authenticated state is right; that it must also become unreadable and unrepairable is not, and it turns one bad state into a permanent one. Fail-closed means no new state the chain would treat as authenticated -- not that the fault cannot be observed or ended. The recovery surface is narrow and writes no checkpoint, because a recovery that seeded one would be the second initialization route this design exists to remove. And the parameter group widened because parameter 35 is read in preference to 34 by both the node and committee derivation, so closing 34 alone left the same fact reachable under its second spelling.",
+      "governance": "A chain whose registry context cannot open may still stop being an authenticated chain, or replace this contract's code, on the normal vote alone. That is a deliberate relaxation of the two-stage rule in exactly that state and in no other: the governing quorum the second stage consults is precisely what such a chain has no way to reach, so requiring it for the two operations that end the state would leave no way out of it at all.",
       "activation": "Unchanged. No suite is allocated, no network is configured, and the version-16 activation gates and listed approvals remain independent thresholds that this change does not move."
     }
   ],

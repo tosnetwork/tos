@@ -73,6 +73,107 @@ std::vector<Case> cases(const td::Ref<vm::Cell>& contract) {
                                      nullptr, {}, true);
          expect(outcome.exit == 0, "an-inactive-chain-without-a-checkpoint-is-accepted");
        }},
+      // An account whose registry context can never open is not an account that
+      // must die. These six cases are the whole of what such an account may and
+      // may not do: it can still be read, it can still be voted on, it may take
+      // exactly two decisions about itself, and every path that would produce
+      // state the chain treats as authenticated refuses.
+      //
+      // The refusal above is the tick-tock, which is a writer. What follows is
+      // everything else.
+      {"a-checkpointless-active-chain-still-registers-votes", [=] {
+         Host host;
+         auto proposal = config_proposal(17, vm::CellBuilder().store_long(0x5151, 16).finalize());
+         auto votes = vote_dictionary(proposal, voter_public(), 0, false);
+         auto id = proposal->get_hash().as_array();
+         vm::CellBuilder signed_part;
+         signed_part.store_long(0x566f7445, 32).store_long(0, 16);
+         signed_part.store_bytes(td::Slice(reinterpret_cast<const char*>(id.data()), 32));
+         auto payload = signed_part.finalize();
+         auto slice = vm::load_cell_slice(payload);
+         unsigned char bits[64] = {};
+         const auto length = slice.size() / 8;
+         expect(slice.fetch_bytes(td::MutableSlice(reinterpret_cast<char*>(bits), length)), "fixture-vote");
+         unsigned char signature[64] = {};
+         expect(crypto_sign_detached(signature, nullptr, bits, length, voter().secret) == 0, "fixture-vote");
+         vm::CellBuilder body;
+         body.store_long(0x566f7465, 32).store_long(0, 64);
+         body.store_bytes(td::Slice(reinterpret_cast<const char*>(signature), 64));
+         body.append_cellslice(vm::load_cell_slice_ref(payload));
+         auto run = run_contract(contract, body.finalize(), 1, 1000, &host, vm::validator_auth_capability,
+                                 vm::validator_auth_min_version, false, {}, 1000000, true, {}, voter_public(),
+                                 votes, 0, nullptr, true);
+         // The account was read. A loader that refused would have taken this
+         // down with it, and with it every get-method and any diagnosis of the
+         // fault.
+         expect(run.exit == 0, "a-checkpointless-active-chain-still-registers-votes");
+       }},
+      // But nothing it could vote through installs, except the two below.
+      {"a-checkpointless-active-chain-changes-no-ordinary-parameter", [=] {
+         Host host;
+         auto run = run_owner_action(contract, 17, vm::CellBuilder().store_long(0x5151, 16).finalize(), &host,
+                                     true, true);
+         expect(run.exit == 47, "a-checkpointless-active-chain-changes-no-ordinary-parameter");
+       }},
+      // The registry update is refused before the update is even read, so the
+      // instruction that would hand the account a checkpoint is never reached.
+      // A recovery that seeded one would be the second initialization route
+      // this design exists to remove, arrived at by the back door.
+      {"a-checkpointless-active-chain-applies-no-registry-update", [=] {
+         auto cells = registry_cells();
+         auto host = registry_host(cells);
+         auto run = run_contract(contract, registry_body(cells), 0, 1000, &host, vm::validator_auth_capability,
+                                 vm::validator_auth_min_version, true, {}, 1000000, true, {}, nullptr, {}, 0,
+                                 nullptr, true);
+         expect(run.exit == 47 && host.applies == 0 && host.checkpoints == 0,
+                "a-checkpointless-active-chain-applies-no-registry-update");
+       }},
+      {"a-checkpointless-active-chain-installs-no-elected-set", [=] {
+         Host host;
+         // A set that carries its bindings, so the refusal is the checkpoint's
+         // and not the one that refuses an unbound set.
+         auto body = vm::CellBuilder().store_long(0x4e565354, 32).store_long(7, 64)
+                         .store_ref(elected_set(5000, 6000)).store_ref(bindings_cell()).finalize();
+         auto run = run_contract(contract, body, elector_account, 1000, &host, vm::validator_auth_capability,
+                                 vm::validator_auth_min_version, false, {}, 1000000, true, {}, nullptr, {}, 0,
+                                 nullptr, true);
+         expect(run.exit == 47 && host.binds == 0,
+                "a-checkpointless-active-chain-installs-no-elected-set");
+       }},
+      // And the two decisions it may take. Deactivation first: a chain that
+      // stops being authenticated has no registry context to be missing.
+      {"a-checkpointless-active-chain-may-stop-being-authenticated", [=] {
+         Host host;
+         auto inactive = vm::CellBuilder().store_long(0xc4, 8)
+                             .store_long(vm::validator_auth_min_version, 32).store_long(0, 64).finalize();
+         auto run = run_owner_action(contract, 8, inactive, &host, true, true);
+         expect(run.exit == 0, "a-checkpointless-active-chain-may-stop-being-authenticated");
+         expect(same_cell(installed_parameter(run.data, 8), inactive),
+                "a-checkpointless-active-chain-may-stop-being-authenticated");
+         // And it did not acquire a checkpoint on the way out.
+         expect(stored_checkpoint(run.data).is_null(),
+                "a-checkpointless-active-chain-may-stop-being-authenticated");
+       }},
+      // Replacing this contract's code is the other. It installs on the normal
+      // vote alone, because the governing quorum such a chain would otherwise
+      // need is exactly what it has no way to consult.
+      {"a-checkpointless-active-chain-may-replace-its-code", [=] {
+         Host host;
+         auto upgrade = vm::CellBuilder().store_ref(vm::CellBuilder().store_long(0, 8).finalize()).finalize();
+         auto proposal = config_proposal(-1000, upgrade);
+         auto votes = vote_dictionary(proposal, voter_public(), 0, true);
+         auto run = cast_vote(contract, proposal, votes, &host, true, true);
+         expect(run.exit == 0, "a-checkpointless-active-chain-may-replace-its-code");
+         // The exit code says nothing here: a proposal marked terminal and a
+         // code upgrade both end at zero. What distinguishes them is whether
+         // the proposal was spent. Asserting the exit alone left this case
+         // passing with the carve-out removed, which the mutation for it
+         // reported as a survivor.
+         expect(stored_wins(run.committed_data, proposal) == -1,
+                "a-checkpointless-active-chain-may-replace-its-code");
+         expect(stored_checkpoint(run.committed_data).is_null(),
+                "a-checkpointless-active-chain-may-replace-its-code");
+       }},
       {"an-inactive-chain-tick-tock-asks-for-nothing", [=] {
          Host host;
          auto outcome = run_ticktock(contract, &host, 0, vm::validator_auth_min_version, false);
