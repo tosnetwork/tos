@@ -405,30 +405,42 @@ up: a real committee, a certificate every member signed, the real registry, the
 privileged host and the compiled configuration contract, with the account's own
 tick-tock after it.
 
-| masterchain signers | transaction | account tick-tock | together |
-| ---: | ---: | ---: | ---: |
-| 100 | 538,043 | 6,119 | 544,162 |
-| 400 | 2,240,393 | 6,119 | 2,246,512 |
+| masterchain signers | transaction, counted | account tick-tock, not counted |
+| ---: | ---: | ---: |
+| 100 | 538,043 | 6,119 |
+| 400 | 2,240,393 | 6,119 |
 
 The masterchain block gas limits are underload five hundred thousand, soft one
-million, hard two and a half million. Both fit under hard. Only the installed
-committee fits under soft, which is where a collator stops adding to a block: at
-the profile ceiling a governance operation is a transaction that closes the
-block it is in rather than one that shares it.
+million, hard two and a half million. Both transactions fit under hard. Only the
+installed committee fits under soft, which is where a collator stops adding to a
+block: at the profile ceiling a governance operation is a transaction that
+closes the block it is in rather than one that shares it.
+
+Only the transaction is measured against those limits, because only the
+transaction is counted toward them. A tick-tock enters the block's limits with
+its gas recorded as zero however much it used -- its logical time and size still
+count -- while an ordinary transaction contributes all of its gas unless it is
+one of the mint and recover special transactions, which a governance message is
+not. So the account's tick-tock is measured as execution and excluded from the
+comparison.
 
 The sum of the components is not the transaction. At a hundred signers the
 components come to four hundred and twenty-four thousand and the transaction
 costs five hundred and thirty-eight thousand; the difference is the contract, the
 instruction, and reading a certificate that is itself tens of kilobytes.
 
-What the block bound does not settle is which block. The elector's own mandatory
-tick-tock is measured beside its contract, and closing an election is far larger
-than this whole limit at either committee size -- three million three hundred
-and fifty-five thousand at a hundred members before this design exists, and
-three million seven hundred and fifty-five thousand with it. That cost is the
-elector's, not this design's, and it is reported with its control for exactly
-that reason; what this design adds to it is four hundred thousand at a hundred
-members and six hundred and fifty-three thousand at four hundred.
+The elector's own mandatory tick-tock is measured beside its contract, and
+closing an election is larger than this whole limit at either committee size --
+three million three hundred and fifty-five thousand at a hundred members before
+this design exists, and three million seven hundred and fifty-five thousand with
+it. None of that reaches the block's gas budget either, for the same reason, so
+a maximum governance transaction and an election close can occupy one block
+without the gas accounting objecting. What is left is what that accounting was
+never measuring: the wall clock of a validator executing both, and the size and
+logical-time limits, which tick-tocks do count toward. The cost is the
+elector's, not this design's, and it is reported with its unactivated control
+for exactly that reason; what this design adds is four hundred thousand at a
+hundred members and six hundred and fifty-three thousand at four hundred.
 
 Multiplying the work allowance by the price is not the bound either. That
 allowance is an operational ceiling -- a million entries and two hundred and

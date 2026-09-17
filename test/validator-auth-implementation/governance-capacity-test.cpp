@@ -21,11 +21,12 @@
 // raised to without a new profile: that is what the code has to survive.
 //
 // The ceiling it is measured against is the masterchain block gas limit the
-// zerostate installs, two and a half million. The credit an external message
-// runs on before it is accepted is ten thousand, and the registry action is
-// unsigned and accepts only after the update has applied -- so the whole
-// verification has to fit in that credit, and this reports where it stops when
-// it does not.
+// zerostate installs, two and a half million -- and only the transaction is
+// measured against it, because a tick-tock's gas is deliberately left out of
+// block accounting. The credit an external message runs on before it is
+// accepted is ten thousand, and the registry action is unsigned and accepts
+// only after the update has applied -- so the whole verification has to fit in
+// that credit, and this reports where it stops when it does not.
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -62,6 +63,15 @@ void report(bool condition, const std::string& name) {
 // Soft is where a collator stops adding transactions to a block; hard is what a
 // block may not exceed. A transaction below hard but above soft is one that can
 // be included and then leaves the block closed behind it.
+//
+// What counts toward those limits is not all execution. A tick-tock is entered
+// with `update_limits(status, with_gas = false)`, which adds zero gas however
+// much it actually used, while still counting its logical time and its size.
+// So the account's own tick-tock below is real work and is measured, and it is
+// not part of what the block's gas budget sees -- and neither is the elector's,
+// which is far larger. The governance message is an ordinary transaction and is
+// not one of the mint/recover special transactions the gas exclusion is for, so
+// its gas does count, all of it.
 constexpr long long block_gas_soft_limit = 1000000, block_gas_hard_limit = 2500000;
 // The credit an external message runs on before it is accepted.
 constexpr long long external_gas_credit = 10000;
@@ -189,6 +199,7 @@ int main(int argc, char** argv) {
         "the-installed-committee-fits-the-masterchain-block",
         "the-profile-ceiling-fits-the-masterchain-block",
         "only-the-installed-committee-leaves-the-block-open",
+        "the-account-tick-tock-is-work-the-block-gas-budget-does-not-see",
         "no-committee-size-fits-the-unaccepted-external-credit",
     };
     for (const auto* name : manifest)
@@ -200,10 +211,9 @@ int main(int argc, char** argv) {
     for (const auto* line : {"installed", "ceiling"}) {
       const auto& m = line[0] == 'i' ? installed : ceiling;
       const auto n = line[0] == 'i' ? installed_main_validators : profile_ceiling;
-      std::cerr << "MEASURE signers=" << n << " transaction_gas=" << m.transaction_gas
-                << " ticktock_gas=" << m.ticktock_gas << " block_total=" << m.transaction_gas + m.ticktock_gas
-                << " soft=" << block_gas_soft_limit << " hard=" << block_gas_hard_limit
-                << " verifications=" << m.verifications << " exit=" << m.exit
+      std::cerr << "MEASURE signers=" << n << " block_gas=" << m.transaction_gas
+                << " ticktock_gas_excluded=" << m.ticktock_gas << " soft=" << block_gas_soft_limit
+                << " hard=" << block_gas_hard_limit << " verifications=" << m.verifications << " exit=" << m.exit
                 << " committed=" << m.committed << '\n';
     }
 
@@ -214,25 +224,28 @@ int main(int argc, char** argv) {
                ceiling.applies == 1 && ceiling.verifications == profile_ceiling,
            "the-whole-transaction-verifies-every-signature-the-committee-supplied");
 
-    report(installed.transaction_gas + installed.ticktock_gas < block_gas_hard_limit,
+    report(installed.transaction_gas < block_gas_hard_limit,
            "the-installed-committee-fits-the-masterchain-block");
 
     // The one that could have gone either way. Parameter 16 may be raised to
     // this without a new profile, so a configuration a governance operation is
     // allowed to install must not produce a governance operation the
     // masterchain can no longer execute.
-    report(ceiling.transaction_gas + ceiling.ticktock_gas < block_gas_hard_limit,
-           "the-profile-ceiling-fits-the-masterchain-block");
+    report(ceiling.transaction_gas < block_gas_hard_limit, "the-profile-ceiling-fits-the-masterchain-block");
 
     // What fitting does not say. At the profile ceiling the transaction alone
     // passes the point where a collator stops adding to a block, so it is a
     // transaction that closes the block it is in rather than one that shares
-    // it. The elector's own mandatory tick-tock is measured beside its
-    // contract, where its state is built; at committee scale it is larger than
-    // this whole limit with or without this design, so which block a governance
-    // operation lands in is a question this bound does not answer.
+    // it.
     report(installed.transaction_gas < block_gas_soft_limit && ceiling.transaction_gas > block_gas_soft_limit,
            "only-the-installed-committee-leaves-the-block-open");
+
+    // And the tick-tock beside it is work the block's gas budget never sees.
+    // Measuring it is still worth doing -- it is execution a validator performs
+    // -- but adding it to the figures above would be comparing it against a
+    // limit it is deliberately excluded from.
+    report(installed.ticktock_gas > 0 && installed.ticktock_gas == ceiling.ticktock_gas,
+           "the-account-tick-tock-is-work-the-block-gas-budget-does-not-see");
 
     // And the separate question, which fitting the block does not answer. The
     // registry action is unsigned and accepts only after the update has

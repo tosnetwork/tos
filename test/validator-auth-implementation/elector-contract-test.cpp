@@ -191,6 +191,13 @@ int main(int argc, char** argv) {
     // masterchain committee of four hundred means an elected set of four
     // hundred, so the block that carries the largest certificate also runs the
     // largest election close.
+    //
+    // This is execution cost, not block-gas cost. A tick-tock is entered into
+    // the block's limits with its gas counted as zero, so however large this
+    // becomes it does not consume the budget an ordinary transaction is
+    // measured against. What it does consume is a validator's wall clock, and
+    // the legacy run beside each activated one is what separates the elector's
+    // own cost from this design's addition to it.
     guard("election-close-cost-is-reported-at-committee-scale", [&] {
       for (unsigned members : {100u, 400u}) {
         vm::Dictionary set(256);
