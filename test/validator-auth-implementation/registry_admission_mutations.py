@@ -46,8 +46,9 @@ MUTATIONS = [
      '  std::shared_ptr<WitnessedAnchorSource> owned_history(&borrowed, [](WitnessedAnchorSource*) {});',
      True, ["an-authenticated-witness-needs-no-archive", "only-the-witnessed-coordinate-is-served"], SOURCE),
     ("history-retained", "history-outlives-the-call-that-assembled-it",
-     '    , history_(std::move(history))',
-     '    , history_(std::shared_ptr<const FinalizedAnchorSource>(history.get(), [](const FinalizedAnchorSource*) {}))',
+     '      , history(std::move(history))',
+     '      , history(std::shared_ptr<const FinalizedAnchorSource>(history.get(),\n'
+     '                                                            [](const FinalizedAnchorSource*) {}))',
      True, ["an-authenticated-witness-needs-no-archive", "only-the-witnessed-coordinate-is-served"], ASSEMBLER),
 
     # The collator supplies these facts. Mutating the copy step simulates the
@@ -134,8 +135,9 @@ MUTATIONS = [
     # companions are declared rather than the rule relaxed: a mutation that
     # breaks something it did not name is a mutation nobody understood.
     ("authority-returned", "complete-input-produces-an-authority",
-     '  return NativeConfigTransaction::open(inputs.transaction, recognized.value().message.evidence,\n'
-     '                                       std::move(owned_history), uncharged);',
+     '  return NativeConfigTransaction::open_admitted(inputs.transaction, sequence, std::move(recognized.value().evidence),\n'
+     '                                                std::move(recognized.value().message.proposal),\n'
+     '                                                std::move(owned_history));',
      '  return Error{"registry-admission-not-registry"};',
      False, ["collator-gathering-produces-an-authority", "history-outlives-the-call-that-assembled-it",
              "an-authenticated-witness-needs-no-archive", "only-the-witnessed-coordinate-is-served",
