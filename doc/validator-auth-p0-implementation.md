@@ -453,15 +453,20 @@ applied first: moved after the unpacking it gates, every refusal is still a
 refusal and the work it exists to refuse has already been done. That is the
 mutation that holds it.
 
-Two things this does not do. The allowance is per expansion rather than across
-them, because a container's two expansions do not measure disjoint bytes -- an
-inline attachment is inside the authorizations blob and is declared by both --
-and summing them would refuse a four-hundred-signer message. And it bounds work
-per message, not per byte sent: a sender can still spend five hundred bytes for
-two microseconds of refusal, which is a much smaller ratio than before and is
-still a ratio. What closes that is a bound on how often an unauthenticated
-source may reach this at all, which is a question about the ingress path and not
-about this container.
+Why per expansion and not summed across them: a container's two expansions do
+not measure disjoint bytes. An inline attachment lives inside the authorizations
+blob and is declared by both, so summing them counts a four-hundred-signer
+message as a hundred and sixteen thousand bytes and refuses it. Removing that
+overlap means changing what the shared callback charges, which is what the
+virtual machine charges a transaction, so it is a consensus change and belongs
+to a tariff review rather than to a hardening patch.
+
+What this does not do is bound repetition. A sender can still spend five hundred
+bytes for two microseconds of refusal, as many times as they like. Three orders
+of magnitude better than the same five hundred bytes buying two thousand
+microseconds, and still a ratio. What an attacker can buy per attempt is now
+bounded; how many attempts they can buy is a question about the ingress path and
+not about this container, and it is open.
 
 That is a property of the order and of nothing else, which is why it is held by
 a mutation rather than by a comment: establishing the quorum before the
