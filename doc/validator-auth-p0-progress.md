@@ -83,7 +83,7 @@ Six production call paths now reach P0 behaviour:
 | Election binding | `crypto/block/mc-config.cpp` | Identity and stake id survive committee selection into the node's validator set |
 | Genesis writing | `crypto/fift/lib/Config.fif`, the genesis tool | A genesis can carry an authenticated registry and authenticated descriptors |
 | Committee derivation | the genesis rehearsal | The native path derives a committee from a genesis the real writers produced |
-| Session identity confirmation | `validator/manager.cpp`, as a declared insertion | The manager may not create a validator group under a session identity the authenticated producer does not confirm |
+| Session identity confirmation | `validator/manager.cpp`, as a declared insertion | The manager may not create a validator group under a session identity the authenticated producer does not confirm, nor on a state committee derivation would refuse |
 
 The last of these is a binding, not a replacement. The manager builds a session
 identity and the producer builds the same identity from the validator set: two
@@ -96,11 +96,33 @@ disagreement. It runs only on a chain that has activated P0, behind the same
 gate native committee derivation uses, and an unreadable state reports inactive
 so that enforcement cannot stop an otherwise healthy node.
 
+Agreement about an identity is not the whole of what the confirmation says. The
+identity is a hash of keys, addresses and weights, so it agrees whether or not
+the election that produced those members was admissible at all; a confirmation
+that said only "these two derivations agree" would let the manager hand
+consensus a roster committee derivation refuses, with each side passing its own
+tests. Derivation's rules divide into those decided from the masterchain state
+alone and those that need an anchor and an archive read. The first are now a
+single function that derivation and the confirmation both call, so the
+confirmation applies them in full rather than keeping a smaller copy: the
+capability and version gate, parameter 46 being mandatory and critical, the
+validator-count bounds, the election's own boundary in time, a real catchain
+selector, and an elected set in which every member names a registry identity
+and no identity, stake or consensus key appears twice.
+
+The registry rules stay out, and that is a statement rather than an omission:
+they need an independently established anchor this caller does not have. What
+the confirmation can say about the roster itself is that every member it will
+run carries a binding, which is derivation's own rule for the members it
+selects. What it cannot say is that the roster is the one this state elects --
+recomputing the selection needs the shard hashes a full configuration carries,
+and what the state yields here is a plain one.
+
 Everything else remains open. The named remaining work, grouped:
 
 | Group | Remaining |
 | --- | --- |
-| Session and consensus | Consensus call sites; the manager's archive reader and an independently established finalized head. Session birth and committee derivation now exist as a library boundary and are owned by the authenticated birth, but the derived committee still has no consumer in `validator/manager.cpp`: the insertion there confirms the session identity and does not yet run consensus against the derived committee |
+| Session and consensus | Consensus call sites; the manager's archive reader and an independently established finalized head. Session birth and committee derivation now exist as a library boundary and are owned by the authenticated birth, but the derived committee still has no consumer in `validator/manager.cpp`: the insertion there confirms the session identity and the state it would run on, and does not yet run consensus against the derived committee. The registry half of derivation's admission remains out of reach there for want of an established anchor, which is the same missing piece as the archive reader |
 | Contracts | Elector emission and session admission; configuration authorization and atomic root installation. Both contracts now carry declared P0 entry points, so the row no longer says they carry none: `config-code.fc` declares the VAUTH_APPLY and VAUTH_BIND instructions, persists the registry checkpoint, dispatches the registry action and finalizes a proposal that completed normal voting, and `elector-code.fc` carries the registry identity each elected member named through selection and refund. What is outstanding is emission and admission rather than any entry point at all: the elector work is binding an elected set, not emitting receipts |
 | Chain apply | Native block apply, contract data installation, action-phase commit wiring, installed chain root |
 | Serving | Remote HTTP/2 with mutual TLS, and installation of the served composition into the node. The node history adapter and the authenticated public composition now exist as library boundaries: the client methods are served behind a transport that supplies an authenticated principal, and that transport is a narrow interface so a mutual-TLS implementation substitutes for the local Unix one without touching the composition. Only the local Unix implementation exists today |

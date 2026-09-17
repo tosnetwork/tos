@@ -29,7 +29,7 @@
     "doc/validator-auth-p0/transport.schema.json": "ddd45d7d3eb672559efde020af95a0e215146775ec82f8c6847b0f3ab8127584",
     "doc/validator-auth-p0/wire.tl": "a5e10c8e25887cb30440a26a0d8cbcef1473878aeb87438cca1a0f0bc6875c15",
     "doc/validator-auth-p0/wire.tlb": "923650bd74bbbf677a070d1d13d7c12d46944e8bffbfc3a72641093d20d3ce9d",
-    "doc/validator-auth-p0-native-insertions.json": "ab3b3a7e794f90c2dd328dd3b6493d419e9a941c2ae75c60f8b7de973315bd3d",
+    "doc/validator-auth-p0-native-insertions.json": "0c6ba314830c7524547af99781df9156f70c3473e97fbbc286c787ea40c8975d",
     "test/validator-auth-p0/README.md": "a0b0950c4ac702f8be0f34919a50f8e7b13d5d14dda3bd2cc05b4c8ffee31321",
     "test/validator-auth-p0/api.py": "9ec50bf9e19345ef54a8894a3525eba1eed8fb10412b8a3fdc1ed1c5728fb815",
     "test/validator-auth-p0/archive_evidence.py": "22bb392a561068e0fb3905ce7e8df95bab463468cdfe3be884eff19b12481409",
@@ -332,6 +332,15 @@
       "change": "Gave this workflow one concurrency group per commit and stopped it cancelling a run in progress.",
       "scope": "Scheduling only. No step, guard, harness, input or artifact changes, and the workflow does exactly the same work on exactly the same files.",
       "reason": "This record names this workflow as the evidence that must pass at the commit carrying its exact artifact set. Grouped by pull request it cancelled the earlier commit's run whenever a later commit arrived, so the commit the record pointed at could be left with no run at all. Refusing to cancel a running job is not sufficient on its own: a group holds one pending run at a time and a third arrival evicts the one that is waiting, which is where a superseded commit's run sits.",
+      "activation": "Unchanged. No suite is allocated, no network is configured, and the version-16 activation gates and listed approvals remain independent thresholds that this change does not move."
+    },
+    {
+      "artifact": "doc/validator-auth-p0-native-insertions.json",
+      "previous_sha256": "ab3b3a7e794f90c2dd328dd3b6493d419e9a941c2ae75c60f8b7de973315bd3d",
+      "sha256": "0c6ba314830c7524547af99781df9156f70c3473e97fbbc286c787ea40c8975d",
+      "change": "Amended the text of one already-declared manager insertion so that the session confirmation receives the masterchain state the validator set was computed from.",
+      "scope": "The text of one insertion, and nothing else. No insertion is added or removed, every offset is unchanged because offsets are stated in original-file coordinates, and the contract of the original manager bytes is untouched. No wire, API, schema, operation, role, limit or profile value changes.",
+      "reason": "The confirmation kept its own smaller copy of committee derivation's admission rules -- two of them, applied to the roster -- because it had no state to apply the rest to. Two statements of one admission rule become two rules the moment one of them moves, and the manager would then build a group whose roster derivation refuses while both sides kept passing their own tests. Derivation's state-only rules now live in one place that both callers ask, and the manager passes the state so it can ask.",
       "activation": "Unchanged. No suite is allocated, no network is configured, and the version-16 activation gates and listed approvals remain independent thresholds that this change does not move."
     }
   ],

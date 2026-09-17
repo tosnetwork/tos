@@ -3099,8 +3099,10 @@ void ValidatorManagerImpl::update_shards() {
           tos::auth::Hash manager_identity{};
           auto identity_bytes = val_group_id.as_slice();
           std::copy(identity_bytes.ubegin(), identity_bytes.uend(), manager_identity.begin());
-          auto confirmed =
-              tos::auth::native_session_identity_confirms(val_set, shard, auth_inputs, manager_identity);
+          // The same state the set above was computed from, so what the
+          // confirmation admits is what this session would actually run under.
+          auto confirmed = tos::auth::native_session_identity_confirms(
+              last_masterchain_state_->root_cell(), val_set, shard, auth_inputs, manager_identity);
           if (!confirmed.ok() || !confirmed.value()) {
             LOG(ERROR) << "refusing to create validator group for " << shard.to_str()
                        << ": the authenticated session identity does not confirm this validator set; "

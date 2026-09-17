@@ -20,7 +20,10 @@ namespace tos::auth {
 //
 // Nothing here runs unless the chain has activated P0. The gate is deliberately
 // the same one native committee derivation uses, so a chain cannot be subject to
-// this refusal while native derivation would have admitted it.
+// this refusal while native derivation would have admitted it. The admission
+// rules are derivation's own for the same reason: applied from a copy here they
+// would be a second set of rules the moment one of them moved, and the manager
+// would build a group whose roster derivation refuses.
 
 // The manager copies a session id and an options hash into these fixed-size
 // fields byte for byte. That copy is exactly sized only because both sources are
@@ -44,9 +47,16 @@ struct ManagerSessionInputs {
   bool new_catchain_ids{};
 };
 
-// Confirms the manager's identity against the producer's. An error is a refusal
-// to proceed, never a silent pass: a caller that cannot establish agreement must
-// decline the session rather than run it unconfirmed.
-Result<bool> native_session_identity_confirms(td::Ref<block::ValidatorSet> validator_set, tos::ShardIdFull shard,
+// Confirms the manager's identity against the producer's, and confirms that the
+// state and the roster are ones committee derivation admits. An error is a
+// refusal to proceed, never a silent pass: a caller that cannot establish
+// agreement must decline the session rather than run it unconfirmed.
+//
+// The masterchain state is the one the manager built its set from. It is passed
+// rather than re-fetched so that what is admitted here is what the session will
+// actually run under, and so that the admission rules can be derivation's own
+// rather than a smaller set restated here.
+Result<bool> native_session_identity_confirms(td::Ref<vm::Cell> masterchain_state,
+                                              td::Ref<block::ValidatorSet> validator_set, tos::ShardIdFull shard,
                                               const ManagerSessionInputs&, const Hash& manager_identity);
 }  // namespace tos::auth

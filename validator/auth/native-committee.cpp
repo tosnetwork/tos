@@ -26,29 +26,21 @@ Result<std::vector<Key>> committee_identity_keys(const Identity& identity, const
   return keys;
 }
 
-Result<NativeCommittee> NativeCommittee::derive(td::Ref<vm::Cell> root, const Anchor& anchor, const ChainContext& chain,
-                                                tos::ShardIdFull shard, std::uint32_t catchain,
-                                                StateReadBudget budget) {
+Result<AdmittedState> admit_masterchain_state(td::Ref<vm::Cell> root) {
   try {
-    if (!shard.is_valid_ext() || tos::shard_pfx_len(shard.shard) > tos::max_shard_pfx_len ||
-        (shard.is_masterchain() && shard.shard != tos::shardIdAll))
-      return Error{"committee-shard"};
-    if (anchor.seqno_ == std::numeric_limits<std::uint32_t>::max() || anchor.root_ == Hash{} ||
-        anchor.file_ == Hash{} || root.is_null() || hash(root->get_hash().as_slice()) != anchor.state_)
-      return Error{"committee-anchor"};
-    if (chain.genesis_root == Hash{} || chain.genesis_file == Hash{} || chain.chain_domain == Hash{})
-      return Error{"chain-context"};
+    if (root.is_null())
+      return Error{"masterchain-state"};
     block::gen::ShardStateUnsplit::Record header;
     if (!tlb::unpack_cell(root, header))
       return Error{"masterchain-state"};
     block::ShardId source(header.shard_id);
-    if (header.global_id != chain.network || header.seq_no != anchor.seqno_ || source.workchain_id != -1 ||
-        source.shard_pfx_len != 0)
+    if (source.workchain_id != -1 || source.shard_pfx_len != 0)
       return Error{"state-context"};
     auto config = block::Config::extract_from_state(root, block::Config::needCapabilities);
     if (config.is_error())
       return Error{"native-config"};
-    const auto& cfg = *config.ok();
+    auto held = config.move_as_ok();
+    const auto& cfg = *held;
     if (cfg.get_global_version() < 16 || !(cfg.get_capabilities() & tos::capValidatorAuth))
       return Error{"committee-capability"};
     for (int index : {9, 10}) {
@@ -70,7 +62,8 @@ Result<NativeCommittee> NativeCommittee::derive(td::Ref<vm::Cell> root, const An
     auto election = block::Config::unpack_validator_set(election_cell);
     if (election.is_error())
       return Error{"native-election"};
-    const auto& elected = *election.ok();
+    auto held_election = election.move_as_ok();
+    const auto& elected = *held_election;
     if (elected.total < 1 || static_cast<unsigned>(elected.total) > count.max_validators || elected.main < 1 ||
         static_cast<unsigned>(elected.main) > count.max_main_validators || elected.utime_since > header.gen_utime ||
         header.gen_utime >= elected.utime_until)
@@ -80,11 +73,6 @@ Result<NativeCommittee> NativeCommittee::derive(td::Ref<vm::Cell> root, const An
     auto selector = cfg.get_config_param(28);
     if (selector.is_null() || !block::gen::t_CatchainConfig.validate_ref(selector))
       return Error{"committee-selector"};
-    auto registry = RegistryView::open(cfg.get_config_param(46), anchor.seqno_, budget);
-    if (!registry.ok())
-      return registry.error();
-    if (registry.value().chain_domain() != chain.chain_domain)
-      return Error{"chain-domain"};
     std::set<Hash> identities, stakes, network_keys;
     for (const auto& member : elected.list) {
       if (!member.auth_binding)
@@ -94,12 +82,60 @@ Result<NativeCommittee> NativeCommittee::derive(td::Ref<vm::Cell> root, const An
       if (!identities.insert(identity).second || !stakes.insert(stake).second ||
           !network_keys.insert(hash(member.pubkey.as_bits256().as_slice())).second)
         return Error{"election-duplicate"};
+    }
+    AdmittedState admitted;
+    admitted.config = std::move(held);
+    admitted.elected = std::move(held_election);
+    admitted.election_cell = std::move(election_cell);
+    admitted.consensus_keys = std::move(network_keys);
+    admitted.gen_utime = header.gen_utime;
+    admitted.network = header.global_id;
+    admitted.seqno = header.seq_no;
+    return admitted;
+  } catch (const vm::VmError&) {
+    return Error{"committee-cell"};
+  } catch (const vm::VmVirtError&) {
+    return Error{"committee-pruned"};
+  }
+}
+
+Result<NativeCommittee> NativeCommittee::derive(td::Ref<vm::Cell> root, const Anchor& anchor, const ChainContext& chain,
+                                                tos::ShardIdFull shard, std::uint32_t catchain,
+                                                StateReadBudget budget) {
+  try {
+    if (!shard.is_valid_ext() || tos::shard_pfx_len(shard.shard) > tos::max_shard_pfx_len ||
+        (shard.is_masterchain() && shard.shard != tos::shardIdAll))
+      return Error{"committee-shard"};
+    if (anchor.seqno_ == std::numeric_limits<std::uint32_t>::max() || anchor.root_ == Hash{} ||
+        anchor.file_ == Hash{} || root.is_null() || hash(root->get_hash().as_slice()) != anchor.state_)
+      return Error{"committee-anchor"};
+    if (chain.genesis_root == Hash{} || chain.genesis_file == Hash{} || chain.chain_domain == Hash{})
+      return Error{"chain-context"};
+    auto state = admit_masterchain_state(root);
+    if (!state.ok())
+      return state.error();
+    auto& admitted = state.value();
+    // What the anchor and the chain context add to what the state already says.
+    // The state's own shape is decided above, once, for every caller.
+    if (admitted.network != chain.network || admitted.seqno != anchor.seqno_)
+      return Error{"state-context"};
+    const auto& cfg = *admitted.config;
+    const auto& elected = *admitted.elected;
+    const auto& network_keys = admitted.consensus_keys;
+    auto registry = RegistryView::open(cfg.get_config_param(46), anchor.seqno_, budget);
+    if (!registry.ok())
+      return registry.error();
+    if (registry.value().chain_domain() != chain.chain_domain)
+      return Error{"chain-domain"};
+    for (const auto& member : elected.list) {
+      auto identity = hash(member.auth_binding->identity.as_slice());
+      auto stake = hash(member.auth_binding->stake_id.as_slice());
       auto found = registry.value().identity(identity);
       if (!found.ok() || found.value().stake_id_ != stake)
         return Error{"election-registry-binding"};
     }
-    auto selected = cfg.compute_validator_set(shard, elected, header.gen_utime, catchain);
-    auto election_hash = hash(election_cell->get_hash().as_slice());
+    auto selected = cfg.compute_validator_set(shard, elected, admitted.gen_utime, catchain);
+    auto election_hash = hash(admitted.election_cell->get_hash().as_slice());
     auto election_id = digest("election", election_hash);
     if (!election_id.ok())
       return election_id.error();

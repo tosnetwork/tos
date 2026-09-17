@@ -1,12 +1,41 @@
 #pragma once
+#include <memory>
 #include <set>
 
+#include "crypto/block/mc-config.h"
 #include "tos/tos-types.h"
 
 #include "context.h"
 #include "lifecycle.h"
 #include "state.h"
 namespace tos::auth {
+// What a masterchain state admits on its own, before any registry is opened.
+//
+// Derivation decides in three stages: what the state says, what the registry
+// says, and what the two say together. Only the first needs neither an anchor
+// nor an archive read, so a caller holding a state and nothing else -- the
+// manager, deciding whether to run a session -- can apply exactly these rules
+// instead of keeping a smaller set of its own. A smaller set is the failure
+// this exists to prevent: the manager would build a group whose roster
+// derivation refuses, hand it to consensus, and each side would keep passing
+// its own tests.
+//
+// Everything derivation goes on to use from the state is carried here, so the
+// state is read once and the two stages cannot end up reading different things.
+struct AdmittedState {
+  std::unique_ptr<block::Config> config;
+  std::shared_ptr<block::TotalValidatorSet> elected;
+  td::Ref<vm::Cell> election_cell;
+  // Every elected member's consensus key. Registry key selection refuses a key
+  // that appears here, so the set is part of what the state admits rather than
+  // something the next stage recomputes.
+  std::set<Hash> consensus_keys;
+  std::uint32_t gen_utime{};
+  std::int32_t network{};
+  std::uint32_t seqno{};
+};
+Result<AdmittedState> admit_masterchain_state(td::Ref<vm::Cell> masterchain_state);
+
 // The registry keys an identity authenticates with, and the one rule about them
 // that two callers both have to apply: none of them may be a key any elected
 // member uses for consensus.

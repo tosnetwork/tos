@@ -164,7 +164,7 @@ int main(int argc, char** argv) {
 
     auto matching = manager_identity(shard, selected, catchain, bits(inputs.options_hash), inputs.vertical_seqno,
                                      inputs.key_block_seqno, inputs.new_catchain_ids);
-    auto agreed = native_session_identity_confirms(validator_set, shard, inputs, matching);
+    auto agreed = native_session_identity_confirms(root, validator_set, shard, inputs, matching);
     if (!agreed.ok() || !agreed.value())
       bad("manager-identity-is-confirmed");
     ok("manager-identity-is-confirmed");
@@ -177,7 +177,7 @@ int main(int argc, char** argv) {
              {"different-vertical-seqno-is-refused", [&] { auto c = inputs; c.vertical_seqno = 3; return c; }()},
              {"different-catchain-form-is-refused",
               [&] { auto c = inputs; c.new_catchain_ids = true; c.key_block_seqno = 7; return c; }()}}) {
-      auto refused = native_session_identity_confirms(validator_set, shard, changed, matching);
+      auto refused = native_session_identity_confirms(root, validator_set, shard, changed, matching);
       if (!refused.ok() || refused.value())
         bad(label);
       ok(label);
@@ -187,18 +187,18 @@ int main(int argc, char** argv) {
     // one: that is the disagreement the binding exists to catch.
     auto foreign = manager_identity(shard, selected, catchain + 1, bits(inputs.options_hash), inputs.vertical_seqno,
                                     inputs.key_block_seqno, inputs.new_catchain_ids);
-    auto stale = native_session_identity_confirms(validator_set, shard, inputs, foreign);
+    auto stale = native_session_identity_confirms(root, validator_set, shard, inputs, foreign);
     if (!stale.ok() || stale.value())
       bad("foreign-identity-is-refused");
     ok("foreign-identity-is-refused");
 
     // A confirmation that cannot be established is an error, never a quiet yes.
-    auto empty = native_session_identity_confirms(validator_set, shard, inputs, Hash{});
+    auto empty = native_session_identity_confirms(root, validator_set, shard, inputs, Hash{});
     if (empty.ok())
       bad("zero-identity-is-an-error");
     ok("zero-identity-is-an-error");
 
-    auto absent = native_session_identity_confirms({}, shard, inputs, matching);
+    auto absent = native_session_identity_confirms(root, {}, shard, inputs, matching);
     if (absent.ok())
       bad("absent-validator-set-is-an-error");
     ok("absent-validator-set-is-an-error");
@@ -227,10 +227,29 @@ int main(int argc, char** argv) {
           manager_identity(shard, unbound_set->export_vector(), unbound_set->get_catchain_seqno(),
                            bits(inputs.options_hash), inputs.vertical_seqno, inputs.key_block_seqno,
                            inputs.new_catchain_ids);
-      auto refused = native_session_identity_confirms(unbound_set, shard, inputs, unbound_identity);
-      if (refused.ok())
+      auto refused = native_session_identity_confirms(unbound_root, unbound_set, shard, inputs, unbound_identity);
+      // Named, not merely refused. A negative case that accepts any error is
+      // satisfied by a fixture that never reached the rule under test, which is
+      // exactly what a refusal like this looks like from the outside.
+      if (refused.ok() || refused.error().code != "election-binding-required")
         bad("an-unbound-election-is-refused");
       ok("an-unbound-election-is-refused");
+
+      // The same roster, offered against a state that does admit. Every rule
+      // above is about the state, and reaches the roster only through it, so a
+      // roster that did not come from this state has to be refused on its own
+      // terms -- under the name derivation gives the same refusal for the
+      // members it selects.
+      //
+      // This is also the whole of what can be said here about that pairing. The
+      // confirmation cannot recompute the selection to prove the roster is this
+      // state's: doing so needs the shard hashes a full config carries and this
+      // caller holds a plain one. What it can require is that the roster is one
+      // derivation would build a committee from.
+      auto foreign_roster = native_session_identity_confirms(root, unbound_set, shard, inputs, unbound_identity);
+      if (foreign_roster.ok() || foreign_roster.error().code != "selected-binding-required")
+        bad("a-roster-from-another-state-is-refused");
+      ok("a-roster-from-another-state-is-refused");
     }
 
     // Two members naming one identity is refused for the same reason: a
@@ -251,10 +270,38 @@ int main(int argc, char** argv) {
           manager_identity(shard, shared_set->export_vector(), shared_set->get_catchain_seqno(),
                            bits(inputs.options_hash), inputs.vertical_seqno, inputs.key_block_seqno,
                            inputs.new_catchain_ids);
-      auto duplicated = native_session_identity_confirms(shared_set, shard, inputs, shared_identity);
-      if (duplicated.ok())
+      auto duplicated = native_session_identity_confirms(shared_root, shared_set, shard, inputs, shared_identity);
+      if (duplicated.ok() || duplicated.error().code != "election-duplicate")
         bad("a-duplicated-identity-is-refused");
       ok("a-duplicated-identity-is-refused");
+    }
+
+    // A rule the confirmation did not have until it took derivation's own. The
+    // ceiling on how many validators may be elected is decided from the state
+    // and not from the roster, so the identity -- a hash of keys, addresses and
+    // weights -- agrees exactly as it does for the accepted case above. Without
+    // the shared admission the manager would confirm a session on a chain
+    // derivation refuses outright, and consensus would receive the group.
+    {
+      vm::CellBuilder beyond;
+      beyond.store_long(401, 16).store_long(100, 16).store_long(1, 16);
+      auto beyond_root = replace_config(root, 16, beyond.finalize());
+      auto refused = native_session_identity_confirms(beyond_root, validator_set, shard, inputs, matching);
+      if (refused.ok() || refused.error().code != "validator-count")
+        bad("a-state-beyond-the-validator-ceiling-is-refused");
+      ok("a-state-beyond-the-validator-ceiling-is-refused");
+    }
+
+    // And the same state with the ceiling it actually has is confirmed, so the
+    // case above is about the ceiling rather than about replacing a parameter.
+    {
+      vm::CellBuilder within;
+      within.store_long(400, 16).store_long(100, 16).store_long(1, 16);
+      auto within_root = replace_config(root, 16, within.finalize());
+      auto agreed = native_session_identity_confirms(within_root, validator_set, shard, inputs, matching);
+      if (!agreed.ok() || !agreed.value())
+        bad("a-state-within-the-validator-ceiling-is-confirmed");
+      ok("a-state-within-the-validator-ceiling-is-confirmed");
     }
 
     if (argc == 2) {

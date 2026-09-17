@@ -8,7 +8,7 @@ MUTATIONS=[
  ('native-full-roster','mc-config','const auto& v = vset.list[i]; nodes.emplace_back(v.pubkey, v.weight, v.adnl_addr); nodes.back().auth_binding = v.auth_binding;','const auto& v = vset.list[i]; nodes.emplace_back(v.pubkey, v.weight, v.adnl_addr);'),
  ('descriptor-equality','descriptor-equality','if (auth_binding != other.auth_binding) return false;',''),
  ('state-root','native-committee','hash(root->get_hash().as_slice()) != anchor.state_','false'),
- ('network','native-committee','header.global_id != chain.network','false'),
+ ('network','native-committee','admitted.network != chain.network','false'),
  ('native-version','native-committee','cfg.get_global_version() < 16','false'),
  ('native-capability','native-committee','!(cfg.get_capabilities() & tos::capValidatorAuth)','false'),
  ('chain-domain','native-committee','registry.value().chain_domain() != chain.chain_domain','false'),

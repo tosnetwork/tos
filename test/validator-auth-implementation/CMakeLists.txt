@@ -815,6 +815,15 @@ add_executable(test-p0-manager-binding manager-binding-test.cpp)
 target_link_libraries(test-p0-manager-binding PRIVATE tos_validator_auth_native tos_block tl_api tl-utils keys)
 set_target_properties(test-p0-manager-binding PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 
+configure_file("${PROJECT_SOURCE_DIR}/validator/auth/manager-session-binding.cpp"
+               "${CMAKE_CURRENT_BINARY_DIR}/mutated-manager-session-binding.cpp" COPYONLY)
+add_executable(test-p0-manager-session-binding-mutant EXCLUDE_FROM_ALL manager-binding-test.cpp
+               "${CMAKE_CURRENT_BINARY_DIR}/mutated-manager-session-binding.cpp")
+target_include_directories(test-p0-manager-session-binding-mutant PRIVATE "${PROJECT_SOURCE_DIR}/validator/auth")
+target_link_libraries(test-p0-manager-session-binding-mutant
+                      PRIVATE tos_validator_auth_native tos_block tl_api tl-utils keys)
+set_target_properties(test-p0-manager-session-binding-mutant PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+
 add_executable(test-p0-archive-growth archive-growth-test.cpp)
 target_link_libraries(test-p0-archive-growth PRIVATE tos_validator_auth_native)
 set_target_properties(test-p0-archive-growth PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)

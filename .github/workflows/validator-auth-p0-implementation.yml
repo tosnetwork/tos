@@ -464,6 +464,13 @@ jobs:
           test -x build-p0/test/validator-auth-implementation/test-p0-manager-binding
           build-p0/test/validator-auth-implementation/test-p0-manager-binding \
             artifacts/manager-binding | tee artifacts/manager-binding.txt
+          # And prove each rule the confirmation applies can be observed being
+          # removed. The confirmation decides whether a validator group is
+          # created at all, so a rule nothing would miss is a rule that is not
+          # there.
+          python3 test/validator-auth-implementation/manager_binding_mutations.py \
+            --build build-p0 --out artifacts/manager-binding-mutations.json
+          git diff --exit-code
       - name: Bind session committee ownership to the authenticated birth
         if: matrix.guards == 'native'
         run: |
