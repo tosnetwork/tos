@@ -24,7 +24,12 @@ HOST = Path("validator/auth/native-election-binding-host.cpp")
 ASSEMBLER = Path("validator/auth/native-collation-authority.cpp")
 
 BIND_CALL = "        vset = vauth_bind_validators(vset, bindings);\n"
-BOUND_RETURN = "  ++bindings_;\n  return bound.value();"
+# The host keeps the bound set in a member before answering with it, so the
+# seam is the binder's own result rather than the return statement. Anchoring
+# on the call also means the arrived set is still available to hand back: by
+# the return it has been moved into the binder.
+BOUND_RETURN = ("  auto bound = bind_elected_validators(std::move(elected), declared.value(), "
+                "registry.value(), coordinate_);")
 AUTHORITY = "  return NativeElectionBindingTransaction::open(\n"
 
 MUTATIONS = [
@@ -36,7 +41,8 @@ MUTATIONS = [
     # The instruction answers with what it was handed. Every case that compares
     # the bound set against the one that arrived fails.
     ("instruction-returns-the-bound-set", "the-bound-set-is-not-the-set-that-arrived",
-     HOST, BOUND_RETURN, "  ++bindings_;\n  return elected_was;",
+     HOST, BOUND_RETURN,
+     "  auto arrived = elected;\n" + BOUND_RETURN + "\n  if (bound.ok())\n    bound = arrived;",
      ["the-installed-set-is-the-bound-one-not-the-one-that-arrived"]),
     # No authority is assembled for the message the elector actually sent.
     ("assembler-opens-a-transaction", "the-message-the-elector-sent-assembles-a-binding-authority",
