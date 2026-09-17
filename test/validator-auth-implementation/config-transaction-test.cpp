@@ -68,30 +68,47 @@ int main(int argc, char** argv) {
 
     std::filesystem::path input(argv[2]);
     auto f = fixture(input, 5);
-    // This suite used to build its state with owner_fixture::mcstate(), which is
-    // sufficient for refusal cases but deliberately has no elected validator
-    // set. The execution-clone case is a positive transaction open, so it must
-    // start from the same shared committee state shape used by committee and
-    // joined-commit tests. One elected member matches this owner fixture's one
-    // identity/stake pair; make() then adds the real configuration account while
-    // preserving Config34 and the catchain selector.
-    auto context = config_context_fixture::make(auth_fixture::chain_state(f.registry, 0, false, 1));
-    auto state = context.root;
+
+    // Keep the original refusal fixture exactly as it was. Its parent is at 99,
+    // so the coordinate regression cases exercise 98/99/101 rather than relying
+    // on unsigned wraparound at genesis. It intentionally has no elected set;
+    // none of those cases is meant to reach committee derivation.
+    auto state = mcstate(f);
     auto history = std::make_shared<History>();
-    history->anchor = context.head;
+    history->anchor = Anchor{99, hash(state), h(6001), hash(state)};
 
     NativeConfigTransactionInputs inputs;
     inputs.masterchain_state = state;
-    inputs.parent = context.head;
-    inputs.chain = context.chain;
+    inputs.parent = Anchor{99, hash(state), h(6001), hash(state)};
+    inputs.chain = f.chain;
     inputs.shard = {tos::masterchainId, tos::shardIdAll};
     inputs.catchain = 3;
-    inputs.inclusion = context.head.seqno_ + 1;
+    inputs.inclusion = 100;
     auto charge = [](std::size_t) -> Result<bool> { return true; };
-    // The block's prefix, opened once. Every case opens a transaction onto it
-    // rather than having the transaction derive its own from the parent state.
+    // The block's prefix, opened once. Every refusal case opens a transaction
+    // onto it rather than having the transaction derive its own from the parent.
     const auto sequence =
-        config_context_fixture::sequence_for(state, inputs.parent, inputs.chain, inputs.inclusion);
+        config_context_fixture::sequence_for(state, inputs.parent, f.chain, inputs.inclusion);
+
+    // The clone case is the first positive NativeConfigTransaction::open() in
+    // this file, so it needs a state that can actually derive a committee. Use
+    // the shared committee fixture rather than inventing another validator-set
+    // encoder here. One elected member matches this owner fixture's one
+    // identity/stake pair; make() adds the real configuration account while
+    // preserving Config34 and the catchain selector.
+    auto positive_context =
+        config_context_fixture::make(auth_fixture::chain_state(f.registry, 0, false, 1));
+    auto positive_history = std::make_shared<History>();
+    positive_history->anchor = positive_context.head;
+    NativeConfigTransactionInputs positive_inputs;
+    positive_inputs.masterchain_state = positive_context.root;
+    positive_inputs.parent = positive_context.head;
+    positive_inputs.chain = positive_context.chain;
+    positive_inputs.shard = {tos::masterchainId, tos::shardIdAll};
+    positive_inputs.catchain = 3;
+    positive_inputs.inclusion = positive_context.head.seqno_ + 1;
+    const auto positive_sequence = config_context_fixture::sequence_for(
+        positive_context.root, positive_inputs.parent, positive_inputs.chain, positive_inputs.inclusion);
 
     std::vector<Test> tests;
     auto add = [&](std::string name, std::function<void()> fn) { tests.emplace_back(std::move(name), std::move(fn)); };
@@ -146,11 +163,16 @@ int main(int argc, char** argv) {
         ++expansion_charges;
         return true;
       };
-      auto primary = NativeConfigTransaction::open(inputs, sequence, evidence_cell(), {}, history, counting_charge);
+      auto primary = NativeConfigTransaction::open(positive_inputs, positive_sequence, evidence_cell(), {},
+                                                   positive_history, counting_charge);
       require(primary.ok() && primary.value() != nullptr && expansion_charges != 0,
               "execution-clone-reuses-admitted-material-with-a-fresh-host");
       const auto charges_after_admission = expansion_charges;
 
+      // Model the real retry order: the first execution has already touched its
+      // host before the logging run asks for another one. The clone must start
+      // clean despite that mutation, and creating it must not charge/open the
+      // evidence a second time.
       vm::ValidatorAuthHost::Charge no_charge{[](long long) {}, [](std::uint16_t) {}};
       primary.value()->host().checkpoint(no_charge);
       require(primary.value()->host().checkpoints() == 1,
