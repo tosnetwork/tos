@@ -1,6 +1,6 @@
 # Validator authentication P0: wire/API profile v1
 
-**Status: design frozen, v1 revision 3; not deployed or activated.**
+**Status: design frozen, v1 revision 4; not deployed or activated.**
 This directory proposes the P0 contract missing from the signature inventory.
 Merging a specification does not enable a verifier, change genesis, or satisfy
 production P0 acceptance. The frozen decisions are authorized by the owner request to update and freeze

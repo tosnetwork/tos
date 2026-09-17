@@ -1,6 +1,6 @@
 # Decisions for the two P1 boundaries
 
-Status: **design frozen, revision 3** under the owner authorization recorded in
+Status: **design frozen, revision 4** under the owner authorization recorded in
 [the freeze record](../validator-auth-p0-freeze.json); not activated.
 This replaces the previous open alternatives with one implementable contract.
 

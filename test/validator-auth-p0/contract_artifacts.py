@@ -4,9 +4,11 @@ import hashlib
 import json
 from pathlib import Path
 import re
+import sys
 
 ROOT = Path(__file__).resolve().parents[2]
 DOC = ROOT/'doc/validator-auth-p0'
+FREEZE = ROOT/'doc/validator-auth-p0-freeze.json'
 START = '<!-- canonical-schema:begin -->'
 END = '<!-- canonical-schema:end -->'
 
@@ -75,6 +77,38 @@ def rendered(schema):
     return START+'\n```text\n'+'\n'.join(rows)+'\n```\n'+END
 
 
+def ledger_errors(artifacts, recorded, declared):
+    """The bytes, the profile and the frozen record must say one thing.
+
+    Two places record the digest of each normative artifact. They drifted once,
+    each passing its own lock while naming different bytes. This requires all
+    three to agree at once, so neither ledger can be updated alone.
+
+    The frozen record's amendment chain is an audit trail and is deliberately
+    not consulted here. A chain describing how an artifact reached its current
+    bytes must not become a way to authorise a profile that still commits to
+    the bytes it replaced: the profile is what the policy signs, so what it
+    names has to be what is on disk now.
+    """
+    errors = []
+    for name, digest in sorted(artifacts.items()):
+        if recorded.get(name) != digest:
+            errors.append('the profile does not name the current bytes of '+name)
+        path = 'doc/validator-auth-p0/'+name
+        if path not in declared:
+            errors.append('the frozen record does not carry '+name)
+        elif declared[path] != digest:
+            errors.append('the frozen record does not name the current bytes of '+name)
+    return errors
+
+
+def require_ledger_mutation_refused(name, artifacts, recorded, declared):
+    if ledger_errors(artifacts, recorded, declared):
+        print('MUTATION_KILLED '+name)
+        return []
+    return ['ledger mutation survived: '+name]
+
+
 def main(write=False):
     schema = inspect_schema()
     wire_path = DOC/'WIRE.md'; wire = wire_path.read_text()
@@ -93,7 +127,7 @@ def main(write=False):
                  if p.is_file() and p.name != 'profile.json'}
     profile_path = DOC/'profile.json'; profile = json.loads(profile_path.read_text())
     if write:
-        profile['revision'] = 3
+        profile['revision'] = 4
         profile['grammar'] = 'canonical-schema.json ordered field arrays; WIRE.md generated view'
         profile['operations']['cancel'] = 7
         profile['limits'].update(pending_per_identity=10, pending_per_role_profile=1, schedule_delay_mc_blocks=65536,
@@ -102,7 +136,26 @@ def main(write=False):
         profile_path.write_text(json.dumps(profile, indent=2)+'\n')
     elif profile.get('artifact_sha256') != artifacts:
         raise ValueError('profile artifact fingerprint drift')
-    print('PASS: canonical schema, generated view and profile artifact fingerprint')
+    if not write:
+        recorded = profile.get('artifact_sha256', {})
+        declared = json.loads(FREEZE.read_text())['artifact_sha256']
+        errors = ledger_errors(artifacts, recorded, declared)
+        # Prove the check speaks, on each ledger and on the bytes themselves.
+        # One moved digest anywhere has to be refused, or the agreement this
+        # asserts is an agreement nobody is checking.
+        victim = sorted(artifacts)[0]
+        elsewhere = '0'*64
+        errors += require_ledger_mutation_refused('profile-ledger-moved-alone', artifacts,
+                                                  {**recorded, victim: elsewhere}, declared)
+        errors += require_ledger_mutation_refused('frozen-record-moved-alone', artifacts, recorded,
+                                                  {**declared, 'doc/validator-auth-p0/'+victim: elsewhere})
+        errors += require_ledger_mutation_refused('artifact-moved-without-either-ledger',
+                                                  {**artifacts, victim: elsewhere}, recorded, declared)
+        if errors:
+            for error in errors:
+                print('FAIL: '+error, file=sys.stderr)
+            raise ValueError('profile and frozen record disagree about the current normative artifacts')
+    print('PASS: canonical schema, generated view, profile fingerprint and both ledgers agreeing')
 
 
 if __name__ == '__main__':

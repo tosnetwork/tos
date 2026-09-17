@@ -1,7 +1,7 @@
 {
   "status": "design-frozen-not-activated",
   "version": 1,
-  "revision": 3,
+  "revision": 4,
   "authorization": "Owner explicitly requested design modification and freeze in the current task; max_validators fixed at 400.",
   "source_base": "73fdaf5746e6b84cb0f71f11d67a0bf0e579e80a",
   "prior_review_head": "23413e56814fbe709795e71e14897acb21d4c145",
@@ -16,15 +16,15 @@
   "artifact_sha256": {
     ".github/workflows/validator-auth-p0-profile.yml": "1d068fb0564fde36018ca337dee900cf659e036ddefda58b9c7a861069d7c019",
     "doc/validator-auth-p0/ACTIVATION.md": "a74450d93f3883a48783410614baa57a0a1e9de4f48bc680df5779a3af00179c",
-    "doc/validator-auth-p0/API-CONTRACT.md": "08728fb9358e83086d48da51a1525be6c468d7932197d6e013f6e80c4e4e15a1",
+    "doc/validator-auth-p0/API-CONTRACT.md": "daf59d84f7caac217c6614bafc0f56b0a1afbe49f35f30f63cb30e608c14e14e",
     "doc/validator-auth-p0/CLIENTS.md": "4d9f3486f215b1a2217096f0be118f9f00d1ff5c89c4aae221b04c85f09357cb",
     "doc/validator-auth-p0/LIFECYCLE.md": "94e4ae0afd9b71b861706f17fdb7d2d2ce4d12eb79626bbe4e95f097c949eaa5",
-    "doc/validator-auth-p0/OPEN-DECISIONS.md": "d004066e54f096f008400b3306d8def3a360b9bc3006de2f86d7c2086cec7a2b",
-    "doc/validator-auth-p0/README.md": "9b1781e0f02f938270d5214cdb7ad5c0903ad603e0bd7f10fefd1f15dae1f839",
+    "doc/validator-auth-p0/OPEN-DECISIONS.md": "09f1454ab9773dd030658910a0895c5d579319156810b44c163e315281a2c0c8",
+    "doc/validator-auth-p0/README.md": "1abae4cdec2b54c4651d1e54d3c78a203efc7c78bfd068966ad43c9e182f591d",
     "doc/validator-auth-p0/SIGNER.md": "3d904e29ab690364dde1759f80b4f0dff4cca115a0f2e3ec7397db5cffe6ea5f",
     "doc/validator-auth-p0/WIRE.md": "57b82384298fc73019765ab07823f8f736c17f230f724e6bdd1170348b94ed48",
     "doc/validator-auth-p0/canonical-schema.json": "40b801c7e79dbd02355ccf8e8b76689338ad396d49e2d2ce7d5241a2e92717b5",
-    "doc/validator-auth-p0/profile.json": "9b118505ab9a3f68118dc50b51f2742b3d29ca81c6be215cf54b28f4de83b568",
+    "doc/validator-auth-p0/profile.json": "8032aa88fe7ec289f81b7419b1f5e1a7f3f7aeb4b117c94c0a62d710ddb84ef1",
     "doc/validator-auth-p0/signer-store.sql": "f89318b1d3334ae9c844cbe933425f765688613bf4181e7b312bfd0c7caa7e85",
     "doc/validator-auth-p0/transport.schema.json": "ddd45d7d3eb672559efde020af95a0e215146775ec82f8c6847b0f3ab8127584",
     "doc/validator-auth-p0/wire.tl": "a5e10c8e25887cb30440a26a0d8cbcef1473878aeb87438cca1a0f0bc6875c15",
@@ -37,11 +37,11 @@
     "test/validator-auth-p0/check_schema.py": "eb75c2ccc682df021d54a5dae79f9cd8a0ac3b246c5515c6c95db8617c606dde",
     "test/validator-auth-p0/codec.cpp": "d87bec46215699b09f861d5e0f86f8ac465c97314befdbf46ca3fbf592b556e2",
     "test/validator-auth-p0/codec.rs": "9ae980fa3dcf4636d94970a30984e9deeb5055563231aa03ded585de1a34aa17",
-    "test/validator-auth-p0/contract_artifacts.py": "39a05b92a6f3265a8eb8fc5b00db4a78ae2e3d9a97c9b56982b4645e67a89eb1",
+    "test/validator-auth-p0/contract_artifacts.py": "862c48c732682ff5603d3409b8ec69662f79284c87b8a1edb86fb3ea71bcf11d",
     "test/validator-auth-p0/differential.py": "364f71d86fb002669802102e43d9099734abff6e152abb9ebb57cd068383e39d",
     "test/validator-auth-p0/ed25519_oracle.py": "50a601b2c32b1b0589dcb08361050538c4a2501a67e84797085271d8c3ca9624",
-    "test/validator-auth-p0/freeze_record.py": "35fff38782f31260f78889ff86804760e671e7d1ded9a7d7dd587e2f2846c402",
-    "test/validator-auth-p0/golden.json.gz": "4e0b5e63e69a258734d02cdfe0c9a850642cf2c109ead04aaf2bcbd67c6aa860",
+    "test/validator-auth-p0/freeze_record.py": "89dd10e3c519695fd26f2503131276b09a94bf573437f84f3cd8db80e8783078",
+    "test/validator-auth-p0/golden.json.gz": "fe8a2e698a2e5306eb51febd72fcd9a4012be71f103129972534bce8bbd4f5bb",
     "test/validator-auth-p0/lifecycle-api-golden.json": "83823c819d61b1c116d6712fcd487daf9ce500f0482db46ee2e45e8464a3ba79",
     "test/validator-auth-p0/lifecycle.py": "167c7e9ebb16e272b1e30acc0b36a03f7179d408622589ef7080ba9bfdb97ecd",
     "test/validator-auth-p0/mutations.py": "269d075b4ebd2d3916ca4eb32221e24bab12c4aea948a2a9682d4f7ace9593f4",
@@ -212,6 +212,60 @@
       "scope": "Statement order inside one already-declared insertion. No original contract byte is affected, every insertion remains declared at its original offset, and a chain that has not activated reaches the original paths unaltered.",
       "reason": "The request is unsigned and replayable, and these conditions can refuse a finalization whose governance is valid -- the parameter moved since the vote, or it is mandatory, or it is critical and the vote was not. Accepting first made the configuration account pay again for every replay of a request that could never have succeeded. The successful path still reaches acceptance inside the masterchain credit; that is measured rather than assumed.",
       "activation": "Unchanged. No suite is allocated, no network is configured, and the version-16 activation gates and listed approvals remain independent thresholds that this does not satisfy."
+    },
+    {
+      "profile_revision": 4,
+      "previous_profile_revision": 3,
+      "corrects": [13, 15],
+      "change": "Reconciled the profile with the normative bytes it commits to, and moved the profile identity from v1 revision 3 to v1 revision 4. The earlier lifecycle amendments correctly changed the normative rules but incorrectly stated that no profile artifact moved. Because profile.json commits to the exact normative artifact bytes, those amendments require a profile revision and regenerated reference vectors. Revision 4 reconciles that commitment.",
+      "artifacts": [
+        {
+          "artifact": "doc/validator-auth-p0/README.md",
+          "previous_sha256": "9b1781e0f02f938270d5214cdb7ad5c0903ad603e0bd7f10fefd1f15dae1f839",
+          "sha256": "1abae4cdec2b54c4651d1e54d3c78a203efc7c78bfd068966ad43c9e182f591d",
+          "change": "Profile identity line now reads v1 revision 4."
+        },
+        {
+          "artifact": "doc/validator-auth-p0/API-CONTRACT.md",
+          "previous_sha256": "08728fb9358e83086d48da51a1525be6c468d7932197d6e013f6e80c4e4e15a1",
+          "sha256": "daf59d84f7caac217c6614bafc0f56b0a1afbe49f35f30f63cb30e608c14e14e",
+          "change": "Profile identity line now reads v1 revision 4."
+        },
+        {
+          "artifact": "doc/validator-auth-p0/OPEN-DECISIONS.md",
+          "previous_sha256": "d004066e54f096f008400b3306d8def3a360b9bc3006de2f86d7c2086cec7a2b",
+          "sha256": "09f1454ab9773dd030658910a0895c5d579319156810b44c163e315281a2c0c8",
+          "change": "Profile identity line now reads revision 4."
+        },
+        {
+          "artifact": "doc/validator-auth-p0/profile.json",
+          "previous_sha256": "9b118505ab9a3f68118dc50b51f2742b3d29ca81c6be215cf54b28f4de83b568",
+          "sha256": "8032aa88fe7ec289f81b7419b1f5e1a7f3f7aeb4b117c94c0a62d710ddb84ef1",
+          "change": "Revision 4, and the artifact digests of the four normative documents that moved: the lifecycle document under entries 13 and 15, and the three identity lines changed here."
+        },
+        {
+          "artifact": "test/validator-auth-p0/golden.json.gz",
+          "previous_sha256": "4e0b5e63e69a258734d02cdfe0c9a850642cf2c109ead04aaf2bcbd67c6aa860",
+          "sha256": "fe8a2e698a2e5306eb51febd72fcd9a4012be71f103129972534bce8bbd4f5bb",
+          "change": "Public reference vectors regenerated from the final profile bytes: the policy, the committee and the five certificate cases with their statements and envelopes."
+        },
+        {
+          "artifact": "test/validator-auth-p0/contract_artifacts.py",
+          "previous_sha256": "39a05b92a6f3265a8eb8fc5b00db4a78ae2e3d9a97c9b56982b4645e67a89eb1",
+          "sha256": "862c48c732682ff5603d3409b8ec69662f79284c87b8a1edb86fb3ea71bcf11d",
+          "change": "Writes revision 4, and now requires the current bytes, the profile ledger and this record's ledger to agree at once, with three mutations proving each half of that refuses alone."
+        },
+        {
+          "artifact": "test/validator-auth-p0/freeze_record.py",
+          "previous_sha256": "35fff38782f31260f78889ff86804760e671e7d1ded9a7d7dd587e2f2846c402",
+          "sha256": "89dd10e3c519695fd26f2503131276b09a94bf573437f84f3cd8db80e8783078",
+          "change": "Writes revision 4, so the tool cannot reconstruct the superseded revision."
+        }
+      ],
+      "scope": "Profile identity and the fingerprint it carries. No wire constructor, binary field, schema type, API encoding, operation number, role, limit or transport value is added, removed or renumbered; version stays 1. The normative lifecycle semantics that made this necessary were changed under entries 13 and 15 and are not changed again here.",
+      "reason": "One fact -- the digest of each normative artifact -- was written in two places, and an amendment updated one of them. The profile is what the policy signs, so a profile naming bytes that no longer exist would let two nodes hold one interface digest while reading different normative rules. Entries 13 and 15 are left exactly as written rather than corrected in place: they record what was believed at the time, and this entry records what was wrong with it.",
+      "regeneration": "The reference vectors are public C0 fixtures derived deterministically from the fixed public seeds already in the repository. No validator, operator, owner or other production authority signs them, and no network authority is exercised by regenerating them.",
+      "activation": "Unchanged. No suite is allocated, no network is configured, and the version-16 activation gates and listed approvals remain independent thresholds that this does not satisfy. The five approvals were pending against revision 3 and none was granted; they now stand against revision 4 and its interface digest."
     }
   ],
   "implementation_evidence_update": {
