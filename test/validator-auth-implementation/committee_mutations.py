@@ -18,7 +18,7 @@ MUTATIONS=[
  ('mandatory-config','native-committee','if (entry.is_null() || entry->size() != 0 || entry->size_refs() != 0) return Error{"config-mandatory"};',''),
  ('unsupported-selector','native-committee','if (selector.is_null() || !block::gen::t_CatchainConfig.validate_ref(selector)) return Error{"committee-selector"};',''),
  ('stake-substitution','native-committee','found.value().stake_id_ != stake','false'),
- ('network-key-reuse','native-committee','network_keys.contains(hash({reinterpret_cast<const char*>(key.public_key_.data()), key.public_key_.size()}))','false'),
+ ('network-key-reuse','native-committee','consensus_keys.contains(hash({reinterpret_cast<const char*>(key.public_key_.data()), key.public_key_.size()}))','false'),
  ('native-full-weight','native-committee','member.weight, hash(member.addr.as_slice())','1, hash(member.addr.as_slice())'),
  ('election-id-binding','native-committee','cfg.get_config_param(35, 34)','cfg.get_config_param(34)'),
  ('descriptor-zero-identity','mc-config','binding.identity.is_zero() ||',''),
