@@ -1,5 +1,6 @@
 """Regression tests for the development and validator-economics zerostates."""
 
+import datetime as dt
 import json
 import os
 import re
@@ -661,6 +662,19 @@ def _stated_genesis_utimes(sources: dict[str, str]) -> dict[str, int]:
     return stated
 
 
+def _rendered_genesis_jst(utime: int) -> str:
+    """How the genesis time reads in the comments, derived from the epoch."""
+    jst = dt.datetime.fromtimestamp(utime, dt.timezone(dt.timedelta(hours=9)))
+    return jst.strftime("%Y-%m-%d %H:%M:%S JST")
+
+
+def _stated_genesis_dates(sources: dict[str, str]) -> list[str]:
+    """Every date these files spell out in Japan time, wherever they do it."""
+    found: list[str] = []
+    for text in sources.values():
+        found.extend(re.findall(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} JST", text))
+    return found
+
 def _genesis_sources() -> dict[str, str]:
     return {name: (REPO / name).read_text() for name in GENESIS_UTIME_HOLDERS}
 
@@ -676,6 +690,13 @@ def test_every_holder_of_the_genesis_time_agrees():
     genesis = sources["crypto/smartcont/gen-zerostate.fif"]
     assert f"SOURCE_DATE_EPOCH must be {EXPECTED_MAINNET_GENESIS_UTIME}" in genesis
 
+    # The same fact is also written as prose, and prose drifts on its own. The
+    # numeric comparison above passed while two comments still named the
+    # superseded date, which is the whole failure repeating one spelling later.
+    stated_jst = _stated_genesis_dates(sources)
+    expected_jst = _rendered_genesis_jst(EXPECTED_MAINNET_GENESIS_UTIME)
+    assert set(stated_jst) == {expected_jst}, stated_jst
+
     # And prove this notices. One holder moved on its own must be refused,
     # including when it is written with the separators that hid it before.
     for name in GENESIS_UTIME_HOLDERS:
@@ -686,3 +707,11 @@ def test_every_holder_of_the_genesis_time_agrees():
             f"{EXPECTED_MAINNET_GENESIS_UTIME:_}", f"{EXPECTED_MAINNET_GENESIS_UTIME + 1:_}"
         )
         assert set(_stated_genesis_utimes(moved).values()) != {EXPECTED_MAINNET_GENESIS_UTIME}, name
+
+    # A comment left behind while the number moved is refused too.
+    for name, text in sources.items():
+        if expected_jst not in text:
+            continue
+        stale = dict(sources)
+        stale[name] = text.replace(expected_jst, "2026-09-15 10:00:00 JST", 1)
+        assert set(_stated_genesis_dates(stale)) != {expected_jst}, name
