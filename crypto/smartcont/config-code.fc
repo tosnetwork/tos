@@ -12,8 +12,13 @@ cell vauth_bind_validators(cell elected, cell bindings) impure asm "VAUTH_BIND";
 ;; capability, and the node reads the same parameter. Deciding from the shape of
 ;; the message instead would answer a different question -- whether the sender
 ;; chose to attach bindings -- and a sender does not decide activation.
-int validator_auth_active() inline {
-  var param = config_param(8);
+;; Whether a Config8 value leaves the chain authenticated.
+;;
+;; Asked of the parameter the chain is running under, and of one a change
+;; proposes to install. Those are the same question and this is the only place
+;; that answers it: a second reader would be a second opinion about what
+;; "active" means, and the two would agree until one of them moved.
+int config8_activates?(cell param) inline {
   if (cell_null?(param)) {
     return false;
   }
@@ -28,6 +33,10 @@ int validator_auth_active() inline {
   var capabilities = cs~load_uint(64);
   cs.end_parse();
   return (version >= 16) & ((capabilities & 1024) != 0);
+}
+
+int validator_auth_active() inline {
+  return config8_activates?(config_param(8));
 }
 
 ;; The three parameters that hold a validator set: previous, current and next.
@@ -66,6 +75,24 @@ int validator_set_param(int param_id) inline {
          (param_id == 36) |   ;; next validators
          (param_id == 37);    ;; next temporary validators
 }
+;; The parameter that names which account *is* the configuration contract.
+;;
+;; Changing it writes no validator set, and that is exactly why no rule about
+;; parameters 32 to 37 reaches it: collation follows it to another account and
+;; takes that account's whole dictionary. What the replacement must satisfy is
+;; shape, the mandatory parameters and the activation gates. Nothing there says
+;; the validator set it carries is one the registry decided, so a redirect
+;; installs every parameter at once with no per-parameter rule applied to any
+;; of them.
+;;
+;; Frozen while the design is active. Replacing this contract's logic does not
+;; need it: a code upgrade keeps the dictionary, and so keeps the validator set
+;; the registry decided. A live redirect would need a procedure that proves the
+;; new account's registry, checkpoint, sets, domain and revision together, and
+;; there is no such procedure to point at.
+int configuration_contract_param(int param_id) inline {
+  return param_id == 0;
+}
 cell vauth_registry_state() impure asm "VAUTH_STATE";
 
 ;; The registry checkpoint this account carries.
@@ -90,14 +117,27 @@ global cell registry_checkpoint;
   throw_if(47, validator_auth_active() & cell_null?(registry_checkpoint));
 }
 
-;; The two decisions such a chain is still allowed to take about itself:
+;; Whether this is a change such a chain is still allowed to make about itself:
 ;; stop being an authenticated chain, or replace this contract's code.
 ;;
-;; Neither writes a checkpoint, which is the whole point. A recovery that
-;; seeded one would be the second initialization route the design exists to
-;; remove, arrived at by the back door.
-int recovery_parameter(int param_id) inline {
-  return (param_id == 8) | (param_id == -1000);
+;; The question is about the value and not about the index. Parameter 8 is not
+;; a recovery by virtue of its number -- a Config8 that leaves the chain
+;; authenticated is an ordinary change to an active chain, and an active chain
+;; with no checkpoint may not make one. Reading only the index let such a value
+;; through both the checkpoint requirement and the governing quorum, which is
+;; every protection this state has.
+;;
+;; Neither recovery writes a checkpoint, which is the point. One that seeded
+;; one would be the second initialization route this design exists to remove,
+;; arrived at by the back door.
+int recovery_change?(int param_id, cell param_val) inline {
+  if (param_id == -1000) {
+    return true;
+  }
+  if (param_id == 8) {
+    return ~ config8_activates?(param_val);
+  }
+  return false;
 }
 
 builder store_checkpoint(builder b) inline {
@@ -229,8 +269,9 @@ _ perform_action(cfg_dict, public_key, action, cs) inline_ref {
     ;; than declined: this message is signed by a key that is meant to know
     ;; what it is doing, and silently discarding its instruction would report
     ;; success for a change that did not happen.
-    throw_if(48, validator_auth_active() & validator_set_param(param_index));
-    ifnot (recovery_parameter(param_index)) {
+    throw_if(48, validator_auth_active() &
+                 (validator_set_param(param_index) | configuration_contract_param(param_index)));
+    ifnot (recovery_change?(param_index, param_value)) {
       require_registry_checkpoint();
     }
     cfg_dict~idict_set_ref(32, param_index, param_value);
@@ -341,9 +382,16 @@ _ perform_action(cfg_dict, public_key, action, cs) inline_ref {
     ;; trying to set a critical parameter after a non-critical voting
     return (cfg_dict, 0, null());
   }
-  ifnot (recovery_parameter(param_id)) {
+  ifnot (recovery_change?(param_id, param_val)) {
     require_registry_checkpoint();
   }
+  ;; Parameter 0 is deliberately not named here. On an active chain this
+  ;; function is reached only from a governance finalization, and that caller
+  ;; refuses a zero parameter id before it commits anything -- the id doubles as
+  ;; the "conditions refused this proposal" answer, so parameter 0 can never be
+  ;; installed through it. A rule repeated here would change no outcome, and a
+  ;; guard that cannot fire stops protecting without saying so. What holds the
+  ;; accident in place is a case, not a second copy of the rule.
   if (validator_auth_active() & validator_set_param(param_id)) {
     ;; A proposal cannot install a validator set on an active chain: it carries
     ;; no bindings and reaches no registry. Declined rather than thrown, like
@@ -455,8 +503,8 @@ int needs_governance?(cell proposal) inline_ref {
   ifnot (cell_null?(registry_checkpoint)) {
     return true;
   }
-  var (param_id, _, _) = parse_config_proposal(proposal);
-  return ~ recovery_parameter(param_id);
+  var (param_id, param_val, _) = parse_config_proposal(proposal);
+  return ~ recovery_change?(param_id, param_val);
 }
 
 (cell, cell, int) register_vote(vote_dict, phash, idx, weight) inline_ref {

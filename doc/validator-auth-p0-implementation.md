@@ -105,48 +105,60 @@ deferred. None of them is on the path from a genesis to a finalized block.
 
 ### Named blockers
 
-A configuration dictionary can reach the masterchain state without passing any
-of the contract's rules, and that route is open. It is named here rather than
-closed because closing it is a decision about governance authority rather than
-about this design.
+A configuration dictionary could reach the masterchain state without passing
+any of the contract's rules. That route is now closed, by the narrowest of the
+three ways it could have been.
 
 Every generic writer of a validator set inside the configuration contract is
-now shut: an accepted proposal and a message signed by the configuration key
-both refuse parameters 32 through 37 while the design is active, each index
-named and each covered by a mutation. The dictionary the chain runs on is
-copied out of the configuration account's data by collation, and that data has
-exactly two writers, this contract's code and genesis. So within the contract
-the set is complete.
+shut: an accepted proposal and a message signed by the configuration key both
+refuse parameters 32 through 37 while the design is active, each index named
+and each covered by a mutation. The dictionary the chain runs on is copied out
+of the configuration account's data by collation, and that data has exactly two
+writers, this contract's code and genesis.
 
-Parameter 0 is the exception, and it is not a writer of a validator set; it
-names which account *is* the configuration contract. When it changes, collation
-fetches the new account's dictionary and takes it whole. What that dictionary
-must satisfy is `valid_config_data`: every parameter well formed, every
-mandatory parameter present, and the validator-authentication configuration
-gates -- version, capability, parameters 9 and 10 naming 46, the count bounds,
-and the registry root's own shape. None of that says the validator set in the
-new dictionary is one the registry decided.
+Parameter 0 was the exception. It writes no validator set; it names which
+account *is* the configuration contract, and when it changes, collation follows
+it and takes the new account's dictionary whole. What that dictionary must
+satisfy is `valid_config_data`: every parameter well formed, every mandatory
+parameter present, and the validator-authentication gates -- version,
+capability, parameters 9 and 10 naming 46, the count bounds, and the registry
+root's own shape. None of that says the validator set it carries is one the
+registry decided, so a redirect installed every parameter at once with no
+per-parameter rule applied to any of them. A governing quorum, or the
+configuration key where one still exists, could therefore install a set with
+bindings no registry issued -- at which point committee derivation refuses at
+the registry check while the manager's state-only admission admits the roster,
+which is the divergence closing 32 through 37 removed, reached another way.
 
-So a governing quorum, or the configuration key on a chain that still has one,
-can install a configuration account whose parameter 34 or 35 carries a set with
-bindings no registry ever issued. The result is not an unauthenticated chain
-that runs: committee derivation refuses such a set at the registry check, so no
-authenticated committee exists, while the manager's state-only admission would
-admit the roster. That is the same divergence between the two admissions that
-closing 32 through 37 removed, reached by a different route.
+Parameter 0 is now frozen while the design is active, and the two writers are
+closed differently because only one of them could reach it. The configuration
+key is refused outright, under its own predicate and its own mutation so that
+rule cannot be mistaken for the validator-set one beside it.
 
-Three things could close it, and they are not equivalent. The contract could
-refuse parameter 0 while the design is active, which is narrow and consistent
-with the rest but removes the ability to replace the configuration contract on
-a live authenticated chain. `valid_config_data` could require registry binding,
-which is the rule in the right place but needs registry access at collation
-time, where it has none today. Or it could be left as is on the ground that
-replacing the configuration contract is already total authority -- the same
-principals can replace this contract's code -- in which case it should be
-written down as an accepted power rather than rediscovered as a hole. That last
-reading is weaker than it sounds: a code upgrade keeps the existing dictionary
-and therefore the existing validator set, while a parameter 0 redirect replaces
-every parameter at once with no per-parameter rule applied to the new set.
+Governance could never reach it, and the reason is an accident rather than a
+rule: on an active chain a proposal installs only through a governance
+finalization, and that path refuses a zero parameter id, because the id doubles
+as the answer "the acceptance conditions refused this proposal". A proposal
+naming parameter 0 is therefore indistinguishable from a refused one. A guard
+repeated there changed no outcome -- its mutation killed nothing, which is how
+this was found -- and a guard that cannot fire stops protecting without saying
+so, so it was removed. What holds the accident in place is a case that fails if
+the sentinel stops conflating the two, or if the two-stage rule stops routing an
+active chain's proposals through finalization.
+
+Replacing this contract's logic does not need parameter 0: a code upgrade keeps
+the dictionary and so keeps the set the registry decided, while a redirect
+replaces the dictionary entire. The two were never the same authority, which is
+why the third option -- accepting the redirect as a power the same principals
+already hold -- was the weakest of the three and was not taken.
+
+Teaching `valid_config_data` to require registry binding remains the rule in
+the right place, and it is not written: that validator runs at collation time
+and has no registry to ask there. A live parameter 0 replacement would need a
+procedure proving the new account's registry, checkpoint, sets, domain and
+revision together. There is no such procedure, and until there is, the
+parameter stays frozen rather than guarded by a check that cannot see what it
+would have to check.
 
 Native governance gas was carried here as a blocker. At the committee this
 network installs it is not one, and the figures that made it look like one were
@@ -231,7 +243,7 @@ whose premise has moved.
 | Persistent native registry | Independent C++/Rust immutable cell dictionaries, validated derived indexes and per-operation native authority | 34 replay cases, eight checkpoint attacks, 80 real-owner authority cases and 36 compiled guards; bounded work over 501 historical identities | Global configuration operations and node installation. Zero-identity policy operations and contract-owned persistence are in place: the account's own tick-tock writes the prefix a block with no registry message produced, which is what keeps parameter 46 from naming transitions as due at a coordinate that has passed |
 | Native header witnesses | Independent C++/Rust fixed-surface Merkle proofs authenticated by native history; no archive/cache access; carried by the registry message and authenticated at consensus admission | 25 shared cases, independent proof generation, 27 compiled guards and full-dependency sanitizer parity | Concrete transaction host metering: admission authenticates a carried witness uncharged |
 | Privileged native VM host | C++/Rust VAUTH_STATE/VAUTH_APPLY/VAUTH_BIND, one purpose-specific host per transaction shape, including a state-only host for the account's own tick-tock, transaction-scoped ownership, no nested VM inheritance and explicit charge callback | 39 exact outcome/gas/host-call comparisons, host-purpose and allowance cases, compiled guards and full-dependency sanitizer parity | Deterministic native gas, which is measured rather than argued and is not a blocker at the committee this network installs. A certificate from the twenty-one-member masterchain committee reads 13,440 gas and verifies at the machine's own tariff, announced before each verification, for forty-four thousand more; at the four hundred the profile admits, 256,000 and one million five hundred and sixty thousand. The comparison against the 10,000 masterchain credit is withdrawn: the configuration account is special by address, so its compute phase begins at the special limit rather than at one acceptance would raise, and the credit was never what bounded this. What the four-hundred figures show is a ceiling on how far the committee could grow -- one operation at 89.6 per cent of the hard block limit -- not an obstacle in front of the chain being built. See the prose above for the end-to-end measurement. The authority is assembled per transaction by collation, validation and message-pool admission through one assembler, an update host refuses to bind and a binding host refuses to apply, and a refused operation spends the allowance it read rather than restoring it |
-| Native configuration account context | Independent C++/Rust binding of actual ShardAccounts code/data/library, Config0, owned config dictionary, complete checkpoint and parent committee | 22 shared cases, 24 compiled guards and full-dependency sanitizer parity | Native commit of the account the contract produced. The contract now carries its checkpoint through every store and replaces it from the state instruction on a registry update, so parameter 46 and the account's checkpoint commit together. A design-active chain missing either is refused rather than migrated, and the refusal is at the writers rather than at the loader: such an account can still be read, diagnosed and voted on, but every path that would produce state the chain treats as authenticated -- the elected set, the registry update, the account's own tick-tock, an ordinary parameter by proposal or by the configuration key -- refuses. The registry update refuses before the update is read, so the instruction that would hand the account a checkpoint is never reached; a recovery that seeded one would be the second initialization route this design removes. The recovery surface is exactly two parameters, deactivation and this contract's code, which install on the normal vote alone because the governing quorum such a chain would otherwise need is precisely what it cannot consult. First-update migration is deferred and is not a P0 path. Both halves are now exercised. The genesis rehearsal writes the configuration account through the genesis interpreter -- the configuration dictionary through the same `config!` word a real genesis uses, from the registry and descriptors the real writers produced -- and the account it leaves behind runs its own first tick-tock and commits, while the same account without the checkpoint is refused with the activation error. The canonical mainnet template still seeds neither, which is the other half of the same rule: it does not activate the design |
+| Native configuration account context | Independent C++/Rust binding of actual ShardAccounts code/data/library, Config0, owned config dictionary, complete checkpoint and parent committee | 22 shared cases, 24 compiled guards and full-dependency sanitizer parity | Native commit of the account the contract produced. The contract now carries its checkpoint through every store and replaces it from the state instruction on a registry update, so parameter 46 and the account's checkpoint commit together. A design-active chain missing either is refused rather than migrated, and the refusal is at the writers rather than at the loader: such an account can still be read, diagnosed and voted on, but every path that would produce state the chain treats as authenticated -- the elected set, the registry update, the account's own tick-tock, an ordinary parameter by proposal or by the configuration key -- refuses. The registry update refuses before the update is read, so the instruction that would hand the account a checkpoint is never reached; a recovery that seeded one would be the second initialization route this design removes. The recovery surface is exactly two changes -- a Config8 value that leaves the chain unauthenticated, and this contract's code -- which install on the normal vote alone because the governing quorum such a chain would otherwise need is precisely what it cannot consult. It is the value and not the parameter number that makes a change a recovery: a Config8 that leaves the chain authenticated is an ordinary change to an active chain, and an active chain with no checkpoint may not make one. First-update migration is deferred and is not a P0 path. Both halves are now exercised. The genesis rehearsal writes the configuration account through the genesis interpreter -- the configuration dictionary through the same `config!` word a real genesis uses, from the registry and descriptors the real writers produced -- and the account it leaves behind runs its own first tick-tock and commits, while the same account without the checkpoint is refused with the activation error. The canonical mainnet template still seeds neither, which is the other half of the same rule: it does not activate the design |
 | Native transaction evidence | Independent C++/Rust bounded transaction-contained VAA1, typed chunk dictionary, byte-work charging and authenticated owner header | 39 shared cases, 30 compiled guards, identical charge traces and full-dependency sanitizer parity | Concrete native VM pricing and transaction host invocation |
 | Native finalized history | Independent C++/Rust resolution of full anchors from authenticated OldMcBlocksInfo and original native block bytes; node-local finalized-head establishment binds final signature-set verification to exact block/state coordinates | 37 shared history cases plus focused finalized-head cases; exact file/root/context/new-state binding, final-vs-approval refusal and monotonic head advancement | Signature-set actor adapter and installation of the established head. No archive adapter remains outstanding: consensus admission authenticates the witness a message carries against the parent state's own history index and reads no archive, so the cache, resolution queue and reporting that fed one are deleted rather than pending |
 | Authenticated ordered identity apply | C++ and independent Rust compose native owner proofs, PoP and current administration with per-operation resulting state | 80 shared cases from real wallet approvals, same-block administration rotation, due/policy boundaries, exact native bytes and 22 compiled guards | Native elector/config transaction admission and installed chain root |

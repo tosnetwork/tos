@@ -56,7 +56,13 @@ REQUIREMENT = """  throw_if(47, validator_auth_active() & cell_null?(registry_ch
 # widens the recovery surface; narrowing it to nothing leaves the account
 # readable and permanently unrepairable, which is the state this whole
 # arrangement exists to avoid.
-RECOVERY = """  return (param_id == 8) | (param_id == -1000);
+RECOVERY = """  if (param_id == -1000) {
+    return true;
+  }
+  if (param_id == 8) {
+    return ~ config8_activates?(param_val);
+  }
+  return false;
 """
 
 # Whether the governing quorum is also required. Requiring it unconditionally
@@ -65,8 +71,8 @@ RECOVERY = """  return (param_id == 8) | (param_id == -1000);
 GOVERNANCE = """  ifnot (cell_null?(registry_checkpoint)) {
     return true;
   }
-  var (param_id, _, _) = parse_config_proposal(proposal);
-  return ~ recovery_parameter(param_id);
+  var (param_id, param_val, _) = parse_config_proposal(proposal);
+  return ~ recovery_change?(param_id, param_val);
 """
 
 STORE = "    .store_checkpoint()\n"
@@ -175,10 +181,26 @@ MUTATIONS = [
     # have to keep passing while the guard is gone, which is what says the
     # mutation removed a rule about activation rather than a rule about an index.
     ("validator-set-not-installable-by-proposal", "a-finalization-cannot-install-a-validator-set",
-     PROPOSAL_GUARD, "  if (0) {\n", ["no-generic-writer-installs-any-validator-set-index"]),
-    ("validator-set-not-installable-by-owner", "an-owner-action-cannot-install-a-validator-set",
-     "    throw_if(48, validator_auth_active() & validator_set_param(param_index));\n", "",
+     PROPOSAL_GUARD, "  if (0) {\n",
      ["no-generic-writer-installs-any-validator-set-index"]),
+    # The account that is the configuration contract, closed on its own. The
+    # whole-guard mutation above cannot distinguish this from the validator-set
+    # rule beside it, and the two are protected for different reasons.
+    ("configuration-contract-address-unprotected-by-owner",
+     "the-configuration-key-cannot-redirect-the-configuration-contract",
+     " | configuration_contract_param(param_index)", "", []),
+    # Parameter 8 as a recovery by its number rather than by its value. This is
+    # the defect the value check replaced: a Config8 that leaves the chain
+    # authenticated passing as a recovery, and taking the checkpoint
+    # requirement and the governing quorum with it.
+    ("recovery-ignores-the-value", "a-checkpointless-active-chain-refuses-a-config8-that-stays-authenticated",
+     "    return ~ config8_activates?(param_val);\n", "    return true;\n",
+     ["a-checkpointless-active-chain-votes-in-no-config8-that-stays-authenticated"]),
+    ("validator-set-not-installable-by-owner", "an-owner-action-cannot-install-a-validator-set",
+     """    throw_if(48, validator_auth_active() &
+                 (validator_set_param(param_index) | configuration_contract_param(param_index)));\n""", "",
+     ["no-generic-writer-installs-any-validator-set-index",
+      "the-configuration-key-cannot-redirect-the-configuration-contract"]),
     # The refusal that an active chain must not run without a checkpoint. It
     # had no mutation at all: the branch was added and the fixture that would
     # have reached it seeds one, so nothing exercised it. This removes the
@@ -187,23 +209,35 @@ MUTATIONS = [
     # question, so removing it removes all of them. The tick-tock is the first
     # case to say so; the rest are companions rather than a relaxed rule.
     ("active-chain-needs-a-checkpoint", "an-active-chain-without-a-checkpoint-is-refused",
-     REQUIREMENT, "", ["a-checkpointless-active-chain-changes-no-ordinary-parameter",
-                       "a-checkpointless-active-chain-applies-no-registry-update",
-                       "a-checkpointless-active-chain-installs-no-elected-set"]),
+     REQUIREMENT, "", [
+      "a-checkpointless-active-chain-applies-no-registry-update",
+      "a-checkpointless-active-chain-changes-no-ordinary-parameter",
+      "a-checkpointless-active-chain-installs-no-elected-set",
+      "a-checkpointless-active-chain-refuses-a-config8-that-stays-authenticated"
+     ]),
     # The recovery surface has to be exactly two parameters. Closing it leaves
     # a readable account nothing can repair.
     ("recovery-surface-closed", "a-checkpointless-active-chain-may-stop-being-authenticated",
-     RECOVERY, "  return false;\n", ["a-checkpointless-active-chain-may-replace-its-code"]),
+     RECOVERY, "  return false;\n", [
+      "a-checkpointless-active-chain-may-replace-its-code",
+      "a-checkpointless-active-chain-votes-in-a-config8-that-deactivates"
+     ]),
     # And opening it to every parameter would make the requirement above mean
     # nothing at all, so the case that refuses an ordinary parameter is what
     # notices.
     ("recovery-surface-opened", "a-checkpointless-active-chain-changes-no-ordinary-parameter",
-     RECOVERY, "  return true;\n", ["an-active-chain-without-a-checkpoint-is-refused"]),
+     RECOVERY, "  return true;\n", [
+      "a-checkpointless-active-chain-refuses-a-config8-that-stays-authenticated",
+      "a-checkpointless-active-chain-votes-in-no-config8-that-stays-authenticated",
+      "an-active-chain-without-a-checkpoint-is-refused"
+     ]),
     # Requiring the governing quorum unconditionally is the deadlock this
     # carve-out exists to avoid: the code upgrade can then never be voted
     # through on a chain whose registry context cannot open.
     ("governance-required-even-for-recovery", "a-checkpointless-active-chain-may-replace-its-code",
-     GOVERNANCE, "  return true;\n", []),
+     GOVERNANCE, "  return true;\n", [
+      "a-checkpointless-active-chain-votes-in-a-config8-that-deactivates"
+     ]),
     # An active chain installs its elected set through VAUTH_BIND, which writes
     # validator_auth#b3. Without this branch the voting path refuses that
     # descriptor for its shape, so the normal vote a configuration parameter
@@ -212,9 +246,13 @@ MUTATIONS = [
     # chain was active or not, which is what let that look correct.
     ("authenticated-descriptor-votes", "a-completed-vote-installs-nothing-under-governance",
      AUTHENTICATED_DESCRIPTOR, "",
-     ["a-terminal-proposal-takes-no-further-votes",
+     [
+      "a-checkpointless-active-chain-may-replace-its-code",
       "a-checkpointless-active-chain-still-registers-votes",
-      "a-checkpointless-active-chain-may-replace-its-code"]),
+      "a-checkpointless-active-chain-votes-in-a-config8-that-deactivates",
+      "a-checkpointless-active-chain-votes-in-no-config8-that-stays-authenticated",
+      "a-terminal-proposal-takes-no-further-votes"
+     ]),
     # The store lives in store_data rather than in the registry branch exactly
     # so a path with nothing to do with the registry carries it too. The vote
     # case is what proves that, and it is named here rather than the registry
@@ -233,7 +271,10 @@ MUTATIONS = [
       "a-checkpointless-active-chain-installs-no-elected-set",
       "a-checkpointless-active-chain-may-replace-its-code",
       "a-checkpointless-active-chain-may-stop-being-authenticated",
+      "a-checkpointless-active-chain-refuses-a-config8-that-stays-authenticated",
       "a-checkpointless-active-chain-still-registers-votes",
+      "a-checkpointless-active-chain-votes-in-a-config8-that-deactivates",
+      "a-checkpointless-active-chain-votes-in-no-config8-that-stays-authenticated",
       "a-due-only-tick-tock-persists-the-prefix",
       "a-finalization-cannot-install-a-validator-set",
       "a-governance-operation-finalizes-a-completed-proposal",
@@ -242,21 +283,26 @@ MUTATIONS = [
       "a-refused-finalization-never-accepts",
       "a-terminal-proposal-survives-a-tick-tock-scan",
       "a-valid-finalization-reaches-accept-with-real-gas-credit",
+      "a-vote-keeps-the-checkpoint",
       "active-set-with-bindings-is-installed-bound",
       "active-unbound-set-is-refused",
       "an-active-chain-without-a-checkpoint-is-refused",
       "an-inactive-chain-installs-on-the-threshold",
       "an-inactive-chain-keeps-every-validator-set-index-writable",
+      "an-inactive-chain-keeps-the-configuration-contract-address-writable",
       "an-inactive-chain-lets-the-owner-install-a-validator-set",
-      "no-generic-writer-installs-any-validator-set-index",
       "an-inactive-chain-tick-tock-asks-for-nothing",
       "an-inactive-chain-without-a-checkpoint-is-accepted",
       "an-owner-action-installs-an-ordinary-parameter",
       "an-unknown-proposal-is-not-finalizable",
+      "governance-cannot-redirect-the-configuration-contract-while-active",
+      "no-generic-writer-installs-any-validator-set-index",
+      "no-generic-writer-installs-the-configuration-contract-address",
       "registry-c4-installs-parameter-46",
       "registry-c4-replaces-old-parameter-46",
       "registry-first-checkpoint-installs-new-parameter",
-      "registry-first-checkpoint-replaces-old-parameter"
+      "registry-first-checkpoint-replaces-old-parameter",
+      "the-configuration-key-cannot-redirect-the-configuration-contract"
      ]),
     ("checkpoint-restaged", "a-registry-update-stores-the-staged-checkpoint", STAGED,
      "    accept_message();\n", [], "() recv_external(slice in_msg) impure {"),
@@ -275,7 +321,10 @@ MUTATIONS = [
     # already did, and the tick-tock scan, which reaches the rotation reset with
     # no vote at all.
     ("threshold-still-installs", "a-completed-vote-installs-nothing-under-governance", RV_THRESHOLD, "",
-     ["a-checkpointless-active-chain-still-registers-votes"],
+     [
+      "a-checkpointless-active-chain-still-registers-votes",
+      "a-checkpointless-active-chain-votes-in-no-config8-that-stays-authenticated"
+     ],
      "(cell, cell, int) register_vote(vote_dict, phash, idx, weight) inline_ref {"),
     ("terminal-takes-more-votes", "a-terminal-proposal-takes-no-further-votes", RV_EARLY, "", [],
      "(cell, cell, int) register_vote(vote_dict, phash, idx, weight) inline_ref {"),
@@ -304,7 +353,9 @@ MUTATIONS = [
     ("finalized-proposal-not-consumed", "a-governance-operation-finalizes-a-completed-proposal",
      PROPOSAL_CONSUMED, "", [], "() recv_external(slice in_msg) impure {"),
     ("sentinel-is-the-threshold", "a-completed-vote-installs-nothing-under-governance", SENTINEL,
-     "        .store_uint(wins, 8)\n", [],
+     "        .store_uint(wins, 8)\n", [
+      "a-checkpointless-active-chain-votes-in-no-config8-that-stays-authenticated"
+     ],
      "(cell, cell, int) register_vote(vote_dict, phash, idx, weight) inline_ref {"),
 ]
 
