@@ -134,7 +134,21 @@ struct Measured {
 // cost that scales with the committee is the same one; what operation 6 adds is
 // the contract-side acceptance of a proposal, which the contract suite measures
 // against its own fixture.
-Measured measure(const td::Ref<vm::Cell>& contract, unsigned records, long long limit, long long credit) {
+// What a sender who is not entitled to this operation can make the chain do
+// before it refuses them. Both shapes are free to produce: the committee's
+// identities, key references and epochs are public, and a certificate that was
+// once accepted stays on the chain for anyone to copy.
+struct Unentitled {
+  // Every field right and every signature real, but an operation bound to a
+  // policy that is no longer the one in force -- which is what a certificate
+  // copied off the chain becomes as soon as the thing it authorized happens.
+  bool stale = false;
+  // A certificate of the right shape whose signatures are not signatures.
+  bool forged = false;
+};
+
+Measured measure(const td::Ref<vm::Cell>& contract, unsigned records, long long limit, long long credit,
+                 Unentitled unentitled = {}) {
   auto f = gf::fixture(records);
 
   // A zero-identity policy activation, authorized by the same quorum and signed
@@ -147,10 +161,20 @@ Measured measure(const td::Ref<vm::Cell>& contract, unsigned records, long long 
   f.update.operation_ = 4;
   f.update.identity_ = Hash{};
   f.update.nonce_ = 1;
-  f.update.previous_ = f.current.current_policy();
+  f.update.previous_ = unentitled.stale ? auth_fixture::h(4242) : f.current.current_policy();
   f.update.effective_from_ = policy.effective_from_;
   f.update.new_policy_ = auth_fixture::value(tos::auth::encode(policy), "capacity-policy-bytes");
   gf::sign(f);
+  if (unentitled.forged) {
+    auto cert = auth_fixture::value(
+        tos::auth::decode<tos::auth::Certificate>(f.evidence.governance_[0].certificate_.inline_),
+        "capacity-forged-cert");
+    for (auto& record : cert.records_)
+      record.components_[0].signature_[0] ^= 1;
+    f.evidence.governance_[0].certificate_ = auth_fixture::value(
+        tos::auth::object_value(4, auth_fixture::value(tos::auth::encode(cert), "capacity-forged-bytes")),
+        "capacity-forged-carrier");
+  }
 
   // The block this transaction is in is the one after the registry's own
   // coordinate; a prefix cannot be opened on the block the parent already is.
@@ -229,6 +253,10 @@ int main(int argc, char** argv) {
         "a-post-quantum-committee-of-the-installed-size-fits-the-masterchain-block",
         "a-post-quantum-committee-past-the-measured-boundary-does-not-fit",
         "a-governance-operation-is-admitted-through-the-external-ingress",
+        "a-forged-certificate-is-refused-at-its-first-signature",
+        "a-stale-certificate-is-refused-before-any-verification",
+        "a-forged-certificate-is-refused-at-its-first-signature-at-scale",
+        "a-stale-certificate-is-refused-before-any-verification-at-scale",
     };
     for (const auto* name : manifest)
       std::cout << "MANIFEST " << name << '\n';
@@ -301,6 +329,43 @@ int main(int argc, char** argv) {
       report(admitted.accepted && admitted.committed &&
                  admitted.verifications == installed_main_validators,
              "a-governance-operation-is-admitted-through-the-external-ingress");
+    }
+
+    // And what the same ingress costs someone who is not entitled to use it.
+    // Neither shape is ever accepted, so neither sender is ever charged: an
+    // external message that does not reach acceptance is dropped, and this
+    // account pays no gas fee in any case. What is spent is a validator's.
+    for (const auto records : {installed_main_validators, profile_ceiling}) {
+      const auto forged = measure(contract, records, uncapped, external_gas_credit, {false, true});
+      const auto stale = measure(contract, records, uncapped, external_gas_credit, {true, false});
+      std::cerr << "MEASURE unentitled signers=" << records << " forged_gas=" << forged.transaction_gas
+                << " forged_verifications=" << forged.verifications << " stale_gas=" << stale.transaction_gas
+                << " stale_verifications=" << stale.verifications << " forged_committed=" << forged.committed
+                << " stale_committed=" << stale.committed << " forged_accepted=" << forged.accepted
+                << " stale_accepted=" << stale.accepted << '\n';
+
+      // A forged certificate is refused at its first signature. The shape that
+      // is cheapest to produce is the cheapest to refuse, however many records
+      // it claims: the loop stops at the one that does not verify.
+      report(!forged.committed && !forged.accepted && forged.verifications == 1,
+             records == installed_main_validators ? "a-forged-certificate-is-refused-at-its-first-signature"
+                                                  : "a-forged-certificate-is-refused-at-its-first-signature-at-scale");
+
+      // And a certificate copied off the chain is verified not at all, because
+      // what it no longer satisfies is checked before anything is verified.
+      // This is the ordering the path depends on: every condition an
+      // unentitled sender cannot meet is settled while the work is still
+      // cheap, and the signatures are looked at last.
+      //
+      // Both land under the credit an ordinary account would have had, which
+      // is the thing worth knowing. This account's limit is raised before it
+      // accepts and its gas is never charged as a fee, so nothing downstream
+      // would stop a sender from spending that limit; what stops them is that
+      // the work is refused before it is done.
+      report(!stale.committed && !stale.accepted && stale.verifications == 0 &&
+                 stale.transaction_gas < external_gas_credit && forged.transaction_gas < external_gas_credit,
+             records == installed_main_validators ? "a-stale-certificate-is-refused-before-any-verification"
+                                                  : "a-stale-certificate-is-refused-before-any-verification-at-scale");
     }
 
     // Everything the largest measured transaction spent that was not signature

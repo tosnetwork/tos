@@ -607,6 +607,12 @@ target_include_directories(test-p0-governance-capacity-mutant PRIVATE "${PROJECT
 target_link_libraries(test-p0-governance-capacity-mutant PRIVATE tos_validator_auth_native tos_crypto)
 set_target_properties(test-p0-governance-capacity-mutant PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 
+configure_file("${PROJECT_SOURCE_DIR}/validator/auth/lifecycle.cpp" "${CMAKE_CURRENT_BINARY_DIR}/governance-ordering-mutated.cpp" COPYONLY)
+add_executable(test-p0-governance-ordering-mutant EXCLUDE_FROM_ALL governance-capacity-test.cpp "${CMAKE_CURRENT_BINARY_DIR}/governance-ordering-mutated.cpp")
+target_include_directories(test-p0-governance-ordering-mutant PRIVATE "${PROJECT_SOURCE_DIR}/validator/auth")
+target_link_libraries(test-p0-governance-ordering-mutant PRIVATE tos_validator_auth_native tos_crypto)
+set_target_properties(test-p0-governance-ordering-mutant PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+
 add_executable(test-p0-signature-tariff signature-tariff-test.cpp)
 target_link_libraries(test-p0-signature-tariff PRIVATE tos_crypto)
 set_target_properties(test-p0-signature-tariff PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)

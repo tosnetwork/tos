@@ -384,8 +384,32 @@ committed.
 
 So the credit is not what bounds this path, and the question it was thought to
 answer -- whether a legitimate operation can be admitted at all -- is answered
-yes. What the same fact opens instead is that the work before acceptance is not
-bounded by ten thousand gas either, for anyone.
+yes. The same fact appears to open another: if the credit does not bound the
+work before acceptance for a legitimate sender, it does not bound it for anyone,
+and this account is never charged a gas fee either.
+
+What bounds it is the order. A zero-identity operation settles every condition
+an unentitled sender cannot meet -- the operation's shape, the compare-and-swap
+against the policy in force, the nonce, the effective height, the policy chain
+and its revision -- before the quorum is established, and the verification loop
+stops at the first signature that does not verify. Measured against the real
+contract at the installed committee and at the profile ceiling:
+
+| what was sent | gas | verifications |
+| --- | ---: | ---: |
+| a certificate copied off the chain, now bound to a policy that has moved | 2,664 / 3,064 | 0 |
+| a certificate of the right shape with signatures that are not signatures | 2,664 / 3,064 | 1 |
+
+Neither is accepted and neither is committed, and both cost less than the ten
+thousand of credit an ordinary account would have had -- so the path is not a
+way to spend a validator's work for free, despite being a path on which work is
+never charged for.
+
+That is a property of the order and of nothing else, which is why it is held by
+a mutation rather than by a comment: establishing the quorum before the
+compare-and-swap leaves every refusal exactly as it was, refused for the same
+reason, and costs a full verification the sender never paid for. Moving it there
+was watched to turn the stale-certificate case red.
 
 It cost seven entries a record until the identity stopped being revalidated for
 every signer. The state is validated in full when it is opened, every key

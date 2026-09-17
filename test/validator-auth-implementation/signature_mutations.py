@@ -10,7 +10,31 @@ import json
 import subprocess
 from pathlib import Path
 
-from context_mutations import checked, mutate
+from context_mutations import checked, mutate, validate
+from mutation_support import replace_once
+
+
+def mutate_together(path, edits, run):
+    """Apply several edits as one mutation.
+
+    Moving a call is two edits -- put it where it should not be, take it from
+    where it was -- and neither alone is the thing being tested. Applied one at
+    a time the first is a duplicated verification, which a different case
+    catches for a different reason."""
+    original = path.read_text()
+    validate(run())
+    guard, label = edits[0][0], edits[0][1]
+    try:
+        text = original
+        for _, _, before, after in edits:
+            text = replace_once(text, before, after)
+        path.write_text(text)
+        validate(run(label), label)
+        print('KILLED:', guard, flush=True)
+    finally:
+        path.write_text(original)
+        validate(run())
+    return [dict(guard=guard, assertion=label, compiled=True, assertion_failed=True)]
 
 # Guard name, failing case, original production expression, replacement.
 #
@@ -40,6 +64,33 @@ CAPACITY = [
      'if (meter)\n      (*meter)(p.key->suite());\n', ''),
 ]
 
+# The order, which is what decides whether an unentitled sender can spend a
+# validator's work. Every condition such a sender cannot meet is settled while
+# the work is still cheap, and the signatures are looked at last. Verifying
+# first costs nothing that any test notices -- the operation is still refused,
+# and refused for the same reason -- except that refusing it now costs a full
+# verification the sender never paid for.
+ORDERING = [
+    # The quorum established first and the conditions checked after it, rather
+    # than the other way round. Moved, not duplicated: a second verification
+    # would be caught by the count instead, which is a different property.
+    ('verification-before-the-cheap-checks', 'a-stale-certificate-is-refused-before-any-verification',
+     '  if (update.previous_ != current.current_policy())\n'
+     '    return Error{"global-predecessor"};\n',
+     '  auto anchor = authority.governance(update, evidence, current, inclusion);\n'
+     '  if (!anchor.ok())\n'
+     '    return anchor.error();\n'
+     '  if (update.previous_ != current.current_policy())\n'
+     '    return Error{"global-predecessor"};\n'),
+    ('verification-moved-from-its-place', 'a-stale-certificate-is-refused-before-any-verification',
+     '  // The quorum, and the anchor it was established against. The activation is\n'
+     '  // stamped with what came back rather than with a value chosen here.\n'
+     '  auto anchor = authority.governance(update, evidence, current, inclusion);\n'
+     '  if (!anchor.ok())\n'
+     '    return anchor.error();\n',
+     ''),
+]
+
 # The price, in the machine that publishes it.
 TARIFF = [
     ('classical-tariff', 'verification-past-the-free-allowance-pays-the-machine-tariff',
@@ -65,6 +116,8 @@ def main(args):
     if args.contract:
         report += mutate(folder / 'signature-verify-mutated.cpp', CAPACITY,
                          runner('test-p0-governance-capacity-mutant', [str(args.contract.resolve())]))
+        report += mutate_together(folder / 'governance-ordering-mutated.cpp', ORDERING,
+                                  runner('test-p0-governance-ordering-mutant', [str(args.contract.resolve())]))
     report += mutate(folder / 'signature-tariff-mutated.cpp', TARIFF, runner('test-p0-signature-tariff-mutant'))
     args.out.write_text(json.dumps(dict(signature_mutations=report, restored_baselines=True), indent=2) + '\n')
 
