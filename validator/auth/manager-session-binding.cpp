@@ -1,3 +1,5 @@
+#include <set>
+
 #include "block/mc-config.h"
 
 #include "manager-session-binding.h"
@@ -39,9 +41,20 @@ Result<bool> native_session_identity_confirms(td::Ref<block::ValidatorSet> valid
   // it. Checked here rather than at the call site: the caller is a declared
   // insertion into a frozen file, and this keeps what the confirmation means
   // in one place.
+  std::set<td::Bits256> identities, stakes, consensus_keys;
   for (const auto& member : validator_set->export_vector()) {
     if (!member.auth_binding)
       return Error{"manager-session-election-binding"};
+    // Derivation refuses a set that names one identity, one stake or one
+    // consensus key twice, because a committee cannot say which member a
+    // duplicate is. These are the rules it applies to the member list alone,
+    // so they can be applied here; the ones that consult the registry cannot,
+    // because that needs an independently established anchor this caller does
+    // not yet have.
+    if (!identities.insert(member.auth_binding->identity).second ||
+        !stakes.insert(member.auth_binding->stake_id).second ||
+        !consensus_keys.insert(member.key.as_bits256()).second)
+      return Error{"manager-session-election-duplicate"};
   }
   NativeSessionIdInput input;
   input.native_options_hash = inputs.options_hash;

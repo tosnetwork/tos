@@ -75,7 +75,7 @@ Hash manager_identity(tos::ShardIdFull shard, const std::vector<tos::ValidatorDe
 // authenticated path would never have admitted, so a fixture built from one
 // would be describing a chain that cannot exist -- and the confirmation this
 // file exercises refuses it for exactly that reason.
-td::Ref<vm::Cell> election(unsigned count = 4, bool bound = true) {
+td::Ref<vm::Cell> election(unsigned count = 4, bool bound = true, bool shared = false) {
   vm::Dictionary list(16);
   std::uint64_t weight = 0;
   for (unsigned i = 1; i <= count; ++i) {
@@ -90,9 +90,12 @@ td::Ref<vm::Cell> election(unsigned count = 4, bool bound = true) {
     if (bound) {
       // validator_auth_binding$_ identity:bits256 stake_id:bits256. Both are
       // refused when zero, so the fixture names distinct non-zero values.
+      // `shared` makes every member name the first member's identity and
+      // stake, which is what a set derivation refuses as a duplicate.
+      const unsigned named = shared ? 1 : i;
       vm::CellBuilder binding;
-      binding.store_bytes(td::Slice(reinterpret_cast<const char*>(h(30000 + i).data()), 32))
-          .store_bytes(td::Slice(reinterpret_cast<const char*>(h(40000 + i).data()), 32));
+      binding.store_bytes(td::Slice(reinterpret_cast<const char*>(h(30000 + named).data()), 32))
+          .store_bytes(td::Slice(reinterpret_cast<const char*>(h(40000 + named).data()), 32));
       cell.store_ref(binding.finalize());
     }
     td::BitArray<16> index(i - 1);
@@ -228,6 +231,30 @@ int main(int argc, char** argv) {
       if (refused.ok())
         bad("an-unbound-election-is-refused");
       ok("an-unbound-election-is-refused");
+    }
+
+    // Two members naming one identity is refused for the same reason: a
+    // committee cannot say which member a duplicate is, so derivation refuses
+    // it, and a roster consensus runs under must be one derivation admits.
+    {
+      auto shared_root = replace_config(replace_config(masterchain(registry, 0), 34, election(4, true, true)), 28,
+                                        catchain_selector());
+      auto shared_config = block::ConfigInfo::extract_config(
+          shared_root, tos::BlockIdExt{tos::BlockId{tos::masterchainId, tos::shardIdAll, 0}},
+          block::ConfigInfo::needValidatorSet | block::ConfigInfo::needCapabilities);
+      check(shared_config.is_ok(), "fixture-shared-config");
+      block::ValidatorSetCompute shared_compute;
+      check(shared_compute.init(shared_config.ok().get()).is_ok(), "fixture-shared-compute");
+      auto shared_set = shared_compute.get_validator_set(shard, shared_config.ok()->utime, 0);
+      check(shared_set.not_null(), "fixture-shared-validator-set");
+      auto shared_identity =
+          manager_identity(shard, shared_set->export_vector(), shared_set->get_catchain_seqno(),
+                           bits(inputs.options_hash), inputs.vertical_seqno, inputs.key_block_seqno,
+                           inputs.new_catchain_ids);
+      auto duplicated = native_session_identity_confirms(shared_set, shard, inputs, shared_identity);
+      if (duplicated.ok())
+        bad("a-duplicated-identity-is-refused");
+      ok("a-duplicated-identity-is-refused");
     }
 
     if (argc == 2) {
