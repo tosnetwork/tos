@@ -54,6 +54,20 @@ constexpr std::uint64_t per_entry = 64, per_byte = 1;
 // installs it for the masterchain.
 constexpr std::uint64_t network_credit = 10000;
 
+// Two different ceilings, and they answer two different questions.
+//
+// The profile admits four hundred signer records and the registry refuses the
+// four hundred and first, so four hundred is what this code must survive -- and
+// it stays reachable, because the validator counts are a configuration
+// parameter a governance operation may raise up to that same bound.
+//
+// What the network as configured actually presents is smaller. Governance is
+// signed by the masterchain committee, and the masterchain subset is
+// `max_main_validators`, which the zerostate installs as one hundred. So the
+// operation a running chain has to carry today is a hundred records, and four
+// hundred is the ceiling it could be raised to without a new profile.
+constexpr unsigned profile_ceiling = 400, installed_main_validators = 100;
+
 struct Cost {
   std::uint64_t gas = 0;
   std::uint64_t entries = 0, bytes = 0;
@@ -102,27 +116,33 @@ int main() {
     for (const auto* name : manifest)
       std::cout << "MANIFEST " << name << '\n';
 
-    const auto small = measure(8), medium = measure(64), largest = measure(400);
+    const auto small = measure(8), medium = measure(64), installed = measure(installed_main_validators),
+               largest = measure(profile_ceiling);
     std::cerr << "MEASURE records=8 gas=" << small.gas << " entries=" << small.entries << " bytes=" << small.bytes
               << '\n';
     std::cerr << "MEASURE records=64 gas=" << medium.gas << " entries=" << medium.entries << " bytes="
               << medium.bytes << '\n';
-    std::cerr << "MEASURE records=400 gas=" << largest.gas << " entries=" << largest.entries << " bytes="
-              << largest.bytes << " credit=" << network_credit << '\n';
+    std::cerr << "MEASURE records=" << installed_main_validators << " gas=" << installed.gas
+              << " entries=" << installed.entries << " bytes=" << installed.bytes << '\n';
+    std::cerr << "MEASURE records=" << profile_ceiling << " gas=" << largest.gas << " entries=" << largest.entries
+              << " bytes=" << largest.bytes << " credit=" << network_credit << '\n';
 
     // Linear, so the largest legal certificate is the worst case and there is
     // nothing between the samples that costs more.
     {
-      const bool measured = small.verified && medium.verified && largest.verified;
-      const auto per_record_small = small.entries / 8, per_record_large = largest.entries / 400;
-      report(measured && per_record_small == per_record_large && per_record_large > 0,
+      const bool measured = small.verified && medium.verified && installed.verified && largest.verified;
+      const auto per_record_small = small.entries / 8, per_record_installed = installed.entries / installed_main_validators,
+                 per_record_large = largest.entries / profile_ceiling;
+      report(measured && per_record_small == per_record_large && per_record_installed == per_record_large &&
+                 per_record_large > 0,
              "governance-cost-is-linear-in-signer-records");
     }
 
-    // The frozen profile admits four hundred signer records and requires every
-    // supplied signature to verify. That operation cannot be paid for out of
-    // the credit an external message has before it is accepted.
-    report(largest.verified && largest.gas > network_credit,
+    // Neither ceiling fits the credit an external message has before it is
+    // accepted, so this does not turn on which one the network installs: the
+    // committee it runs today already exceeds that credit by sixfold, and the
+    // one the profile admits by twenty-five.
+    report(installed.verified && installed.gas > network_credit && largest.verified && largest.gas > network_credit,
            "governance-worst-case-exceeds-the-external-credit");
 
     // What the caller is charged for the part that grows fastest is the number
@@ -130,7 +150,8 @@ int main() {
     // records. A count taken from the certificate's length instead would say
     // the same thing here and a different thing for every certificate that is
     // refused before a signature is looked at.
-    report(small.reported == 8 && medium.reported == 64 && largest.reported == 400,
+    report(small.reported == 8 && medium.reported == 64 && installed.reported == installed_main_validators &&
+               largest.reported == profile_ceiling,
            "governance-reports-one-verification-for-each-signature-it-checks");
 
     // Which is the case below. One component names an epoch the governing

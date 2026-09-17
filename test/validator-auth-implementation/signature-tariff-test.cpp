@@ -123,11 +123,16 @@ int main() {
     report(tariff(0) == 0 && tariff(10) == 0, "verification-within-the-free-allowance-is-not-charged");
     report(tariff(11) == 4000, "verification-past-the-free-allowance-pays-the-machine-tariff");
 
-    // Four hundred signer records is what the frozen profile admits, so this is
-    // the largest crypto bill a single governance operation can present.
-    const auto largest = tariff(400);
-    std::cerr << "MEASURE checks=400 crypto_gas=" << largest << '\n';
-    report(largest == (400 - 10) * 4000, "the-largest-admissible-certificate-pays-for-every-verification-past-it");
+    // Two ceilings. The masterchain committee is `max_main_validators`, which
+    // the zerostate installs as one hundred, so that is the crypto bill a
+    // running chain presents. Four hundred is what the profile admits and what
+    // the configuration parameter could be raised to without a new one, so it
+    // is what the code has to survive.
+    const auto installed = tariff(100), ceiling = tariff(400);
+    std::cerr << "MEASURE checks=100 crypto_gas=" << installed << '\n';
+    std::cerr << "MEASURE checks=400 crypto_gas=" << ceiling << '\n';
+    report(installed == (100 - 10) * 4000 && ceiling == (400 - 10) * 4000,
+           "the-largest-admissible-certificate-pays-for-every-verification-past-it");
 
     // The registry admits no post-quantum key today, but the price of one is
     // not invented on the day it does: the tariff its own instruction pays is
