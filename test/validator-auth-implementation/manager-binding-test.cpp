@@ -67,10 +67,15 @@ Hash manager_identity(tos::ShardIdFull shard, const std::vector<tos::ValidatorDe
   return out;
 }
 
-// A minimal election cell: ordinary descriptors, no binding variants. The
-// committee cases cover descriptor shapes; this file only needs a validator set
-// the production unpacker accepts.
-td::Ref<vm::Cell> election(unsigned count = 4) {
+// A minimal election cell of authenticated descriptors.
+//
+// They carry bindings because on a chain that has activated the design every
+// elected member does: the configuration contract refuses to install a set
+// whose bindings are absent. A set of ordinary descriptors is a set the
+// authenticated path would never have admitted, so a fixture built from one
+// would be describing a chain that cannot exist -- and the confirmation this
+// file exercises refuses it for exactly that reason.
+td::Ref<vm::Cell> election(unsigned count = 4, bool bound = true) {
   vm::Dictionary list(16);
   std::uint64_t weight = 0;
   for (unsigned i = 1; i <= count; ++i) {
@@ -78,10 +83,18 @@ td::Ref<vm::Cell> election(unsigned count = 4) {
     auto key = h(10000 + i);
     pub.store_long(0x8e81278a, 32).store_bytes(td::Slice(reinterpret_cast<const char*>(key.data()), 32));
     vm::CellBuilder cell;
-    cell.store_long(0x73, 8)
+    cell.store_long(bound ? 0xb3 : 0x73, 8)
         .append_cellslice(vm::CellSlice(vm::NoVm{}, pub.finalize()))
         .store_long(i * 3, 64)
         .store_bytes(td::Slice(reinterpret_cast<const char*>(h(20000 + i).data()), 32));
+    if (bound) {
+      // validator_auth_binding$_ identity:bits256 stake_id:bits256. Both are
+      // refused when zero, so the fixture names distinct non-zero values.
+      vm::CellBuilder binding;
+      binding.store_bytes(td::Slice(reinterpret_cast<const char*>(h(30000 + i).data()), 32))
+          .store_bytes(td::Slice(reinterpret_cast<const char*>(h(40000 + i).data()), 32));
+      cell.store_ref(binding.finalize());
+    }
     td::BitArray<16> index(i - 1);
     check(list.set(index.bits(), 16, td::make_ref<vm::CellSlice>(vm::NoVm{}, cell.finalize())), "list-add");
     check(tos::checked_add_validator_weight(weight, i * 3), "fixture-weight");
@@ -186,6 +199,36 @@ int main(int argc, char** argv) {
     if (absent.ok())
       bad("absent-validator-set-is-an-error");
     ok("absent-validator-set-is-an-error");
+
+    // A set whose members name no registry identity is refused before any
+    // identity is derived.
+    //
+    // The identity is a hash of keys, addresses and weights, so it agrees
+    // whether or not the members are bound. Without this, the manager could
+    // create a validator group under a roster that committee derivation would
+    // have refused with election-binding-required, and consensus receives
+    // whatever the manager hands it. The confirmation has to mean the set was
+    // admissible, not merely that two derivations of its identity agree.
+    {
+      auto unbound_root = replace_config(replace_config(masterchain(registry, 0), 34, election(4, false)), 28,
+                                         catchain_selector());
+      auto unbound_config = block::ConfigInfo::extract_config(
+          unbound_root, tos::BlockIdExt{tos::BlockId{tos::masterchainId, tos::shardIdAll, 0}},
+          block::ConfigInfo::needValidatorSet | block::ConfigInfo::needCapabilities);
+      check(unbound_config.is_ok(), "fixture-unbound-config");
+      block::ValidatorSetCompute unbound_compute;
+      check(unbound_compute.init(unbound_config.ok().get()).is_ok(), "fixture-unbound-compute");
+      auto unbound_set = unbound_compute.get_validator_set(shard, unbound_config.ok()->utime, 0);
+      check(unbound_set.not_null(), "fixture-unbound-validator-set");
+      auto unbound_identity =
+          manager_identity(shard, unbound_set->export_vector(), unbound_set->get_catchain_seqno(),
+                           bits(inputs.options_hash), inputs.vertical_seqno, inputs.key_block_seqno,
+                           inputs.new_catchain_ids);
+      auto refused = native_session_identity_confirms(unbound_set, shard, inputs, unbound_identity);
+      if (refused.ok())
+        bad("an-unbound-election-is-refused");
+      ok("an-unbound-election-is-refused");
+    }
 
     if (argc == 2) {
       std::filesystem::path out(argv[1]);

@@ -29,6 +29,20 @@ Result<bool> native_session_identity_confirms(td::Ref<block::ValidatorSet> valid
     return Error{"manager-session-validator-set"};
   if (manager_identity == Hash{})
     return Error{"manager-session-identity"};
+  // The set this session will run under has to be one the authenticated path
+  // would have admitted. Committee derivation refuses an elected member that
+  // names no registry identity, because an unbound member is exactly what an
+  // election that never reached the registry produces. The identity below is
+  // derived from keys, addresses and weights alone and would agree either way,
+  // so without this the manager could create a group whose roster the
+  // authenticated committee would have refused, and consensus would receive
+  // it. Checked here rather than at the call site: the caller is a declared
+  // insertion into a frozen file, and this keeps what the confirmation means
+  // in one place.
+  for (const auto& member : validator_set->export_vector()) {
+    if (!member.auth_binding)
+      return Error{"manager-session-election-binding"};
+  }
   NativeSessionIdInput input;
   input.native_options_hash = inputs.options_hash;
   input.workchain = shard.workchain;
