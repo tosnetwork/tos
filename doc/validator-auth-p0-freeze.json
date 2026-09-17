@@ -29,7 +29,7 @@
     "doc/validator-auth-p0/transport.schema.json": "ddd45d7d3eb672559efde020af95a0e215146775ec82f8c6847b0f3ab8127584",
     "doc/validator-auth-p0/wire.tl": "a5e10c8e25887cb30440a26a0d8cbcef1473878aeb87438cca1a0f0bc6875c15",
     "doc/validator-auth-p0/wire.tlb": "923650bd74bbbf677a070d1d13d7c12d46944e8bffbfc3a72641093d20d3ce9d",
-    "doc/validator-auth-p0-native-insertions.json": "0ebc61a6cfd12cbff924546d71e86aee543161f24dff261877e41b7b1a4dc8d3",
+    "doc/validator-auth-p0-native-insertions.json": "973bedd0fb7cffec5faf23a8f555865c787cf2fe96386c74892b7b83b34aa5be",
     "test/validator-auth-p0/README.md": "a0b0950c4ac702f8be0f34919a50f8e7b13d5d14dda3bd2cc05b4c8ffee31321",
     "test/validator-auth-p0/api.py": "9ec50bf9e19345ef54a8894a3525eba1eed8fb10412b8a3fdc1ed1c5728fb815",
     "test/validator-auth-p0/archive_evidence.py": "22bb392a561068e0fb3905ce7e8df95bab463468cdfe3be884eff19b12481409",
@@ -48,7 +48,7 @@
     "test/validator-auth-p0/native-boc.cpp": "fb7e9c350d2b88347ccfdf4b0eeb828b43e80383e81b82f15c533a46a1625f4e",
     "test/validator-auth-p0/native-profile.cmake": "efce5ea42651ac673db2c6c1a3c6a716527cc09d3e01101eb51191e2519a7542",
     "test/validator-auth-p0/native_guard.py": "72530987f41d1d6d55fa9204db6da67a2fe75a27b05a7524038d6fb556d02278",
-    "test/validator-auth-p0/production-baseline.json": "4a641fbc02bd90559315e5c9d3b5b370a209c3949f491dc54d2c6d740681c92d",
+    "test/validator-auth-p0/production-baseline.json": "82592ce86c671fe999ef364ac165b7c7c4ed6ee16a98a1aeec5363df676d3a09",
     "test/validator-auth-p0/reference.py": "dbdd804d2c733db2cd1ac0c9b87a9185b43786bfad956862853673b1f22f5501",
     "test/validator-auth-p0/run_tests.py": "fe17eff01af3f33f7bfb55fafe52224e7df2708e542e3d217749af66bd402528",
     "test/validator-auth-p0/test_api_guards.py": "bd838b26fa39c6cd144b40b6ac92fcdf56c59ed9acc4c0cb7182c3a950311600",
@@ -283,6 +283,26 @@
       "change": "Named where the profile digest may be written down, in either the hexadecimal spelling a record uses or the decimal byte array the generator emits, and refused it anywhere else. A superseded digest is allowed only where its transition is declared. Added a control that the default reader of the generated comparison reads the file it is given, because the mutations beside it only prove an injected reader is honoured.",
       "scope": "Verification only, over tracked files. No wire, API, operation, field, encoding, limit, role or transport value changes and no artifact hash moves as a result. The list of places the digest may appear is data in this checker, not a new frozen set: adding a consumer means naming it there.",
       "reason": "The previous entry closed the derivations that were known. It could not say the set was complete, and it was not: two planning documents still stated the superseded fingerprint in the present tense, which this refuses and which is corrected in the same change. The digest was found in six places by following one failure at a time, and each of the first two fixes uncovered another layer, so what was missing was a way for the next one to fail at the gate rather than in a later job.",
+      "activation": "Unchanged. No suite is allocated, no network is configured, and the version-16 activation gates and listed approvals remain independent thresholds that this does not satisfy."
+    },
+    {
+      "artifact": "test/validator-auth-p0/production-baseline.json",
+      "previous_sha256": "4a641fbc02bd90559315e5c9d3b5b370a209c3949f491dc54d2c6d740681c92d",
+      "sha256": "82592ce86c671fe999ef364ac165b7c7c4ed6ee16a98a1aeec5363df676d3a09",
+      "authorization": "The owner authorized reopening these two files for this change, overriding the earlier decision to defer it.",
+      "change": "Re-baselined the two production files that name the external-message ingress source, so that provenance can be a sum of a remote peer and a local origin rather than an optional peer. validator/manager.cpp keeps its insertion model and the five declared insertions still reconstruct it; its recorded original moves because original bytes changed. validator/impl/liteserver.cpp is in the whole-file set, which has no insertion mechanism, so its recorded hash is replaced.",
+      "scope": "Two files, and the insertion offsets of one of them. No wire, API, schema, operation, role, limit or profile value changes, the profile revision is unchanged, and no other production file is touched. The reconstructed original of validator/manager.cpp differs from the previous one in exactly the thirty lines of this conversion and in nothing else, which was compared line by line rather than asserted.",
+      "reason": "An optional source made absence representable, and absence reached the per-source limiter as the case that is not limited at all -- a meaning nobody chose. No adapter could remove it honestly: at this boundary an absent source meant either an in-process submission or a client whose address the transport could not resolve, so mapping absence to a local origin would have been false for the second. The type had to be named inside these two files, and both are frozen, so there was no route that left them untouched. What this does not do is decide whether a local origin is exempt from the limiter; that is transport policy and is left where it was.",
+      "historical_baseline": "The claim that these two files preserve their pre-P0 bytes is withdrawn for them, and only for them. Every other file in the inventory still reconstructs to its original.",
+      "activation": "Unchanged. No suite is allocated, no network is configured, and the version-16 activation gates and listed approvals remain independent thresholds that this does not satisfy."
+    },
+    {
+      "artifact": "doc/validator-auth-p0-native-insertions.json",
+      "previous_sha256": "0ebc61a6cfd12cbff924546d71e86aee543161f24dff261877e41b7b1a4dc8d3",
+      "sha256": "973bedd0fb7cffec5faf23a8f555865c787cf2fe96386c74892b7b83b34aa5be",
+      "change": "Moved four of the five declared insertions into validator/manager.cpp to the coordinates they now occupy. The insertion texts are unchanged; the conversion above sits earlier in the file and displaces everything after it by the same amount.",
+      "scope": "Offsets only. No insertion is added, removed or reworded, and the first insertion, which precedes the conversion, keeps its coordinate.",
+      "reason": "Offsets are stated in original-file coordinates. Recomputing them by locating each insertion in the edited file and subtracting what precedes it reproduces the previous offsets exactly when run against the unedited file, which is how the new ones were checked rather than trusted.",
       "activation": "Unchanged. No suite is allocated, no network is configured, and the version-16 activation gates and listed approvals remain independent thresholds that this does not satisfy."
     }
   ],

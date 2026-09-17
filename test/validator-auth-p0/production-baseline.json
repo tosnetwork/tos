@@ -35,9 +35,9 @@
     "validator/consensus/types.h": "cc75824e179732199f6abf8ae351dab701149ee7615c113cadfe4347cd2547c3",
     "validator/impl/accept-block.cpp": "a98648c9c341789990c8a639e9ba76bd8953558be4114173605d1dd62336727d",
     "validator/impl/check-proof.cpp": "034e1e365bf3ad0e40114a322a0ea0537e9e64a49807b306ad8c1ec9f560529c",
-    "validator/impl/liteserver.cpp": "50c5f25b4d92a361997e5855aef526ec3b9a89488849d240134de48bcf9c4a45",
+    "validator/impl/liteserver.cpp": "ccc523c4c423c1906dd5f726e51fc455c06f26d41f2f91ae15abe2745d568c41",
     "validator/impl/top-shard-descr.cpp": "86bb0794d2faf337e8cbefafdcab7ae4c3aba5fb5ee9e1fc995d49fd346004bd",
-    "validator/manager.cpp": "1759d35769d3d149ca40a2aef8977b1f2eaf26602fac0a1178bc5ae75242030e",
+    "validator/manager.cpp": "7ec7b1e0f9582dd9382566c0774ac9e374dc54e690f6ec471025eb736b042a8f",
     "validator/validate-broadcast.cpp": "2d1c2a1cc1dd2e76d647b81c05fb11eb6dae2ed27364c49cd4fd5ffc1fdbc062"
   }
 }

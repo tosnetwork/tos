@@ -184,7 +184,7 @@ void FullNodeShardImpl::process_external_message_broadcast(PublicKeyHash src,
     return;
   }
   td::actor::send_closure(validator_manager_, &ValidatorManagerInterface::new_external_message_broadcast,
-                          std::move(message.message_->data_), 0, td::optional<PublicKeyHash>{src},
+                          std::move(message.message_->data_), 0, ExtMessageIngressSource{RemotePeer{src}},
                           std::move(promise));
 }
 

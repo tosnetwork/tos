@@ -312,9 +312,9 @@ void ValidatorManagerImpl::get_key_block_proof_link(BlockIdExt block_id, td::Pro
 }
 
 td::actor::Task<> ValidatorManagerImpl::new_external_message_broadcast(td::BufferSlice data, int priority,
-                                                                        td::optional<PublicKeyHash> source_peer) {
-  // Disk-replay manager treats source_peer as informational only here.
-  (void)source_peer;
+                                                                        ExtMessageIngressSource source) {
+  // Disk-replay manager records provenance but applies no per-source limit.
+  (void)source;
   if (last_masterchain_state_.is_null()) {
     co_return td::Status::Error(ErrorCode::notready, "not ready");
   }

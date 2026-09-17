@@ -40,7 +40,7 @@ class LiteQuery : public td::actor::Actor {
   td::BufferSlice query_;
   td::actor::ActorId<tos::validator::ValidatorManager> manager_;
   td::actor::ActorId<LiteServerCache> cache_;
-  td::optional<PublicKeyHash> source_peer_;
+  ExtMessageIngressSource source_;
   td::Timestamp timeout_;
   td::Promise<td::BufferSlice> promise_;
 
@@ -87,13 +87,13 @@ class LiteQuery : public td::actor::Actor {
     ls_capabilities = 7
   };  // version 1.1; +1 = build block proof chains, +2 = masterchainInfoExt, +4 = runSmcMethod
   LiteQuery(td::BufferSlice data, td::actor::ActorId<tos::validator::ValidatorManager> manager,
-            td::actor::ActorId<LiteServerCache> cache, td::optional<PublicKeyHash> source_peer,
+            td::actor::ActorId<LiteServerCache> cache, ExtMessageIngressSource source,
             td::Promise<td::BufferSlice> promise);
   LiteQuery(WorkchainId wc, StdSmcAddress acc_addr, td::actor::ActorId<tos::validator::ValidatorManager> manager,
             td::Promise<std::tuple<td::Ref<vm::CellSlice>, UnixTime, LogicalTime, std::unique_ptr<block::ConfigInfo>>>
                 promise);
   static void run_query(td::BufferSlice data, td::actor::ActorId<tos::validator::ValidatorManager> manager,
-                        td::actor::ActorId<LiteServerCache> cache, td::optional<PublicKeyHash> source_peer,
+                        td::actor::ActorId<LiteServerCache> cache, ExtMessageIngressSource source,
                         td::Promise<td::BufferSlice> promise);
 
   static void fetch_account_state(

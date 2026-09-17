@@ -152,7 +152,7 @@ void FullNodeCustomOverlay::process_broadcast(PublicKeyHash src, tos_api::tosNod
                         << " (priority=" << it->second << ")";
   td::actor::ask(validator_manager_, &ValidatorManagerInterface::new_external_message_broadcast,
                  std::move(query.message_->data_), it->second,
-                 td::optional<PublicKeyHash>{src})
+                 ExtMessageIngressSource{RemotePeer{src}})
       .detach();
 }
 

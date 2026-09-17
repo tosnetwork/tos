@@ -1,20 +1,22 @@
-"""Hold the external-message provenance debt at the size it was measured.
+"""Hold external-message provenance total: a remote peer or a local origin.
 
-Every path that submits an external message supplies a source today: both
-overlays pass the broadcasting peer, the ADNL paths pass the querying node, and
-the JSON-RPC submissions derive a stable per-client identity. What remains is
-not a measured hole but a type: the source is an optional, so absence is
-representable, and absence reaches the per-source limiter as the unlimited case
-because that is what it has always meant.
+The source used to be an optional peer. Absence was therefore representable,
+and absence reached the per-source limiter as the case that is not limited at
+all -- a meaning nobody chose, inherited from transports that had no identity
+to hand over. Nothing made a new call site decide, so the way to get the
+unlimited answer was to say nothing.
 
-Replacing the optional with a remote-or-local sum type is the fix. It cannot be
-done yet, because the type is named in two files inside the frozen production
-boundary. Until the change that reopens them, this keeps the debt closed: the
-argument has no default, so provenance cannot be omitted, and the places that
-still say "nothing" are the ones recorded here and cannot become more.
+The type is now a sum of exactly two cases, so there is no third state to fall
+through and no default to omit. This keeps it that way. What it refuses:
 
-Shrinking any number below is fine and needs no edit here. Growing one, or
-adding a file, is refused.
+  an optional peer reappearing on the ingress path
+  a default on a provenance parameter
+  nullopt or an empty optional offered to an ingress entry point
+  a limiter branch that answers without naming which case it answered for
+
+The last one is why the visit is checked rather than trusted: a branch that
+returns early for anything but the two named cases would restore the bypass
+without restoring the type.
 """
 from __future__ import annotations
 
@@ -26,37 +28,14 @@ ROOT = Path(__file__).resolve().parents[2]
 SEARCH = ('validator', 'validator-engine', 'test', 'create-hardfork', 'utils', 'lite-client')
 SUFFIXES = {'.h', '.hpp', '.cpp'}
 
-# A declared ingress source. The count is per file because a file may carry the
-# interface, the override and the definition.
-SURFACE = {
-    'validator/validator.h': 2,
-    'validator/manager.hpp': 3,
-    'validator/manager.cpp': 4,
-    'validator/manager-disk.hpp': 1,
-    'validator/manager-disk.cpp': 1,
-    'validator/manager-hardfork.hpp': 1,
-    'validator/manager-hardfork.cpp': 1,
-    'validator/impl/ext-message-pool.hpp': 1,
-    'validator/impl/ext-message-pool.cpp': 1,
-    'validator/impl/liteserver.hpp': 3,
-    'validator/impl/liteserver.cpp': 2,
-    'validator/fabric.h': 1,
-    'validator/impl/fabric.cpp': 1,
-}
+TYPE = ROOT/'validator/ext-message-ingress-source.h'
+POOL = 'validator/impl/ext-message-pool.cpp'
 
-# A call site that says "no remote identity" in so many words. Each is a local
-# harness or tool submitting in process, which is why it is allowed to say it.
-# It is provenance, not permission: none of these is exempt from anything.
-EMPTY_CALLS = {
-    'create-hardfork/create-hardfork.cpp': 1,
-    'test/test-tos-collator.cpp': 1,
-    'test/test-ext-message-pool.cpp': 1,
-}
-
-DEFAULTED = re.compile(r'source_peer\s*=\s*\{\s*\}')
-DECLARED = re.compile(r'optional\s*<\s*(?:tos::|ton::)?PublicKeyHash\s*>\s*source_peer')
-EMPTY = re.compile(r'optional\s*<\s*(?:tos::|ton::)?PublicKeyHash\s*>\s*\{\s*\}')
+# The ingress entry points. A provenance argument is mandatory at each.
 ENTRY = re.compile(r'(?:new_external_message_broadcast|new_external_message_query|check_add_external_message)')
+# An optional peer anywhere on the ingress path is the shape that was removed.
+OPTIONAL_PEER = re.compile(r'optional\s*<\s*(?:tos::|ton::)?PublicKeyHash\s*>')
+DEFAULTED = re.compile(r'(?:ExtMessageIngressSource|optional\s*<[^>]*PublicKeyHash[^>]*>)\s+\w+\s*=')
 
 
 def sources() -> dict[str, str]:
@@ -71,42 +50,35 @@ def sources() -> dict[str, str]:
     return found
 
 
-def counted(files: dict[str, str], pattern: re.Pattern) -> dict[str, int]:
-    return {name: len(pattern.findall(text)) for name, text in files.items() if pattern.search(text)}
-
-
-def nullopt_arguments(files: dict[str, str]) -> list[str]:
-    """An entry point handed nullopt rather than a stated absence.
-
-    Absence is already representable; what this refuses is a second spelling of
-    it, because two spellings are how a rule gets enforced on one of them.
-    """
-    out = []
-    for name, text in files.items():
-        for match in ENTRY.finditer(text):
-            if 'nullopt' in text[match.end():match.end()+200]:
-                out.append(name)
-                break
-    return out
-
-
 def errors_for(files: dict[str, str]) -> list[str]:
     errors = []
     for name, text in sorted(files.items()):
+        for match in ENTRY.finditer(text):
+            window = text[match.end():match.end()+240]
+            if 'nullopt' in window:
+                errors.append('an ingress entry point is handed nullopt: '+name)
+                break
+            if OPTIONAL_PEER.search(window):
+                errors.append('an ingress entry point still takes an optional peer: '+name)
+                break
+        if OPTIONAL_PEER.search(text) and 'ExtMessageIngressSource' in text:
+            errors.append('an optional peer survives beside the provenance type in: '+name)
         if DEFAULTED.search(text):
-            errors.append('an ingress source parameter has a default again: '+name)
+            errors.append('a provenance parameter has a default in: '+name)
 
-    for label, pattern, recorded in (('declares an ingress source', DECLARED, SURFACE),
-                                     ('states an absent source', EMPTY, EMPTY_CALLS)):
-        actual = counted(files, pattern)
-        for name, count in sorted(actual.items()):
-            allowed = recorded.get(name, 0)
-            if count > allowed:
-                errors.append(f'{name} {label} {count} times; {allowed} recorded'
-                              if allowed else f'{name} newly {label}')
+    # The sum type must stay a sum of exactly the two named cases.
+    declaration = files.get('validator/ext-message-ingress-source.h', '')
+    if 'std::variant<RemotePeer, LocalOrigin>' not in declaration:
+        errors.append('provenance is no longer a sum of a remote peer and a local origin')
 
-    for name in sorted(nullopt_arguments(files)):
-        errors.append('an ingress entry point is handed nullopt: '+name)
+    # And the limiter must answer for both of them by name.
+    pool = files.get(POOL, '')
+    if pool:
+        for case in ('const RemotePeer &', 'const LocalOrigin &'):
+            if case not in pool:
+                errors.append('the limiter does not answer for '+case.strip()+' by name')
+        if 'std::visit' not in pool:
+            errors.append('the limiter no longer decides by visiting every case')
     return errors
 
 
@@ -122,26 +94,31 @@ def main() -> int:
     files = sources()
     errors = errors_for(files)
 
-    victim = 'validator/validator.h'
-    if victim not in files:
-        errors.append('cannot locate the ingress interface')
+    pool = files.get(POOL, '')
+    if not pool:
+        errors.append('cannot locate the admission pool')
     else:
-        errors += require_refused('default-restored', {
-            **files, victim: files[victim].replace('td::optional<PublicKeyHash> source_peer)',
-                                                   'td::optional<PublicKeyHash> source_peer = {})', 1)})
-        errors += require_refused('new-optional-source-surface', {
-            **files, 'validator/invented-ingress.h': 'td::optional<PublicKeyHash> source_peer;\n'})
-        errors += require_refused('new-absent-source-call-site', {
-            **files, 'validator/invented-caller.cpp': 'f(td::optional<PublicKeyHash>{});\n'})
-        errors += require_refused('nullopt-handed-to-an-entry-point', {
-            **files, 'validator/invented-nullopt.cpp': 'new_external_message_broadcast(data, 0, std::nullopt);\n'})
+        errors += require_refused('optional-peer-returns-to-an-entry-point', {
+            **files, 'validator/invented-ingress.cpp':
+                'check_add_external_message(data, 0, false, td::optional<PublicKeyHash>{});\n'})
+        errors += require_refused('nullopt-offered-to-an-entry-point', {
+            **files, 'validator/invented-nullopt.cpp':
+                'new_external_message_broadcast(data, 0, std::nullopt);\n'})
+        errors += require_refused('provenance-parameter-given-a-default', {
+            **files, 'validator/invented-default.h': 'void f(ExtMessageIngressSource source = {});\n'})
+        errors += require_refused('local-case-no-longer-answered-by-name', {
+            **files, POOL: pool.replace('const LocalOrigin &', 'const auto &', 1)})
+        errors += require_refused('provenance-stops-being-a-sum-of-two', {
+            **files, 'validator/ext-message-ingress-source.h':
+                files.get('validator/ext-message-ingress-source.h', '').replace(
+                    'std::variant<RemotePeer, LocalOrigin>', 'std::optional<RemotePeer>', 1)})
 
     if errors:
         for error in errors:
             print('FAIL: '+error, file=sys.stderr)
         return 1
-    print(f'PASS: provenance is mandatory; {sum(EMPTY_CALLS.values())} recorded absent-source call sites, '
-          f'{sum(SURFACE.values())} recorded optional-source declarations')
+    print('PASS: provenance is a remote peer or a local origin, with no third state, '
+          'no default and no absent case reaching the limiter')
     return 0
 
 

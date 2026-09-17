@@ -59,10 +59,10 @@ td::int32 get_tl_tag(td::Slice slice) {
 }
 
 void LiteQuery::run_query(td::BufferSlice data, td::actor::ActorId<ValidatorManager> manager,
-                          td::actor::ActorId<LiteServerCache> cache, td::optional<PublicKeyHash> source_peer,
+                          td::actor::ActorId<LiteServerCache> cache, ExtMessageIngressSource source,
                           td::Promise<td::BufferSlice> promise) {
   td::actor::create_actor<LiteQuery>("litequery", std::move(data), std::move(manager), std::move(cache),
-                                     std::move(source_peer), std::move(promise))
+                                     std::move(source), std::move(promise))
       .release();
 }
 
@@ -74,12 +74,12 @@ void LiteQuery::fetch_account_state(
 }
 
 LiteQuery::LiteQuery(td::BufferSlice data, td::actor::ActorId<ValidatorManager> manager,
-                     td::actor::ActorId<LiteServerCache> cache, td::optional<PublicKeyHash> source_peer,
+                     td::actor::ActorId<LiteServerCache> cache, ExtMessageIngressSource source,
                      td::Promise<td::BufferSlice> promise)
     : query_(std::move(data))
     , manager_(std::move(manager))
     , cache_(std::move(cache))
-    , source_peer_(std::move(source_peer))
+    , source_(std::move(source))
     , promise_(std::move(promise)) {
   timeout_ = td::Timestamp::in(default_timeout_msec * 0.001);
 }
@@ -561,7 +561,7 @@ void LiteQuery::continue_getZeroState(BlockIdExt blkid, td::BufferSlice state) {
 void LiteQuery::perform_sendMessage(td::BufferSlice data) {
   LOG(DEBUG) << "started a sendMessage(<" << data.size() << " bytes>) liteserver query";
   td::actor::send_closure(
-      manager_, &ValidatorManager::new_external_message_query, std::move(data), std::move(source_peer_),
+      manager_, &ValidatorManager::new_external_message_query, std::move(data), std::move(source_),
       td::PromiseCreator::lambda(
           [Self = actor_id(this), cache = cache_, cache_key = cache_key_](td::Result<td::Unit> res) mutable {
             if (res.is_error()) {

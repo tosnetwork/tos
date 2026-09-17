@@ -412,9 +412,9 @@ class ValidatorManagerImpl : public ValidatorManager {
   //void get_block_description(BlockIdExt block_id, td::Promise<BlockDescription> promise) override;
 
   td::actor::Task<> new_external_message_broadcast(td::BufferSlice data, int priority,
-                                                   td::optional<PublicKeyHash> source_peer) override;
+                                                   ExtMessageIngressSource source) override;
   td::actor::Task<> new_external_message_query(td::BufferSlice data,
-                                               td::optional<PublicKeyHash> source_peer) override;
+                                               ExtMessageIngressSource source) override;
   td::actor::Task<> new_external_message_query_cont(td::Ref<ExtMessage> message,
                                                     td::actor::StartedTask<> wait_allow_broadcast);
 
@@ -427,7 +427,7 @@ class ValidatorManagerImpl : public ValidatorManager {
   void add_ext_server_id(adnl::AdnlNodeIdShort id) override;
   void add_ext_server_port(td::uint16 port) override;
   void run_ext_query(adnl::AdnlNodeIdShort source, td::BufferSlice data, td::Promise<td::BufferSlice> promise) override;
-  void execute_ext_query(td::optional<PublicKeyHash> source_peer, td::BufferSlice data,
+  void execute_ext_query(ExtMessageIngressSource source, td::BufferSlice data,
                          td::Promise<td::BufferSlice> promise);
   void finish_ext_query(td::Result<td::BufferSlice> result, td::Promise<td::BufferSlice> promise);
 

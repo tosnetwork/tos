@@ -39,7 +39,7 @@ class ExtMessagePool : public td::actor::Actor {
     td::actor::StartedTask<> wait_allow_broadcast;
   };
   td::actor::Task<CheckResult> check_add_external_message(td::BufferSlice data, int priority, bool add_to_mempool,
-                                                          td::optional<PublicKeyHash> source_peer);
+                                                          ExtMessageIngressSource source);
   void install_collator_queue(ShardIdFull shard, std::unique_ptr<ExtMsgCallback> callback);
   void cleanup_external_messages(ShardIdFull shard);
   // Workchain-agnostic expiry sweep.
@@ -178,7 +178,8 @@ class ExtMessagePool : public td::actor::Actor {
     td::Timestamp last_seen = td::Timestamp::now();
   };
   std::map<PublicKeyHash, PeerAdmission> peer_admission_;
-  bool admit_source(const td::optional<PublicKeyHash> &source_peer, td::Timestamp now);
+  bool admit_remote_peer(const PublicKeyHash &peer, td::Timestamp now);
+  bool admit_source(const ExtMessageIngressSource &source, td::Timestamp now);
 
   struct AdmissionWindowStats {
     td::uint64 in{0};

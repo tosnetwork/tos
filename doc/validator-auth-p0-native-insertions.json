@@ -106,19 +106,19 @@
     "text": "#include \"validator/auth/manager-session-binding.h\"\n"
    },
    {
-    "offset": 106425,
+    "offset": 106658,
     "text": "void ValidatorManagerImpl::establish_validator_auth_chain() {\n  if (validator_auth_chain_ || last_masterchain_state_.is_null()) {\n    return;\n  }\n  auto P = td::PromiseCreator::lambda([SelfId = actor_id(this)](td::Result<td::BufferSlice> R) {\n    td::actor::send_closure(SelfId, &ValidatorManagerImpl::established_validator_auth_zero_state, std::move(R));\n  });\n  td::actor::send_closure(db_, &Db::get_zero_state_file, opts_->zero_block_id(), std::move(P));\n}\n\nvoid ValidatorManagerImpl::established_validator_auth_zero_state(td::Result<td::BufferSlice> R) {\n  if (R.is_error()) {\n    LOG(INFO) << \"no registry authority: zero state unreadable: \" << R.move_as_error();\n    return;\n  }\n  if (last_masterchain_state_.is_null()) {\n    return;\n  }\n  auto raw = R.move_as_ok();\n  auto root = vm::std_boc_deserialize(raw.as_slice());\n  if (root.is_error()) {\n    LOG(INFO) << \"no registry authority: zero state undeserializable: \" << root.move_as_error();\n    return;\n  }\n  auto chain = tos::auth::establish_chain_context(root.move_as_ok(), opts_->zero_block_id(),\n                                                 last_masterchain_state_->get_global_id());\n  if (!chain.ok()) {\n    LOG(INFO) << \"no registry authority: \" << chain.error().code;\n    return;\n  }\n  validator_auth_chain_ = chain.value();\n  publish_validator_auth();\n}\n\nvoid ValidatorManagerImpl::publish_validator_auth() {\n  if (!validator_auth_chain_) {\n    return;\n  }\n  auto value = validator_auth_collation();\n  for (auto &collation : collation_managers_) {\n    td::actor::send_closure(collation.second.get(), &CollationManager::update_validator_auth, value);\n  }\n}\n\ntd::optional<ValidatorAuthCollation> ValidatorManagerImpl::validator_auth_collation() {\n  if (!validator_auth_chain_) {\n    return {};\n  }\n  return ValidatorAuthCollation{validator_auth_chain_.value()};\n}\n"
    },
    {
-    "offset": 107217,
+    "offset": 107450,
     "text": "\n  establish_validator_auth_chain();\n"
    },
    {
-    "offset": 139545,
+    "offset": 139778,
     "text": "        // The identity this manager just built is one derivation of a fact the\n        // chain state derives too. Running a session under a name the producer\n        // does not confirm is how one session acquires two identities, each\n        // passing its own tests. Refuse the shard instead, exactly as an\n        // unreadable consensus config does: stay a full node.\n        //\n        // Nothing here runs until the chain activates validator authentication.\n        if (tos::auth::native_session_binding_active(last_masterchain_state_->root_cell())) {\n          tos::auth::ManagerSessionInputs auth_inputs;\n          auto options_bytes = opts_hash.as_slice();\n          std::copy(options_bytes.ubegin(), options_bytes.uend(), auth_inputs.options_hash.begin());\n          auth_inputs.vertical_seqno = opts_->get_maximal_vertical_seqno();\n          auth_inputs.key_block_seqno = key_seqno;\n          auth_inputs.new_catchain_ids = opts.new_catchain_ids;\n          tos::auth::Hash manager_identity{};\n          auto identity_bytes = val_group_id.as_slice();\n          std::copy(identity_bytes.ubegin(), identity_bytes.uend(), manager_identity.begin());\n          auto confirmed =\n              tos::auth::native_session_identity_confirms(val_set, shard, auth_inputs, manager_identity);\n          if (!confirmed.ok() || !confirmed.value()) {\n            LOG(ERROR) << \"refusing to create validator group for \" << shard.to_str()\n                       << \": the authenticated session identity does not confirm this validator set; \"\n                          \"validation for this shard is disabled until they agree\";\n            --(shard.is_masterchain() ? active_validator_groups_master_ : active_validator_groups_shard_);\n            continue;\n          }\n        }\n"
    },
    {
-    "offset": 160670,
+    "offset": 160903,
     "text": "    // One created after the context was established would otherwise never be\n    // told about it, since publishing only happens when something changes.\n    td::actor::send_closure(actor.get(), &CollationManager::update_validator_auth, validator_auth_collation());\n"
    }
   ],

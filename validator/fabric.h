@@ -137,7 +137,7 @@ void run_validate_query(BlockCandidate candidate, ValidateParams params, td::act
 void run_collate_query(CollateParams params, td::actor::ActorId<ValidatorManager> manager,
                        td::CancellationToken cancellation_token, td::Promise<BlockCandidate> promise);
 void run_liteserver_query(td::BufferSlice data, td::actor::ActorId<ValidatorManager> manager,
-                          td::actor::ActorId<LiteServerCache> cache, td::optional<PublicKeyHash> source_peer,
+                          td::actor::ActorId<LiteServerCache> cache, ExtMessageIngressSource source,
                           td::Promise<td::BufferSlice> promise);
 void run_fetch_account_state(
     WorkchainId wc, StdSmcAddress addr, td::actor::ActorId<ValidatorManager> manager,

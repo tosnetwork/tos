@@ -43,7 +43,7 @@ TEST(ExtMessagePool, RejectsAdmissionBeforeMasterchainState) {
 
     auto result =
         co_await td::actor::ask(pool.get(), &ExtMessagePool::check_add_external_message,
-                                td::BufferSlice{"not a bag of cells"}, 0, false, td::optional<PublicKeyHash>{})
+                                td::BufferSlice{"not a bag of cells"}, 0, false, ExtMessageIngressSource{LocalOrigin{}})
             .wrap();
 
     ASSERT_TRUE(result.is_error());

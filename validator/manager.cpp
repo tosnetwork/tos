@@ -499,13 +499,13 @@ void ValidatorManagerImpl::get_key_block_proof_link(BlockIdExt block_id, td::Pro
 }
 
 td::actor::Task<> ValidatorManagerImpl::new_external_message_broadcast(td::BufferSlice data, int priority,
-                                                                       td::optional<PublicKeyHash> source_peer) {
+                                                                       ExtMessageIngressSource source) {
   if (!started_) {
     co_return td::Status::Error(ErrorCode::notready, "node not synced");
   }
   auto r_check_result =
       co_await td::actor::ask(ext_message_pool_, &ExtMessagePool::check_add_external_message, std::move(data), priority,
-                              /* add_to_mempool = */ is_validator() || !collator_nodes_.empty(), std::move(source_peer))
+                              /* add_to_mempool = */ is_validator() || !collator_nodes_.empty(), std::move(source))
           .wrap();
   if (r_check_result.is_error()) {
     VLOG(VALIDATOR_DEBUG) << "Dropping external message broadcast (prio=" << priority
@@ -525,10 +525,10 @@ td::actor::Task<> ValidatorManagerImpl::new_external_message_broadcast(td::Buffe
 }
 
 td::actor::Task<> ValidatorManagerImpl::new_external_message_query(td::BufferSlice data,
-                                                                   td::optional<PublicKeyHash> source_peer) {
+                                                                   ExtMessageIngressSource source) {
   auto [message, wait_allow_broadcast] = co_await td::actor::ask(
       ext_message_pool_, &ExtMessagePool::check_add_external_message, std::move(data), 0,
-      /* add_to_mempool = */ is_validator() || !collator_nodes_.empty(), std::move(source_peer));
+      /* add_to_mempool = */ is_validator() || !collator_nodes_.empty(), std::move(source));
   new_external_message_query_cont(std::move(message), std::move(wait_allow_broadcast)).start().detach();
   co_return td::Unit{};
 }
@@ -995,27 +995,29 @@ void ValidatorManagerImpl::run_ext_query(adnl::AdnlNodeIdShort source, td::Buffe
     return;
   }
 
-  td::optional<PublicKeyHash> source_peer;
-  if (!source.is_zero()) {
-    source_peer = source.pubkey_hash();
-  }
+  // A query always arrives over a transport, so its provenance is remote even
+  // when the transport could not attribute it. A zero identity used to erase
+  // the source, and an erased source was the case the per-source limiter did
+  // not apply to; unattributed clients therefore share one bucket instead of
+  // sharing an exemption.
+  ExtMessageIngressSource ingress{RemotePeer{source.pubkey_hash()}};
 
   if (!wait) {
-    execute_ext_query(std::move(source_peer), std::move(data), std::move(promise));
+    execute_ext_query(std::move(ingress), std::move(data), std::move(promise));
   } else {
     auto e = std::move(*wait);
     if (static_cast<BlockSeqno>(e->seqno_) <= min_confirmed_masterchain_seqno_) {
-      execute_ext_query(std::move(source_peer), std::move(data), std::move(promise));
+      execute_ext_query(std::move(ingress), std::move(data), std::move(promise));
     } else {
       auto t = e->timeout_ms_ < 10000 ? e->timeout_ms_ * 0.001 : 10.0;
       auto Q = td::PromiseCreator::lambda([data = std::move(data), SelfId = actor_id(this),
-                                           source_peer = std::move(source_peer),
+                                           ingress = std::move(ingress),
                                            promise = std::move(promise)](td::Result<td::Unit> R) mutable {
         if (R.is_error()) {
           promise.set_error(R.move_as_error());
           return;
         }
-        td::actor::send_closure(SelfId, &ValidatorManagerImpl::execute_ext_query, std::move(source_peer),
+        td::actor::send_closure(SelfId, &ValidatorManagerImpl::execute_ext_query, std::move(ingress),
                                 std::move(data), std::move(promise));
       });
       wait_shard_client_state(e->seqno_, td::Timestamp::in(t), std::move(Q));
@@ -1023,7 +1025,7 @@ void ValidatorManagerImpl::run_ext_query(adnl::AdnlNodeIdShort source, td::Buffe
   }
 }
 
-void ValidatorManagerImpl::execute_ext_query(td::optional<PublicKeyHash> source_peer, td::BufferSlice data,
+void ValidatorManagerImpl::execute_ext_query(ExtMessageIngressSource source, td::BufferSlice data,
                                              td::Promise<td::BufferSlice> promise) {
   if (!lite_server_admission_.try_acquire_execution()) {
     promise.set_error(td::Status::Error(ErrorCode::notready, "liteserver execution limit exceeded"));
@@ -1033,7 +1035,7 @@ void ValidatorManagerImpl::execute_ext_query(td::optional<PublicKeyHash> source_
       [SelfId = actor_id(this), promise = std::move(promise)](td::Result<td::BufferSlice> R) mutable {
         td::actor::send_closure(SelfId, &ValidatorManagerImpl::finish_ext_query, std::move(R), std::move(promise));
       });
-  run_liteserver_query(std::move(data), actor_id(this), lite_server_cache_.get(), std::move(source_peer), std::move(P));
+  run_liteserver_query(std::move(data), actor_id(this), lite_server_cache_.get(), std::move(source), std::move(P));
 }
 
 void ValidatorManagerImpl::finish_ext_query(td::Result<td::BufferSlice> result, td::Promise<td::BufferSlice> promise) {

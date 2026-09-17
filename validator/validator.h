@@ -25,6 +25,7 @@
 
 #include "adnl/adnl.h"
 #include "dht/dht.h"
+#include "ext-message-ingress-source.h"
 #include "interfaces/block-handle.h"
 #include "interfaces/block.h"
 #include "interfaces/external-message.h"
@@ -414,9 +415,9 @@ class ValidatorManagerInterface : public td::actor::Actor {
   // limiter is a transport policy question and is deliberately not answered by
   // the shape of this parameter.
   virtual td::actor::Task<> new_external_message_broadcast(td::BufferSlice data, int priority,
-                                                           td::optional<PublicKeyHash> source_peer) = 0;
+                                                           ExtMessageIngressSource source) = 0;
   virtual td::actor::Task<> new_external_message_query(td::BufferSlice data,
-                                                       td::optional<PublicKeyHash> source_peer) {
+                                                       ExtMessageIngressSource source) {
     co_return td::Status::Error("not implemented");
   }
   virtual void new_ihr_message(td::BufferSlice data) = 0;

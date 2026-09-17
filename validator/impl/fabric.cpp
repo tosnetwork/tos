@@ -230,9 +230,9 @@ void run_collate_query(CollateParams params, td::actor::ActorId<ValidatorManager
 }
 
 void run_liteserver_query(td::BufferSlice data, td::actor::ActorId<ValidatorManager> manager,
-                          td::actor::ActorId<LiteServerCache> cache, td::optional<PublicKeyHash> source_peer,
+                          td::actor::ActorId<LiteServerCache> cache, ExtMessageIngressSource source,
                           td::Promise<td::BufferSlice> promise) {
-  LiteQuery::run_query(std::move(data), std::move(manager), std::move(cache), std::move(source_peer),
+  LiteQuery::run_query(std::move(data), std::move(manager), std::move(cache), std::move(source),
                        std::move(promise));
 }
 

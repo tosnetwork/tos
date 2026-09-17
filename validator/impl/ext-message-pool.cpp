@@ -20,6 +20,8 @@
 #include "td/utils/Random.h"
 #include "td/utils/Timer.h"
 
+#include "td/utils/overloaded.h"
+
 #include "ext-message-pool.hpp"
 #include "external-message.hpp"
 #include "fabric.h"
@@ -34,9 +36,9 @@ void ExtMessagePool::init_checkers() {
 }
 
 td::actor::Task<ExtMessagePool::CheckResult> ExtMessagePool::check_add_external_message(
-    td::BufferSlice data, int priority, bool add_to_mempool, td::optional<PublicKeyHash> source_peer) {
+    td::BufferSlice data, int priority, bool add_to_mempool, ExtMessageIngressSource source) {
   ++admission_window_.in;
-  if (!admit_source(source_peer, td::Timestamp::now())) {
+  if (!admit_source(source, td::Timestamp::now())) {
     ++admission_window_.rejected;
     co_return td::Status::Error(ErrorCode::notready, "external message source rate limit exceeded");
   }
@@ -112,11 +114,8 @@ td::actor::Task<ExtMessagePool::CheckResult> ExtMessagePool::check_add_external_
   co_return result.move_as_ok();
 }
 
-bool ExtMessagePool::admit_source(const td::optional<PublicKeyHash> &source_peer, td::Timestamp now) {
-  if (!source_peer) {
-    return true;
-  }
-  auto it = peer_admission_.find(source_peer.value());
+bool ExtMessagePool::admit_remote_peer(const PublicKeyHash &peer, td::Timestamp now) {
+  auto it = peer_admission_.find(peer);
   if (it == peer_admission_.end()) {
     if (peer_admission_.size() >= MAX_TRACKED_ADMISSION_PEERS) {
       auto oldest = std::min_element(peer_admission_.begin(), peer_admission_.end(), [](const auto &a, const auto &b) {
@@ -124,7 +123,7 @@ bool ExtMessagePool::admit_source(const td::optional<PublicKeyHash> &source_peer
       });
       peer_admission_.erase(oldest);
     }
-    it = peer_admission_.emplace(source_peer.value(), PeerAdmission{}).first;
+    it = peer_admission_.emplace(peer, PeerAdmission{}).first;
   }
   it->second.last_seen = now;
   if (!it->second.rate.check(now)) {
@@ -132,6 +131,26 @@ bool ExtMessagePool::admit_source(const td::optional<PublicKeyHash> &source_peer
   }
   it->second.rate.insert(now);
   return true;
+}
+
+bool ExtMessagePool::admit_source(const ExtMessageIngressSource &source, td::Timestamp now) {
+  // Both cases are answered. There is no third one to fall through, which is
+  // the whole point of the source being a sum type: the unlimited answer used
+  // to be what a caller got for saying nothing.
+  return std::visit(td::overloaded(
+                        [&](const RemotePeer &remote) { return admit_remote_peer(remote.peer, now); },
+                        [&](const LocalOrigin &) {
+                          // A submission that did not arrive over a transport is not
+                          // metered. That is the behaviour a locally-originated message
+                          // has always had, and it is stated here rather than reached by
+                          // falling off the end of a check.
+                          //
+                          // It is not a statement that local callers are trusted. Whether
+                          // an in-process entry should be metered is a transport policy
+                          // question, and answering it here would decide it by accident.
+                          return true;
+                        }),
+                    source);
 }
 
 size_t ExtMessagePool::max_admission_waiters() {

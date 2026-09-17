@@ -172,9 +172,9 @@ void ValidatorManagerImpl::get_key_block_proof_link(BlockIdExt block_id, td::Pro
 }
 
 td::actor::Task<> ValidatorManagerImpl::new_external_message_broadcast(td::BufferSlice data, int priority,
-                                                                        td::optional<PublicKeyHash> source_peer) {
-  // Hardfork-import manager treats source_peer as informational only.
-  (void)source_peer;
+                                                                        ExtMessageIngressSource source) {
+  // Hardfork-import manager records provenance but applies no per-source limit.
+  (void)source;
   auto msg = co_await create_ext_message(std::move(data), block::SizeLimitsConfig::ExtMsgLimits());
   ext_messages_.emplace_back(std::move(msg));
   co_return td::Unit{};
