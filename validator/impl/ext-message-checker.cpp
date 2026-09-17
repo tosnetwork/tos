@@ -146,12 +146,27 @@ td::actor::Task<ExtMessageChecker::CheckedExtMsg> ExtMessageChecker::check(td::B
     }
   }
 
-  CO_TRY(run_message(wc, std::move(account), unpack_account, state.utime, state.lt + 1, message->root_cell(),
-                     exec_config, [&] {
-                       std::shared_ptr<vm::ValidatorAuthHost> host;
-                       offer_validator_auth(message->root_cell(), config_snapshot, mc_state, state.utime, host);
-                       return host;
-                     }));
+  // Admission is the expensive, attacker-sized part. Do it once. The first VM
+  // attempt executes the assembled transaction itself; a diagnostic retry
+  // clones only its immutable admitted material into a fresh host, so work
+  // allowance and staged state are reset without expanding the evidence again.
+  std::shared_ptr<tos::auth::NativeConfigTransaction> admitted_authority;
+  offer_validator_auth(message->root_cell(), config_snapshot, mc_state, state.utime, admitted_authority);
+  CO_TRY(run_message(
+      wc, std::move(account), unpack_account, state.utime, state.lt + 1, message->root_cell(), exec_config,
+      [authority = std::move(admitted_authority), first = true]() mutable -> std::shared_ptr<vm::ValidatorAuthHost> {
+        if (!authority) {
+          return {};
+        }
+        std::shared_ptr<tos::auth::NativeConfigTransaction> execution;
+        if (first) {
+          first = false;
+          execution = authority;
+        } else {
+          execution = std::shared_ptr<tos::auth::NativeConfigTransaction>(authority->clone_for_execution());
+        }
+        return std::shared_ptr<vm::ValidatorAuthHost>(execution, &execution->host());
+      }));
   result.timings.vm = timer.elapsed();
   co_return result;
 }
@@ -203,10 +218,10 @@ td::Result<bool> ExtMessageChecker::check_workchain_execution(const td::Ref<ExtM
   return false;
 }
 
-bool ExtMessageChecker::offer_validator_auth(const td::Ref<vm::Cell>& msg_root, const ConfigSnapshot& snapshot,
-                                            const td::Ref<MasterchainState>& mc_state, UnixTime now,
-                                            std::shared_ptr<vm::ValidatorAuthHost>& host) const {
-  host.reset();
+bool ExtMessageChecker::offer_validator_auth(
+    const td::Ref<vm::Cell>& msg_root, const ConfigSnapshot& snapshot, const td::Ref<MasterchainState>& mc_state,
+    UnixTime now, std::shared_ptr<tos::auth::NativeConfigTransaction>& authority) const {
+  authority.reset();
   if (!validator_auth_chain_ || snapshot.config == nullptr || mc_state.is_null() || msg_root.is_null()) {
     return false;
   }
@@ -235,8 +250,7 @@ bool ExtMessageChecker::offer_validator_auth(const td::Ref<vm::Cell>& msg_root, 
     return false;
   }
 
-  auto authority = std::shared_ptr<tos::auth::NativeConfigTransaction>(std::move(admitted.value()));
-  host = std::shared_ptr<vm::ValidatorAuthHost>(authority, &authority->host());
+  authority = std::shared_ptr<tos::auth::NativeConfigTransaction>(std::move(admitted.value()));
   return true;
 }
 

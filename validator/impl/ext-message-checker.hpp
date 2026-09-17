@@ -93,17 +93,19 @@ class ExtMessageChecker : public td::actor::Actor {
   };
   std::map<ExecConfigKey, ExecConfigPair> exec_configs_;
 
-  // `authority` is called immediately before each execution attempt rather than
-  // once: applying a registry update stages state inside the authority, so the
-  // retry that produces a VM log has to run against a fresh one or it would be
-  // replaying against a host that has already moved.
+  // `authority` is called immediately before each execution attempt. It may
+  // therefore be called again for the diagnostic logging run, but it creates a
+  // fresh host from material admitted once before run_message: host state and
+  // work allowances are independent without re-opening attacker-chosen bytes.
   td::Status run_message(WorkchainId wc, block::Account acc,
                          const std::function<td::Result<block::Account>()>& rebuild_account, UnixTime utime,
                          LogicalTime lt, const td::Ref<vm::Cell>& msg_root, ExecConfigPair& exec_config,
                          const std::function<std::shared_ptr<vm::ValidatorAuthHost>()>& authority);
 
   // Assembles the registry authority for one external message at the current
-  // masterchain tip, or refuses.
+  // masterchain tip, or refuses. The returned transaction is also the immutable
+  // admission seed for a diagnostic retry: clone_for_execution() shares its
+  // already-opened evidence while constructing a new reader and host.
   //
   // This is not a consensus authority and decides nothing about any block. It
   // answers whether this message can execute at all, which is what admission to
@@ -117,7 +119,7 @@ class ExtMessageChecker : public td::actor::Actor {
   // second way to build this authority is a second answer waiting to differ.
   bool offer_validator_auth(const td::Ref<vm::Cell>& msg_root, const ConfigSnapshot& snapshot,
                             const td::Ref<MasterchainState>& mc_state, UnixTime now,
-                            std::shared_ptr<vm::ValidatorAuthHost>& host) const;
+                            std::shared_ptr<tos::auth::NativeConfigTransaction>& authority) const;
 
   struct CachedState {
     BlockIdExt block_id;

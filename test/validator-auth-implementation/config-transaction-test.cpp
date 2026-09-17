@@ -22,6 +22,11 @@ struct AssertionFailure : std::runtime_error {
   using std::runtime_error::runtime_error;
 };
 
+void require(bool condition, const char* name) {
+  if (!condition)
+    throw AssertionFailure(name);
+}
+
 template <class T>
 void refuses(const Result<T>& result, const char* code, const char* name) {
   if (result.ok() || result.error().code != code)
@@ -125,6 +130,32 @@ int main(int argc, char** argv) {
     add("absent-history-refused", [=] {
       refuses(NativeConfigTransaction::open(inputs, sequence, evidence_cell(), {}, {}, charge), "native-config-transaction-input",
               "absent-history-refused");
+    });
+    add("execution-clone-reuses-admitted-material-with-a-fresh-host", [&] {
+      unsigned expansion_charges = 0;
+      auto counting_charge = [&](std::size_t) -> Result<bool> {
+        ++expansion_charges;
+        return true;
+      };
+      auto primary = NativeConfigTransaction::open(inputs, sequence, evidence_cell(), {}, history, counting_charge);
+      require(primary.ok() && primary.value() != nullptr && expansion_charges != 0,
+              "execution-clone-reuses-admitted-material-with-a-fresh-host");
+      const auto charges_after_admission = expansion_charges;
+
+      auto retry = primary.value()->clone_for_execution();
+      require(retry != nullptr && expansion_charges == charges_after_admission,
+              "execution-clone-reuses-admitted-material-with-a-fresh-host");
+      require(&retry->host() != &primary.value()->host(),
+              "execution-clone-reuses-admitted-material-with-a-fresh-host");
+
+      vm::ValidatorAuthHost::Charge no_charge{[](long long) {}, [](std::uint16_t) {}};
+      primary.value()->host().checkpoint(no_charge);
+      require(primary.value()->host().checkpoints() == 1 && retry->host().checkpoints() == 0,
+              "execution-clone-reuses-admitted-material-with-a-fresh-host");
+      retry->host().checkpoint(no_charge);
+      require(primary.value()->host().checkpoints() == 1 && retry->host().checkpoints() == 1 &&
+                  expansion_charges == charges_after_admission,
+              "execution-clone-reuses-admitted-material-with-a-fresh-host");
     });
 
     if (argc == 4 && std::string_view(argv[3]) == "--list") {

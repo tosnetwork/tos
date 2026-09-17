@@ -1,16 +1,16 @@
-"""Require the admission path to open an arriving container once.
+"""Hold both levels of the external-message evidence expansion boundary.
 
-Recognition opens the evidence container under the admission allowance, and
-what follows it -- owner authentication, then the transaction assembler -- is
-handed the value it produced. Opening the root a second time establishes no
-boundary recognition has not already established: the cell is immutable and the
-parse is a function of it, so the second answer can only agree with the first.
-What it does do is repeat an expansion whose size the sender chose, which is the
-thing the allowance exists to bound.
+The registry admission source may open an arriving evidence container once, under
+the admission allowance. The ingress checker has a second, wider invariant: a
+failed VM run is repeated with logging, but that diagnostic retry must reuse the
+material already admitted by the first attempt rather than run admission again.
+The retry still needs a fresh host because host state and work allowance are
+mutable.
 
-So the count is held here. A guard against work that is merely redundant does
-not fail any test when it is removed -- everything still passes, twice as
-slowly -- which is exactly the kind of property that regresses quietly.
+Neither property changes a functional answer when it regresses. The same message
+is merely parsed twice, or the same host is accidentally reused, so ordinary
+accept/refuse tests are the wrong instrument. This check holds the source shape
+and mutates both invariants in memory to prove the check itself speaks.
 """
 from __future__ import annotations
 
@@ -20,23 +20,136 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 ADMISSION = ROOT / "validator/auth/native-registry-admission.cpp"
+TRANSACTION = ROOT / "validator/auth/native-config-transaction.cpp"
+INGRESS = ROOT / "validator/impl/ext-message-checker.cpp"
 OPEN = re.compile(r"NativeEvidence::open\s*\(")
+OFFER = re.compile(r"offer_validator_auth\s*\(")
+
+
+def between(source: str, start: str, end: str) -> str:
+    begin = source.find(start)
+    finish = source.find(end, begin + len(start)) if begin >= 0 else -1
+    if begin < 0 or finish < 0:
+        return ""
+    return source[begin:finish]
+
+
+def admission_errors(source: str) -> list[str]:
+    errors: list[str] = []
+    openings = OPEN.findall(source)
+    if len(openings) != 1:
+        errors.append(
+            f"the registry admission source opens an arriving container {len(openings)} times; expected one"
+        )
+    if "admission_evidence_budget()" not in source:
+        errors.append("the registry admission opening is not made under the admission allowance")
+    return errors
+
+
+def ingress_errors(source: str) -> list[str]:
+    errors: list[str] = []
+    check = between(
+        source,
+        "td::actor::Task<ExtMessageChecker::CheckedExtMsg> ExtMessageChecker::check(",
+        "td::Result<ExtMessageChecker::ConfigSnapshot> ExtMessageChecker::resolve_config(",
+    )
+    run = between(
+        source,
+        "td::Status ExtMessageChecker::run_message(",
+        "td::actor::Task<ExtMessageChecker::ResolvedState> ExtMessageChecker::resolve_state(",
+    )
+    offer = between(
+        source,
+        "bool ExtMessageChecker::offer_validator_auth(",
+        "td::Status ExtMessageChecker::run_message(",
+    )
+    if not check or not run or not offer:
+        return ["cannot isolate the ingress checker functions"]
+
+    run_call = check.find("CO_TRY(run_message(")
+    offers = list(OFFER.finditer(check))
+    if len(offers) != 1:
+        errors.append(f"the ingress check performs {len(offers)} authority admissions; expected one")
+    elif run_call < 0 or offers[0].start() > run_call:
+        errors.append("authority admission occurs inside/after run_message instead of once before both VM attempts")
+
+    if "clone_for_execution()" not in check[run_call if run_call >= 0 else 0 :]:
+        errors.append("the diagnostic retry has no fresh-host clone from admitted material")
+    if run.count("authority()") != 2:
+        errors.append(
+            f"run_message constructs an execution authority {run.count('authority()')} times in source; expected nolog and log"
+        )
+    if OFFER.search(run):
+        errors.append("run_message itself can re-enter authority admission")
+    if offer.count("assemble_registry_authority(") != 1:
+        errors.append("offer_validator_auth no longer has exactly one production authority assembly")
+
+    clone = between(
+        (TRANSACTION.read_text() if TRANSACTION.exists() else ""),
+        "std::unique_ptr<NativeConfigTransaction> NativeConfigTransaction::clone_for_execution() const",
+        "const FinalizedAnchorSource& NativeConfigTransaction::history() const",
+    )
+    if not clone:
+        errors.append("cannot isolate clone_for_execution")
+    else:
+        if OPEN.search(clone):
+            errors.append("clone_for_execution re-opens evidence")
+        if "new NativeConfigTransaction(material_)" not in clone:
+            errors.append("clone_for_execution no longer derives solely from immutable admitted material")
+    return errors
+
+
+def require_mutation_rejected(name: str, mutated: str) -> list[str]:
+    errors = ingress_errors(mutated)
+    if errors:
+        print(f"MUTATION_KILLED {name}: {errors[0]}")
+        return []
+    return [f"guard mutation survived: {name}"]
 
 
 def main() -> int:
-    source = ADMISSION.read_text()
-    openings = OPEN.findall(source)
-    if len(openings) != 1:
-        print(
-            f"FAIL: the admission path opens an arriving container {len(openings)} times; "
-            "recognition's opening is the only one that establishes anything",
-            file=sys.stderr,
+    admission = ADMISSION.read_text()
+    ingress = INGRESS.read_text()
+    errors = admission_errors(admission) + ingress_errors(ingress)
+
+    # Regression one: move the one admission into the factory run_message calls
+    # for both nolog and log attempts. This is the exact expensive-work doubling
+    # the outer guard exists to catch.
+    admission_line = (
+        "  offer_validator_auth(message->root_cell(), config_snapshot, mc_state, state.utime, admitted_authority);\n"
+    )
+    factory_open = (
+        "      [authority = std::move(admitted_authority), first = true]() mutable -> "
+        "std::shared_ptr<vm::ValidatorAuthHost> {\n"
+    )
+    if ingress.count(admission_line) != 1 or ingress.count(factory_open) != 1:
+        errors.append("mutation anchors for repeated ingress admission are not unique")
+    else:
+        repeated = ingress.replace(admission_line, "", 1).replace(
+            factory_open,
+            factory_open
+            + "        offer_validator_auth(message->root_cell(), config_snapshot, mc_state, state.utime, authority);\n",
+            1,
         )
+        errors += require_mutation_rejected("admission-moved-into-retry-factory", repeated)
+
+    # Regression two: return the same stateful host on the logging attempt. It
+    # avoids the second parse but inherits settled work and staged state, which
+    # makes the diagnostic run asymmetric with its rebuilt account.
+    clone_line = (
+        "          execution = std::shared_ptr<tos::auth::NativeConfigTransaction>(authority->clone_for_execution());\n"
+    )
+    if ingress.count(clone_line) != 1:
+        errors.append("mutation anchor for stateful-host reuse is not unique")
+    else:
+        reused = ingress.replace(clone_line, "          execution = authority;\n", 1)
+        errors += require_mutation_rejected("logging-run-reuses-stateful-host", reused)
+
+    if errors:
+        for error in errors:
+            print(f"FAIL: {error}", file=sys.stderr)
         return 1
-    if "admission_evidence_budget()" not in source:
-        print("FAIL: the opening is not made under the admission allowance", file=sys.stderr)
-        return 1
-    print("PASS: one opening, under the admission allowance")
+    print("PASS: one evidence opening, one ingress admission, fresh host for the logging retry")
     return 0
 
 

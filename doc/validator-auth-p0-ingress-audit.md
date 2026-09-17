@@ -37,19 +37,18 @@ check_add_external_message
      admission_waiters_ < max_admission_waiters(), 512..50000               BEFORE
   4  ExtMessageChecker::check, on one of NUM_CHECKERS = 24 workers
        offer_validator_auth -> assemble_registry_authority
-         -> NativeEvidence::open            <- the allowance from B1
+         -> NativeEvidence::open            <- the allowance from B1, once
        run_message
-         VM run, no log
-         if it failed: authority() again -> a second open -> VM run with log
+         VM run, no log, with the assembled host
+         if it failed: clone_for_execution -> fresh host -> VM run with log
   5  MAX_EXT_MSG_PER_ADDR, 30 per 10 seconds per destination                AFTER
   6  ext_messages_hashes_ / ext_messages_hashes_norm_                       AFTER
 ```
 
 ## How many expansions one message can cause
 
-One if the message's first VM run succeeds. **Two if it fails**, because the
-authority is supplied as a factory and `run_message` calls it again to repeat
-the run with logging on:
+**One evidence opening whether the first VM run succeeds or fails.** The logging
+retry still asks for an authority a second time:
 
 ```cpp
 auto status = run_message_on_account(..., *exec_config.nolog, authority());
@@ -58,15 +57,23 @@ if (status.is_ok()) return status;
 auto status_with_log = run_message_on_account(..., *exec_config.log, authority());
 ```
 
-The retry is diagnostic. Its result is discarded unless it fails, in which case
-its error is returned instead. What matters here is who reaches it: a legitimate
-message succeeds and is assembled once; a hostile message fails by definition
-and is assembled twice. The doubling applies to exactly the traffic that should
-not have it.
+What changed is what that factory means. Admission runs before `run_message` and
+produces one `NativeConfigTransaction`. Its parsed evidence, committee, witnessed
+history, proposal and accepted prefix are held as immutable material. The first
+VM run uses the assembled host. If the run fails, `clone_for_execution()` builds
+a new context, reader and host over that same admitted material. The rebuilt
+account therefore meets a host with fresh staged state and a fresh work allowance,
+without parsing the attacker-controlled evidence again.
 
-Each assembly opens the container once, and one opening expands at two points,
-each bounded. So a hostile message can cause four bounded expansions where a
-legitimate one causes two.
+One opening still expands at two points -- the authorizations blob and the
+attachments -- and each point is bounded independently. A failed hostile message
+therefore causes the same two bounded expansion points as a successful message,
+not four.
+
+A source guard holds both halves of that property. Moving admission back inside
+the retry factory is rejected, and replacing the clone with the already-used
+host is rejected separately. Those regressions otherwise leave ordinary
+functional answers unchanged.
 
 ## Whether repeating a message is cheaper than the first time
 
@@ -124,13 +131,8 @@ refusing was already done.
 
 ## What this leaves for the fix
 
-Three things, in the order the trace found them.
-
-The double assembly in the ingress checker is redundant rather than protective:
-both calls parse the same immutable message against the same state and can only
-agree. Removing it halves hostile-message cost and changes nothing else, and is
-worth doing before considering any limiter, because a limiter sized against
-doubled work is sized against a number we chose not to fix.
+The first finding from the trace -- duplicate evidence admission on the logging
+retry -- is closed as described above. Two wider ingress questions remain.
 
 Rejected messages are not suppressed. The machinery to suppress them --
 including a normalized hash that is representation-independent -- already exists
@@ -143,5 +145,5 @@ sender is most likely to be in. Closing it is a policy decision about transports
 that supply no peer identity, not a validator-auth decision, and it protects
 every external message rather than only this path.
 
-None of the three requires a new registry-specific limiter, which is the outcome
-this audit was run to test for.
+Neither remaining question requires a new registry-specific limiter, which is
+the outcome this audit was run to test for.

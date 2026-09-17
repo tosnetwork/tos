@@ -28,17 +28,17 @@ struct NativeConfigTransactionInputs {
   std::uint32_t inclusion{};  // coordinate of the block being built
 };
 
-// Owns the pieces the host borrows, because the host holds references to them
-// and outliving the assembler would be a dangling read rather than an error.
+// Owns one execution host while sharing the immutable material that admission
+// established. A diagnostic retry needs a fresh host and fresh work allowance,
+// but it must not parse the arriving evidence again: the cell is immutable and
+// admission already bounded and authenticated that interpretation.
 class NativeConfigTransaction {
-  NativeCommittee committee_;
-  NativeEvidence evidence_;
-  std::shared_ptr<const FinalizedAnchorSource> history_;
+  struct Material;
+  std::shared_ptr<const Material> material_;
   NativeIdentityContext context_;
   ObjectReader reader_;
   NativeConfigHost host_;
-  NativeConfigTransaction(NativeCommittee, NativeEvidence, std::shared_ptr<const FinalizedAnchorSource>,
-                          NativeRegistryBlock, ChainContext, std::uint32_t inclusion, td::Ref<vm::Cell> proposal);
+  explicit NativeConfigTransaction(std::shared_ptr<const Material>);
 
  public:
   // The prefix comes from the sequence, never from the parent state. A second
@@ -65,6 +65,13 @@ class NativeConfigTransaction {
       const NativeConfigTransactionInputs&, const NativeConfigSequence&, NativeEvidence transaction_evidence,
       td::Ref<vm::Cell> admitted_proposal, std::shared_ptr<const FinalizedAnchorSource>, StateReadBudget = {});
 
+  // Construct another execution over exactly the material this transaction was
+  // admitted with. The parsed evidence, committee, witnessed history, proposal
+  // and accepted prefix are shared immutably; the context, object reader and
+  // host are new. In particular, work settled by one host is not inherited by
+  // the next one, while no attacker-controlled bytes are expanded again.
+  std::unique_ptr<NativeConfigTransaction> clone_for_execution() const;
+
   NativeConfigHost& host() {
     return host_;
   }
@@ -72,11 +79,7 @@ class NativeConfigTransaction {
   // during VM execution, long after the call that assembled this returned, so
   // it is exposed here for one reason: a test can read it after that return and
   // find out whether it is still there.
-  const FinalizedAnchorSource& history() const {
-    return *history_;
-  }
-  const Authorizations& authorizations() const {
-    return evidence_.authorizations();
-  }
+  const FinalizedAnchorSource& history() const;
+  const Authorizations& authorizations() const;
 };
 }  // namespace tos::auth

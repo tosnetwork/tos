@@ -6,17 +6,37 @@
 #include "native-registry.h"
 namespace tos::auth {
 
-NativeConfigTransaction::NativeConfigTransaction(NativeCommittee committee, NativeEvidence evidence,
-                                                 std::shared_ptr<const FinalizedAnchorSource> history,
-                                                 NativeRegistryBlock accepted, ChainContext chain,
-                                                 std::uint32_t inclusion, td::Ref<vm::Cell> proposal)
-    : committee_(std::move(committee))
-    , evidence_(std::move(evidence))
-    , history_(std::move(history))
-    , context_{std::move(chain), committee_.snapshot(), *history_}
-    , reader_(evidence_.reader())
-    , host_(std::move(accepted), context_, reader_, inclusion, evidence_.root(), evidence_.authorizations(),
-              std::move(proposal)) {
+// What admission established before any execution attempt. It is immutable and
+// may therefore back more than one fresh host without re-opening the evidence
+// container. The mutable pieces -- reader state, registry work allowance and
+// staged host state -- live in NativeConfigTransaction itself, not here.
+struct NativeConfigTransaction::Material {
+  NativeCommittee committee;
+  NativeEvidence evidence;
+  std::shared_ptr<const FinalizedAnchorSource> history;
+  NativeRegistryBlock accepted;
+  ChainContext chain;
+  std::uint32_t inclusion;
+  td::Ref<vm::Cell> proposal;
+
+  Material(NativeCommittee committee, NativeEvidence evidence, std::shared_ptr<const FinalizedAnchorSource> history,
+           NativeRegistryBlock accepted, ChainContext chain, std::uint32_t inclusion, td::Ref<vm::Cell> proposal)
+      : committee(std::move(committee))
+      , evidence(std::move(evidence))
+      , history(std::move(history))
+      , accepted(std::move(accepted))
+      , chain(std::move(chain))
+      , inclusion(inclusion)
+      , proposal(std::move(proposal)) {
+  }
+};
+
+NativeConfigTransaction::NativeConfigTransaction(std::shared_ptr<const Material> material)
+    : material_(std::move(material))
+    , context_{material_->chain, material_->committee.snapshot(), *material_->history}
+    , reader_(material_->evidence.reader())
+    , host_(material_->accepted, context_, reader_, material_->inclusion, material_->evidence.root(),
+            material_->evidence.authorizations(), material_->proposal) {
 }
 
 namespace {
@@ -68,9 +88,10 @@ Result<std::unique_ptr<NativeConfigTransaction>> NativeConfigTransaction::open(
   if (!evidence.ok())
     return evidence.error();
 
-  return std::unique_ptr<NativeConfigTransaction>(new NativeConfigTransaction(
-      std::move(committee.value()), std::move(evidence.value()), std::move(history), std::move(accepted), inputs.chain,
-      inputs.inclusion, std::move(admitted_proposal)));
+  auto material = std::make_shared<Material>(std::move(committee.value()), std::move(evidence.value()),
+                                             std::move(history), std::move(accepted), inputs.chain,
+                                             inputs.inclusion, std::move(admitted_proposal));
+  return std::unique_ptr<NativeConfigTransaction>(new NativeConfigTransaction(std::move(material)));
 }
 
 Result<std::unique_ptr<NativeConfigTransaction>> NativeConfigTransaction::open_admitted(
@@ -84,8 +105,21 @@ Result<std::unique_ptr<NativeConfigTransaction>> NativeConfigTransaction::open_a
     return committee.error();
   auto accepted = sequence.accepted();
 
-  return std::unique_ptr<NativeConfigTransaction>(new NativeConfigTransaction(
-      std::move(committee.value()), std::move(evidence), std::move(history), std::move(accepted), inputs.chain,
-      inputs.inclusion, std::move(admitted_proposal)));
+  auto material = std::make_shared<Material>(std::move(committee.value()), std::move(evidence), std::move(history),
+                                             std::move(accepted), inputs.chain, inputs.inclusion,
+                                             std::move(admitted_proposal));
+  return std::unique_ptr<NativeConfigTransaction>(new NativeConfigTransaction(std::move(material)));
+}
+
+std::unique_ptr<NativeConfigTransaction> NativeConfigTransaction::clone_for_execution() const {
+  return std::unique_ptr<NativeConfigTransaction>(new NativeConfigTransaction(material_));
+}
+
+const FinalizedAnchorSource& NativeConfigTransaction::history() const {
+  return *material_->history;
+}
+
+const Authorizations& NativeConfigTransaction::authorizations() const {
+  return material_->evidence.authorizations();
 }
 }  // namespace tos::auth
