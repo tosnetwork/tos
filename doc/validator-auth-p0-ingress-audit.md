@@ -99,14 +99,14 @@ message. It is not used for this.
 
 | bound | value | applies to |
 | --- | --- | --- |
-| per-peer rate | 30 per 10 seconds | **only a sender with a peer identity** |
+| per-peer rate | 30 per 10 seconds | **every remote sender**, attributed or not |
 | message size | `ext_msg_limits.max_size` | everyone |
 | checks in flight | 192, over 24 workers | everyone |
 | admission queue | 512 to 50,000, sized from measured completion rate | everyone |
 | per-destination rate | 30 per 10 seconds | applied after the work |
 
-The per-peer limiter is the only one that is per-sender, and it has a case that
-is not bounded at all:
+The per-peer limiter is the only one that is per-sender, and it used to have a
+case that was not bounded at all:
 
 ```cpp
 bool ExtMessagePool::admit_source(const td::optional<PublicKeyHash> &source_peer, td::Timestamp now) {
@@ -115,31 +115,52 @@ bool ExtMessagePool::admit_source(const td::optional<PublicKeyHash> &source_peer
   }
 ```
 
-An earlier revision of this document read that as the case a hostile sender is
-most likely to be in. Tracing every path that reaches this function does not
-support it, and the claim is withdrawn. What each submission path supplies:
+Two things about that have since changed, and both are in the tree.
+
+An earlier revision of this document read the unbounded case as the one a
+hostile sender is most likely to be in. Tracing every path that reaches this
+function does not support it, and the claim is withdrawn. What each submission
+path supplies:
 
 | path | source |
 | --- | --- |
 | public overlay, `FullNodeShardImpl::process_broadcast` | the broadcasting peer, always |
 | custom overlay, `FullNodeCustomOverlay::process_broadcast` | the broadcasting peer, always, and only from an authorized sender in `msg_senders_` |
-| ADNL query, `ValidatorManagerImpl::run_ext_query` | the querying node, unless its ADNL id is zero |
+| ADNL query, `ValidatorManagerImpl::run_ext_query` | the querying node |
 | full node master, `FullNodeMasterImpl::process_query` | the querying node |
 | validator engine ADNL entry | the querying node |
 | JSON-RPC submission, the five `send_attributed_liteserver_query` sites | a per-client identity derived from the resolved client address |
 
 The JSON-RPC path is worth naming, because it is the one that already answered
-this question. It does not forward an absent source: it hashes the resolved
-client address into a stable id of its own, so that submissions over HTTP meet
-the same window the ADNL path has always had. Its own comment says why. Its read
-queries still carry no source, but a read query never reaches this function.
+this question for itself. It does not forward an absent source: it hashes the
+resolved client address into a stable id of its own, so that submissions over
+HTTP meet the same window the ADNL path has always had. Its read queries do
+carry no source, but a read query never reaches this function.
 
-What is left is narrower and is an architectural ambiguity rather than a
-measured public hole: the source is an `optional` with a default, so absence is
-representable and means "unlimited" without anyone having chosen that. The one
-residual path that reaches it is a JSON-RPC submission whose client address
-resolves empty, which keeps the historical zero id. No measured public remote
-path currently reaches this function without an identity.
+And the unbounded case no longer exists. The source is no longer an optional
+peer but a sum of a remote peer and a local origin, so absence is not
+representable and the limiter answers for both cases by name:
+
+```cpp
+return std::visit(td::overloaded(
+                      [&](const RemotePeer &remote) { return admit_remote_peer(remote.peer, now); },
+                      [&](const LocalOrigin &) { return true; }),
+                  source);
+```
+
+The one path that used to reach the unbounded case was a query whose ADNL
+identity is zero, which the manager turned into an absent source. It is now a
+remote peer with an unattributed identity, so those clients share one limiter
+bucket rather than sharing an exemption. That is a shared bucket and not a good
+identity: unrelated unattributed clients throttle each other, which is a
+conservative failure rather than a correct one, and improving it means giving
+the transport something better to attribute by.
+
+The local case is exempt, as a locally-originated submission has always been.
+That exemption is now stated where it is decided rather than reached by
+omission, and it is provenance rather than trust: whether an in-process entry
+should be metered is a transport policy question that the type deliberately does
+not answer.
 
 For a sender who did reach it, what remains is the concurrency bound: 192 checks
 in flight across 24 workers, with a queue in front of it. That bounds how much
@@ -176,3 +197,61 @@ unlimited external path later.
 
 Neither remaining question requires a new registry-specific limiter, which is
 the outcome this audit was run to test for.
+
+## Whether a global admission limiter is missing
+
+The question was whether the pool needs a global admission CPU token bucket on
+top of the per-sender window. It does not, and the reason is that it already has
+a global admission control which nobody had described as one.
+
+`max_admission_waiters()` does not return a constant. It sizes the queue from
+the completion rate the pool has been measuring, so that waiting stays under
+`MAX_ADMISSION_QUEUE_DELAY`, and refuses beyond it -- before the expensive
+check, like every other bound here:
+
+```
+cap = measured completions per second * 5 s, clamped to [512, 50000]
+```
+
+That is a feedback controller whose control variable is throughput. A CPU token
+bucket would be a second controller for the same variable, set by hand, and the
+two would disagree the first time the machine changed.
+
+What arrives at the expensive stage is bounded before that. The per-sender
+window is thirty per ten seconds, so N senders can put 3N checks per second in
+front of the workers:
+
+| senders | reaching the expensive stage |
+| ---: | ---: |
+| 1 | 3/s |
+| 10 | 30/s |
+| 100 | 300/s |
+
+and the attacker-controlled part of one check is bounded too: opening an
+arriving container costs 44 microseconds at a kilobyte and 2,442 at the 64 KiB
+admission ceiling, whether the bytes are repeated or distinct.
+
+### What is wrong is the floor, not the absence of a limiter
+
+The clamp's lower bound contradicts the rule above it. The cap is derived from a
+delay, but the floor is a count, so below 512/5 = 102.4 completions per second
+the floor wins and the delay it was derived from is no longer what is enforced:
+
+| completions | cap | what a full queue then implies |
+| ---: | ---: | ---: |
+| 1000/s | 5000 | 5.0 s |
+| 102.4/s | 512 | 5.0 s |
+| 50/s | 512 | 10.2 s |
+| 10/s | 512 | 51.2 s |
+| 1/s | 512 | 512 s |
+
+The departure grows exactly as the node slows, which is the condition the bound
+exists for. A queue sized for five seconds admits over eight minutes of work at
+one completion per second.
+
+No replacement floor is proposed here. Picking one means choosing the slowest
+throughput at which the node should still accept a queue at all, and that is a
+number from a production machine rather than from this reasoning. What can be
+said without it is that a constant floor under a delay-derived cap cannot honour
+the delay, so the floor should either be derived from the same delay or be
+removed in favour of the measured rate alone.
