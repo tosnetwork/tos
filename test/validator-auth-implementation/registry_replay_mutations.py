@@ -20,7 +20,13 @@ CASES=[
  ('due-other-identity-checkpoint-replay','next.due.entry(pending.effective_from).or_default().insert(update.identity);',''),
  ('canceled-epoch-retained-checkpoint-replay','next.epochs.insert((key.identity, (key.role, key.suite, key.parameters)), key.epoch);',''),
  ('policy-boundary-bytes','next.current_policy = object_id("policy", next.policy_at(at)?)?;',''),
- ('control-retention-bytes','store_dictionary(32, self.activations.iter())?','store_dictionary(32, std::iter::empty::<(&Vec<u8>, &Activation)>())?'),
+ # Named for the case that actually notices. Both dictionaries were filed
+ # under control-retention-bytes, and dropping the activations changes the
+ # bytes of a fixture that is checked earlier: the global policy operation has
+ # activations, the control-retention fixture has observations. Measured, not
+ # assumed -- removing each one and reading the first failure is what settled
+ # which is which.
+ ('global-policy-operation-bytes','store_dictionary(32, self.activations.iter())?','store_dictionary(32, std::iter::empty::<(&Vec<u8>, &Activation)>())?'),
  ('control-retention-bytes','store_dictionary(256, self.observations.iter())?','store_dictionary(256, std::iter::empty::<(&Hash, &Observation)>())?'),
 ]
 def run(args):

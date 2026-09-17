@@ -276,6 +276,17 @@ fetching; callers must use one reader for all attachments of an operation.
 
 ## Local evidence and CI
 
+One byte charge has no case that notices its removal. `RegistryView::open`
+charges for the policy-activation record it reads, and deleting that charge
+breaks nothing: the budget cases assert an exact remainder after a key lookup,
+or assert refusal when the open path is starved, and neither observes the
+remainder after a successful open. A case that opens a registry carrying an
+activation, with a budget sized so the activation's bytes are exactly what is
+left, and asserts nothing remains, would close it. The gap is recorded where
+the mutation for it would otherwise sit, so it is refused rather than
+forgotten; it stayed invisible because the anchor beside it had become
+ambiguous and took the harness down before it reached anything.
+
 The implementation workflow's matrix rides its own time limit, and the reason is
 a build each leg repeats rather than the guards it runs. In one run, "Build
 production libraries and focused drivers" measured 34.8, 38.4 and 39.0 minutes

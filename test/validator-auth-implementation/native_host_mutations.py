@@ -23,7 +23,13 @@ RUST=[
  ('host-meter','host-negative-gas','if gas < 0 { fail!(ExceptionCode::RangeCheckError); }',''),
  ('host-operands','host-apply-success','.apply(update, evidence,','.apply(evidence, update,'),
 ]
-_start=_source.index('pub(super) fn execute_vauth_state(');_end=_source.index('pub(super) fn execute_vauth_apply(',_start);_state=_source[_start:_end]
+# The scope ends at whichever function follows, not at one named here. It used
+# to name execute_vauth_apply, and execute_vauth_bind was later inserted between
+# the two -- so the slice covered two functions, the anchor matched twice, and
+# the harness stopped before running anything.
+_start=_source.index('pub(super) fn execute_vauth_state(')
+_end=_source.index('\npub(super) fn ',_start+1)
+_state=_source[_start:_end]
 RUST.append(('host-required','host-required',_state,replace_once(_state,'let Some(host) = engine.validator_auth_host() else { fail!(ExceptionCode::InvalidOpcode); };','let Some(host) = engine.validator_auth_host() else { return Ok(()); };')))
 RUST_VM=[('host-child-isolation','host-child-isolation','capabilities: self.capabilities, validator_auth_host: None, block_version: self.block_version,','capabilities: self.capabilities, validator_auth_host: self.validator_auth_host.clone(), block_version: self.block_version,')]
 def main(a):

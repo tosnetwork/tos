@@ -28,7 +28,7 @@ STATE = Path("validator/auth/native-config-state-host.cpp")
 BINARY = Path("build-p0/test/validator-auth-implementation/test-p0-host-purpose")
 REFUSAL = '  refuse_instruction("P0 native transaction context required");'
 SETTLE = ("  work_remaining_ = registry.value().remaining();\n"
-          "  charge(as_gas(consumed(before, work_remaining_, gas_per_entry_, gas_per_byte_)));\n")
+          "  charge.gas(as_gas(consumed(before, work_remaining_, gas_per_entry_, gas_per_byte_)));\n")
 REFUSE = '  if (!bound.ok())\n    refuse_host("native binding refused");\n'
 
 

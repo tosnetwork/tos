@@ -6,16 +6,41 @@ ROOT=Path(__file__).resolve().parents[2]
 CPP=[
  ('view-entry-budget','if (budget_.entries == 0) return Error{"state-resource"};',''),
  ('view-budget-charge','--budget_.entries;',''),
- ('view-budget-charge','budget_.bytes -= raw.value().size();',''),
+ # Followed by its own next line, because a second byte charge was added later
+ # in `open` as `result.budget_.bytes -= ...`, and the matcher is token-based:
+ # the shorter form is a suffix of the longer one, so the anchor silently
+ # stopped being unique and took the whole harness down with it.
+ ('view-budget-charge','budget_.bytes -= raw.value().size();\n    return raw;','return raw;'),
+ # The byte charge for the policy-activation read in `RegistryView::open` is
+ # deliberately absent from this table, and that is a gap rather than a
+ # decision. Adding it showed the charge is unguarded: removing
+ # `result.budget_.bytes -= raw.value().size();` breaks no case, so the mutation
+ # survives and would make this harness red for a real reason.
+ #
+ # What would kill it is a case that opens a registry which has an activation,
+ # with a budget sized so the activation's bytes are exactly what remains, and
+ # asserts `remaining().bytes == 0`. The existing budget cases either assert an
+ # exact remainder after a key lookup (`view-budget-charge`) or assert refusal
+ # when the open path is starved (`policy-byte-budget`); none asserts the
+ # remainder after a successful open, which is where this charge shows.
+ #
+ # It stayed unnoticed because the anchor above was ambiguous, so the harness
+ # died before reaching anything here.
  ('view-byte-budget','std::min(budget_.bytes, maximum)','maximum'),
  ('identity-binding','value.value().identity_ != id ||',''),
  ('identity-stake','value.value().stake_id_ == Hash{}','false'),
- ('entry-tail','leaf->size() != 0 ||',''),
+ # Extended by its own refusal, because `open`'s policy-activation branch
+ # repeats the same shape check and the bare form matches both.
+ ('entry-tail','leaf->size() != 0 || leaf->size_refs() != 1)\n      return Error{"dictionary-shape"};',
+  'false)\n      return Error{"dictionary-shape"};'),
  ('key-hash','hash.value() != id','false'),
  ('key-descriptor','key.capacity_limit_ != 0','false'),
  ('key-admission','if (!admitted.ok()) return admitted.error();',''),
  ('policy-hash','id.value() != result.current_policy_','false'),
- ('dictionary-shape','wrapper.size() != 1 ||',''),
+ # Likewise: the same wrapper check guards the registry root and, since the
+ # policy-activation branch was added, the control dictionary as well.
+ ('dictionary-shape','vm::CellSlice wrapper{vm::NoVm{}, root};\n    if (!wrapper.is_valid() || wrapper.is_special() || wrapper.size() != 1 ||',
+  'vm::CellSlice wrapper{vm::NoVm{}, root};\n    if (!wrapper.is_valid() || wrapper.is_special() ||'),
  ('view-cache','auto cached = identities_.find(id);','auto cached = identities_.end();'),
  ('view-cache','auto cached = keys_.find(id);','auto cached = keys_.end();'),
  ('view-read-only','Result<std::uint64_t> RegistryView::latest_epoch(const Hash&, KeySlot) const { return Error{"read-only-view"}; }','Result<std::uint64_t> RegistryView::latest_epoch(const Hash&, KeySlot) const { return std::uint64_t(0); }'),
