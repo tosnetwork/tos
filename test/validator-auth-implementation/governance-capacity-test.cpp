@@ -96,8 +96,11 @@ constexpr long long post_quantum_signature_gas = 50000;
 // What one signer record weighs under each suite. A classical component carries
 // a sixty-four byte signature beside its identity, key reference and epoch; a
 // post-quantum one carries two thousand four hundred and twenty.
-constexpr long long classical_record_bytes = 32 + 12 + 64;
-constexpr long long post_quantum_record_bytes = 32 + 12 + tos::pq::mldsa44_signature_bytes;
+constexpr long long record_overhead_bytes = 32 + 12;
+constexpr long long classical_record_bytes = record_overhead_bytes + 64;
+constexpr long long post_quantum_record_bytes = record_overhead_bytes + tos::pq::mldsa44_signature_bytes;
+// The certificate size the frozen profile pins, which no suite changes.
+constexpr long long frozen_certificate_bytes = 524288;
 
 // An allowance large enough that the transaction always runs to the end, so
 // that what is reported is what the work costs rather than where the meter ran
@@ -220,6 +223,8 @@ int main(int argc, char** argv) {
         "the-profile-ceiling-fits-the-masterchain-block",
         "only-the-installed-committee-leaves-the-block-open",
         "the-account-tick-tock-is-work-the-block-gas-budget-does-not-see",
+        "the-classical-suite-fits-both-budgets-the-profile-ceiling-leaves",
+        "the-post-quantum-suite-fits-neither",
         "a-post-quantum-committee-of-twenty-fits-the-masterchain-block",
         "a-post-quantum-committee-of-forty-does-not-fit-with-its-certificate",
         "no-committee-size-fits-the-unaccepted-external-credit",
@@ -319,6 +324,35 @@ int main(int argc, char** argv) {
     }
     std::cerr << "MEASURE largest_non_crypto=" << largest_non_crypto
               << " certificate_bytes_classical=" << profile_ceiling * classical_record_bytes << '\n';
+
+    // What a suite would have to cost for the committee this profile admits to
+    // fit at all. Both budgets are derived from measured figures rather than
+    // chosen: the gas one is what the block has left after everything that is
+    // not verification, divided over the signatures that are not free; the byte
+    // one is the frozen certificate bound divided over the records, less what a
+    // record carries besides its signature.
+    //
+    // This is the question a choice of algorithm actually faces. Ed25519 fits
+    // both with almost nothing to spare. Nothing about a post-quantum suite is
+    // close to either, which is why a larger committee is a question about the
+    // certificate's architecture rather than about which signature goes in it.
+    {
+      const auto crypto_budget = block_gas_hard_limit - largest_non_crypto;
+      const auto per_signature_gas = crypto_budget / (profile_ceiling - classical_free_checks);
+      const auto per_signature_bytes = frozen_certificate_bytes / profile_ceiling - record_overhead_bytes;
+      std::cerr << "MEASURE signers=" << profile_ceiling << " crypto_budget=" << crypto_budget
+                << " per_signature_gas_budget=" << per_signature_gas
+                << " per_signature_byte_budget=" << per_signature_bytes
+                << " classical=" << classical_signature_gas << "/" << classical_record_bytes - record_overhead_bytes
+                << " post_quantum=" << post_quantum_signature_gas << "/"
+                << post_quantum_record_bytes - record_overhead_bytes << '\n';
+      report(classical_signature_gas <= per_signature_gas &&
+                 classical_record_bytes - record_overhead_bytes <= per_signature_bytes,
+             "the-classical-suite-fits-both-budgets-the-profile-ceiling-leaves");
+      report(post_quantum_signature_gas > per_signature_gas &&
+                 post_quantum_record_bytes - record_overhead_bytes > per_signature_bytes,
+             "the-post-quantum-suite-fits-neither");
+    }
 
     // Twenty fits with room left over even after the largest non-verification
     // cost this suite has ever measured is added on top of it.
