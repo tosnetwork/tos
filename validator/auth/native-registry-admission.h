@@ -33,6 +33,30 @@ struct RegistryAdmissionInputs {
 // come from the loaded masterchain state and its configuration. A mismatch is
 // refused before the transaction inputs are assembled, so a caller cannot make
 // two equally-wrong copies and pass a self-comparison.
+// What a message nobody has authorized yet may be expanded into.
+//
+// Deciding whether an arriving external message is a registry update means
+// opening its evidence container, and opening it means unpacking bytes a
+// stranger chose. Execution may expand far more than this, and should: by then
+// a block has accepted the work and something is paying for it. This happens
+// on a stranger's say-so, before there is a transaction, and the allowance is
+// therefore its own and much smaller.
+//
+// It is measured in the logical bytes a container declares, which is what the
+// container states before anything is unpacked -- not in what it serialized
+// to. Two containers that expand to the same thing get the same answer however
+// differently they were written down, so a serializer that stores an identical
+// cell once cannot buy an expansion nobody allowed. The largest governance
+// message this profile admits declares under sixty thousand bytes; this leaves
+// room for that and refuses four times what execution would.
+inline constexpr std::size_t native_admission_limit = 65536;
+
+// The allowance itself, as admission supplies it. Exposed rather than left
+// file-local because the bound is worth exercising directly: reaching it
+// through the admission path needs a masterchain state and a configuration
+// account, and what the bound says has nothing to do with either.
+EvidenceCharge admission_evidence_budget();
+
 Result<RegistryAdmissionInputs> gather_registry_admission_inputs(
     td::Ref<vm::Cell> message, const Hash& configuration_account, td::Ref<vm::Cell> masterchain_state,
     const tos::BlockIdExt& established_parent_block, const tos::BlockIdExt& parent_block,

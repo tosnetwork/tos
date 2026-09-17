@@ -24,9 +24,11 @@
 #include <vector>
 
 #include "validator/auth/native-evidence.h"
+#include "validator/auth/native-registry-admission.h"
 
 #include "vm/boc.h"
 
+#include "governance-fixture.h"
 #include "native-fixture.h"
 
 namespace {
@@ -41,8 +43,8 @@ void report(bool condition, const std::string& name) {
   std::cout << "CASE_PASS " << name << '\n';
 }
 
-// The callback production admission supplies, reproduced rather than referred
-// to: it is file-local there, and what is being measured is what it permits.
+// What admission used to supply, kept so the measurement below has something to
+// measure the bound against. It is no longer what production passes.
 Result<bool> uncharged(std::size_t) {
   return true;
 }
@@ -78,6 +80,22 @@ td::Ref<vm::Cell> container(std::size_t bytes, bool distinct = false) {
   b.store_long(native_evidence_tag, 32).store_long(1, 16).store_long(0, 1);
   b.store_ref(packed).store_ref(vm::CellBuilder().finalize());
   return b.finalize();
+}
+
+// A container a real committee would send, and what it declares.
+td::Ref<vm::Cell> legitimate(unsigned records) {
+  auto f = governance_fixture::fixture(records);
+  auto packed = auth_fixture::value(
+      pack_bytes(auth_fixture::value(encode(f.evidence), "admission-legitimate")), "admission-legitimate-pack");
+  vm::CellBuilder b;
+  b.store_long(native_evidence_tag, 32).store_long(1, 16).store_long(0, 1);
+  b.store_ref(packed).store_ref(vm::CellBuilder().finalize());
+  return b.finalize();
+}
+
+std::size_t legitimate_declared(unsigned records) {
+  auto f = governance_fixture::fixture(records);
+  return auth_fixture::value(encode(f.evidence), "admission-legitimate").size();
 }
 
 struct Cost {
@@ -118,6 +136,9 @@ int main() {
         "an-arriving-message-is-opened-before-anything-charges-for-it",
         "repeated-bytes-cost-the-sender-less-than-they-cost-the-node",
         "the-work-admission-does-is-bounded-by-the-declared-limit",
+        "an-oversized-container-is-refused-however-densely-it-was-written",
+        "the-bound-refuses-before-the-container-is-expanded",
+        "the-bound-admits-the-largest-message-the-profile-allows",
     };
     for (const auto* name : manifest)
       std::cout << "MANIFEST " << name << '\n';
@@ -166,6 +187,63 @@ int main() {
       std::cerr << "MEASURE oversized_refused=" << refused << '\n';
       report(refused && full.bytes <= message_ceiling,
              "the-work-admission-does-is-bounded-by-the-declared-limit");
+    }
+
+    // And what a message that is entitled to be here actually declares, which
+    // is what any admission bound has to leave room for. Measured at the
+    // committee installed and at the one the profile admits, because a bound
+    // sized to the first would refuse the second and the second is reachable
+    // by a configuration change.
+    for (const unsigned records : {21u, 400u})
+      std::cerr << "MEASURE legitimate_signers=" << records << " declared_bytes=" << legitimate_declared(records)
+                << " admission_limit=" << native_admission_limit
+                << " execution_limit=" << native_authorizations_limit << '\n';
+
+    // The bound, exercised as admission supplies it. What has to hold is that
+    // the container is refused before it is expanded, and that the two shapes
+    // which expand to the same thing are refused the same way -- the answer is
+    // about what a container declares, not about how densely it was written.
+    {
+      auto timed = [](const td::Ref<vm::Cell>& cell) {
+        std::vector<long long> samples;
+        bool admitted = false;
+        for (unsigned batch = 0; batch < 7; ++batch) {
+          const auto start = std::chrono::steady_clock::now();
+          for (unsigned repeat = 0; repeat < 8; ++repeat)
+            admitted = NativeEvidence::open(cell, admission_evidence_budget()).ok();
+          const auto elapsed = std::chrono::steady_clock::now() - start;
+          samples.push_back(std::chrono::duration_cast<std::chrono::nanoseconds>(elapsed).count() / 8);
+        }
+        std::sort(samples.begin(), samples.end());
+        return std::pair{admitted, samples[samples.size() / 2]};
+      };
+
+      const auto [repeated_ok, repeated_ns] = timed(container(inline_bytes));
+      const auto [distinct_ok, distinct_ns] = timed(container(inline_bytes, true));
+      const auto [legal_ok, legal_ns] = timed(legitimate(400));
+      std::cerr << "MEASURE bounded repeated_admitted=" << repeated_ok << " repeated_ns=" << repeated_ns
+                << " distinct_admitted=" << distinct_ok << " distinct_ns=" << distinct_ns
+                << " legitimate400_admitted=" << legal_ok << " legitimate400_ns=" << legal_ns
+                << " admission_limit=" << native_admission_limit << '\n';
+
+      // Both refused, and refused identically, because both declare the same
+      // logical size. One of them serialized to five hundred bytes and the
+      // other to seventy thousand, and that made no difference.
+      report(!repeated_ok && !distinct_ok, "an-oversized-container-is-refused-however-densely-it-was-written");
+
+      // And refused before being expanded. Opening the legitimate container of
+      // four hundred records does less work than expanding sixty-four
+      // kilobytes would, and the refusals are faster still; a bound applied
+      // after the unpacking would be slower than the work it did not prevent.
+      report(legal_ok && repeated_ns * 4 < full.micros * 1000 && distinct_ns * 4 < full.micros * 1000,
+             "the-bound-refuses-before-the-container-is-expanded");
+
+      // What a real governance operation declares has to stay inside it, at
+      // the committee installed and at the one the profile admits, or the
+      // bound would refuse the thing it exists to let through.
+      report(legal_ok && legitimate_declared(21) < native_admission_limit &&
+                 legitimate_declared(400) < native_admission_limit,
+             "the-bound-admits-the-largest-message-the-profile-allows");
     }
 
     std::cout << "SUMMARY cases=" << passed << " passed=" << passed << '\n';

@@ -12,9 +12,6 @@
 #include "native-registry-admission.h"
 namespace tos::auth {
 namespace {
-Result<bool> uncharged(std::size_t) {
-  return true;
-}
 
 struct RecognizedUpdate {
   Hash destination{};
@@ -49,12 +46,33 @@ Result<RecognizedUpdate> recognize(td::Ref<vm::Cell> message) {
   auto recognized = recognize_registry_message(cs.fetch_ref());
   if (!recognized.ok())
     return Error{"registry-admission-not-registry"};
-  auto evidence = NativeEvidence::open(recognized.value().evidence, uncharged);
+  auto evidence = NativeEvidence::open(recognized.value().evidence, admission_evidence_budget());
   if (!evidence.ok())
     return evidence.error();
   return RecognizedUpdate{account, std::move(recognized.value()), std::move(evidence.value())};
 }
 }  // namespace
+
+EvidenceCharge admission_evidence_budget() {
+  // Each expansion bounded, rather than a running total across them.
+  //
+  // A container is expanded in two places and they do not measure disjoint
+  // things: an attachment carried inline is inside the authorizations blob, so
+  // its bytes are declared once by the blob and again by the attachment
+  // total. Summing those refuses a governance message at four hundred signers,
+  // which declares under sixty thousand bytes and would be counted as a
+  // hundred and sixteen thousand.
+  //
+  // Bounding each expansion separately keeps the property that matters, which
+  // is that no single unpack exceeds the allowance, and leaves the arithmetic
+  // of what those two numbers overlap in to execution, where changing it would
+  // change what a transaction is charged.
+  return [](std::size_t bytes) -> Result<bool> {
+    if (bytes > native_admission_limit)
+      return Error{"admission-evidence-bound"};
+    return true;
+  };
+}
 
 Result<RegistryAdmissionInputs> gather_registry_admission_inputs(
     td::Ref<vm::Cell> message, const Hash& configuration_account, td::Ref<vm::Cell> masterchain_state,
@@ -155,7 +173,12 @@ Result<std::unique_ptr<NativeConfigTransaction>> admit_registry_message(const Re
   }
   auto owned_history = std::make_shared<WitnessedAnchorSource>(std::move(witnessed));
 
+  // The same container, opened a second time on the same unauthenticated path,
+  // so it carries the same kind of allowance. They are separate allowances
+  // rather than one shared across both openings, which is looser than it could
+  // be; what it is not is unbounded.
   return NativeConfigTransaction::open(inputs.transaction, sequence, recognized.value().message.evidence,
-                                       recognized.value().message.proposal, std::move(owned_history), uncharged);
+                                       recognized.value().message.proposal, std::move(owned_history),
+                                       admission_evidence_budget());
 }
 }  // namespace tos::auth

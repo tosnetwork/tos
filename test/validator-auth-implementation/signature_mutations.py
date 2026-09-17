@@ -91,6 +91,19 @@ ORDERING = [
      ''),
 ]
 
+# The admission bound, which is only a bound because it is applied first. Moved
+# after the unpacking it gates, every refusal is still a refusal -- and the work
+# it exists to refuse has already been done.
+ADMISSION = [
+    ('bound-after-the-expansion-it-gates', 'the-bound-refuses-before-the-container-is-expanded',
+     '    auto bytes = declared(auth, native_authorizations_limit);\n'
+     '    need(take(charge(bytes)), "evidence-charge");\n'
+     '    auto a = take(decode<Authorizations>(take(unpack_bytes(auth, native_authorizations_limit))));\n',
+     '    auto bytes = declared(auth, native_authorizations_limit);\n'
+     '    auto a = take(decode<Authorizations>(take(unpack_bytes(auth, native_authorizations_limit))));\n'
+     '    need(take(charge(bytes)), "evidence-charge");\n'),
+]
+
 # The price, in the machine that publishes it.
 TARIFF = [
     ('classical-tariff', 'verification-past-the-free-allowance-pays-the-machine-tariff',
@@ -118,6 +131,8 @@ def main(args):
                          runner('test-p0-governance-capacity-mutant', [str(args.contract.resolve())]))
         report += mutate_together(folder / 'governance-ordering-mutated.cpp', ORDERING,
                                   runner('test-p0-governance-ordering-mutant', [str(args.contract.resolve())]))
+    report += mutate(folder / 'admission-evidence-mutated.cpp', ADMISSION,
+                     runner('test-p0-admission-cost-mutant'))
     report += mutate(folder / 'signature-tariff-mutated.cpp', TARIFF, runner('test-p0-signature-tariff-mutant'))
     args.out.write_text(json.dumps(dict(signature_mutations=report, restored_baselines=True), indent=2) + '\n')
 

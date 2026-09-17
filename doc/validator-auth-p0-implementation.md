@@ -427,10 +427,41 @@ what the node does:
 
 Identical leaves serialize once and are walked every time, so the same work
 costs a sender a hundred and twenty-seven times less to send in one shape than
-in the other. The measurement is of the container being opened, not of the whole
-admission path, so it is a floor. It is recorded here because a bound on work
-per message is not a bound on work per byte sent, and only the second is what an
-attacker chooses.
+in the other.
+
+The container states how many bytes it expands to before any of them are
+touched, and the opening already charges that declared figure before unpacking
+rather than counting afterwards. What was missing was anyone to charge: the
+callback admission supplied accepted every size. It now supplies an allowance of
+its own, sixty-four kilobytes, which is not what execution allows and should not
+be -- execution happens after a block has accepted the work, and this happens on
+a stranger's say-so. A governance message declares three and a half thousand
+bytes at the committee installed and fifty-eight and a half thousand at the one
+the profile admits, so the allowance leaves room for the largest legal message
+and refuses four times less than execution would.
+
+| a sixty-four kilobyte attachment | admitted | to decide |
+| --- | ---: | ---: |
+| bytes that repeat | no | 2,431 ns |
+| bytes that do not | no | 2,515 ns |
+| a real four-hundred-signer certificate | yes | 1,146 us |
+
+Refused in two microseconds rather than two thousand, and refused the same way
+in both shapes, because the answer is about what a container declares and not
+about how densely it was written down. The bound is a bound only because it is
+applied first: moved after the unpacking it gates, every refusal is still a
+refusal and the work it exists to refuse has already been done. That is the
+mutation that holds it.
+
+Two things this does not do. The allowance is per expansion rather than across
+them, because a container's two expansions do not measure disjoint bytes -- an
+inline attachment is inside the authorizations blob and is declared by both --
+and summing them would refuse a four-hundred-signer message. And it bounds work
+per message, not per byte sent: a sender can still spend five hundred bytes for
+two microseconds of refusal, which is a much smaller ratio than before and is
+still a ratio. What closes that is a bound on how often an unauthenticated
+source may reach this at all, which is a question about the ingress path and not
+about this container.
 
 That is a property of the order and of nothing else, which is why it is held by
 a mutation rather than by a comment: establishing the quorum before the
