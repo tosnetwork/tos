@@ -276,6 +276,22 @@ fetching; callers must use one reader for all attachments of an operation.
 
 ## Local evidence and CI
 
+The implementation workflow's matrix rides its own time limit, and the reason is
+a build each leg repeats rather than the guards it runs. In one run, "Build
+production libraries and focused drivers" measured 34.8, 38.4 and 39.0 minutes
+in three separate legs, and it is the same work every time: the Rust format,
+clippy and build, a full CMake configure, roughly eighty targets, and a second
+sanitized tree. Eight legs pay it. Of a ninety-minute budget, about forty went
+before any guard ran, five legs were cut off at the limit, and two of the three
+that finished did so at 87 and 79 minutes.
+
+The limit is raised to give the run a verdict, and that is not the fix. Building
+once and publishing the trees for the guard legs to consume is, and it changes a
+workflow this record cites for its evidence, so it is separated from unblocking
+the run rather than folded into it. Until it is done, the headroom is headroom
+and not room for the legs to grow into.
+
+
 Local native and Rust builds and the cases above passed on macOS/ARM. The guard
 harnesses compile isolated production mutations and require assertion failures;
 compiler errors, imports and abnormal driver exits are not accepted as kills.

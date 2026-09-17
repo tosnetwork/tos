@@ -134,7 +134,24 @@ jobs:
             guards: native
             check_name: P0 native execution guards
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 90
+    # Raised from 90, which five of the eight legs hit exactly and two more came
+    # within three and eleven minutes of. The limit was not protecting anything:
+    # the work is legitimate and measured, and the jobs that finished did so at
+    # 63, 79 and 87 minutes.
+    #
+    # What actually consumes the budget is a build every leg repeats. "Build
+    # production libraries and focused drivers" measured 34.8, 38.4 and 39.0
+    # minutes in three separate legs of one run, and it is the same work each
+    # time: the Rust format, clippy and build, a full CMake configure, roughly
+    # eighty targets, and a second sanitized tree. Eight legs pay it, so about
+    # forty of the ninety minutes was spent before any guard ran.
+    #
+    # Sharing one build across the legs -- build once, publish the trees, have
+    # the guard legs consume them -- is the fix, and it is a change to a workflow
+    # the frozen record cites for its evidence, so it is not made here in the
+    # same breath as unblocking the run. This headroom is for until that is done,
+    # not a licence for the legs to keep growing into it.
+    timeout-minutes: 150
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
