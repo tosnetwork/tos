@@ -27,6 +27,7 @@
 // accepted is ten thousand, and the registry action is unsigned and accepts
 // only after the update has applied -- so the whole verification has to fit in
 // that credit, and this reports where it stops when it does not.
+#include <iterator>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -84,7 +85,7 @@ constexpr unsigned installed_main_validators = 100, profile_ceiling = 400;
 // Two smaller committees, measured because a post-quantum suite makes each
 // signature cost more than a hundred of them do today, and the question of what
 // size it could be run at is decided by measurement rather than by argument.
-constexpr unsigned smaller_committees[] = {20, 40};
+constexpr unsigned smaller_committees[] = {20, 21, 34, 35, 36, 40};
 
 // What one verification costs under each suite, from the machine's own
 // schedule: the classical one after its ten-check allowance, and the
@@ -300,8 +301,8 @@ int main(int argc, char** argv) {
     const auto largest_non_crypto =
         ceiling.transaction_gas - (profile_ceiling - classical_free_checks) * classical_signature_gas;
 
-    long long post_quantum_floor[2] = {0, 0};
-    for (unsigned index = 0; index < 2; ++index) {
+    long long post_quantum_floor[std::size(smaller_committees)] = {};
+    for (unsigned index = 0; index < std::size(smaller_committees); ++index) {
       const auto records = smaller_committees[index];
       const auto small = measure(contract, records, uncapped, 0);
       const auto classical = (records > classical_free_checks ? records - classical_free_checks : 0) *
@@ -327,8 +328,8 @@ int main(int argc, char** argv) {
     // Forty does not. Its verification alone is four fifths of the block, and
     // what is left is less than the non-verification cost of a certificate
     // carrying fewer bytes than its own.
-    report(post_quantum_floor[1] < block_gas_hard_limit &&
-               post_quantum_floor[1] + largest_non_crypto > block_gas_hard_limit,
+    report(post_quantum_floor[std::size(smaller_committees) - 1] < block_gas_hard_limit &&
+               post_quantum_floor[std::size(smaller_committees) - 1] + largest_non_crypto > block_gas_hard_limit,
            "a-post-quantum-committee-of-forty-does-not-fit-with-its-certificate");
 
     std::cout << "SUMMARY cases=" << passed << " passed=" << passed << '\n';

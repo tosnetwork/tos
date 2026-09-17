@@ -439,16 +439,24 @@ which is conservative twice over: a twenty-record ML-DSA certificate already
 carries more bytes than the four-hundred-record classical one that figure came
 from.
 
-| masterchain signers | verification | with everything else | hard limit |
+| masterchain signers | verification | with everything else | of the hard limit |
 | ---: | ---: | ---: | ---: |
-| 20 | 1,000,000 | 1,732,236 | 2,500,000 |
-| 40 | 2,000,000 | 2,763,086 | 2,500,000 |
+| 20 | 1,000,000 | 1,732,236 | 69% |
+| 21 | 1,050,000 | 1,783,626 | 71% |
+| 34 | 1,700,000 | 2,453,771 | 98% |
+| 35 | 1,750,000 | 2,505,311 | 100.2% |
+| 36 | 1,800,000 | 2,556,651 | 102% |
+| 40 | 2,000,000 | 2,763,086 | 111% |
 
-Twenty fits. Forty does not: its verification alone is four fifths of the block,
-and what remains is less than the non-verification cost of a certificate
-carrying fewer bytes than its own. The boundary is in the thirties, and putting
-it exactly requires measuring what a post-quantum certificate costs to carry
-rather than substituting a classical one for it.
+Thirty-four is the largest that fits and thirty-five is over by five thousand
+gas, which is close enough that the boundary should be read as "the middle
+thirties" rather than as a number to design against. What it is not is a hundred:
+the committee this network installs is three times larger than a post-quantum
+suite could carry through this certificate architecture.
+
+The substitution is conservative twice over, so these are floors. Putting the
+boundary exactly requires measuring what a post-quantum certificate costs to
+carry rather than borrowing a classical one's cost for it.
 
 The elector's own mandatory tick-tock is measured beside its contract, and
 closing an election is larger than this whole limit at either committee size --
