@@ -29,7 +29,7 @@
     "doc/validator-auth-p0/transport.schema.json": "ddd45d7d3eb672559efde020af95a0e215146775ec82f8c6847b0f3ab8127584",
     "doc/validator-auth-p0/wire.tl": "a5e10c8e25887cb30440a26a0d8cbcef1473878aeb87438cca1a0f0bc6875c15",
     "doc/validator-auth-p0/wire.tlb": "923650bd74bbbf677a070d1d13d7c12d46944e8bffbfc3a72641093d20d3ce9d",
-    "doc/validator-auth-p0-native-insertions.json": "bf95901edf5a7078b3649eac2f513d19a694dc0f39cb3359356af28e76f6e23d",
+    "doc/validator-auth-p0-native-insertions.json": "7d5e6a22b7de7d5650da9e9c61bb7e884247f0fe5b925965454e8aa10e1b47d0",
     "test/validator-auth-p0/README.md": "a0b0950c4ac702f8be0f34919a50f8e7b13d5d14dda3bd2cc05b4c8ffee31321",
     "test/validator-auth-p0/api.py": "9ec50bf9e19345ef54a8894a3525eba1eed8fb10412b8a3fdc1ed1c5728fb815",
     "test/validator-auth-p0/archive_evidence.py": "22bb392a561068e0fb3905ce7e8df95bab463468cdfe3be884eff19b12481409",
@@ -352,6 +352,16 @@
       "scope": "Declared additive insertions only. The contract still preserves every historical byte: the one original line this touches, which marks the loader impure, is declared as a seven-byte insertion rather than an amendment, so the production baseline is unchanged. No wire, API, schema, operation, role, limit or profile value changes, and the profile revision is unchanged.",
       "reason": "Refusing in the loader mixed two different requirements. That an account with no checkpoint must not go on producing authenticated state is right; that it must also become unreadable and unrepairable is not, and it turns one bad state into a permanent one. Fail-closed means no new state the chain would treat as authenticated -- not that the fault cannot be observed or ended. The recovery surface is narrow and writes no checkpoint, because a recovery that seeded one would be the second initialization route this design exists to remove. And the parameter group widened because parameter 35 is read in preference to 34 by both the node and committee derivation, so closing 34 alone left the same fact reachable under its second spelling.",
       "governance": "A chain whose registry context cannot open may still stop being an authenticated chain, or replace this contract's code, on the normal vote alone. That is a deliberate relaxation of the two-stage rule in exactly that state and in no other: the governing quorum the second stage consults is precisely what such a chain has no way to reach, so requiring it for the two operations that end the state would leave no way out of it at all.",
+      "activation": "Unchanged. No suite is allocated, no network is configured, and the version-16 activation gates and listed approvals remain independent thresholds that this change does not move."
+    },
+    {
+      "artifact": "doc/validator-auth-p0-native-insertions.json",
+      "previous_sha256": "bf95901edf5a7078b3649eac2f513d19a694dc0f39cb3359356af28e76f6e23d",
+      "sha256": "7d5e6a22b7de7d5650da9e9c61bb7e884247f0fe5b925965454e8aa10e1b47d0",
+      "authorization": "The owner ruled that the protected validator-set parameters be written out one index at a time rather than as a range, so that each protected index is explicit under the frozen-insertion audit model.",
+      "change": "Re-derived the configuration contract's declared insertions after the validator-set predicate was written as six named indices rather than as a bound on a range. The set it accepts is unchanged.",
+      "scope": "The text of one declared insertion. No insertion is added or removed, no offset moves, the contract keeps every historical byte, and no wire, API, schema, operation, role, limit or profile value changes.",
+      "reason": "A range is one claim about six parameters and a mutation can only take the whole claim away. Six disjuncts can each be removed on their own, so the set being complete became something a case can fail to notice rather than something the line asserts about itself -- and the state this branch was actually in, with 34 and 36 closed while 35 and 37 were open, is the state no case had noticed.",
       "activation": "Unchanged. No suite is allocated, no network is configured, and the version-16 activation gates and listed approvals remain independent thresholds that this change does not move."
     }
   ],

@@ -47,20 +47,30 @@ UNMEASURABLE = """  if (!(completions_per_second > 0)) {"""
 SIGN_ONLY = """  if (completions_per_second < 0) {"""
 
 # With no floor left under the cap, the estimate is the only thing between a
-# burst and a refusal. Folding an empty window back in as a throughput of zero
-# is the defect that would put back: an idle pool would decay toward refusing
-# the next burst for want of traffic rather than for want of capacity.
-MEASURES_NOTHING = """  if (!(window_seconds >= 1.0) || window_seconds > 10.0 || completions == 0) {"""
-MEASURES_ZERO = """  if (!(window_seconds >= 1.0) || window_seconds > 10.0) {"""
+# burst and a refusal, and what an empty window means depends on whether the
+# pool had anything to do. Reading a saturated empty window as "measured
+# nothing" is the defect: the cap is consulted only while every check slot is
+# occupied, so that reading keeps an older estimate exactly when the pool has
+# stopped completing anything, and goes on promising five seconds of a
+# throughput nobody is observing.
+STALL_IS_MEASURED = """    return saturated ? 0.0 : previous;"""
+STALL_IS_IGNORED = """    return previous;"""
 
+# Each entry names the case that must fail, and every other case the same
+# removal is expected to take with it. A companion is declared rather than the
+# rule relaxed: a mutation that breaks something it did not name is a mutation
+# nobody understood.
 MUTATIONS = [
-    ("ingress-carries-the-authority", "the-ingress-authority-reaches-the-instruction", CARRIES, DROPS, SOURCE),
+    ("ingress-carries-the-authority", "the-ingress-authority-reaches-the-instruction", CARRIES, DROPS, SOURCE, []),
     ("a-full-queue-never-implies-more-than-the-delay-allows",
-     "a-full-queue-never-implies-more-than-the-delay-allows", DELAY_ONLY, WITH_FLOOR, ADMISSION),
+     "a-full-queue-never-implies-more-than-the-delay-allows", DELAY_ONLY, WITH_FLOOR, ADMISSION, []),
     ("an-unmeasurable-rate-admits-no-queue",
-     "an-unmeasurable-rate-admits-no-queue", UNMEASURABLE, SIGN_ONLY, ADMISSION),
-    ("a-window-with-nothing-in-it-measures-nothing",
-     "a-window-with-nothing-in-it-measures-nothing", MEASURES_NOTHING, MEASURES_ZERO, ADMISSION),
+     "an-unmeasurable-rate-admits-no-queue", UNMEASURABLE, SIGN_ONLY, ADMISSION, []),
+    # The queue a stalled pool may offer is the same rule read twice: what the
+    # estimate becomes, and what the cap then allows.
+    ("a-saturated-window-with-no-completions-measures-zero",
+     "a-saturated-window-with-no-completions-measures-zero", STALL_IS_MEASURED, STALL_IS_IGNORED, ADMISSION,
+     ["a-stalled-pool-admits-no-queue"]),
 ]
 
 
@@ -86,7 +96,7 @@ def main() -> int:
     args = parser.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
 
-    originals = {path: path.read_text() for path in {source for *_, source in MUTATIONS}}
+    originals = {source: source.read_text() for *_, source, _ in MUTATIONS}
     if not build(args.build):
         print("BASELINE-BUILD-FAILED", file=sys.stderr)
         return 1
@@ -97,7 +107,7 @@ def main() -> int:
 
     records, failures = [], 0
     try:
-        for guard, case, before, after, source in MUTATIONS:
+        for guard, case, before, after, source, companions in MUTATIONS:
             original = originals[source]
             if original.count(before) != 1:
                 print(f"ANCHOR-NOT-UNIQUE {guard} ({original.count(before)})", file=sys.stderr)
@@ -119,12 +129,14 @@ def main() -> int:
             restored = build(args.build) and all(outcomes(run(args.build)).values())
             record = {"guard": guard, "case": case, "source": str(source), "edit_reached_source": reached,
                       "compiled": compiled, "every_case_reported": complete, "cases_broken": broke,
-                      "only_the_named_case_broke": broke == [case], "restored_baseline": restored,
-                      "source_unchanged": source.read_text() == original}
+                      "declared_companions": companions,
+                      "only_declared_cases_broke": case in broke and set(broke) <= {case, *companions},
+                      "restored_baseline": restored, "source_unchanged": source.read_text() == original}
             records.append(record)
             print(json.dumps(record), flush=True)
             if not all(record[key] for key in ("edit_reached_source", "compiled", "every_case_reported",
-                                               "only_the_named_case_broke", "restored_baseline", "source_unchanged")):
+                                               "only_declared_cases_broke", "restored_baseline",
+                                               "source_unchanged")):
                 failures += 1
     finally:
         for path, text in originals.items():

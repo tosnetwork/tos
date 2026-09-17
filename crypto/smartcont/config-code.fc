@@ -44,16 +44,27 @@ int validator_auth_active() inline {
 ;; The whole group is closed, not the three indices this contract moves between.
 ;; Parameter 35 is the one that makes that necessary rather than tidy: both the
 ;; node and committee derivation read the current set as "35 if present, else
-;; 34", so a set written to 35 is the set the chain runs under while 34 still
-;; holds whatever the registry decided. Closing 34 alone would have left the
-;; same fact reachable under its second spelling. The remaining indices have no
-;; reader here today, and are closed for the same reason rather than after the
-;; first one acquires one.
+;; 34", and the next set as "37 if present, else 36". A set written to 35 is
+;; therefore the set the chain runs under while 34 still holds whatever the
+;; registry decided -- the same fact under its second spelling, reached by a
+;; writer that never passed the registry. Closing 34 and 36 alone left exactly
+;; that open. Parameter 33 has no reader here today and is closed with the
+;; rest rather than after it acquires one.
 ;;
 ;; The tick-tock rotation is not a writer in this sense: it moves cells that are
 ;; already installed between these indices and introduces no new set.
 int validator_set_param(int param_id) inline {
-  return (param_id >= 32) & (param_id <= 37);
+  ;; Written out one index at a time rather than as a range. A range is one
+  ;; claim about six parameters, and a mutation can only take the whole claim
+  ;; away; six disjuncts can each be removed on their own, so the set being
+  ;; complete is something a case can fail to notice rather than something this
+  ;; line asserts about itself.
+  return (param_id == 32) |   ;; previous validators
+         (param_id == 33) |   ;; previous temporary validators
+         (param_id == 34) |   ;; current validators
+         (param_id == 35) |   ;; current temporary validators
+         (param_id == 36) |   ;; next validators
+         (param_id == 37);    ;; next temporary validators
 }
 cell vauth_registry_state() impure asm "VAUTH_STATE";
 

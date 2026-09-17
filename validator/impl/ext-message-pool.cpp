@@ -157,7 +157,11 @@ size_t ExtMessagePool::max_admission_waiters() {
   double now = td::Time::now();
   double window = now - rate_window_start_;
   if (window >= 1.0) {
-    check_completion_rate_ = updated_completion_rate(check_completion_rate_, completions_in_rate_window_, window);
+    // This is consulted only from inside the loop that waits for a check slot,
+    // so the pool is full every time it is asked. Saying so here rather than
+    // letting the estimator assume it keeps the two facts in one place.
+    check_completion_rate_ = updated_completion_rate(check_completion_rate_, completions_in_rate_window_, window,
+                                                     inflight_checks_ >= MAX_INFLIGHT_CHECKS);
     completions_in_rate_window_ = 0;
     rate_window_start_ = now;
   }

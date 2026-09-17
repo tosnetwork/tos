@@ -346,17 +346,36 @@ int main() {
     // would previously have queued, and the removed floor would have been
     // covering that case by accident rather than serving nothing.
     {
+      using tos::validator::admission_cap;
       using tos::validator::updated_completion_rate;
-      expect(updated_completion_rate(2000.0, 0, 1.0) == 2000.0,
-             "a-window-with-nothing-in-it-measures-nothing");
-      // A window with work in it does move the estimate, so the case above is
-      // about emptiness rather than about the estimate being frozen.
-      expect(updated_completion_rate(2000.0, 10, 1.0) < 2000.0,
+      // An idle pool completes nothing because there is no work: that window
+      // has measured nothing, and the estimate stands.
+      expect(updated_completion_rate(2000.0, 0, 1.0, false) == 2000.0,
+             "an-idle-window-measures-nothing");
+      // A saturated pool completing nothing has measured its throughput, and
+      // the throughput is zero. This is the case production is in, because the
+      // cap is consulted only while every check slot is occupied -- so keeping
+      // the older estimate here promises five seconds of a throughput nobody is
+      // observing, to a queue standing in front of checks that are not
+      // finishing.
+      expect(updated_completion_rate(2000.0, 0, 1.0, true) == 0.0,
+             "a-saturated-window-with-no-completions-measures-zero");
+      expect(admission_cap(updated_completion_rate(2000.0, 0, 1.0, true)) == 0,
+             "a-stalled-pool-admits-no-queue");
+      // One window with work in it brings it straight back, so a stall costs a
+      // second of queue rather than the pool's ability to recover.
+      expect(updated_completion_rate(0.0, 4000, 1.0, true) == 2000.0,
+             "one-window-with-work-in-it-restores-the-estimate");
+      // A window with work in it moves the estimate either way, so the cases
+      // above are about emptiness rather than about the estimate being frozen.
+      expect(updated_completion_rate(2000.0, 10, 1.0, true) < 2000.0 &&
+                 updated_completion_rate(2000.0, 10, 1.0, false) < 2000.0,
              "a-window-with-work-in-it-moves-the-estimate");
       // And the window itself has to be a measurement: too short to have
       // measured anything, or so long the pool was idle for most of it.
-      expect(updated_completion_rate(2000.0, 10, 0.5) == 2000.0 &&
-                 updated_completion_rate(2000.0, 10, 60.0) == 2000.0,
+      expect(updated_completion_rate(2000.0, 10, 0.5, true) == 2000.0 &&
+                 updated_completion_rate(2000.0, 10, 60.0, true) == 2000.0 &&
+                 updated_completion_rate(2000.0, 0, 0.5, true) == 2000.0,
              "a-window-that-is-not-a-measurement-is-not-read-as-one");
     }
 

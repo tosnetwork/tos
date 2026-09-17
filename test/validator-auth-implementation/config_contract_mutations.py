@@ -152,15 +152,33 @@ PROPOSAL_GUARD = """  if (validator_auth_active() & validator_set_param(param_id
 """
 
 MUTATIONS = [
+    # One per index, because the predicate being complete is a different claim
+    # from the guard being present, and the mutations that remove the whole
+    # guard cannot tell them apart. Closing 34 and 36 while leaving 35 and 37
+    # open is exactly the state this branch was in, and no case noticed.
+    ("validator-set-index-32-unprotected", "no-generic-writer-installs-any-validator-set-index",
+     "(param_id == 32) |", "(0) |", []),
+    ("validator-set-index-33-unprotected", "no-generic-writer-installs-any-validator-set-index",
+     "(param_id == 33) |", "(0) |", []),
+    ("validator-set-index-34-unprotected", "no-generic-writer-installs-any-validator-set-index",
+     "(param_id == 34) |", "(0) |",
+     ["a-finalization-cannot-install-a-validator-set", "an-owner-action-cannot-install-a-validator-set"]),
+    ("validator-set-index-35-unprotected", "no-generic-writer-installs-any-validator-set-index",
+     "(param_id == 35) |", "(0) |", []),
+    ("validator-set-index-36-unprotected", "no-generic-writer-installs-any-validator-set-index",
+     "(param_id == 36) |", "(0) |", []),
+    ("validator-set-index-37-unprotected", "no-generic-writer-installs-any-validator-set-index",
+     "(param_id == 37);", "(0);", []),
     # The two generic writers of a configuration parameter, each closed against
     # the three indices that hold a validator set. Neither guard is reachable on
     # an inactive chain, and the inactive cases are companions of neither: they
     # have to keep passing while the guard is gone, which is what says the
     # mutation removed a rule about activation rather than a rule about an index.
     ("validator-set-not-installable-by-proposal", "a-finalization-cannot-install-a-validator-set",
-     PROPOSAL_GUARD, "  if (0) {\n", []),
+     PROPOSAL_GUARD, "  if (0) {\n", ["no-generic-writer-installs-any-validator-set-index"]),
     ("validator-set-not-installable-by-owner", "an-owner-action-cannot-install-a-validator-set",
-     "    throw_if(48, validator_auth_active() & validator_set_param(param_index));\n", "", []),
+     "    throw_if(48, validator_auth_active() & validator_set_param(param_index));\n", "",
+     ["no-generic-writer-installs-any-validator-set-index"]),
     # The refusal that an active chain must not run without a checkpoint. It
     # had no mutation at all: the branch was added and the fixture that would
     # have reached it seeds one, so nothing exercised it. This removes the
@@ -228,7 +246,9 @@ MUTATIONS = [
       "active-unbound-set-is-refused",
       "an-active-chain-without-a-checkpoint-is-refused",
       "an-inactive-chain-installs-on-the-threshold",
+      "an-inactive-chain-keeps-every-validator-set-index-writable",
       "an-inactive-chain-lets-the-owner-install-a-validator-set",
+      "no-generic-writer-installs-any-validator-set-index",
       "an-inactive-chain-tick-tock-asks-for-nothing",
       "an-inactive-chain-without-a-checkpoint-is-accepted",
       "an-owner-action-installs-an-ordinary-parameter",

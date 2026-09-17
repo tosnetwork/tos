@@ -50,20 +50,36 @@ inline constexpr std::size_t max_admission_waiters_ceiling = 50000;
 // better served than one left waiting for a delay nobody bounded.
 // The completion rate after a measurement window closes.
 //
-// A window in which nothing completed has not measured a throughput of zero.
-// It has measured nothing, and the two are different: a pool nobody is sending
-// to completes nothing because there is no work, not because it cannot do any.
-// Folding such a window in as zero makes an idle pool indistinguishable from a
-// stalled one and shrinks the queue it can offer the next burst for want of
-// traffic rather than for want of capacity. So an empty window leaves the
-// estimate where it was, and the next window with work in it moves it.
+// A window with nothing in it means two different things, and only the caller
+// knows which. A pool nobody is sending to completes nothing because there is
+// no work: that window has measured nothing, and folding it in as zero would
+// shrink the queue it can offer the next burst for want of traffic rather than
+// for want of capacity. A pool that is saturated -- every check slot occupied
+// for the whole window -- and still completes nothing has measured its
+// throughput, and the throughput is zero.
 //
-// A window far longer than one is also not folded in: the pool was not asked
-// anything for most of it, so what it says about throughput is an average over
-// a period that was mostly not a measurement.
-inline double updated_completion_rate(double previous, std::uint64_t completions, double window_seconds) {
-  if (!(window_seconds >= 1.0) || window_seconds > 10.0 || completions == 0) {
+// The second case is the one that matters, and it is the one production is in:
+// the cap is consulted only while the pool is full. Keeping an older, higher
+// estimate there means promising five seconds of a throughput that is no longer
+// being observed, and promising it to a queue in front of checks that are not
+// finishing. So a saturated empty window is not smoothed: there is nothing to
+// smooth, the measurement is zero, and one window with work in it brings the
+// estimate straight back.
+//
+// The idle branch is not reached from production today. It is here so the
+// answer stays right if that ever changes rather than depending on a call site
+// nobody restated, and it is exercised directly.
+//
+// A window far shorter or longer than one is not a measurement either way: too
+// short to have measured anything, or long enough that the pool was idle for
+// most of it.
+inline double updated_completion_rate(double previous, std::uint64_t completions, double window_seconds,
+                                      bool saturated) {
+  if (!(window_seconds >= 1.0) || window_seconds > 10.0) {
     return previous;
+  }
+  if (completions == 0) {
+    return saturated ? 0.0 : previous;
   }
   return 0.5 * previous + 0.5 * static_cast<double>(completions) / window_seconds;
 }

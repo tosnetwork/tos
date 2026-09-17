@@ -324,6 +324,41 @@ std::vector<Case> cases(const td::Ref<vm::Cell>& contract) {
          expect(installed_parameter(run.data, 34).is_null(),
                 "an-owner-action-cannot-install-a-validator-set");
        }},
+      // Every index in the group, through both generic writers. The three this
+      // contract moves between are covered above; these are the three it does
+      // not, and 35 and 37 are the ones that matter most: the node and
+      // committee derivation read the current set as "35 if present, else 34"
+      // and the next set as "37 if present, else 36", so a set written there is
+      // the set the chain runs under while the index the registry decided still
+      // holds what it decided.
+      {"no-generic-writer-installs-any-validator-set-index", [=] {
+         for (long long index : {32, 33, 34, 35, 36, 37}) {
+           Host proposed;
+           auto cells = registry_cells();
+           auto host = registry_host(cells);
+           auto proposal = config_proposal(index, validator_set_cell(voter_public(), true));
+           auto votes = vote_dictionary(proposal, voter_public(), 255, false);
+           auto finalization = run_contract(contract, registry_body(cells, proposal), 0, 1000, &host,
+                                            vm::validator_auth_capability, vm::validator_auth_min_version, true,
+                                            {}, 1000000, true, {}, voter_public(), votes);
+           expect(finalization.exit == 53 && !finalization.committed,
+                  "no-generic-writer-installs-any-validator-set-index");
+           auto owned = run_owner_action(contract, index, validator_set_cell(voter_public(), true), &proposed, true);
+           expect(owned.exit == 48 && installed_parameter(owned.data, index).is_null(),
+                  "no-generic-writer-installs-any-validator-set-index");
+         }
+       }},
+      // And a chain that has not activated keeps every one of them writable,
+      // so the rule above is the activation's rather than the index's.
+      {"an-inactive-chain-keeps-every-validator-set-index-writable", [=] {
+         for (long long index : {32, 33, 34, 35, 36, 37}) {
+           Host host;
+           auto set = validator_set_cell(voter_public());
+           auto run = run_owner_action(contract, index, set, &host, false);
+           expect(run.exit == 0 && same_cell(installed_parameter(run.data, index), set),
+                  "an-inactive-chain-keeps-every-validator-set-index-writable");
+         }
+       }},
       // And the rule is the activation's, not the parameter index's. A chain
       // that has not activated the design has no registry to route through, so
       // closing the route there would remove governance it still needs.
