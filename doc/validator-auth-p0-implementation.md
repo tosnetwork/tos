@@ -100,12 +100,40 @@ before any.
 
 So at the committee this network installs there is no blocker here. What the
 figures show is a ceiling: at the four hundred the profile admits, one operation
-is more than twice the soft block limit and nearly the whole hard one. That is a
-statement about the ceiling, not about the chain being built.
+is 89.6 per cent of the hard block limit. That is a statement about how far the
+committee could grow, not about the chain being built.
 
-Whether paid governance ingress is inside P0 at all is recorded separately as a
-tariff item; this entry does not settle it, and the two should not be read as
-agreeing until one of them says so.
+Paid governance ingress follows from that. It was carried as a prerequisite for
+making native governance executable, and at twenty-one there is nothing for it
+to be a prerequisite to. Charging for governance ingress may still be wanted for
+economic reasons; it is a tariff item and not a P0 blocker, and this record no
+longer names it as one.
+
+### Post-quantum, and what it depends on
+
+The conclusion that a post-quantum suite would need signature aggregation was
+reached for a committee of hundreds, where hundreds of independent signatures
+have to fit one block. It does not survive the committee that is installed.
+
+| signers | post-quantum floor | certificate | of the 2,500,000 hard limit |
+| ---: | ---: | ---: | ---: |
+| 21 | 1,103,233 | 51,744 bytes | 44% |
+| 34 | 1,773,378 | | 71% |
+| 35 | 1,824,918 | | 73% |
+
+A per-signature post-quantum certificate fits the masterchain **hard** limit at
+twenty-one, with roughly fifty-six per cent of it unused. It does not fit the
+soft limit: 1,103,233 is about ten per cent above the million, so a block
+carrying one is already past the soft threshold and has only the hard limit left
+above it. Saying it "fits" without saying which limit would be the same kind of
+mistake as measuring against the wrong credit.
+
+What this replaces is the blanket requirement. Aggregation is not needed to make
+post-quantum governance feasible at the production committee size; it becomes
+interesting again only if the committee grows, and the boundary is in the middle
+thirties. Committee size and the post-quantum route are therefore one decision
+and should be recorded as coupled, rather than carrying forward a requirement
+whose premise has moved.
 
 ## Execution boundaries and falsifiable checks
 
