@@ -33,6 +33,16 @@ assertions after compiling. A compilation failure is not a killed mutation.
 | Operational acceptance | None | No rehearsal has enabled P0 on a chain |
 | **P0 overall** | **roughly 55-60%** | Weighted estimate, not a measured figure |
 
+The table above was counted on 2026-09-14 and has not been recounted since. What
+has landed after it: the bounded evidence expansion and the single opening on
+the admission path, the execution clone that gives a diagnostic retry a fresh
+host without re-parsing attacker bytes, the governance finalization of a voted
+proposal, the profile's move to v1 revision 4, and external-message provenance
+becoming a remote peer or a local origin. None of those is a new call path, so
+the node-integration figure is believed unchanged; the library column was not
+re-derived and the numbers should be read as of that date rather than as of this
+head.
+
 The overall figure is an estimate and should be read as such. It has barely moved
 over the last several working sessions, not because progress stalled but because
 touching real execution keeps making previously invisible integration work
@@ -91,7 +101,7 @@ Everything else remains open. The named remaining work, grouped:
 | Group | Remaining |
 | --- | --- |
 | Session and consensus | Consensus call sites; the manager's archive reader and an independently established finalized head. Session birth and committee derivation now exist as a library boundary and are owned by the authenticated birth, but the derived committee still has no consumer in `validator/manager.cpp`: the insertion there confirms the session identity and does not yet run consensus against the derived committee |
-| Contracts | Elector emission and session admission; configuration authorization and atomic root installation. `elector-code.fc` and `config-code.fc` contain no P0 entry point |
+| Contracts | Elector emission and session admission; configuration authorization and atomic root installation. Both contracts now carry declared P0 entry points, so the row no longer says they carry none: `config-code.fc` declares the VAUTH_APPLY and VAUTH_BIND instructions, persists the registry checkpoint, dispatches the registry action and finalizes a proposal that completed normal voting, and `elector-code.fc` carries the registry identity each elected member named through selection and refund. What is outstanding is emission and admission rather than any entry point at all: the elector work is binding an elected set, not emitting receipts |
 | Chain apply | Native block apply, contract data installation, action-phase commit wiring, installed chain root |
 | Serving | Remote HTTP/2 with mutual TLS, and installation of the served composition into the node. The node history adapter and the authenticated public composition now exist as library boundaries: the client methods are served behind a transport that supplies an authenticated principal, and that transport is a narrow interface so a mutual-TLS implementation substitutes for the local Unix one without touching the composition. Only the local Unix implementation exists today |
 | Provisioning | Provider inventory reconciliation, independent operational trust distribution, the node permit adapter |

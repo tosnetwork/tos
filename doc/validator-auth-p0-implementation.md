@@ -74,14 +74,38 @@ deferred. None of them is on the path from a genesis to a finalized block.
 
 ### Named blockers
 
-Native governance gas is a blocker and not a note. The masterchain committee
-this network installs is a hundred validators, and one governance operation
-signed by it costs six times the credit an external message has before it is
-accepted in registry reads alone, plus three hundred and sixty thousand gas of
-signature verification. At the four hundred the profile admits, twenty-five
-times and one million five hundred and sixty thousand. No choice of credit
-closes either, because the credit is not where a transaction of that size can be
-paid for. What to do about it is a protocol decision and is not made here.
+Native governance gas was carried here as a blocker. At the committee this
+network installs it is not one, and the figures that made it look like one were
+not the figures for that committee.
+
+The figures this paragraph carried were the ones for a hundred-validator
+committee, which is not what the zerostate installs. It installs twenty-one, as
+`400 21 4 config.validator_num!`, and the capacity bound refuses a genesis and a
+bound that name different numbers. Re-measured at the committee actually
+installed, and at the ceiling the profile admits:
+
+| signers | whole transaction | signature verification | of the 1,000,000 soft block limit |
+| ---: | ---: | ---: | ---: |
+| 21 | 97,233 | 44,000 | 9.7% |
+| 400 | 2,240,393 | 1,560,000 | 224% |
+
+The credit is not what bounds this, and saying it was applied an ordinary
+account's entry conditions to an account that is not ordinary. The
+configuration account is special by address, so its compute phase begins at the
+special limit rather than at one acceptance would raise. Measured end to end
+through the real ingress at the installed committee, a governance operation is
+admitted, verifies all twenty-one signatures and commits. A forged certificate
+costs 2,664 gas and is refused at its first verification; a stale one is refused
+before any.
+
+So at the committee this network installs there is no blocker here. What the
+figures show is a ceiling: at the four hundred the profile admits, one operation
+is more than twice the soft block limit and nearly the whole hard one. That is a
+statement about the ceiling, not about the chain being built.
+
+Whether paid governance ingress is inside P0 at all is recorded separately as a
+tariff item; this entry does not settle it, and the two should not be read as
+agreeing until one of them says so.
 
 ## Execution boundaries and falsifiable checks
 
@@ -104,7 +128,7 @@ paid for. What to do about it is a protocol decision and is not made here.
 | Native configuration gates | Actual C++ admission/transition and Rust config admission, frozen Config46 registration, capability/version, required parameters and revision continuity | 43 shared cases, 11 legacy transition tests, 47 compiled guards and full-dependency sanitizer parity | Native contract authorization, atomic root installation and approved activation |
 | Persistent native registry | Independent C++/Rust immutable cell dictionaries, validated derived indexes and per-operation native authority | 34 replay cases, eight checkpoint attacks, 80 real-owner authority cases and 36 compiled guards; bounded work over 501 historical identities | Global configuration operations and node installation. Zero-identity policy operations and contract-owned persistence are in place: the account's own tick-tock writes the prefix a block with no registry message produced, which is what keeps parameter 46 from naming transitions as due at a coordinate that has passed |
 | Native header witnesses | Independent C++/Rust fixed-surface Merkle proofs authenticated by native history; no archive/cache access; carried by the registry message and authenticated at consensus admission | 25 shared cases, independent proof generation, 27 compiled guards and full-dependency sanitizer parity | Concrete transaction host metering: admission authenticates a carried witness uncharged |
-| Privileged native VM host | C++/Rust VAUTH_STATE/VAUTH_APPLY/VAUTH_BIND, one purpose-specific host per transaction shape, including a state-only host for the account's own tick-tock, transaction-scoped ownership, no nested VM inheritance and explicit charge callback | 39 exact outcome/gas/host-call comparisons, host-purpose and allowance cases, compiled guards and full-dependency sanitizer parity | Deterministic native gas, which is now a named blocker rather than a note: a certificate from the hundred-validator masterchain committee this network installs exceeds the masterchain credit on its reads alone, and its signature verifications -- now priced at the machine's own tariff, announced before each one is performed -- add three hundred and sixty thousand gas more; at the four hundred the profile admits, one million five hundred and sixty thousand. The authority is assembled per transaction by collation, validation and message-pool admission through one assembler, an update host refuses to bind and a binding host refuses to apply, and a refused operation spends the allowance it read rather than restoring it |
+| Privileged native VM host | C++/Rust VAUTH_STATE/VAUTH_APPLY/VAUTH_BIND, one purpose-specific host per transaction shape, including a state-only host for the account's own tick-tock, transaction-scoped ownership, no nested VM inheritance and explicit charge callback | 39 exact outcome/gas/host-call comparisons, host-purpose and allowance cases, compiled guards and full-dependency sanitizer parity | Deterministic native gas, which is now a named blocker rather than a note: a certificate from the twenty-one-member masterchain committee this network installs exceeds the masterchain credit on its reads alone, 13,440 against 10,000, and its signature verifications -- now priced at the machine's own tariff, announced before each one is performed -- add forty-four thousand gas more; at the four hundred the profile admits, 256,000 and one million five hundred and sixty thousand. See the named blockers above for what was re-measured and what the earlier figures described. The authority is assembled per transaction by collation, validation and message-pool admission through one assembler, an update host refuses to bind and a binding host refuses to apply, and a refused operation spends the allowance it read rather than restoring it |
 | Native configuration account context | Independent C++/Rust binding of actual ShardAccounts code/data/library, Config0, owned config dictionary, complete checkpoint and parent committee | 22 shared cases, 24 compiled guards and full-dependency sanitizer parity | Native commit of the account the contract produced. The contract now carries its checkpoint through every store and replaces it from the state instruction on a registry update, so parameter 46 and the account's checkpoint commit together; which of genesis seeding or first-update migration installs the first one is an activation policy still to be chosen |
 | Native transaction evidence | Independent C++/Rust bounded transaction-contained VAA1, typed chunk dictionary, byte-work charging and authenticated owner header | 39 shared cases, 30 compiled guards, identical charge traces and full-dependency sanitizer parity | Concrete native VM pricing and transaction host invocation |
 | Native finalized history | Independent C++/Rust resolution of full anchors from authenticated OldMcBlocksInfo and original native block bytes; node-local finalized-head establishment binds final signature-set verification to exact block/state coordinates | 37 shared history cases plus focused finalized-head cases; exact file/root/context/new-state binding, final-vs-approval refusal and monotonic head advancement | Signature-set actor adapter and installation of the established head. No archive adapter remains outstanding: consensus admission authenticates the witness a message carries against the parent state's own history index and reads no archive, so the cache, resolution queue and reporting that fed one are deleted rather than pending |
