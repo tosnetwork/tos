@@ -48,10 +48,41 @@ remains -- a producer and a validator deriving different session snapshots, each
 correct by its own lights -- which is the shape this design has paid for
 repeatedly and which costs least to find while the surrounding work is fresh.
 
-Its entry condition is the activation policy: whether the first checkpoint is
-seeded at genesis or installed by the first update. Nothing downstream opens a
-configuration context without one, so this is not an independent item that can
-be scheduled later; it gates the phase.
+Its entry condition was the activation policy, and that is now decided.
+
+**Validator authentication P0 v1 is genesis-activated.** No existing chain
+adopts it through an in-place first-update migration. Any test, development or
+rehearsal network that needs it must regenesis. A production mainnet starts with
+Config46 and the matching configuration-account checkpoint already present in
+the zero state.
+
+Genesis seeds both sides or neither. Installing the registry parameter without
+the account checkpoint that describes the same initial authenticated state is
+not a partial success, it is a chain that cannot open a configuration context.
+
+There is no migration fallback anywhere. A chain with the design active and no
+checkpoint is an error, and is refused. Nothing in the manager, in
+`mc-config.cpp` or in the contract host may recognise a missing checkpoint as a
+chain that has not migrated yet and seed one. That path would be a second
+installation route reachable without the one that is declared.
+
+What this buys is an invariant the whole phase can rest on:
+
+```
+the design is active
+  => Config46 exists
+  => the configuration account's checkpoint exists
+  => both describe the same initial authenticated state
+  => a configuration context can always open
+```
+
+What it avoids is a second consensus-visible state machine. First-update
+migration would introduce pre-activation, a migration transaction, partial
+installation, restart and replay across it, failed migration, and a first
+session that crosses the activation height -- each needing its own proofs and
+its own mutation surface, for a chain that has not started. Migration stays
+deferred and would be designed as its own profile if a running network ever has
+to adopt this.
 
 **Phase two: elector emission and node actor installation.** Receipts,
 admission, and hanging the history, proof, signer and provider services on the
@@ -157,7 +188,7 @@ whose premise has moved.
 | Persistent native registry | Independent C++/Rust immutable cell dictionaries, validated derived indexes and per-operation native authority | 34 replay cases, eight checkpoint attacks, 80 real-owner authority cases and 36 compiled guards; bounded work over 501 historical identities | Global configuration operations and node installation. Zero-identity policy operations and contract-owned persistence are in place: the account's own tick-tock writes the prefix a block with no registry message produced, which is what keeps parameter 46 from naming transitions as due at a coordinate that has passed |
 | Native header witnesses | Independent C++/Rust fixed-surface Merkle proofs authenticated by native history; no archive/cache access; carried by the registry message and authenticated at consensus admission | 25 shared cases, independent proof generation, 27 compiled guards and full-dependency sanitizer parity | Concrete transaction host metering: admission authenticates a carried witness uncharged |
 | Privileged native VM host | C++/Rust VAUTH_STATE/VAUTH_APPLY/VAUTH_BIND, one purpose-specific host per transaction shape, including a state-only host for the account's own tick-tock, transaction-scoped ownership, no nested VM inheritance and explicit charge callback | 39 exact outcome/gas/host-call comparisons, host-purpose and allowance cases, compiled guards and full-dependency sanitizer parity | Deterministic native gas, which is now a named blocker rather than a note: a certificate from the twenty-one-member masterchain committee this network installs exceeds the masterchain credit on its reads alone, 13,440 against 10,000, and its signature verifications -- now priced at the machine's own tariff, announced before each one is performed -- add forty-four thousand gas more; at the four hundred the profile admits, 256,000 and one million five hundred and sixty thousand. See the named blockers above for what was re-measured and what the earlier figures described. The authority is assembled per transaction by collation, validation and message-pool admission through one assembler, an update host refuses to bind and a binding host refuses to apply, and a refused operation spends the allowance it read rather than restoring it |
-| Native configuration account context | Independent C++/Rust binding of actual ShardAccounts code/data/library, Config0, owned config dictionary, complete checkpoint and parent committee | 22 shared cases, 24 compiled guards and full-dependency sanitizer parity | Native commit of the account the contract produced. The contract now carries its checkpoint through every store and replaces it from the state instruction on a registry update, so parameter 46 and the account's checkpoint commit together; which of genesis seeding or first-update migration installs the first one is an activation policy still to be chosen |
+| Native configuration account context | Independent C++/Rust binding of actual ShardAccounts code/data/library, Config0, owned config dictionary, complete checkpoint and parent committee | 22 shared cases, 24 compiled guards and full-dependency sanitizer parity | Native commit of the account the contract produced. The contract now carries its checkpoint through every store and replaces it from the state instruction on a registry update, so parameter 46 and the account's checkpoint commit together; genesis seeds both, and a design-active chain missing either is refused rather than migrated; first-update migration is deferred and is not a P0 path |
 | Native transaction evidence | Independent C++/Rust bounded transaction-contained VAA1, typed chunk dictionary, byte-work charging and authenticated owner header | 39 shared cases, 30 compiled guards, identical charge traces and full-dependency sanitizer parity | Concrete native VM pricing and transaction host invocation |
 | Native finalized history | Independent C++/Rust resolution of full anchors from authenticated OldMcBlocksInfo and original native block bytes; node-local finalized-head establishment binds final signature-set verification to exact block/state coordinates | 37 shared history cases plus focused finalized-head cases; exact file/root/context/new-state binding, final-vs-approval refusal and monotonic head advancement | Signature-set actor adapter and installation of the established head. No archive adapter remains outstanding: consensus admission authenticates the witness a message carries against the parent state's own history index and reads no archive, so the cache, resolution queue and reporting that fed one are deleted rather than pending |
 | Authenticated ordered identity apply | C++ and independent Rust compose native owner proofs, PoP and current administration with per-operation resulting state | 80 shared cases from real wallet approvals, same-block administration rotation, due/policy boundaries, exact native bytes and 22 compiled guards | Native elector/config transaction admission and installed chain root |
