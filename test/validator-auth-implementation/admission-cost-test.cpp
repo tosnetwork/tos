@@ -98,6 +98,24 @@ std::size_t legitimate_declared(unsigned records) {
   return auth_fixture::value(encode(f.evidence), "admission-legitimate").size();
 }
 
+// How many separate expansions one opening performs, counted by how many times
+// it asks the allowance. How many openings the admission path performs is a
+// question about that path rather than about this container, and is held by a
+// check over its source.
+unsigned admission_expansion_points(const td::Ref<vm::Cell>& evidence) {
+  unsigned opens = 0;
+  auto counting = [&opens](std::size_t bytes) -> Result<bool> {
+    if (bytes > native_admission_limit)
+      return Error{"admission-evidence-bound"};
+    ++opens;
+    return true;
+  };
+  auto first = NativeEvidence::open(evidence, counting);
+  if (!first.ok())
+    throw std::runtime_error("admission-expansions");
+  return opens;
+}
+
 struct Cost {
   std::size_t bytes = 0;
   long long micros = 0;
@@ -139,6 +157,7 @@ int main() {
         "an-oversized-container-is-refused-however-densely-it-was-written",
         "the-bound-refuses-before-the-container-is-expanded",
         "the-bound-admits-the-largest-message-the-profile-allows",
+        "one-opening-is-bounded-at-each-of-its-expansion-points",
     };
     for (const auto* name : manifest)
       std::cout << "MANIFEST " << name << '\n';
@@ -244,6 +263,16 @@ int main() {
       report(legal_ok && legitimate_declared(21) < native_admission_limit &&
                  legitimate_declared(400) < native_admission_limit,
              "the-bound-admits-the-largest-message-the-profile-allows");
+
+      // What one opening costs, which is what an allowance per expansion adds
+      // up to. A container is expanded at two points inside a single opening --
+      // the authorizations blob, and the attachments -- so bounding each at the
+      // allowance bounds one opening at twice it. That is the figure to hold
+      // this against; it is not a budget for a message.
+      const auto points = admission_expansion_points(legitimate(400));
+      std::cerr << "MEASURE expansion_points_per_opening=" << points
+                << " aggregate_bound=" << points * native_admission_limit << '\n';
+      report(points == 2, "one-opening-is-bounded-at-each-of-its-expansion-points");
     }
 
     std::cout << "SUMMARY cases=" << passed << " passed=" << passed << '\n';

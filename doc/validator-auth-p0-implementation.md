@@ -433,8 +433,18 @@ The container states how many bytes it expands to before any of them are
 touched, and the opening already charges that declared figure before unpacking
 rather than counting afterwards. What was missing was anyone to charge: the
 callback admission supplied accepted every size. It now supplies an allowance of
-its own, sixty-four kilobytes, which is not what execution allows and should not
-be -- execution happens after a block has accepted the work, and this happens on
+its own, and what it says exactly is this: no single unauthenticated expansion
+may declare more than sixty-five thousand five hundred and thirty-six logical
+bytes. It is not a budget for a message and not a budget for a container. One
+opening expands a container at two points -- the authorizations blob, and the
+attachments -- each bounded separately, so one opening may expand at most about
+twice that; and the admission path performs one opening, because recognition
+opens the container and what follows is handed the value it produced rather than
+the root to parse again. Twice sixty-five thousand five hundred and thirty-six
+is the figure to hold this against.
+
+The allowance is not what execution allows and should not be -- execution
+happens after a block has accepted the work, and this happens on
 a stranger's say-so. A governance message declares three and a half thousand
 bytes at the committee installed and fifty-eight and a half thousand at the one
 the profile admits, so the allowance leaves room for the largest legal message
@@ -452,6 +462,11 @@ about how densely it was written down. The bound is a bound only because it is
 applied first: moved after the unpacking it gates, every refusal is still a
 refusal and the work it exists to refuse has already been done. That is the
 mutation that holds it.
+
+The single opening is held separately, by a check over the admission source
+rather than by a test, because removing redundant work breaks nothing when it
+comes back: every case still passes, twice as slowly. Reinstating the second
+opening was watched to fail that check.
 
 Why per expansion and not summed across them: a container's two expansions do
 not measure disjoint bytes. An inline attachment lives inside the authorizations

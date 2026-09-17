@@ -285,6 +285,7 @@ jobs:
           set -euo pipefail
           build-p0/test/validator-auth-implementation/test-p0-governance-gas | tee artifacts/governance-gas.txt
           build-p0/test/validator-auth-implementation/test-p0-signature-tariff | tee artifacts/signature-tariff.txt
+          python3 test/validator-auth-implementation/check_admission_expansion.py | tee artifacts/admission-expansion.txt
           build-p0/test/validator-auth-implementation/test-p0-admission-cost | tee artifacts/admission-cost.txt
           git diff --exit-code
       - name: Apply a zero-identity policy operation
