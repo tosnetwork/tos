@@ -95,7 +95,13 @@ int main(int argc, char** argv) {
       stack.write().push_int(td::make_refint(elector_account));
       stack.write().push_bool(false);
       stack.write().push_smallint(-2);
-      return run(code, data, std::move(stack), elect_close + 10, activated);
+      auto result = run(code, data, std::move(stack), elect_close + 10, activated);
+      // The most expensive tick-tock this contract has: the one that closes an
+      // election and sends the set. A block carrying a governance transaction
+      // has to hold this too, so the number is reported rather than left to be
+      // guessed from the case that consumed it.
+      std::cerr << "MEASURE elector_ticktock_gas=" << result.gas << " activated=" << activated << '\n';
+      return result;
     };
 
     auto one_member = [&](const unsigned char* key, std::uint64_t account, std::uint64_t amount,
@@ -178,6 +184,40 @@ int main(int argc, char** argv) {
       expect(std::equal(std::begin(identity), std::end(identity), std::begin(stored)),
              "active-election-sends-one-binding-per-selected-member");
       ok("active-election-sends-one-binding-per-selected-member");
+    });
+
+    // What the same tick-tock costs at the committee sizes a masterchain block
+    // has to carry alongside a governance transaction. The two are coupled: a
+    // masterchain committee of four hundred means an elected set of four
+    // hundred, so the block that carries the largest certificate also runs the
+    // largest election close.
+    guard("election-close-cost-is-reported-at-committee-scale", [&] {
+      for (unsigned members : {100u, 400u}) {
+        vm::Dictionary set(256);
+        std::uint64_t total = 0;
+        for (unsigned index = 0; index < members; ++index) {
+          unsigned char key[32] = {}, named[32] = {};
+          key[0] = static_cast<unsigned char>(index & 0xff);
+          key[1] = static_cast<unsigned char>((index >> 8) & 0xff);
+          key[31] = 0x11;
+          named[0] = static_cast<unsigned char>(index & 0xff);
+          named[31] = 0x22;
+          const std::uint64_t amount = 19000000000ULL;
+          expect(set.set(td::ConstBitPtr(key), 256,
+                         vm::load_cell_slice_ref(member_record(amount, 0x20000, staker_account + index, 0x4444 + index,
+                                                               named))),
+                 "election-close-cost-is-reported-at-committee-scale");
+          total += amount;
+        }
+        // Both sides of activation, because a cost this design did not
+        // introduce is not a cost this design has to answer for. The legacy
+        // run is the control.
+        auto legacy = elect_over(set, total, false);
+        expect(legacy.exit == 0, "election-close-cost-is-reported-at-committee-scale");
+        auto closed = elect_over(set, total, true);
+        expect(closed.exit == 0, "election-close-cost-is-reported-at-committee-scale");
+      }
+      ok("election-close-cost-is-reported-at-committee-scale");
     });
 
     // The half-fix this case exists to refuse. Stakes placed before activation

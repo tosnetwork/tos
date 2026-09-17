@@ -31,6 +31,15 @@ VERIFY = [
      '      if (!valid.value())\n        return Error{"signature"};\n    }'),
 ]
 
+# The same removal again, against the whole transaction rather than the
+# verification path alone. A capacity bound that survived the verification being
+# skipped would be measuring the contract and calling it the cost of governance.
+CAPACITY = [
+    ('signature-unreported-in-transaction',
+     'the-whole-transaction-verifies-every-signature-the-committee-supplied',
+     'if (meter)\n      (*meter)(p.key->suite());\n', ''),
+]
+
 # The price, in the machine that publishes it.
 TARIFF = [
     ('classical-tariff', 'verification-past-the-free-allowance-pays-the-machine-tariff',
@@ -46,13 +55,16 @@ def main(args):
     build = args.build.resolve()
     folder = build / 'test/validator-auth-implementation'
 
-    def runner(target):
+    def runner(target, arguments=()):
         def run(_label=None):
             checked(['cmake', '--build', str(build), '--target', target, '-j2'])
-            return subprocess.run([str(folder / target)], capture_output=True, text=True)
+            return subprocess.run([str(folder / target), *arguments], capture_output=True, text=True)
         return run
 
     report = mutate(folder / 'signature-verify-mutated.cpp', VERIFY, runner('test-p0-governance-gas-mutant'))
+    if args.contract:
+        report += mutate(folder / 'signature-verify-mutated.cpp', CAPACITY,
+                         runner('test-p0-governance-capacity-mutant', [str(args.contract.resolve())]))
     report += mutate(folder / 'signature-tariff-mutated.cpp', TARIFF, runner('test-p0-signature-tariff-mutant'))
     args.out.write_text(json.dumps(dict(signature_mutations=report, restored_baselines=True), indent=2) + '\n')
 
@@ -60,5 +72,8 @@ def main(args):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--build', type=Path, required=True)
+    # The built configuration contract. Without it the whole-transaction bound
+    # cannot be run, so its mutation is skipped rather than reported as killed.
+    parser.add_argument('--contract', type=Path)
     parser.add_argument('--out', type=Path, required=True)
     main(parser.parse_args())

@@ -145,6 +145,10 @@ struct Outcome {
   int exit;
   td::Ref<vm::Cell> data;
   td::Ref<vm::Cell> actions;
+  // What the run cost. The elector's tick-tock is mandatory masterchain work,
+  // so it is part of what a block carrying a governance transaction must also
+  // fit; measuring it anywhere but here would mean building its state twice.
+  long long gas = 0;
 };
 
 Outcome run(const td::Ref<vm::Cell>& code, const td::Ref<vm::Cell>& data, td::Ref<vm::Stack> stack, std::uint32_t now,
@@ -170,9 +174,9 @@ Outcome run(const td::Ref<vm::Cell>& code, const td::Ref<vm::Cell>& data, td::Re
     vm::VmState state{code, 16, std::move(stack), vm::GasLimits{10000000, 10000000}, 1, data, {}, {}, {}, 1024};
     state.set_c7(vm::make_tuple_ref(td::make_ref<vm::Tuple>(std::move(info))));
     int exit = ~state.run();
-    return {exit, state.get_c4(), state.get_committed_state().c5};
+    return {exit, state.get_c4(), state.get_committed_state().c5, state.gas_consumed()};
   } catch (const vm::VmFatal&) {
-    return {-1000, {}, {}};
+    return {-1000, {}, {}, 0};
   }
 }
 

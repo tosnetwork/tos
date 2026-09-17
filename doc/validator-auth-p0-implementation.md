@@ -363,7 +363,10 @@ survive, not what it will usually be asked to do.
 The credit an external message has before it is accepted is ten thousand.
 Neither ceiling fits it: the installed committee costs six times that in reads
 alone, the profile's twenty-five times, and eight signer records already exceed
-it.
+it. The registry action is unsigned and reaches `accept_message` only after the
+update has applied, so the whole verification happens on that credit -- run
+against the real contract, a hundred-signer operation stops after twelve
+verifications, having never accepted and never committed.
 
 It cost seven entries a record until the identity stopped being revalidated for
 every signer. The state is validated in full when it is opened, every key
@@ -397,17 +400,35 @@ is the one the host draws on rather than a second one of its own. The count is
 of verifications actually performed, not of records presented: a certificate
 refused while its structure is still being read pays for none of them.
 
-So one governance operation has two known floors, against a masterchain block
-limit of two and a half million: four hundred and twenty-four thousand gas for
-the committee this network installs, and one million eight hundred and sixteen
-thousand for the largest the profile admits. What remains unmeasured is
-everything else the block must also contain: the configuration contract's own
-instructions, the proposal dictionary, the state instruction, account
-persistence, and the configuration and elector tick-tocks. Whether the whole
-transaction and the whole block fit is the next measurement, not an inference
-from this one -- and it has to be taken at both ceilings, because the one that
-is comfortable today is a configuration parameter away from the one that is
-not.
+Those are components. The whole transaction has now been run rather than added
+up: a real committee, a certificate every member signed, the real registry, the
+privileged host and the compiled configuration contract, with the account's own
+tick-tock after it.
+
+| masterchain signers | transaction | account tick-tock | together |
+| ---: | ---: | ---: | ---: |
+| 100 | 538,043 | 6,119 | 544,162 |
+| 400 | 2,240,393 | 6,119 | 2,246,512 |
+
+The masterchain block gas limits are underload five hundred thousand, soft one
+million, hard two and a half million. Both fit under hard. Only the installed
+committee fits under soft, which is where a collator stops adding to a block: at
+the profile ceiling a governance operation is a transaction that closes the
+block it is in rather than one that shares it.
+
+The sum of the components is not the transaction. At a hundred signers the
+components come to four hundred and twenty-four thousand and the transaction
+costs five hundred and thirty-eight thousand; the difference is the contract, the
+instruction, and reading a certificate that is itself tens of kilobytes.
+
+What the block bound does not settle is which block. The elector's own mandatory
+tick-tock is measured beside its contract, and closing an election is far larger
+than this whole limit at either committee size -- three million three hundred
+and fifty-five thousand at a hundred members before this design exists, and
+three million seven hundred and fifty-five thousand with it. That cost is the
+elector's, not this design's, and it is reported with its control for exactly
+that reason; what this design adds to it is four hundred thousand at a hundred
+members and six hundred and fifty-three thousand at four hundred.
 
 Multiplying the work allowance by the price is not the bound either. That
 allowance is an operational ceiling -- a million entries and two hundred and
