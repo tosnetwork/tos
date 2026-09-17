@@ -26,6 +26,22 @@ MUTATIONS=[
  ('consecutive-blocks','lifecycle','lifecycle.cpp','if(parent_coordinate>=max_coordinate-1||coordinate!=parent_coordinate+1)return Error{"block-gap"};',''),
 ]
 VENDORED=ROOT/'third-party/mldsa-native/mldsa'
+# Headers the shadowed sources declare against but that are never mutated.
+#
+# The shadow exists so a mutation is compiled instead of the file it replaces,
+# and it holds validator/auth, crypto/validator-auth and crypto/pq. Nothing
+# else is copied, so anything those declare against has to resolve from the
+# tree. state.h declares two methods in terms of td::Ref<vm::Cell>, so the
+# core suites need the VM headers even though they exercise no cells.
+#
+# These come after the shadow paths deliberately. A header that exists in both
+# places must resolve to the shadow, or a mutation would compile against the
+# original and be reported as a survivor.
+def real_tree_includes(build):
+ # The generated headers live in the build tree, so the tree has to be named
+ # rather than guessed. Every other harness here takes it the same way.
+ return ['-I'+str(ROOT/'crypto'),'-I'+str(ROOT),'-I'+str(ROOT/'tdutils'),'-I'+str(ROOT/'tdactor'),
+         '-I'+str(build/'tdutils')]
 def main(args):
  flags=shlex.split(subprocess.run(['pkg-config','--cflags','--libs','libsodium','openssl'],capture_output=True,text=True,check=True).stdout)
  results=[]
@@ -42,7 +58,7 @@ def main(args):
    if not native.exists():
     c=subprocess.run([os.environ.get('CC','cc'),'-std=c90','-O1','-c','-I'+str(folder/'crypto/pq'),'-I'+str(VENDORED),'-DMLD_CONFIG_FILE="mldsa44-config.h"',str(VENDORED/'mldsa_native.c'),'-o',str(native)],capture_output=True,text=True)
     if c.returncode:raise RuntimeError('vendored backend did not compile: '+c.stderr)
-   command=[os.environ.get('CXX','c++'),'-std=c++20','-O1','-DTOS_AUTH_CORE_ONLY','-I'+str(folder),'-I'+str(folder/'crypto'),'-I'+str(folder/'crypto/pq'),'-I'+str(VENDORED),'-DMLD_CONFIG_FILE="mldsa44-config.h"',str(ROOT/'test/validator-auth-implementation'/driver),*[str(shadow/s) for s in sources],str(folder/'crypto/validator-auth/ed25519.cpp'),str(folder/'crypto/pq/mldsa44.cpp'),str(native),*flags,'-o',str(binary)]
+   command=[os.environ.get('CXX','c++'),'-std=c++20','-O1','-DTOS_AUTH_CORE_ONLY','-I'+str(folder),'-I'+str(folder/'crypto'),'-I'+str(folder/'crypto/pq'),'-I'+str(VENDORED),*real_tree_includes(args.build),'-DMLD_CONFIG_FILE="mldsa44-config.h"',str(ROOT/'test/validator-auth-implementation'/driver),*[str(shadow/s) for s in sources],str(folder/'crypto/validator-auth/ed25519.cpp'),str(folder/'crypto/pq/mldsa44.cpp'),str(native),*flags,'-o',str(binary)]
    p=subprocess.run(command,capture_output=True,text=True)
    if p.returncode:raise RuntimeError('mutation did not compile: '+p.stderr)
    return binary
@@ -85,4 +101,4 @@ def main(args):
    p=test(suite,build(suite));assert p.returncode==0,(suite,p.stderr)
  args.out.write_text(json.dumps({'production_cpp_mutations':results,'restored_baselines':True},indent=2)+'\n')
 if __name__=='__main__':
- parser=argparse.ArgumentParser();parser.add_argument('--rust',type=Path,required=True);parser.add_argument('--out',type=Path,required=True);main(parser.parse_args())
+ parser=argparse.ArgumentParser();parser.add_argument('--rust',type=Path,required=True);parser.add_argument('--out',type=Path,required=True);parser.add_argument('--build',type=Path,default=ROOT/'build-p0');main(parser.parse_args())

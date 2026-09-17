@@ -17,7 +17,6 @@
     Copyright 2017-2020 Telegram Systems LLP
     Copyright 2025-2026 TOS Blockchain Teams
 */
-#include "absl/functional/internal/any_invocable.h"
 #include "td/db/RocksDb.h"
 #include "td/utils/Random.h"
 #include "td/utils/crypto.h"

@@ -636,6 +636,7 @@ jobs:
           set -euo pipefail
           export FUNC_BIN="$PWD/build-p0/crypto/func" FIFT_BIN="$PWD/build-p0/crypto/fift"
           python3 test/validator-auth-implementation/mutations.py \
+            --build build-p0 \
             --rust tosctl/src/target/debug/conformance --out artifacts/cpp-mutations.json
           python3 test/validator-auth-implementation/rust_mutations.py \
             --cpp build-p0/test/validator-auth-implementation/test-p0-implementation --out artifacts/rust-mutations.json
