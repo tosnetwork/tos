@@ -113,11 +113,6 @@ Result<std::unique_ptr<NativeConfigTransaction>> admit_registry_message(const Re
   if (inputs.transaction.catchain != inputs.catchain_source)
     return Error{"registry-admission-catchain-input"};
 
-  // The account gathered by the collator is checked against the parent state
-  // here instead of becoming a second authority. Config0 and the state's own
-  // configuration header must agree, and the gathered value must be that same
-  // account. A wrong gathered value therefore fails before it can look like an
-  // ordinary message to another account.
   auto config = block::Config::extract_from_state(inputs.transaction.masterchain_state, 0);
   if (config.is_error())
     return Error{"registry-admission-input"};
@@ -129,31 +124,13 @@ Result<std::unique_ptr<NativeConfigTransaction>> admit_registry_message(const Re
   if (recognized.value().destination != declared.value())
     return Error{"registry-admission-not-configuration"};
 
-  // The bound this enforces is the one that matters here: an approval may not
-  // name a block at or after the one being built, so a transaction cannot
-  // authorise itself with state it is in the middle of producing. The
-  // coordinates it returns are not used as a second authority below -- they
-  // restate what the approval already declares, and the anchor that reaches
-  // execution is the authenticated one.
   auto required =
       required_finalized_coordinates(recognized.value().evidence.authorizations(), inputs.transaction.inclusion);
   if (!required.ok())
     return required.error();
 
-  // The finality an approval relies on is carried by the message and checked
-  // against this state's own history index. Nothing here reads an archive, so
-  // the authority is a function of the parent state and the message alone --
-  // which is what re-execution needs: a validator holding the same block
-  // reaches the same answer whatever its archive happens to contain.
-  // An update with no owner approval names no finalized history, so there is
-  // nothing to witness and the source stays empty.
   std::map<std::uint32_t, Anchor> witnessed;
   if (!required.value().empty()) {
-    // The archive is deliberately unreachable here. Authenticating a header is
-    // documented never to read one, and a reader that refuses turns that
-    // promise into something a test can fail rather than a comment. The budget
-    // below is not what prevents the read -- a default-constructed one allows
-    // plenty -- the refusing reader is.
     auto reader = [](const tos::BlockIdExt&, std::size_t) -> Result<Bytes> {
       return Error{"registry-admission-archive-read"};
     };
@@ -164,21 +141,17 @@ Result<std::unique_ptr<NativeConfigTransaction>> admit_registry_message(const Re
     auto authenticated = recognized.value().evidence.authenticate_owner(index.value());
     if (!authenticated.ok())
       return authenticated.error();
-    // One entry, and it is the authenticated anchor. Comparing it against the
-    // declared coordinates again would be a guard that cannot fail: both come
-    // from the same approval, and authentication already refuses unless the
-    // witness proves that exact anchor. A wider source is what would matter,
-    // and the source is built here from this one value.
     witnessed.emplace(authenticated.value().seqno_, authenticated.value());
   }
   auto owned_history = std::make_shared<WitnessedAnchorSource>(std::move(witnessed));
 
-  // The same container, opened a second time on the same unauthenticated path,
-  // so it carries the same kind of allowance. They are separate allowances
-  // rather than one shared across both openings, which is looser than it could
-  // be; what it is not is unbounded.
-  return NativeConfigTransaction::open(inputs.transaction, sequence, recognized.value().message.evidence,
-                                       recognized.value().message.proposal, std::move(owned_history),
-                                       admission_evidence_budget());
+  // Recognition already opened this exact evidence root under the admission
+  // allowance, and owner authentication above used that parsed value. Hand the
+  // same value to the transaction assembler. Reopening the root here would not
+  // establish another trust boundary; it would only repeat attacker-selected
+  // expansion and create two parser decisions for one immutable cell.
+  return NativeConfigTransaction::open_admitted(inputs.transaction, sequence, std::move(recognized.value().evidence),
+                                                std::move(recognized.value().message.proposal),
+                                                std::move(owned_history));
 }
 }  // namespace tos::auth
