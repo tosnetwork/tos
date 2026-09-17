@@ -3,5 +3,5 @@
 #include <array>
 #include <cstdint>
 namespace block {
-inline constexpr std::array<std::uint8_t,32> validator_auth_profile_fingerprint{155,17,133,5,171,154,63,104,17,141,197,11,81,242,116,43,61,41,202,129,198,190,33,92,245,75,40,244,222,131,181,104};
+inline constexpr std::array<std::uint8_t,32> validator_auth_profile_fingerprint{128,50,170,136,254,126,194,137,248,27,116,25,177,245,225,167,243,247,174,180,177,23,201,76,10,98,215,16,221,184,78,241};
 }
