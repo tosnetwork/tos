@@ -405,6 +405,33 @@ thousand of credit an ordinary account would have had -- so the path is not a
 way to spend a validator's work for free, despite being a path on which work is
 never charged for.
 
+One seam is not covered by any of that, because it happens before there is a
+transaction to meter. Admission to the message pool has to decide whether an
+arriving external message is a registry update, and deciding opens the evidence
+container: the authorizations are unpacked out of their byte tree, decoded, and
+every attached object validated. The callback that work is given at
+`native-registry-admission.cpp` accepts any size, and at this stage a
+certificate is an opaque object identified by its own hash, so nothing in the
+container has to be something that would ever verify.
+
+The work is bounded -- one attachment per authorization kind, three kinds, sixty
+four kilobytes each, and an inbound message ceiling of two hundred and fifty six
+kilobytes below that -- and a container claiming more is refused rather than
+unpacked. What is not bounded is the ratio between what the sender spends and
+what the node does:
+
+| one sixty-four kilobyte attachment | on the wire | to open | per wire kilobyte |
+| --- | ---: | ---: | ---: |
+| bytes that repeat | 551 | 2,392 us | 4,445 us |
+| bytes that do not | 70,092 | 2,444 us | 35 us |
+
+Identical leaves serialize once and are walked every time, so the same work
+costs a sender a hundred and twenty-seven times less to send in one shape than
+in the other. The measurement is of the container being opened, not of the whole
+admission path, so it is a floor. It is recorded here because a bound on work
+per message is not a bound on work per byte sent, and only the second is what an
+attacker chooses.
+
 That is a property of the order and of nothing else, which is why it is held by
 a mutation rather than by a comment: establishing the quorum before the
 compare-and-swap leaves every refusal exactly as it was, refused for the same
