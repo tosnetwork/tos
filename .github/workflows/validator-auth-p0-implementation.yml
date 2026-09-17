@@ -34,17 +34,23 @@ on:
 
 permissions:
   contents: read
-# Runs queue here rather than replacing each other. The frozen record binds its
-# evidence to a commit, and this job carries the guards and mutation harnesses
-# that evidence is made of, so a run that is cancelled leaves that commit with
-# nothing that can be cited for it. This job also takes long enough that a push
-# during it almost always lands first: four commits in one session reached a
-# final state of "cancelled" and can never be spoken for.
+# One group per commit, so no run can ever displace another's.
 #
-# The group is kept, so the cost is that a verdict for the head waits behind the
-# commits before it rather than that several full runs execute at once.
+# The frozen record binds its evidence to a commit, and this job carries the
+# guards and mutation harnesses that evidence is made of, so a run that is
+# cancelled leaves that commit with nothing that can be cited for it. The job
+# also takes long enough that a push during it almost always lands first: five
+# commits in one session reached a final state of "cancelled" and can never be
+# spoken for.
+#
+# Refusing to cancel a running job is not enough on its own, which is how the
+# fifth was lost. A group holds one pending run at a time, so a third arrival
+# evicts whichever was waiting -- and waiting is exactly where a superseded
+# commit's run sits. Keying the group by commit removes the queue instead of
+# reordering it: two runs for one commit still collapse, which is the only case
+# where one run genuinely answers for another.
 concurrency:
-  group: validator-p0-implementation-${{ github.event.pull_request.number || github.ref }}
+  group: validator-p0-implementation-${{ github.sha }}
   cancel-in-progress: false
 
 defaults:

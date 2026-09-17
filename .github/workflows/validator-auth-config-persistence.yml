@@ -20,8 +20,11 @@ on:
 permissions:
   contents: read
 
+# Keyed by commit for the same reason as the implementation workflow: this run
+# is the evidence for the commit it ran on, a group holds only one pending run,
+# and a superseded commit is exactly the one whose run is still waiting.
 concurrency:
-  group: config-persistence-${{ github.ref }}
+  group: config-persistence-${{ github.sha }}
   cancel-in-progress: false
 
 jobs:
