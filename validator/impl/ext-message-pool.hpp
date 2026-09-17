@@ -24,6 +24,7 @@
 #include "td/utils/PersistentTreap.h"
 #include "td/utils/RateLimiterWindow.h"
 
+#include "ext-message-admission.h"
 #include "ext-message-checker.hpp"
 
 namespace tos::validator {
@@ -202,8 +203,6 @@ class ExtMessagePool : public td::actor::Actor {
   static constexpr size_t SOFT_MEMPOOL_LIMIT = 1024;
   static constexpr size_t NUM_CHECKERS = 24;
   static constexpr size_t MAX_INFLIGHT_CHECKS = 8 * NUM_CHECKERS;
-  static constexpr size_t MAX_ADMISSION_WAITERS = 50000;
-  static constexpr double MAX_ADMISSION_QUEUE_DELAY = 5.0;
   static constexpr size_t MAX_TRACKED_ADMISSION_PEERS = 4096;
   static constexpr double ADMISSION_STATS_PERIOD = 5.0;
 };

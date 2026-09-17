@@ -15,6 +15,7 @@
 // and an accept, so the only question the run asks is whether an authority
 // arrived.
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 #include <string>
 
@@ -22,6 +23,7 @@
 #include "block/block-parse.h"
 #include "block/mc-config.h"
 #include "block/transaction.h"
+#include "validator/impl/ext-message-admission.h"
 #include "validator/impl/external-message.hpp"
 #include "vm/authops.h"
 #include "vm/vm.h"
@@ -301,6 +303,41 @@ int main() {
     }
     expect(refused.is_error() && reason.find(expected) != std::string::npos,
           "a-message-needing-the-authority-is-rejected-without-one");
+
+    // The queue in front of the expensive check is sized from a delay, so what
+    // it allows has to be that delay's own statement at every rate. It used to
+    // carry a floor of 512 entries, which is a count under a cap derived from a
+    // delay: the two agreed only above about a hundred completions a second and
+    // diverged further the slower the node got, which is the condition the
+    // bound exists for.
+    {
+      using tos::validator::admission_cap;
+      using tos::validator::max_admission_queue_delay;
+      using tos::validator::max_admission_waiters_ceiling;
+      bool honoured = true;
+      for (double rate : {0.5, 1.0, 10.0, 50.0, 102.4, 500.0, 2000.0}) {
+        // What a full queue at this rate implies in seconds, which is the
+        // quantity the bound is about.
+        const double implied = static_cast<double>(admission_cap(rate)) / rate;
+        if (implied > max_admission_queue_delay) {
+          std::cerr << "DETAIL rate=" << rate << " queue=" << admission_cap(rate) << " implies " << implied << "s\n";
+          honoured = false;
+        }
+      }
+      expect(honoured, "a-full-queue-never-implies-more-than-the-delay-allows");
+
+      // The ceiling still holds, so the rule is a bound and not merely a
+      // multiplication, and a pool completing nothing admits nothing rather
+      // than a ceiling-sized queue.
+      expect(admission_cap(1e12) == max_admission_waiters_ceiling, "a-fast-pool-stops-at-the-ceiling");
+      expect(admission_cap(0.0) == 0 && admission_cap(-1.0) == 0,
+             "a-pool-completing-nothing-admits-no-queue");
+      // A rate that is not a number answers the same way. Reached through the
+      // same comparison, so the refusal covers it rather than leaving it to
+      // multiply into the ceiling.
+      expect(admission_cap(std::numeric_limits<double>::quiet_NaN()) == 0,
+             "an-unmeasurable-rate-admits-no-queue");
+    }
 
     std::cout << "SUMMARY cases=" << passed + failed << " passed=" << passed << '\n';
     return failed ? 1 : 0;

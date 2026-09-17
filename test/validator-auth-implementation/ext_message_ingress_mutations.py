@@ -30,7 +30,29 @@ CARRIES = """                                                        &exec_confi
                                                         std::move(validator_auth_host));"""
 DROPS = """                                                        &exec_config.serialize_config, true, lt, nullptr, {});"""
 
-MUTATIONS = [("ingress-carries-the-authority", "the-ingress-authority-reaches-the-instruction", CARRIES, DROPS)]
+ADMISSION = Path("validator/impl/ext-message-admission.h")
+
+# The queue in front of the expensive check is sized from a delay. Putting a
+# constant floor back under it is the defect that was there: the two agree only
+# above about a hundred completions a second, and the slower the node gets the
+# further a full queue departs from the delay it was supposedly sized for.
+DELAY_ONLY = """  const double cap = completions_per_second * max_admission_queue_delay;"""
+WITH_FLOOR = """  const double raw = completions_per_second * max_admission_queue_delay;
+  const double cap = raw < 512.0 ? 512.0 : raw;"""
+
+# The refusal is written against everything that is not a positive rate so that
+# a rate which is not a number answers like one that is zero. Narrowing it to a
+# sign test lets that rate multiply into a ceiling-sized queue.
+UNMEASURABLE = """  if (!(completions_per_second > 0)) {"""
+SIGN_ONLY = """  if (completions_per_second < 0) {"""
+
+MUTATIONS = [
+    ("ingress-carries-the-authority", "the-ingress-authority-reaches-the-instruction", CARRIES, DROPS, SOURCE),
+    ("a-full-queue-never-implies-more-than-the-delay-allows",
+     "a-full-queue-never-implies-more-than-the-delay-allows", DELAY_ONLY, WITH_FLOOR, ADMISSION),
+    ("an-unmeasurable-rate-admits-no-queue",
+     "an-unmeasurable-rate-admits-no-queue", UNMEASURABLE, SIGN_ONLY, ADMISSION),
+]
 
 
 def build(tree: str) -> bool:
@@ -55,7 +77,7 @@ def main() -> int:
     args = parser.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
 
-    original = SOURCE.read_text()
+    originals = {path: path.read_text() for path in {source for *_, source in MUTATIONS}}
     if not build(args.build):
         print("BASELINE-BUILD-FAILED", file=sys.stderr)
         return 1
@@ -66,14 +88,15 @@ def main() -> int:
 
     records, failures = [], 0
     try:
-        for guard, case, before, after in MUTATIONS:
+        for guard, case, before, after, source in MUTATIONS:
+            original = originals[source]
             if original.count(before) != 1:
                 print(f"ANCHOR-NOT-UNIQUE {guard} ({original.count(before)})", file=sys.stderr)
                 failures += 1
                 continue
             changed = original.replace(before, after, 1)
-            SOURCE.write_text(changed)
-            reached = SOURCE.read_text() == changed
+            source.write_text(changed)
+            reached = source.read_text() == changed
             compiled = build(args.build)
             broke: list[str] = []
             complete = False
@@ -83,18 +106,20 @@ def main() -> int:
                 # case that never executed indistinguishable from one that held.
                 complete = set(result) == set(baseline)
                 broke = sorted(name for name, ok in result.items() if not ok)
-            SOURCE.write_text(original)
+            source.write_text(original)
             restored = build(args.build) and all(outcomes(run(args.build)).values())
-            record = {"guard": guard, "case": case, "edit_reached_source": reached, "compiled": compiled,
-                      "every_case_reported": complete, "cases_broken": broke, "only_the_named_case_broke": broke == [case],
-                      "restored_baseline": restored, "source_unchanged": SOURCE.read_text() == original}
+            record = {"guard": guard, "case": case, "source": str(source), "edit_reached_source": reached,
+                      "compiled": compiled, "every_case_reported": complete, "cases_broken": broke,
+                      "only_the_named_case_broke": broke == [case], "restored_baseline": restored,
+                      "source_unchanged": source.read_text() == original}
             records.append(record)
             print(json.dumps(record), flush=True)
             if not all(record[key] for key in ("edit_reached_source", "compiled", "every_case_reported",
                                                "only_the_named_case_broke", "restored_baseline", "source_unchanged")):
                 failures += 1
     finally:
-        SOURCE.write_text(original)
+        for path, text in originals.items():
+            path.write_text(text)
 
     (args.out / "mutations.json").write_text(json.dumps(records, indent=1) + "\n")
     return 1 if failures else 0

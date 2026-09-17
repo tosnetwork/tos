@@ -34,7 +34,7 @@ check_add_external_message
   1  admit_source(source_peer)              per peer, 30 per 10 seconds     BEFORE
   2  data.size() <= ext_msg_limits.max_size                                 BEFORE
   3  inflight_checks_ < MAX_INFLIGHT_CHECKS = 8 * 24 = 192                  BEFORE
-     admission_waiters_ < max_admission_waiters(), 512..50000               BEFORE
+     admission_waiters_ < max_admission_waiters(), 0..50000                 BEFORE
   4  ExtMessageChecker::check, on one of NUM_CHECKERS = 24 workers
        offer_validator_auth -> assemble_registry_authority
          -> NativeEvidence::open            <- the allowance from B1, once
@@ -102,7 +102,7 @@ message. It is not used for this.
 | per-peer rate | 30 per 10 seconds | **every remote sender**, attributed or not |
 | message size | `ext_msg_limits.max_size` | everyone |
 | checks in flight | 192, over 24 workers | everyone |
-| admission queue | 512 to 50,000, sized from measured completion rate | everyone |
+| admission queue | up to 50,000, sized from measured completion rate | everyone |
 | per-destination rate | 30 per 10 seconds | applied after the work |
 
 The per-peer limiter is the only one that is per-sender, and it used to have a
@@ -210,7 +210,7 @@ the completion rate the pool has been measuring, so that waiting stays under
 check, like every other bound here:
 
 ```
-cap = measured completions per second * 5 s, clamped to [512, 50000]
+cap = measured completions per second * 5 s, capped at 50000
 ```
 
 That is a feedback controller whose control variable is throughput. A CPU token
@@ -231,13 +231,14 @@ and the attacker-controlled part of one check is bounded too: opening an
 arriving container costs 44 microseconds at a kilobyte and 2,442 at the 64 KiB
 admission ceiling, whether the bytes are repeated or distinct.
 
-### What is wrong is the floor, not the absence of a limiter
+### What was wrong is the floor, not the absence of a limiter
 
-The clamp's lower bound contradicts the rule above it. The cap is derived from a
-delay, but the floor is a count, so below 512/5 = 102.4 completions per second
-the floor wins and the delay it was derived from is no longer what is enforced:
+The clamp's lower bound contradicted the rule above it. The cap is derived from
+a delay, but the floor was a count, so below 512/5 = 102.4 completions per
+second the floor won and the delay it was derived from was no longer what was
+enforced:
 
-| completions | cap | what a full queue then implies |
+| completions | cap | what a full queue then implied |
 | ---: | ---: | ---: |
 | 1000/s | 5000 | 5.0 s |
 | 102.4/s | 512 | 5.0 s |
@@ -245,13 +246,32 @@ the floor wins and the delay it was derived from is no longer what is enforced:
 | 10/s | 512 | 51.2 s |
 | 1/s | 512 | 512 s |
 
-The departure grows exactly as the node slows, which is the condition the bound
-exists for. A queue sized for five seconds admits over eight minutes of work at
-one completion per second.
+The departure grew exactly as the node slowed, which is the condition the bound
+exists for. A queue sized for five seconds admitted over eight minutes of work
+at one completion per second.
 
-No replacement floor is proposed here. Picking one means choosing the slowest
-throughput at which the node should still accept a queue at all, and that is a
-number from a production machine rather than from this reasoning. What can be
-said without it is that a constant floor under a delay-derived cap cannot honour
-the delay, so the floor should either be derived from the same delay or be
-removed in favour of the measured rate alone.
+**The floor is removed.** Choosing a replacement would have meant choosing the
+slowest throughput at which a node should still accept a queue -- a number from
+a production machine rather than from this reasoning -- and it was not necessary
+to choose one, because the floor turned out to serve nothing.
+
+The only thing a floor under a measured rate can be for is the start, before
+anything has been measured. That case was already covered elsewhere: the rate
+does not begin at zero but at an optimistic estimate, so the first window is
+bounded by that estimate and the floor was never what admitted the first burst.
+Below about a hundred completions a second the floor was therefore the only
+thing it ever did, and that is precisely where it contradicted the delay.
+
+What remains is the delay's own statement at every rate: the queue is however
+many checks finish in `max_admission_queue_delay` at the rate the pool is
+achieving, up to the ceiling. A pool completing nothing admits no queue, which
+is the same rule rather than a new refusal -- the checks already in flight still
+run and still release their slots, and a sender told "not ready" at once is
+better served than one left waiting for a delay nobody bounded.
+
+The rule and the two constants it reads now sit together in
+`validator/impl/ext-message-admission.h`, apart from the pool, so the arithmetic
+can be stated as itself; the ingress suite asserts that a full queue never
+implies more than the delay at any of seven rates, that the ceiling still holds,
+and that a rate of zero, a negative rate and a rate that is not a number all
+admit nothing.

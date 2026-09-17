@@ -164,8 +164,7 @@ size_t ExtMessagePool::max_admission_waiters() {
     completions_in_rate_window_ = 0;
     rate_window_start_ = now;
   }
-  double cap = check_completion_rate_ * MAX_ADMISSION_QUEUE_DELAY;
-  return static_cast<size_t>(td::clamp(cap, 512.0, static_cast<double>(MAX_ADMISSION_WAITERS)));
+  return admission_cap(check_completion_rate_);
 }
 
 void ExtMessagePool::release_check_slot() {
