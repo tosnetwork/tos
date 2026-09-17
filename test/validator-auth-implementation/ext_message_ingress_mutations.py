@@ -46,12 +46,21 @@ WITH_FLOOR = """  const double raw = completions_per_second * max_admission_queu
 UNMEASURABLE = """  if (!(completions_per_second > 0)) {"""
 SIGN_ONLY = """  if (completions_per_second < 0) {"""
 
+# With no floor left under the cap, the estimate is the only thing between a
+# burst and a refusal. Folding an empty window back in as a throughput of zero
+# is the defect that would put back: an idle pool would decay toward refusing
+# the next burst for want of traffic rather than for want of capacity.
+MEASURES_NOTHING = """  if (!(window_seconds >= 1.0) || window_seconds > 10.0 || completions == 0) {"""
+MEASURES_ZERO = """  if (!(window_seconds >= 1.0) || window_seconds > 10.0) {"""
+
 MUTATIONS = [
     ("ingress-carries-the-authority", "the-ingress-authority-reaches-the-instruction", CARRIES, DROPS, SOURCE),
     ("a-full-queue-never-implies-more-than-the-delay-allows",
      "a-full-queue-never-implies-more-than-the-delay-allows", DELAY_ONLY, WITH_FLOOR, ADMISSION),
     ("an-unmeasurable-rate-admits-no-queue",
      "an-unmeasurable-rate-admits-no-queue", UNMEASURABLE, SIGN_ONLY, ADMISSION),
+    ("a-window-with-nothing-in-it-measures-nothing",
+     "a-window-with-nothing-in-it-measures-nothing", MEASURES_NOTHING, MEASURES_ZERO, ADMISSION),
 ]
 
 

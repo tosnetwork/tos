@@ -157,10 +157,7 @@ size_t ExtMessagePool::max_admission_waiters() {
   double now = td::Time::now();
   double window = now - rate_window_start_;
   if (window >= 1.0) {
-    if (window <= 10.0) {
-      check_completion_rate_ =
-          0.5 * check_completion_rate_ + 0.5 * static_cast<double>(completions_in_rate_window_) / window;
-    }
+    check_completion_rate_ = updated_completion_rate(check_completion_rate_, completions_in_rate_window_, window);
     completions_in_rate_window_ = 0;
     rate_window_start_ = now;
   }

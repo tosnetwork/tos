@@ -339,6 +339,27 @@ int main() {
              "an-unmeasurable-rate-admits-no-queue");
     }
 
+    // With no floor the estimate is the only thing standing between a burst and
+    // a refusal, so what it measures has to be throughput and not traffic. A
+    // pool nobody is sending to completes nothing because there is no work; if
+    // that reads as a throughput of zero, an idle pool sheds the next burst it
+    // would previously have queued, and the removed floor would have been
+    // covering that case by accident rather than serving nothing.
+    {
+      using tos::validator::updated_completion_rate;
+      expect(updated_completion_rate(2000.0, 0, 1.0) == 2000.0,
+             "a-window-with-nothing-in-it-measures-nothing");
+      // A window with work in it does move the estimate, so the case above is
+      // about emptiness rather than about the estimate being frozen.
+      expect(updated_completion_rate(2000.0, 10, 1.0) < 2000.0,
+             "a-window-with-work-in-it-moves-the-estimate");
+      // And the window itself has to be a measurement: too short to have
+      // measured anything, or so long the pool was idle for most of it.
+      expect(updated_completion_rate(2000.0, 10, 0.5) == 2000.0 &&
+                 updated_completion_rate(2000.0, 10, 60.0) == 2000.0,
+             "a-window-that-is-not-a-measurement-is-not-read-as-one");
+    }
+
     std::cout << "SUMMARY cases=" << passed + failed << " passed=" << passed << '\n';
     return failed ? 1 : 0;
   } catch (const std::exception& error) {

@@ -252,15 +252,23 @@ at one completion per second.
 
 **The floor is removed.** Choosing a replacement would have meant choosing the
 slowest throughput at which a node should still accept a queue -- a number from
-a production machine rather than from this reasoning -- and it was not necessary
-to choose one, because the floor turned out to serve nothing.
+a production machine rather than from this reasoning -- and no such number was
+needed once what the floor was actually covering had been found.
 
-The only thing a floor under a measured rate can be for is the start, before
-anything has been measured. That case was already covered elsewhere: the rate
-does not begin at zero but at an optimistic estimate, so the first window is
-bounded by that estimate and the floor was never what admitted the first burst.
-Below about a hundred completions a second the floor was therefore the only
-thing it ever did, and that is precisely where it contradicted the delay.
+It was covering two things, and only one of them was the start. The rate does
+not begin at zero but at an optimistic estimate, so the first window is bounded
+by that estimate and the floor was never what admitted the first burst. The
+other was idleness, and that one was real: the rate was an average of
+completions over wall-clock seconds, so a pool nobody was sending to decayed
+toward zero for want of traffic rather than for want of capacity, and removing
+the floor alone would have made such a pool shed the next burst it used to
+queue.
+
+A window in which nothing completed has not measured a throughput of zero; it
+has measured nothing. It is no longer folded in, so an idle pool keeps the
+throughput it last demonstrated and a slow one is measured as slow. That is
+what makes removing the floor a correction rather than a trade: the estimate now
+means what the cap reads it as meaning.
 
 What remains is the delay's own statement at every rate: the queue is however
 many checks finish in `max_admission_queue_delay` at the rate the pool is

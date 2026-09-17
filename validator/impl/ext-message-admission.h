@@ -18,6 +18,7 @@
 */
 #pragma once
 #include <cstddef>
+#include <cstdint>
 
 namespace tos::validator {
 
@@ -47,6 +48,26 @@ inline constexpr std::size_t max_admission_waiters_ceiling = 50000;
 // same rule rather than a new refusal: the checks already in flight still run
 // and still release their slots, and a sender told "not ready" at once is
 // better served than one left waiting for a delay nobody bounded.
+// The completion rate after a measurement window closes.
+//
+// A window in which nothing completed has not measured a throughput of zero.
+// It has measured nothing, and the two are different: a pool nobody is sending
+// to completes nothing because there is no work, not because it cannot do any.
+// Folding such a window in as zero makes an idle pool indistinguishable from a
+// stalled one and shrinks the queue it can offer the next burst for want of
+// traffic rather than for want of capacity. So an empty window leaves the
+// estimate where it was, and the next window with work in it moves it.
+//
+// A window far longer than one is also not folded in: the pool was not asked
+// anything for most of it, so what it says about throughput is an average over
+// a period that was mostly not a measurement.
+inline double updated_completion_rate(double previous, std::uint64_t completions, double window_seconds) {
+  if (!(window_seconds >= 1.0) || window_seconds > 10.0 || completions == 0) {
+    return previous;
+  }
+  return 0.5 * previous + 0.5 * static_cast<double>(completions) / window_seconds;
+}
+
 inline std::size_t admission_cap(double completions_per_second) {
   // Written as a refusal of everything that is not a positive rate, so that a
   // rate which is zero, negative or not a number all answer the same way
