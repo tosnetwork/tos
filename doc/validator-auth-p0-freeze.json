@@ -29,7 +29,7 @@
     "doc/validator-auth-p0/transport.schema.json": "ddd45d7d3eb672559efde020af95a0e215146775ec82f8c6847b0f3ab8127584",
     "doc/validator-auth-p0/wire.tl": "a5e10c8e25887cb30440a26a0d8cbcef1473878aeb87438cca1a0f0bc6875c15",
     "doc/validator-auth-p0/wire.tlb": "923650bd74bbbf677a070d1d13d7c12d46944e8bffbfc3a72641093d20d3ce9d",
-    "doc/validator-auth-p0-native-insertions.json": "f9f5dd2afe1f9635d10a14ff5dc012e392eb17c761f40e34198c00c68ee31448",
+    "doc/validator-auth-p0-native-insertions.json": "ab3b3a7e794f90c2dd328dd3b6493d419e9a941c2ae75c60f8b7de973315bd3d",
     "test/validator-auth-p0/README.md": "a0b0950c4ac702f8be0f34919a50f8e7b13d5d14dda3bd2cc05b4c8ffee31321",
     "test/validator-auth-p0/api.py": "9ec50bf9e19345ef54a8894a3525eba1eed8fb10412b8a3fdc1ed1c5728fb815",
     "test/validator-auth-p0/archive_evidence.py": "22bb392a561068e0fb3905ce7e8df95bab463468cdfe3be884eff19b12481409",
@@ -314,6 +314,16 @@
       "scope": "The text of one insertion, and nothing else. No insertion is added or removed, every offset is unchanged because offsets are stated in original-file coordinates and this edit lies inside inserted text, and the reconstructed original of crypto/smartcont/config-code.fc is byte-identical -- so the production baseline does not move and no file loses its historical-bytes claim.",
       "reason": "The contract tolerated a checkpoint-less account while the node's own reader refused one, and that asymmetry was the first-update migration path: the contract would carry the absence forward until some authenticated update produced a checkpoint. With genesis seeding chosen, that is the second installation route the policy forbids, reachable without the declared one.",
       "activation": "Unchanged. No suite is allocated, no network is configured, and the version-16 activation gates and listed approvals remain independent thresholds that this does not satisfy."
+    },
+    {
+      "artifact": "doc/validator-auth-p0-native-insertions.json",
+      "previous_sha256": "f9f5dd2afe1f9635d10a14ff5dc012e392eb17c761f40e34198c00c68ee31448",
+      "sha256": "ab3b3a7e794f90c2dd328dd3b6493d419e9a941c2ae75c60f8b7de973315bd3d",
+      "change": "Declared three added insertions in the configuration contract and extended one already-declared insertion. The reader that answers a validator descriptor's public key and weight now also accepts the authenticated constructor; the two writers that take a parameter index and a cell -- an accepted proposal and a message signed by the configuration master key -- refuse the three indices that hold a validator set while the design is active; and the predicate naming those three indices was added to the insertion that already holds this contract's activation predicate.",
+      "scope": "Three added insertions and one amended insertion text, all declared at original-file coordinates. The contract keeps every historical byte and every other offset is unchanged. No wire, API, schema, operation, role, limit or profile value changes, and the profile revision is unchanged.",
+      "reason": "Two separate holes, both of the same shape: one fact with more than one source. An authenticated chain installs its elected set through the binder, which writes the authenticated constructor, and the descriptor reader accepted only the two older ones -- so a validator voting on the set its own chain produced was refused for the descriptor's shape, closing the first of the two doors a configuration-parameter change now has to pass. And a validator set had three writers rather than one: the elector's message, where the set passes through the registry, and two generic parameter writers that carry no bindings and reach no registry at all. The second and third are the routes an attacker who had obtained governance would use, because they are the ones with no binding to forge.",
+      "governance": "This narrows what a configuration proposal and the configuration master key may do on an active chain: neither can install a validator set. That authority is not removed but relocated to the registry, which is where this design places it; on a chain that has not activated, both writers are unchanged. A rotation the registry cannot produce is therefore no longer reachable by governance alone, which is the intended cost.",
+      "activation": "Unchanged. No suite is allocated, no network is configured, and the version-16 activation gates and listed approvals remain independent thresholds that this change does not move."
     }
   ],
   "implementation_evidence_update": {

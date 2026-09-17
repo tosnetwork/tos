@@ -42,6 +42,15 @@ BINARY = Path("build-p0/test/validator-auth-implementation/test-p0-config-contra
 LOAD = """  registry_checkpoint = null();
   if (cs.slice_refs()) {
     registry_checkpoint = cs~load_ref();
+  } else {
+    ;; Genesis seeds the registry parameter and this checkpoint together or it
+    ;; seeds neither. So on a chain that has activated the design, an account
+    ;; carrying no checkpoint is not one that has yet to migrate; it is one
+    ;; whose configuration context can never open. Reading it as the former is
+    ;; the only place a second installation route could begin, and it would be
+    ;; reachable without the declared one. Refused here rather than seeded
+    ;; anywhere.
+    throw_if(47, validator_auth_active());
   }
 """
 STORE = "    .store_checkpoint()\n"
@@ -115,7 +124,40 @@ TICKTOCK = """  if (validator_auth_active()) {
   }
 """
 
+AUTHENTICATED_DESCRIPTOR = """  if (cs.preload_uint(8) == 0xb3) {
+    cs~skip_bits(8);
+    throw_unless(41, cs~load_uint(32) == 0x8e81278a);
+    return (cs~load_uint(256), cs~load_uint(64));
+  }
+"""
+
+PROPOSAL_GUARD = """  if (validator_auth_active() & validator_set_param(param_id)) {
+"""
+
 MUTATIONS = [
+    # The two generic writers of a configuration parameter, each closed against
+    # the three indices that hold a validator set. Neither guard is reachable on
+    # an inactive chain, and the inactive cases are companions of neither: they
+    # have to keep passing while the guard is gone, which is what says the
+    # mutation removed a rule about activation rather than a rule about an index.
+    ("validator-set-not-installable-by-proposal", "a-finalization-cannot-install-a-validator-set",
+     PROPOSAL_GUARD, "  if (0) {\n", []),
+    ("validator-set-not-installable-by-owner", "an-owner-action-cannot-install-a-validator-set",
+     "    throw_if(48, validator_auth_active() & validator_set_param(param_index));\n", "", []),
+    # The refusal that an active chain must not run without a checkpoint. It
+    # had no mutation at all: the branch was added and the fixture that would
+    # have reached it seeds one, so nothing exercised it. This removes the
+    # throw and requires the case built for it to notice.
+    ("active-chain-needs-a-checkpoint", "an-active-chain-without-a-checkpoint-is-refused",
+     "    throw_if(47, validator_auth_active());\n", "", []),
+    # An active chain installs its elected set through VAUTH_BIND, which writes
+    # validator_auth#b3. Without this branch the voting path refuses that
+    # descriptor for its shape, so the normal vote a configuration parameter
+    # now needs cannot be cast at all and the governance door behind it is
+    # never reached. The fixture used to build the legacy shape whether the
+    # chain was active or not, which is what let that look correct.
+    ("authenticated-descriptor-votes", "a-completed-vote-installs-nothing-under-governance",
+     AUTHENTICATED_DESCRIPTOR, "", ["a-terminal-proposal-takes-no-further-votes"]),
     # The store lives in store_data rather than in the registry branch exactly
     # so a path with nothing to do with the registry carries it too. The vote
     # case is what proves that, and it is named here rather than the registry
@@ -128,7 +170,10 @@ MUTATIONS = [
     # and every case that restores one fails.
     ("checkpoint-loaded", "a-vote-keeps-the-checkpoint", LOAD,
      "  registry_checkpoint = null();\n  cs~load_ref();\n",
-     ["registry-c4-installs-parameter-46", "registry-c4-replaces-old-parameter-46",
+     ["an-active-chain-without-a-checkpoint-is-refused",
+      "an-inactive-chain-without-a-checkpoint-is-accepted",
+      "an-inactive-chain-lets-the-owner-install-a-validator-set",
+      "registry-c4-installs-parameter-46", "registry-c4-replaces-old-parameter-46",
       "registry-first-checkpoint-installs-new-parameter", "registry-first-checkpoint-replaces-old-parameter",
       "a-due-only-tick-tock-persists-the-prefix", "an-inactive-chain-tick-tock-asks-for-nothing",
       "a-completed-vote-installs-nothing-under-governance", "a-terminal-proposal-takes-no-further-votes",

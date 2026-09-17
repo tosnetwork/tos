@@ -56,6 +56,23 @@ std::vector<Case> cases(const td::Ref<vm::Cell>& contract) {
        }},
       // And an inactive chain reaches no instruction at all, so a tick-tock
       // there is exactly the tick-tock it has always been.
+      // The three states the activation policy distinguishes, including the one
+      // it says cannot exist. That last one is why the fixture has an opt-out:
+      // the seeding it does everywhere else would remove the very state this
+      // refusal guards, and a guard whose input cannot be built is a guard
+      // nobody has heard.
+      {"an-active-chain-without-a-checkpoint-is-refused", [=] {
+         Host host;
+         auto outcome = run_ticktock(contract, &host, vm::validator_auth_capability,
+                                     vm::validator_auth_min_version, true, {}, {}, 1000000, nullptr, {}, true);
+         expect(outcome.exit == 47, "an-active-chain-without-a-checkpoint-is-refused");
+       }},
+      {"an-inactive-chain-without-a-checkpoint-is-accepted", [=] {
+         Host host;
+         auto outcome = run_ticktock(contract, &host, 0, vm::validator_auth_min_version, false, {}, {}, 1000000,
+                                     nullptr, {}, true);
+         expect(outcome.exit == 0, "an-inactive-chain-without-a-checkpoint-is-accepted");
+       }},
       {"an-inactive-chain-tick-tock-asks-for-nothing", [=] {
          Host host;
          auto outcome = run_ticktock(contract, &host, 0, vm::validator_auth_min_version, false);
@@ -163,6 +180,60 @@ std::vector<Case> cases(const td::Ref<vm::Cell>& contract) {
       // the parameter, not the registry, and not the proposal, which stays
       // awaiting governance rather than being spent. The proposal here states a
       // condition the parameter does not currently meet.
+      // A validator set has one writer on an active chain: the elector's
+      // message, where the set passes through the registry. These four cases
+      // are about the two writers that are generic -- they take an index and a
+      // cell, carry no bindings, and reach no registry -- and about the fact
+      // that closing them closes nothing else.
+      {"a-finalization-cannot-install-a-validator-set", [=] {
+         auto cells = registry_cells();
+         auto host = registry_host(cells);
+         auto proposal = config_proposal(34, validator_set_cell(voter_public(), true));
+         auto votes = vote_dictionary(proposal, voter_public(), 255, false);
+         auto run = run_contract(contract, registry_body(cells, proposal), 0, 1000, &host,
+                                 vm::validator_auth_capability, vm::validator_auth_min_version, true, {},
+                                 1000000, true, {}, voter_public(), votes);
+         // Refused where every other condition of the vote is refused, so the
+         // same thing follows: nothing is committed, and the proposal is still
+         // awaiting governance rather than spent on an attempt that installed
+         // nothing. A set built in the shape the binder writes, so the refusal
+         // is not about the descriptor but about the route.
+         expect(run.exit == 53 && !run.committed, "a-finalization-cannot-install-a-validator-set");
+         expect(run.committed_data.is_null(), "a-finalization-cannot-install-a-validator-set");
+       }},
+      // The master key is the other generic writer. This case exists first
+      // because it is the one that proves the signed owner message reaches
+      // perform_action at all: without it the refusal below would pass for any
+      // reason the message failed, including a fixture that never got there.
+      {"an-owner-action-installs-an-ordinary-parameter", [=] {
+         Host host;
+         auto value = vm::CellBuilder().store_long(0x5151, 16).finalize();
+         auto run = run_owner_action(contract, 17, value, &host, true);
+         expect(run.exit == 0, "an-owner-action-installs-an-ordinary-parameter");
+         expect(same_cell(installed_parameter(run.data, 17), value),
+                "an-owner-action-installs-an-ordinary-parameter");
+       }},
+      {"an-owner-action-cannot-install-a-validator-set", [=] {
+         Host host;
+         auto run = run_owner_action(contract, 34, validator_set_cell(voter_public(), true), &host, true);
+         // Thrown rather than declined: this message is signed by a key that is
+         // meant to know what it is doing, and reporting success for a change
+         // that did not happen is worse than refusing it.
+         expect(run.exit == 48, "an-owner-action-cannot-install-a-validator-set");
+         expect(installed_parameter(run.data, 34).is_null(),
+                "an-owner-action-cannot-install-a-validator-set");
+       }},
+      // And the rule is the activation's, not the parameter index's. A chain
+      // that has not activated the design has no registry to route through, so
+      // closing the route there would remove governance it still needs.
+      {"an-inactive-chain-lets-the-owner-install-a-validator-set", [=] {
+         Host host;
+         auto set = validator_set_cell(voter_public());
+         auto run = run_owner_action(contract, 34, set, &host, false);
+         expect(run.exit == 0, "an-inactive-chain-lets-the-owner-install-a-validator-set");
+         expect(same_cell(installed_parameter(run.data, 34), set),
+                "an-inactive-chain-lets-the-owner-install-a-validator-set");
+       }},
       {"a-refused-finalization-leaves-the-proposal", [=] {
          auto cells = registry_cells();
          auto host = registry_host(cells);

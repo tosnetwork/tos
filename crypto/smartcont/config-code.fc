@@ -29,6 +29,23 @@ int validator_auth_active() inline {
   cs.end_parse();
   return (version >= 16) & ((capabilities & 1024) != 0);
 }
+
+;; The three parameters that hold a validator set: previous, current and next.
+;;
+;; On an active chain exactly one writer may reach them -- the elector's message,
+;; where the set passes through the registry before it is installed. Every other
+;; writer of a configuration parameter is generic: it takes an index and a cell
+;; and carries no bindings, so a set written that way reaches no registry and
+;; the chain would hold a current validator set the registry never decided.
+;; That is the same fact with two sources, and the second source is the one an
+;; attacker who has obtained governance would use, because it is the one with no
+;; binding to forge.
+;;
+;; The tick-tock rotation is not a writer in this sense: it moves cells that are
+;; already installed between these three indices and introduces no new set.
+int validator_set_param(int param_id) inline {
+  return (param_id == 32) | (param_id == 34) | (param_id == 36);
+}
 cell vauth_registry_state() impure asm "VAUTH_STATE";
 
 ;; The registry checkpoint this account carries.
@@ -163,6 +180,12 @@ _ perform_action(cfg_dict, public_key, action, cs) inline_ref {
     var param_index = cs~load_int(32);
     var param_value = cs~load_ref();
     cs.end_parse();
+    ;; The configuration master key is a generic writer too, and on an active
+    ;; chain a validator set is not a parameter it may write. Thrown rather
+    ;; than declined: this message is signed by a key that is meant to know
+    ;; what it is doing, and silently discarding its instruction would report
+    ;; success for a change that did not happen.
+    throw_if(48, validator_auth_active() & validator_set_param(param_index));
     cfg_dict~idict_set_ref(32, param_index, param_value);
     return (cfg_dict, public_key);
   } elseif (action == 0x4e436f64) {
@@ -212,6 +235,25 @@ _ perform_action(cfg_dict, public_key, action, cs) inline_ref {
   ;; ed25519_pubkey#8e81278a pubkey:bits256 = SigPubKey;
   ;; validator#53 public_key:SigPubKey weight:uint64 = ValidatorDescr;
   ;; validator_addr#73 public_key:SigPubKey weight:uint64 adnl_addr:bits256 = ValidatorDescr;
+  ;; validator_auth#b3 public_key:SigPubKey weight:uint64 adnl_addr:bits256
+  ;;   binding:^ValidatorAuthBinding = ValidatorDescr;
+  ;;
+  ;; An authenticated chain installs its elected set through VAUTH_BIND, and
+  ;; that is the constructor the binder writes. The mask below accepts 0x53 and
+  ;; 0x73 only, so without this a validator voting on a bound set is refused
+  ;; for the shape of the descriptor the chain itself produced -- and since a
+  ;; configuration parameter now needs the normal vote as well as the governing
+  ;; quorum, the first of those two doors would be shut on an active chain.
+  ;;
+  ;; Only the public key and the weight are answered, which is what every
+  ;; caller of this function asks for. The address and the binding are left
+  ;; unread exactly as 0x73 leaves its address unread: the registry decides
+  ;; what a binding means, and reading it here would be a second opinion.
+  if (cs.preload_uint(8) == 0xb3) {
+    cs~skip_bits(8);
+    throw_unless(41, cs~load_uint(32) == 0x8e81278a);
+    return (cs~load_uint(256), cs~load_uint(64));
+  }
   throw_unless(41, (cs~load_uint(8) & ~ 0x20) == 0x53);
   throw_unless(41, cs~load_uint(32) == 0x8e81278a);
   return (cs~load_uint(256), cs~load_uint(64));
@@ -250,6 +292,14 @@ _ perform_action(cfg_dict, public_key, action, cs) inline_ref {
   (_, found?) = cparams.idict_get?(32, param_id);
   if (found? < critical?) {
     ;; trying to set a critical parameter after a non-critical voting
+    return (cfg_dict, 0, null());
+  }
+  if (validator_auth_active() & validator_set_param(param_id)) {
+    ;; A proposal cannot install a validator set on an active chain: it carries
+    ;; no bindings and reaches no registry. Declined rather than thrown, like
+    ;; every other refusal here -- the proposal has already been removed from
+    ;; the vote dictionary by this point, so throwing would leave a proposal
+    ;; that fails every vote cast on it forever.
     return (cfg_dict, 0, null());
   }
   ;; CHANGE ONE CONFIGURATION PARAMETER (!)

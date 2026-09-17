@@ -180,9 +180,16 @@ td::Ref<vm::Cell> bindings_cell() {
 }
 
 td::Ref<vm::Cell> contract_data(const td::Ref<vm::Cell>& config, td::Ref<vm::Cell> checkpoint = {},
-                                td::Ref<vm::Cell> votes = {}) {
+                                td::Ref<vm::Cell> votes = {}, const unsigned char* owner_public = nullptr) {
   vm::CellBuilder data;
-  data.store_ref(config).store_long(0, 32).store_zeroes(256);
+  data.store_ref(config).store_long(0, 32);
+  if (owner_public) {
+    data.store_bytes(td::Slice(reinterpret_cast<const char*>(owner_public), 32));
+  } else {
+    // The deposed-dictator state, which is what every case that is not about
+    // the master key wants: no signature can satisfy a key of zero.
+    data.store_zeroes(256);
+  }
   if (votes.not_null()) {
     data.store_long(1, 1).store_ref(std::move(votes));
   } else {
@@ -218,11 +225,24 @@ td::Ref<vm::Cell> stored_checkpoint(const td::Ref<vm::Cell>& data) {
 // a fixture stores names the set by hash, and the configuration installs the
 // same cell: two constructions of it would be two answers to "which set is
 // current", and the contract compares them.
-td::Ref<vm::Cell> validator_set_cell(const unsigned char* voting_key) {
+// The elected set as the chain would hold it.
+//
+// On an active chain this is what VAUTH_BIND writes: validator_auth#b3, with
+// an address and a binding the registry decides the meaning of. Building the
+// legacy shape for an active chain would be testing a set that chain cannot
+// have, and it is what let a voting path that refuses 0xb3 look correct.
+td::Ref<vm::Cell> validator_set_cell(const unsigned char* voting_key, bool bound = false) {
   vm::CellBuilder descriptor;
-  descriptor.store_long(0x53, 8).store_long(0x8e81278a, 32);
+  descriptor.store_long(bound ? 0xb3 : 0x53, 8).store_long(0x8e81278a, 32);
   descriptor.store_bytes(td::Slice(reinterpret_cast<const char*>(voting_key), 32));
   descriptor.store_long(5, 64);
+  if (bound) {
+    descriptor.store_bytes(td::Slice(reinterpret_cast<const char*>(voting_key), 32));
+    vm::CellBuilder binding;
+    binding.store_bytes(td::Slice(reinterpret_cast<const char*>(voting_key), 32))
+        .store_bytes(td::Slice(reinterpret_cast<const char*>(voting_key), 32));
+    descriptor.store_ref(binding.finalize());
+  }
   vm::Dictionary list(16);
   td::BitArray<16> at;
   at.store_ulong(0);
@@ -305,7 +325,7 @@ td::Ref<vm::Cell> configuration(td::Ref<vm::Cell> registry = {}, bool activated 
   }
   if (voting_key) {
     key.store_long(34);
-    expect(dict.set_ref(key.cbits(), 32, validator_set_cell(voting_key)), "fixture-config34");
+    expect(dict.set_ref(key.cbits(), 32, validator_set_cell(voting_key, activated)), "fixture-config34");
     // The voting rules the contract reads its threshold from.
     key.store_long(11);
     auto setup = proposal_setup();
@@ -498,12 +518,12 @@ Outcome run_contract(const td::Ref<vm::Cell>& contract, const td::Ref<vm::Cell>&
                      bool external = false, td::Ref<vm::Cell> registry = {}, long long gas_limit = 1000000,
                      bool config8_active = false, td::Ref<vm::Cell> checkpoint = {},
                      const unsigned char* voting_key = nullptr, td::Ref<vm::Cell> votes = {},
-                     long long credit = 0) {
+                     long long credit = 0, const unsigned char* owner_public = nullptr) {
   expect(contract.not_null(), "contract-loaded");
   checkpoint = seeded_checkpoint(registry, config8_active, std::move(checkpoint));
   auto config = configuration(std::move(registry), config8_active, voting_key);
   auto message = external ? external_message(body) : internal_message(from, body);
-  auto data = contract_data(config, std::move(checkpoint), std::move(votes));
+  auto data = contract_data(config, std::move(checkpoint), std::move(votes), owner_public);
   td::Ref<vm::Stack> stack{true};
   stack.write().push_int(td::make_refint(1000000000000LL));
   stack.write().push_int(td::make_refint(external ? 0LL : 2000000000LL));
@@ -520,8 +540,6 @@ Outcome run_contract(const td::Ref<vm::Cell>& contract, const td::Ref<vm::Cell>&
   try {
     // Flag 1 initializes c3 from the built contract. An external entry needs
     // selector -1, not the internal selector 0 used by the election cases.
-    // With a credit the run starts with no limit of its own, exactly as an
-    // unaccepted external message does: everything before accept_message has to
     // With a credit the run starts with no limit of its own, exactly as an
     // unaccepted external message does: everything before accept_message has to
     // fit in the credit, and accepting is what raises the ceiling to the limit.
@@ -613,13 +631,19 @@ using Case = std::pair<std::string, std::function<void()>>;
 
 // One tick-tock of the configuration account. No message, which is the whole
 // point: this is the transaction a block with nothing to process still runs.
+// `unseeded` is the one way to build an account state the policy says cannot
+// exist: active, with no checkpoint. It exists so the refusal that guards that
+// state has something to refuse. Every other caller gets the seeding above,
+// because a case starting there would be describing a chain that cannot exist.
 Outcome run_ticktock(const td::Ref<vm::Cell>& contract, vm::ValidatorAuthHost* host, td::uint64 capabilities,
                      int version,
                      bool config8_active, td::Ref<vm::Cell> registry = {}, td::Ref<vm::Cell> checkpoint = {},
                      long long gas_limit = 1000000, const unsigned char* voting_key = nullptr,
-                     td::Ref<vm::Cell> votes = {}) {
+                     td::Ref<vm::Cell> votes = {}, bool unseeded = false) {
   expect(contract.not_null(), "contract-loaded");
-  checkpoint = seeded_checkpoint(registry, config8_active, std::move(checkpoint));
+  if (!unseeded) {
+    checkpoint = seeded_checkpoint(registry, config8_active, std::move(checkpoint));
+  }
   auto config = configuration(std::move(registry), config8_active, voting_key);
   auto data = contract_data(config, std::move(checkpoint), std::move(votes));
   td::Ref<vm::Stack> stack{true};
@@ -654,6 +678,19 @@ Outcome run_ticktock(const td::Ref<vm::Cell>& contract, vm::ValidatorAuthHost* h
 struct Voter {
   unsigned char key[32] = {}, secret[64] = {};
 };
+// The configuration master key. A generic parameter write can also arrive
+// signed by it, and a message the contract refuses for its signature proves
+// nothing about what it refuses for its content, so the account has to carry a
+// key a case can actually sign with.
+const Voter& owner() {
+  static const Voter identity = [] {
+    Voter made;
+    expect(crypto_sign_keypair(made.key, made.secret) == 0, "fixture-owner");
+    return made;
+  }();
+  return identity;
+}
+
 const Voter& voter() {
   static const Voter identity = [] {
     Voter made;
@@ -664,6 +701,31 @@ const Voter& voter() {
 }
 const unsigned char* voter_public() {
   return voter().key;
+}
+
+// A generic parameter write arriving the way the configuration master key
+// sends one: an external message the owner signed. This is the second writer
+// that takes an index and a cell and carries no bindings, so it is the second
+// place a validator set could be installed without reaching the registry.
+Outcome run_owner_action(const td::Ref<vm::Cell>& contract, long long index, td::Ref<vm::Cell> value,
+                         Host* host, bool active) {
+  // recv_external reads the signature, then the action, sequence number and
+  // expiry, and checks the signature over everything after the signature.
+  vm::CellBuilder payload;
+  payload.store_long(0x43665021, 32).store_long(0, 32).store_long(0xfffffff0, 32).store_long(index, 32);
+  payload.store_ref(std::move(value));
+  auto signed_part = payload.finalize();
+  auto digest = signed_part->get_hash().as_slice();
+  unsigned char signature[64] = {};
+  expect(crypto_sign_detached(signature, nullptr, digest.ubegin(), digest.size(), owner().secret) == 0,
+         "fixture-owner-signature");
+
+  vm::CellBuilder body;
+  body.store_bytes(td::Slice(reinterpret_cast<const char*>(signature), 64));
+  body.append_cellslice(vm::load_cell_slice_ref(signed_part));
+  return run_contract(contract, body.finalize(), 0, 1000, host,
+                      active ? vm::validator_auth_capability : 0, vm::validator_auth_min_version, true, {},
+                      1000000, active, {}, nullptr, {}, 0, owner().key);
 }
 
 // One vote, arriving the way a validator sends one: an internal message whose
