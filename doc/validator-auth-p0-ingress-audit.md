@@ -105,8 +105,8 @@ message. It is not used for this.
 | admission queue | 512 to 50,000, sized from measured completion rate | everyone |
 | per-destination rate | 30 per 10 seconds | applied after the work |
 
-The per-peer limiter is the only one that is per-sender, and it is the one with
-a hole in it:
+The per-peer limiter is the only one that is per-sender, and it has a case that
+is not bounded at all:
 
 ```cpp
 bool ExtMessagePool::admit_source(const td::optional<PublicKeyHash> &source_peer, td::Timestamp now) {
@@ -115,15 +115,36 @@ bool ExtMessagePool::admit_source(const td::optional<PublicKeyHash> &source_peer
   }
 ```
 
-A message arriving without a source peer is not rate limited at all. Whether a
-given transport supplies one is a property of that transport rather than of the
-sender's intent, so this is not a bound a hostile sender has to work around --
-it is one they may simply not be subject to.
+An earlier revision of this document read that as the case a hostile sender is
+most likely to be in. Tracing every path that reaches this function does not
+support it, and the claim is withdrawn. What each submission path supplies:
 
-What remains for such a sender is the concurrency bound: 192 checks in flight
-across 24 workers, with a queue in front of it. That bounds how much work is in
-progress at once. It does not bound how much work is done per second, which is
-what a saturation attack spends.
+| path | source |
+| --- | --- |
+| public overlay, `FullNodeShardImpl::process_broadcast` | the broadcasting peer, always |
+| custom overlay, `FullNodeCustomOverlay::process_broadcast` | the broadcasting peer, always, and only from an authorized sender in `msg_senders_` |
+| ADNL query, `ValidatorManagerImpl::run_ext_query` | the querying node, unless its ADNL id is zero |
+| full node master, `FullNodeMasterImpl::process_query` | the querying node |
+| validator engine ADNL entry | the querying node |
+| JSON-RPC submission, the five `send_attributed_liteserver_query` sites | a per-client identity derived from the resolved client address |
+
+The JSON-RPC path is worth naming, because it is the one that already answered
+this question. It does not forward an absent source: it hashes the resolved
+client address into a stable id of its own, so that submissions over HTTP meet
+the same window the ADNL path has always had. Its own comment says why. Its read
+queries still carry no source, but a read query never reaches this function.
+
+What is left is narrower and is an architectural ambiguity rather than a
+measured public hole: the source is an `optional` with a default, so absence is
+representable and means "unlimited" without anyone having chosen that. The one
+residual path that reaches it is a JSON-RPC submission whose client address
+resolves empty, which keeps the historical zero id. No measured public remote
+path currently reaches this function without an identity.
+
+For a sender who did reach it, what remains is the concurrency bound: 192 checks
+in flight across 24 workers, with a queue in front of it. That bounds how much
+work is in progress at once. It does not bound how much work is done per second,
+which is what a saturation attack spends.
 
 The per-destination limit does not help here either. It is applied after the
 check, so a message refused by the check never reaches it, and the work of
@@ -140,10 +161,18 @@ for accepted ones. Whether refusal is safe to cache is a separate question: a
 message refused against one masterchain state may be legitimate against the
 next, so any such cache is bounded by state rather than by time alone.
 
-The per-source limiter has an unbounded case, and it is the case a hostile
-sender is most likely to be in. Closing it is a policy decision about transports
-that supply no peer identity, not a validator-auth decision, and it protects
-every external message rather than only this path.
+The per-source limiter has a case that is not bounded, but on the evidence above
+it is not the case a hostile remote sender is in. The work it calls for is
+therefore not a limiter but a type: the source is an `optional` with a default,
+so a call site can omit provenance and silently receive the unlimited answer,
+and nothing makes a new call site choose. Making provenance explicit and total
+-- a remote peer or a local origin, with no third state and no default -- fixes
+the ambiguity without deciding anything about transports.
+
+Whether a local origin is exempt from the limiter is a separate transport policy
+decision and is deliberately not settled by that change: local is provenance,
+trusted is policy, and merging them is how an in-process convenience becomes an
+unlimited external path later.
 
 Neither remaining question requires a new registry-specific limiter, which is
 the outcome this audit was run to test for.
