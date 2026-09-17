@@ -48,6 +48,68 @@ def fift_source(bindings, out_boc, word, mutate=None):
     return "\n".join(lines) + "\n"
 
 
+def compile_contract(build, work):
+    """The configuration contract, built from source the way the chain builds it."""
+    out = work / "contract"
+    out.mkdir(parents=True, exist_ok=True)
+    fif, boc = out / "config-code.fif", out / "config-code.boc"
+    compiled = run([build / "crypto/func", "-PS", "-o", fif,
+                    ROOT / "crypto/smartcont/stdlib.fc", ROOT / "crypto/smartcont/config-code.fc"])
+    if compiled.returncode != 0:
+        return None
+    assembler = out / "assemble.fif"
+    assembler.write_text('"Asm.fif" include\n"%s" include\n2 boc+>B "%s" B>file\n' % (fif, boc))
+    assembled = run([build / "crypto/fift", "-I", ROOT / "crypto/fift/lib", "-s", assembler])
+    if assembled.returncode != 0 or not boc.is_file():
+        return None
+    return boc
+
+
+def seed_genesis_account(build, work, fift_path, election_boc):
+    """Write the configuration account a genesis leaves behind, and one without.
+
+    Both the configuration dictionary and the account cell are written by the
+    genesis interpreter, through the same `config!` word a real genesis uses --
+    which also validates each parameter against the schema, so a descriptor the
+    chain could not hold would be refused here rather than executed.
+    """
+    source = work / "gen-account.fif"
+    account = work / "genesis-account.boc"
+    unseeded = work / "genesis-account-unseeded.boc"
+    config = work / "genesis-config.boc"
+    source.write_text("\n".join([
+        '"TosUtil.fif" include',
+        '"Config.fif" include',
+        '"%s" file>B B>boc constant registry' % (work / "registry/config46.boc"),
+        '"%s" file>B B>boc constant checkpoint' % (work / "registry/registry-checkpoint.boc"),
+        '"%s" file>B B>boc constant vset' % election_boc,
+        '// Version and capability are what make the chain design-active, and the',
+        '// account below is what that activation then requires.',
+        '16 1024 config.version!',
+        '250 250 1000 23 true config.catchain_params!',
+        '400 100 1 config.validator_num!',
+        'vset 34 config!',
+        'registry 46 config!',
+        '( 0 1 9 10 16 28 34 46 ) config.mandatory_params!',
+        '( 0 1 9 10 16 34 46 ) config.critical_params!',
+        'configdict 2 boc+>B "%s" B>file' % config,
+        '// cfg_dict, seqno, configuration master key, votes, and the checkpoint',
+        '// beside the parameter. The key is zero: a genesis that appoints no',
+        '// configuration dictator is the case this rehearsal is about.',
+        '<b configdict ref, 0 32 u, 0 256 u, dictnew dict, checkpoint ref, b>',
+        '2 boc+>B "%s" B>file' % account,
+        '// The same account without it, which is the state the policy forbids.',
+        '<b configdict ref, 0 32 u, 0 256 u, dictnew dict, b>',
+        '2 boc+>B "%s" B>file' % unseeded,
+        '."wrote genesis configuration account" cr',
+    ]) + "\n")
+    result = run([build / "crypto/create-state", "-s", source],
+                 env={"FIFTPATH": fift_path, "PATH": "/usr/bin:/bin"})
+    if result.returncode != 0 or not account.is_file() or not unseeded.is_file():
+        return None, None, None
+    return account, unseeded, config
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--build", type=Path, required=True)
@@ -150,6 +212,42 @@ def main():
                   mismatch.returncode != 0 and "chain-domain-mismatch" in mismatch.stderr,
                   mismatch.stdout + mismatch.stderr):
         failures += 1
+
+    # The account a genesis leaves behind, and whether the chain it starts can
+    # make its first block.
+    #
+    # The contract refuses a design-active chain whose configuration account
+    # carries no registry checkpoint: on such a chain that is not an account
+    # yet to migrate, it is one whose configuration context can never open. That
+    # refusal presumes a genesis seeds the parameter and the checkpoint
+    # together, and a rule about what genesis writes cannot be established by a
+    # fixture that writes it in the same place that reads it. So the account is
+    # written here by the genesis interpreter, from the registry and the
+    # descriptors the real writers produced, and then executed.
+    contract = compile_contract(args.build, work)
+    if not record("configuration-contract-built", contract is not None):
+        failures += 1
+    else:
+        seeded, unseeded, config = seed_genesis_account(args.build, work, fift_path, authenticated)
+        if not record("genesis-account-written", seeded is not None):
+            failures += 1
+        else:
+            checkpoint = work / "registry/registry-checkpoint.boc"
+            started = run([binaries / "p0-genesis-account-probe", "--contract", contract,
+                           "--account", seeded, "--config", config, "--checkpoint", checkpoint,
+                           "--expect-exit", "0"])
+            if not record("a-seeded-genesis-account-makes-its-first-block", started.returncode == 0,
+                          started.stdout + started.stderr):
+                failures += 1
+            # And the state the policy says cannot exist is refused rather than
+            # migrated, so the case above is about the seeding and not about the
+            # account being loadable at all.
+            refused = run([binaries / "p0-genesis-account-probe", "--contract", contract,
+                           "--account", unseeded, "--config", config, "--checkpoint", checkpoint,
+                           "--expect-exit", "47"])
+            if not record("an-unseeded-genesis-account-is-refused", refused.returncode == 0,
+                          refused.stdout + refused.stderr):
+                failures += 1
 
     report["failures"] = failures
     args.out.parent.mkdir(parents=True, exist_ok=True)

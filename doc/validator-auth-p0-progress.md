@@ -83,6 +83,7 @@ Six production call paths now reach P0 behaviour:
 | Election binding | `crypto/block/mc-config.cpp` | Identity and stake id survive committee selection into the node's validator set |
 | Genesis writing | `crypto/fift/lib/Config.fif`, the genesis tool | A genesis can carry an authenticated registry and authenticated descriptors |
 | Committee derivation | the genesis rehearsal | The native path derives a committee from a genesis the real writers produced |
+| Genesis seeding | the genesis rehearsal | An account the genesis interpreter wrote, carrying parameter 46 and the registry checkpoint together, runs its own first tick-tock and commits; the same account without the checkpoint is refused |
 | Session identity confirmation | `validator/manager.cpp`, as a declared insertion | The manager may not create a validator group under a session identity the authenticated producer does not confirm, nor on a state committee derivation would refuse |
 
 The last of these is a binding, not a replacement. The manager builds a session

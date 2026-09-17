@@ -635,6 +635,10 @@ using Case = std::pair<std::string, std::function<void()>>;
 // exist: active, with no checkpoint. It exists so the refusal that guards that
 // state has something to refuse. Every other caller gets the seeding above,
 // because a case starting there would be describing a chain that cannot exist.
+Outcome execute_ticktock(const td::Ref<vm::Cell>& contract, const td::Ref<vm::Cell>& data,
+                         const td::Ref<vm::Cell>& config, vm::ValidatorAuthHost* host, td::uint64 capabilities,
+                         int version, long long gas_limit);
+
 Outcome run_ticktock(const td::Ref<vm::Cell>& contract, vm::ValidatorAuthHost* host, td::uint64 capabilities,
                      int version,
                      bool config8_active, td::Ref<vm::Cell> registry = {}, td::Ref<vm::Cell> checkpoint = {},
@@ -646,6 +650,17 @@ Outcome run_ticktock(const td::Ref<vm::Cell>& contract, vm::ValidatorAuthHost* h
   }
   auto config = configuration(std::move(registry), config8_active, voting_key);
   auto data = contract_data(config, std::move(checkpoint), std::move(votes));
+  return execute_ticktock(contract, data, config, host, capabilities, version, gas_limit);
+}
+
+// The account's own tick-tock, run on an account and a configuration supplied
+// from outside. Separated from the fixture that builds them so that a genesis
+// written by the real writer can be executed by the same path these cases use,
+// rather than by a second copy of it.
+Outcome execute_ticktock(const td::Ref<vm::Cell>& contract, const td::Ref<vm::Cell>& data,
+                         const td::Ref<vm::Cell>& config, vm::ValidatorAuthHost* host, td::uint64 capabilities,
+                         int version, long long gas_limit = 1000000) {
+  expect(contract.not_null() && data.not_null(), "ticktock-inputs");
   td::Ref<vm::Stack> stack{true};
   stack.write().push_int(td::make_refint(1000000000000LL));
   stack.write().push_int(td::make_refint(static_cast<long long>(config_account)));
